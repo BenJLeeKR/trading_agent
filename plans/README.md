@@ -37,6 +37,8 @@
 | 23 | [`23.runtime_wiring_helper_refactor.md`](./23.runtime_wiring_helper_refactor.md) | runtime wiring helper 공통화 및 Postgres 테스트 보강 계획 |
 | 24 | [`24.llm_provider_resolver.md`](./24.llm_provider_resolver.md) | LLM_PROVIDER 기반 env resolver 일반화 계획 |
 | 25 | [`25_runtime_event_interpretation_smoke.md`](./25_runtime_event_interpretation_smoke.md) | Runtime EventInterpretationAgent smoke 검증 계획 |
+| 26 | [`26_real_ai_risk_agent.md`](./26_real_ai_risk_agent.md) | Real AIRiskAgent 구현 계획 (schema 공유, bootstrap wiring, orchestrator 통합) |
+| 27 | [`27_ei_output_to_ai_risk_flow.md`](./27_ei_output_to_ai_risk_flow.md) | EI 출력 -> AIRiskAgent 전달 설계 변경 계획 |
 
 ## 빠른 추천 경로
 
@@ -48,6 +50,8 @@
 4. [`23.runtime_wiring_helper_refactor.md`](./23.runtime_wiring_helper_refactor.md)
 5. [`24.llm_provider_resolver.md`](./24.llm_provider_resolver.md)
 6. [`25_runtime_event_interpretation_smoke.md`](./25_runtime_event_interpretation_smoke.md)
+7. [`26_real_ai_risk_agent.md`](./26_real_ai_risk_agent.md)
+8. [`27_ei_output_to_ai_risk_flow.md`](./27_ei_output_to_ai_risk_flow.md)
 
 ### AI Agent / Provider 연결 흐름만 보기
 
@@ -58,6 +62,8 @@
 5. [`23.runtime_wiring_helper_refactor.md`](./23.runtime_wiring_helper_refactor.md)
 6. [`24.llm_provider_resolver.md`](./24.llm_provider_resolver.md)
 7. [`25_runtime_event_interpretation_smoke.md`](./25_runtime_event_interpretation_smoke.md)
+8. [`26_real_ai_risk_agent.md`](./26_real_ai_risk_agent.md)
+9. [`27_ei_output_to_ai_risk_flow.md`](./27_ei_output_to_ai_risk_flow.md)
 
 ### 브로커 / 실행 안전성 흐름만 보기
 

@@ -23,9 +23,15 @@ from agent_trading.domain.entities import (
 )
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.repositories.container import RepositoryContainer
+from agent_trading.services.ai_agents.ai_risk import AIRiskAgent
 from agent_trading.services.ai_agents.base import (
     AgentExecutionRequest,
+    AIProviderClient,
     ProviderAIAgent,
+    RawProviderResponse,
+)
+from agent_trading.services.ai_agents.event_interpretation import (
+    EventInterpretationAgent,
 )
 from agent_trading.services.ai_agents.recorder import AgentRunRecorder
 from agent_trading.services.ai_agents.schemas import (
@@ -118,6 +124,65 @@ def repos() -> RepositoryContainer:
 @pytest.fixture
 def service(repos: RepositoryContainer) -> DecisionOrchestratorService:
     return DecisionOrchestratorService(repos)
+
+
+@pytest.fixture
+def mock_ei_provider() -> AIProviderClient:
+    """Return an ``AIProviderClient`` that returns a valid EI response."""
+    import json
+    from dataclasses import asdict
+
+    from agent_trading.services.ai_agents.schemas import AggregateEventView, InterpretedEvent
+
+    output = EventInterpretationOutput(
+        symbol="AAPL",
+        issuer_code="037730",
+        events=(),
+        aggregate_view=AggregateEventView(),
+    )
+
+    async def _generate(**kwargs: object) -> RawProviderResponse:
+        return RawProviderResponse(
+            raw_content=json.dumps(asdict(output)),
+            parsed=output,
+        )
+
+    ei_mock = MagicMock(spec=AIProviderClient)
+    ei_mock.generate_structured = AsyncMock(side_effect=_generate)
+    return ei_mock
+
+
+@pytest.fixture
+def mock_ar_provider() -> AIProviderClient:
+    """Return an ``AIProviderClient`` that returns a valid AR response."""
+    import json
+    from dataclasses import asdict
+
+    output = AIRiskOutput(
+        symbol="AAPL",
+        agent_name="ai_risk",
+        schema_version="v1",
+        decision_context_id=None,
+        risk_opinion="reduce",
+        risk_score=0.65,
+        confidence=0.8,
+        size_adjustment_factor=0.5,
+        max_holding_horizon="swing",
+        risk_flags=("concentration",),
+        reason_codes=("high_correlation",),
+        opposing_evidence=(),
+        summary="Reduce position due to concentration risk",
+    )
+
+    async def _generate(**kwargs: object) -> RawProviderResponse:
+        return RawProviderResponse(
+            raw_content=json.dumps(asdict(output)),
+            parsed=output,
+        )
+
+    ar_mock = MagicMock(spec=AIProviderClient)
+    ar_mock.generate_structured = AsyncMock(side_effect=_generate)
+    return ar_mock
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +413,99 @@ class TestSchemaAlignment:
         for run in service._agent_recorder.list_all():
             assert run.structured_output_json is not None
             assert run.structured_output_json.get("schema_version") == "v1"
+
+
+# ---------------------------------------------------------------------------
+# Real EI + Real AR + Stub FDC integration
+# ---------------------------------------------------------------------------
+
+
+class TestRealAgentsIntegration:
+    """Real EventInterpretationAgent + real AIRiskAgent + stub composer."""
+
+    @pytest.mark.asyncio
+    async def test_real_ei_and_real_ar_with_stub_fdc(
+        self,
+        repos: RepositoryContainer,
+        sample_request: SubmitOrderRequest,
+        mock_ei_provider: AIProviderClient,
+        mock_ar_provider: AIProviderClient,
+    ) -> None:
+        """Real EI + real AR + stub FDC: assemble() succeeds, recorder has 3 runs."""
+        ei_agent = EventInterpretationAgent(provider_client=mock_ei_provider)
+        ar_agent = AIRiskAgent(provider_client=mock_ar_provider)
+        recorder = AgentRunRecorder()
+
+        orchestrator = DecisionOrchestratorService(
+            repos,
+            event_interpretation_agent=ei_agent,
+            ai_risk_agent=ar_agent,
+            agent_recorder=recorder,
+        )
+
+        intent = await orchestrator.assemble(sample_request)
+        assert isinstance(intent, OrderIntent)
+
+        # Recorder should have 3 runs
+        runs = recorder.list_all()
+        assert len(runs) == 3
+
+        # Agent types should include real EI and real AR
+        agent_types = {r.agent_type for r in runs}
+        assert agent_types == {
+            "event_interpretation",
+            "ai_risk",
+            "final_decision_composer",
+        }
+
+        # EI run should have structured_output_json with symbol from mock
+        ei_run = next(r for r in runs if r.agent_type == "event_interpretation")
+        assert ei_run.structured_output_json is not None
+        assert ei_run.structured_output_json.get("symbol") == "AAPL"
+        assert ei_run.structured_output_json.get("agent_name") == "event_interpretation"
+
+        # AR run should have structured_output_json with risk_opinion from mock
+        ar_run = next(r for r in runs if r.agent_type == "ai_risk")
+        assert ar_run.structured_output_json is not None
+        assert ar_run.structured_output_json.get("risk_opinion") == "reduce"
+        assert ar_run.structured_output_json.get("risk_score") == 0.65
+        assert ar_run.structured_output_json.get("agent_name") == "ai_risk"
+
+        # FDC run should be stub (default values)
+        fdc_run = next(r for r in runs if r.agent_type == "final_decision_composer")
+        assert fdc_run.structured_output_json is not None
+        assert fdc_run.structured_output_json.get("decision_type") == "HOLD"
+
+    @pytest.mark.asyncio
+    async def test_real_ei_real_ar_records_decision_context_id(
+        self,
+        repos: RepositoryContainer,
+        sample_request: SubmitOrderRequest,
+        mock_ei_provider: AIProviderClient,
+        mock_ar_provider: AIProviderClient,
+    ) -> None:
+        """Decision context ID is recorded in both real agent runs."""
+        ctx_id = uuid4()
+        ei_agent = EventInterpretationAgent(provider_client=mock_ei_provider)
+        ar_agent = AIRiskAgent(provider_client=mock_ar_provider)
+        recorder = AgentRunRecorder()
+
+        orchestrator = DecisionOrchestratorService(
+            repos,
+            event_interpretation_agent=ei_agent,
+            ai_risk_agent=ar_agent,
+            agent_recorder=recorder,
+        )
+
+        await orchestrator.assemble(sample_request, decision_context_id=ctx_id)
+
+        runs = recorder.list_all()
+        # Both real agent runs should have decision_context_id
+        for run in runs:
+            assert run.decision_context_id == ctx_id
+            assert run.structured_output_json is not None
+            stored_ctx = run.structured_output_json.get("decision_context_id")
+            assert stored_ctx == str(ctx_id)
 
 
 # ---------------------------------------------------------------------------

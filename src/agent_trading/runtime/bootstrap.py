@@ -18,6 +18,7 @@ from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.contracts import ExternalEventRepository
 from agent_trading.repositories.postgres.bootstrap import build_postgres_repositories
 from agent_trading.services.ai_agents import (
+    AIRiskAgent,
     EventInterpretationAgent,
     OpenAICompatibleClient,
 )
@@ -74,19 +75,7 @@ def _build_polling_workers(
 
 
 def _build_provider_agent(settings: AppSettings) -> EventInterpretationAgent | None:
-    """Build a real ``EventInterpretationAgent`` if provider settings are complete.
-
-    Validates that **all three** of ``provider_api_key``, ``provider_base_url``,
-    and ``provider_model_id`` are configured.  If any is missing/empty, logs a
-    warning and returns ``None`` so the orchestrator falls back to
-    ``StubEventInterpretationAgent``.
-
-    Returns
-    -------
-    EventInterpretationAgent or None
-        A real agent when provider settings are complete, or ``None`` when
-        they are not (caller falls back to stub).
-    """
+    """Build a real ``EventInterpretationAgent`` if provider settings are complete."""
     if not settings.provider_api_key:
         logger.info(
             "Provider API key not configured — "
@@ -117,6 +106,42 @@ def _build_provider_agent(settings: AppSettings) -> EventInterpretationAgent | N
     )
 
 
+def _build_ai_risk_agent(settings: AppSettings) -> AIRiskAgent | None:
+    """Build a real ``AIRiskAgent`` if provider settings are complete.
+
+    Returns ``None`` when settings are incomplete — caller falls back to
+    ``StubAIRiskAgent``.
+    """
+    if not settings.provider_api_key:
+        logger.info(
+            "Provider API key not configured — "
+            "using stub AIRiskAgent"
+        )
+        return None
+    if not settings.provider_base_url:
+        logger.warning(
+            "provider_base_url is empty — "
+            "using stub AIRiskAgent"
+        )
+        return None
+    if not settings.provider_model_id:
+        logger.warning(
+            "provider_model_id is empty — "
+            "using stub AIRiskAgent"
+        )
+        return None
+
+    client = OpenAICompatibleClient(
+        api_key=settings.provider_api_key,
+        base_url=settings.provider_base_url,
+        timeout_seconds=settings.provider_timeout_seconds,
+    )
+    return AIRiskAgent(
+        provider_client=client,
+        model_id=settings.provider_model_id,
+    )
+
+
 async def _close_provider_agent(agent: object | None) -> None:
     """Safely close the provider agent's underlying HTTP client.
 
@@ -134,29 +159,33 @@ def _build_orchestrator(
     repos: RepositoryContainer,
     settings: AppSettings,
     event_interpretation_agent: EventInterpretationAgent | None = None,
+    ai_risk_agent: AIRiskAgent | None = None,
 ) -> DecisionOrchestratorService:
     """Build a ``DecisionOrchestratorService`` with provider agent injection.
 
-    When provider settings are complete, the real ``EventInterpretationAgent``
-    is injected.  Otherwise the orchestrator falls back to
-    ``StubEventInterpretationAgent``.
+    When provider settings are complete, the real agents are injected.
+    Otherwise the orchestrator falls back to stub agents.
 
     Parameters
     ----------
     repos:
         Repository container for the orchestrator's data access.
     settings:
-        Application settings (used to build the provider agent when
-        ``event_interpretation_agent`` is not provided).
+        Application settings (used to build provider agents when not
+        explicitly provided).
     event_interpretation_agent:
-        Pre-built provider agent.  When ``None`` (default), the agent
-        is built internally via ``_build_provider_agent(settings)``.
+        Pre-built EI agent.  When ``None``, built via ``_build_provider_agent(settings)``.
+    ai_risk_agent:
+        Pre-built AR agent.  When ``None``, built via ``_build_ai_risk_agent(settings)``.
     """
     if event_interpretation_agent is None:
         event_interpretation_agent = _build_provider_agent(settings)
+    if ai_risk_agent is None:
+        ai_risk_agent = _build_ai_risk_agent(settings)
     return DecisionOrchestratorService(
         repos=repos,
         event_interpretation_agent=event_interpretation_agent,
+        ai_risk_agent=ai_risk_agent,
     )
 
 
@@ -170,8 +199,11 @@ def build_default_runtime() -> dict[str, object]:
     repositories = build_in_memory_repositories()
     polling_workers = _build_polling_workers(repositories, settings)
     event_interpretation_agent = _build_provider_agent(settings)
+    ai_risk_agent = _build_ai_risk_agent(settings)
     orchestrator = _build_orchestrator(
-        repositories, settings, event_interpretation_agent,
+        repositories, settings,
+        event_interpretation_agent=event_interpretation_agent,
+        ai_risk_agent=ai_risk_agent,
     )
     return {
         "settings": settings,
@@ -180,6 +212,7 @@ def build_default_runtime() -> dict[str, object]:
         "polling_workers": polling_workers,
         "orchestrator": orchestrator,
         "event_interpretation_agent": event_interpretation_agent,
+        "ai_risk_agent": ai_risk_agent,
     }
 
 
@@ -233,8 +266,11 @@ async def build_postgres_runtime(
     broker_adapter = _build_kis_adapter(settings)
     polling_workers = _build_polling_workers(repositories, settings)
     event_interpretation_agent = _build_provider_agent(settings)
+    ai_risk_agent = _build_ai_risk_agent(settings)
     orchestrator = _build_orchestrator(
-        repositories, settings, event_interpretation_agent,
+        repositories, settings,
+        event_interpretation_agent=event_interpretation_agent,
+        ai_risk_agent=ai_risk_agent,
     )
 
     return {
@@ -245,18 +281,20 @@ async def build_postgres_runtime(
         "polling_workers": polling_workers,
         "orchestrator": orchestrator,
         "event_interpretation_agent": event_interpretation_agent,
+        "ai_risk_agent": ai_risk_agent,
     }
 
 
 async def shutdown_postgres_runtime(runtime: dict[str, Any]) -> None:
     """Clean up a PostgreSQL runtime.
 
-    Closes the underlying HTTP client of the provider agent (if any),
+    Closes the underlying HTTP clients of all provider agents (if any),
     then closes the connection pool.  Any open database transaction
     must be closed by the caller before calling this function.
     """
-    agent = runtime.get("event_interpretation_agent")
-    await _close_provider_agent(agent)
+    for key in ("event_interpretation_agent", "ai_risk_agent"):
+        agent = runtime.get(key)
+        await _close_provider_agent(agent)
     await close_pool()
 
 
@@ -302,8 +340,11 @@ async def postgres_runtime(
         repositories = build_postgres_repositories(tx)
         polling_workers = _build_polling_workers(repositories, settings)
         event_interpretation_agent = _build_provider_agent(settings)
+        ai_risk_agent = _build_ai_risk_agent(settings)
         orchestrator = _build_orchestrator(
-            repositories, settings, event_interpretation_agent,
+            repositories, settings,
+            event_interpretation_agent=event_interpretation_agent,
+            ai_risk_agent=ai_risk_agent,
         )
         runtime: dict[str, Any] = {
             "settings": settings,
@@ -313,6 +354,7 @@ async def postgres_runtime(
             "polling_workers": polling_workers,
             "orchestrator": orchestrator,
             "event_interpretation_agent": event_interpretation_agent,
+            "ai_risk_agent": ai_risk_agent,
         }
         yield runtime
 

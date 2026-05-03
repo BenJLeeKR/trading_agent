@@ -19,7 +19,7 @@ from uuid import uuid4
 
 import pytest
 
-from agent_trading.services.ai_agents.ai_risk import StubAIRiskAgent
+from agent_trading.services.ai_agents.ai_risk import AIRiskAgent, StubAIRiskAgent
 from agent_trading.services.ai_agents.base import (
     AIProviderClient,
     AgentExecutionRequest,
@@ -222,6 +222,171 @@ class TestStubAIRiskAgent:
         )
         result = await agent.run(request)
         assert isinstance(result, AIRiskOutput)
+        assert result.decision_context_id is None
+
+
+# ---------------------------------------------------------------------------
+# AIRiskAgent (real) — with mock provider
+# ---------------------------------------------------------------------------
+
+
+class TestAIRiskAgent:
+    """Real AIRiskAgent with mock provider."""
+
+    def test_protocol_conformance(self, mock_provider: AIProviderClient) -> None:
+        """Agent satisfies the ProviderAIAgent protocol."""
+        agent = AIRiskAgent(provider_client=mock_provider)
+        assert isinstance(agent, ProviderAIAgent)
+
+    def test_agent_name(self, mock_provider: AIProviderClient) -> None:
+        """agent_name is 'ai_risk'."""
+        agent = AIRiskAgent(provider_client=mock_provider)
+        assert agent.agent_name == "ai_risk"
+
+    def test_schema_version_default(self, mock_provider: AIProviderClient) -> None:
+        """schema_version defaults to 'v1'."""
+        agent = AIRiskAgent(provider_client=mock_provider)
+        assert agent.schema_version == "v1"
+
+    def test_schema_version_custom(self, mock_provider: AIProviderClient) -> None:
+        """schema_version can be set via constructor."""
+        agent = AIRiskAgent(
+            provider_client=mock_provider,
+            schema_version="v2",
+        )
+        assert agent.schema_version == "v2"
+
+    @pytest.mark.asyncio
+    async def test_run_returns_ai_risk_output(
+        self,
+        mock_provider: AIProviderClient,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """Real agent with successful provider call returns valid output."""
+        agent = AIRiskAgent(provider_client=mock_provider)
+        result = await agent.run(sample_request)
+        assert isinstance(result, AIRiskOutput)
+        # The mock returns EventInterpretationOutput as parsed, but AIRiskAgent
+        # expects AIRiskOutput shape — verify safe fallback kicks in
+        # when provider returns wrong type
+        assert result.risk_opinion == "allow"  # default fallback value
+
+    @pytest.mark.asyncio
+    async def test_run_with_ai_risk_mock_response(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """Provider returns valid AIRiskOutput shape."""
+        risk_provider = AsyncMock(spec=AIProviderClient)
+
+        async def _generate(**kwargs: object) -> RawProviderResponse:
+            return RawProviderResponse(
+                parsed=AIRiskOutput(
+                    symbol="005930",
+                    proposed_side="buy",
+                    risk_opinion="reduce",
+                    risk_score=0.65,
+                    confidence=0.7,
+                    size_adjustment_factor=0.3,
+                    max_holding_horizon="short",
+                    risk_flags=("high_volatility",),
+                    reason_codes=("R001", "R002"),
+                    opposing_evidence=("Recent price gap",),
+                    summary="Moderate risk due to high volatility.",
+                ),
+                raw_content='{"symbol": "005930", "risk_opinion": "reduce"}',
+            )
+
+        risk_provider.generate_structured = _generate  # type: ignore[method-assign]
+
+        agent = AIRiskAgent(provider_client=risk_provider)
+        result = await agent.run(sample_request)
+        assert isinstance(result, AIRiskOutput)
+        # Provider response fields should be preserved
+        assert result.symbol == "005930"
+        assert result.proposed_side == "buy"
+        assert result.risk_opinion == "reduce"
+        assert result.risk_score == 0.65
+        assert result.confidence == 0.7
+        assert result.size_adjustment_factor == 0.3
+        assert result.max_holding_horizon == "short"
+        assert result.risk_flags == ("high_volatility",)
+        assert result.reason_codes == ("R001", "R002")
+        assert result.opposing_evidence == ("Recent price gap",)
+        assert result.summary == "Moderate risk due to high volatility."
+        # Metadata fields overridden by agent
+        assert result.agent_name == "ai_risk"
+        assert result.schema_version == "v1"
+
+    @pytest.mark.asyncio
+    async def test_run_fallback_on_provider_error(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """Provider error → default AIRiskOutput."""
+        failing_provider = AsyncMock(spec=AIProviderClient)
+
+        async def _raise(**kwargs: object) -> object:
+            raise RuntimeError("Provider unavailable")
+
+        failing_provider.generate_structured = _raise  # type: ignore[method-assign]
+
+        agent = AIRiskAgent(provider_client=failing_provider)
+        result = await agent.run(sample_request)
+        assert isinstance(result, AIRiskOutput)
+        # Default values
+        assert result.risk_opinion == "allow"
+        assert result.risk_score == 0.0
+
+    @pytest.mark.asyncio
+    async def test_run_fallback_on_parse_error(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """Invalid response from provider → default output."""
+        bad_provider = AsyncMock(spec=AIProviderClient)
+
+        async def _bad_generate(**kwargs: object) -> RawProviderResponse:
+            raise ValueError("Invalid JSON")
+
+        bad_provider.generate_structured = _bad_generate  # type: ignore[method-assign]
+
+        agent = AIRiskAgent(provider_client=bad_provider)
+        result = await agent.run(sample_request)
+        assert isinstance(result, AIRiskOutput)
+        assert result.risk_opinion == "allow"
+
+    @pytest.mark.asyncio
+    async def test_decision_context_id_set_when_provided(
+        self,
+        mock_provider: AIProviderClient,
+    ) -> None:
+        """decision_context_id is set from the request when provided."""
+        ctx_id = uuid4()
+        request = AgentExecutionRequest(
+            decision_context_id=ctx_id,
+            correlation_id="test-ctx-ar",
+            context=AssembledContext(),
+        )
+        agent = AIRiskAgent(provider_client=mock_provider)
+        result = await agent.run(request)
+        # Mock returns EventInterpretationOutput which has decision_context_id=None,
+        # but AIRiskAgent overrides it from request
+        assert result.decision_context_id == str(ctx_id)
+
+    @pytest.mark.asyncio
+    async def test_decision_context_id_none_when_not_provided(
+        self,
+        mock_provider: AIProviderClient,
+    ) -> None:
+        """decision_context_id is None when request has no context."""
+        request = AgentExecutionRequest(
+            decision_context_id=None,
+            correlation_id="test-noctx-ar",
+            context=AssembledContext(),
+        )
+        agent = AIRiskAgent(provider_client=mock_provider)
+        result = await agent.run(request)
         assert result.decision_context_id is None
 
 

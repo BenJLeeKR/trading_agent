@@ -40,7 +40,7 @@ from agent_trading.services.ai_agents.event_interpretation import (
     EventInterpretationAgent,
     StubEventInterpretationAgent,
 )
-from agent_trading.services.ai_agents.ai_risk import StubAIRiskAgent
+from agent_trading.services.ai_agents.ai_risk import AIRiskAgent, StubAIRiskAgent
 from agent_trading.services.ai_agents.final_decision_composer import (
     StubFinalDecisionComposerAgent,
 )
@@ -57,6 +57,7 @@ __all__ = [
     "OpenAICompatibleClient",
     "EventInterpretationAgent",
     "StubEventInterpretationAgent",
+    "AIRiskAgent",
     "StubAIRiskAgent",
     "StubFinalDecisionComposerAgent",
 ]

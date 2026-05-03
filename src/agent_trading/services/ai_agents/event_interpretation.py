@@ -31,6 +31,7 @@ from agent_trading.services.ai_agents.schemas import (
     EventInterpretationOutput,
     InterpretedEvent,
     AggregateEventView,
+    generate_json_schema,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,85 +96,6 @@ class StubEventInterpretationAgent:
 # ---------------------------------------------------------------------------
 # Real implementation
 # ---------------------------------------------------------------------------
-
-
-def _generate_json_schema(dataclass_type: type) -> dict[str, Any]:
-    """Generate a minimal JSON schema for a dataclass type.
-
-    This is used to instruct the LLM on the expected output format.
-    Only handles the types used in ``EventInterpretationOutput``.
-    """
-    import dataclasses
-
-    fields: dict[str, Any] = {}
-    required: list[str] = []
-
-    for f in dataclasses.fields(dataclass_type):
-        field_type = f.type
-        origin = getattr(field_type, "__origin__", None)
-        type_name = getattr(field_type, "__name__", str(field_type))
-
-        # Determine JSON type
-        if type_name == "str":
-            json_type = "string"
-        elif type_name == "int":
-            json_type = "integer"
-        elif type_name == "float":
-            json_type = "number"
-        elif type_name == "bool":
-            json_type = "boolean"
-        elif origin is tuple:
-            # Tuple of dataclasses — array of objects
-            args = getattr(field_type, "__args__", ())
-            if args and hasattr(args[0], "__dataclass_fields__"):
-                json_type = "array"
-                fields[f.name] = {
-                    "type": "array",
-                    "items": {"$ref": f"#/definitions/{args[0].__name__}"},
-                }
-                continue
-            else:
-                json_type = "array"
-        elif hasattr(field_type, "__dataclass_fields__"):
-            # Nested dataclass
-            fields[f.name] = {"$ref": f"#/definitions/{field_type.__name__}"}
-            continue
-        else:
-            json_type = "string"
-
-        fields[f.name] = {"type": json_type}
-
-        # Check if the field has a default — if not, it's required
-        default = f.default
-        if default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING:
-            required.append(f.name)
-
-    schema: dict[str, Any] = {
-        "type": "object",
-        "properties": fields,
-    }
-    if required:
-        schema["required"] = required
-
-    # Build definitions for nested dataclasses
-    definitions: dict[str, Any] = {}
-    for f in dataclasses.fields(dataclass_type):
-        field_type = f.type
-        origin = getattr(field_type, "__origin__", None)
-        if origin is tuple:
-            args = getattr(field_type, "__args__", ())
-            if args and hasattr(args[0], "__dataclass_fields__"):
-                nested = args[0]
-                if nested.__name__ not in definitions:
-                    definitions[nested.__name__] = _generate_json_schema(nested)
-        elif hasattr(field_type, "__dataclass_fields__"):
-            if field_type.__name__ not in definitions:
-                definitions[field_type.__name__] = _generate_json_schema(field_type)
-
-    if definitions:
-        schema["definitions"] = definitions
-
-    return schema
 
 
 class EventInterpretationAgent:
@@ -278,7 +200,7 @@ class EventInterpretationAgent:
     def _build_system_prompt(self) -> str:
         """Build the system prompt describing the expected output schema."""
         schema_json = json.dumps(
-            _generate_json_schema(EventInterpretationOutput), indent=2
+            generate_json_schema(EventInterpretationOutput), indent=2
         )
         return (
             "You are an Event Interpretation Agent for a trading system. "
