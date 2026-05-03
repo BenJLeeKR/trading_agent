@@ -1,0 +1,61 @@
+“자동 reload”보다 **수동으로 다시 컨텍스트를 먹이는 방식**이 가장 확실합니다.
+
+지금 확인된 저장 위치는 이렇습니다.
+
+- 세션 인덱스: `~/.codex/session_index.jsonl`
+- 세션 원본: `~/.codex/sessions/.../rollout-....jsonl`
+- 요약 메모리: `~/.codex/memories/raw_memories.md`
+- 턴 요약: `~/.codex/memories/rollout_summaries/...md`
+
+가끔 이력을 잘 못 불러오면 보통 이렇게 하면 됩니다.
+
+**1. 가장 쉬운 방법**
+새 턴 시작할 때 요약 파일을 직접 붙여넣기
+
+```bash
+sed -n '1,220p' ~/.codex/memories/raw_memories.md
+```
+
+또는 특정 요약 파일:
+
+```bash
+sed -n '1,220p' ~/.codex/memories/rollout_summaries/2026-05-01T11-46-50-Tr8j-trading_design_handoff_postgres_repository_bootstrap.md
+```
+
+그 내용을 새 대화에 넣고:
+- “이 컨텍스트 기준으로 이어서 작업해줘”
+라고 하면 됩니다.
+
+**2. 세션 원본까지 다시 보고 싶을 때**
+```bash
+sed -n '1,200p' ~/.codex/session_index.jsonl
+sed -n '1,200p' ~/.codex/sessions/2026/05/01/rollout-2026-05-01T20-46-50-019de35c-eb6f-7062-807c-bd2fcdffe147.jsonl
+```
+
+이건 원본 로그라 길 수 있어서, 보통은 `raw_memories.md`나 `rollout_summaries` 쪽이 더 실용적입니다.
+
+**3. 가장 권장하는 복구 방식**
+프로젝트 루트에 handoff 문서를 유지하고 그걸 다시 먹이기
+
+지금은 이미:
+- [HANDOFF_TO_ROO_CODE.md](/workspace/agent_trading/plan_docs/HANDOFF_TO_ROO_CODE.md:1)
+
+이 문서가 있어서, Codex가 기억을 놓쳤을 때도 이 파일을 기준으로 빠르게 복구할 수 있습니다.
+
+**4. 실전 팁**
+중요한 작업 단위가 끝날 때마다 아래 3개 중 하나를 남겨두면 복구가 쉬워집니다.
+
+- `plan_docs/HANDOFF_*.md`
+- `plans/*.md`
+- `~/.codex/memories/rollout_summaries/*.md`
+
+**5. 결론**
+현재 기준으로는 “reload 버튼”보다:
+
+1. `raw_memories.md` 확인
+2. `rollout_summaries` 확인
+3. `HANDOFF` 문서 붙여넣기
+
+이 3단계가 가장 안정적입니다.
+
+원하면 제가 바로 **“Codex 컨텍스트 복구용 짧은 프롬프트 템플릿”**도 만들어드릴게요.

@@ -1,0 +1,425 @@
+"""Tests for the three stub AI agents and the real EventInterpretationAgent.
+
+Each agent is tested for:
+* Protocol conformance (``ProviderAIAgent``).
+* Default output values match the aligned schema (``08_ai_decision_policy.md``
+  §4.2).
+* ``run()`` succeeds with a valid ``AgentExecutionRequest``.
+* Safe fallback on exception (the stub agents themselves don't raise,
+  but the fallback path is verified).
+
+The real ``EventInterpretationAgent`` is tested with a mock provider to
+verify successful parsing and safe fallback behaviour.
+"""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock
+from uuid import uuid4
+
+import pytest
+
+from agent_trading.services.ai_agents.ai_risk import StubAIRiskAgent
+from agent_trading.services.ai_agents.base import (
+    AIProviderClient,
+    AgentExecutionRequest,
+    ProviderAIAgent,
+    RawProviderResponse,
+)
+from agent_trading.services.ai_agents.event_interpretation import (
+    EventInterpretationAgent,
+    StubEventInterpretationAgent,
+)
+from agent_trading.services.ai_agents.final_decision_composer import (
+    StubFinalDecisionComposerAgent,
+)
+from agent_trading.services.ai_agents.schemas import (
+    AIRiskOutput,
+    EventInterpretationOutput,
+    FinalDecisionComposerOutput,
+)
+from agent_trading.services.decision_orchestrator import AssembledContext
+
+
+# ---------------------------------------------------------------------------
+# Shared fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def sample_request() -> AgentExecutionRequest:
+    return AgentExecutionRequest(
+        decision_context_id=uuid4(),
+        correlation_id="test-corr-1",
+        context=AssembledContext(),
+    )
+
+
+@pytest.fixture
+def mock_provider() -> AIProviderClient:
+    """Return an ``AIProviderClient`` that returns a valid response."""
+    client = AsyncMock(spec=AIProviderClient)
+
+    async def _generate(**kwargs: object) -> RawProviderResponse:
+        return RawProviderResponse(
+            parsed=EventInterpretationOutput(
+                symbol="AAPL",
+                issuer_code="037730",
+                events=(),
+                aggregate_view=EventInterpretationOutput.__dataclass_fields__[
+                    "aggregate_view"
+                ].default_factory(),
+            ),
+            raw_content='{"symbol": "AAPL", "issuer_code": "037730"}',
+        )
+
+    client.generate_structured = _generate  # type: ignore[method-assign]
+    return client
+
+
+# ---------------------------------------------------------------------------
+# StubEventInterpretationAgent
+# ---------------------------------------------------------------------------
+
+
+class TestStubEventInterpretationAgent:
+    """StubEventInterpretationAgent protocol conformance and output."""
+
+    def test_protocol_conformance(self) -> None:
+        """Agent satisfies the ProviderAIAgent protocol."""
+        agent = StubEventInterpretationAgent()
+        assert isinstance(agent, ProviderAIAgent)
+
+    def test_agent_name(self) -> None:
+        """agent_name is 'event_interpretation'."""
+        agent = StubEventInterpretationAgent()
+        assert agent.agent_name == "event_interpretation"
+
+    def test_schema_version_default(self) -> None:
+        """schema_version defaults to 'v1'."""
+        agent = StubEventInterpretationAgent()
+        assert agent.schema_version == "v1"
+
+    def test_schema_version_custom(self) -> None:
+        """schema_version can be set via constructor."""
+        agent = StubEventInterpretationAgent(schema_version="v2")
+        assert agent.schema_version == "v2"
+
+    @pytest.mark.asyncio
+    async def test_run_returns_event_interpretation_output(
+        self, sample_request: AgentExecutionRequest
+    ) -> None:
+        """run() returns an EventInterpretationOutput."""
+        agent = StubEventInterpretationAgent()
+        result = await agent.run(sample_request)
+        assert isinstance(result, EventInterpretationOutput)
+
+    @pytest.mark.asyncio
+    async def test_default_output_values(
+        self, sample_request: AgentExecutionRequest
+    ) -> None:
+        """Default output matches the aligned schema (empty events, neutral)."""
+        agent = StubEventInterpretationAgent()
+        result = await agent.run(sample_request)
+        # Schema metadata
+        assert result.schema_version == "v1"
+        assert result.agent_name == "event_interpretation"
+        assert result.decision_context_id is None
+        # Symbol / issuer
+        assert result.symbol == ""
+        assert result.issuer_code == ""
+        # Events
+        assert result.events == ()
+        # Aggregate view
+        assert result.aggregate_view.overall_bias == "neutral"
+        assert result.aggregate_view.event_conflict is False
+        assert result.aggregate_view.top_reason_codes == ()
+        assert result.aggregate_view.opposing_evidence == ()
+
+    @pytest.mark.asyncio
+    async def test_run_succeeds_with_none_context_id(
+        self,
+    ) -> None:
+        """run() succeeds when decision_context_id is None."""
+        agent = StubEventInterpretationAgent()
+        request = AgentExecutionRequest(
+            decision_context_id=None,
+            correlation_id="test-corr-2",
+            context=AssembledContext(),
+        )
+        result = await agent.run(request)
+        assert isinstance(result, EventInterpretationOutput)
+        assert result.decision_context_id is None
+
+
+# ---------------------------------------------------------------------------
+# StubAIRiskAgent
+# ---------------------------------------------------------------------------
+
+
+class TestStubAIRiskAgent:
+    """StubAIRiskAgent protocol conformance and output."""
+
+    def test_protocol_conformance(self) -> None:
+        """Agent satisfies the ProviderAIAgent protocol."""
+        agent = StubAIRiskAgent()
+        assert isinstance(agent, ProviderAIAgent)
+
+    def test_agent_name(self) -> None:
+        """agent_name is 'ai_risk'."""
+        agent = StubAIRiskAgent()
+        assert agent.agent_name == "ai_risk"
+
+    def test_schema_version_default(self) -> None:
+        """schema_version defaults to 'v1'."""
+        agent = StubAIRiskAgent()
+        assert agent.schema_version == "v1"
+
+    @pytest.mark.asyncio
+    async def test_run_returns_ai_risk_output(
+        self, sample_request: AgentExecutionRequest
+    ) -> None:
+        """run() returns an AIRiskOutput."""
+        agent = StubAIRiskAgent()
+        result = await agent.run(sample_request)
+        assert isinstance(result, AIRiskOutput)
+
+    @pytest.mark.asyncio
+    async def test_default_output_values(
+        self, sample_request: AgentExecutionRequest
+    ) -> None:
+        """Default output matches the aligned schema (allow, zero risk)."""
+        agent = StubAIRiskAgent()
+        result = await agent.run(sample_request)
+        # Schema metadata
+        assert result.schema_version == "v1"
+        assert result.agent_name == "ai_risk"
+        assert result.decision_context_id is None
+        # Symbol / side
+        assert result.symbol == ""
+        assert result.proposed_side == ""
+        # Risk opinion
+        assert result.risk_opinion == "allow"
+        assert result.risk_score == 0.0
+        assert result.confidence == 0.0
+        assert result.size_adjustment_factor == 0.0
+        assert result.max_holding_horizon == "swing"
+        # Lists
+        assert result.risk_flags == ()
+        assert result.reason_codes == ()
+        assert result.opposing_evidence == ()
+        # Summary
+        assert result.summary == ""
+
+    @pytest.mark.asyncio
+    async def test_run_succeeds_with_none_context_id(self) -> None:
+        """run() succeeds when decision_context_id is None."""
+        agent = StubAIRiskAgent()
+        request = AgentExecutionRequest(
+            decision_context_id=None,
+            correlation_id="test-corr-3",
+            context=AssembledContext(),
+        )
+        result = await agent.run(request)
+        assert isinstance(result, AIRiskOutput)
+        assert result.decision_context_id is None
+
+
+# ---------------------------------------------------------------------------
+# StubFinalDecisionComposerAgent
+# ---------------------------------------------------------------------------
+
+
+class TestStubFinalDecisionComposerAgent:
+    """StubFinalDecisionComposerAgent protocol conformance and output."""
+
+    def test_protocol_conformance(self) -> None:
+        """Agent satisfies the ProviderAIAgent protocol."""
+        agent = StubFinalDecisionComposerAgent()
+        assert isinstance(agent, ProviderAIAgent)
+
+    def test_agent_name(self) -> None:
+        """agent_name is 'final_decision_composer'."""
+        agent = StubFinalDecisionComposerAgent()
+        assert agent.agent_name == "final_decision_composer"
+
+    def test_schema_version_default(self) -> None:
+        """schema_version defaults to 'v1'."""
+        agent = StubFinalDecisionComposerAgent()
+        assert agent.schema_version == "v1"
+
+    @pytest.mark.asyncio
+    async def test_run_returns_final_decision_composer_output(
+        self, sample_request: AgentExecutionRequest
+    ) -> None:
+        """run() returns a FinalDecisionComposerOutput."""
+        agent = StubFinalDecisionComposerAgent()
+        result = await agent.run(sample_request)
+        assert isinstance(result, FinalDecisionComposerOutput)
+
+    @pytest.mark.asyncio
+    async def test_default_output_values(
+        self, sample_request: AgentExecutionRequest
+    ) -> None:
+        """Default output matches the aligned schema (HOLD, empty)."""
+        agent = StubFinalDecisionComposerAgent()
+        result = await agent.run(sample_request)
+        # Schema metadata
+        assert result.schema_version == "v1"
+        assert result.agent_name == "final_decision_composer"
+        assert result.decision_context_id is None
+        # Symbol
+        assert result.symbol == ""
+        # Decision
+        assert result.decision_type == "HOLD"
+        assert result.side == ""
+        assert result.entry_style == ""
+        assert result.time_horizon == "swing"
+        assert result.confidence == 0.0
+        assert result.conviction == 0.0
+        # Lists
+        assert result.reason_codes == ()
+        assert result.opposing_evidence == ()
+        # Nested: execution_preferences
+        assert result.execution_preferences.use_limit_order is True
+        assert result.execution_preferences.price_band_hint.reference_type == "last_price"
+        assert result.execution_preferences.price_band_hint.max_slippage_bps == 15
+        assert result.execution_preferences.allow_partial_fill is True
+        # Nested: sizing_hint
+        assert result.sizing_hint.size_mode == "no_change"
+        assert result.sizing_hint.size_adjustment_factor == 0.0
+        # Nested: exit_plan_hint
+        assert result.exit_plan_hint.stop_style == "volatility_based"
+        assert result.exit_plan_hint.take_profit_style == "partial_scale_out"
+        assert result.exit_plan_hint.max_holding_days == 20
+        # Summary
+        assert result.summary == ""
+
+    @pytest.mark.asyncio
+    async def test_run_succeeds_with_none_context_id(self) -> None:
+        """run() succeeds when decision_context_id is None."""
+        agent = StubFinalDecisionComposerAgent()
+        request = AgentExecutionRequest(
+            decision_context_id=None,
+            correlation_id="test-corr-4",
+            context=AssembledContext(),
+        )
+        result = await agent.run(request)
+        assert isinstance(result, FinalDecisionComposerOutput)
+        assert result.decision_context_id is None
+
+
+# ---------------------------------------------------------------------------
+# EventInterpretationAgent (real) — with mock provider
+# ---------------------------------------------------------------------------
+
+
+class TestEventInterpretationAgent:
+    """Real EventInterpretationAgent with mock provider."""
+
+    def test_protocol_conformance(self, mock_provider: AIProviderClient) -> None:
+        """Agent satisfies the ProviderAIAgent protocol."""
+        agent = EventInterpretationAgent(provider_client=mock_provider)
+        assert isinstance(agent, ProviderAIAgent)
+
+    def test_agent_name(self, mock_provider: AIProviderClient) -> None:
+        """agent_name is 'event_interpretation'."""
+        agent = EventInterpretationAgent(provider_client=mock_provider)
+        assert agent.agent_name == "event_interpretation"
+
+    def test_schema_version_default(self, mock_provider: AIProviderClient) -> None:
+        """schema_version defaults to 'v1'."""
+        agent = EventInterpretationAgent(provider_client=mock_provider)
+        assert agent.schema_version == "v1"
+
+    def test_schema_version_custom(self, mock_provider: AIProviderClient) -> None:
+        """schema_version can be set via constructor."""
+        agent = EventInterpretationAgent(
+            provider_client=mock_provider,
+            schema_version="v2",
+        )
+        assert agent.schema_version == "v2"
+
+    @pytest.mark.asyncio
+    async def test_run_returns_event_interpretation_output(
+        self,
+        mock_provider: AIProviderClient,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """Real agent with successful provider call returns valid output."""
+        agent = EventInterpretationAgent(provider_client=mock_provider)
+        result = await agent.run(sample_request)
+        assert isinstance(result, EventInterpretationOutput)
+        # Provider response fields should be preserved
+        assert result.symbol == "AAPL"
+        assert result.issuer_code == "037730"
+
+    @pytest.mark.asyncio
+    async def test_run_fallback_on_provider_error(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """Provider error → default EventInterpretationOutput."""
+        failing_provider = AsyncMock(spec=AIProviderClient)
+
+        async def _raise(**kwargs: object) -> object:
+            raise RuntimeError("Provider unavailable")
+
+        failing_provider.generate_structured = _raise  # type: ignore[method-assign]
+
+        agent = EventInterpretationAgent(provider_client=failing_provider)
+        result = await agent.run(sample_request)
+        assert isinstance(result, EventInterpretationOutput)
+        # Default values
+        assert result.symbol == ""
+        assert result.issuer_code == ""
+
+    @pytest.mark.asyncio
+    async def test_run_fallback_on_parse_error(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """Invalid response from provider → default output."""
+        bad_provider = AsyncMock(spec=AIProviderClient)
+
+        async def _bad_generate(**kwargs: object) -> RawProviderResponse:
+            # Return a response that will fail dataclass construction
+            raise ValueError("Invalid JSON")
+
+        bad_provider.generate_structured = _bad_generate  # type: ignore[method-assign]
+
+        agent = EventInterpretationAgent(provider_client=bad_provider)
+        result = await agent.run(sample_request)
+        assert isinstance(result, EventInterpretationOutput)
+        assert result.symbol == ""
+
+    @pytest.mark.asyncio
+    async def test_decision_context_id_set_when_provided(
+        self,
+        mock_provider: AIProviderClient,
+    ) -> None:
+        """decision_context_id is set from the request when provided."""
+        ctx_id = uuid4()
+        request = AgentExecutionRequest(
+            decision_context_id=ctx_id,
+            correlation_id="test-ctx",
+            context=AssembledContext(),
+        )
+        agent = EventInterpretationAgent(provider_client=mock_provider)
+        result = await agent.run(request)
+        assert result.decision_context_id == str(ctx_id)
+
+    @pytest.mark.asyncio
+    async def test_decision_context_id_none_when_not_provided(
+        self,
+        mock_provider: AIProviderClient,
+    ) -> None:
+        """decision_context_id is None when request has no context."""
+        request = AgentExecutionRequest(
+            decision_context_id=None,
+            correlation_id="test-noctx",
+            context=AssembledContext(),
+        )
+        agent = EventInterpretationAgent(provider_client=mock_provider)
+        result = await agent.run(request)
+        assert result.decision_context_id is None

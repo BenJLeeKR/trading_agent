@@ -1,0 +1,55 @@
+# =============================================================================
+# Agent Trading System — Local Development Services
+# =============================================================================
+# Minimal setup: PostgreSQL + Python app container.
+# No Redis, observability, or CI/CD infrastructure.
+#
+# Usage:
+#   docker compose up -d          # Start all services
+#   docker compose exec app bash  # Open a shell in the app container
+#   docker compose down           # Stop all services
+# =============================================================================
+
+services:
+  # ---- PostgreSQL 16 -------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: trading
+      POSTGRES_USER: trading
+      POSTGRES_PASSWORD: trading
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trading"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ---- Python Application --------------------------------------------------
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_HOST: db
+      DATABASE_PORT: 5432
+      DATABASE_NAME: trading
+      DATABASE_USER: trading
+      DATABASE_PASSWORD: trading
+      DATABASE_SCHEMA: trading
+    volumes:
+      - ./src:/app/src
+      - ./db:/app/db
+      - ./tests:/app/tests
+      - ./pyproject.toml:/app/pyproject.toml
+    # Keep the container alive for interactive commands
+    command: ["tail", "-f", "/dev/null"]
+    restart: unless-stopped
+
+volumes:
+  pgdata:

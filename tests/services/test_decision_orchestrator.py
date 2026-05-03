@@ -1,0 +1,410 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from decimal import Decimal
+from uuid import UUID, uuid4
+
+import pytest
+
+from agent_trading.domain.entities import (
+    ConfigVersionEntity,
+    DecisionContextEntity,
+    ExternalEventEntity,
+)
+from agent_trading.domain.enums import (
+    Environment,
+    OrderSide,
+    OrderType,
+    SourceReliabilityTier,
+    TimeInForce,
+)
+from agent_trading.domain.models import SubmitOrderRequest
+from agent_trading.repositories.bootstrap import build_in_memory_repositories
+from agent_trading.services.decision_orchestrator import (
+    AssembledContext,
+    DecisionOrchestratorService,
+    ScoreCalculator,
+    ScoreResult,
+    StubScoreCalculator,
+)
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def service() -> DecisionOrchestratorService:
+    repos = build_in_memory_repositories()
+    return DecisionOrchestratorService(repos=repos)
+
+
+@pytest.fixture
+def sample_request() -> SubmitOrderRequest:
+    return SubmitOrderRequest(
+        account_ref="test_account",
+        client_order_id="test-001",
+        correlation_id="corr-001",
+        strategy_id="strat-001",
+        symbol="005930",
+        market="KRX",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=Decimal("10"),
+        price=Decimal("50000"),
+        time_in_force=TimeInForce.DAY,
+    )
+
+
+@pytest.fixture
+def seeded_service() -> DecisionOrchestratorService:
+    """Service with a seeded decision context and config version."""
+    repos = build_in_memory_repositories()
+
+    # Seed a config version
+    config_version = ConfigVersionEntity(
+        config_version_id=uuid4(),
+        client_id=uuid4(),
+        environment=Environment.PAPER,
+        version_tag="v1.0",
+        config_json={"max_order_size": 100},
+        checksum="abc123",
+        activated_at=datetime.now(timezone.utc),
+    )
+    repos.config_versions._items[config_version.config_version_id] = config_version
+
+    # Seed a decision context referencing the config version
+    context = DecisionContextEntity(
+        decision_context_id=uuid4(),
+        account_id=uuid4(),
+        strategy_id=uuid4(),
+        config_version_id=config_version.config_version_id,
+        market_timestamp=datetime.now(timezone.utc),
+        correlation_id="corr-seeded",
+    )
+    repos.decision_contexts._items[context.decision_context_id] = context
+
+    return DecisionOrchestratorService(repos=repos)
+
+
+# ---------------------------------------------------------------------------
+# Existing tests (must remain green)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_assemble_returns_order_intent(service, sample_request):
+    """assemble() returns an OrderIntent with the given fields."""
+    decision_context_id = uuid4()
+    order_intent_id = uuid4()
+
+    intent = await service.assemble(
+        sample_request,
+        decision_context_id=decision_context_id,
+        order_intent_id=order_intent_id,
+    )
+
+    assert intent.decision_context_id == decision_context_id
+    assert intent.order_intent_id == order_intent_id
+    # assemble() generates decision_id, decision_context_id, order_intent_id
+    # so the assembled request differs from the original sample_request.
+    # Verify that the original fields are preserved.
+    assert intent.request.client_order_id == sample_request.client_order_id
+    assert intent.request.correlation_id == sample_request.correlation_id
+    assert intent.request.account_ref == sample_request.account_ref
+    assert intent.request.symbol == sample_request.symbol
+    assert intent.request.market == sample_request.market
+    assert intent.request.side == sample_request.side
+    assert intent.request.order_type == sample_request.order_type
+    assert intent.request.quantity == sample_request.quantity
+    assert intent.request.price == sample_request.price
+    assert intent.request.strategy_id == sample_request.strategy_id
+    # Generated fields should be populated
+    assert intent.request.decision_id is not None
+    assert intent.request.decision_context_id == str(decision_context_id)
+    assert intent.request.order_intent_id == str(order_intent_id)
+
+
+@pytest.mark.asyncio
+async def test_assemble_without_optional_fields(service, sample_request):
+    """assemble() works with None for optional fields and generates IDs."""
+    intent = await service.assemble(sample_request)
+
+    # When no decision_context_id is provided, it resolves to None (no contexts exist)
+    assert intent.decision_context_id is None
+    # order_intent_id is generated when not provided
+    assert intent.order_intent_id is not None
+    # Generated fields
+    assert intent.request.decision_id is not None
+    assert intent.request.decision_context_id is None
+    assert intent.request.order_intent_id == str(intent.order_intent_id)
+    # Original fields preserved
+    assert intent.request.client_order_id == sample_request.client_order_id
+    assert intent.request.symbol == sample_request.symbol
+
+
+@pytest.mark.asyncio
+async def test_assemble_preserves_request_fields(service, sample_request):
+    """assemble() preserves the original request fields."""
+    intent = await service.assemble(sample_request)
+
+    assert intent.request.client_order_id == "test-001"
+    assert intent.request.symbol == "005930"
+    assert intent.request.quantity == Decimal("10")
+    assert intent.request.side == OrderSide.BUY
+    assert intent.request.order_type == OrderType.LIMIT
+    assert intent.request.time_in_force == TimeInForce.DAY
+
+
+# ---------------------------------------------------------------------------
+# Priority 3: AssembledContext
+# ---------------------------------------------------------------------------
+
+
+class TestAssembledContext:
+    """AssembledContext dataclass field requirements."""
+
+    def test_default_construction(self) -> None:
+        """AssembledContext can be constructed with defaults."""
+        ctx = AssembledContext()
+        assert ctx.decision_context is None
+        assert ctx.config_version is None
+        assert ctx.recent_events == ()
+        assert ctx.score.score == 0.0
+        assert ctx.score.threshold == 0.0
+        assert ctx.score.reason_codes == ()
+
+    def test_full_construction(self) -> None:
+        """AssembledContext can be constructed with all fields."""
+        now = datetime.now(timezone.utc)
+        decision_context = DecisionContextEntity(
+            decision_context_id=uuid4(),
+            account_id=uuid4(),
+            strategy_id=uuid4(),
+            config_version_id=uuid4(),
+            market_timestamp=now,
+            correlation_id="corr-001",
+        )
+        config_version = ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=uuid4(),
+            environment=Environment.PAPER,
+            version_tag="v1",
+            config_json={},
+            checksum="abc",
+        )
+        event = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="test",
+            source_name="test",
+            published_at=now,
+        )
+        score = ScoreResult(score=0.75, threshold=0.5, reason_codes=("momentum",))
+
+        ctx = AssembledContext(
+            decision_context=decision_context,
+            config_version=config_version,
+            recent_events=(event,),
+            score=score,
+        )
+
+        assert ctx.decision_context is decision_context
+        assert ctx.config_version is config_version
+        assert len(ctx.recent_events) == 1
+        assert ctx.recent_events[0] is event
+        assert ctx.score.score == 0.75
+        assert ctx.score.reason_codes == ("momentum",)
+
+    def test_frozen(self) -> None:
+        """AssembledContext is frozen."""
+        ctx = AssembledContext()
+        with pytest.raises(AttributeError):
+            ctx.score = ScoreResult()  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Priority 3: ScoreResult and StubScoreCalculator
+# ---------------------------------------------------------------------------
+
+
+class TestScoreResult:
+    """ScoreResult dataclass."""
+
+    def test_defaults(self) -> None:
+        """ScoreResult has sensible defaults."""
+        sr = ScoreResult()
+        assert sr.score == 0.0
+        assert sr.threshold == 0.0
+        assert sr.reason_codes == ()
+
+    def test_custom_values(self) -> None:
+        """ScoreResult accepts custom values."""
+        sr = ScoreResult(score=0.8, threshold=0.6, reason_codes=("a", "b"))
+        assert sr.score == 0.8
+        assert sr.threshold == 0.6
+        assert sr.reason_codes == ("a", "b")
+
+
+class TestStubScoreCalculator:
+    """StubScoreCalculator returns zero-score result."""
+
+    @pytest.mark.asyncio
+    async def test_calculate_returns_zero_score(self) -> None:
+        """StubScoreCalculator.calculate() returns ScoreResult with defaults."""
+        calc = StubScoreCalculator()
+        ctx = AssembledContext()
+        result = await calc.calculate(ctx)
+        assert isinstance(result, ScoreResult)
+        assert result.score == 0.0
+        assert result.threshold == 0.0
+        assert result.reason_codes == ()
+
+
+# ---------------------------------------------------------------------------
+# Priority 3: OrderIntent extensions
+# ---------------------------------------------------------------------------
+
+
+class TestOrderIntentExtensions:
+    """OrderIntent new fields (context, config_version_id, reason_codes)."""
+
+    @pytest.mark.asyncio
+    async def test_intent_contains_context(self, service, sample_request):
+        """OrderIntent has context field populated."""
+        intent = await service.assemble(sample_request)
+        assert hasattr(intent, "context")
+        assert isinstance(intent.context, AssembledContext)
+
+    @pytest.mark.asyncio
+    async def test_intent_contains_config_version_id(self, service, sample_request):
+        """OrderIntent has config_version_id field."""
+        intent = await service.assemble(sample_request)
+        assert hasattr(intent, "config_version_id")
+
+    @pytest.mark.asyncio
+    async def test_intent_contains_reason_codes(self, service, sample_request):
+        """OrderIntent has reason_codes field."""
+        intent = await service.assemble(sample_request)
+        assert hasattr(intent, "reason_codes")
+        assert intent.reason_codes == ()
+
+    @pytest.mark.asyncio
+    async def test_intent_context_default_when_no_context(
+        self, service, sample_request
+    ):
+        """OrderIntent.context has defaults when no decision context exists."""
+        intent = await service.assemble(sample_request)
+        assert intent.context.decision_context is None
+        assert intent.context.config_version is None
+        assert intent.context.recent_events == ()
+        assert intent.context.score.score == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Priority 3: Config version connection
+# ---------------------------------------------------------------------------
+
+
+class TestConfigVersionConnection:
+    """Config version lookup via decision_context.config_version_id."""
+
+    @pytest.mark.asyncio
+    async def test_config_version_resolved_when_context_exists(
+        self, seeded_service, sample_request
+    ):
+        """Config version is resolved from seeded decision context."""
+        # Retrieve the seeded context ID from the fixture's repos
+        repos = seeded_service._repos
+        context_id = next(iter(repos.decision_contexts._items))
+        intent = await seeded_service.assemble(
+            sample_request,
+            decision_context_id=context_id,
+        )
+        assert intent.config_version_id is not None
+        assert intent.context.config_version is not None
+        assert intent.context.config_version.version_tag == "v1.0"
+
+    @pytest.mark.asyncio
+    async def test_config_version_none_when_no_context(
+        self, service, sample_request
+    ):
+        """Config version is None when no decision context exists."""
+        intent = await service.assemble(sample_request)
+        assert intent.config_version_id is None
+        assert intent.context.config_version is None
+
+
+# ---------------------------------------------------------------------------
+# Priority 3: External event stub
+# ---------------------------------------------------------------------------
+
+
+class TestExternalEventStub:
+    """External event query stub does not break assemble()."""
+
+    @pytest.mark.asyncio
+    async def test_external_events_empty_when_no_events(
+        self, service, sample_request
+    ):
+        """recent_events is empty when no external events exist."""
+        intent = await service.assemble(sample_request)
+        assert intent.context.recent_events == ()
+
+    @pytest.mark.asyncio
+    async def test_external_events_stub_does_not_raise(
+        self, service, sample_request
+    ):
+        """External event query stub does not raise during assemble()."""
+        # Even with no events, assemble() should complete without error
+        intent = await service.assemble(sample_request)
+        assert isinstance(intent, object)
+
+
+# ---------------------------------------------------------------------------
+# Priority 3: ScoreCalculator stub
+# ---------------------------------------------------------------------------
+
+
+class TestScoreCalculatorStub:
+    """ScoreCalculator stub does not break existing flow."""
+
+    @pytest.mark.asyncio
+    async def test_default_stub_used_when_no_calculator(
+        self, service, sample_request
+    ):
+        """Default StubScoreCalculator is used when no calculator injected."""
+        intent = await service.assemble(sample_request)
+        assert intent.reason_codes == ()
+        assert intent.context.score.score == 0.0
+
+    @pytest.mark.asyncio
+    async def test_custom_calculator_injected(self, sample_request):
+        """Custom ScoreCalculator is called during assemble()."""
+
+        class CustomCalculator:
+            async def calculate(self, context: AssembledContext) -> ScoreResult:
+                return ScoreResult(
+                    score=0.9, threshold=0.5, reason_codes=("custom",)
+                )
+
+        repos = build_in_memory_repositories()
+        service = DecisionOrchestratorService(
+            repos=repos, score_calculator=CustomCalculator()
+        )
+        intent = await service.assemble(sample_request)
+
+        assert intent.context.score.score == 0.9
+        assert intent.context.score.threshold == 0.5
+        assert intent.reason_codes == ("custom",)
+
+    @pytest.mark.asyncio
+    async def test_calculator_stub_keeps_flow_intact(
+        self, service, sample_request
+    ):
+        """ScoreCalculator stub does not alter existing assemble() flow."""
+        intent = await service.assemble(sample_request)
+        # Core fields still populated
+        assert intent.order_intent_id is not None
+        assert intent.request.client_order_id == sample_request.client_order_id
+        assert intent.request.symbol == sample_request.symbol

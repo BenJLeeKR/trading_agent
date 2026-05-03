@@ -1,0 +1,12 @@
+---
+description: Korean response rule
+alwaysApply: true
+---
+
+# Korean Response Rule
+
+- Always respond in Korean unless the user explicitly asks for another language.
+- Explain implementation plans, errors, fixes, and summaries in Korean.
+- Keep code identifiers, file names, package names, API names, and CLI commands in English.
+- Do not translate technical keywords unnecessarily.
+- When generating comments in source code, write comments in Korean only if comments are actually helpful.

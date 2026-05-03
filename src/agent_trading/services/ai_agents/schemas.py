@@ -1,0 +1,363 @@
+"""Structured output schemas for the v1 Provider AI Agent set.
+
+Each dataclass mirrors the JSON schema defined in the design document
+(``08_ai_decision_policy.md``, section 4.2).  Stub agents return default
+instances; real agents will populate these from Provider API responses.
+
+Schema versioning
+-----------------
+Every output type carries a ``schema_version`` class attribute so that
+downstream consumers (recorder, audit log, replay) can detect format
+changes at runtime.  The initial version is ``"v1"``.
+
+Alignment
+---------
+The three output dataclasses (``EventInterpretationOutput``,
+``AIRiskOutput``, ``FinalDecisionComposerOutput``) are aligned with the
+JSON schema in the design document.  Nested dataclasses are used for
+structured sub-objects (e.g. ``InterpretedEvent``, ``AggregateEventView``,
+``ExecutionPreferences``).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+
+# ============================================================================
+# Agent 1. Event Interpretation Agent
+# ============================================================================
+
+
+@dataclass(slots=True, frozen=True)
+class InterpretedEvent:
+    """A single interpreted event within the Event Interpretation output.
+
+    Corresponds to each item in the ``events[]`` array of the JSON schema
+    in ``08_ai_decision_policy.md`` §4.2 Agent 1.
+
+    Parameters
+    ----------
+    source_event_id
+        Original event identifier from the source (e.g. OpenDART receipt
+        number).
+    event_type
+        Classification of the event (e.g. ``"Y|사업보고서 (2023)"``).
+    source_name
+        Name of the source adapter (e.g. ``"opendart"``).
+    source_reliability_tier
+        Reliability tier of the source (e.g. ``"T1"``).
+    stale
+        Whether the event is considered stale per the freshness budget.
+    impact_direction
+        Perceived impact direction: ``"positive"``, ``"negative"``, or
+        ``"neutral"``.
+    impact_horizon
+        Expected impact horizon: ``"short"``, ``"swing"``, or ``"long"``.
+    confidence
+        Confidence in this interpretation (0.0 – 1.0).
+    novelty
+        How novel / surprising the event is: ``"high"``, ``"medium"``,
+        or ``"low"``.
+    supports_entry
+        Whether this event supports entering a new position.
+    supports_exit
+        Whether this event supports exiting an existing position.
+    risk_flags
+        Any risk flags raised by this event.
+    reason_codes
+        Machine-readable reason codes for this interpretation.
+    summary
+        Human-readable summary of the interpretation.
+    """
+
+    source_event_id: str = ""
+    event_type: str = ""
+    source_name: str = ""
+    source_reliability_tier: str = ""
+    stale: bool = False
+    impact_direction: str = "neutral"
+    impact_horizon: str = "swing"
+    confidence: float = 0.0
+    novelty: str = "medium"
+    supports_entry: bool = False
+    supports_exit: bool = False
+    risk_flags: tuple[str, ...] = ()
+    reason_codes: tuple[str, ...] = ()
+    summary: str = ""
+
+
+@dataclass(slots=True, frozen=True)
+class AggregateEventView:
+    """Aggregate view across all interpreted events.
+
+    Corresponds to the ``aggregate_view`` object in the JSON schema
+    (``08_ai_decision_policy.md`` §4.2 Agent 1).
+
+    Parameters
+    ----------
+    overall_bias
+        Overall directional bias: ``"positive"``, ``"negative"``, or
+        ``"neutral"``.
+    event_conflict
+        Whether there is conflicting evidence across events.
+    top_reason_codes
+        Most important reason codes across all events.
+    opposing_evidence
+        Human-readable list of evidence that opposes the overall bias.
+    """
+
+    overall_bias: str = "neutral"
+    event_conflict: bool = False
+    top_reason_codes: tuple[str, ...] = ()
+    opposing_evidence: tuple[str, ...] = ()
+
+
+@dataclass(slots=True, frozen=True)
+class EventInterpretationOutput:
+    """Structured output of the Event Interpretation Agent.
+
+    Corresponds to the JSON schema in ``08_ai_decision_policy.md`` §4.2
+    Agent 1.
+
+    Parameters
+    ----------
+    schema_version
+        Version of the output schema (``"v1"``).
+    agent_name
+        Agent identifier (``"event_interpretation"``).
+    decision_context_id
+        UUID of the decision context this output belongs to, as a string
+        (or ``None`` if not yet associated).
+    symbol
+        The trading symbol being evaluated.
+    issuer_code
+        Issuer / company code for the symbol.
+    events
+        Ordered tuple of interpreted events.
+    aggregate_view
+        Aggregate view across all events.
+    """
+
+    schema_version: str = "v1"
+    agent_name: str = "event_interpretation"
+    decision_context_id: str | None = None
+    symbol: str = ""
+    issuer_code: str = ""
+    events: tuple[InterpretedEvent, ...] = ()
+    aggregate_view: AggregateEventView = field(default_factory=AggregateEventView)
+
+
+# ============================================================================
+# Agent 2. AI Risk Agent
+# ============================================================================
+
+
+@dataclass(slots=True, frozen=True)
+class AIRiskOutput:
+    """Structured output of the AI Risk Agent.
+
+    Corresponds to the JSON schema in ``08_ai_decision_policy.md`` §4.2
+    Agent 2.
+
+    Parameters
+    ----------
+    schema_version
+        Version of the output schema (``"v1"``).
+    agent_name
+        Agent identifier (``"ai_risk"``).
+    decision_context_id
+        UUID of the decision context this output belongs to, as a string
+        (or ``None`` if not yet associated).
+    symbol
+        The trading symbol being evaluated.
+    proposed_side
+        The proposed trade side (``"BUY"`` or ``"SELL"``).
+    risk_opinion
+        Risk opinion: ``"allow"``, ``"reduce"``, ``"reject"``, or
+        ``"review"``.
+    risk_score
+        Composite risk score (0.0 – 1.0).  Higher = more risky.
+    confidence
+        Confidence in the risk assessment (0.0 – 1.0).
+    size_adjustment_factor
+        Recommended size reduction factor (0.0 = no reduction, 0.5 = halve,
+        1.0 = zero the position).
+    max_holding_horizon
+        Maximum recommended holding horizon: ``"short"``, ``"swing"``, or
+        ``"long"``.
+    risk_flags
+        Risk flags raised by the agent.
+    reason_codes
+        Machine-readable reason codes for the risk opinion.
+    opposing_evidence
+        Human-readable list of evidence that opposes the risk opinion.
+    summary
+        Human-readable summary of the risk assessment.
+    """
+
+    schema_version: str = "v1"
+    agent_name: str = "ai_risk"
+    decision_context_id: str | None = None
+    symbol: str = ""
+    proposed_side: str = ""
+    risk_opinion: str = "allow"
+    risk_score: float = 0.0
+    confidence: float = 0.0
+    size_adjustment_factor: float = 0.0
+    max_holding_horizon: str = "swing"
+    risk_flags: tuple[str, ...] = ()
+    reason_codes: tuple[str, ...] = ()
+    opposing_evidence: tuple[str, ...] = ()
+    summary: str = ""
+
+
+# ============================================================================
+# Agent 3. Final Decision Composer
+# ============================================================================
+
+
+@dataclass(slots=True, frozen=True)
+class PriceBandHint:
+    """Price band hint within execution preferences.
+
+    Parameters
+    ----------
+    reference_type
+        Price reference (e.g. ``"last_price"``, ``"vwap"``).
+    max_slippage_bps
+        Maximum acceptable slippage in basis points.
+    """
+
+    reference_type: str = "last_price"
+    max_slippage_bps: int = 15
+
+
+@dataclass(slots=True, frozen=True)
+class ExecutionPreferences:
+    """Execution preferences for the order.
+
+    Corresponds to the ``execution_preferences`` object in the JSON schema
+    (``08_ai_decision_policy.md`` §4.2 Agent 3).
+
+    Parameters
+    ----------
+    use_limit_order
+        Whether to use a limit order (vs. market order).
+    price_band_hint
+        Price band hint for limit order placement.
+    allow_partial_fill
+        Whether partial fills are acceptable.
+    """
+
+    use_limit_order: bool = True
+    price_band_hint: PriceBandHint = field(default_factory=PriceBandHint)
+    allow_partial_fill: bool = True
+
+
+@dataclass(slots=True, frozen=True)
+class SizingHint:
+    """Sizing hint for the order.
+
+    Corresponds to the ``sizing_hint`` object in the JSON schema
+    (``08_ai_decision_policy.md`` §4.2 Agent 3).
+
+    Parameters
+    ----------
+    size_mode
+        Sizing mode: ``"fractional_reduce"``, ``"no_change"``, or
+        ``"increase"``.
+    size_adjustment_factor
+        Fractional adjustment factor (0.0 = no change, 0.5 = reduce by
+        half, etc.).
+    """
+
+    size_mode: str = "no_change"
+    size_adjustment_factor: float = 0.0
+
+
+@dataclass(slots=True, frozen=True)
+class ExitPlanHint:
+    """Exit plan hint for the order.
+
+    Corresponds to the ``exit_plan_hint`` object in the JSON schema
+    (``08_ai_decision_policy.md`` §4.2 Agent 3).
+
+    Parameters
+    ----------
+    stop_style
+        Stop-loss style (e.g. ``"volatility_based"``, ``"fixed"``).
+    take_profit_style
+        Take-profit style (e.g. ``"partial_scale_out"``, ``"full"``).
+    max_holding_days
+        Maximum number of days to hold the position.
+    """
+
+    stop_style: str = "volatility_based"
+    take_profit_style: str = "partial_scale_out"
+    max_holding_days: int = 20
+
+
+@dataclass(slots=True, frozen=True)
+class FinalDecisionComposerOutput:
+    """Structured output of the Final Decision Composer.
+
+    Corresponds to the JSON schema in ``08_ai_decision_policy.md`` §4.2
+    Agent 3.
+
+    Parameters
+    ----------
+    schema_version
+        Version of the output schema (``"v1"``).
+    agent_name
+        Agent identifier (``"final_decision_composer"``).
+    decision_context_id
+        UUID of the decision context this output belongs to, as a string
+        (or ``None`` if not yet associated).
+    symbol
+        The trading symbol being evaluated.
+    decision_type
+        Final decision type: ``"APPROVE"``, ``"REJECT"``, ``"HOLD"``,
+        ``"WATCH"``, ``"EXIT"``, or ``"REDUCE"``.
+    side
+        Trade side: ``"BUY"`` or ``"SELL"``.
+    entry_style
+        Entry style (e.g. ``"LIMIT"``, ``"MARKET"``).
+    time_horizon
+        Expected time horizon: ``"short"``, ``"swing"``, or ``"long"``.
+    confidence
+        Overall confidence in the decision (0.0 – 1.0).
+    conviction
+        Strength of conviction (0.0 – 1.0).
+    reason_codes
+        Machine-readable reason codes for the decision.
+    opposing_evidence
+        Human-readable list of evidence opposing the decision.
+    execution_preferences
+        Execution preferences for the order.
+    sizing_hint
+        Sizing hint for the order.
+    exit_plan_hint
+        Exit plan hint for the order.
+    summary
+        Human-readable summary of the decision.
+    """
+
+    schema_version: str = "v1"
+    agent_name: str = "final_decision_composer"
+    decision_context_id: str | None = None
+    symbol: str = ""
+    decision_type: str = "HOLD"
+    side: str = ""
+    entry_style: str = ""
+    time_horizon: str = "swing"
+    confidence: float = 0.0
+    conviction: float = 0.0
+    reason_codes: tuple[str, ...] = ()
+    opposing_evidence: tuple[str, ...] = ()
+    execution_preferences: ExecutionPreferences = field(
+        default_factory=ExecutionPreferences
+    )
+    sizing_hint: SizingHint = field(default_factory=SizingHint)
+    exit_plan_hint: ExitPlanHint = field(default_factory=ExitPlanHint)
+    summary: str = ""

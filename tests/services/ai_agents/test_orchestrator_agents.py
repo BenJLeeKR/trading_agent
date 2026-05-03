@@ -1,0 +1,418 @@
+"""Tests for AI Agent wiring inside ``DecisionOrchestratorService``.
+
+Verifies that:
+* Agents are called during ``assemble()`` when injected.
+* Custom agents can be injected and are called.
+* Agent failure does not break ``assemble()`` (safe fallback).
+* Recorder stores agent runs after ``assemble()``.
+* Existing ``assemble()`` behaviour is preserved.
+* Schema alignment: ``structured_output_json`` contains ``agent_name`` and
+  ``decision_context_id`` consistent with the ``AgentRunEntity`` metadata.
+"""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock
+from uuid import UUID, uuid4
+
+import pytest
+
+from agent_trading.domain.entities import (
+    ConfigVersionEntity,
+    DecisionContextEntity,
+)
+from agent_trading.domain.models import SubmitOrderRequest
+from agent_trading.repositories.container import RepositoryContainer
+from agent_trading.services.ai_agents.base import (
+    AgentExecutionRequest,
+    ProviderAIAgent,
+)
+from agent_trading.services.ai_agents.recorder import AgentRunRecorder
+from agent_trading.services.ai_agents.schemas import (
+    AIRiskOutput,
+    EventInterpretationOutput,
+    FinalDecisionComposerOutput,
+)
+from agent_trading.services.decision_orchestrator import (
+    AssembledContext,
+    DecisionOrchestratorService,
+    OrderIntent,
+    ScoreResult,
+)
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def sample_request() -> SubmitOrderRequest:
+    return SubmitOrderRequest(
+        client_order_id="client-1",
+        correlation_id="",
+        account_ref="test-account",
+        symbol="005930",
+        market="KRX",
+        side="buy",
+        order_type="limit",
+        time_in_force="day",
+        quantity=10,
+        price=50000.0,
+        decision_id="",
+        strategy_id=None,
+        idempotency_key="idem-1",
+    )
+
+
+@pytest.fixture
+def repos() -> RepositoryContainer:
+    """Return an empty in-memory repository container."""
+    from agent_trading.repositories.memory import (
+        InMemoryAccountRepository,
+        InMemoryBrokerAccountRepository,
+        InMemoryCashBalanceSnapshotRepository,
+        InMemoryClientRepository,
+        InMemoryConfigVersionRepository,
+        InMemoryDecisionContextRepository,
+        InMemoryExternalEventRepository,
+        InMemoryFillEventRepository,
+        InMemoryGuardrailEvaluationRepository,
+        InMemoryInstrumentRepository,
+        InMemoryOrderRepository,
+        InMemoryOrderStateEventRepository,
+        InMemoryPositionSnapshotRepository,
+        InMemoryReconciliationRepository,
+        InMemoryRiskLimitSnapshotRepository,
+        InMemoryStrategyRepository,
+        InMemoryTradeDecisionRepository,
+        InMemoryUnitOfWork,
+        InMemoryBrokerOrderRepository,
+        InMemoryAuditLogRepository,
+    )
+
+    return RepositoryContainer(
+        unit_of_work=InMemoryUnitOfWork(),
+        clients=InMemoryClientRepository(),
+        accounts=InMemoryAccountRepository(),
+        strategies=InMemoryStrategyRepository(),
+        config_versions=InMemoryConfigVersionRepository(),
+        instruments=InMemoryInstrumentRepository(),
+        decision_contexts=InMemoryDecisionContextRepository(),
+        position_snapshots=InMemoryPositionSnapshotRepository(),
+        cash_balance_snapshots=InMemoryCashBalanceSnapshotRepository(),
+        trade_decisions=InMemoryTradeDecisionRepository(),
+        orders=InMemoryOrderRepository(),
+        broker_orders=InMemoryBrokerOrderRepository(),
+        fill_events=InMemoryFillEventRepository(),
+        reconciliations=InMemoryReconciliationRepository(),
+        audit_logs=InMemoryAuditLogRepository(),
+        broker_accounts=InMemoryBrokerAccountRepository(),
+        order_state_events=InMemoryOrderStateEventRepository(),
+        guardrail_evaluations=InMemoryGuardrailEvaluationRepository(),
+        risk_limit_snapshots=InMemoryRiskLimitSnapshotRepository(),
+        external_events=InMemoryExternalEventRepository(),
+    )
+
+
+@pytest.fixture
+def service(repos: RepositoryContainer) -> DecisionOrchestratorService:
+    return DecisionOrchestratorService(repos)
+
+
+# ---------------------------------------------------------------------------
+# Agent injection and execution
+# ---------------------------------------------------------------------------
+
+
+class TestAgentInjection:
+    """Custom agents are called during assemble()."""
+
+    @pytest.mark.asyncio
+    async def test_default_agents_used_when_none_injected(
+        self, service: DecisionOrchestratorService, sample_request: SubmitOrderRequest
+    ) -> None:
+        """Default stub agents are used when no custom agents are injected."""
+        intent = await service.assemble(sample_request)
+        assert isinstance(intent, OrderIntent)
+
+        # Recorder should have 3 runs (one per agent)
+        runs = service._agent_recorder.list_all()
+        assert len(runs) == 3
+        agent_types = {r.agent_type for r in runs}
+        assert agent_types == {
+            "event_interpretation",
+            "ai_risk",
+            "final_decision_composer",
+        }
+
+    @pytest.mark.asyncio
+    async def test_custom_agents_injected(
+        self, repos: RepositoryContainer, sample_request: SubmitOrderRequest
+    ) -> None:
+        """Custom agents are called during assemble()."""
+        # Create mock agents
+        mock_ei = MagicMock(spec=ProviderAIAgent)
+        mock_ei.agent_name = "event_interpretation"
+        mock_ei.run = AsyncMock(return_value=EventInterpretationOutput())
+
+        mock_ar = MagicMock(spec=ProviderAIAgent)
+        mock_ar.agent_name = "ai_risk"
+        mock_ar.run = AsyncMock(return_value=AIRiskOutput())
+
+        mock_fdc = MagicMock(spec=ProviderAIAgent)
+        mock_fdc.agent_name = "final_decision_composer"
+        mock_fdc.run = AsyncMock(return_value=FinalDecisionComposerOutput())
+
+        recorder = AgentRunRecorder()
+
+        orchestrator = DecisionOrchestratorService(
+            repos,
+            event_interpretation_agent=mock_ei,
+            ai_risk_agent=mock_ar,
+            final_decision_agent=mock_fdc,
+            agent_recorder=recorder,
+        )
+
+        intent = await orchestrator.assemble(sample_request)
+        assert isinstance(intent, OrderIntent)
+
+        # Each mock agent should have been called once
+        assert mock_ei.run.call_count == 1
+        assert mock_ar.run.call_count == 1
+        assert mock_fdc.run.call_count == 1
+
+        # Recorder should have 3 runs
+        assert len(recorder.list_all()) == 3
+
+    @pytest.mark.asyncio
+    async def test_agents_called_in_correct_order(
+        self, repos: RepositoryContainer, sample_request: SubmitOrderRequest
+    ) -> None:
+        """Agents are called in order: EI → AR → FDC."""
+        call_order: list[str] = []
+
+        class TrackingEI:
+            agent_name = "event_interpretation"
+            schema_version = "v1"
+            async def run(self, request: AgentExecutionRequest) -> EventInterpretationOutput:
+                call_order.append("event_interpretation")
+                return EventInterpretationOutput()
+
+        class TrackingAR:
+            agent_name = "ai_risk"
+            schema_version = "v1"
+            async def run(self, request: AgentExecutionRequest) -> AIRiskOutput:
+                call_order.append("ai_risk")
+                return AIRiskOutput()
+
+        class TrackingFDC:
+            agent_name = "final_decision_composer"
+            schema_version = "v1"
+            async def run(self, request: AgentExecutionRequest) -> FinalDecisionComposerOutput:
+                call_order.append("final_decision_composer")
+                return FinalDecisionComposerOutput()
+
+        orchestrator = DecisionOrchestratorService(
+            repos,
+            event_interpretation_agent=TrackingEI(),
+            ai_risk_agent=TrackingAR(),
+            final_decision_agent=TrackingFDC(),
+        )
+
+        await orchestrator.assemble(sample_request)
+        assert call_order == [
+            "event_interpretation",
+            "ai_risk",
+            "final_decision_composer",
+        ]
+
+
+# ---------------------------------------------------------------------------
+# Safe fallback on agent failure
+# ---------------------------------------------------------------------------
+
+
+class TestAgentSafeFallback:
+    """Agent failure does not break assemble()."""
+
+    @pytest.mark.asyncio
+    async def test_agent_failure_returns_default_output(
+        self, repos: RepositoryContainer, sample_request: SubmitOrderRequest
+    ) -> None:
+        """When an agent raises, assemble() still succeeds with default output."""
+
+        class FailingAgent:
+            agent_name = "failing_agent"
+            schema_version = "v1"
+            async def run(self, request: AgentExecutionRequest) -> object:
+                msg = "Simulated agent failure"
+                raise RuntimeError(msg)
+
+        orchestrator = DecisionOrchestratorService(
+            repos,
+            event_interpretation_agent=FailingAgent(),  # type: ignore[arg-type]
+        )
+
+        intent = await orchestrator.assemble(sample_request)
+        assert isinstance(intent, OrderIntent)
+
+        # Recorder should still have 3 runs (failing agent recorded with default output)
+        runs = orchestrator._agent_recorder.list_all()
+        assert len(runs) == 3
+
+    @pytest.mark.asyncio
+    async def test_all_agents_fail_assemble_still_succeeds(
+        self, repos: RepositoryContainer, sample_request: SubmitOrderRequest
+    ) -> None:
+        """Even if all three agents fail, assemble() succeeds."""
+
+        class FailingAgent:
+            agent_name = "failing"
+            schema_version = "v1"
+            async def run(self, request: AgentExecutionRequest) -> object:
+                msg = "Simulated failure"
+                raise RuntimeError(msg)
+
+        orchestrator = DecisionOrchestratorService(
+            repos,
+            event_interpretation_agent=FailingAgent(),  # type: ignore[arg-type]
+            ai_risk_agent=FailingAgent(),  # type: ignore[arg-type]
+            final_decision_agent=FailingAgent(),  # type: ignore[arg-type]
+        )
+
+        intent = await orchestrator.assemble(sample_request)
+        assert isinstance(intent, OrderIntent)
+
+
+# ---------------------------------------------------------------------------
+# Schema alignment consistency
+# ---------------------------------------------------------------------------
+
+
+class TestSchemaAlignment:
+    """structured_output_json is consistent with AgentRunEntity metadata."""
+
+    @pytest.mark.asyncio
+    async def test_structured_output_contains_agent_name(
+        self, service: DecisionOrchestratorService, sample_request: SubmitOrderRequest
+    ) -> None:
+        """Each run's structured_output_json contains agent_name matching agent_type."""
+        await service.assemble(sample_request)
+        for run in service._agent_recorder.list_all():
+            assert run.structured_output_json is not None
+            stored_name = run.structured_output_json.get("agent_name")
+            assert stored_name == run.agent_type, (
+                f"agent_name mismatch: output={stored_name!r} != entity={run.agent_type!r}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_structured_output_decision_context_id_null_when_not_provided(
+        self, service: DecisionOrchestratorService, sample_request: SubmitOrderRequest
+    ) -> None:
+        """When no decision_context_id is provided, payload is null (entity may have synthetic UUID)."""
+        await service.assemble(sample_request)
+        for run in service._agent_recorder.list_all():
+            assert run.structured_output_json is not None
+            stored_ctx = run.structured_output_json.get("decision_context_id")
+            assert stored_ctx is None, (
+                f"Expected null decision_context_id in payload when not provided, "
+                f"got {stored_ctx!r} (entity has synthetic UUID={run.decision_context_id})"
+            )
+
+    @pytest.mark.asyncio
+    async def test_structured_output_decision_context_id_matches_when_provided(
+        self, service: DecisionOrchestratorService, sample_request: SubmitOrderRequest
+    ) -> None:
+        """When decision_context_id is provided, payload matches the explicit ID."""
+        ctx_id = uuid4()
+        await service.assemble(sample_request, decision_context_id=ctx_id)
+        for run in service._agent_recorder.list_all():
+            assert run.structured_output_json is not None
+            stored_ctx = run.structured_output_json.get("decision_context_id")
+            assert stored_ctx == str(ctx_id), (
+                f"decision_context_id mismatch: output={stored_ctx!r} != expected={str(ctx_id)!r}"
+            )
+            # Entity should also use the same explicit ID (no synthetic fallback)
+            assert run.decision_context_id == ctx_id, (
+                f"Entity decision_context_id mismatch: "
+                f"{run.decision_context_id} != {ctx_id}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_structured_output_schema_version_v1(
+        self, service: DecisionOrchestratorService, sample_request: SubmitOrderRequest
+    ) -> None:
+        """Each run's structured_output_json has schema_version 'v1'."""
+        await service.assemble(sample_request)
+        for run in service._agent_recorder.list_all():
+            assert run.structured_output_json is not None
+            assert run.structured_output_json.get("schema_version") == "v1"
+
+
+# ---------------------------------------------------------------------------
+# Existing assemble() behaviour preserved
+# ---------------------------------------------------------------------------
+
+
+class TestExistingBehaviourPreserved:
+    """Existing assemble() behaviour is unchanged by agent wiring."""
+
+    @pytest.mark.asyncio
+    async def test_assemble_returns_order_intent(
+        self, service: DecisionOrchestratorService, sample_request: SubmitOrderRequest
+    ) -> None:
+        """assemble() still returns an OrderIntent."""
+        intent = await service.assemble(sample_request)
+        assert isinstance(intent, OrderIntent)
+
+    @pytest.mark.asyncio
+    async def test_assemble_preserves_request_fields(
+        self, service: DecisionOrchestratorService, sample_request: SubmitOrderRequest
+    ) -> None:
+        """Request fields are preserved in the assembled OrderIntent."""
+        intent = await service.assemble(sample_request)
+        assert intent.request.symbol == sample_request.symbol
+        assert intent.request.side == sample_request.side
+        assert intent.request.quantity == sample_request.quantity
+        assert intent.request.price == sample_request.price
+
+    @pytest.mark.asyncio
+    async def test_assemble_with_decision_context_id(
+        self,
+        repos: RepositoryContainer,
+        sample_request: SubmitOrderRequest,
+    ) -> None:
+        """When a decision_context_id is provided, it is used."""
+        # Seed a decision context
+        ctx_id = uuid4()
+        ctx = DecisionContextEntity(
+            decision_context_id=ctx_id,
+            account_id=uuid4(),
+            strategy_id=uuid4(),
+            config_version_id=uuid4(),
+            market_timestamp=None,
+            correlation_id="corr-seed",
+        )
+        await repos.decision_contexts.add(ctx)
+
+        service = DecisionOrchestratorService(repos)
+        intent = await service.assemble(
+            sample_request,
+            decision_context_id=ctx_id,
+        )
+        assert intent.decision_context_id == ctx_id
+        # Recorder should have 3 runs
+        assert len(service._agent_recorder.list_all()) == 3
+
+    @pytest.mark.asyncio
+    async def test_recorder_accessible_after_assemble(
+        self, service: DecisionOrchestratorService, sample_request: SubmitOrderRequest
+    ) -> None:
+        """Recorder is accessible and contains runs after assemble()."""
+        await service.assemble(sample_request)
+        runs = service._agent_recorder.list_all()
+        assert len(runs) == 3
+        # Each run should have structured_output_json
+        for run in runs:
+            assert run.structured_output_json is not None

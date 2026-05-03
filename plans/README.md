@@ -1,0 +1,69 @@
+# Plans Index
+
+`plans/` 디렉터리는 구현 진행 과정에서 작성된 작업 계획, 검토 보고서, 후속 수정 계획을 **오래된 순서부터 최신 순서까지** 정리한 기록이다.
+
+권장 읽기 방식:
+
+1. 처음부터 전체 흐름을 따라가려면 `01`부터 순서대로 읽는다.
+2. 현재 상태만 빠르게 파악하려면 `18` 이후 문서부터 읽는다.
+3. 특정 milestone의 맥락이 필요할 때만 그 이전 문서로 내려간다.
+
+## 문서 목록
+
+| 순서 | 파일 | 설명 |
+|------|------|------|
+| 01 | [`01.dev_infrastructure_plan.md`](./01.dev_infrastructure_plan.md) | 초기 개발 인프라, Docker, DB, pyproject, Makefile 구성 계획 |
+| 02 | [`02.mvp_milestone1_implementation_plan.md`](./02.mvp_milestone1_implementation_plan.md) | MVP Milestone 1 구현 계획 |
+| 03 | [`03.milestone1_completion_review.md`](./03.milestone1_completion_review.md) | Milestone 1 완료 검토 및 PostgreSQL 통합 확인 |
+| 04 | [`04.milestone2_implementation_plan.md`](./04.milestone2_implementation_plan.md) | Postgres 기반 audit, repository, paper loop 안정화 계획 |
+| 05 | [`05.milestone2_optimistic_locking.md`](./05.milestone2_optimistic_locking.md) | 주문 상태 전이 optimistic locking 설계 |
+| 06 | [`06.milestone3_implementation_plan.md`](./06.milestone3_implementation_plan.md) | Milestone 3 구현 계획 |
+| 07 | [`07.document_code_alignment_report.md`](./07.document_code_alignment_report.md) | 설계 문서와 코드 간 gap 분석 보고서 |
+| 08 | [`08.milestone4_safe_order_path_persistence.md`](./08.milestone4_safe_order_path_persistence.md) | 안전한 주문 경로 persistence 정렬 계획 |
+| 09 | [`09.milestone5_decision_persistence_alignment.md`](./09.milestone5_decision_persistence_alignment.md) | decision persistence 구조 정렬 계획 |
+| 10 | [`10.milestone6_broker_contract_reconciliation_alignment.md`](./10.milestone6_broker_contract_reconciliation_alignment.md) | broker contract / reconciliation 정렬 계획 |
+| 11 | [`11.milestone6_post_fix_items.md`](./11.milestone6_post_fix_items.md) | Milestone 6 후속 수정 항목 |
+| 12 | [`12.milestone7_broker_capacity_and_event_data.md`](./12.milestone7_broker_capacity_and_event_data.md) | broker capacity, event data 기반 확장 계획 |
+| 13 | [`13.milestone7_fixes_plan.md`](./13.milestone7_fixes_plan.md) | Milestone 7 버그 수정 및 테스트 보강 계획 |
+| 14 | [`14.milestone8_plan.md`](./14.milestone8_plan.md) | Milestone 8 전체 계획 |
+| 15 | [`15.milestone8_event_loop_fix_plan.md`](./15.milestone8_event_loop_fix_plan.md) | Milestone 8 event loop 계약 불일치 수정 계획 |
+| 16 | [`16.post_milestone8_plan.md`](./16.post_milestone8_plan.md) | Milestone 8 이후 warning/smoke 후속 작업 계획 |
+| 17 | [`17.fix_audit_log_ordering_plan.md`](./17.fix_audit_log_ordering_plan.md) | audit log ordering deterministic fix 계획 |
+| 18 | [`18.three_priority_tasks_plan.md`](./18.three_priority_tasks_plan.md) | 이후 우선순위 3개 작업 계획 |
+| 19 | [`19.priority_5_prerequisite_schema_alignment.md`](./19.priority_5_prerequisite_schema_alignment.md) | AI agent schema alignment 선행 계획 |
+| 20 | [`20.fix_decision_context_id_semantic_mismatch.md`](./20.fix_decision_context_id_semantic_mismatch.md) | `decision_context_id` payload/storage 의미 분리 계획 |
+| 21 | [`21.priority_5_1_deepseek_provider_connection.md`](./21.priority_5_1_deepseek_provider_connection.md) | DeepSeek 기반 첫 Provider 연결 계획 |
+| 22 | [`22.priority_5_1_runtime_wiring.md`](./22.priority_5_1_runtime_wiring.md) | runtime에서 real provider agent 주입 계획 |
+| 23 | [`23.runtime_wiring_helper_refactor.md`](./23.runtime_wiring_helper_refactor.md) | runtime wiring helper 공통화 및 Postgres 테스트 보강 계획 |
+| 24 | [`24.llm_provider_resolver.md`](./24.llm_provider_resolver.md) | LLM_PROVIDER 기반 env resolver 일반화 계획 |
+| 25 | [`25_runtime_event_interpretation_smoke.md`](./25_runtime_event_interpretation_smoke.md) | Runtime EventInterpretationAgent smoke 검증 계획 |
+
+## 빠른 추천 경로
+
+### 현재 상태만 빠르게 보기
+
+1. [`18.three_priority_tasks_plan.md`](./18.three_priority_tasks_plan.md)
+2. [`21.priority_5_1_deepseek_provider_connection.md`](./21.priority_5_1_deepseek_provider_connection.md)
+3. [`22.priority_5_1_runtime_wiring.md`](./22.priority_5_1_runtime_wiring.md)
+4. [`23.runtime_wiring_helper_refactor.md`](./23.runtime_wiring_helper_refactor.md)
+5. [`24.llm_provider_resolver.md`](./24.llm_provider_resolver.md)
+6. [`25_runtime_event_interpretation_smoke.md`](./25_runtime_event_interpretation_smoke.md)
+
+### AI Agent / Provider 연결 흐름만 보기
+
+1. [`19.priority_5_prerequisite_schema_alignment.md`](./19.priority_5_prerequisite_schema_alignment.md)
+2. [`20.fix_decision_context_id_semantic_mismatch.md`](./20.fix_decision_context_id_semantic_mismatch.md)
+3. [`21.priority_5_1_deepseek_provider_connection.md`](./21.priority_5_1_deepseek_provider_connection.md)
+4. [`22.priority_5_1_runtime_wiring.md`](./22.priority_5_1_runtime_wiring.md)
+5. [`23.runtime_wiring_helper_refactor.md`](./23.runtime_wiring_helper_refactor.md)
+6. [`24.llm_provider_resolver.md`](./24.llm_provider_resolver.md)
+7. [`25_runtime_event_interpretation_smoke.md`](./25_runtime_event_interpretation_smoke.md)
+
+### 브로커 / 실행 안전성 흐름만 보기
+
+1. [`10.milestone6_broker_contract_reconciliation_alignment.md`](./10.milestone6_broker_contract_reconciliation_alignment.md)
+2. [`12.milestone7_broker_capacity_and_event_data.md`](./12.milestone7_broker_capacity_and_event_data.md)
+3. [`14.milestone8_plan.md`](./14.milestone8_plan.md)
+4. [`15.milestone8_event_loop_fix_plan.md`](./15.milestone8_event_loop_fix_plan.md)
+5. [`16.post_milestone8_plan.md`](./16.post_milestone8_plan.md)
+6. [`17.fix_audit_log_ordering_plan.md`](./17.fix_audit_log_ordering_plan.md)
