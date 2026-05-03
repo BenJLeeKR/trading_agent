@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
@@ -29,7 +28,9 @@ from agent_trading.services.ai_agents.recorder import AgentRunRecorder
 from agent_trading.services.ai_agents.schemas import (
     AIRiskOutput,
     EventInterpretationOutput,
+    ExecutionPreferences,
     FinalDecisionComposerOutput,
+    SizingHint,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,53 @@ class ScoreResult:
     score: float = 0.0
     threshold: float = 0.0
     reason_codes: tuple[str, ...] = ()
+
+
+@dataclass(slots=True, frozen=True)
+class AIDecisionInputs:
+    """Normalised backend contract carrying v1 Provider AI Agent outputs.
+
+    This is the **only** channel through which EI / AR / FDC agent outputs
+    reach the deterministic backend (``OrderIntent`` → ``OrderManager``).
+
+    Design rules
+    ------------
+    1. Raw agent outputs are **not** carried — only normalised fields
+       that the deterministic backend can consume.
+    2. Every field has a deterministic default — safe fallback guaranteed
+       even when every agent fails.
+    3. This contract does **not** modify ``SubmitOrderRequest``.
+    4. ``OrderManager``, ``BrokerAdapter``, ``ReconciliationService``
+       boundaries are unchanged.
+    """
+
+    # ── FDC-derived ──────────────────────────────────────────────────
+    decision_type: str = "HOLD"
+    confidence: float = 0.0
+    conviction: float = 0.0
+    reason_codes: tuple[str, ...] = ()
+    opposing_evidence: tuple[str, ...] = ()
+    execution_preferences: ExecutionPreferences = field(
+        default_factory=ExecutionPreferences
+    )
+    sizing_hint: SizingHint = field(default_factory=SizingHint)
+
+    # ── AR-derived ───────────────────────────────────────────────────
+    risk_opinion: str = "allow"
+    risk_score: float = 0.0
+    risk_confidence: float = 0.0
+    size_adjustment_factor: float = 0.0
+    risk_reason_codes: tuple[str, ...] = ()
+    risk_flags: tuple[str, ...] = ()
+
+    # ── EI-derived ───────────────────────────────────────────────────
+    event_bias: str = "neutral"
+    event_conflict: bool = False
+    event_reason_codes: tuple[str, ...] = ()
+
+    # ── Metadata ─────────────────────────────────────────────────────
+    source_agent_names: tuple[str, ...] = ()
+    schema_versions: tuple[tuple[str, str], ...] = ()
 
 
 class ScoreCalculator(Protocol):
@@ -126,6 +174,8 @@ class OrderIntent:
     context: AssembledContext = field(default_factory=AssembledContext)
     config_version_id: UUID | None = None
     reason_codes: tuple[str, ...] = ()
+    # --- Normalised AI backend contract (Priority A coupling) ---
+    ai_backend_inputs: AIDecisionInputs = field(default_factory=AIDecisionInputs)
 
 
 # ---------------------------------------------------------------------------
@@ -296,8 +346,8 @@ class DecisionOrchestratorService:
         if not correlation_id:
             correlation_id = str(uuid4())
 
-        # --- Run AI agents (stub — no actual Provider calls) ---
-        await self._run_agents(
+        # --- Run AI agents → AIDecisionInputs ---
+        ai_inputs = await self._run_agents(
             assembled_context=assembled_context,
             decision_context_id=resolved_context_id,
             correlation_id=correlation_id,
@@ -340,6 +390,7 @@ class DecisionOrchestratorService:
             context=assembled_context,
             config_version_id=config_version_id,
             reason_codes=score_result.reason_codes,
+            ai_backend_inputs=ai_inputs,
         )
 
     # ------------------------------------------------------------------
@@ -384,7 +435,7 @@ class DecisionOrchestratorService:
         assembled_context: AssembledContext,
         decision_context_id: UUID | None,
         correlation_id: str,
-    ) -> None:
+    ) -> AIDecisionInputs:
         """Execute the three v1 Provider AI Agents sequentially.
 
         Execution order
@@ -396,6 +447,13 @@ class DecisionOrchestratorService:
         Each agent receives an ``AgentExecutionRequest`` built from the
         assembled context.  Individual outputs are kept as local variables
         and recorded via ``self._agent_recorder``.
+
+        Returns
+        -------
+        AIDecisionInputs
+            Normalised backend contract aggregating outputs from all three
+            agents.  Always returned — even when every agent fails, a
+            deterministic default ``AIDecisionInputs()`` is provided.
 
         Safe-fallback policy
         --------------------
@@ -503,6 +561,42 @@ class DecisionOrchestratorService:
             risk_output.risk_opinion,
             composer_output.decision_type,
         )
+
+        # --- Assemble AIDecisionInputs from all three agent outputs ---
+        ai_inputs = AIDecisionInputs(
+            # FDC-derived
+            decision_type=composer_output.decision_type,
+            confidence=composer_output.confidence,
+            conviction=composer_output.conviction,
+            reason_codes=composer_output.reason_codes,
+            opposing_evidence=composer_output.opposing_evidence,
+            execution_preferences=composer_output.execution_preferences,
+            sizing_hint=composer_output.sizing_hint,
+            # AR-derived
+            risk_opinion=risk_output.risk_opinion,
+            risk_score=risk_output.risk_score,
+            risk_confidence=risk_output.confidence,
+            size_adjustment_factor=risk_output.size_adjustment_factor,
+            risk_reason_codes=risk_output.reason_codes,
+            risk_flags=risk_output.risk_flags,
+            # EI-derived
+            event_bias=event_output.aggregate_view.overall_bias,
+            event_conflict=event_output.aggregate_view.event_conflict,
+            event_reason_codes=event_output.aggregate_view.top_reason_codes,
+            # Metadata
+            source_agent_names=(
+                event_output.agent_name,
+                risk_output.agent_name,
+                composer_output.agent_name,
+            ),
+            schema_versions=(
+                ("event_interpretation", event_output.schema_version),
+                ("ai_risk", risk_output.schema_version),
+                ("final_decision_composer", composer_output.schema_version),
+            ),
+        )
+
+        return ai_inputs
 
 
 # ---------------------------------------------------------------------------

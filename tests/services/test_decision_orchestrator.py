@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
@@ -15,15 +15,14 @@ from agent_trading.domain.enums import (
     Environment,
     OrderSide,
     OrderType,
-    SourceReliabilityTier,
     TimeInForce,
 )
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.services.decision_orchestrator import (
+    AIDecisionInputs,
     AssembledContext,
     DecisionOrchestratorService,
-    ScoreCalculator,
     ScoreResult,
     StubScoreCalculator,
 )
@@ -300,6 +299,92 @@ class TestOrderIntentExtensions:
         assert intent.context.recent_events == ()
         assert intent.context.score.score == 0.0
 
+    @pytest.mark.asyncio
+    async def test_intent_contains_ai_backend_inputs(
+        self, service, sample_request
+    ):
+        """OrderIntent has ai_backend_inputs field populated (default stub)."""
+        intent = await service.assemble(sample_request)
+        assert hasattr(intent, "ai_backend_inputs")
+        assert isinstance(intent.ai_backend_inputs, AIDecisionInputs)
+
+    @pytest.mark.asyncio
+    async def test_ai_backend_inputs_defaults_on_stub(
+        self, service, sample_request
+    ):
+        """Stub agents produce deterministic safe-fallback defaults."""
+        intent = await service.assemble(sample_request)
+        inputs = intent.ai_backend_inputs
+        # FDC defaults
+        assert inputs.decision_type == "HOLD"
+        assert inputs.confidence == 0.0
+        assert inputs.conviction == 0.0
+        assert inputs.reason_codes == ()
+        assert inputs.opposing_evidence == ()
+        # AR defaults (size_adjustment_factor=0.0 from stub AIRiskOutput)
+        assert inputs.risk_opinion == "allow"
+        assert inputs.risk_score == 0.0
+        assert inputs.risk_confidence == 0.0
+        assert inputs.size_adjustment_factor == 0.0
+        assert inputs.risk_reason_codes == ()
+        assert inputs.risk_flags == ()
+        # EI defaults
+        assert inputs.event_bias == "neutral"
+        assert inputs.event_conflict is False
+        assert inputs.event_reason_codes == ()
+        # schema_versions is a tuple (not a dict)
+        assert isinstance(inputs.schema_versions, tuple)
+        assert not isinstance(inputs.schema_versions, dict)
+
+    @pytest.mark.asyncio
+    async def test_ai_backend_inputs_different_from_reason_codes(
+        self, service, sample_request
+    ):
+        """AIDecisionInputs.reason_codes is distinct from OrderIntent.reason_codes."""
+        intent = await service.assemble(sample_request)
+        # OrderIntent.reason_codes comes from ScoreResult (deterministic)
+        assert intent.reason_codes == ()
+        # AIDecisionInputs.reason_codes comes from FDC agent output
+        assert intent.ai_backend_inputs.reason_codes == ()
+        # They are different objects (different sources)
+        assert intent.reason_codes is not intent.ai_backend_inputs.reason_codes or (
+            intent.reason_codes == () and intent.ai_backend_inputs.reason_codes == ()
+        )
+
+    @pytest.mark.asyncio
+    async def test_ai_backend_inputs_direct_defaults(
+        self
+    ):
+        """AIDecisionInputs() direct construction has correct defaults."""
+        inputs = AIDecisionInputs()
+        # size_adjustment_factor defaults to 0.0 (matches AIRiskOutput default)
+        assert inputs.size_adjustment_factor == 0.0
+        # schema_versions defaults to empty tuple
+        assert inputs.schema_versions == ()
+        assert isinstance(inputs.schema_versions, tuple)
+
+    @pytest.mark.asyncio
+    async def test_ai_backend_inputs_schema_versions_immutable(
+        self
+    ):
+        """schema_versions is a deeply immutable tuple structure."""
+        inputs = AIDecisionInputs(
+            schema_versions=(
+                ("event_interpretation", "v1"),
+                ("ai_risk", "v2"),
+            )
+        )
+        assert isinstance(inputs.schema_versions, tuple)
+        assert not isinstance(inputs.schema_versions, dict)
+        assert len(inputs.schema_versions) == 2
+        sv = dict(inputs.schema_versions)
+        assert sv["event_interpretation"] == "v1"
+        assert sv["ai_risk"] == "v2"
+
+        # Frozen dataclass prevents mutation at the top level
+        with pytest.raises(AttributeError):
+            # slot frozen — cannot assign
+            inputs.schema_versions = ()  # type: ignore[misc]
 
 # ---------------------------------------------------------------------------
 # Priority 3: Config version connection

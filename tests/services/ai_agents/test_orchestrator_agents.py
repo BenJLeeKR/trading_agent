@@ -13,12 +13,11 @@ Verifies that:
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
 from agent_trading.domain.entities import (
-    ConfigVersionEntity,
     DecisionContextEntity,
 )
 from agent_trading.domain.models import SubmitOrderRequest
@@ -43,10 +42,9 @@ from agent_trading.services.ai_agents.schemas import (
     FinalDecisionComposerOutput,
 )
 from agent_trading.services.decision_orchestrator import (
-    AssembledContext,
+    AIDecisionInputs,
     DecisionOrchestratorService,
     OrderIntent,
-    ScoreResult,
 )
 
 
@@ -135,7 +133,7 @@ def mock_ei_provider() -> AIProviderClient:
     import json
     from dataclasses import asdict
 
-    from agent_trading.services.ai_agents.schemas import AggregateEventView, InterpretedEvent
+    from agent_trading.services.ai_agents.schemas import AggregateEventView
 
     output = EventInterpretationOutput(
         symbol="AAPL",
@@ -378,6 +376,57 @@ class TestAgentSafeFallback:
 
         intent = await orchestrator.assemble(sample_request)
         assert isinstance(intent, OrderIntent)
+
+    @pytest.mark.asyncio
+    async def test_all_agents_fail_ai_backend_inputs_defaults(
+        self, repos: RepositoryContainer, sample_request: SubmitOrderRequest
+    ) -> None:
+        """All agents fail → ai_backend_inputs has deterministic safe-fallback defaults."""
+        class FailingAgent:
+            agent_name = "failing"
+            schema_version = "v1"
+            async def run(self, request: AgentExecutionRequest) -> object:
+                msg = "Simulated failure"
+                raise RuntimeError(msg)
+
+        orchestrator = DecisionOrchestratorService(
+            repos,
+            event_interpretation_agent=FailingAgent(),  # type: ignore[arg-type]
+            ai_risk_agent=FailingAgent(),  # type: ignore[arg-type]
+            final_decision_agent=FailingAgent(),  # type: ignore[arg-type]
+        )
+
+        intent = await orchestrator.assemble(sample_request)
+        assert isinstance(intent, OrderIntent)
+
+        ai = intent.ai_backend_inputs
+        assert isinstance(ai, AIDecisionInputs)
+
+        # Safe-fallback defaults from fallback output objects
+        assert ai.decision_type == "HOLD"
+        assert ai.confidence == 0.0
+        assert ai.conviction == 0.0
+        assert ai.reason_codes == ()
+        assert ai.opposing_evidence == ()
+        assert ai.risk_opinion == "allow"
+        assert ai.risk_score == 0.0
+        assert ai.risk_confidence == 0.0
+        assert ai.size_adjustment_factor == 0.0    # from default AIRiskOutput
+        assert ai.risk_reason_codes == ()
+        assert ai.risk_flags == ()
+        assert ai.event_bias == "neutral"
+        assert ai.event_conflict is False
+        assert ai.event_reason_codes == ()
+
+        # Metadata is always populated from fallback output dataclass defaults
+        assert "event_interpretation" in ai.source_agent_names
+        assert "ai_risk" in ai.source_agent_names
+        assert "final_decision_composer" in ai.source_agent_names
+        assert isinstance(ai.schema_versions, tuple)
+        sv = dict(ai.schema_versions)
+        assert sv["event_interpretation"] == "v1"
+        assert sv["ai_risk"] == "v1"
+        assert sv["final_decision_composer"] == "v1"
 
 
 # ---------------------------------------------------------------------------
@@ -709,6 +758,68 @@ class TestRealAgentsIntegration:
         assert fdc_agent.last_request.event_interpretation_output is not None
         assert fdc_agent.last_request.ai_risk_output is not None
 
+    @pytest.mark.asyncio
+    async def test_real_ei_real_ar_real_fdc_ai_backend_inputs(
+        self,
+        repos: RepositoryContainer,
+        sample_request: SubmitOrderRequest,
+        mock_ei_provider: AIProviderClient,
+        mock_ar_provider: AIProviderClient,
+        mock_fdc_provider: AIProviderClient,
+    ) -> None:
+        """Real EI + real AR + real FDC → ai_backend_inputs contains expected values."""
+        ei_agent = EventInterpretationAgent(provider_client=mock_ei_provider)
+        ar_agent = AIRiskAgent(provider_client=mock_ar_provider)
+        fdc_agent = FinalDecisionComposerAgent(provider_client=mock_fdc_provider)
+        recorder = AgentRunRecorder()
+
+        orchestrator = DecisionOrchestratorService(
+            repos,
+            event_interpretation_agent=ei_agent,
+            ai_risk_agent=ar_agent,
+            final_decision_agent=fdc_agent,
+            agent_recorder=recorder,
+        )
+
+        intent = await orchestrator.assemble(sample_request)
+        assert isinstance(intent, OrderIntent)
+
+        ai = intent.ai_backend_inputs
+        assert isinstance(ai, AIDecisionInputs)
+
+        # FDC-derived fields
+        assert ai.decision_type == "BUY"
+        assert ai.confidence == 0.75
+        assert ai.conviction == 0.0               # default (not in mock FDC)
+        assert ai.execution_preferences is not None
+        assert ai.sizing_hint is not None
+
+        # AR-derived fields
+        assert ai.risk_opinion == "reduce"
+        assert ai.risk_score == 0.65
+        assert ai.risk_confidence == 0.8
+        assert ai.size_adjustment_factor == 0.5
+        assert "high_correlation" in ai.risk_reason_codes
+        assert "concentration" in ai.risk_flags
+
+        # EI-derived fields
+        assert ai.event_bias == "neutral"          # AggregateEventView default
+        assert ai.event_conflict is False
+
+        # Metadata
+        assert "event_interpretation" in ai.source_agent_names
+        assert "ai_risk" in ai.source_agent_names
+        assert "final_decision_composer" in ai.source_agent_names
+        assert isinstance(ai.schema_versions, tuple)
+        sv = dict(ai.schema_versions)
+        assert sv["event_interpretation"] == "v1"
+        assert sv["ai_risk"] == "v1"
+        assert sv["final_decision_composer"] == "v1"
+
+        # Separated reason_codes: AIDecisionInputs has FDC-derived, OrderIntent has deterministic
+        assert ai.reason_codes == ()                # FDC mock returns default empty tuple
+        assert intent.reason_codes == ()            # ScoreResult default
+
 
 # ---------------------------------------------------------------------------
 # Existing assemble() behaviour preserved
@@ -776,3 +887,12 @@ class TestExistingBehaviourPreserved:
         # Each run should have structured_output_json
         for run in runs:
             assert run.structured_output_json is not None
+
+    @pytest.mark.asyncio
+    async def test_intent_contains_ai_backend_inputs(
+        self, service: DecisionOrchestratorService, sample_request: SubmitOrderRequest
+    ) -> None:
+        """OrderIntent.ai_backend_inputs field is present with correct type."""
+        intent = await service.assemble(sample_request)
+        assert hasattr(intent, "ai_backend_inputs")
+        assert isinstance(intent.ai_backend_inputs, AIDecisionInputs)

@@ -2,6 +2,12 @@
 
 `plans/` 디렉터리는 구현 진행 과정에서 작성된 작업 계획, 검토 보고서, 후속 수정 계획을 **오래된 순서부터 최신 순서까지** 정리한 기록이다.
 
+## 문서 관리 원칙
+
+- **하나의 plan 번호 = 하나의 canonical 파일**: 같은 작업 단위에 대해 여러 버전의 plan 문서를 파일로 분리하지 않는다. 수정 이력이 필요한 경우, 문서 내부 `Revision History` 섹션에 누적 기록한다.
+- **파일명 규칙**: `{순서}_{설명}.md` — 순서는 2자리 숫자 (01, 02, ...).
+- **Rejected 접근법**: 문서 내 `부록(Appendix)` 섹션에 참고용으로 보관한다. 별도 파일로 분리하지 않는다.
+
 권장 읽기 방식:
 
 1. 처음부터 전체 흐름을 따라가려면 `01`부터 순서대로 읽는다.
@@ -40,6 +46,7 @@
 | 26 | [`26_real_ai_risk_agent.md`](./26_real_ai_risk_agent.md) | Real AIRiskAgent 구현 계획 (schema 공유, bootstrap wiring, orchestrator 통합) |
 | 27 | [`27_ei_output_to_ai_risk_flow.md`](./27_ei_output_to_ai_risk_flow.md) | EI 출력 -> AIRiskAgent 전달 설계 변경 계획 |
 | 28 | [`28_real_final_decision_composer_agent.md`](./28_real_final_decision_composer_agent.md) | Real FinalDecisionComposerAgent 구현 계획 (EI→AR→FDC 데이터 흐름 완성) |
+| 29 | [`29_ai_decision_backend_contract.md`](./29_ai_decision_backend_contract.md) | AI Decision Backend Contract — `AIDecisionInputs` 정규화된 backend 계약 (Rev 1 REJECTED, Rev 2 IMPLEMENTED, Rev 3 PENDING) |
 
 ## 빠른 추천 경로
 
@@ -54,6 +61,7 @@
 7. [`26_real_ai_risk_agent.md`](./26_real_ai_risk_agent.md)
 8. [`27_ei_output_to_ai_risk_flow.md`](./27_ei_output_to_ai_risk_flow.md)
 9. [`28_real_final_decision_composer_agent.md`](./28_real_final_decision_composer_agent.md)
+10. [`29_ai_decision_backend_contract.md`](./29_ai_decision_backend_contract.md)
 
 ### AI Agent / Provider 연결 흐름만 보기
 
@@ -67,6 +75,7 @@
 8. [`26_real_ai_risk_agent.md`](./26_real_ai_risk_agent.md)
 9. [`27_ei_output_to_ai_risk_flow.md`](./27_ei_output_to_ai_risk_flow.md)
 10. [`28_real_final_decision_composer_agent.md`](./28_real_final_decision_composer_agent.md)
+11. [`29_ai_decision_backend_contract.md`](./29_ai_decision_backend_contract.md)
 
 ### 브로커 / 실행 안전성 흐름만 보기
 
