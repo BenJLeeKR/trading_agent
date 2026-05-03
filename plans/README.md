@@ -39,6 +39,7 @@
 | 25 | [`25_runtime_event_interpretation_smoke.md`](./25_runtime_event_interpretation_smoke.md) | Runtime EventInterpretationAgent smoke 검증 계획 |
 | 26 | [`26_real_ai_risk_agent.md`](./26_real_ai_risk_agent.md) | Real AIRiskAgent 구현 계획 (schema 공유, bootstrap wiring, orchestrator 통합) |
 | 27 | [`27_ei_output_to_ai_risk_flow.md`](./27_ei_output_to_ai_risk_flow.md) | EI 출력 -> AIRiskAgent 전달 설계 변경 계획 |
+| 28 | [`28_real_final_decision_composer_agent.md`](./28_real_final_decision_composer_agent.md) | Real FinalDecisionComposerAgent 구현 계획 (EI→AR→FDC 데이터 흐름 완성) |
 
 ## 빠른 추천 경로
 
@@ -52,6 +53,7 @@
 6. [`25_runtime_event_interpretation_smoke.md`](./25_runtime_event_interpretation_smoke.md)
 7. [`26_real_ai_risk_agent.md`](./26_real_ai_risk_agent.md)
 8. [`27_ei_output_to_ai_risk_flow.md`](./27_ei_output_to_ai_risk_flow.md)
+9. [`28_real_final_decision_composer_agent.md`](./28_real_final_decision_composer_agent.md)
 
 ### AI Agent / Provider 연결 흐름만 보기
 
@@ -64,6 +66,7 @@
 7. [`25_runtime_event_interpretation_smoke.md`](./25_runtime_event_interpretation_smoke.md)
 8. [`26_real_ai_risk_agent.md`](./26_real_ai_risk_agent.md)
 9. [`27_ei_output_to_ai_risk_flow.md`](./27_ei_output_to_ai_risk_flow.md)
+10. [`28_real_final_decision_composer_agent.md`](./28_real_final_decision_composer_agent.md)
 
 ### 브로커 / 실행 안전성 흐름만 보기
 

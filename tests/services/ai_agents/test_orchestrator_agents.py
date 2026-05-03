@@ -24,6 +24,9 @@ from agent_trading.domain.entities import (
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.services.ai_agents.ai_risk import AIRiskAgent
+from agent_trading.services.ai_agents.final_decision_composer import (
+    FinalDecisionComposerAgent,
+)
 from agent_trading.services.ai_agents.base import (
     AgentExecutionRequest,
     AIProviderClient,
@@ -183,6 +186,33 @@ def mock_ar_provider() -> AIProviderClient:
     ar_mock = MagicMock(spec=AIProviderClient)
     ar_mock.generate_structured = AsyncMock(side_effect=_generate)
     return ar_mock
+
+
+@pytest.fixture
+def mock_fdc_provider() -> AIProviderClient:
+    """Return an ``AIProviderClient`` that returns a valid FDC response."""
+    import json
+    from dataclasses import asdict
+
+    output = FinalDecisionComposerOutput(
+        schema_version="v1",
+        agent_name="final_decision_composer",
+        decision_context_id=None,
+        symbol="AAPL",
+        decision_type="BUY",
+        confidence=0.75,
+        summary="Strong momentum with manageable risk",
+    )
+
+    async def _generate(**kwargs: object) -> RawProviderResponse:
+        return RawProviderResponse(
+            raw_content=json.dumps(asdict(output)),
+            parsed=output,
+        )
+
+    fdc_mock = MagicMock(spec=AIProviderClient)
+    fdc_mock.generate_structured = AsyncMock(side_effect=_generate)
+    return fdc_mock
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +536,178 @@ class TestRealAgentsIntegration:
             assert run.structured_output_json is not None
             stored_ctx = run.structured_output_json.get("decision_context_id")
             assert stored_ctx == str(ctx_id)
+
+
+    @pytest.mark.asyncio
+    async def test_ei_output_passed_to_ar(
+        self,
+        repos: RepositoryContainer,
+        sample_request: SubmitOrderRequest,
+        mock_ei_provider: AIProviderClient,
+        mock_ar_provider: AIProviderClient,
+    ) -> None:
+        """EI output is passed through to the AR agent via request_with_ei."""
+        from agent_trading.services.ai_agents.schemas import EventInterpretationOutput
+
+        ei_agent = EventInterpretationAgent(provider_client=mock_ei_provider)
+
+        # Tracking AR agent that captures the request
+        class TrackingARAgent:
+            last_request: AgentExecutionRequest | None = None
+
+            @property
+            def agent_name(self) -> str:
+                return "ai_risk"
+
+            @property
+            def schema_version(self) -> str:
+                return "v1"
+
+            async def run(self, request: AgentExecutionRequest) -> AIRiskOutput:
+                self.last_request = request
+                return AIRiskOutput()
+
+        ar_agent = TrackingARAgent()
+        recorder = AgentRunRecorder()
+
+        orchestrator = DecisionOrchestratorService(
+            repos,
+            event_interpretation_agent=ei_agent,
+            ai_risk_agent=ar_agent,  # type: ignore[arg-type]
+            agent_recorder=recorder,
+        )
+
+        await orchestrator.assemble(sample_request)
+
+        # The AR agent should have received a request with event_interpretation_output
+        assert ar_agent.last_request is not None
+        ei_output = ar_agent.last_request.event_interpretation_output
+        assert ei_output is not None
+        assert isinstance(ei_output, EventInterpretationOutput)
+        # The EI output should contain data from the mock provider
+        assert ei_output.symbol == "AAPL"
+        assert ei_output.issuer_code == "037730"
+
+    @pytest.mark.asyncio
+    async def test_real_ei_real_ar_real_fdc(
+        self,
+        repos: RepositoryContainer,
+        sample_request: SubmitOrderRequest,
+        mock_ei_provider: AIProviderClient,
+        mock_ar_provider: AIProviderClient,
+        mock_fdc_provider: AIProviderClient,
+    ) -> None:
+        """Real EI + real AR + real FDC: assemble() succeeds, recorder has 3 runs, FDC output verified."""
+        ei_agent = EventInterpretationAgent(provider_client=mock_ei_provider)
+        ar_agent = AIRiskAgent(provider_client=mock_ar_provider)
+        fdc_agent = FinalDecisionComposerAgent(provider_client=mock_fdc_provider)
+        recorder = AgentRunRecorder()
+
+        orchestrator = DecisionOrchestratorService(
+            repos,
+            event_interpretation_agent=ei_agent,
+            ai_risk_agent=ar_agent,
+            final_decision_agent=fdc_agent,
+            agent_recorder=recorder,
+        )
+
+        intent = await orchestrator.assemble(sample_request)
+        assert isinstance(intent, OrderIntent)
+
+        # Recorder should have 3 runs
+        runs = recorder.list_all()
+        assert len(runs) == 3
+
+        # Agent types should include all three real agents
+        agent_types = {r.agent_type for r in runs}
+        assert agent_types == {
+            "event_interpretation",
+            "ai_risk",
+            "final_decision_composer",
+        }
+
+        # EI run should have structured_output_json from mock provider
+        ei_run = next(r for r in runs if r.agent_type == "event_interpretation")
+        assert ei_run.structured_output_json is not None
+        assert ei_run.structured_output_json.get("symbol") == "AAPL"
+        assert ei_run.structured_output_json.get("agent_name") == "event_interpretation"
+
+        # AR run should have structured_output_json from mock provider
+        ar_run = next(r for r in runs if r.agent_type == "ai_risk")
+        assert ar_run.structured_output_json is not None
+        assert ar_run.structured_output_json.get("risk_opinion") == "reduce"
+        assert ar_run.structured_output_json.get("risk_score") == 0.65
+        assert ar_run.structured_output_json.get("agent_name") == "ai_risk"
+
+        # FDC run should have structured_output_json from mock provider
+        fdc_run = next(r for r in runs if r.agent_type == "final_decision_composer")
+        assert fdc_run.structured_output_json is not None
+        assert fdc_run.structured_output_json.get("decision_type") == "BUY"
+        assert fdc_run.structured_output_json.get("confidence") == 0.75
+        assert fdc_run.structured_output_json.get("agent_name") == "final_decision_composer"
+        assert fdc_run.structured_output_json.get("schema_version") == "v1"
+
+    @pytest.mark.asyncio
+    async def test_ei_and_ar_output_passed_to_fdc(
+        self,
+        repos: RepositoryContainer,
+        sample_request: SubmitOrderRequest,
+        mock_ei_provider: AIProviderClient,
+        mock_ar_provider: AIProviderClient,
+    ) -> None:
+        """Both EI and AR outputs are passed through to the FDC agent via request_with_ei_and_ar."""
+        ei_agent = EventInterpretationAgent(provider_client=mock_ei_provider)
+        ar_agent = AIRiskAgent(provider_client=mock_ar_provider)
+
+        # Tracking FDC agent that captures the request
+        class TrackingFDCAgent:
+            last_request: AgentExecutionRequest | None = None
+
+            @property
+            def agent_name(self) -> str:
+                return "final_decision_composer"
+
+            @property
+            def schema_version(self) -> str:
+                return "v1"
+
+            async def run(self, request: AgentExecutionRequest) -> FinalDecisionComposerOutput:
+                self.last_request = request
+                return FinalDecisionComposerOutput()
+
+        fdc_agent = TrackingFDCAgent()
+        recorder = AgentRunRecorder()
+
+        orchestrator = DecisionOrchestratorService(
+            repos,
+            event_interpretation_agent=ei_agent,
+            ai_risk_agent=ar_agent,
+            final_decision_agent=fdc_agent,  # type: ignore[arg-type]
+            agent_recorder=recorder,
+        )
+
+        await orchestrator.assemble(sample_request)
+
+        # The FDC agent should have received a request with both EI and AR outputs
+        assert fdc_agent.last_request is not None
+
+        # EI output should be present and valid
+        ei_output = fdc_agent.last_request.event_interpretation_output
+        assert ei_output is not None
+        assert isinstance(ei_output, EventInterpretationOutput)
+        assert ei_output.symbol == "AAPL"
+        assert ei_output.issuer_code == "037730"
+
+        # AR output should be present and valid
+        ar_output = fdc_agent.last_request.ai_risk_output
+        assert ar_output is not None
+        assert isinstance(ar_output, AIRiskOutput)
+        assert ar_output.risk_opinion == "reduce"
+        assert ar_output.risk_score == 0.65
+
+        # Both outputs received in a single request (the 3-stage request chain)
+        assert fdc_agent.last_request.event_interpretation_output is not None
+        assert fdc_agent.last_request.ai_risk_output is not None
 
 
 # ---------------------------------------------------------------------------

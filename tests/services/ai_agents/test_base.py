@@ -13,6 +13,7 @@ from agent_trading.services.ai_agents.base import (
     AIProviderClient,
     ProviderAIAgent,
 )
+from agent_trading.services.ai_agents.schemas import AIRiskOutput, EventInterpretationOutput
 from agent_trading.services.decision_orchestrator import AssembledContext
 
 
@@ -50,7 +51,7 @@ class TestAgentExecutionRequest:
         assert req_without.decision_context_id is None
 
     def test_optional_fields_default_none(self) -> None:
-        """model_id and prompt_id default to None."""
+        """model_id, prompt_id, event_interpretation_output, ai_risk_output default to None."""
         context = AssembledContext()
         req = AgentExecutionRequest(
             decision_context_id=None,
@@ -59,9 +60,11 @@ class TestAgentExecutionRequest:
         )
         assert req.model_id is None
         assert req.prompt_id is None
+        assert req.event_interpretation_output is None
+        assert req.ai_risk_output is None
 
     def test_optional_fields_custom(self) -> None:
-        """model_id and prompt_id can be set."""
+        """model_id, prompt_id, and event_interpretation_output can be set."""
         context = AssembledContext()
         req = AgentExecutionRequest(
             decision_context_id=None,
@@ -72,6 +75,57 @@ class TestAgentExecutionRequest:
         )
         assert req.model_id == "gpt-4o"
         assert req.prompt_id == "prompt-v2"
+
+    def test_event_interpretation_output_default_none(self) -> None:
+        """event_interpretation_output defaults to None when not provided."""
+        context = AssembledContext()
+        req = AgentExecutionRequest(
+            decision_context_id=None,
+            correlation_id="corr-ei-none",
+            context=context,
+        )
+        assert req.event_interpretation_output is None
+
+    def test_event_interpretation_output_custom(self) -> None:
+        """event_interpretation_output accepts an EventInterpretationOutput."""
+        context = AssembledContext()
+        ei_output = EventInterpretationOutput(
+            symbol="AAPL",
+            issuer_code="037730",
+        )
+        req = AgentExecutionRequest(
+            decision_context_id=None,
+            correlation_id="corr-ei-set",
+            context=context,
+            event_interpretation_output=ei_output,
+        )
+        assert req.event_interpretation_output is not None
+        assert req.event_interpretation_output.symbol == "AAPL"
+        assert req.event_interpretation_output.issuer_code == "037730"
+
+    def test_ai_risk_output_default_none(self) -> None:
+        """ai_risk_output defaults to None when not provided."""
+        context = AssembledContext()
+        req = AgentExecutionRequest(
+            decision_context_id=None,
+            correlation_id="corr-ar-none",
+            context=context,
+        )
+        assert req.ai_risk_output is None
+
+    def test_ai_risk_output_custom(self) -> None:
+        """ai_risk_output accepts an AIRiskOutput."""
+        context = AssembledContext()
+        ar_output = AIRiskOutput(symbol="AAPL", risk_score=0.5)
+        req = AgentExecutionRequest(
+            decision_context_id=None,
+            correlation_id="corr-ar-set",
+            context=context,
+            ai_risk_output=ar_output,
+        )
+        assert req.ai_risk_output is not None
+        assert req.ai_risk_output.symbol == "AAPL"
+        assert req.ai_risk_output.risk_score == 0.5
 
     def test_frozen(self) -> None:
         """AgentExecutionRequest is frozen."""

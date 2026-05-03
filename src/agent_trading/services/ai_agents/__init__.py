@@ -18,7 +18,7 @@ event_interpretation.py
 ai_risk.py
     ``StubAIRiskAgent``.
 final_decision_composer.py
-    ``StubFinalDecisionComposerAgent``.
+    ``StubFinalDecisionComposerAgent`` and ``FinalDecisionComposerAgent`` (real).
 """
 
 from agent_trading.services.ai_agents.base import (
@@ -42,6 +42,7 @@ from agent_trading.services.ai_agents.event_interpretation import (
 )
 from agent_trading.services.ai_agents.ai_risk import AIRiskAgent, StubAIRiskAgent
 from agent_trading.services.ai_agents.final_decision_composer import (
+    FinalDecisionComposerAgent,
     StubFinalDecisionComposerAgent,
 )
 
@@ -59,5 +60,6 @@ __all__ = [
     "StubEventInterpretationAgent",
     "AIRiskAgent",
     "StubAIRiskAgent",
+    "FinalDecisionComposerAgent",
     "StubFinalDecisionComposerAgent",
 ]

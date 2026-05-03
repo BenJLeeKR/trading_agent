@@ -17,6 +17,8 @@ from uuid import UUID
 
 if TYPE_CHECKING:
     from agent_trading.services.decision_orchestrator import AssembledContext
+    from agent_trading.services.ai_agents.schemas import EventInterpretationOutput
+    from agent_trading.services.ai_agents.schemas import AIRiskOutput
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +41,10 @@ class AgentExecutionRequest:
     context
         The fully assembled ``AssembledContext`` (decision context, config
         version, recent events, score).
+    event_interpretation_output
+        Optional output from the Event Interpretation Agent.  When provided,
+        downstream agents (AI Risk, Final Decision Composer) can use the
+        interpreted event data to inform their own analysis.
     model_id
         Optional model identifier (e.g. ``"gpt-4o"``).  Stub agents ignore
         this; real agents will use it to select the model.
@@ -50,6 +56,8 @@ class AgentExecutionRequest:
     decision_context_id: UUID | None
     correlation_id: str
     context: AssembledContext
+    event_interpretation_output: EventInterpretationOutput | None = None
+    ai_risk_output: AIRiskOutput | None = None
     model_id: str | None = None
     prompt_id: str | None = None
 

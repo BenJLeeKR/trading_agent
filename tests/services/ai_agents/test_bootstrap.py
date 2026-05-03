@@ -30,6 +30,7 @@ from agent_trading.runtime.bootstrap import (
 from agent_trading.services.ai_agents import (
     AIRiskAgent,
     EventInterpretationAgent,
+    FinalDecisionComposerAgent,
     OpenAICompatibleClient,
 )
 from agent_trading.services.ai_agents.event_interpretation import (
@@ -166,26 +167,35 @@ class TestBuildDefaultRuntime:
         runtime = build_default_runtime()
         assert "ai_risk_agent" in runtime
 
+    def test_contains_final_decision_agent_key(self) -> None:
+        """Runtime dict에 final_decision_agent 키가 포함됨."""
+        runtime = build_default_runtime()
+        assert "final_decision_agent" in runtime
+
     def test_uses_stub_when_no_api_key(self) -> None:
-        """Provider 설정 없으면 두 agent 모두 None (stub fallback)."""
+        """Provider 설정 없으면 세 agent 모두 None (stub fallback)."""
         runtime = build_default_runtime()
         assert runtime["event_interpretation_agent"] is None
         assert runtime["ai_risk_agent"] is None
+        assert runtime["final_decision_agent"] is None
 
     def test_uses_real_agent_when_api_key_set(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """DeepSeek 설정 완전 → EventInterpretationAgent + AIRiskAgent 주입."""
+        """DeepSeek 설정 완전 → 세 real agent 모두 주입."""
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
         monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
         monkeypatch.setenv("DEEPSEEK_MODEL_ID", "deepseek-chat")
         runtime = build_default_runtime()
         ei_agent = runtime["event_interpretation_agent"]
         ar_agent = runtime["ai_risk_agent"]
+        fdc_agent = runtime["final_decision_agent"]
         assert ei_agent is not None
         assert isinstance(ei_agent, EventInterpretationAgent)
         assert ar_agent is not None
         assert isinstance(ar_agent, AIRiskAgent)
+        assert fdc_agent is not None
+        assert isinstance(fdc_agent, FinalDecisionComposerAgent)
 
     def test_runtime_shape_consistent(self) -> None:
         """Runtime dict 필수 키가 모두 존재."""
@@ -198,6 +208,7 @@ class TestBuildDefaultRuntime:
             "orchestrator",
             "event_interpretation_agent",
             "ai_risk_agent",
+            "final_decision_agent",
         }
         assert expected_keys.issubset(runtime.keys())
 
@@ -251,29 +262,38 @@ class TestBuildPostgresRuntime:
         runtime = await build_postgres_runtime(run_migrations=False)
         assert "ai_risk_agent" in runtime
 
+    async def test_contains_final_decision_agent_key(self) -> None:
+        """Runtime dict에 final_decision_agent 키가 포함됨."""
+        runtime = await build_postgres_runtime(run_migrations=False)
+        assert "final_decision_agent" in runtime
+
     async def test_uses_stub_when_no_api_key(self) -> None:
-        """DEEPSEEK_API_KEY 없으면 두 agent 모두 None (stub fallback)."""
+        """DEEPSEEK_API_KEY 없으면 세 agent 모두 None (stub fallback)."""
         runtime = await build_postgres_runtime(run_migrations=False)
         assert runtime["event_interpretation_agent"] is None
         assert runtime["ai_risk_agent"] is None
+        assert runtime["final_decision_agent"] is None
 
     async def test_uses_real_agent_when_api_key_set(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """설정이 완전하면 EventInterpretationAgent + AIRiskAgent 주입."""
+        """설정이 완전하면 세 real agent 모두 주입."""
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
         monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
         monkeypatch.setenv("DEEPSEEK_MODEL_ID", "deepseek-chat")
         runtime = await build_postgres_runtime(run_migrations=False)
         ei_agent = runtime["event_interpretation_agent"]
         ar_agent = runtime["ai_risk_agent"]
+        fdc_agent = runtime["final_decision_agent"]
         assert ei_agent is not None
         assert isinstance(ei_agent, EventInterpretationAgent)
         assert ar_agent is not None
         assert isinstance(ar_agent, AIRiskAgent)
+        assert fdc_agent is not None
+        assert isinstance(fdc_agent, FinalDecisionComposerAgent)
 
     async def test_runtime_shape_consistent(self) -> None:
-        """Runtime dict에 db_config 포함 8개 키 모두 존재."""
+        """Runtime dict에 db_config 포함 9개 키 모두 존재."""
         runtime = await build_postgres_runtime(run_migrations=False)
         expected_keys = {
             "settings",
@@ -284,6 +304,7 @@ class TestBuildPostgresRuntime:
             "orchestrator",
             "event_interpretation_agent",
             "ai_risk_agent",
+            "final_decision_agent",
         }
         assert expected_keys.issubset(runtime.keys())
 
@@ -375,8 +396,15 @@ class TestPostgresRuntimeContext:
         ) as runtime:
             assert "ai_risk_agent" in runtime
 
+    async def test_contains_final_decision_agent_key(self) -> None:
+        """Context 내부 runtime dict에 final_decision_agent 키가 포함됨."""
+        async with postgres_runtime(
+            run_migrations=False, auto_rollback=True
+        ) as runtime:
+            assert "final_decision_agent" in runtime
+
     async def test_runtime_shape_consistent(self) -> None:
-        """Runtime dict에 db_config 포함 8개 키 모두 존재."""
+        """Runtime dict에 db_config 포함 9개 키 모두 존재."""
         async with postgres_runtime(
             run_migrations=False, auto_rollback=True
         ) as runtime:
@@ -389,6 +417,7 @@ class TestPostgresRuntimeContext:
                 "orchestrator",
                 "event_interpretation_agent",
                 "ai_risk_agent",
+                "final_decision_agent",
             }
             assert expected_keys.issubset(runtime.keys())
 

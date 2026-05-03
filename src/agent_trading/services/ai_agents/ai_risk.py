@@ -26,7 +26,7 @@ from agent_trading.services.ai_agents.base import (
     ProviderAIAgent,
     RawProviderResponse,
 )
-from agent_trading.services.ai_agents.schemas import AIRiskOutput, generate_json_schema
+from agent_trading.services.ai_agents.schemas import AIRiskOutput, EventInterpretationOutput, generate_json_schema
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +224,15 @@ class AIRiskAgent:
         )
 
     def _build_user_prompt(self, request: AgentExecutionRequest) -> str:
-        """Build the user prompt with the current request context."""
+        """Build the user prompt with the current request context.
+
+        When the request carries an ``event_interpretation_output`` (i.e. the
+        Event Interpretation Agent has run successfully), the prompt includes
+        the interpreted event data (overall bias, event conflict, top reason
+        codes, and per-event summaries).  When it is ``None`` (no EI output
+        available), the prompt uses only the assembled context — this preserves
+        backward compatibility with callers that do not pass EI output.
+        """
         context = request.context
         score = context.score
         events = context.recent_events or []
@@ -235,6 +243,36 @@ class AIRiskAgent:
 
         # Symbol and proposed side
         lines.append(f"Symbol: {request.context.decision_context or '(not available)'}")
+
+        # === Event Interpretation output (if available) ===
+        # The orchestrator always passes a structured EventInterpretationOutput
+        # (never None) when the EI agent ran, but we guard against None here
+        # for callers that construct AgentExecutionRequest directly.
+        ei_output = request.event_interpretation_output
+        if ei_output is not None:
+            lines.append("")
+            lines.append("=== Event Interpretation ===")
+            lines.append(f"Overall bias: {ei_output.aggregate_view.overall_bias}")
+            lines.append(f"Event conflict: {ei_output.aggregate_view.event_conflict}")
+            if ei_output.aggregate_view.top_reason_codes:
+                lines.append(
+                    "Top reason codes: "
+                    f"{', '.join(ei_output.aggregate_view.top_reason_codes)}"
+                )
+
+            # Interpreted events summary (max 10 to keep prompt length manageable)
+            interpreted = ei_output.events or ()
+            if interpreted:
+                lines.append(f"Interpreted events ({len(interpreted)}):")
+                for ie in interpreted[:10]:
+                    summary = ie.summary or ie.headline or "(no summary)"
+                    lines.append(f"  - [{ie.event_type}] {summary}")
+                    lines.append(
+                        f"    impact={ie.impact_direction} "
+                        f"confidence={ie.confidence}"
+                    )
+            lines.append("")
+        # ==================================================
 
         if score:
             lines.append(f"Score: {score.score} (threshold: {score.threshold})")

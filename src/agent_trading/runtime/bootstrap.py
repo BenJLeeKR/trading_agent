@@ -20,6 +20,7 @@ from agent_trading.repositories.postgres.bootstrap import build_postgres_reposit
 from agent_trading.services.ai_agents import (
     AIRiskAgent,
     EventInterpretationAgent,
+    FinalDecisionComposerAgent,
     OpenAICompatibleClient,
 )
 from agent_trading.services.decision_orchestrator import (
@@ -142,6 +143,44 @@ def _build_ai_risk_agent(settings: AppSettings) -> AIRiskAgent | None:
     )
 
 
+def _build_final_decision_agent(
+    settings: AppSettings,
+) -> FinalDecisionComposerAgent | None:
+    """Build a real ``FinalDecisionComposerAgent`` if provider settings are complete.
+
+    Returns ``None`` when settings are incomplete — caller falls back to
+    ``StubFinalDecisionComposerAgent``.
+    """
+    if not settings.provider_api_key:
+        logger.info(
+            "Provider API key not configured — "
+            "using stub FinalDecisionComposerAgent"
+        )
+        return None
+    if not settings.provider_base_url:
+        logger.warning(
+            "provider_base_url is empty — "
+            "using stub FinalDecisionComposerAgent"
+        )
+        return None
+    if not settings.provider_model_id:
+        logger.warning(
+            "provider_model_id is empty — "
+            "using stub FinalDecisionComposerAgent"
+        )
+        return None
+
+    client = OpenAICompatibleClient(
+        api_key=settings.provider_api_key,
+        base_url=settings.provider_base_url,
+        timeout_seconds=settings.provider_timeout_seconds,
+    )
+    return FinalDecisionComposerAgent(
+        provider_client=client,
+        model_id=settings.provider_model_id,
+    )
+
+
 async def _close_provider_agent(agent: object | None) -> None:
     """Safely close the provider agent's underlying HTTP client.
 
@@ -160,6 +199,7 @@ def _build_orchestrator(
     settings: AppSettings,
     event_interpretation_agent: EventInterpretationAgent | None = None,
     ai_risk_agent: AIRiskAgent | None = None,
+    final_decision_agent: FinalDecisionComposerAgent | None = None,
 ) -> DecisionOrchestratorService:
     """Build a ``DecisionOrchestratorService`` with provider agent injection.
 
@@ -177,15 +217,20 @@ def _build_orchestrator(
         Pre-built EI agent.  When ``None``, built via ``_build_provider_agent(settings)``.
     ai_risk_agent:
         Pre-built AR agent.  When ``None``, built via ``_build_ai_risk_agent(settings)``.
+    final_decision_agent:
+        Pre-built FDC agent.  When ``None``, built via ``_build_final_decision_agent(settings)``.
     """
     if event_interpretation_agent is None:
         event_interpretation_agent = _build_provider_agent(settings)
     if ai_risk_agent is None:
         ai_risk_agent = _build_ai_risk_agent(settings)
+    if final_decision_agent is None:
+        final_decision_agent = _build_final_decision_agent(settings)
     return DecisionOrchestratorService(
         repos=repos,
         event_interpretation_agent=event_interpretation_agent,
         ai_risk_agent=ai_risk_agent,
+        final_decision_agent=final_decision_agent,
     )
 
 
@@ -200,10 +245,12 @@ def build_default_runtime() -> dict[str, object]:
     polling_workers = _build_polling_workers(repositories, settings)
     event_interpretation_agent = _build_provider_agent(settings)
     ai_risk_agent = _build_ai_risk_agent(settings)
+    final_decision_agent = _build_final_decision_agent(settings)
     orchestrator = _build_orchestrator(
         repositories, settings,
         event_interpretation_agent=event_interpretation_agent,
         ai_risk_agent=ai_risk_agent,
+        final_decision_agent=final_decision_agent,
     )
     return {
         "settings": settings,
@@ -213,6 +260,7 @@ def build_default_runtime() -> dict[str, object]:
         "orchestrator": orchestrator,
         "event_interpretation_agent": event_interpretation_agent,
         "ai_risk_agent": ai_risk_agent,
+        "final_decision_agent": final_decision_agent,
     }
 
 
@@ -267,10 +315,12 @@ async def build_postgres_runtime(
     polling_workers = _build_polling_workers(repositories, settings)
     event_interpretation_agent = _build_provider_agent(settings)
     ai_risk_agent = _build_ai_risk_agent(settings)
+    final_decision_agent = _build_final_decision_agent(settings)
     orchestrator = _build_orchestrator(
         repositories, settings,
         event_interpretation_agent=event_interpretation_agent,
         ai_risk_agent=ai_risk_agent,
+        final_decision_agent=final_decision_agent,
     )
 
     return {
@@ -282,6 +332,7 @@ async def build_postgres_runtime(
         "orchestrator": orchestrator,
         "event_interpretation_agent": event_interpretation_agent,
         "ai_risk_agent": ai_risk_agent,
+        "final_decision_agent": final_decision_agent,
     }
 
 
@@ -292,7 +343,7 @@ async def shutdown_postgres_runtime(runtime: dict[str, Any]) -> None:
     then closes the connection pool.  Any open database transaction
     must be closed by the caller before calling this function.
     """
-    for key in ("event_interpretation_agent", "ai_risk_agent"):
+    for key in ("event_interpretation_agent", "ai_risk_agent", "final_decision_agent"):
         agent = runtime.get(key)
         await _close_provider_agent(agent)
     await close_pool()
@@ -341,10 +392,12 @@ async def postgres_runtime(
         polling_workers = _build_polling_workers(repositories, settings)
         event_interpretation_agent = _build_provider_agent(settings)
         ai_risk_agent = _build_ai_risk_agent(settings)
+        final_decision_agent = _build_final_decision_agent(settings)
         orchestrator = _build_orchestrator(
             repositories, settings,
             event_interpretation_agent=event_interpretation_agent,
             ai_risk_agent=ai_risk_agent,
+            final_decision_agent=final_decision_agent,
         )
         runtime: dict[str, Any] = {
             "settings": settings,
@@ -355,6 +408,7 @@ async def postgres_runtime(
             "orchestrator": orchestrator,
             "event_interpretation_agent": event_interpretation_agent,
             "ai_risk_agent": ai_risk_agent,
+            "final_decision_agent": final_decision_agent,
         }
         yield runtime
 

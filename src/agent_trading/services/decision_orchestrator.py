@@ -430,10 +430,23 @@ class DecisionOrchestratorService:
             structured_output=_dataclass_to_dict(event_output),
         )
 
+        # --- Build a new request with the EI output for downstream agents ---
+        # AgentExecutionRequest is frozen, so we must create a new instance.
+        # When EI fails, event_output is an empty EventInterpretationOutput(),
+        # so downstream agents always receive a structured value (never None).
+        request_with_ei = AgentExecutionRequest(
+            decision_context_id=request.decision_context_id,
+            correlation_id=request.correlation_id,
+            context=request.context,
+            event_interpretation_output=event_output,
+            model_id=request.model_id,
+            prompt_id=request.prompt_id,
+        )
+
         # --- 2. AI Risk Agent ---
         risk_output: AIRiskOutput
         try:
-            risk_output = await self._ai_risk_agent.run(request)
+            risk_output = await self._ai_risk_agent.run(request_with_ei)
         except Exception:
             logger.warning(
                 "AI Risk Agent failed — using default output "
@@ -449,10 +462,24 @@ class DecisionOrchestratorService:
             structured_output=_dataclass_to_dict(risk_output),
         )
 
+        # --- Build a new request with both EI and AR output for FDC ---
+        # AgentExecutionRequest is frozen, so we must create a new instance.
+        # When AR fails, risk_output is an empty AIRiskOutput(), so FDC always
+        # receives a structured value (never None).
+        request_with_ei_and_ar = AgentExecutionRequest(
+            decision_context_id=request.decision_context_id,
+            correlation_id=request.correlation_id,
+            context=request.context,
+            event_interpretation_output=event_output,
+            ai_risk_output=risk_output,
+            model_id=request.model_id,
+            prompt_id=request.prompt_id,
+        )
+
         # --- 3. Final Decision Composer Agent ---
         composer_output: FinalDecisionComposerOutput
         try:
-            composer_output = await self._final_decision_agent.run(request)
+            composer_output = await self._final_decision_agent.run(request_with_ei_and_ar)
         except Exception:
             logger.warning(
                 "Final Decision Composer Agent failed — using default output "
