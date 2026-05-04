@@ -4,8 +4,8 @@
 
 ## 문서 관리 원칙
 
-- **하나의 plan 번호 = 하나의 canonical 파일**: 같은 작업 단위에 대해 여러 버전의 plan 문서를 파일로 분리하지 않는다. 수정 이력이 필요한 경우, 문서 내부 `Revision History` 섹션에 누적 기록한다.
-- **파일명 규칙**: `{순서}_{설명}.md` — 순서는 2자리 숫자 (01, 02, ...).
+- **하나의 plan 번호 = 하나의 canonical 파일**: 같은 작업 단위에 대해 여러 버전의 plan 문서를 파일로 분리하지 않는다. 수정 이력이 필요한 경우, 문서 내부 `Revision History` 섹션에 누적 기록한다. 같은 task의 원본안/수정안/후속안을 별도 파일로 쪼개지 않는다.
+- **파일명**: 숫자 접두사 + 설명으로 구성 (예: `04.xxx.md`, `29_ai_decision_backend_contract.md`). 엄격한 패턴보다는 `plans/README.md` 목록에서 순서대로 식별 가능하게 하는 것이 목적이다.
 - **Rejected 접근법**: 문서 내 `부록(Appendix)` 섹션에 참고용으로 보관한다. 별도 파일로 분리하지 않는다.
 
 권장 읽기 방식:
@@ -46,7 +46,10 @@
 | 26 | [`26_real_ai_risk_agent.md`](./26_real_ai_risk_agent.md) | Real AIRiskAgent 구현 계획 (schema 공유, bootstrap wiring, orchestrator 통합) |
 | 27 | [`27_ei_output_to_ai_risk_flow.md`](./27_ei_output_to_ai_risk_flow.md) | EI 출력 -> AIRiskAgent 전달 설계 변경 계획 |
 | 28 | [`28_real_final_decision_composer_agent.md`](./28_real_final_decision_composer_agent.md) | Real FinalDecisionComposerAgent 구현 계획 (EI→AR→FDC 데이터 흐름 완성) |
-| 29 | [`29_ai_decision_backend_contract.md`](./29_ai_decision_backend_contract.md) | AI Decision Backend Contract — `AIDecisionInputs` 정규화된 backend 계약 (Rev 1 REJECTED, Rev 2 IMPLEMENTED, Rev 3 PENDING) |
+| 29 | [`29_ai_decision_backend_contract.md`](./29_ai_decision_backend_contract.md) | AI Decision Backend Contract — `AIDecisionInputs` 정규화된 backend 계약 (Rev 1 REJECTED, Rev 2 IMPLEMENTED, Rev 3 IMPLEMENTED) |
+| 30 | [`30_runtime_three_agent_smoke.md`](./30_runtime_three_agent_smoke.md) | Real 3-Agent Runtime Smoke Verification — EI→AR→FDC full chain smoke, env-isolated fallback, provider-agnostic skip (Rev 2: env 제어 정렬) |
+| 31 | [`31_ai_risk_input_expansion.md`](./31_ai_risk_input_expansion.md) | AIRiskAgent input expansion: richer deterministic account/risk context (position, cash, risk_limit snapshots) + PG repos + prompt summaries |
+| 32 | [`32_ai_broker_boundary_pre_submit_verification.md`](./32_ai_broker_boundary_pre_submit_verification.md) | AI-Broker Pre-Submit Safety Boundary Verification: AI layer가 execution boundary를 우회하지 않음을 테스트로 증명 |
 
 ## 빠른 추천 경로
 
@@ -62,6 +65,7 @@
 8. [`27_ei_output_to_ai_risk_flow.md`](./27_ei_output_to_ai_risk_flow.md)
 9. [`28_real_final_decision_composer_agent.md`](./28_real_final_decision_composer_agent.md)
 10. [`29_ai_decision_backend_contract.md`](./29_ai_decision_backend_contract.md)
+11. [`30_runtime_three_agent_smoke.md`](./30_runtime_three_agent_smoke.md)
 
 ### AI Agent / Provider 연결 흐름만 보기
 
@@ -76,6 +80,7 @@
 9. [`27_ei_output_to_ai_risk_flow.md`](./27_ei_output_to_ai_risk_flow.md)
 10. [`28_real_final_decision_composer_agent.md`](./28_real_final_decision_composer_agent.md)
 11. [`29_ai_decision_backend_contract.md`](./29_ai_decision_backend_contract.md)
+12. [`30_runtime_three_agent_smoke.md`](./30_runtime_three_agent_smoke.md)
 
 ### 브로커 / 실행 안전성 흐름만 보기
 

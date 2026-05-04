@@ -7,9 +7,13 @@ from uuid import uuid4
 import pytest
 
 from agent_trading.domain.entities import (
+    CashBalanceSnapshotEntity,
     ConfigVersionEntity,
     DecisionContextEntity,
     ExternalEventEntity,
+    InstrumentEntity,
+    PositionSnapshotEntity,
+    RiskLimitSnapshotEntity,
 )
 from agent_trading.domain.enums import (
     Environment,
@@ -173,6 +177,10 @@ class TestAssembledContext:
         assert ctx.score.score == 0.0
         assert ctx.score.threshold == 0.0
         assert ctx.score.reason_codes == ()
+        # New fields default to None
+        assert ctx.position_snapshot is None
+        assert ctx.cash_balance_snapshot is None
+        assert ctx.risk_limit_snapshot is None
 
     def test_full_construction(self) -> None:
         """AssembledContext can be constructed with all fields."""
@@ -201,11 +209,45 @@ class TestAssembledContext:
         )
         score = ScoreResult(score=0.75, threshold=0.5, reason_codes=("momentum",))
 
+        # New snapshot entities
+        position_snapshot = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            instrument_id=uuid4(),
+            quantity=Decimal("100"),
+            average_price=Decimal("50.00"),
+            market_price=Decimal("52.00"),
+            unrealized_pnl=Decimal("200.00"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        cash_balance_snapshot = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            currency="KRW",
+            available_cash=Decimal("1000000"),
+            settled_cash=Decimal("500000"),
+            unsettled_cash=Decimal("500000"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        risk_limit_snapshot = RiskLimitSnapshotEntity(
+            risk_limit_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            snapshot_at=now,
+            nav=Decimal("10000000"),
+            kill_switch_active=False,
+            blocked_reason_codes=None,
+        )
+
         ctx = AssembledContext(
             decision_context=decision_context,
             config_version=config_version,
             recent_events=(event,),
             score=score,
+            position_snapshot=position_snapshot,
+            cash_balance_snapshot=cash_balance_snapshot,
+            risk_limit_snapshot=risk_limit_snapshot,
         )
 
         assert ctx.decision_context is decision_context
@@ -214,6 +256,10 @@ class TestAssembledContext:
         assert ctx.recent_events[0] is event
         assert ctx.score.score == 0.75
         assert ctx.score.reason_codes == ("momentum",)
+        # New fields
+        assert ctx.position_snapshot is position_snapshot
+        assert ctx.cash_balance_snapshot is cash_balance_snapshot
+        assert ctx.risk_limit_snapshot is risk_limit_snapshot
 
     def test_frozen(self) -> None:
         """AssembledContext is frozen."""
@@ -493,3 +539,145 @@ class TestScoreCalculatorStub:
         assert intent.order_intent_id is not None
         assert intent.request.client_order_id == sample_request.client_order_id
         assert intent.request.symbol == sample_request.symbol
+
+
+# ---------------------------------------------------------------------------
+# Priority: position_snapshot_id source-of-truth
+# ---------------------------------------------------------------------------
+
+
+class TestPositionSnapshotSourceOfTruth:
+    """position_snapshot_id is the strongest source of truth for replay.
+
+    ``decision_context.position_snapshot_id`` -> ``get(id)`` must be accepted
+    unconditionally, even when the instrument catalog lookup returns ``None``.
+    The latest-fallback path (``list_latest_by_account``) still uses instrument
+    symbol filtering as before.
+    """
+
+    @pytest.mark.asyncio
+    async def test_explicit_snapshot_survives_instrument_failure(
+        self, sample_request
+    ):
+        """Explicit position_snapshot_id is accepted even when instrument
+        lookup yields None (no instrument seeded)."""
+        repos = build_in_memory_repositories()
+
+        # Seed a decision context with an explicit position_snapshot_id
+        ctx_id = uuid4()
+        snap_id = uuid4()
+        account_id = uuid4()
+        strategy_id = uuid4()
+        config_id = uuid4()
+        now = datetime.now(timezone.utc)
+
+        context = DecisionContextEntity(
+            decision_context_id=ctx_id,
+            account_id=account_id,
+            strategy_id=strategy_id,
+            config_version_id=config_id,
+            market_timestamp=now,
+            correlation_id="corr-snapshot-test",
+            position_snapshot_id=snap_id,
+        )
+        repos.decision_contexts._items[ctx_id] = context
+
+        # Seed the referenced PositionSnapshotEntity
+        snapshot = PositionSnapshotEntity(
+            position_snapshot_id=snap_id,
+            account_id=account_id,
+            instrument_id=uuid4(),  # any instrument_id works
+            quantity=Decimal("100"),
+            average_price=Decimal("50000"),
+            market_price=Decimal("50500"),
+            unrealized_pnl=Decimal("50000"),
+            source_of_truth="reconciliation",
+            snapshot_at=now,
+        )
+        repos.position_snapshots._items[snap_id] = snapshot
+
+        # Do NOT seed any InstrumentEntity → get_by_symbol() returns None
+
+        service = DecisionOrchestratorService(repos=repos)
+        intent = await service.assemble(sample_request, decision_context_id=ctx_id)
+
+        # The explicit snapshot must survive even though instrument is None
+        assert intent.context.position_snapshot is not None
+        assert intent.context.position_snapshot.position_snapshot_id == snap_id
+
+    @pytest.mark.asyncio
+    async def test_latest_fallback_with_symbol_filtering(
+        self, sample_request
+    ):
+        """Without explicit position_snapshot_id, the latest snapshot matching
+        the request symbol is picked via instrument filtering."""
+        repos = build_in_memory_repositories()
+
+        account_id = uuid4()
+        strategy_id = uuid4()
+        config_id = uuid4()
+        now = datetime.now(timezone.utc)
+
+        # Seed an instrument matching the sample request symbol/market
+        instrument = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="005930",
+            market_code="KRX",
+            asset_class="stock",
+            currency="KRW",
+            name="Samsung Electronics",
+        )
+        repos.instruments._items[instrument.instrument_id] = instrument
+
+        # Seed multiple PositionSnapshotEntity entries for the same account;
+        # only one matches the seeded instrument_id.
+        wrong_instrument_id = uuid4()
+
+        old_snapshot = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=account_id,
+            instrument_id=wrong_instrument_id,
+            quantity=Decimal("50"),
+            average_price=Decimal("60000"),
+            market_price=Decimal("61000"),
+            unrealized_pnl=Decimal("50000"),
+            source_of_truth="broker",
+            snapshot_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        )
+        repos.position_snapshots._items[old_snapshot.position_snapshot_id] = old_snapshot
+
+        matching_snapshot = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=account_id,
+            instrument_id=instrument.instrument_id,
+            quantity=Decimal("100"),
+            average_price=Decimal("50000"),
+            market_price=Decimal("50500"),
+            unrealized_pnl=Decimal("50000"),
+            source_of_truth="reconciliation",
+            snapshot_at=now,
+        )
+        repos.position_snapshots._items[matching_snapshot.position_snapshot_id] = matching_snapshot
+
+        # Seed a decision context WITHOUT position_snapshot_id
+        ctx_id = uuid4()
+        context = DecisionContextEntity(
+            decision_context_id=ctx_id,
+            account_id=account_id,
+            strategy_id=strategy_id,
+            config_version_id=config_id,
+            market_timestamp=now,
+            correlation_id="corr-fallback-test",
+            position_snapshot_id=None,
+        )
+        repos.decision_contexts._items[ctx_id] = context
+
+        service = DecisionOrchestratorService(repos=repos)
+        intent = await service.assemble(sample_request, decision_context_id=ctx_id)
+
+        # The matching snapshot (same instrument_id as the resolved instrument)
+        # should be picked via the fallback path.
+        assert intent.context.position_snapshot is not None
+        assert intent.context.position_snapshot.position_snapshot_id == matching_snapshot.position_snapshot_id
+        assert intent.context.position_snapshot.instrument_id == instrument.instrument_id
+        assert intent.context.position_snapshot.quantity == Decimal("100")

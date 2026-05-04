@@ -5,8 +5,8 @@
 | Rev | Status | Description |
 |-----|--------|-------------|
 | 1 | **REJECTED** | Raw `FinalDecisionComposerOutput` → `OrderIntent` coupling. 거부 사유: FDC 단일 agent에만 의존, 정규화된 backend contract 부재, `reason_codes` 의미 혼동, `SubmitOrderRequest` 우회 경로 우려 |
-| 2 | **IMPLEMENTED** | `AIDecisionInputs` 정규화된 backend contract dataclass 채택. EI/AR/FDC 3개 agent 출력을 집계하여 `OrderIntent.ai_backend_inputs`로 전달. 모든 테스트 통과 (406/406) |
-| 3 | **PENDING** | `size_adjustment_factor` 기본값 보정 (`1.0` → `0.0`), `schema_versions` immutable 구조 변경 (`dict` → `tuple[tuple[str, str], ...]`), 테스트 보강 |
+| 2 | **IMPLEMENTED** | `AIDecisionInputs` 정규화된 backend contract dataclass 도입. EI/AR/FDC 3개 agent 출력을 집계하여 `OrderIntent.ai_backend_inputs`로 전달. 모든 테스트 통과 |
+| 3 | **IMPLEMENTED** | 기본값 및 불변성 보정: `size_adjustment_factor` 기본값 `0.0` 정렬, `schema_versions` immutable 구조 (`tuple[tuple[str, str], ...]`), 직접 생성 기본값 및 불변성 테스트 보강 |
 
 ---
 
@@ -433,14 +433,14 @@ flowchart TD
 - [x] `SubmitOrderRequest` 수정 없음
 - [x] `OrderManager`/`BrokerAdapter`/`ReconciliationService` 경계 변경 없음
 - [x] Recorder 저장 로직 유지됨 (기존 audit/replay 경로 약화 없음)
-- [x] 신규 테스트 6개 이상 추가 및 통과
-- [x] 기존 테스트 100% 통과 (406/406 — 회귀 없음)
+- [x] 신규 테스트 8개 이상 추가 및 통과
+- [x] 기존 테스트 100% 통과 (416/416 — 회귀 없음)
 - [x] Lint 통과 (`ruff check src/`)
-- [ ] Rev 3: `size_adjustment_factor` 기본값 `0.0` 확인
-- [ ] Rev 3: `schema_versions` 타입 `tuple[tuple[str, str], ...]` 확인
-- [ ] Rev 3: `_run_agents()` assembly가 tuple 구조로 변경됨
-- [ ] Rev 3: `test_ai_backend_inputs_direct_defaults` — 직접 생성 시 기본값 검증
-- [ ] Rev 3: `test_ai_backend_inputs_schema_versions_immutable` — 불변성 검증
+- [x] Rev 3: `size_adjustment_factor` 기본값 `0.0` 확인
+- [x] Rev 3: `schema_versions` 타입 `tuple[tuple[str, str], ...]` 확인
+- [x] Rev 3: `_run_agents()` assembly가 tuple 구조로 변경됨
+- [x] Rev 3: `test_ai_backend_inputs_direct_defaults` — 직접 생성 시 기본값 검증
+- [x] Rev 3: `test_ai_backend_inputs_schema_versions_immutable` — 불변성 검증
 
 ---
 

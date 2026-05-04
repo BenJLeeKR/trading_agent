@@ -7,9 +7,13 @@ from typing import Protocol
 from uuid import UUID, uuid4
 
 from agent_trading.domain.entities import (
+    CashBalanceSnapshotEntity,
     ConfigVersionEntity,
     DecisionContextEntity,
     ExternalEventEntity,
+    InstrumentEntity,
+    PositionSnapshotEntity,
+    RiskLimitSnapshotEntity,
 )
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.repositories.container import RepositoryContainer
@@ -138,7 +142,8 @@ class AssembledContext:
 
     This aggregates all available information at decision time:
     the active decision context, the governing config version,
-    recent external events, and a deterministic score.
+    recent external events, a deterministic score, and richer
+    deterministic account / risk data (position, cash, risk limits).
 
     All fields are optional — the service assembles what it can and
     leaves missing pieces as ``None`` or empty.
@@ -148,6 +153,9 @@ class AssembledContext:
     config_version: ConfigVersionEntity | None = None
     recent_events: tuple[ExternalEventEntity, ...] = ()
     score: ScoreResult = field(default_factory=ScoreResult)
+    position_snapshot: PositionSnapshotEntity | None = None
+    cash_balance_snapshot: CashBalanceSnapshotEntity | None = None
+    risk_limit_snapshot: RiskLimitSnapshotEntity | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -236,8 +244,16 @@ class DecisionOrchestratorService:
       sequentially and records their outputs.
     * No actual Provider API calls — all agents return default structured
       outputs (safe fallback on exception).
-    * ``OrderIntent`` is **not** modified — agent outputs are accessible
-      via the recorder.
+
+    Priority A additions (AI Decision Backend Contract)
+    ---------------------------------------------------
+    * ``AIDecisionInputs`` dataclass — normalised aggregate of EI/AR/FDC
+      agent outputs, carried on ``OrderIntent.ai_backend_inputs``.
+    * ``_run_agents()`` now returns ``AIDecisionInputs`` (not ``None``).
+    * ``assemble()`` passes the normalised contract to ``OrderIntent``.
+    * ``AgentRunRecorder`` continues to record every run for audit/replay.
+    * Raw agent outputs are **not** carried on ``OrderIntent`` — only
+      normalised fields via ``AIDecisionInputs``.
     """
 
     def __init__(
@@ -320,11 +336,81 @@ class DecisionOrchestratorService:
         except Exception:
             pass
 
+        # --- Resolve instrument for position filtering ---
+        instrument: InstrumentEntity | None = None
+        try:
+            instrument = await self._repos.instruments.get_by_symbol(
+                symbol=request.symbol,
+                market_code=request.market,
+            )
+        except Exception:
+            pass
+
+        # --- Query position snapshot ---
+        # Priority:
+        #   1. decision_context.position_snapshot_id → get(id) → accept regardless of
+        #      instrument lookup success (strongest source of truth for replay).
+        #   2. If no explicit ID, account latest snapshots → symbol-filter by instrument.
+        position_snapshot: PositionSnapshotEntity | None = None
+        if decision_context is not None:
+            if decision_context.position_snapshot_id is not None:
+                try:
+                    pos = await self._repos.position_snapshots.get(
+                        decision_context.position_snapshot_id
+                    )
+                    if pos is not None:
+                        position_snapshot = pos
+                except Exception:
+                    pass
+            if position_snapshot is None and decision_context.account_id is not None:
+                try:
+                    snaps = await self._repos.position_snapshots.list_latest_by_account(
+                        decision_context.account_id
+                    )
+                    for s in snaps:
+                        if instrument is not None and s.instrument_id == instrument.instrument_id:
+                            position_snapshot = s
+                            break
+                except Exception:
+                    pass
+
+        # --- Query cash balance snapshot ---
+        # Priority: decision_context.cash_balance_snapshot_id → account latest
+        cash_balance_snapshot: CashBalanceSnapshotEntity | None = None
+        if decision_context is not None:
+            if decision_context.cash_balance_snapshot_id is not None:
+                try:
+                    cash_balance_snapshot = await self._repos.cash_balance_snapshots.get(
+                        decision_context.cash_balance_snapshot_id
+                    )
+                except Exception:
+                    pass
+            if cash_balance_snapshot is None and decision_context.account_id is not None:
+                try:
+                    cash_balance_snapshot = await self._repos.cash_balance_snapshots.get_latest_by_account(
+                        decision_context.account_id
+                    )
+                except Exception:
+                    pass
+
+        # --- Query risk limit snapshot ---
+        risk_limit_snapshot: RiskLimitSnapshotEntity | None = None
+        if decision_context is not None and decision_context.account_id is not None:
+            try:
+                risk_limit_snapshot = await self._repos.risk_limit_snapshots.get_latest_by_account(
+                    decision_context.account_id
+                )
+            except Exception:
+                pass
+
         # --- Assemble context (without score yet) ---
         assembled_context = AssembledContext(
             decision_context=decision_context,
             config_version=config_version,
             recent_events=recent_events,
+            position_snapshot=position_snapshot,
+            cash_balance_snapshot=cash_balance_snapshot,
+            risk_limit_snapshot=risk_limit_snapshot,
         )
 
         # --- Calculate score ---
@@ -336,6 +422,9 @@ class DecisionOrchestratorService:
             config_version=config_version,
             recent_events=recent_events,
             score=score_result,
+            position_snapshot=position_snapshot,
+            cash_balance_snapshot=cash_balance_snapshot,
+            risk_limit_snapshot=risk_limit_snapshot,
         )
 
         # --- Generate order_intent_id if not provided ---

@@ -1,11 +1,9 @@
+"""Assemble a ``RepositoryContainer`` backed by PostgreSQL."""
+
 from __future__ import annotations
 
 from agent_trading.db.transaction import TransactionManager
 from agent_trading.repositories.container import RepositoryContainer
-from agent_trading.repositories.memory import (
-    InMemoryCashBalanceSnapshotRepository,
-    InMemoryPositionSnapshotRepository,
-)
 from agent_trading.repositories.postgres.accounts import PostgresAccountRepository
 from agent_trading.repositories.postgres.audit_logs import PostgresAuditLogRepository
 from agent_trading.repositories.postgres.broker_accounts import (
@@ -14,12 +12,18 @@ from agent_trading.repositories.postgres.broker_accounts import (
 from agent_trading.repositories.postgres.broker_orders import (
     PostgresBrokerOrderRepository,
 )
+from agent_trading.repositories.postgres.cash_balance_snapshots import (
+    PostgresCashBalanceSnapshotRepository,
+)
 from agent_trading.repositories.postgres.clients import PostgresClientRepository
 from agent_trading.repositories.postgres.config_versions import (
     PostgresConfigVersionRepository,
 )
 from agent_trading.repositories.postgres.decision_contexts import (
     PostgresDecisionContextRepository,
+)
+from agent_trading.repositories.postgres.external_events import (
+    PostgresExternalEventRepository,
 )
 from agent_trading.repositories.postgres.fill_events import (
     PostgresFillEventRepository,
@@ -33,10 +37,10 @@ from agent_trading.repositories.postgres.instruments import (
 from agent_trading.repositories.postgres.order_state_events import (
     PostgresOrderStateEventRepository,
 )
-from agent_trading.repositories.postgres.external_events import (
-    PostgresExternalEventRepository,
-)
 from agent_trading.repositories.postgres.orders import PostgresOrderRepository
+from agent_trading.repositories.postgres.position_snapshots import (
+    PostgresPositionSnapshotRepository,
+)
 from agent_trading.repositories.postgres.reconciliation import (
     PostgresReconciliationRepository,
 )
@@ -72,7 +76,8 @@ def build_postgres_repositories(
         ``strategies``, ``config_versions``, ``decision_contexts``,
         ``instruments``, ``orders``, ``audit_logs``, ``broker_orders``,
         ``fill_events``, ``order_state_events``, ``guardrail_evaluations``,
-        ``risk_limit_snapshots``, and ``reconciliations`` are backed by
+        ``risk_limit_snapshots``, ``position_snapshots``,
+        ``cash_balance_snapshots``, and ``reconciliations`` are backed by
         PostgreSQL.
     """
     return RepositoryContainer(
@@ -83,8 +88,8 @@ def build_postgres_repositories(
         config_versions=PostgresConfigVersionRepository(tx),
         instruments=PostgresInstrumentRepository(tx),
         decision_contexts=PostgresDecisionContextRepository(tx),
-        position_snapshots=InMemoryPositionSnapshotRepository(),
-        cash_balance_snapshots=InMemoryCashBalanceSnapshotRepository(),
+        position_snapshots=PostgresPositionSnapshotRepository(tx),
+        cash_balance_snapshots=PostgresCashBalanceSnapshotRepository(tx),
         trade_decisions=PostgresTradeDecisionRepository(tx),
         orders=PostgresOrderRepository(tx),
         broker_orders=PostgresBrokerOrderRepository(tx),

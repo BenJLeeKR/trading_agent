@@ -487,6 +487,139 @@ class TestAIRiskAgent:
         # Verify EI content is NOT in the prompt
         assert "Event Interpretation" not in user_prompt
 
+    @pytest.mark.asyncio
+    async def test_run_with_position_cash_risk_in_prompt(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """Position, cash, and risk limit snapshots in context add sections to the prompt."""
+        from datetime import datetime, timezone
+        from decimal import Decimal
+        from unittest.mock import AsyncMock
+        from uuid import uuid4
+
+        from agent_trading.domain.entities import (
+            CashBalanceSnapshotEntity,
+            PositionSnapshotEntity,
+            RiskLimitSnapshotEntity,
+        )
+        from agent_trading.services.decision_orchestrator import AssembledContext
+
+        provider = AsyncMock(spec=AIProviderClient)
+        captured_kwargs: dict[str, object] = {}
+
+        async def _generate(**kwargs: object) -> RawProviderResponse:
+            captured_kwargs.update(kwargs)
+            return RawProviderResponse(
+                parsed=AIRiskOutput(
+                    symbol="TEST",
+                    proposed_side="buy",
+                    risk_opinion="allow",
+                ),
+                raw_content='{"symbol": "TEST"}',
+            )
+
+        provider.generate_structured = _generate  # type: ignore[method-assign]
+
+        now = datetime.now(timezone.utc)
+        pos = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            instrument_id=uuid4(),
+            quantity=Decimal("50"),
+            average_price=Decimal("100.00"),
+            market_price=Decimal("105.00"),
+            unrealized_pnl=Decimal("250.00"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        cash = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            currency="KRW",
+            available_cash=Decimal("5000000"),
+            settled_cash=Decimal("3000000"),
+            unsettled_cash=Decimal("2000000"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        rl = RiskLimitSnapshotEntity(
+            risk_limit_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            snapshot_at=now,
+            kill_switch_active=False,
+            drawdown_state="normal",
+            daily_loss_used_pct=Decimal("15.0"),
+            max_daily_loss_limit_pct=Decimal("20.0"),
+            gross_exposure_pct=Decimal("45.0"),
+        )
+
+        context = AssembledContext(
+            position_snapshot=pos,
+            cash_balance_snapshot=cash,
+            risk_limit_snapshot=rl,
+        )
+        request = AgentExecutionRequest(
+            decision_context_id=sample_request.decision_context_id,
+            correlation_id=sample_request.correlation_id,
+            context=context,
+        )
+
+        agent = AIRiskAgent(provider_client=provider)
+        await agent.run(request)
+
+        user_prompt = str(captured_kwargs.get("user_prompt", ""))
+        # Verify position section
+        assert "Current Position" in user_prompt
+        assert "Quantity: 50" in user_prompt
+        assert "Average price: 100.00" in user_prompt
+        assert "Market price: 105.00" in user_prompt
+        assert "Unrealised P&L: 250.00" in user_prompt
+        # Verify cash section
+        assert "Cash Balance" in user_prompt
+        assert "Available cash: 5000000" in user_prompt
+        assert "Settled cash: 3000000" in user_prompt
+        # Verify risk limit section
+        assert "Risk Limit State" in user_prompt
+        assert "Kill switch active: False" in user_prompt
+        assert "Drawdown state: normal" in user_prompt
+        assert "Daily loss: 15.0% / 20.0% limit" in user_prompt
+        assert "Gross exposure: 45.0%" in user_prompt
+
+    @pytest.mark.asyncio
+    async def test_run_without_position_cash_risk(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """Without position/cash/risk_limit snapshots, prompt does not contain those sections."""
+        from unittest.mock import AsyncMock
+
+        provider = AsyncMock(spec=AIProviderClient)
+        captured_kwargs: dict[str, object] = {}
+
+        async def _generate(**kwargs: object) -> RawProviderResponse:
+            captured_kwargs.update(kwargs)
+            return RawProviderResponse(
+                parsed=AIRiskOutput(
+                    symbol="TEST",
+                    proposed_side="buy",
+                    risk_opinion="allow",
+                ),
+                raw_content='{"symbol": "TEST"}',
+            )
+
+        provider.generate_structured = _generate  # type: ignore[method-assign]
+
+        # Use sample request with empty AssembledContext (no snapshots)
+        agent = AIRiskAgent(provider_client=provider)
+        await agent.run(sample_request)
+
+        user_prompt = str(captured_kwargs.get("user_prompt", ""))
+        # Verify new snapshot sections are NOT present
+        assert "Current Position" not in user_prompt
+        assert "Cash Balance" not in user_prompt
+        assert "Risk Limit State" not in user_prompt
+
 
 # ---------------------------------------------------------------------------
 # StubFinalDecisionComposerAgent

@@ -147,12 +147,18 @@ class PositionSnapshotRepository(Protocol):
     async def add(self, snapshot: PositionSnapshotEntity) -> PositionSnapshotEntity:
         ...
 
+    async def get(self, position_snapshot_id: UUID) -> PositionSnapshotEntity | None:
+        ...
+
     async def list_latest_by_account(self, account_id: UUID) -> Sequence[PositionSnapshotEntity]:
         ...
 
 
 class CashBalanceSnapshotRepository(Protocol):
     async def add(self, snapshot: CashBalanceSnapshotEntity) -> CashBalanceSnapshotEntity:
+        ...
+
+    async def get(self, cash_balance_snapshot_id: UUID) -> CashBalanceSnapshotEntity | None:
         ...
 
     async def get_latest_by_account(self, account_id: UUID) -> CashBalanceSnapshotEntity | None:

@@ -218,6 +218,9 @@ class InMemoryPositionSnapshotRepository:
         self._items[snapshot.position_snapshot_id] = snapshot
         return snapshot
 
+    async def get(self, position_snapshot_id: UUID) -> PositionSnapshotEntity | None:
+        return self._items.get(position_snapshot_id)
+
     async def list_latest_by_account(self, account_id: UUID) -> Sequence[PositionSnapshotEntity]:
         results = [item for item in self._items.values() if item.account_id == account_id]
         results.sort(key=lambda item: item.snapshot_at, reverse=True)
@@ -231,6 +234,9 @@ class InMemoryCashBalanceSnapshotRepository:
     async def add(self, snapshot: CashBalanceSnapshotEntity) -> CashBalanceSnapshotEntity:
         self._items[snapshot.cash_balance_snapshot_id] = snapshot
         return snapshot
+
+    async def get(self, cash_balance_snapshot_id: UUID) -> CashBalanceSnapshotEntity | None:
+        return self._items.get(cash_balance_snapshot_id)
 
     async def get_latest_by_account(self, account_id: UUID) -> CashBalanceSnapshotEntity | None:
         results = [item for item in self._items.values() if item.account_id == account_id]

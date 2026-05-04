@@ -284,6 +284,56 @@ class AIRiskAgent:
         if dc:
             lines.append(f"Decision context account_id: {dc.account_id}")
 
+        # === Position snapshot summary (if available) ===
+        pos = context.position_snapshot
+        if pos is not None:
+            lines.append("")
+            lines.append("=== Current Position (this symbol) ===")
+            lines.append(f"  Quantity: {pos.quantity}")
+            lines.append(f"  Average price: {pos.average_price}")
+            if pos.market_price is not None:
+                lines.append(f"  Market price: {pos.market_price}")
+            if pos.unrealized_pnl is not None:
+                lines.append(f"  Unrealised P&L: {pos.unrealized_pnl}")
+        # ==================================================
+
+        # === Cash balance snapshot summary (if available) ===
+        cash = context.cash_balance_snapshot
+        if cash is not None:
+            lines.append("")
+            lines.append("=== Cash Balance ===")
+            lines.append(f"  Available cash: {cash.available_cash}")
+            lines.append(f"  Currency: {cash.currency}")
+            if cash.settled_cash is not None:
+                lines.append(f"  Settled cash: {cash.settled_cash}")
+            if cash.unsettled_cash is not None:
+                lines.append(f"  Unsettled cash: {cash.unsettled_cash}")
+        # ==================================================
+
+        # === Risk limit snapshot summary (if available) ===
+        rl = context.risk_limit_snapshot
+        if rl is not None:
+            lines.append("")
+            lines.append("=== Risk Limit State ===")
+            lines.append(f"  Kill switch active: {rl.kill_switch_active}")
+            if rl.drawdown_state:
+                lines.append(f"  Drawdown state: {rl.drawdown_state}")
+            if rl.blocked_reason_codes:
+                lines.append(
+                    "  Blocked reason codes: "
+                    f"{', '.join(rl.blocked_reason_codes)}"
+                )
+            if rl.daily_loss_used_pct is not None and rl.max_daily_loss_limit_pct is not None:
+                lines.append(
+                    f"  Daily loss: {rl.daily_loss_used_pct}% / "
+                    f"{rl.max_daily_loss_limit_pct}% limit"
+                )
+            if rl.gross_exposure_pct is not None:
+                lines.append(f"  Gross exposure: {rl.gross_exposure_pct}%")
+            if rl.net_exposure_pct is not None:
+                lines.append(f"  Net exposure: {rl.net_exposure_pct}%")
+        # ==================================================
+
         lines.append(f"Recent events ({len(events)}):")
         for e in events[:20]:
             headline = e.headline or "(no headline)"
