@@ -51,6 +51,8 @@
 | 31 | [`31_ai_risk_input_expansion.md`](./31_ai_risk_input_expansion.md) | AIRiskAgent input expansion: richer deterministic account/risk context (position, cash, risk_limit snapshots) + PG repos + prompt summaries |
 | 32 | [`32_ai_broker_boundary_pre_submit_verification.md`](./32_ai_broker_boundary_pre_submit_verification.md) | AI-Broker Pre-Submit Safety Boundary Verification: AI layer가 execution boundary를 우회하지 않음을 테스트로 증명 |
 | 33 | [`33_post_submit_reconciliation_boundary.md`](./33_post_submit_reconciliation_boundary.md) | Post-Submit Unknown State / Reconciliation Boundary Verification: submit 이후 ambiguous/unknown 상태에서 reconciliation-first 원칙 검증 + event loop dedup bug fix |
+| 34 | [`34_reconcile_required_fill_transition_policy.md`](./34_reconcile_required_fill_transition_policy.md) | RECONCILE_REQUIRED → FILLED 차단 정책: WS fill notification 중 optimistic state progression 방지. Fill data 보존, state는 reconciliation까지 hold. State machine hard boundary + event loop explicit guard. |
+| 35 | [`35_reconciliation_authoritative_state_reflection.md`](./35_reconciliation_authoritative_state_reflection.md) | Reconciliation Authoritative State Reflection: broker inquiry 결과를 local order state에 안전하게 반영. `transition_to_authoritative()` 전용 경로로 `_ALLOWED_TRANSITIONS` 불변 유지. 실패 시 `reflection_failed` + lock 유지. |
 
 ## 빠른 추천 경로
 
@@ -67,6 +69,11 @@
 9. [`28_real_final_decision_composer_agent.md`](./28_real_final_decision_composer_agent.md)
 10. [`29_ai_decision_backend_contract.md`](./29_ai_decision_backend_contract.md)
 11. [`30_runtime_three_agent_smoke.md`](./30_runtime_three_agent_smoke.md)
+12. [`31_ai_risk_input_expansion.md`](./31_ai_risk_input_expansion.md)
+13. [`32_ai_broker_boundary_pre_submit_verification.md`](./32_ai_broker_boundary_pre_submit_verification.md)
+14. [`33_post_submit_reconciliation_boundary.md`](./33_post_submit_reconciliation_boundary.md)
+15. [`34_reconcile_required_fill_transition_policy.md`](./34_reconcile_required_fill_transition_policy.md)
+16. [`35_reconciliation_authoritative_state_reflection.md`](./35_reconciliation_authoritative_state_reflection.md)
 
 ### AI Agent / Provider 연결 흐름만 보기
 
@@ -93,3 +100,5 @@
 6. [`17.fix_audit_log_ordering_plan.md`](./17.fix_audit_log_ordering_plan.md)
 7. [`32_ai_broker_boundary_pre_submit_verification.md`](./32_ai_broker_boundary_pre_submit_verification.md)
 8. [`33_post_submit_reconciliation_boundary.md`](./33_post_submit_reconciliation_boundary.md)
+9. [`34_reconcile_required_fill_transition_policy.md`](./34_reconcile_required_fill_transition_policy.md)
+10. [`35_reconciliation_authoritative_state_reflection.md`](./35_reconciliation_authoritative_state_reflection.md)

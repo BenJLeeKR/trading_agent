@@ -204,50 +204,29 @@
 
 ## 6. Known Gap Characterization Test
 
-### 6.1 Test B: `test_ws_full_fill_on_reconcile_required_currently_allowed_known_gap`
+### 6.1 Test B: RECONCILE_REQUIRED → FILLED 차단 정책 (Plan 34)
 
-**분류**: Known gap characterization (NOT a safety boundary verification)
+> **⚠️ Plan 34에서 해결됨**: 이 known gap은 [`34_reconcile_required_fill_transition_policy.md`](./34_reconcile_required_fill_transition_policy.md)에서 해결되었다.
+
+**분류**: ~~Known gap characterization~~ → **Safety boundary verification** (Plan 34에서 전환)
 
 **위치**: [`tests/services/test_unknown_state_reconciliation_boundary.py`](tests/services/test_unknown_state_reconciliation_boundary.py)
 
-**목적**: **현재 state machine의 동작을 사실 그대로 기록한다.** `_ALLOWED_TRANSITIONS[RECONCILE_REQUIRED]`는 `FILLED`를 포함한다. 즉, WS full fill notification이 도착하면 `transition_to(FILLED)`가 **성공한다**. 이는 reconciliation-first 원칙의 이상적인 목표 상태가 아니라, **현재 state machine이 허용하는 current behavior**다.
+**클래스**: `TestWsFullFillOnReconcileRequiredFillDataPreservedStateHeld`
 
-**이 테스트가 verification이 아닌 characterization인 이유**:
-- 이 테스트는 "안전한 동작"을 검증하는 것이 아니다
-- 현재 `_ALLOWED_TRANSITIONS`가 RECONCILE_REQUIRED → FILLED를 허용하는 사실을 기록한다
-- 이는 production-safe barrier가 아닌, production 코드에 존재하는 **gap**을 드러낸다
-- 이번 Plan에서는 production 코드를 변경하지 않고, 이 gap을 테스트로 고정(freeze)하여 후속 작업에서 재검토할 수 있도록 한다
+**Plan 34 변경 사항**:
+- `_ALLOWED_TRANSITIONS[RECONCILE_REQUIRED]`에서 `FILLED` **제거됨** — state machine hard boundary
+- `_handle_fill_notification()`에 **RECONCILE_REQUIRED guard** 추가 — event loop explicit guard
+- Fill data(ExternalEvent + FillEvent)는 보존, order state만 RECONCILE_REQUIRED 유지
+- 두 계층 보호: exception-as-control-flow 방지 + 모든 미래 경로 차단
 
-**시나리오**:
-```
-1. Order를 RECONCILE_REQUIRED 상태로 설정
-2. WS full fill notification 시뮬레이션 (filled_qty=10, order_qty=10)
-3. _resolve_fill_status() → FILLED 반환
-4. transition_to(RECONCILE_REQUIRED → FILLED) → 성공 (예외 없음)
-5. Order 상태가 FILLED로 변경됨
-```
-
-**검증 포인트**:
-- `mock_order_manager.transition_to`가 `FILLED`로 호출됨
-- 전이 성공 — 예외 발생하지 않음
-- (이 결과가 "안전함"을 의미하지 않음 — 단지 현재 동작을 기록)
-
-**Known Gap 문서화 (테스트 코드 내):**
-```python
-# KNOWN GAP CHARACTERIZATION — NOT a safety verification.
-#
-# Current behavior:
-#   RECONCILE_REQUIRED → FILLED is ALLOWED by _ALLOWED_TRANSITIONS.
-#   This means a WS fill notification can bypass the reconciliation flow.
-#
-# Why this is a gap:
-#   If reconciliation would determine a different outcome (e.g. CANCELLED),
-#   the order state would be inconsistent until reconciliation is re-triggered.
-#
-# This test FREEZES the current behavior for documentation purposes.
-# It does NOT assert that this behavior is safe.
-# Future work should revisit the transition policy for RECONCILE_REQUIRED.
-```
+**변경된 테스트**:
+| 변경 전 (Plan 33) | 변경 후 (Plan 34) |
+|---|---|
+| `TestWsFullFillOnReconcileRequiredCurrentlyAllowedKnownGap` | `TestWsFullFillOnReconcileRequiredFillDataPreservedStateHeld` |
+| `test_full_fill_transition_from_reconcile_required_succeeds` | `test_reconcile_required_to_filled_state_machine_blocked` |
+| `test_event_loop_full_fill_on_reconcile_required_allowed` | `test_ws_full_fill_on_reconcile_required_data_preserved_state_held` |
+| 신규 | `test_ws_partial_fill_on_reconcile_required_data_preserved_state_held` |
 
 ---
 

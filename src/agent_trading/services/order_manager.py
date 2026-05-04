@@ -89,7 +89,11 @@ _ALLOWED_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
     },
     OrderStatus.RECONCILE_REQUIRED: {
         OrderStatus.ACKNOWLEDGED,
-        OrderStatus.FILLED,
+        # FILLED intentionally removed — a fill notification during
+        # reconciliation must NOT optimistically progress the order state.
+        # Fill data is preserved (ExternalEvent + FillEvent), but the
+        # order stays in RECONCILE_REQUIRED until reconciliation resolves.
+        # See plans/34_reconcile_required_fill_transition_policy.md
         OrderStatus.CANCELLED,
         OrderStatus.REJECTED,
         OrderStatus.EXPIRED,
@@ -99,6 +103,16 @@ _ALLOWED_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
 _TERMINAL_STATES: frozenset[OrderStatus] = frozenset(
     {
         OrderStatus.FILLED,
+        OrderStatus.CANCELLED,
+        OrderStatus.REJECTED,
+        OrderStatus.EXPIRED,
+    }
+)
+
+_AUTHORITATIVE_REFLECTION_TARGETS: frozenset[OrderStatus] = frozenset(
+    {
+        OrderStatus.FILLED,
+        OrderStatus.ACKNOWLEDGED,
         OrderStatus.CANCELLED,
         OrderStatus.REJECTED,
         OrderStatus.EXPIRED,
@@ -125,6 +139,21 @@ def _validate_transition(
             order_request_id,
             current_status,
             target_status,
+        )
+
+
+def _validate_authoritative_target(target_status: OrderStatus) -> None:
+    """Validate that ``target_status`` is in the authoritative reflection set.
+
+    Raises
+    ------
+    ValueError
+        If ``target_status`` is not in ``_AUTHORITATIVE_REFLECTION_TARGETS``.
+    """
+    if target_status not in _AUTHORITATIVE_REFLECTION_TARGETS:
+        raise ValueError(
+            f"{target_status.value} is not a valid authoritative reflection target. "
+            f"Allowed: {', '.join(s.value for s in _AUTHORITATIVE_REFLECTION_TARGETS)}"
         )
 
 
@@ -443,14 +472,12 @@ class OrderManager:
     ) -> OrderRequestEntity:
         """Validate and persist a state transition with optimistic locking.
 
-        The order must already exist in the repository (added via
-        ``create_order`` or ``repos.orders.add()``).
+        Enforces ``_ALLOWED_TRANSITIONS`` via ``_validate_transition()``.
+        This is the standard path for all regular callers (event loop,
+        broker response handlers, etc.).
 
-        If a ``VersionConflictError`` is raised by the repository, the
-        method re-fetches the latest order state and retries the
-        ``update_status`` call.  The audit-log entry (status change) is
-        recorded **once** outside the retry loop to avoid duplicate
-        audit entries.
+        For reconciliation authoritative reflection, use
+        ``transition_to_authoritative()`` instead.
 
         Parameters
         ----------
@@ -473,7 +500,96 @@ class OrderManager:
             A new entity reflecting the updated status.
         """
         _validate_transition(order.order_request_id, order.status, target_status)
+        return await self._transition_to_core(
+            order,
+            target_status,
+            reason_code=reason_code,
+            reason_message=reason_message,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+        )
 
+    async def transition_to_authoritative(
+        self,
+        order: OrderRequestEntity,
+        target_status: OrderStatus,
+        *,
+        reconciliation_run_id: UUID,
+        reason_message: str | None = None,
+        max_retries: int = 3,
+        retry_delay: float = 0.05,
+    ) -> OrderRequestEntity:
+        """Authoritative state reflection for reconciliation path ONLY.
+
+        This method is EXCLUSIVELY for use by ReconciliationService when
+        a broker inquiry has resolved an unknown order state.
+
+        Design rationale
+        ----------------
+        This method deliberately SKIPS ``_validate_transition()`` because
+        the transition is driven by the broker's authoritative inquiry
+        response, NOT by an optimistic WS fill.  The regular state machine
+        (``_ALLOWED_TRANSITIONS``) remains conservative — Plan 34's hard
+        boundary is preserved for all other callers.
+
+        All other safeguards are preserved:
+        * Optimistic locking with retry
+        * Audit log entry (status_change) with actor="reconciliation_service"
+        * Order state event (append-only) with reason_code="RECONCILE_RESOLVED"
+        * Terminal state detection on version conflict
+
+        Parameters
+        ----------
+        reconciliation_run_id : UUID
+            The reconciliation run driving this reflection.  Included in
+            audit/log for full traceability.
+        """
+        _validate_authoritative_target(target_status)
+
+        # Terminal state check (same safeguard as transition_to).
+        if order.status in _TERMINAL_STATES:
+            raise InvalidStateTransitionError(
+                order.order_request_id,
+                order.status,
+                target_status,
+                reason=f"Cannot transition from terminal state {order.status.value}",
+            )
+
+        return await self._transition_to_core(
+            order,
+            target_status,
+            reason_code="RECONCILE_RESOLVED",
+            reason_message=reason_message or (
+                f"Reconciliation authoritative reflection: "
+                f"run_id={reconciliation_run_id}, broker returned {target_status.value}"
+            ),
+            actor_type="system",
+            actor_id="reconciliation_service",
+            max_retries=max_retries,
+            retry_delay=retry_delay,
+        )
+
+    async def _transition_to_core(
+        self,
+        order: OrderRequestEntity,
+        target_status: OrderStatus,
+        *,
+        reason_code: str | None = None,
+        reason_message: str | None = None,
+        actor_type: str = "system",
+        actor_id: str = "order_manager",
+        max_retries: int = 3,
+        retry_delay: float = 0.05,
+    ) -> OrderRequestEntity:
+        """Shared core: optimistic locking retry + audit + order_state_event.
+
+        This is the extracted inner logic of ``transition_to()``, shared
+        with ``transition_to_authoritative()`` to avoid code duplication.
+        Callers MUST perform their own pre-transition validation before
+        calling this method.
+        """
         before = order
         after = _replace_status(
             order, target_status, reason_code=reason_code, reason_message=reason_message

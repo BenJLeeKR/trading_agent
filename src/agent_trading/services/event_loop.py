@@ -309,6 +309,21 @@ class RealTimeEventLoop:
         )
         await self._fill_repo.add(fill_event)
 
+        # --- Guard: block optimistic state progression during reconciliation ---
+        # Fill data (ExternalEvent + FillEvent) is already persisted above.
+        # If the order is in RECONCILE_REQUIRED, we hold the state progression
+        # until reconciliation resolves the authoritative result.
+        # See plans/34_reconcile_required_fill_transition_policy.md
+        if order_entity.status == OrderStatus.RECONCILE_REQUIRED:
+            logger.warning(
+                "Fill notification preserved for order %s — "
+                "order is in RECONCILE_REQUIRED state. "
+                "Fill data persisted, state progression held "
+                "until reconciliation resolves.",
+                order_entity.order_request_id,
+            )
+            return
+
         # --- Route order state change through OrderManager ---
         order_qty = _safe_decimal(order_qty_str)
         target_status = _resolve_fill_status(fill_qty, order_qty)

@@ -96,6 +96,7 @@ class ReconciliationStatus(str, Enum):
     IN_PROGRESS = "in_progress"
     RESOLVED = "resolved"
     ESCALATED = "escalated"
+    REFLECTION_FAILED = "reflection_failed"
 
 
 class DecisionType(str, Enum):

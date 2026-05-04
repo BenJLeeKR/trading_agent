@@ -166,13 +166,14 @@ class TestAllowedTransitions:
         assert result.status == OrderStatus.ACKNOWLEDGED
 
     @pytest.mark.asyncio
-    async def test_reconcile_required_to_filled(
+    async def test_reconcile_required_to_filled_blocked(
         self, order_manager: OrderManager, in_memory_repos: RepositoryContainer
     ) -> None:
+        """RECONCILE_REQUIRED → FILLED is now blocked (Plan 34)."""
         order = _make_order(OrderStatus.RECONCILE_REQUIRED)
         await in_memory_repos.orders.add(order)
-        result = await order_manager.transition_to(order, OrderStatus.FILLED)
-        assert result.status == OrderStatus.FILLED
+        with pytest.raises(InvalidStateTransitionError):
+            await order_manager.transition_to(order, OrderStatus.FILLED)
 
     @pytest.mark.asyncio
     async def test_reconcile_required_to_cancelled(
@@ -300,3 +301,94 @@ class TestForbiddenTransitions:
                     continue
                 with pytest.raises(InvalidStateTransitionError):
                     await order_manager.transition_to(order, target)
+
+
+# ---------------------------------------------------------------------------
+# Authoritative transitions (Plan 35)
+# ---------------------------------------------------------------------------
+
+
+class TestAuthoritativeTransitions:
+    """Authoritative transitions allowed ONLY via transition_to_authoritative().
+
+    Plan 35 introduces a dedicated method for reconciliation-driven state
+    reflection.  These tests verify that:
+    * ``transition_to_authoritative()`` allows RECONCILE_REQUIRED → FILLED
+    * ``transition_to()`` still blocks this transition (Plan 34 preserved)
+    * PARTIALLY_FILLED is rejected by the authoritative path
+    * Audit trail is correctly recorded (order_state_event)
+    """
+
+    @pytest.mark.asyncio
+    async def test_reconcile_required_to_filled_authoritative(
+        self, order_manager: OrderManager, in_memory_repos: RepositoryContainer
+    ) -> None:
+        """transition_to_authoritative() allows RECONCILE_REQUIRED → FILLED."""
+        order = _make_order(OrderStatus.RECONCILE_REQUIRED)
+        await in_memory_repos.orders.add(order)
+        result = await order_manager.transition_to_authoritative(
+            order, OrderStatus.FILLED,
+            reconciliation_run_id=uuid4(),
+        )
+        assert result.status == OrderStatus.FILLED
+
+    @pytest.mark.asyncio
+    async def test_regular_transition_to_filled_still_blocked(
+        self, order_manager: OrderManager, in_memory_repos: RepositoryContainer
+    ) -> None:
+        """transition_to() still blocks RECONCILE_REQUIRED → FILLED (Plan 34)."""
+        order = _make_order(OrderStatus.RECONCILE_REQUIRED)
+        await in_memory_repos.orders.add(order)
+        with pytest.raises(InvalidStateTransitionError):
+            await order_manager.transition_to(order, OrderStatus.FILLED)
+
+    @pytest.mark.asyncio
+    async def test_authoritative_rejects_partially_filled(
+        self, order_manager: OrderManager, in_memory_repos: RepositoryContainer
+    ) -> None:
+        """transition_to_authoritative() rejects PARTIALLY_FILLED."""
+        order = _make_order(OrderStatus.RECONCILE_REQUIRED)
+        await in_memory_repos.orders.add(order)
+        with pytest.raises(ValueError, match="not a valid authoritative reflection target"):
+            await order_manager.transition_to_authoritative(
+                order, OrderStatus.PARTIALLY_FILLED,
+                reconciliation_run_id=uuid4(),
+            )
+
+    @pytest.mark.asyncio
+    async def test_authoritative_preserves_audit_trail(
+        self, order_manager: OrderManager, in_memory_repos: RepositoryContainer
+    ) -> None:
+        """transition_to_authoritative() records audit + order_state_event."""
+        order = _make_order(OrderStatus.RECONCILE_REQUIRED)
+        await in_memory_repos.orders.add(order)
+        result = await order_manager.transition_to_authoritative(
+            order, OrderStatus.FILLED,
+            reconciliation_run_id=uuid4(),
+        )
+        assert result.status == OrderStatus.FILLED
+
+        # Verify order_state_event was recorded.
+        events = await in_memory_repos.order_state_events.list_by_order_request(
+            order.order_request_id,
+        )
+        assert len(events) >= 1
+        assert events[-1].new_status == OrderStatus.FILLED
+        assert events[-1].reason_code == "RECONCILE_RESOLVED"
+
+    @pytest.mark.asyncio
+    async def test_authoritative_rejects_terminal_state(
+        self, order_manager: OrderManager, in_memory_repos: RepositoryContainer
+    ) -> None:
+        """transition_to_authoritative() raises InvalidStateTransitionError
+        with correct current_status/target_status for terminal-state orders."""
+        order = _make_order(OrderStatus.FILLED)
+        await in_memory_repos.orders.add(order)
+        with pytest.raises(InvalidStateTransitionError) as exc_info:
+            await order_manager.transition_to_authoritative(
+                order, OrderStatus.CANCELLED,
+                reconciliation_run_id=uuid4(),
+            )
+        exc = exc_info.value
+        assert exc.current_status == OrderStatus.FILLED
+        assert exc.target_status == OrderStatus.CANCELLED

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -33,6 +33,7 @@ from agent_trading.domain.entities import (
     FillEventEntity,
     ExternalEventEntity,
     OrderRequestEntity,
+    ReconciliationRunEntity,
 )
 from agent_trading.domain.enums import (
     BrokerName,
@@ -545,6 +546,216 @@ class TestResolveAndMarkUnblocksSubmission:
         )
         assert locked_after is False
 
+    # ------------------------------------------------------------------
+    # Plan 35: Authoritative state reflection via resolve_and_mark()
+    # ------------------------------------------------------------------
+
+    async def test_resolve_and_mark_reflects_authoritative_state(
+        self,
+        repos,
+        manager: OrderManager,
+        reconciliation_service: ReconciliationService,
+        mock_broker: BrokerAdapter,
+        sample_order,
+        submit_request: SubmitOrderRequest,
+    ) -> None:
+        """resolve_and_mark() with order_manager reflects order state."""
+        # --- Step 1: Submit with uncertain result ---
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="test-001",
+            broker_order_id=None,
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=datetime.now(timezone.utc),
+            raw_code="TIMEOUT",
+            raw_message="Response timeout",
+            uncertain=True,
+            requires_reconciliation=False,
+        )
+        result = await manager.submit_order_to_broker(
+            sample_order, mock_broker, submit_request
+        )
+        assert result.status == OrderStatus.RECONCILE_REQUIRED
+
+        active_run = await reconciliation_service.get_active_run(
+            sample_order.account_id
+        )
+        assert active_run is not None
+        assert active_run.status == "started"
+
+        # --- Step 2: Broker inquiry returns ACKNOWLEDGED ---
+        mock_broker.resolve_unknown_state.return_value = OrderStatusResult(
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="test-001",
+            broker_order_id="BRK-001",
+            status=OrderStatus.ACKNOWLEDGED,
+        )
+
+        # --- Step 3: resolve_and_mark with order_manager ---
+        await reconciliation_service.resolve_and_mark(
+            reconciliation_run_id=active_run.reconciliation_run_id,
+            account_ref="test_account",
+            broker=mock_broker,
+            client_order_id="test-001",
+            order_manager=manager,
+        )
+
+        # --- Step 4: Order state reflected ---
+        updated = await repos.orders.get(sample_order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.ACKNOWLEDGED, (
+            f"Expected order state reflected to ACKNOWLEDGED, "
+            f"got {updated.status}"
+        )
+
+        # --- Step 5: Reconciliation run resolved ---
+        resolved_run = await repos.reconciliations.get_run(
+            active_run.reconciliation_run_id
+        )
+        assert resolved_run is not None
+        assert resolved_run.status == "resolved"
+
+    async def test_resolve_and_mark_preserves_audit_trail(
+        self,
+        repos,
+        manager: OrderManager,
+        reconciliation_service: ReconciliationService,
+        mock_broker: BrokerAdapter,
+        sample_order,
+        submit_request: SubmitOrderRequest,
+    ) -> None:
+        """State reflection produces order_state_event with reason_code='RECONCILE_RESOLVED'."""
+        # --- Step 1: Submit with uncertain result ---
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="test-001",
+            broker_order_id=None,
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=datetime.now(timezone.utc),
+            raw_code="TIMEOUT",
+            raw_message="Response timeout",
+            uncertain=True,
+            requires_reconciliation=False,
+        )
+        await manager.submit_order_to_broker(
+            sample_order, mock_broker, submit_request
+        )
+
+        active_run = await reconciliation_service.get_active_run(
+            sample_order.account_id
+        )
+        assert active_run is not None
+
+        # --- Step 2: Broker returns FILLED ---
+        mock_broker.resolve_unknown_state.return_value = OrderStatusResult(
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="test-001",
+            broker_order_id="BRK-001",
+            status=OrderStatus.FILLED,
+        )
+
+        # --- Step 3: resolve_and_mark with order_manager ---
+        await reconciliation_service.resolve_and_mark(
+            reconciliation_run_id=active_run.reconciliation_run_id,
+            account_ref="test_account",
+            broker=mock_broker,
+            client_order_id="test-001",
+            order_manager=manager,
+        )
+
+        # --- Step 4: Verify order_state_event ---
+        events = await repos.order_state_events.list_by_order_request(
+            sample_order.order_request_id
+        )
+        assert len(events) >= 1
+        assert events[-1].reason_code == "RECONCILE_RESOLVED"
+        assert events[-1].new_status == OrderStatus.FILLED
+
+    async def test_resolve_and_mark_handles_unresolved_status(
+        self,
+        repos,
+        manager: OrderManager,
+        reconciliation_service: ReconciliationService,
+        mock_broker: BrokerAdapter,
+        sample_order,
+        submit_request: SubmitOrderRequest,
+    ) -> None:
+        """Ambiguous broker status -> run stays started, lock stays held."""
+        # --- Step 1: Submit with uncertain result ---
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="test-001",
+            broker_order_id=None,
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=datetime.now(timezone.utc),
+            raw_code="TIMEOUT",
+            raw_message="Response timeout",
+            uncertain=True,
+            requires_reconciliation=False,
+        )
+        await manager.submit_order_to_broker(
+            sample_order, mock_broker, submit_request
+        )
+
+        active_run = await reconciliation_service.get_active_run(
+            sample_order.account_id
+        )
+        assert active_run is not None
+        assert active_run.status == "started"
+
+        # Lock is held
+        locked = await reconciliation_service.is_blocked(
+            account_id=sample_order.account_id,
+            symbol=submit_request.symbol,
+            side=submit_request.side.value,
+        )
+        assert locked is True
+
+        # --- Step 2: Broker returns RECONCILE_REQUIRED (ambiguous) ---
+        mock_broker.resolve_unknown_state.return_value = OrderStatusResult(
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="test-001",
+            broker_order_id=None,
+            status=OrderStatus.RECONCILE_REQUIRED,
+        )
+
+        # --- Step 3: resolve_and_mark with order_manager ---
+        await reconciliation_service.resolve_and_mark(
+            reconciliation_run_id=active_run.reconciliation_run_id,
+            account_ref="test_account",
+            broker=mock_broker,
+            client_order_id="test-001",
+            order_manager=manager,
+        )
+
+        # --- Step 4: Run still "started" ---
+        run_after = await repos.reconciliations.get_run(
+            active_run.reconciliation_run_id
+        )
+        assert run_after is not None
+        assert run_after.status == "started", (
+            f"Expected run status 'started' for ambiguous broker result, "
+            f"got '{run_after.status}'"
+        )
+
+        # --- Step 5: Lock still held ---
+        locked_after = await reconciliation_service.is_blocked(
+            account_id=sample_order.account_id,
+            symbol=submit_request.symbol,
+            side=submit_request.side.value,
+        )
+        assert locked_after is True, (
+            "Expected lock to remain held when broker returns ambiguous status"
+        )
+
+        # --- Step 6: Order state NOT transitioned ---
+        updated = await repos.orders.get(sample_order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.RECONCILE_REQUIRED
+
 
 class TestUnknownStateLifecycleOrderAuditAndReconciliationState:
     """Test E: Order audit entries and reconciliation state for unknown-state lifecycle.
@@ -682,89 +893,503 @@ class TestUnknownStateLifecycleOrderAuditAndReconciliationState:
 
 
 # ======================================================================
-# Category 2: Known Gap Characterization
+# Test F: Reconciliation Authoritative State Reflection (Plan 35)
 # ======================================================================
 
 
-class TestWsFullFillOnReconcileRequiredCurrentlyAllowedKnownGap:
-    """Test B: KNOWN GAP — ``FILLED`` is currently allowed from
-    ``RECONCILE_REQUIRED``.
+class TestReconciliationAuthoritativeStateReflection:
+    """Test F: Reconciliation authoritative state reflection (Plan 35).
 
-    ╔══════════════════════════════════════════════════════════════════╗
-    ║  THIS IS NOT A SAFETY VERIFICATION TEST.                       ║
-    ║  It characterizes CURRENT BEHAVIOR, which is known to differ   ║
-    ║  from production-safe semantics.                               ║
-    ╚══════════════════════════════════════════════════════════════════╝
+    Verifies that ``resolve_and_mark()`` with ``order_manager`` reflects
+    each authoritative broker status to the local ``OrderRequestEntity``
+    via ``transition_to_authoritative()``.
 
-    Current state
-    -------------
-    ``_ALLOWED_TRANSITIONS[RECONCILE_REQUIRED]`` includes ``FILLED``
-    (see ``order_manager.py`` lines 62–97).  This means a WS full-fill
-    notification CAN transition an order out of ``RECONCILE_REQUIRED``
-    into ``FILLED``, effectively bypassing the reconciliation process.
+    Authoritative status set
+    ------------------------
+    FILLED, ACKNOWLEDGED, CANCELLED, REJECTED, EXPIRED
 
-    Why this is acceptable (for now)
-    ---------------------------------
-    1. The fill data is always persisted (append-only ingest).
-    2. The reconciliation run still exists for audit/review.
-    3. The lock is released when reconciliation is resolved.
+    Reflection failure behavior
+    ---------------------------
+    When ``transition_to_authoritative()`` fails, the reconciliation run
+    is set to ``"reflection_failed"``, the lock remains held, and the
+    error is recorded in ``summary_json["reflection_error"]``.
+    """
 
-    Why this is a known gap for production safety
-    ----------------------------------------------
-    1. A full fill during reconciliation means the system accepted a
-       broker state transition without completing reconciliation.
-    2. If the reconciliation would have detected a mismatch, the full
-       fill consumes that mismatch silently.
-    3. Future work should revisit whether ``FILLED`` should be removed
-       from ``_ALLOWED_TRANSITIONS[RECONCILE_REQUIRED]``.
+    # ------------------------------------------------------------------
+    # 5a. FILLED reflection
+    # ------------------------------------------------------------------
+
+    async def test_full_fill_reflected_after_reconciliation(
+        self,
+        repos,
+        manager: OrderManager,
+        reconciliation_service: ReconciliationService,
+        mock_broker: BrokerAdapter,
+        sample_order,
+        submit_request: SubmitOrderRequest,
+    ) -> None:
+        """Broker resolves FILLED -> order state reflected to FILLED."""
+        # --- Arrange: submit with uncertain result ---
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="test-001",
+            broker_order_id=None,
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=datetime.now(timezone.utc),
+            raw_code="TIMEOUT",
+            raw_message="Response timeout",
+            uncertain=True,
+            requires_reconciliation=False,
+        )
+        await manager.submit_order_to_broker(
+            sample_order, mock_broker, submit_request
+        )
+        active_run = await reconciliation_service.get_active_run(
+            sample_order.account_id
+        )
+        assert active_run is not None
+        assert active_run.status == "started"
+
+        # --- Act: broker resolves FILLED ---
+        mock_broker.resolve_unknown_state.return_value = OrderStatusResult(
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="test-001",
+            broker_order_id="BRK-001",
+            status=OrderStatus.FILLED,
+        )
+
+        await reconciliation_service.resolve_and_mark(
+            reconciliation_run_id=active_run.reconciliation_run_id,
+            account_ref="test_account",
+            broker=mock_broker,
+            client_order_id="test-001",
+            order_manager=manager,
+        )
+
+        # --- Assert: order state reflected to FILLED ---
+        updated = await repos.orders.get(sample_order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.FILLED
+
+        # Run resolved
+        resolved_run = await repos.reconciliations.get_run(
+            active_run.reconciliation_run_id
+        )
+        assert resolved_run is not None
+        assert resolved_run.status == "resolved"
+        assert resolved_run.summary_json.get("resolved_status") == "filled"
+
+    # ------------------------------------------------------------------
+    # 5b. ACKNOWLEDGED reflection
+    # ------------------------------------------------------------------
+
+    async def test_acknowledged_reflected_after_reconciliation(
+        self,
+        repos,
+        manager: OrderManager,
+        reconciliation_service: ReconciliationService,
+        mock_broker: BrokerAdapter,
+        sample_order,
+        submit_request: SubmitOrderRequest,
+    ) -> None:
+        """Broker resolves ACKNOWLEDGED -> order state reflected to ACKNOWLEDGED."""
+        # --- Arrange: submit with uncertain result ---
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="test-001",
+            broker_order_id=None,
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=datetime.now(timezone.utc),
+            raw_code="TIMEOUT",
+            raw_message="Response timeout",
+            uncertain=True,
+            requires_reconciliation=False,
+        )
+        await manager.submit_order_to_broker(
+            sample_order, mock_broker, submit_request
+        )
+        active_run = await reconciliation_service.get_active_run(
+            sample_order.account_id
+        )
+        assert active_run is not None
+        assert active_run.status == "started"
+
+        # --- Act: broker resolves ACKNOWLEDGED ---
+        mock_broker.resolve_unknown_state.return_value = OrderStatusResult(
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="test-001",
+            broker_order_id="BRK-001",
+            status=OrderStatus.ACKNOWLEDGED,
+        )
+
+        await reconciliation_service.resolve_and_mark(
+            reconciliation_run_id=active_run.reconciliation_run_id,
+            account_ref="test_account",
+            broker=mock_broker,
+            client_order_id="test-001",
+            order_manager=manager,
+        )
+
+        # --- Assert: order state reflected to ACKNOWLEDGED ---
+        updated = await repos.orders.get(sample_order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.ACKNOWLEDGED
+
+    # ------------------------------------------------------------------
+    # 5c. CANCELLED reflection
+    # ------------------------------------------------------------------
+
+    async def test_cancelled_reflected_after_reconciliation(
+        self,
+        repos,
+        manager: OrderManager,
+        reconciliation_service: ReconciliationService,
+        mock_broker: BrokerAdapter,
+        sample_order,
+        submit_request: SubmitOrderRequest,
+    ) -> None:
+        """Broker resolves CANCELLED -> order state reflected to CANCELLED."""
+        # --- Arrange: submit with uncertain result ---
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="test-001",
+            broker_order_id=None,
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=datetime.now(timezone.utc),
+            raw_code="TIMEOUT",
+            raw_message="Response timeout",
+            uncertain=True,
+            requires_reconciliation=False,
+        )
+        await manager.submit_order_to_broker(
+            sample_order, mock_broker, submit_request
+        )
+        active_run = await reconciliation_service.get_active_run(
+            sample_order.account_id
+        )
+        assert active_run is not None
+        assert active_run.status == "started"
+
+        # --- Act: broker resolves CANCELLED ---
+        mock_broker.resolve_unknown_state.return_value = OrderStatusResult(
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="test-001",
+            broker_order_id="BRK-001",
+            status=OrderStatus.CANCELLED,
+        )
+
+        await reconciliation_service.resolve_and_mark(
+            reconciliation_run_id=active_run.reconciliation_run_id,
+            account_ref="test_account",
+            broker=mock_broker,
+            client_order_id="test-001",
+            order_manager=manager,
+        )
+
+        # --- Assert: order state reflected to CANCELLED ---
+        updated = await repos.orders.get(sample_order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.CANCELLED
+
+    # ------------------------------------------------------------------
+    # 5d. REJECTED reflection
+    # ------------------------------------------------------------------
+
+    async def test_rejected_reflected_after_reconciliation(
+        self,
+        repos,
+        manager: OrderManager,
+        reconciliation_service: ReconciliationService,
+        mock_broker: BrokerAdapter,
+        sample_order,
+        submit_request: SubmitOrderRequest,
+    ) -> None:
+        """Broker resolves REJECTED -> order state reflected to REJECTED."""
+        # --- Arrange: submit with uncertain result ---
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="test-001",
+            broker_order_id=None,
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=datetime.now(timezone.utc),
+            raw_code="TIMEOUT",
+            raw_message="Response timeout",
+            uncertain=True,
+            requires_reconciliation=False,
+        )
+        await manager.submit_order_to_broker(
+            sample_order, mock_broker, submit_request
+        )
+        active_run = await reconciliation_service.get_active_run(
+            sample_order.account_id
+        )
+        assert active_run is not None
+        assert active_run.status == "started"
+
+        # --- Act: broker resolves REJECTED ---
+        mock_broker.resolve_unknown_state.return_value = OrderStatusResult(
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="test-001",
+            broker_order_id="BRK-001",
+            status=OrderStatus.REJECTED,
+        )
+
+        await reconciliation_service.resolve_and_mark(
+            reconciliation_run_id=active_run.reconciliation_run_id,
+            account_ref="test_account",
+            broker=mock_broker,
+            client_order_id="test-001",
+            order_manager=manager,
+        )
+
+        # --- Assert: order state reflected to REJECTED ---
+        updated = await repos.orders.get(sample_order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.REJECTED
+
+    # ------------------------------------------------------------------
+    # 5e. EXPIRED reflection
+    # ------------------------------------------------------------------
+
+    async def test_expired_reflected_after_reconciliation(
+        self,
+        repos,
+        manager: OrderManager,
+        reconciliation_service: ReconciliationService,
+        mock_broker: BrokerAdapter,
+        sample_order,
+        submit_request: SubmitOrderRequest,
+    ) -> None:
+        """Broker resolves EXPIRED -> order state reflected to EXPIRED."""
+        # --- Arrange: submit with uncertain result ---
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="test-001",
+            broker_order_id=None,
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=datetime.now(timezone.utc),
+            raw_code="TIMEOUT",
+            raw_message="Response timeout",
+            uncertain=True,
+            requires_reconciliation=False,
+        )
+        await manager.submit_order_to_broker(
+            sample_order, mock_broker, submit_request
+        )
+        active_run = await reconciliation_service.get_active_run(
+            sample_order.account_id
+        )
+        assert active_run is not None
+        assert active_run.status == "started"
+
+        # --- Act: broker resolves EXPIRED ---
+        mock_broker.resolve_unknown_state.return_value = OrderStatusResult(
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="test-001",
+            broker_order_id="BRK-001",
+            status=OrderStatus.EXPIRED,
+        )
+
+        await reconciliation_service.resolve_and_mark(
+            reconciliation_run_id=active_run.reconciliation_run_id,
+            account_ref="test_account",
+            broker=mock_broker,
+            client_order_id="test-001",
+            order_manager=manager,
+        )
+
+        # --- Assert: order state reflected to EXPIRED ---
+        updated = await repos.orders.get(sample_order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.EXPIRED
+
+    # ------------------------------------------------------------------
+    # 5f. Reflection failure — run stays, lock stays
+    # ------------------------------------------------------------------
+
+    async def test_reflection_failure_keeps_run_and_lock(
+        self,
+        repos,
+        manager: OrderManager,
+        reconciliation_service: ReconciliationService,
+        mock_broker: BrokerAdapter,
+        sample_order,
+        submit_request: SubmitOrderRequest,
+    ) -> None:
+        """Reflection failure -> run='reflection_failed', lock stays held, error recorded."""
+        # --- Arrange: submit with uncertain result ---
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="test-001",
+            broker_order_id=None,
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=datetime.now(timezone.utc),
+            raw_code="TIMEOUT",
+            raw_message="Response timeout",
+            uncertain=True,
+            requires_reconciliation=False,
+        )
+        await manager.submit_order_to_broker(
+            sample_order, mock_broker, submit_request
+        )
+        active_run = await reconciliation_service.get_active_run(
+            sample_order.account_id
+        )
+        assert active_run is not None
+        assert active_run.status == "started"
+
+        # Lock is held
+        locked = await reconciliation_service.is_blocked(
+            account_id=sample_order.account_id,
+            symbol=submit_request.symbol,
+            side=submit_request.side.value,
+        )
+        assert locked is True
+
+        # Broker resolves FILLED
+        mock_broker.resolve_unknown_state.return_value = OrderStatusResult(
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="test-001",
+            broker_order_id="BRK-001",
+            status=OrderStatus.FILLED,
+        )
+
+        # --- Act: make transition_to_authoritative() fail via class-level mock ---
+        # NOTE: OrderManager is @dataclass(slots=True), so instance-level
+        # mock.patch.object() fails (slots attributes are read-only).
+        # We mock at the CLASS level (OrderManager) instead, which works
+        # because class attributes are always writable.
+        with patch.object(
+            OrderManager,
+            "transition_to_authoritative",
+            new=AsyncMock(side_effect=RuntimeError("Simulated transition failure")),
+        ):
+            await reconciliation_service.resolve_and_mark(
+                reconciliation_run_id=active_run.reconciliation_run_id,
+                account_ref="test_account",
+                broker=mock_broker,
+                client_order_id="test-001",
+                order_manager=manager,
+            )
+
+        # --- Assert: run status is "reflection_failed" ---
+        run_after = await repos.reconciliations.get_run(
+            active_run.reconciliation_run_id
+        )
+        assert run_after is not None
+        assert run_after.status == "reflection_failed", (
+            f"Expected 'reflection_failed', got '{run_after.status}'"
+        )
+
+        # summary_json contains reflection_error
+        assert run_after.summary_json is not None
+        assert "reflection_error" in run_after.summary_json
+        assert "Simulated transition failure" in run_after.summary_json["reflection_error"]
+        assert run_after.summary_json.get("resolved_status") == "filled"
+
+        # Lock still held
+        locked_after = await reconciliation_service.is_blocked(
+            account_id=sample_order.account_id,
+            symbol=submit_request.symbol,
+            side=submit_request.side.value,
+        )
+        assert locked_after is True, (
+            "Expected lock to remain held after reflection failure"
+        )
+
+        # Order state NOT transitioned
+        updated = await repos.orders.get(sample_order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.RECONCILE_REQUIRED
+
+
+# ======================================================================
+# Category 2: Safety Verification — Fill Data Preserved, State Held
+# ======================================================================
+
+
+class TestWsFullFillOnReconcileRequiredFillDataPreservedStateHeld:
+    """Test B: SAFETY VERIFICATION — WS fill on RECONCILE_REQUIRED must
+    preserve fill data AND hold order state progression.
+
+    Core principle (Plan 34)
+    ------------------------
+    When a WS fill notification arrives for an order in RECONCILE_REQUIRED
+    state, the system MUST:
+
+    1. Persist all fill data (ExternalEvent + FillEvent) — data preserved
+    2. NOT transition the order state — state progression held
+    3. Wait for reconciliation to resolve the authoritative result
+
+    Why two layers of protection?
+    -----------------------------
+    - ``_ALLOWED_TRANSITIONS`` (state machine): hard boundary — removes
+      ``FILLED`` from ``RECONCILE_REQUIRED`` transitions. Catches ALL
+      paths (current and future).
+    - ``_handle_fill_notification`` (event loop guard): explicit guard
+      with clear warning logging before transition_to(). Avoids
+      exception-as-control-flow anti-pattern.
+
+    Design Decision
+    ---------------
+    Both layers are needed because the state machine raises an exception
+    (``InvalidStateTransitionError``), which is caught generically in the
+    event loop's exception handler.  The explicit guard ensures the
+    behavior is intentional and logged clearly, not an accidental
+    exception swallow.
 
     See Also
     --------
-    * ``plans/33_post_submit_reconciliation_boundary.md`` §6.1
+    * ``plans/34_reconcile_required_fill_transition_policy.md``
     * ``order_manager._ALLOWED_TRANSITIONS``
     """
 
     # ------------------------------------------------------------------
-    # 2a. Direct state machine — transition succeeds (known gap)
+    # 2a. Direct state machine — transition raises error
     # ------------------------------------------------------------------
 
-    async def test_full_fill_transition_from_reconcile_required_succeeds(
+    async def test_reconcile_required_to_filled_state_machine_blocked(
         self,
         repos,
         manager: OrderManager,
     ) -> None:
-        """RECONCILE_REQUIRED → FILLED is currently allowed (known gap).
+        """State machine blocks RECONCILE_REQUIRED → FILLED.
 
-        Verifies that the state machine accepts this transition.
-        This documents the current behavior, NOT a safety guarantee.
+        Fill data is preserved by the caller; state progression is held
+        until reconciliation resolves the authoritative result.
         """
         order = await _create_order(repos, status=OrderStatus.RECONCILE_REQUIRED)
 
-        updated = await manager.transition_to(
-            order,
-            OrderStatus.FILLED,
-            reason_code="WS_FILL",
-            reason_message="Full fill during reconciliation (known gap)",
-        )
-
-        assert updated.status == OrderStatus.FILLED
+        with pytest.raises(InvalidStateTransitionError):
+            await manager.transition_to(
+                order,
+                OrderStatus.FILLED,
+                reason_code="WS_FILL",
+                reason_message="Full fill during reconciliation (blocked by Plan 34)",
+            )
 
     # ------------------------------------------------------------------
-    # 2b. Event loop path — full fill goes through (known gap)
+    # 2b. Event loop path — full fill data preserved, state held
     # ------------------------------------------------------------------
 
-    async def test_event_loop_full_fill_on_reconcile_required_allowed(
+    async def test_ws_full_fill_on_reconcile_required_data_preserved_state_held(
         self,
         repos,
         manager: OrderManager,
         reconciliation_service: ReconciliationService,
         mock_adapter: MagicMock,
     ) -> None:
-        """Event loop: full fill notification transitions order from
-        RECONCILE_REQUIRED to FILLED (known gap — currently allowed).
+        """Event loop: full fill data preserved, order stays RECONCILE_REQUIRED.
 
-        This characterizes current behavior.  The transition succeeds
-        but reconciliation data is preserved for audit/review.
+        Verifies the core principle: fill data (ExternalEvent + FillEvent)
+        is persisted, but order state progression is held until
+        reconciliation resolves.
         """
         # --- Arrange ---
         account_id = uuid4()
@@ -802,7 +1427,7 @@ class TestWsFullFillOnReconcileRequiredCurrentlyAllowedKnownGap:
         # --- Act ---
         await event_loop._handle_fill_notification(data)
 
-        # --- Assert ---
+        # --- Assert: fill data preserved ---
 
         # ExternalEvent persisted
         ext_event = await repos.external_events.find_by_dedup_key(
@@ -812,18 +1437,95 @@ class TestWsFullFillOnReconcileRequiredCurrentlyAllowedKnownGap:
         assert ext_event.dedup_key_hash == "fill:KIS12345678:143025"
 
         # FillEvent persisted
-        # Note: FillEventEntity.broker_order_id stores the local order_request_id
         fill_events = await repos.fill_events.list_by_broker_order(
             order.order_request_id
         )
         assert len(fill_events) == 1
 
-        # Order transitioned to FILLED (known gap — currently allowed)
+        # --- Assert: state progression held ---
+        # Order MUST remain in RECONCILE_REQUIRED — NOT transitioned to FILLED
         updated_order = await repos.orders.get(order.order_request_id)
         assert updated_order is not None
-        assert updated_order.status == OrderStatus.FILLED, (
-            f"Known gap: RECONCILE_REQUIRED → FILLED is currently allowed. "
-            f"Order status = {updated_order.status}"
+        assert updated_order.status == OrderStatus.RECONCILE_REQUIRED, (
+            f"Fill data preserved, state progression held. "
+            f"Expected RECONCILE_REQUIRED, got {updated_order.status}"
+        )
+
+    # ------------------------------------------------------------------
+    # 2c. Event loop path — partial fill also blocked
+    # ------------------------------------------------------------------
+
+    async def test_ws_partial_fill_on_reconcile_required_data_preserved_state_held(
+        self,
+        repos,
+        manager: OrderManager,
+        reconciliation_service: ReconciliationService,
+        mock_adapter: MagicMock,
+    ) -> None:
+        """Event loop: partial fill data preserved, order stays RECONCILE_REQUIRED.
+
+        Even a partial fill during reconciliation must not optimistically
+        progress the order state. Fill data is persisted for reconciliation
+        to use when resolving the authoritative result.
+        """
+        # --- Arrange ---
+        account_id = uuid4()
+        order = await _create_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            account_id=account_id,
+        )
+
+        broker_order = BrokerOrderEntity(
+            broker_order_id=uuid4(),
+            order_request_id=order.order_request_id,
+            broker_name="koreainvestment",
+            broker_status="reconcile_required",
+            broker_native_order_id="KIS87654321",
+            created_at=datetime.now(timezone.utc),
+        )
+        await repos.broker_orders.add(broker_order)
+
+        event_loop = _build_event_loop(
+            mock_adapter, manager, reconciliation_service, repos
+        )
+
+        # Partial fill: filled_qty=3 < order_qty=10
+        data = {
+            "broker_order_id": "KIS87654321",
+            "stock_code": "005930",
+            "filled_qty": "3",
+            "filled_price": "50000",
+            "filled_time": "143025",
+            "side": OrderSide.BUY,
+            "order_qty": "10",
+        }
+
+        # --- Act ---
+        await event_loop._handle_fill_notification(data)
+
+        # --- Assert: fill data preserved ---
+
+        # ExternalEvent persisted
+        ext_event = await repos.external_events.find_by_dedup_key(
+            "fill:KIS87654321:143025"
+        )
+        assert ext_event is not None, "ExternalEvent should be persisted"
+        assert ext_event.dedup_key_hash == "fill:KIS87654321:143025"
+
+        # FillEvent persisted
+        fill_events = await repos.fill_events.list_by_broker_order(
+            order.order_request_id
+        )
+        assert len(fill_events) == 1
+        assert fill_events[0].fill_quantity == Decimal("3")
+
+        # --- Assert: state progression held ---
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.RECONCILE_REQUIRED, (
+            f"Partial fill data preserved, state progression held. "
+            f"Expected RECONCILE_REQUIRED, got {updated_order.status}"
         )
 
 

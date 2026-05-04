@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone, timedelta
 from uuid import UUID, uuid4
 
 from agent_trading.brokers.base import BrokerAdapter
-from agent_trading.domain.entities import ReconciliationRunEntity
+from agent_trading.domain.entities import OrderRequestEntity, ReconciliationRunEntity
 from agent_trading.domain.enums import OrderStatus
 from agent_trading.domain.models import OrderStatusResult
 from agent_trading.repositories.container import RepositoryContainer
+from agent_trading.repositories.filters import OrderQuery
+
+logger = logging.getLogger(__name__)
 
 
 class ReconciliationService:
@@ -374,6 +378,7 @@ class ReconciliationService:
         *,
         client_order_id: str | None = None,
         broker_order_id: str | None = None,
+        order_manager: OrderManager | None = None,  # Plan 35: optional authoritative reflection
     ) -> OrderStatusResult:
         """Convenience: inquire broker and, if resolved, mark run as done.
 
@@ -382,7 +387,12 @@ class ReconciliationService:
         2. If the returned status is a terminal or known-good state
            (FILLED, CANCELLED, REJECTED, EXPIRED, ACKNOWLEDGED),
            marks the reconciliation run as resolved.
-        3. Returns the broker's response for the caller to act on.
+        3. If ``order_manager`` is provided, also reflects the authoritative
+           state onto the local order via ``transition_to_authoritative()``
+           (Plan 35).  On reflection success, the run is marked resolved.
+           On reflection failure, the run status is set to
+           ``reflection_failed`` and the blocking lock remains held.
+        4. Returns the broker's response for the caller to act on.
 
         Parameters
         ----------
@@ -396,6 +406,11 @@ class ReconciliationService:
             Optional client-side order identifier.
         broker_order_id : str | None
             Optional broker-side order identifier.
+        order_manager : OrderManager | None
+            If provided, the authoritative status from the broker inquiry
+            is reflected onto the local order via
+            ``transition_to_authoritative()``.  When ``None`` (default),
+            the method behaves identically to the pre-Plan-35 behaviour.
 
         Returns
         -------
@@ -418,14 +433,93 @@ class ReconciliationService:
             OrderStatus.ACKNOWLEDGED,
         }
         if result.status in resolved_statuses:
-            await self.mark_resolved(
-                reconciliation_run_id,
-                summary_json={
-                    "resolved_via": "broker_inquiry",
-                    "resolved_status": result.status.value,
-                    "broker_order_id": result.broker_order_id,
-                    "client_order_id": result.client_order_id,
-                },
-            )
+            if order_manager is not None:
+                # --- Authoritative state reflection (Plan 35) ---
+                order = await self._resolve_order_for_reflection(
+                    client_order_id=client_order_id or "",
+                    broker_order_id=broker_order_id,
+                )
+                if order is not None and order.status == OrderStatus.RECONCILE_REQUIRED:
+                    try:
+                        await order_manager.transition_to_authoritative(
+                            order,
+                            result.status,
+                            reconciliation_run_id=reconciliation_run_id,
+                        )
+                        # Step 1: authoritative transition → audit/state event
+                        # Step 2: run resolved + lock released
+                        await self.mark_resolved(
+                            reconciliation_run_id,
+                            summary_json={
+                                "resolved_via": "broker_inquiry",
+                                "resolved_status": result.status.value,
+                                "broker_order_id": result.broker_order_id,
+                                "client_order_id": result.client_order_id,
+                            },
+                        )
+                    except Exception as exc:
+                        # Inquiry succeeded but reflection failed.
+                        # Run is NOT resolved; lock stays held.
+                        logger.error(
+                            "Authoritative reflection failed for run %s: %s",
+                            reconciliation_run_id, exc,
+                        )
+                        await self._repos.reconciliations.update_run_status(
+                            reconciliation_run_id,
+                            status="reflection_failed",
+                            summary_json={
+                                "resolved_via": "broker_inquiry",
+                                "resolved_status": result.status.value,
+                                "reflection_error": str(exc),
+                                "error_timestamp": datetime.now(timezone.utc).isoformat(),
+                                "broker_order_id": result.broker_order_id,
+                                "client_order_id": result.client_order_id,
+                            },
+                        )
+                else:
+                    # Order not found or not in RECONCILE_REQUIRED —
+                    # still mark resolved (backward compatible).
+                    await self.mark_resolved(
+                        reconciliation_run_id,
+                        summary_json={
+                            "resolved_via": "broker_inquiry",
+                            "resolved_status": result.status.value,
+                            "broker_order_id": result.broker_order_id,
+                            "client_order_id": result.client_order_id,
+                        },
+                    )
+            else:
+                # No order_manager provided — backward compatible behaviour.
+                await self.mark_resolved(
+                    reconciliation_run_id,
+                    summary_json={
+                        "resolved_via": "broker_inquiry",
+                        "resolved_status": result.status.value,
+                        "broker_order_id": result.broker_order_id,
+                        "client_order_id": result.client_order_id,
+                    },
+                )
 
         return result
+
+    async def _resolve_order_for_reflection(
+        self,
+        client_order_id: str,
+        broker_order_id: str | None,
+    ) -> OrderRequestEntity | None:
+        """Find the order associated with this reconciliation run.
+
+        Used by ``resolve_and_mark()`` to locate the local order that
+        needs authoritative state reflection.
+        """
+        if broker_order_id:
+            broker_order = await self._repos.broker_orders.get_by_native_order_id(
+                broker_order_id
+            )
+            if broker_order is not None:
+                return await self._repos.orders.get(broker_order.order_request_id)
+        if client_order_id:
+            orders = await self._repos.orders.list(OrderQuery(client_order_id=client_order_id))
+            if orders:
+                return orders[0]
+        return None
