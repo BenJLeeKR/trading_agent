@@ -397,8 +397,8 @@ class TestDuplicateFillDetection:
         await event_loop_fixture._handle_fill_notification(data)
 
         # Assert
-        # ExternalEvent is still saved (append-only ingest)
-        mock_external_event_repo.add.assert_called_once()
+        # ExternalEvent NOT saved (dedup check happens before persist — bug fix)
+        mock_external_event_repo.add.assert_not_called()
         # FillEvent is skipped because dedup hit
         mock_fill_repo.add.assert_not_called()
         # OrderManager transition is skipped

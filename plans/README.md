@@ -50,6 +50,7 @@
 | 30 | [`30_runtime_three_agent_smoke.md`](./30_runtime_three_agent_smoke.md) | Real 3-Agent Runtime Smoke Verification — EI→AR→FDC full chain smoke, env-isolated fallback, provider-agnostic skip (Rev 2: env 제어 정렬) |
 | 31 | [`31_ai_risk_input_expansion.md`](./31_ai_risk_input_expansion.md) | AIRiskAgent input expansion: richer deterministic account/risk context (position, cash, risk_limit snapshots) + PG repos + prompt summaries |
 | 32 | [`32_ai_broker_boundary_pre_submit_verification.md`](./32_ai_broker_boundary_pre_submit_verification.md) | AI-Broker Pre-Submit Safety Boundary Verification: AI layer가 execution boundary를 우회하지 않음을 테스트로 증명 |
+| 33 | [`33_post_submit_reconciliation_boundary.md`](./33_post_submit_reconciliation_boundary.md) | Post-Submit Unknown State / Reconciliation Boundary Verification: submit 이후 ambiguous/unknown 상태에서 reconciliation-first 원칙 검증 + event loop dedup bug fix |
 
 ## 빠른 추천 경로
 
@@ -90,3 +91,5 @@
 4. [`15.milestone8_event_loop_fix_plan.md`](./15.milestone8_event_loop_fix_plan.md)
 5. [`16.post_milestone8_plan.md`](./16.post_milestone8_plan.md)
 6. [`17.fix_audit_log_ordering_plan.md`](./17.fix_audit_log_ordering_plan.md)
+7. [`32_ai_broker_boundary_pre_submit_verification.md`](./32_ai_broker_boundary_pre_submit_verification.md)
+8. [`33_post_submit_reconciliation_boundary.md`](./33_post_submit_reconciliation_boundary.md)

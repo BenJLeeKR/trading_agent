@@ -267,13 +267,14 @@ class RealTimeEventLoop:
             dedup_key_hash=dedup_key,
             metadata=data,
         )
-        await self._external_event_repo.add(ext_event)
-
-        # --- Duplicate detection ---
+        # --- Duplicate detection (check before persisting) ---
         existing = await self._external_event_repo.find_by_dedup_key(dedup_key)
         if existing is not None:
             logger.info("Duplicate fill notification skipped: %s", dedup_key)
             return
+
+        # --- Persist ExternalEventEntity (append-only ingest) ---
+        await self._external_event_repo.add(ext_event)
 
         # --- Check for gap fill in progress ---
         if stock_code in self._gap_fill_in_progress:
