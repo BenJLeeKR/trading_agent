@@ -309,15 +309,23 @@ async def seeded_repos(
 
 @pytest.fixture
 async def client(seeded_repos: RepositoryContainer) -> TestClient:
-    """FastAPI ``TestClient`` with seeded repos."""
-    app = create_app(repos=seeded_repos)
+    """FastAPI ``TestClient`` with seeded repos (no auth)."""
+    app = create_app(repos=seeded_repos, auth_enabled=False)
     with TestClient(app) as tc:
         yield tc
 
 
 @pytest.fixture
 async def empty_client() -> TestClient:
-    """FastAPI ``TestClient`` with empty (unseeded) in-memory repos."""
-    app = create_app()
+    """FastAPI ``TestClient`` with empty (unseeded) in-memory repos (no auth)."""
+    app = create_app(auth_enabled=False)
+    with TestClient(app) as tc:
+        yield tc
+
+
+@pytest.fixture
+async def auth_client() -> TestClient:
+    """FastAPI ``TestClient`` with auth enabled (token: ``"test-token"``)."""
+    app = create_app(auth_token="test-token")
     with TestClient(app) as tc:
         yield tc

@@ -15,6 +15,8 @@
 | 1 | 2026-05-04 | 최초 작성 |
 | 2 | 2026-05-04 | Plan 42 반영: Postgres mode 실행 방법 추가, `/health` 응답 변화, 기능적 한계 업데이트 |
 | 3 | 2026-05-04 | Plan 43 반영: Docker 실행 절차 추가 (`docker compose up -d db api`) |
+| 4 | 2026-05-04 | Plan 46 반영: Bearer token 인증 추가. `make run-api`에 token 필요. Swagger UI Authorize 버튼 설명 추가 |
+| 5 | 2026-05-04 | Plan 46 후속: `make run-api`에서 고정 token 제거. `make run-api-dev` 분리. safe default 강화 |
 
 ---
 
@@ -35,16 +37,24 @@
 
 #### In-memory mode (기본)
 
+> **Plan 46+**: Bearer token 인증이 기본 활성화되어 있습니다.
+> `INSPECTION_API_TOKEN` 환경 변수가 필요하며, 설정되지 않으면 서버가 시작되지 않습니다.
+
 ```bash
-# 기본 in-memory 모드로 실행 (추가 설정 불필요)
-make run-api
+# 운영 기본 경로 — INSPECTION_API_TOKEN을 명시적으로 설정해야 함
+INSPECTION_API_TOKEN="설정할-토큰" make run-api
 ```
 
 또는 직접 uvicorn 실행:
 
 ```bash
-uvicorn agent_trading.api.app:app --reload --host 0.0.0.0 --port 8000
+INSPECTION_API_TOKEN="설정할-토큰" \
+  uvicorn agent_trading.api.app:app --reload --host 0.0.0.0 --port 8000
 ```
+
+> **개발 편의용**: `make run-api-dev`를 사용하면 고정 개발 토큰(`dev-token-123`)이 자동 설정됩니다.
+> **인증 비활성화 (개발 전용)**: `create_app(auth_enabled=False)`를 직접 호출하거나
+> 테스트 코드에서 명시적으로 무인증 모드를 사용해야 합니다.
 
 #### Postgres mode (Plan 42+)
 
@@ -138,9 +148,14 @@ curl -s http://localhost:8000/health | python3 -m json.tool
 **Swagger UI 사용 순서**:
 
 1. 브라우저에서 `http://localhost:8000/docs` 열기
-2. 각 endpoint 섹션(health, orders, audit, reconciliation, decisions) 확장
-3. "Try it out" 클릭 → 파라미터 입력 → "Execute" 클릭
-4. 응답 body, status code, 응답 시간 확인
+2. **Authorize** 버튼 클릭 → `BearerAuth` → 설정한 `INSPECTION_API_TOKEN` 값 입력 → Authorize
+   (개발 편의: `make run-api-dev` 사용 시 `dev-token-123`)
+3. 각 endpoint 섹션(orders, audit, reconciliation, decisions 등) 확장
+4. "Try it out" 클릭 → 파라미터 입력 → "Execute" 클릭
+5. 응답 body, status code, 응답 시간 확인
+
+> ⚠️ **참고**: `/health`, `/health/readyz` endpoint는 인증 없이 접근 가능합니다.
+> 그 외 모든 inspection endpoint는 **Authorize** 버튼으로 Bearer token을 설정한 후에만 호출 가능합니다.
 
 ---
 
@@ -461,7 +476,7 @@ curl -s "http://localhost:8000/orders?limit=10" | python3 -m json.tool
 |------|------|------|
 | **Write API** | ❌ 없음 | 데이터 조회만 가능. 주문 생성/수정/취소 불가 |
 | **Admin UI** | ❌ 없음 | Swagger UI가 유일한 operator interface. 시각화/대시보드 없음 |
-| **인증/인가** | ❌ 없음 | 모든 endpoint가 인증 없이 접근 가능. 운영망에 노출 시 보안 위험 |
+| **인증/인가** | ✅ Plan 46 | Bearer token 인증 활성화. protected endpoint는 401 반환. `/health`, `/health/readyz`, `/docs`, `/openapi.json`는 공개 |
 | **Postgres API 모드** | ✅ Plan 42 | `create_app(runtime_mode="postgres")`로 Postgres 데이터 조회 가능. 단, `make run-api`는 기본 in-memory 모드 |
 | **페이징** | ❌ Phase 2 | `limit` 파라미터만 존재. cursor/token 기반 페이징 없음 |
 | **정렬 커스터마이징** | ❌ 고정 | 각 endpoint의 정렬 기준이 고정되어 있음 (`/audit-logs`는 내림차순으로 고정된 것으로 보이나 실제로는 오름차순) |
@@ -507,7 +522,7 @@ Admin UI가 도입되면 (`BACKLOG.md` Medium-term #1):
 |-------------|--------|
 | [Phase 2 API endpoints](BACKLOG.md:22) | 이 가이드의 endpoint별 확인 포인트 확장 |
 | [Postgres-backed API mode](BACKLOG.md:23) | ✅ **Plan 42로 구현 완료**. `database` 필드가 `"connected"` 또는 `"disconnected"`로 표시. `runtime_mode`가 `"postgres"`로 설정됨. |
-| [Auth/RBAC](BACKLOG.md:35) | 인증 추가 시 모든 endpoint에 Authorization header 필요 |
+| [Auth/RBAC](BACKLOG.md:35) | ✅ **Plan 46으로 구현 완료**. Bearer token 인증 활성화. `/health` 등 공개 endpoint 제외 모든 endpoint에 Authorization header 필요 |
 | [Admin UI](BACKLOG.md:34) | 이 가이드의 체크리스트 시나리오가 UI 대시보드로 대체 |
 | [Operator intervention](BACKLOG.md:36) | write API 추가 시 이 가이드에 수동 조치 절차 추가 필요 |
 | [Reconciliation lock list API](BACKLOG.md:24) | Postgres 모드에서 lock 조회가 가능해지면 이 가이드 업데이트 |
@@ -516,23 +531,35 @@ Admin UI가 도입되면 (`BACKLOG.md` Medium-term #1):
 
 ## Appendix: curl 명령어 모음
 
+> **Plan 46+**: 보호 endpoint 호출 시 `Authorization: Bearer <token>` header 필수.
+> 공개 endpoint(`/health`, `/health/readyz`)는 header 불필요.
+
+> **개발용 예시**: 아래 예시는 `TOKEN="dev-token-123"`를 사용합니다.
+> 운영 환경에서는 실제 설정한 토큰 값으로 변경하세요.
+
 ```bash
-# 1. 서버 상태
+TOKEN="dev-token-123"   # ← 실제 운영 토큰으로 변경 필요
+
+# 0. 인증 확인 (토큰 없이 보호 endpoint → 401)
+curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/orders
+# → 401
+
+# 1. 서버 상태 (공개 — 인증 불필요)
 curl -s http://localhost:8000/health/readyz
 curl -s http://localhost:8000/health | python3 -m json.tool
 
-# 2. 주문 조회
-curl -s "http://localhost:8000/orders?limit=5" | python3 -m json.tool
-curl -s "http://localhost:8000/orders/{UUID}/events" | python3 -m json.tool
+# 2. 주문 조회 (보호 — Bearer token 필요)
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8000/orders?limit=5" | python3 -m json.tool
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8000/orders/{UUID}/events" | python3 -m json.tool
 
-# 3. 감사 로그
-curl -s "http://localhost:8000/audit-logs?correlation_id={CORR_ID}" | python3 -m json.tool
+# 3. 감사 로그 (보호)
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8000/audit-logs?correlation_id={CORR_ID}" | python3 -m json.tool
 
-# 4. Reconciliation
-curl -s "http://localhost:8000/reconciliation/runs?account_id={UUID}" | python3 -m json.tool
-curl -s "http://localhost:8000/reconciliation/locks?account_id={UUID}" | python3 -m json.tool
+# 4. Reconciliation (보호)
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8000/reconciliation/runs?account_id={UUID}" | python3 -m json.tool
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8000/reconciliation/locks?account_id={UUID}" | python3 -m json.tool
 
-# 5. Decisions
-curl -s "http://localhost:8000/trade-decisions?decision_context_id={UUID}" | python3 -m json.tool
-curl -s "http://localhost:8000/decision-contexts/{UUID}" | python3 -m json.tool
+# 5. Decisions (보호)
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8000/trade-decisions?decision_context_id={UUID}" | python3 -m json.tool
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8000/decision-contexts/{UUID}" | python3 -m json.tool
 ```

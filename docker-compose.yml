@@ -74,6 +74,7 @@ services:
       DATABASE_PASSWORD: trading
       DATABASE_SCHEMA: trading
       API_RUNTIME_MODE: postgres
+      INSPECTION_API_TOKEN: "${INSPECTION_API_TOKEN:-}"
     ports:
       - "8000:8000"
     command:

@@ -31,7 +31,7 @@ def _pg_env_complete() -> bool:
 @pytest.fixture
 async def postgres_client() -> TestClient:
     """TestClient backed by Postgres (pool-only lifespan, request-scoped repos)."""
-    app = create_app(runtime_mode="postgres")
+    app = create_app(runtime_mode="postgres", auth_enabled=False)
     with TestClient(app) as tc:
         yield tc
 

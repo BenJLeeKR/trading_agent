@@ -32,7 +32,13 @@ lint:
 # API Server (FastAPI)
 # =============================================================================
 
+# 운영 실행 — INSPECTION_API_TOKEN 미설정 시 startup fail (safe default)
 run-api:
+	uvicorn agent_trading.api.app:app --reload --host 0.0.0.0 --port 8000
+
+# 개발 편의용 — 고정 개발 토큰을 자동 주입
+run-api-dev:
+	INSPECTION_API_TOKEN=dev-token-123 \
 	uvicorn agent_trading.api.app:app --reload --host 0.0.0.0 --port 8000
 
 # =============================================================================

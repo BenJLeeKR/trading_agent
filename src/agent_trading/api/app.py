@@ -14,7 +14,8 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+from fastapi.openapi.utils import get_openapi
 
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.repositories.container import RepositoryContainer
@@ -24,11 +25,15 @@ try:
 except ImportError:
     _version = "0.1.0"
 
+from agent_trading.api.security import configure_security, require_viewer
+
 
 def create_app(
     repos: RepositoryContainer | None = None,
     *,
     runtime_mode: str = "in_memory",
+    auth_enabled: bool = True,
+    auth_token: str | None = None,
 ) -> FastAPI:
     """Create a configured FastAPI application.
 
@@ -39,11 +44,23 @@ def create_app(
         and ``runtime_mode`` is treated as a label only.
     runtime_mode:
         Runtime identifier (``"in_memory"`` or ``"postgres"``).
+    auth_enabled:
+        Whether to enforce Bearer token authentication on protected endpoints.
+        ``True`` (default) — token validation is active.
+        ``False`` — all endpoints are open (development / testing only).
+    auth_token:
+        The expected Bearer token value.  **Required** when ``auth_enabled=True``.
+        Ignored when ``auth_enabled=False``.
 
     Returns
     -------
     FastAPI app with routers registered and (in-memory mode) repos attached to
     ``app.state``.
+
+    Raises
+    ------
+    ValueError
+        If ``auth_enabled=True`` and ``auth_token`` is ``None`` or empty.
 
     Notes
     -----
@@ -52,8 +69,17 @@ def create_app(
     they are created per request via the ``get_repos`` dependency
     (see :mod:`agent_trading.api.deps`).
     """
+    if auth_enabled and not auth_token:
+        raise ValueError(
+            "auth_token must be provided when auth_enabled=True. "
+            "Set auth_enabled=False explicitly for unauthenticated (dev/test) mode."
+        )
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        # Configure security module at startup
+        configure_security(token=auth_token)
+
         if repos is not None:
             # Explicit repos injected — caller has full control.
             _app.state.repos = repos
@@ -89,31 +115,72 @@ def create_app(
         lifespan=lifespan,
         docs_url="/docs",
         redoc_url=None,
+        swagger_ui_parameters={"persistAuthorization": True},
     )
 
-    # Register routers — Phase 1
+    # ── OpenAPI security scheme (Authorize button in Swagger UI) ────────────
+    # Register the scheme in `components` so the Authorize button appears.
+    # Do NOT set global `security` — that would force ALL endpoints (including
+    # health) to show the lock icon in Swagger UI.  Public endpoints are
+    # documented as public; protected endpoints enforce auth at runtime via
+    # the require_viewer dependency.
+    def custom_openapi() -> dict:
+        if app.openapi_schema:
+            return app.openapi_schema
+        openapi_schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=app.routes,
+        )
+        openapi_schema["components"]["securitySchemes"] = {
+            "BearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT",  # format only, not actual JWT
+            }
+        }
+        # No global `security` — public endpoints stay unlocked in Swagger UI.
+        app.openapi_schema = openapi_schema
+        return app.openapi_schema
+
+    app.openapi = custom_openapi
+
+    # ── Register routers ──────────────────────────────────────────────────
+    # Phase 1 routers
     from agent_trading.api.routes.health import router as health_router
     from agent_trading.api.routes.orders import router as orders_router
     from agent_trading.api.routes.audit_logs import router as audit_logs_router
     from agent_trading.api.routes.reconciliation import router as reconciliation_router
     from agent_trading.api.routes.decisions import router as decisions_router
 
+    # Health is public — no auth dependencies
     app.include_router(health_router)
-    app.include_router(orders_router)
-    app.include_router(audit_logs_router)
-    app.include_router(reconciliation_router)
-    app.include_router(decisions_router)
 
-    # Register routers — Phase 2
+    # Protected routers — require viewer role when auth is enabled
+    protected_routers = [
+        orders_router,
+        audit_logs_router,
+        reconciliation_router,
+        decisions_router,
+    ]
+
+    # Phase 2 routers
     from agent_trading.api.routes.accounts import router as accounts_router
     from agent_trading.api.routes.instruments import router as instruments_router
     from agent_trading.api.routes.positions import router as positions_router
     from agent_trading.api.routes.clients import router as clients_router
 
-    app.include_router(accounts_router)
-    app.include_router(instruments_router)
-    app.include_router(positions_router)
-    app.include_router(clients_router)
+    protected_routers.extend(
+        [accounts_router, instruments_router, positions_router, clients_router]
+    )
+
+    if auth_enabled:
+        for router in protected_routers:
+            app.include_router(router, dependencies=[Depends(require_viewer)])
+    else:
+        for router in protected_routers:
+            app.include_router(router)
 
     return app
 
@@ -124,9 +191,9 @@ def create_app(
 def create_app_from_env() -> FastAPI:
     """Factory for ``uvicorn ... --factory``.
 
-    Reads ``API_RUNTIME_MODE`` from the environment and delegates to
-    :func:`create_app`.  The module-level ``app`` instance (see below) is
-    **not** affected — it always stays in-memory.
+    Reads environment variables and delegates to :func:`create_app`.
+    The module-level ``app`` instance (see below) is **not** affected —
+    it always stays in-memory.
 
     Usage in ``docker-compose.yml``::
 
@@ -144,12 +211,23 @@ def create_app_from_env() -> FastAPI:
     API_RUNTIME_MODE : str
         ``"postgres"`` to run in Postgres-backed mode (requires
         ``DATABASE_*`` env vars).  Defaults to ``"in_memory"``.
+    INSPECTION_API_TOKEN : str
+        Bearer token for authentication.  **Required in production.**
+        When missing, ``create_app`` raises ``ValueError`` (startup fail).
+    INSPECTION_API_ROLE : str
+        Role assigned to authenticated principals (default ``"viewer"``).
+        Currently unused for authorization logic, but reserved for future use.
     """
     import os
 
     mode = os.getenv("API_RUNTIME_MODE", "in_memory")
-    return create_app(runtime_mode=mode)
+    token = os.getenv("INSPECTION_API_TOKEN")
+    role = os.getenv("INSPECTION_API_ROLE", "viewer")
+    return create_app(runtime_mode=mode, auth_token=token)
 
 
 # Default instance: in-memory repos, suitable for development / inspection.
-app = create_app()
+# Auth is disabled for the module-level default so that quick `uvicorn ...:app`
+# invocations work without requiring INSPECTION_API_TOKEN.
+# Production deployments MUST use create_app_from_env() or docker-compose.
+app = create_app(auth_enabled=False)
