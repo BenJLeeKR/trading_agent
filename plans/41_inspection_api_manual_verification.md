@@ -17,6 +17,7 @@
 | 3 | 2026-05-04 | Plan 43 반영: Docker 실행 절차 추가 (`docker compose up -d db api`) |
 | 4 | 2026-05-04 | Plan 46 반영: Bearer token 인증 추가. `make run-api`에 token 필요. Swagger UI Authorize 버튼 설명 추가 |
 | 5 | 2026-05-04 | Plan 46 후속: `make run-api`에서 고정 token 제거. `make run-api-dev` 분리. safe default 강화 |
+| 6 | 2026-05-04 | Plan 47 반영: Auth policy hardening. Docs/OpenAPI 공개 정책 고정, token/role validation 강화, 역할 구조 명문화 |
 
 ---
 
@@ -476,7 +477,7 @@ curl -s "http://localhost:8000/orders?limit=10" | python3 -m json.tool
 |------|------|------|
 | **Write API** | ❌ 없음 | 데이터 조회만 가능. 주문 생성/수정/취소 불가 |
 | **Admin UI** | ❌ 없음 | Swagger UI가 유일한 operator interface. 시각화/대시보드 없음 |
-| **인증/인가** | ✅ Plan 46 | Bearer token 인증 활성화. protected endpoint는 401 반환. `/health`, `/health/readyz`, `/docs`, `/openapi.json`는 공개 |
+| **인증/인가** | ✅ Plan 46, Plan 47 | Bearer token 인증 활성화. protected endpoint는 401 반환. **Docs 정책**: `/docs`와 `/openapi.json`은 공개 (API 발견성 유지). 보호 endpoint 호출에만 Bearer token 필요. token/role validation 강화 완료 (whitespace token 거부, role 허용값 검증). 향후 docs 보호 옵션 → [`BACKLOG.md`](BACKLOG.md:32) |
 | **Postgres API 모드** | ✅ Plan 42 | `create_app(runtime_mode="postgres")`로 Postgres 데이터 조회 가능. 단, `make run-api`는 기본 in-memory 모드 |
 | **페이징** | ❌ Phase 2 | `limit` 파라미터만 존재. cursor/token 기반 페이징 없음 |
 | **정렬 커스터마이징** | ❌ 고정 | 각 endpoint의 정렬 기준이 고정되어 있음 (`/audit-logs`는 내림차순으로 고정된 것으로 보이나 실제로는 오름차순) |

@@ -27,6 +27,8 @@ except ImportError:
 
 from agent_trading.api.security import configure_security, require_viewer
 
+_VALID_ROLES = frozenset({"viewer", "admin"})
+
 
 def create_app(
     repos: RepositoryContainer | None = None,
@@ -34,6 +36,7 @@ def create_app(
     runtime_mode: str = "in_memory",
     auth_enabled: bool = True,
     auth_token: str | None = None,
+    auth_role: str = "viewer",
 ) -> FastAPI:
     """Create a configured FastAPI application.
 
@@ -51,6 +54,9 @@ def create_app(
     auth_token:
         The expected Bearer token value.  **Required** when ``auth_enabled=True``.
         Ignored when ``auth_enabled=False``.
+    auth_role:
+        Role assigned to authenticated principals (``"viewer"`` or ``"admin"``).
+        Defaults to ``"viewer"``.
 
     Returns
     -------
@@ -60,7 +66,10 @@ def create_app(
     Raises
     ------
     ValueError
-        If ``auth_enabled=True`` and ``auth_token`` is ``None`` or empty.
+        If ``auth_enabled=True`` and ``auth_token`` is ``None``, empty, or
+        whitespace-only.
+    ValueError
+        If ``auth_role`` is not one of ``{"viewer", "admin"}``.
 
     Notes
     -----
@@ -69,16 +78,22 @@ def create_app(
     they are created per request via the ``get_repos`` dependency
     (see :mod:`agent_trading.api.deps`).
     """
-    if auth_enabled and not auth_token:
+    if auth_enabled and (not auth_token or not auth_token.strip()):
         raise ValueError(
-            "auth_token must be provided when auth_enabled=True. "
+            "auth_token must be a non-empty string when auth_enabled=True. "
             "Set auth_enabled=False explicitly for unauthenticated (dev/test) mode."
+        )
+
+    if auth_role not in _VALID_ROLES:
+        raise ValueError(
+            f"Invalid auth_role={auth_role!r}. "
+            f"Allowed values: {sorted(_VALID_ROLES)}"
         )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Configure security module at startup
-        configure_security(token=auth_token)
+        configure_security(token=auth_token, role=auth_role)
 
         if repos is not None:
             # Explicit repos injected — caller has full control.
@@ -223,7 +238,7 @@ def create_app_from_env() -> FastAPI:
     mode = os.getenv("API_RUNTIME_MODE", "in_memory")
     token = os.getenv("INSPECTION_API_TOKEN")
     role = os.getenv("INSPECTION_API_ROLE", "viewer")
-    return create_app(runtime_mode=mode, auth_token=token)
+    return create_app(runtime_mode=mode, auth_token=token, auth_role=role)
 
 
 # Default instance: in-memory repos, suitable for development / inspection.

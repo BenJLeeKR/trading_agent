@@ -65,6 +65,9 @@
 | 42 | [`42_postgres_backed_inspection_api_mode.md`](./42_postgres_backed_inspection_api_mode.md) | Postgres-backed Inspection API Mode (Rev 2): `create_app(runtime_mode="postgres")`로 실제 DB 데이터 조회. Pool-only lifespan + request-scoped repos. `/health`/`/readyz` DB probe 개선. Postgres API 테스트 4개. 기존 in-memory 회귀 방지. |
 | 43 | [`43_containerize_inspection_api.md`](./43_containerize_inspection_api.md) | Containerize FastAPI Inspection API and docker-compose Integration: `api` 서비스 추가 (uvicorn --factory, Postgres mode, port 8000, healthcheck). `app` 서비스 유지. `create_app_from_env()` factory 함수. Makefile docker-api targets. |
 | 44 | [`44_postgres_reconciliation_locks_inspection.md`](./44_postgres_reconciliation_locks_inspection.md) | Postgres-backed Reconciliation Locks Inspection Support: `list_locks()` contract 추가, InMemory + Postgres 구현, route refactor (fallback 제거), `BlockingLockEntity`, `BlockingLockStatus` 확장, test suite (in-memory + Postgres 통합). |
+| 45 | [`45_inspection_api_phase2.md`](./45_inspection_api_phase2.md) | Inspection API Phase 2: accounts, clients, instruments, positions, cash-balances, broker-orders endpoint 추가. P0/P1 분류, Pydantic schema, route 파일, in-memory + Postgres 테스트. |
+| 46 | [`46_auth_rbac_inspection_api.md`](./46_auth_rbac_inspection_api.md) | Auth/RBAC for Inspection API: Static Bearer token, viewer/admin RBAC, public/protected endpoint 정책, router-level dependency, OpenAPI BearerAuth scheme, safe default (auth_enabled=True). |
+| 47 | [`47_auth_policy_hardening.md`](./47_auth_policy_hardening.md) | Auth Policy Hardening (Pre-UI Security Pass): Docs/OpenAPI 공개 정책 고정, Token 운영 정책 명문화, whitespace/role validation, create_app_from_env() role 전달 버그 수정, BACKLOG/README 업데이트. |
 ## 빠른 추천 경로
 
 ### 현재 상태만 빠르게 보기

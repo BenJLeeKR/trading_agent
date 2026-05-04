@@ -6,6 +6,8 @@ Test categories
 * **Protected endpoints without auth** — expect 401.
 * **Protected endpoints with valid token** — expect 200.
 * **Invalid / malformed token** — expect 401.
+* **Startup validation** — ``ValueError`` on bad config (whitespace token,
+  invalid role).
 * **OpenAPI security scheme** — BearerAuth scheme present in spec.
 """
 
@@ -13,6 +15,8 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 import pytest
+
+from agent_trading.api.app import create_app
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -190,3 +194,44 @@ class TestOpenAPISecurityScheme:
             "Global security should not be set, otherwise public endpoints "
             "show lock icons in Swagger UI"
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# F. Startup validation — create_app() reject bad config
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestStartupValidation:
+    """``create_app()`` raises ``ValueError`` on invalid configuration."""
+
+    def test_whitespace_only_token_raises_value_error(self) -> None:
+        """Whitespace-only token is rejected at startup."""
+        with pytest.raises(ValueError, match="auth_token must be a non-empty string"):
+            create_app(auth_enabled=True, auth_token="   ")
+
+    def test_empty_token_raises_value_error(self) -> None:
+        """Empty string token is rejected at startup."""
+        with pytest.raises(ValueError, match="auth_token must be a non-empty string"):
+            create_app(auth_enabled=True, auth_token="")
+
+    def test_none_token_raises_value_error(self) -> None:
+        """``None`` token is rejected at startup."""
+        with pytest.raises(ValueError, match="auth_token must be a non-empty string"):
+            create_app(auth_enabled=True, auth_token=None)
+
+    def test_invalid_role_raises_value_error(self) -> None:
+        """Role other than ``viewer`` or ``admin`` is rejected."""
+        with pytest.raises(ValueError, match="Invalid auth_role"):
+            create_app(auth_enabled=True, auth_token="valid-token", auth_role="superadmin")
+
+    def test_valid_admin_role_succeeds(self) -> None:
+        """``auth_role="admin"`` is accepted."""
+        app = create_app(auth_enabled=True, auth_token="valid-token", auth_role="admin")
+        assert app is not None
+
+    def test_auth_disabled_ignores_token_validation(self) -> None:
+        """``auth_enabled=False`` skips token validation entirely."""
+        app = create_app(
+            auth_enabled=False, auth_token=None, auth_role="viewer"
+        )
+        assert app is not None
