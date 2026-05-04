@@ -8,15 +8,24 @@ from uuid import UUID, uuid4
 import pytest
 
 from agent_trading.brokers.base import BrokerAdapter
-from agent_trading.domain.entities import OrderRequestEntity
+from agent_trading.domain.entities import (
+    AccountEntity,
+    InstrumentEntity,
+    OrderRequestEntity,
+)
 from agent_trading.domain.enums import (
     BrokerName,
+    Environment,
     OrderSide,
     OrderStatus,
     OrderType,
     TimeInForce,
 )
 from agent_trading.domain.models import SubmitOrderRequest, SubmitOrderResult
+from agent_trading.services.decision_orchestrator import (
+    DecisionOrchestratorService,
+    OrderIntent,
+)
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.services.reconciliation_service import ReconciliationService
@@ -245,3 +254,136 @@ async def test_submit_without_reconciliation_service(
 
     assert result.status == OrderStatus.SUBMITTED
     mock_broker.submit_order.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Plan 32: AI-Broker Pre-Submit Safety Boundary — Test B
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_assemble_request_only_passed_to_broker(
+    repos, reconciliation_service, mock_broker, sample_order, submit_request
+):
+    """intent.request (SubmitOrderRequest) reaches broker, not the full OrderIntent.
+
+    This verifies that:
+    1. ``assemble()`` populates ``ai_backend_inputs`` on the ``OrderIntent``.
+    2. But only ``intent.request`` (a ``SubmitOrderRequest``) is passed to the
+       broker — the ``OrderIntent`` wrapper, including ``ai_backend_inputs``,
+       never reaches the execution boundary.
+    """
+    service = DecisionOrchestratorService(repos=repos)
+
+    # --- assemble() returns OrderIntent with populated ai_backend_inputs ---
+    intent = await service.assemble(submit_request)
+
+    # ai_backend_inputs is populated (stub agents produce deterministic defaults)
+    assert intent.ai_backend_inputs is not None
+    assert intent.ai_backend_inputs.decision_type == "HOLD"
+    assert isinstance(intent.request, SubmitOrderRequest)
+
+    # intent.request is a plain SubmitOrderRequest — no ai_backend_inputs field
+    assert not hasattr(intent.request, "ai_backend_inputs")
+
+    # --- Submit via OrderManager sharing the same repos ---
+    manager = OrderManager(
+        repos=repos,
+        reconciliation_service=reconciliation_service,
+    )
+
+    mock_broker.submit_order.return_value = SubmitOrderResult(
+        accepted=True,
+        broker_name=BrokerName.KOREA_INVESTMENT,
+        client_order_id="test-001",
+        broker_order_id="BRK-001",
+        broker_status=OrderStatus.ACKNOWLEDGED,
+        ack_timestamp=datetime.now(timezone.utc),
+        raw_code="0000",
+        raw_message="Accepted",
+    )
+
+    result = await manager.submit_order_to_broker(
+        sample_order, mock_broker, intent.request
+    )
+
+    assert result.status == OrderStatus.SUBMITTED
+
+    # Broker received intent.request (SubmitOrderRequest) — NOT the OrderIntent.
+    # This proves ai_backend_inputs stayed on the OrderIntent side of the boundary.
+    mock_broker.submit_order.assert_awaited_once_with(intent.request)
+
+
+# ---------------------------------------------------------------------------
+# Plan 32: AI-Broker Pre-Submit Safety Boundary — Test C
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_lock_blocks_submission_after_uncertain(
+    manager, repos, reconciliation_service, mock_broker, sample_order, submit_request
+):
+    """Uncertain result creates a lock; second submit is blocked; broker called once.
+
+    This verifies the reconciliation-first principle:
+    1. First submit with ``uncertain=True`` → order transitions to
+       ``RECONCILE_REQUIRED`` and a blocking lock is acquired.
+    2. Second submit (new order, same account) → blocked by lock →
+       ``RECONCILE_REQUIRED`` without calling the broker.
+    3. ``mock_broker.submit_order.call_count == 1`` — the second submit
+       never reaches the broker.
+    """
+    # --- First submit: uncertain → RECONCILE_REQUIRED + lock acquired ---
+    mock_broker.submit_order.return_value = SubmitOrderResult(
+        accepted=True,
+        broker_name=BrokerName.KOREA_INVESTMENT,
+        client_order_id="test-001",
+        broker_order_id=None,  # Missing broker_order_id → uncertain
+        broker_status=OrderStatus.ACKNOWLEDGED,
+        ack_timestamp=datetime.now(timezone.utc),
+        raw_code="TIMEOUT",
+        raw_message="Response timeout",
+        uncertain=True,
+        requires_reconciliation=False,
+    )
+
+    result1 = await manager.submit_order_to_broker(
+        sample_order, mock_broker, submit_request
+    )
+
+    assert result1.status == OrderStatus.RECONCILE_REQUIRED
+    assert result1.status_reason_code == "TIMEOUT"
+    assert mock_broker.submit_order.call_count == 1  # First submit reached broker
+
+    # --- Create a second order with the SAME account_id in PENDING_SUBMIT ---
+    now = datetime.now(timezone.utc)
+    second_order = OrderRequestEntity(
+        order_request_id=uuid4(),
+        account_id=sample_order.account_id,  # Same account → same lock scope
+        instrument_id=sample_order.instrument_id,
+        client_order_id="test-002",
+        idempotency_key="ik-test-002",
+        correlation_id="corr-002",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        requested_quantity=Decimal("10"),
+        status=OrderStatus.PENDING_SUBMIT,
+        requested_price=Decimal("50000"),
+        time_in_force=TimeInForce.DAY,
+        created_at=now,
+        updated_at=now,
+    )
+    await repos.orders.add(second_order)
+
+    # Reset the mock return value (does not affect call_count)
+    # The second submit should be blocked by the reconciliation lock.
+    result2 = await manager.submit_order_to_broker(
+        second_order, mock_broker, submit_request
+    )
+
+    # Second submit was blocked by lock — broker NOT called again
+    assert result2.status == OrderStatus.RECONCILE_REQUIRED
+    assert result2.status_reason_code == "BLOCKED"
+    assert mock_broker.submit_order.call_count == 1, (
+        f"Expected call_count=1 (blocked), got {mock_broker.submit_order.call_count}"
+    )

@@ -7,6 +7,8 @@ from uuid import uuid4
 import pytest
 
 from agent_trading.domain.entities import (
+    AccountEntity,
+    AuditLogEntity,
     CashBalanceSnapshotEntity,
     ConfigVersionEntity,
     DecisionContextEntity,
@@ -18,10 +20,12 @@ from agent_trading.domain.entities import (
 from agent_trading.domain.enums import (
     Environment,
     OrderSide,
+    OrderStatus,
     OrderType,
     TimeInForce,
 )
 from agent_trading.domain.models import SubmitOrderRequest
+from agent_trading.services.order_manager import OrderManager
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.services.decision_orchestrator import (
     AIDecisionInputs,
@@ -432,6 +436,41 @@ class TestOrderIntentExtensions:
             # slot frozen — cannot assign
             inputs.schema_versions = ()  # type: ignore[misc]
 
+    @pytest.mark.asyncio
+    async def test_ai_backend_inputs_does_not_affect_submit_request(
+        self, service, sample_request
+    ):
+        """ai_backend_inputs populated but SubmitOrderRequest preserves original fields.
+
+        This verifies the AI-to-execution safety boundary: even when
+        ``ai_backend_inputs`` carries the full AI decision payload, the
+        ``SubmitOrderRequest`` (which is what the broker receives) is
+        assembled exclusively from the original ``request`` fields, not
+        from any AI-derived data.
+        """
+        intent = await service.assemble(sample_request)
+
+        # ai_backend_inputs is populated (stub agents produce defaults)
+        assert intent.ai_backend_inputs is not None
+        assert intent.ai_backend_inputs.decision_type == "HOLD"
+
+        # SubmitOrderRequest preserves ALL original fields — ai_backend_inputs
+        # is NOT injected into the request payload.
+        assert intent.request.client_order_id == sample_request.client_order_id
+        assert intent.request.correlation_id == sample_request.correlation_id
+        assert intent.request.account_ref == sample_request.account_ref
+        assert intent.request.symbol == sample_request.symbol
+        assert intent.request.market == sample_request.market
+        assert intent.request.side == sample_request.side
+        assert intent.request.order_type == sample_request.order_type
+        assert intent.request.quantity == sample_request.quantity
+        assert intent.request.price == sample_request.price
+        assert intent.request.strategy_id == sample_request.strategy_id
+        assert intent.request.time_in_force == sample_request.time_in_force
+
+        # Verify ai_backend_inputs is NOT a field of SubmitOrderRequest
+        assert not hasattr(intent.request, "ai_backend_inputs")
+
 # ---------------------------------------------------------------------------
 # Priority 3: Config version connection
 # ---------------------------------------------------------------------------
@@ -681,3 +720,99 @@ class TestPositionSnapshotSourceOfTruth:
         assert intent.context.position_snapshot.position_snapshot_id == matching_snapshot.position_snapshot_id
         assert intent.context.position_snapshot.instrument_id == instrument.instrument_id
         assert intent.context.position_snapshot.quantity == Decimal("100")
+
+
+# ---------------------------------------------------------------------------
+# Plan 32: AI-Broker Pre-Submit Safety Boundary — Test D
+# ---------------------------------------------------------------------------
+
+
+class TestAssembleAndCreateOrderFullFlow:
+    """assemble() + create_order() full flow: AI recorder + order audit path.
+
+    This test verifies that:
+    1. After ``assemble()``, the in-memory recorder contains exactly 3
+       ``AgentRunEntity`` entries (EI, AR, FDC).
+    2. ``OrderManager.create_order(intent.request)`` succeeds and creates an
+       order in ``DRAFT`` status.
+    3. The audit log contains an ``order.create`` entry.
+    4. The AI recorder and the order audit path coexist without interference.
+    """
+
+    @pytest.mark.asyncio
+    async def test_assemble_and_create_order_full_flow(
+        self, sample_request
+    ):
+        """Full flow: assemble → recorder 3 runs → create_order → audit log."""
+        repos = build_in_memory_repositories()
+
+        # ── Seed account (needed by OrderManager.create_order) ──
+        account = AccountEntity(
+            account_id=uuid4(),
+            client_id=uuid4(),
+            broker_account_id=uuid4(),
+            environment=Environment.PAPER,
+            account_alias="test_account",  # matches sample_request.account_ref
+            account_masked="test-****",
+            status="active",
+        )
+        repos.accounts._items[account.account_id] = account
+
+        # ── Seed instrument (needed by OrderManager.create_order) ──
+        instrument = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="005930",  # matches sample_request.symbol
+            market_code="KRX",  # matches sample_request.market
+            asset_class="stock",
+            currency="KRW",
+            name="Samsung Electronics",
+        )
+        repos.instruments._items[instrument.instrument_id] = instrument
+
+        # ── Create services sharing the same repos ──
+        service = DecisionOrchestratorService(repos=repos)
+        manager = OrderManager(repos=repos, reconciliation_service=None)
+
+        # ── Step 1: assemble() → recorder should have 3 agent runs ──
+        intent = await service.assemble(sample_request)
+
+        assert intent.ai_backend_inputs is not None
+        runs = service._agent_recorder.list_all()
+        assert len(runs) == 3, (
+            f"Expected 3 agent runs (EI, AR, FDC), got {len(runs)}"
+        )
+        agent_types = {r.agent_type for r in runs}
+        assert agent_types == {
+            "event_interpretation",
+            "ai_risk",
+            "final_decision_composer",
+        }, f"Unexpected agent types: {agent_types}"
+
+        # ── Step 2: create_order(intent.request) → DRAFT ──
+        created = await manager.create_order(intent.request)
+
+        assert created.status == OrderStatus.DRAFT, (
+            f"Expected DRAFT, got {created.status}"
+        )
+        assert created.account_id == account.account_id
+        assert created.instrument_id == instrument.instrument_id
+        assert created.client_order_id == intent.request.client_order_id
+
+        # ── Step 3: Audit log contains order.create ──
+        audit_logs = await repos.audit_logs.list_by_correlation_id(
+            intent.request.correlation_id
+        )
+        create_entries = [
+            e for e in audit_logs if e.action == "order.create"
+        ]
+        assert len(create_entries) == 1, (
+            f"Expected 1 order.create audit entry, got {len(create_entries)}"
+        )
+        assert create_entries[0].target_entity_type == "order_request"
+        assert create_entries[0].target_entity_id == str(created.order_request_id)
+
+        # ── Step 4: AI recorder + order audit path coexist (both populated) ──
+        assert len(service._agent_recorder.list_all()) == 3  # unchanged
+        assert len(audit_logs) >= 1  # at least order.create
+        # The recorder and audit log are independent storage backends
+        assert service._agent_recorder.list_all() is not audit_logs
