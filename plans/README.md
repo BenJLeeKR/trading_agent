@@ -7,12 +7,15 @@
 - **하나의 plan 번호 = 하나의 canonical 파일**: 같은 작업 단위에 대해 여러 버전의 plan 문서를 파일로 분리하지 않는다. 수정 이력이 필요한 경우, 문서 내부 `Revision History` 섹션에 누적 기록한다. 같은 task의 원본안/수정안/후속안을 별도 파일로 쪼개지 않는다.
 - **파일명**: 숫자 접두사 + 설명으로 구성 (예: `04.xxx.md`, `29_ai_decision_backend_contract.md`). 엄격한 패턴보다는 `plans/README.md` 목록에서 순서대로 식별 가능하게 하는 것이 목적이다.
 - **Rejected 접근법**: 문서 내 `부록(Appendix)` 섹션에 참고용으로 보관한다. 별도 파일로 분리하지 않는다.
+- **Backlog 관리**: "지금 당장 실행할 작업"은 numbered plan으로, "나중에 할 작업"은 [`BACKLOG.md`](./BACKLOG.md)에 기록한다. 실행할 때만 번호 Plan을 생성하고, 아직 시작하지 않을 작업은 BACKLOG에만 기록한다. BACKLOG 항목이 실제로 시작되면 해당 항목을 완료 표시하고 새 numbered plan으로 승격한다.
+- **참조**: [`plans/BACKLOG.md`](./BACKLOG.md) — Future work candidates 정리
 
 권장 읽기 방식:
 
 1. 처음부터 전체 흐름을 따라가려면 `01`부터 순서대로 읽는다.
 2. 현재 상태만 빠르게 파악하려면 `18` 이후 문서부터 읽는다.
 3. 특정 milestone의 맥락이 필요할 때만 그 이전 문서로 내려간다.
+4. **아직 실행하지 않은 작업 아이디어**는 [`BACKLOG.md`](./BACKLOG.md)를 참조한다.
 
 ## 문서 목록
 
@@ -56,7 +59,10 @@
 | 36 | [`36_kis_paper_ai_runtime_smoke.md`](./36_kis_paper_ai_runtime_smoke.md) | KIS Paper + AI Layer Combined Runtime Smoke Verification: AI layer 3-agent chain + KIS paper adapter가 결합된 runtime에서 execution boundary 안전성 검증. 3 scenarios (Runtime Wiring, Assemble Compatibility, Minimal Paper Submit) |
 | 37 | [`37_long_path_end_to_end_integration.md`](./37_long_path_end_to_end_integration.md) | Long-Path End-to-End Integration Scenario: AI assemble -> create_order -> submit (uncertain) -> reconciliation -> authoritative reflection -> final state. KIS 불필요. In-memory + Postgres + Failure branch. |
 | 38 | [`38_postgres_long_path_execution.md`](./38_postgres_long_path_execution.md) | Postgres-backed Long-Path E2E Execution & Verification: env alignment (POSTGRES_URL -> DATABASE_HOST), Postgres scenario activation, persistence artifact verification in actual DB, MCP/Codex access documentation. |
- 
+| 39 | [`39_trade_decision_schema_alignment.md`](./39_trade_decision_schema_alignment.md) | Trade Decision Schema Alignment: migration 0009 (decision column nullable), Postgres persistence test for trade_decisions, zero existing test changes. |
+| 40 | [`40_fastapi_inspection_api.md`](./40_fastapi_inspection_api.md) | FastAPI Inspection / Admin API (Read-Only First): Phase 1 — 9 inspection endpoints with Swagger UI, in-memory-first, 명시적 repository 주입, 최소 read model Pydantic schema. |
+| 41 | [`41_inspection_api_manual_verification.md`](./41_inspection_api_manual_verification.md) | Inspection API Manual Verification Guide / Operator Checklist: Swagger UI 기반 7가지 운영 체크리스트 시나리오, 10개 endpoint별 확인 포인트, curl 명령어 모음, 현재 한계 및 다음 단계 연결. |
+  
 ## 빠른 추천 경로
 
 ### 현재 상태만 빠르게 보기
@@ -80,6 +86,8 @@
 17. [`36_kis_paper_ai_runtime_smoke.md`](./36_kis_paper_ai_runtime_smoke.md)
 18. [`37_long_path_end_to_end_integration.md`](./37_long_path_end_to_end_integration.md)
 19. [`38_postgres_long_path_execution.md`](./38_postgres_long_path_execution.md)
+20. [`39_trade_decision_schema_alignment.md`](./39_trade_decision_schema_alignment.md)
+21. [`40_fastapi_inspection_api.md`](./40_fastapi_inspection_api.md)
 
 ### AI Agent / Provider 연결 흐름만 보기
 
