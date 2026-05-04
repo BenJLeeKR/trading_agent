@@ -1,15 +1,18 @@
-"""``GET /health`` — minimal server and database status."""
+"""``GET /health`` — minimal server and database status.
+
+Uses ``request.app.state.runtime_mode`` directly instead of
+``Depends(get_repos)`` to avoid creating request-scoped Postgres
+repos for a simple health check.
+"""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from agent_trading.api.deps import get_repos
 from agent_trading.api.schemas import HealthResponse
-from agent_trading.repositories.container import RepositoryContainer
 
 router = APIRouter(tags=["health"])
 
@@ -20,23 +23,20 @@ except ImportError:
 
 
 @router.get("/health", response_model=HealthResponse)
-async def health(
-    repos: RepositoryContainer = Depends(get_repos),
-) -> HealthResponse:
-    """Return minimal server status and database connectivity."""
-    runtime_mode: str = "in_memory"
-    database_status: str = "in_memory"
+async def health(request: Request) -> HealthResponse:
+    """Return minimal server status and database connectivity.
 
-    # Attempt a lightweight DB probe if Postgres repos are detected.
-    uow = repos.unit_of_work
-    if hasattr(uow, "_pool") and uow._pool is not None:  # type: ignore[attr-defined]
-        runtime_mode = "postgres"
-        try:
-            async with uow._pool.acquire() as conn:  # type: ignore[attr-defined]
-                await conn.execute("SELECT 1")
-                database_status = "connected"
-        except Exception:  # noqa: BLE001
-            database_status = "disconnected"
+    Uses ``request.app.state.runtime_mode`` directly (no ``Depends(get_repos)``)
+    to keep the health probe lightweight and independent of request-scoped repos.
+    """
+    runtime_mode: str = getattr(request.app.state, "runtime_mode", "in_memory")
+    database_status: str = runtime_mode  # fallback: same as mode label
+
+    if runtime_mode == "postgres":
+        from agent_trading.db.connection import health_check
+
+        db_ok = await health_check()
+        database_status = "connected" if db_ok else "disconnected"
 
     return HealthResponse(
         status="ok",
@@ -48,6 +48,21 @@ async def health(
 
 
 @router.get("/health/readyz")
-async def readyz() -> JSONResponse:
-    """Kubernetes-style readiness probe — always 200 for now."""
+async def readyz(request: Request) -> JSONResponse:
+    """Kubernetes-style readiness probe.
+
+    In postgres mode, checks database reachability.
+    """
+    runtime_mode: str = getattr(request.app.state, "runtime_mode", "in_memory")
+
+    if runtime_mode == "postgres":
+        from agent_trading.db.connection import health_check
+
+        db_ok = await health_check()
+        if not db_ok:
+            return JSONResponse(
+                {"status": "not_ready", "reason": "database unreachable"},
+                status_code=503,
+            )
+
     return JSONResponse({"status": "ok"})

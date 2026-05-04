@@ -8,6 +8,7 @@ These are minimal **read models** — not 1:1 mirrors of domain entities.
 from __future__ import annotations
 
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
@@ -101,13 +102,16 @@ class ReconciliationRunSummary(BaseModel):
 class BlockingLockStatus(BaseModel):
     """``GET /reconciliation/locks`` — blocking lock status."""
 
+    lock_id: str
     account_id: str
     strategy_id: str | None = None
     symbol: str | None = None
     side: str | None = None
     reason: str
     locked_by_run_id: str
-    expires_at: datetime
+    locked_at: datetime | None = None
+    expires_at: datetime | None = None
+    is_active: bool = True
 
 
 class DecisionContextDetail(BaseModel):
@@ -137,3 +141,123 @@ class TradeDecisionDetail(BaseModel):
     entry_price: float | None = None
     quantity: float | None = None
     max_order_value: float | None = None
+
+
+# ── Phase 2: Account, Client, Instrument, Position, Cash-balance, Broker-order ──
+
+
+class AccountSummary(BaseModel):
+    """``GET /accounts`` / ``GET /accounts/{id}`` — account info."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    account_id: UUID
+    client_id: UUID
+    broker_account_id: UUID
+    account_alias: str | None = None
+    account_masked: str | None = None
+    environment: str
+    status: str
+    risk_profile: dict[str, object] | None = None
+    created_at: datetime
+    updated_at: datetime | None = None
+
+
+class ClientDetail(BaseModel):
+    """``GET /clients/{id}`` — client info."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    client_id: UUID
+    client_code: str
+    name: str
+    status: str
+    base_currency: str
+    created_at: datetime
+    updated_at: datetime | None = None
+
+
+class InstrumentDetail(BaseModel):
+    """``GET /instruments/{id}`` — instrument info."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    instrument_id: UUID
+    symbol: str
+    market_code: str
+    asset_class: str
+    currency: str
+    name: str
+    tick_size: float | None = None
+    lot_size: float | None = None
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime | None = None
+
+
+class PositionSnapshotView(BaseModel):
+    """``GET /positions`` — point-in-time position snapshot.
+
+    .. note::
+
+       This is a **snapshot** — not the current live position.  The
+       repository returns all position snapshots for the account ordered
+       by ``snapshot_at`` descending.  Use ``snapshot_at`` to identify
+       the most recent observation.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    position_snapshot_id: UUID
+    account_id: UUID
+    instrument_id: UUID
+    quantity: float
+    average_price: float
+    market_price: float
+    unrealized_pnl: float | None = None
+    source_of_truth: str
+    snapshot_at: datetime
+    created_at: datetime
+
+
+class CashBalanceSnapshotView(BaseModel):
+    """``GET /cash-balances`` — latest cash balance snapshot.
+
+    .. note::
+
+       Returns ``null`` when no snapshot exists for the given account.
+       This is **not** an error — the account may not have been funded
+       or no snapshot has been recorded yet.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    cash_balance_snapshot_id: UUID
+    account_id: UUID
+    currency: str
+    available_cash: float
+    settled_cash: float
+    unsettled_cash: float
+    source_of_truth: str
+    snapshot_at: datetime
+    created_at: datetime
+
+
+class BrokerOrderView(BaseModel):
+    """``GET /orders/{id}/broker-orders`` — broker-side order reference.
+
+    Inspection‑friendly subset of ``BrokerOrderEntity`` fields.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    broker_order_id: UUID
+    order_request_id: UUID
+    broker_name: str
+    broker_status: str
+    broker_native_order_id: str | None = None
+    request_payload_uri: str | None = None
+    response_payload_uri: str | None = None
+    last_synced_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime | None = None

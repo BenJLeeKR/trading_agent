@@ -300,6 +300,25 @@ class ReconciliationRunEntity:
 
 
 @dataclass(slots=True, frozen=True)
+class BlockingLockEntity:
+    """Read-only inspection entity for a blocking lock on a strategy/symbol.
+
+    Maps directly to ``trading.order_blocking_locks`` rows.
+    Active check: ``expires_at > NOW()`` (or ``resolved_at IS NULL`` if
+    soft-delete columns are added in the future).
+    """
+    lock_id: UUID
+    account_id: UUID
+    strategy_id: UUID | None = None
+    symbol: str | None = None
+    side: str | None = None
+    reason: str = "reconciliation"
+    locked_by_run_id: UUID | None = None
+    locked_at: datetime | None = None
+    expires_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class AuditLogEntity:
     audit_log_id: UUID
     actor_type: str

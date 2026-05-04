@@ -1,13 +1,19 @@
 # =============================================================================
 # Agent Trading System — Local Development Services
 # =============================================================================
-# Minimal setup: PostgreSQL + Python app container.
+# Minimal setup: PostgreSQL + Python app container + FastAPI inspection API.
 # No Redis, observability, or CI/CD infrastructure.
 #
+# Services:
+#   db   — PostgreSQL 16 (data persisted in pgdata volume)
+#   app  — Dev shell container (pytest, migration, manual scripts)
+#   api  — FastAPI inspection API server (Postgres mode, port 8000)
+#
 # Usage:
-#   docker compose up -d          # Start all services
-#   docker compose exec app bash  # Open a shell in the app container
-#   docker compose down           # Stop all services
+#   docker compose up -d            # Start all services
+#   docker compose up -d db api     # Start DB + API only (no dev shell)
+#   docker compose exec app bash    # Open a shell in the dev container
+#   docker compose down             # Stop all services
 # =============================================================================
 
 services:
@@ -29,7 +35,7 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # ---- Python Application --------------------------------------------------
+  # ---- Python Application (Development Shell) -----------------------------
   app:
     build: .
     depends_on:
@@ -49,6 +55,45 @@ services:
       - ./pyproject.toml:/app/pyproject.toml
     # Keep the container alive for interactive commands
     command: ["tail", "-f", "/dev/null"]
+    restart: unless-stopped
+
+  # ---- FastAPI Inspection API ----------------------------------------------
+  # Runs the read-only inspection API in Postgres-backed mode.
+  # Uses uvicorn --factory to call create_app_from_env(), which reads
+  # API_RUNTIME_MODE from the environment.
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_HOST: db
+      DATABASE_PORT: 5432
+      DATABASE_NAME: trading
+      DATABASE_USER: trading
+      DATABASE_PASSWORD: trading
+      DATABASE_SCHEMA: trading
+      API_RUNTIME_MODE: postgres
+    ports:
+      - "8000:8000"
+    command:
+      - uvicorn
+      - agent_trading.api.app:create_app_from_env
+      - --factory
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request; exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health/readyz').status==200 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
 
 volumes:

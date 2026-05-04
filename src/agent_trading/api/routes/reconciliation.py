@@ -56,39 +56,30 @@ async def list_blocking_locks(
     """List active (non-expired) blocking locks for an account.
 
     ``account_id`` is **required** to scope the query.
+    Delegates to ``ReconciliationRepository.list_locks()`` which handles
+    both in-memory and Postgres backends transparently.
     """
     try:
         uid = UUID(account_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid UUID: {account_id}") from exc
 
-    # The in-memory reconciliation repository stores locks internally.
-    # We access the private store for inspection purposes.
-    # In Postgres mode, this would query `trading.order_blocking_locks`.
-    repo = repos.reconciliations
-    if hasattr(repo, "_blocking_locks"):
-        locks: list[BlockingLockStatus] = []
-        for key, value in repo._blocking_locks.items():  # type: ignore[attr-defined]
-            if key[0] != uid:
-                continue
-            # Skip expired locks
-            from datetime import datetime, timezone
+    from datetime import datetime, timezone
 
-            expires_at = value.get("expires_at")
-            if expires_at and expires_at <= datetime.now(timezone.utc):
-                continue
-            locks.append(
-                BlockingLockStatus(
-                    account_id=str(key[0]),
-                    strategy_id=str(key[1]) if key[1] else None,
-                    symbol=key[2],
-                    side=key[3],
-                    reason=value.get("reason", "reconciliation"),
-                    locked_by_run_id=str(value.get("locked_by_run_id", "")),
-                    expires_at=expires_at,
-                )
-            )
-        return locks
-
-    # Fallback for Postgres or unknown repos: return empty.
-    return []
+    locks = await repos.reconciliations.list_locks(uid)
+    now = datetime.now(timezone.utc)
+    return [
+        BlockingLockStatus(
+            lock_id=str(lock.lock_id),
+            account_id=str(lock.account_id),
+            strategy_id=str(lock.strategy_id) if lock.strategy_id else None,
+            symbol=lock.symbol,
+            side=lock.side,
+            reason=lock.reason,
+            locked_by_run_id=str(lock.locked_by_run_id) if lock.locked_by_run_id else "",
+            locked_at=lock.locked_at,
+            expires_at=lock.expires_at,
+            is_active=lock.expires_at is None or lock.expires_at > now,
+        )
+        for lock in locks
+    ]

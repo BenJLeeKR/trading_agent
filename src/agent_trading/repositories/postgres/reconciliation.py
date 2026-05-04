@@ -6,7 +6,7 @@ from uuid import UUID
 
 from agent_trading.db.row_mapper import row_to_entity
 from agent_trading.db.transaction import TransactionManager
-from agent_trading.domain.entities import ReconciliationRunEntity
+from agent_trading.domain.entities import BlockingLockEntity, ReconciliationRunEntity
 
 
 class PostgresReconciliationRepository:
@@ -113,6 +113,30 @@ class PostgresReconciliationRepository:
         )
         return row_to_entity(row, ReconciliationRunEntity) if row else None
 
+    async def list_locks(
+        self, account_id: UUID
+    ) -> Sequence[BlockingLockEntity]:
+        """Return active (non-expired) blocking locks for an account.
+
+        Active lock check uses ``expires_at > NOW()`` since the DDL has no
+        ``resolved_at`` / ``deleted_at`` column — locks are physically
+        DELETEd, not soft-deleted. If a soft-delete column is added in a
+        future migration, include it in the WHERE clause alongside the
+        expiry check.
+        """
+        rows = await self._tx.connection.fetch(
+            """
+            SELECT lock_id, account_id, strategy_id, symbol, side,
+                   reason, locked_by_run_id, locked_at, expires_at
+            FROM trading.order_blocking_locks
+            WHERE account_id = $1
+              AND expires_at > NOW()
+            ORDER BY locked_at DESC
+            """,
+            account_id,
+        )
+        return [_row_to_blocking_lock(r) for r in rows]
+
     async def update_run_status(
         self,
         reconciliation_run_id: UUID,
@@ -140,3 +164,18 @@ class PostgresReconciliationRepository:
                 reconciliation_run_id,
                 status,
             )
+
+
+def _row_to_blocking_lock(row: object) -> BlockingLockEntity:
+    """Convert a ``trading.order_blocking_locks`` row to a ``BlockingLockEntity``."""
+    return BlockingLockEntity(
+        lock_id=row["lock_id"],
+        account_id=row["account_id"],
+        strategy_id=row.get("strategy_id"),
+        symbol=row.get("symbol"),
+        side=row.get("side"),
+        reason=row.get("reason", "reconciliation"),
+        locked_by_run_id=row.get("locked_by_run_id"),
+        locked_at=row.get("locked_at"),
+        expires_at=row.get("expires_at"),
+    )

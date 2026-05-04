@@ -7,6 +7,7 @@ from uuid import UUID
 from agent_trading.domain.entities import (
     AccountEntity,
     AuditLogEntity,
+    BlockingLockEntity,
     BrokerAccountEntity,
     BrokerOrderEntity,
     CashBalanceSnapshotEntity,
@@ -265,6 +266,18 @@ class ReconciliationRepository(Protocol):
         status: str,
         summary_json: dict[str, object] | None = None,
     ) -> None:
+        ...
+
+    # -- Plan 44: Lock inspection --
+    async def list_locks(
+        self, account_id: UUID
+    ) -> Sequence[BlockingLockEntity]:
+        """Return active (non-expired) blocking locks for an account.
+
+        Active means ``expires_at > NOW()`` (physical DELETE, no soft-delete
+        column exists yet). If ``resolved_at`` / ``deleted_at`` columns are
+        added later, they should be included in the filter.
+        """
         ...
 
 

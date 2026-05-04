@@ -62,7 +62,9 @@
 | 39 | [`39_trade_decision_schema_alignment.md`](./39_trade_decision_schema_alignment.md) | Trade Decision Schema Alignment: migration 0009 (decision column nullable), Postgres persistence test for trade_decisions, zero existing test changes. |
 | 40 | [`40_fastapi_inspection_api.md`](./40_fastapi_inspection_api.md) | FastAPI Inspection / Admin API (Read-Only First): Phase 1 — 9 inspection endpoints with Swagger UI, in-memory-first, 명시적 repository 주입, 최소 read model Pydantic schema. |
 | 41 | [`41_inspection_api_manual_verification.md`](./41_inspection_api_manual_verification.md) | Inspection API Manual Verification Guide / Operator Checklist: Swagger UI 기반 7가지 운영 체크리스트 시나리오, 10개 endpoint별 확인 포인트, curl 명령어 모음, 현재 한계 및 다음 단계 연결. |
-  
+| 42 | [`42_postgres_backed_inspection_api_mode.md`](./42_postgres_backed_inspection_api_mode.md) | Postgres-backed Inspection API Mode (Rev 2): `create_app(runtime_mode="postgres")`로 실제 DB 데이터 조회. Pool-only lifespan + request-scoped repos. `/health`/`/readyz` DB probe 개선. Postgres API 테스트 4개. 기존 in-memory 회귀 방지. |
+| 43 | [`43_containerize_inspection_api.md`](./43_containerize_inspection_api.md) | Containerize FastAPI Inspection API and docker-compose Integration: `api` 서비스 추가 (uvicorn --factory, Postgres mode, port 8000, healthcheck). `app` 서비스 유지. `create_app_from_env()` factory 함수. Makefile docker-api targets. |
+| 44 | [`44_postgres_reconciliation_locks_inspection.md`](./44_postgres_reconciliation_locks_inspection.md) | Postgres-backed Reconciliation Locks Inspection Support: `list_locks()` contract 추가, InMemory + Postgres 구현, route refactor (fallback 제거), `BlockingLockEntity`, `BlockingLockStatus` 확장, test suite (in-memory + Postgres 통합). |
 ## 빠른 추천 경로
 
 ### 현재 상태만 빠르게 보기
@@ -88,7 +90,10 @@
 19. [`38_postgres_long_path_execution.md`](./38_postgres_long_path_execution.md)
 20. [`39_trade_decision_schema_alignment.md`](./39_trade_decision_schema_alignment.md)
 21. [`40_fastapi_inspection_api.md`](./40_fastapi_inspection_api.md)
-
+22. [`41_inspection_api_manual_verification.md`](./41_inspection_api_manual_verification.md)
+23. [`42_postgres_backed_inspection_api_mode.md`](./42_postgres_backed_inspection_api_mode.md)
+24. [`43_containerize_inspection_api.md`](./43_containerize_inspection_api.md)
+25. [`44_postgres_reconciliation_locks_inspection.md`](./44_postgres_reconciliation_locks_inspection.md)
 ### AI Agent / Provider 연결 흐름만 보기
 
 1. [`19.priority_5_prerequisite_schema_alignment.md`](./19.priority_5_prerequisite_schema_alignment.md)

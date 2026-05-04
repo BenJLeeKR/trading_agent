@@ -1,5 +1,5 @@
 """Order inspection endpoints: ``GET /orders``, ``GET /orders/{id}``,
-``GET /orders/{id}/events``.
+``GET /orders/{id}/events``, ``GET /orders/{id}/broker-orders``.
 
 Results are sorted by ``created_at`` descending (newest first).
 """
@@ -11,7 +11,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from agent_trading.api.deps import get_repos
-from agent_trading.api.schemas import OrderDetail, OrderEvent, OrderSummary
+from agent_trading.api.schemas import BrokerOrderView, OrderDetail, OrderEvent, OrderSummary
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import OrderQuery
 
@@ -123,3 +123,26 @@ async def get_order_events(
         )
         for e in events
     ]
+
+
+@router.get("/{order_request_id}/broker-orders", response_model=list[BrokerOrderView])
+async def get_broker_orders(
+    order_request_id: str,
+    repos: RepositoryContainer = Depends(get_repos),
+) -> list[BrokerOrderView]:
+    """List broker-side order references for a given order request.
+
+    Returns an empty list when no broker orders have been registered yet.
+    """
+    try:
+        uid = UUID(order_request_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid UUID: {order_request_id}") from exc
+
+    # Validate order exists first
+    order = await repos.orders.get(uid)
+    if order is None:
+        raise HTTPException(status_code=404, detail=f"Order not found: {order_request_id}")
+
+    broker_orders = await repos.broker_orders.list_by_order_request(uid)
+    return [BrokerOrderView.model_validate(bo) for bo in broker_orders]

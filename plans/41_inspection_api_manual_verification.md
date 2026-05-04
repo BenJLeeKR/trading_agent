@@ -13,6 +13,8 @@
 | Rev | 날짜 | 변경 내용 |
 |-----|------|-----------|
 | 1 | 2026-05-04 | 최초 작성 |
+| 2 | 2026-05-04 | Plan 42 반영: Postgres mode 실행 방법 추가, `/health` 응답 변화, 기능적 한계 업데이트 |
+| 3 | 2026-05-04 | Plan 43 반영: Docker 실행 절차 추가 (`docker compose up -d db api`) |
 
 ---
 
@@ -31,6 +33,8 @@
 
 ### 1.1 API 서버 실행
 
+#### In-memory mode (기본)
+
 ```bash
 # 기본 in-memory 모드로 실행 (추가 설정 불필요)
 make run-api
@@ -42,17 +46,68 @@ make run-api
 uvicorn agent_trading.api.app:app --reload --host 0.0.0.0 --port 8000
 ```
 
+#### Postgres mode (Plan 42+)
+
+```bash
+# 1. .env 파일에서 DB 환경 변수 로드
+set -a && source .env && set +a
+
+# 2. Postgres mode로 API 실행
+# ⚠️ 기본 `app` 인스턴스는 in-memory. Postgres mode는 entry point 변경 필요.
+#    아래는 참고용 — 추후 Phase 2에서 환경 변수 기반 전환 추가 예정.
+uvicorn agent_trading.api.app:create_app --reload --host 0.0.0.0 --port 8000
+```
+
+> **현재 Postgres mode 실행 방법**: `create_app(runtime_mode="postgres")`를 직접 호출하는
+> 스크립트 또는 테스트를 통해서만 실행 가능. `make run-api`는 기본 in-memory 모드로 동작.
+
+#### Docker mode (Plan 43+)
+
+```bash
+# 1. 이미지 빌드
+docker compose build
+
+# 2. DB + API 서비스 기동 (Postgres mode, port 8000)
+docker compose up -d db api
+
+# 3. 헬스 체크 (컨테이너 healthcheck 상태 확인)
+docker compose ps
+# → api 컨테이너가 "(healthy)" 상태여야 정상
+
+# 4. API 로그 확인 (uvicorn access log)
+docker compose logs -f api
+
+# 5. API 서버 재시작
+make docker-restart-api
+
+# 6. 종료
+docker compose down
+```
+
+Docker mode(`api` 서비스)의 특징:
+- **내부 동작**: `uvicorn agent_trading.api.app:create_app_from_env --factory --host 0.0.0.0 --port 8000`
+- `create_app_from_env()`가 `API_RUNTIME_MODE=postgres`를 읽어 Postgres mode로 동작
+- `app` 서비스와 동일한 이미지(`build: .`)를 공유하므로 별도 Dockerfile 불필요
+- 컨테이너 내부 healthcheck: `127.0.0.1:8000/health/readyz` (Python urllib)
+- `start_period: 10s` — DB 연결 + pool 생성 시간 확보
+
+> **참고**: `docker compose up -d`는 모든 서비스(db + app + api)를 기동.
+> `docker compose up -d db api`는 dev shell(`app`) 없이 DB + API만 실행.
+
+Postgres mode에서의 내부 동작:
+1. **Lifespan startup**: `DatabaseConfig()`로 `.env` 읽기 → `create_pool()`로 asyncpg pool 생성
+2. **각 요청마다**: `TransactionManager` 열기 → `build_postgres_repositories(tx)` → repos 사용 후 트랜잭션 정리
+3. **Lifespan shutdown**: `close_pool()`로 pool 정리
+
 ### 1.2 필요 환경
 
-| 항목 | 값 | 비고 |
-|------|-----|------|
-| Python | >= 3.11 | |
-| 필수 패키지 | `fastapi>=0.110.0`, `uvicorn[standard]>=0.27.0` | `pip install -e ".[dev]"`로 설치 |
-| `.env` 파일 | **불필요** | in-memory 모드는 `.env`가 없어도 동작 |
-| PostgreSQL | **불필요** | Phase 1은 기본적으로 in-memory repository 사용 |
-| 초기 데이터 | **없음** | 서버 기동 시 빈 상태. 시스템이 주문을 생성한 후에 데이터 조회 가능 |
-
-> **참고**: Postgres-backed 모드는 Phase 2 이후 지원 예정.
+| 항목 | In-memory mode | Postgres mode |
+|------|---------------|---------------|
+| Python | >= 3.11 | >= 3.11 |
+| 필수 패키지 | `fastapi>=0.110.0`, `uvicorn[standard]>=0.27.0` | 동일 + `asyncpg>=0.29.0` |
+| `.env` 파일 | **불필요** | **필수** — `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER`, `DATABASE_PASSWORD` |
+| PostgreSQL | **불필요** | **필수** — 실행 중인 PostgreSQL 인스턴스 필요 |
+| 초기 데이터 | **없음** | DB 마이그레이션 + 기존 데이터 존재 시 조회 가능 |
 
 ### 1.3 서버 종료
 
@@ -98,8 +153,9 @@ curl -s http://localhost:8000/health | python3 -m json.tool
 | **목적** | 서버 상태와 데이터베이스 연결 상태 확인 |
 | **언제 보는가** | 서버 기동 직후, 장애 발생 시, 정기 상태 점검 |
 | **파라미터** | 없음 |
-| **정상 시 기대값** | `{"status":"ok", "version":"...", "database":"in_memory", "runtime_mode":"in_memory"}` |
-| **이상 징후** | `database`가 `"disconnected"`인 경우 (Postgres 모드에서만 해당) |
+| **정상 시 기대값 (in-memory)** | `{"status":"ok", "version":"...", "database":"in_memory", "runtime_mode":"in_memory"}` |
+| **정상 시 기대값 (postgres)** | `{"status":"ok", "version":"...", "database":"connected", "runtime_mode":"postgres"}` |
+| **이상 징후** | Postgres mode에서 `database`가 `"disconnected"`인 경우 → DB 연결 불가 |
 | **Swagger 테스트** | `/docs` → `GET /health` → Try it out → Execute |
 
 ### 3.2 `GET /health/readyz`
@@ -406,7 +462,7 @@ curl -s "http://localhost:8000/orders?limit=10" | python3 -m json.tool
 | **Write API** | ❌ 없음 | 데이터 조회만 가능. 주문 생성/수정/취소 불가 |
 | **Admin UI** | ❌ 없음 | Swagger UI가 유일한 operator interface. 시각화/대시보드 없음 |
 | **인증/인가** | ❌ 없음 | 모든 endpoint가 인증 없이 접근 가능. 운영망에 노출 시 보안 위험 |
-| **Postgres API 모드** | ❌ Phase 2 | 현재 in-memory 전용. Postgres 데이터 조회 불가 |
+| **Postgres API 모드** | ✅ Plan 42 | `create_app(runtime_mode="postgres")`로 Postgres 데이터 조회 가능. 단, `make run-api`는 기본 in-memory 모드 |
 | **페이징** | ❌ Phase 2 | `limit` 파라미터만 존재. cursor/token 기반 페이징 없음 |
 | **정렬 커스터마이징** | ❌ 고정 | 각 endpoint의 정렬 기준이 고정되어 있음 (`/audit-logs`는 내림차순으로 고정된 것으로 보이나 실제로는 오름차순) |
 | **KIS submit 관측** | ⚠️ 제한적 | 주문 상태는 조회 가능하지만 브로커 응답 원문은 `broker_api_call_log`에 저장되어 아직 API로 노출되지 않음 |
@@ -450,7 +506,7 @@ Admin UI가 도입되면 (`BACKLOG.md` Medium-term #1):
 | BACKLOG 항목 | 연관성 |
 |-------------|--------|
 | [Phase 2 API endpoints](BACKLOG.md:22) | 이 가이드의 endpoint별 확인 포인트 확장 |
-| [Postgres-backed API mode](BACKLOG.md:23) | Postgres 모드에서 `database` 필드가 `"postgres"`로 표시됨. `/health` 응답 변화 |
+| [Postgres-backed API mode](BACKLOG.md:23) | ✅ **Plan 42로 구현 완료**. `database` 필드가 `"connected"` 또는 `"disconnected"`로 표시. `runtime_mode`가 `"postgres"`로 설정됨. |
 | [Auth/RBAC](BACKLOG.md:35) | 인증 추가 시 모든 endpoint에 Authorization header 필요 |
 | [Admin UI](BACKLOG.md:34) | 이 가이드의 체크리스트 시나리오가 UI 대시보드로 대체 |
 | [Operator intervention](BACKLOG.md:36) | write API 추가 시 이 가이드에 수동 조치 절차 추가 필요 |

@@ -9,6 +9,7 @@ from uuid import UUID
 from agent_trading.domain.entities import (
     AccountEntity,
     AuditLogEntity,
+    BlockingLockEntity,
     BrokerAccountEntity,
     BrokerOrderEntity,
     CashBalanceSnapshotEntity,
@@ -454,6 +455,37 @@ class InMemoryReconciliationRepository:
             completed_at=run.completed_at,
             created_at=run.created_at,
         )
+
+    # -- Plan 44: Lock inspection (contract method) --
+
+    async def list_locks(
+        self, account_id: UUID
+    ) -> Sequence[BlockingLockEntity]:
+        """Return active (non-expired) blocking locks for an account."""
+        now = datetime.now(timezone.utc)
+        results: list[BlockingLockEntity] = []
+        for key, value in self._blocking_locks.items():
+            if key[0] != account_id:
+                continue
+            expires_at = value.get("expires_at")
+            # Skip expired locks (matching Postgres WHERE expires_at > NOW())
+            if expires_at and expires_at <= now:
+                continue
+            results.append(
+                BlockingLockEntity(
+                    lock_id=value.get("lock_id", UUID(int=0)),
+                    account_id=key[0],
+                    strategy_id=key[1],
+                    symbol=key[2],
+                    side=key[3],
+                    reason=value.get("reason", "reconciliation"),
+                    locked_by_run_id=value.get("locked_by_run_id"),
+                    locked_at=value.get("locked_at"),
+                    expires_at=expires_at,
+                )
+            )
+        results.sort(key=lambda x: x.locked_at or now, reverse=True)
+        return results
 
     # -- In-memory blocking lock support (for tests) --
 

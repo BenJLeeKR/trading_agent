@@ -1,5 +1,6 @@
 .PHONY: install run migrate test lint smoke \
-        docker-up docker-down docker-build docker-migrate docker-test docker-shell
+        docker-up docker-down docker-build docker-migrate docker-test docker-shell \
+        docker-up-api docker-logs-api docker-restart-api
 
 # =============================================================================
 # Local Development (requires local Python venv + local PostgreSQL)
@@ -55,3 +56,16 @@ docker-test:
 
 docker-shell:
 	docker compose exec app /bin/bash
+
+# Start only the DB + API services (no dev shell)
+# Usage: make docker-up-api
+docker-up-api:
+	docker compose up -d db api
+
+# Tail the API server logs
+docker-logs-api:
+	docker compose logs -f api
+
+# Restart the API server container
+docker-restart-api:
+	docker compose restart api

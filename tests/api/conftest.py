@@ -13,11 +13,14 @@ from agent_trading.api.app import create_app
 from agent_trading.domain.entities import (
     AccountEntity,
     AuditLogEntity,
+    BrokerOrderEntity,
+    CashBalanceSnapshotEntity,
     ClientEntity,
     DecisionContextEntity,
     InstrumentEntity,
     OrderRequestEntity,
     OrderStateEventEntity,
+    PositionSnapshotEntity,
     ReconciliationRunEntity,
     TradeDecisionEntity,
 )
@@ -76,6 +79,16 @@ def trade_decision_id() -> UUID:
 
 
 @pytest.fixture
+def position_snapshot_id() -> UUID:
+    return uuid4()
+
+
+@pytest.fixture
+def broker_order_id() -> UUID:
+    return uuid4()
+
+
+@pytest.fixture
 def correlation_id() -> str:
     return f"test-correlation-{uuid4()}"
 
@@ -90,6 +103,8 @@ async def seeded_repos(
     config_version_id: UUID,
     decision_context_id: UUID,
     trade_decision_id: UUID,
+    position_snapshot_id: UUID,
+    broker_order_id: UUID,
     correlation_id: str,
 ) -> RepositoryContainer:
     """Build in-memory repos and seed with sample data."""
@@ -233,6 +248,61 @@ async def seeded_repos(
         mismatch_count=0,
     )
     await repos.reconciliations.add_run(run)
+
+    # Seed: blocking lock (in-memory via acquire_lock)
+    repos.reconciliations.acquire_lock(
+        account_id=account_id,
+        strategy_id=strategy_id,
+        symbol="AAPL",
+        side="buy",
+        reason="reconciliation",
+        locked_by_run_id=run.reconciliation_run_id,
+        expires_at=datetime.now(timezone.utc).replace(year=9999),  # far future = active
+    )
+
+    # Seed: position snapshot
+    await repos.position_snapshots.add(
+        PositionSnapshotEntity(
+            position_snapshot_id=position_snapshot_id,
+            account_id=account_id,
+            instrument_id=instrument_id,
+            quantity=Decimal("100"),
+            average_price=Decimal("150.00"),
+            market_price=Decimal("155.00"),
+            unrealized_pnl=Decimal("500.00"),
+            source_of_truth="broker",
+            snapshot_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+
+    # Seed: cash balance snapshot
+    await repos.cash_balance_snapshots.add(
+        CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=account_id,
+            currency="KRW",
+            available_cash=Decimal("1000000"),
+            settled_cash=Decimal("1000000"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+
+    # Seed: broker order linked to the order above
+    await repos.broker_orders.add(
+        BrokerOrderEntity(
+            broker_order_id=broker_order_id,
+            order_request_id=order.order_request_id,
+            broker_name="KIS",
+            broker_status="filled",
+            broker_native_order_id="KIS-12345",
+            last_synced_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+        )
+    )
 
     return repos
 

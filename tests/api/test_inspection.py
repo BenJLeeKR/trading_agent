@@ -1,7 +1,10 @@
 """Inspection API endpoint tests.
 
 Covers: ``GET /orders``, ``GET /orders/{id}``, ``GET /orders/{id}/events``,
-``GET /audit-logs``, ``GET /reconciliation/runs``.
+``GET /audit-logs``, ``GET /reconciliation/runs``, ``GET /reconciliation/locks``,
+``GET /accounts``, ``GET /accounts/{id}``, ``GET /instruments/{id}``,
+``GET /positions``, ``GET /cash-balances``, ``GET /clients/{id}``,
+``GET /orders/{id}/broker-orders``.
 """
 
 from __future__ import annotations
@@ -129,3 +132,267 @@ class TestReconciliation:
         """``GET /reconciliation/runs`` returns 422 when account_id is missing."""
         response = client.get("/reconciliation/runs")
         assert response.status_code == 422
+
+    # -- Plan 44: Lock inspection tests --
+
+    def test_list_locks(self, client: TestClient) -> None:
+        """``GET /reconciliation/locks`` returns active locks."""
+        orders_resp = client.get("/orders")
+        orders = orders_resp.json()
+        assert len(orders) >= 1
+        acct_id = orders[0]["account_id"]
+
+        response = client.get(f"/reconciliation/locks?account_id={acct_id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) >= 1
+        lock = data[0]
+        assert lock["account_id"] == acct_id
+        assert lock["symbol"] == "AAPL"
+        assert lock["side"] == "buy"
+        assert lock["is_active"] is True
+        assert "lock_id" in lock
+        assert "locked_at" in lock
+
+    def test_list_locks_missing_param(self, client: TestClient) -> None:
+        """``GET /reconciliation/locks`` returns 422 when account_id is missing."""
+        response = client.get("/reconciliation/locks")
+        assert response.status_code == 422
+
+    def test_list_locks_invalid_uuid(self, client: TestClient) -> None:
+        """``GET /reconciliation/locks`` returns 400 for invalid UUID."""
+        response = client.get("/reconciliation/locks?account_id=not-a-uuid")
+        assert response.status_code == 400
+
+
+# ── Phase 2: Account, Client, Instrument, Position, Cash-balance, Broker-order ──
+
+
+class TestAccounts:
+    """Account inspection endpoints."""
+
+    def test_list_accounts(self, client: TestClient) -> None:
+        """``GET /accounts?client_id=...`` returns seeded accounts."""
+        # Get a client_id from orders
+        orders_resp = client.get("/orders")
+        orders = orders_resp.json()
+        assert len(orders) >= 1
+        client_id = orders[0]["account_id"]  # not ideal — use seeded client_id directly
+        # Instead, find the client_code from an order's correlation_id
+        # Better: get accounts via a known client_id from seed data
+        # We know the seeded account has client_id we can discover via get-order detail
+        detail_resp = client.get(f"/orders/{orders[0]['order_request_id']}")
+        assert detail_resp.status_code == 200
+        detail = detail_resp.json()
+        # account_id is in detail — use it to find client_id through accounts
+        acct_resp = client.get(f"/accounts/{detail['account_id']}")
+        assert acct_resp.status_code == 200
+        acct_data = acct_resp.json()
+        known_client_id = acct_data["client_id"]
+
+        response = client.get(f"/accounts?client_id={known_client_id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) >= 1
+        assert data[0]["client_id"] == known_client_id
+
+    def test_list_accounts_missing_param(self, client: TestClient) -> None:
+        """``GET /accounts`` returns 422 when client_id is missing."""
+        response = client.get("/accounts")
+        assert response.status_code == 422
+
+    def test_list_accounts_invalid_uuid(self, client: TestClient) -> None:
+        """``GET /accounts`` returns 400 for invalid client_id UUID."""
+        response = client.get("/accounts?client_id=not-a-uuid")
+        assert response.status_code == 400
+
+    def test_get_account_by_id(self, client: TestClient) -> None:
+        """``GET /accounts/{id}`` returns account detail."""
+        # Discover seeded account_id from orders
+        orders_resp = client.get("/orders")
+        orders = orders_resp.json()
+        assert len(orders) >= 1
+        detail_resp = client.get(f"/orders/{orders[0]['order_request_id']}")
+        assert detail_resp.status_code == 200
+        known_acct_id = detail_resp.json()["account_id"]
+
+        response = client.get(f"/accounts/{known_acct_id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["account_id"] == known_acct_id
+        assert "environment" in data
+        assert "status" in data
+
+    def test_get_account_not_found(self, client: TestClient) -> None:
+        """``GET /accounts/{id}`` returns 404 for unknown ID."""
+        response = client.get("/accounts/00000000-0000-0000-0000-000000000000")
+        assert response.status_code == 404
+
+    def test_get_account_invalid_uuid(self, client: TestClient) -> None:
+        """``GET /accounts/{id}`` returns 400 for invalid UUID."""
+        response = client.get("/accounts/not-a-uuid")
+        assert response.status_code == 400
+
+
+class TestInstruments:
+    """Instrument inspection endpoints."""
+
+    def test_get_instrument_by_id(self, client: TestClient) -> None:
+        """``GET /instruments/{id}`` returns instrument detail."""
+        # Discover seeded instrument_id from orders
+        orders_resp = client.get("/orders")
+        orders = orders_resp.json()
+        assert len(orders) >= 1
+        detail_resp = client.get(f"/orders/{orders[0]['order_request_id']}")
+        assert detail_resp.status_code == 200
+        known_instr_id = detail_resp.json()["instrument_id"]
+
+        response = client.get(f"/instruments/{known_instr_id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["instrument_id"] == known_instr_id
+        assert data["symbol"] == "AAPL"
+        assert data["market_code"] == "NASDAQ"
+        assert data["is_active"] is True
+
+    def test_get_instrument_not_found(self, client: TestClient) -> None:
+        """``GET /instruments/{id}`` returns 404 for unknown ID."""
+        response = client.get("/instruments/00000000-0000-0000-0000-000000000000")
+        assert response.status_code == 404
+
+    def test_get_instrument_invalid_uuid(self, client: TestClient) -> None:
+        """``GET /instruments/{id}`` returns 400 for invalid UUID."""
+        response = client.get("/instruments/not-a-uuid")
+        assert response.status_code == 400
+
+
+class TestPositions:
+    """Position / cash-balance inspection endpoints."""
+
+    def test_list_positions(self, client: TestClient) -> None:
+        """``GET /positions?account_id=...`` returns seeded position snapshot."""
+        # Discover seeded account_id
+        orders_resp = client.get("/orders")
+        orders = orders_resp.json()
+        assert len(orders) >= 1
+        detail_resp = client.get(f"/orders/{orders[0]['order_request_id']}")
+        assert detail_resp.status_code == 200
+        known_acct_id = detail_resp.json()["account_id"]
+
+        response = client.get(f"/positions?account_id={known_acct_id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) >= 1
+        pos = data[0]
+        assert pos["account_id"] == known_acct_id
+        assert pos["quantity"] == 100.0
+        assert pos["average_price"] == 150.0
+        assert pos["market_price"] == 155.0
+
+    def test_list_positions_missing_param(self, client: TestClient) -> None:
+        """``GET /positions`` returns 422 when account_id is missing."""
+        response = client.get("/positions")
+        assert response.status_code == 422
+
+    def test_list_positions_invalid_uuid(self, client: TestClient) -> None:
+        """``GET /positions`` returns 400 for invalid account_id UUID."""
+        response = client.get("/positions?account_id=not-a-uuid")
+        assert response.status_code == 400
+
+    def test_list_positions_empty(self, client: TestClient) -> None:
+        """``GET /positions`` returns empty list for unknown account."""
+        response = client.get("/positions?account_id=00000000-0000-0000-0000-000000000000")
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_get_cash_balance(self, client: TestClient) -> None:
+        """``GET /cash-balances?account_id=...`` returns seeded cash balance."""
+        orders_resp = client.get("/orders")
+        orders = orders_resp.json()
+        assert len(orders) >= 1
+        detail_resp = client.get(f"/orders/{orders[0]['order_request_id']}")
+        assert detail_resp.status_code == 200
+        known_acct_id = detail_resp.json()["account_id"]
+
+        response = client.get(f"/cash-balances?account_id={known_acct_id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data is not None
+        assert data["account_id"] == known_acct_id
+        assert data["currency"] == "KRW"
+        assert data["available_cash"] == 1000000.0
+
+    def test_get_cash_balance_missing_param(self, client: TestClient) -> None:
+        """``GET /cash-balances`` returns 422 when account_id is missing."""
+        response = client.get("/cash-balances")
+        assert response.status_code == 422
+
+    def test_get_cash_balance_empty(self, client: TestClient) -> None:
+        """``GET /cash-balances`` returns 200 null for unknown account."""
+        response = client.get("/cash-balances?account_id=00000000-0000-0000-0000-000000000000")
+        assert response.status_code == 200
+        assert response.json() is None
+
+
+class TestClients:
+    """Client inspection endpoints."""
+
+    def test_get_client_by_id(self, client: TestClient) -> None:
+        """``GET /clients/{id}`` returns client detail."""
+        # Discover client_id from accounts
+        orders_resp = client.get("/orders")
+        orders = orders_resp.json()
+        assert len(orders) >= 1
+        detail_resp = client.get(f"/orders/{orders[0]['order_request_id']}")
+        assert detail_resp.status_code == 200
+        acct_resp = client.get(f"/accounts/{detail_resp.json()['account_id']}")
+        assert acct_resp.status_code == 200
+        known_client_id = acct_resp.json()["client_id"]
+
+        response = client.get(f"/clients/{known_client_id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["client_id"] == known_client_id
+        assert data["client_code"] == "API_TEST"
+        assert data["name"] == "API Test Client"
+        assert data["base_currency"] == "KRW"
+
+    def test_get_client_not_found(self, client: TestClient) -> None:
+        """``GET /clients/{id}`` returns 404 for unknown ID."""
+        response = client.get("/clients/00000000-0000-0000-0000-000000000000")
+        assert response.status_code == 404
+
+    def test_get_client_invalid_uuid(self, client: TestClient) -> None:
+        """``GET /clients/{id}`` returns 400 for invalid UUID."""
+        response = client.get("/clients/not-a-uuid")
+        assert response.status_code == 400
+
+
+class TestBrokerOrders:
+    """Broker-order inspection endpoints."""
+
+    def test_get_broker_orders(self, client: TestClient) -> None:
+        """``GET /orders/{id}/broker-orders`` returns broker order refs."""
+        orders_resp = client.get("/orders")
+        orders = orders_resp.json()
+        assert len(orders) >= 1
+        order_id = orders[0]["order_request_id"]
+
+        response = client.get(f"/orders/{order_id}/broker-orders")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) >= 1
+        bo = data[0]
+        assert bo["broker_name"] == "KIS"
+        assert bo["broker_status"] == "filled"
+        assert bo["broker_native_order_id"] == "KIS-12345"
+
+    def test_get_broker_orders_not_found(self, client: TestClient) -> None:
+        """``GET /orders/{id}/broker-orders`` returns 404 for unknown order."""
+        response = client.get("/orders/00000000-0000-0000-0000-000000000000/broker-orders")
+        assert response.status_code == 404
+
+    def test_get_broker_orders_invalid_uuid(self, client: TestClient) -> None:
+        """``GET /orders/{id}/broker-orders`` returns 400 for invalid UUID."""
+        response = client.get("/orders/not-a-uuid/broker-orders")
+        assert response.status_code == 400
