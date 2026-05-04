@@ -49,9 +49,15 @@ from agent_trading.services.decision_orchestrator import (
 class TestBuildProviderAgent:
     """_build_provider_agent() returns None when settings incomplete."""
 
-    def test_returns_none_when_no_api_key(self) -> None:
-        """provider_api_key가 비어있으면 None 반환."""
-        settings = AppSettings()  # 모든 provider 필드가 기본값 (빈 문자열)
+    def test_returns_none_when_no_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """provider_api_key가 비어있으면 None 반환.
+
+        Clears provider API key env vars to stay deterministic regardless
+        of ``.env`` content (which may set DEEPSEEK_API_KEY / OPENAI_API_KEY).
+        """
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        settings = AppSettings()
         agent = _build_provider_agent(settings)
         assert agent is None
 
@@ -172,8 +178,14 @@ class TestBuildDefaultRuntime:
         runtime = build_default_runtime()
         assert "final_decision_agent" in runtime
 
-    def test_uses_stub_when_no_api_key(self) -> None:
-        """Provider 설정 없으면 세 agent 모두 None (stub fallback)."""
+    def test_uses_stub_when_no_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Provider 설정 없으면 세 agent 모두 None (stub fallback).
+
+        Clears provider API key env vars to stay deterministic regardless
+        of ``.env`` content.
+        """
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         runtime = build_default_runtime()
         assert runtime["event_interpretation_agent"] is None
         assert runtime["ai_risk_agent"] is None
@@ -267,8 +279,14 @@ class TestBuildPostgresRuntime:
         runtime = await build_postgres_runtime(run_migrations=False)
         assert "final_decision_agent" in runtime
 
-    async def test_uses_stub_when_no_api_key(self) -> None:
-        """DEEPSEEK_API_KEY 없으면 세 agent 모두 None (stub fallback)."""
+    async def test_uses_stub_when_no_api_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Provider API key 없으면 세 agent 모두 None (stub fallback).
+
+        Clears provider API key env vars to stay deterministic regardless
+        of ``.env`` content.
+        """
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         runtime = await build_postgres_runtime(run_migrations=False)
         assert runtime["event_interpretation_agent"] is None
         assert runtime["ai_risk_agent"] is None

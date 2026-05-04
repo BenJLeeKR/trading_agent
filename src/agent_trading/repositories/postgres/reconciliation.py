@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from uuid import UUID
 
@@ -28,7 +29,7 @@ class PostgresReconciliationRepository:
             run.trigger_type,
             run.status,
             run.mismatch_count,
-            run.summary_json,
+            json.dumps(run.summary_json) if run.summary_json is not None else None,
             run.started_at,
             run.completed_at,
             run.created_at,
@@ -61,7 +62,7 @@ class PostgresReconciliationRepository:
             reconciliation_run_id,
             order_request_id,
             mismatch_type,
-            details,
+            json.dumps(details) if details is not None else None,
         )
 
     async def attach_position_mismatch(
@@ -80,7 +81,7 @@ class PostgresReconciliationRepository:
             reconciliation_run_id,
             position_snapshot_id,
             mismatch_type,
-            details,
+            json.dumps(details) if details is not None else None,
         )
 
     async def list_runs_by_account(
@@ -127,7 +128,7 @@ class PostgresReconciliationRepository:
                 """,
                 reconciliation_run_id,
                 status,
-                summary_json,
+                json.dumps(summary_json),
             )
         else:
             await self._tx.connection.execute(

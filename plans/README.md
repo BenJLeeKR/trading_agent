@@ -53,7 +53,10 @@
 | 33 | [`33_post_submit_reconciliation_boundary.md`](./33_post_submit_reconciliation_boundary.md) | Post-Submit Unknown State / Reconciliation Boundary Verification: submit 이후 ambiguous/unknown 상태에서 reconciliation-first 원칙 검증 + event loop dedup bug fix |
 | 34 | [`34_reconcile_required_fill_transition_policy.md`](./34_reconcile_required_fill_transition_policy.md) | RECONCILE_REQUIRED → FILLED 차단 정책: WS fill notification 중 optimistic state progression 방지. Fill data 보존, state는 reconciliation까지 hold. State machine hard boundary + event loop explicit guard. |
 | 35 | [`35_reconciliation_authoritative_state_reflection.md`](./35_reconciliation_authoritative_state_reflection.md) | Reconciliation Authoritative State Reflection: broker inquiry 결과를 local order state에 안전하게 반영. `transition_to_authoritative()` 전용 경로로 `_ALLOWED_TRANSITIONS` 불변 유지. 실패 시 `reflection_failed` + lock 유지. |
-
+| 36 | [`36_kis_paper_ai_runtime_smoke.md`](./36_kis_paper_ai_runtime_smoke.md) | KIS Paper + AI Layer Combined Runtime Smoke Verification: AI layer 3-agent chain + KIS paper adapter가 결합된 runtime에서 execution boundary 안전성 검증. 3 scenarios (Runtime Wiring, Assemble Compatibility, Minimal Paper Submit) |
+| 37 | [`37_long_path_end_to_end_integration.md`](./37_long_path_end_to_end_integration.md) | Long-Path End-to-End Integration Scenario: AI assemble -> create_order -> submit (uncertain) -> reconciliation -> authoritative reflection -> final state. KIS 불필요. In-memory + Postgres + Failure branch. |
+| 38 | [`38_postgres_long_path_execution.md`](./38_postgres_long_path_execution.md) | Postgres-backed Long-Path E2E Execution & Verification: env alignment (POSTGRES_URL -> DATABASE_HOST), Postgres scenario activation, persistence artifact verification in actual DB, MCP/Codex access documentation. |
+ 
 ## 빠른 추천 경로
 
 ### 현재 상태만 빠르게 보기
@@ -74,6 +77,9 @@
 14. [`33_post_submit_reconciliation_boundary.md`](./33_post_submit_reconciliation_boundary.md)
 15. [`34_reconcile_required_fill_transition_policy.md`](./34_reconcile_required_fill_transition_policy.md)
 16. [`35_reconciliation_authoritative_state_reflection.md`](./35_reconciliation_authoritative_state_reflection.md)
+17. [`36_kis_paper_ai_runtime_smoke.md`](./36_kis_paper_ai_runtime_smoke.md)
+18. [`37_long_path_end_to_end_integration.md`](./37_long_path_end_to_end_integration.md)
+19. [`38_postgres_long_path_execution.md`](./38_postgres_long_path_execution.md)
 
 ### AI Agent / Provider 연결 흐름만 보기
 
@@ -89,6 +95,7 @@
 10. [`28_real_final_decision_composer_agent.md`](./28_real_final_decision_composer_agent.md)
 11. [`29_ai_decision_backend_contract.md`](./29_ai_decision_backend_contract.md)
 12. [`30_runtime_three_agent_smoke.md`](./30_runtime_three_agent_smoke.md)
+13. [`36_kis_paper_ai_runtime_smoke.md`](./36_kis_paper_ai_runtime_smoke.md)
 
 ### 브로커 / 실행 안전성 흐름만 보기
 
@@ -102,3 +109,6 @@
 8. [`33_post_submit_reconciliation_boundary.md`](./33_post_submit_reconciliation_boundary.md)
 9. [`34_reconcile_required_fill_transition_policy.md`](./34_reconcile_required_fill_transition_policy.md)
 10. [`35_reconciliation_authoritative_state_reflection.md`](./35_reconciliation_authoritative_state_reflection.md)
+11. [`36_kis_paper_ai_runtime_smoke.md`](./36_kis_paper_ai_runtime_smoke.md)
+12. [`37_long_path_end_to_end_integration.md`](./37_long_path_end_to_end_integration.md)
+13. [`38_postgres_long_path_execution.md`](./38_postgres_long_path_execution.md)
