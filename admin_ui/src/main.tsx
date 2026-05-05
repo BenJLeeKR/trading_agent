@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "@picocss/pico/css/pico.min.css";
+import "./styles/admin-theme.css";
 import App from "./App";
 
 const root = document.getElementById("root");

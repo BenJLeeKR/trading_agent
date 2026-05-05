@@ -137,11 +137,18 @@ export async function getReconciliationLocks(
   );
 }
 
+/**
+ * Fetch accounts for a given client.
+ *
+ * NOTE: `clientId` is required by the backend (`GET /accounts?client_id=...`).
+ * As a temporary heuristic, the caller should obtain a `client_id` from
+ * `getOrders()[0].client_id` — see components that call this function.
+ */
 export async function getAccounts(
-  clientCode?: string
+  clientId?: string
 ): Promise<import("../types/api").AccountSummary[]> {
-  const params = clientCode
-    ? `?client_code=${encodeURIComponent(clientCode)}`
+  const params = clientId
+    ? `?client_id=${encodeURIComponent(clientId)}`
     : "";
   return request<import("../types/api").AccountSummary[]>(
     `/accounts${params}`

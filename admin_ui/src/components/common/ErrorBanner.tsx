@@ -5,18 +5,7 @@ interface ErrorBannerProps {
 
 export function ErrorBanner({ message, onDismiss }: ErrorBannerProps) {
   return (
-    <div
-      style={{
-        padding: "0.75rem 1rem",
-        marginBottom: "1rem",
-        backgroundColor: "var(--pico-del-color)",
-        color: "#fff",
-        borderRadius: "6px",
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-      }}
-    >
+    <div className="warning-banner warning-banner--error">
       <span>⚠ {message}</span>
       {onDismiss && (
         <button

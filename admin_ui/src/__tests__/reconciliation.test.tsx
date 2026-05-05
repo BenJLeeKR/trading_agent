@@ -5,6 +5,8 @@ import ReconciliationView from "../components/ReconciliationView";
 import { setStoredToken, clearStoredToken } from "../api/client";
 import { mockFetchOnce, mockFetchError } from "./test-utils/mockFetch";
 import {
+  mockOrders,
+  mockAccounts,
   mockReconciliationRuns,
   mockLocks,
   VALID_TOKEN,
@@ -34,7 +36,9 @@ describe("ReconciliationView loading state", () => {
  * ─────────────────────────────────────────── */
 describe("ReconciliationView runs tab", () => {
   it("renders reconciliation runs table with status badge", async () => {
-    // GET /reconciliation/runs + /reconciliation/locks (parallel)
+    // GET /orders → GET /accounts?client_id=... → GET /reconciliation/runs + /reconciliation/locks
+    mockFetchOnce(mockOrders);
+    mockFetchOnce(mockAccounts);
     mockFetchOnce(mockReconciliationRuns);
     mockFetchOnce(mockLocks);
 
@@ -67,6 +71,8 @@ describe("ReconciliationView runs tab", () => {
 describe("ReconciliationView run status filter", () => {
   it("filters runs when status is selected", async () => {
     const user = userEvent.setup();
+    mockFetchOnce(mockOrders);
+    mockFetchOnce(mockAccounts);
     mockFetchOnce(mockReconciliationRuns);
     mockFetchOnce(mockLocks);
 
@@ -98,6 +104,8 @@ describe("ReconciliationView locks tab", () => {
   it("switches to locks tab and renders lock columns", async () => {
     const user = userEvent.setup();
 
+    mockFetchOnce(mockOrders);
+    mockFetchOnce(mockAccounts);
     mockFetchOnce(mockReconciliationRuns);
     mockFetchOnce(mockLocks);
 
@@ -128,6 +136,8 @@ describe("ReconciliationView locks tab", () => {
  * ─────────────────────────────────────────── */
 describe("ReconciliationView active lock warning", () => {
   it("shows enhanced warning banner when active (non-expired) locks exist", async () => {
+    mockFetchOnce(mockOrders);
+    mockFetchOnce(mockAccounts);
     mockFetchOnce(mockReconciliationRuns);
     // mockLocks has is_expired: false → active
     mockFetchOnce(mockLocks);
@@ -161,6 +171,8 @@ describe("ReconciliationView empty locks", () => {
   it("shows no warning and empty message when locks list is empty", async () => {
     const user = userEvent.setup();
 
+    mockFetchOnce(mockOrders);
+    mockFetchOnce(mockAccounts);
     mockFetchOnce(mockReconciliationRuns);
     // Empty locks
     mockFetchOnce([]);

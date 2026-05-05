@@ -9,6 +9,7 @@ import {
   mockFetchNetworkError,
 } from "./test-utils/mockFetch";
 import {
+  mockAccounts,
   mockHealthOk,
   mockHealthDegraded,
   mockOrders,
@@ -46,9 +47,10 @@ describe("Dashboard loading state", () => {
  * ─────────────────────────────────────────── */
 describe("Dashboard with valid data", () => {
   it("renders summary cards, database status, locks, and orders", async () => {
-    // Mock 4 parallel API calls in order: health, orders, reconRuns, locks
-    mockFetchOnce(mockHealthOk);
+    // Mock 5 API calls: orders → accounts → health → reconRuns → locks
     mockFetchOnce(mockOrders);
+    mockFetchOnce(mockAccounts);
+    mockFetchOnce(mockHealthOk);
     mockFetchOnce(mockReconciliationRuns);
     mockFetchOnce(mockLocks);
 
@@ -92,7 +94,7 @@ describe("Dashboard with valid data", () => {
  * ─────────────────────────────────────────── */
 describe("Dashboard error state", () => {
   it("shows ErrorBanner when API calls fail", async () => {
-    // Mock first API call (health) to fail with network error
+    // First API call (getOrders) fails with network error
     mockFetchNetworkError();
 
     render(
@@ -114,8 +116,9 @@ describe("Dashboard error state", () => {
  * ─────────────────────────────────────────── */
 describe("Dashboard refresh button", () => {
   it("refetches data when Refresh is clicked", async () => {
-    const fetchSpy1 = mockFetchOnce(mockHealthOk);
     mockFetchOnce(mockOrders);
+    const fetchSpy1 = mockFetchOnce(mockAccounts);
+    mockFetchOnce(mockHealthOk);
     mockFetchOnce(mockReconciliationRuns);
     mockFetchOnce(mockLocks);
 
@@ -135,8 +138,9 @@ describe("Dashboard refresh button", () => {
 
     // Click Refresh — should trigger fetchAll again
     const user = userEvent.setup();
-    mockFetchOnce(mockHealthOk);
     mockFetchOnce(mockOrders);
+    mockFetchOnce(mockAccounts);
+    mockFetchOnce(mockHealthOk);
     mockFetchOnce(mockReconciliationRuns);
     mockFetchOnce(mockLocks);
 
@@ -156,8 +160,9 @@ describe("Dashboard refresh button", () => {
  * ─────────────────────────────────────────── */
 describe("Dashboard navigation links", () => {
   it("renders clickable summary cards with correct href", async () => {
-    mockFetchOnce(mockHealthOk);
     mockFetchOnce(mockOrders);
+    mockFetchOnce(mockAccounts);
+    mockFetchOnce(mockHealthOk);
     mockFetchOnce(mockReconciliationRuns);
     mockFetchOnce(mockLocks);
 
@@ -195,8 +200,9 @@ describe("Dashboard navigation links", () => {
 describe("Dashboard health degraded signal", () => {
   it("shows warning banner when health status is degraded", async () => {
     // Use degraded health (database: "disconnected")
-    mockFetchOnce(mockHealthDegraded);
     mockFetchOnce(mockOrders);
+    mockFetchOnce(mockAccounts);
+    mockFetchOnce(mockHealthDegraded);
     mockFetchOnce(mockReconciliationRuns);
     mockFetchOnce(mockLocks);
 
@@ -221,8 +227,9 @@ describe("Dashboard health degraded signal", () => {
  * ─────────────────────────────────────────── */
 describe("Dashboard health ok", () => {
   it("does not show health warning when status is ok", async () => {
-    mockFetchOnce(mockHealthOk);
     mockFetchOnce(mockOrders);
+    mockFetchOnce(mockAccounts);
+    mockFetchOnce(mockHealthOk);
     mockFetchOnce(mockReconciliationRuns);
     mockFetchOnce(mockLocks);
 

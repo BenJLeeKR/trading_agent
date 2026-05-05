@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import type { AccountSummary, PositionSnapshotView, CashBalanceSnapshotView } from "../types/api";
-import { getAccounts, getPositions, getCashBalance } from "../api/client";
+import type { AccountSummary, OrderSummary, PositionSnapshotView, CashBalanceSnapshotView } from "../types/api";
+import { getAccounts, getOrders, getPositions, getCashBalance } from "../api/client";
 import { DataTable } from "./common/DataTable";
 import { StatusBadge } from "./common/StatusBadge";
 import { ErrorBanner } from "./common/ErrorBanner";
@@ -20,11 +20,26 @@ export default function AccountsView() {
   const [searchText, setSearchText] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
 
+  // Phase 1: get orders to obtain a client_id (temporary heuristic),
+  // then Phase 2: fetch accounts scoped to that client.
   useEffect(() => {
     setLoading(true);
     setError(null);
-    getAccounts()
-      .then(setAccounts)
+    getOrders()
+      .then((orders: OrderSummary[]) => {
+        if (orders.length === 0) {
+          // No orders → no client_id available; show empty state
+          setAccounts([]);
+          return;
+        }
+        const clientId = orders[0].client_id;
+        return getAccounts(clientId);
+      })
+      .then((maybeAccounts: AccountSummary[] | undefined) => {
+        if (maybeAccounts !== undefined) {
+          setAccounts(maybeAccounts);
+        }
+      })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "Failed to load accounts";
         setError(msg);
@@ -118,22 +133,14 @@ export default function AccountsView() {
 
   return (
     <section>
-      <hgroup>
+      <div className="page-header">
         <h2>Accounts & Positions</h2>
         <p>Select an account to view its positions and cash balance.</p>
-      </hgroup>
+      </div>
 
       {/* Filter bar */}
-      <div
-        style={{
-          display: "flex",
-          gap: "0.75rem",
-          flexWrap: "wrap",
-          marginBottom: "0.75rem",
-          alignItems: "flex-end",
-        }}
-      >
-        <label style={{ display: "flex", flexDirection: "column", fontSize: "0.875rem" }}>
+      <div className="filter-bar">
+        <label>
           Search
           <input
             type="search"
@@ -144,7 +151,7 @@ export default function AccountsView() {
             style={{ width: "220px" }}
           />
         </label>
-        <label style={{ display: "flex", flexDirection: "column", fontSize: "0.875rem" }}>
+        <label>
           Type
           <select
             value={typeFilter}
@@ -181,30 +188,18 @@ export default function AccountsView() {
           {detailLoading ? (
             <LoadingSpinner />
           ) : (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-                gap: "1rem",
-              }}
-            >
+            <div className="data-grid-auto">
               <article>
                 <header><strong>Cash Balance</strong></header>
                 {cashBalance ? (
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr",
-                      gap: "0.5rem",
-                    }}
-                  >
+                  <div className="data-grid-2">
                     <div><strong>Currency:</strong> {cashBalance.currency}</div>
                     <div><strong>Available:</strong> {cashBalance.available_amount}</div>
                     <div><strong>Total:</strong> {cashBalance.total_amount}</div>
                     <div><strong>Snapshot:</strong> {cashBalance.snapshot_time}</div>
                   </div>
                 ) : (
-                  <p style={{ color: "var(--pico-muted-color)" }}>
+                  <p className="text-muted">
                     No cash balance snapshot available.
                   </p>
                 )}

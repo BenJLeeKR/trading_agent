@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type {
+  AccountSummary,
   HealthResponse,
   OrderSummary,
   ReconciliationRunSummary,
   BlockingLockStatus,
 } from "../types/api";
 import {
+  getAccounts,
   getHealth,
   getOrders,
   getReconciliationRuns,
@@ -23,49 +25,37 @@ interface CardData {
   to?: string;
 }
 
-function SummaryCard({ label, value, variant, to }: CardData) {
+function SummaryCard({ label, value, variant = "ok", to }: CardData) {
+  const variantClass =
+    variant === "ok"
+      ? "summary-card--ok"
+      : variant === "warn"
+        ? "summary-card--warn"
+        : "summary-card--error";
+
   const color =
     variant === "ok"
-      ? "var(--pico-ins-color)"
+      ? "var(--status-success)"
       : variant === "warn"
-        ? "var(--pico-warning)"
-        : variant === "error"
-          ? "var(--pico-del-color)"
-          : "var(--pico-primary)";
+        ? "var(--status-warning)"
+        : "var(--status-error)";
 
   const content = (
     <>
-      <h3 style={{ margin: 0, color }}>{value}</h3>
-      <small style={{ color: "var(--pico-muted-color)" }}>{label}</small>
+      <h3 style={{ color }}>{value}</h3>
+      <small>{label}</small>
     </>
   );
 
-  const style: React.CSSProperties = {
-    textAlign: "center",
-    padding: "1rem",
-    borderTop: `3px solid ${color}`,
-    cursor: to ? "pointer" : undefined,
-    transition: "opacity 0.15s",
-  };
-
   if (to) {
     return (
-      <Link
-        to={to}
-        style={{ textDecoration: "none", color: "inherit" }}
-        onMouseEnter={(e) => {
-          (e.currentTarget as HTMLElement).style.opacity = "0.8";
-        }}
-        onMouseLeave={(e) => {
-          (e.currentTarget as HTMLElement).style.opacity = "1";
-        }}
-      >
-        <article style={style}>{content}</article>
+      <Link to={to} className={`summary-card ${variantClass}`}>
+        {content}
       </Link>
     );
   }
 
-  return <article style={style}>{content}</article>;
+  return <div className={`summary-card ${variantClass}`}>{content}</div>;
 }
 
 export default function Dashboard() {
@@ -81,14 +71,25 @@ export default function Dashboard() {
     setLoading(true);
     setError(null);
     try {
-      const [h, o, r, l] = await Promise.all([
+      // Phase 1: get orders to obtain a client_id (temporary heuristic)
+      const orders = await getOrders();
+      setOrders(orders);
+
+      // Phase 2: use the first order's client_id to fetch accounts
+      let accountId: string | undefined;
+      if (orders.length > 0) {
+        const clientId = orders[0].client_id;
+        const accounts = await getAccounts(clientId);
+        accountId = accounts.length > 0 ? accounts[0].account_id : undefined;
+      }
+
+      // Phase 3: fetch remaining data in parallel with account-scoped reconciliation calls
+      const [h, r, l] = await Promise.all([
         getHealth(),
-        getOrders(),
-        getReconciliationRuns(),
-        getReconciliationLocks(),
+        accountId ? getReconciliationRuns(accountId) : Promise.resolve<ReconciliationRunSummary[]>([]),
+        accountId ? getReconciliationLocks(accountId) : Promise.resolve<BlockingLockStatus[]>([]),
       ]);
       setHealth(h);
-      setOrders(o);
       setReconRuns(r);
       setLocks(l);
     } catch (err: unknown) {
@@ -150,40 +151,26 @@ export default function Dashboard() {
 
   return (
     <section>
-      <hgroup>
+      <div className="page-header">
         <h2>Dashboard</h2>
         <p>Read-only overview of system status.</p>
-      </hgroup>
+      </div>
 
-      {/* Health status detail banner */}
+      {/* Health status detail banner — only shown when not ok */}
       {health?.status && health.status !== "ok" && (
-        <article
-          style={{
-            backgroundColor: "var(--pico-del-background)",
-            color: "var(--pico-del-color)",
-            padding: "0.5rem 1rem",
-            marginBottom: "1rem",
-            borderRadius: "4px",
-            border: "1px solid var(--pico-del-color)",
-          }}
-        >
-          <strong>⚠️ System Status: {health.status.toUpperCase()}</strong>
-          <br />
-          <span style={{ fontWeight: "normal" }}>
-            Database: {health.database === "connected" ? "Connected" : "Disconnected"}
-            {health.database !== "connected" && " — Some features may be unavailable."}
-          </span>
-        </article>
+        <div className="warning-banner warning-banner--error">
+          <div>
+            <span className="warning-banner-strong">⚠️ System Status: {health.status.toUpperCase()}</span>
+            <br />
+            <span>
+              Database: {health.database === "connected" ? "Connected" : "Disconnected"}
+              {health.database !== "connected" && " — Some features may be unavailable."}
+            </span>
+          </div>
+        </div>
       )}
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-          gap: "1rem",
-          marginBottom: "2rem",
-        }}
-      >
+      <div className="summary-cards-grid">
         {cards.map((c) => (
           <SummaryCard key={c.label} label={c.label} value={c.value} variant={c.variant} to={c.to} />
         ))}
@@ -212,7 +199,7 @@ export default function Dashboard() {
                 height: "10px",
                 borderRadius: "50%",
                 backgroundColor:
-                  dbVariant === "ok" ? "var(--pico-ins-color)" : "var(--pico-del-color)",
+                  dbVariant === "ok" ? "var(--status-success)" : "var(--status-error)",
                 marginRight: "0.3rem",
               }}
             />
@@ -225,7 +212,7 @@ export default function Dashboard() {
             <strong>Reconciliation Locks</strong>
           </header>
           {locks.length === 0 ? (
-            <p style={{ color: "var(--pico-muted-color)" }}>No locks.</p>
+            <p className="text-muted">No locks.</p>
           ) : (
             <table>
               <thead>
@@ -240,15 +227,7 @@ export default function Dashboard() {
                   <tr
                     key={lk.lock_id}
                     onClick={() => navigate("/reconciliation")}
-                    style={{ cursor: "pointer" }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLElement).style.backgroundColor =
-                        "var(--pico-primary-background)";
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLElement).style.backgroundColor =
-                        "transparent";
-                    }}
+                    className="cursor-pointer"
                   >
                     <td>{lk.symbol}</td>
                     <td>{lk.lock_type}</td>
@@ -272,7 +251,7 @@ export default function Dashboard() {
             <strong>Recent Orders</strong>
           </header>
           {orders.length === 0 ? (
-            <p style={{ color: "var(--pico-muted-color)" }}>No orders.</p>
+            <p className="text-muted">No orders.</p>
           ) : (
             <table>
               <thead>
@@ -287,15 +266,7 @@ export default function Dashboard() {
                   <tr
                     key={o.order_request_id}
                     onClick={() => navigate(`/orders/${o.order_request_id}`)}
-                    style={{ cursor: "pointer" }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLElement).style.backgroundColor =
-                        "var(--pico-primary-background)";
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLElement).style.backgroundColor =
-                        "transparent";
-                    }}
+                    className="cursor-pointer"
                   >
                     <td>{o.symbol}</td>
                     <td>{o.side}</td>
@@ -315,11 +286,11 @@ export default function Dashboard() {
         </article>
       </div>
 
-      <footer>
+      <div className="page-footer">
         <button className="outline" onClick={fetchAll}>
           🔄 Refresh
         </button>
-      </footer>
+      </div>
     </section>
   );
 }

@@ -5,6 +5,7 @@ import AccountsView from "../components/AccountsView";
 import { setStoredToken, clearStoredToken } from "../api/client";
 import { mockFetchOnce, mockFetchError } from "./test-utils/mockFetch";
 import {
+  mockOrders,
   mockAccounts,
   mockPositions,
   mockCashBalance,
@@ -35,7 +36,8 @@ describe("AccountsView loading state", () => {
  * ─────────────────────────────────────────── */
 describe("AccountsView account list", () => {
   it("renders accounts table with account codes and types", async () => {
-    // GET /accounts
+    // GET /orders first (for client_id heuristic), then GET /accounts?client_id=...
+    mockFetchOnce(mockOrders);
     mockFetchOnce(mockAccounts);
 
     render(<AccountsView />);
@@ -63,7 +65,9 @@ describe("AccountsView account detail", () => {
   it("loads positions and cash balance after row click", async () => {
     const user = userEvent.setup();
 
-    // Phase 1: accounts list
+    // Phase 1: orders (for client_id heuristic)
+    mockFetchOnce(mockOrders);
+    // Phase 2: accounts list
     mockFetchOnce(mockAccounts);
 
     render(<AccountsView />);
@@ -106,6 +110,7 @@ describe("AccountsView cash balance null", () => {
   it("shows 'No cash balance snapshot' when cashBalance is null", async () => {
     const user = userEvent.setup();
 
+    mockFetchOnce(mockOrders);
     mockFetchOnce(mockAccounts);
 
     render(<AccountsView />);
@@ -138,6 +143,7 @@ describe("AccountsView empty positions", () => {
   it("shows empty message when positions list is empty", async () => {
     const user = userEvent.setup();
 
+    mockFetchOnce(mockOrders);
     mockFetchOnce(mockAccounts);
 
     render(<AccountsView />);
@@ -169,6 +175,7 @@ describe("AccountsView empty positions", () => {
 describe("AccountsView search filter", () => {
   it("filters accounts by search text", async () => {
     const user = userEvent.setup();
+    mockFetchOnce(mockOrders);
     mockFetchOnce(mockAccounts);
 
     render(<AccountsView />);
@@ -192,6 +199,7 @@ describe("AccountsView search filter", () => {
 describe("AccountsView type filter", () => {
   it("shows only matching accounts when type filter is selected", async () => {
     const user = userEvent.setup();
+    mockFetchOnce(mockOrders);
     mockFetchOnce(mockAccounts);
 
     render(<AccountsView />);
@@ -215,6 +223,7 @@ describe("AccountsView type filter", () => {
 describe("AccountsView selected row highlight", () => {
   it("highlights the selected account row", async () => {
     const user = userEvent.setup();
+    mockFetchOnce(mockOrders);
     mockFetchOnce(mockAccounts);
     // Row click triggers Phase 2 API calls
     mockFetchOnce(mockPositions);
@@ -241,6 +250,7 @@ describe("AccountsView selected row highlight", () => {
 describe("AccountsView detail area clarity", () => {
   it("shows account code and type in detail header", async () => {
     const user = userEvent.setup();
+    mockFetchOnce(mockOrders);
     mockFetchOnce(mockAccounts);
     mockFetchOnce(mockPositions);
     mockFetchOnce(mockCashBalance);
@@ -270,6 +280,7 @@ describe("AccountsView detail area clarity", () => {
 describe("AccountsView selection reset on filter", () => {
   it("resets selection when filtered list no longer contains selected account", async () => {
     const user = userEvent.setup();
+    mockFetchOnce(mockOrders);
     mockFetchOnce(mockAccounts);
     mockFetchOnce(mockPositions);
     mockFetchOnce(mockCashBalance);
@@ -303,7 +314,7 @@ describe("AccountsView selection reset on filter", () => {
  * ─────────────────────────────────────────── */
 describe("AccountsView error state", () => {
   it("shows ErrorBanner when API call fails", async () => {
-    // First API (getAccounts) fails
+    // First API (getOrders) fails
     mockFetchError(500, "Server error");
 
     render(<AccountsView />);

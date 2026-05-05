@@ -1,0 +1,132 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+:root {
+  /* Admin console: muted dark enterprise palette */
+  --background: oklch(0.13 0.008 240);
+  --foreground: oklch(0.92 0.005 240);
+  --card: oklch(0.16 0.009 240);
+  --card-foreground: oklch(0.92 0.005 240);
+  --popover: oklch(0.16 0.009 240);
+  --popover-foreground: oklch(0.92 0.005 240);
+  --primary: oklch(0.65 0.12 210);
+  --primary-foreground: oklch(0.98 0 0);
+  --secondary: oklch(0.20 0.01 240);
+  --secondary-foreground: oklch(0.78 0.005 240);
+  --muted: oklch(0.20 0.008 240);
+  --muted-foreground: oklch(0.55 0.008 240);
+  --accent: oklch(0.22 0.01 240);
+  --accent-foreground: oklch(0.88 0.005 240);
+  --destructive: oklch(0.52 0.22 25);
+  --destructive-foreground: oklch(0.92 0.005 25);
+  --border: oklch(0.24 0.009 240);
+  --input: oklch(0.22 0.009 240);
+  --ring: oklch(0.65 0.12 210);
+
+  /* Status colors */
+  --status-success: oklch(0.55 0.14 155);
+  --status-success-fg: oklch(0.88 0.08 155);
+  --status-warning: oklch(0.68 0.16 60);
+  --status-warning-fg: oklch(0.92 0.06 60);
+  --status-error: oklch(0.52 0.22 25);
+  --status-error-fg: oklch(0.90 0.08 25);
+  --status-info: oklch(0.55 0.12 220);
+  --status-info-fg: oklch(0.82 0.08 220);
+  --status-amber: oklch(0.68 0.16 60);
+  --status-amber-fg: oklch(0.93 0.06 60);
+
+  /* Surface layers */
+  --surface-1: oklch(0.16 0.009 240);
+  --surface-2: oklch(0.19 0.009 240);
+  --surface-3: oklch(0.22 0.009 240);
+
+  --radius: 0.5rem;
+
+  --sidebar: oklch(0.15 0.009 240);
+  --sidebar-foreground: oklch(0.92 0.005 240);
+  --sidebar-primary: oklch(0.65 0.12 210);
+  --sidebar-primary-foreground: oklch(0.98 0 0);
+  --sidebar-accent: oklch(0.20 0.01 240);
+  --sidebar-accent-foreground: oklch(0.88 0.005 240);
+  --sidebar-border: oklch(0.22 0.009 240);
+  --sidebar-ring: oklch(0.65 0.12 210);
+}
+
+@theme inline {
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'Geist Mono', 'Courier New', monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 6px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-status-success: var(--status-success);
+  --color-status-success-fg: var(--status-success-fg);
+  --color-status-warning: var(--status-warning);
+  --color-status-warning-fg: var(--status-warning-fg);
+  --color-status-error: var(--status-error);
+  --color-status-error-fg: var(--status-error-fg);
+  --color-status-info: var(--status-info);
+  --color-status-info-fg: var(--status-info-fg);
+  --color-status-amber: var(--status-amber);
+  --color-status-amber-fg: var(--status-amber-fg);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: oklch(0.28 0.009 240);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.35 0.009 240);
+}
+
+/* Tabular numbers for data tables */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}

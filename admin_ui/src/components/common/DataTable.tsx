@@ -31,11 +31,11 @@ export function DataTable<T extends Record<string, any>>({
   }
 
   if (data.length === 0) {
-    return <p style={{ color: "var(--muted-color)" }}>{emptyMessage}</p>;
+    return <p className="text-muted">{emptyMessage}</p>;
   }
 
   return (
-    <figure>
+    <div className="table-wrapper">
       <table>
         <thead>
           <tr>
@@ -49,12 +49,7 @@ export function DataTable<T extends Record<string, any>>({
             <tr
               key={row[keyField]}
               onClick={() => onRowClick?.(row)}
-              style={{
-                cursor: onRowClick ? "pointer" : undefined,
-                ...(selectedKey && selectedKey === row[keyField]
-                  ? { backgroundColor: "var(--pico-primary-background)", color: "#fff" }
-                  : {}),
-              }}
+              className={onRowClick ? "cursor-pointer" : undefined}
               aria-selected={selectedKey === row[keyField] ? true : undefined}
             >
               {columns.map((col) => (
@@ -66,6 +61,6 @@ export function DataTable<T extends Record<string, any>>({
           ))}
         </tbody>
       </table>
-    </figure>
+    </div>
   );
 }

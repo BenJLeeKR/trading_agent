@@ -135,24 +135,16 @@ export default function DecisionsView() {
 
   return (
     <section>
-      <hgroup>
+      <div className="page-header">
         <h2>Trade Decisions</h2>
         <p>
           Total: {decisions.length} decision{decisions.length !== 1 ? "s" : ""}
         </p>
-      </hgroup>
+      </div>
 
       {/* Filter bar */}
-      <div
-        style={{
-          display: "flex",
-          gap: "0.75rem",
-          flexWrap: "wrap",
-          marginBottom: "0.75rem",
-          alignItems: "flex-end",
-        }}
-      >
-        <label style={{ display: "flex", flexDirection: "column", fontSize: "0.875rem" }}>
+      <div className="filter-bar">
+        <label>
           Symbol
           <input
             type="search"
@@ -163,7 +155,7 @@ export default function DecisionsView() {
             style={{ width: "160px" }}
           />
         </label>
-        <label style={{ display: "flex", flexDirection: "column", fontSize: "0.875rem" }}>
+        <label>
           Side
           <select
             value={sideFilter}
@@ -178,7 +170,7 @@ export default function DecisionsView() {
             ))}
           </select>
         </label>
-        <label style={{ display: "flex", flexDirection: "column", fontSize: "0.875rem" }}>
+        <label>
           Confidence Min
           <input
             type="number"
@@ -192,7 +184,7 @@ export default function DecisionsView() {
             style={{ width: "100px" }}
           />
         </label>
-        <label style={{ display: "flex", flexDirection: "column", fontSize: "0.875rem" }}>
+        <label>
           Confidence Max
           <input
             type="number"
@@ -220,7 +212,7 @@ export default function DecisionsView() {
 
       {/* Detail panel */}
       {selectedDecision ? (
-        <article style={{ marginTop: "1rem" }}>
+        <article className="detail-panel">
           <header>
             <strong>Decision Detail</strong>
             <button
@@ -232,7 +224,7 @@ export default function DecisionsView() {
               ✕
             </button>
           </header>
-          <div className="grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+          <div className="data-grid-2">
             <div>
               <strong>Ticker:</strong> {selectedDecision.ticker}
             </div>
@@ -272,15 +264,9 @@ export default function DecisionsView() {
             />
           )}
           {contextDetail && (
-            <section
-              style={{
-                marginTop: "1rem",
-                borderTop: "1px solid var(--pico-muted-border-color)",
-                paddingTop: "0.75rem",
-              }}
-            >
+            <section className="detail-context-section">
               <h6>Decision Context</h6>
-              <div className="grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+              <div className="data-grid-2">
                 <div>
                   <strong>Strategy:</strong> {contextDetail.strategy_code}
                 </div>
@@ -304,14 +290,7 @@ export default function DecisionsView() {
       ) : (
         !loading &&
         decisions.length > 0 && (
-          <article
-            style={{
-              marginTop: "1rem",
-              padding: "2rem",
-              textAlign: "center",
-              color: "var(--pico-muted-color)",
-            }}
-          >
+          <article className="placeholder-panel">
             Select a decision row to view details.
           </article>
         )

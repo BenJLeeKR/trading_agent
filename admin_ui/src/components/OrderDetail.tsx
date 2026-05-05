@@ -73,20 +73,14 @@ export default function OrderDetail() {
         <Link to="/orders">&larr; Back to Orders</Link>
       </p>
 
-      <hgroup>
+      <div className="page-header">
         <h2>Order Detail</h2>
         <p>ID: <code>{order.order_request_id}</code></p>
-      </hgroup>
+      </div>
 
       <article>
         <header><strong>Summary</strong></header>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-            gap: "0.5rem",
-          }}
-        >
+        <div className="data-grid-auto">
           <div><strong>Symbol:</strong> {order.symbol}</div>
           <div><strong>Side:</strong> {order.side}</div>
           <div>
@@ -100,7 +94,7 @@ export default function OrderDetail() {
           <div><strong>Created:</strong> {order.created_at}</div>
           <div><strong>Updated:</strong> {order.updated_at ?? "—"}</div>
           {order.error_message && (
-            <div style={{ color: "var(--pico-del-color)" }}>
+            <div className="text-error">
               <strong>Error:</strong> {order.error_message}
             </div>
           )}

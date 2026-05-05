@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ReconciliationRunSummary, BlockingLockStatus } from "../types/api";
-import { getReconciliationRuns, getReconciliationLocks } from "../api/client";
+import type { ReconciliationRunSummary, BlockingLockStatus, AccountSummary, OrderSummary } from "../types/api";
+import { getAccounts, getOrders, getReconciliationRuns, getReconciliationLocks } from "../api/client";
 import { DataTable } from "./common/DataTable";
 import { StatusBadge } from "./common/StatusBadge";
 import { ErrorBanner } from "./common/ErrorBanner";
@@ -28,10 +28,37 @@ export default function ReconciliationView() {
   useEffect(() => {
     setLoading(true);
     setError(null);
-    Promise.all([getReconciliationRuns(), getReconciliationLocks()])
-      .then(([r, l]) => {
-        setRuns(r);
-        setLocks(l);
+
+    // Phase 1: get orders to obtain a client_id (temporary heuristic)
+    getOrders()
+      .then((orders: OrderSummary[]) => {
+        if (orders.length === 0) {
+          // No orders → no client_id available; show empty state
+          setRuns([]);
+          setLocks([]);
+          return;
+        }
+        const clientId = orders[0].client_id;
+        // Phase 2: use client_id to fetch accounts, then get the first account_id
+        return getAccounts(clientId).then((accounts: AccountSummary[]) => {
+          const accountId = accounts.length > 0 ? accounts[0].account_id : undefined;
+          // Phase 3: fetch reconciliation data scoped to the account
+          return Promise.all([
+            accountId
+              ? getReconciliationRuns(accountId)
+              : Promise.resolve<ReconciliationRunSummary[]>([]),
+            accountId
+              ? getReconciliationLocks(accountId)
+              : Promise.resolve<BlockingLockStatus[]>([]),
+          ]);
+        });
+      })
+      .then((result) => {
+        if (result) {
+          const [r, l] = result as [ReconciliationRunSummary[], BlockingLockStatus[]];
+          setRuns(r);
+          setLocks(l);
+        }
       })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "Failed to load reconciliation data";
@@ -85,12 +112,12 @@ export default function ReconciliationView() {
 
   return (
     <section>
-      <hgroup>
+      <div className="page-header">
         <h2>Reconciliation</h2>
         <p>Reconciliation runs and blocking locks.</p>
-      </hgroup>
+      </div>
 
-      <div role="tablist" style={{ marginBottom: "1rem" }}>
+      <div className="tab-bar" role="tablist">
         <button
           role="tab"
           aria-selected={activeTab === "runs"}
@@ -140,23 +167,17 @@ export default function ReconciliationView() {
       {activeTab === "locks" && (
         <>
           {activeLocks.length > 0 && (
-            <article
-              style={{
-                backgroundColor: "var(--pico-del-background)",
-                color: "var(--pico-del-color)",
-                padding: "0.75rem 1rem",
-                marginBottom: "1rem",
-                borderRadius: "4px",
-                border: "2px solid var(--pico-del-color)",
-                fontWeight: "bold",
-              }}
-            >
-              🚫 <strong>{activeLocks.length} Active Blocking Lock{activeLocks.length !== 1 ? "s" : ""}</strong>
-              <br />
-              <span style={{ fontWeight: "normal" }}>
-                These may block trading operations. Resolve locks before submitting new orders.
-              </span>
-            </article>
+            <div className="warning-banner warning-banner--error">
+              <div>
+                <span className="warning-banner-strong">
+                  🚫 {activeLocks.length} Active Blocking Lock{activeLocks.length !== 1 ? "s" : ""}
+                </span>
+                <br />
+                <span style={{ fontWeight: "normal" }}>
+                  These may block trading operations. Resolve locks before submitting new orders.
+                </span>
+              </div>
+            </div>
           )}
           <DataTable
             columns={lockColumns}

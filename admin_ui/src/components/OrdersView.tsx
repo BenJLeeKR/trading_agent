@@ -67,8 +67,8 @@ export default function OrdersView() {
           style={{
             color:
               r.side.toLowerCase() === "buy"
-                ? "var(--pico-ins-color)"
-                : "var(--pico-del-color)",
+                ? "var(--status-success)"
+                : "var(--status-error)",
             fontWeight: 600,
           }}
         >
@@ -91,23 +91,15 @@ export default function OrdersView() {
 
   return (
     <section>
-      <hgroup>
+      <div className="page-header">
         <h2>Orders</h2>
         <p>
           Total: {filteredOrders.length} / {orders.length} order
           {orders.length !== 1 ? "s" : ""}
         </p>
-      </hgroup>
+      </div>
 
-      <div
-        style={{
-          display: "flex",
-          gap: "0.75rem",
-          marginBottom: "1rem",
-          flexWrap: "wrap",
-          alignItems: "center",
-        }}
-      >
+      <div className="filter-bar">
         <input
           type="search"
           placeholder="Search by symbol…"
