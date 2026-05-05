@@ -7,6 +7,7 @@ import { StatusBadge } from "./common/StatusBadge";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import type { Column } from "./common/DataTable";
+import { Lock, AlertTriangle, CheckCircle, X } from "lucide-react";
 
 type Tab = "runs" | "locks";
 
@@ -18,42 +19,35 @@ const RUN_STATUSES = [
   "failed",
 ] as const;
 
-/* ───────────────────────────────────────────
- * FilterGroup — single-select button group
- * ─────────────────────────────────────────── */
-function FilterGroup({
-  label,
-  options,
-  value,
-  onChange,
-}: {
-  label: string;
-  options: { label: string; value: string }[];
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div className="filter-group" role="group" aria-label={label}>
-      {options.map((opt) => (
-        <button
-          key={opt.value}
-          type="button"
-          className={`filter-group-btn${value === opt.value ? " filter-group-btn--active" : ""}`}
-          onClick={() => onChange(opt.value)}
-        >
-          {opt.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 function formatStatusLabel(status: string): string {
   if (status === "all") return "All";
   return status
     .split("_")
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
+}
+
+/* ── DetailRow (template pattern) ── */
+function DetailRow({
+  label,
+  value,
+  valueColor,
+}: {
+  label: string;
+  value: string;
+  valueColor?: string;
+}) {
+  return (
+    <div className="detail-row">
+      <span className="detail-row-label">{label}</span>
+      <span
+        className="detail-row-value"
+        style={{ color: valueColor ?? "var(--text-primary)" }}
+      >
+        {value}
+      </span>
+    </div>
+  );
 }
 
 export default function ReconciliationView() {
@@ -63,6 +57,7 @@ export default function ReconciliationView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [runStatusFilter, setRunStatusFilter] = useState("all");
+  const [selectedRun, setSelectedRun] = useState<ReconciliationRunSummary | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -153,9 +148,31 @@ export default function ReconciliationView() {
     <section>
       <div className="page-header">
         <h2>Reconciliation</h2>
-        <p>Reconciliation runs and blocking locks.</p>
+        <p>Reconciliation runs & lock management</p>
       </div>
 
+      {/* Active lock warning banner (template pattern) */}
+      {activeLocks.length > 0 && (
+        <div
+          className="warning-banner warning-banner--error"
+          style={{ marginBottom: "1rem" }}
+        >
+          <div className="warning-banner-content">
+            <Lock size={15} style={{ flexShrink: 0, marginTop: "0.1rem" }} />
+            <div>
+              <span className="warning-banner-strong">
+                {activeLocks.length} Active Blocking Lock{activeLocks.length !== 1 ? "s" : ""}
+              </span>
+              <br />
+              <span className="warning-banner-body">
+                These may block trading operations. Resolve locks before submitting new orders.
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tab bar */}
       <div className="tab-bar" role="tablist">
         <button
           role="tab"
@@ -173,57 +190,161 @@ export default function ReconciliationView() {
         </button>
       </div>
 
+      {/* Runs tab */}
       {activeTab === "runs" && (
         <div className="tab-content">
-          <FilterGroup
-            label="Status"
-            options={RUN_STATUSES.map((s) => ({
-              label: formatStatusLabel(s),
-              value: s,
-            }))}
-            value={runStatusFilter}
-            onChange={setRunStatusFilter}
-          />
-          <Panel title="Reconciliation Runs">
-            <DataTable
-              columns={runColumns}
-              data={filteredRuns}
-              keyField="run_id"
-              emptyMessage="No reconciliation runs found."
-              compact
-            />
-          </Panel>
+          <div className="filter-bar">
+            <div className="filter-group" role="group" aria-label="Status">
+              {RUN_STATUSES.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  className={`filter-group-btn${runStatusFilter === s ? " filter-group-btn--active" : ""}`}
+                  onClick={() => {
+                    setRunStatusFilter(s);
+                    setSelectedRun(null);
+                  }}
+                >
+                  {formatStatusLabel(s)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="split-layout">
+            <div className="split-main">
+              <Panel title="Reconciliation Runs">
+                <DataTable
+                  columns={runColumns}
+                  data={filteredRuns}
+                  keyField="run_id"
+                  onRowClick={(row) =>
+                    setSelectedRun(
+                      selectedRun?.run_id === row.run_id ? null : row,
+                    )
+                  }
+                  emptyMessage="No reconciliation runs found."
+                  compact
+                />
+              </Panel>
+            </div>
+
+            {/* Right: run detail panel */}
+            {selectedRun && (
+              <div className="split-sidebar split-sidebar--narrow">
+                <div className="card-panel">
+                  <div className="card-panel-header">
+                    <span className="card-panel-title">Run Detail</span>
+                    <button
+                      onClick={() => setSelectedRun(null)}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                        color: "var(--text-muted)",
+                        padding: 0,
+                      }}
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                  <div style={{ padding: "0.75rem 1rem" }}>
+                    <DetailRow
+                      label="Run ID"
+                      value={selectedRun.run_id}
+                    />
+                    <DetailRow
+                      label="Status"
+                      value={selectedRun.status}
+                    />
+                    <DetailRow
+                      label="Started"
+                      value={selectedRun.started_at}
+                    />
+                    <DetailRow
+                      label="Completed"
+                      value={selectedRun.completed_at ?? "—"}
+                    />
+                    <DetailRow
+                      label="Order Mismatches"
+                      value={String(selectedRun.order_mismatches)}
+                      valueColor={
+                        selectedRun.order_mismatches > 0
+                          ? "var(--status-error)"
+                          : undefined
+                      }
+                    />
+                    <DetailRow
+                      label="Position Mismatches"
+                      value={String(selectedRun.position_mismatches)}
+                      valueColor={
+                        selectedRun.position_mismatches > 0
+                          ? "var(--status-error)"
+                          : undefined
+                      }
+                    />
+                  </div>
+
+                  {/* Status footer */}
+                  {selectedRun.status === "completed" &&
+                    selectedRun.order_mismatches === 0 &&
+                    selectedRun.position_mismatches === 0 && (
+                      <div
+                        style={{
+                          padding: "0.6rem 1rem",
+                          borderTop: "1px solid var(--border-color)",
+                          backgroundColor: "#f0fdf4",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.4rem",
+                        }}
+                      >
+                        <CheckCircle size={12} color="#16a34a" />
+                        <span
+                          style={{
+                            fontSize: "0.7rem",
+                            color: "#16a34a",
+                            fontWeight: 500,
+                          }}
+                        >
+                          All positions matched successfully.
+                        </span>
+                      </div>
+                    )}
+                  {(selectedRun.order_mismatches > 0 ||
+                    selectedRun.position_mismatches > 0) && (
+                      <div
+                        style={{
+                          padding: "0.6rem 1rem",
+                          borderTop: "1px solid var(--border-color)",
+                          backgroundColor: "#fffbeb",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.4rem",
+                        }}
+                      >
+                        <AlertTriangle size={12} color="#d97706" />
+                        <span
+                          style={{
+                            fontSize: "0.7rem",
+                            color: "#d97706",
+                            fontWeight: 500,
+                          }}
+                        >
+                          Mismatches require review.
+                        </span>
+                      </div>
+                    )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
+      {/* Locks tab */}
       {activeTab === "locks" && (
         <div className="tab-content">
-          {activeLocks.length > 0 && (
-            <div className="warning-banner warning-banner--error">
-              <svg
-                className="warning-banner-icon"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <circle cx="12" cy="12" r="10" />
-                <line x1="15" y1="9" x2="9" y2="15" />
-                <line x1="9" y1="9" x2="15" y2="15" />
-              </svg>
-              <div className="warning-banner-content">
-                <span className="warning-banner-strong">
-                  {activeLocks.length} Active Blocking Lock{activeLocks.length !== 1 ? "s" : ""}
-                </span>
-                <br />
-                <span className="warning-banner-body">
-                  These may block trading operations. Resolve locks before submitting new orders.
-                </span>
-              </div>
-            </div>
-          )}
           <Panel title="Blocking Locks">
             <DataTable
               columns={lockColumns}

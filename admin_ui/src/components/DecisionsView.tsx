@@ -2,46 +2,53 @@ import { useEffect, useMemo, useState } from "react";
 import type { DecisionContextDetail, TradeDecisionDetail } from "../types/api";
 import { getDecisionContext, getTradeDecisions } from "../api/client";
 import { DataTable } from "./common/DataTable";
-import { Panel } from "./common/Panel";
-import { DetailField } from "./common/DetailField";
-import { SectionDivider } from "./common/SectionDivider";
 import { StatusBadge } from "./common/StatusBadge";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import type { Column } from "./common/DataTable";
+import { X, Brain, TrendingUp, TrendingDown, Search } from "lucide-react";
 
 const SIDES = ["all", "buy", "sell", "hold"] as const;
 
 /* ───────────────────────────────────────────
- * FilterGroup — single-select button group
+ * ConfidenceBar — progress bar with color threshold
  * ─────────────────────────────────────────── */
-function FilterGroup({
-  label,
-  options,
-  value,
-  onChange,
-}: {
-  label: string;
-  options: { label: string; value: string }[];
-  value: string;
-  onChange: (value: string) => void;
-}) {
+function ConfidenceBar({ value }: { value: number }) {
+  // value is 0–1 float; convert to 0–100
+  const pct = value * 100;
+  const color = value >= 0.7 ? "#22c55e" : value >= 0.4 ? "#f59e0b" : "#ef4444";
   return (
-    <div className="filter-group" role="group" aria-label={label}>
-      {options.map((opt) => (
-        <button
-          key={opt.value}
-          type="button"
-          className={`filter-group-btn${value === opt.value ? " filter-group-btn--active" : ""}`}
-          onClick={() => onChange(opt.value)}
-        >
-          {opt.label}
-        </button>
-      ))}
+    <div className="flex items-center gap-2">
+      <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: "#f3f4f6" }}>
+        <div
+          className="h-full rounded-full transition-all"
+          style={{ width: `${pct}%`, backgroundColor: color }}
+        />
+      </div>
+      <span className="text-xs font-semibold tabular-nums shrink-0" style={{ color, minWidth: 32 }}>
+        {pct.toFixed(0)}%
+      </span>
     </div>
   );
 }
 
+/* ───────────────────────────────────────────
+ * DetailRow — label + value pair for detail panels
+ * ─────────────────────────────────────────── */
+function DetailRow({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
+  return (
+    <div className="detail-row">
+      <span className="detail-row-label">{label}</span>
+      <span className="detail-row-value" style={valueColor ? { color: valueColor } : undefined}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+/* ───────────────────────────────────────────
+ * DecisionsView
+ * ─────────────────────────────────────────── */
 export default function DecisionsView() {
   const [decisions, setDecisions] = useState<TradeDecisionDetail[]>([]);
   const [loading, setLoading] = useState(true);
@@ -111,53 +118,31 @@ export default function DecisionsView() {
   }, [decisions, searchText, sideFilter, confidenceMin, confidenceMax]);
 
   const columns: Column<TradeDecisionDetail>[] = [
-    { key: "created_at", label: "Created" },
-    { key: "ticker", label: "Ticker" },
+    { key: "trade_decision_id", label: "Decision ID", render: (r) => <code>{r.trade_decision_id.slice(0, 8)}…</code> },
+    { key: "ticker", label: "Symbol" },
     {
       key: "side",
-      label: "Side",
-      render: (r) => (
-        <span className={r.side.toLowerCase() === "buy" ? "side-buy" : "side-sell"}>
-          {r.side.toUpperCase()}
-        </span>
-      ),
+      label: "Action",
+      render: (r) => {
+        const color = r.side.toLowerCase() === "buy" ? "#16a34a" : r.side.toLowerCase() === "sell" ? "#dc2626" : "#6b7280";
+        return <span style={{ color, fontWeight: 600 }}>{r.side.toUpperCase()}</span>;
+      },
     },
-    { key: "intent", label: "Intent" },
-    { key: "qty", label: "Qty" },
     {
       key: "confidence",
       label: "Confidence",
-      /* ⚠️ Inline style 보존 — decisions.test.tsx의 toHaveStyle 검증과 연결됨 */
-      render: (r) => {
-        const pct = (r.confidence * 100).toFixed(0);
-        const color =
-          r.confidence >= 0.7
-            ? "var(--pico-ins-color)"
-            : r.confidence >= 0.4
-              ? "var(--pico-warning)"
-              : "var(--pico-del-color)";
-        return <span style={{ color, fontWeight: 600 }}>{pct}%</span>;
-      },
+      render: (r) => <ConfidenceBar value={r.confidence} />,
     },
-    { key: "agent_label", label: "Agent" },
+    { key: "agent_label", label: "Strategy" },
     {
-      key: "decision_context_id",
-      label: "Context ID",
-      render: (r) => (
-        <code className="context-id">
-          {r.decision_context_id.substring(0, 8)}…
-        </code>
-      ),
+      key: "created_at",
+      label: "Time",
+      render: (r) => new Date(r.created_at).toLocaleTimeString(),
     },
   ];
 
   if (loading) return <LoadingSpinner />;
   if (error) return <ErrorBanner message={error} onDismiss={() => setError(null)} />;
-
-  function handleCloseDetail() {
-    setSelectedDecision(null);
-    setContextDetail(null);
-  }
 
   return (
     <section>
@@ -168,153 +153,245 @@ export default function DecisionsView() {
         </p>
       </div>
 
-      {/* Filter bar */}
-      <div className="filter-bar">
-        <input
-          type="search"
-          placeholder="Search by ticker..."
-          value={searchText}
-          onChange={(e) => setSearchText(e.target.value)}
-          aria-label="Search decisions by ticker"
-          style={{ width: "160px" }}
-        />
+      {/* ── Split layout ── */}
+      <div className="split-layout">
+        {/* Left: filters + table */}
+        <div className="split-main">
+          {/* Filter bar */}
+          <div className="filter-bar">
+            <div className="input-wrap">
+              <Search size={14} className="input-wrap-icon" />
+              <input
+                type="search"
+                placeholder="Search by ticker..."
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                aria-label="Search decisions by ticker"
+              />
+            </div>
 
-        <FilterGroup
-          label="Side"
-          options={SIDES.map((s) => ({
-            label: s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1),
-            value: s,
-          }))}
-          value={sideFilter}
-          onChange={setSideFilter}
-        />
+            <div className="filter-group" role="group" aria-label="Side">
+              {SIDES.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  className={`pill-btn${sideFilter === s ? " pill-btn--active" : ""}`}
+                  onClick={() => setSideFilter(s)}
+                >
+                  {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
+                </button>
+              ))}
+            </div>
 
-        <label className="confidence-filter">
-          Confidence Min
-          <input
-            type="number"
-            min="0"
-            max="1"
-            step="0.05"
-            placeholder="0.0"
-            value={confidenceMin}
-            onChange={(e) => setConfidenceMin(e.target.value)}
-            aria-label="Minimum confidence"
-            className="confidence-input"
-          />
-        </label>
-        <label className="confidence-filter">
-          Confidence Max
-          <input
-            type="number"
-            min="0"
-            max="1"
-            step="0.05"
-            placeholder="1.0"
-            value={confidenceMax}
-            onChange={(e) => setConfidenceMax(e.target.value)}
-            aria-label="Maximum confidence"
-            className="confidence-input"
-          />
-        </label>
-      </div>
-
-      <Panel
-        title="Trade Decisions"
-        headerRight={
-          <span className="panel-counter">
-            {filteredDecisions.length} / {decisions.length} decision
-            {decisions.length !== 1 ? "s" : ""}
-          </span>
-        }
-      >
-        <DataTable
-          columns={columns}
-          data={filteredDecisions}
-          keyField="trade_decision_id"
-          onRowClick={(row) => setSelectedDecision(row)}
-          selectedKey={selectedDecision?.trade_decision_id ?? null}
-          isLoading={loading}
-          emptyMessage="No trade decisions found."
-          compact
-        />
-      </Panel>
-
-      {/* Detail panel */}
-      {selectedDecision ? (
-        <Panel
-          title="Decision Detail"
-          subtitle={`${selectedDecision.ticker} · ${selectedDecision.side.toUpperCase()} · ${(selectedDecision.confidence * 100).toFixed(0)}% confidence`}
-          headerRight={
-            <button
-              style={{ padding: "0.25rem 0.75rem", cursor: "pointer" }}
-              onClick={handleCloseDetail}
-              aria-label="Close detail panel"
-              type="button"
-            >
-              ✕
-            </button>
-          }
-        >
-          <div className="detail-grid">
-            <DetailField label="Ticker" value={selectedDecision.ticker} />
-            <DetailField
-              label="Side"
-              value={<StatusBadge status={selectedDecision.side.toUpperCase()} />}
-            />
-            <DetailField
-              label="Confidence"
-              value={`${(selectedDecision.confidence * 100).toFixed(0)}%`}
-            />
-            <DetailField label="Agent" value={selectedDecision.agent_label} />
-            <DetailField label="Intent" value={selectedDecision.intent} />
-            <DetailField
-              label="Created"
-              value={new Date(selectedDecision.created_at).toLocaleString()}
-            />
-            <DetailField
-              label="Decision ID"
-              value={selectedDecision.trade_decision_id}
-              mono
-            />
-            <DetailField
-              label="Context ID"
-              value={selectedDecision.decision_context_id}
-              mono
-            />
+            <div className="flex items-center gap-2 ml-auto">
+              <label className="confidence-filter" style={{ fontSize: "0.75rem", color: "#9ca3af" }}>
+                Min
+                <input
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  placeholder="0.0"
+                  value={confidenceMin}
+                  onChange={(e) => setConfidenceMin(e.target.value)}
+                  aria-label="Minimum confidence"
+                  className="confidence-input"
+                />
+              </label>
+              <label className="confidence-filter" style={{ fontSize: "0.75rem", color: "#9ca3af" }}>
+                Max
+                <input
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  placeholder="1.0"
+                  value={confidenceMax}
+                  onChange={(e) => setConfidenceMax(e.target.value)}
+                  aria-label="Maximum confidence"
+                  className="confidence-input"
+                />
+              </label>
+            </div>
           </div>
 
-          {contextLoading && <LoadingSpinner text="Loading context..." />}
-          {contextError && (
-            <ErrorBanner
-              message={contextError}
-              onDismiss={() => setContextError(null)}
-            />
-          )}
-          {contextDetail && (
-            <>
-              <SectionDivider label="Decision Context" />
-              <div className="detail-grid">
-                <DetailField label="Strategy" value={contextDetail.strategy_code} />
-                <DetailField label="Client" value={contextDetail.client_id} />
-                <DetailField label="Session" value={contextDetail.session_id} />
-                <DetailField label="Agents" value={contextDetail.agent_count} />
-                <DetailField
-                  label="Timestamp"
-                  value={new Date(contextDetail.timestamp).toLocaleString()}
-                />
+          {/* Table panel */}
+          <div className="card-panel">
+            <div className="card-panel-header">
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <Brain size={13} style={{ color: "#374151" }} />
+                <span className="card-panel-title">Decision Log</span>
               </div>
-            </>
-          )}
-        </Panel>
-      ) : (
-        !loading &&
-        decisions.length > 0 && (
-          <article className="placeholder-panel">
-            Select a decision row to view details.
-          </article>
-        )
-      )}
+              <span className="card-panel-count">
+                {filteredDecisions.length} / {decisions.length}
+              </span>
+            </div>
+            <DataTable
+              columns={columns}
+              data={filteredDecisions}
+              keyField="trade_decision_id"
+              onRowClick={(row) => setSelectedDecision(
+                selectedDecision?.trade_decision_id === row.trade_decision_id ? null : row
+              )}
+              selectedKey={selectedDecision?.trade_decision_id ?? null}
+              emptyMessage="No trade decisions found."
+              compact
+            />
+          </div>
+        </div>
+
+        {/* Right: detail panel (288px) */}
+        {selectedDecision ? (
+          <div className="split-sidebar" style={{ width: 288, flexShrink: 0 }}>
+            {/* ── Decision Detail card ── */}
+            <div className="card-panel">
+              <div className="card-panel-header">
+                <span className="card-panel-title">Decision Detail</span>
+                <button
+                  onClick={() => { setSelectedDecision(null); setContextDetail(null); }}
+                  style={{ color: "#9ca3af", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                  aria-label="Close detail panel"
+                  type="button"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+
+              {/* Action + status banner */}
+              <div
+                className="status-banner"
+                style={{
+                  backgroundColor:
+                    selectedDecision.confidence >= 0.7 ? "#f0fdf4" :
+                    selectedDecision.confidence >= 0.4 ? "#fffbeb" :
+                    "#fef2f2",
+                  borderBottom: "1px solid #e8eaed",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <span style={{ fontWeight: 700, fontSize: "0.875rem", color: "#16a34a" }}>
+                    {selectedDecision.side.toUpperCase()}
+                  </span>
+                  <span style={{ fontWeight: 600, fontSize: "0.875rem", color: "#111827" }}>
+                    {selectedDecision.ticker}
+                  </span>
+                </div>
+                <span
+                  className="status-badge"
+                  style={{
+                    backgroundColor:
+                      selectedDecision.confidence >= 0.7 ? "#dcfce7" :
+                      selectedDecision.confidence >= 0.4 ? "#fef3c7" :
+                      "#fee2e2",
+                    color:
+                      selectedDecision.confidence >= 0.7 ? "#16a34a" :
+                      selectedDecision.confidence >= 0.4 ? "#d97706" :
+                      "#dc2626",
+                  }}
+                >
+                  <span className="status-badge-dot" />
+                  {(selectedDecision.confidence * 100).toFixed(0)}%
+                </span>
+              </div>
+
+              {/* Fields */}
+              <div style={{ padding: "0.75rem 1rem" }}>
+                <DetailRow label="Decision ID" value={selectedDecision.trade_decision_id.slice(0, 16) + "…"} />
+                <DetailRow label="Intent" value={selectedDecision.intent} />
+                <DetailRow label="Agent" value={selectedDecision.agent_label} />
+                <DetailRow label="Qty" value={selectedDecision.qty} />
+                <DetailRow
+                  label="Created"
+                  value={new Date(selectedDecision.created_at).toLocaleString()}
+                />
+                <DetailRow label="Context ID" value={selectedDecision.decision_context_id.slice(0, 12) + "…"} />
+              </div>
+
+              {/* Confidence bar */}
+              <div style={{ padding: "0 1rem 0.75rem" }}>
+                <p style={{ fontSize: "0.75rem", color: "#9ca3af", marginBottom: "0.375rem" }}>Confidence</p>
+                <ConfidenceBar value={selectedDecision.confidence} />
+              </div>
+
+              {/* Reason (intent) */}
+              <div style={{ padding: "0.75rem 1rem", borderTop: "1px solid #f3f4f6" }}>
+                <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "#374151", marginBottom: "0.25rem" }}>Reason</p>
+                <p style={{ fontSize: "0.75rem", lineHeight: "1.4", color: "#6b7280" }}>
+                  {selectedDecision.intent || "No reason provided."}
+                </p>
+              </div>
+            </div>
+
+            {/* ── Input Signals card ── */}
+            <div className="card-panel">
+              <div className="card-panel-header">
+                <span className="card-panel-title">Input Signals</span>
+              </div>
+              <div style={{ padding: "0.75rem 1rem" }}>
+                <DetailRow label="Agent Signal" value={selectedDecision.agent_label} />
+                <DetailRow
+                  label="Side Signal"
+                  value={selectedDecision.side.toUpperCase()}
+                  valueColor={
+                    selectedDecision.side.toLowerCase() === "buy" ? "#16a34a" :
+                    selectedDecision.side.toLowerCase() === "sell" ? "#dc2626" :
+                    "#6b7280"
+                  }
+                />
+                <DetailRow label="Confidence Score" value={`${(selectedDecision.confidence * 100).toFixed(0)}%`} />
+                <DetailRow label="Quantity" value={selectedDecision.qty} />
+              </div>
+            </div>
+
+            {/* ── Market Context card ── */}
+            <div className="card-panel">
+              <div className="card-panel-header">
+                <span className="card-panel-title">Market Context</span>
+              </div>
+
+              {contextLoading && (
+                <div style={{ padding: "0.75rem 1rem" }}>
+                  <LoadingSpinner text="Loading context..." />
+                </div>
+              )}
+
+              {contextError && (
+                <div style={{ padding: "0.5rem" }}>
+                  <ErrorBanner message={contextError} onDismiss={() => setContextError(null)} />
+                </div>
+              )}
+
+              {contextDetail && (
+                <div style={{ padding: "0.75rem 1rem" }}>
+                  <DetailRow label="Strategy" value={contextDetail.strategy_code} />
+                  <DetailRow label="Client" value={contextDetail.client_id} />
+                  <DetailRow label="Session" value={contextDetail.session_id ?? "—"} />
+                  <DetailRow label="Agent Count" value={String(contextDetail.agent_count)} />
+                  <DetailRow
+                    label="Timestamp"
+                    value={new Date(contextDetail.timestamp).toLocaleString()}
+                  />
+                </div>
+              )}
+
+              {!contextDetail && !contextLoading && !contextError && (
+                <div style={{ padding: "1rem", textAlign: "center", color: "#9ca3af", fontSize: "0.75rem" }}>
+                  Select a decision with context to view market data.
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          !loading && decisions.length > 0 && (
+            <div className="split-sidebar" style={{ width: 288, flexShrink: 0 }}>
+              <div className="split-main-placeholder" style={{ height: "100%" }}>
+                <Brain size={32} />
+                <p>Select a decision row to view details.</p>
+              </div>
+            </div>
+          )
+        )}
+      </div>
     </section>
   );
 }

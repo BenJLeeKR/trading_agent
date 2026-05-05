@@ -1,28 +1,21 @@
-'use client'
-
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
-import { AdminShell } from '@/components/admin/admin-shell'
-import { OverviewDashboard } from '@/components/admin/overview-dashboard'
-import { OrdersView } from '@/components/admin/orders-view'
-import { ReconciliationView } from '@/components/admin/reconciliation-view'
-import { AccountsView } from '@/components/admin/accounts-view'
-import { DecisionsView } from '@/components/admin/decisions-view'
-import { PlaceholderView } from '@/components/admin/placeholder-view'
+import { Routes, Route, Navigate } from 'react-router-dom'
+import DashboardLayout from './components/layout/DashboardLayout'
+import OverviewPage from './pages/OverviewPage'
+import OrdersPage from './pages/OrdersPage'
+import ProductsPage from './pages/ProductsPage'
+import AnalyticsPage from './pages/AnalyticsPage'
 
 export default function App() {
   return (
-    <BrowserRouter basename="/admin">
-      <AdminShell>
-        <Routes>
-          <Route path="/" element={<OverviewDashboard />} />
-          <Route path="/orders" element={<OrdersView />} />
-          <Route path="/reconciliation" element={<ReconciliationView />} />
-          <Route path="/accounts" element={<AccountsView />} />
-          <Route path="/decisions" element={<DecisionsView />} />
-          <Route path="/logs" element={<PlaceholderView title="Logs" description="System and agent logs will appear here." />} />
-          <Route path="/settings" element={<PlaceholderView title="System Settings" description="Read-only system configuration." />} />
-        </Routes>
-      </AdminShell>
-    </BrowserRouter>
+    <Routes>
+      <Route path="/" element={<DashboardLayout />}>
+        <Route index element={<Navigate to="/overview" replace />} />
+        <Route path="overview" element={<OverviewPage />} />
+        <Route path="orders" element={<OrdersPage />} />
+        <Route path="products" element={<ProductsPage />} />
+        <Route path="analytics" element={<AnalyticsPage />} />
+        <Route path="*" element={<Navigate to="/overview" replace />} />
+      </Route>
+    </Routes>
   )
 }

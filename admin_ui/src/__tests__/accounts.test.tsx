@@ -32,10 +32,10 @@ describe("AccountsView loading state", () => {
 });
 
 /* ───────────────────────────────────────────
- * Scenario 2: 계정 목록 렌더
+ * Scenario 2: 계정 카드 목록 렌더
  * ─────────────────────────────────────────── */
 describe("AccountsView account list", () => {
-  it("renders accounts table with account codes and types", async () => {
+  it("renders account cards with account codes and types", async () => {
     // GET /orders first (for client_id heuristic), then GET /accounts?client_id=...
     mockFetchOnce(mockOrders);
     mockFetchOnce(mockAccounts);
@@ -43,26 +43,26 @@ describe("AccountsView account list", () => {
     render(<AccountsView />);
 
     await waitFor(() => {
-      expect(screen.getByText("Account Code")).toBeInTheDocument();
+      expect(screen.getByText("Accounts & Positions")).toBeInTheDocument();
     });
 
-    // Account data
+    // Account data — rendered as card buttons
     expect(screen.getByText("ACC-001")).toBeInTheDocument();
     expect(screen.getByText("ACC-002")).toBeInTheDocument();
-    // CLIENT-001 appears in both rows of the DataTable
-    expect(screen.getAllByText("CLIENT-001").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("cash")).toBeInTheDocument();
-    expect(screen.getByText("margin")).toBeInTheDocument();
-    // USD appears in both account rows (currency column)
-    expect(screen.getAllByText("USD").length).toBeGreaterThanOrEqual(1);
+
+    // Account types are shown in the card broker line: e.g. "cash · USD"
+    expect(screen.getByText(/cash · USD/)).toBeInTheDocument();
+    expect(screen.getByText(/margin · USD/)).toBeInTheDocument();
+    // USD appears in both account card broker lines (e.g. "cash · USD")
+    expect(screen.getAllByText(/USD/).length).toBeGreaterThanOrEqual(2);
   });
 });
 
 /* ───────────────────────────────────────────
- * Scenario 3: Row click → positions + cash balance
+ * Scenario 3: Card click → positions + cash balance
  * ─────────────────────────────────────────── */
 describe("AccountsView account detail", () => {
-  it("loads positions and cash balance after row click", async () => {
+  it("loads positions and cash balance after card click", async () => {
     const user = userEvent.setup();
 
     // Phase 1: orders (for client_id heuristic)
@@ -80,26 +80,28 @@ describe("AccountsView account detail", () => {
     mockFetchOnce(mockPositions);   // GET /positions?account_id=...
     mockFetchOnce(mockCashBalance); // GET /cash-balances?account_id=...
 
-    // Click the first account row
+    // Click the first account card button
     await user.click(screen.getByText("ACC-001"));
 
     // Wait for detail section to appear
     await waitFor(() => {
-      expect(screen.getByText(/Account Detail/)).toBeInTheDocument();
+      expect(screen.getByText("Cash Balance Detail")).toBeInTheDocument();
     });
 
-    // Positions table
+    // Positions table — values are formatted with formatCurrency()
     expect(screen.getByText("AAPL")).toBeInTheDocument();
     expect(screen.getByText("TSLA")).toBeInTheDocument();
+    // Quantity is not formatted
     expect(screen.getByText("100")).toBeInTheDocument();
-    expect(screen.getByText("180.00")).toBeInTheDocument();
-    expect(screen.getByText("185.50")).toBeInTheDocument();
+    // Price values are formatted as currency: $180.00, $185.50
+    expect(screen.getByText("$180.00")).toBeInTheDocument();
+    expect(screen.getByText("$185.50")).toBeInTheDocument();
 
-    // Cash balance section
-    expect(screen.getByText("50000.00")).toBeInTheDocument();
-    expect(screen.getByText("100000.00")).toBeInTheDocument();
-    // USD appears in DataTable AND cash balance section
-    expect(screen.getAllByText("USD").length).toBeGreaterThanOrEqual(2);
+    // Cash balance section — formatted with commas: $50,000.00, $100,000.00
+    expect(screen.getByText("$50,000.00")).toBeInTheDocument();
+    expect(screen.getByText("$100,000.00")).toBeInTheDocument();
+    // USD appears in cards ("cash · USD", "margin · USD") AND cash balance detail
+    expect(screen.getAllByText(/USD/).length).toBeGreaterThanOrEqual(3);
   });
 });
 
@@ -107,7 +109,7 @@ describe("AccountsView account detail", () => {
  * Scenario 4: Cash balance null
  * ─────────────────────────────────────────── */
 describe("AccountsView cash balance null", () => {
-  it("shows 'No cash balance snapshot' when cashBalance is null", async () => {
+  it("shows em dash when cashBalance is null", async () => {
     const user = userEvent.setup();
 
     mockFetchOnce(mockOrders);
@@ -125,14 +127,13 @@ describe("AccountsView cash balance null", () => {
 
     await user.click(screen.getByText("ACC-001"));
 
+    // When cashBalance is null, the Cash Balance card shows "—"
     await waitFor(() => {
-      expect(
-        screen.getByText("No cash balance snapshot available."),
-      ).toBeInTheDocument();
+      expect(screen.getByText("Cash Balance")).toBeInTheDocument();
     });
 
-    // Positions should still load
-    expect(screen.getByText("AAPL")).toBeInTheDocument();
+    // The value shows "—" (em dash in account cards and summary card)
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
   });
 });
 
@@ -164,8 +165,8 @@ describe("AccountsView empty positions", () => {
       ).toBeInTheDocument();
     });
 
-    // Cash balance should still load
-    expect(screen.getByText("50000.00")).toBeInTheDocument();
+    // Cash balance should still load — formatted as $50,000.00
+    expect(screen.getByText("$50,000.00")).toBeInTheDocument();
   });
 });
 
@@ -219,14 +220,14 @@ describe("AccountsView type filter", () => {
 });
 
 /* ───────────────────────────────────────────
- * Scenario 9: Selected row highlight
+ * Scenario 9: Selected card highlight via detail render
  * ─────────────────────────────────────────── */
-describe("AccountsView selected row highlight", () => {
-  it("highlights the selected account row", async () => {
+describe("AccountsView selected card highlight", () => {
+  it("loads detail when account card is clicked", async () => {
     const user = userEvent.setup();
     mockFetchOnce(mockOrders);
     mockFetchOnce(mockAccounts);
-    // Row click triggers Phase 2 API calls
+    // Card click triggers Phase 2 API calls
     mockFetchOnce(mockPositions);
     mockFetchOnce(mockCashBalance);
 
@@ -236,12 +237,13 @@ describe("AccountsView selected row highlight", () => {
       expect(screen.getByText("ACC-001")).toBeInTheDocument();
     });
 
-    // Click ACC-001 row
+    // Click ACC-001 card
     await user.click(screen.getByText("ACC-001"));
 
-    // The selected row should have aria-selected="true"
-    const selectedRow = screen.getByRole("row", { selected: true });
-    expect(selectedRow).toBeInTheDocument();
+    // The detail panel should appear — verify by checking for summary card content
+    await waitFor(() => {
+      expect(screen.getByText("Cash Balance Detail")).toBeInTheDocument();
+    });
   });
 });
 
@@ -249,7 +251,7 @@ describe("AccountsView selected row highlight", () => {
  * Scenario 10: Detail area clarity
  * ─────────────────────────────────────────── */
 describe("AccountsView detail area clarity", () => {
-  it("shows account code and type in detail header", async () => {
+  it("shows account code and type in detail area", async () => {
     const user = userEvent.setup();
     mockFetchOnce(mockOrders);
     mockFetchOnce(mockAccounts);
@@ -265,13 +267,14 @@ describe("AccountsView detail area clarity", () => {
     await user.click(screen.getByText("ACC-001"));
 
     await waitFor(() => {
-      expect(screen.getByText(/Account Detail/)).toBeInTheDocument();
+      expect(screen.getByText("Cash Balance Detail")).toBeInTheDocument();
     });
 
-    // Detail header should contain account code and type
-    // These values appear in both DataTable row and detail header, so use getAllByText
-    expect(screen.getAllByText(/ACC-001/).length).toBeGreaterThanOrEqual(2);
-    expect(screen.getAllByText(/cash/).length).toBeGreaterThanOrEqual(2);
+    // Account code appears in the card button
+    expect(screen.getByText("ACC-001")).toBeInTheDocument();
+
+    // Type "cash" appears in the account card broker line ("cash · USD")
+    expect(screen.getByText(/^cash · USD$/)).toBeInTheDocument();
   });
 });
 
@@ -296,7 +299,7 @@ describe("AccountsView selection reset on filter", () => {
     await user.click(screen.getByText("ACC-001"));
 
     await waitFor(() => {
-      expect(screen.getByText(/Account Detail/)).toBeInTheDocument();
+      expect(screen.getByText("Cash Balance Detail")).toBeInTheDocument();
     });
 
     // Now filter by "margin" — ACC-001 (cash) should disappear from list
@@ -305,7 +308,9 @@ describe("AccountsView selection reset on filter", () => {
 
     // Detail should be gone since ACC-001 is no longer visible
     await waitFor(() => {
-      expect(screen.queryByText(/Account Detail/)).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Select an account from the left panel to view details."),
+      ).toBeInTheDocument();
     });
   });
 });

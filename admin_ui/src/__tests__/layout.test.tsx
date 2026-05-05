@@ -32,7 +32,7 @@ describe("Layout navigation", () => {
     );
 
     // Brand
-    expect(screen.getByText("AITrading Co.")).toBeInTheDocument();
+    expect(screen.getByText("AgentTrade")).toBeInTheDocument();
     expect(screen.getByText((content) => content.includes("Operator Console"))).toBeInTheDocument();
 
     // All 5 nav links

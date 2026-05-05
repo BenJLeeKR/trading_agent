@@ -1,15 +1,22 @@
 import type { Metadata } from 'next'
-import '../src/index.css'
+import { Inter } from 'next/font/google'
+import './globals.css'
+
+const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 
 export const metadata: Metadata = {
-  title: 'AITrading Co. — System Operations Center',
-  description: 'Internal read-only operator console for AI multi-agent trading system monitoring.',
+  title: 'Agent Trading Admin UI',
+  description: 'Enterprise agent trading operations console',
 }
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode
+}>) {
   return (
-    <html lang="en" className="bg-background">
-      <body className="font-sans antialiased">
+    <html lang="en" className={inter.variable}>
+      <body className="antialiased bg-gray-50">
         {children}
       </body>
     </html>

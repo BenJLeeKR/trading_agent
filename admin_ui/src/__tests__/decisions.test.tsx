@@ -41,12 +41,11 @@ describe("DecisionsView with data", () => {
     // Verify total count
     expect(screen.getByText(/Total: 3 decisions/)).toBeInTheDocument();
 
-    // Verify key column headers
-    expect(screen.getByRole("columnheader", { name: "Ticker" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Side" })).toBeInTheDocument();
+    // Verify key column headers (updated for template columns)
+    expect(screen.getByRole("columnheader", { name: "Symbol" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Action" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Confidence" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Agent" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Context ID" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Strategy" })).toBeInTheDocument();
   });
 });
 
@@ -67,17 +66,17 @@ describe("DecisionsView confidence color", () => {
       expect(screen.getAllByText("Trade Decisions")[0]).toBeInTheDocument();
     });
 
-    // AAPL confidence 0.85 >= 0.7 → green (var(--pico-ins-color))
+    // AAPL confidence 0.85 >= 0.7 → green (#22c55e)
     const aaplConf = screen.getByText("85%");
-    expect(aaplConf).toHaveStyle("color: var(--pico-ins-color)");
+    expect(aaplConf).toHaveStyle("color: #22c55e");
 
-    // TSLA confidence 0.55 >= 0.4 → warning (var(--pico-warning))
+    // TSLA confidence 0.55 >= 0.4 → amber (#f59e0b)
     const tslaConf = screen.getByText("55%");
-    expect(tslaConf).toHaveStyle("color: var(--pico-warning)");
+    expect(tslaConf).toHaveStyle("color: #f59e0b");
 
-    // MSFT confidence 0.25 < 0.4 → red (var(--pico-del-color))
+    // MSFT confidence 0.25 < 0.4 → red (#ef4444)
     const msftConf = screen.getByText("25%");
-    expect(msftConf).toHaveStyle("color: var(--pico-del-color)");
+    expect(msftConf).toHaveStyle("color: #ef4444");
   });
 });
 
@@ -129,14 +128,16 @@ describe("DecisionsView detail panel", () => {
     await waitFor(() => {
       expect(screen.getByText("Decision Detail")).toBeInTheDocument();
     });
-    // Intent, 85%, and FinalDecisionComposer appear in both DataTable row and detail panel
+    // Intent, 85%, and FinalDecisionComposer appear in DataTable row and detail panels
     expect(screen.getAllByText("Buy AAPL — strong earnings outlook").length).toBe(2);
-    expect(screen.getAllByText("85%").length).toBe(2);
-    expect(screen.getAllByText("FinalDecisionComposer").length).toBe(2);
+    // 85% appears in table row, status banner, ConfidenceBar, and Input Signals card
+    expect(screen.getAllByText("85%").length).toBeGreaterThanOrEqual(3);
+    // FinalDecisionComposer appears in table row, Detail card, and Input Signals card
+    expect(screen.getAllByText("FinalDecisionComposer").length).toBeGreaterThanOrEqual(2);
 
-    // Decision Context section loaded
+    // Market Context section loaded
     await waitFor(() => {
-      expect(screen.getByText("Decision Context")).toBeInTheDocument();
+      expect(screen.getByText("Market Context")).toBeInTheDocument();
     });
     expect(screen.getByText("momentum-v1")).toBeInTheDocument();
     expect(screen.getByText("3")).toBeInTheDocument();

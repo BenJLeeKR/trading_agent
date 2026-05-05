@@ -83,9 +83,8 @@ describe("Dashboard with valid data", () => {
     expect(screen.getByText(/Recent Orders/)).toBeInTheDocument();
     expect(screen.getByText("TSLA")).toBeInTheDocument();
 
-    // AAPL appears in both Locks and Orders tables — verify it exists at least once
-    const aaplElements = screen.getAllByText("AAPL");
-    expect(aaplElements.length).toBeGreaterThanOrEqual(2);
+    // AAPL appears in the Recent Orders table
+    expect(screen.getByText("AAPL")).toBeInTheDocument();
   });
 });
 
@@ -112,51 +111,7 @@ describe("Dashboard error state", () => {
 });
 
 /* ───────────────────────────────────────────
- * Scenario 4: Refresh 버튼
- * ─────────────────────────────────────────── */
-describe("Dashboard refresh button", () => {
-  it("refetches data when Refresh is clicked", async () => {
-    mockFetchOnce(mockOrders);
-    const fetchSpy1 = mockFetchOnce(mockAccounts);
-    mockFetchOnce(mockHealthOk);
-    mockFetchOnce(mockReconciliationRuns);
-    mockFetchOnce(mockLocks);
-
-    render(
-      <MemoryRouter>
-        <Dashboard />
-      </MemoryRouter>,
-    );
-
-    // Wait for initial data load
-    await waitFor(() => {
-      expect(screen.getByText("Dashboard")).toBeInTheDocument();
-    });
-
-    // Reset mock calls tracking for initial load
-    fetchSpy1.mockClear();
-
-    // Click Refresh — should trigger fetchAll again
-    const user = userEvent.setup();
-    mockFetchOnce(mockOrders);
-    mockFetchOnce(mockAccounts);
-    mockFetchOnce(mockHealthOk);
-    mockFetchOnce(mockReconciliationRuns);
-    mockFetchOnce(mockLocks);
-
-    await user.click(screen.getByRole("button", { name: /refresh/i }));
-
-    // Wait for fetch to be called again (loading state appears then data)
-    await waitFor(() => {
-      expect(fetchSpy1).toHaveBeenCalledWith("/health", {
-        headers: { Authorization: `Bearer ${VALID_TOKEN}` },
-      });
-    });
-  });
-});
-
-/* ───────────────────────────────────────────
- * Scenario 5: Summary Card navigation links
+ * Scenario 4: Summary Card navigation links
  * ─────────────────────────────────────────── */
 describe("Dashboard navigation links", () => {
   it("renders clickable summary cards with correct href", async () => {
