@@ -295,7 +295,7 @@ export default function DecisionsView() {
               </div>
 
               {/* Fields */}
-              <div style={{ padding: "0.75rem 1rem" }}>
+              <div className="panel-body">
                 <DetailRow label="Decision ID" value={selectedDecision.trade_decision_id.slice(0, 16) + "…"} />
                 <DetailRow label="Intent" value={selectedDecision.intent} />
                 <DetailRow label="Agent" value={selectedDecision.agent_label} />
@@ -327,7 +327,7 @@ export default function DecisionsView() {
               <div className="card-panel-header">
                 <span className="card-panel-title">Input Signals</span>
               </div>
-              <div style={{ padding: "0.75rem 1rem" }}>
+              <div className="panel-body">
                 <DetailRow label="Agent Signal" value={selectedDecision.agent_label} />
                 <DetailRow
                   label="Side Signal"
@@ -350,7 +350,7 @@ export default function DecisionsView() {
               </div>
 
               {contextLoading && (
-                <div style={{ padding: "0.75rem 1rem" }}>
+                <div className="panel-body">
                   <LoadingSpinner text="Loading context..." />
                 </div>
               )}
@@ -362,7 +362,7 @@ export default function DecisionsView() {
               )}
 
               {contextDetail && (
-                <div style={{ padding: "0.75rem 1rem" }}>
+                <div className="panel-body">
                   <DetailRow label="Strategy" value={contextDetail.strategy_code} />
                   <DetailRow label="Client" value={contextDetail.client_id} />
                   <DetailRow label="Session" value={contextDetail.session_id ?? "—"} />

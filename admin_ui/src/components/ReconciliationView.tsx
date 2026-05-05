@@ -199,7 +199,7 @@ export default function ReconciliationView() {
                 <button
                   key={s}
                   type="button"
-                  className={`filter-group-btn${runStatusFilter === s ? " filter-group-btn--active" : ""}`}
+                  className={`pill-btn${runStatusFilter === s ? " pill-btn--active" : ""}`}
                   onClick={() => {
                     setRunStatusFilter(s);
                     setSelectedRun(null);
@@ -248,7 +248,7 @@ export default function ReconciliationView() {
                       <X size={13} />
                     </button>
                   </div>
-                  <div style={{ padding: "0.75rem 1rem" }}>
+                  <div className="panel-body">
                     <DetailRow
                       label="Run ID"
                       value={selectedRun.run_id}
@@ -289,48 +289,18 @@ export default function ReconciliationView() {
                   {selectedRun.status === "completed" &&
                     selectedRun.order_mismatches === 0 &&
                     selectedRun.position_mismatches === 0 && (
-                      <div
-                        style={{
-                          padding: "0.6rem 1rem",
-                          borderTop: "1px solid var(--border-color)",
-                          backgroundColor: "#f0fdf4",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "0.4rem",
-                        }}
-                      >
+                      <div className="status-footer status-footer--success">
                         <CheckCircle size={12} color="#16a34a" />
-                        <span
-                          style={{
-                            fontSize: "0.7rem",
-                            color: "#16a34a",
-                            fontWeight: 500,
-                          }}
-                        >
+                        <span className="status-footer-text" style={{ color: "#16a34a" }}>
                           All positions matched successfully.
                         </span>
                       </div>
                     )}
                   {(selectedRun.order_mismatches > 0 ||
                     selectedRun.position_mismatches > 0) && (
-                      <div
-                        style={{
-                          padding: "0.6rem 1rem",
-                          borderTop: "1px solid var(--border-color)",
-                          backgroundColor: "#fffbeb",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "0.4rem",
-                        }}
-                      >
+                      <div className="status-footer status-footer--warn">
                         <AlertTriangle size={12} color="#d97706" />
-                        <span
-                          style={{
-                            fontSize: "0.7rem",
-                            color: "#d97706",
-                            fontWeight: 500,
-                          }}
-                        >
+                        <span className="status-footer-text" style={{ color: "#d97706" }}>
                           Mismatches require review.
                         </span>
                       </div>

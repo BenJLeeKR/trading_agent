@@ -60,13 +60,6 @@ function SummaryCard({
   alert,
   children,
 }: CardData) {
-  const variantClass =
-    variant === "ok"
-      ? "summary-card--ok"
-      : variant === "warn"
-        ? "summary-card--warn"
-        : "summary-card--error";
-
   const changeClass =
     changeUp === true
       ? "summary-card-change--up"
@@ -114,13 +107,13 @@ function SummaryCard({
 
   if (to) {
     return (
-      <Link to={to} className={`summary-card ${variantClass}`}>
+      <Link to={to} className="summary-card">
         {content}
       </Link>
     );
   }
 
-  return <div className={`summary-card ${variantClass}`}>{content}</div>;
+  return <div className="summary-card">{content}</div>;
 }
 
 /* ── Metric Row ── */

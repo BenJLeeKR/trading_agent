@@ -157,7 +157,7 @@ export default function OrdersView() {
                 <button
                   key={s}
                   type="button"
-                  className={`filter-group-btn${statusFilter === s ? " filter-group-btn--active" : ""}`}
+                  className={`pill-btn${statusFilter === s ? " pill-btn--active" : ""}`}
                   onClick={() => setStatusFilter(s)}
                 >
                   {s === "all"
@@ -172,7 +172,7 @@ export default function OrdersView() {
                 <button
                   key={s}
                   type="button"
-                  className={`filter-group-btn${sideFilter === s ? " filter-group-btn--active" : ""}`}
+                  className={`pill-btn${sideFilter === s ? " pill-btn--active" : ""}`}
                   onClick={() => setSideFilter(s)}
                 >
                   {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
@@ -283,7 +283,7 @@ export default function OrdersView() {
                 </span>
               </div>
 
-              <div style={{ padding: "0.75rem 1rem" }}>
+              <div className="panel-body">
                 <DetailRow
                   label="Order ID"
                   value={selectedOrder.order_request_id}
@@ -316,7 +316,7 @@ export default function OrdersView() {
               <div className="card-panel-header">
                 <span className="card-panel-title">State Events</span>
               </div>
-              <div style={{ padding: "0.75rem 1rem" }}>
+              <div className="panel-body">
                 {[
                   { label: "Order Created", color: "#3b82f6" },
                   { label: "Sent to Broker", color: "#8b5cf6" },

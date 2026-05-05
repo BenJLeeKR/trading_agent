@@ -81,14 +81,14 @@
   --shadow-panel: 0 4px 16px 0 rgba(0,0,0,0.08);
   --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.05);
 
-  /* ── Typography Scale ── */
-  --text-xs: 0.65rem;
-  --text-sm: 0.7rem;
-  --text-base: 0.8rem;
-  --text-md: 0.85rem;
-  --text-lg: 0.9rem;
-  --text-xl: 1.1rem;
-  --text-2xl: 1.4rem;
+  /* ── Typography Scale (aligned to template Tailwind defaults) ── */
+  --text-xs: 0.75rem;    /* 12px */
+  --text-sm: 0.875rem;   /* 14px */
+  --text-base: 1rem;     /* 16px */
+  --text-md: 0.875rem;   /* 14px — aligned to text-sm (template has no --text-md) */
+  --text-lg: 1.125rem;   /* 18px */
+  --text-xl: 1.25rem;    /* 20px */
+  --text-2xl: 1.5rem;    /* 24px */
 
   /* ── Font Families ── */
   --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', Ubuntu, Cantarell, 'Helvetica Neue', sans-serif;
@@ -310,8 +310,8 @@ article,
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.4rem 0.75rem;
-  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.75rem;          /* template: py-2 = 0.5rem */
+  border-radius: var(--radius-md);   /* template: rounded-lg = 8px */
   text-decoration: none;
   color: var(--sidebar-text);
   font-size: var(--text-lg);
@@ -477,11 +477,17 @@ article,
   margin-bottom: var(--space-6);
 }
 
+.summary-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3);
+}
+
 .summary-card {
   flex: 1;
   background-color: var(--panel-bg);
   border: 1px solid var(--panel-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);   /* template: rounded-xl = 12px */
   box-shadow: var(--shadow-card);
   padding: var(--space-4);
   display: flex;
@@ -552,17 +558,6 @@ article,
 }
 .summary-card-change--neutral {
   color: var(--text-muted);
-}
-
-/* Card top border variants */
-.summary-card--ok {
-  border-top: 3px solid var(--status-success);
-}
-.summary-card--warn {
-  border-top: 3px solid var(--status-warning);
-}
-.summary-card--error {
-  border-top: 3px solid var(--status-error);
 }
 
 /* Summary card sub-metrics */
@@ -636,6 +631,10 @@ article,
   margin-bottom: var(--space-4);
   flex-wrap: wrap;
   align-items: center;
+  background-color: #fff;           /* template: bg-white */
+  border: 1px solid var(--border-color); /* template: border */
+  border-radius: var(--radius-lg);  /* template: rounded-xl = 12px */
+  padding: 0.75rem;                 /* template: p-3 */
 }
 
 .filter-bar label {
@@ -772,19 +771,19 @@ article,
 }
 
 .table-wrapper thead th {
-  padding: var(--space-2) var(--space-3);
+  padding: 0.625rem 1rem;          /* px-4 py-2.5 — template match */
   text-align: left;
-  font-weight: 600;
-  color: var(--text-muted);
-  font-size: var(--text-base);
-  text-transform: uppercase;
-  letter-spacing: var(--tracking-wide);
+  font-weight: 500;                /* font-medium — template match */
+  color: var(--text-muted);        /* #9ca3af — template match */
+  font-size: var(--text-xs);       /* 0.75rem — template match */
+  text-transform: none;            /* template has no uppercase */
+  letter-spacing: normal;          /* template has no letter-spacing */
   border-bottom: 1px solid #f3f4f6;
   white-space: nowrap;
 }
 
 .table-wrapper tbody td {
-  padding: var(--space-2) var(--space-3);
+  padding: 0.625rem 1rem;          /* px-4 py-2.5 — template match */
   border-bottom: 1px solid #f9fafb;
   vertical-align: middle;
   white-space: nowrap;
@@ -798,17 +797,16 @@ article,
   background-color: var(--sidebar-hover);
 }
 
-/* Selected row accent */
+/* Selected row — no left accent border (template match) */
 .table-wrapper tbody tr[aria-selected="true"] {
   background-color: var(--sidebar-active);
-  border-left: 2px solid var(--accent-color);
   outline: none;
 }
 
 /* ── DataTable Compact Mode ── */
 .table-wrapper.table-compact td,
 .table-wrapper.table-compact th {
-  padding: 0.3rem 0.55rem;
+  padding: 0.25rem 0.5rem;
   min-height: 28px;
 }
 
@@ -1216,57 +1214,32 @@ hr {
   white-space: nowrap;
 }
 
+/* ── Pill button style (template style: px-2.5 py-1 rounded-lg text-xs) ── */
+.pill-btn,
 .filter-group-btn {
-  padding: var(--space-1) 0.55rem;
-  font-size: var(--text-sm);
-  font-weight: 500;
-  border-radius: 0.3rem;
-  border: 1px solid var(--border-color);
-  background-color: var(--surface-3);
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: background-color 0.1s ease, border-color 0.1s ease, color 0.1s ease;
-  line-height: 1.4;
-  white-space: nowrap;
-  pointer-events: auto;
-  user-select: none;
-}
-
-.filter-group-btn:hover {
-  color: var(--text-primary);
-  border-color: var(--text-muted);
-}
-
-.filter-group-btn--active {
-  background-color: #1d2939;
-  border-color: #1d2939;
-  color: #fff;
-  font-weight: 600;
-}
-
-/* ── Pill button style (template style) ── */
-.pill-btn {
-  padding: 0.25rem 0.55rem;
-  font-size: var(--text-xs);
-  font-weight: 500;
-  border-radius: var(--radius-sm);
-  border: none;
-  background-color: var(--surface-3);
-  color: var(--text-muted);
+  padding: 0.25rem 0.625rem;       /* px-2.5 py-1 — template match */
+  font-size: var(--text-xs);        /* 0.75rem — template match */
+  font-weight: 500;                 /* font-medium — template match */
+  border-radius: var(--radius-md);  /* 8px (rounded-lg) — template match */
+  border: none;                     /* template has no border */
+  background-color: var(--surface-3); /* #f3f4f6 — template match */
+  color: var(--text-secondary);     /* #6b7280 — template match */
   cursor: pointer;
   transition: background-color 0.1s ease, color 0.1s ease;
   line-height: 1.4;
   white-space: nowrap;
 }
 
-.pill-btn:hover {
+.pill-btn:hover,
+.filter-group-btn:hover {
   color: var(--text-primary);
   background-color: #e5e7eb;
 }
 
-.pill-btn--active {
-  background-color: #1d2939;
-  color: #fff;
+.pill-btn--active,
+.filter-group-btn--active {
+  background-color: #1d2939;        /* template match */
+  color: #fff;                      /* template match */
 }
 
 /* ─────────────────────────────────────
@@ -1275,7 +1248,7 @@ hr {
 .card-panel {
   background-color: var(--panel-bg);
   border: 1px solid var(--panel-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);   /* template: rounded-xl = 12px */
   box-shadow: var(--shadow-card);
   overflow: hidden;
 }
@@ -1344,7 +1317,7 @@ hr {
   width: 100%;
   text-align: left;
   padding: var(--space-3);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);   /* template: rounded-xl = 12px */
   border: 1px solid var(--border-color);
   background-color: var(--panel-bg);
   cursor: pointer;
@@ -1367,7 +1340,7 @@ hr {
 }
 
 .account-card-id {
-  font-size: 0.6rem;
+  font-size: 0.625rem;             /* template: text-[10px] */
   font-family: var(--font-mono);
   color: var(--text-muted);
   margin-top: 0.15rem;
@@ -1377,7 +1350,7 @@ hr {
   display: inline-flex;
   align-items: center;
   gap: 0.2rem;
-  font-size: 0.6rem;
+  font-size: 0.625rem;             /* template: text-[10px] */
   font-weight: 600;
   padding: 0.1rem 0.35rem;
   border-radius: 999px;
@@ -1391,7 +1364,7 @@ hr {
 }
 
 .account-card-label {
-  font-size: 0.6rem;
+  font-size: 0.625rem;             /* template: text-[10px] */
   color: var(--text-muted);
 }
 
@@ -1403,7 +1376,7 @@ hr {
 }
 
 .account-card-broker {
-  font-size: 0.6rem;
+  font-size: 0.625rem;             /* template: text-[10px] */
   color: var(--text-muted);
   margin-top: var(--space-2);
 }
@@ -1446,10 +1419,9 @@ hr {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 1.25rem;
-  height: 3rem;
-  border-bottom: 1px solid var(--border-color);
-  background-color: var(--surface-1);
+  padding: 0.75rem 1.5rem;          /* template: px-6 py-3 */
+  border-bottom: 1px solid #e8eaed; /* template: border-gray-100 */
+  background-color: #fff;           /* template: bg-white */
   flex-shrink: 0;
 }
 
@@ -1459,8 +1431,8 @@ hr {
 }
 
 .top-header-greeting {
-  font-size: var(--text-md);
-  font-weight: 600;
+  font-size: var(--text-base);       /* template alignment */
+  font-weight: 700;                  /* template alignment */
   color: var(--text-primary);
   line-height: 1.3;
 }
@@ -1572,9 +1544,9 @@ hr {
 .alerts-panel {
   background-color: var(--panel-bg);
   border: 1px solid var(--panel-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);   /* template: rounded-xl = 12px */
   box-shadow: var(--shadow-card);
-  padding: var(--space-4);
+  padding: var(--space-3);           /* template: p-3 = 0.75rem */
 }
 
 .alerts-panel-title {
@@ -1668,7 +1640,7 @@ hr {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: 0.35rem 0;
+  padding: 0.375rem 0;            /* template: py-1.5 = 0.375rem */
   border-bottom: 1px solid #f9fafb;
 }
 
@@ -2005,4 +1977,49 @@ hr {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ── Detail panel body (template: px-4 py-3) ── */
+.panel-body {
+  padding: 0.75rem 1rem;
+}
+
+/* ── Sidebar logout button ── */
+.sidebar-logout-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.8rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.12s ease;
+}
+.sidebar-logout-btn:hover {
+  color: var(--text-primary);
+}
+
+/* ── Status footer (reconciliation detail) ── */
+.status-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.6rem 1rem;
+  border-top: 1px solid var(--border-color);
+}
+.status-footer--success {
+  background-color: #f0fdf4;
+  color: #16a34a;
+}
+.status-footer--warn {
+  background-color: #fffbeb;
+  color: #d97706;
+}
+.status-footer-text {
+  font-size: 0.7rem;
+  font-weight: 500;
 }

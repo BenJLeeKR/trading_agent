@@ -137,20 +137,7 @@ export function Layout() {
           </div>
           <button
             onClick={logout}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "0.4rem",
-              width: "100%",
-              padding: "0.35rem 0.6rem",
-              fontSize: "0.8rem",
-              borderRadius: "6px",
-              border: "1px solid var(--border-color)",
-              background: "transparent",
-              color: "var(--text-muted)",
-              cursor: "pointer",
-              transition: "color 0.12s ease",
-            }}
+            className="sidebar-logout-btn"
           >
             <LogOut size={13} />
             <span>Logout</span>

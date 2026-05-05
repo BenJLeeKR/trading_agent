@@ -268,7 +268,7 @@ export default function AccountsView() {
               return (
                 <button
                   key={acc.account_id}
-                  className={`account-card${isSelected ? " account-card--selected" : ""}`}
+                  className={`account-card${isSelected ? " account-card--active" : ""}`}
                   onClick={() => setSelectedAccount(acc.account_id)}
                 >
                   <div className="flex items-start justify-between mb-1">
@@ -315,7 +315,7 @@ export default function AccountsView() {
               ) : (
                 <>
                   {/* Summary cards */}
-                  <div className="summary-card-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+                  <div className="summary-card-grid">
                     <SummaryCard
                       icon={Wallet}
                       iconBg="#eef2ff"
