@@ -16,6 +16,7 @@ from typing import AsyncIterator
 
 from fastapi import Depends, FastAPI
 from fastapi.openapi.utils import get_openapi
+from fastapi.staticfiles import StaticFiles
 
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.repositories.container import RepositoryContainer
@@ -196,6 +197,22 @@ def create_app(
     else:
         for router in protected_routers:
             app.include_router(router)
+
+    # ── Admin UI static files ─────────────────────────────────────────────
+    # Mount the built React app under /admin if the dist directory exists.
+    # The UI shell (HTML/CSS/JS) is publicly served; data access requires
+    # Bearer token authentication via the API layer.
+    import os
+
+    _admin_ui_dist = os.path.normpath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "admin_ui", "dist")
+    )
+    if os.path.isdir(_admin_ui_dist):
+        app.mount(
+            "/admin",
+            StaticFiles(directory=_admin_ui_dist, html=True),
+            name="admin_ui",
+        )
 
     return app
 

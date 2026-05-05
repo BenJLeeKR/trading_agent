@@ -68,6 +68,11 @@
 | 45 | [`45_inspection_api_phase2.md`](./45_inspection_api_phase2.md) | Inspection API Phase 2: accounts, clients, instruments, positions, cash-balances, broker-orders endpoint 추가. P0/P1 분류, Pydantic schema, route 파일, in-memory + Postgres 테스트. |
 | 46 | [`46_auth_rbac_inspection_api.md`](./46_auth_rbac_inspection_api.md) | Auth/RBAC for Inspection API: Static Bearer token, viewer/admin RBAC, public/protected endpoint 정책, router-level dependency, OpenAPI BearerAuth scheme, safe default (auth_enabled=True). |
 | 47 | [`47_auth_policy_hardening.md`](./47_auth_policy_hardening.md) | Auth Policy Hardening (Pre-UI Security Pass): Docs/OpenAPI 공개 정책 고정, Token 운영 정책 명문화, whitespace/role validation, create_app_from_env() role 전달 버그 수정, BACKLOG/README 업데이트. |
+| 48 | [`48_admin_ui_phase1.md`](./48_admin_ui_phase1.md) | Admin UI Phase 1 (Read-Only Operations Dashboard): Vite + React + TypeScript + Pico CSS. SPA served via FastAPI StaticFiles mount. 5 pages: Login, Dashboard, Orders, Reconciliation, Accounts, Decisions. sessionStorage token. No backend API changes. |
+| 49 | [`49_admin_ui_test_hardening.md`](./49_admin_ui_test_hardening.md) | Admin UI Smoke / Component Test Hardening: Vitest + RTL + jsdom 기반 24개 테스트 (P0 16 + P1 8). Auth flow 완전 커버, Dashboard/OrdersView smoke, 공통 컴포넌트 smoke. URL+Method 분기 명확화. |
+| 50 | [`50_admin_ui_test_coverage_phase2.md`](./50_admin_ui_test_coverage_phase2.md) | Admin UI Test Coverage Phase 2: P0 19개 (OrderDetail 7, AccountsView 6, ReconciliationView 6) + P1 7개 (Layout 4, DecisionsView 3) = 26개 신규. 총 50개 테스트로 확장. Fixture 8종 추가. |
+| 51 | [`51_admin_ui_operations_workflow_enhancements.md`](./51_admin_ui_operations_workflow_enhancements.md) | Admin UI Operations Workflow Enhancements (P0): OrdersView filter/search, OrderDetail → Decisions drill-down, ReconciliationView quick-filter + lock 강조, Dashboard signal + drill-down links. Read-only UX enhancement. 8개 신규 테스트 = 총 58 tests. |
+
 ## 빠른 추천 경로
 
 ### 현재 상태만 빠르게 보기
@@ -97,6 +102,13 @@
 23. [`42_postgres_backed_inspection_api_mode.md`](./42_postgres_backed_inspection_api_mode.md)
 24. [`43_containerize_inspection_api.md`](./43_containerize_inspection_api.md)
 25. [`44_postgres_reconciliation_locks_inspection.md`](./44_postgres_reconciliation_locks_inspection.md)
+26. [`45_inspection_api_phase2.md`](./45_inspection_api_phase2.md)
+27. [`46_auth_rbac_inspection_api.md`](./46_auth_rbac_inspection_api.md)
+28. [`47_auth_policy_hardening.md`](./47_auth_policy_hardening.md)
+29. [`48_admin_ui_phase1.md`](./48_admin_ui_phase1.md)
+30. [`49_admin_ui_test_hardening.md`](./49_admin_ui_test_hardening.md)
+31. [`50_admin_ui_test_coverage_phase2.md`](./50_admin_ui_test_coverage_phase2.md)
+
 ### AI Agent / Provider 연결 흐름만 보기
 
 1. [`19.priority_5_prerequisite_schema_alignment.md`](./19.priority_5_prerequisite_schema_alignment.md)
