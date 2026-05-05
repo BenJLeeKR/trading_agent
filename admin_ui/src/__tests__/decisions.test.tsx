@@ -128,19 +128,23 @@ describe("DecisionsView detail panel", () => {
     await waitFor(() => {
       expect(screen.getByText("Decision Detail")).toBeInTheDocument();
     });
-    // Intent, 85%, and FinalDecisionComposer appear in DataTable row and detail panels
-    expect(screen.getAllByText("Buy AAPL — strong earnings outlook").length).toBe(2);
+    // Decision type "auto_execute" appears in detail panel
+    expect(screen.getAllByText("auto_execute").length).toBeGreaterThanOrEqual(1);
     // 85% appears in table row, status banner, ConfidenceBar, and Input Signals card
     expect(screen.getAllByText("85%").length).toBeGreaterThanOrEqual(3);
-    // FinalDecisionComposer appears in table row, Detail card, and Input Signals card
-    expect(screen.getAllByText("FinalDecisionComposer").length).toBeGreaterThanOrEqual(2);
+    // rationale_summary appears in Reason section
+    expect(screen.getByText("Strong earnings outlook for AAPL")).toBeInTheDocument();
+    // Quantity "100" appears in Detail card and Input Signals card
+    expect(screen.getAllByText("100").length).toBeGreaterThanOrEqual(2);
 
     // Market Context section loaded
     await waitFor(() => {
       expect(screen.getByText("Market Context")).toBeInTheDocument();
     });
-    expect(screen.getByText("momentum-v1")).toBeInTheDocument();
-    expect(screen.getByText("3")).toBeInTheDocument();
+    // strategy_id UUID appears in both DataTable column and detail panel
+    expect(screen.getAllByText("aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00s1").length).toBeGreaterThanOrEqual(2);
+    // account_id UUID is shown in detail panel
+    expect(screen.getByText("aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a1")).toBeInTheDocument();
   });
 
   it("shows error banner when context API call fails", async () => {

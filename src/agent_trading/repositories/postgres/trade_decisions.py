@@ -131,3 +131,9 @@ class PostgresTradeDecisionRepository:
         if row is None:
             return None
         return row_to_entity(row, TradeDecisionEntity)
+
+    async def list_all(self) -> list[TradeDecisionEntity]:
+        rows = await self._tx.connection.fetch(
+            "SELECT * FROM trading.trade_decisions ORDER BY created_at DESC",
+        )
+        return [row_to_entity(row, TradeDecisionEntity) for row in rows]

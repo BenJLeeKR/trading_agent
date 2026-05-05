@@ -131,22 +131,29 @@ export interface InstrumentDetail {
 export interface TradeDecisionDetail {
   trade_decision_id: string;
   decision_context_id: string;
-  intent: string;
-  ticker: string;
+  decision_type: string;
   side: string;
-  qty: string;
-  confidence: number;
-  agent_label: string;
+  strategy_id: string;
+  symbol: string;
+  market: string;
+  entry_style: string;
   created_at: string;
+  entry_price: number | null;
+  quantity: number | null;
+  max_order_value: number | null;
+  confidence: number | null;
+  rationale_summary: string | null;
 }
 
 export interface DecisionContextDetail {
   decision_context_id: string;
-  strategy_code: string;
-  client_id: string;
-  session_id: string | null;
-  timestamp: string;
-  agent_count: number;
+  account_id: string;
+  strategy_id: string;
+  config_version_id: string;
+  market_timestamp: string;
+  correlation_id: string;
+  trading_session_id: string | null;
+  created_at: string | null;
 }
 
 /* ───────────────────────────────────────────

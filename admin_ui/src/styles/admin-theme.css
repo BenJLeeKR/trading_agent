@@ -8,6 +8,8 @@
  *                  design/design_template/components/admin/pages/*
  * ============================================================ */
 
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
 /* ─────────────────────────────────────
  * 1. Design Tokens (CSS Custom Properties)
  * ───────────────────────────────────── */
@@ -91,7 +93,7 @@
   --text-2xl: 1.5rem;    /* 24px */
 
   /* ── Font Families ── */
-  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', Ubuntu, Cantarell, 'Helvetica Neue', sans-serif;
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', Ubuntu, Cantarell, 'Helvetica Neue', sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
 
   /* ── Spacing Scale (4px base) ── */
@@ -112,6 +114,12 @@
 /* ─────────────────────────────────────
  * 2. Base Overrides
  * ───────────────────────────────────── */
+html {
+  font-size: 14px;                   /* template: html { font-size: 14px } */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
 body {
   background-color: var(--app-background);
   color: var(--text-primary);
@@ -314,7 +322,7 @@ article,
   border-radius: var(--radius-md);   /* template: rounded-lg = 8px */
   text-decoration: none;
   color: var(--sidebar-text);
-  font-size: var(--text-lg);
+  font-size: var(--text-sm);         /* template: text-sm = 0.875rem */
   transition: background-color 0.12s ease, color 0.12s ease;
   white-space: nowrap;
 }
@@ -767,23 +775,24 @@ article,
 .table-wrapper table {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--text-md);
+  font-size: var(--text-xs);       /* 10.5px — template: text-xs */
 }
 
 .table-wrapper thead th {
-  padding: 0.625rem 1rem;          /* px-4 py-2.5 — template match */
+  padding: 0.75rem 1rem;           /* py-3 px-4 — template: px-4 py-3 */
   text-align: left;
-  font-weight: 500;                /* font-medium — template match */
+  font-weight: 600;                /* font-semibold — template match */
   color: var(--text-muted);        /* #9ca3af — template match */
-  font-size: var(--text-xs);       /* 0.75rem — template match */
-  text-transform: none;            /* template has no uppercase */
-  letter-spacing: normal;          /* template has no letter-spacing */
+  font-size: var(--text-xs);       /* 10.5px — template match */
+  text-transform: uppercase;       /* template: uppercase */
+  letter-spacing: var(--tracking-wider); /* 0.04em — template: tracking-wider */
   border-bottom: 1px solid #f3f4f6;
   white-space: nowrap;
 }
 
 .table-wrapper tbody td {
-  padding: 0.625rem 1rem;          /* px-4 py-2.5 — template match */
+  padding: 0.75rem 1rem;           /* py-3 px-4 — template: px-4 py-3 */
+  font-size: var(--text-xs);       /* 10.5px — template: text-xs */
   border-bottom: 1px solid #f9fafb;
   vertical-align: middle;
   white-space: nowrap;
@@ -1136,7 +1145,7 @@ hr {
 
 .panel-header h3,
 .panel-title {
-  font-size: var(--text-md);
+  font-size: var(--text-xs);       /* 10.5px — template: text-xs */
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
@@ -1340,7 +1349,7 @@ hr {
 }
 
 .account-card-id {
-  font-size: 0.625rem;             /* template: text-[10px] */
+  font-size: 10px;                 /* template: text-[10px] — fixed px */
   font-family: var(--font-mono);
   color: var(--text-muted);
   margin-top: 0.15rem;
@@ -1350,7 +1359,7 @@ hr {
   display: inline-flex;
   align-items: center;
   gap: 0.2rem;
-  font-size: 0.625rem;             /* template: text-[10px] */
+  font-size: 10px;                 /* template: text-[10px] — fixed px */
   font-weight: 600;
   padding: 0.1rem 0.35rem;
   border-radius: 999px;
@@ -1364,7 +1373,7 @@ hr {
 }
 
 .account-card-label {
-  font-size: 0.625rem;             /* template: text-[10px] */
+  font-size: 10px;                 /* template: text-[10px] — fixed px */
   color: var(--text-muted);
 }
 
@@ -1376,7 +1385,7 @@ hr {
 }
 
 .account-card-broker {
-  font-size: 0.625rem;             /* template: text-[10px] */
+  font-size: 10px;                 /* template: text-[10px] — fixed px */
   color: var(--text-muted);
   margin-top: var(--space-2);
 }
@@ -1431,8 +1440,8 @@ hr {
 }
 
 .top-header-greeting {
-  font-size: var(--text-base);       /* template alignment */
-  font-weight: 700;                  /* template alignment */
+  font-size: var(--text-base);       /* 14px — template: text-[15px] (close) */
+  font-weight: 600;                  /* font-semibold — template match */
   color: var(--text-primary);
   line-height: 1.3;
 }

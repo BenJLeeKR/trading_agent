@@ -261,6 +261,8 @@ class InMemoryTradeDecisionRepository:
             None,
         )
 
+    async def list_all(self) -> Sequence[TradeDecisionEntity]:
+        return tuple(self._items.values())
 
 class InMemoryOrderRepository:
     def __init__(self) -> None:

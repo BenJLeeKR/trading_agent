@@ -15,39 +15,45 @@ from agent_trading.repositories.container import RepositoryContainer
 router = APIRouter(tags=["decisions"])
 
 
+def _to_detail(d: object) -> TradeDecisionDetail:
+    """Convert domain entity to API schema."""
+    return TradeDecisionDetail(
+        trade_decision_id=str(d.trade_decision_id),
+        decision_context_id=str(d.decision_context_id),
+        decision_type=d.decision_type.value,
+        side=d.side.value,
+        strategy_id=str(d.strategy_id),
+        symbol=d.symbol,
+        market=d.market,
+        entry_style=d.entry_style.value,
+        created_at=d.created_at,
+        entry_price=float(d.entry_price) if d.entry_price is not None else None,
+        quantity=float(d.quantity) if d.quantity is not None else None,
+        max_order_value=float(d.max_order_value) if d.max_order_value is not None else None,
+        confidence=float(d.confidence) if d.confidence is not None else None,
+        rationale_summary=d.rationale_summary,
+    )
+
+
 @router.get("/trade-decisions", response_model=list[TradeDecisionDetail])
 async def list_trade_decisions(
-    decision_context_id: str = Query(..., description="Decision context ID (required)"),
+    decision_context_id: str | None = Query(None, description="Decision context ID (optional)"),
     repos: RepositoryContainer = Depends(get_repos),
 ) -> list[TradeDecisionDetail]:
-    """List trade decisions filtered by ``decision_context_id``."""
-    try:
-        ctx_id = UUID(decision_context_id)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=400, detail=f"Invalid UUID: {decision_context_id}"
-        ) from exc
+    """List trade decisions, optionally filtered by ``decision_context_id``."""
+    if decision_context_id is not None:
+        try:
+            ctx_id = UUID(decision_context_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail=f"Invalid UUID: {decision_context_id}"
+            ) from exc
 
-    decision = await repos.trade_decisions.get_by_context(ctx_id)
-    if decision is None:
-        return []
-
-    return [
-        TradeDecisionDetail(
-            trade_decision_id=str(decision.trade_decision_id),
-            decision_context_id=str(decision.decision_context_id),
-            decision_type=decision.decision_type.value,
-            side=decision.side.value,
-            strategy_id=str(decision.strategy_id),
-            symbol=decision.symbol,
-            market=decision.market,
-            entry_style=decision.entry_style.value,
-            created_at=decision.created_at,
-            entry_price=float(decision.entry_price) if decision.entry_price is not None else None,
-            quantity=float(decision.quantity) if decision.quantity is not None else None,
-            max_order_value=float(decision.max_order_value) if decision.max_order_value is not None else None,
-        )
-    ]
+        decision = await repos.trade_decisions.get_by_context(ctx_id)
+        return [_to_detail(decision)] if decision is not None else []
+    else:
+        decisions = await repos.trade_decisions.list_all()
+        return [_to_detail(d) for d in decisions]
 
 
 @router.get("/decision-contexts/{decision_context_id}", response_model=DecisionContextDetail)
@@ -72,5 +78,6 @@ async def get_decision_context(
         config_version_id=str(ctx.config_version_id),
         market_timestamp=ctx.market_timestamp,
         correlation_id=ctx.correlation_id,
+        trading_session_id=str(ctx.trading_session_id) if ctx.trading_session_id is not None else None,
         created_at=ctx.created_at,
     )

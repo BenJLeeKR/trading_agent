@@ -109,17 +109,17 @@ export default function DecisionsView() {
     return decisions.filter((d) => {
       const matchSide = sideFilter === "all" || d.side === sideFilter;
       const matchSearch =
-        !searchText || d.ticker.toLowerCase().includes(searchText.toLowerCase());
+        !searchText || d.symbol.toLowerCase().includes(searchText.toLowerCase());
       const min = confidenceMin ? parseFloat(confidenceMin) : 0;
       const max = confidenceMax ? parseFloat(confidenceMax) : 1;
-      const matchConfidence = d.confidence >= min && d.confidence <= max;
+      const matchConfidence = (d.confidence ?? 0) >= min && (d.confidence ?? 0) <= max;
       return matchSide && matchSearch && matchConfidence;
     });
   }, [decisions, searchText, sideFilter, confidenceMin, confidenceMax]);
 
   const columns: Column<TradeDecisionDetail>[] = [
     { key: "trade_decision_id", label: "Decision ID", render: (r) => <code>{r.trade_decision_id.slice(0, 8)}…</code> },
-    { key: "ticker", label: "Symbol" },
+    { key: "symbol", label: "Symbol" },
     {
       key: "side",
       label: "Action",
@@ -131,9 +131,9 @@ export default function DecisionsView() {
     {
       key: "confidence",
       label: "Confidence",
-      render: (r) => <ConfidenceBar value={r.confidence} />,
+      render: (r) => <ConfidenceBar value={r.confidence ?? 0} />,
     },
-    { key: "agent_label", label: "Strategy" },
+    { key: "strategy_id", label: "Strategy" },
     {
       key: "created_at",
       label: "Time",
@@ -262,8 +262,8 @@ export default function DecisionsView() {
                 className="status-banner"
                 style={{
                   backgroundColor:
-                    selectedDecision.confidence >= 0.7 ? "#f0fdf4" :
-                    selectedDecision.confidence >= 0.4 ? "#fffbeb" :
+                    (selectedDecision.confidence ?? 0) >= 0.7 ? "#f0fdf4" :
+                    (selectedDecision.confidence ?? 0) >= 0.4 ? "#fffbeb" :
                     "#fef2f2",
                   borderBottom: "1px solid #e8eaed",
                 }}
@@ -273,33 +273,33 @@ export default function DecisionsView() {
                     {selectedDecision.side.toUpperCase()}
                   </span>
                   <span style={{ fontWeight: 600, fontSize: "0.875rem", color: "#111827" }}>
-                    {selectedDecision.ticker}
+                    {selectedDecision.symbol}
                   </span>
                 </div>
                 <span
                   className="status-badge"
                   style={{
                     backgroundColor:
-                      selectedDecision.confidence >= 0.7 ? "#dcfce7" :
-                      selectedDecision.confidence >= 0.4 ? "#fef3c7" :
+                      (selectedDecision.confidence ?? 0) >= 0.7 ? "#dcfce7" :
+                      (selectedDecision.confidence ?? 0) >= 0.4 ? "#fef3c7" :
                       "#fee2e2",
                     color:
-                      selectedDecision.confidence >= 0.7 ? "#16a34a" :
-                      selectedDecision.confidence >= 0.4 ? "#d97706" :
+                      (selectedDecision.confidence ?? 0) >= 0.7 ? "#16a34a" :
+                      (selectedDecision.confidence ?? 0) >= 0.4 ? "#d97706" :
                       "#dc2626",
                   }}
                 >
                   <span className="status-badge-dot" />
-                  {(selectedDecision.confidence * 100).toFixed(0)}%
+                  {((selectedDecision.confidence ?? 0) * 100).toFixed(0)}%
                 </span>
               </div>
 
               {/* Fields */}
               <div className="panel-body">
                 <DetailRow label="Decision ID" value={selectedDecision.trade_decision_id.slice(0, 16) + "…"} />
-                <DetailRow label="Intent" value={selectedDecision.intent} />
-                <DetailRow label="Agent" value={selectedDecision.agent_label} />
-                <DetailRow label="Qty" value={selectedDecision.qty} />
+                <DetailRow label="Decision Type" value={selectedDecision.decision_type} />
+                <DetailRow label="Strategy ID" value={selectedDecision.strategy_id} />
+                <DetailRow label="Qty" value={String(selectedDecision.quantity ?? "—")} />
                 <DetailRow
                   label="Created"
                   value={new Date(selectedDecision.created_at).toLocaleString()}
@@ -310,14 +310,14 @@ export default function DecisionsView() {
               {/* Confidence bar */}
               <div style={{ padding: "0 1rem 0.75rem" }}>
                 <p style={{ fontSize: "0.75rem", color: "#9ca3af", marginBottom: "0.375rem" }}>Confidence</p>
-                <ConfidenceBar value={selectedDecision.confidence} />
+                <ConfidenceBar value={selectedDecision.confidence ?? 0} />
               </div>
 
-              {/* Reason (intent) */}
+              {/* Reason (rationale_summary) */}
               <div style={{ padding: "0.75rem 1rem", borderTop: "1px solid #f3f4f6" }}>
                 <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "#374151", marginBottom: "0.25rem" }}>Reason</p>
                 <p style={{ fontSize: "0.75rem", lineHeight: "1.4", color: "#6b7280" }}>
-                  {selectedDecision.intent || "No reason provided."}
+                  {selectedDecision.rationale_summary || "No reason provided."}
                 </p>
               </div>
             </div>
@@ -328,7 +328,7 @@ export default function DecisionsView() {
                 <span className="card-panel-title">Input Signals</span>
               </div>
               <div className="panel-body">
-                <DetailRow label="Agent Signal" value={selectedDecision.agent_label} />
+                <DetailRow label="Strategy ID" value={selectedDecision.strategy_id} />
                 <DetailRow
                   label="Side Signal"
                   value={selectedDecision.side.toUpperCase()}
@@ -338,8 +338,8 @@ export default function DecisionsView() {
                     "#6b7280"
                   }
                 />
-                <DetailRow label="Confidence Score" value={`${(selectedDecision.confidence * 100).toFixed(0)}%`} />
-                <DetailRow label="Quantity" value={selectedDecision.qty} />
+                <DetailRow label="Confidence Score" value={`${((selectedDecision.confidence ?? 0) * 100).toFixed(0)}%`} />
+                <DetailRow label="Quantity" value={String(selectedDecision.quantity ?? "—")} />
               </div>
             </div>
 
@@ -363,13 +363,14 @@ export default function DecisionsView() {
 
               {contextDetail && (
                 <div className="panel-body">
-                  <DetailRow label="Strategy" value={contextDetail.strategy_code} />
-                  <DetailRow label="Client" value={contextDetail.client_id} />
-                  <DetailRow label="Session" value={contextDetail.session_id ?? "—"} />
-                  <DetailRow label="Agent Count" value={String(contextDetail.agent_count)} />
+                  <DetailRow label="Strategy ID" value={contextDetail.strategy_id} />
+                  <DetailRow label="Account ID" value={contextDetail.account_id} />
+                  <DetailRow label="Session ID" value={contextDetail.trading_session_id ?? "—"} />
+                  <DetailRow label="Config Version" value={contextDetail.config_version_id} />
+                  <DetailRow label="Correlation ID" value={contextDetail.correlation_id} />
                   <DetailRow
-                    label="Timestamp"
-                    value={new Date(contextDetail.timestamp).toLocaleString()}
+                    label="Market Timestamp"
+                    value={new Date(contextDetail.market_timestamp).toLocaleString()}
                   />
                 </div>
               )}

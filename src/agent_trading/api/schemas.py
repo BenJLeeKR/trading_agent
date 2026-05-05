@@ -123,6 +123,7 @@ class DecisionContextDetail(BaseModel):
     config_version_id: str
     market_timestamp: datetime
     correlation_id: str
+    trading_session_id: str | None = None
     created_at: datetime | None = None
 
 
@@ -141,6 +142,8 @@ class TradeDecisionDetail(BaseModel):
     entry_price: float | None = None
     quantity: float | None = None
     max_order_value: float | None = None
+    confidence: float | None = None
+    rationale_summary: str | None = None
 
 
 # ── Phase 2: Account, Client, Instrument, Position, Cash-balance, Broker-order ──

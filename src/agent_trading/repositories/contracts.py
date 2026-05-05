@@ -173,6 +173,8 @@ class TradeDecisionRepository(Protocol):
     async def get_by_context(self, decision_context_id: UUID) -> TradeDecisionEntity | None:
         ...
 
+    async def list_all(self) -> Sequence[TradeDecisionEntity]:
+        ...
 
 class OrderRepository(Protocol):
     async def add(self, order: OrderRequestEntity) -> OrderRequestEntity:
