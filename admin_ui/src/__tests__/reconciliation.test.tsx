@@ -58,15 +58,15 @@ describe("ReconciliationView runs tab", () => {
     expect(screen.getAllByText("0").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("completed")).toBeInTheDocument(); // StatusBadge text
 
-    // Status filter dropdown should be visible
-    expect(
-      screen.getByRole("combobox", { name: /filter runs by status/i }),
-    ).toBeInTheDocument();
+    // Status filter group should be visible with buttons
+    expect(screen.getByRole("button", { name: /^All$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Completed$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Running$/i })).toBeInTheDocument();
   });
 });
 
 /* ───────────────────────────────────────────
- * Scenario 3: Runs 탭 — status filter
+ * Scenario 3: Runs 탭 — status filter (button group)
  * ─────────────────────────────────────────── */
 describe("ReconciliationView run status filter", () => {
   it("filters runs when status is selected", async () => {
@@ -85,9 +85,9 @@ describe("ReconciliationView run status filter", () => {
     // Initially "completed" run is visible
     expect(screen.getByText("completed")).toBeInTheDocument();
 
-    // Change filter to "running"
-    const filterSelect = screen.getByRole("combobox", { name: /filter runs by status/i });
-    await user.selectOptions(filterSelect, "running");
+    // Click "Running" status button
+    const runningBtn = screen.getByRole("button", { name: /^Running$/i });
+    await user.click(runningBtn);
 
     // "completed" row should be hidden
     expect(screen.queryByText("completed")).not.toBeInTheDocument();

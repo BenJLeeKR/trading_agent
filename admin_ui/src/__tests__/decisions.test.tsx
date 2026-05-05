@@ -30,7 +30,7 @@ describe("DecisionsView with data", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Trade Decisions")).toBeInTheDocument();
+      expect(screen.getAllByText("Trade Decisions")[0]).toBeInTheDocument();
     });
 
     // Verify all tickers are rendered
@@ -64,7 +64,7 @@ describe("DecisionsView confidence color", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Trade Decisions")).toBeInTheDocument();
+      expect(screen.getAllByText("Trade Decisions")[0]).toBeInTheDocument();
     });
 
     // AAPL confidence 0.85 >= 0.7 → green (var(--pico-ins-color))
@@ -118,7 +118,7 @@ describe("DecisionsView detail panel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Trade Decisions")).toBeInTheDocument();
+      expect(screen.getAllByText("Trade Decisions")[0]).toBeInTheDocument();
     });
 
     // Click the first row (AAPL)
@@ -154,7 +154,7 @@ describe("DecisionsView detail panel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Trade Decisions")).toBeInTheDocument();
+      expect(screen.getAllByText("Trade Decisions")[0]).toBeInTheDocument();
     });
 
     // Click the first row
@@ -187,12 +187,12 @@ describe("DecisionsView side filter", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Trade Decisions")).toBeInTheDocument();
+      expect(screen.getAllByText("Trade Decisions")[0]).toBeInTheDocument();
     });
 
-    // Select "buy" in side filter
-    const sideSelect = screen.getByLabelText("Filter by side");
-    await user.selectOptions(sideSelect, "buy");
+    // Click "Buy" side button
+    const buyBtn = screen.getByRole("button", { name: /^Buy$/i });
+    await user.click(buyBtn);
 
     // AAPL (buy) should remain, TSLA (hold) and MSFT (sell) should be hidden
     expect(screen.getByText("AAPL")).toBeInTheDocument();
@@ -216,7 +216,7 @@ describe("DecisionsView symbol search", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Trade Decisions")).toBeInTheDocument();
+      expect(screen.getAllByText("Trade Decisions")[0]).toBeInTheDocument();
     });
 
     const searchInput = screen.getByLabelText("Search decisions by ticker");
@@ -243,7 +243,7 @@ describe("DecisionsView confidence filter", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Trade Decisions")).toBeInTheDocument();
+      expect(screen.getAllByText("Trade Decisions")[0]).toBeInTheDocument();
     });
 
     // Set confidence min to 0.5 → only AAPL (0.85) and TSLA (0.55) should show
@@ -270,7 +270,7 @@ describe("DecisionsView no selection state", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Trade Decisions")).toBeInTheDocument();
+      expect(screen.getAllByText("Trade Decisions")[0]).toBeInTheDocument();
     });
 
     // Placeholder should be visible when data loaded and no row selected

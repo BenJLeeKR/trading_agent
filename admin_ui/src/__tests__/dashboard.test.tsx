@@ -64,7 +64,7 @@ describe("Dashboard with valid data", () => {
     await waitFor(() => {
       expect(screen.getByText("Dashboard")).toBeInTheDocument();
       // Verify health data loaded: <code>in_memory</code> proves getHealth() succeeded
-      expect(screen.getByText("in_memory")).toBeInTheDocument();
+      expect(screen.getAllByText("in_memory")[0]).toBeInTheDocument();
     });
 
     // Summary cards
@@ -77,7 +77,7 @@ describe("Dashboard with valid data", () => {
     expect(screen.getByText(/Database/)).toBeInTheDocument();
 
     // Locks table
-    expect(screen.getByText(/Reconciliation Locks/)).toBeInTheDocument();
+    expect(screen.getAllByText("Active Locks")[0]).toBeInTheDocument();
 
     // Orders table
     expect(screen.getByText(/Recent Orders/)).toBeInTheDocument();

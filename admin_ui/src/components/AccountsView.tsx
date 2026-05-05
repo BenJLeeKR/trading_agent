@@ -2,10 +2,42 @@ import { useEffect, useMemo, useState } from "react";
 import type { AccountSummary, OrderSummary, PositionSnapshotView, CashBalanceSnapshotView } from "../types/api";
 import { getAccounts, getOrders, getPositions, getCashBalance } from "../api/client";
 import { DataTable } from "./common/DataTable";
+import { Panel } from "./common/Panel";
+import { DetailField } from "./common/DetailField";
 import { StatusBadge } from "./common/StatusBadge";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import type { Column } from "./common/DataTable";
+
+/* ───────────────────────────────────────────
+ * FilterGroup — single-select button group
+ * ─────────────────────────────────────────── */
+function FilterGroup({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: { label: string; value: string }[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="filter-group" role="group" aria-label={label}>
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          type="button"
+          className={`filter-group-btn${value === opt.value ? " filter-group-btn--active" : ""}`}
+          onClick={() => onChange(opt.value)}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export default function AccountsView() {
   const [accounts, setAccounts] = useState<AccountSummary[]>([]);
@@ -140,84 +172,80 @@ export default function AccountsView() {
 
       {/* Filter bar */}
       <div className="filter-bar">
-        <label>
-          Search
-          <input
-            type="search"
-            placeholder="Search by code or alias..."
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-            aria-label="Search accounts"
-            style={{ width: "220px" }}
-          />
-        </label>
-        <label>
-          Type
-          <select
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-            aria-label="Filter by account type"
-            style={{ width: "140px" }}
-          >
-            <option value="all">All Types</option>
-            <option value="cash">Cash</option>
-            <option value="margin">Margin</option>
-          </select>
-        </label>
+        <input
+          type="search"
+          placeholder="Search by code or alias..."
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+          aria-label="Search accounts"
+          style={{ width: "220px" }}
+        />
+
+        <FilterGroup
+          label="Type"
+          options={[
+            { label: "All", value: "all" },
+            { label: "Cash", value: "cash" },
+            { label: "Margin", value: "margin" },
+          ]}
+          value={typeFilter}
+          onChange={setTypeFilter}
+        />
       </div>
 
-      <DataTable
-        columns={accountColumns}
-        data={filteredAccounts}
-        keyField="account_id"
-        onRowClick={(row) => setSelectedAccount(row.account_id)}
-        selectedKey={safeSelectedAccount}
-        emptyMessage="No accounts found."
-      />
+      <Panel title="Accounts">
+        <DataTable
+          columns={accountColumns}
+          data={filteredAccounts}
+          keyField="account_id"
+          onRowClick={(row) => setSelectedAccount(row.account_id)}
+          selectedKey={safeSelectedAccount}
+          emptyMessage="No accounts found."
+          compact
+        />
+      </Panel>
 
       {safeSelectedAccount && (
         <>
-          <hr />
-          <h3>
-            Account Detail:{" "}
-            {selectedAccountDetail
-              ? `${selectedAccountDetail.account_code} (${selectedAccountDetail.account_type})`
-              : safeSelectedAccount}
-          </h3>
-
-          {detailLoading ? (
-            <LoadingSpinner />
-          ) : (
-            <div className="data-grid-auto">
-              <article>
-                <header><strong>Cash Balance</strong></header>
+          <Panel
+            title="Account Detail"
+            subtitle={
+              selectedAccountDetail
+                ? `${selectedAccountDetail.account_code} (${selectedAccountDetail.account_type})`
+                : undefined
+            }
+          >
+            {detailLoading ? (
+              <LoadingSpinner />
+            ) : (
+              <>
+                {/* Cash Balance */}
                 {cashBalance ? (
-                  <div className="data-grid-2">
-                    <div><strong>Currency:</strong> {cashBalance.currency}</div>
-                    <div><strong>Available:</strong> {cashBalance.available_amount}</div>
-                    <div><strong>Total:</strong> {cashBalance.total_amount}</div>
-                    <div><strong>Snapshot:</strong> {cashBalance.snapshot_time}</div>
+                  <div className="detail-grid">
+                    <DetailField label="Currency" value={cashBalance.currency} />
+                    <DetailField label="Available" value={cashBalance.available_amount} mono />
+                    <DetailField label="Total" value={cashBalance.total_amount} mono />
+                    <DetailField label="Snapshot" value={cashBalance.snapshot_time} />
                   </div>
                 ) : (
-                  <p className="text-muted">
+                  <p className="text-muted" style={{ margin: 0 }}>
                     No cash balance snapshot available.
                   </p>
                 )}
-              </article>
 
-              <article>
-                <header>
-                  <strong>Positions ({positions.length})</strong>
-                </header>
-                <DataTable
-                  columns={positionColumns}
-                  data={positions}
-                  keyField="position_snapshot_id"
-                  emptyMessage="No positions for this account."
-                />
-              </article>
-            </div>
-          )}
+                {/* Positions */}
+                <div style={{ marginTop: "0.75rem" }}>
+                  <DataTable
+                    columns={positionColumns}
+                    data={positions}
+                    keyField="position_snapshot_id"
+                    emptyMessage="No positions for this account."
+                    compact
+                  />
+                </div>
+              </>
+            )}
+          </Panel>
         </>
       )}
     </section>

@@ -208,8 +208,9 @@ describe("AccountsView type filter", () => {
       expect(screen.getByText("ACC-001")).toBeInTheDocument();
     });
 
-    const typeSelect = screen.getByLabelText("Filter by account type");
-    await user.selectOptions(typeSelect, "margin");
+    // Click "Margin" type button
+    const marginBtn = screen.getByRole("button", { name: /^Margin$/i });
+    await user.click(marginBtn);
 
     // ACC-002 (margin) should remain, ACC-001 (cash) should be hidden
     expect(screen.getByText("ACC-002")).toBeInTheDocument();
@@ -299,8 +300,8 @@ describe("AccountsView selection reset on filter", () => {
     });
 
     // Now filter by "margin" — ACC-001 (cash) should disappear from list
-    const typeSelect = screen.getByLabelText("Filter by account type");
-    await user.selectOptions(typeSelect, "margin");
+    const marginBtn = screen.getByRole("button", { name: /^Margin$/i });
+    await user.click(marginBtn);
 
     // Detail should be gone since ACC-001 is no longer visible
     await waitFor(() => {

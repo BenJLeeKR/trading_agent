@@ -15,6 +15,7 @@ interface DataTableProps<T> {
   isLoading?: boolean;
   emptyMessage?: string;
   selectedKey?: string | null;
+  compact?: boolean;
 }
 
 export function DataTable<T extends Record<string, any>>({
@@ -25,6 +26,7 @@ export function DataTable<T extends Record<string, any>>({
   isLoading,
   emptyMessage = "No data available.",
   selectedKey,
+  compact = false,
 }: DataTableProps<T>) {
   if (isLoading) {
     return <article aria-busy={true}>Loading...</article>;
@@ -35,7 +37,7 @@ export function DataTable<T extends Record<string, any>>({
   }
 
   return (
-    <div className="table-wrapper">
+    <div className={`table-wrapper${compact ? " table-compact" : ""}`}>
       <table>
         <thead>
           <tr>

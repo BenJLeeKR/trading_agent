@@ -32,11 +32,11 @@ describe("Layout navigation", () => {
     );
 
     // Brand
-    expect(screen.getByText("🛡️ Admin UI")).toBeInTheDocument();
-    expect(screen.getByText("READ-ONLY")).toBeInTheDocument();
+    expect(screen.getByText("AITrading Co.")).toBeInTheDocument();
+    expect(screen.getByText((content) => content.includes("Operator Console"))).toBeInTheDocument();
 
     // All 5 nav links
-    expect(screen.getByText("Dashboard")).toBeInTheDocument();
+    expect(screen.getAllByText("Dashboard")[0]).toBeInTheDocument();
     expect(screen.getByText("Orders")).toBeInTheDocument();
     expect(screen.getByText("Reconciliation")).toBeInTheDocument();
     expect(screen.getByText("Accounts")).toBeInTheDocument();

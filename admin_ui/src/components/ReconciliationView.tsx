@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReconciliationRunSummary, BlockingLockStatus, AccountSummary, OrderSummary } from "../types/api";
 import { getAccounts, getOrders, getReconciliationRuns, getReconciliationLocks } from "../api/client";
 import { DataTable } from "./common/DataTable";
+import { Panel } from "./common/Panel";
 import { StatusBadge } from "./common/StatusBadge";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
@@ -16,6 +17,44 @@ const RUN_STATUSES = [
   "reconcile_required",
   "failed",
 ] as const;
+
+/* ───────────────────────────────────────────
+ * FilterGroup — single-select button group
+ * ─────────────────────────────────────────── */
+function FilterGroup({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: { label: string; value: string }[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="filter-group" role="group" aria-label={label}>
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          type="button"
+          className={`filter-group-btn${value === opt.value ? " filter-group-btn--active" : ""}`}
+          onClick={() => onChange(opt.value)}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function formatStatusLabel(status: string): string {
+  if (status === "all") return "All";
+  return status
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
 
 export default function ReconciliationView() {
   const [activeTab, setActiveTab] = useState<Tab>("runs");
@@ -135,42 +174,48 @@ export default function ReconciliationView() {
       </div>
 
       {activeTab === "runs" && (
-        <>
-          <div style={{ marginBottom: "0.75rem" }}>
-            <select
-              value={runStatusFilter}
-              onChange={(e) => setRunStatusFilter(e.target.value)}
-              aria-label="Filter runs by status"
-              style={{ minWidth: "160px" }}
-            >
-              {RUN_STATUSES.map((s) => (
-                <option key={s} value={s}>
-                  {s === "all"
-                    ? "All Statuses"
-                    : s
-                        .split("_")
-                        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-                        .join(" ")}
-                </option>
-              ))}
-            </select>
-          </div>
-          <DataTable
-            columns={runColumns}
-            data={filteredRuns}
-            keyField="run_id"
-            emptyMessage="No reconciliation runs found."
+        <div style={{ marginTop: "0.75rem" }}>
+          <FilterGroup
+            label="Status"
+            options={RUN_STATUSES.map((s) => ({
+              label: formatStatusLabel(s),
+              value: s,
+            }))}
+            value={runStatusFilter}
+            onChange={setRunStatusFilter}
           />
-        </>
+          <Panel title="Reconciliation Runs">
+            <DataTable
+              columns={runColumns}
+              data={filteredRuns}
+              keyField="run_id"
+              emptyMessage="No reconciliation runs found."
+              compact
+            />
+          </Panel>
+        </div>
       )}
 
       {activeTab === "locks" && (
-        <>
+        <div style={{ marginTop: "0.75rem" }}>
           {activeLocks.length > 0 && (
             <div className="warning-banner warning-banner--error">
-              <div>
+              <svg
+                className="warning-banner-icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <line x1="15" y1="9" x2="9" y2="15" />
+                <line x1="9" y1="9" x2="15" y2="15" />
+              </svg>
+              <div className="warning-banner-content">
                 <span className="warning-banner-strong">
-                  🚫 {activeLocks.length} Active Blocking Lock{activeLocks.length !== 1 ? "s" : ""}
+                  {activeLocks.length} Active Blocking Lock{activeLocks.length !== 1 ? "s" : ""}
                 </span>
                 <br />
                 <span style={{ fontWeight: "normal" }}>
@@ -179,13 +224,16 @@ export default function ReconciliationView() {
               </div>
             </div>
           )}
-          <DataTable
-            columns={lockColumns}
-            data={locks}
-            keyField="lock_id"
-            emptyMessage="No blocking locks found."
-          />
-        </>
+          <Panel title="Blocking Locks">
+            <DataTable
+              columns={lockColumns}
+              data={locks}
+              keyField="lock_id"
+              emptyMessage="No blocking locks found."
+              compact
+            />
+          </Panel>
+        </div>
       )}
     </section>
   );

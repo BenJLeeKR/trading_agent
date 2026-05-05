@@ -3,6 +3,9 @@ import { Link, useParams } from "react-router-dom";
 import type { OrderDetail as OrderDetailType, OrderEvent, BrokerOrderView } from "../types/api";
 import { getOrderDetail, getOrderEvents, getBrokerOrders } from "../api/client";
 import { DataTable } from "./common/DataTable";
+import { Panel } from "./common/Panel";
+import { DetailField } from "./common/DetailField";
+import { SectionDivider } from "./common/SectionDivider";
 import { StatusBadge } from "./common/StatusBadge";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import { ErrorBanner } from "./common/ErrorBanner";
@@ -69,78 +72,104 @@ export default function OrderDetail() {
 
   return (
     <section>
-      <p>
+      <p style={{ marginBottom: "0.75rem" }}>
         <Link to="/orders">&larr; Back to Orders</Link>
       </p>
 
-      <div className="page-header">
-        <h2>Order Detail</h2>
-        <p>ID: <code>{order.order_request_id}</code></p>
-      </div>
-
-      <article>
-        <header><strong>Summary</strong></header>
-        <div className="data-grid-auto">
-          <div><strong>Symbol:</strong> {order.symbol}</div>
-          <div><strong>Side:</strong> {order.side}</div>
-          <div>
-            <strong>Status:</strong> <StatusBadge status={order.status} />
-          </div>
-          <div><strong>Order Type:</strong> {order.order_type}</div>
-          <div><strong>Qty:</strong> {order.qty}</div>
-          <div><strong>Filled Qty:</strong> {order.filled_qty ?? "—"}</div>
-          <div><strong>Avg Fill Price:</strong> {order.avg_fill_price ?? "—"}</div>
-          <div><strong>Strategy:</strong> {order.strategy_code}</div>
-          <div><strong>Created:</strong> {order.created_at}</div>
-          <div><strong>Updated:</strong> {order.updated_at ?? "—"}</div>
-          {order.error_message && (
-            <div className="text-error">
-              <strong>Error:</strong> {order.error_message}
-            </div>
-          )}
+      {/* ── Summary Panel ── */}
+      <Panel
+        title="Order Detail"
+        subtitle={`${order.symbol} · ${order.side} · ${order.order_type}`}
+        headerRight={
+          <code style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+            {order.order_request_id}
+          </code>
+        }
+      >
+        <div className="detail-grid">
+          <DetailField label="Symbol" value={order.symbol} />
+          <DetailField label="Side" value={order.side} />
+          <DetailField
+            label="Status"
+            value={<StatusBadge status={order.status} />}
+          />
+          <DetailField label="Order Type" value={order.order_type} />
+          <DetailField label="Qty" value={order.qty} />
+          <DetailField
+            label="Filled Qty"
+            value={order.filled_qty ?? "\u2014"}
+          />
+          <DetailField
+            label="Avg Fill Price"
+            value={order.avg_fill_price ?? "\u2014"}
+            mono
+          />
+          <DetailField label="Strategy" value={order.strategy_code} />
+          <DetailField label="Created" value={order.created_at} />
+          <DetailField
+            label="Updated"
+            value={order.updated_at ?? "\u2014"}
+          />
         </div>
-        {(order.decision_context_id || order.trade_decision_id) && (
-          <footer>
-            <strong>Decision Links:</strong>
-            {order.decision_context_id && (
-              <span style={{ marginLeft: "0.5rem" }}>
-                Context:{" "}
-                <Link to={`/decisions?contextId=${order.decision_context_id}`}>
-                  <code>{order.decision_context_id}</code>
-                </Link>
-              </span>
-            )}
-            {order.trade_decision_id && (
-              <span style={{ marginLeft: "1rem" }}>
-                Decision:{" "}
-                <Link to={`/decisions?contextId=${order.decision_context_id ?? order.trade_decision_id}`}>
-                  <code>{order.trade_decision_id}</code>
-                </Link>
-              </span>
-            )}
-          </footer>
-        )}
-      </article>
 
-      <article>
-        <header><strong>State Events ({events.length})</strong></header>
+        {order.error_message && (
+          <div className="text-error" style={{ marginTop: "0.5rem" }}>
+            <strong>Error:</strong> {order.error_message}
+          </div>
+        )}
+
+        {(order.decision_context_id || order.trade_decision_id) && (
+          <>
+            <SectionDivider label="Decision Links:" />
+            <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+              {order.decision_context_id && (
+                <span>
+                  Context:{" "}
+                  <Link to={`/decisions?contextId=${order.decision_context_id}`}>
+                    <code>{order.decision_context_id}</code>
+                  </Link>
+                </span>
+              )}
+              {order.trade_decision_id && (
+                <span>
+                  Decision:{" "}
+                  <Link
+                    to={`/decisions?contextId=${order.decision_context_id ?? order.trade_decision_id}`}
+                  >
+                    <code>{order.trade_decision_id}</code>
+                  </Link>
+                </span>
+              )}
+            </div>
+          </>
+        )}
+      </Panel>
+
+      {/* ── State Events Panel ── */}
+      <Panel
+        title={`State Events (${events.length})`}
+      >
         <DataTable
           columns={eventColumns}
           data={events}
           keyField="event_id"
           emptyMessage="No state events recorded."
+          compact
         />
-      </article>
+      </Panel>
 
-      <article>
-        <header><strong>Broker Orders ({brokerOrders.length})</strong></header>
+      {/* ── Broker Orders Panel ── */}
+      <Panel
+        title={`Broker Orders (${brokerOrders.length})`}
+      >
         <DataTable
           columns={brokerColumns}
           data={brokerOrders}
           keyField="broker_order_id"
           emptyMessage="No broker orders."
+          compact
         />
-      </article>
+      </Panel>
     </section>
   );
 }

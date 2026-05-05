@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type {
@@ -17,15 +18,39 @@ import {
 import { StatusBadge } from "./common/StatusBadge";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
+import { Panel } from "./common/Panel";
+import { DataTable } from "./common/DataTable";
 
+/* ── SVG Icons ── */
+function AlertTriangleIcon() {
+  return (
+    <svg className="warning-banner-icon" viewBox="0 0 24 24">
+      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  );
+}
+function XCircleIcon() {
+  return (
+    <svg className="warning-banner-icon" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="15" y1="9" x2="9" y2="15" />
+      <line x1="9" y1="9" x2="15" y2="15" />
+    </svg>
+  );
+}
+
+/* ── Summary Card with optional children (sub-metrics) ── */
 interface CardData {
   label: string;
   value: string | number;
   variant?: "ok" | "warn" | "error";
   to?: string;
+  children?: ReactNode;
 }
 
-function SummaryCard({ label, value, variant = "ok", to }: CardData) {
+function SummaryCard({ label, value, variant = "ok", to, children }: CardData) {
   const variantClass =
     variant === "ok"
       ? "summary-card--ok"
@@ -44,6 +69,7 @@ function SummaryCard({ label, value, variant = "ok", to }: CardData) {
     <>
       <h3 style={{ color }}>{value}</h3>
       <small>{label}</small>
+      {children && <div className="summary-card-metrics">{children}</div>}
     </>
   );
 
@@ -56,6 +82,16 @@ function SummaryCard({ label, value, variant = "ok", to }: CardData) {
   }
 
   return <div className={`summary-card ${variantClass}`}>{content}</div>;
+}
+
+/* ── Metric Row ── */
+function MetricRow({ label, value }: { label: string; value: string | number }) {
+  return (
+    <span className="metric-row">
+      <span className="metric-row-label">{label}</span>
+      <span className="metric-row-value">{value}</span>
+    </span>
+  );
 }
 
 export default function Dashboard() {
@@ -122,16 +158,31 @@ export default function Dashboard() {
   const serverStatusVariant =
     health?.status === "ok" ? "ok" : health?.status === "degraded" ? "warn" : "error";
 
+  const pendingOrders = orders.filter((o) => o.status === "pending").length;
+  const filledOrders = orders.filter((o) => o.status === "filled").length;
+
   const cards: CardData[] = [
     {
       label: "Server Status",
       value: health?.status ?? "unknown",
       variant: serverStatusVariant,
+      children: health ? (
+        <>
+          <MetricRow label="db" value={health.database} />
+          <MetricRow label="mode" value={health.mode} />
+        </>
+      ) : undefined,
     },
     {
       label: "Total Orders",
       value: orders.length,
       to: "/orders",
+      children: (
+        <>
+          <MetricRow label="pending" value={pendingOrders} />
+          <MetricRow label="filled" value={filledOrders} />
+        </>
+      ),
     },
     {
       label: "Active Locks",
@@ -156,134 +207,134 @@ export default function Dashboard() {
         <p>Read-only overview of system status.</p>
       </div>
 
-      {/* Health status detail banner — only shown when not ok */}
+      {/* Warning: Health degraded */}
       {health?.status && health.status !== "ok" && (
         <div className="warning-banner warning-banner--error">
-          <div>
-            <span className="warning-banner-strong">⚠️ System Status: {health.status.toUpperCase()}</span>
-            <br />
-            <span>
-              Database: {health.database === "connected" ? "Connected" : "Disconnected"}
-              {health.database !== "connected" && " — Some features may be unavailable."}
-            </span>
+          <div className="warning-banner-content">
+            {health.status === "error" ? <XCircleIcon /> : <AlertTriangleIcon />}
+            <div>
+              <span className="warning-banner-strong">System Status: {health.status.toUpperCase()}</span>
+              <br />
+              <span>
+                Database: {health.database === "connected" ? "Connected" : "Disconnected"}
+                {health.database !== "connected" && " — Some features may be unavailable."}
+              </span>
+            </div>
           </div>
         </div>
       )}
 
       <div className="summary-cards-grid">
         {cards.map((c) => (
-          <SummaryCard key={c.label} label={c.label} value={c.value} variant={c.variant} to={c.to} />
+          <SummaryCard key={c.label} label={c.label} value={c.value} variant={c.variant} to={c.to}>
+            {c.children}
+          </SummaryCard>
         ))}
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-          gap: "1rem",
-        }}
-      >
-        <article>
-          <header>
-            <strong>Database</strong>
-          </header>
-          <p>
-            Mode: <code>{health?.mode ?? "—"}</code>
-            <br />
-            Status: <StatusBadge status={health?.database ?? "unknown"} />
-            <br />
-            <span
-              style={{
-                display: "inline-block",
-                width: "10px",
-                height: "10px",
-                borderRadius: "50%",
-                backgroundColor:
-                  dbVariant === "ok" ? "var(--status-success)" : "var(--status-error)",
-                marginRight: "0.3rem",
-              }}
-            />
-            {health?.database === "connected" ? "Connected" : "Disconnected"}
-          </p>
-        </article>
+      <div className="dashboard-body">
+        {/* Main content left */}
+        <div className="dashboard-main">
+          {/* Database panel */}
+          <Panel title="Database Status">
+            <p>
+              Mode: <code>{health?.mode ?? "—"}</code>
+              <br />
+              Status: <StatusBadge status={health?.database ?? "unknown"} />
+            </p>
+            <p>
+              <span
+                style={{
+                  display: "inline-block",
+                  width: "10px",
+                  height: "10px",
+                  borderRadius: "50%",
+                  backgroundColor:
+                    dbVariant === "ok" ? "var(--status-success)" : "var(--status-error)",
+                  marginRight: "0.3rem",
+                }}
+              />
+              {health?.database === "connected" ? "Connected" : "Disconnected"}
+            </p>
+          </Panel>
 
-        <article>
-          <header>
-            <strong>Reconciliation Locks</strong>
-          </header>
-          {locks.length === 0 ? (
-            <p className="text-muted">No locks.</p>
-          ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Type</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {locks.slice(0, 5).map((lk) => (
-                  <tr
-                    key={lk.lock_id}
-                    onClick={() => navigate("/reconciliation")}
-                    className="cursor-pointer"
-                  >
-                    <td>{lk.symbol}</td>
-                    <td>{lk.lock_type}</td>
-                    <td>
-                      <StatusBadge status={lk.is_expired ? "expired" : "active"} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-          {locks.length > 5 && (
-            <footer>
-              <small>Showing 5 of {locks.length} locks.</small>
-            </footer>
-          )}
-        </article>
+          {/* Recent Orders panel */}
+          <Panel
+            title="Recent Orders"
+            headerRight={<small className="text-muted">Last 5</small>}
+          >
+            {orders.length === 0 ? (
+              <p className="text-muted">No orders.</p>
+            ) : (
+              <DataTable
+                columns={[
+                  { key: "symbol", label: "Symbol" },
+                  { key: "side", label: "Side" },
+                  { key: "status", label: "Status", render: (o) => <StatusBadge status={o.status} /> },
+                ]}
+                data={orders.slice(0, 5)}
+                keyField="order_request_id"
+                onRowClick={(o) => navigate(`/orders/${o.order_request_id}`)}
+                compact
+              />
+            )}
+            {orders.length > 5 && (
+              <div className="page-footer" style={{ marginTop: "0.5rem", paddingTop: "0.5rem" }}>
+                <small className="text-muted">Showing 5 of {orders.length} orders.</small>
+              </div>
+            )}
+          </Panel>
+        </div>
 
-        <article>
-          <header>
-            <strong>Recent Orders</strong>
-          </header>
-          {orders.length === 0 ? (
-            <p className="text-muted">No orders.</p>
-          ) : (
-            <table>
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Side</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {orders.slice(0, 5).map((o) => (
-                  <tr
-                    key={o.order_request_id}
-                    onClick={() => navigate(`/orders/${o.order_request_id}`)}
-                    className="cursor-pointer"
-                  >
-                    <td>{o.symbol}</td>
-                    <td>{o.side}</td>
-                    <td>
-                      <StatusBadge status={o.status} />
-                    </td>
+        {/* Signals sidebar right */}
+        <div className="signals-sidebar">
+          {/* Active Locks Warnings */}
+          <Panel title="Active Locks" noPadding>
+            {activeLocks.length === 0 ? (
+              <p className="text-muted" style={{ padding: "0.75rem" }}>No active locks.</p>
+            ) : (
+              <table className="signal-table">
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>Type</th>
+                    <th>Status</th>
                   </tr>
+                </thead>
+                <tbody>
+                  {activeLocks.slice(0, 5).map((lk) => (
+                    <tr
+                      key={lk.lock_id}
+                      onClick={() => navigate("/reconciliation")}
+                      style={{ cursor: "pointer" }}
+                    >
+                      <td>{lk.symbol}</td>
+                      <td>{lk.lock_type}</td>
+                      <td><StatusBadge status="active" /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Panel>
+
+          {/* Incomplete Reconciliation Signals */}
+          <Panel title="Incomplete Reconciliation" noPadding>
+            {incompleteRuns.length === 0 ? (
+              <p className="text-muted" style={{ padding: "0.75rem" }}>All runs complete.</p>
+            ) : (
+              <ul className="signal-list">
+                {incompleteRuns.map((r) => (
+                  <li key={r.run_id}>
+                    <span className="signal-dot signal-dot--amber" />
+                    <span className="signal-agent">{r.run_id.slice(0, 8)}</span>
+                    <span className="signal-issue">{r.status}</span>
+                  </li>
                 ))}
-              </tbody>
-            </table>
-          )}
-          {orders.length > 5 && (
-            <footer>
-              <small>Showing 5 of {orders.length} orders.</small>
-            </footer>
-          )}
-        </article>
+              </ul>
+            )}
+          </Panel>
+        </div>
       </div>
 
       <div className="page-footer">

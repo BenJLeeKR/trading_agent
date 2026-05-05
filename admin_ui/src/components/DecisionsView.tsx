@@ -2,12 +2,45 @@ import { useEffect, useMemo, useState } from "react";
 import type { DecisionContextDetail, TradeDecisionDetail } from "../types/api";
 import { getDecisionContext, getTradeDecisions } from "../api/client";
 import { DataTable } from "./common/DataTable";
+import { Panel } from "./common/Panel";
+import { DetailField } from "./common/DetailField";
+import { SectionDivider } from "./common/SectionDivider";
 import { StatusBadge } from "./common/StatusBadge";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import type { Column } from "./common/DataTable";
 
 const SIDES = ["all", "buy", "sell", "hold"] as const;
+
+/* ───────────────────────────────────────────
+ * FilterGroup — single-select button group
+ * ─────────────────────────────────────────── */
+function FilterGroup({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: { label: string; value: string }[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="filter-group" role="group" aria-label={label}>
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          type="button"
+          className={`filter-group-btn${value === opt.value ? " filter-group-btn--active" : ""}`}
+          onClick={() => onChange(opt.value)}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export default function DecisionsView() {
   const [decisions, setDecisions] = useState<TradeDecisionDetail[]>([]);
@@ -102,6 +135,7 @@ export default function DecisionsView() {
     {
       key: "confidence",
       label: "Confidence",
+      /* ⚠️ Inline style 보존 — decisions.test.tsx의 toHaveStyle 검증과 연결됨 */
       render: (r) => {
         const pct = (r.confidence * 100).toFixed(0);
         const color =
@@ -144,33 +178,26 @@ export default function DecisionsView() {
 
       {/* Filter bar */}
       <div className="filter-bar">
-        <label>
-          Symbol
-          <input
-            type="search"
-            placeholder="Search by ticker..."
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-            aria-label="Search decisions by ticker"
-            style={{ width: "160px" }}
-          />
-        </label>
-        <label>
-          Side
-          <select
-            value={sideFilter}
-            onChange={(e) => setSideFilter(e.target.value)}
-            aria-label="Filter by side"
-            style={{ width: "120px" }}
-          >
-            {SIDES.map((s) => (
-              <option key={s} value={s}>
-                {s === "all" ? "All Sides" : s}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
+        <input
+          type="search"
+          placeholder="Search by ticker..."
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+          aria-label="Search decisions by ticker"
+          style={{ width: "160px" }}
+        />
+
+        <FilterGroup
+          label="Side"
+          options={SIDES.map((s) => ({
+            label: s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1),
+            value: s,
+          }))}
+          value={sideFilter}
+          onChange={setSideFilter}
+        />
+
+        <label style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
           Confidence Min
           <input
             type="number"
@@ -181,10 +208,10 @@ export default function DecisionsView() {
             value={confidenceMin}
             onChange={(e) => setConfidenceMin(e.target.value)}
             aria-label="Minimum confidence"
-            style={{ width: "100px" }}
+            style={{ width: "100px", marginTop: "0.2rem" }}
           />
         </label>
-        <label>
+        <label style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
           Confidence Max
           <input
             type="number"
@@ -195,65 +222,74 @@ export default function DecisionsView() {
             value={confidenceMax}
             onChange={(e) => setConfidenceMax(e.target.value)}
             aria-label="Maximum confidence"
-            style={{ width: "100px" }}
+            style={{ width: "100px", marginTop: "0.2rem" }}
           />
         </label>
       </div>
 
-      <DataTable
-        columns={columns}
-        data={filteredDecisions}
-        keyField="trade_decision_id"
-        onRowClick={(row) => setSelectedDecision(row)}
-        selectedKey={selectedDecision?.trade_decision_id ?? null}
-        isLoading={loading}
-        emptyMessage="No trade decisions found."
-      />
+      <Panel
+        title="Trade Decisions"
+        headerRight={
+          <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+            {filteredDecisions.length} / {decisions.length} decision
+            {decisions.length !== 1 ? "s" : ""}
+          </span>
+        }
+      >
+        <DataTable
+          columns={columns}
+          data={filteredDecisions}
+          keyField="trade_decision_id"
+          onRowClick={(row) => setSelectedDecision(row)}
+          selectedKey={selectedDecision?.trade_decision_id ?? null}
+          isLoading={loading}
+          emptyMessage="No trade decisions found."
+          compact
+        />
+      </Panel>
 
       {/* Detail panel */}
       {selectedDecision ? (
-        <article className="detail-panel">
-          <header>
-            <strong>Decision Detail</strong>
+        <Panel
+          title="Decision Detail"
+          subtitle={`${selectedDecision.ticker} · ${selectedDecision.side.toUpperCase()} · ${(selectedDecision.confidence * 100).toFixed(0)}% confidence`}
+          headerRight={
             <button
-              style={{ float: "right", padding: "0.25rem 0.75rem" }}
+              style={{ padding: "0.25rem 0.75rem", cursor: "pointer" }}
               onClick={handleCloseDetail}
               aria-label="Close detail panel"
               type="button"
             >
               ✕
             </button>
-          </header>
-          <div className="data-grid-2">
-            <div>
-              <strong>Ticker:</strong> {selectedDecision.ticker}
-            </div>
-            <div>
-              <strong>Side:</strong>{" "}
-              <StatusBadge status={selectedDecision.side.toUpperCase()} />
-            </div>
-            <div>
-              <strong>Confidence:</strong>{" "}
-              {(selectedDecision.confidence * 100).toFixed(0)}%
-            </div>
-            <div>
-              <strong>Agent:</strong> {selectedDecision.agent_label}
-            </div>
-            <div>
-              <strong>Intent:</strong> {selectedDecision.intent}
-            </div>
-            <div>
-              <strong>Created:</strong>{" "}
-              {new Date(selectedDecision.created_at).toLocaleString()}
-            </div>
-            <div>
-              <strong>Decision ID:</strong>{" "}
-              <code>{selectedDecision.trade_decision_id}</code>
-            </div>
-            <div>
-              <strong>Context ID:</strong>{" "}
-              <code>{selectedDecision.decision_context_id}</code>
-            </div>
+          }
+        >
+          <div className="detail-grid">
+            <DetailField label="Ticker" value={selectedDecision.ticker} />
+            <DetailField
+              label="Side"
+              value={<StatusBadge status={selectedDecision.side.toUpperCase()} />}
+            />
+            <DetailField
+              label="Confidence"
+              value={`${(selectedDecision.confidence * 100).toFixed(0)}%`}
+            />
+            <DetailField label="Agent" value={selectedDecision.agent_label} />
+            <DetailField label="Intent" value={selectedDecision.intent} />
+            <DetailField
+              label="Created"
+              value={new Date(selectedDecision.created_at).toLocaleString()}
+            />
+            <DetailField
+              label="Decision ID"
+              value={selectedDecision.trade_decision_id}
+              mono
+            />
+            <DetailField
+              label="Context ID"
+              value={selectedDecision.decision_context_id}
+              mono
+            />
           </div>
 
           {contextLoading && <LoadingSpinner text="Loading context..." />}
@@ -264,29 +300,21 @@ export default function DecisionsView() {
             />
           )}
           {contextDetail && (
-            <section className="detail-context-section">
-              <h6>Decision Context</h6>
-              <div className="data-grid-2">
-                <div>
-                  <strong>Strategy:</strong> {contextDetail.strategy_code}
-                </div>
-                <div>
-                  <strong>Client:</strong> {contextDetail.client_id}
-                </div>
-                <div>
-                  <strong>Session:</strong> {contextDetail.session_id}
-                </div>
-                <div>
-                  <strong>Agents:</strong> {contextDetail.agent_count}
-                </div>
-                <div>
-                  <strong>Timestamp:</strong>{" "}
-                  {new Date(contextDetail.timestamp).toLocaleString()}
-                </div>
+            <>
+              <SectionDivider label="Decision Context" />
+              <div className="detail-grid">
+                <DetailField label="Strategy" value={contextDetail.strategy_code} />
+                <DetailField label="Client" value={contextDetail.client_id} />
+                <DetailField label="Session" value={contextDetail.session_id} />
+                <DetailField label="Agents" value={contextDetail.agent_count} />
+                <DetailField
+                  label="Timestamp"
+                  value={new Date(contextDetail.timestamp).toLocaleString()}
+                />
               </div>
-            </section>
+            </>
           )}
-        </article>
+        </Panel>
       ) : (
         !loading &&
         decisions.length > 0 && (

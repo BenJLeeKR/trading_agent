@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import type { OrderSummary } from "../types/api";
 import { getOrders } from "../api/client";
 import { DataTable } from "./common/DataTable";
+import { Panel } from "./common/Panel";
 import { StatusBadge } from "./common/StatusBadge";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
@@ -19,6 +20,36 @@ const ORDER_STATUSES = [
 ] as const;
 
 const SIDES = ["all", "buy", "sell", "hold"] as const;
+
+/* ───────────────────────────────────────────
+ * FilterGroup — single-select button group
+ * ─────────────────────────────────────────── */
+function FilterGroup({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: { label: string; value: string }[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="filter-group" role="group" aria-label={label}>
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          type="button"
+          className={`filter-group-btn${value === opt.value ? " filter-group-btn--active" : ""}`}
+          onClick={() => onChange(opt.value)}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export default function OrdersView() {
   const [orders, setOrders] = useState<OrderSummary[]>([]);
@@ -91,14 +122,6 @@ export default function OrdersView() {
 
   return (
     <section>
-      <div className="page-header">
-        <h2>Orders</h2>
-        <p>
-          Total: {filteredOrders.length} / {orders.length} order
-          {orders.length !== 1 ? "s" : ""}
-        </p>
-      </div>
-
       <div className="filter-bar">
         <input
           type="search"
@@ -108,39 +131,46 @@ export default function OrdersView() {
           style={{ flex: 1, minWidth: "180px" }}
           aria-label="Search by symbol"
         />
-        <select
+
+        <FilterGroup
+          label="Status"
+          options={ORDER_STATUSES.map((s) => ({
+            label: s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1),
+            value: s,
+          }))}
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          aria-label="Filter by status"
-          style={{ minWidth: "130px" }}
-        >
-          {ORDER_STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {s === "all" ? "All Statuses" : s.charAt(0).toUpperCase() + s.slice(1)}
-            </option>
-          ))}
-        </select>
-        <select
+          onChange={setStatusFilter}
+        />
+
+        <FilterGroup
+          label="Side"
+          options={SIDES.map((s) => ({
+            label: s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1),
+            value: s,
+          }))}
           value={sideFilter}
-          onChange={(e) => setSideFilter(e.target.value)}
-          aria-label="Filter by side"
-          style={{ minWidth: "100px" }}
-        >
-          {SIDES.map((s) => (
-            <option key={s} value={s}>
-              {s === "all" ? "All Sides" : s.charAt(0).toUpperCase() + s.slice(1)}
-            </option>
-          ))}
-        </select>
+          onChange={setSideFilter}
+        />
       </div>
 
-      <DataTable
-        columns={columns}
-        data={filteredOrders}
-        keyField="order_request_id"
-        onRowClick={(row) => navigate(`/orders/${row.order_request_id}`)}
-        emptyMessage="No orders found."
-      />
+      <Panel
+        title="Orders"
+        headerRight={
+          <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+            Total: {filteredOrders.length} / {orders.length} order
+            {orders.length !== 1 ? "s" : ""}
+          </span>
+        }
+      >
+        <DataTable
+          columns={columns}
+          data={filteredOrders}
+          keyField="order_request_id"
+          onRowClick={(row) => navigate(`/orders/${row.order_request_id}`)}
+          emptyMessage="No orders found."
+          compact
+        />
+      </Panel>
     </section>
   );
 }
