@@ -33,7 +33,7 @@ describe("Layout navigation", () => {
 
     // Brand
     expect(screen.getByText("AgentTrade")).toBeInTheDocument();
-    expect(screen.getByText((content) => content.includes("Operator Console"))).toBeInTheDocument();
+    expect(screen.getByText("Live")).toBeInTheDocument();
 
     // All 5 nav links
     expect(screen.getAllByText("Dashboard")[0]).toBeInTheDocument();

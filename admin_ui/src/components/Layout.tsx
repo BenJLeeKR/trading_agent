@@ -66,9 +66,9 @@ export function Layout() {
           {!collapsed && (
             <div className="sidebar-brand-text">
               <div className="sidebar-brand-title">AgentTrade</div>
-              <div className="sidebar-brand-subtitle">
-                Operator Console{" "}
-                <span className="sidebar-brand-badge">· READ ONLY</span>
+              <div className="sidebar-brand-status">
+                <span className="sidebar-brand-dot" />
+                <span className="sidebar-brand-live">Live</span>
               </div>
             </div>
           )}
@@ -91,7 +91,10 @@ export function Layout() {
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto py-3">
-          <div className="sidebar-nav-section">Main Menu</div>
+          {!collapsed && (
+            <div className="sidebar-nav-section">NAVIGATION</div>
+          )}
+          {collapsed && <div className="mt-2" />}
           <ul className="sidebar-nav">
             {NAV_ITEMS.map((item) => (
               <li key={item.to} className="sidebar-nav-item">
@@ -113,38 +116,34 @@ export function Layout() {
           </ul>
         </nav>
 
-        {/* User area */}
-        <div className="sidebar-user">
-          <div className="sidebar-user-avatar">A</div>
-          {!collapsed && (
-            <div className="sidebar-user-info">
-              <div className="sidebar-user-name">Admin</div>
-              <div className="sidebar-user-role">Read Only</div>
-            </div>
-          )}
-        </div>
-
         {/* Token + logout */}
         <div className="sidebar-footer">
-          <div
-            style={{
-              marginBottom: "0.35rem",
-              fontSize: "0.75rem",
-              lineHeight: 1.3,
-            }}
-          >
-            <div>Token: {truncatedToken}</div>
-          </div>
+          {!collapsed && (
+            <div className="sidebar-footer-status">
+              <div className="sidebar-footer-status-content">
+                <span className="sidebar-footer-status-dot" />
+                <div className="sidebar-footer-status-text">
+                  <p className="sidebar-footer-status-title">All systems normal</p>
+                  <p className="sidebar-footer-status-sub">Token: {truncatedToken}</p>
+                </div>
+              </div>
+            </div>
+          )}
+          {collapsed && (
+            <div className="sidebar-footer-collapsed-dot" />
+          )}
           <button
             onClick={logout}
             className="sidebar-logout-btn"
           >
             <LogOut size={13} />
-            <span>Logout</span>
+            {!collapsed && <span>Logout</span>}
           </button>
-          <div className="sidebar-footer-version">
-            v2.4.1 — build 20260505
-          </div>
+          {!collapsed && (
+            <div className="sidebar-footer-version">
+              v2.4.1 — build 20260505
+            </div>
+          )}
         </div>
       </aside>
 

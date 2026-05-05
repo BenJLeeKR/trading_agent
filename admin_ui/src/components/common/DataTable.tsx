@@ -33,7 +33,11 @@ export function DataTable<T extends Record<string, any>>({
   }
 
   if (data.length === 0) {
-    return <p className="text-muted">{emptyMessage}</p>;
+    return (
+      <div className="panel-empty">
+        <p className="text-muted">{emptyMessage}</p>
+      </div>
+    );
   }
 
   return (
