@@ -174,7 +174,7 @@ export default function ReconciliationView() {
       </div>
 
       {activeTab === "runs" && (
-        <div style={{ marginTop: "0.75rem" }}>
+        <div className="tab-content">
           <FilterGroup
             label="Status"
             options={RUN_STATUSES.map((s) => ({
@@ -197,7 +197,7 @@ export default function ReconciliationView() {
       )}
 
       {activeTab === "locks" && (
-        <div style={{ marginTop: "0.75rem" }}>
+        <div className="tab-content">
           {activeLocks.length > 0 && (
             <div className="warning-banner warning-banner--error">
               <svg
@@ -218,7 +218,7 @@ export default function ReconciliationView() {
                   {activeLocks.length} Active Blocking Lock{activeLocks.length !== 1 ? "s" : ""}
                 </span>
                 <br />
-                <span style={{ fontWeight: "normal" }}>
+                <span className="warning-banner-body">
                   These may block trading operations. Resolve locks before submitting new orders.
                 </span>
               </div>

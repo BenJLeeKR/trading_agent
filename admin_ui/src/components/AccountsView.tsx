@@ -135,15 +135,7 @@ export default function AccountsView() {
       key: "side",
       label: "Side",
       render: (r) => (
-        <span
-          style={{
-            color:
-              r.side.toLowerCase() === "long"
-                ? "var(--pico-ins-color)"
-                : "var(--pico-del-color)",
-            fontWeight: 600,
-          }}
-        >
+        <span className={r.side.toLowerCase() === "long" ? "side-long" : "side-short"}>
           {r.side.toUpperCase()}
         </span>
       ),
@@ -178,7 +170,7 @@ export default function AccountsView() {
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
           aria-label="Search accounts"
-          style={{ width: "220px" }}
+          className="filter-input-narrow"
         />
 
         <FilterGroup
@@ -234,7 +226,7 @@ export default function AccountsView() {
                 )}
 
                 {/* Positions */}
-                <div style={{ marginTop: "0.75rem" }}>
+                <div className="positions-table">
                   <DataTable
                     columns={positionColumns}
                     data={positions}

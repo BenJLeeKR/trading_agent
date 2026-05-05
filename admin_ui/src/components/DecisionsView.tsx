@@ -117,15 +117,7 @@ export default function DecisionsView() {
       key: "side",
       label: "Side",
       render: (r) => (
-        <span
-          style={{
-            color:
-              r.side.toLowerCase() === "buy"
-                ? "var(--pico-ins-color)"
-                : "var(--pico-del-color)",
-            fontWeight: 600,
-          }}
-        >
+        <span className={r.side.toLowerCase() === "buy" ? "side-buy" : "side-sell"}>
           {r.side.toUpperCase()}
         </span>
       ),
@@ -152,7 +144,7 @@ export default function DecisionsView() {
       key: "decision_context_id",
       label: "Context ID",
       render: (r) => (
-        <code style={{ fontSize: "0.75rem" }}>
+        <code className="context-id">
           {r.decision_context_id.substring(0, 8)}…
         </code>
       ),
@@ -197,7 +189,7 @@ export default function DecisionsView() {
           onChange={setSideFilter}
         />
 
-        <label style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+        <label className="confidence-filter">
           Confidence Min
           <input
             type="number"
@@ -208,10 +200,10 @@ export default function DecisionsView() {
             value={confidenceMin}
             onChange={(e) => setConfidenceMin(e.target.value)}
             aria-label="Minimum confidence"
-            style={{ width: "100px", marginTop: "0.2rem" }}
+            className="confidence-input"
           />
         </label>
-        <label style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+        <label className="confidence-filter">
           Confidence Max
           <input
             type="number"
@@ -222,7 +214,7 @@ export default function DecisionsView() {
             value={confidenceMax}
             onChange={(e) => setConfidenceMax(e.target.value)}
             aria-label="Maximum confidence"
-            style={{ width: "100px", marginTop: "0.2rem" }}
+            className="confidence-input"
           />
         </label>
       </div>
@@ -230,7 +222,7 @@ export default function DecisionsView() {
       <Panel
         title="Trade Decisions"
         headerRight={
-          <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+          <span className="panel-counter">
             {filteredDecisions.length} / {decisions.length} decision
             {decisions.length !== 1 ? "s" : ""}
           </span>

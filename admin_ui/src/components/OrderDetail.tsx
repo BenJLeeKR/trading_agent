@@ -72,7 +72,7 @@ export default function OrderDetail() {
 
   return (
     <section>
-      <p style={{ marginBottom: "0.75rem" }}>
+      <p className="back-link">
         <Link to="/orders">&larr; Back to Orders</Link>
       </p>
 
@@ -81,7 +81,7 @@ export default function OrderDetail() {
         title="Order Detail"
         subtitle={`${order.symbol} · ${order.side} · ${order.order_type}`}
         headerRight={
-          <code style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+          <code className="order-id">
             {order.order_request_id}
           </code>
         }
@@ -113,7 +113,7 @@ export default function OrderDetail() {
         </div>
 
         {order.error_message && (
-          <div className="text-error" style={{ marginTop: "0.5rem" }}>
+          <div className="text-error error-block">
             <strong>Error:</strong> {order.error_message}
           </div>
         )}
@@ -121,7 +121,7 @@ export default function OrderDetail() {
         {(order.decision_context_id || order.trade_decision_id) && (
           <>
             <SectionDivider label="Decision Links:" />
-            <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+            <div className="decision-links">
               {order.decision_context_id && (
                 <span>
                   Context:{" "}

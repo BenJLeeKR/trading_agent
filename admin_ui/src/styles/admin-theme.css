@@ -78,6 +78,33 @@
   /* ── Brand accent (muted blue) ── */
   --accent-color: oklch(0.65 0.12 210);
   --accent-hover: oklch(0.60 0.12 210);
+
+  /* ── Typography Scale ── */
+  --text-xs: 0.65rem;      /* meta labels, badges, timestamps */
+  --text-sm: 0.7rem;       /* compact table, small meta */
+  --text-base: 0.8rem;     /* body text, detail values */
+  --text-md: 0.85rem;      /* panel titles, table cells */
+  --text-lg: 0.9rem;       /* nav links, top header */
+  --text-xl: 1.1rem;       /* sidebar brand title */
+  --text-2xl: 1.4rem;      /* page titles */
+
+  /* ── Font Families ── */
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', Ubuntu, Cantarell, 'Helvetica Neue', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+
+  /* ── Spacing Scale (4px base) ── */
+  --space-1: 0.25rem;   /*  4px */
+  --space-2: 0.5rem;    /*  8px */
+  --space-3: 0.75rem;   /* 12px */
+  --space-4: 1rem;      /* 16px */
+  --space-5: 1.25rem;   /* 20px */
+  --space-6: 1.5rem;    /* 24px */
+  --space-7: 1.75rem;   /* 28px */
+  --space-8: 2rem;      /* 32px */
+
+  /* ── Letter Spacing (Tracking) ── */
+  --tracking-wide: 0.03em;   /* table headers */
+  --tracking-wider: 0.04em;  /* uppercase labels, section dividers */
 }
 
 /* ─────────────────────────────────────
@@ -86,6 +113,9 @@
 body {
   background-color: var(--app-background);
   color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: 1.5;
 }
 
 /* Pico CSS bridge: ensure article surfaces use our panel tokens */
@@ -140,26 +170,15 @@ article,
   border-right: 1px solid var(--sidebar-border);
 }
 
-.sidebar-brand {
-  padding: 1rem 1rem 0.5rem;
-  margin-bottom: 0.75rem;
-}
-
-.sidebar-brand-title {
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
 .sidebar-brand-badge {
   display: inline-block;
-  font-size: 0.7rem;
+  font-size: var(--text-sm);
   font-weight: 600;
   padding: 0.1rem 0.4rem;
   border-radius: 3px;
   background-color: oklch(0.22 0.009 240);
   color: var(--text-muted);
-  letter-spacing: 0.03em;
+  letter-spacing: var(--tracking-wide);
 }
 
 .sidebar-nav {
@@ -179,7 +198,7 @@ article,
   border-radius: var(--radius-sm);
   text-decoration: none;
   color: var(--sidebar-text);
-  font-size: 0.9rem;
+  font-size: var(--text-lg);
   transition: background-color 0.12s ease, color 0.12s ease;
 }
 
@@ -195,16 +214,16 @@ article,
 }
 
 .sidebar-footer {
-  padding: 0.75rem 1rem;
+  padding: var(--space-3) var(--space-4);
   border-top: 1px solid var(--sidebar-border);
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
   color: var(--text-muted);
 }
 
 /* Main content area */
 .main-content {
   flex: 1;
-  padding: 1.5rem;
+  padding: var(--space-6);
   overflow: auto;
 }
 
@@ -214,18 +233,18 @@ article,
 
 /* Page header (hgroup replacement) */
 .page-header {
-  margin-bottom: 1.5rem;
+  margin-bottom: var(--space-6);
 }
 
 .page-header h2 {
-  font-size: 1.4rem;
+  font-size: var(--text-2xl);
   font-weight: 700;
   color: var(--text-primary);
   margin: 0 0 0.15rem;
 }
 
 .page-header p {
-  font-size: 0.85rem;
+  font-size: var(--text-md);
   color: var(--text-secondary);
   margin: 0;
 }
@@ -234,7 +253,7 @@ article,
 .section-header {
   font-weight: 600;
   color: var(--text-primary);
-  font-size: 0.95rem;
+  font-size: var(--text-md);
 }
 
 /* ─────────────────────────────────────
@@ -244,13 +263,13 @@ article,
 .summary-cards-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 1rem;
-  margin-bottom: 2rem;
+  gap: var(--space-4);
+  margin-bottom: var(--space-8);
 }
 
 .summary-card {
   text-align: center;
-  padding: 1rem;
+  padding: var(--space-4);
   background-color: var(--surface-1);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
@@ -281,13 +300,13 @@ article,
 
 .summary-card h3 {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: var(--text-2xl);
   font-weight: 700;
 }
 
 .summary-card small {
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: var(--text-base);
 }
 
 /* ─────────────────────────────────────
@@ -302,24 +321,24 @@ article,
 }
 
 .surface-panel-header {
-  padding: 0.75rem 1rem;
+  padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--border-subtle);
   font-weight: 600;
   color: var(--text-primary);
-  font-size: 0.9rem;
+  font-size: var(--text-lg);
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
 .surface-panel-body {
-  padding: 0.75rem 1rem;
+  padding: var(--space-3) var(--space-4);
 }
 
 .surface-panel-footer {
-  padding: 0.5rem 1rem;
+  padding: var(--space-2) var(--space-4);
   border-top: 1px solid var(--border-subtle);
-  font-size: 0.8rem;
+  font-size: var(--text-base);
   color: var(--text-muted);
 }
 
@@ -329,8 +348,8 @@ article,
 
 .filter-bar {
   display: flex;
-  gap: 0.75rem;
-  margin-bottom: 1rem;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
   flex-wrap: wrap;
   align-items: center;
 }
@@ -338,7 +357,7 @@ article,
 .filter-bar label {
   display: flex;
   flex-direction: column;
-  font-size: 0.8rem;
+  font-size: var(--text-base);
   color: var(--text-secondary);
 }
 
@@ -352,17 +371,17 @@ article,
  * ───────────────────────────────────── */
 
 .detail-panel {
-  margin-top: 1rem;
+  margin-top: var(--space-4);
 }
 
 .detail-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 0.5rem;
+  gap: var(--space-2);
 }
 
 .detail-field {
-  font-size: 0.875rem;
+  font-size: var(--text-base);
 }
 
 .detail-field strong {
@@ -373,17 +392,6 @@ article,
 /* ─────────────────────────────────────
  * 10. Utility Classes — Warning Banner
  * ───────────────────────────────────── */
-
-.warning-banner {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.75rem 1rem;
-  margin-bottom: 1rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid;
-  font-size: 0.875rem;
-}
 
 .warning-banner--error {
   background-color: var(--status-error-bg);
@@ -425,23 +433,23 @@ article,
 .table-wrapper table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.85rem;
+  font-size: var(--text-md);
 }
 
 .table-wrapper thead th {
-  padding: 0.5rem 0.75rem;
+  padding: var(--space-2) var(--space-3);
   text-align: left;
   font-weight: 600;
   color: var(--text-secondary);
-  font-size: 0.8rem;
+  font-size: var(--text-base);
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: var(--tracking-wide);
   border-bottom: 1px solid var(--border-color);
   white-space: nowrap;
 }
 
 .table-wrapper tbody td {
-  padding: 0.4rem 0.75rem;
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border-subtle);
   vertical-align: middle;
   white-space: nowrap;
@@ -455,12 +463,6 @@ article,
   background-color: oklch(0.20 0.01 240);
 }
 
-.table-wrapper tbody tr[aria-selected="true"] {
-  background-color: oklch(0.22 0.03 240 / 0.6);
-  outline: 1px solid var(--accent-color);
-  outline-offset: -1px;
-}
-
 /* ─────────────────────────────────────
  * 12. Utility Classes — Badge
  * ───────────────────────────────────── */
@@ -468,7 +470,7 @@ article,
 .badge {
   display: inline-block;
   padding: 0.15rem 0.5rem;
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
   font-weight: 600;
   border-radius: var(--radius-sm);
   white-space: nowrap;
@@ -518,8 +520,8 @@ article,
 }
 
 .tab-bar button[role="tab"] {
-  padding: 0.5rem 1rem;
-  font-size: 0.85rem;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-md);
   font-weight: 500;
   border: none;
   background: transparent;
@@ -545,8 +547,8 @@ article,
  * ───────────────────────────────────── */
 
 .page-footer {
-  margin-top: 1.5rem;
-  padding-top: 1rem;
+  margin-top: var(--space-6);
+  padding-top: var(--space-4);
   border-top: 1px solid var(--border-subtle);
 }
 
@@ -557,13 +559,13 @@ article,
 .data-grid-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.5rem;
+  gap: var(--space-2);
 }
 
 .data-grid-auto {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 0.5rem;
+  gap: var(--space-2);
 }
 
 /* ─────────────────────────────────────
@@ -590,10 +592,115 @@ article,
   color: var(--status-warning);
 }
 
+/* ── Side colors ── */
+.side-buy,
+.side-long {
+  color: var(--status-success);
+  font-weight: 600;
+}
+.side-sell,
+.side-short {
+  color: var(--status-error);
+  font-weight: 600;
+}
+
+/* ── Flex filter input ── */
+.filter-input-flex {
+  flex: 1;
+  min-width: 180px;
+}
+
+/* ── Narrow filter input ── */
+.filter-input-narrow {
+  width: 220px;
+}
+
+/* ── Confidence filter label + input ── */
+.confidence-filter {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.confidence-input {
+  width: 100px;
+  margin-top: 0.2rem;
+}
+
+/* ── Panel counter badge ── */
+.panel-counter {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* ── Back link in detail pages ── */
+.back-link {
+  margin-bottom: var(--space-3);
+}
+
+/* ── Order ID mono display ── */
+.order-id {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  letter-spacing: -0.01em;
+}
+
+/* ── Context ID mono display ── */
+.context-id {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+/* ── Decision links wrapper ── */
+.decision-links {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+/* ── Error block spacing ── */
+.error-block {
+  margin-top: var(--space-2);
+}
+
+/* ── Health status dot ── */
+.health-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+/* ── Table footer area ── */
+.table-footer {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+}
+
+/* ── Panel empty state padding ── */
+.panel-empty {
+  padding: var(--space-3);
+}
+
+/* ── Tab content area ── */
+.tab-content {
+  margin-top: var(--space-3);
+}
+
+/* ── Warning banner body text ── */
+.warning-banner-body {
+  font-weight: normal;
+}
+
+/* ── Positions table spacing ── */
+.positions-table {
+  margin-top: var(--space-3);
+}
+
 /* Placeholder panel for empty selection states */
 .placeholder-panel {
-  margin-top: 1rem;
-  padding: 2rem;
+  margin-top: var(--space-4);
+  padding: var(--space-8);
   text-align: center;
   color: var(--text-muted);
   background-color: var(--panel-bg);
@@ -603,9 +710,9 @@ article,
 
 /* Context section inside detail panel */
 .detail-context-section {
-  margin-top: 1rem;
+  margin-top: var(--space-4);
   border-top: 1px solid var(--border-subtle);
-  padding-top: 0.75rem;
+  padding-top: var(--space-3);
 }
 
 /* ─────────────────────────────────────
@@ -686,15 +793,15 @@ hr {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.65rem 1rem;
+  padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
-  gap: 0.75rem;
+  gap: var(--space-3);
 }
 
 .panel-header h3,
 .panel-title {
-  font-size: 0.85rem;
+  font-size: var(--text-md);
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
@@ -702,7 +809,7 @@ hr {
 }
 
 .panel-subtitle {
-  font-size: 0.7rem;
+  font-size: var(--text-sm);
   color: var(--text-muted);
   margin: 0.1rem 0 0;
   line-height: 1.2;
@@ -712,11 +819,11 @@ hr {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-2);
 }
 
 .panel-body {
-  padding: 0.75rem 1rem;
+  padding: var(--space-3) var(--space-4);
   flex: 1;
   min-height: 0;
 }
@@ -735,37 +842,37 @@ hr {
 }
 
 .detail-field-label {
-  font-size: 0.65rem;
+  font-size: var(--text-xs);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--tracking-wider);
   line-height: 1.2;
 }
 
 .detail-field-value {
-  font-size: 0.8rem;
+  font-size: var(--text-base);
   color: var(--text-primary);
   line-height: 1.4;
 }
 
 .detail-field-value--mono {
-  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 
 .section-divider {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin: 0.6rem 0;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
 }
 
 .section-divider-label {
-  font-size: 0.65rem;
+  font-size: var(--text-xs);
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--tracking-wider);
   color: var(--text-muted);
   opacity: 0.6;
   white-space: nowrap;
@@ -783,14 +890,14 @@ hr {
 .filter-group {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
+  gap: var(--space-1);
 }
 
 .filter-group-label {
-  font-size: 0.65rem;
+  font-size: var(--text-xs);
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--tracking-wider);
   color: var(--text-muted);
   opacity: 0.6;
   margin-right: 0.15rem;
@@ -798,8 +905,8 @@ hr {
 }
 
 .filter-group-btn {
-  padding: 0.25rem 0.55rem;
-  font-size: 0.7rem;
+  padding: var(--space-1) 0.55rem;
+  font-size: var(--text-sm);
   font-weight: 500;
   border-radius: 0.3rem;
   border: 1px solid var(--border-color);
@@ -840,7 +947,7 @@ hr {
 }
 
 .top-header-title {
-  font-size: 0.9rem;
+  font-size: var(--text-lg);
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -848,19 +955,19 @@ hr {
 .top-header-right {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: var(--space-4);
 }
 
 .top-header-search {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.25rem 0.65rem;
+  gap: var(--space-1);
+  padding: var(--space-1) 0.65rem;
   border-radius: var(--radius-sm);
   background-color: var(--surface-2);
   border: 1px solid var(--border-subtle);
   color: var(--text-muted);
-  font-size: 0.7rem;
+  font-size: var(--text-sm);
   pointer-events: none;
   user-select: none;
   opacity: 0.7;
@@ -879,7 +986,7 @@ hr {
 .top-header-user {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-1);
 }
 
 .top-header-user-avatar {
@@ -901,14 +1008,14 @@ hr {
 }
 
 .top-header-user-name {
-  font-size: 0.7rem;
+  font-size: var(--text-sm);
   font-weight: 500;
   color: var(--text-primary);
   line-height: 1.2;
 }
 
 .top-header-user-status {
-  font-size: 0.6rem;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   line-height: 1.2;
 }
@@ -916,11 +1023,11 @@ hr {
 .top-header-clock {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
-  font-size: 0.65rem;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   pointer-events: none;
   user-select: none;
   opacity: 0.6;
@@ -972,7 +1079,7 @@ hr {
 
 .sidebar-brand-icon span {
   color: oklch(0.70 0.10 240);
-  font-size: 0.7rem;
+  font-size: var(--text-sm);
   font-weight: 800;
 }
 
@@ -981,7 +1088,7 @@ hr {
 }
 
 .sidebar-brand-title {
-  font-size: 0.85rem;
+  font-size: var(--text-md);
   font-weight: 700;
   color: var(--text-primary);
   margin: 0;
@@ -992,7 +1099,7 @@ hr {
 }
 
 .sidebar-brand-subtitle {
-  font-size: 0.6rem;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   margin: 0;
   line-height: 1.3;
@@ -1043,23 +1150,23 @@ hr {
 
 /* Footer version */
 .sidebar-footer-version {
-  font-size: 0.6rem;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   opacity: 0.5;
-  margin-top: 0.25rem;
+  margin-top: var(--space-1);
   font-variant-numeric: tabular-nums;
 }
 
 /* ─────────────────────────────────────
  * 24. DataTable Compact Mode & Selected Row Accent
  * ───────────────────────────────────── */
-.table-compact td,
-.table-compact th {
-  padding: 0.3rem 0.55rem !important;
+.table-wrapper.table-compact td,
+.table-wrapper.table-compact th {
+  padding: 0.3rem 0.55rem;
   min-height: 28px;
 }
 
-.table-compact tbody td {
+.table-wrapper.table-compact tbody td {
   padding-top: 0.25rem;
   padding-bottom: 0.25rem;
 }
@@ -1084,8 +1191,8 @@ hr {
 .metric-row {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
-  font-size: 0.65rem;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
   line-height: 1.4;
 }
 
@@ -1153,9 +1260,9 @@ hr {
 .signal-list li {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.45rem 0.75rem;
-  font-size: 0.7rem;
+  gap: var(--space-2);
+  padding: 0.45rem var(--space-3);
+  font-size: var(--text-sm);
   border-bottom: 1px solid var(--border-subtle);
   transition: background-color 0.1s ease;
 }
@@ -1182,23 +1289,23 @@ hr {
 
 .signal-table {
   width: 100%;
-  font-size: 0.7rem;
+  font-size: var(--text-sm);
   border-collapse: collapse;
 }
 
 .signal-table th {
   text-align: left;
-  font-size: 0.6rem;
+  font-size: var(--text-xs);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.03em;
-  padding: 0.4rem 0.75rem;
+  letter-spacing: var(--tracking-wide);
+  padding: var(--space-1) var(--space-3);
   border-bottom: 1px solid var(--border-subtle);
 }
 
 .signal-table td {
-  padding: 0.35rem 0.75rem;
+  padding: var(--space-1) var(--space-3);
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-primary);
   vertical-align: middle;
@@ -1229,13 +1336,13 @@ hr {
 .health-label {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  font-size: 0.65rem;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
   font-weight: 600;
   padding: 0.15rem 0.4rem;
   border-radius: 0.2rem;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: var(--tracking-wide);
 }
 
 .health-label--ok {
@@ -1300,21 +1407,21 @@ hr {
 }
 
 .event-timeline-event {
-  font-size: 0.7rem;
+  font-size: var(--text-sm);
   font-weight: 600;
   color: var(--text-primary);
   text-transform: capitalize;
 }
 
 .event-timeline-time {
-  font-size: 0.65rem;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
 .event-timeline-detail {
-  font-size: 0.65rem;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   opacity: 0.7;
   margin-top: 0.1rem;
@@ -1337,7 +1444,7 @@ hr {
 .warning-banner-content {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-2);
   flex: 1;
 }
 
@@ -1346,11 +1453,11 @@ hr {
   justify-content: space-between;
   align-items: center;
   padding: 0.6rem 0.85rem;
-  margin-bottom: 0.75rem;
+  margin-bottom: var(--space-3);
   border-radius: var(--radius-sm);
   border: 1px solid;
-  font-size: 0.8rem;
-  gap: 0.5rem;
+  font-size: var(--text-base);
+  gap: var(--space-2);
 }
 
 /* ─────────────────────────────────────

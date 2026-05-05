@@ -94,15 +94,7 @@ export default function OrdersView() {
       key: "side",
       label: "Side",
       render: (r) => (
-        <span
-          style={{
-            color:
-              r.side.toLowerCase() === "buy"
-                ? "var(--status-success)"
-                : "var(--status-error)",
-            fontWeight: 600,
-          }}
-        >
+        <span className={r.side.toLowerCase() === "buy" ? "side-buy" : "side-sell"}>
           {r.side.toUpperCase()}
         </span>
       ),
@@ -128,7 +120,7 @@ export default function OrdersView() {
           placeholder="Search by symbol…"
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
-          style={{ flex: 1, minWidth: "180px" }}
+          className="filter-input-flex"
           aria-label="Search by symbol"
         />
 
@@ -156,7 +148,7 @@ export default function OrdersView() {
       <Panel
         title="Orders"
         headerRight={
-          <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+          <span className="panel-counter">
             Total: {filteredOrders.length} / {orders.length} order
             {orders.length !== 1 ? "s" : ""}
           </span>

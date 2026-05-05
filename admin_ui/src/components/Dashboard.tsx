@@ -244,14 +244,10 @@ export default function Dashboard() {
             </p>
             <p>
               <span
+                className="health-dot"
                 style={{
-                  display: "inline-block",
-                  width: "10px",
-                  height: "10px",
-                  borderRadius: "50%",
                   backgroundColor:
                     dbVariant === "ok" ? "var(--status-success)" : "var(--status-error)",
-                  marginRight: "0.3rem",
                 }}
               />
               {health?.database === "connected" ? "Connected" : "Disconnected"}
@@ -279,7 +275,7 @@ export default function Dashboard() {
               />
             )}
             {orders.length > 5 && (
-              <div className="page-footer" style={{ marginTop: "0.5rem", paddingTop: "0.5rem" }}>
+              <div className="table-footer">
                 <small className="text-muted">Showing 5 of {orders.length} orders.</small>
               </div>
             )}
@@ -291,7 +287,7 @@ export default function Dashboard() {
           {/* Active Locks Warnings */}
           <Panel title="Active Locks" noPadding>
             {activeLocks.length === 0 ? (
-              <p className="text-muted" style={{ padding: "0.75rem" }}>No active locks.</p>
+              <p className="text-muted panel-empty">No active locks.</p>
             ) : (
               <table className="signal-table">
                 <thead>
@@ -306,7 +302,7 @@ export default function Dashboard() {
                     <tr
                       key={lk.lock_id}
                       onClick={() => navigate("/reconciliation")}
-                      style={{ cursor: "pointer" }}
+                      className="cursor-pointer"
                     >
                       <td>{lk.symbol}</td>
                       <td>{lk.lock_type}</td>
@@ -321,7 +317,7 @@ export default function Dashboard() {
           {/* Incomplete Reconciliation Signals */}
           <Panel title="Incomplete Reconciliation" noPadding>
             {incompleteRuns.length === 0 ? (
-              <p className="text-muted" style={{ padding: "0.75rem" }}>All runs complete.</p>
+              <p className="text-muted panel-empty">All runs complete.</p>
             ) : (
               <ul className="signal-list">
                 {incompleteRuns.map((r) => (
