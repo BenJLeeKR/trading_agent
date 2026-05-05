@@ -205,7 +205,7 @@ def create_app(
     import os
 
     _admin_ui_dist = os.path.normpath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "admin_ui", "dist")
+        os.path.join(os.path.dirname(__file__), "..", "..", "..", "admin_ui", "dist")
     )
     if os.path.isdir(_admin_ui_dist):
         app.mount(
