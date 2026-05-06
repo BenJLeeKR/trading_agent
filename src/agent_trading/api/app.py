@@ -191,6 +191,11 @@ def create_app(
         [accounts_router, instruments_router, positions_router, clients_router]
     )
 
+    # Phase 3 — Agent Run inspection
+    from agent_trading.api.routes.agent_runs import router as agent_runs_router
+
+    protected_routers.append(agent_runs_router)
+
     if auth_enabled:
         for router in protected_routers:
             app.include_router(router, dependencies=[Depends(require_viewer)])

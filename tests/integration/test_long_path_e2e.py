@@ -316,7 +316,7 @@ class TestLongPathE2EInMemory:
         assert events[-1].new_status == OrderStatus.ACKNOWLEDGED
 
         # AI recorder: 정확히 3 runs (stable — 변경 불가)
-        assert len(service._agent_recorder.list_all()) == 3
+        assert len(await service._agent_recorder.list_all()) == 3
 
         # AI boundary: broker received SubmitOrderRequest only
         mock_broker.submit_order.assert_awaited_once_with(intent.request)

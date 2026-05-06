@@ -4,7 +4,7 @@ Covers: ``GET /orders``, ``GET /orders/{id}``, ``GET /orders/{id}/events``,
 ``GET /audit-logs``, ``GET /reconciliation/runs``, ``GET /reconciliation/locks``,
 ``GET /accounts``, ``GET /accounts/{id}``, ``GET /instruments/{id}``,
 ``GET /positions``, ``GET /cash-balances``, ``GET /clients/{id}``,
-``GET /orders/{id}/broker-orders``.
+``GET /orders/{id}/broker-orders``, ``GET /agent-runs``.
 """
 
 from __future__ import annotations
@@ -396,3 +396,65 @@ class TestBrokerOrders:
         """``GET /orders/{id}/broker-orders`` returns 400 for invalid UUID."""
         response = client.get("/orders/not-a-uuid/broker-orders")
         assert response.status_code == 400
+
+
+class TestAgentRuns:
+    """Agent run inspection endpoints."""
+
+    def test_list_agent_runs_empty(self, empty_client: TestClient) -> None:
+        """``GET /agent-runs`` returns empty list when no runs exist."""
+        response = empty_client.get("/agent-runs")
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_list_agent_runs(self, client: TestClient) -> None:
+        """``GET /agent-runs`` returns seeded agent runs ordered by started_at DESC."""
+        response = client.get("/agent-runs")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 3
+        agent_types = {r["agent_type"] for r in data}
+        assert agent_types == {
+            "event_interpretation",
+            "ai_risk",
+            "final_decision_composer",
+        }
+        # Verify started_at DESC ordering
+        started_ats = [r["started_at"] for r in data]
+        assert started_ats == sorted(started_ats, reverse=True), (
+            f"Expected started_at DESC order, got: {started_ats}"
+        )
+
+    def test_list_agent_runs_filter_by_decision_context(
+        self, client: TestClient
+    ) -> None:
+        """``GET /agent-runs?decision_context_id=...`` filters correctly."""
+        # First get the full list to find a decision_context_id
+        list_resp = client.get("/agent-runs")
+        runs = list_resp.json()
+        assert len(runs) >= 1
+        ctx_id = runs[0]["decision_context_id"]
+
+        response = client.get(f"/agent-runs?decision_context_id={ctx_id}")
+        assert response.status_code == 200
+        filtered = response.json()
+        assert len(filtered) == 3
+        for run in filtered:
+            assert run["decision_context_id"] == ctx_id
+
+    def test_list_agent_runs_filter_invalid_uuid(
+        self, client: TestClient
+    ) -> None:
+        """``GET /agent-runs?decision_context_id=...`` returns 400 for invalid UUID."""
+        response = client.get("/agent-runs?decision_context_id=not-a-uuid")
+        assert response.status_code == 400
+
+    def test_list_agent_runs_filter_no_match(
+        self, client: TestClient
+    ) -> None:
+        """``GET /agent-runs?decision_context_id=...`` returns empty for unknown UUID."""
+        response = client.get(
+            "/agent-runs?decision_context_id=00000000-0000-0000-0000-000000000000"
+        )
+        assert response.status_code == 200
+        assert response.json() == []

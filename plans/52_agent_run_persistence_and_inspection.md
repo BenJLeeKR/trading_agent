@@ -5,6 +5,9 @@
 `AgentRunRecorder`의 in-memory 전용 stub을 repository-backed 구조로 전환하고,  
 `GET /agent-runs` inspection API를 추가하여 AI Agent 실행 이력을 DB에 저장하고 조회할 수 있게 한다.
 
+**범위 제한**: `GET /agent-runs` 목록 endpoint + optional `?decision_context_id=` filter 까지만.  
+`GET /agent-runs/{id}`는 이번 턴에서 제외.
+
 ## 현재 상태
 
 ```mermaid
@@ -34,26 +37,42 @@ flowchart LR
 | `trading.agent_runs` 테이블 | `migrations/0001_initial_schema.sql` | ✅ 컬럼·제약조건·인덱스 완비 |
 | `row_to_entity()` | `row_mapper.py:58-94` | ✅ Enum 필드 없음, 별도 변환 불필요 |
 | `AgentRunRecorder.record()` (async) | `recorder.py:43-163` | ✅ 비즈니스 로직(agent_name 정합성, decision_context_id payload vs storage 분리) 존재 |
-| `AgentRunRecorder.list_*()` (sync) | `recorder.py:165-177` | ⚠️ sync, Postgres 적응 위해 async 변환 필요 |
+| `AgentRunRecorder.list_*()` (sync) | `recorder.py:165-177` | ⚠️ sync → async 변환 필요 |
 | `DecisionOrchestratorService.__init__` | `decision_orchestrator.py:280-297` | ✅ `agent_recorder` DI 지원 |
-| `_run_agents()` → `record()` 호출 | `decision_orchestrator.py:552-724` | ✅ 수정 불필요 (record는 이미 async) |
-| `_build_orchestrator()` | `runtime/bootstrap.py:197-234` | ⚠️ `agent_recorder` 미주입 → default `AgentRunRecorder()` 사용 |
+| `_run_agents()` → `record()` 호출 | `decision_orchestrator.py:605,637,659` | ✅ 수정 불필요 (record는 이미 async) |
+| `_build_orchestrator()` | `runtime/bootstrap.py:197-234` | ⚠️ `agent_recorder` 미주입 → default `AgentRunRecorder()` |
 
-### 만들어야 할 것
+## 호출부 전수조사 결과: `list_all()` / `list_by_decision_context()`
 
-| 항목 | 설명 |
+### `list_all()` call sites
+
+| 위치 | 호출 방식 | 영향 |
+|------|----------|------|
+| **Production 코드: 0곳** | | **sync→async 전환에 영향 없음** |
+| `tests/services/ai_agents/test_orchestrator_agents.py` (13곳) | `recorder.list_all()` / `service._agent_recorder.list_all()` | await 추가 필요 |
+| `tests/services/test_decision_orchestrator.py` (4곳) | `service._agent_recorder.list_all()` | await 추가 필요 |
+| `tests/smoke/test_runtime_event_interpretation_smoke.py` (2곳) | `orchestrator._agent_recorder.list_all()` | await 추가 필요 |
+| `tests/smoke/test_runtime_three_agent_smoke.py` (4곳) | `orchestrator._agent_recorder.list_all()` | await 추가 필요 |
+| `tests/integration/test_long_path_e2e.py` (1곳) | `service._agent_recorder.list_all()` | await 추가 필요 |
+
+### `list_by_decision_context()` call sites
+
+| 위치 | 호출 방식 | 영향 |
+|------|----------|------|
+| **Production 코드: 0곳** | | **sync→async 전환에 영향 없음** |
+| **Test 코드: 0곳** | | **await 추가 불필요** |
+
+### `clear()` call sites
+
+| 위치 | 영향 |
 |------|------|
-| `AgentRunRepository` protocol | `contracts.py`에 추가 - `add()`, `list_by_decision_context()`, `list_all()` |
-| `InMemoryAgentRunRepository` | `memory.py`에 구현 |
-| `PostgresAgentRunRepository` | `postgres/agent_runs.py` 신규 파일 |
-| `RepositoryContainer.agent_runs` | `container.py`에 필드 추가 |
-| `build_in_memory_repositories()` + `build_postgres_repositories()` | 각각 wiring 추가 |
-| `AgentRunRecorder` 개선 | repository DI, query async화, clear() 유지 |
-| `_build_orchestrator()` | `AgentRunRecorder(repo)` 주입 |
-| `AgentRunResponse` schema | `api/schemas.py`에 Pydantic 모델 |
-| `GET /agent-runs` route | `api/routes/agent_runs.py` 신규 파일 |
-| `app.py` 등록 | protected router로 등록 |
-| 테스트 | repository unit test + API integration test |
+| **외부 호출 0곳** | 변경 없이 유지 |
+
+### 결론
+
+`list_all()` sync→async 변환은 **test 5개 파일**(총 24곳)에만 `await` 추가 작업이 필요하다.  
+Production 코드에는 영향이 전혀 없다. `list_by_decision_context()`는 아직 호출자가 없으므로  
+안전하게 async로 변경 가능하다.
 
 ## 변경 불가 항목
 
@@ -92,7 +111,8 @@ class AgentRunRepository(Protocol):
         ...
 ```
 
-**근거**: 기존 `TradeDecisionRepository` 패턴과 동일. `list_all()`에 `limit` 파라미터를 추가하여 API에서 페이징 기본값을 갖도록 함.
+**근거**: 기존 `TradeDecisionRepository` 패턴과 동일.  
+`list_all()`에 `limit` 파라미터를 추가하여 API에서 페이징 기본값을 갖도록 함.
 
 ---
 
@@ -126,7 +146,8 @@ class InMemoryAgentRunRepository:
         self._runs.clear()
 ```
 
-**근거**: 기존 `InMemoryTradeDecisionRepository` 패턴과 동일. `clear()` 메서드는 테스트에서 사용.
+**근거**: 기존 `InMemoryTradeDecisionRepository` 패턴과 동일.  
+`clear()` 메서드는 테스트에서 사용 가능하도록 추가.
 
 ---
 
@@ -134,9 +155,12 @@ class InMemoryAgentRunRepository:
 
 **파일**: `src/agent_trading/repositories/postgres/agent_runs.py`
 
+`PostgresTradeDecisionRepository` 패턴을 따라 explicit SQL 사용.
+
 ```python
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
 from agent_trading.db.row_mapper import row_to_entity
@@ -145,10 +169,7 @@ from agent_trading.domain.entities import AgentRunEntity
 
 
 class PostgresAgentRunRepository:
-    """PostgreSQL implementation of ``AgentRunRepository``.
-
-    Stores agent execution runs in the ``trading.agent_runs`` table.
-    """
+    """PostgreSQL implementation of ``AgentRunRepository``."""
 
     __slots__ = ("_tx",)
 
@@ -177,7 +198,7 @@ class PostgresAgentRunRepository:
             run.temperature,
             run.seed,
             run.raw_output_uri,
-            _json_dumps(run.structured_output_json),
+            json.dumps(run.structured_output_json) if run.structured_output_json else None,
             run.status,
             run.started_at,
             run.completed_at,
@@ -206,9 +227,11 @@ class PostgresAgentRunRepository:
 
 **핵심 설계**:
 - `structured_output_json` → `$n::jsonb` 캐스팅 (asyncpg JSONB codec 없을 때 대비)
+- `json.dumps()`로 dict를 JSON 문자열로 변환 (asyncpg JSONB codec fallback)
 - `RETURNING *` → `row_to_entity()`로 Entity 변환 (DB 기본값 반영)
 - `ORDER BY started_at DESC` → 최신 실행이 먼저 오도록
 - `LIMIT $1` → `list_all()`에 limit 기본값 100
+- `agent_run_id`는 recorder가 생성하고 repository는 전달받은 entity를 저장만 함
 
 ---
 
@@ -219,50 +242,55 @@ class PostgresAgentRunRepository:
 ```python
 from agent_trading.repositories.contracts import (
     ...
-    AgentRunRepository,    # 추가
+    AgentRunRepository,    # import 추가
 )
 
 @dataclass(slots=True, frozen=True)
 class RepositoryContainer:
-    ...
-    agent_runs: AgentRunRepository  # 추가
+    unit_of_work: UnitOfWork
+    agent_runs: AgentRunRepository  # accounts 앞, 알파벳 순서
+    accounts: AccountRepository
     ...
 ```
 
-⚠️ **주의**: `frozen=True` dataclass이므로 필드 순서는 알파벳 순서 유지.  
-`agent_runs`는 `accounts`와 `audit_logs` 사이에 위치.
+⚠️ `frozen=True` dataclass — 필드 순서는 **알파벳 순서** 유지해야 함.  
+`agent_runs`는 `unit_of_work` 다음, `accounts` 앞에 위치.
 
 ---
 
 ### Step 5: Bootstrap wiring
 
-**파일 수정 1**: `repositories/bootstrap.py`
+**파일 수정 1**: `src/agent_trading/repositories/bootstrap.py`
 
 ```python
 from agent_trading.repositories.memory import (
     ...
-    InMemoryAgentRunRepository,   # 추가
+    InMemoryAgentRunRepository,   # import 추가
 )
 
 def build_in_memory_repositories() -> RepositoryContainer:
     return RepositoryContainer(
-        ...
+        unit_of_work=InMemoryUnitOfWork(),
         agent_runs=InMemoryAgentRunRepository(),  # 추가
+        clients=InMemoryClientRepository(),
         ...
     )
 ```
 
-**파일 수정 2**: `repositories/postgres/bootstrap.py`
+**파일 수정 2**: `src/agent_trading/repositories/postgres/bootstrap.py`
+
+wiring 책임만 — SQL 디테일은 `postgres/agent_runs.py`에 위임.
 
 ```python
 from agent_trading.repositories.postgres.agent_runs import (
-    PostgresAgentRunRepository,  # 추가
+    PostgresAgentRunRepository,  # import 추가
 )
 
 def build_postgres_repositories(tx: TransactionManager) -> RepositoryContainer:
     return RepositoryContainer(
-        ...
+        unit_of_work=PostgresUnitOfWork(tx),
         agent_runs=PostgresAgentRunRepository(tx),  # 추가
+        clients=PostgresClientRepository(tx),
         ...
     )
 ```
@@ -271,36 +299,24 @@ def build_postgres_repositories(tx: TransactionManager) -> RepositoryContainer:
 
 ### Step 6: `AgentRunRecorder` repository-backed 전환
 
-**파일**: `services/ai_agents/recorder.py`
+**파일**: `src/agent_trading/services/ai_agents/recorder.py`
 
 **변경 사항**:
 
-1. **생성자 변경**: `AgentRunRepository`를 받도록
+1. **생성자 변경**: `AgentRunRepository`를 필수로 받도록
    - `def __init__(self, repo: AgentRunRepository, max_runs: int = 0) -> None:`
    - `self._repo = repo` 저장
-   - 기존 `self._runs: list[AgentRunEntity]`는 유지 (clear()용 + fallback)
+   - 기존 `self._runs: list[AgentRunEntity]`는 유지 (fallback buffer + clear()용)
 
 2. **`record()` 수정**: 
-   - 기존 비즈니스 로직(agent_name 정합성, decision_context_id payload/storage 분리) **전부 유지**
-   - `self._runs.append(run)` → `self._repo.add(run)`으로 영속화
+   - 기존 비즈니스 로직 **전부 유지** (agent_name 정합성 체크, decision_context_id payload/storage 분리)
+   - `self._runs.append(run)` 후 `self._repo.add(run)` 호출
+   - **`agent_run_id`는 recorder가 생성**, repository는 전달받은 entity를 저장만 함
 
-3. **`list_by_decision_context()` → async 변환**:
-   ```python
-   async def list_by_decision_context(
-       self, decision_context_id: UUID
-   ) -> Sequence[AgentRunEntity]:
-       return await self._repo.list_by_decision_context(decision_context_id)
-   ```
+3. **`list_by_decision_context()` sync → async 변환**
+4. **`list_all()` sync → async 변환** (기존 arg 없는 signature → `limit: int = 100`)
 
-4. **`list_all()` → async 변환**:
-   ```python
-   async def list_all(self, limit: int = 100) -> Sequence[AgentRunEntity]:
-       return await self._repo.list_all(limit=limit)
-   ```
-
-5. **`clear()` 유지**: 테스트 호환성을 위해 유지, repository clear도 호출
-
-**변경 예시**:
+5. **`clear()` 유지** — 내부 buffer만 clear
 
 ```python
 from collections.abc import Sequence
@@ -319,7 +335,7 @@ class AgentRunRecorder:
         self._runs: list[AgentRunEntity] = []  # fallback buffer
 
     async def record(self, ...) -> AgentRunEntity:
-        # ... 기존 비즈니스 로직 유지 ...
+        # ... 기존 비즈니스 로직 그대로 유지 ...
         run = AgentRunEntity(...)
         
         self._runs.append(run)
@@ -342,14 +358,21 @@ class AgentRunRecorder:
         self._runs.clear()
 ```
 
-**후방 호환성**: `_run_agents()`에서 `record()` 호출은 이미 `await` 사용 중이므로 수정 불필요.  
-단, `DecisionOrchestratorService.__init__`의 `agent_recorder or AgentRunRecorder()` 기본값이 깨짐 → Step 7에서 처리.
+**영향 파일 (await 추가 필요)**:
+
+| 파일 | 변경 내용 |
+|------|----------|
+| `tests/services/ai_agents/test_orchestrator_agents.py` | 13곳 `list_all()` → `await list_all()` |
+| `tests/services/test_decision_orchestrator.py` | 4곳 `list_all()` → `await list_all()` |
+| `tests/smoke/test_runtime_event_interpretation_smoke.py` | 2곳 `list_all()` → `await list_all()` |
+| `tests/smoke/test_runtime_three_agent_smoke.py` | 4곳 `list_all()` → `await list_all()` |
+| `tests/integration/test_long_path_e2e.py` | 1곳 `list_all()` → `await list_all()` |
 
 ---
 
 ### Step 7: Runtime bootstrap wiring
 
-**파일**: `runtime/bootstrap.py`
+**파일**: `src/agent_trading/runtime/bootstrap.py`
 
 **`_build_orchestrator()` 변경**:
 
@@ -411,6 +434,8 @@ class AgentRunResponse(BaseModel):
 
 **파일**: `src/agent_trading/api/routes/agent_runs.py` (신규)
 
+`decisions.py` 패턴을 따라 구현.
+
 ```python
 from __future__ import annotations
 
@@ -465,10 +490,6 @@ async def list_agent_runs(
     ]
 ```
 
-**설계**: `trade_decisions.py` 패턴과 동일.  
-`?decision_context_id=` 필터 → 단일 context의 모든 run 조회.  
-`?limit=` 파라미터로 최대 결과 제한 (기본 100).
-
 ---
 
 ### Step 10: `app.py` — agent_runs_router 등록
@@ -480,7 +501,10 @@ async def list_agent_runs(
 from agent_trading.api.routes.agent_runs import router as agent_runs_router  # 추가
 
 protected_routers = [
-    ...
+    orders_router,
+    audit_logs_router,
+    reconciliation_router,
+    decisions_router,
     agent_runs_router,  # 추가
 ]
 ```
@@ -494,7 +518,7 @@ protected_routers = [
 **파일**: `tests/repositories/test_postgres_agent_runs.py` (신규)
 
 `test_postgres_trade_decisions.py` 패턴 참조:
-- `seeded_agent_run` fixture (decision_context_id 참조)
+- `seeded_decision_context` fixture 재사용
 - `test_add_agent_run` — full entity INSERT 및 RETURNING 검증
 - `test_list_by_decision_context` — context별 조회
 - `test_list_all` — 전체 조회 + limit
@@ -512,40 +536,90 @@ protected_routers = [
 
 #### 11.3 API conftest 수정
 
-**파일**: `tests/api/conftest.py`
+**파일**: `tests/api/conftest.py` — **이 파일만** 수정
+
 - `agent_run_id` fixture 추가
+- `decision_context_id` fixture 재사용
 - `seeded_repos`에 `AgentRunEntity` 시드 추가 (decision_context_id 참조)
+
+#### 11.4 Orchestrator assemble() persisted 검증
+
+**파일**: `tests/services/test_decision_orchestrator.py`
+
+기존 `test_assemble_with_ai_agents_runs_recorder` 테스트를 확장하여  
+`assemble()` 1회 → EI/AR/FDC 3건이 **persisted**되었는지 검증:
+- `service._agent_recorder.list_all()` 호출 후 `len(runs) == 3` 확인
+- 각 run의 `agent_type` 확인 (`event_interpretation`, `ai_risk`, `final_decision`)
+- `structured_output_json`이 None이 아닌지 확인
+
+#### 11.5 기존 test 파일 await 추가
+
+다음 5개 파일의 `list_all()` 호출 24곳에 `await` 추가:
+
+| 파일 | 변경 수량 |
+|------|----------|
+| `tests/services/ai_agents/test_orchestrator_agents.py` | 13곳 |
+| `tests/services/test_decision_orchestrator.py` | 4곳 |
+| `tests/smoke/test_runtime_event_interpretation_smoke.py` | 2곳 |
+| `tests/smoke/test_runtime_three_agent_smoke.py` | 4곳 |
+| `tests/integration/test_long_path_e2e.py` | 1곳 |
 
 ---
 
 ### Step 12: 최종 검증
 
-1. **`pytest tests/`** 실행 — 기존 테스트가 깨지지 않는지 확인
-2. **`pytest tests/repositories/test_postgres_agent_runs.py`** — 신규 Postgres repository 테스트
-3. **`pytest tests/api/test_inspection.py::TestAgentRuns`** — API inspection 테스트
-4. **수동 검증**: `GET /agent-runs` 호출하여 JSON 응답 구조 확인
+1. **`pytest tests/ -x`** 실행 — 기존 테스트가 깨지지 않는지 확인
+2. **`pytest tests/repositories/test_postgres_agent_runs.py -x`** — 신규 Postgres repository 테스트
+3. **`pytest tests/api/test_inspection.py::TestAgentRuns -x`** — API inspection 테스트
+4. **`pytest tests/services/test_decision_orchestrator.py -x`** — orchestrator assemble persisted 검증
 
-## 변경 파일 요약
+## 최종 변경 파일 목록
 
-| 파일 | 변경 유형 | 설명 |
-|------|----------|------|
-| `repositories/contracts.py` | 수정 | `AgentRunRepository` protocol 추가 |
-| `repositories/memory.py` | 수정 | `InMemoryAgentRunRepository` 클래스 추가 |
-| `repositories/postgres/agent_runs.py` | **신규** | `PostgresAgentRunRepository` |
-| `repositories/container.py` | 수정 | `agent_runs: AgentRunRepository` 필드 추가 |
-| `repositories/bootstrap.py` | 수정 | `InMemoryAgentRunRepository()` wiring |
-| `repositories/postgres/bootstrap.py` | 수정 | `PostgresAgentRunRepository(tx)` wiring |
-| `services/ai_agents/recorder.py` | 수정 | repository-backed, query async화 |
-| `runtime/bootstrap.py` | 수정 | `AgentRunRecorder(repo=repos.agent_runs)` 주입 |
-| `api/schemas.py` | 수정 | `AgentRunResponse` Pydantic 모델 추가 |
-| `api/routes/agent_runs.py` | **신규** | `GET /agent-runs` endpoint |
-| `api/app.py` | 수정 | agent_runs_router 등록 |
-| `tests/repositories/test_postgres_agent_runs.py` | **신규** | Postgres repository test |
-| `tests/api/conftest.py` | 수정 | `AgentRunEntity` 시드 추가 |
-| `tests/api/test_inspection.py` | 수정 | `TestAgentRuns` 클래스 추가 |
+| # | 파일 | 변경 유형 | 설명 |
+|---|------|----------|------|
+| 1 | `repositories/contracts.py` | 수정 | `AgentRunRepository` protocol 추가 |
+| 2 | `repositories/memory.py` | 수정 | `InMemoryAgentRunRepository` 클래스 추가 |
+| 3 | `repositories/postgres/agent_runs.py` | **신규** | `PostgresAgentRunRepository` — explicit SQL |
+| 4 | `repositories/container.py` | 수정 | `agent_runs: AgentRunRepository` 필드 추가 |
+| 5 | `repositories/bootstrap.py` | 수정 | `InMemoryAgentRunRepository()` wiring |
+| 6 | `repositories/postgres/bootstrap.py` | 수정 | `PostgresAgentRunRepository(tx)` wiring (wiring만) |
+| 7 | `services/ai_agents/recorder.py` | 수정 | repository-backed, query async화 |
+| 8 | `runtime/bootstrap.py` | 수정 | `AgentRunRecorder(repo=repos.agent_runs)` 주입 |
+| 9 | `api/schemas.py` | 수정 | `AgentRunResponse` Pydantic 모델 추가 |
+| 10 | `api/routes/agent_runs.py` | **신규** | `GET /agent-runs` endpoint |
+| 11 | `api/app.py` | 수정 | agent_runs_router 등록 |
+| 12 | `tests/repositories/test_postgres_agent_runs.py` | **신규** | Postgres repository test |
+| 13 | `tests/api/conftest.py` | 수정 | `AgentRunEntity` 시드 추가 |
+| 14 | `tests/api/test_inspection.py` | 수정 | `TestAgentRuns` 클래스 추가 |
+| 15 | `tests/services/test_decision_orchestrator.py` | 수정 | assemble persisted 검증 + await 추가 |
+| 16 | `tests/services/ai_agents/test_orchestrator_agents.py` | 수정 | 13곳 `await` 추가 |
+| 17 | `tests/smoke/test_runtime_event_interpretation_smoke.py` | 수정 | 2곳 `await` 추가 |
+| 18 | `tests/smoke/test_runtime_three_agent_smoke.py` | 수정 | 4곳 `await` 추가 |
+| 19 | `tests/integration/test_long_path_e2e.py` | 수정 | 1곳 `await` 추가 |
+
+## 구현 순서
+
+```mermaid
+flowchart TD
+    S1[Step 1: contracts.py<br/>AgentRunRepository protocol] --> S2[Step 2: memory.py<br/>InMemoryAgentRunRepository]
+    S2 --> S3[Step 3: postgres/agent_runs.py 신규<br/>PostgresAgentRunRepository]
+    S3 --> S4[Step 4: container.py<br/>RepositoryContainer 필드 추가]
+    S4 --> S5a[bootstrap.py<br/>InMemory wiring]
+    S4 --> S5b[postgres/bootstrap.py<br/>Postgres wiring]
+    S5a --> S6[Step 6: recorder.py<br/>repository-backed + async query]
+    S5b --> S6
+    S6 --> S7[Step 7: runtime/bootstrap.py<br/>agent_recorder 주입]
+    S7 --> S8[Step 8: api/schemas.py<br/>AgentRunResponse]
+    S8 --> S9[Step 9: api/routes/agent_runs.py 신규<br/>GET /agent-runs]
+    S9 --> S10[Step 10: app.py<br/>router 등록]
+    S10 --> S11[Step 11: Tests]
+    S11 --> S12[Step 12: 검증]
+```
 
 ## 제외된 변경
 
 - **`decision_orchestrator.py`의 `_run_agents()`** — 내부 `record()` 호출은 이미 async이며, 수정 불필요
 - **`DecisionOrchestratorService.__init__`** — `agent_recorder` DI signature는 유지, 기본값만 삭제
 - **기존 `AgentRunRecorder`의 `record()` 비즈니스 로직** — agent_name 정합성 체크, decision_context_id payload/storage 분리 → 그대로 유지
+- **`GET /agent-runs/{id}`** — 이번 턴에서 제외
+- **`OrderManager`**, **`ReconciliationService`**, **`BrokerAdapter`**, **`admin_ui`** — 절대 수정 금지

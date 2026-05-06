@@ -131,7 +131,7 @@ class TestRuntimeEventInterpretationFallback:
         assert isinstance(intent, OrderIntent)
 
         # Recorder should have 3 stub agent runs
-        runs = orchestrator._agent_recorder.list_all()
+        runs = await orchestrator._agent_recorder.list_all()
         assert len(runs) == 3, f"Expected 3 runs, got {len(runs)}"
         agent_types = {r.agent_type for r in runs}
         assert agent_types == {
@@ -389,7 +389,7 @@ class TestRuntimeEventInterpretationSmoke:
         assert isinstance(intent, OrderIntent)
 
         # --- Recorder verification ---
-        runs = orchestrator._agent_recorder.list_all()
+        runs = await orchestrator._agent_recorder.list_all()
         assert len(runs) == 3, f"Expected 3 runs, got {len(runs)}"
 
         # EI run (index 0): real provider call

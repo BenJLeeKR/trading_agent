@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from agent_trading.repositories.base import UnitOfWork
 from agent_trading.repositories.contracts import (
     AccountRepository,
+    AgentRunRepository,
     AuditLogRepository,
     BrokerAccountRepository,
     BrokerOrderRepository,
@@ -29,6 +30,7 @@ from agent_trading.repositories.contracts import (
 @dataclass(slots=True, frozen=True)
 class RepositoryContainer:
     unit_of_work: UnitOfWork
+    agent_runs: AgentRunRepository
     clients: ClientRepository
     accounts: AccountRepository
     strategies: StrategyRepository

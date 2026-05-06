@@ -23,6 +23,7 @@ from agent_trading.services.ai_agents import (
     FinalDecisionComposerAgent,
     OpenAICompatibleClient,
 )
+from agent_trading.services.ai_agents.recorder import AgentRunRecorder
 from agent_trading.services.decision_orchestrator import (
     DecisionOrchestratorService,
 )
@@ -231,6 +232,7 @@ def _build_orchestrator(
         event_interpretation_agent=event_interpretation_agent,
         ai_risk_agent=ai_risk_agent,
         final_decision_agent=final_decision_agent,
+        agent_recorder=AgentRunRecorder(repo=repos.agent_runs),
     )
 
 

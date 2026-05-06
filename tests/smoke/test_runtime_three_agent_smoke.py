@@ -156,22 +156,25 @@ class TestRuntimeThreeAgentFallback:
         assert isinstance(intent, OrderIntent)
 
         # Recorder: 3 runs — each with structured_output_json
-        runs = orchestrator._agent_recorder.list_all()
+        # NOTE: list_all() returns runs ordered by started_at DESC (contract),
+        # so we lookup by agent_type rather than assuming insertion order.
+        runs = await orchestrator._agent_recorder.list_all()
         assert len(runs) == 3
-        for i, expected_agent in enumerate(
-            ["event_interpretation", "ai_risk", "final_decision_composer"]
+        runs_by_type = {r.agent_type: r for r in runs}
+        for expected_agent in (
+            "event_interpretation", "ai_risk", "final_decision_composer"
         ):
-            run = runs[i]
-            assert run.agent_type == expected_agent, (
-                f"Run {i}: expected agent_type={expected_agent!r}, "
-                f"got {run.agent_type!r}"
+            run = runs_by_type.get(expected_agent)
+            assert run is not None, (
+                f"Missing run for agent_type={expected_agent!r}; "
+                f"got types: {list(runs_by_type)}"
             )
             assert run.structured_output_json is not None, (
-                f"Run {i}: structured_output_json is None"
+                f"Run agent_type={expected_agent!r}: structured_output_json is None"
             )
             assert (
                 run.structured_output_json.get("schema_version") == "v1"
-            ), f"Run {i}: schema_version mismatch"
+            ), f"Run agent_type={expected_agent!r}: schema_version mismatch"
 
         # AIDecisionInputs: safe-fallback defaults for decision values,
         # but agent_name / schema_version metadata is populated by stub
@@ -259,7 +262,7 @@ class TestRuntimeThreeAgentSmoke:
 
         # Recorder: 3 runs, all real agent_type
         orchestrator: DecisionOrchestratorService = runtime["orchestrator"]  # type: ignore[assignment]
-        runs = orchestrator._agent_recorder.list_all()
+        runs = await orchestrator._agent_recorder.list_all()
         assert len(runs) == 3
 
         for i, expected_agent in enumerate(
@@ -423,7 +426,7 @@ class TestRuntimeThreeAgentPartialChain:
         # (both return "ai_risk", "final_decision_composer").
         # The stub/real distinction is in the injection path, not the
         # agent_type string.
-        runs = orchestrator._agent_recorder.list_all()
+        runs = await orchestrator._agent_recorder.list_all()
         assert len(runs) == 3
         assert runs[0].agent_type == "event_interpretation"  # real
         assert runs[1].agent_type == "ai_risk"                # stub (same agent_type as real)
@@ -472,7 +475,7 @@ class TestRuntimeThreeAgentPartialChain:
         # NOTE: Stub FDC uses the same agent_type as real FDC
         # ("final_decision_composer").  The stub/real distinction is
         # in the injection path, not the agent_type string.
-        runs = orchestrator._agent_recorder.list_all()
+        runs = await orchestrator._agent_recorder.list_all()
         assert len(runs) == 3
         assert runs[0].agent_type == "event_interpretation"   # real
         assert runs[1].agent_type == "ai_risk"                 # real

@@ -8,6 +8,7 @@ from uuid import UUID
 
 from agent_trading.domain.entities import (
     AccountEntity,
+    AgentRunEntity,
     AuditLogEntity,
     BlockingLockEntity,
     BrokerAccountEntity,
@@ -762,3 +763,31 @@ class InMemoryExternalEventRepository:
         ]
         results.sort(key=lambda item: item.published_at, reverse=True)
         return tuple(results)
+
+
+class InMemoryAgentRunRepository:
+    """In-memory implementation of ``AgentRunRepository``."""
+
+    def __init__(self) -> None:
+        self._runs: list[AgentRunEntity] = []
+
+    async def add(self, run: AgentRunEntity) -> AgentRunEntity:
+        self._runs.append(run)
+        return run
+
+    async def list_by_decision_context(
+        self, decision_context_id: UUID
+    ) -> Sequence[AgentRunEntity]:
+        results = [
+            r for r in self._runs
+            if r.decision_context_id == decision_context_id
+        ]
+        results.sort(key=lambda r: r.started_at, reverse=True)
+        return tuple(results)
+
+    async def list_all(self, limit: int = 100) -> Sequence[AgentRunEntity]:
+        results = sorted(self._runs, key=lambda r: r.started_at, reverse=True)
+        return tuple(results[:limit])
+
+    async def clear(self) -> None:
+        self._runs.clear()

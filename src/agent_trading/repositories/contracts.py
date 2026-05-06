@@ -6,6 +6,7 @@ from uuid import UUID
 
 from agent_trading.domain.entities import (
     AccountEntity,
+    AgentRunEntity,
     AuditLogEntity,
     BlockingLockEntity,
     BrokerAccountEntity,
@@ -366,4 +367,22 @@ class ExternalEventRepository(Protocol):
     async def list_by_type(
         self, event_type: str, since: datetime
     ) -> Sequence[ExternalEventEntity]:
+        ...
+
+
+class AgentRunRepository(Protocol):
+    """Store for AI Agent execution run records."""
+
+    async def add(self, run: AgentRunEntity) -> AgentRunEntity:
+        """Persist a new agent run and return it with server defaults."""
+        ...
+
+    async def list_by_decision_context(
+        self, decision_context_id: UUID
+    ) -> Sequence[AgentRunEntity]:
+        """Return all runs for a decision context, ordered by started_at DESC."""
+        ...
+
+    async def list_all(self, limit: int = 100) -> Sequence[AgentRunEntity]:
+        """Return recent runs ordered by started_at DESC."""
         ...

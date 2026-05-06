@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from agent_trading.api.app import create_app
 from agent_trading.domain.entities import (
     AccountEntity,
+    AgentRunEntity,
     AuditLogEntity,
     BrokerOrderEntity,
     CashBalanceSnapshotEntity,
@@ -303,6 +304,27 @@ async def seeded_repos(
             created_at=datetime.now(timezone.utc),
         )
     )
+
+    # Seed: agent runs (3 runs for the decision context)
+    # Use distinct started_at values so ordering tests can verify DESC contract.
+    now = datetime.now(timezone.utc)
+    agent_run_seeds = [
+        ("event_interpretation", now - timedelta(seconds=2)),
+        ("ai_risk", now - timedelta(seconds=1)),
+        ("final_decision_composer", now),
+    ]
+    for agent_type, started_at in agent_run_seeds:
+        await repos.agent_runs.add(
+            AgentRunEntity(
+                agent_run_id=uuid4(),
+                decision_context_id=decision_context_id,
+                agent_type=agent_type,
+                started_at=started_at,
+                status="completed",
+                completed_at=started_at,
+                created_at=started_at,
+            )
+        )
 
     return repos
 

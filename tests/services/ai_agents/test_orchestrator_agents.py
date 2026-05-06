@@ -77,6 +77,7 @@ def repos() -> RepositoryContainer:
     """Return an empty in-memory repository container."""
     from agent_trading.repositories.memory import (
         InMemoryAccountRepository,
+        InMemoryAgentRunRepository,
         InMemoryBrokerAccountRepository,
         InMemoryCashBalanceSnapshotRepository,
         InMemoryClientRepository,
@@ -119,6 +120,7 @@ def repos() -> RepositoryContainer:
         guardrail_evaluations=InMemoryGuardrailEvaluationRepository(),
         risk_limit_snapshots=InMemoryRiskLimitSnapshotRepository(),
         external_events=InMemoryExternalEventRepository(),
+        agent_runs=InMemoryAgentRunRepository(),
     )
 
 
@@ -230,7 +232,7 @@ class TestAgentInjection:
         assert isinstance(intent, OrderIntent)
 
         # Recorder should have 3 runs (one per agent)
-        runs = service._agent_recorder.list_all()
+        runs = await service._agent_recorder.list_all()
         assert len(runs) == 3
         agent_types = {r.agent_type for r in runs}
         assert agent_types == {
@@ -276,7 +278,7 @@ class TestAgentInjection:
         assert mock_fdc.run.call_count == 1
 
         # Recorder should have 3 runs
-        assert len(recorder.list_all()) == 3
+        assert len(await recorder.list_all()) == 3
 
     @pytest.mark.asyncio
     async def test_agents_called_in_correct_order(
@@ -351,7 +353,7 @@ class TestAgentSafeFallback:
         assert isinstance(intent, OrderIntent)
 
         # Recorder should still have 3 runs (failing agent recorded with default output)
-        runs = orchestrator._agent_recorder.list_all()
+        runs = await orchestrator._agent_recorder.list_all()
         assert len(runs) == 3
 
     @pytest.mark.asyncio
@@ -443,7 +445,7 @@ class TestSchemaAlignment:
     ) -> None:
         """Each run's structured_output_json contains agent_name matching agent_type."""
         await service.assemble(sample_request)
-        for run in service._agent_recorder.list_all():
+        for run in await service._agent_recorder.list_all():
             assert run.structured_output_json is not None
             stored_name = run.structured_output_json.get("agent_name")
             assert stored_name == run.agent_type, (
@@ -456,7 +458,7 @@ class TestSchemaAlignment:
     ) -> None:
         """When no decision_context_id is provided, payload is null (entity may have synthetic UUID)."""
         await service.assemble(sample_request)
-        for run in service._agent_recorder.list_all():
+        for run in await service._agent_recorder.list_all():
             assert run.structured_output_json is not None
             stored_ctx = run.structured_output_json.get("decision_context_id")
             assert stored_ctx is None, (
@@ -471,7 +473,7 @@ class TestSchemaAlignment:
         """When decision_context_id is provided, payload matches the explicit ID."""
         ctx_id = uuid4()
         await service.assemble(sample_request, decision_context_id=ctx_id)
-        for run in service._agent_recorder.list_all():
+        for run in await service._agent_recorder.list_all():
             assert run.structured_output_json is not None
             stored_ctx = run.structured_output_json.get("decision_context_id")
             assert stored_ctx == str(ctx_id), (
@@ -489,7 +491,7 @@ class TestSchemaAlignment:
     ) -> None:
         """Each run's structured_output_json has schema_version 'v1'."""
         await service.assemble(sample_request)
-        for run in service._agent_recorder.list_all():
+        for run in await service._agent_recorder.list_all():
             assert run.structured_output_json is not None
             assert run.structured_output_json.get("schema_version") == "v1"
 
@@ -526,7 +528,7 @@ class TestRealAgentsIntegration:
         assert isinstance(intent, OrderIntent)
 
         # Recorder should have 3 runs
-        runs = recorder.list_all()
+        runs = await recorder.list_all()
         assert len(runs) == 3
 
         # Agent types should include real EI and real AR
@@ -578,7 +580,7 @@ class TestRealAgentsIntegration:
 
         await orchestrator.assemble(sample_request, decision_context_id=ctx_id)
 
-        runs = recorder.list_all()
+        runs = await recorder.list_all()
         # Both real agent runs should have decision_context_id
         for run in runs:
             assert run.decision_context_id == ctx_id
@@ -664,7 +666,7 @@ class TestRealAgentsIntegration:
         assert isinstance(intent, OrderIntent)
 
         # Recorder should have 3 runs
-        runs = recorder.list_all()
+        runs = await recorder.list_all()
         assert len(runs) == 3
 
         # Agent types should include all three real agents
@@ -874,7 +876,7 @@ class TestExistingBehaviourPreserved:
         )
         assert intent.decision_context_id == ctx_id
         # Recorder should have 3 runs
-        assert len(service._agent_recorder.list_all()) == 3
+        assert len(await service._agent_recorder.list_all()) == 3
 
     @pytest.mark.asyncio
     async def test_recorder_accessible_after_assemble(
@@ -882,7 +884,7 @@ class TestExistingBehaviourPreserved:
     ) -> None:
         """Recorder is accessible and contains runs after assemble()."""
         await service.assemble(sample_request)
-        runs = service._agent_recorder.list_all()
+        runs = await service._agent_recorder.list_all()
         assert len(runs) == 3
         # Each run should have structured_output_json
         for run in runs:

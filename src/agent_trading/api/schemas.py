@@ -264,3 +264,26 @@ class BrokerOrderView(BaseModel):
     last_synced_at: datetime | None = None
     created_at: datetime
     updated_at: datetime | None = None
+
+
+class AgentRunResponse(BaseModel):
+    """``GET /agent-runs`` — AI Agent execution run record.
+
+    Inspection‑friendly subset of ``AgentRunEntity`` fields.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    agent_run_id: UUID
+    decision_context_id: UUID
+    agent_type: str
+    started_at: datetime
+    model_id: UUID | None = None
+    prompt_id: UUID | None = None
+    temperature: float | None = None
+    seed: int | None = None
+    raw_output_uri: str | None = None
+    structured_output_json: dict[str, object] | None = None
+    status: str = "completed"
+    completed_at: datetime | None = None
+    created_at: datetime | None = None

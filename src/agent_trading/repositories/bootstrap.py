@@ -3,6 +3,7 @@ from __future__ import annotations
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.memory import (
     InMemoryAccountRepository,
+    InMemoryAgentRunRepository,
     InMemoryAuditLogRepository,
     InMemoryBrokerAccountRepository,
     InMemoryBrokerOrderRepository,
@@ -28,6 +29,7 @@ from agent_trading.repositories.memory import (
 def build_in_memory_repositories() -> RepositoryContainer:
     return RepositoryContainer(
         unit_of_work=InMemoryUnitOfWork(),
+        agent_runs=InMemoryAgentRunRepository(),
         clients=InMemoryClientRepository(),
         accounts=InMemoryAccountRepository(),
         strategies=InMemoryStrategyRepository(),

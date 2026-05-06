@@ -22,21 +22,34 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from agent_trading.domain.entities import AgentRunEntity
+from agent_trading.repositories.contracts import AgentRunRepository
 
 logger = logging.getLogger(__name__)
 
 
 class AgentRunRecorder:
-    """In-memory stub for recording AI Agent execution runs.
+    """Record AI Agent execution runs, backed by a repository.
+
+    When a ``repo`` is provided, ``record()`` persists the run via the
+    repository.  Query methods (``list_all``, ``list_by_decision_context``)
+    delegate to the repository when available.
 
     Parameters
     ----------
+    repo
+        Optional repository for persistence.  When ``None``, runs are
+        kept only in an internal in-memory list (stub behaviour).
     max_runs
-        Maximum number of runs to keep in memory.  When the limit is
-        reached, the oldest runs are evicted.  ``0`` means unlimited.
+        Maximum number of runs to keep in the in-memory buffer.
+        ``0`` means unlimited.
     """
 
-    def __init__(self, max_runs: int = 0) -> None:
+    def __init__(
+        self,
+        repo: AgentRunRepository | None = None,
+        max_runs: int = 0,
+    ) -> None:
+        self._repo = repo
         self._max_runs = max_runs
         self._runs: list[AgentRunEntity] = []
 
@@ -73,8 +86,8 @@ class AgentRunRecorder:
         Returns
         -------
         AgentRunEntity
-            The newly created entity (already appended to the internal
-            list).
+            The newly created entity (persisted via the repository when
+            available, otherwise appended to the internal list).
         """
         now = datetime.now(timezone.utc)
 
@@ -150,6 +163,12 @@ class AgentRunRecorder:
 
         self._runs.append(run)
 
+        # Persist via repository when available
+        if self._repo is not None:
+            persisted = await self._repo.add(run)
+        else:
+            persisted = run
+
         # Evict oldest runs when over limit
         if self._max_runs > 0 and len(self._runs) > self._max_runs:
             self._runs = self._runs[-self._max_runs :]
@@ -160,21 +179,25 @@ class AgentRunRecorder:
             decision_context_id,
             run.agent_run_id,
         )
-        return run
+        return persisted
 
-    def list_by_decision_context(
+    async def list_by_decision_context(
         self, decision_context_id: UUID
     ) -> Sequence[AgentRunEntity]:
         """Return all runs for a given decision context, ordered by start time."""
+        if self._repo is not None:
+            return await self._repo.list_by_decision_context(decision_context_id)
         return tuple(
             r
             for r in self._runs
             if r.decision_context_id == decision_context_id
         )
 
-    def list_all(self) -> Sequence[AgentRunEntity]:
+    async def list_all(self, limit: int = 100) -> Sequence[AgentRunEntity]:
         """Return all recorded runs (ordered by insertion)."""
-        return tuple(self._runs)
+        if self._repo is not None:
+            return await self._repo.list_all(limit=limit)
+        return tuple(self._runs[-limit:])
 
     def clear(self) -> None:
         """Remove all recorded runs (useful in tests)."""

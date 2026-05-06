@@ -5,6 +5,7 @@ from __future__ import annotations
 from agent_trading.db.transaction import TransactionManager
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.postgres.accounts import PostgresAccountRepository
+from agent_trading.repositories.postgres.agent_runs import PostgresAgentRunRepository
 from agent_trading.repositories.postgres.audit_logs import PostgresAuditLogRepository
 from agent_trading.repositories.postgres.broker_accounts import (
     PostgresBrokerAccountRepository,
@@ -82,6 +83,7 @@ def build_postgres_repositories(
     """
     return RepositoryContainer(
         unit_of_work=PostgresUnitOfWork(tx),
+        agent_runs=PostgresAgentRunRepository(tx),
         clients=PostgresClientRepository(tx),
         accounts=PostgresAccountRepository(tx),
         strategies=PostgresStrategyRepository(tx),

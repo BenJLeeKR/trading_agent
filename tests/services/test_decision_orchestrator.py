@@ -901,7 +901,7 @@ class TestAssembleAndCreateOrderFullFlow:
         )
 
         assert intent.ai_backend_inputs is not None
-        runs = service._agent_recorder.list_all()
+        runs = await service._agent_recorder.list_all()
         assert len(runs) == 3, (
             f"Expected 3 agent runs (EI, AR, FDC), got {len(runs)}"
         )
@@ -942,7 +942,7 @@ class TestAssembleAndCreateOrderFullFlow:
         assert create_entries[0].target_entity_id == str(created.order_request_id)
 
         # ── Step 4: AI recorder + order audit path coexist (both populated) ──
-        assert len(service._agent_recorder.list_all()) == 3  # unchanged
+        assert len(await service._agent_recorder.list_all()) == 3  # unchanged
         assert len(audit_logs) >= 1  # at least order.create
         # The recorder and audit log are independent storage backends
-        assert service._agent_recorder.list_all() is not audit_logs
+        assert await service._agent_recorder.list_all() is not audit_logs
