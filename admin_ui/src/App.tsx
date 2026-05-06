@@ -1,5 +1,5 @@
-import { HashRouter, Routes, Route } from "react-router-dom";
-import { AuthProvider } from "./context/AuthContext";
+import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
+import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Layout } from "./components/Layout";
 import { LoginForm } from "./components/LoginForm";
 import { ProtectedRoute } from "./components/ProtectedRoute";
@@ -10,13 +10,29 @@ import ReconciliationView from "./components/ReconciliationView";
 import AccountsView from "./components/AccountsView";
 import DecisionsView from "./components/DecisionsView";
 
+/** Redirect to "/" if already authenticated (reverse of ProtectedRoute). */
+function PublicRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated } = useAuth();
+  if (isAuthenticated) {
+    return <Navigate to="/" replace />;
+  }
+  return <>{children}</>;
+}
+
 export default function App() {
   return (
     <HashRouter>
       <AuthProvider>
         <Routes>
-          {/* Login — no layout */}
-          <Route path="/login" element={<LoginForm />} />
+          {/* Login — no layout; redirect to dashboard if already authenticated */}
+          <Route
+            path="/login"
+            element={
+              <PublicRoute>
+                <LoginForm />
+              </PublicRoute>
+            }
+          />
 
           {/* Protected routes — with sidebar layout */}
           <Route

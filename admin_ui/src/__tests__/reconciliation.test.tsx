@@ -32,9 +32,9 @@ describe("ReconciliationView loading state", () => {
 });
 
 /* ───────────────────────────────────────────
- * Scenario 2: Runs 탭 렌더
+ * Scenario 2: Runs 테이블 렌더 (side-by-side layout)
  * ─────────────────────────────────────────── */
-describe("ReconciliationView runs tab", () => {
+describe("ReconciliationView runs table", () => {
   it("renders reconciliation runs table with status badge", async () => {
     // GET /orders → GET /accounts?client_id=... → GET /reconciliation/runs + /reconciliation/locks
     mockFetchOnce(mockOrders);
@@ -48,9 +48,10 @@ describe("ReconciliationView runs tab", () => {
       expect(screen.getByText("Reconciliation")).toBeInTheDocument();
     });
 
-    // Runs tab is active by default
-    expect(screen.getByText("Started")).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Completed" })).toBeInTheDocument();
+    // Template columns: Run ID, Date, Time, Status, Order Mismatches, Position Mismatches
+    expect(screen.getByRole("columnheader", { name: "Run ID" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Date" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Time" })).toBeInTheDocument();
     expect(screen.getByText("Order Mismatches")).toBeInTheDocument();
     expect(screen.getByText("Position Mismatches")).toBeInTheDocument();
 
@@ -98,12 +99,10 @@ describe("ReconciliationView run status filter", () => {
 });
 
 /* ───────────────────────────────────────────
- * Scenario 4: Locks 탭 전환
+ * Scenario 4: Lock 카드 표시 (side-by-side layout)
  * ─────────────────────────────────────────── */
-describe("ReconciliationView locks tab", () => {
-  it("switches to locks tab and renders lock columns", async () => {
-    const user = userEvent.setup();
-
+describe("ReconciliationView lock cards", () => {
+  it("renders lock cards in the right sidebar", async () => {
     mockFetchOnce(mockOrders);
     mockFetchOnce(mockAccounts);
     mockFetchOnce(mockReconciliationRuns);
@@ -115,44 +114,34 @@ describe("ReconciliationView locks tab", () => {
       expect(screen.getByText("Reconciliation")).toBeInTheDocument();
     });
 
-    // Click Locks tab
-    await user.click(screen.getByRole("tab", { name: /locks/i }));
+    // Blocking Locks panel header should be visible
+    expect(screen.getByText("Blocking Locks")).toBeInTheDocument();
 
-    // Lock columns
-    expect(screen.getByText("Symbol")).toBeInTheDocument();
-    expect(screen.getByText("Type")).toBeInTheDocument();
-    expect(screen.getByText("Strategy")).toBeInTheDocument();
-    expect(screen.getByText("Acquired")).toBeInTheDocument();
-    expect(screen.getByText("Expires")).toBeInTheDocument();
+    // Lock data rendered as cards (combined lock_type — strategy_code text)
+    expect(screen.getByText(/manual.*strat-a/)).toBeInTheDocument();
 
-    // Lock data
-    expect(screen.getByText("manual")).toBeInTheDocument();
-    expect(screen.getByText("strat-a")).toBeInTheDocument();
+    // Active count badge (multiple elements may contain "active" text)
+    expect(screen.getAllByText(/active/).length).toBeGreaterThanOrEqual(1);
   });
 });
 
 /* ───────────────────────────────────────────
- * Scenario 5: Active lock 경고 표시 (강화된 스타일)
+ * Scenario 5: Active lock 경고 표시 (side-by-side layout)
  * ─────────────────────────────────────────── */
 describe("ReconciliationView active lock warning", () => {
   it("shows enhanced warning banner when active (non-expired) locks exist", async () => {
     mockFetchOnce(mockOrders);
     mockFetchOnce(mockAccounts);
     mockFetchOnce(mockReconciliationRuns);
-    // mockLocks has is_expired: false → active
     mockFetchOnce(mockLocks);
 
     render(<ReconciliationView />);
 
-    // Switch to locks tab to see the warning
-    const user = userEvent.setup();
     await waitFor(() => {
       expect(screen.getByText("Reconciliation")).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole("tab", { name: /locks/i }));
-
-    // Warning banner should be visible with enhanced text
+    // Warning banner should be visible (no tab switch needed — always visible)
     await waitFor(() => {
       expect(
         screen.getByText(/Active Blocking Lock/i),
@@ -169,8 +158,6 @@ describe("ReconciliationView active lock warning", () => {
  * ─────────────────────────────────────────── */
 describe("ReconciliationView empty locks", () => {
   it("shows no warning and empty message when locks list is empty", async () => {
-    const user = userEvent.setup();
-
     mockFetchOnce(mockOrders);
     mockFetchOnce(mockAccounts);
     mockFetchOnce(mockReconciliationRuns);
@@ -183,14 +170,12 @@ describe("ReconciliationView empty locks", () => {
       expect(screen.getByText("Reconciliation")).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole("tab", { name: /locks/i }));
-
     // No warning banner
     expect(
       screen.queryByText(/Active Blocking Lock/i),
     ).not.toBeInTheDocument();
 
-    // Empty message from DataTable
+    // Empty message from card panel
     expect(
       screen.getByText("No blocking locks found."),
     ).toBeInTheDocument();

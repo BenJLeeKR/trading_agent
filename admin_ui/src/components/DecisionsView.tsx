@@ -122,7 +122,7 @@ export default function DecisionsView() {
     { key: "symbol", label: "Symbol" },
     {
       key: "side",
-      label: "Action",
+      label: "Side",
       render: (r) => {
         const color = r.side.toLowerCase() === "buy" ? "#16a34a" : r.side.toLowerCase() === "sell" ? "#dc2626" : "#6b7280";
         return <span style={{ color, fontWeight: 600 }}>{r.side.toUpperCase()}</span>;
@@ -133,11 +133,15 @@ export default function DecisionsView() {
       label: "Confidence",
       render: (r) => <ConfidenceBar value={r.confidence ?? 0} />,
     },
-    { key: "strategy_id", label: "Strategy" },
+    {
+      key: "rationale_summary",
+      label: "Reasoning",
+      render: (r) => r.rationale_summary || "—",
+    },
     {
       key: "created_at",
-      label: "Time",
-      render: (r) => new Date(r.created_at).toLocaleTimeString(),
+      label: "Timestamp",
+      render: (r) => new Date(r.created_at).toLocaleString(),
     },
   ];
 
@@ -157,19 +161,31 @@ export default function DecisionsView() {
       <div className="split-layout">
         {/* Left: filters + table */}
         <div className="split-main">
-          {/* Filter bar */}
+          {/* Filter bar (matching Orders/Accounts template pattern) */}
           <div className="filter-bar">
-            <div className="input-wrap">
-              <Search size={14} className="input-wrap-icon" />
+            {/* Search — filter-input-wrap with clear button */}
+            <div className="filter-input-wrap">
+              <Search size={12} className="filter-input-icon" />
               <input
                 type="search"
-                placeholder="Search by ticker..."
+                placeholder="Search by ticker…"
                 value={searchText}
                 onChange={(e) => setSearchText(e.target.value)}
+                className="filter-input-flex"
                 aria-label="Search decisions by ticker"
               />
+              {searchText && (
+                <button
+                  onClick={() => setSearchText("")}
+                  className="filter-input-clear"
+                  aria-label="Clear search"
+                >
+                  <X size={11} />
+                </button>
+              )}
             </div>
 
+            {/* Side filter pills — inline filter-group */}
             <div className="filter-group" role="group" aria-label="Side">
               {SIDES.map((s) => (
                 <button
@@ -183,9 +199,18 @@ export default function DecisionsView() {
               ))}
             </div>
 
-            <div className="flex items-center gap-2 ml-auto">
-              <label className="confidence-filter" style={{ fontSize: "0.75rem", color: "#9ca3af" }}>
-                Min
+            {/* Confidence Min/Max — original column style (label above input), side by side in one box */}
+            <div
+              className="flex items-center gap-3 px-2.5 py-1.5 rounded-lg border shrink-0"
+              style={{
+                backgroundColor: "#f9fafb",
+                borderColor: "#e8eaed",
+              }}
+            >
+              <div className="flex flex-col gap-0.5">
+                <span className="text-xs" style={{ color: "#9ca3af", lineHeight: 1.2 }}>
+                  Min
+                </span>
                 <input
                   type="number"
                   min="0"
@@ -194,12 +219,21 @@ export default function DecisionsView() {
                   placeholder="0.0"
                   value={confidenceMin}
                   onChange={(e) => setConfidenceMin(e.target.value)}
+                  className="bg-transparent outline-none border rounded-sm"
+                  style={{
+                    width: 72,
+                    padding: "0.2rem 0.3rem",
+                    fontSize: "0.75rem",
+                    color: "#374151",
+                    borderColor: "var(--border-color)",
+                  }}
                   aria-label="Minimum confidence"
-                  className="confidence-input"
                 />
-              </label>
-              <label className="confidence-filter" style={{ fontSize: "0.75rem", color: "#9ca3af" }}>
-                Max
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <span className="text-xs" style={{ color: "#9ca3af", lineHeight: 1.2 }}>
+                  Max
+                </span>
                 <input
                   type="number"
                   min="0"
@@ -208,10 +242,17 @@ export default function DecisionsView() {
                   placeholder="1.0"
                   value={confidenceMax}
                   onChange={(e) => setConfidenceMax(e.target.value)}
+                  className="bg-transparent outline-none border rounded-sm"
+                  style={{
+                    width: 72,
+                    padding: "0.2rem 0.3rem",
+                    fontSize: "0.75rem",
+                    color: "#374151",
+                    borderColor: "var(--border-color)",
+                  }}
                   aria-label="Maximum confidence"
-                  className="confidence-input"
                 />
-              </label>
+              </div>
             </div>
           </div>
 
@@ -235,7 +276,6 @@ export default function DecisionsView() {
               )}
               selectedKey={selectedDecision?.trade_decision_id ?? null}
               emptyMessage="No trade decisions found."
-              compact
             />
           </div>
         </div>
@@ -322,10 +362,10 @@ export default function DecisionsView() {
               </div>
             </div>
 
-            {/* ── Input Signals card ── */}
+            {/* ── Signals card ── */}
             <div className="card-panel">
               <div className="card-panel-header">
-                <span className="card-panel-title">Input Signals</span>
+                <span className="card-panel-title">Signals</span>
               </div>
               <div className="panel-body">
                 <DetailRow label="Strategy ID" value={selectedDecision.strategy_id} />

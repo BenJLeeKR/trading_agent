@@ -41,11 +41,11 @@ describe("DecisionsView with data", () => {
     // Verify total count
     expect(screen.getByText(/Total: 3 decisions/)).toBeInTheDocument();
 
-    // Verify key column headers (updated for template columns)
+    // Verify key column headers (template columns: Side, Reasoning, Timestamp)
     expect(screen.getByRole("columnheader", { name: "Symbol" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Action" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Side" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Confidence" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Strategy" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Reasoning" })).toBeInTheDocument();
   });
 });
 
@@ -130,11 +130,11 @@ describe("DecisionsView detail panel", () => {
     });
     // Decision type "auto_execute" appears in detail panel
     expect(screen.getAllByText("auto_execute").length).toBeGreaterThanOrEqual(1);
-    // 85% appears in table row, status banner, ConfidenceBar, and Input Signals card
+    // 85% appears in table row, ConfidenceBar, and Signals card
     expect(screen.getAllByText("85%").length).toBeGreaterThanOrEqual(3);
-    // rationale_summary appears in Reason section
-    expect(screen.getByText("Strong earnings outlook for AAPL")).toBeInTheDocument();
-    // Quantity "100" appears in Detail card and Input Signals card
+    // rationale_summary appears in both table (Reasoning column) and detail panel (Reason section)
+    expect(screen.getAllByText("Strong earnings outlook for AAPL").length).toBeGreaterThanOrEqual(1);
+    // Quantity "100" appears in Detail card and Signals card
     expect(screen.getAllByText("100").length).toBeGreaterThanOrEqual(2);
 
     // Market Context section loaded

@@ -191,11 +191,11 @@ export default function AccountsView() {
       ),
     },
     { key: "quantity", label: "Qty", render: (r) => formatQty(r.quantity) },
-    { key: "avg_price", label: "Avg Price", render: (r) => formatCurrency(r.avg_price) },
+    { key: "avg_price", label: "Avg Cost", render: (r) => formatCurrency(r.avg_price) },
     { key: "current_price", label: "Current Price", render: (r) => formatCurrency(r.current_price) },
     {
       key: "pnl",
-      label: "PnL",
+      label: "P&L",
       render: (r) => {
         const pnl = Number.parseFloat(r.pnl) || 0;
         return (

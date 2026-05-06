@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -14,7 +15,9 @@ from agent_trading.domain.entities import (
     InstrumentEntity,
     PositionSnapshotEntity,
     RiskLimitSnapshotEntity,
+    TradeDecisionEntity,
 )
+from agent_trading.domain.enums import DecisionType, EntryStyle, OrderSide, OrderType
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.services.ai_agents.base import (
@@ -104,6 +107,24 @@ class AIDecisionInputs:
     # ── Metadata ─────────────────────────────────────────────────────
     source_agent_names: tuple[str, ...] = ()
     schema_versions: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(slots=True, frozen=True)
+class AgentExecutionBundle:
+    """Internal result bundle from the three-agent chain.
+
+    Keeps raw structured outputs available for persistence while exposing
+    only the normalised ``AIDecisionInputs`` to downstream execution code.
+    """
+
+    ai_inputs: AIDecisionInputs = field(default_factory=AIDecisionInputs)
+    event_output: EventInterpretationOutput = field(
+        default_factory=EventInterpretationOutput
+    )
+    risk_output: AIRiskOutput = field(default_factory=AIRiskOutput)
+    composer_output: FinalDecisionComposerOutput = field(
+        default_factory=FinalDecisionComposerOutput
+    )
 
 
 class ScoreCalculator(Protocol):
@@ -435,16 +456,26 @@ class DecisionOrchestratorService:
         if not correlation_id:
             correlation_id = str(uuid4())
 
-        # --- Run AI agents → AIDecisionInputs ---
-        ai_inputs = await self._run_agents(
+        # --- Run AI agents → persistence bundle + normalised backend inputs ---
+        agent_bundle = await self._run_agents(
             assembled_context=assembled_context,
             decision_context_id=resolved_context_id,
             correlation_id=correlation_id,
         )
 
+        # --- Persist or reuse trade decision when a concrete context exists ---
+        trade_decision_id = await self._ensure_trade_decision(
+            request=request,
+            assembled_context=assembled_context,
+            agent_bundle=agent_bundle,
+            decision_context_id=resolved_context_id,
+        )
+
         # --- Generate decision_id if not provided ---
         decision_id = request.decision_id
-        if not decision_id:
+        if trade_decision_id is not None:
+            decision_id = str(trade_decision_id)
+        elif not decision_id:
             decision_id = str(uuid4())
 
         # --- Assemble the final SubmitOrderRequest ---
@@ -479,7 +510,7 @@ class DecisionOrchestratorService:
             context=assembled_context,
             config_version_id=config_version_id,
             reason_codes=score_result.reason_codes,
-            ai_backend_inputs=ai_inputs,
+            ai_backend_inputs=agent_bundle.ai_inputs,
         )
 
     # ------------------------------------------------------------------
@@ -524,7 +555,7 @@ class DecisionOrchestratorService:
         assembled_context: AssembledContext,
         decision_context_id: UUID | None,
         correlation_id: str,
-    ) -> AIDecisionInputs:
+    ) -> AgentExecutionBundle:
         """Execute the three v1 Provider AI Agents sequentially.
 
         Execution order
@@ -685,7 +716,111 @@ class DecisionOrchestratorService:
             ),
         )
 
-        return ai_inputs
+        return AgentExecutionBundle(
+            ai_inputs=ai_inputs,
+            event_output=event_output,
+            risk_output=risk_output,
+            composer_output=composer_output,
+        )
+
+    async def _ensure_trade_decision(
+        self,
+        *,
+        request: SubmitOrderRequest,
+        assembled_context: AssembledContext,
+        agent_bundle: AgentExecutionBundle,
+        decision_context_id: UUID | None,
+    ) -> UUID | None:
+        """Persist or reuse a ``TradeDecisionEntity`` for this context.
+
+        This keeps ``trade_decisions`` aligned with the live AI assembly
+        path without changing the submit/order/reconciliation boundaries.
+        When the orchestrator cannot build a valid entity, it fails open
+        and simply omits the trade-decision link from the order path.
+        """
+        if decision_context_id is None:
+            return None
+
+        try:
+            existing = await self._repos.trade_decisions.get_by_context(
+                decision_context_id
+            )
+        except Exception:
+            logger.warning(
+                "Trade decision lookup failed before persistence. "
+                "decision_context_id=%s",
+                decision_context_id,
+                exc_info=True,
+            )
+            return None
+
+        if existing is not None:
+            return existing.trade_decision_id
+
+        decision_context = assembled_context.decision_context
+        if decision_context is None:
+            return None
+
+        now = datetime.now(timezone.utc)
+        composer_output = agent_bundle.composer_output
+        ai_inputs = agent_bundle.ai_inputs
+
+        try:
+            decision = TradeDecisionEntity(
+                trade_decision_id=uuid4(),
+                decision_context_id=decision_context_id,
+                decision_type=_resolve_decision_type(composer_output.decision_type),
+                side=_resolve_order_side(composer_output.side, request.side),
+                strategy_id=decision_context.strategy_id,
+                symbol=request.symbol,
+                market=request.market,
+                entry_style=_resolve_entry_style(
+                    composer_output.entry_style,
+                    request.order_type,
+                ),
+                created_at=now,
+                entry_price=_decimal_or_none(request.price),
+                quantity=_decimal_or_none(request.quantity),
+                max_order_value=_calculate_max_order_value(
+                    request.price,
+                    request.quantity,
+                ),
+                confidence=Decimal(str(composer_output.confidence)),
+                risk_check_passed=ai_inputs.risk_opinion in {"allow", "reduce"},
+                reason_codes=list(composer_output.reason_codes) or None,
+                opposing_evidence={
+                    "items": list(composer_output.opposing_evidence),
+                }
+                if composer_output.opposing_evidence
+                else {},
+                exit_plan_json=_dataclass_to_dict(composer_output.exit_plan_hint),
+                calculation_version="decision_orchestrator.v1",
+                agent_version_json=dict(ai_inputs.schema_versions),
+                rationale_summary=composer_output.summary or None,
+                decision_json={
+                    "decision_type": composer_output.decision_type,
+                    "side": composer_output.side,
+                    "entry_style": composer_output.entry_style,
+                    "time_horizon": composer_output.time_horizon,
+                    "event_bias": ai_inputs.event_bias,
+                    "event_conflict": ai_inputs.event_conflict,
+                    "risk_opinion": ai_inputs.risk_opinion,
+                    "risk_flags": list(ai_inputs.risk_flags),
+                    "execution_preferences": _dataclass_to_dict(
+                        composer_output.execution_preferences
+                    ),
+                    "sizing_hint": _dataclass_to_dict(composer_output.sizing_hint),
+                },
+            )
+            saved = await self._repos.trade_decisions.add(decision)
+            return saved.trade_decision_id
+        except Exception:
+            logger.warning(
+                "Trade decision persistence failed. decision_context_id=%s",
+                decision_context_id,
+                exc_info=True,
+            )
+            return None
 
 
 # ---------------------------------------------------------------------------
@@ -725,3 +860,55 @@ def _dataclass_to_dict(obj: object) -> dict[str, object]:
         else:
             result[field_name] = value  # type: ignore[literal-required]
     return result
+
+
+def _resolve_decision_type(value: str | None) -> DecisionType:
+    if not value:
+        return DecisionType.HOLD
+    try:
+        return DecisionType(value.lower())
+    except ValueError:
+        return DecisionType.HOLD
+
+
+def _resolve_order_side(value: str | None, fallback: OrderSide) -> OrderSide:
+    if value:
+        try:
+            return OrderSide(value.lower())
+        except ValueError:
+            pass
+    return fallback
+
+
+def _resolve_entry_style(
+    value: str | None,
+    fallback_order_type: OrderType,
+) -> EntryStyle:
+    if value:
+        try:
+            return EntryStyle(value.lower())
+        except ValueError:
+            pass
+
+    if fallback_order_type == OrderType.MARKET:
+        return EntryStyle.MARKET
+    if fallback_order_type == OrderType.LIMIT:
+        return EntryStyle.LIMIT
+    return EntryStyle.NO_ORDER
+
+
+def _decimal_or_none(value: object) -> Decimal | None:
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return value
+    return Decimal(str(value))
+
+
+def _calculate_max_order_value(
+    price: Decimal | None,
+    quantity: Decimal,
+) -> Decimal | None:
+    if price is None:
+        return None
+    return price * quantity

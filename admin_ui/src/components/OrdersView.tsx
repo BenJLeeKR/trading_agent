@@ -11,6 +11,7 @@ import type { Column } from "./common/DataTable";
 import {
   Search,
   X,
+  ChevronDown,
   ChevronRight,
   Clock,
   CheckCircle,
@@ -62,6 +63,7 @@ export default function OrdersView() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [sideFilter, setSideFilter] = useState("all");
   const [selectedOrder, setSelectedOrder] = useState<OrderSummary | null>(null);
+  const [brokerFilter, setBrokerFilter] = useState("All Brokers");
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -77,6 +79,16 @@ export default function OrdersView() {
       .finally(() => setLoading(false));
   }, []);
 
+  const brokerOptions = useMemo(() => {
+    const unique = new Set<string>();
+    unique.add("All Brokers");
+    orders.forEach((o) => {
+      const b = (o as any).broker;
+      if (b && typeof b === "string") unique.add(b);
+    });
+    return Array.from(unique);
+  }, [orders]);
+
   const filteredOrders = useMemo(() => {
     return orders.filter((o) => {
       if (
@@ -91,12 +103,15 @@ export default function OrdersView() {
       if (sideFilter !== "all" && o.side !== sideFilter) {
         return false;
       }
+      if (brokerFilter !== "All Brokers" && (o as any).broker !== brokerFilter) {
+        return false;
+      }
       return true;
     });
-  }, [orders, searchText, statusFilter, sideFilter]);
+  }, [orders, searchText, statusFilter, sideFilter, brokerFilter]);
 
   const columns: Column<OrderSummary>[] = [
-    { key: "created_at", label: "Created" },
+    { key: "order_request_id", label: "Order ID", render: (r) => <code style={{ fontSize: "0.6875rem" }}>{r.order_request_id.slice(0, 8)}…</code> },
     { key: "symbol", label: "Symbol" },
     {
       key: "side",
@@ -111,7 +126,6 @@ export default function OrdersView() {
         </span>
       ),
     },
-    { key: "order_type", label: "Type" },
     { key: "qty", label: "Qty" },
     {
       key: "status",
@@ -119,6 +133,7 @@ export default function OrdersView() {
       render: (r) => <StatusBadge status={r.status} />,
     },
     { key: "strategy_code", label: "Strategy" },
+    { key: "created_at", label: "Time" },
   ];
 
   if (loading) return <LoadingSpinner />;
@@ -179,6 +194,27 @@ export default function OrdersView() {
                 </button>
               ))}
             </div>
+
+            {/* Broker select (template pattern) */}
+            <div
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs"
+              style={{
+                backgroundColor: "#f9fafb",
+                borderColor: "#e8eaed",
+              }}
+            >
+              <select
+                value={brokerFilter}
+                onChange={(e) => setBrokerFilter(e.target.value)}
+                className="bg-transparent outline-none text-xs cursor-pointer"
+                style={{ color: "#374151" }}
+              >
+                {brokerOptions.map((b) => (
+                  <option key={b}>{b}</option>
+                ))}
+              </select>
+              <ChevronDown size={11} style={{ color: "#9ca3af" }} />
+            </div>
           </div>
 
           {/* Table */}
@@ -203,7 +239,6 @@ export default function OrdersView() {
                 )
               }
               emptyMessage="No orders found."
-              compact
             />
           </Panel>
         </div>
@@ -361,33 +396,16 @@ export default function OrdersView() {
               </div>
             </div>
 
-            {/* View Full Detail link */}
+            {/* Broker Mapping (template pattern) */}
             <div className="card-panel">
-              <button
-                onClick={() =>
-                  navigate(`/orders/${selectedOrder.order_request_id}`)
-                }
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: "0.35rem",
-                  width: "100%",
-                  padding: "0.6rem",
-                  background: "transparent",
-                  border: "1px solid var(--border-color)",
-                  borderRadius: "var(--radius-sm)",
-                  color: "var(--accent-color)",
-                  fontSize: "var(--text-xs)",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  transition: "background-color 0.12s ease",
-                }}
-              >
-                <ExternalLink size={12} />
-                <span>View Full Detail</span>
-                <ChevronRight size={12} />
-              </button>
+              <div className="card-panel-header">
+                <span className="card-panel-title">Broker Mapping</span>
+              </div>
+              <div className="panel-body">
+                <DetailRow label="Broker" value={(selectedOrder as any).broker ?? "—"} />
+                <DetailRow label="Broker Order ID" value={(selectedOrder as any).broker_order_id ?? "—"} />
+                <DetailRow label="Broker Status" value={(selectedOrder as any).broker_status ?? "—"} />
+              </div>
             </div>
           </div>
         )}

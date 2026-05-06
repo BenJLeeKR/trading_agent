@@ -1,10 +1,12 @@
 import { useState, type FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { getHealth } from "../api/client";
 import { ApiResponseError, UnauthorizedError } from "../api/client";
 
 export function LoginForm() {
   const { login } = useAuth();
+  const navigate = useNavigate();
   const [tokenInput, setTokenInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -38,6 +40,7 @@ export function LoginForm() {
 
       // Token is valid
       login(trimmed);
+      navigate("/");
     } catch (err) {
       if (err instanceof UnauthorizedError) {
         setError("Invalid token. The server rejected the authorization.");
@@ -72,7 +75,7 @@ export function LoginForm() {
           <h2>Inspection Dashboard</h2>
         </hgroup>
 
-        <p style={{ fontSize: "0.9rem", color: "var(--pico-muted-color)" }}>
+        <p style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>
           Enter your <code>INSPECTION_API_TOKEN</code> to access the dashboard.
           This token is stored in your session only and cleared on logout or tab
           close.
@@ -83,7 +86,7 @@ export function LoginForm() {
             style={{
               padding: "0.5rem 0.75rem",
               marginBottom: "1rem",
-              backgroundColor: "var(--pico-del-color)",
+              backgroundColor: "#dc2626",
               color: "#fff",
               borderRadius: "4px",
               fontSize: "0.85rem",

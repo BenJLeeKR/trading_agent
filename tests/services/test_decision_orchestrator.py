@@ -18,6 +18,8 @@ from agent_trading.domain.entities import (
     RiskLimitSnapshotEntity,
 )
 from agent_trading.domain.enums import (
+    DecisionType,
+    EntryStyle,
     Environment,
     OrderSide,
     OrderStatus,
@@ -723,6 +725,100 @@ class TestPositionSnapshotSourceOfTruth:
 
 
 # ---------------------------------------------------------------------------
+# TradeDecision persistence
+# ---------------------------------------------------------------------------
+
+
+class TestTradeDecisionPersistence:
+    @pytest.mark.asyncio
+    async def test_assemble_persists_trade_decision_for_context(
+        self, sample_request: SubmitOrderRequest
+    ) -> None:
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        strategy_id = uuid4()
+
+        config_version = ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=uuid4(),
+            environment=Environment.PAPER,
+            version_tag="v1",
+            config_json={},
+            checksum="sum",
+            activated_at=now,
+        )
+        await repos.config_versions.add(config_version)
+
+        context = DecisionContextEntity(
+            decision_context_id=uuid4(),
+            account_id=uuid4(),
+            strategy_id=strategy_id,
+            config_version_id=config_version.config_version_id,
+            market_timestamp=now,
+            correlation_id="corr-persist",
+            created_at=now,
+        )
+        await repos.decision_contexts.add(context)
+
+        service = DecisionOrchestratorService(repos=repos)
+        intent = await service.assemble(
+            sample_request,
+            decision_context_id=context.decision_context_id,
+        )
+
+        assert intent.request.decision_id is not None
+        persisted = await repos.trade_decisions.get_by_context(
+            context.decision_context_id
+        )
+        assert persisted is not None
+        assert str(persisted.trade_decision_id) == intent.request.decision_id
+        assert persisted.decision_type == DecisionType.HOLD
+        assert persisted.side == OrderSide.BUY
+        assert persisted.strategy_id == strategy_id
+        assert persisted.entry_style == EntryStyle.LIMIT
+        assert persisted.quantity == Decimal("10")
+        assert persisted.entry_price == Decimal("50000")
+        assert persisted.max_order_value == Decimal("500000")
+        assert persisted.risk_check_passed is True
+        assert persisted.agent_version_json == {
+            "event_interpretation": "v1",
+            "ai_risk": "v1",
+            "final_decision_composer": "v1",
+        }
+
+    @pytest.mark.asyncio
+    async def test_assemble_reuses_existing_trade_decision_for_context(
+        self, sample_request: SubmitOrderRequest
+    ) -> None:
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        context = DecisionContextEntity(
+            decision_context_id=uuid4(),
+            account_id=uuid4(),
+            strategy_id=uuid4(),
+            config_version_id=uuid4(),
+            market_timestamp=now,
+            correlation_id="corr-reuse",
+            created_at=now,
+        )
+        await repos.decision_contexts.add(context)
+
+        service = DecisionOrchestratorService(repos=repos)
+        first = await service.assemble(
+            sample_request,
+            decision_context_id=context.decision_context_id,
+        )
+        second = await service.assemble(
+            sample_request,
+            decision_context_id=context.decision_context_id,
+        )
+
+        decisions = await repos.trade_decisions.list_all()
+        assert len(decisions) == 1
+        assert first.request.decision_id == second.request.decision_id
+
+
+# ---------------------------------------------------------------------------
 # Plan 32: AI-Broker Pre-Submit Safety Boundary — Test D
 # ---------------------------------------------------------------------------
 
@@ -745,6 +841,7 @@ class TestAssembleAndCreateOrderFullFlow:
     ):
         """Full flow: assemble → recorder 3 runs → create_order → audit log."""
         repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
 
         # ── Seed account (needed by OrderManager.create_order) ──
         account = AccountEntity(
@@ -757,6 +854,30 @@ class TestAssembleAndCreateOrderFullFlow:
             status="active",
         )
         repos.accounts._items[account.account_id] = account
+
+        config_version = ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=account.client_id,
+            environment=Environment.PAPER,
+            version_tag="v1",
+            config_json={},
+            checksum="cfg-1",
+            activated_at=now,
+        )
+        repos.config_versions._items[config_version.config_version_id] = config_version
+
+        decision_context = DecisionContextEntity(
+            decision_context_id=uuid4(),
+            account_id=account.account_id,
+            strategy_id=uuid4(),
+            config_version_id=config_version.config_version_id,
+            market_timestamp=now,
+            correlation_id="corr-full-flow",
+            created_at=now,
+        )
+        repos.decision_contexts._items[decision_context.decision_context_id] = (
+            decision_context
+        )
 
         # ── Seed instrument (needed by OrderManager.create_order) ──
         instrument = InstrumentEntity(
@@ -774,7 +895,10 @@ class TestAssembleAndCreateOrderFullFlow:
         manager = OrderManager(repos=repos, reconciliation_service=None)
 
         # ── Step 1: assemble() → recorder should have 3 agent runs ──
-        intent = await service.assemble(sample_request)
+        intent = await service.assemble(
+            sample_request,
+            decision_context_id=decision_context.decision_context_id,
+        )
 
         assert intent.ai_backend_inputs is not None
         runs = service._agent_recorder.list_all()
@@ -797,6 +921,12 @@ class TestAssembleAndCreateOrderFullFlow:
         assert created.account_id == account.account_id
         assert created.instrument_id == instrument.instrument_id
         assert created.client_order_id == intent.request.client_order_id
+        assert created.trade_decision_id is not None
+        persisted = await repos.trade_decisions.get_by_context(
+            decision_context.decision_context_id
+        )
+        assert persisted is not None
+        assert created.trade_decision_id == persisted.trade_decision_id
 
         # ── Step 3: Audit log contains order.create ──
         audit_logs = await repos.audit_logs.list_by_correlation_id(

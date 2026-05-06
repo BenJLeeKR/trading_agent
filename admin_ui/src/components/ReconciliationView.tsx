@@ -9,8 +9,6 @@ import { LoadingSpinner } from "./common/LoadingSpinner";
 import type { Column } from "./common/DataTable";
 import { Lock, AlertTriangle, CheckCircle, X } from "lucide-react";
 
-type Tab = "runs" | "locks";
-
 const RUN_STATUSES = [
   "all",
   "completed",
@@ -51,7 +49,6 @@ function DetailRow({
 }
 
 export default function ReconciliationView() {
-  const [activeTab, setActiveTab] = useState<Tab>("runs");
   const [runs, setRuns] = useState<ReconciliationRunSummary[]>([]);
   const [locks, setLocks] = useState<BlockingLockStatus[]>([]);
   const [loading, setLoading] = useState(true);
@@ -115,8 +112,23 @@ export default function ReconciliationView() {
   );
 
   const runColumns: Column<ReconciliationRunSummary>[] = [
-    { key: "started_at", label: "Started" },
-    { key: "completed_at", label: "Completed" },
+    {
+      key: "run_id",
+      label: "Run ID",
+      render: (r) => (
+        <code style={{ fontSize: "0.6875rem" }}>{r.run_id.slice(0, 8)}…</code>
+      ),
+    },
+    {
+      key: "started_at",
+      label: "Date",
+      render: (r) => new Date(r.started_at).toLocaleDateString(),
+    },
+    {
+      key: "started_at",
+      label: "Time",
+      render: (r) => new Date(r.started_at).toLocaleTimeString(),
+    },
     {
       key: "status",
       label: "Status",
@@ -124,21 +136,6 @@ export default function ReconciliationView() {
     },
     { key: "order_mismatches", label: "Order Mismatches" },
     { key: "position_mismatches", label: "Position Mismatches" },
-  ];
-
-  const lockColumns: Column<BlockingLockStatus>[] = [
-    { key: "symbol", label: "Symbol" },
-    { key: "lock_type", label: "Type" },
-    { key: "strategy_code", label: "Strategy" },
-    {
-      key: "is_expired",
-      label: "Status",
-      render: (r) => (
-        <StatusBadge status={r.is_expired ? "expired" : "active"} />
-      ),
-    },
-    { key: "acquired_at", label: "Acquired" },
-    { key: "expires_at", label: "Expires" },
   ];
 
   if (loading) return <LoadingSpinner />;
@@ -172,27 +169,11 @@ export default function ReconciliationView() {
         </div>
       )}
 
-      {/* Tab bar */}
-      <div className="tab-bar" role="tablist">
-        <button
-          role="tab"
-          aria-selected={activeTab === "runs"}
-          onClick={() => setActiveTab("runs")}
-        >
-          Runs ({runs.length})
-        </button>
-        <button
-          role="tab"
-          aria-selected={activeTab === "locks"}
-          onClick={() => setActiveTab("locks")}
-        >
-          Locks ({locks.length})
-        </button>
-      </div>
-
-      {/* Runs tab */}
-      {activeTab === "runs" && (
-        <div className="tab-content">
+      {/* Side-by-side layout (template pattern) */}
+      <div className="split-layout" style={{ alignItems: "flex-start" }}>
+        {/* Left column: runs + unmatched */}
+        <div className="split-main">
+          {/* Filter bar */}
           <div className="filter-bar">
             <div className="filter-group" role="group" aria-label="Status">
               {RUN_STATUSES.map((s) => (
@@ -211,121 +192,245 @@ export default function ReconciliationView() {
             </div>
           </div>
 
-          <div className="split-layout">
-            <div className="split-main">
-              <Panel title="Reconciliation Runs">
-                <DataTable
-                  columns={runColumns}
-                  data={filteredRuns}
-                  keyField="run_id"
-                  onRowClick={(row) =>
-                    setSelectedRun(
-                      selectedRun?.run_id === row.run_id ? null : row,
-                    )
-                  }
-                  emptyMessage="No reconciliation runs found."
-                  compact
-                />
-              </Panel>
-            </div>
-
-            {/* Right: run detail panel */}
-            {selectedRun && (
-              <div className="split-sidebar split-sidebar--narrow">
-                <div className="card-panel">
-                  <div className="card-panel-header">
-                    <span className="card-panel-title">Run Detail</span>
-                    <button
-                      onClick={() => setSelectedRun(null)}
-                      style={{
-                        background: "none",
-                        border: "none",
-                        cursor: "pointer",
-                        color: "var(--text-muted)",
-                        padding: 0,
-                      }}
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                  <div className="panel-body">
-                    <DetailRow
-                      label="Run ID"
-                      value={selectedRun.run_id}
-                    />
-                    <DetailRow
-                      label="Status"
-                      value={selectedRun.status}
-                    />
-                    <DetailRow
-                      label="Started"
-                      value={selectedRun.started_at}
-                    />
-                    <DetailRow
-                      label="Completed"
-                      value={selectedRun.completed_at ?? "—"}
-                    />
-                    <DetailRow
-                      label="Order Mismatches"
-                      value={String(selectedRun.order_mismatches)}
-                      valueColor={
-                        selectedRun.order_mismatches > 0
-                          ? "var(--status-error)"
-                          : undefined
-                      }
-                    />
-                    <DetailRow
-                      label="Position Mismatches"
-                      value={String(selectedRun.position_mismatches)}
-                      valueColor={
-                        selectedRun.position_mismatches > 0
-                          ? "var(--status-error)"
-                          : undefined
-                      }
-                    />
-                  </div>
-
-                  {/* Status footer */}
-                  {selectedRun.status === "completed" &&
-                    selectedRun.order_mismatches === 0 &&
-                    selectedRun.position_mismatches === 0 && (
-                      <div className="status-footer status-footer--success">
-                        <CheckCircle size={12} color="#16a34a" />
-                        <span className="status-footer-text" style={{ color: "#16a34a" }}>
-                          All positions matched successfully.
-                        </span>
-                      </div>
-                    )}
-                  {(selectedRun.order_mismatches > 0 ||
-                    selectedRun.position_mismatches > 0) && (
-                      <div className="status-footer status-footer--warn">
-                        <AlertTriangle size={12} color="#d97706" />
-                        <span className="status-footer-text" style={{ color: "#d97706" }}>
-                          Mismatches require review.
-                        </span>
-                      </div>
-                    )}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Locks tab */}
-      {activeTab === "locks" && (
-        <div className="tab-content">
-          <Panel title="Blocking Locks">
+          {/* Runs table */}
+          <Panel title="Reconciliation Runs">
             <DataTable
-              columns={lockColumns}
-              data={locks}
-              keyField="lock_id"
-              emptyMessage="No blocking locks found."
-              compact
+              columns={runColumns}
+              data={filteredRuns}
+              keyField="run_id"
+              onRowClick={(row) =>
+                setSelectedRun(
+                  selectedRun?.run_id === row.run_id ? null : row,
+                )
+              }
+              emptyMessage="No reconciliation runs found."
             />
           </Panel>
+
+          {/* Unmatched Positions table (template pattern) */}
+          <div className="card-panel" style={{ marginTop: "1rem" }}>
+            <div className="card-panel-header">
+              <span className="card-panel-title">Unmatched Positions</span>
+              {filteredRuns.reduce((sum, r) => sum + r.position_mismatches, 0) > 0 && (
+                <span
+                  className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+                  style={{ backgroundColor: "#fef2f2", color: "#dc2626" }}
+                >
+                  {filteredRuns.reduce((sum, r) => sum + r.position_mismatches, 0)}
+                </span>
+              )}
+            </div>
+            <div className="panel-body" style={{ padding: 0 }}>
+              {filteredRuns.filter((r) => r.position_mismatches > 0).length === 0 ? (
+                <div className="empty-state">
+                  <p>No unmatched positions found.</p>
+                </div>
+              ) : (
+                <table className="w-full">
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid #f3f4f6" }}>
+                      {["Run ID", "Symbol", "Type", "Expected", "Actual", "Diff"].map((h) => (
+                        <th
+                          key={h}
+                          className="px-4 py-2.5 text-left text-xs font-medium whitespace-nowrap"
+                          style={{ color: "#9ca3af" }}
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredRuns
+                      .filter((r) => r.position_mismatches > 0)
+                      .flatMap((r) => {
+                        const rows = [];
+                        for (let i = 0; i < Math.min(r.position_mismatches, 3); i++) {
+                          rows.push(
+                            <tr
+                              key={`${r.run_id}-${i}`}
+                              style={{
+                                borderBottom: "1px solid #f9fafb",
+                                backgroundColor: "#fffbeb",
+                              }}
+                            >
+                              <td className="px-4 py-2.5 text-xs font-mono" style={{ color: "#6b7280" }}>
+                                <code style={{ fontSize: "0.6875rem" }}>{r.run_id.slice(0, 8)}…</code>
+                              </td>
+                              <td className="px-4 py-2.5 text-xs font-semibold" style={{ color: "#111827" }}>
+                                —
+                              </td>
+                              <td className="px-4 py-2.5">
+                                <span
+                                  className="text-xs px-1.5 py-0.5 rounded"
+                                  style={{ backgroundColor: "#f3f4f6", color: "#6b7280" }}
+                                >
+                                  position
+                                </span>
+                              </td>
+                              <td className="px-4 py-2.5 text-xs tabular-nums" style={{ color: "#374151" }}>
+                                —
+                              </td>
+                              <td className="px-4 py-2.5 text-xs tabular-nums" style={{ color: "#374151" }}>
+                                —
+                              </td>
+                              <td className="px-4 py-2.5 text-xs tabular-nums font-semibold" style={{ color: "#dc2626" }}>
+                                —{r.position_mismatches > 0 ? ` (${r.position_mismatches} total)` : ""}
+                              </td>
+                            </tr>,
+                          );
+                        }
+                        return rows;
+                      })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
         </div>
-      )}
+
+        {/* Right column: locks + run detail */}
+        <div
+          className="split-sidebar split-sidebar--narrow"
+          style={{ width: 280, flexShrink: 0 }}
+        >
+          {/* Locks card panel */}
+          <div className="card-panel">
+            <div className="card-panel-header">
+              <span className="card-panel-title">Blocking Locks</span>
+              <span
+                className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+                style={{
+                  backgroundColor: activeLocks.length > 0 ? "#fef2f2" : "#f3f4f6",
+                  color: activeLocks.length > 0 ? "#dc2626" : "#6b7280",
+                }}
+              >
+                {activeLocks.length} active
+              </span>
+            </div>
+            <div className="panel-body" style={{ padding: 0 }}>
+              {locks.length === 0 ? (
+                <div className="empty-state">
+                  <p>No blocking locks found.</p>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-0 divide-y" style={{ borderColor: "#f3f4f6" }}>
+                  {locks.map((lock) => (
+                    <div key={lock.lock_id} className="px-4 py-3">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span
+                          className="text-xs font-semibold font-mono"
+                          style={{ color: "#111827" }}
+                        >
+                          {lock.symbol}
+                        </span>
+                        <span
+                          className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+                          style={
+                            lock.is_expired
+                              ? { backgroundColor: "#f3f4f6", color: "#6b7280" }
+                              : { backgroundColor: "#fef2f2", color: "#dc2626" }
+                          }
+                        >
+                          {lock.is_expired ? "expired" : "active"}
+                        </span>
+                      </div>
+                      <p
+                        className="text-xs leading-relaxed mb-2"
+                        style={{ color: "#6b7280" }}
+                      >
+                        {lock.lock_type} — {lock.strategy_code}
+                      </p>
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px]" style={{ color: "#9ca3af" }}>
+                            Acquired
+                          </span>
+                          <span className="text-[10px] font-mono" style={{ color: "#374151" }}>
+                            {new Date(lock.acquired_at).toLocaleTimeString()}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px]" style={{ color: "#9ca3af" }}>
+                            Expires
+                          </span>
+                          <span className="text-[10px] font-mono" style={{ color: "#374151" }}>
+                            {lock.expires_at
+                              ? new Date(lock.expires_at).toLocaleTimeString()
+                              : "—"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Run Detail card (conditional) */}
+          {selectedRun && (
+            <div className="card-panel" style={{ marginTop: "1rem" }}>
+              <div className="card-panel-header">
+                <span className="card-panel-title">Run Detail</span>
+                <button
+                  onClick={() => setSelectedRun(null)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "var(--text-muted)",
+                    padding: 0,
+                  }}
+                >
+                  <X size={13} />
+                </button>
+              </div>
+              <div className="panel-body">
+                <DetailRow label="Run ID" value={selectedRun.run_id} />
+                <DetailRow label="Status" value={selectedRun.status} />
+                <DetailRow label="Started" value={new Date(selectedRun.started_at).toLocaleString()} />
+                <DetailRow label="Completed" value={selectedRun.completed_at ? new Date(selectedRun.completed_at).toLocaleString() : "—"} />
+                <DetailRow
+                  label="Order Mismatches"
+                  value={String(selectedRun.order_mismatches)}
+                  valueColor={
+                    selectedRun.order_mismatches > 0 ? "var(--status-error)" : undefined
+                  }
+                />
+                <DetailRow
+                  label="Position Mismatches"
+                  value={String(selectedRun.position_mismatches)}
+                  valueColor={
+                    selectedRun.position_mismatches > 0 ? "var(--status-error)" : undefined
+                  }
+                />
+              </div>
+
+              {/* Status footer */}
+              {selectedRun.status === "completed" &&
+                selectedRun.order_mismatches === 0 &&
+                selectedRun.position_mismatches === 0 && (
+                  <div className="status-footer status-footer--success">
+                    <CheckCircle size={12} color="#16a34a" />
+                    <span className="status-footer-text" style={{ color: "#16a34a" }}>
+                      All positions matched successfully.
+                    </span>
+                  </div>
+                )}
+              {(selectedRun.order_mismatches > 0 ||
+                selectedRun.position_mismatches > 0) && (
+                <div className="status-footer status-footer--warn">
+                  <AlertTriangle size={12} color="#d97706" />
+                  <span className="status-footer-text" style={{ color: "#d97706" }}>
+                    Mismatches require review.
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
     </section>
   );
 }
