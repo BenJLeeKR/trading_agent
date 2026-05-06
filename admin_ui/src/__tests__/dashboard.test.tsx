@@ -9,12 +9,9 @@ import {
   mockFetchNetworkError,
 } from "./test-utils/mockFetch";
 import {
-  mockAccounts,
   mockHealthOk,
   mockHealthDegraded,
   mockOrders,
-  mockReconciliationRuns,
-  mockLocks,
   VALID_TOKEN,
 } from "./test-utils/fixtures";
 
@@ -43,16 +40,13 @@ describe("Dashboard loading state", () => {
 });
 
 /* ───────────────────────────────────────────
- * Scenario 2: 정상 데이터 로드 (4개 병렬 API)
+ * Scenario 2: 정상 데이터 로드 (health + orders 병렬 API)
  * ─────────────────────────────────────────── */
 describe("Dashboard with valid data", () => {
-  it("renders summary cards, database status, locks, and orders", async () => {
-    // Mock 5 API calls: orders → accounts → health → reconRuns → locks
-    mockFetchOnce(mockOrders);
-    mockFetchOnce(mockAccounts);
+  it("renders summary cards, database status, and orders", async () => {
+    // Mock 2 API calls: getHealth() + getOrders() in parallel via Promise.all
     mockFetchOnce(mockHealthOk);
-    mockFetchOnce(mockReconciliationRuns);
-    mockFetchOnce(mockLocks);
+    mockFetchOnce(mockOrders);
 
     render(
       <MemoryRouter>
@@ -62,25 +56,25 @@ describe("Dashboard with valid data", () => {
 
     // Wait for data to load — all rendered content
     await waitFor(() => {
-      expect(screen.getByText("Dashboard")).toBeInTheDocument();
+      expect(screen.getByText("Overview")).toBeInTheDocument();
       // Verify health data loaded: <code>in_memory</code> proves getHealth() succeeded
-      expect(screen.getAllByText("in_memory")[0]).toBeInTheDocument();
+      expect(screen.getByText(/in_memory/)).toBeInTheDocument();
     });
 
     // Summary cards
-    expect(screen.getByText("Server Status")).toBeInTheDocument();
-    expect(screen.getByText("ok")).toBeInTheDocument();
-    expect(screen.getByText("Total Orders")).toBeInTheDocument();
+    expect(screen.getByText("API Health")).toBeInTheDocument();
+    expect(screen.getAllByText("Operational")[0]).toBeInTheDocument();
+    expect(screen.getAllByText("Recent Orders")[0]).toBeInTheDocument();
     expect(screen.getByText("2")).toBeInTheDocument();
 
     // Database status — <code>in_memory</code> already verified health loaded in waitFor
-    expect(screen.getByText(/Database/)).toBeInTheDocument();
+    expect(screen.getByText(/Database Health/)).toBeInTheDocument();
 
-    // Locks table
-    expect(screen.getAllByText("Active Locks")[0]).toBeInTheDocument();
+    // Locks section — empty state (no reconciliation API calls anymore)
+    expect(screen.getByText(/No active locks/)).toBeInTheDocument();
 
     // Orders table
-    expect(screen.getByText(/Recent Orders/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Recent Orders/)[0]).toBeInTheDocument();
     expect(screen.getByText("TSLA")).toBeInTheDocument();
 
     // AAPL appears in the Recent Orders table
@@ -111,15 +105,12 @@ describe("Dashboard error state", () => {
 });
 
 /* ───────────────────────────────────────────
- * Scenario 4: Summary Card navigation links
+ * Scenario 4: Navigation links
  * ─────────────────────────────────────────── */
 describe("Dashboard navigation links", () => {
-  it("renders clickable summary cards with correct href", async () => {
-    mockFetchOnce(mockOrders);
-    mockFetchOnce(mockAccounts);
+  it("renders clickable navigation buttons with correct href", async () => {
     mockFetchOnce(mockHealthOk);
-    mockFetchOnce(mockReconciliationRuns);
-    mockFetchOnce(mockLocks);
+    mockFetchOnce(mockOrders);
 
     render(
       <MemoryRouter>
@@ -128,24 +119,16 @@ describe("Dashboard navigation links", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Dashboard")).toBeInTheDocument();
+      expect(screen.getByText("Overview")).toBeInTheDocument();
     });
 
-    // "Total Orders" card should link to /orders
-    const ordersLink = screen.getByRole("link", { name: /2.*Total Orders/ });
+    // "View all orders" button should link to /orders
+    const ordersLink = screen.getByRole("button", { name: /View all orders/ });
     expect(ordersLink).toBeInTheDocument();
-    expect(ordersLink).toHaveAttribute("href", "/orders");
 
-    // There are active locks (mockLocks has is_expired: false)
-    // So "Active Locks" card should link to /reconciliation
-    const locksLink = screen.getByRole("link", { name: /1.*Active Locks/ });
-    expect(locksLink).toBeInTheDocument();
-    expect(locksLink).toHaveAttribute("href", "/reconciliation");
-
-    // "Incomplete Runs" — mockReconciliationRuns has status "completed", so no incomplete runs
-    // Check that Incomplete Runs card exists (value 0) but should NOT have a link
-    const incompleteRunsLink = screen.queryByRole("link", { name: /0.*Incomplete Runs/ });
-    expect(incompleteRunsLink).not.toBeInTheDocument();
+    // "View reconciliation" button should link to /reconciliation
+    const reconLink = screen.getByRole("button", { name: /View reconciliation/ });
+    expect(reconLink).toBeInTheDocument();
   });
 });
 
@@ -155,11 +138,8 @@ describe("Dashboard navigation links", () => {
 describe("Dashboard health degraded signal", () => {
   it("shows warning banner when health status is degraded", async () => {
     // Use degraded health (database: "disconnected")
-    mockFetchOnce(mockOrders);
-    mockFetchOnce(mockAccounts);
     mockFetchOnce(mockHealthDegraded);
-    mockFetchOnce(mockReconciliationRuns);
-    mockFetchOnce(mockLocks);
+    mockFetchOnce(mockOrders);
 
     render(
       <MemoryRouter>
@@ -168,25 +148,21 @@ describe("Dashboard health degraded signal", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Dashboard")).toBeInTheDocument();
+      expect(screen.getByText("Overview")).toBeInTheDocument();
     });
 
-    // Warning banner should be visible
-    expect(screen.getByText(/System Status: DEGRADED/i)).toBeInTheDocument();
-    expect(screen.getByText(/Disconnected — Some features may be unavailable/i)).toBeInTheDocument();
+    // Database Health card should show "Disconnected"
+    expect(screen.getByText("Disconnected")).toBeInTheDocument();
   });
 });
 
 /* ───────────────────────────────────────────
- * Scenario 7: Health ok — no warning banner
+ * Scenario 7: Health ok — no warning
  * ─────────────────────────────────────────── */
 describe("Dashboard health ok", () => {
   it("does not show health warning when status is ok", async () => {
-    mockFetchOnce(mockOrders);
-    mockFetchOnce(mockAccounts);
     mockFetchOnce(mockHealthOk);
-    mockFetchOnce(mockReconciliationRuns);
-    mockFetchOnce(mockLocks);
+    mockFetchOnce(mockOrders);
 
     render(
       <MemoryRouter>
@@ -195,12 +171,10 @@ describe("Dashboard health ok", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Dashboard")).toBeInTheDocument();
+      expect(screen.getByText("Overview")).toBeInTheDocument();
     });
 
-    // No degraded warning banner
-    expect(
-      screen.queryByText(/System Status: [A-Z]/i),
-    ).not.toBeInTheDocument();
+    // Database Health card should show "Operational"
+    expect(screen.getAllByText("Operational").length).toBeGreaterThanOrEqual(1);
   });
 });

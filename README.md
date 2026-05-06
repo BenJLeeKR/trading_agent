@@ -99,6 +99,62 @@ make docker-down
 
 ---
 
+## Inspection API 실행
+
+Inspection API는 FastAPI 기반의 읽기 전용 조회 API입니다. **실행 방식에 따라 DB 연결 여부가 결정됩니다.**
+
+### 실행 방식 비교
+
+| 방식 | 명령 | DB 연결 | Auth | 환경변수 |
+|------|------|---------|------|----------|
+| In-memory (개발용) | `make run-api-inmemory` | ❌ (in-memory mock) | ❌ (비활성) | 무시됨 |
+| Postgres (운영용) | `make run-api-postgres` | ✅ PostgreSQL | ✅ Bearer token | `API_RUNTIME_MODE`, `INSPECTION_API_TOKEN` |
+
+### ⚠️ 잘못된 실행 방식 — 항상 in-memory
+
+```bash
+# ❌ 아래 방식은 INSPECTION_API_TOKEN을 설정해도 in_memory 모드로 실행됩니다.
+#    module-level app = create_app(auth_enabled=False) 가 고정되어 있기 때문입니다.
+uvicorn agent_trading.api.app:app --reload --host 0.0.0.0 --port 9000
+
+# ❌ 환경변수를 줘도 module-level app은 읽지 않습니다.
+INSPECTION_API_TOKEN=dev-token-123 \
+uvicorn agent_trading.api.app:app --reload --host 0.0.0.0 --port 9000
+
+# ❌ API_RUNTIME_MODE=postgres 도 마찬가지로 무시됩니다.
+API_RUNTIME_MODE=postgres INSPECTION_API_TOKEN=dev-token-123 \
+uvicorn agent_trading.api.app:app --reload --host 0.0.0.0 --port 9000
+```
+
+### ✅ 올바른 실행 방식 — Postgres + Auth
+
+`create_app_from_env`를 `--factory` 플래그와 함께 사용해야 환경변수가 적용됩니다.
+
+```bash
+# 1. .env 파일에서 DATABASE_* 환경변수 로드 (PostgreSQL 연결 정보)
+source .env
+
+# 2. Postgres-backed 모드로 실행
+API_RUNTIME_MODE=postgres \
+INSPECTION_API_TOKEN=dev-token-123 \
+uvicorn agent_trading.api.app:create_app_from_env --factory --reload --host 0.0.0.0 --port 9000
+
+# 또는 Makefile target 사용 (DATABASE_* 는 .env 또는 export 필요)
+make run-api-postgres
+```
+
+> **참고**: `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER`, `DATABASE_PASSWORD` 환경변수가 설정되어 있어야 Postgres 모드가 정상 동작합니다. `.env` 파일을 통해 로드하거나 직접 export 하세요.
+
+### Docker Compose (권장)
+
+```bash
+docker compose up -d db api
+```
+
+[`docker-compose.yml`](docker-compose.yml:82-89)은 이미 올바른 방식(`create_app_from_env --factory`)을 사용하고 있습니다.
+
+---
+
 ## 프로젝트 구조
 
 ```
@@ -158,9 +214,17 @@ make docker-down
 | `DATABASE_USER` | `trading` | 데이터베이스 사용자 |
 | `DATABASE_PASSWORD` | `trading` | 데이터베이스 비밀번호 |
 | `DATABASE_SCHEMA` | `trading` | 스키마 이름 |
+| `API_RUNTIME_MODE` | `in_memory` | Inspection API 런타임 모드 (`postgres` / `in_memory`). `create_app_from_env --factory` 방식에서만 읽힘. |
+| `INSPECTION_API_TOKEN` | — | Inspection API Bearer token. **운영 필수.** 미설정 시 startup fail. `create_app_from_env --factory` 방식에서만 읽힘. |
+| `INSPECTION_API_ROLE` | `viewer` | 인증된 사용자 역할 (`viewer` / `admin`). `create_app_from_env --factory` 방식에서만 읽힘. |
 
 > **호환성**: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` 도 지원하지만
 > `DATABASE_*` prefix가 우선합니다.
+>
+> **⚠️ 중요**: `API_RUNTIME_MODE`, `INSPECTION_API_TOKEN`, `INSPECTION_API_ROLE`은
+> `uvicorn agent_trading.api.app:app` (module-level app) 방식에서는 **무시됩니다**.
+> 반드시 `uvicorn agent_trading.api.app:create_app_from_env --factory` 방식으로 실행해야
+> 이 환경변수들이 적용됩니다.
 
 ---
 
@@ -173,6 +237,8 @@ make docker-down
 | `make migrate` | 로컬 마이그레이션 실행 |
 | `make test` | 로컬 테스트 실행 |
 | `make lint` | ruff 정적 분석 |
+| `make run-api-inmemory` | Inspection API 실행 (in-memory, auth 비활성, module-level `app`) |
+| `make run-api-postgres` | Inspection API 실행 (Postgres, auth 활성, `create_app_from_env --factory`, `.env` 필요) |
 | `make docker-up` | Docker 서비스 시작 |
 | `make docker-down` | Docker 서비스 종료 |
 | `make docker-build` | Docker 이미지 빌드 |

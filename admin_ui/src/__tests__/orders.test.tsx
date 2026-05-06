@@ -52,13 +52,10 @@ describe("OrdersView with order data", () => {
     expect(screen.getByText("AAPL")).toBeInTheDocument();
     expect(screen.getByText("TSLA")).toBeInTheDocument();
 
-    // Check total count
-    expect(screen.getByText(/Total: 2 \/ 2 orders/)).toBeInTheDocument();
-
     // Verify column headers
     expect(screen.getByText("Symbol")).toBeInTheDocument();
-    expect(screen.getByText("Side")).toBeInTheDocument();
-    expect(screen.getByText("Status")).toBeInTheDocument();
+    expect(screen.getAllByText("Side")[0]).toBeInTheDocument();
+    expect(screen.getAllByText("Status")[0]).toBeInTheDocument();
   });
 });
 
@@ -78,9 +75,6 @@ describe("OrdersView empty list", () => {
     await waitFor(() => {
       expect(screen.getByText("No orders found.")).toBeInTheDocument();
     });
-
-    // Total should be 0
-    expect(screen.getByText(/Total: 0 \/ 0 orders/)).toBeInTheDocument();
   });
 });
 
@@ -113,7 +107,7 @@ describe("OrdersView row click navigation", () => {
 });
 
 /* ───────────────────────────────────────────
- * Scenario 5: Filter by status (button group)
+ * Scenario 5: Filter by status (dropdown)
  * ─────────────────────────────────────────── */
 describe("OrdersView filter by status", () => {
   it("shows only filtered orders when status is selected", async () => {
@@ -133,21 +127,19 @@ describe("OrdersView filter by status", () => {
     // Initially both orders visible
     expect(screen.getByText("AAPL")).toBeInTheDocument();
     expect(screen.getByText("TSLA")).toBeInTheDocument();
-    expect(screen.getByText(/Total: 2 \/ 2 orders/)).toBeInTheDocument();
 
-    // Click "Filled" status button
-    const filledBtn = screen.getByRole("button", { name: /^Filled$/i });
-    await user.click(filledBtn);
+    // Select "Filled" from status dropdown
+    const statusSelect = screen.getByLabelText("Status");
+    await user.selectOptions(statusSelect, "filled");
 
     // Only AAPL (filled) should remain
     expect(screen.getByText("AAPL")).toBeInTheDocument();
     expect(screen.queryByText("TSLA")).not.toBeInTheDocument();
-    expect(screen.getByText(/Total: 1 \/ 2 orders/)).toBeInTheDocument();
   });
 });
 
 /* ───────────────────────────────────────────
- * Scenario 6: Filter by side (button group)
+ * Scenario 6: Filter by side (dropdown)
  * ─────────────────────────────────────────── */
 describe("OrdersView filter by side", () => {
   it("shows only matching side when side filter is selected", async () => {
@@ -168,9 +160,9 @@ describe("OrdersView filter by side", () => {
     expect(screen.getByText("AAPL")).toBeInTheDocument();
     expect(screen.getByText("TSLA")).toBeInTheDocument();
 
-    // Click "Buy" side button
-    const buyBtn = screen.getByRole("button", { name: /^Buy$/i });
-    await user.click(buyBtn);
+    // Select "Buy" from side dropdown
+    const sideSelect = screen.getByLabelText("Side");
+    await user.selectOptions(sideSelect, "buy");
 
     // Only AAPL (buy) should remain
     expect(screen.getByText("AAPL")).toBeInTheDocument();
@@ -197,13 +189,12 @@ describe("OrdersView search by symbol", () => {
     });
 
     // Type "AAPL" in search
-    const searchInput = screen.getByRole("searchbox", { name: /search by symbol/i });
+    const searchInput = screen.getByPlaceholderText("Search symbol or order ID...");
     await user.type(searchInput, "AAPL");
 
     // Only AAPL should remain
     expect(screen.getByText("AAPL")).toBeInTheDocument();
     expect(screen.queryByText("TSLA")).not.toBeInTheDocument();
-    expect(screen.getByText(/Total: 1 \/ 2 orders/)).toBeInTheDocument();
   });
 });
 
@@ -226,20 +217,18 @@ describe("OrdersView combined filter and search", () => {
     });
 
     // Type "AAPL" in search
-    const searchInput = screen.getByRole("searchbox", { name: /search by symbol/i });
+    const searchInput = screen.getByPlaceholderText("Search symbol or order ID...");
     await user.type(searchInput, "AAPL");
 
-    // Click "Filled" status button — AAPL is filled, TSLA is pending
-    const filledBtn = screen.getByRole("button", { name: /^Filled$/i });
-    await user.click(filledBtn);
+    // Select "Filled" from status dropdown — AAPL is filled, TSLA is pending
+    const statusSelect = screen.getByLabelText("Status");
+    await user.selectOptions(statusSelect, "filled");
 
     // AAPL (filled, buy) should still show
     expect(screen.getByText("AAPL")).toBeInTheDocument();
 
-    // Now click "Pending" — AAPL is not pending, should disappear
-    const pendingBtn = screen.getByRole("button", { name: /^Pending$/i });
-    await user.click(pendingBtn);
+    // Now select "Pending" — AAPL is not pending, should disappear
+    await user.selectOptions(statusSelect, "pending");
     expect(screen.queryByText("AAPL")).not.toBeInTheDocument();
-    expect(screen.getByText(/Total: 0 \/ 2 orders/)).toBeInTheDocument();
   });
 });

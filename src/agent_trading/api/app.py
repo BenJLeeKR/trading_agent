@@ -263,8 +263,32 @@ def create_app_from_env() -> FastAPI:
     return create_app(runtime_mode=mode, auth_token=token, auth_role=role)
 
 
-# Default instance: in-memory repos, suitable for development / inspection.
-# Auth is disabled for the module-level default so that quick `uvicorn ...:app`
-# invocations work without requiring INSPECTION_API_TOKEN.
-# Production deployments MUST use create_app_from_env() or docker-compose.
+# ═══════════════════════════════════════════════════════════════════════════
+# Module-level default instance
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# WARNING — This ``app`` is ALWAYS in-memory + auth-disabled.
+# Environment variables (API_RUNTIME_MODE, INSPECTION_API_TOKEN) are NOT
+# read.  The module-level ``app`` is created at import time with hard-coded
+# defaults:
+#
+#   ❌ uvicorn agent_trading.api.app:app
+#       → runtime_mode="in_memory", auth_enabled=False
+#
+#   ❌ INSPECTION_API_TOKEN=... uvicorn agent_trading.api.app:app
+#       → STILL in_memory (token is silently ignored)
+#
+#   ❌ API_RUNTIME_MODE=postgres uvicorn agent_trading.api.app:app
+#       → STILL in_memory (env var is silently ignored)
+#
+# For Postgres-backed mode with authentication, use create_app_from_env
+# with the ``--factory`` flag:
+#
+#   ✅ uvicorn agent_trading.api.app:create_app_from_env --factory
+#
+#   ✅ API_RUNTIME_MODE=postgres INSPECTION_API_TOKEN=... \
+#        uvicorn agent_trading.api.app:create_app_from_env --factory
+#
+# See ``docker-compose.yml`` for a complete production-grade example.
+# ═══════════════════════════════════════════════════════════════════════════
 app = create_app(auth_enabled=False)

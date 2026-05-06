@@ -3,67 +3,20 @@ import { useNavigate } from "react-router-dom";
 import type { OrderSummary } from "../types/api";
 import { getOrders } from "../api/client";
 import { DataTable } from "./common/DataTable";
-import { Panel } from "./common/Panel";
 import { StatusBadge } from "./common/StatusBadge";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
-import type { Column } from "./common/DataTable";
-import {
-  Search,
-  X,
-  ChevronDown,
-  ChevronRight,
-  Clock,
-  CheckCircle,
-  XCircle,
-  Minus,
-  ExternalLink,
-} from "lucide-react";
-
-const ORDER_STATUSES = [
-  "all",
-  "pending",
-  "submitted",
-  "partial",
-  "filled",
-  "rejected",
-  "cancelled",
-] as const;
-
-const SIDES = ["all", "buy", "sell", "hold"] as const;
-
-/* ── DetailRow (template pattern) ── */
-function DetailRow({
-  label,
-  value,
-  valueColor,
-}: {
-  label: string;
-  value: string;
-  valueColor?: string;
-}) {
-  return (
-    <div className="detail-row">
-      <span className="detail-row-label">{label}</span>
-      <span
-        className="detail-row-value"
-        style={{ color: valueColor ?? "var(--text-primary)" }}
-      >
-        {value}
-      </span>
-    </div>
-  );
-}
+import { FilterBar } from "./common/FilterBar";
+import { X } from "lucide-react";
 
 export default function OrdersView() {
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [sideFilter, setSideFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [sideFilter, setSideFilter] = useState("");
   const [selectedOrder, setSelectedOrder] = useState<OrderSummary | null>(null);
-  const [brokerFilter, setBrokerFilter] = useState("All Brokers");
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -72,344 +25,167 @@ export default function OrdersView() {
     getOrders()
       .then(setOrders)
       .catch((err: unknown) => {
-        const msg =
-          err instanceof Error ? err.message : "Failed to load orders";
+        const msg = err instanceof Error ? err.message : "Failed to load orders";
         setError(msg);
       })
       .finally(() => setLoading(false));
   }, []);
 
-  const brokerOptions = useMemo(() => {
-    const unique = new Set<string>();
-    unique.add("All Brokers");
-    orders.forEach((o) => {
-      const b = (o as any).broker;
-      if (b && typeof b === "string") unique.add(b);
-    });
-    return Array.from(unique);
-  }, [orders]);
-
   const filteredOrders = useMemo(() => {
     return orders.filter((o) => {
-      if (
-        searchText &&
-        !o.symbol.toLowerCase().includes(searchText.toLowerCase())
-      ) {
+      if (searchText && !(o.symbol ?? "").toLowerCase().includes(searchText.toLowerCase()) && !o.order_request_id.toLowerCase().includes(searchText.toLowerCase())) {
         return false;
       }
-      if (statusFilter !== "all" && o.status !== statusFilter) {
-        return false;
-      }
-      if (sideFilter !== "all" && o.side !== sideFilter) {
-        return false;
-      }
-      if (brokerFilter !== "All Brokers" && (o as any).broker !== brokerFilter) {
-        return false;
-      }
+      if (statusFilter && o.status !== statusFilter) return false;
+      if (sideFilter && o.side !== sideFilter) return false;
       return true;
     });
-  }, [orders, searchText, statusFilter, sideFilter, brokerFilter]);
+  }, [orders, searchText, statusFilter, sideFilter]);
 
-  const columns: Column<OrderSummary>[] = [
-    { key: "order_request_id", label: "Order ID", render: (r) => <code style={{ fontSize: "0.6875rem" }}>{r.order_request_id.slice(0, 8)}…</code> },
-    { key: "symbol", label: "Symbol" },
-    {
-      key: "side",
-      label: "Side",
-      render: (r) => (
-        <span
-          className={
-            r.side.toLowerCase() === "buy" ? "side-buy" : "side-sell"
-          }
-        >
-          {r.side.toUpperCase()}
-        </span>
-      ),
-    },
-    { key: "qty", label: "Qty" },
-    {
-      key: "status",
-      label: "Status",
-      render: (r) => <StatusBadge status={r.status} />,
-    },
-    { key: "strategy_code", label: "Strategy" },
-    { key: "created_at", label: "Time" },
+  const orderColumns = [
+    { key: "order_request_id", header: "Order ID", width: "100px", render: (r: OrderSummary) => (
+      <code className="text-xs">{r.order_request_id.slice(0, 8)}…</code>
+    )},
+    { key: "symbol", header: "Symbol" },
+    { key: "side", header: "Side", render: (r: OrderSummary) => (
+      <StatusBadge variant={r.side.toLowerCase() === "buy" ? "success" : "error"}>{r.side.toUpperCase()}</StatusBadge>
+    )},
+    { key: "requested_quantity", header: "Qty" },
+    { key: "status", header: "Status", render: (r: OrderSummary) => {
+      const variants: Record<string, "success" | "warning" | "error" | "info" | "neutral"> = {
+        filled: "success",
+        pending: "warning",
+        rejected: "error",
+        partial: "info",
+        submitted: "info",
+        cancelled: "neutral",
+      };
+      return <StatusBadge variant={variants[r.status] || "info"}>{r.status.toUpperCase()}</StatusBadge>;
+    }},
+    { key: "created_at", header: "Created" },
   ];
 
   if (loading) return <LoadingSpinner />;
-  if (error)
-    return <ErrorBanner message={error} onDismiss={() => setError(null)} />;
+  if (error) return <ErrorBanner message={error} onDismiss={() => setError(null)} />;
 
   return (
-    <section>
-      <div className="split-layout">
-        {/* Left: filter bar + table */}
-        <div className="split-main">
-          {/* Filter bar (template pattern) */}
-          <div className="filter-bar">
-            <div className="filter-input-wrap">
-              <Search size={12} className="filter-input-icon" />
-              <input
-                type="search"
-                placeholder="Search by symbol…"
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                className="filter-input-flex"
-                aria-label="Search by symbol"
-              />
-              {searchText && (
-                <button
-                  onClick={() => setSearchText("")}
-                  className="filter-input-clear"
-                >
-                  <X size={11} />
-                </button>
-              )}
-            </div>
+    <div className="p-6 space-y-6">
+      {/* Page Header */}
+      <div>
+        <h1 className="text-2xl font-semibold text-[#0f172a]">Orders</h1>
+        <p className="text-sm text-[#64748b] mt-1">View order lifecycle, broker mapping, and decision lineage</p>
+      </div>
 
-            <div className="filter-group" role="group" aria-label="Status">
-              {ORDER_STATUSES.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  className={`pill-btn${statusFilter === s ? " pill-btn--active" : ""}`}
-                  onClick={() => setStatusFilter(s)}
-                >
-                  {s === "all"
-                    ? "All"
-                    : s.charAt(0).toUpperCase() + s.slice(1)}
-                </button>
-              ))}
-            </div>
-
-            <div className="filter-group" role="group" aria-label="Side">
-              {SIDES.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  className={`pill-btn${sideFilter === s ? " pill-btn--active" : ""}`}
-                  onClick={() => setSideFilter(s)}
-                >
-                  {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
-                </button>
-              ))}
-            </div>
-
-            {/* Broker select (template pattern) */}
-            <div
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs"
-              style={{
-                backgroundColor: "#f9fafb",
-                borderColor: "#e8eaed",
-              }}
-            >
-              <select
-                value={brokerFilter}
-                onChange={(e) => setBrokerFilter(e.target.value)}
-                className="bg-transparent outline-none text-xs cursor-pointer"
-                style={{ color: "#374151" }}
-              >
-                {brokerOptions.map((b) => (
-                  <option key={b}>{b}</option>
-                ))}
-              </select>
-              <ChevronDown size={11} style={{ color: "#9ca3af" }} />
-            </div>
-          </div>
-
-          {/* Table */}
-          <Panel
-            title="Orders"
-            headerRight={
-              <span className="panel-counter">
-                Total: {filteredOrders.length} / {orders.length} order
-                {orders.length !== 1 ? "s" : ""}
-              </span>
-            }
-          >
-            <DataTable
-              columns={columns}
-              data={filteredOrders}
-              keyField="order_request_id"
-              onRowClick={(row) =>
-                setSelectedOrder(
-                  selectedOrder?.order_request_id === row.order_request_id
-                    ? null
-                    : row,
-                )
+      <div className="grid grid-cols-12 gap-6">
+        {/* Orders List */}
+        <div className={selectedOrder ? "col-span-7" : "col-span-12"}>
+          <FilterBar
+            searchPlaceholder="Search symbol or order ID..."
+            searchValue={searchText}
+            onSearchChange={setSearchText}
+            filters={[
+              {
+                key: "status",
+                label: "Status",
+                options: [
+                  { label: "Filled", value: "filled" },
+                  { label: "Pending", value: "pending" },
+                  { label: "Rejected", value: "rejected" },
+                  { label: "Partial", value: "partial" },
+                  { label: "Submitted", value: "submitted" },
+                  { label: "Cancelled", value: "cancelled" },
+                ],
+                value: statusFilter,
+                onChange: setStatusFilter,
+              },
+              {
+                key: "side",
+                label: "Side",
+                options: [
+                  { label: "Buy", value: "buy" },
+                  { label: "Sell", value: "sell" },
+                ],
+                value: sideFilter,
+                onChange: setSideFilter,
+              },
+            ]}
+            onClearAll={() => {
+              setSearchText("");
+              setStatusFilter("");
+              setSideFilter("");
+            }}
+          />
+          <DataTable
+            columns={orderColumns}
+            data={filteredOrders}
+            idKey="order_request_id"
+            onRowClick={(row) => {
+              if (selectedOrder?.order_request_id === row.order_request_id) {
+                setSelectedOrder(null);
+              } else {
+                setSelectedOrder(row);
               }
-              emptyMessage="No orders found."
-            />
-          </Panel>
+            }}
+            selectedId={selectedOrder?.order_request_id}
+            emptyMessage="No orders found."
+          />
         </div>
 
-        {/* Right: inline detail panel (template pattern) */}
+        {/* Order Detail Panel */}
         {selectedOrder && (
-          <div className="detail-side-panel">
-            {/* Order Detail card */}
-            <div className="card-panel">
-              <div className="card-panel-header">
-                <span className="card-panel-title">Order Detail</span>
+          <div className="col-span-5 space-y-4">
+            <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-[#0f172a]">Order Detail</h3>
                 <button
                   onClick={() => setSelectedOrder(null)}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    cursor: "pointer",
-                    color: "var(--text-muted)",
-                    padding: 0,
-                  }}
+                  className="p-1 text-[#94a3b8] hover:text-[#64748b] transition-colors"
                 >
-                  <X size={13} />
+                  <X className="h-5 w-5" />
                 </button>
               </div>
-
-              {/* Status banner */}
-              <div
-                className="status-banner"
-                style={{
-                  backgroundColor:
-                    selectedOrder.status === "filled" ||
-                    selectedOrder.status === "partial"
-                      ? "#f0fdf4"
-                      : selectedOrder.status === "pending" ||
-                          selectedOrder.status === "submitted"
-                        ? "#fffbeb"
-                        : selectedOrder.status === "rejected" ||
-                            selectedOrder.status === "cancelled"
-                          ? "#fef2f2"
-                          : "#eff6ff",
-                }}
-              >
-                <span
-                  className="status-banner-dot"
-                  style={{
-                    backgroundColor:
-                      selectedOrder.status === "filled" ||
-                      selectedOrder.status === "partial"
-                        ? "#22c55e"
-                        : selectedOrder.status === "pending" ||
-                            selectedOrder.status === "submitted"
-                          ? "#f59e0b"
-                          : selectedOrder.status === "rejected" ||
-                              selectedOrder.status === "cancelled"
-                            ? "#ef4444"
-                            : "#3b82f6",
-                  }}
-                />
-                <span
-                  className="status-banner-label"
-                  style={{
-                    color:
-                      selectedOrder.status === "filled" ||
-                      selectedOrder.status === "partial"
-                        ? "#16a34a"
-                        : selectedOrder.status === "pending" ||
-                            selectedOrder.status === "submitted"
-                          ? "#d97706"
-                          : selectedOrder.status === "rejected" ||
-                              selectedOrder.status === "cancelled"
-                            ? "#dc2626"
-                            : "#2563eb",
-                  }}
+              <dl className="space-y-3">
+                <div className="flex justify-between">
+                  <dt className="text-sm text-[#64748b]">Order ID</dt>
+                  <dd className="text-sm font-medium text-[#0f172a]">{selectedOrder.order_request_id}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-sm text-[#64748b]">Symbol</dt>
+                  <dd className="text-sm font-medium text-[#0f172a]">{selectedOrder.symbol ?? "—"}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-sm text-[#64748b]">Side</dt>
+                  <dd><StatusBadge variant={selectedOrder.side.toLowerCase() === "buy" ? "success" : "error"}>{selectedOrder.side.toUpperCase()}</StatusBadge></dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-sm text-[#64748b]">Quantity</dt>
+                  <dd className="text-sm font-medium text-[#0f172a]">{selectedOrder.requested_quantity}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-sm text-[#64748b]">Status</dt>
+                  <dd><StatusBadge status={selectedOrder.status} /></dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-sm text-[#64748b]">Client Order ID</dt>
+                  <dd className="text-sm font-medium text-[#0f172a]">{selectedOrder.client_order_id}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-sm text-[#64748b]">Created</dt>
+                  <dd className="text-sm font-medium text-[#0f172a]">{selectedOrder.created_at ?? "—"}</dd>
+                </div>
+              </dl>
+              <div className="mt-4 pt-4 border-t border-[#e2e8f0]">
+                <button
+                  onClick={() => navigate(`/orders/${selectedOrder.order_request_id}`)}
+                  className="w-full text-center text-sm text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors"
                 >
-                  {selectedOrder.status.charAt(0).toUpperCase() +
-                    selectedOrder.status.slice(1)}
-                </span>
-              </div>
-
-              <div className="panel-body">
-                <DetailRow
-                  label="Order ID"
-                  value={selectedOrder.order_request_id}
-                />
-                <DetailRow label="Symbol" value={selectedOrder.symbol} />
-                <DetailRow
-                  label="Side"
-                  value={selectedOrder.side.toUpperCase()}
-                  valueColor={
-                    selectedOrder.side.toLowerCase() === "buy"
-                      ? "#16a34a"
-                      : "#dc2626"
-                  }
-                />
-                <DetailRow label="Type" value={selectedOrder.order_type} />
-                <DetailRow
-                  label="Quantity"
-                  value={String(selectedOrder.qty)}
-                />
-                <DetailRow
-                  label="Strategy"
-                  value={selectedOrder.strategy_code}
-                />
-                <DetailRow label="Created" value={selectedOrder.created_at} />
-              </div>
-            </div>
-
-            {/* State Events (template timeline pattern) */}
-            <div className="card-panel">
-              <div className="card-panel-header">
-                <span className="card-panel-title">State Events</span>
-              </div>
-              <div className="panel-body">
-                {[
-                  { label: "Order Created", color: "#3b82f6" },
-                  { label: "Sent to Broker", color: "#8b5cf6" },
-                  ...(selectedOrder.status !== "cancelled" &&
-                  selectedOrder.status !== "rejected"
-                    ? [{ label: "Acknowledged", color: "#10b981" }]
-                    : []),
-                  ...(selectedOrder.status === "filled" ||
-                  selectedOrder.status === "partial"
-                    ? [{ label: "Fill Received", color: "#10b981" }]
-                    : []),
-                  ...(selectedOrder.status === "cancelled"
-                    ? [{ label: "Cancelled", color: "#ef4444" }]
-                    : []),
-                  ...(selectedOrder.status === "rejected"
-                    ? [{ label: "Rejected", color: "#ef4444" }]
-                    : []),
-                ].map((ev, i, arr) => (
-                  <div key={i} className="event-timeline-item">
-                    <div className="event-timeline-line">
-                      <span
-                        className="event-timeline-dot"
-                        style={{ backgroundColor: ev.color }}
-                      />
-                      {i < arr.length - 1 && (
-                        <span
-                          className="event-timeline-connector"
-                          style={{ backgroundColor: "var(--border-color)" }}
-                        />
-                      )}
-                    </div>
-                    <div className="event-timeline-content">
-                      <p
-                        className="event-timeline-label"
-                        style={{ color: ev.color }}
-                      >
-                        {ev.label}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Broker Mapping (template pattern) */}
-            <div className="card-panel">
-              <div className="card-panel-header">
-                <span className="card-panel-title">Broker Mapping</span>
-              </div>
-              <div className="panel-body">
-                <DetailRow label="Broker" value={(selectedOrder as any).broker ?? "—"} />
-                <DetailRow label="Broker Order ID" value={(selectedOrder as any).broker_order_id ?? "—"} />
-                <DetailRow label="Broker Status" value={(selectedOrder as any).broker_status ?? "—"} />
+                  View full details →
+                </button>
               </div>
             </div>
           </div>
         )}
       </div>
-    </section>
+    </div>
   );
 }

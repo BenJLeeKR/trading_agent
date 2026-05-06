@@ -9,6 +9,7 @@ import OrderDetail from "./components/OrderDetail";
 import ReconciliationView from "./components/ReconciliationView";
 import AccountsView from "./components/AccountsView";
 import DecisionsView from "./components/DecisionsView";
+import AgentRunsView from "./components/AgentRunsView";
 
 /** Redirect to "/" if already authenticated (reverse of ProtectedRoute). */
 function PublicRoute({ children }: { children: React.ReactNode }) {
@@ -48,6 +49,7 @@ export default function App() {
             <Route path="reconciliation" element={<ReconciliationView />} />
             <Route path="accounts" element={<AccountsView />} />
             <Route path="decisions" element={<DecisionsView />} />
+            <Route path="agent-runs" element={<AgentRunsView />} />
           </Route>
         </Routes>
       </AuthProvider>

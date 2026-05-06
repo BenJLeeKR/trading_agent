@@ -65,15 +65,14 @@ describe("OrderDetail with valid data", () => {
     expect(screen.getByText("AAPL")).toBeInTheDocument();
     expect(screen.getByText("buy")).toBeInTheDocument();
     expect(screen.getByText("limit")).toBeInTheDocument();
-    expect(screen.getAllByText("100").length).toBeGreaterThanOrEqual(1); // qty + filled_qty
-    expect(screen.getByText("strat-a")).toBeInTheDocument();
+    expect(screen.getAllByText("100").length).toBeGreaterThanOrEqual(1); // requested_quantity + filled_qty
     expect(screen.getByText("185.50")).toBeInTheDocument();
 
-    // Back link
-    expect(screen.getByText(/← Back to Orders/)).toBeInTheDocument();
+    // Back link (ArrowLeft icon + text)
+    expect(screen.getByText("Back to Orders")).toBeInTheDocument();
 
-    // Decision Links footer
-    expect(screen.getByText("Decision Links:")).toBeInTheDocument();
+    // Decision Links footer (no colon in new template)
+    expect(screen.getByText("Decision Links")).toBeInTheDocument();
     // Verify the IDs are rendered inside Link elements (they should have href)
     const contextLink = screen.getByRole("link", {
       name: /aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00dc1/,
@@ -171,7 +170,7 @@ describe("OrderDetail without decision links", () => {
     });
 
     // Decision Links must NOT be present
-    expect(screen.queryByText("Decision Links:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Decision Links")).not.toBeInTheDocument();
     // Regular content should still render
     expect(screen.getByText("AAPL")).toBeInTheDocument();
   });

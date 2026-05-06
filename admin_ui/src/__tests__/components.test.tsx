@@ -17,8 +17,8 @@ interface TestRow {
 }
 
 const testColumns: Column<TestRow>[] = [
-  { key: "name", label: "Name" },
-  { key: "value", label: "Value" },
+  { key: "name", header: "Name" },
+  { key: "value", header: "Value" },
 ];
 
 const testData: TestRow[] = [
@@ -28,12 +28,12 @@ const testData: TestRow[] = [
 
 describe("DataTable", () => {
   /* Scenario 1: 렌더링 */
-  it("renders column labels and data rows", () => {
+  it("renders column headers and data rows", () => {
     render(
       <DataTable
         columns={testColumns}
         data={testData}
-        keyField="id"
+        idKey="id"
       />,
     );
 
@@ -51,7 +51,7 @@ describe("DataTable", () => {
       <DataTable
         columns={testColumns}
         data={[]}
-        keyField="id"
+        idKey="id"
         emptyMessage="No items found."
       />,
     );
@@ -60,12 +60,12 @@ describe("DataTable", () => {
   });
 
   /* Scenario 3: 로딩 상태 */
-  it("shows loading text when isLoading is true", () => {
+  it("shows loading spinner when isLoading is true", () => {
     render(
       <DataTable
         columns={testColumns}
         data={[]}
-        keyField="id"
+        idKey="id"
         isLoading
       />,
     );
@@ -82,7 +82,7 @@ describe("DataTable", () => {
       <DataTable
         columns={testColumns}
         data={testData}
-        keyField="id"
+        idKey="id"
         onRowClick={onRowClick}
       />,
     );
@@ -128,7 +128,7 @@ describe("ErrorBanner", () => {
     expect(screen.getByText(/Something went wrong/)).toBeInTheDocument();
 
     // Click dismiss button
-    await user.click(screen.getByRole("button", { name: /dismiss/i }));
+    await user.click(screen.getByRole("button"));
     expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 });

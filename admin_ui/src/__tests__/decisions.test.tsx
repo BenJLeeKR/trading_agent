@@ -4,8 +4,42 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, afterEach, beforeEach, vi } from "vitest";
 import DecisionsView from "../components/DecisionsView";
 import { setStoredToken, clearStoredToken } from "../api/client";
+import {
+  mockTradeDecisions,
+  mockDecisionContext,
+  mockAgentRuns,
+  VALID_TOKEN,
+} from "./test-utils/fixtures";
 import { mockFetchOnce, mockFetchError } from "./test-utils/mockFetch";
-import { mockTradeDecisions, mockDecisionContext, VALID_TOKEN } from "./test-utils/fixtures";
+
+/**
+ * Create a fetch mock that dispatches by URL path pattern.
+ * Routes are matched by `url.includes(pattern)` — the first match wins.
+ * If the route value is an `Error`, it is returned as a 500 response.
+ */
+function mockUrlRouter(routes: Record<string, unknown>) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    const url = typeof input === "string" ? input : input instanceof Request ? input.url : "";
+    const entry = Object.entries(routes).find(([pattern]) => url.includes(pattern));
+    if (entry) {
+      const data = entry[1];
+      if (data instanceof Error) {
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          statusText: data.message,
+          json: async () => ({ detail: data.message }),
+        } as Response);
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => data,
+      } as Response);
+    }
+    return Promise.reject(new Error(`No mock for ${url}`));
+  });
+}
 
 beforeEach(() => {
   setStoredToken(VALID_TOKEN);
@@ -30,16 +64,13 @@ describe("DecisionsView with data", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByText("Trade Decisions")[0]).toBeInTheDocument();
+      expect(screen.getByText("Decisions")).toBeInTheDocument();
     });
 
     // Verify all tickers are rendered
     expect(screen.getByText("AAPL")).toBeInTheDocument();
     expect(screen.getByText("TSLA")).toBeInTheDocument();
     expect(screen.getByText("MSFT")).toBeInTheDocument();
-
-    // Verify total count
-    expect(screen.getByText(/Total: 3 decisions/)).toBeInTheDocument();
 
     // Verify key column headers (template columns: Side, Reasoning, Timestamp)
     expect(screen.getByRole("columnheader", { name: "Symbol" })).toBeInTheDocument();
@@ -63,7 +94,7 @@ describe("DecisionsView confidence color", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByText("Trade Decisions")[0]).toBeInTheDocument();
+      expect(screen.getByText("Decisions")).toBeInTheDocument();
     });
 
     // AAPL confidence 0.85 >= 0.7 → green (#22c55e)
@@ -96,8 +127,6 @@ describe("DecisionsView empty list", () => {
     await waitFor(() => {
       expect(screen.getByText("No trade decisions found.")).toBeInTheDocument();
     });
-
-    expect(screen.getByText(/Total: 0 decisions/)).toBeInTheDocument();
   });
 });
 
@@ -107,8 +136,11 @@ describe("DecisionsView empty list", () => {
 describe("DecisionsView detail panel", () => {
   it("shows decision fields and lazy-loads context on row click", async () => {
     const user = userEvent.setup();
-    mockFetchOnce(mockTradeDecisions);
-    mockFetchOnce(mockDecisionContext);
+    mockUrlRouter({
+      "/trade-decisions": mockTradeDecisions,
+      "/decision-contexts/": mockDecisionContext,
+      "/agent-runs": mockAgentRuns,
+    });
 
     render(
       <MemoryRouter>
@@ -117,7 +149,7 @@ describe("DecisionsView detail panel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByText("Trade Decisions")[0]).toBeInTheDocument();
+      expect(screen.getByText("Decisions")).toBeInTheDocument();
     });
 
     // Click the first row (AAPL)
@@ -149,8 +181,11 @@ describe("DecisionsView detail panel", () => {
 
   it("shows error banner when context API call fails", async () => {
     const user = userEvent.setup();
-    mockFetchOnce(mockTradeDecisions);
-    mockFetchError(500, "Internal error");
+    mockUrlRouter({
+      "/trade-decisions": mockTradeDecisions,
+      "/decision-contexts/": new Error("API error 500: Internal error"),
+      "/agent-runs": mockAgentRuns,
+    });
 
     render(
       <MemoryRouter>
@@ -159,7 +194,7 @@ describe("DecisionsView detail panel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByText("Trade Decisions")[0]).toBeInTheDocument();
+      expect(screen.getByText("Decisions")).toBeInTheDocument();
     });
 
     // Click the first row
@@ -178,7 +213,7 @@ describe("DecisionsView detail panel", () => {
 });
 
 /* ───────────────────────────────────────────
- * Scenario 5: Filter by side
+ * Scenario 5: Filter by side (dropdown)
  * ─────────────────────────────────────────── */
 describe("DecisionsView side filter", () => {
   it("shows only matching decisions when side filter is selected", async () => {
@@ -192,12 +227,12 @@ describe("DecisionsView side filter", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByText("Trade Decisions")[0]).toBeInTheDocument();
+      expect(screen.getByText("Decisions")).toBeInTheDocument();
     });
 
-    // Click "Buy" side button
-    const buyBtn = screen.getByRole("button", { name: /^Buy$/i });
-    await user.click(buyBtn);
+    // Select "Buy" from side dropdown
+    const sideSelect = screen.getByLabelText("Side");
+    await user.selectOptions(sideSelect, "buy");
 
     // AAPL (buy) should remain, TSLA (hold) and MSFT (sell) should be hidden
     expect(screen.getByText("AAPL")).toBeInTheDocument();
@@ -221,10 +256,10 @@ describe("DecisionsView symbol search", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByText("Trade Decisions")[0]).toBeInTheDocument();
+      expect(screen.getByText("Decisions")).toBeInTheDocument();
     });
 
-    const searchInput = screen.getByLabelText("Search decisions by ticker");
+    const searchInput = screen.getByPlaceholderText("Search symbol or decision ID...");
     await user.type(searchInput, "AAPL");
 
     // Only AAPL should be visible
@@ -234,12 +269,16 @@ describe("DecisionsView symbol search", () => {
 });
 
 /* ───────────────────────────────────────────
- * Scenario 7: Filter by confidence range
+ * Scenario 8: Agent Runs panel in detail panel
  * ─────────────────────────────────────────── */
-describe("DecisionsView confidence filter", () => {
-  it("filters decisions by confidence range", async () => {
+describe("DecisionsView agent runs panel", () => {
+  it("shows agent runs panel with EI/AR/FDC cards when decision is selected", async () => {
     const user = userEvent.setup();
-    mockFetchOnce(mockTradeDecisions);
+    mockUrlRouter({
+      "/trade-decisions": mockTradeDecisions,
+      "/decision-contexts/": mockDecisionContext,
+      "/agent-runs": mockAgentRuns,
+    });
 
     render(
       <MemoryRouter>
@@ -248,21 +287,161 @@ describe("DecisionsView confidence filter", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByText("Trade Decisions")[0]).toBeInTheDocument();
+      expect(screen.getByText("Decisions")).toBeInTheDocument();
     });
 
-    // Set confidence min to 0.5 → only AAPL (0.85) and TSLA (0.55) should show
-    const minInput = screen.getByLabelText("Minimum confidence");
-    await user.type(minInput, "0.5");
+    // Click AAPL row
+    const aaplRow = screen.getByText("AAPL");
+    await user.click(aaplRow);
 
-    expect(screen.getByText("AAPL")).toBeInTheDocument();
-    expect(screen.getByText("TSLA")).toBeInTheDocument();
-    expect(screen.queryByText("MSFT")).not.toBeInTheDocument();
+    // Agent Runs card appears
+    await waitFor(() => {
+      expect(screen.getByText("Agent Runs")).toBeInTheDocument();
+    });
+
+    // All three agent type badges are visible
+    expect(screen.getByText("EI")).toBeInTheDocument();
+    expect(screen.getByText("AR")).toBeInTheDocument();
+    expect(screen.getByText("FDC")).toBeInTheDocument();
+
+    // Structured output summary is shown
+    expect(screen.getByText(/Strong earnings momentum/)).toBeInTheDocument();
+  });
+
+  it("shows empty state when no agent runs exist", async () => {
+    const user = userEvent.setup();
+    mockUrlRouter({
+      "/trade-decisions": mockTradeDecisions,
+      "/decision-contexts/": mockDecisionContext,
+      "/agent-runs": [],
+    });
+
+    render(
+      <MemoryRouter>
+        <DecisionsView />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Decisions")).toBeInTheDocument();
+    });
+
+    const aaplRow = screen.getByText("AAPL");
+    await user.click(aaplRow);
+
+    await waitFor(() => {
+      expect(screen.getByText("Agent Runs")).toBeInTheDocument();
+    });
+
+    expect(
+      screen.getByText("No agent runs recorded for this decision context."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows error banner when agent runs API call fails", async () => {
+    const user = userEvent.setup();
+    mockUrlRouter({
+      "/trade-decisions": mockTradeDecisions,
+      "/decision-contexts/": mockDecisionContext,
+      "/agent-runs": new Error("API error 500: Internal error"),
+    });
+    // Override the agent-runs route to return an error
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input instanceof Request ? input.url : "";
+      if (url.includes("/agent-runs")) {
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          statusText: "Internal error",
+          json: async () => ({ detail: "Internal error" }),
+        } as Response);
+      }
+      if (url.includes("/decision-contexts/")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => mockDecisionContext,
+        } as Response);
+      }
+      if (url.includes("/trade-decisions")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => mockTradeDecisions,
+        } as Response);
+      }
+      return Promise.reject(new Error(`No mock for ${url}`));
+    });
+
+    render(
+      <MemoryRouter>
+        <DecisionsView />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Decisions")).toBeInTheDocument();
+    });
+
+    const aaplRow = screen.getByText("AAPL");
+    await user.click(aaplRow);
+
+    await waitFor(() => {
+      expect(screen.getByText("Agent Runs")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/API error 500/i)).toBeInTheDocument();
+    });
+  });
+
+  it("toggles structured output JSON detail", async () => {
+    const user = userEvent.setup();
+    mockUrlRouter({
+      "/trade-decisions": mockTradeDecisions,
+      "/decision-contexts/": mockDecisionContext,
+      "/agent-runs": mockAgentRuns,
+    });
+
+    render(
+      <MemoryRouter>
+        <DecisionsView />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Decisions")).toBeInTheDocument();
+    });
+
+    const aaplRow = screen.getByText("AAPL");
+    await user.click(aaplRow);
+
+    await waitFor(() => {
+      expect(screen.getByText("Agent Runs")).toBeInTheDocument();
+    });
+
+    // Click "Show raw output" for the first run
+    const showButtons = screen.getAllByText("Show raw output");
+    await user.click(showButtons[0]);
+
+    // JSON block should appear
+    await waitFor(() => {
+      expect(screen.getByText(/"signal"/)).toBeInTheDocument();
+    });
+
+    // Click "Hide raw output"
+    const hideButton = screen.getByText("Hide raw output");
+    await user.click(hideButton);
+
+    // JSON block should disappear
+    await waitFor(() => {
+      expect(screen.queryByText(/"signal"/)).not.toBeInTheDocument();
+    });
   });
 });
 
 /* ───────────────────────────────────────────
- * Scenario 8: Empty / no-selection state
+ * Scenario 7: Empty / no-selection state
  * ─────────────────────────────────────────── */
 describe("DecisionsView no selection state", () => {
   it("shows placeholder text when no row is selected", async () => {
@@ -275,12 +454,12 @@ describe("DecisionsView no selection state", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByText("Trade Decisions")[0]).toBeInTheDocument();
+      expect(screen.getByText("Decisions")).toBeInTheDocument();
     });
 
     // Placeholder should be visible when data loaded and no row selected
     expect(
-      screen.getByText("Select a decision row to view details."),
+      screen.getByText("Select a decision from the table to view details."),
     ).toBeInTheDocument();
   });
 });

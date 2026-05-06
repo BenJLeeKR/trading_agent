@@ -1,0 +1,280 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
+import { describe, expect, it, afterEach, beforeEach, vi } from "vitest";
+import AgentRunsView from "../components/AgentRunsView";
+import { setStoredToken, clearStoredToken } from "../api/client";
+import { mockAgentRuns, VALID_TOKEN } from "./test-utils/fixtures";
+
+/**
+ * URL-based fetch mock — routes are matched by `url.includes(pattern)`.
+ * The first match wins. Used to avoid mockFetchOnce call-order dependencies.
+ */
+function mockUrlRouter(routes: Record<string, unknown>) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    const url = typeof input === "string" ? input : input instanceof Request ? input.url : "";
+    const entry = Object.entries(routes).find(([pattern]) => url.includes(pattern));
+    if (entry) {
+      const data = entry[1];
+      if (data instanceof Error) {
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          statusText: data.message,
+          json: async () => ({ detail: data.message }),
+        } as Response);
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => data,
+      } as Response);
+    }
+    return Promise.reject(new Error(`No mock for ${url}`));
+  });
+}
+
+beforeEach(() => {
+  setStoredToken(VALID_TOKEN);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  clearStoredToken();
+});
+
+/* ── Helper to render AgentRunsView inside a MemoryRouter ── */
+function renderView() {
+  return render(
+    <MemoryRouter>
+      <AgentRunsView />
+    </MemoryRouter>
+  );
+}
+
+/* ── Test data variants ── */
+
+/** Single EI run for filter tests */
+const singleEiRun = [mockAgentRuns[0]];
+
+/** Single completed run */
+const singleCompletedRun = [mockAgentRuns[0]];
+
+/** Empty array */
+const emptyRuns: typeof mockAgentRuns = [];
+
+/* ──────────────────────────────────────────────
+ * AgentRunsView — data rendering
+ * ────────────────────────────────────────────── */
+
+describe("AgentRunsView with data", () => {
+  it("renders agent runs with EI/AR/FDC badges", async () => {
+    mockUrlRouter({ "/agent-runs": mockAgentRuns });
+    renderView();
+
+    // Wait for data to load
+    await waitFor(() => {
+      expect(screen.getByText("EI")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("AR")).toBeInTheDocument();
+    expect(screen.getByText("FDC")).toBeInTheDocument();
+    expect(screen.getByText("3 results")).toBeInTheDocument();
+  });
+
+  it("shows summary text from structured_output_json", async () => {
+    mockUrlRouter({ "/agent-runs": mockAgentRuns });
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText("Strong earnings momentum")).toBeInTheDocument();
+    });
+  });
+});
+
+/* ──────────────────────────────────────────────
+ * AgentRunsView — empty state
+ * ────────────────────────────────────────────── */
+
+describe("AgentRunsView empty list", () => {
+  it("shows empty message when no agent runs exist", async () => {
+    mockUrlRouter({ "/agent-runs": emptyRuns });
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText("No agent runs found")).toBeInTheDocument();
+    });
+  });
+});
+
+/* ──────────────────────────────────────────────
+ * AgentRunsView — error state
+ * ────────────────────────────────────────────── */
+
+describe("AgentRunsView error state", () => {
+  it("shows error banner when API call fails", async () => {
+    mockUrlRouter({ "/agent-runs": new Error("Network failure") });
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText(/API error 500/)).toBeInTheDocument();
+    });
+  });
+
+  it("dismisses error banner on click", async () => {
+    mockUrlRouter({ "/agent-runs": new Error("Network failure") });
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText(/API error 500/)).toBeInTheDocument();
+    });
+
+    // Click dismiss button (×)
+    const dismissBtn = screen.getByRole("button", { name: /×|dismiss/i });
+    await userEvent.click(dismissBtn);
+
+    await waitFor(() => {
+      expect(screen.queryByText(/API error 500/)).not.toBeInTheDocument();
+    });
+  });
+});
+
+/* ──────────────────────────────────────────────
+ * AgentRunsView — row selection & detail panel
+ * ────────────────────────────────────────────── */
+
+describe("AgentRunsView detail panel", () => {
+  it("shows metadata when a row is clicked", async () => {
+    mockUrlRouter({ "/agent-runs": mockAgentRuns });
+    renderView();
+
+    // Wait for data to load
+    await waitFor(() => {
+      expect(screen.getByText("EI")).toBeInTheDocument();
+    });
+
+    // Click the first row (EI)
+    const eiRow = screen.getByText("EI").closest("tr");
+    expect(eiRow).not.toBeNull();
+    await userEvent.click(eiRow!);
+
+    // Detail panel should show metadata fields
+    // Use getAllByText because labels appear both as label text and as values
+    await waitFor(() => {
+      expect(screen.getAllByText("Agent Run ID").length).toBeGreaterThanOrEqual(1);
+    });
+    expect(screen.getAllByText("Decision Context ID").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Agent Type").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Status").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("shows structured output section when run has structured_output_json", async () => {
+    mockUrlRouter({ "/agent-runs": mockAgentRuns });
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText("EI")).toBeInTheDocument();
+    });
+
+    // Click the first row (EI has structured_output_json with summary)
+    const eiRow = screen.getByText("EI").closest("tr");
+    await userEvent.click(eiRow!);
+
+    await waitFor(() => {
+      expect(screen.getByText("Structured Output")).toBeInTheDocument();
+    });
+  });
+});
+
+/* ──────────────────────────────────────────────
+ * AgentRunsView — search filter
+ * ────────────────────────────────────────────── */
+
+describe("AgentRunsView search filter", () => {
+  it("filters runs by decision_context_id", async () => {
+    mockUrlRouter({ "/agent-runs": mockAgentRuns });
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText("EI")).toBeInTheDocument();
+    });
+
+    // All 3 runs visible initially
+    expect(screen.getByText("3 results")).toBeInTheDocument();
+
+    // Search for a non-matching decision_context_id
+    const searchInput = screen.getByPlaceholderText(/Search by Decision Context ID/i);
+    await userEvent.type(searchInput, "NONEXISTENT");
+
+    await waitFor(() => {
+      expect(screen.getByText("0 results")).toBeInTheDocument();
+    });
+  });
+});
+
+/* ──────────────────────────────────────────────
+ * AgentRunsView — agent type filter
+ * ────────────────────────────────────────────── */
+
+describe("AgentRunsView agent type filter", () => {
+  it("shows only EI runs when event_interpretation filter is selected", async () => {
+    mockUrlRouter({ "/agent-runs": mockAgentRuns });
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText("EI")).toBeInTheDocument();
+    });
+
+    // Select "event_interpretation" from the Agent Type dropdown
+    const agentTypeSelect = screen.getByLabelText("Agent Type");
+    await userEvent.selectOptions(agentTypeSelect, "event_interpretation");
+
+    // EI should still be visible
+    expect(screen.getByText("EI")).toBeInTheDocument();
+    // AR and FDC should not be visible
+    expect(screen.queryByText("AR")).not.toBeInTheDocument();
+    expect(screen.queryByText("FDC")).not.toBeInTheDocument();
+    expect(screen.getByText("1 result")).toBeInTheDocument();
+  });
+});
+
+/* ──────────────────────────────────────────────
+ * AgentRunsView — status filter
+ * ────────────────────────────────────────────── */
+
+describe("AgentRunsView status filter", () => {
+  it("shows only completed runs when completed filter is selected", async () => {
+    mockUrlRouter({ "/agent-runs": mockAgentRuns });
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText("EI")).toBeInTheDocument();
+    });
+
+    // All 3 runs are "completed", so all should remain visible
+    const statusSelect = screen.getByLabelText("Status");
+    await userEvent.selectOptions(statusSelect, "completed");
+
+    expect(screen.getByText("EI")).toBeInTheDocument();
+    expect(screen.getByText("AR")).toBeInTheDocument();
+    expect(screen.getByText("FDC")).toBeInTheDocument();
+    expect(screen.getByText("3 results")).toBeInTheDocument();
+  });
+
+  it("shows 0 results when status filter matches nothing", async () => {
+    mockUrlRouter({ "/agent-runs": mockAgentRuns });
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText("EI")).toBeInTheDocument();
+    });
+
+    // Select "running" — none of the mock runs have this status
+    const statusSelect = screen.getByLabelText("Status");
+    await userEvent.selectOptions(statusSelect, "running");
+
+    await waitFor(() => {
+      expect(screen.getByText("0 results")).toBeInTheDocument();
+    });
+  });
+});

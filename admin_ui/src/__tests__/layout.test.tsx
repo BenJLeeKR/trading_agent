@@ -16,7 +16,7 @@ afterEach(() => {
  * Scenario 1: 네비게이션 링크 렌더링
  * ─────────────────────────────────────────── */
 describe("Layout navigation", () => {
-  it("renders all 5 navigation links and brand", () => {
+  it("renders all 6 navigation links and brand", () => {
     setStoredToken(VALID_TOKEN);
 
     render(
@@ -32,15 +32,15 @@ describe("Layout navigation", () => {
     );
 
     // Brand
-    expect(screen.getByText("AgentTrade")).toBeInTheDocument();
-    expect(screen.getByText("Live")).toBeInTheDocument();
+    expect(screen.getByText("Admin Console")).toBeInTheDocument();
 
-    // All 5 nav links
-    expect(screen.getAllByText("Dashboard")[0]).toBeInTheDocument();
+    // All 6 nav links (Overview instead of Dashboard in new template)
+    expect(screen.getAllByText("Overview")[0]).toBeInTheDocument();
     expect(screen.getByText("Orders")).toBeInTheDocument();
     expect(screen.getByText("Reconciliation")).toBeInTheDocument();
     expect(screen.getByText("Accounts")).toBeInTheDocument();
     expect(screen.getByText("Decisions")).toBeInTheDocument();
+    expect(screen.getByText("Agent Runs")).toBeInTheDocument();
 
     // Outlet content rendered
     expect(screen.getByText("Page Content")).toBeInTheDocument();
@@ -68,7 +68,7 @@ describe("Layout token display", () => {
 
     // Token: first 8 characters followed by "..."
     const expectedPrefix = VALID_TOKEN.slice(0, 8);
-    expect(screen.getByText(`Token: ${expectedPrefix}...`)).toBeInTheDocument();
+    expect(screen.getByText(`${expectedPrefix}...`)).toBeInTheDocument();
   });
 });
 
@@ -94,16 +94,16 @@ describe("Layout logout", () => {
 
     // Verify token is displayed before logout
     const expectedPrefix = VALID_TOKEN.slice(0, 8);
-    expect(screen.getByText(`Token: ${expectedPrefix}...`)).toBeInTheDocument();
+    expect(screen.getByText(`${expectedPrefix}...`)).toBeInTheDocument();
 
     // Click logout button
-    await user.click(screen.getByRole("button", { name: /logout/i }));
+    await user.click(screen.getByRole("button", { name: /log out/i }));
 
     // Token cleared from sessionStorage
     expect(sessionStorage.getItem("auth_token")).toBeNull();
 
-    // Token display should now show em dash
-    expect(screen.getByText("Token: —")).toBeInTheDocument();
+    // Token display should now show "Read-only"
+    expect(screen.getByText("Read-only")).toBeInTheDocument();
   });
 });
 
@@ -111,7 +111,7 @@ describe("Layout logout", () => {
  * Scenario 4: Token 없음
  * ─────────────────────────────────────────── */
 describe("Layout without token", () => {
-  it("shows em dash when no token is available", () => {
+  it("shows read-only when no token is available", () => {
     // Explicitly ensure no token
     clearStoredToken();
 
@@ -127,10 +127,10 @@ describe("Layout without token", () => {
       </MemoryRouter>,
     );
 
-    // Token display should be em dash
-    expect(screen.getByText("Token: —")).toBeInTheDocument();
+    // Token display should be "Read-only"
+    expect(screen.getByText("Read-only")).toBeInTheDocument();
 
-    // Logout button should still be present
-    expect(screen.getByRole("button", { name: /logout/i })).toBeInTheDocument();
+    // Log Out button should still be present
+    expect(screen.getByRole("button", { name: /log out/i })).toBeInTheDocument();
   });
 });

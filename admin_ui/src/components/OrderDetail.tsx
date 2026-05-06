@@ -3,13 +3,11 @@ import { Link, useParams } from "react-router-dom";
 import type { OrderDetail as OrderDetailType, OrderEvent, BrokerOrderView } from "../types/api";
 import { getOrderDetail, getOrderEvents, getBrokerOrders } from "../api/client";
 import { DataTable } from "./common/DataTable";
-import { Panel } from "./common/Panel";
-import { DetailField } from "./common/DetailField";
-import { SectionDivider } from "./common/SectionDivider";
 import { StatusBadge } from "./common/StatusBadge";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import { ErrorBanner } from "./common/ErrorBanner";
 import type { Column } from "./common/DataTable";
+import { ArrowLeft } from "lucide-react";
 
 export default function OrderDetail() {
   const { orderId } = useParams<{ orderId: string }>();
@@ -42,134 +40,165 @@ export default function OrderDetail() {
 
   if (loading) return <LoadingSpinner />;
   if (error) return <ErrorBanner message={error} onDismiss={() => setError(null)} />;
-  if (!order) return <p>Order not found.</p>;
+  if (!order) return <p className="p-6 text-[#64748b]">Order not found.</p>;
 
   const eventColumns: Column<OrderEvent>[] = [
-    { key: "timestamp", label: "Timestamp" },
+    { key: "timestamp", header: "Timestamp" },
     {
       key: "from_status",
-      label: "From",
+      header: "From",
       render: (r) => <StatusBadge status={r.from_status} />,
     },
     {
       key: "to_status",
-      label: "To",
+      header: "To",
       render: (r) => <StatusBadge status={r.to_status} />,
     },
-    { key: "reason", label: "Reason" },
+    { key: "reason", header: "Reason" },
   ];
 
   const brokerColumns: Column<BrokerOrderView>[] = [
-    { key: "broker_id", label: "Broker" },
-    { key: "native_order_id", label: "Native Order ID" },
+    { key: "broker_id", header: "Broker" },
+    { key: "native_order_id", header: "Native Order ID" },
     {
       key: "status",
-      label: "Status",
+      header: "Status",
       render: (r) => <StatusBadge status={r.status} />,
     },
-    { key: "submitted_at", label: "Submitted At" },
+    { key: "submitted_at", header: "Submitted At" },
   ];
 
   return (
-    <section>
-      <p className="back-link">
-        <Link to="/orders">&larr; Back to Orders</Link>
-      </p>
+    <div className="p-6 space-y-6">
+      {/* Back link */}
+      <Link
+        to="/orders"
+        className="inline-flex items-center gap-1 text-sm text-[#64748b] hover:text-[#0f172a] transition-colors"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        Back to Orders
+      </Link>
 
-      {/* ── Summary Panel ── */}
-      <Panel
-        title="Order Detail"
-        subtitle={`${order.symbol} · ${order.side} · ${order.order_type}`}
-        headerRight={
-          <code className="order-id">
+      {/* Order Detail card */}
+      <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-lg font-semibold text-[#0f172a]">Order Detail</h3>
+            <p className="text-sm text-[#64748b]">{order.symbol} · {order.side} · {order.order_type}</p>
+          </div>
+          <code className="text-xs font-mono text-[#64748b] bg-[#f8fafc] px-2 py-1 rounded">
             {order.order_request_id}
           </code>
-        }
-      >
-        <div className="detail-grid">
-          <DetailField label="Symbol" value={order.symbol} />
-          <DetailField label="Side" value={order.side} />
-          <DetailField
-            label="Status"
-            value={<StatusBadge status={order.status} />}
-          />
-          <DetailField label="Order Type" value={order.order_type} />
-          <DetailField label="Qty" value={order.qty} />
-          <DetailField
-            label="Filled Qty"
-            value={order.filled_qty ?? "\u2014"}
-          />
-          <DetailField
-            label="Avg Fill Price"
-            value={order.avg_fill_price ?? "\u2014"}
-            mono
-          />
-          <DetailField label="Strategy" value={order.strategy_code} />
-          <DetailField label="Created" value={order.created_at} />
-          <DetailField
-            label="Updated"
-            value={order.updated_at ?? "\u2014"}
-          />
         </div>
 
+        <dl className="grid grid-cols-2 gap-4">
+          <div>
+            <dt className="text-sm text-[#64748b]">Symbol</dt>
+            <dd className="text-sm font-medium text-[#0f172a] mt-0.5">{order.symbol}</dd>
+          </div>
+          <div>
+            <dt className="text-sm text-[#64748b]">Side</dt>
+            <dd className="mt-0.5">
+              <StatusBadge variant={order.side.toLowerCase() === "buy" ? "success" : "error"}>
+                {order.side}
+              </StatusBadge>
+            </dd>
+          </div>
+          <div>
+            <dt className="text-sm text-[#64748b]">Status</dt>
+            <dd className="mt-0.5"><StatusBadge status={order.status} /></dd>
+          </div>
+          <div>
+            <dt className="text-sm text-[#64748b]">Order Type</dt>
+            <dd className="text-sm font-medium text-[#0f172a] mt-0.5">{order.order_type}</dd>
+          </div>
+          <div>
+            <dt className="text-sm text-[#64748b]">Qty</dt>
+            <dd className="text-sm font-medium text-[#0f172a] mt-0.5">{order.requested_quantity}</dd>
+          </div>
+          <div>
+            <dt className="text-sm text-[#64748b]">Filled Qty</dt>
+            <dd className="text-sm font-medium text-[#0f172a] mt-0.5">{order.filled_qty ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-sm text-[#64748b]">Avg Fill Price</dt>
+            <dd className="text-sm font-mono text-[#0f172a] mt-0.5">{order.avg_fill_price ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-sm text-[#64748b]">Client Order ID</dt>
+            <dd className="text-sm font-medium text-[#0f172a] mt-0.5">{order.client_order_id}</dd>
+          </div>
+          <div>
+            <dt className="text-sm text-[#64748b]">Created</dt>
+            <dd className="text-sm text-[#0f172a] mt-0.5">{order.created_at ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-sm text-[#64748b]">Updated</dt>
+            <dd className="text-sm text-[#0f172a] mt-0.5">{order.updated_at ?? "—"}</dd>
+          </div>
+        </dl>
+
         {order.error_message && (
-          <div className="text-error error-block">
-            <strong>Error:</strong> {order.error_message}
+          <div className="mt-4 p-3 bg-[#fef2f2] border border-[#f87171] rounded-lg">
+            <strong className="text-sm text-[#dc2626]">Error:</strong>
+            <span className="text-sm text-[#dc2626] ml-1">{order.error_message}</span>
           </div>
         )}
 
         {(order.decision_context_id || order.trade_decision_id) && (
-          <>
-            <SectionDivider label="Decision Links:" />
-            <div className="decision-links">
+          <div className="mt-4 pt-4 border-t border-[#e2e8f0]">
+            <p className="text-xs font-semibold text-[#64748b] mb-2">Decision Links</p>
+            <div className="flex gap-4">
               {order.decision_context_id && (
-                <span>
+                <span className="text-sm">
                   Context:{" "}
-                  <Link to={`/decisions?contextId=${order.decision_context_id}`}>
-                    <code>{order.decision_context_id}</code>
+                  <Link
+                    to={`/decisions?contextId=${order.decision_context_id}`}
+                    className="text-[#3b82f6] hover:text-[#2563eb] font-mono text-xs"
+                  >
+                    {order.decision_context_id}
                   </Link>
                 </span>
               )}
               {order.trade_decision_id && (
-                <span>
+                <span className="text-sm">
                   Decision:{" "}
                   <Link
                     to={`/decisions?contextId=${order.decision_context_id ?? order.trade_decision_id}`}
+                    className="text-[#3b82f6] hover:text-[#2563eb] font-mono text-xs"
                   >
-                    <code>{order.trade_decision_id}</code>
+                    {order.trade_decision_id}
                   </Link>
                 </span>
               )}
             </div>
-          </>
+          </div>
         )}
-      </Panel>
+      </div>
 
-      {/* ── State Events Panel ── */}
-      <Panel
-        title={`State Events (${events.length})`}
-      >
+      {/* State Events */}
+      <div className="space-y-2">
+        <h4 className="text-sm font-medium text-[#0f172a]">State Events ({events.length})</h4>
         <DataTable
           columns={eventColumns}
           data={events}
-          keyField="event_id"
+          idKey="event_id"
           emptyMessage="No state events recorded."
           compact
         />
-      </Panel>
+      </div>
 
-      {/* ── Broker Orders Panel ── */}
-      <Panel
-        title={`Broker Orders (${brokerOrders.length})`}
-      >
+      {/* Broker Orders */}
+      <div className="space-y-2">
+        <h4 className="text-sm font-medium text-[#0f172a]">Broker Orders ({brokerOrders.length})</h4>
         <DataTable
           columns={brokerColumns}
           data={brokerOrders}
-          keyField="broker_order_id"
+          idKey="broker_order_id"
           emptyMessage="No broker orders."
           compact
         />
-      </Panel>
-    </section>
+      </div>
+    </div>
   );
 }

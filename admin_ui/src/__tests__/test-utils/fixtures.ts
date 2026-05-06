@@ -11,42 +11,53 @@ import type {
   CashBalanceSnapshotView,
   TradeDecisionDetail,
   DecisionContextDetail,
+  AgentRunResponse,
 } from "../../types/api";
 
 export const mockHealthOk: HealthResponse = {
   status: "ok",
   database: "connected",
-  mode: "in_memory",
+  runtime_mode: "in_memory",
 };
 
 export const mockHealthDegraded: HealthResponse = {
   status: "degraded",
   database: "disconnected",
-  mode: "in_memory",
+  runtime_mode: "postgres",
 };
 
 export const mockOrders: OrderSummary[] = [
   {
     order_request_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0001",
-    symbol: "AAPL",
+    client_order_id: "client-ref-001",
+    account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a1",
     side: "buy",
     order_type: "limit",
-    qty: "100",
     status: "filled",
+    requested_quantity: 100,
+    requested_price: null,
+    symbol: "AAPL",
+    correlation_id: "corr-001",
+    trade_decision_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00td1",
     created_at: "2026-05-05T00:00:00Z",
-    client_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00c1",
-    strategy_code: "strat-a",
+    updated_at: "2026-05-05T00:00:10Z",
+    version: 1,
   },
   {
     order_request_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0002",
-    symbol: "TSLA",
+    client_order_id: "client-ref-002",
+    account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a1",
     side: "sell",
     order_type: "market",
-    qty: "50",
     status: "pending",
+    requested_quantity: 50,
+    requested_price: null,
+    symbol: "TSLA",
+    correlation_id: "corr-002",
+    trade_decision_id: null,
     created_at: "2026-05-05T00:01:00Z",
-    client_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00c1",
-    strategy_code: "strat-b",
+    updated_at: null,
+    version: 1,
   },
 ];
 
@@ -80,8 +91,6 @@ export const mockLocks: BlockingLockStatus[] = [
 export const dashboardApiResponses = [
   mockHealthOk,
   mockOrders,
-  mockReconciliationRuns,
-  mockLocks,
 ];
 
 /** A valid token for testing */
@@ -93,21 +102,24 @@ export const VALID_TOKEN = "test-token-valid-000000000000";
 
 export const mockOrderDetail: OrderDetail = {
   order_request_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0001",
-  symbol: "AAPL",
+  client_order_id: "client-ref-001",
+  account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a1",
   side: "buy",
   order_type: "limit",
-  qty: "100",
   status: "filled",
+  requested_quantity: 100,
+  requested_price: null,
+  symbol: "AAPL",
+  correlation_id: "corr-001",
+  trade_decision_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00td1",
   created_at: "2026-05-05T00:00:00Z",
-  client_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00c1",
-  strategy_code: "strat-a",
   updated_at: "2026-05-05T00:00:10Z",
+  version: 1,
+  instrument_id: null,
   filled_qty: "100",
   avg_fill_price: "185.50",
   decision_context_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00dc1",
-  trade_decision_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00td1",
   error_message: null,
-  client_order_id: "client-ref-001",
   broker_order_id: "broker-ref-001",
   broker_id: "KIS",
 };
@@ -263,3 +275,51 @@ export const mockDecisionContext: DecisionContextDetail = {
   trading_session_id: "session-001",
   created_at: "2026-05-05T00:00:00Z",
 };
+
+export const mockAgentRuns: AgentRunResponse[] = [
+  {
+    agent_run_id: "rrrrrrrr-bbbb-cccc-dddd-eeeeeeee00r1",
+    decision_context_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00dc1",
+    agent_type: "event_interpretation",
+    started_at: "2026-05-05T00:00:02Z",
+    status: "completed",
+    structured_output_json: { signal: "bullish", confidence: 0.82, summary: "Strong earnings momentum" },
+    completed_at: "2026-05-05T00:00:05Z",
+    model_id: null,
+    prompt_id: null,
+    temperature: null,
+    seed: null,
+    raw_output_uri: null,
+    created_at: null,
+  },
+  {
+    agent_run_id: "rrrrrrrr-bbbb-cccc-dddd-eeeeeeee00r2",
+    decision_context_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00dc1",
+    agent_type: "ai_risk",
+    started_at: "2026-05-05T00:00:06Z",
+    status: "completed",
+    structured_output_json: { risk_score: 0.35, max_order_value: 20000, approved: true },
+    completed_at: "2026-05-05T00:00:09Z",
+    model_id: null,
+    prompt_id: null,
+    temperature: null,
+    seed: null,
+    raw_output_uri: null,
+    created_at: null,
+  },
+  {
+    agent_run_id: "rrrrrrrr-bbbb-cccc-dddd-eeeeeeee00r3",
+    decision_context_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00dc1",
+    agent_type: "final_decision_composer",
+    started_at: "2026-05-05T00:00:10Z",
+    status: "completed",
+    structured_output_json: { decision: "buy", quantity: 100, entry_price: 185.50 },
+    completed_at: "2026-05-05T00:00:12Z",
+    model_id: null,
+    prompt_id: null,
+    temperature: null,
+    seed: null,
+    raw_output_uri: null,
+    created_at: null,
+  },
+];

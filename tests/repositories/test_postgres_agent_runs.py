@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from agent_trading.domain.entities import AgentRunEntity
+from agent_trading.domain.entities import AgentRunEntity, DecisionContextEntity
 from agent_trading.repositories.container import RepositoryContainer
 
 
@@ -84,6 +84,23 @@ async def test_list_by_decision_context(
 
     # Add a run for a different context (should not appear)
     other_ctx_id = uuid4()
+    # Satisfy FK: copy fields from the existing seeded decision_context
+    conn = repos.unit_of_work.connection
+    src = await conn.fetchrow(
+        "SELECT account_id, strategy_id, config_version_id, market_timestamp, "
+        "correlation_id FROM trading.decision_contexts WHERE decision_context_id = $1",
+        seeded_decision_context,
+    )
+    assert src is not None
+    other_ctx = DecisionContextEntity(
+        decision_context_id=other_ctx_id,
+        account_id=src["account_id"],
+        strategy_id=src["strategy_id"],
+        config_version_id=src["config_version_id"],
+        market_timestamp=src["market_timestamp"],
+        correlation_id=f"OTHER_{other_ctx_id.hex[:8]}",
+    )
+    await repos.decision_contexts.add(other_ctx)
     run3 = _make_run(other_ctx_id, "final_decision_composer")
     await repos.agent_runs.add(run3)
 

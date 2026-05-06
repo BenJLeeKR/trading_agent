@@ -67,7 +67,9 @@ async function request<T>(
     let detail = res.statusText;
     try {
       const body = await res.json();
-      if (body.detail) detail = body.detail;
+      if (body.detail !== undefined) {
+        detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+      }
     } catch {
       // ignore parse error
     }
@@ -187,6 +189,17 @@ export async function getTradeDecisions(
     : "";
   return request<import("../types/api").TradeDecisionDetail[]>(
     `/trade-decisions${params}`
+  );
+}
+
+export async function getAgentRuns(
+  decisionContextId?: string
+): Promise<import("../types/api").AgentRunResponse[]> {
+  const params = decisionContextId
+    ? `?decision_context_id=${encodeURIComponent(decisionContextId)}`
+    : "";
+  return request<import("../types/api").AgentRunResponse[]>(
+    `/agent-runs${params}`
   );
 }
 

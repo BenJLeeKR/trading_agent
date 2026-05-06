@@ -26,8 +26,8 @@ describe("LoginForm rendering", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("🛡️ Admin UI")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Bearer token")).toBeInTheDocument();
+    expect(screen.getByText("Admin Console")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Paste your token here...")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /enter dashboard/i })).toBeInTheDocument();
   });
 });
@@ -66,7 +66,7 @@ describe("LoginForm valid token", () => {
       </MemoryRouter>,
     );
 
-    await user.type(screen.getByPlaceholderText("Bearer token"), VALID_TOKEN);
+    await user.type(screen.getByPlaceholderText("Paste your token here..."), VALID_TOKEN);
     await user.click(screen.getByRole("button", { name: /enter dashboard/i }));
 
     // Wait for async verification
@@ -97,7 +97,7 @@ describe("LoginForm invalid token", () => {
       </MemoryRouter>,
     );
 
-    await user.type(screen.getByPlaceholderText("Bearer token"), "bad-token");
+    await user.type(screen.getByPlaceholderText("Paste your token here..."), "bad-token");
     await user.click(screen.getByRole("button", { name: /enter dashboard/i }));
 
     await waitFor(() => {
@@ -124,7 +124,7 @@ describe("LoginForm network error", () => {
       </MemoryRouter>,
     );
 
-    await user.type(screen.getByPlaceholderText("Bearer token"), VALID_TOKEN);
+    await user.type(screen.getByPlaceholderText("Paste your token here..."), VALID_TOKEN);
     await user.click(screen.getByRole("button", { name: /enter dashboard/i }));
 
     await waitFor(() => {
@@ -200,7 +200,7 @@ describe("Login flow → auth state change", () => {
     );
 
     // Submit valid token
-    await user.type(screen.getByPlaceholderText("Bearer token"), VALID_TOKEN);
+    await user.type(screen.getByPlaceholderText("Paste your token here..."), VALID_TOKEN);
     await user.click(screen.getByRole("button", { name: /enter dashboard/i }));
 
     // Wait for auth state to update (login() was called after fetch success)

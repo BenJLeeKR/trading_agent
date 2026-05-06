@@ -77,6 +77,8 @@ services:
       INSPECTION_API_TOKEN: "${INSPECTION_API_TOKEN:-}"
     ports:
       - "8000:8000"
+    volumes:
+      - ./admin_ui/dist:/app/admin_ui/dist
     command:
       - uvicorn
       - agent_trading.api.app:create_app_from_env

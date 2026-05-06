@@ -6,29 +6,32 @@
 export interface HealthResponse {
   status: string;
   database: string;
-  mode: string;
+  runtime_mode: string;
 }
 
 export interface OrderSummary {
   order_request_id: string;
-  symbol: string;
+  client_order_id: string;
+  account_id: string;
   side: string;
   order_type: string;
-  qty: string;
   status: string;
-  created_at: string;
-  client_id: string;
-  strategy_code: string;
+  requested_quantity: number;
+  requested_price: number | null;
+  symbol: string | null;
+  correlation_id: string;
+  trade_decision_id: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  version: number;
 }
 
 export interface OrderDetail extends OrderSummary {
-  updated_at: string | null;
+  instrument_id: string | null;
   filled_qty: string | null;
   avg_fill_price: string | null;
   decision_context_id: string | null;
-  trade_decision_id: string | null;
   error_message: string | null;
-  client_order_id: string | null;
   broker_order_id: string | null;
   broker_id: string | null;
 }
@@ -153,6 +156,22 @@ export interface DecisionContextDetail {
   market_timestamp: string;
   correlation_id: string;
   trading_session_id: string | null;
+  created_at: string | null;
+}
+
+export interface AgentRunResponse {
+  agent_run_id: string;
+  decision_context_id: string;
+  agent_type: string;
+  started_at: string;
+  model_id: string | null;
+  prompt_id: string | null;
+  temperature: number | null;
+  seed: number | null;
+  raw_output_uri: string | null;
+  structured_output_json: Record<string, unknown> | null;
+  status: string;
+  completed_at: string | null;
   created_at: string | null;
 }
 

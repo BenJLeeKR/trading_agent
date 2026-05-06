@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { cn } from "@/lib/utils";
 
 interface PanelProps {
   title?: string;
@@ -20,17 +21,17 @@ export function Panel({
   noPadding = false,
 }: PanelProps) {
   return (
-    <div className={`panel ${className}`}>
+    <div className={cn("bg-white rounded-xl border border-[#e2e8f0]", className)}>
       {(title || headerRight) && (
-        <div className="panel-header">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#e2e8f0]">
           <div>
-            {title && <h3 className="panel-title">{title}</h3>}
-            {subtitle && <p className="panel-subtitle">{subtitle}</p>}
+            {title && <h3 className="text-base font-semibold text-[#0f172a]">{title}</h3>}
+            {subtitle && <p className="text-xs text-[#64748b] mt-0.5">{subtitle}</p>}
           </div>
-          {headerRight && <div className="panel-header-right">{headerRight}</div>}
+          {headerRight && <div>{headerRight}</div>}
         </div>
       )}
-      <div className={`panel-body${noPadding ? " panel-body--no-padding" : ""} ${bodyClassName}`}>
+      <div className={cn(noPadding ? "" : "p-5", bodyClassName)}>
         {children}
       </div>
     </div>

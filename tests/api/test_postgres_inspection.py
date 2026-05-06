@@ -327,3 +327,171 @@ class TestPostgresInspectionAPI:
             await cleanup_conn.execute("DELETE FROM trading.broker_accounts WHERE broker_account_id = $1", broker_acct_id)
         finally:
             await cleanup_conn.close()
+
+    async def test_agent_runs_list_all(self, postgres_client: TestClient) -> None:
+        """``GET /agent-runs`` returns seeded rows from Postgres in started_at DESC."""
+        import asyncpg
+        import os
+        from uuid import uuid4
+        from datetime import datetime, timezone, timedelta
+
+        dsn = (
+            f"postgresql://{os.environ['DATABASE_USER']}:{os.environ['DATABASE_PASSWORD']}"
+            f"@{os.environ['DATABASE_HOST']}:{os.environ['DATABASE_PORT']}"
+            f"/{os.environ['DATABASE_NAME']}"
+        )
+
+        ctx_id = uuid4()
+        now = datetime.now(timezone.utc)
+
+        conn = await asyncpg.connect(dsn=dsn, statement_cache_size=0)
+        try:
+            # Satisfy FK: agent_runs -> decision_contexts
+            await conn.execute(
+                "INSERT INTO trading.decision_contexts (decision_context_id, correlation_id, "
+                "decision_type, triggered_by, status, created_at) "
+                "VALUES ($1, $2, 'order', 'test', 'active', $3)",
+                ctx_id, f"PG_AR_LIST_{ctx_id.hex[:8]}", now,
+            )
+            # Insert 3 agent runs with different started_at values
+            run_ids = [uuid4() for _ in range(3)]
+            agent_types = ["event_interpretation", "ai_risk", "final_decision_composer"]
+            started_ats = [
+                now - timedelta(seconds=2),
+                now - timedelta(seconds=1),
+                now,
+            ]
+            for rid, atype, sat in zip(run_ids, agent_types, started_ats):
+                await conn.execute(
+                    "INSERT INTO trading.agent_runs (agent_run_id, decision_context_id, agent_type, "
+                    "started_at, status, completed_at, created_at) "
+                    "VALUES ($1, $2, $3, $4, 'completed', $5, $6)",
+                    rid, ctx_id, atype, sat, sat, sat,
+                )
+        finally:
+            await conn.close()
+
+        seed_ids = {str(rid) for rid in run_ids}
+
+        resp = postgres_client.get("/agent-runs")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        # Filter to only our seeded runs — avoids dependency on global DB state
+        our_runs = [r for r in data if r["agent_run_id"] in seed_ids]
+
+        # Cleanup runs even if assertions below fail
+        cleanup_conn = await asyncpg.connect(dsn=dsn, statement_cache_size=0)
+        try:
+            assert len(our_runs) == 3, f"Expected 3 seeded runs, found {len(our_runs)}"
+            # Verify started_at DESC ordering among our seeded runs
+            our_ats = [r["started_at"] for r in our_runs]
+            assert our_ats == sorted(our_ats, reverse=True), (
+                f"Expected started_at DESC order, got: {our_ats}"
+            )
+            # Verify all 3 agent types present
+            returned_types = {r["agent_type"] for r in our_runs}
+            assert returned_types == set(agent_types)
+        finally:
+            for rid in run_ids:
+                await cleanup_conn.execute("DELETE FROM trading.agent_runs WHERE agent_run_id = $1", rid)
+            await cleanup_conn.execute("DELETE FROM trading.decision_contexts WHERE decision_context_id = $1", ctx_id)
+            await cleanup_conn.close()
+
+    async def test_agent_runs_filter_by_decision_context(
+        self, postgres_client: TestClient,
+    ) -> None:
+        """``GET /agent-runs?decision_context_id=...`` filters correctly."""
+        import asyncpg
+        import os
+        from uuid import uuid4
+        from datetime import datetime, timezone, timedelta
+
+        dsn = (
+            f"postgresql://{os.environ['DATABASE_USER']}:{os.environ['DATABASE_PASSWORD']}"
+            f"@{os.environ['DATABASE_HOST']}:{os.environ['DATABASE_PORT']}"
+            f"/{os.environ['DATABASE_NAME']}"
+        )
+
+        ctx_a = uuid4()
+        ctx_b = uuid4()
+        now = datetime.now(timezone.utc)
+
+        conn = await asyncpg.connect(dsn=dsn, statement_cache_size=0)
+        try:
+            # Insert 2 decision contexts
+            for ctx_id, suffix in [(ctx_a, "A"), (ctx_b, "B")]:
+                await conn.execute(
+                    "INSERT INTO trading.decision_contexts (decision_context_id, correlation_id, "
+                    "decision_type, triggered_by, status, created_at) "
+                    "VALUES ($1, $2, 'order', 'test', 'active', $3)",
+                    ctx_id, f"PG_AR_FILTER_{suffix}_{ctx_id.hex[:8]}", now,
+                )
+            # Insert 1 run for ctx_a, 2 runs for ctx_b
+            run_a = uuid4()
+            run_b1 = uuid4()
+            run_b2 = uuid4()
+            await conn.execute(
+                "INSERT INTO trading.agent_runs (agent_run_id, decision_context_id, agent_type, "
+                "started_at, status, completed_at, created_at) "
+                "VALUES ($1, $2, 'event_interpretation', $3, 'completed', $4, $5)",
+                run_a, ctx_a, now, now, now,
+            )
+            for rid, atype, sat in [
+                (run_b1, "ai_risk", now - timedelta(seconds=1)),
+                (run_b2, "final_decision_composer", now),
+            ]:
+                await conn.execute(
+                    "INSERT INTO trading.agent_runs (agent_run_id, decision_context_id, agent_type, "
+                    "started_at, status, completed_at, created_at) "
+                    "VALUES ($1, $2, $3, $4, 'completed', $5, $6)",
+                    rid, ctx_b, atype, sat, sat, sat,
+                )
+        finally:
+            await conn.close()
+
+        all_run_ids = (run_a, run_b1, run_b2)
+        all_ctx_ids = (ctx_a, ctx_b)
+
+        # Open cleanup connection upfront so it runs even if assertions fail
+        cleanup_conn = await asyncpg.connect(dsn=dsn, statement_cache_size=0)
+        try:
+            # Filter by ctx_a — should return 1 row
+            resp_a = postgres_client.get(f"/agent-runs?decision_context_id={ctx_a}")
+            assert resp_a.status_code == 200
+            data_a = resp_a.json()
+            assert len(data_a) == 1
+            assert data_a[0]["agent_type"] == "event_interpretation"
+            assert data_a[0]["decision_context_id"] == str(ctx_a)
+
+            # Filter by ctx_b — should return 2 rows in DESC order
+            resp_b = postgres_client.get(f"/agent-runs?decision_context_id={ctx_b}")
+            assert resp_b.status_code == 200
+            data_b = resp_b.json()
+            assert len(data_b) == 2
+            started_ats = [r["started_at"] for r in data_b]
+            assert started_ats == sorted(started_ats, reverse=True)
+        finally:
+            for rid in all_run_ids:
+                await cleanup_conn.execute("DELETE FROM trading.agent_runs WHERE agent_run_id = $1", rid)
+            for ctx_id in all_ctx_ids:
+                await cleanup_conn.execute("DELETE FROM trading.decision_contexts WHERE decision_context_id = $1", ctx_id)
+            await cleanup_conn.close()
+
+    async def test_agent_runs_filter_invalid_uuid(
+        self, postgres_client: TestClient,
+    ) -> None:
+        """``GET /agent-runs?decision_context_id=invalid`` returns 400."""
+        resp = postgres_client.get("/agent-runs?decision_context_id=not-a-uuid")
+        assert resp.status_code == 400
+
+    async def test_agent_runs_filter_no_match(
+        self, postgres_client: TestClient,
+    ) -> None:
+        """``GET /agent-runs?decision_context_id=<unknown>`` returns empty list."""
+        from uuid import uuid4
+
+        unknown_id = uuid4()
+        resp = postgres_client.get(f"/agent-runs?decision_context_id={unknown_id}")
+        assert resp.status_code == 200
+        assert resp.json() == []

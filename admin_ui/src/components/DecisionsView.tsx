@@ -1,25 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DecisionContextDetail, TradeDecisionDetail } from "../types/api";
 import { getDecisionContext, getTradeDecisions } from "../api/client";
+import AgentRunsPanel from "./AgentRunsPanel";
 import { DataTable } from "./common/DataTable";
 import { StatusBadge } from "./common/StatusBadge";
+import { FilterBar } from "./common/FilterBar";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import type { Column } from "./common/DataTable";
-import { X, Brain, TrendingUp, TrendingDown, Search } from "lucide-react";
-
-const SIDES = ["all", "buy", "sell", "hold"] as const;
+import { X, Brain } from "lucide-react";
 
 /* ───────────────────────────────────────────
  * ConfidenceBar — progress bar with color threshold
  * ─────────────────────────────────────────── */
 function ConfidenceBar({ value }: { value: number }) {
-  // value is 0–1 float; convert to 0–100
   const pct = value * 100;
   const color = value >= 0.7 ? "#22c55e" : value >= 0.4 ? "#f59e0b" : "#ef4444";
   return (
     <div className="flex items-center gap-2">
-      <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: "#f3f4f6" }}>
+      <div className="flex-1 h-1.5 rounded-full overflow-hidden bg-[#f3f4f6]">
         <div
           className="h-full rounded-full transition-all"
           style={{ width: `${pct}%`, backgroundColor: color }}
@@ -27,20 +26,6 @@ function ConfidenceBar({ value }: { value: number }) {
       </div>
       <span className="text-xs font-semibold tabular-nums shrink-0" style={{ color, minWidth: 32 }}>
         {pct.toFixed(0)}%
-      </span>
-    </div>
-  );
-}
-
-/* ───────────────────────────────────────────
- * DetailRow — label + value pair for detail panels
- * ─────────────────────────────────────────── */
-function DetailRow({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
-  return (
-    <div className="detail-row">
-      <span className="detail-row-label">{label}</span>
-      <span className="detail-row-value" style={valueColor ? { color: valueColor } : undefined}>
-        {value}
       </span>
     </div>
   );
@@ -62,9 +47,7 @@ export default function DecisionsView() {
 
   // Filter state
   const [searchText, setSearchText] = useState("");
-  const [sideFilter, setSideFilter] = useState("all");
-  const [confidenceMin, setConfidenceMin] = useState("");
-  const [confidenceMax, setConfidenceMax] = useState("");
+  const [sideFilter, setSideFilter] = useState("");
 
   useEffect(() => {
     setLoading(true);
@@ -107,40 +90,42 @@ export default function DecisionsView() {
 
   const filteredDecisions = useMemo(() => {
     return decisions.filter((d) => {
-      const matchSide = sideFilter === "all" || d.side === sideFilter;
+      const matchSide = !sideFilter || d.side === sideFilter;
       const matchSearch =
         !searchText || d.symbol.toLowerCase().includes(searchText.toLowerCase());
-      const min = confidenceMin ? parseFloat(confidenceMin) : 0;
-      const max = confidenceMax ? parseFloat(confidenceMax) : 1;
-      const matchConfidence = (d.confidence ?? 0) >= min && (d.confidence ?? 0) <= max;
-      return matchSide && matchSearch && matchConfidence;
+      return matchSide && matchSearch;
     });
-  }, [decisions, searchText, sideFilter, confidenceMin, confidenceMax]);
+  }, [decisions, searchText, sideFilter]);
 
-  const columns: Column<TradeDecisionDetail>[] = [
-    { key: "trade_decision_id", label: "Decision ID", render: (r) => <code>{r.trade_decision_id.slice(0, 8)}…</code> },
-    { key: "symbol", label: "Symbol" },
+  const decisionColumns: Column<TradeDecisionDetail>[] = [
+    {
+      key: "trade_decision_id",
+      header: "Decision ID",
+      render: (r) => <code className="text-xs">{r.trade_decision_id.slice(0, 8)}…</code>,
+    },
+    { key: "symbol", header: "Symbol" },
     {
       key: "side",
-      label: "Side",
-      render: (r) => {
-        const color = r.side.toLowerCase() === "buy" ? "#16a34a" : r.side.toLowerCase() === "sell" ? "#dc2626" : "#6b7280";
-        return <span style={{ color, fontWeight: 600 }}>{r.side.toUpperCase()}</span>;
-      },
+      header: "Side",
+      render: (r) => (
+        <StatusBadge variant={r.side.toLowerCase() === "buy" ? "success" : r.side.toLowerCase() === "sell" ? "error" : "info"}>
+          {r.side.toUpperCase()}
+        </StatusBadge>
+      ),
     },
     {
       key: "confidence",
-      label: "Confidence",
+      header: "Confidence",
       render: (r) => <ConfidenceBar value={r.confidence ?? 0} />,
     },
     {
       key: "rationale_summary",
-      label: "Reasoning",
+      header: "Reasoning",
       render: (r) => r.rationale_summary || "—",
     },
     {
       key: "created_at",
-      label: "Timestamp",
+      header: "Timestamp",
       render: (r) => new Date(r.created_at).toLocaleString(),
     },
   ];
@@ -149,290 +134,213 @@ export default function DecisionsView() {
   if (error) return <ErrorBanner message={error} onDismiss={() => setError(null)} />;
 
   return (
-    <section>
-      <div className="page-header">
-        <h2>Trade Decisions</h2>
-        <p>
-          Total: {decisions.length} decision{decisions.length !== 1 ? "s" : ""}
-        </p>
+    <div className="p-6 space-y-6">
+      {/* Page Header */}
+      <div>
+        <h1 className="text-2xl font-semibold text-[#0f172a]">Decisions</h1>
+        <p className="text-sm text-[#64748b] mt-1">View AI trade decisions and related context</p>
       </div>
 
-      {/* ── Split layout ── */}
-      <div className="split-layout">
-        {/* Left: filters + table */}
-        <div className="split-main">
-          {/* Filter bar (matching Orders/Accounts template pattern) */}
-          <div className="filter-bar">
-            {/* Search — filter-input-wrap with clear button */}
-            <div className="filter-input-wrap">
-              <Search size={12} className="filter-input-icon" />
-              <input
-                type="search"
-                placeholder="Search by ticker…"
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                className="filter-input-flex"
-                aria-label="Search decisions by ticker"
-              />
-              {searchText && (
-                <button
-                  onClick={() => setSearchText("")}
-                  className="filter-input-clear"
-                  aria-label="Clear search"
-                >
-                  <X size={11} />
-                </button>
-              )}
-            </div>
-
-            {/* Side filter pills — inline filter-group */}
-            <div className="filter-group" role="group" aria-label="Side">
-              {SIDES.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  className={`pill-btn${sideFilter === s ? " pill-btn--active" : ""}`}
-                  onClick={() => setSideFilter(s)}
-                >
-                  {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
-                </button>
-              ))}
-            </div>
-
-            {/* Confidence Min/Max — original column style (label above input), side by side in one box */}
-            <div
-              className="flex items-center gap-3 px-2.5 py-1.5 rounded-lg border shrink-0"
-              style={{
-                backgroundColor: "#f9fafb",
-                borderColor: "#e8eaed",
-              }}
-            >
-              <div className="flex flex-col gap-0.5">
-                <span className="text-xs" style={{ color: "#9ca3af", lineHeight: 1.2 }}>
-                  Min
-                </span>
-                <input
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  placeholder="0.0"
-                  value={confidenceMin}
-                  onChange={(e) => setConfidenceMin(e.target.value)}
-                  className="bg-transparent outline-none border rounded-sm"
-                  style={{
-                    width: 72,
-                    padding: "0.2rem 0.3rem",
-                    fontSize: "0.75rem",
-                    color: "#374151",
-                    borderColor: "var(--border-color)",
-                  }}
-                  aria-label="Minimum confidence"
-                />
-              </div>
-              <div className="flex flex-col gap-0.5">
-                <span className="text-xs" style={{ color: "#9ca3af", lineHeight: 1.2 }}>
-                  Max
-                </span>
-                <input
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  placeholder="1.0"
-                  value={confidenceMax}
-                  onChange={(e) => setConfidenceMax(e.target.value)}
-                  className="bg-transparent outline-none border rounded-sm"
-                  style={{
-                    width: 72,
-                    padding: "0.2rem 0.3rem",
-                    fontSize: "0.75rem",
-                    color: "#374151",
-                    borderColor: "var(--border-color)",
-                  }}
-                  aria-label="Maximum confidence"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Table panel */}
-          <div className="card-panel">
-            <div className="card-panel-header">
-              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                <Brain size={13} style={{ color: "#374151" }} />
-                <span className="card-panel-title">Decision Log</span>
-              </div>
-              <span className="card-panel-count">
-                {filteredDecisions.length} / {decisions.length}
-              </span>
-            </div>
-            <DataTable
-              columns={columns}
-              data={filteredDecisions}
-              keyField="trade_decision_id"
-              onRowClick={(row) => setSelectedDecision(
-                selectedDecision?.trade_decision_id === row.trade_decision_id ? null : row
-              )}
-              selectedKey={selectedDecision?.trade_decision_id ?? null}
-              emptyMessage="No trade decisions found."
-            />
-          </div>
+      <div className="grid grid-cols-12 gap-6">
+        {/* Decisions List */}
+        <div className={selectedDecision ? "col-span-7" : "col-span-12"}>
+          <FilterBar
+            searchPlaceholder="Search symbol or decision ID..."
+            searchValue={searchText}
+            onSearchChange={setSearchText}
+            filters={[
+              {
+                key: "side",
+                label: "Side",
+                options: [
+                  { label: "Buy", value: "buy" },
+                  { label: "Sell", value: "sell" },
+                  { label: "Hold", value: "hold" },
+                ],
+                value: sideFilter,
+                onChange: setSideFilter,
+              },
+            ]}
+            onClearAll={() => {
+              setSearchText("");
+              setSideFilter("");
+            }}
+          />
+          <DataTable
+            columns={decisionColumns}
+            data={filteredDecisions}
+            idKey="trade_decision_id"
+            onRowClick={(row) => setSelectedDecision(
+              selectedDecision?.trade_decision_id === row.trade_decision_id ? null : row
+            )}
+            selectedId={selectedDecision?.trade_decision_id}
+            emptyMessage="No trade decisions found."
+          />
         </div>
 
-        {/* Right: detail panel (288px) */}
+        {/* Decision Detail Panel */}
         {selectedDecision ? (
-          <div className="split-sidebar" style={{ width: 288, flexShrink: 0 }}>
-            {/* ── Decision Detail card ── */}
-            <div className="card-panel">
-              <div className="card-panel-header">
-                <span className="card-panel-title">Decision Detail</span>
+          <div className="col-span-5 space-y-4">
+            {/* Decision Detail card */}
+            <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-[#0f172a]">Decision Detail</h3>
                 <button
                   onClick={() => { setSelectedDecision(null); setContextDetail(null); }}
-                  style={{ color: "#9ca3af", background: "none", border: "none", cursor: "pointer", padding: 0 }}
-                  aria-label="Close detail panel"
-                  type="button"
+                  className="p-1 text-[#94a3b8] hover:text-[#64748b] transition-colors"
                 >
-                  <X size={13} />
+                  <X className="h-5 w-5" />
                 </button>
               </div>
 
-              {/* Action + status banner */}
-              <div
-                className="status-banner"
-                style={{
-                  backgroundColor:
-                    (selectedDecision.confidence ?? 0) >= 0.7 ? "#f0fdf4" :
-                    (selectedDecision.confidence ?? 0) >= 0.4 ? "#fffbeb" :
-                    "#fef2f2",
-                  borderBottom: "1px solid #e8eaed",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <span style={{ fontWeight: 700, fontSize: "0.875rem", color: "#16a34a" }}>
-                    {selectedDecision.side.toUpperCase()}
-                  </span>
-                  <span style={{ fontWeight: 600, fontSize: "0.875rem", color: "#111827" }}>
-                    {selectedDecision.symbol}
-                  </span>
+              {/* Action + confidence banner */}
+              <div className={`flex items-center justify-between px-3 py-2 rounded-lg mb-4 ${
+                (selectedDecision.confidence ?? 0) >= 0.7 ? "bg-[#f0fdf4]" :
+                (selectedDecision.confidence ?? 0) >= 0.4 ? "bg-[#fffbeb]" :
+                "bg-[#fef2f2]"
+              }`}>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-bold text-[#16a34a]">{selectedDecision.side.toUpperCase()}</span>
+                  <span className="text-sm font-semibold text-[#0f172a]">{selectedDecision.symbol}</span>
                 </div>
-                <span
-                  className="status-badge"
-                  style={{
-                    backgroundColor:
-                      (selectedDecision.confidence ?? 0) >= 0.7 ? "#dcfce7" :
-                      (selectedDecision.confidence ?? 0) >= 0.4 ? "#fef3c7" :
-                      "#fee2e2",
-                    color:
-                      (selectedDecision.confidence ?? 0) >= 0.7 ? "#16a34a" :
-                      (selectedDecision.confidence ?? 0) >= 0.4 ? "#d97706" :
-                      "#dc2626",
-                  }}
-                >
-                  <span className="status-badge-dot" />
+                <StatusBadge variant={
+                  (selectedDecision.confidence ?? 0) >= 0.7 ? "success" :
+                  (selectedDecision.confidence ?? 0) >= 0.4 ? "warning" : "error"
+                }>
                   {((selectedDecision.confidence ?? 0) * 100).toFixed(0)}%
-                </span>
+                </StatusBadge>
               </div>
 
-              {/* Fields */}
-              <div className="panel-body">
-                <DetailRow label="Decision ID" value={selectedDecision.trade_decision_id.slice(0, 16) + "…"} />
-                <DetailRow label="Decision Type" value={selectedDecision.decision_type} />
-                <DetailRow label="Strategy ID" value={selectedDecision.strategy_id} />
-                <DetailRow label="Qty" value={String(selectedDecision.quantity ?? "—")} />
-                <DetailRow
-                  label="Created"
-                  value={new Date(selectedDecision.created_at).toLocaleString()}
-                />
-                <DetailRow label="Context ID" value={selectedDecision.decision_context_id.slice(0, 12) + "…"} />
-              </div>
+              <dl className="space-y-3">
+                <div className="flex justify-between">
+                  <dt className="text-sm text-[#64748b]">Decision ID</dt>
+                  <dd className="text-sm font-mono text-[#0f172a]">{selectedDecision.trade_decision_id.slice(0, 16)}…</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-sm text-[#64748b]">Decision Type</dt>
+                  <dd className="text-sm font-medium text-[#0f172a]">{selectedDecision.decision_type}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-sm text-[#64748b]">Strategy ID</dt>
+                  <dd className="text-sm font-mono text-[#0f172a]">{selectedDecision.strategy_id}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-sm text-[#64748b]">Qty</dt>
+                  <dd className="text-sm font-medium text-[#0f172a]">{String(selectedDecision.quantity ?? "—")}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-sm text-[#64748b]">Created</dt>
+                  <dd className="text-sm text-[#0f172a]">{new Date(selectedDecision.created_at).toLocaleString()}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-sm text-[#64748b]">Context ID</dt>
+                  <dd className="text-sm font-mono text-[#3b82f6]">{selectedDecision.decision_context_id.slice(0, 12)}…</dd>
+                </div>
+              </dl>
 
               {/* Confidence bar */}
-              <div style={{ padding: "0 1rem 0.75rem" }}>
-                <p style={{ fontSize: "0.75rem", color: "#9ca3af", marginBottom: "0.375rem" }}>Confidence</p>
+              <div className="mt-4 pt-4 border-t border-[#e2e8f0]">
+                <p className="text-xs text-[#64748b] mb-2">Confidence</p>
                 <ConfidenceBar value={selectedDecision.confidence ?? 0} />
               </div>
 
-              {/* Reason (rationale_summary) */}
-              <div style={{ padding: "0.75rem 1rem", borderTop: "1px solid #f3f4f6" }}>
-                <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "#374151", marginBottom: "0.25rem" }}>Reason</p>
-                <p style={{ fontSize: "0.75rem", lineHeight: "1.4", color: "#6b7280" }}>
+              {/* Reason */}
+              <div className="mt-4 pt-4 border-t border-[#e2e8f0]">
+                <p className="text-xs font-semibold text-[#374151] mb-1">Reason</p>
+                <p className="text-xs leading-relaxed text-[#64748b]">
                   {selectedDecision.rationale_summary || "No reason provided."}
                 </p>
               </div>
             </div>
 
-            {/* ── Signals card ── */}
-            <div className="card-panel">
-              <div className="card-panel-header">
-                <span className="card-panel-title">Signals</span>
-              </div>
-              <div className="panel-body">
-                <DetailRow label="Strategy ID" value={selectedDecision.strategy_id} />
-                <DetailRow
-                  label="Side Signal"
-                  value={selectedDecision.side.toUpperCase()}
-                  valueColor={
-                    selectedDecision.side.toLowerCase() === "buy" ? "#16a34a" :
-                    selectedDecision.side.toLowerCase() === "sell" ? "#dc2626" :
-                    "#6b7280"
-                  }
-                />
-                <DetailRow label="Confidence Score" value={`${((selectedDecision.confidence ?? 0) * 100).toFixed(0)}%`} />
-                <DetailRow label="Quantity" value={String(selectedDecision.quantity ?? "—")} />
-              </div>
+            {/* Signals card */}
+            <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
+              <h4 className="text-sm font-medium text-[#0f172a] mb-4">Signals</h4>
+              <dl className="space-y-3">
+                <div className="flex justify-between">
+                  <dt className="text-sm text-[#64748b]">Strategy ID</dt>
+                  <dd className="text-sm font-mono text-[#0f172a]">{selectedDecision.strategy_id}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-sm text-[#64748b]">Side Signal</dt>
+                  <dd>
+                    <StatusBadge variant={selectedDecision.side.toLowerCase() === "buy" ? "success" : selectedDecision.side.toLowerCase() === "sell" ? "error" : "info"}>
+                      {selectedDecision.side.toUpperCase()}
+                    </StatusBadge>
+                  </dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-sm text-[#64748b]">Confidence Score</dt>
+                  <dd className="text-sm font-medium text-[#0f172a]">{((selectedDecision.confidence ?? 0) * 100).toFixed(0)}%</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-sm text-[#64748b]">Quantity</dt>
+                  <dd className="text-sm font-medium text-[#0f172a]">{String(selectedDecision.quantity ?? "—")}</dd>
+                </div>
+              </dl>
             </div>
 
-            {/* ── Market Context card ── */}
-            <div className="card-panel">
-              <div className="card-panel-header">
-                <span className="card-panel-title">Market Context</span>
-              </div>
+            {/* Market Context card */}
+            <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
+              <h4 className="text-sm font-medium text-[#0f172a] mb-4">Market Context</h4>
 
               {contextLoading && (
-                <div className="panel-body">
-                  <LoadingSpinner text="Loading context..." />
-                </div>
+                <LoadingSpinner text="Loading context..." />
               )}
 
               {contextError && (
-                <div style={{ padding: "0.5rem" }}>
-                  <ErrorBanner message={contextError} onDismiss={() => setContextError(null)} />
-                </div>
+                <ErrorBanner message={contextError} onDismiss={() => setContextError(null)} />
               )}
 
               {contextDetail && (
-                <div className="panel-body">
-                  <DetailRow label="Strategy ID" value={contextDetail.strategy_id} />
-                  <DetailRow label="Account ID" value={contextDetail.account_id} />
-                  <DetailRow label="Session ID" value={contextDetail.trading_session_id ?? "—"} />
-                  <DetailRow label="Config Version" value={contextDetail.config_version_id} />
-                  <DetailRow label="Correlation ID" value={contextDetail.correlation_id} />
-                  <DetailRow
-                    label="Market Timestamp"
-                    value={new Date(contextDetail.market_timestamp).toLocaleString()}
-                  />
-                </div>
+                <dl className="space-y-3">
+                  <div className="flex justify-between">
+                    <dt className="text-sm text-[#64748b]">Strategy ID</dt>
+                    <dd className="text-sm font-mono text-[#0f172a]">{contextDetail.strategy_id}</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-sm text-[#64748b]">Account ID</dt>
+                    <dd className="text-sm font-mono text-[#0f172a]">{contextDetail.account_id}</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-sm text-[#64748b]">Session ID</dt>
+                    <dd className="text-sm text-[#0f172a]">{contextDetail.trading_session_id ?? "—"}</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-sm text-[#64748b]">Config Version</dt>
+                    <dd className="text-sm font-mono text-[#0f172a]">{contextDetail.config_version_id}</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-sm text-[#64748b]">Correlation ID</dt>
+                    <dd className="text-sm font-mono text-[#3b82f6]">{contextDetail.correlation_id}</dd>
+                  </div>
+                  <div className="flex justify-between">
+                    <dt className="text-sm text-[#64748b]">Market Timestamp</dt>
+                    <dd className="text-sm text-[#0f172a]">{new Date(contextDetail.market_timestamp).toLocaleString()}</dd>
+                  </div>
+                </dl>
               )}
 
               {!contextDetail && !contextLoading && !contextError && (
-                <div style={{ padding: "1rem", textAlign: "center", color: "#9ca3af", fontSize: "0.75rem" }}>
-                  Select a decision with context to view market data.
-                </div>
+                <p className="text-sm text-[#94a3b8] text-center py-4">Select a decision with context to view market data.</p>
               )}
             </div>
+
+            {/* Agent Runs card */}
+            <AgentRunsPanel decisionContextId={selectedDecision?.decision_context_id ?? null} />
           </div>
         ) : (
-          !loading && decisions.length > 0 && (
-            <div className="split-sidebar" style={{ width: 288, flexShrink: 0 }}>
-              <div className="split-main-placeholder" style={{ height: "100%" }}>
-                <Brain size={32} />
-                <p>Select a decision row to view details.</p>
+          !loading && !error && decisions.length > 0 && (
+            <div className="col-span-5 flex items-center justify-center bg-white rounded-xl border border-[#e2e8f0] p-12">
+              <div className="text-center">
+                <p className="text-sm text-[#94a3b8]">
+                  Select a decision from the table to view details.
+                </p>
               </div>
             </div>
           )
         )}
       </div>
-    </section>
+    </div>
   );
 }

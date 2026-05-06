@@ -1,45 +1,59 @@
+import { cn } from "@/lib/utils";
+
+type BadgeVariant = "success" | "warning" | "error" | "info" | "neutral";
+
 interface StatusBadgeProps {
-  status: string;
+  /** Explicit variant (template style) */
+  variant?: BadgeVariant;
+  /** Status string (legacy style — auto-mapped to variant) */
+  status?: string;
+  children?: React.ReactNode;
+  className?: string;
 }
 
-/** Map a status string to a CSS variant class */
-function statusToVariant(status: string): string {
-  const s = status.toLowerCase();
-  // Success group
-  if (["filled", "completed", "resolved", "ok", "healthy"].includes(s)) {
-    return "badge--success";
+const variantStyles: Record<BadgeVariant, string> = {
+  success: "bg-[#dcfce7] text-[#166534]",
+  warning: "bg-[#fef3c7] text-[#92400e]",
+  error: "bg-[#fee2e2] text-[#991b1b]",
+  info: "bg-[#dbeafe] text-[#1e40af]",
+  neutral: "bg-[#f1f5f9] text-[#475569]",
+};
+
+/** Map a status string to a BadgeVariant */
+function statusToVariant(s: string): BadgeVariant {
+  const lower = s.toLowerCase();
+  if (["filled", "completed", "resolved", "ok", "healthy", "active", "buy", "long"].includes(lower)) {
+    return "success";
   }
-  // Warning group
-  if (
-    [
-      "reconcile_required",
-      "degraded",
-      "active",
-      "partial",
-      "partially_filled",
-    ].includes(s)
-  ) {
-    return "badge--warning";
+  if (["reconcile_required", "degraded", "partial", "partially_filled", "pending"].includes(lower)) {
+    return "warning";
   }
-  // Error group
-  if (
-    ["rejected", "reflection_failed", "error", "failed"].includes(s)
-  ) {
-    return "badge--error";
+  if (["rejected", "reflection_failed", "error", "failed", "sell", "short", "restricted"].includes(lower)) {
+    return "error";
   }
-  // Info / amber group
-  if (["pending", "submitted", "running"].includes(s)) {
-    return "badge--info";
+  if (["submitted", "running", "margin", "info"].includes(lower)) {
+    return "info";
   }
-  // Muted / expired / cancelled
-  if (["cancelled", "expired"].includes(s)) {
-    return "badge--muted";
+  if (["cancelled", "expired"].includes(lower)) {
+    return "neutral";
   }
-  // Default
-  return "badge--info";
+  return "info";
 }
 
-export function StatusBadge({ status }: StatusBadgeProps) {
-  const variant = statusToVariant(status);
-  return <span className={`badge ${variant}`}>{status}</span>;
+export function StatusBadge({ variant, status, children, className }: StatusBadgeProps) {
+  // Determine variant: explicit > auto-mapped from status > default "info"
+  const resolvedVariant: BadgeVariant = variant ?? (status ? statusToVariant(status) : "info");
+  const displayText = children ?? status ?? "";
+
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium",
+        variantStyles[resolvedVariant],
+        className
+      )}
+    >
+      {displayText}
+    </span>
+  );
 }
