@@ -755,6 +755,18 @@ class TestGuardedPaperSubmit:
 
     When ``ENABLE_KIS_PAPER_SUBMIT_SMOKE=true`` AND all safety conditions
     are met, submit_order is NOT blocked (guarded actual submit).
+
+    Note on KIS Paper rate limits
+    -----------------------------
+    KIS Paper sandbox enforces a **1-token-per-minute** rate limit
+    (EGW00133) on ``oauth2/tokenP`` (called by ``authenticate()``).
+    If the token quota was consumed by a previous run within the last
+    60 seconds, authentication will fail with EGW00133.
+
+    The error message now clearly shows ``msg_cd=EGW00133`` with the
+    description ``접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)``.
+    This is a sandbox constraint, not a code defect or credential issue.
+    Wait ~60 seconds before rerunning.
     """
 
     @pytest.fixture(autouse=True)

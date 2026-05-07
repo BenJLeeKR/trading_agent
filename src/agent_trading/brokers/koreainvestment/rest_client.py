@@ -282,7 +282,7 @@ class KISRestClient:
             self._client = httpx.AsyncClient(
                 base_url=self._base_url,
                 timeout=httpx.Timeout(30.0, connect=10.0),
-                limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+                limits=httpx.Limits(max_keepalive_connections=0, max_connections=10),
             )
         return self._client
 
@@ -461,17 +461,28 @@ class KISRestClient:
             rt_cd = data.get("rt_cd", "")
             msg = data.get("msg1", data.get("msg", ""))
 
+            # Some KIS endpoints (e.g. oauth2/tokenP) return OAuth2-style
+            # error fields (error_code / error_description) instead of the
+            # usual KIS business-level fields (msg_cd / msg1).  Capture
+            # them here so the error message is actually informative.
+            error_code = data.get("error_code", "")
+            error_description = data.get("error_description", "")
+            if error_code and not msg_cd:
+                msg_cd = error_code
+            if error_description and not msg:
+                msg = error_description
+
             if msg_cd in _AMBIGUOUS_ERROR_CODES or rt_cd in _AMBIGUOUS_ERROR_CODES:
                 raise BrokerError(
                     broker_name=BrokerName.KOREA_INVESTMENT,
-                    error_type=BrokerErrorType.AMBIGUOUS_STATE,
+                    error_type=BrokerErrorType.API_ERROR,
                     retryable=False,
                     raw_message=f"KIS {endpoint}: ambiguous state (msg_cd={msg_cd}, rt_cd={rt_cd}): {msg}",
                 )
             if msg_cd in _KNOWN_FAILURE_CODES or rt_cd in _KNOWN_FAILURE_CODES:
                 raise BrokerError(
                     broker_name=BrokerName.KOREA_INVESTMENT,
-                    error_type=BrokerErrorType.ORDER_FAILED,
+                    error_type=BrokerErrorType.ORDER_REJECTED,
                     retryable=False,
                     raw_message=f"KIS {endpoint}: known failure (msg_cd={msg_cd}, rt_cd={rt_cd}): {msg}",
                 )
@@ -493,14 +504,14 @@ class KISRestClient:
             if msg_cd in _AMBIGUOUS_ERROR_CODES or rt_cd in _AMBIGUOUS_ERROR_CODES:
                 raise BrokerError(
                     broker_name=BrokerName.KOREA_INVESTMENT,
-                    error_type=BrokerErrorType.AMBIGUOUS_STATE,
+                    error_type=BrokerErrorType.API_ERROR,
                     retryable=False,
                     raw_message=f"KIS {endpoint}: ambiguous state (msg_cd={msg_cd}, rt_cd={rt_cd}): {msg}",
                 )
             if msg_cd in _KNOWN_FAILURE_CODES or rt_cd in _KNOWN_FAILURE_CODES:
                 raise BrokerError(
                     broker_name=BrokerName.KOREA_INVESTMENT,
-                    error_type=BrokerErrorType.ORDER_FAILED,
+                    error_type=BrokerErrorType.ORDER_REJECTED,
                     retryable=False,
                     raw_message=f"KIS {endpoint}: known failure (msg_cd={msg_cd}, rt_cd={rt_cd}): {msg}",
                 )
@@ -813,6 +824,13 @@ class KISRestClient:
         """Retrieve current positions (잔고조회).
 
         Uses inquire-balance endpoint.
+
+        Note
+        ----
+        KIS ``inquire-balance`` requires the continuation/pagination fields
+        ``CTX_AREA_FK100`` and ``CTX_AREA_NK100`` on **every** request,
+        including the initial page.  Omitting them triggers
+        ``OPSQ2001: INPUT_FIELD_NAME CTX_AREA_FK100``.
         """
         params = {
             "CANO": self.account_number,
@@ -825,6 +843,8 @@ class KISRestClient:
             "FNCG_AMT_AUTO_RDPT_YN": "N",
             "PRCS_DVSN": "01",
             "COST_ICLD_YN": "N",
+            "CTX_AREA_FK100": "",  # 연속조회검색조건100 (최초조회: 빈값)
+            "CTX_AREA_NK100": "",  # 연속조회키100 (최초조회: 빈값)
         }
 
         data = await self._request(
@@ -844,6 +864,13 @@ class KISRestClient:
         """Retrieve cash balance (잔고조회 — cash component).
 
         Uses inquire-balance endpoint and extracts the cash portion.
+
+        Note
+        ----
+        KIS ``inquire-balance`` requires the continuation/pagination fields
+        ``CTX_AREA_FK100`` and ``CTX_AREA_NK100`` on **every** request,
+        including the initial page.  Omitting them triggers
+        ``OPSQ2001: INPUT_FIELD_NAME CTX_AREA_FK100``.
         """
         params = {
             "CANO": self.account_number,
@@ -856,6 +883,8 @@ class KISRestClient:
             "FNCG_AMT_AUTO_RDPT_YN": "N",
             "PRCS_DVSN": "01",
             "COST_ICLD_YN": "N",
+            "CTX_AREA_FK100": "",  # 연속조회검색조건100 (최초조회: 빈값)
+            "CTX_AREA_NK100": "",  # 연속조회키100 (최초조회: 빈값)
         }
 
         data = await self._request(

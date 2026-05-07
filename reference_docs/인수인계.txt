@@ -1,4 +1,4 @@
-제목: 멀티 에이전트 트레이딩 시스템 구축 #5
+제목: 멀티 에이전트 트레이딩 시스템 구축 #6
 
 이 Task는 기존 `/workspace/agent_trading` 작업의 연속입니다.
 이전 대화 로그를 복원하려 하지 말고, 반드시 **현재 코드 상태와 아래 문서**를 기준으로 이어서 작업하세요.
@@ -40,13 +40,14 @@
 
 [작업 이력 / 현재 상태 파악용 plans]
 14. `/workspace/agent_trading/plans/README.md`
+15. `/workspace/agent_trading/plans/*.md`
 
 [앞으로 해야 할 일]
-15. `/workspace/agent_trading/plans/BACKLOG.md`
+16. `/workspace/agent_trading/plans/BACKLOG.md`
 
 [브로커 참고 자료]
-16. `/workspace/agent_trading/reference_docs/한국투자증권_오픈API_핵심요약_자동매매용.md`
-17. `/workspace/agent_trading/reference_docs/한국투자증권_오픈API_전체문서_20260503_030000.xlsx`
+17. `/workspace/agent_trading/reference_docs/한국투자증권_오픈API_핵심요약_자동매매용.md`
+18. `/workspace/agent_trading/reference_docs/한국투자증권_오픈API_전체문서_20260503_030000.xlsx`
 
 현재까지 구현/정리된 상태 요약:
 

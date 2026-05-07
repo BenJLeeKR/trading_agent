@@ -21,11 +21,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from typing import Any, AsyncIterator
 
 import pytest
 
 from agent_trading.brokers.base import SubscriptionBudget
+from agent_trading.brokers.errors import BrokerError
 from agent_trading.brokers.koreainvestment.adapter import KoreaInvestmentAdapter
 from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
 from agent_trading.brokers.koreainvestment.websocket_client import KISWebSocketClient
@@ -110,6 +112,35 @@ def _read_only_guard(monkeypatch: pytest.MonkeyPatch) -> None:
 # Fixtures
 # =========================================================================
 
+# Module-level pacing: minimum 1-second gap between consecutive REST API
+# calls across ALL tests in this module.  KIS Paper sandbox enforces a
+# global REST 1 rps limit (EGW00201: 초당 거래건수 초과).  Without this
+# spacing, cumulative API calls from earlier tests (e.g. test_authentication,
+# test_get_quote) trigger the per-second rate limit before the account-level
+# tests even start.
+_last_api_call: float = 0.0
+
+
+@pytest.fixture(autouse=True)
+async def _space_api_calls() -> None:
+    """Ensure >=1.0s between consecutive REST API calls across the module.
+
+    KIS Paper sandbox enforces a **global** REST 1 rps limit
+    (EGW00201: 초당 거래건수 초과).  This module-scoped autouse fixture
+    enforces a minimum 1-second gap between **every** test function that
+    makes a REST API call, so that the smoke suite respects the sandbox
+    pacing constraint regardless of which test class the call belongs to.
+
+    The 1-second gap is conservative relative to the 1 rps limit, providing
+    headroom for timing jitter in CI and async scheduling.
+    """
+    global _last_api_call
+    now = time.time()
+    elapsed = now - _last_api_call
+    if elapsed < 1.0:
+        await asyncio.sleep(1.0 - elapsed)
+    _last_api_call = time.time()
+
 
 @pytest.fixture(scope="module")
 async def kis_rest_client() -> AsyncIterator[KISRestClient]:
@@ -135,7 +166,16 @@ async def kis_rest_client() -> AsyncIterator[KISRestClient]:
     ``KISRestClient.close()`` wraps ``RuntimeError`` for Python 3.14
     compatibility (httpx/httpcore/anyio event-loop-closed during teardown).
 
-    Raises ``pytest.fail`` if KIS_ENV is not "paper".
+    Eager authentication
+    --------------------
+    This fixture calls ``authenticate()`` eagerly (before yielding the
+    client) so that EGW00133 (1-token-per-minute rate limit) is caught
+    early.  If the rate limit is active, the **entire module** is skipped
+    via ``pytest.skip()`` with a clear explanation, instead of letting
+    every test fail with an opaque 403.
+
+    Raises ``pytest.fail`` if KIS_ENV is not "paper", or if authentication
+    fails for a reason other than EGW00133 (e.g. invalid credentials).
     """
     _check_paper_env()
 
@@ -152,6 +192,23 @@ async def kis_rest_client() -> AsyncIterator[KISRestClient]:
         account_product_code=account_product_code,
         env=env,
     )
+
+    # Eager authenticate — catch EGW00133 (rate limit) early and skip the
+    # entire module with a clear message instead of opaque 403 failures.
+    try:
+        await client.authenticate()
+    except BrokerError as e:
+        # Prefer structured raw_message (contains "msg_cd=EGW00133") over
+        # string matching; fall back to str(e) if raw_message is None.
+        msg = e.raw_message or str(e)
+        if "EGW00133" in msg:
+            pytest.skip(
+                "KIS Paper token rate limit hit (EGW00133: 1 token/min). "
+                "Wait ~60 seconds before rerunning the smoke suite."
+            )
+        pytest.fail(
+            f"KIS authentication/setup failed (not a rate-limit issue): {msg}"
+        )
 
     yield client
 
@@ -172,7 +229,18 @@ async def kis_ws_client(
 
     Requires a valid approval key from the REST client.
     """
-    approval_key = await kis_rest_client.get_approval_key()
+    try:
+        approval_key = await kis_rest_client.get_approval_key()
+    except RuntimeError:
+        # Python 3.14+: httpx/httpcore may raise RuntimeError('Event loop is closed')
+        # during HTTP request teardown.  This is an infrastructure issue, not a
+        # credential or API problem — skip the WebSocket tests gracefully.
+        pytest.skip(
+            "KIS WebSocket approval key acquisition failed: "
+            "event loop closed during HTTP request "
+            "(Python 3.14 httpx/httpcore teardown issue). "
+            "This is an infrastructure issue, not a credential problem."
+        )
     env = os.getenv("KIS_ENV", "paper")
 
     budget = SubscriptionBudget(
@@ -314,7 +382,15 @@ class TestKISPaperSmokeMarketData:
 
 
 class TestKISPaperSmokeAccount:
-    """Level 2: Account-related read-only queries."""
+    """Level 2: Account-related read-only queries.
+
+    REST API call spacing is handled by the module-level ``_space_api_calls``
+    autouse fixture, which enforces a minimum 1-second gap between
+    **every** test function in the module.  This ensures that cumulative
+    API calls from earlier test classes (e.g. ``test_authentication``,
+    ``test_get_quote``) do not trigger KIS Paper's global REST 1 rps limit
+    (EGW00201: 초당 거래건수 초과) before the account-level tests run.
+    """
 
     @pytest.mark.smoke
     async def test_get_positions(self, kis_rest_client: KISRestClient) -> None:

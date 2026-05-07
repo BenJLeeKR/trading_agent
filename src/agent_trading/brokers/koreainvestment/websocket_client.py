@@ -160,7 +160,14 @@ class KISWebSocketClient:
             self._heartbeat_task = None
 
         if self._ws is not None:
-            await self._ws.close()
+            try:
+                await self._ws.close()
+            except RuntimeError:
+                # Python 3.14+: websockets/httpcore may raise RuntimeError
+                # ('Event loop is closed') during teardown when the event
+                # loop has already been shut down.  Safe to ignore — the
+                # connection is already being torn down.
+                pass
             self._ws = None
 
         logger.info("KIS WebSocket disconnected")
