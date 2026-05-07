@@ -55,7 +55,7 @@ export function DataTable<T extends Record<string, any>>({
               {columns.map((col) => (
                 <th
                   key={col.key}
-                  className="px-4 py-3 text-left text-xs font-medium text-[#64748b] uppercase tracking-wider"
+                  className="px-4 py-3 text-left text-xs font-semibold text-[#64748b] uppercase tracking-wider"
                   style={{ width: col.width }}
                 >
                   {col.header}

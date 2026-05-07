@@ -278,3 +278,28 @@ describe("AgentRunsView status filter", () => {
     });
   });
 });
+
+/* ──────────────────────────────────────────────
+ * AgentRunsView — context ID drill-down link
+ * ────────────────────────────────────────────── */
+
+describe("AgentRunsView context ID link", () => {
+  it("renders decision_context_id as a link to /decisions?contextId=...", async () => {
+    mockUrlRouter({ "/agent-runs": mockAgentRuns });
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText("EI")).toBeInTheDocument();
+    });
+
+    // Find the context ID link — first mock run has decision_context_id ending in "00dc1"
+    // All 3 mock runs share the same decision_context_id, so getAllByTitle returns 3 links
+    const links = screen.getAllByTitle(mockAgentRuns[0].decision_context_id);
+    expect(links.length).toBeGreaterThanOrEqual(1);
+    expect(links[0].tagName).toBe("A");
+    expect(links[0]).toHaveAttribute(
+      "href",
+      `/decisions?contextId=${encodeURIComponent(mockAgentRuns[0].decision_context_id)}`
+    );
+  });
+});

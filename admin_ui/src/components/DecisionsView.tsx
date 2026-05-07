@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import type { DecisionContextDetail, TradeDecisionDetail } from "../types/api";
 import { getDecisionContext, getTradeDecisions } from "../api/client";
 import AgentRunsPanel from "./AgentRunsPanel";
@@ -35,6 +36,9 @@ function ConfidenceBar({ value }: { value: number }) {
  * DecisionsView
  * ─────────────────────────────────────────── */
 export default function DecisionsView() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const contextIdParam = searchParams.get("contextId");
+
   const [decisions, setDecisions] = useState<TradeDecisionDetail[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -52,14 +56,17 @@ export default function DecisionsView() {
   useEffect(() => {
     setLoading(true);
     setError(null);
-    getTradeDecisions()
+    const fetchPromise = contextIdParam
+      ? getTradeDecisions(contextIdParam)
+      : getTradeDecisions();
+    fetchPromise
       .then(setDecisions)
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "Failed to load trade decisions";
         setError(msg);
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [contextIdParam]);
 
   // Lazy-load decision context on row select (with stale-response guard)
   useEffect(() => {
@@ -136,9 +143,30 @@ export default function DecisionsView() {
   return (
     <div className="p-6 space-y-6">
       {/* Page Header */}
-      <div>
-        <h1 className="text-2xl font-semibold text-[#0f172a]">Decisions</h1>
-        <p className="text-sm text-[#64748b] mt-1">View AI trade decisions and related context</p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-[#0f172a]">Decisions</h1>
+          <p className="text-sm text-[#64748b] mt-1">View AI trade decisions and related context</p>
+        </div>
+        {contextIdParam && (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#eff6ff] border border-[#bfdbfe] shrink-0">
+            <Brain className="h-3.5 w-3.5 text-[#1d4ed8]" />
+            <span className="text-xs font-medium text-[#1d4ed8]">
+              Filtered by context: {contextIdParam.slice(0, 12)}…
+            </span>
+            <button
+              onClick={() => {
+                setSearchParams({});
+                setSelectedDecision(null);
+                setContextDetail(null);
+              }}
+              className="ml-1 p-0.5 rounded text-[#1d4ed8] hover:text-[#1e40af] hover:bg-[#dbeafe] transition-colors"
+              aria-label="Clear context filter"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-12 gap-6">

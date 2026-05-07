@@ -2,6 +2,7 @@ import type { AgentRunResponse } from "../types/api";
 import { AgentTypeBadge } from "./AgentTypeBadge";
 import { StatusBadge } from "./common/StatusBadge";
 import { cn } from "@/lib/utils";
+import { Link } from "react-router-dom";
 
 interface AgentRunsTableProps {
   runs: AgentRunResponse[];
@@ -85,7 +86,14 @@ export function AgentRunsTable({ runs, selectedId, onRowClick, loading }: AgentR
                     <StatusBadge status={run.status}>{run.status}</StatusBadge>
                   </td>
                   <td className="px-4 py-3 text-sm text-[#0f172a] font-mono text-xs">
-                    {truncateId(run.decision_context_id)}
+                    <Link
+                      to={`/decisions?contextId=${encodeURIComponent(run.decision_context_id)}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-[#3b82f6] hover:underline"
+                      title={run.decision_context_id}
+                    >
+                      {truncateId(run.decision_context_id)}
+                    </Link>
                   </td>
                   <td className="px-4 py-3 text-sm text-[#0f172a]">
                     {formatTime(run.started_at)}

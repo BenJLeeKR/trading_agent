@@ -269,6 +269,30 @@ describe("DecisionsView symbol search", () => {
 });
 
 /* ───────────────────────────────────────────
+ * Scenario 7: Empty / no-selection state
+ * ─────────────────────────────────────────── */
+describe("DecisionsView no selection state", () => {
+  it("shows placeholder text when no row is selected", async () => {
+    mockFetchOnce(mockTradeDecisions);
+
+    render(
+      <MemoryRouter>
+        <DecisionsView />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Decisions")).toBeInTheDocument();
+    });
+
+    // Placeholder should be visible when data loaded and no row selected
+    expect(
+      screen.getByText("Select a decision from the table to view details."),
+    ).toBeInTheDocument();
+  });
+});
+
+/* ───────────────────────────────────────────
  * Scenario 8: Agent Runs panel in detail panel
  * ─────────────────────────────────────────── */
 describe("DecisionsView agent runs panel", () => {
@@ -441,25 +465,76 @@ describe("DecisionsView agent runs panel", () => {
 });
 
 /* ───────────────────────────────────────────
- * Scenario 7: Empty / no-selection state
+ * Scenario 9: contextId query param → filtered fetch + indicator
  * ─────────────────────────────────────────── */
-describe("DecisionsView no selection state", () => {
-  it("shows placeholder text when no row is selected", async () => {
-    mockFetchOnce(mockTradeDecisions);
+describe("DecisionsView contextId query param", () => {
+  it("passes contextId to getTradeDecisions and shows filter indicator", async () => {
+    const contextId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00dc1";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input instanceof Request ? input.url : "";
+      // Must include decision_context_id query param
+      if (url.includes("/trade-decisions") && url.includes("decision_context_id")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => mockTradeDecisions,
+        } as Response);
+      }
+      if (url.includes("/trade-decisions")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [],
+        } as Response);
+      }
+      return Promise.reject(new Error(`No mock for ${url}`));
+    });
 
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[`/decisions?contextId=${contextId}`]}>
+        <DecisionsView />
+      </MemoryRouter>,
+    );
+
+    // Filter indicator should appear
+    await waitFor(() => {
+      expect(screen.getByText(/Filtered by context/i)).toBeInTheDocument();
+    });
+
+    // The fetch URL should include decision_context_id
+    const tradeDecisionsCalls = fetchSpy.mock.calls.filter(
+      ([input]) => typeof input === "string" && input.includes("/trade-decisions")
+    );
+    expect(tradeDecisionsCalls.length).toBeGreaterThanOrEqual(1);
+    const callUrl = tradeDecisionsCalls[0][0] as string;
+    expect(callUrl).toContain("decision_context_id");
+    expect(callUrl).toContain(encodeURIComponent(contextId));
+  });
+
+  it("clears context filter when X button is clicked", async () => {
+    const contextId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00dc1";
+    const user = userEvent.setup();
+    mockUrlRouter({
+      "/trade-decisions": mockTradeDecisions,
+    });
+
+    render(
+      <MemoryRouter initialEntries={[`/decisions?contextId=${contextId}`]}>
         <DecisionsView />
       </MemoryRouter>,
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Decisions")).toBeInTheDocument();
+      expect(screen.getByText(/Filtered by context/i)).toBeInTheDocument();
     });
 
-    // Placeholder should be visible when data loaded and no row selected
-    expect(
-      screen.getByText("Select a decision from the table to view details."),
-    ).toBeInTheDocument();
+    // Click the clear button
+    const clearBtn = screen.getByRole("button", { name: /clear context filter/i });
+    await user.click(clearBtn);
+
+    // Indicator should disappear
+    await waitFor(() => {
+      expect(screen.queryByText(/Filtered by context/i)).not.toBeInTheDocument();
+    });
   });
 });

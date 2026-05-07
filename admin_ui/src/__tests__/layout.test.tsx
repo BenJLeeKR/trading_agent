@@ -48,10 +48,10 @@ describe("Layout navigation", () => {
 });
 
 /* ───────────────────────────────────────────
- * Scenario 2: Token 표시
+ * Scenario 2: Read-only badge 표시 (token 유무 관계없이 항상)
  * ─────────────────────────────────────────── */
-describe("Layout token display", () => {
-  it("displays truncated token when token exists", () => {
+describe("Layout read-only badge", () => {
+  it("shows Read-only badge when token exists", () => {
     setStoredToken(VALID_TOKEN);
 
     render(
@@ -66,9 +66,7 @@ describe("Layout token display", () => {
       </MemoryRouter>,
     );
 
-    // Token: first 8 characters followed by "..."
-    const expectedPrefix = VALID_TOKEN.slice(0, 8);
-    expect(screen.getByText(`${expectedPrefix}...`)).toBeInTheDocument();
+    expect(screen.getByText("Read-only")).toBeInTheDocument();
   });
 });
 
@@ -76,7 +74,7 @@ describe("Layout token display", () => {
  * Scenario 3: Logout 동작
  * ─────────────────────────────────────────── */
 describe("Layout logout", () => {
-  it("clears token and hides token display on logout", async () => {
+  it("clears token and shows Read-only badge after logout", async () => {
     const user = userEvent.setup();
     setStoredToken(VALID_TOKEN);
 
@@ -92,9 +90,8 @@ describe("Layout logout", () => {
       </MemoryRouter>,
     );
 
-    // Verify token is displayed before logout
-    const expectedPrefix = VALID_TOKEN.slice(0, 8);
-    expect(screen.getByText(`${expectedPrefix}...`)).toBeInTheDocument();
+    // Read-only badge is always shown
+    expect(screen.getByText("Read-only")).toBeInTheDocument();
 
     // Click logout button
     await user.click(screen.getByRole("button", { name: /log out/i }));
@@ -102,7 +99,7 @@ describe("Layout logout", () => {
     // Token cleared from sessionStorage
     expect(sessionStorage.getItem("auth_token")).toBeNull();
 
-    // Token display should now show "Read-only"
+    // Read-only badge still shown after logout
     expect(screen.getByText("Read-only")).toBeInTheDocument();
   });
 });

@@ -103,13 +103,12 @@ export function Layout() {
   const currentPath = location.pathname === "/" ? "/" : `/${location.pathname.split("/")[1]}`;
 
   const now = new Date();
-  const dateStr = now.toLocaleString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const y = now.getFullYear();
+  const m = now.getMonth() + 1;
+  const d = now.getDate();
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  const dateStr = `${y}. ${m}. ${d}. ${hh}:${mm}`;
 
   return (
     <div className="flex h-screen bg-[#f8fafc]">
@@ -138,7 +137,7 @@ export function Layout() {
                       {item.disabled ? (
                         <button
                           disabled
-                          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[#cbd5e1] cursor-not-allowed text-left"
+                          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold text-[#cbd5e1] cursor-not-allowed text-left"
                         >
                           <item.icon className="h-5 w-5" />
                           {item.label}
@@ -151,7 +150,7 @@ export function Layout() {
                           to={item.to}
                           end={item.to === "/"}
                           className={cn(
-                            "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                            "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors",
                             isActive
                               ? "bg-[#f1f5f9] text-[#0f172a]"
                               : "text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0f172a]"
@@ -175,7 +174,7 @@ export function Layout() {
             <li>
               <button
                 onClick={logout}
-                className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0f172a] transition-colors text-left"
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0f172a] transition-colors text-left"
               >
                 <LogOut className="h-5 w-5" />
                 Log Out
@@ -206,9 +205,7 @@ export function Layout() {
             <span className="text-xs text-[#94a3b8]">{dateStr}</span>
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#f1f5f9]">
               <span className="flex h-2 w-2 rounded-full bg-[#22c55e]" />
-              <span className="text-xs font-medium text-[#0f172a]">
-                {token ? `${token.slice(0, 8)}...` : "Read-only"}
-              </span>
+              <span className="text-xs font-medium text-[#0f172a]">Read-only</span>
             </div>
           </div>
         </header>
