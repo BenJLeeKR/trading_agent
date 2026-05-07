@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
+from dotenv import load_dotenv
+
+# Auto-load .env from project root so that smoke tests and other test suites
+# can read KIS_APP_KEY / KIS_APP_SECRET / KIS_ACCOUNT_NO etc. without needing
+# a separate ``python -c "load_dotenv(); pytest(...)"`` wrapper.
+load_dotenv()
 
 from agent_trading.domain.entities import (
     AccountEntity,

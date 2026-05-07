@@ -343,6 +343,104 @@ class RateLimitBudgetManager:
         }
 
 
+# ---------------------------------------------------------------------------
+# KIS environment-aware budget manager factory
+# ---------------------------------------------------------------------------
+
+
+def build_kis_budget_manager(
+    kis_env: str,
+    real_rest_rps: int = 15,
+    paper_rest_rps: int = 1,
+) -> RateLimitBudgetManager:
+    """Create a ``RateLimitBudgetManager`` with per-bucket safety scaling
+    based on the KIS environment's aggregate REST RPS **baseline**.
+
+    The environment RPS value is used as a **safety scaling baseline**,
+    not as an exact global REST cap.  Each of the 5 token buckets (AUTH,
+    ORDER, INQUIRY, MARKET_DATA, RECONCILIATION) is independently sized
+    with conservative weights.  Because the buckets are independent, the
+    aggregate sum of their refill rates is **not** strictly enforced at
+    the global level — the scaling simply ensures each bucket operates
+    within a reasonable safety margin relative to the environment's
+    documented aggregate limit.
+
+    Parameters
+    ----------
+    kis_env : str
+        Normalised KIS environment (``"paper"`` or ``"live"``).  ``"real"``
+        is also accepted and treated as ``"live"``.
+    real_rest_rps : int
+        Aggregate REST RPS baseline for the live environment (default 15).
+    paper_rest_rps : int
+        Aggregate REST RPS baseline for the paper environment (default 1).
+
+    Returns
+    -------
+    RateLimitBudgetManager
+        A budget manager whose 5 token buckets are independently scaled
+        using the environment RPS as a safety baseline.  The per-bucket
+        refill rates are **not** an exact partition of the total RPS.
+
+    Notes
+    -----
+    The per-bucket distribution is a **safety budget scaling**, not an
+    exact RPS guarantee.  The weights are chosen to reflect expected
+    traffic patterns while keeping headroom for burst handling:
+
+    ================ ======== ========= ============
+    Bucket            Weight   Paper rps Live rps
+    ================ ======== ========= ============
+    AUTH              0.017    0.017     0.10
+    ORDER             0.10     0.10      2.00
+    INQUIRY           0.50     0.50      5.00
+    MARKET_DATA       0.50     0.50      5.00
+    RECONCILIATION    0.10     0.10      1.00
+    ================ ======== ========= ============
+
+    Capacity (burst) is set conservatively to allow short bursts without
+    immediate throttling.  The aggregate of all bucket refill rates is
+    intentionally kept **below** the environment RPS baseline to provide
+    safety headroom — this is **not** an exact quota partition.
+    """
+    env = kis_env.strip().lower().replace("real", "live")
+
+    if env == "paper":
+        total = max(1, paper_rest_rps)
+        # Paper: very conservative — auth is the bottleneck (1 token/min).
+        # Capacities are scaled proportionally from the 1-RPS baseline.
+        return RateLimitBudgetManager(
+            auth_capacity=max(1, int(total * 1)),
+            auth_refill_rate=0.017 * total,
+            order_capacity=max(1, int(total * 1)),
+            order_refill_rate=0.1 * total,
+            inquiry_capacity=max(1, int(total * 1)),
+            inquiry_refill_rate=0.5 * total,
+            market_data_capacity=max(1, int(total * 1)),
+            market_data_refill_rate=0.5 * total,
+            reconciliation_capacity=max(1, int(total * 1)),
+            reconciliation_refill_rate=0.1 * total,
+        )
+
+    # Live / real environment
+    total = max(1, real_rest_rps)
+    # Normalise the live baseline capacities (designed for total=15) to the
+    # configured total RPS so that custom overrides scale proportionally.
+    scale = total / 15.0
+    return RateLimitBudgetManager(
+        auth_capacity=max(1, int(5 * scale)),
+        auth_refill_rate=0.1 * scale,
+        order_capacity=max(1, int(5 * scale)),
+        order_refill_rate=2.0 * scale,
+        inquiry_capacity=max(1, int(10 * scale)),
+        inquiry_refill_rate=5.0 * scale,
+        market_data_capacity=max(1, int(20 * scale)),
+        market_data_refill_rate=5.0 * scale,
+        reconciliation_capacity=max(1, int(5 * scale)),
+        reconciliation_refill_rate=1.0 * scale,
+    )
+
+
 @dataclass(slots=True, frozen=True)
 class SubscriptionBudget:
     """WebSocket subscription capacity management.

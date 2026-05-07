@@ -124,6 +124,7 @@ async def close_pool() -> None:
 
     _pool = None
     _pool_initialized = False
+    _pool_initialized = False
 
 
 async def health_check(config: DatabaseConfig | None = None) -> bool:

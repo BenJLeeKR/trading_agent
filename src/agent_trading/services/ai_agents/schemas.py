@@ -233,6 +233,25 @@ class EventInterpretationOutput:
     events: tuple[InterpretedEvent, ...] = ()
     aggregate_view: AggregateEventView = field(default_factory=AggregateEventView)
 
+    def __post_init__(self) -> None:
+        """Coerce ``aggregate_view`` from JSON string or dict to ``AggregateEventView``.
+
+        Some providers (e.g. DeepSeek) may return nested objects as serialised
+        JSON strings instead of proper nested JSON objects.  Because
+        ``from __future__ import annotations`` makes all type annotations strings
+        at runtime, the ``_coerce_nested_json_strings`` helper in
+        ``provider_client.py`` may not always resolve the target type correctly.
+        This ``__post_init__`` acts as a second line of defence.
+        """
+        import json
+
+        av = self.aggregate_view
+        if isinstance(av, str):
+            parsed = json.loads(av)
+            object.__setattr__(self, "aggregate_view", AggregateEventView(**parsed))
+        elif isinstance(av, dict) and not isinstance(av, AggregateEventView):
+            object.__setattr__(self, "aggregate_view", AggregateEventView(**av))
+
 
 # ============================================================================
 # Agent 2. AI Risk Agent

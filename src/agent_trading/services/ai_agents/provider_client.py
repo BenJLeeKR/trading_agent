@@ -18,6 +18,73 @@ from agent_trading.services.ai_agents.base import AIProviderClient, RawProviderR
 logger = logging.getLogger(__name__)
 
 
+def _coerce_nested_json_strings(
+    dataclass_type: type, data: dict[str, Any]
+) -> dict[str, Any]:
+    """Recursively coerce JSON-string fields into dicts for nested dataclass fields.
+
+    Some providers (e.g. DeepSeek) may return nested objects as serialised JSON
+    strings instead of proper nested JSON objects.  This function detects such
+    fields by inspecting the dataclass type's field annotations and, when a field
+    value is a string but the target type is a dataclass (or tuple of dataclasses),
+    parses the string with ``json.loads`` and recurses.
+
+    .. note::
+        Uses ``typing.get_type_hints()`` to resolve string annotations that arise
+        from ``from __future__ import annotations``, which makes all annotations
+        strings at runtime.
+    """
+    import dataclasses
+    import typing
+
+    # Resolve string annotations to actual types (handles ``from __future__ import annotations``).
+    try:
+        resolved_hints = typing.get_type_hints(dataclass_type)
+    except Exception:
+        resolved_hints = {}
+
+    for f in dataclasses.fields(dataclass_type):
+        # Use the resolved type hint if available, otherwise fall back to f.type
+        field_type = resolved_hints.get(f.name, f.type)
+        origin = getattr(field_type, "__origin__", None)
+        value = data.get(f.name)
+
+        if value is None or isinstance(value, (int, float, bool)):
+            continue
+
+        # Nested dataclass field — value should be a dict, but may be a JSON string
+        if hasattr(field_type, "__dataclass_fields__"):
+            if isinstance(value, str):
+                try:
+                    data[f.name] = json.loads(value)
+                except (json.JSONDecodeError, TypeError):
+                    pass  # leave as-is, will fail at construction
+            if isinstance(data.get(f.name), dict):
+                data[f.name] = _coerce_nested_json_strings(
+                    field_type, data[f.name]
+                )
+
+        # Tuple of dataclasses — value should be a list, but items may be JSON strings
+        elif origin is tuple:
+            args = getattr(field_type, "__args__", ())
+            if args and hasattr(args[0], "__dataclass_fields__") and isinstance(value, list):
+                elem_type = args[0]
+                coerced: list[dict[str, Any]] = []
+                for item in value:
+                    if isinstance(item, str):
+                        try:
+                            item = json.loads(item)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    if isinstance(item, dict):
+                        coerced.append(_coerce_nested_json_strings(elem_type, item))
+                    else:
+                        coerced.append(item)  # type: ignore[arg-type]
+                data[f.name] = coerced
+
+    return data
+
+
 class OpenAICompatibleClient:
     """HTTP-based OpenAI-compatible provider client.
 
@@ -72,7 +139,7 @@ class OpenAICompatibleClient:
         Parameters
         ----------
         model_id
-            The model identifier (e.g. ``"deepseek-chat"``).
+            The model identifier (e.g. ``"deepseek-v4-pro"``).
         system_prompt
             The system-level instruction for the model.
         user_prompt
@@ -120,6 +187,12 @@ class OpenAICompatibleClient:
 
         # Parse JSON into the target dataclass
         parsed_dict = json.loads(raw_content)
+
+        # Recursively coerce nested JSON strings into dicts for nested dataclass fields.
+        # Some providers (e.g. DeepSeek) may return nested objects as serialised JSON
+        # strings instead of proper nested JSON objects.
+        parsed_dict = _coerce_nested_json_strings(response_format, parsed_dict)
+
         parsed = response_format(**parsed_dict)
 
         return RawProviderResponse(parsed=parsed, raw_content=raw_content)

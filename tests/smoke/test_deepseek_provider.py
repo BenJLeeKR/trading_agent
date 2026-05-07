@@ -57,7 +57,7 @@ class TestDeepSeekSmoke:
         )
         try:
             result: RawProviderResponse = await client.generate_structured(
-                model_id=os.getenv("DEEPSEEK_MODEL_ID", "deepseek-chat"),
+                model_id=os.getenv("DEEPSEEK_MODEL_ID", "deepseek-v4-pro"),
                 system_prompt="You are a helpful assistant. Output valid JSON.",
                 user_prompt='Return {"symbol": "TEST", "score": 0.5}',
                 response_format=_SimpleOutput,
@@ -79,7 +79,7 @@ class TestDeepSeekSmoke:
         )
         try:
             result: RawProviderResponse = await client.generate_structured(
-                model_id=os.getenv("DEEPSEEK_MODEL_ID", "deepseek-chat"),
+                model_id=os.getenv("DEEPSEEK_MODEL_ID", "deepseek-v4-pro"),
                 system_prompt=(
                     "You are a test assistant. "
                     "Always respond with valid JSON matching the schema."

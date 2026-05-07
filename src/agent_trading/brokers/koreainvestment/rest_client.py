@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 
 import httpx
 
-from agent_trading.brokers.backoff import CircuitBreaker, ExponentialBackoff
+from agent_trading.brokers.backoff import CircuitBreaker, CircuitState, ExponentialBackoff
 from agent_trading.brokers.errors import (
     BrokerError,
     BrokerErrorType,
@@ -229,6 +229,7 @@ class KISRestClient:
     account_number: str
     account_product_code: str
     env: str = "paper"  # "live" | "paper"
+    base_url: str = ""  # explicit override via KIS_BASE_URL; empty = use KIS_API_BASE_URLS
     budget_manager: RateLimitBudgetManager | None = None
 
     # --- internal state ---
@@ -258,11 +259,28 @@ class KISRestClient:
     # Client lifecycle
     # ------------------------------------------------------------------
 
+    def __post_init__(self) -> None:
+        """Normalize ``real`` → ``live`` for KIS_ENV compatibility."""
+        if self.env.strip().lower() == "real":
+            object.__setattr__(self, "env", "live")
+
+    @property
+    def _base_url(self) -> str:
+        """Resolve the KIS base URL.
+
+        Priority:
+        1. ``self.base_url`` (explicit override via ``KIS_BASE_URL``)
+        2. ``KIS_API_BASE_URLS[self.env]`` (hardcoded mapping)
+        """
+        if self.base_url:
+            return self.base_url
+        return KIS_API_BASE_URLS[self.env]
+
     async def _get_client(self) -> httpx.AsyncClient:
         """Lazy-init the shared httpx.AsyncClient."""
         if self._client is None:
             self._client = httpx.AsyncClient(
-                base_url=KIS_API_BASE_URLS[self.env],
+                base_url=self._base_url,
                 timeout=httpx.Timeout(30.0, connect=10.0),
                 limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
             )
@@ -271,7 +289,13 @@ class KISRestClient:
     async def close(self) -> None:
         """Explicitly close the underlying HTTP client."""
         if self._client is not None:
-            await self._client.aclose()
+            try:
+                await self._client.aclose()
+            except RuntimeError:
+                # Python 3.14+: httpx/httpcore may raise RuntimeError('Event loop is closed')
+                # during teardown when the event loop has already been shut down.
+                # This is safe to ignore — the client's transport is already closed.
+                pass
             self._client = None
 
     # ------------------------------------------------------------------
@@ -295,7 +319,7 @@ class KISRestClient:
         }
         resp = await client.post(
             KIS_ENDPOINTS["oauth2_token"],
-            data=body,  # oauth2/tokenP uses form-encoded body
+            json=body,  # oauth2/tokenP requires JSON body
         )
         data = self._raise_on_error(resp, endpoint="oauth2_token")
         self._access_token = data["access_token"]
@@ -322,10 +346,21 @@ class KISRestClient:
             "appkey": self.api_key,
             "secretkey": self.api_secret,
         }
-        resp = await client.post(
-            KIS_ENDPOINTS["oauth2_approval"],
-            data=body,
-        )
+        try:
+            resp = await client.post(
+                KIS_ENDPOINTS["oauth2_approval"],
+                json=body,
+            )
+        except RuntimeError:
+            # Python 3.14+: httpx/httpcore may raise RuntimeError('Event loop is closed')
+            # during teardown when the event loop has already been shut down.
+            # Re-raise as a clearer error so callers can distinguish this from
+            # a genuine API failure.
+            raise RuntimeError(
+                "KIS get_approval_key: event loop closed during HTTP request "
+                "(Python 3.14 httpx/httpcore teardown issue). "
+                "This is an infrastructure issue, not a credential problem."
+            ) from None
         data = self._raise_on_error(resp, endpoint="oauth2_approval")
         self._approval_key = data["approval_key"]
         # approval key expires in 86400s (24h); refresh 5 min early
@@ -359,15 +394,19 @@ class KISRestClient:
         pair = KIS_TR_IDS.get(key)
         if pair is None:
             raise BrokerError(
+                broker_name=BrokerName.KOREA_INVESTMENT,
                 error_type=BrokerErrorType.INVALID_REQUEST,
-                message=f"Unknown TR ID key: {key}",
+                retryable=False,
+                raw_message=f"Unknown TR ID key: {key}",
             )
         live_tr, paper_tr = pair
         tr_id = paper_tr if self.env == "paper" else live_tr
         if tr_id is None:
             raise BrokerError(
+                broker_name=BrokerName.KOREA_INVESTMENT,
                 error_type=BrokerErrorType.INVALID_REQUEST,
-                message=f"TR ID {key} not available in {self.env} environment",
+                retryable=False,
+                raw_message=f"TR ID {key} not available in {self.env} environment",
             )
         return tr_id
 
@@ -410,9 +449,10 @@ class KISRestClient:
             data = resp.json()
         except (json.JSONDecodeError, ValueError):
             raise BrokerError(
+                broker_name=BrokerName.KOREA_INVESTMENT,
                 error_type=BrokerErrorType.API_ERROR,
-                message=f"KIS {endpoint}: non-JSON response (HTTP {resp.status_code})",
-                raw_response=resp.text,
+                retryable=False,
+                raw_message=f"KIS {endpoint}: non-JSON response (HTTP {resp.status_code})",
             )
 
         # HTTP-level error
@@ -423,22 +463,25 @@ class KISRestClient:
 
             if msg_cd in _AMBIGUOUS_ERROR_CODES or rt_cd in _AMBIGUOUS_ERROR_CODES:
                 raise BrokerError(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
                     error_type=BrokerErrorType.AMBIGUOUS_STATE,
-                    message=f"KIS {endpoint}: ambiguous state (msg_cd={msg_cd}, rt_cd={rt_cd}): {msg}",
-                    raw_response=resp.text,
+                    retryable=False,
+                    raw_message=f"KIS {endpoint}: ambiguous state (msg_cd={msg_cd}, rt_cd={rt_cd}): {msg}",
                 )
             if msg_cd in _KNOWN_FAILURE_CODES or rt_cd in _KNOWN_FAILURE_CODES:
                 raise BrokerError(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
                     error_type=BrokerErrorType.ORDER_FAILED,
-                    message=f"KIS {endpoint}: known failure (msg_cd={msg_cd}, rt_cd={rt_cd}): {msg}",
-                    raw_response=resp.text,
+                    retryable=False,
+                    raw_message=f"KIS {endpoint}: known failure (msg_cd={msg_cd}, rt_cd={rt_cd}): {msg}",
                 )
 
             # Default: API error
             raise BrokerError(
+                broker_name=BrokerName.KOREA_INVESTMENT,
                 error_type=BrokerErrorType.API_ERROR,
-                message=f"KIS {endpoint}: HTTP {resp.status_code} (msg_cd={msg_cd}): {msg}",
-                raw_response=resp.text,
+                retryable=False,
+                raw_message=f"KIS {endpoint}: HTTP {resp.status_code} (msg_cd={msg_cd}): {msg}",
             )
 
         # KIS business-level error (rt_cd != "0")
@@ -449,21 +492,24 @@ class KISRestClient:
         if rt_cd != "0":
             if msg_cd in _AMBIGUOUS_ERROR_CODES or rt_cd in _AMBIGUOUS_ERROR_CODES:
                 raise BrokerError(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
                     error_type=BrokerErrorType.AMBIGUOUS_STATE,
-                    message=f"KIS {endpoint}: ambiguous state (msg_cd={msg_cd}, rt_cd={rt_cd}): {msg}",
-                    raw_response=resp.text,
+                    retryable=False,
+                    raw_message=f"KIS {endpoint}: ambiguous state (msg_cd={msg_cd}, rt_cd={rt_cd}): {msg}",
                 )
             if msg_cd in _KNOWN_FAILURE_CODES or rt_cd in _KNOWN_FAILURE_CODES:
                 raise BrokerError(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
                     error_type=BrokerErrorType.ORDER_FAILED,
-                    message=f"KIS {endpoint}: known failure (msg_cd={msg_cd}, rt_cd={rt_cd}): {msg}",
-                    raw_response=resp.text,
+                    retryable=False,
+                    raw_message=f"KIS {endpoint}: known failure (msg_cd={msg_cd}, rt_cd={rt_cd}): {msg}",
                 )
 
             raise BrokerError(
+                broker_name=BrokerName.KOREA_INVESTMENT,
                 error_type=BrokerErrorType.API_ERROR,
-                message=f"KIS {endpoint}: business error (rt_cd={rt_cd}, msg_cd={msg_cd}): {msg}",
-                raw_response=resp.text,
+                retryable=False,
+                raw_message=f"KIS {endpoint}: business error (rt_cd={rt_cd}, msg_cd={msg_cd}): {msg}",
             )
 
         return data
@@ -518,10 +564,12 @@ class KISRestClient:
             self.budget_manager.consume_or_raise(bucket)
 
         # 2. Circuit breaker
-        if self._circuit_breaker.is_open():
+        if self._circuit_breaker.state == CircuitState.OPEN:
             raise BrokerError(
+                broker_name=BrokerName.KOREA_INVESTMENT,
                 error_type=BrokerErrorType.API_ERROR,
-                message=f"KIS circuit breaker open for {endpoint_key}",
+                retryable=False,
+                raw_message=f"KIS circuit breaker open for {endpoint_key}",
             )
 
         # 3. Build request
@@ -543,15 +591,29 @@ class KISRestClient:
         except httpx.TimeoutException:
             self._circuit_breaker.record_failure()
             raise BrokerError(
+                broker_name=BrokerName.KOREA_INVESTMENT,
                 error_type=BrokerErrorType.TIMEOUT,
-                message=f"KIS {endpoint_key}: timeout",
+                retryable=True,
+                raw_message=f"KIS {endpoint_key}: timeout",
             )
         except httpx.RequestError as e:
             self._circuit_breaker.record_failure()
             raise BrokerError(
+                broker_name=BrokerName.KOREA_INVESTMENT,
                 error_type=BrokerErrorType.NETWORK_ERROR,
-                message=f"KIS {endpoint_key}: network error: {e}",
+                retryable=True,
+                raw_message=f"KIS {endpoint_key}: network error: {e}",
             )
+        except RuntimeError:
+            # Python 3.14+: httpx/httpcore may raise RuntimeError('Event loop is closed')
+            # during teardown when the event loop has already been shut down.
+            # Re-raise as a clearer error so callers can distinguish this from
+            # a genuine API failure.
+            raise RuntimeError(
+                f"KIS {endpoint_key}: event loop closed during HTTP request "
+                f"(Python 3.14 httpx/httpcore teardown issue). "
+                f"This is an infrastructure issue, not a credential problem."
+            ) from None
 
         # 5. Parse + normalise
         data = self._raise_on_error(resp, endpoint=endpoint_key)

@@ -1,7 +1,8 @@
-"""Tests for LLM provider environment variable resolution.
+"""Tests for LLM provider and KIS environment variable resolution.
 
 Verifies that ``AppSettings`` resolves ``provider_*`` fields based on
-the ``LLM_PROVIDER`` environment variable.
+the ``LLM_PROVIDER`` environment variable, and that KIS env vars follow
+the preferred → fallback resolution chain.
 """
 
 from __future__ import annotations
@@ -12,6 +13,10 @@ import pytest
 
 from agent_trading.config.settings import (
     AppSettings,
+    _resolve_kis_api_key,
+    _resolve_kis_api_secret,
+    _resolve_kis_account_number,
+    _resolve_kis_env,
     _resolve_provider_api_key,
     _resolve_provider_base_url,
     _resolve_provider_model_id,
@@ -97,10 +102,10 @@ class TestResolveProviderModelId:
     """_resolve_provider_model_id() uses provider-specific defaults."""
 
     def test_deepseek_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """DeepSeek no env var → default deepseek-chat."""
+        """DeepSeek no env var → default deepseek-v4-pro."""
         monkeypatch.setenv("LLM_PROVIDER", "deepseek")
         monkeypatch.delenv("DEEPSEEK_MODEL_ID", raising=False)
-        assert _resolve_provider_model_id() == "deepseek-chat"
+        assert _resolve_provider_model_id() == "deepseek-v4-pro"
 
     def test_openai_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """OpenAI no env var → default gpt-4o."""
@@ -220,3 +225,196 @@ class TestAppSettingsProviderResolution:
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-ds-should-not-read")
         settings = AppSettings()
         assert settings.provider_api_key == "sk-oa-only"
+
+
+# ===========================================================================
+# KIS resolver unit tests
+# ===========================================================================
+
+
+class TestResolveKisApiKey:
+    """_resolve_kis_api_key() prefers KIS_APP_KEY, falls back to KIS_API_KEY."""
+
+    def test_preferred_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """KIS_APP_KEY set → returns KIS_APP_KEY."""
+        monkeypatch.setenv("KIS_APP_KEY", "preferred-key")
+        monkeypatch.setenv("KIS_API_KEY", "fallback-key")
+        assert _resolve_kis_api_key() == "preferred-key"
+
+    def test_fallback_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Only KIS_API_KEY set → returns KIS_API_KEY."""
+        monkeypatch.delenv("KIS_APP_KEY", raising=False)
+        monkeypatch.setenv("KIS_API_KEY", "fallback-key")
+        assert _resolve_kis_api_key() == "fallback-key"
+
+    def test_both_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Neither set → empty string."""
+        monkeypatch.delenv("KIS_APP_KEY", raising=False)
+        monkeypatch.delenv("KIS_API_KEY", raising=False)
+        assert _resolve_kis_api_key() == ""
+
+
+class TestResolveKisApiSecret:
+    """_resolve_kis_api_secret() prefers KIS_APP_SECRET, falls back to KIS_API_SECRET."""
+
+    def test_preferred_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """KIS_APP_SECRET set → returns KIS_APP_SECRET."""
+        monkeypatch.setenv("KIS_APP_SECRET", "preferred-secret")
+        monkeypatch.setenv("KIS_API_SECRET", "fallback-secret")
+        assert _resolve_kis_api_secret() == "preferred-secret"
+
+    def test_fallback_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Only KIS_API_SECRET set → returns KIS_API_SECRET."""
+        monkeypatch.delenv("KIS_APP_SECRET", raising=False)
+        monkeypatch.setenv("KIS_API_SECRET", "fallback-secret")
+        assert _resolve_kis_api_secret() == "fallback-secret"
+
+    def test_both_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Neither set → empty string."""
+        monkeypatch.delenv("KIS_APP_SECRET", raising=False)
+        monkeypatch.delenv("KIS_API_SECRET", raising=False)
+        assert _resolve_kis_api_secret() == ""
+
+
+class TestResolveKisAccountNumber:
+    """_resolve_kis_account_number() prefers KIS_ACCOUNT_NO, falls back to KIS_ACCOUNT_NUMBER."""
+
+    def test_preferred_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """KIS_ACCOUNT_NO set → returns KIS_ACCOUNT_NO."""
+        monkeypatch.setenv("KIS_ACCOUNT_NO", "preferred-acc")
+        monkeypatch.setenv("KIS_ACCOUNT_NUMBER", "fallback-acc")
+        assert _resolve_kis_account_number() == "preferred-acc"
+
+    def test_fallback_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Only KIS_ACCOUNT_NUMBER set → returns KIS_ACCOUNT_NUMBER."""
+        monkeypatch.delenv("KIS_ACCOUNT_NO", raising=False)
+        monkeypatch.setenv("KIS_ACCOUNT_NUMBER", "fallback-acc")
+        assert _resolve_kis_account_number() == "fallback-acc"
+
+    def test_both_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Neither set → empty string."""
+        monkeypatch.delenv("KIS_ACCOUNT_NO", raising=False)
+        monkeypatch.delenv("KIS_ACCOUNT_NUMBER", raising=False)
+        assert _resolve_kis_account_number() == ""
+
+
+class TestResolveKisEnv:
+    """_resolve_kis_env() normalizes ``real`` → ``live``, defaults to ``paper``."""
+
+    def test_default_paper(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """KIS_ENV unset → 'paper'."""
+        monkeypatch.delenv("KIS_ENV", raising=False)
+        assert _resolve_kis_env() == "paper"
+
+    def test_paper_explicit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """KIS_ENV=paper → 'paper'."""
+        monkeypatch.setenv("KIS_ENV", "paper")
+        assert _resolve_kis_env() == "paper"
+
+    def test_real_normalized_to_live(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """KIS_ENV=real → 'live'."""
+        monkeypatch.setenv("KIS_ENV", "real")
+        assert _resolve_kis_env() == "live"
+
+    def test_live_passthrough(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """KIS_ENV=live → 'live'."""
+        monkeypatch.setenv("KIS_ENV", "live")
+        assert _resolve_kis_env() == "live"
+
+    def test_real_case_insensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """KIS_ENV=REAL → 'live' (case-insensitive)."""
+        monkeypatch.setenv("KIS_ENV", "REAL")
+        assert _resolve_kis_env() == "live"
+
+    def test_real_with_whitespace(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """KIS_ENV='  real  ' → 'live' (stripped)."""
+        monkeypatch.setenv("KIS_ENV", "  real  ")
+        assert _resolve_kis_env() == "live"
+
+
+class TestAppSettingsKisFields:
+    """AppSettings KIS fields resolve correctly via resolver functions."""
+
+    def test_preferred_names(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """All preferred names set → fields use preferred values."""
+        monkeypatch.setenv("KIS_APP_KEY", "pk-key")
+        monkeypatch.setenv("KIS_APP_SECRET", "pk-secret")
+        monkeypatch.setenv("KIS_ACCOUNT_NO", "pk-acc")
+        monkeypatch.setenv("KIS_ENV", "real")
+        monkeypatch.setenv("KIS_BASE_URL", "https://custom.url:9443")
+        settings = AppSettings()
+        assert settings.kis_api_key == "pk-key"
+        assert settings.kis_api_secret == "pk-secret"
+        assert settings.kis_account_number == "pk-acc"
+        assert settings.kis_env == "live"  # normalized
+        assert settings.kis_base_url == "https://custom.url:9443"
+
+    def test_fallback_names(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Only legacy names set → fields use fallback values."""
+        monkeypatch.delenv("KIS_APP_KEY", raising=False)
+        monkeypatch.delenv("KIS_APP_SECRET", raising=False)
+        monkeypatch.delenv("KIS_ACCOUNT_NO", raising=False)
+        monkeypatch.setenv("KIS_API_KEY", "legacy-key")
+        monkeypatch.setenv("KIS_API_SECRET", "legacy-secret")
+        monkeypatch.setenv("KIS_ACCOUNT_NUMBER", "legacy-acc")
+        monkeypatch.setenv("KIS_ENV", "live")
+        monkeypatch.delenv("KIS_BASE_URL", raising=False)
+        settings = AppSettings()
+        assert settings.kis_api_key == "legacy-key"
+        assert settings.kis_api_secret == "legacy-secret"
+        assert settings.kis_account_number == "legacy-acc"
+        assert settings.kis_env == "live"
+        assert settings.kis_base_url == ""
+
+    def test_all_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No KIS env vars set → empty strings + paper default."""
+        monkeypatch.delenv("KIS_APP_KEY", raising=False)
+        monkeypatch.delenv("KIS_APP_SECRET", raising=False)
+        monkeypatch.delenv("KIS_ACCOUNT_NO", raising=False)
+        monkeypatch.delenv("KIS_API_KEY", raising=False)
+        monkeypatch.delenv("KIS_API_SECRET", raising=False)
+        monkeypatch.delenv("KIS_ACCOUNT_NUMBER", raising=False)
+        monkeypatch.delenv("KIS_ENV", raising=False)
+        monkeypatch.delenv("KIS_BASE_URL", raising=False)
+        settings = AppSettings()
+        assert settings.kis_api_key == ""
+        assert settings.kis_api_secret == ""
+        assert settings.kis_account_number == ""
+        assert settings.kis_env == "paper"
+        assert settings.kis_base_url == ""
+
+    # ------------------------------------------------------------------
+    # KIS REST RPS resolver tests
+    # ------------------------------------------------------------------
+
+    def test_real_rest_rps_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``KIS_REAL_REST_RPS`` unset → defaults to 15."""
+        monkeypatch.delenv("KIS_REAL_REST_RPS", raising=False)
+        settings = AppSettings()
+        assert settings.kis_real_rest_rps == 15
+
+    def test_paper_rest_rps_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``KIS_PAPER_REST_RPS`` unset → defaults to 1."""
+        monkeypatch.delenv("KIS_PAPER_REST_RPS", raising=False)
+        settings = AppSettings()
+        assert settings.kis_paper_rest_rps == 1
+
+    def test_real_rest_rps_custom(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``KIS_REAL_REST_RPS`` set → uses env value."""
+        monkeypatch.setenv("KIS_REAL_REST_RPS", "20")
+        settings = AppSettings()
+        assert settings.kis_real_rest_rps == 20
+
+    def test_paper_rest_rps_custom(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``KIS_PAPER_REST_RPS`` set → uses env value."""
+        monkeypatch.setenv("KIS_PAPER_REST_RPS", "3")
+        settings = AppSettings()
+        assert settings.kis_paper_rest_rps == 3
+
+    def test_rest_rps_clamp_positive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Zero or negative RPS values are clamped to 1."""
+        monkeypatch.setenv("KIS_REAL_REST_RPS", "0")
+        monkeypatch.setenv("KIS_PAPER_REST_RPS", "-5")
+        settings = AppSettings()
+        assert settings.kis_real_rest_rps == 1
+        assert settings.kis_paper_rest_rps == 1

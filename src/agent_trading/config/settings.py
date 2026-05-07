@@ -35,7 +35,7 @@ _PROVIDER_BASE_URL_DEFAULTS: dict[str, str] = {
 }
 
 _PROVIDER_MODEL_ID_DEFAULTS: dict[str, str] = {
-    "deepseek": "deepseek-chat",
+    "deepseek": "deepseek-v4-pro",
     "openai": "gpt-4o",
 }
 
@@ -97,6 +97,53 @@ def _resolve_provider_timeout() -> int:
 
 
 # ---------------------------------------------------------------------------
+# KIS environment variable resolution (preferred name → legacy fallback)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_kis_api_key() -> str:
+    """Resolve KIS API key: ``KIS_APP_KEY`` preferred, fallback ``KIS_API_KEY``."""
+    return os.getenv("KIS_APP_KEY") or os.getenv("KIS_API_KEY", "")
+
+
+def _resolve_kis_api_secret() -> str:
+    """Resolve KIS API secret: ``KIS_APP_SECRET`` preferred, fallback ``KIS_API_SECRET``."""
+    return os.getenv("KIS_APP_SECRET") or os.getenv("KIS_API_SECRET", "")
+
+
+def _resolve_kis_account_number() -> str:
+    """Resolve KIS account number: ``KIS_ACCOUNT_NO`` preferred, fallback ``KIS_ACCOUNT_NUMBER``."""
+    return os.getenv("KIS_ACCOUNT_NO") or os.getenv("KIS_ACCOUNT_NUMBER", "")
+
+
+def _resolve_kis_env() -> str:
+    """Read ``KIS_ENV`` and normalize ``"real"`` → ``"live"``.
+
+    Returns ``"paper"`` when unset.
+    """
+    raw = os.getenv("KIS_ENV", "paper")
+    return raw.strip().lower().replace("real", "live")
+
+
+def _resolve_kis_real_rest_rps() -> int:
+    """Resolve KIS real/live REST RPS: ``KIS_REAL_REST_RPS``, default 15.
+
+    Clamped to ``max(1, value)`` to ensure a positive safety baseline.
+    """
+    raw = os.getenv("KIS_REAL_REST_RPS", "15")
+    return max(1, int(raw))
+
+
+def _resolve_kis_paper_rest_rps() -> int:
+    """Resolve KIS paper REST RPS: ``KIS_PAPER_REST_RPS``, default 1.
+
+    Clamped to ``max(1, value)`` to ensure a positive safety baseline.
+    """
+    raw = os.getenv("KIS_PAPER_REST_RPS", "1")
+    return max(1, int(raw))
+
+
+# ---------------------------------------------------------------------------
 # Application settings
 # ---------------------------------------------------------------------------
 
@@ -108,11 +155,23 @@ class AppSettings:
     timezone: str = "Asia/Seoul"
 
     # ---- KIS API credentials (read from environment) -------------------------
-    kis_api_key: str = field(default_factory=lambda: os.getenv("KIS_API_KEY", ""))
-    kis_api_secret: str = field(default_factory=lambda: os.getenv("KIS_API_SECRET", ""))
-    kis_account_number: str = field(default_factory=lambda: os.getenv("KIS_ACCOUNT_NUMBER", ""))
+    # Preferred naming (한국투자증권 actual): KIS_APP_KEY / KIS_APP_SECRET / KIS_ACCOUNT_NO
+    # Legacy fallback:                       KIS_API_KEY / KIS_API_SECRET / KIS_ACCOUNT_NUMBER
+    kis_api_key: str = field(default_factory=_resolve_kis_api_key)
+    kis_api_secret: str = field(default_factory=_resolve_kis_api_secret)
+    kis_account_number: str = field(default_factory=_resolve_kis_account_number)
     kis_account_product_code: str = field(default_factory=lambda: os.getenv("KIS_ACCOUNT_PRODUCT_CODE", "01"))
-    kis_env: str = field(default_factory=lambda: os.getenv("KIS_ENV", "paper"))
+    kis_env: str = field(default_factory=_resolve_kis_env)
+    kis_base_url: str = field(default_factory=lambda: os.getenv("KIS_BASE_URL", ""))
+
+    # ---- KIS REST rate limit safety budget (env override) --------------------
+    # ``KIS_REAL_REST_RPS`` (default 15) and ``KIS_PAPER_REST_RPS`` (default 1)
+    # control the per-environment token-bucket refill rates in
+    # ``RateLimitBudgetManager``.  These are **safety budget scaling baselines**,
+    # not exact RPS guarantees — the 5-bucket distribution spreads the total
+    # conservatively across AUTH / ORDER / INQUIRY / MARKET_DATA / RECONCILIATION.
+    kis_real_rest_rps: int = field(default_factory=_resolve_kis_real_rest_rps)
+    kis_paper_rest_rps: int = field(default_factory=_resolve_kis_paper_rest_rps)
 
     # ---- OpenDART API credentials (read from environment) --------------------
     opendart_api_key: str = field(default_factory=lambda: os.getenv("OPENDART_API_KEY", ""))
@@ -126,4 +185,3 @@ class AppSettings:
     provider_base_url: str = field(default_factory=_resolve_provider_base_url)
     provider_model_id: str = field(default_factory=_resolve_provider_model_id)
     provider_timeout_seconds: int = field(default_factory=_resolve_provider_timeout)
-

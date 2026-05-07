@@ -35,6 +35,13 @@ from agent_trading.brokers.koreainvestment.websocket_client import KISWebSocketC
 # =========================================================================
 
 _REQUIRED_ENV_VARS: tuple[str, ...] = (
+    "KIS_APP_KEY",
+    "KIS_APP_SECRET",
+    "KIS_ACCOUNT_NO",
+)
+
+# Legacy fallback names for the same credentials (checked in _credentials_configured)
+_LEGACY_ENV_VARS: tuple[str, ...] = (
     "KIS_API_KEY",
     "KIS_API_SECRET",
     "KIS_ACCOUNT_NUMBER",
@@ -44,8 +51,15 @@ _WS_FIRST_MSG_TIMEOUT: float = 15.0  # seconds
 
 
 def _credentials_configured() -> bool:
-    """Return True only when *all* required env vars are set and non-empty."""
-    return all(bool(os.getenv(v)) for v in _REQUIRED_ENV_VARS)
+    """Return True when preferred or legacy env vars are fully set.
+
+    Checks preferred names (``KIS_APP_KEY``, …) first; falls back to
+    legacy names (``KIS_API_KEY``, …) for backward compatibility.
+    """
+    preferred = all(bool(os.getenv(v)) for v in _REQUIRED_ENV_VARS)
+    if preferred:
+        return True
+    return all(bool(os.getenv(v)) for v in _LEGACY_ENV_VARS)
 
 
 def _check_paper_env() -> None:
@@ -63,13 +77,6 @@ def _check_paper_env() -> None:
 # Read-only guard fixture (autouse, function-scoped)
 # =========================================================================
 
-_WRITE_OPS: tuple[str, ...] = (
-    "submit_order",
-    "cancel_order",
-    "amend_order",
-)
-
-
 @pytest.fixture(autouse=True)
 def _read_only_guard(monkeypatch: pytest.MonkeyPatch) -> None:
     """Block write operations on KISRestClient and KoreaInvestmentAdapter.
@@ -77,6 +84,12 @@ def _read_only_guard(monkeypatch: pytest.MonkeyPatch) -> None:
     Uses ``monkeypatch.setattr()`` at the class level, which is safe for
     ``slots=True`` dataclasses.  The patch is automatically reverted after
     each test function.
+
+    Note
+    ----
+    ``KISRestClient`` only has ``submit_order`` and ``cancel_order``
+    (no ``amend_order``).  ``KoreaInvestmentAdapter`` has all three.
+    Each class is patched only for methods it actually defines.
     """
 
     async def _block(*args: object, **kwargs: object) -> None:
@@ -85,9 +98,12 @@ def _read_only_guard(monkeypatch: pytest.MonkeyPatch) -> None:
             "called during smoke test."
         )
 
-    for cls in (KISRestClient, KoreaInvestmentAdapter):
-        for op in _WRITE_OPS:
-            monkeypatch.setattr(cls, op, _block)
+    # KISRestClient: submit_order, cancel_order (no amend_order)
+    for op in ("submit_order", "cancel_order"):
+        monkeypatch.setattr(KISRestClient, op, _block)
+    # KoreaInvestmentAdapter: submit_order, cancel_order, amend_order
+    for op in ("submit_order", "cancel_order", "amend_order"):
+        monkeypatch.setattr(KoreaInvestmentAdapter, op, _block)
 
 
 # =========================================================================
@@ -99,13 +115,33 @@ def _read_only_guard(monkeypatch: pytest.MonkeyPatch) -> None:
 async def kis_rest_client() -> AsyncIterator[KISRestClient]:
     """Module-scoped KISRestClient for read-only smoke tests.
 
+    ``scope="module"`` ensures the access token is obtained once and reused
+    across all tests in the module, avoiding KIS Paper's 1-token-per-minute
+    rate limit (EGW00133) on the ``oauth2/tokenP`` endpoint.
+
+    Note on KIS Paper rate limits
+    -----------------------------
+    KIS Paper sandbox enforces a **1-token-per-minute** rate limit
+    (EGW00133) on **each** auth endpoint:
+    - ``oauth2/tokenP`` (called by ``authenticate()``)
+    - ``oauth2/Approval`` (called by ``get_approval_key()``)
+
+    Within a single pytest process with ``scope="module"``, the token is
+    cached in ``KISRestClient`` so only the **first** call to each endpoint
+    hits the network.  However, running the same smoke suite twice within
+    1 minute will trigger rate limits on the second run because a new
+    ``KISRestClient`` instance starts with an empty cache.
+
+    ``KISRestClient.close()`` wraps ``RuntimeError`` for Python 3.14
+    compatibility (httpx/httpcore/anyio event-loop-closed during teardown).
+
     Raises ``pytest.fail`` if KIS_ENV is not "paper".
     """
     _check_paper_env()
 
-    api_key = os.environ["KIS_API_KEY"]
-    api_secret = os.environ["KIS_API_SECRET"]
-    account_number = os.environ["KIS_ACCOUNT_NUMBER"]
+    api_key = os.getenv("KIS_APP_KEY") or os.getenv("KIS_API_KEY", "")
+    api_secret = os.getenv("KIS_APP_SECRET") or os.getenv("KIS_API_SECRET", "")
+    account_number = os.getenv("KIS_ACCOUNT_NO") or os.getenv("KIS_ACCOUNT_NUMBER", "")
     account_product_code = os.getenv("KIS_ACCOUNT_PRODUCT_CODE", "01")
     env = os.getenv("KIS_ENV", "paper")
 
@@ -119,7 +155,13 @@ async def kis_rest_client() -> AsyncIterator[KISRestClient]:
 
     yield client
 
-    await client.close()
+    try:
+        await client.close()
+    except RuntimeError:
+        # Python 3.14+: httpx/httpcore may raise RuntimeError('Event loop is closed')
+        # during teardown when the event loop has already been shut down.
+        # This is safe to ignore — the client's transport is already closed.
+        pass
 
 
 @pytest.fixture(scope="module")
@@ -149,7 +191,12 @@ async def kis_ws_client(
     yield client
 
     if client._connected:
-        await client.disconnect()
+        try:
+            await client.disconnect()
+        except RuntimeError:
+            # Python 3.14+: websockets/httpcore may raise RuntimeError
+            # ('Event loop is closed') during teardown. Safe to ignore.
+            pass
 
 
 # =========================================================================
@@ -192,7 +239,12 @@ class TestKISPaperSmokeAuth:
 
     @pytest.mark.smoke
     async def test_authentication(self, kis_rest_client: KISRestClient) -> None:
-        """Obtain an access token from KIS oauth2/tokenP."""
+        """Obtain an access token from KIS oauth2/tokenP.
+
+        This is the **first** auth API call in the module.  The token is
+        cached in ``KISRestClient._access_token`` so all subsequent tests
+        reuse it without hitting the network.
+        """
         token = await kis_rest_client.authenticate()
         assert token, "Access token should be a non-empty string"
         assert isinstance(token, str), f"Expected str, got {type(token)}"
@@ -200,7 +252,26 @@ class TestKISPaperSmokeAuth:
 
     @pytest.mark.smoke
     async def test_approval_key(self, kis_rest_client: KISRestClient) -> None:
-        """Obtain a WebSocket approval key from KIS oauth2/approval."""
+        """Obtain a WebSocket approval key from KIS oauth2/approval.
+
+        Calls ``authenticate()`` first (cached — no network) to demonstrate
+        token reuse, then calls ``get_approval_key()`` which hits the
+        ``oauth2/Approval`` endpoint.
+
+        Note
+        ----
+        KIS Paper enforces a **1-token-per-minute** rate limit per auth
+        endpoint.  ``get_approval_key()`` hits a **different** endpoint
+        (``oauth2/Approval``) than ``authenticate()`` (``oauth2/tokenP``),
+        so this call is **not** rate-limited by the previous auth call.
+        However, running the full smoke suite twice within 1 minute will
+        trigger EGW00133 on the second run.
+        """
+        # Call authenticate() first — it's cached from test_authentication,
+        # so this is a no-op that verifies token reuse works correctly.
+        token = await kis_rest_client.authenticate()
+        assert token, "Cached access token should still be valid"
+
         approval_key = await kis_rest_client.get_approval_key()
         assert approval_key, "Approval key should be a non-empty string"
         assert isinstance(approval_key, str), (

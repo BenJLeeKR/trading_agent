@@ -230,3 +230,36 @@ class TestNormalizeSubmitResult:
         )
         normalized = adapter._normalize_submit_result(result)
         assert normalized.normalized_status == OrderStatus.ACKNOWLEDGED
+
+
+class TestBuildKisAdapterRuntimeWiring:
+    """``_build_kis_adapter()`` runtime wiring — budget manager injection."""
+
+    def test_build_kis_adapter_injects_budget_manager(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``_build_kis_adapter()`` creates a ``RateLimitBudgetManager`` and
+        passes it to ``KISRestClient``."""
+        from agent_trading.config.settings import AppSettings
+        from agent_trading.runtime.bootstrap import _build_kis_adapter
+
+        monkeypatch.setenv("KIS_APP_KEY", "test-key")
+        monkeypatch.setenv("KIS_APP_SECRET", "test-secret")
+        monkeypatch.setenv("KIS_ACCOUNT_NO", "12345678")
+        monkeypatch.setenv("KIS_ENV", "paper")
+        monkeypatch.delenv("KIS_REAL_REST_RPS", raising=False)
+        monkeypatch.delenv("KIS_PAPER_REST_RPS", raising=False)
+
+        settings = AppSettings()
+        adapter = _build_kis_adapter(settings)
+
+        # The adapter's internal REST client should have a budget_manager
+        rest_client = adapter._rest
+        assert rest_client.budget_manager is not None
+        assert isinstance(rest_client.budget_manager, RateLimitBudgetManager)
+
+        # Paper env → conservative bucket capacities
+        snap = rest_client.budget_manager.snapshot()
+        assert snap["auth"]["capacity"] == 1
+        assert snap["order"]["capacity"] == 1
+        assert snap["inquiry"]["capacity"] == 1
+        assert snap["market_data"]["capacity"] == 1
+        assert snap["reconciliation"]["capacity"] == 1

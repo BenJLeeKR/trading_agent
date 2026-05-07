@@ -21,15 +21,15 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: trading
-      POSTGRES_USER: trading
-      POSTGRES_PASSWORD: trading
+      POSTGRES_DB: "${DATABASE_NAME:-trading}"
+      POSTGRES_USER: "${DATABASE_USER:-trading}"
+      POSTGRES_PASSWORD: "${DATABASE_PASSWORD:-trading}"
     ports:
-      - "5432:5432"
+      - "${DATABASE_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U trading"]
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-trading}"]
       interval: 3s
       timeout: 3s
       retries: 5
@@ -43,11 +43,37 @@ services:
         condition: service_healthy
     environment:
       DATABASE_HOST: db
-      DATABASE_PORT: 5432
-      DATABASE_NAME: trading
-      DATABASE_USER: trading
-      DATABASE_PASSWORD: trading
-      DATABASE_SCHEMA: trading
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "${DATABASE_NAME:-trading}"
+      DATABASE_USER: "${DATABASE_USER:-trading}"
+      DATABASE_PASSWORD: "${DATABASE_PASSWORD:-trading}"
+      DATABASE_SCHEMA: "${DATABASE_SCHEMA:-trading}"
+      APP_ENV: "${APP_ENV:-paper}"
+      APP_TIMEZONE: "${APP_TIMEZONE:-Asia/Seoul}"
+      # KIS env — preferred names (한국투자증권 actual standard)
+      KIS_ENV: "${KIS_ENV:-paper}"
+      KIS_APP_KEY: "${KIS_APP_KEY:-}"
+      KIS_APP_SECRET: "${KIS_APP_SECRET:-}"
+      KIS_ACCOUNT_NO: "${KIS_ACCOUNT_NO:-}"
+      KIS_BASE_URL: "${KIS_BASE_URL:-}"
+      KIS_ACCOUNT_PRODUCT_CODE: "${KIS_ACCOUNT_PRODUCT_CODE:-01}"
+      # REST rate limit safety budget baseline
+      KIS_REAL_REST_RPS: "${KIS_REAL_REST_RPS:-15}"
+      KIS_PAPER_REST_RPS: "${KIS_PAPER_REST_RPS:-1}"
+      # Legacy fallback names (still supported)
+      KIS_API_KEY: "${KIS_API_KEY:-}"
+      KIS_API_SECRET: "${KIS_API_SECRET:-}"
+      KIS_ACCOUNT_NUMBER: "${KIS_ACCOUNT_NUMBER:-}"
+      LLM_PROVIDER: "${LLM_PROVIDER:-deepseek}"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
+      DEEPSEEK_MODEL_ID: "${DEEPSEEK_MODEL_ID:-deepseek-v4-pro}"
+      DEEPSEEK_TIMEOUT_SECONDS: "${DEEPSEEK_TIMEOUT_SECONDS:-30}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-https://api.openai.com/v1}"
+      OPENAI_MODEL_ID: "${OPENAI_MODEL_ID:-gpt-4o}"
+      OPENAI_TIMEOUT_SECONDS: "${OPENAI_TIMEOUT_SECONDS:-30}"
+      OPENDART_API_KEY: "${OPENDART_API_KEY:-}"
     volumes:
       - ./src:/app/src
       - ./db:/app/db
@@ -68,12 +94,38 @@ services:
         condition: service_healthy
     environment:
       DATABASE_HOST: db
-      DATABASE_PORT: 5432
-      DATABASE_NAME: trading
-      DATABASE_USER: trading
-      DATABASE_PASSWORD: trading
-      DATABASE_SCHEMA: trading
-      API_RUNTIME_MODE: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "${DATABASE_NAME:-trading}"
+      DATABASE_USER: "${DATABASE_USER:-trading}"
+      DATABASE_PASSWORD: "${DATABASE_PASSWORD:-trading}"
+      DATABASE_SCHEMA: "${DATABASE_SCHEMA:-trading}"
+      API_RUNTIME_MODE: "${API_RUNTIME_MODE:-postgres}"
+      APP_ENV: "${APP_ENV:-paper}"
+      APP_TIMEZONE: "${APP_TIMEZONE:-Asia/Seoul}"
+      # KIS env — preferred names (한국투자증권 actual standard)
+      KIS_ENV: "${KIS_ENV:-paper}"
+      KIS_APP_KEY: "${KIS_APP_KEY:-}"
+      KIS_APP_SECRET: "${KIS_APP_SECRET:-}"
+      KIS_ACCOUNT_NO: "${KIS_ACCOUNT_NO:-}"
+      KIS_BASE_URL: "${KIS_BASE_URL:-}"
+      KIS_ACCOUNT_PRODUCT_CODE: "${KIS_ACCOUNT_PRODUCT_CODE:-01}"
+      # REST rate limit safety budget baseline
+      KIS_REAL_REST_RPS: "${KIS_REAL_REST_RPS:-15}"
+      KIS_PAPER_REST_RPS: "${KIS_PAPER_REST_RPS:-1}"
+      # Legacy fallback names (still supported)
+      KIS_API_KEY: "${KIS_API_KEY:-}"
+      KIS_API_SECRET: "${KIS_API_SECRET:-}"
+      KIS_ACCOUNT_NUMBER: "${KIS_ACCOUNT_NUMBER:-}"
+      LLM_PROVIDER: "${LLM_PROVIDER:-deepseek}"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
+      DEEPSEEK_MODEL_ID: "${DEEPSEEK_MODEL_ID:-deepseek-v4-pro}"
+      DEEPSEEK_TIMEOUT_SECONDS: "${DEEPSEEK_TIMEOUT_SECONDS:-30}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-https://api.openai.com/v1}"
+      OPENAI_MODEL_ID: "${OPENAI_MODEL_ID:-gpt-4o}"
+      OPENAI_TIMEOUT_SECONDS: "${OPENAI_TIMEOUT_SECONDS:-30}"
+      OPENDART_API_KEY: "${OPENDART_API_KEY:-}"
       INSPECTION_API_TOKEN: "${INSPECTION_API_TOKEN:-}"
     ports:
       - "8000:8000"

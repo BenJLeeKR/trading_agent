@@ -81,6 +81,13 @@ from agent_trading.services.order_manager import OrderManager
 # =========================================================================
 
 _REQUIRED_ENV_VARS: tuple[str, ...] = (
+    "KIS_APP_KEY",
+    "KIS_APP_SECRET",
+    "KIS_ACCOUNT_NO",
+)
+
+# Legacy fallback names for the same credentials (checked in _credentials_configured)
+_LEGACY_ENV_VARS: tuple[str, ...] = (
     "KIS_API_KEY",
     "KIS_API_SECRET",
     "KIS_ACCOUNT_NUMBER",
@@ -92,8 +99,15 @@ _REQUIRED_ENV_VARS: tuple[str, ...] = (
 
 
 def _credentials_configured() -> bool:
-    """Return True only when *all* required KIS env vars are set."""
-    return all(bool(os.getenv(v)) for v in _REQUIRED_ENV_VARS)
+    """Return True when preferred or legacy env vars are fully set.
+
+    Checks preferred names (``KIS_APP_KEY``, …) first; falls back to
+    legacy names (``KIS_API_KEY``, …) for backward compatibility.
+    """
+    preferred = all(bool(os.getenv(v)) for v in _REQUIRED_ENV_VARS)
+    if preferred:
+        return True
+    return all(bool(os.getenv(v)) for v in _LEGACY_ENV_VARS)
 
 
 def _check_paper_env() -> None:

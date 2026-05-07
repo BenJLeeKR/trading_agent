@@ -1,16 +1,11 @@
-"""In-memory stub recorder for AI Agent execution runs.
+"""Recorder for AI Agent execution runs.
 
-The ``AgentRunRecorder`` stores ``AgentRunEntity`` instances in a plain
-list.  This is a **stub** — the real implementation will persist runs via
-a dedicated ``AgentRunRepository`` (added in a later milestone).
+The ``AgentRunRecorder`` records ``AgentRunEntity`` instances.  When a
+repository is provided, runs are persisted via the repository; otherwise
+they are kept in an internal in-memory buffer (stub behaviour).
 
-Current limitations (accepted for v1)
--------------------------------------
-* No persistence — runs are lost on process restart.
-* No repository protocol or container entry yet.
-* ``raw_output`` is stored inside ``structured_output_json`` under a
-  ``"__debug_raw_output__"`` key rather than in ``raw_output_uri``,
-  because the URI-based storage layer does not exist yet.
+Query methods (``list_all``, ``list_by_decision_context``) delegate to
+the repository when available, falling back to the in-memory buffer.
 """
 
 from __future__ import annotations
@@ -31,8 +26,7 @@ class AgentRunRecorder:
     """Record AI Agent execution runs, backed by a repository.
 
     When a ``repo`` is provided, ``record()`` persists the run via the
-    repository.  Query methods (``list_all``, ``list_by_decision_context``)
-    delegate to the repository when available.
+    repository.  Query methods delegate to the repository when available.
 
     Parameters
     ----------
@@ -144,12 +138,16 @@ class AgentRunRecorder:
                 )
                 output_dict.pop("decision_context_id", None)
 
-        # Entity는 항상 non-null UUID 필요 → synthetic fallback
-        resolved_entity_ctx_id: UUID = decision_context_id or uuid4()
-
+        # ── decision_context_id: None을 그대로 전달 (synthetic UUID 금지) ──
+        #
+        # AgentRunEntity.decision_context_id는 UUID | None 타입이므로
+        # None을 허용합니다. InMemoryAgentRunRepository는 None을 그대로
+        # 저장하며, PostgresAgentRunRepository는 NOT NULL + FK 제약으로
+        # 인해 None인 경우 DB 예외가 발생합니다.
+        # 호출자(orchestrator)가 유효한 UUID를 제공해야 합니다.
         run = AgentRunEntity(
             agent_run_id=uuid4(),
-            decision_context_id=resolved_entity_ctx_id,
+            decision_context_id=decision_context_id,
             agent_type=agent_type,
             started_at=now,
             model_id=None,  # UUID lookup deferred
@@ -163,7 +161,9 @@ class AgentRunRecorder:
 
         self._runs.append(run)
 
-        # Persist via repository when available
+        # Persist via repository when available.
+        # The caller (orchestrator) is responsible for providing a valid
+        # decision_context_id when Postgres persistence is required.
         if self._repo is not None:
             persisted = await self._repo.add(run)
         else:
@@ -184,20 +184,26 @@ class AgentRunRecorder:
     async def list_by_decision_context(
         self, decision_context_id: UUID
     ) -> Sequence[AgentRunEntity]:
-        """Return all runs for a given decision context, ordered by start time."""
+        """Return all runs for a given decision context, ordered by start time.
+
+        Delegates to the repository when available; otherwise falls back
+        to the in-memory buffer.
+        """
         if self._repo is not None:
             return await self._repo.list_by_decision_context(decision_context_id)
         return tuple(
-            r
-            for r in self._runs
-            if r.decision_context_id == decision_context_id
+            r for r in self._runs if r.decision_context_id == decision_context_id
         )
 
     async def list_all(self, limit: int = 100) -> Sequence[AgentRunEntity]:
-        """Return all recorded runs (ordered by insertion)."""
+        """Return all recorded runs (ordered by insertion).
+
+        Delegates to the repository when available; otherwise falls back
+        to the in-memory buffer.
+        """
         if self._repo is not None:
             return await self._repo.list_all(limit=limit)
-        return tuple(self._runs[-limit:])
+        return tuple(self._runs)[-limit:]
 
     def clear(self) -> None:
         """Remove all recorded runs (useful in tests)."""

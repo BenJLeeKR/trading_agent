@@ -25,6 +25,7 @@ export default defineConfig({
       "/instruments": "http://localhost:8000",
       "/trade-decisions": "http://localhost:8000",
       "/decision-contexts": "http://localhost:8000",
+      "/agent-runs": "http://localhost:8000",
     },
   },
   build: {

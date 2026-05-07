@@ -230,3 +230,80 @@ block new entries before placing additional orders.
 - circuit breaker
 
 v1에서는 정확한 broker 수치보다 **예산 분리 구조와 fail-safe 정책**을 먼저 구현한다.
+
+## 14. KIS 환경별 REST RPS → Token Bucket Safety Scaling
+
+### 14.1 개요
+
+KIS API 문서는 환경별 aggregate REST RPS를 제공한다:
+
+- 실전투자 (`live`/`real`): **15 RPS**
+- 모의투자 (`paper`): **1 RPS**
+
+이 수치는 5개 독립 token bucket (AUTH, ORDER, INQUIRY, MARKET_DATA, RECONCILIATION)의
+**safety scaling baseline**으로 사용된다. 각 bucket은 독립적으로 동작하므로 aggregate
+total이 strict하게 보장되지 않는다 — 의도적인 설계로, bucket 간 경합이 발생해도
+한 bucket의 고갈이 다른 bucket에 영향을 주지 않도록 한다.
+
+> **현재 구현은 per-bucket safety scaling이다. exact global REST cap이 아니다.**
+> strict global cap이 필요하면 14.6 참고.
+
+### 14.2 Bucket 분배표 (v1 Safety Scaling)
+
+| Bucket | Weight | Paper (1 RPS) | Live (15 RPS) |
+|--------|--------|---------------|---------------|
+| AUTH | 0.017 | 0.017 rps / cap 1 | 0.10 rps / cap 5 |
+| ORDER | 0.10 | 0.10 rps / cap 1 | 2.00 rps / cap 5 |
+| INQUIRY | 0.50 | 0.50 rps / cap 1 | 5.00 rps / cap 10 |
+| MARKET_DATA | 0.50 | 0.50 rps / cap 1 | 5.00 rps / cap 20 |
+| RECONCILIATION | 0.10 | 0.10 rps / cap 1 | 1.00 rps / cap 5 |
+| **Sum** | **1.217** | **~1.2 rps** | **~13.1 rps** |
+
+Capacity (burst)는 환경별 baseline capacity를 직접 사용한다:
+- Paper: 모든 bucket `capacity = max(1, int(total_rps * 1))` → 모두 1
+- Live: `capacity = max(1, int(baseline_cap * scale))` where `scale = total_rps / 15.0`
+  - baseline capacities: auth=5, order=5, inquiry=10, market_data=20, reconciliation=5
+
+### 14.3 환경 정규화
+
+- `KIS_ENV=paper` → paper bucket rates
+- `KIS_ENV=real` → `live`로 정규화 → live bucket rates
+- `KIS_ENV=live` → live bucket rates
+
+### 14.4 Env Override
+
+두 env var로 전체 RPS 기준점을 override할 수 있다:
+
+- `KIS_REAL_REST_RPS` (기본값 15) — live 환경의 aggregate RPS baseline
+- `KIS_PAPER_REST_RPS` (기본값 1) — paper 환경의 aggregate RPS baseline
+
+override 시 각 bucket의 refill rate는 `baseline_rate * (override_rps / default_rps)`로
+비례 scaling된다. 예: `KIS_REAL_REST_RPS=30` → 모든 live bucket rate가 2배가 된다.
+
+### 14.5 구현 위치
+
+- Resolver 함수: `src/agent_trading/config/settings.py` (`_resolve_kis_real_rest_rps`, `_resolve_kis_paper_rest_rps`)
+- Factory 함수: `src/agent_trading/brokers/rate_limit.py` (`build_kis_budget_manager()`)
+- Runtime wiring: `src/agent_trading/runtime/bootstrap.py` (`_build_kis_adapter()`)
+
+### 14.6 향후 확장: Strict Global REST Cap
+
+현재 v1은 per-bucket safety scaling만 적용한다. 만약 strict global REST cap이
+필요하다면 아래 구조로 확장해야 한다:
+
+```
+Global Token Bucket (total_rps)
+    ├── AUTH bucket (sub-rate-limited)
+    ├── ORDER bucket (sub-rate-limited)
+    ├── INQUIRY bucket (sub-rate-limited)
+    ├── MARKET_DATA bucket (sub-rate-limited)
+    └── RECONCILIATION bucket (sub-rate-limited)
+```
+
+- **Global bucket**: 전체 REST RPS를 enforce하는 상위 bucket
+- **Per-bucket sub-limits**: 각 operation type별 max rate (현재 v1 bucket과 동일)
+- 모든 API call은 **global bucket → per-bucket** 순으로 2단 consume
+- 장점: aggregate total이 strict하게 보장됨
+- 단점: bucket 간 경합 발생 가능 (한 bucket이 global token을 모두 소진하면 다른 bucket도 차단)
+
+이 확장은 현재 v1 범위를 벗어나므로, 필요시 별도 plan으로 추진한다.

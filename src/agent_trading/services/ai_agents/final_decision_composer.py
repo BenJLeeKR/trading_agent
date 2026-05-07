@@ -103,7 +103,7 @@ class FinalDecisionComposerAgent:
     provider_client
         The ``AIProviderClient`` instance used to call the external Provider.
     model_id
-        The model identifier (e.g. ``"deepseek-chat"``).
+        The model identifier (e.g. ``"deepseek-v4-pro"``).
     schema_version
         Version string reported via the ``schema_version`` property.
     """
@@ -112,7 +112,7 @@ class FinalDecisionComposerAgent:
         self,
         provider_client: AIProviderClient,
         *,
-        model_id: str = "deepseek-chat",
+        model_id: str = "deepseek-v4-pro",
         schema_version: str = "v1",
     ) -> None:
         self._provider = provider_client

@@ -20,6 +20,7 @@ from agent_trading.domain.entities import (
 from agent_trading.domain.enums import DecisionType, EntryStyle, OrderSide, OrderType
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.repositories.container import RepositoryContainer
+from agent_trading.repositories.filters import AccountLookup
 from agent_trading.services.ai_agents.base import (
     AgentExecutionRequest,
     ProviderAIAgent,
@@ -321,10 +322,12 @@ class DecisionOrchestratorService:
         OrderIntent
             A structured intent with P1 fields and assembled context attached.
         """
-        # --- Resolve active decision context ---
-        resolved_context_id = decision_context_id
-        if resolved_context_id is None:
-            resolved_context_id = await self._resolve_active_context()
+        # --- Resolve or create active decision context ---
+        # Ensures a valid decision_context_id exists before agent execution,
+        # so that Postgres-backed agent run persistence works correctly.
+        resolved_context_id = await self._ensure_or_create_decision_context(
+            request, decision_context_id
+        )
 
         # --- Resolve full DecisionContextEntity ---
         decision_context: DecisionContextEntity | None = None
@@ -517,6 +520,105 @@ class DecisionOrchestratorService:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    async def _ensure_or_create_decision_context(
+        self,
+        request: SubmitOrderRequest,
+        existing_context_id: UUID | None,
+    ) -> UUID | None:
+        """Resolve or create a valid ``decision_context_id`` before agent execution.
+
+        Strategy
+        --------
+        1. ``existing_context_id``가 제공되면 → DB 존재 여부와 관계없이 그 ID를 반환.
+           (caller가 명시적으로 ID를 제공했으므로 책임을 가짐)
+        2. ``existing_context_id``가 ``None``이면 → request fields에서 FK chain을
+           resolve하여 새 context 생성:
+           - ``request.account_ref`` → ``repos.accounts.find_one()`` → ``account_id``
+           - ``request.strategy_id`` → ``UUID`` 파싱 → ``strategy_id``
+           - ``account.client_id + account.environment`` → ``repos.config_versions.get_active()``
+        3. **3개 조건이 모두 충족될 때만** 생성하고, 하나라도 실패하면 ``None`` 반환 (fail-open).
+
+        Returns
+        -------
+        UUID | None
+            유효한 ``decision_context_id`` 또는 ``None`` (생성 불가).
+        """
+        # Case 1: existing_context_id가 제공됨 → caller가 책임지고 사용
+        if existing_context_id is not None:
+            return existing_context_id
+
+        # Case 2: request fields에서 FK chain resolution
+        try:
+            # 조건 1: account_ref → account
+            account = await self._repos.accounts.find_one(
+                AccountLookup(account_alias=request.account_ref)
+            )
+            if account is None:
+                logger.warning(
+                    "Cannot create decision context: account not found for ref=%s",
+                    request.account_ref,
+                )
+                return None
+
+            # 조건 2: strategy_id UUID 파싱
+            try:
+                strategy_id = UUID(request.strategy_id)
+            except (ValueError, AttributeError):
+                logger.warning(
+                    "Cannot create decision context: invalid strategy_id=%s",
+                    request.strategy_id,
+                )
+                return None
+
+            # 조건 3: client_id + environment → active config version
+            config_version = await self._repos.config_versions.get_active(
+                client_id=account.client_id,
+                environment=account.environment,
+            )
+            if config_version is None:
+                logger.warning(
+                    "Cannot create decision context: no active config version "
+                    "for client=%s env=%s",
+                    account.client_id,
+                    account.environment,
+                )
+                return None
+
+            # --- 모든 조건 충족 → DecisionContextEntity 생성 ---
+            now = datetime.now(timezone.utc)
+            context_id = existing_context_id or uuid4()
+            correlation_id = request.correlation_id or str(uuid4())
+
+            context = DecisionContextEntity(
+                decision_context_id=context_id,
+                account_id=account.account_id,
+                strategy_id=strategy_id,
+                config_version_id=config_version.config_version_id,
+                market_timestamp=now,
+                correlation_id=correlation_id,
+                created_at=now,
+            )
+
+            saved = await self._repos.decision_contexts.add(context)
+            logger.info(
+                "Created decision context: id=%s account_id=%s strategy_id=%s "
+                "correlation_id=%s",
+                saved.decision_context_id,
+                saved.account_id,
+                saved.strategy_id,
+                saved.correlation_id,
+            )
+            return saved.decision_context_id
+
+        except Exception:
+            logger.warning(
+                "Failed to create decision context — agent runs will proceed "
+                "without persistence. account_ref=%s",
+                request.account_ref,
+                exc_info=True,
+            )
+            return None
+
     async def _resolve_active_context(self) -> UUID | None:
         """Resolve the most recent active decision context.
 
@@ -588,6 +690,16 @@ class DecisionOrchestratorService:
             correlation_id=correlation_id,
             context=assembled_context,
         )
+
+        # Log when no decision context is available — agent runs will be
+        # recorded in-memory only (not persisted to Postgres) because
+        # PostgresAgentRunRepository requires a valid FK reference.
+        if decision_context_id is None:
+            logger.info(
+                "No active decision context — agent runs will be kept "
+                "in-memory only (not persisted). correlation_id=%s",
+                correlation_id,
+            )
 
         # --- 1. Event Interpretation Agent ---
         event_output: EventInterpretationOutput

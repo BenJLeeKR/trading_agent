@@ -7,11 +7,12 @@ from typing import Any
 
 from agent_trading.brokers.koreainvestment.adapter import KoreaInvestmentAdapter
 from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
+from agent_trading.brokers.rate_limit import build_kis_budget_manager
 from agent_trading.brokers.polling_worker import PollingConfig, PollingWorker
 from agent_trading.brokers.source_adapter import SourceAdapter
 from agent_trading.config.settings import AppSettings
 from agent_trading.db.connection import DatabaseConfig, close_pool, create_pool
-from agent_trading.db.migrations.run import ensure_schema
+from agent_trading.db.migrations.run import run_all_migrations
 from agent_trading.db.transaction import transaction
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.repositories.container import RepositoryContainer
@@ -32,13 +33,25 @@ logger = logging.getLogger(__name__)
 
 
 def _build_kis_adapter(settings: AppSettings) -> KoreaInvestmentAdapter:
-    """Build a KoreaInvestmentAdapter with a configured KISRestClient."""
+    """Build a KoreaInvestmentAdapter with a configured KISRestClient.
+
+    The ``RateLimitBudgetManager`` is created via ``build_kis_budget_manager()``
+    using the environment-specific REST RPS settings, providing a safety budget
+    baseline for all KIS REST API calls.
+    """
+    budget_manager = build_kis_budget_manager(
+        kis_env=settings.kis_env,
+        real_rest_rps=settings.kis_real_rest_rps,
+        paper_rest_rps=settings.kis_paper_rest_rps,
+    )
     rest_client = KISRestClient(
         api_key=settings.kis_api_key,
         api_secret=settings.kis_api_secret,
         account_number=settings.kis_account_number,
         account_product_code=settings.kis_account_product_code,
         env=settings.kis_env,
+        base_url=settings.kis_base_url,
+        budget_manager=budget_manager,
     )
     return KoreaInvestmentAdapter(rest_client=rest_client)
 
@@ -384,7 +397,7 @@ async def postgres_runtime(
     await create_pool(config)
 
     if run_migrations:
-        await ensure_schema(config)
+        await run_all_migrations(config=config)
 
     settings = AppSettings()
     broker_adapter = _build_kis_adapter(settings)

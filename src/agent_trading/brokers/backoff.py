@@ -138,6 +138,14 @@ class CircuitBreaker:
             self._on_failure()
             raise
 
+    def record_success(self) -> None:
+        """Public alias for :meth:`_on_success`."""
+        self._on_success()
+
+    def record_failure(self) -> None:
+        """Public alias for :meth:`_on_failure`."""
+        self._on_failure()
+
     def _on_success(self) -> None:
         if self._state == CircuitState.HALF_OPEN:
             self._half_open_attempts += 1

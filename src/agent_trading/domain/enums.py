@@ -6,6 +6,7 @@ from enum import Enum
 class Environment(str, Enum):
     PAPER = "paper"
     LIVE = "live"
+    REAL = "real"  # KIS actual naming — normalized to LIVE internally
 
 
 class BrokerName(str, Enum):
@@ -59,11 +60,14 @@ class BrokerErrorType(str, Enum):
     AUTHORIZATION = "authorization"
     RATE_LIMIT = "rate_limit"
     NETWORK = "network"
+    NETWORK_ERROR = "network_error"
     INVALID_REQUEST = "invalid_request"
     UNSUPPORTED_CAPABILITY = "unsupported_capability"
     ORDER_REJECTED = "order_rejected"
     TEMPORARY_BROKER = "temporary_broker"
     DATA_UNAVAILABLE = "data_unavailable"
+    API_ERROR = "api_error"
+    TIMEOUT = "timeout"
 
 
 class MarketDataChannel(str, Enum):

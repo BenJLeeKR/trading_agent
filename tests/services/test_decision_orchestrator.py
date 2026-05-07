@@ -97,6 +97,47 @@ def seeded_service() -> DecisionOrchestratorService:
     return DecisionOrchestratorService(repos=repos)
 
 
+@pytest.fixture
+def seeded_service_with_account() -> DecisionOrchestratorService:
+    """Service with a seeded account and config version for context creation.
+
+    ``sample_request.account_ref="test_account"``에 매칭되는 account와
+    활성 config version이 존재하므로, orchestrator가 ``_ensure_or_create_decision_context()``
+    에서 새 ``DecisionContextEntity``를 생성할 수 있다.
+
+    Note: ``sample_request.strategy_id``는 UUID 문자열이어야 하므로
+    ``str(uuid4())``로 설정한다.
+    """
+    repos = build_in_memory_repositories()
+    now = datetime.now(timezone.utc)
+
+    # Seed an account matching sample_request.account_ref="test_account"
+    account = AccountEntity(
+        account_id=uuid4(),
+        client_id=uuid4(),
+        broker_account_id=uuid4(),
+        environment=Environment.PAPER,
+        account_alias="test_account",
+        account_masked="test-****",
+        status="active",
+    )
+    repos.accounts._items[account.account_id] = account
+
+    # Seed a config version referencing the account's client_id
+    config_version = ConfigVersionEntity(
+        config_version_id=uuid4(),
+        client_id=account.client_id,
+        environment=Environment.PAPER,
+        version_tag="v1.0",
+        config_json={},
+        checksum="abc123",
+        activated_at=now,
+    )
+    repos.config_versions._items[config_version.config_version_id] = config_version
+
+    return DecisionOrchestratorService(repos=repos)
+
+
 # ---------------------------------------------------------------------------
 # Existing tests (must remain green)
 # ---------------------------------------------------------------------------
@@ -144,7 +185,7 @@ async def test_assemble_without_optional_fields(service, sample_request):
     assert intent.decision_context_id is None
     # order_intent_id is generated when not provided
     assert intent.order_intent_id is not None
-    # Generated fields
+    # Generated fields — no context created (empty repo → fail-open)
     assert intent.request.decision_id is not None
     assert intent.request.decision_context_id is None
     assert intent.request.order_intent_id == str(intent.order_intent_id)
@@ -946,3 +987,84 @@ class TestAssembleAndCreateOrderFullFlow:
         assert len(audit_logs) >= 1  # at least order.create
         # The recorder and audit log are independent storage backends
         assert await service._agent_recorder.list_all() is not audit_logs
+
+
+# ---------------------------------------------------------------------------
+# Decision context auto-creation tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_assemble_creates_decision_context_when_not_provided(
+    seeded_service_with_account, sample_request
+):
+    """Orchestrator creates a decision context when none is provided.
+
+    조건: account + strategy_id(UUID) + config_version 모두 유효 → 생성 성공
+    검증:
+    - decision_context_id가 None이 아님
+    - context가 repos에 persisted 됨
+    - 3개 agent run이 recorder에 기록됨
+    """
+    service = seeded_service_with_account
+
+    # sample_request.strategy_id="strat-001"은 UUID가 아니므로
+    # 유효한 UUID 문자열로 교체
+    import dataclasses
+    request = dataclasses.replace(
+        sample_request,
+        strategy_id=str(uuid4()),
+    )
+
+    intent = await service.assemble(request)
+
+    # Context should have been created
+    assert intent.decision_context_id is not None, (
+        "Expected orchestrator to create a decision context"
+    )
+    assert intent.request.decision_context_id == str(intent.decision_context_id)
+
+    # Verify context was persisted in repos
+    context = await service._repos.decision_contexts.get(
+        intent.decision_context_id
+    )
+    assert context is not None
+    assert context.account_id is not None
+    assert context.config_version_id is not None
+    assert context.strategy_id is not None
+    assert context.market_timestamp is not None
+    assert context.correlation_id is not None
+
+    # Verify 3 agent runs recorded (recorder has no repo guard → all persisted)
+    runs = await service._agent_recorder.list_all()
+    assert len(runs) == 3, (
+        f"Expected 3 agent runs (EI, AR, FDC), got {len(runs)}"
+    )
+    agent_types = {r.agent_type for r in runs}
+    assert agent_types == {
+        "event_interpretation",
+        "ai_risk",
+        "final_decision_composer",
+    }
+
+
+@pytest.mark.asyncio
+async def test_assemble_fail_open_when_account_missing(service, sample_request):
+    """Orchestrator fails open when account lookup fails.
+
+    조건: account 없음 → context 생성 실패 → fail-open
+    검증:
+    - decision_context_id가 None
+    - agent run은 계속 실행됨 (3개 기록)
+    """
+    intent = await service.assemble(sample_request)
+
+    # No context created (empty repo → fail-open)
+    assert intent.decision_context_id is None
+    assert intent.request.decision_context_id is None
+
+    # Agent runs still proceed (recorded in-memory)
+    runs = await service._agent_recorder.list_all()
+    assert len(runs) == 3, (
+        f"Expected 3 agent runs even on fail-open, got {len(runs)}"
+    )
