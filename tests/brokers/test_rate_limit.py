@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from agent_trading.brokers.rate_limit import (
+    BudgetExhaustedError,
     BucketType,
     RateLimitBudgetManager,
     build_kis_budget_manager,
@@ -33,17 +34,17 @@ class TestBuildKisBudgetManager:
         assert snap["reconciliation"]["capacity"] == 1
 
     def test_live_budget_default_rps(self) -> None:
-        """Live env with default 15 RPS creates scaled buckets."""
+        """Live env with default 18 RPS (per KIS notice 2026-04-20) creates scaled buckets."""
         mgr = build_kis_budget_manager(kis_env="live")
         assert isinstance(mgr, RateLimitBudgetManager)
         snap = mgr.snapshot()
-        # Live baseline capacities (15 RPS): auth=5, order=5, inquiry=10,
-        # market_data=20, reconciliation=5
-        assert snap["auth"]["capacity"] == 5
-        assert snap["order"]["capacity"] == 5
-        assert snap["inquiry"]["capacity"] == 10
-        assert snap["market_data"]["capacity"] == 20
-        assert snap["reconciliation"]["capacity"] == 5
+        # Live baseline capacities (18 RPS, scale=18/15=1.2):
+        # auth=6, order=6, inquiry=12, market_data=24, reconciliation=6
+        assert snap["auth"]["capacity"] == 6
+        assert snap["order"]["capacity"] == 6
+        assert snap["inquiry"]["capacity"] == 12
+        assert snap["market_data"]["capacity"] == 24
+        assert snap["reconciliation"]["capacity"] == 6
 
     def test_real_env_treated_as_live(self) -> None:
         """``real`` input is normalised to ``live`` internally."""
@@ -84,3 +85,67 @@ class TestBuildKisBudgetManager:
             snap = mgr.snapshot()
             for key in ("auth", "order", "inquiry", "market_data", "reconciliation"):
                 assert snap[key]["capacity"] >= 1, f"{env}.{key}.capacity < 1"
+
+
+class TestStrictGlobalRestCap:
+    """``build_kis_budget_manager()`` global REST bucket (2-tier enforcement)."""
+
+    def test_global_bucket_paper_default(self) -> None:
+        """Paper env: global REST bucket capacity=1, refill_rate=1.0."""
+        mgr = build_kis_budget_manager(kis_env="paper")
+        snap = mgr.snapshot()
+        assert "global" in snap
+        assert snap["global"]["capacity"] == 1
+        assert snap["global"]["refill_rate"] == 1.0
+
+    def test_global_bucket_live_default(self) -> None:
+        """Live env: global REST bucket capacity=18, refill_rate=18.0."""
+        mgr = build_kis_budget_manager(kis_env="live")
+        snap = mgr.snapshot()
+        assert "global" in snap
+        assert snap["global"]["capacity"] == 18
+        assert snap["global"]["refill_rate"] == 18.0
+
+    def test_global_bucket_custom_rps(self) -> None:
+        """Custom ``real_rest_rps=30`` scales global bucket capacity proportionally."""
+        mgr = build_kis_budget_manager(kis_env="live", real_rest_rps=30)
+        snap = mgr.snapshot()
+        assert "global" in snap
+        assert snap["global"]["capacity"] == 30
+        assert snap["global"]["refill_rate"] == 30.0
+
+    def test_global_bucket_exhausted_blocks_operation(self) -> None:
+        """Global bucket empty → ``consume_or_raise()`` raises ``BudgetExhaustedError``."""
+        mgr = build_kis_budget_manager(kis_env="paper")  # global capacity=1
+        # First call consumes the only token
+        mgr.consume_or_raise(BucketType.INQUIRY)
+        # Second call should fail on the global bucket (paper: 1 RPS)
+        with pytest.raises(BudgetExhaustedError) as exc_info:
+            mgr.consume_or_raise(BucketType.INQUIRY)
+        assert exc_info.value.bucket == "global"
+
+    def test_per_bucket_exhausted_independently(self) -> None:
+        """Global bucket OK but per-bucket empty → raises for per-bucket."""
+        mgr = build_kis_budget_manager(kis_env="paper")
+        # Drain the inquiry bucket by consuming until exhausted
+        # Paper inquiry capacity=1, refill_rate=0.5 — consume 1 to drain
+        snap = mgr.snapshot()
+        inquiry_cap = snap["inquiry"]["capacity"]
+        for _ in range(inquiry_cap):
+            mgr.consume_or_raise(BucketType.INQUIRY)  # consumes global + inquiry
+        # Global is paper (1 rps) — already consumed above. Need to account for that.
+        # Actually let's use a different approach: create a budget with large global,
+        # then drain inquiry.
+        mgr2 = build_kis_budget_manager(kis_env="live")  # global=18, inquiry=12
+        for _ in range(12):
+            mgr2.consume_or_raise(BucketType.INQUIRY)
+        # Now inquiry is exhausted but global (18) still has tokens
+        with pytest.raises(BudgetExhaustedError) as exc_info:
+            mgr2.consume_or_raise(BucketType.INQUIRY)
+        assert exc_info.value.bucket == "inquiry"
+
+    def test_global_bucket_disabled_by_default(self) -> None:
+        """``RateLimitBudgetManager()`` direct construction has no global bucket."""
+        mgr = RateLimitBudgetManager()
+        snap = mgr.snapshot()
+        assert "global" not in snap

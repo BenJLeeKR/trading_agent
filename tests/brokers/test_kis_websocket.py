@@ -316,6 +316,75 @@ class TestKISWebSocketClient:
         assert ws_client.get_last_continuum("H0STCNT0") is None
 
 
+class TestWebSocketUrlOverride:
+    """``KISWebSocketClient`` URL override behaviour without calling ``connect()``.
+
+    ``connect()`` creates background ``_reader_loop`` / ``_heartbeat_loop`` tasks
+    that make reliable unit testing difficult without heavy mocking. Instead we
+    verify:
+
+    1. ``__init__`` correctly stores the ``ws_url`` parameter as ``self._ws_url``.
+    2. The URL resolution expression ``self._ws_url or KIS_WS_URLS[self._env]``
+       produces the expected result for each scenario.
+    """
+
+    def test_ws_url_stored_when_provided(self) -> None:
+        """``ws_url`` passed to ``__init__`` is stored as ``self._ws_url``."""
+        client = KISWebSocketClient(
+            rest_client=MagicMock(),
+            approval_key="test-key",
+            env="paper",
+            ws_url="ws://custom.override.url:31000",
+        )
+        assert client._ws_url == "ws://custom.override.url:31000"
+
+    def test_ws_url_empty_by_default(self) -> None:
+        """Default ``ws_url=""`` → ``self._ws_url`` is ``""``."""
+        client = KISWebSocketClient(
+            rest_client=MagicMock(),
+            approval_key="test-key",
+            env="paper",
+        )
+        assert client._ws_url == ""
+
+    def test_url_resolve_override(self) -> None:
+        """``_ws_url or KIS_WS_URLS[_env]`` → override wins when non-empty."""
+        from agent_trading.brokers.koreainvestment.websocket_client import KIS_WS_URLS
+
+        client = KISWebSocketClient(
+            rest_client=MagicMock(),
+            approval_key="test-key",
+            env="paper",
+            ws_url="ws://custom.url:31000",
+        )
+        url = client._ws_url or KIS_WS_URLS[client._env]
+        assert url == "ws://custom.url:31000"
+
+    def test_url_resolve_default_paper(self) -> None:
+        """``_ws_url=""`` with ``env="paper"`` → paper default URL."""
+        from agent_trading.brokers.koreainvestment.websocket_client import KIS_WS_URLS
+
+        client = KISWebSocketClient(
+            rest_client=MagicMock(),
+            approval_key="test-key",
+            env="paper",
+        )
+        url = client._ws_url or KIS_WS_URLS[client._env]
+        assert url == "ws://ops.koreainvestment.com:31000"
+
+    def test_url_resolve_default_live(self) -> None:
+        """``_ws_url=""`` with ``env="live"`` → live default URL."""
+        from agent_trading.brokers.koreainvestment.websocket_client import KIS_WS_URLS
+
+        client = KISWebSocketClient(
+            rest_client=MagicMock(),
+            approval_key="test-key",
+            env="live",
+        )
+        url = client._ws_url or KIS_WS_URLS[client._env]
+        assert url == "ws://ops.koreainvestment.com:21000"
+
+
 # ======================================================================
 # Subscription saturation eviction tests (Stream D)
 # ======================================================================
@@ -478,3 +547,62 @@ class TestDuplicateEventIngestion:
             dedup_key_hash="trade:005930:143025:85000",
         )
         assert event.dedup_key_hash == "trade:005930:143025:85000"
+
+
+class TestSubscriptionBudget41Cap:
+    """SubscriptionBudget with ``max_subscriptions=41`` enforces the KIS 41-cap.
+
+    The 42nd subscription attempt is rejected at the budget level.
+    """
+
+    @pytest.fixture
+    def budget_41(self) -> SubscriptionBudget:
+        return SubscriptionBudget(max_subscriptions=41)
+
+    def test_41_optional_subscriptions_succeed(self, budget_41: SubscriptionBudget) -> None:
+        """Up to 41 optional subscriptions are accepted."""
+        for i in range(41):
+            assert budget_41.subscribe_optional(), f"Optional subscription #{i + 1} should succeed"
+        assert budget_41.total_used == 41
+
+    def test_42nd_optional_subscription_rejected(self, budget_41: SubscriptionBudget) -> None:
+        """The 42nd optional subscription is rejected."""
+        for _ in range(41):
+            budget_41.subscribe_optional()
+        assert not budget_41.subscribe_optional(), "42nd optional subscription should be rejected"
+
+    def test_critical_can_evict_optional_at_41(self, budget_41: SubscriptionBudget) -> None:
+        """When total_used == 41, a critical subscription evicts one optional."""
+        for _ in range(41):
+            budget_41.subscribe_optional()
+        assert budget_41.total_used == 41
+
+        # Critical can evict one optional
+        assert budget_41.subscribe_critical(), "Critical should evict optional and succeed"
+        assert budget_41.total_used == 41  # still 41 — evicted 1 optional, added 1 critical
+        assert budget_41.current_critical == 1
+        assert budget_41.current_optional == 40
+
+    def test_unsubscribe_frees_capacity(self, budget_41: SubscriptionBudget) -> None:
+        """After unsubscribing one, a new subscription is accepted."""
+        for _ in range(41):
+            budget_41.subscribe_optional()
+        assert not budget_41.subscribe_optional()
+
+        budget_41.unsubscribe(optional=True)
+        assert budget_41.total_used == 40
+
+        assert budget_41.subscribe_optional(), "Should succeed after unsubscribe"
+        assert budget_41.total_used == 41
+
+    def test_snapshot_shows_41(self, budget_41: SubscriptionBudget) -> None:
+        """Snapshot reflects max_subscriptions=41."""
+        snap = budget_41.snapshot()
+        assert snap["max_subscriptions"] == 41
+        assert snap["remaining"] == 41
+        assert snap["total_used"] == 0
+
+        budget_41.subscribe_optional()
+        snap = budget_41.snapshot()
+        assert snap["total_used"] == 1
+        assert snap["remaining"] == 40

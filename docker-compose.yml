@@ -56,9 +56,10 @@ services:
       KIS_APP_SECRET: "${KIS_APP_SECRET:-}"
       KIS_ACCOUNT_NO: "${KIS_ACCOUNT_NO:-}"
       KIS_BASE_URL: "${KIS_BASE_URL:-}"
+      KIS_WS_URL: "${KIS_WS_URL:-}"
       KIS_ACCOUNT_PRODUCT_CODE: "${KIS_ACCOUNT_PRODUCT_CODE:-01}"
-      # REST rate limit safety budget baseline
-      KIS_REAL_REST_RPS: "${KIS_REAL_REST_RPS:-15}"
+      # REST rate limit safety budget baseline (KIS notice 2026-04-20: 실전 18 rps)
+      KIS_REAL_REST_RPS: "${KIS_REAL_REST_RPS:-18}"
       KIS_PAPER_REST_RPS: "${KIS_PAPER_REST_RPS:-1}"
       # Legacy fallback names (still supported)
       KIS_API_KEY: "${KIS_API_KEY:-}"
@@ -108,6 +109,7 @@ services:
       KIS_APP_SECRET: "${KIS_APP_SECRET:-}"
       KIS_ACCOUNT_NO: "${KIS_ACCOUNT_NO:-}"
       KIS_BASE_URL: "${KIS_BASE_URL:-}"
+      KIS_WS_URL: "${KIS_WS_URL:-}"
       KIS_ACCOUNT_PRODUCT_CODE: "${KIS_ACCOUNT_PRODUCT_CODE:-01}"
       # REST rate limit safety budget baseline
       KIS_REAL_REST_RPS: "${KIS_REAL_REST_RPS:-15}"

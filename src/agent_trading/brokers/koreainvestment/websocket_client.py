@@ -96,12 +96,14 @@ class KISWebSocketClient:
         env: str = "paper",
         subscription_budget: SubscriptionBudget | None = None,
         on_event: Callable[[dict[str, Any]], None] | None = None,
+        ws_url: str = "",
     ) -> None:
         self._rest = rest_client
         self._approval_key = approval_key
         self._env = env
         self._budget = subscription_budget or SubscriptionBudget()
         self._on_event = on_event
+        self._ws_url = ws_url
 
         self._ws: Any = None  # websockets.WebSocketClientProtocol
         self._connected = False
@@ -125,7 +127,7 @@ class KISWebSocketClient:
         """
         import websockets
 
-        url = KIS_WS_URLS[self._env]
+        url = self._ws_url or KIS_WS_URLS[self._env]
         try:
             self._ws = await websockets.connect(
                 url,

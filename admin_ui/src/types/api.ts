@@ -86,39 +86,48 @@ export interface BlockingLockStatus {
 
 export interface AccountSummary {
   account_id: string;
-  account_code: string;
-  client_code: string;
-  account_type: string;
+  client_id: string;
+  broker_account_id: string;
+  account_alias: string | null;
+  account_masked: string | null;
+  environment: string;
   status: string;
-  currency: string;
+  risk_profile: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string | null;
 }
 
 export interface PositionSnapshotView {
   position_snapshot_id: string;
   account_id: string;
-  symbol: string;
-  side: string;
-  quantity: string;
-  avg_price: string;
-  current_price: string;
-  pnl: string;
-  snapshot_time: string;
+  instrument_id: string;
+  quantity: number;
+  average_price: number;
+  market_price: number;
+  unrealized_pnl: number | null;
+  source_of_truth: string;
+  snapshot_at: string;
 }
 
 export interface CashBalanceSnapshotView {
   cash_balance_snapshot_id: string;
   account_id: string;
   currency: string;
-  available_amount: string;
-  total_amount: string;
-  snapshot_time: string;
+  available_cash: number;
+  settled_cash: number;
+  unsettled_cash: number;
+  source_of_truth: string;
+  snapshot_at: string;
 }
 
 export interface ClientDetail {
   client_id: string;
   client_code: string;
-  client_name: string;
+  name: string;
   status: string;
+  base_currency: string;
+  created_at: string;
+  updated_at: string | null;
 }
 
 export interface InstrumentDetail {

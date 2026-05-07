@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -239,6 +240,12 @@ class KISRestClient:
     _approval_key: str | None = field(default=None, init=False, repr=False)
     _approval_key_expires_at: float = field(default=0.0, init=False, repr=False)
 
+    # --- auth strict cap (1 rps per KIS notice 2026-04-20) ---
+    _auth_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+    _approval_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+    _last_auth_call_time: float = field(default=0.0, init=False, repr=False)
+    _last_approval_call_time: float = field(default=0.0, init=False, repr=False)
+
     # --- backoff / circuit breaker ---
     _backoff: ExponentialBackoff = field(
         default_factory=lambda: ExponentialBackoff(
@@ -306,26 +313,49 @@ class KISRestClient:
         """Obtain (or refresh) an access token from KIS oauth2/tokenP.
 
         Returns the current valid access token.
-        """
-        now = time.time()
-        if self._access_token is not None and now < self._token_expires_at:
-            return self._access_token
 
-        client = await self._get_client()
-        body = {
-            "grant_type": "client_credentials",
-            "appkey": self.api_key,
-            "appsecret": self.api_secret,
-        }
-        resp = await client.post(
-            KIS_ENDPOINTS["oauth2_token"],
-            json=body,  # oauth2/tokenP requires JSON body
-        )
-        data = self._raise_on_error(resp, endpoint="oauth2_token")
-        self._access_token = data["access_token"]
-        # token expires in 86400s (24h); refresh 5 min early
-        self._token_expires_at = now + int(data.get("expires_in", 86400)) - 300
-        return self._access_token  # type: ignore[return-value]
+        .. note::
+           Strict 1 rps enforcement per KIS official notice (2026-04-20):
+           - ``asyncio.Lock`` serialises concurrent callers so only one HTTP
+             request reaches KIS at a time (single-flight).
+           - A monotonic cooldown timer guarantees at least 1 second between
+             successive actual HTTP calls to ``/oauth2/tokenP``.
+           - The lock + double-check pattern means concurrent callers whose
+             cache is still valid never touch the network — they return the
+             cached token immediately.
+        """
+        async with self._auth_lock:
+            # 1. Double-check cache (standard lock pattern)
+            now_wall = time.time()
+            if self._access_token is not None and now_wall < self._token_expires_at:
+                return self._access_token
+
+            # 2. Strict 1 rps: enforce minimum 1s between actual HTTP calls
+            now_mono = time.monotonic()
+            elapsed = now_mono - self._last_auth_call_time
+            if self._last_auth_call_time > 0.0 and elapsed < 1.0:
+                await asyncio.sleep(1.0 - elapsed)
+                now_mono = time.monotonic()
+
+            # 3. HTTP call
+            client = await self._get_client()
+            body = {
+                "grant_type": "client_credentials",
+                "appkey": self.api_key,
+                "appsecret": self.api_secret,
+            }
+            resp = await client.post(
+                KIS_ENDPOINTS["oauth2_token"],
+                json=body,  # oauth2/tokenP requires JSON body
+            )
+            data = self._raise_on_error(resp, endpoint="oauth2_token")
+
+            # 4. Update cache + cooldown timestamp (only on success)
+            self._access_token = data["access_token"]
+            # token expires in 86400s (24h); refresh 5 min early
+            self._token_expires_at = now_wall + int(data.get("expires_in", 86400)) - 300
+            self._last_auth_call_time = now_mono
+            return self._access_token  # type: ignore[return-value]
 
     # ------------------------------------------------------------------
     # Auth: WebSocket approval key
@@ -335,37 +365,58 @@ class KISRestClient:
         """Obtain (or refresh) a WebSocket approval key from oauth2/Approval.
 
         Returns the current valid approval key.
-        """
-        now = time.time()
-        if self._approval_key is not None and now < self._approval_key_expires_at:
-            return self._approval_key
 
-        client = await self._get_client()
-        body = {
-            "grant_type": "client_credentials",
-            "appkey": self.api_key,
-            "secretkey": self.api_secret,
-        }
-        try:
-            resp = await client.post(
-                KIS_ENDPOINTS["oauth2_approval"],
-                json=body,
-            )
-        except RuntimeError:
-            # Python 3.14+: httpx/httpcore may raise RuntimeError('Event loop is closed')
-            # during teardown when the event loop has already been shut down.
-            # Re-raise as a clearer error so callers can distinguish this from
-            # a genuine API failure.
-            raise RuntimeError(
-                "KIS get_approval_key: event loop closed during HTTP request "
-                "(Python 3.14 httpx/httpcore teardown issue). "
-                "This is an infrastructure issue, not a credential problem."
-            ) from None
-        data = self._raise_on_error(resp, endpoint="oauth2_approval")
-        self._approval_key = data["approval_key"]
-        # approval key expires in 86400s (24h); refresh 5 min early
-        self._approval_key_expires_at = now + int(data.get("expires_in", 86400)) - 300
-        return self._approval_key  # type: ignore[return-value]
+        .. note::
+           Strict 1 rps enforcement per KIS official notice (2026-04-20):
+           Same lock + monotonic cooldown pattern as ``authenticate()``.
+           The approval key has its **own** independent lock and cooldown
+           timer, so calling both ``authenticate()`` and ``get_approval_key()``
+           back-to-back does **not** trigger a false cooldown — each endpoint
+           is governed independently.
+        """
+        async with self._approval_lock:
+            # 1. Double-check cache
+            now_wall = time.time()
+            if self._approval_key is not None and now_wall < self._approval_key_expires_at:
+                return self._approval_key
+
+            # 2. Strict 1 rps cooldown
+            now_mono = time.monotonic()
+            elapsed = now_mono - self._last_approval_call_time
+            if self._last_approval_call_time > 0.0 and elapsed < 1.0:
+                await asyncio.sleep(1.0 - elapsed)
+                now_mono = time.monotonic()
+
+            # 3. HTTP call
+            client = await self._get_client()
+            body = {
+                "grant_type": "client_credentials",
+                "appkey": self.api_key,
+                "secretkey": self.api_secret,
+            }
+            try:
+                resp = await client.post(
+                    KIS_ENDPOINTS["oauth2_approval"],
+                    json=body,
+                )
+            except RuntimeError:
+                # Python 3.14+: httpx/httpcore may raise RuntimeError('Event loop is closed')
+                # during teardown when the event loop has already been shut down.
+                # Re-raise as a clearer error so callers can distinguish this from
+                # a genuine API failure.
+                raise RuntimeError(
+                    "KIS get_approval_key: event loop closed during HTTP request "
+                    "(Python 3.14 httpx/httpcore teardown issue). "
+                    "This is an infrastructure issue, not a credential problem."
+                ) from None
+            data = self._raise_on_error(resp, endpoint="oauth2_approval")
+
+            # 4. Update cache + cooldown timestamp (only on success)
+            self._approval_key = data["approval_key"]
+            # approval key expires in 86400s (24h); refresh 5 min early
+            self._approval_key_expires_at = now_wall + int(data.get("expires_in", 86400)) - 300
+            self._last_approval_call_time = now_mono
+            return self._approval_key  # type: ignore[return-value]
 
     # ------------------------------------------------------------------
     # Hashkey generation (HMAC-SHA256)
@@ -537,10 +588,15 @@ class KISRestClient:
         - Multiple records: ``{"output1": [...], "output2": [...]}``
         - Some endpoints use ``{"output": [...]}``
 
-        This method flattens to a consistent ``{"output": ...}`` shape.
+        This method flattens to a consistent ``{"output": ...}`` shape
+        while preserving ``output2`` (used by inquire-balance for cash
+        summary).
         """
         if "output1" in data:
-            return {"output": data["output1"]}
+            result: dict[str, Any] = {"output": data["output1"]}
+            if "output2" in data:
+                result["output2"] = data["output2"]
+            return result
         if "output" in data:
             return {"output": data["output"]}
         # Some endpoints return data directly in the root
@@ -863,10 +919,17 @@ class KISRestClient:
     async def get_cash_balance(self) -> dict[str, Any]:
         """Retrieve cash balance (잔고조회 — cash component).
 
-        Uses inquire-balance endpoint and extracts the cash portion.
+        Uses inquire-balance endpoint and extracts the cash portion
+        from ``output2`` (예수금 총괄).
 
         Note
         ----
+        KIS ``inquire-balance`` returns the response in two blocks:
+        - ``output`` / ``output1``: position array (종목별 잔고)
+        - ``output2``: cash summary (예수금 총괄)
+
+        This method reads from ``output2`` only.
+
         KIS ``inquire-balance`` requires the continuation/pagination fields
         ``CTX_AREA_FK100`` and ``CTX_AREA_NK100`` on **every** request,
         including the initial page.  Omitting them triggers
@@ -895,10 +958,11 @@ class KISRestClient:
             params=params,
         )
 
-        output = data.get("output", {})
-        if isinstance(output, list):
-            output = output[0] if output else {}
-        return output
+        # output2 contains the cash summary (예수금 총괄)
+        output2 = data.get("output2", {})
+        if isinstance(output2, list):
+            output2 = output2[0] if output2 else {}
+        return output2
 
     async def get_quote(self, symbol: str) -> dict[str, Any]:
         """Retrieve current price quote (주식현재가 시세).

@@ -27,6 +27,15 @@ from agent_trading.domain.models import (
 class SubscriptionBudget:
     """WebSocket subscription capacity management with eviction policy.
 
+    .. note::
+       KIS official notice (2026-04-20) limits WebSocket registrations to
+       **41 per account**.  The ``KoreaInvestmentAdapter`` creates its
+       ``SubscriptionBudget`` with ``max_subscriptions=41``, making 41 the
+       authoritative cap for the KIS WebSocket path.  The class-level
+       default ``max_subscriptions=100`` is a **safety ceiling** for
+       non-KIS use cases and future growth; other adapters or tests should
+       set an explicit ``max_subscriptions`` matching their broker's limit.
+
     Manages two tiers of subscriptions:
     - **Critical**: held positions, open orders, fill notifications.
       Protected from eviction by optional subscriptions.
@@ -117,6 +126,24 @@ class SubscriptionBudget:
         if optional and self.current_optional > 0:
             object.__setattr__(self, "current_optional", self.current_optional - 1)
 
+    def snapshot(self) -> dict[str, object]:
+        """Return a read-only snapshot of the current subscription budget state.
+
+        Returns
+        -------
+        dict[str, object]
+            Keys: ``max_subscriptions``, ``critical_limit``, ``optional_limit``,
+            ``current_critical``, ``current_optional``, ``total_used``, ``remaining``.
+        """
+        return {
+            "max_subscriptions": self.max_subscriptions,
+            "critical_limit": self.critical_limit,
+            "optional_limit": self.optional_limit,
+            "current_critical": self.current_critical,
+            "current_optional": self.current_optional,
+            "total_used": self.total_used,
+            "remaining": self.max_subscriptions - self.total_used,
+        }
 
 class BrokerAdapter(Protocol):
     """Common broker contract used by the trading core."""

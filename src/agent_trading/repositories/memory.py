@@ -56,6 +56,9 @@ class InMemoryClientRepository:
     async def get_by_code(self, client_code: str) -> ClientEntity | None:
         return next((item for item in self._items.values() if item.client_code == client_code), None)
 
+    async def list_all(self) -> Sequence[ClientEntity]:
+        return tuple(self._items.values())
+
 
 class InMemoryAccountRepository:
     def __init__(self) -> None:

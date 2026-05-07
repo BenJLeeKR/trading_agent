@@ -126,11 +126,14 @@ def _resolve_kis_env() -> str:
 
 
 def _resolve_kis_real_rest_rps() -> int:
-    """Resolve KIS real/live REST RPS: ``KIS_REAL_REST_RPS``, default 15.
+    """Resolve KIS real/live REST RPS: ``KIS_REAL_REST_RPS``, default 18.
+
+    Updated to 18 per KIS official notice (2026-04-20): 실전 REST 계좌당
+    초당 18건.  ``KIS_REAL_REST_RPS`` env var overrides the default.
 
     Clamped to ``max(1, value)`` to ensure a positive safety baseline.
     """
-    raw = os.getenv("KIS_REAL_REST_RPS", "15")
+    raw = os.getenv("KIS_REAL_REST_RPS", "18")
     return max(1, int(raw))
 
 
@@ -163,6 +166,7 @@ class AppSettings:
     kis_account_product_code: str = field(default_factory=lambda: os.getenv("KIS_ACCOUNT_PRODUCT_CODE", "01"))
     kis_env: str = field(default_factory=_resolve_kis_env)
     kis_base_url: str = field(default_factory=lambda: os.getenv("KIS_BASE_URL", ""))
+    kis_ws_url: str = field(default_factory=lambda: os.getenv("KIS_WS_URL", ""))
 
     # ---- KIS REST rate limit safety budget (env override) --------------------
     # ``KIS_REAL_REST_RPS`` (default 15) and ``KIS_PAPER_REST_RPS`` (default 1)

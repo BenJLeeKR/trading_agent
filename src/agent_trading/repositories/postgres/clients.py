@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from uuid import UUID
 
 import asyncpg
@@ -48,3 +49,9 @@ class PostgresClientRepository:
             client_code,
         )
         return row_to_entity(row, ClientEntity) if row else None
+
+    async def list_all(self) -> Sequence[ClientEntity]:
+        rows = await self._tx.connection.fetch(
+            "SELECT * FROM trading.clients ORDER BY client_code"
+        )
+        return [row_to_entity(row, ClientEntity) for row in rows]

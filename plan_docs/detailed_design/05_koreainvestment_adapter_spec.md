@@ -145,11 +145,26 @@ submit_order 재호출 금지
 
 ## 6.8 KIS Rate Limit and Backoff Policy
 
+Rate limit 정책은 ``plan_docs/detailed_design/10_broker_rate_limit_and_capacity_policy.md``에
+상세히 정의되어 있으며, 아래는 KIS 공식 발표 (2026-04-20) 기준 capability와
+현재 코드 enforcement 상태를 요약한 표이다.
+
+| Capability | KIS 공시 값 (2026-04-20) | Code Enforcement | 문서 상태 |
+|---|---|---|---|
+| **실전 REST RPS** | 계좌당 초당 18건 (이전 15 → 18 상향) | Token-bucket safety scaling: [`build_kis_budget_manager()`](src/agent_trading/brokers/rate_limit.py:351)에서 `real_rest_rps=18` 기본값; 5-bucket 분배 | [`10_broker_rate_limit_and_capacity_policy.md`](plan_docs/detailed_design/10_broker_rate_limit_and_capacity_policy.md) §12, §14 |
+| **모의 REST RPS** | 계좌당 초당 1건 | `paper_rest_rps=1` 기본값; paper env → 3-bucket 단순 분배 | 동문 §12, §14.3 |
+| **Auth token** (`/oauth2/tokenP`) | 1 rps | AUTH bucket (실전: 0.12 rps, cap 6)에서 간접 보호; 별도 1 rps strict cap 없음 | 동문 §12 — **※ 후속작업 #1** |
+| **Approval key** (`/oauth2/Approval`) | 1 rps | AUTH bucket 공유; 별도 1 rps strict cap 없음 | 동문 §12 — **※ 후속작업 #1** |
+| **WebSocket 등록** | 계좌당 41건 | [`SubscriptionBudget`](src/agent_trading/brokers/base.py:26) `max_subscriptions=100` (KIS 41 초과); 별도 41 제한 없음 | 동문 §12 — **※ 후속작업 #2** |
+| **동시호출 권장 간격** | 100~150ms | Token-bucket refill rate로 간접 반영; 별도 hard interval 없음 | 동문 §12 |
+| **Global REST Cap** (계좌+key 기준) | 초당 18건 (실전) | Safety scaling만 존재; strict global REST cap 미구현 | 동문 §14.6 — **※ 후속작업 #3** |
+
 - rate limit은 quote, order, inquiry, auth operation 별로 분리해서 추적한다.
 - 주문 관련 rate limit에 접근하면 신규 진입 주문을 제한한다.
 - 상태 조회 rate limit은 reconciliation에 영향을 주므로 별도 예산을 남겨둔다.
 - backoff는 operation별로 다르게 적용한다.
 - rate limit 초과는 단순 retry가 아니라 circuit breaker와 연동한다.
+- KIS capability 구분표의 상세 bucket 분배는 ``10_broker_rate_limit_and_capacity_policy.md`` §14.2 참조.
 
 ## 6.9 Decimal and Rounding Policy
 

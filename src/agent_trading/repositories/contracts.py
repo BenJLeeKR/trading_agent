@@ -41,6 +41,9 @@ class ClientRepository(Protocol):
     async def get_by_code(self, client_code: str) -> ClientEntity | None:
         ...
 
+    async def list_all(self) -> Sequence[ClientEntity]:
+        ...
+
 
 class BrokerAccountRepository(Protocol):
     async def add(self, broker_account: BrokerAccountEntity) -> BrokerAccountEntity:

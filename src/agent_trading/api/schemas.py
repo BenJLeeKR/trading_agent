@@ -287,3 +287,48 @@ class AgentRunResponse(BaseModel):
     status: str = "completed"
     completed_at: datetime | None = None
     created_at: datetime | None = None
+
+
+# ---------------------------------------------------------------------------
+# Broker Capacity Inspection (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+class BucketSnapshot(BaseModel):
+    """Token-bucket state for a single operation type.
+
+    Returned as a dict entry inside ``BrokerCapacityResponse.rest_budget``.
+    """
+
+    remaining: float
+    capacity: float
+    refill_rate: float
+    utilization: float
+
+
+class WsSubscriptionSnapshot(BaseModel):
+    """WebSocket subscription budget state."""
+
+    max_subscriptions: int
+    critical_limit: int
+    optional_limit: int
+    current_critical: int
+    current_optional: int
+    total_used: int
+    remaining: int
+
+
+class BrokerCapacityResponse(BaseModel):
+    """``GET /broker-capacity`` — REST + WebSocket broker capacity overview.
+
+    Read‑only snapshot of the active broker adapter's rate limit budgets
+    and WebSocket subscription state.  No enforcement logic is triggered.
+    """
+
+    broker_name: str
+    environment: str
+    rest_budget: dict[str, BucketSnapshot]
+    can_accept_new_entries: bool
+    websocket: WsSubscriptionSnapshot
+    market_data_subscriptions: int
+    order_event_accounts: list[str]

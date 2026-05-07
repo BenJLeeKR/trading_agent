@@ -8,6 +8,7 @@ import pytest
 
 from agent_trading.brokers.koreainvestment.adapter import KoreaInvestmentAdapter
 from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
+from agent_trading.brokers.base import SubscriptionBudget
 from agent_trading.brokers.rate_limit import RateLimitBudgetManager
 from agent_trading.domain.enums import BrokerName, OrderSide, OrderStatus, OrderType, TimeInForce
 from agent_trading.domain.models import SubmitOrderRequest
@@ -263,3 +264,32 @@ class TestBuildKisAdapterRuntimeWiring:
         assert snap["inquiry"]["capacity"] == 1
         assert snap["market_data"]["capacity"] == 1
         assert snap["reconciliation"]["capacity"] == 1
+
+
+class TestKisAdapterSubscriptionBudget:
+    """``KoreaInvestmentAdapter`` default subscription budget is ``max_subscriptions=41``."""
+
+    def test_default_budget_max_41(self, adapter: KoreaInvestmentAdapter) -> None:
+        """Adapter creates ``SubscriptionBudget`` with ``max_subscriptions=41`` by default."""
+        budget = adapter._subscription_budget
+        assert budget.max_subscriptions == 41
+        assert budget.critical_limit == 20
+        assert budget.optional_limit == 80
+        assert budget.current_critical == 0
+        assert budget.current_optional == 0
+
+    def test_explicit_budget_not_overridden(self) -> None:
+        """Explicitly provided ``SubscriptionBudget`` is used as-is (not overridden)."""
+        budget = RateLimitBudgetManager()
+        rest_client = KISRestClient(
+            api_key="dummy",
+            api_secret="dummy",
+            account_number="12345678",
+            account_product_code="01",
+            budget_manager=budget,
+        )
+        custom_budget = SubscriptionBudget(max_subscriptions=10, critical_limit=5, optional_limit=5)
+        adapter = KoreaInvestmentAdapter(rest_client=rest_client, subscription_budget=custom_budget)
+        assert adapter._subscription_budget is custom_budget
+        assert adapter._subscription_budget.max_subscriptions == 10
+        assert adapter._subscription_budget.critical_limit == 5

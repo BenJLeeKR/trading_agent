@@ -38,6 +38,7 @@ def create_app(
     auth_enabled: bool = True,
     auth_token: str | None = None,
     auth_role: str = "viewer",
+    broker_adapter: object | None = None,
 ) -> FastAPI:
     """Create a configured FastAPI application.
 
@@ -95,6 +96,9 @@ def create_app(
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Configure security module at startup
         configure_security(token=auth_token, role=auth_role)
+
+        # Store broker adapter for /broker-capacity inspection endpoint
+        _app.state.broker_adapter = broker_adapter
 
         if repos is not None:
             # Explicit repos injected — caller has full control.
@@ -195,6 +199,11 @@ def create_app(
     from agent_trading.api.routes.agent_runs import router as agent_runs_router
 
     protected_routers.append(agent_runs_router)
+
+    # Phase 3b — Broker Capacity inspection
+    from agent_trading.api.routes.broker_capacity import router as broker_capacity_router
+
+    protected_routers.append(broker_capacity_router)
 
     if auth_enabled:
         for router in protected_routers:

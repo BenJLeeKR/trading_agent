@@ -53,7 +53,10 @@ def _build_kis_adapter(settings: AppSettings) -> KoreaInvestmentAdapter:
         base_url=settings.kis_base_url,
         budget_manager=budget_manager,
     )
-    return KoreaInvestmentAdapter(rest_client=rest_client)
+    return KoreaInvestmentAdapter(
+        rest_client=rest_client,
+        ws_url=settings.kis_ws_url,
+    )
 
 
 def _build_polling_workers(

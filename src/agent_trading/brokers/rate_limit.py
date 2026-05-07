@@ -38,6 +38,7 @@ class BucketType(str, Enum):
     INQUIRY = "inquiry"
     RECONCILIATION = "reconciliation"
     MARKET_DATA = "market_data"
+    REST_GLOBAL = "global"
 
 
 @dataclass(slots=True)
@@ -152,6 +153,11 @@ class RateLimitBudgetManager:
     reconciliation_reserve_min : float
         Minimum reconciliation reserve ratio. When the reconciliation
         bucket drops below this, new entries are blocked. Default 0.5 (50%).
+    global_rest_capacity : int
+        Global REST bucket capacity (burst).  ``0`` disables the global
+        REST cap (backward compatible).  Default 0.
+    global_rest_refill_rate : float
+        Global REST bucket tokens per second (the total environment RPS).
     """
 
     session_id: UUID
@@ -161,6 +167,8 @@ class RateLimitBudgetManager:
     reconciliation: OperationBucket
     market_data: OperationBucket
     auth: OperationBucket
+    # --- Global REST cap -- (Tier 1, checked before per-operation buckets)
+    global_rest: OperationBucket | None = None
     # --- Thresholds ---
     inquiry_block_threshold: float = 0.2
     reconciliation_reserve_min: float = 0.5
@@ -181,6 +189,8 @@ class RateLimitBudgetManager:
         auth_refill_rate: float = 0.1,
         inquiry_block_threshold: float = 0.2,
         reconciliation_reserve_min: float = 0.5,
+        global_rest_capacity: int = 0,
+        global_rest_refill_rate: float = 0.0,
     ) -> None:
         self.session_id = session_id or uuid4()
         self.order = OperationBucket(
@@ -208,6 +218,14 @@ class RateLimitBudgetManager:
             capacity=auth_capacity,
             refill_rate=auth_refill_rate,
         )
+        if global_rest_capacity > 0:
+            self.global_rest = OperationBucket(
+                bucket_type=BucketType.REST_GLOBAL,
+                capacity=global_rest_capacity,
+                refill_rate=global_rest_refill_rate,
+            )
+        else:
+            self.global_rest = None
         self.inquiry_block_threshold = inquiry_block_threshold
         self.reconciliation_reserve_min = reconciliation_reserve_min
 
@@ -224,11 +242,31 @@ class RateLimitBudgetManager:
     def consume_or_raise(self, bucket: BucketType, tokens: int = 1) -> None:
         """Consume *tokens* from *bucket* or raise ``BudgetExhaustedError``.
 
+        2-tier enforcement:
+        1. **Global REST bucket** (Tier 1) — if the global REST cap is
+           configured, check it first.  If the global bucket is exhausted
+           the request is blocked regardless of the per-bucket state.
+        2. **Per-operation bucket** (Tier 2) — the existing per-bucket
+           check for the specific operation type.
+
         Raises
         ------
         BudgetExhaustedError
-            If the bucket does not have enough tokens.
+            If either the global REST cap or the per-operation bucket
+            does not have enough tokens.
         """
+        # Tier 1: global REST gate
+        if self.global_rest is not None:
+            if not self.global_rest.try_consume(tokens):
+                raise BudgetExhaustedError(
+                    bucket="global",
+                    message=(
+                        f"Global REST cap exhausted "
+                        f"(remaining={self.global_rest.remaining}"
+                        f"/{self.global_rest.capacity})"
+                    ),
+                )
+        # Tier 2: per-operation bucket
         if not self.try_consume(bucket, tokens):
             b = self._bucket(bucket)
             raise BudgetExhaustedError(
@@ -312,7 +350,7 @@ class RateLimitBudgetManager:
 
     def snapshot(self) -> dict[str, Any]:
         """Return a snapshot of all bucket states for monitoring."""
-        return {
+        result: dict[str, Any] = {
             "session_id": str(self.session_id),
             "order": {
                 "remaining": self.order.remaining,
@@ -339,8 +377,16 @@ class RateLimitBudgetManager:
                 "capacity": self.auth.capacity,
                 "utilization": self.auth.utilization,
             },
-            "can_accept_new_entries": self.can_accept_new_entries,
         }
+        if self.global_rest is not None:
+            result["global"] = {
+                "remaining": self.global_rest.remaining,
+                "capacity": self.global_rest.capacity,
+                "refill_rate": self.global_rest.refill_rate,
+                "utilization": self.global_rest.utilization,
+            }
+        result["can_accept_new_entries"] = self.can_accept_new_entries
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -350,20 +396,17 @@ class RateLimitBudgetManager:
 
 def build_kis_budget_manager(
     kis_env: str,
-    real_rest_rps: int = 15,
+    real_rest_rps: int = 18,
     paper_rest_rps: int = 1,
 ) -> RateLimitBudgetManager:
     """Create a ``RateLimitBudgetManager`` with per-bucket safety scaling
     based on the KIS environment's aggregate REST RPS **baseline**.
 
-    The environment RPS value is used as a **safety scaling baseline**,
-    not as an exact global REST cap.  Each of the 5 token buckets (AUTH,
-    ORDER, INQUIRY, MARKET_DATA, RECONCILIATION) is independently sized
-    with conservative weights.  Because the buckets are independent, the
-    aggregate sum of their refill rates is **not** strictly enforced at
-    the global level — the scaling simply ensures each bucket operates
-    within a reasonable safety margin relative to the environment's
-    documented aggregate limit.
+    The environment RPS value is used both as a **safety scaling baseline**
+    for per-bucket sizing **and** as the **strict global REST cap** enforced
+    via a dedicated ``global_rest`` token bucket (Tier 1).  Every REST request
+    first checks the global bucket, then the per-operation bucket — if either
+    is exhausted the request is blocked.
 
     Parameters
     ----------
@@ -371,16 +414,20 @@ def build_kis_budget_manager(
         Normalised KIS environment (``"paper"`` or ``"live"``).  ``"real"``
         is also accepted and treated as ``"live"``.
     real_rest_rps : int
-        Aggregate REST RPS baseline for the live environment (default 15).
+        Aggregate REST RPS baseline for the live environment.
+        Default 18 (per KIS official notice 2026-04-20: 실전 REST 계좌당
+        초당 18건).  The design baseline (15) used for bucket weight
+        normalisation is kept separate in the scaling math so that env
+        overrides scale proportionally regardless of the default.
     paper_rest_rps : int
         Aggregate REST RPS baseline for the paper environment (default 1).
 
     Returns
     -------
     RateLimitBudgetManager
-        A budget manager whose 5 token buckets are independently scaled
-        using the environment RPS as a safety baseline.  The per-bucket
-        refill rates are **not** an exact partition of the total RPS.
+        A budget manager with a **2-tier token-bucket** architecture:
+        Tier 1 ``global_rest`` (total RPS cap) + Tier 2 per-operation
+        buckets independently scaled from the environment RPS baseline.
 
     Notes
     -----
@@ -402,6 +449,14 @@ def build_kis_budget_manager(
     immediate throttling.  The aggregate of all bucket refill rates is
     intentionally kept **below** the environment RPS baseline to provide
     safety headroom — this is **not** an exact quota partition.
+
+    .. note::
+
+       The ``15.0`` divisor in ``scale = total / 15.0`` is the **design
+       baseline** — the bucket weights were calibrated for 15 RPS.  This
+       divisor stays at 15.0 regardless of the default value, so that
+       env overrides (e.g. ``KIS_REAL_REST_RPS=30``) always scale
+       proportionally from the original design point.
     """
     env = kis_env.strip().lower().replace("real", "live")
 
@@ -409,6 +464,7 @@ def build_kis_budget_manager(
         total = max(1, paper_rest_rps)
         # Paper: very conservative — auth is the bottleneck (1 token/min).
         # Capacities are scaled proportionally from the 1-RPS baseline.
+        # Global REST cap = total RPS (strict upper bound).
         return RateLimitBudgetManager(
             auth_capacity=max(1, int(total * 1)),
             auth_refill_rate=0.017 * total,
@@ -420,6 +476,8 @@ def build_kis_budget_manager(
             market_data_refill_rate=0.5 * total,
             reconciliation_capacity=max(1, int(total * 1)),
             reconciliation_refill_rate=0.1 * total,
+            global_rest_capacity=total,
+            global_rest_refill_rate=1.0 * total,
         )
 
     # Live / real environment
@@ -438,12 +496,20 @@ def build_kis_budget_manager(
         market_data_refill_rate=5.0 * scale,
         reconciliation_capacity=max(1, int(5 * scale)),
         reconciliation_refill_rate=1.0 * scale,
+        global_rest_capacity=total,
+        global_rest_refill_rate=1.0 * total,
     )
 
 
 @dataclass(slots=True, frozen=True)
 class SubscriptionBudget:
     """WebSocket subscription capacity management.
+
+    .. note::
+       KIS official notice (2026-04-20) limits WebSocket registrations to
+       **41 per account**.  This budget does **not** enforce the 41-cap at
+       this level; a dedicated KIS-capped wrapper is a documented follow-up
+       item — see ``plan_docs/detailed_design/10_broker_rate_limit_and_capacity_policy.md`` §12.
 
     Parameters
     ----------

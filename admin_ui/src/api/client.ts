@@ -95,6 +95,10 @@ export async function getReadyz(): Promise<Record<string, string>> {
  * Protected API helpers — require Bearer token
  * ─────────────────────────────────────────── */
 
+export async function getClients(): Promise<import("../types/api").ClientDetail[]> {
+  return request<import("../types/api").ClientDetail[]>("/clients");
+}
+
 export async function getOrders(): Promise<import("../types/api").OrderSummary[]> {
   return request<import("../types/api").OrderSummary[]>("/orders");
 }

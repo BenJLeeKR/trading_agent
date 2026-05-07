@@ -70,13 +70,15 @@ class KoreaInvestmentAdapter(BrokerAdapter):
         rest_client: KISRestClient,
         mode: str = "paper",
         subscription_budget: SubscriptionBudget | None = None,
+        ws_url: str = "",
     ) -> None:
         self._rest = rest_client
         self._mode = mode
+        self._ws_url = ws_url
         self._ws: KISWebSocketClient | None = None
         self._ws_connected = False
         self._ws_approval_key: str | None = None
-        self._subscription_budget = subscription_budget or SubscriptionBudget()
+        self._subscription_budget = subscription_budget or SubscriptionBudget(max_subscriptions=41)
         self._market_data_subscriptions: dict[str, set[str]] = {}  # channel -> {tr_keys}
         self._order_event_accounts: set[str] = set()
 
@@ -433,6 +435,7 @@ class KoreaInvestmentAdapter(BrokerAdapter):
             approval_key=self._ws_approval_key,
             env=self._mode,
             subscription_budget=self._subscription_budget,
+            ws_url=self._ws_url,
         )
         await self._ws.connect()
         self._ws_connected = True

@@ -1,4 +1,4 @@
-"""Client inspection endpoint: ``GET /clients/{id}``."""
+"""Client inspection endpoints: ``GET /clients``, ``GET /clients/{id}``."""
 
 from uuid import UUID
 
@@ -9,6 +9,15 @@ from agent_trading.api.schemas import ClientDetail
 from agent_trading.repositories.container import RepositoryContainer
 
 router = APIRouter(tags=["clients"])
+
+
+@router.get("/clients", response_model=list[ClientDetail])
+async def list_clients(
+    repos: RepositoryContainer = Depends(get_repos),
+) -> list[ClientDetail]:
+    """List all clients (read‑only, no search/sort/pagination)."""
+    clients = await repos.clients.list_all()
+    return [ClientDetail.model_validate(c) for c in clients]
 
 
 @router.get("/clients/{client_id}", response_model=ClientDetail)

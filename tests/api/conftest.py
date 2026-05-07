@@ -351,3 +351,74 @@ async def auth_client() -> TestClient:
     app = create_app(auth_token="test-token")
     with TestClient(app) as tc:
         yield tc
+
+
+@pytest.fixture
+def mock_budget_manager() -> MagicMock:
+    """Return a ``MagicMock`` mimicking ``RateLimitBudgetManager``."""
+    from unittest.mock import MagicMock
+
+    mgr = MagicMock()
+    mgr.snapshot.return_value = {
+        "session_id": "test-session",
+        "order": {"remaining": 3.0, "capacity": 5.0, "refill_rate": 1.0, "utilization": 0.4},
+        "inquiry": {"remaining": 8.0, "capacity": 10.0, "refill_rate": 2.0, "utilization": 0.2},
+        "reconciliation": {
+            "remaining": 2.0,
+            "capacity": 3.0,
+            "refill_rate": 0.5,
+            "utilization": 0.33,
+        },
+        "market_data": {
+            "remaining": 5.0,
+            "capacity": 5.0,
+            "refill_rate": 0.0,
+            "utilization": 0.0,
+        },
+        "auth": {"remaining": 1.0, "capacity": 1.0, "refill_rate": 1.0, "utilization": 0.0},
+        "can_accept_new_entries": True,
+    }
+    return mgr
+
+
+@pytest.fixture
+def mock_subscription_budget() -> MagicMock:
+    """Return a ``MagicMock`` mimicking ``SubscriptionBudget``."""
+    from unittest.mock import MagicMock
+
+    budget = MagicMock()
+    budget.snapshot.return_value = {
+        "max_subscriptions": 100,
+        "critical_limit": 20,
+        "optional_limit": 80,
+        "current_critical": 3,
+        "current_optional": 5,
+        "total_used": 8,
+        "remaining": 92,
+    }
+    return budget
+
+
+@pytest.fixture
+def client_with_adapter(
+    seeded_repos: RepositoryContainer,
+    mock_budget_manager: MagicMock,
+    mock_subscription_budget: MagicMock,
+) -> TestClient:
+    """FastAPI ``TestClient`` with a mock broker adapter (no auth)."""
+    from unittest.mock import MagicMock
+
+    adapter = MagicMock()
+    adapter._mode = "paper"
+    adapter._rest.budget_manager = mock_budget_manager
+    adapter._subscription_budget = mock_subscription_budget
+    adapter._market_data_subscriptions = {"005930": None, "000660": None}
+    adapter._order_event_accounts = {"account-1"}
+
+    app = create_app(
+        repos=seeded_repos,
+        auth_enabled=False,
+        broker_adapter=adapter,
+    )
+    with TestClient(app) as tc:
+        yield tc

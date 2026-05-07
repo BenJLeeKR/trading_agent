@@ -15,6 +15,14 @@ Usage:
 
     pytest tests/smoke/test_kis_paper_smoke.py -v -m smoke
     pytest tests/smoke/test_kis_paper_smoke.py -v -m slow   # includes WS
+
+KIS capability notice (2026-04-20):
+    - 실전 REST: 계좌당 초당 18건 (이전 15 → 18 상향)
+    - 모의 REST: 계좌당 초당 1건
+    - Auth/Approval key: 1 rps
+    - WebSocket 등록: 계좌당 41건
+    - 동시호출 권장 간격: 100~150ms
+    - 상세: plan_docs/detailed_design/10_broker_rate_limit_and_capacity_policy.md §12
 """
 
 from __future__ import annotations

@@ -365,6 +365,7 @@ class TestAppSettingsKisFields:
         assert settings.kis_account_number == "legacy-acc"
         assert settings.kis_env == "live"
         assert settings.kis_base_url == ""
+        assert settings.kis_ws_url == ""
 
     def test_all_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """No KIS env vars set → empty strings + paper default."""
@@ -382,16 +383,17 @@ class TestAppSettingsKisFields:
         assert settings.kis_account_number == ""
         assert settings.kis_env == "paper"
         assert settings.kis_base_url == ""
+        assert settings.kis_ws_url == ""
 
     # ------------------------------------------------------------------
     # KIS REST RPS resolver tests
     # ------------------------------------------------------------------
 
     def test_real_rest_rps_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """``KIS_REAL_REST_RPS`` unset → defaults to 15."""
+        """``KIS_REAL_REST_RPS`` unset → defaults to 18 per KIS notice 2026-04-20."""
         monkeypatch.delenv("KIS_REAL_REST_RPS", raising=False)
         settings = AppSettings()
-        assert settings.kis_real_rest_rps == 15
+        assert settings.kis_real_rest_rps == 18
 
     def test_paper_rest_rps_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``KIS_PAPER_REST_RPS`` unset → defaults to 1."""
@@ -410,6 +412,22 @@ class TestAppSettingsKisFields:
         monkeypatch.setenv("KIS_PAPER_REST_RPS", "3")
         settings = AppSettings()
         assert settings.kis_paper_rest_rps == 3
+
+    # ------------------------------------------------------------------
+    # KIS WS URL override tests
+    # ------------------------------------------------------------------
+
+    def test_kis_ws_url_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``KIS_WS_URL`` unset → defaults to empty string."""
+        monkeypatch.delenv("KIS_WS_URL", raising=False)
+        settings = AppSettings()
+        assert settings.kis_ws_url == ""
+
+    def test_kis_ws_url_custom(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``KIS_WS_URL`` set → uses env value."""
+        monkeypatch.setenv("KIS_WS_URL", "ws://custom.url:31000")
+        settings = AppSettings()
+        assert settings.kis_ws_url == "ws://custom.url:31000"
 
     def test_rest_rps_clamp_positive(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Zero or negative RPS values are clamped to 1."""
