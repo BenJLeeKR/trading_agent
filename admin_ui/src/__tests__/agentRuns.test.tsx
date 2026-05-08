@@ -79,7 +79,7 @@ describe("AgentRunsView with data", () => {
 
     expect(screen.getByText("AR")).toBeInTheDocument();
     expect(screen.getByText("FDC")).toBeInTheDocument();
-    expect(screen.getByText("3 results")).toBeInTheDocument();
+    expect(screen.getByText("3개 결과")).toBeInTheDocument();
   });
 
   it("shows summary text from structured_output_json", async () => {
@@ -102,7 +102,7 @@ describe("AgentRunsView empty list", () => {
     renderView();
 
     await waitFor(() => {
-      expect(screen.getByText("No agent runs found")).toBeInTheDocument();
+      expect(screen.getByText("에이전트 실행 기록이 없습니다")).toBeInTheDocument();
     });
   });
 });
@@ -161,11 +161,11 @@ describe("AgentRunsView detail panel", () => {
     // Detail panel should show metadata fields
     // Use getAllByText because labels appear both as label text and as values
     await waitFor(() => {
-      expect(screen.getAllByText("Agent Run ID").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText("에이전트 실행 ID").length).toBeGreaterThanOrEqual(1);
     });
-    expect(screen.getAllByText("Decision Context ID").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Agent Type").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Status").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("의사결정 컨텍스트 ID").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("에이전트 유형").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("상태").length).toBeGreaterThanOrEqual(1);
   });
 
   it("shows structured output section when run has structured_output_json", async () => {
@@ -181,7 +181,7 @@ describe("AgentRunsView detail panel", () => {
     await userEvent.click(eiRow!);
 
     await waitFor(() => {
-      expect(screen.getByText("Structured Output")).toBeInTheDocument();
+      expect(screen.getByText("구조화된 출력")).toBeInTheDocument();
     });
   });
 });
@@ -200,14 +200,14 @@ describe("AgentRunsView search filter", () => {
     });
 
     // All 3 runs visible initially
-    expect(screen.getByText("3 results")).toBeInTheDocument();
+    expect(screen.getByText("3개 결과")).toBeInTheDocument();
 
     // Search for a non-matching decision_context_id
-    const searchInput = screen.getByPlaceholderText(/Search by Decision Context ID/i);
+    const searchInput = screen.getByPlaceholderText(/에이전트 실행 ID 검색/i);
     await userEvent.type(searchInput, "NONEXISTENT");
 
     await waitFor(() => {
-      expect(screen.getByText("0 results")).toBeInTheDocument();
+      expect(screen.getByText("0개 결과")).toBeInTheDocument();
     });
   });
 });
@@ -226,7 +226,7 @@ describe("AgentRunsView agent type filter", () => {
     });
 
     // Select "event_interpretation" from the Agent Type dropdown
-    const agentTypeSelect = screen.getByLabelText("Agent Type");
+    const agentTypeSelect = screen.getByLabelText("에이전트 유형");
     await userEvent.selectOptions(agentTypeSelect, "event_interpretation");
 
     // EI should still be visible
@@ -234,7 +234,7 @@ describe("AgentRunsView agent type filter", () => {
     // AR and FDC should not be visible
     expect(screen.queryByText("AR")).not.toBeInTheDocument();
     expect(screen.queryByText("FDC")).not.toBeInTheDocument();
-    expect(screen.getByText("1 result")).toBeInTheDocument();
+    expect(screen.getByText("1개 결과")).toBeInTheDocument();
   });
 });
 
@@ -252,13 +252,13 @@ describe("AgentRunsView status filter", () => {
     });
 
     // All 3 runs are "completed", so all should remain visible
-    const statusSelect = screen.getByLabelText("Status");
+    const statusSelect = screen.getByLabelText("상태");
     await userEvent.selectOptions(statusSelect, "completed");
 
     expect(screen.getByText("EI")).toBeInTheDocument();
     expect(screen.getByText("AR")).toBeInTheDocument();
     expect(screen.getByText("FDC")).toBeInTheDocument();
-    expect(screen.getByText("3 results")).toBeInTheDocument();
+    expect(screen.getByText("3개 결과")).toBeInTheDocument();
   });
 
   it("shows 0 results when status filter matches nothing", async () => {
@@ -270,11 +270,11 @@ describe("AgentRunsView status filter", () => {
     });
 
     // Select "running" — none of the mock runs have this status
-    const statusSelect = screen.getByLabelText("Status");
+    const statusSelect = screen.getByLabelText("상태");
     await userEvent.selectOptions(statusSelect, "running");
 
     await waitFor(() => {
-      expect(screen.getByText("0 results")).toBeInTheDocument();
+      expect(screen.getByText("0개 결과")).toBeInTheDocument();
     });
   });
 });

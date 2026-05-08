@@ -32,15 +32,15 @@ describe("Layout navigation", () => {
     );
 
     // Brand
-    expect(screen.getByText("Admin Console")).toBeInTheDocument();
+    expect(screen.getByText("운영 콘솔")).toBeInTheDocument();
 
-    // All 6 nav links (Overview instead of Dashboard in new template)
-    expect(screen.getAllByText("Overview")[0]).toBeInTheDocument();
-    expect(screen.getByText("Orders")).toBeInTheDocument();
-    expect(screen.getByText("Reconciliation")).toBeInTheDocument();
-    expect(screen.getByText("Accounts")).toBeInTheDocument();
-    expect(screen.getByText("Decisions")).toBeInTheDocument();
-    expect(screen.getByText("Agent Runs")).toBeInTheDocument();
+    // All 6 nav links
+    expect(screen.getAllByText("개요")[0]).toBeInTheDocument();
+    expect(screen.getByText("주문")).toBeInTheDocument();
+    expect(screen.getByText("정합성 점검")).toBeInTheDocument();
+    expect(screen.getByText("계좌")).toBeInTheDocument();
+    expect(screen.getByText("의사결정")).toBeInTheDocument();
+    expect(screen.getByText("에이전트 실행")).toBeInTheDocument();
 
     // Outlet content rendered
     expect(screen.getByText("Page Content")).toBeInTheDocument();
@@ -66,7 +66,7 @@ describe("Layout read-only badge", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("Read-only")).toBeInTheDocument();
+    expect(screen.getByText("읽기 전용")).toBeInTheDocument();
   });
 });
 
@@ -91,16 +91,16 @@ describe("Layout logout", () => {
     );
 
     // Read-only badge is always shown
-    expect(screen.getByText("Read-only")).toBeInTheDocument();
+    expect(screen.getByText("읽기 전용")).toBeInTheDocument();
 
     // Click logout button
-    await user.click(screen.getByRole("button", { name: /log out/i }));
+    await user.click(screen.getByRole("button", { name: /로그아웃/i }));
 
     // Token cleared from sessionStorage
     expect(sessionStorage.getItem("auth_token")).toBeNull();
 
     // Read-only badge still shown after logout
-    expect(screen.getByText("Read-only")).toBeInTheDocument();
+    expect(screen.getByText("읽기 전용")).toBeInTheDocument();
   });
 });
 
@@ -125,9 +125,9 @@ describe("Layout without token", () => {
     );
 
     // Token display should be "Read-only"
-    expect(screen.getByText("Read-only")).toBeInTheDocument();
+    expect(screen.getByText("읽기 전용")).toBeInTheDocument();
 
     // Log Out button should still be present
-    expect(screen.getByRole("button", { name: /log out/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /로그아웃/i })).toBeInTheDocument();
   });
 });

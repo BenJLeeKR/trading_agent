@@ -41,7 +41,7 @@ describe("Dashboard loading state", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("Loading...")).toBeInTheDocument();
+    expect(screen.getByText("로딩 중...")).toBeInTheDocument();
   });
 });
 
@@ -80,19 +80,19 @@ describe("Dashboard with valid data", () => {
 
     // Wait for data to load
     await waitFor(() => {
-      expect(screen.getByText("Overview")).toBeInTheDocument();
+      expect(screen.getByText("개요")).toBeInTheDocument();
     });
 
     // Top 3 account/cash/position cards
-    expect(screen.getByText("Total Accounts")).toBeInTheDocument();
-    expect(screen.getAllByText("Available Cash").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Positions").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("전체 계좌")).toBeInTheDocument();
+    expect(screen.getAllByText("가용 현금").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("포지션").length).toBeGreaterThanOrEqual(1);
 
     // Restored metric cards — Recent Orders, Active Locks, Incomplete Recon
     // These appear both as metric card titles and section headings, so use getAllByText
-    expect(screen.getAllByText("Recent Orders").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Active Locks").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Incomplete Recon")).toBeInTheDocument();
+    expect(screen.getAllByText("최근 주문").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("활성 잠금").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("미완료 정합성")).toBeInTheDocument();
 
     // Removed metric cards — Paper/Live/Locked Accounts should NOT be present
     expect(screen.queryByText("Paper Accounts")).not.toBeInTheDocument();
@@ -109,7 +109,7 @@ describe("Dashboard with valid data", () => {
     expect(screen.getByText("Live Account 1")).toBeInTheDocument();
     expect(screen.getByText("Locked Paper Account")).toBeInTheDocument();
 
-    // Status badges
+    // Status badges — StatusBadge uses acct.status.toUpperCase() (API field, not translated)
     expect(screen.getAllByText("ACTIVE").length).toBe(2);
     expect(screen.getByText("LOCKED")).toBeInTheDocument();
 
@@ -118,7 +118,7 @@ describe("Dashboard with valid data", () => {
     expect(screen.getByText("live")).toBeInTheDocument();
 
     // "View all accounts" navigation button
-    expect(screen.getByRole("button", { name: /View all accounts/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /전체 계좌 보기/ })).toBeInTheDocument();
 
     // Recent Orders section — shows order rows
     expect(screen.getAllByText("AAPL").length).toBeGreaterThanOrEqual(1);
@@ -126,6 +126,9 @@ describe("Dashboard with valid data", () => {
 
     // Active Locks section — shows lock rows
     expect(screen.getByText("manual-review-account-a1")).toBeInTheDocument();
+
+    // Freshness indicator — "HH:mm:ss에 업데이트됨" appears in the page header
+    expect(screen.getByText(/에 업데이트됨/)).toBeInTheDocument();
   });
 });
 
@@ -154,13 +157,16 @@ describe("Dashboard empty state", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("No accounts found")).toBeInTheDocument();
+      expect(screen.getByText("계좌가 없습니다")).toBeInTheDocument();
     });
 
     // Empty state CTA
     expect(
-      screen.getByRole("button", { name: /Go to Accounts/ }),
+      screen.getByRole("button", { name: /계좌로 이동/ }),
     ).toBeInTheDocument();
+
+    // Freshness indicator also appears in empty state
+    expect(screen.getByText(/에 업데이트됨/)).toBeInTheDocument();
   });
 
   it("shows empty state when clients exist but no accounts", async () => {
@@ -178,8 +184,11 @@ describe("Dashboard empty state", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("No accounts found")).toBeInTheDocument();
+      expect(screen.getByText("계좌가 없습니다")).toBeInTheDocument();
     });
+
+    // Freshness indicator also appears in empty state
+    expect(screen.getByText(/에 업데이트됨/)).toBeInTheDocument();
   });
 });
 
@@ -199,7 +208,7 @@ describe("Dashboard error state", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/Network error/i),
+        screen.getByText("Network error"),
       ).toBeInTheDocument();
     });
   });
@@ -228,19 +237,19 @@ describe("Dashboard navigation links", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Overview")).toBeInTheDocument();
+      expect(screen.getByText("개요")).toBeInTheDocument();
     });
 
     // "View all accounts" button
-    const accountsLink = screen.getByRole("button", { name: /View all accounts/ });
+    const accountsLink = screen.getByRole("button", { name: /전체 계좌 보기/ });
     expect(accountsLink).toBeInTheDocument();
 
     // "View all orders" button
-    const ordersLink = screen.getByRole("button", { name: /View all orders/ });
+    const ordersLink = screen.getByRole("button", { name: /전체 주문 보기/ });
     expect(ordersLink).toBeInTheDocument();
 
     // "View all locks" button
-    const locksLink = screen.getByRole("button", { name: /View all locks/ });
+    const locksLink = screen.getByRole("button", { name: /전체 잠금 보기/ });
     expect(locksLink).toBeInTheDocument();
   });
 });
@@ -270,10 +279,10 @@ describe("Dashboard empty state navigation", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("No accounts found")).toBeInTheDocument();
+      expect(screen.getByText("계좌가 없습니다")).toBeInTheDocument();
     });
 
-    const goButton = screen.getByRole("button", { name: /Go to Accounts/ });
+    const goButton = screen.getByRole("button", { name: /계좌로 이동/ });
     expect(goButton).toBeInTheDocument();
   });
 });

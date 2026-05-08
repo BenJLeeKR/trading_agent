@@ -61,7 +61,7 @@ export default function AgentRunsPanel({ decisionContextId }: AgentRunsPanelProp
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          const msg = err instanceof Error ? err.message : "Failed to load agent runs";
+          const msg = err instanceof Error ? err.message : "에이전트 실행 기록을 불러오지 못했습니다";
           setError(msg);
           setLoading(false);
         }
@@ -88,9 +88,9 @@ export default function AgentRunsPanel({ decisionContextId }: AgentRunsPanelProp
   if (!decisionContextId) {
     return (
       <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
-        <h4 className="text-sm font-medium text-[#0f172a] mb-4">Agent Runs</h4>
+        <h4 className="text-sm font-medium text-[#0f172a] mb-4">에이전트 실행</h4>
         <p className="text-sm text-[#94a3b8] text-center py-4">
-          Select a decision to view AI agent execution details.
+          의사결정을 선택하면 AI 에이전트 실행 상세를 볼 수 있습니다.
         </p>
       </div>
     );
@@ -100,8 +100,8 @@ export default function AgentRunsPanel({ decisionContextId }: AgentRunsPanelProp
   if (loading) {
     return (
       <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
-        <h4 className="text-sm font-medium text-[#0f172a] mb-4">Agent Runs</h4>
-        <LoadingSpinner text="Loading agent runs..." />
+        <h4 className="text-sm font-medium text-[#0f172a] mb-4">에이전트 실행</h4>
+        <LoadingSpinner text="에이전트 실행 기록 로딩 중..." />
       </div>
     );
   }
@@ -110,7 +110,7 @@ export default function AgentRunsPanel({ decisionContextId }: AgentRunsPanelProp
   if (error) {
     return (
       <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
-        <h4 className="text-sm font-medium text-[#0f172a] mb-4">Agent Runs</h4>
+        <h4 className="text-sm font-medium text-[#0f172a] mb-4">에이전트 실행</h4>
         <ErrorBanner message={error} onDismiss={() => setError(null)} />
       </div>
     );
@@ -120,9 +120,9 @@ export default function AgentRunsPanel({ decisionContextId }: AgentRunsPanelProp
   if (runs.length === 0) {
     return (
       <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
-        <h4 className="text-sm font-medium text-[#0f172a] mb-4">Agent Runs</h4>
+        <h4 className="text-sm font-medium text-[#0f172a] mb-4">에이전트 실행</h4>
         <p className="text-sm text-[#94a3b8] text-center py-4">
-          No agent runs recorded for this decision context.
+          이 의사결정 컨텍스트에 대한 에이전트 실행 기록이 없습니다.
         </p>
       </div>
     );
@@ -131,7 +131,7 @@ export default function AgentRunsPanel({ decisionContextId }: AgentRunsPanelProp
   /* ── Data ── */
   return (
     <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
-      <h4 className="text-sm font-medium text-[#0f172a] mb-4">Agent Runs</h4>
+      <h4 className="text-sm font-medium text-[#0f172a] mb-4">에이전트 실행</h4>
       <div className="space-y-3">
         {runs.map((run) => {
           const sv = statusVariant(run.status);
@@ -180,7 +180,7 @@ export default function AgentRunsPanel({ decisionContextId }: AgentRunsPanelProp
                 onClick={() => toggleExpand(run.agent_run_id)}
                 className="text-xs text-[#3b82f6] hover:text-[#2563eb] transition-colors"
               >
-                {isExpanded ? "Hide raw output" : "Show raw output"}
+                {isExpanded ? "원시 출력 숨기기" : "원시 출력 보기"}
               </button>
 
               {isExpanded && (

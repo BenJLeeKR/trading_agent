@@ -15,11 +15,11 @@ import {
 
 /** Map REST bucket key to a human-readable label. */
 const BUCKET_LABELS: Record<string, string> = {
-  auth: "Auth",
-  order: "Order",
-  inquiry: "Inquiry",
-  reconciliation: "Reconciliation",
-  market_data: "Market Data",
+  auth: "인증",
+  order: "주문",
+  inquiry: "조회",
+  reconciliation: "정합성 점검",
+  market_data: "시장 데이터",
 };
 
 /** Return a colour class based on utilisation ratio. */
@@ -78,7 +78,7 @@ export default function BrokerCapacityPanel() {
       setCapacity(data);
     } catch (err: unknown) {
       const msg =
-        err instanceof Error ? err.message : "Failed to load broker capacity";
+        err instanceof Error ? err.message : "브로커 용량을 불러오지 못했습니다";
       setError(msg);
     } finally {
       setLoading(false);
@@ -95,13 +95,13 @@ export default function BrokerCapacityPanel() {
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-[#0f172a]">
-            Broker Capacity
+            브로커 용량
           </h2>
         </div>
         <div className="bg-white rounded-xl border border-[#e2e8f0] p-6">
           <div className="flex items-center gap-3 text-sm text-[#64748b]">
             <Activity className="h-4 w-4 animate-pulse" />
-            Loading broker capacity…
+            브로커 용량 로딩 중…
           </div>
         </div>
       </div>
@@ -118,7 +118,7 @@ export default function BrokerCapacityPanel() {
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-[#0f172a]">
-            Broker Capacity
+            브로커 용량
           </h2>
         </div>
         {is503 ? (
@@ -127,10 +127,10 @@ export default function BrokerCapacityPanel() {
               <Server className="h-5 w-5 text-[#94a3b8] mt-0.5" />
               <div>
                 <p className="text-sm font-medium text-[#0f172a]">
-                  Capacity information unavailable in this runtime
+                  이 런타임에서는 용량 정보를 사용할 수 없습니다
                 </p>
                 <p className="text-xs text-[#94a3b8] mt-1">
-                  Broker adapter not configured
+                  브로커 어댑터가 설정되지 않았습니다
                 </p>
               </div>
             </div>
@@ -146,7 +146,7 @@ export default function BrokerCapacityPanel() {
   if (!capacity) return null;
 
   /* ── main render ── */
-  const { broker_name, environment, rest_budget, can_accept_new_entries, websocket } =
+  const { broker_name, environment, rest_budget, can_accept_new_entries, websocket, generated_at } =
     capacity;
 
   return (
@@ -154,7 +154,7 @@ export default function BrokerCapacityPanel() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-[#0f172a]">
-          Broker Capacity
+          브로커 용량
         </h2>
       </div>
 
@@ -168,18 +168,21 @@ export default function BrokerCapacityPanel() {
             <span className="text-xs font-mono text-[#64748b] uppercase">
               {environment}
             </span>
+            <span className="text-xs text-[#94a3b8]">
+              스냅샷 {new Date(generated_at).toLocaleTimeString("ko-KR")}
+            </span>
           </div>
           <div className="flex items-center gap-2 text-sm">
-            <span className="text-[#64748b]">Accepting new entries:</span>
+            <span className="text-[#64748b]">신규 접수:</span>
             {can_accept_new_entries ? (
               <StatusBadge variant="success">
                 <CheckCircle className="h-3 w-3" />
-                YES
+                허용
               </StatusBadge>
             ) : (
               <StatusBadge variant="warning">
                 <AlertTriangle className="h-3 w-3" />
-                NO
+                차단
               </StatusBadge>
             )}
           </div>
@@ -190,7 +193,7 @@ export default function BrokerCapacityPanel() {
           <div className="flex items-center gap-2 mb-3">
             <Activity className="h-4 w-4 text-[#64748b]" />
             <span className="text-sm font-medium text-[#0f172a]">
-              REST Budget
+              REST 예산
             </span>
           </div>
           <div className="space-y-2.5">
@@ -214,53 +217,53 @@ export default function BrokerCapacityPanel() {
           <div className="flex items-center gap-2 mb-3">
             <Wifi className="h-4 w-4 text-[#64748b]" />
             <span className="text-sm font-medium text-[#0f172a]">
-              WebSocket
+              웹소켓
             </span>
             {websocket.ws_connected ? (
               <StatusBadge variant="success">
                 <CheckCircle className="h-3 w-3" />
-                Connected
+                연결됨
               </StatusBadge>
             ) : (
               <StatusBadge variant="error">
                 <AlertTriangle className="h-3 w-3" />
-                Disconnected
+                연결 끊김
               </StatusBadge>
             )}
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div>
-              <p className="text-xs text-[#94a3b8]">Subscriptions</p>
+              <p className="text-xs text-[#94a3b8]">구독</p>
               <p className="text-sm font-mono text-[#0f172a]">
                 {websocket.total_used} / {websocket.max_subscriptions}
               </p>
             </div>
             <div>
-              <p className="text-xs text-[#94a3b8]">Remaining</p>
+              <p className="text-xs text-[#94a3b8]">잔여</p>
               <p className="text-sm font-mono text-[#0f172a]">
                 {websocket.remaining}
               </p>
             </div>
             <div>
-              <p className="text-xs text-[#94a3b8]">Critical</p>
+              <p className="text-xs text-[#94a3b8]">중요</p>
               <p className="text-sm font-mono text-[#0f172a]">
                 {websocket.current_critical} / {websocket.critical_limit}
               </p>
             </div>
             <div>
-              <p className="text-xs text-[#94a3b8]">Optional</p>
+              <p className="text-xs text-[#94a3b8]">선택</p>
               <p className="text-sm font-mono text-[#0f172a]">
                 {websocket.current_optional} / {websocket.optional_limit}
               </p>
             </div>
             <div>
-              <p className="text-xs text-[#94a3b8]">Market Data Subs</p>
+              <p className="text-xs text-[#94a3b8]">시장데이터 구독</p>
               <p className="text-sm font-mono text-[#0f172a]">
                 {capacity.market_data_subscriptions}
               </p>
             </div>
             <div>
-              <p className="text-xs text-[#94a3b8]">Order Event Accts</p>
+              <p className="text-xs text-[#94a3b8]">주문이벤트 계좌</p>
               <p className="text-sm font-mono text-[#0f172a]">
                 {capacity.order_event_accounts.length}
               </p>

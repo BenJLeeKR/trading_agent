@@ -62,7 +62,7 @@ export default function DecisionsView() {
     fetchPromise
       .then(setDecisions)
       .catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : "Failed to load trade decisions";
+        const msg = err instanceof Error ? err.message : "의사결정을 불러오지 못했습니다";
         setError(msg);
       })
       .finally(() => setLoading(false));
@@ -84,7 +84,7 @@ export default function DecisionsView() {
       })
       .catch((err) => {
         if (!cancelled) {
-          setContextError(err instanceof Error ? err.message : "Failed to load context");
+          setContextError(err instanceof Error ? err.message : "컨텍스트를 불러오지 못했습니다");
         }
       })
       .finally(() => {
@@ -107,13 +107,13 @@ export default function DecisionsView() {
   const decisionColumns: Column<TradeDecisionDetail>[] = [
     {
       key: "trade_decision_id",
-      header: "Decision ID",
+      header: "의사결정 ID",
       render: (r) => <code className="text-xs">{r.trade_decision_id.slice(0, 8)}…</code>,
     },
-    { key: "symbol", header: "Symbol" },
+    { key: "symbol", header: "심볼" },
     {
       key: "side",
-      header: "Side",
+      header: "매매",
       render: (r) => (
         <StatusBadge variant={r.side.toLowerCase() === "buy" ? "success" : r.side.toLowerCase() === "sell" ? "error" : "info"}>
           {r.side.toUpperCase()}
@@ -122,17 +122,17 @@ export default function DecisionsView() {
     },
     {
       key: "confidence",
-      header: "Confidence",
+      header: "신뢰도",
       render: (r) => <ConfidenceBar value={r.confidence ?? 0} />,
     },
     {
       key: "rationale_summary",
-      header: "Reasoning",
+      header: "근거",
       render: (r) => r.rationale_summary || "—",
     },
     {
       key: "created_at",
-      header: "Timestamp",
+      header: "시각",
       render: (r) => new Date(r.created_at).toLocaleString(),
     },
   ];
@@ -145,14 +145,14 @@ export default function DecisionsView() {
       {/* Page Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-[#0f172a]">Decisions</h1>
-          <p className="text-sm text-[#64748b] mt-1">View AI trade decisions and related context</p>
+          <h1 className="text-2xl font-semibold text-[#0f172a]">의사결정</h1>
+          <p className="text-sm text-[#64748b] mt-1">AI 거래 의사결정 및 관련 컨텍스트 조회</p>
         </div>
         {contextIdParam && (
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#eff6ff] border border-[#bfdbfe] shrink-0">
             <Brain className="h-3.5 w-3.5 text-[#1d4ed8]" />
             <span className="text-xs font-medium text-[#1d4ed8]">
-              Filtered by context: {contextIdParam.slice(0, 12)}…
+              컨텍스트별 필터링: {contextIdParam.slice(0, 12)}…
             </span>
             <button
               onClick={() => {
@@ -161,7 +161,7 @@ export default function DecisionsView() {
                 setContextDetail(null);
               }}
               className="ml-1 p-0.5 rounded text-[#1d4ed8] hover:text-[#1e40af] hover:bg-[#dbeafe] transition-colors"
-              aria-label="Clear context filter"
+              aria-label="컨텍스트 필터 초기화"
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -173,17 +173,17 @@ export default function DecisionsView() {
         {/* Decisions List */}
         <div className={selectedDecision ? "col-span-7" : "col-span-12"}>
           <FilterBar
-            searchPlaceholder="Search symbol or decision ID..."
+            searchPlaceholder="심볼 또는 의사결정 ID 검색..."
             searchValue={searchText}
             onSearchChange={setSearchText}
             filters={[
               {
                 key: "side",
-                label: "Side",
+                label: "매매",
                 options: [
-                  { label: "Buy", value: "buy" },
-                  { label: "Sell", value: "sell" },
-                  { label: "Hold", value: "hold" },
+                  { label: "매수", value: "buy" },
+                  { label: "매도", value: "sell" },
+                  { label: "보류", value: "hold" },
                 ],
                 value: sideFilter,
                 onChange: setSideFilter,
@@ -202,7 +202,7 @@ export default function DecisionsView() {
               selectedDecision?.trade_decision_id === row.trade_decision_id ? null : row
             )}
             selectedId={selectedDecision?.trade_decision_id}
-            emptyMessage="No trade decisions found."
+            emptyMessage="의사결정이 없습니다."
           />
         </div>
 
@@ -212,7 +212,7 @@ export default function DecisionsView() {
             {/* Decision Detail card */}
             <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-[#0f172a]">Decision Detail</h3>
+                <h3 className="text-lg font-semibold text-[#0f172a]">의사결정 상세</h3>
                 <button
                   onClick={() => { setSelectedDecision(null); setContextDetail(null); }}
                   className="p-1 text-[#94a3b8] hover:text-[#64748b] transition-colors"
@@ -241,56 +241,56 @@ export default function DecisionsView() {
 
               <dl className="space-y-3">
                 <div className="flex justify-between">
-                  <dt className="text-sm text-[#64748b]">Decision ID</dt>
+                  <dt className="text-sm text-[#64748b]">의사결정 ID</dt>
                   <dd className="text-sm font-mono text-[#0f172a]">{selectedDecision.trade_decision_id.slice(0, 16)}…</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-sm text-[#64748b]">Decision Type</dt>
+                  <dt className="text-sm text-[#64748b]">의사결정 유형</dt>
                   <dd className="text-sm font-medium text-[#0f172a]">{selectedDecision.decision_type}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-sm text-[#64748b]">Strategy ID</dt>
+                  <dt className="text-sm text-[#64748b]">전략 ID</dt>
                   <dd className="text-sm font-mono text-[#0f172a]">{selectedDecision.strategy_id}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-sm text-[#64748b]">Qty</dt>
+                  <dt className="text-sm text-[#64748b]">수량</dt>
                   <dd className="text-sm font-medium text-[#0f172a]">{String(selectedDecision.quantity ?? "—")}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-sm text-[#64748b]">Created</dt>
+                  <dt className="text-sm text-[#64748b]">생성일</dt>
                   <dd className="text-sm text-[#0f172a]">{new Date(selectedDecision.created_at).toLocaleString()}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-sm text-[#64748b]">Context ID</dt>
+                  <dt className="text-sm text-[#64748b]">컨텍스트 ID</dt>
                   <dd className="text-sm font-mono text-[#3b82f6]">{selectedDecision.decision_context_id.slice(0, 12)}…</dd>
                 </div>
               </dl>
 
               {/* Confidence bar */}
               <div className="mt-4 pt-4 border-t border-[#e2e8f0]">
-                <p className="text-xs text-[#64748b] mb-2">Confidence</p>
+                <p className="text-xs text-[#64748b] mb-2">신뢰도</p>
                 <ConfidenceBar value={selectedDecision.confidence ?? 0} />
               </div>
 
               {/* Reason */}
               <div className="mt-4 pt-4 border-t border-[#e2e8f0]">
-                <p className="text-xs font-semibold text-[#374151] mb-1">Reason</p>
+                <p className="text-xs font-semibold text-[#374151] mb-1">근거</p>
                 <p className="text-xs leading-relaxed text-[#64748b]">
-                  {selectedDecision.rationale_summary || "No reason provided."}
+                  {selectedDecision.rationale_summary || "근거가 제공되지 않았습니다."}
                 </p>
               </div>
             </div>
 
             {/* Signals card */}
             <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
-              <h4 className="text-sm font-medium text-[#0f172a] mb-4">Signals</h4>
+              <h4 className="text-sm font-medium text-[#0f172a] mb-4">시그널</h4>
               <dl className="space-y-3">
                 <div className="flex justify-between">
-                  <dt className="text-sm text-[#64748b]">Strategy ID</dt>
+                  <dt className="text-sm text-[#64748b]">전략 ID</dt>
                   <dd className="text-sm font-mono text-[#0f172a]">{selectedDecision.strategy_id}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-sm text-[#64748b]">Side Signal</dt>
+                  <dt className="text-sm text-[#64748b]">매매 시그널</dt>
                   <dd>
                     <StatusBadge variant={selectedDecision.side.toLowerCase() === "buy" ? "success" : selectedDecision.side.toLowerCase() === "sell" ? "error" : "info"}>
                       {selectedDecision.side.toUpperCase()}
@@ -298,11 +298,11 @@ export default function DecisionsView() {
                   </dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-sm text-[#64748b]">Confidence Score</dt>
+                  <dt className="text-sm text-[#64748b]">신뢰도 점수</dt>
                   <dd className="text-sm font-medium text-[#0f172a]">{((selectedDecision.confidence ?? 0) * 100).toFixed(0)}%</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-sm text-[#64748b]">Quantity</dt>
+                  <dt className="text-sm text-[#64748b]">수량</dt>
                   <dd className="text-sm font-medium text-[#0f172a]">{String(selectedDecision.quantity ?? "—")}</dd>
                 </div>
               </dl>
@@ -310,10 +310,10 @@ export default function DecisionsView() {
 
             {/* Market Context card */}
             <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
-              <h4 className="text-sm font-medium text-[#0f172a] mb-4">Market Context</h4>
+              <h4 className="text-sm font-medium text-[#0f172a] mb-4">시장 컨텍스트</h4>
 
               {contextLoading && (
-                <LoadingSpinner text="Loading context..." />
+                <LoadingSpinner text="컨텍스트 로딩 중..." />
               )}
 
               {contextError && (
@@ -323,34 +323,34 @@ export default function DecisionsView() {
               {contextDetail && (
                 <dl className="space-y-3">
                   <div className="flex justify-between">
-                    <dt className="text-sm text-[#64748b]">Strategy ID</dt>
+                    <dt className="text-sm text-[#64748b]">전략 ID</dt>
                     <dd className="text-sm font-mono text-[#0f172a]">{contextDetail.strategy_id}</dd>
                   </div>
                   <div className="flex justify-between">
-                    <dt className="text-sm text-[#64748b]">Account ID</dt>
+                    <dt className="text-sm text-[#64748b]">계좌 ID</dt>
                     <dd className="text-sm font-mono text-[#0f172a]">{contextDetail.account_id}</dd>
                   </div>
                   <div className="flex justify-between">
-                    <dt className="text-sm text-[#64748b]">Session ID</dt>
+                    <dt className="text-sm text-[#64748b]">세션 ID</dt>
                     <dd className="text-sm text-[#0f172a]">{contextDetail.trading_session_id ?? "—"}</dd>
                   </div>
                   <div className="flex justify-between">
-                    <dt className="text-sm text-[#64748b]">Config Version</dt>
+                    <dt className="text-sm text-[#64748b]">설정 버전</dt>
                     <dd className="text-sm font-mono text-[#0f172a]">{contextDetail.config_version_id}</dd>
                   </div>
                   <div className="flex justify-between">
-                    <dt className="text-sm text-[#64748b]">Correlation ID</dt>
+                    <dt className="text-sm text-[#64748b]">상관관계 ID</dt>
                     <dd className="text-sm font-mono text-[#3b82f6]">{contextDetail.correlation_id}</dd>
                   </div>
                   <div className="flex justify-between">
-                    <dt className="text-sm text-[#64748b]">Market Timestamp</dt>
+                    <dt className="text-sm text-[#64748b]">시장 시각</dt>
                     <dd className="text-sm text-[#0f172a]">{new Date(contextDetail.market_timestamp).toLocaleString()}</dd>
                   </div>
                 </dl>
               )}
 
               {!contextDetail && !contextLoading && !contextError && (
-                <p className="text-sm text-[#94a3b8] text-center py-4">Select a decision with context to view market data.</p>
+                <p className="text-sm text-[#94a3b8] text-center py-4">컨텍스트가 있는 의사결정을 선택하면 시장 데이터를 볼 수 있습니다.</p>
               )}
             </div>
 

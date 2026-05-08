@@ -26,14 +26,14 @@ export function DataTable<T extends Record<string, any>>({
   onRowClick,
   selectedId,
   isLoading,
-  emptyMessage = "No data available.",
+  emptyMessage = "데이터가 없습니다.",
   compact = false,
 }: DataTableProps<T>) {
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center p-8 gap-3">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-[#e2e8f0] border-t-[#3b82f6]" />
-        <p className="text-sm text-[#64748b]">Loading...</p>
+        <p className="text-sm text-[#64748b]">로딩 중...</p>
       </div>
     );
   }

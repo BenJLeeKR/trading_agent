@@ -20,7 +20,7 @@ interface FilterBarProps {
 }
 
 export function FilterBar({
-  searchPlaceholder = "Search...",
+  searchPlaceholder = "검색...",
   searchValue = "",
   onSearchChange,
   filters = [],
@@ -69,7 +69,7 @@ export function FilterBar({
           className="flex items-center gap-1.5 px-3 py-2 text-sm text-[#64748b] hover:text-[#0f172a] transition-colors"
         >
           <X className="h-4 w-4" />
-          Clear
+          초기화
         </button>
       )}
     </div>

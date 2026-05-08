@@ -19,11 +19,14 @@ const RUN_STATUSES = [
 ] as const;
 
 function formatStatusLabel(status: string): string {
-  if (status === "all") return "All";
-  return status
-    .split("_")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
+  const labels: Record<string, string> = {
+    all: "전체",
+    completed: "완료",
+    running: "실행 중",
+    reconcile_required: "정합성 필요",
+    failed: "실패",
+  };
+  return labels[status] ?? status;
 }
 
 export default function ReconciliationView() {
@@ -93,32 +96,32 @@ export default function ReconciliationView() {
     <div className="p-6 space-y-6">
       {/* Page Header */}
       <div>
-        <h1 className="text-2xl font-semibold text-[#0f172a]">Reconciliation</h1>
-        <p className="text-sm text-[#64748b] mt-1">Monitor uncertain states, reconciliation runs, and active locks</p>
+        <h1 className="text-2xl font-semibold text-[#0f172a]">정합성 점검</h1>
+        <p className="text-sm text-[#64748b] mt-1">불확실한 상태, 정합성 점검 실행 및 활성 잠금을 모니터링합니다</p>
       </div>
 
       {/* Active lock warning banner (template pattern) */}
       {activeLocks.length > 0 && (
         <WarningBanner
           variant="error"
-          title={`${activeLocks.length} Active Blocking Lock${activeLocks.length !== 1 ? "s" : ""}`}
-          message="These may block trading operations. Resolve locks before submitting new orders."
+          title={`활성 차단 잠금 ${activeLocks.length}개`}
+          message="거래 작업을 차단할 수 있습니다. 잠금을 해결한 후 새 주문을 제출하세요."
         />
       )}
 
       {/* Active Locks Section */}
       <div className="space-y-3">
-        <h2 className="text-lg font-semibold text-[#0f172a]">Active Locks</h2>
+        <h2 className="text-lg font-semibold text-[#0f172a]">활성 잠금</h2>
         {locks.length === 0 ? (
           <div className="bg-white rounded-xl border border-[#e2e8f0] p-8 text-center">
-            <p className="text-sm text-[#94a3b8]">No blocking locks found.</p>
+            <p className="text-sm text-[#94a3b8]">차단 잠금이 없습니다.</p>
           </div>
         ) : (
           <div className="bg-white rounded-xl border border-[#e2e8f0] overflow-hidden">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-[#e2e8f0] bg-[#f8fafc]">
-                  {["Symbol", "Type", "Strategy", "Status", "Acquired", "Expires"].map((h) => (
+                  {["심볼", "유형", "전략", "상태", "획득 시각", "만료 시각"].map((h) => (
                     <th
                       key={h}
                       className="px-4 py-2.5 text-left text-xs font-medium text-[#64748b] whitespace-nowrap"
@@ -136,7 +139,7 @@ export default function ReconciliationView() {
                     <td className="px-4 py-2.5 text-sm text-[#64748b]">{lock.strategy_code}</td>
                     <td className="px-4 py-2.5">
                       <StatusBadge variant={lock.is_expired ? "neutral" : "error"}>
-                        {lock.is_expired ? "EXPIRED" : "ACTIVE"}
+                        {lock.is_expired ? "만료" : "활성"}
                       </StatusBadge>
                     </td>
                     <td className="px-4 py-2.5 text-sm text-[#64748b]">
@@ -155,7 +158,7 @@ export default function ReconciliationView() {
 
       {/* Reconciliation Runs Section */}
       <div className="space-y-3">
-        <h2 className="text-lg font-semibold text-[#0f172a]">Reconciliation Runs</h2>
+        <h2 className="text-lg font-semibold text-[#0f172a]">정합성 점검 실행</h2>
 
         {/* Filter pills */}
         <div className="flex items-center gap-2">
@@ -191,7 +194,7 @@ export default function ReconciliationView() {
                 )
               }
               selectedId={selectedRun?.run_id}
-              emptyMessage="No reconciliation runs found."
+              emptyMessage="정합성 점검 실행 기록이 없습니다."
             />
           </div>
 
@@ -200,7 +203,7 @@ export default function ReconciliationView() {
             <div className="col-span-5 space-y-4">
               <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-semibold text-[#0f172a]">Run Detail</h3>
+                  <h3 className="text-lg font-semibold text-[#0f172a]">실행 상세</h3>
                   <button
                     onClick={() => setSelectedRun(null)}
                     className="p-1 text-[#94a3b8] hover:text-[#64748b] transition-colors"
@@ -210,31 +213,31 @@ export default function ReconciliationView() {
                 </div>
                 <dl className="space-y-3">
                   <div className="flex justify-between">
-                    <dt className="text-sm text-[#64748b]">Run ID</dt>
+                    <dt className="text-sm text-[#64748b]">실행 ID</dt>
                     <dd className="text-sm font-mono text-[#0f172a]">{selectedRun.run_id}</dd>
                   </div>
                   <div className="flex justify-between">
-                    <dt className="text-sm text-[#64748b]">Status</dt>
+                    <dt className="text-sm text-[#64748b]">상태</dt>
                     <dd><StatusBadge status={selectedRun.status} /></dd>
                   </div>
                   <div className="flex justify-between">
-                    <dt className="text-sm text-[#64748b]">Started</dt>
+                    <dt className="text-sm text-[#64748b]">시작</dt>
                     <dd className="text-sm text-[#0f172a]">{new Date(selectedRun.started_at).toLocaleString()}</dd>
                   </div>
                   <div className="flex justify-between">
-                    <dt className="text-sm text-[#64748b]">Completed</dt>
+                    <dt className="text-sm text-[#64748b]">완료</dt>
                     <dd className="text-sm text-[#0f172a]">
                       {selectedRun.completed_at ? new Date(selectedRun.completed_at).toLocaleString() : "—"}
                     </dd>
                   </div>
                   <div className="flex justify-between">
-                    <dt className="text-sm text-[#64748b]">Order Mismatches</dt>
+                    <dt className="text-sm text-[#64748b]">주문 불일치</dt>
                     <dd className={`text-sm font-semibold ${selectedRun.order_mismatches > 0 ? "text-[#dc2626]" : "text-[#0f172a]"}`}>
                       {selectedRun.order_mismatches}
                     </dd>
                   </div>
                   <div className="flex justify-between">
-                    <dt className="text-sm text-[#64748b]">Position Mismatches</dt>
+                    <dt className="text-sm text-[#64748b]">포지션 불일치</dt>
                     <dd className={`text-sm font-semibold ${selectedRun.position_mismatches > 0 ? "text-[#dc2626]" : "text-[#0f172a]"}`}>
                       {selectedRun.position_mismatches}
                     </dd>
@@ -247,14 +250,14 @@ export default function ReconciliationView() {
                   selectedRun.position_mismatches === 0 && (
                     <div className="mt-4 pt-4 border-t border-[#e2e8f0] flex items-center gap-2">
                       <CheckCircle className="h-4 w-4 text-[#16a34a]" />
-                      <span className="text-sm text-[#16a34a]">All positions matched successfully.</span>
+                      <span className="text-sm text-[#16a34a]">모든 포지션이 일치합니다.</span>
                     </div>
                   )}
                 {(selectedRun.order_mismatches > 0 ||
                   selectedRun.position_mismatches > 0) && (
                   <div className="mt-4 pt-4 border-t border-[#e2e8f0] flex items-center gap-2">
                     <AlertTriangle className="h-4 w-4 text-[#d97706]" />
-                    <span className="text-sm text-[#d97706]">Mismatches require review.</span>
+                    <span className="text-sm text-[#d97706]">불일치 항목을 검토해야 합니다.</span>
                   </div>
                 )}
               </div>

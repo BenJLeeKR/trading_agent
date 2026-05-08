@@ -39,7 +39,7 @@ function renderOrderDetail() {
 describe("OrderDetail loading state", () => {
   it("shows LoadingSpinner on initial render", () => {
     renderOrderDetail();
-    expect(screen.getByText("Loading...")).toBeInTheDocument();
+    expect(screen.getByText("로딩 중...")).toBeInTheDocument();
   });
 });
 
@@ -58,7 +58,7 @@ describe("OrderDetail with valid data", () => {
     renderOrderDetail();
 
     await waitFor(() => {
-      expect(screen.getByText("Order Detail")).toBeInTheDocument();
+      expect(screen.getByText("주문 상세")).toBeInTheDocument();
     });
 
     // Summary section
@@ -69,10 +69,10 @@ describe("OrderDetail with valid data", () => {
     expect(screen.getByText("185.50")).toBeInTheDocument();
 
     // Back link (ArrowLeft icon + text)
-    expect(screen.getByText("Back to Orders")).toBeInTheDocument();
+    expect(screen.getByText("주문 목록으로")).toBeInTheDocument();
 
     // Decision Links footer (no colon in new template)
-    expect(screen.getByText("Decision Links")).toBeInTheDocument();
+    expect(screen.getByText("의사결정 연결")).toBeInTheDocument();
     // Verify the IDs are rendered inside Link elements (they should have href)
     const contextLink = screen.getByRole("link", {
       name: /aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00dc1/,
@@ -93,10 +93,10 @@ describe("OrderDetail with valid data", () => {
     );
 
     // State Events section header
-    expect(screen.getByText(/State Events \(2\)/)).toBeInTheDocument();
+    expect(screen.getByText(/상태 이벤트 \(2\)/)).toBeInTheDocument();
 
     // Broker Orders section header
-    expect(screen.getByText(/Broker Orders \(1\)/)).toBeInTheDocument();
+    expect(screen.getByText(/브로커 주문 \(1\)/)).toBeInTheDocument();
   });
 });
 
@@ -112,14 +112,14 @@ describe("OrderDetail state events table", () => {
     renderOrderDetail();
 
     await waitFor(() => {
-      expect(screen.getByText("Order Detail")).toBeInTheDocument();
+      expect(screen.getByText("주문 상세")).toBeInTheDocument();
     });
 
     // Column headers
-    expect(screen.getByText("Timestamp")).toBeInTheDocument();
-    expect(screen.getByText("From")).toBeInTheDocument();
-    expect(screen.getByText("To")).toBeInTheDocument();
-    expect(screen.getByText("Reason")).toBeInTheDocument();
+    expect(screen.getByText("시각")).toBeInTheDocument();
+    expect(screen.getByText("이전")).toBeInTheDocument();
+    expect(screen.getByText("이후")).toBeInTheDocument();
+    expect(screen.getByText("사유")).toBeInTheDocument();
 
     // Event data
     expect(screen.getByText("Order submitted to broker")).toBeInTheDocument();
@@ -139,13 +139,13 @@ describe("OrderDetail broker orders section", () => {
     renderOrderDetail();
 
     await waitFor(() => {
-      expect(screen.getByText("Order Detail")).toBeInTheDocument();
+      expect(screen.getByText("주문 상세")).toBeInTheDocument();
     });
 
     // Column headers
-    expect(screen.getByText("Broker")).toBeInTheDocument();
-    expect(screen.getByText("Native Order ID")).toBeInTheDocument();
-    expect(screen.getByText("Submitted At")).toBeInTheDocument();
+    expect(screen.getByText("브로커")).toBeInTheDocument();
+    expect(screen.getByText("Native 주문 ID")).toBeInTheDocument();
+    expect(screen.getByText("제출 시각")).toBeInTheDocument();
 
     // Broker order data
     expect(screen.getByText("KIS")).toBeInTheDocument();
@@ -166,11 +166,11 @@ describe("OrderDetail without decision links", () => {
     renderOrderDetail();
 
     await waitFor(() => {
-      expect(screen.getByText("Order Detail")).toBeInTheDocument();
+      expect(screen.getByText("주문 상세")).toBeInTheDocument();
     });
 
     // Decision Links must NOT be present
-    expect(screen.queryByText("Decision Links")).not.toBeInTheDocument();
+    expect(screen.queryByText("의사결정 연결")).not.toBeInTheDocument();
     // Regular content should still render
     expect(screen.getByText("AAPL")).toBeInTheDocument();
   });
@@ -208,7 +208,7 @@ describe("OrderDetail order not found", () => {
     renderOrderDetail();
 
     await waitFor(() => {
-      expect(screen.getByText("Order not found.")).toBeInTheDocument();
+      expect(screen.getByText("주문을 찾을 수 없습니다.")).toBeInTheDocument();
     });
   });
 });

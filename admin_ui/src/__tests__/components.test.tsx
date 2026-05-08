@@ -17,8 +17,8 @@ interface TestRow {
 }
 
 const testColumns: Column<TestRow>[] = [
-  { key: "name", header: "Name" },
-  { key: "value", header: "Value" },
+  { key: "name", header: "이름" },
+  { key: "value", header: "값" },
 ];
 
 const testData: TestRow[] = [
@@ -37,8 +37,8 @@ describe("DataTable", () => {
       />,
     );
 
-    expect(screen.getByText("Name")).toBeInTheDocument();
-    expect(screen.getByText("Value")).toBeInTheDocument();
+    expect(screen.getByText("이름")).toBeInTheDocument();
+    expect(screen.getByText("값")).toBeInTheDocument();
     expect(screen.getByText("Alpha")).toBeInTheDocument();
     expect(screen.getByText("Beta")).toBeInTheDocument();
     expect(screen.getByText("100")).toBeInTheDocument();
@@ -52,11 +52,11 @@ describe("DataTable", () => {
         columns={testColumns}
         data={[]}
         idKey="id"
-        emptyMessage="No items found."
+        emptyMessage="항목이 없습니다."
       />,
     );
 
-    expect(screen.getByText("No items found.")).toBeInTheDocument();
+    expect(screen.getByText("항목이 없습니다.")).toBeInTheDocument();
   });
 
   /* Scenario 3: 로딩 상태 */
@@ -70,7 +70,7 @@ describe("DataTable", () => {
       />,
     );
 
-    expect(screen.getByText("Loading...")).toBeInTheDocument();
+    expect(screen.getByText("로딩 중...")).toBeInTheDocument();
   });
 
   /* Scenario 4: Row click */
@@ -140,11 +140,11 @@ describe("LoadingSpinner", () => {
   /* Scenario 7: 렌더링 */
   it("renders loading text", () => {
     render(<LoadingSpinner />);
-    expect(screen.getByText("Loading...")).toBeInTheDocument();
+    expect(screen.getByText("로딩 중...")).toBeInTheDocument();
   });
 
   it("renders custom text", () => {
-    render(<LoadingSpinner text="Fetching data..." />);
-    expect(screen.getByText("Fetching data...")).toBeInTheDocument();
+    render(<LoadingSpinner text="데이터를 불러오는 중..." />);
+    expect(screen.getByText("데이터를 불러오는 중...")).toBeInTheDocument();
   });
 });

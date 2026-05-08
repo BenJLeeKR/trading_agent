@@ -25,7 +25,7 @@ export default function OrdersView() {
     getOrders()
       .then(setOrders)
       .catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : "Failed to load orders";
+        const msg = err instanceof Error ? err.message : "주문을 불러오지 못했습니다";
         setError(msg);
       })
       .finally(() => setLoading(false));
@@ -43,15 +43,15 @@ export default function OrdersView() {
   }, [orders, searchText, statusFilter, sideFilter]);
 
   const orderColumns = [
-    { key: "order_request_id", header: "Order ID", width: "100px", render: (r: OrderSummary) => (
+    { key: "order_request_id", header: "주문 ID", width: "100px", render: (r: OrderSummary) => (
       <code className="text-xs">{r.order_request_id.slice(0, 8)}…</code>
     )},
-    { key: "symbol", header: "Symbol" },
-    { key: "side", header: "Side", render: (r: OrderSummary) => (
+    { key: "symbol", header: "심볼" },
+    { key: "side", header: "매매", render: (r: OrderSummary) => (
       <StatusBadge variant={r.side.toLowerCase() === "buy" ? "success" : "error"}>{r.side.toUpperCase()}</StatusBadge>
     )},
-    { key: "requested_quantity", header: "Qty" },
-    { key: "status", header: "Status", render: (r: OrderSummary) => {
+    { key: "requested_quantity", header: "수량" },
+    { key: "status", header: "상태", render: (r: OrderSummary) => {
       const variants: Record<string, "success" | "warning" | "error" | "info" | "neutral"> = {
         filled: "success",
         pending: "warning",
@@ -62,7 +62,7 @@ export default function OrdersView() {
       };
       return <StatusBadge variant={variants[r.status] || "info"}>{r.status.toUpperCase()}</StatusBadge>;
     }},
-    { key: "created_at", header: "Created" },
+    { key: "created_at", header: "생성일" },
   ];
 
   if (loading) return <LoadingSpinner />;
@@ -72,38 +72,38 @@ export default function OrdersView() {
     <div className="p-6 space-y-6">
       {/* Page Header */}
       <div>
-        <h1 className="text-2xl font-semibold text-[#0f172a]">Orders</h1>
-        <p className="text-sm text-[#64748b] mt-1">View order lifecycle, broker mapping, and decision lineage</p>
+        <h1 className="text-2xl font-semibold text-[#0f172a]">주문</h1>
+        <p className="text-sm text-[#64748b] mt-1">주문 생애주기, 브로커 매핑, 의사결정 이력 조회</p>
       </div>
 
       <div className="grid grid-cols-12 gap-6">
         {/* Orders List */}
         <div className={selectedOrder ? "col-span-7" : "col-span-12"}>
           <FilterBar
-            searchPlaceholder="Search symbol or order ID..."
+            searchPlaceholder="심볼 또는 주문 ID 검색..."
             searchValue={searchText}
             onSearchChange={setSearchText}
             filters={[
               {
                 key: "status",
-                label: "Status",
+                label: "상태",
                 options: [
-                  { label: "Filled", value: "filled" },
-                  { label: "Pending", value: "pending" },
-                  { label: "Rejected", value: "rejected" },
-                  { label: "Partial", value: "partial" },
-                  { label: "Submitted", value: "submitted" },
-                  { label: "Cancelled", value: "cancelled" },
+                  { label: "체결", value: "filled" },
+                  { label: "대기", value: "pending" },
+                  { label: "거부", value: "rejected" },
+                  { label: "부분체결", value: "partial" },
+                  { label: "제출", value: "submitted" },
+                  { label: "취소", value: "cancelled" },
                 ],
                 value: statusFilter,
                 onChange: setStatusFilter,
               },
               {
                 key: "side",
-                label: "Side",
+                label: "매매",
                 options: [
-                  { label: "Buy", value: "buy" },
-                  { label: "Sell", value: "sell" },
+                  { label: "매수", value: "buy" },
+                  { label: "매도", value: "sell" },
                 ],
                 value: sideFilter,
                 onChange: setSideFilter,
@@ -127,7 +127,7 @@ export default function OrdersView() {
               }
             }}
             selectedId={selectedOrder?.order_request_id}
-            emptyMessage="No orders found."
+            emptyMessage="주문이 없습니다."
           />
         </div>
 
@@ -136,7 +136,7 @@ export default function OrdersView() {
           <div className="col-span-5 space-y-4">
             <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-[#0f172a]">Order Detail</h3>
+                <h3 className="text-lg font-semibold text-[#0f172a]">주문 상세</h3>
                 <button
                   onClick={() => setSelectedOrder(null)}
                   className="p-1 text-[#94a3b8] hover:text-[#64748b] transition-colors"
@@ -146,31 +146,31 @@ export default function OrdersView() {
               </div>
               <dl className="space-y-3">
                 <div className="flex justify-between">
-                  <dt className="text-sm text-[#64748b]">Order ID</dt>
+                  <dt className="text-sm text-[#64748b]">주문 ID</dt>
                   <dd className="text-sm font-medium text-[#0f172a]">{selectedOrder.order_request_id}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-sm text-[#64748b]">Symbol</dt>
+                  <dt className="text-sm text-[#64748b]">심볼</dt>
                   <dd className="text-sm font-medium text-[#0f172a]">{selectedOrder.symbol ?? "—"}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-sm text-[#64748b]">Side</dt>
+                  <dt className="text-sm text-[#64748b]">매매</dt>
                   <dd><StatusBadge variant={selectedOrder.side.toLowerCase() === "buy" ? "success" : "error"}>{selectedOrder.side.toUpperCase()}</StatusBadge></dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-sm text-[#64748b]">Quantity</dt>
+                  <dt className="text-sm text-[#64748b]">수량</dt>
                   <dd className="text-sm font-medium text-[#0f172a]">{selectedOrder.requested_quantity}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-sm text-[#64748b]">Status</dt>
+                  <dt className="text-sm text-[#64748b]">상태</dt>
                   <dd><StatusBadge status={selectedOrder.status} /></dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-sm text-[#64748b]">Client Order ID</dt>
+                  <dt className="text-sm text-[#64748b]">클라이언트 주문 ID</dt>
                   <dd className="text-sm font-medium text-[#0f172a]">{selectedOrder.client_order_id}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-sm text-[#64748b]">Created</dt>
+                  <dt className="text-sm text-[#64748b]">생성일</dt>
                   <dd className="text-sm font-medium text-[#0f172a]">{selectedOrder.created_at ?? "—"}</dd>
                 </div>
               </dl>
@@ -179,7 +179,7 @@ export default function OrdersView() {
                   onClick={() => navigate(`/orders/${selectedOrder.order_request_id}`)}
                   className="w-full text-center text-sm text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors"
                 >
-                  View full details →
+                  전체 상세 보기 →
                 </button>
               </div>
             </div>

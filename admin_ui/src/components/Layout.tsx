@@ -34,22 +34,22 @@ interface NavSection {
 
 const navSections: NavSection[] = [
   {
-    title: "ACTIVE",
+    title: "활성",
     items: [
-      { icon: LayoutDashboard, label: "Overview", to: "/" },
-      { icon: FileText, label: "Orders", to: "/orders" },
-      { icon: RefreshCcw, label: "Reconciliation", to: "/reconciliation" },
-      { icon: Wallet, label: "Accounts", to: "/accounts" },
-      { icon: Brain, label: "Decisions", to: "/decisions" },
-      { icon: Zap, label: "Agent Runs", to: "/agent-runs" },
+      { icon: LayoutDashboard, label: "개요", to: "/" },
+      { icon: FileText, label: "주문", to: "/orders" },
+      { icon: RefreshCcw, label: "정합성 점검", to: "/reconciliation" },
+      { icon: Wallet, label: "계좌", to: "/accounts" },
+      { icon: Brain, label: "의사결정", to: "/decisions" },
+      { icon: Zap, label: "에이전트 실행", to: "/agent-runs" },
     ],
   },
   {
-    title: "RESERVED",
+    title: "예약",
     items: [
-      { icon: Building2, label: "Broker", to: "#", disabled: true },
-      { icon: Server, label: "System", to: "#", disabled: true },
-      { icon: ShieldCheck, label: "Admin", to: "#", disabled: true },
+      { icon: Building2, label: "브로커", to: "#", disabled: true },
+      { icon: Server, label: "시스템", to: "#", disabled: true },
+      { icon: ShieldCheck, label: "관리자", to: "#", disabled: true },
     ],
   },
 ];
@@ -119,7 +119,7 @@ export function Layout() {
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#1e293b]">
             <span className="text-white font-bold text-sm">A</span>
           </div>
-          <span className="text-lg font-semibold text-[#0f172a]">Admin Console</span>
+          <span className="text-lg font-semibold text-[#0f172a]">운영 콘솔</span>
         </div>
 
         {/* Navigation */}
@@ -177,7 +177,7 @@ export function Layout() {
                 className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0f172a] transition-colors text-left"
               >
                 <LogOut className="h-5 w-5" />
-                Log Out
+                로그아웃
               </button>
             </li>
           </ul>
@@ -190,12 +190,12 @@ export function Layout() {
         <header className="flex items-center justify-between bg-white px-6 py-3 border-b border-[#e2e8f0]">
           {/* Status Strip */}
           <div className="flex items-center gap-6">
-            <StatusDot label="API: Operational" healthy={apiHealthy} />
-            <StatusDot label="DB: Connected" healthy={dbHealthy} />
+            <StatusDot label="API: 정상" healthy={apiHealthy} />
+            <StatusDot label="DB: 연결됨" healthy={dbHealthy} />
             <div className="flex items-center gap-2">
               <Activity className="h-3.5 w-3.5 text-[#64748b]" />
               <span className="text-xs font-medium text-[#64748b]">
-                {apiHealthy ? "All systems normal" : "Issues detected"}
+                {apiHealthy ? "모든 시스템 정상" : "이상 감지"}
               </span>
             </div>
           </div>
@@ -205,7 +205,7 @@ export function Layout() {
             <span className="text-xs text-[#94a3b8]">{dateStr}</span>
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#f1f5f9]">
               <span className="flex h-2 w-2 rounded-full bg-[#22c55e]" />
-              <span className="text-xs font-medium text-[#0f172a]">Read-only</span>
+              <span className="text-xs font-medium text-[#0f172a]">읽기 전용</span>
             </div>
           </div>
         </header>

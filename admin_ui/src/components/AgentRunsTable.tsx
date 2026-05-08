@@ -30,7 +30,7 @@ export function AgentRunsTable({ runs, selectedId, onRowClick, loading }: AgentR
   if (loading) {
     return (
       <div className="bg-white rounded-xl border border-[#e2e8f0] p-8 text-center">
-        <p className="text-sm text-[#94a3b8]">Loading...</p>
+        <p className="text-sm text-[#94a3b8]">로딩 중...</p>
       </div>
     );
   }
@@ -38,7 +38,7 @@ export function AgentRunsTable({ runs, selectedId, onRowClick, loading }: AgentR
   if (runs.length === 0) {
     return (
       <div className="bg-white rounded-xl border border-[#e2e8f0] p-8 text-center">
-        <p className="text-sm text-[#94a3b8]">No agent runs found</p>
+        <p className="text-sm text-[#94a3b8]">에이전트 실행 기록이 없습니다</p>
       </div>
     );
   }
@@ -50,19 +50,19 @@ export function AgentRunsTable({ runs, selectedId, onRowClick, loading }: AgentR
           <thead>
             <tr className="border-b border-[#e2e8f0] bg-[#f8fafc]">
               <th className="px-4 py-3 text-left text-xs font-medium text-[#64748b] uppercase tracking-wider">
-                Agent Type
+                에이전트 유형
               </th>
               <th className="px-4 py-3 text-left text-xs font-medium text-[#64748b] uppercase tracking-wider">
-                Status
+                상태
               </th>
               <th className="px-4 py-3 text-left text-xs font-medium text-[#64748b] uppercase tracking-wider">
-                Decision Context
+                의사결정 컨텍스트
               </th>
               <th className="px-4 py-3 text-left text-xs font-medium text-[#64748b] uppercase tracking-wider">
-                Started
+                시작
               </th>
               <th className="px-4 py-3 text-left text-xs font-medium text-[#64748b] uppercase tracking-wider">
-                Summary
+                요약
               </th>
             </tr>
           </thead>

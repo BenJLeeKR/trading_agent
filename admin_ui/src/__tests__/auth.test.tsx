@@ -26,9 +26,9 @@ describe("LoginForm rendering", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("Admin Console")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Paste your token here...")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /enter dashboard/i })).toBeInTheDocument();
+    expect(screen.getByText("운영 콘솔")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("토큰을 붙여넣으세요...")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /대시보드 접속/i })).toBeInTheDocument();
   });
 });
 
@@ -45,7 +45,7 @@ describe("LoginForm empty token", () => {
       </MemoryRouter>,
     );
 
-    const button = screen.getByRole("button", { name: /enter dashboard/i });
+    const button = screen.getByRole("button", { name: /대시보드 접속/i });
     expect(button).toBeDisabled();
   });
 });
@@ -66,8 +66,8 @@ describe("LoginForm valid token", () => {
       </MemoryRouter>,
     );
 
-    await user.type(screen.getByPlaceholderText("Paste your token here..."), VALID_TOKEN);
-    await user.click(screen.getByRole("button", { name: /enter dashboard/i }));
+    await user.type(screen.getByPlaceholderText("토큰을 붙여넣으세요..."), VALID_TOKEN);
+    await user.click(screen.getByRole("button", { name: /대시보드 접속/i }));
 
     // Wait for async verification
     await waitFor(() => {
@@ -97,12 +97,12 @@ describe("LoginForm invalid token", () => {
       </MemoryRouter>,
     );
 
-    await user.type(screen.getByPlaceholderText("Paste your token here..."), "bad-token");
-    await user.click(screen.getByRole("button", { name: /enter dashboard/i }));
+    await user.type(screen.getByPlaceholderText("토큰을 붙여넣으세요..."), "bad-token");
+    await user.click(screen.getByRole("button", { name: /대시보드 접속/i }));
 
     await waitFor(() => {
       expect(
-        screen.getByText(/invalid token/i),
+        screen.getByText(/유효하지 않은 토큰/i),
       ).toBeInTheDocument();
     });
   });
@@ -124,12 +124,12 @@ describe("LoginForm network error", () => {
       </MemoryRouter>,
     );
 
-    await user.type(screen.getByPlaceholderText("Paste your token here..."), VALID_TOKEN);
-    await user.click(screen.getByRole("button", { name: /enter dashboard/i }));
+    await user.type(screen.getByPlaceholderText("토큰을 붙여넣으세요..."), VALID_TOKEN);
+    await user.click(screen.getByRole("button", { name: /대시보드 접속/i }));
 
     await waitFor(() => {
       expect(
-        screen.getByText(/cannot connect to server/i),
+        screen.getByText(/서버에 연결할 수 없습니다/i),
       ).toBeInTheDocument();
     });
   });
@@ -200,8 +200,8 @@ describe("Login flow → auth state change", () => {
     );
 
     // Submit valid token
-    await user.type(screen.getByPlaceholderText("Paste your token here..."), VALID_TOKEN);
-    await user.click(screen.getByRole("button", { name: /enter dashboard/i }));
+    await user.type(screen.getByPlaceholderText("토큰을 붙여넣으세요..."), VALID_TOKEN);
+    await user.click(screen.getByRole("button", { name: /대시보드 접속/i }));
 
     // Wait for auth state to update (login() was called after fetch success)
     await waitFor(() => {
@@ -231,7 +231,7 @@ describe("Logout", () => {
             {isAuthenticated ? "Authenticated" : "Not Authenticated"}
           </span>
           <span data-testid="token-value">{token ?? "null"}</span>
-          <button onClick={logout}>Logout</button>
+          <button onClick={logout}>로그아웃</button>
         </div>
       );
     }
@@ -249,7 +249,7 @@ describe("Logout", () => {
     expect(screen.getByTestId("token-value")).toHaveTextContent(VALID_TOKEN);
 
     // Click logout
-    await user.click(screen.getByRole("button", { name: /logout/i }));
+    await user.click(screen.getByRole("button", { name: /로그아웃/i }));
 
     // Token cleared from sessionStorage and state
     expect(screen.getByTestId("auth-status")).toHaveTextContent("Not Authenticated");

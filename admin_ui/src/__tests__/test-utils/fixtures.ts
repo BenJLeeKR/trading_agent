@@ -117,6 +117,7 @@ export const mockReconciliationSummary: ReconciliationSummary = {
       position_mismatches: 0,
     },
   ],
+  generated_at: "2026-05-08T05:00:00Z",
 };
 
 /** Dashboard parallel API responses — order matches fetchAll() call order */
@@ -484,4 +485,5 @@ export const mockBrokerCapacity: BrokerCapacityResponse = {
   },
   market_data_subscriptions: 3,
   order_event_accounts: ["aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a1"],
+  generated_at: "2026-05-08T05:00:00Z",
 };

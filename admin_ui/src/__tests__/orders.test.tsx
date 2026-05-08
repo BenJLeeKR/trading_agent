@@ -27,7 +27,7 @@ describe("OrdersView loading state", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("Loading...")).toBeInTheDocument();
+    expect(screen.getByText("로딩 중...")).toBeInTheDocument();
   });
 });
 
@@ -45,7 +45,7 @@ describe("OrdersView with order data", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Orders")).toBeInTheDocument();
+      expect(screen.getByText("주문")).toBeInTheDocument();
     });
 
     // Verify data is rendered
@@ -53,9 +53,9 @@ describe("OrdersView with order data", () => {
     expect(screen.getByText("TSLA")).toBeInTheDocument();
 
     // Verify column headers
-    expect(screen.getByText("Symbol")).toBeInTheDocument();
-    expect(screen.getAllByText("Side")[0]).toBeInTheDocument();
-    expect(screen.getAllByText("Status")[0]).toBeInTheDocument();
+    expect(screen.getByText("심볼")).toBeInTheDocument();
+    expect(screen.getAllByText("매매")[0]).toBeInTheDocument();
+    expect(screen.getAllByText("상태")[0]).toBeInTheDocument();
   });
 });
 
@@ -73,7 +73,7 @@ describe("OrdersView empty list", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("No orders found.")).toBeInTheDocument();
+      expect(screen.getByText("주문이 없습니다.")).toBeInTheDocument();
     });
   });
 });
@@ -121,7 +121,7 @@ describe("OrdersView filter by status", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Orders")).toBeInTheDocument();
+      expect(screen.getByText("주문")).toBeInTheDocument();
     });
 
     // Initially both orders visible
@@ -129,7 +129,7 @@ describe("OrdersView filter by status", () => {
     expect(screen.getByText("TSLA")).toBeInTheDocument();
 
     // Select "Filled" from status dropdown
-    const statusSelect = screen.getByLabelText("Status");
+    const statusSelect = screen.getByLabelText("상태");
     await user.selectOptions(statusSelect, "filled");
 
     // Only AAPL (filled) should remain
@@ -153,7 +153,7 @@ describe("OrdersView filter by side", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Orders")).toBeInTheDocument();
+      expect(screen.getByText("주문")).toBeInTheDocument();
     });
 
     // Initially both visible
@@ -161,7 +161,7 @@ describe("OrdersView filter by side", () => {
     expect(screen.getByText("TSLA")).toBeInTheDocument();
 
     // Select "Buy" from side dropdown
-    const sideSelect = screen.getByLabelText("Side");
+    const sideSelect = screen.getByLabelText("매매");
     await user.selectOptions(sideSelect, "buy");
 
     // Only AAPL (buy) should remain
@@ -185,11 +185,11 @@ describe("OrdersView search by symbol", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Orders")).toBeInTheDocument();
+      expect(screen.getByText("주문")).toBeInTheDocument();
     });
 
     // Type "AAPL" in search
-    const searchInput = screen.getByPlaceholderText("Search symbol or order ID...");
+    const searchInput = screen.getByPlaceholderText("심볼 또는 주문 ID 검색...");
     await user.type(searchInput, "AAPL");
 
     // Only AAPL should remain
@@ -213,15 +213,15 @@ describe("OrdersView combined filter and search", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Orders")).toBeInTheDocument();
+      expect(screen.getByText("주문")).toBeInTheDocument();
     });
 
     // Type "AAPL" in search
-    const searchInput = screen.getByPlaceholderText("Search symbol or order ID...");
+    const searchInput = screen.getByPlaceholderText("심볼 또는 주문 ID 검색...");
     await user.type(searchInput, "AAPL");
 
     // Select "Filled" from status dropdown — AAPL is filled, TSLA is pending
-    const statusSelect = screen.getByLabelText("Status");
+    const statusSelect = screen.getByLabelText("상태");
     await user.selectOptions(statusSelect, "filled");
 
     // AAPL (filled, buy) should still show

@@ -15,7 +15,7 @@ export function LoginForm() {
     e.preventDefault();
     const trimmed = tokenInput.trim();
     if (!trimmed) {
-      setError("Token cannot be empty.");
+      setError("토큰이 비어 있습니다.");
       return;
     }
 
@@ -41,11 +41,11 @@ export function LoginForm() {
       navigate("/");
     } catch (err) {
       if (err instanceof UnauthorizedError) {
-        setError("Invalid token. The server rejected the authorization.");
+        setError("유효하지 않은 토큰입니다. 서버가 인증을 거부했습니다.");
       } else if (err instanceof ApiResponseError) {
-        setError(`Server error: ${err.detail}`);
+        setError(`서버 오류: ${err.detail}`);
       } else {
-        setError("Cannot connect to server. Is the API running?");
+        setError("서버에 연결할 수 없습니다. API가 실행 중인지 확인하세요.");
       }
     } finally {
       setIsVerifying(false);
@@ -61,14 +61,14 @@ export function LoginForm() {
             A
           </div>
           <div>
-            <h1 className="text-xl font-semibold text-[#0f172a]">Admin Console</h1>
-            <p className="text-sm text-[#64748b]">Inspection Dashboard</p>
+            <h1 className="text-xl font-semibold text-[#0f172a]">운영 콘솔</h1>
+            <p className="text-sm text-[#64748b]">운영 대시보드</p>
           </div>
         </div>
 
         <p className="text-sm text-[#64748b] mb-6 leading-relaxed">
-          Enter your <code className="text-xs bg-[#f1f5f9] px-1.5 py-0.5 rounded text-[#0f172a]">INSPECTION_API_TOKEN</code> to access the dashboard.
-          This token is stored in your session only and cleared on logout or tab close.
+          <code className="text-xs bg-[#f1f5f9] px-1.5 py-0.5 rounded text-[#0f172a]">INSPECTION_API_TOKEN</code>을 입력하여 대시보드에 접속하세요.
+          토큰은 세션에만 저장되며 로그아웃 또는 탭 종료 시 삭제됩니다.
         </p>
 
         {error && (
@@ -81,12 +81,12 @@ export function LoginForm() {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label htmlFor="token-input" className="block text-sm font-medium text-[#0f172a] mb-1.5">
-              Bearer Token
+              Bearer 토큰
             </label>
             <input
               id="token-input"
               type="password"
-              placeholder="Paste your token here..."
+              placeholder="토큰을 붙여넣으세요..."
               value={tokenInput}
               onChange={(e) => setTokenInput(e.target.value)}
               autoFocus
@@ -99,7 +99,7 @@ export function LoginForm() {
             disabled={isVerifying || !tokenInput.trim()}
             className="w-full px-4 py-2.5 text-sm font-medium text-white bg-[#3b82f6] rounded-lg hover:bg-[#2563eb] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {isVerifying ? "Verifying..." : "Enter Dashboard"}
+            {isVerifying ? "확인 중..." : "대시보드 접속"}
           </button>
         </form>
       </div>

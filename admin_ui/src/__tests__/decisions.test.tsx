@@ -64,7 +64,7 @@ describe("DecisionsView with data", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Decisions")).toBeInTheDocument();
+      expect(screen.getByText("의사결정")).toBeInTheDocument();
     });
 
     // Verify all tickers are rendered
@@ -73,10 +73,10 @@ describe("DecisionsView with data", () => {
     expect(screen.getByText("MSFT")).toBeInTheDocument();
 
     // Verify key column headers (template columns: Side, Reasoning, Timestamp)
-    expect(screen.getByRole("columnheader", { name: "Symbol" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Side" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Confidence" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "Reasoning" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "심볼" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "매매" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "신뢰도" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "근거" })).toBeInTheDocument();
   });
 });
 
@@ -94,7 +94,7 @@ describe("DecisionsView confidence color", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Decisions")).toBeInTheDocument();
+      expect(screen.getByText("의사결정")).toBeInTheDocument();
     });
 
     // AAPL confidence 0.85 >= 0.7 → green (#22c55e)
@@ -125,7 +125,7 @@ describe("DecisionsView empty list", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("No trade decisions found.")).toBeInTheDocument();
+      expect(screen.getByText("의사결정이 없습니다.")).toBeInTheDocument();
     });
   });
 });
@@ -149,7 +149,7 @@ describe("DecisionsView detail panel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Decisions")).toBeInTheDocument();
+      expect(screen.getByText("의사결정")).toBeInTheDocument();
     });
 
     // Click the first row (AAPL)
@@ -158,7 +158,7 @@ describe("DecisionsView detail panel", () => {
 
     // Detail panel shows decision fields
     await waitFor(() => {
-      expect(screen.getByText("Decision Detail")).toBeInTheDocument();
+      expect(screen.getByText("의사결정 상세")).toBeInTheDocument();
     });
     // Decision type "auto_execute" appears in detail panel
     expect(screen.getAllByText("auto_execute").length).toBeGreaterThanOrEqual(1);
@@ -171,7 +171,7 @@ describe("DecisionsView detail panel", () => {
 
     // Market Context section loaded
     await waitFor(() => {
-      expect(screen.getByText("Market Context")).toBeInTheDocument();
+      expect(screen.getByText("시장 컨텍스트")).toBeInTheDocument();
     });
     // strategy_id UUID appears in both DataTable column and detail panel
     expect(screen.getAllByText("aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00s1").length).toBeGreaterThanOrEqual(2);
@@ -194,7 +194,7 @@ describe("DecisionsView detail panel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Decisions")).toBeInTheDocument();
+      expect(screen.getByText("의사결정")).toBeInTheDocument();
     });
 
     // Click the first row
@@ -202,7 +202,7 @@ describe("DecisionsView detail panel", () => {
     await user.click(aaplRow);
 
     await waitFor(() => {
-      expect(screen.getByText("Decision Detail")).toBeInTheDocument();
+      expect(screen.getByText("의사결정 상세")).toBeInTheDocument();
     });
 
     // Error should appear
@@ -227,11 +227,11 @@ describe("DecisionsView side filter", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Decisions")).toBeInTheDocument();
+      expect(screen.getByText("의사결정")).toBeInTheDocument();
     });
 
-    // Select "Buy" from side dropdown
-    const sideSelect = screen.getByLabelText("Side");
+    // Select "매수" from side dropdown
+    const sideSelect = screen.getByLabelText("매매");
     await user.selectOptions(sideSelect, "buy");
 
     // AAPL (buy) should remain, TSLA (hold) and MSFT (sell) should be hidden
@@ -256,10 +256,10 @@ describe("DecisionsView symbol search", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Decisions")).toBeInTheDocument();
+      expect(screen.getByText("의사결정")).toBeInTheDocument();
     });
 
-    const searchInput = screen.getByPlaceholderText("Search symbol or decision ID...");
+    const searchInput = screen.getByPlaceholderText("심볼 또는 의사결정 ID 검색...");
     await user.type(searchInput, "AAPL");
 
     // Only AAPL should be visible
@@ -287,7 +287,7 @@ describe("DecisionsView agent runs panel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Decisions")).toBeInTheDocument();
+      expect(screen.getByText("의사결정")).toBeInTheDocument();
     });
 
     // Click AAPL row
@@ -296,7 +296,7 @@ describe("DecisionsView agent runs panel", () => {
 
     // Agent Runs card appears
     await waitFor(() => {
-      expect(screen.getByText("Agent Runs")).toBeInTheDocument();
+      expect(screen.getByText("에이전트 실행")).toBeInTheDocument();
     });
 
     // All three agent type badges are visible
@@ -323,18 +323,18 @@ describe("DecisionsView agent runs panel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Decisions")).toBeInTheDocument();
+      expect(screen.getByText("의사결정")).toBeInTheDocument();
     });
 
     const aaplRow = screen.getByText("AAPL");
     await user.click(aaplRow);
 
     await waitFor(() => {
-      expect(screen.getByText("Agent Runs")).toBeInTheDocument();
+      expect(screen.getByText("에이전트 실행")).toBeInTheDocument();
     });
 
     expect(
-      screen.getByText("No agent runs recorded for this decision context."),
+      screen.getByText("이 의사결정 컨텍스트에 대한 에이전트 실행 기록이 없습니다."),
     ).toBeInTheDocument();
   });
 
@@ -380,14 +380,14 @@ describe("DecisionsView agent runs panel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Decisions")).toBeInTheDocument();
+      expect(screen.getByText("의사결정")).toBeInTheDocument();
     });
 
     const aaplRow = screen.getByText("AAPL");
     await user.click(aaplRow);
 
     await waitFor(() => {
-      expect(screen.getByText("Agent Runs")).toBeInTheDocument();
+      expect(screen.getByText("에이전트 실행")).toBeInTheDocument();
     });
 
     await waitFor(() => {
@@ -410,18 +410,18 @@ describe("DecisionsView agent runs panel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Decisions")).toBeInTheDocument();
+      expect(screen.getByText("의사결정")).toBeInTheDocument();
     });
 
     const aaplRow = screen.getByText("AAPL");
     await user.click(aaplRow);
 
     await waitFor(() => {
-      expect(screen.getByText("Agent Runs")).toBeInTheDocument();
+      expect(screen.getByText("에이전트 실행")).toBeInTheDocument();
     });
 
-    // Click "Show raw output" for the first run
-    const showButtons = screen.getAllByText("Show raw output");
+    // Click "원시 출력 보기" for the first run
+    const showButtons = screen.getAllByText("원시 출력 보기");
     await user.click(showButtons[0]);
 
     // JSON block should appear
@@ -429,8 +429,8 @@ describe("DecisionsView agent runs panel", () => {
       expect(screen.getByText(/"signal"/)).toBeInTheDocument();
     });
 
-    // Click "Hide raw output"
-    const hideButton = screen.getByText("Hide raw output");
+    // Click "원시 출력 숨기기"
+    const hideButton = screen.getByText("원시 출력 숨기기");
     await user.click(hideButton);
 
     // JSON block should disappear
@@ -474,7 +474,7 @@ describe("DecisionsView contextId query param", () => {
 
     // Filter indicator should appear
     await waitFor(() => {
-      expect(screen.getByText(/Filtered by context/i)).toBeInTheDocument();
+      expect(screen.getByText(/컨텍스트별 필터링/i)).toBeInTheDocument();
     });
 
     // The fetch URL should include decision_context_id
@@ -501,16 +501,16 @@ describe("DecisionsView contextId query param", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/Filtered by context/i)).toBeInTheDocument();
+      expect(screen.getByText(/컨텍스트별 필터링/i)).toBeInTheDocument();
     });
 
     // Click the clear button
-    const clearBtn = screen.getByRole("button", { name: /clear context filter/i });
+    const clearBtn = screen.getByRole("button", { name: /컨텍스트 필터 초기화/i });
     await user.click(clearBtn);
 
     // Indicator should disappear
     await waitFor(() => {
-      expect(screen.queryByText(/Filtered by context/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/컨텍스트별 필터링/i)).not.toBeInTheDocument();
     });
   });
 });

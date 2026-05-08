@@ -136,4 +136,5 @@ async def get_reconciliation_summary(
             )
             for r in incomplete_runs
         ],
+        generated_at=now,
     )

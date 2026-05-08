@@ -120,6 +120,7 @@ export default function Dashboard() {
   const [reconRuns, setReconRuns] = useState<ReconciliationRunSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [loadedAt, setLoadedAt] = useState<Date | null>(null);
   const navigate = useNavigate();
 
   const fetchAll = useCallback(async () => {
@@ -135,6 +136,7 @@ export default function Dashboard() {
         setOrders([]);
         setLocks([]);
         setReconRuns([]);
+        setLoadedAt(new Date());
         setLoading(false);
         return;
       }
@@ -175,9 +177,10 @@ export default function Dashboard() {
       setOrders(ordersData);
       setLocks(reconSummary.recent_active_locks);
       setReconRuns(reconSummary.recent_incomplete_runs);
+      setLoadedAt(new Date());
     } catch (err: unknown) {
       const msg =
-        err instanceof Error ? err.message : "Failed to load dashboard data";
+        err instanceof Error ? err.message : "대시보드 데이터를 불러오지 못했습니다";
       setError(msg);
     } finally {
       setLoading(false);
@@ -210,24 +213,29 @@ export default function Dashboard() {
     return (
       <div className="p-6 space-y-6">
         <div>
-          <h1 className="text-2xl font-semibold text-[#0f172a]">Overview</h1>
+          <h1 className="text-2xl font-semibold text-[#0f172a]">개요</h1>
           <p className="text-sm text-[#64748b] mt-1">
-            Account and position summary
+            계좌 및 포지션 요약
           </p>
+          {loadedAt && (
+            <p className="text-xs text-[#94a3b8] mt-0.5">
+              {loadedAt.toLocaleTimeString("ko-KR")}에 업데이트됨
+            </p>
+          )}
         </div>
         <div className="bg-white rounded-xl border border-[#e2e8f0] p-12 text-center">
           <Users className="h-12 w-12 text-[#94a3b8] mx-auto mb-4" />
           <h2 className="text-lg font-semibold text-[#0f172a] mb-2">
-            No accounts found
+            계좌가 없습니다
           </h2>
           <p className="text-sm text-[#64748b] mb-6">
-            There are no accounts registered in the system yet.
+            시스템에 등록된 계좌가 아직 없습니다.
           </p>
           <button
             onClick={() => navigate("/accounts")}
             className="inline-flex items-center gap-2 px-4 py-2 bg-[#3b82f6] text-white rounded-lg text-sm font-medium hover:bg-[#2563eb] transition-colors"
           >
-            Go to Accounts
+            계좌로 이동
             <ArrowRight className="h-4 w-4" />
           </button>
         </div>
@@ -240,61 +248,66 @@ export default function Dashboard() {
     <div className="p-6 space-y-6">
       {/* Page Header */}
       <div>
-        <h1 className="text-2xl font-semibold text-[#0f172a]">Overview</h1>
+        <h1 className="text-2xl font-semibold text-[#0f172a]">개요</h1>
         <p className="text-sm text-[#64748b] mt-1">
-          Account and position summary
+          계좌 및 포지션 요약
         </p>
+        {loadedAt && (
+          <p className="text-xs text-[#94a3b8] mt-0.5">
+            {loadedAt.toLocaleTimeString("ko-KR")}에 업데이트됨
+          </p>
+        )}
       </div>
 
       {/* Summary Metric Cards — 6 columns */}
       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         <MetricCard
           icon={<Users className="h-5 w-5" />}
-          title="Total Accounts"
+          title="전체 계좌"
           value={summary.totalAccounts}
-          subtitle={`${summary.activeAccounts} active · ${summary.lockedAccounts} locked`}
+          subtitle={`활성 ${summary.activeAccounts} · 잠금 ${summary.lockedAccounts}`}
         />
         <MetricCard
           icon={<Wallet className="h-5 w-5" />}
-          title="Available Cash"
+          title="가용 현금"
           value={formatCurrency(summary.totalAvailableCash)}
-          subtitle={`Settled: ${formatCurrency(summary.totalSettledCash)}`}
+          subtitle={`결제완료: ${formatCurrency(summary.totalSettledCash)}`}
         />
         <MetricCard
           icon={<BarChart3 className="h-5 w-5" />}
-          title="Positions"
+          title="포지션"
           value={summary.totalPositionCount}
-          subtitle={`${summary.accountsWithPositions} accounts with positions`}
+          subtitle={`${summary.accountsWithPositions}개 계좌 보유 중`}
         />
         <MetricCard
           icon={<ShoppingCart className="h-5 w-5" />}
-          title="Recent Orders"
+          title="최근 주문"
           value={recentOrdersCount}
-          subtitle={recentOrdersCount > 0 ? "Total orders in system" : "No orders yet"}
+          subtitle={recentOrdersCount > 0 ? "시스템 전체 주문 수" : "주문 없음"}
         />
         <MetricCard
           icon={<Lock className="h-5 w-5" />}
-          title="Active Locks"
+          title="활성 잠금"
           value={activeLocksCount}
-          subtitle="Across all accounts"
+          subtitle="전체 계좌 기준"
         />
         <MetricCard
           icon={<RefreshCw className="h-5 w-5" />}
-          title="Incomplete Recon"
+          title="미완료 정합성"
           value={incompleteReconCount}
-          subtitle="Across all accounts"
+          subtitle="전체 계좌 기준"
         />
       </div>
 
       {/* Account Quick List */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-[#0f172a]">Accounts</h2>
+          <h2 className="text-lg font-semibold text-[#0f172a]">계좌</h2>
           <button
             onClick={() => navigate("/accounts")}
             className="flex items-center gap-1 text-sm text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors"
           >
-            View all accounts
+            전체 계좌 보기
             <ArrowRight className="h-4 w-4" />
           </button>
         </div>
@@ -303,19 +316,19 @@ export default function Dashboard() {
             <thead>
               <tr className="border-b border-[#e2e8f0] bg-[#f8fafc]">
                 <th className="text-left px-4 py-3 font-medium text-[#64748b]">
-                  Account
+                  계좌
                 </th>
                 <th className="text-left px-4 py-3 font-medium text-[#64748b]">
-                  Status
+                  상태
                 </th>
                 <th className="text-left px-4 py-3 font-medium text-[#64748b]">
-                  Env
+                  환경
                 </th>
                 <th className="text-right px-4 py-3 font-medium text-[#64748b]">
-                  Positions
+                  포지션
                 </th>
                 <th className="text-right px-4 py-3 font-medium text-[#64748b]">
-                  Available Cash
+                  가용 현금
                 </th>
               </tr>
             </thead>
@@ -374,31 +387,31 @@ export default function Dashboard() {
       {/* Recent Orders Section */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-[#0f172a]">Recent Orders</h2>
+          <h2 className="text-lg font-semibold text-[#0f172a]">최근 주문</h2>
           <button
             onClick={() => navigate("/orders")}
             className="flex items-center gap-1 text-sm text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors"
           >
-            View all orders
+            전체 주문 보기
             <ArrowRight className="h-4 w-4" />
           </button>
         </div>
         {orders.length === 0 ? (
           <div className="bg-white rounded-xl border border-[#e2e8f0] p-8 text-center">
             <ShoppingCart className="h-8 w-8 text-[#94a3b8] mx-auto mb-2" />
-            <p className="text-sm text-[#64748b]">No orders found.</p>
+            <p className="text-sm text-[#64748b]">주문이 없습니다.</p>
           </div>
         ) : (
           <div className="bg-white rounded-xl border border-[#e2e8f0] overflow-hidden">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#e2e8f0] bg-[#f8fafc]">
-                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">Order</th>
-                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">Symbol</th>
-                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">Side</th>
-                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">Status</th>
-                  <th className="text-right px-4 py-3 font-medium text-[#64748b]">Qty</th>
-                  <th className="text-right px-4 py-3 font-medium text-[#64748b]">Created</th>
+                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">주문</th>
+                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">심볼</th>
+                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">매매</th>
+                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">상태</th>
+                  <th className="text-right px-4 py-3 font-medium text-[#64748b]">수량</th>
+                  <th className="text-right px-4 py-3 font-medium text-[#64748b]">생성일</th>
                 </tr>
               </thead>
               <tbody>
@@ -461,30 +474,30 @@ export default function Dashboard() {
       {/* Active Locks Section */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-[#0f172a]">Active Locks</h2>
+          <h2 className="text-lg font-semibold text-[#0f172a]">활성 잠금</h2>
           <button
             onClick={() => navigate("/reconciliation")}
             className="flex items-center gap-1 text-sm text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors"
           >
-            View all locks
+            전체 잠금 보기
             <ArrowRight className="h-4 w-4" />
           </button>
         </div>
         {locks.length === 0 ? (
           <div className="bg-white rounded-xl border border-[#e2e8f0] p-8 text-center">
             <Lock className="h-8 w-8 text-[#94a3b8] mx-auto mb-2" />
-            <p className="text-sm text-[#64748b]">No active locks.</p>
+            <p className="text-sm text-[#64748b]">활성 잠금이 없습니다.</p>
           </div>
         ) : (
           <div className="bg-white rounded-xl border border-[#e2e8f0] overflow-hidden">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#e2e8f0] bg-[#f8fafc]">
-                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">Lock Key</th>
-                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">Type</th>
-                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">Symbol</th>
-                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">Strategy</th>
-                  <th className="text-right px-4 py-3 font-medium text-[#64748b]">Expires</th>
+                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">잠금 키</th>
+                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">유형</th>
+                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">심볼</th>
+                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">전략</th>
+                  <th className="text-right px-4 py-3 font-medium text-[#64748b]">만료</th>
                 </tr>
               </thead>
               <tbody>

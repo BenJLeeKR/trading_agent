@@ -33,6 +33,18 @@ function truncateUuid(uuid: string): string {
   return uuid.length > 8 ? uuid.slice(0, 8) + "…" : uuid;
 }
 
+/** Format an ISO timestamp string to ``yyyy-MM-dd HH:mm:ss`` for display. */
+function formatSnapshotTime(iso: string): string {
+  const d = new Date(iso);
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return `${y}-${mo}-${dd} ${hh}:${mm}:${ss}`;
+}
+
 /* ───────────────────────────────────────────
  * AccountsView
  * ─────────────────────────────────────────── */
@@ -73,7 +85,7 @@ export default function AccountsView() {
         if (accts) setAccounts(accts);
       })
       .catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : "Failed to load accounts";
+        const msg = err instanceof Error ? err.message : "계좌를 불러오지 못했습니다";
         setError(msg);
       })
       .finally(() => setLoading(false));
@@ -93,7 +105,7 @@ export default function AccountsView() {
         setCashBalance(c);
       })
       .catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : "Failed to load account detail";
+        const msg = err instanceof Error ? err.message : "계좌 상세를 불러오지 못했습니다";
         setError(msg);
       })
       .finally(() => setDetailLoading(false));
@@ -140,7 +152,7 @@ export default function AccountsView() {
   const accountColumns: Column<AccountSummary>[] = [
     {
       key: "account_code",
-      header: "Account",
+      header: "계좌",
       render: (r) => {
         const code = r.account_code;
         const alias = r.account_alias;
@@ -156,7 +168,7 @@ export default function AccountsView() {
     },
     {
       key: "broker_account_code",
-      header: "Account #",
+      header: "계좌번호",
       render: (r) => {
         const code = r.broker_account_code;
         const masked = r.account_masked;
@@ -171,7 +183,7 @@ export default function AccountsView() {
     },
     {
       key: "environment",
-      header: "Env",
+      header: "환경",
       render: (r) => (
         <StatusBadge variant={r.environment === "live" ? "warning" : "info"}>
           {r.environment.toUpperCase()}
@@ -180,7 +192,7 @@ export default function AccountsView() {
     },
     {
       key: "status",
-      header: "Status",
+      header: "상태",
       render: (r) => {
         const variant =
           r.status === "active"
@@ -198,27 +210,27 @@ export default function AccountsView() {
   const positionColumns: Column<PositionSnapshotView>[] = [
     {
       key: "instrument_id",
-      header: "Instrument",
+      header: "종목",
       render: (r) => (
         <span title={r.instrument_id} className="text-xs font-mono">
           {truncateUuid(r.instrument_id)}
         </span>
       ),
     },
-    { key: "quantity", header: "Qty", render: (r) => formatQty(r.quantity) },
+    { key: "quantity", header: "수량", render: (r) => formatQty(r.quantity) },
     {
       key: "average_price",
-      header: "Avg Cost",
+      header: "평균단가",
       render: (r) => formatCurrency(r.average_price, "KRW"),
     },
     {
       key: "market_price",
-      header: "Market Price",
+      header: "시장가",
       render: (r) => formatCurrency(r.market_price, "KRW"),
     },
     {
       key: "unrealized_pnl",
-      header: "Unrealized P&L",
+      header: "미실현 손익",
       render: (r) => {
         const pnl = r.unrealized_pnl ?? 0;
         return (
@@ -231,7 +243,7 @@ export default function AccountsView() {
         );
       },
     },
-    { key: "snapshot_at", header: "Snapshot" },
+    { key: "snapshot_at", header: "스냅샷" },
   ];
 
   // ── Render ──────────────────────────────────────────────────────
@@ -243,19 +255,19 @@ export default function AccountsView() {
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-[#0f172a]">Accounts</h1>
+          <h1 className="text-2xl font-semibold text-[#0f172a]">계좌</h1>
           <p className="text-sm text-[#64748b] mt-1">
-            View account status, positions, and cash balances
+            계좌 상태, 포지션, 현금 잔고 조회
           </p>
           <p className="text-xs text-[#94a3b8] mt-0.5">
-            Account metadata from internal database
+            내부 데이터베이스 계좌 메타데이터
           </p>
         </div>
         {/* Selected client indicator */}
         {selectedClient && (
           <div className="flex items-center gap-2 bg-white rounded-lg border border-[#e2e8f0] px-3 py-2 text-sm">
             <Users className="h-4 w-4 text-[#64748b]" />
-            <span className="text-[#64748b]">Client:</span>
+            <span className="text-[#64748b]">클라이언트:</span>
             <span className="font-medium text-[#0f172a]">
               {selectedClient.name}
             </span>
@@ -269,7 +281,7 @@ export default function AccountsView() {
         <div className="flex items-center justify-center bg-white rounded-xl border border-[#e2e8f0] p-12">
           <div className="text-center">
             <Users className="h-8 w-8 text-[#94a3b8] mx-auto mb-2" />
-            <p className="text-sm text-[#64748b]">No clients found. No accounts to display.</p>
+            <p className="text-sm text-[#64748b]">클라이언트가 없습니다. 표시할 계좌가 없습니다.</p>
           </div>
         </div>
       ) : (
@@ -277,16 +289,16 @@ export default function AccountsView() {
           {/* Accounts List */}
           <div className={safeSelectedAccount ? "col-span-5" : "col-span-12"}>
             <FilterBar
-              searchPlaceholder="Search account alias or number..."
+              searchPlaceholder="계좌 별칭 또는 번호 검색..."
               searchValue={searchText}
               onSearchChange={setSearchText}
               filters={[
                 {
                   key: "env",
-                  label: "Environment",
+                  label: "환경",
                   options: [
-                    { label: "Paper", value: "paper" },
-                    { label: "Live", value: "live" },
+                    { label: "모의", value: "paper" },
+                    { label: "실전", value: "live" },
                   ],
                   value: envFilter,
                   onChange: setEnvFilter,
@@ -303,7 +315,7 @@ export default function AccountsView() {
               onRowClick={(row) => setSelectedAccount(row.account_id)}
               selectedId={safeSelectedAccount}
               idKey="account_id"
-              emptyMessage="No accounts found for this client."
+              emptyMessage="이 클라이언트의 계좌가 없습니다."
             />
           </div>
 
@@ -314,9 +326,9 @@ export default function AccountsView() {
               {selectedAccountDetail.status === "locked" && (
                 <div className="flex items-center gap-2 bg-[#fef2f2] border border-[#f87171] rounded-lg px-4 py-3">
                   <Lock className="h-4 w-4 text-[#dc2626]" />
-                  <strong className="text-sm text-[#dc2626]">Account Locked</strong>
+                  <strong className="text-sm text-[#dc2626]">계좌 잠금</strong>
                   <span className="text-sm text-[#dc2626]">
-                    Trading and modifications are restricted.
+                    거래 및 수정이 제한됩니다.
                   </span>
                 </div>
               )}
@@ -324,7 +336,7 @@ export default function AccountsView() {
               {/* Account Detail card */}
               <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-semibold text-[#0f172a]">Account Metadata</h3>
+                  <h3 className="text-lg font-semibold text-[#0f172a]">계좌 메타데이터</h3>
                   <button
                     onClick={() => setSelectedAccount(null)}
                     className="p-1 text-[#94a3b8] hover:text-[#64748b] transition-colors"
@@ -334,31 +346,31 @@ export default function AccountsView() {
                 </div>
                 <dl className="grid grid-cols-2 gap-4">
                   <div>
-                    <dt className="text-sm text-[#64748b]">Account Code</dt>
+                    <dt className="text-sm text-[#64748b]">계좌 코드</dt>
                     <dd className="text-sm font-mono text-[#0f172a] mt-0.5">
                       {selectedAccountDetail.account_code ?? "—"}
                     </dd>
                   </div>
                   <div>
-                    <dt className="text-sm text-[#64748b]">Alias</dt>
+                    <dt className="text-sm text-[#64748b]">별칭</dt>
                     <dd className="text-sm font-medium text-[#0f172a] mt-0.5">
                       {selectedAccountDetail.account_alias ?? "—"}
                     </dd>
                   </div>
                   <div>
-                    <dt className="text-sm text-[#64748b]">Account #</dt>
+                    <dt className="text-sm text-[#64748b]">계좌번호</dt>
                     <dd className="text-sm font-mono text-[#0f172a] mt-0.5">
                       {selectedAccountDetail.account_masked ?? "—"}
                     </dd>
                   </div>
                   <div>
-                    <dt className="text-sm text-[#64748b]">Broker Code</dt>
+                    <dt className="text-sm text-[#64748b]">브로커 코드</dt>
                     <dd className="text-sm font-mono text-[#0f172a] mt-0.5">
                       {selectedAccountDetail.broker_account_code ?? "—"}
                     </dd>
                   </div>
                   <div>
-                    <dt className="text-sm text-[#64748b]">Environment</dt>
+                    <dt className="text-sm text-[#64748b]">환경</dt>
                     <dd className="mt-0.5">
                       <StatusBadge
                         variant={
@@ -372,7 +384,7 @@ export default function AccountsView() {
                     </dd>
                   </div>
                   <div>
-                    <dt className="text-sm text-[#64748b]">Status</dt>
+                    <dt className="text-sm text-[#64748b]">상태</dt>
                     <dd className="mt-0.5">
                       <StatusBadge
                         variant={
@@ -390,29 +402,29 @@ export default function AccountsView() {
                 {/* Technical IDs — muted section for UUIDs and raw refs */}
                 <div className="mt-6 pt-4 border-t border-[#e2e8f0]">
                   <h4 className="text-xs font-medium text-[#94a3b8] uppercase tracking-wider mb-2">
-                    Technical IDs
+                    기술 ID
                   </h4>
                   <dl className="grid grid-cols-3 gap-3">
                     <div>
-                      <dt className="text-xs text-[#94a3b8]">Account ID</dt>
+                      <dt className="text-xs text-[#94a3b8]">계좌 ID</dt>
                       <dd className="text-xs font-mono text-[#94a3b8] mt-0.5" title={selectedAccountDetail.account_id}>
                         {truncateUuid(selectedAccountDetail.account_id)}
                       </dd>
                     </div>
                     <div>
-                      <dt className="text-xs text-[#94a3b8]">Broker Account ID</dt>
+                      <dt className="text-xs text-[#94a3b8]">브로커 계좌 ID</dt>
                       <dd className="text-xs font-mono text-[#94a3b8] mt-0.5" title={selectedAccountDetail.broker_account_id}>
                         {truncateUuid(selectedAccountDetail.broker_account_id)}
                       </dd>
                     </div>
                     <div>
-                      <dt className="text-xs text-[#94a3b8]">Client ID</dt>
+                      <dt className="text-xs text-[#94a3b8]">클라이언트 ID</dt>
                       <dd className="text-xs font-mono text-[#94a3b8] mt-0.5" title={selectedAccountDetail.client_id}>
                         {truncateUuid(selectedAccountDetail.client_id)}
                       </dd>
                     </div>
                     <div>
-                      <dt className="text-xs text-[#94a3b8]">Broker Ref</dt>
+                      <dt className="text-xs text-[#94a3b8]">브로커 참조</dt>
                       <dd className="text-xs font-mono text-[#94a3b8] mt-0.5" title={selectedAccountDetail.broker_account_ref ?? undefined}>
                         {selectedAccountDetail.broker_account_ref ?? "—"}
                       </dd>
@@ -425,13 +437,13 @@ export default function AccountsView() {
               <div className="flex items-center gap-2">
                 <div className="h-px flex-1 bg-[#e2e8f0]" />
                 <span className="text-xs font-medium text-[#94a3b8] uppercase tracking-wider">
-                  Broker Snapshot
+                  브로커 스냅샷
                 </span>
                 <div className="h-px flex-1 bg-[#e2e8f0]" />
               </div>
 
               {detailLoading ? (
-                <LoadingSpinner text="Loading account detail..." />
+                <LoadingSpinner text="계좌 상세 로딩 중..." />
               ) : (
                 <>
                   {/* Summary cards */}
@@ -445,7 +457,7 @@ export default function AccountsView() {
                       <p className="text-2xl font-semibold text-[#0f172a]">
                         {formatCurrency(totalValue, cashBalance?.currency)}
                       </p>
-                      <p className="text-xs text-[#64748b] mt-1">Total Value</p>
+                      <p className="text-xs text-[#64748b] mt-1">총 자산</p>
                     </div>
                     <div className="bg-white rounded-xl border border-[#e2e8f0] p-4">
                       <div className="flex items-center gap-2 mb-2">
@@ -458,7 +470,7 @@ export default function AccountsView() {
                           ? formatCurrency(cashBalance.settled_cash, cashBalance.currency)
                           : "—"}
                       </p>
-                      <p className="text-xs text-[#64748b] mt-1">Cash Balance</p>
+                      <p className="text-xs text-[#64748b] mt-1">현금 잔고</p>
                     </div>
                     <div className="bg-white rounded-xl border border-[#e2e8f0] p-4">
                       <div className="flex items-center gap-2 mb-2">
@@ -484,7 +496,7 @@ export default function AccountsView() {
                         {totalPnl >= 0 ? "+" : ""}
                         {formatCurrency(totalPnl, cashBalance?.currency)}
                       </p>
-                      <p className="text-xs text-[#64748b] mt-1">Unrealized P&L</p>
+                      <p className="text-xs text-[#64748b] mt-1">미실현 손익</p>
                     </div>
                   </div>
 
@@ -493,39 +505,39 @@ export default function AccountsView() {
                     <div className="bg-white rounded-xl border border-[#e2e8f0] p-4">
                       <div className="flex items-center justify-between mb-3">
                         <h4 className="text-sm font-medium text-[#0f172a]">
-                          Broker Snapshot — Cash Balance
+                          브로커 스냅샷 — 현금 잔고
                         </h4>
-                        <span className="text-xs text-[#94a3b8] font-mono">
-                          {cashBalance.snapshot_at}
+                        <span className="text-xs text-[#94a3b8]">
+                          스냅샷: {formatSnapshotTime(cashBalance.snapshot_at)}
                         </span>
                       </div>
                       <div className="flex gap-6 text-sm flex-wrap">
                         <div>
-                          <span className="text-[#64748b]">Available: </span>
+                          <span className="text-[#64748b]">가용: </span>
                           <span className="font-semibold text-[#0f172a]">
                             {formatCurrency(cashBalance.available_cash, cashBalance.currency)}
                           </span>
                         </div>
                         <div>
-                          <span className="text-[#64748b]">Settled: </span>
+                          <span className="text-[#64748b]">결제완료: </span>
                           <span className="font-semibold text-[#0f172a]">
                             {formatCurrency(cashBalance.settled_cash, cashBalance.currency)}
                           </span>
                         </div>
                         <div>
-                          <span className="text-[#64748b]">Unsettled: </span>
+                          <span className="text-[#64748b]">미결제: </span>
                           <span className="font-semibold text-[#0f172a]">
                             {formatCurrency(cashBalance.unsettled_cash, cashBalance.currency)}
                           </span>
                         </div>
                         <div>
-                          <span className="text-[#64748b]">Currency: </span>
+                          <span className="text-[#64748b]">통화: </span>
                           <span className="font-semibold text-[#0f172a]">
                             {cashBalance.currency}
                           </span>
                         </div>
                         <div>
-                          <span className="text-[#64748b]">Source: </span>
+                          <span className="text-[#64748b]">출처: </span>
                           <span className="font-semibold text-[#0f172a]">
                             {cashBalance.source_of_truth}
                           </span>
@@ -538,11 +550,11 @@ export default function AccountsView() {
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <h4 className="text-sm font-medium text-[#0f172a]">
-                        Broker Snapshot — Positions
+                        브로커 스냅샷 — 포지션
                       </h4>
                       {positions.length > 0 && (
-                        <span className="text-xs text-[#94a3b8] font-mono">
-                          {positions[0].snapshot_at}
+                        <span className="text-xs text-[#94a3b8]">
+                          스냅샷: {formatSnapshotTime(positions[0].snapshot_at)}
                         </span>
                       )}
                     </div>
@@ -550,7 +562,7 @@ export default function AccountsView() {
                       columns={positionColumns}
                       data={positions}
                       idKey="position_snapshot_id"
-                      emptyMessage="No positions for this account."
+                      emptyMessage="이 계좌의 포지션이 없습니다."
                       compact
                     />
                   </div>

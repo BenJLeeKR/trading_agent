@@ -121,6 +121,7 @@ class ReconciliationSummary(BaseModel):
     incomplete_recon_count: int
     recent_active_locks: list[BlockingLockStatus]
     recent_incomplete_runs: list[ReconciliationRunSummary]
+    generated_at: datetime
 
 
 class DecisionContextDetail(BaseModel):
@@ -345,3 +346,4 @@ class BrokerCapacityResponse(BaseModel):
     websocket: WsSubscriptionSnapshot
     market_data_subscriptions: int
     order_event_accounts: list[str]
+    generated_at: datetime

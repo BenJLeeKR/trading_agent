@@ -43,6 +43,7 @@ class TestBrokerCapacityWithAdapter:
         assert "websocket" in data
         assert "market_data_subscriptions" in data
         assert "order_event_accounts" in data
+        assert "generated_at" in data
 
         assert data["broker_name"] == "MagicMock"
         assert data["environment"] == "paper"

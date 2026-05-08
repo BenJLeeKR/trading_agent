@@ -32,7 +32,7 @@ export default function OrderDetail() {
         setBrokerOrders(b);
       })
       .catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : "Failed to load order detail";
+        const msg = err instanceof Error ? err.message : "주문 상세를 불러오지 못했습니다";
         setError(msg);
       })
       .finally(() => setLoading(false));
@@ -40,32 +40,32 @@ export default function OrderDetail() {
 
   if (loading) return <LoadingSpinner />;
   if (error) return <ErrorBanner message={error} onDismiss={() => setError(null)} />;
-  if (!order) return <p className="p-6 text-[#64748b]">Order not found.</p>;
+  if (!order) return <p className="p-6 text-[#64748b]">주문을 찾을 수 없습니다.</p>;
 
   const eventColumns: Column<OrderEvent>[] = [
-    { key: "timestamp", header: "Timestamp" },
+    { key: "timestamp", header: "시각" },
     {
       key: "from_status",
-      header: "From",
+      header: "이전",
       render: (r) => <StatusBadge status={r.from_status} />,
     },
     {
       key: "to_status",
-      header: "To",
+      header: "이후",
       render: (r) => <StatusBadge status={r.to_status} />,
     },
-    { key: "reason", header: "Reason" },
+    { key: "reason", header: "사유" },
   ];
 
   const brokerColumns: Column<BrokerOrderView>[] = [
-    { key: "broker_id", header: "Broker" },
-    { key: "native_order_id", header: "Native Order ID" },
+    { key: "broker_id", header: "브로커" },
+    { key: "native_order_id", header: "Native 주문 ID" },
     {
       key: "status",
-      header: "Status",
+      header: "상태",
       render: (r) => <StatusBadge status={r.status} />,
     },
-    { key: "submitted_at", header: "Submitted At" },
+    { key: "submitted_at", header: "제출 시각" },
   ];
 
   return (
@@ -76,14 +76,14 @@ export default function OrderDetail() {
         className="inline-flex items-center gap-1 text-sm text-[#64748b] hover:text-[#0f172a] transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
-        Back to Orders
+        주문 목록으로
       </Link>
 
       {/* Order Detail card */}
       <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="text-lg font-semibold text-[#0f172a]">Order Detail</h3>
+            <h3 className="text-lg font-semibold text-[#0f172a]">주문 상세</h3>
             <p className="text-sm text-[#64748b]">{order.symbol} · {order.side} · {order.order_type}</p>
           </div>
           <code className="text-xs font-mono text-[#64748b] bg-[#f8fafc] px-2 py-1 rounded">
@@ -93,11 +93,11 @@ export default function OrderDetail() {
 
         <dl className="grid grid-cols-2 gap-4">
           <div>
-            <dt className="text-sm text-[#64748b]">Symbol</dt>
+            <dt className="text-sm text-[#64748b]">심볼</dt>
             <dd className="text-sm font-medium text-[#0f172a] mt-0.5">{order.symbol}</dd>
           </div>
           <div>
-            <dt className="text-sm text-[#64748b]">Side</dt>
+            <dt className="text-sm text-[#64748b]">매매</dt>
             <dd className="mt-0.5">
               <StatusBadge variant={order.side.toLowerCase() === "buy" ? "success" : "error"}>
                 {order.side}
@@ -105,53 +105,53 @@ export default function OrderDetail() {
             </dd>
           </div>
           <div>
-            <dt className="text-sm text-[#64748b]">Status</dt>
+            <dt className="text-sm text-[#64748b]">상태</dt>
             <dd className="mt-0.5"><StatusBadge status={order.status} /></dd>
           </div>
           <div>
-            <dt className="text-sm text-[#64748b]">Order Type</dt>
+            <dt className="text-sm text-[#64748b]">주문 유형</dt>
             <dd className="text-sm font-medium text-[#0f172a] mt-0.5">{order.order_type}</dd>
           </div>
           <div>
-            <dt className="text-sm text-[#64748b]">Qty</dt>
+            <dt className="text-sm text-[#64748b]">수량</dt>
             <dd className="text-sm font-medium text-[#0f172a] mt-0.5">{order.requested_quantity}</dd>
           </div>
           <div>
-            <dt className="text-sm text-[#64748b]">Filled Qty</dt>
+            <dt className="text-sm text-[#64748b]">체결 수량</dt>
             <dd className="text-sm font-medium text-[#0f172a] mt-0.5">{order.filled_qty ?? "—"}</dd>
           </div>
           <div>
-            <dt className="text-sm text-[#64748b]">Avg Fill Price</dt>
+            <dt className="text-sm text-[#64748b]">평균 체결가</dt>
             <dd className="text-sm font-mono text-[#0f172a] mt-0.5">{order.avg_fill_price ?? "—"}</dd>
           </div>
           <div>
-            <dt className="text-sm text-[#64748b]">Client Order ID</dt>
+            <dt className="text-sm text-[#64748b]">클라이언트 주문 ID</dt>
             <dd className="text-sm font-medium text-[#0f172a] mt-0.5">{order.client_order_id}</dd>
           </div>
           <div>
-            <dt className="text-sm text-[#64748b]">Created</dt>
+            <dt className="text-sm text-[#64748b]">생성일</dt>
             <dd className="text-sm text-[#0f172a] mt-0.5">{order.created_at ?? "—"}</dd>
           </div>
           <div>
-            <dt className="text-sm text-[#64748b]">Updated</dt>
+            <dt className="text-sm text-[#64748b]">수정일</dt>
             <dd className="text-sm text-[#0f172a] mt-0.5">{order.updated_at ?? "—"}</dd>
           </div>
         </dl>
 
         {order.error_message && (
           <div className="mt-4 p-3 bg-[#fef2f2] border border-[#f87171] rounded-lg">
-            <strong className="text-sm text-[#dc2626]">Error:</strong>
+            <strong className="text-sm text-[#dc2626]">오류:</strong>
             <span className="text-sm text-[#dc2626] ml-1">{order.error_message}</span>
           </div>
         )}
 
         {(order.decision_context_id || order.trade_decision_id) && (
           <div className="mt-4 pt-4 border-t border-[#e2e8f0]">
-            <p className="text-xs font-semibold text-[#64748b] mb-2">Decision Links</p>
+            <p className="text-xs font-semibold text-[#64748b] mb-2">의사결정 연결</p>
             <div className="flex gap-4">
               {order.decision_context_id && (
                 <span className="text-sm">
-                  Context:{" "}
+                  컨텍스트:{" "}
                   <Link
                     to={`/decisions?contextId=${order.decision_context_id}`}
                     className="text-[#3b82f6] hover:text-[#2563eb] font-mono text-xs"
@@ -162,7 +162,7 @@ export default function OrderDetail() {
               )}
               {order.trade_decision_id && (
                 <span className="text-sm">
-                  Decision:{" "}
+                  의사결정:{" "}
                   <Link
                     to={`/decisions?contextId=${order.decision_context_id ?? order.trade_decision_id}`}
                     className="text-[#3b82f6] hover:text-[#2563eb] font-mono text-xs"
@@ -178,24 +178,24 @@ export default function OrderDetail() {
 
       {/* State Events */}
       <div className="space-y-2">
-        <h4 className="text-sm font-medium text-[#0f172a]">State Events ({events.length})</h4>
+        <h4 className="text-sm font-medium text-[#0f172a]">상태 이벤트 ({events.length})</h4>
         <DataTable
           columns={eventColumns}
           data={events}
           idKey="event_id"
-          emptyMessage="No state events recorded."
+          emptyMessage="기록된 상태 이벤트가 없습니다."
           compact
         />
       </div>
 
       {/* Broker Orders */}
       <div className="space-y-2">
-        <h4 className="text-sm font-medium text-[#0f172a]">Broker Orders ({brokerOrders.length})</h4>
+        <h4 className="text-sm font-medium text-[#0f172a]">브로커 주문 ({brokerOrders.length})</h4>
         <DataTable
           columns={brokerColumns}
           data={brokerOrders}
           idKey="broker_order_id"
-          emptyMessage="No broker orders."
+          emptyMessage="브로커 주문이 없습니다."
           compact
         />
       </div>

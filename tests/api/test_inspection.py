@@ -176,6 +176,8 @@ class TestReconciliation:
         assert data["incomplete_recon_count"] >= 1
         assert len(data["recent_active_locks"]) >= 1
         assert len(data["recent_incomplete_runs"]) >= 1
+        # generated_at freshness timestamp
+        assert "generated_at" in data
         # Check structure of first lock
         lock = data["recent_active_locks"][0]
         assert "lock_id" in lock

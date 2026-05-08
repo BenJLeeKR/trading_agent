@@ -97,7 +97,7 @@ describe("AccountsView data fetching", () => {
       new Promise<never>(() => {}),
     );
     render(<AccountsView />);
-    expect(screen.getByText("Loading...")).toBeInTheDocument();
+    expect(screen.getByText("로딩 중...")).toBeInTheDocument();
   });
 
   it("fetches clients and displays account list", async () => {
@@ -121,7 +121,7 @@ describe("AccountsView data fetching", () => {
     expect(screen.getByText("Test Client")).toBeInTheDocument();
     expect(screen.getByText("(CLIENT01)")).toBeInTheDocument();
     // Data source label
-    expect(screen.getByText("Account metadata from internal database")).toBeInTheDocument();
+    expect(screen.getByText("내부 데이터베이스 계좌 메타데이터")).toBeInTheDocument();
   });
 
   it("shows empty state when no clients exist", async () => {
@@ -130,7 +130,7 @@ describe("AccountsView data fetching", () => {
     render(<AccountsView />);
 
     await waitFor(() => {
-      expect(screen.getByText("No clients found. No accounts to display.")).toBeInTheDocument();
+      expect(screen.getByText("클라이언트가 없습니다. 표시할 계좌가 없습니다.")).toBeInTheDocument();
     });
   });
 
@@ -169,9 +169,9 @@ describe("AccountsView detail panel", () => {
 
     // Wait for detail panel + positions/cash balance data to load
     await waitFor(() => {
-      expect(screen.getByText("Account Metadata")).toBeInTheDocument();
-      expect(screen.getByText("Broker Snapshot — Positions")).toBeInTheDocument();
-      expect(screen.getByText("Broker Snapshot — Cash Balance")).toBeInTheDocument();
+      expect(screen.getByText("계좌 메타데이터")).toBeInTheDocument();
+      expect(screen.getByText("브로커 스냅샷 — 포지션")).toBeInTheDocument();
+      expect(screen.getByText("브로커 스냅샷 — 현금 잔고")).toBeInTheDocument();
     });
 
     // Detail fields — broker_account_code appears in table + detail panel
@@ -181,17 +181,23 @@ describe("AccountsView detail panel", () => {
     // Environment appears in table + detail panel
     expect(screen.getAllByText("PAPER").length).toBeGreaterThanOrEqual(2);
 
-    // Summary cards — "Unrealized P&L" also appears as a column header
+    // Summary cards — "미실현 손익" also appears as a column header
     // in the positions table, so use getAllByText
-    expect(screen.getAllByText("Unrealized P&L").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("미실현 손익").length).toBeGreaterThanOrEqual(2);
 
     // Cash balance detail — settled cash appears in the summary card
     // and the cash balance detail section
     await waitFor(() => {
       // "1,000,000" might be split across text nodes in jsdom;
       // verify via the parent text content instead
-      expect(screen.getByText(/Settled:/)).toBeInTheDocument();
+      expect(screen.getByText(/결제완료:/)).toBeInTheDocument();
     });
+
+    // Freshness indicator — "스냅샷:" with formatted timestamp appears
+    // in both Cash Balance header and Positions header
+    // mock data has snapshot_at: "2024-01-01T12:00:00Z" → "스냅샷: 2024-01-01 12:00:00"
+    // Two elements match (Cash Balance + Positions), so use getAllByText
+    expect(screen.getAllByText(/^스냅샷:/).length).toBe(2);
   });
 
   it("handles null cash balance", async () => {
@@ -209,11 +215,11 @@ describe("AccountsView detail panel", () => {
     screen.getByText("CLIENT1-PAPER-PAPER").click();
 
     await waitFor(() => {
-      expect(screen.getByText("Account Metadata")).toBeInTheDocument();
+      expect(screen.getByText("계좌 메타데이터")).toBeInTheDocument();
     });
 
     // Cash balance section should not render
-    expect(screen.queryByText("Broker Snapshot — Cash Balance")).not.toBeInTheDocument();
+    expect(screen.queryByText("브로커 스냅샷 — 현금 잔고")).not.toBeInTheDocument();
 
     // Cash Balance summary card shows "—"
     const cashCard = screen.getAllByText("—");
@@ -242,7 +248,7 @@ describe("AccountsView detail panel", () => {
     screen.getByText("CLIENT1-PAPER-PAPER").click();
 
     await waitFor(() => {
-      expect(screen.getByText("Account Locked")).toBeInTheDocument();
+      expect(screen.getByText("계좌 잠금")).toBeInTheDocument();
     });
   });
 });

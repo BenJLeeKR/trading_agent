@@ -21,16 +21,16 @@ describe("ReconciliationView empty state", () => {
     render(<ReconciliationView />);
 
     await waitFor(() => {
-      expect(screen.getByText("Reconciliation")).toBeInTheDocument();
+      expect(screen.getByText("정합성 점검")).toBeInTheDocument();
     });
 
     // Active Locks section — empty state
-    expect(screen.getByText("Active Locks")).toBeInTheDocument();
-    expect(screen.getByText("No blocking locks found.")).toBeInTheDocument();
+    expect(screen.getByText("활성 잠금")).toBeInTheDocument();
+    expect(screen.getByText("차단 잠금이 없습니다.")).toBeInTheDocument();
 
     // Reconciliation Runs section — empty state
-    expect(screen.getByText("Reconciliation Runs")).toBeInTheDocument();
-    expect(screen.getByText("No reconciliation runs found.")).toBeInTheDocument();
+    expect(screen.getByText("정합성 점검 실행")).toBeInTheDocument();
+    expect(screen.getByText("정합성 점검 실행 기록이 없습니다.")).toBeInTheDocument();
   });
 });
 
@@ -42,12 +42,12 @@ describe("ReconciliationView no locks warning", () => {
     render(<ReconciliationView />);
 
     await waitFor(() => {
-      expect(screen.getByText("Reconciliation")).toBeInTheDocument();
+      expect(screen.getByText("정합성 점검")).toBeInTheDocument();
     });
 
     // No warning banner
     expect(
-      screen.queryByText(/Active Blocking Lock/i),
+      screen.queryByText(/활성 차단 잠금/i),
     ).not.toBeInTheDocument();
   });
 });

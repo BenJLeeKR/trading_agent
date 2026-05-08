@@ -89,6 +89,7 @@ export interface ReconciliationSummary {
   incomplete_recon_count: number;
   recent_active_locks: BlockingLockStatus[];
   recent_incomplete_runs: ReconciliationRunSummary[];
+  generated_at: string;
 }
 
 export interface AccountSummary {
@@ -224,6 +225,7 @@ export interface BrokerCapacityResponse {
   websocket: WsSubscriptionSnapshot;
   market_data_subscriptions: number;
   order_event_accounts: string[];
+  generated_at: string;
 }
 
 /* ───────────────────────────────────────────

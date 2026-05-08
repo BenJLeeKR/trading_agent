@@ -32,31 +32,31 @@ describe("BrokerCapacityPanel with valid data", () => {
 
     // Wait for data to load
     await waitFor(() => {
-      expect(screen.getByText("Broker Capacity")).toBeInTheDocument();
+      expect(screen.getByText("브로커 용량")).toBeInTheDocument();
     });
 
     // Header info
     expect(screen.getByText("koreainvestment")).toBeInTheDocument();
     expect(screen.getByText("paper")).toBeInTheDocument();
 
-    // can_accept_new_entries = true → "YES" badge
-    expect(screen.getByText("YES")).toBeInTheDocument();
+    // can_accept_new_entries = true → "허용" badge
+    expect(screen.getByText("허용")).toBeInTheDocument();
 
     // REST Budget section
-    expect(screen.getByText("REST Budget")).toBeInTheDocument();
-    expect(screen.getByText("Auth")).toBeInTheDocument();
-    expect(screen.getByText("Order")).toBeInTheDocument();
-    expect(screen.getByText("Inquiry")).toBeInTheDocument();
-    expect(screen.getByText("Reconciliation")).toBeInTheDocument();
-    expect(screen.getByText("Market Data")).toBeInTheDocument();
+    expect(screen.getByText("REST 예산")).toBeInTheDocument();
+    expect(screen.getByText("인증")).toBeInTheDocument();
+    expect(screen.getByText("주문")).toBeInTheDocument();
+    expect(screen.getByText("조회")).toBeInTheDocument();
+    expect(screen.getByText("정합성 점검")).toBeInTheDocument();
+    expect(screen.getByText("시장 데이터")).toBeInTheDocument();
 
     // REST budget values — "5/8 (38%)" etc. (0.375 → 38%)
     expect(screen.getByText("5/8 (38%)")).toBeInTheDocument();
     expect(screen.getByText("15/20 (25%)")).toBeInTheDocument();
 
     // WebSocket section
-    expect(screen.getByText("WebSocket")).toBeInTheDocument();
-    expect(screen.getByText("Connected")).toBeInTheDocument(); // ws_connected badge
+    expect(screen.getByText("웹소켓")).toBeInTheDocument();
+    expect(screen.getByText("연결됨")).toBeInTheDocument(); // ws_connected badge
     expect(screen.getByText("7 / 50")).toBeInTheDocument(); // total_used / max_subscriptions
     expect(screen.getByText("43")).toBeInTheDocument(); // remaining
     expect(screen.getByText("5 / 40")).toBeInTheDocument(); // current_critical / critical_limit
@@ -65,6 +65,9 @@ describe("BrokerCapacityPanel with valid data", () => {
     // Market data subs + order event accounts
     expect(screen.getByText("3")).toBeInTheDocument(); // market_data_subscriptions
     expect(screen.getByText("1")).toBeInTheDocument(); // order_event_accounts.length
+
+    // Freshness indicator — "스냅샷 HH:mm:ss" appears in the summary row
+    expect(screen.getByText(/스냅샷/)).toBeInTheDocument();
   });
 });
 
@@ -82,7 +85,7 @@ describe("BrokerCapacityPanel warning state", () => {
     render(<BrokerCapacityPanel />);
 
     await waitFor(() => {
-      expect(screen.getByText("NO")).toBeInTheDocument();
+      expect(screen.getByText("차단")).toBeInTheDocument();
     });
   });
 });
@@ -99,12 +102,12 @@ describe("BrokerCapacityPanel 503 state", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText("Capacity information unavailable in this runtime"),
+        screen.getByText("이 런타임에서는 용량 정보를 사용할 수 없습니다"),
       ).toBeInTheDocument();
     });
 
     expect(
-      screen.getByText("Broker adapter not configured"),
+      screen.getByText("브로커 어댑터가 설정되지 않았습니다"),
     ).toBeInTheDocument();
   });
 });
@@ -120,7 +123,7 @@ describe("BrokerCapacityPanel network error", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/Network error/i),
+        screen.getByText("Network error"),
       ).toBeInTheDocument();
     });
   });

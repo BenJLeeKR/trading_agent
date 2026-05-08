@@ -10,6 +10,7 @@ the endpoint returns a 503 status.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -120,4 +121,5 @@ async def get_broker_capacity(request: Request) -> BrokerCapacityResponse:
         websocket=ws_snapshot,
         market_data_subscriptions=md_subs,
         order_event_accounts=order_accounts,
+        generated_at=datetime.now(timezone.utc),
     )

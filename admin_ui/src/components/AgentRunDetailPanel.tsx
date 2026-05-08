@@ -30,6 +30,7 @@ export function AgentRunDetailPanel({ run }: AgentRunDetailPanelProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   const copyToClipboard = (text: string, field: string) => {
+    // field is kept for potential future i18n use
     navigator.clipboard.writeText(text);
     setCopiedField(field);
     setTimeout(() => setCopiedField(null), 2000);
@@ -38,7 +39,7 @@ export function AgentRunDetailPanel({ run }: AgentRunDetailPanelProps) {
   if (!run) {
     return (
       <div className="bg-white rounded-xl border border-[#e2e8f0] p-8 flex items-center justify-center min-h-[300px]">
-        <p className="text-sm text-[#94a3b8]">Select an agent run to view details</p>
+        <p className="text-sm text-[#94a3b8]">에이전트 실행을 선택하면 상세 정보를 볼 수 있습니다.</p>
       </div>
     );
   }
@@ -66,7 +67,7 @@ export function AgentRunDetailPanel({ run }: AgentRunDetailPanelProps) {
             <button
               onClick={() => copyToClipboard(String(displayValue), label)}
               className="ml-2 p-1 hover:bg-[#f1f5f9] rounded transition-colors"
-              title="Copy to clipboard"
+              title="클립보드에 복사"
             >
               <Copy
                 className={`h-3 w-3 ${
@@ -85,19 +86,19 @@ export function AgentRunDetailPanel({ run }: AgentRunDetailPanelProps) {
       <div className="overflow-y-auto flex-1 p-4 md:p-6">
         {/* Metadata Section */}
         <div className="mb-6">
-          <h3 className="text-sm font-semibold text-[#0f172a] mb-3">Metadata</h3>
+          <h3 className="text-sm font-semibold text-[#0f172a] mb-3">메타데이터</h3>
           <div className="space-y-0 text-xs">
-            <MetadataField label="Agent Run ID" value={run.agent_run_id} copyable />
-            <MetadataField label="Decision Context ID" value={run.decision_context_id} copyable />
-            <MetadataField label="Agent Type" value={agentTypeLabel(run.agent_type)} />
-            <MetadataField label="Status" value={run.status} />
-            <MetadataField label="Started At" value={formatTime(run.started_at)} />
+            <MetadataField label="에이전트 실행 ID" value={run.agent_run_id} copyable />
+            <MetadataField label="의사결정 컨텍스트 ID" value={run.decision_context_id} copyable />
+            <MetadataField label="에이전트 유형" value={agentTypeLabel(run.agent_type)} />
+            <MetadataField label="상태" value={run.status} />
+            <MetadataField label="시작" value={formatTime(run.started_at)} />
             <MetadataField
-              label="Completed At"
+              label="완료"
               value={run.completed_at ? formatTime(run.completed_at) : "-"}
             />
-            <MetadataField label="Model ID" value={run.model_id} copyable />
-            <MetadataField label="Prompt ID" value={run.prompt_id} copyable />
+            <MetadataField label="모델 ID" value={run.model_id} copyable />
+            <MetadataField label="프롬프트 ID" value={run.prompt_id} copyable />
             <MetadataField label="Temperature" value={run.temperature} />
             <MetadataField label="Seed" value={run.seed} />
           </div>
@@ -106,11 +107,11 @@ export function AgentRunDetailPanel({ run }: AgentRunDetailPanelProps) {
         {/* Summary Section */}
         {run.structured_output_json && (
           <div className="mb-6">
-            <h3 className="text-sm font-semibold text-[#0f172a] mb-3">Structured Output</h3>
+            <h3 className="text-sm font-semibold text-[#0f172a] mb-3">구조화된 출력</h3>
             <div className="bg-[#f8fafc] rounded-lg p-4 space-y-2 text-xs">
               {!!run.structured_output_json["summary"] && (
                 <div>
-                  <p className="text-[#64748b] font-medium mb-1">Summary</p>
+                  <p className="text-[#64748b] font-medium mb-1">요약</p>
                   <p className="text-[#0f172a]">
                     {String(run.structured_output_json["summary"])}
                   </p>
@@ -118,7 +119,7 @@ export function AgentRunDetailPanel({ run }: AgentRunDetailPanelProps) {
               )}
               {!!run.structured_output_json["decision_type"] && (
                 <div>
-                  <p className="text-[#64748b] font-medium mb-1">Decision Type</p>
+                  <p className="text-[#64748b] font-medium mb-1">의사결정 유형</p>
                   <p className="text-[#0f172a]">
                     {String(run.structured_output_json["decision_type"])}
                   </p>
@@ -126,7 +127,7 @@ export function AgentRunDetailPanel({ run }: AgentRunDetailPanelProps) {
               )}
               {!!run.structured_output_json["risk_opinion"] && (
                 <div>
-                  <p className="text-[#64748b] font-medium mb-1">Risk Opinion</p>
+                  <p className="text-[#64748b] font-medium mb-1">리스크 의견</p>
                   <p className="text-[#0f172a]">
                     {String(run.structured_output_json["risk_opinion"])}
                   </p>
@@ -134,7 +135,7 @@ export function AgentRunDetailPanel({ run }: AgentRunDetailPanelProps) {
               )}
               {Array.isArray(run.structured_output_json["reason_codes"]) && (
                 <div>
-                  <p className="text-[#64748b] font-medium mb-1">Reason Codes</p>
+                  <p className="text-[#64748b] font-medium mb-1">사유 코드</p>
                   <div className="flex flex-wrap gap-1">
                     {(run.structured_output_json["reason_codes"] as string[]).map(
                       (code, idx) => (
@@ -156,7 +157,7 @@ export function AgentRunDetailPanel({ run }: AgentRunDetailPanelProps) {
         {/* Raw JSON Section */}
         {run.structured_output_json && (
           <div>
-            <h3 className="text-sm font-semibold text-[#0f172a] mb-3">Raw Output</h3>
+            <h3 className="text-sm font-semibold text-[#0f172a] mb-3">원시 출력</h3>
             <pre className="bg-[#f8fafc] rounded-lg p-4 overflow-auto text-[11px] text-[#0f172a] font-mono border border-[#e2e8f0] max-h-48">
               {JSON.stringify(run.structured_output_json, null, 2)}
             </pre>
@@ -165,7 +166,7 @@ export function AgentRunDetailPanel({ run }: AgentRunDetailPanelProps) {
 
         {!run.structured_output_json && (
           <div className="bg-[#f8fafc] rounded-lg p-4 text-center">
-            <p className="text-sm text-[#94a3b8]">No structured output available</p>
+            <p className="text-sm text-[#94a3b8]">구조화된 출력이 없습니다.</p>
           </div>
         )}
       </div>

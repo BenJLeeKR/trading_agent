@@ -31,7 +31,7 @@ export default function AgentRunsView() {
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          const msg = err instanceof Error ? err.message : "Failed to load agent runs";
+          const msg = err instanceof Error ? err.message : "에이전트 실행 기록을 불러오지 못했습니다";
           setError(msg);
           setLoading(false);
         }
@@ -67,7 +67,7 @@ export default function AgentRunsView() {
   if (loading) {
     return (
       <div className="p-6">
-        <LoadingSpinner text="Loading agent runs..." />
+        <LoadingSpinner text="에이전트 실행 기록 로딩 중..." />
       </div>
     );
   }
@@ -86,9 +86,9 @@ export default function AgentRunsView() {
     <div className="p-6 space-y-6">
       {/* Page Header */}
       <div>
-        <h1 className="text-2xl font-semibold text-[#0f172a]">Agent Runs</h1>
+        <h1 className="text-2xl font-semibold text-[#0f172a]">에이전트 실행</h1>
         <p className="text-sm text-[#64748b] mt-1">
-          Review AI execution traces for trading decisions
+          AI 에이전트 실행 추적 검토
         </p>
       </div>
 
@@ -99,7 +99,7 @@ export default function AgentRunsView() {
           <Search className="absolute left-3 top-3 h-4 w-4 text-[#94a3b8]" />
           <input
             type="text"
-            placeholder="Search by Decision Context ID or Agent Run ID..."
+            placeholder="의사결정 컨텍스트 ID 또는 에이전트 실행 ID 검색..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-10 pr-4 py-2 border border-[#e2e8f0] rounded-lg text-sm text-[#0f172a] placeholder-[#94a3b8] focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:border-transparent"
@@ -110,41 +110,41 @@ export default function AgentRunsView() {
         <div className="flex flex-wrap gap-4">
           <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-[#64748b] uppercase tracking-wider">
-              Agent Type
+              에이전트 유형
             </label>
             <select
-              aria-label="Agent Type"
+              aria-label="에이전트 유형"
               value={agentTypeFilter}
               onChange={(e) => setAgentTypeFilter(e.target.value)}
               className="px-3 py-2 border border-[#e2e8f0] rounded-lg text-sm text-[#0f172a] focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:border-transparent cursor-pointer"
             >
-              <option value="all">All</option>
-              <option value="event_interpretation">Event Interpretation (EI)</option>
-              <option value="ai_risk">AI Risk (AR)</option>
-              <option value="final_decision_composer">Final Decision Composer (FDC)</option>
+              <option value="all">전체</option>
+              <option value="event_interpretation">이벤트 해석 (EI)</option>
+              <option value="ai_risk">AI 리스크 (AR)</option>
+              <option value="final_decision_composer">최종 의사결정 (FDC)</option>
             </select>
           </div>
 
           <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-[#64748b] uppercase tracking-wider">
-              Status
+              상태
             </label>
             <select
-              aria-label="Status"
+              aria-label="상태"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
               className="px-3 py-2 border border-[#e2e8f0] rounded-lg text-sm text-[#0f172a] focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:border-transparent cursor-pointer"
             >
-              <option value="all">All</option>
-              <option value="completed">Completed</option>
-              <option value="running">Running</option>
-              <option value="failed">Failed</option>
+              <option value="all">전체</option>
+              <option value="completed">완료</option>
+              <option value="running">실행 중</option>
+              <option value="failed">실패</option>
             </select>
           </div>
 
           <div className="flex items-end">
             <span className="text-xs text-[#94a3b8]">
-              {filteredRuns.length} result{filteredRuns.length !== 1 ? "s" : ""}
+              {filteredRuns.length}개 결과
             </span>
           </div>
         </div>
