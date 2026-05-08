@@ -164,6 +164,30 @@ class TestReconciliation:
         response = client.get("/reconciliation/locks?account_id=not-a-uuid")
         assert response.status_code == 400
 
+    # -- Plan 64: Aggregate summary endpoint --
+
+    def test_reconciliation_summary(self, client: TestClient) -> None:
+        """``GET /reconciliation/summary`` returns aggregate metrics."""
+        response = client.get("/reconciliation/summary")
+        assert response.status_code == 200
+        data = response.json()
+        # Should have at least the seeded lock and run
+        assert data["active_locks_count"] >= 1
+        assert data["incomplete_recon_count"] >= 1
+        assert len(data["recent_active_locks"]) >= 1
+        assert len(data["recent_incomplete_runs"]) >= 1
+        # Check structure of first lock
+        lock = data["recent_active_locks"][0]
+        assert "lock_id" in lock
+        assert "account_id" in lock
+        assert "symbol" in lock
+        assert "is_active" in lock
+        # Check structure of first incomplete run
+        run = data["recent_incomplete_runs"][0]
+        assert run["status"] != "completed"
+        assert "reconciliation_run_id" in run
+        assert "account_id" in run
+
 
 # ── Phase 2: Account, Client, Instrument, Position, Cash-balance, Broker-order ──
 

@@ -84,6 +84,13 @@ export interface BlockingLockStatus {
   is_expired: boolean;
 }
 
+export interface ReconciliationSummary {
+  active_locks_count: number;
+  incomplete_recon_count: number;
+  recent_active_locks: BlockingLockStatus[];
+  recent_incomplete_runs: ReconciliationRunSummary[];
+}
+
 export interface AccountSummary {
   account_id: string;
   client_id: string;
@@ -185,6 +192,38 @@ export interface AgentRunResponse {
   status: string;
   completed_at: string | null;
   created_at: string | null;
+}
+
+/* ───────────────────────────────────────────
+ * Broker Capacity Inspection types
+ * ─────────────────────────────────────────── */
+
+export interface BucketSnapshot {
+  remaining: number;
+  capacity: number;
+  refill_rate: number;
+  utilization: number;
+}
+
+export interface WsSubscriptionSnapshot {
+  max_subscriptions: number;
+  critical_limit: number;
+  optional_limit: number;
+  current_critical: number;
+  current_optional: number;
+  total_used: number;
+  remaining: number;
+  ws_connected: boolean;
+}
+
+export interface BrokerCapacityResponse {
+  broker_name: string;
+  environment: string;
+  rest_budget: Record<string, BucketSnapshot>;
+  can_accept_new_entries: boolean;
+  websocket: WsSubscriptionSnapshot;
+  market_data_subscriptions: number;
+  order_event_accounts: string[];
 }
 
 /* ───────────────────────────────────────────

@@ -263,13 +263,39 @@ def create_app_from_env() -> FastAPI:
     INSPECTION_API_ROLE : str
         Role assigned to authenticated principals (default ``"viewer"``).
         Currently unused for authorization logic, but reserved for future use.
+
+    Broker adapter
+    --------------
+    When ``API_RUNTIME_MODE=postgres``, this factory also attempts to build a
+    :class:`~agent_trading.brokers.koreainvestment.adapter.KoreaInvestmentAdapter`
+    so that ``GET /broker-capacity`` returns live REST budget and WebSocket
+    subscription snapshots.  If KIS credentials are missing or the adapter
+    cannot be constructed, a warning is logged and the API server continues
+    without a broker adapter (``/broker-capacity`` returns 503).
     """
     import os
+
+    from agent_trading.config.settings import AppSettings
+    from agent_trading.runtime.bootstrap import build_api_broker_adapter
 
     mode = os.getenv("API_RUNTIME_MODE", "in_memory")
     token = os.getenv("INSPECTION_API_TOKEN")
     role = os.getenv("INSPECTION_API_ROLE", "viewer")
-    return create_app(runtime_mode=mode, auth_token=token, auth_role=role)
+
+    # Build broker adapter in Postgres mode only.
+    # In-memory mode is for development/testing where KIS credentials may not
+    # be available — skip adapter construction entirely.
+    broker_adapter: object | None = None
+    if mode == "postgres":
+        settings = AppSettings()
+        broker_adapter = build_api_broker_adapter(settings)
+
+    return create_app(
+        runtime_mode=mode,
+        auth_token=token,
+        auth_role=role,
+        broker_adapter=broker_adapter,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════

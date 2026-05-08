@@ -299,6 +299,19 @@ class ReconciliationRepository(Protocol):
         """
         ...
 
+    # -- Plan 64: Aggregate (all-account) queries for Dashboard --
+    async def list_all_runs(
+        self, limit: int = 20
+    ) -> Sequence[ReconciliationRunEntity]:
+        """Return reconciliation runs across all accounts, newest first."""
+        ...
+
+    async def list_all_active_locks(
+        self,
+    ) -> Sequence[BlockingLockEntity]:
+        """Return active (non-expired) blocking locks across all accounts."""
+        ...
+
 
 class AuditLogRepository(Protocol):
     async def add(self, audit_log: AuditLogEntity) -> AuditLogEntity:

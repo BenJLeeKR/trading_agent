@@ -13,6 +13,7 @@ import type {
   TradeDecisionDetail,
   DecisionContextDetail,
   AgentRunResponse,
+  BrokerCapacityResponse,
 } from "../../types/api";
 
 export const mockHealthOk: HealthResponse = {
@@ -425,3 +426,32 @@ export const mockAgentRuns: AgentRunResponse[] = [
     created_at: null,
   },
 ];
+
+/* ──────────────────────────────────────────────
+ * Broker Capacity fixtures
+ * ────────────────────────────────────────────── */
+
+export const mockBrokerCapacity: BrokerCapacityResponse = {
+  broker_name: "koreainvestment",
+  environment: "paper",
+  rest_budget: {
+    auth: { remaining: 1, capacity: 1, refill_rate: 0.1, utilization: 0 },
+    order: { remaining: 5, capacity: 8, refill_rate: 0.5, utilization: 0.375 },
+    inquiry: { remaining: 15, capacity: 20, refill_rate: 2.0, utilization: 0.25 },
+    reconciliation: { remaining: 3, capacity: 5, refill_rate: 0.5, utilization: 0.4 },
+    market_data: { remaining: 10, capacity: 10, refill_rate: 1.0, utilization: 0 },
+  },
+  can_accept_new_entries: true,
+  websocket: {
+    max_subscriptions: 50,
+    critical_limit: 40,
+    optional_limit: 10,
+    current_critical: 5,
+    current_optional: 2,
+    total_used: 7,
+    remaining: 43,
+    ws_connected: true,
+  },
+  market_data_subscriptions: 3,
+  order_event_accounts: ["aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a1"],
+};

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import BrokerCapacityPanel from "./BrokerCapacityPanel";
 import { useNavigate } from "react-router-dom";
 import type {
   AccountSummary,
@@ -7,6 +8,7 @@ import type {
   OrderSummary,
   BlockingLockStatus,
   ReconciliationRunSummary,
+  ReconciliationSummary,
 } from "../types/api";
 import {
   getClients,
@@ -14,8 +16,7 @@ import {
   getPositions,
   getCashBalance,
   getOrders,
-  getReconciliationLocks,
-  getReconciliationRuns,
+  getReconciliationSummary,
 } from "../api/client";
 import { StatusBadge } from "./common/StatusBadge";
 import { ErrorBanner } from "./common/ErrorBanner";
@@ -167,11 +168,15 @@ export default function Dashboard() {
       setCashMap(new Map(cashResults));
 
       // Step 4: fetch orders, locks, reconciliation runs (parallel)
-      const [ordersData, locksData, reconData] = await Promise.all([
-        getOrders(),
-        getReconciliationLocks(),
-        getReconciliationRuns(),
-      ]);
+      // Reconciliation APIs require account_id; use first account as representative.
+      const repAccountId = allAccounts[0]?.account_id;
+      const [ordersData, locksData, reconData] = repAccountId
+        ? await Promise.all([
+            getOrders(),
+            getReconciliationLocks(repAccountId),
+            getReconciliationRuns(repAccountId),
+          ])
+        : [await getOrders(), [], []];
       setOrders(ordersData);
       setLocks(locksData);
       setReconRuns(reconData);
@@ -199,6 +204,12 @@ export default function Dashboard() {
   const incompleteReconCount = reconRuns.filter(
     (r) => r.status !== "completed",
   ).length;
+
+  // Representative account name for reconciliation scope labeling
+  const repAccountName =
+    accounts[0]?.account_alias ??
+    accounts[0]?.account_masked ??
+    "";
 
   /* ── loading / error ── */
   if (loading) return <LoadingSpinner />;
@@ -276,13 +287,13 @@ export default function Dashboard() {
           icon={<Lock className="h-5 w-5" />}
           title="Active Locks"
           value={activeLocksCount}
-          subtitle={activeLocksCount > 0 ? "Requires attention" : "No active locks"}
+          subtitle={repAccountName || "No account selected"}
         />
         <MetricCard
           icon={<RefreshCw className="h-5 w-5" />}
           title="Incomplete Recon"
           value={incompleteReconCount}
-          subtitle={incompleteReconCount > 0 ? "Needs review" : "All reconciled"}
+          subtitle={repAccountName || "No account selected"}
         />
       </div>
 
@@ -470,6 +481,11 @@ export default function Dashboard() {
             <ArrowRight className="h-4 w-4" />
           </button>
         </div>
+        {repAccountName && (
+          <p className="text-xs text-[#94a3b8]">
+            Representative account: {repAccountName}
+          </p>
+        )}
         {locks.length === 0 ? (
           <div className="bg-white rounded-xl border border-[#e2e8f0] p-8 text-center">
             <Lock className="h-8 w-8 text-[#94a3b8] mx-auto mb-2" />
@@ -527,6 +543,9 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {/* Broker Capacity Panel — independent fetch, read-only */}
+      <BrokerCapacityPanel />
     </div>
   );
 }

@@ -517,6 +517,44 @@ class InMemoryReconciliationRepository:
         results.sort(key=lambda x: x.locked_at or now, reverse=True)
         return results
 
+    # -- Plan 64: Aggregate (all-account) queries for Dashboard --
+
+    async def list_all_runs(
+        self, limit: int = 20
+    ) -> Sequence[ReconciliationRunEntity]:
+        """Return reconciliation runs across all accounts, newest first."""
+        candidates = sorted(
+            self._runs.values(), key=lambda x: x.started_at, reverse=True
+        )
+        return candidates[:limit]
+
+    async def list_all_active_locks(
+        self,
+    ) -> Sequence[BlockingLockEntity]:
+        """Return active (non-expired) blocking locks across all accounts."""
+        now = datetime.now(timezone.utc)
+        results: list[BlockingLockEntity] = []
+        for key, value in self._blocking_locks.items():
+            expires_at = value.get("expires_at")
+            # Skip expired locks (matching Postgres WHERE expires_at > NOW())
+            if expires_at and expires_at <= now:
+                continue
+            results.append(
+                BlockingLockEntity(
+                    lock_id=value.get("lock_id", UUID(int=0)),
+                    account_id=key[0],
+                    strategy_id=key[1],
+                    symbol=key[2],
+                    side=key[3],
+                    reason=value.get("reason", "reconciliation"),
+                    locked_by_run_id=value.get("locked_by_run_id"),
+                    locked_at=value.get("locked_at"),
+                    expires_at=expires_at,
+                )
+            )
+        results.sort(key=lambda x: x.locked_at or now, reverse=True)
+        return results
+
     # -- In-memory blocking lock support (for tests) --
 
     def _lock_key(

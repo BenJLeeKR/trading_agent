@@ -75,6 +75,7 @@ async def get_broker_capacity(request: Request) -> BrokerCapacityResponse:
 
     # ── WebSocket subscription snapshot ────────────────────────────────────
     sub_budget = getattr(adapter, "_subscription_budget", None)
+    ws_connected = bool(getattr(adapter, "_ws_connected", False))
     if sub_budget is not None:
         ws_raw = sub_budget.snapshot()
         ws_snapshot = WsSubscriptionSnapshot(
@@ -85,6 +86,7 @@ async def get_broker_capacity(request: Request) -> BrokerCapacityResponse:
             current_optional=ws_raw["current_optional"],
             total_used=ws_raw["total_used"],
             remaining=ws_raw["remaining"],
+            ws_connected=ws_connected,
         )
     else:
         ws_snapshot = WsSubscriptionSnapshot(
@@ -95,6 +97,7 @@ async def get_broker_capacity(request: Request) -> BrokerCapacityResponse:
             current_optional=0,
             total_used=0,
             remaining=0,
+            ws_connected=ws_connected,
         )
 
     # ── Market data / order event counts ────────────────────────────────────

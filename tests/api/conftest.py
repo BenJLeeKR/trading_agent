@@ -414,6 +414,7 @@ def client_with_adapter(
     adapter._subscription_budget = mock_subscription_budget
     adapter._market_data_subscriptions = {"005930": None, "000660": None}
     adapter._order_event_accounts = {"account-1"}
+    adapter._ws_connected = True
 
     app = create_app(
         repos=seeded_repos,

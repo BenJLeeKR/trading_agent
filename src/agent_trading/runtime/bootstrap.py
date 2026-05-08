@@ -61,6 +61,41 @@ def _build_kis_adapter(settings: AppSettings) -> KoreaInvestmentAdapter:
     )
 
 
+def build_api_broker_adapter(
+    settings: AppSettings,
+) -> KoreaInvestmentAdapter | None:
+    """Build a broker adapter for the inspection API server.
+
+    This is a graceful wrapper around ``_build_kis_adapter`` intended for use
+    by ``create_app_from_env()``.  If KIS credentials are missing or the
+    adapter cannot be constructed, the function logs a warning and returns
+    ``None`` — the API server will still start, but ``/broker-capacity`` will
+    return 503 ("Broker adapter not configured").
+
+    Returns
+    -------
+    KoreaInvestmentAdapter | None
+        The adapter instance, or ``None`` if the build fails.
+    """
+    # Check whether KIS credentials are present before attempting to build.
+    if not settings.kis_api_key or not settings.kis_api_secret:
+        logger.warning(
+            "KIS_API_KEY / KIS_APP_KEY and KIS_API_SECRET / KIS_APP_SECRET are "
+            "both empty — broker adapter will not be available. "
+            "GET /broker-capacity will return 503."
+        )
+        return None
+
+    try:
+        return _build_kis_adapter(settings)
+    except Exception:
+        logger.exception(
+            "Failed to build broker adapter for API server. "
+            "GET /broker-capacity will return 503."
+        )
+        return None
+
+
 def _build_polling_workers(
     repos: RepositoryContainer,
     settings: AppSettings,

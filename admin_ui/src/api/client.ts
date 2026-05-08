@@ -143,6 +143,14 @@ export async function getReconciliationLocks(
   );
 }
 
+export async function getReconciliationSummary(): Promise<
+  import("../types/api").ReconciliationSummary
+> {
+  return request<import("../types/api").ReconciliationSummary>(
+    "/reconciliation/summary"
+  );
+}
+
 /**
  * Fetch accounts for a given client.
  *
@@ -221,4 +229,8 @@ export async function getAuditLogs(
   return request<import("../types/api").AuditLogEntry[]>(
     `/audit-logs?correlation_id=${encodeURIComponent(correlationId)}`
   );
+}
+
+export async function getBrokerCapacity(): Promise<import("../types/api").BrokerCapacityResponse> {
+  return request<import("../types/api").BrokerCapacityResponse>("/broker-capacity");
 }

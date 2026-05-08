@@ -114,6 +114,15 @@ class BlockingLockStatus(BaseModel):
     is_active: bool = True
 
 
+class ReconciliationSummary(BaseModel):
+    """``GET /reconciliation/summary`` — aggregate reconciliation summary."""
+
+    active_locks_count: int
+    incomplete_recon_count: int
+    recent_active_locks: list[BlockingLockStatus]
+    recent_incomplete_runs: list[ReconciliationRunSummary]
+
+
 class DecisionContextDetail(BaseModel):
     """``GET /decision-contexts/{id}`` — decision context detail."""
 
@@ -319,6 +328,7 @@ class WsSubscriptionSnapshot(BaseModel):
     current_optional: int
     total_used: int
     remaining: int
+    ws_connected: bool = False
 
 
 class BrokerCapacityResponse(BaseModel):

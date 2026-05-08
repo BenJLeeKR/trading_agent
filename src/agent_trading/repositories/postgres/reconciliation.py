@@ -137,6 +137,37 @@ class PostgresReconciliationRepository:
         )
         return [_row_to_blocking_lock(r) for r in rows]
 
+    # -- Plan 64: Aggregate (all-account) queries for Dashboard --
+
+    async def list_all_runs(
+        self, limit: int = 20
+    ) -> Sequence[ReconciliationRunEntity]:
+        """Return reconciliation runs across all accounts, newest first."""
+        rows = await self._tx.connection.fetch(
+            """
+            SELECT * FROM trading.reconciliation_runs
+            ORDER BY started_at DESC
+            LIMIT $1
+            """,
+            limit,
+        )
+        return [row_to_entity(row, ReconciliationRunEntity) for row in rows]
+
+    async def list_all_active_locks(
+        self,
+    ) -> Sequence[BlockingLockEntity]:
+        """Return active (non-expired) blocking locks across all accounts."""
+        rows = await self._tx.connection.fetch(
+            """
+            SELECT lock_id, account_id, strategy_id, symbol, side,
+                   reason, locked_by_run_id, locked_at, expires_at
+            FROM trading.order_blocking_locks
+            WHERE expires_at > NOW()
+            ORDER BY locked_at DESC
+            """
+        )
+        return [_row_to_blocking_lock(r) for r in rows]
+
     async def update_run_status(
         self,
         reconciliation_run_id: UUID,

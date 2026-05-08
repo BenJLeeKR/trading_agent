@@ -108,7 +108,8 @@ describe("Dashboard with valid data", () => {
     expect(screen.getAllByText("1").length).toBeGreaterThanOrEqual(1); // Active Locks = 1, Incomplete Recon = 1
 
     // Account table rows (3 accounts)
-    expect(screen.getByText("Paper Account 1")).toBeInTheDocument();
+    // "Paper Account 1" also appears in reconciliation scope labels, so use getAllByText
+    expect(screen.getAllByText("Paper Account 1").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Live Account 1")).toBeInTheDocument();
     expect(screen.getByText("Locked Paper Account")).toBeInTheDocument();
 
