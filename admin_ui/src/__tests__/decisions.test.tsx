@@ -269,30 +269,6 @@ describe("DecisionsView symbol search", () => {
 });
 
 /* ───────────────────────────────────────────
- * Scenario 7: Empty / no-selection state
- * ─────────────────────────────────────────── */
-describe("DecisionsView no selection state", () => {
-  it("shows placeholder text when no row is selected", async () => {
-    mockFetchOnce(mockTradeDecisions);
-
-    render(
-      <MemoryRouter>
-        <DecisionsView />
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("Decisions")).toBeInTheDocument();
-    });
-
-    // Placeholder should be visible when data loaded and no row selected
-    expect(
-      screen.getByText("Select a decision from the table to view details."),
-    ).toBeInTheDocument();
-  });
-});
-
-/* ───────────────────────────────────────────
  * Scenario 8: Agent Runs panel in detail panel
  * ─────────────────────────────────────────── */
 describe("DecisionsView agent runs panel", () => {

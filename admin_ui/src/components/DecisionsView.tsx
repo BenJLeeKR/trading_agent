@@ -207,7 +207,7 @@ export default function DecisionsView() {
         </div>
 
         {/* Decision Detail Panel */}
-        {selectedDecision ? (
+        {selectedDecision && (
           <div className="col-span-5 space-y-4">
             {/* Decision Detail card */}
             <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
@@ -357,16 +357,6 @@ export default function DecisionsView() {
             {/* Agent Runs card */}
             <AgentRunsPanel decisionContextId={selectedDecision?.decision_context_id ?? null} />
           </div>
-        ) : (
-          !loading && !error && decisions.length > 0 && (
-            <div className="col-span-5 flex items-center justify-center bg-white rounded-xl border border-[#e2e8f0] p-12">
-              <div className="text-center">
-                <p className="text-sm text-[#94a3b8]">
-                  Select a decision from the table to view details.
-                </p>
-              </div>
-            </div>
-          )
         )}
       </div>
     </div>

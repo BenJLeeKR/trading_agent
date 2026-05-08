@@ -9,6 +9,7 @@ import type {
   AccountSummary,
   PositionSnapshotView,
   CashBalanceSnapshotView,
+  ClientDetail,
   TradeDecisionDetail,
   DecisionContextDetail,
   AgentRunResponse,
@@ -161,6 +162,18 @@ export const mockBrokerOrders: BrokerOrderView[] = [
   },
 ];
 
+export const mockClients: ClientDetail[] = [
+  {
+    client_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00c1",
+    client_code: "CLIENT1",
+    name: "Test Client 1",
+    status: "active",
+    base_currency: "KRW",
+    created_at: "2026-05-05T00:00:00Z",
+    updated_at: null,
+  },
+];
+
 export const mockAccounts: AccountSummary[] = [
   {
     account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a1",
@@ -187,6 +200,39 @@ export const mockAccounts: AccountSummary[] = [
     broker_account_code: "KIS-LIVE-****1234",
     account_code: "CLIENT1-LIVE-LIVE",
     environment: "live",
+    status: "active",
+    risk_profile: null,
+    created_at: "2026-05-05T00:00:00Z",
+    updated_at: null,
+  },
+  {
+    account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a3",
+    client_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00c1",
+    broker_account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00b3",
+    account_alias: "Locked Paper Account",
+    account_masked: "****9999",
+    broker_account_ref: "50099999",
+    broker_account_code: "KIS-PAPER-****9999",
+    account_code: "CLIENT1-PAPER-LOCKED",
+    environment: "paper",
+    status: "locked",
+    risk_profile: null,
+    created_at: "2026-05-05T00:00:00Z",
+    updated_at: null,
+  },
+];
+
+export const mockAccountsNoPositions: AccountSummary[] = [
+  {
+    account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a4",
+    client_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00c1",
+    broker_account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00b4",
+    account_alias: "Empty Account",
+    account_masked: "****0000",
+    broker_account_ref: "50000000",
+    broker_account_code: "KIS-PAPER-****0000",
+    account_code: "CLIENT1-PAPER-EMPTY",
+    environment: "paper",
     status: "active",
     risk_profile: null,
     created_at: "2026-05-05T00:00:00Z",
@@ -219,6 +265,20 @@ export const mockPositions: PositionSnapshotView[] = [
   },
 ];
 
+export const mockPositionsForLocked: PositionSnapshotView[] = [
+  {
+    position_snapshot_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00p3",
+    account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a3",
+    instrument_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00i1",
+    quantity: 10,
+    average_price: 200.0,
+    market_price: 210.0,
+    unrealized_pnl: 100.0,
+    source_of_truth: "broker",
+    snapshot_at: "2026-05-05T00:00:00Z",
+  },
+];
+
 export const mockCashBalance: CashBalanceSnapshotView = {
   cash_balance_snapshot_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00cb1",
   account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a1",
@@ -229,6 +289,32 @@ export const mockCashBalance: CashBalanceSnapshotView = {
   source_of_truth: "broker",
   snapshot_at: "2026-05-05T00:00:00Z",
 };
+
+export const mockCashBalanceForLocked: CashBalanceSnapshotView = {
+  cash_balance_snapshot_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00cb2",
+  account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a3",
+  currency: "KRW",
+  available_cash: 1000000.0,
+  settled_cash: 2000000.0,
+  unsettled_cash: 0,
+  source_of_truth: "broker",
+  snapshot_at: "2026-05-05T00:00:00Z",
+};
+
+export const mockCashBalanceNull: CashBalanceSnapshotView | null = null;
+
+/** Dashboard — incomplete reconciliation run (status !== "completed") */
+export const mockIncompleteReconRuns: ReconciliationRunSummary[] = [
+  {
+    run_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00r2",
+    account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a1",
+    status: "in_progress",
+    started_at: "2026-05-05T00:00:00Z",
+    completed_at: null,
+    order_mismatches: 2,
+    position_mismatches: 1,
+  },
+];
 
 export const mockTradeDecisions: TradeDecisionDetail[] = [
   {

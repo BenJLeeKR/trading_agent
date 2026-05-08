@@ -308,7 +308,7 @@ export default function AccountsView() {
           </div>
 
           {/* Account Detail Panel */}
-          {safeSelectedAccount && selectedAccountDetail ? (
+          {safeSelectedAccount && selectedAccountDetail && (
             <div className="col-span-7 space-y-4">
               {/* Locked warning */}
               {selectedAccountDetail.status === "locked" && (
@@ -557,17 +557,6 @@ export default function AccountsView() {
                 </>
               )}
             </div>
-          ) : (
-            !loading && accounts.length > 0 && (
-              <div className="col-span-7 flex items-center justify-center bg-white rounded-xl border border-[#e2e8f0] p-12">
-                <div className="text-center">
-                  <Wallet className="h-8 w-8 text-[#94a3b8] mx-auto mb-2" />
-                  <p className="text-sm text-[#94a3b8]">
-                    Select an account from the left panel to view details.
-                  </p>
-                </div>
-              </div>
-            )
           )}
         </div>
       )}
