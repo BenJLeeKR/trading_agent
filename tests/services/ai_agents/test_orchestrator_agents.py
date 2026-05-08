@@ -92,6 +92,7 @@ def repos() -> RepositoryContainer:
         InMemoryPositionSnapshotRepository,
         InMemoryReconciliationRepository,
         InMemoryRiskLimitSnapshotRepository,
+        InMemorySnapshotSyncRunRepository,
         InMemoryStrategyRepository,
         InMemoryTradeDecisionRepository,
         InMemoryUnitOfWork,
@@ -120,6 +121,7 @@ def repos() -> RepositoryContainer:
         guardrail_evaluations=InMemoryGuardrailEvaluationRepository(),
         risk_limit_snapshots=InMemoryRiskLimitSnapshotRepository(),
         external_events=InMemoryExternalEventRepository(),
+        snapshot_sync_runs=InMemorySnapshotSyncRunRepository(),
         agent_runs=InMemoryAgentRunRepository(),
     )
 

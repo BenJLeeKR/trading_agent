@@ -102,3 +102,15 @@ docker-logs-api:
 # Restart the API server container
 docker-restart-api:
 	docker compose restart api
+
+# Start the snapshot sync scheduler container
+docker-up-snapshot-sync:
+	docker compose up -d snapshot-sync
+
+# Tail the snapshot sync scheduler logs
+docker-logs-snapshot-sync:
+	docker compose logs -f snapshot-sync
+
+# Restart the snapshot sync scheduler container
+docker-restart-snapshot-sync:
+	docker compose restart snapshot-sync

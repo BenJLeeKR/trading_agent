@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
@@ -24,11 +26,41 @@ from agent_trading.domain.entities import (
     PositionSnapshotEntity,
     ReconciliationRunEntity,
     RiskLimitSnapshotEntity,
+    SnapshotSyncRunEntity,
     StrategyEntity,
     TradeDecisionEntity,
 )
 from agent_trading.domain.enums import Environment, OrderStatus
 from agent_trading.repositories.filters import AccountLookup, DecisionContextQuery, OrderQuery
+
+
+@dataclass(slots=True, frozen=True)
+class SnapshotSyncHealthSummary:
+    """Freshness/health summary for the most recent snapshot sync runs.
+
+    Computed by :meth:`SnapshotSyncRunRepository.get_sync_health_summary`.
+    """
+
+    last_run_started_at: datetime | None
+    """``started_at`` of the most recent run, or ``None`` if no runs exist."""
+
+    last_run_completed_at: datetime | None
+    """``completed_at`` of the most recent run, or ``None`` if no runs exist."""
+
+    last_status: str | None
+    """``status`` of the most recent run (e.g. ``"completed"``, ``"failed"``)."""
+
+    last_successful_run_at: datetime | None
+    """``started_at`` of the most recent ``status == 'completed'`` run."""
+
+    consecutive_failures: int
+    """Number of consecutive ``status == 'failed'`` runs (reverse chronological)."""
+
+    is_stale: bool
+    """``True`` when ``now - last_successful_run_at > stale_threshold_seconds``."""
+
+    stale_threshold_seconds: int
+    """The threshold used for the staleness computation."""
 
 
 class ClientRepository(Protocol):
@@ -61,6 +93,14 @@ class BrokerAccountRepository(Protocol):
         ...
 
     async def list_by_broker(self, broker_name: str) -> Sequence[BrokerAccountEntity]:
+        ...
+
+    async def list_by_broker_and_env(
+        self,
+        broker_name: str,
+        env: Environment,
+    ) -> Sequence[BrokerAccountEntity]:
+        """List broker accounts filtered by broker name and environment."""
         ...
 
 
@@ -396,6 +436,74 @@ class ExternalEventRepository(Protocol):
     async def list_by_type(
         self, event_type: str, since: datetime
     ) -> Sequence[ExternalEventEntity]:
+        ...
+
+
+class SnapshotSyncRunRepository(Protocol):
+    """Store for KIS snapshot sync execution history.
+
+    Append-only: each sync run (manual or scheduler) creates one record.
+    This is a run-level summary, not individual position/cash rows.
+    """
+
+    async def add(self, run: SnapshotSyncRunEntity) -> SnapshotSyncRunEntity:
+        """Persist a new sync run record and return it with server defaults."""
+        ...
+
+    async def list_runs(
+        self,
+        limit: int = 50,
+        trigger_type: str | None = None,
+        status: str | None = None,
+    ) -> Sequence[SnapshotSyncRunEntity]:
+        """List sync runs, newest first.
+
+        Parameters
+        ----------
+        limit:
+            Maximum number of records to return (default ``50``).
+        trigger_type:
+            Optional filter by ``"manual"`` or ``"scheduler"``.
+        status:
+            Optional filter by ``"completed"``, ``"partial"``, or ``"failed"``.
+
+        Returns
+        -------
+        Sequence[SnapshotSyncRunEntity]
+            Runs ordered by ``started_at`` descending.
+        """
+        ...
+
+    async def get(self, run_id: UUID) -> SnapshotSyncRunEntity | None:
+        """Get a single sync run by its UUID.
+
+        Parameters
+        ----------
+        run_id:
+            The snapshot sync run's unique identifier.
+
+        Returns
+        -------
+        SnapshotSyncRunEntity | None
+            The matching run, or ``None`` if not found.
+        """
+
+    async def get_sync_health_summary(
+        self,
+        stale_threshold_seconds: int = 900,
+    ) -> SnapshotSyncHealthSummary:
+        """Compute a freshness/staleness summary for snapshot sync runs.
+
+        Parameters
+        ----------
+        stale_threshold_seconds:
+            Seconds after which a sync is considered stale (default ``900``).
+
+        Returns
+        -------
+        SnapshotSyncHealthSummary
+            Aggregate health indicators (never ``None`` — even for empty data).
+        """
         ...
 
 

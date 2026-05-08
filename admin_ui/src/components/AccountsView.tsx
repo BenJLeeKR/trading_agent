@@ -20,7 +20,11 @@ import { Lock, Wallet, TrendingUp, TrendingDown, X, Users } from "lucide-react";
 function formatCurrency(val: number | null | undefined, currency: string = "KRW"): string {
   if (val == null) return "—";
   if (Number.isNaN(val)) return "—";
-  return new Intl.NumberFormat("ko-KR", { style: "currency", currency }).format(val);
+  const formatted = new Intl.NumberFormat("ko-KR", {
+    maximumFractionDigits: currency === "KRW" ? 0 : 2,
+  }).format(val);
+  if (currency === "KRW") return `${formatted}원`;
+  return `${formatted} ${currency}`;
 }
 
 function formatQty(val: number | null | undefined): string {
@@ -33,7 +37,14 @@ function truncateUuid(uuid: string): string {
   return uuid.length > 8 ? uuid.slice(0, 8) + "…" : uuid;
 }
 
-/** Format an ISO timestamp string to ``yyyy-MM-dd HH:mm:ss`` for display. */
+/**
+ * Format an ISO timestamp string for snapshot display.
+ *
+ * Output includes:
+ * - ``yyyy-MM-dd HH:mm:ss`` in browser local time
+ * - UTC offset (e.g. ``UTC+09:00``)
+ * - Elapsed time since the snapshot (e.g. ``약 11시간 전``)
+ */
 function formatSnapshotTime(iso: string): string {
   const d = new Date(iso);
   const y = d.getFullYear();
@@ -42,7 +53,36 @@ function formatSnapshotTime(iso: string): string {
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
   const ss = String(d.getSeconds()).padStart(2, "0");
-  return `${y}-${mo}-${dd} ${hh}:${mm}:${ss}`;
+
+  // ── Timezone offset ──────────────────────────────────────────────
+  // getTimezoneOffset() returns minutes BEHIND UTC, so negate it.
+  // KST (UTC+9) → -540 → we display UTC+09:00
+  const offsetMin = -d.getTimezoneOffset();
+  const sign = offsetMin >= 0 ? "+" : "-";
+  const tzHours = String(Math.floor(Math.abs(offsetMin) / 60)).padStart(2, "0");
+  const tzMins = String(Math.abs(offsetMin) % 60).padStart(2, "0");
+  const tzSuffix = `UTC${sign}${tzHours}:${tzMins}`;
+
+  // ── Elapsed time ─────────────────────────────────────────────────
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  let elapsed = "";
+  if (diffMs >= 0) {
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 1) {
+      elapsed = "방금 전";
+    } else if (diffMin < 60) {
+      elapsed = `${diffMin}분 전`;
+    } else if (diffMin < 1440) {
+      const hours = Math.floor(diffMin / 60);
+      const mins = diffMin % 60;
+      elapsed = `${hours}시간 ${mins}분 전`;
+    } else {
+      elapsed = `${Math.floor(diffMin / 1440)}일 전`;
+    }
+  }
+
+  return `${y}-${mo}-${dd} ${hh}:${mm}:${ss} ${tzSuffix} (${elapsed})`;
 }
 
 /* ───────────────────────────────────────────

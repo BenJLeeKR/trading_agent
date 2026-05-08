@@ -302,6 +302,35 @@ class ReconciliationRunEntity:
 
 
 @dataclass(slots=True, frozen=True)
+class SnapshotSyncRunEntity:
+    """Record of a single KIS snapshot sync execution.
+
+    Stores run-level summary only (not individual position/cash rows).
+    Follows the same pattern as ``ReconciliationRunEntity``.
+    """
+    snapshot_sync_run_id: UUID
+    trigger_type: str  # "manual" | "scheduler"
+    scope: str  # "single" | "batch" | "all"
+    dry_run: bool
+    total_accounts: int
+    succeeded_accounts: int
+    partial_accounts: int
+    failed_accounts: int
+    skipped_accounts: int
+    positions_synced_total: int
+    positions_skipped_total: int
+    cash_synced_count: int
+    error_count: int
+    status: str  # "completed" | "partial" | "failed"
+    started_at: datetime
+    env_filter: str | None = None
+    status_filter: str | None = None
+    summary_json: dict[str, object] | None = None
+    completed_at: datetime | None = None
+    created_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class BlockingLockEntity:
     """Read-only inspection entity for a blocking lock on a strategy/symbol.
 

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Sequence
-from dataclasses import replace
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from agent_trading.domain.entities import (
@@ -26,11 +27,19 @@ from agent_trading.domain.entities import (
     PositionSnapshotEntity,
     ReconciliationRunEntity,
     RiskLimitSnapshotEntity,
+    SnapshotSyncRunEntity,
     StrategyEntity,
     TradeDecisionEntity,
 )
 from agent_trading.domain.enums import Environment, OrderStatus
+from agent_trading.repositories.contracts import SnapshotSyncHealthSummary
 from agent_trading.repositories.filters import AccountLookup, DecisionContextQuery, OrderQuery
+
+from collections import defaultdict
+from dataclasses import replace
+from datetime import datetime, timezone
+from uuid import UUID
+
 from agent_trading.repositories.postgres.orders import VersionConflictError
 
 
@@ -80,6 +89,8 @@ class InMemoryAccountRepository:
             if lookup.account_alias is not None and item.account_alias != lookup.account_alias:
                 continue
             if lookup.environment is not None and item.environment != lookup.environment:
+                continue
+            if lookup.broker_account_id is not None and item.broker_account_id != lookup.broker_account_id:
                 continue
             return item
         return None
@@ -682,6 +693,17 @@ class InMemoryBrokerAccountRepository:
     async def list_by_broker(self, broker_name: str) -> Sequence[BrokerAccountEntity]:
         return tuple(item for item in self._items.values() if item.broker_name == broker_name)
 
+    async def list_by_broker_and_env(
+        self,
+        broker_name: str,
+        env: Environment,
+    ) -> Sequence[BrokerAccountEntity]:
+        return tuple(
+            item
+            for item in self._items.values()
+            if item.broker_name == broker_name and item.environment == env
+        )
+
 
 class InMemoryAuditLogRepository:
     def __init__(self) -> None:
@@ -828,6 +850,87 @@ class InMemoryExternalEventRepository:
         ]
         results.sort(key=lambda item: item.published_at, reverse=True)
         return tuple(results)
+
+
+class InMemorySnapshotSyncRunRepository:
+    """In-memory implementation of ``SnapshotSyncRunRepository``."""
+
+    def __init__(self) -> None:
+        self._items: dict[UUID, SnapshotSyncRunEntity] = {}
+
+    async def add(self, run: SnapshotSyncRunEntity) -> SnapshotSyncRunEntity:
+        self._items[run.snapshot_sync_run_id] = run
+        return run
+
+    async def list_runs(
+        self,
+        limit: int = 50,
+        trigger_type: str | None = None,
+        status: str | None = None,
+    ) -> Sequence[SnapshotSyncRunEntity]:
+        """List sync runs, newest first. Optional filter by trigger_type or status."""
+        items = list(self._items.values())
+        if trigger_type is not None:
+            items = [i for i in items if i.trigger_type == trigger_type]
+        if status is not None:
+            items = [i for i in items if i.status == status]
+        items.sort(key=lambda e: e.started_at, reverse=True)
+        return tuple(items[:limit])
+
+    async def get(self, run_id: UUID) -> SnapshotSyncRunEntity | None:
+        """Get a single sync run by its UUID."""
+        return self._items.get(run_id)
+
+    async def get_sync_health_summary(
+        self,
+        stale_threshold_seconds: int = 900,
+    ) -> SnapshotSyncHealthSummary:
+        """Compute a freshness/staleness summary from in-memory items."""
+        items = sorted(self._items.values(), key=lambda e: e.started_at, reverse=True)
+
+        if not items:
+            return SnapshotSyncHealthSummary(
+                last_run_started_at=None,
+                last_run_completed_at=None,
+                last_status=None,
+                last_successful_run_at=None,
+                consecutive_failures=0,
+                is_stale=True,
+                stale_threshold_seconds=stale_threshold_seconds,
+            )
+
+        last = items[0]
+
+        # Most recent successful run
+        last_successful: SnapshotSyncRunEntity | None = None
+        for e in items:
+            if e.status == "completed":
+                last_successful = e
+                break
+
+        # Count consecutive failures
+        consecutive_failures = 0
+        for e in items:
+            if e.status == "failed":
+                consecutive_failures += 1
+            else:
+                break
+
+        now = datetime.now(timezone.utc)
+        last_successful_at = last_successful.started_at if last_successful else None
+        is_stale = True
+        if last_successful_at is not None:
+            is_stale = (now - last_successful_at).total_seconds() > stale_threshold_seconds
+
+        return SnapshotSyncHealthSummary(
+            last_run_started_at=last.started_at,
+            last_run_completed_at=last.completed_at,
+            last_status=last.status,
+            last_successful_run_at=last_successful_at,
+            consecutive_failures=consecutive_failures,
+            is_stale=is_stale,
+            stale_threshold_seconds=stale_threshold_seconds,
+        )
 
 
 class InMemoryAgentRunRepository:

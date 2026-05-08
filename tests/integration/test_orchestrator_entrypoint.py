@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from uuid import UUID
 
+import os
+import re
 import pytest
 
 from agent_trading.domain.entities import (
@@ -31,12 +33,13 @@ from agent_trading.runtime.bootstrap import postgres_runtime
 
 # ---------------------------------------------------------------------------
 # Constants — must match scripts/run_orchestrator_once.py
+# Generated via uuid5(NAMESPACE_DNS, "{entity_type}.entrypoint")
 # ---------------------------------------------------------------------------
-CLIENT_ID = UUID("11111111-1111-1111-1111-111111111111")
-BROKER_ACCOUNT_ID = UUID("22222222-2222-2222-2222-222222222222")
-ACCOUNT_ID = UUID("33333333-3333-3333-3333-333333333333")
-STRATEGY_ID = UUID("44444444-4444-4444-4444-444444444444")
-CONFIG_VERSION_ID = UUID("55555555-5555-5555-5555-555555555555")
+CLIENT_ID = UUID("301961b4-75d9-533c-92b7-69a306cdd435")
+BROKER_ACCOUNT_ID = UUID("7f39fc04-346a-5484-90ab-80e8a1d04a15")
+ACCOUNT_ID = UUID("a44a02d1-7f32-5a62-99f7-235abeb58284")
+STRATEGY_ID = UUID("30a1d26b-8230-51fc-8548-30920effff0c")
+CONFIG_VERSION_ID = UUID("529ab376-183a-53df-b4ab-73d948c1404c")
 
 CLIENT_CODE = "EPC001"
 ACCOUNT_ALIAS = "Entrypoint Paper"
@@ -47,13 +50,47 @@ MARKET = "KRX"
 
 def _pg_available() -> bool:
     """Check whether Postgres env vars are set (docker compose defaults)."""
-    import os
     return bool(os.environ.get("DATABASE_HOST") or os.environ.get("DATABASE_URL"))
 
 
 # ---------------------------------------------------------------------------
 # Helpers — mirror scripts/run_orchestrator_once.py
 # ---------------------------------------------------------------------------
+
+def _seed_account_ref() -> str:
+    """Resolve broker ``account_ref`` from ``KIS_ACCOUNT_NO`` env var."""
+    return os.getenv("KIS_ACCOUNT_NO") or os.getenv("KIS_ACCOUNT_NUMBER", "50186448")
+
+
+def _seed_last4() -> str:
+    """Return the last 4 digits of the resolved account ref."""
+    ref = _seed_account_ref()
+    digits = re.sub(r"[^0-9]", "", ref)
+    if len(digits) >= 4:
+        return digits[-4:]
+    return digits.zfill(4)
+
+
+def _seed_broker_code() -> str:
+    """Derive ``broker_account_code`` from ``KIS_ENV`` + ``_seed_last4()``.
+    Format: ``KIS-{ENV}-****{last4}`` (e.g. ``KIS-PAPER-****6448``).
+    """
+    env = os.getenv("KIS_ENV", "paper").strip().lower().replace("real", "live")
+    return f"KIS-{env.upper()}-****{_seed_last4()}"
+
+
+def _seed_masked() -> str:
+    """Derive ``account_masked`` from ``_seed_last4()``.
+    Format: ``****{last4}`` (e.g. ``****6448``).
+    """
+    return f"****{_seed_last4()}"
+
+
+def _seed_base_url() -> str:
+    """Use ``KIS_BASE_URL`` from env, fall back to the official KIS paper URL."""
+    return os.getenv("KIS_BASE_URL", "https://openapivts.koreainvestment.com:29443")
+
+
 async def _seed_if_empty(repos: RepositoryContainer, force: bool = False) -> bool:
     """Idempotent seed — same logic as the entrypoint.
 
@@ -89,19 +126,19 @@ async def _seed_if_empty(repos: RepositoryContainer, force: bool = False) -> boo
                 SET broker_name=EXCLUDED.broker_name,
                     account_ref=EXCLUDED.account_ref,
                     broker_account_code=EXCLUDED.broker_account_code
-        """, BROKER_ACCOUNT_ID, "KoreaInvestment", "50045678", Environment.PAPER.value,
-            "entrypoint-cred", "https://mock.broker/api", "active",
-            "KIS-PAPER-****5678")
+        """, BROKER_ACCOUNT_ID, "koreainvestment", _seed_account_ref(), Environment.PAPER.value,
+            "entrypoint-cred", _seed_base_url(), "active",
+            _seed_broker_code())
     else:
         broker_account = BrokerAccountEntity(
             broker_account_id=BROKER_ACCOUNT_ID,
-            broker_name="KoreaInvestment",
-            account_ref="50045678",
+            broker_name="koreainvestment",
+            account_ref=_seed_account_ref(),
             environment=Environment.PAPER,
             credential_ref="entrypoint-cred",
-            base_url="https://mock.broker/api",
+            base_url=_seed_base_url(),
             status="active",
-            broker_account_code="KIS-PAPER-****5678",
+            broker_account_code=_seed_broker_code(),
         )
         await repos.broker_accounts.add(broker_account)
 
@@ -136,7 +173,7 @@ async def _seed_if_empty(repos: RepositoryContainer, force: bool = False) -> boo
                 SET account_alias=EXCLUDED.account_alias,
                     account_code=EXCLUDED.account_code
         """, ACCOUNT_ID, CLIENT_ID, BROKER_ACCOUNT_ID, Environment.PAPER.value,
-            ACCOUNT_ALIAS, "****5678", "active", "EPC001-PAPER-ENTRYPOINT")
+            ACCOUNT_ALIAS, _seed_masked(), "active", "EPC001-PAPER-ENTRYPOINT")
     else:
         account = AccountEntity(
             account_id=ACCOUNT_ID,
@@ -144,7 +181,7 @@ async def _seed_if_empty(repos: RepositoryContainer, force: bool = False) -> boo
             broker_account_id=BROKER_ACCOUNT_ID,
             environment=Environment.PAPER,
             account_alias=ACCOUNT_ALIAS,
-            account_masked="****5678",
+            account_masked=_seed_masked(),
             status="active",
             account_code="EPC001-PAPER-ENTRYPOINT",
         )

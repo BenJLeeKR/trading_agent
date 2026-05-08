@@ -45,10 +45,12 @@ class TestPublicEndpoints:
         assert data["status"] == "ok"
 
     def test_health_readyz_public_without_token(self, empty_client: TestClient) -> None:
-        """``GET /health/readyz`` returns 200 without auth."""
+        """``GET /health/readyz`` returns 200 without auth — ok within grace."""
         resp = empty_client.get("/health/readyz")
         assert resp.status_code == 200
-        assert resp.json() == {"status": "ok"}
+        data = resp.json()
+        # Freshly booted app (started_at ≈ now) within grace → ok
+        assert data["status"] == "ok"
 
     def test_docs_public_without_token(self, empty_client: TestClient) -> None:
         """``GET /docs`` (Swagger UI) returns 200 without auth."""

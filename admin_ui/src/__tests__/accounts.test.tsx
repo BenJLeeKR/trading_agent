@@ -194,8 +194,10 @@ describe("AccountsView detail panel", () => {
     });
 
     // Freshness indicator — "스냅샷:" with formatted timestamp appears
-    // in both Cash Balance header and Positions header
-    // mock data has snapshot_at: "2024-01-01T12:00:00Z" → "스냅샷: 2024-01-01 12:00:00"
+    // in both Cash Balance header and Positions header.
+    // mock data has snapshot_at: "2024-01-01T12:00:00Z".
+    // Output now includes timezone offset + elapsed time, e.g.:
+    //   "스냅샷: 2024-01-01 12:00:00 UTC+00:00 (약 863일 전)"
     // Two elements match (Cash Balance + Positions), so use getAllByText
     expect(screen.getAllByText(/^스냅샷:/).length).toBe(2);
   });

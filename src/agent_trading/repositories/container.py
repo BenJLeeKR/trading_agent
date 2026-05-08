@@ -22,6 +22,7 @@ from agent_trading.repositories.contracts import (
     PositionSnapshotRepository,
     ReconciliationRepository,
     RiskLimitSnapshotRepository,
+    SnapshotSyncRunRepository,
     StrategyRepository,
     TradeDecisionRepository,
 )
@@ -46,6 +47,7 @@ class RepositoryContainer:
     reconciliations: ReconciliationRepository
     audit_logs: AuditLogRepository
     broker_accounts: BrokerAccountRepository
+    snapshot_sync_runs: SnapshotSyncRunRepository
     order_state_events: OrderStateEventRepository
     guardrail_evaluations: GuardrailEvaluationRepository
     risk_limit_snapshots: RiskLimitSnapshotRepository

@@ -19,13 +19,26 @@ from pydantic import BaseModel, ConfigDict
 
 
 class HealthResponse(BaseModel):
-    """``GET /health`` — minimal server status."""
+    """``GET /health`` — minimal server status + optional snapshot sync freshness."""
 
     status: str = "ok"
     version: str
     timestamp: datetime
     database: str
     runtime_mode: str
+
+    # ── Snapshot Sync Freshness (optional — added when repos are accessible) ──
+    snapshot_sync_detail: str | None = None
+    """One of ``"ok"``, ``"stale"``, ``"no_history"``, or ``None`` (unavailable)."""
+
+    snapshot_sync_stale: bool | None = None
+    """``True`` when the most recent successful sync exceeds the stale threshold."""
+
+    snapshot_sync_last_successful_run_at: datetime | None = None
+    """``started_at`` of the most recent successful (``completed``) sync run."""
+
+    snapshot_sync_consecutive_failures: int | None = None
+    """Number of consecutive ``status == 'failed'`` runs (reverse chronological)."""
 
 
 class OrderSummary(BaseModel):
@@ -97,6 +110,55 @@ class ReconciliationRunSummary(BaseModel):
     started_at: datetime
     completed_at: datetime | None = None
     mismatch_count: int = 0
+
+
+class SnapshotSyncRunSummary(BaseModel):
+    """``GET /snapshot-sync-runs`` — KIS snapshot sync run summary."""
+
+    snapshot_sync_run_id: str
+    trigger_type: str
+    scope: str
+    dry_run: bool
+    total_accounts: int
+    succeeded_accounts: int
+    partial_accounts: int
+    failed_accounts: int
+    skipped_accounts: int
+    positions_synced_total: int
+    positions_skipped_total: int
+    cash_synced_count: int
+    error_count: int
+    status: str
+    started_at: datetime
+    completed_at: datetime | None = None
+    env_filter: str | None = None
+    status_filter: str | None = None
+    summary_json: dict[str, object] | None = None
+
+
+class SnapshotSyncRunHealthSummary(BaseModel):
+    """``GET /snapshot-sync-runs/summary`` — KIS snapshot sync freshness/health summary."""
+
+    last_run_started_at: datetime | None = None
+    """``started_at`` of the most recent run, or ``None`` if no runs exist."""
+
+    last_run_completed_at: datetime | None = None
+    """``completed_at`` of the most recent run, or ``None`` if no runs exist."""
+
+    last_status: str | None = None
+    """``status`` of the most recent run (e.g. ``"completed"``, ``"failed"``)."""
+
+    last_successful_run_at: datetime | None = None
+    """``started_at`` of the most recent ``status == 'completed'`` run."""
+
+    consecutive_failures: int = 0
+    """Number of consecutive ``status == 'failed'`` runs (reverse chronological)."""
+
+    is_stale: bool = True
+    """``True`` when the most recent successful run exceeds the stale threshold."""
+
+    stale_threshold_seconds: int = 900
+    """The threshold used for staleness computation."""
 
 
 class BlockingLockStatus(BaseModel):

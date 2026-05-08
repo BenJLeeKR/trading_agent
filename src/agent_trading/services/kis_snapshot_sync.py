@@ -12,8 +12,12 @@ from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
 from agent_trading.domain.entities import (
     CashBalanceSnapshotEntity,
     PositionSnapshotEntity,
+    SnapshotSyncRunEntity,
 )
+from agent_trading.domain.enums import Environment
 from agent_trading.repositories.contracts import (
+    AccountRepository,
+    BrokerAccountRepository,
     CashBalanceSnapshotRepository,
     InstrumentRepository,
     PositionSnapshotRepository,
@@ -59,6 +63,105 @@ class SyncResult:
 
     def _add_error(self, msg: str) -> None:
         self.errors.append(msg)
+
+
+@dataclass(slots=True, frozen=True)
+class BatchSyncResult:
+    """Aggregate result for batch KIS snapshot sync across multiple accounts."""
+
+    total_accounts: int = 0
+    succeeded: int = 0
+    partial: int = 0
+    failed: int = 0
+    skipped: int = 0
+    total_positions_synced: int = 0
+    total_positions_skipped: int = 0
+    total_cash_synced: int = 0
+    account_results: list[tuple[UUID, SyncResult]] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+    def _incr(self, field_name: str, delta: int = 1) -> None:
+        object.__setattr__(self, field_name, getattr(self, field_name) + delta)
+
+    def _set(self, field_name: str, value: object) -> None:
+        object.__setattr__(self, field_name, value)
+
+    def _add_error(self, msg: str) -> None:
+        self.errors.append(msg)
+
+
+def build_sync_run_entity(
+    batch: BatchSyncResult,
+    *,
+    trigger_type: str,
+    scope: str,
+    env_filter: str | None = None,
+    status_filter: str | None = None,
+    dry_run: bool = False,
+    started_at: datetime | None = None,
+    summary_json: dict[str, object] | None = None,
+) -> SnapshotSyncRunEntity:
+    """Build a ``SnapshotSyncRunEntity`` from a ``BatchSyncResult`` + metadata.
+
+    Parameters
+    ----------
+    batch : BatchSyncResult
+        The result of a completed snapshot sync run.
+    trigger_type : str
+        ``"manual"`` or ``"scheduler"``.
+    scope : str
+        ``"single"``, ``"batch"``, or ``"all"``.
+    env_filter : str | None
+        The environment filter used (``"paper"`` / ``"live"`` / ``None``).
+    status_filter : str | None
+        The account status filter used, or ``None``.
+    dry_run : bool
+        Whether this was a dry run (KIS fetch performed, DB rolled back).
+    started_at : datetime | None
+        When the run started. Defaults to ``datetime.now(timezone.utc)``.
+    summary_json : dict[str, object] | None
+        Optional structured summary data.
+
+    Returns
+    -------
+    SnapshotSyncRunEntity
+        A run-level summary entity ready for persistence.
+    """
+    error_count = len(batch.errors)
+    now = datetime.now(timezone.utc)
+
+    # Determine run status
+    # "completed": no failures, no partial accounts, no errors
+    # "partial":   some partial or successful accounts (but not all clean)
+    # "failed":    all accounts failed
+    if batch.failed == 0 and batch.partial == 0 and error_count == 0:
+        status = "completed"
+    elif batch.partial > 0 or batch.succeeded > 0:
+        status = "partial"
+    else:
+        status = "failed"
+
+    return SnapshotSyncRunEntity(
+        snapshot_sync_run_id=uuid4(),
+        trigger_type=trigger_type,
+        scope=scope,
+        env_filter=env_filter,
+        status_filter=status_filter,
+        dry_run=dry_run,
+        total_accounts=batch.total_accounts,
+        succeeded_accounts=batch.succeeded,
+        partial_accounts=batch.partial,
+        failed_accounts=batch.failed,
+        skipped_accounts=batch.skipped,
+        positions_synced_total=batch.total_positions_synced,
+        positions_skipped_total=batch.total_positions_skipped,
+        cash_synced_count=batch.total_cash_synced,
+        error_count=error_count,
+        status=status,
+        started_at=started_at or now,
+        completed_at=now,
+        summary_json=summary_json,
+    )
 
 
 async def sync_kis_account_snapshots(
@@ -201,6 +304,219 @@ async def sync_kis_account_snapshots(
                 result._add_error(msg)
 
     return result
+
+
+# ── Batch sync functions ────────────────────────────────────────────────
+
+
+async def sync_kis_accounts_by_ids(
+    rest_client: KISRestClient,
+    instrument_repo: InstrumentRepository,
+    position_snapshot_repo: PositionSnapshotRepository,
+    cash_balance_snapshot_repo: CashBalanceSnapshotRepository,
+    account_ids: Sequence[UUID],
+) -> BatchSyncResult:
+    """Sync snapshots for multiple account IDs sequentially.
+
+    Calls ``sync_kis_account_snapshots()`` for each account and
+    aggregates results into a ``BatchSyncResult``.
+
+    Parameters
+    ----------
+    rest_client:
+        Authenticated KIS REST client.
+    instrument_repo:
+        Repository for resolving ``pdno`` to ``instrument_id``.
+    position_snapshot_repo:
+        Repository for persisting position snapshots.
+    cash_balance_snapshot_repo:
+        Repository for persisting cash-balance snapshots.
+    account_ids:
+        Sequence of ``AccountEntity.account_id`` (UUID) values to sync.
+
+    Returns
+    -------
+    BatchSyncResult
+        Aggregated summary across all accounts.
+    """
+    batch = BatchSyncResult(total_accounts=len(account_ids))
+
+    for account_id in account_ids:
+        try:
+            result = await sync_kis_account_snapshots(
+                rest_client=rest_client,
+                instrument_repo=instrument_repo,
+                position_snapshot_repo=position_snapshot_repo,
+                cash_balance_snapshot_repo=cash_balance_snapshot_repo,
+                account_id=account_id,
+            )
+        except Exception as exc:
+            msg = f"Unexpected error syncing account_id={account_id}: {exc}"
+            logger.error(msg)
+            batch._add_error(msg)
+            batch._incr("failed")
+            continue
+
+        batch.account_results.append((account_id, result))
+        batch._incr("total_positions_synced", result.positions_synced)
+        batch._incr("total_positions_skipped", result.positions_skipped)
+        if result.cash_balance_synced:
+            batch._incr("total_cash_synced")
+
+        if result.errors:
+            # Some errors but at least partial success
+            if result.positions_synced > 0 or result.cash_balance_synced:
+                batch._incr("partial")
+            else:
+                batch._incr("failed")
+        else:
+            batch._incr("succeeded")
+
+    return batch
+
+
+async def sync_all_kis_accounts(
+    rest_client: KISRestClient,
+    instrument_repo: InstrumentRepository,
+    position_snapshot_repo: PositionSnapshotRepository,
+    cash_balance_snapshot_repo: CashBalanceSnapshotRepository,
+    broker_account_repo: BrokerAccountRepository,
+    account_repo: AccountRepository,
+    *,
+    kis_account_number: str | None = None,
+    env: Environment | None = None,
+    account_status: str | None = None,
+) -> BatchSyncResult:
+    """Discover all KIS accounts and sync snapshots for each.
+
+    Uses ``BrokerAccountRepository.list_by_broker("koreainvestment")`` to
+    discover all KIS broker accounts, then resolves each to an
+    ``AccountEntity`` via ``AccountRepository.find_one()``.
+
+    When ``env`` is provided, only broker accounts whose ``environment``
+    matches the given value are discovered (via
+    ``BrokerAccountRepository.list_by_broker_and_env``).
+
+    When ``account_status`` is provided, only accounts whose
+    ``AccountEntity.status`` matches the given value are synced.
+    Non-matching accounts are reported as skipped.
+
+    Parameters
+    ----------
+    rest_client:
+        Authenticated KIS REST client.
+    instrument_repo:
+        Repository for resolving ``pdno`` to ``instrument_id``.
+    position_snapshot_repo:
+        Repository for persisting position snapshots.
+    cash_balance_snapshot_repo:
+        Repository for persisting cash-balance snapshots.
+    broker_account_repo:
+        Repository for listing KIS broker accounts.
+    account_repo:
+        Repository for resolving broker accounts to ``AccountEntity``.
+    kis_account_number:
+        Optional KIS account number (from settings). When provided,
+        only broker accounts whose ``account_ref`` matches this value
+        will be synced. Non-matching accounts are reported as skipped.
+    env:
+        Optional environment filter. When provided, only broker accounts
+        whose ``environment`` matches this value are discovered.
+    account_status:
+        Optional account status filter. When provided, only accounts
+        whose ``AccountEntity.status`` matches this value are synced.
+
+    Returns
+    -------
+    BatchSyncResult
+        Aggregated summary across all discovered accounts.
+    """
+    if env is not None:
+        broker_accounts = await broker_account_repo.list_by_broker_and_env(
+            "koreainvestment", env
+        )
+    else:
+        broker_accounts = await broker_account_repo.list_by_broker("koreainvestment")
+    batch = BatchSyncResult(total_accounts=len(broker_accounts))
+
+    for ba in broker_accounts:
+        # Filter by KIS account number if provided
+        if kis_account_number is not None and ba.account_ref != kis_account_number:
+            logger.info(
+                "Skipping broker_account_id=%s (account_ref=%s) — "
+                "does not match KIS_ACCOUNT_NUMBER=%s",
+                ba.broker_account_id,
+                ba.account_ref,
+                kis_account_number,
+            )
+            batch._incr("skipped")
+            continue
+
+        # Resolve broker account → AccountEntity
+        try:
+            from agent_trading.repositories.filters import AccountLookup
+
+            lookup = AccountLookup(broker_account_id=ba.broker_account_id)
+            account = await account_repo.find_one(lookup)
+        except Exception as exc:
+            msg = f"Failed to resolve broker_account_id={ba.broker_account_id}: {exc}"
+            logger.error(msg)
+            batch._add_error(msg)
+            batch._incr("failed")
+            continue
+
+        if account is None:
+            logger.warning(
+                "No AccountEntity found for broker_account_id=%s (account_ref=%s) — skipping",
+                ba.broker_account_id,
+                ba.account_ref,
+            )
+            batch._incr("skipped")
+            continue
+
+        # Filter by account status if provided
+        if account_status is not None and account.status != account_status:
+            logger.info(
+                "Skipping account_id=%s (status=%s) — "
+                "does not match requested account_status=%s",
+                account.account_id,
+                account.status,
+                account_status,
+            )
+            batch._incr("skipped")
+            continue
+
+        # Sync this account
+        try:
+            result = await sync_kis_account_snapshots(
+                rest_client=rest_client,
+                instrument_repo=instrument_repo,
+                position_snapshot_repo=position_snapshot_repo,
+                cash_balance_snapshot_repo=cash_balance_snapshot_repo,
+                account_id=account.account_id,
+            )
+        except Exception as exc:
+            msg = f"Unexpected error syncing account_id={account.account_id}: {exc}"
+            logger.error(msg)
+            batch._add_error(msg)
+            batch._incr("failed")
+            continue
+
+        batch.account_results.append((account.account_id, result))
+        batch._incr("total_positions_synced", result.positions_synced)
+        batch._incr("total_positions_skipped", result.positions_skipped)
+        if result.cash_balance_synced:
+            batch._incr("total_cash_synced")
+
+        if result.errors:
+            if result.positions_synced > 0 or result.cash_balance_synced:
+                batch._incr("partial")
+            else:
+                batch._incr("failed")
+        else:
+            batch._incr("succeeded")
+
+    return batch
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────

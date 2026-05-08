@@ -154,5 +154,46 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  # ---- KIS Snapshot Sync Scheduler -----------------------------------------
+  # Periodically syncs KIS account positions + cash balance into snapshot tables.
+  # Runs ``sync_all_kis_accounts()`` in a loop with configurable interval.
+  snapshot-sync:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_HOST: db
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "${DATABASE_NAME:-trading}"
+      DATABASE_USER: "${DATABASE_USER:-trading}"
+      DATABASE_PASSWORD: "${DATABASE_PASSWORD:-trading}"
+      DATABASE_SCHEMA: "${DATABASE_SCHEMA:-trading}"
+      APP_ENV: "${APP_ENV:-paper}"
+      APP_TIMEZONE: "${APP_TIMEZONE:-Asia/Seoul}"
+      # KIS env
+      KIS_ENV: "${KIS_ENV:-paper}"
+      KIS_APP_KEY: "${KIS_APP_KEY:-}"
+      KIS_APP_SECRET: "${KIS_APP_SECRET:-}"
+      KIS_ACCOUNT_NO: "${KIS_ACCOUNT_NO:-}"
+      KIS_BASE_URL: "${KIS_BASE_URL:-}"
+      KIS_WS_URL: "${KIS_WS_URL:-}"
+      KIS_ACCOUNT_PRODUCT_CODE: "${KIS_ACCOUNT_PRODUCT_CODE:-01}"
+      KIS_REAL_REST_RPS: "${KIS_REAL_REST_RPS:-18}"
+      KIS_PAPER_REST_RPS: "${KIS_PAPER_REST_RPS:-1}"
+      # Legacy fallback names (still supported)
+      KIS_API_KEY: "${KIS_API_KEY:-}"
+      KIS_API_SECRET: "${KIS_API_SECRET:-}"
+      KIS_ACCOUNT_NUMBER: "${KIS_ACCOUNT_NUMBER:-}"
+      # Sync interval (seconds, default 300 = 5 minutes)
+      KIS_SNAPSHOT_SYNC_INTERVAL_SECONDS: "${KIS_SNAPSHOT_SYNC_INTERVAL_SECONDS:-300}"
+    volumes:
+      - ./src:/app/src
+      - ./scripts:/app/scripts
+    command:
+      - python
+      - scripts/run_snapshot_sync_loop.py
+    restart: unless-stopped
+
 volumes:
   pgdata:

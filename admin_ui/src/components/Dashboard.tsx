@@ -26,11 +26,9 @@ import { ArrowRight, Users, Wallet, BarChart3, ShoppingCart, Lock, RefreshCw } f
 /* ── helpers ── */
 function formatCurrency(val: number | null | undefined): string {
   if (val == null) return "—";
-  return new Intl.NumberFormat("ko-KR", {
-    style: "currency",
-    currency: "KRW",
+  return `${new Intl.NumberFormat("ko-KR", {
     maximumFractionDigits: 0,
-  }).format(val);
+  }).format(val)}원`;
 }
 
 /* ── MetricCard ── */

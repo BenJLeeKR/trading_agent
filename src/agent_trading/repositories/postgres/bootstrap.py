@@ -48,6 +48,9 @@ from agent_trading.repositories.postgres.reconciliation import (
 from agent_trading.repositories.postgres.risk_limit_snapshots import (
     PostgresRiskLimitSnapshotRepository,
 )
+from agent_trading.repositories.postgres.snapshot_sync_runs import (
+    PostgresSnapshotSyncRunRepository,
+)
 from agent_trading.repositories.postgres.strategies import (
     PostgresStrategyRepository,
 )
@@ -100,6 +103,7 @@ def build_postgres_repositories(
         reconciliations=PostgresReconciliationRepository(tx),
         audit_logs=PostgresAuditLogRepository(tx),
         broker_accounts=PostgresBrokerAccountRepository(tx),
+        snapshot_sync_runs=PostgresSnapshotSyncRunRepository(tx),
         order_state_events=PostgresOrderStateEventRepository(tx),
         guardrail_evaluations=PostgresGuardrailEvaluationRepository(tx),
         risk_limit_snapshots=PostgresRiskLimitSnapshotRepository(tx),

@@ -165,6 +165,28 @@ def _resolve_kis_dev_token_cache_path() -> str:
     return os.getenv("KIS_DEV_TOKEN_CACHE_PATH", ".cache/kis_token.json")
 
 
+def _resolve_kis_snapshot_stale_threshold_seconds() -> int:
+    """Resolve stale threshold for KIS snapshot sync freshness check.
+
+    ``KIS_SNAPSHOT_STALE_THRESHOLD_SECONDS`` env var, default ``900`` (15 min).
+    Clamped to ``max(1, value)``.
+    """
+    raw = os.getenv("KIS_SNAPSHOT_STALE_THRESHOLD_SECONDS", "900")
+    return max(1, int(raw))
+
+
+def _resolve_kis_snapshot_startup_grace_seconds() -> int:
+    """Resolve startup grace period for snapshot sync readiness check.
+
+    ``KIS_SNAPSHOT_STARTUP_GRACE_SECONDS`` env var, default ``600`` (10 min).
+    During this window after process boot, ``/health/readyz`` skips the
+    snapshot-sync-stale check and returns ``"ok"`` instead of ``"degraded"``.
+    Clamped to ``max(0, value)``.
+    """
+    raw = os.getenv("KIS_SNAPSHOT_STARTUP_GRACE_SECONDS", "600")
+    return max(0, int(raw))
+
+
 # ---------------------------------------------------------------------------
 # Application settings
 # ---------------------------------------------------------------------------
@@ -199,6 +221,16 @@ class AppSettings:
     # ---- KIS dev token cache (paper/dev only; disabled in live) ---------------
     kis_dev_token_cache_enabled: bool = field(default_factory=_resolve_kis_dev_token_cache_enabled)
     kis_dev_token_cache_path: str = field(default_factory=_resolve_kis_dev_token_cache_path)
+
+    # ---- KIS snapshot sync stale threshold -----------------------------------
+    kis_snapshot_stale_threshold_seconds: int = field(
+        default_factory=_resolve_kis_snapshot_stale_threshold_seconds,
+    )
+
+    # ---- KIS snapshot sync startup grace period ------------------------------
+    kis_snapshot_startup_grace_seconds: int = field(
+        default_factory=_resolve_kis_snapshot_startup_grace_seconds,
+    )
 
     # ---- OpenDART API credentials (read from environment) --------------------
     opendart_api_key: str = field(default_factory=lambda: os.getenv("OPENDART_API_KEY", ""))

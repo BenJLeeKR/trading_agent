@@ -72,6 +72,10 @@ class PostgresAccountRepository:
             conditions.append(f"environment = ${idx}")
             params.append(lookup.environment.value)
             idx += 1
+        if lookup.broker_account_id is not None:
+            conditions.append(f"broker_account_id = ${idx}")
+            params.append(lookup.broker_account_id)
+            idx += 1
 
         if not conditions:
             return None

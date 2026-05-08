@@ -70,3 +70,17 @@ class PostgresBrokerAccountRepository:
             broker_name,
         )
         return tuple(row_to_entity(r, BrokerAccountEntity) for r in rows)
+
+    async def list_by_broker_and_env(
+        self,
+        broker_name: str,
+        env: Environment,
+    ) -> Sequence[BrokerAccountEntity]:
+        rows = await self._tx.connection.fetch(
+            "SELECT * FROM trading.broker_accounts "
+            "WHERE broker_name = $1 AND environment = $2 "
+            "ORDER BY account_ref",
+            broker_name,
+            env.value,
+        )
+        return tuple(row_to_entity(r, BrokerAccountEntity) for r in rows)

@@ -1,4 +1,37 @@
-# Internal Identifier Policy — 규칙형 code/display metadata 도입
+# Internal Identifier Policy — UUID Generation Standard & Code/Label Separation
+
+## 0. UUID Generation Policy
+
+### 원칙
+1. **모든 internal ID(PK/FK)는 UUID를 사용한다.**
+2. **UUID는 opaque한 internal 식별자이며, business meaning을 포함하지 않는다.**
+3. **사람이 읽는 식별자는 별도 `code` / `label` / `alias` 필드가 담당한다.**
+
+### UUID Version: v4 (랜덤) / v5 (name-based)
+
+| 생성 방식 | 사용처 | 비고 |
+|-----------|--------|------|
+| `uuid4()` (random) | **Runtime entity 생성** — 모든 production 코드 | 충돌 확률이 무시할 수준, 단순함 |
+| `uuid.uuid5()` (name-based, SHA-1) | **Seed/Test deterministic UUID** — idempotent seeding | 같은 name에서 항상 같은 UUID 생성, FK 관계 유지 |
+
+### Seed/Test UUID 규칙
+
+- `uuid5(NAMESPACE_DNS, "{entity_type}.{context}")` 형식 사용
+- 예: `uuid.uuid5(uuid.NAMESPACE_DNS, "client.entrypoint")`
+- 반복 숫자 패턴(`11111111-...`, `22222222-...`) **금지**
+- 하드코딩된 UUID 문자열은 `UUID("...")` 리터럴로 명시하고, 생성 방식을 주석에 기록
+
+### 사람이 읽는 식별자 계층
+
+| 역할 | 필드 | 예시 |
+|------|------|------|
+| 내부 PK/FK (opaque) | `*_id` (UUID) | `301961b4-75d9-533c-92b7-69a306cdd435` |
+| 사람이 읽는 code | `*_code` | `EPC001`, `KIS-PAPER-****5678` |
+| 사람이 읽는 label | `name`, `account_alias` | `Entrypoint Client`, `Paper Account 1` |
+
+---
+
+# Internal Identifier Policy — 규칙형 code/display metadata 도입 (이하 원본)
 
 ## 1. 현황 분석
 

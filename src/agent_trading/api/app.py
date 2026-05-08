@@ -12,6 +12,7 @@ Usage::
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import AsyncIterator
 
 from fastapi import Depends, FastAPI
@@ -94,6 +95,9 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        # Record process startup timestamp for grace-period logic
+        _app.state.started_at = datetime.now(timezone.utc)
+
         # Configure security module at startup
         configure_security(token=auth_token, role=auth_role)
 
@@ -204,6 +208,11 @@ def create_app(
     from agent_trading.api.routes.broker_capacity import router as broker_capacity_router
 
     protected_routers.append(broker_capacity_router)
+
+    # Phase 4 — Snapshot Sync Run inspection
+    from agent_trading.api.routes.snapshot_sync_runs import router as snapshot_sync_runs_router
+
+    protected_routers.append(snapshot_sync_runs_router)
 
     if auth_enabled:
         for router in protected_routers:

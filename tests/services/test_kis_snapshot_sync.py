@@ -6,6 +6,7 @@ Tests use in-memory repositories and a mock KIS REST client to verify:
 - Instrument lookup failure → skip + warning (not hard fail)
 - Partial success when some positions fail
 - Empty responses
+- Batch sync (multiple account IDs, auto-discovery, filtering)
 """
 from __future__ import annotations
 
@@ -17,18 +18,29 @@ from uuid import UUID, uuid4
 import pytest
 
 from agent_trading.domain.entities import (
+    AccountEntity,
+    BrokerAccountEntity,
     CashBalanceSnapshotEntity,
     InstrumentEntity,
     PositionSnapshotEntity,
+    SnapshotSyncRunEntity,
 )
+from agent_trading.domain.enums import Environment
 from agent_trading.repositories.memory import (
+    InMemoryAccountRepository,
+    InMemoryBrokerAccountRepository,
     InMemoryCashBalanceSnapshotRepository,
     InMemoryInstrumentRepository,
     InMemoryPositionSnapshotRepository,
+    InMemorySnapshotSyncRunRepository,
 )
 from agent_trading.services.kis_snapshot_sync import (
+    BatchSyncResult,
     SyncResult,
+    build_sync_run_entity,
+    sync_all_kis_accounts,
     sync_kis_account_snapshots,
+    sync_kis_accounts_by_ids,
 )
 
 
@@ -467,3 +479,997 @@ class TestSyncCombined:
         # Append-only: 2 snapshots after 2 calls
         assert len(position_repo._items) == 2
         assert len(cash_repo._items) == 2
+
+
+# ── Batch Sync Tests ─────────────────────────────────────────────────────
+
+
+class TestBatchSyncByIds:
+    """``sync_kis_accounts_by_ids()`` tests."""
+
+    async def test_sync_multiple_ids(
+        self,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+    ) -> None:
+        """Multiple account IDs are synced and aggregated correctly."""
+        account_id_1 = uuid4()
+        account_id_2 = uuid4()
+        client = FakeKISRestClient(
+            positions=[_make_position(pdno="005930")],
+            cash_balance=_make_cash_balance(),
+        )
+
+        batch = await sync_kis_accounts_by_ids(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            account_ids=[account_id_1, account_id_2],
+        )
+
+        assert batch.total_accounts == 2
+        assert batch.succeeded == 2
+        assert batch.partial == 0
+        assert batch.failed == 0
+        assert batch.skipped == 0
+        assert batch.total_positions_synced == 2  # 1 per account
+        assert batch.total_cash_synced == 2       # 1 per account
+        assert len(batch.account_results) == 2
+        assert len(position_repo._items) == 2
+        assert len(cash_repo._items) == 2
+
+    async def test_batch_partial_failure(
+        self,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+    ) -> None:
+        """When some accounts fail, partial/failed counters reflect correctly."""
+
+        class FailingClient(FakeKISRestClient):
+            def __init__(self) -> None:
+                super().__init__(positions=[_make_position(pdno="005930")])
+                self.call_count = 0
+
+            async def get_positions(self) -> list[dict[str, Any]]:
+                self.call_count += 1
+                if self.call_count == 2:
+                    raise RuntimeError("KIS timeout on second call")
+                return self._positions
+
+        account_id_1 = uuid4()
+        account_id_2 = uuid4()
+        client = FailingClient()
+
+        batch = await sync_kis_accounts_by_ids(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            account_ids=[account_id_1, account_id_2],
+        )
+
+        assert batch.total_accounts == 2
+        assert batch.succeeded == 1
+        assert batch.partial == 0
+        assert batch.failed == 1
+        assert batch.total_positions_synced == 1
+        assert len(batch.account_results) == 2  # both appended (one with errors)
+        assert len(position_repo._items) == 1
+
+    async def test_batch_empty_ids(
+        self,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+    ) -> None:
+        """Empty account_ids list produces empty BatchSyncResult."""
+        client = FakeKISRestClient()
+        batch = await sync_kis_accounts_by_ids(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            account_ids=[],
+        )
+
+        assert batch.total_accounts == 0
+        assert batch.succeeded == 0
+        assert batch.partial == 0
+        assert batch.failed == 0
+        assert batch.skipped == 0
+        assert batch.total_positions_synced == 0
+        assert len(batch.account_results) == 0
+
+
+class TestSyncAllKisAccounts:
+    """``sync_all_kis_accounts()`` tests."""
+
+    async def test_sync_all_discovery(
+        self,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+    ) -> None:
+        """Discovered KIS broker accounts are resolved and synced."""
+        broker_account_id_1 = uuid4()
+        broker_account_id_2 = uuid4()
+        account_id_1 = uuid4()
+        account_id_2 = uuid4()
+
+        broker_repo = InMemoryBrokerAccountRepository()
+        await broker_repo.add(BrokerAccountEntity(
+            broker_account_id=broker_account_id_1,
+            broker_name="koreainvestment",
+            account_ref="1234567890",
+            environment=Environment.PAPER,
+            credential_ref="default",
+        ))
+        await broker_repo.add(BrokerAccountEntity(
+            broker_account_id=broker_account_id_2,
+            broker_name="koreainvestment",
+            account_ref="0987654321",
+            environment=Environment.PAPER,
+            credential_ref="default",
+        ))
+
+        account_repo = InMemoryAccountRepository()
+        await account_repo.add(AccountEntity(
+            account_id=account_id_1,
+            client_id=uuid4(),
+            broker_account_id=broker_account_id_1,
+            account_alias="KIS-1",
+            account_masked="1234-****",
+            environment=Environment.PAPER,
+            status="active",
+        ))
+        await account_repo.add(AccountEntity(
+            account_id=account_id_2,
+            client_id=uuid4(),
+            broker_account_id=broker_account_id_2,
+            account_alias="KIS-2",
+            account_masked="0987-****",
+            environment=Environment.PAPER,
+            status="active",
+        ))
+
+        client = FakeKISRestClient(
+            positions=[_make_position(pdno="005930")],
+            cash_balance=_make_cash_balance(),
+        )
+
+        batch = await sync_all_kis_accounts(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            broker_account_repo=broker_repo,
+            account_repo=account_repo,
+        )
+
+        assert batch.total_accounts == 2
+        assert batch.succeeded == 2
+        assert batch.partial == 0
+        assert batch.failed == 0
+        assert batch.skipped == 0
+        assert batch.total_positions_synced == 2
+        assert len(position_repo._items) == 2
+
+    async def test_sync_all_with_account_number_filter(
+        self,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+    ) -> None:
+        """When kis_account_number is set, non-matching accounts are skipped."""
+        broker_account_id_1 = uuid4()
+        broker_account_id_2 = uuid4()
+        account_id_1 = uuid4()
+
+        broker_repo = InMemoryBrokerAccountRepository()
+        await broker_repo.add(BrokerAccountEntity(
+            broker_account_id=broker_account_id_1,
+            broker_name="koreainvestment",
+            account_ref="1234567890",
+            environment=Environment.PAPER,
+            credential_ref="default",
+        ))
+        await broker_repo.add(BrokerAccountEntity(
+            broker_account_id=broker_account_id_2,
+            broker_name="koreainvestment",
+            account_ref="0987654321",
+            environment=Environment.PAPER,
+            credential_ref="default",
+        ))
+
+        account_repo = InMemoryAccountRepository()
+        await account_repo.add(AccountEntity(
+            account_id=account_id_1,
+            client_id=uuid4(),
+            broker_account_id=broker_account_id_1,
+            account_alias="KIS-1",
+            account_masked="1234-****",
+            environment=Environment.PAPER,
+            status="active",
+        ))
+
+        client = FakeKISRestClient(
+            positions=[_make_position(pdno="005930")],
+            cash_balance=_make_cash_balance(),
+        )
+
+        batch = await sync_all_kis_accounts(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            broker_account_repo=broker_repo,
+            account_repo=account_repo,
+            kis_account_number="1234567890",
+        )
+
+        assert batch.total_accounts == 2
+        assert batch.succeeded == 1
+        assert batch.skipped == 1  # 0987654321 skipped
+        assert batch.failed == 0
+        assert batch.total_positions_synced == 1
+        assert len(position_repo._items) == 1
+
+    async def test_batch_empty_discovery(
+        self,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+    ) -> None:
+        """No KIS broker accounts → empty BatchSyncResult."""
+        broker_repo = InMemoryBrokerAccountRepository()
+        account_repo = InMemoryAccountRepository()
+        client = FakeKISRestClient()
+
+        batch = await sync_all_kis_accounts(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            broker_account_repo=broker_repo,
+            account_repo=account_repo,
+        )
+
+        assert batch.total_accounts == 0
+        assert batch.succeeded == 0
+        assert batch.partial == 0
+        assert batch.failed == 0
+        assert batch.skipped == 0
+        assert batch.total_positions_synced == 0
+        assert len(batch.account_results) == 0
+
+
+class TestSyncAllWithEnvFilter:
+    """``sync_all_kis_accounts()`` — environment (``env``) filter tests."""
+
+    async def test_filter_env_paper_only(
+        self,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+    ) -> None:
+        """When ``env=Environment.PAPER``, only paper accounts are synced."""
+        broker_account_id_paper = uuid4()
+        broker_account_id_live = uuid4()
+        account_id_paper = uuid4()
+
+        broker_repo = InMemoryBrokerAccountRepository()
+        await broker_repo.add(BrokerAccountEntity(
+            broker_account_id=broker_account_id_paper,
+            broker_name="koreainvestment",
+            account_ref="1111111111",
+            environment=Environment.PAPER,
+            credential_ref="default",
+        ))
+        await broker_repo.add(BrokerAccountEntity(
+            broker_account_id=broker_account_id_live,
+            broker_name="koreainvestment",
+            account_ref="2222222222",
+            environment=Environment.LIVE,
+            credential_ref="default",
+        ))
+
+        account_repo = InMemoryAccountRepository()
+        await account_repo.add(AccountEntity(
+            account_id=account_id_paper,
+            client_id=uuid4(),
+            broker_account_id=broker_account_id_paper,
+            account_alias="KIS-PAPER",
+            account_masked="****1111",
+            environment=Environment.PAPER,
+            status="active",
+        ))
+
+        client = FakeKISRestClient(
+            positions=[_make_position(pdno="005930")],
+            cash_balance=_make_cash_balance(),
+        )
+
+        batch = await sync_all_kis_accounts(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            broker_account_repo=broker_repo,
+            account_repo=account_repo,
+            env=Environment.PAPER,
+        )
+
+        # Only 1 broker account discovered (paper), 1 synced
+        assert batch.total_accounts == 1
+        assert batch.succeeded == 1
+        assert batch.skipped == 0
+        assert batch.failed == 0
+        assert batch.total_positions_synced == 1
+        assert len(position_repo._items) == 1
+
+    async def test_filter_env_live_only(
+        self,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+    ) -> None:
+        """When ``env=Environment.LIVE``, only live accounts are synced."""
+        broker_account_id_paper = uuid4()
+        broker_account_id_live = uuid4()
+        account_id_live = uuid4()
+
+        broker_repo = InMemoryBrokerAccountRepository()
+        await broker_repo.add(BrokerAccountEntity(
+            broker_account_id=broker_account_id_paper,
+            broker_name="koreainvestment",
+            account_ref="1111111111",
+            environment=Environment.PAPER,
+            credential_ref="default",
+        ))
+        await broker_repo.add(BrokerAccountEntity(
+            broker_account_id=broker_account_id_live,
+            broker_name="koreainvestment",
+            account_ref="2222222222",
+            environment=Environment.LIVE,
+            credential_ref="default",
+        ))
+
+        account_repo = InMemoryAccountRepository()
+        await account_repo.add(AccountEntity(
+            account_id=account_id_live,
+            client_id=uuid4(),
+            broker_account_id=broker_account_id_live,
+            account_alias="KIS-LIVE",
+            account_masked="****2222",
+            environment=Environment.LIVE,
+            status="active",
+        ))
+
+        client = FakeKISRestClient(
+            positions=[_make_position(pdno="005930")],
+            cash_balance=_make_cash_balance(),
+        )
+
+        batch = await sync_all_kis_accounts(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            broker_account_repo=broker_repo,
+            account_repo=account_repo,
+            env=Environment.LIVE,
+        )
+
+        assert batch.total_accounts == 1
+        assert batch.succeeded == 1
+        assert batch.skipped == 0
+        assert batch.failed == 0
+        assert batch.total_positions_synced == 1
+        assert len(position_repo._items) == 1
+
+    async def test_filter_env_none(
+        self,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+    ) -> None:
+        """When ``env=None``, all environments are discovered (backward compat)."""
+        broker_account_id_paper = uuid4()
+        broker_account_id_live = uuid4()
+        account_id_paper = uuid4()
+        account_id_live = uuid4()
+
+        broker_repo = InMemoryBrokerAccountRepository()
+        await broker_repo.add(BrokerAccountEntity(
+            broker_account_id=broker_account_id_paper,
+            broker_name="koreainvestment",
+            account_ref="1111111111",
+            environment=Environment.PAPER,
+            credential_ref="default",
+        ))
+        await broker_repo.add(BrokerAccountEntity(
+            broker_account_id=broker_account_id_live,
+            broker_name="koreainvestment",
+            account_ref="2222222222",
+            environment=Environment.LIVE,
+            credential_ref="default",
+        ))
+
+        account_repo = InMemoryAccountRepository()
+        await account_repo.add(AccountEntity(
+            account_id=account_id_paper,
+            client_id=uuid4(),
+            broker_account_id=broker_account_id_paper,
+            account_alias="KIS-PAPER",
+            account_masked="****1111",
+            environment=Environment.PAPER,
+            status="active",
+        ))
+        await account_repo.add(AccountEntity(
+            account_id=account_id_live,
+            client_id=uuid4(),
+            broker_account_id=broker_account_id_live,
+            account_alias="KIS-LIVE",
+            account_masked="****2222",
+            environment=Environment.LIVE,
+            status="active",
+        ))
+
+        client = FakeKISRestClient(
+            positions=[_make_position(pdno="005930")],
+            cash_balance=_make_cash_balance(),
+        )
+
+        batch = await sync_all_kis_accounts(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            broker_account_repo=broker_repo,
+            account_repo=account_repo,
+            env=None,
+        )
+
+        assert batch.total_accounts == 2
+        assert batch.succeeded == 2
+        assert batch.skipped == 0
+        assert batch.failed == 0
+        assert batch.total_positions_synced == 2
+        assert len(position_repo._items) == 2
+
+
+# ── Snapshot sync run history tests ────────────────────────────────────
+
+
+class TestSnapshotSyncRunEntity:
+    """``SnapshotSyncRunEntity`` construction validation."""
+
+    def test_manual_single_completed(self) -> None:
+        """A fully successful manual single-account sync."""
+        now = datetime.now(timezone.utc)
+        entity = SnapshotSyncRunEntity(
+            snapshot_sync_run_id=uuid4(),
+            trigger_type="manual",
+            scope="single",
+            dry_run=False,
+            total_accounts=1,
+            succeeded_accounts=1,
+            partial_accounts=0,
+            failed_accounts=0,
+            skipped_accounts=0,
+            positions_synced_total=5,
+            positions_skipped_total=0,
+            cash_synced_count=1,
+            error_count=0,
+            status="completed",
+            started_at=now,
+            completed_at=now,
+        )
+        assert entity.trigger_type == "manual"
+        assert entity.status == "completed"
+        assert entity.scope == "single"
+        assert entity.dry_run is False
+
+    def test_scheduler_all_partial(self) -> None:
+        """A scheduler run with partial success."""
+        now = datetime.now(timezone.utc)
+        entity = SnapshotSyncRunEntity(
+            snapshot_sync_run_id=uuid4(),
+            trigger_type="scheduler",
+            scope="all",
+            dry_run=False,
+            total_accounts=5,
+            succeeded_accounts=3,
+            partial_accounts=1,
+            failed_accounts=1,
+            skipped_accounts=0,
+            positions_synced_total=15,
+            positions_skipped_total=2,
+            cash_synced_count=4,
+            error_count=2,
+            status="partial",
+            started_at=now,
+            completed_at=now,
+        )
+        assert entity.trigger_type == "scheduler"
+        assert entity.status == "partial"
+        assert entity.scope == "all"
+
+    def test_manual_single_failed(self) -> None:
+        """A fully failed manual sync."""
+        now = datetime.now(timezone.utc)
+        entity = SnapshotSyncRunEntity(
+            snapshot_sync_run_id=uuid4(),
+            trigger_type="manual",
+            scope="single",
+            dry_run=False,
+            total_accounts=1,
+            succeeded_accounts=0,
+            partial_accounts=0,
+            failed_accounts=1,
+            skipped_accounts=0,
+            positions_synced_total=0,
+            positions_skipped_total=0,
+            cash_synced_count=0,
+            error_count=3,
+            status="failed",
+            started_at=now,
+            completed_at=now,
+        )
+        assert entity.status == "failed"
+        assert entity.failed_accounts == 1
+        assert entity.error_count == 3
+
+    def test_dry_run_flag(self) -> None:
+        """Dry-run flag is stored correctly."""
+        now = datetime.now(timezone.utc)
+        entity = SnapshotSyncRunEntity(
+            snapshot_sync_run_id=uuid4(),
+            trigger_type="manual",
+            scope="all",
+            dry_run=True,
+            total_accounts=2,
+            succeeded_accounts=2,
+            partial_accounts=0,
+            failed_accounts=0,
+            skipped_accounts=0,
+            positions_synced_total=10,
+            positions_skipped_total=0,
+            cash_synced_count=2,
+            error_count=0,
+            status="completed",
+            started_at=now,
+        )
+        assert entity.dry_run is True
+
+    def test_with_env_and_status_filter(self) -> None:
+        """Entity stores env_filter and status_filter when provided."""
+        now = datetime.now(timezone.utc)
+        entity = SnapshotSyncRunEntity(
+            snapshot_sync_run_id=uuid4(),
+            trigger_type="manual",
+            scope="all",
+            dry_run=False,
+            total_accounts=3,
+            succeeded_accounts=2,
+            partial_accounts=1,
+            failed_accounts=0,
+            skipped_accounts=0,
+            positions_synced_total=8,
+            positions_skipped_total=1,
+            cash_synced_count=2,
+            error_count=1,
+            status="partial",
+            started_at=now,
+            env_filter="paper",
+            status_filter="active",
+        )
+        assert entity.env_filter == "paper"
+        assert entity.status_filter == "active"
+
+    def test_with_summary_json(self) -> None:
+        """Entity stores summary_json dict."""
+        now = datetime.now(timezone.utc)
+        entity = SnapshotSyncRunEntity(
+            snapshot_sync_run_id=uuid4(),
+            trigger_type="scheduler",
+            scope="all",
+            dry_run=False,
+            total_accounts=10,
+            succeeded_accounts=10,
+            partial_accounts=0,
+            failed_accounts=0,
+            skipped_accounts=0,
+            positions_synced_total=50,
+            positions_skipped_total=0,
+            cash_synced_count=10,
+            error_count=0,
+            status="completed",
+            started_at=now,
+            summary_json={"duration_seconds": 12.5},
+        )
+        assert entity.summary_json is not None
+        assert entity.summary_json["duration_seconds"] == 12.5
+
+
+class TestBuildSyncRunEntity:
+    """``build_sync_run_entity()`` status classification tests."""
+
+    def test_completed_no_errors(self) -> None:
+        """Zero failures + zero errors → status='completed'."""
+        batch = BatchSyncResult(
+            total_accounts=2,
+            succeeded=2,
+            partial=0,
+            failed=0,
+            skipped=0,
+            total_positions_synced=10,
+            total_positions_skipped=0,
+            total_cash_synced=2,
+            errors=[],
+        )
+        entity = build_sync_run_entity(
+            batch,
+            trigger_type="manual",
+            scope="batch",
+            dry_run=False,
+        )
+        assert entity.status == "completed"
+        assert entity.total_accounts == 2
+        assert entity.succeeded_accounts == 2
+        assert entity.failed_accounts == 0
+        assert entity.error_count == 0
+        assert entity.trigger_type == "manual"
+        assert entity.scope == "batch"
+
+    def test_partial_some_failures(self) -> None:
+        """Some failures but partial success → status='partial'."""
+        batch = BatchSyncResult(
+            total_accounts=3,
+            succeeded=2,
+            partial=1,
+            failed=0,
+            skipped=0,
+            total_positions_synced=8,
+            total_positions_skipped=2,
+            total_cash_synced=2,
+            errors=["Account B: timeout"],
+        )
+        entity = build_sync_run_entity(
+            batch,
+            trigger_type="scheduler",
+            scope="all",
+            dry_run=False,
+        )
+        assert entity.status == "partial"
+        assert entity.error_count == 1
+        assert entity.trigger_type == "scheduler"
+        assert entity.scope == "all"
+
+    def test_failed_all_fail(self) -> None:
+        """All accounts failed → status='failed'."""
+        batch = BatchSyncResult(
+            total_accounts=2,
+            succeeded=0,
+            partial=0,
+            failed=2,
+            skipped=0,
+            total_positions_synced=0,
+            total_positions_skipped=0,
+            total_cash_synced=0,
+            errors=["Account A: auth error", "Account B: network error"],
+        )
+        entity = build_sync_run_entity(
+            batch,
+            trigger_type="manual",
+            scope="single",
+            dry_run=False,
+        )
+        assert entity.status == "failed"
+        assert entity.error_count == 2
+        assert entity.succeeded_accounts == 0
+        assert entity.failed_accounts == 2
+
+    def test_partial_with_only_partial_count(self) -> None:
+        """batch.partial > 0 but no failures → status='partial'."""
+        batch = BatchSyncResult(
+            total_accounts=1,
+            succeeded=0,
+            partial=1,
+            failed=0,
+            skipped=0,
+            total_positions_synced=3,
+            total_positions_skipped=2,
+            total_cash_synced=1,
+            errors=[],
+        )
+        entity = build_sync_run_entity(
+            batch,
+            trigger_type="manual",
+            scope="single",
+            dry_run=False,
+        )
+        assert entity.status == "partial"
+
+    def test_dry_run_propagated(self) -> None:
+        """dry_run flag is passed through to entity."""
+        batch = BatchSyncResult(
+            total_accounts=1,
+            succeeded=1,
+            errors=[],
+        )
+        entity = build_sync_run_entity(
+            batch,
+            trigger_type="manual",
+            scope="single",
+            dry_run=True,
+        )
+        assert entity.dry_run is True
+
+    def test_env_status_filter_propagated(self) -> None:
+        """env_filter and status_filter are passed through."""
+        batch = BatchSyncResult(total_accounts=1, succeeded=1, errors=[])
+        entity = build_sync_run_entity(
+            batch,
+            trigger_type="manual",
+            scope="all",
+            dry_run=False,
+            env_filter="live",
+            status_filter="active",
+        )
+        assert entity.env_filter == "live"
+        assert entity.status_filter == "active"
+
+
+class TestSnapshotSyncRunRepository:
+    """``InMemorySnapshotSyncRunRepository`` round-trip tests."""
+
+    async def test_add_and_retrieve(self) -> None:
+        """Adding a run entity succeeds and returns it."""
+        repo = InMemorySnapshotSyncRunRepository()
+        now = datetime.now(timezone.utc)
+        entity = SnapshotSyncRunEntity(
+            snapshot_sync_run_id=uuid4(),
+            trigger_type="manual",
+            scope="single",
+            dry_run=False,
+            total_accounts=1,
+            succeeded_accounts=1,
+            partial_accounts=0,
+            failed_accounts=0,
+            skipped_accounts=0,
+            positions_synced_total=5,
+            positions_skipped_total=0,
+            cash_synced_count=1,
+            error_count=0,
+            status="completed",
+            started_at=now,
+        )
+        saved = await repo.add(entity)
+        assert saved.snapshot_sync_run_id == entity.snapshot_sync_run_id
+        assert saved.status == "completed"
+        assert len(repo._items) == 1
+
+    async def test_add_multiple_runs(self) -> None:
+        """Multiple runs can be added independently."""
+        repo = InMemorySnapshotSyncRunRepository()
+        now = datetime.now(timezone.utc)
+        e1 = SnapshotSyncRunEntity(
+            snapshot_sync_run_id=uuid4(),
+            trigger_type="manual", scope="single", dry_run=False,
+            total_accounts=1, succeeded_accounts=1,
+            partial_accounts=0, failed_accounts=0, skipped_accounts=0,
+            positions_synced_total=3, positions_skipped_total=0,
+            cash_synced_count=1, error_count=0, status="completed",
+            started_at=now,
+        )
+        e2 = SnapshotSyncRunEntity(
+            snapshot_sync_run_id=uuid4(),
+            trigger_type="scheduler", scope="all", dry_run=False,
+            total_accounts=5, succeeded_accounts=4,
+            partial_accounts=1, failed_accounts=0, skipped_accounts=0,
+            positions_synced_total=20, positions_skipped_total=1,
+            cash_synced_count=5, error_count=1, status="partial",
+            started_at=now,
+        )
+        await repo.add(e1)
+        await repo.add(e2)
+        assert len(repo._items) == 2
+
+
+class TestSyncAllWithStatusFilter:
+    """``sync_all_kis_accounts()`` — account status (``account_status``) filter tests."""
+
+    async def test_filter_status_active(
+        self,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+    ) -> None:
+        """When ``account_status='active'``, inactive accounts are skipped."""
+        broker_account_id_active = uuid4()
+        broker_account_id_inactive = uuid4()
+        account_id_active = uuid4()
+
+        broker_repo = InMemoryBrokerAccountRepository()
+        await broker_repo.add(BrokerAccountEntity(
+            broker_account_id=broker_account_id_active,
+            broker_name="koreainvestment",
+            account_ref="1111111111",
+            environment=Environment.PAPER,
+            credential_ref="default",
+        ))
+        await broker_repo.add(BrokerAccountEntity(
+            broker_account_id=broker_account_id_inactive,
+            broker_name="koreainvestment",
+            account_ref="2222222222",
+            environment=Environment.PAPER,
+            credential_ref="default",
+        ))
+
+        account_repo = InMemoryAccountRepository()
+        await account_repo.add(AccountEntity(
+            account_id=account_id_active,
+            client_id=uuid4(),
+            broker_account_id=broker_account_id_active,
+            account_alias="KIS-ACTIVE",
+            account_masked="****1111",
+            environment=Environment.PAPER,
+            status="active",
+        ))
+        # Inactive account — no matching AccountEntity in this test
+        # (it exists but has status="inactive" so will be skipped)
+
+        client = FakeKISRestClient(
+            positions=[_make_position(pdno="005930")],
+            cash_balance=_make_cash_balance(),
+        )
+
+        batch = await sync_all_kis_accounts(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            broker_account_repo=broker_repo,
+            account_repo=account_repo,
+            account_status="active",
+        )
+
+        assert batch.total_accounts == 2
+        assert batch.succeeded == 1
+        assert batch.skipped == 1  # inactive account has no AccountEntity → skipped
+        assert batch.failed == 0
+
+    async def test_filter_status_inactive(
+        self,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+    ) -> None:
+        """When ``account_status='inactive'``, active accounts are skipped."""
+        broker_account_id_active = uuid4()
+        broker_account_id_inactive = uuid4()
+        account_id_inactive = uuid4()
+
+        broker_repo = InMemoryBrokerAccountRepository()
+        await broker_repo.add(BrokerAccountEntity(
+            broker_account_id=broker_account_id_active,
+            broker_name="koreainvestment",
+            account_ref="1111111111",
+            environment=Environment.PAPER,
+            credential_ref="default",
+        ))
+        await broker_repo.add(BrokerAccountEntity(
+            broker_account_id=broker_account_id_inactive,
+            broker_name="koreainvestment",
+            account_ref="2222222222",
+            environment=Environment.PAPER,
+            credential_ref="default",
+        ))
+
+        account_repo = InMemoryAccountRepository()
+        await account_repo.add(AccountEntity(
+            account_id=account_id_inactive,
+            client_id=uuid4(),
+            broker_account_id=broker_account_id_inactive,
+            account_alias="KIS-INACTIVE",
+            account_masked="****2222",
+            environment=Environment.PAPER,
+            status="inactive",
+        ))
+
+        client = FakeKISRestClient(
+            positions=[_make_position(pdno="005930")],
+            cash_balance=_make_cash_balance(),
+        )
+
+        batch = await sync_all_kis_accounts(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            broker_account_repo=broker_repo,
+            account_repo=account_repo,
+            account_status="inactive",
+        )
+
+        assert batch.total_accounts == 2
+        assert batch.succeeded == 1
+        # active account has no AccountEntity with status="inactive"
+        # so it is discovered but the broker account resolves to an AccountEntity
+        # whose status ("active") != "inactive" → skipped
+        assert batch.skipped == 1
+        assert batch.failed == 0
+
+    async def test_filter_status_none(
+        self,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+    ) -> None:
+        """When ``account_status=None``, all statuses are synced (backward compat)."""
+        broker_account_id_active = uuid4()
+        broker_account_id_inactive = uuid4()
+        account_id_active = uuid4()
+        account_id_inactive = uuid4()
+
+        broker_repo = InMemoryBrokerAccountRepository()
+        await broker_repo.add(BrokerAccountEntity(
+            broker_account_id=broker_account_id_active,
+            broker_name="koreainvestment",
+            account_ref="1111111111",
+            environment=Environment.PAPER,
+            credential_ref="default",
+        ))
+        await broker_repo.add(BrokerAccountEntity(
+            broker_account_id=broker_account_id_inactive,
+            broker_name="koreainvestment",
+            account_ref="2222222222",
+            environment=Environment.PAPER,
+            credential_ref="default",
+        ))
+
+        account_repo = InMemoryAccountRepository()
+        await account_repo.add(AccountEntity(
+            account_id=account_id_active,
+            client_id=uuid4(),
+            broker_account_id=broker_account_id_active,
+            account_alias="KIS-ACTIVE",
+            account_masked="****1111",
+            environment=Environment.PAPER,
+            status="active",
+        ))
+        await account_repo.add(AccountEntity(
+            account_id=account_id_inactive,
+            client_id=uuid4(),
+            broker_account_id=broker_account_id_inactive,
+            account_alias="KIS-INACTIVE",
+            account_masked="****2222",
+            environment=Environment.PAPER,
+            status="inactive",
+        ))
+
+        client = FakeKISRestClient(
+            positions=[_make_position(pdno="005930")],
+            cash_balance=_make_cash_balance(),
+        )
+
+        batch = await sync_all_kis_accounts(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            broker_account_repo=broker_repo,
+            account_repo=account_repo,
+            account_status=None,
+        )
+
+        assert batch.total_accounts == 2
+        assert batch.succeeded == 2
+        assert batch.skipped == 0
+        assert batch.failed == 0
+        assert batch.total_positions_synced == 2
+        assert len(position_repo._items) == 2

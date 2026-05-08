@@ -13,6 +13,7 @@ class AccountLookup:
     client_id: UUID | None = None
     account_alias: str | None = None
     environment: Environment | None = None
+    broker_account_id: UUID | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -34,4 +35,3 @@ class DecisionContextQuery:
     market_timestamp_from: datetime | None = None
     market_timestamp_to: datetime | None = None
     limit: int = 100
-
