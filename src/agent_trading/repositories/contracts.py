@@ -77,6 +77,19 @@ class AccountRepository(Protocol):
     async def list_by_client(self, client_id: UUID) -> Sequence[AccountEntity]:
         ...
 
+    async def update_metadata(
+        self,
+        account_id: UUID,
+        *,
+        account_masked: str | None = None,
+    ) -> AccountEntity | None:
+        """Update mutable metadata fields on an existing account.
+
+        Currently supports ``account_masked`` only.  Returns the updated
+        ``AccountEntity``, or ``None`` if the account does not exist.
+        """
+        ...
+
 
 class StrategyRepository(Protocol):
     async def add(self, strategy: StrategyEntity) -> StrategyEntity:

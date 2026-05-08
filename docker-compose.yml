@@ -79,6 +79,7 @@ services:
       - ./src:/app/src
       - ./db:/app/db
       - ./tests:/app/tests
+      - ./scripts:/app/scripts
       - ./pyproject.toml:/app/pyproject.toml
     # Keep the container alive for interactive commands
     command: ["tail", "-f", "/dev/null"]

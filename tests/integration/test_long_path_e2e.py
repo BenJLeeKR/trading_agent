@@ -616,6 +616,7 @@ class TestLongPathE2EPostgres:
             credential_ref="pg-e2e-cred",
             base_url=None,
             status="active",
+            broker_account_code="KIS-PAPER-****ACCT",
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )

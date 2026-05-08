@@ -56,6 +56,7 @@ async def _seed_broker_account(
         credential_ref="pg-smoke-cred",
         base_url=None,
         status="active",
+        broker_account_code="KIS-PAPER-****ACCT",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )

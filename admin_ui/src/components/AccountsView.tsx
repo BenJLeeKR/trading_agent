@@ -17,10 +17,10 @@ import { Lock, Wallet, TrendingUp, TrendingDown, X, Users } from "lucide-react";
 /* ───────────────────────────────────────────
  * Helpers
  * ─────────────────────────────────────────── */
-function formatCurrency(val: number | null | undefined): string {
+function formatCurrency(val: number | null | undefined, currency: string = "KRW"): string {
   if (val == null) return "—";
   if (Number.isNaN(val)) return "—";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(val);
+  return new Intl.NumberFormat("ko-KR", { style: "currency", currency }).format(val);
 }
 
 function formatQty(val: number | null | undefined): string {
@@ -139,14 +139,35 @@ export default function AccountsView() {
   // ── Column definitions ──────────────────────────────────────────
   const accountColumns: Column<AccountSummary>[] = [
     {
-      key: "account_masked",
-      header: "Account #",
-      render: (r) => r.account_masked ?? "—",
+      key: "account_code",
+      header: "Account",
+      render: (r) => {
+        const code = r.account_code;
+        const alias = r.account_alias;
+        const masked = r.account_masked;
+        const label = code || alias || masked || "—";
+        const title = [code, alias, masked].filter(Boolean).join(" · ") || undefined;
+        return (
+          <span title={title} className="text-sm font-medium text-[#0f172a]">
+            {label}
+          </span>
+        );
+      },
     },
     {
-      key: "account_alias",
-      header: "Alias",
-      render: (r) => r.account_alias ?? "—",
+      key: "broker_account_code",
+      header: "Account #",
+      render: (r) => {
+        const code = r.broker_account_code;
+        const masked = r.account_masked;
+        const label = code || masked || "—";
+        const title = [code, masked].filter(Boolean).join(" · ") || undefined;
+        return (
+          <span title={title} className="text-xs font-mono text-[#64748b]">
+            {label}
+          </span>
+        );
+      },
     },
     {
       key: "environment",
@@ -188,12 +209,12 @@ export default function AccountsView() {
     {
       key: "average_price",
       header: "Avg Cost",
-      render: (r) => formatCurrency(r.average_price),
+      render: (r) => formatCurrency(r.average_price, "KRW"),
     },
     {
       key: "market_price",
       header: "Market Price",
-      render: (r) => formatCurrency(r.market_price),
+      render: (r) => formatCurrency(r.market_price, "KRW"),
     },
     {
       key: "unrealized_pnl",
@@ -205,7 +226,7 @@ export default function AccountsView() {
             className={`text-xs font-semibold ${pnl >= 0 ? "text-[#16a34a]" : "text-[#dc2626]"}`}
           >
             {pnl >= 0 ? "+" : ""}
-            {formatCurrency(pnl)}
+            {formatCurrency(pnl, "KRW")}
           </span>
         );
       },
@@ -225,6 +246,9 @@ export default function AccountsView() {
           <h1 className="text-2xl font-semibold text-[#0f172a]">Accounts</h1>
           <p className="text-sm text-[#64748b] mt-1">
             View account status, positions, and cash balances
+          </p>
+          <p className="text-xs text-[#94a3b8] mt-0.5">
+            Account metadata from internal database
           </p>
         </div>
         {/* Selected client indicator */}
@@ -300,7 +324,7 @@ export default function AccountsView() {
               {/* Account Detail card */}
               <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-semibold text-[#0f172a]">Account Detail</h3>
+                  <h3 className="text-lg font-semibold text-[#0f172a]">Account Metadata</h3>
                   <button
                     onClick={() => setSelectedAccount(null)}
                     className="p-1 text-[#94a3b8] hover:text-[#64748b] transition-colors"
@@ -310,15 +334,27 @@ export default function AccountsView() {
                 </div>
                 <dl className="grid grid-cols-2 gap-4">
                   <div>
-                    <dt className="text-sm text-[#64748b]">Account #</dt>
-                    <dd className="text-sm font-medium text-[#0f172a] mt-0.5">
-                      {selectedAccountDetail.account_masked ?? "—"}
+                    <dt className="text-sm text-[#64748b]">Account Code</dt>
+                    <dd className="text-sm font-mono text-[#0f172a] mt-0.5">
+                      {selectedAccountDetail.account_code ?? "—"}
                     </dd>
                   </div>
                   <div>
                     <dt className="text-sm text-[#64748b]">Alias</dt>
                     <dd className="text-sm font-medium text-[#0f172a] mt-0.5">
                       {selectedAccountDetail.account_alias ?? "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm text-[#64748b]">Account #</dt>
+                    <dd className="text-sm font-mono text-[#0f172a] mt-0.5">
+                      {selectedAccountDetail.account_masked ?? "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm text-[#64748b]">Broker Code</dt>
+                    <dd className="text-sm font-mono text-[#0f172a] mt-0.5">
+                      {selectedAccountDetail.broker_account_code ?? "—"}
                     </dd>
                   </div>
                   <div>
@@ -349,19 +385,49 @@ export default function AccountsView() {
                       </StatusBadge>
                     </dd>
                   </div>
-                  <div>
-                    <dt className="text-sm text-[#64748b]">Broker Account ID</dt>
-                    <dd className="text-sm font-mono text-[#0f172a] mt-0.5">
-                      {truncateUuid(selectedAccountDetail.broker_account_id)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-sm text-[#64748b]">Client ID</dt>
-                    <dd className="text-sm font-mono text-[#0f172a] mt-0.5">
-                      {truncateUuid(selectedAccountDetail.client_id)}
-                    </dd>
-                  </div>
                 </dl>
+
+                {/* Technical IDs — muted section for UUIDs and raw refs */}
+                <div className="mt-6 pt-4 border-t border-[#e2e8f0]">
+                  <h4 className="text-xs font-medium text-[#94a3b8] uppercase tracking-wider mb-2">
+                    Technical IDs
+                  </h4>
+                  <dl className="grid grid-cols-3 gap-3">
+                    <div>
+                      <dt className="text-xs text-[#94a3b8]">Account ID</dt>
+                      <dd className="text-xs font-mono text-[#94a3b8] mt-0.5" title={selectedAccountDetail.account_id}>
+                        {truncateUuid(selectedAccountDetail.account_id)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-[#94a3b8]">Broker Account ID</dt>
+                      <dd className="text-xs font-mono text-[#94a3b8] mt-0.5" title={selectedAccountDetail.broker_account_id}>
+                        {truncateUuid(selectedAccountDetail.broker_account_id)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-[#94a3b8]">Client ID</dt>
+                      <dd className="text-xs font-mono text-[#94a3b8] mt-0.5" title={selectedAccountDetail.client_id}>
+                        {truncateUuid(selectedAccountDetail.client_id)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-[#94a3b8]">Broker Ref</dt>
+                      <dd className="text-xs font-mono text-[#94a3b8] mt-0.5" title={selectedAccountDetail.broker_account_ref ?? undefined}>
+                        {selectedAccountDetail.broker_account_ref ?? "—"}
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
+              </div>
+
+              {/* Broker Snapshot section label */}
+              <div className="flex items-center gap-2">
+                <div className="h-px flex-1 bg-[#e2e8f0]" />
+                <span className="text-xs font-medium text-[#94a3b8] uppercase tracking-wider">
+                  Broker Snapshot
+                </span>
+                <div className="h-px flex-1 bg-[#e2e8f0]" />
               </div>
 
               {detailLoading ? (
@@ -377,7 +443,7 @@ export default function AccountsView() {
                         </div>
                       </div>
                       <p className="text-2xl font-semibold text-[#0f172a]">
-                        {formatCurrency(totalValue)}
+                        {formatCurrency(totalValue, cashBalance?.currency)}
                       </p>
                       <p className="text-xs text-[#64748b] mt-1">Total Value</p>
                     </div>
@@ -389,7 +455,7 @@ export default function AccountsView() {
                       </div>
                       <p className="text-2xl font-semibold text-[#0f172a]">
                         {cashBalance
-                          ? formatCurrency(cashBalance.settled_cash)
+                          ? formatCurrency(cashBalance.settled_cash, cashBalance.currency)
                           : "—"}
                       </p>
                       <p className="text-xs text-[#64748b] mt-1">Cash Balance</p>
@@ -416,7 +482,7 @@ export default function AccountsView() {
                         }`}
                       >
                         {totalPnl >= 0 ? "+" : ""}
-                        {formatCurrency(totalPnl)}
+                        {formatCurrency(totalPnl, cashBalance?.currency)}
                       </p>
                       <p className="text-xs text-[#64748b] mt-1">Unrealized P&L</p>
                     </div>
@@ -425,26 +491,31 @@ export default function AccountsView() {
                   {/* Cash balance detail */}
                   {cashBalance && (
                     <div className="bg-white rounded-xl border border-[#e2e8f0] p-4">
-                      <h4 className="text-sm font-medium text-[#0f172a] mb-3">
-                        Cash Balance Detail
-                      </h4>
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-sm font-medium text-[#0f172a]">
+                          Broker Snapshot — Cash Balance
+                        </h4>
+                        <span className="text-xs text-[#94a3b8] font-mono">
+                          {cashBalance.snapshot_at}
+                        </span>
+                      </div>
                       <div className="flex gap-6 text-sm flex-wrap">
                         <div>
                           <span className="text-[#64748b]">Available: </span>
                           <span className="font-semibold text-[#0f172a]">
-                            {formatCurrency(cashBalance.available_cash)}
+                            {formatCurrency(cashBalance.available_cash, cashBalance.currency)}
                           </span>
                         </div>
                         <div>
                           <span className="text-[#64748b]">Settled: </span>
                           <span className="font-semibold text-[#0f172a]">
-                            {formatCurrency(cashBalance.settled_cash)}
+                            {formatCurrency(cashBalance.settled_cash, cashBalance.currency)}
                           </span>
                         </div>
                         <div>
                           <span className="text-[#64748b]">Unsettled: </span>
                           <span className="font-semibold text-[#0f172a]">
-                            {formatCurrency(cashBalance.unsettled_cash)}
+                            {formatCurrency(cashBalance.unsettled_cash, cashBalance.currency)}
                           </span>
                         </div>
                         <div>
@@ -459,19 +530,22 @@ export default function AccountsView() {
                             {cashBalance.source_of_truth}
                           </span>
                         </div>
-                        <div>
-                          <span className="text-[#64748b]">Snapshot: </span>
-                          <span className="font-semibold text-[#0f172a]">
-                            {cashBalance.snapshot_at}
-                          </span>
-                        </div>
                       </div>
                     </div>
                   )}
 
                   {/* Positions table */}
                   <div className="space-y-2">
-                    <h4 className="text-sm font-medium text-[#0f172a]">Positions</h4>
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-medium text-[#0f172a]">
+                        Broker Snapshot — Positions
+                      </h4>
+                      {positions.length > 0 && (
+                        <span className="text-xs text-[#94a3b8] font-mono">
+                          {positions[0].snapshot_at}
+                        </span>
+                      )}
+                    </div>
                     <DataTable
                       columns={positionColumns}
                       data={positions}

@@ -26,8 +26,9 @@ class PostgresBrokerAccountRepository:
         row = await self._tx.connection.fetchrow(
             """INSERT INTO trading.broker_accounts
                (broker_account_id, broker_name, account_ref, environment,
-                credential_ref, base_url, status, created_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                credential_ref, base_url, status, broker_account_code,
+                created_at, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                RETURNING *""",
             account.broker_account_id,
             account.broker_name,
@@ -36,6 +37,7 @@ class PostgresBrokerAccountRepository:
             account.credential_ref,
             account.base_url,
             account.status,
+            account.broker_account_code,
             account.created_at or datetime.now(timezone.utc),
             account.updated_at or datetime.now(timezone.utc),
         )

@@ -90,6 +90,9 @@ export interface AccountSummary {
   broker_account_id: string;
   account_alias: string | null;
   account_masked: string | null;
+  broker_account_ref: string | null;
+  broker_account_code: string | null;
+  account_code: string | null;
   environment: string;
   status: string;
   risk_profile: Record<string, unknown> | null;

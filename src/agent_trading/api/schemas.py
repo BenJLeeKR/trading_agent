@@ -159,6 +159,9 @@ class AccountSummary(BaseModel):
     broker_account_id: UUID
     account_alias: str | None = None
     account_masked: str | None = None
+    broker_account_ref: str | None = None
+    broker_account_code: str | None = None
+    account_code: str | None = None
     environment: str
     status: str
     risk_profile: dict[str, object] | None = None
@@ -239,8 +242,8 @@ class CashBalanceSnapshotView(BaseModel):
     account_id: UUID
     currency: str
     available_cash: float
-    settled_cash: float
-    unsettled_cash: float
+    settled_cash: float | None
+    unsettled_cash: float | None
     source_of_truth: str
     snapshot_at: datetime
     created_at: datetime

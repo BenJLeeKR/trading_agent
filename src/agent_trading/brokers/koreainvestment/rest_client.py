@@ -9,6 +9,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -233,6 +234,10 @@ class KISRestClient:
     base_url: str = ""  # explicit override via KIS_BASE_URL; empty = use KIS_API_BASE_URLS
     budget_manager: RateLimitBudgetManager | None = None
 
+    # --- dev token cache (file-based, paper/dev only) -------------------------
+    dev_token_cache_enabled: bool = False
+    dev_token_cache_path: str = ".cache/kis_token.json"
+
     # --- internal state ---
     _client: httpx.AsyncClient | None = field(default=None, init=False, repr=False)
     _access_token: str | None = field(default=None, init=False, repr=False)
@@ -306,6 +311,61 @@ class KISRestClient:
             self._client = None
 
     # ------------------------------------------------------------------
+    # Dev token cache (file-based, paper/dev only)
+    # ------------------------------------------------------------------
+
+    async def _load_dev_token_cache(self) -> None:
+        """Load access token from file cache if valid.
+
+        Validates fingerprint, env, base_url, and expiry.
+        Silent on any failure — falls back to HTTP call.
+        """
+        if not self.dev_token_cache_enabled:
+            return
+        path = Path(self.dev_token_cache_path)
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text())
+            expected_fp = hashlib.sha256(self.api_key.encode()).hexdigest()[:16]
+            if data.get("app_key_fingerprint") != expected_fp:
+                return
+            if data.get("kis_env") != self.env:
+                return
+            if data.get("base_url") != self._base_url:
+                return
+            expires_at = float(data["expires_at"])
+            if time.time() >= expires_at - 60:
+                return
+            self._access_token = data["access_token"]
+            self._token_expires_at = expires_at
+        except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError):
+            return
+
+    async def _save_dev_token_cache(self) -> None:
+        """Save the current access token to file cache."""
+        if not self.dev_token_cache_enabled:
+            return
+        if self._access_token is None:
+            return
+        path = Path(self.dev_token_cache_path)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fingerprint = hashlib.sha256(self.api_key.encode()).hexdigest()[:16]
+            data: dict[str, object] = {
+                "access_token": self._access_token,
+                "token_type": "bearer",
+                "expires_at": self._token_expires_at,
+                "kis_env": self.env,
+                "base_url": self._base_url,
+                "app_key_fingerprint": fingerprint,
+                "created_at": time.time(),
+            }
+            path.write_text(json.dumps(data, indent=2))
+        except OSError:
+            return
+
+    # ------------------------------------------------------------------
     # Auth: access token
     # ------------------------------------------------------------------
 
@@ -329,6 +389,12 @@ class KISRestClient:
             now_wall = time.time()
             if self._access_token is not None and now_wall < self._token_expires_at:
                 return self._access_token
+
+            # 1b. Dev token cache: load from file if in-memory cache is empty
+            if self._access_token is None:
+                await self._load_dev_token_cache()
+                if self._access_token is not None and now_wall < self._token_expires_at:
+                    return self._access_token
 
             # 2. Strict 1 rps: enforce minimum 1s between actual HTTP calls
             now_mono = time.monotonic()
@@ -355,6 +421,8 @@ class KISRestClient:
             # token expires in 86400s (24h); refresh 5 min early
             self._token_expires_at = now_wall + int(data.get("expires_in", 86400)) - 300
             self._last_auth_call_time = now_mono
+            # 4b. Dev token cache: persist to file
+            await self._save_dev_token_cache()
             return self._access_token  # type: ignore[return-value]
 
     # ------------------------------------------------------------------

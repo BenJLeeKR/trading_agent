@@ -11,6 +11,25 @@ from agent_trading.repositories.container import RepositoryContainer
 router = APIRouter(tags=["accounts"])
 
 
+async def _enrich_account(
+    account: object,
+    repos: RepositoryContainer,
+) -> AccountSummary:
+    """Build an ``AccountSummary`` with broker metadata resolved.
+
+    ``AccountSummary.model_validate(account)`` reads from the entity's
+    attributes; ``broker_account_ref`` and ``broker_account_code`` are
+    not entity fields, so we resolve them from the
+    ``BrokerAccountRepository`` and inject them.
+    """
+    base = AccountSummary.model_validate(account)
+    broker_acct = await repos.broker_accounts.get(base.broker_account_id)
+    if broker_acct is not None:
+        base.broker_account_ref = broker_acct.account_ref
+        base.broker_account_code = broker_acct.broker_account_code
+    return base
+
+
 @router.get("/accounts", response_model=list[AccountSummary])
 async def list_accounts(
     client_id: str = Query(..., description="Client UUID to filter by"),
@@ -27,7 +46,11 @@ async def list_accounts(
         raise HTTPException(status_code=400, detail="Invalid client_id UUID")
 
     accounts = await repos.accounts.list_by_client(cid)
-    return [AccountSummary.model_validate(a) for a in accounts]
+    results: list[AccountSummary] = []
+    for a in accounts:
+        enriched = await _enrich_account(a, repos)
+        results.append(enriched)
+    return results
 
 
 @router.get("/accounts/{account_id}", response_model=AccountSummary)
@@ -44,4 +67,4 @@ async def get_account(
     account = await repos.accounts.get(aid)
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")
-    return AccountSummary.model_validate(account)
+    return await _enrich_account(account, repos)

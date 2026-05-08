@@ -75,6 +75,7 @@ def sample_account(account_id: UUID, client_id: UUID) -> AccountEntity:
         account_alias="Test Account",
         account_masked="****5678",
         status="active",
+        account_code="TEST001-PAPER-TEST",
     )
 
 
@@ -235,6 +236,7 @@ async def seeded_postgres_data(
         credential_ref="test-cred",
         base_url="https://test.broker/api",
         status="active",
+        broker_account_code="TEST-PAPER-****0001",
     )
     await postgres_repos.broker_accounts.add(broker_account)
 

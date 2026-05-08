@@ -29,6 +29,7 @@ async def seeded_decision_context_deps(
         credential_ref="test-cred",
         base_url="https://test.broker/api",
         status="active",
+        broker_account_code="TEST-PAPER-****00dc",
     )
     await postgres_repos.broker_accounts.add(broker_account)
     await postgres_repos.clients.add(sample_client)

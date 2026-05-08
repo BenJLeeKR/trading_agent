@@ -87,6 +87,30 @@ class InMemoryAccountRepository:
     async def list_by_client(self, client_id: UUID) -> Sequence[AccountEntity]:
         return tuple(item for item in self._items.values() if item.client_id == client_id)
 
+    async def update_metadata(
+        self,
+        account_id: UUID,
+        *,
+        account_masked: str | None = None,
+    ) -> AccountEntity | None:
+        existing = self._items.get(account_id)
+        if existing is None:
+            return None
+        updated = AccountEntity(
+            account_id=existing.account_id,
+            client_id=existing.client_id,
+            broker_account_id=existing.broker_account_id,
+            environment=existing.environment,
+            account_alias=existing.account_alias,
+            account_masked=account_masked if account_masked is not None else existing.account_masked,
+            status=existing.status,
+            risk_profile=existing.risk_profile,
+            created_at=existing.created_at,
+            updated_at=datetime.now(timezone.utc),
+        )
+        self._items[account_id] = updated
+        return updated
+
 
 class InMemoryStrategyRepository:
     def __init__(self) -> None:

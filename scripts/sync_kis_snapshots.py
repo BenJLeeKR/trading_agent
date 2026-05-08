@@ -25,6 +25,7 @@ import sys
 from uuid import UUID
 
 from agent_trading.config.settings import AppSettings
+from agent_trading.db.connection import DatabaseConfig, create_pool
 from agent_trading.repositories.postgres.bootstrap import build_postgres_repositories
 from agent_trading.services.kis_snapshot_sync import sync_kis_account_snapshots
 
@@ -53,13 +54,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 async def _run(account_id: UUID) -> int:
     from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
-    from agent_trading.db.transaction import TransactionManager
-    from agent_trading.db.connection import create_pool
+    from agent_trading.brokers.rate_limit import build_kis_budget_manager
+    from agent_trading.db.transaction import transaction
 
-    settings = AppSettings.from_env()
+    settings = AppSettings()
 
     # ── 1. KIS REST client ─────────────────────────────────────────────
     logger.info("Creating KISRestClient (env=%s) ...", settings.kis_env)
+    budget_manager = build_kis_budget_manager(
+        kis_env=settings.kis_env,
+        real_rest_rps=settings.kis_real_rest_rps,
+        paper_rest_rps=settings.kis_paper_rest_rps,
+    )
     rest_client = KISRestClient(
         api_key=settings.kis_api_key,
         api_secret=settings.kis_api_secret,
@@ -67,7 +73,7 @@ async def _run(account_id: UUID) -> int:
         account_product_code=settings.kis_account_product_code,
         env=settings.kis_env,
         base_url=settings.kis_base_url,
-        rps_config=settings.kis_rest_rps_config,
+        budget_manager=budget_manager,
     )
 
     try:
@@ -75,30 +81,34 @@ async def _run(account_id: UUID) -> int:
         await rest_client.authenticate()
         logger.info("KIS authentication successful.")
 
-        # ── 2. Postgres repositories ──────────────────────────────────
+        # ── 2. Postgres connection + transaction ──────────────────────
         logger.info("Connecting to Postgres ...")
-        pool = await create_pool(settings.database_url)
-        tx = TransactionManager(pool)
-        repos = build_postgres_repositories(tx)
-        logger.info("Postgres repositories ready.")
+        db_config = DatabaseConfig()
+        await create_pool(db_config)
 
-        # ── 3. Run sync ───────────────────────────────────────────────
-        logger.info("Syncing snapshots for account_id=%s ...", account_id)
-        result = await sync_kis_account_snapshots(
-            rest_client=rest_client,
-            instrument_repo=repos.instruments,
-            position_snapshot_repo=repos.position_snapshots,
-            cash_balance_snapshot_repo=repos.cash_balance_snapshots,
-            account_id=account_id,
-        )
+        async with transaction() as tx:
+            repos = build_postgres_repositories(tx)
+            logger.info("Postgres repositories ready.")
+
+            # ── 3. Run sync ───────────────────────────────────────────
+            logger.info("Syncing snapshots for account_id=%s ...", account_id)
+            result = await sync_kis_account_snapshots(
+                rest_client=rest_client,
+                instrument_repo=repos.instruments,
+                position_snapshot_repo=repos.position_snapshots,
+                cash_balance_snapshot_repo=repos.cash_balance_snapshots,
+                account_id=account_id,
+            )
+
+            await tx.commit()
 
         # ── 4. Report ─────────────────────────────────────────────────
         print("\n" + "=" * 60)
         print("  KIS Snapshot Sync — Summary")
         print("=" * 60)
-        print(f"  Positions synced : {result.positions_synced}")
-        print(f"  Positions skipped: {result.positions_skipped}")
-        print(f"  Cash balance     : {'synced' if result.cash_balance_synced else 'failed/skipped'}")
+        print(f"  Positions synced     : {result.positions_synced}")
+        print(f"  Positions skipped    : {result.positions_skipped}")
+        print(f"  Cash balance         : {'synced' if result.cash_balance_synced else 'failed/skipped'}")
         if result.errors:
             print(f"  Errors ({len(result.errors)}):")
             for err in result.errors:
@@ -113,8 +123,6 @@ async def _run(account_id: UUID) -> int:
 
     finally:
         await rest_client.close()
-        if "pool" in locals():
-            await pool.close()
 
 
 def main(argv: list[str] | None = None) -> int:

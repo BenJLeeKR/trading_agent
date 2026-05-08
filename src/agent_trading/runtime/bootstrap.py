@@ -52,6 +52,8 @@ def _build_kis_adapter(settings: AppSettings) -> KoreaInvestmentAdapter:
         env=settings.kis_env,
         base_url=settings.kis_base_url,
         budget_manager=budget_manager,
+        dev_token_cache_enabled=settings.kis_dev_token_cache_enabled,
+        dev_token_cache_path=settings.kis_dev_token_cache_path,
     )
     return KoreaInvestmentAdapter(
         rest_client=rest_client,

@@ -146,6 +146,25 @@ def _resolve_kis_paper_rest_rps() -> int:
     return max(1, int(raw))
 
 
+def _resolve_kis_dev_token_cache_enabled() -> bool:
+    """Resolve dev token cache enabled flag from ``KIS_DEV_TOKEN_CACHE_ENABLED``.
+
+    Disabled by default.  Must be explicitly set to ``"true"`` for paper/dev.
+    When ``KIS_ENV=live``, this setting is **ignored** — the cache is
+    always disabled in production.
+    """
+    raw = os.getenv("KIS_DEV_TOKEN_CACHE_ENABLED", "false")
+    return raw.strip().lower() == "true"
+
+
+def _resolve_kis_dev_token_cache_path() -> str:
+    """Resolve dev token cache file path from ``KIS_DEV_TOKEN_CACHE_PATH``.
+
+    Default: ``.cache/kis_token.json`` (relative to project root or cwd).
+    """
+    return os.getenv("KIS_DEV_TOKEN_CACHE_PATH", ".cache/kis_token.json")
+
+
 # ---------------------------------------------------------------------------
 # Application settings
 # ---------------------------------------------------------------------------
@@ -176,6 +195,10 @@ class AppSettings:
     # conservatively across AUTH / ORDER / INQUIRY / MARKET_DATA / RECONCILIATION.
     kis_real_rest_rps: int = field(default_factory=_resolve_kis_real_rest_rps)
     kis_paper_rest_rps: int = field(default_factory=_resolve_kis_paper_rest_rps)
+
+    # ---- KIS dev token cache (paper/dev only; disabled in live) ---------------
+    kis_dev_token_cache_enabled: bool = field(default_factory=_resolve_kis_dev_token_cache_enabled)
+    kis_dev_token_cache_path: str = field(default_factory=_resolve_kis_dev_token_cache_path)
 
     # ---- OpenDART API credentials (read from environment) --------------------
     opendart_api_key: str = field(default_factory=lambda: os.getenv("OPENDART_API_KEY", ""))

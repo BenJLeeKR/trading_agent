@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from datetime import datetime, timezone
 from uuid import UUID
 
 from agent_trading.db.row_mapper import row_to_entity
@@ -26,8 +27,9 @@ class PostgresAccountRepository:
             """
             INSERT INTO trading.accounts
                 (account_id, client_id, broker_account_id, environment,
-                 account_alias, account_masked, status, risk_profile)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+                 account_alias, account_masked, status, risk_profile,
+                 account_code)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
             RETURNING *
             """,
             account.account_id,
@@ -38,6 +40,7 @@ class PostgresAccountRepository:
             account.account_masked,
             account.status,
             json.dumps(account.risk_profile) if account.risk_profile is not None else None,
+            account.account_code,
         )
         return row_to_entity(row, AccountEntity)
 
@@ -83,3 +86,40 @@ class PostgresAccountRepository:
             client_id,
         )
         return tuple(row_to_entity(r, AccountEntity) for r in rows)
+
+    async def update_metadata(
+        self,
+        account_id: UUID,
+        *,
+        account_masked: str | None = None,
+    ) -> AccountEntity | None:
+        """Update mutable metadata fields on an existing account.
+
+        Only non-``None`` keyword arguments are applied.  ``updated_at`` is
+        always bumped to the current UTC timestamp.
+        """
+        sets: list[str] = []
+        params: list[object] = []
+        idx = 1
+
+        if account_masked is not None:
+            sets.append(f"account_masked = ${idx}")
+            params.append(account_masked)
+            idx += 1
+
+        if not sets:
+            # Nothing to update — just return the current entity
+            return await self.get(account_id)
+
+        sets.append(f"updated_at = ${idx}")
+        params.append(datetime.now(timezone.utc))
+        idx += 1
+
+        params.append(account_id)
+        sql = (
+            "UPDATE trading.accounts SET "
+            + ", ".join(sets)
+            + f" WHERE account_id = ${idx} RETURNING *"
+        )
+        row = await self._tx.connection.fetchrow(sql, *params)
+        return row_to_entity(row, AccountEntity) if row else None

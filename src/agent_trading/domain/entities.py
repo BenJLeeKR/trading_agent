@@ -39,6 +39,7 @@ class BrokerAccountEntity:
     credential_ref: str
     base_url: str | None = None
     status: str = "active"
+    broker_account_code: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -53,6 +54,7 @@ class AccountEntity:
     account_masked: str
     status: str
     risk_profile: dict[str, object] = field(default_factory=dict)
+    account_code: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

@@ -31,6 +31,7 @@ def sample_broker_account(broker_account_id: UUID) -> BrokerAccountEntity:
         credential_ref="test-cred",
         base_url=None,
         status="active",
+        broker_account_code="KIS-PAPER-****0001",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )
@@ -111,6 +112,7 @@ async def test_list_by_broker(
         credential_ref="cred-1",
         base_url=None,
         status="active",
+        broker_account_code="KIS-PAPER-****0001",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )
@@ -122,6 +124,7 @@ async def test_list_by_broker(
         credential_ref="cred-2",
         base_url=None,
         status="active",
+        broker_account_code="KIS-LIVE-****0002",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )
@@ -133,6 +136,7 @@ async def test_list_by_broker(
         credential_ref="cred-3",
         base_url=None,
         status="active",
+        broker_account_code="KIWO-PAPER-****0003",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )
@@ -171,6 +175,7 @@ async def test_add_duplicate_ref_raises(
         credential_ref="other-cred",
         base_url=None,
         status="active",
+        broker_account_code="KIS-PAPER-****0001",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )
