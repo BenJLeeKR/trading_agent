@@ -3,6 +3,7 @@ import type {
   OrderSummary,
   ReconciliationRunSummary,
   BlockingLockStatus,
+  ReconciliationSummary,
   OrderDetail,
   OrderEvent,
   BrokerOrderView,
@@ -88,6 +89,35 @@ export const mockLocks: BlockingLockStatus[] = [
     is_expired: false,
   },
 ];
+
+export const mockReconciliationSummary: ReconciliationSummary = {
+  active_locks_count: 1,
+  incomplete_recon_count: 1,
+  recent_active_locks: [
+    {
+      lock_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00l1",
+      lock_key: "manual-review-account-a1",
+      account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a1",
+      symbol: "AAPL",
+      strategy_code: "strat-a",
+      lock_type: "manual",
+      acquired_at: "2026-05-05T00:00:00Z",
+      expires_at: "2026-05-06T00:00:00Z",
+      is_expired: false,
+    },
+  ],
+  recent_incomplete_runs: [
+    {
+      run_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00r2",
+      account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a1",
+      status: "in_progress",
+      started_at: "2026-05-05T00:01:00Z",
+      completed_at: null,
+      order_mismatches: 1,
+      position_mismatches: 0,
+    },
+  ],
+};
 
 /** Dashboard parallel API responses — order matches fetchAll() call order */
 export const dashboardApiResponses = [

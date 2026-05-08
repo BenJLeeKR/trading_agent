@@ -17,8 +17,7 @@ import {
   mockCashBalanceForLocked,
   mockCashBalanceNull,
   mockOrders,
-  mockLocks,
-  mockIncompleteReconRuns,
+  mockReconciliationSummary,
   VALID_TOKEN,
 } from "./test-utils/fixtures";
 
@@ -47,11 +46,11 @@ describe("Dashboard loading state", () => {
 });
 
 /* ───────────────────────────────────────────
- * Scenario 2: 정상 데이터 로드 — 다중 계좌 + orders/locks/recon
+ * Scenario 2: 정상 데이터 로드 — 다중 계좌 + orders + reconciliation summary
  * API call sequence:
  *   getClients → getAccounts
  *   → getPositions(3x) + getCashBalance(3x) (parallel)
- *   → getOrders + getReconciliationLocks + getReconciliationRuns (parallel)
+ *   → getOrders + getReconciliationSummary (parallel)
  * ─────────────────────────────────────────── */
 describe("Dashboard with valid data", () => {
   it("renders summary cards with correct metrics", async () => {
@@ -61,8 +60,7 @@ describe("Dashboard with valid data", () => {
     // 3-5. getPositions(accountId) for each of 3 accounts
     // 6-8. getCashBalance(accountId) for each of 3 accounts
     // 9. getOrders() → mockOrders (2 orders)
-    // 10. getReconciliationLocks() → mockLocks (1 lock)
-    // 11. getReconciliationRuns() → mockIncompleteReconRuns (1 incomplete)
+    // 10. getReconciliationSummary() → mockReconciliationSummary
     mockFetchOnce(mockClients);
     mockFetchOnce(mockAccounts);
     mockFetchOnce(mockPositions);          // getPositions(a1)
@@ -72,8 +70,7 @@ describe("Dashboard with valid data", () => {
     mockFetchOnce(mockCashBalanceForLocked);// getCashBalance(a3)
     mockFetchOnce(mockCashBalanceNull);    // getCashBalance(a2)
     mockFetchOnce(mockOrders);             // getOrders()
-    mockFetchOnce(mockLocks);              // getReconciliationLocks()
-    mockFetchOnce(mockIncompleteReconRuns);// getReconciliationRuns()
+    mockFetchOnce(mockReconciliationSummary); // getReconciliationSummary()
 
     render(
       <MemoryRouter>
@@ -108,8 +105,7 @@ describe("Dashboard with valid data", () => {
     expect(screen.getAllByText("1").length).toBeGreaterThanOrEqual(1); // Active Locks = 1, Incomplete Recon = 1
 
     // Account table rows (3 accounts)
-    // "Paper Account 1" also appears in reconciliation scope labels, so use getAllByText
-    expect(screen.getAllByText("Paper Account 1").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Paper Account 1")).toBeInTheDocument();
     expect(screen.getByText("Live Account 1")).toBeInTheDocument();
     expect(screen.getByText("Locked Paper Account")).toBeInTheDocument();
 
@@ -149,8 +145,7 @@ describe("Dashboard empty state", () => {
     mockFetchOnce([]); // getCashBalance (a3)
     mockFetchOnce([]); // getCashBalance (a2)
     mockFetchOnce([]); // getOrders
-    mockFetchOnce([]); // getReconciliationLocks
-    mockFetchOnce([]); // getReconciliationRuns
+    mockFetchOnce(mockReconciliationSummary); // getReconciliationSummary()
 
     render(
       <MemoryRouter>
@@ -171,16 +166,10 @@ describe("Dashboard empty state", () => {
   it("shows empty state when clients exist but no accounts", async () => {
     mockFetchOnce(mockClients);  // getClients
     mockFetchOnce([]);           // getAccounts returns empty array
-    // Provide remaining mocks to prevent queue exhaustion on re-render.
-    mockFetchOnce([]); // getPositions (a1)
-    mockFetchOnce([]); // getPositions (a3)
-    mockFetchOnce([]); // getPositions (a2)
-    mockFetchOnce([]); // getCashBalance (a1)
-    mockFetchOnce([]); // getCashBalance (a3)
-    mockFetchOnce([]); // getCashBalance (a2)
-    mockFetchOnce([]); // getOrders
-    mockFetchOnce([]); // getReconciliationLocks
-    mockFetchOnce([]); // getReconciliationRuns
+    // When allAccounts is empty, getPositions/getCashBalance are not called.
+    // Only getOrders + getReconciliationSummary follow.
+    mockFetchOnce([]);                          // getOrders
+    mockFetchOnce(mockReconciliationSummary);   // getReconciliationSummary()
 
     render(
       <MemoryRouter>
@@ -230,8 +219,7 @@ describe("Dashboard navigation links", () => {
     mockFetchOnce(mockCashBalanceForLocked);
     mockFetchOnce(mockCashBalanceNull);
     mockFetchOnce(mockOrders);
-    mockFetchOnce(mockLocks);
-    mockFetchOnce(mockIncompleteReconRuns);
+    mockFetchOnce(mockReconciliationSummary);
 
     render(
       <MemoryRouter>

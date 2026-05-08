@@ -167,19 +167,14 @@ export default function Dashboard() {
       setPositionsMap(new Map(posResults));
       setCashMap(new Map(cashResults));
 
-      // Step 4: fetch orders, locks, reconciliation runs (parallel)
-      // Reconciliation APIs require account_id; use first account as representative.
-      const repAccountId = allAccounts[0]?.account_id;
-      const [ordersData, locksData, reconData] = repAccountId
-        ? await Promise.all([
-            getOrders(),
-            getReconciliationLocks(repAccountId),
-            getReconciliationRuns(repAccountId),
-          ])
-        : [await getOrders(), [], []];
+      // Step 4: fetch orders + reconciliation summary (aggregate, no account_id needed)
+      const [ordersData, reconSummary] = await Promise.all([
+        getOrders(),
+        getReconciliationSummary(),
+      ]);
       setOrders(ordersData);
-      setLocks(locksData);
-      setReconRuns(reconData);
+      setLocks(reconSummary.recent_active_locks);
+      setReconRuns(reconSummary.recent_incomplete_runs);
     } catch (err: unknown) {
       const msg =
         err instanceof Error ? err.message : "Failed to load dashboard data";
@@ -204,12 +199,6 @@ export default function Dashboard() {
   const incompleteReconCount = reconRuns.filter(
     (r) => r.status !== "completed",
   ).length;
-
-  // Representative account name for reconciliation scope labeling
-  const repAccountName =
-    accounts[0]?.account_alias ??
-    accounts[0]?.account_masked ??
-    "";
 
   /* ── loading / error ── */
   if (loading) return <LoadingSpinner />;
@@ -287,13 +276,13 @@ export default function Dashboard() {
           icon={<Lock className="h-5 w-5" />}
           title="Active Locks"
           value={activeLocksCount}
-          subtitle={repAccountName || "No account selected"}
+          subtitle="Across all accounts"
         />
         <MetricCard
           icon={<RefreshCw className="h-5 w-5" />}
           title="Incomplete Recon"
           value={incompleteReconCount}
-          subtitle={repAccountName || "No account selected"}
+          subtitle="Across all accounts"
         />
       </div>
 
@@ -481,11 +470,6 @@ export default function Dashboard() {
             <ArrowRight className="h-4 w-4" />
           </button>
         </div>
-        {repAccountName && (
-          <p className="text-xs text-[#94a3b8]">
-            Representative account: {repAccountName}
-          </p>
-        )}
         {locks.length === 0 ? (
           <div className="bg-white rounded-xl border border-[#e2e8f0] p-8 text-center">
             <Lock className="h-8 w-8 text-[#94a3b8] mx-auto mb-2" />
