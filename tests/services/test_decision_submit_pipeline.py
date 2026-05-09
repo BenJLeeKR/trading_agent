@@ -280,6 +280,31 @@ class TestAssembleAndSubmit:
         )
         repos.instruments._items[instrument.instrument_id] = instrument
 
+        # Seed fresh snapshots (for account-level Phase 4c guard)
+        fresh_cash = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            currency="KRW",
+            available_cash=Decimal("1000000"),
+            settled_cash=Decimal("0"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        repos.cash_balance_snapshots._items[fresh_cash.cash_balance_snapshot_id] = fresh_cash
+        fresh_pos = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            instrument_id=instrument.instrument_id,
+            quantity=Decimal("10"),
+            average_price=Decimal("50000"),
+            market_price=Decimal("50000"),
+            unrealized_pnl=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        repos.position_snapshots._items[fresh_pos.position_snapshot_id] = fresh_pos
+
         return repos
 
     @pytest.fixture

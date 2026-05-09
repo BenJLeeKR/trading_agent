@@ -4,8 +4,8 @@
 ----
 이 모듈은 backend engine의 결정론적 특성을 검증한다.
 즉, 동일한 입력 상태가 주어졌을 때 ``assemble()``, ``calculate_sizing()``,
-``build_submit_order_request_from_decision()``이 항상 동일한 결과를
-생성하는지 확인한다.
+``build_submit_order_request_from_decision()``, ``assemble_and_submit()``이
+항상 동일한 결과를 생성하는지 확인한다.
 
 범위 (사용자 피드백 반영)
 -------------------------
@@ -23,6 +23,16 @@
    2회 호출하여 동일 ``SubmitOrderRequest`` 확인
 4. ``assemble_and_submit()``을 동일 입력으로 2회 호출하여 동일 최종 상태 확인
    (단, submit 결과는 mock broker이므로 status만 검증)
+5. ``ReplayBundle`` parametrize 테스트로 5개 시나리오 결정론적 검증
+   (REDUCE/EXIT/stale guard/cash constraint 포함)
+
+리팩터 노트
+-----------
+- 공유 헬퍼(``_make_request``, ``_make_sizing_inputs``, ``_build_repos``,
+  ``_make_stub_fdc``, ``ReplayBundle``, ``REPLAY_SCENARIOS``)는
+  ``replay_test_harness.py``에서 import.
+- 3개 중복 ``repos`` fixture를 ``_build_repos()`` 호출로 대체.
+- 3개 중복 ``_StubFDC`` 클래스를 ``_make_stub_fdc()`` 호출로 대체.
 """
 
 from __future__ import annotations
@@ -41,17 +51,8 @@ from agent_trading.domain.entities import (
     ConfigVersionEntity,
     InstrumentEntity,
     PositionSnapshotEntity,
-    RiskLimitSnapshotEntity,
 )
-from agent_trading.domain.enums import (
-    AssetClass,
-    BrokerName,
-    Environment,
-    OrderSide,
-    OrderStatus,
-    OrderType,
-    TimeInForce,
-)
+from agent_trading.domain.enums import BrokerName, Environment, OrderSide, OrderStatus
 from agent_trading.domain.models import SubmitOrderRequest, SubmitOrderResult
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.repositories.container import RepositoryContainer
@@ -66,51 +67,14 @@ from agent_trading.services.sizing_engine import (
     SizingResult,
     calculate_sizing,
 )
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_request(**kwargs: object) -> SubmitOrderRequest:
-    """Build a minimal ``SubmitOrderRequest`` for test use."""
-    overrides: dict[str, object] = {
-        "client_order_id": "REPLAY-TEST-001",
-        "correlation_id": "corr-replay-001",
-        "account_ref": "test-account",
-        "strategy_id": str(uuid4()),
-        "symbol": "005930",
-        "market": "KRX",
-        "side": OrderSide.BUY,
-        "order_type": OrderType.LIMIT,
-        "quantity": Decimal("10"),
-        "price": Decimal("50000"),
-        "time_in_force": TimeInForce.DAY,
-    }
-    overrides.update(kwargs)
-    return SubmitOrderRequest(**overrides)  # type: ignore[arg-type]
-
-
-def _make_sizing_inputs(**overrides: object) -> SizingInputs:
-    """Build a standard ``SizingInputs`` for replay testing."""
-    defaults: dict[str, object] = {
-        "decision_type": "BUY",
-        "side": OrderSide.BUY,
-        "requested_quantity": Decimal("10"),
-        "requested_price": Decimal("50000"),
-        "available_cash": Decimal("1000000"),
-        "current_position_qty": Decimal("0"),
-        "nav": Decimal("5000000"),
-        "max_single_position_pct": Decimal("0.1"),
-        "min_cash_buffer_pct": Decimal("0.05"),
-        "max_order_value": Decimal("50000000"),
-        "min_order_qty": Decimal("1"),
-        "max_order_qty": Decimal("1000"),
-        "lot_size": Decimal("1"),
-    }
-    defaults.update(overrides)
-    return SizingInputs(**defaults)  # type: ignore[arg-type]
-
+from tests.services.replay_test_harness import (
+    REPLAY_SCENARIOS,
+    ReplayBundle,
+    _build_repos,
+    _make_request,
+    _make_sizing_inputs,
+    _make_stub_fdc,
+)
 
 # ---------------------------------------------------------------------------
 # Suite
@@ -185,66 +149,10 @@ class TestReplayDeterministicBuildSubmitRequest:
 
     @pytest.fixture
     def repos(self) -> RepositoryContainer:
-        repos = build_in_memory_repositories()
-        now = datetime.now(timezone.utc)
-
-        account = AccountEntity(
-            account_id=uuid4(),
-            client_id=uuid4(),
-            broker_account_id=uuid4(),
-            environment=Environment.PAPER,
-            account_alias="test-account",
-            account_masked="test-****",
-            status="active",
+        return _build_repos(
+            seed_cash=Decimal("1000000"),
+            seed_position_qty=Decimal("10"),
         )
-        repos.accounts._items[account.account_id] = account
-
-        config_version = ConfigVersionEntity(
-            config_version_id=uuid4(),
-            client_id=account.client_id,
-            environment=Environment.PAPER,
-            version_tag="v1.0",
-            config_json={},
-            checksum="abc123",
-            activated_at=now,
-        )
-        repos.config_versions._items[config_version.config_version_id] = config_version
-
-        instrument = InstrumentEntity(
-            instrument_id=uuid4(),
-            symbol="005930",
-            market_code="KRX",
-            asset_class=AssetClass.KR_STOCK,
-            currency="KRW",
-            name="Samsung Electronics",
-        )
-        repos.instruments._items[instrument.instrument_id] = instrument
-
-        return repos
-
-    class _ApproveStubFDC:
-        """APPROVE 반환 stub — build_submit_order_request가 None을 반환하지 않도록."""
-
-        @property
-        def agent_name(self) -> str:
-            return "final_decision_composer"
-
-        @property
-        def schema_version(self) -> str:
-            return "1.0.0"
-
-        async def run(self, request: object) -> object:
-            from agent_trading.services.ai_agents.schemas import (
-                FinalDecisionComposerOutput,
-            )
-            return FinalDecisionComposerOutput(
-                decision_type="APPROVE",
-                side="BUY",
-                symbol="005930",
-                confidence=0.8,
-                conviction=0.7,
-                summary="Replay test stub",
-            )
 
     @pytest.mark.asyncio
     async def test_replay_build_request_identity(
@@ -252,15 +160,19 @@ class TestReplayDeterministicBuildSubmitRequest:
         repos: RepositoryContainer,
     ) -> None:
         """동일 OrderIntent로 2회 호출 → 동일 SubmitOrderRequest."""
-        request = _make_request()
+        request = _make_request(client_order_id="REPLAY-BUILD-001")
         service = DecisionOrchestratorService(
             repos=repos,
-            final_decision_agent=self._ApproveStubFDC(),
+            final_decision_agent=_make_stub_fdc(),  # type: ignore[arg-type]
         )
         intent = await service.assemble(request)
 
-        submit1 = build_submit_order_request_from_decision(intent)
-        submit2 = build_submit_order_request_from_decision(intent)
+        # Pass explicit client_order_id from the request to avoid
+        # timestamp-based auto-generation (which is non-deterministic
+        # at microsecond precision).
+        explicit_cid = intent.request.client_order_id
+        submit1 = build_submit_order_request_from_decision(intent, client_order_id=explicit_cid)
+        submit2 = build_submit_order_request_from_decision(intent, client_order_id=explicit_cid)
 
         assert submit1 is not None
         assert submit2 is not None
@@ -277,32 +189,10 @@ class TestReplayDeterministicBuildSubmitRequest:
     ) -> None:
         """HOLD 결정 → 항상 None 반환 (결정론적)."""
         request = _make_request()
-
-        class _HoldFDCAgent:
-            @property
-            def agent_name(self) -> str:
-                return "final_decision_composer"
-
-            @property
-            def schema_version(self) -> str:
-                return "1.0.0"
-
-            async def run(self, _request: object) -> object:
-                from agent_trading.services.ai_agents.schemas import (
-                    FinalDecisionComposerOutput,
-                )
-                return FinalDecisionComposerOutput(
-                    decision_type="HOLD",
-                    side="BUY",
-                    symbol="005930",
-                    confidence=0.0,
-                    conviction=0.0,
-                    summary="HOLD",
-                )
-
+        hold_fdc = _make_stub_fdc(decision_type="HOLD", confidence=0.0, conviction=0.0, summary="HOLD")
         service = DecisionOrchestratorService(
             repos=repos,
-            final_decision_agent=_HoldFDCAgent(),
+            final_decision_agent=hold_fdc,  # type: ignore[arg-type]
         )
         intent = await service.assemble(request)
 
@@ -319,68 +209,12 @@ class TestReplayDeterministicAssemble:
     AI agent는 stub으로 대체하여 비결정론적 요소 제거.
     """
 
-    class _StubFDC:
-        """APPROVE 반환 stub — 항상 동일 출력."""
-
-        @property
-        def agent_name(self) -> str:
-            return "final_decision_composer"
-
-        @property
-        def schema_version(self) -> str:
-            return "1.0.0"
-
-        async def run(self, request: object) -> object:
-            from agent_trading.services.ai_agents.schemas import (
-                FinalDecisionComposerOutput,
-            )
-            return FinalDecisionComposerOutput(
-                decision_type="APPROVE",
-                side="BUY",
-                symbol="005930",
-                confidence=0.8,
-                conviction=0.7,
-                summary="Replay test stub",
-            )
-
     @pytest.fixture
     def repos(self) -> RepositoryContainer:
-        repos = build_in_memory_repositories()
-        now = datetime.now(timezone.utc)
-
-        account = AccountEntity(
-            account_id=uuid4(),
-            client_id=uuid4(),
-            broker_account_id=uuid4(),
-            environment=Environment.PAPER,
-            account_alias="test-account",
-            account_masked="test-****",
-            status="active",
+        return _build_repos(
+            seed_cash=Decimal("1000000"),
+            seed_position_qty=Decimal("10"),
         )
-        repos.accounts._items[account.account_id] = account
-
-        config_version = ConfigVersionEntity(
-            config_version_id=uuid4(),
-            client_id=account.client_id,
-            environment=Environment.PAPER,
-            version_tag="v1.0",
-            config_json={},
-            checksum="abc123",
-            activated_at=now,
-        )
-        repos.config_versions._items[config_version.config_version_id] = config_version
-
-        instrument = InstrumentEntity(
-            instrument_id=uuid4(),
-            symbol="005930",
-            market_code="KRX",
-            asset_class=AssetClass.KR_STOCK,
-            currency="KRW",
-            name="Samsung Electronics",
-        )
-        repos.instruments._items[instrument.instrument_id] = instrument
-
-        return repos
 
     @pytest.mark.asyncio
     async def test_replay_assemble_identity(
@@ -393,7 +227,7 @@ class TestReplayDeterministicAssemble:
 
         service = DecisionOrchestratorService(
             repos=repos,
-            final_decision_agent=self._StubFDC(),
+            final_decision_agent=_make_stub_fdc(),  # type: ignore[arg-type]
         )
 
         intent1 = await service.assemble(request1)
@@ -421,7 +255,7 @@ class TestReplayDeterministicAssemble:
 
         service = DecisionOrchestratorService(
             repos=repos,
-            final_decision_agent=self._StubFDC(),
+            final_decision_agent=_make_stub_fdc(),  # type: ignore[arg-type]
         )
 
         intent = await service.assemble(request)
@@ -446,66 +280,12 @@ class TestReplayDeterministicPipeline:
     동일 입력 → 동일 ``SubmitResult`` (mock broker 사용).
     """
 
-    class _StubFDC:
-        @property
-        def agent_name(self) -> str:
-            return "final_decision_composer"
-
-        @property
-        def schema_version(self) -> str:
-            return "1.0.0"
-
-        async def run(self, request: object) -> object:
-            from agent_trading.services.ai_agents.schemas import (
-                FinalDecisionComposerOutput,
-            )
-            return FinalDecisionComposerOutput(
-                decision_type="APPROVE",
-                side="BUY",
-                symbol="005930",
-                confidence=0.8,
-                conviction=0.7,
-                summary="Replay pipeline stub",
-            )
-
     @pytest.fixture
     def repos(self) -> RepositoryContainer:
-        repos = build_in_memory_repositories()
-        now = datetime.now(timezone.utc)
-
-        account = AccountEntity(
-            account_id=uuid4(),
-            client_id=uuid4(),
-            broker_account_id=uuid4(),
-            environment=Environment.PAPER,
-            account_alias="test-account",
-            account_masked="test-****",
-            status="active",
+        return _build_repos(
+            seed_cash=Decimal("1000000"),
+            seed_position_qty=Decimal("10"),
         )
-        repos.accounts._items[account.account_id] = account
-
-        config_version = ConfigVersionEntity(
-            config_version_id=uuid4(),
-            client_id=account.client_id,
-            environment=Environment.PAPER,
-            version_tag="v1.0",
-            config_json={},
-            checksum="abc123",
-            activated_at=now,
-        )
-        repos.config_versions._items[config_version.config_version_id] = config_version
-
-        instrument = InstrumentEntity(
-            instrument_id=uuid4(),
-            symbol="005930",
-            market_code="KRX",
-            asset_class=AssetClass.KR_STOCK,
-            currency="KRW",
-            name="Samsung Electronics",
-        )
-        repos.instruments._items[instrument.instrument_id] = instrument
-
-        return repos
 
     @pytest.fixture
     def reconciliation_service(
@@ -552,7 +332,7 @@ class TestReplayDeterministicPipeline:
 
         service = DecisionOrchestratorService(
             repos=repos,
-            final_decision_agent=self._StubFDC(),
+            final_decision_agent=_make_stub_fdc(),  # type: ignore[arg-type]
         )
 
         result1 = await service.assemble_and_submit(
@@ -560,18 +340,12 @@ class TestReplayDeterministicPipeline:
             order_manager=order_manager,
             broker=mock_broker,  # type: ignore[arg-type]
         )
-        # Reset mock for second call (but it won't be called again due to
-        # duplicate client_order_id protection in Phase 3)
 
         # Create fresh repos/manager for second run
-        repos2 = build_in_memory_repositories()
-        now = datetime.now(timezone.utc)
-        account = list(repos.accounts._items.values())[0]
-        repos2.accounts._items[account.account_id] = account
-        config_version = list(repos.config_versions._items.values())[0]
-        repos2.config_versions._items[config_version.config_version_id] = config_version
-        instrument = list(repos.instruments._items.values())[0]
-        repos2.instruments._items[instrument.instrument_id] = instrument
+        repos2 = _build_repos(
+            seed_cash=Decimal("1000000"),
+            seed_position_qty=Decimal("10"),
+        )
 
         mock_broker2 = MagicMock(spec=BrokerAdapter)
         mock_broker2.submit_order = AsyncMock()
@@ -591,7 +365,7 @@ class TestReplayDeterministicPipeline:
 
         service2 = DecisionOrchestratorService(
             repos=repos2,
-            final_decision_agent=self._StubFDC(),
+            final_decision_agent=_make_stub_fdc(),  # type: ignore[arg-type]
         )
 
         result2 = await service2.assemble_and_submit(
@@ -617,32 +391,11 @@ class TestReplayDeterministicPipeline:
     ) -> None:
         """HOLD 결정 → 2회 모두 SKIPPED (결정론적)."""
         request = _make_request(client_order_id="REPLAY-HOLD-001")
-
-        class _HoldFDC:
-            @property
-            def agent_name(self) -> str:
-                return "final_decision_composer"
-
-            @property
-            def schema_version(self) -> str:
-                return "1.0.0"
-
-            async def run(self, _request: object) -> object:
-                from agent_trading.services.ai_agents.schemas import (
-                    FinalDecisionComposerOutput,
-                )
-                return FinalDecisionComposerOutput(
-                    decision_type="HOLD",
-                    side="BUY",
-                    symbol="005930",
-                    confidence=0.0,
-                    conviction=0.0,
-                    summary="HOLD",
-                )
+        hold_fdc = _make_stub_fdc(decision_type="HOLD", confidence=0.0, conviction=0.0, summary="HOLD")
 
         service = DecisionOrchestratorService(
             repos=repos,
-            final_decision_agent=_HoldFDC(),
+            final_decision_agent=hold_fdc,  # type: ignore[arg-type]
         )
 
         result1 = await service.assemble_and_submit(
@@ -652,14 +405,10 @@ class TestReplayDeterministicPipeline:
         )
 
         # Create fresh repos/manager for second run
-        repos2 = build_in_memory_repositories()
-        now = datetime.now(timezone.utc)
-        account = list(repos.accounts._items.values())[0]
-        repos2.accounts._items[account.account_id] = account
-        config_version = list(repos.config_versions._items.values())[0]
-        repos2.config_versions._items[config_version.config_version_id] = config_version
-        instrument = list(repos.instruments._items.values())[0]
-        repos2.instruments._items[instrument.instrument_id] = instrument
+        repos2 = _build_repos(
+            seed_cash=Decimal("1000000"),
+            seed_position_qty=Decimal("10"),
+        )
 
         mock_broker2 = MagicMock(spec=BrokerAdapter)
         mock_broker2.submit_order = AsyncMock()
@@ -669,7 +418,7 @@ class TestReplayDeterministicPipeline:
 
         service2 = DecisionOrchestratorService(
             repos=repos2,
-            final_decision_agent=_HoldFDC(),
+            final_decision_agent=hold_fdc,  # type: ignore[arg-type]
         )
 
         result2 = await service2.assemble_and_submit(
@@ -686,3 +435,201 @@ class TestReplayDeterministicPipeline:
         )
         mock_broker.submit_order.assert_not_called()
         mock_broker2.submit_order.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Parametrized replay scenarios
+# ---------------------------------------------------------------------------
+
+
+class TestReplayDeterministicParametrized:
+    """``assemble_and_submit()`` 결정론적 검증 — parametrized scenarios.
+
+    ``REPLAY_SCENARIOS`` 리스트를 ``@pytest.mark.parametrize``로 전달하여
+    각 시나리오별로 동일 입력 → 동일 출력을 검증한다.
+
+    시나리오 naming convention:
+    - ``_submit``: pipeline이 broker submission까지 진행
+    - ``_guard``: pipeline이 guardrail(Phase 4c)에서 중단
+    """
+
+    @pytest.mark.parametrize(
+        "bundle",
+        REPLAY_SCENARIOS,
+        ids=lambda b: b.name,
+    )
+    @pytest.mark.asyncio
+    async def test_replay_scenario(
+        self,
+        bundle: ReplayBundle,
+    ) -> None:
+        """동일 ReplayBundle → 결정론적 결과."""
+        # ── Given ──
+        mock_broker = MagicMock(spec=BrokerAdapter)
+        mock_broker.submit_order = AsyncMock()
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id=bundle.request.client_order_id,
+            broker_order_id="BRK-REPLAY-001",
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=datetime.now(timezone.utc),
+            raw_code="0000",
+            raw_message="Accepted",
+        )
+
+        rs = ReconciliationService(bundle.repos)
+        om = OrderManager(repos=bundle.repos, reconciliation_service=rs)
+
+        service = DecisionOrchestratorService(
+            repos=bundle.repos,
+            final_decision_agent=bundle.stub_fdc,  # type: ignore[arg-type]
+        )
+
+        # ── When ──
+        result = await service.assemble_and_submit(
+            bundle.request,
+            order_manager=om,
+            broker=mock_broker,  # type: ignore[arg-type]
+        )
+
+        # ── Then: status ──
+        assert result.status == bundle.expected_status, (
+            f"[{bundle.name}] Expected status {bundle.expected_status}, "
+            f"got {result.status}"
+        )
+
+        # ── Then: quantity ──
+        # NOTE: Pipeline creates the Order at Phase 4b (before guardrail).
+        # For guard-blocked scenarios (Phase 4c blocks), result.order is NOT
+        # None — the order exists in PENDING_SUBMIT status.  We only verify
+        # quantity when a submit scenario expects it.
+        if bundle.expected_quantity is not None:
+            assert result.order is not None, (
+                f"[{bundle.name}] Expected order but got None"
+            )
+            assert result.order.requested_quantity == bundle.expected_quantity, (
+                f"[{bundle.name}] Expected qty {bundle.expected_quantity}, "
+                f"got {result.order.requested_quantity}"
+            )
+
+        # ── Then: guardrail rule ──
+        if bundle.expected_guardrail_rule is not None:
+            assert result.decision_context_id is not None, (
+                f"[{bundle.name}] Expected decision_context_id for guardrail lookup"
+            )
+            guardrails = await bundle.repos.guardrail_evaluations.get_by_decision_context(
+                result.decision_context_id
+            )
+            matching = [
+                g for g in guardrails
+                if g.blocking_rule_codes is not None
+                and bundle.expected_guardrail_rule in g.blocking_rule_codes
+            ]
+            assert matching, (
+                f"[{bundle.name}] Expected guardrail {bundle.expected_guardrail_rule}, "
+                f"found: {[g.blocking_rule_codes for g in guardrails]}"
+            )
+
+        # ── Then: submit vs guard 분리 ──
+        # _submit 시나리오: broker.submit_order()가 1회 호출되어야 함
+        # _guard 시나리오: broker.submit_order()가 0회 호출되어야 함
+        if bundle.name.endswith("_submit"):
+            assert mock_broker.submit_order.await_count == 1, (
+                f"[{bundle.name}] Submit scenario: expected 1 submit call, "
+                f"got {mock_broker.submit_order.await_count}"
+            )
+        elif bundle.name.endswith("_guard"):
+            assert mock_broker.submit_order.await_count == 0, (
+                f"[{bundle.name}] Guard scenario: expected 0 submit calls, "
+                f"got {mock_broker.submit_order.await_count}"
+            )
+        else:
+            # Fallback: use expected_submit_call_count
+            assert mock_broker.submit_order.await_count == bundle.expected_submit_call_count, (
+                f"[{bundle.name}] Expected {bundle.expected_submit_call_count} submit calls, "
+                f"got {mock_broker.submit_order.await_count}"
+            )
+
+    @pytest.mark.parametrize(
+        "bundle",
+        REPLAY_SCENARIOS,
+        ids=lambda b: b.name,
+    )
+    @pytest.mark.asyncio
+    async def test_replay_scenario_second_run_identity(
+        self,
+        bundle: ReplayBundle,
+    ) -> None:
+        """동일 ReplayBundle을 fresh repos로 2회 실행 → 동일 status.
+
+        2회차에도 동일한 ``SubmitResult.status``가 나오는지 검증하여
+        결정론적 특성을 확인한다.
+        """
+        # ── First run ──
+        mock_broker1 = MagicMock(spec=BrokerAdapter)
+        mock_broker1.submit_order = AsyncMock()
+        mock_broker1.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id=bundle.request.client_order_id,
+            broker_order_id="BRK-REPLAY-001",
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=datetime.now(timezone.utc),
+            raw_code="0000",
+            raw_message="Accepted",
+        )
+        rs1 = ReconciliationService(bundle.repos)
+        om1 = OrderManager(repos=bundle.repos, reconciliation_service=rs1)
+        service1 = DecisionOrchestratorService(
+            repos=bundle.repos,
+            final_decision_agent=bundle.stub_fdc,  # type: ignore[arg-type]
+        )
+        result1 = await service1.assemble_and_submit(
+            bundle.request,
+            order_manager=om1,
+            broker=mock_broker1,  # type: ignore[arg-type]
+        )
+
+        # ── Second run (fresh repos, same inputs) ──
+        repos2 = _build_repos(
+            seed_cash=bundle.repos.cash_balance_snapshots._items[
+                next(iter(bundle.repos.cash_balance_snapshots._items), None)
+            ].available_cash if bundle.repos.cash_balance_snapshots._items else None,
+            seed_position_qty=next(
+                (p.quantity for p in bundle.repos.position_snapshots._items.values()),
+                None,
+            ),
+        )
+        mock_broker2 = MagicMock(spec=BrokerAdapter)
+        mock_broker2.submit_order = AsyncMock()
+        mock_broker2.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id=bundle.request.client_order_id,
+            broker_order_id="BRK-REPLAY-002",
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=datetime.now(timezone.utc),
+            raw_code="0000",
+            raw_message="Accepted",
+        )
+        rs2 = ReconciliationService(repos2)
+        om2 = OrderManager(repos=repos2, reconciliation_service=rs2)
+        service2 = DecisionOrchestratorService(
+            repos=repos2,
+            final_decision_agent=bundle.stub_fdc,  # type: ignore[arg-type]
+        )
+        result2 = await service2.assemble_and_submit(
+            bundle.request,
+            order_manager=om2,
+            broker=mock_broker2,  # type: ignore[arg-type]
+        )
+
+        # ── Then: same status ──
+        assert result1.status == result2.status, (
+            f"[{bundle.name}] Status mismatch: {result1.status} vs {result2.status}"
+        )
+        assert result1.status == bundle.expected_status, (
+            f"[{bundle.name}] Expected {bundle.expected_status}, "
+            f"got {result1.status}"
+        )

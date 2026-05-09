@@ -10,11 +10,15 @@ Test matrix
 6. Duplicate fill detection → FillEventRepository.add() skipped
 7. Gap fill → ExternalEventRepository.add() with correct field mapping
 8. Trade price / orderbook ingest → ExternalEventRepository.add()
+9. WS fill notification → sync_order_post_submit() trigger
+10. WS trigger debounce
+11. WS trigger with no sync service (no-op)
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
@@ -37,8 +41,15 @@ from agent_trading.domain.enums import (
 )
 from agent_trading.domain.models import FillEvent
 from agent_trading.services.event_loop import RealTimeEventLoop
+from agent_trading.services.order_sync_service import SyncOrderResult
 
 pytestmark = pytest.mark.asyncio
+
+# ---------------------------------------------------------------------------
+# Shared constants
+# ---------------------------------------------------------------------------
+
+_TEST_ACCOUNT_REF = "test-account-01"
 
 
 # ======================================================================
@@ -145,6 +156,95 @@ def event_loop_fixture(
         external_event_repo=mock_external_event_repo,
         broker_order_repo=mock_broker_order_repo,
     )
+
+
+# ======================================================================
+# Fixtures: WS-triggered sync
+# ======================================================================
+
+
+@pytest.fixture
+def mock_sync_service() -> MagicMock:
+    service = MagicMock()
+    service.sync_order_post_submit = AsyncMock(
+        return_value=SyncOrderResult(
+            broker_order_id=uuid4(),
+            previous_status=OrderStatus.SUBMITTED,
+            current_status=OrderStatus.PARTIALLY_FILLED,
+            status_changed=True,
+            fills_synced=1,
+            fills_skipped=0,
+            terminal=False,
+            snapshot_triggered=False,
+            last_synced_at=datetime.now(tz=timezone.utc),
+        )
+    )
+    return service
+
+
+@pytest.fixture
+def event_loop_with_sync(
+    mock_adapter: MagicMock,
+    mock_order_manager: MagicMock,
+    mock_reconciliation_service: MagicMock,
+    mock_order_repo: MagicMock,
+    mock_fill_repo: MagicMock,
+    mock_external_event_repo: MagicMock,
+    mock_broker_order_repo: MagicMock,
+    mock_sync_service: MagicMock,
+) -> RealTimeEventLoop:
+    return RealTimeEventLoop(
+        adapter=mock_adapter,
+        order_manager=mock_order_manager,
+        reconciliation_service=mock_reconciliation_service,
+        order_repo=mock_order_repo,
+        fill_repo=mock_fill_repo,
+        external_event_repo=mock_external_event_repo,
+        broker_order_repo=mock_broker_order_repo,
+        sync_service=mock_sync_service,
+        account_ref=_TEST_ACCOUNT_REF,
+    )
+
+
+@pytest.fixture
+def mock_snapshot_refresh_cb() -> AsyncMock:
+    return AsyncMock()
+
+
+@pytest.fixture
+def event_loop_with_sync_and_refresh(
+    mock_adapter: MagicMock,
+    mock_order_manager: MagicMock,
+    mock_reconciliation_service: MagicMock,
+    mock_order_repo: MagicMock,
+    mock_fill_repo: MagicMock,
+    mock_external_event_repo: MagicMock,
+    mock_broker_order_repo: MagicMock,
+    mock_sync_service: MagicMock,
+    mock_snapshot_refresh_cb: AsyncMock,
+) -> RealTimeEventLoop:
+    return RealTimeEventLoop(
+        adapter=mock_adapter,
+        order_manager=mock_order_manager,
+        reconciliation_service=mock_reconciliation_service,
+        order_repo=mock_order_repo,
+        fill_repo=mock_fill_repo,
+        external_event_repo=mock_external_event_repo,
+        broker_order_repo=mock_broker_order_repo,
+        sync_service=mock_sync_service,
+        account_ref=_TEST_ACCOUNT_REF,
+        snapshot_refresh_cb=mock_snapshot_refresh_cb,
+    )
+
+
+# ======================================================================
+# Fixtures: snapshot refresh callback
+# ======================================================================
+
+
+@pytest.fixture
+def mock_snapshot_refresh_cb() -> AsyncMock:
+    return AsyncMock()
 
 
 # ======================================================================
@@ -507,3 +607,277 @@ class TestTradePriceAndOrderbook:
         assert call_args.symbol == "005930"
         assert call_args.dedup_key_hash == "orderbook:005930:143025"
         assert call_args.published_at is not None
+
+
+# ======================================================================
+# WS-triggered sync tests
+# ======================================================================
+
+
+class TestWsTriggeredSync:
+    """WS fill notification → sync_order_post_submit() trigger path."""
+
+    async def test_ws_fill_triggers_sync_with_correct_broker_order_id(
+        self,
+        event_loop_with_sync: RealTimeEventLoop,
+        mock_sync_service: MagicMock,
+        mock_broker_order_repo: MagicMock,
+        mock_order_repo: MagicMock,
+        sample_broker_order: BrokerOrderEntity,
+        sample_order_entity: OrderRequestEntity,
+    ) -> None:
+        """WS fill notification triggers sync_order_post_submit with correct UUID."""
+        # Arrange
+        mock_broker_order_repo.get_by_native_order_id.return_value = sample_broker_order
+        mock_order_repo.get.return_value = sample_order_entity
+
+        data = {
+            "broker_order_id": "KIS12345678",
+            "stock_code": "005930",
+            "filled_qty": "5",
+            "filled_price": "50500",
+            "filled_time": "143025",
+            "side": OrderSide.BUY,
+            "order_qty": "10",
+        }
+
+        # Act
+        await event_loop_with_sync._handle_fill_notification(data)
+
+        # Assert: sync_order_post_submit was called with the internal UUID
+        mock_sync_service.sync_order_post_submit.assert_called_once()
+        call_kwargs = mock_sync_service.sync_order_post_submit.call_args[1]
+        assert call_kwargs["broker_order_id"] == sample_broker_order.broker_order_id
+
+    async def test_ws_fill_triggers_sync_with_account_ref_and_broker(
+        self,
+        event_loop_with_sync: RealTimeEventLoop,
+        mock_sync_service: MagicMock,
+        mock_broker_order_repo: MagicMock,
+        mock_order_repo: MagicMock,
+        mock_adapter: MagicMock,
+        sample_broker_order: BrokerOrderEntity,
+        sample_order_entity: OrderRequestEntity,
+    ) -> None:
+        """sync_order_post_submit receives correct account_ref and broker adapter."""
+        # Arrange
+        mock_broker_order_repo.get_by_native_order_id.return_value = sample_broker_order
+        mock_order_repo.get.return_value = sample_order_entity
+
+        data = {
+            "broker_order_id": "KIS12345678",
+            "stock_code": "005930",
+            "filled_qty": "5",
+            "filled_price": "50500",
+            "filled_time": "143025",
+            "side": OrderSide.BUY,
+            "order_qty": "10",
+        }
+
+        # Act
+        await event_loop_with_sync._handle_fill_notification(data)
+
+        # Assert: account_ref and broker are passed correctly
+        mock_sync_service.sync_order_post_submit.assert_called_once()
+        call_kwargs = mock_sync_service.sync_order_post_submit.call_args[1]
+        assert call_kwargs["account_ref"] == _TEST_ACCOUNT_REF
+        assert call_kwargs["broker"] is mock_adapter
+
+    async def test_ws_fill_unknown_order_no_sync(
+        self,
+        event_loop_with_sync: RealTimeEventLoop,
+        mock_sync_service: MagicMock,
+        mock_broker_order_repo: MagicMock,
+        mock_order_manager: MagicMock,
+    ) -> None:
+        """Unknown native order ID → sync is NOT called (graceful skip)."""
+        # Arrange: broker_order_repo returns None for unknown order
+        mock_broker_order_repo.get_by_native_order_id.return_value = None
+
+        data = {
+            "broker_order_id": "UNKNOWN_ORDER_ID",
+            "stock_code": "005930",
+            "filled_qty": "5",
+            "filled_price": "50000",
+            "filled_time": "143025",
+            "side": OrderSide.BUY,
+            "order_qty": "10",
+        }
+
+        # Act
+        await event_loop_with_sync._handle_fill_notification(data)
+
+        # Assert
+        mock_sync_service.sync_order_post_submit.assert_not_called()
+        mock_order_manager.transition_to.assert_not_called()
+
+    async def test_ws_fill_sync_debounce(
+        self,
+        event_loop_with_sync: RealTimeEventLoop,
+        mock_sync_service: MagicMock,
+        mock_broker_order_repo: MagicMock,
+        mock_order_repo: MagicMock,
+        sample_broker_order: BrokerOrderEntity,
+        sample_order_entity: OrderRequestEntity,
+    ) -> None:
+        """Duplicate fill for same order within debounce window → sync called only once."""
+        # Arrange
+        mock_broker_order_repo.get_by_native_order_id.return_value = sample_broker_order
+        mock_order_repo.get.return_value = sample_order_entity
+
+        data = {
+            "broker_order_id": "KIS12345678",
+            "stock_code": "005930",
+            "filled_qty": "3",
+            "filled_price": "50000",
+            "filled_time": "143025",
+            "side": OrderSide.BUY,
+            "order_qty": "10",
+        }
+
+        # First call — should trigger sync
+        await event_loop_with_sync._handle_fill_notification(data)
+        assert mock_sync_service.sync_order_post_submit.call_count == 1
+
+        # Second call — same order, should be debounced
+        await event_loop_with_sync._handle_fill_notification(data)
+        assert mock_sync_service.sync_order_post_submit.call_count == 1  # Still 1
+
+    async def test_ws_fill_sync_no_service_noop(
+        self,
+        event_loop_fixture: RealTimeEventLoop,
+        mock_broker_order_repo: MagicMock,
+        mock_order_repo: MagicMock,
+        sample_broker_order: BrokerOrderEntity,
+        sample_order_entity: OrderRequestEntity,
+    ) -> None:
+        """sync_service=None → sync trigger is NOT fired (backward compatible)."""
+        # Arrange
+        mock_broker_order_repo.get_by_native_order_id.return_value = sample_broker_order
+        mock_order_repo.get.return_value = sample_order_entity
+
+        data = {
+            "broker_order_id": "KIS12345678",
+            "stock_code": "005930",
+            "filled_qty": "5",
+            "filled_price": "50500",
+            "filled_time": "143025",
+            "side": OrderSide.BUY,
+            "order_qty": "10",
+        }
+
+        # Act: use event_loop_fixture (no sync_service configured)
+        # Should not raise any error
+        await event_loop_fixture._handle_fill_notification(data)
+
+        # Assert: no AttributeError / exception from sync trigger path
+        # (The test passes if no exception is raised — the sync path is simply skipped.)
+
+
+class TestWsTriggeredSnapshotRefresh:
+    """WS fill notification → FILLED → snapshot refresh 직접 호출 경로."""
+
+    async def test_ws_fill_triggers_snapshot_refresh_directly(
+        self,
+        event_loop_with_sync_and_refresh: RealTimeEventLoop,
+        mock_snapshot_refresh_cb: AsyncMock,
+        mock_broker_order_repo: MagicMock,
+        mock_order_repo: MagicMock,
+        sample_broker_order: BrokerOrderEntity,
+        sample_order_entity: OrderRequestEntity,
+    ) -> None:
+        """WS fill notification으로 order가 FILLED에 도달하면
+        snapshot_refresh_cb가 직접 호출됨."""
+        # Arrange
+        mock_broker_order_repo.get_by_native_order_id.return_value = sample_broker_order
+        mock_order_repo.get.return_value = sample_order_entity
+
+        # fill_qty == order_qty → FILLED
+        data = {
+            "broker_order_id": "KIS12345678",
+            "stock_code": "005930",
+            "filled_qty": "10",
+            "filled_price": "50500",
+            "filled_time": "143025",
+            "side": OrderSide.BUY,
+            "order_qty": "10",
+        }
+
+        # Act
+        await event_loop_with_sync_and_refresh._handle_fill_notification(data)
+
+        # Assert: snapshot_refresh_cb가 account_id로 호출됨
+        mock_snapshot_refresh_cb.assert_awaited_once_with(
+            sample_order_entity.account_id,
+        )
+        # dedup set에 native order ID가 기록되었는지 확인
+        assert "KIS12345678" in event_loop_with_sync_and_refresh._filled_refresh_fired
+
+    async def test_ws_fill_snapshot_refresh_dedup(
+        self,
+        event_loop_with_sync_and_refresh: RealTimeEventLoop,
+        mock_snapshot_refresh_cb: AsyncMock,
+        mock_broker_order_repo: MagicMock,
+        mock_order_repo: MagicMock,
+        sample_broker_order: BrokerOrderEntity,
+        sample_order_entity: OrderRequestEntity,
+    ) -> None:
+        """동일 주문에 대해 2번 fill notification이 와도
+        snapshot refresh는 최초 1회만 호출됨."""
+        # Arrange
+        mock_broker_order_repo.get_by_native_order_id.return_value = sample_broker_order
+        mock_order_repo.get.return_value = sample_order_entity
+
+        data = {
+            "broker_order_id": "KIS12345678",
+            "stock_code": "005930",
+            "filled_qty": "10",
+            "filled_price": "50500",
+            "filled_time": "143025",
+            "side": OrderSide.BUY,
+            "order_qty": "10",
+        }
+
+        # Act: 첫 번째 fill
+        await event_loop_with_sync_and_refresh._handle_fill_notification(data)
+
+        # 두 번째 fill (동일 주문, 다른 시간)
+        data2 = {**data, "filled_time": "143030"}
+        await event_loop_with_sync_and_refresh._handle_fill_notification(data2)
+
+        # Assert: refresh는 1회만 호출됨
+        assert mock_snapshot_refresh_cb.await_count == 1
+        mock_snapshot_refresh_cb.assert_awaited_once_with(
+            sample_order_entity.account_id,
+        )
+
+    async def test_ws_fill_partial_no_refresh(
+        self,
+        event_loop_with_sync_and_refresh: RealTimeEventLoop,
+        mock_snapshot_refresh_cb: AsyncMock,
+        mock_broker_order_repo: MagicMock,
+        mock_order_repo: MagicMock,
+        sample_broker_order: BrokerOrderEntity,
+        sample_order_entity: OrderRequestEntity,
+    ) -> None:
+        """PARTIALLY_FILLED fill notification → FILLED가 아니므로 refresh 호출 안 함."""
+        # Arrange
+        mock_broker_order_repo.get_by_native_order_id.return_value = sample_broker_order
+        mock_order_repo.get.return_value = sample_order_entity
+
+        # fill_qty < order_qty → PARTIALLY_FILLED
+        data = {
+            "broker_order_id": "KIS12345678",
+            "stock_code": "005930",
+            "filled_qty": "3",
+            "filled_price": "50500",
+            "filled_time": "143025",
+            "side": OrderSide.BUY,
+            "order_qty": "10",
+        }
+
+        # Act
+        await event_loop_with_sync_and_refresh._handle_fill_notification(data)
+
+        # Assert: refresh 호출되지 않음
+        mock_snapshot_refresh_cb.assert_not_awaited()

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -23,6 +25,7 @@ from agent_trading.domain.entities import (
 from agent_trading.domain.enums import DecisionType, EntryStyle, OrderSide, OrderStatus, OrderType
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.services.order_manager import OrderManager
+from agent_trading.services.order_sync_service import OrderSyncService
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import AccountLookup
 from agent_trading.services.ai_agents.base import (
@@ -54,6 +57,9 @@ from agent_trading.services.sizing_engine import (
 
 logger = logging.getLogger(__name__)
 
+# Phase 5.5: post-submit sync timeout (seconds)
+_PHASE55_SYNC_TIMEOUT: int = 5
+
 
 # ---------------------------------------------------------------------------
 # Scoring protocol (deterministic stub)
@@ -72,6 +78,23 @@ class ScoreResult:
     score: float = 0.0
     threshold: float = 0.0
     reason_codes: tuple[str, ...] = ()
+
+
+@dataclass(slots=True, frozen=True)
+class AccountSnapshotFreshness:
+    """Account-level snapshot freshness summary for Phase 4c guard.
+
+    Evaluates whether a specific account's cash and position snapshots
+    are fresh enough to proceed with broker submission.  Uses the same
+    ``stale_threshold_seconds`` as the run-level summary.
+    """
+
+    account_id: UUID
+    latest_cash_snapshot_at: datetime | None
+    latest_position_snapshot_at: datetime | None
+    is_cash_stale: bool
+    is_position_stale: bool
+    is_stale: bool
 
 
 @dataclass(slots=True, frozen=True)
@@ -347,6 +370,9 @@ class DecisionOrchestratorService:
         ai_risk_agent: ProviderAIAgent | None = None,
         final_decision_agent: ProviderAIAgent | None = None,
         agent_recorder: AgentRunRecorder | None = None,
+        # --- Phase 5.5: post-submit sync ---
+        sync_service: OrderSyncService | None = None,
+        snapshot_refresh_cb: Callable[[UUID], Awaitable[None]] | None = None,
     ) -> None:
         self._repos = repos
         self._stale_threshold_seconds = stale_threshold_seconds
@@ -357,6 +383,9 @@ class DecisionOrchestratorService:
         self._ai_risk_agent = ai_risk_agent or StubAIRiskAgent()
         self._final_decision_agent = final_decision_agent or StubFinalDecisionComposerAgent()
         self._agent_recorder = agent_recorder or AgentRunRecorder()
+        # --- Phase 5.5 ---
+        self._sync_service = sync_service
+        self._snapshot_refresh_cb = snapshot_refresh_cb
 
     async def assemble(
         self,
@@ -812,60 +841,131 @@ class DecisionOrchestratorService:
                 decision_context_id=intent.decision_context_id,
             )
 
-        # ── Phase 4c: stale snapshot guard ──
-        health = await self._repos.snapshot_sync_runs.get_sync_health_summary(
-            stale_threshold_seconds=self._stale_threshold_seconds,
+        # ── Phase 4c: stale snapshot guard (account-level preferred) ──
+        account_id: UUID | None = (
+            intent.context.decision_context.account_id
+            if intent.context is not None
+            and intent.context.decision_context is not None
+            else None
         )
-        if health.is_stale:
-            logger.info(
-                "Phase 4c BLOCKED stale_snapshot: last_successful_run_at=%s "
-                "threshold=%ds trade_decision_id=%s",
-                health.last_successful_run_at,
-                self._stale_threshold_seconds,
-                trade_decision_id,
-            )
-            # GuardrailEvaluation: stale_snapshot outcome 기록
-            try:
-                guardrail_eval = GuardrailEvaluationEntity(
-                    guardrail_evaluation_id=uuid4(),
-                    decision_context_id=intent.decision_context_id,
-                    trade_decision_id=trade_decision_id,
-                    order_request_id=pending_order.order_request_id,
-                    rule_set_version="stale_snapshot_guard_v1",
-                    overall_passed=False,
-                    evaluated_at=datetime.now(timezone.utc),
-                    rule_results={
-                        "is_stale": True,
-                        "last_successful_run_at": (
-                            str(health.last_successful_run_at)
-                            if health.last_successful_run_at
-                            else None
-                        ),
-                        "stale_threshold_seconds": self._stale_threshold_seconds,
-                        "last_run_status": health.last_status,
-                    },
-                    blocking_rule_codes=["STALE_SNAPSHOT"],
+        if account_id is not None:
+            freshness = await self._check_account_snapshot_freshness(account_id)
+            if freshness.is_stale:
+                logger.info(
+                    "Phase 4c BLOCKED STALE_SNAPSHOT_ACCOUNT: account_id=%s "
+                    "cash_stale=%s pos_stale=%s threshold=%ds trade_decision_id=%s",
+                    account_id,
+                    freshness.is_cash_stale,
+                    freshness.is_position_stale,
+                    self._stale_threshold_seconds,
+                    trade_decision_id,
                 )
-                await self._repos.guardrail_evaluations.add(guardrail_eval)
-            except Exception:
-                logger.warning(
-                    "Failed to record guardrail evaluation for stale snapshot",
-                    exc_info=True,
-                )
+                try:
+                    guardrail_eval = GuardrailEvaluationEntity(
+                        guardrail_evaluation_id=uuid4(),
+                        decision_context_id=intent.decision_context_id,
+                        trade_decision_id=trade_decision_id,
+                        order_request_id=pending_order.order_request_id,
+                        rule_set_version="stale_snapshot_guard_v1",
+                        overall_passed=False,
+                        evaluated_at=datetime.now(timezone.utc),
+                        rule_results={
+                            "is_stale": True,
+                            "stale_level": "account",
+                            "account_id": str(account_id),
+                            "latest_cash_snapshot_at": (
+                                str(freshness.latest_cash_snapshot_at)
+                                if freshness.latest_cash_snapshot_at
+                                else None
+                            ),
+                            "latest_position_snapshot_at": (
+                                str(freshness.latest_position_snapshot_at)
+                                if freshness.latest_position_snapshot_at
+                                else None
+                            ),
+                            "is_cash_stale": freshness.is_cash_stale,
+                            "is_position_stale": freshness.is_position_stale,
+                            "stale_threshold_seconds": self._stale_threshold_seconds,
+                        },
+                        blocking_rule_codes=["STALE_SNAPSHOT_ACCOUNT"],
+                    )
+                    await self._repos.guardrail_evaluations.add(guardrail_eval)
+                except Exception:
+                    logger.warning(
+                        "Failed to record guardrail evaluation for stale snapshot (account)",
+                        exc_info=True,
+                    )
 
-            return SubmitResult(
-                status="SKIPPED",
-                intent=intent,
-                order=pending_order,
-                error_phase="stale_snapshot",
-                error_message=(
-                    f"Snapshot sync is stale: last successful run at "
-                    f"{health.last_successful_run_at}, "
-                    f"threshold={self._stale_threshold_seconds}s"
-                ),
-                trade_decision_id=trade_decision_id,
-                decision_context_id=intent.decision_context_id,
+                return SubmitResult(
+                    status="SKIPPED",
+                    intent=intent,
+                    order=pending_order,
+                    error_phase="stale_snapshot",
+                    error_message=(
+                        f"Account-level snapshot stale: account_id={account_id}, "
+                        f"cash_stale={freshness.is_cash_stale}, "
+                        f"pos_stale={freshness.is_position_stale}, "
+                        f"threshold={self._stale_threshold_seconds}s"
+                    ),
+                    trade_decision_id=trade_decision_id,
+                    decision_context_id=intent.decision_context_id,
+                )
+        else:
+            # Fallback: run-level summary
+            health = await self._repos.snapshot_sync_runs.get_sync_health_summary(
+                stale_threshold_seconds=self._stale_threshold_seconds,
             )
+            if health.is_stale:
+                logger.info(
+                    "Phase 4c BLOCKED stale_snapshot (run-level fallback): "
+                    "last_successful_run_at=%s threshold=%ds trade_decision_id=%s",
+                    health.last_successful_run_at,
+                    self._stale_threshold_seconds,
+                    trade_decision_id,
+                )
+                try:
+                    guardrail_eval = GuardrailEvaluationEntity(
+                        guardrail_evaluation_id=uuid4(),
+                        decision_context_id=intent.decision_context_id,
+                        trade_decision_id=trade_decision_id,
+                        order_request_id=pending_order.order_request_id,
+                        rule_set_version="stale_snapshot_guard_v1",
+                        overall_passed=False,
+                        evaluated_at=datetime.now(timezone.utc),
+                        rule_results={
+                            "is_stale": True,
+                            "stale_level": "run",
+                            "last_successful_run_at": (
+                                str(health.last_successful_run_at)
+                                if health.last_successful_run_at
+                                else None
+                            ),
+                            "stale_threshold_seconds": self._stale_threshold_seconds,
+                            "last_run_status": health.last_status,
+                        },
+                        blocking_rule_codes=["STALE_SNAPSHOT"],
+                    )
+                    await self._repos.guardrail_evaluations.add(guardrail_eval)
+                except Exception:
+                    logger.warning(
+                        "Failed to record guardrail evaluation for stale snapshot (run-level)",
+                        exc_info=True,
+                    )
+
+                return SubmitResult(
+                    status="SKIPPED",
+                    intent=intent,
+                    order=pending_order,
+                    error_phase="stale_snapshot",
+                    error_message=(
+                        f"Snapshot sync is stale (run-level fallback): "
+                        f"last successful run at "
+                        f"{health.last_successful_run_at}, "
+                        f"threshold={self._stale_threshold_seconds}s"
+                    ),
+                    trade_decision_id=trade_decision_id,
+                    decision_context_id=intent.decision_context_id,
+                )
 
         # ── Phase 5: submit to broker ──
         logger.info(
@@ -895,6 +995,48 @@ class DecisionOrchestratorService:
                 trade_decision_id=trade_decision_id,
                 decision_context_id=intent.decision_context_id,
             )
+
+        # ── Phase 5.5: post-submit sync (fire-and-forget with timeout) ──
+        if (
+            submitted_order.status == OrderStatus.SUBMITTED
+            and self._sync_service is not None
+        ):
+            try:
+                broker_orders = (
+                    await self._repos.broker_orders.list_by_order_request(
+                        submitted_order.order_request_id,
+                    )
+                )
+                if broker_orders:
+                    bo = broker_orders[0]
+                    await asyncio.wait_for(
+                        self._sync_service.sync_order_post_submit(
+                            account_ref=submit_request.account_ref,
+                            broker=broker,
+                            broker_order_id=bo.broker_order_id,
+                            snapshot_refresh_cb=self._snapshot_refresh_cb,
+                        ),
+                        timeout=_PHASE55_SYNC_TIMEOUT,
+                    )
+                    logger.info(
+                        "Phase 5.5 sync complete: "
+                        "order_id=%s broker_order_id=%s",
+                        submitted_order.order_request_id,
+                        bo.broker_order_id,
+                    )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Phase 5.5 sync TIMEOUT (order_id=%s) — "
+                    "submit result preserved",
+                    submitted_order.order_request_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Phase 5.5 sync FAILED (order_id=%s): %s — "
+                    "submit result preserved",
+                    submitted_order.order_request_id,
+                    exc,
+                )
 
         # ── Map final order status to SubmitResult.status ──
         final_status = submitted_order.status
@@ -959,6 +1101,63 @@ class DecisionOrchestratorService:
             max_order_value=_decimal_or_none(execution.get("max_order_value")),
             min_order_qty=_decimal_or_none(execution.get("min_order_qty")),
             max_order_qty=_decimal_or_none(execution.get("max_order_qty")),
+        )
+
+    async def _check_account_snapshot_freshness(
+        self, account_id: UUID
+    ) -> AccountSnapshotFreshness:
+        """Check whether a specific account's snapshots are fresh.
+
+        Returns an ``AccountSnapshotFreshness`` summary for the given
+        ``account_id``.  Uses the same ``_stale_threshold_seconds`` as the
+        run-level summary.
+
+        **Zero-position account policy**: if ``list_latest_by_account()``
+        returns an empty list, the positions are considered fresh *iff* a
+        cash snapshot exists and is fresh (because the sync function
+        fetches cash and positions together).
+        """
+        now = datetime.now(timezone.utc)
+
+        # 1. Cash snapshot
+        cash_snapshot = await self._repos.cash_balance_snapshots.get_latest_by_account(
+            account_id
+        )
+        if cash_snapshot is None:
+            return AccountSnapshotFreshness(
+                account_id=account_id,
+                latest_cash_snapshot_at=None,
+                latest_position_snapshot_at=None,
+                is_cash_stale=True,
+                is_position_stale=True,
+                is_stale=True,
+            )
+
+        is_cash_stale = (
+            now - cash_snapshot.snapshot_at
+        ).total_seconds() > self._stale_threshold_seconds
+
+        # 2. Position snapshots
+        position_snapshots = (
+            await self._repos.position_snapshots.list_latest_by_account(account_id)
+        )
+        latest_position_snapshot_at: datetime | None = None
+        is_position_stale = False
+
+        if position_snapshots:
+            latest_position_snapshot_at = max(s.snapshot_at for s in position_snapshots)
+            is_position_stale = (
+                now - latest_position_snapshot_at
+            ).total_seconds() > self._stale_threshold_seconds
+
+        # Zero-position account policy: empty positions + cash fresh = pass
+        return AccountSnapshotFreshness(
+            account_id=account_id,
+            latest_cash_snapshot_at=cash_snapshot.snapshot_at,
+            latest_position_snapshot_at=latest_position_snapshot_at,
+            is_cash_stale=is_cash_stale,
+            is_position_stale=is_position_stale,
+            is_stale=is_cash_stale or is_position_stale,
         )
 
     async def _ensure_or_create_decision_context(

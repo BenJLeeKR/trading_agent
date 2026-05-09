@@ -214,6 +214,11 @@ def create_app(
 
     protected_routers.append(snapshot_sync_runs_router)
 
+    # Phase 5 — Paper performance summary
+    from agent_trading.api.routes.performance import router as performance_router
+
+    protected_routers.append(performance_router)
+
     if auth_enabled:
         for router in protected_routers:
             app.include_router(router, dependencies=[Depends(require_viewer)])

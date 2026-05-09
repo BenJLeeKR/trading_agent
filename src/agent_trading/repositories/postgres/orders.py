@@ -105,6 +105,11 @@ class PostgresOrderRepository:
             conditions.append(f"status = ${idx}")
             params.append(query.status.value)
             idx += 1
+        if query.statuses is not None:
+            placeholders = ",".join(f"${idx + i}" for i in range(len(query.statuses)))
+            conditions.append(f"status IN ({placeholders})")
+            params.extend(s.value for s in query.statuses)
+            idx += len(query.statuses)
         if query.trade_decision_id is not None:
             conditions.append(f"trade_decision_id = ${idx}")
             params.append(query.trade_decision_id)

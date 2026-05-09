@@ -222,6 +222,22 @@ class CashBalanceSnapshotRepository(Protocol):
     async def get_latest_by_account(self, account_id: UUID) -> CashBalanceSnapshotEntity | None:
         ...
 
+    async def list_by_account(self, account_id: UUID) -> Sequence[CashBalanceSnapshotEntity]:
+        """계좌의 모든 현금 snapshot을 snapshot_at DESC 정렬로 반환합니다.
+
+        Parameters
+        ----------
+        account_id:
+            대상 계좌 UUID.
+
+        Returns
+        -------
+        Sequence[CashBalanceSnapshotEntity]
+            snapshot_at 내림차순 정렬된 snapshot 목록.
+            데이터가 없으면 빈 시퀀스.
+        """
+        ...
+
 
 class TradeDecisionRepository(Protocol):
     async def add(self, decision: TradeDecisionEntity) -> TradeDecisionEntity:

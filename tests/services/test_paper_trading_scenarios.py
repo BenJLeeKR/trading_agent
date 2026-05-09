@@ -21,7 +21,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
@@ -31,8 +31,10 @@ import pytest
 from agent_trading.brokers.base import BrokerAdapter
 from agent_trading.domain.entities import (
     AccountEntity,
+    CashBalanceSnapshotEntity,
     ConfigVersionEntity,
     InstrumentEntity,
+    PositionSnapshotEntity,
     SnapshotSyncRunEntity,
 )
 from agent_trading.domain.enums import (
@@ -227,6 +229,34 @@ class TestPaperTradingScenarios:
                 audit log contains order.create + status changes
         """
         # Given
+        # Seed fresh snapshots (for account-level Phase 4c guard)
+        now = datetime.now(timezone.utc)
+        account = list(repos.accounts._items.values())[0]
+        instrument = list(repos.instruments._items.values())[0]
+        cash_snapshot = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            currency="KRW",
+            available_cash=Decimal("1000000"),
+            settled_cash=Decimal("0"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        await repos.cash_balance_snapshots.add(cash_snapshot)
+        position_snapshot = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            instrument_id=instrument.instrument_id,
+            quantity=Decimal("10"),
+            average_price=Decimal("50000"),
+            market_price=Decimal("50000"),
+            unrealized_pnl=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        await repos.position_snapshots.add(position_snapshot)
+
         request = _make_request(client_order_id="SCENARIO-1-HAPPY-001")
         mock_broker.submit_order.return_value = SubmitOrderResult(
             accepted=True,
@@ -368,6 +398,34 @@ class TestPaperTradingScenarios:
                 lock persists until resolved
         """
         # Given: broker returns uncertain result
+        # Seed fresh snapshots (for account-level Phase 4c guard)
+        now = datetime.now(timezone.utc)
+        account = list(repos.accounts._items.values())[0]
+        instrument = list(repos.instruments._items.values())[0]
+        cash_snapshot = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            currency="KRW",
+            available_cash=Decimal("1000000"),
+            settled_cash=Decimal("0"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        await repos.cash_balance_snapshots.add(cash_snapshot)
+        position_snapshot = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            instrument_id=instrument.instrument_id,
+            quantity=Decimal("10"),
+            average_price=Decimal("50000"),
+            market_price=Decimal("50000"),
+            unrealized_pnl=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        await repos.position_snapshots.add(position_snapshot)
+
         request = _make_request(client_order_id="SCENARIO-3-UNCERTAIN-001")
         mock_broker.submit_order.return_value = SubmitOrderResult(
             accepted=True,
@@ -475,19 +533,19 @@ class TestPaperTradingScenarios:
         order_manager: OrderManager,
         mock_broker: BrokerAdapter,
     ) -> None:
-        """Stale Snapshot (no_history) → Submit 차단.
+        """Stale Snapshot (no_history) → Submit 차단 (account-level path).
 
-        Given:  snapshot_sync_runs 비어 있음 → is_stale=True (no_history)
+        Given:  계좌에 cash/position snapshot 없음 → account-level
+                staleness 감지 → STALE_SNAPSHOT_ACCOUNT
                 stale_threshold_seconds=1
         When:   submit request (BUY, APPROVE)
         Then:   assemble() 정상 실행
                 pipeline returns SubmitResult(status="SKIPPED", error_phase="stale_snapshot")
                 broker.submit_order() 호출되지 않음
-                guardrail_evaluations에 STALE_SNAPSHOT 기록 존재
+                guardrail_evaluations에 STALE_SNAPSHOT_ACCOUNT 기록 존재
         """
-        # build_in_memory_repositories()가 fresh run을 시딩하므로,
-        # no-history stale 테스트를 위해 명시적으로 제거
-        repos.snapshot_sync_runs._items.clear()
+        # 계좌에 snapshot이 없으므로 account-level staleness가 먼저 차단
+        # run-level run은 제거할 필요 없음 (account-level이 우선)
 
         request = _make_request(client_order_id="SCENARIO-4-STALE-001")
         mock_broker.submit_order.return_value = SubmitOrderResult(
@@ -531,11 +589,15 @@ class TestPaperTradingScenarios:
         )
         eval_records = list(repos.guardrail_evaluations._items.values())
         stale_record = next(
-            (e for e in eval_records if "STALE_SNAPSHOT" in (e.blocking_rule_codes or [])),
+            (
+                e
+                for e in eval_records
+                if "STALE_SNAPSHOT_ACCOUNT" in (e.blocking_rule_codes or [])
+            ),
             None,
         )
         assert stale_record is not None, (
-            "Expected a GuardrailEvaluation with STALE_SNAPSHOT blocking_rule_code"
+            "Expected a GuardrailEvaluation with STALE_SNAPSHOT_ACCOUNT blocking_rule_code"
         )
         assert stale_record.overall_passed is False
         # decision_context_id는 pipeline 내부의 intent 기준이므로 result에서 확인
@@ -555,15 +617,42 @@ class TestPaperTradingScenarios:
         order_manager: OrderManager,
         mock_broker: BrokerAdapter,
     ) -> None:
-        """Fresh Snapshot → 정상 SUBMITTED.
+        """Fresh Snapshot → 정상 SUBMITTED (account-level + run-level 모두 fresh).
 
-        Given:  snapshot_sync_runs에 최근 완료된 run 존재 → is_stale=False
+        Given:  계좌에 fresh cash snapshot + fresh position snapshots 존재
+                snapshot_sync_runs에 최근 완료된 run 존재
         When:   submit request (BUY, APPROVE)
         Then:   pipeline 정상 진행 → SUBMITTED
                 broker.submit_order() 1회 호출
         """
-        # Seed: completed SnapshotSyncRunEntity — started_at = now (fresh)
+        # Seed: account-level fresh snapshots
         now = datetime.now(timezone.utc)
+        account = list(repos.accounts._items.values())[0]
+        cash_snapshot = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            currency="KRW",
+            available_cash=Decimal("1000000"),
+            settled_cash=Decimal("0"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        await repos.cash_balance_snapshots.add(cash_snapshot)
+        position_snapshot = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            instrument_id=uuid4(),
+            quantity=Decimal("10"),
+            average_price=Decimal("50000"),
+            market_price=Decimal("50000"),
+            unrealized_pnl=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        await repos.position_snapshots.add(position_snapshot)
+
+        # Seed: completed SnapshotSyncRunEntity — started_at = now (fresh)
         seed_run = SnapshotSyncRunEntity(
             snapshot_sync_run_id=uuid4(),
             trigger_type="scheduler",
@@ -582,7 +671,6 @@ class TestPaperTradingScenarios:
             started_at=now,
             completed_at=now,
         )
-        # InMemorySnapshotSyncRunRepository.add()으로 시딩
         await repos.snapshot_sync_runs.add(seed_run)
 
         request = _make_request(client_order_id="SCENARIO-4B-FRESH-001")
@@ -640,6 +728,34 @@ class TestPaperTradingScenarios:
                 lock still in place
         """
         # ── First call: uncertain → lock created ──
+        # Seed fresh snapshots (for account-level Phase 4c guard)
+        now = datetime.now(timezone.utc)
+        account = list(repos.accounts._items.values())[0]
+        instrument = list(repos.instruments._items.values())[0]
+        cash_snapshot = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            currency="KRW",
+            available_cash=Decimal("1000000"),
+            settled_cash=Decimal("0"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        await repos.cash_balance_snapshots.add(cash_snapshot)
+        position_snapshot = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            instrument_id=instrument.instrument_id,
+            quantity=Decimal("10"),
+            average_price=Decimal("50000"),
+            market_price=Decimal("50000"),
+            unrealized_pnl=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        await repos.position_snapshots.add(position_snapshot)
+
         first_request = _make_request(client_order_id="SCENARIO-5-LOCK-001")
 
         mock_broker.submit_order.return_value = SubmitOrderResult(
@@ -725,3 +841,439 @@ class TestPaperTradingScenarios:
         assert is_blocked, (
             "Blocking lock should still exist after second blocked call"
         )
+
+    # ═════════════════════════════════════════════════════════════════════
+    # Account-Level Snapshot Freshness Tests (6 cases)
+    # ═════════════════════════════════════════════════════════════════════
+
+    @pytest.mark.asyncio
+    async def test_account_level_fresh_cash_and_positions(
+        self,
+        repos: RepositoryContainer,
+        order_manager: OrderManager,
+        mock_broker: BrokerAdapter,
+    ) -> None:
+        """Test 1: Cash + positions both fresh → SUBMITTED.
+
+        Given:  account-level cash snapshot fresh
+                account-level position snapshots fresh (max snapshot_at within threshold)
+        When:   submit request (BUY, APPROVE)
+        Then:   account-level freshness PASS → pipeline proceeds
+                broker.submit_order() 1회 호출
+        """
+        now = datetime.now(timezone.utc)
+        account = list(repos.accounts._items.values())[0]
+
+        # Seed fresh cash snapshot
+        cash_snapshot = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            currency="KRW",
+            available_cash=Decimal("1000000"),
+            settled_cash=Decimal("0"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        await repos.cash_balance_snapshots.add(cash_snapshot)
+
+        # Seed fresh position snapshots
+        position1 = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            instrument_id=uuid4(),
+            quantity=Decimal("10"),
+            average_price=Decimal("50000"),
+            market_price=Decimal("50000"),
+            unrealized_pnl=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        await repos.position_snapshots.add(position1)
+
+        request = _make_request(client_order_id="TEST-ACCT-FRESH-001")
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="TEST-ACCT-FRESH-001",
+            broker_order_id="BRK-FRESH-001",
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=now,
+            raw_code="0000",
+            raw_message="Accepted",
+        )
+
+        service = DecisionOrchestratorService(
+            repos=repos,
+            stale_threshold_seconds=900,
+            final_decision_agent=self._ApproveFDCAgent(),
+        )
+
+        result = await service.assemble_and_submit(
+            request,
+            order_manager=order_manager,
+            broker=mock_broker,  # type: ignore[arg-type]
+        )
+        assert result.status == "SUBMITTED", (
+            f"Expected SUBMITTED (both fresh), got {result.status}"
+        )
+        mock_broker.submit_order.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_account_level_stale_cash(
+        self,
+        repos: RepositoryContainer,
+        order_manager: OrderManager,
+        mock_broker: BrokerAdapter,
+    ) -> None:
+        """Test 2: Cash snapshot stale → STALE_SNAPSHOT_ACCOUNT 차단.
+
+        Given:  cash snapshot exists but stale (> threshold)
+                position snapshot fresh
+        When:   submit request (BUY, APPROVE)
+        Then:   pipeline returns SKIPPED (stale_snapshot)
+                guardrail has STALE_SNAPSHOT_ACCOUNT
+                broker.submit_order() 호출되지 않음
+        """
+        now = datetime.now(timezone.utc)
+        stale_time = now - timedelta(seconds=1000)
+        account = list(repos.accounts._items.values())[0]
+
+        # Seed stale cash snapshot
+        cash_snapshot = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            currency="KRW",
+            available_cash=Decimal("1000000"),
+            settled_cash=Decimal("0"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=stale_time,
+        )
+        await repos.cash_balance_snapshots.add(cash_snapshot)
+
+        # Seed fresh position snapshot
+        position1 = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            instrument_id=uuid4(),
+            quantity=Decimal("10"),
+            average_price=Decimal("50000"),
+            market_price=Decimal("50000"),
+            unrealized_pnl=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        await repos.position_snapshots.add(position1)
+
+        request = _make_request(client_order_id="TEST-ACCT-STALE-CASH-001")
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="TEST-ACCT-STALE-CASH-001",
+            broker_order_id="SHOULD-NOT-HAPPEN",
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=now,
+        )
+
+        service = DecisionOrchestratorService(
+            repos=repos,
+            stale_threshold_seconds=300,  # stale_time > 300s ago
+            final_decision_agent=self._ApproveFDCAgent(),
+        )
+
+        result = await service.assemble_and_submit(
+            request,
+            order_manager=order_manager,
+            broker=mock_broker,  # type: ignore[arg-type]
+        )
+        assert result.status == "SKIPPED", (
+            f"Expected SKIPPED (stale cash), got {result.status}"
+        )
+        assert result.error_phase == "stale_snapshot"
+        mock_broker.submit_order.assert_not_called()
+
+        # GuardrailEvaluation에 STALE_SNAPSHOT_ACCOUNT 기록 확인
+        eval_records = list(repos.guardrail_evaluations._items.values())
+        stale_record = next(
+            (e for e in eval_records if "STALE_SNAPSHOT_ACCOUNT" in (e.blocking_rule_codes or [])),
+            None,
+        )
+        assert stale_record is not None, (
+            "Expected GuardrailEvaluation with STALE_SNAPSHOT_ACCOUNT"
+        )
+
+    @pytest.mark.asyncio
+    async def test_account_level_stale_positions(
+        self,
+        repos: RepositoryContainer,
+        order_manager: OrderManager,
+        mock_broker: BrokerAdapter,
+    ) -> None:
+        """Test 3: Positions stale (cash fresh) → STALE_SNAPSHOT_ACCOUNT 차단.
+
+        Given:  cash snapshot fresh
+                position snapshots exist but max snapshot_at stale (> threshold)
+        When:   submit request (BUY, APPROVE)
+        Then:   pipeline returns SKIPPED (stale_snapshot)
+                guardrail has STALE_SNAPSHOT_ACCOUNT
+                broker.submit_order() 호출되지 않음
+        """
+        now = datetime.now(timezone.utc)
+        stale_time = now - timedelta(seconds=1000)
+        account = list(repos.accounts._items.values())[0]
+
+        # Seed fresh cash snapshot
+        cash_snapshot = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            currency="KRW",
+            available_cash=Decimal("1000000"),
+            settled_cash=Decimal("0"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        await repos.cash_balance_snapshots.add(cash_snapshot)
+
+        # Seed stale position snapshot
+        position1 = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            instrument_id=uuid4(),
+            quantity=Decimal("10"),
+            average_price=Decimal("50000"),
+            market_price=Decimal("50000"),
+            unrealized_pnl=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=stale_time,
+        )
+        await repos.position_snapshots.add(position1)
+
+        request = _make_request(client_order_id="TEST-ACCT-STALE-POS-001")
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="TEST-ACCT-STALE-POS-001",
+            broker_order_id="SHOULD-NOT-HAPPEN",
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=now,
+        )
+
+        service = DecisionOrchestratorService(
+            repos=repos,
+            stale_threshold_seconds=300,
+            final_decision_agent=self._ApproveFDCAgent(),
+        )
+
+        result = await service.assemble_and_submit(
+            request,
+            order_manager=order_manager,
+            broker=mock_broker,  # type: ignore[arg-type]
+        )
+        assert result.status == "SKIPPED", (
+            f"Expected SKIPPED (stale positions), got {result.status}"
+        )
+        assert result.error_phase == "stale_snapshot"
+        mock_broker.submit_order.assert_not_called()
+
+        # GuardrailEvaluation 확인
+        eval_records = list(repos.guardrail_evaluations._items.values())
+        stale_record = next(
+            (e for e in eval_records if "STALE_SNAPSHOT_ACCOUNT" in (e.blocking_rule_codes or [])),
+            None,
+        )
+        assert stale_record is not None
+
+    @pytest.mark.asyncio
+    async def test_account_level_no_cash_snapshot(
+        self,
+        repos: RepositoryContainer,
+        order_manager: OrderManager,
+        mock_broker: BrokerAdapter,
+    ) -> None:
+        """Test 4: No cash snapshot → STALE_SNAPSHOT_ACCOUNT 차단.
+
+        Given:  cash snapshot None (never synced)
+                position snapshots empty
+        When:   submit request (BUY, APPROVE)
+        Then:   pipeline returns SKIPPED (stale_snapshot)
+                broker.submit_order() 호출되지 않음
+        """
+        # No snapshots seeded at all
+        request = _make_request(client_order_id="TEST-ACCT-NO-CASH-001")
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="TEST-ACCT-NO-CASH-001",
+            broker_order_id="SHOULD-NOT-HAPPEN",
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=datetime.now(timezone.utc),
+        )
+
+        service = DecisionOrchestratorService(
+            repos=repos,
+            stale_threshold_seconds=1,
+            final_decision_agent=self._ApproveFDCAgent(),
+        )
+
+        result = await service.assemble_and_submit(
+            request,
+            order_manager=order_manager,
+            broker=mock_broker,  # type: ignore[arg-type]
+        )
+        assert result.status == "SKIPPED", (
+            f"Expected SKIPPED (no cash snapshot), got {result.status}"
+        )
+        assert result.error_phase == "stale_snapshot"
+        mock_broker.submit_order.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_account_level_run_fresh_account_stale(
+        self,
+        repos: RepositoryContainer,
+        order_manager: OrderManager,
+        mock_broker: BrokerAdapter,
+    ) -> None:
+        """Test 5: Run-level fresh + account-level stale → account-level wins.
+
+        Given:  run-level snapshot_sync_runs에 fresh run 존재
+                account-level cash snapshot stale (> threshold)
+        When:   submit request (BUY, APPROVE)
+        Then:   account-level staleness이 run-level freshness보다 우선
+                pipeline returns SKIPPED (STALE_SNAPSHOT_ACCOUNT)
+                broker.submit_order() 호출되지 않음
+        """
+        now = datetime.now(timezone.utc)
+        stale_time = now - timedelta(seconds=1000)
+        account = list(repos.accounts._items.values())[0]
+
+        # Seed: run-level fresh
+        seed_run = SnapshotSyncRunEntity(
+            snapshot_sync_run_id=uuid4(),
+            trigger_type="scheduler",
+            scope="all",
+            dry_run=False,
+            total_accounts=1,
+            succeeded_accounts=1,
+            partial_accounts=0,
+            failed_accounts=0,
+            skipped_accounts=0,
+            positions_synced_total=10,
+            positions_skipped_total=0,
+            cash_synced_count=1,
+            error_count=0,
+            status="completed",
+            started_at=now,
+            completed_at=now,
+        )
+        await repos.snapshot_sync_runs.add(seed_run)
+
+        # Seed: account-level stale cash snapshot
+        cash_snapshot = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            currency="KRW",
+            available_cash=Decimal("1000000"),
+            settled_cash=Decimal("0"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=stale_time,
+        )
+        await repos.cash_balance_snapshots.add(cash_snapshot)
+
+        request = _make_request(client_order_id="TEST-ACCT-RUN-FRESH-001")
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="TEST-ACCT-RUN-FRESH-001",
+            broker_order_id="SHOULD-NOT-HAPPEN",
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=now,
+        )
+
+        service = DecisionOrchestratorService(
+            repos=repos,
+            stale_threshold_seconds=300,
+            final_decision_agent=self._ApproveFDCAgent(),
+        )
+
+        result = await service.assemble_and_submit(
+            request,
+            order_manager=order_manager,
+            broker=mock_broker,  # type: ignore[arg-type]
+        )
+        assert result.status == "SKIPPED", (
+            f"Expected SKIPPED (account-level wins over run-level), got {result.status}"
+        )
+        assert result.error_phase == "stale_snapshot"
+        mock_broker.submit_order.assert_not_called()
+
+        # Verify STALE_SNAPSHOT_ACCOUNT (not STALE_SNAPSHOT)
+        eval_records = list(repos.guardrail_evaluations._items.values())
+        stale_record = next(
+            (e for e in eval_records if "STALE_SNAPSHOT_ACCOUNT" in (e.blocking_rule_codes or [])),
+            None,
+        )
+        assert stale_record is not None, (
+            "Expected STALE_SNAPSHOT_ACCOUNT blocking code"
+        )
+
+    @pytest.mark.asyncio
+    async def test_account_level_fresh_cash_empty_positions(
+        self,
+        repos: RepositoryContainer,
+        order_manager: OrderManager,
+        mock_broker: BrokerAdapter,
+    ) -> None:
+        """Test 6: Cash fresh + empty positions → SUBMITTED (zero-position policy).
+
+        Given:  cash snapshot fresh
+                position snapshots empty list (no positions for this account)
+        When:   submit request (BUY, APPROVE)
+        Then:   zero-position account policy 적용 → PASS
+                broker.submit_order() 1회 호출
+        """
+        now = datetime.now(timezone.utc)
+        account = list(repos.accounts._items.values())[0]
+
+        # Seed fresh cash snapshot only (no position snapshots)
+        cash_snapshot = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            currency="KRW",
+            available_cash=Decimal("1000000"),
+            settled_cash=Decimal("0"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        await repos.cash_balance_snapshots.add(cash_snapshot)
+
+        request = _make_request(client_order_id="TEST-ACCT-ZERO-POS-001")
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="TEST-ACCT-ZERO-POS-001",
+            broker_order_id="BRK-ZERO-POS-001",
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=now,
+            raw_code="0000",
+            raw_message="Accepted",
+        )
+
+        service = DecisionOrchestratorService(
+            repos=repos,
+            stale_threshold_seconds=900,
+            final_decision_agent=self._ApproveFDCAgent(),
+        )
+
+        result = await service.assemble_and_submit(
+            request,
+            order_manager=order_manager,
+            broker=mock_broker,  # type: ignore[arg-type]
+        )
+        assert result.status == "SUBMITTED", (
+            f"Expected SUBMITTED (zero-position policy), got {result.status}"
+        )
+        mock_broker.submit_order.assert_called_once()

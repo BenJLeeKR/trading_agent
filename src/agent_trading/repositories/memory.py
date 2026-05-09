@@ -278,6 +278,13 @@ class InMemoryCashBalanceSnapshotRepository:
     async def get(self, cash_balance_snapshot_id: UUID) -> CashBalanceSnapshotEntity | None:
         return self._items.get(cash_balance_snapshot_id)
 
+    async def list_by_account(self, account_id: UUID) -> Sequence[CashBalanceSnapshotEntity]:
+        results = [
+            item for item in self._items.values() if item.account_id == account_id
+        ]
+        results.sort(key=lambda item: item.snapshot_at, reverse=True)
+        return tuple(results)
+
     async def get_latest_by_account(self, account_id: UUID) -> CashBalanceSnapshotEntity | None:
         results = [item for item in self._items.values() if item.account_id == account_id]
         if not results:
@@ -330,6 +337,8 @@ class InMemoryOrderRepository:
             if query.correlation_id is not None and item.correlation_id != query.correlation_id:
                 continue
             if query.status is not None and item.status != query.status:
+                continue
+            if query.statuses is not None and item.status not in query.statuses:
                 continue
             if query.trade_decision_id is not None and item.trade_decision_id != query.trade_decision_id:
                 continue

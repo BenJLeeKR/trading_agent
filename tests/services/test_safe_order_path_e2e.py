@@ -34,6 +34,8 @@ Every scenario verifies:
 
 from __future__ import annotations
 
+import asyncio
+
 from datetime import datetime, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
@@ -44,8 +46,10 @@ import pytest
 from agent_trading.brokers.base import BrokerAdapter
 from agent_trading.domain.entities import (
     AccountEntity,
+    CashBalanceSnapshotEntity,
     ConfigVersionEntity,
     InstrumentEntity,
+    PositionSnapshotEntity,
 )
 from agent_trading.domain.enums import (
     AssetClass,
@@ -66,6 +70,7 @@ from agent_trading.services.order_manager import (
     DuplicateOrderError,
     OrderManager,
 )
+from agent_trading.services.order_sync_service import OrderSyncService
 from agent_trading.services.reconciliation_service import ReconciliationService
 
 # ---------------------------------------------------------------------------
@@ -172,6 +177,31 @@ class TestSafeOrderPathE2E:
         )
         repos.instruments._items[instrument.instrument_id] = instrument
 
+        # Seed fresh snapshots (for account-level Phase 4c guard)
+        fresh_cash = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            currency="KRW",
+            available_cash=Decimal("1000000"),
+            settled_cash=Decimal("0"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        repos.cash_balance_snapshots._items[fresh_cash.cash_balance_snapshot_id] = fresh_cash
+        fresh_pos = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            instrument_id=instrument.instrument_id,
+            quantity=Decimal("10"),
+            average_price=Decimal("50000"),
+            market_price=Decimal("50000"),
+            unrealized_pnl=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        repos.position_snapshots._items[fresh_pos.position_snapshot_id] = fresh_pos
+
         return repos
 
     @pytest.fixture
@@ -213,6 +243,48 @@ class TestSafeOrderPathE2E:
         broker = MagicMock(spec=BrokerAdapter)
         broker.submit_order = AsyncMock()
         return broker
+
+    # ── Phase 5.5 fixtures ──
+
+    @pytest.fixture
+    def mock_sync_service(self) -> MagicMock:
+        """Return a MagicMock that looks like an OrderSyncService."""
+        mock = MagicMock(spec=OrderSyncService)
+        mock.sync_order_post_submit = AsyncMock()
+        return mock
+
+    @pytest.fixture
+    def service_with_sync(
+        self,
+        repos: RepositoryContainer,
+        mock_sync_service: MagicMock,
+    ) -> DecisionOrchestratorService:
+        """Orchestrator with Phase 5.5 sync service injected."""
+        return DecisionOrchestratorService(
+            repos=repos,
+            final_decision_agent=self._ApproveFDCAgent(),
+            sync_service=mock_sync_service,
+        )
+
+    @pytest.fixture
+    def mock_snapshot_refresh(self) -> AsyncMock:
+        """Return an AsyncMock for snapshot_refresh_cb."""
+        return AsyncMock()
+
+    @pytest.fixture
+    def service_with_sync_and_cb(
+        self,
+        repos: RepositoryContainer,
+        mock_sync_service: MagicMock,
+        mock_snapshot_refresh: AsyncMock,
+    ) -> DecisionOrchestratorService:
+        """Orchestrator with sync service + snapshot refresh callback."""
+        return DecisionOrchestratorService(
+            repos=repos,
+            final_decision_agent=self._ApproveFDCAgent(),
+            sync_service=mock_sync_service,
+            snapshot_refresh_cb=mock_snapshot_refresh,
+        )
 
     # ── Helpers ──
 
@@ -739,4 +811,270 @@ class TestSafeOrderPathE2E:
             "Blocking lock should exist after requires_reconciliation result"
         )
 
+    # ═══════════════════════════════════════════════════════════════════
+    # Phase 5.5: Post-submit sync tests
+    # ═══════════════════════════════════════════════════════════════════
 
+    @pytest.mark.asyncio
+    async def test_phase55_submitted_calls_sync(
+        self,
+        service_with_sync: DecisionOrchestratorService,
+        mock_sync_service: MagicMock,
+        order_manager: OrderManager,
+        mock_broker: BrokerAdapter,
+        sample_request: SubmitOrderRequest,
+    ) -> None:
+        """Phase 5.5: SUBMITTED → sync_order_post_submit called with correct broker_order_id."""
+        # Given
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="P55-TEST-001",
+            broker_order_id="BRK-P55-001",
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=datetime.now(timezone.utc),
+            raw_code="0000",
+            raw_message="Accepted",
+        )
+
+        # When
+        result = await service_with_sync.assemble_and_submit(
+            sample_request,
+            order_manager=order_manager,
+            broker=mock_broker,
+        )
+
+        # Then: pipeline result unchanged
+        assert result.status == "SUBMITTED"
+        assert result.order is not None
+        assert result.order.status == OrderStatus.SUBMITTED
+        assert result.error_phase is None
+
+        # Then: sync was called once
+        mock_sync_service.sync_order_post_submit.assert_awaited_once()
+
+        # Then: broker_order_id is a valid UUID (generated internally)
+        call_kwargs = mock_sync_service.sync_order_post_submit.call_args.kwargs
+        broker_order_id = call_kwargs.get("broker_order_id")
+        assert isinstance(broker_order_id, UUID), (
+            f"Expected UUID, got {type(broker_order_id)}"
+        )
+
+        # Then: account_ref matches
+        assert call_kwargs.get("account_ref") == sample_request.account_ref
+
+        # Then: broker is the same instance
+        assert call_kwargs.get("broker") is mock_broker
+
+    @pytest.mark.asyncio
+    async def test_phase55_timeout_does_not_break_pipeline(
+        self,
+        service_with_sync: DecisionOrchestratorService,
+        mock_sync_service: MagicMock,
+        order_manager: OrderManager,
+        mock_broker: BrokerAdapter,
+        sample_request: SubmitOrderRequest,
+    ) -> None:
+        """Phase 5.5 timeout → SubmitResult.status remains SUBMITTED, warning logged."""
+        # Given
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="P55-TIMEOUT-001",
+            broker_order_id="BRK-P55-TO",
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=datetime.now(timezone.utc),
+            raw_code="0000",
+            raw_message="Accepted",
+        )
+        mock_sync_service.sync_order_post_submit.side_effect = asyncio.TimeoutError()
+
+        # When
+        result = await service_with_sync.assemble_and_submit(
+            sample_request,
+            order_manager=order_manager,
+            broker=mock_broker,
+        )
+
+        # Then: pipeline result unchanged despite timeout
+        assert result.status == "SUBMITTED"
+        assert result.order is not None
+        assert result.order.status == OrderStatus.SUBMITTED
+        assert result.error_phase is None
+        mock_sync_service.sync_order_post_submit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_phase55_exception_does_not_break_pipeline(
+        self,
+        service_with_sync: DecisionOrchestratorService,
+        mock_sync_service: MagicMock,
+        order_manager: OrderManager,
+        mock_broker: BrokerAdapter,
+        sample_request: SubmitOrderRequest,
+    ) -> None:
+        """Phase 5.5 generic exception → SubmitResult.status remains SUBMITTED."""
+        # Given
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="P55-EXC-001",
+            broker_order_id="BRK-P55-EXC",
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=datetime.now(timezone.utc),
+            raw_code="0000",
+            raw_message="Accepted",
+        )
+        mock_sync_service.sync_order_post_submit.side_effect = Exception("sync failed")
+
+        # When
+        result = await service_with_sync.assemble_and_submit(
+            sample_request,
+            order_manager=order_manager,
+            broker=mock_broker,
+        )
+
+        # Then: pipeline result unchanged despite sync failure
+        assert result.status == "SUBMITTED"
+        assert result.order is not None
+        assert result.order.status == OrderStatus.SUBMITTED
+        assert result.error_phase is None
+        mock_sync_service.sync_order_post_submit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_phase55_skipped_when_rejected(
+        self,
+        service_with_sync: DecisionOrchestratorService,
+        mock_sync_service: MagicMock,
+        order_manager: OrderManager,
+        mock_broker: BrokerAdapter,
+        sample_request: SubmitOrderRequest,
+    ) -> None:
+        """Phase 5.5 skipped when broker rejects (not SUBMITTED)."""
+        # Given
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=False,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="P55-REJ-001",
+            broker_order_id="BRK-P55-REJ",
+            broker_status=OrderStatus.REJECTED,
+            ack_timestamp=datetime.now(timezone.utc),
+            raw_code="1000",
+            raw_message="Rejected by broker",
+        )
+
+        # When
+        result = await service_with_sync.assemble_and_submit(
+            sample_request,
+            order_manager=order_manager,
+            broker=mock_broker,
+        )
+
+        # Then
+        assert result.status == "REJECTED"
+        mock_sync_service.sync_order_post_submit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_phase55_skipped_when_reconcile_required(
+        self,
+        service_with_sync: DecisionOrchestratorService,
+        mock_sync_service: MagicMock,
+        order_manager: OrderManager,
+        mock_broker: BrokerAdapter,
+        sample_request: SubmitOrderRequest,
+    ) -> None:
+        """Phase 5.5 skipped when broker returns uncertain result."""
+        # Given
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="P55-REC-001",
+            broker_order_id=None,
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=datetime.now(timezone.utc),
+            raw_code="TIMEOUT",
+            raw_message="Response timeout",
+            uncertain=True,
+        )
+
+        # When
+        result = await service_with_sync.assemble_and_submit(
+            sample_request,
+            order_manager=order_manager,
+            broker=mock_broker,
+        )
+
+        # Then
+        assert result.status == "RECONCILE_REQUIRED"
+        mock_sync_service.sync_order_post_submit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_phase55_not_called_when_no_sync_service(
+        self,
+        service: DecisionOrchestratorService,
+        order_manager: OrderManager,
+        mock_broker: BrokerAdapter,
+        sample_request: SubmitOrderRequest,
+    ) -> None:
+        """Phase 5.5 not called when sync_service=None (backward compat)."""
+        # Given
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="P55-NONE-001",
+            broker_order_id="BRK-P55-NONE",
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=datetime.now(timezone.utc),
+            raw_code="0000",
+            raw_message="Accepted",
+        )
+
+        # When
+        result = await service.assemble_and_submit(
+            sample_request,
+            order_manager=order_manager,
+            broker=mock_broker,
+        )
+
+        # Then: pipeline completes normally without sync
+        assert result.status == "SUBMITTED"
+        assert result.order is not None
+        assert result.order.status == OrderStatus.SUBMITTED
+        assert result.error_phase is None
+
+    @pytest.mark.asyncio
+    async def test_phase55_snapshot_refresh_cb_forwarded(
+        self,
+        service_with_sync_and_cb: DecisionOrchestratorService,
+        mock_sync_service: MagicMock,
+        mock_snapshot_refresh: AsyncMock,
+        order_manager: OrderManager,
+        mock_broker: BrokerAdapter,
+        sample_request: SubmitOrderRequest,
+    ) -> None:
+        """Phase 5.5: snapshot_refresh_cb forwarded to sync_order_post_submit."""
+        # Given
+        mock_broker.submit_order.return_value = SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="P55-CB-001",
+            broker_order_id="BRK-P55-CB",
+            broker_status=OrderStatus.ACKNOWLEDGED,
+            ack_timestamp=datetime.now(timezone.utc),
+            raw_code="0000",
+            raw_message="Accepted",
+        )
+
+        # When
+        result = await service_with_sync_and_cb.assemble_and_submit(
+            sample_request,
+            order_manager=order_manager,
+            broker=mock_broker,
+        )
+
+        # Then
+        assert result.status == "SUBMITTED"
+        mock_sync_service.sync_order_post_submit.assert_awaited_once()
+        call_kwargs = mock_sync_service.sync_order_post_submit.call_args.kwargs
+        assert call_kwargs.get("snapshot_refresh_cb") is mock_snapshot_refresh, (
+            "snapshot_refresh_cb should be forwarded"
+        )

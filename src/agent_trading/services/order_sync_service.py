@@ -17,6 +17,7 @@ from agent_trading.domain.entities import (
 from agent_trading.domain.enums import OrderStatus
 from agent_trading.domain.models import FillEvent, OrderStatusResult
 from agent_trading.repositories.container import RepositoryContainer
+from agent_trading.repositories.filters import OrderQuery
 from agent_trading.services.order_manager import OrderManager
 
 logger = logging.getLogger(__name__)
@@ -233,14 +234,26 @@ class OrderSyncService:
         # ── 7. Update last_synced_at ──
         await self._update_last_synced_at(broker_order_id, now)
 
-        # ── 8. Snapshot refresh if FILLED ──
+        # ── 8. Snapshot refresh if newly FILLED with fills ──
         current_status = order.status
         terminal = current_status in _TERMINAL_STATUSES
         snapshot_triggered = False
-        if terminal and current_status == OrderStatus.FILLED and snapshot_refresh_cb is not None:
+        if (
+            status_changed
+            and current_status == OrderStatus.FILLED
+            and fills_synced > 0
+            and snapshot_refresh_cb is not None
+        ):
             try:
                 await snapshot_refresh_cb(order.account_id)
                 snapshot_triggered = True
+                logger.info(
+                    "Snapshot refresh triggered for account=%s "
+                    "broker_order=%s (status: %s→%s, fills_synced=%d)",
+                    order.account_id, broker_order_id,
+                    previous_status.value, current_status.value,
+                    fills_synced,
+                )
             except Exception as exc:
                 logger.warning(
                     "Snapshot refresh callback failed for account=%s: %s",
@@ -434,3 +447,166 @@ class OrderSyncService:
                 "Failed to update last_synced_at for broker_order=%s: %s",
                 broker_order_id, exc,
             )
+
+
+# ------------------------------------------------------------------
+# Batch runner
+# ------------------------------------------------------------------
+
+
+@dataclass(slots=True, frozen=True)
+class SyncCycleResult:
+    """Summary of a single post-submit sync cycle.
+
+    Attributes
+    ----------
+    total_orders:
+        Total number of ``OrderRequestEntity`` records polled.
+    updated:
+        Number of orders whose internal status changed.
+    filled:
+        Number of orders that reached FILLED (terminal).
+    partial:
+        Number of orders still in a non-terminal syncable status
+        (SUBMITTED / ACKNOWLEDGED / PARTIALLY_FILLED) after this cycle.
+    errors:
+        Human-readable error descriptions for any per-order failures.
+    snapshots_refreshed:
+        Number of orders for which a snapshot refresh was triggered
+        upon reaching FILLED with new fills.
+    """
+
+    total_orders: int
+    updated: int
+    filled: int
+    partial: int
+    errors: list[str]
+    snapshots_refreshed: int = 0
+
+
+_DEFAULT_BATCH_LIMIT = 200
+
+_ACTIVE_SYNC_STATUSES: list[OrderStatus] = [
+    OrderStatus.SUBMITTED,
+    OrderStatus.ACKNOWLEDGED,
+    OrderStatus.PARTIALLY_FILLED,
+]
+
+
+@dataclass(slots=True)
+class PostSubmitSyncRunner:
+    """Batch runner that discovers active orders and syncs each one.
+
+    Designed for use by ``scripts/run_post_submit_sync_loop.py`` or any
+    scheduler that wishes to periodically converge pending orders toward
+    their terminal broker state.
+
+    Typical usage::
+
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=OrderSyncService(repos=repos, order_manager=order_manager),
+            broker=broker_adapter,
+        )
+        summary = await runner.run_sync_cycle(account_ref="...")
+        logger.info("sync-cycle  orders=%d updated=%d filled=%d errors=%d",
+                     summary.total_orders, summary.updated,
+                     summary.filled, len(summary.errors))
+    """
+
+    repos: RepositoryContainer
+    sync_service: OrderSyncService
+    broker: BrokerAdapter
+    snapshot_refresh_cb: Callable[[UUID], Awaitable[None]] | None = None
+
+    async def run_sync_cycle(
+        self,
+        account_ref: str | None = None,
+        *,
+        limit: int = _DEFAULT_BATCH_LIMIT,
+    ) -> SyncCycleResult:
+        """Query active (non-terminal) orders and sync each one.
+
+        Parameters
+        ----------
+        account_ref:
+            Broker account reference passed to each
+            ``sync_order_post_submit()`` call.  If ``None``, an empty
+            string is used (caller must override as needed).
+        limit:
+            Maximum number of orders to poll in a single cycle.
+
+        Returns
+        -------
+        SyncCycleResult
+            Aggregated summary of the cycle.
+        """
+        # ── 1. Query active orders ────────────────────────────────────────
+        orders = await self.repos.orders.list(
+            OrderQuery(
+                statuses=_ACTIVE_SYNC_STATUSES,
+                limit=limit,
+            )
+        )
+
+        if not orders:
+            return SyncCycleResult(
+                total_orders=0,
+                updated=0,
+                filled=0,
+                partial=0,
+                errors=[],
+            )
+
+        updated = 0
+        filled = 0
+        partial = 0
+        snapshots_refreshed = 0
+        errors: list[str] = []
+
+        # ── 2. Sync each order ────────────────────────────────────────────
+        resolved_account_ref = account_ref or ""
+
+        for order in orders:
+            broker_orders = await self.repos.broker_orders.list_by_order_request(
+                order.order_request_id,
+            )
+            if not broker_orders:
+                continue
+
+            for broker_order in broker_orders:
+                try:
+                    result = await self.sync_service.sync_order_post_submit(
+                        account_ref=resolved_account_ref,
+                        broker=self.broker,
+                        broker_order_id=broker_order.broker_order_id,
+                        snapshot_refresh_cb=self.snapshot_refresh_cb,
+                    )
+                except Exception as exc:
+                    errors.append(
+                        f"{broker_order.broker_order_id}: {exc}"
+                    )
+                    continue
+
+                if result.error is not None:
+                    errors.append(
+                        f"{broker_order.broker_order_id}: {result.error}"
+                    )
+                if result.status_changed:
+                    updated += 1
+                if result.terminal and result.current_status == OrderStatus.FILLED:
+                    filled += 1
+                    if result.snapshot_triggered:
+                        snapshots_refreshed += 1
+                elif not result.terminal:
+                    partial += 1
+
+        # ── 3. Return summary ─────────────────────────────────────────────
+        return SyncCycleResult(
+            total_orders=len(orders),
+            updated=updated,
+            filled=filled,
+            partial=partial,
+            snapshots_refreshed=snapshots_refreshed,
+            errors=errors,
+        )

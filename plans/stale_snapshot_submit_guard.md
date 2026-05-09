@@ -72,7 +72,7 @@ Phase 5: submit_order_to_broker() → broker 전송
 
 `is_stale=True`는 empty history와 stale을 동등하게 차단한다. 이는 snapshot sync가 초기화되지 않은 상태에서의 주문 제출을 방지하는 안전장치이다.
 
-> **한계**: 현재 freshness source는 **run-level global summary** 기준. 특정 account의 position/cash snapshot이 개별적으로 얼마나 최신인지는 확인하지 않음. Account-level freshness는 향후 position_snapshot.captured_at 또는 cash_balance_snapshot.snapshot_at 기준으로 정밀화 가능.
+> **참고 — 2026-05-09 업데이트**: Phase 4c submit guard는 [`account_level_snapshot_freshness.md`](account_level_snapshot_freshness.md)에서 **account-level freshness로 정밀화 완료**. 계좌별 `CashBalanceSnapshotEntity.snapshot_at` + `PositionSnapshotEntity.snapshot_at` 기준으로 freshness 판단. Account-level 경로 우선, run-level fallback 유지. Zero-position account policy 적용.
 
 ### Step 4b: Result Recording
 

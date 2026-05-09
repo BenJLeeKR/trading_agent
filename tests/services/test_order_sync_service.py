@@ -30,9 +30,12 @@ from agent_trading.domain.enums import (
 from agent_trading.domain.models import FillEvent, OrderStatusResult
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.repositories.container import RepositoryContainer
+from agent_trading.repositories.filters import OrderQuery
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.services.order_sync_service import (
     OrderSyncService,
+    PostSubmitSyncRunner,
+    SyncCycleResult,
     SyncOrderResult,
 )
 
@@ -426,6 +429,102 @@ class TestSyncAlreadyTerminal:
 
 
 # ═════════════════════════════════════════════════════════════════════
+# Test: FILLED 도달 but fills_synced == 0 → refresh 미호출
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestSyncFilledNoFillIncrease:
+    """FILLED 도달했지만 새로운 fill이 없으면 snapshot refresh를 호출하지 않음."""
+
+    async def test_filled_without_new_fills_no_refresh(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        order = _make_order(repos, status=OrderStatus.PARTIALLY_FILLED)
+        broker_order = _make_broker_order(
+            repos, order, broker_status="partially_filled",
+        )
+        # Broker returns FILLED but with NO fills (fills already synced previously)
+        broker = _StubBroker(status=OrderStatus.FILLED, fills=[])
+
+        snapshot_called: list[UUID] = []
+
+        async def _refresh_cb(account_id: UUID) -> None:
+            snapshot_called.append(account_id)
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+            snapshot_refresh_cb=_refresh_cb,
+        )
+
+        assert result.status_changed is True
+        assert result.current_status == OrderStatus.FILLED
+        assert result.terminal is True
+        assert result.fills_synced == 0
+        # 새 조건: fills_synced > 0 을 만족하지 못하므로 refresh 미호출
+        assert result.snapshot_triggered is False
+        assert len(snapshot_called) == 0
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: PARTIALLY_FILLED + fills > 0 → refresh 미호출 (FILLED 아님)
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestSyncPartialFillNoRefresh:
+    """PARTIALLY_FILLED로 전이 + fill 증가 → FILLED가 아니므로 refresh 미호출."""
+
+    async def test_partial_fill_no_refresh(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        order = _make_order(repos, status=OrderStatus.SUBMITTED)
+        broker_order = _make_broker_order(
+            repos, order, broker_status="submitted",
+        )
+        fills = [
+            FillEvent(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                broker_order_id=broker_order.broker_native_order_id,
+                symbol="005930",
+                side=OrderSide.BUY,
+                fill_quantity=Decimal("3"),
+                fill_price=Decimal("50000"),
+                fill_timestamp=now,
+                fee=Decimal("150"),
+                tax=Decimal("0"),
+            ),
+        ]
+        broker = _StubBroker(status=OrderStatus.PARTIALLY_FILLED, fills=fills)
+
+        snapshot_called: list[UUID] = []
+
+        async def _refresh_cb(account_id: UUID) -> None:
+            snapshot_called.append(account_id)
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+            snapshot_refresh_cb=_refresh_cb,
+        )
+
+        assert result.status_changed is True
+        assert result.current_status == OrderStatus.PARTIALLY_FILLED
+        assert result.terminal is False
+        assert result.fills_synced >= 1
+        # FILLED가 아니므로 refresh 미호출
+        assert result.snapshot_triggered is False
+        assert len(snapshot_called) == 0
+
+
+# ═════════════════════════════════════════════════════════════════════
 # Test: No status change
 # ═════════════════════════════════════════════════════════════════════
 
@@ -590,3 +689,432 @@ class TestSyncBrokerError:
         assert "get_order_status failed" in result.error
         assert result.status_changed is False
         assert result.current_status == OrderStatus.SUBMITTED
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: PostSubmitSyncRunner — batch post-submit sync cycle
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestPostSubmitSyncRunner:
+    """``PostSubmitSyncRunner`` — 미체결/부분체결 주문 batch sync cycle."""
+
+    async def test_runner_only_active_orders(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Active order(SUBMITTED/ACKNOWLEDGED/PARTIALLY_FILLED)만 polling 대상."""
+        # Active orders
+        active1 = _make_order(repos, status=OrderStatus.SUBMITTED, client_order_id="ACT-001")
+        active2 = _make_order(repos, status=OrderStatus.ACKNOWLEDGED, client_order_id="ACT-002")
+        active3 = _make_order(repos, status=OrderStatus.PARTIALLY_FILLED, client_order_id="ACT-003")
+        # Terminal order (FILLED) — polling 제외 대상
+        terminal = _make_order(repos, status=OrderStatus.FILLED, client_order_id="TERM-001")
+
+        for o in [active1, active2, active3, terminal]:
+            _make_broker_order(repos, o, broker_native_order_id=f"BRK-{o.client_order_id}")
+
+        # Broker가 ACKNOWLEDGED 반환 → active1(SUBMITTED→ACK)만 status_changed
+        # active2(ACK→ACK)와 active3(PARTIALLY_FILLED→ACK, backward transition)는 변경 없음
+        broker = _StubBroker(status=OrderStatus.ACKNOWLEDGED)
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=sync_service,
+            broker=broker,  # type: ignore[arg-type]
+        )
+
+        result = await runner.run_sync_cycle(account_ref="test-account")
+
+        assert result.total_orders == 3  # FILLED는 제외
+        assert result.filled == 0        # FILLED 도달 없음
+        # active1: SUBMITTED→ACK (changed 1), active2: ACK→ACK (no change),
+        # active3: PARTIALLY_FILLED→ACK (backward → no change)
+        assert result.updated == 1
+        assert result.partial == 3       # 모두 non-terminal
+        assert result.errors == []
+
+    async def test_runner_empty_cycle(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Active order가 전혀 없으면 empty summary 반환."""
+        # Terminal order만 존재
+        _make_order(repos, status=OrderStatus.FILLED, client_order_id="TERM-001")
+
+        broker = _StubBroker(status=OrderStatus.FILLED)
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=sync_service,
+            broker=broker,  # type: ignore[arg-type]
+        )
+
+        result = await runner.run_sync_cycle(account_ref="test-account")
+
+        assert result.total_orders == 0
+        assert result.updated == 0
+        assert result.filled == 0
+        assert result.partial == 0
+        assert result.errors == []
+
+    async def test_runner_partial_to_filled(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """PARTIALLY_FILLED → FILLED 수렴을 runner가 정확히 집계."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(repos, status=OrderStatus.PARTIALLY_FILLED, client_order_id="PF-001")
+        broker_order = _make_broker_order(repos, order, broker_native_order_id="BRK-PF-001")
+        fills = [
+            FillEvent(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                broker_order_id=broker_order.broker_native_order_id,
+                symbol="005930",
+                side=OrderSide.BUY,
+                fill_quantity=Decimal("10"),
+                fill_price=Decimal("50000"),
+                fill_timestamp=now,
+                fee=Decimal("500"),
+                tax=Decimal("0"),
+            ),
+        ]
+        broker = _StubBroker(status=OrderStatus.FILLED, fills=fills)
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=sync_service,
+            broker=broker,  # type: ignore[arg-type]
+        )
+
+        result = await runner.run_sync_cycle(account_ref="test-account")
+
+        assert result.total_orders == 1
+        assert result.updated == 1       # 상태 변경 발생
+        assert result.filled == 1        # FILLED 도달
+        assert result.partial == 0       # 더 이상 active 아님
+        assert result.errors == []
+
+        # Verify final order state
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.FILLED
+
+    async def test_runner_filled_triggers_snapshot(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """FILLED 도달 시 snapshot_refresh_cb가 runner를 통해 호출됨."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(repos, status=OrderStatus.PARTIALLY_FILLED, client_order_id="SNAP-001")
+        broker_order = _make_broker_order(repos, order, broker_native_order_id="BRK-SNAP-001")
+        fills = [
+            FillEvent(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                broker_order_id=broker_order.broker_native_order_id,
+                symbol="005930",
+                side=OrderSide.BUY,
+                fill_quantity=Decimal("10"),
+                fill_price=Decimal("50000"),
+                fill_timestamp=now,
+                fee=Decimal("500"),
+                tax=Decimal("0"),
+            ),
+        ]
+        broker = _StubBroker(status=OrderStatus.FILLED, fills=fills)
+
+        snapshot_called: list[UUID] = []
+
+        async def _refresh_cb(account_id: UUID) -> None:
+            snapshot_called.append(account_id)
+
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=sync_service,
+            broker=broker,  # type: ignore[arg-type]
+            snapshot_refresh_cb=_refresh_cb,
+        )
+
+        result = await runner.run_sync_cycle(account_ref="test-account")
+
+        assert result.total_orders == 1
+        assert result.filled == 1
+        # snapshot_refresh_cb가 sync_service를 통해 호출되었는지 검증
+        assert len(snapshot_called) == 1
+        assert snapshot_called[0] == order.account_id
+
+    async def test_runner_one_failure_does_not_block_others(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """단일 broker_order sync 실패가 전체 cycle을 중단시키지 않음."""
+        order1 = _make_order(repos, status=OrderStatus.SUBMITTED, client_order_id="FAIL-001")
+        order2 = _make_order(repos, status=OrderStatus.SUBMITTED, client_order_id="FAIL-002")
+        order3 = _make_order(repos, status=OrderStatus.SUBMITTED, client_order_id="FAIL-003")
+
+        bo1 = _make_broker_order(repos, order1, broker_native_order_id="BRK-FAIL-001")
+        bo2 = _make_broker_order(repos, order2, broker_native_order_id="BRK-FAIL-002")
+        bo3 = _make_broker_order(repos, order3, broker_native_order_id="BRK-FAIL-003")
+
+        # order2의 broker_order → get_order_status에서 RuntimeError 발생
+        class _SelectiveFailingBroker:
+            def __init__(self) -> None:
+                self._fail_id = bo2.broker_native_order_id
+                self.get_order_status_call_count = 0
+                self.get_fills_call_count = 0
+
+            async def get_order_status(
+                self,
+                account_ref: str,
+                client_order_id: str,
+                broker_order_id: str,
+            ) -> OrderStatusResult:
+                self.get_order_status_call_count += 1
+                if broker_order_id == self._fail_id:
+                    raise RuntimeError("Broker timeout")
+                return OrderStatusResult(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
+                    client_order_id=client_order_id,
+                    broker_order_id=broker_order_id,
+                    status=OrderStatus.ACKNOWLEDGED,
+                    filled_quantity=Decimal("0"),
+                    remaining_quantity=Decimal("10"),
+                    average_fill_price=Decimal("0"),
+                    last_updated_at=datetime.now(timezone.utc),
+                )
+
+            async def get_fills(
+                self,
+                account_ref: str,
+                broker_order_id: str,
+                from_ts: datetime | None = None,
+            ) -> Sequence[FillEvent]:
+                self.get_fills_call_count += 1
+                return []
+
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=sync_service,
+            broker=_SelectiveFailingBroker(),  # type: ignore[arg-type]
+        )
+
+        result = await runner.run_sync_cycle(account_ref="test-account")
+
+        assert result.total_orders == 3    # 3개 모두 조회됨
+        assert len(result.errors) == 1     # order2만 실패
+        assert result.updated == 2         # order1, order3은 성공 (SUBMITTED→ACK)
+        assert result.partial == 3         # 모두 non-terminal
+
+    async def test_runner_broker_exception_isolation(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Broker.get_order_status() 예외가 SyncOrderResult.error로 처리되어
+        runner의 except 분기 대신 정상 error 집계 경로로 수렴."""
+        order = _make_order(repos, status=OrderStatus.SUBMITTED, client_order_id="EXC-001")
+        _make_broker_order(repos, order, broker_native_order_id="BRK-EXC-001")
+
+        class _FailingBroker:
+            async def get_order_status(
+                self, account_ref: str, client_order_id: str, broker_order_id: str
+            ) -> OrderStatusResult:
+                raise RuntimeError("Broker unavailable")
+
+            async def get_fills(
+                self,
+                account_ref: str,
+                broker_order_id: str,
+                from_ts: datetime | None = None,
+            ) -> Sequence[FillEvent]:
+                return []
+
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=sync_service,
+            broker=_FailingBroker(),  # type: ignore[arg-type]
+        )
+
+        result = await runner.run_sync_cycle(account_ref="test-account")
+
+        assert result.total_orders == 1
+        assert len(result.errors) == 1
+        assert "get_order_status failed" in result.errors[0]
+        assert result.updated == 0
+        assert result.filled == 0
+        assert result.partial == 1  # non-terminal (error case)
+
+    async def test_runner_multiple_broker_orders_per_order(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """하나의 OrderRequestEntity에 여러 BrokerOrderEntity가 존재하는 경우
+        각 broker_order가 모두 sync되고 집계에 반영됨."""
+        order = _make_order(repos, status=OrderStatus.ACKNOWLEDGED, client_order_id="MULTI-001")
+        bo1 = _make_broker_order(repos, order, broker_native_order_id="BRK-MULTI-A")
+        bo2 = _make_broker_order(repos, order, broker_native_order_id="BRK-MULTI-B")
+
+        broker = _StubBroker(status=OrderStatus.ACKNOWLEDGED)
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=sync_service,
+            broker=broker,  # type: ignore[arg-type]
+        )
+
+        result = await runner.run_sync_cycle(account_ref="test-account")
+
+        assert result.total_orders == 1       # 1개의 order entity
+        # 2개의 broker_order 각각에 대해 sync 수행 → partial=2
+        assert result.partial == 2
+        assert result.updated == 0            # 상태 변화 없음 (ACK→ACK)
+        assert result.filled == 0
+        assert result.errors == []
+
+    async def test_runner_no_broker_order_skipped(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """BrokerOrderEntity가 없는 OrderRequestEntity는 조용히 skip."""
+        _make_order(repos, status=OrderStatus.ACKNOWLEDGED, client_order_id="NOBRK-001")
+        # Broker order를 생성하지 않음
+
+        broker = _StubBroker(status=OrderStatus.FILLED)
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=sync_service,
+            broker=broker,  # type: ignore[arg-type]
+        )
+
+        result = await runner.run_sync_cycle(account_ref="test-account")
+
+        # Order는 조회되었지만 broker_order가 없어 skip
+        assert result.total_orders == 1
+        assert result.updated == 0
+        assert result.filled == 0
+        assert result.partial == 0   # sync 수행 안 됨 → partial 집계 없음
+        assert result.errors == []
+
+
+class TestRunnerSnapshotsRefreshed:
+    """``PostSubmitSyncRunner``가 ``SyncCycleResult.snapshots_refreshed``를
+    올바르게 누적하는지 검증."""
+
+    async def test_runner_snapshots_refreshed_counted(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """FILLED 도달 + fill 증가 → snapshots_refreshed=1 누적."""
+        now = datetime.now(timezone.utc)
+
+        # Order 1: PARTIALLY_FILLED → broker가 FILLED + fill 반환
+        order1 = _make_order(
+            repos, status=OrderStatus.PARTIALLY_FILLED,
+            client_order_id="SNAP-CNT-001",
+        )
+        bo1 = _make_broker_order(
+            repos, order1, broker_native_order_id="BRK-SNAP-CNT-A",
+        )
+        fills1 = [
+            FillEvent(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                broker_order_id=bo1.broker_native_order_id,
+                symbol="005930",
+                side=OrderSide.BUY,
+                fill_quantity=Decimal("10"),
+                fill_price=Decimal("50000"),
+                fill_timestamp=now,
+                fee=Decimal("500"),
+                tax=Decimal("0"),
+            ),
+        ]
+
+        # Order 2: SUBMITTED → broker가 PARTIALLY_FILLED + fill 반환 (FILLED 아님)
+        order2 = _make_order(
+            repos, status=OrderStatus.SUBMITTED,
+            client_order_id="SNAP-CNT-002",
+        )
+        bo2 = _make_broker_order(
+            repos, order2, broker_native_order_id="BRK-SNAP-CNT-B",
+        )
+        fills2 = [
+            FillEvent(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                broker_order_id=bo2.broker_native_order_id,
+                symbol="005930",
+                side=OrderSide.BUY,
+                fill_quantity=Decimal("3"),
+                fill_price=Decimal("50000"),
+                fill_timestamp=now,
+                fee=Decimal("150"),
+                tax=Decimal("0"),
+            ),
+        ]
+
+        snapshot_called: list[UUID] = []
+
+        async def _refresh_cb(account_id: UUID) -> None:
+            snapshot_called.append(account_id)
+
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=sync_service,
+            broker=_MultiStatusBroker(  # type: ignore[arg-type]
+                [(bo1.broker_native_order_id, OrderStatus.FILLED, fills1),
+                 (bo2.broker_native_order_id, OrderStatus.PARTIALLY_FILLED, fills2)],
+            ),
+            snapshot_refresh_cb=_refresh_cb,
+        )
+
+        result = await runner.run_sync_cycle(account_ref="test-account")
+
+        assert result.total_orders == 2
+        assert result.filled == 1
+        assert result.partial == 1
+        assert result.snapshots_refreshed == 1
+        assert len(snapshot_called) == 1
+        assert snapshot_called[0] == order1.account_id
+
+
+class _MultiStatusBroker:
+    """여러 broker_order_id에 대해 서로 다른 status/fills를 반환하는 stub."""
+
+    def __init__(self, entries: list[tuple[str, OrderStatus, list[FillEvent]]]) -> None:
+        self._map: dict[str, tuple[OrderStatus, list[FillEvent]]] = {
+            native_id: (status, fills) for native_id, status, fills in entries
+        }
+        self.get_order_status_call_count = 0
+        self.get_fills_call_count = 0
+
+    async def get_order_status(
+        self,
+        account_ref: str,
+        client_order_id: str,
+        broker_order_id: str,
+    ) -> OrderStatusResult:
+        self.get_order_status_call_count += 1
+        status, _ = self._map.get(broker_order_id, (OrderStatus.SUBMITTED, []))
+        return OrderStatusResult(
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id=client_order_id,
+            broker_order_id=broker_order_id,
+            status=status,
+            filled_quantity=Decimal("0"),
+            remaining_quantity=Decimal("0"),
+            average_fill_price=Decimal("0"),
+            last_updated_at=datetime.now(timezone.utc),
+        )
+
+    async def get_fills(
+        self,
+        account_ref: str,
+        broker_order_id: str,
+        from_ts: datetime | None = None,
+    ) -> Sequence[FillEvent]:
+        self.get_fills_call_count += 1
+        _, fills = self._map.get(broker_order_id, (OrderStatus.SUBMITTED, []))
+        return fills

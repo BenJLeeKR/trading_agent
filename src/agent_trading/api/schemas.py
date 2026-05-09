@@ -7,7 +7,7 @@ These are minimal **read models** — not 1:1 mirrors of domain entities.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -410,3 +410,92 @@ class BrokerCapacityResponse(BaseModel):
     market_data_subscriptions: int
     order_event_accounts: list[str]
     generated_at: datetime
+
+
+class AccountPerformanceSummaryView(BaseModel):
+    """``GET /performance-summary`` — paper 운용 성과 요약 (계좌 수준)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    account_id: str
+    as_of: datetime
+    cash_balance: float
+    position_market_value: float
+    total_equity: float
+    realized_pnl: float
+    unrealized_pnl: float
+    total_pnl: float
+    filled_order_count: int
+    open_position_count: int
+    winning_trade_count: int
+    losing_trade_count: int
+
+
+class StrategyPerformanceSummaryView(BaseModel):
+    """``GET /performance-summary?strategy_id=...`` — 전략 수준 성과 요약."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    account_id: str
+    strategy_id: str
+    as_of: datetime
+    realized_pnl: float
+    filled_order_count: int
+    winning_trade_count: int
+    losing_trade_count: int
+
+
+class DailyPerformancePointView(BaseModel):
+    """``GET /performance-history`` 응답의 단일 일별 성과 포인트."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    date: date
+    realized_pnl: float
+    cumulative_realized_pnl: float
+    cash_balance: float | None
+    position_market_value: float | None
+    unrealized_pnl: float | None
+    total_equity: float | None
+
+
+class PerformanceHistoryResponse(BaseModel):
+    """``GET /performance-history`` — 기간 필터 기반 일별 성과 히스토리."""
+
+    account_id: str
+    start_date: date
+    end_date: date
+    strategy_id: str | None
+    points: list[DailyPerformancePointView]
+
+
+class PerformanceMetricsView(BaseModel):
+    """``GET /performance-metrics`` — 기간 기반 성과 지표.
+
+    cumulative return, drawdown, win-rate, avg win-loss 등
+    paper 운용 성과 평가를 위한 핵심 지표를 반환합니다.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    account_id: str
+    strategy_id: str | None
+    period_start: date
+    period_end: date
+
+    starting_equity: float
+    current_equity: float
+    cumulative_realized_pnl: float
+    cumulative_return_pct: float
+
+    peak_equity: float
+    current_drawdown_pct: float
+    max_drawdown_pct: float
+
+    total_filled_orders: int
+    winning_trades: int
+    losing_trades: int
+    win_rate: float
+    avg_win: float | None
+    avg_loss: float | None
+    profit_factor: float | None

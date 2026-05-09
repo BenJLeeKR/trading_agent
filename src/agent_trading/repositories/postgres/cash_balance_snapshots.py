@@ -50,6 +50,15 @@ class PostgresCashBalanceSnapshotRepository:
         )
         return row_to_entity(row, CashBalanceSnapshotEntity) if row else None
 
+    async def list_by_account(self, account_id: UUID) -> Sequence[CashBalanceSnapshotEntity]:
+        rows = await self._tx.connection.fetch(
+            "SELECT * FROM trading.cash_balance_snapshots "
+            "WHERE account_id = $1 "
+            "ORDER BY snapshot_at DESC",
+            account_id,
+        )
+        return tuple(row_to_entity(r, CashBalanceSnapshotEntity) for r in rows)
+
     async def get_latest_by_account(
         self, account_id: UUID
     ) -> CashBalanceSnapshotEntity | None:

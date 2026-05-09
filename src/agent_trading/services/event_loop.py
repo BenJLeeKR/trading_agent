@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -51,6 +51,7 @@ from agent_trading.repositories.contracts import (
     OrderRepository,
 )
 from agent_trading.services.order_manager import OrderManager
+from agent_trading.services.order_sync_service import OrderSyncService
 from agent_trading.services.reconciliation_service import ReconciliationService
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,11 @@ _SOURCE_CHANNEL_BACKFILL = "backfill"
 
 # Broker name constant for BrokerOrderRepository lookup
 _BROKER_NAME = "koreainvestment"
+
+# Debounce interval for WS-triggered sync (seconds).
+# Prevents rapid duplicate sync_order_post_submit() calls for the same order
+# when multiple fill notifications arrive in quick succession.
+_WS_SYNC_DEBOUNCE_SECONDS = 5
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +113,12 @@ class RealTimeEventLoop:
         broker_order_repo: BrokerOrderRepository,
         *,
         poll_interval: float = 0.1,
+        # Optional WS-triggered sync dependencies.
+        # When ``sync_service`` is ``None``, no sync trigger is fired —
+        # the event loop behaves exactly as before.
+        sync_service: OrderSyncService | None = None,
+        account_ref: str | None = None,
+        snapshot_refresh_cb: Callable[[UUID], Awaitable[None]] | None = None,
     ) -> None:
         self._adapter = adapter
         self._order_manager = order_manager
@@ -117,10 +129,17 @@ class RealTimeEventLoop:
         self._broker_order_repo = broker_order_repo
         self._poll_interval = poll_interval
 
+        # WS-triggered sync dependencies (optional)
+        self._sync_service = sync_service
+        self._account_ref = account_ref
+        self._snapshot_refresh_cb = snapshot_refresh_cb
+
         self._running = False
         self._task: asyncio.Task[None] | None = None
         self._gap_fill_in_progress: set[str] = set()  # Symbols being gap-filled
         self._stale_symbols: set[str] = set()  # Symbols with stale fast-execution signals
+        self._debounce_last_sync: dict[UUID, datetime] = {}  # broker_order_id -> last sync time
+        self._filled_refresh_fired: set[str] = set()  # broker native order IDs that already triggered refresh
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -346,6 +365,83 @@ class RealTimeEventLoop:
                 broker_order_id,
                 e,
             )
+
+        # --- Fire snapshot refresh directly if FILLED reached ---
+        # The transition_to() above already updated the order status to
+        # FILLED in the database.  By the time sync_order_post_submit()
+        # runs (fire-and-forget), the order is already terminal, so
+        # sync's own refresh trigger (which requires status_changed)
+        # would not fire.  Therefore we must trigger refresh here directly.
+        if (
+            target_status == OrderStatus.FILLED
+            and self._snapshot_refresh_cb is not None
+            and broker_order_id not in self._filled_refresh_fired
+        ):
+            self._filled_refresh_fired.add(broker_order_id)
+            try:
+                await self._snapshot_refresh_cb(order_entity.account_id)
+                logger.info(
+                    "WS fill -> snapshot refresh triggered for account=%s "
+                    "order=%s broker_order=%s",
+                    order_entity.account_id,
+                    order_entity.order_request_id,
+                    broker_order_id,
+                )
+            except Exception as e:
+                logger.warning(
+                    "WS fill -> snapshot refresh failed for account=%s: %s",
+                    order_entity.account_id,
+                    e,
+                )
+
+        # --- Fire WS-triggered sync (fire-and-forget with debounce) ---
+        # After the fill notification has been processed and the order state
+        # has progressed via OrderManager.transition_to(), trigger a
+        # sync_order_post_submit() to converge the order's broker-side status
+        # and fill events as quickly as possible.
+        #
+        # This is a fire-and-forget task — errors are handled internally by
+        # sync_order_post_submit() and logged.  If the sync fails, the
+        # polling-based PostSubmitSyncRunner (30s interval) serves as the
+        # eventual-convergence fallback.
+        if self._sync_service is not None and self._account_ref is not None:
+            try:
+                # Re-resolve the BrokerOrderEntity to obtain the internal
+                # broker_order_id (UUID) that sync_order_post_submit() expects.
+                broker_order_entity = await self._broker_order_repo.get_by_native_order_id(
+                    broker_name=_BROKER_NAME,
+                    broker_native_order_id=broker_order_id,
+                )
+                if broker_order_entity is not None:
+                    bo_uuid = broker_order_entity.broker_order_id
+
+                    # Debounce: skip if sync was called for this order within
+                    # the configured debounce window.
+                    now = datetime.now(tz=timezone.utc)
+                    last = self._debounce_last_sync.get(bo_uuid)
+                    if last is not None and (now - last).total_seconds() < _WS_SYNC_DEBOUNCE_SECONDS:
+                        logger.debug(
+                            "Sync debounced for broker_order=%s (%.1fs since last)",
+                            bo_uuid,
+                            (now - last).total_seconds(),
+                        )
+                    else:
+                        self._debounce_last_sync[bo_uuid] = now
+                        # Fire-and-forget: do not block the WS event handler.
+                        asyncio.create_task(
+                            self._sync_service.sync_order_post_submit(
+                                account_ref=self._account_ref,
+                                broker=self._adapter,
+                                broker_order_id=bo_uuid,
+                                snapshot_refresh_cb=self._snapshot_refresh_cb,
+                            )
+                        )
+            except Exception as e:
+                logger.warning(
+                    "Failed to trigger WS sync for native_order=%s: %s",
+                    broker_order_id,
+                    e,
+                )
 
     async def _handle_trade_price(self, data: dict[str, Any]) -> None:
         """Handle a trade price update (H0STCNT0 / H0STCNS0).
