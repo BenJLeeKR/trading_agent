@@ -15,33 +15,23 @@
 
 ---
 
-## Near-term (다음 1-3개 Plan 후보)
-
 | # | 항목 | 출처 | 상태 |
 |---|------|------|------|
 | 1 | **Plan 40 Phase 2 — API endpoints 확장**: `GET /orders/{id}/broker-orders`, `GET /accounts`, `GET /accounts/{id}`, `GET /clients/{id}`, `GET /instruments/{id}`, `GET /positions`, `GET /cash-balances`, `GET /guardrail-evaluations`, `GET /risk-limit-snapshots`, `GET /agent-runs` | [Plan 40](plans/40_fastapi_inspection_api.md:78) | ❌ 미착수 |
 | 2 | **Plan 40 Phase 2 — Postgres-backed API mode**: `create_app()`에 Postgres repository 주입 지원, `runtime_mode="postgres"` 모드 | [Plan 40](plans/40_fastapi_inspection_api.md:78) | ❌ 미착수 |
 | 3 | **Reconciliation blocking lock list API**: `GET /reconciliation/locks` 구현을 위해 reconciliation repository에 `list_locks()` 메서드 추가. 현재 `is_blocked()`만 존재 | [Plan 40](plans/40_fastapi_inspection_api.md) | ❌ 미착수 |
 | 4 | **KIS real credential + combined submit smoke**: KIS 실제 API key 확보 후 `tests/smoke/test_kis_paper_smoke.py` 등 combined submit smoke 실행 | [Plan 36](plans/36_kis_paper_ai_runtime_smoke.md) | ❌ 미착수 |
-| 5 | **TradeDecisionEntity creation path**: AI agent가 `TradeDecisionEntity`를 생성할 때 `DecisionOrchestrator` → `PostgresTradeDecisionRepository.add()` 경로 구현 | [Plan 39](plans/39_trade_decision_schema_alignment.md:295) | ❌ 미착수 |
-
----
-
-## Near-term (다음 1-3개 Plan 후보)
-
-| # | 항목 | 출처 | 상태 |
-|---|------|------|------|
-| 1 | **Plan 40 Phase 2 — API endpoints 확장**: `GET /orders/{id}/broker-orders`, `GET /accounts`, `GET /accounts/{id}`, `GET /clients/{id}`, `GET /instruments/{id}`, `GET /positions`, `GET /cash-balances`, `GET /guardrail-evaluations`, `GET /risk-limit-snapshots`, `GET /agent-runs` | [Plan 40](plans/40_fastapi_inspection_api.md:78) | ❌ 미착수 |
-| 2 | **Plan 40 Phase 2 — Postgres-backed API mode**: `create_app()`에 Postgres repository 주입 지원, `runtime_mode="postgres"` 모드 | [Plan 40](plans/40_fastapi_inspection_api.md:78) | ❌ 미착수 |
-| 3 | **Reconciliation blocking lock list API**: `GET /reconciliation/locks` 구현을 위해 reconciliation repository에 `list_locks()` 메서드 추가. 현재 `is_blocked()`만 존재 | [Plan 40](plans/40_fastapi_inspection_api.md) | ❌ 미착수 |
-| 4 | **KIS real credential + combined submit smoke**: KIS 실제 API key 확보 후 `tests/smoke/test_kis_paper_smoke.py` 등 combined submit smoke 실행 | [Plan 36](plans/36_kis_paper_ai_runtime_smoke.md) | ❌ 미착수 |
-| 5 | **TradeDecisionEntity creation path**: AI agent가 `TradeDecisionEntity`를 생성할 때 `DecisionOrchestrator` → `PostgresTradeDecisionRepository.add()` 경로 구현 | [Plan 39](plans/39_trade_decision_schema_alignment.md:295) | ❌ 미착수 |
-| 6 | **Docs/OpenAPI 보호 옵션 (inspection API)**: `/docs`와 `/openapi.json`을 auth 보호 대상에 포함. 현재는 공개 유지 중 | Plan 47 | ❌ 미착수 |
-| 7 | **Admin UI P1 — DecisionsView detail panel**: 특정 decision 행 클릭 시 TradeDecisionDetail 또는 DecisionContextDetail 내용을 inline panel 또는 modal로 표시. 현재는 단순 리스트만 존재 | [Plan 51](plans/51_admin_ui_operations_workflow_enhancements.md) | ❌ 미착수 |
-| 8 | **Admin UI P1 — AccountsView filter/selection 개선**: 계좌 목록 필터 (type, strategy) 및 선택 시 상세 영역 시각적 개선 | [Plan 51](plans/51_admin_ui_operations_workflow_enhancements.md) | ❌ 미착수 |
-| 9 | **Admin UI — Dashboard reconciliation metrics**: Dashboard에 정합성 점검 메트릭 (불일치 수, 마지막 실행 시각) 추가. 현재는 locks만 표시 | Plan 53 | ❌ 미착수 |
-| 10 | **Admin UI — Dashboard/Accounts/Broker Capacity freshness visualization**: 데이터 신선도(freshness) 시각화. 각 데이터 소스별 마지막 업데이트 시각 표시 및 지연 경고 | Plan 53 | ❌ 미착수 |
-| 11 | **KIS Snapshot Sync 정기 스케줄러 도입**: `docker compose up -d snapshot-sync`로 5분 간격 주기 실행. Position + Cash Balance snapshot 정기 적재 완료 | [snapshot_timezone_fix.md](plans/snapshot_timezone_fix.md) | ✅ 완료 |
+| 5 | **Docs/OpenAPI 보호 옵션 (inspection API)**: `/docs`와 `/openapi.json`을 auth 보호 대상에 포함. 현재는 공개 유지 중 | Plan 47 | ❌ 미착수 |
+| 6 | **Admin UI P1 — DecisionsView detail panel**: 특정 decision 행 클릭 시 TradeDecisionDetail 또는 DecisionContextDetail 내용을 inline panel 또는 modal로 표시. 현재는 단순 리스트만 존재 | [Plan 51](plans/51_admin_ui_operations_workflow_enhancements.md) | ❌ 미착수 |
+| 7 | **Admin UI P1 — AccountsView filter/selection 개선**: 계좌 목록 필터 (type, strategy) 및 선택 시 상세 영역 시각적 개선 | [Plan 51](plans/51_admin_ui_operations_workflow_enhancements.md) | ❌ 미착수 |
+| 8 | **Admin UI — Dashboard reconciliation metrics**: Dashboard에 정합성 점검 메트릭 (불일치 수, 마지막 실행 시각) 추가. 현재는 locks만 표시 | Plan 53 | ❌ 미착수 |
+| 9 | **Admin UI — Dashboard/Accounts/Broker Capacity freshness visualization**: 데이터 신선도(freshness) 시각화. 각 데이터 소스별 마지막 업데이트 시각 표시 및 지연 경고 | Plan 53 | ❌ 미착수 |
+| 10 | **KIS Snapshot Sync 정기 스케줄러 도입**: `docker compose up -d snapshot-sync`로 5분 간격 주기 실행. Position + Cash Balance snapshot 정기 적재 완료 | [snapshot_timezone_fix.md](plans/snapshot_timezone_fix.md) | ✅ 완료 |
+| 11 | **AI Decision → Order Submit 파이프라인 (Gap 1)**: FDC 결과를 TradeDecisionEntity 저장과 실제 broker submit 파이프라인으로 연결. `assemble_and_submit()` 5-phase pipeline, `build_submit_order_request_from_decision()` pure function, runtime wiring, `--submit` CLI 모드 | 본 문서 | ✅ 완료 |
+| 12 | **Decision State와 Order State 간 추적성 개선 (Gap 2)**: `decision_context_id ↔ order_request_id` 양방향 참조, audit log 정책 강화, 재현성 보장 | Gap 분석 결과 | ✅ 완료 |
+| 13 | **Safe Order Path 통합 시나리오 검증 (Gap 3)**: reconciliation + unknown state + blocking lock 통합 시나리오의 E2E 검증 | Gap 분석 결과 | ✅ 완료 |
+| 14 | **Backend Sizing Math 고도화 (Gap 4)**: position-aware sizing, config-driven 제약, multi-leg 분할 계산 | Gap 분석 결과 | ❌ 미착수 |
+| 15 | **E2E / Canary 전환 기준 정립 (Gap 5)**: paper trading loop 완성, canary gate 조건 정의, go/no-go 기준 문서화 | Gap 분석 결과 | ❌ 미착수 |
 ## Medium-term (다음 마일스톤)
 
 | # | 항목 | 출처 | 상태 |
@@ -109,3 +99,10 @@
 | 2026-05-08 | Snapshot Sync Freshness / Health Summary | [kis_snapshot_sync_freshness.md](plans/kis_snapshot_sync_freshness.md) | `SnapshotSyncHealthSummary` dataclass + `get_sync_health_summary()` (Protocol/Postgres/InMemory). `KIS_SNAPSHOT_STALE_THRESHOLD_SECONDS` env config (default 900s). `SnapshotSyncRunHealthSummary` Pydantic schema. `GET /snapshot-sync-runs/summary` 라우트 (단일 엔드포인트, list보다 먼저 등록). 신규 테스트 7개 (empty, fresh, stale, consecutive_failures, auth_required, auth_passes). |
 | 2026-05-08 | Snapshot Sync Freshness → Health/Readiness 신호 연결 | [kis_snapshot_sync_readiness.md](plans/kis_snapshot_sync_readiness.md) | HealthResponse에 snapshot sync freshness optional 필드 4개 추가. `/health`에 snapshot sync detail 포함. `/health/readyz`에 stale sync → degraded 정책 구현. 신규 테스트 4개 + 기존 readyz 테스트 degraded 반영. 27/27 통과. |
 | 2026-05-08 | Snapshot Sync Startup Grace Period | [kis_snapshot_sync_grace.md](plans/kis_snapshot_sync_grace.md) | `KIS_SNAPSHOT_STARTUP_GRACE_SECONDS` env config (default 600s). `_app.state.started_at` in lifespan. Grace 내 readiness: `ok` + health detail: `starting_up`. Grace 경과 후 기존 degraded 정책 유지. Grace 무관 DB unreachable → `not_ready`. 신규 테스트 5개 + 기존 3개 수정. |
+| 2026-05-08 | Broker-Agnostic Operations Runner | [broker_agnostic_operations_runner.md](plans/broker_agnostic_operations_runner.md) | `SnapshotFetchProvider` Protocol + `FetchedSnapshot` dataclass. `sync_account_snapshots()`/`sync_accounts_by_ids()`/`sync_all_accounts()` broker-agnostic runner. `KISSyncSnapshotProvider` (KIS 구현체). `scripts/sync_snapshots.py` 신규 CLI. `run_snapshot_sync_loop.py` broker-aware. `settings.py` env alias additive. `sync_kis_snapshots.py` deprecated wrapper 유지. 신규 테스트 33개 (공통 runner 24 + KIS provider 9). 총 113/113 통과. |
+| 2026-05-08 | Broker-Aware Snapshot Client/Provider Factory | [broker_agnostic_operations_runner.md](plans/broker_agnostic_operations_runner.md) | `SnapshotSyncComponents` dataclass + `build_snapshot_sync_components()` factory. `scripts/sync_snapshots.py`에서 `_build_provider()` 제거 → factory 호출. `scripts/run_snapshot_sync_loop.py`에서 KIS 직접 wiring 제거 → factory 호출. `sync_kis_snapshots.py` deprecated wrapper 유지. 신규 테스트 8개. 총 121/121 테스트 통과. |
+| 2026-05-08 | AuthenticatableSnapshotClient Protocol | [authenticatable_snapshot_client_protocol.md](plans/authenticatable_snapshot_client_protocol.md) | `SnapshotSyncComponents.client`를 `Any` → `AuthenticatableSnapshotClient` Protocol로 승격. Scheduler(`run_snapshot_sync_loop.py`)에서 `type: ignore[union-attr]` 제거, `\| None` 타입 제거. 신규 테스트 1개. 총 122/122 테스트 통과. |
+| 2026-05-09 | **AI Decision → Order Submit 파이프라인 (Gap 1)** | [gap1_ai_decision_to_order_submit.md](plans/gap1_ai_decision_to_order_submit.md) | FDC 결과 → `TradeDecisionEntity` 저장 → `OrderManager` → broker submit 전 경로 연결. `SubmitResult` dataclass, `assemble_and_submit()` 5-phase pipeline, `build_submit_order_request_from_decision()` pure function, runtime wiring (`bootstrap.py` + `run_orchestrator_once.py --submit`). 20/20 신규 테스트 통과. |
+| 2026-05-09 | **AI Agent comment/rationale 저장 한국어 강제** | [gap4_korean_text_enforcement.md](plans/gap4_korean_text_enforcement.md) | PostgreSQL 서술형 텍스트 한국어 강제. Dual Defense: Prompt 수준 + Backend 정규화. `korean_normalizer.py` (validate_or_normalize_korean, normalize_structured_output, contains_korean). 3개 Agent prompt 한국어 지시. `recorder.py` `normalize_structured_output()` 적용. `decision_orchestrator.py` `validate_or_normalize_korean()` 적용. 34/34 신규 테스트 통과 (26 unit + 8 integration). |
+| 2026-05-09 | **Decision ↔ Order 추적성 강화 (Gap 2)** | [gap2_decision_order_traceability.md](plans/gap2_decision_order_traceability.md) | `decision_context_id` 6개 경로 전파: OrderManager.create_order() → OrderRequestEntity, PostgresOrderRepository.add() SQL INSERT, OrderQuery 필터 2종(trade_decision_id, decision_context_id), OrderSummary/GET /orders trace query params, TradeDecisionRepository.get() PK 조회, SubmitResult.decision_context_id 7개 return site. 20/20 pipeline + 82/82 관련 테스트 통과. |
+| 2026-05-09 | **Safe Order Path E2E 검증 (Gap 3)** | [gap3_safe_order_path_e2e.md](plans/gap3_safe_order_path_e2e.md) | Fake broker adapter 기반 E2E 시나리오 7개 검증: happy path(SUBMITTED), uncertain(RECONCILE_REQUIRED+lock), blocking lock 차단(RECONCILE_REQUIRED+broker 0회), lock 재시도(차단+broker 1회), reject(REJECTED), duplicate guard(ERROR), requires_reconciliation(RECONCILE_REQUIRED+lock). 7/7 신규 + 40/40 기존 테스트 통과. |

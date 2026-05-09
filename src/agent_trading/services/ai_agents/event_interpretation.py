@@ -207,7 +207,11 @@ class EventInterpretationAgent:
             "Analyze the following external events and produce a structured "
             "interpretation output.\n\n"
             "Output must be valid JSON matching this schema:\n"
-            f"{schema_json}"
+            f"{schema_json}\n\n"
+            "Language requirement: All human-readable narrative fields "
+            "(summary, opposing_evidence) MUST be written in Korean. "
+            "Machine-readable fields (reason_codes, event_type, impact_direction, "
+            "source_name, etc.) MUST remain in English."
         )
 
     def _build_user_prompt(self, request: AgentExecutionRequest) -> str:

@@ -548,9 +548,10 @@ class TestRealAgentsIntegration:
         assert ei_run.structured_output_json.get("agent_name") == "event_interpretation"
 
         # AR run should have structured_output_json with risk_opinion from mock
+        # Korean normalizer wraps narrative fields with [ko: ...] marker
         ar_run = next(r for r in runs if r.agent_type == "ai_risk")
         assert ar_run.structured_output_json is not None
-        assert ar_run.structured_output_json.get("risk_opinion") == "reduce"
+        assert ar_run.structured_output_json.get("risk_opinion") == "[ko: reduce]"
         assert ar_run.structured_output_json.get("risk_score") == 0.65
         assert ar_run.structured_output_json.get("agent_name") == "ai_risk"
 
@@ -686,9 +687,10 @@ class TestRealAgentsIntegration:
         assert ei_run.structured_output_json.get("agent_name") == "event_interpretation"
 
         # AR run should have structured_output_json from mock provider
+        # Korean normalizer wraps narrative fields with [ko: ...] marker
         ar_run = next(r for r in runs if r.agent_type == "ai_risk")
         assert ar_run.structured_output_json is not None
-        assert ar_run.structured_output_json.get("risk_opinion") == "reduce"
+        assert ar_run.structured_output_json.get("risk_opinion") == "[ko: reduce]"
         assert ar_run.structured_output_json.get("risk_score") == 0.65
         assert ar_run.structured_output_json.get("agent_name") == "ai_risk"
 

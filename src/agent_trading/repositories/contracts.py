@@ -227,6 +227,9 @@ class TradeDecisionRepository(Protocol):
     async def add(self, decision: TradeDecisionEntity) -> TradeDecisionEntity:
         ...
 
+    async def get(self, trade_decision_id: UUID) -> TradeDecisionEntity | None:
+        ...
+
     async def get_by_context(self, decision_context_id: UUID) -> TradeDecisionEntity | None:
         ...
 

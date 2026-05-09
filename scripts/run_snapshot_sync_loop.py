@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
-"""Periodic KIS snapshot sync loop — dedicated scheduler process.
+"""Broker-agnostic snapshot sync loop — dedicated scheduler process.
 
 Usage
 -----
     # Default interval (5 minutes)
     python scripts/run_snapshot_sync_loop.py
 
-    # Custom interval
+    # Custom interval (supports both env var names)
+    SNAPSHOT_SYNC_INTERVAL_SECONDS=60 python scripts/run_snapshot_sync_loop.py
     KIS_SNAPSHOT_SYNC_INTERVAL_SECONDS=60 python scripts/run_snapshot_sync_loop.py
 
-Designed to be run as a dedicated Docker service (``snapshot-sync``) that
-continuously keeps KIS account snapshots fresh.  Each iteration:
+    # Explicit broker (currently only koreainvestment)
+    python scripts/run_snapshot_sync_loop.py --broker koreainvestment
 
-1. Creates an authenticated ``KISRestClient``.
+Designed to be run as a dedicated Docker service (``snapshot-sync``) that
+continuously keeps broker account snapshots fresh.  Each iteration:
+
+1. Creates an authenticated broker REST client via a ``SnapshotFetchProvider``.
 2. Connects to Postgres and builds repositories.
-3. Calls ``sync_all_kis_accounts()`` (auto-discover all KIS accounts).
+3. Calls ``sync_all_accounts()`` (auto-discover all broker accounts).
 4. Logs a structured summary (accounts synced/partial/failed, positions,
    cash, errors).
 5. Sleeps for the configured interval.
@@ -24,6 +28,7 @@ On SIGTERM/SIGINT the current sync completes gracefully before exit.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 import os
@@ -32,14 +37,16 @@ import sys
 import time
 from datetime import datetime, timezone
 
+from agent_trading.brokers.snapshot_factory import build_snapshot_sync_components
 from agent_trading.config.settings import AppSettings
 from agent_trading.db.connection import DatabaseConfig, close_pool, create_pool
 from agent_trading.db.transaction import transaction
 from agent_trading.repositories.postgres.bootstrap import build_postgres_repositories
 from agent_trading.services.kis_snapshot_sync import (
+    BatchSyncResult,
     build_sync_run_entity,
-    sync_all_kis_accounts,
 )
+from agent_trading.services.snapshot_sync import sync_all_accounts
 
 # ── Logging ────────────────────────────────────────────────────────────────
 
@@ -57,10 +64,20 @@ DEFAULT_INTERVAL_SECONDS = 300  # 5 minutes
 
 ENV_INTERVAL = "KIS_SNAPSHOT_SYNC_INTERVAL_SECONDS"
 
+# Broker-agnostic alias: SNAPSHOT_SYNC_INTERVAL_SECONDS (preferred),
+# falls back to KIS_SNAPSHOT_SYNC_INTERVAL_SECONDS.
+ENV_INTERVAL_AGNOSTIC = "SNAPSHOT_SYNC_INTERVAL_SECONDS"
+
 
 def _read_interval() -> int:
-    """Read the sync interval from the environment (seconds)."""
-    raw = os.getenv(ENV_INTERVAL, str(DEFAULT_INTERVAL_SECONDS))
+    """Read the sync interval from the environment (seconds).
+
+    Prefers ``SNAPSHOT_SYNC_INTERVAL_SECONDS`` (broker-agnostic alias),
+    falls back to ``KIS_SNAPSHOT_SYNC_INTERVAL_SECONDS``.
+    """
+    raw = os.getenv(ENV_INTERVAL_AGNOSTIC) or os.getenv(
+        ENV_INTERVAL, str(DEFAULT_INTERVAL_SECONDS)
+    )
     try:
         val = int(raw)
         if val < 10:
@@ -144,40 +161,24 @@ def _install_signal_handlers() -> None:
             signal.signal(sig, _handle_signal)
 
 
-async def _run_one_cycle(settings: AppSettings) -> None:
-    """Execute a single sync cycle with its own KIS client + DB connection."""
+async def _run_one_cycle(settings: AppSettings, broker: str) -> None:
+    """Execute a single sync cycle with its own broker client + DB connection."""
     # Lazy imports to keep module-level import fast
-    from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
-    from agent_trading.brokers.rate_limit import build_kis_budget_manager
+    components = build_snapshot_sync_components(broker, settings)
 
-    rest_client: KISRestClient | None = None
+    provider = components.provider
     started_at = datetime.now(timezone.utc)
 
     try:
-        # ── 1. KIS REST client ─────────────────────────────────────────
+        # ── 1. Broker authentication ─────────────────────────────────────
         logger.info(
-            "Creating KISRestClient (env=%s, account=%s) ...",
+            "Authenticating broker client (broker=%s, env=%s, account=%s) ...",
+            broker,
             settings.kis_env,
             settings.kis_account_number or "(auto-discover)",
         )
-        budget_manager = build_kis_budget_manager(
-            kis_env=settings.kis_env,
-            real_rest_rps=settings.kis_real_rest_rps,
-            paper_rest_rps=settings.kis_paper_rest_rps,
-        )
-        rest_client = KISRestClient(
-            api_key=settings.kis_api_key,
-            api_secret=settings.kis_api_secret,
-            account_number=settings.kis_account_number,
-            account_product_code=settings.kis_account_product_code,
-            env=settings.kis_env,
-            base_url=settings.kis_base_url,
-            budget_manager=budget_manager,
-        )
-
-        logger.info("Authenticating with KIS ...")
-        await rest_client.authenticate()
-        logger.info("KIS authentication successful.")
+        await components.client.authenticate()
+        logger.info("Broker authentication successful.")
 
         # ── 2. Postgres connection ─────────────────────────────────────
         logger.info("Connecting to Postgres ...")
@@ -187,16 +188,17 @@ async def _run_one_cycle(settings: AppSettings) -> None:
         # ── 3. Run auto-discover sync ──────────────────────────────────
         async with transaction() as tx:
             repos = build_postgres_repositories(tx)
-            logger.info("Repositories ready. Running sync_all_kis_accounts() ...")
+            logger.info("Repositories ready. Running sync_all_accounts() ...")
 
-            batch = await sync_all_kis_accounts(
-                rest_client=rest_client,
+            batch = await sync_all_accounts(
+                fetch_provider=provider,
                 instrument_repo=repos.instruments,
                 position_snapshot_repo=repos.position_snapshots,
                 cash_balance_snapshot_repo=repos.cash_balance_snapshots,
                 broker_account_repo=repos.broker_accounts,
                 account_repo=repos.accounts,
-                kis_account_number=settings.kis_account_number,
+                broker_name=broker,
+                account_number=settings.kis_account_number,
             )
 
             # ── 4. Save execution history ──────────────────────────────
@@ -217,27 +219,28 @@ async def _run_one_cycle(settings: AppSettings) -> None:
     except Exception as exc:
         logger.error("Sync cycle failed: %s", exc, exc_info=True)
     finally:
-        if rest_client is not None:
-            try:
-                await rest_client.close()
-            except Exception:
-                pass
+        try:
+            await components.client.close()
+        except Exception:
+            pass
         try:
             await close_pool()
         except Exception:
             pass
 
 
-async def _run_loop() -> None:
+async def _run_loop(broker: str) -> None:
     """Main loop: run sync cycles until shutdown is requested."""
     interval = _read_interval()
     logger.info(
-        "Starting KIS snapshot sync loop (interval=%ds, env=%s) ...",
+        "Starting snapshot sync loop (broker=%s, interval=%ds, env=%s) ...",
+        broker,
         interval,
         os.getenv("KIS_ENV", "paper"),
     )
     logger.info(
-        "Set %s to change interval (default=%d).",
+        "Set %s (or %s) to change interval (default=%d).",
+        ENV_INTERVAL_AGNOSTIC,
         ENV_INTERVAL,
         DEFAULT_INTERVAL_SECONDS,
     )
@@ -247,10 +250,10 @@ async def _run_loop() -> None:
     cycle_count = 0
     while not _shutdown_event.is_set():
         cycle_count += 1
-        logger.info("=== Cycle %d ===", cycle_count)
+        logger.info("=== Cycle %d (broker=%s) ===", cycle_count, broker)
 
         cycle_start = time.monotonic()
-        await _run_one_cycle(settings)
+        await _run_one_cycle(settings, broker)
         elapsed = time.monotonic() - cycle_start
 
         logger.info(
@@ -275,15 +278,18 @@ async def _run_loop() -> None:
     logger.info("Shutdown complete (%d cycles executed).", cycle_count)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     """Entry point for ``snapshot-sync`` scheduler."""
+    args = _parse_args(argv)
+    broker = args.broker
+
     # Install signal handlers before entering the event loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     _install_signal_handlers()
 
     try:
-        loop.run_until_complete(_run_loop())
+        loop.run_until_complete(_run_loop(broker))
     except KeyboardInterrupt:
         logger.info("KeyboardInterrupt — exiting.")
     finally:

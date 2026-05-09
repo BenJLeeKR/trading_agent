@@ -28,6 +28,8 @@ from agent_trading.services.ai_agents.recorder import AgentRunRecorder
 from agent_trading.services.decision_orchestrator import (
     DecisionOrchestratorService,
 )
+from agent_trading.services.order_manager import OrderManager
+from agent_trading.services.reconciliation_service import ReconciliationService
 
 logger = logging.getLogger(__name__)
 
@@ -289,6 +291,19 @@ def _build_orchestrator(
     )
 
 
+def _build_order_manager(repos: RepositoryContainer) -> OrderManager:
+    """Build an ``OrderManager`` wired with a ``ReconciliationService``.
+
+    The reconciliation service is always built so that ``submit_order_to_broker()``
+    can acquire blocking locks on uncertain results.
+    """
+    reconciliation_service = ReconciliationService(repos=repos)
+    return OrderManager(
+        repos=repos,
+        reconciliation_service=reconciliation_service,
+    )
+
+
 def build_default_runtime() -> dict[str, object]:
     """Compose the initial runtime dependencies for local development.
 
@@ -307,12 +322,14 @@ def build_default_runtime() -> dict[str, object]:
         ai_risk_agent=ai_risk_agent,
         final_decision_agent=final_decision_agent,
     )
+    order_manager = _build_order_manager(repositories)
     return {
         "settings": settings,
         "primary_broker_adapter": broker_adapter,
         "repositories": repositories,
         "polling_workers": polling_workers,
         "orchestrator": orchestrator,
+        "order_manager": order_manager,
         "event_interpretation_agent": event_interpretation_agent,
         "ai_risk_agent": ai_risk_agent,
         "final_decision_agent": final_decision_agent,
@@ -377,6 +394,7 @@ async def build_postgres_runtime(
         ai_risk_agent=ai_risk_agent,
         final_decision_agent=final_decision_agent,
     )
+    order_manager = _build_order_manager(repositories)
 
     return {
         "settings": settings,
@@ -385,6 +403,7 @@ async def build_postgres_runtime(
         "db_config": config,
         "polling_workers": polling_workers,
         "orchestrator": orchestrator,
+        "order_manager": order_manager,
         "event_interpretation_agent": event_interpretation_agent,
         "ai_risk_agent": ai_risk_agent,
         "final_decision_agent": final_decision_agent,
@@ -454,6 +473,7 @@ async def postgres_runtime(
             ai_risk_agent=ai_risk_agent,
             final_decision_agent=final_decision_agent,
         )
+        order_manager = _build_order_manager(repositories)
         runtime: dict[str, Any] = {
             "settings": settings,
             "primary_broker_adapter": broker_adapter,
@@ -461,6 +481,7 @@ async def postgres_runtime(
             "db_config": config,
             "polling_workers": polling_workers,
             "orchestrator": orchestrator,
+            "order_manager": order_manager,
             "event_interpretation_agent": event_interpretation_agent,
             "ai_risk_agent": ai_risk_agent,
             "final_decision_agent": final_decision_agent,

@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Minimal orchestrator entrypoint: seed prerequisites, run ``assemble()``,
-print results, and exit — **without** broker submit.
+"""Minimal orchestrator entrypoint: seed prerequisites, run ``assemble()``
+or ``assemble_and_submit()``, print results, and exit.
 
 Usage
 -----
 .. code-block:: bash
 
-    # Requires a running Postgres (e.g. ``docker compose up -d db``).
+    # assemble only (no broker submit):
     python -m scripts.run_orchestrator_once
+
+    # full pipeline: assemble → validate → create_order → submit_order:
+    python -m scripts.run_orchestrator_once --submit
 
 Environment variables
 ---------------------
@@ -16,6 +19,7 @@ Same as the main application (``DATABASE_URL``, etc.).
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 import os
@@ -35,6 +39,7 @@ from agent_trading.domain.enums import AssetClass, Environment, OrderSide, Order
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.runtime.bootstrap import postgres_runtime
+from agent_trading.services.decision_orchestrator import SubmitResult
 
 logger = logging.getLogger(__name__)
 
@@ -222,6 +227,17 @@ async def main() -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
+    parser = argparse.ArgumentParser(
+        description="Run the orchestrator and optionally submit orders to the broker.",
+    )
+    parser.add_argument(
+        "--submit",
+        action="store_true",
+        default=False,
+        help="Run the full assemble → submit pipeline (default: assemble only)",
+    )
+    args = parser.parse_args()
+
     async with postgres_runtime() as runtime:
         repos: RepositoryContainer = runtime["repositories"]
         orchestrator = runtime["orchestrator"]
@@ -247,43 +263,65 @@ async def main() -> None:
             price=Decimal("50000"),
         )
 
-        # Step 3: run orchestrator.assemble() — NO broker submit
-        logger.info("Calling orchestrator.assemble() …")
-        intent = await orchestrator.assemble(request)
-
-        # Step 4: print results
-        dc_id = intent.decision_context_id
-        logger.info("=" * 60)
-        logger.info("Orchestrator assemble completed.")
-        logger.info("  decision_context_id : %s", dc_id)
-        logger.info("  order_intent_id     : %s", intent.order_intent_id)
-        logger.info("  config_version_id   : %s", intent.config_version_id)
-        logger.info("  reason_codes        : %s", intent.reason_codes)
-
-        # Step 5: verify DB rows
-        if dc_id is not None:
-            # decision_contexts
-            ctx = await repos.decision_contexts.get(dc_id)
-            logger.info("  decision_contexts   : %s row(s)", 1 if ctx else 0)
-
-            # trade_decisions
-            decisions = await repos.trade_decisions.list_all()
-            logger.info("  trade_decisions     : %s row(s)", len(decisions))
-            for d in decisions:
-                logger.info("    trade_decision_id=%s type=%s side=%s symbol=%s",
-                            d.trade_decision_id, d.decision_type, d.side, d.symbol)
-
-            # agent_runs
-            runs = await repos.agent_runs.list_by_decision_context(dc_id)
-            logger.info("  agent_runs          : %s row(s)", len(runs))
-            agent_types = [r.agent_type for r in runs]
-            for at in sorted(agent_types):
-                logger.info("    agent_type=%s", at)
+        if args.submit:
+            # ── Full pipeline: assemble → validate → create_order → submit ──
+            order_manager = runtime["order_manager"]
+            broker = runtime["primary_broker_adapter"]
+            logger.info(
+                "Calling orchestrator.assemble_and_submit() with broker=%s …",
+                broker.__class__.__name__,
+            )
+            result: SubmitResult = await orchestrator.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=broker,
+            )
+            logger.info("=" * 60)
+            logger.info("Pipeline complete.")
+            logger.info("  status              : %s", result.status)
+            logger.info("  error_phase         : %s", result.error_phase)
+            logger.info("  error_message       : %s", result.error_message)
+            logger.info("  trade_decision_id   : %s", result.trade_decision_id)
+            if result.intent is not None:
+                logger.info("  decision_context_id : %s", result.intent.decision_context_id)
+                logger.info("  order_intent_id     : %s", result.intent.order_intent_id)
+            if result.order is not None:
+                logger.info("  order_id            : %s", result.order.order_request_id)
+                logger.info("  order_status        : %s", result.order.status)
+            logger.info("=" * 60)
         else:
-            logger.warning("No decision context was created — check prerequisites.")
+            # ── Assemble only (no broker submit) ──
+            logger.info("Calling orchestrator.assemble() …")
+            intent = await orchestrator.assemble(request)
 
-        logger.info("=" * 60)
-        logger.info("Done. No broker submit was performed.")
+            dc_id = intent.decision_context_id
+            logger.info("=" * 60)
+            logger.info("Orchestrator assemble completed.")
+            logger.info("  decision_context_id : %s", dc_id)
+            logger.info("  order_intent_id     : %s", intent.order_intent_id)
+            logger.info("  config_version_id   : %s", intent.config_version_id)
+            logger.info("  reason_codes        : %s", intent.reason_codes)
+
+            if dc_id is not None:
+                ctx = await repos.decision_contexts.get(dc_id)
+                logger.info("  decision_contexts   : %s row(s)", 1 if ctx else 0)
+
+                decisions = await repos.trade_decisions.list_all()
+                logger.info("  trade_decisions     : %s row(s)", len(decisions))
+                for d in decisions:
+                    logger.info("    trade_decision_id=%s type=%s side=%s symbol=%s",
+                                d.trade_decision_id, d.decision_type, d.side, d.symbol)
+
+                runs = await repos.agent_runs.list_by_decision_context(dc_id)
+                logger.info("  agent_runs          : %s row(s)", len(runs))
+                agent_types = [r.agent_type for r in runs]
+                for at in sorted(agent_types):
+                    logger.info("    agent_type=%s", at)
+            else:
+                logger.warning("No decision context was created — check prerequisites.")
+
+            logger.info("=" * 60)
+            logger.info("Done. No broker submit was performed.")
 
 
 if __name__ == "__main__":

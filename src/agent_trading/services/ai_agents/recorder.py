@@ -18,6 +18,9 @@ from uuid import UUID, uuid4
 
 from agent_trading.domain.entities import AgentRunEntity
 from agent_trading.repositories.contracts import AgentRunRepository
+from agent_trading.services.ai_agents.korean_normalizer import (
+    normalize_structured_output,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +92,13 @@ class AgentRunRecorder:
         output_dict: dict[str, object] = dict(structured_output or {})
         if raw_output is not None:
             output_dict["__debug_raw_output__"] = raw_output
+
+        # ── Korean narrative text normalisation ──────────────────────
+        # Normalise all known narrative fields (summary, risk_opinion,
+        # opposing_evidence) to ensure they contain Korean.  Non-Korean
+        # text is wrapped with a "[ko: ...]" marker so that the operator
+        # can see the field should have been written in Korean.
+        output_dict = normalize_structured_output(output_dict)
 
         # --- Schema alignment consistency checks ---
         # Verify that structured_output["agent_name"] matches agent_type

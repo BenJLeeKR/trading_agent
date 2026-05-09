@@ -224,7 +224,11 @@ class FinalDecisionComposerAgent:
             "the AI Risk Agent, together with the assembled trading context, "
             "to produce a structured final decision.\n\n"
             "Output must be valid JSON matching this schema:\n"
-            f"{schema_json}"
+            f"{schema_json}\n\n"
+            "Language requirement: All human-readable narrative fields "
+            "(summary, opposing_evidence) MUST be written in Korean. "
+            "Machine-readable fields (reason_codes, decision_type, side, "
+            "entry_style, time_horizon, etc.) MUST remain in English."
         )
 
     def _build_user_prompt(self, request: AgentExecutionRequest) -> str:

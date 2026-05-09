@@ -57,6 +57,7 @@ class OrderSummary(BaseModel):
     symbol: str | None = None
     correlation_id: str
     trade_decision_id: str | None = None
+    decision_context_id: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
     version: int

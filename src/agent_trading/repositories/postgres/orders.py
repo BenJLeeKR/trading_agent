@@ -38,8 +38,8 @@ class PostgresOrderRepository:
                      side, order_type, time_in_force,
                      requested_price, requested_quantity,
                      status, status_reason_code, status_reason_message,
-                     trade_decision_id, submitted_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                     trade_decision_id, decision_context_id, submitted_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
                 RETURNING *
                 """,
                 order.order_request_id,
@@ -57,6 +57,7 @@ class PostgresOrderRepository:
                 order.status_reason_code,
                 order.status_reason_message,
                 order.trade_decision_id,
+                order.decision_context_id,
                 order.submitted_at,
             )
             return row_to_entity(row, OrderRequestEntity)
@@ -103,6 +104,14 @@ class PostgresOrderRepository:
         if query.status is not None:
             conditions.append(f"status = ${idx}")
             params.append(query.status.value)
+            idx += 1
+        if query.trade_decision_id is not None:
+            conditions.append(f"trade_decision_id = ${idx}")
+            params.append(query.trade_decision_id)
+            idx += 1
+        if query.decision_context_id is not None:
+            conditions.append(f"decision_context_id = ${idx}")
+            params.append(query.decision_context_id)
             idx += 1
         if query.submitted_from is not None:
             conditions.append(f"submitted_at >= ${idx}")

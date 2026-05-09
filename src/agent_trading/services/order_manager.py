@@ -282,6 +282,14 @@ class OrderManager:
             except (ValueError, AttributeError):
                 pass
 
+        # --- resolve decision_context_id from request if provided ---
+        decision_context_id: UUID | None = None
+        if request.decision_context_id is not None:
+            try:
+                decision_context_id = UUID(request.decision_context_id)
+            except (ValueError, AttributeError):
+                pass
+
         # --- build entity ---
         now = datetime.now(timezone.utc)
         order = OrderRequestEntity(
@@ -298,6 +306,7 @@ class OrderManager:
             requested_quantity=request.quantity,
             status=OrderStatus.DRAFT,
             trade_decision_id=trade_decision_id,
+            decision_context_id=decision_context_id,
             submitted_at=None,
             status_reason_code=None,
             status_reason_message=None,

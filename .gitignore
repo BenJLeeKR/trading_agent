@@ -10,6 +10,7 @@ env/
 # --- Environment ---
 .env
 .env.bak
+.env.org
 .env.example
 
 # --- IDE / Editor ---

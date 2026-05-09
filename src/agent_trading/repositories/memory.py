@@ -294,6 +294,9 @@ class InMemoryTradeDecisionRepository:
         self._items[decision.trade_decision_id] = decision
         return decision
 
+    async def get(self, trade_decision_id: UUID) -> TradeDecisionEntity | None:
+        return self._items.get(trade_decision_id)
+
     async def get_by_context(self, decision_context_id: UUID) -> TradeDecisionEntity | None:
         return next(
             (item for item in self._items.values() if item.decision_context_id == decision_context_id),
@@ -327,6 +330,10 @@ class InMemoryOrderRepository:
             if query.correlation_id is not None and item.correlation_id != query.correlation_id:
                 continue
             if query.status is not None and item.status != query.status:
+                continue
+            if query.trade_decision_id is not None and item.trade_decision_id != query.trade_decision_id:
+                continue
+            if query.decision_context_id is not None and item.decision_context_id != query.decision_context_id:
                 continue
             if query.submitted_from is not None and (
                 item.submitted_at is None or item.submitted_at < query.submitted_from

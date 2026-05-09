@@ -7,18 +7,21 @@ from decimal import Decimal
 from typing import Protocol
 from uuid import UUID, uuid4
 
+from agent_trading.brokers.base import BrokerAdapter
 from agent_trading.domain.entities import (
     CashBalanceSnapshotEntity,
     ConfigVersionEntity,
     DecisionContextEntity,
     ExternalEventEntity,
     InstrumentEntity,
+    OrderRequestEntity,
     PositionSnapshotEntity,
     RiskLimitSnapshotEntity,
     TradeDecisionEntity,
 )
-from agent_trading.domain.enums import DecisionType, EntryStyle, OrderSide, OrderType
+from agent_trading.domain.enums import DecisionType, EntryStyle, OrderSide, OrderStatus, OrderType
 from agent_trading.domain.models import SubmitOrderRequest
+from agent_trading.services.order_manager import OrderManager
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import AccountLookup
 from agent_trading.services.ai_agents.base import (
@@ -31,6 +34,9 @@ from agent_trading.services.ai_agents.event_interpretation import (
 from agent_trading.services.ai_agents.ai_risk import StubAIRiskAgent
 from agent_trading.services.ai_agents.final_decision_composer import (
     StubFinalDecisionComposerAgent,
+)
+from agent_trading.services.ai_agents.korean_normalizer import (
+    validate_or_normalize_korean,
 )
 from agent_trading.services.ai_agents.recorder import AgentRunRecorder
 from agent_trading.services.ai_agents.schemas import (
@@ -206,6 +212,54 @@ class OrderIntent:
     reason_codes: tuple[str, ...] = ()
     # --- Normalised AI backend contract (Priority A coupling) ---
     ai_backend_inputs: AIDecisionInputs = field(default_factory=AIDecisionInputs)
+
+
+# ---------------------------------------------------------------------------
+# Submit result — return type for the full assemble → submit pipeline
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True, frozen=True)
+class SubmitResult:
+    """Result of the full ``assemble_and_submit()`` pipeline.
+
+    Tracks the outcome across all phases from AI agent execution through
+    to broker submission, enabling the caller to distinguish between
+    different failure modes.
+
+    Parameters
+    ----------
+    status
+        One of:
+        * ``"SUBMITTED"`` — order was successfully submitted to the broker.
+        * ``"SKIPPED"`` — decision was HOLD/WATCH, no order created.
+        * ``"REJECTED"`` — broker explicitly rejected the order.
+        * ``"RECONCILE_REQUIRED"`` — broker returned uncertain result;
+          blocking lock acquired, reconciliation needed.
+        * ``"FAILED"`` — translation failure (e.g. HOLD decision skipped).
+        * ``"ERROR"`` — unexpected exception during any phase.
+    intent
+        The ``OrderIntent`` produced by ``assemble()``, if available.
+    order
+        The ``OrderRequestEntity`` created by ``OrderManager.create_order()``,
+        if available (``None`` when creation failed or was skipped).
+    error_phase
+        Which phase produced the error, for diagnostics:
+        ``None`` | ``"ai"`` | ``"decision_save"`` | ``"translation"`` |
+        ``"order_create"`` | ``"order_submit"``
+    error_message
+        Human-readable error detail, if any.
+    trade_decision_id
+        UUID of the persisted ``TradeDecisionEntity``, if available.
+    """
+
+    status: str
+    intent: OrderIntent | None = None
+    order: OrderRequestEntity | None = None
+    error_phase: str | None = None
+    error_message: str | None = None
+    trade_decision_id: UUID | None = None
+    decision_context_id: UUID | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -514,6 +568,252 @@ class DecisionOrchestratorService:
             config_version_id=config_version_id,
             reason_codes=score_result.reason_codes,
             ai_backend_inputs=agent_bundle.ai_inputs,
+        )
+
+    # ------------------------------------------------------------------
+    # Full pipeline: assemble → validate → create_order → submit_order
+    # ------------------------------------------------------------------
+
+    async def assemble_and_submit(
+        self,
+        request: SubmitOrderRequest,
+        *,
+        order_manager: OrderManager,
+        broker: BrokerAdapter,
+        decision_context_id: UUID | None = None,
+        order_intent_id: UUID | None = None,
+        actor_type: str = "system",
+        actor_id: str = "decision_orchestrator",
+    ) -> SubmitResult:
+        """Execute the full AI decision → order submit pipeline.
+
+        This is the **primary entry point** for paper trading.  It chains:
+
+        1. ``assemble()`` → runs EI/AR/FDC agents, persists ``TradeDecisionEntity``,
+           returns ``OrderIntent``.
+        2. ``build_submit_order_request_from_decision()`` → validates the intent
+           and builds a ``SubmitOrderRequest`` (or signals ``SKIPPED`` when the
+           decision is HOLD).
+        3. ``OrderManager.create_order()`` → validates, persists a ``DRAFT`` order.
+        4. ``OrderManager.transition_to(PENDING_SUBMIT)`` → moves the order to
+           submit-ready state.
+        5. ``OrderManager.submit_order_to_broker()`` → blocking lock check,
+           broker submission, result handling (SUBMITTED / RECONCILE_REQUIRED /
+           REJECTED).
+
+        Parameters
+        ----------
+        request : SubmitOrderRequest
+            Initial order request (minimal fields — side, symbol, market, etc.).
+        order_manager : OrderManager
+            Fully configured ``OrderManager`` with repository and reconciliation
+            service wired in.
+        broker : BrokerAdapter
+            The broker adapter to submit orders through.
+        decision_context_id : UUID | None
+            Optional explicit decision context ID.  Auto-resolved when ``None``.
+        order_intent_id : UUID | None
+            Optional explicit order intent ID.  Auto-generated when ``None``.
+        actor_type, actor_id :
+            Identity used for audit-log entries.
+
+        Returns
+        -------
+        SubmitResult
+            Structured result with status, intent, order, and error details.
+        """
+        # ── Phase 1: assemble() ──
+        logger.info("Phase 1: assemble() — running AI agents …")
+        try:
+            intent = await self.assemble(
+                request,
+                decision_context_id=decision_context_id,
+                order_intent_id=order_intent_id,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Phase 1 FAILED (ai): assemble() raised unexpectedly. "
+                "decision_context_id=%s",
+                decision_context_id,
+            )
+            return SubmitResult(
+                status="ERROR",
+                error_phase="ai",
+                error_message=f"assemble() failed: {exc}",
+                decision_context_id=decision_context_id,
+            )
+
+        # Resolve trade_decision_id from the intent for diagnostics.
+        trade_decision_id: UUID | None = None
+        if intent.decision_context_id is not None:
+            try:
+                td = await self._repos.trade_decisions.get_by_context(
+                    intent.decision_context_id
+                )
+                if td is not None:
+                    trade_decision_id = td.trade_decision_id
+            except Exception:
+                pass
+
+        # ── Phase 2: validate intent (skip HOLD/WATCH) ──
+        logger.info(
+            "Phase 2: validate intent — decision_type=%s",
+            intent.ai_backend_inputs.decision_type,
+        )
+        submit_request = build_submit_order_request_from_decision(intent)
+        if submit_request is None:
+            logger.info(
+                "Phase 2 SKIPPED (hold): decision_type=%s, trade_decision_id=%s",
+                intent.ai_backend_inputs.decision_type,
+                trade_decision_id,
+            )
+            return SubmitResult(
+                status="SKIPPED",
+                intent=intent,
+                trade_decision_id=trade_decision_id,
+                decision_context_id=intent.decision_context_id,
+                error_phase="translation",
+                error_message=(
+                    f"Decision type '{intent.ai_backend_inputs.decision_type}' "
+                    f"produced no order request"
+                ),
+            )
+
+        # ── Phase 3: OrderManager.create_order() ──
+        logger.info(
+            "Phase 3: create_order — client_order_id=%s symbol=%s side=%s",
+            submit_request.client_order_id,
+            submit_request.symbol,
+            submit_request.side,
+        )
+        try:
+            order = await order_manager.create_order(
+                submit_request,
+                actor_type=actor_type,
+                actor_id=actor_id,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Phase 3 FAILED (order_create): client_order_id=%s",
+                submit_request.client_order_id,
+            )
+            return SubmitResult(
+                status="ERROR",
+                intent=intent,
+                error_phase="order_create",
+                error_message=f"create_order() failed: {exc}",
+                trade_decision_id=trade_decision_id,
+                decision_context_id=intent.decision_context_id,
+            )
+
+        # ── Phase 4a: transition DRAFT → VALIDATED ──
+        logger.info(
+            "Phase 4a: transition_to(VALIDATED) — order_id=%s",
+            order.order_request_id,
+        )
+        try:
+            validated_order = await order_manager.transition_to(
+                order,
+                OrderStatus.VALIDATED,
+                actor_type=actor_type,
+                actor_id=actor_id,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Phase 4a FAILED (order_create): transition to VALIDATED "
+                "failed for order_id=%s",
+                order.order_request_id,
+            )
+            return SubmitResult(
+                status="ERROR",
+                intent=intent,
+                order=order,
+                error_phase="order_create",
+                error_message=f"transition_to(VALIDATED) failed: {exc}",
+                trade_decision_id=trade_decision_id,
+                decision_context_id=intent.decision_context_id,
+            )
+
+        # ── Phase 4b: transition VALIDATED → PENDING_SUBMIT ──
+        logger.info(
+            "Phase 4b: transition_to(PENDING_SUBMIT) — order_id=%s",
+            validated_order.order_request_id,
+        )
+        try:
+            pending_order = await order_manager.transition_to(
+                validated_order,
+                OrderStatus.PENDING_SUBMIT,
+                actor_type=actor_type,
+                actor_id=actor_id,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Phase 4b FAILED (order_create): transition to PENDING_SUBMIT "
+                "failed for order_id=%s",
+                validated_order.order_request_id,
+            )
+            return SubmitResult(
+                status="ERROR",
+                intent=intent,
+                order=validated_order,
+                error_phase="order_create",
+                error_message=f"transition_to(PENDING_SUBMIT) failed: {exc}",
+                trade_decision_id=trade_decision_id,
+                decision_context_id=intent.decision_context_id,
+            )
+
+        # ── Phase 5: submit to broker ──
+        logger.info(
+            "Phase 5: submit_order_to_broker — order_id=%s broker=%s",
+            pending_order.order_request_id,
+            broker.__class__.__name__,
+        )
+        try:
+            submitted_order = await order_manager.submit_order_to_broker(
+                pending_order,
+                broker,
+                submit_request,
+                actor_type=actor_type,
+                actor_id=actor_id,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Phase 5 FAILED (order_submit): order_id=%s",
+                pending_order.order_request_id,
+            )
+            return SubmitResult(
+                status="ERROR",
+                intent=intent,
+                order=pending_order,
+                error_phase="order_submit",
+                error_message=f"submit_order_to_broker() failed: {exc}",
+                trade_decision_id=trade_decision_id,
+                decision_context_id=intent.decision_context_id,
+            )
+
+        # ── Map final order status to SubmitResult.status ──
+        final_status = submitted_order.status
+        if final_status == OrderStatus.SUBMITTED:
+            result_status = "SUBMITTED"
+        elif final_status == OrderStatus.RECONCILE_REQUIRED:
+            result_status = "RECONCILE_REQUIRED"
+        elif final_status == OrderStatus.REJECTED:
+            result_status = "REJECTED"
+        else:
+            result_status = f"UNEXPECTED:{final_status.value}"
+
+        logger.info(
+            "Pipeline complete: status=%s order_id=%s trade_decision_id=%s",
+            result_status,
+            submitted_order.order_request_id,
+            trade_decision_id,
+        )
+        return SubmitResult(
+            status=result_status,
+            intent=intent,
+            order=submitted_order,
+            trade_decision_id=trade_decision_id,
+            decision_context_id=intent.decision_context_id,
         )
 
     # ------------------------------------------------------------------
@@ -901,14 +1201,19 @@ class DecisionOrchestratorService:
                 risk_check_passed=ai_inputs.risk_opinion in {"allow", "reduce"},
                 reason_codes=list(composer_output.reason_codes) or None,
                 opposing_evidence={
-                    "items": list(composer_output.opposing_evidence),
+                    "items": [
+                        validate_or_normalize_korean(item)
+                        for item in composer_output.opposing_evidence
+                    ],
                 }
                 if composer_output.opposing_evidence
                 else {},
                 exit_plan_json=_dataclass_to_dict(composer_output.exit_plan_hint),
                 calculation_version="decision_orchestrator.v1",
                 agent_version_json=dict(ai_inputs.schema_versions),
-                rationale_summary=composer_output.summary or None,
+                rationale_summary=validate_or_normalize_korean(
+                    composer_output.summary or None
+                ),
                 decision_json={
                     "decision_type": composer_output.decision_type,
                     "side": composer_output.side,
@@ -1024,3 +1329,95 @@ def _calculate_max_order_value(
     if price is None:
         return None
     return price * quantity
+
+
+# ---------------------------------------------------------------------------
+# Deterministic translation: OrderIntent → SubmitOrderRequest
+# ---------------------------------------------------------------------------
+
+
+def build_submit_order_request_from_decision(
+    intent: OrderIntent,
+    client_order_id: str | None = None,
+) -> SubmitOrderRequest | None:
+    """Translate an ``OrderIntent`` into a ``SubmitOrderRequest`` for broker submission.
+
+    This is the **deterministic backend translation** step.  It validates
+    that the AI decision is actionable and constructs a valid submission
+    request from the assembled intent.
+
+    Design rules
+    ------------
+    1. **AI = judgment only, backend = execution**: This function is pure
+       deterministic logic — no LLM calls, no AI judgment.
+    2. **HOLD / WATCH decisions are skipped**: The function returns ``None``
+       when the decision is not actionable.
+    3. **No broker semantics change**: The returned ``SubmitOrderRequest``
+       preserves all existing fields and does not modify ``SubmitOrderRequest``,
+       ``OrderManager``, or ``BrokerAdapter`` boundaries.
+    4. **Stateless**: The function does not access repositories, databases,
+       or external services.
+
+    Parameters
+    ----------
+    intent : OrderIntent
+        The fully assembled order intent from ``DecisionOrchestratorService``.
+    client_order_id : str | None
+        Optional explicit client order ID.  When ``None``, a deterministic
+        ID is generated from the decision context ID.
+
+    Returns
+    -------
+    SubmitOrderRequest | None
+        A valid submission request, or ``None`` when the decision type
+        indicates no order should be submitted (HOLD / WATCH / REDUCE with
+        no quantity).
+    """
+    # ── Decision type check: skip non-actionable decisions ──
+    decision_type = intent.ai_backend_inputs.decision_type
+    actionable_types = {"APPROVE", "BUY", "SELL", "EXIT", "REDUCE"}
+    if decision_type not in actionable_types:
+        return None
+
+    # ── Quantity validation ──
+    if intent.request.quantity <= 0:
+        return None
+
+    # ── Generate client_order_id if not provided ──
+    resolved_client_order_id: str
+    if client_order_id:
+        resolved_client_order_id = client_order_id
+    elif intent.decision_context_id is not None:
+        # Deterministic: "dc-{short_uuid}-{timestamp_suffix}"
+        short = str(intent.decision_context_id).split("-")[0]
+        ts = datetime.now(timezone.utc).strftime("%H%M%S%f")[:10]
+        resolved_client_order_id = f"dc-{short}-{ts}"
+    else:
+        return None
+
+    # ── Build the SubmitOrderRequest from intent.request ──
+    # Preserve all fields from the assembled request; the assemble() method
+    # has already set decision_id, decision_context_id, order_intent_id, etc.
+    return SubmitOrderRequest(
+        account_ref=intent.request.account_ref,
+        client_order_id=resolved_client_order_id,
+        correlation_id=intent.request.correlation_id,
+        strategy_id=intent.request.strategy_id,
+        symbol=intent.request.symbol,
+        market=intent.request.market,
+        side=intent.request.side,
+        order_type=intent.request.order_type,
+        quantity=intent.request.quantity,
+        time_in_force=intent.request.time_in_force,
+        price=intent.request.price,
+        idempotency_key=intent.request.idempotency_key,
+        decision_id=intent.request.decision_id,
+        decision_context_id=intent.request.decision_context_id,
+        order_intent_id=intent.request.order_intent_id,
+        price_band_lower=intent.request.price_band_lower,
+        price_band_upper=intent.request.price_band_upper,
+        max_slippage_bps=intent.request.max_slippage_bps,
+        allow_partial_fill=intent.request.allow_partial_fill,
+        client_timestamp=intent.request.client_timestamp,
+        metadata=intent.request.metadata,
+    )

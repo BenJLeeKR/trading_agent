@@ -168,22 +168,31 @@ def _resolve_kis_dev_token_cache_path() -> str:
 def _resolve_kis_snapshot_stale_threshold_seconds() -> int:
     """Resolve stale threshold for KIS snapshot sync freshness check.
 
-    ``KIS_SNAPSHOT_STALE_THRESHOLD_SECONDS`` env var, default ``900`` (15 min).
-    Clamped to ``max(1, value)``.
+    ``SNAPSHOT_STALE_THRESHOLD_SECONDS`` (preferred) or
+    ``KIS_SNAPSHOT_STALE_THRESHOLD_SECONDS`` (fallback) env var,
+    default ``900`` (15 min).  Clamped to ``max(1, value)``.
     """
-    raw = os.getenv("KIS_SNAPSHOT_STALE_THRESHOLD_SECONDS", "900")
+    raw = (
+        os.getenv("SNAPSHOT_STALE_THRESHOLD_SECONDS")
+        or os.getenv("KIS_SNAPSHOT_STALE_THRESHOLD_SECONDS", "900")
+    )
     return max(1, int(raw))
 
 
 def _resolve_kis_snapshot_startup_grace_seconds() -> int:
     """Resolve startup grace period for snapshot sync readiness check.
 
-    ``KIS_SNAPSHOT_STARTUP_GRACE_SECONDS`` env var, default ``600`` (10 min).
+    ``SNAPSHOT_STARTUP_GRACE_SECONDS`` (preferred) or
+    ``KIS_SNAPSHOT_STARTUP_GRACE_SECONDS`` (fallback) env var,
+    default ``600`` (10 min).
     During this window after process boot, ``/health/readyz`` skips the
     snapshot-sync-stale check and returns ``"ok"`` instead of ``"degraded"``.
     Clamped to ``max(0, value)``.
     """
-    raw = os.getenv("KIS_SNAPSHOT_STARTUP_GRACE_SECONDS", "600")
+    raw = (
+        os.getenv("SNAPSHOT_STARTUP_GRACE_SECONDS")
+        or os.getenv("KIS_SNAPSHOT_STARTUP_GRACE_SECONDS", "600")
+    )
     return max(0, int(raw))
 
 

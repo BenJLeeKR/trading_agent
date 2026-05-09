@@ -32,6 +32,7 @@ def _order_to_summary(order: object) -> OrderSummary:
         symbol=None,  # resolves from instrument_id (skipped for now)
         correlation_id=str(order.correlation_id),  # type: ignore[attr-defined]
         trade_decision_id=str(order.trade_decision_id) if order.trade_decision_id is not None else None,  # type: ignore[attr-defined]
+        decision_context_id=str(order.decision_context_id) if order.decision_context_id is not None else None,  # type: ignore[attr-defined]
         created_at=order.created_at,  # type: ignore[attr-defined]
         updated_at=order.updated_at,  # type: ignore[attr-defined]
         version=order.version,  # type: ignore[attr-defined]
@@ -56,6 +57,8 @@ async def list_orders(
     account_id: str | None = Query(None),
     client_order_id: str | None = Query(None),
     status: str | None = Query(None),
+    trade_decision_id: str | None = Query(None, description="Filter by trade decision UUID"),
+    decision_context_id: str | None = Query(None, description="Filter by decision context UUID"),
     limit: int = Query(100, ge=1, le=1000),
     repos: RepositoryContainer = Depends(get_repos),
 ) -> list[OrderSummary]:
@@ -67,6 +70,8 @@ async def list_orders(
         account_id=UUID(account_id) if account_id else None,
         client_order_id=client_order_id,
         status=status,
+        trade_decision_id=UUID(trade_decision_id) if trade_decision_id else None,
+        decision_context_id=UUID(decision_context_id) if decision_context_id else None,
         limit=limit,
     )
     orders = await repos.orders.list(query)

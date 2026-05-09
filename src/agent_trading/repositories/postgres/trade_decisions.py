@@ -120,6 +120,15 @@ class PostgresTradeDecisionRepository:
         )
         return row_to_entity(row, TradeDecisionEntity)
 
+    async def get(self, trade_decision_id: UUID) -> TradeDecisionEntity | None:
+        row = await self._tx.connection.fetchrow(
+            "SELECT * FROM trading.trade_decisions WHERE trade_decision_id = $1",
+            trade_decision_id,
+        )
+        if row is None:
+            return None
+        return row_to_entity(row, TradeDecisionEntity)
+
     async def get_by_context(
         self, decision_context_id: UUID
     ) -> TradeDecisionEntity | None:

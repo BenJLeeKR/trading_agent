@@ -22,6 +22,8 @@ class OrderQuery:
     client_order_id: str | None = None
     correlation_id: str | None = None
     status: OrderStatus | None = None
+    trade_decision_id: UUID | None = None
+    decision_context_id: UUID | None = None
     submitted_from: datetime | None = None
     submitted_to: datetime | None = None
     limit: int = 100
