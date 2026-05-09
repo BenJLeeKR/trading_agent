@@ -499,3 +499,34 @@ class PerformanceMetricsView(BaseModel):
     avg_win: float | None
     avg_loss: float | None
     profit_factor: float | None
+
+
+class BenchmarkComparisonView(BaseModel):
+    """``GET /performance-benchmark`` — 계좌/전략 성과와 benchmark 지수 간 초과수익 비교.
+
+    portfolio metrics는 ``PerformanceMetricsView``의 cumulative_return_pct와
+    max_drawdown_pct를 그대로 사용합니다. benchmark metrics는
+    ``_calc_benchmark_metrics()``로 일별 종가 시리즈에서 계산합니다.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    account_id: str
+    strategy_id: str | None
+    benchmark_code: str
+    period_start: date
+    period_end: date
+
+    # -- Portfolio (from existing PerformanceMetrics) --
+    portfolio_return_pct: float
+    benchmark_return_pct: float
+    excess_return_pct: float
+
+    # -- Drawdown --
+    portfolio_max_drawdown_pct: float
+    benchmark_max_drawdown_pct: float | None
+    relative_drawdown_pct: float | None
+
+    # -- Volatility (reserved, always None in this iteration) --
+    portfolio_volatility_pct: float | None = None
+    benchmark_volatility_pct: float | None = None
