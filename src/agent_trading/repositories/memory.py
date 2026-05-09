@@ -396,6 +396,29 @@ class InMemoryBrokerOrderRepository:
     async def list_by_order_request(self, order_request_id: UUID) -> Sequence[BrokerOrderEntity]:
         return tuple(item for item in self._items.values() if item.order_request_id == order_request_id)
 
+    async def get(self, broker_order_id: UUID) -> BrokerOrderEntity | None:
+        return self._items.get(broker_order_id)
+
+    async def update(
+        self,
+        broker_order_id: UUID,
+        *,
+        broker_status: str | None = None,
+        last_synced_at: datetime | None = None,
+        updated_at: datetime | None = None,
+    ) -> None:
+        item = self._items.get(broker_order_id)
+        if item is None:
+            raise ValueError(f"BrokerOrder not found: {broker_order_id}")
+        kwargs: dict[str, object] = {}
+        if broker_status is not None:
+            kwargs["broker_status"] = broker_status
+        if last_synced_at is not None:
+            kwargs["last_synced_at"] = last_synced_at
+        if updated_at is not None:
+            kwargs["updated_at"] = updated_at
+        self._items[broker_order_id] = replace(item, **kwargs)
+
 
 class InMemoryFillEventRepository:
     def __init__(self) -> None:

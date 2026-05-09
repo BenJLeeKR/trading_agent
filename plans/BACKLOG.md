@@ -17,21 +17,28 @@
 
 | # | 항목 | 출처 | 상태 |
 |---|------|------|------|
-| 1 | **Plan 40 Phase 2 — API endpoints 확장**: `GET /orders/{id}/broker-orders`, `GET /accounts`, `GET /accounts/{id}`, `GET /clients/{id}`, `GET /instruments/{id}`, `GET /positions`, `GET /cash-balances`, `GET /guardrail-evaluations`, `GET /risk-limit-snapshots`, `GET /agent-runs` | [Plan 40](plans/40_fastapi_inspection_api.md:78) | ❌ 미착수 |
-| 2 | **Plan 40 Phase 2 — Postgres-backed API mode**: `create_app()`에 Postgres repository 주입 지원, `runtime_mode="postgres"` 모드 | [Plan 40](plans/40_fastapi_inspection_api.md:78) | ❌ 미착수 |
-| 3 | **Reconciliation blocking lock list API**: `GET /reconciliation/locks` 구현을 위해 reconciliation repository에 `list_locks()` 메서드 추가. 현재 `is_blocked()`만 존재 | [Plan 40](plans/40_fastapi_inspection_api.md) | ❌ 미착수 |
-| 4 | **KIS real credential + combined submit smoke**: KIS 실제 API key 확보 후 `tests/smoke/test_kis_paper_smoke.py` 등 combined submit smoke 실행 | [Plan 36](plans/36_kis_paper_ai_runtime_smoke.md) | ❌ 미착수 |
-| 5 | **Docs/OpenAPI 보호 옵션 (inspection API)**: `/docs`와 `/openapi.json`을 auth 보호 대상에 포함. 현재는 공개 유지 중 | Plan 47 | ❌ 미착수 |
-| 6 | **Admin UI P1 — DecisionsView detail panel**: 특정 decision 행 클릭 시 TradeDecisionDetail 또는 DecisionContextDetail 내용을 inline panel 또는 modal로 표시. 현재는 단순 리스트만 존재 | [Plan 51](plans/51_admin_ui_operations_workflow_enhancements.md) | ❌ 미착수 |
-| 7 | **Admin UI P1 — AccountsView filter/selection 개선**: 계좌 목록 필터 (type, strategy) 및 선택 시 상세 영역 시각적 개선 | [Plan 51](plans/51_admin_ui_operations_workflow_enhancements.md) | ❌ 미착수 |
-| 8 | **Admin UI — Dashboard reconciliation metrics**: Dashboard에 정합성 점검 메트릭 (불일치 수, 마지막 실행 시각) 추가. 현재는 locks만 표시 | Plan 53 | ❌ 미착수 |
-| 9 | **Admin UI — Dashboard/Accounts/Broker Capacity freshness visualization**: 데이터 신선도(freshness) 시각화. 각 데이터 소스별 마지막 업데이트 시각 표시 및 지연 경고 | Plan 53 | ❌ 미착수 |
-| 10 | **KIS Snapshot Sync 정기 스케줄러 도입**: `docker compose up -d snapshot-sync`로 5분 간격 주기 실행. Position + Cash Balance snapshot 정기 적재 완료 | [snapshot_timezone_fix.md](plans/snapshot_timezone_fix.md) | ✅ 완료 |
-| 11 | **AI Decision → Order Submit 파이프라인 (Gap 1)**: FDC 결과를 TradeDecisionEntity 저장과 실제 broker submit 파이프라인으로 연결. `assemble_and_submit()` 5-phase pipeline, `build_submit_order_request_from_decision()` pure function, runtime wiring, `--submit` CLI 모드 | 본 문서 | ✅ 완료 |
-| 12 | **Decision State와 Order State 간 추적성 개선 (Gap 2)**: `decision_context_id ↔ order_request_id` 양방향 참조, audit log 정책 강화, 재현성 보장 | Gap 분석 결과 | ✅ 완료 |
-| 13 | **Safe Order Path 통합 시나리오 검증 (Gap 3)**: reconciliation + unknown state + blocking lock 통합 시나리오의 E2E 검증 | Gap 분석 결과 | ✅ 완료 |
-| 14 | **Backend Sizing Math 고도화 (Gap 4)**: position-aware sizing, config-driven 제약, multi-leg 분할 계산 | Gap 분석 결과 | ❌ 미착수 |
-| 15 | **E2E / Canary 전환 기준 정립 (Gap 5)**: paper trading loop 완성, canary gate 조건 정의, go/no-go 기준 문서화 | Gap 분석 결과 | ❌ 미착수 |
+| 1 | **Paper Trading Loop 연속 실행**: 주기적 orchestrator loop + fill sync + position/cash refresh. `verify_paper_loop.py --interval`은 assemble/submit만 반복; fill polling, position/cash 자동 갱신은 미포함 | Paper Trading Loop Validation | ❌ 미착수 |
+| 2 | **Replay-Style 검증 엔진 고도화**: 저장된 decision context 기반 결정론적 재현 검증 엔진. 현재 `test_decision_replay.py`는 단위 수준; 전체 DB 기반 replay 경로 필요 | Paper Trading Loop Validation | ❌ 미착수 |
+| 3 | **Snapshot Staleness Guardrail (Phase 5)**: submit 단계에서 position/cash snapshot freshness 검사. stale snapshot 시 RECONCILE_REQUIRED + status_reason_code="STALE_SNAPSHOT". `test_scenario_4_stale_snapshot_guard` 참조 | Paper Trading Loop Validation | ❌ 미착수 |
+| 4 | **Fill Sync / Post-Submit Update**: 주문 제출 후 broker로부터 fill 상태를 주기적으로 polling하는 루틴. `reconciliation_service.resolve_unknown_state()` 자동화 | Paper Trading Loop Validation | ✅ 승격됨 |
+| 5 | **Plan 40 Phase 2 — API endpoints 확장**: `GET /orders/{id}/broker-orders`, `GET /accounts`, `GET /accounts/{id}`, `GET /clients/{id}`, `GET /instruments/{id}`, `GET /positions`, `GET /cash-balances`, `GET /guardrail-evaluations`, `GET /risk-limit-snapshots`, `GET /agent-runs` | [Plan 40](plans/40_fastapi_inspection_api.md:78) | ❌ 미착수 |
+| 6 | **Plan 40 Phase 2 — Postgres-backed API mode**: `create_app()`에 Postgres repository 주입 지원, `runtime_mode="postgres"` 모드 | [Plan 40](plans/40_fastapi_inspection_api.md:78) | ❌ 미착수 |
+| 7 | **Reconciliation blocking lock list API**: `GET /reconciliation/locks` 구현을 위해 reconciliation repository에 `list_locks()` 메서드 추가. 현재 `is_blocked()`만 존재 | [Plan 40](plans/40_fastapi_inspection_api.md) | ❌ 미착수 |
+| 8 | **KIS real credential + combined submit smoke**: KIS 실제 API key 확보 후 `tests/smoke/test_kis_paper_smoke.py` 등 combined submit smoke 실행 | [Plan 36](plans/36_kis_paper_ai_runtime_smoke.md) | ❌ 미착수 |
+| 9 | **Docs/OpenAPI 보호 옵션 (inspection API)**: `/docs`와 `/openapi.json`을 auth 보호 대상에 포함. 현재는 공개 유지 중 | Plan 47 | ❌ 미착수 |
+| 10 | **Admin UI P1 — DecisionsView detail panel**: 특정 decision 행 클릭 시 TradeDecisionDetail 또는 DecisionContextDetail 내용을 inline panel 또는 modal로 표시. 현재는 단순 리스트만 존재 | [Plan 51](plans/51_admin_ui_operations_workflow_enhancements.md) | ❌ 미착수 |
+| 11 | **Admin UI P1 — AccountsView filter/selection 개선**: 계좌 목록 필터 (type, strategy) 및 선택 시 상세 영역 시각적 개선 | [Plan 51](plans/51_admin_ui_operations_workflow_enhancements.md) | ❌ 미착수 |
+| 12 | **Admin UI — Dashboard reconciliation metrics**: Dashboard에 정합성 점검 메트릭 (불일치 수, 마지막 실행 시각) 추가. 현재는 locks만 표시 | Plan 53 | ❌ 미착수 |
+| 13 | **Admin UI — Dashboard/Accounts/Broker Capacity freshness visualization**: 데이터 신선도(freshness) 시각화. 각 데이터 소스별 마지막 업데이트 시각 표시 및 지연 경고 | Plan 53 | ❌ 미착수 |
+| 14 | **Position/Cash Refresh After Fill**: Fill 발생 후 position snapshot/cash balance snapshot 자동 갱신 경로. Snapshot sync loop와 decision pipeline 연결 | Paper Trading Loop Validation | ❌ 미착수 |
+| 15 | **Paper PnL Calculation**: 체결 데이터 기반 수익률 계산 경로. `PositionSnapshot`/`FillEvent` 활용 | Paper Trading Loop Validation | ❌ 미착수 |
+| 16 | **Postgres BrokerOrderRepository.update() 구현**: 현재 InMemory 전용 `update()`를 Postgres에도 구현. `PostgresBrokerOrderRepository.update()`에 SQL UPDATE + `last_synced_at` 반영 | Fill Sync / Post-Submit Update | ❌ 미착수 |
+| 17 | **Scheduler 기반 정기 Post-Submit Sync**: `OrderSyncService`를 주기적으로 실행하는 scheduler loop. 미체결/부분체결 주기적 polling으로 상태 최신성 유지 | Fill Sync / Post-Submit Update | ❌ 미착수 |
+| 18 | **FillEvent에 broker_fill_id 필드 추가**: 현재 fill dedup이 `(timestamp, price, quantity)` tuple 기반. broker 고유 fill ID로 dedup 강화 | Fill Sync / Post-Submit Update | ❌ 미착수 |
+| 19 | **WebSocket 기반 실시간 order event 수신**: polling → WS event 기반 post-submit update 전환. KIS WS order event channel 연동 | Fill Sync / Post-Submit Update | ❌ 미착수 |
+| 20 | **Pipeline Phase 5.5 Post-Submit Sync 연동**: `assemble_and_submit()`에서 submit 직후 첫 1회 `OrderSyncService.sync_order_post_submit()` 호출. 실패 무시, timeout 5s | Fill Sync / Post-Submit Update | ❌ 미착수 |
+| 21 | **Snapshot refresh 직접 통합**: `OrderSyncService`가 FILLED terminal 감지 시 snapshot refresh callback 직접 호출. 현재는 optional callback으로 위임 | Fill Sync / Post-Submit Update | ❌ 미착수 |
+
 ## Medium-term (다음 마일스톤)
 
 | # | 항목 | 출처 | 상태 |
@@ -106,3 +113,6 @@
 | 2026-05-09 | **AI Agent comment/rationale 저장 한국어 강제** | [gap4_korean_text_enforcement.md](plans/gap4_korean_text_enforcement.md) | PostgreSQL 서술형 텍스트 한국어 강제. Dual Defense: Prompt 수준 + Backend 정규화. `korean_normalizer.py` (validate_or_normalize_korean, normalize_structured_output, contains_korean). 3개 Agent prompt 한국어 지시. `recorder.py` `normalize_structured_output()` 적용. `decision_orchestrator.py` `validate_or_normalize_korean()` 적용. 34/34 신규 테스트 통과 (26 unit + 8 integration). |
 | 2026-05-09 | **Decision ↔ Order 추적성 강화 (Gap 2)** | [gap2_decision_order_traceability.md](plans/gap2_decision_order_traceability.md) | `decision_context_id` 6개 경로 전파: OrderManager.create_order() → OrderRequestEntity, PostgresOrderRepository.add() SQL INSERT, OrderQuery 필터 2종(trade_decision_id, decision_context_id), OrderSummary/GET /orders trace query params, TradeDecisionRepository.get() PK 조회, SubmitResult.decision_context_id 7개 return site. 20/20 pipeline + 82/82 관련 테스트 통과. |
 | 2026-05-09 | **Safe Order Path E2E 검증 (Gap 3)** | [gap3_safe_order_path_e2e.md](plans/gap3_safe_order_path_e2e.md) | Fake broker adapter 기반 E2E 시나리오 7개 검증: happy path(SUBMITTED), uncertain(RECONCILE_REQUIRED+lock), blocking lock 차단(RECONCILE_REQUIRED+broker 0회), lock 재시도(차단+broker 1회), reject(REJECTED), duplicate guard(ERROR), requires_reconciliation(RECONCILE_REQUIRED+lock). 7/7 신규 + 40/40 기존 테스트 통과. |
+| 2026-05-09 | **Backend Sizing Math 고도화 (Gap 4)** | [gap4_backend_sizing_math.md](plans/gap4_backend_sizing_math.md) | Position-aware/config-driven deterministic sizing engine 도입. `SizingInputs`(18-field) / `SizingResult`(4-field) dataclass. `calculate_sizing()` 8-step pure function pipeline. Phase 1.5 pipeline step (`_build_sizing_inputs()`+`calculate_sizing()`). 37/37 sizing engine 단위 테스트 + 2/2 pipeline 통합 테스트 + 444/444 기존 테스트 회귀 없음. 총 483/483 테스트 통과. |
+| 2026-05-09 | **Paper Trading Loop Validation** | [paper_trading_loop_validation.md](plans/paper_trading_loop_validation.md) | Paper 운영 루프 검증 기반 완성. 사용자 통합테스트 5개 시나리오(`test_paper_trading_scenarios.py`), Replay 결정론적 검증(`test_decision_replay.py`), `run_orchestrator_once.py` 개선(`--dry-run`, `--output json`), `verify_paper_loop.py` 신규(반복 실행 전용), Go/No-Go 기준 문서화. |
+| 2026-05-09 | **Fill Sync / Post-Submit Update** | [fill_sync_post_submit_update.md](plans/fill_sync_post_submit_update.md) | `OrderSyncService` 신규 생성. `sync_order_post_submit()` 진입점. chain transition (SUBMITTED→FILLED 3-step). Fill event ingestion + dedup. `BrokerOrderRepository.update()/get()` Protocol + InMemory. `last_synced_at` 초기값 설정. 11개 신규 테스트. 470/470 기존 테스트 회귀 없음. |

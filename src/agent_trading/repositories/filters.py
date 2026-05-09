@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
@@ -22,6 +23,7 @@ class OrderQuery:
     client_order_id: str | None = None
     correlation_id: str | None = None
     status: OrderStatus | None = None
+    statuses: Sequence[OrderStatus] | None = None
     trade_decision_id: UUID | None = None
     decision_context_id: UUID | None = None
     submitted_from: datetime | None = None

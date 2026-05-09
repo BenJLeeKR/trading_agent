@@ -2,6 +2,9 @@
 """Minimal orchestrator entrypoint: seed prerequisites, run ``assemble()``
 or ``assemble_and_submit()``, print results, and exit.
 
+**단발 실행 전용** — ``--interval`` 등 반복 실행 옵션 없음.
+반복 실행(continuous loop)이 필요하면 ``verify_paper_loop.py`` 사용.
+
 Usage
 -----
 .. code-block:: bash
@@ -12,6 +15,12 @@ Usage
     # full pipeline: assemble → validate → create_order → submit_order:
     python -m scripts.run_orchestrator_once --submit
 
+    # dry-run: assemble + sizing only, no broker submit:
+    python -m scripts.run_orchestrator_once --dry-run
+
+    # JSON output for automated analysis:
+    python -m scripts.run_orchestrator_once --submit --output json
+
 Environment variables
 ---------------------
 Same as the main application (``DATABASE_URL``, etc.).
@@ -21,9 +30,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import re
+import sys
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
@@ -218,23 +229,65 @@ async def _seed_if_empty(repos: RepositoryContainer) -> bool:
     return True
 
 
+def _serialize_result(result: SubmitResult) -> dict[str, object]:
+    """Serialize a ``SubmitResult`` to a JSON-compatible dict."""
+    data: dict[str, object] = {
+        "status": result.status,
+        "error_phase": result.error_phase,
+        "error_message": result.error_message,
+        "trade_decision_id": str(result.trade_decision_id) if result.trade_decision_id else None,
+        "decision_context_id": str(result.decision_context_id) if result.decision_context_id else None,
+    }
+    if result.intent is not None:
+        data["order_intent_id"] = str(result.intent.order_intent_id)
+        data["decision_type"] = result.intent.ai_backend_inputs.decision_type
+        data["sized_quantity"] = str(result.intent.request.quantity)
+    if result.order is not None:
+        data["order_id"] = str(result.order.order_request_id)
+        data["order_status"] = result.order.status.value
+        data["client_order_id"] = result.order.client_order_id
+        data["status_reason_code"] = result.order.status_reason_code
+        data["requested_quantity"] = str(result.order.requested_quantity)
+    return data
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-async def main() -> None:
+async def main() -> int:
+    """Run the orchestrator and return an exit code.
+
+    Returns
+    -------
+    int
+        ``0`` on success, ``1`` on failure.
+    """
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
     parser = argparse.ArgumentParser(
-        description="Run the orchestrator and optionally submit orders to the broker.",
+        description="Run the orchestrator and optionally submit orders to the broker. "
+                    "One-shot only — for continuous mode use ``verify_paper_loop.py``.",
     )
     parser.add_argument(
         "--submit",
         action="store_true",
         default=False,
         help="Run the full assemble → submit pipeline (default: assemble only)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Run assemble + sizing only, no broker submit. Implies no --submit needed.",
+    )
+    parser.add_argument(
+        "--output",
+        choices=["text", "json"],
+        default="text",
+        help="Output format: ``text`` (human-readable) or ``json`` (machine-readable)",
     )
     args = parser.parse_args()
 
@@ -263,6 +316,54 @@ async def main() -> None:
             price=Decimal("50000"),
         )
 
+        # ── Dry-run: assemble + sizing only, no broker submit ──
+        if args.dry_run:
+            logger.info("Dry-run mode: assemble + sizing only (no broker submit).")
+            intent = await orchestrator.assemble(request)
+
+            # Run sizing engine (same as Phase 1.5 in full pipeline)
+            sizing_inputs = orchestrator._build_sizing_inputs(intent)
+            from agent_trading.services.sizing_engine import calculate_sizing
+            sizing_result = calculate_sizing(sizing_inputs)
+
+            dc_id = intent.decision_context_id
+            if args.output == "json":
+                output: dict[str, object] = {
+                    "mode": "dry-run",
+                    "status": "assemble_complete",
+                    "decision_context_id": str(dc_id) if dc_id else None,
+                    "order_intent_id": str(intent.order_intent_id),
+                    "decision_type": intent.ai_backend_inputs.decision_type,
+                    "symbol": intent.request.symbol,
+                    "side": intent.request.side.value,
+                    "requested_quantity": str(intent.request.quantity),
+                    "sizing": {
+                        "quantity": str(sizing_result.quantity),
+                        "applied_constraints": list(sizing_result.applied_constraints),
+                        "skip_reason": sizing_result.skip_reason,
+                    },
+                    "config_version_id": intent.config_version_id,
+                    "reason_codes": intent.reason_codes,
+                }
+                print(json.dumps(output, indent=2, ensure_ascii=False))
+            else:
+                logger.info("=" * 60)
+                logger.info("Dry-run assemble complete.")
+                logger.info("  decision_context_id : %s", dc_id)
+                logger.info("  order_intent_id     : %s", intent.order_intent_id)
+                logger.info("  decision_type       : %s", intent.ai_backend_inputs.decision_type)
+                logger.info("  symbol              : %s", intent.request.symbol)
+                logger.info("  side                : %s", intent.request.side)
+                logger.info("  requested_quantity  : %s", intent.request.quantity)
+                logger.info("  config_version_id   : %s", intent.config_version_id)
+                logger.info("  reason_codes        : %s", intent.reason_codes)
+                logger.info("  sizing_quantity     : %s", sizing_result.quantity)
+                logger.info("  sizing_constraints  : %s", sizing_result.applied_constraints)
+                if sizing_result.skip_reason:
+                    logger.info("  sizing_skip_reason  : %s", sizing_result.skip_reason)
+                logger.info("=" * 60)
+            return 0
+
         if args.submit:
             # ── Full pipeline: assemble → validate → create_order → submit ──
             order_manager = runtime["order_manager"]
@@ -276,53 +377,90 @@ async def main() -> None:
                 order_manager=order_manager,
                 broker=broker,
             )
-            logger.info("=" * 60)
-            logger.info("Pipeline complete.")
-            logger.info("  status              : %s", result.status)
-            logger.info("  error_phase         : %s", result.error_phase)
-            logger.info("  error_message       : %s", result.error_message)
-            logger.info("  trade_decision_id   : %s", result.trade_decision_id)
-            if result.intent is not None:
-                logger.info("  decision_context_id : %s", result.intent.decision_context_id)
-                logger.info("  order_intent_id     : %s", result.intent.order_intent_id)
-            if result.order is not None:
-                logger.info("  order_id            : %s", result.order.order_request_id)
-                logger.info("  order_status        : %s", result.order.status)
-            logger.info("=" * 60)
+
+            if args.output == "json":
+                print(json.dumps(_serialize_result(result), indent=2, ensure_ascii=False))
+            else:
+                logger.info("=" * 60)
+                logger.info("Pipeline complete.")
+                logger.info("  status              : %s", result.status)
+                logger.info("  error_phase         : %s", result.error_phase)
+                logger.info("  error_message       : %s", result.error_message)
+                logger.info("  trade_decision_id   : %s", result.trade_decision_id)
+                if result.intent is not None:
+                    logger.info("  decision_context_id : %s", result.intent.decision_context_id)
+                    logger.info("  order_intent_id     : %s", result.intent.order_intent_id)
+                if result.order is not None:
+                    logger.info("  order_id            : %s", result.order.order_request_id)
+                    logger.info("  order_status        : %s", result.order.status)
+                    logger.info("  requested_quantity  : %s", result.order.requested_quantity)
+                logger.info("=" * 60)
+
+            # Return exit code based on result status
+            if result.status in ("SUBMITTED", "SKIPPED"):
+                return 0
+            if result.status == "RECONCILE_REQUIRED":
+                # Recoverable — warn but return success
+                logger.warning("Order requires reconciliation (code=%s)",
+                               result.order.status_reason_code if result.order else "N/A")
+                return 0
+            # ERROR or REJECTED
+            return 1
         else:
             # ── Assemble only (no broker submit) ──
             logger.info("Calling orchestrator.assemble() …")
             intent = await orchestrator.assemble(request)
 
             dc_id = intent.decision_context_id
-            logger.info("=" * 60)
-            logger.info("Orchestrator assemble completed.")
-            logger.info("  decision_context_id : %s", dc_id)
-            logger.info("  order_intent_id     : %s", intent.order_intent_id)
-            logger.info("  config_version_id   : %s", intent.config_version_id)
-            logger.info("  reason_codes        : %s", intent.reason_codes)
-
-            if dc_id is not None:
-                ctx = await repos.decision_contexts.get(dc_id)
-                logger.info("  decision_contexts   : %s row(s)", 1 if ctx else 0)
-
-                decisions = await repos.trade_decisions.list_all()
-                logger.info("  trade_decisions     : %s row(s)", len(decisions))
-                for d in decisions:
-                    logger.info("    trade_decision_id=%s type=%s side=%s symbol=%s",
-                                d.trade_decision_id, d.decision_type, d.side, d.symbol)
-
-                runs = await repos.agent_runs.list_by_decision_context(dc_id)
-                logger.info("  agent_runs          : %s row(s)", len(runs))
-                agent_types = [r.agent_type for r in runs]
-                for at in sorted(agent_types):
-                    logger.info("    agent_type=%s", at)
+            if args.output == "json":
+                assemble_output: dict[str, object] = {
+                    "mode": "assemble-only",
+                    "status": "assemble_complete",
+                    "decision_context_id": str(dc_id) if dc_id else None,
+                    "order_intent_id": str(intent.order_intent_id),
+                    "decision_type": intent.ai_backend_inputs.decision_type,
+                    "symbol": intent.request.symbol,
+                    "side": intent.request.side.value,
+                    "requested_quantity": str(intent.request.quantity),
+                    "config_version_id": intent.config_version_id,
+                    "reason_codes": intent.reason_codes,
+                }
+                print(json.dumps(assemble_output, indent=2, ensure_ascii=False))
             else:
-                logger.warning("No decision context was created — check prerequisites.")
+                logger.info("=" * 60)
+                logger.info("Orchestrator assemble completed.")
+                logger.info("  decision_context_id : %s", dc_id)
+                logger.info("  order_intent_id     : %s", intent.order_intent_id)
+                logger.info("  config_version_id   : %s", intent.config_version_id)
+                logger.info("  reason_codes        : %s", intent.reason_codes)
+                logger.info("  decision_type       : %s", intent.ai_backend_inputs.decision_type)
+                logger.info("  symbol              : %s", intent.request.symbol)
+                logger.info("  side                : %s", intent.request.side)
+                logger.info("  requested_quantity  : %s", intent.request.quantity)
 
-            logger.info("=" * 60)
-            logger.info("Done. No broker submit was performed.")
+                if dc_id is not None:
+                    ctx = await repos.decision_contexts.get(dc_id)
+                    logger.info("  decision_contexts   : %s row(s)", 1 if ctx else 0)
+
+                    decisions = await repos.trade_decisions.list_all()
+                    logger.info("  trade_decisions     : %s row(s)", len(decisions))
+                    for d in decisions:
+                        logger.info("    trade_decision_id=%s type=%s side=%s symbol=%s",
+                                    d.trade_decision_id, d.decision_type, d.side, d.symbol)
+
+                    runs = await repos.agent_runs.list_by_decision_context(dc_id)
+                    logger.info("  agent_runs          : %s row(s)", len(runs))
+                    agent_types = [r.agent_type for r in runs]
+                    for at in sorted(agent_types):
+                        logger.info("    agent_type=%s", at)
+                else:
+                    logger.warning("No decision context was created — check prerequisites.")
+
+                logger.info("=" * 60)
+                logger.info("Done. No broker submit was performed.")
+
+            return 0
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    sys.exit(asyncio.run(main()))

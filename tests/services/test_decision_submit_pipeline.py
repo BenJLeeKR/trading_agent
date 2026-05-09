@@ -25,9 +25,12 @@ import pytest
 
 from agent_trading.domain.entities import (
     AccountEntity,
+    CashBalanceSnapshotEntity,
     ConfigVersionEntity,
     InstrumentEntity,
     OrderRequestEntity,
+    PositionSnapshotEntity,
+    RiskLimitSnapshotEntity,
 )
 from agent_trading.domain.enums import AssetClass, Environment, OrderSide, OrderStatus, OrderType, TimeInForce
 from agent_trading.domain.models import SubmitOrderRequest
@@ -491,6 +494,121 @@ class TestAssembleAndSubmit:
         # --- Gap 2: traceability assertion ---
         # assemble() failed before decision_context_id could be resolved
         assert result.decision_context_id is None
+
+    # ── Phase 1.5 sizing — quantity capped by cash constraint ──
+
+    @pytest.mark.asyncio
+    async def test_sizing_applied_to_submitted_order(
+        self,
+        repos: Any,
+        order_manager: OrderManager,
+        sample_request: SubmitOrderRequest,
+    ) -> None:
+        """Phase 1.5 sizing caps quantity when cash is insufficient.
+
+        Request quantity=100 price=50000 → total value=5,000,000.
+        Seeded cash=500,000 → max shares=10.  Submitted order should
+        have quantity=10, not 100.
+        """
+        # Find the seeded account UUID
+        account = next(
+            a for a in repos.accounts._items.values()
+            if a.account_alias == "test-account"
+        )
+
+        # Seed cash balance snapshot (500,000 KRW available)
+        repos.cash_balance_snapshots._items[account.account_id] = (
+            CashBalanceSnapshotEntity(
+                cash_balance_snapshot_id=uuid4(),
+                account_id=account.account_id,
+                available_cash=Decimal("500000"),
+                settled_cash=Decimal("500000"),
+                unsettled_cash=Decimal("0"),
+                currency="KRW",
+                source_of_truth="broker",
+                snapshot_at=datetime.now(timezone.utc),
+            )
+        )
+
+        async def _mock_submit(*args: Any, **kwargs: Any) -> OrderRequestEntity:
+            return _make_order_entity(status=OrderStatus.SUBMITTED)
+
+        broker_stub = object()
+        service = DecisionOrchestratorService(
+            repos=repos,
+            final_decision_agent=self._ApproveFDCAgent(),
+        )
+        with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):
+            result = await service.assemble_and_submit(
+                sample_request,
+                order_manager=order_manager,
+                broker=broker_stub,  # type: ignore[arg-type]
+            )
+
+        assert result.status == "SUBMITTED", f"Expected SUBMITTED, got {result.status}"
+        assert result.order is not None, "Order must exist"
+        # The order's requested_quantity should be the sized quantity (10),
+        # not the original 100.
+        assert result.order.requested_quantity == Decimal("10"), (
+            f"Expected sized quantity 10 (cash-limited), "
+            f"got {result.order.requested_quantity}"
+        )
+
+    # ── Phase 1.5 sizing — zero quantity → SKIPPED ──
+
+    @pytest.mark.asyncio
+    async def test_sizing_zero_quantity_skips(
+        self,
+        repos: Any,
+        order_manager: OrderManager,
+    ) -> None:
+        """Phase 1.5 returns SKIPPED when sizing results in zero quantity."""
+        request = _make_request(quantity=Decimal("100"), price=Decimal("50000"))
+
+        account = next(
+            a for a in repos.accounts._items.values()
+            if a.account_alias == "test-account"
+        )
+
+        # Seed cash balance snapshot (very low cash → zero qty)
+        repos.cash_balance_snapshots._items[account.account_id] = (
+            CashBalanceSnapshotEntity(
+                cash_balance_snapshot_id=uuid4(),
+                account_id=account.account_id,
+                available_cash=Decimal("1000"),
+                settled_cash=Decimal("1000"),
+                unsettled_cash=Decimal("0"),
+                currency="KRW",
+                source_of_truth="broker",
+                snapshot_at=datetime.now(timezone.utc),
+            )
+        )
+
+        async def _mock_submit(
+            *args: Any,
+            **kwargs: Any,
+        ) -> OrderRequestEntity:
+            raise AssertionError("Broker should not be called when sizing returns zero")
+
+        broker_stub = object()
+        service = DecisionOrchestratorService(
+            repos=repos,
+            final_decision_agent=self._ApproveFDCAgent(),
+        )
+        with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):
+            result = await service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=broker_stub,  # type: ignore[arg-type]
+            )
+
+        assert result.status == "SKIPPED", f"Expected SKIPPED, got {result.status}"
+        assert result.error_phase == "sizing", (
+            f"Expected error_phase='sizing', got {result.error_phase}"
+        )
+        assert result.intent is not None
+        assert result.order is None  # No order created
+        assert result.decision_context_id is not None
 
     # ── submit_order_to_broker() exception -> ERROR/order_submit ──
 

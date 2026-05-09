@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Protocol
@@ -13,6 +13,7 @@ from agent_trading.domain.entities import (
     ConfigVersionEntity,
     DecisionContextEntity,
     ExternalEventEntity,
+    GuardrailEvaluationEntity,
     InstrumentEntity,
     OrderRequestEntity,
     PositionSnapshotEntity,
@@ -45,6 +46,10 @@ from agent_trading.services.ai_agents.schemas import (
     ExecutionPreferences,
     FinalDecisionComposerOutput,
     SizingHint,
+)
+from agent_trading.services.sizing_engine import (
+    SizingInputs,
+    calculate_sizing,
 )
 
 logger = logging.getLogger(__name__)
@@ -336,6 +341,7 @@ class DecisionOrchestratorService:
         self,
         repos: RepositoryContainer,
         *,
+        stale_threshold_seconds: int = 900,
         score_calculator: ScoreCalculator | None = None,
         event_interpretation_agent: ProviderAIAgent | None = None,
         ai_risk_agent: ProviderAIAgent | None = None,
@@ -343,6 +349,7 @@ class DecisionOrchestratorService:
         agent_recorder: AgentRunRecorder | None = None,
     ) -> None:
         self._repos = repos
+        self._stale_threshold_seconds = stale_threshold_seconds
         self._score_calculator = score_calculator or StubScoreCalculator()
         self._event_interpretation_agent = (
             event_interpretation_agent or StubEventInterpretationAgent()
@@ -655,6 +662,49 @@ class DecisionOrchestratorService:
             except Exception:
                 pass
 
+        # ── Phase 1.5: deterministic sizing engine ──
+        logger.info(
+            "Phase 1.5: sizing engine — decision_type=%s side=%s quantity=%s",
+            intent.ai_backend_inputs.decision_type,
+            intent.request.side,
+            intent.request.quantity,
+        )
+        sizing_inputs = self._build_sizing_inputs(intent)
+        sizing_result = calculate_sizing(sizing_inputs)
+
+        if sizing_result.quantity <= 0:
+            logger.info(
+                "Phase 1.5 SKIPPED (sizing): reason=%s, trade_decision_id=%s",
+                sizing_result.skip_reason,
+                trade_decision_id,
+            )
+            return SubmitResult(
+                status="SKIPPED",
+                intent=intent,
+                trade_decision_id=trade_decision_id,
+                decision_context_id=intent.decision_context_id,
+                error_phase="sizing",
+                error_message=sizing_result.skip_reason or "Sizing rejected order",
+            )
+
+        # Log applied constraints
+        if sizing_result.applied_constraints:
+            logger.info(
+                "Phase 1.5: constraints applied=%s sized_quantity=%s",
+                sizing_result.applied_constraints,
+                sizing_result.quantity,
+            )
+
+        # Apply sizing result — override intent request quantity
+        if sizing_result.quantity != intent.request.quantity:
+            sized_request = replace(intent.request, quantity=sizing_result.quantity)
+            intent = replace(intent, request=sized_request)
+            logger.info(
+                "Phase 1.5: quantity overridden by sizing — original=%s sized=%s",
+                intent.request.quantity,
+                sizing_result.quantity,
+            )
+
         # ── Phase 2: validate intent (skip HOLD/WATCH) ──
         logger.info(
             "Phase 2: validate intent — decision_type=%s",
@@ -762,6 +812,61 @@ class DecisionOrchestratorService:
                 decision_context_id=intent.decision_context_id,
             )
 
+        # ── Phase 4c: stale snapshot guard ──
+        health = await self._repos.snapshot_sync_runs.get_sync_health_summary(
+            stale_threshold_seconds=self._stale_threshold_seconds,
+        )
+        if health.is_stale:
+            logger.info(
+                "Phase 4c BLOCKED stale_snapshot: last_successful_run_at=%s "
+                "threshold=%ds trade_decision_id=%s",
+                health.last_successful_run_at,
+                self._stale_threshold_seconds,
+                trade_decision_id,
+            )
+            # GuardrailEvaluation: stale_snapshot outcome 기록
+            try:
+                guardrail_eval = GuardrailEvaluationEntity(
+                    guardrail_evaluation_id=uuid4(),
+                    decision_context_id=intent.decision_context_id,
+                    trade_decision_id=trade_decision_id,
+                    order_request_id=pending_order.order_request_id,
+                    rule_set_version="stale_snapshot_guard_v1",
+                    overall_passed=False,
+                    evaluated_at=datetime.now(timezone.utc),
+                    rule_results={
+                        "is_stale": True,
+                        "last_successful_run_at": (
+                            str(health.last_successful_run_at)
+                            if health.last_successful_run_at
+                            else None
+                        ),
+                        "stale_threshold_seconds": self._stale_threshold_seconds,
+                        "last_run_status": health.last_status,
+                    },
+                    blocking_rule_codes=["STALE_SNAPSHOT"],
+                )
+                await self._repos.guardrail_evaluations.add(guardrail_eval)
+            except Exception:
+                logger.warning(
+                    "Failed to record guardrail evaluation for stale snapshot",
+                    exc_info=True,
+                )
+
+            return SubmitResult(
+                status="SKIPPED",
+                intent=intent,
+                order=pending_order,
+                error_phase="stale_snapshot",
+                error_message=(
+                    f"Snapshot sync is stale: last successful run at "
+                    f"{health.last_successful_run_at}, "
+                    f"threshold={self._stale_threshold_seconds}s"
+                ),
+                trade_decision_id=trade_decision_id,
+                decision_context_id=intent.decision_context_id,
+            )
+
         # ── Phase 5: submit to broker ──
         logger.info(
             "Phase 5: submit_order_to_broker — order_id=%s broker=%s",
@@ -819,6 +924,42 @@ class DecisionOrchestratorService:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _build_sizing_inputs(self, intent: OrderIntent) -> SizingInputs:
+        """Build ``SizingInputs`` from an ``OrderIntent``.
+
+        Extracts position, cash, NAV, and config data from the assembled
+        context and maps them to the sizing engine's input format.
+        """
+        ctx = intent.context
+        ai = intent.ai_backend_inputs
+        req = intent.request
+
+        config = ctx.config_version.config_json if ctx.config_version else {}
+        risk = config.get("risk", {})
+        execution = config.get("execution", {})
+
+        pos_qty = ctx.position_snapshot.quantity if ctx.position_snapshot else None
+        pos_avg_price = ctx.position_snapshot.average_price if ctx.position_snapshot else None
+        available_cash = ctx.cash_balance_snapshot.available_cash if ctx.cash_balance_snapshot else None
+        nav = ctx.risk_limit_snapshot.nav if ctx.risk_limit_snapshot else None
+
+        return SizingInputs(
+            decision_type=ai.decision_type,
+            side=req.side,
+            requested_quantity=req.quantity,
+            requested_price=req.price,
+            sizing_hint=ai.sizing_hint,
+            current_position_qty=pos_qty,
+            current_position_avg_price=pos_avg_price,
+            available_cash=available_cash,
+            nav=nav,
+            max_single_position_pct=_decimal_or_none(risk.get("max_single_position_pct")),
+            min_cash_buffer_pct=_decimal_or_none(risk.get("min_cash_buffer_pct")),
+            max_order_value=_decimal_or_none(execution.get("max_order_value")),
+            min_order_qty=_decimal_or_none(execution.get("min_order_qty")),
+            max_order_qty=_decimal_or_none(execution.get("max_order_qty")),
+        )
 
     async def _ensure_or_create_decision_context(
         self,

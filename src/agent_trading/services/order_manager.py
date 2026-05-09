@@ -436,14 +436,16 @@ class OrderManager:
         if result.accepted:
             # Normal path: order was accepted by broker.
             # Record the broker order.
+            now = datetime.now(timezone.utc)
             broker_order = BrokerOrderEntity(
                 broker_order_id=uuid4(),
                 order_request_id=order.order_request_id,
                 broker_name=result.broker_name.value,
                 broker_status=result.broker_status.value,
                 broker_native_order_id=result.broker_order_id,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
+                created_at=now,
+                updated_at=now,
+                last_synced_at=now,
             )
             await self.repos.broker_orders.add(broker_order)
 

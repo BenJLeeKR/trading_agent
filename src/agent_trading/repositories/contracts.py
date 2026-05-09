@@ -274,6 +274,48 @@ class BrokerOrderRepository(Protocol):
     async def list_by_order_request(self, order_request_id: UUID) -> Sequence[BrokerOrderEntity]:
         ...
 
+    async def get(self, broker_order_id: UUID) -> BrokerOrderEntity | None:
+        """Get a single broker order by its internal UUID.
+
+        Parameters
+        ----------
+        broker_order_id:
+            The internal ``BrokerOrderEntity.broker_order_id``.
+
+        Returns
+        -------
+        BrokerOrderEntity | None
+            The matching entity, or ``None`` if not found.
+        """
+        ...
+
+    async def update(
+        self,
+        broker_order_id: UUID,
+        *,
+        broker_status: str | None = None,
+        last_synced_at: datetime | None = None,
+        updated_at: datetime | None = None,
+    ) -> None:
+        """Update mutable fields on a BrokerOrderEntity.
+
+        Parameters
+        ----------
+        broker_order_id:
+            The UUID of the broker order to update.
+        broker_status:
+            New broker-side order status (e.g. ``"FILLED"``, ``"CANCELLED"``).
+        last_synced_at:
+            Timestamp of the last successful sync with the broker.
+        updated_at:
+            Timestamp of this update.  If not provided, the repository
+            may set it to the current time.
+
+        The entity is frozen (immutable), so implementations MUST
+        use ``dataclasses.replace()`` internally.
+        """
+        ...
+
 
 class FillEventRepository(Protocol):
     async def add(self, fill_event: FillEventEntity) -> FillEventEntity:
