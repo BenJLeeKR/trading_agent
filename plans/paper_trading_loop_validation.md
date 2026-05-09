@@ -38,7 +38,8 @@
 | **Position/Cash Refresh After Fill** | ❌ 미착수 | Fill 발생 후 position snapshot/cash balance snapshot 자동 갱신 경로 없음. Snapshot sync loop와 decision pipeline이 분리되어 있음 |
 | **PnL Calculation** | ❌ 미착수 | Paper PnL 계산 로직 없음. 체결 데이터는 저장되나(PositionSnapshot / FillEvent), 수익률 계산 경로 없음 |
 | **Replay / Backtest** | ✅ 구현 완료 | 결정론적 replay 검증: `ReplayBundle` dataclass + `_build_repos()` factory + 5개 parametrize 시나리오 + 2-run identity. `replay_test_harness.py` 공유 모듈. `replay_verification.py` 운영 검증 스크립트. Historical backtest는 후속 |
-| **Paper Go/No-Go Criteria** | ❌ 미착수 | Paper 운영 충족 조건 문서화되지 않음 |
+| **Paper Go/No-Go Gate** | ✅ 구현 완료 | `PaperGateService.evaluate()` 8개 check + `GET /performance/paper-go-no-go` API. 7개 테스트 통과 |
+| **Paper Exit Criteria (3-Layer)** | ✅ 신규 구현 | [paper_exit_criteria.md](plans/paper_exit_criteria.md) 설계 + [`scripts/evaluate_paper_exit.py`](scripts/evaluate_paper_exit.py) CLI (Layer A/B/C + 최종 종합). 8개 테스트 통과 |
 | **User Integration Test Scenarios** | △ 부분적 | E2E safe order path 테스트(7개)는 있으나 "사용자 시나리오" 관점으로 패키징되지 않음 |
 
 ---
@@ -162,7 +163,7 @@ Full backtest는 아래가 준비된 후 검토:
 | 1 | Safe order path 전 시나리오 통과 (7개) | `pytest tests/services/test_safe_order_path_e2e.py -v` → 7/7 pass | ✅ 현재 통과 |
 | 2 | Sizing engine 테스트 전부 통과 (37개) | `pytest tests/services/test_sizing_engine.py -v` → 37/37 pass | ✅ 현재 통과 |
 | 3 | Pipeline 테스트 전부 통과 (22개) | `pytest tests/services/test_decision_submit_pipeline.py -v` → 22/22 pass | ✅ 현재 통과 |
-| 4 | 전체 서비스 테스트 회귀 없음 | `pytest tests/services/ -v` → pre-existing failure 외 신규 실패 0 | ✅ 444/460 통과 (14 error pre-existing) |
+| 4 | 전체 서비스 테스트 회귀 없음 | `pytest tests/services/ -v` → all green (0 failed, 0 errors) | ✅ 589/589 통과 |
 | 5 | Snapshot freshness 정상 (stale 없음) | `GET /health/readyz` → `ok`; `GET /health` → `snapshot_sync.freshness.status==fresh`; `SnapshotSyncRunRepository.get_sync_health_summary()` → stale_count==0 | ✅ 스케줄러 실행 시 |
 | 6 | Reconciliation degrade 없는 상태 | `InMemoryReconciliationRepository.list_all_active_locks()` → empty; admin UI ReconciliationView → lock count 0 | 검증 필요 |
 | 7 | Snapshot sync 스케줄러 정상 작동 | `run_snapshot_sync_loop.py` 1회 이상 성공; `GET /snapshot-sync-runs/summary` → last_run_success==true | 검증 필요 |
@@ -175,6 +176,8 @@ Full backtest는 아래가 준비된 후 검토:
 | **NEW** | Paper continuous decision loop 테스트 통과 (17 tests) | `pytest tests/scripts/test_run_paper_decision_loop.py -v` → 17/17 pass | ✅ 구현 완료 |
 | **NEW** | Paper continuous decision loop 스크립트 정상 실행 | `python -m scripts.run_paper_decision_loop --count 1 --dry-run` → exit 0 | ✅ 구현 완료 |
 | **NEW** | Paper continuous decision loop submit 모드 스크립트 정상 실행 | `python -m scripts.run_paper_decision_loop --count 1 --submit` → exit 0 | ✅ 구현 완료 |
+| **NEW** | **Paper Go/No-Go Gate 통과** | `GET /performance/paper-go-no-go?account_id=...&start_date=...&end_date=...` → `overall_status==GO` | ✅ 구현 완료 (7 tests 통과) |
+| **NEW** | **Paper Exit Criteria 평가 통과** | `python -m scripts.evaluate_paper_exit --account-id ... --start-date ... --end-date ...` → Layer A/B/C 평가 후 최종 종합 PASS | ✅ 신규 구현 ([`scripts/evaluate_paper_exit.py`](scripts/evaluate_paper_exit.py) 8 tests 통과) |
 
 ### No-Go 조건
 
@@ -185,6 +188,8 @@ Full backtest는 아래가 준비된 후 검토:
 | Snapshot sync 연속 실패 | 브로커 credential/network 점검 |
 | Pipeline 오류율 > 5% | 원인 분석 및 핫픽스 |
 | Audit log 누락 | 저장소 적합성 점검 |
+| **Paper Go/No-Go Gate 평가 FAIL (NO_GO)** | `GET /performance/paper-go-no-go` 응답 확인 → FAIL 항목 원인 분석 및 수정 후 재평가 |
+| **Paper Go/No-Go Gate 경고 (HOLD)** | WARN 항목 검토 → 일부 지표 미달이지만 운영 가능 여부 판단 후 GO/NO_GO 결정 |
 
 ---
 
@@ -373,6 +378,9 @@ flowchart TD
 ---
 
 ## 10. Live Canary 이전 필수 항목 (3개)
+
+> **참고**: 이 체크리스트는 [`plans/mode_boundary_paper_live.md`](plans/mode_boundary_paper_live.md) §2.2 Mode 전환 Checklist와 연결됩니다.
+> 자세한 paper/live mode 경계 정리는 해당 문서 참조.
 
 1. **Paper Trading Loop 연속 실행 검증** — ✅ 구현 완료. `scripts/run_paper_decision_loop.py` (300s 간격, `--count`, `--dry-run`, `--submit`, graceful shutdown). 17개 단위 테스트 통과. 기존 snapshot sync / post-submit sync loop와 역할 분리되어 공존 가능
 2. **사용자 통합테스트 5개 시나리오 자동 통과** — ✅ 구현 완료. `test_paper_trading_scenarios.py` (6개 시나리오)

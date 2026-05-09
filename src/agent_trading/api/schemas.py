@@ -530,3 +530,38 @@ class BenchmarkComparisonView(BaseModel):
     # -- Volatility (reserved, always None in this iteration) --
     portfolio_volatility_pct: float | None = None
     benchmark_volatility_pct: float | None = None
+
+
+class PaperGateCheckView(BaseModel):
+    """Individual gate criterion check result.
+
+    Serialises ``measured_value`` and ``threshold`` as ``str`` to support
+    both ``Decimal`` and ``int`` threshold types uniformly.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    code: str
+    label: str
+    status: str  # PASS / WARN / FAIL
+    measured_value: str | None
+    threshold: str | None
+    message: str
+
+
+class PaperGoNoGoEvaluationView(BaseModel):
+    """``GET /paper-go-no-go`` — Paper Go/No-Go Gate evaluation result.
+
+    Aggregates individual checks across performance, stability and
+    operational-health axes into a single ``GO`` / ``HOLD`` / ``NO_GO``
+    overall status.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    account_id: str
+    strategy_id: str | None
+    overall_status: str  # GO / HOLD / NO_GO
+    checks: list[PaperGateCheckView]
+    generated_at: datetime
+    summary_reason: str

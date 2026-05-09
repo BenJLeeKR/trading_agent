@@ -402,6 +402,14 @@ def build_kis_budget_manager(
     """Create a ``RateLimitBudgetManager`` with per-bucket safety scaling
     based on the KIS environment's aggregate REST RPS **baseline**.
 
+    .. important::
+       This is the **primary env-specific rate-limit switch**.  Paper and
+       live environments use completely different budget profiles (see
+       Notes table below).  The ``kis_env`` parameter is driven by
+       ``AppSettings.kis_env`` (which comes from ``KIS_ENV``), so
+       switching the broker environment automatically switches the
+       rate-limit budget profile.
+
     The environment RPS value is used both as a **safety scaling baseline**
     for per-bucket sizing **and** as the **strict global REST cap** enforced
     via a dedicated ``global_rest`` token bucket (Tier 1).  Every REST request

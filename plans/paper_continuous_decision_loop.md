@@ -1,9 +1,13 @@
 # Paper Continuous Decision Loop — 설계 문서
 
-> **목적**: 단발 orchestrator(`run_orchestrator_once.py`)를 반복 실행 가능한 paper 운영 루프로 승격.
+> **목적**: 단발 orchestrator(`run_orchestrator_once.py`)를 반복 실행 가능한 운영 루프로 승격.
 > 기존 `verify_paper_loop.py`는 검증 전용으로 유지, 신규 `run_paper_decision_loop.py`는 운영 전용.
 >
 > **상태**: 설계 완료
+>
+> **참고**: 이 문서는 "paper"라는 이름을 가지고 있지만, 문서에서 설명하는 runtime loop는 **mode-agnostic**입니다.
+> 동일한 decision pipeline, sizing, submit 로직이 live mode에서도 그대로 동작합니다.
+> "paper"는 초기 구현 컨텍스트를 반영한 naming이며, 실제 runtime은 env-specific broker 설정만 교체하면 live에서도 실행 가능합니다.
 
 ---
 

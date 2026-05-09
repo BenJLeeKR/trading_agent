@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
+from decimal import Decimal
 
 from agent_trading.domain.enums import Environment
 
@@ -203,6 +204,17 @@ def _resolve_kis_snapshot_startup_grace_seconds() -> int:
 
 @dataclass(slots=True, frozen=True)
 class AppSettings:
+    # ── Mode Switch ─────────────────────────────────────────────────────
+    # Paper↔Live 전환 시 아래 항목만 변경하면 됩니다:
+    #   1. environment → LIVE (또는 PAPER)
+    #   2. KIS API key/secret → live 환경 값
+    #   3. KIS_ACCOUNT_NUMBER → live 계좌
+    #   4. KIS_ACCOUNT_PRODUCT_CODE → live 상품코드
+    #   5. KIS_ENV → live
+    #   6. KIS_BASE_URL, KIS_WS_URL → live endpoint
+    #   7. KIS_REAL_REST_RPS → 적절한 live rate limit (기본값 15)
+    # 나머지 설정 (cache, staleness threshold, grace period,
+    # paper gate thresholds, LLM provider 등)은 변경 불필요.
     environment: Environment = Environment.PAPER
     app_name: str = "agent-trading"
     timezone: str = "Asia/Seoul"
@@ -239,6 +251,45 @@ class AppSettings:
     # ---- KIS snapshot sync startup grace period ------------------------------
     kis_snapshot_startup_grace_seconds: int = field(
         default_factory=_resolve_kis_snapshot_startup_grace_seconds,
+    )
+
+    # ---- Paper Go/No-Go Gate thresholds -------------------------------------
+    paper_gate_min_return_pct: Decimal = field(
+        default_factory=lambda: Decimal(os.getenv("PAPER_GATE_MIN_RETURN_PCT", "0.0")),
+    )
+    paper_gate_min_excess_return_pct: Decimal = field(
+        default_factory=lambda: Decimal(os.getenv("PAPER_GATE_MIN_EXCESS_RETURN_PCT", "-5.0")),
+    )
+    paper_gate_max_drawdown_pct: Decimal = field(
+        default_factory=lambda: Decimal(os.getenv("PAPER_GATE_MAX_DRAWDOWN_PCT", "20.0")),
+    )
+    paper_gate_min_win_rate_pct: Decimal = field(
+        default_factory=lambda: Decimal(os.getenv("PAPER_GATE_MIN_WIN_RATE_PCT", "0.0")),
+    )
+    paper_gate_min_filled_orders: int = field(
+        default_factory=lambda: max(1, int(os.getenv("PAPER_GATE_MIN_FILLED_ORDERS", "3"))),
+    )
+    paper_gate_max_consecutive_failures: int = field(
+        default_factory=lambda: max(0, int(os.getenv("PAPER_GATE_MAX_CONSECUTIVE_FAILURES", "3"))),
+    )
+
+    # ---- Live Gate thresholds (paper보다 엄격) --------------------------------
+    # Paper Exit 통과 후 Live 검토 자격을 판정하기 위한 추가 임계값.
+    # Paper Gate threshold보다 더 엄격한 기준을 적용한다.
+    live_gate_min_filled_orders: int = field(
+        default_factory=lambda: max(1, int(os.getenv("LIVE_GATE_MIN_FILLED_ORDERS", "10"))),
+    )
+    live_gate_max_drawdown_pct: Decimal = field(
+        default_factory=lambda: Decimal(os.getenv("LIVE_GATE_MAX_DRAWDOWN_PCT", "10.0")),
+    )
+    live_gate_min_excess_return_pct: Decimal = field(
+        default_factory=lambda: Decimal(os.getenv("LIVE_GATE_MIN_EXCESS_RETURN_PCT", "0.0")),
+    )
+    live_gate_max_recent_reconcile_required: int = field(
+        default_factory=lambda: max(0, int(os.getenv("LIVE_GATE_MAX_RECENT_RECONCILE_REQUIRED", "2"))),
+    )
+    live_gate_max_recent_blocking_locks: int = field(
+        default_factory=lambda: max(0, int(os.getenv("LIVE_GATE_MAX_RECENT_BLOCKING_LOCKS", "1"))),
     )
 
     # ---- OpenDART API credentials (read from environment) --------------------

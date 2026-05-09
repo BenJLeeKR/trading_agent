@@ -12,7 +12,7 @@ from agent_trading.brokers.polling_worker import PollingConfig, PollingWorker
 from agent_trading.brokers.source_adapter import SourceAdapter
 from agent_trading.config.settings import AppSettings
 from agent_trading.db.connection import DatabaseConfig, close_pool, create_pool
-from agent_trading.db.migrations.run import run_all_migrations
+from agent_trading.db.migrations.run import ensure_schema, run_all_migrations
 from agent_trading.db.transaction import transaction
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.repositories.container import RepositoryContainer

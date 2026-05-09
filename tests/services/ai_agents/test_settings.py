@@ -359,6 +359,7 @@ class TestAppSettingsKisFields:
         monkeypatch.setenv("KIS_ACCOUNT_NUMBER", "legacy-acc")
         monkeypatch.setenv("KIS_ENV", "live")
         monkeypatch.delenv("KIS_BASE_URL", raising=False)
+        monkeypatch.delenv("KIS_WS_URL", raising=False)
         settings = AppSettings()
         assert settings.kis_api_key == "legacy-key"
         assert settings.kis_api_secret == "legacy-secret"
@@ -377,6 +378,7 @@ class TestAppSettingsKisFields:
         monkeypatch.delenv("KIS_ACCOUNT_NUMBER", raising=False)
         monkeypatch.delenv("KIS_ENV", raising=False)
         monkeypatch.delenv("KIS_BASE_URL", raising=False)
+        monkeypatch.delenv("KIS_WS_URL", raising=False)
         settings = AppSettings()
         assert settings.kis_api_key == ""
         assert settings.kis_api_secret == ""

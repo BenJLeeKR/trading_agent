@@ -20,10 +20,12 @@ from agent_trading.api.schemas import (
     AccountPerformanceSummaryView,
     BenchmarkComparisonView,
     DailyPerformancePointView,
+    PaperGoNoGoEvaluationView,
     PerformanceHistoryResponse,
     PerformanceMetricsView,
     StrategyPerformanceSummaryView,
 )
+from agent_trading.config.settings import AppSettings
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.services.benchmark_comparison import (
     BENCHMARK_KOSPI,
@@ -32,6 +34,7 @@ from agent_trading.services.benchmark_comparison import (
     InMemoryBenchmarkPriceRepository,
     _DEFAULT_BENCHMARK_PRICES,
 )
+from agent_trading.services.paper_gate import PaperGateService
 from agent_trading.services.performance_summary import PerformanceSummaryService
 
 router = APIRouter(tags=["performance"])
@@ -346,3 +349,98 @@ async def get_performance_benchmark(
     )
 
     return BenchmarkComparisonView.model_validate(comparison)
+
+
+@router.get(
+    "/paper-go-no-go",
+    response_model=PaperGoNoGoEvaluationView,
+)
+async def get_paper_go_no_go(
+    account_id: str = Query(..., description="Account UUID"),
+    start_date: str = Query(..., description="Start date (YYYY-MM-DD)"),
+    end_date: str = Query(..., description="End date (YYYY-MM-DD)"),
+    strategy_id: str | None = Query(
+        None, description="Optional strategy UUID for strategy-scoped evaluation"
+    ),
+    benchmark_code: str | None = Query(
+        None, description=f"Optional benchmark code ({sorted(VALID_BENCHMARK_CODES)})"
+    ),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> PaperGoNoGoEvaluationView:
+    """Get Paper Go/No-Go Gate evaluation for an account.
+
+    Aggregates performance, stability and operational-health checks into a
+    single ``GO`` / ``HOLD`` / ``NO_GO`` overall status.
+
+    Parameters
+    ----------
+    account_id:
+        Target account UUID (required).
+    start_date:
+        Start date in ``YYYY-MM-DD`` format (inclusive, required).
+    end_date:
+        End date in ``YYYY-MM-DD`` format (inclusive, required).
+    strategy_id:
+        Optional strategy UUID for strategy-scoped evaluation.
+    benchmark_code:
+        Optional benchmark code (e.g. ``KOSPI``).  When provided, the
+        ``MIN_EXCESS_RETURN`` check is included.
+
+    Returns
+    -------
+    PaperGoNoGoEvaluationView
+        Complete gate evaluation with overall status and individual checks.
+    """
+    # -- Validate account_id --
+    try:
+        aid = UUID(account_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid account_id UUID")
+
+    # -- Validate dates --
+    try:
+        sd = date.fromisoformat(start_date)
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail="Invalid start_date (use YYYY-MM-DD)"
+        )
+    try:
+        ed = date.fromisoformat(end_date)
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail="Invalid end_date (use YYYY-MM-DD)"
+        )
+    if sd > ed:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date must be on or before end_date",
+        )
+
+    # -- Validate optional strategy_id --
+    sid: UUID | None = None
+    if strategy_id is not None:
+        try:
+            sid = UUID(strategy_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid strategy_id UUID")
+
+    # -- Build service --
+    settings = AppSettings()
+    benchmark_price_repo: InMemoryBenchmarkPriceRepository | None = None
+    if benchmark_code is not None:
+        benchmark_price_repo = InMemoryBenchmarkPriceRepository(
+            prices=_DEFAULT_BENCHMARK_PRICES,
+        )
+    service = PaperGateService(
+        repos=repos,
+        settings=settings,
+        benchmark_price_repo=benchmark_price_repo,
+    )
+    evaluation = await service.evaluate(
+        account_id=aid,
+        start_date=sd,
+        end_date=ed,
+        strategy_id=sid,
+        benchmark_code=benchmark_code,
+    )
+    return PaperGoNoGoEvaluationView.model_validate(evaluation)

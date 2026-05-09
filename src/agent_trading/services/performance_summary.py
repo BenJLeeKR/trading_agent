@@ -1,4 +1,9 @@
-"""Paper performance summary service — read-only PnL/equity aggregation.
+"""Performance summary service — read-only PnL/equity aggregation.
+
+**Mode-agnostic**: This module works identically in both paper and live
+modes.  It reads fills, positions, and cash balance from repositories
+without any broker-env-specific logic.  The "Paper" in the legacy filename
+reflects the initial implementation context only.
 
 Pure functions
 ==============

@@ -1,4 +1,4 @@
-# Snapshot Sync Startup Grace Period
+E# Snapshot Sync Startup Grace Period
 
 ## 1. 정책 결정
 

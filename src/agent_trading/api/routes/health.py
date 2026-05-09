@@ -1,4 +1,4 @@
-"""``GET /health`` — minimal server and database status, plus snapshot sync freshness.
+ㅏ"""``GET /health`` — minimal server and database status, plus snapshot sync freshness.
 
 Uses ``request.app.state.runtime_mode`` directly instead of
 ``Depends(get_repos)`` to avoid creating request-scoped Postgres

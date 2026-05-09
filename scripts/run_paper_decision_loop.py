@@ -563,7 +563,22 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Entry point for the paper continuous decision loop."""
+    """Entry point for the continuous decision loop.
+
+    .. note::
+       This script is named ``run_paper_decision_loop`` for historical
+       reasons (it was introduced during the paper-trading milestone),
+       but the core runtime logic is **mode-agnostic**.  The same
+       ``assemble()`` → sizing → submit pipeline works identically
+       for both paper and live modes.  Only the broker credentials /
+       endpoint / rate-limit configuration (driven by ``AppSettings``)
+       differ between environments.
+
+       To switch to live mode, change the following env vars:
+       ``KIS_ENV=live``, ``KIS_APP_KEY`` / ``KIS_APP_SECRET`` for live,
+       ``KIS_ACCOUNT_NUMBER`` for live, ``KIS_BASE_URL`` / ``KIS_WS_URL``
+       for live endpoints, and ``KIS_REAL_REST_RPS`` for live rate limits.
+    """
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] paper-decision-loop: %(message)s",

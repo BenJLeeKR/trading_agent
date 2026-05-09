@@ -1,8 +1,9 @@
 # Paper Benchmark Comparison — 전략/계좌 성과 기준 지수 대비 초과수익 비교
 
-> **상태**: 설계
-> **목표**: paper 운용 성과를 절대 손익/수익률에서 benchmark 대비 상대 평가로 확장
+> **상태**: 설계 — **mode-agnostic**
+> **목표**: paper/live 모두에서 benchmark 대비 상대 평가를 제공
 > **제약**: 단일 benchmark 대비 read-only comparison에 집중, 기존 endpoint 의미 변경 금지
+> **mode-agnostic**: 이 모듈은 paper/live 모두에서 동일하게 동작합니다. broker env와 무관하게 repository의 fill/position 데이터를 읽어 benchmark 비교를 수행합니다.
 
 ---
 

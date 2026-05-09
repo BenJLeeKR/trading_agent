@@ -1,4 +1,9 @@
-"""Paper benchmark comparison service — portfolio vs benchmark excess return.
+"""Benchmark comparison service — portfolio vs benchmark excess return.
+
+**Mode-agnostic**: This module works identically in both paper and live
+modes.  It reads performance data from repositories and compares against
+benchmark price series without any broker-env-specific logic.  The "Paper"
+in the legacy filename reflects the initial implementation context only.
 
 Pure function
 =============

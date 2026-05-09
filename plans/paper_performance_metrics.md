@@ -1,8 +1,9 @@
 # Paper Performance Metrics — 설계 문서
 
-> **상태**: ✅ 구현 완료 (2026-05-09)
+> **상태**: ✅ 구현 완료 (2026-05-09) — **mode-agnostic**
 > **변경 파일**: [`performance_summary.py`](src/agent_trading/services/performance_summary.py), [`schemas.py`](src/agent_trading/api/schemas.py), [`routes/performance.py`](src/agent_trading/api/routes/performance.py), [`test_performance_summary.py`](tests/services/test_performance_summary.py), [`BACKLOG.md`](plans/BACKLOG.md)
 > **테스트 결과**: 44/44 (performance_summary) + 86/86 (performance_summary + inspection) 통과
+> **mode-agnostic**: 이 모듈은 paper/live 모두에서 동일하게 동작합니다. broker env와 무관하게 repository의 fill/position/cash 데이터만 읽어 성과 지표를 계산합니다.
 
 ## 1. Metrics Source Inventory
 
