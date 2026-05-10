@@ -87,6 +87,37 @@ def _env(**kwargs: object) -> object:
                 os.environ[env_key] = old_value
 
 
+def _add_equity_snapshots(repos: RepositoryContainer) -> None:
+    """Add cash snapshots to create sufficient equity history for risk metric computation.
+
+    The original ``_seed_base()`` creates only 1 cash snapshot (at ``_NOW - 1day``).
+    With BUY-only orders, this produces 0 starting equity and only 1 valid daily
+    return → ``_calc_sharpe_sortino()`` returns ``(None, None)`` → risk check
+    methods return ``WARN``.
+
+    This helper adds snapshots before the range start (for starting_equity ≠ 0)
+    and during the range (for ≥2 daily returns), producing valid Sharpe/Sortino/
+    Calmar ratios when combined with the original ``_seed_base()`` snapshot.
+    """
+    snapshots: list[tuple[datetime, str]] = [
+        (_NOW - timedelta(days=9), "10000000"),  # Apr 29: starting_equity
+        (_NOW - timedelta(days=7), "10000000"),  # May 1: range start
+        (_NOW - timedelta(days=4), "9500000"),   # May 4: equity decline
+        (_NOW - timedelta(days=2), "9200000"),   # May 6: further decline
+    ]
+    for ts, cash in snapshots:
+        repos.cash_balance_snapshots._items[uuid4()] = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=_ACCOUNT_ID,
+            currency="KRW",
+            available_cash=Decimal(cash),
+            settled_cash=Decimal(cash),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="test",
+            snapshot_at=ts,
+        )
+
+
 def _seed_base(repos: RepositoryContainer) -> None:
     """Seed minimal reference data (client, account, strategy, cash/position)."""
     # Client
@@ -297,19 +328,28 @@ class TestPaperGateService:
         """모든 지표가 threshold 충족 → GO."""
         repos = build_in_memory_repositories()
         _seed_base(repos)
+        _add_equity_snapshots(repos)
         # 3 filled orders (meets min_filled_orders=3 default)
         _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=3))
         _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=2))
         _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=1))
         _add_fresh_sync_run(repos)
 
-        settings = AppSettings()
-        service = PaperGateService(repos, settings=settings)
-        evaluation = await service.evaluate(
-            account_id=_ACCOUNT_ID,
-            start_date=_START,
-            end_date=_END,
-        )
+        # BUY orders create negative equity returns → negative return & risk metrics.
+        # Override thresholds to -99 so they all PASS (test goal is GO).
+        with _env(
+            MIN_RETURN_PCT="-99",
+            MIN_SHARPE_RATIO="-99",
+            MIN_SORTINO_RATIO="-99",
+            MIN_CALMAR_RATIO="-99",
+        ):
+            settings = AppSettings()
+            service = PaperGateService(repos, settings=settings)
+            evaluation = await service.evaluate(
+                account_id=_ACCOUNT_ID,
+                start_date=_START,
+                end_date=_END,
+            )
 
         assert isinstance(evaluation, PaperGoNoGoEvaluation)
         assert evaluation.overall_status == OverallStatus.GO
@@ -472,18 +512,20 @@ class TestPaperGateService:
         benchmark_repo = InMemoryBenchmarkPriceRepository(
             prices=_DEFAULT_BENCHMARK_PRICES,
         )
-        settings = AppSettings()
-        service = PaperGateService(
-            repos=repos,
-            settings=settings,
-            benchmark_price_repo=benchmark_repo,
-        )
-        evaluation = await service.evaluate(
-            account_id=_ACCOUNT_ID,
-            start_date=_START,
-            end_date=_END,
-            benchmark_code=BENCHMARK_KOSPI,
-        )
+        # BUY orders → negative risk metrics; override to PASS for this test.
+        with _env(MIN_SHARPE_RATIO="-99", MIN_SORTINO_RATIO="-99", MIN_CALMAR_RATIO="-99"):
+            settings = AppSettings()
+            service = PaperGateService(
+                repos=repos,
+                settings=settings,
+                benchmark_price_repo=benchmark_repo,
+            )
+            evaluation = await service.evaluate(
+                account_id=_ACCOUNT_ID,
+                start_date=_START,
+                end_date=_END,
+                benchmark_code=BENCHMARK_KOSPI,
+            )
 
         # MIN_EXCESS_RETURN should be present
         codes = {c.code for c in evaluation.checks}
@@ -505,16 +547,101 @@ class TestPaperGateService:
         _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=3))
         _add_fresh_sync_run(repos)
 
-        settings = AppSettings()
-        service = PaperGateService(repos, settings=settings)
-        evaluation = await service.evaluate(
-            account_id=_ACCOUNT_ID,
-            start_date=_START,
-            end_date=_END,
-            # No benchmark_code
-        )
+        # BUY orders → negative risk metrics; override to PASS for this test.
+        with _env(MIN_SHARPE_RATIO="-99", MIN_SORTINO_RATIO="-99", MIN_CALMAR_RATIO="-99"):
+            settings = AppSettings()
+            service = PaperGateService(repos, settings=settings)
+            evaluation = await service.evaluate(
+                account_id=_ACCOUNT_ID,
+                start_date=_START,
+                end_date=_END,
+                # No benchmark_code
+            )
 
         codes = {c.code for c in evaluation.checks}
         assert "MIN_EXCESS_RETURN" not in codes, (
             f"Expected no MIN_EXCESS_RETURN check, got codes={codes}"
         )
+
+    # ------------------------------------------------------------------
+    # 8. Risk metrics below threshold → WARN (new)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_risk_metrics_warn_below_threshold(self) -> None:
+        """Sharpe/Sortino/Calmar가 threshold 미달 → 3개 WARN, overall HOLD."""
+        repos = build_in_memory_repositories()
+        _seed_base(repos)
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=3))
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=2))
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=1))
+        _add_fresh_sync_run(repos)
+
+        # MIN_RETURN would FAIL with negative return; override to -99 so risk metrics
+        # are the only source of WARN.  Risk threshold defaults to 0.0 → negative
+        # sharpe/sortino/calmar all trigger WARN.
+        with _env(MIN_RETURN_PCT="-99"):
+            settings = AppSettings()
+            service = PaperGateService(repos, settings=settings)
+            evaluation = await service.evaluate(
+                account_id=_ACCOUNT_ID,
+                start_date=_START,
+                end_date=_END,
+            )
+
+        assert evaluation.overall_status == OverallStatus.HOLD
+
+        # Verify 3 risk metrics are all WARN
+        risk_codes = {"MIN_SHARPE_RATIO", "MIN_SORTINO_RATIO", "MIN_CALMAR_RATIO"}
+        for code in risk_codes:
+            check = next(c for c in evaluation.checks if c.code == code)
+            assert check.status == GateStatus.WARN, (
+                f"{code} should be WARN, got {check.status}: {check.message}"
+            )
+
+        # Verify no FAIL checks
+        assert not any(c.status == GateStatus.FAIL for c in evaluation.checks)
+
+        # Verify total WARN count is at least 3 (risk metrics)
+        warn_count = sum(1 for c in evaluation.checks if c.status == GateStatus.WARN)
+        assert warn_count >= 3, f"Expected >=3 WARNs, got {warn_count}"
+
+    # ------------------------------------------------------------------
+    # 9. Risk metrics above threshold → PASS (new)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_risk_metrics_pass_when_above_threshold(self) -> None:
+        """Risk-adjusted threshold 매우 낮음 → risk check 3개 모두 PASS, overall GO."""
+        repos = build_in_memory_repositories()
+        _seed_base(repos)
+        _add_equity_snapshots(repos)
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=3))
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=2))
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=1))
+        _add_fresh_sync_run(repos)
+
+        # Override thresholds so all 11 checks PASS (test goal is GO).
+        with _env(
+            MIN_RETURN_PCT="-99",
+            MIN_SHARPE_RATIO="-99",
+            MIN_SORTINO_RATIO="-99",
+            MIN_CALMAR_RATIO="-99",
+        ):
+            settings = AppSettings()
+            service = PaperGateService(repos, settings=settings)
+            evaluation = await service.evaluate(
+                account_id=_ACCOUNT_ID,
+                start_date=_START,
+                end_date=_END,
+            )
+
+        assert evaluation.overall_status == OverallStatus.GO
+
+        # Verify risk checks are all PASS
+        risk_codes = {"MIN_SHARPE_RATIO", "MIN_SORTINO_RATIO", "MIN_CALMAR_RATIO"}
+        for code in risk_codes:
+            check = next(c for c in evaluation.checks if c.code == code)
+            assert check.status == GateStatus.PASS, (
+                f"{code} should be PASS, got {check.status}: {check.message}"
+            )

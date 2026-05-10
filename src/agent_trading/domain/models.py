@@ -221,6 +221,7 @@ class FillEvent:
     fill_quantity: Decimal
     fill_price: Decimal
     fill_timestamp: datetime
+    broker_fill_id: str | None = None  # broker-native fill identifier (e.g. KIS CCLD_NUM)
     fee: Decimal | None = None
     tax: Decimal | None = None
 

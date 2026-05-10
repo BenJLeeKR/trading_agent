@@ -116,6 +116,32 @@ def _manual_checks(*statuses: str) -> list[LiveGateCheck]:
 # ═══════════════════════════════════════════════════════════════════
 
 
+def _add_equity_snapshots(repos: RepositoryContainer) -> None:
+    """Add cash snapshots for sufficient equity history (risk metric computation).
+
+    ``_seed_base()`` creates only 1 cash snapshot, which with BUY-only orders
+    produces 0 starting_equity and <2 daily returns → risk metrics are ``None``.
+    This helper adds snapshots so Sharpe/Sortino/Calmar are valid (non-None).
+    """
+    snapshots: list[tuple[datetime, str]] = [
+        (_NOW - timedelta(days=9), "10000000"),  # Apr 29: starting_equity
+        (_NOW - timedelta(days=7), "10000000"),  # May 1: range start
+        (_NOW - timedelta(days=4), "9500000"),   # May 4: equity decline
+        (_NOW - timedelta(days=2), "9200000"),   # May 6: further decline
+    ]
+    for ts, cash in snapshots:
+        repos.cash_balance_snapshots._items[uuid4()] = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=_ACCOUNT_ID,
+            currency="KRW",
+            available_cash=Decimal(cash),
+            settled_cash=Decimal(cash),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="test",
+            snapshot_at=ts,
+        )
+
+
 def _seed_base(repos: RepositoryContainer) -> None:
     """Seed minimal reference data (client, account, strategy, cash/position snapshots)."""
     repos.clients._items[_CLIENT_ID] = ClientEntity(
@@ -309,6 +335,7 @@ class TestLiveGateEvaluator:
         """12건 체결 + fresh sync → Paper PASS, live auto 평가 정상 동작 확인."""
         repos = build_in_memory_repositories()
         _seed_base(repos)
+        _add_equity_snapshots(repos)
         for _ in range(12):
             _add_filled_order(repos)
 
@@ -441,7 +468,11 @@ class TestLiveGateEvaluator:
         assert "manual_checks" in doc["live_gate"]
         assert "auto_summary" in doc["live_gate"]
         assert "manual_summary" in doc["live_gate"]
-        assert len(doc["live_gate"]["auto_checks"]) == 8
+        # 8 original + 3 risk-adjusted display-only = 11
+        assert len(doc["live_gate"]["auto_checks"]) == 11, (
+            f"Expected 11 auto checks (8 original + 3 risk-adjusted display-only), "
+            f"got {len(doc['live_gate']['auto_checks'])}"
+        )
         assert len(doc["live_gate"]["manual_checks"]) == 6
 
     @pytest.mark.asyncio
@@ -468,3 +499,71 @@ class TestLiveGateEvaluator:
             "LG_MANUAL_FINAL_DECISION",
         ]
         assert codes == expected, f"Unexpected codes: {codes}"
+
+    # ------------------------------------------------------------------
+    # 4. Live auto에 display-only risk check 포함 (new)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_live_auto_includes_risk_checks(self) -> None:
+        """evaluate_live_auto() 결과에 LG_SHARPE_RATIO/LG_SORTINO_RATIO/LG_CALMAR_RATIO 포함, 모두 PASS."""
+        repos = build_in_memory_repositories()
+        _seed_base(repos)
+        for _ in range(12):
+            _add_filled_order(repos)
+
+        evaluator = _build_evaluator(repos)
+
+        live_checks = await evaluator.evaluate_live_auto(
+            account_id=_ACCOUNT_ID,
+            start_date=_START,
+            end_date=_END,
+        )
+
+        codes = {c.code for c in live_checks}
+        for code in ("LG_SHARPE_RATIO", "LG_SORTINO_RATIO", "LG_CALMAR_RATIO"):
+            assert code in codes, f"Expected {code} in live auto checks, got codes={codes}"
+
+        # All risk checks must be PASS (display-only)
+        for code in ("LG_SHARPE_RATIO", "LG_SORTINO_RATIO", "LG_CALMAR_RATIO"):
+            check = next(c for c in live_checks if c.code == code)
+            assert check.status == "PASS", (
+                f"{code} should be PASS (display-only), got {check.status}"
+            )
+            assert check.threshold == "N/A", (
+                f"{code} threshold should be N/A (no env var), got {check.threshold}"
+            )
+
+    # ------------------------------------------------------------------
+    # 5. Risk check always PASS → overall decision 영향 없음 (new)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_risk_checks_not_affect_overall(self) -> None:
+        """Display-only risk check가 overall decision logic에 영향 없음."""
+        # Use _determine_overall unit test:
+        # auto checks: 8 original all PASS + 3 risk display-only PASS
+        # manual: all PENDING
+        # → overall should be HOLD (manual PENDING), same as without risk checks
+
+        auto_codes = [
+            "LG_FILLED_ORDERS", "LG_MAX_DRAWDOWN", "LG_EXCESS_RETURN",
+            "LG_WIN_RATE", "LG_RECENT_RECONCILE", "LG_RECENT_BLOCKING_LOCKS",
+            "LG_READYZ", "LG_POST_SUBMIT_SYNC",
+            "LG_SHARPE_RATIO", "LG_SORTINO_RATIO", "LG_CALMAR_RATIO",
+        ]
+        auto_checks = [
+            _make_check(code, "auto", "PASS") for code in auto_codes
+        ]
+        manual_checks = _manual_checks("PENDING")
+
+        overall, reason = LiveGateEvaluator._determine_overall(
+            paper_exit_status="PASS",
+            live_checks=auto_checks,
+            manual_checks=manual_checks,
+        )
+
+        # With manual PENDING + all auto PASS → overall HOLD
+        # Same behavior as without risk checks (they are all PASS)
+        assert overall == "HOLD", f"Expected HOLD, got {overall}"
+        assert "수동" in reason

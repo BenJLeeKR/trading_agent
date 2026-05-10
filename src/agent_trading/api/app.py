@@ -189,7 +189,7 @@ def create_app(
         decisions_router,
     ]
 
-    # Phase 2 routers
+    # Phase 2 routers (Milestone 6 — account/client/instrument inspection)
     from agent_trading.api.routes.accounts import router as accounts_router
     from agent_trading.api.routes.instruments import router as instruments_router
     from agent_trading.api.routes.positions import router as positions_router
@@ -197,6 +197,18 @@ def create_app(
 
     protected_routers.extend(
         [accounts_router, instruments_router, positions_router, clients_router]
+    )
+
+    # Phase 2b — Guardrail evaluation & risk limit snapshot inspection
+    from agent_trading.api.routes.guardrail_evaluations import (
+        router as guardrail_evaluations_router,
+    )
+    from agent_trading.api.routes.risk_limit_snapshots import (
+        router as risk_limit_snapshots_router,
+    )
+
+    protected_routers.extend(
+        [guardrail_evaluations_router, risk_limit_snapshots_router]
     )
 
     # Phase 3 — Agent Run inspection

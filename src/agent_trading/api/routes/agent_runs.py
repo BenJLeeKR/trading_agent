@@ -1,4 +1,4 @@
-"""Agent run inspection endpoint: ``GET /agent-runs``.
+"""Agent run inspection endpoints: ``GET /agent-runs``, ``GET /agent-runs/{id}``.
 
 Returns AI Agent execution run records, optionally filtered by
 ``decision_context_id``.
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
 from agent_trading.api.deps import get_repos
 from agent_trading.api.schemas import AgentRunResponse
@@ -60,3 +60,15 @@ async def list_agent_runs(
         runs = await repos.agent_runs.list_all()
 
     return [_to_response(r) for r in runs]
+
+
+@router.get("/agent-runs/{agent_run_id}", response_model=AgentRunResponse)
+async def get_agent_run(
+    agent_run_id: UUID = Path(..., description="Agent run UUID"),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> AgentRunResponse:
+    """Get a single agent run by its UUID."""
+    run = await repos.agent_runs.get(agent_run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Agent run not found")
+    return _to_response(run)

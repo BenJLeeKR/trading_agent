@@ -69,6 +69,32 @@ _END = date(2026, 5, 8)
 # ═══════════════════════════════════════════════════════════════════
 
 
+def _add_equity_snapshots(repos: RepositoryContainer) -> None:
+    """Add cash snapshots for sufficient equity history (risk metric computation).
+
+    ``_seed_base()`` creates only 1 cash snapshot, which with BUY-only orders
+    produces 0 starting_equity and <2 daily returns → risk metrics are ``None``.
+    This helper adds snapshots so Sharpe/Sortino/Calmar are valid (non-None).
+    """
+    snapshots: list[tuple[datetime, str]] = [
+        (_NOW - timedelta(days=9), "10000000"),  # Apr 29: starting_equity
+        (_NOW - timedelta(days=7), "10000000"),  # May 1: range start
+        (_NOW - timedelta(days=4), "9500000"),   # May 4: equity decline
+        (_NOW - timedelta(days=2), "9200000"),   # May 6: further decline
+    ]
+    for ts, cash in snapshots:
+        repos.cash_balance_snapshots._items[uuid4()] = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=_ACCOUNT_ID,
+            currency="KRW",
+            available_cash=Decimal(cash),
+            settled_cash=Decimal(cash),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="test",
+            snapshot_at=ts,
+        )
+
+
 def _seed_base(repos: RepositoryContainer) -> None:
     """Seed minimal reference data."""
     repos.clients._items[_CLIENT_ID] = ClientEntity(
@@ -238,6 +264,7 @@ class TestPaperExitEvaluator:
         """모든 지표 양호, Gate GO, semi not_run → HOLD (수동 대기)"""
         repos = build_in_memory_repositories()
         _seed_base(repos)
+        _add_equity_snapshots(repos)
         _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=3))
         _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=2))
         _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=1))
@@ -287,6 +314,7 @@ class TestPaperExitEvaluator:
         """Layer A는 PASS, Layer B에 FAIL → HOLD"""
         repos = build_in_memory_repositories()
         _seed_base(repos)
+        _add_equity_snapshots(repos)
         _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=3))
         _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=2))
         _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=1))
@@ -697,3 +725,37 @@ class TestPaperExitEvaluator:
         # READYZ_ENDPOINT should be WARN (degraded → HOLD)
         readyz = next(c for c in auto.checks if c.code == "READYZ_ENDPOINT")
         assert readyz.status == "WARN", f"Expected WARN, got {readyz.status}"
+
+    # ------------------------------------------------------------------
+    # 9. Layer A 자동 확장 — risk-adjusted check 포함 (new)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_auto_includes_risk_checks(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """evaluate_auto() 결과에 MIN_SHARPE_RATIO/MIN_SORTINO_RATIO/MIN_CALMAR_RATIO 포함"""
+        repos = build_in_memory_repositories()
+        _seed_base(repos)
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=3))
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=2))
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=1))
+        _add_fresh_sync_run(repos)
+
+        # BUY orders → negative risk metrics; override thresholds so they PASS
+        monkeypatch.setenv("PAPER_GATE_MIN_SHARPE_RATIO", "-99")
+        monkeypatch.setenv("PAPER_GATE_MIN_SORTINO_RATIO", "-99")
+        monkeypatch.setenv("PAPER_GATE_MIN_CALMAR_RATIO", "-99")
+
+        settings = AppSettings()
+        evaluator = PaperExitEvaluator(repos=repos, settings=settings)
+
+        auto = await evaluator.evaluate_auto(
+            account_id=_ACCOUNT_ID,
+            start_date=_START,
+            end_date=_END,
+        )
+
+        codes = {c.code for c in auto.checks}
+        for code in ("MIN_SHARPE_RATIO", "MIN_SORTINO_RATIO", "MIN_CALMAR_RATIO"):
+            assert code in codes, (
+                f"Expected {code} in Layer A checks, got codes={codes}"
+            )

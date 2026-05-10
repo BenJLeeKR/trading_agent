@@ -19,10 +19,12 @@ from agent_trading.api.deps import get_repos
 from agent_trading.api.schemas import (
     AccountPerformanceSummaryView,
     BenchmarkComparisonView,
+    BenchmarkHistoryResponse,
     DailyPerformancePointView,
     PaperGoNoGoEvaluationView,
     PerformanceHistoryResponse,
     PerformanceMetricsView,
+    RelativeBenchmarkPointView,
     StrategyPerformanceSummaryView,
 )
 from agent_trading.config.settings import AppSettings
@@ -349,6 +351,119 @@ async def get_performance_benchmark(
     )
 
     return BenchmarkComparisonView.model_validate(comparison)
+
+
+@router.get(
+    "/performance-benchmark-history",
+    response_model=BenchmarkHistoryResponse,
+)
+async def get_performance_benchmark_history(
+    account_id: str = Query(..., description="Account UUID"),
+    start_date: str = Query(..., description="Start date (YYYY-MM-DD)"),
+    end_date: str = Query(..., description="End date (YYYY-MM-DD)"),
+    benchmark_code: str = Query(
+        default=BENCHMARK_KOSPI,
+        description=f"Benchmark code ({sorted(VALID_BENCHMARK_CODES)}). Default: {BENCHMARK_KOSPI}",
+    ),
+    strategy_id: str | None = Query(
+        None, description="Optional strategy UUID for strategy-scoped history"
+    ),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> BenchmarkHistoryResponse:
+    """Get daily portfolio vs benchmark relative performance history.
+
+    Returns a time-series of daily relative performance points from
+    ``start_date`` to ``end_date`` (inclusive).  Each point includes
+    portfolio/benchmark cumulative return, drawdown, excess return, and
+    outperformance streak.
+
+    Parameters
+    ----------
+    account_id:
+        Target account UUID (required).
+    start_date:
+        Start date in ``YYYY-MM-DD`` format (inclusive, required).
+    end_date:
+        End date in ``YYYY-MM-DD`` format (inclusive, required).
+    benchmark_code:
+        Target benchmark code.  Defaults to ``KOSPI``.
+    strategy_id:
+        Optional strategy UUID.  When provided, portfolio metrics are
+        scoped to that strategy's orders.
+
+    Returns
+    -------
+    BenchmarkHistoryResponse
+        Time-series of daily relative performance points.
+    """
+    # -- Validate account_id --
+    try:
+        aid = UUID(account_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid account_id UUID")
+
+    # -- Validate dates --
+    try:
+        sd = date.fromisoformat(start_date)
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail="Invalid start_date (use YYYY-MM-DD)"
+        )
+
+    try:
+        ed = date.fromisoformat(end_date)
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail="Invalid end_date (use YYYY-MM-DD)"
+        )
+
+    if sd > ed:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date must be on or before end_date",
+        )
+
+    # -- Validate benchmark_code --
+    if benchmark_code not in VALID_BENCHMARK_CODES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid benchmark_code={benchmark_code!r}. "
+            f"Valid codes: {sorted(VALID_BENCHMARK_CODES)}",
+        )
+
+    # -- Validate optional strategy_id --
+    sid: UUID | None = None
+    if strategy_id is not None:
+        try:
+            sid = UUID(strategy_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid strategy_id UUID")
+
+    # -- Build service with in-memory benchmark price repo --
+    benchmark_price_repo = InMemoryBenchmarkPriceRepository(
+        prices=_DEFAULT_BENCHMARK_PRICES,
+    )
+    service = BenchmarkComparisonService(
+        repos=repos,
+        benchmark_price_repo=benchmark_price_repo,
+    )
+    points = await service.get_benchmark_daily_history(
+        account_id=aid,
+        start_date=sd,
+        end_date=ed,
+        benchmark_code=benchmark_code,
+        strategy_id=sid,
+    )
+
+    return BenchmarkHistoryResponse(
+        account_id=account_id,
+        start_date=sd,
+        end_date=ed,
+        strategy_id=strategy_id,
+        benchmark_code=benchmark_code,
+        total_days=len(points),
+        points=[RelativeBenchmarkPointView.model_validate(p) for p in points],
+    )
 
 
 @router.get(

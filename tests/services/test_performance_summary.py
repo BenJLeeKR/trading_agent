@@ -51,6 +51,7 @@ from agent_trading.services.performance_summary import (
     StrategyPerformanceSummary,
     _calc_equity_metrics,
     _calc_per_fill_pnl,
+    _calc_sharpe_sortino,
     _calc_win_loss_metrics,
     _latest_cash_on_or_before,
     _latest_positions_on_or_before,
@@ -1181,6 +1182,87 @@ class TestCalcWinLossMetrics:
         assert pf is None
 
 
+class TestCalcSharpeSortino:
+    """``_calc_sharpe_sortino()`` — Sharpe/Sortino 순수 함수 검증."""
+
+    def test_mixed_returns(self) -> None:
+        """양수/음수 혼합 → sharpe/sortino 모두 정상 계산."""
+        points = [
+            DailyPerformancePoint(date(2026, 5, 1), Decimal("0"), Decimal("0"), None, None, None, Decimal("100")),
+            DailyPerformancePoint(date(2026, 5, 2), Decimal("0"), Decimal("0"), None, None, None, Decimal("101")),
+            DailyPerformancePoint(date(2026, 5, 3), Decimal("0"), Decimal("0"), None, None, None, Decimal("99")),
+            DailyPerformancePoint(date(2026, 5, 4), Decimal("0"), Decimal("0"), None, None, None, Decimal("102")),
+            DailyPerformancePoint(date(2026, 5, 5), Decimal("0"), Decimal("0"), None, None, None, Decimal("98")),
+        ]
+        # returns: +1%, -1.98%, +3.03%, -3.92%
+        # downside: -1.98%, -3.92% → 2개 → Sortino 계산 가능
+        sharpe, sortino = _calc_sharpe_sortino(points)
+        assert sharpe is not None
+        assert sortino is not None
+        # mean return negative (overall declining) → both negative
+        assert sortino < 0
+        assert sharpe < 0
+
+    def test_all_positive_returns(self) -> None:
+        """모든 수익률 양수 → downside=0 → sortino=None."""
+        points = [
+            DailyPerformancePoint(date(2026, 5, 1), Decimal("0"), Decimal("0"), None, None, None, Decimal("100")),
+            DailyPerformancePoint(date(2026, 5, 2), Decimal("0"), Decimal("0"), None, None, None, Decimal("101")),
+            DailyPerformancePoint(date(2026, 5, 3), Decimal("0"), Decimal("0"), None, None, None, Decimal("102")),
+            DailyPerformancePoint(date(2026, 5, 4), Decimal("0"), Decimal("0"), None, None, None, Decimal("103")),
+        ]
+        sharpe, sortino = _calc_sharpe_sortino(points)
+        assert sharpe is not None
+        assert sortino is None  # downside_dev=0
+
+    def test_all_same_returns(self) -> None:
+        """모든 수익률 동일 → stddev=0 → sharpe=None, sortino=None."""
+        points = [
+            DailyPerformancePoint(date(2026, 5, 1), Decimal("0"), Decimal("0"), None, None, None, Decimal("100")),
+            DailyPerformancePoint(date(2026, 5, 2), Decimal("0"), Decimal("0"), None, None, None, Decimal("200")),
+            DailyPerformancePoint(date(2026, 5, 3), Decimal("0"), Decimal("0"), None, None, None, Decimal("400")),
+        ]
+        # returns: +100%, +100% → identical → stddev=0
+        sharpe, sortino = _calc_sharpe_sortino(points)
+        assert sharpe is None   # stddev=0
+        assert sortino is None  # downside_dev=0
+
+    def test_single_valid_return(self) -> None:
+        """1개 return만 (< 2) → (None, None)."""
+        points = [
+            DailyPerformancePoint(date(2026, 5, 1), Decimal("0"), Decimal("0"), None, None, None, Decimal("100")),
+            DailyPerformancePoint(date(2026, 5, 2), Decimal("0"), Decimal("0"), None, None, None, Decimal("101")),
+        ]
+        sharpe, sortino = _calc_sharpe_sortino(points)
+        assert sharpe is None
+        assert sortino is None
+
+    def test_insufficient_data(self) -> None:
+        """0개 return (모두 None equity) → (None, None)."""
+        points = [
+            DailyPerformancePoint(date(2026, 5, 1), Decimal("0"), Decimal("0"), None, None, None, None),
+            DailyPerformancePoint(date(2026, 5, 2), Decimal("0"), Decimal("0"), None, None, None, None),
+        ]
+        sharpe, sortino = _calc_sharpe_sortino(points)
+        assert sharpe is None
+        assert sortino is None
+
+    def test_mixed_negative_heavy(self) -> None:
+        """음수 수익률이 많은 경우 → sharpe/sortino 모두 음수 가능."""
+        points = [
+            DailyPerformancePoint(date(2026, 5, 1), Decimal("0"), Decimal("0"), None, None, None, Decimal("100")),
+            DailyPerformancePoint(date(2026, 5, 2), Decimal("0"), Decimal("0"), None, None, None, Decimal("98")),
+            DailyPerformancePoint(date(2026, 5, 3), Decimal("0"), Decimal("0"), None, None, None, Decimal("99")),
+            DailyPerformancePoint(date(2026, 5, 4), Decimal("0"), Decimal("0"), None, None, None, Decimal("103")),
+            DailyPerformancePoint(date(2026, 5, 5), Decimal("0"), Decimal("0"), None, None, None, Decimal("98.5")),
+        ]
+        sharpe, sortino = _calc_sharpe_sortino(points)
+        # 4 returns: -2%, +1.02%, +4.04%, -4.37% → mean likely positive, but negative heavy
+        # We just verify both are computed (not None)
+        assert sharpe is not None
+        assert sortino is not None
+
+
 # ---------------------------------------------------------------------------
 # TestGetPerformanceMetrics
 # ---------------------------------------------------------------------------
@@ -1395,3 +1477,121 @@ class TestGetPerformanceMetrics:
             assert metrics.losing_trades == 0
             assert metrics.cumulative_realized_pnl == Decimal("550000")
             assert metrics.win_rate == Decimal("100.0")
+
+    @pytest.mark.asyncio
+    async def test_basic_risk_metrics(self) -> None:
+        """equity 변화 다양 + FILLED order → sharpe/sortino/calmar 모두 정상 계산."""
+        async with _setup_service() as service:
+            repos = service._repos
+            d1 = date(2026, 5, 1)
+            d2 = date(2026, 5, 5)
+            ts1 = datetime(2026, 5, 1, 10, 0, 0, tzinfo=timezone.utc)
+
+            # Cash snapshot at day before start
+            day_before = d1 - timedelta(days=1)
+            _add_cash_snapshot(repos, "1000000",
+                               snapshot_at=datetime.combine(day_before, datetime.min.time(), tzinfo=timezone.utc))
+
+            # Position snapshot at day before start
+            pos_before = _make_position(quantity="10", average_price="50000", market_price="50000")
+            repos.position_snapshots._items[pos_before.position_snapshot_id] = PositionSnapshotEntity(
+                position_snapshot_id=pos_before.position_snapshot_id,
+                account_id=pos_before.account_id,
+                instrument_id=pos_before.instrument_id,
+                quantity=pos_before.quantity,
+                average_price=pos_before.average_price,
+                market_price=pos_before.market_price,
+                unrealized_pnl=pos_before.unrealized_pnl,
+                source_of_truth=pos_before.source_of_truth,
+                snapshot_at=datetime.combine(day_before, datetime.min.time(), tzinfo=timezone.utc),
+            )
+
+            # Day 1: sell 10 @ 55000 → +550000 → equity up
+            _add_order_with_fills(
+                repos, OrderSide.SELL,
+                fill_price="55000", fill_quantity="10",
+                fill_timestamp=ts1,
+            )
+
+            # Day 2-5: add daily cash snapshots with different equity levels
+            for day_offset in range(5):
+                snap_date = d1 + timedelta(days=day_offset)
+                # Equity varies: 1550000 (day1), 1530000 (day2), 1570000 (day3), 1560000 (day4), 1580000 (day5)
+                cash_vals = ["1550000", "1530000", "1570000", "1560000", "1580000"]
+                _add_cash_snapshot(
+                    repos, cash_vals[day_offset],
+                    snapshot_at=datetime(snap_date.year, snap_date.month, snap_date.day, 15, 30, 0, tzinfo=timezone.utc),
+                )
+
+            metrics = await service.get_performance_metrics(
+                _ACCOUNT_ID,
+                start_date=d1,
+                end_date=d2,
+            )
+
+            # New risk metrics should be present
+            assert metrics.sharpe_ratio is not None
+            assert metrics.sortino_ratio is not None
+            assert metrics.calmar_ratio is not None
+            # Sharpe and Sortino should be positive (equity generally rising)
+            assert metrics.sharpe_ratio > 0
+            assert metrics.sortino_ratio > 0
+            # Calmar: cumulative return positive, max_drawdown positive → ratio positive
+            assert metrics.calmar_ratio > 0
+            # 기존 metrics unchanged
+            assert metrics.total_filled_orders == 1
+            assert metrics.winning_trades == 1
+
+    @pytest.mark.asyncio
+    async def test_flat_equity_risk_metrics(self) -> None:
+        """equity 변동 없음 → stddev=0 → sharpe=None, sortino=None, calmar=None."""
+        async with _setup_service() as service:
+            repos = service._repos
+            d1 = date(2026, 5, 1)
+            d2 = date(2026, 5, 4)
+
+            # Cash snapshot at day before (starting equity)
+            day_before = d1 - timedelta(days=1)
+            _add_cash_snapshot(repos, "1000000",
+                               snapshot_at=datetime.combine(day_before, datetime.min.time(), tzinfo=timezone.utc))
+
+            # All days same equity (no orders → equity stays at 1000000)
+            for day_offset in range(4):
+                snap_date = d1 + timedelta(days=day_offset)
+                _add_cash_snapshot(
+                    repos, "1000000",
+                    snapshot_at=datetime(snap_date.year, snap_date.month, snap_date.day, 15, 30, 0, tzinfo=timezone.utc),
+                )
+
+            metrics = await service.get_performance_metrics(
+                _ACCOUNT_ID,
+                start_date=d1,
+                end_date=d2,
+            )
+
+            # daily_returns all 0 → stddev=0 → sharpe=None, sortino=None
+            assert metrics.sharpe_ratio is None
+            assert metrics.sortino_ratio is None
+            # max_drawdown=0 → calmar=None
+            assert metrics.calmar_ratio is None
+            # no orders → total_filled_orders=0
+            assert metrics.total_filled_orders == 0
+
+    @pytest.mark.asyncio
+    async def test_no_data_risk_metrics(self) -> None:
+        """데이터 없는 계좌 → 모든 신규 field=None."""
+        async with _setup_service() as service:
+            d1 = date(2026, 5, 1)
+            d2 = date(2026, 5, 3)
+
+            metrics = await service.get_performance_metrics(
+                _ACCOUNT_ID,
+                start_date=d1,
+                end_date=d2,
+            )
+
+            assert metrics.sharpe_ratio is None
+            assert metrics.sortino_ratio is None
+            assert metrics.calmar_ratio is None
+            # 기존 metrics still valid (zero-filled)
+            assert metrics.total_filled_orders == 0

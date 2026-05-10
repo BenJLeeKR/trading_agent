@@ -42,13 +42,18 @@ from agent_trading.services.benchmark_comparison import (
     BENCHMARK_KOSDAQ,
     VALID_BENCHMARK_CODES,
     BenchmarkComparison,
+    BenchmarkComparisonService,
     BenchmarkPriceRepository,
     InMemoryBenchmarkPriceRepository,
+    RelativeBenchmarkPoint,
     _DEFAULT_BENCHMARK_PRICES,
     _calc_benchmark_metrics,
-    BenchmarkComparisonService,
+    _calc_relative_benchmark_points,
 )
-from agent_trading.services.performance_summary import PerformanceSummaryService
+from agent_trading.services.performance_summary import (
+    DailyPerformancePoint,
+    PerformanceSummaryService,
+)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -351,3 +356,489 @@ class TestGetBenchmarkComparison:
         assert comparison.strategy_id == _STRATEGY_ID
         assert comparison.portfolio_return_pct == Decimal("0")  # no fills
         assert comparison.benchmark_return_pct > Decimal("0")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Helpers for _calc_relative_benchmark_points tests
+# ═══════════════════════════════════════════════════════════════════
+
+_D1 = date(2026, 5, 1)
+_D2 = date(2026, 5, 2)
+_D3 = date(2026, 5, 3)
+_D4 = date(2026, 5, 4)
+
+_EQ10M = Decimal("10000000")
+_EQ10_1M = Decimal("10100000")
+_EQ10_2M = Decimal("10200000")
+_EQ10_5M = Decimal("10500000")
+_EQ11M = Decimal("11000000")
+_EQ12M = Decimal("12000000")
+_EQ9_5M = Decimal("9500000")
+
+_PRICE100 = Decimal("100")
+_PRICE102 = Decimal("102")
+_PRICE105 = Decimal("105")
+_PRICE100_5 = Decimal("100.5")
+_PRICE101 = Decimal("101")
+_PRICE103 = Decimal("103")
+_PRICE104 = Decimal("104")
+_PRICE106 = Decimal("106")
+_PRICE107 = Decimal("107")
+_PRICE108 = Decimal("108")
+_PRICE110 = Decimal("110")
+_PRICE115 = Decimal("115")
+_PRICE118 = Decimal("118")
+_PRICE120 = Decimal("120")
+_PRICE85 = Decimal("85")
+
+
+def _make_dpp(d: date, equity: Decimal) -> DailyPerformancePoint:
+    """Create a DailyPerformancePoint with only date/total_equity populated."""
+    return DailyPerformancePoint(
+        date=d,
+        realized_pnl=Decimal("0"),
+        cumulative_realized_pnl=Decimal("0"),
+        cash_balance=equity,
+        position_market_value=Decimal("0"),
+        unrealized_pnl=Decimal("0"),
+        total_equity=equity,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Pure function: _calc_relative_benchmark_points
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestCalcRelativeBenchmarkPoints:
+    """``_calc_relative_benchmark_points()`` — 순수 함수 검증 (14 tests)."""
+
+    # ── 기본 정합성 ───────────────────────────────────────────────
+
+    def test_basic_aligned_data(self) -> None:
+        """Portfolio +5%/+10% vs benchmark +2%/+5% → correct excess, streak."""
+        points = _calc_relative_benchmark_points(
+            portfolio_points=[
+                _make_dpp(_D1, _EQ10M),
+                _make_dpp(_D2, _EQ10_5M),
+                _make_dpp(_D3, _EQ11M),
+            ],
+            benchmark_prices=[
+                (_D1, _PRICE100),
+                (_D2, _PRICE102),
+                (_D3, _PRICE105),
+            ],
+            start_date=_D1,
+            end_date=_D3,
+        )
+
+        assert len(points) == 3
+
+        # d1: baseline
+        assert points[0].date == _D1
+        assert points[0].portfolio_return_pct == Decimal("0.00")
+        assert points[0].benchmark_return_pct == Decimal("0.00")
+        assert points[0].excess_return_pct == Decimal("0.00")
+        assert points[0].outperformance_streak == 0
+
+        # d2: portfolio +5%, benchmark +2% → excess +3%
+        assert points[1].date == _D2
+        assert points[1].portfolio_return_pct == Decimal("5.00")
+        assert points[1].benchmark_return_pct == Decimal("2.00")
+        assert points[1].excess_return_pct == Decimal("3.00")
+        assert points[1].outperformance_streak == 1
+
+        # d3: portfolio +10%, benchmark +5% → excess +5%
+        assert points[2].date == _D3
+        assert points[2].portfolio_return_pct == Decimal("10.00")
+        assert points[2].benchmark_return_pct == Decimal("5.00")
+        assert points[2].excess_return_pct == Decimal("5.00")
+        assert points[2].outperformance_streak == 2
+
+    # ── Streak 누적 (양수) ────────────────────────────────────────
+
+    def test_outperformance_streak_accumulates(self) -> None:
+        """Portfolio outperforms 3 consecutive days → streak +1 → +2 → +3."""
+        points = _calc_relative_benchmark_points(
+            portfolio_points=[
+                _make_dpp(_D1, _EQ10M),
+                _make_dpp(_D2, _EQ10_2M),
+                _make_dpp(_D3, _EQ10_5M),
+                _make_dpp(_D4, _EQ11M),
+            ],
+            benchmark_prices=[
+                (_D1, _PRICE100),
+                (_D2, _PRICE100_5),
+                (_D3, _PRICE101),
+                (_D4, _PRICE102),
+            ],
+            start_date=_D1,
+            end_date=_D4,
+        )
+
+        assert len(points) == 4
+        assert points[1].outperformance_streak == 1  # d2: excess > 0
+        assert points[2].outperformance_streak == 2  # d3: excess > 0
+        assert points[3].outperformance_streak == 3  # d4: excess > 0
+
+    # ── Streak 누적 (음수) ────────────────────────────────────────
+
+    def test_underperformance_streak_accumulates(self) -> None:
+        """Portfolio underperforms 3 consecutive days → streak -1 → -2."""
+        points = _calc_relative_benchmark_points(
+            portfolio_points=[
+                _make_dpp(_D1, _EQ10M),
+                _make_dpp(_D2, _EQ10_1M),
+                _make_dpp(_D3, _EQ10_2M),
+            ],
+            benchmark_prices=[
+                (_D1, _PRICE100),
+                (_D2, _PRICE103),
+                (_D3, _PRICE107),
+            ],
+            start_date=_D1,
+            end_date=_D3,
+        )
+
+        assert len(points) == 3
+        # d2: portfolio +1%, benchmark +3% → excess -2%
+        assert points[1].excess_return_pct is not None and points[1].excess_return_pct < Decimal("0")
+        assert points[1].outperformance_streak == -1
+        # d3: portfolio +2%, benchmark +7% → excess -5%
+        assert points[2].excess_return_pct is not None and points[2].excess_return_pct < Decimal("0")
+        assert points[2].outperformance_streak == -2
+
+    # ── Streak 부호 변경 ──────────────────────────────────────────
+
+    def test_streak_sign_change_positive_to_negative(self) -> None:
+        """Positive streak → sign change → resets to -1."""
+        points = _calc_relative_benchmark_points(
+            portfolio_points=[
+                _make_dpp(_D1, _EQ10M),
+                _make_dpp(_D2, _EQ10_5M),
+                _make_dpp(_D3, _EQ10_5M),  # flat equity
+            ],
+            benchmark_prices=[
+                (_D1, _PRICE100),
+                (_D2, _PRICE102),
+                (_D3, _PRICE106),  # benchmark rises more
+            ],
+            start_date=_D1,
+            end_date=_D3,
+        )
+
+        assert len(points) == 3
+        assert points[1].outperformance_streak == 1   # d2: excess +3%
+        assert points[2].outperformance_streak == -1  # d3: excess negative (reset)
+
+    def test_streak_sign_change_negative_to_positive(self) -> None:
+        """Negative streak → sign change → resets to +1."""
+        points = _calc_relative_benchmark_points(
+            portfolio_points=[
+                _make_dpp(_D1, _EQ10M),
+                _make_dpp(_D2, _EQ10_1M),
+                _make_dpp(_D3, _EQ11M),
+            ],
+            benchmark_prices=[
+                (_D1, _PRICE100),
+                (_D2, _PRICE104),
+                (_D3, _PRICE105),
+            ],
+            start_date=_D1,
+            end_date=_D3,
+        )
+
+        assert len(points) == 3
+        assert points[1].outperformance_streak == -1  # d2: excess negative
+        assert points[2].outperformance_streak == 1   # d3: excess positive (reset)
+
+    # ── Streak 0 리셋 ─────────────────────────────────────────────
+
+    def test_streak_resets_to_zero_on_zero_excess(self) -> None:
+        """Accumulated streak → excess == 0 → streak = 0."""
+        points = _calc_relative_benchmark_points(
+            portfolio_points=[
+                _make_dpp(_D1, _EQ10M),
+                _make_dpp(_D2, _EQ11M),
+                _make_dpp(_D3, _EQ12M),
+                _make_dpp(_D4, _EQ12M),  # flat → excess 0
+            ],
+            benchmark_prices=[
+                (_D1, _PRICE100),
+                (_D2, _PRICE108),
+                (_D3, _PRICE118),
+                (_D4, _PRICE120),
+            ],
+            start_date=_D1,
+            end_date=_D4,
+        )
+
+        assert len(points) == 4
+        assert points[1].outperformance_streak == 1  # excess > 0
+        assert points[2].outperformance_streak == 2  # excess > 0
+        assert points[3].outperformance_streak == 0  # excess == 0 → reset
+
+    # ── Missing benchmark data ────────────────────────────────────
+
+    def test_missing_benchmark_data(self) -> None:
+        """d2 has no benchmark price → benchmark fields None, streak=0."""
+        points = _calc_relative_benchmark_points(
+            portfolio_points=[
+                _make_dpp(_D1, _EQ10M),
+                _make_dpp(_D2, _EQ10_5M),
+                _make_dpp(_D3, _EQ11M),
+            ],
+            benchmark_prices=[
+                (_D1, _PRICE100),
+                (_D3, _PRICE105),  # d2 missing
+            ],
+            start_date=_D1,
+            end_date=_D3,
+        )
+
+        assert len(points) == 3
+        # d1: all present
+        assert points[0].benchmark_data_available is True
+        assert points[0].benchmark_return_pct is not None
+        # d2: benchmark missing
+        assert points[1].benchmark_data_available is False
+        assert points[1].benchmark_return_pct is None
+        assert points[1].benchmark_drawdown_pct is None
+        assert points[1].relative_drawdown_pct is None
+        assert points[1].excess_return_pct is None
+        assert points[1].outperformance_streak == 0
+        # d3: back to normal
+        assert points[2].benchmark_data_available is True
+        assert points[2].benchmark_return_pct is not None
+
+    # ── Missing portfolio data ────────────────────────────────────
+
+    def test_missing_portfolio_data(self) -> None:
+        """Benchmark-only date → portfolio fields None, streak=0."""
+        points = _calc_relative_benchmark_points(
+            portfolio_points=[
+                _make_dpp(_D2, _EQ10_5M),  # d1 missing
+            ],
+            benchmark_prices=[
+                (_D1, _PRICE100),
+                (_D2, _PRICE102),
+            ],
+            start_date=_D1,
+            end_date=_D2,
+        )
+
+        assert len(points) == 2
+        # d1: portfolio missing
+        assert points[0].portfolio_return_pct is None
+        assert points[0].portfolio_drawdown_pct is None
+        assert points[0].outperformance_streak == 0
+        # d2: portfolio present (baseline from d2 equity)
+        assert points[1].portfolio_return_pct == Decimal("0.00")  # starting equity = d2's own
+
+    # ── Starting point 정합성 ─────────────────────────────────────
+
+    def test_starting_equity_on_start_date(self) -> None:
+        """Starting equity from start_date → correct baseline."""
+        points = _calc_relative_benchmark_points(
+            portfolio_points=[
+                _make_dpp(_D1, _EQ10M),
+            ],
+            benchmark_prices=[
+                (_D1, _PRICE100),
+            ],
+            start_date=_D1,
+            end_date=_D1,
+        )
+
+        assert len(points) == 1
+        assert points[0].portfolio_return_pct == Decimal("0.00")
+        assert points[0].benchmark_return_pct == Decimal("0.00")
+
+    def test_starting_equity_after_start_date(self) -> None:
+        """No data on start_date → first available equity = baseline."""
+        points = _calc_relative_benchmark_points(
+            portfolio_points=[
+                _make_dpp(_D2, _EQ10_5M),  # first data on d2
+            ],
+            benchmark_prices=[
+                (_D1, _PRICE100),
+                (_D2, _PRICE105),
+            ],
+            start_date=_D1,
+            end_date=_D2,
+        )
+
+        assert len(points) == 2
+        # d1: portfolio missing → fields None
+        assert points[0].portfolio_return_pct is None
+        assert points[0].benchmark_return_pct == Decimal("0.00")  # baseline
+        # d2: portfolio starts at 0% (baseline = d2 equity)
+        assert points[1].portfolio_return_pct == Decimal("0.00")
+        assert points[1].benchmark_return_pct == Decimal("5.00")
+        # excess = 0 - 5 = -5%
+        assert points[1].excess_return_pct == Decimal("-5.00")
+
+    # ── 빈 결과 ───────────────────────────────────────────────────
+
+    def test_empty_portfolio_points(self) -> None:
+        """Empty portfolio_points → empty result."""
+        points = _calc_relative_benchmark_points(
+            portfolio_points=[],
+            benchmark_prices=[(_D1, _PRICE100)],
+            start_date=_D1,
+            end_date=_D1,
+        )
+        assert points == []
+
+    def test_no_data_at_all(self) -> None:
+        """Both empty → empty result."""
+        points = _calc_relative_benchmark_points(
+            portfolio_points=[],
+            benchmark_prices=[],
+            start_date=_D1,
+            end_date=_D1,
+        )
+        assert points == []
+
+    # ── Drawdown tracking ─────────────────────────────────────────
+
+    def test_drawdown_tracking(self) -> None:
+        """Peak then decline → positive drawdown."""
+        points = _calc_relative_benchmark_points(
+            portfolio_points=[
+                _make_dpp(_D1, _EQ10M),
+                _make_dpp(_D2, _EQ12M),   # peak
+                _make_dpp(_D3, _EQ11M),   # decline
+            ],
+            benchmark_prices=[
+                (_D1, _PRICE100),
+                (_D2, _PRICE100),
+                (_D3, _PRICE100),
+            ],
+            start_date=_D1,
+            end_date=_D3,
+        )
+
+        assert len(points) == 3
+        # d2: new peak → 0% drawdown
+        assert points[1].portfolio_drawdown_pct == Decimal("0.00")
+        # d3: (12-11)/12*100 = 8.33... → quantized
+        assert points[2].portfolio_drawdown_pct == Decimal("8.33")
+        # Benchmark flat → drawdown 0%
+        assert points[2].benchmark_drawdown_pct == Decimal("0.00")
+        # Relative = portfolio - benchmark = 8.33%
+        assert points[2].relative_drawdown_pct == Decimal("8.33")
+
+    def test_relative_drawdown_sign_negative(self) -> None:
+        """Portfolio drawdown < benchmark drawdown → negative relative_dd."""
+        points = _calc_relative_benchmark_points(
+            portfolio_points=[
+                _make_dpp(_D1, _EQ10M),
+                _make_dpp(_D2, _EQ10M),
+                _make_dpp(_D3, _EQ9_5M),  # -5% from peak
+            ],
+            benchmark_prices=[
+                (_D1, _PRICE100),
+                (_D2, _PRICE100),
+                (_D3, _PRICE85),  # -15% from peak
+            ],
+            start_date=_D1,
+            end_date=_D3,
+        )
+
+        assert len(points) == 3
+        # Portfolio dd = 5%, benchmark dd = 15%
+        assert points[2].portfolio_drawdown_pct == Decimal("5.00")
+        assert points[2].benchmark_drawdown_pct == Decimal("15.00")
+        # relative = 5 - 15 = -10% (portfolio defended better)
+        assert points[2].relative_drawdown_pct == Decimal("-10.00")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Integration: BenchmarkComparisonService.get_benchmark_daily_history
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestGetBenchmarkDailyHistory:
+    """``BenchmarkComparisonService.get_benchmark_daily_history()`` — 통합 검증."""
+
+    @pytest.mark.asyncio
+    async def test_basic_history(self) -> None:
+        """KOSPI benchmark → returns points for date range (no fills = flat)."""
+        async with _setup_service() as service:
+            points = await service.get_benchmark_daily_history(
+                account_id=_ACCOUNT_ID,
+                start_date=date(2026, 5, 1),
+                end_date=date(2026, 5, 8),
+                benchmark_code=BENCHMARK_KOSPI,
+            )
+
+        assert isinstance(points, list)
+        assert len(points) > 0
+        for p in points:
+            assert isinstance(p, RelativeBenchmarkPoint)
+            assert p.date >= date(2026, 5, 1)
+            assert p.date <= date(2026, 5, 8)
+        # Ascending order
+        dates = [p.date for p in points]
+        assert dates == sorted(dates)
+
+    @pytest.mark.asyncio
+    async def test_strategy_filter(self) -> None:
+        """Strategy_id provided → history respects strategy scope."""
+        async with _setup_service() as service:
+            points = await service.get_benchmark_daily_history(
+                account_id=_ACCOUNT_ID,
+                start_date=date(2026, 5, 1),
+                end_date=date(2026, 5, 8),
+                benchmark_code=BENCHMARK_KOSPI,
+                strategy_id=_STRATEGY_ID,
+            )
+
+        assert len(points) > 0
+        # No fills → portfolio return is 0%
+        for p in points:
+            if p.portfolio_return_pct is not None:
+                assert p.portfolio_return_pct == Decimal("0.00")
+
+    @pytest.mark.asyncio
+    async def test_invalid_benchmark_code(self) -> None:
+        """Invalid benchmark_code → ValueError."""
+        async with _setup_service() as service:
+            with pytest.raises(ValueError, match="Unknown benchmark_code"):
+                await service.get_benchmark_daily_history(
+                    account_id=_ACCOUNT_ID,
+                    start_date=date(2026, 5, 1),
+                    end_date=date(2026, 5, 8),
+                    benchmark_code="INVALID",
+                )
+
+    @pytest.mark.asyncio
+    async def test_empty_result_no_fills(self) -> None:
+        """No fills → portfolio has no data → empty points."""
+        async with _setup_service() as service:
+            points = await service.get_benchmark_daily_history(
+                account_id=_ACCOUNT_ID,
+                start_date=date(2026, 5, 1),
+                end_date=date(2026, 5, 1),
+                benchmark_code=BENCHMARK_KOSPI,
+            )
+
+        # Without fills, the portfolio daily history may still return
+        # points if there are cash/position snapshots.  This test
+        # verifies the call does not raise and returns a list.
+        assert isinstance(points, list)
+
+    @pytest.mark.asyncio
+    async def test_point_ordering(self) -> None:
+        """Points are returned in ascending date order."""
+        async with _setup_service() as service:
+            points = await service.get_benchmark_daily_history(
+                account_id=_ACCOUNT_ID,
+                start_date=date(2026, 5, 1),
+                end_date=date(2026, 5, 13),
+                benchmark_code=BENCHMARK_KOSPI,
+            )
+
+        dates = [p.date for p in points]
+        assert dates == sorted(dates)

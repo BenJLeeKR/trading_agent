@@ -931,14 +931,16 @@ class KISRestClient:
                 continue
 
             fill = FillEvent(
-                event_id=uuid4(),
+                broker_name=BrokerName.KOREA_INVESTMENT,
                 broker_order_id=item.get("ODNO", ""),
                 symbol=item.get("PDNO", ""),
                 side=OrderSide.BUY if item.get("SLL_BUY_DVSN_CD") in ("01", "02") else OrderSide.SELL,
-                filled_qty=ccll_qty,
-                filled_price=Decimal(item.get("CCLD_UNPR", "0")),
-                filled_at=datetime.now(timezone.utc),  # KIS doesn't provide per-fill timestamp
-                raw_response=item,
+                fill_quantity=ccll_qty,
+                fill_price=Decimal(item.get("CCLD_UNPR", "0")),
+                fill_timestamp=datetime.now(timezone.utc),  # KIS doesn't provide per-fill timestamp
+                broker_fill_id=item.get("CCLD_NUM"),  # KIS 체결번호 (unique per fill)
+                fee=None,
+                tax=None,
             )
             fills.append(fill)
 

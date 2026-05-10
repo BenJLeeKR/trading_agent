@@ -315,6 +315,22 @@ class PerformanceMetrics:
     """Profit factor = sum(winning_pnl) / abs(sum(losing_pnl)).
     losing_trades가 0이면 None (0으로 나누기 방지)."""
 
+    # ── 위험 조정 수익률 (Risk-Adjusted Return Metrics) ──
+
+    sharpe_ratio: Decimal | None = None
+    """Sharpe ratio (비연율화) = mean daily return / stddev of daily returns.
+    risk-free rate = 0. 최소 2개 유효 일별 수익률 필요.
+    stddev=0이면 None."""
+
+    sortino_ratio: Decimal | None = None
+    """Sortino ratio (비연율화) = mean daily return / downside deviation.
+    risk-free rate = 0. 최소 2개 유효 일별 수익률 필요.
+    음수 수익률 표본 2개 미만이면 None."""
+
+    calmar_ratio: Decimal | None = None
+    """Calmar ratio = cumulative_return_pct / max_drawdown_pct.
+    max_drawdown_pct=0이면 None. cumulative_return_pct 음수이면 음수 가능."""
+
 
 # =========================================================================
 # Pure helpers — metrics 계산
@@ -443,6 +459,75 @@ def _calc_win_loss_metrics(
         profit_factor = winning_sum / abs(losing_sum)
 
     return (total, winning, losing, win_rate, avg_win, avg_loss, profit_factor)
+
+
+def _calc_sharpe_sortino(
+    points: Sequence[DailyPerformancePoint],
+) -> tuple[Decimal | None, Decimal | None]:
+    """일별 equity history에서 Sharpe ratio와 Sortino ratio를 계산합니다.
+
+    계산 규칙
+    --------
+    - 비연율화 raw daily 기준 (후속에서 sqrt(252) 확장 예정)
+    - risk-free rate = 0 고정 (env/config 추가 금지)
+    - 일별 수익률은 연속된 두 non-None equity 쌍에서만 생성
+    - equity[t-1] == 0인 경우 해당 return 계산하지 않음
+    - missing day equity는 보간하지 않음 (prev_equity carry-forward)
+    - 최소 2개 유효 일별 수익률 필요 (ddof=1 표본 표준편차 계산 가능 조건)
+    - Sortino: 음수 수익률 표본이 2개 미만이면 None
+
+    Parameters
+    ----------
+    points:
+        일별 성과 포인트 목록 (start_date→end_date 순).
+
+    Returns
+    -------
+    tuple[Decimal | None, Decimal | None]
+        (sharpe_ratio, sortino_ratio)
+        유효 daily return이 2개 미만이면 (None, None).
+    """
+    # 1. 일별 수익률 계산 (연속된 non-None equity 쌍만)
+    daily_returns: list[Decimal] = []
+    prev_equity: Decimal | None = None
+
+    for p in points:
+        if p.total_equity is not None and prev_equity is not None and prev_equity > 0:
+            daily_return = (p.total_equity - prev_equity) / prev_equity
+            daily_returns.append(daily_return)
+        if p.total_equity is not None:
+            prev_equity = p.total_equity
+        # p.total_equity가 None이면 prev_equity 유지 (carry forward, 보간 금지)
+
+    if len(daily_returns) < 2:
+        return (None, None)
+
+    # 2. Mean daily return
+    n = len(daily_returns)
+    mean_return = sum(daily_returns) / Decimal(str(n))
+
+    # 3. Sharpe: mean / stddev (비연율화, raw daily)
+    variance = sum((r - mean_return) ** 2 for r in daily_returns) / Decimal(str(n - 1))
+    stddev = variance.sqrt() if variance > 0 else Decimal("0")
+
+    sharpe_ratio: Decimal | None = None
+    if stddev > 0:
+        sharpe_ratio = mean_return / stddev
+
+    # 4. Sortino: mean / downside deviation (비연율화, raw daily)
+    downside_returns = [r for r in daily_returns if r < 0]
+    # 최소 downside 표본 조건: 음수 수익률 2개 미만이면 None
+    if len(downside_returns) >= 2:
+        downside_variance = sum(r * r for r in downside_returns) / Decimal(str(n - 1))
+        downside_dev = downside_variance.sqrt() if downside_variance > 0 else Decimal("0")
+    else:
+        downside_dev = Decimal("0")
+
+    sortino_ratio: Decimal | None = None
+    if downside_dev > 0:
+        sortino_ratio = mean_return / downside_dev
+
+    return (sharpe_ratio, sortino_ratio)
 
 
 # =========================================================================
@@ -849,6 +934,18 @@ class PerformanceSummaryService:
             profit_factor,
         ) = _calc_win_loss_metrics(per_order_pnls)
 
+        # ── 5. Risk-adjusted return metrics (Sharpe / Sortino / Calmar) ──
+        sharpe_ratio, sortino_ratio = _calc_sharpe_sortino(points)
+
+        # Calmar ratio: cumulative_return_pct / max_drawdown_pct
+        # max_drawdown_pct == 0 → None (division guard)
+        # cumulative_return_pct가 음수이면 calmar_ratio도 음수 가능
+        calmar_ratio: Decimal | None = (
+            cumulative_return_pct / max_drawdown_pct
+            if max_drawdown_pct > 0
+            else None
+        )
+
         return PerformanceMetrics(
             account_id=account_id,
             strategy_id=strategy_id,
@@ -868,4 +965,7 @@ class PerformanceSummaryService:
             avg_win=avg_win,
             avg_loss=avg_loss,
             profit_factor=profit_factor,
+            sharpe_ratio=sharpe_ratio,
+            sortino_ratio=sortino_ratio,
+            calmar_ratio=calmar_ratio,
         )

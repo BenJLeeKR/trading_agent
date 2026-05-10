@@ -46,6 +46,17 @@ class PostgresGuardrailEvaluationRepository:
         )
         return row_to_entity(row, GuardrailEvaluationEntity)
 
+    async def get(
+        self, guardrail_evaluation_id: object
+    ) -> GuardrailEvaluationEntity | None:
+        """Get a single guardrail evaluation by its UUID."""
+        row = await self._tx.connection.fetchrow(
+            "SELECT * FROM trading.guardrail_evaluations "
+            "WHERE guardrail_evaluation_id = $1",
+            guardrail_evaluation_id,
+        )
+        return row_to_entity(row, GuardrailEvaluationEntity) if row else None
+
     async def get_by_decision_context(
         self, decision_context_id: object
     ) -> Sequence[GuardrailEvaluationEntity]:
@@ -65,5 +76,21 @@ class PostgresGuardrailEvaluationRepository:
             "WHERE order_request_id = $1 "
             "ORDER BY evaluated_at",
             order_request_id,
+        )
+        return tuple(row_to_entity(r, GuardrailEvaluationEntity) for r in rows)
+
+    async def list_by_account(
+        self, account_id: object, limit: int = 20
+    ) -> Sequence[GuardrailEvaluationEntity]:
+        """List guardrail evaluations for an account via decision_context JOIN."""
+        rows = await self._tx.connection.fetch(
+            "SELECT ge.* FROM trading.guardrail_evaluations ge "
+            "JOIN trading.decision_contexts dc "
+            "ON ge.decision_context_id = dc.decision_context_id "
+            "WHERE dc.account_id = $1 "
+            "ORDER BY ge.evaluated_at DESC "
+            "LIMIT $2",
+            account_id,
+            limit,
         )
         return tuple(row_to_entity(r, GuardrailEvaluationEntity) for r in rows)

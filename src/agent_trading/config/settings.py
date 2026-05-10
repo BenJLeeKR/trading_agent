@@ -273,6 +273,18 @@ class AppSettings:
         default_factory=lambda: max(0, int(os.getenv("PAPER_GATE_MAX_CONSECUTIVE_FAILURES", "3"))),
     )
 
+    # ---- Risk-Adjusted Gate thresholds (Paper, WARN-only) --------------------
+    # 음수 Sharpe/Sortino/Calmar만 WARN (기본값 0.0).
+    paper_gate_min_sharpe_ratio: Decimal = field(
+        default_factory=lambda: Decimal(os.getenv("PAPER_GATE_MIN_SHARPE_RATIO", "0.0")),
+    )
+    paper_gate_min_sortino_ratio: Decimal = field(
+        default_factory=lambda: Decimal(os.getenv("PAPER_GATE_MIN_SORTINO_RATIO", "0.0")),
+    )
+    paper_gate_min_calmar_ratio: Decimal = field(
+        default_factory=lambda: Decimal(os.getenv("PAPER_GATE_MIN_CALMAR_RATIO", "0.0")),
+    )
+
     # ---- Live Gate thresholds (paper보다 엄격) --------------------------------
     # Paper Exit 통과 후 Live 검토 자격을 판정하기 위한 추가 임계값.
     # Paper Gate threshold보다 더 엄격한 기준을 적용한다.

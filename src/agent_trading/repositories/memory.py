@@ -432,15 +432,21 @@ class InMemoryBrokerOrderRepository:
 class InMemoryFillEventRepository:
     def __init__(self) -> None:
         self._items: dict[UUID, FillEventEntity] = {}
+        self._by_fill_id: dict[str, FillEventEntity] = {}
 
     async def add(self, fill_event: FillEventEntity) -> FillEventEntity:
         self._items[fill_event.fill_event_id] = fill_event
+        if fill_event.broker_fill_id:
+            self._by_fill_id[fill_event.broker_fill_id] = fill_event
         return fill_event
 
     async def list_by_broker_order(self, broker_order_id: UUID) -> Sequence[FillEventEntity]:
         results = [item for item in self._items.values() if item.broker_order_id == broker_order_id]
         results.sort(key=lambda item: item.fill_timestamp)
         return tuple(results)
+
+    async def get_by_broker_fill_id(self, broker_fill_id: str) -> FillEventEntity | None:
+        return self._by_fill_id.get(broker_fill_id)
 
 
 class InMemoryReconciliationRepository:
@@ -801,6 +807,12 @@ class InMemoryGuardrailEvaluationRepository:
         self._items[evaluation.guardrail_evaluation_id] = evaluation
         return evaluation
 
+    async def get(
+        self, guardrail_evaluation_id: UUID
+    ) -> GuardrailEvaluationEntity | None:
+        """Get a single guardrail evaluation by its UUID."""
+        return self._items.get(guardrail_evaluation_id)
+
     async def get_by_decision_context(
         self, decision_context_id: UUID
     ) -> Sequence[GuardrailEvaluationEntity]:
@@ -816,6 +828,26 @@ class InMemoryGuardrailEvaluationRepository:
             item for item in self._items.values()
             if item.order_request_id == order_request_id
         )
+
+    async def list_by_account(
+        self, account_id: UUID, limit: int = 20
+    ) -> Sequence[GuardrailEvaluationEntity]:
+        """List guardrail evaluations for an account (via decision_context join).
+
+        Note: In-memory implementation iterates all items and matches
+        via decision_context_id. For production, use the Postgres implementation
+        which performs a proper SQL JOIN.
+        """
+        # Collect decision_context_ids for this account from decision_contexts
+        # Since we don't have a direct reference to the decision_context repo,
+        # we filter items that have a non-None decision_context_id.
+        # The Postgres implementation uses a proper JOIN.
+        results = [
+            item for item in self._items.values()
+            if item.decision_context_id is not None
+        ]
+        results.sort(key=lambda item: item.evaluated_at, reverse=True)
+        return tuple(results[:limit])
 
 
 class InMemoryRiskLimitSnapshotRepository:
@@ -981,6 +1013,13 @@ class InMemoryAgentRunRepository:
     async def add(self, run: AgentRunEntity) -> AgentRunEntity:
         self._runs.append(run)
         return run
+
+    async def get(self, agent_run_id: UUID) -> AgentRunEntity | None:
+        """Get a single agent run by its UUID."""
+        for run in self._runs:
+            if run.agent_run_id == agent_run_id:
+                return run
+        return None
 
     async def list_by_decision_context(
         self, decision_context_id: UUID

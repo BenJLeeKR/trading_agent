@@ -18,11 +18,13 @@ from agent_trading.domain.entities import (
     CashBalanceSnapshotEntity,
     ClientEntity,
     DecisionContextEntity,
+    GuardrailEvaluationEntity,
     InstrumentEntity,
     OrderRequestEntity,
     OrderStateEventEntity,
     PositionSnapshotEntity,
     ReconciliationRunEntity,
+    RiskLimitSnapshotEntity,
     TradeDecisionEntity,
 )
 from agent_trading.domain.enums import (
@@ -301,6 +303,41 @@ async def seeded_repos(
             broker_status="filled",
             broker_native_order_id="KIS-12345",
             last_synced_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+
+    # Seed: guardrail evaluation
+    await repos.guardrail_evaluations.add(
+        GuardrailEvaluationEntity(
+            guardrail_evaluation_id=uuid4(),
+            decision_context_id=decision_context_id,
+            rule_set_version="v1.0",
+            overall_passed=True,
+            evaluated_at=datetime.now(timezone.utc),
+            rule_results={"max_position_size": {"passed": True, "limit": 1000, "value": 100}},
+            blocking_rule_codes=None,
+            warning_rule_codes=None,
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+
+    # Seed: risk limit snapshot
+    await repos.risk_limit_snapshots.add(
+        RiskLimitSnapshotEntity(
+            risk_limit_snapshot_id=uuid4(),
+            account_id=account_id,
+            snapshot_at=datetime.now(timezone.utc),
+            nav=Decimal("10000000"),
+            cash_available=Decimal("5000000"),
+            gross_exposure_pct=Decimal("50.0"),
+            net_exposure_pct=Decimal("30.0"),
+            daily_realized_pnl=Decimal("100000"),
+            daily_unrealized_pnl=Decimal("50000"),
+            daily_loss_used_pct=Decimal("10.0"),
+            max_daily_loss_limit_pct=Decimal("20.0"),
+            drawdown_state="normal",
+            kill_switch_active=False,
             created_at=datetime.now(timezone.utc),
         )
     )

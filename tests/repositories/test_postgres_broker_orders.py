@@ -268,3 +268,110 @@ async def test_broker_native_order_id_nullable(
 
     saved = await postgres_repos.broker_orders.add(bo)
     assert saved.broker_native_order_id is None
+
+
+@pytest.mark.asyncio
+async def test_get_by_id(
+    postgres_repos: RepositoryContainer,
+    seeded_order_request: UUID,
+    sample_broker_order: BrokerOrderEntity,
+) -> None:
+    """Retrieve a broker order by ``broker_order_id`` (PK lookup)."""
+    saved = await postgres_repos.broker_orders.add(sample_broker_order)
+
+    fetched = await postgres_repos.broker_orders.get(saved.broker_order_id)
+    assert fetched is not None
+    assert fetched.broker_order_id == sample_broker_order.broker_order_id
+    assert fetched.broker_status == "submitted"
+    assert fetched.broker_name == "KIS"
+
+
+@pytest.mark.asyncio
+async def test_get_by_id_not_found(
+    postgres_repos: RepositoryContainer,
+) -> None:
+    """Nonexistent ``broker_order_id`` returns ``None``."""
+    result = await postgres_repos.broker_orders.get(uuid4())
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_update_status(
+    postgres_repos: RepositoryContainer,
+    seeded_order_request: UUID,
+    sample_broker_order: BrokerOrderEntity,
+) -> None:
+    """Update ``broker_status`` only and verify via ``get()``."""
+    saved = await postgres_repos.broker_orders.add(sample_broker_order)
+    new_status = "filled"
+
+    await postgres_repos.broker_orders.update(
+        saved.broker_order_id,
+        broker_status=new_status,
+    )
+
+    updated = await postgres_repos.broker_orders.get(saved.broker_order_id)
+    assert updated is not None
+    assert updated.broker_status == new_status
+    # updated_at should have been bumped
+    assert updated.updated_at > saved.updated_at
+
+
+@pytest.mark.asyncio
+async def test_update_last_synced_at(
+    postgres_repos: RepositoryContainer,
+    seeded_order_request: UUID,
+    sample_broker_order: BrokerOrderEntity,
+) -> None:
+    """Update ``last_synced_at`` only."""
+    saved = await postgres_repos.broker_orders.add(sample_broker_order)
+    assert saved.last_synced_at is None  # fixture starts with None
+
+    sync_time = datetime.now(timezone.utc)
+    await postgres_repos.broker_orders.update(
+        saved.broker_order_id,
+        last_synced_at=sync_time,
+    )
+
+    updated = await postgres_repos.broker_orders.get(saved.broker_order_id)
+    assert updated is not None
+    assert updated.last_synced_at is not None
+    # Allow small rounding differences from the DB timestamptz
+    assert abs((updated.last_synced_at - sync_time).total_seconds()) < 2
+
+
+@pytest.mark.asyncio
+async def test_update_multiple_fields(
+    postgres_repos: RepositoryContainer,
+    seeded_order_request: UUID,
+    sample_broker_order: BrokerOrderEntity,
+) -> None:
+    """Update ``broker_status`` and ``last_synced_at`` simultaneously."""
+    saved = await postgres_repos.broker_orders.add(sample_broker_order)
+    new_status = "partially_filled"
+    sync_time = datetime.now(timezone.utc)
+
+    await postgres_repos.broker_orders.update(
+        saved.broker_order_id,
+        broker_status=new_status,
+        last_synced_at=sync_time,
+    )
+
+    updated = await postgres_repos.broker_orders.get(saved.broker_order_id)
+    assert updated is not None
+    assert updated.broker_status == new_status
+    assert updated.last_synced_at is not None
+    assert abs((updated.last_synced_at - sync_time).total_seconds()) < 2
+    assert updated.updated_at > saved.updated_at
+
+
+@pytest.mark.asyncio
+async def test_update_not_found(
+    postgres_repos: RepositoryContainer,
+) -> None:
+    """Update on a nonexistent ``broker_order_id`` raises ``ValueError``."""
+    with pytest.raises(ValueError, match="BrokerOrder not found"):
+        await postgres_repos.broker_orders.update(
+            uuid4(),
+            broker_status="filled",
+        )

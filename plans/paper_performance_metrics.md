@@ -1,9 +1,10 @@
 # Paper Performance Metrics — 설계 문서
 
-> **상태**: ✅ 구현 완료 (2026-05-09) — **mode-agnostic**
+> **상태**: ✅ 구현 완료 (2026-05-10) — **mode-agnostic**
 > **변경 파일**: [`performance_summary.py`](src/agent_trading/services/performance_summary.py), [`schemas.py`](src/agent_trading/api/schemas.py), [`routes/performance.py`](src/agent_trading/api/routes/performance.py), [`test_performance_summary.py`](tests/services/test_performance_summary.py), [`BACKLOG.md`](plans/BACKLOG.md)
-> **테스트 결과**: 44/44 (performance_summary) + 86/86 (performance_summary + inspection) 통과
+> **테스트 결과**: 53/53 (performance_summary) + 56/56 (inspection API) 통과
 > **mode-agnostic**: 이 모듈은 paper/live 모두에서 동일하게 동작합니다. broker env와 무관하게 repository의 fill/position/cash 데이터만 읽어 성과 지표를 계산합니다.
+> **⚠️ 후속 확장**: Sharpe/Sortino/Calmar ratio는 [`paper_performance_risk_adjusted_metrics.md`](plans/paper_performance_risk_adjusted_metrics.md) 참고
 
 ## 1. Metrics Source Inventory
 
@@ -19,7 +20,9 @@
 | avg_win | sum(winning_pnl) / winning_trades | Exact |
 | avg_loss | sum(losing_pnl) / losing_trades | Exact |
 | profit_factor | sum(winning) / abs(sum(losing)) | Exact |
-| sharpe_ratio (deferred) | daily return std dev | Approximate (일수 부족 시 신뢰도 낮음) |
+| sharpe_ratio | daily return std dev (rf=0, 비연율화) | Approximate (일수 부족 시 신뢰도 낮음) |
+| sortino_ratio | daily downside deviation (rf=0, 비연율화) | Approximate (음수 수익률 2+ 필요) |
+| calmar_ratio | cumulative_return_pct / max_drawdown_pct | Exact |
 
 ### Per-order vs Per-fill 정책
 

@@ -53,6 +53,14 @@ class PostgresAgentRunRepository:
         )
         return row_to_entity(row, AgentRunEntity)
 
+    async def get(self, agent_run_id: UUID) -> AgentRunEntity | None:
+        """Get a single agent run by its UUID."""
+        row = await self._tx.connection.fetchrow(
+            "SELECT * FROM trading.agent_runs WHERE agent_run_id = $1",
+            agent_run_id,
+        )
+        return row_to_entity(row, AgentRunEntity) if row else None
+
     async def list_by_decision_context(
         self, decision_context_id: UUID
     ) -> list[AgentRunEntity]:

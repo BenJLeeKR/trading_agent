@@ -454,6 +454,75 @@ class LiveGateEvaluator:
                 message="Post-submit sync 정상",
             ))
 
+        # -- 9. LG_SHARPE_RATIO: display only, always PASS (first turn) --
+        sr = metrics.sharpe_ratio
+        if sr is not None:
+            checks.append(LiveGateCheck(
+                code="LG_SHARPE_RATIO",
+                label="Live Sharpe Ratio",
+                layer="auto",
+                status="PASS",
+                measured_value=f"{sr:.4f}",
+                threshold="N/A",
+                message="Sharpe Ratio 정보 표시 (현재 gate 미적용)",
+            ))
+        else:
+            checks.append(LiveGateCheck(
+                code="LG_SHARPE_RATIO",
+                label="Live Sharpe Ratio",
+                layer="auto",
+                status="PASS",
+                measured_value="N/A",
+                threshold="N/A",
+                message="Sharpe Ratio 데이터 없음 — 정보 표시",
+            ))
+
+        # -- 10. LG_SORTINO_RATIO: display only, always PASS (first turn) --
+        sortino = metrics.sortino_ratio
+        if sortino is not None:
+            checks.append(LiveGateCheck(
+                code="LG_SORTINO_RATIO",
+                label="Live Sortino Ratio",
+                layer="auto",
+                status="PASS",
+                measured_value=f"{sortino:.4f}",
+                threshold="N/A",
+                message="Sortino Ratio 정보 표시 (현재 gate 미적용)",
+            ))
+        else:
+            checks.append(LiveGateCheck(
+                code="LG_SORTINO_RATIO",
+                label="Live Sortino Ratio",
+                layer="auto",
+                status="PASS",
+                measured_value="N/A",
+                threshold="N/A",
+                message="Sortino Ratio 데이터 없음 — 정보 표시",
+            ))
+
+        # -- 11. LG_CALMAR_RATIO: display only, always PASS (first turn) --
+        calmar = metrics.calmar_ratio
+        if calmar is not None:
+            checks.append(LiveGateCheck(
+                code="LG_CALMAR_RATIO",
+                label="Live Calmar Ratio",
+                layer="auto",
+                status="PASS",
+                measured_value=f"{calmar:.4f}",
+                threshold="N/A",
+                message="Calmar Ratio 정보 표시 (현재 gate 미적용)",
+            ))
+        else:
+            checks.append(LiveGateCheck(
+                code="LG_CALMAR_RATIO",
+                label="Live Calmar Ratio",
+                layer="auto",
+                status="PASS",
+                measured_value="N/A",
+                threshold="N/A",
+                message="Calmar Ratio 데이터 없음 — 정보 표시",
+            ))
+
         return checks
 
     # ------------------------------------------------------------------

@@ -478,8 +478,8 @@ class PerformanceMetricsView(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    account_id: str
-    strategy_id: str | None
+    account_id: UUID
+    strategy_id: UUID | None
     period_start: date
     period_end: date
 
@@ -499,6 +499,11 @@ class PerformanceMetricsView(BaseModel):
     avg_win: float | None
     avg_loss: float | None
     profit_factor: float | None
+
+    # ── 위험 조정 수익률 (Risk-Adjusted Return Metrics) ──
+    sharpe_ratio: float | None = None
+    sortino_ratio: float | None = None
+    calmar_ratio: float | None = None
 
 
 class BenchmarkComparisonView(BaseModel):
@@ -530,6 +535,52 @@ class BenchmarkComparisonView(BaseModel):
     # -- Volatility (reserved, always None in this iteration) --
     portfolio_volatility_pct: float | None = None
     benchmark_volatility_pct: float | None = None
+
+
+# ---------------------------------------------------------------------------
+# Benchmark Daily Relative Trend
+# ---------------------------------------------------------------------------
+
+
+class RelativeBenchmarkPointView(BaseModel):
+    """``GET /performance-benchmark-history`` 응답의 단일 일별 상대 성과 포인트.
+
+    All return/drawdown values are in **percentage points** (e.g. 3.5 means
+    3.5 %).  ``None`` indicates the value could not be calculated (missing
+    data — no interpolation is performed).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    date: date
+    portfolio_return_pct: float | None
+    benchmark_return_pct: float | None
+    excess_return_pct: float | None
+    portfolio_drawdown_pct: float | None
+    benchmark_drawdown_pct: float | None
+    relative_drawdown_pct: float | None
+    outperformance_streak: int
+    benchmark_data_available: bool
+
+
+class BenchmarkHistoryResponse(BaseModel):
+    """``GET /performance-benchmark-history`` — 기간 필터 기반 일별 상대 성과 히스토리.
+
+    Portfolio와 benchmark 지수 간 일별 누적 수익률, drawdown, outperformance
+    streak을 시계열로 반환합니다.
+
+    ``total_days``는 ``points`` 개수와 동일하며, ``start_date~end_date``의
+    캘린더 일수가 아닙니다. date coverage는 **Data-date Union** 정책을 따릅니다
+    (portfolio/benchmark 데이터가 있는 날짜의 합집합).
+    """
+
+    account_id: str
+    start_date: date
+    end_date: date
+    strategy_id: str | None
+    benchmark_code: str
+    total_days: int
+    points: list[RelativeBenchmarkPointView]
 
 
 class PaperGateCheckView(BaseModel):
@@ -565,3 +616,55 @@ class PaperGoNoGoEvaluationView(BaseModel):
     checks: list[PaperGateCheckView]
     generated_at: datetime
     summary_reason: str
+
+
+class GuardrailEvaluationView(BaseModel):
+    """``GET /guardrail-evaluations`` — guardrail rule evaluation result.
+
+    Represents the result of a single guardrail evaluation against a
+    decision, order, or both.  Each evaluation records which rules were
+    checked, their results, and whether the overall check passed.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    guardrail_evaluation_id: UUID
+    rule_set_version: str
+    overall_passed: bool
+    evaluated_at: datetime
+    decision_context_id: UUID | None = None
+    trade_decision_id: UUID | None = None
+    order_request_id: UUID | None = None
+    rule_results: dict[str, object] = {}
+    blocking_rule_codes: list[str] | None = None
+    warning_rule_codes: list[str] | None = None
+    created_at: datetime | None = None
+
+
+class RiskLimitSnapshotView(BaseModel):
+    """``GET /risk-limit-snapshots`` — point-in-time risk limit snapshot.
+
+    Captures NAV, cash, exposure, P&L, drawdown state, and kill-switch
+    status for an account at a given point in time.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    risk_limit_snapshot_id: UUID
+    account_id: UUID
+    snapshot_at: datetime
+    nav: float | None = None
+    cash_available: float | None = None
+    gross_exposure_pct: float | None = None
+    net_exposure_pct: float | None = None
+    daily_realized_pnl: float | None = None
+    daily_unrealized_pnl: float | None = None
+    daily_loss_used_pct: float | None = None
+    max_daily_loss_limit_pct: float | None = None
+    symbol_exposure_json: dict[str, object] = {}
+    sector_exposure_json: dict[str, object] = {}
+    open_order_exposure_json: dict[str, object] = {}
+    drawdown_state: str | None = None
+    kill_switch_active: bool = False
+    blocked_reason_codes: list[str] | None = None
+    created_at: datetime | None = None

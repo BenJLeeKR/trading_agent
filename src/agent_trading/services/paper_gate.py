@@ -153,6 +153,11 @@ class PaperGateService:
         checks.append(self._check_min_return(metrics.cumulative_return_pct))
         checks.append(self._check_max_drawdown(metrics.max_drawdown_pct))
 
+        # -- Risk-adjusted performance metrics (WARN-only) --
+        checks.append(self._check_min_sharpe_ratio(metrics.sharpe_ratio))
+        checks.append(self._check_min_sortino_ratio(metrics.sortino_ratio))
+        checks.append(self._check_min_calmar_ratio(metrics.calmar_ratio))
+
         # -- Optional: benchmark comparison --
         if benchmark_code is not None and self._bench_service is not None:
             try:
@@ -311,6 +316,88 @@ class PaperGateService:
             status=GateStatus.PASS,
             measured_value=value, threshold=threshold,
             message=f"승률 {value}% — 기준 통과",
+        )
+
+    # ------------------------------------------------------------------
+    # Risk-adjusted performance checks (WARN-only)
+    # ------------------------------------------------------------------
+
+    def _check_min_sharpe_ratio(self, value: Decimal | None) -> PaperGateCheck:
+        threshold = self._settings.paper_gate_min_sharpe_ratio
+        code = "MIN_SHARPE_RATIO"
+        label = "최소 Sharpe Ratio"
+
+        if value is None:
+            return PaperGateCheck(
+                code=code, label=label,
+                status=GateStatus.WARN,
+                measured_value=None, threshold=threshold,
+                message="일별 수익률 표본 부족으로 Sharpe Ratio를 계산할 수 없습니다",
+            )
+        if value < threshold:
+            return PaperGateCheck(
+                code=code, label=label,
+                status=GateStatus.WARN,
+                measured_value=value, threshold=threshold,
+                message=f"Sharpe Ratio {value}이(가) 최소 기준 {threshold}에 미달합니다",
+            )
+        return PaperGateCheck(
+            code=code, label=label,
+            status=GateStatus.PASS,
+            measured_value=value, threshold=threshold,
+            message=f"Sharpe Ratio {value} — 기준 통과",
+        )
+
+    def _check_min_sortino_ratio(self, value: Decimal | None) -> PaperGateCheck:
+        threshold = self._settings.paper_gate_min_sortino_ratio
+        code = "MIN_SORTINO_RATIO"
+        label = "최소 Sortino Ratio"
+
+        if value is None:
+            return PaperGateCheck(
+                code=code, label=label,
+                status=GateStatus.WARN,
+                measured_value=None, threshold=threshold,
+                message="음수 수익률 표본 부족으로 Sortino Ratio를 계산할 수 없습니다",
+            )
+        if value < threshold:
+            return PaperGateCheck(
+                code=code, label=label,
+                status=GateStatus.WARN,
+                measured_value=value, threshold=threshold,
+                message=f"Sortino Ratio {value}이(가) 최소 기준 {threshold}에 미달합니다",
+            )
+        return PaperGateCheck(
+            code=code, label=label,
+            status=GateStatus.PASS,
+            measured_value=value, threshold=threshold,
+            message=f"Sortino Ratio {value} — 기준 통과",
+        )
+
+    def _check_min_calmar_ratio(self, value: Decimal | None) -> PaperGateCheck:
+        threshold = self._settings.paper_gate_min_calmar_ratio
+        code = "MIN_CALMAR_RATIO"
+        label = "최소 Calmar Ratio"
+
+        if value is None:
+            return PaperGateCheck(
+                code=code, label=label,
+                status=GateStatus.WARN,
+                measured_value=None, threshold=threshold,
+                message="최대 손실 폭이 0이어서 Calmar Ratio를 계산할 수 없습니다",
+            )
+        if value < threshold:
+            return PaperGateCheck(
+                code=code, label=label,
+                status=GateStatus.WARN,
+                measured_value=value, threshold=threshold,
+                message=f"Calmar Ratio {value}이(가) 최소 기준 {threshold}에 미달합니다",
+            )
+        return PaperGateCheck(
+            code=code, label=label,
+            status=GateStatus.PASS,
+            measured_value=value, threshold=threshold,
+            message=f"Calmar Ratio {value} — 기준 통과",
         )
 
     def _check_filled_orders(self, value: int) -> PaperGateCheck:

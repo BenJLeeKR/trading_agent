@@ -59,3 +59,10 @@ class PostgresFillEventRepository:
             broker_order_id,
         )
         return tuple(row_to_entity(r, FillEventEntity) for r in rows)
+
+    async def get_by_broker_fill_id(self, broker_fill_id: str) -> FillEventEntity | None:
+        row = await self._tx.connection.fetchrow(
+            "SELECT * FROM trading.fill_events WHERE broker_fill_id = $1",
+            broker_fill_id,
+        )
+        return row_to_entity(row, FillEventEntity) if row else None

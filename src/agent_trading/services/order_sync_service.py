@@ -372,6 +372,16 @@ class OrderSyncService:
     ) -> tuple[int, int]:
         """Fetch fill events from broker and persist new ones (dedup).
 
+        Dedup priority
+        --------------
+        1. broker_fill_id (when available) — authoritative broker-native fill
+           identifier.  If the incoming ``FillEvent`` carries a non-empty
+           ``broker_fill_id`` and that ID already exists in the repository
+           under the same ``broker_order_id``, the fill is treated as a
+           duplicate regardless of timestamp/price/quantity.
+        2. Composite key ``(broker_order_id, fill_timestamp, fill_price,
+           fill_quantity)`` — fallback for fills without a broker fill ID.
+
         Returns
         -------
         tuple[int, int]
@@ -398,20 +408,41 @@ class OrderSyncService:
             broker_order.broker_order_id,
         )
 
-        # Dedup key: (fill_timestamp, fill_price, fill_quantity) since
-        # FillEvent model does not carry a broker_fill_id.
-        existing_keys: set[tuple[datetime, Decimal, Decimal]] = {
-            (f.fill_timestamp, f.fill_price, f.fill_quantity)
-            for f in existing
-        }
+        # Split existing fills by broker_fill_id presence.
+        # Fills with broker_fill_id use authoritative broker-native dedup.
+        # Fills without broker_fill_id fall back to composite key dedup.
+        existing_by_fill_id: dict[str, FillEventEntity] = {}
+        existing_composite: set[tuple[UUID, datetime, Decimal, Decimal]] = set()
+        for f in existing:
+            if f.broker_fill_id:
+                existing_by_fill_id[f.broker_fill_id] = f
+            else:
+                existing_composite.add(
+                    (f.broker_order_id, f.fill_timestamp, f.fill_price, f.fill_quantity),
+                )
 
         synced = 0
         skipped = 0
         for fill in fill_events:
-            key = (fill.fill_timestamp, fill.fill_price, fill.fill_quantity)
-            if key in existing_keys:
+            # Normalise broker_fill_id: empty string → None
+            broker_fill_id: str | None = fill.broker_fill_id or None
+
+            if broker_fill_id and broker_fill_id in existing_by_fill_id:
+                # Authoritative dedup: same broker_fill_id → duplicate
                 skipped += 1
                 continue
+
+            if not broker_fill_id:
+                # Composite key fallback (broker_order_id included for safety).
+                key = (
+                    broker_order.broker_order_id,
+                    fill.fill_timestamp,
+                    fill.fill_price,
+                    fill.fill_quantity,
+                )
+                if key in existing_composite:
+                    skipped += 1
+                    continue
 
             entity = FillEventEntity(
                 fill_event_id=uuid4(),
@@ -419,13 +450,18 @@ class OrderSyncService:
                 fill_timestamp=fill.fill_timestamp,
                 fill_price=fill.fill_price,
                 fill_quantity=fill.fill_quantity,
-                source_channel="polling",
-                broker_fill_id="",
+                source_channel="rest_poll",
+                broker_fill_id=broker_fill_id,
                 fill_fee=fill.fee,
                 fill_tax=fill.tax,
             )
             await self.repos.fill_events.add(entity)
-            existing_keys.add(key)
+            if broker_fill_id:
+                existing_by_fill_id[broker_fill_id] = entity
+            else:
+                existing_composite.add(
+                    (broker_order.broker_order_id, fill.fill_timestamp, fill.fill_price, fill.fill_quantity),
+                )
             synced += 1
 
         return synced, skipped

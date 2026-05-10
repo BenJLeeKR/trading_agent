@@ -348,13 +348,14 @@ class TestSyncChainTransition:
 
 
 class TestSyncFillDedup:
-    """동일 fill이 2회차 sync에서 skip되는지 검증."""
+    """Fill dedup — broker_fill_id 우선, composite key fallback."""
 
-    async def test_fill_dedup(
+    async def test_fill_dedup_composite_key_fallback(
         self,
         sync_service: OrderSyncService,
         repos: RepositoryContainer,
     ) -> None:
+        """``broker_fill_id=None`` fill → composite key dedup (기존 방식 유지)."""
         now = datetime.now(timezone.utc)
         order = _make_order(repos, status=OrderStatus.ACKNOWLEDGED)
         broker_order = _make_broker_order(
@@ -370,6 +371,7 @@ class TestSyncFillDedup:
                 fill_quantity=Decimal("5"),
                 fill_price=Decimal("50000"),
                 fill_timestamp=now,
+                broker_fill_id=None,
                 fee=Decimal("250"),
                 tax=Decimal("0"),
             ),
@@ -385,7 +387,7 @@ class TestSyncFillDedup:
         assert r1.fills_synced == 1
         assert r1.fills_skipped == 0
 
-        # 2nd call — broker returns same fills → dedup
+        # 2nd call — broker returns same fills → composite key dedup
         r2 = await sync_service.sync_order_post_submit(
             account_ref="test-account",
             broker=broker,  # type: ignore[arg-type]
@@ -393,6 +395,331 @@ class TestSyncFillDedup:
         )
         assert r2.fills_synced == 0, "Same fills should be deduplicated"
         assert r2.fills_skipped >= 1
+
+    async def test_fill_dedup_by_broker_fill_id(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """동일 ``broker_fill_id`` fill 2회 sync → broker_fill_id 기반 dedup."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(repos, status=OrderStatus.ACKNOWLEDGED)
+        broker_order = _make_broker_order(
+            repos, order, broker_status="acknowledged",
+        )
+
+        fills = [
+            FillEvent(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                broker_order_id=broker_order.broker_native_order_id,
+                symbol="005930",
+                side=OrderSide.BUY,
+                fill_quantity=Decimal("5"),
+                fill_price=Decimal("50000"),
+                fill_timestamp=now,
+                broker_fill_id="CCLD001",
+                fee=Decimal("250"),
+                tax=Decimal("0"),
+            ),
+        ]
+        broker = _StubBroker(status=OrderStatus.PARTIALLY_FILLED, fills=fills)
+
+        # 1st call — sync fill
+        r1 = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+        assert r1.fills_synced == 1
+        assert r1.fills_skipped == 0
+
+        # 2nd call — broker returns same fills → broker_fill_id dedup
+        r2 = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+        assert r2.fills_synced == 0, "Same broker_fill_id should be deduplicated"
+        assert r2.fills_skipped >= 1
+
+    async def test_fill_dedup_broker_fill_id_preferred(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """동일 timestamp/price/qty지만 다른 broker_fill_id → 별개 fill (broker_fill_id 우선)."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(repos, status=OrderStatus.ACKNOWLEDGED)
+        broker_order = _make_broker_order(
+            repos, order, broker_status="acknowledged",
+        )
+
+        fills = [
+            FillEvent(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                broker_order_id=broker_order.broker_native_order_id,
+                symbol="005930",
+                side=OrderSide.BUY,
+                fill_quantity=Decimal("5"),
+                fill_price=Decimal("50000"),
+                fill_timestamp=now,
+                broker_fill_id="CCLD001",
+                fee=Decimal("250"),
+                tax=Decimal("0"),
+            ),
+            FillEvent(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                broker_order_id=broker_order.broker_native_order_id,
+                symbol="005930",
+                side=OrderSide.BUY,
+                fill_quantity=Decimal("5"),
+                fill_price=Decimal("50000"),
+                fill_timestamp=now,
+                broker_fill_id="CCLD002",  # 다른 fill ID
+                fee=Decimal("250"),
+                tax=Decimal("0"),
+            ),
+        ]
+        broker = _StubBroker(status=OrderStatus.PARTIALLY_FILLED, fills=fills)
+
+        # Composite key만 보면 둘이 동일하지만, broker_fill_id가 다르므로 둘 다 sync
+        r = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+        assert r.fills_synced == 2, "Different broker_fill_id → both synced"
+        assert r.fills_skipped == 0
+
+    async def test_fill_dedup_broker_fill_id_overrides_timestamp(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """동일 ``broker_fill_id`` + 다른 timestamp/price/qty → broker_fill_id 우선 dedup (skip)."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(repos, status=OrderStatus.ACKNOWLEDGED)
+        broker_order = _make_broker_order(
+            repos, order, broker_status="acknowledged",
+        )
+
+        fills = [
+            FillEvent(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                broker_order_id=broker_order.broker_native_order_id,
+                symbol="005930",
+                side=OrderSide.BUY,
+                fill_quantity=Decimal("5"),
+                fill_price=Decimal("50000"),
+                fill_timestamp=now,
+                broker_fill_id="CCLD001",
+                fee=Decimal("250"),
+                tax=Decimal("0"),
+            ),
+        ]
+        broker = _StubBroker(status=OrderStatus.PARTIALLY_FILLED, fills=fills)
+
+        # 1st call — sync fill
+        r1 = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+        assert r1.fills_synced == 1
+
+        # 2nd call — 동일 broker_fill_id지만 timestamp/price/qty가 다름
+        later = datetime.now(timezone.utc)
+        fills2 = [
+            FillEvent(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                broker_order_id=broker_order.broker_native_order_id,
+                symbol="005930",
+                side=OrderSide.BUY,
+                fill_quantity=Decimal("10"),      # 다른 수량
+                fill_price=Decimal("51000"),       # 다른 가격
+                fill_timestamp=later,              # 다른 시간
+                broker_fill_id="CCLD001",          # 동일 broker_fill_id
+                fee=Decimal("300"),
+                tax=Decimal("0"),
+            ),
+        ]
+        broker2 = _StubBroker(status=OrderStatus.PARTIALLY_FILLED, fills=fills2)
+        r2 = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker2,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+        assert r2.fills_synced == 0, "Same broker_fill_id → deduped despite different values"
+        assert r2.fills_skipped >= 1
+
+    async def test_fill_dedup_mixed(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """일부 fill은 broker_fill_id 보유, 일부는 None → 각각 dedup 정상."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(repos, status=OrderStatus.ACKNOWLEDGED)
+        broker_order = _make_broker_order(
+            repos, order, broker_status="acknowledged",
+        )
+
+        # Fill A: has broker_fill_id, Fill B: no broker_fill_id
+        fills = [
+            FillEvent(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                broker_order_id=broker_order.broker_native_order_id,
+                symbol="005930",
+                side=OrderSide.BUY,
+                fill_quantity=Decimal("3"),
+                fill_price=Decimal("49000"),
+                fill_timestamp=now,
+                broker_fill_id="CCLD-A",
+                fee=Decimal("100"),
+                tax=Decimal("0"),
+            ),
+            FillEvent(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                broker_order_id=broker_order.broker_native_order_id,
+                symbol="005930",
+                side=OrderSide.BUY,
+                fill_quantity=Decimal("7"),
+                fill_price=Decimal("51000"),
+                fill_timestamp=now,
+                broker_fill_id=None,
+                fee=Decimal("200"),
+                tax=Decimal("0"),
+            ),
+        ]
+        broker = _StubBroker(status=OrderStatus.PARTIALLY_FILLED, fills=fills)
+
+        # 1st call — both synced
+        r1 = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+        assert r1.fills_synced == 2
+
+        # 2nd call — broker returns identical fills → both deduped
+        r2 = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+        assert r2.fills_synced == 0
+        assert r2.fills_skipped >= 2
+
+    async def test_fill_empty_broker_fill_id_normalized_to_none(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """빈 문자열 broker_fill_id는 None으로 정규화되고 composite fallback을 사용한다."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(repos, status=OrderStatus.ACKNOWLEDGED)
+        broker_order = _make_broker_order(
+            repos, order, broker_status="acknowledged",
+        )
+
+        fills = [
+            FillEvent(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                broker_order_id=broker_order.broker_native_order_id,
+                symbol="005930",
+                side=OrderSide.BUY,
+                fill_quantity=Decimal("5"),
+                fill_price=Decimal("50000"),
+                fill_timestamp=now,
+                broker_fill_id="",
+                fee=Decimal("250"),
+                tax=Decimal("0"),
+            ),
+        ]
+        broker = _StubBroker(status=OrderStatus.PARTIALLY_FILLED, fills=fills)
+
+        r1 = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+        assert r1.fills_synced == 1
+        assert r1.fills_skipped == 0
+
+        saved = await repos.fill_events.list_by_broker_order(
+            broker_order.broker_order_id,
+        )
+        assert len(saved) == 1
+        assert saved[0].broker_fill_id is None
+        assert saved[0].source_channel == "rest_poll"
+
+        r2 = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+        assert r2.fills_synced == 0
+        assert r2.fills_skipped >= 1
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: InMemoryFillEventRepository.get_by_broker_fill_id
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestInMemoryFillEventRepository:
+    """``InMemoryFillEventRepository.get_by_broker_fill_id()`` 동작 검증."""
+
+    async def test_get_by_broker_fill_id_found(
+        self,
+        repos: RepositoryContainer,
+    ) -> None:
+        """broker_fill_id로 등록된 fill을 찾을 수 있음."""
+        fill_id = uuid4()
+        entity = FillEventEntity(
+            fill_event_id=fill_id,
+            broker_order_id=uuid4(),
+            fill_timestamp=datetime.now(timezone.utc),
+            fill_price=Decimal("50000"),
+            fill_quantity=Decimal("5"),
+            source_channel="rest_poll",
+            broker_fill_id="CCLD-XYZ",
+        )
+        await repos.fill_events.add(entity)
+
+        found = await repos.fill_events.get_by_broker_fill_id("CCLD-XYZ")
+        assert found is not None
+        assert found.fill_event_id == fill_id
+        assert found.broker_fill_id == "CCLD-XYZ"
+
+    async def test_get_by_broker_fill_id_not_found(
+        self,
+        repos: RepositoryContainer,
+    ) -> None:
+        """존재하지 않는 broker_fill_id → None."""
+        found = await repos.fill_events.get_by_broker_fill_id("NONEXISTENT")
+        assert found is None
+
+    async def test_get_by_broker_fill_id_ignores_none(
+        self,
+        repos: RepositoryContainer,
+    ) -> None:
+        """``broker_fill_id=None``으로 저장된 fill은 get_by_broker_fill_id로 찾을 수 없음."""
+        fill_id = uuid4()
+        entity = FillEventEntity(
+            fill_event_id=fill_id,
+            broker_order_id=uuid4(),
+            fill_timestamp=datetime.now(timezone.utc),
+            fill_price=Decimal("50000"),
+            fill_quantity=Decimal("5"),
+            source_channel="rest_poll",
+            broker_fill_id=None,
+        )
+        await repos.fill_events.add(entity)
+
+        # InMemory는 _by_fill_id 인덱스에 None을 저장하지 않음
+        found = await repos.fill_events.get_by_broker_fill_id("")  # 빈 문자열은 None과 다름
+        assert found is None
 
 
 # ═════════════════════════════════════════════════════════════════════

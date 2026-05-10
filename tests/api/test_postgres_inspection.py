@@ -495,3 +495,60 @@ class TestPostgresInspectionAPI:
         resp = postgres_client.get(f"/agent-runs?decision_context_id={unknown_id}")
         assert resp.status_code == 200
         assert resp.json() == []
+
+    # ── Guardrail Evaluation smoke tests ───────────────────────────────
+
+    async def test_guardrail_evaluations_requires_filter(
+        self, postgres_client: TestClient,
+    ) -> None:
+        """``GET /guardrail-evaluations`` returns empty list without filter."""
+        resp = postgres_client.get("/guardrail-evaluations")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    async def test_guardrail_evaluations_by_decision_context(
+        self, postgres_client: TestClient,
+    ) -> None:
+        """``GET /guardrail-evaluations?decision_context_id=<unknown>`` returns empty."""
+        from uuid import uuid4
+
+        unknown_id = uuid4()
+        resp = postgres_client.get(
+            f"/guardrail-evaluations?decision_context_id={unknown_id}"
+        )
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    # ── Risk Limit Snapshot smoke tests ────────────────────────────────
+
+    async def test_risk_limit_snapshots_requires_account(
+        self, postgres_client: TestClient,
+    ) -> None:
+        """``GET /risk-limit-snapshots`` returns 422 without account_id."""
+        resp = postgres_client.get("/risk-limit-snapshots")
+        assert resp.status_code == 422
+
+    async def test_risk_limit_snapshots_unknown_account(
+        self, postgres_client: TestClient,
+    ) -> None:
+        """``GET /risk-limit-snapshots?account_id=<unknown>`` returns empty list."""
+        from uuid import uuid4
+
+        unknown_id = uuid4()
+        resp = postgres_client.get(
+            f"/risk-limit-snapshots?account_id={unknown_id}"
+        )
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    async def test_risk_limit_snapshots_latest_unknown_account(
+        self, postgres_client: TestClient,
+    ) -> None:
+        """``GET /risk-limit-snapshots/latest?account_id=<unknown>`` returns 404."""
+        from uuid import uuid4
+
+        unknown_id = uuid4()
+        resp = postgres_client.get(
+            f"/risk-limit-snapshots/latest?account_id={unknown_id}"
+        )
+        assert resp.status_code == 404

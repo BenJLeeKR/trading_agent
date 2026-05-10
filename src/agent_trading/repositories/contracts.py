@@ -340,6 +340,17 @@ class FillEventRepository(Protocol):
     async def list_by_broker_order(self, broker_order_id: UUID) -> Sequence[FillEventEntity]:
         ...
 
+    async def get_by_broker_fill_id(self, broker_fill_id: str) -> FillEventEntity | None:
+        """Look up a fill event by its broker-native fill identifier.
+
+        ``broker_fill_id`` is unique per ``(broker_order_id, broker_fill_id)``
+        (DB constraint ``uq_fill_events_native``).  Since the same
+        ``broker_fill_id`` could theoretically appear under a different
+        ``broker_order_id``, callers should verify the ``broker_order_id``
+        match after retrieval.
+        """
+        ...
+
 
 class ReconciliationRepository(Protocol):
     """Store for reconciliation runs and mismatch tracking."""
@@ -445,6 +456,12 @@ class GuardrailEvaluationRepository(Protocol):
     async def add(self, evaluation: GuardrailEvaluationEntity) -> GuardrailEvaluationEntity:
         ...
 
+    async def get(
+        self, guardrail_evaluation_id: UUID
+    ) -> GuardrailEvaluationEntity | None:
+        """Get a single guardrail evaluation by its UUID."""
+        ...
+
     async def get_by_decision_context(
         self, decision_context_id: UUID
     ) -> Sequence[GuardrailEvaluationEntity]:
@@ -453,6 +470,12 @@ class GuardrailEvaluationRepository(Protocol):
     async def get_by_order_request(
         self, order_request_id: UUID
     ) -> Sequence[GuardrailEvaluationEntity]:
+        ...
+
+    async def list_by_account(
+        self, account_id: UUID, limit: int = 20
+    ) -> Sequence[GuardrailEvaluationEntity]:
+        """List guardrail evaluations for an account (via decision_context join)."""
         ...
 
 
@@ -573,6 +596,10 @@ class AgentRunRepository(Protocol):
 
     async def add(self, run: AgentRunEntity) -> AgentRunEntity:
         """Persist a new agent run and return it with server defaults."""
+        ...
+
+    async def get(self, agent_run_id: UUID) -> AgentRunEntity | None:
+        """Get a single agent run by its UUID."""
         ...
 
     async def list_by_decision_context(
