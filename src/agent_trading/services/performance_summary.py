@@ -22,6 +22,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal
+from typing import NamedTuple
 from uuid import UUID
 
 from agent_trading.domain.entities import (
@@ -37,6 +38,29 @@ from agent_trading.repositories.filters import OrderQuery
 # =========================================================================
 # Pure functions — 결정론적 PnL 계산, 테스트 용이
 # =========================================================================
+
+
+class SharpeSortinoResult(NamedTuple):
+    """``_calc_sharpe_sortino()``의 반환 타입.
+
+    첫 2개 요소는 기존 ``tuple[Decimal | None, Decimal | None]``과 동일하므로
+    ``sharpe, sortino = _calc_sharpe_sortino(points)`` 형태의 unpacking이
+    그대로 동작합니다 (하위 호환).
+    """
+
+    sharpe_ratio: Decimal | None
+    """Sharpe ratio 값 (None이면 계산 불가)."""
+    sharpe_status: str
+    """``ok`` | ``insufficient_data`` | ``zero_variance``"""
+    sharpe_note: str
+    """한국어 설명 메시지."""
+
+    sortino_ratio: Decimal | None
+    """Sortino ratio 값 (None이면 계산 불가)."""
+    sortino_status: str
+    """``ok`` | ``insufficient_data`` | ``insufficient_downside_samples`` | ``zero_variance``"""
+    sortino_note: str
+    """한국어 설명 메시지."""
 
 
 def calc_realized_pnl_for_order(
@@ -331,6 +355,23 @@ class PerformanceMetrics:
     """Calmar ratio = cumulative_return_pct / max_drawdown_pct.
     max_drawdown_pct=0이면 None. cumulative_return_pct 음수이면 음수 가능."""
 
+    # ── Explanation / Status Fields (gate-facing, additive only) ──
+
+    sharpe_ratio_status: str = "insufficient_data"
+    """계산 상태 코드: ``ok`` | ``insufficient_data`` | ``zero_variance``"""
+    sharpe_ratio_note: str = ""
+    """한국어 설명 메시지. 비어있으면 안 됩니다."""
+
+    sortino_ratio_status: str = "insufficient_data"
+    """계산 상태 코드: ``ok`` | ``insufficient_data`` | ``insufficient_downside_samples`` | ``zero_variance``"""
+    sortino_ratio_note: str = ""
+    """한국어 설명 메시지. 비어있으면 안 됩니다."""
+
+    calmar_ratio_status: str = "zero_drawdown"
+    """계산 상태 코드: ``ok`` | ``zero_drawdown``"""
+    calmar_ratio_note: str = ""
+    """한국어 설명 메시지. 비어있으면 안 됩니다."""
+
 
 # =========================================================================
 # Pure helpers — metrics 계산
@@ -463,7 +504,7 @@ def _calc_win_loss_metrics(
 
 def _calc_sharpe_sortino(
     points: Sequence[DailyPerformancePoint],
-) -> tuple[Decimal | None, Decimal | None]:
+) -> SharpeSortinoResult:
     """일별 equity history에서 Sharpe ratio와 Sortino ratio를 계산합니다.
 
     계산 규칙
@@ -483,9 +524,11 @@ def _calc_sharpe_sortino(
 
     Returns
     -------
-    tuple[Decimal | None, Decimal | None]
-        (sharpe_ratio, sortino_ratio)
-        유효 daily return이 2개 미만이면 (None, None).
+    SharpeSortinoResult
+        (sharpe_ratio, sharpe_status, sharpe_note, sortino_ratio,
+         sortino_status, sortino_note)
+        유효 daily return이 2개 미만이면 sharpe/sortino ratio는 None,
+        status는 ``insufficient_data``.
     """
     # 1. 일별 수익률 계산 (연속된 non-None equity 쌍만)
     daily_returns: list[Decimal] = []
@@ -499,8 +542,24 @@ def _calc_sharpe_sortino(
             prev_equity = p.total_equity
         # p.total_equity가 None이면 prev_equity 유지 (carry forward, 보간 금지)
 
+    # ── Sharpe status/note 결정 ──
+    sharpe_ratio: Decimal | None = None
+    sharpe_status: str
+    sharpe_note: str
+
+    sortino_ratio: Decimal | None = None
+    sortino_status: str
+    sortino_note: str
+
     if len(daily_returns) < 2:
-        return (None, None)
+        sharpe_status = "insufficient_data"
+        sharpe_note = "일별 수익률 표본 부족으로 Sharpe Ratio를 계산할 수 없습니다"
+        sortino_status = "insufficient_data"
+        sortino_note = "일별 수익률 표본 부족으로 Sortino Ratio를 계산할 수 없습니다"
+        return SharpeSortinoResult(
+            sharpe_ratio, sharpe_status, sharpe_note,
+            sortino_ratio, sortino_status, sortino_note,
+        )
 
     # 2. Mean daily return
     n = len(daily_returns)
@@ -510,9 +569,13 @@ def _calc_sharpe_sortino(
     variance = sum((r - mean_return) ** 2 for r in daily_returns) / Decimal(str(n - 1))
     stddev = variance.sqrt() if variance > 0 else Decimal("0")
 
-    sharpe_ratio: Decimal | None = None
     if stddev > 0:
         sharpe_ratio = mean_return / stddev
+        sharpe_status = "ok"
+        sharpe_note = "Sharpe Ratio 정상 계산"
+    else:
+        sharpe_status = "zero_variance"
+        sharpe_note = "일별 수익률 변동성이 0이어서 Sharpe Ratio를 계산할 수 없습니다"
 
     # 4. Sortino: mean / downside deviation (비연율화, raw daily)
     downside_returns = [r for r in daily_returns if r < 0]
@@ -523,11 +586,21 @@ def _calc_sharpe_sortino(
     else:
         downside_dev = Decimal("0")
 
-    sortino_ratio: Decimal | None = None
     if downside_dev > 0:
         sortino_ratio = mean_return / downside_dev
+        sortino_status = "ok"
+        sortino_note = "Sortino Ratio 정상 계산"
+    elif len(downside_returns) < 2:
+        sortino_status = "insufficient_downside_samples"
+        sortino_note = "음수 수익률 표본 부족으로 Sortino Ratio를 계산할 수 없습니다"
+    else:
+        sortino_status = "zero_variance"
+        sortino_note = "하방 변동성이 0이어서 Sortino Ratio를 계산할 수 없습니다"
 
-    return (sharpe_ratio, sortino_ratio)
+    return SharpeSortinoResult(
+        sharpe_ratio, sharpe_status, sharpe_note,
+        sortino_ratio, sortino_status, sortino_note,
+    )
 
 
 # =========================================================================
@@ -935,16 +1008,23 @@ class PerformanceSummaryService:
         ) = _calc_win_loss_metrics(per_order_pnls)
 
         # ── 5. Risk-adjusted return metrics (Sharpe / Sortino / Calmar) ──
-        sharpe_ratio, sortino_ratio = _calc_sharpe_sortino(points)
+        sr = _calc_sharpe_sortino(points)
 
         # Calmar ratio: cumulative_return_pct / max_drawdown_pct
         # max_drawdown_pct == 0 → None (division guard)
         # cumulative_return_pct가 음수이면 calmar_ratio도 음수 가능
-        calmar_ratio: Decimal | None = (
-            cumulative_return_pct / max_drawdown_pct
-            if max_drawdown_pct > 0
-            else None
-        )
+        calmar_ratio: Decimal | None
+        calmar_status: str
+        calmar_note: str
+
+        if max_drawdown_pct > 0:
+            calmar_ratio = cumulative_return_pct / max_drawdown_pct
+            calmar_status = "ok"
+            calmar_note = "Calmar Ratio 정상 계산"
+        else:
+            calmar_ratio = None
+            calmar_status = "zero_drawdown"
+            calmar_note = "최대 손실 폭이 0이어서 Calmar Ratio를 계산할 수 없습니다"
 
         return PerformanceMetrics(
             account_id=account_id,
@@ -965,7 +1045,13 @@ class PerformanceSummaryService:
             avg_win=avg_win,
             avg_loss=avg_loss,
             profit_factor=profit_factor,
-            sharpe_ratio=sharpe_ratio,
-            sortino_ratio=sortino_ratio,
+            sharpe_ratio=sr.sharpe_ratio,
+            sortino_ratio=sr.sortino_ratio,
             calmar_ratio=calmar_ratio,
+            sharpe_ratio_status=sr.sharpe_status,
+            sharpe_ratio_note=sr.sharpe_note,
+            sortino_ratio_status=sr.sortino_status,
+            sortino_ratio_note=sr.sortino_note,
+            calmar_ratio_status=calmar_status,
+            calmar_ratio_note=calmar_note,
         )

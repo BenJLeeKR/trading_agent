@@ -1,14 +1,14 @@
-제목: 멀티 에이전트 트레이딩 시스템 구축 #8
+제목: 멀티 에이전트 트레이딩 시스템 구축 #9
 
 이 Task는 기존 `/workspace/agent_trading` 작업의 연속입니다.
 이전 대화 로그를 복원하려 하지 말고, 반드시 **현재 코드 상태와 아래 문서**를 기준으로 이어서 작업하세요.
 실제 작업자는 Roo Code이고, Codex는 Roo Code가 제대로 작업을 하기위한 업무지시에 대한 프롬프트를 생성합니다.
 그리고, Roo Code가 작업한 내용을 바탕으로, 작업내용이 적절한 지를 확인하는 작업을 합니다.
 
-프로젝트 위치:
+# 프로젝트 위치:
 - /workspace/agent_trading
 
-기본 원칙:
+# 기본 원칙:
 - 문서와 현재 코드 상태를 함께 보고 판단할 것
 - 이미 끝난 작업을 다시 설계하지 말고, 현재 구현 위에서 이어갈 것
 - 실전 자동주문에서는 rate limit을 성능이 아니라 주문 안전성 제약으로 다룰 것
@@ -20,113 +20,54 @@
 - OrderManager / ReconciliationService / BrokerAdapter 경계를 깨지 말 것
 - KIS API 연결시, oauth2/tokenP 재발급 남용을 방지하기 위해서 'KIS_DEV_TOKEN_CACHE_PATH=.cache/kis_token.json' 활용할 것
 
-우선 읽을 문서 순서:
+# 우선 읽을 문서 순서:
 
 [상위 설계 / 기준 문서]
 1. `/workspace/agent_trading/plan_docs/ENTERPRISE_TRADING_SYSTEM_DESIGN.md`
-2. `/workspace/agent_trading/plan_docs/HANDOFF_TO_ROO_CODE.md`
+2. `/workspace/agent_trading/plan_docs/ENTERPRISE_TRADING_SYSTEM_DESIGN_V2.md`
+3. `/workspace/agent_trading/plan_docs/HANDOFF_TO_ROO_CODE.md`
 
 [상세 설계 문서]
-3. `/workspace/agent_trading/plan_docs/detailed_design/README.md`
-4. `/workspace/agent_trading/plan_docs/detailed_design/01_system_architecture.md`
-5. `/workspace/agent_trading/plan_docs/detailed_design/02_order_execution_sequence.md`
-6. `/workspace/agent_trading/plan_docs/detailed_design/03_data_model_erd.md`
-7. `/workspace/agent_trading/plan_docs/detailed_design/04_broker_adapter_interface.md`
-8. `/workspace/agent_trading/plan_docs/detailed_design/05_koreainvestment_adapter_spec.md`
-9. `/workspace/agent_trading/plan_docs/detailed_design/06_config_schema.md`
-10. `/workspace/agent_trading/plan_docs/detailed_design/07_mvp_scope_and_delivery_plan.md`
-11. `/workspace/agent_trading/plan_docs/detailed_design/08_ai_decision_policy.md`
-12. `/workspace/agent_trading/plan_docs/detailed_design/09_market_and_event_data_policy.md`
-13. `/workspace/agent_trading/plan_docs/detailed_design/10_broker_rate_limit_and_capacity_policy.md`
+1. `/workspace/agent_trading/plan_docs/detailed_design/README.md`
+2. `/workspace/agent_trading/plan_docs/detailed_design/01_system_architecture.md`
+3. `/workspace/agent_trading/plan_docs/detailed_design/02_order_execution_sequence.md`
+4. `/workspace/agent_trading/plan_docs/detailed_design/03_data_model_erd.md`
+5. `/workspace/agent_trading/plan_docs/detailed_design/04_broker_adapter_interface.md`
+6. `/workspace/agent_trading/plan_docs/detailed_design/05_koreainvestment_adapter_spec.md`
+7. `/workspace/agent_trading/plan_docs/detailed_design/06_config_schema.md`
+8. `/workspace/agent_trading/plan_docs/detailed_design/07_mvp_scope_and_delivery_plan.md`
+9. `/workspace/agent_trading/plan_docs/detailed_design/08_ai_decision_policy.md`
+10. `/workspace/agent_trading/plan_docs/detailed_design/09_market_and_event_data_policy.md`
+11. `/workspace/agent_trading/plan_docs/detailed_design/10_broker_rate_limit_and_capacity_policy.md`
 
 [작업 이력 / 현재 상태 파악용 plans]
-14. `/workspace/agent_trading/plans/README.md`
-15. `/workspace/agent_trading/plans/*.md`
+1. `/workspace/agent_trading/plans/README.md`
+2. `/workspace/agent_trading/plans/*.md`
 
 [앞으로 해야 할 일]
-16. `/workspace/agent_trading/plans/BACKLOG.md`
+1. `/workspace/agent_trading/plans/BACKLOG.md`
 
 [브로커 참고 자료]
-17. `/workspace/agent_trading/reference_docs/한국투자증권_오픈API_핵심요약_자동매매용.md`
-18. `/workspace/agent_trading/reference_docs/한국투자증권_오픈API_전체문서_20260503_030000.xlsx`
+1. `/workspace/agent_trading/reference_docs/한국투자증권_오픈API_핵심요약_자동매매용.md`
+2. `/workspace/agent_trading/reference_docs/한국투자증권_오픈API_전체문서_20260503_030000.xlsx`
 
-현재까지 구현/정리된 상태 요약:
+
+# 현재까지 구현/정리된 상태 요약 예시:
 
 1. 인프라 / 저장소 / 핵심 서비스
-- Postgres / InMemory repository 다수 구현 완료
-- DB migration 기반 스키마 운영 중
-- OrderManager 구현 완료
-- 상태 전이 / order_state_events / guardrail_evaluations / risk_limit_snapshots 반영 완료
-- ConfigVersion / DecisionContext / TradeDecision 확장 완료
-- ReconciliationService 및 blocking lock 구현 완료
-- audit log ordering deterministic fix 완료
-- 현재 audit / replay / reconciliation 기반은 live-safe 방향으로 정리됨
-
 2. 브로커 / 실행 경로
-- BrokerAdapter 계약 정렬 완료
-- KIS REST client 실전화 완료
-- KIS WebSocket client 구현 완료
-- Rate limit budget / reconciliation reserve 반영 완료
-- Subscription budget 실제 적용 완료
-- WebSocket event loop / gap fill / duplicate handling / runtime-safe fallback 반영 완료
-- KIS paper smoke 테스트 인프라 준비 완료
-- 단, 실제 KIS paper credential 기반 실연동은 사용자 환경에서 별도 실행 필요
-
 3. External event / polling
-- ExternalEventEntity / repository / migration / test foundation 완료
-- SourceAdapter / RawEvent / DedupKeyGenerator / FreshnessBudget / PollingWorker 구현 완료
-- OpenDART adapter v1 구현 완료
-- runtime bootstrap에 polling worker 통합 완료
-
 4. AI Decision Layer
-- v1 Provider AI Agent 3종 문서화 완료:
-  - Event Interpretation Agent
-  - AI Risk Agent
-  - Final Decision Composer
-- JSON schema / deterministic backend boundary / storage requirements 문서 반영 완료
-- AI agent execution structure 구현 완료
-- AgentExecutionRequest / ProviderAIAgent / AIProviderClient / AgentRunRecorder 구현 완료
-- stub agents 3개 구현 완료
-- schema alignment 완료
-- decision_context_id payload vs storage semantic mismatch 해결 완료
-
 5. Provider 연결
-- 첫 provider는 DeepSeek 기준으로 진행
-- OpenAI-compatible HTTP REST client 구현 완료
-- `.env.example` / `AppSettings` / provider-agnostic internal settings 정리 완료
-- `LLM_PROVIDER` 기반 env resolver 일반화 완료
-  - `LLM_PROVIDER=deepseek` -> `DEEPSEEK_*`
-  - `LLM_PROVIDER=openai` -> `OPENAI_*`
-  - unsupported provider -> warning + stub fallback
-- bootstrap runtime wiring 완료
-  - EventInterpretationAgent real/stub
-  - AIRiskAgent real/stub
-  - FinalDecisionComposerAgent real/stub
-  - default / build_postgres_runtime / postgres_runtime 3경로 동일 shape 유지
-
 6. AI agent 실제 구현 상태
-- EventInterpretationAgent: real 구현 완료
-- AIRiskAgent: real 구현 완료
-- FinalDecisionComposerAgent: real 구현 완료
-- EI -> AR 데이터 흐름 연결 완료
-- EI -> AR -> FDC request chain 연결 완료
-- FDC fallback은 보수적으로 HOLD 유지
-- recorder 재조회 방식이 아니라 in-memory request chain으로 데이터 전달
-- deterministic backend / order submit 경로는 아직 AI와 느슨하게 연결된 상태이며, 실행 경로는 변경하지 않음
-
 7. Smoke / test 상태
-- 현재 기준 전체 테스트:
-  - `408 passed, 14 skipped, 0 failed`
-- smoke skip은 credential 의존 케이스 포함
-- runtime EventInterpretation smoke 테스트 추가됨
-- non-smoke / smoke 분리되어 있음
 
-중요한 현재 사실:
+# 중요한 현재 사실:
 - EI / AR / FDC 모두 real 구현은 들어가 있음
 - 하지만 최종 주문 판단과 deterministic backend score/threshold/sizing/hard guardrail의 깊은 결합은 아직 본격화되지 않음
 - KIS 실계정 / paper 기준 end-to-end live-safe 검증 필요
 
-현재 코드 기준 사실 관계:
+# 현재 코드 기준 사실 관계:
 - EventInterpretationAgent real 연결 완료
 - AIRiskAgent real 연결 완료
 - FinalDecisionComposerAgent real 연결 완료
@@ -139,24 +80,20 @@
 - bootstrap에서 `event_interpretation_agent`, `ai_risk_agent`, `final_decision_agent`, `orchestrator`를 runtime dict에 노출
 
 
-현재 새 Task에서 원하는 작업 방식:
+# 현재 새 Task에서 원하는 작업 방식:
 1. 먼저 위 문서와 현재 코드를 읽고 현 상태를 재확인
 2. 현재까지의 진행상태를 모두 파악 후 다음 작업에 대한 프롬프트 입력을 위한 대기
 
-중요 제약:
+# 중요 제약:
 - 이미 완료된 내용을 다시 뜯어고치지 말 것
 - 문서와 현재 코드가 어긋나는 경우, 먼저 현재 코드 기준 사실 상태를 확인하고 그 후 문서/계획을 맞출 것
 - broker submit 경로, hard guardrail, deterministic sizing/threshold를 AI로 대체하지 말 것
 - replay / audit / reconciliation 경계를 약화시키지 말 것
 
-새 Task 시작 시 첫 보고 형식:
+# 새 Task 시작 시 첫 보고 형식:
 1. 읽은 문서 요약
 2. 현재 구현 상태 요약
-3. 아직 남은 핵심 갭 3~5개
 
-
-추가 참고:
+# 추가 참고:
 - `plans/README.md`는 오래된 순서부터 최신 순서까지 정렬되어 있음
 - 위의 내용 외에도 추가적으로 더 진행된 내용은 `plans/` 경로의 문서들 확인으로 판단
-
-이 인수인계 프롬프트와 현재 코드 상태를 기준으로 작업을 이어가세요.

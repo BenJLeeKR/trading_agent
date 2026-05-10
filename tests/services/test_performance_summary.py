@@ -48,6 +48,7 @@ from agent_trading.services.performance_summary import (
     DailyPerformancePoint,
     PerformanceMetrics,
     PerformanceSummaryService,
+    SharpeSortinoResult,
     StrategyPerformanceSummary,
     _calc_equity_metrics,
     _calc_per_fill_pnl,
@@ -1196,7 +1197,9 @@ class TestCalcSharpeSortino:
         ]
         # returns: +1%, -1.98%, +3.03%, -3.92%
         # downside: -1.98%, -3.92% → 2개 → Sortino 계산 가능
-        sharpe, sortino = _calc_sharpe_sortino(points)
+        result = _calc_sharpe_sortino(points)
+        sharpe = result.sharpe_ratio
+        sortino = result.sortino_ratio
         assert sharpe is not None
         assert sortino is not None
         # mean return negative (overall declining) → both negative
@@ -1211,7 +1214,9 @@ class TestCalcSharpeSortino:
             DailyPerformancePoint(date(2026, 5, 3), Decimal("0"), Decimal("0"), None, None, None, Decimal("102")),
             DailyPerformancePoint(date(2026, 5, 4), Decimal("0"), Decimal("0"), None, None, None, Decimal("103")),
         ]
-        sharpe, sortino = _calc_sharpe_sortino(points)
+        result = _calc_sharpe_sortino(points)
+        sharpe = result.sharpe_ratio
+        sortino = result.sortino_ratio
         assert sharpe is not None
         assert sortino is None  # downside_dev=0
 
@@ -1223,7 +1228,9 @@ class TestCalcSharpeSortino:
             DailyPerformancePoint(date(2026, 5, 3), Decimal("0"), Decimal("0"), None, None, None, Decimal("400")),
         ]
         # returns: +100%, +100% → identical → stddev=0
-        sharpe, sortino = _calc_sharpe_sortino(points)
+        result = _calc_sharpe_sortino(points)
+        sharpe = result.sharpe_ratio
+        sortino = result.sortino_ratio
         assert sharpe is None   # stddev=0
         assert sortino is None  # downside_dev=0
 
@@ -1233,7 +1240,9 @@ class TestCalcSharpeSortino:
             DailyPerformancePoint(date(2026, 5, 1), Decimal("0"), Decimal("0"), None, None, None, Decimal("100")),
             DailyPerformancePoint(date(2026, 5, 2), Decimal("0"), Decimal("0"), None, None, None, Decimal("101")),
         ]
-        sharpe, sortino = _calc_sharpe_sortino(points)
+        result = _calc_sharpe_sortino(points)
+        sharpe = result.sharpe_ratio
+        sortino = result.sortino_ratio
         assert sharpe is None
         assert sortino is None
 
@@ -1243,7 +1252,9 @@ class TestCalcSharpeSortino:
             DailyPerformancePoint(date(2026, 5, 1), Decimal("0"), Decimal("0"), None, None, None, None),
             DailyPerformancePoint(date(2026, 5, 2), Decimal("0"), Decimal("0"), None, None, None, None),
         ]
-        sharpe, sortino = _calc_sharpe_sortino(points)
+        result = _calc_sharpe_sortino(points)
+        sharpe = result.sharpe_ratio
+        sortino = result.sortino_ratio
         assert sharpe is None
         assert sortino is None
 
@@ -1256,11 +1267,111 @@ class TestCalcSharpeSortino:
             DailyPerformancePoint(date(2026, 5, 4), Decimal("0"), Decimal("0"), None, None, None, Decimal("103")),
             DailyPerformancePoint(date(2026, 5, 5), Decimal("0"), Decimal("0"), None, None, None, Decimal("98.5")),
         ]
-        sharpe, sortino = _calc_sharpe_sortino(points)
+        result = _calc_sharpe_sortino(points)
+        sharpe = result.sharpe_ratio
+        sortino = result.sortino_ratio
         # 4 returns: -2%, +1.02%, +4.04%, -4.37% → mean likely positive, but negative heavy
         # We just verify both are computed (not None)
         assert sharpe is not None
         assert sortino is not None
+
+    # ── Status / Note fields (explanation field 강화) ──
+
+    def test_sharpe_sortino_status_ok(self) -> None:
+        """혼합 수익률 + 2개 이상 downside → sharpe/sortino 모두 status='ok'."""
+        points = [
+            DailyPerformancePoint(date(2026, 5, 1), Decimal("0"), Decimal("0"), None, None, None, Decimal("100")),
+            DailyPerformancePoint(date(2026, 5, 2), Decimal("0"), Decimal("0"), None, None, None, Decimal("101")),
+            DailyPerformancePoint(date(2026, 5, 3), Decimal("0"), Decimal("0"), None, None, None, Decimal("99")),
+            DailyPerformancePoint(date(2026, 5, 4), Decimal("0"), Decimal("0"), None, None, None, Decimal("102")),
+            DailyPerformancePoint(date(2026, 5, 5), Decimal("0"), Decimal("0"), None, None, None, Decimal("98")),
+        ]
+        result = _calc_sharpe_sortino(points)
+        assert result.sharpe_status == "ok"
+        assert result.sortino_status == "ok"
+        assert result.sharpe_ratio is not None
+        assert result.sortino_ratio is not None
+
+    def test_sharpe_sortino_status_insufficient_data(self) -> None:
+        """0개 return → sharpe/sortino 모두 status='insufficient_data'."""
+        points = [
+            DailyPerformancePoint(date(2026, 5, 1), Decimal("0"), Decimal("0"), None, None, None, None),
+            DailyPerformancePoint(date(2026, 5, 2), Decimal("0"), Decimal("0"), None, None, None, None),
+        ]
+        result = _calc_sharpe_sortino(points)
+        assert result.sharpe_status == "insufficient_data"
+        assert result.sortino_status == "insufficient_data"
+        assert result.sharpe_ratio is None
+        assert result.sortino_ratio is None
+
+    def test_sharpe_status_zero_variance(self) -> None:
+        """모든 수익률 동일 → stddev=0 → sharpe_status='zero_variance'."""
+        points = [
+            DailyPerformancePoint(date(2026, 5, 1), Decimal("0"), Decimal("0"), None, None, None, Decimal("100")),
+            DailyPerformancePoint(date(2026, 5, 2), Decimal("0"), Decimal("0"), None, None, None, Decimal("200")),
+            DailyPerformancePoint(date(2026, 5, 3), Decimal("0"), Decimal("0"), None, None, None, Decimal("400")),
+        ]
+        result = _calc_sharpe_sortino(points)
+        assert result.sharpe_status == "zero_variance"
+        assert result.sharpe_ratio is None
+
+    def test_sortino_status_insufficient_downside_samples(self) -> None:
+        """모든 수익률 양수 → downside 표본 부족 → sortino_status='insufficient_downside_samples'."""
+        points = [
+            DailyPerformancePoint(date(2026, 5, 1), Decimal("0"), Decimal("0"), None, None, None, Decimal("100")),
+            DailyPerformancePoint(date(2026, 5, 2), Decimal("0"), Decimal("0"), None, None, None, Decimal("101")),
+            DailyPerformancePoint(date(2026, 5, 3), Decimal("0"), Decimal("0"), None, None, None, Decimal("102")),
+            DailyPerformancePoint(date(2026, 5, 4), Decimal("0"), Decimal("0"), None, None, None, Decimal("103")),
+        ]
+        result = _calc_sharpe_sortino(points)
+        assert result.sortino_status == "insufficient_downside_samples"
+        assert result.sortino_ratio is None
+        # Sharpe는 정상 계산 (stddev > 0)
+        assert result.sharpe_status == "ok"
+        assert result.sharpe_ratio is not None
+
+    def test_sharpe_sortino_notes_not_empty(self) -> None:
+        """모든 status 케이스에서 note가 비어있지 않음을 검증."""
+        # Case 1: 정상 계산 (mixed returns)
+        points_ok = [
+            DailyPerformancePoint(date(2026, 5, 1), Decimal("0"), Decimal("0"), None, None, None, Decimal("100")),
+            DailyPerformancePoint(date(2026, 5, 2), Decimal("0"), Decimal("0"), None, None, None, Decimal("101")),
+            DailyPerformancePoint(date(2026, 5, 3), Decimal("0"), Decimal("0"), None, None, None, Decimal("99")),
+            DailyPerformancePoint(date(2026, 5, 4), Decimal("0"), Decimal("0"), None, None, None, Decimal("102")),
+            DailyPerformancePoint(date(2026, 5, 5), Decimal("0"), Decimal("0"), None, None, None, Decimal("98")),
+        ]
+        r1 = _calc_sharpe_sortino(points_ok)
+        assert r1.sharpe_note != ""
+        assert r1.sortino_note != ""
+
+        # Case 2: insufficient_data
+        points_inf = [
+            DailyPerformancePoint(date(2026, 5, 1), Decimal("0"), Decimal("0"), None, None, None, None),
+        ]
+        r2 = _calc_sharpe_sortino(points_inf)
+        assert r2.sharpe_note != ""
+        assert r2.sortino_note != ""
+
+        # Case 3: zero_variance (sharpe)
+        points_zv = [
+            DailyPerformancePoint(date(2026, 5, 1), Decimal("0"), Decimal("0"), None, None, None, Decimal("100")),
+            DailyPerformancePoint(date(2026, 5, 2), Decimal("0"), Decimal("0"), None, None, None, Decimal("200")),
+            DailyPerformancePoint(date(2026, 5, 3), Decimal("0"), Decimal("0"), None, None, None, Decimal("400")),
+        ]
+        r3 = _calc_sharpe_sortino(points_zv)
+        assert r3.sharpe_note != ""
+        assert r3.sortino_note != ""
+
+        # Case 4: insufficient_downside_samples (sortino)
+        points_ids = [
+            DailyPerformancePoint(date(2026, 5, 1), Decimal("0"), Decimal("0"), None, None, None, Decimal("100")),
+            DailyPerformancePoint(date(2026, 5, 2), Decimal("0"), Decimal("0"), None, None, None, Decimal("101")),
+            DailyPerformancePoint(date(2026, 5, 3), Decimal("0"), Decimal("0"), None, None, None, Decimal("102")),
+            DailyPerformancePoint(date(2026, 5, 4), Decimal("0"), Decimal("0"), None, None, None, Decimal("103")),
+        ]
+        r4 = _calc_sharpe_sortino(points_ids)
+        assert r4.sharpe_note != ""
+        assert r4.sortino_note != ""
 
 
 # ---------------------------------------------------------------------------
@@ -1538,6 +1649,13 @@ class TestGetPerformanceMetrics:
             assert metrics.sortino_ratio > 0
             # Calmar: cumulative return positive, max_drawdown positive → ratio positive
             assert metrics.calmar_ratio > 0
+            # Explanation fields (gate-facing)
+            assert metrics.sharpe_ratio_status == "ok"
+            assert metrics.sortino_ratio_status == "ok"
+            assert metrics.calmar_ratio_status == "ok"
+            assert metrics.sharpe_ratio_note != ""
+            assert metrics.sortino_ratio_note != ""
+            assert metrics.calmar_ratio_note != ""
             # 기존 metrics unchanged
             assert metrics.total_filled_orders == 1
             assert metrics.winning_trades == 1
@@ -1574,6 +1692,13 @@ class TestGetPerformanceMetrics:
             assert metrics.sortino_ratio is None
             # max_drawdown=0 → calmar=None
             assert metrics.calmar_ratio is None
+            # Explanation fields (gate-facing)
+            assert metrics.sharpe_ratio_status == "zero_variance"
+            assert metrics.sortino_ratio_status == "insufficient_downside_samples"
+            assert metrics.calmar_ratio_status == "zero_drawdown"
+            assert metrics.sharpe_ratio_note != ""
+            assert metrics.sortino_ratio_note != ""
+            assert metrics.calmar_ratio_note != ""
             # no orders → total_filled_orders=0
             assert metrics.total_filled_orders == 0
 
@@ -1593,5 +1718,12 @@ class TestGetPerformanceMetrics:
             assert metrics.sharpe_ratio is None
             assert metrics.sortino_ratio is None
             assert metrics.calmar_ratio is None
+            # Explanation fields (gate-facing) — default values
+            assert metrics.sharpe_ratio_status == "insufficient_data"
+            assert metrics.sortino_ratio_status == "insufficient_data"
+            assert metrics.calmar_ratio_status == "zero_drawdown"
+            assert metrics.sharpe_ratio_note != ""
+            assert metrics.sortino_ratio_note != ""
+            assert metrics.calmar_ratio_note != ""
             # 기존 metrics still valid (zero-filled)
             assert metrics.total_filled_orders == 0

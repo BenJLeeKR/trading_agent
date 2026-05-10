@@ -648,10 +648,10 @@ class TestRiskLimitSnapshots:
 
 
 class TestPerformanceMetrics:
-    """``GET /performance-metrics`` — 신규 risk-adjusted field 포함 검증."""
+    """``GET /performance-metrics`` — risk-adjusted field + explanation field 검증."""
 
     def test_new_fields_present(self, empty_client: TestClient) -> None:
-        """응답에 신규 field 3개가 존재하는지 확인."""
+        """응답에 신규 field 9개 (3 numeric + 6 explanation)가 존재하는지 확인."""
         acct_id = "00000000-0000-0000-0000-000000000001"
         response = empty_client.get(
             "/performance-metrics",
@@ -664,13 +664,21 @@ class TestPerformanceMetrics:
         assert response.status_code == 200
         data = response.json()
 
-        # 신규 3개 field 존재
+        # Numeric risk-adjusted fields (3)
         assert "sharpe_ratio" in data
         assert "sortino_ratio" in data
         assert "calmar_ratio" in data
 
-    def test_new_fields_null(self, empty_client: TestClient) -> None:
-        """데이터 없음 → 모든 신규 field가 None."""
+        # Explanation / Status fields (6)
+        assert "sharpe_ratio_status" in data
+        assert "sharpe_ratio_note" in data
+        assert "sortino_ratio_status" in data
+        assert "sortino_ratio_note" in data
+        assert "calmar_ratio_status" in data
+        assert "calmar_ratio_note" in data
+
+    def test_new_fields_status_values(self, empty_client: TestClient) -> None:
+        """데이터 없음 → numeric fields는 None, status/note fields는 기본값."""
         acct_id = "00000000-0000-0000-0000-000000000001"
         response = empty_client.get(
             "/performance-metrics",
@@ -683,10 +691,22 @@ class TestPerformanceMetrics:
         assert response.status_code == 200
         data = response.json()
 
-        # 데이터가 없으므로 신규 field는 모두 null
+        # 데이터가 없으므로 신규 numeric field는 모두 null
         assert data["sharpe_ratio"] is None
         assert data["sortino_ratio"] is None
         assert data["calmar_ratio"] is None
+
+        # Explanation fields는 기본 status 값 (nullable 아님)
+        assert data["sharpe_ratio_status"] == "insufficient_data"
+        assert data["sortino_ratio_status"] == "insufficient_data"
+        assert data["calmar_ratio_status"] == "zero_drawdown"
+        assert isinstance(data["sharpe_ratio_note"], str)
+        assert isinstance(data["sortino_ratio_note"], str)
+        assert isinstance(data["calmar_ratio_note"], str)
+        # note는 비어있지 않음
+        assert data["sharpe_ratio_note"] != ""
+        assert data["sortino_ratio_note"] != ""
+        assert data["calmar_ratio_note"] != ""
 
     def test_existing_fields_unchanged(self, empty_client: TestClient) -> None:
         """기존 19개 field가 예상 타입으로 존재하는지 확인 (회귀 방지)."""
@@ -702,7 +722,7 @@ class TestPerformanceMetrics:
         assert response.status_code == 200
         data = response.json()
 
-        # 기존 19개 field 존재 및 타입 확인
+        # 기존 19개 field 존재 및 타입 확인 (회귀 방지)
         assert isinstance(data["account_id"], str)
         assert data["strategy_id"] is None
         assert isinstance(data["period_start"], str)
@@ -721,3 +741,16 @@ class TestPerformanceMetrics:
         assert data["avg_win"] is None
         assert data["avg_loss"] is None
         assert data["profit_factor"] is None
+
+        # 신규 3개 numeric field (회귀 방지)
+        assert data["sharpe_ratio"] is None
+        assert data["sortino_ratio"] is None
+        assert data["calmar_ratio"] is None
+
+        # 신규 6개 explanation field (회귀 방지)
+        assert data["sharpe_ratio_status"] == "insufficient_data"
+        assert isinstance(data["sharpe_ratio_note"], str)
+        assert data["sortino_ratio_status"] == "insufficient_data"
+        assert isinstance(data["sortino_ratio_note"], str)
+        assert data["calmar_ratio_status"] == "zero_drawdown"
+        assert isinstance(data["calmar_ratio_note"], str)

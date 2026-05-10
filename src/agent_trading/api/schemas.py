@@ -505,6 +505,22 @@ class PerformanceMetricsView(BaseModel):
     sortino_ratio: float | None = None
     calmar_ratio: float | None = None
 
+    # ── Explanation / Status Fields (gate-facing, additive only) ──
+    sharpe_ratio_status: str
+    """``ok`` | ``insufficient_data`` | ``zero_variance``"""
+    sharpe_ratio_note: str
+    """한국어 설명 메시지."""
+
+    sortino_ratio_status: str
+    """``ok`` | ``insufficient_data`` | ``insufficient_downside_samples`` | ``zero_variance``"""
+    sortino_ratio_note: str
+    """한국어 설명 메시지."""
+
+    calmar_ratio_status: str
+    """``ok`` | ``zero_drawdown``"""
+    calmar_ratio_note: str
+    """한국어 설명 메시지."""
+
 
 class BenchmarkComparisonView(BaseModel):
     """``GET /performance-benchmark`` — 계좌/전략 성과와 benchmark 지수 간 초과수익 비교.
