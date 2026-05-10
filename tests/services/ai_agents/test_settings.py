@@ -403,6 +403,123 @@ class TestAppSettingsKisFields:
         settings = AppSettings()
         assert settings.kis_paper_rest_rps == 1
 
+
+# ===========================================================================
+# Schema generation tests  (generate_json_schema + typing.get_type_hints)
+# ===========================================================================
+
+
+class TestGenerateJsonSchemaTypeResolution:
+    """generate_json_schema() correctly resolves string annotations."""
+
+    def test_tuple_field_detected(self) -> None:
+        """tuple[InterpretedEvent, ...] detected as array (not plain string)."""
+        from agent_trading.services.ai_agents.schemas import (
+            EventInterpretationOutput,
+            generate_json_schema,
+        )
+
+        schema = generate_json_schema(EventInterpretationOutput)
+        events_schema = schema["properties"]["events"]
+        assert events_schema["type"] == "array"
+        assert "items" in events_schema
+        assert "$ref" in events_schema["items"]
+
+    def test_nested_dataclass_detected(self) -> None:
+        """AggregateEventView nested dataclass detected (not plain string)."""
+        from agent_trading.services.ai_agents.schemas import (
+            EventInterpretationOutput,
+            generate_json_schema,
+        )
+
+        schema = generate_json_schema(EventInterpretationOutput)
+        av_schema = schema["properties"]["aggregate_view"]
+        assert "$ref" in av_schema
+        assert "definitions" in schema
+        assert "AggregateEventView" in schema["definitions"]
+
+    def test_primitive_fields_resolved(self) -> None:
+        """str, int, float, bool fields resolve correctly."""
+        from agent_trading.services.ai_agents.schemas import (
+            EventInterpretationOutput,
+            generate_json_schema,
+        )
+
+        schema = generate_json_schema(EventInterpretationOutput)
+        assert schema["properties"]["symbol"]["type"] == "string"
+        assert schema["properties"]["schema_version"]["type"] == "string"
+
+
+# ===========================================================================
+# EventInterpretationOutput.__post_init__ defence tests
+# ===========================================================================
+
+
+class TestEventInterpretationOutputPostInit:
+    """__post_init__() correctly handles malformed provider responses."""
+
+    def test_aggregate_view_plain_string_fallback(self) -> None:
+        """Plain string aggregate_view → default AggregateEventView."""
+        from agent_trading.services.ai_agents.schemas import (
+            AggregateEventView,
+            EventInterpretationOutput,
+        )
+
+        output = EventInterpretationOutput(aggregate_view="중립적")  # type: ignore[arg-type]
+        assert isinstance(output.aggregate_view, AggregateEventView)
+        assert output.aggregate_view.overall_bias == "neutral"
+
+    def test_aggregate_view_json_string_parsed(self) -> None:
+        """JSON object string aggregate_view → parsed AggregateEventView."""
+        from agent_trading.services.ai_agents.schemas import (
+            AggregateEventView,
+            EventInterpretationOutput,
+        )
+
+        output = EventInterpretationOutput(
+            aggregate_view='{"overall_bias": "positive", "event_conflict": false}'
+        )
+        assert isinstance(output.aggregate_view, AggregateEventView)
+        assert output.aggregate_view.overall_bias == "positive"
+        assert output.aggregate_view.event_conflict is False
+
+    def test_events_string_fallback(self) -> None:
+        """String events field → empty tuple."""
+        from agent_trading.services.ai_agents.schemas import (
+            EventInterpretationOutput,
+        )
+
+        output = EventInterpretationOutput(events="최근 이벤트가 없습니다.")  # type: ignore[arg-type]
+        assert output.events == ()
+
+    def test_events_malformed_items_skipped(self) -> None:
+        """List with malformed items: bad items skipped, good items kept."""
+        from agent_trading.services.ai_agents.schemas import (
+            EventInterpretationOutput,
+            InterpretedEvent,
+        )
+
+        # Valid InterpretedEvent field, followed by an item with an unknown key
+        output = EventInterpretationOutput(events=(  # type: ignore[arg-type]
+            {"source_event_id": "evt-001", "summary": "good event"},
+            {"unknown_field": "not a valid field"},
+        ))
+        assert len(output.events) == 1
+        assert isinstance(output.events[0], InterpretedEvent)
+        assert output.events[0].source_event_id == "evt-001"
+
+    def test_events_all_malformed_returns_empty(self) -> None:
+        """All events malformed → empty tuple."""
+        from agent_trading.services.ai_agents.schemas import (
+            EventInterpretationOutput,
+        )
+
+        output = EventInterpretationOutput(events=(  # type: ignore[arg-type]
+            {"bad": "item1"},
+            {"also": "bad"},
+        ))
+        assert output.events == ()
+
     def test_real_rest_rps_custom(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``KIS_REAL_REST_RPS`` set → uses env value."""
         monkeypatch.setenv("KIS_REAL_REST_RPS", "20")

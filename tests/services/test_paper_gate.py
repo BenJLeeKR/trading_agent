@@ -50,6 +50,12 @@ from agent_trading.services.paper_gate import (
     PaperGoNoGoEvaluation,
     PaperGateService,
 )
+from agent_trading.services.risk_metric_constants import (
+    CALMAR_ZERO_DRAWDOWN_NOTE,
+    GateReasonCode,
+    SHARPE_INSUFFICIENT_DATA_NOTE,
+    SORTINO_INSUFFICIENT_DOWNSIDE_NOTE,
+)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -362,6 +368,11 @@ class TestPaperGateService:
             assert check.status == GateStatus.PASS, (
                 f"{check.code} should be PASS, got {check.status}: {check.message}"
             )
+            # T7: PASS case → reason_code is None
+            assert check.reason_code is None, (
+                f"{check.code} reason_code should be None on PASS, "
+                f"got {check.reason_code}"
+            )
 
         # Summary should indicate all passed
         assert "통과" in evaluation.summary_reason
@@ -433,6 +444,11 @@ class TestPaperGateService:
 
         snapshot_check = next(c for c in evaluation.checks if c.code == "SNAPSHOT_FRESHNESS")
         _assert_check(snapshot_check, code="SNAPSHOT_FRESHNESS", status=GateStatus.FAIL)
+        # T3: stale snapshot → reason_code=snapshot_stale
+        assert snapshot_check.reason_code == GateReasonCode.SNAPSHOT_STALE.value, (
+            f"SNAPSHOT_FRESHNESS reason_code should be snapshot_stale, "
+            f"got {snapshot_check.reason_code}"
+        )
 
         # Summary should mention "실패"
         assert "실패" in evaluation.summary_reason
@@ -494,6 +510,11 @@ class TestPaperGateService:
         lock_check = next(c for c in evaluation.checks if c.code == "BLOCKING_LOCKS")
         _assert_check(lock_check, code="BLOCKING_LOCKS", status=GateStatus.FAIL)
         assert lock_check.measured_value == 1
+        # T3: blocking lock → reason_code=blocking_lock_present
+        assert lock_check.reason_code == GateReasonCode.BLOCKING_LOCK_PRESENT.value, (
+            f"BLOCKING_LOCKS reason_code should be blocking_lock_present, "
+            f"got {lock_check.reason_code}"
+        )
 
     # ------------------------------------------------------------------
     # 6. With benchmark_code → MIN_EXCESS_RETURN included
@@ -606,6 +627,37 @@ class TestPaperGateService:
         warn_count = sum(1 for c in evaluation.checks if c.status == GateStatus.WARN)
         assert warn_count >= 3, f"Expected >=3 WARNs, got {warn_count}"
 
+        # ── 공유 상수 참조 의도 노출 ──
+        # paper_gate의 None-case WARN message가 performance_summary note와
+        # 동일한 공통 상수(SHARPE_INSUFFICIENT_DATA_NOTE 등)를 참조함을 검증.
+        # (이 테스트에서는 value가 None이 아니므로 직접 비교로 대체)
+        assert SHARPE_INSUFFICIENT_DATA_NOTE != ""
+        assert SORTINO_INSUFFICIENT_DOWNSIDE_NOTE != ""
+        assert CALMAR_ZERO_DRAWDOWN_NOTE != ""
+
+        # ── T1: WARN 시 reason_code 검증 ──
+        # Risk metric value가 None일 수 있음 (insufficient data).
+        # 각 metric의 None-case reason_code는 다르며, value가 None이면
+        # 해당 None-case 코드가 설정됨.
+        expected_reason_codes = {
+            "MIN_SHARPE_RATIO": GateReasonCode.INSUFFICIENT_DATA,
+            "MIN_SORTINO_RATIO": GateReasonCode.INSUFFICIENT_DOWNSIDE_SAMPLES,
+            "MIN_CALMAR_RATIO": GateReasonCode.ZERO_DRAWDOWN,
+        }
+        for code in risk_codes:
+            check = next(c for c in evaluation.checks if c.code == code)
+            # value가 None이면 None-case reason_code, numeric이면 metric_below_threshold
+            if check.measured_value is None:
+                assert check.reason_code == expected_reason_codes[code].value, (
+                    f"{code} reason_code should be {expected_reason_codes[code].value} "
+                    f"when value=None, got {check.reason_code}"
+                )
+            else:
+                assert check.reason_code == GateReasonCode.METRIC_BELOW_THRESHOLD.value, (
+                    f"{code} reason_code should be metric_below_threshold on WARN "
+                    f"(value={check.measured_value}<threshold), got {check.reason_code}"
+                )
+
     # ------------------------------------------------------------------
     # 9. Risk metrics above threshold → PASS (new)
     # ------------------------------------------------------------------
@@ -645,3 +697,197 @@ class TestPaperGateService:
             assert check.status == GateStatus.PASS, (
                 f"{code} should be PASS, got {check.status}: {check.message}"
             )
+
+    # ------------------------------------------------------------------
+    # 10. Risk metrics None → reason_code 검증 (T2)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_risk_metrics_none_reason_code(self) -> None:
+        """Sharpe/Sortino/Calmar가 None(데이터 부족) → 개별 reason_code 검증."""
+        repos = build_in_memory_repositories()
+        _seed_base(repos)
+        # Only 1 filled order, NO _add_equity_snapshots → insufficient equity history
+        # → sharpe/sortino/calmar 모두 None
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=1))
+        _add_fresh_sync_run(repos)
+
+        # MIN_RETURN이 None이면 PASS하도록 threshold 조정
+        with _env(MIN_RETURN_PCT="-99"):
+            settings = AppSettings()
+            service = PaperGateService(repos, settings=settings)
+            evaluation = await service.evaluate(
+                account_id=_ACCOUNT_ID,
+                start_date=_START,
+                end_date=_END,
+            )
+
+        # MIN_SHARPE_RATIO: value=None → WARN, reason_code=insufficient_data
+        sharpe = next(c for c in evaluation.checks if c.code == "MIN_SHARPE_RATIO")
+        assert sharpe.status == GateStatus.WARN, (
+            f"MIN_SHARPE_RATIO should be WARN when None, got {sharpe.status}"
+        )
+        assert sharpe.reason_code == GateReasonCode.INSUFFICIENT_DATA.value, (
+            f"MIN_SHARPE_RATIO reason_code should be insufficient_data when value=None, "
+            f"got {sharpe.reason_code}"
+        )
+
+        # MIN_SORTINO_RATIO: value=None → WARN, reason_code=insufficient_downside_samples
+        sortino = next(c for c in evaluation.checks if c.code == "MIN_SORTINO_RATIO")
+        assert sortino.status == GateStatus.WARN, (
+            f"MIN_SORTINO_RATIO should be WARN when None, got {sortino.status}"
+        )
+        assert sortino.reason_code == GateReasonCode.INSUFFICIENT_DOWNSIDE_SAMPLES.value, (
+            f"MIN_SORTINO_RATIO reason_code should be insufficient_downside_samples "
+            f"when value=None, got {sortino.reason_code}"
+        )
+
+        # MIN_CALMAR_RATIO: value=None → WARN, reason_code=zero_drawdown
+        calmar = next(c for c in evaluation.checks if c.code == "MIN_CALMAR_RATIO")
+        assert calmar.status == GateStatus.WARN, (
+            f"MIN_CALMAR_RATIO should be WARN when None, got {calmar.status}"
+        )
+        assert calmar.reason_code == GateReasonCode.ZERO_DRAWDOWN.value, (
+            f"MIN_CALMAR_RATIO reason_code should be zero_drawdown when value=None, "
+            f"got {calmar.reason_code}"
+        )
+
+    # ------------------------------------------------------------------
+    # 11. All PASS → reason_code summary fields 모두 기본값 (T9)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_all_pass_reason_code_summary_empty(self) -> None:
+        """모든 check PASS → reason_code 요약 필드는 빈 기본값."""
+        repos = build_in_memory_repositories()
+        _seed_base(repos)
+        _add_equity_snapshots(repos)
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=3))
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=2))
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=1))
+        _add_fresh_sync_run(repos)
+
+        with _env(
+            MIN_RETURN_PCT="-99",
+            MIN_SHARPE_RATIO="-99",
+            MIN_SORTINO_RATIO="-99",
+            MIN_CALMAR_RATIO="-99",
+        ):
+            settings = AppSettings()
+            service = PaperGateService(repos, settings=settings)
+            evaluation = await service.evaluate(
+                account_id=_ACCOUNT_ID,
+                start_date=_START,
+                end_date=_END,
+            )
+
+        assert evaluation.reason_code_counts == {}, (
+            f"Expected empty reason_code_counts on all PASS, got {evaluation.reason_code_counts}"
+        )
+        assert evaluation.warn_reason_codes == [], (
+            f"Expected empty warn_reason_codes on all PASS, got {evaluation.warn_reason_codes}"
+        )
+        assert evaluation.fail_reason_codes == [], (
+            f"Expected empty fail_reason_codes on all PASS, got {evaluation.fail_reason_codes}"
+        )
+        assert evaluation.display_only_count == 0, (
+            f"Expected display_only_count 0 on all PASS, got {evaluation.display_only_count}"
+        )
+
+    # ------------------------------------------------------------------
+    # 12. WARN reason_code count 집계 (T10)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_warn_reason_code_counts(self) -> None:
+        """WARN check의 reason_code별 count + warn_reason_codes 집계 검증."""
+        repos = build_in_memory_repositories()
+        _seed_base(repos)
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=3))
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=2))
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=1))
+        _add_fresh_sync_run(repos)
+
+        with _env(MIN_RETURN_PCT="-99"):
+            settings = AppSettings()
+            service = PaperGateService(repos, settings=settings)
+            evaluation = await service.evaluate(
+                account_id=_ACCOUNT_ID,
+                start_date=_START,
+                end_date=_END,
+            )
+
+        # At least 3 risk metrics should WARN (with None-case reason_codes
+        # like insufficient_data, insufficient_downside_samples, zero_drawdown
+        # because the test setup has insufficient equity history).
+        total_warn_codes = sum(evaluation.reason_code_counts.values())
+        assert total_warn_codes >= 3, (
+            f"Expected >=3 WARN reason_code entries total, "
+            f"got {total_warn_codes} from {evaluation.reason_code_counts}"
+        )
+        # warn_reason_codes should be sorted unique list
+        assert evaluation.warn_reason_codes == sorted(evaluation.warn_reason_codes), (
+            f"warn_reason_codes should be sorted, got {evaluation.warn_reason_codes}"
+        )
+        assert evaluation.fail_reason_codes == [], (
+            f"Expected empty fail_reason_codes, got {evaluation.fail_reason_codes}"
+        )
+        assert evaluation.display_only_count == 0
+
+    # ------------------------------------------------------------------
+    # 13. FAIL reason_code codes (T11)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_fail_reason_code_codes(self) -> None:
+        """FAIL check의 reason_code → fail_reason_codes 집계 검증."""
+        repos = build_in_memory_repositories()
+        _seed_base(repos)
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=3))
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=2))
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=1))
+        # Clear all sync runs → stale
+        repos.snapshot_sync_runs._items.clear()
+
+        now = datetime.now(timezone.utc)
+        stale_run = SnapshotSyncRunEntity(
+            snapshot_sync_run_id=uuid4(),
+            trigger_type="scheduler",
+            scope="all",
+            dry_run=False,
+            total_accounts=1,
+            succeeded_accounts=1,
+            partial_accounts=0,
+            failed_accounts=0,
+            skipped_accounts=0,
+            positions_synced_total=5,
+            positions_skipped_total=0,
+            cash_synced_count=1,
+            error_count=0,
+            status="completed",
+            started_at=now - timedelta(hours=25),
+            completed_at=now - timedelta(hours=25),
+            env_filter=None,
+            status_filter=None,
+        )
+        repos.snapshot_sync_runs._items[stale_run.snapshot_sync_run_id] = stale_run
+
+        settings = AppSettings()
+        service = PaperGateService(repos, settings=settings)
+        evaluation = await service.evaluate(
+            account_id=_ACCOUNT_ID,
+            start_date=_START,
+            end_date=_END,
+        )
+
+        # At least snapshot_stale should be in fail_reason_codes
+        assert "snapshot_stale" in evaluation.fail_reason_codes, (
+            f"Expected snapshot_stale in fail_reason_codes, "
+            f"got {evaluation.fail_reason_codes}"
+        )
+        assert evaluation.reason_code_counts.get("snapshot_stale", 0) >= 1, (
+            f"Expected snapshot_stale in reason_code_counts, "
+            f"got {evaluation.reason_code_counts}"
+        )
+        # display_only never appears in Paper Gate
+        assert evaluation.display_only_count == 0

@@ -16,6 +16,7 @@ import pytest
 from agent_trading.services.ai_agents.base import RawProviderResponse
 from agent_trading.services.ai_agents.provider_client import (
     OpenAICompatibleClient,
+    _coerce_nested_json_strings,
 )
 
 
@@ -29,6 +30,20 @@ class _FakeOutput:
     """Minimal dataclass used as ``response_format`` in tests."""
     symbol: str = ""
     score: float = 0.0
+
+
+@dataclass(slots=True, frozen=True)
+class _NestedInner:
+    """Minimal nested dataclass for testing dict→dataclass coercion."""
+    size_mode: str = "no_change"
+    size_adjustment_factor: float = 0.0
+
+
+@dataclass(slots=True, frozen=True)
+class _NestedOuter:
+    """Outer dataclass with a nested dataclass field."""
+    decision: str = "hold"
+    sizing_hint: _NestedInner = _NestedInner()
 
 
 def _make_client(
@@ -218,3 +233,57 @@ class TestOpenAICompatibleClient:
         )
 
         assert "seed" not in captured[0]
+
+
+# ---------------------------------------------------------------------------
+# Nested dataclass coercion tests
+# ---------------------------------------------------------------------------
+
+
+class TestCoerceNestedJsonStrings:
+    """Unit tests for ``_coerce_nested_json_strings()`` nested dataclass conversion."""
+
+    def test_nested_dict_converts_to_dataclass(self) -> None:
+        """Dict sizing_hint -> _NestedInner dataclass instance after coercion."""
+        raw: dict[str, Any] = {
+            "decision": "buy",
+            "sizing_hint": {"size_mode": "increase", "size_adjustment_factor": 0.15},
+        }
+        coerced = _coerce_nested_json_strings(_NestedOuter, raw)
+        assert isinstance(coerced["sizing_hint"], _NestedInner)
+        assert coerced["sizing_hint"].size_mode == "increase"
+        assert coerced["sizing_hint"].size_adjustment_factor == 0.15
+
+        # Also verify that the full construction succeeds
+        outer = _NestedOuter(**coerced)
+        assert outer.decision == "buy"
+        assert isinstance(outer.sizing_hint, _NestedInner)
+        assert outer.sizing_hint.size_mode == "increase"
+
+    def test_nested_dict_malformed_fallback(self) -> None:
+        """Malformed nested dict stays as dict (fallback, no crash)."""
+        raw: dict[str, Any] = {
+            "decision": "buy",
+            "sizing_hint": {"size_mode": "increase", "unknown_field": 1},
+        }
+        # _NestedInner has only size_mode and size_adjustment_factor;
+        # extra keys cause a TypeError on frozen dataclass, but the function
+        # should catch it and keep the dict.
+        coerced = _coerce_nested_json_strings(_NestedOuter, raw)
+        # Should NOT crash; fallback keeps it as dict
+        assert isinstance(coerced["sizing_hint"], dict)
+
+    def test_nested_json_string_converts_to_dataclass(self) -> None:
+        """JSON-string sizing_hint -> parsed dict -> _NestedInner dataclass."""
+        raw: dict[str, Any] = {
+            "decision": "sell",
+            "sizing_hint": '{"size_mode": "decrease", "size_adjustment_factor": 0.1}',
+        }
+        coerced = _coerce_nested_json_strings(_NestedOuter, raw)
+        assert isinstance(coerced["sizing_hint"], _NestedInner)
+        assert coerced["sizing_hint"].size_mode == "decrease"
+        assert coerced["sizing_hint"].size_adjustment_factor == 0.1
+
+        outer = _NestedOuter(**coerced)
+        assert outer.decision == "sell"
+        assert isinstance(outer.sizing_hint, _NestedInner)

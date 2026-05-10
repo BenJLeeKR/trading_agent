@@ -36,14 +36,33 @@ def generate_json_schema(dataclass_type: type) -> dict[str, Any]:
     This is used to instruct the LLM on the expected output format.
     Handles ``str``, ``int``, ``float``, ``bool``, ``tuple`` of dataclasses,
     and nested dataclasses.
+
+    .. note::
+
+       This fix addresses the ``from __future__ import annotations`` issue
+       where all type annotations are strings at runtime.  By using
+       ``typing.get_type_hints()`` we resolve string annotations back to
+       their actual types (e.g. ``tuple[InterpretedEvent, ...]`` instead of
+       ``"tuple[InterpretedEvent, ...]"``).
+
+       **This is a prompt quality improvement, not a runtime guarantee.**
+       Providers may still return malformed JSON.  Runtime defence is
+       handled separately by ``__post_init__()`` methods.
     """
     import dataclasses
+    import typing
+
+    # Resolve string annotations to actual types (PEP 563 / from __future__)
+    try:
+        resolved_hints = typing.get_type_hints(dataclass_type)
+    except Exception:
+        resolved_hints = {}
 
     fields: dict[str, Any] = {}
     required: list[str] = []
 
     for f in dataclasses.fields(dataclass_type):
-        field_type = f.type
+        field_type = resolved_hints.get(f.name, f.type)
         origin = getattr(field_type, "__origin__", None)
         type_name = getattr(field_type, "__name__", str(field_type))
 
@@ -89,10 +108,10 @@ def generate_json_schema(dataclass_type: type) -> dict[str, Any]:
     if required:
         schema["required"] = required
 
-    # Build definitions for nested dataclasses
+    # Build definitions for nested dataclasses (using resolved hints)
     definitions: dict[str, Any] = {}
     for f in dataclasses.fields(dataclass_type):
-        field_type = f.type
+        field_type = resolved_hints.get(f.name, f.type)
         origin = getattr(field_type, "__origin__", None)
         if origin is tuple:
             args = getattr(field_type, "__args__", ())
@@ -234,7 +253,7 @@ class EventInterpretationOutput:
     aggregate_view: AggregateEventView = field(default_factory=AggregateEventView)
 
     def __post_init__(self) -> None:
-        """Coerce ``aggregate_view`` from JSON string or dict to ``AggregateEventView``.
+        """Coerce malformed fields to safe defaults.
 
         Some providers (e.g. DeepSeek) may return nested objects as serialised
         JSON strings instead of proper nested JSON objects.  Because
@@ -242,15 +261,56 @@ class EventInterpretationOutput:
         at runtime, the ``_coerce_nested_json_strings`` helper in
         ``provider_client.py`` may not always resolve the target type correctly.
         This ``__post_init__`` acts as a second line of defence.
+
+        Malformed item policy
+        ---------------------
+        - ``events`` string → ``()`` empty tuple
+        - ``events`` list with invalid items → item-level skip, all fail → ``()``
+        - ``aggregate_view`` JSON string → ``json.loads()`` → ``AggregateEventView``
+        - ``aggregate_view`` plain string → ``AggregateEventView()`` default
+        - ``aggregate_view`` dict with shape mismatch → ``AggregateEventView()`` default
         """
         import json
 
+        # --- aggregate_view 방어 ---
         av = self.aggregate_view
         if isinstance(av, str):
-            parsed = json.loads(av)
-            object.__setattr__(self, "aggregate_view", AggregateEventView(**parsed))
+            try:
+                parsed = json.loads(av)
+                if isinstance(parsed, dict):
+                    object.__setattr__(self, "aggregate_view", AggregateEventView(**parsed))
+                else:
+                    # JSON string but not a dict → default
+                    object.__setattr__(self, "aggregate_view", AggregateEventView())
+            except (json.JSONDecodeError, TypeError, ValueError):
+                # Plain string ("중립적") → default
+                object.__setattr__(self, "aggregate_view", AggregateEventView())
         elif isinstance(av, dict) and not isinstance(av, AggregateEventView):
-            object.__setattr__(self, "aggregate_view", AggregateEventView(**av))
+            try:
+                object.__setattr__(self, "aggregate_view", AggregateEventView(**av))
+            except (TypeError, ValueError):
+                # Dict but shape mismatch → default
+                object.__setattr__(self, "aggregate_view", AggregateEventView())
+
+        # --- events 방어 ---
+        ev = self.events
+        if isinstance(ev, str):
+            # String events → empty tuple
+            object.__setattr__(self, "events", ())
+        elif isinstance(ev, (list, tuple)):
+            # Item-level skip: keep only valid InterpretedEvent items
+            safe: list[InterpretedEvent] = []
+            for item in ev:
+                if isinstance(item, dict):
+                    try:
+                        safe.append(InterpretedEvent(**item))
+                    except (TypeError, ValueError):
+                        pass  # Malformed item — skip
+                elif isinstance(item, InterpretedEvent):
+                    safe.append(item)
+            # If items were removed, replace with filtered tuple
+            if len(safe) != len(ev):
+                object.__setattr__(self, "events", tuple(safe))
 
 
 # ============================================================================

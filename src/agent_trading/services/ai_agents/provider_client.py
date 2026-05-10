@@ -60,9 +60,13 @@ def _coerce_nested_json_strings(
                 except (json.JSONDecodeError, TypeError):
                     pass  # leave as-is, will fail at construction
             if isinstance(data.get(f.name), dict):
-                data[f.name] = _coerce_nested_json_strings(
+                coerced = _coerce_nested_json_strings(
                     field_type, data[f.name]
                 )
+                try:
+                    data[f.name] = field_type(**coerced)
+                except (TypeError, ValueError):
+                    data[f.name] = coerced  # fallback: keep as dict
 
         # Tuple of dataclasses — value should be a list, but items may be JSON strings
         elif origin is tuple:

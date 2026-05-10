@@ -17,11 +17,11 @@ status.  The overall evaluation aggregates them:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from enum import Enum
-from typing import Sequence
+from typing import Any, Sequence
 from uuid import UUID
 
 from agent_trading.config.settings import AppSettings
@@ -31,6 +31,12 @@ from agent_trading.services.benchmark_comparison import (
     BenchmarkComparisonService,
 )
 from agent_trading.services.performance_summary import PerformanceSummaryService
+from agent_trading.services.risk_metric_constants import (
+    CALMAR_ZERO_DRAWDOWN_NOTE,
+    GateReasonCode,
+    SHARPE_INSUFFICIENT_DATA_NOTE,
+    SORTINO_INSUFFICIENT_DOWNSIDE_NOTE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +75,7 @@ class PaperGateCheck:
     measured_value: Decimal | int | None
     threshold: Decimal | int | None
     message: str
+    reason_code: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -81,6 +88,63 @@ class PaperGoNoGoEvaluation:
     checks: Sequence[PaperGateCheck]
     generated_at: datetime
     summary_reason: str
+    # --- 신규: reason_code 요약 집계 (read-only additive) ---
+    reason_code_counts: dict[str, int] = field(default_factory=dict)
+    warn_reason_codes: list[str] = field(default_factory=list)
+    fail_reason_codes: list[str] = field(default_factory=list)
+    display_only_count: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Helper — reason_code summary aggregation
+# ---------------------------------------------------------------------------
+
+
+def compute_reason_code_summary(
+    checks: Sequence[PaperGateCheck],
+) -> dict[str, Any]:
+    """Compute reason_code summary aggregation from gate checks.
+
+    Pure function — no side effects.  Operates on any check-like objects
+    that have ``reason_code: str | None`` and ``status: str`` fields
+    (PaperGateCheck, AutoCheckResult, LiveGateCheck).
+
+    Args:
+        checks: Gate check sequence with status and reason_code attributes.
+
+    Returns:
+        Dictionary with four keys for read-only JSON inclusion:
+
+        * **reason_code_counts** — non-None reason_code별 등장 횟수
+        * **warn_reason_codes** — WARN check의 unique reason_code (정렬)
+        * **fail_reason_codes** — FAIL check의 unique reason_code (정렬)
+        * **display_only_count** — display_only check 개수 (별도 파생)
+    """
+    reason_code_counts: dict[str, int] = {}
+    warn_codes: set[str] = set()
+    fail_codes: set[str] = set()
+    display_only_count = 0
+
+    for c in checks:
+        rc = c.reason_code
+        if rc is None:
+            continue  # PASS checks excluded from summary
+
+        reason_code_counts[rc] = reason_code_counts.get(rc, 0) + 1
+
+        if rc == GateReasonCode.DISPLAY_ONLY.value:
+            display_only_count += 1
+        elif c.status == "WARN":
+            warn_codes.add(rc)
+        elif c.status == "FAIL":
+            fail_codes.add(rc)
+
+    return {
+        "reason_code_counts": reason_code_counts,
+        "warn_reason_codes": sorted(warn_codes),
+        "fail_reason_codes": sorted(fail_codes),
+        "display_only_count": display_only_count,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +254,7 @@ class PaperGateService:
         overall = self._determine_overall(checks)
         summary = self._build_summary(overall, checks, metrics.total_filled_orders)
 
+        summary_data = compute_reason_code_summary(checks)
         return PaperGoNoGoEvaluation(
             account_id=account_id,
             strategy_id=strategy_id,
@@ -197,6 +262,7 @@ class PaperGateService:
             checks=checks,
             generated_at=datetime.now(timezone.utc),
             summary_reason=summary,
+            **summary_data,
         )
 
     # ------------------------------------------------------------------
@@ -214,6 +280,7 @@ class PaperGateService:
                 status=GateStatus.FAIL,
                 measured_value=None, threshold=threshold,
                 message="수익률 데이터를 계산할 수 없습니다",
+                reason_code=GateReasonCode.METRIC_UNAVAILABLE.value,
             )
         if value < threshold:
             return PaperGateCheck(
@@ -221,6 +288,7 @@ class PaperGateService:
                 status=GateStatus.FAIL,
                 measured_value=value, threshold=threshold,
                 message=f"누적 수익률 {value}%이(가) 최소 기준 {threshold}%에 미달합니다",
+                reason_code=GateReasonCode.METRIC_BELOW_THRESHOLD.value,
             )
         return PaperGateCheck(
             code=code, label=label,
@@ -247,6 +315,7 @@ class PaperGateService:
                 status=GateStatus.FAIL,
                 measured_value=value, threshold=threshold,
                 message=f"최대 손실 폭 {value}%이(가) 허용 기준 {threshold}%을 초과했습니다",
+                reason_code=GateReasonCode.METRIC_BELOW_THRESHOLD.value,
             )
         return PaperGateCheck(
             code=code, label=label,
@@ -266,6 +335,7 @@ class PaperGateService:
                 status=GateStatus.FAIL,
                 measured_value=None, threshold=threshold,
                 message="초과수익 데이터를 계산할 수 없습니다",
+                reason_code=GateReasonCode.METRIC_UNAVAILABLE.value,
             )
         if value < threshold:
             return PaperGateCheck(
@@ -273,6 +343,7 @@ class PaperGateService:
                 status=GateStatus.FAIL,
                 measured_value=value, threshold=threshold,
                 message=f"초과수익 {value}%p이(가) 최소 기준 {threshold}%p에 미달합니다",
+                reason_code=GateReasonCode.METRIC_BELOW_THRESHOLD.value,
             )
         return PaperGateCheck(
             code=code, label=label,
@@ -290,6 +361,7 @@ class PaperGateService:
             measured_value=None,
             threshold=self._settings.paper_gate_min_excess_return_pct,
             message="벤치마크 가격 데이터를 불러올 수 없습니다",
+            reason_code=GateReasonCode.BENCHMARK_UNAVAILABLE.value,
         )
 
     def _check_win_rate(self, value: Decimal | None) -> PaperGateCheck:
@@ -310,6 +382,7 @@ class PaperGateService:
                 status=GateStatus.WARN,
                 measured_value=value, threshold=threshold,
                 message=f"승률 {value}%이(가) 최소 기준 {threshold}%에 미달합니다",
+                reason_code=GateReasonCode.METRIC_BELOW_THRESHOLD.value,
             )
         return PaperGateCheck(
             code=code, label=label,
@@ -332,7 +405,8 @@ class PaperGateService:
                 code=code, label=label,
                 status=GateStatus.WARN,
                 measured_value=None, threshold=threshold,
-                message="일별 수익률 표본 부족으로 Sharpe Ratio를 계산할 수 없습니다",
+                message=SHARPE_INSUFFICIENT_DATA_NOTE,
+                reason_code=GateReasonCode.INSUFFICIENT_DATA.value,
             )
         if value < threshold:
             return PaperGateCheck(
@@ -340,6 +414,7 @@ class PaperGateService:
                 status=GateStatus.WARN,
                 measured_value=value, threshold=threshold,
                 message=f"Sharpe Ratio {value}이(가) 최소 기준 {threshold}에 미달합니다",
+                reason_code=GateReasonCode.METRIC_BELOW_THRESHOLD.value,
             )
         return PaperGateCheck(
             code=code, label=label,
@@ -358,7 +433,8 @@ class PaperGateService:
                 code=code, label=label,
                 status=GateStatus.WARN,
                 measured_value=None, threshold=threshold,
-                message="음수 수익률 표본 부족으로 Sortino Ratio를 계산할 수 없습니다",
+                message=SORTINO_INSUFFICIENT_DOWNSIDE_NOTE,
+                reason_code=GateReasonCode.INSUFFICIENT_DOWNSIDE_SAMPLES.value,
             )
         if value < threshold:
             return PaperGateCheck(
@@ -366,6 +442,7 @@ class PaperGateService:
                 status=GateStatus.WARN,
                 measured_value=value, threshold=threshold,
                 message=f"Sortino Ratio {value}이(가) 최소 기준 {threshold}에 미달합니다",
+                reason_code=GateReasonCode.METRIC_BELOW_THRESHOLD.value,
             )
         return PaperGateCheck(
             code=code, label=label,
@@ -384,7 +461,8 @@ class PaperGateService:
                 code=code, label=label,
                 status=GateStatus.WARN,
                 measured_value=None, threshold=threshold,
-                message="최대 손실 폭이 0이어서 Calmar Ratio를 계산할 수 없습니다",
+                message=CALMAR_ZERO_DRAWDOWN_NOTE,
+                reason_code=GateReasonCode.ZERO_DRAWDOWN.value,
             )
         if value < threshold:
             return PaperGateCheck(
@@ -392,6 +470,7 @@ class PaperGateService:
                 status=GateStatus.WARN,
                 measured_value=value, threshold=threshold,
                 message=f"Calmar Ratio {value}이(가) 최소 기준 {threshold}에 미달합니다",
+                reason_code=GateReasonCode.METRIC_BELOW_THRESHOLD.value,
             )
         return PaperGateCheck(
             code=code, label=label,
@@ -411,6 +490,7 @@ class PaperGateService:
                 status=GateStatus.FAIL,
                 measured_value=value, threshold=threshold,
                 message=f"체결 건수 {value}건이(가) 최소 기준 {threshold}건에 미달합니다",
+                reason_code=GateReasonCode.METRIC_BELOW_THRESHOLD.value,
             )
         return PaperGateCheck(
             code=code, label=label,
@@ -429,6 +509,7 @@ class PaperGateService:
                 status=GateStatus.FAIL,
                 measured_value=1, threshold=0,
                 message="스냅샷이 최신 상태가 아닙니다",
+                reason_code=GateReasonCode.SNAPSHOT_STALE.value,
             )
         return PaperGateCheck(
             code=code, label=label,
@@ -448,6 +529,7 @@ class PaperGateService:
                 status=GateStatus.FAIL,
                 measured_value=consecutive_failures, threshold=threshold,
                 message=f"연속 실패 {consecutive_failures}회 — 허용 기준 {threshold}회 초과",
+                reason_code=GateReasonCode.EXCESSIVE_SYNC_FAILURES.value,
             )
         return PaperGateCheck(
             code=code, label=label,
@@ -466,6 +548,7 @@ class PaperGateService:
                 status=GateStatus.FAIL,
                 measured_value=lock_count, threshold=0,
                 message=f"활성 차단 락 {lock_count}개 존재 — 해결 후 재평가 필요",
+                reason_code=GateReasonCode.BLOCKING_LOCK_PRESENT.value,
             )
         return PaperGateCheck(
             code=code, label=label,

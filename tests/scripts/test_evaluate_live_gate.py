@@ -41,6 +41,8 @@ from agent_trading.services.benchmark_comparison import (
     InMemoryBenchmarkPriceRepository,
     _DEFAULT_BENCHMARK_PRICES,
 )
+from agent_trading.services.paper_gate import compute_reason_code_summary
+from agent_trading.services.risk_metric_constants import GateReasonCode
 from scripts.evaluate_live_gate import (
     LiveGateCheck,
     LiveGateEvaluator,
@@ -475,6 +477,27 @@ class TestLiveGateEvaluator:
         )
         assert len(doc["live_gate"]["manual_checks"]) == 6
 
+        # ── T8: JSON backward compatibility — reason_code 필드 존재 확인 ──
+        for check in doc["live_gate"]["auto_checks"]:
+            assert "reason_code" in check, (
+                f"auto check {check['code']} JSON should include reason_code"
+            )
+            # 기존 필드 유지 검증
+            assert "code" in check
+            assert "label" in check
+            assert "status" in check
+            assert "message" in check
+
+        # paper_exit layer_a_checks에도 reason_code 포함
+        for check in doc["paper_exit"]["layer_a_checks"]:
+            assert "reason_code" in check, (
+                f"paper_exit layer_a check {check['code']} JSON should include reason_code"
+            )
+            # 기존 필드 유지 검증
+            assert "code" in check
+            assert "status" in check
+            assert "message" in check
+
     @pytest.mark.asyncio
     async def test_manual_template_output(self) -> None:
         """``build_manual_template()`` — 6개 PENDING 항목 반환 확인."""
@@ -534,6 +557,29 @@ class TestLiveGateEvaluator:
                 f"{code} threshold should be N/A (no env var), got {check.threshold}"
             )
 
+        # ── Metric name vocabulary 검증 ──
+        # Live Gate는 display-only이므로 WARN message를 공유하지 않지만,
+        # metric name 어휘(Sharpe Ratio / Sortino Ratio / Calmar Ratio)는
+        # Performance API / Paper Gate와 동일하게 사용되어야 함.
+        label_map = {
+            "LG_SHARPE_RATIO": "Sharpe Ratio",
+            "LG_SORTINO_RATIO": "Sortino Ratio",
+            "LG_CALMAR_RATIO": "Calmar Ratio",
+        }
+        for code, expected_vocab in label_map.items():
+            check = next(c for c in live_checks if c.code == code)
+            assert expected_vocab in check.label, (
+                f"{code} label '{check.label}' should contain '{expected_vocab}'"
+            )
+
+        # ── T5: display-only risk check → reason_code=display_only 검증 ──
+        for code in ("LG_SHARPE_RATIO", "LG_SORTINO_RATIO", "LG_CALMAR_RATIO"):
+            check = next(c for c in live_checks if c.code == code)
+            assert check.reason_code == GateReasonCode.DISPLAY_ONLY.value, (
+                f"{code} reason_code should be display_only (display-only check), "
+                f"got {check.reason_code}"
+            )
+
     # ------------------------------------------------------------------
     # 5. Risk check always PASS → overall decision 영향 없음 (new)
     # ------------------------------------------------------------------
@@ -567,3 +613,159 @@ class TestLiveGateEvaluator:
         # Same behavior as without risk checks (they are all PASS)
         assert overall == "HOLD", f"Expected HOLD, got {overall}"
         assert "수동" in reason
+
+    # ------------------------------------------------------------------
+    # 6. JSON 출력에 reason_code_summary 포함 + display_only (T6)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_json_output_reason_code_summary(self) -> None:
+        """JSON live_gate.reason_code_summary 블록 구조 + display_only 포함 검증."""
+        repos = build_in_memory_repositories()
+        _seed_base(repos)
+        for _ in range(12):
+            _add_filled_order(repos)
+
+        evaluator = _build_evaluator(repos)
+
+        pe_status, pe_auto = await evaluator.evaluate_paper_exit(
+            account_id=_ACCOUNT_ID,
+            start_date=_START,
+            end_date=_END,
+        )
+        live_checks = await evaluator.evaluate_live_auto(
+            account_id=_ACCOUNT_ID,
+            start_date=_START,
+            end_date=_END,
+        )
+        manual_checks = evaluator.build_manual_template(
+            account_id=_ACCOUNT_ID,
+            start_date=_START,
+            end_date=_END,
+        )
+        overall, reason = evaluator._determine_overall(
+            paper_exit_status=pe_status,
+            live_checks=live_checks,
+            manual_checks=manual_checks,
+        )
+
+        # Compute summary for JSON
+        summary_data = compute_reason_code_summary(
+            list(live_checks) + list(manual_checks)
+        )
+
+        json_str = evaluator.to_json(
+            paper_exit_status=pe_status,
+            paper_exit_auto=pe_auto,
+            live_checks=live_checks,
+            manual_checks=manual_checks,
+            overall_status=overall,
+            summary_reason=reason,
+            account_id=_ACCOUNT_ID,
+            start_date=_START,
+            end_date=_END,
+            **summary_data,
+        )
+        doc = json.loads(json_str)
+
+        # reason_code_summary 블록 존재 확인
+        assert "reason_code_summary" in doc["live_gate"], (
+            "JSON live_gate should contain reason_code_summary block"
+        )
+        summary = doc["live_gate"]["reason_code_summary"]
+        assert "reason_code_counts" in summary
+        assert "warn_reason_codes" in summary
+        assert "fail_reason_codes" in summary
+        assert "display_only_count" in summary
+
+        # 타입 검증
+        assert isinstance(summary["reason_code_counts"], dict)
+        assert isinstance(summary["warn_reason_codes"], list)
+        assert isinstance(summary["fail_reason_codes"], list)
+        assert isinstance(summary["display_only_count"], int)
+
+        # display_only risk check 3개 포함 → display_only_count >= 3
+        assert summary["display_only_count"] >= 3, (
+            f"Expected display_only_count >= 3 (3 risk display-only checks), "
+            f"got {summary['display_only_count']}"
+        )
+        # display_only가 reason_code_counts에 포함되어야 함
+        assert "display_only" in summary["reason_code_counts"], (
+            f"Expected display_only in reason_code_counts, "
+            f"got {summary['reason_code_counts']}"
+        )
+        assert summary["reason_code_counts"]["display_only"] >= 3
+
+        # 기존 필드 영향 없음
+        assert "auto_checks" in doc["live_gate"]
+        assert "manual_checks" in doc["live_gate"]
+        assert "auto_summary" in doc["live_gate"]
+        assert "manual_summary" in doc["live_gate"]
+
+    # ------------------------------------------------------------------
+    # 7. Text 출력에 reason_code 요약 라인 포함 (T7)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_text_output_reason_code_summary(self) -> None:
+        """Text 출력에 reason_codes: 요약 라인이 포함되는지 검증."""
+        repos = build_in_memory_repositories()
+        _seed_base(repos)
+        for _ in range(12):
+            _add_filled_order(repos)
+
+        evaluator = _build_evaluator(repos)
+
+        pe_status, pe_auto = await evaluator.evaluate_paper_exit(
+            account_id=_ACCOUNT_ID,
+            start_date=_START,
+            end_date=_END,
+        )
+        live_checks = await evaluator.evaluate_live_auto(
+            account_id=_ACCOUNT_ID,
+            start_date=_START,
+            end_date=_END,
+        )
+        manual_checks = evaluator.build_manual_template(
+            account_id=_ACCOUNT_ID,
+            start_date=_START,
+            end_date=_END,
+        )
+        overall, reason = evaluator._determine_overall(
+            paper_exit_status=pe_status,
+            live_checks=live_checks,
+            manual_checks=manual_checks,
+        )
+
+        # Compute summary for text
+        summary_data = compute_reason_code_summary(
+            list(live_checks) + list(manual_checks)
+        )
+
+        text = evaluator.to_text(
+            paper_exit_status=pe_status,
+            paper_exit_auto=pe_auto,
+            live_checks=live_checks,
+            manual_checks=manual_checks,
+            overall_status=overall,
+            summary_reason=reason,
+            account_id=_ACCOUNT_ID,
+            start_date=_START,
+            end_date=_END,
+            **summary_data,
+        )
+
+        # reason_codes: 라인이 존재하는지 확인
+        assert "reason_codes:" in text, (
+            "Text output should contain 'reason_codes:' summary line"
+        )
+        # display_only count가 text에 포함되어야 함
+        assert "display_only" in text, (
+            "Text output should include display_only count"
+        )
+        # 주요 섹션 보존 확인
+        assert "Live Gate" in text
+        assert "Paper Exit Status" in text
+        assert "Live-Specific Auto Checks" in text
+        assert "Manual Checks" in text
+        assert "Overall:" in text

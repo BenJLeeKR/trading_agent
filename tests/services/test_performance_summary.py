@@ -60,6 +60,14 @@ from agent_trading.services.performance_summary import (
     calc_realized_pnl_for_order,
     calc_unrealized_pnl_from_positions,
 )
+from agent_trading.services.risk_metric_constants import (
+    RiskMetricStatus,
+    SHARPE_INSUFFICIENT_DATA_NOTE,
+    SHARPE_ZERO_VARIANCE_NOTE,
+    SORTINO_INSUFFICIENT_DATA_NOTE,
+    SORTINO_INSUFFICIENT_DOWNSIDE_NOTE,
+    SORTINO_ZERO_VARIANCE_NOTE,
+)
 
 # ---------------------------------------------------------------------------
 # Shared test data
@@ -1287,8 +1295,8 @@ class TestCalcSharpeSortino:
             DailyPerformancePoint(date(2026, 5, 5), Decimal("0"), Decimal("0"), None, None, None, Decimal("98")),
         ]
         result = _calc_sharpe_sortino(points)
-        assert result.sharpe_status == "ok"
-        assert result.sortino_status == "ok"
+        assert result.sharpe_status == RiskMetricStatus.OK.value
+        assert result.sortino_status == RiskMetricStatus.OK.value
         assert result.sharpe_ratio is not None
         assert result.sortino_ratio is not None
 
@@ -1299,8 +1307,8 @@ class TestCalcSharpeSortino:
             DailyPerformancePoint(date(2026, 5, 2), Decimal("0"), Decimal("0"), None, None, None, None),
         ]
         result = _calc_sharpe_sortino(points)
-        assert result.sharpe_status == "insufficient_data"
-        assert result.sortino_status == "insufficient_data"
+        assert result.sharpe_status == RiskMetricStatus.INSUFFICIENT_DATA.value
+        assert result.sortino_status == RiskMetricStatus.INSUFFICIENT_DATA.value
         assert result.sharpe_ratio is None
         assert result.sortino_ratio is None
 
@@ -1312,7 +1320,7 @@ class TestCalcSharpeSortino:
             DailyPerformancePoint(date(2026, 5, 3), Decimal("0"), Decimal("0"), None, None, None, Decimal("400")),
         ]
         result = _calc_sharpe_sortino(points)
-        assert result.sharpe_status == "zero_variance"
+        assert result.sharpe_status == RiskMetricStatus.ZERO_VARIANCE.value
         assert result.sharpe_ratio is None
 
     def test_sortino_status_insufficient_downside_samples(self) -> None:
@@ -1324,15 +1332,15 @@ class TestCalcSharpeSortino:
             DailyPerformancePoint(date(2026, 5, 4), Decimal("0"), Decimal("0"), None, None, None, Decimal("103")),
         ]
         result = _calc_sharpe_sortino(points)
-        assert result.sortino_status == "insufficient_downside_samples"
+        assert result.sortino_status == RiskMetricStatus.INSUFFICIENT_DOWNSIDE_SAMPLES.value
         assert result.sortino_ratio is None
         # Sharpe는 정상 계산 (stddev > 0)
-        assert result.sharpe_status == "ok"
+        assert result.sharpe_status == RiskMetricStatus.OK.value
         assert result.sharpe_ratio is not None
 
     def test_sharpe_sortino_notes_not_empty(self) -> None:
-        """모든 status 케이스에서 note가 비어있지 않음을 검증."""
-        # Case 1: 정상 계산 (mixed returns)
+        """모든 status 케이스에서 note가 공통 상수와 일치함을 검증 (shared-reference intent)."""
+        # Case 1: 정상 계산 (mixed returns) — OK note는 공통화 대상 아님
         points_ok = [
             DailyPerformancePoint(date(2026, 5, 1), Decimal("0"), Decimal("0"), None, None, None, Decimal("100")),
             DailyPerformancePoint(date(2026, 5, 2), Decimal("0"), Decimal("0"), None, None, None, Decimal("101")),
@@ -1344,25 +1352,26 @@ class TestCalcSharpeSortino:
         assert r1.sharpe_note != ""
         assert r1.sortino_note != ""
 
-        # Case 2: insufficient_data
+        # Case 2: insufficient_data → 공통 상수와 일치해야 함
         points_inf = [
             DailyPerformancePoint(date(2026, 5, 1), Decimal("0"), Decimal("0"), None, None, None, None),
         ]
         r2 = _calc_sharpe_sortino(points_inf)
-        assert r2.sharpe_note != ""
-        assert r2.sortino_note != ""
+        assert r2.sharpe_note == SHARPE_INSUFFICIENT_DATA_NOTE
+        assert r2.sortino_note == SORTINO_INSUFFICIENT_DATA_NOTE
 
-        # Case 3: zero_variance (sharpe)
+        # Case 3: zero_variance (sharpe) → sharpe_note는 공통 상수
+        # sortino: 모든 수익률 양수 → downside_returns=0개 (< 2) → insufficient_downside_samples
         points_zv = [
             DailyPerformancePoint(date(2026, 5, 1), Decimal("0"), Decimal("0"), None, None, None, Decimal("100")),
             DailyPerformancePoint(date(2026, 5, 2), Decimal("0"), Decimal("0"), None, None, None, Decimal("200")),
             DailyPerformancePoint(date(2026, 5, 3), Decimal("0"), Decimal("0"), None, None, None, Decimal("400")),
         ]
         r3 = _calc_sharpe_sortino(points_zv)
-        assert r3.sharpe_note != ""
-        assert r3.sortino_note != ""
+        assert r3.sharpe_note == SHARPE_ZERO_VARIANCE_NOTE
+        assert r3.sortino_note == SORTINO_INSUFFICIENT_DOWNSIDE_NOTE
 
-        # Case 4: insufficient_downside_samples (sortino)
+        # Case 4: insufficient_downside_samples (sortino) → sortino_note는 공통 상수
         points_ids = [
             DailyPerformancePoint(date(2026, 5, 1), Decimal("0"), Decimal("0"), None, None, None, Decimal("100")),
             DailyPerformancePoint(date(2026, 5, 2), Decimal("0"), Decimal("0"), None, None, None, Decimal("101")),
@@ -1370,8 +1379,10 @@ class TestCalcSharpeSortino:
             DailyPerformancePoint(date(2026, 5, 4), Decimal("0"), Decimal("0"), None, None, None, Decimal("103")),
         ]
         r4 = _calc_sharpe_sortino(points_ids)
+        # sharpe 정상 계산 → sharpe_note는 OK (공통화 대상 아님)
         assert r4.sharpe_note != ""
-        assert r4.sortino_note != ""
+        # sortino: 모든 수익률 양수 → insufficient_downside_samples
+        assert r4.sortino_note == SORTINO_INSUFFICIENT_DOWNSIDE_NOTE
 
 
 # ---------------------------------------------------------------------------

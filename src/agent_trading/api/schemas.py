@@ -614,6 +614,7 @@ class PaperGateCheckView(BaseModel):
     measured_value: str | None
     threshold: str | None
     message: str
+    reason_code: str | None = None
 
 
 class PaperGoNoGoEvaluationView(BaseModel):
@@ -632,6 +633,11 @@ class PaperGoNoGoEvaluationView(BaseModel):
     checks: list[PaperGateCheckView]
     generated_at: datetime
     summary_reason: str
+    # --- 신규: reason_code 요약 집계 (read-only additive) ---
+    reason_code_counts: dict[str, int] = {}
+    warn_reason_codes: list[str] = []
+    fail_reason_codes: list[str] = []
+    display_only_count: int = 0
 
 
 class GuardrailEvaluationView(BaseModel):

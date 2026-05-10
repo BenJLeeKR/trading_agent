@@ -71,7 +71,9 @@ from agent_trading.services.paper_gate import (
     OverallStatus,
     PaperGateService,
     PaperGoNoGoEvaluation,
+    compute_reason_code_summary,
 )
+from agent_trading.services.risk_metric_constants import GateReasonCode
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +91,7 @@ class AutoCheckResult:
     measured_value: str | None
     threshold: str | None
     message: str
+    reason_code: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -122,6 +125,11 @@ class LayerAResult:
     status: str  # PASS / WARN / FAIL
     checks: Sequence[AutoCheckResult]
     gate_evaluation: PaperGoNoGoEvaluation | None
+    # --- 신규: reason_code 요약 집계 (read-only additive) ---
+    reason_code_counts: dict[str, int] = field(default_factory=dict)
+    warn_reason_codes: list[str] = field(default_factory=list)
+    fail_reason_codes: list[str] = field(default_factory=list)
+    display_only_count: int = 0
 
 
 @dataclass(slots=True, frozen=True)
@@ -206,6 +214,7 @@ class PaperExitEvaluator:
                     measured_value=self._fmt_decimal(c.measured_value),
                     threshold=self._fmt_decimal(c.threshold),
                     message=c.message,
+                    reason_code=c.reason_code,  # propagate from PaperGateCheck
                 )
             )
 
@@ -222,12 +231,15 @@ class PaperExitEvaluator:
         if health_stale is True:
             health_status = "FAIL"
             health_msg = "snapshot_sync_stale = True → FAIL"
+            health_reason = GateReasonCode.SNAPSHOT_STALE.value
         elif health_stale is False:
             health_status = "PASS"
             health_msg = "snapshot_sync_stale = False"
+            health_reason = None
         else:
             health_status = "FAIL"
             health_msg = "health endpoint unavailable → FAIL"
+            health_reason = GateReasonCode.HEALTH_UNAVAILABLE.value
 
         checks.append(
             AutoCheckResult(
@@ -236,6 +248,7 @@ class PaperExitEvaluator:
                 measured_value=str(health_stale) if health_stale is not None else None,
                 threshold="False",
                 message=health_msg + " (stale→FAIL)",
+                reason_code=health_reason,
             )
         )
 
@@ -243,12 +256,15 @@ class PaperExitEvaluator:
         if health_stale is True:
             readyz_status = "WARN"
             readyz_msg = "snapshot_sync_stale → degraded → HOLD"
+            readyz_reason = GateReasonCode.SNAPSHOT_STALE.value
         elif health_stale is False:
             readyz_status = "PASS"
             readyz_msg = "snapshot_sync_fresh → ok"
+            readyz_reason = None
         else:
             readyz_status = "FAIL"
             readyz_msg = "health endpoint unavailable → not_ready → FAIL"
+            readyz_reason = GateReasonCode.HEALTH_UNAVAILABLE.value
 
         checks.append(
             AutoCheckResult(
@@ -257,6 +273,7 @@ class PaperExitEvaluator:
                 measured_value="degraded" if health_stale else "ok",
                 threshold="ok",
                 message=readyz_msg + " (not_ready→FAIL, degraded→HOLD)",
+                reason_code=readyz_reason,
             )
         )
 
@@ -270,10 +287,12 @@ class PaperExitEvaluator:
         else:
             a_status = "PASS"
 
+        summary_data = compute_reason_code_summary(checks)
         return LayerAResult(
             status=a_status,
             checks=checks,
             gate_evaluation=gate_eval,
+            **summary_data,
         )
 
     # ------------------------------------------------------------------
@@ -531,6 +550,22 @@ class PaperExitEvaluator:
     # 출력 포맷
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _build_reason_code_text_summary(
+        result: LayerAResult,
+    ) -> str:
+        """Build one-line reason_code text summary (counts only, no detail codes)."""
+        parts = []
+        if result.warn_reason_codes:
+            parts.append(f"warn={len(result.warn_reason_codes)}")
+        if result.fail_reason_codes:
+            parts.append(f"fail={len(result.fail_reason_codes)}")
+        if result.display_only_count:
+            parts.append(f"display_only={result.display_only_count}")
+        if not parts:
+            return ""
+        return f"reason_codes: {', '.join(parts)}"
+
     def to_text(
         self,
         auto: LayerAResult,
@@ -567,6 +602,10 @@ class PaperExitEvaluator:
             lines.append(
                 f"  {icon} {c.code:20s} {c.message}"
             )
+        # Reason code summary line (counts only)
+        rc_summary = self._build_reason_code_text_summary(auto)
+        if rc_summary:
+            lines.append(f"  {rc_summary}")
         lines.append("")
 
         # Layer B
@@ -640,9 +679,16 @@ class PaperExitEvaluator:
                             "measured_value": c.measured_value,
                             "threshold": c.threshold,
                             "message": c.message,
+                            "reason_code": c.reason_code,
                         }
                         for c in auto.checks
                     ],
+                    "reason_code_summary": {
+                        "reason_code_counts": auto.reason_code_counts,
+                        "warn_reason_codes": auto.warn_reason_codes,
+                        "fail_reason_codes": auto.fail_reason_codes,
+                        "display_only_count": auto.display_only_count,
+                    },
                 },
                 "semi": {
                     "status": semi.status,

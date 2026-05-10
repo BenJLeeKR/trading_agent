@@ -40,6 +40,7 @@ from agent_trading.services.benchmark_comparison import (
     InMemoryBenchmarkPriceRepository,
     _DEFAULT_BENCHMARK_PRICES,
 )
+from agent_trading.services.risk_metric_constants import GateReasonCode
 from scripts.evaluate_paper_exit import (
     AutoCheckResult,
     FinalOverall,
@@ -577,6 +578,22 @@ class TestPaperExitEvaluator:
             assert "checklist" in check
             assert "status" in check
 
+        # ── T4: JSON 출력에 reason_code 노출 검증 ──
+        for check in parsed["layers"]["auto"]["checks"]:
+            assert "reason_code" in check, (
+                f"auto check {check.get('code')} JSON should include reason_code field"
+            )
+
+        # ── T8: 기존 JSON consumer backward compatibility 검증 ──
+        # 기존 필드(message, status, code, measured_value, threshold)는
+        # reason_code 추가 후에도 동일하게 유지
+        for check in parsed["layers"]["auto"]["checks"]:
+            assert "code" in check
+            assert "status" in check
+            assert "message" in check
+            assert "measured_value" in check
+            assert "threshold" in check
+
     # ------------------------------------------------------------------
     # 6. Manual Template 출력 검증
     # ------------------------------------------------------------------
@@ -759,3 +776,129 @@ class TestPaperExitEvaluator:
             assert code in codes, (
                 f"Expected {code} in Layer A checks, got codes={codes}"
             )
+
+    # ------------------------------------------------------------------
+    # 9. JSON 출력에 reason_code_summary 포함 (T9)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_json_output_reason_code_summary(self) -> None:
+        """JSON layers.auto.reason_code_summary 블록 구조 검증."""
+        repos = build_in_memory_repositories()
+        _seed_base(repos)
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=3))
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=2))
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=1))
+        _add_fresh_sync_run(repos)
+
+        settings = AppSettings()
+        evaluator = PaperExitEvaluator(
+            repos=repos,
+            settings=settings,
+            benchmark_price_repo=InMemoryBenchmarkPriceRepository(
+                prices=_DEFAULT_BENCHMARK_PRICES,
+            ),
+        )
+
+        auto = await evaluator.evaluate_auto(
+            account_id=_ACCOUNT_ID,
+            start_date=_START,
+            end_date=_END,
+            benchmark_code="KOSPI",
+        )
+        semi = await evaluator.evaluate_semi(
+            account_id=_ACCOUNT_ID,
+            start_date=_START,
+            end_date=_END,
+            run_semi=False,
+        )
+        manual = evaluator.build_manual_template(auto_result=auto, semi_result=semi)
+
+        json_str = evaluator.to_json(
+            auto=auto,
+            semi=semi,
+            manual=manual,
+            overall=PaperExitEvaluator._determine_overall(auto, semi, manual),
+            account_id=_ACCOUNT_ID,
+            start_date=_START,
+            end_date=_END,
+            strategy_id=_STRATEGY_ID,
+            benchmark_code="KOSPI",
+        )
+        parsed = json.loads(json_str)
+
+        # reason_code_summary 블록 존재 확인
+        assert "reason_code_summary" in parsed["layers"]["auto"], (
+            "JSON layers.auto should contain reason_code_summary block"
+        )
+        summary = parsed["layers"]["auto"]["reason_code_summary"]
+        assert "reason_code_counts" in summary
+        assert "warn_reason_codes" in summary
+        assert "fail_reason_codes" in summary
+        assert "display_only_count" in summary
+
+        # 타입 검증
+        assert isinstance(summary["reason_code_counts"], dict)
+        assert isinstance(summary["warn_reason_codes"], list)
+        assert isinstance(summary["fail_reason_codes"], list)
+        assert isinstance(summary["display_only_count"], int)
+
+        # 기존 필드 영향 없음 (backward compatibility)
+        assert "status" in parsed["layers"]["auto"]
+        assert "checks" in parsed["layers"]["auto"]
+        assert "summary" in parsed["layers"]["auto"]
+
+    # ------------------------------------------------------------------
+    # 10. Text 출력에 reason_code 요약 라인 포함 (T10)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_text_output_reason_code_summary(self) -> None:
+        """Text 출력에 reason_codes: 요약 라인이 포함되는지 검증."""
+        repos = build_in_memory_repositories()
+        _seed_base(repos)
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=3))
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=2))
+        _add_filled_order(repos, OrderSide.BUY, fill_timestamp=_NOW - timedelta(days=1))
+        _add_fresh_sync_run(repos)
+
+        settings = AppSettings()
+        evaluator = PaperExitEvaluator(
+            repos=repos,
+            settings=settings,
+            benchmark_price_repo=InMemoryBenchmarkPriceRepository(
+                prices=_DEFAULT_BENCHMARK_PRICES,
+            ),
+        )
+
+        auto = await evaluator.evaluate_auto(
+            account_id=_ACCOUNT_ID,
+            start_date=_START,
+            end_date=_END,
+            benchmark_code="KOSPI",
+        )
+        semi = await evaluator.evaluate_semi(
+            account_id=_ACCOUNT_ID,
+            start_date=_START,
+            end_date=_END,
+            run_semi=False,
+        )
+        manual = evaluator.build_manual_template(auto_result=auto, semi_result=semi)
+
+        text = evaluator.to_text(
+            auto=auto,
+            semi=semi,
+            manual=manual,
+            overall=PaperExitEvaluator._determine_overall(auto, semi, manual),
+            account_id=_ACCOUNT_ID,
+            start_date=_START,
+            end_date=_END,
+        )
+
+        # reason_codes: 라인이 존재하는지 확인
+        assert "reason_codes:" in text, (
+            "Text output should contain 'reason_codes:' summary line"
+        )
+        # 주요 섹션 보존 확인
+        assert "Layer A" in text
+        assert "Overall:" in text

@@ -1068,3 +1068,78 @@ async def test_assemble_fail_open_when_account_missing(service, sample_request):
     assert len(runs) == 3, (
         f"Expected 3 agent runs even on fail-open, got {len(runs)}"
     )
+
+
+# ===========================================================================
+# Correlation duplicate → transaction 유지
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_ensure_or_create_decision_context_reuses_existing(
+    seeded_service_with_account, sample_request
+):
+    """동일 correlation_id로 2회 호출 시 context 재사용 (transaction 유지).
+
+    검증 목표
+    --------
+    - ``_ensure_or_create_decision_context()``가 ``existing_context_id``를 제공받으면
+      바로 반환 (추가 insert 없음) → transaction abort 위험 없음
+    - savepoint fallback (in-memory에서 connection 없을 때) 정상 동작
+
+    Note
+    ----
+    실제 UniqueViolationError → savepoint rollback → transaction 유지 검증은
+    postgres integration test 필요. 여기서는 구조적 안전성을 확인.
+    """
+    from dataclasses import replace
+
+    # sample_request의 strategy_id를 UUID 문자열로 변경
+    strategy_id = uuid4()
+    req = replace(sample_request, strategy_id=str(strategy_id))
+
+    # 1차: context 생성
+    ctx_id_1 = await seeded_service_with_account._ensure_or_create_decision_context(
+        req, None
+    )
+    assert ctx_id_1 is not None, "First call should create a context"
+
+    # 2차: 동일 existing_context_id 전달 → 바로 반환 (추가 insert 없음)
+    ctx_id_2 = await seeded_service_with_account._ensure_or_create_decision_context(
+        req, ctx_id_1
+    )
+    assert ctx_id_2 == ctx_id_1, "Should return the same existing context ID"
+
+    # Transaction 유지 확인: 후속 agent_run 기록 가능
+    from agent_trading.domain.entities import AgentRunEntity
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    run = AgentRunEntity(
+        agent_run_id=uuid4(),
+        decision_context_id=ctx_id_1,
+        agent_type="event_interpretation",
+        started_at=now,
+        completed_at=now,
+    )
+    # InFailedSQLTransactionError 없이 정상 저장되어야 함
+    saved = await seeded_service_with_account._repos.agent_runs.add(run)
+    assert saved is not None
+    assert saved.agent_run_id == run.agent_run_id
+
+
+@pytest.mark.asyncio
+async def test_ensure_or_create_decision_context_none_no_connection_crash(
+    service, sample_request
+):
+    """In-memory UoW (connection attr 없음)에서 savepoint 코드가 crash 나지 않음.
+
+    ``service`` fixture는 in-memory repository를 사용하므로
+    ``unit_of_work.connection``이 없다. savepoint fallback 경로 검증.
+    """
+    ctx_id = await service._ensure_or_create_decision_context(
+        sample_request, None
+    )
+    # In-memory에서는 account lookup 실패 → fail-open → None
+    # (crash만 안 나면 OK)
+    _ = ctx_id

@@ -62,8 +62,10 @@ from agent_trading.services.paper_gate import (
     GateStatus,
     PaperGateService,
     PaperGoNoGoEvaluation,
+    compute_reason_code_summary,
 )
 from agent_trading.services.performance_summary import PerformanceSummaryService
+from agent_trading.services.risk_metric_constants import GateReasonCode
 from scripts.evaluate_paper_exit import (
     PaperExitEvaluator,
     AutoCheckResult,
@@ -89,6 +91,7 @@ class LiveGateCheck:
     measured_value: str | None
     threshold: str | None
     message: str
+    reason_code: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -102,6 +105,11 @@ class LiveCanaryReadinessEvaluation:
     checks: Sequence[LiveGateCheck]
     generated_at: datetime
     summary_reason: str
+    # --- 신규: reason_code 요약 집계 (read-only additive) ---
+    reason_code_counts: dict[str, int] = field(default_factory=dict)
+    warn_reason_codes: list[str] = field(default_factory=list)
+    fail_reason_codes: list[str] = field(default_factory=list)
+    display_only_count: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +208,7 @@ class LiveGateEvaluator:
                     f"체결 건수 {filled}건이 live 최소 기준 {lg_min_orders}건에 미달합니다. "
                     f"(paper gate 기준: {self._settings.paper_gate_min_filled_orders}건)"
                 ),
+                reason_code=GateReasonCode.METRIC_BELOW_THRESHOLD.value,
             ))
         else:
             checks.append(LiveGateCheck(
@@ -227,6 +236,7 @@ class LiveGateEvaluator:
                     f"최대 손실 폭 {dd}%이(가) live 허용 기준 {lg_max_dd}%을 초과했습니다. "
                     f"(paper gate 기준: {self._settings.paper_gate_max_drawdown_pct}%)"
                 ),
+                reason_code=GateReasonCode.METRIC_BELOW_THRESHOLD.value,
             ))
         else:
             dd_str = f"{dd}%" if dd is not None else "N/A"
@@ -273,6 +283,7 @@ class LiveGateEvaluator:
                         f"초과수익 {excess}%p이(가) live 최소 기준 {lg_min_excess}%p에 미달합니다. "
                         f"(paper gate 기준: {self._settings.paper_gate_min_excess_return_pct}%p)"
                     ),
+                    reason_code=GateReasonCode.METRIC_BELOW_THRESHOLD.value,
                 ))
             elif excess is not None:
                 checks.append(LiveGateCheck(
@@ -293,6 +304,7 @@ class LiveGateEvaluator:
                     measured_value=None,
                     threshold=f"{lg_min_excess}%p",
                     message="벤치마크 데이터를 불러올 수 없습니다 — 수동 확인 필요",
+                    reason_code=GateReasonCode.BENCHMARK_UNAVAILABLE.value,
                 ))
         else:
             checks.append(LiveGateCheck(
@@ -303,6 +315,7 @@ class LiveGateEvaluator:
                 measured_value=None,
                 threshold=f"{lg_min_excess}%p",
                 message="벤치마크 코드 미지정 — 수동 확인 필요",
+                reason_code=GateReasonCode.BENCHMARK_CODE_MISSING.value,
             ))
 
         # -- 4. LG_WIN_RATE: paper gate threshold 재사용 --
@@ -320,6 +333,7 @@ class LiveGateEvaluator:
                     f"승률 {win_rate}%이(가) 기준 {paper_win_threshold}%에 미달합니다. "
                     "(paper gate threshold 재사용)"
                 ),
+                reason_code=GateReasonCode.METRIC_BELOW_THRESHOLD.value,
             ))
         else:
             wr_str = f"{win_rate}%" if win_rate is not None else "N/A"
@@ -354,6 +368,7 @@ class LiveGateEvaluator:
                     f"최근 RECONCILE_REQUIRED 상태 {reconcile_count}건 — "
                     f"허용 기준 {max_reconcile}건 초과"
                 ),
+                reason_code=GateReasonCode.EXCESSIVE_RECONCILE_REQUIRED.value,
             ))
         else:
             checks.append(LiveGateCheck(
@@ -383,6 +398,7 @@ class LiveGateEvaluator:
                     f"활성 차단 lock {lock_count}개 — "
                     f"허용 기준 {max_locks}개 초과. 해결 후 재평가 필요."
                 ),
+                reason_code=GateReasonCode.BLOCKING_LOCK_PRESENT.value,
             ))
         else:
             checks.append(LiveGateCheck(
@@ -413,6 +429,7 @@ class LiveGateEvaluator:
                     "스냅샷 동기화가 최신 상태가 아닙니다. "
                     "readyz degraded 상태 — 확인 필요."
                 ),
+                reason_code=GateReasonCode.SNAPSHOT_STALE.value,
             ))
         else:
             checks.append(LiveGateCheck(
@@ -442,6 +459,7 @@ class LiveGateEvaluator:
                 measured_value=f"연속실패 {health.consecutive_failures}회",
                 threshold="연속실패 0회",
                 message=f"Post-submit sync 연속 실패 {health.consecutive_failures}회 — 확인 필요",
+                reason_code=GateReasonCode.SYNC_FAILURE.value,
             ))
         else:
             checks.append(LiveGateCheck(
@@ -465,6 +483,7 @@ class LiveGateEvaluator:
                 measured_value=f"{sr:.4f}",
                 threshold="N/A",
                 message="Sharpe Ratio 정보 표시 (현재 gate 미적용)",
+                reason_code=GateReasonCode.DISPLAY_ONLY.value,
             ))
         else:
             checks.append(LiveGateCheck(
@@ -475,6 +494,7 @@ class LiveGateEvaluator:
                 measured_value="N/A",
                 threshold="N/A",
                 message="Sharpe Ratio 데이터 없음 — 정보 표시",
+                reason_code=GateReasonCode.DISPLAY_ONLY.value,
             ))
 
         # -- 10. LG_SORTINO_RATIO: display only, always PASS (first turn) --
@@ -488,6 +508,7 @@ class LiveGateEvaluator:
                 measured_value=f"{sortino:.4f}",
                 threshold="N/A",
                 message="Sortino Ratio 정보 표시 (현재 gate 미적용)",
+                reason_code=GateReasonCode.DISPLAY_ONLY.value,
             ))
         else:
             checks.append(LiveGateCheck(
@@ -498,6 +519,7 @@ class LiveGateEvaluator:
                 measured_value="N/A",
                 threshold="N/A",
                 message="Sortino Ratio 데이터 없음 — 정보 표시",
+                reason_code=GateReasonCode.DISPLAY_ONLY.value,
             ))
 
         # -- 11. LG_CALMAR_RATIO: display only, always PASS (first turn) --
@@ -511,6 +533,7 @@ class LiveGateEvaluator:
                 measured_value=f"{calmar:.4f}",
                 threshold="N/A",
                 message="Calmar Ratio 정보 표시 (현재 gate 미적용)",
+                reason_code=GateReasonCode.DISPLAY_ONLY.value,
             ))
         else:
             checks.append(LiveGateCheck(
@@ -521,6 +544,7 @@ class LiveGateEvaluator:
                 measured_value="N/A",
                 threshold="N/A",
                 message="Calmar Ratio 데이터 없음 — 정보 표시",
+                reason_code=GateReasonCode.DISPLAY_ONLY.value,
             ))
 
         return checks
@@ -698,6 +722,11 @@ class LiveGateEvaluator:
         account_id: UUID,
         start_date: date,
         end_date: date,
+        *,
+        reason_code_counts: dict[str, int] | None = None,
+        warn_reason_codes: list[str] | None = None,
+        fail_reason_codes: list[str] | None = None,
+        display_only_count: int = 0,
     ) -> str:
         """텍스트 보고서 생성."""
         lines: list[str] = []
@@ -737,6 +766,16 @@ class LiveGateEvaluator:
             f"[Live-Specific Auto Checks]  "
             f"{a_pass}/{a_total} pass, {a_warn} warn, {a_fail} fail"
         )
+        # Reason code summary line (counts only)
+        if warn_reason_codes or fail_reason_codes or display_only_count:
+            parts = []
+            if warn_reason_codes:
+                parts.append(f"warn={len(warn_reason_codes)}")
+            if fail_reason_codes:
+                parts.append(f"fail={len(fail_reason_codes)}")
+            if display_only_count:
+                parts.append(f"display_only={display_only_count}")
+            lines.append(f"  reason_codes: {', '.join(parts)}")
         for c in auto_checks:
             icon = self._status_icon(c.status)
             mv = f" (实测: {c.measured_value}, 阈值: {c.threshold})" if c.measured_value else ""
@@ -782,6 +821,11 @@ class LiveGateEvaluator:
         end_date: date,
         strategy_id: UUID | None = None,
         benchmark_code: str | None = None,
+        *,
+        reason_code_counts: dict[str, int] | None = None,
+        warn_reason_codes: list[str] | None = None,
+        fail_reason_codes: list[str] | None = None,
+        display_only_count: int = 0,
     ) -> str:
         """JSON 보고서 생성."""
         all_checks = list(live_checks) + list(manual_checks)
@@ -809,6 +853,7 @@ class LiveGateEvaluator:
                         "measured_value": c.measured_value,
                         "threshold": c.threshold,
                         "message": c.message,
+                        "reason_code": c.reason_code,
                     }
                     for c in (paper_exit_auto.checks if paper_exit_auto else [])
                 ] if paper_exit_auto else [],
@@ -822,6 +867,7 @@ class LiveGateEvaluator:
                         "measured_value": c.measured_value,
                         "threshold": c.threshold,
                         "message": c.message,
+                        "reason_code": c.reason_code,
                     }
                     for c in auto_checks
                 ],
@@ -844,6 +890,12 @@ class LiveGateEvaluator:
                     "total": len(manual_checks),
                     "pending": sum(1 for c in manual_checks if c.status == "PENDING"),
                     "done": sum(1 for c in manual_checks if c.status == "DONE"),
+                },
+                "reason_code_summary": {
+                    "reason_code_counts": reason_code_counts or {},
+                    "warn_reason_codes": warn_reason_codes or [],
+                    "fail_reason_codes": fail_reason_codes or [],
+                    "display_only_count": display_only_count,
                 },
             },
         }
@@ -1036,7 +1088,11 @@ async def main(argv: list[str] | None = None) -> int:
             manual_checks=manual_checks,
         )
 
-        # 5. Output
+        # 5. Reason code summary
+        all_checks_for_summary: list[LiveGateCheck] = list(live_checks) + list(manual_checks)
+        summary_data = compute_reason_code_summary(all_checks_for_summary)
+
+        # 6. Output
         if args.output == "json":
             output = evaluator.to_json(
                 paper_exit_status=paper_exit_status,
@@ -1050,6 +1106,7 @@ async def main(argv: list[str] | None = None) -> int:
                 end_date=args.end_date,
                 strategy_id=args.strategy_id,
                 benchmark_code=args.benchmark_code,
+                **summary_data,
             )
         else:
             output = evaluator.to_text(
@@ -1062,6 +1119,7 @@ async def main(argv: list[str] | None = None) -> int:
                 account_id=args.account_id,
                 start_date=args.start_date,
                 end_date=args.end_date,
+                **summary_data,
             )
 
         print(output)

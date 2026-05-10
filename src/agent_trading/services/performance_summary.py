@@ -33,6 +33,15 @@ from agent_trading.domain.entities import (
 from agent_trading.domain.enums import OrderSide, OrderStatus
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import OrderQuery
+from agent_trading.services.risk_metric_constants import (
+    CALMAR_ZERO_DRAWDOWN_NOTE,
+    RiskMetricStatus,
+    SHARPE_INSUFFICIENT_DATA_NOTE,
+    SHARPE_ZERO_VARIANCE_NOTE,
+    SORTINO_INSUFFICIENT_DATA_NOTE,
+    SORTINO_INSUFFICIENT_DOWNSIDE_NOTE,
+    SORTINO_ZERO_VARIANCE_NOTE,
+)
 
 
 # =========================================================================
@@ -552,10 +561,10 @@ def _calc_sharpe_sortino(
     sortino_note: str
 
     if len(daily_returns) < 2:
-        sharpe_status = "insufficient_data"
-        sharpe_note = "일별 수익률 표본 부족으로 Sharpe Ratio를 계산할 수 없습니다"
-        sortino_status = "insufficient_data"
-        sortino_note = "일별 수익률 표본 부족으로 Sortino Ratio를 계산할 수 없습니다"
+        sharpe_status = RiskMetricStatus.INSUFFICIENT_DATA.value
+        sharpe_note = SHARPE_INSUFFICIENT_DATA_NOTE
+        sortino_status = RiskMetricStatus.INSUFFICIENT_DATA.value
+        sortino_note = SORTINO_INSUFFICIENT_DATA_NOTE
         return SharpeSortinoResult(
             sharpe_ratio, sharpe_status, sharpe_note,
             sortino_ratio, sortino_status, sortino_note,
@@ -571,11 +580,11 @@ def _calc_sharpe_sortino(
 
     if stddev > 0:
         sharpe_ratio = mean_return / stddev
-        sharpe_status = "ok"
+        sharpe_status = RiskMetricStatus.OK.value
         sharpe_note = "Sharpe Ratio 정상 계산"
     else:
-        sharpe_status = "zero_variance"
-        sharpe_note = "일별 수익률 변동성이 0이어서 Sharpe Ratio를 계산할 수 없습니다"
+        sharpe_status = RiskMetricStatus.ZERO_VARIANCE.value
+        sharpe_note = SHARPE_ZERO_VARIANCE_NOTE
 
     # 4. Sortino: mean / downside deviation (비연율화, raw daily)
     downside_returns = [r for r in daily_returns if r < 0]
@@ -588,14 +597,14 @@ def _calc_sharpe_sortino(
 
     if downside_dev > 0:
         sortino_ratio = mean_return / downside_dev
-        sortino_status = "ok"
+        sortino_status = RiskMetricStatus.OK.value
         sortino_note = "Sortino Ratio 정상 계산"
     elif len(downside_returns) < 2:
-        sortino_status = "insufficient_downside_samples"
-        sortino_note = "음수 수익률 표본 부족으로 Sortino Ratio를 계산할 수 없습니다"
+        sortino_status = RiskMetricStatus.INSUFFICIENT_DOWNSIDE_SAMPLES.value
+        sortino_note = SORTINO_INSUFFICIENT_DOWNSIDE_NOTE
     else:
-        sortino_status = "zero_variance"
-        sortino_note = "하방 변동성이 0이어서 Sortino Ratio를 계산할 수 없습니다"
+        sortino_status = RiskMetricStatus.ZERO_VARIANCE.value
+        sortino_note = SORTINO_ZERO_VARIANCE_NOTE
 
     return SharpeSortinoResult(
         sharpe_ratio, sharpe_status, sharpe_note,
@@ -1019,12 +1028,12 @@ class PerformanceSummaryService:
 
         if max_drawdown_pct > 0:
             calmar_ratio = cumulative_return_pct / max_drawdown_pct
-            calmar_status = "ok"
+            calmar_status = RiskMetricStatus.OK.value
             calmar_note = "Calmar Ratio 정상 계산"
         else:
             calmar_ratio = None
-            calmar_status = "zero_drawdown"
-            calmar_note = "최대 손실 폭이 0이어서 Calmar Ratio를 계산할 수 없습니다"
+            calmar_status = RiskMetricStatus.ZERO_DRAWDOWN.value
+            calmar_note = CALMAR_ZERO_DRAWDOWN_NOTE
 
         return PerformanceMetrics(
             account_id=account_id,

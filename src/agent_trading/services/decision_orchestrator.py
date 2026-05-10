@@ -9,6 +9,8 @@ from decimal import Decimal
 from typing import Protocol
 from uuid import UUID, uuid4
 
+import asyncpg
+
 from agent_trading.brokers.base import BrokerAdapter
 from agent_trading.domain.entities import (
     CashBalanceSnapshotEntity,
@@ -1239,7 +1241,25 @@ class DecisionOrchestratorService:
                 created_at=now,
             )
 
-            saved = await self._repos.decision_contexts.add(context)
+            # Savepoint-protected insert: UniqueViolationError 격리
+            # PostgreSQL nested connection.transaction() creates a savepoint,
+            # so a UniqueViolationError only rolls back the savepoint, not
+            # the outer transaction. In-memory UoW has no connection attr.
+            try:
+                conn = getattr(self._repos.unit_of_work, "connection", None)
+                if conn is not None:
+                    async with conn.transaction():
+                        saved = await self._repos.decision_contexts.add(context)
+                else:
+                    saved = await self._repos.decision_contexts.add(context)
+            except asyncpg.exceptions.UniqueViolationError:
+                logger.warning(
+                    "correlation_id=%s already exists — savepoint rollback, "
+                    "continuing with decision_context_id=None",
+                    correlation_id,
+                )
+                return None
+
             logger.info(
                 "Created decision context: id=%s account_id=%s strategy_id=%s "
                 "correlation_id=%s",

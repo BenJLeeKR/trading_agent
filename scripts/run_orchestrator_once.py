@@ -306,7 +306,7 @@ async def main() -> int:
         request = SubmitOrderRequest(
             account_ref=ACCOUNT_ALIAS,
             client_order_id="entrypoint-001",
-            correlation_id="entrypoint-correlation-001",
+            correlation_id=f"entrypoint-correlation-{uuid4()}",
             strategy_id=str(STRATEGY_ID),
             symbol=SYMBOL,
             market=MARKET,
