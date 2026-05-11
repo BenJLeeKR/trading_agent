@@ -15,6 +15,48 @@
 
 ---
 
+## 14-Agent 설계 vs 현재 구현/Backlog 정리
+
+이 섹션은 `plan_docs/agents/`의 14-agent 책임 분해와 실제 구현/Backlog 분해 단위를 맞춰 보기 위한 보정표다.
+
+- **중요**: 14개 `Agent`는 모두 provider LLM agent 구현 대상이 아니다.
+- 현재 v1에서 **실제 런타임 AI core**로 연결된 것은 `Event Interpretation`, `AI Risk`, `Final Decision Composer` 3개다.
+- 나머지 상당수는 설계상 `deterministic service/engine/worker` 또는 `hybrid`가 목표 형태이며, 일부는 이미 기능 축 기준으로 부분 구현돼 있다.
+- 따라서 아래 표의 목적은 “왜 14개가 BACKLOG에 agent 이름 그대로 안 보이는가”를 설명하고, 아직 **별도 backlog 작업으로 재분해되지 않은 축**을 표시하는 것이다.
+
+| Agent 책임 | 목표 형태 | 현재 상태 | 현재 구현/Backlog 앵커 | Backlog 분해 상태 |
+|---|---|---|---|---|
+| Data Collector Agent | Deterministic worker + adapter | 부분 구현 | KIS REST/WS, polling worker, source adapter, snapshot/event sync loop | 기존 backlog/plan에 기능 축으로 반영됨 |
+| Data Quality Agent | Deterministic validator/service | 부분 구현 | freshness guard, stale snapshot guard, sync health, dedup, gap handling | 기존 backlog/plan에 기능 축으로 반영됨 |
+| Market Regime Agent | Hybrid | 미구현 | 설계 문서상 개념만 존재 | **별도 backlog 재분해 필요** |
+| Universe Selection Agent | Deterministic ranking/filter + optional AI | 미구현 | 설계 문서상 개념만 존재 | **별도 backlog 재분해 필요** |
+| Strategy Selection Agent | Hybrid policy service | 미구현 | 설계 문서상 개념만 존재 | **별도 backlog 재분해 필요** |
+| Signal Agent | Deterministic scoring engine | 미구현 | 설계 문서상 개념만 존재 | **별도 backlog 재분해 필요** |
+| News/RAG Agent | Provider AI + retrieval/event pipeline hybrid | 부분 구현 | `EventInterpretationAgent`, OpenDART adapter, external event pipeline | 일부 반영됨, 전용 backlog로는 미분해 |
+| Portfolio Agent | Deterministic portfolio construction | 미구현 | 설계 문서상 개념만 존재 | **별도 backlog 재분해 필요** |
+| Order Construction Agent | Deterministic order-construction service | 미구현 | 현재는 FDC + sizing/order translation에 임시 흡수 | **별도 backlog 재분해 필요** |
+| AI Risk Manager Agent | Provider AI + deterministic hard-limit 후단 | 구현 완료 | `services/ai_agents/ai_risk.py`, `decision_orchestrator.py` | 구현됨 |
+| AI Compliance Agent | Hybrid policy/compliance + hard validator | 미구현 | 설계 문서상 개념만 존재 | **별도 backlog 재분해 필요** |
+| Execution Agent | Deterministic execution pipeline | 부분 구현 | `order_manager.py`, broker adapter, reconciliation, post-submit sync | 기존 backlog/plan에 기능 축으로 반영됨 |
+| Performance Agent | Deterministic analytics + optional AI commentary | 부분 구현 | performance summary/history/metrics/benchmark/gate/exit/live-readiness | 기능 축으로는 상당 부분 구현, “agent” 단위 backlog는 미분해 |
+| Model Monitor Agent | Deterministic monitoring + offline analysis | 미구현 | provider failover/quality hardening 일부만 인접 구현 | **별도 backlog 재분해 필요** |
+
+### 현재 해석 규칙
+
+1. **EI / AR / FDC는 v1 실전 코어**다. 나머지 agent 역할 일부는 아직 FDC나 deterministic backend에 임시 흡수돼 있다.
+2. **Execution Agent는 AI agent가 아니다.** 주문 제출, 체결 추적, 정합성 수렴은 `OrderManager + BrokerAdapter + ReconciliationService` 중심 deterministic path로 유지한다.
+3. **Backlog 누락처럼 보이는 이유는 작업 분해 단위 차이**다. 현재 BACKLOG는 agent 이름보다 `snapshot sync`, `paper gate`, `event ingestion`, `performance`, `submit/sync/reconcile` 같은 기능 축으로 정리돼 있다.
+4. 아래 7개 축은 추후 별도 backlog 항목으로 재분해 후보로 본다.
+   - Market Regime Agent
+   - Universe Selection Agent
+   - Strategy Selection Agent
+   - Signal Agent
+   - Portfolio Agent
+   - AI Compliance Agent
+   - Model Monitor Agent
+
+---
+
 | # | 항목 | 출처 | 상태 |
 |---|------|------|------|
 | 1 | **Paper Trading Loop 연속 실행**: 주기적 orchestrator loop + fill sync + position/cash refresh. `run_paper_decision_loop.py` (300s 간격, CLI 옵션 6종, graceful shutdown). `verify_paper_loop.py --interval`은 assemble/submit만 반복; fill polling, position/cash 자동 갱신은 미포함 | Paper Trading Loop Validation | ✅ 승격됨 |
@@ -44,6 +86,13 @@
 | 24 | **Paper Go/No-Go Gate**: 성과/안정성/운영 지표 기반 paper 운용 통과 여부 자동 판정. `PaperGateService` (8개 check) + `GET /paper-go-no-go` API. `PAPER_GATE_*` env 6개 threshold. `GateStatus`(PASS/WARN/FAIL) + `OverallStatus`(GO/HOLD/NO_GO). 7개 신규 테스트. | Paper Go/No-Go Gate | ✅ 승격됨 |
 | 25 | **Paper Exit Criteria (3-Layer)**: Paper → Live Canary 전환 전 최종 합격 기준. Layer A (Auto, PaperGateService 8 checks + health/readyz 2 checks), Layer B (Semi-Auto, 5 checks), Layer C (Manual, 5 체크리스트). 최종 종합: A FAIL→FAIL(exit 2), A+B FAIL→HOLD(exit 1), A/B+C pending→HOLD(exit 1), all complete→PASS(exit 0). NOT_RUN/HOLD/FAIL/PASS 구분. [`scripts/evaluate_paper_exit.py`](scripts/evaluate_paper_exit.py) CLI 4개 출력 모드(text/json/manual-template). 8개 신규 테스트. | [paper_exit_criteria.md](plans/paper_exit_criteria.md) | ✅ 승격됨 |
 | 26 | **Live Gate / Canary Readiness (Phase 3)**: Paper Exit 통과 후 Live 검토 자격 + 추가 보호 조건. `LiveGateEvaluator` (PaperExitEvaluator 재사용). Live-specific 8개 auto check (filled orders 10↑/drawdown 10%↓/excess return 0%p↑/win rate/reconcile failures/blocking locks/readyz/post-submit sync). 6개 manual checklist (credential/account masking/operator approval/paper log review/rate limit review/final decision). 5개 신규 env thresholds. Overall: BLOCKED/HOLD/READY. [`scripts/evaluate_live_gate.py`](scripts/evaluate_live_gate.py) CLI 4개 출력 모드(text/json/manual-template) + exit code 0/1/2. 10개 신규 테스트. | [live_gate_canary_readiness.md](plans/live_gate_canary_readiness.md) | ✅ 승격됨 |
+| 27 | **Market Regime Agent 분해**: deterministic regime feature set + rule-based classifier + optional AI commentary. 우선 구현 범위는 변동성/추세/risk-on-off 3축 feature 정리, regime label contract 정의, decision pipeline 입력 연결, replay 가능한 pure helper 우선. 초기 목표는 provider agent 추가보다 deterministic backbone 구축. | [01_agent_inventory_and_status.md](../plan_docs/agents/01_agent_inventory_and_status.md), [02_agent_target_shapes.md](../plan_docs/agents/02_agent_target_shapes.md) | ❌ 미착수 |
+| 28 | **Universe Selection Agent 분해**: 거래 가능 종목 풀 생성과 ranking/filter service. 유동성/슬리피지/시장/브로커 제약/이벤트 존재 여부를 기준으로 candidate universe를 만들고, paper/live 공통 contract로 orchestrator 입력에 주입. 초기 목표는 deterministic filter + ranking engine, optional AI commentary는 후순위. | [01_agent_inventory_and_status.md](../plan_docs/agents/01_agent_inventory_and_status.md), [02_agent_target_shapes.md](../plan_docs/agents/02_agent_target_shapes.md) | ❌ 미착수 |
+| 29 | **Strategy Selection Agent 분해**: 현재 국면과 계좌 상태를 기준으로 허용 전략/실행 스타일을 고르는 hybrid policy service. 전략 registry, enable/disable gate, regime-aware selection contract, paper 성과 기반 감쇠/중지 기준을 포함. 현재 FDC에 임시 흡수된 “어떤 스타일로 진입할지” 책임을 별도 계층으로 분리. | [01_agent_inventory_and_status.md](../plan_docs/agents/01_agent_inventory_and_status.md), [02_agent_target_shapes.md](../plan_docs/agents/02_agent_target_shapes.md), [ENTERPRISE_TRADING_SYSTEM_DESIGN_V2.md](../plan_docs/ENTERPRISE_TRADING_SYSTEM_DESIGN_V2.md) | ❌ 미착수 |
+| 30 | **Signal Agent 분해**: 기술/수급/모멘텀/변동성 점수화 deterministic engine. feature registry + score aggregation + replay/backtest 친화적 pure helper 우선. Event/news 파생 factor는 News/RAG 입력과 결합하되, 최종 score는 수치 재현 가능한 backend가 authoritative source가 되도록 유지. | [01_agent_inventory_and_status.md](../plan_docs/agents/01_agent_inventory_and_status.md), [02_agent_target_shapes.md](../plan_docs/agents/02_agent_target_shapes.md), [08_ai_decision_policy.md](../plan_docs/detailed_design/08_ai_decision_policy.md) | ❌ 미착수 |
+| 31 | **Portfolio Agent 분해**: 목표 비중, concentration budget, exposure budget, 계좌별 capital allocation을 담당하는 deterministic portfolio construction service. 현재 sizing/risk/decision 사이에 흩어진 배분 책임을 하나의 정책 계층으로 모으고, strategy-level target allocation과 account-level order budget을 분리한다. | [01_agent_inventory_and_status.md](../plan_docs/agents/01_agent_inventory_and_status.md), [02_agent_target_shapes.md](../plan_docs/agents/02_agent_target_shapes.md) | ❌ 미착수 |
+| 32 | **AI Compliance Agent 분해**: 정책 위반 가능성 해석(AI)과 hard validator(deterministic)를 분리한 hybrid compliance layer. 금지 종목/권한 불일치/필수 필드 누락/브로커 제약 위반은 deterministic 차단, ambiguous policy/event risk만 AI가 의견을 제공. paper/live 공통 pre-submit verification chain에 read-only 또는 blocking gate로 연결. | [01_agent_inventory_and_status.md](../plan_docs/agents/01_agent_inventory_and_status.md), [02_agent_target_shapes.md](../plan_docs/agents/02_agent_target_shapes.md), [08_ai_decision_policy.md](../plan_docs/detailed_design/08_ai_decision_policy.md) | ❌ 미착수 |
+| 33 | **Model Monitor Agent 분해**: provider drift, prompt drift, fallback rate, replay/live divergence, backtest-production 괴리 모니터링 service. 우선 구현 범위는 AI agent별 success/fallback/timeout/reason_code 집계, contract drift 알림, replay vs runtime 비교 보고서, model/provider별 품질 회귀 지표 수집. provider failover hardening과 연결되지만 별도 monitoring 관점의 backlog로 관리. | [01_agent_inventory_and_status.md](../plan_docs/agents/01_agent_inventory_and_status.md), [02_agent_target_shapes.md](../plan_docs/agents/02_agent_target_shapes.md), [ENTERPRISE_TRADING_SYSTEM_DESIGN_V2.md](../plan_docs/ENTERPRISE_TRADING_SYSTEM_DESIGN_V2.md) | ❌ 미착수 |
 
 ## Medium-term (다음 마일스톤)
 
