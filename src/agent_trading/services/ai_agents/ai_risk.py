@@ -30,6 +30,12 @@ from agent_trading.services.ai_agents.schemas import AIRiskOutput, EventInterpre
 
 logger = logging.getLogger(__name__)
 
+# Canonical risk_opinion values (machine-readable enum).
+# Any value outside this set is treated as drift and falls back to "allow".
+_ALLOWED_RISK_OPINIONS: frozenset[str] = frozenset({
+    "allow", "reduce", "reject", "review",
+})
+
 
 # ---------------------------------------------------------------------------
 # Stub (existing, unchanged)
@@ -181,6 +187,35 @@ class AIRiskAgent:
                 summary=result.summary,
             )
 
+            # --- risk_opinion canonical validation ---
+            # strip().lower() 후 canonical 4값(allow/reduce/reject/review)과 비교.
+            # drift 감지 시 의미 해석 없이 "allow"로 fallback + 경고 로그.
+            risk_opinion_normalized = result.risk_opinion.strip().lower()
+            if risk_opinion_normalized not in _ALLOWED_RISK_OPINIONS:
+                logger.warning(
+                    "risk_opinion drift detected — falling back to 'allow'. "
+                    "raw=%r symbol=%s decision_context_id=%s",
+                    result.risk_opinion,
+                    result.symbol,
+                    result.decision_context_id,
+                )
+                result = AIRiskOutput(
+                    schema_version=result.schema_version,
+                    agent_name=result.agent_name,
+                    decision_context_id=result.decision_context_id,
+                    symbol=result.symbol,
+                    proposed_side=result.proposed_side,
+                    risk_opinion="allow",
+                    risk_score=result.risk_score,
+                    confidence=result.confidence,
+                    size_adjustment_factor=result.size_adjustment_factor,
+                    max_holding_horizon=result.max_holding_horizon,
+                    risk_flags=result.risk_flags,
+                    reason_codes=result.reason_codes,
+                    opposing_evidence=result.opposing_evidence,
+                    summary=result.summary,
+                )
+
             logger.info(
                 "AIRiskAgent succeeded: "
                 "symbol=%s risk_opinion=%s risk_score=%.2f",
@@ -221,10 +256,17 @@ class AIRiskAgent:
             "and any available scoring information.\n\n"
             "Output must be valid JSON matching this schema:\n"
             f"{schema_json}\n\n"
-            "Language requirement: All human-readable narrative fields "
-            "(risk_opinion, summary, opposing_evidence) MUST be written in Korean. "
-            "Machine-readable fields (reason_codes, risk_flags, proposed_side, etc.) "
-            "MUST remain in English."
+            "IMPORTANT — Machine-readable fields (English enum values only):\n"
+            "- risk_opinion: one of allow, reduce, reject, review\n"
+            "- proposed_side: BUY or SELL\n"
+            "- max_holding_horizon: short, swing, long\n"
+            "- risk_flags: machine-readable English codes\n"
+            "- reason_codes: machine-readable English codes\n\n"
+            "Narrative fields (Korean only):\n"
+            "- summary: Korean narrative summary\n"
+            "- opposing_evidence: Korean narrative list\n\n"
+            "Machine-readable fields MUST contain ONLY canonical English values. "
+            "Narrative fields MUST be written in Korean."
         )
 
     def _build_user_prompt(self, request: AgentExecutionRequest) -> str:
@@ -269,12 +311,20 @@ class AIRiskAgent:
             if interpreted:
                 lines.append(f"Interpreted events ({len(interpreted)}):")
                 for ie in interpreted[:10]:
-                    summary = ie.summary or ie.headline or "(no summary)"
-                    lines.append(f"  - [{ie.event_type}] {summary}")
-                    lines.append(
-                        f"    impact={ie.impact_direction} "
-                        f"confidence={ie.confidence}"
-                    )
+                    if isinstance(ie, dict):
+                        summary = ie.get("summary") or ie.get("headline") or "(no summary)"
+                        lines.append(f"  - [{ie.get('event_type', '?')}] {summary}")
+                        lines.append(
+                            f"    impact={ie.get('impact_direction', '?')} "
+                            f"confidence={ie.get('confidence', '?')}"
+                        )
+                    else:
+                        summary = ie.summary or ie.headline or "(no summary)"
+                        lines.append(f"  - [{ie.event_type}] {summary}")
+                        lines.append(
+                            f"    impact={ie.impact_direction} "
+                            f"confidence={ie.confidence}"
+                        )
             lines.append("")
         # ==================================================
 

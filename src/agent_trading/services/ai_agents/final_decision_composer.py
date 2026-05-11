@@ -225,10 +225,14 @@ class FinalDecisionComposerAgent:
             "to produce a structured final decision.\n\n"
             "Output must be valid JSON matching this schema:\n"
             f"{schema_json}\n\n"
-            "Language requirement: All human-readable narrative fields "
-            "(summary, opposing_evidence) MUST be written in Korean. "
-            "Machine-readable fields (reason_codes, decision_type, side, "
-            "entry_style, time_horizon, etc.) MUST remain in English."
+            "IMPORTANT: The following fields MUST use canonical English enum values:\n"
+            "- decision_type: one of APPROVE, REJECT, HOLD, WATCH, EXIT, REDUCE\n"
+            "- side: BUY or SELL\n"
+            "- entry_style: LIMIT, MARKET, VWAP, TWAP\n"
+            "- time_horizon: short, swing, long\n"
+            "- reason_codes: machine-readable English codes\n\n"
+            "Narrative fields (summary, opposing_evidence) MUST be written in Korean. "
+            "Machine-readable fields listed above MUST remain in English."
         )
 
     def _build_user_prompt(self, request: AgentExecutionRequest) -> str:
@@ -285,12 +289,20 @@ class FinalDecisionComposerAgent:
             if interpreted:
                 lines.append(f"Interpreted events ({len(interpreted)}):")
                 for ie in interpreted[:10]:
-                    summary = ie.summary or "(no summary)"
-                    lines.append(f"  - [{ie.event_type}] {summary}")
-                    lines.append(
-                        f"    impact={ie.impact_direction} "
-                        f"confidence={ie.confidence}"
-                    )
+                    if isinstance(ie, dict):
+                        summary = ie.get("summary") or "(no summary)"
+                        lines.append(f"  - [{ie.get('event_type', '?')}] {summary}")
+                        lines.append(
+                            f"    impact={ie.get('impact_direction', '?')} "
+                            f"confidence={ie.get('confidence', '?')}"
+                        )
+                    else:
+                        summary = ie.summary or "(no summary)"
+                        lines.append(f"  - [{ie.event_type}] {summary}")
+                        lines.append(
+                            f"    impact={ie.impact_direction} "
+                            f"confidence={ie.confidence}"
+                        )
 
         # === AI Risk output (if available) ===
         ar_output = request.ai_risk_output

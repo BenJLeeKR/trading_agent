@@ -40,6 +40,7 @@ from agent_trading.services.decision_orchestrator import (
     DecisionOrchestratorService,
     OrderIntent,
     SubmitResult,
+    _normalize_decision_type,
     build_submit_order_request_from_decision,
 )
 from agent_trading.services.order_manager import OrderManager
@@ -209,6 +210,63 @@ class TestBuildSubmitOrderRequest:
         intent = _make_intent(decision_context_id=None)
         result = build_submit_order_request_from_decision(intent)
         assert result is None
+
+    # ── Normalization tests: _normalize_decision_type() unit tests ──
+    # These test the normalization function directly.
+    # build_submit_order_request_from_decision() receives already-normalized
+    # values from _run_agents(), so it is tested with canonical values.
+
+    def test_entry_normalized_to_approve(self) -> None:
+        """``entry`` → ``APPROVE`` (actionable)."""
+        assert _normalize_decision_type("entry") == "APPROVE"
+
+    def test_entry_uppercase_normalized_to_approve(self) -> None:
+        """``ENTRY`` → ``APPROVE``."""
+        assert _normalize_decision_type("ENTRY") == "APPROVE"
+
+    def test_entry_mixed_case_normalized_to_approve(self) -> None:
+        """``Entry`` → ``APPROVE``."""
+        assert _normalize_decision_type("Entry") == "APPROVE"
+
+    def test_no_action_normalized_to_hold(self) -> None:
+        """``no_action`` → ``HOLD`` (non-actionable)."""
+        assert _normalize_decision_type("no_action") == "HOLD"
+
+    def test_no_trade_normalized_to_hold(self) -> None:
+        """``no_trade`` → ``HOLD``."""
+        assert _normalize_decision_type("no_trade") == "HOLD"
+
+    def test_none_normalized_to_hold(self) -> None:
+        """``none`` → ``HOLD``."""
+        assert _normalize_decision_type("none") == "HOLD"
+
+    def test_approve_passthrough(self) -> None:
+        """``APPROVE`` passes through unchanged."""
+        assert _normalize_decision_type("APPROVE") == "APPROVE"
+
+    def test_hold_passthrough(self) -> None:
+        """``HOLD`` passes through unchanged."""
+        assert _normalize_decision_type("HOLD") == "HOLD"
+
+    def test_buy_passthrough(self) -> None:
+        """``BUY`` passes through unchanged (actionable_types compatible)."""
+        assert _normalize_decision_type("BUY") == "BUY"
+
+    def test_sell_passthrough(self) -> None:
+        """``SELL`` passes through unchanged."""
+        assert _normalize_decision_type("SELL") == "SELL"
+
+    def test_unknown_fallback_to_hold(self) -> None:
+        """Unknown value falls back to ``HOLD``."""
+        assert _normalize_decision_type("foobar") == "HOLD"
+
+    def test_empty_fallback_to_hold(self) -> None:
+        """Empty string falls back to ``HOLD``."""
+        assert _normalize_decision_type("") == "HOLD"
+
+    def test_whitespace_fallback_to_hold(self) -> None:
+        """Whitespace-only string falls back to ``HOLD``."""
+        assert _normalize_decision_type("  ") == "HOLD"
 
 
 # ---------------------------------------------------------------------------

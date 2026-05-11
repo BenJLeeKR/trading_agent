@@ -19,7 +19,11 @@ from uuid import uuid4
 
 import pytest
 
-from agent_trading.services.ai_agents.ai_risk import AIRiskAgent, StubAIRiskAgent
+from agent_trading.services.ai_agents.ai_risk import (
+    AIRiskAgent,
+    StubAIRiskAgent,
+    _ALLOWED_RISK_OPINIONS,
+)
 from agent_trading.services.ai_agents.base import (
     AIProviderClient,
     AgentExecutionRequest,
@@ -619,6 +623,224 @@ class TestAIRiskAgent:
         assert "Current Position" not in user_prompt
         assert "Cash Balance" not in user_prompt
         assert "Risk Limit State" not in user_prompt
+
+    # ------------------------------------------------------------------
+    # risk_opinion canonical validation tests (B안 post-parse normalization)
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_risk_opinion_drift_detected(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """Korean prose risk_opinion → 'allow' fallback + warning log."""
+        from unittest.mock import AsyncMock
+
+        provider = AsyncMock(spec=AIProviderClient)
+        captured_kwargs: dict[str, object] = {}
+
+        async def _generate(**kwargs: object) -> RawProviderResponse:
+            captured_kwargs.update(kwargs)
+            return RawProviderResponse(
+                parsed=AIRiskOutput(
+                    symbol="TEST",
+                    proposed_side="buy",
+                    risk_opinion="기술적 돌파 신호가 있으나 신뢰도가 낮음",
+                ),
+                raw_content='{"symbol": "TEST"}',
+            )
+
+        provider.generate_structured = _generate  # type: ignore[method-assign]
+
+        agent = AIRiskAgent(provider_client=provider)
+        result = await agent.run(sample_request)
+
+        assert result.risk_opinion == "allow", (
+            f"Expected 'allow' fallback, got {result.risk_opinion!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_risk_opinion_canonical_allow(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """risk_opinion='allow' → pass-through (no fallback)."""
+        from unittest.mock import AsyncMock
+
+        provider = AsyncMock(spec=AIProviderClient)
+
+        async def _generate(**kwargs: object) -> RawProviderResponse:
+            return RawProviderResponse(
+                parsed=AIRiskOutput(
+                    symbol="TEST",
+                    proposed_side="buy",
+                    risk_opinion="allow",
+                ),
+                raw_content='{"symbol": "TEST"}',
+            )
+
+        provider.generate_structured = _generate  # type: ignore[method-assign]
+
+        agent = AIRiskAgent(provider_client=provider)
+        result = await agent.run(sample_request)
+
+        assert result.risk_opinion == "allow"
+
+    @pytest.mark.asyncio
+    async def test_risk_opinion_canonical_reduce(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """risk_opinion='reduce' → pass-through (no fallback)."""
+        from unittest.mock import AsyncMock
+
+        provider = AsyncMock(spec=AIProviderClient)
+
+        async def _generate(**kwargs: object) -> RawProviderResponse:
+            return RawProviderResponse(
+                parsed=AIRiskOutput(
+                    symbol="TEST",
+                    proposed_side="buy",
+                    risk_opinion="reduce",
+                ),
+                raw_content='{"symbol": "TEST"}',
+            )
+
+        provider.generate_structured = _generate  # type: ignore[method-assign]
+
+        agent = AIRiskAgent(provider_client=provider)
+        result = await agent.run(sample_request)
+
+        assert result.risk_opinion == "reduce"
+
+    @pytest.mark.asyncio
+    async def test_risk_opinion_canonical_reject(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """risk_opinion='reject' → pass-through (no fallback)."""
+        from unittest.mock import AsyncMock
+
+        provider = AsyncMock(spec=AIProviderClient)
+
+        async def _generate(**kwargs: object) -> RawProviderResponse:
+            return RawProviderResponse(
+                parsed=AIRiskOutput(
+                    symbol="TEST",
+                    proposed_side="buy",
+                    risk_opinion="reject",
+                ),
+                raw_content='{"symbol": "TEST"}',
+            )
+
+        provider.generate_structured = _generate  # type: ignore[method-assign]
+
+        agent = AIRiskAgent(provider_client=provider)
+        result = await agent.run(sample_request)
+
+        assert result.risk_opinion == "reject"
+
+    @pytest.mark.asyncio
+    async def test_risk_opinion_canonical_review(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """risk_opinion='review' → pass-through (no fallback)."""
+        from unittest.mock import AsyncMock
+
+        provider = AsyncMock(spec=AIProviderClient)
+
+        async def _generate(**kwargs: object) -> RawProviderResponse:
+            return RawProviderResponse(
+                parsed=AIRiskOutput(
+                    symbol="TEST",
+                    proposed_side="buy",
+                    risk_opinion="review",
+                ),
+                raw_content='{"symbol": "TEST"}',
+            )
+
+        provider.generate_structured = _generate  # type: ignore[method-assign]
+
+        agent = AIRiskAgent(provider_client=provider)
+        result = await agent.run(sample_request)
+
+        assert result.risk_opinion == "review"
+
+    @pytest.mark.asyncio
+    async def test_risk_opinion_uppercase_passthrough(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """'ALLOW' → strip().lower()='allow' (in canonical set) → pass-through (no fallback)."""
+        from unittest.mock import AsyncMock
+
+        provider = AsyncMock(spec=AIProviderClient)
+
+        async def _generate(**kwargs: object) -> RawProviderResponse:
+            return RawProviderResponse(
+                parsed=AIRiskOutput(
+                    symbol="TEST",
+                    proposed_side="buy",
+                    risk_opinion="ALLOW",
+                ),
+                raw_content='{"symbol": "TEST"}',
+            )
+
+        provider.generate_structured = _generate  # type: ignore[method-assign]
+
+        agent = AIRiskAgent(provider_client=provider)
+        result = await agent.run(sample_request)
+
+        # strip().lower() 후 canonical set에 포함되므로 pass-through, 원본 유지
+        assert result.risk_opinion == "ALLOW"
+
+    @pytest.mark.asyncio
+    async def test_risk_opinion_empty_fallback(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """Empty risk_opinion → 'allow' fallback."""
+        from unittest.mock import AsyncMock
+
+        provider = AsyncMock(spec=AIProviderClient)
+
+        async def _generate(**kwargs: object) -> RawProviderResponse:
+            return RawProviderResponse(
+                parsed=AIRiskOutput(
+                    symbol="TEST",
+                    proposed_side="buy",
+                    risk_opinion="",
+                ),
+                raw_content='{"symbol": "TEST"}',
+            )
+
+        provider.generate_structured = _generate  # type: ignore[method-assign]
+
+        agent = AIRiskAgent(provider_client=provider)
+        result = await agent.run(sample_request)
+
+        assert result.risk_opinion == "allow"
+
+    def test_risk_opinion_system_prompt_contains_allowed_values(
+        self,
+        mock_provider: AIProviderClient,
+    ) -> None:
+        """System prompt lists all 4 canonical risk_opinion values."""
+        agent = AIRiskAgent(provider_client=mock_provider)
+        # Access the private method for test verification
+        prompt = agent._build_system_prompt()  # type: ignore[no-untyped-call]
+
+        for value in ("allow", "reduce", "reject", "review"):
+            assert value in prompt, (
+                f"Canonical value {value!r} not found in system prompt"
+            )
+
+    def test_allowed_risk_opinions_constant(self) -> None:
+        """_ALLOWED_RISK_OPINIONS contains exactly 4 canonical values."""
+        assert _ALLOWED_RISK_OPINIONS == frozenset(
+            {"allow", "reduce", "reject", "review"}
+        ), f"Unexpected values: {_ALLOWED_RISK_OPINIONS}"
 
 
 # ---------------------------------------------------------------------------

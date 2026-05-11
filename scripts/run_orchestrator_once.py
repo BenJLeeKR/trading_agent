@@ -36,7 +36,7 @@ import os
 import re
 import sys
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from uuid import UUID, uuid4
 
 from agent_trading.domain.entities import (
@@ -76,6 +76,29 @@ MARKET = "KRX"
 # Seed must reflect actual KIS paper account metadata so that re-seed alone
 # produces correct values — no manual DB UPDATE required.
 # ---------------------------------------------------------------------------
+
+def _resolve_smoke_price() -> Decimal:
+    """Return order price for smoke/test execution.
+
+    Priority:
+    1. ``KIS_SMOKE_PRICE`` env var (for smoke runs with a specific price).
+    2. ``Decimal("50000")`` safe default (dry-run / non-submit usage).
+
+    Always logs the resolved price and its source for observability.
+    """
+    raw = os.environ.get("KIS_SMOKE_PRICE")
+    if raw is not None:
+        try:
+            price = Decimal(raw)
+            logger.info("Using KIS_SMOKE_PRICE=%s from env var", price)
+            return price
+        except (InvalidOperation, ValueError):
+            logger.warning(
+                "Invalid KIS_SMOKE_PRICE=%r, falling back to default 50000", raw,
+            )
+    logger.info("KIS_SMOKE_PRICE not set, using default price=50000")
+    return Decimal("50000")
+
 
 def _seed_account_ref() -> str:
     """Resolve broker ``account_ref`` from ``KIS_ACCOUNT_NO`` env var.
@@ -303,6 +326,14 @@ async def main() -> int:
             logger.info("Using existing seed data.")
 
         # Step 2: build SubmitOrderRequest with valid UUID strategy_id
+        resolved_price = _resolve_smoke_price()
+        if args.submit and resolved_price == Decimal("50000"):
+            logger.warning(
+                "KIS_SMOKE_PRICE not set — using default price=%s. "
+                "This may cause KIS price validation error (msg_cd=40270000). "
+                "Set KIS_SMOKE_PRICE env var for paper submit smoke.",
+                resolved_price,
+            )
         request = SubmitOrderRequest(
             account_ref=ACCOUNT_ALIAS,
             client_order_id="entrypoint-001",
@@ -313,7 +344,7 @@ async def main() -> int:
             side=OrderSide.BUY,
             order_type=OrderType.LIMIT,
             quantity=Decimal("10"),
-            price=Decimal("50000"),
+            price=resolved_price,
         )
 
         # ── Dry-run: assemble + sizing only, no broker submit ──
@@ -342,8 +373,8 @@ async def main() -> int:
                         "applied_constraints": list(sizing_result.applied_constraints),
                         "skip_reason": sizing_result.skip_reason,
                     },
-                    "config_version_id": intent.config_version_id,
-                    "reason_codes": intent.reason_codes,
+                    "config_version_id": str(intent.config_version_id) if intent.config_version_id else None,
+                    "reason_codes": [str(rc) for rc in (intent.reason_codes or [])],
                 }
                 print(json.dumps(output, indent=2, ensure_ascii=False))
             else:
@@ -422,8 +453,8 @@ async def main() -> int:
                     "symbol": intent.request.symbol,
                     "side": intent.request.side.value,
                     "requested_quantity": str(intent.request.quantity),
-                    "config_version_id": intent.config_version_id,
-                    "reason_codes": intent.reason_codes,
+                    "config_version_id": str(intent.config_version_id) if intent.config_version_id else None,
+                    "reason_codes": [str(rc) for rc in (intent.reason_codes or [])],
                 }
                 print(json.dumps(assemble_output, indent=2, ensure_ascii=False))
             else:

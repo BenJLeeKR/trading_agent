@@ -795,10 +795,17 @@ class KISRestClient:
         order_time = str(output.get("ORD_TMD", ""))
 
         return SubmitOrderResult(
-            success=True,
-            broker_order_id=broker_order_id,
-            order_time=order_time,
-            raw_response=output,
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id=request.client_order_id,
+            broker_order_id=broker_order_id or None,
+            broker_status=OrderStatus.SUBMITTED,
+            ack_timestamp=datetime.now(timezone.utc),
+            raw_code=str(output.get("ODNO", "")),
+            raw_message=str(output.get("ORD_TMD", "")),
+            normalized_status=OrderStatus.SUBMITTED,
+            uncertain=False,
+            requires_reconciliation=False,
         )
 
     async def cancel_order(

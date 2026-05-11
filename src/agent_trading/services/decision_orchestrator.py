@@ -1454,6 +1454,19 @@ class DecisionOrchestratorService:
             composer_output.decision_type,
         )
 
+        # --- 단일 정규화: composer raw output → canonical decision_type ---
+        # recording 이후, AIDecisionInputs 조립 전에 한 번만 normalize.
+        # 이후 모든 downstream (AIDecisionInputs, AgentExecutionBundle,
+        # _ensure_trade_decision)은 normalized value만 사용.
+        normalized_dt = _normalize_decision_type(composer_output.decision_type)
+        if normalized_dt != composer_output.decision_type:
+            composer_output = replace(composer_output, decision_type=normalized_dt)
+            logger.info(
+                "Normalized decision_type: %s → %s",
+                composer_output.decision_type,
+                normalized_dt,
+            )
+
         # --- Assemble AIDecisionInputs from all three agent outputs ---
         ai_inputs = AIDecisionInputs(
             # FDC-derived
@@ -1637,6 +1650,49 @@ def _dataclass_to_dict(obj: object) -> dict[str, object]:
         else:
             result[field_name] = value  # type: ignore[literal-required]
     return result
+
+
+def _normalize_decision_type(decision_type: str) -> str:
+    """Normalize AI output decision_type to canonical backend contract values.
+
+    Maps known drift vocabulary to equivalent canonical values while
+    preserving direct matches and existing BUY/SELL handling.
+
+    == Canonical pass-through (그대로 유지) ==
+    APPROVE, REJECT, HOLD, WATCH, EXIT, REDUCE
+    BUY, SELL  (actionable_types에서 이미 처리 중이므로 보존)
+
+    == Known drift → canonical mapping (대소문자 불변) ==
+    entry → APPROVE  (단, side=BUY/SELL이 별도로 존재한다는 전제)
+    no_action → HOLD
+    no_trade → HOLD
+    none → HOLD
+
+    == 대소문자/표기 변형 처리 ==
+    - 입력을 strip() + upper()로 정규화 후 매핑
+    - ENTRY, entry, Entry → 모두 "ENTRY" → APPROVE
+    - NO_TRADE, no_trade, No_Trade → 모두 "NO_TRADE" → HOLD
+
+    == Fallback ==
+    Any other unknown value → HOLD (same as existing _resolve_decision_type)
+    """
+    normalized = decision_type.strip().upper()
+
+    # Direct canonical match — pass through
+    if normalized in {
+        "APPROVE", "REJECT", "HOLD", "WATCH", "EXIT", "REDUCE",
+        "BUY", "SELL",
+    }:
+        return normalized
+
+    # Known drift vocabulary → canonical mapping
+    mapping: dict[str, str] = {
+        "ENTRY": "APPROVE",
+        "NO_ACTION": "HOLD",
+        "NO_TRADE": "HOLD",
+        "NONE": "HOLD",
+    }
+    return mapping.get(normalized, "HOLD")
 
 
 def _resolve_decision_type(value: str | None) -> DecisionType:
