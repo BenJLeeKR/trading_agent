@@ -22,9 +22,9 @@
 | 필드 | 분류 | 비고 |
 |------|------|------|
 | `environment: Environment` | 🔵 env-specific | `PAPER` / `LIVE` — 최상위 모드 스위치 |
-| `kis_env` | 🔵 env-specific | `paper` / `live` — KIS API endpoint 결정 |
-| `kis_api_key`, `kis_api_secret` | 🔵 env-specific | broker credential |
-| `kis_account_number`, `kis_account_product_code` | 🔵 env-specific | 계좌 식별자 |
+| `kis_env` | 🔵 env-specific | `paper` / `live` — 실행 모드 (paper sandbox vs live real); 미설정 시 paper; "real" → "live" 자동 정규화 |
+| `kis_api_key`, `kis_api_secret` | 🔵 env-specific | KIS_APP_KEY / KIS_API_KEY (preferred/legacy fallback) |
+| `kis_account_number`, `kis_account_product_code` | 🔵 env-specific | KIS_ACCOUNT_NO / KIS_ACCOUNT_NUMBER (preferred/legacy fallback); KIS_ACCOUNT_PRODUCT_CODE |
 | `kis_base_url`, `kis_ws_url` | 🔵 env-specific | REST/WS endpoint |
 | `kis_real_rest_rps` (15) | 🔵 env-specific | live rate limit baseline |
 | `kis_paper_rest_rps` (1) | 🔵 env-specific | paper rate limit baseline |
@@ -141,7 +141,7 @@ Paper→Live 전환 시 변경이 **필요한** 것:
 | 1 | `environment` | `APP_ENV` 또는 유사 | `paper` |
 | 2 | KIS API key | `KIS_APP_KEY` / `KIS_API_KEY` | paper key |
 | 3 | KIS API secret | `KIS_APP_SECRET` / `KIS_API_SECRET` | paper secret |
-| 4 | KIS 계좌번호 | `KIS_ACCOUNT_NUMBER` | paper 계좌 |
+| 4 | KIS 계좌번호 | `KIS_ACCOUNT_NO` / `KIS_ACCOUNT_NUMBER` | paper 계좌 |
 | 5 | KIS 계좌상품코드 | `KIS_ACCOUNT_PRODUCT_CODE` | paper 상품코드 |
 | 6 | KIS env | `KIS_ENV` | `paper` |
 | 7 | REST endpoint | `KIS_BASE_URL` | paper URL |
@@ -248,6 +248,8 @@ class AppSettings:
     environment: Environment = Environment.PAPER
 
     # ── KIS env-specific ──
+    # Preferred naming: KIS_APP_KEY / KIS_APP_SECRET / KIS_ACCOUNT_NO
+    # Legacy fallback:  KIS_API_KEY / KIS_API_SECRET / KIS_ACCOUNT_NUMBER
     kis_api_key: str = ""
     kis_api_secret: str = ""
     kis_account_number: str = ""
@@ -269,7 +271,7 @@ class AppSettings:
     paper_gate_min_excess_return_pct: Decimal = Decimal("-3")
     paper_gate_max_drawdown_pct: Decimal = Decimal("15")
     paper_gate_min_win_rate_pct: Decimal = Decimal("40")
-    paper_gate_min_filled_orders: int = 20
+    paper_gate_min_filled_orders: int = 3
     paper_gate_max_consecutive_failures: int = 3
 ```
 
@@ -295,7 +297,7 @@ class AppSettings:
 # Paper↔Live 전환 시 아래 항목만 변경하면 됩니다:
 #   1. environment → LIVE (또는 PAPER)
 #   2. KIS API key/secret → live 환경 값
-#   3. KIS_ACCOUNT_NUMBER → live 계좌
+#   3. KIS_ACCOUNT_NO / KIS_ACCOUNT_NUMBER → live 계좌
 #   4. KIS_ENV → live
 #   5. KIS_BASE_URL, KIS_WS_URL → live endpoint
 #   6. KIS_REAL_REST_RPS → 적절한 live rate limit

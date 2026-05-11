@@ -14,6 +14,57 @@ from pydantic import BaseModel, ConfigDict
 
 
 # ---------------------------------------------------------------------------
+# Enum Metadata schemas (Phase 2b — reusable enum field metadata)
+# ---------------------------------------------------------------------------
+
+
+class EnumValueMetadataSchema(BaseModel):
+    """A single enum value with its display label and optional broker code."""
+
+    value: str
+    """Canonical enum value (matches ``enums.py``)."""
+
+    label: str
+    """Human-readable display label (e.g. ``"지정가"``)."""
+
+    description: str | None = None
+    """Optional explanation, especially for unsupported values."""
+
+    broker_code: str | None = None
+    """Broker-specific code for display reference only.
+
+    .. note::
+
+       This is **not** the authoritative submit mapping.  The actual
+       ``ORD_DVSN`` code sent to KIS is determined by
+       ``KISRestClient._map_order_type()``.
+    """
+
+    supported: bool = True
+    """``True`` when the value is actively supported by the broker adapter."""
+
+
+class EnumFieldMetadataSchema(BaseModel):
+    """Metadata for an entire enum field."""
+
+    field: str
+    """API field name (e.g. ``"order_type"``)."""
+
+    type: str = "enum"
+    """Metadata type discriminator (reserved for future use)."""
+
+    values: list[EnumValueMetadataSchema]
+    """All possible values for this field."""
+
+
+class EnumMetadataListResponse(BaseModel):
+    """``GET /metadata/enums`` — all registered enum field metadata."""
+
+    fields: list[EnumFieldMetadataSchema]
+    """List of enum field metadata entries."""
+
+
+# ---------------------------------------------------------------------------
 # Response schemas
 # ---------------------------------------------------------------------------
 

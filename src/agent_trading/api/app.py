@@ -231,6 +231,11 @@ def create_app(
 
     protected_routers.append(performance_router)
 
+    # Phase 5b — Enum metadata inspection
+    from agent_trading.api.routes.metadata import router as metadata_router
+
+    protected_routers.append(metadata_router)
+
     if auth_enabled:
         for router in protected_routers:
             app.include_router(router, dependencies=[Depends(require_viewer)])

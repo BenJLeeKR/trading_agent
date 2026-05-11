@@ -69,17 +69,17 @@ set -a; source /workspace/agent_trading/.env; set +a
 |--------|------|---------|------|
 | `KIS_ENV` | ✅ | `paper` | KIS API endpoint 결정 (paper/live) |
 | `DATABASE_URL` | ✅ | `postgresql://...` | Postgres 연결 (`.env`에 없으면 shell export) |
-| `KIS_API_KEY` | ✅ | `PS...` | KIS paper API key |
-| `KIS_API_SECRET` | ✅ | `...` | KIS paper API secret |
-| `KIS_ACCOUNT_NUMBER` | ✅ | `50186448` | KIS paper 계좌번호 |
+| `KIS_APP_KEY` / `KIS_API_KEY` | ✅ | `PS...` | KIS paper API key (preferred/legacy fallback) |
+| `KIS_APP_SECRET` / `KIS_API_SECRET` | ✅ | `...` | KIS paper API secret (preferred/legacy fallback) |
+| `KIS_ACCOUNT_NO` / `KIS_ACCOUNT_NUMBER` | ✅ | `50186448` | KIS paper 계좌번호 (preferred/legacy fallback) |
 | `KIS_ACCOUNT_PRODUCT_CODE` | ✅ | `01` | KIS paper 계좌상품코드 (=01) |
 | `DEEPSEEK_API_KEY` | ✅ | `sk-...` | DeepSeek LLM API key |
 | `DEEPSEEK_BASE_URL` | ✅ | `https://api.deepseek.com` | DeepSeek LLM endpoint |
-| `DEEPSEEK_MODEL_ID` | ✅ | `deepseek-chat` | ⚠️ `deepseek-v4-pro`는 **사용 금지** (empty response) |
+| `DEEPSEEK_MODEL_ID` | ✅ | `deepseek-chat` | `deepseek-chat` smoke 재현에 더 안정적; `deepseek-v4-pro`도 동작 가능하나 timeout/품질 편차 가능 |
 | `DEEPSEEK_TIMEOUT_SECONDS` | 권장 | `120` | 기본 60초 → FDC ReadTimeout 방지 |
 | `KIS_PAPER_REST_RPS` | ✅ | `2` | ⚠️ `1`이면 snapshot sync **실패** (Global REST cap 소진) |
 | `KIS_DEV_TOKEN_CACHE_ENABLED` | 권장 | `true` | Token cache 활성화 (paper 전용) |
-| `ENABLE_KIS_PAPER_SUBMIT_SMOKE` | ✅ | `true` | Submit smoke opt-in gate |
+| `ENABLE_KIS_PAPER_SUBMIT_SMOKE` | 권장 | `true` | 운영상 opt-in safety flag (현재 스크립트 자체 필수 조건은 아님) |
 | `KIS_SMOKE_PRICE` | Smoke 전용 | `268500` | Submit smoke용 price override (Phase 2.5에서 설정) |
 
 ### 2-C. 필수 env vars 누락 확인
@@ -88,9 +88,9 @@ set -a; source /workspace/agent_trading/.env; set +a
 echo "=== === Env Check === ==="
 echo "KIS_ENV=${KIS_ENV:-<MISSING>}"
 echo "DATABASE_URL=${DATABASE_URL:+set (length ${#DATABASE_URL})}/${DATABASE_URL:-<MISSING>}"
-echo "KIS_API_KEY=${KIS_API_KEY:+set (length ${#KIS_API_KEY})}/${KIS_API_KEY:-<MISSING>}"
-echo "KIS_API_SECRET=${KIS_API_SECRET:+set (length ${#KIS_API_SECRET})}/${KIS_API_SECRET:-<MISSING>}"
-echo "KIS_ACCOUNT_NUMBER=${KIS_ACCOUNT_NUMBER:-<MISSING>}"
+echo "KIS_APP_KEY=${KIS_APP_KEY:+set}/${KIS_APP_KEY:-<MISSING>}  /  KIS_API_KEY=${KIS_API_KEY:+set}/${KIS_API_KEY:-<MISSING>}"
+echo "KIS_APP_SECRET=${KIS_APP_SECRET:+set}/${KIS_APP_SECRET:-<MISSING>}  /  KIS_API_SECRET=${KIS_API_SECRET:+set}/${KIS_API_SECRET:-<MISSING>}"
+echo "KIS_ACCOUNT_NO=${KIS_ACCOUNT_NO:-<MISSING>}  /  KIS_ACCOUNT_NUMBER=${KIS_ACCOUNT_NUMBER:-<MISSING>}"
 echo "KIS_ACCOUNT_PRODUCT_CODE=${KIS_ACCOUNT_PRODUCT_CODE:-<MISSING>}"
 echo "DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:+set}/${DEEPSEEK_API_KEY:-<MISSING>}"
 echo "DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-<MISSING>}"
@@ -140,7 +140,7 @@ asyncio.run(find_paper_accounts())
 ```
 
 > **예상 출력**: `UUID: a44a02d1-7f32-5a62-99f7-235abeb58284  alias: Entrypoint Paper  env: paper  masked: ****6448`
-> 이 UUID는 [`scripts/run_orchestrator_once.py`](scripts/run_orchestrator_once.py:63)의 `ACCOUNT_ID` 상수와 일치해야 함.
+> 이 UUID는 [`scripts/run_orchestrator_once.py`](scripts/run_orchestrator_once.py:64)의 `ACCOUNT_ID` 상수와 일치해야 함.
 
 ### 3-B. KIS endpoint connectivity
 
@@ -201,6 +201,7 @@ async def evaluate():
         repos = runtime['repositories']
         settings = runtime['settings']
         gate = PaperGateService(repos=repos, settings=settings)
+        # ⚠️ 날짜 범위는 실행 시점에 맞게 조정 필요
         result = await gate.evaluate(
             account_id=ACCOUNT_ID,
             start_date=date(2026, 4, 1),
@@ -330,14 +331,14 @@ python3 scripts/run_orchestrator_once.py --dry-run
 
 | 증상 | 원인 | 조치 |
 |------|------|------|
-| `EventInterpretationAgent failed` | DeepSeek API key 오류 또는 model ID 오류 | `DEEPSEEK_MODEL_ID=deepseek-chat` 확인, API key 재설정 |
+| `EventInterpretationAgent failed` | DeepSeek API key 오류 또는 model ID 불안정 | `DEEPSEEK_MODEL_ID=deepseek-chat` 권장, API key 재설정 |
 | `FinalDecisionComposer timed out` | `DEEPSEEK_TIMEOUT_SECONDS` 부족 | 120s 이상으로 증가 |
 | HOLD/WATCH만 반복 | Synthetic seed 부족 | Phase 1.5 Seed 실행 후 재시도 |
 | `decision_context_id` 없음 | DB FK chain 미존재 | 자동 seed가 수행되므로 1회 더 시도 |
 
-### ⚠️ 실수 포인트 #5: `DEEPSEEK_MODEL_ID=deepseek-v4-pro`
+### ⚠️ 실수 포인트 #5: `DEEPSEEK_MODEL_ID` 선택
 
-**절대 사용 금지**. [`kis_paper_order_phase1_execution.md`](plans/kis_paper_order_phase1_execution.md:94) 참조. `deepseek-v4-pro`는 HTTP 200을 반환하지만 **empty response**를 반환하여 `JSONDecodeError` 발생. 반드시 `deepseek-chat` 사용.
+`deepseek-chat`이 smoke 재현에 더 안정적이어서 권장. [`kis_paper_order_phase1_execution.md`](plans/kis_paper_order_phase1_execution.md:94) 참조. `deepseek-v4-pro`도 동작 가능하지만 timeout/품질 편차가 있을 수 있음.
 
 ---
 
@@ -353,6 +354,7 @@ export KIS_SMOKE_PRICE=268500
 ```
 
 > `268500` = 005930 삼성전자 **전일종가**(`prdy_clpr`). KIS paper 상/하한가 이내에서 broker accept가 검증된 유일한 값.
+> **⚠️ 주의**: 이 값은 실행 시점의 삼성전자 현재가에 따라 유효하지 않을 수 있음. KIS paper 상/하한가(전일종가 ±30%) 이내인지 확인 후 사용. 새 값이 필요하면 `sync_kis_snapshots.py` 실행 후 DB `position_snapshots`에서 `prdy_clpr` 조회.
 
 ### 7-B. Price 결정 로직
 
@@ -376,7 +378,7 @@ env var를 설정하지 않고 `--submit` 실행 시, default price=50000으로 
 ## 8. Phase 3: Submit Smoke 실행
 
 > **목적**: Full pipeline (assemble → validate → create_order → submit_order) 실행.  
-> **opt-in 조건**: `ENABLE_KIS_PAPER_SUBMIT_SMOKE=true` 필요.
+> **opt-in 조건**: `ENABLE_KIS_PAPER_SUBMIT_SMOKE=true` 권장 (운영상 safety flag. 현재 스크립트 자체 필수 조건은 아님).
 
 ### 8-A. Submit 실행
 
@@ -537,10 +539,10 @@ python3 scripts/seed_smoke_test.py --cleanup
 | □ | `KIS_ENV=paper` 확인 | ⚠️ **Live 계좌 오발송 위험** | 🔴 CRITICAL |
 | □ | `DATABASE_URL` shell export (`.env`에 없을 경우) | DB 연결 실패, 전체 pipeline 중단 | 🔴 BLOCKER |
 | □ | `KIS_PAPER_REST_RPS=2` 설정 (1→실패) | Snapshot sync 실패 (RateLimit) | 🔴 BLOCKER |
-| □ | `DEEPSEEK_MODEL_ID=deepseek-chat` (v4-pro→empty) | AI Agent empty response → JSONDecodeError | 🔴 BLOCKER |
+| □ | `DEEPSEEK_MODEL_ID=deepseek-chat` 권장 (v4-pro는 timeout/품질 편차 가능) | AI Agent 응답 불안정 | 🟡 HIGH |
 | □ | `DEEPSEEK_TIMEOUT_SECONDS=120` (기본 60→부족) | FDC ReadTimeout → HOLD 결정 | 🟡 HIGH |
 | □ | `KIS_SMOKE_PRICE` 설정 (기본 50000→에러) | `msg_cd=40270000` price validation error | 🔴 BLOCKER |
-| □ | `ENABLE_KIS_PAPER_SUBMIT_SMOKE=true` 설정 | Submit smoke gate 차단 | 🔴 BLOCKER |
+| □ | `ENABLE_KIS_PAPER_SUBMIT_SMOKE=true` 설정 (운영 권장) | Safety flag 미설정 시 운영상 불안 | 🟡 HIGH |
 | □ | Pre-Flight Check 생략 | Env 오류 조기 발견 실패 | 🟡 HIGH |
 | □ | Stale Snapshot 상태에서 submit | `stale_snapshot` SKIPPED | 🟡 HIGH |
 | □ | Synthetic seed cleanup 누락 | 불필요한 test data DB 잔류 | 🟢 LOW |
@@ -618,7 +620,7 @@ flowchart LR
 
 | 실행 | 일시 | 결과 | 비고 |
 |------|------|------|------|
-| Phase 1-C (초기) | 2026-05-10 | 🚦 실행 금지 | `DEEPSEEK_MODEL_ID=deepseek-v4-pro` 오류 |
+| Phase 1-C (초기) | 2026-05-10 | 🚦 보류 | `DEEPSEEK_MODEL_ID=deepseek-v4-pro` timeout/품질 편차 |
 | Phase 1-C (재시도) | 2026-05-10 | ✅ Dry-run 성공 | `deepseek-chat` + 120s timeout |
 | Submit Smoke #1-#10 | 2026-05-11 | ✅ 6/10 SUBMITTED | `KIS_SMOKE_PRICE=268500` 적용 |
 | Price fix | 2026-05-11 | ✅ 수정 완료 | `_resolve_smoke_price()` + `rest_client.py` 버그 수정 |
