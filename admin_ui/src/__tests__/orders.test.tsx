@@ -220,15 +220,46 @@ describe("OrdersView combined filter and search", () => {
     const searchInput = screen.getByPlaceholderText("심볼 또는 주문 ID 검색...");
     await user.type(searchInput, "AAPL");
 
-    // Select "Filled" from status dropdown — AAPL is filled, TSLA is pending
+    // Select "Filled" from status dropdown — AAPL is filled, TSLA is pending_submit
     const statusSelect = screen.getByLabelText("상태");
     await user.selectOptions(statusSelect, "filled");
 
     // AAPL (filled, buy) should still show
     expect(screen.getByText("AAPL")).toBeInTheDocument();
 
-    // Now select "Pending" — AAPL is not pending, should disappear
-    await user.selectOptions(statusSelect, "pending");
+    // Now select "제출 대기" (pending_submit) — AAPL is not pending_submit, should disappear
+    await user.selectOptions(statusSelect, "pending_submit");
     expect(screen.queryByText("AAPL")).not.toBeInTheDocument();
+  });
+});
+
+/* ───────────────────────────────────────────
+ * Scenario 9: Filter by canonical pending_submit
+ * ─────────────────────────────────────────── */
+describe("OrdersView filter by canonical status", () => {
+  it("filters by pending_submit and shows TSLA only", async () => {
+    const user = userEvent.setup();
+    mockFetchOnce(mockOrders);
+
+    render(
+      <MemoryRouter>
+        <OrdersView />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("주문")).toBeInTheDocument();
+    });
+
+    // Both orders visible initially
+    expect(screen.getByText("AAPL")).toBeInTheDocument();
+    expect(screen.getByText("TSLA")).toBeInTheDocument();
+
+    // Select "제출 대기" (pending_submit) — only TSLA has status=pending_submit
+    const statusSelect = screen.getByLabelText("상태");
+    await user.selectOptions(statusSelect, "pending_submit");
+
+    expect(screen.queryByText("AAPL")).not.toBeInTheDocument();
+    expect(screen.getByText("TSLA")).toBeInTheDocument();
   });
 });

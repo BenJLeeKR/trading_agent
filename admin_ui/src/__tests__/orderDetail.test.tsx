@@ -9,6 +9,7 @@ import {
   mockOrderDetailNoDecision,
   mockOrderEvents,
   mockBrokerOrders,
+  mockEnumMetadataResponse,
   VALID_TOKEN,
 } from "./test-utils/fixtures";
 
@@ -24,6 +25,9 @@ afterEach(() => {
 });
 
 function renderOrderDetail() {
+  // Pre-load useEnumMetadata module-level cache so that the component
+  // does not fire a fetch for /metadata/enums during the test.
+  mockFetchOnce(mockEnumMetadataResponse);
   return render(
     <MemoryRouter initialEntries={[`/orders/${ORDER_ID}`]}>
       <Routes>
@@ -63,8 +67,9 @@ describe("OrderDetail with valid data", () => {
 
     // Summary section
     expect(screen.getByText("AAPL")).toBeInTheDocument();
-    expect(screen.getByText("buy")).toBeInTheDocument();
-    expect(screen.getByText("limit")).toBeInTheDocument();
+    expect(screen.getByText("매수")).toBeInTheDocument();
+    // "지정가" appears twice: subtitle + detail field → use getAllByText
+    expect(screen.getAllByText("지정가").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("100").length).toBeGreaterThanOrEqual(1); // requested_quantity + filled_qty
     expect(screen.getByText("185.50")).toBeInTheDocument();
 

@@ -8,6 +8,7 @@ import {
   mockTradeDecisions,
   mockDecisionContext,
   mockAgentRuns,
+  mockEnumMetadataResponse,
   VALID_TOKEN,
 } from "./test-utils/fixtures";
 import { mockFetchOnce, mockFetchError } from "./test-utils/mockFetch";
@@ -55,7 +56,10 @@ afterEach(() => {
  * ─────────────────────────────────────────── */
 describe("DecisionsView with data", () => {
   it("renders trade decisions in DataTable", async () => {
-    mockFetchOnce(mockTradeDecisions);
+    mockUrlRouter({
+      "/metadata/enums": mockEnumMetadataResponse,
+      "/trade-decisions": mockTradeDecisions,
+    });
 
     render(
       <MemoryRouter>
@@ -85,7 +89,10 @@ describe("DecisionsView with data", () => {
  * ─────────────────────────────────────────── */
 describe("DecisionsView confidence color", () => {
   it("applies correct color based on confidence value", async () => {
-    mockFetchOnce(mockTradeDecisions);
+    mockUrlRouter({
+      "/metadata/enums": mockEnumMetadataResponse,
+      "/trade-decisions": mockTradeDecisions,
+    });
 
     render(
       <MemoryRouter>
@@ -116,7 +123,10 @@ describe("DecisionsView confidence color", () => {
  * ─────────────────────────────────────────── */
 describe("DecisionsView empty list", () => {
   it("shows empty message when no decisions", async () => {
-    mockFetchOnce([]);
+    mockUrlRouter({
+      "/metadata/enums": mockEnumMetadataResponse,
+      "/trade-decisions": [],
+    });
 
     render(
       <MemoryRouter>
@@ -137,6 +147,7 @@ describe("DecisionsView detail panel", () => {
   it("shows decision fields and lazy-loads context on row click", async () => {
     const user = userEvent.setup();
     mockUrlRouter({
+      "/metadata/enums": mockEnumMetadataResponse,
       "/trade-decisions": mockTradeDecisions,
       "/decision-contexts/": mockDecisionContext,
       "/agent-runs": mockAgentRuns,
@@ -160,8 +171,8 @@ describe("DecisionsView detail panel", () => {
     await waitFor(() => {
       expect(screen.getByText("의사결정 상세")).toBeInTheDocument();
     });
-    // Decision type "auto_execute" appears in detail panel
-    expect(screen.getAllByText("auto_execute").length).toBeGreaterThanOrEqual(1);
+    // Decision type "auto_execute" appears in detail panel (via getEnumLabel → "자동 실행")
+    expect(screen.getAllByText("자동 실행").length).toBeGreaterThanOrEqual(1);
     // 85% appears in table row, ConfidenceBar, and Signals card
     expect(screen.getAllByText("85%").length).toBeGreaterThanOrEqual(3);
     // rationale_summary appears in both table (Reasoning column) and detail panel (Reason section)
@@ -182,6 +193,7 @@ describe("DecisionsView detail panel", () => {
   it("shows error banner when context API call fails", async () => {
     const user = userEvent.setup();
     mockUrlRouter({
+      "/metadata/enums": mockEnumMetadataResponse,
       "/trade-decisions": mockTradeDecisions,
       "/decision-contexts/": new Error("API error 500: Internal error"),
       "/agent-runs": mockAgentRuns,
@@ -218,7 +230,10 @@ describe("DecisionsView detail panel", () => {
 describe("DecisionsView side filter", () => {
   it("shows only matching decisions when side filter is selected", async () => {
     const user = userEvent.setup();
-    mockFetchOnce(mockTradeDecisions);
+    mockUrlRouter({
+      "/metadata/enums": mockEnumMetadataResponse,
+      "/trade-decisions": mockTradeDecisions,
+    });
 
     render(
       <MemoryRouter>
@@ -247,7 +262,10 @@ describe("DecisionsView side filter", () => {
 describe("DecisionsView symbol search", () => {
   it("filters decisions by ticker search text", async () => {
     const user = userEvent.setup();
-    mockFetchOnce(mockTradeDecisions);
+    mockUrlRouter({
+      "/metadata/enums": mockEnumMetadataResponse,
+      "/trade-decisions": mockTradeDecisions,
+    });
 
     render(
       <MemoryRouter>
@@ -275,6 +293,7 @@ describe("DecisionsView agent runs panel", () => {
   it("shows agent runs panel with EI/AR/FDC cards when decision is selected", async () => {
     const user = userEvent.setup();
     mockUrlRouter({
+      "/metadata/enums": mockEnumMetadataResponse,
       "/trade-decisions": mockTradeDecisions,
       "/decision-contexts/": mockDecisionContext,
       "/agent-runs": mockAgentRuns,
@@ -311,6 +330,7 @@ describe("DecisionsView agent runs panel", () => {
   it("shows empty state when no agent runs exist", async () => {
     const user = userEvent.setup();
     mockUrlRouter({
+      "/metadata/enums": mockEnumMetadataResponse,
       "/trade-decisions": mockTradeDecisions,
       "/decision-contexts/": mockDecisionContext,
       "/agent-runs": [],
@@ -341,6 +361,7 @@ describe("DecisionsView agent runs panel", () => {
   it("shows error banner when agent runs API call fails", async () => {
     const user = userEvent.setup();
     mockUrlRouter({
+      "/metadata/enums": mockEnumMetadataResponse,
       "/trade-decisions": mockTradeDecisions,
       "/decision-contexts/": mockDecisionContext,
       "/agent-runs": new Error("API error 500: Internal error"),
@@ -348,6 +369,13 @@ describe("DecisionsView agent runs panel", () => {
     // Override the agent-runs route to return an error
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = typeof input === "string" ? input : input instanceof Request ? input.url : "";
+      if (url.includes("/metadata/enums")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => mockEnumMetadataResponse,
+        } as Response);
+      }
       if (url.includes("/agent-runs")) {
         return Promise.resolve({
           ok: false,
@@ -398,6 +426,7 @@ describe("DecisionsView agent runs panel", () => {
   it("toggles structured output JSON detail", async () => {
     const user = userEvent.setup();
     mockUrlRouter({
+      "/metadata/enums": mockEnumMetadataResponse,
       "/trade-decisions": mockTradeDecisions,
       "/decision-contexts/": mockDecisionContext,
       "/agent-runs": mockAgentRuns,
@@ -448,6 +477,13 @@ describe("DecisionsView contextId query param", () => {
     const contextId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00dc1";
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = typeof input === "string" ? input : input instanceof Request ? input.url : "";
+      if (url.includes("/metadata/enums")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => mockEnumMetadataResponse,
+        } as Response);
+      }
       // Must include decision_context_id query param
       if (url.includes("/trade-decisions") && url.includes("decision_context_id")) {
         return Promise.resolve({
@@ -491,6 +527,7 @@ describe("DecisionsView contextId query param", () => {
     const contextId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00dc1";
     const user = userEvent.setup();
     mockUrlRouter({
+      "/metadata/enums": mockEnumMetadataResponse,
       "/trade-decisions": mockTradeDecisions,
     });
 

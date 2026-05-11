@@ -15,6 +15,7 @@ import type {
   DecisionContextDetail,
   AgentRunResponse,
   BrokerCapacityResponse,
+  EnumMetadataListResponse,
 } from "../../types/api";
 
 export const mockHealthOk: HealthResponse = {
@@ -52,7 +53,7 @@ export const mockOrders: OrderSummary[] = [
     account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a1",
     side: "sell",
     order_type: "market",
-    status: "pending",
+    status: "pending_submit",
     requested_quantity: 50,
     requested_price: null,
     symbol: "TSLA",
@@ -168,7 +169,7 @@ export const mockOrderEvents: OrderEvent[] = [
   {
     event_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00e1",
     order_request_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0001",
-    from_status: "pending",
+    from_status: "pending_submit",
     to_status: "submitted",
     reason: "Order submitted to broker",
     timestamp: "2026-05-05T00:00:01Z",
@@ -486,4 +487,72 @@ export const mockBrokerCapacity: BrokerCapacityResponse = {
   market_data_subscriptions: 3,
   order_event_accounts: ["aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a1"],
   generated_at: "2026-05-08T05:00:00Z",
+};
+
+/**
+ * Mock ``GET /metadata/enums`` response.
+ *
+ * Includes ``side``, ``order_type``, ``order_status``, ``decision_type``,
+ * and ``entry_style`` fields with Korean labels.
+ */
+export const mockEnumMetadataResponse: EnumMetadataListResponse = {
+  fields: [
+    {
+      field: "side",
+      type: "Side",
+      values: [
+        { value: "buy", label: "매수", description: null, broker_code: null, supported: true },
+        { value: "sell", label: "매도", description: null, broker_code: null, supported: true },
+        { value: "hold", label: "보류", description: null, broker_code: null, supported: true },
+      ],
+    },
+    {
+      field: "order_type",
+      type: "OrderType",
+      values: [
+        { value: "market", label: "시장가", description: null, broker_code: null, supported: true },
+        { value: "limit", label: "지정가", description: null, broker_code: null, supported: true },
+        { value: "stop", label: "스탑", description: null, broker_code: null, supported: false },
+        { value: "stop_limit", label: "스탑 리밋", description: null, broker_code: null, supported: false },
+      ],
+    },
+    {
+      field: "order_status",
+      type: "OrderStatus",
+      values: [
+        { value: "draft", label: "초안", description: null, broker_code: null, supported: true },
+        { value: "validated", label: "검증됨", description: null, broker_code: null, supported: true },
+        { value: "pending_submit", label: "제출 대기", description: null, broker_code: null, supported: true },
+        { value: "submitted", label: "제출됨", description: null, broker_code: null, supported: true },
+        { value: "acknowledged", label: "확인됨", description: null, broker_code: null, supported: true },
+        { value: "partially_filled", label: "부분 체결", description: null, broker_code: null, supported: true },
+        { value: "filled", label: "체결", description: null, broker_code: null, supported: true },
+        { value: "cancel_pending", label: "취소 대기", description: null, broker_code: null, supported: true },
+        { value: "cancelled", label: "취소됨", description: null, broker_code: null, supported: true },
+        { value: "rejected", label: "거부됨", description: null, broker_code: null, supported: true },
+        { value: "expired", label: "만료", description: null, broker_code: null, supported: true },
+        { value: "reconcile_required", label: "조정 필요", description: null, broker_code: null, supported: true },
+      ],
+    },
+    {
+      field: "decision_type",
+      type: "DecisionType",
+      values: [
+        { value: "auto_execute", label: "자동 실행", description: null, broker_code: null, supported: true },
+        { value: "manual_review", label: "수동 검토", description: null, broker_code: null, supported: true },
+        { value: "hold", label: "보류", description: null, broker_code: null, supported: true },
+        { value: "escalate", label: "에스컬레이션", description: null, broker_code: null, supported: true },
+      ],
+    },
+    {
+      field: "entry_style",
+      type: "EntryStyle",
+      values: [
+        { value: "market", label: "시장가", description: null, broker_code: null, supported: true },
+        { value: "limit", label: "지정가", description: null, broker_code: null, supported: true },
+        { value: "vwap", label: "VWAP", description: null, broker_code: null, supported: true },
+        { value: "twap", label: "TWAP", description: null, broker_code: null, supported: true },
+      ],
+    },
+  ],
 };

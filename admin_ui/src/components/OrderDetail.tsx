@@ -49,12 +49,20 @@ export default function OrderDetail() {
     {
       key: "from_status",
       header: "이전",
-      render: (r) => <StatusBadge status={r.from_status} />,
+      render: (r) => (
+        <StatusBadge status={r.from_status}>
+          {getEnumLabel(fieldMap, "order_status", r.from_status)}
+        </StatusBadge>
+      ),
     },
     {
       key: "to_status",
       header: "이후",
-      render: (r) => <StatusBadge status={r.to_status} />,
+      render: (r) => (
+        <StatusBadge status={r.to_status}>
+          {getEnumLabel(fieldMap, "order_status", r.to_status)}
+        </StatusBadge>
+      ),
     },
     { key: "reason", header: "사유" },
   ];
@@ -65,7 +73,11 @@ export default function OrderDetail() {
     {
       key: "status",
       header: "상태",
-      render: (r) => <StatusBadge status={r.status} />,
+      render: (r) => (
+        <StatusBadge status={r.status}>
+          {getEnumLabel(fieldMap, "order_status", r.status)}
+        </StatusBadge>
+      ),
     },
     { key: "submitted_at", header: "제출 시각" },
   ];
