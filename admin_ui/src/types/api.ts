@@ -229,6 +229,28 @@ export interface BrokerCapacityResponse {
 }
 
 /* ───────────────────────────────────────────
+ * Enum Metadata types
+ * ─────────────────────────────────────────── */
+
+export interface EnumValueMetadataSchema {
+  value: string;
+  label: string;
+  description: string | null;
+  broker_code: string | null;
+  supported: boolean;
+}
+
+export interface EnumFieldMetadataSchema {
+  field: string;
+  type: string;
+  values: EnumValueMetadataSchema[];
+}
+
+export interface EnumMetadataListResponse {
+  fields: EnumFieldMetadataSchema[];
+}
+
+/* ───────────────────────────────────────────
  * API response wrapper types
  * ─────────────────────────────────────────── */
 

@@ -7,9 +7,11 @@ import { StatusBadge } from "./common/StatusBadge";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import { FilterBar } from "./common/FilterBar";
+import { useEnumMetadata, getEnumLabel } from "../hooks/useEnumMetadata";
 import { X } from "lucide-react";
 
 export default function OrdersView() {
+  const { fieldMap } = useEnumMetadata();
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -48,19 +50,28 @@ export default function OrdersView() {
     )},
     { key: "symbol", header: "심볼" },
     { key: "side", header: "매매", render: (r: OrderSummary) => (
-      <StatusBadge variant={r.side.toLowerCase() === "buy" ? "success" : "error"}>{r.side.toUpperCase()}</StatusBadge>
+      <StatusBadge variant={r.side.toLowerCase() === "buy" ? "success" : "error"}>{getEnumLabel(fieldMap, "side", r.side)}</StatusBadge>
     )},
     { key: "requested_quantity", header: "수량" },
     { key: "status", header: "상태", render: (r: OrderSummary) => {
       const variants: Record<string, "success" | "warning" | "error" | "info" | "neutral"> = {
         filled: "success",
-        pending: "warning",
-        rejected: "error",
-        partial: "info",
         submitted: "info",
+        partially_filled: "info",
+        pending_submit: "warning",
+        rejected: "error",
         cancelled: "neutral",
+        expired: "neutral",
+        acknowledged: "info",
+        reconcile_required: "warning",
+        draft: "neutral",
+        validated: "info",
+        cancel_pending: "warning",
+        // Legacy / short keys (fixture backward compat)
+        pending: "warning",
+        partial: "info",
       };
-      return <StatusBadge variant={variants[r.status] || "info"}>{r.status.toUpperCase()}</StatusBadge>;
+      return <StatusBadge variant={variants[r.status] || "info"}>{getEnumLabel(fieldMap, "order_status", r.status)}</StatusBadge>;
     }},
     { key: "created_at", header: "생성일" },
   ];
@@ -155,7 +166,7 @@ export default function OrdersView() {
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-sm text-[#64748b]">매매</dt>
-                  <dd><StatusBadge variant={selectedOrder.side.toLowerCase() === "buy" ? "success" : "error"}>{selectedOrder.side.toUpperCase()}</StatusBadge></dd>
+                  <dd><StatusBadge variant={selectedOrder.side.toLowerCase() === "buy" ? "success" : "error"}>{getEnumLabel(fieldMap, "side", selectedOrder.side)}</StatusBadge></dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-sm text-[#64748b]">수량</dt>
@@ -163,7 +174,7 @@ export default function OrdersView() {
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-sm text-[#64748b]">상태</dt>
-                  <dd><StatusBadge status={selectedOrder.status} /></dd>
+                  <dd><StatusBadge status={selectedOrder.status}>{getEnumLabel(fieldMap, "order_status", selectedOrder.status)}</StatusBadge></dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-sm text-[#64748b]">클라이언트 주문 ID</dt>

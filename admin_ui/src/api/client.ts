@@ -234,3 +234,15 @@ export async function getAuditLogs(
 export async function getBrokerCapacity(): Promise<import("../types/api").BrokerCapacityResponse> {
   return request<import("../types/api").BrokerCapacityResponse>("/broker-capacity");
 }
+
+export async function getEnumMetadata(): Promise<import("../types/api").EnumMetadataListResponse> {
+  return request<import("../types/api").EnumMetadataListResponse>("/metadata/enums");
+}
+
+export async function getEnumFieldMetadata(
+  field: string
+): Promise<import("../types/api").EnumFieldMetadataSchema> {
+  return request<import("../types/api").EnumFieldMetadataSchema>(
+    `/metadata/enums/${encodeURIComponent(field)}`
+  );
+}

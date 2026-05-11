@@ -25,16 +25,16 @@ function statusToVariant(s: string): BadgeVariant {
   if (["filled", "completed", "resolved", "ok", "healthy", "active", "buy", "long"].includes(lower)) {
     return "success";
   }
-  if (["reconcile_required", "degraded", "partial", "partially_filled", "pending"].includes(lower)) {
+  if (["reconcile_required", "degraded", "partial", "partially_filled", "pending", "pending_submit", "cancel_pending"].includes(lower)) {
     return "warning";
   }
   if (["rejected", "reflection_failed", "error", "failed", "sell", "short", "restricted"].includes(lower)) {
     return "error";
   }
-  if (["submitted", "running", "margin", "info"].includes(lower)) {
+  if (["submitted", "running", "margin", "info", "validated", "acknowledged"].includes(lower)) {
     return "info";
   }
-  if (["cancelled", "expired"].includes(lower)) {
+  if (["cancelled", "expired", "draft"].includes(lower)) {
     return "neutral";
   }
   return "info";

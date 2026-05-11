@@ -8,6 +8,7 @@ import { StatusBadge } from "./common/StatusBadge";
 import { FilterBar } from "./common/FilterBar";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
+import { useEnumMetadata, getEnumLabel } from "../hooks/useEnumMetadata";
 import type { Column } from "./common/DataTable";
 import { X, Brain } from "lucide-react";
 
@@ -36,6 +37,7 @@ function ConfidenceBar({ value }: { value: number }) {
  * DecisionsView
  * ─────────────────────────────────────────── */
 export default function DecisionsView() {
+  const { fieldMap } = useEnumMetadata();
   const [searchParams, setSearchParams] = useSearchParams();
   const contextIdParam = searchParams.get("contextId");
 
@@ -116,7 +118,7 @@ export default function DecisionsView() {
       header: "매매",
       render: (r) => (
         <StatusBadge variant={r.side.toLowerCase() === "buy" ? "success" : r.side.toLowerCase() === "sell" ? "error" : "info"}>
-          {r.side.toUpperCase()}
+          {getEnumLabel(fieldMap, "side", r.side)}
         </StatusBadge>
       ),
     },
@@ -228,7 +230,7 @@ export default function DecisionsView() {
                 "bg-[#fef2f2]"
               }`}>
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-bold text-[#16a34a]">{selectedDecision.side.toUpperCase()}</span>
+                  <span className="text-sm font-bold text-[#16a34a]">{getEnumLabel(fieldMap, "side", selectedDecision.side)}</span>
                   <span className="text-sm font-semibold text-[#0f172a]">{selectedDecision.symbol}</span>
                 </div>
                 <StatusBadge variant={
@@ -246,7 +248,7 @@ export default function DecisionsView() {
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-sm text-[#64748b]">의사결정 유형</dt>
-                  <dd className="text-sm font-medium text-[#0f172a]">{selectedDecision.decision_type}</dd>
+                  <dd className="text-sm font-medium text-[#0f172a]">{getEnumLabel(fieldMap, "decision_type", selectedDecision.decision_type)}</dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-sm text-[#64748b]">전략 ID</dt>
@@ -293,7 +295,7 @@ export default function DecisionsView() {
                   <dt className="text-sm text-[#64748b]">매매 시그널</dt>
                   <dd>
                     <StatusBadge variant={selectedDecision.side.toLowerCase() === "buy" ? "success" : selectedDecision.side.toLowerCase() === "sell" ? "error" : "info"}>
-                      {selectedDecision.side.toUpperCase()}
+                      {getEnumLabel(fieldMap, "side", selectedDecision.side)}
                     </StatusBadge>
                   </dd>
                 </div>

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { OrderDetail as OrderDetailType, OrderEvent, BrokerOrderView } from "../types/api";
 import { getOrderDetail, getOrderEvents, getBrokerOrders } from "../api/client";
+import { useEnumMetadata, getEnumLabel } from "../hooks/useEnumMetadata";
 import { DataTable } from "./common/DataTable";
 import { StatusBadge } from "./common/StatusBadge";
 import { LoadingSpinner } from "./common/LoadingSpinner";
@@ -11,6 +12,7 @@ import { ArrowLeft } from "lucide-react";
 
 export default function OrderDetail() {
   const { orderId } = useParams<{ orderId: string }>();
+  const { fieldMap } = useEnumMetadata();
   const [order, setOrder] = useState<OrderDetailType | null>(null);
   const [events, setEvents] = useState<OrderEvent[]>([]);
   const [brokerOrders, setBrokerOrders] = useState<BrokerOrderView[]>([]);
@@ -84,7 +86,12 @@ export default function OrderDetail() {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="text-lg font-semibold text-[#0f172a]">주문 상세</h3>
-            <p className="text-sm text-[#64748b]">{order.symbol} · {order.side} · {order.order_type}</p>
+            <p className="text-sm text-[#64748b]">
+              {order.symbol} · {getEnumLabel(fieldMap, "side", order.side)} ·{" "}
+              <span title={order.order_type ?? ""}>
+                {getEnumLabel(fieldMap, "order_type", order.order_type)}
+              </span>
+            </p>
           </div>
           <code className="text-xs font-mono text-[#64748b] bg-[#f8fafc] px-2 py-1 rounded">
             {order.order_request_id}
@@ -100,17 +107,26 @@ export default function OrderDetail() {
             <dt className="text-sm text-[#64748b]">매매</dt>
             <dd className="mt-0.5">
               <StatusBadge variant={order.side.toLowerCase() === "buy" ? "success" : "error"}>
-                {order.side}
+                {getEnumLabel(fieldMap, "side", order.side)}
               </StatusBadge>
             </dd>
           </div>
           <div>
             <dt className="text-sm text-[#64748b]">상태</dt>
-            <dd className="mt-0.5"><StatusBadge status={order.status} /></dd>
+            <dd className="mt-0.5">
+              <StatusBadge status={order.status}>
+                {getEnumLabel(fieldMap, "order_status", order.status)}
+              </StatusBadge>
+            </dd>
           </div>
           <div>
             <dt className="text-sm text-[#64748b]">주문 유형</dt>
-            <dd className="text-sm font-medium text-[#0f172a] mt-0.5">{order.order_type}</dd>
+            <dd className="text-sm font-medium text-[#0f172a] mt-0.5">
+              {getEnumLabel(fieldMap, "order_type", order.order_type)}
+              <span className="ml-2 text-xs text-[#94a3b8] font-mono">
+                ({order.order_type})
+              </span>
+            </dd>
           </div>
           <div>
             <dt className="text-sm text-[#64748b]">수량</dt>
