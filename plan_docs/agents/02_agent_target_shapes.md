@@ -127,6 +127,8 @@
 
 - v1의 Event Interpretation Agent가 이 역할 일부를 선점하고 있다.
 - external event pipeline + OpenDART adapter와 결합되는 방향이 맞다.
+- 실전에서는 event raw dump를 직접 길게 읽는 구조보다,
+  ranked / provenance-rich event summary를 짧은 latency budget 안에 처리하는 방향이 맞다.
 
 ## 8. Portfolio Agent
 
@@ -176,6 +178,14 @@
 - 리스크 의견
 - size adjustment factor
 - volatility / liquidity / concentration 해석
+
+### 실전 latency 관점
+
+- AR은 event 해석을 처음부터 다시 하는 Agent가 아니라,
+  EI summary + position/cash/risk snapshot fact를 빠르게 읽는 Agent에 가깝다.
+- 따라서 실전에서는 EI보다 더 짧은 prompt와 timeout budget을 가져야 한다.
+- raw recent_events를 다시 보더라도 provenance-rich short line만 허용하고,
+  장황한 narrative 중복은 피하는 것이 맞다.
 
 ### 현재 구현과의 연결
 
@@ -259,6 +269,20 @@
 
 이 선택은 다음 이유로 타당하다.
 
+### v1 실전 latency budget 해석
+
+현재 v1 3-Agent 체인은 모두 Provider AI Agent이지만, 실전 운영에서는 동일 budget으로 취급하면 안 된다.
+
+- EI: 가장 느릴 수 있으나, event provenance를 구조화하는 slowest analysis layer
+- AR: EI보다 짧아야 하는 intermediate risk opinion layer
+- FDC: 가장 짧아야 하는 final intent synthesis layer
+
+원칙:
+
+- event 수집은 background ingestion이 담당한다
+- 주문 직전 판단 경로는 이미 정리된 context만 읽는다
+- prompt quality를 높이기 위해 provenance를 넣더라도, event count cap / default omission / structured summary 우선 원칙을 유지해야 한다
+
 - external event 해석은 AI 효용이 높다.
 - 리스크 의견 계층은 AI 해석 가치가 크다.
 - 아직 Market/Universe/Strategy/Signal/Portfolio/Order Construction이 전부 세분화되지 않았기 때문에,
@@ -281,4 +305,3 @@
 - 모든 책임을 결국 커버하되, 모두를 "같은 종류의 에이전트"로 만들 필요는 없다.
 - live trading에서는 deterministic execution / reconciliation / guardrail이 AI보다 우선한다.
 - AI는 해석과 정책 판단의 상위 계층을 담당하고, 계산과 제출은 backend service가 맡는다.
-

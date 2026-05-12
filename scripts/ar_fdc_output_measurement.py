@@ -22,12 +22,23 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import re
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
 from uuid import UUID
+
+# .env 파일 로드 (provider API key 등)
+try:
+    from dotenv import load_dotenv
+    _dotenv_path = Path(__file__).resolve().parent.parent / ".env"
+    if _dotenv_path.exists():
+        load_dotenv(_dotenv_path)
+except ImportError:
+    pass
 
 from agent_trading.runtime.bootstrap import postgres_runtime
 from agent_trading.services.ai_agents.ai_risk import AIRiskAgent
@@ -882,11 +893,17 @@ async def main() -> int:
         provider_client = None
         if args.with_provider:
             try:
-                from agent_trading.services.ai_agents.provider_client import AIProviderClientImpl
-                provider_client = AIProviderClientImpl()
-                print("  Provider client initialized.")
-            except ImportError:
-                print("  ⚠️ AIProviderClientImpl not available. Skipping provider calls.")
+                from agent_trading.services.ai_agents.provider_client import OpenAICompatibleClient
+                from agent_trading.config.settings import AppSettings
+                settings = AppSettings()
+                provider_client = OpenAICompatibleClient(
+                    api_key=settings.provider_api_key,
+                    base_url=settings.provider_base_url,
+                    timeout_seconds=settings.provider_timeout_seconds,
+                )
+                print("  Provider client initialized (OpenAICompatibleClient).")
+            except (ImportError, AttributeError) as e:
+                print(f"  ⚠️ Provider client not available: {e}. Skipping provider calls.")
                 provider_client = None
 
         all_results: list[dict[str, Any]] = []
