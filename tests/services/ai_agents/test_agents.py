@@ -1833,3 +1833,28 @@ class TestFinalDecisionComposerAgentPrompt:
         event = self._make_event(ingested_at=stale_time)
         prompt = self._build_prompt([event])
         assert "⚠️STALE" in prompt
+
+    # ------------------------------------------------------------------
+    # Test 7: events have symbol → "Symbol: 030200" in prompt
+    # ------------------------------------------------------------------
+
+    def test_fdc_symbol_line_from_events(self) -> None:
+        """When events carry a symbol, the prompt includes ``Symbol: 030200``."""
+        event = self._make_event(symbol="030200")
+        prompt = self._build_prompt([event])
+        assert "Symbol: 030200" in prompt
+
+    # ------------------------------------------------------------------
+    # Test 8: no events / no symbol → "Symbol: (not available)"
+    # ------------------------------------------------------------------
+
+    def test_fdc_symbol_line_fallback_when_no_symbol(self) -> None:
+        """When no events have a symbol, the prompt shows ``Symbol: (not available)``."""
+        event = self._make_event(symbol=None)
+        prompt = self._build_prompt([event])
+        assert "Symbol: (not available)" in prompt
+
+    def test_fdc_symbol_line_fallback_when_no_events(self) -> None:
+        """When there are no events at all, the prompt shows ``Symbol: (not available)``."""
+        prompt = self._build_prompt([])
+        assert "Symbol: (not available)" in prompt

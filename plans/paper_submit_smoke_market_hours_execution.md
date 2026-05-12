@@ -116,9 +116,12 @@ asyncio.run(main())
 | 결과 | broker_status | 판정 |
 |------|---------------|------|
 | ✅ **ODNO 발급** | `submitted`, `native_id`=숫자 | **Broker accept 성공** |
+| ⚠️ **ODNO 발급 + RECONCILE_REQUIRED** | `reconcile_required`, `native_id`=숫자 | **Paper mock 한계 — 정상**. Post-submit sync 실행 후 `last_synced_at` 갱신 확인 필요 |
 | ❌ `msg_cd=40580000` | 기록 없음 | 장 마감 → Step 1로 돌아가 시간 확인 |
 | ❌ `msg_cd=40270000` | 기록 있음, `error_message` 포함 | **Price validation error** → `KIS_SMOKE_PRICE` 조정 필요 |
 | ❌ 기타 `msg_cd` | 기록 있음 | Broker business reject → 코드 분류 후 보고 |
+
+> **Paper Mock 한계**: KIS paper mock (`openapivts`)은 `inquire-daily-ccld`에서 체결 데이터를 반환하지 않아, post-submit sync 후 `broker_status`가 `reconcile_required`로 수렴하는 것이 정상입니다. 이는 코드 버그가 아닌 테스트 인프라 제약입니다. 자세한 분석은 [`inquire_daily_ccld_payload_capture_report.md`](plans/inquire_daily_ccld_payload_capture_report.md) 참조.
 
 ---
 

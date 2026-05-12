@@ -84,9 +84,9 @@
 | **decision_type** | `APPROVE` | `HOLD` |
 | **confidence** | 0.75 | 0.75 |
 | **summary** | "종합 점수 75점으로 임계치 60점을 초과하여 매수 결정을 승인합니다." | "종합 점수 75점으로 임계치를 상회하나, 이벤트 해석이 모두 중립적이고 리스크 점수가 낮아 추가 상승 모멘텀이 확인될 때까지 관망하는 것이 적절함." |
-| **symbol (raw)** | `UNKNOWN` | `UNKNOWN` |
+| **symbol (raw)** | `UNKNOWN` | `030200` |
 
-**분석**: FDC OLD는 `APPROVE`, FDC NEW는 `HOLD`로 **decision_type이 다릅니다**. 이는 prompt 차이 (OLD: 단순 이벤트 목록 vs NEW: provenance-rich format)가 FDC의 의사결정에 영향을 준 것으로 해석됩니다. 다만 `symbol` 필드는 두 경우 모두 `UNKNOWN`으로, FDC prompt에는 symbol 정보가 전달되지 않는 구조적 문제가 있습니다.
+**분석**: FDC OLD는 `APPROVE`, FDC NEW는 `HOLD`로 **decision_type이 다릅니다**. 이는 prompt 차이 (OLD: 단순 이벤트 목록 vs NEW: provenance-rich format)가 FDC의 의사결정에 영향을 준 것으로 해석됩니다. `symbol` 필드의 경우, OLD-style은 `UNKNOWN` (근사 재현 — 정상), NEW-style은 `030200`으로 개선되었습니다 (Symbol line bug fix 적용 ✅).
 
 ### 3.3 종합 비교
 
@@ -94,7 +94,7 @@
 |-----------|---------------|----------------|
 | Output 동일성 | 동일 ✅ | **상이** (APPROVE → HOLD) |
 | Fallback 사용 | 없음 ✅ | 없음 ✅ |
-| Symbol 정확성 | 개선됨 (UNKNOWN → 030200) | 미개선 (UNKNOWN 유지) |
+| Symbol 정확성 | 개선됨 (UNKNOWN → 030200) | 개선됨 (OLD UNKNOWN 정상 / NEW UNKNOWN→030200) |
 | 응답 시간 | 유사 (2.8s vs 2.9s) | 유사 (5.1s vs 3.9s) |
 
 ---
@@ -132,11 +132,17 @@
 
 ## 5. 위험 요소 및 한계
 
-### 5.1 FDC symbol = UNKNOWN (구조적 문제)
+### 5.1 FDC symbol = UNKNOWN → 해결 완료 ✅
 
-FDC prompt에는 `symbol` 정보가 전달되지 않습니다. `_build_user_prompt()`에서 `request.symbol`을 사용하지만, Phase 1의 `measure_symbol()`에서 `AgentExecutionRequest`에 symbol이 올바르게 설정되지 않았을 가능성이 있습니다.
+[`final_decision_composer.py:_build_user_prompt()`](../src/agent_trading/services/ai_agents/final_decision_composer.py:258)에 Symbol line이 없어 FDC NEW prompt에 symbol 정보가 누락되었던 문제입니다.
 
-**영향**: FDC output의 `symbol` 필드가 항상 `UNKNOWN`으로 표시됨. 이는 production 코드의 동일한 문제를 반영할 수 있음.
+**진단 결과** (상세: [`plans/fdc_symbol_unknown_diagnosis.md`](plans/fdc_symbol_unknown_diagnosis.md)):
+- `AgentExecutionRequest`에는 `symbol` 필드가 없으며, symbol은 `context.recent_events[0].symbol`을 통해 전달됨
+- AR `_build_user_prompt()`는 events에서 symbol을 추출하지만, FDC는 해당 로직이 누락됨
+
+**수정**: AR과 동일한 패턴으로 Symbol line 추가 (3개 테스트 추가, 88/88 통과 ✅)
+
+**OLD-style 영향 없음**: `_build_old_style_fdc_prompt()`는 근사 재현이며 Symbol line이 없음 — 의도된 동작 (수정 대상 아님)
 
 ### 5.2 단일 symbol (030200)만 검증
 
@@ -185,10 +191,10 @@ OLD-style prompt는 `_build_old_style_ar_prompt()` / `_build_old_style_fdc_promp
 
 ## 8. 남은 리스크 1개
 
-**FDC symbol = UNKNOWN 문제**: FDC prompt에 symbol이 전달되지 않아 provider output의 `symbol` 필드가 항상 `UNKNOWN`입니다. 이는 `measure_symbol()`에서 `AgentExecutionRequest` 구성 시 `symbol` 필드 누락 가능성을 시사합니다. production 코드의 `DecisionOrchestratorService._run_agents()`에서도 동일한 문제가 발생할 수 있으므로 확인이 필요합니다.
+**FDC output drift**: Symbol line 추가로 FDC NEW prompt가 변경되어, provider output의 `decision_type`, `confidence` 등이 기존과 달라질 수 있습니다. 현재 OLD-style(`APPROVE`)과 NEW-style(`HOLD`)의 decision_type 차이가 관찰되었으며, 이는 prompt 변화의 자연스러운 결과입니다. 향후 FDC output 안정성 평가 시 참고해야 합니다.
 
 ---
 
 ## 9. 다음 직접 액션 1개
 
-**FDC symbol 전달 확인**: `scripts/ar_fdc_output_measurement.py`의 `measure_symbol()` 함수에서 FDC `AgentExecutionRequest` 생성 시 `symbol`이 올바르게 설정되는지 확인하고, 필요시 수정 후 Phase 1 + Phase 2 재실행.
+**FDC output drift 관찰 지속**: FDC Symbol line fix 이후 동일 symbol(030200)에 대해 Phase 2를 재실행하여 output 안정성을 확인. 추가로 다른 symbol(005930, 000660)에서도 FDC NEW prompt의 symbol 전달이 정상인지 검증.

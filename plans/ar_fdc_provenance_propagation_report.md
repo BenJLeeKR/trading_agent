@@ -5,8 +5,8 @@
 | 파일 | 변경 유형 | 설명 |
 |------|-----------|------|
 | [`src/agent_trading/services/ai_agents/ai_risk.py`](../src/agent_trading/services/ai_agents/ai_risk.py) | 수정 | events section → provenance-rich format, Symbol line bug fix, `datetime` import 추가 |
-| [`src/agent_trading/services/ai_agents/final_decision_composer.py`](../src/agent_trading/services/ai_agents/final_decision_composer.py) | 수정 | events section → provenance-rich format, `datetime` import 추가 |
-| [`tests/services/ai_agents/test_agents.py`](../tests/services/ai_agents/test_agents.py) | 수정 | `TestAIRiskAgentPrompt` (10 tests) + `TestFinalDecisionComposerAgentPrompt` (6 tests) 추가 |
+| [`src/agent_trading/services/ai_agents/final_decision_composer.py`](../src/agent_trading/services/ai_agents/final_decision_composer.py) | 수정 | events section → provenance-rich format, FDC Symbol line fix, `datetime` import 추가 |
+| [`tests/services/ai_agents/test_agents.py`](../tests/services/ai_agents/test_agents.py) | 수정 | `TestAIRiskAgentPrompt` (10 tests) + `TestFinalDecisionComposerAgentPrompt` (9 tests) 추가 |
 
 ## 2. 변경 상세
 
@@ -82,6 +82,44 @@ lines.append(f"Symbol: {symbol}")
 
 두 파일 모두 `from datetime import datetime, timezone` 추가 (기존 코드에 `datetime.now(timezone.utc)` 사용).
 
+### 2.5 FDC Symbol line bug fix
+
+**변경 위치**: [`final_decision_composer.py:_build_user_prompt()`](../src/agent_trading/services/ai_agents/final_decision_composer.py:258)
+
+**BEFORE** (BUG):
+```python
+# Symbol / decision context
+dc = context.decision_context
+if dc:
+    lines.append(f"Account ID: {dc.account_id}")
+```
+→ `Account ID`만 출력, Symbol line 없음 → Provider가 `symbol`을 알 수 없어 `"UNKNOWN"` 반환
+
+**AFTER** (FIX):
+```python
+# Symbol source priority:
+#   1. context.recent_events first non-None e.symbol
+#   2. Fallback "(not available)"
+# NOTE: AgentExecutionRequest has no direct symbol field;
+#       events are all for the same symbol (queried by request.symbol in assemble()).
+#       Same pattern as AIRiskAgent._build_user_prompt().
+symbol: str = "(not available)"
+if events:
+    for e in events:
+        if e.symbol:
+            symbol = e.symbol
+            break
+lines.append(f"Symbol: {symbol}")
+```
+
+**변경 파일**: [`final_decision_composer.py`](../src/agent_trading/services/ai_agents/final_decision_composer.py) — 1개 파일, ~10 lines 추가 (주석 포함)
+
+**영향**:
+- FDC NEW prompt에 `Symbol: 030200` 라인 추가됨
+- Provider output의 `symbol` 필드가 `"UNKNOWN"` → `"030200"`로 개선
+- `_build_old_style_fdc_prompt()`는 근사 재현이므로 수정 대상 아님 (계속 Symbol line 없음)
+- broker submit semantics, admin UI, DB schema, output schema 변경 없음
+
 ## 3. Default tag omission 규칙 (EI와 동일)
 
 | 태그 | 생략 조건 |
@@ -109,7 +147,7 @@ lines.append(f"Symbol: {symbol}")
 python3 -m pytest tests/services/ai_agents/test_agents.py -v --tb=short
 ```
 
-### 5.2 결과: **85 passed** ✅
+### 5.2 결과: **88 passed** ✅
 
 | 테스트 클래스 | 테스트 수 | 설명 |
 |---------------|-----------|------|
@@ -121,7 +159,7 @@ python3 -m pytest tests/services/ai_agents/test_agents.py -v --tb=short
 | `TestEventInterpretationAgent` | 7 | 기존 — 변경 없음 |
 | `TestEventInterpretationAgentPrompt` | 6 | 기존 — 변경 없음 |
 | **`TestAIRiskAgentPrompt`** | **10** | **신규** — AR provenance + Symbol line |
-| **`TestFinalDecisionComposerAgentPrompt`** | **6** | **신규** — FDC provenance |
+| **`TestFinalDecisionComposerAgentPrompt`** | **9** | **신규** — FDC provenance + Symbol line |
 
 ### 5.3 신규 테스트 상세
 
@@ -137,13 +175,16 @@ python3 -m pytest tests/services/ai_agents/test_agents.py -v --tb=short
 9. `test_ar_symbol_line_fallback_when_symbol_none` — symbol=None → `"(not available)"`
 10. `test_ar_combined_provenance_and_symbol` — provenance tags + Symbol line 공존
 
-**`TestFinalDecisionComposerAgentPrompt`** (6 tests):
+**`TestFinalDecisionComposerAgentPrompt`** (9 tests):
 1. `test_fdc_events_all_tags_present`
 2. `test_fdc_events_severity_medium_omitted`
 3. `test_fdc_events_direction_neutral_omitted`
 4. `test_fdc_events_fresh_no_stale`
 5. `test_fdc_events_no_issuer_tag_when_none`
 6. `test_fdc_events_stale_mark_when_old`
+7. `test_fdc_symbol_line_from_events` — Symbol line에 events 기반 symbol 포함 확인
+8. `test_fdc_symbol_line_fallback_when_no_symbol` — events symbol=None → `"(not available)"`
+9. `test_fdc_symbol_line_fallback_when_no_events` — events=[] → `"(not available)"`
 
 ## 6. 측정 스크립트 재실행 결과
 
@@ -183,4 +224,4 @@ python3 scripts/ei_improvement_measurement.py
 |--------|--------|------|
 | 측정 스크립트 하드코딩된 "남은 리스크" 텍스트 | 낮음 | `scripts/ei_improvement_measurement.py`의 "남은 리스크" 섹션이 이전 상태를 가리킴. 기능적 영향 없음 |
 | EI ↔ AR/FDC events format 코드 중복 | 중간 | 3개 파일에 동일한 provenance formatting 로직이 중복. 향후 module-level helper 추출 가능 |
-| `AgentExecutionRequest`에 `symbol` 필드 부재 | 낮음 | events 기반 추출로 우회했으나, 명시적 필드가 있으면 더 안전함 |
+| `AgentExecutionRequest`에 `symbol` 필드 부재 | 낮음 | events 기반 추출로 우회했으나, 명시적 필드가 있으면 더 안전함. AR과 FDC 모두 동일한 우회 방식 사용 |

@@ -1,6 +1,6 @@
 {
   "meta": {
-    "run_ts_utc": "2026-05-12T01:58:27Z",
+    "run_ts_utc": "2026-05-12T02:14:57Z",
     "symbol": "030200",
     "phase1_artifact": "data/ar_fdc_prompts_030200.json",
     "model_id": "deepseek-chat",
@@ -13,22 +13,7 @@
       "run": "ar-old-1",
       "success": true,
       "used_fallback": false,
-      "duration_seconds": 2.8,
-      "parsed_output": {
-        "risk_opinion": "allow",
-        "risk_score": 75.0,
-        "reason_codes": [
-          "REASON_001"
-        ],
-        "reasoning": "현재 이벤트 해석 결과 중립적 편향이며, 점수가 임계값을 초과하여 거래를 허용합니다. 특별한 위험 요소가 발견되지 않았습니다."
-      },
-      "raw_response_preview": "{\n  \"schema_version\": \"1.0\",\n  \"agent_name\": \"RiskAgent\",\n  \"decision_context_id\": \"ar-fdc-measure-030200-001\",\n  \"symbol\": \"UNKNOWN\",\n  \"proposed_side\": \"BUY\",\n  \"risk_opinion\": \"allow\",\n  \"risk_score\": 75.0,\n  \"confidence\": 0.7,\n  \"size_adjustment_factor\": 1.0,\n  \"max_holding_horizon\": \"short\",\n  \"risk_flags\": [],\n  \"reason_codes\": [\"REASON_001\"],\n  \"opposing_evidence\": [\"모든 이벤트가 중립적이며, 특별한 위험 신호가 없음\"],\n  \"summary\": \"현재 이벤트 해석 결과 중립적 편향이며, 점수가 임계값을 초과하여 거래를 허용합니다. 특별한 위험 요소가 발견되지 않았습니다.\"\n}"
-    },
-    {
-      "run": "ar-new-1",
-      "success": true,
-      "used_fallback": false,
-      "duration_seconds": 2.9,
+      "duration_seconds": 3.0,
       "parsed_output": {
         "risk_opinion": "allow",
         "risk_score": 75.0,
@@ -37,31 +22,46 @@
         ],
         "reasoning": "현재 이벤트 해석 결과 중립적 편향이며, 점수가 임계치를 상회하여 거래를 허용합니다. 특별한 위험 요소가 발견되지 않았습니다."
       },
-      "raw_response_preview": "{\n  \"schema_version\": \"1.0\",\n  \"agent_name\": \"RiskAgent\",\n  \"decision_context_id\": \"ar-fdc-measure-030200-001\",\n  \"symbol\": \"030200\",\n  \"proposed_side\": \"BUY\",\n  \"risk_opinion\": \"allow\",\n  \"risk_score\": 75.0,\n  \"confidence\": 0.7,\n  \"size_adjustment_factor\": 1.0,\n  \"max_holding_horizon\": \"short\",\n  \"risk_flags\": [],\n  \"reason_codes\": [\"REASON_001\"],\n  \"opposing_evidence\": [\"최근 이벤트가 모두 중립적이며 특별한 위험 신호가 없음\"],\n  \"summary\": \"현재 이벤트 해석 결과 중립적 편향이며, 점수가 임계치를 상회하여 거래를 허용합니다. 특별한 위험 요소가 발견되지 않았습니다.\"\n}"
+      "raw_response_preview": "{\n  \"schema_version\": \"1.0\",\n  \"agent_name\": \"RiskAgent\",\n  \"decision_context_id\": \"ar-fdc-measure-030200-001\",\n  \"symbol\": \"UNKNOWN\",\n  \"proposed_side\": \"BUY\",\n  \"risk_opinion\": \"allow\",\n  \"risk_score\": 75.0,\n  \"confidence\": 0.7,\n  \"size_adjustment_factor\": 1.0,\n  \"max_holding_horizon\": \"short\",\n  \"risk_flags\": [],\n  \"reason_codes\": [\"REASON_001\"],\n  \"opposing_evidence\": [\"모든 이벤트가 중립적이며, 특별한 위험 신호가 없음\"],\n  \"summary\": \"현재 이벤트 해석 결과 중립적 편향이며, 점수가 임계치를 상회하여 거래를 허용합니다. 특별한 위험 요소가 발견되지 않았습니다.\"\n}"
+    },
+    {
+      "run": "ar-new-1",
+      "success": true,
+      "used_fallback": false,
+      "duration_seconds": 4.0,
+      "parsed_output": {
+        "risk_opinion": "allow",
+        "risk_score": 75.0,
+        "reason_codes": [
+          "REASON_001"
+        ],
+        "reasoning": "현재 이벤트 해석 결과 중립적 편향이며, 점수 75점으로 임계치 60점을 상회합니다. 최근 5건의 이벤트는 모두 중립적 영향과 낮은 신뢰도를 보여 특별한 위험 요소가 없습니다. 따라서 해당 매수 제안을 허용하며, 포지션 크기 조정 없이 스윙 기간 동안 보유 가능합니다."
+      },
+      "raw_response_preview": "{\n  \"schema_version\": \"1.0\",\n  \"agent_name\": \"RiskAgent\",\n  \"decision_context_id\": \"ar-fdc-measure-030200-001\",\n  \"symbol\": \"030200\",\n  \"proposed_side\": \"BUY\",\n  \"risk_opinion\": \"allow\",\n  \"risk_score\": 75.0,\n  \"confidence\": 0.8,\n  \"size_adjustment_factor\": 1.0,\n  \"max_holding_horizon\": \"swing\",\n  \"risk_flags\": [],\n  \"reason_codes\": [\"REASON_001\"],\n  \"opposing_evidence\": [\"최근 이벤트는 모두 중립적이며, 임원·주요주주 보고서가 반복적으로 제출되었으나 특별한 위험 신호는 없음.\"],\n  \"summary\": \"현재 이벤트 해석 결과 중립적 편향이며, 점수 75점으로 임계치 60점을 상회합니다. "
     },
     {
       "run": "fdc-old-1",
       "success": true,
       "used_fallback": false,
-      "duration_seconds": 5.1,
+      "duration_seconds": 4.5,
       "parsed_output": {
         "decision_type": "APPROVE",
         "confidence": 0.75,
-        "reasoning": "종합 점수 75점으로 임계치 60점을 초과하여 매수 결정을 승인합니다. 이벤트 해석은 중립적이나 리스크 평가에서 허용 의견을 제시하였고, 리스크 점수 0.3으로 낮은 수준입니다. 특별한 반대 증거는 없으나, 이벤트의 중립성과 낮은 신뢰도를 고려하여 단기 시장가 매수를 권장합니다."
+        "reasoning": "종합 점수 75점으로 임계치 60점을 초과하여 매수 결정을 승인합니다. 이벤트 해석은 중립적이나 리스크 평가에서 허용 의견을 제시하였으며, 리스크 점수 0.3으로 낮은 수준입니다. 특별한 반대 증거는 없으나 모든 이벤트가 중립적이므로 단기 트레이딩 관점에서 접근합니다."
       },
-      "raw_response_preview": "{\n  \"schema_version\": \"1.0\",\n  \"agent_name\": \"Final Decision Composer\",\n  \"decision_context_id\": \"ar-fdc-measure-030200-001\",\n  \"symbol\": \"UNKNOWN\",\n  \"decision_type\": \"APPROVE\",\n  \"side\": \"BUY\",\n  \"entry_style\": \"MARKET\",\n  \"time_horizon\": \"short\",\n  \"confidence\": 0.75,\n  \"conviction\": 0.7,\n  \"reason_codes\": [\"REASON_001\"],\n  \"opposing_evidence\": [\"이벤트 해석이 중립적이며, 특별한 긍정적 또는 부정적 신호가 없음\"],\n  \"execution_preferences\": {\n    \"use_limit_order\": false,\n    \"price_band_hint\": {\n      \"reference_type\": "
+      "raw_response_preview": "{\n  \"schema_version\": \"1.0\",\n  \"agent_name\": \"Final Decision Composer\",\n  \"decision_context_id\": \"ar-fdc-measure-030200-001\",\n  \"symbol\": \"UNKNOWN\",\n  \"decision_type\": \"APPROVE\",\n  \"side\": \"BUY\",\n  \"entry_style\": \"MARKET\",\n  \"time_horizon\": \"short\",\n  \"confidence\": 0.75,\n  \"conviction\": 0.7,\n  \"reason_codes\": [\"REASON_001\"],\n  \"opposing_evidence\": [\"모든 이벤트가 중립적이며, 특별한 상승 또는 하락 신호가 없음\"],\n  \"execution_preferences\": {\n    \"use_limit_order\": false,\n    \"price_band_hint\": {\n      \"reference_type\": \"l"
     },
     {
       "run": "fdc-new-1",
       "success": true,
       "used_fallback": false,
-      "duration_seconds": 3.9,
+      "duration_seconds": 4.2,
       "parsed_output": {
         "decision_type": "HOLD",
         "confidence": 0.75,
-        "reasoning": "종합 점수 75점으로 임계치를 상회하나, 이벤트 해석이 모두 중립적이고 리스크 점수가 낮아 추가 상승 모멘텀이 확인될 때까지 관망하는 것이 적절함."
+        "reasoning": "컨텍스트 점수 75로 임계치를 넘었으나, 이벤트 해석이 중립적이고 리스크 점수가 낮아 확신도가 높지 않음. 따라서 현재 포지션을 유지하며 추가 신호를 기다리는 것이 적절함."
       },
-      "raw_response_preview": "{\n  \"schema_version\": \"1.0\",\n  \"agent_name\": \"Final Decision Composer\",\n  \"decision_context_id\": \"ar-fdc-measure-030200-001\",\n  \"symbol\": \"UNKNOWN\",\n  \"decision_type\": \"HOLD\",\n  \"side\": \"BUY\",\n  \"entry_style\": \"LIMIT\",\n  \"time_horizon\": \"short\",\n  \"confidence\": 0.75,\n  \"conviction\": 0.5,\n  \"reason_codes\": [\"REASON_001\"],\n  \"opposing_evidence\": [\"이벤트 해석이 중립적이며, 특별한 방향성 신호가 없음\"],\n  \"execution_preferences\": {\n    \"use_limit_order\": true,\n    \"price_band_hint\": {\n      \"reference_type\": \"last\",\n    "
+      "raw_response_preview": "{\n  \"schema_version\": \"1.0\",\n  \"agent_name\": \"Final Decision Composer\",\n  \"decision_context_id\": \"ar-fdc-measure-030200-001\",\n  \"symbol\": \"030200\",\n  \"decision_type\": \"HOLD\",\n  \"side\": \"BUY\",\n  \"entry_style\": \"LIMIT\",\n  \"time_horizon\": \"short\",\n  \"confidence\": 0.75,\n  \"conviction\": 0.5,\n  \"reason_codes\": [\"REASON_001\"],\n  \"opposing_evidence\": [\"이벤트 해석이 중립적이며, 컨텍스트 점수가 임계치를 넘었으나 강한 신호는 아님\"],\n  \"execution_preferences\": {\n    \"use_limit_order\": true,\n    \"price_band_hint\": {\n      \"reference_type\":"
     }
   ],
   "summary": {
@@ -69,7 +69,7 @@
     "successful": 4,
     "failed": 0,
     "fallback_count": 0,
-    "total_duration_seconds": 14.7,
+    "total_duration_seconds": 15.8,
     "conclusion": "mixed_signal"
   }
 }

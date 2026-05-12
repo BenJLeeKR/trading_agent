@@ -202,16 +202,36 @@ async def _run_one_cycle(
     from agent_trading.brokers.koreainvestment.adapter import (
         KoreaInvestmentAdapter,
     )
+    from agent_trading.brokers.koreainvestment.rest_client import (
+        KISRestClient,
+    )
+    from agent_trading.brokers.rate_limit import (
+        build_kis_budget_manager,
+    )
 
     broker: BrokerAdapter | None = None
     try:
         # ── 1. Broker adapter ─────────────────────────────────────────
         logger.info("Creating broker adapter (env=%s) ...", settings.kis_env)
-        broker = KoreaInvestmentAdapter(
-            api_key=settings.kis_real_api_key,
-            api_secret=settings.kis_real_api_secret,
+        budget_manager = build_kis_budget_manager(
+            kis_env=settings.kis_env,
+            real_rest_rps=settings.kis_real_rest_rps,
+            paper_rest_rps=settings.kis_paper_rest_rps,
+        )
+        rest_client = KISRestClient(
+            api_key=settings.kis_api_key,
+            api_secret=settings.kis_api_secret,
+            account_number=settings.kis_account_number,
+            account_product_code=settings.kis_account_product_code,
             env=settings.kis_env,
-            account_ref=account_ref or settings.kis_account_number or "",
+            base_url=settings.kis_base_url,
+            budget_manager=budget_manager,
+            dev_token_cache_enabled=settings.kis_dev_token_cache_enabled,
+            dev_token_cache_path=settings.kis_dev_token_cache_path,
+        )
+        broker = KoreaInvestmentAdapter(
+            rest_client=rest_client,
+            ws_url=settings.kis_ws_url,
         )
         await broker.authenticate()
         logger.info("Broker authentication successful.")

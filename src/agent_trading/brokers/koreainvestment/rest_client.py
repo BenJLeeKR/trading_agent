@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -20,6 +21,8 @@ from agent_trading.brokers.errors import (
     BrokerError,
     BrokerErrorType,
 )
+
+logger = logging.getLogger(__name__)
 from agent_trading.brokers.rate_limit import (
     BudgetExhaustedError,
     BucketType,
@@ -841,19 +844,29 @@ class KISRestClient:
 
         output = data.get("output", data)
         return CancelOrderResult(
-            success=True,
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="",
             broker_order_id=str(output.get("ODNO", "")),
-            raw_response=output,
+            broker_status=OrderStatus.CANCELLED,
+            raw_code=str(output.get("ODNO", "")),
+            raw_message=str(output.get("ORD_TMD", "")),
         )
 
     # ------------------------------------------------------------------
     # Inquiry operations
     # ------------------------------------------------------------------
 
-    async def get_order_status(self, broker_order_id: str) -> OrderStatusResult:
+    async def get_order_status(
+        self,
+        account_ref: str,
+        client_order_id: str | None = None,
+        broker_order_id: str | None = None,
+    ) -> OrderStatusResult:
         """Query order status via daily settlement inquiry.
 
         Uses inquire-daily-ccld endpoint.
+        Matches the ``BrokerAdapter`` protocol signature.
         """
         params = {
             "CANO": self.account_number,
@@ -880,27 +893,61 @@ class KISRestClient:
         if isinstance(output, dict):
             output = [output]
 
-        # Find the matching order
-        for item in output:
-            if item.get("ODNO") == broker_order_id:
-                return self._parse_order_status_item(item)
+        # ── Instrumentation: capture inquire-daily-ccld response for paper mock analysis ──
+        if logger.isEnabledFor(logging.DEBUG):
+            odnos_in_response = [item.get("ODNO", "") for item in output]
+            logger.debug(
+                "inquire-daily-ccld: output_count=%d, requested_odno=%s, odnos_in_response=%s",
+                len(output), broker_order_id, odnos_in_response[:20],
+            )
+            if output:
+                sample = {
+                    "ODNO": output[0].get("ODNO", ""),
+                    "PDNO": output[0].get("PDNO", ""),
+                    "ORD_QTY": output[0].get("ORD_QTY", ""),
+                    "CCLD_QTY": output[0].get("CCLD_QTY", ""),
+                    "CNCL_YN": output[0].get("CNCL_YN", ""),
+                    "RVSE_YN": output[0].get("RVSE_YN", ""),
+                    "SLL_BUY_DVSN_CD": output[0].get("SLL_BUY_DVSN_CD", ""),
+                    "ORD_TMD": output[0].get("ORD_TMD", ""),
+                    "CCLD_TMD": output[0].get("CCLD_TMD", ""),
+                }
+                logger.debug("inquire-daily-ccld: first_item_fields=%s", sample)
+
+        # Find the matching order by broker_order_id
+        if broker_order_id is not None:
+            for item in output:
+                if item.get("ODNO") == broker_order_id:
+                    return self._parse_order_status_item(item)
+
+        logger.info(
+            "inquire-daily-ccld: ODNO match FAILED for broker_order_id=%s "
+            "(output_count=%d, odnos_in_response=%s)",
+            broker_order_id, len(output),
+            [item.get("ODNO", "") for item in output][:20],
+        )
 
         return OrderStatusResult(
-            broker_order_id=broker_order_id,
-            status=OrderStatus.UNKNOWN,
-            filled_qty=Decimal("0"),
-            remaining_qty=Decimal("0"),
-            raw_response=output,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id=client_order_id,
+            broker_order_id=broker_order_id or "",
+            status=OrderStatus.RECONCILE_REQUIRED,
+            filled_quantity=Decimal("0"),
+            remaining_quantity=Decimal("0"),
+            raw_code="",
+            raw_message="Order not found in daily settlement inquiry",
         )
 
     async def get_fills(
         self,
-        broker_order_id: str | None = None,
-        since: datetime | None = None,
+        account_ref: str,
+        broker_order_id: str,
+        from_ts: str | None = None,
     ) -> Sequence[FillEvent]:
         """Retrieve fill events from daily settlement inquiry.
 
         Uses inquire-daily-ccld endpoint.
+        Matches the ``BrokerAdapter`` protocol signature.
         """
         params = {
             "CANO": self.account_number,
@@ -1162,19 +1209,25 @@ class KISRestClient:
         for pos in positions:
             if pos.get("PDNO") == symbol:
                 return OrderStatusResult(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
+                    client_order_id=None,
                     broker_order_id=broker_order_id,
                     status=OrderStatus.FILLED,
-                    filled_qty=Decimal(pos.get("CCLD_QTY", "0")),
-                    remaining_qty=Decimal("0"),
-                    raw_response=pos,
+                    filled_quantity=Decimal(pos.get("CCLD_QTY", "0")),
+                    remaining_quantity=Decimal("0"),
+                    raw_code=pos.get("PDNO", ""),
+                    raw_message="Resolved from position inquiry",
                 )
 
         return OrderStatusResult(
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id=None,
             broker_order_id=broker_order_id,
-            status=OrderStatus.UNKNOWN,
-            filled_qty=Decimal("0"),
-            remaining_qty=Decimal("0"),
-            raw_response=output,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            filled_quantity=Decimal("0"),
+            remaining_quantity=Decimal("0"),
+            raw_code="",
+            raw_message="Order not found in daily settlement or positions",
         )
 
     async def _request_with_fallback(
@@ -1243,7 +1296,10 @@ class KISRestClient:
         return mapping.get(time_in_force, "01")
 
     @staticmethod
-    def _parse_order_status_item(item: dict[str, Any]) -> OrderStatusResult:
+    def _parse_order_status_item(
+        item: dict[str, Any],
+        client_order_id: str | None = None,
+    ) -> OrderStatusResult:
         """Parse a single KIS order status item into OrderStatusResult."""
         odno = item.get("ODNO", "")
         ord_qty = Decimal(item.get("ORD_QTY", "0"))
@@ -1262,14 +1318,17 @@ class KISRestClient:
         elif item.get("CNCL_YN") == "Y":
             status = OrderStatus.CANCELLED
         elif item.get("RVSE_YN") == "Y":
-            status = OrderStatus.REPLACED
+            status = OrderStatus.CANCELLED
         else:
-            status = OrderStatus.PENDING
+            status = OrderStatus.SUBMITTED
 
         return OrderStatusResult(
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id=client_order_id,
             broker_order_id=odno,
             status=status,
-            filled_qty=ccll_qty,
-            remaining_qty=rmn_qty,
-            raw_response=item,
+            filled_quantity=ccll_qty,
+            remaining_quantity=rmn_qty,
+            raw_code=item.get("ORD_DVSN", ""),
+            raw_message=item.get("ORD_TMD", ""),
         )

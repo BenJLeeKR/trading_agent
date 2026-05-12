@@ -259,7 +259,21 @@ class FinalDecisionComposerAgent:
             f"Correlation ID: {request.correlation_id}",
         ]
 
-        # Symbol / decision context
+        # Symbol source priority:
+        #   1. context.recent_events first non-None e.symbol
+        #   2. Fallback "(not available)"
+        # NOTE: AgentExecutionRequest has no direct symbol field;
+        #       events are all for the same symbol (queried by request.symbol in assemble()).
+        #       Same pattern as AIRiskAgent._build_user_prompt().
+        symbol: str = "(not available)"
+        if events:
+            for e in events:
+                if e.symbol:
+                    symbol = e.symbol
+                    break
+        lines.append(f"Symbol: {symbol}")
+
+        # Decision context
         dc = context.decision_context
         if dc:
             lines.append(f"Account ID: {dc.account_id}")

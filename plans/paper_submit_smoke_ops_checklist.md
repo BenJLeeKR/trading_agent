@@ -482,12 +482,49 @@ asyncio.run(check())
 | `order_requests` | `price` | `268500` (설정한 KIS_SMOKE_PRICE) |
 | `broker_orders` | `broker_native_order_id` | **ODNO 발급** (숫자 문자열, 예: `0000027326`) |
 | `broker_orders` | `broker_status` | `submitted` |
+| `broker_orders` | `last_synced_at` | **Post-submit sync 실행 후 갱신** |
+| `order_state_events` | 상태 전이 이력 | **Post-submit sync 실행 후 기록** |
 
-### 9-D. 제약 사항 (미구현 항목)
+### 9-D. Paper Mock 한계 (검증 범위)
+
+> **중요**: KIS paper mock (`openapivts`)은 `inquire-daily-ccld` 엔드포인트에서 체결 데이터를 반환하지 않는 한계가 있습니다.
+> 따라서 paper 환경에서 post-submit sync의 broker_status는 `RECONCILE_REQUIRED`로 수렴하는 것이 정상이며,
+> 이는 **코드 버그가 아닌 테스트 인프라 제약**입니다. 자세한 분석은
+> [`inquire_daily_ccld_payload_capture_report.md`](plans/inquire_daily_ccld_payload_capture_report.md) 참조.
+
+| 항목 | Paper 허용 여부 | Live 기대 |
+|------|----------------|-----------|
+| `broker_status=reconcile_required` | ✅ **허용 (정상)** | ❌ 비정상 — 원인 분석 필요 |
+| `last_synced_at` 갱신 | ✅ **필수 성공 기준** | ✅ 필수 |
+| `order_state_events` 기록 | ✅ **필수 성공 기준** | ✅ 필수 |
+| FILLED / CANCELLED / REJECTED 수렴 | ❌ **Paper mock에서 기대 불가** | ✅ **필수 성공 기준** |
+| 실제 체결 내역 조회 | ❌ **Paper mock에서 기대 불가** | ✅ 가능 |
+
+### 9-E. Post-Submit Sync 확인 (Phase 5.5 연동)
+
+Post-submit sync 실행 후 아래 항목을 추가 확인합니다:
+
+```bash
+cd /workspace/agent_trading && bash -c 'set -a && source .env && set +a && python3 -c "
+import asyncio
+from agent_trading.db.connection import create_pool
+async def main():
+    pool = await create_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch('SELECT broker_order_id, broker_native_order_id, broker_status, last_synced_at FROM broker_orders ORDER BY submitted_at DESC LIMIT 10')
+        for r in rows:
+            print(f'ID: {r[\"broker_order_id\"]}  native: {r[\"broker_native_order_id\"]}  status: {r[\"broker_status\"]}  synced: {r[\"last_synced_at\"]}')
+        cnt = await conn.fetchval('SELECT COUNT(*) FROM order_state_events')
+        print(f'order_state_events count: {cnt}')
+    await pool.close()
+asyncio.run(main())
+"
+```
+
+### 9-F. 제약 사항 (미구현 항목)
 
 | 항목 | 상태 | 비고 |
 |------|------|------|
-| `order_state_events` 기록 | ❌ 미구현 | 상태 전환 이벤트 미기록 (v1 스펙 범위 외) |
 | `reconciliation_locks` 테이블 | ❌ 미존재 | v1 스펙 범위 외 |
 | Post-submit sync (Phase 5.5) | ✅ 구현 | 스케줄러 루프 + WS 이벤트 트리거 |
 
