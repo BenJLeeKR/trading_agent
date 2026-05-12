@@ -1,5 +1,21 @@
 # 뉴스 Source Adapter 1차 설계 — Source 선정, Symbol 매핑, Noise Filtering, EI 연계
 
+> **⚠️ 최종 상태: 보류 (Deferred)**
+>
+> 본 설계 문서는 Naver Finance scraping을 1순위 source로 가정한 초기 설계입니다.
+> 이후 3단계 평가 결과 모든 접근법이 v1 기준에 미달하여 **뉴스 source 통합은 v1 범위에서 제외**되었습니다.
+>
+> | 단계 | 접근법 | 평가 결과 | 문서 |
+> |------|--------|-----------|------|
+> | 1차 | Naver Finance Scraping | ❌ Legal Gate No-Go | [`1st_design.md`](plans/news_source_adapter_1st_design.md) |
+> | 2차 | Naver News Search API | ❌ 3-way 검증 No-Go | [`2nd_design_api.md`](plans/news_source_adapter_2nd_design_api.md) |
+> | 3차 | 대체 후보 6개 비교 평가 | ❌ 모두 v1 기준 No-Go | [`3rd_evaluation.md`](plans/news_source_adapter_3rd_evaluation.md) |
+>
+> **v1 External Event Source = OpenDART only** (T1_REGULATORY)
+> **뉴스 Source = P2 Backlog** (향후 재검토 조건: licensed vendor, legal-approved source, stronger symbol mapping path)
+>
+> ---
+
 ## 목차
 
 1. [개요 및 전제](#1-개요-및-전제)

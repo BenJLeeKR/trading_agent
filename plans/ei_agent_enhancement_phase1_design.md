@@ -401,6 +401,27 @@ events = await self._repos.external_events.list_by_symbol_or_issuer(...)
 2. 추가 source의 signal-to-noise ratio는 충분한가?
 3. 구현/유지보수 비용 대비 효과가 있는가?
 
+**2026-05-12 업데이트 — 뉴스 source 3차 평가 완료, v1에서는 OpenDART only로 확정**:
+
+| 평가 단계 | 접근법 | 결과 | 문서 |
+|-----------|--------|------|------|
+| 1차 | Naver Finance Scraping | ❌ Legal Gate No-Go | [`1st_design.md`](plans/news_source_adapter_1st_design.md) |
+| 2차 | Naver News Search API | ❌ sort=sim/date/2-stage hybrid 모두 No-Go | [`2nd_design_api.md`](plans/news_source_adapter_2nd_design_api.md) |
+| 3차 | 대체 후보 6개 (Yahoo/FMP/Alpha Vantage/한경RSS/Bing/연합RSS) | ❌ 모두 v1 기준 No-Go | [`3rd_evaluation.md`](plans/news_source_adapter_3rd_evaluation.md) |
+
+**핵심 발견**:
+- **Company name 기반 검색 source** (Bing, 한경 RSS 등)는 Naver 검증 결과 precision 24~26% 문제가 API/포털의 문제가 아니라 **검색 기반 접근법 자체의 근본적 한계** — v1 정밀도 기준 미달
+- **Symbol 직접 매핑 source** (Yahoo Finance, FMP, Alpha Vantage)는 한국 주식 coverage가 없거나 Legal 문제가 있음
+- **Legal + 한국 Coverage + Symbol 직접 매핑을 모두 만족하는 source는 존재하지 않음**
+
+**최종 결론**: v1 External Event Source = **OpenDART only**. 뉴스 source 통합은 **P2 Backlog**으로 이동.
+
+**향후 재검토 조건**:
+1. Licensed vendor 도입 (예: 연합인포맥스 유료 tier)
+2. Legal-approved source (Naver Finance scraping 법적 재검토)
+3. Stronger symbol mapping path (LLM re-ranking 개념 증명 완료 후)
+4. Yahoo Finance conditional path는 정책 승인 전까지 제외
+
 ---
 
 ## 3. 전체 변경 파일 목록 (구현 시, 조건부 포함)

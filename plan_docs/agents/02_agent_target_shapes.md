@@ -126,9 +126,21 @@
 ### 현재 구현과의 연결
 
 - v1의 Event Interpretation Agent가 이 역할 일부를 선점하고 있다.
-- external event pipeline + OpenDART adapter와 결합되는 방향이 맞다.
-- 실전에서는 event raw dump를 직접 길게 읽는 구조보다,
-  ranked / provenance-rich event summary를 짧은 latency budget 안에 처리하는 방향이 맞다.
+- **v1 External Event Source = OpenDART only** (T1_REGULATORY). 뉴스 source adapter는 P2 Backlog으로 보류.
+- external event pipeline + OpenDART adapter는 v1에서 정상 운영 중.
+- 뉴스 source 통합은 P0-1~P1-B (OpenDART symbol 매핑 → EI prompt 개선) 안정화 후 재검토.
+
+### News Source 평가 이력 (2026-05-12)
+
+| 평가 | 접근법 | 결과 |
+|------|--------|------|
+| 1차 | Naver Finance Scraping | ❌ Legal Gate No-Go |
+| 2차 | Naver News Search API | ❌ 3-way 검증 No-Go |
+| 3차 | 대체 후보 6개 비교 | ❌ 모두 v1 기준 No-Go |
+
+**핵심**: Company name 기반 검색은 검색 접근법 자체의 한계 (precision 24~26%), Symbol 직접 매핑 source는 한국 coverage 부족 또는 Legal 문제. Legal + 한국 Coverage + Symbol 직접 매핑을 모두 만족하는 source는 현재 없음.
+
+**향후 재검토 조건**: Licensed vendor · Legal-approved source · Stronger symbol mapping path (LLM re-ranking)
 
 ## 8. Portfolio Agent
 

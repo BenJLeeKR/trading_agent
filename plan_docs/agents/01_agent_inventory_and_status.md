@@ -35,7 +35,7 @@
 | Universe Selection Agent | 거래 후보 종목군 생성 | Deterministic ranking/filter engine 중심, 필요 시 AI 보조 | Planned | `08_ai_decision_policy.md`에 설계만 존재 |
 | Strategy Selection Agent | 사용할 전략/실행 스타일 선택 | Hybrid policy service + optional AI recommendation | Planned | `08_ai_decision_policy.md`에 설계만 존재 |
 | Signal Agent | 기술/수급/모멘텀/변동성 점수화 | Deterministic scoring engine | Planned | `08_ai_decision_policy.md`에 설계만 존재 |
-| News/RAG Agent | 뉴스/공시/리포트/이벤트 요약과 리스크 태깅 | Provider AI Agent + retrieval/event adapter hybrid | Partially Implemented | `EventInterpretationAgent`, `OpenDartSourceAdapter`, external event pipeline |
+| News/RAG Agent | 뉴스/공시/리포트/이벤트 요약과 리스크 태깅 | Provider AI Agent + retrieval/event adapter hybrid | Partially Implemented | `EventInterpretationAgent`, `OpenDartSourceAdapter`, external event pipeline (v1: OpenDART only) |
 | Portfolio Agent | 목표 비중, 진입/청산 후보 계산 | Deterministic portfolio construction service | Planned | 설계 문서상 개념만 존재 |
 | Order Construction Agent | 가격/수량/주문 타입/시간조건/청산 규칙 결정 | Deterministic order-construction service with AI inputs | Planned | `08_ai_decision_policy.md`에 설계만 존재 |
 | AI Risk Manager Agent | 한도, 손실, 유동성, 집중도, 헤지, 사이징 조정 판단 | Provider AI Agent + deterministic hard limits 후단 연동 | Implemented | `services/ai_agents/ai_risk.py`, `decision_orchestrator.py`, `runtime/bootstrap.py` |

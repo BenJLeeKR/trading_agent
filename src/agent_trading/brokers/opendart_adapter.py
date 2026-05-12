@@ -47,6 +47,88 @@ OPENDART_BASE_URL = "https://opendart.fss.or.kr/api"
 # OpenDART status codes
 _STATUS_SUCCESS = "000"
 
+# ── Disclosure importance classification ──────────────────────────────
+# High-signal keywords — disclosures with direct price impact potential.
+_HIGH_SIGNAL_KEYWORDS: set[str] = {
+    "유상증자결정",
+    "무상증자결정",
+    "단일판매",  # 단일판매ㆍ공급계약체결
+    "영업(잠정)실적",
+    "영업실적",
+    "최대주주변경",
+    "합병결정",
+    "분할결정",
+    "영업양수도",
+    "자기주식취득",
+    "자기주식처분",
+    "배당결정",
+    "횡령",  # 횡령ㆍ배임발생
+    "배임",
+    "대규모손실",
+    "회생",  # 회생절차개시
+    "파산",
+    "감사의견비적정",
+    "전환사채권발행결정",
+    "신주인수권부사채발행결정",
+    "주식관련사채권발행결정",
+    "기업결합신고",
+    "대량보유상황보고서",
+}
+
+# Medium-signal keywords — situation-dependent relevance.
+_MEDIUM_SIGNAL_KEYWORDS: set[str] = {
+    "액면변경",
+    "신규시장상장",
+    "신용등급변동",
+    "사업재편",
+    "주주총회소집",
+    "증권신고서",
+    "임원",  # 임원ㆍ주요주주소유
+    "주요사항보고서",
+    "주식매수선택권",
+    "채권발행",
+}
+
+# Low-signal disclosure types (rm field).
+_LOW_SIGNAL_RM_TYPES: set[str] = {
+    "정기공시",
+}
+
+
+def _classify_importance(report_nm: str, rm: str | None) -> str:
+    """Classify disclosure importance based on ``report_nm`` and ``rm``.
+
+    Returns one of ``"high"``, ``"medium"``, or ``"low"``.
+
+    Rules
+    -----
+    1. High signal: ``report_nm`` contains any keyword from
+       ``_HIGH_SIGNAL_KEYWORDS``.
+    2. Medium signal: ``report_nm`` contains any keyword from
+       ``_MEDIUM_SIGNAL_KEYWORDS``.
+    3. Low signal: ``rm`` is ``"정기공시"`` (regular disclosure).
+    4. Default: ``"low"`` (catch-all for unmatched disclosures).
+    """
+    if not report_nm:
+        return "low"
+
+    # 1. High signal — keyword match
+    for kw in _HIGH_SIGNAL_KEYWORDS:
+        if kw in report_nm:
+            return "high"
+
+    # 2. Medium signal — keyword match
+    for kw in _MEDIUM_SIGNAL_KEYWORDS:
+        if kw in report_nm:
+            return "medium"
+
+    # 3. Low signal — regular disclosure type
+    if rm and rm in _LOW_SIGNAL_RM_TYPES:
+        return "low"
+
+    # 4. Default: low (catch-all)
+    return "low"
+
 
 class OpenDartSourceAdapter:
     """Source adapter for OpenDART (금융감독원 전자공시).
@@ -186,8 +268,14 @@ class OpenDartSourceAdapter:
         """Convert a ``RawEvent`` into a normalised ``ExternalEventEntity``.
 
         v1 scope: field mapping only — no AI classification.
+        Importance classification is computed from the raw payload.
         """
         dedup_key = self.generate_dedup_key(raw)
+
+        # Classify importance from raw payload fields
+        report_nm = raw.raw_payload.get("report_nm", "") or ""
+        rm = raw.raw_payload.get("rm", None)
+        importance = _classify_importance(report_nm, rm)
 
         return ExternalEventEntity(
             event_id=uuid4(),
@@ -208,7 +296,10 @@ class OpenDartSourceAdapter:
             raw_payload_uri=None,
             dedup_key_hash=dedup_key,
             supersedes_event_id=None,
-            metadata={"source_raw_event_type": raw.event_type},
+            metadata={
+                "source_raw_event_type": raw.event_type,
+                "importance": importance,
+            },
             created_at=None,
         )
 
