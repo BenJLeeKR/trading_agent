@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from agent_trading.services.ai_agents.base import (
@@ -215,17 +216,19 @@ class EventInterpretationAgent:
         )
 
     def _build_user_prompt(self, request: AgentExecutionRequest) -> str:
-        """Build the user prompt with the current request context."""
+        """Build the user prompt with provenance-rich event context."""
         context = request.context
         score = context.score
         events = context.recent_events or []
+        now = datetime.now(timezone.utc)
 
         lines: list[str] = [
             f"Correlation ID: {request.correlation_id}",
         ]
 
         if score:
-            lines.append(f"Score: {score.score} (threshold: {score.threshold})")
+            score_line = f"Score: {score.score} (threshold: {score.threshold})"
+            lines.append(score_line)
             if score.reason_codes:
                 lines.append(f"Reason codes: {', '.join(score.reason_codes)}")
 
@@ -233,9 +236,33 @@ class EventInterpretationAgent:
         for e in events[:20]:
             headline = e.headline or "(no headline)"
             summary = e.body_summary or ""
-            lines.append(
-                f"  - [{e.event_type}] {headline}"
-                f"{' — ' + summary[:200] if summary else ''}"
-            )
+
+            # Provenance tags — only non-None/non-empty, non-default
+            parts: list[str] = []
+            if e.source_name:
+                parts.append(f"[src:{e.source_name}]")
+            if e.source_reliability_tier:
+                parts.append(f"[tier:{e.source_reliability_tier}]")
+            if e.event_type:
+                parts.append(f"[{e.event_type}]")
+            if e.published_at:
+                parts.append(f"[{e.published_at.strftime('%Y-%m-%d')}]")
+            if e.issuer_code:
+                parts.append(f"[issuer:{e.issuer_code}]")
+            # Non-default severity only
+            if e.severity and e.severity != "medium":
+                parts.append(f"[severity:{e.severity}]")
+            # Non-default direction only
+            if e.direction and e.direction not in ("neutral", ""):
+                parts.append(f"[{e.direction}]")
+
+            # Stale check — based on ingested_at, not published_at
+            stale_mark = ""
+            if e.ingested_at and (now - e.ingested_at).total_seconds() > 86400:  # 24h
+                stale_mark = " ⚠️STALE"
+
+            tagged = " ".join(parts)
+            body = f" — {summary[:200]}" if summary else ""
+            lines.append(f"  {tagged}{stale_mark} {headline}{body}")
 
         return "\n".join(lines)

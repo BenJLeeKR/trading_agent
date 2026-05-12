@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from agent_trading.services.ai_agents.base import (
@@ -287,8 +288,18 @@ class AIRiskAgent:
             f"Correlation ID: {request.correlation_id}",
         ]
 
-        # Symbol and proposed side
-        lines.append(f"Symbol: {request.context.decision_context or '(not available)'}")
+        # Symbol source priority:
+        #   1. context.recent_events first non-None e.symbol
+        #   2. Fallback "(not available)"
+        # NOTE: AgentExecutionRequest has no direct symbol field;
+        #       events are all for the same symbol (queried by request.symbol in assemble()).
+        symbol: str = "(not available)"
+        if events:
+            for e in events:
+                if e.symbol:
+                    symbol = e.symbol
+                    break
+        lines.append(f"Symbol: {symbol}")
 
         # === Event Interpretation output (if available) ===
         # The orchestrator always passes a structured EventInterpretationOutput
@@ -389,12 +400,36 @@ class AIRiskAgent:
         # ==================================================
 
         lines.append(f"Recent events ({len(events)}):")
+        now = datetime.now(timezone.utc)
         for e in events[:20]:
             headline = e.headline or "(no headline)"
             summary = e.body_summary or ""
-            lines.append(
-                f"  - [{e.event_type}] {headline}"
-                f"{' — ' + summary[:200] if summary else ''}"
-            )
+
+            # Provenance tags — same rules as EI (severity/direction default omission,
+            # stale check, issuer_code condition, etc.)
+            parts: list[str] = []
+            if e.source_name:
+                parts.append(f"[src:{e.source_name}]")
+            if e.source_reliability_tier:
+                parts.append(f"[tier:{e.source_reliability_tier}]")
+            if e.event_type:
+                parts.append(f"[{e.event_type}]")
+            if e.published_at:
+                parts.append(f"[{e.published_at.strftime('%Y-%m-%d')}]")
+            if e.issuer_code:
+                parts.append(f"[issuer:{e.issuer_code}]")
+            if e.severity and e.severity != "medium":
+                parts.append(f"[severity:{e.severity}]")
+            if e.direction and e.direction not in ("neutral", ""):
+                parts.append(f"[{e.direction}]")
+
+            # Stale check — based on ingested_at, not published_at
+            stale_mark = ""
+            if e.ingested_at and (now - e.ingested_at).total_seconds() > 86400:
+                stale_mark = " ⚠️STALE"
+
+            tagged = " ".join(parts)
+            body = f" — {summary[:200]}" if summary else ""
+            lines.append(f"  {tagged}{stale_mark} {headline}{body}")
 
         return "\n".join(lines)

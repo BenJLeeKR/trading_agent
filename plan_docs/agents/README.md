@@ -18,6 +18,8 @@
    - 14개 Agent의 현재 상태, 최종 구현 형태, 코드/문서 앵커를 한 표로 정리
 2. [02_agent_target_shapes.md](./02_agent_target_shapes.md)
    - 각 Agent의 최종 개발 모양, 경계, 입력/출력, 구현 원칙을 서술형으로 설명
+3. [03_risk_role_boundaries.md](./03_risk_role_boundaries.md)
+   - 현재 코드 기준으로 `AI Risk Agent`, `Sizing Engine`, `Hard Guardrail`, 향후 `AI Compliance Agent`의 책임 경계를 정리
 
 ## 현재 결론 요약
 
@@ -27,4 +29,8 @@
   - Final Decision Composer
 - Data Collector / Execution / Data Quality 일부 책임은 이미 deterministic path로 상당 부분 구현되어 있다.
 - 나머지 Agent는 장기적으로 필요하지만, 모두를 동일한 "LLM agent"로 만들 계획은 아니다.
-
+- 리스크 영역은 특히 `AI 해석`과 `deterministic 집행`을 분리해서 봐야 한다.
+  - `AI Risk Agent`는 리스크 해석기
+  - `Sizing Engine`은 하드 수량 계산기
+  - `Hard Guardrail`은 최종 강제 차단기
+  - `AI Compliance Agent`는 향후 정책/규정 해석 보조 후보

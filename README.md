@@ -258,6 +258,27 @@ docker compose up -d db api
 
 ---
 
+## Agent Role Boundaries
+
+현재 멀티 에이전트 설계는 모든 책임을 LLM agent로 구현하는 방향이 아닙니다. 특히 리스크 영역은 아래처럼 분리해서 보는 것이 현재 코드와 가장 잘 맞습니다.
+
+- `AI Risk Agent`
+  - 이벤트/포지션/현금/노출 상태를 보고 `allow/reduce/reject/review` 같은 **리스크 의견**을 냅니다.
+- `Sizing Engine`
+  - `max_single_position_pct`, `min_cash_buffer_pct`, `max_order_value` 같은 **하드 수량 제약**을 결정론적으로 적용합니다.
+- `Hard Guardrail`
+  - stale snapshot, blocked reason, kill switch, risk check 같은 **최종 차단 책임**을 집니다.
+- `AI Compliance Agent` (향후)
+  - 규정/정책의 애매한 부분을 해석하는 보조 계층이 될 수 있지만, authoritative한 금지/허용 집행은 deterministic validator가 맡아야 합니다.
+
+관련 상세 문서:
+
+- [plan_docs/agents/01_agent_inventory_and_status.md](plan_docs/agents/01_agent_inventory_and_status.md)
+- [plan_docs/agents/02_agent_target_shapes.md](plan_docs/agents/02_agent_target_shapes.md)
+- [plan_docs/agents/03_risk_role_boundaries.md](plan_docs/agents/03_risk_role_boundaries.md)
+
+---
+
 ## 라이선스
 
 내부 프로젝트 — 라이선스 미정

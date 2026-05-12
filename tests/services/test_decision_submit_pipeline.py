@@ -15,10 +15,10 @@ See Also
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -27,6 +27,7 @@ from agent_trading.domain.entities import (
     AccountEntity,
     CashBalanceSnapshotEntity,
     ConfigVersionEntity,
+    ExternalEventEntity,
     InstrumentEntity,
     OrderRequestEntity,
     PositionSnapshotEntity,
@@ -47,6 +48,7 @@ from agent_trading.services.order_manager import OrderManager
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 
 from agent_trading.services.ai_agents.base import AgentExecutionRequest
+from agent_trading.services.ai_agents.event_interpretation import EventInterpretationAgent
 from agent_trading.services.ai_agents.schemas import FinalDecisionComposerOutput
 
 _SENTINEL = object()
@@ -725,3 +727,308 @@ class TestAssembleAndSubmit:
         assert result.decision_context_id == result.intent.decision_context_id, (
             "SubmitResult.decision_context_id must match intent.decision_context_id"
         )
+
+
+# ---------------------------------------------------------------------------
+# P1-B: Event query window — 72h retention
+# ---------------------------------------------------------------------------
+
+
+class TestEventQueryWindow:
+    """``assemble()`` passes the correct ``since`` window to ``list_by_symbol()``.
+
+    P1-B changed the event retention window from 24h to 72h so that
+    regulatory disclosures (quarterly reports, major shareholder filings,
+    etc.) are not dropped too early.
+    """
+
+    @pytest.mark.asyncio
+    async def test_assemble_uses_72h_window(self) -> None:
+        """``assemble()`` calls ``list_by_symbol()`` with ``since=now-72h``."""
+        repos = build_in_memory_repositories()
+        svc = DecisionOrchestratorService(repos=repos)
+
+        # Seed an event with published_at = 48h ago (within 72h window)
+        now = datetime.now(timezone.utc)
+        event_48h = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="K|분기보고서 (2026.03)",
+            source_name="opendart",
+            published_at=now - timedelta(hours=48),
+            source_reliability_tier="T1",
+            symbol="005930",
+            issuer_code="00123456",
+            ingested_at=now - timedelta(hours=48),
+            headline="분기보고서",
+        )
+        await repos.external_events.add(event_48h)
+
+        # Seed an event with published_at = 96h ago (outside 72h window)
+        event_96h = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="Y|사업보고서 (2025.12)",
+            source_name="opendart",
+            published_at=now - timedelta(hours=96),
+            source_reliability_tier="T1",
+            symbol="005930",
+            issuer_code="00123456",
+            ingested_at=now - timedelta(hours=96),
+            headline="사업보고서",
+        )
+        await repos.external_events.add(event_96h)
+
+        # Build a minimal SubmitOrderRequest using the test helper
+        request = _make_request()
+
+        intent = await svc.assemble(request)
+
+        # 48h event should be included (within 72h window)
+        symbols_in_events = {e.symbol for e in intent.context.recent_events}
+        assert "005930" in symbols_in_events, (
+            "Event published 48h ago must be included in 72h window"
+        )
+
+        # 96h event should NOT be included (outside 72h window)
+        # We check by event_id since both have symbol=005930
+        event_ids_included = {e.event_id for e in intent.context.recent_events}
+        assert event_96h.event_id not in event_ids_included, (
+            "Event published 96h ago must NOT be included in 72h window"
+        )
+
+
+class TestP1AandP1BIntegration:
+    """P1-A (prompt provenance) + P1-B (72h retention) 통합 검증.
+
+    event seed → assemble() → recent_events → _build_user_prompt()
+    전체 파이프라인이 의도대로 작동하는지 확인.
+    """
+
+    @pytest.mark.asyncio
+    async def test_48h_event_has_provenance_tags_in_prompt(self) -> None:
+        """시나리오 1: 48h event가 provenance tag와 함께 prompt에 표시됨."""
+        repos = build_in_memory_repositories()
+        svc = DecisionOrchestratorService(repos=repos)
+        now = datetime.now(timezone.utc)
+
+        # 48h event (모든 provenance 필드 존재)
+        event_48h = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="K|분기보고서 (2026.03)",
+            source_name="opendart",
+            published_at=now - timedelta(hours=48),
+            source_reliability_tier="T1",
+            symbol="005930",
+            issuer_code="00123456",
+            ingested_at=now - timedelta(hours=48),
+            severity="high",
+            direction="positive",
+            headline="분기보고서",
+        )
+        await repos.external_events.add(event_48h)
+
+        # 96h event (window 밖)
+        event_96h = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="Y|사업보고서 (2025.12)",
+            source_name="opendart",
+            published_at=now - timedelta(hours=96),
+            source_reliability_tier="T1",
+            symbol="005930",
+            issuer_code="00123456",
+            ingested_at=now - timedelta(hours=96),
+            headline="사업보고서",
+        )
+        await repos.external_events.add(event_96h)
+
+        # assemble() 실행
+        request = _make_request()
+        intent = await svc.assemble(request)
+
+        # --- P1-B 검증: retention window ---
+        event_ids = {e.event_id for e in intent.context.recent_events}
+        assert event_48h.event_id in event_ids, "48h event must be in 72h window"
+        assert event_96h.event_id not in event_ids, "96h event must be outside 72h window"
+
+        # --- P1-A 검증: provenance tags in prompt ---
+        agent = EventInterpretationAgent(provider_client=AsyncMock())
+        ei_request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="integ-test-1",
+            context=intent.context,
+        )
+        prompt = agent._build_user_prompt(ei_request)
+
+        # Provenance tags 존재 확인
+        assert "[src:opendart]" in prompt
+        assert "[tier:T1]" in prompt
+        assert "[K|분기보고서 (2026.03)]" in prompt
+        date_str = (now - timedelta(hours=48)).strftime("%Y-%m-%d")
+        assert f"[{date_str}]" in prompt
+        assert "[issuer:00123456]" in prompt
+        assert "[severity:high]" in prompt
+        assert "[positive]" in prompt
+        # stale: ingested_at=48h > 24h
+        assert "⚠️STALE" in prompt
+
+    @pytest.mark.asyncio
+    async def test_fresh_ingestion_no_stale_despite_old_published(self) -> None:
+        """시나리오 2: ingested_at fresh, published_at old → ⚠️STALE 없음."""
+        repos = build_in_memory_repositories()
+        svc = DecisionOrchestratorService(repos=repos)
+        now = datetime.now(timezone.utc)
+
+        event = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="K|공시",
+            source_name="opendart",
+            published_at=now - timedelta(hours=48),  # 48h 전 공시 (72h window 내)
+            source_reliability_tier="T1",
+            symbol="005930",
+            issuer_code="00123456",
+            ingested_at=now - timedelta(hours=1),    # 1h 전 수집 (fresh)
+            headline="공시",
+        )
+        await repos.external_events.add(event)
+
+        request = _make_request()
+        intent = await svc.assemble(request)
+
+        event_ids = {e.event_id for e in intent.context.recent_events}
+        assert event.event_id in event_ids
+
+        agent = EventInterpretationAgent(provider_client=AsyncMock())
+        ei_request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="integ-test-2",
+            context=intent.context,
+        )
+        prompt = agent._build_user_prompt(ei_request)
+
+        # ingested_at=1h < 24h → stale 아님
+        assert "⚠️STALE" not in prompt, (
+            "Event ingested 1h ago must NOT have stale mark"
+        )
+        # published_at 날짜는 표시되어야 함
+        date_str = (now - timedelta(hours=48)).strftime("%Y-%m-%d")
+        assert f"[{date_str}]" in prompt
+
+    @pytest.mark.asyncio
+    async def test_default_severity_direction_omitted(self) -> None:
+        """시나리오 3: severity=medium, direction=neutral → tag 생략."""
+        repos = build_in_memory_repositories()
+        svc = DecisionOrchestratorService(repos=repos)
+        now = datetime.now(timezone.utc)
+
+        event = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="disclosure",
+            source_name="opendart",
+            published_at=now,
+            source_reliability_tier="T1",
+            symbol="005930",
+            issuer_code="00123456",
+            ingested_at=now,
+            severity="medium",    # default
+            direction="neutral",  # default
+            headline="test",
+        )
+        await repos.external_events.add(event)
+
+        request = _make_request()
+        intent = await svc.assemble(request)
+
+        agent = EventInterpretationAgent(provider_client=AsyncMock())
+        ei_request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="integ-test-3",
+            context=intent.context,
+        )
+        prompt = agent._build_user_prompt(ei_request)
+
+        assert "[severity:medium]" not in prompt
+        assert "[positive]" not in prompt
+        assert "[negative]" not in prompt
+
+    @pytest.mark.asyncio
+    async def test_no_issuer_code_tag_omitted(self) -> None:
+        """시나리오 4: issuer_code=None → [issuer:...] tag 없음."""
+        repos = build_in_memory_repositories()
+        svc = DecisionOrchestratorService(repos=repos)
+        now = datetime.now(timezone.utc)
+
+        event = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="disclosure",
+            source_name="opendart",
+            published_at=now,
+            source_reliability_tier="T1",
+            symbol="005930",
+            issuer_code=None,  # issuer 없음
+            ingested_at=now,
+            headline="test",
+        )
+        await repos.external_events.add(event)
+
+        request = _make_request()
+        intent = await svc.assemble(request)
+
+        agent = EventInterpretationAgent(provider_client=AsyncMock())
+        ei_request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="integ-test-4",
+            context=intent.context,
+        )
+        prompt = agent._build_user_prompt(ei_request)
+
+        assert "[issuer:" not in prompt
+
+    @pytest.mark.asyncio
+    async def test_20_event_cap_in_prompt(self) -> None:
+        """시나리오 5: 25개 event → prompt에는 20개만 표시."""
+        repos = build_in_memory_repositories()
+        svc = DecisionOrchestratorService(repos=repos)
+        now = datetime.now(timezone.utc)
+
+        # 25개 event seed (모두 72h window 내)
+        for i in range(25):
+            event = ExternalEventEntity(
+                event_id=uuid4(),
+                event_type=f"type_{i}",
+                source_name="opendart",
+                published_at=now - timedelta(hours=i),  # 0h ~ 24h 전
+                source_reliability_tier="T1",
+                symbol="005930",
+                issuer_code="00123456",
+                ingested_at=now - timedelta(hours=i),
+                headline=f"event_{i}",
+            )
+            await repos.external_events.add(event)
+
+        request = _make_request()
+        intent = await svc.assemble(request)
+
+        # recent_events에는 25개 모두 있어야 함
+        assert len(intent.context.recent_events) == 25
+
+        agent = EventInterpretationAgent(provider_client=AsyncMock())
+        ei_request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="integ-test-5",
+            context=intent.context,
+        )
+        prompt = agent._build_user_prompt(ei_request)
+
+        # Prompt 헤더에는 전체 count 표시
+        assert "Recent events (25):" in prompt
+
+        # Prompt의 event 줄 수는 20개여야 함 ([:20] slice)
+        event_lines = [line for line in prompt.split("\n") if line.startswith("  [src:")]
+        assert len(event_lines) == 20, (
+            f"Expected 20 event lines in prompt, got {len(event_lines)}"
+        )
+
+        # event_0 ~ event_19는 있어야 함
+        assert "event_0" in prompt
+        assert "event_19" in prompt
+        # event_20 ~ event_24는 없어야 함
+        assert "event_20" not in prompt

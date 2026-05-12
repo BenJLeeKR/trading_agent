@@ -28,6 +28,7 @@ _SAMPLE_LIST_RESPONSE: dict[str, Any] = {
             "corp_code": "00123456",
             "corp_name": "삼성전자",
             "corp_cls": "Y",
+            "stock_code": "005930",
             "report_nm": "사업보고서 (2023)",
             "rcept_no": "20230101000001",
             "rcept_dt": "20230101",
@@ -37,6 +38,7 @@ _SAMPLE_LIST_RESPONSE: dict[str, Any] = {
             "corp_code": "00765432",
             "corp_name": "SK하이닉스",
             "corp_cls": "Y",
+            "stock_code": "000660",
             "report_nm": "반기보고서 (2023)",
             "rcept_no": "20230102000002",
             "rcept_dt": "20230102",
@@ -94,6 +96,9 @@ class TestOpenDartSourceAdapter:
         assert events[0].source_event_id == "20230101000001"
         assert events[0].issuer_code == "00123456"
         assert events[0].headline == "사업보고서 (2023)"
+        # P0-1: stock_code → symbol 매핑 검증
+        assert events[0].symbol == "005930"
+        assert events[1].symbol == "000660"
 
         await adapter.close()
 

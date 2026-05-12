@@ -175,7 +175,7 @@ class OpenDartSourceAdapter:
             ingested_at=ingested_at,
             source_reliability_tier=self.reliability_tier.value,
             raw_payload=item,
-            symbol=None,  # OpenDART uses corp_code, not ticker symbol
+            symbol=item.get("stock_code") or None,
             issuer_code=item.get("corp_code"),
             market=None,
             headline=report_nm,

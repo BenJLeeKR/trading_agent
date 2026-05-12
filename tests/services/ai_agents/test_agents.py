@@ -14,11 +14,13 @@ verify successful parsing and safe fallback behaviour.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
+from agent_trading.domain.entities import ExternalEventEntity
 from agent_trading.services.ai_agents.ai_risk import (
     AIRiskAgent,
     StubAIRiskAgent,
@@ -43,7 +45,10 @@ from agent_trading.services.ai_agents.schemas import (
     EventInterpretationOutput,
     FinalDecisionComposerOutput,
 )
-from agent_trading.services.decision_orchestrator import AssembledContext
+from agent_trading.services.decision_orchestrator import (
+    AssembledContext,
+    ScoreResult,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1327,3 +1332,504 @@ class TestEventInterpretationAgent:
         agent = EventInterpretationAgent(provider_client=mock_provider)
         result = await agent.run(request)
         assert result.decision_context_id is None
+
+
+# ---------------------------------------------------------------------------
+# P1-A: Provenance prompt format tests
+# ---------------------------------------------------------------------------
+
+
+class TestEventInterpretationAgentPrompt:
+    """Tests for ``_build_user_prompt()`` provenance format.
+
+    These tests verify that provenance tags, stale flags, and
+    non-default-only rules are correctly applied.
+    """
+
+    @staticmethod
+    def _make_event(
+        *,
+        source_name: str = "opendart",
+        source_reliability_tier: str = "T1",
+        event_type: str = "disclosure",
+        published_at: datetime | None = None,
+        issuer_code: str | None = "005930",
+        severity: str = "medium",
+        direction: str = "neutral",
+        ingested_at: datetime | None = None,
+        headline: str = "test headline",
+        body_summary: str | None = None,
+    ) -> ExternalEventEntity:
+        """Helper to build an ``ExternalEventEntity`` with defaults."""
+        now = datetime.now(timezone.utc)
+        return ExternalEventEntity(
+            event_id=uuid4(),
+            event_type=event_type,
+            source_name=source_name,
+            published_at=published_at or now,
+            source_reliability_tier=source_reliability_tier,
+            issuer_code=issuer_code,
+            symbol=None,
+            ingested_at=ingested_at or now,
+            severity=severity,
+            direction=direction,
+            headline=headline,
+            body_summary=body_summary,
+        )
+
+    def _build_prompt(
+        self,
+        events: list[ExternalEventEntity],
+        score: ScoreResult | None = None,
+    ) -> str:
+        """Call ``_build_user_prompt()`` and return the result string."""
+        agent = EventInterpretationAgent(provider_client=AsyncMock())
+        request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="test-provenance",
+            context=AssembledContext(
+                recent_events=tuple(events),
+                score=score or ScoreResult(),
+            ),
+        )
+        return agent._build_user_prompt(request)
+
+    # ------------------------------------------------------------------
+    # Test 1: All tags present when all fields exist
+    # ------------------------------------------------------------------
+
+    def test_all_tags_present(self) -> None:
+        """All provenance tags appear when every field is populated."""
+        now = datetime.now(timezone.utc)
+        event = self._make_event(
+            source_name="opendart",
+            source_reliability_tier="T1",
+            event_type="disclosure",
+            published_at=now,
+            issuer_code="005930",
+            severity="high",          # non-default → tag appears
+            direction="positive",     # non-default → tag appears
+            ingested_at=now,          # fresh → no stale mark
+        )
+        prompt = self._build_prompt([event])
+
+        assert "[src:opendart]" in prompt
+        assert "[tier:T1]" in prompt
+        assert "[disclosure]" in prompt
+        # published_at date in YYYY-MM-DD format
+        date_str = now.strftime("%Y-%m-%d")
+        assert f"[{date_str}]" in prompt
+        assert "[issuer:005930]" in prompt
+        assert "[severity:high]" in prompt
+        assert "[positive]" in prompt
+        # ⚠️STALE must NOT appear (fresh event)
+        assert "⚠️STALE" not in prompt
+
+    # ------------------------------------------------------------------
+    # Test 2: severity=medium → [severity:...] NOT present
+    # ------------------------------------------------------------------
+
+    def test_severity_medium_omitted(self) -> None:
+        """Default severity ``medium`` does NOT produce a ``[severity:...]`` tag."""
+        event = self._make_event(severity="medium")
+        prompt = self._build_prompt([event])
+        assert "[severity:medium]" not in prompt
+        assert "[severity:" not in prompt
+
+    # ------------------------------------------------------------------
+    # Test 3: direction=neutral → [positive]/[negative] NOT present
+    # ------------------------------------------------------------------
+
+    def test_direction_neutral_omitted(self) -> None:
+        """Default direction ``neutral`` does NOT produce ``[positive]`` or ``[negative]``."""
+        event = self._make_event(direction="neutral")
+        prompt = self._build_prompt([event])
+        assert "[positive]" not in prompt
+        assert "[negative]" not in prompt
+
+    # ------------------------------------------------------------------
+    # Test 4: ingested_at < 24h → ⚠️STALE NOT present
+    # ------------------------------------------------------------------
+
+    def test_fresh_event_no_stale(self) -> None:
+        """Event ingested less than 24h ago does NOT get the stale mark."""
+        now = datetime.now(timezone.utc)
+        event = self._make_event(ingested_at=now)
+        prompt = self._build_prompt([event])
+        assert "⚠️STALE" not in prompt
+
+    # ------------------------------------------------------------------
+    # Test 5: issuer_code=None → [issuer:...] NOT present
+    # ------------------------------------------------------------------
+
+    def test_no_issuer_code_omitted(self) -> None:
+        """When ``issuer_code`` is ``None``, the ``[issuer:...]`` tag is absent."""
+        event = self._make_event(issuer_code=None)
+        prompt = self._build_prompt([event])
+        assert "[issuer:" not in prompt
+
+    # ------------------------------------------------------------------
+    # Test 6: ingested_at > 24h → ⚠️STALE IS present
+    # ------------------------------------------------------------------
+
+    def test_stale_event_shows_stale_mark(self) -> None:
+        """Event ingested more than 24h ago DOES get the stale mark."""
+        now = datetime.now(timezone.utc)
+        stale_time = now - timedelta(hours=25)
+        event = self._make_event(ingested_at=stale_time)
+        prompt = self._build_prompt([event])
+        assert "⚠️STALE" in prompt
+
+
+# ---------------------------------------------------------------------------
+# TestAIRiskAgentPrompt — AR _build_user_prompt() provenance format
+# ---------------------------------------------------------------------------
+
+
+class TestAIRiskAgentPrompt:
+    """Tests for ``AIRiskAgent._build_user_prompt()`` provenance format.
+
+    These tests verify that provenance tags, stale flags, and
+    non-default-only rules are correctly applied in the AR events section,
+    and that the Symbol line does not leak ``DecisionContextEntity.__repr__()``.
+    """
+
+    @staticmethod
+    def _make_event(
+        *,
+        source_name: str = "opendart",
+        source_reliability_tier: str = "T1",
+        event_type: str = "disclosure",
+        published_at: datetime | None = None,
+        issuer_code: str | None = "005930",
+        severity: str = "medium",
+        direction: str = "neutral",
+        ingested_at: datetime | None = None,
+        headline: str = "test headline",
+        body_summary: str | None = None,
+        symbol: str | None = "030200",
+    ) -> ExternalEventEntity:
+        """Helper to build an ``ExternalEventEntity`` with defaults."""
+        now = datetime.now(timezone.utc)
+        return ExternalEventEntity(
+            event_id=uuid4(),
+            event_type=event_type,
+            source_name=source_name,
+            published_at=published_at or now,
+            source_reliability_tier=source_reliability_tier,
+            issuer_code=issuer_code,
+            symbol=symbol,
+            ingested_at=ingested_at or now,
+            severity=severity,
+            direction=direction,
+            headline=headline,
+            body_summary=body_summary,
+        )
+
+    def _build_prompt(
+        self,
+        events: list[ExternalEventEntity],
+        score: ScoreResult | None = None,
+    ) -> str:
+        """Call ``AIRiskAgent._build_user_prompt()`` and return the result string."""
+        agent = AIRiskAgent(provider_client=AsyncMock())
+        request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="test-ar-provenance",
+            context=AssembledContext(
+                recent_events=tuple(events),
+                score=score or ScoreResult(),
+            ),
+        )
+        return agent._build_user_prompt(request)
+
+    # ------------------------------------------------------------------
+    # Test 1: All provenance tags present
+    # ------------------------------------------------------------------
+
+    def test_ar_events_all_tags_present(self) -> None:
+        """All provenance tags appear when every field is populated."""
+        now = datetime.now(timezone.utc)
+        event = self._make_event(
+            source_name="opendart",
+            source_reliability_tier="T1",
+            event_type="disclosure",
+            published_at=now,
+            issuer_code="005930",
+            severity="high",
+            direction="positive",
+            ingested_at=now,
+        )
+        prompt = self._build_prompt([event])
+        assert "[src:opendart]" in prompt
+        assert "[tier:T1]" in prompt
+        assert "[disclosure]" in prompt
+        date_str = now.strftime("%Y-%m-%d")
+        assert f"[{date_str}]" in prompt
+        assert "[issuer:005930]" in prompt
+        assert "[severity:high]" in prompt
+        assert "[positive]" in prompt
+        assert "⚠️STALE" not in prompt
+
+    # ------------------------------------------------------------------
+    # Test 2: severity=medium → [severity:...] NOT present
+    # ------------------------------------------------------------------
+
+    def test_ar_events_severity_medium_omitted(self) -> None:
+        """Default severity ``medium`` does NOT produce a ``[severity:...]`` tag."""
+        event = self._make_event(severity="medium")
+        prompt = self._build_prompt([event])
+        assert "[severity:medium]" not in prompt
+        assert "[severity:" not in prompt
+
+    # ------------------------------------------------------------------
+    # Test 3: direction=neutral → [positive]/[negative] NOT present
+    # ------------------------------------------------------------------
+
+    def test_ar_events_direction_neutral_omitted(self) -> None:
+        """Default direction ``neutral`` does NOT produce ``[positive]`` or ``[negative]``."""
+        event = self._make_event(direction="neutral")
+        prompt = self._build_prompt([event])
+        assert "[positive]" not in prompt
+        assert "[negative]" not in prompt
+
+    # ------------------------------------------------------------------
+    # Test 4: ingested_at < 24h → ⚠️STALE NOT present
+    # ------------------------------------------------------------------
+
+    def test_ar_events_fresh_no_stale(self) -> None:
+        """Freshly ingested event does NOT get the stale mark."""
+        now = datetime.now(timezone.utc)
+        event = self._make_event(ingested_at=now)
+        prompt = self._build_prompt([event])
+        assert "⚠️STALE" not in prompt
+
+    # ------------------------------------------------------------------
+    # Test 5: issuer_code=None → [issuer:...] NOT present
+    # ------------------------------------------------------------------
+
+    def test_ar_events_no_issuer_tag_when_none(self) -> None:
+        """When ``issuer_code`` is ``None``, no ``[issuer:...]`` tag appears."""
+        event = self._make_event(issuer_code=None)
+        prompt = self._build_prompt([event])
+        assert "[issuer:" not in prompt
+
+    # ------------------------------------------------------------------
+    # Test 6: ingested_at > 24h → ⚠️STALE IS present
+    # ------------------------------------------------------------------
+
+    def test_ar_events_stale_mark_when_old(self) -> None:
+        """Event ingested more than 24h ago DOES get the stale mark."""
+        now = datetime.now(timezone.utc)
+        stale_time = now - timedelta(hours=25)
+        event = self._make_event(ingested_at=stale_time)
+        prompt = self._build_prompt([event])
+        assert "⚠️STALE" in prompt
+
+    # ------------------------------------------------------------------
+    # Test 7: Symbol line — no DecisionContextEntity.__repr__() leak
+    # ------------------------------------------------------------------
+
+    def test_ar_symbol_line_no_repr_leak(self) -> None:
+        """Symbol line shows the event symbol, not a ``DecisionContextEntity`` repr."""
+        event = self._make_event(symbol="030200")
+        prompt = self._build_prompt([event])
+        # Must contain the actual symbol
+        assert "Symbol: 030200" in prompt
+        # Must NOT contain DecisionContextEntity repr patterns
+        assert "DecisionContextEntity" not in prompt
+        assert "decision_context" not in prompt
+
+    # ------------------------------------------------------------------
+    # Test 8: Symbol line — fallback when events list is empty
+    # ------------------------------------------------------------------
+
+    def test_ar_symbol_line_fallback_when_no_events(self) -> None:
+        """When no events are provided, Symbol falls back to ``(not available)``."""
+        prompt = self._build_prompt([])
+        assert "Symbol: (not available)" in prompt
+
+    # ------------------------------------------------------------------
+    # Test 9: Symbol line — fallback when all event symbols are None
+    # ------------------------------------------------------------------
+
+    def test_ar_symbol_line_fallback_when_symbol_none(self) -> None:
+        """When all events have ``symbol=None``, Symbol falls back to ``(not available)``."""
+        event = self._make_event(symbol=None)
+        prompt = self._build_prompt([event])
+        assert "Symbol: (not available)" in prompt
+
+    # ------------------------------------------------------------------
+    # Test 10: Combined — provenance tags + Symbol line in same prompt
+    # ------------------------------------------------------------------
+
+    def test_ar_combined_provenance_and_symbol(self) -> None:
+        """Provenance tags and Symbol line coexist correctly in the same prompt."""
+        now = datetime.now(timezone.utc)
+        event = self._make_event(
+            source_name="opendart",
+            source_reliability_tier="T1",
+            event_type="disclosure",
+            published_at=now,
+            issuer_code="005930",
+            severity="high",
+            direction="positive",
+            ingested_at=now,
+            symbol="030200",
+        )
+        prompt = self._build_prompt([event])
+        # Provenance tags present
+        assert "[src:opendart]" in prompt
+        assert "[tier:T1]" in prompt
+        assert "[issuer:005930]" in prompt
+        assert "[severity:high]" in prompt
+        assert "[positive]" in prompt
+        # Symbol line correct
+        assert "Symbol: 030200" in prompt
+        # No stale mark
+        assert "⚠️STALE" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# TestFinalDecisionComposerAgentPrompt — FDC _build_user_prompt() provenance
+# ---------------------------------------------------------------------------
+
+
+class TestFinalDecisionComposerAgentPrompt:
+    """Tests for ``FinalDecisionComposerAgent._build_user_prompt()`` provenance format.
+
+    These tests verify that provenance tags, stale flags, and
+    non-default-only rules are correctly applied in the FDC events section.
+    """
+
+    @staticmethod
+    def _make_event(
+        *,
+        source_name: str = "opendart",
+        source_reliability_tier: str = "T1",
+        event_type: str = "disclosure",
+        published_at: datetime | None = None,
+        issuer_code: str | None = "005930",
+        severity: str = "medium",
+        direction: str = "neutral",
+        ingested_at: datetime | None = None,
+        headline: str = "test headline",
+        body_summary: str | None = None,
+        symbol: str | None = "030200",
+    ) -> ExternalEventEntity:
+        """Helper to build an ``ExternalEventEntity`` with defaults."""
+        now = datetime.now(timezone.utc)
+        return ExternalEventEntity(
+            event_id=uuid4(),
+            event_type=event_type,
+            source_name=source_name,
+            published_at=published_at or now,
+            source_reliability_tier=source_reliability_tier,
+            issuer_code=issuer_code,
+            symbol=symbol,
+            ingested_at=ingested_at or now,
+            severity=severity,
+            direction=direction,
+            headline=headline,
+            body_summary=body_summary,
+        )
+
+    def _build_prompt(
+        self,
+        events: list[ExternalEventEntity],
+        score: ScoreResult | None = None,
+    ) -> str:
+        """Call ``FinalDecisionComposerAgent._build_user_prompt()`` and return the result string."""
+        agent = FinalDecisionComposerAgent(provider_client=AsyncMock())
+        request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="test-fdc-provenance",
+            context=AssembledContext(
+                recent_events=tuple(events),
+                score=score or ScoreResult(),
+            ),
+        )
+        return agent._build_user_prompt(request)
+
+    # ------------------------------------------------------------------
+    # Test 1: All provenance tags present
+    # ------------------------------------------------------------------
+
+    def test_fdc_events_all_tags_present(self) -> None:
+        """All provenance tags appear when every field is populated."""
+        now = datetime.now(timezone.utc)
+        event = self._make_event(
+            source_name="opendart",
+            source_reliability_tier="T1",
+            event_type="disclosure",
+            published_at=now,
+            issuer_code="005930",
+            severity="high",
+            direction="positive",
+            ingested_at=now,
+        )
+        prompt = self._build_prompt([event])
+        assert "[src:opendart]" in prompt
+        assert "[tier:T1]" in prompt
+        assert "[disclosure]" in prompt
+        date_str = now.strftime("%Y-%m-%d")
+        assert f"[{date_str}]" in prompt
+        assert "[issuer:005930]" in prompt
+        assert "[severity:high]" in prompt
+        assert "[positive]" in prompt
+        assert "⚠️STALE" not in prompt
+
+    # ------------------------------------------------------------------
+    # Test 2: severity=medium → [severity:...] NOT present
+    # ------------------------------------------------------------------
+
+    def test_fdc_events_severity_medium_omitted(self) -> None:
+        """Default severity ``medium`` does NOT produce a ``[severity:...]`` tag."""
+        event = self._make_event(severity="medium")
+        prompt = self._build_prompt([event])
+        assert "[severity:medium]" not in prompt
+        assert "[severity:" not in prompt
+
+    # ------------------------------------------------------------------
+    # Test 3: direction=neutral → [positive]/[negative] NOT present
+    # ------------------------------------------------------------------
+
+    def test_fdc_events_direction_neutral_omitted(self) -> None:
+        """Default direction ``neutral`` does NOT produce ``[positive]`` or ``[negative]``."""
+        event = self._make_event(direction="neutral")
+        prompt = self._build_prompt([event])
+        assert "[positive]" not in prompt
+        assert "[negative]" not in prompt
+
+    # ------------------------------------------------------------------
+    # Test 4: ingested_at < 24h → ⚠️STALE NOT present
+    # ------------------------------------------------------------------
+
+    def test_fdc_events_fresh_no_stale(self) -> None:
+        """Freshly ingested event does NOT get the stale mark."""
+        now = datetime.now(timezone.utc)
+        event = self._make_event(ingested_at=now)
+        prompt = self._build_prompt([event])
+        assert "⚠️STALE" not in prompt
+
+    # ------------------------------------------------------------------
+    # Test 5: issuer_code=None → [issuer:...] NOT present
+    # ------------------------------------------------------------------
+
+    def test_fdc_events_no_issuer_tag_when_none(self) -> None:
+        """When ``issuer_code`` is ``None``, no ``[issuer:...]`` tag appears."""
+        event = self._make_event(issuer_code=None)
+        prompt = self._build_prompt([event])
+        assert "[issuer:" not in prompt
+
+    # ------------------------------------------------------------------
+    # Test 6: ingested_at > 24h → ⚠️STALE IS present
+    # ------------------------------------------------------------------
+
+    def test_fdc_events_stale_mark_when_old(self) -> None:
+        """Event ingested more than 24h ago DOES get the stale mark."""
+        now = datetime.now(timezone.utc)
+        stale_time = now - timedelta(hours=25)
+        event = self._make_event(ingested_at=stale_time)
+        prompt = self._build_prompt([event])
+        assert "⚠️STALE" in prompt

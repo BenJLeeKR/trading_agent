@@ -446,7 +446,7 @@ class DecisionOrchestratorService:
         try:
             events = await self._repos.external_events.list_by_symbol(
                 symbol=request.symbol,
-                since=datetime.now(timezone.utc) - timedelta(hours=24),
+                since=datetime.now(timezone.utc) - timedelta(hours=72),
             )
             recent_events = tuple(events)
         except Exception:
