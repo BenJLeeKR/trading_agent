@@ -40,6 +40,9 @@ try:
 except ImportError:
     pass
 
+import json
+import os
+
 from agent_trading.runtime.bootstrap import postgres_runtime
 from agent_trading.services.ai_agents.ai_risk import AIRiskAgent
 from agent_trading.services.ai_agents.base import AgentExecutionRequest
@@ -625,6 +628,116 @@ async def _call_provider_fdc(
 # ========================================================================
 
 
+# ========================================================================
+#  Phase 1: Artifact 빌드/저장 함수
+# ========================================================================
+
+
+def _build_artifact(symbol: str, result: dict[str, Any]) -> dict[str, Any]:
+    """Build the Phase 1 JSON artifact from measurement result.
+
+    Phase 1은 read-only 검증:
+    - DB write 없음
+    - provider 호출 없음
+    - artifact dump only
+    """
+    events_list = result.get("_events_list", [])
+    event_snapshot = []
+    for e in events_list[:20]:
+        event_snapshot.append({
+            "source_name": e.source_name or "",
+            "event_type": e.event_type or "",
+            "published_at": e.published_at.isoformat() if e.published_at else "",
+            "issuer_code": e.issuer_code or "",
+            "headline": e.headline or "",
+        })
+
+    ar_quality = result.get("ar", {}).get("quality", {})
+    fdc_quality = result.get("fdc", {}).get("quality", {})
+
+    artifact: dict[str, Any] = {
+        "meta": {
+            "symbol": symbol,
+            "measured_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "since_utc": (datetime.now(timezone.utc) - timedelta(hours=72)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "event_count": result.get("events_count", 0),
+            "schema_version": "1.0",
+        },
+        "event_snapshot": event_snapshot,
+        "context": {
+            "score": {
+                "score": 75.0,
+                "threshold": 60.0,
+                "reason_codes": ["REASON_001"],
+            },
+            "decision_context": {
+                "account_id": "00000000-0000-0000-0000-000000000001",
+                "symbol": symbol,
+            },
+            "position_snapshot": {
+                "quantity": 0,
+                "average_price": None,
+                "market_price": None,
+            },
+            "cash_balance_snapshot": {
+                "available_cash": "1000000",
+                "currency": "KRW",
+            },
+            "risk_limit_snapshot": {
+                "kill_switch_active": False,
+            },
+            "ei_output_summary": {
+                "overall_bias": "neutral",
+                "event_conflict": False,
+                "top_reason_codes": ["REASON_001"],
+                "interpreted_event_count": min(len(events_list), 5),
+            },
+            "ar_output_summary": {
+                "risk_opinion": "allow",
+                "risk_score": 0.0,
+                "reason_codes": [],
+            },
+        },
+        "prompts": {
+            "ar_old_prompt": result.get("_old_ar_prompt", ""),
+            "ar_new_prompt": result.get("_new_ar_prompt", ""),
+            "fdc_old_prompt": result.get("_old_fdc_prompt", ""),
+            "fdc_new_prompt": result.get("_new_fdc_prompt", ""),
+        },
+        "system_prompts": {
+            "ar": result.get("_ar_system_prompt", ""),
+            "fdc": result.get("_fdc_system_prompt", ""),
+        },
+        "flags": {
+            "old_style_is_approximate_reconstruction": True,
+        },
+        "prompt_quality": {
+            "ar": {
+                "tokens": ar_quality.get("tokens", {}),
+                "provenance_completeness": ar_quality.get("provenance_completeness", {}),
+                "context_depth": ar_quality.get("context_depth", {}),
+                "symbol_bug_fixed": result.get("ar", {}).get("symbol_bug_fixed", False),
+            },
+            "fdc": {
+                "tokens": fdc_quality.get("tokens", {}),
+                "provenance_completeness": fdc_quality.get("provenance_completeness", {}),
+                "context_depth": fdc_quality.get("context_depth", {}),
+            },
+        },
+    }
+    return artifact
+
+
+def _save_artifact(artifact: dict[str, Any], symbol: str) -> str:
+    """Save artifact to data/ar_fdc_prompts_{symbol}.json."""
+    data_dir = Path(__file__).resolve().parent.parent / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    path = data_dir / f"ar_fdc_prompts_{symbol}.json"
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(artifact, f, indent=2, ensure_ascii=False)
+    return str(path)
+
+
 async def measure_symbol(
     repos: Any,
     symbol: str,
@@ -857,9 +970,56 @@ async def measure_symbol(
             "quality": fdc_quality,
         },
         "provider_results": provider_results,
+        # Phase 1 artifact build 용 추가 데이터
+        "_events_list": events_list,
+        "_old_ar_prompt": old_ar_prompt,
+        "_new_ar_prompt": new_ar_prompt,
+        "_old_fdc_prompt": old_fdc_prompt,
+        "_new_fdc_prompt": new_fdc_prompt,
+        "_ar_system_prompt": ar_agent._build_system_prompt(),
+        "_fdc_system_prompt": fdc_agent._build_system_prompt(),
     }
 
     return result
+
+
+async def _run_dump_prompts() -> int:
+    """Phase 1: DB fetch → prompt materialization → JSON artifact.
+
+    Read-only 검증:
+    - DB write 없음
+    - provider 호출 없음
+    - artifact dump only
+    - 030200 only
+    """
+    symbol = "030200"
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(hours=72)
+
+    print(SEP)
+    print("  Phase 1: DB Fetch + Prompt Materialization (Read-only)")
+    print(SEP)
+    print(f"  Symbol: {symbol}")
+    print(f"  Since (72h): {since.strftime('%Y-%m-%d %H:%M:%S')}Z")
+    print(SEP)
+
+    async with postgres_runtime() as runtime:
+        repos = runtime["repositories"]
+        result = await measure_symbol(repos, symbol, now, since, with_provider=False)
+
+        if result.get("events_count", 0) == 0:
+            print(f"\n  ❌ Event count 0 for {symbol}. No data available.")
+            return 1
+
+        artifact = _build_artifact(symbol, result)
+        path = _save_artifact(artifact, symbol)
+        print(f"\n  ✅ Artifact saved: {path}")
+        print(f"  Events: {result.get('events_count')}")
+        print(f"  Prompts: AR old/new, FDC old/new (4 prompts)")
+        print(f"  System prompts: AR, FDC (2 prompts)")
+        print(f"  Event snapshot: {len(artifact.get('event_snapshot', []))} events")
+
+    return 0
 
 
 async def main() -> int:
@@ -872,7 +1032,19 @@ async def main() -> int:
         action="store_true",
         help="선택적 provider 호출 (030200 only, 2회 반복, 탐색적 관찰)",
     )
+    parser.add_argument(
+        "--dump-prompts",
+        action="store_true",
+        help=(
+            "Phase 1: DB fetch → prompt materialization → JSON artifact. "
+            "Read-only, 030200 only, provider 호출 없음."
+        ),
+    )
     args = parser.parse_args()
+
+    # ── Phase 1: --dump-prompts (read-only, 030200 only) ──
+    if args.dump_prompts:
+        return await _run_dump_prompts()
 
     now = datetime.now(timezone.utc)
     since = now - timedelta(hours=72)
