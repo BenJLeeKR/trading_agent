@@ -349,6 +349,14 @@ class PositionSnapshotView(BaseModel):
     snapshot_at: datetime
     created_at: datetime
 
+    # ── Resolved instrument display fields (enriched at query time) ──
+    symbol: str | None = None
+    """Ticker symbol resolved from ``instrument_id`` (e.g. ``005930``)."""
+
+    instrument_name: str | None = None
+    """Human-readable instrument name resolved from ``instrument_id``
+    (e.g. ``Samsung Electronics Co., Ltd.``)."""
+
 
 class CashBalanceSnapshotView(BaseModel):
     """``GET /cash-balances`` — latest cash balance snapshot.

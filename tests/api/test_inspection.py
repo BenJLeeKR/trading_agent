@@ -24,7 +24,7 @@ class TestOrders:
         assert response.json() == []
 
     def test_list_orders(self, client: TestClient) -> None:
-        """``GET /orders`` returns seeded orders."""
+        """``GET /orders`` returns seeded orders with symbol resolved."""
         response = client.get("/orders")
         assert response.status_code == 200
         data = response.json()
@@ -35,9 +35,11 @@ class TestOrders:
         assert first["status"] == "acknowledged"
         assert first["requested_quantity"] == 100.0
         assert first["requested_price"] == 150.0
+        # ── Lineage visibility: symbol resolved from instrument_id ──
+        assert first["symbol"] == "AAPL"
 
     def test_get_order_by_id(self, client: TestClient) -> None:
-        """``GET /orders/{id}`` returns order detail."""
+        """``GET /orders/{id}`` returns order detail with symbol resolved."""
         # First get list to find an ID
         list_resp = client.get("/orders")
         orders = list_resp.json()
@@ -53,6 +55,8 @@ class TestOrders:
         # Detail-specific fields
         assert "instrument_id" in detail
         assert "time_in_force" in detail
+        # ── Lineage visibility: symbol resolved from instrument_id ──
+        assert detail["symbol"] == "AAPL"
 
     def test_get_order_not_found(self, client: TestClient) -> None:
         """``GET /orders/{id}`` returns 404 for unknown ID."""
@@ -296,7 +300,9 @@ class TestPositions:
     """Position / cash-balance inspection endpoints."""
 
     def test_list_positions(self, client: TestClient) -> None:
-        """``GET /positions?account_id=...`` returns seeded position snapshot."""
+        """``GET /positions?account_id=...`` returns seeded position snapshot
+        with symbol and instrument_name resolved.
+        """
         # Discover seeded account_id
         orders_resp = client.get("/orders")
         orders = orders_resp.json()
@@ -314,6 +320,9 @@ class TestPositions:
         assert pos["quantity"] == 100.0
         assert pos["average_price"] == 150.0
         assert pos["market_price"] == 155.0
+        # ── Lineage visibility: symbol/name resolved from instrument_id ──
+        assert pos["symbol"] == "AAPL"
+        assert pos["instrument_name"] == "Apple Inc."
 
     def test_list_positions_missing_param(self, client: TestClient) -> None:
         """``GET /positions`` returns 422 when account_id is missing."""

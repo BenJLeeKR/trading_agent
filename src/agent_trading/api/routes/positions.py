@@ -28,6 +28,9 @@ async def list_positions(
        position.  All snapshots for the account are returned ordered by
        ``snapshot_at`` descending.  Use the ``snapshot_at`` field to
        identify the most recent observation.
+
+    Each snapshot is enriched with ``symbol`` and ``instrument_name``
+    resolved from the ``instrument_id`` via the instruments repository.
     """
     try:
         aid = UUID(account_id)
@@ -35,7 +38,15 @@ async def list_positions(
         raise HTTPException(status_code=400, detail="Invalid account_id UUID")
 
     snapshots = await repos.position_snapshots.list_latest_by_account(aid)
-    return [PositionSnapshotView.model_validate(s) for s in snapshots]
+    result: list[PositionSnapshotView] = []
+    for s in snapshots:
+        view = PositionSnapshotView.model_validate(s)
+        inst = await repos.instruments.get(s.instrument_id)
+        if inst is not None:
+            view.symbol = inst.symbol
+            view.instrument_name = inst.name
+        result.append(view)
+    return result
 
 
 @router.get("/cash-balances", response_model=CashBalanceSnapshotView | None)

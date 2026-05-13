@@ -118,6 +118,9 @@ export interface PositionSnapshotView {
   unrealized_pnl: number | null;
   source_of_truth: string;
   snapshot_at: string;
+  // ── Resolved instrument display fields (enriched at query time) ──
+  symbol: string | null;
+  instrument_name: string | null;
 }
 
 export interface CashBalanceSnapshotView {

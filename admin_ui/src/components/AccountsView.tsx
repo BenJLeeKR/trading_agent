@@ -249,12 +249,17 @@ export default function AccountsView() {
 
   const positionColumns: Column<PositionSnapshotView>[] = [
     {
-      key: "instrument_id",
+      key: "symbol",
       header: "종목",
       render: (r) => (
-        <span title={r.instrument_id} className="text-xs font-mono">
-          {truncateUuid(r.instrument_id)}
-        </span>
+        <div>
+          <div className="text-sm font-medium text-[#0f172a]">
+            {r.symbol ?? truncateUuid(r.instrument_id)}
+          </div>
+          {r.instrument_name && (
+            <div className="text-xs text-[#64748b]">{r.instrument_name}</div>
+          )}
+        </div>
       ),
     },
     { key: "quantity", header: "수량", render: (r) => formatQty(r.quantity) },

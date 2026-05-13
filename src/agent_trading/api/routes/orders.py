@@ -6,6 +6,7 @@ Results are sorted by ``created_at`` descending (newest first).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -29,7 +30,7 @@ def _order_to_summary(order: object) -> OrderSummary:
         status=order.status.value,  # type: ignore[attr-defined]
         requested_quantity=float(order.requested_quantity),  # type: ignore[attr-defined]
         requested_price=float(order.requested_price) if order.requested_price is not None else None,  # type: ignore[attr-defined]
-        symbol=None,  # resolves from instrument_id (skipped for now)
+        symbol=None,  # enriched by _enrich_order_summary
         correlation_id=str(order.correlation_id),  # type: ignore[attr-defined]
         trade_decision_id=str(order.trade_decision_id) if order.trade_decision_id is not None else None,  # type: ignore[attr-defined]
         decision_context_id=str(order.decision_context_id) if order.decision_context_id is not None else None,  # type: ignore[attr-defined]
@@ -37,6 +38,24 @@ def _order_to_summary(order: object) -> OrderSummary:
         updated_at=order.updated_at,  # type: ignore[attr-defined]
         version=order.version,  # type: ignore[attr-defined]
     )
+
+
+async def _enrich_order_summary(
+    order: object,
+    repos: RepositoryContainer,
+) -> OrderSummary:
+    """Convert an ``OrderRequestEntity`` to ``OrderSummary`` with symbol resolved.
+
+    Looks up the instrument by ``instrument_id`` to populate the ``symbol``
+    field.  Falls back to ``None`` when the instrument is not found.
+    """
+    summary = _order_to_summary(order)
+    instrument_id: UUID | None = getattr(order, "instrument_id", None)
+    if instrument_id is not None:
+        inst = await repos.instruments.get(instrument_id)
+        if inst is not None:
+            summary.symbol = inst.symbol
+    return summary
 
 
 def _order_to_detail(order: object) -> OrderDetail:
@@ -50,6 +69,20 @@ def _order_to_detail(order: object) -> OrderDetail:
         submitted_at=order.submitted_at,  # type: ignore[attr-defined]
         time_in_force=order.time_in_force.value if order.time_in_force is not None else None,  # type: ignore[attr-defined]
     )
+
+
+async def _enrich_order_detail(
+    order: object,
+    repos: RepositoryContainer,
+) -> OrderDetail:
+    """Convert an ``OrderRequestEntity`` to ``OrderDetail`` with symbol resolved."""
+    detail = _order_to_detail(order)
+    instrument_id: UUID | None = getattr(order, "instrument_id", None)
+    if instrument_id is not None:
+        inst = await repos.instruments.get(instrument_id)
+        if inst is not None:
+            detail.symbol = inst.symbol
+    return detail
 
 
 @router.get("", response_model=list[OrderSummary])
@@ -75,7 +108,7 @@ async def list_orders(
         limit=limit,
     )
     orders = await repos.orders.list(query)
-    return [_order_to_summary(o) for o in orders]
+    return [await _enrich_order_summary(o, repos) for o in orders]
 
 
 @router.get("/{order_request_id}", response_model=OrderDetail)
@@ -92,7 +125,7 @@ async def get_order(
     order = await repos.orders.get(uid)
     if order is None:
         raise HTTPException(status_code=404, detail=f"Order not found: {order_request_id}")
-    return _order_to_detail(order)
+    return await _enrich_order_detail(order, repos)
 
 
 @router.get("/{order_request_id}/events", response_model=list[OrderEvent])
