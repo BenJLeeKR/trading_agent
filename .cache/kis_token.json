@@ -1,9 +1,0 @@
-{
-  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJ0b2tlbiIsImF1ZCI6IjQ2NzQ2Y2YyLWFiNmQtNDM5Yi1hMzUyLTdjYjBhMmIxNzNjMSIsInByZHRfY2QiOiIiLCJpc3MiOiJ1bm9ndyIsImV4cCI6MTc3ODY0MjUxOCwiaWF0IjoxNzc4NTU2MTE4LCJqdGkiOiJQUzV2TkRZMlg4YUVMU2M5ZjY0aEZhbnBCWmxqU21xVGdSSXkifQ.Qje5UF9AthwWLMGsWV5ociUwceQBfbzwiDKubKrJHiilDaGFksjF5RSMB0IKC3csUCSJd4v3OwnXWffPYqUoqA",
-  "token_type": "bearer",
-  "expires_at": 1778644273.3260784,
-  "kis_env": "paper",
-  "base_url": "https://openapivts.koreainvestment.com:29443",
-  "app_key_fingerprint": "b5d0fe1dcbdd94ed",
-  "created_at": 1778558173.693289
-}

@@ -229,13 +229,14 @@ async def _run_one_cycle(settings: AppSettings, broker: str) -> None:
             pass
 
 
-async def _run_loop(broker: str) -> None:
+async def _run_loop(broker: str, max_cycles: int = 0) -> None:
     """Main loop: run sync cycles until shutdown is requested."""
     interval = _read_interval()
     logger.info(
-        "Starting snapshot sync loop (broker=%s, interval=%ds, env=%s) ...",
+        "Starting snapshot sync loop (broker=%s, interval=%ds, max_cycles=%d, env=%s) ...",
         broker,
         interval,
+        max_cycles,
         os.getenv("KIS_ENV", "paper"),
     )
     logger.info(
@@ -263,6 +264,11 @@ async def _run_loop(broker: str) -> None:
             interval,
         )
 
+        # Check max_cycles limit
+        if max_cycles > 0 and cycle_count >= max_cycles:
+            logger.info("Reached max_cycles=%d — exiting.", max_cycles)
+            break
+
         # Wait for the interval (or shutdown signal)
         try:
             await asyncio.wait_for(
@@ -278,10 +284,30 @@ async def _run_loop(broker: str) -> None:
     logger.info("Shutdown complete (%d cycles executed).", cycle_count)
 
 
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Snapshot sync scheduler — continuously keep broker account snapshots fresh.",
+    )
+    parser.add_argument(
+        "--broker",
+        type=str,
+        default="koreainvestment",
+        help="Broker name (default: koreainvestment).",
+    )
+    parser.add_argument(
+        "--max-cycles",
+        type=int,
+        default=0,
+        help="Maximum number of cycles to run (0 = infinite, default).",
+    )
+    return parser.parse_args(argv)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point for ``snapshot-sync`` scheduler."""
     args = _parse_args(argv)
     broker = args.broker
+    max_cycles = args.max_cycles
 
     # Install signal handlers before entering the event loop
     loop = asyncio.new_event_loop()
@@ -289,7 +315,7 @@ def main(argv: list[str] | None = None) -> int:
     _install_signal_handlers()
 
     try:
-        loop.run_until_complete(_run_loop(broker))
+        loop.run_until_complete(_run_loop(broker, max_cycles))
     except KeyboardInterrupt:
         logger.info("KeyboardInterrupt — exiting.")
     finally:

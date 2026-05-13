@@ -1,5 +1,15 @@
 # KIS Paper 환경 1개월 운영 체크리스트 — 일일 루틴 / 장중 루틴 / cleanup / 성과 점검
 
+> **⚠️ 운영 전제**: 현재 `KIS_ENV=paper`를 **운영상 live 환경으로 취급**한다.
+> 모든 루틴은 실제 운영자가 그대로 실행 가능해야 하며, 아래 규칙을 **반드시** 준수한다.
+>
+> - **Python 실행**: 항상 `python3` 사용 (`python` 사용 금지)
+> - **Shell 실행**: 항상 `/bin/bash` 기준 (`/bin/sh` 사용 금지)
+> - **env 로드**: `bash -c 'set -a; source .env; set +a && ...'` 패턴 사용
+> - **DB 스키마**: 모든 테이블은 public 스키마, 스키마 prefix 불필요 (`trading.` prefix 사용 금지)
+> - **status 값**: DB enum 값은 **소문자** (`pending_submit`, `reconcile_required`, `failed`)
+> - **KIS_SMOKE_PRICE**: 기본값 50000 의존 금지, 반드시 시장가와 일치시킬 것
+
 > **운영 전제**: 현재 [`KIS_ENV=paper`](src/agent_trading/config/settings.py:120)를 실제 live 운영 환경으로 간주한다.
 > 사용자가 직접 `.env`를 변경해 `real` 전환을 지시하기 전까지는 현 체제를 계속 운영한다.
 >
@@ -100,40 +110,77 @@ flowchart TD
 | 2 | Python 가상환경 확인 | `which python3 && python3 --version` | Python 3.11+ 정상 출력 | 가상환경 재설정 |
 | 3 | DB URL 로드 확인 | `grep DATABASE_URL .env \| head -1` | 정상 URL 출력 | `.env` 재확인, shell scope 확인 |
 
+> **KIS REST endpoint 참고**: 아래 표는 KIS paper/live 환경의 REST endpoint를 정리한 것이다.
+> 모든 curl 예시와 스크립트는 이 기준을 따라야 한다.
+>
+> | 환경 | Hostname | Port | REST Base URL |
+> |---|---|---|---|
+> | **paper** (모의투자) | `openapivts.koreainvestment.com` | **29443** | `https://openapivts.koreainvestment.com:29443` |
+> | **live** (실전) | `openapi.koreainvestment.com` | **9443** | `https://openapi.koreainvestment.com:9443` |
+
 ### A-2. 필수 환경변수 적재 확인 [필수]
 
 | # | 변수명 | 확인 방법 | 성공 기준 |
 |---|---|---|---|
-| 1 | `KIS_PAPER_APP_KEY` | `grep KIS_PAPER_APP_KEY .env` | non-empty |
-| 2 | `KIS_PAPER_APP_SECRET` | `grep KIS_PAPER_APP_SECRET .env` | non-empty |
+| 1 | `KIS_APP_KEY` | `grep KIS_APP_KEY .env` | non-empty |
+| 2 | `KIS_APP_SECRET` | `grep KIS_APP_SECRET .env` | non-empty |
 | 3 | `KIS_PAPER_REST_RPS` | `grep KIS_PAPER_REST_RPS .env` | `2` 이상 (과거 RPS=1 실패 이력) |
 | 4 | `KIS_SMOKE_PRICE` | `grep KIS_SMOKE_PRICE .env` | non-empty, 시장가와 일치 |
 | 5 | `DEEPSEEK_API_KEY` | `grep DEEPSEEK_API_KEY .env` | non-empty |
 | 6 | `DEEPSEEK_MODEL_ID` | `grep DEEPSEEK_MODEL_ID .env` | non-empty (권장: `deepseek-chat`) |
 
 > **⚠️ 실수 포인트 #1**: [`DATABASE_URL` shell scope](plans/paper_submit_smoke_ops_checklist.md:106) — `.env`는 `export`하지 않으므로 `source .env` 후에도 shell 변수로만 존재. DB 접근 스크립트는 python-dotenv를 통해 로드해야 함.
+>
+> **Shell 실행 규칙**: 모든 명령은 `/bin/bash` 기준. `/bin/sh`는 `source` 명령을 지원하지 않으므로 반드시 `bash -c 'set -a; source .env; set +a && ...'` 패턴을 사용할 것.
 
 ### A-3. KIS_SMOKE_PRICE 현재가 일치 검증 [필수]
 
-[`KIS_SMOKE_PRICE`](plans/paper_submit_smoke_ops_checklist.md:345)는 장 시작 전 반드시 시장가와 일치해야 한다. 기본값 50000에 의존할 경우 [`msg_cd=40270000`](plans/paper_nearreal_ops_cleanup_plan.md:51) 오류 발생.
+> **⚠️ 중요**: `KIS_SMOKE_PRICE`는 **기본값 50000에 절대 의존하지 말 것**.
+> 기본값 의존 시 `msg_cd=40270000` (가격 차이 과다) 또는 `msg_cd=267000` 오류가 발생하여 Submit이 실패한다.
+> 반드시 KIS API로 현재가를 조회하여 `.env`에 설정한 후 진행한다.
+
+[`KIS_SMOKE_PRICE`](plans/paper_submit_smoke_ops_checklist.md:345)는 장 시작 전 반드시 시장가와 일치해야 한다.
 
 ```bash
-# .env 로드
-set -a; source .env; set +a
+# python-dotenv로 .env 로드 → token cache 파일 읽기 → curl로 KIS API 현재가 조회
+python3 -c "
+from dotenv import load_dotenv
+import os, json, subprocess, sys
 
-# KIS API로 현재가 조회
-curl -s -H "content-type: application/json" \
-  -H "authorization: Bearer $(python3 -c "
-import asyncio, asyncpg
-async def get_token():
-    conn = await asyncpg.connect(dsn='$DATABASE_URL')
-    row = await conn.fetchrow(\"SELECT token FROM kis_token_cache WHERE account_id=(SELECT id FROM accounts LIMIT 1) ORDER BY expires_at DESC LIMIT 1\")
-    print(row['token'] if row else '')
-    await conn.close()
-asyncio.run(get_token())
-")" \
-  "https://openapivts.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=005930" \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('output',{}).get('stck_prpr','NOT_FOUND'))"
+load_dotenv()
+
+# token cache 파일에서 access_token 읽기
+cache_path = '.cache/kis_token.json'
+try:
+    with open(cache_path) as f:
+        data = json.load(f)
+    token = data.get('access_token', '')
+except (FileNotFoundError, json.JSONDecodeError):
+    token = ''
+
+if not token:
+    print('TOKEN_EMPTY — 캐시 파일 없음. snapshot sync 실행 후 재시도')
+    sys.exit(1)
+
+# curl로 KIS API 현재가 조회 (-k: KIS 모의투자 SSL 인증서 호스트명 불일치 대응)
+# 주의: inquire-price는 authorization 외에도 appkey, appsecret, tr_id 헤더가 필요
+result = subprocess.run(
+    ['curl', '-s', '-k',
+     '-H', 'content-type: application/json',
+     '-H', f'authorization: Bearer {token}',
+     '-H', f'appkey: {os.getenv(\"KIS_APP_KEY\", \"\")}',
+     '-H', f'appsecret: {os.getenv(\"KIS_APP_SECRET\", \"\")}',
+     '-H', 'tr_id: FHKST01010100',
+     'https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=005930'],
+    capture_output=True, text=True)
+data = json.loads(result.stdout)
+if data.get('rt_cd') != '0':
+    print(f'API error: {data.get(\"msg1\", \"unknown\")} (code={data.get(\"msg_cd\", \"\")})')
+    print('→ 토큰 만료 또는 appkey/appsecret 불일치. snapshot sync 실행 후 재시도')
+    sys.exit(1)
+price = data.get('output', {}).get('stck_prpr', 'NOT_FOUND')
+print(f'005930 current price: {price}')
+"
 ```
 
 | 상태 | 조치 |
@@ -147,14 +194,26 @@ asyncio.run(get_token())
 ### A-4. DB Connectivity 확인 [필수]
 
 ```bash
-set -a; source .env; set +a
-
+# python-dotenv로 .env 로드 → DatabaseConfig.resolved_dsn 조합 → asyncpg 연결
 python3 -c "
-import asyncio, asyncpg
+from dotenv import load_dotenv
+import os, asyncio, asyncpg
+
+load_dotenv()
+
+host = os.getenv('DATABASE_HOST', 'localhost')
+port = int(os.getenv('DATABASE_PORT', '5432'))
+user = os.getenv('DATABASE_USER', 'trading')
+password = os.getenv('DATABASE_PASSWORD', 'trading')
+database = os.getenv('DATABASE_NAME', 'trading')
+dsn = f'postgresql://{user}:{password}@{host}:{port}/{database}'
+
 async def check():
-    conn = await asyncpg.connect(dsn='$DATABASE_URL')
-    print(f'DB connected: {await conn.fetchval(\"SELECT 1\")}')
+    conn = await asyncpg.connect(dsn=dsn)
+    val = await conn.fetchval('SELECT 1')
+    print(f'DB connected: SELECT 1 = {val}')
     await conn.close()
+
 asyncio.run(check())
 "
 ```
@@ -167,26 +226,27 @@ asyncio.run(check())
 
 ### A-5. Token Cache 상태 확인 [권장]
 
-[Token cache](src/agent_trading/brokers/koreainvestment/rest_client.py:320)가 만료되면 장중 첫 API 호출 시 authenticate가 실행되어 약간의 지연 발생.
+[Token cache](src/agent_trading/brokers/koreainvestment/rest_client.py:320)는 **파일 기반**(`.cache/kis_token.json`)으로 저장된다.
+DB 테이블(`kis_token_cache`)은 존재하지 않으므로 파일로 직접 확인한다.
 
 ```bash
 # 캐시 파일 확인
 ls -la .cache/kis_token.json 2>/dev/null || echo "캐시 없음"
 
-# 캐시 없으면 수동 발급 (선택)
+# 캐시 내용 확인 (파일 직접 읽기)
 python3 -c "
-import asyncio, asyncpg
-async def check():
-    conn = await asyncpg.connect(dsn='$DATABASE_URL')
-    row = await conn.fetchrow('SELECT token, expires_at FROM kis_token_cache ORDER BY expires_at DESC LIMIT 1')
-    if row:
-        print(f'Token expires: {row[\"expires_at\"]}')
-        print(f'Valid: {row[\"expires_at\"] > datetime.now(timezone.utc)}')
-    else:
-        print('No cached token')
-    await conn.close()
+import json, os
 from datetime import datetime, timezone
-asyncio.run(check())
+cache_path = '.cache/kis_token.json'
+if os.path.exists(cache_path):
+    with open(cache_path) as f:
+        data = json.load(f)
+    token = data.get('access_token', '')
+    expires_at = data.get('expires_at', 'unknown')
+    print(f'Token exists: {bool(token)}')
+    print(f'Token expires: {expires_at}')
+else:
+    print('No cached token (file not found)')
 "
 ```
 
@@ -202,18 +262,28 @@ asyncio.run(check())
 
 ```bash
 python3 -c "
-import asyncio, asyncpg
+from dotenv import load_dotenv
+import os, asyncio, asyncpg
 from datetime import datetime, timezone
+
+load_dotenv()
+host = os.getenv('DATABASE_HOST', 'localhost')
+port = int(os.getenv('DATABASE_PORT', '5432'))
+user = os.getenv('DATABASE_USER', 'trading')
+password = os.getenv('DATABASE_PASSWORD', 'trading')
+database = os.getenv('DATABASE_NAME', 'trading')
+dsn = f'postgresql://{user}:{password}@{host}:{port}/{database}'
+
 async def check():
-    conn = await asyncpg.connect(dsn='$DATABASE_URL')
+    conn = await asyncpg.connect(dsn=dsn)
     rows = await conn.fetch('''
-        SELECT account_id, last_synced_at, status 
-        FROM snapshot_sync_runs 
-        ORDER BY last_synced_at DESC LIMIT 5
+        SELECT snapshot_sync_run_id, started_at, status
+        FROM trading.snapshot_sync_runs
+        ORDER BY started_at DESC LIMIT 5
     ''')
     for r in rows:
-        age = datetime.now(timezone.utc) - r['last_synced_at']
-        print(f'Account {r[\"account_id\"]}: last_sync={r[\"last_synced_at\"]}, age={age.total_seconds()/60:.0f}min, status={r[\"status\"]}')
+        age = datetime.now(timezone.utc) - r['started_at']
+        print(f'Run {r[\"snapshot_sync_run_id\"]}: started={r[\"started_at\"]}, age={age.total_seconds()/60:.0f}min, status={r[\"status\"]}')
     await conn.close()
 asyncio.run(check())
 "
@@ -233,7 +303,7 @@ asyncio.run(check())
 python3 _cleanup_pending_submit.py
 ```
 
-> **사전 검증**: `SELECT COUNT(*) FROM order_requests WHERE status='PENDING_SUBMIT' AND created_at < NOW() - INTERVAL '24 hours'` 가 0보다 크면 실행.
+> **사전 검증**: `SELECT COUNT(*) FROM trading.order_requests WHERE status='pending_submit' AND created_at < NOW() - INTERVAL '24 hours'` 가 0보다 크면 실행.
 
 | 결과 | 의미 |
 |---|---|
@@ -246,27 +316,39 @@ python3 _cleanup_pending_submit.py
 ### A-8. Audit Log / Logging 확인 [권장]
 
 ```bash
-# 최근 50건의 audit_log 확인
+# 최근 10건의 audit_logs 확인
 python3 -c "
-import asyncio, asyncpg
+from dotenv import load_dotenv
+import os, asyncio, asyncpg
+
+load_dotenv()
+host = os.getenv('DATABASE_HOST', 'localhost')
+port = int(os.getenv('DATABASE_PORT', '5432'))
+user = os.getenv('DATABASE_USER', 'trading')
+password = os.getenv('DATABASE_PASSWORD', 'trading')
+database = os.getenv('DATABASE_NAME', 'trading')
+dsn = f'postgresql://{user}:{password}@{host}:{port}/{database}'
+
 async def check():
-    conn = await asyncpg.connect(dsn='$DATABASE_URL')
+    conn = await asyncpg.connect(dsn=dsn)
     rows = await conn.fetch('''
-        SELECT id, entity_type, action, status, created_at 
-        FROM audit_log 
+        SELECT audit_log_id, actor_type, action, target_entity_type, created_at
+        FROM trading.audit_logs
         ORDER BY created_at DESC LIMIT 10
     ''')
     for r in rows:
-        print(f'{r[\"created_at\"]} | {r[\"entity_type\"]} | {r[\"action\"]} | {r[\"status\"]}')
+        print(f'{r[\"created_at\"]} | actor={r[\"actor_type\"]} | action={r[\"action\"]} | target={r[\"target_entity_type\"]}')
     await conn.close()
 asyncio.run(check())
 "
 ```
 
+> **참고**: `audit_logs` 테이블에는 `status` / `error_message` 컬럼이 없다. 오류 로그 식별은 `action` 값 또는 `metadata` JSONB 필드를 통해 확인한다.
+
 | 상태 | 조치 |
 |---|---|
 | 정상 로그만 출력 | ✅ |
-| `ERROR`/`FAILURE` 상태 로그 다수 | 원인 분석 후 조치 |
+| `action`에 `error`/`failure` 포함 다수 | 원인 분석 후 조치 |
 
 ---
 
@@ -276,38 +358,61 @@ asyncio.run(check())
 
 ### B-1. Snapshot Sync Loop 동작 확인 [권장/30분]
 
-Snapshot sync loop는 장중 지속적으로 실행되어야 한다.
+Snapshot sync loop는 장중 지속적으로 실행되는 것이 이상적이나, 수동 실행(1회성)도 운영 방식으로 허용된다.
+아래 두 가지를 구분하여 확인한다.
+
+**① Sync loop 프로세스 실행 여부 확인**
 
 ```bash
-# sync loop 프로세스 확인
 ps aux | grep run_snapshot_sync_loop | grep -v grep
+```
 
-# 최근 sync 기록 확인
+- 프로세스가 살아 있으면 loop 모드로 동작 중
+- 프로세스가 없으면 수동 실행 상태 — 아래 freshness 확인으로 대체 가능
+
+**② 최근 sync freshness 확인**
+
+아래 스크립트로 마지막 sync 시점과 상태를 확인한다. DSN 조합 방식은 A-6/A-8과 동일하다.
+
+```bash
 python3 -c "
-import asyncio, asyncpg
+from dotenv import load_dotenv
+import os, asyncio, asyncpg
 from datetime import datetime, timezone
+
+load_dotenv()
+host = os.getenv('DATABASE_HOST', 'localhost')
+port = int(os.getenv('DATABASE_PORT', '5432'))
+user = os.getenv('DATABASE_USER', 'trading')
+password = os.getenv('DATABASE_PASSWORD', 'trading')
+database = os.getenv('DATABASE_NAME', 'trading')
+dsn = f'postgresql://{user}:{password}@{host}:{port}/{database}'
+
 async def check():
-    conn = await asyncpg.connect(dsn='$DATABASE_URL')
+    conn = await asyncpg.connect(dsn=dsn)
     row = await conn.fetchrow('''
-        SELECT last_synced_at, status, error_message
-        FROM snapshot_sync_runs 
-        ORDER BY last_synced_at DESC LIMIT 1
+        SELECT started_at, status
+        FROM trading.snapshot_sync_runs
+        ORDER BY started_at DESC LIMIT 1
     ''')
     if row:
-        age = datetime.now(timezone.utc) - row['last_synced_at']
-        print(f'last_sync: {row[\"last_synced_at\"]}, age: {age.total_seconds()/60:.0f}min, status: {row[\"status\"]}')
-        if row['error_message']:
-            print(f'ERROR: {row[\"error_message\"]}')
+        age = datetime.now(timezone.utc) - row['started_at']
+        print(f'last_sync: {row[\"started_at\"]}, age: {age.total_seconds()/60:.0f}min, status: {row[\"status\"]}')
+    else:
+        print('No sync records found')
     await conn.close()
 asyncio.run(check())
 "
 ```
 
-| 조건 | 조치 |
-|---|---|
-| Sync loop 실행 중, age < 30min | ✅ 정상 |
-| Sync loop 미실행 | `python3 scripts/run_snapshot_sync_loop.py &` 로 시작 |
-| Sync 실패 반복 | 로그 확인, KIS API 상태 확인 |
+> **참고**: `snapshot_sync_runs` 테이블에는 `error_message` 컬럼이 없다. 실패 원인은 별도 로그 파일에서 확인한다.
+
+| 조건 | 평가 | 조치 |
+|---|---|---|
+| Loop 실행 중, age < 30min | ✅ 정상 | — |
+| Loop 미실행, age < 30min | ✅ 정상 (수동 실행) | loop 시작은 선택 |
+| Loop 미실행, age > 30min | ⚠️ freshness 저하 | `python3 scripts/run_snapshot_sync_loop.py --max-cycles=1` 으로 1회 실행 |
+| Sync 실패 반복 (`status = failed`) | ❌ 장애 가능성 | KIS API 상태 확인, 로그 분석 |
 
 ### B-2. Dry-Run 검증 [권장/1시간]
 
@@ -374,31 +479,47 @@ python3 scripts/run_post_submit_sync_loop.py --max-cycles=1 --interval=5 2>&1 | 
 
 ### B-6. Reconcile_required 모니터링 [권장/1시간]
 
+`reconcile_required`는 broker 응답이 불확실할 때 발생하는 상태로, KIS paper mock의 한계상 일부 허용된다.
+단, 급증하거나 지속 증가하면 원인 분석이 필요하다.
+
+> DSN 조합 방식은 [B-1](#b-1-snapshot-sync-loop-동작-확인-권장30분)을 참고한다.
+
 ```bash
 python3 -c "
-import asyncio, asyncpg
+from dotenv import load_dotenv
+import os, asyncio, asyncpg
+
+load_dotenv()
+host = os.getenv('DATABASE_HOST', 'localhost')
+port = int(os.getenv('DATABASE_PORT', '5432'))
+user = os.getenv('DATABASE_USER', 'trading')
+password = os.getenv('DATABASE_PASSWORD', 'trading')
+database = os.getenv('DATABASE_NAME', 'trading')
+dsn = f'postgresql://{user}:{password}@{host}:{port}/{database}'
+
 async def check():
-    conn = await asyncpg.connect(dsn='$DATABASE_URL')
-    count = await conn.fetchval(\"SELECT COUNT(*) FROM order_requests WHERE status='RECONCILE_REQUIRED'\")
-    print(f'RECONCILE_REQUIRED 건수: {count}')
+    conn = await asyncpg.connect(dsn=dsn)
+    count = await conn.fetchval(\"SELECT COUNT(*) FROM trading.order_requests WHERE status='reconcile_required'\")
+    print(f'reconcile_required 건수: {count}')
     if count > 0:
         rows = await conn.fetch('''
-            SELECT id, created_at, error_message, updated_at
-            FROM order_requests WHERE status='RECONCILE_REQUIRED'
+            SELECT order_request_id, created_at
+            FROM trading.order_requests WHERE status='reconcile_required'
             ORDER BY created_at DESC
         ''')
         for r in rows[:5]:
-            print(f'  {r[\"id\"]} | created={r[\"created_at\"]} | err={r[\"error_message\"]}')
+            print(f'  {r[\"order_request_id\"]} | created={r[\"created_at\"]}')
     await conn.close()
 asyncio.run(check())
 "
 ```
 
-| 건수 | 평가 |
-|---|---|
-| 0건 | ✅ 정상 |
-| 1–5건 | ⚠️ 모니터링 — 시간 경과에 따라 증가 추세 확인 |
-| 5건 초과 또는 급증 | ❌ 원인 분석 필요 — broker 연동 문제 가능성 |
+| 건수 | 평가 | 조치 |
+|---|---|---|
+| 0건 | ✅ 정상 | — |
+| 1–5건 | ⚠️ 관찰 — 증가 추세 확인 | 시간 경과에 따라 재측정 |
+| 5건 초과 | ⚠️ 주의 — 절대 실패 기준 아님 | broker 연동 상태 점검, post-submit sync로 해소 가능 |
+| 급증 (단기간 2배↑) | ❌ 원인 분석 필요 | 로그 분석, 필요시 수동 정리 |
 
 ### B-7. 성과/포지션/현금 모니터링 [권장]
 
@@ -406,20 +527,30 @@ asyncio.run(check())
 # 성과 요약 조회 (API 통해)
 curl -s http://localhost:8000/performance-summary 2>/dev/null | python3 -m json.tool || echo "API not available"
 
-# 포지션 확인
+# 포지션 확인 (DSN 조합 방식은 B-1 참고)
 python3 -c "
-import asyncio, asyncpg
+from dotenv import load_dotenv
+import os, asyncio, asyncpg
+
+load_dotenv()
+host = os.getenv('DATABASE_HOST', 'localhost')
+port = int(os.getenv('DATABASE_PORT', '5432'))
+user = os.getenv('DATABASE_USER', 'trading')
+password = os.getenv('DATABASE_PASSWORD', 'trading')
+database = os.getenv('DATABASE_NAME', 'trading')
+dsn = f'postgresql://{user}:{password}@{host}:{port}/{database}'
+
 async def check():
-    conn = await asyncpg.connect(dsn='$DATABASE_URL')
+    conn = await asyncpg.connect(dsn=dsn)
     rows = await conn.fetch('''
-        SELECT symbol, quantity, market_price, average_price, 
+        SELECT instrument_id, quantity, market_price, average_price,
                (quantity * market_price) as market_value,
-               created_at
-        FROM position_snapshots 
-        ORDER BY created_at DESC LIMIT 10
+               snapshot_at
+        FROM trading.position_snapshots
+        ORDER BY snapshot_at DESC LIMIT 10
     ''')
     for r in rows:
-        print(f'{r[\"symbol\"]}: qty={r[\"quantity\"]}, market={r[\"market_price\"]}, avg={r[\"average_price\"]}, value={r[\"market_value\"]}')
+        print(f'instrument={r[\"instrument_id\"]}: qty={r[\"quantity\"]}, market={r[\"market_price\"]}, avg={r[\"average_price\"]}, value={r[\"market_value\"]}')
     await conn.close()
 asyncio.run(check())
 "
@@ -430,25 +561,42 @@ asyncio.run(check())
 ## 4. C. End-of-Day Routine (장후) — 15:30–16:30 KST
 
 > **목적**: 장 마감 후 시스템 상태를 최종 점검하고, 일일 성과를 기록하며, 익일 운영을 준비한다.
+>
+> **운영 원칙**:
+> - 당일 submit이 0건(HOLD/WATCH)이어도 C 루틴은 정상 완료 가능하다. submit이 없어도 점검 항목은 독립적으로 수행한다.
+> - `reconcile_required`는 KIS paper mock 한계상 허용되는 상태이며, 실패가 아니다. 증가 추세만 관찰한다.
+> - stale cleanup이 0건이면 가장 이상적인 상태이다. cleanup이 필요 없는 것을 긍정적으로 평가한다.
 
 ### C-1. Snapshot Sync 최종 확인 [필수]
 
+장 마감 시점에 마지막 snapshot sync 상태를 확인한다. DSN 조합 방식은 A-6/A-8/B-1과 동일하다.
+
 ```bash
 python3 -c "
-import asyncio, asyncpg
+from dotenv import load_dotenv
+import os, asyncio, asyncpg
 from datetime import datetime, timezone
+
+load_dotenv()
+host = os.getenv('DATABASE_HOST', 'localhost')
+port = int(os.getenv('DATABASE_PORT', '5432'))
+user = os.getenv('DATABASE_USER', 'trading')
+password = os.getenv('DATABASE_PASSWORD', 'trading')
+database = os.getenv('DATABASE_NAME', 'trading')
+dsn = f'postgresql://{user}:{password}@{host}:{port}/{database}'
+
 async def check():
-    conn = await asyncpg.connect(dsn='$DATABASE_URL')
+    conn = await asyncpg.connect(dsn=dsn)
     row = await conn.fetchrow('''
-        SELECT account_id, last_synced_at, status, error_message
-        FROM snapshot_sync_runs 
-        ORDER BY last_synced_at DESC LIMIT 1
+        SELECT started_at, status
+        FROM snapshot_sync_runs
+        ORDER BY started_at DESC LIMIT 1
     ''')
     if row:
-        age = datetime.now(timezone.utc) - row['last_synced_at']
-        print(f'최종 sync: {row[\"last_synced_at\"]}, {age.total_seconds()/60:.0f}분 전, 상태: {row[\"status\"]}')
+        age = datetime.now(timezone.utc) - row['started_at']
+        print(f'최종 sync: {row[\"started_at\"]}, {age.total_seconds()/60:.0f}분 전, 상태: {row[\"status\"]}')
     total = await conn.fetchval('SELECT COUNT(*) FROM snapshot_sync_runs')
-    failed = await conn.fetchval(\"SELECT COUNT(*) FROM snapshot_sync_runs WHERE status='FAILED'\")
+    failed = await conn.fetchval(\"SELECT COUNT(*) FROM snapshot_sync_runs WHERE status='failed'\")
     print(f'총 sync 시도: {total}, 실패: {failed}')
     await conn.close()
 asyncio.run(check())
@@ -462,71 +610,115 @@ asyncio.run(check())
 | 마지막 sync 실패 | ❌ 원인 기록, 익일 재시도 |
 | 일일 실패율 > 20% | ❌ 익일 원인 분석 |
 
+> **참고**: 당일 submit이 0건이어도 C-1은 정상 수행 가능하다. Sync freshness는 submit 여부와 무관하게 독립적으로 평가한다.
+
 ### C-2. 실패/예외 케이스 정리 [필수]
 
-당일 발생한 모든 예외 케이스를 취합한다.
+당일 발생한 모든 예외 케이스를 취합한다. DSN 조합 방식은 C-1과 동일하다.
 
 ```bash
 # 오늘 날짜 기준 예외 로그 확인
 python3 -c "
-import asyncio, asyncpg
+from dotenv import load_dotenv
+import os, asyncio, asyncpg
 from datetime import date
+
+load_dotenv()
+host = os.getenv('DATABASE_HOST', 'localhost')
+port = int(os.getenv('DATABASE_PORT', '5432'))
+user = os.getenv('DATABASE_USER', 'trading')
+password = os.getenv('DATABASE_PASSWORD', 'trading')
+database = os.getenv('DATABASE_NAME', 'trading')
+dsn = f'postgresql://{user}:{password}@{host}:{port}/{database}'
+
 async def check():
-    conn = await asyncpg.connect(dsn='$DATABASE_URL')
+    conn = await asyncpg.connect(dsn=dsn)
     today = date.today()
     
-    # 오늘 생성된 ERROR 상태 audit_log
+    # 오늘 생성된 audit_logs (전체 출력, status/error_message 컬럼 없음)
     rows = await conn.fetch('''
-        SELECT entity_type, action, status, error_message, created_at
-        FROM audit_log 
-        WHERE created_at::date = \$1 AND status IN ('ERROR','FAILURE')
+        SELECT audit_log_id, actor_type, action, target_entity_type, created_at
+        FROM audit_logs
+        WHERE created_at::date = \$1
         ORDER BY created_at DESC
     ''', today)
-    print(f'== 오류 로그: {len(rows)}건 ==')
+    print(f'== 오늘 audit_logs: {len(rows)}건 ==')
     for r in rows:
-        print(f'{r[\"created_at\"]} | {r[\"entity_type\"]} | {r[\"action\"]} | {r[\"status\"]} | {r[\"error_message\"]}')
+        print(f'{r[\"created_at\"]} | actor={r[\"actor_type\"]} | action={r[\"action\"]} | target={r[\"target_entity_type\"]}')
     
-    # 오늘 생성된 RECONCILE_REQUIRED
+    # 오늘 생성된 reconcile_required
+    # reconcile_required는 KIS paper mock 한계상 허용되는 상태 — 실패가 아님
     rr = await conn.fetch('''
-        SELECT id, created_at, error_message
-        FROM order_requests 
-        WHERE status='RECONCILE_REQUIRED' AND created_at::date = \$1
+        SELECT order_request_id, created_at
+        FROM order_requests
+        WHERE status='reconcile_required' AND created_at::date = \$1
         ORDER BY created_at DESC
     ''', today)
-    print(f'== RECONCILE_REQUIRED: {len(rr)}건 ==')
+    print(f'== reconcile_required: {len(rr)}건 (허용 상태, 증가 추세 관찰) ==')
     
-    # 오늘 생성된 PENDING_SUBMIT (아직 처리되지 않은 것)
+    # 오늘 생성된 pending_submit (아직 처리되지 않은 것)
     ps = await conn.fetch('''
-        SELECT COUNT(*) as cnt FROM order_requests 
-        WHERE status='PENDING_SUBMIT' AND created_at::date = \$1
+        SELECT COUNT(*) as cnt FROM order_requests
+        WHERE status='pending_submit' AND created_at::date = \$1
     ''', today)
-    print(f'== 미처리 PENDING_SUBMIT: {ps[0][\"cnt\"]}건 ==')
+    print(f'== 미처리 pending_submit: {ps[0][\"cnt\"]}건 ==')
     
     await conn.close()
 asyncio.run(check())
 "
 ```
+
+| 항목 | 판정 기준 |
+|------|----------|
+| sync 실패 0건 | ✅ 정상 |
+| audit_logs 이상 패턴 없음 | ✅ 정상 |
+| reconcile_required 증가 없음 | ✅ 안정 상태 (KIS paper mock 한계상 허용) |
+| reconcile_required 급증 (단기간 2배↑) | ⚠️ 주의 — 원인 분석 필요 (B-6 참고) |
+| 미처리 pending_submit 0건 | ✅ 정상 |
+| 당일 submit 0건 | ✅ 정상 (HOLD/WATCH도 정상 운영) |
 
 ### C-3. Stale Cleanup 필요 여부 확인 [필수]
 
+24시간 이상 방치된 `pending_submit` 주문이 있는지 확인한다. DSN 조합 방식은 C-1/C-2와 동일하다.
+
 ```bash
 python3 -c "
-import asyncio, asyncpg
+from dotenv import load_dotenv
+import os, asyncio, asyncpg
 from datetime import datetime, timezone, timedelta
+
+load_dotenv()
+host = os.getenv('DATABASE_HOST', 'localhost')
+port = int(os.getenv('DATABASE_PORT', '5432'))
+user = os.getenv('DATABASE_USER', 'trading')
+password = os.getenv('DATABASE_PASSWORD', 'trading')
+database = os.getenv('DATABASE_NAME', 'trading')
+dsn = f'postgresql://{user}:{password}@{host}:{port}/{database}'
+
 async def check():
-    conn = await asyncpg.connect(dsn='$DATABASE_URL')
+    conn = await asyncpg.connect(dsn=dsn)
     stale = await conn.fetchval('''
-        SELECT COUNT(*) FROM order_requests 
-        WHERE status='PENDING_SUBMIT' 
+        SELECT COUNT(*) FROM order_requests
+        WHERE status='pending_submit'
         AND created_at < \$1
     ''', datetime.now(timezone.utc) - timedelta(hours=24))
-    print(f'24h 이상 stale PENDING_SUBMIT: {stale}건')
+    print(f'24h 이상 stale pending_submit: {stale}건')
     if stale > 0:
         print('>>> _cleanup_pending_submit.py 실행 필요')
+    else:
+        print('>>> cleanup 불필요 (0건)')
     await conn.close()
 asyncio.run(check())
 "
 ```
+
+| stale 건수 | 판정 | 조치 |
+|-----------|------|------|
+| 0건 | ✅ 정상 — cleanup 불필요 | — |
+| 1건 이상 | ⚠️ 주의 | `_cleanup_pending_submit.py` 실행 검토 |
+| 5건 이상 급증 | ❌ 원인 분석 필요 | Stale 누적 원인 파악 |
+
+> **참고**: stale 0건도 정상 결과이다. cleanup이 필요 없는 상태가 가장 이상적이다.
 
 ### C-4. 일일 성과 기록 [권장]
 
@@ -588,9 +780,7 @@ curl -s http://localhost:8000/performance-metrics 2>/dev/null | python3 -m json.
 [`PaperGateService.evaluate()`](plans/paper_go_no_go_gate.md:189)를 통해 현재 시스템의 Go/No-Go 상태를 평가한다.
 
 ```bash
-set -a; source .env; set +a
-
-python3 scripts/run_paper_decision_loop.py --gate-only 2>&1
+bash -c 'set -a; source .env; set +a && exec python3 scripts/run_paper_decision_loop.py --gate-only 2>&1'
 ```
 
 또는 API로 조회:
@@ -623,16 +813,10 @@ curl -s http://localhost:8000/paper-gate 2>/dev/null | python3 -m json.tool
 [Paper Exit Criteria](plans/paper_exit_criteria.md:25) 3-layer 평가를 수행한다.
 
 ```bash
-set -a; source .env; set +a
-
-# Layer A: 자동 판정
-python3 scripts/evaluate_paper_exit.py --account-id=<ACCOUNT_ID> 2>&1
-
-# Layer B + C: Semi + Manual (JSON 출력)
-python3 scripts/evaluate_paper_exit.py --account-id=<ACCOUNT_ID> --run-semi --output json 2>&1
-
-# Manual 체크리스트 템플릿
-python3 scripts/evaluate_paper_exit.py --account-id=<ACCOUNT_ID> --manual-template 2>&1
+bash -c 'set -a; source .env; set +a && \
+  python3 scripts/evaluate_paper_exit.py --account-id=<ACCOUNT_ID> 2>&1 && \
+  python3 scripts/evaluate_paper_exit.py --account-id=<ACCOUNT_ID> --run-semi --output json 2>&1 && \
+  python3 scripts/evaluate_paper_exit.py --account-id=<ACCOUNT_ID> --manual-template 2>&1'
 ```
 
 | 종합 상태 | 의미 |
@@ -643,68 +827,95 @@ python3 scripts/evaluate_paper_exit.py --account-id=<ACCOUNT_ID> --manual-templa
 
 ### D-3. Sync Failure / Stale / Blocking Lock 추세 분석 [권장/주간]
 
-```bash
-python3 -c "
-import asyncio, asyncpg
+```python
+# python-dotenv + DSN 조합 방식 (A-6/A-8/B-1/C-1과 동일)
+from dotenv import load_dotenv
+import os, asyncio, asyncpg
 from datetime import datetime, timezone, timedelta
+
+load_dotenv()
+host = os.getenv('DATABASE_HOST', 'localhost')
+port = int(os.getenv('DATABASE_PORT', '5432'))
+user = os.getenv('DATABASE_USER', 'trading')
+password = os.getenv('DATABASE_PASSWORD', 'trading')
+database = os.getenv('DATABASE_NAME', 'trading')
+dsn = f'postgresql://{user}:{password}@{host}:{port}/{database}'
+
 async def check():
-    conn = await asyncpg.connect(dsn='$DATABASE_URL')
+    conn = await asyncpg.connect(dsn=dsn)
     week_ago = datetime.now(timezone.utc) - timedelta(days=7)
     
     # Sync 실패 추세
-    total = await conn.fetchval('SELECT COUNT(*) FROM snapshot_sync_runs WHERE last_synced_at > \$1', week_ago)
-    failed = await conn.fetchval(\"SELECT COUNT(*) FROM snapshot_sync_runs WHERE status='FAILED' AND last_synced_at > \$1\", week_ago)
-    print(f'주간 sync: 총 {total}회, 실패 {failed}회 ({failed/total*100:.1f}% 실패율)' if total else 'No sync data')
+    total = await conn.fetchval('SELECT COUNT(*) FROM snapshot_sync_runs WHERE started_at > $1', week_ago)
+    failed = await conn.fetchval("SELECT COUNT(*) FROM snapshot_sync_runs WHERE status='failed' AND started_at > $1", week_ago)
+    fail_rate = (failed / total * 100) if total else 0
+    print(f'주간 sync: 총 {total}회, 실패 {failed}회 ({fail_rate:.1f}% 실패율)' if total else 'No sync data')
     
-    # PENDING_SUBMIT stale 추세
+    # pending_submit stale 추세
     stale = await conn.fetchval('''
-        SELECT COUNT(*) FROM order_requests 
-        WHERE status='PENDING_SUBMIT' 
-        AND created_at < \$1
+        SELECT COUNT(*) FROM order_requests
+        WHERE status='pending_submit'
+        AND created_at < $1
     ''', week_ago)
-    print(f'주간 stale PENDING_SUBMIT 누적: {stale}건')
+    print(f'주간 stale pending_submit 누적: {stale}건')
     
     # Blocking locks
     locks = await conn.fetch('SELECT * FROM pg_locks WHERE NOT granted')
     print(f'Blocking locks: {len(locks)}건')
     
     await conn.close()
+
 asyncio.run(check())
-"
 ```
+
+| 지표 | 정상 | 주의 | 심각 |
+|------|------|------|------|
+| Sync 실패율 | < 10% (✅) | 10–30% (⚠️) | > 30% 또는 연속 3회 실패 (❌) |
+| Stale pending_submit | 0건 (✅) | 1–3건 (⚠️) | 5건 이상 급증 (❌) |
+| Blocking locks | 0건 (✅) | 1–2건 (⚠️) | 3건 이상 (❌) |
 
 ### D-4. AI Decision Quality 검토 [권장/주간]
 
-```bash
-python3 -c "
-import asyncio, asyncpg
+```python
+# python-dotenv + DSN 조합 방식 (A-6/A-8/B-1/C-1과 동일)
+from dotenv import load_dotenv
+import os, asyncio, asyncpg
 from datetime import datetime, timezone, timedelta
+
+load_dotenv()
+host = os.getenv('DATABASE_HOST', 'localhost')
+port = int(os.getenv('DATABASE_PORT', '5432'))
+user = os.getenv('DATABASE_USER', 'trading')
+password = os.getenv('DATABASE_PASSWORD', 'trading')
+database = os.getenv('DATABASE_NAME', 'trading')
+dsn = f'postgresql://{user}:{password}@{host}:{port}/{database}'
+
 async def check():
-    conn = await asyncpg.connect(dsn='$DATABASE_URL')
+    conn = await asyncpg.connect(dsn=dsn)
     week_ago = datetime.now(timezone.utc) - timedelta(days=7)
     
     rows = await conn.fetch('''
         SELECT decision_type, COUNT(*) as cnt
         FROM trade_decisions
-        WHERE created_at > \$1
+        WHERE created_at > $1
         GROUP BY decision_type
         ORDER BY cnt DESC
     ''', week_ago)
     print('== 주간 AI 결정 분포 ==')
     for r in rows:
-        print(f'  {r[\"decision_type\"]}: {r[\"cnt\"]}회')
+        print(f'  {r["decision_type"]}: {r["cnt"]}회')
     
     # APPROVE 비율
-    total = await conn.fetchval('SELECT COUNT(*) FROM trade_decisions WHERE created_at > \$1', week_ago)
+    total = await conn.fetchval('SELECT COUNT(*) FROM trade_decisions WHERE created_at > $1', week_ago)
     approve = await conn.fetchval('''
-        SELECT COUNT(*) FROM trade_decisions 
-        WHERE decision_type='APPROVE' AND created_at > \$1
+        SELECT COUNT(*) FROM trade_decisions
+        WHERE decision_type='APPROVE' AND created_at > $1
     ''', week_ago)
     print(f'APPROVE 비율: {approve}/{total} = {approve/total*100:.1f}%' if total else 'No data')
     
     await conn.close()
+
 asyncio.run(check())
-"
 ```
 
 | 지표 | 정상 범위 | 이상 징후 |
@@ -785,7 +996,7 @@ asyncio.run(check())
 
 | 구분 | 내용 |
 |---|---|
-| **증상** | `RECONCILE_REQUIRED` 건수가 평소 대비 2배 이상 증가 |
+| **증상** | `reconcile_required` 건수가 평소 대비 2배 이상 증가 |
 | **심각도** | 🟠 심각 — broker 연동 불안정 |
 | **즉시 조치** | `audit_log`에서 관련 오류 확인 → 필요시 수동 broker 조회 |
 | **임계값** | 5건 이상 또는 전일 대비 2배 이상 증가 시 대응 |
@@ -829,7 +1040,7 @@ CTO 시연 시 아래 지표를 준비하여 시스템의 안정성과 성과를
 | 📊 안정성 | Gate 상태 | [`GET /paper-gate`](plans/paper_go_no_go_gate.md:359) | `GO` |
 | 📊 안정성 | Exit Criteria 상태 | `evaluate_paper_exit.py` | `PASS` |
 | 📊 안정성 | Sync 실패율 (주간) | snapshot_sync_runs | < 10% |
-| 📊 안정성 | Stale PENDING_SUBMIT (잔여) | order_requests | 0건 |
+| 📊 안정성 | Stale pending_submit (잔여) | order_requests | 0건 |
 | 🔄 운영 | Submit 건수 (누적) | order_requests | > 5건 |
 | 🔄 운영 | AI 결정 APPROVE 비율 | trade_decisions | 5–30% |
 | 🔄 운영 | Reconcile_required (잔여) | order_requests | 0–3건 |
@@ -894,7 +1105,7 @@ YYYY-MM-DD ~ YYYY-MM-DD (총 N영업일)
 | Exit Criteria | PASS/HOLD/FAIL | ✅/⚠️/❌ |
 | Sync 실패율 | X% | ✅/⚠️/❌ |
 | Stale cleanup 횟수 | N회 | — |
-| Reconcile_required 최대 | N건 | ✅/⚠️/❌ |
+| reconcile_required 최대 | N건 | ✅/⚠️/❌ |
 
 ## 운영 통계
 | 항목 | 값 |
@@ -903,7 +1114,7 @@ YYYY-MM-DD ~ YYYY-MM-DD (총 N영업일)
 | Submit 실행 횟수 | N회 |
 | Submit 성공 (SUBMITTED) | N회 |
 | Submit 실패 (REJECTED) | N회 |
-| Reconcile_required 발생 | N회 |
+| reconcile_required 발생 | N회 |
 | Stale cleanup 실행 | N회 |
 | 예외 상황 발생 | N회 |
 
@@ -995,31 +1206,56 @@ set -a; source .env; set +a
 
 ### 데이터베이스 직접 조회 명령어
 
-```bash
+```python
+# python-dotenv + DSN 조합 방식 (A-6/A-8/B-1/C-1과 동일)
+from dotenv import load_dotenv
+import os, asyncio, asyncpg
+
+load_dotenv()
+host = os.getenv('DATABASE_HOST', 'localhost')
+port = int(os.getenv('DATABASE_PORT', '5432'))
+user = os.getenv('DATABASE_USER', 'trading')
+password = os.getenv('DATABASE_PASSWORD', 'trading')
+database = os.getenv('DATABASE_NAME', 'trading')
+dsn = f'postgresql://{user}:{password}@{host}:{port}/{database}'
+
 # order_requests 상태 분포
-python3 -c "
-import asyncio, asyncpg
-async def check():
-    conn = await asyncpg.connect(dsn='$DATABASE_URL')
+async def check_orders():
+    conn = await asyncpg.connect(dsn=dsn)
     rows = await conn.fetch('SELECT status, COUNT(*) as cnt FROM order_requests GROUP BY status ORDER BY cnt DESC')
     for r in rows:
-        print(f'{r[\"status\"]}: {r[\"cnt\"]}건')
+        print(f'{r["status"]}: {r["cnt"]}건')
     await conn.close()
-asyncio.run(check())
-"
+
+asyncio.run(check_orders())
 
 # order_state_events 최근 10건
-python3 -c "
-import asyncio, asyncpg
-async def check():
-    conn = await asyncpg.connect(dsn='$DATABASE_URL')
+async def check_events():
+    conn = await asyncpg.connect(dsn=dsn)
     rows = await conn.fetch('SELECT * FROM order_state_events ORDER BY created_at DESC LIMIT 10')
     for r in rows:
-        print(f'{r[\"created_at\"]} | from={r[\"from_status\"]} to={r[\"to_status\"]} | reason={r[\"reason_code\"]}')
+        print(f'{r["created_at"]} | from={r["from_status"]} to={r["to_status"]} | reason={r["reason_code"]}')
     await conn.close()
-asyncio.run(check())
-"
+
+asyncio.run(check_events())
 ```
+
+### 운영 스크립트 하드닝 백로그
+
+> **우선순위**: P4 — Nice to have, low effort (현재 운영 blocker 아님)
+>
+> **현재 운영**: [`/bin/bash` + env 로드 패턴](#9-참고-관련-스크립트-및-명령어)으로 문제없이 운영 중. 아래 하드닝은 없어도 운영 가능.
+
+| 항목 | 대상 | 현재 방식 | 하드닝 제안 | 예상 변경 | 작업량 |
+|------|------|-----------|------------|-----------|--------|
+| `.env` self-loading | [`run_snapshot_sync_loop.py`](scripts/run_snapshot_sync_loop.py), [`run_orchestrator_once.py`](scripts/run_orchestrator_once.py) | `os.getenv()` 의존 — `.env`가 shell scope에 있어야 함 | 두 스크립트 `main()` 첫 줄에 `load_dotenv()` 추가 | 각 +2줄 | 5분 |
+
+**판정 근거** ([분석原文](plans/paper_one_month_ops_checklist.md)):
+- 두 스크립트는 `AppSettings()` / `DatabaseConfig()`를 통해 `os.getenv()`로 모든 설정을 읽음 (1일 리허설 실증 완료)
+- `load_dotenv()` 없이도 [`bash -c 'set -a; source .env; set +a && python3 scripts/...'`](#9-참고-관련-스크립트-및-명령어) 패턴으로 정상 동작
+- `.env` 미로드 시 KIS API 키 / DB 접속 정보 / AI Provider 키 누락 → 인증 실패
+- `load_dotenv()`는 기존 env var를 덮어쓰지 않으므로 기존 패턴과 충돌 없음
+- **지금 당장은 blocker가 아님** — 문서에 고정된 운영 패턴이 유효
 
 ---
 
