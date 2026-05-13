@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import type {
   AccountSummary,
   ClientDetail,
@@ -98,6 +99,8 @@ export default function AccountsView() {
   const [positions, setPositions] = useState<PositionSnapshotView[]>([]);
   const [cashBalance, setCashBalance] = useState<CashBalanceSnapshotView | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [showSnapshotHistory, setShowSnapshotHistory] = useState(false);
+  const navigate = useNavigate();
 
   // Filter state
   const [searchText, setSearchText] = useState("");
@@ -151,6 +154,18 @@ export default function AccountsView() {
       .finally(() => setDetailLoading(false));
   }, [selectedAccount]);
 
+  // ── Snapshot dedup: instrument별 최신 snapshot 1건 ──────────────
+  const latestPositions = useMemo(() => {
+    const map = new Map<string, PositionSnapshotView>();
+    for (const pos of positions) {
+      const existing = map.get(pos.instrument_id);
+      if (!existing || pos.snapshot_at > existing.snapshot_at) {
+        map.set(pos.instrument_id, pos);
+      }
+    }
+    return Array.from(map.values());
+  }, [positions]);
+
   // ── Derived data ────────────────────────────────────────────────
   const filteredAccounts = useMemo(() => {
     return accounts.filter((a) => {
@@ -174,19 +189,19 @@ export default function AccountsView() {
     ? accounts.find((a) => a.account_id === safeSelectedAccount)
     : null;
 
-  // Summary cards derived values
+  // Summary cards derived values (always based on latest snapshot per instrument)
   const totalPnl = useMemo(() => {
-    return positions.reduce((sum, p) => sum + (p.unrealized_pnl ?? 0), 0);
-  }, [positions]);
+    return latestPositions.reduce((sum, p) => sum + (p.unrealized_pnl ?? 0), 0);
+  }, [latestPositions]);
 
   const totalValue = useMemo(() => {
-    const posValue = positions.reduce(
+    const posValue = latestPositions.reduce(
       (sum, p) => sum + p.quantity * p.market_price,
       0,
     );
     const cash = cashBalance?.settled_cash ?? 0;
     return posValue + cash;
-  }, [positions, cashBalance]);
+  }, [latestPositions, cashBalance]);
 
   // ── Column definitions ──────────────────────────────────────────
   const accountColumns: Column<AccountSummary>[] = [
@@ -288,7 +303,22 @@ export default function AccountsView() {
         );
       },
     },
-    { key: "snapshot_at", header: "스냅샷" },
+    { key: "snapshot_at", header: "스냅샷 시각" },
+    {
+      key: "actions",
+      header: "",
+      render: (r) => (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            navigate(`/orders?symbol=${encodeURIComponent(r.symbol ?? "")}`);
+          }}
+          className="text-xs text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors whitespace-nowrap"
+        >
+          관련 주문 보기 →
+        </button>
+      ),
+    },
   ];
 
   // ── Render ──────────────────────────────────────────────────────
@@ -597,15 +627,27 @@ export default function AccountsView() {
                       <h4 className="text-sm font-medium text-[#0f172a]">
                         브로커 스냅샷 — 포지션
                       </h4>
-                      {positions.length > 0 && (
-                        <span className="text-xs text-[#94a3b8]">
-                          스냅샷: {formatSnapshotTime(positions[0].snapshot_at)}
-                        </span>
-                      )}
+                      <div className="flex items-center gap-3">
+                        {positions.length > latestPositions.length && (
+                          <button
+                            onClick={() => setShowSnapshotHistory((v) => !v)}
+                            className="text-xs text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors"
+                          >
+                            {showSnapshotHistory
+                              ? "최신 포지션만 보기"
+                              : `스냅샷 이력 보기 (${positions.length}건)`}
+                          </button>
+                        )}
+                        {positions.length > 0 && (
+                          <span className="text-xs text-[#94a3b8]">
+                            스냅샷: {formatSnapshotTime(positions[0].snapshot_at)}
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <DataTable
                       columns={positionColumns}
-                      data={positions}
+                      data={showSnapshotHistory ? positions : latestPositions}
                       idKey="position_snapshot_id"
                       emptyMessage="이 계좌의 포지션이 없습니다."
                       compact

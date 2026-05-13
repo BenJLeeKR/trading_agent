@@ -284,6 +284,8 @@ export const mockPositions: PositionSnapshotView[] = [
     unrealized_pnl: 550.0,
     source_of_truth: "broker",
     snapshot_at: "2026-05-05T00:00:00Z",
+    symbol: "AAPL",
+    instrument_name: "Apple Inc.",
   },
   {
     position_snapshot_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00p2",
@@ -295,6 +297,8 @@ export const mockPositions: PositionSnapshotView[] = [
     unrealized_pnl: 250.0,
     source_of_truth: "broker",
     snapshot_at: "2026-05-05T00:00:00Z",
+    symbol: "MSFT",
+    instrument_name: "Microsoft Corporation",
   },
 ];
 
@@ -309,6 +313,8 @@ export const mockPositionsForLocked: PositionSnapshotView[] = [
     unrealized_pnl: 100.0,
     source_of_truth: "broker",
     snapshot_at: "2026-05-05T00:00:00Z",
+    symbol: "AAPL",
+    instrument_name: "Apple Inc.",
   },
 ];
 

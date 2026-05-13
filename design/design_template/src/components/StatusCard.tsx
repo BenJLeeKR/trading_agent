@@ -23,17 +23,17 @@ export function StatusCard({ title, value, status, subtitle }: StatusCardProps) 
   }
 
   return (
-    <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-sm font-medium text-[#64748b]">{title}</span>
-        <div className={cn("flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium", statusColors[status])}>
-          <span className={cn("w-1.5 h-1.5 rounded-full", dotColors[status])} />
-          {status === "healthy" ? "Healthy" : status === "warning" ? "Warning" : status === "error" ? "Error" : "Info"}
+    <div className="bg-white rounded-lg border border-[#e2e8f0] p-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-medium text-[#64748b]">{title}</span>
+        <div className={cn("flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium", statusColors[status])}>
+          <span className={cn("w-1 h-1 rounded-full", dotColors[status])} />
+          {status === "healthy" ? "정상" : status === "warning" ? "주의" : status === "error" ? "오류" : "정보"}
         </div>
       </div>
-      <p className="text-2xl font-semibold text-[#0f172a]">{value}</p>
+      <p className="text-lg font-semibold text-[#0f172a]">{value}</p>
       {subtitle && (
-        <p className="text-xs text-[#94a3b8] mt-1">{subtitle}</p>
+        <p className="text-[10px] text-[#94a3b8] mt-0.5">{subtitle}</p>
       )}
     </div>
   )

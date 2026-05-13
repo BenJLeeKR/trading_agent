@@ -10,6 +10,8 @@ import {
   Server,
   ShieldCheck,
   LogOut,
+  Activity,
+  AlertCircle,
 } from "lucide-react"
 
 interface NavItem {
@@ -26,28 +28,35 @@ interface NavSection {
 
 const navSections: NavSection[] = [
   {
-    title: "ACTIVE",
+    title: "운영 모니터링",
     items: [
-      { icon: LayoutDashboard, label: "Overview", active: true },
-      { icon: FileText, label: "Orders" },
-      { icon: RefreshCcw, label: "Reconciliation" },
-      { icon: Wallet, label: "Accounts" },
-      { icon: Brain, label: "Decisions" },
-      { icon: Zap, label: "Agent Runs" },
+      { icon: LayoutDashboard, label: "운영 대시보드", active: true },
+      { icon: AlertCircle, label: "운영 경고" },
+      { icon: Activity, label: "주문 추적" },
     ],
   },
   {
-    title: "RESERVED",
+    title: "기본 운영",
     items: [
-      { icon: Building2, label: "Broker", disabled: true },
-      { icon: Server, label: "System", disabled: true },
-      { icon: ShieldCheck, label: "Admin", disabled: true },
+      { icon: FileText, label: "주문" },
+      { icon: RefreshCcw, label: "정합성 점검" },
+      { icon: Wallet, label: "계좌" },
+      { icon: Brain, label: "판단" },
+      { icon: Zap, label: "에이전트 실행" },
+    ],
+  },
+  {
+    title: "예약됨",
+    items: [
+      { icon: Building2, label: "브로커", disabled: true },
+      { icon: Server, label: "시스템", disabled: true },
+      { icon: ShieldCheck, label: "관리", disabled: true },
     ],
   },
 ]
 
 const bottomItems: NavItem[] = [
-  { icon: LogOut, label: "Log Out" },
+  { icon: LogOut, label: "로그아웃" },
 ]
 
 interface SidebarProps {

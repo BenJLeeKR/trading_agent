@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import type { OrderSummary } from "../types/api";
 import { getOrders } from "../api/client";
 import { DataTable } from "./common/DataTable";
@@ -20,6 +20,17 @@ export default function OrdersView() {
   const [sideFilter, setSideFilter] = useState("");
   const [selectedOrder, setSelectedOrder] = useState<OrderSummary | null>(null);
   const navigate = useNavigate();
+
+  const location = useLocation();
+
+  // ── Read initial symbol from URL query params ───────────────────
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const symbolParam = params.get("symbol");
+    if (symbolParam) {
+      setSearchText(symbolParam);
+    }
+  }, []);
 
   useEffect(() => {
     setLoading(true);

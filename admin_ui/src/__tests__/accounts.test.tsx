@@ -1,9 +1,16 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act, cleanup } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, afterEach, vi, beforeEach } from "vitest";
 import AccountsView from "../components/AccountsView";
 import { setStoredToken, clearStoredToken } from "../api/client";
 import { VALID_TOKEN } from "./test-utils/fixtures";
 import type { AccountSummary } from "../types/api";
+import type { ReactNode } from "react";
+
+/** Wraps component in MemoryRouter so useNavigate() works. */
+function RouterWrapper({ children }: { children: ReactNode }) {
+  return <MemoryRouter>{children}</MemoryRouter>;
+}
 
 /* ───────────────────────────────────────────
  * Mock data
@@ -64,13 +71,15 @@ const mockPositions = [
     unrealized_pnl: 500.0,
     source_of_truth: "broker",
     snapshot_at: "2024-01-01T12:00:00Z",
+    symbol: "AAPL",
+    instrument_name: "Apple Inc.",
   },
 ];
 
 const mockCashBalance = {
   cash_balance_snapshot_id: "cb-88888888-8888-8888-8888-888888888888",
   account_id: "ac-22222222-2222-2222-2222-222222222222",
-  currency: "KRW",
+  currency: "USD",
   available_cash: 500000,
   settled_cash: 1000000,
   unsettled_cash: 0,
@@ -85,6 +94,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   clearStoredToken();
+  cleanup();
 });
 
 /* ───────────────────────────────────────────
@@ -96,7 +106,7 @@ describe("AccountsView data fetching", () => {
     vi.spyOn(await import("../api/client"), "getClients").mockReturnValue(
       new Promise<never>(() => {}),
     );
-    render(<AccountsView />);
+    render(<AccountsView />, { wrapper: RouterWrapper });
     expect(screen.getByText("로딩 중...")).toBeInTheDocument();
   });
 
@@ -104,7 +114,7 @@ describe("AccountsView data fetching", () => {
     vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
     vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
 
-    render(<AccountsView />);
+    render(<AccountsView />, { wrapper: RouterWrapper });
 
     // Wait for loading to finish
     await waitFor(() => {
@@ -127,7 +137,7 @@ describe("AccountsView data fetching", () => {
   it("shows empty state when no clients exist", async () => {
     vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue([]);
 
-    render(<AccountsView />);
+    render(<AccountsView />, { wrapper: RouterWrapper });
 
     await waitFor(() => {
       expect(screen.getByText("클라이언트가 없습니다. 표시할 계좌가 없습니다.")).toBeInTheDocument();
@@ -139,7 +149,7 @@ describe("AccountsView data fetching", () => {
       new Error("API failure"),
     );
 
-    render(<AccountsView />);
+    render(<AccountsView />, { wrapper: RouterWrapper });
 
     await waitFor(() => {
       expect(screen.getByText("API failure")).toBeInTheDocument();
@@ -157,7 +167,7 @@ describe("AccountsView detail panel", () => {
     vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(mockPositions);
     vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
 
-    render(<AccountsView />);
+    render(<AccountsView />, { wrapper: RouterWrapper });
 
     // Wait for accounts to load, then click the first row
     await waitFor(() => {
@@ -208,7 +218,7 @@ describe("AccountsView detail panel", () => {
     vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(mockPositions);
     vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(null);
 
-    render(<AccountsView />);
+    render(<AccountsView />, { wrapper: RouterWrapper });
 
     await waitFor(() => {
       expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
@@ -241,7 +251,7 @@ describe("AccountsView detail panel", () => {
     vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue([]);
     vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(null);
 
-    render(<AccountsView />);
+    render(<AccountsView />, { wrapper: RouterWrapper });
 
     await waitFor(() => {
       expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
@@ -252,5 +262,239 @@ describe("AccountsView detail panel", () => {
     await waitFor(() => {
       expect(screen.getByText("계좌 잠금")).toBeInTheDocument();
     });
+  });
+});
+
+/* ───────────────────────────────────────────
+ * AccountsView — snapshot dedup and history toggle
+ * ─────────────────────────────────────────── */
+describe("AccountsView snapshot dedup", () => {
+  const multiSnapshotPositions = [
+    {
+      position_snapshot_id: "ps-1111-aaaa",
+      account_id: "ac-22222222-2222-2222-2222-222222222222",
+      instrument_id: "in-77777777-7777-7777-7777-777777777777",
+      quantity: 100,
+      average_price: 150.0,
+      market_price: 155.0,
+      unrealized_pnl: 500.0,
+      source_of_truth: "broker",
+      snapshot_at: "2024-01-01T10:00:00Z",
+      symbol: "AAPL",
+      instrument_name: "Apple Inc.",
+    },
+    {
+      position_snapshot_id: "ps-1111-bbbb",
+      account_id: "ac-22222222-2222-2222-2222-222222222222",
+      instrument_id: "in-77777777-7777-7777-7777-777777777777",
+      quantity: 100,
+      average_price: 150.0,
+      market_price: 160.0,
+      unrealized_pnl: 1000.0,
+      source_of_truth: "broker",
+      snapshot_at: "2024-01-01T12:00:00Z",
+      symbol: "AAPL",
+      instrument_name: "Apple Inc.",
+    },
+    {
+      position_snapshot_id: "ps-2222-aaaa",
+      account_id: "ac-22222222-2222-2222-2222-222222222222",
+      instrument_id: "in-88888888-8888-8888-8888-888888888888",
+      quantity: 50,
+      average_price: 250.0,
+      market_price: 245.0,
+      unrealized_pnl: -250.0,
+      source_of_truth: "broker",
+      snapshot_at: "2024-01-01T10:00:00Z",
+      symbol: "MSFT",
+      instrument_name: "Microsoft Corporation",
+    },
+  ];
+
+  it("shows only latest snapshot per instrument by default", async () => {
+    vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
+    vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
+    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(multiSnapshotPositions);
+    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
+
+    render(<AccountsView />, { wrapper: RouterWrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+    });
+
+    screen.getByText("CLIENT1-PAPER-PAPER").click();
+
+    // Wait for positions to load
+    await waitFor(() => {
+      expect(screen.getByText("브로커 스냅샷 — 포지션")).toBeInTheDocument();
+    });
+
+    // Default: only latest snapshot per instrument (2 rows: AAPL latest + MSFT)
+    // AAPL latest has snapshot_at 12:00, MSFT has 10:00
+    // Both should be visible as rows
+    expect(screen.getByText("AAPL")).toBeInTheDocument();
+    expect(screen.getByText("MSFT")).toBeInTheDocument();
+
+    // The older AAPL snapshot (10:00) should NOT be visible by default
+    // Since both snapshots have same quantity/price, we verify by checking
+    // that only 2 position rows are rendered (not 3)
+    // DataTable renders rows inside tbody; we check AAPL appears once
+    const aaplElements = screen.getAllByText("AAPL");
+    expect(aaplElements.length).toBe(1);
+  });
+
+  it("shows toggle button when snapshot history exists", async () => {
+    vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
+    vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
+    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(multiSnapshotPositions);
+    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
+
+    render(<AccountsView />, { wrapper: RouterWrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+    });
+
+    screen.getByText("CLIENT1-PAPER-PAPER").click();
+
+    await waitFor(() => {
+      expect(screen.getByText("스냅샷 이력 보기 (3건)")).toBeInTheDocument();
+    });
+  });
+
+  it("toggle shows all snapshots when activated", async () => {
+    vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
+    vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
+    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(multiSnapshotPositions);
+    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
+
+    render(<AccountsView />, { wrapper: RouterWrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+    });
+
+    screen.getByText("CLIENT1-PAPER-PAPER").click();
+
+    await waitFor(() => {
+      expect(screen.getByText("스냅샷 이력 보기 (3건)")).toBeInTheDocument();
+    });
+
+    // Click toggle to show all snapshots
+    screen.getByText("스냅샷 이력 보기 (3건)").click();
+
+    // Now all 3 snapshots should be visible
+    // AAPL appears twice (10:00 + 12:00), MSFT once
+    await waitFor(() => {
+      const aaplElements = screen.getAllByText("AAPL");
+      expect(aaplElements.length).toBe(2);
+    });
+
+    // Toggle text should change to "최신 포지션만 보기"
+    expect(screen.getByText("최신 포지션만 보기")).toBeInTheDocument();
+  });
+
+  it("hides toggle when no snapshot history exists", async () => {
+    // Single snapshot per instrument — no history to show
+    vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
+    vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
+    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(mockPositions);
+    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
+
+    render(<AccountsView />, { wrapper: RouterWrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+    });
+
+    screen.getByText("CLIENT1-PAPER-PAPER").click();
+
+    await waitFor(() => {
+      expect(screen.getByText("브로커 스냅샷 — 포지션")).toBeInTheDocument();
+    });
+
+    // Toggle should NOT be present
+    expect(screen.queryByText(/스냅샷 이력 보기/)).not.toBeInTheDocument();
+    expect(screen.queryByText("최신 포지션만 보기")).not.toBeInTheDocument();
+  });
+
+  it("shows 관련 주문 보기 button for each position row", async () => {
+    vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
+    vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
+    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(mockPositions);
+    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
+
+    render(<AccountsView />, { wrapper: RouterWrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+    });
+
+    screen.getByText("CLIENT1-PAPER-PAPER").click();
+
+    await waitFor(() => {
+      expect(screen.getByText("브로커 스냅샷 — 포지션")).toBeInTheDocument();
+    });
+
+    // "관련 주문 보기 →" button should be visible
+    expect(screen.getByText(/관련 주문 보기/)).toBeInTheDocument();
+  });
+
+  it("summary cards use dedup data not raw positions", async () => {
+    vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
+    vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
+    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(multiSnapshotPositions);
+    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
+
+    render(<AccountsView />, { wrapper: RouterWrapper });
+
+    // Wait for account list to render, then select first account
+    await screen.findByText("CLIENT1-PAPER-PAPER", {}, { timeout: 3000 });
+
+    // Click the table row containing the account text
+    const accountRow = screen.getByText("CLIENT1-PAPER-PAPER").closest("tr");
+    expect(accountRow).not.toBeNull();
+    await act(async () => {
+      fireEvent.click(accountRow!);
+    });
+
+    // Wait for positions table to render (confirms detail panel is open)
+    expect(await screen.findByText("AAPL", {}, { timeout: 3000 })).toBeInTheDocument();
+
+    // multiSnapshotPositions has 3 snapshots:
+    //   AAPL (10:00): unrealized_pnl=500,  qty=100, market_price=155
+    //   AAPL (12:00): unrealized_pnl=1000, qty=100, market_price=160  ← latest
+    //   MSFT (10:00): unrealized_pnl=-250, qty=50,  market_price=245  ← latest
+    //
+    // BUG (raw positions sum):
+    //   totalPnl = 500 + 1000 + (-250) = 1250
+    //   totalValue = (100*155 + 100*160 + 50*245) + cash
+    //
+    // FIXED (latestPositions dedup):
+    //   totalPnl = 1000 + (-250) = 750
+    //   totalValue = (100*160 + 50*245) + cash
+    //
+    // mockCashBalance.settled_cash = 1000000
+    // Expected totalValue = 100*160 + 50*245 + 1000000 = 16000 + 12250 + 1000000 = 1028250
+
+    // Verify totalPnl shows dedup value (750), not raw sum (1250)
+    // formatCurrency(750, cashBalance?.currency="USD") → "750 USD"
+    // Note: rendered with "+" prefix when totalPnl >= 0, so use exact: false
+    expect(await screen.findByText("750 USD", { exact: false }, { timeout: 3000 })).toBeInTheDocument();
+
+    // Verify totalValue shows dedup-based value
+    expect(await screen.findByText("1,028,250 USD", { exact: false }, { timeout: 3000 })).toBeInTheDocument();
+
+    // Toggle to history view — summary cards should STAY on latest data
+    screen.getByText("스냅샷 이력 보기 (3건)").click();
+
+    await waitFor(() => {
+      expect(screen.getByText("최신 포지션만 보기")).toBeInTheDocument();
+    });
+
+    // Summary values unchanged even in history mode
+    expect(screen.getByText("750 USD", { exact: false })).toBeInTheDocument();
+    expect(screen.getByText("1,028,250 USD", { exact: false })).toBeInTheDocument();
   });
 });

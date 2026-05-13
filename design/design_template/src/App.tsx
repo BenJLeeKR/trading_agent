@@ -7,28 +7,35 @@ import { Reconciliation } from "@/pages/Reconciliation"
 import { Accounts } from "@/pages/Accounts"
 import { Decisions } from "@/pages/Decisions"
 import { AgentRuns } from "@/pages/AgentRuns"
+import { OperationsDashboard } from "@/pages/OperationsDashboard"
+import { OperationsAlerts } from "@/pages/OperationsAlerts"
+import { OrderTracking } from "@/pages/OrderTracking"
 
-type PageType = "Overview" | "Orders" | "Reconciliation" | "Accounts" | "Decisions" | "Agent Runs"
+type PageType = "운영 대시보드" | "운영 경고" | "주문 추적" | "주문" | "정합성 점검" | "계좌" | "판단" | "에이전트 실행"
 
 function App() {
-  const [currentPage, setCurrentPage] = useState<PageType>("Overview")
+  const [currentPage, setCurrentPage] = useState<PageType>("운영 대시보드")
 
   const renderPage = () => {
     switch (currentPage) {
-      case "Overview":
-        return <Overview onNavigate={(page) => setCurrentPage(page as PageType)} />
-      case "Orders":
+      case "운영 대시보드":
+        return <OperationsDashboard />
+      case "운영 경고":
+        return <OperationsAlerts />
+      case "주문 추적":
+        return <OrderTracking />
+      case "주문":
         return <Orders />
-      case "Reconciliation":
+      case "정합성 점검":
         return <Reconciliation />
-      case "Accounts":
+      case "계좌":
         return <Accounts />
-      case "Decisions":
+      case "판단":
         return <Decisions />
-      case "Agent Runs":
+      case "에이전트 실행":
         return <AgentRuns />
       default:
-        return <Overview onNavigate={(page) => setCurrentPage(page as PageType)} />
+        return <OperationsDashboard />
     }
   }
 
