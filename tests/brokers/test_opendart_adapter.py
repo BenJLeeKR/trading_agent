@@ -305,3 +305,181 @@ class TestOpenDartSourceAdapter:
         assert events[1].published_at == datetime(2023, 1, 2, tzinfo=timezone.utc)
 
         await adapter.close()
+
+
+# ---------------------------------------------------------------------------
+# Importance classification tests
+# ---------------------------------------------------------------------------
+
+
+class TestOpenDartImportanceClassification:
+    """_classify_importance() unit tests — H/M/L signal detection."""
+
+    @pytest.mark.asyncio
+    async def test_high_signal_capital_increase(self) -> None:
+        """유상증자결정 → high."""
+        adapter = OpenDartSourceAdapter(api_key="test_key")
+        now = datetime.now(timezone.utc)
+        raw = RawEvent(
+            source_name="opendart",
+            source_event_id="h001",
+            event_type="Y|유상증자결정",
+            published_at=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            ingested_at=now,
+            source_reliability_tier=SourceReliabilityTier.T1_REGULATORY.value,
+            raw_payload={"report_nm": "유상증자결정", "rm": "기타공시"},
+            issuer_code="00123456",
+            headline="유상증자결정",
+        )
+        entity = await adapter.normalize(raw)
+        assert entity.metadata is not None
+        assert entity.metadata.get("importance") == "high"
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_high_signal_sales_contract(self) -> None:
+        """단일판매계약 → high."""
+        adapter = OpenDartSourceAdapter(api_key="test_key")
+        now = datetime.now(timezone.utc)
+        raw = RawEvent(
+            source_name="opendart",
+            source_event_id="h002",
+            event_type="Y|단일판매·공급계약체결",
+            published_at=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            ingested_at=now,
+            source_reliability_tier=SourceReliabilityTier.T1_REGULATORY.value,
+            raw_payload={"report_nm": "단일판매·공급계약체결", "rm": "기타공시"},
+            issuer_code="00123456",
+            headline="단일판매·공급계약체결",
+        )
+        entity = await adapter.normalize(raw)
+        assert entity.metadata is not None
+        assert entity.metadata.get("importance") == "high"
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_high_signal_earnings(self) -> None:
+        """영업(잠정)실적 → high."""
+        adapter = OpenDartSourceAdapter(api_key="test_key")
+        now = datetime.now(timezone.utc)
+        raw = RawEvent(
+            source_name="opendart",
+            source_event_id="h003",
+            event_type="Y|영업(잠정)실적",
+            published_at=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            ingested_at=now,
+            source_reliability_tier=SourceReliabilityTier.T1_REGULATORY.value,
+            raw_payload={"report_nm": "영업(잠정)실적", "rm": "기타공시"},
+            issuer_code="00123456",
+            headline="영업(잠정)실적",
+        )
+        entity = await adapter.normalize(raw)
+        assert entity.metadata is not None
+        assert entity.metadata.get("importance") == "high"
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_medium_signal_credit_rating(self) -> None:
+        """신용등급변동 → medium."""
+        adapter = OpenDartSourceAdapter(api_key="test_key")
+        now = datetime.now(timezone.utc)
+        raw = RawEvent(
+            source_name="opendart",
+            source_event_id="m001",
+            event_type="Y|신용등급변동",
+            published_at=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            ingested_at=now,
+            source_reliability_tier=SourceReliabilityTier.T1_REGULATORY.value,
+            raw_payload={"report_nm": "신용등급변동", "rm": "기타공시"},
+            issuer_code="00123456",
+            headline="신용등급변동",
+        )
+        entity = await adapter.normalize(raw)
+        assert entity.metadata is not None
+        assert entity.metadata.get("importance") == "medium"
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_low_signal_regular_report(self) -> None:
+        """정기공시(사업보고서) → low."""
+        adapter = OpenDartSourceAdapter(api_key="test_key")
+        now = datetime.now(timezone.utc)
+        raw = RawEvent(
+            source_name="opendart",
+            source_event_id="l001",
+            event_type="Y|사업보고서",
+            published_at=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            ingested_at=now,
+            source_reliability_tier=SourceReliabilityTier.T1_REGULATORY.value,
+            raw_payload={"report_nm": "사업보고서", "rm": "정기공시"},
+            issuer_code="00123456",
+            headline="사업보고서",
+        )
+        entity = await adapter.normalize(raw)
+        assert entity.metadata is not None
+        assert entity.metadata.get("importance") == "low"
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_low_signal_correction(self) -> None:
+        """정정공시 (non-matching) → low."""
+        adapter = OpenDartSourceAdapter(api_key="test_key")
+        now = datetime.now(timezone.utc)
+        raw = RawEvent(
+            source_name="opendart",
+            source_event_id="l002",
+            event_type="Y|정정공시",
+            published_at=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            ingested_at=now,
+            source_reliability_tier=SourceReliabilityTier.T1_REGULATORY.value,
+            raw_payload={"report_nm": "정정공시", "rm": "기타공시"},
+            issuer_code="00123456",
+            headline="정정공시",
+        )
+        entity = await adapter.normalize(raw)
+        assert entity.metadata is not None
+        assert entity.metadata.get("importance") == "low"
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_low_signal_empty_report_nm(self) -> None:
+        """빈 report_nm → low."""
+        adapter = OpenDartSourceAdapter(api_key="test_key")
+        now = datetime.now(timezone.utc)
+        raw = RawEvent(
+            source_name="opendart",
+            source_event_id="l003",
+            event_type="Y|",
+            published_at=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            ingested_at=now,
+            source_reliability_tier=SourceReliabilityTier.T1_REGULATORY.value,
+            raw_payload={"report_nm": "", "rm": "기타공시"},
+            issuer_code="00123456",
+            headline="",
+        )
+        entity = await adapter.normalize(raw)
+        assert entity.metadata is not None
+        assert entity.metadata.get("importance") == "low"
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_normalize_preserves_source_raw_event_type(self) -> None:
+        """normalize() preserves source_raw_event_type alongside importance."""
+        adapter = OpenDartSourceAdapter(api_key="test_key")
+        now = datetime.now(timezone.utc)
+        raw = RawEvent(
+            source_name="opendart",
+            source_event_id="h004",
+            event_type="Y|유상증자결정",
+            published_at=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            ingested_at=now,
+            source_reliability_tier=SourceReliabilityTier.T1_REGULATORY.value,
+            raw_payload={"report_nm": "유상증자결정", "rm": "기타공시"},
+            issuer_code="00123456",
+            headline="유상증자결정",
+        )
+        entity = await adapter.normalize(raw)
+        assert entity.metadata is not None
+        assert entity.metadata.get("source_raw_event_type") == "Y|유상증자결정"
+        assert entity.metadata.get("importance") == "high"
+        await adapter.close()

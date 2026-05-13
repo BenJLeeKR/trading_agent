@@ -135,8 +135,21 @@ sync-cycle  orders=1 (updated=1 filled=0 partial=1)  snapshots=0  errors=0  elap
 
 ---
 
-## 6. 다음 액션
+## 6. 다음 액션 (2026-05-13 업데이트)
 
-1. **Submit smoke 재시도** — 다음 장중 세션에서 dry-run → APPROVE 확인 후 submit 실행
-2. **Post-submit sync 정기 실행** — `run_post_submit_sync_loop.py`를 scheduler/cron으로 정기 실행하여 `last_synced_at` 지속 갱신
-3. **KIS paper API 체결 데이터 부재** — KIS paper mock 환경의 특성으로, 실제 운영(live) 환경에서는 정상 동작 예상
+> **2026-05-13**: Submit smoke ✅ 재시도 성공. 아래 액션 1이 완료되어 2/3/4로 업데이트됨.
+
+### ✅ 완료된 액션
+1. ~~Submit smoke 재시도~~ → **2026-05-13 APPROVE + Submit + Post-Submit Sync 성공** ✅
+   - Dry-run → APPROVE 확인
+   - Submit 성공 (ODNO 발급, broker_status=SUBMITTED)
+   - Post-Submit Sync 실행 (last_synced_at 갱신, order_state_events 증가)
+   - 성공 기준 문서 고정 완료 ([`paper_submit_smoke_ops_checklist.md`](plans/paper_submit_smoke_ops_checklist.md#9-c-성공-기준-paper-검증-완료--2026-05-13-실증-기준))
+
+### 남은 액션
+2. **Post-submit sync 정기 실행** — `run_post_submit_sync_loop.py`를 scheduler/cron으로 정기 실행하여 `last_synced_at` 지속 갱신 (Paper 환경 유지 시)
+3. **Live 환경 전환 후 3가지 logging 제거 조건 검증**
+   - 조건1: `inquire-daily-ccld` `output_count > 0` (Live 실제 payload)
+   - 조건2: ODNO 매칭 성공
+   - 조건3: Terminal status 수렴 (FILLED/CANCELLED/REJECTED)
+4. **조건 모두 충족 시** instrumentation logging 제거

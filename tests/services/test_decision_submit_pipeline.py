@@ -1032,3 +1032,188 @@ class TestP1AandP1BIntegration:
         assert "event_19" in prompt
         # event_20 ~ event_24는 없어야 함
         assert "event_20" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# Importance sort tests
+# ---------------------------------------------------------------------------
+
+
+class TestImportanceSort:
+    """recent_events importance sort order in assemble()."""
+
+    @pytest.mark.asyncio
+    async def test_importance_sort_order(self) -> None:
+        """Events are sorted H > M > L by importance."""
+        repos = build_in_memory_repositories()
+        svc = DecisionOrchestratorService(repos=repos)
+        now = datetime.now(timezone.utc)
+
+        # Create events with different importance levels
+        low_event = ExternalEventEntity(
+            event_id=uuid4(),
+            source_event_id="l001",
+            source_name="opendart",
+            event_type="Y|사업보고서",
+            issuer_code="00123456",
+            symbol="005930",
+            published_at=now - timedelta(hours=1),
+            ingested_at=now,
+            headline="사업보고서",
+            source_reliability_tier="T1_REGULATORY",
+            dedup_key_hash="l001",
+            metadata={"importance": "low"},
+        )
+        medium_event = ExternalEventEntity(
+            event_id=uuid4(),
+            source_event_id="m001",
+            source_name="opendart",
+            event_type="Y|신용등급변동",
+            issuer_code="00123456",
+            symbol="005930",
+            published_at=now - timedelta(hours=2),
+            ingested_at=now,
+            headline="신용등급변동",
+            source_reliability_tier="T1_REGULATORY",
+            dedup_key_hash="m001",
+            metadata={"importance": "medium"},
+        )
+        high_event = ExternalEventEntity(
+            event_id=uuid4(),
+            source_event_id="h001",
+            source_name="opendart",
+            event_type="Y|유상증자결정",
+            issuer_code="00123456",
+            symbol="005930",
+            published_at=now - timedelta(hours=3),
+            ingested_at=now,
+            headline="유상증자결정",
+            source_reliability_tier="T1_REGULATORY",
+            dedup_key_hash="h001",
+            metadata={"importance": "high"},
+        )
+
+        # Insert in reverse order (L, M, H)
+        for ev in (low_event, medium_event, high_event):
+            await repos.external_events.add(ev)
+
+        request = _make_request()
+        intent = await svc.assemble(request)
+
+        recent = intent.context.recent_events
+        assert len(recent) == 3
+        # Expected order: H, M, L
+        assert recent[0].source_event_id == "h001", (
+            f"Expected high first, got {recent[0].source_event_id}"
+        )
+        assert recent[1].source_event_id == "m001", (
+            f"Expected medium second, got {recent[1].source_event_id}"
+        )
+        assert recent[2].source_event_id == "l001", (
+            f"Expected low last, got {recent[2].source_event_id}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_same_importance_recency_sort(self) -> None:
+        """Events with same importance are sorted by published_at DESC."""
+        repos = build_in_memory_repositories()
+        svc = DecisionOrchestratorService(repos=repos)
+        now = datetime.now(timezone.utc)
+
+        old_event = ExternalEventEntity(
+            event_id=uuid4(),
+            source_event_id="old",
+            source_name="opendart",
+            event_type="Y|유상증자결정",
+            issuer_code="00123456",
+            symbol="005930",
+            published_at=now - timedelta(hours=5),
+            ingested_at=now,
+            headline="old",
+            source_reliability_tier="T1_REGULATORY",
+            dedup_key_hash="old",
+            metadata={"importance": "high"},
+        )
+        new_event = ExternalEventEntity(
+            event_id=uuid4(),
+            source_event_id="new",
+            source_name="opendart",
+            event_type="Y|유상증자결정",
+            issuer_code="00123456",
+            symbol="005930",
+            published_at=now - timedelta(hours=1),
+            ingested_at=now,
+            headline="new",
+            source_reliability_tier="T1_REGULATORY",
+            dedup_key_hash="new",
+            metadata={"importance": "high"},
+        )
+
+        # Insert old first, then new
+        await repos.external_events.add(old_event)
+        await repos.external_events.add(new_event)
+
+        request = _make_request()
+        intent = await svc.assemble(request)
+
+        recent = intent.context.recent_events
+        assert len(recent) == 2
+        # Newer event should come first (DESC)
+        assert recent[0].source_event_id == "new", (
+            f"Expected newer first, got {recent[0].source_event_id}"
+        )
+        assert recent[1].source_event_id == "old", (
+            f"Expected older last, got {recent[1].source_event_id}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_missing_metadata_fallback_to_low(self) -> None:
+        """Events without metadata.importance are treated as low."""
+        repos = build_in_memory_repositories()
+        svc = DecisionOrchestratorService(repos=repos)
+        now = datetime.now(timezone.utc)
+
+        high_event = ExternalEventEntity(
+            event_id=uuid4(),
+            source_event_id="h001",
+            source_name="opendart",
+            event_type="Y|유상증자결정",
+            issuer_code="00123456",
+            symbol="005930",
+            published_at=now - timedelta(hours=3),
+            ingested_at=now,
+            headline="유상증자결정",
+            source_reliability_tier="T1_REGULATORY",
+            dedup_key_hash="h001",
+            metadata={"importance": "high"},
+        )
+        no_meta_event = ExternalEventEntity(
+            event_id=uuid4(),
+            source_event_id="no-meta",
+            source_name="opendart",
+            event_type="Y|사업보고서",
+            issuer_code="00123456",
+            symbol="005930",
+            published_at=now - timedelta(hours=1),
+            ingested_at=now,
+            headline="사업보고서",
+            source_reliability_tier="T1_REGULATORY",
+            dedup_key_hash="no-meta",
+            metadata=None,  # no metadata at all
+        )
+
+        await repos.external_events.add(no_meta_event)
+        await repos.external_events.add(high_event)
+
+        request = _make_request()
+        intent = await svc.assemble(request)
+
+        recent = intent.context.recent_events
+        assert len(recent) == 2
+        # High should come first even though no-meta is newer
+        assert recent[0].source_event_id == "h001", (
+            f"Expected high first, got {recent[0].source_event_id}"
+        )
+        assert recent[1].source_event_id == "no-meta", (
+            f"Expected no-meta last, got {recent[1].source_event_id}"
+        )

@@ -250,8 +250,57 @@ replay 시점에는 다음이 재현 가능해야 한다.
 ## 14. v1 권장 범위
 
 - OpenDART
-- KRX KIND
-- 1개 이상 신뢰 가능한 뉴스 피드
-- 기본 거시 캘린더
 
 v1에서는 source 수를 무리하게 늘리지 않고, **신뢰도 높은 이벤트 소스 + 재현 가능한 저장 구조**를 먼저 확보한다.
+
+현재 운영 결론:
+
+- **v1 external event source는 OpenDART only**
+- 뉴스 source 통합은 precision/legal 문제로 P2 backlog로 보류
+- KRX KIND, 거시 캘린더, 리포트는 future work로 남긴다
+
+## 15. Future Data Backlog
+
+아래 두 축은 v2 또는 후속 phase에서 다룰 future work로 명시적으로 남긴다.
+
+### 15.1 장 운영 세션 정보 저장/운영 체크리스트 자동화
+
+목표:
+
+- 장전 / 장중 / 장후 / 휴장 / 조기종료 / 특수 세션 정보를 수집
+- PostgreSQL에 시계열/운영 참조 데이터로 저장
+- 이를 기준으로 운영자가 확인해야 할 “장 시작 전 / 장중 / 장 종료 후” 점검 항목을 시스템적으로 지원
+
+권장 범위:
+
+- KIS 또는 대체 공식 소스에서 장 상태/세션 메타데이터 수집
+- 세션별 시작/종료 시각, 휴장 정보, 특수 운영일 정보 저장
+- snapshot sync, submit smoke, live canary, post-submit sync 실행 전 precheck에서 재사용
+- 운영 체크리스트/inspection UI/API의 근거 데이터로 활용
+
+핵심 활용처:
+
+- 장중 여부 deterministic 판단
+- 장전 준비 작업과 장중 submit 가능 작업 구분
+- 장 종료 후 sync/reconciliation/정산 점검 단계 구분
+
+### 15.2 Broker-backed Instrument Master 적재/갱신
+
+목표:
+
+- KIS 기본종목정보를 PostgreSQL instrument master로 적재/보존
+- 주기적 갱신으로 symbol/market/name/name_kr/식별코드/활성상태를 최신으로 유지
+- 종목 표시/검색/매핑의 공통 기준 데이터로 사용
+
+권장 범위:
+
+- broker 또는 승인된 대체 reference source에서 기본종목정보 수집
+- `instruments`를 한국 종목 중심으로 확장하고 metadata enrichment 수행
+- symbol, market, 영문명/한글명, 식별코드, 활성 상태, 상장 구분 등을 보존
+- snapshot sync, external event symbol mapping, inspection/admin UI 노출, future news source relevance gate의 기반으로 재사용
+
+핵심 활용처:
+
+- 현재 부족한 한국 종목 coverage 보강
+- `InstrumentEntity.name` / 한국어 alias 품질 개선
+- OpenDART 및 future external event source의 symbol/issuer 연결 보강

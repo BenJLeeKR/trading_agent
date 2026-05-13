@@ -116,6 +116,8 @@
 | 4 | **Event loop gap-fill path `transition_to()` 검토**: `trigger_gap_fill()`이 ExternalEvent persist만 수행. 향후 fill data → order state 반영 경로 필요 여부 검토 | [Plan 35](plans/35_reconciliation_authoritative_state_reflection.md:844) | ❌ 미착수 |
 | 5 | **Reconciliation 결과로 PARTIALLY_FILLED 반영 검토**: 현재는 authoritative reflection에서 PARTIALLY_FILLED 제외. 실제 broker 사례 발생 시 재검토 | [Plan 35](plans/35_reconciliation_authoritative_state_reflection.md:845) | ❌ 미착수 |
 | 6 | **Reconciliation Run에 order_id 직접 매핑**: `_resolve_order_for_reflection()`이 broker_order_id/client_order_id로 찾는 방식. 향후 run에 직접 order_id 저장 검토 | [Plan 35](plans/35_reconciliation_authoritative_state_reflection.md:846) | ❌ 미착수 |
+| 7 | **장 운영 세션 정보 수집/저장 + 운영 체크리스트 자동 점검**: KIS 또는 대체 공식 소스에서 장전/장중/장후/휴장/조기종료/특수 세션 정보를 수집해 PostgreSQL에 저장하고, 이를 기반으로 “장 시작 전 할 일 / 장중에 할 일 / 장 종료 후 할 일” 점검 로직 및 운영 체크리스트를 구성 | User request (2026-05-13) | ❌ 미착수 |
+| 8 | **KIS 기본종목정보 instrument master 적재/갱신**: KIS 기본종목정보를 PostgreSQL instrument master로 적재하고 주기적으로 갱신하는 파이프라인. symbol/market/name/name_kr/식별코드/활성상태/metadata를 보존해 snapshot sync, external event mapping, UI/inspection 종목 정보 노출의 공통 기준 데이터로 사용 | User request (2026-05-13) | ❌ 미착수 |
 
 ---
 
@@ -130,6 +132,8 @@
 | 5 | Redis cache layer (rate limit, session cache) | [Enterprise Design](../plan_docs/ENTERPRISE_TRADING_SYSTEM_DESIGN.md) | 현재는 in-memory |
 | 6 | CI/CD pipeline (K8s, Terraform, GitHub Actions) | [Plan 01](plans/01.dev_infrastructure_plan.md:6) | v1 제외 |
 | 7 | Observability stack (metrics, tracing, structured logging, alerting) | [Enterpris`e Design](../plan_docs/ENTERPRISE_TRADING_SYSTEM_DESIGN.md) | v1 제외 |
+| 8 | Extended market session intelligence (pre/open/intraday/post/holiday checklist automation) | User request (2026-05-13) | v2/Phase X 후보 |
+| 9 | Broker-backed instrument master sync and enrichment | User request (2026-05-13) | v2/Phase X 후보 |
 
 ---
 

@@ -64,6 +64,56 @@ ls -la .cache/kis_token.json 2>/dev/null || echo "No token cache found"
 
 Paper token과 Live token은 별도로 발급됩니다. `dev_token_cache_enabled=True` 상태에서 paper token이 캐시되어 있으면, Live 전환 시 `HTTP 403 (접근토큰 발급 잠시 후 다시 시도)`가 발생할 수 있습니다. **Live 전환 시 token cache를 반드시 삭제**해야 합니다.
 
+### 2.4 KIS_SMOKE_PRICE 확인 (near-real submit 필수)
+
+> **운영 규칙 (2026-05-13 확정)**: near-real submit 전 `KIS_SMOKE_PRICE`는 **필수 설정** 항목. 기본값 50000 의존 금지.
+
+```bash
+# KIS_SMOKE_PRICE 설정 여부 확인
+echo "KIS_SMOKE_PRICE=${KIS_SMOKE_PRICE:-<NOT SET>}"
+
+# 설정되지 않은 경우 KIS API로 현재가 조회 후 설정
+# export KIS_SMOKE_PRICE=<KIS API inquire-price stck_prpr>
+```
+
+| 상태 | 조치 |
+|------|------|
+| 미설정 또는 기본값 50000 | ❌ submit 불가 (`msg_cd=40270000`). KIS API로 현재가 조회 후 설정 |
+| 시장가와 일치 | ✅ submit 가능 |
+
+상세: [`paper_submit_smoke_ops_checklist.md#7`](plans/paper_submit_smoke_ops_checklist.md:345)
+
+### 2.5 Stale PENDING_SUBMIT 확인 (cleanup 필요)
+
+> **운영 규칙 (2026-05-13 확정)**: 24h 이상 `pending_submit` 상태로 broker 미제출 주문은 submit 전 정리 필요.
+
+```bash
+cd /workspace/agent_trading && bash -c 'set -a && source .env && set +a && python3 -c "
+import asyncio, asyncpg
+async def main():
+    conn = await asyncpg.connect(
+        host=\"\$(echo \$DATABASE_HOST)\", port=\$(echo \$DATABASE_PORT),
+        user=\"\$(echo \$DATABASE_USER)\", password=\"\$(echo \$DATABASE_PASSWORD)\",
+        database=\"\$(echo \$DATABASE_NAME)\")
+    rows = await conn.fetch(\"\"\"
+        SELECT COUNT(*) FROM order_requests
+        WHERE status = 'pending_submit'
+          AND created_at < NOW() - INTERVAL '24 hours'
+          AND order_request_id NOT IN (SELECT order_request_id FROM broker_orders)
+    \"\"\")
+    print(f'Stale pending_submit: {rows[0][0]}건')
+    await conn.close()
+asyncio.run(main())
+"
+```
+
+| 상태 | 조치 |
+|------|------|
+| 0건 | ✅ 정상, submit 가능 |
+| 1건 이상 | ❌ [`_cleanup_pending_submit.py`](_cleanup_pending_submit.py) 실행 후 재확인 |
+
+상세: [`paper_submit_smoke_ops_checklist.md#10-B`](plans/paper_submit_smoke_ops_checklist.md:608)
+
 ---
 
 ## 3. Snapshot Freshness 확인
@@ -144,9 +194,38 @@ LIMIT 10;
 | **fills 조회** | ❌ 기대 불가 | ✅ 가능 |
 | **검증 가능 범위** | pipeline 정상 동작 여부 | 전체 order lifecycle |
 
+## 6. Paper 실증 완료 vs Live 전용 분리
+
+> **2026-05-13 기준**: 아래 표는 2026-05-13 APPROVE + Submit + Post-Submit Sync 실증 결과를 반영하여, Paper에서 검증 완료된 항목과 Live에서만 검증 가능한 항목을 분리합니다.
+
+### 6.1 Paper 실증 완료 항목 (✅)
+
+| 항목 | 상태 | 실증 근거 |
+|------|------|----------|
+| Dry-run → APPROVE 결정 | ✅ 2026-05-13 실증 완료 | DB UPDATE로 smoke event 품질 개선 후 APPROVE 유도 성공 |
+| Submit 성공 (broker API 호출) | ✅ 2026-05-13 실증 완료 | `broker_status=SUBMITTED`, `broker_native_order_id` (ODNO) 발급 |
+| Post-submit sync 실행 | ✅ 2026-05-13 실증 완료 | `last_synced_at` 갱신, `order_state_events` 증가 |
+| Sync pipeline 정상 동작 | ✅ 2026-05-13 실증 완료 | orders>=1, errors=0 |
+| `reconcile_required` 허용 | ✅ Paper mock 정상 범위 | `inquire-daily-ccld` → `output: []` (paper mock 한계) |
+| KIS_SMOKE_PRICE = 시장가 일치 필수 | ✅ 2026-05-13 실증 완료 | 26850/50000 실패 → 267000(시장가) 성공 |
+
+### 6.2 Live 전용 검증 항목 (❌ Paper 미검증)
+
+| 항목 | 설명 | 검증 방법 |
+|------|------|----------|
+| `inquire-daily-ccld` 실제 payload | Paper mock은 `output: []` 반환. Live에서는 실제 체결 데이터 반환 예상 | DEBUG logging `output_count > 0` 확인 |
+| ODNO 매칭 성공 | `item.get("ODNO") == broker_order_id` 매칭 성공 → `_parse_order_status_item()` 호출 | INFO logging에 ODNO match failure 미출력 |
+| Terminal status 수렴 | FILLED / CANCELLED / REJECTED로 수렴 | DB `broker_orders.broker_status` 확인 |
+| Fills 동기화 | `_sync_fills()`가 실제 체결 건에서 FillEvent 생성 | DB `fill_events` 테이블 조회 |
+| Cancel/reject 반영 | Broker가 주문 취소/거절 시 상태 전이 | `order_state_events` 경로 확인 |
+
+### 6.3 Logging 제거 조건과의 관계
+
+위 3개 Live 전용 항목 (`inquire-daily-ccld` payload, ODNO 매칭, terminal status 수렴)은 [Section 7](#7-logging-제거-조건-요약)의 instrumentation logging 제거 조건과 정확히 일치합니다. 즉, **Live 검증 = Logging 제거 조건 확인**과 동일합니다.
+
 ---
 
-## 6. Logging 제거 조건 요약
+## 7. Logging 제거 조건 요약
 
 계측 logging (`rest_client.py:896-928`) 제거는 **Live 검증 후 3가지 조건이 모두 충족**되어야 합니다:
 
@@ -160,7 +239,12 @@ LIMIT 10;
 
 ---
 
-## 7. 전체 흐름도
+## 8. 전체 흐름도
+
+> **조건1/2/3의 상세 정의는 [Section 6.2](#62-live-전용-검증-항목-❌-paper-미검증) 참조.**
+> 조건1 `output_count > 0` = Live `inquire-daily-ccld` 실제 payload 확인
+> 조건2 ODNO 매칭 성공 = broker_order_id 일치
+> 조건3 terminal status 수렴 = FILLED/CANCELLED/REJECTED
 
 ```mermaid
 flowchart TD
@@ -189,6 +273,7 @@ flowchart TD
 
 | 문서 | 내용 |
 |------|------|
+| [`live_transition_operational_plan.md`](plans/live_transition_operational_plan.md) | **Live 전환 운영 계획** — Preflight → Submit 관찰 → 판정 체계 통합 |
 | [`mode_boundary_paper_live.md`](plans/mode_boundary_paper_live.md) | Paper/Live mode 전환 절차 (env vars, rate limit, gate) |
 | [`inquire_daily_ccld_payload_capture_report.md`](plans/inquire_daily_ccld_payload_capture_report.md) | Payload 계측 결과, logging 제거 조건 |
 | [`paper_mock_boundary_validation_scope.md`](plans/paper_mock_boundary_validation_scope.md) | Paper mock 한계 문서화 보고서 |

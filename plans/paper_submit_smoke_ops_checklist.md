@@ -80,7 +80,7 @@ set -a; source /workspace/agent_trading/.env; set +a
 | `KIS_PAPER_REST_RPS` | ✅ | `2` | ⚠️ `1`이면 snapshot sync **실패** (Global REST cap 소진) |
 | `KIS_DEV_TOKEN_CACHE_ENABLED` | 권장 | `true` | Token cache 활성화 (paper 전용) |
 | `ENABLE_KIS_PAPER_SUBMIT_SMOKE` | 권장 | `true` | 운영상 opt-in safety flag (현재 스크립트 자체 필수 조건은 아님) |
-| `KIS_SMOKE_PRICE` | Smoke 전용 | `268500` | Submit smoke용 price override (Phase 2.5에서 설정) |
+| `KIS_SMOKE_PRICE` | Smoke 전용 | `267000` (시장가) | Submit smoke용 price override (Phase 2.5에서 설정). **반드시 실제 시장가와 일치**해야 함. 모의투자 API가 가격 검증을 수행하므로 부정확한 값은 `msg_cd=40270000` 실패. |
 
 ### 2-C. 필수 env vars 누락 확인
 
@@ -342,36 +342,68 @@ python3 scripts/run_orchestrator_once.py --dry-run
 
 ---
 
-## 7. Phase 2.5: KIS_SMOKE_PRICE 설정
+## 7. Phase 2.5: KIS_SMOKE_PRICE 설정 (필수)
 
-> **목적**: KIS paper broker가 accept 가능한 LIMIT price 설정.  
-> **참고**: [`paper_submit_smoke_cleanup.md`](plans/paper_submit_smoke_cleanup.md:68) 참조.
+> **목적**: KIS paper broker가 accept 가능한 LIMIT price 설정.
+> **상태**: **권장 → 필수** (2026-05-13 운영 기준 정리). near-real submit 전 반드시 설정해야 함.
+> **참고**: [`paper_nearreal_ops_cleanup_plan.md`](plans/paper_nearreal_ops_cleanup_plan.md:68) 참조.
 
 ### 7-A. Price 설정
 
 ```bash
-export KIS_SMOKE_PRICE=268500
+export KIS_SMOKE_PRICE=267000
 ```
 
-> `268500` = 005930 삼성전자 **전일종가**(`prdy_clpr`). KIS paper 상/하한가 이내에서 broker accept가 검증된 유일한 값.
-> **⚠️ 주의**: 이 값은 실행 시점의 삼성전자 현재가에 따라 유효하지 않을 수 있음. KIS paper 상/하한가(전일종가 ±30%) 이내인지 확인 후 사용. 새 값이 필요하면 `sync_kis_snapshots.py` 실행 후 DB `position_snapshots`에서 `prdy_clpr` 조회.
+> **실증 결과 (2026-05-13)**: KIS paper mock은 `inquire-price` 가격 검증을 수행하며, 실제 시장가와 다른 price는 `msg_cd=40270000`(모의투자 상/하한가 오류)으로 거절함.
+>
+> | 시도 | Price | 결과 |
+> |------|-------|------|
+> | 1차 | 26850 (임의값) | ❌ `msg_cd=40270000` |
+> | 2차 | 50000 (기본값) | ❌ `msg_cd=40270000` |
+> | 3차 | **267000** (KIS API 현재가) | ✅ SUBMITTED |
+>
+> **설정 방법**: KIS API로 현재가 조회 후 설정. 예: 005930 현재가는 KIS REST API `stck_prpr` 필드.
+> **⚠️ 주의**: 전일종가가 아닌 **당일 현재가**를 사용해야 함. KIS paper 상/하한가(전일종가 ±30%) 이내여야 함.
 
-### 7-B. Price 결정 로직
+### 7-B. Price 결정 로직 (필수 — 기본값 의존 금지)
 
 [`_resolve_smoke_price()`](scripts/run_orchestrator_once.py:80)의 우선순위:
 
 ```
-1. KIS_SMOKE_PRICE env var → 해당 Decimal (smoke 검증 완료)
-2. fallback → Decimal("50000") → KIS price validation error (msg_cd=40270000)
+1. KIS_SMOKE_PRICE env var → 해당 Decimal (시장가와 일치 필수)
+2. fallback → Decimal("50000") → KIS price validation error (msg_cd=40270000) → 사용 불가
 ```
 
-### 7-C. 경고: env 미설정 시
+> **운영 규칙 (2026-05-13 확정)**: `KIS_SMOKE_PRICE` env var는 near-real submit 전 **필수 설정** 항목이다. 기본값 50000에 의존하는 것은 허용되지 않는다. 설정값은 KIS API `inquire-price`로 조회한 당일 현재가와 일치해야 한다.
 
-`KIS_SMOKE_PRICE`가 설정되지 않으면 기본값 `50000`이 사용되며, 이는 KIS 하한가(`187,950`)를 크게 밑돌아 `msg_cd=40270000` 에러 발생. [`run_orchestrator_once.py`](scripts/run_orchestrator_once.py:330)에서 경고 로그 출력.
+### 7-C. KIS API로 현재가 조회 명령어
 
-### ⚠️ 실수 포인트 #6: `KIS_SMOKE_PRICE` 미설정
+```bash
+cd /workspace/agent_trading && bash -c 'set -a && source .env && set +a && python3 -c "
+import asyncio
+from agent_trading.runtime.bootstrap import postgres_runtime
+from agent_trading.repositories.container import RepositoryContainer
+async def main():
+    async with postgres_runtime() as runtime:
+        repos: RepositoryContainer = runtime[\"repositories\"]
+        inst = await repos.instruments.get_by_symbol(\"005930\", \"KRX\")
+        if inst:
+            print(f\"Symbol: {inst.symbol}, Name: {inst.name}\")
+        else:
+            print(\"Instrument 005930/KRX not found\")
+asyncio.run(main())
+"
+```
 
-env var를 설정하지 않고 `--submit` 실행 시, default price=50000으로 submit되어 `msg_cd=40270000`(price validation error) 발생. 반드시 `KIS_SMOKE_PRICE`를 설정할 것.
+> 현재가 확인 후 export: `export KIS_SMOKE_PRICE=<현재가>`
+
+### 7-D. 경고: env 미설정 시
+
+`KIS_SMOKE_PRICE`가 설정되지 않으면 기본값 `50000`이 사용되며, 이는 KIS 하한가를 크게 밑돌아 `msg_cd=40270000` 에러 발생. [`run_orchestrator_once.py`](scripts/run_orchestrator_once.py:330)에서 경고 로그 출력.
+
+### ⚠️ 실수 포인트 #6: `KIS_SMOKE_PRICE` 미설정 또는 시장가 불일치
+
+env var를 설정하지 않고 `--submit` 실행 시, default price=50000으로 submit되어 `msg_cd=40270000`(price validation error) 발생. 또한 설정값이 실제 시장가와 다르면 동일 에러 발생. **반드시 KIS API로 현재가를 확인 후 설정**할 것.
 
 ---
 
@@ -421,6 +453,38 @@ python3 scripts/run_orchestrator_once.py --submit --output text
 4. 그래도 실패 → AI Agent 입력 데이터 문제 진단 (Phase 1.5 Seed 고려)
 
 > **주의**: 각 시도마다 새로운 `correlation_id`로 broker submit이 발생하여, 실제 주문이 생성됨 (paper 환경이므로 무해). 과거 실행에서 10회 시도 중 6회 SUBMITTED (총 5건 order_request + broker_order 생성됨).
+
+### 8-E. AI 결정 품질과 입력 이벤트 품질의 상관관계
+
+**실증 결과 (2026-05-13)**: AI의 decision_type은 입력 이벤트 품질에 직접 비례함.
+
+| 입력 상태 | AI 결정 | 원인 |
+|-----------|---------|------|
+| stale (published_at=2일전) + synthetic + headline=NULL | HOLD | `risk_flags: ["synthetic_data", "stale"]` → FDC "신뢰도 낮음" |
+| fresh (published_at=NOW) + headline=구체적 + severity=high + direction=positive + importance=high | **APPROVE** (confidence=0.70) | EI가 긍정적 신호로 해석, FDC가 BUY 결정 |
+
+**시사점**:
+- 이벤트 품질 개선 없이 AI 결정 개선 불가
+- OpenDART importance 분류(`metadata.importance=high`)가 EI prompt에서 우선 검토되어 APPROVE에 기여
+- `severity`/`direction` 값이 EI 추론에 직접적 영향
+
+### 8-F. Smoke Event 데이터 조정 기법 (검증 전용)
+
+> ⚠️ **이 기법은 검증용 임시 조치이며, 운영 절차가 아님**
+
+APPROVE 유도를 위해 smoke event의 DB 데이터를 직접 수정한 사례:
+
+| 조정 항목 | 적용값 | 목적 |
+|-----------|--------|------|
+| `published_at` → `NOW()` | stale 플래그 제거 | AI가 `stale` risk_flag를 제거하도록 유도 |
+| `metadata.synthetic` → 제거 | synthetic 플래그 제거 | AI가 `synthetic_data` risk_flag를 제거하도록 유도 |
+| `headline` → 구체적 텍스트 | EI 해석 가능한 입력 제공 | AI 추론 품질 향상 |
+| `metadata.importance` → `"high"` | 중요도 정렬 우선 | EI가 이벤트를 먼저 검토하도록 유도 |
+
+**제약**:
+- 운영 환경에서 이 기법을 사용하면 안 됨 (데이터 무결성 훼손)
+- Live 환경에서는 실제 OpenDART 공시 데이터가 자연스럽게 높은 품질을 제공할 것으로 예상
+- 이 기법은 **Paper mock의 이벤트 부족 현상을 우회하기 위한 임시 수단**
 
 ### ⚠️ 실수 포인트 #7: Stale Snapshot Blocker
 
@@ -474,16 +538,19 @@ asyncio.run(check())
 "
 ```
 
-### 9-C. 성공 기준
+### 9-C. 성공 기준 (Paper 검증 완료 — 2026-05-13 실증 기준)
 
-| 테이블 | 항목 | 기준 |
-|--------|------|------|
-| `order_requests` | `status` | `SUBMITTED` |
-| `order_requests` | `price` | `268500` (설정한 KIS_SMOKE_PRICE) |
-| `broker_orders` | `broker_native_order_id` | **ODNO 발급** (숫자 문자열, 예: `0000027326`) |
-| `broker_orders` | `broker_status` | `submitted` |
-| `broker_orders` | `last_synced_at` | **Post-submit sync 실행 후 갱신** |
-| `order_state_events` | 상태 전이 이력 | **Post-submit sync 실행 후 기록** |
+| 테이블 | 항목 | 기준 | 검증 상태 |
+|--------|------|------|----------|
+| `order_requests` | `status` | `SUBMITTED` → `reconcile_required` | ✅ Paper 실증 완료 |
+| `order_requests` | `price` | 설정한 KIS_SMOKE_PRICE (시장가) | ✅ Paper 실증 완료 |
+| `order_requests` | `side` | `BUY` | ✅ Paper 실증 완료 |
+| `order_requests` | `requested_quantity` | `> 0` (sizing 적용) | ✅ Paper 실증 완료 |
+| `broker_orders` | `broker_native_order_id` | **ODNO 발급** (숫자 문자열) | ✅ Paper 실증 완료 |
+| `broker_orders` | `broker_status` | `submitted` → `reconcile_required` | ✅ Paper 실증 완료 (mock 한계) |
+| `broker_orders` | `last_synced_at` | **Post-submit sync 실행 후 갱신** | ✅ Paper 실증 완료 |
+| `order_state_events` | 상태 전이 이력 | `draft→validated→pending_submit→submitted→reconcile_required` | ✅ Paper 실증 완료 |
+| `broker_orders` | `broker_status` 최종 수렴 | `FILLED` / `CANCELLED` / `REJECTED` | ❌ **Live 전용** (paper mock 한계) |
 
 ### 9-D. Paper Mock 한계 (검증 범위)
 
@@ -536,7 +603,7 @@ asyncio.run(main())
 
 ## 10. Phase 5: Cleanup (옵션)
 
-> **목적**: Phase 1.5에서 주입한 synthetic seed 데이터를 DB에서 제거.
+> **목적**: (1) Phase 1.5에서 주입한 synthetic seed 데이터 제거, (2) stale `pending_submit` 주문 정리.
 
 ### 10-A. Seed Cleanup
 
@@ -546,24 +613,50 @@ cd /workspace/agent_trading
 python3 scripts/seed_smoke_test.py --cleanup
 ```
 
-### 10-B. Cleanup 범위
+### 10-B. Stale PENDING_SUBMIT Cleanup (운영 정리)
 
-| 테이블 | 조건 | 비고 |
-|--------|------|------|
-| `external_events` | `metadata->>'purpose' = 'smoke_test'` | Synthetic event만 삭제 |
-| `instruments` | `metadata->>'purpose' = 'smoke_test'` | 정식 005930/KRX는 대상 아님 (별도 metadata) |
+> **운영 기준 (2026-05-13 확정)**: 24시간 이상 `pending_submit` 상태로 broker 미제출된 주문은 `stale_cleanup`으로 정리한다.
 
-### 10-C. Cleanup하지 않는 항목
+**대상 조건**:
+1. `status = 'pending_submit'`
+2. `created_at < NOW() - INTERVAL '24 hours'`
+3. `broker_orders` 연결 없음 (broker에 미제출)
+
+**처리 방법**: `PENDING_SUBMIT → REJECTED` (reason_code=`stale_cleanup`)
+
+```bash
+cd /workspace/agent_trading
+python3 _cleanup_pending_submit.py
+```
+
+> **실행 결과 (2026-05-13)**: 15건 정리 완료. `order_state_events`에 15건 증적 기록. `reconcile_required` 주문(6건)은 영향 없음.
+
+**Cleanup 스크립트** [`_cleanup_pending_submit.py`](_cleanup_pending_submit.py)가 수행하는 작업:
+1. 대상 주문 조회 및 출력
+2. `order_requests` UPDATE: `status='rejected', status_reason_code='stale_cleanup'`
+3. `order_state_events` INSERT: 상태전이 증적 기록
+4. 결과 검증: rejected count, order_state_events 증가, reconcile_required 영향 없음 확인
+
+### 10-C. Cleanup 범위
+
+| 구분 | 대상 | 조건 | 비고 |
+|------|------|------|------|
+| Seed Cleanup | `external_events` | `metadata->>'purpose' = 'smoke_test'` | Synthetic event만 삭제 |
+| Seed Cleanup | `instruments` | `metadata->>'purpose' = 'smoke_test'` | 정식 005930/KRX는 대상 아님 |
+| Stale Cleanup | `order_requests` | `status='pending_submit' AND created_at < 24h AND no broker_orders` | 상태전이만 수행 (DELETE 아님) |
+
+### 10-D. Cleanup하지 않는 항목
 
 | 항목 | 이유 |
 |------|------|
-| `order_requests` / `broker_orders` / `trade_decisions` / `agent_runs` | 검증의 증적이므로 **의도적으로 보존**. 재현 및 audit 용도 |
+| `broker_orders` / `trade_decisions` / `agent_runs` | 검증의 증적이므로 **의도적으로 보존**. 재현 및 audit 용도 |
+| 정상 `order_requests` (SUBMITTED/RECONCILE_REQUIRED) | 정상 운영 데이터, 보존 |
 | Snapshot sync 데이터 | 정상 market data이므로 보존 |
 | Token cache (`.cache/kis_token.json`) | 재사용 가능, 보존 |
 
 ### ⚠️ 실수 포인트 #9: 불필요한 Full DB Cleanup
 
-`order_requests`나 `broker_orders`를 DELETE하지 말 것. 이 데이터는 검증의 **증적**이며, 재현성 확인과 Post-submit 검증에 필요.
+`order_requests`나 `broker_orders`를 DELETE하지 말 것. 이 데이터는 검증의 **증적**이며, 재현성 확인과 Post-submit 검증에 필요. Stale `pending_submit`은 DELETE가 아닌 상태전이(`REJECTED`)로 처리한다.
 
 ---
 

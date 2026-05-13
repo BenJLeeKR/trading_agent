@@ -448,7 +448,21 @@ class DecisionOrchestratorService:
                 symbol=request.symbol,
                 since=datetime.now(timezone.utc) - timedelta(hours=72),
             )
-            recent_events = tuple(events)
+            # Sort by importance (H > M > L), then by published_at DESC
+            _IMPORTANCE_ORDER: dict[str, int] = {"high": 0, "medium": 1, "low": 2}
+            sorted_events = sorted(
+                events,
+                key=lambda e: (
+                    _IMPORTANCE_ORDER.get(
+                        (e.metadata or {}).get("importance", "low"), 2
+                    ),
+                    # Negate timestamp for DESC order (newest first)
+                    -(
+                        (e.published_at or datetime.min.replace(tzinfo=timezone.utc))
+                    ).timestamp(),
+                ),
+            )
+            recent_events = tuple(sorted_events)
         except Exception:
             pass
 
