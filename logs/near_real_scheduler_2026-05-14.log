@@ -1,0 +1,99 @@
+2026-05-14 07:55:01 [INFO] near-real-scheduler: Starting near-real scheduler (KIS_ENV=paper, paper is treated as near-real).
+2026-05-14 08:00:01 [INFO] near-real-scheduler: phase=pre-market start
+2026-05-14 08:00:01 [INFO] near-real-scheduler: task=pre_snapshot_sync start argv=python3 scripts/run_snapshot_sync_loop.py --max-cycles 1
+2026-05-14 08:00:03 [INFO] near-real-scheduler: task=pre_snapshot_sync complete ok=True returncode=0 timeout=False duration=1.80s
+2026-05-14 08:00:03 [INFO] near-real-scheduler: task=pre_event_ingestion start argv=python3 -m scripts.run_event_ingestion_loop --count 1 --output json
+2026-05-14 08:00:04 [INFO] near-real-scheduler: task=pre_event_ingestion complete ok=True returncode=0 timeout=False duration=0.65s
+2026-05-14 08:00:04 [INFO] near-real-scheduler: task=pre_post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 08:00:04 [INFO] near-real-scheduler: task=pre_post_submit_sync complete ok=True returncode=0 timeout=False duration=0.41s
+2026-05-14 08:00:04 [INFO] near-real-scheduler: phase=pre-market complete
+2026-05-14 08:50:02 [INFO] near-real-scheduler: task=snapshot_sync start argv=python3 scripts/run_snapshot_sync_loop.py --max-cycles 1
+2026-05-14 08:50:03 [INFO] near-real-scheduler: task=snapshot_sync complete ok=True returncode=0 timeout=False duration=1.17s
+2026-05-14 08:50:03 [INFO] near-real-scheduler: task=event_ingestion start argv=python3 -m scripts.run_event_ingestion_loop --count 1 --output json
+2026-05-14 08:50:03 [INFO] near-real-scheduler: task=event_ingestion complete ok=True returncode=0 timeout=False duration=0.58s
+2026-05-14 08:50:03 [INFO] near-real-scheduler: db_submit_count=0 run_date=2026-05-14 statuses=['acknowledged', 'filled', 'partially_filled', 'reconcile_required', 'submitted']
+2026-05-14 08:50:03 [INFO] near-real-scheduler: task=decision_submit_gate start argv=python3 -m scripts.run_paper_decision_loop --count 1 --output json --submit
+2026-05-14 08:50:10 [INFO] near-real-scheduler: task=decision_submit_gate complete ok=True returncode=0 timeout=False duration=6.15s
+2026-05-14 08:50:10 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 08:50:10 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.40s
+2026-05-14 08:50:35 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 08:50:35 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.40s
+2026-05-14 08:51:05 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 08:51:06 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.40s
+2026-05-14 08:51:36 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 08:51:36 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.40s
+2026-05-14 08:52:06 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 08:52:07 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.41s
+2026-05-14 08:52:37 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 08:52:37 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.41s
+2026-05-14 08:53:07 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 08:53:07 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.41s
+2026-05-14 08:53:37 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 08:53:38 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.41s
+2026-05-14 08:54:08 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 08:54:09 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.61s
+2026-05-14 08:54:39 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 08:54:39 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.41s
+2026-05-14 08:55:04 [INFO] near-real-scheduler: task=snapshot_sync start argv=python3 scripts/run_snapshot_sync_loop.py --max-cycles 1
+2026-05-14 08:55:05 [INFO] near-real-scheduler: task=snapshot_sync complete ok=True returncode=0 timeout=False duration=0.60s
+2026-05-14 08:55:05 [INFO] near-real-scheduler: task=event_ingestion start argv=python3 -m scripts.run_event_ingestion_loop --count 1 --output json
+2026-05-14 08:55:05 [INFO] near-real-scheduler: task=event_ingestion complete ok=True returncode=0 timeout=False duration=0.57s
+2026-05-14 08:55:05 [INFO] near-real-scheduler: db_submit_count=0 run_date=2026-05-14 statuses=['acknowledged', 'filled', 'partially_filled', 'reconcile_required', 'submitted']
+2026-05-14 08:55:05 [INFO] near-real-scheduler: task=decision_submit_gate start argv=python3 -m scripts.run_paper_decision_loop --count 1 --output json --submit
+2026-05-14 08:55:11 [INFO] near-real-scheduler: task=decision_submit_gate complete ok=True returncode=0 timeout=False duration=6.20s
+2026-05-14 08:55:16 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 08:55:17 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.41s
+2026-05-14 08:55:47 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 08:55:47 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.40s
+2026-05-14 08:56:17 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 08:56:18 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.40s
+2026-05-14 08:56:48 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 08:56:48 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.41s
+2026-05-14 08:57:18 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 08:57:19 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.41s
+2026-05-14 08:57:49 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 08:57:49 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.40s
+2026-05-14 08:58:19 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 08:58:19 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.40s
+2026-05-14 08:58:49 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 08:58:50 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.41s
+2026-05-14 08:59:20 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 08:59:20 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.41s
+2026-05-14 08:59:50 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 08:59:51 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.41s
+2026-05-14 09:00:06 [INFO] near-real-scheduler: task=snapshot_sync start argv=python3 scripts/run_snapshot_sync_loop.py --max-cycles 1
+2026-05-14 09:00:19 [INFO] near-real-scheduler: task=snapshot_sync complete ok=True returncode=0 timeout=False duration=13.34s
+2026-05-14 09:00:19 [INFO] near-real-scheduler: task=event_ingestion start argv=python3 -m scripts.run_event_ingestion_loop --count 1 --output json
+2026-05-14 09:00:20 [INFO] near-real-scheduler: task=event_ingestion complete ok=True returncode=0 timeout=False duration=0.60s
+2026-05-14 09:00:20 [INFO] near-real-scheduler: db_submit_count=0 run_date=2026-05-14 statuses=['acknowledged', 'filled', 'partially_filled', 'reconcile_required', 'submitted']
+2026-05-14 09:00:20 [INFO] near-real-scheduler: task=decision_submit_gate start argv=python3 -m scripts.run_paper_decision_loop --count 1 --output json --submit
+2026-05-14 09:00:27 [INFO] near-real-scheduler: task=decision_submit_gate complete ok=True returncode=0 timeout=False duration=7.37s
+2026-05-14 09:00:32 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 09:00:34 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=1.68s
+2026-05-14 09:01:04 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 09:01:04 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.50s
+2026-05-14 09:01:34 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 09:01:35 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.40s
+2026-05-14 09:02:05 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 09:02:05 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.40s
+2026-05-14 09:02:35 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 09:02:35 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.40s
+2026-05-14 09:03:05 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 09:03:06 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.91s
+2026-05-14 09:03:36 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 09:03:37 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.40s
+2026-05-14 09:04:07 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 09:04:07 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.40s
+2026-05-14 09:04:37 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 09:04:38 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.41s
+2026-05-14 09:05:08 [INFO] near-real-scheduler: task=snapshot_sync start argv=python3 scripts/run_snapshot_sync_loop.py --max-cycles 1
+2026-05-14 09:05:17 [INFO] near-real-scheduler: task=snapshot_sync complete ok=True returncode=0 timeout=False duration=9.19s
+2026-05-14 09:05:17 [INFO] near-real-scheduler: task=event_ingestion start argv=python3 -m scripts.run_event_ingestion_loop --count 1 --output json
+2026-05-14 09:05:18 [INFO] near-real-scheduler: task=event_ingestion complete ok=True returncode=0 timeout=False duration=0.60s
+2026-05-14 09:05:18 [INFO] near-real-scheduler: db_submit_count=0 run_date=2026-05-14 statuses=['acknowledged', 'filled', 'partially_filled', 'reconcile_required', 'submitted']
+2026-05-14 09:05:18 [INFO] near-real-scheduler: task=decision_submit_gate start argv=python3 -m scripts.run_paper_decision_loop --count 1 --output json --submit
+2026-05-14 09:05:23 [INFO] near-real-scheduler: task=decision_submit_gate complete ok=True returncode=0 timeout=False duration=5.90s
+2026-05-14 09:05:23 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 09:05:24 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.91s
+2026-05-14 09:05:39 [INFO] near-real-scheduler: task=post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-14 09:05:40 [INFO] near-real-scheduler: task=post_submit_sync complete ok=True returncode=0 timeout=False duration=0.98s

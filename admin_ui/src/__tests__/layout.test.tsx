@@ -16,7 +16,7 @@ afterEach(() => {
  * Scenario 1: 네비게이션 링크 렌더링
  * ─────────────────────────────────────────── */
 describe("Layout navigation", () => {
-  it("renders all 6 navigation links and brand", () => {
+  it("renders all 8 navigation links and brand", () => {
     setStoredToken(VALID_TOKEN);
 
     render(
@@ -34,8 +34,10 @@ describe("Layout navigation", () => {
     // Brand
     expect(screen.getByText("운영 콘솔")).toBeInTheDocument();
 
-    // All 6 nav links
-    expect(screen.getAllByText("개요")[0]).toBeInTheDocument();
+    // All nav links (운영 모니터링 3 + 기본 운영 5)
+    expect(screen.getByText("운영 대시보드")).toBeInTheDocument();
+    expect(screen.getByText("운영 경고")).toBeInTheDocument();
+    expect(screen.getByText("주문 추적")).toBeInTheDocument();
     expect(screen.getByText("주문")).toBeInTheDocument();
     expect(screen.getByText("정합성 점검")).toBeInTheDocument();
     expect(screen.getByText("계좌")).toBeInTheDocument();

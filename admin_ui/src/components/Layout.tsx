@@ -14,6 +14,8 @@ import {
   LogOut,
   Activity,
   Zap,
+  AlertCircle,
+  Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -34,9 +36,16 @@ interface NavSection {
 
 const navSections: NavSection[] = [
   {
-    title: "활성",
+    title: "운영 모니터링",
     items: [
-      { icon: LayoutDashboard, label: "개요", to: "/" },
+      { icon: Activity, label: "운영 대시보드", to: "/" },
+      { icon: AlertCircle, label: "운영 경고", to: "/operations/alerts" },
+      { icon: Search, label: "주문 추적", to: "/operations/orders" },
+    ],
+  },
+  {
+    title: "기본 운영",
+    items: [
       { icon: FileText, label: "주문", to: "/orders" },
       { icon: RefreshCcw, label: "정합성 점검", to: "/reconciliation" },
       { icon: Wallet, label: "계좌", to: "/accounts" },
@@ -45,11 +54,11 @@ const navSections: NavSection[] = [
     ],
   },
   {
-    title: "예약",
+    title: "예약됨",
     items: [
       { icon: Building2, label: "브로커", to: "#", disabled: true },
       { icon: Server, label: "시스템", to: "#", disabled: true },
-      { icon: ShieldCheck, label: "관리자", to: "#", disabled: true },
+      { icon: ShieldCheck, label: "관리", to: "#", disabled: true },
     ],
   },
 ];

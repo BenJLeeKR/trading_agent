@@ -68,18 +68,18 @@ export default function OrderDetail() {
   ];
 
   const brokerColumns: Column<BrokerOrderView>[] = [
-    { key: "broker_id", header: "브로커" },
-    { key: "native_order_id", header: "Native 주문 ID" },
+    { key: "broker_name", header: "브로커" },
+    { key: "broker_native_order_id", header: "Native 주문 ID" },
     {
-      key: "status",
+      key: "broker_status",
       header: "상태",
       render: (r) => (
-        <StatusBadge status={r.status}>
-          {getEnumLabel(fieldMap, "order_status", r.status)}
+        <StatusBadge status={r.broker_status}>
+          {getEnumLabel(fieldMap, "order_status", r.broker_status)}
         </StatusBadge>
       ),
     },
-    { key: "submitted_at", header: "제출 시각" },
+    { key: "last_synced_at", header: "최종 동기화 시각" },
   ];
 
   return (

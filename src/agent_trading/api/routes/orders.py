@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from agent_trading.api.deps import get_repos
 from agent_trading.api.schemas import BrokerOrderView, OrderDetail, OrderEvent, OrderSummary
+from agent_trading.domain.enums import OrderStatus
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import OrderQuery
 
@@ -99,10 +100,19 @@ async def list_orders(
 
     Results are sorted by ``created_at`` descending (newest first).
     """
+    parsed_status: OrderStatus | None = None
+    if status is not None:
+        try:
+            parsed_status = OrderStatus(status)
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid order status: {status}",
+            )
     query = OrderQuery(
         account_id=UUID(account_id) if account_id else None,
         client_order_id=client_order_id,
-        status=status,
+        status=parsed_status,
         trade_decision_id=UUID(trade_decision_id) if trade_decision_id else None,
         decision_context_id=UUID(decision_context_id) if decision_context_id else None,
         limit=limit,

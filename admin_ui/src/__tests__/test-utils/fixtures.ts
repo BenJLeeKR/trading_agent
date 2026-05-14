@@ -188,10 +188,12 @@ export const mockBrokerOrders: BrokerOrderView[] = [
   {
     broker_order_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00b1",
     order_request_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0001",
-    broker_id: "KIS",
-    native_order_id: "KIS-NATIVE-001",
-    status: "filled",
-    submitted_at: "2026-05-05T00:00:02Z",
+    broker_name: "KIS",
+    broker_status: "filled",
+    broker_native_order_id: "KIS-NATIVE-001",
+    last_synced_at: "2026-05-05T00:00:02Z",
+    created_at: "2026-05-05T00:00:00Z",
+    updated_at: "2026-05-05T00:00:02Z",
   },
 ];
 
@@ -561,4 +563,113 @@ export const mockEnumMetadataResponse: EnumMetadataListResponse = {
       ],
     },
   ],
+};
+
+/* ───────────────────────────────────────────
+ * Reconcile-required test fixtures
+ * ─────────────────────────────────────────── */
+
+/** 계정 ID (mockOrders/mockLocks와 동일한 계정) */
+export const RECONCILE_ACCOUNT_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a1";
+
+/** instrument_id: AAPL */
+export const RECONCILE_INSTRUMENT_ID_AAPL = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00i1";
+
+/** instrument_id: TSLA */
+export const RECONCILE_INSTRUMENT_ID_TSLA = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00i2";
+
+/** 포지션이 반영된 reconcile_required 주문 */
+export const mockReconcileRequiredWithPosition: OrderSummary = {
+  order_request_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00rq1",
+  client_order_id: "client-reconcile-001",
+  account_id: RECONCILE_ACCOUNT_ID,
+  side: "buy",
+  order_type: "limit",
+  status: "reconcile_required",
+  requested_quantity: 100,
+  requested_price: 50000,
+  symbol: "AAPL",
+  correlation_id: "corr-reconcile-001",
+  trade_decision_id: null,
+  created_at: "2026-05-13T01:00:00Z",
+  updated_at: "2026-05-13T01:05:00Z",
+  version: 2,
+};
+
+/** 포지션이 반영되지 않은 reconcile_required 주문 */
+export const mockReconcileRequiredNoPosition: OrderSummary = {
+  order_request_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00rq2",
+  client_order_id: "client-reconcile-002",
+  account_id: RECONCILE_ACCOUNT_ID,
+  side: "sell",
+  order_type: "market",
+  status: "reconcile_required",
+  requested_quantity: 50,
+  requested_price: null,
+  symbol: "TSLA",
+  correlation_id: "corr-reconcile-002",
+  trade_decision_id: null,
+  created_at: "2026-05-13T02:00:00Z",
+  updated_at: "2026-05-13T02:10:00Z",
+  version: 2,
+};
+
+/** 포지션이 반영된 reconcile_required 주문 (수량/단가 정합) */
+export const mockReconcileRequiredPositionMatched: OrderSummary = {
+  order_request_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00rq3",
+  client_order_id: "client-reconcile-003",
+  account_id: RECONCILE_ACCOUNT_ID,
+  side: "buy",
+  order_type: "limit",
+  status: "reconcile_required",
+  requested_quantity: 100,
+  requested_price: 50000,
+  symbol: "AAPL",
+  correlation_id: "corr-reconcile-003",
+  trade_decision_id: null,
+  created_at: "2026-05-13T03:00:00Z",
+  updated_at: "2026-05-13T03:05:00Z",
+  version: 2,
+};
+
+/** reconcile_required 전용 BrokerOrderView */
+export const mockBrokerOrderForReconcile: BrokerOrderView = {
+  broker_order_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00bo1",
+  order_request_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00rq1",
+  broker_name: "KIS",
+  broker_status: "confirmed",
+  broker_native_order_id: "KIS-NATIVE-001",
+  last_synced_at: "2026-05-13T01:04:00Z",
+  created_at: "2026-05-13T01:00:00Z",
+  updated_at: "2026-05-13T01:04:00Z",
+};
+
+/** reconcile_required 계정의 포지션 스냅샷 (AAPL — 포지션 존재) */
+export const mockPositionForReconcile: PositionSnapshotView = {
+  position_snapshot_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00ps1",
+  account_id: RECONCILE_ACCOUNT_ID,
+  instrument_id: RECONCILE_INSTRUMENT_ID_AAPL,
+  symbol: "AAPL",
+  instrument_name: "Apple Inc.",
+  quantity: 100,
+  average_price: 50000,
+  market_price: 50100,
+  unrealized_pnl: 10000,
+  source_of_truth: "broker",
+  snapshot_at: "2026-05-13T01:05:00Z",
+};
+
+/** reconcile_required 계정의 포지션 스냅샷 (TSLA — quantity 불일치) */
+export const mockPositionForReconcilePartial: PositionSnapshotView = {
+  position_snapshot_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00ps2",
+  account_id: RECONCILE_ACCOUNT_ID,
+  instrument_id: RECONCILE_INSTRUMENT_ID_TSLA,
+  symbol: "TSLA",
+  instrument_name: "Tesla Inc.",
+  quantity: 10,
+  average_price: 200000,
+  market_price: 201000,
+  unrealized_pnl: 10000,
+  source_of_truth: "broker",
+  snapshot_at: "2026-05-13T02:10:00Z",
 };

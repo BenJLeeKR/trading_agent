@@ -99,8 +99,9 @@ export async function getClients(): Promise<import("../types/api").ClientDetail[
   return request<import("../types/api").ClientDetail[]>("/clients");
 }
 
-export async function getOrders(): Promise<import("../types/api").OrderSummary[]> {
-  return request<import("../types/api").OrderSummary[]>("/orders");
+export async function getOrders(status?: string): Promise<import("../types/api").OrderSummary[]> {
+  const query = status ? `?status=${encodeURIComponent(status)}` : "";
+  return request<import("../types/api").OrderSummary[]>(`/orders${query}`);
 }
 
 export async function getOrderDetail(
@@ -244,5 +245,28 @@ export async function getEnumFieldMetadata(
 ): Promise<import("../types/api").EnumFieldMetadataSchema> {
   return request<import("../types/api").EnumFieldMetadataSchema>(
     `/metadata/enums/${encodeURIComponent(field)}`
+  );
+}
+
+/* ── Snapshot Sync Runs ──────────────────── */
+
+export async function getSnapshotSyncRuns(
+  limit?: number,
+  status?: string
+): Promise<import("../types/api").SnapshotSyncRunSummary[]> {
+  const params = new URLSearchParams();
+  if (limit !== undefined) params.set("limit", String(limit));
+  if (status) params.set("status", status);
+  const qs = params.toString();
+  return request<import("../types/api").SnapshotSyncRunSummary[]>(
+    `/snapshot-sync-runs${qs ? `?${qs}` : ""}`
+  );
+}
+
+export async function getSnapshotSyncSummary(): Promise<
+  import("../types/api").SnapshotSyncRunHealthSummary
+> {
+  return request<import("../types/api").SnapshotSyncRunHealthSummary>(
+    "/snapshot-sync-runs/summary"
   );
 }

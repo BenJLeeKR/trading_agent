@@ -150,7 +150,7 @@ describe("OrderDetail broker orders section", () => {
     // Column headers
     expect(screen.getByText("브로커")).toBeInTheDocument();
     expect(screen.getByText("Native 주문 ID")).toBeInTheDocument();
-    expect(screen.getByText("제출 시각")).toBeInTheDocument();
+    expect(screen.getByText("최종 동기화 시각")).toBeInTheDocument();
 
     // Broker order data
     expect(screen.getByText("KIS")).toBeInTheDocument();

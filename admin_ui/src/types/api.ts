@@ -7,6 +7,11 @@ export interface HealthResponse {
   status: string;
   database: string;
   runtime_mode: string;
+  // ── Snapshot Sync Freshness (optional) ──
+  snapshot_sync_detail: string | null;
+  snapshot_sync_stale: boolean | null;
+  snapshot_sync_last_successful_run_at: string | null;
+  snapshot_sync_consecutive_failures: number | null;
 }
 
 export interface OrderSummary {
@@ -48,10 +53,12 @@ export interface OrderEvent {
 export interface BrokerOrderView {
   broker_order_id: string;
   order_request_id: string;
-  broker_id: string;
-  native_order_id: string | null;
-  status: string;
-  submitted_at: string | null;
+  broker_name: string;
+  broker_status: string;
+  broker_native_order_id: string | null;
+  last_synced_at: string | null;
+  created_at: string;
+  updated_at: string | null;
 }
 
 export interface AuditLogEntry {
@@ -251,6 +258,42 @@ export interface EnumFieldMetadataSchema {
 
 export interface EnumMetadataListResponse {
   fields: EnumFieldMetadataSchema[];
+}
+
+/* ───────────────────────────────────────────
+ * Snapshot Sync Run types
+ * ─────────────────────────────────────────── */
+
+export interface SnapshotSyncRunSummary {
+  snapshot_sync_run_id: string;
+  trigger_type: string;
+  scope: string;
+  dry_run: boolean;
+  total_accounts: number;
+  succeeded_accounts: number;
+  partial_accounts: number;
+  failed_accounts: number;
+  skipped_accounts: number;
+  positions_synced_total: number;
+  positions_skipped_total: number;
+  cash_synced_count: number;
+  error_count: number;
+  status: string;
+  started_at: string;
+  completed_at: string | null;
+  env_filter: string | null;
+  status_filter: string | null;
+  summary_json: Record<string, unknown> | null;
+}
+
+export interface SnapshotSyncRunHealthSummary {
+  last_run_started_at: string | null;
+  last_run_completed_at: string | null;
+  last_status: string | null;
+  last_successful_run_at: string | null;
+  consecutive_failures: number;
+  is_stale: boolean;
+  stale_threshold_seconds: number;
 }
 
 /* ───────────────────────────────────────────

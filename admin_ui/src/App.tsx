@@ -10,6 +10,9 @@ import ReconciliationView from "./components/ReconciliationView";
 import AccountsView from "./components/AccountsView";
 import DecisionsView from "./components/DecisionsView";
 import AgentRunsView from "./components/AgentRunsView";
+import OperationsDashboardView from "./components/OperationsDashboardView";
+import OperationsAlertsView from "./components/OperationsAlertsView";
+import OrderTrackingView from "./components/OrderTrackingView";
 
 /** Redirect to "/" if already authenticated (reverse of ProtectedRoute). */
 function PublicRoute({ children }: { children: React.ReactNode }) {
@@ -43,13 +46,17 @@ export default function App() {
               </ProtectedRoute>
             }
           >
-            <Route index element={<Dashboard />} />
+            <Route index element={<OperationsDashboardView />} />
+            <Route path="overview" element={<Dashboard />} />
             <Route path="orders" element={<OrdersView />} />
             <Route path="orders/:orderId" element={<OrderDetail />} />
             <Route path="reconciliation" element={<ReconciliationView />} />
             <Route path="accounts" element={<AccountsView />} />
             <Route path="decisions" element={<DecisionsView />} />
             <Route path="agent-runs" element={<AgentRunsView />} />
+            <Route path="operations" element={<OperationsDashboardView />} />
+            <Route path="operations/alerts" element={<OperationsAlertsView />} />
+            <Route path="operations/orders" element={<OrderTrackingView />} />
           </Route>
         </Routes>
       </AuthProvider>

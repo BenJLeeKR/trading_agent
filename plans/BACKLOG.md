@@ -103,6 +103,7 @@
 | 3 | **Operator intervention workflow**: 사람이 개입하여 주문 상태 강제 변경, kill switch override, 수동 reconciliation | [ENTERPRISE_TRADING_SYSTEM_DESIGN.md](../plan_docs/ENTERPRISE_TRADING_SYSTEM_DESIGN.md) | ❌ 미착수 |
 | 4 | **Migration 0010: Drop legacy `decision` column**: `trade_decisions.decision` 컬럼 제거. Plan 39에서 nullable로 완화한 후 추가 검증 후 완전 삭제 | [Plan 39](plans/39_trade_decision_schema_alignment.md:294) | ❌ 미착수 |
 | 5 | **E2E test with TradeDecisionEntity creation**: AI agent 통합 완료 후 E2E 테스트에서 실제 `TradeDecisionEntity` 생성 및 `trade_decision_id` 참조 검증 | [Plan 39](plans/39_trade_decision_schema_alignment.md:296) | ❌ 미착수 |
+| 6 | **Near-real scheduler Docker daemon/service화**: 현재는 Ubuntu crontab이 `python3 scripts/run_near_real_ops_scheduler.py`를 직접 실행하는 방식. 향후 Docker Compose service 또는 별도 daemon container로 전환하여 운영 안정성과 관측성을 확보. 컨테이너 restart policy(`always`/`unless-stopped`) 적용. 컨테이너 healthcheck 추가 (scheduler heartbeat 응답 확인). Scheduler run 상태/heartbeat를 DB에 기록하여 프로세스 생존 여부를 DB 기반으로 추적 가능하게 함. DB advisory lock 또는 scheduler run 테이블 기반 중복 실행 방지 lock 도입. 로그를 container stdout/stderr + 파일 또는 DB로 표준화. Admin UI에서 scheduler 상태(마지막 heartbeat, 현재 phase, submit_count, failed_tasks)를 확인 가능하도록 API/화면 연동. **내일(2026-05-14) 운영 blocker는 아님** — 현재 crontab 기반 운영을 유지하면서 점진적으로 전환. | [`plans/near_real_internal_scheduler_p0.md`](plans/near_real_internal_scheduler_p0.md), [`plans/near_real_scheduler_runbook_2026-05-14.md`](plans/near_real_scheduler_runbook_2026-05-14.md), [`plans/db_submit_budget_safeguard.md`](plans/db_submit_budget_safeguard.md) | ❌ 미착수 |
 
 ---
 
