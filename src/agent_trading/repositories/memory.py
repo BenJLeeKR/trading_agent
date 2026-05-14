@@ -217,6 +217,28 @@ class InMemoryInstrumentRepository:
             None,
         )
 
+    async def upsert_by_symbol(self, instrument: InstrumentEntity) -> InstrumentEntity:
+        existing = await self.get_by_symbol(instrument.symbol, instrument.market_code)
+        if existing is not None:
+            import datetime
+            updated = InstrumentEntity(
+                instrument_id=existing.instrument_id,
+                symbol=instrument.symbol,
+                market_code=instrument.market_code,
+                asset_class=instrument.asset_class,
+                currency=instrument.currency,
+                name=instrument.name,
+                tick_size=instrument.tick_size,
+                lot_size=instrument.lot_size,
+                is_active=instrument.is_active,
+                metadata=instrument.metadata,
+                created_at=existing.created_at,
+                updated_at=datetime.datetime.now(datetime.timezone.utc),
+            )
+            self._items[existing.instrument_id] = updated
+            return updated
+        return await self.add(instrument)
+
 
 class InMemoryDecisionContextRepository:
     def __init__(self) -> None:

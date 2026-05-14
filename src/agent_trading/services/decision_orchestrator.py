@@ -570,6 +570,8 @@ class DecisionOrchestratorService:
             assembled_context=assembled_context,
             decision_context_id=resolved_context_id,
             correlation_id=correlation_id,
+            symbol=request.symbol,
+            market=request.market,
         )
 
         # --- Persist or reuse trade decision when a concrete context exists ---
@@ -1240,6 +1242,45 @@ class DecisionOrchestratorService:
                 )
                 return None
 
+            # Best-effort snapshot anchoring for replayability and agent context.
+            # The assemble path can still fall back to latest snapshots, but storing
+            # the IDs here makes the exact inputs auditable after the cycle.
+            position_snapshot_id: UUID | None = None
+            cash_balance_snapshot_id: UUID | None = None
+            try:
+                instrument = await self._repos.instruments.get_by_symbol(
+                    symbol=request.symbol,
+                    market_code=request.market,
+                )
+                if instrument is not None:
+                    positions = await self._repos.position_snapshots.list_latest_by_account(
+                        account.account_id,
+                    )
+                    for snapshot in positions:
+                        if snapshot.instrument_id == instrument.instrument_id:
+                            position_snapshot_id = snapshot.position_snapshot_id
+                            break
+            except Exception:
+                logger.debug(
+                    "Unable to anchor latest position snapshot for symbol=%s market=%s",
+                    request.symbol,
+                    request.market,
+                    exc_info=True,
+                )
+
+            try:
+                cash = await self._repos.cash_balance_snapshots.get_latest_by_account(
+                    account.account_id,
+                )
+                if cash is not None:
+                    cash_balance_snapshot_id = cash.cash_balance_snapshot_id
+            except Exception:
+                logger.debug(
+                    "Unable to anchor latest cash balance snapshot for account=%s",
+                    account.account_id,
+                    exc_info=True,
+                )
+
             # --- 모든 조건 충족 → DecisionContextEntity 생성 ---
             now = datetime.now(timezone.utc)
             context_id = existing_context_id or uuid4()
@@ -1250,6 +1291,8 @@ class DecisionOrchestratorService:
                 account_id=account.account_id,
                 strategy_id=strategy_id,
                 config_version_id=config_version.config_version_id,
+                position_snapshot_id=position_snapshot_id,
+                cash_balance_snapshot_id=cash_balance_snapshot_id,
                 market_timestamp=now,
                 correlation_id=correlation_id,
                 created_at=now,
@@ -1331,6 +1374,8 @@ class DecisionOrchestratorService:
         assembled_context: AssembledContext,
         decision_context_id: UUID | None,
         correlation_id: str,
+        symbol: str | None = None,
+        market: str | None = None,
     ) -> AgentExecutionBundle:
         """Execute the three v1 Provider AI Agents sequentially.
 
@@ -1363,6 +1408,8 @@ class DecisionOrchestratorService:
             decision_context_id=decision_context_id,
             correlation_id=correlation_id,
             context=assembled_context,
+            symbol=symbol,
+            market=market,
         )
 
         # Log when no decision context is available — agent runs will be
@@ -1388,6 +1435,9 @@ class DecisionOrchestratorService:
             )
             event_output = EventInterpretationOutput()
 
+        if _is_missing_agent_symbol(event_output.symbol) and symbol:
+            event_output = replace(event_output, symbol=symbol)
+
         await self._agent_recorder.record(
             decision_context_id=decision_context_id,
             agent_type=self._event_interpretation_agent.agent_name,
@@ -1402,6 +1452,8 @@ class DecisionOrchestratorService:
             decision_context_id=request.decision_context_id,
             correlation_id=request.correlation_id,
             context=request.context,
+            symbol=request.symbol,
+            market=request.market,
             event_interpretation_output=event_output,
             model_id=request.model_id,
             prompt_id=request.prompt_id,
@@ -1420,6 +1472,9 @@ class DecisionOrchestratorService:
             )
             risk_output = AIRiskOutput()
 
+        if _is_missing_agent_symbol(risk_output.symbol) and symbol:
+            risk_output = replace(risk_output, symbol=symbol)
+
         await self._agent_recorder.record(
             decision_context_id=decision_context_id,
             agent_type=self._ai_risk_agent.agent_name,
@@ -1434,6 +1489,8 @@ class DecisionOrchestratorService:
             decision_context_id=request.decision_context_id,
             correlation_id=request.correlation_id,
             context=request.context,
+            symbol=request.symbol,
+            market=request.market,
             event_interpretation_output=event_output,
             ai_risk_output=risk_output,
             model_id=request.model_id,
@@ -1452,6 +1509,9 @@ class DecisionOrchestratorService:
                 exc_info=True,
             )
             composer_output = FinalDecisionComposerOutput()
+
+        if _is_missing_agent_symbol(composer_output.symbol) and symbol:
+            composer_output = replace(composer_output, symbol=symbol)
 
         await self._agent_recorder.record(
             decision_context_id=decision_context_id,
@@ -1707,6 +1767,14 @@ def _normalize_decision_type(decision_type: str) -> str:
         "NONE": "HOLD",
     }
     return mapping.get(normalized, "HOLD")
+
+
+def _is_missing_agent_symbol(value: str | None) -> bool:
+    """Return true when an agent omitted or emitted an unknown symbol."""
+    if value is None:
+        return True
+    normalized = value.strip().upper()
+    return normalized in {"", "UNKNOWN", "(NOT AVAILABLE)", "N/A", "NONE", "NULL"}
 
 
 def _resolve_decision_type(value: str | None) -> DecisionType:

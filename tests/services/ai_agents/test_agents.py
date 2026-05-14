@@ -87,6 +87,59 @@ def mock_provider() -> AIProviderClient:
     return client
 
 
+class TestAgentPromptSymbolFallback:
+    """Agents must receive the target symbol even when there are no events."""
+
+    def test_event_interpretation_prompt_includes_request_symbol_without_events(self) -> None:
+        agent = EventInterpretationAgent(provider_client=AsyncMock())
+        request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="symbol-fallback-ei",
+            context=AssembledContext(),
+            symbol="005930",
+            market="KRX",
+        )
+
+        prompt = agent._build_user_prompt(request)
+
+        assert "Symbol: 005930" in prompt
+        assert "Market: KRX" in prompt
+        assert "Recent events (0):" in prompt
+
+    def test_ai_risk_prompt_includes_request_symbol_without_events(self) -> None:
+        agent = AIRiskAgent(provider_client=AsyncMock())
+        request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="symbol-fallback-ar",
+            context=AssembledContext(),
+            symbol="005930",
+            market="KRX",
+            event_interpretation_output=EventInterpretationOutput(symbol="005930"),
+        )
+
+        prompt = agent._build_user_prompt(request)
+
+        assert "Symbol: 005930" in prompt
+        assert "Market: KRX" in prompt
+
+    def test_fdc_prompt_includes_request_symbol_without_events(self) -> None:
+        agent = FinalDecisionComposerAgent(provider_client=AsyncMock())
+        request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="symbol-fallback-fdc",
+            context=AssembledContext(),
+            symbol="005930",
+            market="KRX",
+            event_interpretation_output=EventInterpretationOutput(symbol="005930"),
+            ai_risk_output=AIRiskOutput(symbol="005930"),
+        )
+
+        prompt = agent._build_user_prompt(request)
+
+        assert "Symbol: 005930" in prompt
+        assert "Market: KRX" in prompt
+
+
 # ---------------------------------------------------------------------------
 # StubEventInterpretationAgent
 # ---------------------------------------------------------------------------

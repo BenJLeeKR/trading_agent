@@ -55,3 +55,34 @@ class PostgresInstrumentRepository:
             market_code,
         )
         return row_to_entity(row, InstrumentEntity) if row else None
+
+    async def upsert_by_symbol(self, instrument: InstrumentEntity) -> InstrumentEntity:
+        row = await self._tx.connection.fetchrow(
+            """
+            INSERT INTO trading.instruments
+                (instrument_id, symbol, market_code, asset_class, currency,
+                 name, tick_size, lot_size, is_active, metadata)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+            ON CONFLICT (symbol, market_code) DO UPDATE
+                SET name = EXCLUDED.name,
+                    asset_class = EXCLUDED.asset_class,
+                    currency = EXCLUDED.currency,
+                    tick_size = EXCLUDED.tick_size,
+                    lot_size = EXCLUDED.lot_size,
+                    is_active = EXCLUDED.is_active,
+                    metadata = EXCLUDED.metadata,
+                    updated_at = NOW()
+            RETURNING *
+            """,
+            instrument.instrument_id,
+            instrument.symbol,
+            instrument.market_code,
+            instrument.asset_class,
+            instrument.currency,
+            instrument.name,
+            instrument.tick_size,
+            instrument.lot_size,
+            instrument.is_active,
+            json.dumps(instrument.metadata) if instrument.metadata is not None else None,
+        )
+        return row_to_entity(row, InstrumentEntity)

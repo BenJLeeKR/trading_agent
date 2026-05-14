@@ -51,28 +51,34 @@ class TestAgentExecutionRequest:
         assert req_without.decision_context_id is None
 
     def test_optional_fields_default_none(self) -> None:
-        """model_id, prompt_id, event_interpretation_output, ai_risk_output default to None."""
+        """Optional metadata and downstream outputs default to None."""
         context = AssembledContext()
         req = AgentExecutionRequest(
             decision_context_id=None,
             correlation_id="corr-1",
             context=context,
         )
+        assert req.symbol is None
+        assert req.market is None
         assert req.model_id is None
         assert req.prompt_id is None
         assert req.event_interpretation_output is None
         assert req.ai_risk_output is None
 
     def test_optional_fields_custom(self) -> None:
-        """model_id, prompt_id, and event_interpretation_output can be set."""
+        """symbol, market, model_id, and prompt_id can be set."""
         context = AssembledContext()
         req = AgentExecutionRequest(
             decision_context_id=None,
             correlation_id="corr-1",
             context=context,
+            symbol="005930",
+            market="KRX",
             model_id="gpt-4o",
             prompt_id="prompt-v2",
         )
+        assert req.symbol == "005930"
+        assert req.market == "KRX"
         assert req.model_id == "gpt-4o"
         assert req.prompt_id == "prompt-v2"
 

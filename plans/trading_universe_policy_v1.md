@@ -1,0 +1,476 @@
+# Trading Universe Policy v1.1
+
+작성일: 2026-05-14
+
+## 1. 목적
+
+이 문서는 `instrument master`와 `trading universe`를 분리하여 정의하고, 실제 운영에서 어떤 비즈니스 기준과 절차로 오늘의 판단 대상 종목을 선정할지 고정한다.
+
+핵심 원칙은 다음과 같다.
+
+1. `instruments`는 전체 종목 기준 데이터다.
+2. `universe`는 오늘 판단 대상으로 올릴 실행 집합이다.
+3. Universe 선정은 에이전트의 임의 판단이 아니라, 운영 정책과 결정적 규칙으로 우선 수행한다.
+4. 에이전트는 선정된 universe 안에서 해석, 우선순위화, 매매 판단을 수행한다.
+
+## 2. 용어 정의
+
+### 2.1 Instrument Master
+
+`trading.instruments`는 전체 거래 가능 종목의 기준 정보 저장소다.
+
+포함 예시:
+
+- `symbol`
+- `market_code`
+- `asset_class`
+- `currency`
+- `name`
+- `is_active`
+- 추가 metadata
+
+역할:
+
+- 종목 식별의 단일 기준
+- snapshot sync, external event mapping, UI 표시에 공통 사용
+- universe 선정을 위한 모수 풀 제공
+
+### 2.2 Trading Universe
+
+`trading universe`는 특정 시점에 decision loop가 실제로 순회하는 종목 집합이다.
+
+역할:
+
+- 오늘 판단할 종목 후보군 제한
+- 운영 예산(KIS 호출량, LLM 비용, 판단 시간) 통제
+- 설명 가능성과 재현성 보장
+
+## 3. 운영 원칙
+
+### 3.1 Universe 선정 책임
+
+Universe 선정은 기본적으로 시스템 정책 책임이다.
+
+권장 역할 분리:
+
+- 시스템/정책 계층:
+  - 후보군 생성
+  - 제외 조건 적용
+  - 오늘의 universe 확정
+- 에이전트 계층:
+  - universe 내 종목의 중요도/우선순위 보조
+  - EI/Risk/FDC 판단 수행
+
+금지:
+
+- 에이전트가 전체 시장을 임의로 훑어 오늘의 universe를 독자적으로 생성
+- 운영 정책 없이 LLM이 종목 선정부터 매매 판단까지 전부 수행
+
+### 3.2 설명 가능성
+
+각 종목이 universe에 포함된 이유는 운영자가 사후 설명 가능해야 한다.
+
+예시 reason:
+
+- `core_universe`
+- `held_position`
+- `high_importance_event`
+- `market_overlay`
+- `manual_watchlist`
+- `recent_order_context`
+
+## 4. Universe 선정 계층
+
+Universe는 아래 5단계로 구성한다.
+
+### 4.1 Layer 1 — Base Market Pool
+
+가장 바깥 풀이다. 시스템이 원천적으로 다룰 시장 범위를 결정한다.
+
+v1 권장 기준:
+
+- `market_code = 'KRX'`
+- `asset_class = 'kr_stock'`
+- `is_active = true`
+
+운영 초기 권장 모수:
+
+- `KOSPI100` 또는 이에 준하는 대형주 풀
+
+비즈니스 이유:
+
+- 유동성이 충분하다
+- 공시/이벤트 반응성이 상대적으로 높다
+- near-real 운영에서 슬리피지, 호가 공백, 비정상 종목 노이즈를 줄일 수 있다
+
+### 4.2 Layer 2 — Operational Eligibility Filter
+
+거래 가능한 종목 중에서도 실제 자동매매 운영에 적합한 종목만 남긴다.
+
+예시 기준:
+
+- 거래정지 종목 제외
+- 관리/감리/투자경고 등 운영 제외 리스트 반영
+- 종목 정보 미완성 종목 제외
+- 브로커 주문 지원 범위 밖 종목 제외
+- 내부적으로 비활성 처리된 종목 제외
+
+비즈니스 이유:
+
+- 자동매매 오류 가능성을 낮춤
+- 브로커/시장 예외케이스에 의한 운영 사고를 방지
+
+### 4.3 Layer 3 — Strategy Relevance Filter
+
+운영 가능 종목 중에서도 전략적으로 볼 가치가 있는 종목을 추린다.
+
+예시 기준:
+
+- 최근 중요 OpenDART 이벤트가 존재
+- 최근 1~3영업일 내 공시 발생
+- 최근 판단/주문 이력이 있어 추적 가치가 높음
+- 현재 보유 종목
+
+비즈니스 이유:
+
+- 이벤트 없는 종목을 무의미하게 반복 판단하지 않음
+- 판단 자원을 실제 신호가 있을 가능성이 높은 종목에 집중
+
+### 4.4 Layer 4 — Market-Driven (Flow/Volatility) Overlay
+
+뉴스나 공시가 없어도, 장중 수급과 변동성 자체가 alpha 신호가 될 수 있다. 따라서 event-driven 후보군과 별도로 `market-driven overlay`를 운영한다.
+
+정의:
+
+- 한국투자증권(KIS) 순위 분석 API 또는 동급의 실시간 랭킹 데이터에서 추출한 수급/모멘텀 상위 종목
+
+대표 편입 후보 신호:
+
+- 거래량 급증 상위
+- 체결강도 상위
+- 신고가 근접 또는 신고가 갱신 후보
+- 가격/거래대금 동반 급증 종목
+
+역할:
+
+- OpenDART/뉴스가 없는 종목 중에서도 장중 강한 흐름이 발생한 종목을 universe에 편입
+- KOSDAQ/중소형주 포함 하이알파 후보를 탐지
+- event-driven 전략이 놓치는 intraday momentum 종목을 보강
+
+핵심 원칙:
+
+- `market-driven overlay`는 core universe를 대체하지 않는다
+- 별도의 동적 오버레이로 작동한다
+- 편입 직전 반드시 유동성/체결 안정성 필터를 통과해야 한다
+
+#### 4.4.1 Liquidity Filter
+
+`market-driven overlay`는 변동성이 큰 종목을 다루므로, universe 편입 전에 1차 유동성 필터를 강하게 적용한다.
+
+필수 필터 예시:
+
+- 틱 사이즈 대비 호가창이 지나치게 얇은 종목 제외
+- 직전 N분 누적 거래대금이 너무 낮은 종목 제외
+- 내부 기준 시가총액 하한 미만 종목 제외
+- micro-cap 또는 초저유동성 종목 제외
+- 단일호가/급격한 갭/이상체결로 해석되는 종목 제외
+
+비즈니스 이유:
+
+- 하이알파 후보를 편입하되 execution risk가 과도한 종목은 초기에 배제
+- 에이전트가 신호를 높게 보더라도 실제 체결 가능성이 낮거나 슬리피지가 과도한 종목은 universe 단계에서 차단
+
+#### 4.4.2 포함 reason
+
+`market-driven overlay` 편입 종목은 reason을 명시적으로 남긴다.
+
+예시:
+
+- `flow_volume_surge`
+- `flow_trade_strength`
+- `flow_near_high_breakout`
+- `flow_price_value_breakout`
+
+### 4.5 Layer 5 — Daily Execution Cap
+
+최종적으로 오늘 loop가 실제 순회할 종목 수를 제한한다.
+
+예시 기준:
+
+- 최대 20~30종목
+- 중요도/우선순위 순으로 cut
+- 보유 종목은 cap과 무관하게 강제 포함
+
+비즈니스 이유:
+
+- 5분 주기 내 판단 완료 가능성 확보
+- LLM 비용 통제
+- 운영자가 결과를 검토할 수 있는 범위 유지
+
+## 5. 오늘의 Universe 구성 절차
+
+실무 절차는 다음 순서를 따른다.
+
+### Step 1. Core Universe 준비
+
+정적 또는 반정적 중심 종목군을 유지한다.
+
+예시:
+
+- KOSPI100
+- 내부 승인된 KRX 대형주 리스트
+
+이 풀은 자주 바뀌지 않으며, 운영의 기본 모수 역할을 한다.
+
+### Step 2. 강제 포함 종목 추가
+
+다음 종목은 일반 우선순위와 무관하게 우선 포함한다.
+
+1. 현재 보유 종목
+2. 오늘 미체결/정합성 확인이 필요한 주문 관련 종목
+3. 당일 중요 이벤트가 발생한 종목
+
+이유:
+
+- 이미 익스포저가 있는 종목은 반드시 관리 대상이어야 한다
+- 정합성 점검 대상 종목은 universe 밖으로 밀리면 안 된다
+
+### Step 3. Event-Driven Overlay 추가
+
+다음 종목을 동적 overlay로 추가한다.
+
+- 당일 중요 OpenDART 이벤트 발생 종목
+- 최근 1~3영업일 내 의미 있는 공시 발생 종목
+- 내부 이벤트 정책상 우선 관찰 대상 종목
+
+### Step 4. Market-Driven Overlay 추가
+
+다음 종목을 장중 동적 overlay로 추가한다.
+
+- KIS 순위 분석 API에서 거래량 급증 상위 종목
+- 체결강도 상위 종목
+- 신고가 근접 또는 강한 돌파 후보 종목
+- 가격/거래대금이 동시에 급증하는 종목
+
+이 단계에서는 편입 전에 반드시 `Liquidity Filter`를 적용한다.
+
+기본 정책:
+
+- market-driven 후보는 장중 alpha 포착용이다
+- core universe에 없더라도 편입 가능하다
+- 단, execution risk가 높으면 편입하지 않는다
+
+### Step 5. 제외 규칙 적용
+
+다음은 최종 universe에서 제외한다.
+
+- 비활성 종목
+- 운영 금지 리스트
+- 브로커 미지원 범위
+- 이벤트/가격/스냅샷 데이터가 명백히 불완전한 종목
+- 유동성 필터 미통과 종목
+
+### Step 6. 우선순위 정렬
+
+정렬 기준 예시:
+
+1. 보유 종목
+2. 중요 OpenDART 이벤트 발생 종목
+3. 정합성/미체결 관리 대상 종목
+4. `market-driven overlay` 편입 종목
+5. Core Universe 일반 종목
+
+동률일 경우:
+
+- 최근 이벤트 시각
+- 최근 수급 강도
+- 유동성
+- 시가총액
+- 운영자 수동 우선순위
+
+### Step 7. Daily Cap 적용
+
+정렬 결과에 따라 최종 종목 수를 제한한다.
+
+v1 권장:
+
+- 기본 cap: 20
+- 상한 cap: 30
+
+## 6. v1 운영 정책
+
+### 6.1 기본 정책
+
+v1에서는 다음 정책을 권장한다.
+
+1. `Base Pool = KRX active kr_stock`
+2. `Core Universe = KOSPI100 또는 내부 승인 대형주 리스트`
+3. `Overlay = 중요 공시 종목 + market-driven 수급/변동성 종목`
+4. `강제 포함 = 보유 종목 + 정합성 점검 대상 종목`
+5. `Daily Cap = 20~30`
+
+### 6.2 초기 운영 형태
+
+초기 1개월 near-real 운영에서는 아래 순서를 권장한다.
+
+1. 보유 종목 관리 우선
+2. 중요 공시 종목 우선
+3. 장중 수급/변동성 강한 종목을 제한적으로 추가
+4. 신규 발굴은 Liquidity Filter 통과 종목으로 제한
+
+즉, “시장 전체 탐색”보다 “관리 가능한 범위 내의 고확신 종목 운영”이 우선이다.
+
+## 7. Agent 역할 범위
+
+### 7.1 Agent가 하지 말아야 할 것
+
+- 전체 시장에서 임의로 오늘의 universe를 생성
+- 운영 정책을 우회해 종목을 독자적으로 추가/삭제
+
+### 7.2 Agent가 해도 되는 것
+
+- 선정된 universe 내부에서 우선순위 보조
+- 이벤트 강도 해석
+- 종목별 actionability 판단
+- HOLD/WATCH/APPROVE 결정
+
+### 7.3 결론
+
+Universe 생성은 deterministic system policy가 authoritative source여야 한다.
+
+에이전트는 `selection authority`가 아니라 `decision intelligence` 역할을 맡는다.
+
+## 8. 개발 반영 원칙
+
+### 8.1 필수 분리
+
+개발 구조는 아래 3개를 분리해야 한다.
+
+1. `Instrument Master`
+2. `Universe Selection Policy`
+3. `Decision Loop`
+
+현재처럼 decision loop가 직접 fallback 심볼 하나를 잡아 돌기만 하면, instrument master가 확장돼도 비즈니스 의미가 없다.
+
+### 8.2 최소 구현 순서
+
+#### P0
+
+- `TRADING_UNIVERSE_SYMBOLS` 또는 DB 기반 universe source 확보
+- 단일 `005930` fallback 제거 또는 fallback 전용으로 축소
+- 다종목 loop 동작 확보
+
+#### P1
+
+- 별도 universe selection layer 도입
+- `core universe`, `held positions`, `event-driven overlay`, `market-driven overlay`를 합성하는 deterministic selector 구현
+- 종목별 inclusion reason 기록
+- `market-driven overlay` 종목은 Fast Layer에서 우선 스코어링
+- Liquidity Filter를 deterministic pre-gate로 구현
+
+권장 selector 합성식:
+
+```text
+Final Universe
+  = Core Universe
+  + Held Positions
+  + Event-Driven Overlay
+  + Market-Driven Overlay
+  - Exclusion Rules
+  -> Priority Ranking
+  -> Daily Cap
+```
+
+Fast Layer 정책:
+
+- `market-driven overlay`에서 편입된 종목은 초/분 단위 Fast Layer scoring 후보로 우선 배정
+- Event/공시 중심 Slow Layer보다 높은 refresh cadence를 허용할 수 있다
+- 단, 실제 submit gate는 계좌 예산, snapshot freshness, compliance/risk guard를 그대로 통과해야 한다
+
+#### P2
+
+- universe ranking 보조용 AI 또는 hybrid scoring 도입
+- adaptive scheduling과 결합
+
+## 9. 권장 데이터 모델
+
+v1 이후에는 별도 universe 소스를 분리하는 것이 바람직하다.
+
+예시:
+
+- `universe_watchlists`
+- `universe_watchlist_items`
+- `universe_daily_runs`
+
+최소 필드 예시:
+
+- `symbol`
+- `market_code`
+- `enabled`
+- `priority`
+- `reason`
+- `source_type` (`core`, `held_position`, `event_overlay`, `market_overlay`, `manual`)
+- `effective_date`
+
+## 10. 운영 예외 처리
+
+### 10.1 보유 종목
+
+보유 종목은 universe 일반 cap보다 우선한다.
+
+정책:
+
+- 보유 종목은 항상 포함
+- 보유 종목이 많아져도 일반 후보군을 줄여서 수용
+
+### 10.2 정합성 대상 종목
+
+`reconcile_required`, 미체결 관리, lineage 점검 대상 종목은 universe에서 빠지면 안 된다.
+
+정책:
+
+- execution/reconciliation 관련 종목은 항상 포함
+
+### 10.3 이벤트 발생 종목 급증
+
+같은 날 중요 이벤트 종목이 급증하면, 모두 신규 진입 대상으로 삼지 않는다.
+
+정책:
+
+- 중요 이벤트 종목은 포함하되
+- 실제 submit 후보는 추가 cap 또는 ranking으로 제한
+
+### 10.4 Market-Driven 후보 급증
+
+장중 변동성이 커질 때 `market-driven overlay` 후보가 급증할 수 있다.
+
+정책:
+
+- Fast Layer 우선순위는 높게 두되 무제한 편입하지 않는다
+- Liquidity Filter 통과 후에도 별도 overlay cap을 둘 수 있다
+- 시장 과열 구간에서는 core/held/event 종목을 침범하지 않는 범위에서만 편입한다
+
+## 11. KPI
+
+Universe 정책의 품질은 아래로 평가한다.
+
+1. 오늘 universe 종목 수
+2. 보유 종목 포함 누락률
+3. 중요 이벤트 종목 포함률
+4. market-driven 편입 종목의 actionability 비율
+5. 판단 loop 평균 소요시간
+6. submit candidate 대비 실제 submit 전환율
+7. 이벤트 없는 종목 반복 판단 비율
+
+## 12. 최종 권고
+
+현재 단계의 최적 운영 원칙은 다음과 같다.
+
+1. Universe는 시스템 정책으로 선정한다.
+2. 에이전트는 universe 안에서만 판단한다.
+3. 보유 종목, 중요 이벤트 종목, 정합성 대상 종목은 강제 포함한다.
+4. market-driven alpha 후보는 별도 overlay로 편입하되, Liquidity Filter를 반드시 통과시킨다.
+5. 최종 종목 수는 운영 예산과 주기 제약으로 제한한다.
+6. Universe 선정 이유를 종목별로 기록 가능하게 만든다.
+
+이 문서는 향후 `Universe Selection Agent` 또는 `Universe Selection Service` 구현의 비즈니스 기준 문서로 사용한다.

@@ -289,17 +289,20 @@ class AIRiskAgent:
         ]
 
         # Symbol source priority:
-        #   1. context.recent_events first non-None e.symbol
-        #   2. Fallback "(not available)"
-        # NOTE: AgentExecutionRequest has no direct symbol field;
-        #       events are all for the same symbol (queried by request.symbol in assemble()).
+        #   1. explicit request.symbol
+        #   2. context.recent_events first non-None e.symbol
+        #   3. Fallback "(not available)"
         symbol: str = "(not available)"
-        if events:
+        if request.symbol:
+            symbol = request.symbol
+        elif events:
             for e in events:
                 if e.symbol:
                     symbol = e.symbol
                     break
         lines.append(f"Symbol: {symbol}")
+        if request.market:
+            lines.append(f"Market: {request.market}")
 
         # === Event Interpretation output (if available) ===
         # The orchestrator always passes a structured EventInterpretationOutput

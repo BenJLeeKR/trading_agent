@@ -55,8 +55,12 @@ from agent_trading.services.decision_orchestrator import (
 
 # Module under test
 from scripts.run_paper_decision_loop import (
+    ENV_TRADING_UNIVERSE,
+    UniverseSymbol,
     _build_aggregate_summary,
     _parse_args,
+    _parse_universe_symbols,
+    _read_trading_universe,
     _run_one_cycle,
     _serialize_cycle_result,
     _serialize_precheck,
@@ -575,3 +579,94 @@ class TestParseArgs:
         """--output json."""
         args = _parse_args(["--output", "json"])
         assert args.output == "json"
+
+
+class TestTradingUniverse:
+    """Trading universe env parsing and DB fallback."""
+
+    def test_default_universe(self) -> None:
+        assert _parse_universe_symbols(None) == (UniverseSymbol("005930", "KRX"),)
+
+    def test_parse_symbols_with_default_market(self) -> None:
+        assert _parse_universe_symbols("005930,000660") == (
+            UniverseSymbol("005930", "KRX"),
+            UniverseSymbol("000660", "KRX"),
+        )
+
+    def test_parse_explicit_markets_and_dedup(self) -> None:
+        assert _parse_universe_symbols("005930:KRX,005930.KRX,AAPL:NASDAQ") == (
+            UniverseSymbol("005930", "KRX"),
+            UniverseSymbol("AAPL", "NASDAQ"),
+        )
+
+    @pytest.mark.asyncio
+    async def test_read_trading_universe_from_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Env var takes priority over DB fallback."""
+        monkeypatch.setenv(ENV_TRADING_UNIVERSE, "030200,090150:KRX")
+        result = await _read_trading_universe()
+        assert result == (
+            UniverseSymbol("030200", "KRX"),
+            UniverseSymbol("090150", "KRX"),
+        )
+
+    @pytest.mark.asyncio
+    async def test_db_fallback_when_env_not_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When env var is not set, DB is queried for active KRX instruments."""
+        monkeypatch.delenv(ENV_TRADING_UNIVERSE, raising=False)
+
+        # Mock asyncpg Row-like objects
+        class FakeRow:
+            def __init__(self, symbol: str, market_code: str) -> None:
+                self._data = {"symbol": symbol, "market_code": market_code}
+            def __getitem__(self, key: str) -> str:
+                return self._data[key]
+
+        class FakeConn:
+            async def fetch(self, query: str, *args: Any, **kwargs: Any) -> list[Any]:
+                return [
+                    FakeRow("005930", "KRX"),
+                    FakeRow("000660", "KRX"),
+                ]
+            async def close(self) -> None:
+                pass
+
+        # asyncpg.connect() is async, so we must return an awaitable.
+        # Use AsyncMock to make connect() return FakeConn when awaited.
+        with patch("asyncpg.connect", new=AsyncMock(return_value=FakeConn())):
+            result = await _read_trading_universe()
+            assert result == (
+                UniverseSymbol("005930", "KRX"),
+                UniverseSymbol("000660", "KRX"),
+            )
+
+    @pytest.mark.asyncio
+    async def test_db_fallback_empty_returns_single_symbol(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When DB returns 0 rows, fallback to 005930 single symbol."""
+        monkeypatch.delenv(ENV_TRADING_UNIVERSE, raising=False)
+
+        class FakeConnEmpty:
+            async def fetch(self, query: str, *args: Any, **kwargs: Any) -> list[Any]:
+                return []
+            async def close(self) -> None:
+                pass
+
+        with patch("asyncpg.connect", new=lambda dsn=None, **kw: FakeConnEmpty()):
+            result = await _read_trading_universe()
+            assert result == (UniverseSymbol("005930", "KRX"),)
+
+    @pytest.mark.asyncio
+    async def test_db_fallback_on_connection_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When DB connection fails, fallback to 005930 single symbol."""
+        monkeypatch.delenv(ENV_TRADING_UNIVERSE, raising=False)
+
+        with patch("asyncpg.connect", side_effect=RuntimeError("DB connection refused")):
+            result = await _read_trading_universe()
+            assert result == (UniverseSymbol("005930", "KRX"),)

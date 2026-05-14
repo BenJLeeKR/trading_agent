@@ -18,23 +18,24 @@ Usage
 .. code-block:: bash
 
     # 기본 실행 (5분 간격, 무한 반복, submit 모드)
-    python -m scripts.run_paper_decision_loop
+    python3 -m scripts.run_paper_decision_loop
 
     # 1회 실행 후 종료
-    python -m scripts.run_paper_decision_loop --count 1
+    python3 -m scripts.run_paper_decision_loop --count 1
 
     # Dry-run (assemble + sizing only, submit 없음)
-    python -m scripts.run_paper_decision_loop --count 1 --dry-run
+    python3 -m scripts.run_paper_decision_loop --count 1 --dry-run
 
     # 60초 간격, 5회, JSON 출력
-    python -m scripts.run_paper_decision_loop --interval 60 --count 5 --output json
+    python3 -m scripts.run_paper_decision_loop --interval 60 --count 5 --output json
 
     # 명시적 submit 모드 (기본값)
-    python -m scripts.run_paper_decision_loop --submit --count 1
+    python3 -m scripts.run_paper_decision_loop --submit --count 1
 
 환경 변수
 ---------
 * ``PAPER_DECISION_LOOP_INTERVAL_SECONDS`` — 기본 interval (기본 300)
+* ``TRADING_UNIVERSE_SYMBOLS`` — comma-separated symbol list (예: 005930,030200:KRX)
 * ``KIS_SNAPSHOT_STALE_THRESHOLD_SECONDS`` — snapshot staleness 임계값 (기본 900)
 """
 
@@ -48,6 +49,7 @@ import os
 import signal
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, NoReturn
@@ -67,6 +69,7 @@ from scripts.run_orchestrator_once import (
     STRATEGY_ID,
     SYMBOL,
     MARKET,
+    _resolve_smoke_price,
     _seed_if_empty,
 )
 
@@ -76,6 +79,15 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_INTERVAL_SECONDS = 300
 ENV_INTERVAL = "PAPER_DECISION_LOOP_INTERVAL_SECONDS"
+ENV_TRADING_UNIVERSE = "TRADING_UNIVERSE_SYMBOLS"
+
+
+@dataclass(slots=True, frozen=True)
+class UniverseSymbol:
+    """A symbol/market pair evaluated by the decision loop."""
+
+    symbol: str
+    market: str = MARKET
 
 # ── Signal handling ─────────────────────────────────────────────────────────
 
@@ -125,6 +137,116 @@ def _read_interval() -> int:
             DEFAULT_INTERVAL_SECONDS,
         )
         return DEFAULT_INTERVAL_SECONDS
+
+
+def _parse_universe_symbols(raw: str | None) -> tuple[UniverseSymbol, ...]:
+    """Parse a comma-separated trading universe.
+
+    Supported item formats:
+    - ``005930`` → ``005930:KRX``
+    - ``005930:KRX`` → explicit symbol/market
+    - ``005930.KRX`` → explicit symbol/market
+    """
+    if raw is None or not raw.strip():
+        return (UniverseSymbol(symbol=SYMBOL, market=MARKET),)
+
+    parsed: list[UniverseSymbol] = []
+    seen: set[tuple[str, str]] = set()
+    for item in raw.split(","):
+        token = item.strip()
+        if not token:
+            continue
+
+        if ":" in token:
+            symbol, market = token.split(":", 1)
+        elif "." in token:
+            symbol, market = token.split(".", 1)
+        else:
+            symbol, market = token, MARKET
+
+        symbol = symbol.strip().upper()
+        market = (market.strip().upper() or MARKET)
+        if not symbol:
+            continue
+
+        key = (symbol, market)
+        if key not in seen:
+            parsed.append(UniverseSymbol(symbol=symbol, market=market))
+            seen.add(key)
+
+    if not parsed:
+        logger.warning(
+            "Invalid %s=%r, falling back to %s:%s",
+            ENV_TRADING_UNIVERSE,
+            raw,
+            SYMBOL,
+            MARKET,
+        )
+        return (UniverseSymbol(symbol=SYMBOL, market=MARKET),)
+    return tuple(parsed)
+
+
+async def _read_trading_universe() -> tuple[UniverseSymbol, ...]:
+    """Read the trading universe with fallback chain.
+
+    Priority
+    --------
+    1. ``TRADING_UNIVERSE_SYMBOLS`` env var (explicit override).
+    2. DB ``trading.instruments`` where ``market_code='KRX'`` and ``is_active=true``.
+    3. Hardcoded fallback: ``UniverseSymbol(symbol=SYMBOL, market=MARKET)`` (005930/KRX).
+
+    The env var takes precedence so that operators can override the universe
+    without modifying the database.  When the env var is not set, the DB is
+    queried for all active KRX instruments.  If the DB is unreachable or
+    returns no rows, the single-symbol 005930 fallback is used.
+    """
+    # Priority 1: explicit env var override
+    raw = os.getenv(ENV_TRADING_UNIVERSE)
+    if raw is not None and raw.strip():
+        return _parse_universe_symbols(raw)
+
+    # Priority 2: DB — active KRX instruments from seeded universe
+    # Use a direct connection (not the pool) because this function is called
+    # before postgres_runtime() initialises the pool.
+    try:
+        import asyncpg
+        from agent_trading.db.connection import DatabaseConfig
+        _cfg = DatabaseConfig()
+        _conn = await asyncpg.connect(dsn=_cfg.resolved_dsn)
+        try:
+            rows = await _conn.fetch(
+                "SELECT symbol, market_code FROM trading.instruments "
+                "WHERE market_code = 'KRX' AND is_active = true "
+                "ORDER BY symbol"
+            )
+        finally:
+            await _conn.close()
+        if rows:
+            universe = tuple(
+                UniverseSymbol(symbol=row["symbol"], market=row["market_code"])
+                for row in rows
+            )
+            logger.info(
+                "Trading universe from DB: %d KRX symbols loaded.",
+                len(universe),
+            )
+            return universe
+        logger.info(
+            "DB returned 0 active KRX instruments — falling back to %s:%s.",
+            SYMBOL,
+            MARKET,
+        )
+    except Exception as exc:
+        logger.warning(
+            "DB universe query failed (%s: %s) — falling back to %s:%s.",
+            type(exc).__name__,
+            exc,
+            SYMBOL,
+            MARKET,
+        )
+
+    # Priority 3: hardcoded fallback (single smoke symbol)
+    return (UniverseSymbol(symbol=SYMBOL, market=MARKET),)
 
 
 # ── Pre-check: snapshot sync health ────────────────────────────────────────
@@ -197,6 +319,8 @@ def _serialize_cycle_result(
     result: SubmitResult | None,
     duration: float,
     *,
+    symbol: str = SYMBOL,
+    market: str = MARKET,
     precheck: dict[str, object] | None = None,
     dry_run: bool = False,
     error: str | None = None,
@@ -224,6 +348,8 @@ def _serialize_cycle_result(
 
     data: dict[str, object] = {
         "cycle": cycle,
+        "symbol": symbol,
+        "market": market,
         "started_at": started_at,
         "completed_at": completed_at,
         "duration_seconds": round(duration, 3),
@@ -307,6 +433,8 @@ async def _run_one_cycle(
     submit: bool,
     dry_run: bool,
     output: str,
+    symbol: str = SYMBOL,
+    market: str = MARKET,
 ) -> dict[str, object]:
     """Execute a single decision cycle.
 
@@ -331,17 +459,18 @@ async def _run_one_cycle(
             precheck = await _run_precheck(repos)
 
             # ── 3. Build request ────────────────────────────────────────
+            resolved_price = _resolve_smoke_price()
             request = SubmitOrderRequest(
                 account_ref=ACCOUNT_ALIAS,
-                client_order_id=f"paper-loop-{cycle}-{int(start)}",
-                correlation_id=f"paper-loop-{cycle}-{int(start)}",
+                client_order_id=f"paper-loop-{symbol}-{cycle}-{int(start)}",
+                correlation_id=f"paper-loop-{symbol}-{cycle}-{int(start)}",
                 strategy_id=str(STRATEGY_ID),
-                symbol=SYMBOL,
-                market=MARKET,
+                symbol=symbol,
+                market=market,
                 side=OrderSide.BUY,
                 order_type=OrderType.LIMIT,
                 quantity=Decimal("10"),
-                price=Decimal("50000"),
+                price=resolved_price,
             )
 
             # ── 4. Execute cycle ────────────────────────────────────────
@@ -388,6 +517,8 @@ async def _run_one_cycle(
                 cycle,
                 result,
                 duration,
+                symbol=symbol,
+                market=market,
                 precheck=precheck,
                 dry_run=dry_run,
             )
@@ -399,6 +530,8 @@ async def _run_one_cycle(
             cycle,
             None,
             duration,
+            symbol=symbol,
+            market=market,
             precheck=precheck,
             dry_run=dry_run,
             error=str(exc),
@@ -430,6 +563,13 @@ async def _run_loop(
         output,
     )
     logger.info("Set %s to change interval (default=%d).", ENV_INTERVAL, DEFAULT_INTERVAL_SECONDS)
+    universe = await _read_trading_universe()
+    logger.info(
+        "Trading universe (%d): %s",
+        len(universe),
+        ", ".join(f"{item.symbol}:{item.market}" for item in universe),
+    )
+    logger.info("Set %s to change universe (comma-separated symbols).", ENV_TRADING_UNIVERSE)
 
     _install_signal_handlers()
 
@@ -448,38 +588,51 @@ async def _run_loop(
         cycle_count += 1
         logger.info("=== Decision Cycle %d ===", cycle_count)
 
-        # Run decision cycle
-        result = await _run_one_cycle(
-            cycle=cycle_count,
-            submit=submit,
-            dry_run=dry_run,
-            output=output,
-        )
-        results.append(result)
+        submit_budget_consumed = False
+        for item in universe:
+            # In submit mode, evaluate all symbols but allow at most one
+            # budget-consuming broker submit per script invocation.
+            symbol_submit = submit and not dry_run and not submit_budget_consumed
+            symbol_dry_run = dry_run or (submit and submit_budget_consumed)
 
-        status = result.get("status", "UNKNOWN")
-        if status in ("SUBMITTED", "DRY_RUN", "SKIPPED"):
-            total_success += 1
-        else:
-            total_fail += 1
-
-        # Output per-cycle result
-        if output == "json":
-            print(json.dumps(result, ensure_ascii=False))
-        else:
-            precheck_str = ""
-            precheck_data = result.get("precheck")
-            if isinstance(precheck_data, dict):
-                h = precheck_data.get("health_status", "?")
-                precheck_str = f" [health={h}]"
-            logger.info(
-                "Cycle %d/%s complete — status=%s duration=%.2fs%s",
-                cycle_count,
-                "∞" if max_cycles == 0 else str(max_cycles),
-                status,
-                result.get("duration_seconds", 0),
-                precheck_str,
+            result = await _run_one_cycle(
+                cycle=cycle_count,
+                submit=symbol_submit,
+                dry_run=symbol_dry_run,
+                output=output,
+                symbol=item.symbol,
+                market=item.market,
             )
+            results.append(result)
+
+            status = result.get("status", "UNKNOWN")
+            if status in ("SUBMITTED", "DRY_RUN", "SKIPPED"):
+                total_success += 1
+            else:
+                total_fail += 1
+
+            if status in ("SUBMITTED", "RECONCILE_REQUIRED"):
+                submit_budget_consumed = True
+
+            # Output per-symbol result
+            if output == "json":
+                print(json.dumps(result, ensure_ascii=False))
+            else:
+                precheck_str = ""
+                precheck_data = result.get("precheck")
+                if isinstance(precheck_data, dict):
+                    h = precheck_data.get("health_status", "?")
+                    precheck_str = f" [health={h}]"
+                logger.info(
+                    "Cycle %d/%s symbol=%s:%s complete — status=%s duration=%.2fs%s",
+                    cycle_count,
+                    "∞" if max_cycles == 0 else str(max_cycles),
+                    item.symbol,
+                    item.market,
+                    status,
+                    result.get("duration_seconds", 0),
+                    precheck_str,
+                )
 
         # Wait for next cycle (or shutdown)
         if max_cycles > 0 and cycle_count >= max_cycles:

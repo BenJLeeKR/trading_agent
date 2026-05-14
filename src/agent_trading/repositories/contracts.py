@@ -186,6 +186,19 @@ class InstrumentRepository(Protocol):
     async def get_by_symbol(self, symbol: str, market_code: str) -> InstrumentEntity | None:
         ...
 
+    async def upsert_by_symbol(self, instrument: InstrumentEntity) -> InstrumentEntity:
+        """INSERT … ON CONFLICT (symbol, market_code) DO UPDATE … RETURNING *.
+
+        If a row with the same ``(symbol, market_code)`` already exists,
+        update its mutable fields and return the updated row.  Otherwise
+        insert a new row.
+
+        The caller is responsible for generating ``instrument_id`` when
+        inserting a new instrument.  On conflict, the existing PK is
+        preserved.
+        """
+        ...
+
 
 class DecisionContextRepository(Protocol):
     async def add(self, context: DecisionContextEntity) -> DecisionContextEntity:

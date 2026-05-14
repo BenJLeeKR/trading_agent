@@ -41,6 +41,12 @@ class AgentExecutionRequest:
     context
         The fully assembled ``AssembledContext`` (decision context, config
         version, recent events, score).
+    symbol
+        Trading symbol being evaluated. This is provided explicitly because
+        some cycles have no recent events, so downstream agents cannot infer
+        the symbol from event provenance alone.
+    market
+        Market code for ``symbol`` (for example ``"KRX"``).
     event_interpretation_output
         Optional output from the Event Interpretation Agent.  When provided,
         downstream agents (AI Risk, Final Decision Composer) can use the
@@ -56,6 +62,8 @@ class AgentExecutionRequest:
     decision_context_id: UUID | None
     correlation_id: str
     context: AssembledContext
+    symbol: str | None = None
+    market: str | None = None
     event_interpretation_output: EventInterpretationOutput | None = None
     ai_risk_output: AIRiskOutput | None = None
     model_id: str | None = None

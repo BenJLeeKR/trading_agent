@@ -225,6 +225,10 @@ class EventInterpretationAgent:
         lines: list[str] = [
             f"Correlation ID: {request.correlation_id}",
         ]
+        if request.symbol:
+            lines.append(f"Symbol: {request.symbol}")
+        if request.market:
+            lines.append(f"Market: {request.market}")
 
         if score:
             score_line = f"Score: {score.score} (threshold: {score.threshold})"
