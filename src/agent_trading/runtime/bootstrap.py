@@ -106,6 +106,10 @@ def _build_polling_workers(
 
     v1: OpenDART only (T1_REGULATORY).
     Additional sources (KRX KIND, news feeds) are added in later milestones.
+
+    OpenDART polling worker includes an ``OpenDartSymbolResolver`` for
+    corp_code → stock_code fallback when ``/list.json`` returns empty
+    ``stock_code``.
     """
     workers: list[PollingWorker] = []
     external_event_repo: ExternalEventRepository | None = getattr(
@@ -117,9 +121,14 @@ def _build_polling_workers(
     # OpenDART polling worker (T1_REGULATORY)
     if settings.opendart_api_key:
         from agent_trading.brokers.opendart_adapter import OpenDartSourceAdapter
+        from agent_trading.services.symbol_resolver import OpenDartSymbolResolver
 
+        symbol_resolver = OpenDartSymbolResolver(
+            api_key=settings.opendart_api_key,
+        )
         adapter: SourceAdapter = OpenDartSourceAdapter(
             api_key=settings.opendart_api_key,
+            symbol_resolver=symbol_resolver,
         )
         config = PollingConfig(
             source_name="opendart",

@@ -39,6 +39,7 @@ from agent_trading.brokers.dedup import DedupKeyGenerator
 from agent_trading.brokers.source_adapter import RawEvent, SourceAdapter
 from agent_trading.domain.entities import ExternalEventEntity
 from agent_trading.domain.enums import SourceReliabilityTier
+from agent_trading.services.symbol_resolver import OpenDartSymbolResolver
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,10 @@ class OpenDartSourceAdapter:
         OpenDART API base URL (default: production).
     request_timeout : int
         HTTP request timeout in seconds.
+    symbol_resolver : OpenDartSymbolResolver | None
+        Optional resolver for corp_code → stock_code fallback.
+        When provided, items with empty ``stock_code`` will attempt
+        resolution via ``/company.json`` API.
 
     v1 scope: fetch disclosure list → normalise → store.
     No AI classification, no semantic interpretation.
@@ -154,10 +159,12 @@ class OpenDartSourceAdapter:
         api_key: str,
         base_url: str = OPENDART_BASE_URL,
         request_timeout: int = 30,
+        symbol_resolver: OpenDartSymbolResolver | None = None,
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url
         self._request_timeout = request_timeout
+        self._symbol_resolver = symbol_resolver
         self._client: httpx.AsyncClient | None = None
         self._last_poll: datetime | None = None
 
@@ -179,6 +186,9 @@ class OpenDartSourceAdapter:
 
         Calls ``/api/list.json`` with a date range from the last poll
         timestamp (or yesterday if first poll) to now.
+
+        When a ``symbol_resolver`` is configured, items with empty
+        ``stock_code`` will attempt resolution via ``/company.json`` API.
 
         Returns
         -------
@@ -227,13 +237,24 @@ class OpenDartSourceAdapter:
         if not items:
             return []
 
-        return [self._raw_from_item(item, now) for item in items]
+        # _raw_from_item이 async로 변경되었으므로 list comprehension 대신 async loop 사용
+        events: list[RawEvent] = []
+        for item in items:
+            event = await self._raw_from_item(item, now)
+            events.append(event)
+        return events
 
-    def _raw_from_item(self, item: dict[str, Any], ingested_at: datetime) -> RawEvent:
+    async def _raw_from_item(self, item: dict[str, Any], ingested_at: datetime) -> RawEvent:
         """Convert an OpenDART API item into a ``RawEvent``.
 
         v1: preserves original OpenDART classification (``corp_cls``,
         ``report_nm``) as ``event_type``. No AI classification.
+
+        Symbol resolution priority:
+        1. ``stock_code`` from ``/list.json`` (primary, unchanged).
+        2. If empty AND ``symbol_resolver`` is configured → resolve via
+           ``/company.json`` using ``corp_code``.
+        3. If still empty → ``None`` (unresolvable).
         """
         corp_cls = item.get("corp_cls", "")
         report_nm = item.get("report_nm", "")
@@ -249,6 +270,39 @@ class OpenDartSourceAdapter:
         except (ValueError, TypeError):
             published_at = ingested_at
 
+        # ── Symbol resolution with fallback ──────────────────────────────
+        symbol: str | None = item.get("stock_code") or None
+        corp_code: str | None = item.get("corp_code")
+
+        if symbol is None and corp_code is not None and self._symbol_resolver is not None:
+            resolved = await self._symbol_resolver.resolve(corp_code)
+            if resolved:
+                symbol = resolved
+                logger.debug(
+                    "Resolved symbol via corp_code=%s → %s for rcept_no=%s report_nm=%s",
+                    corp_code,
+                    symbol,
+                    item.get("rcept_no"),
+                    report_nm,
+                )
+            else:
+                logger.debug(
+                    "Failed to resolve symbol for corp_code=%s corp_name=%s rcept_no=%s "
+                    "(negative cache will prevent retry this batch)",
+                    corp_code,
+                    item.get("corp_name", "unknown"),
+                    item.get("rcept_no"),
+                )
+
+        if symbol is None:
+            logger.debug(
+                "Symbol remains None for rcept_no=%s corp_code=%s corp_name=%s report_nm=%s",
+                item.get("rcept_no"),
+                corp_code,
+                item.get("corp_name", "unknown"),
+                report_nm,
+            )
+
         return RawEvent(
             source_name=self.source_name,
             source_event_id=item.get("rcept_no", ""),
@@ -257,8 +311,8 @@ class OpenDartSourceAdapter:
             ingested_at=ingested_at,
             source_reliability_tier=self.reliability_tier.value,
             raw_payload=item,
-            symbol=item.get("stock_code") or None,
-            issuer_code=item.get("corp_code"),
+            symbol=symbol,
+            issuer_code=corp_code,
             market=None,
             headline=report_nm,
             body=None,

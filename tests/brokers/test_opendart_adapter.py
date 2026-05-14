@@ -14,6 +14,7 @@ from agent_trading.brokers.opendart_adapter import OpenDartSourceAdapter
 from agent_trading.brokers.source_adapter import RawEvent
 from agent_trading.domain.entities import ExternalEventEntity
 from agent_trading.domain.enums import SourceReliabilityTier
+from agent_trading.services.symbol_resolver import OpenDartSymbolResolver
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +304,196 @@ class TestOpenDartSourceAdapter:
         assert len(events) == 2
         assert events[0].published_at == datetime(2023, 1, 1, tzinfo=timezone.utc)
         assert events[1].published_at == datetime(2023, 1, 2, tzinfo=timezone.utc)
+
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_fetch_with_symbol_resolver_fallback(self) -> None:
+        """fetch() with symbol_resolver: empty stock_code → corp_code fallback."""
+        # stock_code가 빈 항목이 포함된 응답
+        response_with_empty_stock: dict[str, Any] = {
+            "status": "000",
+            "message": "정상",
+            "list": [
+                {
+                    "corp_code": "00123456",
+                    "corp_name": "삼성전자",
+                    "corp_cls": "Y",
+                    "stock_code": "005930",  # 정상 stock_code
+                    "report_nm": "사업보고서 (2023)",
+                    "rcept_no": "20230101000001",
+                    "rcept_dt": "20230101",
+                    "rm": "정기공시",
+                },
+                {
+                    "corp_code": "00999999",
+                    "corp_name": "비상장법인",
+                    "corp_cls": "E",
+                    "stock_code": "",  # 빈 stock_code → fallback 필요
+                    "report_nm": "기타공시",
+                    "rcept_no": "20230102000002",
+                    "rcept_dt": "20230102",
+                    "rm": "기타공시",
+                },
+            ],
+        }
+
+        # Mock SymbolResolver
+        mock_resolver = AsyncMock(spec=OpenDartSymbolResolver)
+        mock_resolver.resolve.return_value = "999999"  # fallback 성공
+
+        adapter = OpenDartSourceAdapter(
+            api_key="test_key",
+            symbol_resolver=mock_resolver,
+        )
+
+        with patch.object(adapter, "_get_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_response = MagicMock(spec=httpx.Response)
+            mock_response.status_code = 200
+            mock_response.raise_for_status = MagicMock()
+            mock_response.json = MagicMock(return_value=response_with_empty_stock)
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_get_client.return_value = mock_client
+
+            events = await adapter.fetch()
+
+        assert len(events) == 2
+        # 첫 번째 항목: stock_code가 있으므로 그대로 사용
+        assert events[0].symbol == "005930"
+        # 두 번째 항목: stock_code가 없으므로 fallback 호출
+        assert events[1].symbol == "999999"
+        mock_resolver.resolve.assert_awaited_once_with("00999999")
+
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_fetch_with_symbol_resolver_fallback_failure(self) -> None:
+        """fetch() with symbol_resolver: fallback 실패 시 symbol=None 유지."""
+        response_with_empty_stock: dict[str, Any] = {
+            "status": "000",
+            "message": "정상",
+            "list": [
+                {
+                    "corp_code": "00999999",
+                    "corp_name": "비상장법인",
+                    "corp_cls": "E",
+                    "stock_code": "",
+                    "report_nm": "기타공시",
+                    "rcept_no": "20230102000002",
+                    "rcept_dt": "20230102",
+                    "rm": "기타공시",
+                },
+            ],
+        }
+
+        # Mock SymbolResolver — fallback 실패
+        mock_resolver = AsyncMock(spec=OpenDartSymbolResolver)
+        mock_resolver.resolve.return_value = None  # 매핑 실패
+
+        adapter = OpenDartSourceAdapter(
+            api_key="test_key",
+            symbol_resolver=mock_resolver,
+        )
+
+        with patch.object(adapter, "_get_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_response = MagicMock(spec=httpx.Response)
+            mock_response.status_code = 200
+            mock_response.raise_for_status = MagicMock()
+            mock_response.json = MagicMock(return_value=response_with_empty_stock)
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_get_client.return_value = mock_client
+
+            events = await adapter.fetch()
+
+        assert len(events) == 1
+        assert events[0].symbol is None  # fallback 실패 → None 유지
+        mock_resolver.resolve.assert_awaited_once_with("00999999")
+
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_fetch_without_symbol_resolver_preserves_old_behavior(self) -> None:
+        """symbol_resolver 미주입 시 기존 동작 유지 (빈 stock_code → None)."""
+        response_with_empty_stock: dict[str, Any] = {
+            "status": "000",
+            "message": "정상",
+            "list": [
+                {
+                    "corp_code": "00999999",
+                    "corp_name": "비상장법인",
+                    "corp_cls": "E",
+                    "stock_code": "",
+                    "report_nm": "기타공시",
+                    "rcept_no": "20230102000002",
+                    "rcept_dt": "20230102",
+                    "rm": "기타공시",
+                },
+            ],
+        }
+
+        # symbol_resolver 없이 생성 (기존 방식)
+        adapter = OpenDartSourceAdapter(api_key="test_key")
+
+        with patch.object(adapter, "_get_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_response = MagicMock(spec=httpx.Response)
+            mock_response.status_code = 200
+            mock_response.raise_for_status = MagicMock()
+            mock_response.json = MagicMock(return_value=response_with_empty_stock)
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_get_client.return_value = mock_client
+
+            events = await adapter.fetch()
+
+        assert len(events) == 1
+        assert events[0].symbol is None  # 기존 동작: None 유지
+
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_fetch_with_symbol_resolver_no_corp_code(self) -> None:
+        """stock_code도 없고 corp_code도 없으면 resolver 호출 없이 None."""
+        response_no_corp_code: dict[str, Any] = {
+            "status": "000",
+            "message": "정상",
+            "list": [
+                {
+                    # corp_code 자체가 없는 경우
+                    "corp_name": "알수없음",
+                    "corp_cls": "E",
+                    "stock_code": "",
+                    "report_nm": "기타공시",
+                    "rcept_no": "20230102000002",
+                    "rcept_dt": "20230102",
+                    "rm": "기타공시",
+                },
+            ],
+        }
+
+        mock_resolver = AsyncMock(spec=OpenDartSymbolResolver)
+        adapter = OpenDartSourceAdapter(
+            api_key="test_key",
+            symbol_resolver=mock_resolver,
+        )
+
+        with patch.object(adapter, "_get_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_response = MagicMock(spec=httpx.Response)
+            mock_response.status_code = 200
+            mock_response.raise_for_status = MagicMock()
+            mock_response.json = MagicMock(return_value=response_no_corp_code)
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_get_client.return_value = mock_client
+
+            events = await adapter.fetch()
+
+        assert len(events) == 1
+        assert events[0].symbol is None
+        assert events[0].issuer_code is None
+        # corp_code가 없으므로 resolver 호출 안 함
+        mock_resolver.resolve.assert_not_called()
 
         await adapter.close()
 
