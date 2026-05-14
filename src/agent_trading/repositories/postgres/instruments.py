@@ -86,3 +86,20 @@ class PostgresInstrumentRepository:
             json.dumps(instrument.metadata) if instrument.metadata is not None else None,
         )
         return row_to_entity(row, InstrumentEntity)
+
+    async def list_active_by_market(
+        self, market_code: str
+    ) -> Sequence[InstrumentEntity]:
+        """List all active instruments for a given market code.
+
+        Returns only ``is_active=true`` instruments, ordered by symbol.
+        """
+        rows = await self._tx.connection.fetch(
+            """
+            SELECT * FROM trading.instruments
+            WHERE market_code = $1 AND is_active = true
+            ORDER BY symbol
+            """,
+            market_code,
+        )
+        return [row_to_entity(row, InstrumentEntity) for row in rows]

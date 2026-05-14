@@ -50,7 +50,7 @@ import signal
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, NoReturn
 
@@ -58,9 +58,23 @@ from agent_trading.domain.enums import OrderSide, OrderType
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.contracts import SnapshotSyncHealthSummary
+from agent_trading.repositories.filters import AccountLookup
 from agent_trading.runtime.bootstrap import postgres_runtime
 from agent_trading.services.decision_orchestrator import SubmitResult
 from agent_trading.services.sizing_engine import calculate_sizing
+from agent_trading.services.universe_selection import UniverseSelectionService
+from agent_trading.services.universe_selection_types import (
+    CompositionContext,
+    FALLBACK_ACCOUNT_ID,
+)
+
+# Lazy import for KISRestClient (only when KIS credentials are configured)
+try:
+    from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
+    _HAS_KIS = True
+except ImportError:
+    KISRestClient = None  # type: ignore[assignment,misc]
+    _HAS_KIS = False
 
 # ── Seed constants (reused from run_orchestrator_once.py) ───────────────────
 from scripts.run_orchestrator_once import (
@@ -78,16 +92,37 @@ logger = logging.getLogger(__name__)
 # ── Defaults ────────────────────────────────────────────────────────────────
 
 DEFAULT_INTERVAL_SECONDS = 300
+DEFAULT_EVENT_LOOKBACK_HOURS: int = 24
+"""Event lookback window (hours).  Calendar 24h proxy — not trading-session-aware.
+장 시작 직후/휴장일 경계에서는 실제 '1거래일'과 다를 수 있음.
+P2.1+에서 trading calendar 기반 lookback으로 개선 필요."""
 ENV_INTERVAL = "PAPER_DECISION_LOOP_INTERVAL_SECONDS"
 ENV_TRADING_UNIVERSE = "TRADING_UNIVERSE_SYMBOLS"
 
 
 @dataclass(slots=True, frozen=True)
 class UniverseSymbol:
-    """A symbol/market pair evaluated by the decision loop."""
+    """A symbol/market pair evaluated by the decision loop.
+
+    Attributes
+    ----------
+    symbol : str
+        Ticker symbol (e.g. ``"005930"``).
+    market : str
+        Market code (e.g. ``"KRX"``).
+    source_type : str
+        Origin of this symbol's inclusion (``"core"``, ``"held_position"``,
+        ``"event_overlay"``, ``"market_overlay"``, ``"manual"``).
+        Default: ``"core"``.
+    inclusion_reason : str
+        Machine-readable reason for inclusion.
+        Default: ``"kospi200_core"``.
+    """
 
     symbol: str
     market: str = MARKET
+    source_type: str = "core"
+    inclusion_reason: str = "kospi200_core"
 
 # ── Signal handling ─────────────────────────────────────────────────────────
 
@@ -192,53 +227,92 @@ async def _read_trading_universe() -> tuple[UniverseSymbol, ...]:
     Priority
     --------
     1. ``TRADING_UNIVERSE_SYMBOLS`` env var (explicit override).
-    2. DB ``trading.instruments`` where ``market_code='KRX'`` and ``is_active=true``.
+    2. ``UniverseSelectionService.compose()`` — 4-source composition with
+       Liquidity Filter, priority sort, and daily cap.
     3. Hardcoded fallback: ``UniverseSymbol(symbol=SYMBOL, market=MARKET)`` (005930/KRX).
 
     The env var takes precedence so that operators can override the universe
-    without modifying the database.  When the env var is not set, the DB is
-    queried for all active KRX instruments.  If the DB is unreachable or
-    returns no rows, the single-symbol 005930 fallback is used.
+    without modifying the database.  When the env var is not set, the
+    ``UniverseSelectionService`` is used.  If the service is unavailable or
+    returns no symbols, the single-symbol 005930 fallback is used.
     """
     # Priority 1: explicit env var override
     raw = os.getenv(ENV_TRADING_UNIVERSE)
     if raw is not None and raw.strip():
         return _parse_universe_symbols(raw)
 
-    # Priority 2: DB — active KRX instruments from seeded universe
-    # Use a direct connection (not the pool) because this function is called
-    # before postgres_runtime() initialises the pool.
+    # Priority 2: UniverseSelectionService (4-source composition)
     try:
-        import asyncpg
-        from agent_trading.db.connection import DatabaseConfig
-        _cfg = DatabaseConfig()
-        _conn = await asyncpg.connect(dsn=_cfg.resolved_dsn)
-        try:
-            rows = await _conn.fetch(
-                "SELECT symbol, market_code FROM trading.instruments "
-                "WHERE market_code = 'KRX' AND is_active = true "
-                "ORDER BY symbol"
+        async with postgres_runtime(run_migrations=False) as runtime:
+            repos: RepositoryContainer = runtime["repositories"]
+
+            # Create KIS client if available (P2 market overlay)
+            kis_client: KISRestClient | None = None
+            if _HAS_KIS:
+                try:
+                    from agent_trading.config.settings import AppSettings
+
+                    settings = AppSettings()
+                    kis_client = KISRestClient(settings=settings)
+                except Exception:
+                    logger.debug(
+                        "KIS client init failed — market overlay disabled.",
+                        exc_info=True,
+                    )
+
+            selector = UniverseSelectionService(
+                repos,
+                kis_client=kis_client,
             )
-        finally:
-            await _conn.close()
-        if rows:
-            universe = tuple(
-                UniverseSymbol(symbol=row["symbol"], market=row["market_code"])
-                for row in rows
+
+            # Resolve account ID for held-position lookup
+            account_id: UUID = FALLBACK_ACCOUNT_ID
+            try:
+                account = await repos.accounts.find_one(
+                    AccountLookup(alias=ACCOUNT_ALIAS)
+                )
+                if account is not None:
+                    account_id = account.account_id
+            except Exception:
+                logger.debug("Account lookup failed — using fallback account ID.")
+
+            ctx = CompositionContext(
+                account_id=account_id,
+                since=datetime.now(timezone.utc) - timedelta(hours=DEFAULT_EVENT_LOOKBACK_HOURS),
+                # P2 minimum: market overlay cap and pre-pool size
+                market_overlay_cap=5,
+                pre_pool_size=50,
             )
+            selected = await selector.compose(ctx)
+
+            if selected:
+                universe = tuple(
+                    UniverseSymbol(
+                        symbol=s.symbol,
+                        market=s.market,
+                        source_type=s.source_type.value,
+                        inclusion_reason=s.inclusion_reason,
+                    )
+                    for s in selected
+                )
+                logger.info(
+                    "Trading universe from UniverseSelectionService: "
+                    "%d symbols loaded (cap=%d).",
+                    len(universe),
+                    ctx.max_cap,
+                )
+                return universe
+
             logger.info(
-                "Trading universe from DB: %d KRX symbols loaded.",
-                len(universe),
+                "UniverseSelectionService returned 0 symbols — "
+                "falling back to %s:%s.",
+                SYMBOL,
+                MARKET,
             )
-            return universe
-        logger.info(
-            "DB returned 0 active KRX instruments — falling back to %s:%s.",
-            SYMBOL,
-            MARKET,
-        )
     except Exception as exc:
         logger.warning(
-            "DB universe query failed (%s: %s) — falling back to %s:%s.",
+            "UniverseSelectionService failed (%s: %s) — "
+            "falling back to %s:%s.",
             type(exc).__name__,
             exc,
             SYMBOL,

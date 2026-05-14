@@ -1111,6 +1111,68 @@ class KISRestClient:
             output = output[0] if output else {}
         return output
 
+    async def get_quotes_batch(
+        self,
+        symbols: Sequence[str],
+        *,
+        semaphore: asyncio.Semaphore | None = None,
+        timeout: float = 3.0,
+    ) -> dict[str, dict[str, Any]]:
+        """Fetch quotes for multiple symbols concurrently.
+
+        Budget-safe batch helper for P2 Market-Driven Overlay.
+        Each failed symbol is skipped (not crash).
+
+        Parameters
+        ----------
+        symbols : Sequence[str]
+            Symbols to fetch (pre-pool candidates, max ~50).
+        semaphore : asyncio.Semaphore | None
+            Concurrency limiter.  Defaults to ``Semaphore(10)``.
+        timeout : float
+            Per-call timeout in seconds.  Default: 3.0.
+
+        Returns
+        -------
+        dict[str, dict[str, Any]]
+            ``{symbol: raw_output_dict}`` — only successfully fetched symbols
+            are included.  Failed / timed-out symbols are omitted.
+        """
+        sem = semaphore or asyncio.Semaphore(10)
+
+        async def _fetch_one(sym: str) -> tuple[str, dict[str, Any]] | None:
+            try:
+                async with sem:
+                    output = await asyncio.wait_for(
+                        self.get_quote(sym),
+                        timeout=timeout,
+                    )
+                    if output:
+                        return sym, output
+                    return None
+            except asyncio.TimeoutError:
+                logger.debug("get_quotes_batch: timeout for %s (%.1fs)", sym, timeout)
+                return None
+            except Exception:
+                logger.debug("get_quotes_batch: failed for %s", sym, exc_info=True)
+                return None
+
+        tasks = [_fetch_one(sym) for sym in symbols]
+        results = await asyncio.gather(*tasks)
+
+        batch: dict[str, dict[str, Any]] = {}
+        for item in results:
+            if item is not None:
+                sym, output = item
+                batch[sym] = output
+
+        logger.info(
+            "get_quotes_batch: %d/%d symbols fetched successfully.",
+            len(batch),
+            len(symbols),
+        )
+        return batch
+
     async def get_orderbook(self, symbol: str) -> dict[str, Any]:
         """Retrieve orderbook (호가).
 

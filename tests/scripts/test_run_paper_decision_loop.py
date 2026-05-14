@@ -612,61 +612,97 @@ class TestTradingUniverse:
         )
 
     @pytest.mark.asyncio
-    async def test_db_fallback_when_env_not_set(
+    async def test_universe_selection_service_fallback(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """When env var is not set, DB is queried for active KRX instruments."""
+        """When env var is not set, UniverseSelectionService reads active KRX instruments."""
         monkeypatch.delenv(ENV_TRADING_UNIVERSE, raising=False)
 
-        # Mock asyncpg Row-like objects
-        class FakeRow:
-            def __init__(self, symbol: str, market_code: str) -> None:
-                self._data = {"symbol": symbol, "market_code": market_code}
-            def __getitem__(self, key: str) -> str:
-                return self._data[key]
-
-        class FakeConn:
-            async def fetch(self, query: str, *args: Any, **kwargs: Any) -> list[Any]:
-                return [
-                    FakeRow("005930", "KRX"),
-                    FakeRow("000660", "KRX"),
-                ]
-            async def close(self) -> None:
-                pass
-
-        # asyncpg.connect() is async, so we must return an awaitable.
-        # Use AsyncMock to make connect() return FakeConn when awaited.
-        with patch("asyncpg.connect", new=AsyncMock(return_value=FakeConn())):
-            result = await _read_trading_universe()
-            assert result == (
-                UniverseSymbol("005930", "KRX"),
-                UniverseSymbol("000660", "KRX"),
+        # Build in-memory repos with active KRX instruments
+        repos = build_in_memory_repositories()
+        from agent_trading.domain.entities import InstrumentEntity
+        await repos.instruments.add(
+            InstrumentEntity(
+                instrument_id=UUID("11111111-1111-1111-1111-111111111111"),
+                symbol="005930",
+                market_code="KRX",
+                name="Samsung Electronics",
+                is_active=True,
+                asset_class="KR_STOCK",
+                currency="KRW",
+                tick_size=Decimal("50"),
             )
+        )
+        await repos.instruments.add(
+            InstrumentEntity(
+                instrument_id=UUID("22222222-2222-2222-2222-222222222222"),
+                symbol="000660",
+                market_code="KRX",
+                name="SK Hynix",
+                is_active=True,
+                asset_class="KR_STOCK",
+                currency="KRW",
+                tick_size=Decimal("50"),
+            )
+        )
+
+        # Mock postgres_runtime to return our in-memory repos
+        @asynccontextmanager
+        async def _mock_postgres_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": repos}
+
+        with patch(
+            "scripts.run_paper_decision_loop.postgres_runtime",
+            new=_mock_postgres_runtime,
+        ):
+            result = await _read_trading_universe()
+            assert len(result) == 2
+            symbols = {u.symbol for u in result}
+            assert symbols == {"005930", "000660"}
+            # source_type과 inclusion_reason이 설정되었는지 확인
+            for u in result:
+                assert u.source_type == "core"
+                assert u.inclusion_reason == "kospi200_core"
 
     @pytest.mark.asyncio
-    async def test_db_fallback_empty_returns_single_symbol(
+    async def test_universe_selection_service_empty_fallback(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """When DB returns 0 rows, fallback to 005930 single symbol."""
+        """When UniverseSelectionService returns 0 symbols, fallback to 005930."""
         monkeypatch.delenv(ENV_TRADING_UNIVERSE, raising=False)
 
-        class FakeConnEmpty:
-            async def fetch(self, query: str, *args: Any, **kwargs: Any) -> list[Any]:
-                return []
-            async def close(self) -> None:
-                pass
+        repos = build_in_memory_repositories()
 
-        with patch("asyncpg.connect", new=lambda dsn=None, **kw: FakeConnEmpty()):
+        @asynccontextmanager
+        async def _mock_postgres_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": repos}
+
+        with patch(
+            "scripts.run_paper_decision_loop.postgres_runtime",
+            new=_mock_postgres_runtime,
+        ):
             result = await _read_trading_universe()
             assert result == (UniverseSymbol("005930", "KRX"),)
 
     @pytest.mark.asyncio
-    async def test_db_fallback_on_connection_error(
+    async def test_universe_selection_service_error_fallback(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """When DB connection fails, fallback to 005930 single symbol."""
+        """When UniverseSelectionService raises, fallback to 005930."""
         monkeypatch.delenv(ENV_TRADING_UNIVERSE, raising=False)
 
-        with patch("asyncpg.connect", side_effect=RuntimeError("DB connection refused")):
+        class _MockRuntimeError:
+            """Async context manager that raises on __aenter__.
+            Class-based (not @asynccontextmanager) to avoid
+            ``coroutine was never awaited`` warning."""
+            async def __aenter__(self) -> dict[str, Any]:
+                raise RuntimeError("Runtime unavailable")
+            async def __aexit__(self, *args: object) -> None:
+                pass
+
+        with patch(
+            "scripts.run_paper_decision_loop.postgres_runtime",
+            new=_MockRuntimeError,
+        ):
             result = await _read_trading_universe()
             assert result == (UniverseSymbol("005930", "KRX"),)

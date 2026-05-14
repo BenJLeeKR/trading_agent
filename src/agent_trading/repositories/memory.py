@@ -239,6 +239,16 @@ class InMemoryInstrumentRepository:
             return updated
         return await self.add(instrument)
 
+    async def list_active_by_market(
+        self, market_code: str
+    ) -> Sequence[InstrumentEntity]:
+        """List all active instruments for a given market code."""
+        return [
+            item
+            for item in self._items.values()
+            if item.market_code == market_code and item.is_active
+        ]
+
 
 class InMemoryDecisionContextRepository:
     def __init__(self) -> None:

@@ -199,6 +199,17 @@ class InstrumentRepository(Protocol):
         """
         ...
 
+    async def list_active_by_market(
+        self, market_code: str
+    ) -> Sequence[InstrumentEntity]:
+        """List all active instruments for a given market code.
+
+        This is the primary method used by ``UniverseSelectionService``
+        to build the Core Universe.  Returns only ``is_active=true``
+        instruments, ordered by symbol.
+        """
+        ...
+
 
 class DecisionContextRepository(Protocol):
     async def add(self, context: DecisionContextEntity) -> DecisionContextEntity:
