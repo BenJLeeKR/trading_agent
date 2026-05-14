@@ -934,22 +934,48 @@ class InMemoryExternalEventRepository:
                 return item
         return None
 
+    @staticmethod
+    def _is_listed_event(event: ExternalEventEntity) -> bool:
+        """Check if an event is from a listed entity (corp_cls in Y/K/N).
+
+        Uses the ``event_type`` prefix convention: ``Y|``, ``K|``, ``N|``
+        indicate listed entities; ``E|`` indicates non-listed.
+        Events without a corp_cls prefix are considered listed (conservative).
+        """
+        for prefix in ("Y|", "K|", "N|"):
+            if event.event_type.startswith(prefix):
+                return True
+        # E| prefix = non-listed; no prefix = unknown → treat as listed
+        if event.event_type.startswith("E|"):
+            return False
+        return True
+
     async def list_by_symbol(
-        self, symbol: str, since: datetime
+        self,
+        symbol: str,
+        since: datetime,
+        include_non_listed: bool = False,
     ) -> Sequence[ExternalEventEntity]:
         results = [
             item for item in self._items.values()
-            if item.symbol == symbol and item.published_at >= since
+            if item.symbol == symbol
+            and item.published_at >= since
+            and (include_non_listed or self._is_listed_event(item))
         ]
         results.sort(key=lambda item: item.published_at, reverse=True)
         return tuple(results)
 
     async def list_by_type(
-        self, event_type: str, since: datetime
+        self,
+        event_type: str,
+        since: datetime,
+        include_non_listed: bool = False,
     ) -> Sequence[ExternalEventEntity]:
         results = [
             item for item in self._items.values()
-            if item.event_type == event_type and item.published_at >= since
+            if item.event_type == event_type
+            and item.published_at >= since
+            and (include_non_listed or self._is_listed_event(item))
         ]
         results.sort(key=lambda item: item.published_at, reverse=True)
         return tuple(results)

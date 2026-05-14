@@ -95,11 +95,16 @@ class TestOpenDartSourceAdapter:
         assert all(isinstance(e, RawEvent) for e in events)
         assert events[0].source_name == "opendart"
         assert events[0].source_event_id == "20230101000001"
-        assert events[0].issuer_code == "00123456"
+        # P0-1: issuer_code는 stock_code 우선 (005930), corp_code(00123456)는 metadata로
+        assert events[0].issuer_code == "005930"
         assert events[0].headline == "사업보고서 (2023)"
         # P0-1: stock_code → symbol 매핑 검증
         assert events[0].symbol == "005930"
         assert events[1].symbol == "000660"
+        # P0-2: metadata에 corp_cls/corp_code/stock_code 저장 확인
+        assert events[0].metadata.get("corp_cls") == "Y"
+        assert events[0].metadata.get("corp_code") == "00123456"
+        assert events[0].metadata.get("stock_code") == "005930"
 
         await adapter.close()
 
@@ -673,4 +678,149 @@ class TestOpenDartImportanceClassification:
         assert entity.metadata is not None
         assert entity.metadata.get("source_raw_event_type") == "Y|유상증자결정"
         assert entity.metadata.get("importance") == "high"
+        await adapter.close()
+
+
+# ---------------------------------------------------------------------------
+# P0: Metadata enrichment & issuer_code priority tests
+# ---------------------------------------------------------------------------
+
+
+class TestOpenDartMetadataEnrichment:
+    """``_raw_from_item()`` / ``normalize()`` — metadata enrichment (P0)."""
+
+    @pytest.mark.asyncio
+    async def test_raw_from_item_sets_metadata_corp_cls(self) -> None:
+        """_raw_from_item() stores corp_cls in metadata."""
+        adapter = OpenDartSourceAdapter(api_key="test_key")
+        now = datetime.now(timezone.utc)
+
+        raw = await adapter._raw_from_item(
+            {
+                "corp_cls": "Y",
+                "corp_code": "00123456",
+                "stock_code": "005930",
+                "report_nm": "유상증자결정",
+                "rcept_no": "20230101000001",
+                "rcept_dt": "20230101",
+            },
+            ingested_at=now,
+        )
+
+        assert raw.metadata is not None
+        assert raw.metadata.get("corp_cls") == "Y"
+        assert raw.metadata.get("corp_code") == "00123456"
+        assert raw.metadata.get("stock_code") == "005930"
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_raw_from_item_issuer_code_prefers_stock_code(self) -> None:
+        """issuer_code는 stock_code 우선, 없으면 corp_code fallback."""
+        adapter = OpenDartSourceAdapter(api_key="test_key")
+        now = datetime.now(timezone.utc)
+
+        # Case 1: stock_code 있음 → issuer_code = stock_code
+        raw1 = await adapter._raw_from_item(
+            {
+                "corp_cls": "Y",
+                "corp_code": "00123456",
+                "stock_code": "005930",
+                "report_nm": "유상증자결정",
+                "rcept_no": "20230101000001",
+                "rcept_dt": "20230101",
+            },
+            ingested_at=now,
+        )
+        assert raw1.issuer_code == "005930"  # stock_code 우선
+
+        # Case 2: stock_code 없음, corp_code 있음 → issuer_code = corp_code
+        raw2 = await adapter._raw_from_item(
+            {
+                "corp_cls": "E",
+                "corp_code": "00123456",
+                "stock_code": "",
+                "report_nm": "감사보고서",
+                "rcept_no": "20230101000002",
+                "rcept_dt": "20230101",
+            },
+            ingested_at=now,
+        )
+        assert raw2.issuer_code == "00123456"  # corp_code fallback
+
+        # Case 3: 둘 다 없음 → issuer_code = None
+        raw3 = await adapter._raw_from_item(
+            {
+                "corp_cls": "E",
+                "corp_code": "",
+                "stock_code": "",
+                "report_nm": "기타공시",
+                "rcept_no": "20230101000003",
+                "rcept_dt": "20230101",
+            },
+            ingested_at=now,
+        )
+        assert raw3.issuer_code is None
+
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_normalize_preserves_ingest_metadata(self) -> None:
+        """normalize()는 raw.metadata를 entity.metadata에 병합."""
+        adapter = OpenDartSourceAdapter(api_key="test_key")
+        now = datetime.now(timezone.utc)
+
+        raw = RawEvent(
+            source_name="opendart",
+            source_event_id="20230101000001",
+            event_type="Y|유상증자결정",
+            published_at=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            ingested_at=now,
+            source_reliability_tier=SourceReliabilityTier.T1_REGULATORY.value,
+            raw_payload={"corp_code": "00123456", "report_nm": "유상증자결정"},
+            issuer_code="005930",
+            headline="유상증자결정",
+            metadata={"corp_cls": "Y", "corp_code": "00123456", "stock_code": "005930"},
+        )
+
+        entity = await adapter.normalize(raw)
+
+        assert entity.metadata is not None
+        # Ingest-time metadata preserved
+        assert entity.metadata.get("corp_cls") == "Y"
+        assert entity.metadata.get("corp_code") == "00123456"
+        assert entity.metadata.get("stock_code") == "005930"
+        # Computed metadata also present
+        assert entity.metadata.get("source_raw_event_type") == "Y|유상증자결정"
+        assert entity.metadata.get("importance") == "high"
+
+        await adapter.close()
+
+    @pytest.mark.asyncio
+    async def test_normalize_metadata_without_ingest_metadata(self) -> None:
+        """normalize()는 raw.metadata가 없어도 정상 동작."""
+        adapter = OpenDartSourceAdapter(api_key="test_key")
+        now = datetime.now(timezone.utc)
+
+        raw = RawEvent(
+            source_name="opendart",
+            source_event_id="20230101000001",
+            event_type="Y|사업보고서 (2023)",
+            published_at=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            ingested_at=now,
+            source_reliability_tier=SourceReliabilityTier.T1_REGULATORY.value,
+            raw_payload={"corp_code": "00123456", "report_nm": "사업보고서 (2023)"},
+            issuer_code="00123456",
+            headline="사업보고서 (2023)",
+            # metadata 없음 (기존 RawEvent 기본값)
+        )
+
+        entity = await adapter.normalize(raw)
+
+        assert entity.metadata is not None
+        # Computed metadata만 존재
+        assert entity.metadata.get("source_raw_event_type") == "Y|사업보고서 (2023)"
+        assert entity.metadata.get("importance") == "low"
+        # Ingest-time metadata 없음
+        assert entity.metadata.get("corp_cls") is None
+
         await adapter.close()

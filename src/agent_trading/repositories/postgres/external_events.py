@@ -89,29 +89,75 @@ class PostgresExternalEventRepository(ExternalEventRepository):
         return row_to_entity(row, ExternalEventEntity) if row else None
 
     async def list_by_symbol(
-        self, symbol: str, since: datetime
+        self,
+        symbol: str,
+        since: datetime,
+        include_non_listed: bool = False,
     ) -> Sequence[ExternalEventEntity]:
-        rows = await self._tx.connection.fetch(
-            """
-            SELECT * FROM trading.external_events
-            WHERE symbol = $1 AND published_at >= $2
-            ORDER BY published_at DESC
-            """,
-            symbol,
-            since,
-        )
+        """List events by symbol, excluding non-listed (corp_cls=E) by default.
+
+        The listed-event filter uses the ``event_type`` prefix convention
+        (``Y|``, ``K|``, ``N|`` = listed; ``E|`` = non-listed). When
+        ``include_non_listed=False`` (default), only listed-entity events
+        are returned.
+        """
+        if include_non_listed:
+            rows = await self._tx.connection.fetch(
+                """
+                SELECT * FROM trading.external_events
+                WHERE symbol = $1 AND published_at >= $2
+                ORDER BY published_at DESC
+                """,
+                symbol,
+                since,
+            )
+        else:
+            rows = await self._tx.connection.fetch(
+                """
+                SELECT * FROM trading.external_events
+                WHERE symbol = $1
+                  AND published_at >= $2
+                  AND (event_type LIKE 'Y|%' OR event_type LIKE 'K|%' OR event_type LIKE 'N|%')
+                ORDER BY published_at DESC
+                """,
+                symbol,
+                since,
+            )
         return [row_to_entity(r, ExternalEventEntity) for r in rows]
 
     async def list_by_type(
-        self, event_type: str, since: datetime
+        self,
+        event_type: str,
+        since: datetime,
+        include_non_listed: bool = False,
     ) -> Sequence[ExternalEventEntity]:
-        rows = await self._tx.connection.fetch(
-            """
-            SELECT * FROM trading.external_events
-            WHERE event_type = $1 AND published_at >= $2
-            ORDER BY published_at DESC
-            """,
-            event_type,
-            since,
-        )
+        """List events by type, excluding non-listed (corp_cls=E) by default.
+
+        The listed-event filter uses the ``event_type`` prefix convention
+        (``Y|``, ``K|``, ``N|`` = listed; ``E|`` = non-listed). When
+        ``include_non_listed=False`` (default), only listed-entity events
+        are returned.
+        """
+        if include_non_listed:
+            rows = await self._tx.connection.fetch(
+                """
+                SELECT * FROM trading.external_events
+                WHERE event_type = $1 AND published_at >= $2
+                ORDER BY published_at DESC
+                """,
+                event_type,
+                since,
+            )
+        else:
+            rows = await self._tx.connection.fetch(
+                """
+                SELECT * FROM trading.external_events
+                WHERE event_type = $1
+                  AND published_at >= $2
+                  AND (event_type LIKE 'Y|%' OR event_type LIKE 'K|%' OR event_type LIKE 'N|%')
+                ORDER BY published_at DESC
+                """,
+                event_type,
+                since,
+            )
         return [row_to_entity(r, ExternalEventEntity) for r in rows]

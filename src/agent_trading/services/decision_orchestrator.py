@@ -205,6 +205,13 @@ class AssembledContext:
 
     All fields are optional — the service assembles what it can and
     leaves missing pieces as ``None`` or empty.
+
+    Parameters
+    ----------
+    source_type
+        Origin of this symbol in the trading universe:
+        ``"core"`` | ``"held_position"`` | ``"event_overlay"`` | ``"market_overlay"``.
+        Used by FDC to differentiate no-event policy per source type.
     """
 
     decision_context: DecisionContextEntity | None = None
@@ -214,6 +221,9 @@ class AssembledContext:
     position_snapshot: PositionSnapshotEntity | None = None
     cash_balance_snapshot: CashBalanceSnapshotEntity | None = None
     risk_limit_snapshot: RiskLimitSnapshotEntity | None = None
+    # --- Axis 2: Source type for no-event policy differentiation ---
+    source_type: str = "core"
+    """Origin of this symbol: ``"core"`` | ``"held_position"`` | ``"event_overlay"`` | ``"market_overlay"``."""
 
 
 # ---------------------------------------------------------------------------
@@ -533,6 +543,14 @@ class DecisionOrchestratorService:
             except Exception:
                 pass
 
+        # --- Extract source_type from request metadata (Axis 2) ---
+        source_type: str = "core"
+        try:
+            if request.metadata and isinstance(request.metadata, dict):
+                source_type = request.metadata.get("source_type", "core") or "core"
+        except Exception:
+            pass
+
         # --- Assemble context (without score yet) ---
         assembled_context = AssembledContext(
             decision_context=decision_context,
@@ -541,6 +559,7 @@ class DecisionOrchestratorService:
             position_snapshot=position_snapshot,
             cash_balance_snapshot=cash_balance_snapshot,
             risk_limit_snapshot=risk_limit_snapshot,
+            source_type=source_type,
         )
 
         # --- Calculate score ---
@@ -555,6 +574,7 @@ class DecisionOrchestratorService:
             position_snapshot=position_snapshot,
             cash_balance_snapshot=cash_balance_snapshot,
             risk_limit_snapshot=risk_limit_snapshot,
+            source_type=source_type,
         )
 
         # --- Generate order_intent_id if not provided ---
@@ -1410,6 +1430,7 @@ class DecisionOrchestratorService:
             context=assembled_context,
             symbol=symbol,
             market=market,
+            source_type=assembled_context.source_type,
         )
 
         # Log when no decision context is available — agent runs will be
@@ -1457,6 +1478,7 @@ class DecisionOrchestratorService:
             event_interpretation_output=event_output,
             model_id=request.model_id,
             prompt_id=request.prompt_id,
+            source_type=request.source_type,
         )
 
         # --- 2. AI Risk Agent ---
@@ -1495,6 +1517,7 @@ class DecisionOrchestratorService:
             ai_risk_output=risk_output,
             model_id=request.model_id,
             prompt_id=request.prompt_id,
+            source_type=request.source_type,
         )
 
         # --- 3. Final Decision Composer Agent ---

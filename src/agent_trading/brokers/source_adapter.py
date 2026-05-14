@@ -56,6 +56,7 @@ class RawEvent:
     market: str | None = None
     headline: str | None = None
     body: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @runtime_checkable

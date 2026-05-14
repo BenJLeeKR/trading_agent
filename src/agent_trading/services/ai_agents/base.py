@@ -57,6 +57,10 @@ class AgentExecutionRequest:
     prompt_id
         Optional prompt template identifier.  Stub agents ignore this;
         real agents will use it to select the system/user prompt.
+    source_type
+        Origin of this symbol in the trading universe:
+        ``"core"`` | ``"held_position"`` | ``"event_overlay"`` | ``"market_overlay"``.
+        Used by FDC to differentiate no-event policy per source type.
     """
 
     decision_context_id: UUID | None
@@ -68,6 +72,9 @@ class AgentExecutionRequest:
     ai_risk_output: AIRiskOutput | None = None
     model_id: str | None = None
     prompt_id: str | None = None
+    # --- Axis 2: Source type for no-event policy differentiation ---
+    source_type: str = "core"
+    """Origin of this symbol: ``"core"`` | ``"held_position"`` | ``"event_overlay"`` | ``"market_overlay"``."""
 
 
 # ---------------------------------------------------------------------------

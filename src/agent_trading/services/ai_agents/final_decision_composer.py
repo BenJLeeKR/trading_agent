@@ -227,11 +227,27 @@ class FinalDecisionComposerAgent:
             "Output must be valid JSON matching this schema:\n"
             f"{schema_json}\n\n"
             "IMPORTANT: The following fields MUST use canonical English enum values:\n"
-            "- decision_type: one of APPROVE, REJECT, HOLD, WATCH, EXIT, REDUCE\n"
+            "- decision_type: one of APPROVE, BUY, SELL, HOLD, WATCH, EXIT, REDUCE\n"
             "- side: BUY or SELL\n"
             "- entry_style: LIMIT, MARKET, VWAP, TWAP\n"
             "- time_horizon: short, swing, long\n"
             "- reason_codes: machine-readable English codes\n\n"
+            "## No-Event Policy\n"
+            "- 'No material events' is NOT the same as 'negative signal'.\n"
+            "- If EI reports no_material_events=True, differentiate:\n"
+            "  * evidence_strength=none + source_type=market_overlay: "
+            "You may consider WATCH or even APPROVE if price/flow actionability is high.\n"
+            "  * evidence_strength=none + source_type=core: "
+            "Prefer HOLD when no events, but WATCH is acceptable if risk is low.\n"
+            "  * evidence_strength=weak: Consider WATCH instead of HOLD for overlay symbols.\n"
+            "- 'negative signal' means EI found events with bearish bias. "
+            "In that case, HOLD or REDUCE is appropriate regardless of source_type.\n\n"
+            "## Source Type Consideration\n"
+            "- core: Conservative — prefer HOLD when no material events.\n"
+            "- held_position: Already holding — require clear signal to change.\n"
+            "- event_overlay: Added due to recent events — consider the events.\n"
+            "- market_overlay: Added due to market flow — no-event is acceptable. "
+            "Market overlay symbols CAN be APPROVED or WATCHed even without events.\n\n"
             "Narrative fields (summary, opposing_evidence) MUST be written in Korean. "
             "Machine-readable fields listed above MUST remain in English."
         )
@@ -274,6 +290,7 @@ class FinalDecisionComposerAgent:
         lines.append(f"Symbol: {symbol}")
         if request.market:
             lines.append(f"Market: {request.market}")
+        lines.append(f"Source type: {request.source_type}")
 
         # Decision context
         dc = context.decision_context
@@ -295,6 +312,9 @@ class FinalDecisionComposerAgent:
             lines.append("=== Event Interpretation Output ===")
             lines.append(f"Overall bias: {ei_output.aggregate_view.overall_bias}")
             lines.append(f"Event conflict: {ei_output.aggregate_view.event_conflict}")
+            lines.append(f"Evidence strength: {ei_output.aggregate_view.evidence_strength}")
+            lines.append(f"Event count: {ei_output.aggregate_view.event_count}")
+            lines.append(f"No material events: {ei_output.aggregate_view.no_material_events}")
             if ei_output.aggregate_view.top_reason_codes:
                 lines.append(
                     "Top reason codes: "

@@ -509,6 +509,7 @@ async def _run_one_cycle(
     output: str,
     symbol: str = SYMBOL,
     market: str = MARKET,
+    source_type: str = "core",
 ) -> dict[str, object]:
     """Execute a single decision cycle.
 
@@ -545,6 +546,7 @@ async def _run_one_cycle(
                 order_type=OrderType.LIMIT,
                 quantity=Decimal("10"),
                 price=resolved_price,
+                metadata={"source_type": source_type},
             )
 
             # ── 4. Execute cycle ────────────────────────────────────────
@@ -676,6 +678,7 @@ async def _run_loop(
                 output=output,
                 symbol=item.symbol,
                 market=item.market,
+                source_type=item.source_type,
             )
             results.append(result)
 

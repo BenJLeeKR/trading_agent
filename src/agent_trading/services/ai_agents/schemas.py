@@ -210,12 +210,26 @@ class AggregateEventView:
         Most important reason codes across all events.
     opposing_evidence
         Human-readable list of evidence that opposes the overall bias.
+    evidence_strength
+        Quality/quantity of evidence: ``"none"``, ``"weak"``,
+        ``"moderate"``, or ``"strong"``.
+    event_count
+        Number of material events actually grounded for this symbol.
+    no_material_events
+        ``True`` when there are no material events to analyze.
     """
 
     overall_bias: str = "neutral"
     event_conflict: bool = False
     top_reason_codes: tuple[str, ...] = ()
     opposing_evidence: tuple[str, ...] = ()
+    # --- Axis 1: Evidence quality fields ---
+    evidence_strength: str = "none"
+    """Quality/quantity of evidence: ``"none"`` | ``"weak"`` | ``"moderate"`` | ``"strong"``."""
+    event_count: int = 0
+    """Number of material events actually grounded for this symbol."""
+    no_material_events: bool = True
+    """``True`` when there are no material events to analyze."""
 
 
 @dataclass(slots=True, frozen=True)

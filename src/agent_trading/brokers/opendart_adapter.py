@@ -255,6 +255,17 @@ class OpenDartSourceAdapter:
         2. If empty AND ``symbol_resolver`` is configured → resolve via
            ``/company.json`` using ``corp_code``.
         3. If still empty → ``None`` (unresolvable).
+
+        Metadata enrichment (P0):
+        - ``corp_cls``: OpenDART entity classification (Y/K/N = listed, E = non-listed).
+        - ``corp_code``: 8-digit OpenDART corporate code (always present).
+        - ``stock_code``: 6-digit ticker symbol from OpenDART (may be empty for non-listed).
+
+        ``issuer_code`` semantics:
+        - Prefers ``stock_code`` (6-digit ticker) when available.
+        - Falls back to ``corp_code`` (8-digit OpenDART code) for non-listed entities.
+        - Downstream consumers should treat ``issuer_code`` as "best available issuer
+          identifier" — check ``metadata.corp_cls`` to distinguish listed vs non-listed.
         """
         corp_cls = item.get("corp_cls", "")
         report_nm = item.get("report_nm", "")
@@ -272,7 +283,7 @@ class OpenDartSourceAdapter:
 
         # ── Symbol resolution with fallback ──────────────────────────────
         symbol: str | None = item.get("stock_code") or None
-        corp_code: str | None = item.get("corp_code")
+        corp_code: str | None = item.get("corp_code") or None
 
         if symbol is None and corp_code is not None and self._symbol_resolver is not None:
             resolved = await self._symbol_resolver.resolve(corp_code)
@@ -303,6 +314,23 @@ class OpenDartSourceAdapter:
                 report_nm,
             )
 
+        # ── Metadata enrichment ──────────────────────────────────────────
+        # Preserve corp_cls, corp_code, stock_code for downstream filtering/debug.
+        metadata: dict[str, Any] = {}
+        if corp_cls:
+            metadata["corp_cls"] = corp_cls
+        if corp_code:
+            metadata["corp_code"] = corp_code
+        stock_code_raw: str | None = item.get("stock_code") or None
+        if stock_code_raw:
+            metadata["stock_code"] = stock_code_raw
+
+        # ── issuer_code: stock_code 우선, 없으면 corp_code fallback ──────
+        # issuer_code semantics: "best available issuer identifier"
+        # - For listed entities (Y/K/N corp_cls): 6-digit stock_code
+        # - For non-listed entities (E corp_cls): 8-digit corp_code
+        issuer_code: str | None = symbol or corp_code
+
         return RawEvent(
             source_name=self.source_name,
             source_event_id=item.get("rcept_no", ""),
@@ -312,10 +340,11 @@ class OpenDartSourceAdapter:
             source_reliability_tier=self.reliability_tier.value,
             raw_payload=item,
             symbol=symbol,
-            issuer_code=corp_code,
+            issuer_code=issuer_code,
             market=None,
             headline=report_nm,
             body=None,
+            metadata=metadata,
         )
 
     async def normalize(self, raw: RawEvent) -> ExternalEventEntity:
@@ -323,6 +352,11 @@ class OpenDartSourceAdapter:
 
         v1 scope: field mapping only — no AI classification.
         Importance classification is computed from the raw payload.
+
+        Metadata is merged from:
+        - ``raw.metadata``: ingest-time enrichment (corp_cls, corp_code, stock_code).
+        - ``source_raw_event_type``: original OpenDART event_type for traceability.
+        - ``importance``: deterministic H/M/L classification.
         """
         dedup_key = self.generate_dedup_key(raw)
 
@@ -330,6 +364,11 @@ class OpenDartSourceAdapter:
         report_nm = raw.raw_payload.get("report_nm", "") or ""
         rm = raw.raw_payload.get("rm", None)
         importance = _classify_importance(report_nm, rm)
+
+        # Merge ingest-time metadata with computed fields
+        metadata: dict[str, object] = dict(raw.metadata or {})
+        metadata["source_raw_event_type"] = raw.event_type
+        metadata["importance"] = importance
 
         return ExternalEventEntity(
             event_id=uuid4(),
@@ -350,10 +389,7 @@ class OpenDartSourceAdapter:
             raw_payload_uri=None,
             dedup_key_hash=dedup_key,
             supersedes_event_id=None,
-            metadata={
-                "source_raw_event_type": raw.event_type,
-                "importance": importance,
-            },
+            metadata=metadata,
             created_at=None,
         )
 

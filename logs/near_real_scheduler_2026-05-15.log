@@ -1,0 +1,9 @@
+2026-05-15 07:55:01 [INFO] near-real-scheduler: Starting near-real scheduler (KIS_ENV=paper, paper is treated as near-real).
+2026-05-15 08:00:02 [INFO] near-real-scheduler: phase=pre-market start
+2026-05-15 08:00:02 [INFO] near-real-scheduler: task=pre_snapshot_sync start argv=python3 scripts/run_snapshot_sync_loop.py --max-cycles 1
+2026-05-15 08:00:02 [INFO] near-real-scheduler: task=pre_snapshot_sync complete ok=True returncode=0 timeout=False duration=0.79s
+2026-05-15 08:00:02 [INFO] near-real-scheduler: task=pre_event_ingestion start argv=python3 -m scripts.run_event_ingestion_loop --count 1 --output json
+2026-05-15 08:00:17 [INFO] near-real-scheduler: task=pre_event_ingestion complete ok=True returncode=0 timeout=False duration=14.53s
+2026-05-15 08:00:17 [INFO] near-real-scheduler: task=pre_post_submit_sync start argv=python3 scripts/run_post_submit_sync_loop.py --once
+2026-05-15 08:00:17 [INFO] near-real-scheduler: task=pre_post_submit_sync complete ok=True returncode=0 timeout=False duration=0.40s
+2026-05-15 08:00:17 [INFO] near-real-scheduler: phase=pre-market complete

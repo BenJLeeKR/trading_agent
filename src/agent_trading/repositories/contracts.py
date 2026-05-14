@@ -525,6 +525,14 @@ class ExternalEventRepository(Protocol):
 
     This is a **foundation** protocol for Milestone 7. Actual polling
     workers and source adapters are deferred to a later milestone.
+
+    Listed-event filtering (P0):
+    By default, ``list_by_symbol`` and ``list_by_type`` return only
+    **listed-entity events** (OpenDART corp_cls in Y/K/N). Non-listed
+    (corp_cls=E) events are excluded from operational read paths.
+
+    Pass ``include_non_listed=True`` to bypass this filter when
+    administrative inspection is needed.
     """
 
     async def add(self, event: ExternalEventEntity) -> ExternalEventEntity:
@@ -537,12 +545,18 @@ class ExternalEventRepository(Protocol):
         ...
 
     async def list_by_symbol(
-        self, symbol: str, since: datetime
+        self,
+        symbol: str,
+        since: datetime,
+        include_non_listed: bool = False,
     ) -> Sequence[ExternalEventEntity]:
         ...
 
     async def list_by_type(
-        self, event_type: str, since: datetime
+        self,
+        event_type: str,
+        since: datetime,
+        include_non_listed: bool = False,
     ) -> Sequence[ExternalEventEntity]:
         ...
 
