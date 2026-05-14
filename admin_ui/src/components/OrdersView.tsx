@@ -101,48 +101,50 @@ export default function OrdersView() {
       <div className="grid grid-cols-12 gap-6">
         {/* Orders List */}
         <div className={selectedOrder ? "col-span-7" : "col-span-12"}>
-          <FilterBar
-            searchPlaceholder="심볼 또는 주문 ID 검색..."
-            searchValue={searchText}
-            onSearchChange={setSearchText}
-            filters={[
-              {
-                key: "status",
-                label: "상태",
-                options: [
-                  { label: "제출됨", value: "submitted" },
-                  { label: "제출 대기", value: "pending_submit" },
-                  { label: "확인됨", value: "acknowledged" },
-                  { label: "부분 체결", value: "partially_filled" },
-                  { label: "체결", value: "filled" },
-                  { label: "거부됨", value: "rejected" },
-                  { label: "취소 대기", value: "cancel_pending" },
-                  { label: "취소됨", value: "cancelled" },
-                  { label: "만료", value: "expired" },
-                  { label: "조정 필요", value: "reconcile_required" },
-                  { label: "검증됨", value: "validated" },
-                  { label: "초안", value: "draft" },
-                ],
-                value: statusFilter,
-                onChange: setStatusFilter,
-              },
-              {
-                key: "side",
-                label: "매매",
-                options: [
-                  { label: "매수", value: "buy" },
-                  { label: "매도", value: "sell" },
-                ],
-                value: sideFilter,
-                onChange: setSideFilter,
-              },
-            ]}
-            onClearAll={() => {
-              setSearchText("");
-              setStatusFilter("");
-              setSideFilter("");
-            }}
-          />
+          <div className="bg-white rounded-xl border border-[#e2e8f0] p-4 mb-4">
+            <FilterBar
+              searchPlaceholder="심볼 또는 주문 ID 검색..."
+              searchValue={searchText}
+              onSearchChange={setSearchText}
+              filters={[
+                {
+                  key: "status",
+                  label: "상태",
+                  options: [
+                    { label: "제출됨", value: "submitted" },
+                    { label: "제출 대기", value: "pending_submit" },
+                    { label: "확인됨", value: "acknowledged" },
+                    { label: "부분 체결", value: "partially_filled" },
+                    { label: "체결", value: "filled" },
+                    { label: "거부됨", value: "rejected" },
+                    { label: "취소 대기", value: "cancel_pending" },
+                    { label: "취소됨", value: "cancelled" },
+                    { label: "만료", value: "expired" },
+                    { label: "조정 필요", value: "reconcile_required" },
+                    { label: "검증됨", value: "validated" },
+                    { label: "초안", value: "draft" },
+                  ],
+                  value: statusFilter,
+                  onChange: setStatusFilter,
+                },
+                {
+                  key: "side",
+                  label: "매매",
+                  options: [
+                    { label: "매수", value: "buy" },
+                    { label: "매도", value: "sell" },
+                  ],
+                  value: sideFilter,
+                  onChange: setSideFilter,
+                },
+              ]}
+              onClearAll={() => {
+                setSearchText("");
+                setStatusFilter("");
+                setSideFilter("");
+              }}
+            />
+          </div>
           <DataTable
             columns={orderColumns}
             data={filteredOrders}

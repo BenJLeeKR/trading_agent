@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 type StatusVariant = "healthy" | "warning" | "error" | "neutral";
@@ -6,7 +7,7 @@ interface StatusCardProps {
   title: string;
   value: string | number;
   status: StatusVariant;
-  subtitle?: string;
+  subtitle?: string | React.ReactNode;
 }
 
 const statusColors: Record<StatusVariant, string> = {
@@ -46,7 +47,11 @@ export function StatusCard({ title, value, status, subtitle }: StatusCardProps) 
         </div>
       </div>
       <p className="text-lg font-semibold text-[#0f172a]">{value}</p>
-      {subtitle && <p className="text-[10px] text-[#94a3b8] mt-0.5">{subtitle}</p>}
+      {subtitle && (
+        typeof subtitle === "string"
+          ? <p className="text-[10px] text-[#94a3b8] mt-0.5">{subtitle}</p>
+          : <div className="text-[10px] text-[#94a3b8] mt-0.5">{subtitle}</div>
+      )}
     </div>
   );
 }

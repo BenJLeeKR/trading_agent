@@ -174,28 +174,30 @@ export default function DecisionsView() {
       <div className="grid grid-cols-12 gap-6">
         {/* Decisions List */}
         <div className={selectedDecision ? "col-span-7" : "col-span-12"}>
-          <FilterBar
-            searchPlaceholder="심볼 또는 의사결정 ID 검색..."
-            searchValue={searchText}
-            onSearchChange={setSearchText}
-            filters={[
-              {
-                key: "side",
-                label: "매매",
-                options: [
-                  { label: "매수", value: "buy" },
-                  { label: "매도", value: "sell" },
-                  { label: "보류", value: "hold" },
-                ],
-                value: sideFilter,
-                onChange: setSideFilter,
-              },
-            ]}
-            onClearAll={() => {
-              setSearchText("");
-              setSideFilter("");
-            }}
-          />
+          <div className="bg-white rounded-xl border border-[#e2e8f0] p-4 mb-4">
+            <FilterBar
+              searchPlaceholder="심볼 또는 의사결정 ID 검색..."
+              searchValue={searchText}
+              onSearchChange={setSearchText}
+              filters={[
+                {
+                  key: "side",
+                  label: "매매",
+                  options: [
+                    { label: "매수", value: "buy" },
+                    { label: "매도", value: "sell" },
+                    { label: "보류", value: "hold" },
+                  ],
+                  value: sideFilter,
+                  onChange: setSideFilter,
+                },
+              ]}
+              onClearAll={() => {
+                setSearchText("");
+                setSideFilter("");
+              }}
+            />
+          </div>
           <DataTable
             columns={decisionColumns}
             data={filteredDecisions}

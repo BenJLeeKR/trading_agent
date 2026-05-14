@@ -234,45 +234,47 @@ export default function OrderTrackingView() {
       <div className="grid grid-cols-12 gap-6">
         {/* Orders List */}
         <div className={selectedOrder ? "col-span-7" : "col-span-12"}>
-          <FilterBar
-            searchPlaceholder="종목 또는 주문 ID 검색..."
-            searchValue={search}
-            onSearchChange={setSearch}
-            filters={[
-              {
-                key: "status",
-                label: "상태",
-                options: [
-                  { label: "전체", value: "" },
-                  { label: "제출됨", value: "submitted" },
-                  { label: "접수됨", value: "acknowledged" },
-                  { label: "부분체결", value: "partially_filled" },
-                  { label: "체결", value: "filled" },
-                  { label: "거부됨", value: "rejected" },
-                  { label: "취소됨", value: "cancelled" },
-                  { label: "조정필요", value: "reconcile_required" },
-                ],
-                value: statusFilter,
-                onChange: setStatusFilter,
-              },
-              {
-                key: "side",
-                label: "구분",
-                options: [
-                  { label: "전체", value: "" },
-                  { label: "매수", value: "buy" },
-                  { label: "매도", value: "sell" },
-                ],
-                value: sideFilter,
-                onChange: setSideFilter,
-              },
-            ]}
-            onClearAll={() => {
-              setSearch("");
-              setStatusFilter("");
-              setSideFilter("");
-            }}
-          />
+          <div className="bg-white rounded-xl border border-[#e2e8f0] p-4 mb-4">
+            <FilterBar
+              searchPlaceholder="종목 또는 주문 ID 검색..."
+              searchValue={search}
+              onSearchChange={setSearch}
+              filters={[
+                {
+                  key: "status",
+                  label: "상태",
+                  options: [
+                    { label: "전체", value: "" },
+                    { label: "제출됨", value: "submitted" },
+                    { label: "접수됨", value: "acknowledged" },
+                    { label: "부분체결", value: "partially_filled" },
+                    { label: "체결", value: "filled" },
+                    { label: "거부됨", value: "rejected" },
+                    { label: "취소됨", value: "cancelled" },
+                    { label: "조정필요", value: "reconcile_required" },
+                  ],
+                  value: statusFilter,
+                  onChange: setStatusFilter,
+                },
+                {
+                  key: "side",
+                  label: "구분",
+                  options: [
+                    { label: "전체", value: "" },
+                    { label: "매수", value: "buy" },
+                    { label: "매도", value: "sell" },
+                  ],
+                  value: sideFilter,
+                  onChange: setSideFilter,
+                },
+              ]}
+              onClearAll={() => {
+                setSearch("");
+                setStatusFilter("");
+                setSideFilter("");
+              }}
+            />
+          </div>
           {filteredOrders.length > 0 ? (
             <DataTable
               columns={orderColumns}

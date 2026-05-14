@@ -109,7 +109,7 @@ export function Layout() {
     };
   }, []);
 
-  const currentPath = location.pathname === "/" ? "/" : `/${location.pathname.split("/")[1]}`;
+  const currentPath = location.pathname;
 
   const now = new Date();
   const y = now.getFullYear();
@@ -140,7 +140,11 @@ export function Layout() {
               </p>
               <ul className="space-y-1">
                 {section.items.map((item) => {
-                  const isActive = !item.disabled && currentPath === item.to;
+                  const isActive = !item.disabled && (
+                    item.to === "/"
+                      ? currentPath === "/"
+                      : currentPath === item.to || currentPath.startsWith(item.to + "/")
+                  );
                   return (
                     <li key={item.label}>
                       {item.disabled ? (

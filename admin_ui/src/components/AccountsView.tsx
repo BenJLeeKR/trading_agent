@@ -360,9 +360,9 @@ export default function AccountsView() {
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-12 gap-6">
+        <div>
           {/* Accounts List */}
-          <div className={safeSelectedAccount ? "col-span-5" : "col-span-12"}>
+          <div className="mb-4">
             <FilterBar
               searchPlaceholder="계좌 별칭 또는 번호 검색..."
               searchValue={searchText}
@@ -396,7 +396,7 @@ export default function AccountsView() {
 
           {/* Account Detail Panel */}
           {safeSelectedAccount && selectedAccountDetail && (
-            <div className="col-span-7 space-y-4">
+            <div className="space-y-4 mt-6">
               {/* Locked warning */}
               {selectedAccountDetail.status === "locked" && (
                 <div className="flex items-center gap-2 bg-[#fef2f2] border border-[#f87171] rounded-lg px-4 py-3">
@@ -588,7 +588,7 @@ export default function AccountsView() {
                       </div>
                       <div className="flex gap-6 text-sm flex-wrap">
                         <div>
-                          <span className="text-[#64748b]">가용: </span>
+                          <span className="text-[#64748b]">예수금: </span>
                           <span className="font-semibold text-[#0f172a]">
                             {formatCurrency(cashBalance.available_cash, cashBalance.currency)}
                           </span>

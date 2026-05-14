@@ -29,7 +29,7 @@ export function FilterBar({
   const hasActiveFilters = searchValue || filters.some((f) => f.value);
 
   return (
-    <div className="flex items-center gap-3 mb-4 flex-wrap">
+    <div className="flex items-center gap-3 flex-wrap">
       {/* Search */}
       <div className="relative flex-1 max-w-xs min-w-[180px]">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#94a3b8]" />

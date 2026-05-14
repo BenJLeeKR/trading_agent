@@ -17,9 +17,6 @@ import {
   getCashBalance,
   getReconciliationSummary,
   getReconciliationRuns,
-  getTradeDecisions,
-  getAgentRuns,
-  getBrokerCapacity,
   getSnapshotSyncRuns,
 } from "../api/client";
 import type {
@@ -32,6 +29,13 @@ import type {
   ClientDetail,
   SnapshotSyncRunSummary,
 } from "../types/api";
+import { deriveAlerts } from "../lib/alerts";
+
+/* ── Feature flags ── */
+// 현재 운영 화면 단순화를 위해 숨김, 추후 필요 시 true
+const SHOW_ADVANCED_OPERATION_CARDS = false;
+// 최근 5개 요약 섹션 표시 (true 시 하단에 compact 요약 카드 표시)
+const SHOW_DASHBOARD_RECENT_SUMMARIES = true;
 
 /* ── Types ── */
 interface ApiErrorEntry {
@@ -39,16 +43,41 @@ interface ApiErrorEntry {
   message: string;
 }
 
+/* ── Compact Summary Types ── */
+interface CompactOrderItem {
+  id: string;
+  createdAt: string;
+  symbol: string;
+  side: string;
+  quantity: number;
+  status: string;
+  statusVariant: "success" | "warning" | "error" | "info" | "neutral";
+}
+
+interface CompactReconciliationItem {
+  id: string;
+  startedAt: string;
+  status: string;
+  statusVariant: "success" | "warning" | "error" | "neutral";
+  mismatchCount: number;
+  completedAt: string | null;
+}
+
+interface CompactAlertItem {
+  id: string;
+  level: "긴급" | "주의";
+  levelVariant: "error" | "warning";
+  title: string;
+  description: string;
+}
+
 interface DashboardData {
   clients: ClientDetail[];
   health: HealthResponse | null;
   readyz: Record<string, string> | null;
-  brokerCapacity: { broker_name: string; can_accept_new_entries: boolean } | null;
   reconSummary: { active_locks_count: number; incomplete_recon_count: number } | null;
   reconRuns: ReconciliationRunSummary[];
   orders: OrderSummary[];
-  decisions: unknown[];
-  agentRuns: unknown[];
   accounts: AccountSummary[];
   positionsMap: Map<string, PositionSnapshotView[]>;
   cashMap: Map<string, CashBalanceSnapshotView | null>;
@@ -57,9 +86,11 @@ interface DashboardData {
 
 /* ── Helpers ── */
 function formatCurrency(val: number | null | undefined): string {
-  if (val == null) return "N/A";
+  if (val == null || val === undefined) return "—";
+  if (Number.isNaN(val)) return "—";
+  const formatted = Math.abs(val).toLocaleString("ko-KR");
   const prefix = val >= 0 ? "" : "-";
-  return `${prefix}$${Math.abs(val).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `${prefix}${formatted}원`;
 }
 
 function formatPercent(val: number | null | undefined): string {
@@ -78,7 +109,8 @@ function timeAgo(dateStr: string | null | undefined): string {
   return `${hours}시간 전`;
 }
 
-/* ── Columns ── */
+/* ── Legacy Columns (feature flag SHOW_DASHBOARD_SECTIONS 복원 시 사용) ── */
+/*
 interface RecentEvent {
   id: string;
   time: string;
@@ -132,6 +164,7 @@ const reconColumns: Column<PendingRecon>[] = [
   { key: "account", header: "계좌" },
   { key: "createdAt", header: "발생 시간" },
 ];
+*/
 
 /* ── Component ── */
 export default function OperationsDashboardView() {
@@ -144,135 +177,100 @@ export default function OperationsDashboardView() {
   const fetchAll = async () => {
     setLoading(true);
     setError(null);
-    setApiErrors([]);
-
     const errors: ApiErrorEntry[] = [];
     const addError = (apiName: string, err: unknown) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push({ apiName, message: msg });
+      errors.push({ apiName, message: String(err) });
     };
 
-    // ── 시스템 상태 ──
     const healthPromise = getHealth().catch((e) => {
-      addError("getHealth", e);
+      addError("GET /health", e);
       return null;
     });
-
     const readyzPromise = getReadyz().catch((e) => {
-      addError("getReadyz", e);
+      addError("GET /readyz", e);
       return null;
     });
-
-    // ── 브로커 ──
-    const brokerCapacityPromise = getBrokerCapacity().catch((e) => {
-      addError("getBrokerCapacity", e);
-      return null;
-    });
-
-    // ── 정합성 요약 (account_id 불필요) ──
     const reconSummaryPromise = getReconciliationSummary().catch((e) => {
-      addError("getReconciliationSummary", e);
+      addError("GET /reconciliation/summary", e);
       return null;
     });
-
-    // ── 주문 / 결정 / 에이전트 ──
     const ordersPromise = getOrders().catch((e) => {
-      addError("getOrders", e);
-      return [] as OrderSummary[];
-    });
-
-    const decisionsPromise = getTradeDecisions().catch((e) => {
-      addError("getTradeDecisions", e);
+      addError("GET /orders", e);
       return [];
     });
-
-    const agentRunsPromise = getAgentRuns().catch((e) => {
-      addError("getAgentRuns", e);
-      return [];
-    });
-
-    // ── 클라이언트 → 계좌 (Dashboard.tsx와 동일한 패턴) ──
     const clientsPromise = getClients().catch((e) => {
-      addError("getClients", e);
+      addError("GET /clients", e);
       return [] as ClientDetail[];
     });
 
-    const [health, readyz, brokerCapacity, reconSummary, orders, decisions, agentRuns, clients] =
-      await Promise.all([
-        healthPromise,
-        readyzPromise,
-        brokerCapacityPromise,
-        reconSummaryPromise,
-        ordersPromise,
-        decisionsPromise,
-        agentRunsPromise,
-        clientsPromise,
-      ]);
+    const [health, readyz, reconSummary, orders, clients] = await Promise.all([
+      healthPromise,
+      readyzPromise,
+      reconSummaryPromise,
+      ordersPromise,
+      clientsPromise,
+    ]);
 
-    // ── 클라이언트별 계좌 조회 (client_id 필수) ──
+    // ── Accounts per client ──
     let accounts: AccountSummary[] = [];
     if (clients.length > 0) {
       const results = await Promise.allSettled(
         clients.map((c) => getAccounts(c.client_id))
       );
       for (const r of results) {
-        if (r.status === "fulfilled") {
-          accounts.push(...r.value);
-        }
+        if (r.status === "fulfilled") accounts.push(...r.value);
       }
       if (results.some((r) => r.status === "rejected")) {
-        addError("getAccounts", "일부 클라이언트 계좌 조회 실패");
+        addError("GET /accounts", "일부 클라이언트 계좌 조회 실패");
       }
     }
 
-    // ── 정합성 실행 이력 (account_id 있을 때만 호출) ──
-    const firstAccountId = accounts.length > 0 ? accounts[0].account_id : null;
-    let reconRuns: ReconciliationRunSummary[] = [];
-    if (firstAccountId) {
-      try {
-        reconRuns = await getReconciliationRuns(firstAccountId);
-      } catch (e) {
-        addError("getReconciliationRuns", e);
-      }
-    }
-
-    // ── 포지션 + 현금 (계좌별 병렬) ──
-    let positionsMap = new Map<string, PositionSnapshotView[]>();
-    let cashMap = new Map<string, CashBalanceSnapshotView | null>();
-
+    // ── Positions per account ──
+    const positionsMap = new Map<string, PositionSnapshotView[]>();
     if (accounts.length > 0) {
       const posResults = await Promise.allSettled(
-        accounts.map((a) => getPositions(a.account_id))
+        accounts.map((a) => getPositions(a.account_id).then((p) => ({ accountId: a.account_id, positions: p })))
       );
-      const cashResults = await Promise.allSettled(
-        accounts.map((a) => getCashBalance(a.account_id))
-      );
-
-      posResults.forEach((r, i) => {
+      posResults.forEach((r) => {
         if (r.status === "fulfilled") {
-          positionsMap.set(accounts[i].account_id, r.value);
+          positionsMap.set(r.value.accountId, r.value.positions);
         } else {
-          addError(`getPositions(${accounts[i].account_id})`, r.reason);
-          positionsMap.set(accounts[i].account_id, []);
-        }
-      });
-
-      cashResults.forEach((r, i) => {
-        if (r.status === "fulfilled") {
-          cashMap.set(accounts[i].account_id, r.value);
-        } else {
-          addError(`getCashBalance(${accounts[i].account_id})`, r.reason);
-          cashMap.set(accounts[i].account_id, null);
+          addError("GET /positions", "일부 계좌 포지션 조회 실패");
         }
       });
     }
 
-    // ── Snapshot sync runs (최신 1건) ──
+    // ── Cash per account ──
+    const cashMap = new Map<string, CashBalanceSnapshotView | null>();
+    if (accounts.length > 0) {
+      const cashResults = await Promise.allSettled(
+        accounts.map((a) => getCashBalance(a.account_id).then((c) => ({ accountId: a.account_id, cash: c })))
+      );
+      cashResults.forEach((r) => {
+        if (r.status === "fulfilled") {
+          cashMap.set(r.value.accountId, r.value.cash);
+        } else {
+          addError("GET /cash-balance", "일부 계좌 현금 조회 실패");
+        }
+      });
+    }
+
+    // ── Reconciliation runs (first account) ──
+    let reconRuns: ReconciliationRunSummary[] = [];
+    if (accounts.length > 0) {
+      try {
+        reconRuns = await getReconciliationRuns(accounts[0].account_id);
+      } catch {
+        addError("GET /reconciliation/runs", "정합성 실행 이력 조회 실패");
+      }
+    }
+
+    // ── Snapshot sync runs ──
     let snapshotSyncRuns: SnapshotSyncRunSummary[] = [];
     try {
-      snapshotSyncRuns = await getSnapshotSyncRuns(1);
-    } catch (e) {
-      addError("getSnapshotSyncRuns", e);
+      snapshotSyncRuns = await getSnapshotSyncRuns(10);
+    } catch {
+      addError("GET /snapshot-sync-runs", "스냅샷 동기화 이력 조회 실패");
     }
 
     setApiErrors(errors);
@@ -280,12 +278,9 @@ export default function OperationsDashboardView() {
       clients,
       health,
       readyz,
-      brokerCapacity,
-      reconSummary,
+      reconSummary: reconSummary as { active_locks_count: number; incomplete_recon_count: number } | null,
       reconRuns,
-      orders: orders ?? [],
-      decisions: decisions ?? [],
-      agentRuns: agentRuns ?? [],
+      orders,
       accounts,
       positionsMap,
       cashMap,
@@ -298,7 +293,6 @@ export default function OperationsDashboardView() {
     fetchAll();
   }, []);
 
-  /* ── Derived metrics ── */
   const derived = useMemo(() => {
     if (!data) return null;
 
@@ -317,11 +311,6 @@ export default function OperationsDashboardView() {
     const totalPositions = Array.from(latestPositionMap.values()).filter(
       (p) => (p.quantity ?? 0) > 0
     ).length;
-
-    let totalUnrealizedPnl = 0;
-    for (const p of latestPositionMap.values()) {
-      totalUnrealizedPnl += p.unrealized_pnl ?? 0;
-    }
 
     // ── Cash balance: settled_cash 우선, fallback available_cash ──
     let totalAvailableCash = 0;
@@ -351,10 +340,6 @@ export default function OperationsDashboardView() {
       (o) => o.status === "rejected"
     ).length;
 
-    const recentAgentFailures = (data.agentRuns as { status?: string }[]).filter(
-      (r) => r.status === "failed" || r.status === "error"
-    ).length;
-
     const incompleteReconCount = data.reconSummary?.incomplete_recon_count ?? 0;
     const activeLocksCount = data.reconSummary?.active_locks_count ?? 0;
 
@@ -379,11 +364,6 @@ export default function OperationsDashboardView() {
       }
     }
 
-    // Broker capacity (단일 객체)
-    const brokerEntry = data.brokerCapacity;
-    const brokerConnected = brokerEntry !== null;
-    const brokerHealthy = brokerConnected && brokerEntry.can_accept_new_entries;
-
     // Ready state
     const readyzOk =
       data.readyz &&
@@ -392,9 +372,45 @@ export default function OperationsDashboardView() {
     // ── Snapshot sync run status (primary indicator) ──
     const latestSyncRun = data.snapshotSyncRuns.length > 0 ? data.snapshotSyncRuns[0] : null;
 
+    // ── Alert count (shared deriveAlerts 사용) ──
+    // Dashboard가 가진 데이터로 AlertRuleInput 구성
+    const alertInput = {
+      health: data.health,
+      healthError: apiErrors.some((e) => e.apiName === "GET /health"),
+      orders: data.orders,
+      ordersError: apiErrors.some((e) => e.apiName === "GET /orders"),
+      reconSummary: data.reconSummary,
+      reconSummaryError: apiErrors.some((e) => e.apiName === "GET /reconciliation/summary"),
+      reconRuns: data.reconRuns,
+      reconRunsError: apiErrors.some((e) => e.apiName === "GET /reconciliation/runs"),
+      agentRuns: [],
+      agentRunsError: false,
+      positionsCount: totalPositions,
+      positionsError: apiErrors.some((e) => e.apiName === "GET /positions"),
+      snapshotSyncRun: latestSyncRun,
+      snapshotSyncError: apiErrors.some((e) => e.apiName === "GET /snapshot-sync-runs"),
+      latestPositionSnapshotAt: latestSnapshotAt,
+      latestCashSnapshotAt: latestSnapshotAt,
+      apiErrors,
+    };
+    const alertItems = deriveAlerts(alertInput);
+    const urgentCount = alertItems.filter((a) => a.level === "긴급" && a.status === "OPEN").length;
+    const cautionCount = alertItems.filter((a) => a.level === "주의" && a.status === "OPEN").length;
+
+    // ── Recent alert items for compact section C (긴급+주의 only, max 5) ──
+    const recentAlertItems: CompactAlertItem[] = alertItems
+      .filter((a) => (a.level === "긴급" || a.level === "주의") && a.status === "OPEN")
+      .slice(0, 5)
+      .map((a) => ({
+        id: a.id,
+        level: a.level as "긴급" | "주의",
+        levelVariant: a.level === "긴급" ? "error" as const : "warning" as const,
+        title: a.title,
+        description: a.description,
+      }));
+
     return {
       totalPositions,
-      totalUnrealizedPnl,
       totalAvailableCash,
       cashUsedFallback,
       latestSnapshotAt,
@@ -402,46 +418,130 @@ export default function OperationsDashboardView() {
       reconcileRequiredCount,
       filledCount,
       rejectedCount,
-      recentAgentFailures,
       incompleteReconCount,
       activeLocksCount,
-      brokerConnected,
-      brokerHealthy,
       readyzOk,
-      brokerEntry,
       latestSyncRun,
+      urgentCount,
+      cautionCount,
+      recentAlertItems,
     };
-  }, [data]);
+  }, [data, apiErrors]);
 
-  /* ── Recent events from orders ── */
+  /* ── Deprecated: legacy detailed sections (feature flag SHOW_DASHBOARD_SECTIONS 복원 시 사용)
   const recentEvents: RecentEvent[] = useMemo(() => {
     if (!data) return [];
     return data.orders.slice(0, 10).map((o) => ({
       id: o.order_request_id,
-      time: o.created_at
-        ? new Date(o.created_at).toLocaleTimeString("ko-KR", { hour12: false })
-        : "-",
-      type: "ORDER",
-      description: `${o.side === "buy" ? "매수" : "매도"} 주문`,
+      time: o.created_at ?? "-",
+      type: o.side ?? "-",
+      description: `${o.symbol ?? "-"} ${o.requested_quantity ?? 0}주`,
       symbol: o.symbol ?? "-",
-      status: o.status === "filled" || o.status === "acknowledged" ? "SUCCESS" : "PENDING",
+      status: o.status === "filled" ? "SUCCESS" : o.status === "rejected" ? "FAIL" : "PENDING",
     }));
   }, [data]);
 
-  /* ── Pending reconciliations from recon runs ── */
   const pendingRecons: PendingRecon[] = useMemo(() => {
-    if (!data?.reconRuns) return [];
-    return data.reconRuns
-      .filter((r) => r.status !== "completed")
+    if (!data) return [];
+    return data.orders
+      .filter((o) => o.status === "reconcile_required")
       .map((r) => ({
-        id: r.run_id,
-        type: r.order_mismatches && r.order_mismatches > 0 ? "ORDER_MISMATCH" : "POSITION_MISMATCH",
-        account: r.account_id,
-        createdAt: r.started_at ?? "-",
+        id: r.order_request_id,
+        type: "주문-브로커 불일치",
+        account: r.account_id ?? "-",
+        createdAt: r.created_at ?? "-",
       }));
   }, [data]);
+  ── */
 
-  /* ── Loading / Error / Empty ── */
+  /* ── Compact summary data (for SHOW_DASHBOARD_RECENT_SUMMARIES) ── */
+
+  // Section A: 최근 주문/제출 내역 (created_at 내림차순 정렬 후 5개)
+  const compactOrders: CompactOrderItem[] = useMemo(() => {
+    if (!data) return [];
+    return [...data.orders]
+      .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime())
+      .slice(0, 5)
+      .map((o) => {
+        let sideLabel: string;
+        switch (o.side) {
+          case "buy": sideLabel = "매수"; break;
+          case "sell": sideLabel = "매도"; break;
+          default: sideLabel = o.side ?? "-";
+        }
+        let statusLabel: string;
+        let statusVariant: "success" | "warning" | "error" | "info" | "neutral";
+        switch (o.status) {
+          case "filled":
+            statusLabel = "체결";
+            statusVariant = "success";
+            break;
+          case "submitted":
+            statusLabel = "제출";
+            statusVariant = "info";
+            break;
+          case "rejected":
+            statusLabel = "거부";
+            statusVariant = "error";
+            break;
+          case "reconcile_required":
+            statusLabel = "조정필요";
+            statusVariant = "warning";
+            break;
+          default:
+            statusLabel = o.status;
+            statusVariant = "neutral";
+        }
+        return {
+          id: o.order_request_id,
+          createdAt: o.created_at ?? "-",
+          symbol: o.symbol ?? "-",
+          side: sideLabel,
+          quantity: o.requested_quantity ?? 0,
+          status: statusLabel,
+          statusVariant,
+        };
+      });
+  }, [data]);
+
+  // Section B: 최근 정합성 점검 (started_at 내림차순 정렬 후 5개)
+  const compactReconciliationRuns: CompactReconciliationItem[] = useMemo(() => {
+    if (!data) return [];
+    return [...data.reconRuns]
+      .sort((a, b) => new Date(b.started_at ?? 0).getTime() - new Date(a.started_at ?? 0).getTime())
+      .slice(0, 5)
+      .map((r) => {
+        let statusLabel: string;
+        let statusVariant: "success" | "warning" | "error" | "neutral";
+        switch (r.status) {
+          case "completed":
+            statusLabel = "정상";
+            statusVariant = "success";
+            break;
+          case "partial":
+            statusLabel = "주의";
+            statusVariant = "warning";
+            break;
+          case "failed":
+            statusLabel = "긴급";
+            statusVariant = "error";
+            break;
+          default:
+            statusLabel = r.status;
+            statusVariant = "neutral";
+        }
+        return {
+          id: r.run_id,
+          startedAt: r.started_at ?? "-",
+          status: statusLabel,
+          statusVariant,
+          mismatchCount: (r.order_mismatches ?? 0) + (r.position_mismatches ?? 0),
+          completedAt: r.completed_at,
+        };
+      });
+  }, [data]);
+
+  /* ── Loading / Error ── */
   if (loading) return <LoadingSpinner text="운영 데이터 로딩 중..." />;
 
   if (error) {
@@ -459,31 +559,15 @@ export default function OperationsDashboardView() {
     );
   }
 
-  if (!data || data.accounts.length === 0) {
+  if (!data || !derived) {
     return (
-      <div className="p-6 space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold text-[#0f172a]">운영 대시보드</h1>
-          <p className="text-sm text-[#64748b] mt-1">시스템 상태 및 오늘의 운영 현황</p>
-        </div>
-        <div className="bg-white rounded-xl border border-[#e2e8f0] p-8 text-center">
-          <p className="text-sm text-[#94a3b8]">계좌 데이터가 없습니다</p>
-        </div>
-        {apiErrors.length > 0 && (
-          <div className="bg-[#fef2f2] border border-[#f87171] rounded-xl p-4">
-            <h3 className="text-sm font-semibold text-[#991b1b] mb-2">일부 데이터를 불러오지 못했습니다</h3>
-            <ul className="text-xs text-[#b91c1c] space-y-1">
-              {apiErrors.map((e, i) => (
-                <li key={i}>• {e.apiName}: {e.message}</li>
-              ))}
-            </ul>
-          </div>
-        )}
+      <div className="p-6">
+        <ErrorBanner message="데이터를 불러오지 못했습니다" onDismiss={() => {}} />
       </div>
     );
   }
 
-  const d = derived!;
+  const d = derived;
 
   /* ── StatusCard helpers ── */
   const apiStatus = data.health?.status === "ok" ? "정상" : "미연동";
@@ -496,17 +580,6 @@ export default function OperationsDashboardView() {
 
   const readyzStatus = d.readyzOk ? "운영 준비" : "확인 필요";
   const readyzVariant = d.readyzOk ? "healthy" as const : "error" as const;
-
-  const brokerStatus = d.brokerConnected
-    ? d.brokerHealthy
-      ? "여유"
-      : "용량 부족"
-    : "미연동";
-  const brokerVariant = d.brokerConnected
-    ? d.brokerHealthy
-      ? "healthy" as const
-      : "warning" as const
-    : "error" as const;
 
   // ── Snapshot sync StatusCard: sync run status primary, snapshot_at secondary ──
   const syncRun = d.latestSyncRun;
@@ -554,8 +627,11 @@ export default function OperationsDashboardView() {
     ? "warning" as const
     : "healthy" as const;
 
-  const decisionCount = (data.decisions ?? []).length;
   const orderCount = data.orders.length;
+
+  // Alert count status
+  const alertStatusVariant: "error" | "warning" | "healthy" =
+    d.urgentCount > 0 ? "error" : d.cautionCount > 0 ? "warning" : "healthy";
 
   return (
     <div className="p-6 space-y-6">
@@ -588,36 +664,13 @@ export default function OperationsDashboardView() {
 
       {/* Status Summary Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4">
-        <StatusCard title="API 상태" value={apiStatus} status={apiStatusVariant} subtitle="출처: GET /health" />
-        <StatusCard title="DB 상태" value={dbStatus} status={dbStatusVariant} subtitle="출처: GET /health.database" />
+        {/* ── 항상 표시되는 핵심 카드 (6개) ── */}
         <StatusCard title="Ready 상태" value={readyzStatus} status={readyzVariant} subtitle="출처: GET /readyz" />
-        <StatusCard
-          title="브로커 용량"
-          value={brokerStatus}
-          status={brokerVariant}
-          subtitle={d.brokerConnected ? `${d.brokerEntry?.broker_name ?? "브로커"}` : "미연동"}
-        />
         <StatusCard
           title="마지막 스냅샷 동기화"
           value={snapshotStatus}
           status={snapshotVariant}
           subtitle={snapshotSubtitle}
-        />
-        <StatusCard
-          title="미해결 정합성"
-          value={reconStatus}
-          status={reconVariant}
-          subtitle={d.incompleteReconCount > 0 || d.activeLocksCount > 0 ? "수동 확인 필요" : "정상"}
-        />
-        <StatusCard
-          title="오늘 AI 결정"
-          value={`${decisionCount}건`}
-          status="neutral"
-          subtitle={
-            decisionCount > 0
-              ? `출처: GET /agent-runs${d.recentAgentFailures > 0 ? ` (실패 ${d.recentAgentFailures})` : ""}`
-              : "데이터 없음"
-          }
         />
         <StatusCard
           title="오늘 주문 제출"
@@ -648,64 +701,156 @@ export default function OperationsDashboardView() {
           }
         />
         <StatusCard
-          title="미실현 손익"
-          value={formatCurrency(d.totalUnrealizedPnl)}
-          status={d.totalUnrealizedPnl >= 0 ? "healthy" : "warning"}
+          title="운영 경고"
+          value={`긴급 ${d.urgentCount} / 주의 ${d.cautionCount}`}
+          status={alertStatusVariant}
           subtitle={
-            d.totalPositions > 0
-              ? "출처: /positions unrealized_pnl"
-              : "포지션 없음"
+            <button
+              onClick={() => navigate("/operations/alerts")}
+              className="text-[#3b82f6] hover:text-[#2563eb] hover:underline font-medium"
+            >
+              운영 경고 보기 →
+            </button>
           }
         />
-        <StatusCard
-          title="당일 성과"
-          value="N/A"
-          status="neutral"
-          subtitle="계산 불가 (별도 지표 필요)"
-        />
-      </div>
 
-      {/* Recent Events Section */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-[#0f172a]">최근 주문 타임라인</h2>
-          <button
-            onClick={() => navigate("/operations/orders")}
-            className="flex items-center gap-1 text-sm text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors"
-          >
-            전체 보기
-            <ArrowRight className="h-4 w-4" />
-          </button>
-        </div>
-        {recentEvents.length > 0 ? (
-          <DataTable columns={eventColumns} data={recentEvents} idKey="id" />
-        ) : (
-          <div className="bg-white rounded-xl border border-[#e2e8f0] p-8 text-center">
-            <p className="text-sm text-[#94a3b8]">최근 주문 내역이 없습니다</p>
-          </div>
+        {/* ── 고급 카드 (feature flag로 제어) ── */}
+        {SHOW_ADVANCED_OPERATION_CARDS && (
+          <>
+            <StatusCard title="API 상태" value={apiStatus} status={apiStatusVariant} subtitle="출처: GET /health" />
+            <StatusCard title="DB 상태" value={dbStatus} status={dbStatusVariant} subtitle="출처: GET /health.database" />
+            <StatusCard
+              title="미해결 정합성"
+              value={reconStatus}
+              status={reconVariant}
+              subtitle={d.incompleteReconCount > 0 || d.activeLocksCount > 0 ? "수동 확인 필요" : "정상"}
+            />
+            <StatusCard
+              title="미실현 손익"
+              value="N/A"
+              status="neutral"
+              subtitle="숨김 처리 (feature flag)"
+            />
+            <StatusCard
+              title="당일 성과"
+              value="N/A"
+              status="neutral"
+              subtitle="계산 불가 (별도 지표 필요)"
+            />
+          </>
         )}
       </div>
 
-      {/* Pending Reconciliations Section */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-[#0f172a]">미해결 정합성 상태</h2>
-          <button
-            onClick={() => navigate("/reconciliation")}
-            className="flex items-center gap-1 text-sm text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors"
-          >
-            정합성 점검
-            <ArrowRight className="h-4 w-4" />
-          </button>
-        </div>
-        {pendingRecons.length > 0 ? (
-          <DataTable columns={reconColumns} data={pendingRecons} idKey="id" />
-        ) : (
-          <div className="bg-white rounded-xl border border-[#e2e8f0] p-8 text-center">
-            <p className="text-sm text-[#94a3b8]">미해결 정합성 상태 없음</p>
+      {/* Recent Summaries Sections (feature flag) */}
+      {SHOW_DASHBOARD_RECENT_SUMMARIES && (
+        <div className="space-y-6">
+          {/* ── Section A: 최근 주문/제출 내역 ── */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-[#0f172a]">최근 주문/제출 내역</h2>
+              <button
+                onClick={() => navigate("/operations/orders")}
+                className="flex items-center gap-1 text-sm text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors"
+              >
+                주문 추적 보기
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            </div>
+            <DataTable
+              columns={[
+                { key: "createdAt", header: "생성시각", width: "140px" },
+                { key: "symbol", header: "종목", width: "80px" },
+                { key: "side", header: "매매", width: "60px" },
+                { key: "quantity", header: "수량", width: "80px" },
+                {
+                  key: "status",
+                  header: "상태",
+                  width: "80px",
+                  render: (row: CompactOrderItem) => (
+                    <StatusBadge variant={row.statusVariant}>{row.status}</StatusBadge>
+                  ),
+                },
+              ]}
+              data={compactOrders}
+              idKey="id"
+              compact
+              emptyMessage="오늘 주문 없음"
+            />
           </div>
-        )}
-      </div>
+
+          {/* ── Section B: 최근 정합성 점검 ── */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-[#0f172a]">최근 정합성 점검</h2>
+              <button
+                onClick={() => navigate("/reconciliation")}
+                className="flex items-center gap-1 text-sm text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors"
+              >
+                정합성 점검 보기
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            </div>
+            <DataTable
+              columns={[
+                { key: "startedAt", header: "시작시각", width: "140px" },
+                {
+                  key: "status",
+                  header: "상태",
+                  width: "80px",
+                  render: (row: CompactReconciliationItem) => (
+                    <StatusBadge variant={row.statusVariant}>{row.status}</StatusBadge>
+                  ),
+                },
+                { key: "mismatchCount", header: "불일치건수", width: "90px" },
+                {
+                  key: "completedAt",
+                  header: "완료시각",
+                  width: "140px",
+                  render: (row: CompactReconciliationItem) => (
+                    <span className="text-[#64748b]">{row.completedAt ?? "—"}</span>
+                  ),
+                },
+              ]}
+              data={compactReconciliationRuns}
+              idKey="id"
+              compact
+              emptyMessage="정합성 점검 이력 없음"
+            />
+          </div>
+
+          {/* ── Section C: 최근 운영 경고 ── */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-[#0f172a]">최근 운영 경고</h2>
+              <button
+                onClick={() => navigate("/operations/alerts")}
+                className="flex items-center gap-1 text-sm text-[#3b82f6] hover:text-[#2563eb] font-medium transition-colors"
+              >
+                운영 경고 보기
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            </div>
+            <DataTable
+              columns={[
+                {
+                  key: "level",
+                  header: "수준",
+                  width: "60px",
+                  render: (row: CompactAlertItem) => (
+                    <StatusBadge variant={row.levelVariant}>{row.level}</StatusBadge>
+                  ),
+                },
+                { key: "title", header: "제목" },
+                { key: "description", header: "설명" },
+              ]}
+              data={d.recentAlertItems}
+              idKey="id"
+              compact
+              emptyMessage="운영 경고 없음"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

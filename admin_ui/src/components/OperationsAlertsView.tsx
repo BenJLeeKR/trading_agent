@@ -5,7 +5,7 @@ import { StatusBadge } from "./common/StatusBadge";
 import { WarningBanner } from "./common/WarningBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import { ErrorBanner } from "./common/ErrorBanner";
-import { X, AlertCircle, RefreshCw } from "lucide-react";
+import { X, AlertCircle, RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
 import {
   getHealth,
   getOrders,
@@ -25,17 +25,9 @@ import type {
   ClientDetail,
   SnapshotSyncRunSummary,
 } from "../types/api";
+import { deriveAlerts, LEVEL_PRIORITY, type AlertItem, type AlertRuleInput } from "../lib/alerts";
 
 /* ── Types ── */
-interface AlertItem {
-  id: string;
-  level: "긴급" | "주의" | "경고" | "정보";
-  title: string;
-  description: string;
-  time: string;
-  status: "OPEN" | "RESOLVED";
-}
-
 interface OperationNote {
   id: string;
   date: string;
@@ -43,11 +35,10 @@ interface OperationNote {
   status: string;
 }
 
-/* ── Static data (backend API 없음) ── */
+/* ── Static data (backend API 없음, 예시) ── */
 const operationNotes: OperationNote[] = [
   { id: "NOTE-001", date: "2026-05-13", action: "오전 장 개장 전 포지션 정리", status: "완료" },
   { id: "NOTE-002", date: "2026-05-13", action: "API 토큰 갱신", status: "완료" },
-  { id: "NOTE-003", date: "2026-05-14", action: "Pre-Market 점검 필요", status: "대기" },
 ];
 
 const preMarketChecklist = [
@@ -57,239 +48,8 @@ const preMarketChecklist = [
   { id: 4, item: "브로커 용량 상태 확인" },
 ];
 
-/* ── Alert derivation rules ── */
-interface AlertRuleInput {
-  health: HealthResponse | null;
-  healthError: boolean;
-  orders: OrderSummary[];
-  ordersError: boolean;
-  reconSummary: { active_locks_count: number; incomplete_recon_count: number } | null;
-  reconSummaryError: boolean;
-  reconRuns: ReconciliationRunSummary[];
-  reconRunsError: boolean;
-  agentRuns: { status?: string }[];
-  agentRunsError: boolean;
-  positionsCount: number;
-  positionsError: boolean;
-  // ── Snapshot sync run ──
-  snapshotSyncRun: SnapshotSyncRunSummary | null;
-  snapshotSyncError: boolean;
-  // ── Position / Cash snapshot_at for time discrepancy check ──
-  latestPositionSnapshotAt: string | null;
-  latestCashSnapshotAt: string | null;
-}
-
-function deriveAlerts(input: AlertRuleInput): AlertItem[] {
-  const alerts: AlertItem[] = [];
-  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
-
-  // Rule 1: API 상태 이상 (긴급)
-  if (input.healthError || !input.health || input.health.status !== "ok") {
-    alerts.push({
-      id: "ALT-SYS-001",
-      level: "긴급",
-      title: "API 상태 이상",
-      description: input.healthError
-        ? "API 서버 응답 없음 (Health endpoint 연결 실패)"
-        : `API 상태: ${input.health?.status ?? "unknown"}`,
-      time: now,
-      status: "OPEN",
-    });
-  }
-
-  // Rule 2: 스냅샷 동기화 지연 (긴급)
-  if (!input.reconRunsError && input.reconRuns.length > 0) {
-    const sorted = [...input.reconRuns].sort(
-      (a, b) => new Date(b.started_at ?? 0).getTime() - new Date(a.started_at ?? 0).getTime()
-    );
-    const latest = sorted[0];
-    if (latest?.started_at) {
-      const elapsed = Date.now() - new Date(latest.started_at).getTime();
-      if (elapsed > 5 * 60 * 1000) {
-        alerts.push({
-          id: "ALT-SNAP-001",
-          level: "긴급",
-          title: "스냅샷 동기화 지연",
-          description: `마지막 스냅샷 동기화가 5분 이상 갱신되지 않았습니다. (마지막: ${latest.started_at})`,
-          time: now,
-          status: "OPEN",
-        });
-      }
-    }
-  } else if (input.reconRunsError || input.reconRuns.length === 0) {
-    alerts.push({
-      id: "ALT-SNAP-002",
-      level: "긴급",
-      title: "스냅샷 없음",
-      description: input.reconRunsError
-        ? "스냅샷 동기화 이력을 불러올 수 없습니다."
-        : "스냅샷 동기화 실행 이력이 없습니다. 시스템 상태를 확인하세요.",
-      time: now,
-      status: "OPEN",
-    });
-  }
-
-  // Rule 3: 제출 대기 주문 존재 (긴급)
-  if (!input.ordersError) {
-    const pendingSubmit = input.orders.filter((o) => o.status === "submitted").length;
-    if (pendingSubmit > 0) {
-      alerts.push({
-        id: "ALT-ORD-001",
-        level: "긴급",
-        title: "제출 대기 주문 존재",
-        description: `브로커에 미제출된 주문이 ${pendingSubmit}건 있습니다. 즉시 확인하세요.`,
-        time: now,
-        status: "OPEN",
-      });
-    }
-  }
-
-  // Rule 4: 조정 필요 상태 존재 (주의)
-  if (!input.ordersError) {
-    const reconcileRequired = input.orders.filter((o) => o.status === "reconcile_required").length;
-    if (reconcileRequired > 0) {
-      alerts.push({
-        id: "ALT-ORD-002",
-        level: "주의",
-        title: "조정 필요 상태 존재",
-        description: `브로커 확정 불가 상태인 주문이 ${reconcileRequired}건 있습니다. 수동 확인이 필요합니다.`,
-        time: now,
-        status: "OPEN",
-      });
-    }
-  }
-
-  // Rule 5: 에이전트 실행 실패 (주의)
-  if (!input.agentRunsError) {
-    const failures = input.agentRuns.filter(
-      (r) => r.status === "failed" || r.status === "error"
-    ).length;
-    if (failures > 0) {
-      alerts.push({
-        id: "ALT-AGENT-001",
-        level: "주의",
-        title: "에이전트 실행 실패",
-        description: `AI 에이전트 실행 중 ${failures}건의 오류가 발생했습니다. 에이전트 실행 화면에서 확인하세요.`,
-        time: now,
-        status: "OPEN",
-      });
-    }
-  }
-
-  // Rule 6: 활성 락 존재 (주의)
-  if (!input.reconSummaryError && input.reconSummary) {
-    if (input.reconSummary.active_locks_count > 0) {
-      alerts.push({
-        id: "ALT-RECON-001",
-        level: "주의",
-        title: "활성 락 존재",
-        description: `정합성 프로세스가 ${input.reconSummary.active_locks_count}개 계좌를 잠금 상태로 유지 중입니다.`,
-        time: now,
-        status: "OPEN",
-      });
-    }
-  }
-
-  // Rule 7: 주문-포지션 lineage 불일치 (경고)
-  if (!input.ordersError && !input.positionsError) {
-    if (input.orders.length === 0 && input.positionsCount > 0) {
-      alerts.push({
-        id: "ALT-LINEAGE-001",
-        level: "경고",
-        title: "주문-포지션 lineage 불일치",
-        description: `주문 내역이 없으나 ${input.positionsCount}개의 포지션이 존재합니다. 데이터 정합성을 확인하세요.`,
-        time: now,
-        status: "OPEN",
-      });
-    }
-  }
-
-  // ── Snapshot Sync Alert Rules ──
-
-  // SNAP-SYNC-001: status='partial' → 주의
-  if (!input.snapshotSyncError && input.snapshotSyncRun) {
-    if (input.snapshotSyncRun.status === "partial") {
-      alerts.push({
-        id: "SNAP-SYNC-001",
-        level: "주의",
-        title: "스냅샷 부분 성공",
-        description: `스냅샷 동기화가 부분적으로만 완료되었습니다. (성공: ${input.snapshotSyncRun.succeeded_accounts}/${input.snapshotSyncRun.total_accounts} 계좌, 오류: ${input.snapshotSyncRun.error_count}건)`,
-        time: now,
-        status: "OPEN",
-      });
-    }
-  }
-
-  // SNAP-SYNC-002: status='failed' → 긴급
-  if (!input.snapshotSyncError && input.snapshotSyncRun) {
-    if (input.snapshotSyncRun.status === "failed") {
-      alerts.push({
-        id: "SNAP-SYNC-002",
-        level: "긴급",
-        title: "스냅샷 동기화 실패",
-        description: `최근 스냅샷 동기화가 실패했습니다. (실패 계좌: ${input.snapshotSyncRun.failed_accounts}/${input.snapshotSyncRun.total_accounts})`,
-        time: now,
-        status: "OPEN",
-      });
-    }
-  }
-
-  // SNAP-SYNC-003a: API 오류 → 긴급
-  if (input.snapshotSyncError) {
-    alerts.push({
-      id: "SNAP-SYNC-003a",
-      level: "긴급",
-      title: "스냅샷 동기화 상태 조회 실패",
-      description: "스냅샷 동기화 상태를 조회할 수 없습니다. API 연결을 확인하세요.",
-      time: now,
-      status: "OPEN",
-    });
-  }
-
-  // SNAP-SYNC-003b: run 없음 → 긴급
-  if (!input.snapshotSyncError && !input.snapshotSyncRun) {
-    alerts.push({
-      id: "SNAP-SYNC-003b",
-      level: "긴급",
-      title: "스냅샷 동기화 이력 없음",
-      description: "스냅샷 동기화 실행 이력이 없습니다. 시스템 상태를 확인하세요.",
-      time: now,
-      status: "OPEN",
-    });
-  }
-
-  // SNAP-TIME-001: position/cash snapshot_at 차이 > 10분 → 경고
-  if (input.latestPositionSnapshotAt && input.latestCashSnapshotAt) {
-    const posTime = new Date(input.latestPositionSnapshotAt).getTime();
-    const cashTime = new Date(input.latestCashSnapshotAt).getTime();
-    const diffMs = Math.abs(posTime - cashTime);
-    if (diffMs > 10 * 60 * 1000) {
-      const diffMin = Math.round(diffMs / 60000);
-      alerts.push({
-        id: "SNAP-TIME-001",
-        level: "경고",
-        title: "현금/포지션 스냅샷 시각 불일치",
-        description: `포지션 스냅샷과 현금 스냅샷의 갱신 시각이 ${diffMin}분 차이납니다. 데이터 정합성을 확인하세요.`,
-        time: now,
-        status: "OPEN",
-      });
-    }
-  }
-
-  // Rule 8: 모든 조건 정상 (정보)
-  if (alerts.length === 0) {
-    alerts.push({
-      id: "ALT-OK-001",
-      level: "정보",
-      title: "시스템 정상",
-      description: "모든 시스템이 정상 운영 중입니다. 이상 징후가 감지되지 않았습니다.",
-      time: now,
-      status: "RESOLVED",
-    });
-  }
-
-  return alerts;
-}
+/* ── Filter mode ── */
+type FilterMode = "action_needed" | "" | "긴급" | "주의" | "정보" | "정상";
 
 /* ── Columns ── */
 const alertColumns: Column<AlertItem>[] = [
@@ -337,23 +97,48 @@ const noteColumns: Column<OperationNote>[] = [
 /* ── Component ── */
 export default function OperationsAlertsView() {
   const [selectedAlert, setSelectedAlert] = useState<AlertItem | null>(null);
-  const [levelFilter, setLevelFilter] = useState("");
+  const [levelFilter, setLevelFilter] = useState<FilterMode>("action_needed");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [snapshotSyncRun, setSnapshotSyncRun] = useState<SnapshotSyncRunSummary | null>(null);
+  const [notesCollapsed, setNotesCollapsed] = useState(true);
 
   const fetchAlerts = async () => {
     setLoading(true);
     setError(null);
 
+    // API 실패 기록용
+    const apiErrors: { apiName: string; message: string }[] = [];
+
     try {
       // ── 시스템 상태 / 주문 / 정합성 요약 / 에이전트 (account_id 불필요) ──
       const [healthResult, ordersResult, reconSummaryResult, agentRunsResult] =
         await Promise.all([
-          getHealth().then((h) => ({ data: h, error: false })).catch(() => ({ data: null as HealthResponse | null, error: true })),
-          getOrders().then((o) => ({ data: o, error: false })).catch(() => ({ data: [] as OrderSummary[], error: true })),
-          getReconciliationSummary().then((r) => ({ data: r, error: false })).catch(() => ({ data: null, error: true })),
-          getAgentRuns().then((a) => ({ data: a, error: false })).catch(() => ({ data: [] as { status?: string }[], error: true })),
+          getHealth()
+            .then((h) => ({ data: h, error: false }))
+            .catch((e) => {
+              apiErrors.push({ apiName: "GET /health", message: String(e) });
+              return { data: null as HealthResponse | null, error: true };
+            }),
+          getOrders()
+            .then((o) => ({ data: o, error: false }))
+            .catch((e) => {
+              apiErrors.push({ apiName: "GET /orders", message: String(e) });
+              return { data: [] as OrderSummary[], error: true };
+            }),
+          getReconciliationSummary()
+            .then((r) => ({ data: r, error: false }))
+            .catch((e) => {
+              apiErrors.push({ apiName: "GET /reconciliation/summary", message: String(e) });
+              return { data: null, error: true };
+            }),
+          getAgentRuns()
+            .then((a) => ({ data: a, error: false }))
+            .catch((e) => {
+              apiErrors.push({ apiName: "GET /agent-runs", message: String(e) });
+              return { data: [] as { status?: string }[], error: true };
+            }),
         ]);
 
       // ── 클라이언트 → 계좌 (Dashboard.tsx와 동일한 패턴) ──
@@ -484,9 +269,11 @@ export default function OperationsAlertsView() {
         snapshotSyncError,
         latestPositionSnapshotAt,
         latestCashSnapshotAt,
+        apiErrors,
       });
 
       setAlerts(newAlerts);
+      setSnapshotSyncRun(snapshotSyncRun);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "알림 데이터를 불러오지 못했습니다";
       setError(msg);
@@ -501,11 +288,33 @@ export default function OperationsAlertsView() {
 
   const urgentCount = alerts.filter((a) => a.level === "긴급" && a.status === "OPEN").length;
 
+  // Lineage warning: orders=0, positions>0
+  const hasLineageWarning = useMemo(() => {
+    return alerts.some((a) => a.id === "ALT-LINEAGE-001" && a.status === "OPEN");
+  }, [alerts]);
+
   const filteredAlerts = useMemo(() => {
-    return alerts.filter((alert) => {
-      return !levelFilter || alert.level === levelFilter;
-    });
-  }, [alerts, levelFilter]);
+    return alerts
+      .filter((alert) => {
+        // Lineage 경고는 목록에서 제외 (상단 배너로 표시)
+        if (hasLineageWarning && alert.id === "ALT-LINEAGE-001") return false;
+
+        if (levelFilter === "action_needed") {
+          return alert.level === "긴급" || alert.level === "주의";
+        }
+        if (levelFilter === "") return true; // 전체
+        if (levelFilter === "정상") {
+          return alert.level === "정보" && alert.status === "RESOLVED";
+        }
+        return alert.level === levelFilter;
+      })
+      .sort((a, b) => {
+        const priorityDiff = (LEVEL_PRIORITY[a.level] ?? 99) - (LEVEL_PRIORITY[b.level] ?? 99);
+        if (priorityDiff !== 0) return priorityDiff;
+        // 동일 레벨: time 역순 (최신 먼저)
+        return b.time.localeCompare(a.time);
+      });
+  }, [alerts, levelFilter, hasLineageWarning]);
 
   /* ── Loading / Error ── */
   if (loading) return <LoadingSpinner text="알림 데이터 분석 중..." />;
@@ -542,51 +351,48 @@ export default function OperationsAlertsView() {
         />
       )}
 
+      {/* Lineage Warning Banner (prominent at top) */}
+      {hasLineageWarning && (
+        <WarningBanner
+          variant="warning"
+          title="주문-포지션 불일치"
+          message="주문 내역이 없으나 포지션이 존재합니다. 데이터 정합성을 확인하세요."
+        />
+      )}
+
       <div className="grid grid-cols-12 gap-6">
         {/* Alerts List */}
         <div className={selectedAlert ? "col-span-7" : "col-span-12"}>
           {/* Filter Buttons */}
           <div className="flex items-center gap-2 mb-4">
-            <button
-              onClick={() => setLevelFilter("")}
-              className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
-                levelFilter === ""
-                  ? "bg-[#3b82f6] text-white border-[#3b82f6]"
-                  : "bg-white text-[#64748b] border-[#e2e8f0] hover:border-[#3b82f6]"
-              }`}
-            >
-              전체
-            </button>
-            <button
-              onClick={() => setLevelFilter("긴급")}
-              className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
-                levelFilter === "긴급"
-                  ? "bg-[#dc2626] text-white border-[#dc2626]"
-                  : "bg-white text-[#64748b] border-[#e2e8f0] hover:border-[#dc2626]"
-              }`}
-            >
-              긴급
-            </button>
-            <button
-              onClick={() => setLevelFilter("주의")}
-              className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
-                levelFilter === "주의"
-                  ? "bg-[#f59e0b] text-white border-[#f59e0b]"
-                  : "bg-white text-[#64748b] border-[#e2e8f0] hover:border-[#f59e0b]"
-              }`}
-            >
-              주의
-            </button>
-            <button
-              onClick={() => setLevelFilter("정보")}
-              className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
-                levelFilter === "정보"
-                  ? "bg-[#3b82f6] text-white border-[#3b82f6]"
-                  : "bg-white text-[#64748b] border-[#e2e8f0] hover:border-[#3b82f6]"
-              }`}
-            >
-              정보
-            </button>
+            {[
+              { key: "action_needed" as FilterMode, label: "조치 필요" },
+              { key: "" as FilterMode, label: "전체" },
+              { key: "긴급" as FilterMode, label: "긴급" },
+              { key: "주의" as FilterMode, label: "주의" },
+              { key: "정보" as FilterMode, label: "정보" },
+              { key: "정상" as FilterMode, label: "정상" },
+            ].map((btn) => (
+              <button
+                key={btn.key}
+                onClick={() => setLevelFilter(btn.key)}
+                className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
+                  levelFilter === btn.key
+                    ? btn.key === "action_needed"
+                      ? "bg-[#3b82f6] text-white border-[#3b82f6]"
+                      : btn.key === "긴급"
+                        ? "bg-[#dc2626] text-white border-[#dc2626]"
+                        : btn.key === "주의"
+                          ? "bg-[#f59e0b] text-white border-[#f59e0b]"
+                          : btn.key === "정보" || btn.key === "정상"
+                            ? "bg-[#3b82f6] text-white border-[#3b82f6]"
+                            : "bg-[#3b82f6] text-white border-[#3b82f6]"
+                    : "bg-white text-[#64748b] border-[#e2e8f0] hover:border-[#3b82f6]"
+                }`}
+              >
+                {btn.label}
+              </button>
+            ))}
           </div>
 
           {filteredAlerts.length > 0 ? (
@@ -599,7 +405,11 @@ export default function OperationsAlertsView() {
             />
           ) : (
             <div className="bg-white rounded-xl border border-[#e2e8f0] p-8 text-center">
-              <p className="text-sm text-[#94a3b8]">선택한 수준의 알림이 없습니다</p>
+              <p className="text-sm text-[#94a3b8]">
+                {levelFilter === "action_needed"
+                  ? "현재 조치가 필요한 운영 경고가 없습니다"
+                  : "선택한 수준의 알림이 없습니다"}
+              </p>
             </div>
           )}
         </div>
@@ -664,17 +474,71 @@ export default function OperationsAlertsView() {
         )}
       </div>
 
-      {/* Operation Notes Section */}
-      <div className="space-y-3">
-        <h2 className="text-lg font-semibold text-[#0f172a]">운영 메모</h2>
-        <DataTable columns={noteColumns} data={operationNotes} idKey="id" />
-      </div>
-
-      {/* Pre-Market Checklist */}
+      {/* ── Pre-Market Snapshot Sync Status (동적, API 기반) ── */}
       <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
         <div className="flex items-center gap-2 mb-4">
           <AlertCircle className="h-5 w-5 text-[#3b82f6]" />
-          <h3 className="text-lg font-semibold text-[#0f172a]">내일 Pre-Market 확인 사항</h3>
+          <h3 className="text-lg font-semibold text-[#0f172a]">Pre-Market 스냅샷 동기화 실행</h3>
+        </div>
+        {(() => {
+          if (!snapshotSyncRun) {
+            return (
+              <div className="text-sm text-[#64748b]">
+                오늘 Pre-Market 실행 이력 없음
+                <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-[#fef3c7] text-[#92400e]">
+                  수동 확인 필요
+                </span>
+              </div>
+            );
+          }
+          // KST 날짜 확인 (started_at은 ISO 8601 UTC)
+          const runDateKST = (() => {
+            const d = new Date(snapshotSyncRun.started_at);
+            const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+            return kst.toISOString().slice(0, 10);
+          })();
+          const todayKST = (() => {
+            const now = new Date();
+            const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+            return kst.toISOString().slice(0, 10);
+          })();
+          if (runDateKST !== todayKST) {
+            return (
+              <div className="text-sm text-[#64748b]">
+                오늘 Pre-Market 실행 이력 없음 (마지막 실행: {runDateKST})
+                <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-[#fef3c7] text-[#92400e]">
+                  수동 확인 필요
+                </span>
+              </div>
+            );
+          }
+          const statusLabel =
+            snapshotSyncRun.status === "completed"
+              ? { text: "완료", variant: "success" as const }
+              : snapshotSyncRun.status === "partial"
+                ? { text: "주의", variant: "warning" as const }
+                : snapshotSyncRun.status === "failed"
+                  ? { text: "긴급", variant: "error" as const }
+                  : { text: snapshotSyncRun.status, variant: "info" as const };
+          return (
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-[#0f172a]">
+                <span className="font-medium">Pre-Market 스냅샷 동기화 실행</span>
+                <span className="ml-2 text-[#64748b]">
+                  ({new Date(snapshotSyncRun.started_at).toLocaleString("ko-KR")})
+                </span>
+              </div>
+              <StatusBadge variant={statusLabel.variant}>{statusLabel.text}</StatusBadge>
+            </div>
+          );
+        })()}
+      </div>
+
+      {/* ── Pre-Market Checklist (참고, 정적 예시) ── */}
+      <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <AlertCircle className="h-5 w-5 text-[#3b82f6]" />
+          <h3 className="text-lg font-semibold text-[#0f172a]">Pre-Market 확인 리스트 (참고)</h3>
         </div>
         <ul className="space-y-2">
           {preMarketChecklist.map((item) => (
@@ -684,6 +548,32 @@ export default function OperationsAlertsView() {
             </li>
           ))}
         </ul>
+        <p className="mt-3 text-xs text-[#94a3b8]">
+          ※ 위 항목은 백엔드 API 미연동 상태의 참고 리스트입니다. 실제 확인 로직은 TODO/Backlog 항목입니다.
+        </p>
+      </div>
+
+      {/* ── Operation Notes (정적 예시, 접힘 가능) ── */}
+      <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
+        <button
+          onClick={() => setNotesCollapsed(!notesCollapsed)}
+          className="flex items-center justify-between w-full text-left"
+        >
+          <h2 className="text-lg font-semibold text-[#0f172a]">운영 메모 (예시)</h2>
+          {notesCollapsed ? (
+            <ChevronDown className="h-5 w-5 text-[#64748b]" />
+          ) : (
+            <ChevronUp className="h-5 w-5 text-[#64748b]" />
+          )}
+        </button>
+        {!notesCollapsed && (
+          <div className="mt-4 space-y-3">
+            <DataTable columns={noteColumns} data={operationNotes} idKey="id" />
+            <p className="text-xs text-[#94a3b8]">
+              ※ 위 항목은 정적 예시 데이터입니다. 백엔드 API 미연동 상태에서는 샘플 데이터가 표시됩니다.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

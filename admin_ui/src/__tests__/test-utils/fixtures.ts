@@ -22,12 +22,20 @@ export const mockHealthOk: HealthResponse = {
   status: "ok",
   database: "connected",
   runtime_mode: "in_memory",
+  snapshot_sync_detail: null,
+  snapshot_sync_stale: null,
+  snapshot_sync_last_successful_run_at: null,
+  snapshot_sync_consecutive_failures: null,
 };
 
 export const mockHealthDegraded: HealthResponse = {
   status: "degraded",
   database: "disconnected",
   runtime_mode: "postgres",
+  snapshot_sync_detail: null,
+  snapshot_sync_stale: null,
+  snapshot_sync_last_successful_run_at: null,
+  snapshot_sync_consecutive_failures: null,
 };
 
 export const mockOrders: OrderSummary[] = [
