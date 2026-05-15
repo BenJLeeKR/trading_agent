@@ -773,15 +773,18 @@ class DecisionOrchestratorService:
             )
 
         # ── Phase 2: validate intent (skip HOLD/WATCH) ──
+        _dt = intent.ai_backend_inputs.decision_type
         logger.info(
             "Phase 2: validate intent — decision_type=%s",
-            intent.ai_backend_inputs.decision_type,
+            _dt,
         )
         submit_request = build_submit_order_request_from_decision(intent)
         if submit_request is None:
+            skip_reason = "watch" if _dt == "WATCH" else "hold"
             logger.info(
-                "Phase 2 SKIPPED (hold): decision_type=%s, trade_decision_id=%s",
-                intent.ai_backend_inputs.decision_type,
+                "Phase 2 SKIPPED (%s): decision_type=%s, trade_decision_id=%s",
+                skip_reason,
+                _dt,
                 trade_decision_id,
             )
             return SubmitResult(
@@ -791,7 +794,7 @@ class DecisionOrchestratorService:
                 decision_context_id=intent.decision_context_id,
                 error_phase="translation",
                 error_message=(
-                    f"Decision type '{intent.ai_backend_inputs.decision_type}' "
+                    f"Decision type '{_dt}' "
                     f"produced no order request"
                 ),
             )
@@ -1921,9 +1924,19 @@ def build_submit_order_request_from_decision(
         no quantity).
     """
     # ── Decision type check: skip non-actionable decisions ──
+    # WATCH is recognised as a valid decision type (it is recorded in
+    # trade_decisions) but must NOT produce a submit order request.
     decision_type = intent.ai_backend_inputs.decision_type
-    actionable_types = {"APPROVE", "BUY", "SELL", "EXIT", "REDUCE"}
+    actionable_types = {"APPROVE", "BUY", "SELL", "EXIT", "REDUCE", "WATCH"}
     if decision_type not in actionable_types:
+        return None
+
+    # WATCH decisions are monitored but never submitted
+    if decision_type == "WATCH":
+        logger.info(
+            "WATCH decision for symbol=%s — monitoring, order not submitted",
+            intent.request.symbol,
+        )
         return None
 
     # ── Quantity validation ──
