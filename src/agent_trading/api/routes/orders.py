@@ -7,6 +7,7 @@ Results are sorted by ``created_at`` descending (newest first).
 from __future__ import annotations
 
 from collections.abc import Sequence
+from enum import Enum
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -18,6 +19,19 @@ from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import OrderQuery
 
 router = APIRouter(prefix="/orders", tags=["orders"])
+
+
+def _safe_str(val: object) -> str:
+    """Safely convert an enum or string value to its string representation.
+
+    Handles the case where DB rows contain plain strings (e.g.
+    ``"broker_truth_recovery"``, ``"system_ops_recovery"``) that are not
+    members of the ``EventSource`` enum, avoiding ``AttributeError`` when
+    calling ``.value`` on a plain ``str``.
+    """
+    if isinstance(val, Enum):
+        return val.value
+    return str(val)
 
 
 def _order_to_summary(order: object) -> OrderSummary:
@@ -161,9 +175,9 @@ async def get_order_events(
     return [
         OrderEvent(
             order_state_event_id=str(e.order_state_event_id),
-            previous_status=e.previous_status.value if e.previous_status else None,
-            new_status=e.new_status.value,
-            event_source=e.event_source.value,
+            previous_status=_safe_str(e.previous_status) if e.previous_status is not None else None,
+            new_status=_safe_str(e.new_status),
+            event_source=_safe_str(e.event_source),
             event_timestamp=e.event_timestamp,
             reason_code=e.reason_code,
             correlation_id=e.correlation_id,

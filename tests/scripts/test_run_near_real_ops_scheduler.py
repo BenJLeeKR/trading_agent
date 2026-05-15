@@ -18,6 +18,7 @@ from scripts.run_near_real_ops_scheduler import (
     _is_submit_consuming_result,
     _parse_args,
     _parse_hhmm,
+    _parse_snapshot_sync_summary,
     _post_submit_command,
     _snapshot_command,
 )
@@ -72,7 +73,8 @@ class TestSubmitBudgetDetection:
         )
         assert _is_submit_consuming_result(result) is True
 
-    def test_reconcile_required_consumes_budget(self) -> None:
+    def test_reconcile_required_does_not_consume_budget(self) -> None:
+        """P0: reconcile_required는 budget 소모로 간주하지 않음."""
         result = CommandResult(
             name="decision",
             argv=[],
@@ -80,7 +82,7 @@ class TestSubmitBudgetDetection:
             duration_seconds=1.0,
             stdout='log line\n{"status":"RECONCILE_REQUIRED"}\n',
         )
-        assert _is_submit_consuming_result(result) is True
+        assert _is_submit_consuming_result(result) is False
 
     def test_skipped_does_not_consume_budget(self) -> None:
         result = CommandResult(
@@ -137,14 +139,15 @@ class TestDbSubmitBudget:
     """DB-based submit budget query and decision integration."""
 
     def test_budget_consuming_statuses_are_complete(self) -> None:
-        """T2: All 5 budget-consuming statuses are defined."""
+        """T2: All 4 budget-consuming statuses are defined (reconcile_required excluded per P0)."""
         assert _BUDGET_CONSUMING_STATUSES == {
             "submitted",
             "acknowledged",
             "partially_filled",
             "filled",
-            "reconcile_required",
         }
+        # P0: reconcile_required is intentionally excluded — broker truth not yet confirmed.
+        assert "reconcile_required" not in _BUDGET_CONSUMING_STATUSES
 
     def test_kst_midnight_calculation(self) -> None:
         """T1: KST midnight is correctly computed for a given run_date."""
@@ -206,3 +209,75 @@ class TestDbSubmitBudget:
         effective = max(state_count, db_count)
         assert effective == 1
         assert effective >= max_submit_per_day  # dry_run = True ✅
+
+
+class TestParseSnapshotSyncSummary:
+    """``_parse_snapshot_sync_summary()`` — snapshot sync log line parsing."""
+
+    def test_parses_full_metrics(self) -> None:
+        result = CommandResult(
+            name="pre_snapshot_sync",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout=(
+                "2026-05-15 08:00:01 [INFO] snapshot-sync: sync-cycle  "
+                "accounts=1 (ok=1 partial=0 fail=0 skip=0)  "
+                "positions=5 (skipped=0)  cash=1  errors=0\n"
+            ),
+        )
+        metrics = _parse_snapshot_sync_summary(result)
+        assert metrics["total_accounts"] == 1
+        assert metrics["succeeded"] == 1
+        assert metrics["total_positions_synced"] == 5
+        assert metrics["total_cash_synced"] == 1
+        assert metrics["errors"] == 0
+
+    def test_parses_zero_cash(self) -> None:
+        """Cash=0 is a critical signal — pre-market must detect this."""
+        result = CommandResult(
+            name="pre_snapshot_sync",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout=(
+                "2026-05-15 08:00:01 [INFO] snapshot-sync: sync-cycle  "
+                "accounts=1 (ok=1 partial=0 fail=0 skip=0)  "
+                "positions=5 (skipped=0)  cash=0  errors=0\n"
+            ),
+        )
+        metrics = _parse_snapshot_sync_summary(result)
+        assert metrics["total_cash_synced"] == 0
+        assert metrics["total_accounts"] == 1
+
+    def test_returns_empty_on_no_match(self) -> None:
+        result = CommandResult(
+            name="pre_snapshot_sync",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout="some random output without sync-cycle pattern\n",
+        )
+        metrics = _parse_snapshot_sync_summary(result)
+        assert metrics == {}
+
+    def test_parses_multiple_accounts(self) -> None:
+        result = CommandResult(
+            name="pre_snapshot_sync",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout=(
+                "2026-05-15 08:00:01 [INFO] snapshot-sync: sync-cycle  "
+                "accounts=3 (ok=2 partial=1 fail=0 skip=0)  "
+                "positions=12 (skipped=1)  cash=2  errors=1\n"
+            ),
+        )
+        metrics = _parse_snapshot_sync_summary(result)
+        assert metrics["total_accounts"] == 3
+        assert metrics["succeeded"] == 2
+        assert metrics["partial"] == 1
+        assert metrics["total_positions_synced"] == 12
+        assert metrics["total_positions_skipped"] == 1
+        assert metrics["total_cash_synced"] == 2
+        assert metrics["errors"] == 1

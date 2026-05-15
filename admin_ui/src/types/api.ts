@@ -137,6 +137,13 @@ export interface CashBalanceSnapshotView {
   available_cash: number;
   settled_cash: number;
   unsettled_cash: number;
+  // ── KIS output2 계좌 총괄 필드 ──
+  // total_asset: KIS tot_evlu_amt (총평가금액)
+  // settlement_amount: KIS prvs_rcdl_excc_amt (가수도정산금액, D+2 예수금 기준)
+  // total_unrealized_pnl: KIS evlu_pfls_smtl_amt (평가손익합계금액)
+  total_asset?: number;
+  settlement_amount?: number;
+  total_unrealized_pnl?: number;
   source_of_truth: string;
   snapshot_at: string;
 }

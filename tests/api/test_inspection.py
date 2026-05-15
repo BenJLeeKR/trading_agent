@@ -9,9 +9,42 @@ Covers: ``GET /orders``, ``GET /orders/{id}``, ``GET /orders/{id}/events``,
 
 from __future__ import annotations
 
+from enum import Enum
+from typing import Any
+from uuid import UUID
+
 from fastapi.testclient import TestClient
 
+from agent_trading.api.routes.orders import _safe_str
 from tests.api.conftest import client  # noqa: F401
+
+
+class TestSafeStr:
+    """Unit tests for ``_safe_str()`` defensive serialization helper."""
+
+    def test_enum_value(self) -> None:
+        """Enum member → its ``.value`` string."""
+
+        class _TestEnum(str, Enum):
+            FOO = "foo"
+            BAR = "bar"
+
+        assert _safe_str(_TestEnum.FOO) == "foo"
+        assert _safe_str(_TestEnum.BAR) == "bar"
+
+    def test_plain_string(self) -> None:
+        """Plain ``str`` → returned as-is."""
+        assert _safe_str("broker_truth_recovery") == "broker_truth_recovery"
+        assert _safe_str("system_ops_recovery") == "system_ops_recovery"
+        assert _safe_str("manual") == "manual"
+
+    def test_empty_string(self) -> None:
+        """Empty string → empty string."""
+        assert _safe_str("") == ""
+
+    def test_none_raises(self) -> None:
+        """``None`` → ``"None"`` (caller must handle ``None`` before calling)."""
+        assert _safe_str(None) == "None"
 
 
 class TestOrders:
@@ -82,6 +115,57 @@ class TestOrders:
         # Verify sort order: ascending by event_timestamp
         timestamps = [e["event_timestamp"] for e in events]
         assert timestamps == sorted(timestamps)
+        # Verify event_source is serialized as string
+        for ev in events:
+            assert isinstance(ev["event_source"], str)
+            assert ev["event_source"] in ("internal", "broker_rest", "broker_ws",
+                                           "reconciliation", "operator")
+
+    async def test_get_order_events_with_plain_string_source(self, client: TestClient,
+                                                             seeded_repos: Any) -> None:
+        """``GET /orders/{id}/events`` handles plain-string event_source (regression).
+
+        DB rows with ``event_source`` values like ``"broker_truth_recovery"``
+        or ``"system_ops_recovery"`` (not members of ``EventSource`` enum)
+        must not cause ``AttributeError: 'str' object has no attribute 'value'``.
+        """
+        # Get an existing order ID
+        list_resp = client.get("/orders")
+        orders = list_resp.json()
+        assert len(orders) >= 1
+        order_id = orders[0]["order_request_id"]
+        uid = UUID(order_id)
+
+        # Inject a state event with a plain-string event_source via the repo
+        # (simulating what row_to_entity produces for non-enum values)
+        import uuid as _uuid
+        from datetime import datetime, timezone
+        from agent_trading.domain.entities import OrderStateEventEntity
+        from agent_trading.domain.enums import OrderStatus
+
+        plain_str_event = OrderStateEventEntity(
+            order_state_event_id=_uuid.uuid4(),
+            order_request_id=uid,
+            previous_status=OrderStatus.ACKNOWLEDGED,
+            new_status=OrderStatus.FILLED,
+            event_source="broker_truth_recovery",  # plain str, not EventSource enum
+            event_timestamp=datetime.now(timezone.utc),
+            ingested_at=datetime.now(timezone.utc),
+            reason_code="broker_truth_recovery",
+        )
+        await seeded_repos.order_state_events.add(plain_str_event)
+
+        # This must NOT 500
+        events_resp = client.get(f"/orders/{order_id}/events")
+        assert events_resp.status_code == 200, (
+            f"Expected 200, got {events_resp.status_code}: {events_resp.text}"
+        )
+        events = events_resp.json()
+        # Find our injected event
+        matching = [e for e in events if e.get("reason_code") == "broker_truth_recovery"]
+        assert len(matching) >= 1
+        assert matching[0]["event_source"] == "broker_truth_recovery"
+        assert matching[0]["new_status"] == "filled"
 
 
 class TestAuditLogs:

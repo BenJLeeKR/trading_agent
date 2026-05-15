@@ -55,7 +55,7 @@ class FakeKISRestClient:
             raise RuntimeError("KIS positions fetch failed")
         return self._positions
 
-    async def get_cash_balance(self) -> dict[str, Any]:
+    async def get_cash_balance(self, after_hours: bool = False) -> dict[str, Any]:
         if self._fail_cash:
             raise RuntimeError("KIS cash balance fetch failed")
         return self._cash_balance

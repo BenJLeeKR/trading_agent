@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { formatKstDateTime, formatKrw } from "@/lib/utils";
 import { Link } from "react-router-dom";
 import { FilterBar } from "./common/FilterBar";
 import { DataTable, type Column } from "./common/DataTable";
@@ -56,29 +57,6 @@ function statusVariant(status: string): "success" | "warning" | "error" | "info"
   }
 }
 
-function formatTime(dateStr: string | null): string {
-  if (!dateStr) return "-";
-  try {
-    return new Date(dateStr).toLocaleString("ko-KR", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    });
-  } catch {
-    return dateStr;
-  }
-}
-
-function formatPrice(val: string | number | null | undefined): string {
-  if (val == null) return "-";
-  const num = typeof val === "string" ? parseFloat(val) : val;
-  if (isNaN(num)) return "-";
-  return `$${num.toFixed(2)}`;
-}
 
 /* ── Columns ── */
 const orderColumns: Column<OrderSummary>[] = [
@@ -113,13 +91,13 @@ const orderColumns: Column<OrderSummary>[] = [
       </StatusBadge>
     ),
   },
-  { key: "created_at", header: "생성 시간", width: "150px", render: (row: OrderSummary) => formatTime(row.created_at) },
+  { key: "created_at", header: "생성 시간", width: "150px", render: (row: OrderSummary) => formatKstDateTime(row.created_at) },
 ];
 
 const eventColumns: Column<OrderEvent>[] = [
   { key: "from_status", header: "이전 상태", width: "100px", render: (row: OrderEvent) => statusLabel(row.from_status) },
   { key: "to_status", header: "이후 상태", width: "100px", render: (row: OrderEvent) => statusLabel(row.to_status) },
-  { key: "timestamp", header: "시간", width: "150px", render: (row: OrderEvent) => formatTime(row.timestamp) },
+  { key: "timestamp", header: "시간", width: "150px", render: (row: OrderEvent) => formatKstDateTime(row.timestamp) },
   { key: "reason", header: "사유" },
 ];
 
@@ -135,7 +113,7 @@ const brokerColumns: Column<BrokerOrderView>[] = [
       </StatusBadge>
     ),
   },
-  { key: "last_synced_at", header: "마지막 동기화", width: "150px", render: (row: BrokerOrderView) => formatTime(row.last_synced_at) },
+  { key: "last_synced_at", header: "마지막 동기화", width: "150px", render: (row: BrokerOrderView) => formatKstDateTime(row.last_synced_at) },
 ];
 
 /* ── Component ── */
@@ -346,7 +324,7 @@ export default function OrderTrackingView() {
                     <div>
                       <dt className="text-sm text-[#64748b]">가격</dt>
                       <dd className="text-sm font-medium text-[#0f172a] mt-0.5">
-                        {formatPrice(selectedOrder.requested_price)}
+                        {formatKrw(selectedOrder.requested_price)}
                       </dd>
                     </div>
                     {orderDetail && (
@@ -360,7 +338,7 @@ export default function OrderTrackingView() {
                         <div>
                           <dt className="text-sm text-[#64748b]">평균 체결가</dt>
                           <dd className="text-sm font-medium text-[#0f172a] mt-0.5">
-                            {formatPrice(orderDetail.avg_fill_price)}
+                            {formatKrw(orderDetail.avg_fill_price)}
                           </dd>
                         </div>
                         {orderDetail.error_message && (

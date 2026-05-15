@@ -37,6 +37,7 @@ from agent_trading.domain.enums import AssetClass, Environment, OrderSide, Order
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.services.decision_orchestrator import (
     AIDecisionInputs,
+    AgentExecutionBundle,
     AssembledContext,
     DecisionOrchestratorService,
     OrderIntent,
@@ -1217,3 +1218,151 @@ class TestImportanceSort:
         assert recent[1].source_event_id == "no-meta", (
             f"Expected no-meta last, got {recent[1].source_event_id}"
         )
+
+
+class TestPhase5BrokerSubmitFailureLogging:
+    """Phase 5 broker submit failure must log symbol/decision_type/order_id."""
+
+    async def _setup_orchestrator(
+        self,
+        repos: Any,
+        *,
+        stale_snapshot: bool = False,
+    ) -> DecisionOrchestratorService:
+        """Set up orchestrator with optional stale snapshot."""
+        now = datetime.now(timezone.utc)
+        client_id = uuid4()
+        account_id = uuid4()
+
+        # Seed account matching _make_request() account_ref="test-account"
+        account = AccountEntity(
+            account_id=account_id,
+            client_id=client_id,
+            broker_account_id=uuid4(),
+            environment=Environment.PAPER,
+            account_alias="test-account",
+            account_masked="test-****",
+            status="active",
+        )
+        await repos.accounts.add(account)
+
+        # Seed config version so _ensure_or_create_decision_context succeeds
+        config_version = ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=client_id,
+            environment=Environment.PAPER,
+            version_tag="v1.0",
+            config_json={},
+            checksum="abc123",
+            activated_at=now,
+        )
+        await repos.config_versions.add(config_version)
+
+        # Seed instrument matching _make_request() symbol="005930" market="KRX"
+        instrument = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="005930",
+            market_code="KRX",
+            asset_class=AssetClass.KR_STOCK,
+            currency="KRW",
+            name="Samsung Electronics",
+        )
+        await repos.instruments.add(instrument)
+
+        if not stale_snapshot:
+            cash = CashBalanceSnapshotEntity(
+                cash_balance_snapshot_id=uuid4(),
+                account_id=account_id,
+                currency="KRW",
+                available_cash=Decimal("1000000"),
+                settled_cash=Decimal("1000000"),
+                unsettled_cash=None,
+                source_of_truth="broker",
+                snapshot_at=now,
+            )
+            await repos.cash_balance_snapshots.add(cash)
+
+        # Seed a fresh position snapshot so Phase 4c guardrail passes
+        pos = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=account_id,
+            instrument_id=instrument.instrument_id,
+            quantity=Decimal("10"),
+            average_price=Decimal("50000"),
+            market_price=Decimal("50000"),
+            unrealized_pnl=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        await repos.position_snapshots.add(pos)
+
+        svc = DecisionOrchestratorService(
+            repos=repos,
+            event_interpretation_agent=AsyncMock(),
+            ai_risk_agent=AsyncMock(),
+            final_decision_agent=AsyncMock(),
+            score_calculator=AsyncMock(),
+            stale_threshold_seconds=900,
+        )
+        return svc
+
+    @patch(
+        "agent_trading.services.decision_orchestrator.DecisionOrchestratorService._run_agents"
+    )
+    @patch(
+        "agent_trading.services.decision_orchestrator.DecisionOrchestratorService._ensure_trade_decision"
+    )
+    async def test_broker_submit_exception_logs_symbol_and_decision_type(
+        self,
+        mock_ensure_trade: AsyncMock,
+        mock_run_agents: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Phase 5 broker submit exception must include symbol/decision_type in log."""
+        import logging
+
+        caplog.set_level(logging.INFO)
+
+        repos = build_in_memory_repositories()
+        svc = await self._setup_orchestrator(repos)
+
+        # Mock agents to return AgentExecutionBundle with BUY decision_type
+        mock_run_agents.return_value = AgentExecutionBundle(
+            ai_inputs=AIDecisionInputs(
+                decision_type="BUY",
+                confidence=0.8,
+                conviction=0.7,
+            ),
+        )
+        mock_ensure_trade.return_value = uuid4()
+
+        # Mock order_manager.submit_order_to_broker to raise
+        mock_order_manager = AsyncMock(spec=OrderManager)
+        mock_order_manager.submit_order_to_broker.side_effect = RuntimeError(
+            "KIS API connection refused"
+        )
+
+        mock_broker = AsyncMock()
+        mock_broker.__class__.__name__ = "MockBrokerAdapter"
+
+        request = _make_request()
+        result = await svc.assemble_and_submit(
+            request,
+            order_manager=mock_order_manager,
+            broker=mock_broker,
+        )
+
+        assert result is not None
+        assert result.status == "ERROR"
+        assert result.error_phase == "order_submit"
+        assert "KIS API connection refused" in str(result.error_message)
+
+        # Verify log contains symbol and decision_type
+        assert any(
+            "Phase 5 FAILED" in record.message and "005930" in record.message
+            for record in caplog.records
+        ), "Phase 5 FAILED log must contain symbol"
+        assert any(
+            "Phase 5 FAILED" in record.message and "BUY" in record.message
+            for record in caplog.records
+        ), "Phase 5 FAILED log must contain decision_type"

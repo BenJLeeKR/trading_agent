@@ -47,14 +47,20 @@ PYTHON_BIN = "python3"
 
 DEFAULT_MAX_SUBMIT_PER_DAY = 1
 
+# After-hours snapshot window (seconds after EOD phase)
+AFTER_HOURS_SNAPSHOT_WINDOW_SECONDS: int = 3600  # 1 hour
 # Budget-consuming order statuses for DB-based submit budget safeguard.
 # These statuses indicate that a submit budget slot was consumed.
+#
+# NOTE: reconcile_required is intentionally excluded because broker truth has
+# not yet been confirmed.  Counting it as budget-consumed would cause the
+# submit gate to block legitimate submissions (see scheduler_submit_gate_block
+# post-mortem: plans/scheduler_submit_gate_block_reason_2026-05-15.md).
 _BUDGET_CONSUMING_STATUSES: frozenset[str] = frozenset({
     "submitted",
     "acknowledged",
     "partially_filled",
     "filled",
-    "reconcile_required",
 })
 
 PRE_MARKET_START = dtime(8, 0)
@@ -104,6 +110,8 @@ class SchedulerState:
     run_date: date
     pre_market_done: bool = False
     end_of_day_done: bool = False
+    after_hours_mode: bool = False
+    after_hours_next_snapshot_at: datetime | None = None
     submit_count: int = 0
     cycles: int = 0
     command_results: list[CommandResult] = field(default_factory=list)
@@ -159,14 +167,54 @@ def _extract_json_objects(text: str) -> list[dict[str, Any]]:
 
 
 def _is_submit_consuming_result(result: CommandResult) -> bool:
-    """Return true when a decision command consumed the daily submit budget."""
+    """Return true when a decision command consumed the daily submit budget.
+
+    Only ``SUBMITTED`` is considered budget-consuming because it confirms
+    the broker accepted the order.  ``RECONCILE_REQUIRED`` is excluded:
+    broker truth has not been confirmed, so counting it would inflate the
+    submit budget and potentially block legitimate submissions.
+    """
     if not result.ok:
         return False
     for obj in _extract_json_objects(result.stdout):
         status = str(obj.get("status", "")).upper()
-        if status in {"SUBMITTED", "RECONCILE_REQUIRED"}:
+        if status in {"SUBMITTED"}:
             return True
     return False
+
+
+def _parse_snapshot_sync_summary(result: CommandResult) -> dict[str, Any]:
+    """Parse snapshot sync summary metrics from command stdout.
+
+    The snapshot sync loop logs a structured line like::
+
+        sync-cycle  accounts=1 (ok=1 partial=0 fail=0 skip=0)  positions=5 (skipped=0)  cash=1  errors=0
+
+    Returns a dict with parsed metrics or empty dict on failure.
+    """
+    metrics: dict[str, Any] = {}
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if "sync-cycle" in stripped:
+            # Extract key=value pairs from the log line
+            import re
+            m = re.search(
+                r"accounts=(\d+).*?ok=(\d+).*?partial=(\d+).*?fail=(\d+).*?skip=(\d+).*?"
+                r"positions=(\d+).*?skipped=(\d+).*?cash=(\d+).*?errors=(\d+)",
+                stripped,
+            )
+            if m:
+                metrics["total_accounts"] = int(m.group(1))
+                metrics["succeeded"] = int(m.group(2))
+                metrics["partial"] = int(m.group(3))
+                metrics["failed"] = int(m.group(4))
+                metrics["skipped"] = int(m.group(5))
+                metrics["total_positions_synced"] = int(m.group(6))
+                metrics["total_positions_skipped"] = int(m.group(7))
+                metrics["total_cash_synced"] = int(m.group(8))
+                metrics["errors"] = int(m.group(9))
+            break
+    return metrics
 
 
 async def _get_db_submit_count(run_date: date) -> int:
@@ -283,15 +331,27 @@ async def _run_command(
         result.timed_out,
         result.duration_seconds,
     )
-    if result.stdout.strip():
-        logger.debug("task=%s stdout:\n%s", name, result.stdout.strip())
     if result.stderr.strip():
-        logger.debug("task=%s stderr:\n%s", name, result.stderr.strip())
+        logger.error(
+            "task=%s stderr:\n%s",
+            name,
+            result.stderr.strip(),
+        )
+    if result.stdout.strip():
+        logger.log(
+            logging.ERROR if not result.ok else logging.DEBUG,
+            "task=%s stdout:\n%s",
+            name,
+            result.stdout.strip(),
+        )
     return result
 
 
-def _snapshot_command() -> list[str]:
-    return [PYTHON_BIN, "scripts/run_snapshot_sync_loop.py", "--max-cycles", "1"]
+def _snapshot_command(*, after_hours: bool = False) -> list[str]:
+    argv = [PYTHON_BIN, "scripts/run_snapshot_sync_loop.py", "--max-cycles", "1"]
+    if after_hours:
+        argv.append("--after-hours")
+    return argv
 
 
 def _event_command() -> list[str]:
@@ -351,15 +411,53 @@ async def _run_pre_market(
     timeout_seconds: int,
     env: dict[str, str],
 ) -> None:
-    """Run one-time pre-market preparation tasks."""
+    """Run one-time pre-market preparation tasks.
+
+    After snapshot sync, validates that both cash and position snapshots
+    were successfully refreshed. Logs a warning if cash sync is missing
+    (e.g., KIS API not yet available before market open).
+    """
     logger.info("phase=pre-market start")
-    await _run_and_record(
+
+    # ── Step 1: Snapshot sync ──────────────────────────────────────────
+    snap_result = await _run_and_record(
         state,
         "pre_snapshot_sync",
         _snapshot_command(),
         timeout_seconds=timeout_seconds,
         env=env,
     )
+
+    # Validate snapshot sync result: cash must be synced
+    snap_metrics = _parse_snapshot_sync_summary(snap_result)
+    if snap_metrics:
+        total_cash = snap_metrics.get("total_cash_synced", 0)
+        total_accounts = snap_metrics.get("total_accounts", 0)
+        if total_cash == 0 and total_accounts > 0:
+            logger.warning(
+                "pre-market snapshot sync: cash_synced=0 accounts=%d "
+                "positions=%d — KIS API may not yet return cash balance "
+                "before market open. Stale-snapshot guardrail will block "
+                "submits until cash is refreshed.",
+                total_accounts,
+                snap_metrics.get("total_positions_synced", 0),
+            )
+        elif total_cash > 0:
+            logger.info(
+                "pre-market snapshot sync: cash_synced=%d accounts=%d positions=%d",
+                total_cash,
+                total_accounts,
+                snap_metrics.get("total_positions_synced", 0),
+            )
+    else:
+        logger.warning(
+            "pre-market snapshot sync: could not parse sync summary from stdout. "
+            "task=%s returncode=%s",
+            snap_result.name,
+            snap_result.returncode,
+        )
+
+    # ── Step 2: Event ingestion ────────────────────────────────────────
     await _run_and_record(
         state,
         "pre_event_ingestion",
@@ -367,6 +465,8 @@ async def _run_pre_market(
         timeout_seconds=timeout_seconds,
         env=env,
     )
+
+    # ── Step 3: Post-submit sync ───────────────────────────────────────
     await _run_and_record(
         state,
         "pre_post_submit_sync",
@@ -374,6 +474,7 @@ async def _run_pre_market(
         timeout_seconds=timeout_seconds,
         env=env,
     )
+
     state.pre_market_done = True
     logger.info("phase=pre-market complete")
 
@@ -383,13 +484,19 @@ async def _run_end_of_day(
     *,
     timeout_seconds: int,
     env: dict[str, str],
+    snapshot_interval: int = DEFAULT_SNAPSHOT_INTERVAL_SECONDS,
 ) -> None:
-    """Run one-time end-of-day finalization tasks."""
+    """Run one-time end-of-day finalization tasks.
+
+    After the initial EOD snapshot and post-submit sync, transitions
+    into after-hours mode where only snapshot sync continues at regular
+    intervals (no decision loop, no event ingestion, no post-submit-sync).
+    """
     logger.info("phase=end-of-day start")
     await _run_and_record(
         state,
         "eod_snapshot_sync",
-        _snapshot_command(),
+        _snapshot_command(after_hours=True),  # EOD snapshot uses after-hours flag
         timeout_seconds=timeout_seconds,
         env=env,
     )
@@ -401,7 +508,55 @@ async def _run_end_of_day(
         env=env,
     )
     state.end_of_day_done = True
-    logger.info("phase=end-of-day complete")
+    # Enter after-hours mode: continue snapshot sync only
+    state.after_hours_mode = True
+    now = datetime.now(KST)
+    state.after_hours_next_snapshot_at = now + timedelta(seconds=snapshot_interval)
+    logger.info(
+        "phase=end-of-day complete — entering after-hours snapshot mode "
+        "(next snapshot at %s, interval=%ds, window=%ds)",
+        state.after_hours_next_snapshot_at.isoformat(),
+        snapshot_interval,
+        AFTER_HOURS_SNAPSHOT_WINDOW_SECONDS,
+    )
+
+
+async def _run_after_hours_snapshot_cycle(
+    state: SchedulerState,
+    *,
+    timeout_seconds: int,
+    env: dict[str, str],
+    now: datetime,
+) -> None:
+    """Run a single after-hours snapshot sync cycle.
+
+    Only snapshot sync is performed — no decision loop, event ingestion,
+    or post-submit-sync runs during after-hours.
+
+    This is called from the main loop when ``state.after_hours_mode`` is
+    True and the snapshot timer has elapsed.
+    """
+    if state.after_hours_next_snapshot_at is None or now < state.after_hours_next_snapshot_at:
+        return
+    logger.info(
+        "phase=after-hours snapshot cycle due at %s",
+        now.isoformat(),
+    )
+    await _run_and_record(
+        state,
+        "after_hours_snapshot_sync",
+        _snapshot_command(after_hours=True),  # after-hours cycle always uses --after-hours
+        timeout_seconds=timeout_seconds,
+        env=env,
+    )
+    # Schedule next after-hours snapshot
+    state.after_hours_next_snapshot_at = now + timedelta(
+        seconds=DEFAULT_SNAPSHOT_INTERVAL_SECONDS,
+    )
+    logger.info(
+        "after-hours snapshot cycle complete — next at %s",
+        state.after_hours_next_snapshot_at.isoformat(),
+    )
 
 
 async def _run_intraday_due_tasks(
@@ -519,6 +674,14 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
         "Starting near-real scheduler (KIS_ENV=%s, paper is treated as near-real).",
         kis_env,
     )
+    # Log token cache configuration at startup
+    kis_dev_cache_enabled = env.get("KIS_DEV_TOKEN_CACHE_ENABLED", "").strip().lower() == "true"
+    kis_dev_cache_path = env.get("KIS_DEV_TOKEN_CACHE_PATH", ".cache/kis_token.json")
+    logger.info(
+        "Token cache: enabled=%s path=%s",
+        kis_dev_cache_enabled,
+        kis_dev_cache_path,
+    )
 
     run_date = args.run_date or datetime.now(KST).date()
     state = SchedulerState(run_date=run_date)
@@ -556,6 +719,7 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                 state,
                 timeout_seconds=args.task_timeout,
                 env=env,
+                snapshot_interval=args.snapshot_interval,
             )
         _log_summary(state)
         return 0 if all(r.ok for r in state.command_results) else 1
@@ -612,6 +776,16 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                 state,
                 timeout_seconds=args.task_timeout,
                 env=env,
+                snapshot_interval=args.snapshot_interval,
+            )
+
+        # After-hours: continue snapshot sync only (no decision/post-submit)
+        if state.after_hours_mode:
+            await _run_after_hours_snapshot_cycle(
+                state,
+                timeout_seconds=args.task_timeout,
+                env=env,
+                now=now,
             )
 
         await asyncio.sleep(args.tick_seconds)

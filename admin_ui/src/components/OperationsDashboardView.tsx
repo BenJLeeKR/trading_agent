@@ -7,6 +7,7 @@ import { LoadingSpinner } from "./common/LoadingSpinner";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { ArrowRight, RefreshCw } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { formatKrw, formatKstDateTime } from "../lib/utils";
 import {
   getHealth,
   getReadyz,
@@ -85,14 +86,6 @@ interface DashboardData {
 }
 
 /* ── Helpers ── */
-function formatCurrency(val: number | null | undefined): string {
-  if (val == null || val === undefined) return "—";
-  if (Number.isNaN(val)) return "—";
-  const formatted = Math.abs(val).toLocaleString("ko-KR");
-  const prefix = val >= 0 ? "" : "-";
-  return `${prefix}${formatted}원`;
-}
-
 function formatPercent(val: number | null | undefined): string {
   if (val == null) return "N/A";
   const prefix = val >= 0 ? "+" : "";
@@ -690,7 +683,7 @@ export default function OperationsDashboardView() {
         />
         <StatusCard
           title="가용 현금"
-          value={d.totalAvailableCash > 0 ? formatCurrency(d.totalAvailableCash) : "N/A"}
+          value={d.totalAvailableCash > 0 ? formatKrw(d.totalAvailableCash) : "N/A"}
           status="neutral"
           subtitle={
             d.totalAvailableCash > 0
@@ -758,7 +751,7 @@ export default function OperationsDashboardView() {
             </div>
             <DataTable
               columns={[
-                { key: "createdAt", header: "생성시각", width: "140px" },
+                { key: "createdAt", header: "생성시각", width: "140px", render: (row: CompactOrderItem) => formatKstDateTime(row.createdAt) },
                 { key: "symbol", header: "종목", width: "80px" },
                 { key: "side", header: "매매", width: "60px" },
                 { key: "quantity", header: "수량", width: "80px" },
@@ -792,7 +785,7 @@ export default function OperationsDashboardView() {
             </div>
             <DataTable
               columns={[
-                { key: "startedAt", header: "시작시각", width: "140px" },
+                { key: "startedAt", header: "시작시각", width: "140px", render: (row: CompactReconciliationItem) => formatKstDateTime(row.startedAt) },
                 {
                   key: "status",
                   header: "상태",
@@ -807,7 +800,7 @@ export default function OperationsDashboardView() {
                   header: "완료시각",
                   width: "140px",
                   render: (row: CompactReconciliationItem) => (
-                    <span className="text-[#64748b]">{row.completedAt ?? "—"}</span>
+                    <span className="text-[#64748b]">{formatKstDateTime(row.completedAt)}</span>
                   ),
                 },
               ]}

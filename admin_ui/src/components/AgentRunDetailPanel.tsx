@@ -1,23 +1,12 @@
 import { useState } from "react";
 import { Copy } from "lucide-react";
 import type { AgentRunResponse } from "../types/api";
+import { formatKstDateTime } from "@/lib/utils";
 
 interface AgentRunDetailPanelProps {
   run: AgentRunResponse | null;
 }
 
-function formatTime(dateString: string | null) {
-  if (!dateString) return "-";
-  const date = new Date(dateString);
-  return date.toLocaleString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
 
 function agentTypeLabel(agentType: string): string {
   if (agentType.includes("event_interpretation")) return "Event Interpretation";
@@ -92,10 +81,10 @@ export function AgentRunDetailPanel({ run }: AgentRunDetailPanelProps) {
             <MetadataField label="의사결정 컨텍스트 ID" value={run.decision_context_id} copyable />
             <MetadataField label="에이전트 유형" value={agentTypeLabel(run.agent_type)} />
             <MetadataField label="상태" value={run.status} />
-            <MetadataField label="시작" value={formatTime(run.started_at)} />
+            <MetadataField label="시작" value={formatKstDateTime(run.started_at)} />
             <MetadataField
               label="완료"
-              value={run.completed_at ? formatTime(run.completed_at) : "-"}
+              value={run.completed_at ? formatKstDateTime(run.completed_at) : "-"}
             />
             <MetadataField label="모델 ID" value={run.model_id} copyable />
             <MetadataField label="프롬프트 ID" value={run.prompt_id} copyable />

@@ -35,6 +35,7 @@ from agent_trading.domain.models import (
     FillEvent,
     MarketDataSubscription,
     OrderBook,
+    OrderBookLevel,
     OrderStatusResult,
     Position,
     Quote,
@@ -130,28 +131,63 @@ class KoreaInvestmentAdapter(BrokerAdapter):
         )
 
     async def get_quote(self, symbol: str, market: str) -> Quote:
-        raw = await self._rest.get_quote(symbol, market)
+        raw = await self._rest.get_quote(symbol)
+
+        def _decimal(key: str) -> Decimal | None:
+            val = raw.get(key)
+            if val is None:
+                return None
+            try:
+                cleaned = str(val).replace(",", "").strip()
+                if not cleaned:
+                    return None
+                return Decimal(cleaned)
+            except (ValueError, TypeError, ArithmeticError):
+                return None
+
         return Quote(
             symbol=symbol,
             market=market,
-            bid=raw.get("bid"),
-            ask=raw.get("ask"),
-            last=raw.get("last"),
+            bid=_decimal("stck_bidp"),
+            ask=_decimal("stck_askp"),
+            last=_decimal("stck_prpr"),
             as_of=datetime.now(tz=timezone.utc),
         )
 
     async def get_orderbook(self, symbol: str, market: str) -> OrderBook:
-        raw = await self._rest.get_orderbook(symbol, market)
+        raw = await self._rest.get_orderbook(symbol)
+
+        def _decimal(key: str) -> Decimal | None:
+            val = raw.get(key)
+            if val is None:
+                return None
+            try:
+                cleaned = str(val).replace(",", "").strip()
+                if not cleaned:
+                    return None
+                return Decimal(cleaned)
+            except (ValueError, TypeError, ArithmeticError):
+                return None
+
+        def _levels(prefix: str) -> tuple[OrderBookLevel, ...]:
+            levels: list[OrderBookLevel] = []
+            for i in range(1, 11):
+                price = _decimal(f"{prefix}{i}")
+                qty = _decimal(f"{prefix}_rsqn{i}")
+                if price is not None and qty is not None:
+                    levels.append(OrderBookLevel(price=price, quantity=qty))
+            return tuple(levels)
+
         return OrderBook(
             symbol=symbol,
             market=market,
-            bids=tuple(raw.get("bids", [])),
-            asks=tuple(raw.get("asks", [])),
+            bids=_levels("bidp"),
+            asks=_levels("askp"),
             as_of=datetime.now(tz=timezone.utc),
         )
 
     async def get_positions(self, account_ref: str) -> Sequence[Position]:
-        raw_positions = await self._rest.get_positions(account_ref)
+        raw_positions = await self._rest.get_positions()
         return [
             Position(
                 account_ref=account_ref,
@@ -165,7 +201,7 @@ class KoreaInvestmentAdapter(BrokerAdapter):
         ]
 
     async def get_cash_balance(self, account_ref: str) -> CashBalance:
-        raw = await self._rest.get_cash_balance(account_ref)
+        raw = await self._rest.get_cash_balance()
         return CashBalance(
             account_ref=account_ref,
             available_cash=Decimal(str(raw.get("available_cash", 0))),

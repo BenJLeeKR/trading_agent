@@ -5,6 +5,7 @@
  * Shared between OperationsAlertsView and OperationsDashboardView.
  * ─────────────────────────────────────────── */
 import type { HealthResponse, OrderSummary, ReconciliationRunSummary, SnapshotSyncRunSummary } from "../types/api";
+import { formatKstDateTime } from "./utils";
 
 /* ── Public types ────────────────────────── */
 
@@ -51,7 +52,7 @@ export const LEVEL_PRIORITY: Record<string, number> = {
 /* ── Pure function: derive alerts ── */
 export function deriveAlerts(input: AlertRuleInput): AlertItem[] {
   const alerts: AlertItem[] = [];
-  const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+  const now = formatKstDateTime(new Date().toISOString());
 
   // Rule 1: API 상태 이상 (긴급)
   if (input.healthError || !input.health || input.health.status !== "ok") {

@@ -1006,10 +1006,17 @@ class DecisionOrchestratorService:
                 )
 
         # ── Phase 5: submit to broker ──
+        _decision_type: str = "unknown"
+        if intent.ai_backend_inputs is not None:
+            _decision_type = intent.ai_backend_inputs.decision_type or "unknown"
         logger.info(
-            "Phase 5: submit_order_to_broker — order_id=%s broker=%s",
+            "Phase 5: submit_order_to_broker — order_id=%s broker=%s "
+            "symbol=%s decision_type=%s quantity=%s",
             pending_order.order_request_id,
             broker.__class__.__name__,
+            submit_request.symbol if hasattr(submit_request, "symbol") else "unknown",
+            _decision_type,
+            submit_request.quantity if hasattr(submit_request, "quantity") else "unknown",
         )
         try:
             submitted_order = await order_manager.submit_order_to_broker(
@@ -1021,8 +1028,12 @@ class DecisionOrchestratorService:
             )
         except Exception as exc:
             logger.exception(
-                "Phase 5 FAILED (order_submit): order_id=%s",
+                "Phase 5 FAILED (order_submit): order_id=%s symbol=%s "
+                "decision_type=%s trade_decision_id=%s",
                 pending_order.order_request_id,
+                submit_request.symbol if hasattr(submit_request, "symbol") else "unknown",
+                _decision_type,
+                trade_decision_id,
             )
             return SubmitResult(
                 status="ERROR",
@@ -1189,13 +1200,28 @@ class DecisionOrchestratorService:
             ).total_seconds() > self._stale_threshold_seconds
 
         # Zero-position account policy: empty positions + cash fresh = pass
+        is_stale = is_cash_stale or is_position_stale
+        if is_stale:
+            logger.warning(
+                "Snapshot freshness check: account_id=%s "
+                "cash_stale=%s (snapshot_at=%s, age=%.1fs) "
+                "pos_stale=%s (latest_snapshot_at=%s) "
+                "threshold=%ds",
+                account_id,
+                is_cash_stale,
+                cash_snapshot.snapshot_at,
+                (now - cash_snapshot.snapshot_at).total_seconds(),
+                is_position_stale,
+                latest_position_snapshot_at,
+                self._stale_threshold_seconds,
+            )
         return AccountSnapshotFreshness(
             account_id=account_id,
             latest_cash_snapshot_at=cash_snapshot.snapshot_at,
             latest_position_snapshot_at=latest_position_snapshot_at,
             is_cash_stale=is_cash_stale,
             is_position_stale=is_position_stale,
-            is_stale=is_cash_stale or is_position_stale,
+            is_stale=is_stale,
         )
 
     async def _ensure_or_create_decision_context(

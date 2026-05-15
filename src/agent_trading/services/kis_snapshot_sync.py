@@ -36,6 +36,9 @@ _KIS_EVL_PFLS_AMT = "evlu_pfls_amt"  # 평가손익
 _KIS_DNCA_TOT_AMT = "dnca_tot_amt"  # 예수금총액
 _KIS_NXDY_EXCC_AMT = "nxdy_excc_amt"  # 익일초과액
 _KIS_ORD_PSBL_AMT = "ord_psbl_amt"  # 주문가능금액 (fallback용)
+_KIS_TOT_EVL_AMT = "tot_evlu_amt"  # 총평가금액 (유가증권 평가금액 합계 + D+2 예수금)
+_KIS_PRVS_RCDL_EXCC_AMT = "prvs_rcdl_excc_amt"  # 가수도정산금액 (D+2 예수금 기준)
+_KIS_EVL_PFLS_SMTL_AMT = "evlu_pfls_smtl_amt"  # 평가손익합계금액 (계좌 총괄)
 
 _SOURCE_OF_TRUTH = "broker"
 _DEFAULT_MARKET_CODE = "KRX"
@@ -278,6 +281,11 @@ async def sync_kis_account_snapshots(
             else:
                 unsettled_cash = None
 
+            # KIS output2 account-level summary fields
+            total_asset = _safe_optional_decimal(raw_cash.get(_KIS_TOT_EVL_AMT))
+            settlement_amount = _safe_optional_decimal(raw_cash.get(_KIS_PRVS_RCDL_EXCC_AMT))
+            total_unrealized_pnl = _safe_optional_decimal(raw_cash.get(_KIS_EVL_PFLS_SMTL_AMT))
+
             cash_entity = CashBalanceSnapshotEntity(
                 cash_balance_snapshot_id=uuid4(),
                 account_id=account_id,
@@ -285,6 +293,9 @@ async def sync_kis_account_snapshots(
                 available_cash=available_cash,
                 settled_cash=settled_cash,
                 unsettled_cash=unsettled_cash,
+                total_asset=total_asset,
+                settlement_amount=settlement_amount,
+                total_unrealized_pnl=total_unrealized_pnl,
                 source_of_truth=_SOURCE_OF_TRUTH,
                 snapshot_at=snapshot_at,
             )
@@ -302,6 +313,12 @@ async def sync_kis_account_snapshots(
                 msg = f"Failed to persist cash balance snapshot: {exc}"
                 logger.error(msg)
                 result._add_error(msg)
+    else:
+        logger.warning(
+            "Cash balance empty for account_id=%s env=%s broker=koreainvestment endpoint=inquire-balance",
+            account_id,
+            getattr(rest_client, "env", "unknown"),
+        )
 
     return result
 

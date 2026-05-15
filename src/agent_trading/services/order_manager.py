@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
+
+logger = logging.getLogger(__name__)
 
 from agent_trading.brokers.base import BrokerAdapter
 from agent_trading.brokers.rate_limit import BudgetExhaustedError, RateLimitBudgetManager
@@ -407,7 +410,26 @@ class OrderManager:
                 )
 
         # --- Step 2: Submit to broker ---
-        result: SubmitOrderResult = await broker.submit_order(request)
+        logger.info(
+            "Broker submit: order_id=%s symbol=%s side=%s quantity=%s broker=%s",
+            order.order_request_id,
+            request.symbol,
+            request.side.value if hasattr(request, "side") else "unknown",
+            request.quantity if hasattr(request, "quantity") else "unknown",
+            broker.__class__.__name__,
+        )
+        try:
+            result: SubmitOrderResult = await broker.submit_order(request)
+        except Exception as exc:
+            logger.exception(
+                "Broker submit RAISED: order_id=%s symbol=%s broker=%s — %s: %s",
+                order.order_request_id,
+                request.symbol,
+                broker.__class__.__name__,
+                type(exc).__name__,
+                exc,
+            )
+            raise
 
         # --- Step 3: Handle result ---
         if result.uncertain or result.requires_reconciliation:

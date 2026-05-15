@@ -21,6 +21,7 @@ services:
   db:
     image: postgres:16-alpine
     environment:
+      TZ: "Asia/Seoul"
       POSTGRES_DB: "${DATABASE_NAME:-trading}"
       POSTGRES_USER: "${DATABASE_USER:-trading}"
       POSTGRES_PASSWORD: "${DATABASE_PASSWORD:-trading}"
@@ -42,6 +43,7 @@ services:
       db:
         condition: service_healthy
     environment:
+      TZ: "Asia/Seoul"
       DATABASE_HOST: db
       DATABASE_PORT: "5432"
       DATABASE_NAME: "${DATABASE_NAME:-trading}"
@@ -61,6 +63,9 @@ services:
       # REST rate limit safety budget baseline (KIS notice 2026-04-20: 실전 18 rps)
       KIS_REAL_REST_RPS: "${KIS_REAL_REST_RPS:-18}"
       KIS_PAPER_REST_RPS: "${KIS_PAPER_REST_RPS:-1}"
+      # Dev token cache — share host cache to avoid EGW00133 rate limit
+      KIS_DEV_TOKEN_CACHE_ENABLED: "true"
+      KIS_DEV_TOKEN_CACHE_PATH: ".cache/kis_token.json"
       # Legacy fallback names (still supported)
       KIS_API_KEY: "${KIS_API_KEY:-}"
       KIS_API_SECRET: "${KIS_API_SECRET:-}"
@@ -81,6 +86,8 @@ services:
       - ./tests:/app/tests
       - ./scripts:/app/scripts
       - ./pyproject.toml:/app/pyproject.toml
+      # Share KIS dev token cache to avoid 1-per-minute oauth2 rate limit
+      - ./.cache:/app/.cache
     # Keep the container alive for interactive commands
     command: ["tail", "-f", "/dev/null"]
     restart: unless-stopped
@@ -95,6 +102,7 @@ services:
       db:
         condition: service_healthy
     environment:
+      TZ: "Asia/Seoul"
       DATABASE_HOST: db
       DATABASE_PORT: "5432"
       DATABASE_NAME: "${DATABASE_NAME:-trading}"
@@ -115,6 +123,9 @@ services:
       # REST rate limit safety budget baseline
       KIS_REAL_REST_RPS: "${KIS_REAL_REST_RPS:-15}"
       KIS_PAPER_REST_RPS: "${KIS_PAPER_REST_RPS:-1}"
+      # Dev token cache — share host cache to avoid EGW00133 rate limit
+      KIS_DEV_TOKEN_CACHE_ENABLED: "true"
+      KIS_DEV_TOKEN_CACHE_PATH: ".cache/kis_token.json"
       # Legacy fallback names (still supported)
       KIS_API_KEY: "${KIS_API_KEY:-}"
       KIS_API_SECRET: "${KIS_API_SECRET:-}"
@@ -134,6 +145,8 @@ services:
       - "8000:8000"
     volumes:
       - ./admin_ui/dist:/app/admin_ui/dist
+      # Share KIS dev token cache to avoid 1-per-minute oauth2 rate limit
+      - ./.cache:/app/.cache
     command:
       - uvicorn
       - agent_trading.api.app:create_app_from_env
@@ -163,6 +176,7 @@ services:
       db:
         condition: service_healthy
     environment:
+      TZ: "Asia/Seoul"
       DATABASE_HOST: db
       DATABASE_PORT: "5432"
       DATABASE_NAME: "${DATABASE_NAME:-trading}"
@@ -180,7 +194,10 @@ services:
       KIS_WS_URL: "${KIS_WS_URL:-}"
       KIS_ACCOUNT_PRODUCT_CODE: "${KIS_ACCOUNT_PRODUCT_CODE:-01}"
       KIS_REAL_REST_RPS: "${KIS_REAL_REST_RPS:-18}"
-      KIS_PAPER_REST_RPS: "${KIS_PAPER_REST_RPS:-1}"
+      KIS_PAPER_REST_RPS: "2"
+      # Dev token cache — share host cache to avoid EGW00133 rate limit
+      KIS_DEV_TOKEN_CACHE_ENABLED: "true"
+      KIS_DEV_TOKEN_CACHE_PATH: ".cache/kis_token.json"
       # Legacy fallback names (still supported)
       KIS_API_KEY: "${KIS_API_KEY:-}"
       KIS_API_SECRET: "${KIS_API_SECRET:-}"
@@ -190,9 +207,12 @@ services:
     volumes:
       - ./src:/app/src
       - ./scripts:/app/scripts
+      # Share KIS dev token cache to avoid 1-per-minute oauth2 rate limit
+      - ./.cache:/app/.cache
     command:
       - python
       - scripts/run_snapshot_sync_loop.py
+      - "--after-hours"
     restart: unless-stopped
 
 volumes:

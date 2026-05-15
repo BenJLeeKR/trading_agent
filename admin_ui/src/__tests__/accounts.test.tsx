@@ -83,6 +83,10 @@ const mockCashBalance = {
   available_cash: 500000,
   settled_cash: 1000000,
   unsettled_cash: 0,
+  // ── KIS output2 계좌 총괄 필드 (optional, fallback 지원) ──
+  total_asset: 1550000,
+  settlement_amount: 980000,
+  total_unrealized_pnl: 500,
   source_of_truth: "broker",
   snapshot_at: "2024-01-01T12:00:00Z",
 };
@@ -467,24 +471,18 @@ describe("AccountsView snapshot dedup", () => {
     //   AAPL (12:00): unrealized_pnl=1000, qty=100, market_price=160  ← latest
     //   MSFT (10:00): unrealized_pnl=-250, qty=50,  market_price=245  ← latest
     //
-    // BUG (raw positions sum):
-    //   totalPnl = 500 + 1000 + (-250) = 1250
-    //   totalValue = (100*155 + 100*160 + 50*245) + cash
+    // KIS 우선: mockCashBalance.total_asset = 1550000
+    //           mockCashBalance.total_unrealized_pnl = 500
+    //           mockCashBalance.settlement_amount = 980000
     //
-    // FIXED (latestPositions dedup):
-    //   totalPnl = 1000 + (-250) = 750
-    //   totalValue = (100*160 + 50*245) + cash
-    //
-    // mockCashBalance.settled_cash = 1000000
-    // Expected totalValue = 100*160 + 50*245 + 1000000 = 16000 + 12250 + 1000000 = 1028250
+    // formatKrw(1550000) → "1,550,000원"
+    // formatKrw(500) → "+500원" (totalPnl >= 0 이므로 "+" prefix)
 
-    // Verify totalPnl shows dedup value (750), not raw sum (1250)
-    // formatCurrency(750, cashBalance?.currency="USD") → "750 USD"
-    // Note: rendered with "+" prefix when totalPnl >= 0, so use exact: false
-    expect(await screen.findByText("750 USD", { exact: false }, { timeout: 3000 })).toBeInTheDocument();
+    // Verify totalValue shows KIS total_asset (1,550,000), not dedup-based calculation
+    expect(await screen.findByText("1,550,000원", { exact: false }, { timeout: 3000 })).toBeInTheDocument();
 
-    // Verify totalValue shows dedup-based value
-    expect(await screen.findByText("1,028,250 USD", { exact: false }, { timeout: 3000 })).toBeInTheDocument();
+    // Verify totalPnl shows KIS total_unrealized_pnl (500), not dedup sum (750)
+    expect(await screen.findByText("+500원", { exact: false }, { timeout: 3000 })).toBeInTheDocument();
 
     // Toggle to history view — summary cards should STAY on latest data
     screen.getByText("스냅샷 이력 보기 (3건)").click();
@@ -494,7 +492,45 @@ describe("AccountsView snapshot dedup", () => {
     });
 
     // Summary values unchanged even in history mode
-    expect(screen.getByText("750 USD", { exact: false })).toBeInTheDocument();
-    expect(screen.getByText("1,028,250 USD", { exact: false })).toBeInTheDocument();
+    expect(screen.getByText("1,550,000원", { exact: false })).toBeInTheDocument();
+    // "+500원" appears in summary card AND positions table → use getAllByText
+    expect(screen.getAllByText("+500원", { exact: false }).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("falls back to calculated values when KIS fields are undefined", async () => {
+    const cashBalanceWithoutKis = {
+      ...mockCashBalance,
+      total_asset: undefined,
+      settlement_amount: undefined,
+      total_unrealized_pnl: undefined,
+    };
+
+    vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
+    vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
+    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(multiSnapshotPositions);
+    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(cashBalanceWithoutKis);
+
+    render(<AccountsView />, { wrapper: RouterWrapper });
+
+    await screen.findByText("CLIENT1-PAPER-PAPER", {}, { timeout: 3000 });
+
+    const accountRow = screen.getByText("CLIENT1-PAPER-PAPER").closest("tr");
+    expect(accountRow).not.toBeNull();
+    await act(async () => {
+      fireEvent.click(accountRow!);
+    });
+
+    expect(await screen.findByText("AAPL", {}, { timeout: 3000 })).toBeInTheDocument();
+
+    // KIS 필드가 undefined이므로 fallback 계산 사용:
+    //   totalPnl = 1000 + (-250) = 750
+    //   totalValue = (100*160 + 50*245) + 1000000 = 16000 + 12250 + 1000000 = 1028250
+    //   현금잔고 = settled_cash = 1000000
+    //
+    // formatKrw(750) → "+750원" (totalPnl >= 0 이므로 "+" prefix)
+    // formatKrw(1028250) → "1,028,250원"
+
+    expect(await screen.findByText("+750원", { exact: false }, { timeout: 3000 })).toBeInTheDocument();
+    expect(await screen.findByText("1,028,250원", { exact: false }, { timeout: 3000 })).toBeInTheDocument();
   });
 });

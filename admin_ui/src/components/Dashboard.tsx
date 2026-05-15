@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { formatKrw, formatKstDateTime, formatKstTime } from "@/lib/utils";
 import BrokerCapacityPanel from "./BrokerCapacityPanel";
 import { useNavigate } from "react-router-dom";
 import type {
@@ -23,13 +24,6 @@ import { ErrorBanner } from "./common/ErrorBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import { ArrowRight, Users, Wallet, BarChart3, ShoppingCart, Lock, RefreshCw } from "lucide-react";
 
-/* ── helpers ── */
-function formatCurrency(val: number | null | undefined): string {
-  if (val == null) return "—";
-  return `${new Intl.NumberFormat("ko-KR", {
-    maximumFractionDigits: 0,
-  }).format(val)}원`;
-}
 
 /* ── MetricCard ── */
 function MetricCard({
@@ -217,7 +211,7 @@ export default function Dashboard() {
           </p>
           {loadedAt && (
             <p className="text-xs text-[#94a3b8] mt-0.5">
-              {loadedAt.toLocaleTimeString("ko-KR")}에 업데이트됨
+              {formatKstTime(loadedAt.toISOString())}에 업데이트됨
             </p>
           )}
         </div>
@@ -252,7 +246,7 @@ export default function Dashboard() {
         </p>
         {loadedAt && (
           <p className="text-xs text-[#94a3b8] mt-0.5">
-            {loadedAt.toLocaleTimeString("ko-KR")}에 업데이트됨
+            {formatKstTime(loadedAt.toISOString())}에 업데이트됨
           </p>
         )}
       </div>
@@ -268,8 +262,8 @@ export default function Dashboard() {
         <MetricCard
           icon={<Wallet className="h-5 w-5" />}
           title="가용 현금"
-          value={formatCurrency(summary.totalAvailableCash)}
-          subtitle={`결제완료: ${formatCurrency(summary.totalSettledCash)}`}
+          value={formatKrw(summary.totalAvailableCash)}
+          subtitle={`결제완료: ${formatKrw(summary.totalSettledCash)}`}
         />
         <MetricCard
           icon={<BarChart3 className="h-5 w-5" />}
@@ -372,7 +366,7 @@ export default function Dashboard() {
                       {positions.length}
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-[#0f172a]">
-                      {cash ? formatCurrency(cash.available_cash) : "—"}
+                      {cash ? formatKrw(cash.available_cash) : "—"}
                     </td>
                   </tr>
                 );
@@ -458,7 +452,7 @@ export default function Dashboard() {
                     </td>
                     <td className="px-4 py-3 text-right text-xs text-[#64748b]">
                       {order.created_at
-                        ? new Date(order.created_at).toLocaleDateString()
+                        ? formatKstDateTime(order.created_at)
                         : "—"}
                     </td>
                   </tr>
@@ -529,7 +523,7 @@ export default function Dashboard() {
                       {lock.strategy_code}
                     </td>
                     <td className="px-4 py-3 text-right text-xs text-[#64748b]">
-                      {new Date(lock.expires_at).toLocaleDateString()}
+                      {formatKstDateTime(lock.expires_at)}
                     </td>
                   </tr>
                 ))}

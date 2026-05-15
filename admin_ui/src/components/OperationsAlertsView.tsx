@@ -6,6 +6,7 @@ import { WarningBanner } from "./common/WarningBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { X, AlertCircle, RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
+import { formatKstDateTime } from "../lib/utils";
 import {
   getHealth,
   getOrders,
@@ -525,7 +526,7 @@ export default function OperationsAlertsView() {
               <div className="text-sm text-[#0f172a]">
                 <span className="font-medium">Pre-Market 스냅샷 동기화 실행</span>
                 <span className="ml-2 text-[#64748b]">
-                  ({new Date(snapshotSyncRun.started_at).toLocaleString("ko-KR")})
+                  ({formatKstDateTime(snapshotSyncRun.started_at)})
                 </span>
               </div>
               <StatusBadge variant={statusLabel.variant}>{statusLabel.text}</StatusBadge>

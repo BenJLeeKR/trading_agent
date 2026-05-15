@@ -293,3 +293,207 @@ class TestKisAdapterSubscriptionBudget:
         assert adapter._subscription_budget is custom_budget
         assert adapter._subscription_budget.max_subscriptions == 10
         assert adapter._subscription_budget.critical_limit == 5
+
+
+class TestAdapterGetQuote:
+    """``KoreaInvestmentAdapter.get_quote()`` delegates to ``KISRestClient.get_quote(symbol)``
+    (single argument, no ``market``) and correctly maps KIS raw keys to ``Quote`` fields."""
+
+    @pytest.mark.asyncio
+    async def test_get_quote_calls_rest_with_symbol_only(
+        self, adapter: KoreaInvestmentAdapter
+    ) -> None:
+        """Adapter.get_quote(symbol, market) must call self._rest.get_quote(symbol)
+        with only the symbol argument (not market) and map KIS keys correctly."""
+        mock_rest = AsyncMock(spec=KISRestClient)
+        mock_rest.get_quote = AsyncMock(
+            return_value={
+                "stck_prpr": "15000",
+                "stck_bidp": "14900",
+                "stck_askp": "15100",
+            }
+        )
+        original_rest = adapter._rest
+        adapter._rest = mock_rest
+        try:
+            quote = await adapter.get_quote("005930", "KRX")
+            assert quote.last == Decimal("15000")
+            assert quote.bid == Decimal("14900")
+            assert quote.ask == Decimal("15100")
+            assert quote.symbol == "005930"
+            assert quote.market == "KRX"
+            mock_rest.get_quote.assert_awaited_once_with("005930")
+        finally:
+            adapter._rest = original_rest
+
+    @pytest.mark.asyncio
+    async def test_get_quote_empty_response(
+        self, adapter: KoreaInvestmentAdapter
+    ) -> None:
+        """Adapter.get_quote() handles empty dict from rest client."""
+        mock_rest = AsyncMock(spec=KISRestClient)
+        mock_rest.get_quote = AsyncMock(return_value={})
+        original_rest = adapter._rest
+        adapter._rest = mock_rest
+        try:
+            quote = await adapter.get_quote("005930", "KRX")
+            assert quote.last is None
+            assert quote.bid is None
+            assert quote.ask is None
+        finally:
+            adapter._rest = original_rest
+
+    @pytest.mark.asyncio
+    async def test_get_quote_stck_prpr_with_comma(
+        self, adapter: KoreaInvestmentAdapter
+    ) -> None:
+        """KIS returns comma-formatted string numbers (e.g. "67,200")."""
+        mock_rest = AsyncMock(spec=KISRestClient)
+        mock_rest.get_quote = AsyncMock(
+            return_value={
+                "stck_prpr": "67,200",
+                "stck_bidp": "67,100",
+                "stck_askp": "67,300",
+            }
+        )
+        original_rest = adapter._rest
+        adapter._rest = mock_rest
+        try:
+            quote = await adapter.get_quote("005930", "KRX")
+            assert quote.last == Decimal("67200")
+            assert quote.bid == Decimal("67100")
+            assert quote.ask == Decimal("67300")
+        finally:
+            adapter._rest = original_rest
+
+    @pytest.mark.asyncio
+    async def test_get_quote_missing_stck_prpr(
+        self, adapter: KoreaInvestmentAdapter
+    ) -> None:
+        """Missing stck_prpr key → last is None."""
+        mock_rest = AsyncMock(spec=KISRestClient)
+        mock_rest.get_quote = AsyncMock(
+            return_value={"stck_bidp": "14900", "stck_askp": "15100"}
+        )
+        original_rest = adapter._rest
+        adapter._rest = mock_rest
+        try:
+            quote = await adapter.get_quote("005930", "KRX")
+            assert quote.last is None
+            assert quote.bid == Decimal("14900")
+            assert quote.ask == Decimal("15100")
+        finally:
+            adapter._rest = original_rest
+
+    @pytest.mark.asyncio
+    async def test_get_quote_stck_prpr_is_none(
+        self, adapter: KoreaInvestmentAdapter
+    ) -> None:
+        """stck_prpr is None → last is None."""
+        mock_rest = AsyncMock(spec=KISRestClient)
+        mock_rest.get_quote = AsyncMock(
+            return_value={"stck_prpr": None, "stck_bidp": None, "stck_askp": None}
+        )
+        original_rest = adapter._rest
+        adapter._rest = mock_rest
+        try:
+            quote = await adapter.get_quote("005930", "KRX")
+            assert quote.last is None
+            assert quote.bid is None
+            assert quote.ask is None
+        finally:
+            adapter._rest = original_rest
+
+    @pytest.mark.asyncio
+    async def test_get_quote_stck_prpr_invalid(
+        self, adapter: KoreaInvestmentAdapter
+    ) -> None:
+        """stck_prpr is non-numeric → last is None (no crash)."""
+        mock_rest = AsyncMock(spec=KISRestClient)
+        mock_rest.get_quote = AsyncMock(
+            return_value={"stck_prpr": "N/A", "stck_bidp": "", "stck_askp": "---"}
+        )
+        original_rest = adapter._rest
+        adapter._rest = mock_rest
+        try:
+            quote = await adapter.get_quote("005930", "KRX")
+            assert quote.last is None
+            assert quote.bid is None
+            assert quote.ask is None
+        finally:
+            adapter._rest = original_rest
+
+
+class TestAdapterGetOrderbook:
+    """``KoreaInvestmentAdapter.get_orderbook()`` delegates to
+    ``KISRestClient.get_orderbook(symbol)`` (single argument, no ``market``)
+    and correctly maps KIS raw keys to ``OrderBook`` fields."""
+
+    @pytest.mark.asyncio
+    async def test_get_orderbook_calls_rest_with_symbol_only(
+        self, adapter: KoreaInvestmentAdapter
+    ) -> None:
+        """Adapter.get_orderbook(symbol, market) must call
+        self._rest.get_orderbook(symbol) with only the symbol argument
+        and parse KIS askp/bidp keys into OrderBookLevel tuples."""
+        mock_rest = AsyncMock(spec=KISRestClient)
+        mock_rest.get_orderbook = AsyncMock(
+            return_value={
+                "bidp1": "50000", "bidp_rsqn1": "10",
+                "askp1": "50100", "askp_rsqn1": "5",
+            }
+        )
+        original_rest = adapter._rest
+        adapter._rest = mock_rest
+        try:
+            ob = await adapter.get_orderbook("005930", "KRX")
+            assert ob.symbol == "005930"
+            assert ob.market == "KRX"
+            assert len(ob.bids) == 1
+            assert len(ob.asks) == 1
+            assert ob.bids[0].price == Decimal("50000")
+            assert ob.bids[0].quantity == Decimal("10")
+            assert ob.asks[0].price == Decimal("50100")
+            assert ob.asks[0].quantity == Decimal("5")
+            mock_rest.get_orderbook.assert_awaited_once_with("005930")
+        finally:
+            adapter._rest = original_rest
+
+    @pytest.mark.asyncio
+    async def test_get_orderbook_empty_response(
+        self, adapter: KoreaInvestmentAdapter
+    ) -> None:
+        """Adapter.get_orderbook() handles empty dict from rest client."""
+        mock_rest = AsyncMock(spec=KISRestClient)
+        mock_rest.get_orderbook = AsyncMock(return_value={})
+        original_rest = adapter._rest
+        adapter._rest = mock_rest
+        try:
+            ob = await adapter.get_orderbook("005930", "KRX")
+            assert len(ob.bids) == 0
+            assert len(ob.asks) == 0
+        finally:
+            adapter._rest = original_rest
+
+    @pytest.mark.asyncio
+    async def test_get_orderbook_partial_levels(
+        self, adapter: KoreaInvestmentAdapter
+    ) -> None:
+        """Only levels with both price and quantity are included."""
+        mock_rest = AsyncMock(spec=KISRestClient)
+        mock_rest.get_orderbook = AsyncMock(
+            return_value={
+                "bidp1": "50000", "bidp_rsqn1": "10",
+                "bidp2": "49900",  # missing bidp_rsqn2 → skip
+                "askp1": "50100", "askp_rsqn1": "5",
+                "askp2": "50200", "askp_rsqn2": "3",
+            }
+        )
+        original_rest = adapter._rest
+        adapter._rest = mock_rest
+        try:
+            ob = await adapter.get_orderbook("005930", "KRX")
+            assert len(ob.bids) == 1  # level 2 skipped (no quantity)
+            assert len(ob.asks) == 2
+        finally:
+            adapter._rest = original_rest

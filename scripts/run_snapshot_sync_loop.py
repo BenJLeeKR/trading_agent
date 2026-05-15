@@ -131,6 +131,15 @@ def _log_sync_summary(result: object) -> None:
         len(errors),
     )
 
+    if cash_synced == 0 and total > 0:
+        logger.warning(
+            "sync-cycle CASH_SYNC_ZERO: accounts=%d positions=%d — "
+            "cash balance was not synced for any account. "
+            "Stale-snapshot guardrail will block submits until cash is refreshed.",
+            total,
+            positions_synced,
+        )
+
     if errors:
         for err in errors[:5]:  # Log at most 5 errors per cycle
             logger.warning("sync-error %s", err)
@@ -161,7 +170,7 @@ def _install_signal_handlers() -> None:
             signal.signal(sig, _handle_signal)
 
 
-async def _run_one_cycle(settings: AppSettings, broker: str) -> None:
+async def _run_one_cycle(settings: AppSettings, broker: str, after_hours: bool = False) -> None:
     """Execute a single sync cycle with its own broker client + DB connection."""
     # Lazy imports to keep module-level import fast
     components = build_snapshot_sync_components(broker, settings)
@@ -188,7 +197,10 @@ async def _run_one_cycle(settings: AppSettings, broker: str) -> None:
         # ── 3. Run auto-discover sync ──────────────────────────────────
         async with transaction() as tx:
             repos = build_postgres_repositories(tx)
-            logger.info("Repositories ready. Running sync_all_accounts() ...")
+            logger.info(
+                "Repositories ready. Running sync_all_accounts(after_hours=%s) ...",
+                after_hours,
+            )
 
             batch = await sync_all_accounts(
                 fetch_provider=provider,
@@ -199,6 +211,7 @@ async def _run_one_cycle(settings: AppSettings, broker: str) -> None:
                 account_repo=repos.accounts,
                 broker_name=broker,
                 account_number=settings.kis_account_number,
+                after_hours=after_hours,
             )
 
             # ── 4. Save execution history ──────────────────────────────
@@ -229,14 +242,15 @@ async def _run_one_cycle(settings: AppSettings, broker: str) -> None:
             pass
 
 
-async def _run_loop(broker: str, max_cycles: int = 0) -> None:
+async def _run_loop(broker: str, max_cycles: int = 0, after_hours: bool = False) -> None:
     """Main loop: run sync cycles until shutdown is requested."""
     interval = _read_interval()
     logger.info(
-        "Starting snapshot sync loop (broker=%s, interval=%ds, max_cycles=%d, env=%s) ...",
+        "Starting snapshot sync loop (broker=%s, interval=%ds, max_cycles=%d, after_hours=%s, env=%s) ...",
         broker,
         interval,
         max_cycles,
+        after_hours,
         os.getenv("KIS_ENV", "paper"),
     )
     logger.info(
@@ -247,6 +261,11 @@ async def _run_loop(broker: str, max_cycles: int = 0) -> None:
     )
 
     settings = AppSettings()
+    logger.info(
+        "Token cache: enabled=%s path=%s",
+        settings.kis_dev_token_cache_enabled,
+        settings.kis_dev_token_cache_path,
+    )
 
     cycle_count = 0
     while not _shutdown_event.is_set():
@@ -254,7 +273,7 @@ async def _run_loop(broker: str, max_cycles: int = 0) -> None:
         logger.info("=== Cycle %d (broker=%s) ===", cycle_count, broker)
 
         cycle_start = time.monotonic()
-        await _run_one_cycle(settings, broker)
+        await _run_one_cycle(settings, broker, after_hours=after_hours)
         elapsed = time.monotonic() - cycle_start
 
         logger.info(
@@ -300,6 +319,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=0,
         help="Maximum number of cycles to run (0 = infinite, default).",
     )
+    parser.add_argument(
+        "--after-hours",
+        action="store_true",
+        default=False,
+        help="Enable after-hours mode: passes after_hours=True so AFHR_FLPR_YN=Y is used for cash balance inquiry.",
+    )
     return parser.parse_args(argv)
 
 
@@ -308,6 +333,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     broker = args.broker
     max_cycles = args.max_cycles
+    after_hours = args.after_hours
 
     # Install signal handlers before entering the event loop
     loop = asyncio.new_event_loop()
@@ -315,7 +341,7 @@ def main(argv: list[str] | None = None) -> int:
     _install_signal_handlers()
 
     try:
-        loop.run_until_complete(_run_loop(broker, max_cycles))
+        loop.run_until_complete(_run_loop(broker, max_cycles, after_hours=after_hours))
     except KeyboardInterrupt:
         logger.info("KeyboardInterrupt — exiting.")
     finally:

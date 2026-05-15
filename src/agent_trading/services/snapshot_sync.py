@@ -127,6 +127,8 @@ async def sync_account_snapshots(
     position_snapshot_repo: PositionSnapshotRepository,
     cash_balance_snapshot_repo: CashBalanceSnapshotRepository,
     account_id: UUID,
+    *,
+    after_hours: bool = False,
 ) -> SyncResult:
     """Broker-agnostic single-account snapshot sync.
 
@@ -145,6 +147,10 @@ async def sync_account_snapshots(
         Repository for persisting cash-balance snapshots.
     account_id:
         The account UUID to associate with the snapshots.
+    after_hours:
+        When ``True``, passes ``after_hours=True`` to the provider's
+        ``fetch_snapshot()`` so that broker-specific after-hours parameters
+        (e.g. KIS ``AFHR_FLPR_YN=Y``) are applied.
 
     Returns
     -------
@@ -155,7 +161,9 @@ async def sync_account_snapshots(
 
     # ── 1. Fetch via provider ─────────────────────────────────────────
     try:
-        fetched = await fetch_provider.fetch_snapshot(account_id, instrument_repo)
+        fetched = await fetch_provider.fetch_snapshot(
+            account_id, instrument_repo, after_hours=after_hours,
+        )
     except Exception as exc:
         msg = f"Snapshot fetch failed for account_id={account_id}: {exc}"
         logger.error(msg)
@@ -206,6 +214,8 @@ async def sync_accounts_by_ids(
     position_snapshot_repo: PositionSnapshotRepository,
     cash_balance_snapshot_repo: CashBalanceSnapshotRepository,
     account_ids: Sequence[UUID],
+    *,
+    after_hours: bool = False,
 ) -> BatchSyncResult:
     """Broker-agnostic batch snapshot sync for specific account IDs.
 
@@ -224,6 +234,9 @@ async def sync_accounts_by_ids(
         Repository for persisting cash-balance snapshots.
     account_ids:
         Sequence of ``AccountEntity.account_id`` (UUID) values to sync.
+    after_hours:
+        When ``True``, passes through to ``sync_account_snapshots()``
+        for after-hours cash inquiry.
 
     Returns
     -------
@@ -240,6 +253,7 @@ async def sync_accounts_by_ids(
                 position_snapshot_repo=position_snapshot_repo,
                 cash_balance_snapshot_repo=cash_balance_snapshot_repo,
                 account_id=account_id,
+                after_hours=after_hours,
             )
         except Exception as exc:
             msg = f"Unexpected error syncing account_id={account_id}: {exc}"
@@ -277,6 +291,7 @@ async def sync_all_accounts(
     account_number: str | None = None,
     env: Environment | None = None,
     account_status: str | None = None,
+    after_hours: bool = False,
 ) -> BatchSyncResult:
     """Broker-agnostic auto-discover + batch snapshot sync.
 
@@ -309,6 +324,9 @@ async def sync_all_accounts(
     account_status:
         Optional account status filter. When provided, only accounts
         whose ``AccountEntity.status`` matches are synced.
+    after_hours:
+        When ``True``, passes through to ``sync_account_snapshots()``
+        for after-hours cash inquiry (AFHR_FLPR_YN=Y).
 
     Returns
     -------
@@ -377,6 +395,7 @@ async def sync_all_accounts(
                 position_snapshot_repo=position_snapshot_repo,
                 cash_balance_snapshot_repo=cash_balance_snapshot_repo,
                 account_id=account.account_id,
+                after_hours=after_hours,
             )
         except Exception as exc:
             msg = f"Unexpected error syncing account_id={account.account_id}: {exc}"

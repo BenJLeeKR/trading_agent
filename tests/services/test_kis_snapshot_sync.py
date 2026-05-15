@@ -104,11 +104,17 @@ def _make_cash_balance(
     dnca_tot_amt: str = "5000000",
     nxdy_excc_amt: str = "3000000",
     ord_psbl_amt: str = "2000000",
+    tot_evlu_amt: str = "15000000",
+    prvs_rcdl_excc_amt: str = "3500000",
+    evlu_pfls_smtl_amt: str = "500000",
 ) -> dict[str, Any]:
     return {
         "dnca_tot_amt": dnca_tot_amt,
         "nxdy_excc_amt": nxdy_excc_amt,
         "ord_psbl_amt": ord_psbl_amt,
+        "tot_evlu_amt": tot_evlu_amt,
+        "prvs_rcdl_excc_amt": prvs_rcdl_excc_amt,
+        "evlu_pfls_smtl_amt": evlu_pfls_smtl_amt,
     }
 
 
@@ -317,12 +323,15 @@ class TestSyncCashBalance:
         position_repo: InMemoryPositionSnapshotRepository,
         cash_repo: InMemoryCashBalanceSnapshotRepository,
     ) -> None:
-        """Cash balance with all fields is mapped correctly."""
+        """Cash balance with all fields (including KIS output2) is mapped correctly."""
         client = FakeKISRestClient(
             positions=[],
             cash_balance=_make_cash_balance(
                 dnca_tot_amt="5000000",
                 nxdy_excc_amt="3000000",
+                tot_evlu_amt="15000000",
+                prvs_rcdl_excc_amt="3500000",
+                evlu_pfls_smtl_amt="500000",
             ),
         )
         result = await sync_kis_account_snapshots(
@@ -342,6 +351,10 @@ class TestSyncCashBalance:
         assert snap.settled_cash == Decimal("3000000")
         assert snap.unsettled_cash == Decimal("2000000")  # 5M - 3M
         assert snap.source_of_truth == "broker"
+        # KIS output2 account-level summary fields
+        assert snap.total_asset == Decimal("15000000")
+        assert snap.settlement_amount == Decimal("3500000")
+        assert snap.total_unrealized_pnl == Decimal("500000")
 
     async def test_cash_balance_no_settled_field(
         self,

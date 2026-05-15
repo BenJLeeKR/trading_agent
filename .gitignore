@@ -36,3 +36,7 @@ build/
 # --- OS ---
 .DS_Store
 Thumbs.db
+
+# --- ETC ---
+.cache
+.cursor

@@ -1,0 +1,85 @@
+현재 세션의 컨텍스트가 너무 길어져서 새로운 세션으로 작업을 이관하려고 해. 다음 작업자(새로운 Roo Code 세션)가 상황을 완벽하게 파악하고 끊김 없이 작업을 이어갈 수 있도록, 현재까지의 진행 상황을 요약한 `HANDOVER_TO_NEW_SESSION.md` 파일을 `plans/` 폴더에 작성해줘.
+
+이 문서에는 다음 사항이 반드시 포함되어야 해:
+1. **Current Status (현재 상태)**: 이번 세션에서 방금 완료한 핵심 작업과 가장 주요하게 변경된 파일 목록.
+2. **Work In Progress (진행 중인 작업)**: 완벽히 끝나지 않았거나 테스트가 통과되지 않은 채로 중단된 작업, 그리고 발생 중인 에러 메시지나 이슈.
+3. **Implicit Context (숨은 맥락 및 의사결정)**: 공식 설계 문서나 `BACKLOG.md`에는 아직 적혀있지 않지만, 코드를 짜면서 합의한 중요한 규칙, 임시 방편(Workaround), 또는 주의사항.
+
+문서 작성을 완료하면, 세션을 종료해도 좋다고 알려줘.
+
+
+
+
+
+
+
+
+
+제목: 멀티 에이전트 트레이딩 시스템 구축 #13
+
+새로운 개발 세션이 시작되었어. 우리는 현재 "엔터프라이즈급 AI 멀티 에이전트 매매 시스템"을 개발 중이야. 
+네가 컨텍스트를 잃지 않고 바로 작업에 투입될 수 있도록 다음 순서대로 문서를 읽고 파악해줘.
+
+# 프로젝트 위치:
+- /workspace/agent_trading
+
+# 기본 원칙:
+- 문서와 현재 코드 상태를 함께 보고 판단할 것
+- 이미 끝난 작업을 다시 설계하지 말고, 현재 구현 위에서 이어갈 것
+- 실전 자동주문에서는 rate limit을 성능이 아니라 주문 안전성 제약으로 다룰 것
+- unknown order state에서는 신규 주문보다 상태 확인 / reconciliation 우선
+- audit / replay / reconciliation / hard guardrail은 live에서 필수
+- LLM은 계산기가 아니며 deterministic backend calculation을 우선
+- Fast / Slow layer 분리 유지
+- AI는 판단 계층이며 broker submit을 직접 호출하지 않음
+- OrderManager / ReconciliationService / BrokerAdapter 경계를 깨지 말 것
+- KIS API 연결시, oauth2/tokenP 재발급 남용을 방지하기 위해서 'KIS_DEV_TOKEN_CACHE_PATH=.cache/kis_token.json' 활용할 것
+- KIS API 연결이 'paper' 환경이지만, live와 똑같다고 인식하고 운영하고 있음을 주지할 것
+
+# 우선 읽을 문서 순서:
+
+[상위 설계 / 기준 문서]
+1. `/workspace/agent_trading/plan_docs/ENTERPRISE_TRADING_SYSTEM_DESIGN.md`
+2. `/workspace/agent_trading/plan_docs/ENTERPRISE_TRADING_SYSTEM_DESIGN_V2.md`
+3. `/workspace/agent_trading/plan_docs/HANDOFF_TO_ROO_CODE.md`
+
+[상세 설계 문서]
+1. `/workspace/agent_trading/plan_docs/detailed_design/README.md`
+2. `/workspace/agent_trading/plan_docs/detailed_design/01_system_architecture.md`
+3. `/workspace/agent_trading/plan_docs/detailed_design/02_order_execution_sequence.md`
+4. `/workspace/agent_trading/plan_docs/detailed_design/03_data_model_erd.md`
+5. `/workspace/agent_trading/plan_docs/detailed_design/04_broker_adapter_interface.md`
+6. `/workspace/agent_trading/plan_docs/detailed_design/05_koreainvestment_adapter_spec.md`
+7. `/workspace/agent_trading/plan_docs/detailed_design/06_config_schema.md`
+8. `/workspace/agent_trading/plan_docs/detailed_design/07_mvp_scope_and_delivery_plan.md`
+9. `/workspace/agent_trading/plan_docs/detailed_design/08_ai_decision_policy.md`
+10. `/workspace/agent_trading/plan_docs/detailed_design/09_market_and_event_data_policy.md`
+11. `/workspace/agent_trading/plan_docs/detailed_design/10_broker_rate_limit_and_capacity_policy.md`
+
+[에이전트 설계 문서]
+1. `/workspace/agent_trading/plan_docs/agents/01_agent_inventory_and_status.md`
+2. `/workspace/agent_trading/plan_docs/agents/02_agent_target_shapes.md`
+2. `/workspace/agent_trading/plan_docs/agents/03_risk_role_boundaries.md`
+2. `/workspace/agent_trading/plan_docs/agents/README.md`
+
+[작업 이력 / 현재 상태 파악용 plans]
+1. `/workspace/agent_trading/plans/README.md`
+2. `/workspace/agent_trading/plans/HANDOVER_TO_NEW_SESSION.md`
+3. `/workspace/agent_trading/plans/*.md`
+
+[앞으로 해야 할 일]
+1. `/workspace/agent_trading/plans/BACKLOG.md`
+
+[브로커 참고 자료]
+1. `/workspace/agent_trading/reference_docs/한국투자증권_오픈API_핵심요약_자동매매용.md`
+2. `/workspace/agent_trading/reference_docs/한국투자증권_오픈API_전체문서_20260503_030000.xlsx`
+
+
+# 현재 새 Task에서 원하는 작업 방식:
+
+1. 가장 최근에 작성된 `HANDOVER_TO_NEW_SESSION.md` 파일을 먼저 읽고 직전 세션의 상태와 당면 과제를 파악해.
+2. `BACKLOG.md`와 `plans/` 폴더 내의 가장 최근 실행/마일스톤 문서를 읽어줘.
+3. 전체적인 시스템 구조 뼈대를 파악하기 위해 `ENTERPRISE_TRADING_SYSTEM_DESIGN.md` (또는 최상위 아키텍처 문서)를 가볍게 훑어봐.
+
+위 문서들을 모두 파악한 후, 네가 이해한 **"현재 시스템의 개발 단계"**와 **"지금 즉시 시작할 첫 번째 구체적 작업"**을 나에게 간략히 브리핑해줘. 
+내 승인이 떨어지거나, 후속작업 프롬프트를 제시하면 이후 작업을 시작하면 돼.

@@ -14,19 +14,11 @@ import { ErrorBanner } from "./common/ErrorBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import type { Column } from "./common/DataTable";
 import { Lock, Wallet, TrendingUp, TrendingDown, X, Users } from "lucide-react";
+import { formatKrw, formatKstElapsed, formatKstDateTime } from "@/lib/utils";
 
 /* ───────────────────────────────────────────
  * Helpers
  * ─────────────────────────────────────────── */
-function formatCurrency(val: number | null | undefined, currency: string = "KRW"): string {
-  if (val == null) return "—";
-  if (Number.isNaN(val)) return "—";
-  const formatted = new Intl.NumberFormat("ko-KR", {
-    maximumFractionDigits: currency === "KRW" ? 0 : 2,
-  }).format(val);
-  if (currency === "KRW") return `${formatted}원`;
-  return `${formatted} ${currency}`;
-}
 
 function formatQty(val: number | null | undefined): string {
   if (val == null) return "—";
@@ -38,53 +30,6 @@ function truncateUuid(uuid: string): string {
   return uuid.length > 8 ? uuid.slice(0, 8) + "…" : uuid;
 }
 
-/**
- * Format an ISO timestamp string for snapshot display.
- *
- * Output includes:
- * - ``yyyy-MM-dd HH:mm:ss`` in browser local time
- * - UTC offset (e.g. ``UTC+09:00``)
- * - Elapsed time since the snapshot (e.g. ``약 11시간 전``)
- */
-function formatSnapshotTime(iso: string): string {
-  const d = new Date(iso);
-  const y = d.getFullYear();
-  const mo = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  const ss = String(d.getSeconds()).padStart(2, "0");
-
-  // ── Timezone offset ──────────────────────────────────────────────
-  // getTimezoneOffset() returns minutes BEHIND UTC, so negate it.
-  // KST (UTC+9) → -540 → we display UTC+09:00
-  const offsetMin = -d.getTimezoneOffset();
-  const sign = offsetMin >= 0 ? "+" : "-";
-  const tzHours = String(Math.floor(Math.abs(offsetMin) / 60)).padStart(2, "0");
-  const tzMins = String(Math.abs(offsetMin) % 60).padStart(2, "0");
-  const tzSuffix = `UTC${sign}${tzHours}:${tzMins}`;
-
-  // ── Elapsed time ─────────────────────────────────────────────────
-  const now = new Date();
-  const diffMs = now.getTime() - d.getTime();
-  let elapsed = "";
-  if (diffMs >= 0) {
-    const diffMin = Math.floor(diffMs / 60000);
-    if (diffMin < 1) {
-      elapsed = "방금 전";
-    } else if (diffMin < 60) {
-      elapsed = `${diffMin}분 전`;
-    } else if (diffMin < 1440) {
-      const hours = Math.floor(diffMin / 60);
-      const mins = diffMin % 60;
-      elapsed = `${hours}시간 ${mins}분 전`;
-    } else {
-      elapsed = `${Math.floor(diffMin / 1440)}일 전`;
-    }
-  }
-
-  return `${y}-${mo}-${dd} ${hh}:${mm}:${ss} ${tzSuffix} (${elapsed})`;
-}
 
 /* ───────────────────────────────────────────
  * AccountsView
@@ -190,17 +135,26 @@ export default function AccountsView() {
     : null;
 
   // Summary cards derived values (always based on latest snapshot per instrument)
-  const totalPnl = useMemo(() => {
-    return latestPositions.reduce((sum, p) => sum + (p.unrealized_pnl ?? 0), 0);
-  }, [latestPositions]);
-
+  // ── KIS 우선: total_asset (tot_evlu_amt)이 있으면 KIS 총평가금액 사용, 없으면 fallback 계산 ──
   const totalValue = useMemo(() => {
+    if (cashBalance?.total_asset != null) {
+      return cashBalance.total_asset;
+    }
+    // Fallback: position market value + settled cash
     const posValue = latestPositions.reduce(
       (sum, p) => sum + p.quantity * p.market_price,
       0,
     );
     const cash = cashBalance?.settled_cash ?? 0;
     return posValue + cash;
+  }, [latestPositions, cashBalance]);
+
+  // ── KIS 우선: total_unrealized_pnl (evlu_pfls_smtl_amt)이 있으면 KIS 평가손익 사용, 없으면 fallback 계산 ──
+  const totalPnl = useMemo(() => {
+    if (cashBalance?.total_unrealized_pnl != null) {
+      return cashBalance.total_unrealized_pnl;
+    }
+    return latestPositions.reduce((sum, p) => sum + (p.unrealized_pnl ?? 0), 0);
   }, [latestPositions, cashBalance]);
 
   // ── Column definitions ──────────────────────────────────────────
@@ -281,12 +235,12 @@ export default function AccountsView() {
     {
       key: "average_price",
       header: "평균단가",
-      render: (r) => formatCurrency(r.average_price, "KRW"),
+      render: (r) => formatKrw(r.average_price),
     },
     {
       key: "market_price",
       header: "시장가",
-      render: (r) => formatCurrency(r.market_price, "KRW"),
+      render: (r) => formatKrw(r.market_price),
     },
     {
       key: "unrealized_pnl",
@@ -298,12 +252,12 @@ export default function AccountsView() {
             className={`text-xs font-semibold ${pnl >= 0 ? "text-[#16a34a]" : "text-[#dc2626]"}`}
           >
             {pnl >= 0 ? "+" : ""}
-            {formatCurrency(pnl, "KRW")}
+            {formatKrw(pnl)}
           </span>
         );
       },
     },
-    { key: "snapshot_at", header: "스냅샷 시각" },
+    { key: "snapshot_at", header: "스냅샷 시각", render: (r) => formatKstDateTime(r.snapshot_at) },
     {
       key: "actions",
       header: "",
@@ -530,7 +484,7 @@ export default function AccountsView() {
                         </div>
                       </div>
                       <p className="text-2xl font-semibold text-[#0f172a]">
-                        {formatCurrency(totalValue, cashBalance?.currency)}
+                        {formatKrw(totalValue)}
                       </p>
                       <p className="text-xs text-[#64748b] mt-1">총 자산</p>
                     </div>
@@ -542,7 +496,7 @@ export default function AccountsView() {
                       </div>
                       <p className="text-2xl font-semibold text-[#0f172a]">
                         {cashBalance
-                          ? formatCurrency(cashBalance.settled_cash, cashBalance.currency)
+                          ? formatKrw(cashBalance.settlement_amount ?? cashBalance.settled_cash)
                           : "—"}
                       </p>
                       <p className="text-xs text-[#64748b] mt-1">현금 잔고</p>
@@ -569,7 +523,7 @@ export default function AccountsView() {
                         }`}
                       >
                         {totalPnl >= 0 ? "+" : ""}
-                        {formatCurrency(totalPnl, cashBalance?.currency)}
+                        {formatKrw(totalPnl)}
                       </p>
                       <p className="text-xs text-[#64748b] mt-1">미실현 손익</p>
                     </div>
@@ -583,26 +537,26 @@ export default function AccountsView() {
                           브로커 스냅샷 — 현금 잔고
                         </h4>
                         <span className="text-xs text-[#94a3b8]">
-                          스냅샷: {formatSnapshotTime(cashBalance.snapshot_at)}
+                          스냅샷: {formatKstElapsed(cashBalance.snapshot_at)}
                         </span>
                       </div>
                       <div className="flex gap-6 text-sm flex-wrap">
                         <div>
                           <span className="text-[#64748b]">예수금: </span>
                           <span className="font-semibold text-[#0f172a]">
-                            {formatCurrency(cashBalance.available_cash, cashBalance.currency)}
+                            {formatKrw(cashBalance.available_cash)}
                           </span>
                         </div>
                         <div>
                           <span className="text-[#64748b]">결제완료: </span>
                           <span className="font-semibold text-[#0f172a]">
-                            {formatCurrency(cashBalance.settled_cash, cashBalance.currency)}
+                            {formatKrw(cashBalance.settled_cash)}
                           </span>
                         </div>
                         <div>
                           <span className="text-[#64748b]">미결제: </span>
                           <span className="font-semibold text-[#0f172a]">
-                            {formatCurrency(cashBalance.unsettled_cash, cashBalance.currency)}
+                            {formatKrw(cashBalance.unsettled_cash)}
                           </span>
                         </div>
                         <div>
@@ -640,7 +594,7 @@ export default function AccountsView() {
                         )}
                         {positions.length > 0 && (
                           <span className="text-xs text-[#94a3b8]">
-                            스냅샷: {formatSnapshotTime(positions[0].snapshot_at)}
+                            스냅샷: {formatKstElapsed(positions[0].snapshot_at)}
                           </span>
                         )}
                       </div>

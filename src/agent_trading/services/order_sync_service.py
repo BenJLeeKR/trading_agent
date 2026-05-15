@@ -28,6 +28,7 @@ _SYNCABLE_STATUSES: frozenset[OrderStatus] = frozenset(
         OrderStatus.SUBMITTED,
         OrderStatus.ACKNOWLEDGED,
         OrderStatus.PARTIALLY_FILLED,
+        OrderStatus.RECONCILE_REQUIRED,
     }
 )
 
@@ -65,12 +66,13 @@ class OrderSyncService:
     Broker에 제출된 주문의 상태와 체결 내역을 주기적으로 조회하여
     시스템 내부 상태에 반영한다.
 
-    Reconciliation 경로와 충돌하지 않도록 설계되며, 오직
-    ``SUBMITTED`` / ``ACKNOWLEDGED`` / ``PARTIALLY_FILLED`` 상태의
-    주문에 대해서만 동작한다.
+    Reconciliation 경로와 충돌하지 않도록 설계되며,
+    ``SUBMITTED`` / ``ACKNOWLEDGED`` / ``PARTIALLY_FILLED`` /
+    ``RECONCILE_REQUIRED`` 상태의 주문에 대해서 동작한다.
 
-    ``RECONCILE_REQUIRED`` 상태의 주문은 ``ReconciliationService``가
-    담당하므로 이 서비스의 범위를 벗어난다.
+    ``RECONCILE_REQUIRED`` 주문은 broker truth 조회 후
+    ``transition_to()``를 통해 정상 상태로 전이된다.
+    broker truth 미확인 시 현재 상태를 유지한다 (자동 reject 금지).
     """
 
     repos: RepositoryContainer
@@ -338,6 +340,7 @@ class OrderSyncService:
         현재 구현은 잘 알려진 경로만 하드코딩한다:
         - SUBMITTED → ACKNOWLEDGED → PARTIALLY_FILLED → FILLED
         - SUBMITTED → ACKNOWLEDGED → PARTIALLY_FILLED
+        - RECONCILE_REQUIRED → ACKNOWLEDGED → PARTIALLY_FILLED → FILLED
 
         향후 더 일반적인 chain builder로 확장 가능.
         """
@@ -357,6 +360,13 @@ class OrderSyncService:
             return [OrderStatus.ACKNOWLEDGED]
         if current == OrderStatus.ACKNOWLEDGED and target == OrderStatus.FILLED:
             return [
+                OrderStatus.PARTIALLY_FILLED,
+                OrderStatus.FILLED,
+            ]
+        # RECONCILE_REQUIRED → FILLED: broker truth 확인 후 chain 전이
+        if current == OrderStatus.RECONCILE_REQUIRED and target == OrderStatus.FILLED:
+            return [
+                OrderStatus.ACKNOWLEDGED,
                 OrderStatus.PARTIALLY_FILLED,
                 OrderStatus.FILLED,
             ]
@@ -526,6 +536,7 @@ _ACTIVE_SYNC_STATUSES: list[OrderStatus] = [
     OrderStatus.SUBMITTED,
     OrderStatus.ACKNOWLEDGED,
     OrderStatus.PARTIALLY_FILLED,
+    OrderStatus.RECONCILE_REQUIRED,
 ]
 
 

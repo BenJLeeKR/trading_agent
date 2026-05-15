@@ -61,6 +61,7 @@ from scripts.run_paper_decision_loop import (
     _parse_args,
     _parse_universe_symbols,
     _read_trading_universe,
+    _resolve_symbol_price,
     _run_one_cycle,
     _serialize_cycle_result,
     _serialize_precheck,
@@ -706,3 +707,129 @@ class TestTradingUniverse:
         ):
             result = await _read_trading_universe()
             assert result == (UniverseSymbol("005930", "KRX"),)
+
+
+# ---------------------------------------------------------------------------
+# _resolve_symbol_price tests
+# ---------------------------------------------------------------------------
+
+
+class TestResolveSymbolPrice:
+    """``_resolve_symbol_price()`` — symbol별 quote 기반 가격 결정."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """각 테스트 전에 KIS_SMOKE_PRICE를 제거하여 환경 의존성 제거."""
+        monkeypatch.delenv("KIS_SMOKE_PRICE", raising=False)
+
+    @pytest.mark.asyncio
+    async def test_uses_live_quote(self) -> None:
+        """Live quote에서 가격을 가져오는 경로."""
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.get_quote = AsyncMock(
+            return_value=MagicMock(last=Decimal("15000"))
+        )
+
+        price = await _resolve_symbol_price(
+            symbol="000880",
+            market="KRX",
+            broker=broker,
+        )
+
+        assert price == Decimal("15000")
+        broker.get_quote.assert_awaited_once_with("000880", "KRX")
+
+    @pytest.mark.asyncio
+    async def test_fallback_on_quote_none(self) -> None:
+        """Quote.last가 None이면 fallback."""
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.get_quote = AsyncMock(
+            return_value=MagicMock(last=None)
+        )
+
+        price = await _resolve_symbol_price(
+            symbol="000880",
+            market="KRX",
+            broker=broker,
+        )
+
+        # KIS_SMOKE_PRICE가 없으므로 default 50000
+        assert price == Decimal("50000")
+
+    @pytest.mark.asyncio
+    async def test_fallback_on_quote_zero(self) -> None:
+        """Quote.last가 0이면 fallback."""
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.get_quote = AsyncMock(
+            return_value=MagicMock(last=Decimal("0"))
+        )
+
+        price = await _resolve_symbol_price(
+            symbol="000880",
+            market="KRX",
+            broker=broker,
+        )
+
+        assert price == Decimal("50000")
+
+    @pytest.mark.asyncio
+    async def test_fallback_on_quote_exception(self) -> None:
+        """Quote fetch 예외 발생 시 fallback."""
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.get_quote = AsyncMock(side_effect=RuntimeError("API unavailable"))
+
+        price = await _resolve_symbol_price(
+            symbol="000880",
+            market="KRX",
+            broker=broker,
+        )
+
+        assert price == Decimal("50000")
+
+    @pytest.mark.asyncio
+    async def test_fallback_no_broker(self) -> None:
+        """Broker가 None이면 fallback."""
+        price = await _resolve_symbol_price(
+            symbol="000880",
+            market="KRX",
+            broker=None,
+        )
+
+        assert price == Decimal("50000")
+
+    @pytest.mark.asyncio
+    async def test_uses_kis_smoke_price_env_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Quote 실패 시 KIS_SMOKE_PRICE env var를 fallback으로 사용."""
+        monkeypatch.setenv("KIS_SMOKE_PRICE", "99999")
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.get_quote = AsyncMock(side_effect=RuntimeError("API unavailable"))
+
+        price = await _resolve_symbol_price(
+            symbol="000880",
+            market="KRX",
+            broker=broker,
+        )
+
+        assert price == Decimal("99999")
+
+    @pytest.mark.asyncio
+    async def test_quote_priority_over_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Live quote가 KIS_SMOKE_PRICE env var보다 우선."""
+        monkeypatch.setenv("KIS_SMOKE_PRICE", "99999")
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.get_quote = AsyncMock(
+            return_value=MagicMock(last=Decimal("15000"))
+        )
+
+        price = await _resolve_symbol_price(
+            symbol="000880",
+            market="KRX",
+            broker=broker,
+        )
+
+        # Live quote 우선
+        assert price == Decimal("15000")

@@ -4,6 +4,7 @@ import type { AgentRunResponse } from "../types/api";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { AgentTypeBadge } from "./AgentTypeBadge";
+import { formatKstDateTime } from "../lib/utils";
 
 /* ───────────────────────────────────────────
  * Status badge colour
@@ -147,7 +148,7 @@ export default function AgentRunsPanel({ decisionContextId }: AgentRunsPanelProp
                 <div className="flex items-center gap-2">
                   <AgentTypeBadge agentType={run.agent_type} />
                   <span className="text-xs text-[#64748b]">
-                    {new Date(run.started_at).toLocaleString()}
+                    {formatKstDateTime(run.started_at)}
                   </span>
                 </div>
                 <span

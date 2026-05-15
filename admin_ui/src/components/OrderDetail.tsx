@@ -9,6 +9,7 @@ import { LoadingSpinner } from "./common/LoadingSpinner";
 import { ErrorBanner } from "./common/ErrorBanner";
 import type { Column } from "./common/DataTable";
 import { ArrowLeft } from "lucide-react";
+import { formatKstDateTime } from "../lib/utils";
 
 export default function OrderDetail() {
   const { orderId } = useParams<{ orderId: string }>();
@@ -158,11 +159,11 @@ export default function OrderDetail() {
           </div>
           <div>
             <dt className="text-sm text-[#64748b]">생성일</dt>
-            <dd className="text-sm text-[#0f172a] mt-0.5">{order.created_at ?? "—"}</dd>
+            <dd className="text-sm text-[#0f172a] mt-0.5">{formatKstDateTime(order.created_at)}</dd>
           </div>
           <div>
             <dt className="text-sm text-[#64748b]">수정일</dt>
-            <dd className="text-sm text-[#0f172a] mt-0.5">{order.updated_at ?? "—"}</dd>
+            <dd className="text-sm text-[#0f172a] mt-0.5">{formatKstDateTime(order.updated_at)}</dd>
           </div>
         </dl>
 

@@ -8,6 +8,7 @@ import { StatusBadge } from "./common/StatusBadge";
 import { FilterBar } from "./common/FilterBar";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
+import { formatKstDateTime } from "../lib/utils";
 import { useEnumMetadata, getEnumLabel } from "../hooks/useEnumMetadata";
 import type { Column } from "./common/DataTable";
 import { X, Brain } from "lucide-react";
@@ -135,7 +136,7 @@ export default function DecisionsView() {
     {
       key: "created_at",
       header: "시각",
-      render: (r) => new Date(r.created_at).toLocaleString(),
+      render: (r) => formatKstDateTime(r.created_at),
     },
   ];
 
@@ -262,7 +263,7 @@ export default function DecisionsView() {
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-sm text-[#64748b]">생성일</dt>
-                  <dd className="text-sm text-[#0f172a]">{new Date(selectedDecision.created_at).toLocaleString()}</dd>
+                  <dd className="text-sm text-[#0f172a]">{formatKstDateTime(selectedDecision.created_at)}</dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-sm text-[#64748b]">컨텍스트 ID</dt>
@@ -348,7 +349,7 @@ export default function DecisionsView() {
                   </div>
                   <div className="flex justify-between">
                     <dt className="text-sm text-[#64748b]">시장 시각</dt>
-                    <dd className="text-sm text-[#0f172a]">{new Date(contextDetail.market_timestamp).toLocaleString()}</dd>
+                    <dd className="text-sm text-[#0f172a]">{formatKstDateTime(contextDetail.market_timestamp)}</dd>
                   </div>
                 </dl>
               )}

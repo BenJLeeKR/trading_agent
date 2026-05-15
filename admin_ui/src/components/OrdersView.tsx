@@ -9,6 +9,7 @@ import { LoadingSpinner } from "./common/LoadingSpinner";
 import { FilterBar } from "./common/FilterBar";
 import { useEnumMetadata, getEnumLabel } from "../hooks/useEnumMetadata";
 import { X } from "lucide-react";
+import { formatKstDateTime } from "../lib/utils";
 
 export default function OrdersView() {
   const { fieldMap } = useEnumMetadata();
@@ -84,7 +85,7 @@ export default function OrdersView() {
       };
       return <StatusBadge variant={variants[r.status] || "info"}>{getEnumLabel(fieldMap, "order_status", r.status)}</StatusBadge>;
     }},
-    { key: "created_at", header: "생성일" },
+    { key: "created_at", header: "생성일", render: (r: OrderSummary) => formatKstDateTime(r.created_at) },
   ];
 
   if (loading) return <LoadingSpinner />;
@@ -201,7 +202,7 @@ export default function OrdersView() {
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-sm text-[#64748b]">생성일</dt>
-                  <dd className="text-sm font-medium text-[#0f172a]">{selectedOrder.created_at ?? "—"}</dd>
+                  <dd className="text-sm font-medium text-[#0f172a]">{formatKstDateTime(selectedOrder.created_at)}</dd>
                 </div>
               </dl>
               <div className="mt-4 pt-4 border-t border-[#e2e8f0]">

@@ -54,6 +54,13 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, NoReturn
 
+# Lazy import for python-dotenv (optional, for local dev)
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
+
+from agent_trading.brokers.base import BrokerAdapter
 from agent_trading.domain.enums import OrderSide, OrderType
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.repositories.container import RepositoryContainer
@@ -86,6 +93,81 @@ from scripts.run_orchestrator_once import (
     _resolve_smoke_price,
     _seed_if_empty,
 )
+
+# ── Price resolution ──────────────────────────────────────────────────────────
+
+_DEFAULT_SAFE_PRICE = Decimal("50000")
+"""Ultimate fallback price when both live quote and KIS_SMOKE_PRICE are unavailable."""
+
+
+async def _resolve_symbol_price(
+    symbol: str,
+    market: str,
+    broker: BrokerAdapter | None,
+) -> Decimal:
+    """Resolve a per-symbol order price from live broker quote.
+
+    Priority
+    --------
+    1. ``broker.get_quote(symbol, market).last`` — live quote current price.
+    2. ``KIS_SMOKE_PRICE`` env var — smoke-test fallback (legacy).
+    3. ``Decimal("50000")`` — safe default when nothing else works.
+
+    Always logs the resolved price and its source for observability.
+    """
+    # ── Priority 1: Live broker quote ────────────────────────────────────
+    if broker is not None and hasattr(broker, "get_quote"):
+        try:
+            quote = await broker.get_quote(symbol, market)
+            if quote is not None and quote.last is not None and quote.last > 0:
+                logger.info(
+                    "Resolved price symbol=%s price=%s source=live_quote",
+                    symbol,
+                    quote.last,
+                )
+                return quote.last
+            logger.warning(
+                "Quote for %s returned invalid last=%s, falling back.",
+                symbol,
+                quote.last,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Quote fetch failed symbol=%s error=%s, falling back.",
+                symbol,
+                exc,
+            )
+    else:
+        logger.debug(
+            "No broker adapter available for symbol=%s, using fallback price.",
+            symbol,
+        )
+
+    # ── Priority 2: KIS_SMOKE_PRICE env var (legacy fallback) ────────────
+    raw = os.environ.get("KIS_SMOKE_PRICE")
+    if raw is not None:
+        try:
+            price = Decimal(raw)
+            logger.info(
+                "Resolved price symbol=%s price=%s source=KIS_SMOKE_PRICE(fallback)",
+                symbol,
+                price,
+            )
+            return price
+        except (InvalidOperation, ValueError):
+            logger.warning(
+                "Invalid KIS_SMOKE_PRICE=%r for symbol=%s, falling back to default.",
+                raw,
+                symbol,
+            )
+
+    # ── Priority 3: Safe default ─────────────────────────────────────────
+    logger.warning(
+        "No price source available for symbol=%s, using default price=%s",
+        symbol,
+        _DEFAULT_SAFE_PRICE,
+    )
+    return _DEFAULT_SAFE_PRICE
 
 logger = logging.getLogger(__name__)
 
@@ -533,8 +615,15 @@ async def _run_one_cycle(
             # ── 2. Pre-check snapshot health ────────────────────────────
             precheck = await _run_precheck(repos)
 
+            # ── 2.5 Resolve symbol-specific price ───────────────────────
+            broker = runtime.get("primary_broker_adapter")
+            resolved_price = await _resolve_symbol_price(
+                symbol=symbol,
+                market=market,
+                broker=broker,
+            )
+
             # ── 3. Build request ────────────────────────────────────────
-            resolved_price = _resolve_smoke_price()
             request = SubmitOrderRequest(
                 account_ref=ACCOUNT_ALIAS,
                 client_order_id=f"paper-loop-{symbol}-{cycle}-{int(start)}",
@@ -580,6 +669,16 @@ async def _run_one_cycle(
                     order_manager=order_manager,
                     broker=broker,
                 )
+                if result is not None:
+                    logger.info(
+                        "Cycle %d submit result: status=%s error_phase=%s "
+                        "error_message=%s trade_decision_id=%s",
+                        cycle,
+                        result.status,
+                        getattr(result, "error_phase", None),
+                        getattr(result, "error_message", None),
+                        getattr(result, "trade_decision_id", None),
+                    )
             else:
                 # Should not happen (CLI defaults ensure submit=True or dry_run)
                 result = SubmitResult(
@@ -792,6 +891,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _load_env() -> None:
+    """Load .env if python-dotenv is available.
+
+    Existing environment variables are not overwritten, which keeps Docker or
+    manually exported runtime settings authoritative.
+    """
+    if load_dotenv is not None:
+        load_dotenv()
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point for the continuous decision loop.
 
@@ -814,6 +923,8 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s [%(levelname)s] paper-decision-loop: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+    _load_env()
 
     args = _parse_args(argv)
 

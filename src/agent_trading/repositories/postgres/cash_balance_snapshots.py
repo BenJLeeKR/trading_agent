@@ -27,8 +27,9 @@ class PostgresCashBalanceSnapshotRepository:
             INSERT INTO trading.cash_balance_snapshots
                 (cash_balance_snapshot_id, account_id, currency,
                  available_cash, settled_cash, unsettled_cash,
-                 source_of_truth, snapshot_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                 source_of_truth, snapshot_at,
+                 total_asset, settlement_amount, total_unrealized_pnl)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING *
             """,
             snapshot.cash_balance_snapshot_id,
@@ -39,6 +40,9 @@ class PostgresCashBalanceSnapshotRepository:
             snapshot.unsettled_cash,
             snapshot.source_of_truth,
             snapshot.snapshot_at,
+            snapshot.total_asset,
+            snapshot.settlement_amount,
+            snapshot.total_unrealized_pnl,
         )
         return row_to_entity(row, CashBalanceSnapshotEntity)
 

@@ -1,7 +1,7 @@
 import type { AgentRunResponse } from "../types/api";
 import { AgentTypeBadge } from "./AgentTypeBadge";
 import { StatusBadge } from "./common/StatusBadge";
-import { cn } from "@/lib/utils";
+import { cn, formatKstTime } from "@/lib/utils";
 import { Link } from "react-router-dom";
 
 interface AgentRunsTableProps {
@@ -15,16 +15,6 @@ function truncateId(id: string, length = 12) {
   return id.length > length ? `${id.substring(0, length)}...` : id;
 }
 
-function formatTime(dateString: string | null) {
-  if (!dateString) return "-";
-  const date = new Date(dateString);
-  return date.toLocaleTimeString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
 export function AgentRunsTable({ runs, selectedId, onRowClick, loading }: AgentRunsTableProps) {
   if (loading) {
@@ -96,7 +86,7 @@ export function AgentRunsTable({ runs, selectedId, onRowClick, loading }: AgentR
                     </Link>
                   </td>
                   <td className="px-4 py-3 text-sm text-[#0f172a]">
-                    {formatTime(run.started_at)}
+                    {formatKstTime(run.started_at)}
                   </td>
                   <td className="px-4 py-3 text-sm text-[#64748b] truncate max-w-xs">
                     {summary ? (

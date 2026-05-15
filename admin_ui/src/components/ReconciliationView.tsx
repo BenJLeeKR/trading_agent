@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, Fragment } from "react";
+import { formatKstDateTime, formatKrw } from "@/lib/utils";
 import type {
   ReconciliationRunSummary,
   BlockingLockStatus,
@@ -210,13 +211,8 @@ export default function ReconciliationView() {
     },
     {
       key: "started_at",
-      header: "Date",
-      render: (r) => new Date(r.started_at).toLocaleDateString(),
-    },
-    {
-      key: "started_at",
-      header: "Time",
-      render: (r) => new Date(r.started_at).toLocaleTimeString(),
+      header: "시작",
+      render: (r) => formatKstDateTime(r.started_at),
     },
     {
       key: "status",
@@ -254,7 +250,7 @@ export default function ReconciliationView() {
       header: "주문가",
       render: (r: ReconcileRequiredCase) => (
         <span className="font-mono text-xs">
-          {r.order.requested_price?.toLocaleString() ?? "—"}
+          {formatKrw(r.order.requested_price)}
         </span>
       ),
     },
@@ -415,7 +411,7 @@ export default function ReconciliationView() {
                         {rc.order.requested_quantity}
                       </td>
                       <td className="px-4 py-2.5 text-sm font-mono text-[#64748b]">
-                        {rc.order.requested_price?.toLocaleString() ?? "—"}
+                        {formatKrw(rc.order.requested_price)}
                       </td>
                       <td className="px-4 py-2.5">
                         <StatusBadge
@@ -510,10 +506,10 @@ export default function ReconciliationView() {
                       </StatusBadge>
                     </td>
                     <td className="px-4 py-2.5 text-sm text-[#64748b]">
-                      {new Date(lock.acquired_at).toLocaleTimeString()}
+                      {formatKstDateTime(lock.acquired_at)}
                     </td>
                     <td className="px-4 py-2.5 text-sm text-[#64748b]">
-                      {lock.expires_at ? new Date(lock.expires_at).toLocaleTimeString() : "—"}
+                      {lock.expires_at ? formatKstDateTime(lock.expires_at) : "—"}
                     </td>
                   </tr>
                 ))}
@@ -589,12 +585,12 @@ export default function ReconciliationView() {
                   </div>
                   <div className="flex justify-between">
                     <dt className="text-sm text-[#64748b]">시작</dt>
-                    <dd className="text-sm text-[#0f172a]">{new Date(selectedRun.started_at).toLocaleString()}</dd>
+                    <dd className="text-sm text-[#0f172a]">{formatKstDateTime(selectedRun.started_at)}</dd>
                   </div>
                   <div className="flex justify-between">
                     <dt className="text-sm text-[#64748b]">완료</dt>
                     <dd className="text-sm text-[#0f172a]">
-                      {selectedRun.completed_at ? new Date(selectedRun.completed_at).toLocaleString() : "—"}
+                      {selectedRun.completed_at ? formatKstDateTime(selectedRun.completed_at) : "—"}
                     </dd>
                   </div>
                   <div className="flex justify-between">
@@ -688,7 +684,7 @@ function BrokerInfoPanel({
               </td>
               <td className="px-2 py-1 text-[#64748b]">
                 {bo.last_synced_at
-                  ? new Date(bo.last_synced_at).toLocaleString()
+                  ? formatKstDateTime(bo.last_synced_at)
                   : "—"}
               </td>
             </tr>

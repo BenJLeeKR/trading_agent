@@ -207,6 +207,7 @@ _KNOWN_FAILURE_CODES: frozenset[str] = frozenset({
     "EGW00421",  # 정정취소 실패 (수량부족)
     "EGW00422",  # 정정취소 실패 (가격초과)
     "EGW00504",  # 조회실패 (기간초과)
+    "40270000",  # 모의투자 상/하한가 오류 — KIS paper trading only
 })
 
 
@@ -321,28 +322,75 @@ class KISRestClient:
         """Load access token from file cache if valid.
 
         Validates fingerprint, env, base_url, and expiry.
-        Silent on any failure — falls back to HTTP call.
+        Logs explicit reason on cache miss — falls back to HTTP call.
         """
         if not self.dev_token_cache_enabled:
+            logger.info(
+                "Token cache: miss reason=disabled enabled=%s path=%s",
+                self.dev_token_cache_enabled,
+                self.dev_token_cache_path,
+            )
             return
         path = Path(self.dev_token_cache_path)
         if not path.exists():
+            logger.info(
+                "Token cache: miss reason=file_missing enabled=%s path=%s",
+                self.dev_token_cache_enabled,
+                self.dev_token_cache_path,
+            )
             return
         try:
             data = json.loads(path.read_text())
             expected_fp = hashlib.sha256(self.api_key.encode()).hexdigest()[:16]
             if data.get("app_key_fingerprint") != expected_fp:
+                logger.info(
+                    "Token cache: miss reason=fingerprint_mismatch enabled=%s path=%s",
+                    self.dev_token_cache_enabled,
+                    self.dev_token_cache_path,
+                )
                 return
             if data.get("kis_env") != self.env:
+                logger.info(
+                    "Token cache: miss reason=env_mismatch enabled=%s path=%s cache_env=%s current_env=%s",
+                    self.dev_token_cache_enabled,
+                    self.dev_token_cache_path,
+                    data.get("kis_env"),
+                    self.env,
+                )
                 return
             if data.get("base_url") != self._base_url:
+                logger.info(
+                    "Token cache: miss reason=base_url_mismatch enabled=%s path=%s cache_base_url=%s current_base_url=%s",
+                    self.dev_token_cache_enabled,
+                    self.dev_token_cache_path,
+                    data.get("base_url"),
+                    self._base_url,
+                )
                 return
             expires_at = float(data["expires_at"])
             if time.time() >= expires_at - 60:
+                logger.info(
+                    "Token cache: miss reason=expired enabled=%s path=%s expires_at=%s",
+                    self.dev_token_cache_enabled,
+                    self.dev_token_cache_path,
+                    expires_at,
+                )
                 return
             self._access_token = data["access_token"]
             self._token_expires_at = expires_at
-        except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError):
+            logger.info(
+                "Token cache: hit fingerprint=%s expires_at=%s path=%s",
+                expected_fp,
+                expires_at,
+                self.dev_token_cache_path,
+            )
+        except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
+            logger.info(
+                "Token cache: miss reason=read_error enabled=%s path=%s error=%s",
+                self.dev_token_cache_enabled,
+                self.dev_token_cache_path,
+                exc,
+            )
             return
 
     async def _save_dev_token_cache(self) -> None:
@@ -391,12 +439,21 @@ class KISRestClient:
             # 1. Double-check cache (standard lock pattern)
             now_wall = time.time()
             if self._access_token is not None and now_wall < self._token_expires_at:
+                logger.debug(
+                    "Token cache: in-memory hit expires_at=%s",
+                    self._token_expires_at,
+                )
                 return self._access_token
 
             # 1b. Dev token cache: load from file if in-memory cache is empty
             if self._access_token is None:
                 await self._load_dev_token_cache()
                 if self._access_token is not None and now_wall < self._token_expires_at:
+                    logger.debug(
+                        "Token cache: dev-file hit expires_at=%s path=%s",
+                        self._token_expires_at,
+                        self.dev_token_cache_path,
+                    )
                     return self._access_token
 
             # 2. Strict 1 rps: enforce minimum 1s between actual HTTP calls
@@ -1040,11 +1097,17 @@ class KISRestClient:
             output = [output]
         return output
 
-    async def get_cash_balance(self) -> dict[str, Any]:
+    async def get_cash_balance(self, after_hours: bool = False) -> dict[str, Any]:
         """Retrieve cash balance (잔고조회 — cash component).
 
         Uses inquire-balance endpoint and extracts the cash portion
         from ``output2`` (예수금 총괄).
+
+        Parameters
+        ----------
+        after_hours:
+            When ``True``, sets ``AFHR_FLPR_YN=Y`` for after-hours cash
+            inquiry (15:31∼16:31 KST).  Default ``False`` (regular hours).
 
         Note
         ----
@@ -1062,7 +1125,7 @@ class KISRestClient:
         params = {
             "CANO": self.account_number,
             "ACNT_PRDT_CD": self.account_product_code,
-            "AFHR_FLPR_YN": "N",
+            "AFHR_FLPR_YN": "Y" if after_hours else "N",
             "OFL_YN": "",
             "INQR_DVSN": "01",
             "UNPR_DVSN": "01",

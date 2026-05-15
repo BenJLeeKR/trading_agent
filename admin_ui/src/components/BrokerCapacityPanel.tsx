@@ -3,6 +3,7 @@ import type { BrokerCapacityResponse } from "../types/api";
 import { getBrokerCapacity } from "../api/client";
 import { StatusBadge } from "./common/StatusBadge";
 import { ErrorBanner } from "./common/ErrorBanner";
+import { formatKstTime } from "@/lib/utils";
 import {
   Activity,
   Wifi,
@@ -169,7 +170,7 @@ export default function BrokerCapacityPanel() {
               {environment}
             </span>
             <span className="text-xs text-[#94a3b8]">
-              스냅샷 {new Date(generated_at).toLocaleTimeString("ko-KR")}
+              스냅샷 {formatKstTime(generated_at)}
             </span>
           </div>
           <div className="flex items-center gap-2 text-sm">
