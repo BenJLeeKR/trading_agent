@@ -10,7 +10,9 @@ from __future__ import annotations
 from datetime import date, datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+
+from agent_trading.domain.enums import OrderStatus
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +71,23 @@ class EnumMetadataListResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class SchedulerHealth(BaseModel):
+    """Scheduler freshness information embedded in ``/health`` response."""
+
+    last_heartbeat_at: datetime | None = None
+    """Most recent heartbeat timestamp from the ops-scheduler."""
+
+    is_trading_day: bool | None = None
+    """Whether the current market session is a trading day."""
+
+    checked_at: datetime | None = None
+    """When the market session was last checked."""
+
+    healthy: bool | None = None
+    """Derived health: True if heartbeat is recent (for trading days) or session
+    is fresh (for non-trading days)."""
+
+
 class HealthResponse(BaseModel):
     """``GET /health`` — minimal server status + optional snapshot sync freshness."""
 
@@ -91,6 +110,10 @@ class HealthResponse(BaseModel):
     snapshot_sync_consecutive_failures: int | None = None
     """Number of consecutive ``status == 'failed'`` runs (reverse chronological)."""
 
+    # ── Scheduler Freshness (optional — queried from market_sessions table) ──
+    scheduler: SchedulerHealth | None = None
+    """Scheduler heartbeat and trading day information."""
+
 
 class OrderSummary(BaseModel):
     """``GET /orders`` list item — inspection-purpose subset."""
@@ -106,6 +129,8 @@ class OrderSummary(BaseModel):
     requested_quantity: float
     requested_price: float | None = None
     symbol: str | None = None
+    instrument_name: str | None = None
+    """Human-readable instrument name (e.g. ``Samsung Electronics``)."""
     correlation_id: str
     trade_decision_id: str | None = None
     decision_context_id: str | None = None
@@ -183,6 +208,8 @@ class SnapshotSyncRunSummary(BaseModel):
     status: str
     started_at: datetime
     completed_at: datetime | None = None
+    after_hours: bool = False
+    """Whether this sync was an after-hours cash-only run."""
     env_filter: str | None = None
     status_filter: str | None = None
     summary_json: dict[str, object] | None = None
@@ -212,6 +239,9 @@ class SnapshotSyncRunHealthSummary(BaseModel):
     stale_threshold_seconds: int = 900
     """The threshold used for staleness computation."""
 
+    after_hours: bool = False
+    """``True`` when the most recent run was an after-hours (cash-only) sync."""
+
 
 class BlockingLockStatus(BaseModel):
     """``GET /reconciliation/locks`` — blocking lock status."""
@@ -220,6 +250,8 @@ class BlockingLockStatus(BaseModel):
     account_id: str
     strategy_id: str | None = None
     symbol: str | None = None
+    instrument_name: str | None = None
+    """Human-readable instrument name (e.g. ``Samsung Electronics``)."""
     side: str | None = None
     reason: str
     locked_by_run_id: str
@@ -260,6 +292,8 @@ class TradeDecisionDetail(BaseModel):
     side: str
     strategy_id: str
     symbol: str
+    instrument_name: str | None = None
+    """Human-readable instrument name (e.g. ``Samsung Electronics``)."""
     market: str
     entry_style: str
     created_at: datetime
@@ -731,6 +765,58 @@ class GuardrailEvaluationView(BaseModel):
     created_at: datetime | None = None
 
 
+class MarketSessionSummary(BaseModel):
+    """Market session status summary for admin UI."""
+
+    id: int
+    run_date: date
+    is_trading_day: bool
+    opnd_yn: str | None = None
+    bzdy_yn: str | None = None
+    tr_day_yn: str | None = None
+    market_phase: str | None = None
+    raw_opnd_yn: str | None = None
+    raw_mkop_cls_code: str | None = None
+    raw_antc_mkop_cls_code: str | None = None
+    source: str | None = None
+    reason: str | None = None
+    checked_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class SessionEventSummary(BaseModel):
+    """Session event summary for admin UI."""
+
+    id: int
+    market_session_id: int
+    previous_phase: str | None = None
+    new_phase: str | None = None
+    trigger_source: str | None = None
+    metadata: dict | None = None
+    occurred_at: datetime
+    created_at: datetime | None = None
+
+
+class SessionEventsResponse(BaseModel):
+    """``GET /market-sessions/events/recent`` — list of recent session events."""
+
+    status: str = "ok"
+    """Always ``"ok"`` — the endpoint returns 200 even for empty event sets."""
+
+    data: list[SessionEventSummary]
+    """Session events, newest first, up to the requested ``limit``."""
+
+
+class SchedulerStatusResponse(BaseModel):
+    """Scheduler health and current session status."""
+
+    status: str  # "ok" | "no_data"
+    data: MarketSessionSummary | None = None
+    healthy: bool = False
+    stale_seconds: int | None = None
+
+
 class RiskLimitSnapshotView(BaseModel):
     """``GET /risk-limit-snapshots`` — point-in-time risk limit snapshot.
 
@@ -758,3 +844,30 @@ class RiskLimitSnapshotView(BaseModel):
     kill_switch_active: bool = False
     blocked_reason_codes: list[str] | None = None
     created_at: datetime | None = None
+
+
+# ---------------------------------------------------------------------------
+# Manual status change schemas (Phase 26 — operator override)
+# ---------------------------------------------------------------------------
+
+
+class ManualStatusChangeRequest(BaseModel):
+    """Request body for ``PUT /orders/{order_request_id}/status``.
+
+    v1 scope: ``RECONCILE_REQUIRED`` → one of ``_MANUAL_RESOLVE_TARGETS``.
+    """
+
+    target_status: OrderStatus = Field(..., description="Target order status")
+    reason_code: str | None = Field(default="MANUAL_RESOLVE")
+    reason_message: str | None = None
+    evidence: dict[str, object] = Field(..., description="Operator evidence payload")
+
+
+class ManualStatusChangeResponse(BaseModel):
+    """Response for a successful manual status change."""
+
+    order_id: str
+    old_status: str
+    new_status: str
+    updated_at: datetime | None = None
+    actor: str

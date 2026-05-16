@@ -264,6 +264,51 @@ class TestEnumMetadataSingleField:
         v = next(v for v in values if v["value"] == "vwap")
         assert v["label"] == "VWAP"
 
+    # ── reason_code ─────────────────────────────────────────────────
+
+    def test_reason_code_field_present(self, client: TestClient) -> None:
+        """reason_code field가 metadata 응답에 포함되어야 함."""
+        resp = client.get("/metadata/enums/reason_code")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["field"] == "reason_code"
+        assert data["type"] == "string"
+
+    def test_reason_code_known_values(self, client: TestClient) -> None:
+        """10개의 known reason_code가 모두 응답에 포함되어야 함."""
+        resp = client.get("/metadata/enums/reason_code")
+        assert resp.status_code == 200
+        values = {v["value"] for v in resp.json()["values"]}
+        expected = {
+            "BLOCKED", "UNCERTAIN", "RECONCILE_RESOLVED",
+            "MANUAL_RESOLVE", "manual_paper_resolution",
+            "WS_FILL", "FILL_CONFIRMED", "REJECTED",
+            "stale_cleanup", "broker_truth_recovery",
+        }
+        assert values == expected
+
+    def test_reason_code_label_korean(self, client: TestClient) -> None:
+        """모든 reason_code value에 한글 label이 지정되어야 함."""
+        resp = client.get("/metadata/enums/reason_code")
+        assert resp.status_code == 200
+        for v in resp.json()["values"]:
+            assert v["label"] != ""
+            assert isinstance(v["label"], str)
+
+    def test_reason_code_unknown_value_not_in_metadata(self, client: TestClient) -> None:
+        """등록되지 않은 code는 metadata에 포함되지 않아야 함."""
+        resp = client.get("/metadata/enums/reason_code")
+        assert resp.status_code == 200
+        values = {v["value"] for v in resp.json()["values"]}
+        assert "UNKNOWN_CODE_12345" not in values
+
+    def test_reason_code_list_endpoint(self, client: TestClient) -> None:
+        """GET /metadata/enums 응답에 reason_code가 포함되어야 함."""
+        resp = client.get("/metadata/enums")
+        assert resp.status_code == 200
+        fields = {f["field"] for f in resp.json()["fields"]}
+        assert "reason_code" in fields
+
 
 class TestEnumMetadataRegression:
     """Regression checks — existing API endpoints are unaffected."""

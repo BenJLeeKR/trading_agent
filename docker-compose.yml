@@ -167,13 +167,9 @@ services:
       # Share KIS dev token cache to avoid 1-per-minute oauth2 rate limit
       - ./.cache:/app/.cache
     command:
-      - uvicorn
-      - agent_trading.api.app:create_app_from_env
-      - --factory
-      - --host
-      - "0.0.0.0"
-      - --port
-      - "8000"
+      - sh
+      - -c
+      - "python3 -m agent_trading.db.migrations.run && exec uvicorn agent_trading.api.app:create_app_from_env --factory --host 0.0.0.0 --port 8000"
     healthcheck:
       test:
         - "CMD"
@@ -186,9 +182,10 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # ---- KIS Snapshot Sync Scheduler -----------------------------------------
-  # Periodically syncs KIS account positions + cash balance into snapshot tables.
-  # Runs ``sync_all_kis_accounts()`` in a loop with configurable interval.
+  # ---- KIS Snapshot Sync Scheduler (Manual/Debug) ---------------------------
+  # NOTE: This service is for manual/debug snapshot sync only.
+  # The primary orchestration is handled by ops-scheduler service.
+  # To run manually: docker compose run snapshot-sync
   snapshot-sync:
     build: .
     depends_on:
@@ -241,7 +238,156 @@ services:
       - python
       - scripts/run_snapshot_sync_loop.py
       - "--after-hours"
+    restart: "no"  # was "unless-stopped" — scheduler handles snapshot sync
+
+  # ---- Operations Scheduler --------------------------------------------------
+  # Primary orchestration service for the trading day.
+  # Runs run_ops_scheduler.py as a long-lived container with
+  # PostgreSQL advisory lock for duplicate execution prevention.
+  ops-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: agent_trading-app:latest
+    container_name: agent_trading-ops-scheduler
+    command: ["python3", "/app/scripts/run_near_real_ops_scheduler.py"]
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      TZ: "Asia/Seoul"
+      PYTHONPATH: "/app/src:/app/scripts"
+      # DB — DATABASE_URL is used by scheduler for asyncpg direct connections
+      DATABASE_URL: "postgresql://${DATABASE_USER:-trading}:${DATABASE_PASSWORD:-trading}@db:5432/${DATABASE_NAME:-trading}"
+      DB_POOL_MIN: "${DB_POOL_MIN:-2}"
+      DB_POOL_MAX: "${DB_POOL_MAX:-10}"
+      # DB legacy names (fallback for _build_dsn)
+      DATABASE_HOST: "db"
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "${DATABASE_NAME:-trading}"
+      DATABASE_USER: "${DATABASE_USER:-trading}"
+      DATABASE_PASSWORD: "${DATABASE_PASSWORD:-trading}"
+      DATABASE_SCHEMA: "${DATABASE_SCHEMA:-trading}"
+      # KIS env — preferred names (한국투자증권 actual standard)
+      KIS_ENV: "${KIS_ENV:-paper}"
+      KIS_APP_KEY: "${KIS_APP_KEY:-}"
+      KIS_APP_SECRET: "${KIS_APP_SECRET:-}"
+      KIS_ACCOUNT_NO: "${KIS_ACCOUNT_NO:-}"
+      KIS_ACCOUNT_PRODUCT_CODE: "${KIS_ACCOUNT_PRODUCT_CODE:-01}"
+      KIS_BASE_URL: "${KIS_BASE_URL:-}"
+      KIS_WS_URL: "${KIS_WS_URL:-}"
+      KIS_PAPER_REST_RPS: "${KIS_PAPER_REST_RPS:-2}"
+      # Legacy fallback names (still supported)
+      KIS_API_KEY: "${KIS_API_KEY:-}"
+      KIS_API_SECRET: "${KIS_API_SECRET:-}"
+      KIS_ACCOUNT_NUMBER: "${KIS_ACCOUNT_NUMBER:-}"
+      KIS_DEV_TOKEN_CACHE_ENABLED: "${KIS_DEV_TOKEN_CACHE_ENABLED:-true}"
+      KIS_DEV_TOKEN_CACHE_PATH: "${KIS_DEV_TOKEN_CACHE_PATH:-.cache/kis_token.json}"
+      # KIS Live Info (076/163)
+      KIS_LIVE_INFO_ENABLED: "${KIS_LIVE_INFO_ENABLED:-false}"
+      KIS_LIVE_INFO_APP_KEY: "${KIS_LIVE_INFO_APP_KEY}"
+      KIS_LIVE_INFO_APP_SECRET: "${KIS_LIVE_INFO_APP_SECRET}"
+      KIS_LIVE_INFO_BASE_URL: "${KIS_LIVE_INFO_BASE_URL}"
+      KIS_LIVE_INFO_WS_URL: "${KIS_LIVE_INFO_WS_URL}"
+      KIS_LIVE_TOKEN_CACHE_ENABLED: "${KIS_LIVE_TOKEN_CACHE_ENABLED:-true}"
+      KIS_LIVE_TOKEN_CACHE_PATH: "${KIS_LIVE_TOKEN_CACHE_PATH:-.cache/kis_live_token.json}"
+      # Scheduler Specific
+      SCHEDULER_AFTER_HOURS_WINDOW: "${SCHEDULER_AFTER_HOURS_WINDOW:-3600}"
+      SCHEDULER_INSTANCE_ID: "${SCHEDULER_INSTANCE_ID:-default}"
+    volumes:
+      - ./scripts:/app/scripts
+      - ./src:/app/src
+      - ./logs:/app/logs
+      - ./.cache:/app/.cache
+      - ./data:/app/data
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - |
+          python3 -c "
+          import asyncio;
+          from agent_trading.db.connection import create_pool, DatabaseConfig;
+          import os;
+          from datetime import datetime, timezone;
+          loop = asyncio.new_event_loop();
+          pool = loop.run_until_complete(create_pool(DatabaseConfig(dsn=os.environ['DATABASE_URL'])));
+          row = loop.run_until_complete(pool.fetchrow(
+              'SELECT last_heartbeat_at, checked_at, is_trading_day '
+              'FROM trading.market_sessions ORDER BY updated_at DESC LIMIT 1'
+          ));
+          now = datetime.now(timezone.utc);
+          healthy = False;
+          if row and row['last_heartbeat_at'] and (now - row['last_heartbeat_at']).total_seconds() < 120:
+              healthy = True;
+          elif row and row['is_trading_day'] == False and row['checked_at'] and (now - row['checked_at']).total_seconds() < 86400:
+              healthy = True;
+          loop.run_until_complete(pool.close());
+          exit(0 if healthy else 1)
+          "
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - default
+
+  # ---- Reconciliation Worker --------------------------------------------------
+  # Long-lived worker that consumes reconciliation runs created by Phase 18/19.
+  # Polls for runs with status='started', inquires broker for truth,
+  # and transitions orders to authoritative states.
+  reconciliation-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: agent_trading-app:latest
+    container_name: agent_trading-reconciliation-worker
+    command: ["python3", "/app/scripts/run_reconciliation_worker.py"]
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      TZ: "Asia/Seoul"
+      PYTHONPATH: "/app/src:/app/scripts"
+      # DB — DATABASE_URL is used by worker for asyncpg direct connections
+      DATABASE_URL: "postgresql://${DATABASE_USER:-trading}:${DATABASE_PASSWORD:-trading}@db:5432/${DATABASE_NAME:-trading}"
+      DATABASE_HOST: "db"
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "${DATABASE_NAME:-trading}"
+      DATABASE_USER: "${DATABASE_USER:-trading}"
+      DATABASE_PASSWORD: "${DATABASE_PASSWORD:-trading}"
+      DATABASE_SCHEMA: "${DATABASE_SCHEMA:-trading}"
+      # KIS env — preferred names (한국투자증권 actual standard)
+      KIS_ENV: "${KIS_ENV:-paper}"
+      KIS_APP_KEY: "${KIS_APP_KEY:-}"
+      KIS_APP_SECRET: "${KIS_APP_SECRET:-}"
+      KIS_ACCOUNT_NO: "${KIS_ACCOUNT_NO:-}"
+      KIS_ACCOUNT_PRODUCT_CODE: "${KIS_ACCOUNT_PRODUCT_CODE:-01}"
+      KIS_BASE_URL: "${KIS_BASE_URL:-}"
+      KIS_WS_URL: "${KIS_WS_URL:-}"
+      KIS_PAPER_REST_RPS: "${KIS_PAPER_REST_RPS:-2}"
+      # Legacy fallback names (still supported)
+      KIS_API_KEY: "${KIS_API_KEY:-}"
+      KIS_API_SECRET: "${KIS_API_SECRET:-}"
+      KIS_ACCOUNT_NUMBER: "${KIS_ACCOUNT_NUMBER:-}"
+      KIS_DEV_TOKEN_CACHE_ENABLED: "${KIS_DEV_TOKEN_CACHE_ENABLED:-true}"
+      KIS_DEV_TOKEN_CACHE_PATH: "${KIS_DEV_TOKEN_CACHE_PATH:-.cache/kis_token.json}"
+      # KIS Live Info (076/163)
+      KIS_LIVE_INFO_ENABLED: "${KIS_LIVE_INFO_ENABLED:-false}"
+      KIS_LIVE_INFO_APP_KEY: "${KIS_LIVE_INFO_APP_KEY}"
+      KIS_LIVE_INFO_APP_SECRET: "${KIS_LIVE_INFO_APP_SECRET}"
+      KIS_LIVE_INFO_BASE_URL: "${KIS_LIVE_INFO_BASE_URL}"
+      KIS_LIVE_INFO_WS_URL: "${KIS_LIVE_INFO_WS_URL}"
+      KIS_LIVE_TOKEN_CACHE_ENABLED: "${KIS_LIVE_TOKEN_CACHE_ENABLED:-true}"
+      KIS_LIVE_TOKEN_CACHE_PATH: "${KIS_LIVE_TOKEN_CACHE_PATH:-.cache/kis_live_token.json}"
+      # Worker Specific
+      RECONCILIATION_WORKER_INTERVAL_SECONDS: "${RECONCILIATION_WORKER_INTERVAL_SECONDS:-30}"
+      RECONCILIATION_WORKER_BATCH_SIZE: "${RECONCILIATION_WORKER_BATCH_SIZE:-10}"
+    volumes:
+      - ./scripts:/app/scripts
+      - ./src:/app/src
+      - ./.cache:/app/.cache
 
 volumes:
   pgdata:

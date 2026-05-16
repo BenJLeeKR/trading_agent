@@ -9,13 +9,13 @@
 ## 실행 파일
 
 ```bash
-python3 scripts/run_near_real_ops_scheduler.py --run-date 2026-05-14
+python3 scripts/run_ops_scheduler.py --run-date 2026-05-14
 ```
 
 Smoke 검증:
 
 ```bash
-python3 scripts/run_near_real_ops_scheduler.py --once --skip-pre-market
+python3 scripts/run_ops_scheduler.py --once --skip-pre-market
 ```
 
 ## 기본 시간표 (KST)

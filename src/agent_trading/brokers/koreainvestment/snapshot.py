@@ -88,14 +88,18 @@ class KISSyncSnapshotProvider:
         errors: list[str] = []
         positions: list[PositionSnapshotEntity] = []
 
-        # ── 1. Fetch positions ────────────────────────────────────────────
-        try:
-            raw_positions: Sequence[Any] = await self._rest.get_positions()
-        except Exception as exc:
-            msg = f"Failed to fetch positions from KIS: {exc}"
-            logger.error(msg)
-            errors.append(msg)
+        # ── 1. Fetch positions (skip in after-hours — positions don't change after market close) ──
+        if after_hours:
+            logger.info("After-hours mode — skipping positions fetch (cash-only sync)")
             raw_positions = []
+        else:
+            try:
+                raw_positions: Sequence[Any] = await self._rest.get_positions()
+            except Exception as exc:
+                msg = f"Failed to fetch positions from KIS: {exc}"
+                logger.error(msg)
+                errors.append(msg)
+                raw_positions = []
 
         for raw in raw_positions:
             pdno = raw.get(_KIS_PDNO, "")

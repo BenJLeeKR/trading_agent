@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""Near-real operations scheduler — session gate hardened.
+"""
+Operations scheduler — KIS market session aware trading scheduler.
 
-This is a single-process, in-application scheduler for the KIS near-real
-operating day. It does not depend on cron/systemd timers for task timing.
+NOTE: This module is kept for backward compatibility.
+The canonical entrypoint is scripts.run_ops_scheduler.
+
+This is a single-process, in-application scheduler for the KIS trading
+day. It does not depend on cron/systemd timers for task timing.
 
 The scheduler intentionally reuses the existing operational entrypoints:
 
@@ -49,8 +53,10 @@ from zoneinfo import ZoneInfo
 from agent_trading.services.market_session import (
     CombinedSessionProvider,
     MarketSessionProvider,
+    SCHEDULER_ADVISORY_LOCK_KEY,
     SessionInfo,
     create_session_provider,
+    try_scheduler_lock,
 )
 
 # P2: 163 WebSocket market state + DB session persistence
@@ -98,7 +104,7 @@ INTRADAY_START = dtime(8, 50)
 MARKET_CLOSE = dtime(15, 30)
 END_OF_DAY_END = dtime(16, 30)
 
-logger = logging.getLogger("near_real_ops_scheduler")
+logger = logging.getLogger("ops_scheduler")
 
 
 @dataclass(slots=True)
@@ -743,7 +749,7 @@ def _log_summary(state: SchedulerState) -> None:
     total = len(state.command_results)
     failed = [r for r in state.command_results if not r.ok]
     logger.info("=" * 72)
-    logger.info("near-real scheduler summary")
+    logger.info("ops-scheduler summary")
     logger.info("  run_date            : %s", state.run_date.isoformat())
     logger.info("  cycles              : %d", state.cycles)
     logger.info("  tasks               : %d", total)
@@ -784,10 +790,12 @@ async def _init_market_state_provider() -> KisMarketStateClient | None:
         logger.info("Market state provider: skipped (KIS_LIVE_INFO_ENABLED != true)")
         return None
 
-    app_key = env.get("KIS_APP_KEY") or env.get("KIS_PAPER_APP_KEY", "")
-    api_secret = env.get("KIS_APP_SECRET") or env.get("KIS_PAPER_APP_SECRET", "")
+    # 163 Market State Provider는 KIS_LIVE_INFO_* 전용 credential 사용
+    app_key = env.get("KIS_LIVE_INFO_APP_KEY", "").strip()
+    api_secret = env.get("KIS_LIVE_INFO_APP_SECRET", "").strip()
+    base_ws_url = env.get("KIS_LIVE_INFO_WS_URL", "").strip() or None
     if not app_key or not api_secret:
-        logger.info("Market state provider: skipped (missing KIS credentials)")
+        logger.warning("market_state_provider=disabled (KIS_LIVE_INFO_APP_KEY missing)")
         return None
 
     # Build a minimal AppSettings for KisMarketStateClient
@@ -797,12 +805,9 @@ async def _init_market_state_provider() -> KisMarketStateClient | None:
             settings=settings,
             app_key=app_key,
             api_secret=api_secret,
+            base_ws_url=base_ws_url,
         )
-        logger.info(
-            "Market state provider initialized: %s (is_paper=%s)",
-            type(client).__name__,
-            not client.is_connected,
-        )
+        logger.info("market_state_provider=enabled (KIS_LIVE_INFO_APP_KEY present)")
         return client
     except Exception as exc:
         logger.warning("Market state provider init failed: %s — skipping", exc)
@@ -1007,27 +1012,85 @@ async def _session_phase_monitor(
         await asyncio.sleep(poll_interval)
 
 
+def _build_dsn(env: dict[str, str]) -> str | None:
+    """Build a DSN from environment variables.
+
+    Resolution order:
+    1. ``DATABASE_URL`` (full DSN)
+    2. ``DATABASE_DSN`` (full DSN, legacy)
+    3. ``DATABASE_HOST`` + ``DATABASE_PORT`` + ``DATABASE_USER`` + ``DATABASE_PASSWORD`` + ``DATABASE_NAME``
+    """
+    dsn = env.get("DATABASE_URL") or env.get("DATABASE_DSN")
+    if dsn:
+        return dsn
+
+    host = env.get("DATABASE_HOST") or env.get("DB_HOST") or "localhost"
+    port = env.get("DATABASE_PORT") or env.get("DB_PORT") or "5432"
+    user = env.get("DATABASE_USER") or env.get("DB_USER") or "trading"
+    password = env.get("DATABASE_PASSWORD") or env.get("DB_PASSWORD") or "trading"
+    database = env.get("DATABASE_NAME") or env.get("DB_NAME") or "trading"
+    return f"postgresql://{user}:{password}@{host}:{port}/{database}"
+
+
+async def _heartbeat_task(state: SchedulerState, pool) -> None:
+    """10초 간격으로 DB heartbeat 업데이트."""
+    while True:
+        try:
+            if state.session_db_id is not None:
+                await pool.execute(
+                    "UPDATE trading.market_sessions SET last_heartbeat_at = NOW(), updated_at = NOW() WHERE id = $1",
+                    state.session_db_id,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.debug("Heartbeat update skipped (session not yet persisted)")
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            raise
+
+
+async def _log_startup_info(env: dict[str, str], state: SchedulerState, pool_ok: bool) -> None:
+    """스케줄러 시작 정보 로깅."""
+    logger.info("=" * 60)
+    logger.info("🚀 Ops Scheduler starting up")
+    logger.info("=" * 60)
+    logger.info("  KIS env:             %s", env.get("KIS_ENV", "paper"))
+    logger.info("  Live-info enabled:   %s", env.get("KIS_LIVE_INFO_ENABLED", "false"))
+    logger.info("  Live-info token cache: %s (path: %s)",
+        env.get("KIS_LIVE_TOKEN_CACHE_ENABLED", "false"),
+        env.get("KIS_LIVE_TOKEN_CACHE_PATH", "N/A"),
+    )
+    logger.info("  Live-info WS URL:    %s", env.get("KIS_LIVE_INFO_WS_URL", "N/A"))
+    logger.info("  Session source:      CombinedSessionProvider (076+163+fallback)")
+    logger.info("  After-hours window:  %ss", env.get("SCHEDULER_AFTER_HOURS_WINDOW", "3600"))
+    logger.info("  Instance ID:         %s", env.get("SCHEDULER_INSTANCE_ID", "default"))
+    logger.info("  Run date:            %s", datetime.now(KST).strftime("%Y-%m-%d %A"))
+    logger.info("  DB pool:             %s", "connected" if pool_ok else "not connected")
+    logger.info("  Advisory lock:       enabled (key=0x%X)", SCHEDULER_ADVISORY_LOCK_KEY)
+    # Credential presence diagnostics (without exposing secrets)
+    trading_key_present = "present" if env.get("KIS_APP_KEY") else "missing"
+    live_info_key_present = "present" if env.get("KIS_LIVE_INFO_APP_KEY") else "missing"
+    logger.info("  trading_kis_config=%s", trading_key_present)
+    logger.info("  live_info_kis_config=%s", live_info_key_present)
+    market_state = "enabled" if (
+        env.get("KIS_LIVE_INFO_ENABLED", "").strip().lower() == "true"
+        and env.get("KIS_LIVE_INFO_APP_KEY")
+    ) else "disabled"
+    logger.info("  market_state_provider=%s", market_state)
+    logger.info("=" * 60)
+
+
 async def _run_scheduler(args: argparse.Namespace) -> int:
-    """Run the near-real operations scheduler."""
+    """Run the operations scheduler."""
     _load_env()
 
     env = _build_base_env()
     kis_env = env.get("KIS_ENV", "paper")
-    logger.info(
-        "Starting near-real scheduler (KIS_ENV=%s, paper is treated as near-real).",
-        kis_env,
-    )
-    # Log token cache configuration at startup
-    kis_dev_cache_enabled = env.get("KIS_DEV_TOKEN_CACHE_ENABLED", "").strip().lower() == "true"
-    kis_dev_cache_path = env.get("KIS_DEV_TOKEN_CACHE_PATH", ".cache/kis_token.json")
-    logger.info(
-        "Token cache: enabled=%s path=%s",
-        kis_dev_cache_enabled,
-        kis_dev_cache_path,
-    )
 
-    # P2: Resolve DB connection string for session persistence
-    dsn: str | None = env.get("DATABASE_URL") or None
+    # P3: Build DSN for DB operations
+    dsn = _build_dsn(env)
 
     run_date = args.run_date or datetime.now(KST).date()
     state = SchedulerState(run_date=run_date)
@@ -1055,102 +1118,54 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
         )
         logger.info("Phase monitor background task created")
 
-    try:
-        if args.once:
-            now = datetime.now(KST)
-            tasks = _build_tasks(
-                now,
-                snapshot_interval=args.snapshot_interval,
-                event_interval=args.event_interval,
-                decision_interval=args.decision_interval,
-                post_submit_interval=args.post_submit_interval,
+    # P3: Create DB pool for advisory lock and heartbeat
+    pool = None
+    if dsn:
+        try:
+            import asyncpg
+            pool = await asyncpg.create_pool(
+                dsn=dsn,
+                min_size=int(env.get("DB_POOL_MIN", "2")),
+                max_size=int(env.get("DB_POOL_MAX", "10")),
             )
-            # --once mode: session gate applies to all phases
-            if not args.skip_pre_market:
-                if await _session_gate(session_provider, run_date, state, "pre_market"):
-                    await _run_pre_market(
-                        state,
-                        timeout_seconds=args.task_timeout,
-                        env=env,
-                    )
-                else:
-                    logger.info("--once: pre-market phase skipped by session gate")
+        except Exception:
+            logger.warning("Failed to create DB pool — advisory lock and heartbeat disabled")
 
-            if await _session_gate(session_provider, run_date, state, "intraday"):
-                await _run_intraday_due_tasks(
-                    state,
-                    tasks,
-                    max_submit_per_day=args.max_submit_per_day,
-                    timeout_seconds=args.task_timeout,
-                    env=env,
-                    now=now,
+    # P3: Startup info logging
+    await _log_startup_info(env, state, pool is not None)
+
+    # P3: Advisory lock wrapper
+    async def _run_with_lock() -> int:
+        """Inner scheduler logic with lock context."""
+        nonlocal phase_monitor_task, run_date, state, pre_market_at, intraday_at, market_close_at, end_at
+
+        # P3: Heartbeat task
+        heartbeat_task: asyncio.Task[None] | None = None
+        if pool is not None:
+            heartbeat_task = asyncio.create_task(_heartbeat_task(state, pool))
+            logger.info("Heartbeat background task created (interval=10s)")
+
+        try:
+            if args.once:
+                now = datetime.now(KST)
+                tasks = _build_tasks(
+                    now,
+                    snapshot_interval=args.snapshot_interval,
+                    event_interval=args.event_interval,
+                    decision_interval=args.decision_interval,
+                    post_submit_interval=args.post_submit_interval,
                 )
-            else:
-                logger.info("--once: intraday phase skipped by session gate")
+                # --once mode: session gate applies to all phases
+                if not args.skip_pre_market:
+                    if await _session_gate(session_provider, run_date, state, "pre_market"):
+                        await _run_pre_market(
+                            state,
+                            timeout_seconds=args.task_timeout,
+                            env=env,
+                        )
+                    else:
+                        logger.info("--once: pre-market phase skipped by session gate")
 
-            if args.run_eod:
-                if await _session_gate(session_provider, run_date, state, "end_of_day"):
-                    await _run_end_of_day(
-                        state,
-                        timeout_seconds=args.task_timeout,
-                        env=env,
-                        snapshot_interval=args.snapshot_interval,
-                    )
-                else:
-                    logger.info("--once: end-of-day phase skipped by session gate")
-
-            # P2: Persist final session state on --once exit
-            if state.session_info is not None:
-                await _persist_session_state(state, dsn)
-            _log_summary(state)
-            return 0 if all(r.ok for r in state.command_results) else 1
-
-        now = datetime.now(KST)
-        tasks = _build_tasks(
-            max(now, intraday_at),
-            snapshot_interval=args.snapshot_interval,
-            event_interval=args.event_interval,
-            decision_interval=args.decision_interval,
-            post_submit_interval=args.post_submit_interval,
-        )
-
-        stop_event = asyncio.Event()
-
-        def _request_stop() -> None:
-            logger.info("Shutdown requested; current task will finish before exit.")
-            stop_event.set()
-
-        loop = asyncio.get_running_loop()
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            try:
-                loop.add_signal_handler(sig, _request_stop)
-            except NotImplementedError:  # pragma: no cover
-                signal.signal(sig, lambda _sig, _frame: _request_stop())
-
-        while not stop_event.is_set():
-            state.cycles += 1
-            now = datetime.now(KST)
-
-            if now.date() > run_date or now >= end_at:
-                logger.info("Reached scheduler end time: now=%s end=%s", now, end_at)
-                break
-
-            # P1: Session gate — check before each phase
-            if now >= pre_market_at and not state.pre_market_done and not args.skip_pre_market:
-                if await _session_gate(session_provider, run_date, state, "pre_market"):
-                    await _run_pre_market(
-                        state,
-                        timeout_seconds=args.task_timeout,
-                        env=env,
-                    )
-                else:
-                    state.pre_market_done = True  # Mark done to avoid retry
-                    logger.info(
-                        "Pre-market phase skipped by session gate for %s",
-                        run_date.isoformat(),
-                    )
-
-            if intraday_at <= now < market_close_at:
                 if await _session_gate(session_provider, run_date, state, "intraday"):
                     await _run_intraday_due_tasks(
                         state,
@@ -1161,61 +1176,191 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                         now=now,
                     )
                 else:
-                    logger.info(
-                        "Intraday tasks skipped by session gate for %s",
-                        run_date.isoformat(),
-                    )
+                    logger.info("--once: intraday phase skipped by session gate")
 
-            if now >= market_close_at and not state.end_of_day_done:
-                if await _session_gate(session_provider, run_date, state, "end_of_day"):
-                    await _run_end_of_day(
+                if args.run_eod:
+                    if await _session_gate(session_provider, run_date, state, "end_of_day"):
+                        await _run_end_of_day(
+                            state,
+                            timeout_seconds=args.task_timeout,
+                            env=env,
+                            snapshot_interval=args.snapshot_interval,
+                        )
+                    else:
+                        logger.info("--once: end-of-day phase skipped by session gate")
+
+                # P2: Persist final session state on --once exit
+                if state.session_info is not None:
+                    await _persist_session_state(state, dsn)
+                _log_summary(state)
+                return 0 if all(r.ok for r in state.command_results) else 1
+
+            now = datetime.now(KST)
+            tasks = _build_tasks(
+                max(now, intraday_at),
+                snapshot_interval=args.snapshot_interval,
+                event_interval=args.event_interval,
+                decision_interval=args.decision_interval,
+                post_submit_interval=args.post_submit_interval,
+            )
+
+            stop_event = asyncio.Event()
+
+            def _request_stop() -> None:
+                logger.info("Shutdown requested; current task will finish before exit.")
+                stop_event.set()
+
+            loop = asyncio.get_running_loop()
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                try:
+                    loop.add_signal_handler(sig, _request_stop)
+                except NotImplementedError:  # pragma: no cover
+                    signal.signal(sig, lambda _sig, _frame: _request_stop())
+
+            while not stop_event.is_set():
+                state.cycles += 1
+                now = datetime.now(KST)
+
+                if now.date() > run_date or now >= end_at:
+                    logger.info(
+                        "═══ Reached scheduler end time — entering idle mode until next run date ═══"
+                    )
+                    await _persist_session_state(state, dsn)  # 현재 session state 저장
+                    _log_summary(state)  # 오늘 summary 출력
+                    # Idle 전환: run_date + 1일, state 초기화
+                    run_date = run_date + timedelta(days=1)
+                    state = SchedulerState(run_date=run_date)
+                    # 시간 상수 재계산
+                    pre_market_at = _combine(run_date, args.pre_market_start)
+                    intraday_at = _combine(run_date, args.intraday_start)
+                    market_close_at = _combine(run_date, args.market_close)
+                    end_at = _combine(run_date, args.end_of_day_end)
+                    logger.info("═══ Next run_date: %s — waiting for market hours ═══", run_date)
+                    continue
+
+                # 비영업일 early termination — session gate가 모든 phase를 차단하면
+                # 16:30까지 대기하지 않고 즉시 graceful shutdown
+                if state.session_info is not None and not state.session_info.is_trading_day:
+                    logger.info(
+                        "═══ Non-trading day detected (source=%s) — entering idle mode ═══",
+                        state.session_info.source,
+                    )
+                    await _persist_session_state(state, dsn)  # 현재 session state 저장
+                    _log_summary(state)  # 오늘 summary 출력
+                    # 다음 날로 run_date rollover
+                    run_date = run_date + timedelta(days=1)
+                    state = SchedulerState(run_date=run_date)
+                    # 시간 상수 재계산
+                    pre_market_at = _combine(run_date, args.pre_market_start)
+                    intraday_at = _combine(run_date, args.intraday_start)
+                    market_close_at = _combine(run_date, args.market_close)
+                    end_at = _combine(run_date, args.end_of_day_end)
+                    logger.info("═══ Next run_date: %s — waiting for next trading day ═══", run_date)
+                    continue
+
+                # P1: Session gate — check before each phase
+                if now >= pre_market_at and not state.pre_market_done and not args.skip_pre_market:
+                    if await _session_gate(session_provider, run_date, state, "pre_market"):
+                        await _run_pre_market(
+                            state,
+                            timeout_seconds=args.task_timeout,
+                            env=env,
+                        )
+                    else:
+                        state.pre_market_done = True  # Mark done to avoid retry
+                        logger.info(
+                            "Pre-market phase skipped by session gate for %s",
+                            run_date.isoformat(),
+                        )
+
+                if intraday_at <= now < market_close_at:
+                    if await _session_gate(session_provider, run_date, state, "intraday"):
+                        await _run_intraday_due_tasks(
+                            state,
+                            tasks,
+                            max_submit_per_day=args.max_submit_per_day,
+                            timeout_seconds=args.task_timeout,
+                            env=env,
+                            now=now,
+                        )
+                    else:
+                        logger.info(
+                            "Intraday tasks skipped by session gate for %s",
+                            run_date.isoformat(),
+                        )
+
+                if now >= market_close_at and not state.end_of_day_done:
+                    if await _session_gate(session_provider, run_date, state, "end_of_day"):
+                        await _run_end_of_day(
+                            state,
+                            timeout_seconds=args.task_timeout,
+                            env=env,
+                            snapshot_interval=args.snapshot_interval,
+                        )
+                    else:
+                        state.end_of_day_done = True  # Mark done to avoid retry
+                        logger.info(
+                            "End-of-day phase skipped by session gate for %s",
+                            run_date.isoformat(),
+                        )
+
+                # After-hours: continue snapshot sync only (no decision/post-submit)
+                if state.after_hours_mode:
+                    await _run_after_hours_snapshot_cycle(
                         state,
                         timeout_seconds=args.task_timeout,
                         env=env,
-                        snapshot_interval=args.snapshot_interval,
+                        now=now,
                     )
+
+                # Idle/non-trading day: 긴 polling interval (60초)
+                if state.session_info is None or state.cycles == 0:
+                    await asyncio.sleep(min(args.tick_seconds, 60))
                 else:
-                    state.end_of_day_done = True  # Mark done to avoid retry
-                    logger.info(
-                        "End-of-day phase skipped by session gate for %s",
-                        run_date.isoformat(),
-                    )
+                    await asyncio.sleep(args.tick_seconds)
 
-            # After-hours: continue snapshot sync only (no decision/post-submit)
-            if state.after_hours_mode:
-                await _run_after_hours_snapshot_cycle(
-                    state,
-                    timeout_seconds=args.task_timeout,
-                    env=env,
-                    now=now,
-                )
+            # Main loop exited via SIGTERM/SIGINT only — rollover 시에는 이미
+            # _log_summary + _persist_session_state가 각 idle 전환에서 처리됨
+            logger.info("Scheduler main loop exited — cleaning up background tasks")
+            return 0
+        finally:
+            # P3: Cancel heartbeat task
+            if heartbeat_task is not None and not heartbeat_task.done():
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
 
-            await asyncio.sleep(args.tick_seconds)
+            # P2: Cancel phase monitor task
+            if phase_monitor_task is not None and not phase_monitor_task.done():
+                phase_monitor_task.cancel()
+                try:
+                    await phase_monitor_task
+                except asyncio.CancelledError:
+                    pass
 
-        # P2: Persist final session state on exit
-        if state.session_info is not None:
-            await _persist_session_state(state, dsn)
+            # P2: Disconnect market state provider (WebSocket)
+            if market_state_provider is not None:
+                try:
+                    await market_state_provider.disconnect()
+                    logger.debug("Market state provider disconnected")
+                except Exception:
+                    logger.debug("Market state provider disconnect (ignored)", exc_info=True)
 
-        _log_summary(state)
-        return 0 if all(r.ok for r in state.command_results) else 1
-    finally:
-        # P2: Cancel phase monitor task
-        if phase_monitor_task is not None and not phase_monitor_task.done():
-            phase_monitor_task.cancel()
-            try:
-                await phase_monitor_task
-            except asyncio.CancelledError:
-                pass
+            await _close_session_provider(session_provider)
 
-        # P2: Disconnect market state provider (WebSocket)
-        if market_state_provider is not None:
-            try:
-                await market_state_provider.disconnect()
-                logger.debug("Market state provider disconnected")
-            except Exception:
-                logger.debug("Market state provider disconnect (ignored)", exc_info=True)
-
-        await _close_session_provider(session_provider)
+    # P3: Run inner logic with advisory lock
+    if pool is not None:
+        async with try_scheduler_lock(pool) as acquired:
+            if not acquired:
+                logger.warning("❗ Scheduler advisory lock NOT acquired — another instance is running. Exiting.")
+                return 1
+            logger.info("✅ Scheduler advisory lock acquired — proceeding with main loop")
+            return await _run_with_lock()
+    else:
+        logger.warning("No DB pool — running without advisory lock")
+        return await _run_with_lock()
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -1259,7 +1404,7 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint."""
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] near-real-scheduler: %(message)s",
+        format="%(asctime)s [%(levelname)s] ops-scheduler: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     args = _parse_args(argv)

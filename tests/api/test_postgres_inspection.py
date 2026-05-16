@@ -71,9 +71,10 @@ class TestPostgresInspectionAPI:
     async def test_reconciliation_runs_requires_param(
         self, postgres_client: TestClient,
     ) -> None:
-        """``GET /reconciliation/runs`` returns 422 without account_id."""
+        """``GET /reconciliation/runs`` returns 200 (empty list) without account_id."""
         resp = postgres_client.get("/reconciliation/runs")
-        assert resp.status_code == 422
+        assert resp.status_code == 200
+        assert resp.json() == []
 
     async def test_reconciliation_locks_returns_lock_row(
         self, postgres_client: TestClient,

@@ -113,10 +113,16 @@ export default function DecisionsView() {
       header: "의사결정 ID",
       render: (r) => <code className="text-xs">{r.trade_decision_id.slice(0, 8)}…</code>,
     },
-    { key: "symbol", header: "심볼" },
+    { key: "symbol", header: "심볼", render: (r) => (
+      <span className="text-sm font-medium text-[#0f172a]">{r.symbol ?? "—"}</span>
+    )},
+    { key: "instrument_name", header: "종목명", render: (r) => (
+      <span className="text-sm text-[#334155]">{r.instrument_name || "—"}</span>
+    )},
     {
       key: "side",
       header: "매매",
+      width: "90px",
       render: (r) => (
         <StatusBadge variant={r.side.toLowerCase() === "buy" ? "success" : r.side.toLowerCase() === "sell" ? "error" : "info"}>
           {getEnumLabel(fieldMap, "side", r.side)}

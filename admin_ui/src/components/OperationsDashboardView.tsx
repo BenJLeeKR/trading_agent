@@ -2,12 +2,13 @@ import { useState, useEffect, useMemo } from "react";
 import { StatusCard } from "./common/StatusCard";
 import { DataTable, type Column } from "./common/DataTable";
 import { StatusBadge } from "./common/StatusBadge";
+import { Panel } from "./common/Panel";
 import { WarningBanner } from "./common/WarningBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { ArrowRight, RefreshCw } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { formatKrw, formatKstDateTime } from "../lib/utils";
+import { formatKrw, formatKstDateTime, formatKstElapsed } from "../lib/utils";
 import {
   getHealth,
   getReadyz,
@@ -19,6 +20,8 @@ import {
   getReconciliationSummary,
   getReconciliationRuns,
   getSnapshotSyncRuns,
+  getLatestMarketSession,
+  getRecentSessionEvents,
 } from "../api/client";
 import type {
   HealthResponse,
@@ -29,6 +32,10 @@ import type {
   AccountSummary,
   ClientDetail,
   SnapshotSyncRunSummary,
+  SchedulerStatusResponse,
+  SessionEventsResponse,
+  SessionEventSummary,
+  MarketSessionSummary,
 } from "../types/api";
 import { deriveAlerts } from "../lib/alerts";
 
@@ -49,6 +56,7 @@ interface CompactOrderItem {
   id: string;
   createdAt: string;
   symbol: string;
+  instrumentName: string;
   side: string;
   quantity: number;
   status: string;
@@ -83,6 +91,8 @@ interface DashboardData {
   positionsMap: Map<string, PositionSnapshotView[]>;
   cashMap: Map<string, CashBalanceSnapshotView | null>;
   snapshotSyncRuns: SnapshotSyncRunSummary[];
+  sessionData: SchedulerStatusResponse | null;
+  sessionEvents: SessionEventSummary[];
 }
 
 /* ── Helpers ── */
@@ -92,14 +102,73 @@ function formatPercent(val: number | null | undefined): string {
   return `${prefix}${val.toFixed(2)}%`;
 }
 
-function timeAgo(dateStr: string | null | undefined): string {
-  if (!dateStr) return "없음";
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "방금";
-  if (mins < 60) return `${mins}분 전`;
-  const hours = Math.floor(mins / 60);
-  return `${hours}시간 전`;
+/* ── Scheduler Status Types & Helper ── */
+export interface SchedulerCardState {
+  badgeLabel: string;
+  variant: "healthy" | "warning" | "error" | "neutral";
+  value: string;
+  subtitle: string;
+}
+
+/**
+ * Determine scheduler status card state based on session data and fetch errors.
+ * Distinguishes: No Data (neutral) vs Stale (warning) vs Real Error (error).
+ */
+export function getSchedulerStatus(
+  session: MarketSessionSummary | null,
+  sessionHealthy: boolean,
+  staleSeconds: number | null,
+  hasFetchError: boolean,
+  fetchErrorMessage: string | null,
+): SchedulerCardState {
+  // 1. Fetch error → real error (red)
+  if (hasFetchError) {
+    return {
+      badgeLabel: "오류",
+      variant: "error",
+      value: "오류",
+      subtitle: fetchErrorMessage ?? "API fetch failed",
+    };
+  }
+
+  // 2. No session data → No Data (neutral gray, NOT error)
+  if (!session) {
+    return {
+      badgeLabel: "미수집",
+      variant: "neutral",
+      value: "미수집",
+      subtitle: "No session data yet",
+    };
+  }
+
+  // 3. Fallback source → warning (orange), NOT error
+  if (session.source === "gate_error_fallback" || session.source === "fallback") {
+    return {
+      badgeLabel: "대체",
+      variant: "warning",
+      value: "대체",
+      subtitle: `Fallback: ${session.market_phase ?? "-"}`,
+    };
+  }
+
+  // 4. Stale (unhealthy or stale_seconds exceeds 10 min threshold)
+  const STALE_THRESHOLD_SECONDS = 600;
+  if (!sessionHealthy || (staleSeconds != null && staleSeconds > STALE_THRESHOLD_SECONDS)) {
+    return {
+      badgeLabel: "지연",
+      variant: "warning",
+      value: "지연",
+      subtitle: `Last checked: ${formatKstElapsed(session.checked_at)}`,
+    };
+  }
+
+  // 5. Healthy (green)
+  return {
+    badgeLabel: "정상",
+    variant: "healthy",
+    value: "정상",
+    subtitle: `Source: ${session.source ?? "-"} | Phase: ${session.market_phase ?? "-"}`,
+  };
 }
 
 /* ── Legacy Columns (feature flag SHOW_DASHBOARD_SECTIONS 복원 시 사용) ── */
@@ -196,13 +265,26 @@ export default function OperationsDashboardView() {
       return [] as ClientDetail[];
     });
 
-    const [health, readyz, reconSummary, orders, clients] = await Promise.all([
+    // ── Session status fetch ──
+    const sessionPromise = getLatestMarketSession().catch((e) => {
+      addError("GET /market-sessions/latest", e);
+      return null;
+    });
+    const eventsPromise = getRecentSessionEvents(5).catch((e) => {
+      addError("GET /market-sessions/events/recent", e);
+      return null;
+    });
+
+    const [health, readyz, reconSummary, orders, clients, sessionData, eventsResp] = await Promise.all([
       healthPromise,
       readyzPromise,
       reconSummaryPromise,
       ordersPromise,
       clientsPromise,
+      sessionPromise,
+      eventsPromise,
     ]);
+    const sessionEvents = eventsResp?.data ?? [];
 
     // ── Accounts per client ──
     let accounts: AccountSummary[] = [];
@@ -278,6 +360,8 @@ export default function OperationsDashboardView() {
       positionsMap,
       cashMap,
       snapshotSyncRuns,
+      sessionData: sessionData as SchedulerStatusResponse | null,
+      sessionEvents,
     });
     setLoading(false);
   };
@@ -374,8 +458,6 @@ export default function OperationsDashboardView() {
       ordersError: apiErrors.some((e) => e.apiName === "GET /orders"),
       reconSummary: data.reconSummary,
       reconSummaryError: apiErrors.some((e) => e.apiName === "GET /reconciliation/summary"),
-      reconRuns: data.reconRuns,
-      reconRunsError: apiErrors.some((e) => e.apiName === "GET /reconciliation/runs"),
       agentRuns: [],
       agentRunsError: false,
       positionsCount: totalPositions,
@@ -384,6 +466,8 @@ export default function OperationsDashboardView() {
       snapshotSyncError: apiErrors.some((e) => e.apiName === "GET /snapshot-sync-runs"),
       latestPositionSnapshotAt: latestSnapshotAt,
       latestCashSnapshotAt: latestSnapshotAt,
+      schedulerHealth: data.health?.scheduler ?? null,
+      sessionData: data.sessionData ?? null,
       apiErrors,
     };
     const alertItems = deriveAlerts(alertInput);
@@ -402,6 +486,25 @@ export default function OperationsDashboardView() {
         description: a.description,
       }));
 
+    // ── Session status derived ──
+    const session = data.sessionData?.data;
+    const sessionHealthy = data.sessionData?.healthy ?? false;
+    const sessionStaleSeconds = data.sessionData?.stale_seconds;
+    const sessionFetchError = apiErrors.find(e => e.apiName === "GET /market-sessions/latest");
+    const schedulerState = getSchedulerStatus(
+      session ?? null,
+      sessionHealthy,
+      sessionStaleSeconds ?? null,
+      !!sessionFetchError,
+      sessionFetchError?.message ?? null,
+    );
+    const phaseVariant: 'success' | 'warning' | 'error' | 'info' | 'neutral' =
+      session?.market_phase === 'OPEN' ? 'success' :
+      session?.market_phase === 'PRE_MARKET' ? 'warning' :
+      session?.market_phase === 'CLOSING' ? 'warning' :
+      session?.market_phase === 'AFTER_HOURS' ? 'info' :
+      session?.market_phase === 'HALT' ? 'error' : 'neutral';
+
     return {
       totalPositions,
       totalAvailableCash,
@@ -418,6 +521,13 @@ export default function OperationsDashboardView() {
       urgentCount,
       cautionCount,
       recentAlertItems,
+      session,
+      sessionData: data.sessionData,
+      sessionHealthy,
+      sessionStaleSeconds,
+      phaseVariant,
+      sessionEvents: data.sessionEvents,
+      schedulerState,
     };
   }, [data, apiErrors]);
 
@@ -489,6 +599,7 @@ export default function OperationsDashboardView() {
           id: o.order_request_id,
           createdAt: o.created_at ?? "-",
           symbol: o.symbol ?? "-",
+          instrumentName: o.instrument_name ?? "",
           side: sideLabel,
           quantity: o.requested_quantity ?? 0,
           status: statusLabel,
@@ -524,11 +635,11 @@ export default function OperationsDashboardView() {
             statusVariant = "neutral";
         }
         return {
-          id: r.run_id,
+          id: r.reconciliation_run_id,
           startedAt: r.started_at ?? "-",
           status: statusLabel,
           statusVariant,
-          mismatchCount: (r.order_mismatches ?? 0) + (r.position_mismatches ?? 0),
+          mismatchCount: (r.mismatch_count ?? 0),
           completedAt: r.completed_at,
         };
       });
@@ -585,7 +696,7 @@ export default function OperationsDashboardView() {
     snapshotStatus = "스냅샷 없음";
     snapshotVariant = "error";
     snapshotSubtitle = d.latestSnapshotAt
-      ? `포지션/현금 snapshot_at: ${timeAgo(d.latestSnapshotAt)}`
+      ? `포지션/현금 snapshot_at: ${formatKstElapsed(d.latestSnapshotAt)}`
       : "동기화 이력 없음";
   } else {
     // Sync run exists — use status as primary indicator
@@ -608,7 +719,7 @@ export default function OperationsDashboardView() {
     }
     // Secondary: position/cash snapshot_at freshness
     const snapshotTimeStr = d.latestSnapshotAt
-      ? `snapshot_at: ${timeAgo(d.latestSnapshotAt)}`
+      ? `snapshot_at: ${formatKstElapsed(d.latestSnapshotAt)}`
       : "snapshot 데이터 없음";
     snapshotSubtitle = `${snapshotTimeStr} (${syncRun.succeeded_accounts}/${syncRun.total_accounts} 계좌 성공)`;
   }
@@ -634,12 +745,21 @@ export default function OperationsDashboardView() {
         <p className="text-sm text-[#64748b] mt-1">시스템 상태 및 오늘의 운영 현황</p>
       </div>
 
-      {/* Warning Banner */}
+      {/* Warning Banner — 정합성 */}
       {(d.incompleteReconCount > 0 || d.activeLocksCount > 0) && (
         <WarningBanner
           variant="warning"
           title={`미해결 정합성 상태: ${d.incompleteReconCount + d.activeLocksCount}건`}
           message="포지션 또는 현금 불일치가 발생했습니다. 정합성 점검 화면에서 확인하세요."
+        />
+      )}
+
+      {/* Warning Banner — Fallback Session */}
+      {d.session?.source === 'fallback' && (
+        <WarningBanner
+          variant="warning"
+          title="Fallback Session Detection"
+          message="Session provider가 fallback 모드로 동작 중입니다. KIS live-info 연결을 확인하세요."
         />
       )}
 
@@ -657,8 +777,15 @@ export default function OperationsDashboardView() {
 
       {/* Status Summary Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-4">
-        {/* ── 항상 표시되는 핵심 카드 (6개) ── */}
+        {/* ── 항상 표시되는 핵심 카드 (7개) ── */}
         <StatusCard title="Ready 상태" value={readyzStatus} status={readyzVariant} subtitle="출처: GET /readyz" />
+        <StatusCard
+          title="Scheduler Status"
+          value={d.schedulerState.value}
+          status={d.schedulerState.variant}
+          badgeLabel={d.schedulerState.badgeLabel}
+          subtitle={d.schedulerState.subtitle}
+        />
         <StatusCard
           title="마지막 스냅샷 동기화"
           value={snapshotStatus}
@@ -752,8 +879,13 @@ export default function OperationsDashboardView() {
             <DataTable
               columns={[
                 { key: "createdAt", header: "생성시각", width: "140px", render: (row: CompactOrderItem) => formatKstDateTime(row.createdAt) },
-                { key: "symbol", header: "종목", width: "80px" },
-                { key: "side", header: "매매", width: "60px" },
+                { key: "symbol", header: "종목", width: "80px", render: (row: CompactOrderItem) => (
+                  <span className="text-sm font-medium text-[#0f172a]">{row.symbol}</span>
+                )},
+                { key: "instrumentName", header: "종목명", width: "80px", render: (row: CompactOrderItem) => (
+                  <span className="text-sm text-[#334155]">{row.instrumentName || "—"}</span>
+                )},
+                { key: "side", header: "매매", width: "90px" },
                 { key: "quantity", header: "수량", width: "80px" },
                 {
                   key: "status",
@@ -842,6 +974,44 @@ export default function OperationsDashboardView() {
               emptyMessage="운영 경고 없음"
             />
           </div>
+
+          {/* ── Section D: 최근 Session Events ── */}
+          <Panel title="Session Events" subtitle="최근 5건">
+            {d.sessionEvents.length > 0 ? (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 dark:border-gray-700 text-left">
+                    <th className="py-1 pr-2">Time</th>
+                    <th className="py-1 pr-2">Phase</th>
+                    <th className="py-1 pr-2">Source</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {d.sessionEvents.map(evt => (
+                    <tr key={evt.id} className="border-b border-gray-100 dark:border-gray-800">
+                      <td className="py-1 pr-2 text-xs">
+                        {formatKstDateTime(evt.occurred_at)}
+                      </td>
+                      <td className="py-1 pr-2">
+                        <StatusBadge
+                          variant={
+                            evt.new_phase === 'OPEN' ? 'success' :
+                            evt.new_phase === 'AFTER_HOURS' ? 'info' :
+                            evt.new_phase === 'HALT' ? 'error' : 'warning'
+                          }
+                        >
+                          {evt.previous_phase ?? '-'} → {evt.new_phase ?? '-'}
+                        </StatusBadge>
+                      </td>
+                      <td className="py-1 text-xs text-gray-500">{evt.trigger_source ?? '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="text-sm text-[#94a3b8] py-2">No events yet</p>
+            )}
+          </Panel>
         </div>
       )}
     </div>

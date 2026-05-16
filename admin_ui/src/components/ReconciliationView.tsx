@@ -52,8 +52,9 @@ export default function ReconciliationView() {
   /* ── Reconciliation runs / locks state ──── */
   const [runs, setRuns] = useState<ReconciliationRunSummary[]>([]);
   const [locks, setLocks] = useState<BlockingLockStatus[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [runsLocksLoading, setRunsLocksLoading] = useState(true);
+  const [runsError, setRunsError] = useState<string | null>(null);
+  const [locksError, setLocksError] = useState<string | null>(null);
   const [runStatusFilter, setRunStatusFilter] = useState("all");
   const [selectedRun, setSelectedRun] = useState<ReconciliationRunSummary | null>(null);
 
@@ -68,17 +69,42 @@ export default function ReconciliationView() {
 
   /* ── Data loading ───────────────────────── */
 
-  // Load reconciliation runs + locks (existing behaviour)
+  // Load reconciliation runs + locks — individual error handling per section
   useEffect(() => {
-    setLoading(true);
-    setError(null);
+    let cancelled = false;
 
-    // Backend /reconciliation endpoints require an account_id, which we cannot
-    // derive from /orders alone (OrderSummary has no client_id).
-    // Show empty state until a proper account selection mechanism is added.
-    setRuns([]);
-    setLocks([]);
-    setLoading(false);
+    async function loadRuns() {
+      try {
+        const runsData = await getReconciliationRuns();
+        if (!cancelled) setRuns(runsData);
+      } catch (err) {
+        if (!cancelled) {
+          setRunsError(err instanceof Error ? err.message : "정합성 실행 데이터를 불러오지 못했습니다");
+        }
+      }
+    }
+
+    async function loadLocks() {
+      try {
+        const locksData = await getReconciliationLocks();
+        if (!cancelled) setLocks(locksData);
+      } catch (err) {
+        if (!cancelled) {
+          setLocksError(err instanceof Error ? err.message : "잠금 데이터를 불러오지 못했습니다");
+        }
+      }
+    }
+
+    (async () => {
+      setRunsLocksLoading(true);
+      setRunsError(null);
+      setLocksError(null);
+      // Runs and locks fetched independently — one failure does not block the other
+      await Promise.all([loadRuns(), loadLocks()]);
+      if (!cancelled) setRunsLocksLoading(false);
+    })();
+
+    return () => { cancelled = true; };
   }, []);
 
   // Load reconcile_required orders + positions
@@ -134,7 +160,7 @@ export default function ReconciliationView() {
   /* ── Derived data ───────────────────────── */
 
   const activeLocks = useMemo(
-    () => locks.filter((l) => !l.is_expired),
+    () => locks.filter((l) => l.is_active),
     [locks],
   );
 
@@ -203,10 +229,10 @@ export default function ReconciliationView() {
 
   const runColumns: Column<ReconciliationRunSummary>[] = [
     {
-      key: "run_id",
+      key: "reconciliation_run_id",
       header: "Run ID",
       render: (r) => (
-        <code className="text-xs">{r.run_id.slice(0, 8)}…</code>
+        <code className="text-xs">{r.reconciliation_run_id.slice(0, 8)}…</code>
       ),
     },
     {
@@ -219,8 +245,7 @@ export default function ReconciliationView() {
       header: "Status",
       render: (r) => <StatusBadge status={r.status} />,
     },
-    { key: "order_mismatches", header: "Order Mismatches" },
-    { key: "position_mismatches", header: "Position Mismatches" },
+    { key: "mismatch_count", header: "Mismatch Count" },
   ];
 
   const reconcileColumns: Column<ReconcileRequiredCase>[] = [
@@ -229,6 +254,13 @@ export default function ReconciliationView() {
       header: "심볼",
       render: (r: ReconcileRequiredCase) => (
         <span className="font-medium text-[#0f172a]">{r.order.symbol ?? "—"}</span>
+      ),
+    },
+    {
+      key: "instrument_name" as any,
+      header: "종목명",
+      render: (r: ReconcileRequiredCase) => (
+        <span className="text-sm text-[#334155]">{r.order.instrument_name || "—"}</span>
       ),
     },
     {
@@ -303,12 +335,9 @@ export default function ReconciliationView() {
 
   /* ── Render ─────────────────────────────── */
 
-  if (loading) return <LoadingSpinner />;
-  if (error) return <ErrorBanner message={error} onDismiss={() => setError(null)} />;
-
   return (
     <div className="p-6 space-y-6">
-      {/* Page Header */}
+      {/* Page Header (always visible — gives immediate feedback) */}
       <div>
         <h1 className="text-2xl font-semibold text-[#0f172a]">정합성 점검</h1>
         <p className="text-sm text-[#64748b] mt-1">
@@ -316,318 +345,343 @@ export default function ReconciliationView() {
         </p>
       </div>
 
-      {/* Active lock warning banner (template pattern) */}
-      {activeLocks.length > 0 && (
-        <WarningBanner
-          variant="error"
-          title={`활성 차단 잠금 ${activeLocks.length}개`}
-          message="거래 작업을 차단할 수 있습니다. 잠금을 해결한 후 새 주문을 제출하세요."
-        />
-      )}
-
-      {/* ── Reconcile-required section ──────── */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-[#0f172a]">
-            조정 필요 주문
-          </h2>
-          {reconcileLoading && (
-            <RefreshCw className="h-4 w-4 text-[#64748b] animate-spin" />
+      {/* ── Runs / Locks section (section-level loading) ── */}
+      {runsLocksLoading ? (
+        <LoadingSpinner text="정합성 데이터 로딩 중..." />
+      ) : (
+        <>
+          {/* Individual error banners — one failure does not hide the other section */}
+          {runsError && (
+            <ErrorBanner message={runsError} onDismiss={() => setRunsError(null)} />
           )}
-        </div>
+          {locksError && (
+            <ErrorBanner message={locksError} onDismiss={() => setLocksError(null)} />
+          )}
 
-        {/* Summary card */}
-        {reconcileCases.length > 0 && (
-          <div className="grid grid-cols-2 gap-4">
-            <div className="bg-white rounded-xl border border-[#e2e8f0] p-4">
-              <p className="text-xs text-[#64748b]">조정 필요 주문</p>
-              <p className="text-2xl font-semibold text-[#0f172a] mt-1">
-                {summaryCard.total}
-              </p>
-            </div>
-            <div className="bg-white rounded-xl border border-[#e2e8f0] p-4">
-              <p className="text-xs text-[#64748b]">포지션 반영됨</p>
-              <p className="text-2xl font-semibold text-[#0f172a] mt-1">
-                {summaryCard.reflected}
-              </p>
-            </div>
-          </div>
-        )}
+          {/* Active lock warning banner */}
+          {activeLocks.length > 0 && (
+            <WarningBanner
+              variant="error"
+              title={`활성 차단 잠금 ${activeLocks.length}개`}
+              message="거래 작업을 차단할 수 있습니다. 잠금을 해결한 후 새 주문을 제출하세요."
+            />
+          )}
 
-        {/* Warning banner when many unreconciled orders */}
-        {reconcileCases.length > 5 && (
-          <WarningBanner
-            variant="warning"
-            title={`조정 필요 주문 ${reconcileCases.length}건`}
-            message="포지션 반영 여부를 확인하고 필요 시 수동 조정하세요."
-          />
-        )}
-
-        {/* Error banner */}
-        {reconcileError && (
-          <ErrorBanner
-            message={reconcileError}
-            onDismiss={() => setReconcileError(null)}
-          />
-        )}
-
-        {/* Reconcile-required table */}
-        {reconcileCases.length === 0 && !reconcileLoading ? (
-          <div className="bg-white rounded-xl border border-[#e2e8f0] p-8 text-center">
-            <p className="text-sm text-[#94a3b8]">
-              {reconcileError
-                ? "데이터를 불러올 수 없습니다."
-                : "조정이 필요한 주문이 없습니다."}
-            </p>
-          </div>
-        ) : (
-          <div className="bg-white rounded-xl border border-[#e2e8f0] overflow-hidden">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-[#e2e8f0] bg-[#f8fafc]">
-                  {["심볼", "상태", "수량", "주문가", "포지션 반영", "해석", ""].map(
-                    (h) => (
-                      <th
-                        key={h}
-                        className="px-4 py-2.5 text-left text-xs font-medium text-[#64748b] whitespace-nowrap"
-                      >
-                        {h}
-                      </th>
-                    ),
-                  )}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#e2e8f0]">
-                {reconcileCases.map((rc) => (
-                  <Fragment key={rc.order.order_request_id}>
-                    <tr className="hover:bg-[#f8fafc]">
-                      <td className="px-4 py-2.5 text-sm font-medium text-[#0f172a]">
-                        {rc.order.symbol ?? "—"}
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <StatusBadge status={rc.order.status} />
-                      </td>
-                      <td className="px-4 py-2.5 text-sm text-[#64748b]">
-                        {rc.order.requested_quantity}
-                      </td>
-                      <td className="px-4 py-2.5 text-sm font-mono text-[#64748b]">
-                        {formatKrw(rc.order.requested_price)}
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <StatusBadge
-                          variant={rc.positionReflected ? "success" : "neutral"}
+          {/* ── Active Locks Section ────────────── */}
+          <div className="space-y-3">
+            <h2 className="text-lg font-semibold text-[#0f172a]">활성 잠금</h2>
+            {locks.length === 0 ? (
+              <div className="bg-white rounded-xl border border-[#e2e8f0] p-8 text-center">
+                <p className="text-sm text-[#94a3b8]">차단 잠금이 없습니다.</p>
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl border border-[#e2e8f0] overflow-hidden">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-[#e2e8f0] bg-[#f8fafc]">
+                      {["계정", "전략", "Side", "사유", "상태", "획득 시각", "실행 ID"].map((h) => (
+                        <th
+                          key={h}
+                          className="px-4 py-2.5 text-left text-xs font-medium text-[#64748b] whitespace-nowrap"
                         >
-                          {rc.positionReflected ? "반영됨" : "미반영"}
-                        </StatusBadge>
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <span
-                          className={`text-xs ${
-                            rc.variant === "info"
-                              ? "text-[#2563eb]"
-                              : "text-[#d97706]"
-                          }`}
-                        >
-                          {rc.interpretiveText}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleToggleBrokerInfo(rc.order.order_request_id)
-                          }
-                          className="p-1 text-[#94a3b8] hover:text-[#64748b] transition-colors"
-                          title="브로커 정보 보기"
-                        >
-                          {expandedOrderId === rc.order.order_request_id ? (
-                            <ChevronDown className="h-4 w-4" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4" />
-                          )}
-                        </button>
-                      </td>
+                          {h}
+                        </th>
+                      ))}
                     </tr>
-                    {/* Expanded broker info row */}
-                    {expandedOrderId === rc.order.order_request_id && (
-                      <tr key={`${rc.order.order_request_id}-broker`}>
-                        <td colSpan={7} className="px-4 py-3 bg-[#f8fafc]">
-                          <BrokerInfoPanel
-                            orderId={rc.order.order_request_id}
-                            brokerOrders={brokerOrdersMap.get(
-                              rc.order.order_request_id,
-                            )}
-                            loading={brokerLoading.has(
-                              rc.order.order_request_id,
-                            )}
-                          />
+                  </thead>
+                  <tbody className="divide-y divide-[#e2e8f0]">
+                    {locks.map((lock, idx) => (
+                      <tr key={lock.account_id + lock.locked_by_run_id + idx} className="hover:bg-[#f8fafc]">
+                        <td className="px-4 py-2.5">
+                          <span className="text-sm font-medium text-[#0f172a]">{lock.account_id}</span>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className="text-sm text-[#334155]">{lock.strategy_id}</span>
+                        </td>
+                        <td className="px-4 py-2.5 text-sm text-[#64748b]">{lock.side}</td>
+                        <td className="px-4 py-2.5 text-sm text-[#64748b]">{lock.reason}</td>
+                        <td className="px-4 py-2.5">
+                          <StatusBadge variant={!lock.is_active ? "neutral" : "error"}>
+                            {!lock.is_active ? "만료" : "활성"}
+                          </StatusBadge>
+                        </td>
+                        <td className="px-4 py-2.5 text-sm text-[#64748b]">
+                          {formatKstDateTime(lock.locked_at)}
+                        </td>
+                        <td className="px-4 py-2.5 text-sm text-[#64748b]">
+                          {lock.locked_by_run_id}
                         </td>
                       </tr>
-                    )}
-                  </Fragment>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* ── Active Locks Section ────────────── */}
-      <div className="space-y-3">
-        <h2 className="text-lg font-semibold text-[#0f172a]">활성 잠금</h2>
-        {locks.length === 0 ? (
-          <div className="bg-white rounded-xl border border-[#e2e8f0] p-8 text-center">
-            <p className="text-sm text-[#94a3b8]">차단 잠금이 없습니다.</p>
-          </div>
-        ) : (
-          <div className="bg-white rounded-xl border border-[#e2e8f0] overflow-hidden">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-[#e2e8f0] bg-[#f8fafc]">
-                  {["심볼", "유형", "전략", "상태", "획득 시각", "만료 시각"].map((h) => (
-                    <th
-                      key={h}
-                      className="px-4 py-2.5 text-left text-xs font-medium text-[#64748b] whitespace-nowrap"
-                    >
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#e2e8f0]">
-                {locks.map((lock) => (
-                  <tr key={lock.lock_id} className="hover:bg-[#f8fafc]">
-                    <td className="px-4 py-2.5 text-sm font-medium text-[#0f172a]">{lock.symbol}</td>
-                    <td className="px-4 py-2.5 text-sm text-[#64748b]">{lock.lock_type}</td>
-                    <td className="px-4 py-2.5 text-sm text-[#64748b]">{lock.strategy_code}</td>
-                    <td className="px-4 py-2.5">
-                      <StatusBadge variant={lock.is_expired ? "neutral" : "error"}>
-                        {lock.is_expired ? "만료" : "활성"}
-                      </StatusBadge>
-                    </td>
-                    <td className="px-4 py-2.5 text-sm text-[#64748b]">
-                      {formatKstDateTime(lock.acquired_at)}
-                    </td>
-                    <td className="px-4 py-2.5 text-sm text-[#64748b]">
-                      {lock.expires_at ? formatKstDateTime(lock.expires_at) : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* ── Reconciliation Runs Section ─────── */}
-      <div className="space-y-3">
-        <h2 className="text-lg font-semibold text-[#0f172a]">정합성 점검 실행</h2>
-
-        {/* Filter pills */}
-        <div className="flex items-center gap-2">
-          {RUN_STATUSES.map((s) => (
-            <button
-              key={s}
-              type="button"
-              className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-                runStatusFilter === s
-                  ? "bg-[#3b82f6] text-white"
-                  : "bg-white text-[#64748b] border border-[#e2e8f0] hover:bg-[#f8fafc]"
-              }`}
-              onClick={() => {
-                setRunStatusFilter(s);
-                setSelectedRun(null);
-              }}
-            >
-              {formatStatusLabel(s)}
-            </button>
-          ))}
-        </div>
-
-        {/* Runs table + detail side-by-side */}
-        <div className="grid grid-cols-12 gap-6">
-          <div className={selectedRun ? "col-span-7" : "col-span-12"}>
-            <DataTable
-              columns={runColumns}
-              data={filteredRuns}
-              idKey="run_id"
-              onRowClick={(row) =>
-                setSelectedRun(
-                  selectedRun?.run_id === row.run_id ? null : row,
-                )
-              }
-              selectedId={selectedRun?.run_id}
-              emptyMessage="정합성 점검 실행 기록이 없습니다."
-            />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
-          {/* Run Detail Panel */}
-          {selectedRun && (
-            <div className="col-span-5 space-y-4">
-              <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-semibold text-[#0f172a]">실행 상세</h3>
-                  <button
-                    onClick={() => setSelectedRun(null)}
-                    className="p-1 text-[#94a3b8] hover:text-[#64748b] transition-colors"
-                  >
-                    <X className="h-5 w-5" />
-                  </button>
-                </div>
-                <dl className="space-y-3">
-                  <div className="flex justify-between">
-                    <dt className="text-sm text-[#64748b]">실행 ID</dt>
-                    <dd className="text-sm font-mono text-[#0f172a]">{selectedRun.run_id}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-sm text-[#64748b]">상태</dt>
-                    <dd><StatusBadge status={selectedRun.status} /></dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-sm text-[#64748b]">시작</dt>
-                    <dd className="text-sm text-[#0f172a]">{formatKstDateTime(selectedRun.started_at)}</dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-sm text-[#64748b]">완료</dt>
-                    <dd className="text-sm text-[#0f172a]">
-                      {selectedRun.completed_at ? formatKstDateTime(selectedRun.completed_at) : "—"}
-                    </dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-sm text-[#64748b]">주문 불일치</dt>
-                    <dd className={`text-sm font-semibold ${selectedRun.order_mismatches > 0 ? "text-[#dc2626]" : "text-[#0f172a]"}`}>
-                      {selectedRun.order_mismatches}
-                    </dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-sm text-[#64748b]">포지션 불일치</dt>
-                    <dd className={`text-sm font-semibold ${selectedRun.position_mismatches > 0 ? "text-[#dc2626]" : "text-[#0f172a]"}`}>
-                      {selectedRun.position_mismatches}
-                    </dd>
-                  </div>
-                </dl>
+          {/* ── Reconciliation Runs Section ─────── */}
+          <div className="space-y-3">
+            <h2 className="text-lg font-semibold text-[#0f172a]">정합성 점검 실행</h2>
 
-                {/* Status footer */}
-                {selectedRun.status === "completed" &&
-                  selectedRun.order_mismatches === 0 &&
-                  selectedRun.position_mismatches === 0 && (
-                    <div className="mt-4 pt-4 border-t border-[#e2e8f0] flex items-center gap-2">
-                      <CheckCircle className="h-4 w-4 text-[#16a34a]" />
-                      <span className="text-sm text-[#16a34a]">모든 포지션이 일치합니다.</span>
+            {/* Filter pills */}
+            <div className="flex items-center gap-2">
+              {RUN_STATUSES.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                    runStatusFilter === s
+                      ? "bg-[#3b82f6] text-white"
+                      : "bg-white text-[#64748b] border border-[#e2e8f0] hover:bg-[#f8fafc]"
+                  }`}
+                  onClick={() => {
+                    setRunStatusFilter(s);
+                    setSelectedRun(null);
+                  }}
+                >
+                  {formatStatusLabel(s)}
+                </button>
+              ))}
+            </div>
+
+            {/* Runs table + detail side-by-side */}
+            <div className="grid grid-cols-12 gap-6">
+              <div className={selectedRun ? "col-span-7" : "col-span-12"}>
+                <DataTable
+                  columns={runColumns}
+                  data={filteredRuns}
+                  idKey="reconciliation_run_id"
+                  onRowClick={(row) =>
+                    setSelectedRun(
+                      selectedRun?.reconciliation_run_id === row.reconciliation_run_id ? null : row,
+                    )
+                  }
+                  selectedId={selectedRun?.reconciliation_run_id}
+                  emptyMessage="정합성 점검 실행 기록이 없습니다."
+                />
+              </div>
+
+              {/* Run Detail Panel */}
+              {selectedRun && (
+                <div className="col-span-5 space-y-4">
+                  <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-semibold text-[#0f172a]">실행 상세</h3>
+                      <button
+                        onClick={() => setSelectedRun(null)}
+                        className="p-1 text-[#94a3b8] hover:text-[#64748b] transition-colors"
+                      >
+                        <X className="h-5 w-5" />
+                      </button>
                     </div>
-                  )}
-                {(selectedRun.order_mismatches > 0 ||
-                  selectedRun.position_mismatches > 0) && (
-                  <div className="mt-4 pt-4 border-t border-[#e2e8f0] flex items-center gap-2">
-                    <AlertTriangle className="h-4 w-4 text-[#d97706]" />
-                    <span className="text-sm text-[#d97706]">불일치 항목을 검토해야 합니다.</span>
+                    <dl className="space-y-3">
+                      <div className="flex justify-between">
+                        <dt className="text-sm text-[#64748b]">실행 ID</dt>
+                        <dd className="text-sm font-mono text-[#0f172a]">{selectedRun.reconciliation_run_id}</dd>
+                      </div>
+                      <div className="flex justify-between">
+                        <dt className="text-sm text-[#64748b]">상태</dt>
+                        <dd><StatusBadge status={selectedRun.status} /></dd>
+                      </div>
+                      <div className="flex justify-between">
+                        <dt className="text-sm text-[#64748b]">시작</dt>
+                        <dd className="text-sm text-[#0f172a]">{formatKstDateTime(selectedRun.started_at)}</dd>
+                      </div>
+                      <div className="flex justify-between">
+                        <dt className="text-sm text-[#64748b]">완료</dt>
+                        <dd className="text-sm text-[#0f172a]">
+                          {selectedRun.completed_at ? formatKstDateTime(selectedRun.completed_at) : "—"}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between">
+                        <dt className="text-sm text-[#64748b]">불일치 건수</dt>
+                        <dd className={`text-sm font-semibold ${selectedRun.mismatch_count > 0 ? "text-[#dc2626]" : "text-[#0f172a]"}`}>
+                          {selectedRun.mismatch_count}
+                        </dd>
+                      </div>
+                    </dl>
+
+                    {/* Status footer */}
+                    {selectedRun.status === "completed" &&
+                      selectedRun.mismatch_count === 0 && (
+                        <div className="mt-4 pt-4 border-t border-[#e2e8f0] flex items-center gap-2">
+                          <CheckCircle className="h-4 w-4 text-[#16a34a]" />
+                          <span className="text-sm text-[#16a34a]">모든 포지션이 일치합니다.</span>
+                        </div>
+                      )}
+                    {selectedRun.mismatch_count > 0 && (
+                      <div className="mt-4 pt-4 border-t border-[#e2e8f0] flex items-center gap-2">
+                        <AlertTriangle className="h-4 w-4 text-[#d97706]" />
+                        <span className="text-sm text-[#d97706]">불일치 항목을 검토해야 합니다.</span>
+                      </div>
+                    )}
                   </div>
-                )}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ── Reconcile-required section (section-level loading) ── */}
+      {reconcileLoading ? (
+        <LoadingSpinner text="조정 필요 주문 로딩 중..." />
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-[#0f172a]">
+              조정 필요 주문
+            </h2>
+          </div>
+
+          {/* Summary card — semantics-safe: never show misleading "0" while loading/error */}
+          {!reconcileError && reconcileCases.length > 0 && (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-white rounded-xl border border-[#e2e8f0] p-4">
+                <p className="text-xs text-[#64748b]">조정 필요 주문</p>
+                <p className="text-2xl font-semibold text-[#0f172a] mt-1">
+                  {summaryCard.total}
+                </p>
+              </div>
+              <div className="bg-white rounded-xl border border-[#e2e8f0] p-4">
+                <p className="text-xs text-[#64748b]">포지션 반영됨</p>
+                <p className="text-2xl font-semibold text-[#0f172a] mt-1">
+                  {summaryCard.reflected}
+                </p>
               </div>
             </div>
           )}
+
+          {/* Partial data warning — data exists but some accounts failed */}
+          {reconcileError && reconcileCases.length > 0 && (
+            <WarningBanner
+              variant="warning"
+              title="데이터 일부 누락"
+              message="일부 계정의 포지션 데이터를 불러오지 못했습니다. 표시된 정보는 불완전할 수 있습니다."
+            />
+          )}
+
+          {/* Error banner (no data at all) */}
+          {reconcileError && reconcileCases.length === 0 && (
+            <ErrorBanner
+              message={reconcileError}
+              onDismiss={() => setReconcileError(null)}
+            />
+          )}
+
+          {/* Warning banner when many unreconciled orders */}
+          {reconcileCases.length > 5 && (
+            <WarningBanner
+              variant="warning"
+              title={`조정 필요 주문 ${reconcileCases.length}건`}
+              message="포지션 반영 여부를 확인하고 필요 시 수동 조정하세요."
+            />
+          )}
+
+          {/* Reconcile-required table */}
+          {reconcileCases.length === 0 && !reconcileLoading ? (
+            <div className="bg-white rounded-xl border border-[#e2e8f0] p-8 text-center">
+              <p className="text-sm text-[#94a3b8]">
+                {reconcileError
+                  ? "데이터를 불러올 수 없습니다."
+                  : "조정이 필요한 주문이 없습니다."}
+              </p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-xl border border-[#e2e8f0] overflow-hidden">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-[#e2e8f0] bg-[#f8fafc]">
+                    {["심볼", "종목명", "상태", "수량", "주문가", "포지션 반영", "해석", ""].map(
+                      (h) => (
+                        <th
+                          key={h}
+                          className="px-4 py-2.5 text-left text-xs font-medium text-[#64748b] whitespace-nowrap"
+                        >
+                          {h}
+                        </th>
+                      ),
+                    )}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#e2e8f0]">
+                  {reconcileCases.map((rc) => (
+                    <Fragment key={rc.order.order_request_id}>
+                      <tr className="hover:bg-[#f8fafc]">
+                        <td className="px-4 py-2.5 text-sm font-medium text-[#0f172a]">
+                          {rc.order.symbol ?? "—"}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className="text-sm text-[#334155]">{rc.order.instrument_name || "—"}</span>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <StatusBadge status={rc.order.status} />
+                        </td>
+                        <td className="px-4 py-2.5 text-sm text-[#64748b]">
+                          {rc.order.requested_quantity}
+                        </td>
+                        <td className="px-4 py-2.5 text-sm font-mono text-[#64748b]">
+                          {formatKrw(rc.order.requested_price)}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <StatusBadge
+                            variant={rc.positionReflected ? "success" : "neutral"}
+                          >
+                            {rc.positionReflected ? "반영됨" : "미반영"}
+                          </StatusBadge>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span
+                            className={`text-xs ${
+                              rc.variant === "info"
+                                ? "text-[#2563eb]"
+                                : "text-[#d97706]"
+                            }`}
+                          >
+                            {rc.interpretiveText}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleToggleBrokerInfo(rc.order.order_request_id)
+                            }
+                            className="p-1 text-[#94a3b8] hover:text-[#64748b] transition-colors"
+                            title="브로커 정보 보기"
+                          >
+                            {expandedOrderId === rc.order.order_request_id ? (
+                              <ChevronDown className="h-4 w-4" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4" />
+                            )}
+                          </button>
+                        </td>
+                      </tr>
+                      {/* Expanded broker info row */}
+                      {expandedOrderId === rc.order.order_request_id && (
+                        <tr key={`${rc.order.order_request_id}-broker`}>
+                          <td colSpan={8} className="px-4 py-3 bg-[#f8fafc]">
+                            <BrokerInfoPanel
+                              orderId={rc.order.order_request_id}
+                              brokerOrders={brokerOrdersMap.get(
+                                rc.order.order_request_id,
+                              )}
+                              loading={brokerLoading.has(
+                                rc.order.order_request_id,
+                              )}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
-      </div>
+      )}
     </div>
   );
 }

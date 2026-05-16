@@ -26,6 +26,8 @@ from agent_trading.domain.entities import (
     OrderRequestEntity,
     OrderStateEventEntity,
     PositionSnapshotEntity,
+    ReconciliationOrderLinkEntity,
+    ReconciliationPositionLinkEntity,
     ReconciliationRunEntity,
     RiskLimitSnapshotEntity,
     SessionEventEntity,
@@ -216,6 +218,12 @@ class InMemoryInstrumentRepository:
                 for item in self._items.values()
                 if item.symbol == symbol and item.market_code == market_code
             ),
+            None,
+        )
+
+    async def get_by_symbol_any_market(self, symbol: str) -> InstrumentEntity | None:
+        return next(
+            (item for item in self._items.values() if item.symbol == symbol),
             None,
         )
 
@@ -558,6 +566,7 @@ class InMemoryReconciliationRepository:
         self,
         reconciliation_run_id: UUID,
         status: str,
+        completed_at: datetime | None = None,
         summary_json: dict[str, object] | None = None,
     ) -> None:
         run = self._runs.get(reconciliation_run_id)
@@ -571,8 +580,8 @@ class InMemoryReconciliationRepository:
             status=status,
             started_at=run.started_at,
             mismatch_count=run.mismatch_count,
-            summary_json=summary_json or run.summary_json,
-            completed_at=run.completed_at,
+            summary_json=summary_json if summary_json is not None else run.summary_json,
+            completed_at=completed_at if completed_at is not None else run.completed_at,
             created_at=run.created_at,
         )
 
@@ -644,6 +653,98 @@ class InMemoryReconciliationRepository:
             )
         results.sort(key=lambda x: x.locked_at or now, reverse=True)
         return results
+
+    # -- Worker read path (Reconciliation Worker) --
+
+    async def list_pending_runs(
+        self,
+        limit: int = 20,
+        *,
+        account_id: UUID | None = None,
+        run_id: UUID | None = None,
+    ) -> Sequence[ReconciliationRunEntity]:
+        """Return reconciliation runs with ``status = 'started'``."""
+        runs = [
+            r for r in self._runs.values()
+            if r.status == "started"
+        ]
+        if account_id is not None:
+            runs = [r for r in runs if r.account_id == account_id]
+        if run_id is not None:
+            runs = [r for r in runs if r.reconciliation_run_id == run_id]
+        runs.sort(key=lambda r: r.started_at)
+        return runs[:limit]
+
+    # -- Legacy run cleanup --
+
+    async def list_legacy_runs(
+        self,
+        limit: int = 50,
+        *,
+        account_id: UUID | None = None,
+        run_id: UUID | None = None,
+    ) -> Sequence[ReconciliationRunEntity]:
+        """Return legacy runs: ``status = 'started'`` AND no order links."""
+        runs = [
+            r for r in self._runs.values()
+            if r.status == "started"
+        ]
+        # Filter: runs WITH order links excluded
+        runs_with_links = {
+            link_info["reconciliation_run_id"]
+            for links in self._order_links.values()
+            for link_info in links
+            if isinstance(link_info, dict) and "reconciliation_run_id" in link_info
+        }
+        # The _order_links dict is keyed by reconciliation_run_id,
+        # so any run with entries has links.
+        runs = [
+            r for r in runs
+            if r.reconciliation_run_id not in self._order_links
+            or len(self._order_links[r.reconciliation_run_id]) == 0
+        ]
+        if account_id is not None:
+            runs = [r for r in runs if r.account_id == account_id]
+        if run_id is not None:
+            runs = [r for r in runs if r.reconciliation_run_id == run_id]
+        runs.sort(key=lambda r: r.started_at)
+        return runs[:limit]
+
+    async def get_run_order_links(
+        self,
+        reconciliation_run_id: UUID,
+    ) -> Sequence[ReconciliationOrderLinkEntity]:
+        """Return order links attached to a reconciliation run."""
+        raw_links = self._order_links.get(reconciliation_run_id, [])
+        result: list[ReconciliationOrderLinkEntity] = []
+        for link in raw_links:
+            result.append(
+                ReconciliationOrderLinkEntity(
+                    reconciliation_run_id=reconciliation_run_id,
+                    order_request_id=link["order_request_id"],
+                    mismatch_type=link["mismatch_type"],
+                    details_json=link.get("details", {}),
+                )
+            )
+        return result
+
+    async def list_run_position_links(
+        self,
+        reconciliation_run_id: UUID,
+    ) -> Sequence[ReconciliationPositionLinkEntity]:
+        """Return position links attached to a reconciliation run."""
+        raw_links = self._position_links.get(reconciliation_run_id, [])
+        result: list[ReconciliationPositionLinkEntity] = []
+        for link in raw_links:
+            result.append(
+                ReconciliationPositionLinkEntity(
+                    reconciliation_run_id=reconciliation_run_id,
+                    position_snapshot_id=link["position_snapshot_id"],
+                    mismatch_type=link["mismatch_type"],
+                    details_json=link.get("details", {}),
+                )
+            )
+        return result
 
     # -- In-memory blocking lock support (for tests) --
 
@@ -782,6 +883,15 @@ class InMemoryBrokerAccountRepository:
             for item in self._items.values()
             if item.broker_name == broker_name and item.environment == env
         )
+
+    async def list_by_account_id(
+        self,
+        account_id: UUID,
+    ) -> Sequence[BrokerAccountEntity]:
+        """In-memory: return all broker accounts (cross-repo JOIN not available)."""
+        # Note: Proper resolution requires AccountRepository access.
+        # Production path uses a SQL JOIN (see PostgresBrokerAccountRepository).
+        return tuple(self._items.values())
 
 
 class InMemoryAuditLogRepository:

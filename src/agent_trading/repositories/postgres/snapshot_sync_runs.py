@@ -35,9 +35,11 @@ class PostgresSnapshotSyncRunRepository:
                 positions_synced_total, positions_skipped_total,
                 cash_synced_count, error_count,
                 status, started_at, completed_at, summary_json,
+                after_hours,
                 created_at)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                       $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+                       $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+                       $21)
                RETURNING *""",
             run.snapshot_sync_run_id,
             run.trigger_type,
@@ -58,6 +60,7 @@ class PostgresSnapshotSyncRunRepository:
             run.started_at,
             run.completed_at,
             run.summary_json,
+            run.after_hours,
             run.created_at or datetime.now(timezone.utc),
         )
         return row_to_entity(row, SnapshotSyncRunEntity)
@@ -120,6 +123,7 @@ class PostgresSnapshotSyncRunRepository:
                 consecutive_failures=0,
                 is_stale=True,
                 stale_threshold_seconds=stale_threshold_seconds,
+                after_hours=False,
             )
 
         entities = [row_to_entity(row, SnapshotSyncRunEntity) for row in rows]
@@ -157,4 +161,5 @@ class PostgresSnapshotSyncRunRepository:
             consecutive_failures=consecutive_failures,
             is_stale=is_stale,
             stale_threshold_seconds=stale_threshold_seconds,
+            after_hours=last.after_hours,
         )

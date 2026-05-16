@@ -84,3 +84,17 @@ class PostgresBrokerAccountRepository:
             env.value,
         )
         return tuple(row_to_entity(r, BrokerAccountEntity) for r in rows)
+
+    async def list_by_account_id(
+        self,
+        account_id: UUID,
+    ) -> Sequence[BrokerAccountEntity]:
+        """List broker accounts linked to the given account ID via JOIN."""
+        rows = await self._tx.connection.fetch(
+            """SELECT ba.* FROM trading.broker_accounts ba
+               JOIN trading.accounts a ON a.broker_account_id = ba.broker_account_id
+               WHERE a.account_id = $1
+               ORDER BY ba.account_ref""",
+            account_id,
+        )
+        return tuple(row_to_entity(r, BrokerAccountEntity) for r in rows)

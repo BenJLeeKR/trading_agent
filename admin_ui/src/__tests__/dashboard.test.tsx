@@ -125,7 +125,7 @@ describe("Dashboard with valid data", () => {
     expect(screen.getByText("TSLA")).toBeInTheDocument();
 
     // Active Locks section — shows lock rows
-    expect(screen.getByText("manual-review-account-a1")).toBeInTheDocument();
+    expect(screen.getByText("Manual review required")).toBeInTheDocument();
 
     // Freshness indicator — "HH:mm:ss에 업데이트됨" appears in the page header
     expect(screen.getByText(/에 업데이트됨/)).toBeInTheDocument();

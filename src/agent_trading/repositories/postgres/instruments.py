@@ -56,6 +56,13 @@ class PostgresInstrumentRepository:
         )
         return row_to_entity(row, InstrumentEntity) if row else None
 
+    async def get_by_symbol_any_market(self, symbol: str) -> InstrumentEntity | None:
+        row = await self._tx.connection.fetchrow(
+            "SELECT * FROM trading.instruments WHERE symbol = $1 LIMIT 1",
+            symbol,
+        )
+        return row_to_entity(row, InstrumentEntity) if row else None
+
     async def upsert_by_symbol(self, instrument: InstrumentEntity) -> InstrumentEntity:
         row = await self._tx.connection.fetchrow(
             """

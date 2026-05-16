@@ -126,9 +126,8 @@ describe("OrderDetail state events table", () => {
     expect(screen.getByText("이후")).toBeInTheDocument();
     expect(screen.getByText("사유")).toBeInTheDocument();
 
-    // Event data
-    expect(screen.getByText("Order submitted to broker")).toBeInTheDocument();
-    expect(screen.getByText("Fill confirmed by broker")).toBeInTheDocument();
+    // Event data — reason_code → formatter → 한글 라벨 확인
+    expect(screen.getByText("체결 확인")).toBeInTheDocument();
   });
 });
 

@@ -122,7 +122,29 @@ function deriveInterpretiveText(
 /* ── Main entry point ────────────────────── */
 
 /**
+ * Build an account-level symbol→position index for O(1) lookups.
+ *
+ * Returns `Map<accountId, Map<symbol, PositionSnapshotView>>`.
+ */
+function buildPositionIndex(
+  positionsByAccount: Map<string, PositionSnapshotView[]>,
+): Map<string, Map<string, PositionSnapshotView>> {
+  const index = new Map<string, Map<string, PositionSnapshotView>>();
+  for (const [accountId, positions] of positionsByAccount) {
+    const symbolMap = new Map<string, PositionSnapshotView>();
+    for (const pos of positions) {
+      if (pos.symbol) symbolMap.set(pos.symbol, pos);
+    }
+    index.set(accountId, symbolMap);
+  }
+  return index;
+}
+
+/**
  * Derive reconcile-required cases from orders and positions data.
+ *
+ * Uses an account-level symbol→position Map index for O(n) total complexity
+ * instead of O(orders × positions) linear search.
  *
  * @param orders - List of orders (pre-filtered by status=reconcile_required)
  * @param positionsByAccount - Map of account_id → position snapshots
@@ -132,11 +154,19 @@ export function deriveReconcileRequiredCases(
   orders: OrderSummary[],
   positionsByAccount: Map<string, PositionSnapshotView[]>,
 ): ReconcileRequiredCase[] {
+  // Build account-level symbol→position index (O(P) where P = total positions)
+  const positionIndex = buildPositionIndex(positionsByAccount);
+
   const cases: ReconcileRequiredCase[] = [];
 
   for (const order of orders) {
-    const accountPositions = positionsByAccount.get(order.account_id) ?? [];
-    const matchedPosition = findMatchingPosition(order, accountPositions);
+    // O(1) lookup per order — no linear search
+    const acctIndex = positionIndex.get(order.account_id);
+    const matchedPosition =
+      order.symbol && acctIndex
+        ? (acctIndex.get(order.symbol) ?? null)
+        : null;
+
     const positionReflected = matchedPosition !== null;
     const priceMatch = positionReflected
       ? checkPriceMatch(order, matchedPosition!)

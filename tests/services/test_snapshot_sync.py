@@ -160,10 +160,18 @@ class MockSnapshotProvider:
         self,
         account_id: UUID,
         instrument_repo: InstrumentRepository,
+        *,
+        after_hours: bool = False,
     ) -> FetchedSnapshot:
         if self._fail:
             msg = f"Mock failure for account_id={account_id}"
             raise RuntimeError(msg)
+        if after_hours:
+            return FetchedSnapshot(
+                positions=[],
+                cash_balance=self._cash,
+                errors=self._errors,
+            )
         return FetchedSnapshot(
             positions=self._positions,
             cash_balance=self._cash,

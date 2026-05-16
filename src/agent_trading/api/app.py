@@ -236,6 +236,11 @@ def create_app(
 
     protected_routers.append(metadata_router)
 
+    # Phase 5c — Market Session status inspection
+    from agent_trading.api.routes.sessions import router as sessions_router
+
+    protected_routers.append(sessions_router)
+
     if auth_enabled:
         for router in protected_routers:
             app.include_router(router, dependencies=[Depends(require_viewer)])

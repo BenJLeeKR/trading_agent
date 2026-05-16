@@ -43,6 +43,7 @@ def _to_summary(run: object) -> SnapshotSyncRunSummary:
         status=run.status,  # type: ignore[attr-defined]
         started_at=run.started_at,  # type: ignore[attr-defined]
         completed_at=run.completed_at,  # type: ignore[attr-defined]
+        after_hours=run.after_hours,  # type: ignore[attr-defined]
         env_filter=run.env_filter,  # type: ignore[attr-defined]
         status_filter=run.status_filter,  # type: ignore[attr-defined]
         summary_json=run.summary_json,  # type: ignore[attr-defined]
@@ -101,6 +102,7 @@ async def get_snapshot_sync_health_summary(
         consecutive_failures=summary.consecutive_failures,
         is_stale=summary.is_stale,
         stale_threshold_seconds=summary.stale_threshold_seconds,
+        after_hours=summary.after_hours,
     )
 
 

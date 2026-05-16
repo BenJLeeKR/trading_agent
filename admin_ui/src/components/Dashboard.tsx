@@ -190,7 +190,7 @@ export default function Dashboard() {
 
   // Compute derived metrics for top cards
   const recentOrdersCount = orders.length;
-  const activeLocksCount = locks.filter((l) => !l.is_expired).length;
+  const activeLocksCount = locks.filter((l) => l.is_active).length;
   const incompleteReconCount = reconRuns.filter(
     (r) => r.status !== "completed",
   ).length;
@@ -485,45 +485,35 @@ export default function Dashboard() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#e2e8f0] bg-[#f8fafc]">
-                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">잠금 키</th>
-                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">유형</th>
-                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">심볼</th>
+                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">계정</th>
                   <th className="text-left px-4 py-3 font-medium text-[#64748b]">전략</th>
-                  <th className="text-right px-4 py-3 font-medium text-[#64748b]">만료</th>
+                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">Side</th>
+                  <th className="text-left px-4 py-3 font-medium text-[#64748b]">사유</th>
+                  <th className="text-right px-4 py-3 font-medium text-[#64748b]">획득 시각</th>
                 </tr>
               </thead>
               <tbody>
-                {locks.map((lock) => (
+                {locks.map((lock, idx) => (
                   <tr
-                    key={lock.lock_id}
+                    key={lock.account_id + lock.locked_by_run_id + idx}
                     className="border-b border-[#e2e8f0] last:border-b-0 hover:bg-[#f8fafc] transition-colors"
                   >
                     <td className="px-4 py-3">
                       <span className="font-mono text-xs text-[#64748b]">
-                        {lock.lock_key}
+                        {lock.account_id}
                       </span>
                     </td>
-                    <td className="px-4 py-3">
-                      <StatusBadge
-                        variant={
-                          lock.lock_type === "manual"
-                            ? "warning"
-                            : lock.lock_type === "reconciliation"
-                              ? "error"
-                              : "info"
-                        }
-                      >
-                        {lock.lock_type.toUpperCase()}
-                      </StatusBadge>
-                    </td>
                     <td className="px-4 py-3 font-medium text-[#0f172a]">
-                      {lock.symbol}
+                      {lock.strategy_id}
                     </td>
                     <td className="px-4 py-3 text-xs text-[#64748b]">
-                      {lock.strategy_code}
+                      {lock.side}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-[#64748b]">
+                      {lock.reason}
                     </td>
                     <td className="px-4 py-3 text-right text-xs text-[#64748b]">
-                      {formatKstDateTime(lock.expires_at)}
+                      {formatKstDateTime(lock.locked_at)}
                     </td>
                   </tr>
                 ))}

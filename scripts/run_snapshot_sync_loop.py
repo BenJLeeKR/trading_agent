@@ -221,6 +221,7 @@ async def _run_one_cycle(settings: AppSettings, broker: str, after_hours: bool =
                 scope="all",
                 dry_run=False,
                 started_at=started_at,
+                after_hours=after_hours,
             )
             await repos.snapshot_sync_runs.add(run_entity)
 

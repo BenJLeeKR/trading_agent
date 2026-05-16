@@ -98,6 +98,8 @@ class SnapshotFetchProvider(Protocol):
         self,
         account_id: UUID,
         instrument_repo: InstrumentRepository,
+        *,
+        after_hours: bool = False,
     ) -> FetchedSnapshot:
         """Fetch current positions and cash balance for a single account.
 
@@ -109,6 +111,10 @@ class SnapshotFetchProvider(Protocol):
         instrument_repo:
             Repository for resolving broker-native instrument codes (e.g.
             KIS ``pdno``) to ``InstrumentEntity.instrument_id``.
+        after_hours:
+            When ``True``, the provider should skip fetching positions
+            (since they don't change after market close) and only query
+            cash balance with after-hours API parameters.
 
         Returns
         -------

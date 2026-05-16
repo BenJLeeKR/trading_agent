@@ -18,6 +18,7 @@ import {
   getPositions,
   getCashBalance,
   getSnapshotSyncRuns,
+  getLatestMarketSession,
 } from "../api/client";
 import type {
   HealthResponse,
@@ -25,6 +26,7 @@ import type {
   ReconciliationRunSummary,
   ClientDetail,
   SnapshotSyncRunSummary,
+  SchedulerStatusResponse,
 } from "../types/api";
 import { deriveAlerts, LEVEL_PRIORITY, type AlertItem, type AlertRuleInput } from "../lib/alerts";
 
@@ -113,8 +115,8 @@ export default function OperationsAlertsView() {
     const apiErrors: { apiName: string; message: string }[] = [];
 
     try {
-      // ── 시스템 상태 / 주문 / 정합성 요약 / 에이전트 (account_id 불필요) ──
-      const [healthResult, ordersResult, reconSummaryResult, agentRunsResult] =
+      // ── 시스템 상태 / 주문 / 정합성 요약 / 에이전트 / 세션 (account_id 불필요) ──
+      const [healthResult, ordersResult, reconSummaryResult, agentRunsResult, sessionResult] =
         await Promise.all([
           getHealth()
             .then((h) => ({ data: h, error: false }))
@@ -139,6 +141,12 @@ export default function OperationsAlertsView() {
             .catch((e) => {
               apiErrors.push({ apiName: "GET /agent-runs", message: String(e) });
               return { data: [] as { status?: string }[], error: true };
+            }),
+          getLatestMarketSession()
+            .then((s) => ({ data: s, error: false }))
+            .catch((e) => {
+              apiErrors.push({ apiName: "GET /market-sessions/latest", message: String(e) });
+              return { data: null as SchedulerStatusResponse | null, error: true };
             }),
         ]);
 
@@ -260,8 +268,6 @@ export default function OperationsAlertsView() {
         ordersError: ordersResult.error,
         reconSummary: reconSummaryResult.data as { active_locks_count: number; incomplete_recon_count: number } | null,
         reconSummaryError: reconSummaryResult.error,
-        reconRuns: reconRunsResult.data,
-        reconRunsError: reconRunsResult.error,
         agentRuns: agentRunsResult.data,
         agentRunsError: agentRunsResult.error,
         positionsCount,
@@ -270,6 +276,8 @@ export default function OperationsAlertsView() {
         snapshotSyncError,
         latestPositionSnapshotAt,
         latestCashSnapshotAt,
+        schedulerHealth: healthResult.data?.scheduler ?? null,
+        sessionData: sessionResult.data,
         apiErrors,
       });
 
@@ -365,7 +373,8 @@ export default function OperationsAlertsView() {
         {/* Alerts List */}
         <div className={selectedAlert ? "col-span-7" : "col-span-12"}>
           {/* Filter Buttons */}
-          <div className="flex items-center gap-2 mb-4">
+          <div className="bg-white rounded-xl border border-[#e2e8f0] p-4 mb-4">
+          <div className="flex items-center gap-2">
             {[
               { key: "action_needed" as FilterMode, label: "조치 필요" },
               { key: "" as FilterMode, label: "전체" },
@@ -394,6 +403,7 @@ export default function OperationsAlertsView() {
                 {btn.label}
               </button>
             ))}
+          </div>
           </div>
 
           {filteredAlerts.length > 0 ? (
@@ -493,16 +503,8 @@ export default function OperationsAlertsView() {
             );
           }
           // KST 날짜 확인 (started_at은 ISO 8601 UTC)
-          const runDateKST = (() => {
-            const d = new Date(snapshotSyncRun.started_at);
-            const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
-            return kst.toISOString().slice(0, 10);
-          })();
-          const todayKST = (() => {
-            const now = new Date();
-            const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
-            return kst.toISOString().slice(0, 10);
-          })();
+          const runDateKST = formatKstDateTime(snapshotSyncRun.started_at).slice(0, 10);
+          const todayKST = formatKstDateTime(new Date().toISOString()).slice(0, 10);
           if (runDateKST !== todayKST) {
             return (
               <div className="text-sm text-[#64748b]">

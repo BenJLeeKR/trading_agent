@@ -153,6 +153,25 @@ ENUM_METADATA: dict[str, EnumFieldMetadata] = {
             EnumValueMetadata(value="reconcile_required", label="조정 필요"),
         ),
     ),
+    # ── reason_code ────────────────────────────────────────────────
+    # Known system codes, broker raw codes, and numeric broker order IDs.
+    # Not a strict Python enum — type="string" for display metadata only.
+    "reason_code": EnumFieldMetadata(
+        field="reason_code",
+        type="string",
+        values=(
+            EnumValueMetadata(value="BLOCKED", label="차단됨", description="Blocking lock에 의해 submit 차단"),
+            EnumValueMetadata(value="UNCERTAIN", label="불확실 상태", description="Broker 응답 불확실로 조정 필요"),
+            EnumValueMetadata(value="RECONCILE_RESOLVED", label="조정 해소", description="Broker 조회로 상태 확정"),
+            EnumValueMetadata(value="MANUAL_RESOLVE", label="운영자 수동 해소", description="관리자가 수동으로 상태 변경"),
+            EnumValueMetadata(value="manual_paper_resolution", label="운영자 수동 해소", description="관리자 수동 해소 (legacy)"),
+            EnumValueMetadata(value="WS_FILL", label="WS 체결 수신", description="WebSocket 실시간 체결 통보"),
+            EnumValueMetadata(value="FILL_CONFIRMED", label="체결 확인", description="체결 내역 확인 완료"),
+            EnumValueMetadata(value="REJECTED", label="거부됨", description="Broker 주문 거부"),
+            EnumValueMetadata(value="stale_cleanup", label="오래된 상태 정리", description="장기 미확정 주문 정리"),
+            EnumValueMetadata(value="broker_truth_recovery", label="브로커 조회 기반 상태 복구", description="Broker 조회로 실제 상태 반영"),
+        ),
+    ),
     # ── P1: decision_type ─────────────────────────────────────────
     # Mirrors ``DecisionType`` enum in ``enums.py``.
     "decision_type": EnumFieldMetadata(

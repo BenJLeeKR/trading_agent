@@ -14,14 +14,25 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Live-info OAuth token cache constants
+# ---------------------------------------------------------------------------
+
+_HOLIDAY_OAUTH_CACHE_DEFAULT_FILENAME = "kis_live_oauth_token.json"
+_HOLIDAY_OAUTH_EXPIRY_BUFFER = 60  # 1분 버퍼 (만료 직전 재발급)
 
 # ---------------------------------------------------------------------------
 # HolidayStatus — 076 API 응답 구조체
@@ -93,6 +104,9 @@ class KISHolidayClient:
         app_key: str,
         app_secret: str,
         base_url: str = _DEFAULT_BASE_URL,
+        *,
+        enable_token_cache: bool = False,
+        token_cache_path: str | None = None,
     ) -> None:
         self._app_key = app_key
         self._app_secret = app_secret
@@ -101,10 +115,17 @@ class KISHolidayClient:
         # HTTP client (lazy init)
         self._client: httpx.AsyncClient | None = None
 
-        # Token cache (in-memory only; no file cache for live-info client)
+        # In-memory token cache
         self._access_token: str | None = None
         self._token_expires_at: float = 0.0
         self._auth_lock = asyncio.Lock()
+
+        # File token cache (live-info OAuth token persistence across restarts)
+        self._cache_enabled = enable_token_cache
+        self._cache_path: str | None = token_cache_path
+        # Fingerprint: app_key + app_secret[-4:] + base_url
+        raw_fp = f"holiday_oauth_{app_key}_{app_secret[-4:] if len(app_secret) >= 4 else app_secret}_{self._base_url}"
+        self._fingerprint = hashlib.sha256(raw_fp.encode()).hexdigest()[:16]
 
     # ------------------------------------------------------------------
     # HTTP client lifecycle
@@ -141,17 +162,29 @@ class KISHolidayClient:
     async def _ensure_token(self) -> str:
         """Obtain (or return cached) KIS OAuth2 access token.
 
+        Cache resolution order:
+        1. In-memory cache (fastest, per-process)
+        2. File cache (live-info OAuth token, cross-restart)
+        3. HTTP call (``/oauth2/tokenP``)
+
         Implements single-flight pattern with asyncio.Lock to guarantee
         at most 1 concurrent HTTP call to ``/oauth2/tokenP``.
         """
         async with self._auth_lock:
-            now = asyncio.get_event_loop().time()
+            now_wall = time.time()
 
-            # Cache hit check (in-memory only)
-            if self._access_token is not None and now < self._token_expires_at:
+            # 1. In-memory cache hit check
+            if self._access_token is not None and now_wall < self._token_expires_at:
                 return self._access_token
 
-            # HTTP call
+            # 2. File cache load
+            cached = self._load_cached_token()
+            if cached is not None:
+                self._access_token = cached["access_token"]
+                self._token_expires_at = cached["expires_at"]
+                return self._access_token
+
+            # 3. HTTP call (oauth2/tokenP)
             client = await self._get_client()
             body = {
                 "grant_type": "client_credentials",
@@ -166,16 +199,111 @@ class KISHolidayClient:
                 ) from exc
             data = self._parse_response(resp, context="oauth2_token")
 
-            # Update cache — refresh 5 min early
+            # Update in-memory cache — refresh 5 min early
             self._access_token = data["access_token"]
             expires_in = int(data.get("expires_in", 86400))
-            self._token_expires_at = now + expires_in - 300
+            self._token_expires_at = now_wall + expires_in - 300
+
+            # 4. Persist to file cache
+            self._save_cached_token(data, now_wall, expires_in)
 
             logger.debug(
                 "KISHolidayClient: token acquired (expires_in=%ds)",
                 expires_in,
             )
             return self._access_token
+
+    # ------------------------------------------------------------------
+    # File token cache (live-info OAuth token persistence)
+    # ------------------------------------------------------------------
+
+    def _load_cached_token(self) -> dict[str, Any] | None:
+        """Load cached OAuth token from file.
+
+        Returns cached token data (``access_token``, ``expires_at``) or
+        ``None`` if cache is disabled, missing, expired, or fingerprint
+        mismatch.
+        """
+        if not self._cache_enabled:
+            logger.debug("Token cache miss: disabled")
+            return None
+
+        cache_path = self._cache_path
+        if not cache_path:
+            return None
+
+        path = Path(cache_path)
+        if not path.exists():
+            logger.info("Token cache miss: file_missing")
+            return None
+
+        try:
+            data: dict[str, Any] = json.loads(path.read_text())
+
+            # Fingerprint check
+            if data.get("fingerprint") != self._fingerprint:
+                logger.info(
+                    "Token cache miss: fingerprint_mismatch "
+                    "(expected=%s, got=%s)",
+                    self._fingerprint,
+                    data.get("fingerprint", "(none)"),
+                )
+                return None
+
+            # Cache type check — ensure it's a holiday oauth token
+            if data.get("token_purpose") != "holiday_oauth":
+                logger.info(
+                    "Token cache miss: token_purpose_mismatch "
+                    "(expected=holiday_oauth, got=%s)",
+                    data.get("token_purpose", "(none)"),
+                )
+                return None
+
+            # Expiry check (with 1-minute buffer)
+            expires_at = float(data["expires_at"])
+            if time.time() >= expires_at:
+                logger.info("Token cache miss: expired")
+                return None
+
+            logger.info("Token cache hit for live-info holiday client")
+            return {
+                "access_token": data["access_token"],
+                "expires_at": expires_at,
+            }
+
+        except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
+            logger.warning("Token cache miss: read_error (%s)", exc)
+            return None
+
+    def _save_cached_token(
+        self,
+        token_data: dict[str, Any],
+        now_wall: float,
+        expires_in: int,
+    ) -> None:
+        """Save OAuth token to file cache."""
+        if not self._cache_enabled:
+            return
+
+        cache_path = self._cache_path
+        if not cache_path:
+            return
+
+        path = Path(cache_path)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            data: dict[str, Any] = {
+                "access_token": token_data["access_token"],
+                "token_type": token_data.get("token_type", "Bearer"),
+                "expires_at": now_wall + expires_in - _HOLIDAY_OAUTH_EXPIRY_BUFFER,
+                "fingerprint": self._fingerprint,
+                "token_purpose": "holiday_oauth",
+                "created_at": now_wall,
+            }
+            path.write_text(json.dumps(data, indent=2))
+            logger.info("Token cache saved for live-info holiday client")
+        except OSError as exc:
+            logger.warning("Failed to save token cache: %s", exc)
 
     # ------------------------------------------------------------------
     # Response parsing
@@ -189,6 +317,10 @@ class KISHolidayClient:
         """Parse and validate KIS API JSON response.
 
         Raises ``KISHolidayError`` on HTTP or business-level errors.
+
+        Note:
+            OAuth2 ``/oauth2/tokenP`` 응답은 ``rt_cd`` 필드가 없으므로
+            ``context="oauth2_token"``일 때는 ``rt_cd`` 검증을 건너뜁니다.
         """
         try:
             resp.raise_for_status()
@@ -202,7 +334,11 @@ class KISHolidayClient:
                 f"Request failed for {context}: {exc}",
             ) from exc
 
-        # Check KIS business-level error
+        # OAuth2 /oauth2/tokenP 응답에는 rt_cd 필드가 없으므로 검증 생략
+        if context == "oauth2_token":
+            return data
+
+        # Check KIS business-level error (uapi 응답 전용)
         rt_cd = data.get("rt_cd", "")
         if rt_cd != "0":
             msg = data.get("msg1", data.get("msg_cd", "unknown error"))

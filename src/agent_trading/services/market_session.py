@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from typing import AsyncGenerator
 
 from agent_trading.brokers.koreainvestment.holiday_client import (
     KISHolidayClient,
@@ -31,6 +33,49 @@ from agent_trading.brokers.koreainvestment.market_state_client import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Advisory lock key for scheduler duplicate execution prevention.
+# Encoded "OPS_SCHEDULER" as int64 — 0x4E454152_5245414C
+SCHEDULER_ADVISORY_LOCK_KEY: int = 0x4E454152_5245414C
+
+
+@asynccontextmanager
+async def try_scheduler_lock(pool) -> AsyncGenerator[bool, None]:
+    """PostgreSQL advisory lock으로 scheduler 중복 실행 방지.
+
+    사용법:
+        async with try_scheduler_lock(pool) as acquired:
+            if not acquired:
+                logger.warning("Another ops-scheduler instance holds the lock — exiting")
+                return
+            # ... scheduler main loop ...
+
+    Lock은 connection/session 레벨에서 유지되므로,
+    - 컨테이너가 죽으면 자동 해제
+    - 동일 컨테이너 내에서는 재진입 가능
+    - 다른 컨테이너/호스트에서는 획득 불가
+    """
+    acquired = False
+    try:
+        # pg_try_advisory_lock: non-blocking lock attempt
+        # Returns True if lock acquired, False if already held by another session
+        row = await pool.fetchrow(
+            "SELECT pg_try_advisory_lock($1) AS acquired",
+            SCHEDULER_ADVISORY_LOCK_KEY,
+        )
+        acquired = row["acquired"] if row else False
+
+        if acquired:
+            logger.info("Ops-scheduler advisory lock acquired (key=0x%X)", SCHEDULER_ADVISORY_LOCK_KEY)
+
+        yield acquired
+    finally:
+        if acquired:
+            await pool.execute(
+                "SELECT pg_advisory_unlock($1)",
+                SCHEDULER_ADVISORY_LOCK_KEY,
+            )
+            logger.info("Ops-scheduler advisory lock released")
 
 # ---------------------------------------------------------------------------
 # SessionInfo — session gate 결과값 (P2: 163 필드 추가)
@@ -399,6 +444,11 @@ async def create_session_provider() -> MarketSessionProvider:
        → ``KisHolidayProvider`` (076 API)
     2. 그 외 → ``FallbackSessionProvider``
 
+    ``KISHolidayClient``의 file-based token cache는
+    ``KIS_LIVE_TOKEN_CACHE_ENABLED``와 ``KIS_LIVE_TOKEN_CACHE_PATH``
+    환경 변수를 통해 설정되며, market_state_client.py와 **별도 파일**
+    (``kis_live_oauth_token.json``)을 사용합니다.
+
     Returns:
         ``MarketSessionProvider`` 인스턴스
     """
@@ -411,14 +461,32 @@ async def create_session_provider() -> MarketSessionProvider:
 
     if enabled and app_key and app_secret:
         base = base_url or "https://openapi.koreainvestment.com:9443"
+
+        # Live-info token cache 설정 (holiday OAuth 전용, market_state와 별도 파일)
+        cache_enabled = (
+            os.getenv("KIS_LIVE_TOKEN_CACHE_ENABLED", "false").strip().lower() == "true"
+        )
+        cache_base_path = os.getenv(
+            "KIS_LIVE_TOKEN_CACHE_PATH",
+            ".cache/kis_live_token.json",
+        ).strip()
+        # market_state_client.py와 충돌 방지를 위해 별도 파일 사용
+        cache_parent = os.path.dirname(cache_base_path) or ".cache"
+        oauth_cache_path = os.path.join(cache_parent, "kis_live_oauth_token.json")
+
         client = KISHolidayClient(
             app_key=app_key,
             app_secret=app_secret,
             base_url=base,
+            enable_token_cache=cache_enabled,
+            token_cache_path=oauth_cache_path,
         )
         logger.info(
-            "SessionProvider: KisHolidayProvider (076 API) base_url=%s",
+            "SessionProvider: KisHolidayProvider (076 API) base_url=%s "
+            "token_cache=%s enabled=%s",
             base,
+            oauth_cache_path,
+            cache_enabled,
         )
         return KisHolidayProvider(holiday_client=client)
     else:

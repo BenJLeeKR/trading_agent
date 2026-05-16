@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { OrderDetail as OrderDetailType, OrderEvent, BrokerOrderView } from "../types/api";
 import { getOrderDetail, getOrderEvents, getBrokerOrders } from "../api/client";
@@ -9,11 +9,23 @@ import { LoadingSpinner } from "./common/LoadingSpinner";
 import { ErrorBanner } from "./common/ErrorBanner";
 import type { Column } from "./common/DataTable";
 import { ArrowLeft } from "lucide-react";
-import { formatKstDateTime } from "../lib/utils";
+import { formatKstDateTime, formatOrderEventReason } from "../lib/utils";
 
 export default function OrderDetail() {
   const { orderId } = useParams<{ orderId: string }>();
   const { fieldMap } = useEnumMetadata();
+
+  // Derive a flat value→label mapping for reason_code from metadata
+  const reasonFieldMap: Record<string, string> | undefined = useMemo(() => {
+    const field = fieldMap["reason_code"];
+    if (!field) return undefined;
+    const map: Record<string, string> = {};
+    for (const v of field.values) {
+      map[v.value] = v.label;
+    }
+    return map;
+  }, [fieldMap]);
+
   const [order, setOrder] = useState<OrderDetailType | null>(null);
   const [events, setEvents] = useState<OrderEvent[]>([]);
   const [brokerOrders, setBrokerOrders] = useState<BrokerOrderView[]>([]);
@@ -46,26 +58,26 @@ export default function OrderDetail() {
   if (!order) return <p className="p-6 text-[#64748b]">주문을 찾을 수 없습니다.</p>;
 
   const eventColumns: Column<OrderEvent>[] = [
-    { key: "timestamp", header: "시각" },
+    { key: "event_timestamp", header: "시각" },
     {
-      key: "from_status",
+      key: "previous_status",
       header: "이전",
       render: (r) => (
-        <StatusBadge status={r.from_status}>
-          {getEnumLabel(fieldMap, "order_status", r.from_status)}
+        <StatusBadge status={r.previous_status ?? ""}>
+          {getEnumLabel(fieldMap, "order_status", r.previous_status ?? "")}
         </StatusBadge>
       ),
     },
     {
-      key: "to_status",
+      key: "new_status",
       header: "이후",
       render: (r) => (
-        <StatusBadge status={r.to_status}>
-          {getEnumLabel(fieldMap, "order_status", r.to_status)}
+        <StatusBadge status={r.new_status}>
+          {getEnumLabel(fieldMap, "order_status", r.new_status)}
         </StatusBadge>
       ),
     },
-    { key: "reason", header: "사유" },
+    { key: "reason_code", header: "사유", render: (r) => formatOrderEventReason(r.reason_code, reasonFieldMap) },
   ];
 
   const brokerColumns: Column<BrokerOrderView>[] = [
@@ -211,7 +223,7 @@ export default function OrderDetail() {
         <DataTable
           columns={eventColumns}
           data={events}
-          idKey="event_id"
+          idKey="order_state_event_id"
           emptyMessage="기록된 상태 이벤트가 없습니다."
           compact
         />

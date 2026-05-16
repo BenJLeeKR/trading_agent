@@ -122,6 +122,15 @@ _AUTHORITATIVE_REFLECTION_TARGETS: frozenset[OrderStatus] = frozenset(
     }
 )
 
+_MANUAL_RESOLVE_TARGETS: frozenset[OrderStatus] = frozenset(
+    {
+        OrderStatus.FILLED,
+        OrderStatus.CANCELLED,
+        OrderStatus.REJECTED,
+        OrderStatus.EXPIRED,
+    }
+)
+
 
 def _validate_transition(
     order_request_id: UUID,
@@ -613,6 +622,7 @@ class OrderManager:
         reason_message: str | None = None,
         actor_type: str = "system",
         actor_id: str = "order_manager",
+        event_source: EventSource = EventSource.INTERNAL,
         max_retries: int = 3,
         retry_delay: float = 0.05,
     ) -> OrderRequestEntity:
@@ -622,6 +632,13 @@ class OrderManager:
         with ``transition_to_authoritative()`` to avoid code duplication.
         Callers MUST perform their own pre-transition validation before
         calling this method.
+
+        Parameters
+        ----------
+        event_source : EventSource
+            Origin of the state change.  Passed through to
+            ``_record_order_state_event()``.  Defaults to
+            ``EventSource.INTERNAL``.
         """
         before = order
         after = _replace_status(
@@ -672,9 +689,138 @@ class OrderManager:
         # Record order_state_event (append-only, outside retry loop).
         # This runs ONLY after a successful update_status, so no stale
         # or incorrect state events are persisted on version conflict.
-        await self._record_order_state_event(before, after)
+        await self._record_order_state_event(before, after, event_source=event_source)
 
         await self._record_status_change(before, after, actor_type, actor_id)
+
+        # ── Auto-trigger reconciliation on RECONCILE_REQUIRED ──
+        if (
+            target_status == OrderStatus.RECONCILE_REQUIRED
+            and reason_code != "BLOCKED"
+            and self.reconciliation_service is not None
+        ):
+            try:
+                run = await self.reconciliation_service.trigger_and_link(
+                    account_id=after.account_id,
+                    trigger_type="requires_reconciliation",
+                    side=after.side.value if after.side else None,
+                    order_request_id=after.order_request_id,
+                )
+                logger.info(
+                    "reconcile_required auto-triggered: order_id=%s account_id=%s "
+                    "reconciliation_run_id=%s reason_code=%s",
+                    after.order_request_id, after.account_id,
+                    run.reconciliation_run_id, reason_code,
+                )
+            except Exception as exc:
+                logger.error(
+                    "reconcile_required auto-trigger FAILED: order_id=%s account_id=%s error=%s",
+                    after.order_request_id, after.account_id, exc,
+                )
+                # auto-trigger 실패가 상태 전이 자체를 실패시키면 안 됨
+
+        return after
+
+    async def manual_resolve(
+        self,
+        order: OrderRequestEntity,
+        target_status: OrderStatus,
+        *,
+        reason_code: str = "MANUAL_RESOLVE",
+        reason_message: str | None = None,
+        evidence: dict[str, object] | None = None,
+        operator: str = "unknown",
+    ) -> OrderRequestEntity:
+        """Manual operator override — RECONCILE_REQUIRED 전용 (v1).
+
+        SKIP _validate_transition() — manual override is by definition
+        outside the normal state machine.  Instead, validation is:
+
+        1. Order MUST be in RECONCILE_REQUIRED (v1 제약)
+        2. Target must be in _MANUAL_RESOLVE_TARGETS
+        3. Evidence must be provided and non-empty
+
+        Audit trail:
+        - order_state_event with EventSource.OPERATOR
+        - audit_log with structured evidence in metadata
+
+        Reconciliation 후속 처리:
+        - reconciliation_service가 존재하면, order와 연결된 PENDING run을
+          resolved로 mark한다 (mark_resolved).
+          실패해도 상태 전이는 유지 — log warning만 남긴다.
+        """
+        # === v1 Validation: RECONCILE_REQUIRED only ===
+        if order.status != OrderStatus.RECONCILE_REQUIRED:
+            raise InvalidStateTransitionError(
+                order.order_request_id, order.status, target_status,
+                reason=(
+                    f"Manual resolve v1 supports RECONCILE_REQUIRED only, "
+                    f"got {order.status.value}"
+                ),
+            )
+        if target_status not in _MANUAL_RESOLVE_TARGETS:
+            raise ValueError(
+                f"{target_status.value} is not a valid manual resolve target. "
+                f"Allowed: {', '.join(s.value for s in _MANUAL_RESOLVE_TARGETS)}"
+            )
+        if not evidence:
+            raise ValueError("evidence is required for manual resolve")
+
+        # === Core transition with EventSource.OPERATOR ===
+        after = await self._transition_to_core(
+            order,
+            target_status,
+            reason_code=reason_code,
+            reason_message=reason_message,
+            actor_type="operator",
+            actor_id=operator,
+            event_source=EventSource.OPERATOR,
+        )
+
+        # === Reconciliation 후속 처리 (fail-safe) ===
+        if self.reconciliation_service is not None:
+            try:
+                # Find the pending reconciliation run linked to this order
+                pending = await self.reconciliation_service.list_pending_runs(
+                    account_id=after.account_id,
+                )
+                for run in pending:
+                    links = await self.reconciliation_service.get_run_order_links(
+                        run.reconciliation_run_id,
+                    )
+                    if any(
+                        link.order_request_id == after.order_request_id
+                        for link in links
+                    ):
+                        await self.reconciliation_service.mark_resolved(
+                            run.reconciliation_run_id,
+                            summary_json={
+                                "resolved_by": "manual_resolve",
+                                "summary": (
+                                    f"Manual operator resolve: "
+                                    f"{order.status.value} -> {target_status.value}"
+                                ),
+                                "operator": operator,
+                            },
+                        )
+                        logger.info(
+                            "Manual resolve reconciled: order_id=%s run_id=%s",
+                            after.order_request_id,
+                            run.reconciliation_run_id,
+                        )
+                        break
+                else:
+                    logger.warning(
+                        "Manual resolve: no pending reconciliation run found "
+                        "for order_id=%s account_id=%s",
+                        after.order_request_id,
+                        after.account_id,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Manual resolve reconciliation fallback failed: %s", exc
+                )
+
         return after
 
     # ------------------------------------------------------------------
@@ -705,6 +851,7 @@ class OrderManager:
         self,
         before: OrderRequestEntity,
         after: OrderRequestEntity,
+        event_source: EventSource = EventSource.INTERNAL,
     ) -> None:
         """Append an ``order_state_event`` for the transition.
 
@@ -714,13 +861,20 @@ class OrderManager:
         The event is recorded **after** a successful ``update_status()``
         call, so version conflicts or transition failures never produce
         stale event entries.
+
+        Parameters
+        ----------
+        event_source : EventSource
+            Origin of the state change.  Defaults to ``EventSource.INTERNAL``.
+            Callers that need operator/override provenance pass
+            ``EventSource.OPERATOR`` etc.
         """
         event = OrderStateEventEntity(
             order_state_event_id=uuid4(),
             order_request_id=after.order_request_id,
             previous_status=before.status,
             new_status=after.status,
-            event_source=EventSource.INTERNAL,
+            event_source=event_source,
             event_timestamp=datetime.now(timezone.utc),
             ingested_at=datetime.now(timezone.utc),
             reason_code=after.status_reason_code,

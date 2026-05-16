@@ -8,9 +8,10 @@ from __future__ import annotations
 
 from typing import AsyncIterator
 
-from fastapi import Request
+from fastapi import Depends, Request
 
 from agent_trading.repositories.container import RepositoryContainer
+from agent_trading.services.order_manager import OrderManager
 
 
 async def get_repos(request: Request) -> AsyncIterator[RepositoryContainer]:
@@ -47,3 +48,56 @@ async def get_repos(request: Request) -> AsyncIterator[RepositoryContainer]:
     else:
         # In-memory: yield the pre‑built singleton repos from app state.
         yield request.app.state.repos
+
+
+async def get_db(request: Request):
+    """Yield an ``asyncpg.Connection`` from the Postgres pool.
+
+    In ``in_memory`` mode the runtime mode check is skipped and this
+    dependency raises ``RuntimeError`` so that callers know the DB is
+    unavailable — session routes are Postgres-only.
+
+    .. important::
+
+       ``get_db`` yields a raw **Connection**, not a Pool.  Routes must
+       **not** call ``db.acquire()`` — use ``db`` directly::
+
+           @router.get("/market-sessions/latest")
+           async def latest(db=Depends(get_db)):
+               row = await db.fetchrow(...)   # ✓ correct
+
+           # WRONG — db is already a Connection
+           # async with db.acquire() as conn:  # AttributeError!
+    """
+    runtime_mode: str = getattr(request.app.state, "runtime_mode", "in_memory")
+    if runtime_mode != "postgres":
+        raise RuntimeError(
+            "get_db requires API_RUNTIME_MODE=postgres. "
+            "Market-session endpoints are not available in in_memory mode."
+        )
+    from agent_trading.db.connection import get_pool
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        yield conn
+
+
+async def get_order_manager(
+    repos: RepositoryContainer = Depends(get_repos),
+) -> AsyncIterator[OrderManager]:
+    """Request-scoped ``OrderManager`` for write operations.
+
+    Builds a fresh ``OrderManager`` per request, wired with a
+    ``ReconciliationService`` for reconciliation post-processing.
+    The manager is yielded and discarded after the response — it is
+    stateless from the DB perspective (all state lives in ``repos``).
+    """
+    from agent_trading.services.reconciliation_service import ReconciliationService
+
+    reconciliation_service = ReconciliationService(repos=repos)
+    om = OrderManager(
+        repos=repos,
+        reconciliation_service=reconciliation_service,
+        budget_manager=None,
+    )
+    yield om

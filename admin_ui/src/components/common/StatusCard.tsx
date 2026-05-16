@@ -8,6 +8,8 @@ interface StatusCardProps {
   value: string | number;
   status: StatusVariant;
   subtitle?: string | React.ReactNode;
+  /** Override the default status label text on the badge (e.g. "미수집" for neutral) */
+  badgeLabel?: string;
 }
 
 const statusColors: Record<StatusVariant, string> = {
@@ -31,7 +33,7 @@ const statusLabels: Record<StatusVariant, string> = {
   neutral: "정보",
 };
 
-export function StatusCard({ title, value, status, subtitle }: StatusCardProps) {
+export function StatusCard({ title, value, status, subtitle, badgeLabel }: StatusCardProps) {
   return (
     <div className="bg-white rounded-lg border border-[#e2e8f0] p-3">
       <div className="flex items-center justify-between mb-2">
@@ -43,7 +45,7 @@ export function StatusCard({ title, value, status, subtitle }: StatusCardProps) 
           )}
         >
           <span className={cn("w-1 h-1 rounded-full", dotColors[status])} />
-          {statusLabels[status]}
+          {badgeLabel ?? statusLabels[status]}
         </div>
       </div>
       <p className="text-lg font-semibold text-[#0f172a]">{value}</p>

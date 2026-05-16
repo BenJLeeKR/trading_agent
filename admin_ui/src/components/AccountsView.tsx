@@ -221,14 +221,18 @@ export default function AccountsView() {
       key: "symbol",
       header: "종목",
       render: (r) => (
-        <div>
-          <div className="text-sm font-medium text-[#0f172a]">
-            {r.symbol ?? truncateUuid(r.instrument_id)}
-          </div>
-          {r.instrument_name && (
-            <div className="text-xs text-[#64748b]">{r.instrument_name}</div>
-          )}
-        </div>
+        <span className="text-sm font-medium text-[#0f172a]">
+          {r.symbol ?? truncateUuid(r.instrument_id)}
+        </span>
+      ),
+    },
+    {
+      key: "instrument_name",
+      header: "종목명",
+      render: (r) => (
+        <span className="text-sm text-[#334155]">
+          {r.instrument_name || "—"}
+        </span>
       ),
     },
     { key: "quantity", header: "수량", render: (r) => formatQty(r.quantity) },

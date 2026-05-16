@@ -21,23 +21,44 @@ from agent_trading.repositories.container import RepositoryContainer
 router = APIRouter(prefix="/reconciliation", tags=["reconciliation"])
 
 
+async def _enrich_lock_status(
+    status: BlockingLockStatus,
+    repos: RepositoryContainer,
+) -> BlockingLockStatus:
+    """Resolve ``instrument_name`` from the lock's symbol using any market.
+
+    Falls back gracefully — ``instrument_name`` stays ``None`` when the
+    symbol lookup fails or the lock has no symbol.
+    """
+    if status.symbol:
+        inst = await repos.instruments.get_by_symbol_any_market(status.symbol)
+        if inst is not None:
+            status.instrument_name = inst.name
+    return status
+
+
 @router.get("/runs", response_model=list[ReconciliationRunSummary])
 async def list_reconciliation_runs(
-    account_id: str = Query(..., description="Account ID (required)"),
+    account_id: str | None = Query(None, description="Account ID (optional — omit for global view)"),
     limit: int = Query(20, ge=1, le=100),
     repos: RepositoryContainer = Depends(get_repos),
 ) -> list[ReconciliationRunSummary]:
-    """List reconciliation runs for an account.
+    """List reconciliation runs.
 
-    ``account_id`` is **required** to scope the query.
-    Results are sorted by ``started_at`` descending (newest first).
+    When ``account_id`` is provided, results are scoped to that account.
+    When omitted, runs across all accounts are returned (newest first).
     """
     try:
-        uid = UUID(account_id)
+        if account_id:
+            uid = UUID(account_id)
+            runs = await repos.reconciliations.list_runs_by_account(uid, limit=limit)
+        else:
+            runs = await repos.reconciliations.list_all_runs(limit=limit)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid UUID: {account_id}") from exc
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to fetch reconciliation runs")
 
-    runs = await repos.reconciliations.list_runs_by_account(uid, limit=limit)
     return [
         ReconciliationRunSummary(
             reconciliation_run_id=str(r.reconciliation_run_id),
@@ -54,25 +75,29 @@ async def list_reconciliation_runs(
 
 @router.get("/locks", response_model=list[BlockingLockStatus])
 async def list_blocking_locks(
-    account_id: str = Query(..., description="Account ID (required)"),
+    account_id: str | None = Query(None, description="Account ID (optional — omit for global view)"),
     repos: RepositoryContainer = Depends(get_repos),
 ) -> list[BlockingLockStatus]:
-    """List active (non-expired) blocking locks for an account.
+    """List active (non-expired) blocking locks.
 
-    ``account_id`` is **required** to scope the query.
-    Delegates to ``ReconciliationRepository.list_locks()`` which handles
-    both in-memory and Postgres backends transparently.
+    When ``account_id`` is provided, locks are scoped to that account.
+    When omitted, locks across all accounts are returned.
     """
     try:
-        uid = UUID(account_id)
+        if account_id:
+            uid = UUID(account_id)
+            locks = await repos.reconciliations.list_locks(uid)
+        else:
+            locks = await repos.reconciliations.list_all_active_locks()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid UUID: {account_id}") from exc
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to fetch blocking locks")
 
     from datetime import datetime, timezone
 
-    locks = await repos.reconciliations.list_locks(uid)
     now = datetime.now(timezone.utc)
-    return [
+    results = [
         BlockingLockStatus(
             lock_id=str(lock.lock_id),
             account_id=str(lock.account_id),
@@ -87,6 +112,7 @@ async def list_blocking_locks(
         )
         for lock in locks
     ]
+    return [await _enrich_lock_status(s, repos) for s in results]
 
 
 @router.get("/summary", response_model=ReconciliationSummary)
@@ -106,24 +132,27 @@ async def get_reconciliation_summary(
 
     incomplete_runs = [r for r in runs if r.status != "completed"]
 
+    raw_locks = [
+        BlockingLockStatus(
+            lock_id=str(lock.lock_id),
+            account_id=str(lock.account_id),
+            strategy_id=str(lock.strategy_id) if lock.strategy_id else None,
+            symbol=lock.symbol,
+            side=lock.side,
+            reason=lock.reason,
+            locked_by_run_id=str(lock.locked_by_run_id) if lock.locked_by_run_id else "",
+            locked_at=lock.locked_at,
+            expires_at=lock.expires_at,
+            is_active=lock.expires_at is None or lock.expires_at > now,
+        )
+        for lock in locks
+    ]
+    enriched_locks = [await _enrich_lock_status(s, repos) for s in raw_locks]
+
     return ReconciliationSummary(
         active_locks_count=len(locks),
         incomplete_recon_count=len(incomplete_runs),
-        recent_active_locks=[
-            BlockingLockStatus(
-                lock_id=str(lock.lock_id),
-                account_id=str(lock.account_id),
-                strategy_id=str(lock.strategy_id) if lock.strategy_id else None,
-                symbol=lock.symbol,
-                side=lock.side,
-                reason=lock.reason,
-                locked_by_run_id=str(lock.locked_by_run_id) if lock.locked_by_run_id else "",
-                locked_at=lock.locked_at,
-                expires_at=lock.expires_at,
-                is_active=lock.expires_at is None or lock.expires_at > now,
-            )
-            for lock in locks
-        ],
+        recent_active_locks=enriched_locks,
         recent_incomplete_runs=[
             ReconciliationRunSummary(
                 reconciliation_run_id=str(r.reconciliation_run_id),

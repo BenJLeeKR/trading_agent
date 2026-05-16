@@ -36,6 +36,18 @@ def _to_detail(d: object) -> TradeDecisionDetail:
     )
 
 
+async def _enrich_decision_detail(
+    detail: TradeDecisionDetail,
+    repos: RepositoryContainer,
+) -> TradeDecisionDetail:
+    """Resolve ``instrument_name`` from the decision's symbol + market."""
+    if detail.symbol:
+        inst = await repos.instruments.get_by_symbol(detail.symbol, detail.market)
+        if inst is not None:
+            detail.instrument_name = inst.name
+    return detail
+
+
 @router.get("/trade-decisions", response_model=list[TradeDecisionDetail])
 async def list_trade_decisions(
     decision_context_id: str | None = Query(None, description="Decision context ID (optional)"),
@@ -51,10 +63,12 @@ async def list_trade_decisions(
             ) from exc
 
         decision = await repos.trade_decisions.get_by_context(ctx_id)
-        return [_to_detail(decision)] if decision is not None else []
+        if decision is not None:
+            return [await _enrich_decision_detail(_to_detail(decision), repos)]
+        return []
     else:
         decisions = await repos.trade_decisions.list_all()
-        return [_to_detail(d) for d in decisions]
+        return [await _enrich_decision_detail(_to_detail(d), repos) for d in decisions]
 
 
 @router.get("/decision-contexts/{decision_context_id}", response_model=DecisionContextDetail)

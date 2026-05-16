@@ -5,7 +5,11 @@ from datetime import datetime, timezone, timedelta
 from uuid import UUID, uuid4
 
 from agent_trading.brokers.base import BrokerAdapter
-from agent_trading.domain.entities import OrderRequestEntity, ReconciliationRunEntity
+from agent_trading.domain.entities import (
+    OrderRequestEntity,
+    ReconciliationOrderLinkEntity,
+    ReconciliationRunEntity,
+)
 from agent_trading.domain.enums import OrderStatus
 from agent_trading.domain.models import OrderStatusResult
 from agent_trading.repositories.container import RepositoryContainer
@@ -43,6 +47,72 @@ class ReconciliationService:
     # Public API
     # ------------------------------------------------------------------
 
+    async def trigger_and_link(
+        self,
+        account_id: UUID,
+        trigger_type: str,
+        *,
+        strategy_id: UUID | None = None,
+        symbol: str | None = None,
+        side: str | None = None,
+        order_request_id: UUID | None = None,
+        instrument_id: UUID | None = None,
+    ) -> ReconciliationRunEntity:
+        """Create a reconciliation run AND link it to an order in one call.
+
+        This is the canonical entry point for all reconciliation run
+        production paths. It guarantees that every run has at least one
+        order link, satisfying the membership contract.
+
+        Parameters
+        ----------
+        account_id : UUID
+            The account to reconcile.
+        trigger_type : str
+            Reason for triggering (e.g. ``"requires_reconciliation"``).
+        strategy_id, symbol, side :
+            Optional lock scope forwarded to ``trigger()``.
+        order_request_id : UUID | None
+            The order to link. If ``None``, no link is created.
+        instrument_id : UUID | None
+            Optional instrument ID for the link details.
+
+        Returns
+        -------
+        ReconciliationRunEntity
+            The newly created (or reused) run.
+        """
+        run = await self.trigger(
+            account_id=account_id,
+            trigger_type=trigger_type,
+            strategy_id=strategy_id,
+            symbol=symbol,
+            side=side,
+        )
+
+        if order_request_id is not None:
+            try:
+                await self.attach_order_mismatch(
+                    reconciliation_run_id=run.reconciliation_run_id,
+                    order_request_id=order_request_id,
+                    mismatch_type="pending_inquiry",
+                    details={
+                        "trigger_type": trigger_type,
+                        "linked_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+                logger.info(
+                    "order link created: run_id=%s order_id=%s",
+                    run.reconciliation_run_id, order_request_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "order link creation failed (non-fatal): run_id=%s order_id=%s error=%s",
+                    run.reconciliation_run_id, order_request_id, exc,
+                )
+
+        return run
+
     async def trigger(
         self,
         account_id: UUID,
@@ -71,6 +141,22 @@ class ReconciliationService:
         ReconciliationRunEntity
             The newly created run with ``status == "started"``.
         """
+        # ── Idempotency: active run이 이미 존재하면 재사용 ──
+        active_run = await self.get_active_run(account_id)
+        if active_run is not None:
+            logger.info(
+                "reconcile_required auto-trigger: active reconciliation run already exists, reusing. "
+                "run_id=%s account_id=%s trigger_type=%s",
+                active_run.reconciliation_run_id, account_id, trigger_type,
+            )
+            return active_run
+
+        logger.info(
+            "reconcile_required auto-trigger: creating new reconciliation run. "
+            "account_id=%s trigger_type=%s strategy_id=%s symbol=%s side=%s",
+            account_id, trigger_type, strategy_id, symbol, side,
+        )
+
         now = datetime.now(timezone.utc)
 
         run = ReconciliationRunEntity(
@@ -263,6 +349,84 @@ class ReconciliationService:
         """Return the most recent active reconciliation run for the account."""
         return await self._repos.reconciliations.get_active_run(account_id)
 
+    async def list_pending_runs(
+        self,
+        limit: int = 10,
+        *,
+        account_id: UUID | None = None,
+        run_id: UUID | None = None,
+    ) -> list[ReconciliationRunEntity]:
+        """Return reconciliation runs with ``status = 'started'``.
+
+        Parameters
+        ----------
+        limit : int
+            Maximum number of runs to return.
+        account_id : UUID | None
+            Optional filter by account.
+        run_id : UUID | None
+            Optional filter by specific run ID.
+
+        Returns
+        -------
+        list[ReconciliationRunEntity]
+            Runs ordered by ``started_at`` ASC (FIFO).
+        """
+        return list(await self._repos.reconciliations.list_pending_runs(
+            limit=limit,
+            account_id=account_id,
+            run_id=run_id,
+        ))
+
+    async def list_legacy_runs(
+        self,
+        limit: int = 50,
+        *,
+        account_id: UUID | None = None,
+        run_id: UUID | None = None,
+    ) -> list[ReconciliationRunEntity]:
+        """Return legacy runs: ``status = 'started'`` AND no order links.
+
+        Parameters
+        ----------
+        limit : int
+            Maximum number of runs to return (default ``50``).
+        account_id : UUID | None
+            Optional filter by account.
+        run_id : UUID | None
+            Optional filter by specific run ID.
+
+        Returns
+        -------
+        list[ReconciliationRunEntity]
+            Runs ordered by ``started_at`` ASC (oldest first).
+        """
+        return list(await self._repos.reconciliations.list_legacy_runs(
+            limit=limit,
+            account_id=account_id,
+            run_id=run_id,
+        ))
+
+    async def get_run_order_links(
+        self,
+        reconciliation_run_id: UUID,
+    ) -> list[ReconciliationOrderLinkEntity]:
+        """Return order links attached to a reconciliation run.
+
+        Parameters
+        ----------
+        reconciliation_run_id : UUID
+            The reconciliation run to look up.
+
+        Returns
+        -------
+        list[ReconciliationOrderLinkEntity]
+            Links ordered by ``created_at`` ASC.
+        """
+        return list(await self._repos.reconciliations.get_run_order_links(
+            reconciliation_run_id,
+        ))
+
     async def attach_order_mismatch(
         self,
         reconciliation_run_id: UUID,
@@ -320,6 +484,51 @@ class ReconciliationService:
             account_id=run.account_id,
             locked_by_run_id=reconciliation_run_id,
         )
+
+    async def halt_run(
+        self,
+        reconciliation_run_id: UUID,
+        summary_json: dict[str, object] | None = None,
+    ) -> ReconciliationRunEntity:
+        """Mark a reconciliation run as ``halted``.
+
+        - Does **not** release the blocking lock (intentional — stale lock
+          protection).
+        - Records the reason in ``summary_json``.
+        - Sets ``completed_at`` to the current time.
+
+        Parameters
+        ----------
+        reconciliation_run_id : UUID
+            The run to halt.
+        summary_json : dict[str, object] | None
+            Optional metadata to record (e.g. reason, superseded_by).
+
+        Returns
+        -------
+        ReconciliationRunEntity
+            The updated run entity.
+        """
+        run = await self._repos.reconciliations.get_run(reconciliation_run_id)
+        if run is None:
+            raise ValueError(
+                f"Reconciliation run not found: {reconciliation_run_id}"
+            )
+
+        now = datetime.now(timezone.utc)
+        updated_summary = dict(summary_json or {})
+        updated_summary.setdefault("halted_at", now.isoformat())
+
+        await self._repos.reconciliations.update_run_status(
+            reconciliation_run_id=reconciliation_run_id,
+            status="halted",
+            completed_at=now,
+            summary_json=updated_summary,
+        )
+
+        updated = await self._repos.reconciliations.get_run(reconciliation_run_id)
+        assert updated is not None  # guaranteed by the get check above
+        return updated
 
     # ------------------------------------------------------------------
     # Milestone 7: Broker-Specific Unknown State Recovery

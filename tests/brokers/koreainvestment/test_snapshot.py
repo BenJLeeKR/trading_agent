@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
 from agent_trading.brokers.koreainvestment.snapshot import (
     KISSyncSnapshotProvider,
 )
@@ -241,3 +242,53 @@ class TestKISSyncSnapshotProvider:
         result = await provider.fetch_snapshot(uuid4(), inst_repo)
         assert len(result.positions) == 0
         assert any("positions" in err.lower() for err in result.errors)
+
+
+class TestFetchSnapshot:
+    """fetch_snapshot — after-hours rate-limit hotfix tests."""
+
+    async def test_fetch_snapshot_after_hours_skips_positions(self) -> None:
+        """after_hours=True → get_positions() 호출 안 됨, get_cash_balance(after_hours=True)는 정상 호출."""
+        from unittest.mock import AsyncMock
+
+        mock_rest = AsyncMock(spec=KISRestClient)
+        mock_rest.get_positions = AsyncMock(return_value=[])
+        mock_rest.get_cash_balance = AsyncMock(return_value={})
+
+        provider = KISSyncSnapshotProvider(mock_rest)
+        inst_repo = InMemoryInstrumentRepository()
+
+        result = await provider.fetch_snapshot(uuid4(), inst_repo, after_hours=True)
+
+        # get_positions()는 호출되지 않아야 함
+        mock_rest.get_positions.assert_not_called()
+
+        # get_cash_balance(after_hours=True)는 호출되어야 함
+        mock_rest.get_cash_balance.assert_awaited_once_with(after_hours=True)
+
+    async def test_fetch_snapshot_after_hours_returns_cash_only(self) -> None:
+        """after_hours=True → positions는 빈 리스트, cash_balance는 정상, 에러 없음."""
+        from unittest.mock import AsyncMock
+
+        account_id = uuid4()
+        mock_rest = AsyncMock(spec=KISRestClient)
+        mock_rest.get_positions = AsyncMock(return_value=[])
+        mock_rest.get_cash_balance = AsyncMock(
+            return_value={"dnca_tot_amt": "2000000", "nxdy_excc_amt": "1500000"}
+        )
+
+        provider = KISSyncSnapshotProvider(mock_rest)
+        inst_repo = InMemoryInstrumentRepository()
+
+        result = await provider.fetch_snapshot(account_id, inst_repo, after_hours=True)
+
+        # positions는 빈 리스트
+        assert result.positions == []
+
+        # cash_balance는 정상
+        assert result.cash_balance is not None
+        assert result.cash_balance.available_cash == 2000000
+        assert result.cash_balance.settled_cash == 1500000
+
+        # 에러 리스트에 positions 관련 에러가 없어야 함
+        assert not any("position" in err.lower() for err in result.errors)

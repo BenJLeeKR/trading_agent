@@ -20,22 +20,28 @@ import type {
 
 export const mockHealthOk: HealthResponse = {
   status: "ok",
+  version: "1.0.0",
+  timestamp: "2026-05-16T00:00:00Z",
   database: "connected",
   runtime_mode: "in_memory",
   snapshot_sync_detail: null,
   snapshot_sync_stale: null,
   snapshot_sync_last_successful_run_at: null,
   snapshot_sync_consecutive_failures: null,
+  scheduler: null,
 };
 
 export const mockHealthDegraded: HealthResponse = {
   status: "degraded",
+  version: "1.0.0",
+  timestamp: "2026-05-16T00:00:00Z",
   database: "disconnected",
   runtime_mode: "postgres",
   snapshot_sync_detail: null,
   snapshot_sync_stale: null,
   snapshot_sync_last_successful_run_at: null,
   snapshot_sync_consecutive_failures: null,
+  scheduler: null,
 };
 
 export const mockOrders: OrderSummary[] = [
@@ -49,6 +55,7 @@ export const mockOrders: OrderSummary[] = [
     requested_quantity: 100,
     requested_price: null,
     symbol: "AAPL",
+    instrument_name: null,
     correlation_id: "corr-001",
     trade_decision_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00td1",
     created_at: "2026-05-05T00:00:00Z",
@@ -65,6 +72,7 @@ export const mockOrders: OrderSummary[] = [
     requested_quantity: 50,
     requested_price: null,
     symbol: "TSLA",
+    instrument_name: null,
     correlation_id: "corr-002",
     trade_decision_id: null,
     created_at: "2026-05-05T00:01:00Z",
@@ -75,27 +83,25 @@ export const mockOrders: OrderSummary[] = [
 
 export const mockReconciliationRuns: ReconciliationRunSummary[] = [
   {
-    run_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00r1",
+    reconciliation_run_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00r1",
     account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a1",
+    trigger_type: "manual",
     status: "completed",
     started_at: "2026-05-05T00:00:00Z",
     completed_at: "2026-05-05T00:00:05Z",
-    order_mismatches: 0,
-    position_mismatches: 0,
+    mismatch_count: 0,
   },
 ];
 
 export const mockLocks: BlockingLockStatus[] = [
   {
-    lock_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00l1",
-    lock_key: "manual-review-account-a1",
     account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a1",
-    symbol: "AAPL",
-    strategy_code: "strat-a",
-    lock_type: "manual",
-    acquired_at: "2026-05-05T00:00:00Z",
-    expires_at: "2026-05-06T00:00:00Z",
-    is_expired: false,
+    strategy_id: "strat-a",
+    locked_at: "2026-05-05T00:00:00Z",
+    is_active: true,
+    side: "buy",
+    reason: "Manual review required",
+    locked_by_run_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00r1",
   },
 ];
 
@@ -104,26 +110,24 @@ export const mockReconciliationSummary: ReconciliationSummary = {
   incomplete_recon_count: 1,
   recent_active_locks: [
     {
-      lock_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00l1",
-      lock_key: "manual-review-account-a1",
       account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a1",
-      symbol: "AAPL",
-      strategy_code: "strat-a",
-      lock_type: "manual",
-      acquired_at: "2026-05-05T00:00:00Z",
-      expires_at: "2026-05-06T00:00:00Z",
-      is_expired: false,
+      strategy_id: "strat-a",
+      locked_at: "2026-05-05T00:00:00Z",
+      is_active: true,
+      side: "buy",
+      reason: "Manual review required",
+      locked_by_run_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00r1",
     },
   ],
   recent_incomplete_runs: [
     {
-      run_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00r2",
+      reconciliation_run_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00r2",
       account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a1",
+      trigger_type: "scheduled",
       status: "in_progress",
       started_at: "2026-05-05T00:01:00Z",
       completed_at: null,
-      order_mismatches: 1,
-      position_mismatches: 0,
+      mismatch_count: 1,
     },
   ],
   generated_at: "2026-05-08T05:00:00Z",
@@ -152,6 +156,7 @@ export const mockOrderDetail: OrderDetail = {
   requested_quantity: 100,
   requested_price: null,
   symbol: "AAPL",
+  instrument_name: null,
   correlation_id: "corr-001",
   trade_decision_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00td1",
   created_at: "2026-05-05T00:00:00Z",
@@ -175,20 +180,20 @@ export const mockOrderDetailNoDecision: OrderDetail = {
 
 export const mockOrderEvents: OrderEvent[] = [
   {
-    event_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00e1",
-    order_request_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0001",
-    from_status: "pending_submit",
-    to_status: "submitted",
-    reason: "Order submitted to broker",
-    timestamp: "2026-05-05T00:00:01Z",
+    order_state_event_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00e1",
+    previous_status: null,
+    new_status: "submitted",
+    event_source: "INTERNAL",
+    event_timestamp: "2026-05-05T00:00:01Z",
+    reason_code: null,
   },
   {
-    event_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00e2",
-    order_request_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0001",
-    from_status: "submitted",
-    to_status: "filled",
-    reason: "Fill confirmed by broker",
-    timestamp: "2026-05-05T00:00:05Z",
+    order_state_event_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00e2",
+    previous_status: "submitted",
+    new_status: "filled",
+    event_source: "BROKER",
+    event_timestamp: "2026-05-05T00:00:05Z",
+    reason_code: "FILL_CONFIRMED",
   },
 ];
 
@@ -355,13 +360,13 @@ export const mockCashBalanceNull: CashBalanceSnapshotView | null = null;
 /** Dashboard — incomplete reconciliation run (status !== "completed") */
 export const mockIncompleteReconRuns: ReconciliationRunSummary[] = [
   {
-    run_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00r2",
+    reconciliation_run_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00r2",
     account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a1",
+    trigger_type: "post_trade",
     status: "in_progress",
     started_at: "2026-05-05T00:00:00Z",
     completed_at: null,
-    order_mismatches: 2,
-    position_mismatches: 1,
+    mismatch_count: 3,
   },
 ];
 
@@ -373,6 +378,7 @@ export const mockTradeDecisions: TradeDecisionDetail[] = [
     side: "buy",
     strategy_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00s1",
     symbol: "AAPL",
+    instrument_name: null,
     market: "NASDAQ",
     entry_style: "limit",
     created_at: "2026-05-05T00:00:00Z",
@@ -389,6 +395,7 @@ export const mockTradeDecisions: TradeDecisionDetail[] = [
     side: "hold",
     strategy_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00s1",
     symbol: "TSLA",
+    instrument_name: null,
     market: "NASDAQ",
     entry_style: "market",
     created_at: "2026-05-05T00:00:01Z",
@@ -405,6 +412,7 @@ export const mockTradeDecisions: TradeDecisionDetail[] = [
     side: "sell",
     strategy_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00s2",
     symbol: "MSFT",
+    instrument_name: null,
     market: "NASDAQ",
     entry_style: "market",
     created_at: "2026-05-05T00:00:02Z",
@@ -570,6 +578,20 @@ export const mockEnumMetadataResponse: EnumMetadataListResponse = {
         { value: "twap", label: "TWAP", description: null, broker_code: null, supported: true },
       ],
     },
+    {
+      field: "reason_code",
+      type: "string",
+      values: [
+        { value: "BLOCKED", label: "차단됨", description: "Blocking lock에 의해 submit 차단", broker_code: null, supported: true },
+        { value: "UNCERTAIN", label: "불확실 상태", description: "Broker 응답 불확실로 조정 필요", broker_code: null, supported: true },
+        { value: "RECONCILE_RESOLVED", label: "조정 해소", description: "Broker 조회로 상태 확정", broker_code: null, supported: true },
+        { value: "MANUAL_RESOLVE", label: "운영자 수동 해소", description: "관리자가 수동으로 상태 변경", broker_code: null, supported: true },
+        { value: "manual_paper_resolution", label: "운영자 수동 해소", description: "관리자 수동 해소 (legacy)", broker_code: null, supported: true },
+        { value: "WS_FILL", label: "WS 체결 수신", description: "WebSocket 실시간 체결 통보", broker_code: null, supported: true },
+        { value: "FILL_CONFIRMED", label: "체결 확인", description: "체결 내역 확인 완료", broker_code: null, supported: true },
+        { value: "REJECTED", label: "거부됨", description: "Broker 주문 거부", broker_code: null, supported: true },
+      ],
+    },
   ],
 };
 
@@ -597,6 +619,7 @@ export const mockReconcileRequiredWithPosition: OrderSummary = {
   requested_quantity: 100,
   requested_price: 50000,
   symbol: "AAPL",
+  instrument_name: null,
   correlation_id: "corr-reconcile-001",
   trade_decision_id: null,
   created_at: "2026-05-13T01:00:00Z",
@@ -615,6 +638,7 @@ export const mockReconcileRequiredNoPosition: OrderSummary = {
   requested_quantity: 50,
   requested_price: null,
   symbol: "TSLA",
+  instrument_name: null,
   correlation_id: "corr-reconcile-002",
   trade_decision_id: null,
   created_at: "2026-05-13T02:00:00Z",
@@ -633,6 +657,7 @@ export const mockReconcileRequiredPositionMatched: OrderSummary = {
   requested_quantity: 100,
   requested_price: 50000,
   symbol: "AAPL",
+  instrument_name: null,
   correlation_id: "corr-reconcile-003",
   trade_decision_id: null,
   created_at: "2026-05-13T03:00:00Z",

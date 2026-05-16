@@ -270,3 +270,13 @@ export async function getSnapshotSyncSummary(): Promise<
     "/snapshot-sync-runs/summary"
   );
 }
+
+/* ── Market Session ──────────────────────── */
+
+export async function getLatestMarketSession(): Promise<import("../types/api").SchedulerStatusResponse> {
+  return request<import("../types/api").SchedulerStatusResponse>("/market-sessions/latest");
+}
+
+export async function getRecentSessionEvents(limit: number = 5): Promise<import("../types/api").SessionEventsResponse> {
+  return request<import("../types/api").SessionEventsResponse>(`/market-sessions/events/recent?limit=${limit}`);
+}

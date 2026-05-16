@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from agent_trading.api.schemas import HealthResponse
+from agent_trading.api.schemas import HealthResponse, SchedulerHealth
 
 router = APIRouter(tags=["health"])
 
@@ -113,6 +113,9 @@ async def health(request: Request) -> HealthResponse:
             except Exception:
                 snapshot_detail = "unavailable"
 
+    # Scheduler freshness — query latest market_sessions row
+    scheduler_health = await _get_scheduler_health(database_status)
+
     return HealthResponse(
         status="ok",
         version=_version,
@@ -123,6 +126,7 @@ async def health(request: Request) -> HealthResponse:
         snapshot_sync_stale=snapshot_stale,
         snapshot_sync_last_successful_run_at=snapshot_last_ok,
         snapshot_sync_consecutive_failures=snapshot_failures,
+        scheduler=scheduler_health,
     )
 
 
@@ -179,3 +183,64 @@ async def readyz(request: Request) -> JSONResponse:
                 pass
 
     return JSONResponse({"status": "ok"})
+
+
+async def _get_scheduler_health(database_status: str) -> SchedulerHealth | None:
+    """Query the latest ``market_sessions`` row for scheduler freshness.
+
+    Returns ``None`` when the database is not connected or the query fails,
+    or when no database connection environment variables are set.
+    """
+    if database_status != "connected":
+        return None
+    try:
+        import os
+
+        # Resolution order matches ``_build_dsn()`` in the ops-scheduler script.
+        dsn = os.environ.get("DATABASE_URL") or os.environ.get("DATABASE_DSN")
+        if not dsn:
+            host = os.environ.get("DATABASE_HOST") or os.environ.get("DB_HOST") or "localhost"
+            port = os.environ.get("DATABASE_PORT") or os.environ.get("DB_PORT") or "5432"
+            user = os.environ.get("DATABASE_USER") or os.environ.get("DB_USER") or "trading"
+            password = os.environ.get("DATABASE_PASSWORD") or os.environ.get("DB_PASSWORD") or "trading"
+            dbname = os.environ.get("DATABASE_NAME") or os.environ.get("DB_NAME") or "trading"
+            dsn = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
+
+        import asyncpg
+
+        conn = await asyncpg.connect(dsn=dsn)
+        try:
+            row = await conn.fetchrow(
+                "SELECT last_heartbeat_at, checked_at, is_trading_day "
+                "FROM trading.market_sessions ORDER BY updated_at DESC LIMIT 1"
+            )
+        finally:
+            await conn.close()
+
+        if row is None:
+            return SchedulerHealth()
+
+        last_heartbeat: datetime | None = row["last_heartbeat_at"]
+        checked_at: datetime | None = row["checked_at"]
+        is_trading_day: bool | None = row["is_trading_day"]
+        now = datetime.now(timezone.utc)
+
+        # Derive healthy flag using same logic as Docker healthcheck
+        healthy: bool | None = None
+        if is_trading_day and last_heartbeat and (now - last_heartbeat).total_seconds() < 120:
+            healthy = True
+        elif is_trading_day:
+            healthy = False
+        elif not is_trading_day and checked_at and (now - checked_at).total_seconds() < 86400:
+            healthy = True
+        elif not is_trading_day:
+            healthy = False
+
+        return SchedulerHealth(
+            last_heartbeat_at=last_heartbeat,
+            is_trading_day=is_trading_day,
+            checked_at=checked_at,
+            healthy=healthy,
+        )
+    except Exception:
+        return None

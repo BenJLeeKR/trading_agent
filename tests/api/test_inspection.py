@@ -216,10 +216,11 @@ class TestReconciliation:
         assert data[0]["trigger_type"] == "post_submit"
         assert data[0]["status"] == "started"
 
-    def test_list_reconciliation_runs_missing_param(self, client: TestClient) -> None:
-        """``GET /reconciliation/runs`` returns 422 when account_id is missing."""
-        response = client.get("/reconciliation/runs")
-        assert response.status_code == 422
+    def test_list_reconciliation_runs_missing_param(self, empty_client: TestClient) -> None:
+        """``GET /reconciliation/runs`` returns 200 (empty list) without account_id."""
+        response = empty_client.get("/reconciliation/runs")
+        assert response.status_code == 200
+        assert response.json() == []
 
     # -- Plan 44: Lock inspection tests --
 
@@ -242,10 +243,11 @@ class TestReconciliation:
         assert "lock_id" in lock
         assert "locked_at" in lock
 
-    def test_list_locks_missing_param(self, client: TestClient) -> None:
-        """``GET /reconciliation/locks`` returns 422 when account_id is missing."""
-        response = client.get("/reconciliation/locks")
-        assert response.status_code == 422
+    def test_list_locks_missing_param(self, empty_client: TestClient) -> None:
+        """``GET /reconciliation/locks`` returns 200 (empty list) without account_id."""
+        response = empty_client.get("/reconciliation/locks")
+        assert response.status_code == 200
+        assert response.json() == []
 
     def test_list_locks_invalid_uuid(self, client: TestClient) -> None:
         """``GET /reconciliation/locks`` returns 400 for invalid UUID."""

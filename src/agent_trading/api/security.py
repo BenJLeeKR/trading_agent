@@ -140,3 +140,31 @@ async def require_viewer(
             detail="Insufficient permissions — viewer role required",
         )
     return principal
+
+
+async def require_admin(
+    principal: Principal = Depends(get_current_principal),
+) -> Principal:
+    """Require ``admin`` role.
+
+    Parameters
+    ----------
+    principal:
+        The authenticated principal (injected by ``get_current_principal``).
+
+    Returns
+    -------
+    Principal
+        The same principal on success.
+
+    Raises
+    ------
+    HTTPException (403)
+        When the principal's role is not ``"admin"``.
+    """
+    if principal.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions — admin role required",
+        )
+    return principal

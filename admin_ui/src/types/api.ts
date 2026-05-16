@@ -5,6 +5,8 @@
 
 export interface HealthResponse {
   status: string;
+  version: string;
+  timestamp: string;
   database: string;
   runtime_mode: string;
   // ── Snapshot Sync Freshness (optional) ──
@@ -12,6 +14,15 @@ export interface HealthResponse {
   snapshot_sync_stale: boolean | null;
   snapshot_sync_last_successful_run_at: string | null;
   snapshot_sync_consecutive_failures: number | null;
+  // ── Scheduler Freshness (optional) ──
+  scheduler: SchedulerStatus | null;
+}
+
+export interface SchedulerStatus {
+  last_heartbeat_at: string | null;
+  is_trading_day: boolean | null;
+  checked_at: string | null;
+  healthy: boolean | null;
 }
 
 export interface OrderSummary {
@@ -24,6 +35,7 @@ export interface OrderSummary {
   requested_quantity: number;
   requested_price: number | null;
   symbol: string | null;
+  instrument_name: string | null;
   correlation_id: string;
   trade_decision_id: string | null;
   created_at: string | null;
@@ -42,12 +54,14 @@ export interface OrderDetail extends OrderSummary {
 }
 
 export interface OrderEvent {
-  event_id: string;
-  order_request_id: string;
-  from_status: string;
-  to_status: string;
-  reason: string;
-  timestamp: string;
+  order_state_event_id: string;
+  previous_status: string | null;
+  new_status: string;
+  event_source: string;
+  event_timestamp: string;
+  reason_code: string | null;
+  correlation_id?: string | null;
+  created_at?: string | null;
 }
 
 export interface BrokerOrderView {
@@ -70,25 +84,23 @@ export interface AuditLogEntry {
 }
 
 export interface ReconciliationRunSummary {
-  run_id: string;
+  reconciliation_run_id: string;
   account_id: string;
+  trigger_type: string;
+  status: string;
   started_at: string;
   completed_at: string | null;
-  status: string;
-  order_mismatches: number;
-  position_mismatches: number;
+  mismatch_count: number;
 }
 
 export interface BlockingLockStatus {
-  lock_id: string;
-  lock_key: string;
   account_id: string;
-  symbol: string;
-  strategy_code: string;
-  lock_type: string;
-  acquired_at: string;
-  expires_at: string;
-  is_expired: boolean;
+  strategy_id: string;
+  locked_at: string;
+  is_active: boolean;
+  side: string;
+  reason: string;
+  locked_by_run_id: string;
 }
 
 export interface ReconciliationSummary {
@@ -175,6 +187,7 @@ export interface TradeDecisionDetail {
   side: string;
   strategy_id: string;
   symbol: string;
+  instrument_name: string | null;
   market: string;
   entry_style: string;
   created_at: string;
@@ -288,6 +301,7 @@ export interface SnapshotSyncRunSummary {
   status: string;
   started_at: string;
   completed_at: string | null;
+  after_hours: boolean;
   env_filter: string | null;
   status_filter: string | null;
   summary_json: Record<string, unknown> | null;
@@ -301,11 +315,53 @@ export interface SnapshotSyncRunHealthSummary {
   consecutive_failures: number;
   is_stale: boolean;
   stale_threshold_seconds: number;
+  after_hours: boolean;
 }
 
 /* ───────────────────────────────────────────
  * API response wrapper types
  * ─────────────────────────────────────────── */
+
+export interface MarketSessionSummary {
+  id: number;
+  run_date: string;
+  is_trading_day: boolean;
+  opnd_yn: string | null;
+  bzdy_yn: string | null;
+  tr_day_yn: string | null;
+  market_phase: string | null;
+  raw_opnd_yn: string | null;
+  raw_mkop_cls_code: string | null;
+  raw_antc_mkop_cls_code: string | null;
+  source: string | null;
+  reason: string | null;
+  checked_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface SessionEventSummary {
+  id: number;
+  market_session_id: number;
+  previous_phase: string | null;
+  new_phase: string | null;
+  trigger_source: string | null;
+  metadata: Record<string, unknown> | null;
+  occurred_at: string;
+  created_at: string | null;
+}
+
+export interface SchedulerStatusResponse {
+  status: 'ok' | 'no_data';
+  data: MarketSessionSummary | null;
+  healthy: boolean;
+  stale_seconds: number | null;
+}
+
+export interface SessionEventsResponse {
+  status: 'ok';
+  data: SessionEventSummary[];
+}
 
 export interface ApiError {
   detail: string;

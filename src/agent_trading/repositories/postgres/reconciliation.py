@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from datetime import datetime
 from uuid import UUID
 
 from agent_trading.db.row_mapper import row_to_entity
 from agent_trading.db.transaction import TransactionManager
-from agent_trading.domain.entities import BlockingLockEntity, ReconciliationRunEntity
+from agent_trading.domain.entities import (
+    BlockingLockEntity,
+    ReconciliationOrderLinkEntity,
+    ReconciliationPositionLinkEntity,
+    ReconciliationRunEntity,
+)
 
 
 class PostgresReconciliationRepository:
@@ -168,33 +174,139 @@ class PostgresReconciliationRepository:
         )
         return [_row_to_blocking_lock(r) for r in rows]
 
+    # -- Worker read path (Reconciliation Worker) --
+
+    async def list_pending_runs(
+        self,
+        limit: int = 20,
+        *,
+        account_id: UUID | None = None,
+        run_id: UUID | None = None,
+    ) -> Sequence[ReconciliationRunEntity]:
+        """Return reconciliation runs with ``status = 'started'``."""
+        conditions = ["status = 'started'"]
+        params: list[object] = []
+        idx = 1
+
+        if account_id is not None:
+            conditions.append(f"account_id = ${idx}")
+            params.append(account_id)
+            idx += 1
+        if run_id is not None:
+            conditions.append(f"reconciliation_run_id = ${idx}")
+            params.append(run_id)
+            idx += 1
+
+        where = " AND ".join(conditions)
+        sql = (
+            f"SELECT * FROM trading.reconciliation_runs"
+            f" WHERE {where}"
+            f" ORDER BY started_at ASC"
+            f" LIMIT ${idx}"
+        )
+        params.append(limit)
+
+        rows = await self._tx.connection.fetch(sql, *params)
+        return [row_to_entity(row, ReconciliationRunEntity) for row in rows]
+
+    async def get_run_order_links(
+        self,
+        reconciliation_run_id: UUID,
+    ) -> Sequence[ReconciliationOrderLinkEntity]:
+        """Return order links attached to a reconciliation run."""
+        rows = await self._tx.connection.fetch(
+            """
+            SELECT reconciliation_run_id, order_request_id, mismatch_type,
+                   details_json, created_at
+            FROM trading.reconciliation_order_links
+            WHERE reconciliation_run_id = $1
+            ORDER BY created_at ASC
+            """,
+            reconciliation_run_id,
+        )
+        return [_row_to_link_entity(row) for row in rows]
+
+    async def list_run_position_links(
+        self,
+        reconciliation_run_id: UUID,
+    ) -> Sequence[ReconciliationPositionLinkEntity]:
+        """Return position links attached to a reconciliation run."""
+        rows = await self._tx.connection.fetch(
+            """
+            SELECT reconciliation_run_id, position_snapshot_id, mismatch_type,
+                   details_json, created_at
+            FROM trading.reconciliation_position_links
+            WHERE reconciliation_run_id = $1
+            ORDER BY created_at ASC
+            """,
+            reconciliation_run_id,
+        )
+        return [_row_to_position_link_entity(row) for row in rows]
+
     async def update_run_status(
         self,
         reconciliation_run_id: UUID,
         status: str,
+        completed_at: datetime | None = None,
         summary_json: dict[str, object] | None = None,
     ) -> None:
+        sets = ["status = $2"]
+        params = [reconciliation_run_id, status]
+        idx = 3
+
+        if completed_at is not None:
+            sets.append(f"completed_at = ${idx}")
+            params.append(completed_at)
+            idx += 1
         if summary_json is not None:
-            await self._tx.connection.execute(
-                """
-                UPDATE trading.reconciliation_runs
-                SET status = $2, summary_json = $3::jsonb
-                WHERE reconciliation_run_id = $1
-                """,
-                reconciliation_run_id,
-                status,
-                json.dumps(summary_json),
-            )
-        else:
-            await self._tx.connection.execute(
-                """
-                UPDATE trading.reconciliation_runs
-                SET status = $2
-                WHERE reconciliation_run_id = $1
-                """,
-                reconciliation_run_id,
-                status,
-            )
+            sets.append(f"summary_json = ${idx}::jsonb")
+            params.append(json.dumps(summary_json))
+            idx += 1
+
+        set_clause = ", ".join(sets)
+        sql = (
+            f"UPDATE trading.reconciliation_runs"
+            f" SET {set_clause}"
+            f" WHERE reconciliation_run_id = $1"
+        )
+        await self._tx.connection.execute(sql, *params)
+
+    async def list_legacy_runs(
+        self,
+        limit: int = 50,
+        *,
+        account_id: UUID | None = None,
+        run_id: UUID | None = None,
+    ) -> Sequence[ReconciliationRunEntity]:
+        """Return legacy runs: ``status = 'started'`` AND no order links."""
+        conditions = ["r.status = 'started'"]
+        params: list[object] = []
+        idx = 1
+
+        if account_id is not None:
+            conditions.append(f"r.account_id = ${idx}")
+            params.append(account_id)
+            idx += 1
+        if run_id is not None:
+            conditions.append(f"r.reconciliation_run_id = ${idx}")
+            params.append(run_id)
+            idx += 1
+
+        where = " AND ".join(conditions)
+        sql = (
+            f"SELECT r.* FROM trading.reconciliation_runs r"
+            f" WHERE {where}"
+            f" AND NOT EXISTS ("
+            f"     SELECT 1 FROM trading.reconciliation_order_links l"
+            f"     WHERE l.reconciliation_run_id = r.reconciliation_run_id"
+            f" )"
+            f" ORDER BY r.started_at ASC"
+            f" LIMIT ${idx}"
+        )
+        params.append(limit)
+
+        rows = await self._tx.connection.fetch(sql, *params)
+        return [row_to_entity(row, ReconciliationRunEntity) for row in rows]
 
 
 def _row_to_blocking_lock(row: object) -> BlockingLockEntity:
@@ -209,4 +321,32 @@ def _row_to_blocking_lock(row: object) -> BlockingLockEntity:
         locked_by_run_id=row.get("locked_by_run_id"),
         locked_at=row.get("locked_at"),
         expires_at=row.get("expires_at"),
+    )
+
+
+def _row_to_link_entity(row: object) -> ReconciliationOrderLinkEntity:
+    """Convert a ``trading.reconciliation_order_links`` row to a ``ReconciliationOrderLinkEntity``."""
+    details = row.get("details_json") or {}
+    if isinstance(details, str):
+        details = json.loads(details)
+    return ReconciliationOrderLinkEntity(
+        reconciliation_run_id=row["reconciliation_run_id"],
+        order_request_id=row["order_request_id"],
+        mismatch_type=row["mismatch_type"],
+        details_json=details,
+        created_at=row.get("created_at"),
+    )
+
+
+def _row_to_position_link_entity(row: object) -> ReconciliationPositionLinkEntity:
+    """Convert a ``trading.reconciliation_position_links`` row to a ``ReconciliationPositionLinkEntity``."""
+    details = row.get("details_json") or {}
+    if isinstance(details, str):
+        details = json.loads(details)
+    return ReconciliationPositionLinkEntity(
+        reconciliation_run_id=row["reconciliation_run_id"],
+        position_snapshot_id=row["position_snapshot_id"],
+        mismatch_type=row["mismatch_type"],
+        details_json=details,
+        created_at=row.get("created_at"),
     )

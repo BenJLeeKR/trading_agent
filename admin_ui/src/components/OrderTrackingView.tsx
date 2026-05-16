@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
-import { formatKstDateTime, formatKrw } from "@/lib/utils";
+import { formatKstDateTime, formatKrw, formatOrderEventReason } from "@/lib/utils";
+import { useEnumMetadata } from "@/hooks/useEnumMetadata";
 import { Link } from "react-router-dom";
 import { FilterBar } from "./common/FilterBar";
 import { DataTable, type Column } from "./common/DataTable";
@@ -31,12 +32,17 @@ function sideLabel(side: string): string {
 
 function statusLabel(status: string): string {
   const map: Record<string, string> = {
+    draft: "초안",
+    validated: "검증됨",
+    pending_submit: "제출 대기",
     submitted: "제출됨",
     acknowledged: "접수됨",
     partially_filled: "부분체결",
     filled: "체결",
-    rejected: "거부됨",
     cancelled: "취소됨",
+    cancel_pending: "취소 대기",
+    rejected: "거부됨",
+    expired: "만료",
     pending: "대기",
     reconcile_required: "조정필요",
   };
@@ -59,6 +65,7 @@ function statusVariant(status: string): "success" | "warning" | "error" | "info"
 
 
 /* ── Columns ── */
+/* orderColumns is module-level because it has no component dependencies. */
 const orderColumns: Column<OrderSummary>[] = [
   { key: "order_request_id", header: "주문 ID", width: "150px" },
   {
@@ -69,8 +76,16 @@ const orderColumns: Column<OrderSummary>[] = [
     ),
   },
   {
+    key: "instrument_name",
+    header: "종목명",
+    render: (row: OrderSummary) => (
+      <span className="text-sm text-[#334155]">{row.instrument_name || "—"}</span>
+    ),
+  },
+  {
     key: "side",
     header: "구분",
+    width: "90px",
     render: (row: OrderSummary) => (
       <StatusBadge variant={row.side === "buy" ? "success" : "error"}>
         {sideLabel(row.side)}
@@ -94,13 +109,8 @@ const orderColumns: Column<OrderSummary>[] = [
   { key: "created_at", header: "생성 시간", width: "150px", render: (row: OrderSummary) => formatKstDateTime(row.created_at) },
 ];
 
-const eventColumns: Column<OrderEvent>[] = [
-  { key: "from_status", header: "이전 상태", width: "100px", render: (row: OrderEvent) => statusLabel(row.from_status) },
-  { key: "to_status", header: "이후 상태", width: "100px", render: (row: OrderEvent) => statusLabel(row.to_status) },
-  { key: "timestamp", header: "시간", width: "150px", render: (row: OrderEvent) => formatKstDateTime(row.timestamp) },
-  { key: "reason", header: "사유" },
-];
-
+/* eventColumns is defined inside the component via useMemo because it
+   depends on reasonFieldMap (derived from metadata). */
 const brokerColumns: Column<BrokerOrderView>[] = [
   { key: "broker_name", header: "브로커", width: "100px" },
   { key: "broker_native_order_id", header: "ODNO", width: "120px" },
@@ -118,6 +128,28 @@ const brokerColumns: Column<BrokerOrderView>[] = [
 
 /* ── Component ── */
 export default function OrderTrackingView() {
+  const { fieldMap } = useEnumMetadata();
+
+  // Derive a flat value→label mapping for reason_code from metadata
+  const reasonFieldMap: Record<string, string> | undefined = useMemo(() => {
+    const field = fieldMap["reason_code"];
+    if (!field) return undefined;
+    const map: Record<string, string> = {};
+    for (const v of field.values) {
+      map[v.value] = v.label;
+    }
+    return map;
+  }, [fieldMap]);
+
+  // eventColumns depends on reasonFieldMap, so it must be defined inside the component
+  const eventColumns = useMemo<Column<OrderEvent>[]>(() => [
+    { key: "previous_status", header: "이전 상태", width: "100px", render: (row: OrderEvent) => statusLabel(row.previous_status ?? "") },
+    { key: "new_status", header: "이후 상태", width: "100px", render: (row: OrderEvent) => statusLabel(row.new_status) },
+    { key: "event_timestamp", header: "시간", width: "150px", render: (row: OrderEvent) => formatKstDateTime(row.event_timestamp) },
+    { key: "reason_code", header: "사유", render: (row: OrderEvent) => formatOrderEventReason(row.reason_code, reasonFieldMap) },
+    { key: "event_source", header: "소스", width: "90px" },
+  ], [reasonFieldMap]);
+
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [sideFilter, setSideFilter] = useState("");
@@ -356,7 +388,7 @@ export default function OrderTrackingView() {
                 <div className="space-y-2">
                   <h4 className="text-sm font-medium text-[#0f172a]">상태 전이 타임라인</h4>
                   {orderEvents.length > 0 ? (
-                    <DataTable columns={eventColumns} data={orderEvents} idKey="event_id" compact />
+                    <DataTable columns={eventColumns} data={orderEvents} idKey="order_state_event_id" compact />
                   ) : (
                     <div className="bg-white rounded-xl border border-[#e2e8f0] p-4 text-center">
                       <p className="text-xs text-[#94a3b8]">상태 전이 이력이 없습니다</p>

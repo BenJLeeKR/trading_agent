@@ -60,8 +60,13 @@ export default function OrdersView() {
     { key: "order_request_id", header: "주문 ID", width: "100px", render: (r: OrderSummary) => (
       <code className="text-xs">{r.order_request_id.slice(0, 8)}…</code>
     )},
-    { key: "symbol", header: "심볼" },
-    { key: "side", header: "매매", render: (r: OrderSummary) => (
+    { key: "symbol", header: "심볼", render: (r: OrderSummary) => (
+      <span className="text-sm font-medium text-[#0f172a]">{r.symbol ?? "—"}</span>
+    )},
+    { key: "instrument_name", header: "종목명", render: (r: OrderSummary) => (
+      <span className="text-sm text-[#334155]">{r.instrument_name || "—"}</span>
+    )},
+    { key: "side", header: "매매", width: "90px", render: (r: OrderSummary) => (
       <StatusBadge variant={r.side.toLowerCase() === "buy" ? "success" : "error"}>{getEnumLabel(fieldMap, "side", r.side)}</StatusBadge>
     )},
     { key: "requested_quantity", header: "수량" },

@@ -313,6 +313,29 @@ class ReconciliationRunEntity:
 
 
 @dataclass(slots=True, frozen=True)
+class ReconciliationOrderLinkEntity:
+    """Order link attached to a reconciliation run.
+
+    Records which order triggered or was identified during reconciliation.
+    """
+    reconciliation_run_id: UUID
+    order_request_id: UUID
+    mismatch_type: str
+    details_json: dict[str, object] = field(default_factory=dict)
+    created_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class ReconciliationPositionLinkEntity:
+    """Position link attached to a reconciliation run."""
+    reconciliation_run_id: UUID
+    position_snapshot_id: UUID
+    mismatch_type: str
+    details_json: dict[str, object] = field(default_factory=dict)
+    created_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class SnapshotSyncRunEntity:
     """Record of a single KIS snapshot sync execution.
 
@@ -334,6 +357,8 @@ class SnapshotSyncRunEntity:
     error_count: int
     status: str  # "completed" | "partial" | "failed"
     started_at: datetime
+    after_hours: bool = False
+    """Whether this sync was an after-hours cash-only run."""
     env_filter: str | None = None
     status_filter: str | None = None
     summary_json: dict[str, object] | None = None

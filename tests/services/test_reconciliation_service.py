@@ -155,3 +155,98 @@ async def test_acquire_and_release_blocking_lock(service, account_id):
     # Note: In-memory mode does not support actual lock operations,
     # so is_blocked returns False. This is expected.
     assert blocked is False
+
+
+# ---------------------------------------------------------------------------
+# Idempotency tests for trigger()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_trigger_idempotent_reuses_active_run(service, repos, account_id):
+    """동일 계정에 active run이 이미 존재하면 새 run을 생성하지 않고 재사용"""
+    # Given: 첫 번째 trigger로 run 생성
+    run1 = await service.trigger(account_id, "test_trigger")
+
+    # When: 두 번째 trigger (동일 계정)
+    run2 = await service.trigger(account_id, "test_trigger_dup")
+
+    # Then: 동일 run 반환 (새로 생성 안 함)
+    assert run2.reconciliation_run_id == run1.reconciliation_run_id
+
+    # DB에 run이 1개만 있는지 확인
+    all_runs = await repos.reconciliations.list_runs_by_account(account_id)
+    assert len(all_runs) == 1
+
+
+@pytest.mark.asyncio
+async def test_trigger_creates_new_run_when_no_active(service, repos, account_id):
+    """active run이 없으면 정상적으로 새 run 생성"""
+    # Given/When: 첫 번째 trigger
+    run = await service.trigger(account_id, "first_trigger")
+
+    # Then: 정상 생성 확인
+    assert run is not None
+    assert run.status == "started"
+    assert run.account_id == account_id
+
+    all_runs = await repos.reconciliations.list_runs_by_account(account_id)
+    assert len(all_runs) == 1
+
+
+@pytest.mark.asyncio
+async def test_trigger_creates_new_run_after_previous_resolved(service, repos, account_id):
+    """이전 run이 resolved면 새 run 생성"""
+    # Given: 첫 번째 trigger
+    run1 = await service.trigger(account_id, "first")
+    assert run1.status == "started"
+
+    # When: 첫 번째 run을 resolved로 표시
+    await service.mark_resolved(
+        run1.reconciliation_run_id,
+        summary_json={"resolved_by": "test"},
+    )
+
+    # Then: 두 번째 trigger는 새 run 생성
+    run2 = await service.trigger(account_id, "second")
+    assert run2.reconciliation_run_id != run1.reconciliation_run_id
+    assert run2.status == "started"
+
+    all_runs = await repos.reconciliations.list_runs_by_account(account_id)
+    assert len(all_runs) == 2
+
+
+@pytest.mark.asyncio
+async def test_trigger_idempotent_different_trigger_type_same_account(service, repos, account_id):
+    """다른 trigger_type이어도 동일 계정의 active run이 존재하면 재사용"""
+    run1 = await service.trigger(account_id, "uncertain_result")
+    run2 = await service.trigger(account_id, "requires_reconciliation")
+
+    assert run2.reconciliation_run_id == run1.reconciliation_run_id
+
+    all_runs = await repos.reconciliations.list_runs_by_account(account_id)
+    assert len(all_runs) == 1
+
+
+@pytest.mark.asyncio
+async def test_trigger_idempotent_accounts_independent(service, repos):
+    """서로 다른 계정의 trigger는 독립적으로 동작"""
+    account_a = uuid4()
+    account_b = uuid4()
+
+    run_a = await service.trigger(account_a, "trigger_a")
+    run_b = await service.trigger(account_b, "trigger_b")
+
+    # 각 계정별로 별도의 run 생성
+    assert run_a.reconciliation_run_id != run_b.reconciliation_run_id
+
+    runs_a = await repos.reconciliations.list_runs_by_account(account_a)
+    runs_b = await repos.reconciliations.list_runs_by_account(account_b)
+    assert len(runs_a) == 1
+    assert len(runs_b) == 1
+
+    # account_a에서 다시 trigger 해도 기존 run 재사용
+    run_a2 = await service.trigger(account_a, "trigger_a_dup")
+    assert run_a2.reconciliation_run_id == run_a.reconciliation_run_id
+    runs_a = await repos.reconciliations.list_runs_by_account(account_a)
+    assert len(runs_a) == 1

@@ -25,6 +25,8 @@ from agent_trading.domain.entities import (
     OrderRequestEntity,
     OrderStateEventEntity,
     PositionSnapshotEntity,
+    ReconciliationOrderLinkEntity,
+    ReconciliationPositionLinkEntity,
     ReconciliationRunEntity,
     RiskLimitSnapshotEntity,
     SessionEventEntity,
@@ -63,6 +65,9 @@ class SnapshotSyncHealthSummary:
 
     stale_threshold_seconds: int
     """The threshold used for the staleness computation."""
+
+    after_hours: bool = False
+    """``True`` when the most recent run was an after-hours (cash-only) sync."""
 
 
 class ClientRepository(Protocol):
@@ -103,6 +108,27 @@ class BrokerAccountRepository(Protocol):
         env: Environment,
     ) -> Sequence[BrokerAccountEntity]:
         """List broker accounts filtered by broker name and environment."""
+        ...
+
+    async def list_by_account_id(
+        self,
+        account_id: UUID,
+    ) -> Sequence[BrokerAccountEntity]:
+        """List broker accounts linked to the given account ID.
+
+        Uses a JOIN with ``trading.accounts`` to resolve
+        ``account_id → broker_account_id``.
+
+        Parameters
+        ----------
+        account_id : UUID
+            The account whose broker accounts to list.
+
+        Returns
+        -------
+        Sequence[BrokerAccountEntity]
+            Matching broker accounts (usually 0 or 1 per account).
+        """
         ...
 
 
@@ -186,6 +212,15 @@ class InstrumentRepository(Protocol):
         ...
 
     async def get_by_symbol(self, symbol: str, market_code: str) -> InstrumentEntity | None:
+        ...
+
+    async def get_by_symbol_any_market(self, symbol: str) -> InstrumentEntity | None:
+        """Lookup instrument by symbol across all markets.
+
+        Returns the first matching instrument regardless of market,
+        or ``None`` if not found.  Used when the caller does not know
+        the market code (e.g. lock enrichment).
+        """
         ...
 
     async def upsert_by_symbol(self, instrument: InstrumentEntity) -> InstrumentEntity:
@@ -421,6 +456,7 @@ class ReconciliationRepository(Protocol):
         self,
         reconciliation_run_id: UUID,
         status: str,
+        completed_at: datetime | None = None,
         summary_json: dict[str, object] | None = None,
     ) -> None:
         ...
@@ -448,6 +484,88 @@ class ReconciliationRepository(Protocol):
         self,
     ) -> Sequence[BlockingLockEntity]:
         """Return active (non-expired) blocking locks across all accounts."""
+        ...
+
+    # -- Worker read path (Reconciliation Worker) --
+
+    async def list_pending_runs(
+        self,
+        limit: int = 20,
+        *,
+        account_id: UUID | None = None,
+        run_id: UUID | None = None,
+    ) -> Sequence[ReconciliationRunEntity]:
+        """Return reconciliation runs with ``status = 'started'``.
+
+        Parameters
+        ----------
+        limit : int
+            Maximum number of runs to return (default ``20``).
+        account_id : UUID | None
+            Optional filter by account.
+        run_id : UUID | None
+            Optional filter by specific run ID.
+
+        Returns
+        -------
+        Sequence[ReconciliationRunEntity]
+            Runs ordered by ``started_at`` ASC (FIFO).
+        """
+        ...
+
+    async def get_run_order_links(
+        self,
+        reconciliation_run_id: UUID,
+    ) -> Sequence[ReconciliationOrderLinkEntity]:
+        """Return order links attached to a reconciliation run.
+
+        Parameters
+        ----------
+        reconciliation_run_id : UUID
+            The reconciliation run to look up.
+
+        Returns
+        -------
+        Sequence[ReconciliationOrderLinkEntity]
+            Links ordered by ``created_at`` ASC.
+        """
+        ...
+
+    async def list_run_position_links(
+        self,
+        reconciliation_run_id: UUID,
+    ) -> Sequence[ReconciliationPositionLinkEntity]:
+        """Return position links attached to a reconciliation run.
+
+        (Interface only — not yet used by the worker.)
+        """
+        ...
+
+    # -- Legacy run cleanup --
+
+    async def list_legacy_runs(
+        self,
+        limit: int = 50,
+        *,
+        account_id: UUID | None = None,
+        run_id: UUID | None = None,
+    ) -> Sequence[ReconciliationRunEntity]:
+        """Return legacy runs: ``status = 'started'`` AND no order links.
+
+        Parameters
+        ----------
+        limit : int
+            Maximum number of runs to return (default ``50``).
+        account_id : UUID | None
+            Optional filter by account.
+        run_id : UUID | None
+            Optional filter by specific run ID.
+
+        Returns
+        -------
+        Sequence[ReconciliationRunEntity]
+            Runs ordered by ``started_at`` ASC (oldest first).
+        """
         ...
 
 

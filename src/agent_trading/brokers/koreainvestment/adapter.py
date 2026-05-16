@@ -516,9 +516,8 @@ class KoreaInvestmentAdapter(BrokerAdapter):
         uses the INQUIRY bucket with reconciliation reserve fallback.
         """
         return await self._rest.resolve_unknown_state(
-            account_ref,
-            client_order_id=client_order_id,
-            broker_order_id=broker_order_id,
+            broker_order_id=broker_order_id or "",
+            symbol="",
         )
 
     # ------------------------------------------------------------------

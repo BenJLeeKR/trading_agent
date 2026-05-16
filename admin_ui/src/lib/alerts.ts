@@ -4,7 +4,7 @@
  * UI-only computation.  No side effects, no API calls.
  * Shared between OperationsAlertsView and OperationsDashboardView.
  * ─────────────────────────────────────────── */
-import type { HealthResponse, OrderSummary, ReconciliationRunSummary, SnapshotSyncRunSummary } from "../types/api";
+import type { HealthResponse, OrderSummary, SnapshotSyncRunSummary, SchedulerStatusResponse } from "../types/api";
 import { formatKstDateTime } from "./utils";
 
 /* ── Public types ────────────────────────── */
@@ -25,8 +25,6 @@ export interface AlertRuleInput {
   ordersError: boolean;
   reconSummary: { active_locks_count: number; incomplete_recon_count: number } | null;
   reconSummaryError: boolean;
-  reconRuns: ReconciliationRunSummary[];
-  reconRunsError: boolean;
   agentRuns: { status?: string }[];
   agentRunsError: boolean;
   positionsCount: number;
@@ -37,6 +35,10 @@ export interface AlertRuleInput {
   // ── Position / Cash snapshot_at for time discrepancy check ──
   latestPositionSnapshotAt: string | null;
   latestCashSnapshotAt: string | null;
+  // ── Scheduler health ──
+  schedulerHealth: HealthResponse['scheduler'];
+  // ── Market session data (for fallback source detection) ──
+  sessionData: SchedulerStatusResponse | null;
   // ── Failed API names (for ALT-SYS-001) ──
   apiErrors?: { apiName: string; message: string }[];
 }
@@ -48,6 +50,39 @@ export const LEVEL_PRIORITY: Record<string, number> = {
   "경고": 3,
   "정보": 4,
 };
+
+/* ── Helpers ── */
+
+function isStale(timestamp: string | null, maxMinutes: number): boolean {
+  if (!timestamp) return true;
+  const elapsed = (Date.now() - new Date(timestamp).getTime()) / 60000;
+  return elapsed > maxMinutes;
+}
+
+/* ── Session-aware helpers ── */
+
+/** 거래일/비거래일 판정: sessionData 우선, schedulerHealth fallback */
+function isNonTradingDay(input: AlertRuleInput): boolean {
+  if (input.sessionData?.data?.is_trading_day !== undefined) {
+    return !input.sessionData.data.is_trading_day;
+  }
+  if (input.schedulerHealth?.is_trading_day !== undefined) {
+    return !input.schedulerHealth.is_trading_day;
+  }
+  return false; // 기본값: 거래일로 간주 (alert 억제보다 발생이 안전)
+}
+
+/** 장후(After-Hours) 판정: sessionData.market_phase 우선, snapshotSyncRun.after_hours 보조 */
+function isAfterHours(input: AlertRuleInput): boolean {
+  if (input.sessionData?.data?.market_phase !== undefined && input.sessionData.data.market_phase !== null) {
+    const phase: string = input.sessionData.data.market_phase;
+    return phase.includes("장후") || phase.includes("after") || phase.includes("after-hours");
+  }
+  if (input.snapshotSyncRun?.after_hours !== undefined) {
+    return input.snapshotSyncRun.after_hours === true;
+  }
+  return false;
+}
 
 /* ── Pure function: derive alerts ── */
 export function deriveAlerts(input: AlertRuleInput): AlertItem[] {
@@ -69,37 +104,8 @@ export function deriveAlerts(input: AlertRuleInput): AlertItem[] {
     });
   }
 
-  // Rule 2: 스냅샷 동기화 지연 (긴급)
-  if (!input.reconRunsError && input.reconRuns.length > 0) {
-    const sorted = [...input.reconRuns].sort(
-      (a, b) => new Date(b.started_at ?? 0).getTime() - new Date(a.started_at ?? 0).getTime()
-    );
-    const latest = sorted[0];
-    if (latest?.started_at) {
-      const elapsed = Date.now() - new Date(latest.started_at).getTime();
-      if (elapsed > 5 * 60 * 1000) {
-        alerts.push({
-          id: "ALT-SNAP-001",
-          level: "긴급",
-          title: "스냅샷 동기화 지연",
-          description: `마지막 스냅샷 동기화가 5분 이상 갱신되지 않았습니다. (마지막: ${latest.started_at})`,
-          time: now,
-          status: "OPEN",
-        });
-      }
-    }
-  } else if (input.reconRunsError || input.reconRuns.length === 0) {
-    alerts.push({
-      id: "ALT-SNAP-002",
-      level: "긴급",
-      title: "스냅샷 없음",
-      description: input.reconRunsError
-        ? "스냅샷 동기화 이력을 불러올 수 없습니다."
-        : "스냅샷 동기화 실행 이력이 없습니다. 시스템 상태를 확인하세요.",
-      time: now,
-      status: "OPEN",
-    });
-  }
+  // Rule 2: (제거됨) ALT-SNAP-001/002 — reconRuns 기반 스냅샷 alert
+  // → SNAP-SYNC-STALE-001 및 SNAP-SYNC-003b로 대체됨
 
   // Rule 3: 제출 대기 주문 존재 (긴급)
   if (!input.ordersError) {
@@ -162,7 +168,7 @@ export function deriveAlerts(input: AlertRuleInput): AlertItem[] {
     }
   }
 
-  // Rule 7: 주문-포지션 lineage 불일치 (주의 — UI 통일: "경고" → "주의")
+  // Rule 7: 주문-포지션 lineage 불일치 (주의)
   if (!input.ordersError && !input.positionsError) {
     if (input.orders.length === 0 && input.positionsCount > 0) {
       alerts.push({
@@ -176,7 +182,7 @@ export function deriveAlerts(input: AlertRuleInput): AlertItem[] {
     }
   }
 
-  // ── Snapshot Sync Alert Rules ──
+  // ── Snapshot Sync Alert Rules (snapshotSyncRun 기반) ──
 
   // SNAP-SYNC-001: status='partial' → 주의
   if (!input.snapshotSyncError && input.snapshotSyncRun) {
@@ -230,25 +236,102 @@ export function deriveAlerts(input: AlertRuleInput): AlertItem[] {
     });
   }
 
-  // SNAP-TIME-001: position/cash snapshot_at 차이 > 10분 → 주의 (UI 통일: "경고" → "주의")
-  if (input.latestPositionSnapshotAt && input.latestCashSnapshotAt) {
-    const posTime = new Date(input.latestPositionSnapshotAt).getTime();
-    const cashTime = new Date(input.latestCashSnapshotAt).getTime();
-    const diffMs = Math.abs(posTime - cashTime);
-    if (diffMs > 10 * 60 * 1000) {
-      const diffMin = Math.round(diffMs / 60000);
+  // SNAP-SYNC-STALE-001: snapshotSyncRun 기반 스냅샷 동기화 지연
+  // 세션 상태(비영업일/장후/정규장)에 따라 threshold 및 severity 변경
+  if (!input.snapshotSyncError && input.snapshotSyncRun) {
+    const shouldActivate = (() => {
+      if (isNonTradingDay(input)) return false;
+      if (!input.snapshotSyncRun!.completed_at) return true;
+      if (isAfterHours(input)) return isStale(input.snapshotSyncRun!.completed_at, 15);
+      return isStale(input.snapshotSyncRun!.completed_at, 5);
+    })();
+
+    if (shouldActivate) {
       alerts.push({
-        id: "SNAP-TIME-001",
-        level: "주의",
-        title: "현금/포지션 스냅샷 시각 불일치",
-        description: `포지션 스냅샷과 현금 스냅샷의 갱신 시각이 ${diffMin}분 차이납니다. 데이터 정합성을 확인하세요.`,
+        id: "SNAP-SYNC-STALE-001",
+        level: isAfterHours(input) ? "주의" : "긴급",
+        title: "스냅샷 동기화 지연",
+        description: !input.snapshotSyncRun.completed_at
+          ? "스냅샷 동기화 기록 없음"
+          : isAfterHours(input)
+            ? `마지막 스냅샷: ${formatKstDateTime(input.snapshotSyncRun.completed_at)} (장후 15분 임계)`
+            : `마지막 스냅샷: ${formatKstDateTime(input.snapshotSyncRun.completed_at)} (정규장 5분 임계)`,
         time: now,
         status: "OPEN",
       });
     }
   }
 
-  // Rule 8: 모든 조건 정상 (정보 → 정상 표시용)
+  // SNAP-TIME-001: 현금/포지션 스냅샷 시각 불일치
+  // 세션 상태(비영업일/장후)에 따라 면제 처리
+  if (input.latestPositionSnapshotAt && input.latestCashSnapshotAt) {
+    const shouldActivate = (() => {
+      if (isNonTradingDay(input)) return false;
+      if (isAfterHours(input)) return false;
+      const posTime = new Date(input.latestPositionSnapshotAt!).getTime();
+      const cashTime = new Date(input.latestCashSnapshotAt!).getTime();
+      return Math.abs(posTime - cashTime) > 10 * 60 * 1000;
+    })();
+
+    if (shouldActivate) {
+      const posTime = new Date(input.latestPositionSnapshotAt).getTime();
+      const cashTime = new Date(input.latestCashSnapshotAt).getTime();
+      const diffMin = Math.round(Math.abs(posTime - cashTime) / 60000);
+      alerts.push({
+        id: "SNAP-TIME-001",
+        level: "긴급",
+        title: "현금/포지션 스냅샷 시각 불일치",
+        description: `현금 ${formatKstDateTime(input.latestCashSnapshotAt)} / 포지션 ${formatKstDateTime(input.latestPositionSnapshotAt)} (${diffMin}분 차이)`,
+        time: now,
+        status: "OPEN",
+      });
+    }
+  }
+
+  // ── Scheduler Alert Rules ──
+
+  const scheduler = input.schedulerHealth;
+
+  // ALT-SCHED-001: scheduler unhealthy (긴급)
+  if (scheduler && scheduler.healthy === false) {
+    alerts.push({
+      id: "ALT-SCHED-001",
+      level: "긴급",
+      title: "운영 스케줄러 비정상",
+      description: "Scheduler 상태가 unhealthy입니다. 즉시 확인이 필요합니다.",
+      time: now,
+      status: "OPEN",
+    });
+  }
+
+  // ALT-SCHED-002: scheduler stale (주의)
+  if (scheduler && scheduler.last_heartbeat_at !== null) {
+    if (isStale(scheduler.last_heartbeat_at, 30)) {
+      alerts.push({
+        id: "ALT-SCHED-002",
+        level: "주의",
+        title: "운영 스케줄러 응답 없음 (Stale)",
+        description: `마지막 heartbeat: ${formatKstDateTime(scheduler.last_heartbeat_at)}`,
+        time: now,
+        status: "OPEN",
+      });
+    }
+  }
+
+  // ALT-SCHED-004: fallback source 사용 중 (주의)
+  const sessionSource = input.sessionData?.data?.source;
+  if (sessionSource === 'fallback' || sessionSource === 'gate_error_fallback') {
+    alerts.push({
+      id: "ALT-SCHED-004",
+      level: "주의",
+      title: "운영 스케줄러 Fallback 소스 사용 중",
+      description: "KIS API 대체 소스 사용 중입니다. 연결 상태를 확인하세요.",
+      time: now,
+      status: "OPEN",
+    });
+  }
+
+  // 모든 조건 정상 (정보)
   if (alerts.length === 0) {
     alerts.push({
       id: "ALT-OK-001",

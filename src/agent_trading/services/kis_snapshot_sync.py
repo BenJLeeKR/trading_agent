@@ -103,6 +103,7 @@ def build_sync_run_entity(
     dry_run: bool = False,
     started_at: datetime | None = None,
     summary_json: dict[str, object] | None = None,
+    after_hours: bool = False,
 ) -> SnapshotSyncRunEntity:
     """Build a ``SnapshotSyncRunEntity`` from a ``BatchSyncResult`` + metadata.
 
@@ -124,6 +125,8 @@ def build_sync_run_entity(
         When the run started. Defaults to ``datetime.now(timezone.utc)``.
     summary_json : dict[str, object] | None
         Optional structured summary data.
+    after_hours : bool
+        Whether this sync was an after-hours cash-only run.
 
     Returns
     -------
@@ -164,6 +167,7 @@ def build_sync_run_entity(
         started_at=started_at or now,
         completed_at=now,
         summary_json=summary_json,
+        after_hours=after_hours,
     )
 
 

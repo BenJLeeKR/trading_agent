@@ -32,8 +32,10 @@ from agent_trading.services.market_session import (
     FallbackSessionProvider,
     KisHolidayProvider,
     MarketSessionProvider,
+    SCHEDULER_ADVISORY_LOCK_KEY,
     SessionInfo,
     create_session_provider,
+    try_scheduler_lock,
 )
 
 
@@ -571,3 +573,81 @@ class TestCombinedSessionProvider:
         info = await combined.get_session_info(date(2026, 5, 18))
         # 076 says Y, 163 error → fallback to 076
         assert info.is_trading_day is True
+
+
+# ---------------------------------------------------------------------------
+# P3: Scheduler Advisory Lock Tests
+# ---------------------------------------------------------------------------
+
+
+class TestTrySchedulerLock:
+    """``try_scheduler_lock()`` — PostgreSQL advisory lock for scheduler."""
+
+    @pytest.mark.asyncio
+    async def test_acquires_lock(self) -> None:
+        """Scheduler advisory lock이 정상 획득되는지 검증."""
+        pool = AsyncMock()
+        pool.fetchrow.return_value = {"acquired": True}
+
+        async with try_scheduler_lock(pool) as acquired:
+            assert acquired is True
+            pool.fetchrow.assert_called_once()
+
+        # unlock called on exit
+        pool.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_lock_already_held(self) -> None:
+        """다른 인스턴스가 lock 보유 시 획득 실패."""
+        pool = AsyncMock()
+        pool.fetchrow.return_value = {"acquired": False}
+
+        async with try_scheduler_lock(pool) as acquired:
+            assert acquired is False
+
+        # unlock should NOT be called when lock not acquired
+        pool.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_lock_acquire_query_uses_correct_key(self) -> None:
+        """올바른 advisory lock key로 쿼리 실행."""
+        pool = AsyncMock()
+        pool.fetchrow.return_value = {"acquired": True}
+
+        async with try_scheduler_lock(pool):
+            pass
+
+        # Verify the SQL uses pg_try_advisory_lock with the correct key
+        call_args = pool.fetchrow.call_args
+        assert call_args is not None
+        sql, key = call_args[0][0], call_args[0][1]
+        assert "pg_try_advisory_lock" in sql
+        assert key == 0x4E454152_5245414C
+
+    @pytest.mark.asyncio
+    async def test_lock_release_query_uses_correct_key(self) -> None:
+        """Lock 해제 시 pg_advisory_unlock 호출."""
+        pool = AsyncMock()
+        pool.fetchrow.return_value = {"acquired": True}
+
+        async with try_scheduler_lock(pool):
+            pass
+
+        call_args = pool.execute.call_args
+        assert call_args is not None
+        sql, key = call_args[0][0], call_args[0][1]
+        assert "pg_advisory_unlock" in sql
+        assert key == 0x4E454152_5245414C
+
+    @pytest.mark.asyncio
+    async def test_lock_released_on_exception(self) -> None:
+        """예외 발생 시에도 lock 해제되어야 함."""
+        pool = AsyncMock()
+        pool.fetchrow.return_value = {"acquired": True}
+
+        with pytest.raises(RuntimeError):
+            async with try_scheduler_lock(pool):
+                raise RuntimeError("Unexpected error")
+
+        # unlock should still be called
+        pool.execute.assert_called_once()

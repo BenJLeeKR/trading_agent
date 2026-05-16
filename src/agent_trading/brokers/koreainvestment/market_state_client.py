@@ -341,13 +341,16 @@ class KisMarketStateClient(MarketStateProvider):
         self._reconnect_attempts = 0
         self._shutdown_event = asyncio.Event()
 
-        # Determine if this is paper (모의투자) environment
-        self._is_paper = settings.kis_env.lower() in ("paper", "mock", "sandbox")
-        if self._is_paper:
+        # 163 WebSocket is driven by live-info dedicated credentials,
+        # not by the trading environment (paper/mock/live).
+        # If credentials are provided, we attempt connection regardless of env.
+        if not app_key or not api_secret:
             logger.warning(
-                "KisMarketStateClient[paper]: 163 WebSocket not supported in paper env. "
-                "is_connected() will return False."
+                "KisMarketStateClient: 163 WebSocket not available (no live-info credentials)"
             )
+            self._is_paper = True  # credential 없으면 skip
+        else:
+            self._is_paper = False  # live-info credential으로 직접 연결
 
     # ------------------------------------------------------------------
     # Public API

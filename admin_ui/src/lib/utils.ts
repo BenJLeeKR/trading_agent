@@ -150,3 +150,53 @@ export function formatKstElapsed(iso: string | null | undefined): string {
 
   return `${absTime} (${elapsed})`;
 }
+
+/* ───────────────────────────────────────────
+ * OrderEvent Reason Code Formatter
+ * ─────────────────────────────────────────── */
+
+/**
+ * reason_code → 한글 라벨 매핑.
+ * 새 reason_code 추가 시 이 맵에 엔트리만 추가하면 됨.
+ * stale_cleanup과 broker_truth_recovery는 Phase H에서 추가됨.
+ */
+const REASON_LABEL_MAP: Record<string, string> = {
+  BLOCKED: "차단됨",
+  UNCERTAIN: "불확실 상태",
+  RECONCILE_RESOLVED: "조정 해소",
+  MANUAL_RESOLVE: "운영자 수동 해소",
+  manual_paper_resolution: "운영자 수동 해소",
+  WS_FILL: "WS 체결 수신",
+  FILL_CONFIRMED: "체결 확인",
+  REJECTED: "거부됨",
+  stale_cleanup: "오래된 상태 정리",
+  broker_truth_recovery: "브로커 조회 기반 상태 복구",
+};
+
+/** 숫자로만 구성된 문자열인지 판별 (브로커 주문번호) */
+const BROKER_ORDER_ID_PATTERN = /^\d+$/;
+
+/**
+ * Format an OrderEvent reason_code into a human-readable Korean label.
+ *
+ * Policy:
+ *   1. null / undefined / empty string → "—"
+ *   2. Metadata label (fieldMap이 제공된 경우) — 1순위
+ *   3. Known code (in REASON_LABEL_MAP) → Korean label (2순위 fallback)
+ *   4. Numeric string (broker order ID) → "브로커 주문번호: {value}"
+ *   5. Unknown raw code → original value (fallback)
+ */
+export function formatOrderEventReason(
+  code: string | null | undefined,
+  fieldMap?: Record<string, string> | null
+): string {
+  if (code == null || code === "") return "—";
+  // 1순위: metadata label (fieldMap이 제공된 경우)
+  if (fieldMap && code in fieldMap) return fieldMap[code];
+  // 2순위: local fallback map
+  if (code in REASON_LABEL_MAP) return REASON_LABEL_MAP[code];
+  // 3순위: broker order ID pattern (숫자로만 구성)
+  if (BROKER_ORDER_ID_PATTERN.test(code)) return `브로커 주문번호: ${code}`;
+  // 4순위: raw fallback
+  return code;
+}

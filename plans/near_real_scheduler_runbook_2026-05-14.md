@@ -3,7 +3,7 @@
 > **검증 시각**: 2026-05-13 16:49 KST (전일 smoke)
 > **KIS_ENV**: paper
 > **Python**: 3.14.4
-> **스케줄러**: `scripts/run_near_real_ops_scheduler.py`
+> **스케줄러**: `scripts/run_ops_scheduler.py`
 
 ---
 
@@ -22,7 +22,7 @@
 
 ## 1. 스케줄러 개요
 
-[`scripts/run_near_real_ops_scheduler.py`](scripts/run_near_real_ops_scheduler.py)는 단일 프로세스로 하루 운영을 관리하는 in-application 스케줄러입니다.
+[`scripts/run_ops_scheduler.py`](scripts/run_ops_scheduler.py)는 단일 프로세스로 하루 운영을 관리하는 in-application 스케줄러입니다.
 
 ### Phase 전환 시간 (KST)
 
@@ -55,7 +55,7 @@
 ### 2.1 `--help` 출력 ✅
 
 ```
-usage: run_near_real_ops_scheduler.py [-h] [--run-date RUN_DATE]
+usage: run_ops_scheduler.py [-h] [--run-date RUN_DATE]
                                       [--pre-market-start PRE_MARKET_START]
                                       [--intraday-start INTRADAY_START]
                                       [--market-close MARKET_CLOSE]
@@ -74,7 +74,7 @@ usage: run_near_real_ops_scheduler.py [-h] [--run-date RUN_DATE]
 
 ```
 실행 명령어:
-  python3 scripts/run_near_real_ops_scheduler.py --once --skip-pre-market
+  python3 scripts/run_ops_scheduler.py --once --skip-pre-market
 
 결과:
   task=snapshot_sync        ok=True  duration=0.67s
@@ -205,7 +205,7 @@ tmux new-session -d -s near-real-ops-2026-05-14
 # 세션 내에서 .env 로드 후 스케줄러 실행
 tmux send-keys -t near-real-ops-2026-05-14 'cd /workspace/agent_trading' Enter
 tmux send-keys -t near-real-ops-2026-05-14 'set -a; source .env; set +a' Enter
-tmux send-keys -t near-real-ops-2026-05-14 'python3 scripts/run_near_real_ops_scheduler.py --run-date 2026-05-14 2>&1 | tee /tmp/near-real-ops-2026-05-14.log' Enter
+tmux send-keys -t near-real-ops-2026-05-14 'python3 scripts/run_ops_scheduler.py --run-date 2026-05-14 2>&1 | tee /tmp/near-real-ops-2026-05-14.log' Enter
 ```
 
 ### 4.3 로그 확인
@@ -230,7 +230,7 @@ grep -E '(phase=|failed|submit_count|ERROR)' /tmp/near-real-ops-2026-05-14.log
 tmux send-keys -t near-real-ops-2026-05-14 'C-c'
 
 # 방법 2: 프로세스 직접 종료
-pkill -f "run_near_real_ops_scheduler.py.*2026-05-14"
+pkill -f "run_ops_scheduler.py.*2026-05-14"
 
 # 방법 3: tmux 세션 종료
 tmux kill-session -t near-real-ops-2026-05-14
@@ -384,7 +384,7 @@ tail -50 /tmp/near-real-ops-2026-05-14.log
 #    _get_db_submit_count()가 trading.order_requests에서 당일 budget 소비 상태를 조회하므로
 #    --max-submit-per-day 0 없이 일반 실행 가능
 tmux send-keys -t near-real-ops-2026-05-14 'C-c'
-tmux send-keys -t near-real-ops-2026-05-14 'python3 scripts/run_near_real_ops_scheduler.py --run-date 2026-05-14 2>&1 | tee -a /tmp/near-real-ops-2026-05-14.log' Enter
+tmux send-keys -t near-real-ops-2026-05-14 'python3 scripts/run_ops_scheduler.py --run-date 2026-05-14 2>&1 | tee -a /tmp/near-real-ops-2026-05-14.log' Enter
 ```
 
 ### 8.2 Submit이 필요하나 FDC가 HOLD
@@ -442,7 +442,7 @@ print(f'DB health: {result}')
 ```bash
 # === 내일 장전 실행 ===
 tmux new-session -d -s near-real-ops-2026-05-14
-tmux send-keys -t near-real-ops-2026-05-14 'cd /workspace/agent_trading && set -a; source .env; set +a && python3 scripts/run_near_real_ops_scheduler.py --run-date 2026-05-14 2>&1 | tee /tmp/near-real-ops-2026-05-14.log' Enter
+tmux send-keys -t near-real-ops-2026-05-14 'cd /workspace/agent_trading && set -a; source .env; set +a && python3 scripts/run_ops_scheduler.py --run-date 2026-05-14 2>&1 | tee /tmp/near-real-ops-2026-05-14.log' Enter
 
 # === 로그 확인 ===
 tail -f /tmp/near-real-ops-2026-05-14.log
@@ -451,8 +451,8 @@ tail -f /tmp/near-real-ops-2026-05-14.log
 tmux kill-session -t near-real-ops-2026-05-14
 
 # === Smoke 테스트 (재현용) ===
-python3 scripts/run_near_real_ops_scheduler.py --once --skip-pre-market
+python3 scripts/run_ops_scheduler.py --once --skip-pre-market
 
 # === Dry-run 전용 실행 (submit 없음) ===
-python3 scripts/run_near_real_ops_scheduler.py --run-date 2026-05-14 --max-submit-per-day 0
+python3 scripts/run_ops_scheduler.py --run-date 2026-05-14 --max-submit-per-day 0
 ```

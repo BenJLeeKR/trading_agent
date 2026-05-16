@@ -12,8 +12,20 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from agent_trading.api.deps import get_repos
-from agent_trading.api.schemas import BrokerOrderView, OrderDetail, OrderEvent, OrderSummary
+from agent_trading.api.deps import get_order_manager, get_repos
+from agent_trading.api.schemas import (
+    BrokerOrderView,
+    ManualStatusChangeRequest,
+    ManualStatusChangeResponse,
+    OrderDetail,
+    OrderEvent,
+    OrderSummary,
+)
+from agent_trading.api.security import Principal, require_admin
+from agent_trading.domain.enums import OrderStatus
+from agent_trading.repositories.container import RepositoryContainer
+from agent_trading.repositories.filters import OrderQuery
+from agent_trading.services.order_manager import InvalidStateTransitionError, OrderManager
 from agent_trading.domain.enums import OrderStatus
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import OrderQuery
@@ -70,6 +82,7 @@ async def _enrich_order_summary(
         inst = await repos.instruments.get(instrument_id)
         if inst is not None:
             summary.symbol = inst.symbol
+            summary.instrument_name = inst.name
     return summary
 
 
@@ -208,3 +221,72 @@ async def get_broker_orders(
 
     broker_orders = await repos.broker_orders.list_by_order_request(uid)
     return [BrokerOrderView.model_validate(bo) for bo in broker_orders]
+
+
+@router.put("/{order_request_id}/status", response_model=ManualStatusChangeResponse)
+async def manual_resolve_order_status(
+    order_request_id: str,
+    body: ManualStatusChangeRequest,
+    repos: RepositoryContainer = Depends(get_repos),
+    order_manager: OrderManager = Depends(get_order_manager),
+    principal: Principal = Depends(require_admin),
+) -> ManualStatusChangeResponse:
+    """Manually override the status of a RECONCILE_REQUIRED order (v1 — admin only).
+
+    v1 scope:
+    - Only orders in ``RECONCILE_REQUIRED`` status are accepted.
+    - Target must be one of ``{FILLED, CANCELLED, REJECTED, EXPIRED}``.
+    - ``evidence`` is required and must contain at least ``source`` and ``checked_at``.
+
+    Audit trail:
+    - Appends an ``order_state_event`` with ``event_source = "operator"``.
+    - Writes an ``audit_log`` entry with full evidence in metadata.
+
+    Reconciliation fallback:
+    - If a pending reconciliation run is linked to this order, it is
+      automatically resolved.
+    """
+    # 1. Parse UUID
+    try:
+        uid = UUID(order_request_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid UUID: {order_request_id}")
+
+    # 2. Find order
+    order = await repos.orders.get(uid)
+    if order is None:
+        raise HTTPException(status_code=404, detail=f"Order not found: {order_request_id}")
+
+    # 3. Validate evidence structure
+    if not body.evidence:
+        raise HTTPException(status_code=400, detail="evidence is required")
+    required_fields: set[str] = {"source", "checked_at"}
+    missing: set[str] = required_fields - set(body.evidence.keys())
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"evidence missing required fields: {', '.join(sorted(missing))}",
+        )
+
+    # 4. Execute manual resolve
+    try:
+        updated = await order_manager.manual_resolve(
+            order,
+            body.target_status,
+            reason_code=body.reason_code or "MANUAL_RESOLVE",
+            reason_message=body.reason_message,
+            evidence=body.evidence,
+            operator=principal.role,
+        )
+    except InvalidStateTransitionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return ManualStatusChangeResponse(
+        order_id=str(updated.order_request_id),
+        old_status=order.status.value,
+        new_status=updated.status.value,
+        updated_at=updated.updated_at,
+        actor=principal.role,
+    )
