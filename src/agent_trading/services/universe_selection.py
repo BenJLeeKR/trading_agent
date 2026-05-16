@@ -468,7 +468,7 @@ class UniverseSelectionService:
             return
 
         logger.info(
-            "_add_market_overlay: pre-pool size=%d (cap=%d).",
+            "market_overlay pre-pool: %d symbols (cap=%d).",
             len(pre_pool_candidates),
             ctx.pre_pool_size,
         )
@@ -479,6 +479,15 @@ class UniverseSelectionService:
         if not raw_batch:
             logger.debug("_add_market_overlay: no quotes returned — skipping.")
             return
+
+        # ── Step 2.5: Count successful quote fetches ─────────────────────
+        total = len(pre_pool_candidates)
+        success = sum(1 for sym in pre_pool_candidates if raw_batch.get(sym) is not None)
+        logger.info(
+            "market_overlay quotes fetched: %d/%d.",
+            success,
+            total,
+        )
 
         # ── Step 3: Parse → Filter → Score ───────────────────────────────
         scored: list[tuple[float, MarketDataSnapshot]] = []
@@ -526,7 +535,7 @@ class UniverseSelectionService:
             )
 
         logger.info(
-            "_add_market_overlay: %d symbols added (cap=%d, candidates=%d).",
+            "market_overlay symbols added to universe: %d (cap=%d, candidates=%d).",
             len(top_n),
             ctx.market_overlay_cap,
             len(scored),

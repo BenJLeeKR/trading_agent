@@ -335,11 +335,22 @@ async def _read_trading_universe() -> tuple[UniverseSymbol, ...]:
                     from agent_trading.config.settings import AppSettings
 
                     settings = AppSettings()
-                    kis_client = KISRestClient(settings=settings)
-                except Exception:
-                    logger.debug(
-                        "KIS client init failed — market overlay disabled.",
-                        exc_info=True,
+                    kis_client = KISRestClient(
+                        api_key=settings.kis_api_key,
+                        api_secret=settings.kis_api_secret,
+                        account_number=settings.kis_account_number,
+                        account_product_code=settings.kis_account_product_code,
+                        env=settings.kis_env,
+                        base_url=settings.kis_base_url,
+                        dev_token_cache_enabled=settings.kis_dev_token_cache_enabled,
+                        dev_token_cache_path=settings.kis_dev_token_cache_path,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "KIS client init failed — market_overlay disabled "
+                        "(source=_read_trading_universe, error=%s: %s).",
+                        type(exc).__name__,
+                        exc,
                     )
 
             selector = UniverseSelectionService(

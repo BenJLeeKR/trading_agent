@@ -56,6 +56,7 @@ from agent_trading.services.decision_orchestrator import (
 # Module under test
 from scripts.run_paper_decision_loop import (
     ENV_TRADING_UNIVERSE,
+    KISRestClient,
     UniverseSymbol,
     _build_aggregate_summary,
     _parse_args,
@@ -652,9 +653,15 @@ class TestTradingUniverse:
         async def _mock_postgres_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
             yield {"repositories": repos}
 
-        with patch(
-            "scripts.run_paper_decision_loop.postgres_runtime",
-            new=_mock_postgres_runtime,
+        with (
+            patch(
+                "scripts.run_paper_decision_loop.postgres_runtime",
+                new=_mock_postgres_runtime,
+            ),
+            patch(
+                "scripts.run_paper_decision_loop._HAS_KIS",
+                False,
+            ),
         ):
             result = await _read_trading_universe()
             assert len(result) == 2
@@ -664,6 +671,167 @@ class TestTradingUniverse:
             for u in result:
                 assert u.source_type == "core"
                 assert u.inclusion_reason == "kospi200_core"
+
+    @pytest.mark.asyncio
+    async def test_universe_selection_service_with_kis_market_overlay(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """KIS client가 정상 생성되면 _add_market_overlay() 경로가 활성화됨.
+
+        KISRestClient.get_quotes_batch()를 mock하여 real API 호출을 방지.
+        """
+        monkeypatch.delenv(ENV_TRADING_UNIVERSE, raising=False)
+
+        repos = build_in_memory_repositories()
+        from agent_trading.domain.entities import InstrumentEntity
+        for sym in ("005930", "000660", "090150"):
+            await repos.instruments.add(
+                InstrumentEntity(
+                    instrument_id=uuid4(),
+                    symbol=sym,
+                    market_code="KRX",
+                    name=f"Test-{sym}",
+                    is_active=True,
+                    asset_class="KR_STOCK",
+                    currency="KRW",
+                    tick_size=Decimal("50"),
+                )
+            )
+
+        # Mock KISRestClient so it returns empty batch (no market overlay added)
+        mock_kis = AsyncMock(spec=KISRestClient)
+        mock_kis.get_quotes_batch = AsyncMock(return_value={})
+
+        @asynccontextmanager
+        async def _mock_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": repos}
+
+        with (
+            patch(
+                "scripts.run_paper_decision_loop.postgres_runtime",
+                new=_mock_runtime,
+            ),
+            patch(
+                "scripts.run_paper_decision_loop.KISRestClient",
+                return_value=mock_kis,
+            ),
+        ):
+            result = await _read_trading_universe()
+            assert len(result) == 3
+            # market overlay returned empty batch → no market_overlay symbols
+            for u in result:
+                assert u.source_type == "core"
+                assert u.inclusion_reason == "kospi200_core"
+
+    @pytest.mark.asyncio
+    async def test_universe_selection_service_with_kis_quotes_returned(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """KIS client가 quote를 반환하면 market_overlay symbol이 추가됨."""
+        monkeypatch.delenv(ENV_TRADING_UNIVERSE, raising=False)
+
+        repos = build_in_memory_repositories()
+        from agent_trading.domain.entities import InstrumentEntity
+        await repos.instruments.add(
+            InstrumentEntity(
+                instrument_id=UUID("11111111-1111-1111-1111-111111111111"),
+                symbol="005930",
+                market_code="KRX",
+                name="Samsung Electronics",
+                is_active=True,
+                asset_class="KR_STOCK",
+                currency="KRW",
+                tick_size=Decimal("50"),
+            )
+        )
+
+        mock_quote: dict[str, object] = {
+            "stck_prpr": "70000",
+            "prdy_ctrt": "2.5",
+            "acml_tr_pbmn": "500000000000",
+            "stck_hgpr": "71000",
+            "stck_lwpr": "69000",
+            "stck_oprc": "69500",
+            "iscd_stat_cls_code": "",
+        }
+        mock_kis = AsyncMock(spec=KISRestClient)
+        mock_kis.get_quotes_batch = AsyncMock(
+            return_value={"005930": mock_quote},
+        )
+
+        @asynccontextmanager
+        async def _mock_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": repos}
+
+        with (
+            patch(
+                "scripts.run_paper_decision_loop.postgres_runtime",
+                new=_mock_runtime,
+            ),
+            patch(
+                "scripts.run_paper_decision_loop.KISRestClient",
+                return_value=mock_kis,
+            ),
+        ):
+            result = await _read_trading_universe()
+            assert len(result) == 1
+            u = result[0]
+            assert u.symbol == "005930"
+            assert u.source_type == "market_overlay"
+            # prdy_ctrt=2.5 < 3.0, acml_tr_pbmn=5000억 == threshold (not >),
+            # but stck_prpr(70000)/stck_hgpr(71000)=0.986 > 0.95 → near_high_breakout
+            assert u.inclusion_reason == "near_high_breakout"
+
+    @pytest.mark.asyncio
+    async def test_kis_client_init_failure_logs_warning(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """KIS client 생성 실패 시 warning 로그가 남고 market_overlay는 disabled."""
+        monkeypatch.delenv(ENV_TRADING_UNIVERSE, raising=False)
+
+        repos = build_in_memory_repositories()
+        from agent_trading.domain.entities import InstrumentEntity
+        await repos.instruments.add(
+            InstrumentEntity(
+                instrument_id=UUID("11111111-1111-1111-1111-111111111111"),
+                symbol="005930",
+                market_code="KRX",
+                name="Samsung Electronics",
+                is_active=True,
+                asset_class="KR_STOCK",
+                currency="KRW",
+                tick_size=Decimal("50"),
+            )
+        )
+
+        # Mock KISRestClient constructor to raise TypeError
+        def _raise_on_init(*args: object, **kwargs: object) -> KISRestClient:
+            raise TypeError("mock KIS init failure")
+
+        @asynccontextmanager
+        async def _mock_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": repos}
+
+        with (
+            patch(
+                "scripts.run_paper_decision_loop.postgres_runtime",
+                new=_mock_runtime,
+            ),
+            patch(
+                "scripts.run_paper_decision_loop.KISRestClient",
+                side_effect=_raise_on_init,
+            ),
+            caplog.at_level("WARNING"),
+        ):
+            result = await _read_trading_universe()
+            # Fallback to single symbol when KIS init fails
+            assert result == (UniverseSymbol("005930", "KRX"),)
+            # Warning log should contain both "market_overlay disabled" and error info
+            assert any(
+                "market_overlay disabled" in rec.message
+                and "mock KIS init failure" in rec.message
+                for rec in caplog.records
+            ), f"Expected warning log with 'market_overlay disabled' and error. Got: {[r.message for r in caplog.records]}"
 
     @pytest.mark.asyncio
     async def test_universe_selection_service_empty_fallback(
