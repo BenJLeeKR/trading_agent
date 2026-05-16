@@ -242,7 +242,9 @@ async def seeded_postgres_data(
 
     await postgres_repos.clients.add(sample_client)
     await postgres_repos.accounts.add(sample_account)
-    await postgres_repos.instruments.add(sample_instrument)
+    # Use upsert so that pre-existing instrument rows (e.g., from
+    # seed_instrument_master.py) don't cause a UniqueViolationError.
+    await postgres_repos.instruments.upsert_by_symbol(sample_instrument)
 
     # Seed strategy via PostgresStrategyRepository (Milestone 5)
     strategy = StrategyEntity(

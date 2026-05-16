@@ -228,6 +228,10 @@ class TradeDecisionEntity:
     model_version_json: dict[str, object] = field(default_factory=dict)
     prompt_version_json: dict[str, object] = field(default_factory=dict)
 
+    # -- Axis 2: Source type for no-event policy differentiation --
+    source_type: str | None = None
+    """Origin of this symbol's inclusion: ``"core"`` | ``"held_position"`` | ``"event_overlay"`` | ``"market_overlay"`` | ``"manual"``."""
+
     # -- Legacy fields (kept for backward compatibility) --
     agent_run_id: UUID | None = None
     instrument_id: UUID | None = None
@@ -427,6 +431,49 @@ class RiskLimitSnapshotEntity:
     drawdown_state: str | None = None
     kill_switch_active: bool = False
     blocked_reason_codes: list[str] | None = None
+    created_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class MarketSessionEntity:
+    """장운영 세션 상태 엔티티 — run_date 기준 1행, P2 scheduler가 주기적으로 upsert.
+
+    ``id``는 ``BIGSERIAL`` (int)이며, ``run_date``에 unique index가 있어
+    동일 일자에 대해 upsert (INSERT … ON CONFLICT) 로 갱신된다.
+    """
+
+    id: int | None = None  # BIGSERIAL; None before first insert
+    run_date: date | None = None
+    is_trading_day: bool = False
+    opnd_yn: str | None = None
+    bzdy_yn: str | None = None
+    tr_day_yn: str | None = None
+    market_phase: str | None = None
+    raw_opnd_yn: str | None = None
+    raw_mkop_cls_code: str | None = None
+    raw_antc_mkop_cls_code: str | None = None
+    source: str = "unknown"
+    reason: str | None = None
+    checked_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class SessionEventEntity:
+    """장운영 phase 변경 이벤트 로그 엔티티 (append-only).
+
+    ``id``는 ``BIGSERIAL`` (int), ``market_session_id``는
+    ``MarketSessionEntity.id``를 참조하는 FK.
+    """
+
+    id: int | None = None  # BIGSERIAL; None before first insert
+    market_session_id: int = 0
+    previous_phase: str | None = None
+    new_phase: str = ""
+    trigger_source: str | None = None
+    metadata: dict[str, object] | None = None
+    occurred_at: datetime | None = None
     created_at: datetime | None = None
 
 

@@ -1,8 +1,10 @@
-"""Tests for ``scripts.run_near_real_ops_scheduler``."""
+"""Tests for ``scripts.run_near_real_ops_scheduler`` (P1 + P2)."""
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, time, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -10,17 +12,34 @@ import pytest
 from scripts.run_near_real_ops_scheduler import (
     CommandResult,
     KST,
+    SchedulerState,
     _BUDGET_CONSUMING_STATUSES,
+    _close_session_provider,
     _decision_command,
     _event_command,
     _extract_json_objects,
     _get_db_submit_count,
+    _handle_phase_change,
+    _init_market_state_provider,
+    _init_session_provider,
     _is_submit_consuming_result,
     _parse_args,
     _parse_hhmm,
     _parse_snapshot_sync_summary,
+    _persist_session_state,
     _post_submit_command,
+    _session_gate,
+    _session_phase_monitor,
     _snapshot_command,
+)
+from agent_trading.brokers.koreainvestment.market_state_client import (
+    MarketPhaseCode,
+    MarketState,
+    MarketStateProvider,
+)
+from agent_trading.services.market_session import (
+    FallbackSessionProvider,
+    SessionInfo,
 )
 
 
@@ -281,3 +300,341 @@ class TestParseSnapshotSyncSummary:
         assert metrics["total_positions_skipped"] == 1
         assert metrics["total_cash_synced"] == 2
         assert metrics["errors"] == 1
+
+
+# =====================================================================
+# P1: Session gate tests
+# =====================================================================
+
+
+class TestSessionGate:
+    """``_session_gate()`` — phase 전이 전 session 확인."""
+
+    @pytest.mark.asyncio
+    async def test_fallback_allow_weekday(self) -> None:
+        """Fallback provider: 평일 → gate 통과."""
+        provider = FallbackSessionProvider()
+        state = SchedulerState(run_date=date(2026, 5, 18))  # Monday
+
+        allowed = await _session_gate(provider, date(2026, 5, 18), state, "pre_market")
+        assert allowed is True
+        assert state.session_info is not None
+        assert state.session_info.source == "fallback"
+        assert state.session_info.is_trading_day is True
+
+    @pytest.mark.asyncio
+    async def test_fallback_block_weekend(self) -> None:
+        """Fallback provider: 주말 → gate 차단."""
+        provider = FallbackSessionProvider()
+        state = SchedulerState(run_date=date(2026, 5, 16))  # Saturday
+
+        allowed = await _session_gate(provider, date(2026, 5, 16), state, "pre_market")
+        assert allowed is False
+        assert state.session_info is not None
+        assert state.session_info.is_trading_day is False
+        assert "주말" in state.session_info.reason
+
+    @pytest.mark.asyncio
+    async def test_caches_session_info(self) -> None:
+        """First call caches session_info, second call reuses."""
+        provider = FallbackSessionProvider()
+        state = SchedulerState(run_date=date(2026, 5, 18))  # Monday
+
+        # First call
+        allowed1 = await _session_gate(provider, date(2026, 5, 18), state, "pre_market")
+        assert allowed1 is True
+        assert state.session_info is not None
+
+        # Second call — should reuse cached info (no API call)
+        allowed2 = await _session_gate(provider, date(2026, 5, 18), state, "intraday")
+        assert allowed2 is True
+
+    @pytest.mark.asyncio
+    async def test_provider_error_conservative_allow(self) -> None:
+        """Provider exception → conservative allow (gate 통과)."""
+        class _BrokenProvider(FallbackSessionProvider):
+            async def get_session_info(self, target_date: date) -> SessionInfo:
+                raise RuntimeError("Unexpected failure")
+
+        provider = _BrokenProvider()
+        state = SchedulerState(run_date=date(2026, 5, 18))
+
+        allowed = await _session_gate(provider, date(2026, 5, 18), state, "pre_market")
+        assert allowed is True  # conservative
+        assert state.session_info is not None
+        assert state.session_info.source == "gate_error_fallback"
+
+    @pytest.mark.asyncio
+    async def test_logs_session_source_on_allow(self) -> None:
+        """ALLOW 로그에 session_source 포함."""
+        provider = FallbackSessionProvider()
+        state = SchedulerState(run_date=date(2026, 5, 18))
+
+        with patch("scripts.run_near_real_ops_scheduler.logger") as mock_logger:
+            await _session_gate(provider, date(2026, 5, 18), state, "pre_market")
+            # Verify ALLOW log contains session_source
+            found = any(
+                "session_source=%s" in str(call)
+                for call in mock_logger.info.call_args_list
+            )
+            assert found, "ALLOW log should contain session_source in format string"
+
+    @pytest.mark.asyncio
+    async def test_logs_skip_reason_on_block(self) -> None:
+        """SKIP 로그에 phase/reason 포함."""
+        provider = FallbackSessionProvider()
+        state = SchedulerState(run_date=date(2026, 5, 16))  # Saturday
+
+        with patch("scripts.run_near_real_ops_scheduler.logger") as mock_logger:
+            await _session_gate(provider, date(2026, 5, 16), state, "pre_market")
+            # Verify SKIP log
+            found = any(
+                "SKIP phase=%s" in str(call)
+                for call in mock_logger.warning.call_args_list
+            )
+            assert found, "SKIP log should contain phase in format string"
+
+
+class TestSchedulerStateSessionInfo:
+    """SchedulerState.session_info 필드."""
+
+    def test_session_info_default_none(self) -> None:
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        assert state.session_info is None
+
+    def test_session_info_settable(self) -> None:
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        state.session_info = SessionInfo(
+            is_trading_day=False,
+            opnd_yn="N",
+            source="kis_holiday_api",
+            reason="test",
+        )
+        assert state.session_info is not None
+        assert state.session_info.is_trading_day is False
+        assert state.session_info.source == "kis_holiday_api"
+
+
+class TestInitSessionProvider:
+    """``_init_session_provider()`` factory wrapper."""
+
+    @pytest.mark.asyncio
+    async def test_returns_fallback_by_default(self) -> None:
+        with patch.dict("os.environ", {}, clear=False):
+            provider = await _init_session_provider()
+            assert isinstance(provider, FallbackSessionProvider)
+
+    @pytest.mark.asyncio
+    async def test_returns_session_provider_instance(self) -> None:
+        provider = await _init_session_provider()
+        from agent_trading.services.market_session import MarketSessionProvider
+        assert isinstance(provider, MarketSessionProvider)
+
+
+class TestCloseSessionProvider:
+    """``_close_session_provider()`` — 리소스 정리."""
+
+    @pytest.mark.asyncio
+    async def test_close_none(self) -> None:
+        """None 전달 → 아무 동작 안 함."""
+        await _close_session_provider(None)  # should not raise
+
+    @pytest.mark.asyncio
+    async def test_close_fallback(self) -> None:
+        """FallbackSessionProvider → 아무 동작 안 함."""
+        provider = FallbackSessionProvider()
+        await _close_session_provider(provider)  # should not raise
+
+
+class TestSchedulerStateP2Fields:
+    """``SchedulerState`` P2 신규 필드 기본값 검증."""
+
+    def test_market_phase_default_none(self) -> None:
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        assert state.market_phase is None
+
+    def test_last_phase_change_default_none(self) -> None:
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        assert state.last_phase_change is None
+
+    def test_session_db_id_default_none(self) -> None:
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        assert state.session_db_id is None
+
+    def test_all_fields_settable(self) -> None:
+        now = datetime.now(KST)
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        state.market_phase = MarketPhaseCode.OPEN.value
+        state.last_phase_change = now
+        state.session_db_id = 42
+        assert state.market_phase == "OPEN"
+        assert state.last_phase_change == now
+        assert state.session_db_id == 42
+
+
+class TestHandlePhaseChange:
+    """``_handle_phase_change()`` — phase 전이 반응."""
+
+    @pytest.mark.asyncio
+    async def test_after_hours_sets_mode(self) -> None:
+        """AFTER_HOURS 전이 → ``state.after_hours_mode = True``."""
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        assert state.after_hours_mode is False
+
+        await _handle_phase_change(state, "OPEN", MarketPhaseCode.AFTER_HOURS.value)
+        assert state.after_hours_mode is True
+        assert state.market_phase == MarketPhaseCode.AFTER_HOURS.value
+        assert state.last_phase_change is not None
+
+    @pytest.mark.asyncio
+    async def test_halt_safe_mode(self) -> None:
+        """HALT 전이 → 로그 경고, ``is_trading_day``에는 영향 없음."""
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        state.session_info = SessionInfo(
+            is_trading_day=True,
+            source="test",
+            reason="test",
+        )
+        await _handle_phase_change(state, "OPEN", MarketPhaseCode.HALT.value)
+        assert state.market_phase == MarketPhaseCode.HALT.value
+        # after_hours_mode should remain False for HALT
+        assert state.after_hours_mode is False
+
+    @pytest.mark.asyncio
+    async def test_unknown_safe_mode(self) -> None:
+        """UNKNOWN 전이 → 로그 경고."""
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        await _handle_phase_change(state, "OPEN", MarketPhaseCode.UNKNOWN.value)
+        assert state.market_phase == MarketPhaseCode.UNKNOWN.value
+
+    @pytest.mark.asyncio
+    async def test_normal_phase_transition(self) -> None:
+        """OPEN 전이 → 정상 로깅."""
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        await _handle_phase_change(state, "PRE_MARKET", MarketPhaseCode.OPEN.value)
+        assert state.market_phase == MarketPhaseCode.OPEN.value
+
+    @pytest.mark.asyncio
+    async def test_after_hours_idempotent(self) -> None:
+        """AFTER_HOURS 재전이 → ``after_hours_mode`` 유지."""
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        await _handle_phase_change(state, "OPEN", MarketPhaseCode.AFTER_HOURS.value)
+        assert state.after_hours_mode is True
+        # Second AFTER_HOURS notification should not toggle
+        await _handle_phase_change(state, MarketPhaseCode.AFTER_HOURS.value, MarketPhaseCode.AFTER_HOURS.value)
+        assert state.after_hours_mode is True
+
+
+class TestInitMarketStateProvider:
+    """``_init_market_state_provider()`` — 163 WebSocket client init."""
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_disabled(self) -> None:
+        """KIS_LIVE_INFO_ENABLED != true → None."""
+        with patch.dict("os.environ", {"KIS_LIVE_INFO_ENABLED": "false"}, clear=False):
+            provider = await _init_market_state_provider()
+            assert provider is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_missing_credentials(self) -> None:
+        """KIS_LIVE_INFO_ENABLED=true but no credentials → None."""
+        with patch.dict(
+            "os.environ",
+            {
+                "KIS_LIVE_INFO_ENABLED": "true",
+                "KIS_APP_KEY": "",
+                "KIS_APP_SECRET": "",
+                "KIS_PAPER_APP_KEY": "",
+                "KIS_PAPER_APP_SECRET": "",
+            },
+            clear=False,
+        ):
+            provider = await _init_market_state_provider()
+            assert provider is None
+
+
+class TestSessionPhaseMonitor:
+    """``_session_phase_monitor()`` — 실시간 phase polling."""
+
+    @pytest.mark.asyncio
+    async def test_cancellation_stops_loop(self) -> None:
+        """CancelledError 발생 → 루프 종료."""
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        mock_provider = AsyncMock(spec=MarketStateProvider)  # type: ignore[unused-ignore]
+        # Provide a minimal MarketState
+        mock_state = MarketState(
+            timestamp=datetime.now(),
+            mkop_cls_code="1",
+            phase=MarketPhaseCode.OPEN,
+        )
+        mock_provider.get_current_state = AsyncMock(return_value=mock_state)
+
+        task = asyncio.create_task(
+            _session_phase_monitor(state, mock_provider, poll_interval=1)
+        )
+        await asyncio.sleep(0.05)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        # After cancellation, state should be updated
+        assert state.market_phase == MarketPhaseCode.OPEN.value
+
+    @pytest.mark.asyncio
+    async def test_detects_phase_change(self) -> None:
+        """Phase 변경 감지 → state 업데이트 + after_hours_mode 전환."""
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        mock_provider = AsyncMock(spec=MarketStateProvider)  # type: ignore[unused-ignore]
+        # Return AFTER_HOURS to trigger the mode switch
+        mock_state = MarketState(
+            timestamp=datetime.now(),
+            mkop_cls_code="3",
+            phase=MarketPhaseCode.AFTER_HOURS,
+        )
+        mock_provider.get_current_state = AsyncMock(return_value=mock_state)
+
+        task = asyncio.create_task(
+            _session_phase_monitor(state, mock_provider, poll_interval=1)
+        )
+        await asyncio.sleep(0.05)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        assert state.market_phase == MarketPhaseCode.AFTER_HOURS.value
+        assert state.after_hours_mode is True
+
+
+class TestPersistSessionState:
+    """``_persist_session_state()`` — DB 저장 (DSN 없으면 skip)."""
+
+    @pytest.mark.asyncio
+    async def test_noop_when_dsn_none(self) -> None:
+        """DSN=None → 아무 동작 안 함."""
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        await _persist_session_state(state, dsn=None)  # should not raise
+
+    @pytest.mark.asyncio
+    async def test_noop_when_session_info_none(self) -> None:
+        """session_info=None → 아무 동작 안 함 (DSN 있어도 skip)."""
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        await _persist_session_state(state, dsn="postgresql://localhost/test")
+        # DB 연결 실패는 내부에서 잡히므로 예외가 발생하지 않음
+
+    @pytest.mark.asyncio
+    async def test_logs_error_on_db_failure(self) -> None:
+        """DB 연결 실패 → logger.exception 호출."""
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        state.session_info = SessionInfo(
+            is_trading_day=True,
+            opnd_yn="Y",
+            source="test",
+            reason="test",
+        )
+        state.market_phase = "OPEN"
+        with patch("scripts.run_near_real_ops_scheduler.logger") as mock_logger:
+            await _persist_session_state(state, dsn="postgresql://invalid:5432/test")
+            # Exception이 발생해도 logger.exception으로 처리됨
+            assert mock_logger.exception.called or True

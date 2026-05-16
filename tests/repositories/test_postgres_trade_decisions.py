@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from agent_trading.domain.entities import TradeDecisionEntity
+from agent_trading.domain.entities import AccountEntity, TradeDecisionEntity
 from agent_trading.domain.enums import DecisionType, EntryStyle, OrderSide
 from agent_trading.repositories.container import RepositoryContainer
 
@@ -15,10 +15,15 @@ from agent_trading.repositories.container import RepositoryContainer
 async def seeded_decision_context(
     seeded_postgres_data: RepositoryContainer,
 ) -> UUID:
-    """Return the decision_context_id already seeded by ``seeded_postgres_data``."""
+    """Return the decision_context_id already seeded by ``seeded_postgres_data``.
+
+    Filters by ``correlation_id = 'test-correlation'`` to avoid picking up
+    pre-existing rows left by application runs (e.g. ``paper-loop-*``).
+    """
     conn = seeded_postgres_data.unit_of_work.connection
     row = await conn.fetchrow(
-        "SELECT decision_context_id FROM trading.decision_contexts LIMIT 1"
+        "SELECT decision_context_id FROM trading.decision_contexts "
+        "WHERE correlation_id = 'test-correlation' LIMIT 1"
     )
     assert row is not None, "seeded_postgres_data must seed a decision_context"
     return row["decision_context_id"]
@@ -42,8 +47,16 @@ def _make_full_decision(
     strategy_id: UUID,
     *,
     trade_decision_id: UUID | None = None,
+    source_type: str | None = "market_overlay",
 ) -> TradeDecisionEntity:
-    """Helper: build a fully populated TradeDecisionEntity for testing."""
+    """Helper: build a fully populated TradeDecisionEntity for testing.
+
+    Parameters
+    ----------
+    source_type : str | None
+        Origin of this symbol's inclusion. Default ``"market_overlay"``
+        so that source_type round-trip tests are meaningful.
+    """
     now = datetime.now(timezone.utc)
     return TradeDecisionEntity(
         trade_decision_id=trade_decision_id or uuid4(),
@@ -87,6 +100,8 @@ def _make_full_decision(
         confidence=Decimal("0.80"),
         rationale_summary="Strong buy signal on RSI oversold + trend confirmation",
         decision_json={"source": "test", "reason": "synthetic"},
+        # Axis 2: Source type
+        source_type=source_type,
         created_at=now,
     )
 
@@ -172,6 +187,8 @@ async def test_add_and_read_back(
     assert fetched.limit_price == Decimal("150.00")
     assert fetched.confidence == Decimal("0.80")
     assert fetched.rationale_summary == "Strong buy signal on RSI oversold + trend confirmation"
+    # Axis 2: Source type
+    assert fetched.source_type == "market_overlay"
 
 
 # ============================================================================
@@ -271,3 +288,143 @@ async def test_decision_column_nullable(
     # The second insert created a new row, but get_by_context returns the first
     # one by UNIQUE constraint (decision_context_id is UNIQUE).
     # We just verify the query doesn't crash.
+
+
+# ============================================================================
+# Test 4: Source type round-trip — all five values
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_source_type_round_trip(
+    seeded_postgres_data: RepositoryContainer,
+    seeded_decision_context: UUID,
+    seeded_strategy_id: UUID,
+    sample_account: AccountEntity,
+) -> None:
+    """Verify that ``source_type`` is preserved through add → read-back
+    for all five expected values."""
+    repos = seeded_postgres_data
+    account_id = sample_account.account_id
+
+    # Resolve the config_version_id from the seeded decision_context
+    conn = repos.unit_of_work.connection
+    dc_row = await conn.fetchrow(
+        "SELECT config_version_id FROM trading.decision_contexts "
+        "WHERE decision_context_id = $1",
+        seeded_decision_context,
+    )
+    assert dc_row is not None, "seeded decision_context must have a config_version_id"
+    config_version_id: UUID = dc_row["config_version_id"]
+
+    for expected_st in ("core", "held_position", "event_overlay", "market_overlay", "manual"):
+        # Use a fresh context for each iteration (unique constraint)
+        ctx_id = uuid4()
+        await conn.execute(
+            "INSERT INTO trading.decision_contexts "
+            "(decision_context_id, account_id, strategy_id, config_version_id, "
+            " market_timestamp, correlation_id, created_at) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            ctx_id,
+            account_id,
+            seeded_strategy_id,
+            config_version_id,
+            datetime.now(timezone.utc),
+            f"source-type-test-{expected_st}",
+            datetime.now(timezone.utc),
+        )
+
+        decision = _make_full_decision(
+            decision_context_id=ctx_id,
+            strategy_id=seeded_strategy_id,
+            source_type=expected_st,
+        )
+        saved = await repos.trade_decisions.add(decision)
+        assert saved.source_type == expected_st, (
+            f"Saved source_type mismatch: expected={expected_st!r} got={saved.source_type!r}"
+        )
+
+        fetched = await repos.trade_decisions.get_by_context(ctx_id)
+        assert fetched is not None
+        assert fetched.source_type == expected_st, (
+            f"Fetched source_type mismatch: expected={expected_st!r} got={fetched.source_type!r}"
+        )
+
+
+# ============================================================================
+# Test 5: NULL source_type compatibility (existing rows)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_source_type_null_compatibility(
+    seeded_postgres_data: RepositoryContainer,
+    seeded_decision_context: UUID,
+    seeded_strategy_id: UUID,
+    sample_account: AccountEntity,
+) -> None:
+    """Verify that a row with ``source_type = NULL`` can be inserted directly
+    (simulating existing rows that predate migration 0013) and read back
+    successfully with ``source_type = None``."""
+    repos = seeded_postgres_data
+    conn = repos.unit_of_work.connection
+    now = datetime.now(timezone.utc)
+    account_id = sample_account.account_id
+
+    # Resolve the config_version_id from the seeded decision_context
+    dc_row = await conn.fetchrow(
+        "SELECT config_version_id FROM trading.decision_contexts "
+        "WHERE decision_context_id = $1",
+        seeded_decision_context,
+    )
+    assert dc_row is not None, "seeded decision_context must have a config_version_id"
+    config_version_id: UUID = dc_row["config_version_id"]
+
+    # Insert a row via raw SQL, omitting source_type (NULL by omission)
+    td_id = uuid4()
+    ctx_id = uuid4()
+    await conn.execute(
+        "INSERT INTO trading.decision_contexts "
+        "(decision_context_id, account_id, strategy_id, config_version_id, "
+        " market_timestamp, correlation_id, created_at) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        ctx_id,
+        account_id,
+        seeded_strategy_id,
+        config_version_id,
+        now,
+        "null-source-type-test",
+        now,
+    )
+
+    row = await conn.fetchrow(
+        """
+        INSERT INTO trading.trade_decisions
+            (trade_decision_id, decision_context_id,
+             decision_type, side, strategy_id, symbol, market,
+             entry_style, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING trade_decision_id, source_type
+        """,
+        td_id,
+        ctx_id,
+        "approve",
+        "buy",
+        seeded_strategy_id,
+        "AAPL",
+        "NASDAQ",
+        "limit",
+        now,
+    )
+    assert row is not None, "INSERT with NULL source_type should succeed"
+    assert row["source_type"] is None, (
+        f"Expected source_type=NULL, got {row['source_type']!r}. "
+        "Migration 0013 may not have been applied."
+    )
+
+    # Read back via repository
+    fetched = await repos.trade_decisions.get_by_context(ctx_id)
+    assert fetched is not None
+    assert fetched.source_type is None, (
+        f"Expected source_type=None, got {fetched.source_type!r}"
+    )

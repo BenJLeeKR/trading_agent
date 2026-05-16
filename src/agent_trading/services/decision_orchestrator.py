@@ -1690,6 +1690,8 @@ class DecisionOrchestratorService:
                     request.order_type,
                 ),
                 created_at=now,
+                # --- Axis 2: Source type ---
+                source_type=assembled_context.source_type,
                 entry_price=_decimal_or_none(request.price),
                 quantity=_decimal_or_none(request.quantity),
                 max_order_value=_calculate_max_order_value(

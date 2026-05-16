@@ -35,6 +35,9 @@ from agent_trading.repositories.postgres.guardrail_evaluations import (
 from agent_trading.repositories.postgres.instruments import (
     PostgresInstrumentRepository,
 )
+from agent_trading.repositories.postgres.market_sessions import (
+    PostgresMarketSessionRepository,
+)
 from agent_trading.repositories.postgres.order_state_events import (
     PostgresOrderStateEventRepository,
 )
@@ -107,4 +110,5 @@ def build_postgres_repositories(
         order_state_events=PostgresOrderStateEventRepository(tx),
         guardrail_evaluations=PostgresGuardrailEvaluationRepository(tx),
         risk_limit_snapshots=PostgresRiskLimitSnapshotRepository(tx),
+        market_session_repo=PostgresMarketSessionRepository(tx),
     )

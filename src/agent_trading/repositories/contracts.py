@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol
 from uuid import UUID
 
@@ -21,11 +21,13 @@ from agent_trading.domain.entities import (
     FillEventEntity,
     GuardrailEvaluationEntity,
     InstrumentEntity,
+    MarketSessionEntity,
     OrderRequestEntity,
     OrderStateEventEntity,
     PositionSnapshotEntity,
     ReconciliationRunEntity,
     RiskLimitSnapshotEntity,
+    SessionEventEntity,
     SnapshotSyncRunEntity,
     StrategyEntity,
     TradeDecisionEntity,
@@ -649,3 +651,38 @@ class AgentRunRepository(Protocol):
     async def list_all(self, limit: int = 100) -> Sequence[AgentRunEntity]:
         """Return recent runs ordered by started_at DESC."""
         ...
+
+
+class MarketSessionRepository(Protocol):
+    """Store for market session state and phase change events.
+
+    ``market_sessions`` 테이블은 ``run_date`` 기준으로 1행이며,
+    P2 scheduler가 주기적으로 upsert (INSERT … ON CONFLICT) 한다.
+    """
+
+    async def upsert(self, session: MarketSessionEntity) -> MarketSessionEntity:
+        """Upsert a market session by ``run_date``.
+
+        ``INSERT … ON CONFLICT (run_date) DO UPDATE`` semantics.
+        Returns the entity with server-generated defaults (id, created_at, etc.).
+        """
+        ...
+
+    async def get_by_run_date(self, run_date: date) -> MarketSessionEntity | None:
+        """Get the session state for a specific run date."""
+        ...
+
+    async def list_recent(self, limit: int = 10) -> Sequence[MarketSessionEntity]:
+        """Return recent sessions ordered by ``run_date DESC``."""
+        ...
+
+    async def add_event(self, event: SessionEventEntity) -> SessionEventEntity:
+        """Append a phase-change event to the session_events log."""
+        ...
+
+    async def get_events(
+        self, market_session_id: int, limit: int = 50
+    ) -> Sequence[SessionEventEntity]:
+        """Return events for a session, ordered by ``occurred_at DESC``."""
+        ...
+

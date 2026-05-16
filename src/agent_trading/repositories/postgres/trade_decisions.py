@@ -49,6 +49,8 @@ class PostgresTradeDecisionRepository:
                  agent_run_id, instrument_id,
                  target_quantity, target_notional, limit_price,
                  confidence, rationale_summary, decision_json,
+                 -- Axis 2: Source type
+                 source_type,
                  -- Metadata
                  created_at)
             VALUES ($1, $2,
@@ -69,7 +71,8 @@ class PostgresTradeDecisionRepository:
                     $32, $33,
                     $34, $35, $36,
                     $37, $38, $39::jsonb,
-                    $40)
+                    $40,
+                    $41)
             RETURNING *
             """,
             # PK
@@ -115,6 +118,8 @@ class PostgresTradeDecisionRepository:
             decision.confidence,
             decision.rationale_summary,
             json.dumps(decision.decision_json),
+            # Axis 2: Source type
+            decision.source_type,
             # Metadata
             decision.created_at,
         )

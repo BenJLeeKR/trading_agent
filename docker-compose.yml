@@ -70,6 +70,16 @@ services:
       KIS_API_KEY: "${KIS_API_KEY:-}"
       KIS_API_SECRET: "${KIS_API_SECRET:-}"
       KIS_ACCOUNT_NUMBER: "${KIS_ACCOUNT_NUMBER:-}"
+      # P1: Live-info client (076 holiday / market session gate) — completely separate
+      # from paper/live order credentials. Read-only market info only.
+      KIS_LIVE_INFO_ENABLED: "${KIS_LIVE_INFO_ENABLED:-false}"
+      KIS_LIVE_INFO_APP_KEY: "${KIS_LIVE_INFO_APP_KEY:-}"
+      KIS_LIVE_INFO_APP_SECRET: "${KIS_LIVE_INFO_APP_SECRET:-}"
+      KIS_LIVE_INFO_BASE_URL: "${KIS_LIVE_INFO_BASE_URL:-}"
+      KIS_LIVE_INFO_WS_URL: "${KIS_LIVE_INFO_WS_URL:-}"
+      # P2: Live-info token cache (WebSocket approval key persistence)
+      KIS_LIVE_TOKEN_CACHE_ENABLED: "${KIS_LIVE_TOKEN_CACHE_ENABLED:-true}"
+      KIS_LIVE_TOKEN_CACHE_PATH: "${KIS_LIVE_TOKEN_CACHE_PATH:-.cache/kis_live_token.json}"
       LLM_PROVIDER: "${LLM_PROVIDER:-deepseek}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
       DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
@@ -130,6 +140,15 @@ services:
       KIS_API_KEY: "${KIS_API_KEY:-}"
       KIS_API_SECRET: "${KIS_API_SECRET:-}"
       KIS_ACCOUNT_NUMBER: "${KIS_ACCOUNT_NUMBER:-}"
+      # P1: Live-info client (076 holiday / market session gate) — completely separate
+      KIS_LIVE_INFO_ENABLED: "${KIS_LIVE_INFO_ENABLED:-false}"
+      KIS_LIVE_INFO_APP_KEY: "${KIS_LIVE_INFO_APP_KEY:-}"
+      KIS_LIVE_INFO_APP_SECRET: "${KIS_LIVE_INFO_APP_SECRET:-}"
+      KIS_LIVE_INFO_BASE_URL: "${KIS_LIVE_INFO_BASE_URL:-}"
+      KIS_LIVE_INFO_WS_URL: "${KIS_LIVE_INFO_WS_URL:-}"
+      # P2: Live-info token cache (WebSocket approval key persistence)
+      KIS_LIVE_TOKEN_CACHE_ENABLED: "${KIS_LIVE_TOKEN_CACHE_ENABLED:-true}"
+      KIS_LIVE_TOKEN_CACHE_PATH: "${KIS_LIVE_TOKEN_CACHE_PATH:-.cache/kis_live_token.json}"
       LLM_PROVIDER: "${LLM_PROVIDER:-deepseek}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
       DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
@@ -202,6 +221,15 @@ services:
       KIS_API_KEY: "${KIS_API_KEY:-}"
       KIS_API_SECRET: "${KIS_API_SECRET:-}"
       KIS_ACCOUNT_NUMBER: "${KIS_ACCOUNT_NUMBER:-}"
+      # P1: Live-info client (076 holiday / market session gate)
+      KIS_LIVE_INFO_ENABLED: "${KIS_LIVE_INFO_ENABLED:-false}"
+      KIS_LIVE_INFO_APP_KEY: "${KIS_LIVE_INFO_APP_KEY:-}"
+      KIS_LIVE_INFO_APP_SECRET: "${KIS_LIVE_INFO_APP_SECRET:-}"
+      KIS_LIVE_INFO_BASE_URL: "${KIS_LIVE_INFO_BASE_URL:-}"
+      KIS_LIVE_INFO_WS_URL: "${KIS_LIVE_INFO_WS_URL:-}"
+      # P2: Live-info token cache (WebSocket approval key persistence)
+      KIS_LIVE_TOKEN_CACHE_ENABLED: "${KIS_LIVE_TOKEN_CACHE_ENABLED:-true}"
+      KIS_LIVE_TOKEN_CACHE_PATH: "${KIS_LIVE_TOKEN_CACHE_PATH:-.cache/kis_live_token.json}"
       # Sync interval (seconds, default 300 = 5 minutes)
       KIS_SNAPSHOT_SYNC_INTERVAL_SECONDS: "${KIS_SNAPSHOT_SYNC_INTERVAL_SECONDS:-300}"
     volumes:

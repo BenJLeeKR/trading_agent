@@ -166,6 +166,24 @@ def _resolve_kis_dev_token_cache_path() -> str:
     return os.getenv("KIS_DEV_TOKEN_CACHE_PATH", ".cache/kis_token.json")
 
 
+def _resolve_kis_live_token_cache_enabled() -> bool:
+    """Resolve live-info token cache enabled flag from ``KIS_LIVE_TOKEN_CACHE_ENABLED``.
+
+    Live-info token cache is used for WebSocket approval key persistence.
+    Disabled by default.
+    """
+    raw = os.getenv("KIS_LIVE_TOKEN_CACHE_ENABLED", "false")
+    return raw.strip().lower() == "true"
+
+
+def _resolve_kis_live_token_cache_path() -> str:
+    """Resolve live-info token cache file path from ``KIS_LIVE_TOKEN_CACHE_PATH``.
+
+    Default: ``.cache/kis_live_token.json`` (separate from dev token cache).
+    """
+    return os.getenv("KIS_LIVE_TOKEN_CACHE_PATH", ".cache/kis_live_token.json")
+
+
 def _resolve_kis_snapshot_stale_threshold_seconds() -> int:
     """Resolve stale threshold for KIS snapshot sync freshness check.
 
@@ -242,6 +260,13 @@ class AppSettings:
     # ---- KIS dev token cache (paper/dev only; disabled in live) ---------------
     kis_dev_token_cache_enabled: bool = field(default_factory=_resolve_kis_dev_token_cache_enabled)
     kis_dev_token_cache_path: str = field(default_factory=_resolve_kis_dev_token_cache_path)
+
+    # ---- KIS live-info token cache (WebSocket approval key persistence) ------
+    kis_live_token_cache_enabled: bool = field(default_factory=_resolve_kis_live_token_cache_enabled)
+    kis_live_token_cache_path: str = field(default_factory=_resolve_kis_live_token_cache_path)
+
+    # ---- KIS live-info WebSocket URL (163 market state) -----------------------
+    kis_live_info_ws_url: str = field(default_factory=lambda: os.getenv("KIS_LIVE_INFO_WS_URL", ""))
 
     # ---- KIS snapshot sync stale threshold -----------------------------------
     kis_snapshot_stale_threshold_seconds: int = field(

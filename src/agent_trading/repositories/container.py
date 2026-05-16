@@ -17,6 +17,7 @@ from agent_trading.repositories.contracts import (
     FillEventRepository,
     GuardrailEvaluationRepository,
     InstrumentRepository,
+    MarketSessionRepository,
     OrderRepository,
     OrderStateEventRepository,
     PositionSnapshotRepository,
@@ -52,3 +53,4 @@ class RepositoryContainer:
     guardrail_evaluations: GuardrailEvaluationRepository
     risk_limit_snapshots: RiskLimitSnapshotRepository
     external_events: ExternalEventRepository
+    market_session_repo: MarketSessionRepository

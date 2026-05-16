@@ -22,11 +22,13 @@ from agent_trading.domain.entities import (
     FillEventEntity,
     GuardrailEvaluationEntity,
     InstrumentEntity,
+    MarketSessionEntity,
     OrderRequestEntity,
     OrderStateEventEntity,
     PositionSnapshotEntity,
     ReconciliationRunEntity,
     RiskLimitSnapshotEntity,
+    SessionEventEntity,
     SnapshotSyncRunEntity,
     StrategyEntity,
     TradeDecisionEntity,
@@ -1095,3 +1097,105 @@ class InMemoryAgentRunRepository:
 
     async def clear(self) -> None:
         self._runs.clear()
+
+
+class InMemoryMarketSessionRepository:
+    """In-memory implementation of ``MarketSessionRepository``."""
+
+    def __init__(self) -> None:
+        self._sessions: list[MarketSessionEntity] = []
+        self._events: list[SessionEventEntity] = []
+        self._next_session_id: int = 1
+        self._next_event_id: int = 1
+
+    async def upsert(self, session: MarketSessionEntity) -> MarketSessionEntity:
+        """Upsert by ``run_date`` — update if exists, else insert."""
+        for i, existing in enumerate(self._sessions):
+            if existing.run_date == session.run_date:
+                updated = MarketSessionEntity(
+                    id=existing.id,
+                    run_date=session.run_date,
+                    is_trading_day=session.is_trading_day,
+                    opnd_yn=session.opnd_yn,
+                    bzdy_yn=session.bzdy_yn,
+                    tr_day_yn=session.tr_day_yn,
+                    market_phase=session.market_phase,
+                    raw_opnd_yn=session.raw_opnd_yn,
+                    raw_mkop_cls_code=session.raw_mkop_cls_code,
+                    raw_antc_mkop_cls_code=session.raw_antc_mkop_cls_code,
+                    source=session.source,
+                    reason=session.reason,
+                    checked_at=session.checked_at or datetime.now(timezone.utc),
+                    created_at=existing.created_at or datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                )
+                self._sessions[i] = updated
+                return updated
+        # Insert new
+        new = MarketSessionEntity(
+            id=self._next_session_id,
+            run_date=session.run_date,
+            is_trading_day=session.is_trading_day,
+            opnd_yn=session.opnd_yn,
+            bzdy_yn=session.bzdy_yn,
+            tr_day_yn=session.tr_day_yn,
+            market_phase=session.market_phase,
+            raw_opnd_yn=session.raw_opnd_yn,
+            raw_mkop_cls_code=session.raw_mkop_cls_code,
+            raw_antc_mkop_cls_code=session.raw_antc_mkop_cls_code,
+            source=session.source,
+            reason=session.reason,
+            checked_at=session.checked_at or datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        self._next_session_id += 1
+        self._sessions.append(new)
+        return new
+
+    async def get_by_run_date(self, run_date: date) -> MarketSessionEntity | None:
+        for s in self._sessions:
+            if s.run_date == run_date:
+                return s
+        return None
+
+    async def list_recent(
+        self, limit: int = 10
+    ) -> Sequence[MarketSessionEntity]:
+        results = sorted(
+            self._sessions,
+            key=lambda s: s.run_date if s.run_date else date.min,
+            reverse=True,
+        )
+        return tuple(results[:limit])
+
+    async def add_event(self, event: SessionEventEntity) -> SessionEventEntity:
+        new = SessionEventEntity(
+            id=self._next_event_id,
+            market_session_id=event.market_session_id,
+            previous_phase=event.previous_phase,
+            new_phase=event.new_phase,
+            trigger_source=event.trigger_source,
+            metadata=event.metadata,
+            occurred_at=event.occurred_at or datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+        )
+        self._next_event_id += 1
+        self._events.append(new)
+        return new
+
+    async def get_events(
+        self, market_session_id: int, limit: int = 50
+    ) -> Sequence[SessionEventEntity]:
+        results = [
+            e for e in self._events
+            if e.market_session_id == market_session_id
+        ]
+        results.sort(key=lambda e: e.occurred_at or datetime.min, reverse=True)
+        return tuple(results[:limit])
+
+    async def clear(self) -> None:
+        self._sessions.clear()
+        self._events.clear()
+        self._next_session_id = 1
+        self._next_event_id = 1

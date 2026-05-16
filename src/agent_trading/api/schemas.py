@@ -268,6 +268,8 @@ class TradeDecisionDetail(BaseModel):
     max_order_value: float | None = None
     confidence: float | None = None
     rationale_summary: str | None = None
+    source_type: str | None = None
+    """Origin of this symbol: ``"core"`` | ``"held_position"`` | ``"event_overlay"`` | ``"market_overlay"`` | ``"manual"``."""
 
 
 # ── Phase 2: Account, Client, Instrument, Position, Cash-balance, Broker-order ──

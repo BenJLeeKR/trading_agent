@@ -18,6 +18,7 @@ from agent_trading.repositories.memory import (
     InMemoryFillEventRepository,
     InMemoryGuardrailEvaluationRepository,
     InMemoryInstrumentRepository,
+    InMemoryMarketSessionRepository,
     InMemoryOrderRepository,
     InMemoryOrderStateEventRepository,
     InMemoryPositionSnapshotRepository,
@@ -90,6 +91,7 @@ def build_in_memory_repositories() -> RepositoryContainer:
         order_state_events=InMemoryOrderStateEventRepository(),
         guardrail_evaluations=InMemoryGuardrailEvaluationRepository(),
         risk_limit_snapshots=InMemoryRiskLimitSnapshotRepository(),
+        market_session_repo=InMemoryMarketSessionRepository(),
     )
     # Seed a fresh sync run so pipelines work out of the box.
     _seed_fresh_sync_run(repos.snapshot_sync_runs)

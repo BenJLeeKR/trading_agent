@@ -33,8 +33,8 @@
 - Fast / Slow layer 분리 유지
 - AI는 판단 계층이며 broker submit을 직접 호출하지 않음
 - OrderManager / ReconciliationService / BrokerAdapter 경계를 깨지 말 것
-- KIS API 연결시, oauth2/tokenP 재발급 남용을 방지하기 위해서 'KIS_DEV_TOKEN_CACHE_PATH=.cache/kis_token.json' 활용할 것
 - KIS API 연결이 'paper' 환경이지만, live와 똑같다고 인식하고 운영하고 있음을 주지할 것
+- KIS API 연결시, oauth2/tokenP 재발급 남용을 방지하기 위해서 'KIS_DEV_TOKEN_CACHE_PATH=.cache/kis_token.json' 활용할 것
 
 # 우선 읽을 문서 순서:
 
@@ -72,7 +72,7 @@
 
 [브로커 참고 자료]
 1. `/workspace/agent_trading/reference_docs/한국투자증권_오픈API_핵심요약_자동매매용.md`
-2. `/workspace/agent_trading/reference_docs/한국투자증권_오픈API_전체문서_20260503_030000.xlsx`
+2. `/workspace/agent_trading/reference_docs/kis_openapi_full_20260503_markdown/*.md`
 
 
 # 현재 새 Task에서 원하는 작업 방식:
