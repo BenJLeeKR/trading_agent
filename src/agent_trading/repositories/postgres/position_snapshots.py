@@ -28,8 +28,9 @@ class PostgresPositionSnapshotRepository:
             INSERT INTO trading.position_snapshots
                 (position_snapshot_id, account_id, instrument_id,
                  quantity, average_price, market_price, unrealized_pnl,
+                 purchase_amount, evaluation_amount,
                  source_of_truth, snapshot_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING *
             """,
             snapshot.position_snapshot_id,
@@ -39,6 +40,8 @@ class PostgresPositionSnapshotRepository:
             snapshot.average_price,
             snapshot.market_price,
             snapshot.unrealized_pnl,
+            snapshot.purchase_amount,
+            snapshot.evaluation_amount,
             snapshot.source_of_truth,
             snapshot.snapshot_at,
         )

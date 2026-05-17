@@ -242,9 +242,19 @@ export default function AccountsView() {
       render: (r) => formatKrw(r.average_price),
     },
     {
+      key: "purchase_amount",
+      header: "매입금액",
+      render: (r) => (r.purchase_amount != null ? formatKrw(r.purchase_amount) : "—"),
+    },
+    {
       key: "market_price",
-      header: "시장가",
+      header: "현재가",
       render: (r) => formatKrw(r.market_price),
+    },
+    {
+      key: "evaluation_amount",
+      header: "평가금액",
+      render: (r) => (r.evaluation_amount != null ? formatKrw(r.evaluation_amount) : "—"),
     },
     {
       key: "unrealized_pnl",

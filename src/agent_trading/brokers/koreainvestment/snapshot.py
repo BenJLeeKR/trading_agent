@@ -32,6 +32,8 @@ _KIS_HLDG_QTY = "hldg_qty"  # 보유수량
 _KIS_PCHS_AVG_PRIC = "pchs_avg_pric"  # 매입평균가
 _KIS_PRPR = "prpr"  # 현재가
 _KIS_EVL_PFLS_AMT = "evlu_pfls_amt"  # 평가손익
+_KIS_PCHS_AMT = "pchs_amt"  # 매입금액
+_KIS_EVL_AMT = "evlu_amt"  # 평가금액
 
 # KIS inquire-balance output2 (cash summary) field names
 _KIS_DNCA_TOT_AMT = "dnca_tot_amt"  # 예수금총액
@@ -133,6 +135,8 @@ class KISSyncSnapshotProvider:
                     average_price=safe_decimal(raw.get(_KIS_PCHS_AVG_PRIC, "0")),
                     market_price=safe_optional_decimal(raw.get(_KIS_PRPR)),
                     unrealized_pnl=safe_optional_decimal(raw.get(_KIS_EVL_PFLS_AMT)),
+                    purchase_amount=safe_optional_decimal(raw.get(_KIS_PCHS_AMT)),
+                    evaluation_amount=safe_optional_decimal(raw.get(_KIS_EVL_AMT)),
                     source_of_truth=_SOURCE_OF_TRUTH,
                     snapshot_at=snapshot_at,
                 )

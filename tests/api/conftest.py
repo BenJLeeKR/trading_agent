@@ -273,6 +273,8 @@ async def seeded_repos(
             average_price=Decimal("150.00"),
             market_price=Decimal("155.00"),
             unrealized_pnl=Decimal("500.00"),
+            purchase_amount=Decimal("15000.00"),
+            evaluation_amount=Decimal("15500.00"),
             source_of_truth="broker",
             snapshot_at=datetime.now(timezone.utc),
             created_at=datetime.now(timezone.utc),

@@ -135,6 +135,8 @@ export interface PositionSnapshotView {
   average_price: number;
   market_price: number;
   unrealized_pnl: number | null;
+  purchase_amount: number | null;
+  evaluation_amount: number | null;
   source_of_truth: string;
   snapshot_at: string;
   // ── Resolved instrument display fields (enriched at query time) ──

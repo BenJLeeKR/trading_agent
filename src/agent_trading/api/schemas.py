@@ -381,6 +381,8 @@ class PositionSnapshotView(BaseModel):
     average_price: float
     market_price: float
     unrealized_pnl: float | None = None
+    purchase_amount: float | None = None
+    evaluation_amount: float | None = None
     source_of_truth: str
     snapshot_at: datetime
     created_at: datetime

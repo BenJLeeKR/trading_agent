@@ -387,7 +387,8 @@ class TestPositions:
 
     def test_list_positions(self, client: TestClient) -> None:
         """``GET /positions?account_id=...`` returns seeded position snapshot
-        with symbol and instrument_name resolved.
+        with symbol and instrument_name resolved, including purchase_amount
+        and evaluation_amount.
         """
         # Discover seeded account_id
         orders_resp = client.get("/orders")
@@ -406,6 +407,9 @@ class TestPositions:
         assert pos["quantity"] == 100.0
         assert pos["average_price"] == 150.0
         assert pos["market_price"] == 155.0
+        # ── Purchase / evaluation amount fields ──
+        assert pos["purchase_amount"] == 15000.0
+        assert pos["evaluation_amount"] == 15500.0
         # ── Lineage visibility: symbol/name resolved from instrument_id ──
         assert pos["symbol"] == "AAPL"
         assert pos["instrument_name"] == "Apple Inc."

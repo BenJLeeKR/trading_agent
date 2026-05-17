@@ -125,6 +125,8 @@ class PositionSnapshotEntity:
     unrealized_pnl: Decimal | None
     source_of_truth: str
     snapshot_at: datetime
+    purchase_amount: Decimal | None = None
+    evaluation_amount: Decimal | None = None
     created_at: datetime | None = None
 
 
