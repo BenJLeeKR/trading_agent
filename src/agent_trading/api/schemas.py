@@ -304,6 +304,8 @@ class TradeDecisionDetail(BaseModel):
     rationale_summary: str | None = None
     source_type: str | None = None
     """Origin of this symbol: ``"core"`` | ``"held_position"`` | ``"event_overlay"`` | ``"market_overlay"`` | ``"manual"``."""
+    decision_json: dict[str, object] | None = None
+    """Raw decision payload from EI/AR agents (``event_bias``, ``risk_opinion``, etc.)."""
 
 
 # ── Phase 2: Account, Client, Instrument, Position, Cash-balance, Broker-order ──
@@ -873,3 +875,26 @@ class ManualStatusChangeResponse(BaseModel):
     new_status: str
     updated_at: datetime | None = None
     actor: str
+
+
+class ExternalEventView(BaseModel):
+    """Lightweight external event view for UI consumption."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    event_id: str
+    event_type: str
+    source_name: str
+    source_reliability_tier: str
+    symbol: str | None = None
+    headline: str | None = None
+    body_summary: str | None = None
+    published_at: datetime
+    created_at: datetime | None = None
+
+
+class ExternalEventsResponse(BaseModel):
+    """Wrapper for recent external events response."""
+
+    status: str = "ok"
+    data: list[ExternalEventView]

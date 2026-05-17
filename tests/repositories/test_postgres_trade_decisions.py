@@ -99,7 +99,16 @@ def _make_full_decision(
         limit_price=Decimal("150.00"),
         confidence=Decimal("0.80"),
         rationale_summary="Strong buy signal on RSI oversold + trend confirmation",
-        decision_json={"source": "test", "reason": "synthetic"},
+        decision_json={
+            "source": "test",
+            "reason": "synthetic",
+            "event_reason_codes": ["test_code_1", "test_code_2"],
+            "risk_reason_codes": ["risk_test_1"],
+            "reason_codes": ["FDC_TEST"],
+            "opposing_evidence": ["opposing_test"],
+            "confidence": 0.9,
+            "conviction": 0.8,
+        },
         # Axis 2: Source type
         source_type=source_type,
         created_at=now,
@@ -189,6 +198,15 @@ async def test_add_and_read_back(
     assert fetched.rationale_summary == "Strong buy signal on RSI oversold + trend confirmation"
     # Axis 2: Source type
     assert fetched.source_type == "market_overlay"
+
+    # decision_json round-trip: 모든 필드 보존 확인
+    assert "event_reason_codes" in fetched.decision_json
+    assert fetched.decision_json["event_reason_codes"] == ["test_code_1", "test_code_2"]
+    assert fetched.decision_json["risk_reason_codes"] == ["risk_test_1"]
+    assert fetched.decision_json["reason_codes"] == ["FDC_TEST"]
+    assert fetched.decision_json["opposing_evidence"] == ["opposing_test"]
+    assert fetched.decision_json["confidence"] == 0.9
+    assert fetched.decision_json["conviction"] == 0.8
 
 
 # ============================================================================

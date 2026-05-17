@@ -1509,6 +1509,16 @@ class DecisionOrchestratorService:
             structured_output=_dataclass_to_dict(event_output),
         )
 
+        # ── EI top_reason_codes empty detection ─────────────────────
+        if (event_output.aggregate_view
+                and not event_output.aggregate_view.top_reason_codes
+                and event_output.aggregate_view.event_count > 0):
+            logger.warning(
+                "EI top_reason_codes is empty but event_count=%d "
+                "(symbol=%s) — LLM may have omitted the field in aggregation",
+                event_output.aggregate_view.event_count, symbol,
+            )
+
         # --- Build a new request with the EI output for downstream agents ---
         # AgentExecutionRequest is frozen, so we must create a new instance.
         # When EI fails, event_output is an empty EventInterpretationOutput(),
@@ -1737,6 +1747,12 @@ class DecisionOrchestratorService:
                     "time_horizon": composer_output.time_horizon,
                     "event_bias": ai_inputs.event_bias,
                     "event_conflict": ai_inputs.event_conflict,
+                    "event_reason_codes": list(ai_inputs.event_reason_codes),
+                    "risk_reason_codes": list(ai_inputs.risk_reason_codes),
+                    "reason_codes": list(ai_inputs.reason_codes),
+                    "opposing_evidence": list(ai_inputs.opposing_evidence),
+                    "confidence": ai_inputs.confidence,
+                    "conviction": ai_inputs.conviction,
                     "risk_opinion": ai_inputs.risk_opinion,
                     "risk_flags": list(ai_inputs.risk_flags),
                     "execution_preferences": _dataclass_to_dict(

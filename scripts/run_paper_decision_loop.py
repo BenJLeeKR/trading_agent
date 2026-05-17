@@ -62,9 +62,13 @@ except ImportError:
 
 from agent_trading.brokers.base import BrokerAdapter
 from agent_trading.domain.enums import OrderSide, OrderType
+from agent_trading.domain.entities import ExternalEventEntity
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.repositories.container import RepositoryContainer
-from agent_trading.repositories.contracts import SnapshotSyncHealthSummary
+from agent_trading.repositories.contracts import (
+    ExternalEventRepository,
+    SnapshotSyncHealthSummary,
+)
 from agent_trading.repositories.filters import AccountLookup
 from agent_trading.runtime.bootstrap import postgres_runtime
 from agent_trading.services.decision_orchestrator import SubmitResult
@@ -675,6 +679,24 @@ async def _run_one_cycle(
                                     "Cycle %d symbol=%s: seeded %d events from %d candidates",
                                     cycle, symbol, len(seeded_events), len(candidates),
                                 )
+
+                                # NEW: DB persistence (best-effort, non-fatal)
+                                if seeded_events:
+                                    try:
+                                        persisted = await persist_seeded_events(
+                                            seeded_events,
+                                            repos.external_events,
+                                        )
+                                        logger.info(
+                                            "Cycle %d symbol=%s: persisted %d seeded events to DB",
+                                            cycle, symbol, persisted,
+                                        )
+                                    except Exception:
+                                        logger.exception(
+                                            "Cycle %d symbol=%s: seeded event persistence "
+                                            "failed (non-fatal, transient injection continues).",
+                                            cycle, symbol,
+                                        )
                 except Exception:
                     logger.exception(
                         "Cycle %d symbol=%s: seeded news processing failed, continuing without.",
@@ -774,6 +796,42 @@ async def _run_one_cycle(
             dry_run=dry_run,
             error=str(exc),
         )
+
+
+# ── Seeded news persistence ─────────────────────────────────────────────────
+
+
+async def persist_seeded_events(
+    events: list[ExternalEventEntity],
+    repo: ExternalEventRepository,
+) -> int:
+    """
+    Persist seeded news events to external_events table with dedup.
+
+    Returns count of newly persisted events.
+    - DB: long-term storage, analysis, audit trail
+    - Transient injection to EI still happens separately via orchestrator.assemble()
+    """
+    persisted = 0
+    skipped = 0
+    for event in events:
+        try:
+            existing = await repo.find_by_dedup_key(event.dedup_key_hash)
+            if existing is None:
+                await repo.add(event)
+                persisted += 1
+            else:
+                skipped += 1
+        except Exception:
+            logger.exception("Failed to persist seeded event: %s", event.dedup_key_hash)
+            # Non-fatal: transient injection still works
+
+    if persisted > 0 or skipped > 0:
+        logger.info(
+            "Seeded events persisted=%d skipped=%d total=%d",
+            persisted, skipped, len(events),
+        )
+    return persisted
 
 
 # ── Main loop ───────────────────────────────────────────────────────────────

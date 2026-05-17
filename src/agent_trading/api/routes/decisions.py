@@ -33,6 +33,7 @@ def _to_detail(d: object) -> TradeDecisionDetail:
         confidence=float(d.confidence) if d.confidence is not None else None,
         rationale_summary=d.rationale_summary,
         source_type=d.source_type,
+        decision_json=d.decision_json,
     )
 
 

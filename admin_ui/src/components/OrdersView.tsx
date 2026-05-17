@@ -20,6 +20,8 @@ export default function OrdersView() {
   const [statusFilter, setStatusFilter] = useState("");
   const [sideFilter, setSideFilter] = useState("");
   const [selectedOrder, setSelectedOrder] = useState<OrderSummary | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const navigate = useNavigate();
 
   const location = useLocation();
@@ -56,21 +58,27 @@ export default function OrdersView() {
     });
   }, [orders, searchText, statusFilter, sideFilter]);
 
+  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pagedOrders = useMemo(() => {
+    return filteredOrders.slice((safePage - 1) * pageSize, safePage * pageSize);
+  }, [filteredOrders, safePage, pageSize]);
+
   const orderColumns = [
     { key: "order_request_id", header: "주문 ID", width: "100px", render: (r: OrderSummary) => (
       <code className="text-xs">{r.order_request_id.slice(0, 8)}…</code>
     )},
-    { key: "symbol", header: "심볼", render: (r: OrderSummary) => (
+    { key: "symbol", header: "종목", width: "80px", render: (r: OrderSummary) => (
       <span className="text-sm font-medium text-[#0f172a]">{r.symbol ?? "—"}</span>
     )},
-    { key: "instrument_name", header: "종목명", render: (r: OrderSummary) => (
-      <span className="text-sm text-[#334155]">{r.instrument_name || "—"}</span>
+    { key: "instrument_name", header: "종목명", width: "180px", render: (r: OrderSummary) => (
+      <span className="block max-w-[180px] truncate text-sm text-[#334155]" title={r.instrument_name ?? undefined}>{r.instrument_name || "—"}</span>
     )},
-    { key: "side", header: "매매", width: "90px", render: (r: OrderSummary) => (
+    { key: "side", header: "매매", width: "80px", render: (r: OrderSummary) => (
       <StatusBadge variant={r.side.toLowerCase() === "buy" ? "success" : "error"}>{getEnumLabel(fieldMap, "side", r.side)}</StatusBadge>
     )},
-    { key: "requested_quantity", header: "수량" },
-    { key: "status", header: "상태", render: (r: OrderSummary) => {
+    { key: "requested_quantity", header: "수량", width: "90px" },
+    { key: "status", header: "상태", width: "110px", render: (r: OrderSummary) => {
       const variants: Record<string, "success" | "warning" | "error" | "info" | "neutral"> = {
         filled: "success",
         submitted: "info",
@@ -90,7 +98,7 @@ export default function OrdersView() {
       };
       return <StatusBadge variant={variants[r.status] || "info"}>{getEnumLabel(fieldMap, "order_status", r.status)}</StatusBadge>;
     }},
-    { key: "created_at", header: "생성일", render: (r: OrderSummary) => formatKstDateTime(r.created_at) },
+    { key: "created_at", header: "시각", width: "170px", render: (r: OrderSummary) => formatKstDateTime(r.created_at) },
   ];
 
   if (loading) return <LoadingSpinner />;
@@ -111,7 +119,7 @@ export default function OrdersView() {
             <FilterBar
               searchPlaceholder="심볼 또는 주문 ID 검색..."
               searchValue={searchText}
-              onSearchChange={setSearchText}
+              onSearchChange={(v) => { setSearchText(v); setCurrentPage(1); }}
               filters={[
                 {
                   key: "status",
@@ -131,7 +139,7 @@ export default function OrdersView() {
                     { label: "초안", value: "draft" },
                   ],
                   value: statusFilter,
-                  onChange: setStatusFilter,
+                  onChange: (v) => { setStatusFilter(v); setCurrentPage(1); },
                 },
                 {
                   key: "side",
@@ -141,20 +149,26 @@ export default function OrdersView() {
                     { label: "매도", value: "sell" },
                   ],
                   value: sideFilter,
-                  onChange: setSideFilter,
+                  onChange: (v) => { setSideFilter(v); setCurrentPage(1); },
                 },
               ]}
               onClearAll={() => {
                 setSearchText("");
                 setStatusFilter("");
                 setSideFilter("");
+                setCurrentPage(1);
               }}
             />
           </div>
           <DataTable
             columns={orderColumns}
-            data={filteredOrders}
+            data={pagedOrders}
             idKey="order_request_id"
+            currentPage={safePage}
+            pageSize={pageSize}
+            totalItems={filteredOrders.length}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={(size) => { setPageSize(size); setCurrentPage(1); }}
             onRowClick={(row) => {
               if (selectedOrder?.order_request_id === row.order_request_id) {
                 setSelectedOrder(null);

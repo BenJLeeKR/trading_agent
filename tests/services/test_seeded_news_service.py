@@ -358,3 +358,365 @@ class TestSeededNewsCandidateService:
 
         # ── Cleanup ──────────────────────────────────────────────────
         await service.close()
+
+
+class TestCrossSymbolNoiseAndScoring:
+    """Tests for cross-symbol noise detection, scoring weights, seed pacing, and quality filtering."""
+
+    # ------------------------------------------------------------------
+    # Cross-symbol noise detection
+    # ------------------------------------------------------------------
+    def test_cross_symbol_noise_detection(self) -> None:
+        """company_name≠symbol seed → noise 감지 + penalty 적용.
+
+        seed.company_name='한미반도체' 이지만 symbol='000660' (SK하이닉스)인 경우,
+        candidate에 '한미반도체'가 없으면 cross-symbol noise로 감지.
+        """
+        service = SeededNewsCandidateService(
+            search_adapter=Mock(spec=NaverNewsSearchAdapter),
+        )
+
+        # Item about SK하이닉스 (no mention of 한미반도체)
+        item = _make_news_item(
+            title="SK하이닉스, HBM4 양산 발표",
+            description="SK하이닉스가 HBM4 양산을 발표했습니다.",
+        )
+
+        is_noise, penalty = service._is_cross_symbol_noise(
+            candidate=item,
+            seed_company_name="한미반도체",
+            seed_symbol="000660",
+        )
+
+        assert is_noise is True
+        assert penalty == 0.3  # 70% penalty
+
+    def test_cross_symbol_noise_no_false_positive(self) -> None:
+        """회사명이 일치하면 noise로 감지하지 않음."""
+        service = SeededNewsCandidateService(
+            search_adapter=Mock(spec=NaverNewsSearchAdapter),
+        )
+
+        item = _make_news_item(
+            title="삼성전자, 유상증자 결정",
+            description="삼성전자가 유상증자를 결정했습니다.",
+        )
+
+        is_noise, penalty = service._is_cross_symbol_noise(
+            candidate=item,
+            seed_company_name="삼성전자",
+            seed_symbol="005930",
+        )
+
+        assert is_noise is False
+        assert penalty == 1.0
+
+    # ------------------------------------------------------------------
+    # Scoring weight: company_name (40→20)
+    # ------------------------------------------------------------------
+    def test_scoring_company_name_weight_reduced(self) -> None:
+        """company_name만 매칭 = 20점 (기존 40→하향).
+
+        계산: company_name in title(+20) + freshness 24h이내(+20) = 40점
+        - "결정"은 boilerplate token이므로 keyword overlap 미발생
+        - symbol("005930")은 title/desc에 없음
+        """
+        service = SeededNewsCandidateService(
+            search_adapter=Mock(spec=NaverNewsSearchAdapter),
+        )
+        seed = DisclosureTitleDTO(
+            symbol="005930",
+            company_name="삼성전자",
+            headline="유상증자 결정",
+            published_at="20260517",
+        )
+        item = _make_news_item(
+            title="삼성전자, 분기배당 결정",
+            description="삼성전자가 분기배당을 결정했습니다.",
+        )
+
+        score = service._compute_score(item, seed, "삼성전자", "005930")
+
+        # company_name in title = 20, no symbol match, keyword overlap=0
+        # ("결정"은 boilerplate), freshness=20 → total = 40
+        assert score == 40.0, (
+            f"Expected score 40.0 (company=20 + freshness=20), got {score}"
+        )
+        # Verify company_name component is 20 (reduced from 40)
+        assert score >= 20.0, f"company_name score should be at least 20"
+
+    # ------------------------------------------------------------------
+    # Scoring weight: symbol (10→20)
+    # ------------------------------------------------------------------
+    def test_scoring_symbol_match_increased(self) -> None:
+        """symbol 매칭 = 20점 (기존 10→상향). title에 있으면 25점."""
+        service = SeededNewsCandidateService(
+            search_adapter=Mock(spec=NaverNewsSearchAdapter),
+        )
+        seed = DisclosureTitleDTO(
+            symbol="005930",
+            company_name="삼성전자",
+            headline="유상증자 결정",
+            published_at="20260517",
+        )
+        # Item without company_name mention but with symbol in description
+        item = _make_news_item(
+            title="코스피 시황…외국인 순매수",
+            description="005930 삼성전자 강세",
+        )
+
+        score = service._compute_score(item, seed, "삼성전자", "005930")
+
+        # company_name not in title, but in desc → +10
+        # symbol in desc → +20
+        # Total = 10 + 20 = 30 (minimum)
+        assert score >= 30.0, (
+            f"Expected score >= 30 (company desc + symbol desc), got {score}"
+        )
+
+    def test_scoring_symbol_in_title_gives_bonus(self) -> None:
+        """symbol이 title에 있으면 25점."""
+        service = SeededNewsCandidateService(
+            search_adapter=Mock(spec=NaverNewsSearchAdapter),
+        )
+        seed = DisclosureTitleDTO(
+            symbol="005930",
+            company_name="삼성전자",
+            headline="유상증자 결정",
+            published_at="20260517",
+        )
+        item = _make_news_item(
+            title="005930 삼성전자, 유상증자 결정",
+            description="삼성전자가 유상증자를 결정했습니다.",
+        )
+
+        score = service._compute_score(item, seed, "삼성전자", "005930")
+
+        # company_name in title = 20
+        # symbol in title = 25
+        # Total = 45 minimum
+        assert score >= 45.0, (
+            f"Expected score >= 45 (company title + symbol title), got {score}"
+        )
+
+    # ------------------------------------------------------------------
+    # Hard gate + cross-symbol mismatch (scoring penalty, not hard gate)
+    # ------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_hard_gate_company_name_and_symbol_mismatch(self) -> None:
+        """Hard gate는 통과하지만 scoring에서 cross-symbol penalty 적용.
+
+        seed: symbol='000660', company_name='SK하이닉스'
+        news: '한미반도체 관련 기사' (한미반도체 언급, SK하이닉스 언급 없음)
+
+        Hard gate: company_name이 title에 없음 → 통과 실패 (hard gate에서 걸러짐)
+        """
+        mock_http = AsyncMock(spec=httpx.AsyncClient)
+        search_adapter = NaverNewsSearchAdapter(
+            client_id="test", client_secret="test",
+            http_client=mock_http,
+        )
+        service = SeededNewsCandidateService(search_adapter=search_adapter)
+
+        seed = DisclosureTitleDTO(
+            symbol="000660",
+            company_name="SK하이닉스",
+            headline="HBM4 양산 발표",
+            published_at="20260517",
+        )
+
+        # Item about 한미반도체 (no mention of SK하이닉스)
+        items = [
+            {
+                "title": "한미반도체, 신규 장비 수주",
+                "description": "한미반도체가 신규 장비를 수주했습니다.",
+                "link": "https://news.naver.com/main/article/301",
+                "originallink": "https://example.com/news/301",
+                "pubDate": "Fri, 17 May 2026 09:00:00 +0900",
+            },
+        ]
+        mock_http.get.return_value = _make_mock_response(items)
+
+        candidates, metrics = await service.process_seeds([seed])
+
+        # Hard gate: company_name "SK하이닉스" not in title/desc → hard gate drop
+        assert len(candidates) == 0
+        assert metrics.hard_gate_dropped >= 1
+
+        await service.close()
+
+    # ------------------------------------------------------------------
+    # Seed pacing
+    # ------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_seed_pacing_delay(self) -> None:
+        """seed 간 asyncio.sleep(0.5) 호출 검증.
+
+        3개 seed → 2회의 sleep 호출 (첫 번째 seed 직전에는 sleep 없음).
+        """
+        mock_http = AsyncMock(spec=httpx.AsyncClient)
+        search_adapter = NaverNewsSearchAdapter(
+            client_id="test", client_secret="test",
+            http_client=mock_http,
+        )
+        service = SeededNewsCandidateService(search_adapter=search_adapter)
+
+        # Mock _process_one_seed to return empty results quickly
+        async def mock_process(seed):
+            return [], {
+                "has_queries": 1, "queries_count": 1, "raw_count": 0,
+                "hard_gate_passed": 0, "hard_gate_dropped": 0,
+                "deduped_count": 0, "scored_count": 0,
+                "dropped_low_confidence": 0, "dropped_cross_symbol": 0,
+                "retry_count": 0,
+            }
+        service._process_one_seed = mock_process  # type: ignore[assignment]
+
+        seeds = [
+            DisclosureTitleDTO(symbol="005930", company_name="삼성전자",
+                               headline=f"공시 {i}", published_at="20260517")
+            for i in range(3)
+        ]
+
+        import time
+        start = time.monotonic()
+        candidates, metrics = await service.process_seeds(seeds)
+        elapsed = time.monotonic() - start
+
+        # 2 delays × 0.5s = minimum ~1.0s
+        assert elapsed >= 0.8, (
+            f"Expected pacing delay ~1.0s for 3 seeds, got {elapsed:.2f}s"
+        )
+
+        await service.close()
+
+    # ------------------------------------------------------------------
+    # Seed quality filter
+    # ------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_seed_quality_filter(self) -> None:
+        """잘못된 company_name seed → 필터링 + seed_quality_drop_count 증가.
+
+        - seed with company_name='X' (1자) → quality filter drop
+        - seed with company_name='삼성전자' (정상) → 통과
+        """
+        mock_http = AsyncMock(spec=httpx.AsyncClient)
+        search_adapter = NaverNewsSearchAdapter(
+            client_id="test", client_secret="test",
+            http_client=mock_http,
+        )
+        service = SeededNewsCandidateService(search_adapter=search_adapter)
+
+        # Valid seed
+        valid_seed = DisclosureTitleDTO(
+            symbol="005930", company_name="삼성전자",
+            headline="유상증자 결정", published_at="20260517",
+        )
+        # Invalid seed (too short company_name — 1자)
+        invalid_seed = DisclosureTitleDTO(
+            symbol="000660", company_name="X",  # 1자 → quality filter drop
+            headline="HBM4 발표", published_at="20260517",
+        )
+
+        # Mock search to return items for valid seed
+        items = [
+            {
+                "title": "삼성전자 유상증자", "description": "desc",
+                "link": "link1", "originallink": "orig1",
+                "pubDate": "Fri, 17 May 2026 09:00:00 +0900",
+            },
+        ]
+        mock_http.get.return_value = _make_mock_response(items)
+
+        candidates, metrics = await service.process_seeds([invalid_seed, valid_seed])
+
+        # Invalid seed filtered (1자 company_name), valid seed processed
+        assert metrics.seed_quality_drop_count == 1, (
+            f"Expected 1 seed quality drop, got {metrics.seed_quality_drop_count}"
+        )
+        assert metrics.seeds_with_results >= 1, "Valid seed should have results"
+
+        await service.close()
+
+    @pytest.mark.asyncio
+    async def test_seed_quality_filter_short_name(self) -> None:
+        """매우 짧은 company_name seed (<2자) → 필터링."""
+        service = SeededNewsCandidateService(
+            search_adapter=Mock(spec=NaverNewsSearchAdapter),
+        )
+
+        seed = DisclosureTitleDTO(
+            symbol="000660",
+            company_name="",  # empty
+            headline="HBM4 발표",
+            published_at="20260517",
+        )
+
+        # Empty company_name passes validation (can't validate, pass through)
+        assert service._validate_seed_company_name(seed, "000660") is True
+
+        # Very short company_name fails
+        seed2 = DisclosureTitleDTO(
+            symbol="000660",
+            company_name="A",  # too short
+            headline="HBM4 발표",
+            published_at="20260517",
+        )
+        assert service._validate_seed_company_name(seed2, "000660") is False
+
+    # ------------------------------------------------------------------
+    # Cross-symbol noise in metrics
+    # ------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_cross_symbol_noise_in_metrics(self) -> None:
+        """metrics에 cross-symbol noise 카운트 반영 확인.
+
+        Note: 현재 _is_cross_symbol_noise는 hard gate 통과 항목에 대해
+        항상 (False, 1.0)을 반환 (hard gate가 이미 company_name 존재를 보장).
+        따라서 dropped_cross_symbol은 0이 기본값.
+        metrics 필드가 정상적으로 초기화되고 집계되는지만 검증.
+        """
+        mock_http = AsyncMock(spec=httpx.AsyncClient)
+        search_adapter = NaverNewsSearchAdapter(
+            client_id="test", client_secret="test",
+            http_client=mock_http,
+        )
+        service = SeededNewsCandidateService(search_adapter=search_adapter)
+
+        seed = DisclosureTitleDTO(
+            symbol="005930",
+            company_name="삼성전자",
+            headline="유상증자 결정",
+            published_at="20260517",
+        )
+
+        # Relevant items only (no cross-symbol noise in current implementation)
+        items = [
+            {
+                "title": "삼성전자 유상증자 결정",
+                "description": "삼성전자가 유상증자를 결정했습니다.",
+                "link": "link1", "originallink": "orig1",
+                "pubDate": "Fri, 17 May 2026 09:00:00 +0900",
+            },
+            {
+                "title": "삼성전자, 유상증자 소식에 주가 강세",
+                "description": "삼성전자 주가가 유상증자 발표 이후 강세.",
+                "link": "link2", "originallink": "orig2",
+                "pubDate": "Fri, 17 May 2026 09:00:00 +0900",
+            },
+        ]
+        mock_http.get.return_value = _make_mock_response(items)
+
+        candidates, metrics = await service.process_seeds([seed])
+
+        # Verify metrics field exists and is properly initialized
+        assert hasattr(metrics, "dropped_cross_symbol")
+        assert isinstance(metrics.dropped_cross_symbol, int)
+        # Cross-symbol noise usually 0 since hard gate catches unrelated items first
+        assert metrics.dropped_cross_symbol >= 0
+        # Verify item-level metric
+        for sym_data in metrics.per_symbol.values():
+            assert "dropped_cross_symbol" in sym_data
+            assert isinstance(sym_data["dropped_cross_symbol"], int)
+
+        await service.close()

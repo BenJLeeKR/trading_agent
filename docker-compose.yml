@@ -80,9 +80,6 @@ services:
       # P2: Live-info token cache (WebSocket approval key persistence)
       KIS_LIVE_TOKEN_CACHE_ENABLED: "${KIS_LIVE_TOKEN_CACHE_ENABLED:-true}"
       KIS_LIVE_TOKEN_CACHE_PATH: "${KIS_LIVE_TOKEN_CACHE_PATH:-.cache/kis_live_token.json}"
-      # P3: Seeded News — KIS live disclosure (공시 제목 조회용)
-      KIS_LIVE_APP_KEY: "${KIS_LIVE_APP_KEY:-}"
-      KIS_LIVE_APP_SECRET: "${KIS_LIVE_APP_SECRET:-}"
       # P3: Seeded News — NAVER Search API (news candidate 수집용)
       NAVER_CLIENT_ID: "${NAVER_CLIENT_ID:-}"
       NAVER_CLIENT_SECRET: "${NAVER_CLIENT_SECRET:-}"
@@ -292,15 +289,12 @@ services:
       KIS_DEV_TOKEN_CACHE_PATH: "${KIS_DEV_TOKEN_CACHE_PATH:-.cache/kis_token.json}"
       # KIS Live Info (076/163)
       KIS_LIVE_INFO_ENABLED: "${KIS_LIVE_INFO_ENABLED:-false}"
-      KIS_LIVE_INFO_APP_KEY: "${KIS_LIVE_INFO_APP_KEY}"
-      KIS_LIVE_INFO_APP_SECRET: "${KIS_LIVE_INFO_APP_SECRET}"
+      KIS_LIVE_INFO_APP_KEY: "${KIS_LIVE_INFO_APP_KEY:-}"
+      KIS_LIVE_INFO_APP_SECRET: "${KIS_LIVE_INFO_APP_SECRET:-}"
       KIS_LIVE_INFO_BASE_URL: "${KIS_LIVE_INFO_BASE_URL}"
       KIS_LIVE_INFO_WS_URL: "${KIS_LIVE_INFO_WS_URL}"
       KIS_LIVE_TOKEN_CACHE_ENABLED: "${KIS_LIVE_TOKEN_CACHE_ENABLED:-true}"
       KIS_LIVE_TOKEN_CACHE_PATH: "${KIS_LIVE_TOKEN_CACHE_PATH:-.cache/kis_live_token.json}"
-      # P3: Seeded News — KIS live disclosure (공시 제목 조회용)
-      KIS_LIVE_APP_KEY: "${KIS_LIVE_APP_KEY:-}"
-      KIS_LIVE_APP_SECRET: "${KIS_LIVE_APP_SECRET:-}"
       # P3: Seeded News — NAVER Search API (news candidate 수집용)
       NAVER_CLIENT_ID: "${NAVER_CLIENT_ID:-}"
       NAVER_CLIENT_SECRET: "${NAVER_CLIENT_SECRET:-}"

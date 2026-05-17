@@ -304,4 +304,5 @@ class SeededNewsCandidate:
     """검색에 사용된 query string (logging/diagnostics 용)"""
     originallink: str | None = None
     """NAVER ``originallink`` (언론사 원본 URL, dedupe 용)"""
-
+    sort_mode: str = "sim"
+    """NAVER search sort mode (``sim``=정확도순, ``date``=날짜순)"""

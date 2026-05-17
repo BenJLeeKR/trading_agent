@@ -72,7 +72,7 @@ async def main() -> None:
         print()
         print("=" * 60)
         print("샘플 검증 결과: SKIP (KIS live credential 미설정)")
-        print("  KIS_LIVE_APP_KEY / KIS_LIVE_APP_SECRET 미설정으로")
+        print("  KIS_LIVE_INFO_APP_KEY / KIS_LIVE_INFO_APP_SECRET 미설정으로")
         print("  LiveDisclosureSeedService가 [] 반환")
         print("=" * 60)
         return

@@ -190,19 +190,21 @@ def _resolve_kis_live_token_cache_path() -> str:
 
 
 def _resolve_kis_live_app_key() -> str | None:
-    """Resolve live disclosure API key from ``KIS_LIVE_APP_KEY``.
+    """Resolve live disclosure API key from ``KIS_LIVE_INFO_APP_KEY``.
 
+    Uses the same credential as the live-info read-only client.
     Returns ``None`` when unset (disclosure 기능 비활성화).
     """
-    return os.getenv("KIS_LIVE_APP_KEY") or None
+    return os.getenv("KIS_LIVE_INFO_APP_KEY") or None
 
 
 def _resolve_kis_live_app_secret() -> str | None:
-    """Resolve live disclosure API secret from ``KIS_LIVE_APP_SECRET``.
+    """Resolve live disclosure API secret from ``KIS_LIVE_INFO_APP_SECRET``.
 
+    Uses the same credential as the live-info read-only client.
     Returns ``None`` when unset (disclosure 기능 비활성화).
     """
-    return os.getenv("KIS_LIVE_APP_SECRET") or None
+    return os.getenv("KIS_LIVE_INFO_APP_SECRET") or None
 
 
 def _resolve_kis_disclosure_token_cache_path() -> str:

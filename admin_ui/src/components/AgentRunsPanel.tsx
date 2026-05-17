@@ -4,7 +4,7 @@ import type { AgentRunResponse } from "../types/api";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { AgentTypeBadge } from "./AgentTypeBadge";
-import { formatKstDateTime } from "../lib/utils";
+import { formatKstDateTime, formatEiOutput, formatReasonCodeLabel } from "../lib/utils";
 
 /* ───────────────────────────────────────────
  * Status badge colour
@@ -161,17 +161,41 @@ export default function AgentRunsPanel({ decisionContextId }: AgentRunsPanelProp
               {/* Structured output summary — limited key fields */}
               {run.structured_output_json && (
                 <div className="text-xs text-[#475569] space-y-0.5 mb-2">
-                  {run.structured_output_json.summary !== undefined && (
-                    <p><span className="font-medium text-[#64748b]">summary:</span> {String(run.structured_output_json.summary)}</p>
+                  {/* summary: top-level (FDC/AR) or EI fallback from formatEiOutput */}
+                  {(() => {
+                    const so = run.structured_output_json;
+                    const eiView = run.agent_type === 'event_interpretation'
+                      ? formatEiOutput(so as Record<string, unknown>)
+                      : null;
+                    const summaryText = so["summary"] !== undefined
+                      ? String(so["summary"])
+                      : eiView?.operatorSummary ?? null;
+                    if (summaryText) {
+                      return <p><span className="font-medium text-[#64748b]">summary:</span> {summaryText}</p>;
+                    }
+                    return null;
+                  })()}
+                  {/* reason_codes: top-level (FDC/AR) or EI fallback from formatEiOutput */}
+                  {(() => {
+                    const so = run.structured_output_json;
+                    const eiView = run.agent_type === 'event_interpretation'
+                      ? formatEiOutput(so as Record<string, unknown>)
+                      : null;
+                    const codes: string[] = (so["reason_codes"] as string[] | undefined) ||
+                      eiView?.reasonCodes || [];
+                    const codeLabels: string[] = so["reason_codes"]
+                      ? (so["reason_codes"] as string[]).map(formatReasonCodeLabel)
+                      : eiView?.reasonCodeLabels || [];
+                    if (codes.length > 0) {
+                      return <p><span className="font-medium text-[#64748b]">reason_codes:</span> {codeLabels.join(', ')}</p>;
+                    }
+                    return null;
+                  })()}
+                  {run.structured_output_json["decision_type"] !== undefined && (
+                    <p><span className="font-medium text-[#64748b]">decision_type:</span> {String(run.structured_output_json["decision_type"])}</p>
                   )}
-                  {run.structured_output_json.reason_codes !== undefined && (
-                    <p><span className="font-medium text-[#64748b]">reason_codes:</span> {String(run.structured_output_json.reason_codes)}</p>
-                  )}
-                  {run.structured_output_json.decision_type !== undefined && (
-                    <p><span className="font-medium text-[#64748b]">decision_type:</span> {String(run.structured_output_json.decision_type)}</p>
-                  )}
-                  {run.structured_output_json.risk_opinion !== undefined && (
-                    <p><span className="font-medium text-[#64748b]">risk_opinion:</span> {String(run.structured_output_json.risk_opinion)}</p>
+                  {run.structured_output_json["risk_opinion"] !== undefined && (
+                    <p><span className="font-medium text-[#64748b]">risk_opinion:</span> {String(run.structured_output_json["risk_opinion"])}</p>
                   )}
                 </div>
               )}

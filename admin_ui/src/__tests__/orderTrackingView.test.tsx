@@ -400,3 +400,28 @@ describe("OrderTrackingView reason_code metadata label", () => {
     expect(screen.getByText("체결 확인")).toBeInTheDocument();
   });
 });
+
+/* ───────────────────────────────────────────
+ * Scenario 9: Pagination footer 표시
+ * ─────────────────────────────────────────── */
+describe("OrderTrackingView pagination footer", () => {
+  it("shows pagination footer when orders are loaded", async () => {
+    mockFetchOnce(mockOrders);
+
+    render(
+      <MemoryRouter>
+        <OrderTrackingView />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("주문 추적")).toBeInTheDocument();
+    });
+
+    // Total item count should appear (mockOrders has 2 items)
+    expect(screen.getByText("총 2건")).toBeInTheDocument();
+    // Page navigation should appear
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeInTheDocument();
+  });
+});

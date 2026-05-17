@@ -100,6 +100,19 @@ class AgentRunRecorder:
         # can see the field should have been written in Korean.
         output_dict = normalize_structured_output(output_dict)
 
+        # ── EI top_reason_codes empty detection ────────────────────
+        if output_dict.get("agent_name") == "event_interpretation":
+            av = output_dict.get("aggregate_view", {})
+            if isinstance(av, dict):
+                trc = av.get("top_reason_codes", [])
+                ec = av.get("event_count", 0)
+                if not trc and ec is not None and ec > 0:
+                    logger.warning(
+                        "EI top_reason_codes is empty after normalization "
+                        "(event_count=%d) — LLM may have omitted the field",
+                        ec,
+                    )
+
         # --- Schema alignment consistency checks ---
         # Verify that structured_output["agent_name"] matches agent_type
         stored_agent_name = output_dict.get("agent_name")

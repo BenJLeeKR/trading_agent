@@ -12,6 +12,7 @@ PipelineMetrics를 통해 각 실행의 품질 지표를 구조화된 로그로 
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -35,6 +36,9 @@ _MAX_CANDIDATES_PER_SEED = 3
 
 _MAX_CANDIDATES_PER_SYMBOL_GLOBAL = 3
 """Global maximum candidates per symbol after aggregation across all seeds."""
+
+_SEED_PACING_DELAY: float = 0.5
+"""Seconds to wait between processing each seed (429 Rate Limit 대응)."""
 
 
 @dataclass(slots=True)
@@ -66,6 +70,12 @@ class PipelineMetrics:
     """Final candidates after score threshold and top-N."""
     dropped_low_confidence: int = 0
     """Items that passed hard gate and dedupe but failed score threshold."""
+    dropped_cross_symbol: int = 0
+    """Items penalized or dropped due to cross-symbol noise detection."""
+    seed_quality_drop_count: int = 0
+    """Seeds dropped by quality filter (suspicious company_name)."""
+    retry_count: int = 0
+    """Total API retry attempts across all queries."""
     per_symbol: dict[str, dict[str, int]] = field(default_factory=dict)
     """Per-symbol breakdown for granular quality inspection."""
 
@@ -124,8 +134,24 @@ class SeededNewsCandidateService:
             return [], metrics
 
         all_candidates: list[SeededNewsCandidate] = []
+        seed_quality_drops = 0
 
-        for seed in seeds:
+        for idx, seed in enumerate(seeds):
+            # Seed pacing: delay between seeds to avoid 429 Rate Limit
+            if idx > 0:
+                await asyncio.sleep(_SEED_PACING_DELAY)
+
+            # Seed quality filter: skip suspicious seeds
+            if not self._validate_seed_company_name(seed, seed.symbol):
+                logger.warning(
+                    "SeededNewsCandidateService: seed quality filter dropped "
+                    "symbol=%s company=%s",
+                    seed.symbol,
+                    seed.company_name,
+                )
+                seed_quality_drops += 1
+                continue
+
             candidates, seed_metrics = await self._process_one_seed(seed)
             all_candidates.extend(candidates)
 
@@ -141,6 +167,10 @@ class SeededNewsCandidateService:
             metrics.dropped_low_confidence += seed_metrics.get(
                 "dropped_low_confidence", 0,
             )
+            metrics.dropped_cross_symbol += seed_metrics.get(
+                "dropped_cross_symbol", 0,
+            )
+            metrics.retry_count += seed_metrics.get("retry_count", 0)
 
             metrics.per_symbol[seed.symbol] = {
                 "raw": seed_metrics.get("raw_count", 0),
@@ -151,8 +181,11 @@ class SeededNewsCandidateService:
                 "dropped_low_confidence": seed_metrics.get(
                     "dropped_low_confidence", 0,
                 ),
+                "dropped_cross_symbol": seed_metrics.get("dropped_cross_symbol", 0),
                 "kept": len(candidates),
             }
+
+        metrics.seed_quality_drop_count = seed_quality_drops
 
         # Sort by confidence_score descending (global rank)
         all_candidates.sort(
@@ -192,8 +225,8 @@ class SeededNewsCandidateService:
         """Emit structured quality metrics as a single INFO log line."""
         logger.info(
             "SeededNewsCandidateService metrics: "
-            "seeds=%d queries=%d raw=%d hard_gate_pass=%d hard_gate_drop=%d "
-            "deduped=%d dropped_low_conf=%d kept=%d",
+            "seeds=%d queries=%d raw=%d gate+%d/gate-%d "
+            "deduped=%d low_conf=%d cross_sym=%d seed_q_drop=%d retry=%d kept=%d",
             metrics.seeds_total,
             metrics.queries_executed,
             metrics.raw_candidates_fetched,
@@ -201,6 +234,9 @@ class SeededNewsCandidateService:
             metrics.hard_gate_dropped,
             metrics.deduped_count,
             metrics.dropped_low_confidence,
+            metrics.dropped_cross_symbol,
+            metrics.seed_quality_drop_count,
+            metrics.retry_count,
             metrics.kept_count,
         )
         # Per-symbol breakdown at DEBUG level
@@ -208,7 +244,7 @@ class SeededNewsCandidateService:
             for symbol, sm in metrics.per_symbol.items():
                 logger.debug(
                     "  symbol=%s raw=%d gate+%d/gate-%d deduped=%d "
-                    "scored=%d drop=%d kept=%d",
+                    "scored=%d drop=%d cross_sym=%d kept=%d",
                     symbol,
                     sm["raw"],
                     sm["hard_gate_passed"],
@@ -216,6 +252,7 @@ class SeededNewsCandidateService:
                     sm["deduped"],
                     sm["scored_before_threshold"],
                     sm["dropped_low_confidence"],
+                    sm.get("dropped_cross_symbol", 0),
                     sm["kept"],
                 )
 
@@ -244,6 +281,8 @@ class SeededNewsCandidateService:
             "deduped_count": 0,
             "scored_count": 0,
             "dropped_low_confidence": 0,
+            "dropped_cross_symbol": 0,
+            "retry_count": 0,
         }
 
         # Step 1: Build queries
@@ -292,9 +331,10 @@ class SeededNewsCandidateService:
             )
             return [], seed_metrics
 
-        # Step 4: Deduplicate and score
-        scored = self._score_and_rank(hard_gated, seed)
+        # Step 4: Deduplicate and score (with cross-symbol noise detection)
+        scored, cross_symbol_count = self._score_and_rank(hard_gated, seed)
         seed_metrics["deduped_count"] = len(scored)
+        seed_metrics["dropped_cross_symbol"] = cross_symbol_count
 
         # Step 5: Threshold filter
         qualified = [
@@ -385,13 +425,13 @@ class SeededNewsCandidateService:
         self,
         items: list[NaverNewsItem],
         seed: DisclosureTitleDTO,
-    ) -> list[SeededNewsCandidate]:
+    ) -> tuple[list[SeededNewsCandidate], int]:
         """Score, deduplicate, and rank raw NAVER items.
 
         Pipeline:
         1. originallink 기준 중복 제거
         2. Jaccard-like title similarity dedupe (>0.85 = duplicate)
-        3. 개별 Scoring
+        3. 개별 Scoring (cross-symbol noise penalty 포함)
         4. Score descending 정렬
 
         Parameters
@@ -403,8 +443,9 @@ class SeededNewsCandidateService:
 
         Returns
         -------
-        list[SeededNewsCandidate]
-            Scored candidates sorted by confidence_score descending.
+        tuple[list[SeededNewsCandidate], int]
+            (Scored candidates sorted by confidence_score descending,
+             count of items detected as cross-symbol noise).
         """
         # Phase 1: Dedupe by originallink
         seen_links: set[str] = set()
@@ -429,9 +470,13 @@ class SeededNewsCandidateService:
                 deduped_titles.append(item)
 
         # Phase 3: Score each candidate
+        company_name = seed.company_name or ""
+        symbol = seed.symbol or ""
         candidates: list[SeededNewsCandidate] = []
+        cross_symbol_count = 0
+
         for item in deduped_titles:
-            score = self._compute_score(item, seed)
+            score = self._compute_score(item, seed, company_name, symbol)
             candidate = SeededNewsCandidate(
                 symbol=seed.symbol,
                 company_name=seed.company_name,
@@ -449,17 +494,26 @@ class SeededNewsCandidateService:
             )
             candidates.append(candidate)
 
+            # Track cross-symbol noise
+            is_noise, _ = self._is_cross_symbol_noise(
+                item, company_name, symbol,
+            )
+            if is_noise:
+                cross_symbol_count += 1
+
         # Sort by score descending
         candidates.sort(
             key=lambda c: c.confidence_score,
             reverse=True,
         )
-        return candidates
+        return candidates, cross_symbol_count
 
     def _compute_score(
         self,
         item: NaverNewsItem,
         seed: DisclosureTitleDTO,
+        company_name: str = "",
+        symbol: str = "",
     ) -> float:
         """Compute relevance score for a NAVER news item against a seed.
 
@@ -468,11 +522,13 @@ class SeededNewsCandidateService:
         ============================ ====== ====================================
         Component                    Max    Notes
         ============================ ====== ====================================
-        Company name match in title    40   종목명이 title에 있으면 +40
-        Symbol in description          10   종목코드가 description에 있으면 +10
+        Company name match in title    20   종목명이 title에 있으면 +20 (하향)
+        Symbol in description          20   종목코드가 description에 있으면 +20
+        Symbol in title                25   종목코드가 title에 있으면 +25 (상향)
         Keyword overlap                 0~35  seed 핵심어 1개당 +10 (max 35)
         Freshness                       0~20  within 24h=20, within 72h=10
         Description quality            0~5   길이 50자↑=+5, 20자↑=+2
+        Cross-symbol noise penalty   ×0.3   회사명 불일치 시 70% 감점
         ============================ ====== ====================================
 
         Total capped at 100.
@@ -482,26 +538,29 @@ class SeededNewsCandidateService:
         desc_clean = self._strip_html(
             item.description,
         ).lower() if item.description else ""
+        company_lower = company_name.lower()
 
-        # Company name match in title (+40)
-        if seed.company_name and seed.company_name.lower() in title_clean:
-            score += 40
-        elif seed.company_name and seed.company_name.lower() in desc_clean:
-            score += 20  # partial credit for description match
+        # 1. Company name match in title (하향: 40→20)
+        if company_name and company_lower in title_clean:
+            score += 20.0
+        elif company_name and company_lower in desc_clean:
+            score += 10.0  # description만 있으면 +10
 
-        # Symbol in description (+10, price mention indicator)
-        if seed.symbol and seed.symbol in desc_clean:
-            score += 10
+        # 2. Symbol match (상향: 10→20, title에 있으면 +25)
+        if symbol:
+            if symbol in title_clean:
+                score += 25.0
+            elif symbol in desc_clean:
+                score += 20.0
 
-        # Keyword overlap (+0~35, capped)
-        # 키워드 overlap 비중 강화 (description quality 축소분을 여기로 이동)
+        # 3. Keyword overlap (+0~35, capped)
         keyword_overlap = self._query_builder.get_keyword_overlap(
             seed.headline or "",
             item.title,
         )
         score += min(keyword_overlap * 10, 35)
 
-        # Freshness (+0~20)
+        # 4. Freshness (+0~20)
         pub_dt = self._parse_datetime(item.pubDate)
         if pub_dt is not None:
             hours_ago = (
@@ -512,14 +571,101 @@ class SeededNewsCandidateService:
             elif hours_ago < 72:
                 score += 10
 
-        # Description quality (+0~5, 약한 보조 신호)
+        # 5. Description quality (+0~5, 약한 보조 신호)
         desc_len = len(self._strip_html(item.description or ""))
         if desc_len > 50:
             score += 5
         elif desc_len > 20:
             score += 2
 
+        # 6. Cross-symbol noise penalty
+        is_noise, penalty = self._is_cross_symbol_noise(
+            item, company_name, symbol,
+        )
+        if is_noise:
+            score *= penalty
+
         return min(score, 100.0)  # cap at 100
+
+    def _is_cross_symbol_noise(
+        self,
+        candidate: NaverNewsItem,
+        seed_company_name: str,
+        seed_symbol: str,
+    ) -> tuple[bool, float]:
+        """
+        Detect cross-symbol noise.
+
+        Cross-symbol noise occurs when a NAVER news result mentions a DIFFERENT
+        company than the seed's symbol. Example: seed.company_name="한미반도체"
+        but symbol="000660" (SK하이닉스). The news may be about SK하이닉스 but
+        the seed's company_name doesn't match.
+
+        Detection logic:
+        - If the candidate's title/description does NOT mention the seed's
+          company_name at all, it's likely about a different company.
+        - This is a Scoring-level penalty, NOT Hard Gate 차단 (False Negative
+          방지).
+
+        Returns
+        -------
+        tuple[bool, float]
+            (is_noise, penalty_factor):
+            - is_noise: True if the candidate appears to be about a different company
+            - penalty_factor: 0.0~1.0 (1.0 = no penalty, 0.3 = 70% score reduction)
+        """
+        if not seed_company_name or not seed_symbol:
+            return (False, 1.0)
+
+        title_lower = (candidate.title or "").lower()
+        desc_lower = (candidate.description or "").lower()
+        seed_company_lower = seed_company_name.lower()
+
+        # Check if the candidate's title/description mentions the seed's company_name
+        company_in_title = seed_company_lower in title_lower
+        company_in_desc = seed_company_lower in desc_lower
+
+        if not company_in_title and not company_in_desc:
+            # Candidate does NOT mention the seed's company at all
+            # This is likely cross-symbol noise
+            logger.debug(
+                "Cross-symbol noise detected: seed_company=%s seed_symbol=%s "
+                "title=%r",
+                seed_company_name,
+                seed_symbol,
+                candidate.title,
+            )
+            return (True, 0.3)  # 70% penalty
+
+        return (False, 1.0)
+
+    def _validate_seed_company_name(
+        self,
+        seed: DisclosureTitleDTO,
+        symbol: str,
+    ) -> bool:
+        """
+        Quick validation: does the seed's company_name look like it belongs
+        to this symbol?
+
+        Basic heuristic: company_name should be at least 2 characters.
+        Very short company_name strings are suspicious and likely data errors.
+
+        Returns True if seed looks valid, False if suspicious.
+        """
+        if not seed.company_name or not symbol:
+            return True  # can't validate, pass through
+
+        # Basic heuristic: if company_name is very short (< 2 chars), it's suspicious
+        if len(seed.company_name.strip()) < 2:
+            logger.warning(
+                "Suspicious seed company_name (too short): symbol=%s company=%r",
+                symbol,
+                seed.company_name,
+            )
+            return False
+
+        return True
 
     @staticmethod
     def _title_similarity(title_a: str, title_b: str) -> float:

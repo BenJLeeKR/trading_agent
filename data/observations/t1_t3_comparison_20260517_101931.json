@@ -1,0 +1,25 @@
+{
+  "generated_at": "2026-05-17T10:19:31.771259+00:00",
+  "symbols_analyzed": [
+    "051910",
+    "096770",
+    "005930",
+    "035420",
+    "000660"
+  ],
+  "scenarios": {},
+  "metrics": {
+    "total_symbols": 5,
+    "consistent_reinforcement": 0,
+    "conflicting": 0,
+    "duplicate_amplification": 0,
+    "t3_low_quality": 0
+  },
+  "recommendations": {
+    "tier_handling": {},
+    "prompt_changes": [],
+    "data_quality": [
+      "T3(Seeded News) 이벤트의 body_summary 품질 개선 필요. 현재 시뮬레이션 기반이므로 실제 뉴스 데이터 수집 후 재검증 권장."
+    ]
+  }
+}

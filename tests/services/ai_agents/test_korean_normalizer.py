@@ -9,6 +9,7 @@ Tests cover:
 from __future__ import annotations
 
 from agent_trading.services.ai_agents.korean_normalizer import (
+    _NARRATIVE_KEYS,
     contains_korean,
     normalize_structured_output,
     validate_or_normalize_korean,
@@ -144,14 +145,21 @@ class TestNormalizeStructuredOutput:
         result = normalize_structured_output(output)
         assert result["opposing_evidence"] == ("유동성 부족", "변동성 위험")
 
-    def test_risk_opinion_normalized(self) -> None:
-        """'risk_opinion' value is normalised."""
+    def test_risk_opinion_not_wrapped(self) -> None:
+        """'risk_opinion' is a code-type enum, NOT normalised."""
+        output = {"risk_opinion": "allow"}
+        result = normalize_structured_output(output)
+        assert result["risk_opinion"] == "allow"
+        assert "[ko:" not in str(result["risk_opinion"])
+
+    def test_risk_opinion_english_passes_unchanged(self) -> None:
+        """English 'risk_opinion' passes through unchanged (code field)."""
         output = {"risk_opinion": "allow with caution"}
         result = normalize_structured_output(output)
-        assert result["risk_opinion"] == "[ko: allow with caution]"
+        assert result["risk_opinion"] == "allow with caution"
 
-    def test_risk_opinion_korean_passes(self) -> None:
-        """Korean 'risk_opinion' passes through."""
+    def test_risk_opinion_korean_passes_unchanged(self) -> None:
+        """Korean 'risk_opinion' also passes through unchanged (code field)."""
         output = {"risk_opinion": "조심스럽게 허용"}
         result = normalize_structured_output(output)
         assert result["risk_opinion"] == "조심스럽게 허용"
@@ -213,3 +221,65 @@ class TestNormalizeStructuredOutput:
         result = normalize_structured_output(output)
         assert isinstance(result["opposing_evidence"], tuple)
         assert result["opposing_evidence"] == ("[ko: English text]",)
+
+
+# ============================================================================
+# _NARRATIVE_KEYS policy tests
+# ============================================================================
+
+
+class TestNarrativeKeysPolicy:
+    """_NARRATIVE_KEYS must contain only narrative fields, not code-type enums."""
+
+    def test_narrative_keys_excludes_code_fields(self) -> None:
+        """Code-type enum fields must NOT be in _NARRATIVE_KEYS."""
+        code_fields = {"risk_opinion", "overall_bias", "event_bias"}
+        for field in code_fields:
+            assert field not in _NARRATIVE_KEYS, (
+                f"{field} is a code-type enum field and must NOT be "
+                f"in _NARRATIVE_KEYS"
+            )
+
+    def test_narrative_keys_includes_required_fields(self) -> None:
+        """Narrative fields MUST be in _NARRATIVE_KEYS."""
+        required = {"summary", "opposing_evidence"}
+        for field in required:
+            assert field in _NARRATIVE_KEYS, (
+                f"{field} is a narrative field and MUST be in _NARRATIVE_KEYS"
+            )
+
+
+class TestNarrativePolicyKoreanEnforcement:
+    """Korean enforcement policy for narrative vs code fields."""
+
+    def test_code_fields_unchanged(self) -> None:
+        """Code-type fields pass through normalizer unchanged."""
+        data = {
+            "overall_bias": "neutral",
+            "event_conflict": False,
+            "top_reason_codes": ["price_decline"],
+            "evidence_strength": "moderate",
+            "event_count": 3,
+        }
+        result = normalize_structured_output(data)
+        for key, val in data.items():
+            assert result[key] == val, (
+                f"Code field '{key}' changed from '{val}' to '{result[key]}'"
+            )
+
+    def test_deep_nested_summary_normalized(self) -> None:
+        """Deeply nested narrative fields are normalised."""
+        data = {
+            "aggregate_view": {
+                "opposing_evidence": "Some evidence in English",
+                "top_reason_codes": ["code1"],
+            },
+            "events": [
+                {"summary": "Event description in English"},
+                {"summary": "한국어 이벤트 설명"},
+            ],
+        }
+        result = normalize_structured_output(data)
+        assert "[ko: Some evidence in English]" == result["aggregate_view"]["opposing_evidence"]
+        assert "[ko: Event description in English]" == result["events"][0]["summary"]
+        assert result["events"][1]["summary"] == "한국어 이벤트 설명"

@@ -21,6 +21,7 @@ structured sub-objects (e.g. ``InterpretedEvent``, ``AggregateEventView``,
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -230,6 +231,15 @@ class AggregateEventView:
     """Number of material events actually grounded for this symbol."""
     no_material_events: bool = True
     """``True`` when there are no material events to analyze."""
+
+    def __post_init__(self) -> None:
+        _logger = logging.getLogger(self.__class__.__module__)
+        if not self.top_reason_codes and self.event_count > 0:
+            _logger.warning(
+                "AggregateEventView.top_reason_codes is empty but "
+                "event_count=%d — LLM may have omitted the field",
+                self.event_count,
+            )
 
 
 @dataclass(slots=True, frozen=True)

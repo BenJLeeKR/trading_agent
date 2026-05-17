@@ -1,0 +1,151 @@
+{
+  "seeds_fetched": 160,
+  "raw_candidates": 370,
+  "hard_gate_passed": 75,
+  "hard_gate_dropped": 295,
+  "after_dedupe": 75,
+  "after_threshold": 72,
+  "final_kept": 10,
+  "per_symbol": {
+    "005930": {
+      "symbol": "005930",
+      "company": "삼성전자",
+      "seeds": 40,
+      "top_n_global": 3,
+      "top_score": 95.0
+    },
+    "000660": {
+      "symbol": "000660",
+      "company": "SK하이닉스",
+      "seeds": 40,
+      "top_n_global": 3,
+      "top_score": 90.0
+    },
+    "035420": {
+      "symbol": "035420",
+      "company": "NAVER",
+      "seeds": 40,
+      "top_n_global": 3,
+      "top_score": 90.0
+    },
+    "005380": {
+      "symbol": "005380",
+      "company": "현대차",
+      "seeds": 40,
+      "top_n_global": 1,
+      "top_score": 70.0
+    }
+  },
+  "top_candidates": [
+    {
+      "rank": 1,
+      "symbol": "005930",
+      "company_name": "삼성전자",
+      "score": 95.0,
+      "seed_title": "삼성 노조 \"사측 위원 교체\" 요청…정부·사장단 중재에도 \"쉽지 않네\"...",
+      "candidate_title": "삼성전자 노조 위원장 '月 1000만원 수당'?…'노노갈등' 격화",
+      "url": "https://n.news.naver.com/mnews/article/008/0005358847?sid=101",
+      "cross_symbol_noise": false
+    },
+    {
+      "rank": 2,
+      "symbol": "005930",
+      "company_name": "삼성전자",
+      "score": 90.0,
+      "seed_title": "김영훈 노동부 장관, 주말 삼성전자 경영진과 만난다...",
+      "candidate_title": "노동부 장관, 이번 주말 삼성전자 경영진 만난다",
+      "url": "https://n.news.naver.com/mnews/article/018/0006282755?sid=102",
+      "cross_symbol_noise": false
+    },
+    {
+      "rank": 3,
+      "symbol": "005930",
+      "company_name": "삼성전자",
+      "score": 90.0,
+      "seed_title": "김영훈 노동부 장관, 주말 삼성전자 경영진과 만난다...",
+      "candidate_title": "김영훈 노동부 장관, 주말 삼성전자 경영진과 만난다",
+      "url": "https://www.newspim.com/news/view/20260515001241",
+      "cross_symbol_noise": false
+    },
+    {
+      "rank": 4,
+      "symbol": "000660",
+      "company_name": "한미반도체",
+      "score": 90.0,
+      "seed_title": "한미반도체, 美법인 설립한다…반도체 공급망 본격 진출...",
+      "candidate_title": "한미반도체, 美법인 설립한다…반도체 공급망 본격 진출",
+      "url": "https://www.etoday.co.kr/news/view/2585002",
+      "cross_symbol_noise": true
+    },
+    {
+      "rank": 5,
+      "symbol": "000660",
+      "company_name": "한미반도체",
+      "score": 90.0,
+      "seed_title": "한미반도체, 美법인 설립한다…반도체 공급망 본격 진출...",
+      "candidate_title": "한미반도체, 26년 '한미USA' 설립…美 반도체 공급망 본격 진출",
+      "url": "https://n.news.naver.com/mnews/article/018/0006282467?sid=101",
+      "cross_symbol_noise": true
+    },
+    {
+      "rank": 6,
+      "symbol": "000660",
+      "company_name": "한미반도체",
+      "score": 90.0,
+      "seed_title": "한미반도체, 美법인 설립한다…반도체 공급망 본격 진출...",
+      "candidate_title": "한미반도체, 美 법인 설립…AI 반도체 공급망 진출 본격화",
+      "url": "https://www.pinpointnews.co.kr/news/articleView.html?idxno=453034",
+      "cross_symbol_noise": true
+    },
+    {
+      "rank": 7,
+      "symbol": "035420",
+      "company_name": "카카오",
+      "score": 90.0,
+      "seed_title": "카카오, 두나무 지분 팔아 '1조' AI 실탄 챙겨…'500배 잭팟' 극초기 베팅...",
+      "candidate_title": "카카오, 두나무 지분 팔아 '1조' AI 실탄 챙겨…'500배 잭팟' 극초기 베...",
+      "url": "https://n.news.naver.com/mnews/article/018/0006282650?sid=105",
+      "cross_symbol_noise": true
+    },
+    {
+      "rank": 8,
+      "symbol": "035420",
+      "company_name": "NAVER",
+      "score": 80.0,
+      "seed_title": "네이버 커넥트재단, 전국 초중고 교사 대상 AI 교육 콘텐츠 연구 지원...",
+      "candidate_title": "네이버 커넥트재단, 교사 AI 연구회 운영…전국 학교 현장 확산",
+      "url": "https://n.news.naver.com/mnews/article/018/0006281990?sid=105",
+      "cross_symbol_noise": false
+    },
+    {
+      "rank": 9,
+      "symbol": "035420",
+      "company_name": "NAVER",
+      "score": 80.0,
+      "seed_title": "네이버지도, '플라잉뷰 3D' 서울 전역 확대...",
+      "candidate_title": "네이버지도, '플라잉뷰 3D' 서울 전역 확대…63빌딩·국회도 입체 탐색",
+      "url": "https://n.news.naver.com/mnews/article/018/0006281983?sid=105",
+      "cross_symbol_noise": false
+    },
+    {
+      "rank": 10,
+      "symbol": "005380",
+      "company_name": "현대차",
+      "score": 70.0,
+      "seed_title": "코스피, 8천피 찍고 6%대 급락...7500선 내줘[fn마감시황]...",
+      "candidate_title": "코스피, 8천피 찍고 6%대 급락...7500선 내줘[fn마감시황]",
+      "url": "https://n.news.naver.com/mnews/article/014/0005522195?sid=101",
+      "cross_symbol_noise": false
+    }
+  ],
+  "cross_symbol_noise": 4,
+  "notes": {
+    "naver_api_429_errors": "다수의 NAVER API 요청에서 429 Too Many Requests 오류 발생. rate limit 도달로 인해 일부 seed 쿼리가 건너뛰어짐.",
+    "table_display_issue": "Step 3 테이블의 Raw/HardGate/Deduped/Threshold 컬럼이 0으로 표시되었으나, per-seed 로그에는 정상 집계됨. 최종 metrics(raw=370, hard_gate_pass=75)를 신뢰.",
+    "dedup_effect": "Dedupe 단계에서 중복 제거 없음 (deduped=75, hard_gate_pass=75와 동일). 이는 display=10으로 인해 이미 중복이 최소화되었기 때문으로 추정.",
+    "threshold_drop": "Confidence threshold < 50 기준 3건 탈락 (dropped_low_conf=3). 최종 threshold 통과 72건.",
+    "cross_symbol_noise_top10": "Top-10 후보 중 4건(40%)이 cross-symbol noise. 000660(SK하이닉스) 심볼에 한미반도체 관련 뉴스 3건, 035420(NAVER) 심볼에 카카오 뉴스 1건 포함.",
+    "seed_noise": "KIS disclosure seeds 자체에 cross-symbol noise가 다수 존재. 예: 005930 seed에 현대차/SK하이닉스 언급, 000660 seed에 삼성전자/KB금융 등 언급."
+  },
+  "timestamp": "2026-05-17T19:31:00+09:00"
+}

@@ -280,3 +280,31 @@ export async function getLatestMarketSession(): Promise<import("../types/api").S
 export async function getRecentSessionEvents(limit: number = 5): Promise<import("../types/api").SessionEventsResponse> {
   return request<import("../types/api").SessionEventsResponse>(`/market-sessions/events/recent?limit=${limit}`);
 }
+
+/* ── External Events (Recent Events Panel) ─── */
+
+export async function getRecentExternalEvents(
+  symbol: string,
+  limit: number = 5
+): Promise<import("../types/api").ExternalEventView[]> {
+  const params = new URLSearchParams({
+    symbol,
+    limit: String(limit),
+    include_non_listed: 'true',
+  });
+  const res = await fetch(`/external-events/recent?${params}`, {
+    headers: getStoredToken()
+      ? { Authorization: `Bearer ${getStoredToken()}` }
+      : {},
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      if (body.detail) detail = body.detail;
+    } catch { /* ignore */ }
+    throw new ApiResponseError(res.status, detail);
+  }
+  const body: import("../types/api").ExternalEventsResponse = await res.json();
+  return body.data ?? [];
+}

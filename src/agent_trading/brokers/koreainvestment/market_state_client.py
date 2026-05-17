@@ -268,13 +268,10 @@ class KisMarketStateClient(MarketStateProvider):
         # 163 WebSocket is driven by live-info dedicated credentials,
         # not by the trading environment (paper/mock/live).
         # If credentials are provided, we attempt connection regardless of env.
-        if not app_key or not api_secret:
-            logger.warning(
-                "KisMarketStateClient: 163 WebSocket not available (no live-info credentials)"
-            )
-            self._is_paper = True  # credential 없으면 skip
-        else:
-            self._is_paper = False  # live-info credential으로 직접 연결
+        self._is_paper = (
+            not app_key or not api_secret
+            or getattr(settings, "kis_env", "paper") in ("paper", "mock", "sandbox")
+        )
 
     # ------------------------------------------------------------------
     # Public API

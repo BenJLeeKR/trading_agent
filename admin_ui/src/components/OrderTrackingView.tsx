@@ -67,10 +67,18 @@ function statusVariant(status: string): "success" | "warning" | "error" | "info"
 /* ── Columns ── */
 /* orderColumns is module-level because it has no component dependencies. */
 const orderColumns: Column<OrderSummary>[] = [
-  { key: "order_request_id", header: "주문 ID", width: "150px" },
+  {
+    key: "order_request_id",
+    header: "주문 ID",
+    width: "100px",
+    render: (row: OrderSummary) => (
+      <code className="text-xs">{row.order_request_id.slice(0, 8)}…</code>
+    ),
+  },
   {
     key: "symbol",
     header: "종목",
+    width: "80px",
     render: (row: OrderSummary) => (
       <span className="font-semibold text-[#0f172a]">{row.symbol ?? "-"}</span>
     ),
@@ -78,14 +86,20 @@ const orderColumns: Column<OrderSummary>[] = [
   {
     key: "instrument_name",
     header: "종목명",
+    width: "180px",
     render: (row: OrderSummary) => (
-      <span className="text-sm text-[#334155]">{row.instrument_name || "—"}</span>
+      <span
+        className="block max-w-[180px] truncate text-sm text-[#334155]"
+        title={row.instrument_name ?? undefined}
+      >
+        {row.instrument_name || "—"}
+      </span>
     ),
   },
   {
     key: "side",
-    header: "구분",
-    width: "90px",
+    header: "매매",
+    width: "80px",
     render: (row: OrderSummary) => (
       <StatusBadge variant={row.side === "buy" ? "success" : "error"}>
         {sideLabel(row.side)}
@@ -95,18 +109,20 @@ const orderColumns: Column<OrderSummary>[] = [
   {
     key: "requested_quantity",
     header: "수량",
+    width: "90px",
     render: (row: OrderSummary) => `${row.requested_quantity}주`,
   },
   {
     key: "status",
     header: "상태",
+    width: "110px",
     render: (row: OrderSummary) => (
       <StatusBadge variant={statusVariant(row.status)}>
         {statusLabel(row.status)}
       </StatusBadge>
     ),
   },
-  { key: "created_at", header: "생성 시간", width: "150px", render: (row: OrderSummary) => formatKstDateTime(row.created_at) },
+  { key: "created_at", header: "시각", width: "170px", render: (row: OrderSummary) => formatKstDateTime(row.created_at) },
 ];
 
 /* eventColumns is defined inside the component via useMemo because it
@@ -154,6 +170,8 @@ export default function OrderTrackingView() {
   const [statusFilter, setStatusFilter] = useState("");
   const [sideFilter, setSideFilter] = useState("");
   const [selectedOrder, setSelectedOrder] = useState<OrderSummary | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -215,6 +233,12 @@ export default function OrderTrackingView() {
     });
   }, [orders, search, statusFilter, sideFilter]);
 
+  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pagedOrders = useMemo(() => {
+    return filteredOrders.slice((safePage - 1) * pageSize, safePage * pageSize);
+  }, [filteredOrders, safePage, pageSize]);
+
   /* ── Loading / Error ── */
   if (loading) return <LoadingSpinner text="주문 데이터 로딩 중..." />;
 
@@ -248,7 +272,7 @@ export default function OrderTrackingView() {
             <FilterBar
               searchPlaceholder="종목 또는 주문 ID 검색..."
               searchValue={search}
-              onSearchChange={setSearch}
+              onSearchChange={(v) => { setSearch(v); setCurrentPage(1); }}
               filters={[
                 {
                   key: "status",
@@ -264,7 +288,7 @@ export default function OrderTrackingView() {
                     { label: "조정필요", value: "reconcile_required" },
                   ],
                   value: statusFilter,
-                  onChange: setStatusFilter,
+                  onChange: (v) => { setStatusFilter(v); setCurrentPage(1); },
                 },
                 {
                   key: "side",
@@ -275,23 +299,29 @@ export default function OrderTrackingView() {
                     { label: "매도", value: "sell" },
                   ],
                   value: sideFilter,
-                  onChange: setSideFilter,
+                  onChange: (v) => { setSideFilter(v); setCurrentPage(1); },
                 },
               ]}
               onClearAll={() => {
                 setSearch("");
                 setStatusFilter("");
                 setSideFilter("");
+                setCurrentPage(1);
               }}
             />
           </div>
           {filteredOrders.length > 0 ? (
             <DataTable
               columns={orderColumns}
-              data={filteredOrders}
+              data={pagedOrders}
               onRowClick={setSelectedOrder}
               selectedId={selectedOrder?.order_request_id}
               idKey="order_request_id"
+              currentPage={safePage}
+              pageSize={pageSize}
+              totalItems={filteredOrders.length}
+              onPageChange={setCurrentPage}
+              onPageSizeChange={(size) => { setPageSize(size); setCurrentPage(1); }}
             />
           ) : (
             <div className="bg-white rounded-xl border border-[#e2e8f0] p-8 text-center">

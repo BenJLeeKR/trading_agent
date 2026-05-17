@@ -16,6 +16,7 @@ import type {
   AgentRunResponse,
   BrokerCapacityResponse,
   EnumMetadataListResponse,
+  ExternalEventView,
 } from "../../types/api";
 
 export const mockHealthOk: HealthResponse = {
@@ -393,6 +394,19 @@ export const mockTradeDecisions: TradeDecisionDetail[] = [
     max_order_value: 20000,
     confidence: 0.85,
     rationale_summary: "Strong earnings outlook for AAPL",
+    decision_json: {
+      event_bias: "Positive earnings surprise expected",
+      event_conflict: false,
+      event_reason_codes: ['foreign_investor_selling', 'price_decline'],
+      risk_reason_codes: ['high_volatility'],
+      reason_codes: ['FDC_APPROVED'],
+      opposing_evidence: ['low_liquidity'],
+      confidence: 0.85,
+      conviction: 0.75,
+      risk_opinion: "Low risk — strong fundamentals",
+      risk_flags: [],
+      risk_score: 25.0,
+    },
   },
   {
     trade_decision_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00td2",
@@ -410,6 +424,13 @@ export const mockTradeDecisions: TradeDecisionDetail[] = [
     max_order_value: 0,
     confidence: 0.55,
     rationale_summary: "Market uncertainty — holding position",
+    decision_json: {
+      event_bias: "Neutral — no significant catalysts",
+      event_conflict: true,
+      event_reason_codes: ['foreign_investor_selling', 'price_decline'],
+      risk_opinion: "Medium risk — market volatility",
+      risk_flags: ["high_volatility", "low_liquidity"],
+    },
   },
   {
     trade_decision_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00td3",
@@ -427,6 +448,13 @@ export const mockTradeDecisions: TradeDecisionDetail[] = [
     max_order_value: 22000,
     confidence: 0.25,
     rationale_summary: "Stop-loss triggered for MSFT",
+    decision_json: {
+      event_bias: "Bearish — competitive pressure",
+      event_conflict: false,
+      event_reason_codes: ['foreign_investor_selling', 'price_decline'],
+      risk_opinion: "High risk — stop-loss breach",
+      risk_flags: ["stop_loss_breach"],
+    },
   },
 ];
 
@@ -488,6 +516,39 @@ export const mockAgentRuns: AgentRunResponse[] = [
     created_at: null,
   },
 ];
+
+/**
+ * EI agent run fixture with aggregate_view (no top-level summary).
+ * Represents the real EI structured_output_json shape from the database.
+ */
+export const mockEiAgentRunNoSummary: AgentRunResponse = {
+  agent_run_id: 'ei-run-001',
+  decision_context_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00dc1',
+  agent_type: 'event_interpretation',
+  started_at: '2026-05-05T00:00:02Z',
+  status: 'completed',
+  structured_output_json: {
+    symbol: '005930',
+    agent_name: 'event_interpretation',
+    issuer_code: 'UNKNOWN',
+    events: [],
+    aggregate_view: {
+      overall_bias: 'negative',
+      event_conflict: false,
+      top_reason_codes: ['foreign_investor_selling', 'price_decline'],
+      opposing_evidence: [],
+    },
+    schema_version: '1.0',
+    decision_context_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00dc1',
+  },
+  completed_at: '2026-05-05T00:00:05Z',
+  model_id: null,
+  prompt_id: null,
+  temperature: null,
+  seed: null,
+  raw_output_uri: null,
+  created_at: null,
+};
 
 /* ──────────────────────────────────────────────
  * Broker Capacity fixtures
@@ -716,3 +777,65 @@ export const mockPositionForReconcilePartial: PositionSnapshotView = {
   source_of_truth: "broker",
   snapshot_at: "2026-05-13T02:10:00Z",
 };
+
+/* ───────────────────────────────────────────
+ * External Events fixtures (Recent Events Panel)
+ * ─────────────────────────────────────────── */
+
+export const mockRecentEvents005930: ExternalEventView[] = [
+  {
+    event_id: 'evt-001',
+    event_type: 'Y|정기공시',
+    source_name: 'opendart',
+    source_reliability_tier: 'T1',
+    symbol: '005930',
+    headline: '삼성전자, 2026년 1분기 영업이익 14조원 기록',
+    body_summary: '삼성전자가 2026년 1분기 잠정 실적을 발표...',
+    published_at: '2026-05-17T08:00:00Z',
+    created_at: '2026-05-17T08:05:00Z',
+  },
+  {
+    event_id: 'evt-002',
+    event_type: 'N|seeded_news',
+    source_name: 'naver_news',
+    source_reliability_tier: 'T3',
+    symbol: '005930',
+    headline: '삼성전자, 차세대 HBM4 개발 속도',
+    body_summary: '삼성전자가 차세대 고대역폭 메모리 HBM4의...',
+    published_at: '2026-05-17T07:30:00Z',
+    created_at: '2026-05-17T07:32:00Z',
+  },
+  {
+    event_id: 'evt-003',
+    event_type: 'Y|공정공시',
+    source_name: 'opendart',
+    source_reliability_tier: 'T1',
+    symbol: '005930',
+    headline: '삼성전자, 2조원 자사주 매입 결정',
+    body_summary: '삼성전자가 2조원 규모의 자사주 매입을 결정...',
+    published_at: '2026-05-17T06:00:00Z',
+    created_at: '2026-05-17T06:03:00Z',
+  },
+  {
+    event_id: 'evt-004',
+    event_type: 'N|seeded_news',
+    source_name: 'naver_news',
+    source_reliability_tier: 'T3',
+    symbol: '005930',
+    headline: '삼성전자, 반도체 공급과잉 우려에 주가 하락',
+    body_summary: '삼성전자 주가가 글로벌 반도체 공급과잉 우려로...',
+    published_at: '2026-05-17T05:00:00Z',
+    created_at: '2026-05-17T05:05:00Z',
+  },
+  {
+    event_id: 'evt-005',
+    event_type: 'Y|실적발표',
+    source_name: 'opendart',
+    source_reliability_tier: 'T1',
+    symbol: '005930',
+    headline: '삼성전자, 2026년 2분기 가이던스 발표',
+    body_summary: '삼성전자가 2026년 2분기 실적 가이던스를 발표...',
+    published_at: '2026-05-16T23:00:00Z',
+    created_at: '2026-05-16T23:05:00Z',
+  },
+];

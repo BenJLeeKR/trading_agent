@@ -26,8 +26,8 @@ class TestDisclosureClientCreation:
 
     def test_credential_present_creates_client(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """1. Live credential 정상 → client 생성 성공"""
-        monkeypatch.setenv("KIS_LIVE_APP_KEY", "test-live-key")
-        monkeypatch.setenv("KIS_LIVE_APP_SECRET", "test-live-secret")
+        monkeypatch.setenv("KIS_LIVE_INFO_APP_KEY", "test-live-key")
+        monkeypatch.setenv("KIS_LIVE_INFO_APP_SECRET", "test-live-secret")
 
         from agent_trading.config.settings import AppSettings
         from agent_trading.runtime.bootstrap import _build_live_disclosure_client

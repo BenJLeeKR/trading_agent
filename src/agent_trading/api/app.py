@@ -241,6 +241,11 @@ def create_app(
 
     protected_routers.append(sessions_router)
 
+    # Phase L — External Events inspection (recent events panel)
+    from agent_trading.api.routes.external_events import router as external_events_router
+
+    protected_routers.append(external_events_router)
+
     if auth_enabled:
         for router in protected_routers:
             app.include_router(router, dependencies=[Depends(require_viewer)])

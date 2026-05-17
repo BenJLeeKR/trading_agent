@@ -231,3 +231,225 @@ describe("formatOrderEventReason with fieldMap", () => {
     expect(formatOrderEventReason("12345", {})).toBe("브로커 주문번호: 12345");
   });
 });
+
+/* ───────────────────────────────────────────
+ * EI Interpretation Formatter
+ * ─────────────────────────────────────────── */
+import {
+  formatBiasLabel,
+  formatConflictLabel,
+  formatReasonCodeLabel,
+  formatEvidenceStrength,
+  formatReliabilityTier,
+  formatImpactDirection,
+  formatNovelty,
+  formatImpactHorizon,
+  formatEiOutput,
+} from "../lib/utils";
+
+describe("formatBiasLabel", () => {
+  it('returns Korean label for neutral', () => {
+    expect(formatBiasLabel("neutral")).toBe("중립");
+  });
+  it('returns Korean label for positive', () => {
+    expect(formatBiasLabel("positive")).toBe("긍정");
+  });
+  it('returns Korean label for negative', () => {
+    expect(formatBiasLabel("negative")).toBe("부정");
+  });
+  it('normalizes bearish to 부정', () => {
+    expect(formatBiasLabel("bearish")).toBe("부정");
+  });
+  it('returns em dash for null', () => {
+    expect(formatBiasLabel(null)).toBe("—");
+  });
+  it('returns em dash for undefined', () => {
+    expect(formatBiasLabel(undefined)).toBe("—");
+  });
+  it('returns empty string unchanged', () => {
+    expect(formatBiasLabel("")).toBe("—");
+  });
+});
+
+describe("formatConflictLabel", () => {
+  it('returns conflict text for true', () => {
+    expect(formatConflictLabel(true)).toBe("상반된 이벤트 존재");
+  });
+  it('returns em dash for false', () => {
+    expect(formatConflictLabel(false)).toBe("—");
+  });
+  it('returns em dash for null', () => {
+    expect(formatConflictLabel(null)).toBe("—");
+  });
+  it('returns em dash for undefined', () => {
+    expect(formatConflictLabel(undefined)).toBe("—");
+  });
+});
+
+describe("formatReasonCodeLabel", () => {
+  it('returns Korean label for known code', () => {
+    expect(formatReasonCodeLabel("foreign_investor_selling")).toBe("외국인 매도");
+  });
+  it('returns Korean label for price_decline', () => {
+    expect(formatReasonCodeLabel("price_decline")).toBe("가격 하락");
+  });
+  it('returns raw code for unknown code', () => {
+    expect(formatReasonCodeLabel("unknown_reason_xyz")).toBe("unknown_reason_xyz");
+  });
+  it('handles case insensitivity', () => {
+    expect(formatReasonCodeLabel("FOREIGN_INVESTOR_SELLING")).toBe("외국인 매도");
+  });
+});
+
+describe("formatEvidenceStrength", () => {
+  it('returns Korean labels', () => {
+    expect(formatEvidenceStrength("none")).toBe("없음");
+    expect(formatEvidenceStrength("weak")).toBe("약함");
+    expect(formatEvidenceStrength("moderate")).toBe("보통");
+    expect(formatEvidenceStrength("strong")).toBe("강함");
+  });
+  it('returns em dash for null', () => {
+    expect(formatEvidenceStrength(null)).toBe("—");
+  });
+});
+
+describe("formatReliabilityTier", () => {
+  it('returns Korean labels', () => {
+    expect(formatReliabilityTier("T1")).toBe("1등급 (높음)");
+    expect(formatReliabilityTier("T2")).toBe("2등급");
+    expect(formatReliabilityTier("T3")).toBe("3등급");
+    expect(formatReliabilityTier("T4")).toBe("4등급 (낮음)");
+  });
+  it('returns em dash for null', () => {
+    expect(formatReliabilityTier(null)).toBe("—");
+  });
+});
+
+describe("formatImpactDirection", () => {
+  it('returns Korean labels', () => {
+    expect(formatImpactDirection("positive")).toBe("긍정");
+    expect(formatImpactDirection("negative")).toBe("부정");
+    expect(formatImpactDirection("neutral")).toBe("중립");
+  });
+  it('returns em dash for null', () => {
+    expect(formatImpactDirection(null)).toBe("—");
+  });
+});
+
+describe("formatNovelty", () => {
+  it('returns Korean labels', () => {
+    expect(formatNovelty("high")).toBe("높음");
+    expect(formatNovelty("medium")).toBe("보통");
+    expect(formatNovelty("low")).toBe("낮음");
+  });
+  it('returns em dash for null', () => {
+    expect(formatNovelty(null)).toBe("—");
+  });
+});
+
+describe("formatImpactHorizon", () => {
+  it('returns Korean labels', () => {
+    expect(formatImpactHorizon("short")).toBe("단기");
+    expect(formatImpactHorizon("swing")).toBe("스윙");
+    expect(formatImpactHorizon("long")).toBe("장기");
+  });
+  it('returns em dash for null', () => {
+    expect(formatImpactHorizon(null)).toBe("—");
+  });
+});
+
+describe("formatEiOutput", () => {
+  it('returns null for null input', () => {
+    expect(formatEiOutput(null)).toBeNull();
+  });
+  it('returns null for undefined input', () => {
+    expect(formatEiOutput(undefined)).toBeNull();
+  });
+  it('returns null for empty object', () => {
+    expect(formatEiOutput({})).toBeNull();
+  });
+
+  it('returns null when aggregate_view is missing', () => {
+    expect(formatEiOutput({ some_field: "value" })).toBeNull();
+  });
+
+  it('formats EI aggregate_view correctly', () => {
+    const result = formatEiOutput({
+      aggregate_view: {
+        overall_bias: 'negative',
+        event_conflict: false,
+        top_reason_codes: ['foreign_investor_selling', 'price_decline'],
+        evidence_strength: 'moderate',
+        event_count: 2,
+        no_material_events: false,
+      }
+    });
+    expect(result).not.toBeNull();
+    expect(result!.biasLabel).toBe('부정');
+    expect(result!.conflictLabel).toBe('—');
+    expect(result!.reasonCodeLabels).toEqual(['외국인 매도', '가격 하락']);
+    expect(result!.reasonCodes).toEqual(['foreign_investor_selling', 'price_decline']);
+    expect(result!.evidenceStrengthLabel).toBe('보통');
+    expect(result!.eventCount).toBe(2);
+    expect(result!.hasMaterialEvents).toBe(true);
+    expect(result!.operatorSummary).toContain('성향: 부정');
+    expect(result!.operatorSummary).toContain('외국인 매도');
+    expect(result!.operatorSummary).toContain('이벤트 2건');
+  });
+
+  it('includes conflict in operatorSummary when event_conflict is true', () => {
+    const result = formatEiOutput({
+      aggregate_view: {
+        overall_bias: 'neutral',
+        event_conflict: true,
+        top_reason_codes: ['earnings_surprise'],
+        evidence_strength: 'weak',
+        event_count: 3,
+        no_material_events: false,
+      }
+    });
+    expect(result).not.toBeNull();
+    expect(result!.biasLabel).toBe('중립');
+    expect(result!.conflictLabel).toBe('상반된 이벤트 존재');
+    expect(result!.operatorSummary).toContain('상반된 이벤트 존재');
+  });
+
+  it('handles no_material_events', () => {
+    const result = formatEiOutput({
+      aggregate_view: {
+        overall_bias: 'neutral',
+        event_count: 0,
+        no_material_events: true,
+      }
+    });
+    expect(result).not.toBeNull();
+    expect(result!.hasMaterialEvents).toBe(false);
+    expect(result!.operatorSummary).not.toContain('이벤트');
+  });
+
+  it('limits reason code labels to top 3 in operatorSummary', () => {
+    const result = formatEiOutput({
+      aggregate_view: {
+        overall_bias: 'positive',
+        top_reason_codes: ['a', 'b', 'c', 'd', 'e'],
+        event_count: 5,
+        no_material_events: false,
+      }
+    });
+    expect(result!.operatorSummary).toContain(' 외');
+  });
+
+  it('handles missing fields gracefully', () => {
+    const result = formatEiOutput({
+      aggregate_view: {}
+    });
+    expect(result).not.toBeNull();
+    expect(result!.biasLabel).toBe('—');
+    expect(result!.conflictLabel).toBe('—');
+    expect(result!.reasonCodeLabels).toEqual([]);
+    expect(result!.evidenceStrengthLabel).toBe('—');
+    expect(result!.eventCount).toBe(0);
+    expect(result!.hasMaterialEvents).toBe(true);
+    expect(result!.operatorSummary).toBe('성향: —');
+  });
+});

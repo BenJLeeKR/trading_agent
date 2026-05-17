@@ -49,7 +49,6 @@ _KOREAN_RE = re.compile(r"[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]")
 # intentionally excluded from this set — they remain in English.
 _NARRATIVE_KEYS: frozenset[str] = frozenset({
     "summary",
-    "risk_opinion",
     "opposing_evidence",
 })
 

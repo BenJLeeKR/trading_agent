@@ -179,6 +179,21 @@ async def seeded_repos(
         entry_price=Decimal("150.00"),
         quantity=Decimal("100"),
         max_order_value=Decimal("15000"),
+        decision_json={
+            "event_bias": "Positive earnings surprise expected",
+            "event_conflict": False,
+            "event_reason_codes": ["foreign_investor_selling", "price_decline"],
+            "risk_reason_codes": ["high_volatility"],
+            "reason_codes": ["FDC_APPROVED"],
+            "opposing_evidence": ["low_liquidity"],
+            "confidence": 0.85,
+            "conviction": 0.75,
+            "risk_opinion": "Low risk — strong fundamentals",
+            "risk_flags": [],
+            "risk_score": 25.0,
+            "execution_preferences": {},
+            "sizing_hint": {},
+        },
     )
     await repos.trade_decisions.add(td)
 

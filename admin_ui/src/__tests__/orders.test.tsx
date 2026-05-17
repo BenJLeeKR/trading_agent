@@ -53,7 +53,7 @@ describe("OrdersView with order data", () => {
     expect(screen.getByText("TSLA")).toBeInTheDocument();
 
     // Verify column headers
-    expect(screen.getByText("심볼")).toBeInTheDocument();
+    expect(screen.getByText("종목")).toBeInTheDocument();
     expect(screen.getAllByText("매매")[0]).toBeInTheDocument();
     expect(screen.getAllByText("상태")[0]).toBeInTheDocument();
   });
@@ -261,5 +261,30 @@ describe("OrdersView filter by canonical status", () => {
 
     expect(screen.queryByText("AAPL")).not.toBeInTheDocument();
     expect(screen.getByText("TSLA")).toBeInTheDocument();
+  });
+});
+
+/* ───────────────────────────────────────────
+ * Scenario 10: Pagination footer 표시
+ * ─────────────────────────────────────────── */
+describe("OrdersView pagination footer", () => {
+  it("shows pagination footer when orders are loaded", async () => {
+    mockFetchOnce(mockOrders);
+
+    render(
+      <MemoryRouter>
+        <OrdersView />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("주문")).toBeInTheDocument();
+    });
+
+    // Total item count should appear (mockOrders has 2 items)
+    expect(screen.getByText("총 2건")).toBeInTheDocument();
+    // Page navigation should appear
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeInTheDocument();
   });
 });

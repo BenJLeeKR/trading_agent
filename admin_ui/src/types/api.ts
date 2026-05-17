@@ -198,6 +198,7 @@ export interface TradeDecisionDetail {
   max_order_value: number | null;
   confidence: number | null;
   rationale_summary: string | null;
+  decision_json?: Record<string, unknown>;
 }
 
 export interface DecisionContextDetail {
@@ -363,6 +364,23 @@ export interface SchedulerStatusResponse {
 export interface SessionEventsResponse {
   status: 'ok';
   data: SessionEventSummary[];
+}
+
+export interface ExternalEventView {
+  event_id: string;
+  event_type: string;
+  source_name: string;
+  source_reliability_tier: string;
+  symbol: string | null;
+  headline: string | null;
+  body_summary: string | null;
+  published_at: string;
+  created_at: string | null;
+}
+
+export interface ExternalEventsResponse {
+  status: string;
+  data: ExternalEventView[];
 }
 
 export interface ApiError {

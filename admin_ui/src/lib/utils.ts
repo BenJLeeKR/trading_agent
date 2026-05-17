@@ -200,3 +200,205 @@ export function formatOrderEventReason(
   // 4순위: raw fallback
   return code;
 }
+
+// ============================================================
+// EI (Event Interpretation) Operator-Facing Formatter
+// ============================================================
+
+const BIAS_LABEL_MAP: Record<string, string> = {
+  neutral: '중립',
+  positive: '긍정',
+  negative: '부정',
+  bearish: '부정', // LLM outlier 정규화
+};
+
+const EVIDENCE_STRENGTH_LABEL_MAP: Record<string, string> = {
+  none: '없음',
+  weak: '약함',
+  moderate: '보통',
+  strong: '강함',
+};
+
+const RELIABILITY_TIER_LABEL_MAP: Record<string, string> = {
+  T1: '1등급 (높음)',
+  T2: '2등급',
+  T3: '3등급',
+  T4: '4등급 (낮음)',
+};
+
+const IMPACT_DIRECTION_LABEL_MAP: Record<string, string> = {
+  positive: '긍정',
+  negative: '부정',
+  neutral: '중립',
+};
+
+const NOVELTY_LABEL_MAP: Record<string, string> = {
+  high: '높음',
+  medium: '보통',
+  low: '낮음',
+};
+
+const IMPACT_HORIZON_LABEL_MAP: Record<string, string> = {
+  short: '단기',
+  swing: '스윙',
+  long: '장기',
+};
+
+/** 주요 EI reason code 한글 라벨 (상위 30여개 — 나머지는 raw fallback) */
+const REASON_CODE_LABEL_MAP: Record<string, string> = {
+  // 실적/재무
+  earnings_surprise: '실적 서프라이즈',
+  earnings_announcement: '실적 발표',
+  earnings_release: '실적 발표',
+  earnings_report: '실적 보고',
+  earnings_filing: '실적 제출',
+  quarterly_report: '분기 보고서',
+  quarterly_filing: '분기 제출',
+  quarterly_report_filed: '분기 보고서 제출',
+  quarterly_report_filing: '분기 보고서 제출',
+  financial_report: '재무 보고',
+  financial_reporting: '재무 보고',
+  financial_filing: '재무 제출',
+  revenue_growth: '매출 성장',
+  // 가격/시장
+  price_decline: '가격 하락',
+  foreign_investor_selling: '외국인 매도',
+  market_share_gain: '시장 점유율 증가',
+  etf_inflow: 'ETF 자금 유입',
+  etf_listing: 'ETF 상장',
+  low_confidence: '신뢰도 낮음',
+  low_impact: '영향 낮음',
+  low_novelty: '참신성 낮음',
+  no_direction: '방향성 없음',
+  // 기업 활동
+  merger: '합병',
+  merger_announcement: '합병 발표',
+  merger_decision: '합병 결정',
+  merger_report: '합병 보고',
+  asset_acquisition: '자산 취득',
+  fixed_asset_acquisition: '고정 자산 취득',
+  capacity_expansion: '생산 능력 확장',
+  capital_expenditure: '자본 지출',
+  capital_management: '자본 관리',
+  capital_reduction: '자본 감소',
+  debt_guarantee: '채무 보증',
+  debt_guarantee_increase: '채무 보증 증가',
+  debt_guarantee_decision: '채무 보증 결정',
+  // 지배구조/규제
+  corporate_governance: '지배 구조',
+  regulatory_compliance: '규제 준수',
+  regulatory_filing: '규제 제출',
+  shareholder_return: '주주 환원',
+  shareholder_value: '주주 가치',
+  shareholding_change: '지분 변동',
+  major_shareholder_change: '대주주 변경',
+  ownership_change: '소유권 변경',
+  strike_risk: '파업 위험',
+  labor_dispute: '노동 분쟁',
+  operational_disruption: '영업 중단',
+  // 데이터 품질
+  stale: '오래된 데이터',
+  stale_data: '오래된 데이터',
+  stale_event: '오래된 이벤트',
+  stale_info: '오래된 정보',
+  material_event: '중요 이벤트',
+  voluntary_disclosure: '자발적 공시',
+  fair_disclosure: '공정 공시',
+  correction: '정정',
+  // IR/커뮤니케이션
+  ir_activity: 'IR 활동',
+  ir_announcement: 'IR 발표',
+  ir_meeting: 'IR 미팅',
+  ir_holding: 'IR 개최',
+};
+
+export function formatBiasLabel(bias: string | null | undefined): string {
+  if (!bias) return '—';
+  return BIAS_LABEL_MAP[bias.toLowerCase()] || bias;
+}
+
+export function formatConflictLabel(conflict: boolean | null | undefined): string {
+  if (conflict === true) return '상반된 이벤트 존재';
+  return '—';
+}
+
+export function formatReasonCodeLabel(code: string): string {
+  const key = code.toLowerCase();
+  return REASON_CODE_LABEL_MAP[key] || code;
+}
+
+export function formatEvidenceStrength(s: string | null | undefined): string {
+  if (!s) return '—';
+  return EVIDENCE_STRENGTH_LABEL_MAP[s] || s;
+}
+
+export function formatReliabilityTier(tier: string | null | undefined): string {
+  if (!tier) return '—';
+  return RELIABILITY_TIER_LABEL_MAP[tier] || tier;
+}
+
+export function formatImpactDirection(dir: string | null | undefined): string {
+  if (!dir) return '—';
+  return IMPACT_DIRECTION_LABEL_MAP[dir] || dir;
+}
+
+export function formatNovelty(n: string | null | undefined): string {
+  if (!n) return '—';
+  return NOVELTY_LABEL_MAP[n] || n;
+}
+
+export function formatImpactHorizon(h: string | null | undefined): string {
+  if (!h) return '—';
+  return IMPACT_HORIZON_LABEL_MAP[h] || h;
+}
+
+export interface EiInterpretationView {
+  biasLabel: string;
+  conflictLabel: string;
+  reasonCodeLabels: string[];
+  reasonCodes: string[];
+  evidenceStrengthLabel: string;
+  eventCount: number;
+  hasMaterialEvents: boolean;
+  operatorSummary: string;
+}
+
+export function formatEiOutput(so: Record<string, unknown> | null | undefined): EiInterpretationView | null {
+  if (!so) return null;
+  const av = so.aggregate_view as Record<string, unknown> | undefined;
+  if (!av) return null;
+
+  const bias = av.overall_bias as string | undefined;
+  const conflict = av.event_conflict as boolean | undefined;
+  const rawReasonCodes = (av.top_reason_codes as string[]) || [];
+  const evidenceStrength = av.evidence_strength as string | undefined;
+  const eventCount = (av.event_count as number) ?? 0;
+  const noMaterialEvents = av.no_material_events as boolean | undefined;
+
+  const biasLabel = formatBiasLabel(bias);
+  const conflictLabel = formatConflictLabel(conflict);
+  const reasonCodeLabels = rawReasonCodes.map(formatReasonCodeLabel);
+  const evidenceStrengthLabel = formatEvidenceStrength(evidenceStrength);
+
+  // Generate deterministic operator summary
+  const parts: string[] = [`성향: ${biasLabel}`];
+  if (conflict) parts.push('상반된 이벤트 존재');
+  if (rawReasonCodes.length > 0) {
+    parts.push(`사유: ${reasonCodeLabels.slice(0, 3).join(', ')}${rawReasonCodes.length > 3 ? ' 외' : ''}`);
+  }
+  if (!noMaterialEvents && eventCount > 0) {
+    parts.push(`이벤트 ${eventCount}건`);
+  }
+  const operatorSummary = parts.join(' | ');
+
+  return {
+    biasLabel,
+    conflictLabel,
+    reasonCodeLabels,
+    reasonCodes: rawReasonCodes,
+    evidenceStrengthLabel,
+    eventCount,
+    hasMaterialEvents: !noMaterialEvents,
+    operatorSummary,
+  };
+}

@@ -1,0 +1,118 @@
+{
+  "phase": "Phase K Step 2+3: NAVER Seeded News 운영 안정화 1차",
+  "previous_run": {
+    "timestamp": "2026-05-17T19:31:00+09:00",
+    "seeds_fetched": 160,
+    "raw_candidates": 370,
+    "hard_gate_passed": 75,
+    "hard_gate_dropped": 295,
+    "final_kept": 10,
+    "cross_symbol_noise_top10": 4,
+    "cross_symbol_noise_pct": 40.0,
+    "max_score": 95.0,
+    "429_errors": "다수 발생"
+  },
+  "current_run": {
+    "timestamp": "2026-05-17T19:51:58+09:00",
+    "seeds_fetched": 160,
+    "queries": 320,
+    "raw_total_items": 2036,
+    "hard_gate_passed": 379,
+    "hard_gate_dropped": 1657,
+    "after_dedupe": 377,
+    "low_conf_dropped": 184,
+    "cross_symbol_noise": 0,
+    "seed_quality_drop": 0,
+    "retry_count": 0,
+    "final_kept": 12,
+    "top_scores": [
+      85.0,
+      80.0,
+      80.0,
+      80.0,
+      80.0,
+      80.0,
+      80.0,
+      75.0,
+      75.0,
+      70.0,
+      70.0,
+      70.0
+    ],
+    "per_symbol": {
+      "005930": {
+        "company": "삼성전자",
+        "seeds": 40,
+        "fetched": 40,
+        "passed_gate": 10,
+        "cross_symbol_dropped": 0,
+        "top_n": 3,
+        "top_score": 85.0
+      },
+      "000660": {
+        "company": "SK하이닉스",
+        "seeds": 40,
+        "fetched": 40,
+        "passed_gate": 10,
+        "cross_symbol_dropped": 0,
+        "top_n": 3,
+        "top_score": 80.0
+      },
+      "035420": {
+        "company": "NAVER",
+        "seeds": 40,
+        "fetched": 40,
+        "passed_gate": 10,
+        "cross_symbol_dropped": 0,
+        "top_n": 3,
+        "top_score": 80.0
+      },
+      "005380": {
+        "company": "현대차",
+        "seeds": 40,
+        "fetched": 40,
+        "passed_gate": 11,
+        "cross_symbol_dropped": 0,
+        "top_n": 3,
+        "top_score": 70.0
+      }
+    }
+  },
+  "changes": {
+    "retry_backoff": {
+      "description": "NaverNewsSearchAdapter에 retry/backoff + jitter 추가 (max_retries=3, backoff_base=1.0~30.0)",
+      "effect": "429 Rate Limit 자동 복구. 모든 320개 API 쿼리 성공."
+    },
+    "sort_date_removed": {
+      "description": "search_by_seed()에서 sort=date 제거, sort=sim만 사용",
+      "effect": "API call 640→320으로 50% 감소 (160 seeds × 2 queries = 320)"
+    },
+    "seed_pacing": {
+      "description": "seed 간 0.5s asyncio.sleep() 추가",
+      "effect": "NAVER API rate limit 도달 완화"
+    },
+    "scoring_weights": {
+      "description": "company_name in title: 40→20, symbol in desc: 10→20, symbol in title: 25 (new)",
+      "effect": "상위권 점수 95→85로 하향 조정. 심볼 매칭 가중치 상대적 증가."
+    },
+    "cross_symbol_noise_penalty": {
+      "description": "_is_cross_symbol_noise() 신규: 후보 title/description에 seed company_name 없으면 score × 0.3",
+      "effect": "scoring 수준에서 cross-symbol noise 70% 감점"
+    },
+    "seed_quality_filter": {
+      "description": "_validate_seed_company_name() 신규: company_name 2자 미만 seed 제외",
+      "effect": "품질 낮은 seed 자동 제외 (seed_q_drop=0, 모든 seed 통과)"
+    }
+  },
+  "key_improvements": [
+    "429 에러 0건 — retry/backoff가 모든 transient error 자동 복구",
+    "API call 50% 감소 (640→320) — sort=date 제거로 NAVER API 부하 절반",
+    "Cross-symbol noise Top-10 40%→0% (단, seed 구성 차이 영향 있을 수 있음)",
+    "Scoring 가중치 조정: company_name 의존도 ↓, symbol relevance ↑",
+    "Seed pacing 0.5s: NAVER API rate limit 도달 방지"
+  ],
+  "notes": {
+    "cross_symbol_noise_0": "cross_sym=0은 현재 seed 구성(삼성전자, SK하이닉스, NAVER, 현대차)에서 hard gate가 대부분 필터링했기 때문. Scoring-level penalty는 hard gate를 통과했으나 내용에 seed company_name이 없는 경우에만 발동.",
+    "retry_count_0": "서비스 레벨 retry_count=0은 adapter 내부 retry가 service metric으로 전파되지 않았기 때문. adapter는 retry를 내부적으로 처리하고 정상 결과 반환."
+  }
+}

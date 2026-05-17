@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Copy } from "lucide-react";
 import type { AgentRunResponse } from "../types/api";
-import { formatKstDateTime } from "@/lib/utils";
+import { formatKstDateTime, formatEiOutput, formatReasonCodeLabel } from "@/lib/utils";
 
 interface AgentRunDetailPanelProps {
   run: AgentRunResponse | null;
@@ -98,14 +98,32 @@ export function AgentRunDetailPanel({ run }: AgentRunDetailPanelProps) {
           <div className="mb-6">
             <h3 className="text-sm font-semibold text-[#0f172a] mb-3">구조화된 출력</h3>
             <div className="bg-[#f8fafc] rounded-lg p-4 space-y-2 text-xs">
-              {!!run.structured_output_json["summary"] && (
-                <div>
-                  <p className="text-[#64748b] font-medium mb-1">요약</p>
-                  <p className="text-[#0f172a]">
-                    {String(run.structured_output_json["summary"])}
-                  </p>
-                </div>
-              )}
+              {/* 요약: top-level (FDC/AR) 또는 EI fallback (formatEiOutput 기반) */}
+              {(() => {
+                const so = run.structured_output_json;
+                const eiView = run.agent_type === 'event_interpretation'
+                  ? formatEiOutput(so as Record<string, unknown>)
+                  : null;
+                // 1순위: top-level summary (FDC/AR)
+                if (so["summary"]) {
+                  return (
+                    <div>
+                      <p className="text-[#64748b] font-medium mb-1">요약</p>
+                      <p className="text-[#0f172a]">{String(so["summary"])}</p>
+                    </div>
+                  );
+                }
+                // 2순위: EI 전용 formatEiOutput 기반 요약
+                if (eiView?.operatorSummary) {
+                  return (
+                    <div>
+                      <p className="text-[#64748b] font-medium mb-1">EI 요약</p>
+                      <p className="text-[#0f172a]">{eiView.operatorSummary}</p>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
               {!!run.structured_output_json["decision_type"] && (
                 <div>
                   <p className="text-[#64748b] font-medium mb-1">의사결정 유형</p>
@@ -122,35 +140,49 @@ export function AgentRunDetailPanel({ run }: AgentRunDetailPanelProps) {
                   </p>
                 </div>
               )}
-              {Array.isArray(run.structured_output_json["reason_codes"]) && (
-                <div>
-                  <p className="text-[#64748b] font-medium mb-1">사유 코드</p>
-                  <div className="flex flex-wrap gap-1">
-                    {(run.structured_output_json["reason_codes"] as string[]).map(
-                      (code, idx) => (
-                        <span
-                          key={idx}
-                          className="bg-[#e2e8f0] text-[#0f172a] px-2 py-1 rounded text-xs"
-                        >
-                          {code}
-                        </span>
-                      ),
-                    )}
-                  </div>
-                </div>
-              )}
+              {/* reason_codes: top-level (FDC/AR) 또는 EI fallback (formatEiOutput 기반) */}
+              {(() => {
+                const so = run.structured_output_json;
+                const eiView = run.agent_type === 'event_interpretation'
+                  ? formatEiOutput(so as Record<string, unknown>)
+                  : null;
+                const rawCodes: string[] | undefined =
+                  (so["reason_codes"] as string[] | undefined) ??
+                  eiView?.reasonCodes;
+                const codeLabels: string[] = so["reason_codes"]
+                  ? (so["reason_codes"] as string[]).map(formatReasonCodeLabel)
+                  : eiView?.reasonCodeLabels ?? [];
+                if (Array.isArray(rawCodes) && rawCodes.length > 0) {
+                  return (
+                    <div>
+                      <p className="text-[#64748b] font-medium mb-1">사유 코드</p>
+                      <div className="flex flex-wrap gap-1">
+                        {codeLabels.map((label, idx) => (
+                          <span
+                            key={idx}
+                            className="bg-[#e2e8f0] text-[#0f172a] px-2 py-1 rounded text-xs"
+                          >
+                            {label}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
             </div>
           </div>
         )}
 
-        {/* Raw JSON Section */}
+        {/* Raw JSON debug view (collapsible) */}
         {run.structured_output_json && (
-          <div>
-            <h3 className="text-sm font-semibold text-[#0f172a] mb-3">원시 출력</h3>
-            <pre className="bg-[#f8fafc] rounded-lg p-4 overflow-auto text-[11px] text-[#0f172a] font-mono border border-[#e2e8f0] max-h-48">
+          <details className="mb-6">
+            <summary className="text-xs text-[#64748b] cursor-pointer hover:text-[#374151]">Raw JSON</summary>
+            <pre className="mt-2 p-2 bg-gray-50 rounded text-xs text-[#64748b] overflow-x-auto whitespace-pre-wrap max-h-32 overflow-y-auto">
               {JSON.stringify(run.structured_output_json, null, 2)}
             </pre>
-          </div>
+          </details>
         )}
 
         {!run.structured_output_json && (

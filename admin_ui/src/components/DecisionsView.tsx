@@ -1,17 +1,29 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import type { DecisionContextDetail, TradeDecisionDetail } from "../types/api";
-import { getDecisionContext, getTradeDecisions } from "../api/client";
+import type { DecisionContextDetail, ExternalEventView, TradeDecisionDetail } from "../types/api";
+import { getDecisionContext, getRecentExternalEvents, getTradeDecisions } from "../api/client";
 import AgentRunsPanel from "./AgentRunsPanel";
 import { DataTable } from "./common/DataTable";
 import { StatusBadge } from "./common/StatusBadge";
 import { FilterBar } from "./common/FilterBar";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
-import { formatKstDateTime } from "../lib/utils";
+import { formatKstDateTime, formatBiasLabel, formatConflictLabel, formatReasonCodeLabel } from "../lib/utils";
 import { useEnumMetadata, getEnumLabel } from "../hooks/useEnumMetadata";
 import type { Column } from "./common/DataTable";
 import { X, Brain } from "lucide-react";
+
+/* ───────────────────────────────────────────
+ * formatTimeAgo — relative time display helper
+ * ─────────────────────────────────────────── */
+function formatTimeAgo(isoString: string): string {
+  const diff = Date.now() - new Date(isoString).getTime();
+  const hours = Math.floor(diff / 3600000);
+  if (hours < 1) return '방금';
+  if (hours < 24) return `${hours}시간 전`;
+  const days = Math.floor(hours / 24);
+  return `${days}일 전`;
+}
 
 /* ───────────────────────────────────────────
  * ConfidenceBar — progress bar with color threshold
@@ -52,9 +64,17 @@ export default function DecisionsView() {
   const [contextLoading, setContextLoading] = useState(false);
   const [contextError, setContextError] = useState<string | null>(null);
 
+  // Recent events state
+  const [recentEvents, setRecentEvents] = useState<ExternalEventView[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const [eventsError, setEventsError] = useState<string | null>(null);
+  const [eventsExpanded, setEventsExpanded] = useState(false);
+
   // Filter state
   const [searchText, setSearchText] = useState("");
   const [sideFilter, setSideFilter] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   useEffect(() => {
     setLoading(true);
@@ -98,6 +118,47 @@ export default function DecisionsView() {
     };
   }, [selectedDecision?.decision_context_id]);
 
+  // Recent events — load when selected decision changes
+  useEffect(() => {
+    if (!selectedDecision?.symbol) {
+      setRecentEvents([]);
+      return;
+    }
+    let cancelled = false;
+    setEventsLoading(true);
+    setEventsError(null);
+    getRecentExternalEvents(selectedDecision.symbol, 5)
+      .then((data) => {
+        if (!cancelled) setRecentEvents(data);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setEventsError(err instanceof Error ? err.message : "이벤트를 불러오지 못했습니다");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setEventsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedDecision]);
+
+  // "더보기" handler — load up to 10 events
+  const handleLoadMoreEvents = useCallback(async () => {
+    if (!selectedDecision?.symbol) return;
+    try {
+      setEventsLoading(true);
+      const data = await getRecentExternalEvents(selectedDecision.symbol, 10);
+      setRecentEvents(data);
+      setEventsExpanded(true);
+    } catch (err: unknown) {
+      setEventsError(err instanceof Error ? err.message : "이벤트를 불러오지 못했습니다");
+    } finally {
+      setEventsLoading(false);
+    }
+  }, [selectedDecision]);
+
   const filteredDecisions = useMemo(() => {
     return decisions.filter((d) => {
       const matchSide = !sideFilter || d.side === sideFilter;
@@ -107,22 +168,31 @@ export default function DecisionsView() {
     });
   }, [decisions, searchText, sideFilter]);
 
+  const totalPages = Math.max(1, Math.ceil(filteredDecisions.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pagedDecisions = useMemo(() => {
+    return filteredDecisions.slice((safePage - 1) * pageSize, safePage * pageSize);
+  }, [filteredDecisions, safePage, pageSize]);
+
   const decisionColumns: Column<TradeDecisionDetail>[] = [
     {
       key: "trade_decision_id",
       header: "의사결정 ID",
+      width: "100px",
       render: (r) => <code className="text-xs">{r.trade_decision_id.slice(0, 8)}…</code>,
     },
-    { key: "symbol", header: "심볼", render: (r) => (
+    { key: "symbol", header: "종목", width: "80px", render: (r) => (
       <span className="text-sm font-medium text-[#0f172a]">{r.symbol ?? "—"}</span>
     )},
-    { key: "instrument_name", header: "종목명", render: (r) => (
-      <span className="text-sm text-[#334155]">{r.instrument_name || "—"}</span>
+    { key: "instrument_name", header: "종목명", width: "180px", render: (r) => (
+      <span className="block max-w-[180px] truncate text-sm text-[#334155]" title={r.instrument_name ?? undefined}>
+        {r.instrument_name || "—"}
+      </span>
     )},
     {
       key: "side",
       header: "매매",
-      width: "90px",
+      width: "80px",
       render: (r) => (
         <StatusBadge variant={r.side.toLowerCase() === "buy" ? "success" : r.side.toLowerCase() === "sell" ? "error" : "info"}>
           {getEnumLabel(fieldMap, "side", r.side)}
@@ -132,6 +202,7 @@ export default function DecisionsView() {
     {
       key: "confidence",
       header: "신뢰도",
+      width: "130px",
       render: (r) => <ConfidenceBar value={r.confidence ?? 0} />,
     },
     {
@@ -142,6 +213,7 @@ export default function DecisionsView() {
     {
       key: "created_at",
       header: "시각",
+      width: "170px",
       render: (r) => formatKstDateTime(r.created_at),
     },
   ];
@@ -185,7 +257,7 @@ export default function DecisionsView() {
             <FilterBar
               searchPlaceholder="심볼 또는 의사결정 ID 검색..."
               searchValue={searchText}
-              onSearchChange={setSearchText}
+              onSearchChange={(v) => { setSearchText(v); setCurrentPage(1); }}
               filters={[
                 {
                   key: "side",
@@ -196,19 +268,25 @@ export default function DecisionsView() {
                     { label: "보류", value: "hold" },
                   ],
                   value: sideFilter,
-                  onChange: setSideFilter,
+                  onChange: (v) => { setSideFilter(v); setCurrentPage(1); },
                 },
               ]}
               onClearAll={() => {
                 setSearchText("");
                 setSideFilter("");
+                setCurrentPage(1);
               }}
             />
           </div>
           <DataTable
             columns={decisionColumns}
-            data={filteredDecisions}
+            data={pagedDecisions}
             idKey="trade_decision_id"
+            currentPage={safePage}
+            pageSize={pageSize}
+            totalItems={filteredDecisions.length}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={(size) => { setPageSize(size); setCurrentPage(1); }}
             onRowClick={(row) => setSelectedDecision(
               selectedDecision?.trade_decision_id === row.trade_decision_id ? null : row
             )}
@@ -283,13 +361,70 @@ export default function DecisionsView() {
                 <ConfidenceBar value={selectedDecision.confidence ?? 0} />
               </div>
 
-              {/* Reason */}
+              {/* FDC Reason (종합 판단 근거) */}
               <div className="mt-4 pt-4 border-t border-[#e2e8f0]">
-                <p className="text-xs font-semibold text-[#374151] mb-1">근거</p>
+                <p className="text-xs font-semibold text-[#374151] mb-1">종합 판단 근거</p>
                 <p className="text-xs leading-relaxed text-[#64748b]">
                   {selectedDecision.rationale_summary || "근거가 제공되지 않았습니다."}
                 </p>
               </div>
+
+              {/* EI Reason — decision_json에서 event_bias 표시 (formatter 적용) */}
+              {selectedDecision.decision_json?.event_bias != null && (
+                <div className="mt-4 pt-4 border-t border-[#e2e8f0]">
+                  <p className="text-xs font-semibold text-[#374151] mb-1">이벤트 해석 (EI)</p>
+                  <p className="text-xs leading-relaxed text-[#64748b]">
+                    성향: {formatBiasLabel(selectedDecision.decision_json?.event_bias as string)}
+                    {(selectedDecision.decision_json?.event_conflict != null &&
+                      formatConflictLabel(selectedDecision.decision_json.event_conflict as boolean) !== '—') && (
+                      <span className="ml-2 text-yellow-600">
+                        ({formatConflictLabel(selectedDecision.decision_json.event_conflict as boolean)})
+                      </span>
+                    )}
+                  </p>
+
+                  {/* 결정 사유 (event_reason_codes) — formatter 적용 chip */}
+                  {Array.isArray((selectedDecision as any).decision_json?.event_reason_codes) &&
+                    (selectedDecision as any).decision_json.event_reason_codes.length > 0 && (
+                    <div className="mt-2">
+                      <p className="text-xs font-semibold text-[#374151] mb-1">결정 사유</p>
+                      <div className="flex flex-wrap gap-1">
+                        {((selectedDecision as any).decision_json.event_reason_codes as string[]).map((code: string, i: number) => (
+                          <span key={i} className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
+                            {formatReasonCodeLabel(code)}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* event_reason_codes가 비어있거나 null인 경우 — 사유 정보 없음 메시지 */}
+                  {((selectedDecision as any).decision_json?.event_reason_codes == null ||
+                    (Array.isArray((selectedDecision as any).decision_json?.event_reason_codes) &&
+                     (selectedDecision as any).decision_json.event_reason_codes.length === 0)) && (
+                    <div className="mt-2">
+                      <p className="text-xs font-semibold text-[#374151] mb-1">결정 사유</p>
+                      <p className="text-xs leading-relaxed text-[#64748b]">사유 정보 없음</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* AR Reason — decision_json에서 risk_opinion 표시 */}
+              {selectedDecision.decision_json?.risk_opinion != null && (
+                <div className="mt-4 pt-4 border-t border-[#e2e8f0]">
+                  <p className="text-xs font-semibold text-[#374151] mb-1">리스크 평가 (AR)</p>
+                  <p className="text-xs leading-relaxed text-[#64748b]">
+                    의견: {selectedDecision.decision_json.risk_opinion as string}
+                    {Array.isArray(selectedDecision.decision_json.risk_flags) &&
+                     selectedDecision.decision_json.risk_flags.length > 0 && (
+                      <span className="ml-2">
+                        (플래그: {(selectedDecision.decision_json.risk_flags as string[]).join(', ')})
+                      </span>
+                    )}
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Signals card */}
@@ -362,6 +497,65 @@ export default function DecisionsView() {
 
               {!contextDetail && !contextLoading && !contextError && (
                 <p className="text-sm text-[#94a3b8] text-center py-4">컨텍스트가 있는 의사결정을 선택하면 시장 데이터를 볼 수 있습니다.</p>
+              )}
+            </div>
+
+            {/* ===== Recent Events Card ===== */}
+            <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
+              <h4 className="text-sm font-medium text-[#0f172a] mb-4">최근 이벤트 (Recent Events)</h4>
+
+              {eventsLoading && recentEvents.length === 0 ? (
+                <LoadingSpinner />
+              ) : eventsError ? (
+                <ErrorBanner message={eventsError} onDismiss={() => setEventsError(null)} />
+              ) : recentEvents.length === 0 ? (
+                <p className="text-sm text-gray-500">최근 이벤트가 없습니다.</p>
+              ) : (
+                <ul className="divide-y divide-gray-100">
+                  {recentEvents.map((event) => (
+                    <li key={event.event_id} className="py-2 flex items-start gap-2">
+                      {/* Source tier badge */}
+                      <span
+                        className={`inline-flex items-center px-1.5 py-0.5 text-xs font-medium rounded ${
+                          event.source_reliability_tier === 'T1'
+                            ? 'bg-blue-100 text-blue-800'
+                            : 'bg-gray-100 text-gray-600'
+                        }`}
+                      >
+                        {event.source_reliability_tier || 'T3'}
+                      </span>
+                      {/* Source name */}
+                      <span className="text-xs text-gray-500 min-w-[80px]">
+                        {event.source_name === 'opendart'
+                          ? 'OpenDART'
+                          : event.source_name === 'naver_news'
+                            ? 'Seeded News'
+                            : event.source_name}
+                      </span>
+                      {/* Headline */}
+                      <span
+                        className="flex-1 text-sm text-gray-700 truncate max-w-[300px]"
+                        title={event.headline || ''}
+                      >
+                        {event.headline || '(제목 없음)'}
+                      </span>
+                      {/* Time */}
+                      <span className="text-xs text-gray-400 whitespace-nowrap">
+                        {formatTimeAgo(event.published_at)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {/* "더보기" button */}
+              {!eventsExpanded && recentEvents.length >= 5 && (
+                <button
+                  onClick={handleLoadMoreEvents}
+                  className="mt-2 text-xs text-blue-600 hover:text-blue-800"
+                >
+                  더보기 (최대 10건)
+                </button>
               )}
             </div>
 

@@ -61,6 +61,10 @@ def seeded_candidate_to_event(
         "article_link": candidate.link or "",
         "original_link": candidate.originallink or "",
         "query_used": candidate.query_used or "",
+        # Provenance fields for pipeline tracking
+        "sort_mode": candidate.sort_mode,
+        "pipeline_version": "1.0",
+        "candidate_type": _EVENT_TYPE,
     }
 
     return ExternalEventEntity(

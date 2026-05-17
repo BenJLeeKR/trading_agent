@@ -168,6 +168,32 @@ class TestOrders:
         assert matching[0]["new_status"] == "filled"
 
 
+class TestTradeDecisions:
+    """Trade decision inspection endpoints."""
+
+    def test_list_trade_decisions_includes_decision_json(self, client: TestClient) -> None:
+        """``GET /trade-decisions`` returns ``decision_json`` field."""
+        # The fixture seeds a trade decision with decision_json data
+        resp = client.get("/trade-decisions")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) >= 1
+        td = data[0]
+        assert "decision_json" in td, "decision_json field missing from TradeDecisionDetail"
+        assert td["decision_json"] is not None
+        assert "event_bias" in td["decision_json"]
+        assert "risk_opinion" in td["decision_json"]
+        assert "event_reason_codes" in td["decision_json"]
+        assert isinstance(td["decision_json"]["event_reason_codes"], list)
+        assert len(td["decision_json"]["event_reason_codes"]) > 0
+        # 새 필드 검증
+        assert "risk_reason_codes" in td["decision_json"]
+        assert "reason_codes" in td["decision_json"]
+        assert "opposing_evidence" in td["decision_json"]
+        assert "confidence" in td["decision_json"]
+        assert "conviction" in td["decision_json"]
+
+
 class TestAuditLogs:
     """Audit log inspection endpoint."""
 

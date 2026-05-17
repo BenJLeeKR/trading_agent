@@ -149,7 +149,7 @@ def _build_polling_workers(
             logger.warning(
                 "Live disclosure client disabled: "
                 "kis_live_app_key or kis_live_app_secret not configured. "
-                "Set KIS_LIVE_APP_KEY / KIS_LIVE_APP_SECRET to enable.",
+                "Set KIS_LIVE_INFO_APP_KEY / KIS_LIVE_INFO_APP_SECRET to enable.",
             )
             return None
     
@@ -211,7 +211,7 @@ def _build_live_disclosure_client(
         logger.warning(
             "Live disclosure client disabled: "
             "kis_live_app_key or kis_live_app_secret not configured. "
-            "Set KIS_LIVE_APP_KEY / KIS_LIVE_APP_SECRET to enable.",
+            "Set KIS_LIVE_INFO_APP_KEY / KIS_LIVE_INFO_APP_SECRET to enable.",
         )
         return None
 

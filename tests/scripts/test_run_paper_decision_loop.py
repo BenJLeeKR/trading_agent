@@ -31,6 +31,7 @@ from agent_trading.domain.entities import (
     CashBalanceSnapshotEntity,
     ClientEntity,
     ConfigVersionEntity,
+    ExternalEventEntity,
     OrderRequestEntity,
     PositionSnapshotEntity,
     SnapshotSyncRunEntity,
@@ -47,6 +48,7 @@ from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.contracts import SnapshotSyncHealthSummary
+from agent_trading.repositories.memory import InMemoryExternalEventRepository
 from agent_trading.services.decision_orchestrator import (
     DecisionOrchestratorService,
     OrderIntent,
@@ -66,6 +68,7 @@ from scripts.run_paper_decision_loop import (
     _run_one_cycle,
     _serialize_cycle_result,
     _serialize_precheck,
+    persist_seeded_events,
 )
 
 # ---------------------------------------------------------------------------
@@ -1001,3 +1004,151 @@ class TestResolveSymbolPrice:
 
         # Live quote 우선
         assert price == Decimal("15000")
+
+
+class TestPersistSeededEvents:
+    """``persist_seeded_events()`` — DB persistence with dedup."""
+
+    @pytest.mark.asyncio
+    async def test_persists_new(self) -> None:
+        """새 이벤트를 DB에 저장하는지 검증."""
+        repo = InMemoryExternalEventRepository()
+        events = [
+            ExternalEventEntity(
+                event_id=uuid4(),
+                event_type="seeded_news",
+                source_name="naver_news_seeded",
+                published_at=datetime(2026, 5, 17, 12, 0, tzinfo=timezone.utc),
+                source_reliability_tier="T3",
+                symbol="005930",
+                headline="Test news",
+                dedup_key_hash="aaa111",
+                metadata={"importance": "medium"},
+            ),
+            ExternalEventEntity(
+                event_id=uuid4(),
+                event_type="seeded_news",
+                source_name="naver_news_seeded",
+                published_at=datetime(2026, 5, 17, 12, 0, tzinfo=timezone.utc),
+                source_reliability_tier="T3",
+                symbol="005930",
+                headline="Test news 2",
+                dedup_key_hash="bbb222",
+                metadata={"importance": "medium"},
+            ),
+        ]
+
+        persisted = await persist_seeded_events(events, repo)
+        assert persisted == 2
+
+        # DB에 저장 확인
+        e1 = await repo.find_by_dedup_key("aaa111")
+        assert e1 is not None
+        assert e1.headline == "Test news"
+        e2 = await repo.find_by_dedup_key("bbb222")
+        assert e2 is not None
+        assert e2.headline == "Test news 2"
+
+    @pytest.mark.asyncio
+    async def test_skips_duplicate(self) -> None:
+        """같은 이벤트 재호출 시 dedup skip 검증."""
+        repo = InMemoryExternalEventRepository()
+
+        event = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="seeded_news",
+            source_name="naver_news_seeded",
+            published_at=datetime(2026, 5, 17, 12, 0, tzinfo=timezone.utc),
+            source_reliability_tier="T3",
+            symbol="005930",
+            headline="Test news",
+            dedup_key_hash="aaa111",
+            metadata={"importance": "medium"},
+        )
+
+        # 1차 저장
+        persisted1 = await persist_seeded_events([event], repo)
+        assert persisted1 == 1
+
+        # 동일 dedup_key로 2차 저장 시도
+        persisted2 = await persist_seeded_events([event], repo)
+        assert persisted2 == 0  # 모두 skip
+
+        # Count 1 유지
+        events = await repo.list_by_symbol("005930", since=datetime(2020, 1, 1, tzinfo=timezone.utc),
+                                             include_non_listed=True)
+        assert len(events) == 1
+
+    @pytest.mark.asyncio
+    async def test_non_fatal_on_error(self) -> None:
+        """DB 저장 실패 시 예외 전파 안 됨 검증."""
+        repo = MagicMock(spec=InMemoryExternalEventRepository)
+        repo.find_by_dedup_key = AsyncMock(side_effect=ValueError("DB connection lost"))
+
+        event = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="seeded_news",
+            source_name="naver_news_seeded",
+            published_at=datetime(2026, 5, 17, 12, 0, tzinfo=timezone.utc),
+            source_reliability_tier="T3",
+            symbol="005930",
+            headline="Test news",
+            dedup_key_hash="aaa111",
+            metadata={"importance": "medium"},
+        )
+
+        # 예외가 전파되지 않고 0 반환
+        persisted = await persist_seeded_events([event], repo)
+        assert persisted == 0
+
+    @pytest.mark.asyncio
+    async def test_mixed_persist_and_skip(self) -> None:
+        """일부는 저장되고 일부는 skip되는 경우."""
+        repo = InMemoryExternalEventRepository()
+
+        event_a = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="seeded_news",
+            source_name="naver_news_seeded",
+            published_at=datetime(2026, 5, 17, 12, 0, tzinfo=timezone.utc),
+            source_reliability_tier="T3",
+            symbol="005930",
+            headline="News A",
+            dedup_key_hash="aaa111",
+            metadata={"importance": "medium"},
+        )
+        event_b = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="seeded_news",
+            source_name="naver_news_seeded",
+            published_at=datetime(2026, 5, 17, 12, 0, tzinfo=timezone.utc),
+            source_reliability_tier="T3",
+            symbol="005930",
+            headline="News B",
+            dedup_key_hash="bbb222",
+            metadata={"importance": "medium"},
+        )
+
+        # 1차: 2개 저장
+        persisted1 = await persist_seeded_events([event_a, event_b], repo)
+        assert persisted1 == 2
+
+        # 2차: event_a만 다시 시도 (중복), event_c는 신규
+        event_c = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="seeded_news",
+            source_name="naver_news_seeded",
+            published_at=datetime(2026, 5, 17, 12, 0, tzinfo=timezone.utc),
+            source_reliability_tier="T3",
+            symbol="005930",
+            headline="News C",
+            dedup_key_hash="ccc333",
+            metadata={"importance": "medium"},
+        )
+        persisted2 = await persist_seeded_events([event_a, event_c], repo)
+        assert persisted2 == 1  # event_c만 저장됨
+
+        # 최종 count = 3
+        events = await repo.list_by_symbol("005930", since=datetime(2020, 1, 1, tzinfo=timezone.utc),
+                                             include_non_listed=True)
+        assert len(events) == 3
