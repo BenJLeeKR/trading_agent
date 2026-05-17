@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import time
@@ -25,6 +24,12 @@ from typing import Any
 
 import httpx
 
+from agent_trading.brokers.koreainvestment.token_cache import (
+    CachePurpose,
+    KisTokenCache,
+    KisTokenCacheConfig,
+)
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -32,7 +37,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _HOLIDAY_OAUTH_CACHE_DEFAULT_FILENAME = "kis_live_oauth_token.json"
-_HOLIDAY_OAUTH_EXPIRY_BUFFER = 60  # 1분 버퍼 (만료 직전 재발급)
 
 # ---------------------------------------------------------------------------
 # HolidayStatus — 076 API 응답 구조체
@@ -122,10 +126,20 @@ class KISHolidayClient:
 
         # File token cache (live-info OAuth token persistence across restarts)
         self._cache_enabled = enable_token_cache
-        self._cache_path: str | None = token_cache_path
-        # Fingerprint: app_key + app_secret[-4:] + base_url
-        raw_fp = f"holiday_oauth_{app_key}_{app_secret[-4:] if len(app_secret) >= 4 else app_secret}_{self._base_url}"
-        self._fingerprint = hashlib.sha256(raw_fp.encode()).hexdigest()[:16]
+        cache_path = token_cache_path or f".cache/{_HOLIDAY_OAUTH_CACHE_DEFAULT_FILENAME}"
+        # secret hash for fingerprint input
+        secret_hash = app_secret[-4:] if len(app_secret) >= 4 else app_secret
+        self._token_cache = KisTokenCache(KisTokenCacheConfig(
+            enabled=enable_token_cache,
+            cache_path=Path(cache_path),
+            cache_purpose=CachePurpose.LIVE_HOLIDAY_OAUTH,
+            fingerprint_input=f"holiday_oauth_{app_key}_{secret_hash}_{self._base_url}",
+            extra_validators={
+                "token_purpose": "holiday_oauth",
+            },
+            load_expiry_buffer=60.0,
+            save_expiry_buffer=60.0,
+        ))
 
     # ------------------------------------------------------------------
     # HTTP client lifecycle
@@ -164,7 +178,7 @@ class KISHolidayClient:
 
         Cache resolution order:
         1. In-memory cache (fastest, per-process)
-        2. File cache (live-info OAuth token, cross-restart)
+        2. File cache via ``KisTokenCache`` (cross-restart)
         3. HTTP call (``/oauth2/tokenP``)
 
         Implements single-flight pattern with asyncio.Lock to guarantee
@@ -177,12 +191,13 @@ class KISHolidayClient:
             if self._access_token is not None and now_wall < self._token_expires_at:
                 return self._access_token
 
-            # 2. File cache load
-            cached = self._load_cached_token()
-            if cached is not None:
-                self._access_token = cached["access_token"]
-                self._token_expires_at = cached["expires_at"]
-                return self._access_token
+            # 2. File cache load via KisTokenCache
+            if self._cache_enabled:
+                cached_token = await self._token_cache.load()
+                if cached_token is not None:
+                    self._access_token = cached_token
+                    self._token_expires_at = now_wall + 86400 - 300
+                    return self._access_token
 
             # 3. HTTP call (oauth2/tokenP)
             client = await self._get_client()
@@ -204,106 +219,15 @@ class KISHolidayClient:
             expires_in = int(data.get("expires_in", 86400))
             self._token_expires_at = now_wall + expires_in - 300
 
-            # 4. Persist to file cache
-            self._save_cached_token(data, now_wall, expires_in)
+            # 4. Persist to file cache via KisTokenCache
+            if self._cache_enabled:
+                await self._token_cache.save(self._access_token, expires_in)
 
             logger.debug(
                 "KISHolidayClient: token acquired (expires_in=%ds)",
                 expires_in,
             )
             return self._access_token
-
-    # ------------------------------------------------------------------
-    # File token cache (live-info OAuth token persistence)
-    # ------------------------------------------------------------------
-
-    def _load_cached_token(self) -> dict[str, Any] | None:
-        """Load cached OAuth token from file.
-
-        Returns cached token data (``access_token``, ``expires_at``) or
-        ``None`` if cache is disabled, missing, expired, or fingerprint
-        mismatch.
-        """
-        if not self._cache_enabled:
-            logger.debug("Token cache miss: disabled")
-            return None
-
-        cache_path = self._cache_path
-        if not cache_path:
-            return None
-
-        path = Path(cache_path)
-        if not path.exists():
-            logger.info("Token cache miss: file_missing")
-            return None
-
-        try:
-            data: dict[str, Any] = json.loads(path.read_text())
-
-            # Fingerprint check
-            if data.get("fingerprint") != self._fingerprint:
-                logger.info(
-                    "Token cache miss: fingerprint_mismatch "
-                    "(expected=%s, got=%s)",
-                    self._fingerprint,
-                    data.get("fingerprint", "(none)"),
-                )
-                return None
-
-            # Cache type check — ensure it's a holiday oauth token
-            if data.get("token_purpose") != "holiday_oauth":
-                logger.info(
-                    "Token cache miss: token_purpose_mismatch "
-                    "(expected=holiday_oauth, got=%s)",
-                    data.get("token_purpose", "(none)"),
-                )
-                return None
-
-            # Expiry check (with 1-minute buffer)
-            expires_at = float(data["expires_at"])
-            if time.time() >= expires_at:
-                logger.info("Token cache miss: expired")
-                return None
-
-            logger.info("Token cache hit for live-info holiday client")
-            return {
-                "access_token": data["access_token"],
-                "expires_at": expires_at,
-            }
-
-        except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
-            logger.warning("Token cache miss: read_error (%s)", exc)
-            return None
-
-    def _save_cached_token(
-        self,
-        token_data: dict[str, Any],
-        now_wall: float,
-        expires_in: int,
-    ) -> None:
-        """Save OAuth token to file cache."""
-        if not self._cache_enabled:
-            return
-
-        cache_path = self._cache_path
-        if not cache_path:
-            return
-
-        path = Path(cache_path)
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            data: dict[str, Any] = {
-                "access_token": token_data["access_token"],
-                "token_type": token_data.get("token_type", "Bearer"),
-                "expires_at": now_wall + expires_in - _HOLIDAY_OAUTH_EXPIRY_BUFFER,
-                "fingerprint": self._fingerprint,
-                "token_purpose": "holiday_oauth",
-                "created_at": now_wall,
-            }
-            path.write_text(json.dumps(data, indent=2))
-            logger.info("Token cache saved for live-info holiday client")
-        except OSError as exc:
-            logger.warning("Failed to save token cache: %s", exc)
 
     # ------------------------------------------------------------------
     # Response parsing

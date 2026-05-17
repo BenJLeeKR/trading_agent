@@ -227,8 +227,81 @@ class FillEvent:
 
 
 @dataclass(slots=True, frozen=True)
+class DisclosureTitleDTO:
+    """KIS FHKST01011800 공시 제목 정규화 응답.
+
+    Attributes
+    ----------
+    symbol: 종목코드 (ex: 005930)
+    company_name: 종목명 (ex: 삼성전자, KIS 응답 kor_isnm1~10에서 추출)
+    headline: 공시 제목 (hts_pbnt_titl_cntt, 최대 400자)
+    published_at: 발행 시각 (data_dt + data_tm 조합, KIS 응답 형식 그대로)
+    source: 데이터 출처 식별자 (NAVER SourceAdapter 연결 포인트)
+    """
+    symbol: str
+    """종목코드 (ex: 005930)"""
+    company_name: str | None = None
+    """종목명 (ex: 삼성전자)"""
+    headline: str | None = None
+    """공시 제목 (hts_pbnt_titl_cntt, 최대 400자)"""
+    published_at: str | None = None
+    """공시 일시 (KIS 응답 data_dt + data_tm 조합)"""
+    source: str = "kis_disclosure_live"
+    """데이터 출처 식별자 (NAVER SourceAdapter 연결 포인트)"""
+
+
+@dataclass(slots=True, frozen=True)
 class MarketDataSubscription:
     channel: MarketDataChannel
     symbol: str
     market: str
+
+
+@dataclass(slots=True, frozen=True)
+class SeededNewsCandidate:
+    """KIS-seeded NAVER news candidate for EI consumption.
+
+    This is a **transient** DTO — stored in memory only until EI integration.
+    KIS 공시 제목을 seed로 NAVER 뉴스 검색 API를 호출한 결과를 정규화한 DTO.
+    Scoring, Dedupe, Hard Gate 통과 후 EI Agent에 전달된다.
+
+    Attributes
+    ----------
+    symbol: 종목코드 (ex: 005930)
+    company_name: 종목명 (ex: 삼성전자)
+    seed_headline: KIS disclosure title (the search seed)
+    related_news_title: NAVER news title (HTML stripped)
+    related_news_summary: NAVER news description/summary (HTML stripped)
+    link: original article URL (NAVER ``link`` 필드)
+    published_at: article publication datetime (RFC 3339, 정규화 완료)
+    source: data source identifier (기본값 ``naver_news_seeded``)
+    confidence_score: computed relevance score (0-100)
+    seed_source: origin of the seed (기본값 ``kis_disclosure_live``)
+    query_used: 검색에 사용된 query string (logging 용)
+    originallink: NAVER ``originallink`` (언론사 원본 URL, dedupe 용)
+    """
+    symbol: str
+    """종목코드 (ex: 005930)"""
+    company_name: str | None = None
+    """종목명 (ex: 삼성전자)"""
+    seed_headline: str | None = None
+    """KIS disclosure title (the search seed)"""
+    related_news_title: str = ""
+    """NAVER news title (HTML stripped)"""
+    related_news_summary: str | None = None
+    """NAVER news description/summary (HTML stripped)"""
+    link: str = ""
+    """Original article URL (NAVER ``link`` field)"""
+    published_at: datetime | None = None
+    """RFC 3339 datetime (정규화 완료). 외부 표시 시에만 문자열 변환."""
+    source: str = "naver_news_seeded"
+    """데이터 출처 식별자 (기본값 ``naver_news_seeded``)"""
+    confidence_score: float = 0.0
+    """Computed relevance score (0-100)"""
+    seed_source: str = "kis_disclosure_live"
+    """Origin of the seed (기본값 ``kis_disclosure_live``)"""
+    query_used: str | None = None
+    """검색에 사용된 query string (logging/diagnostics 용)"""
+    originallink: str | None = None
+    """NAVER ``originallink`` (언론사 원본 URL, dedupe 용)"""
 

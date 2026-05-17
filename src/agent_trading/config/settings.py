@@ -184,6 +184,81 @@ def _resolve_kis_live_token_cache_path() -> str:
     return os.getenv("KIS_LIVE_TOKEN_CACHE_PATH", ".cache/kis_live_token.json")
 
 
+# ---------------------------------------------------------------------------
+# KIS disclosure (live 전용 공시 제목) 설정
+# ---------------------------------------------------------------------------
+
+
+def _resolve_kis_live_app_key() -> str | None:
+    """Resolve live disclosure API key from ``KIS_LIVE_APP_KEY``.
+
+    Returns ``None`` when unset (disclosure 기능 비활성화).
+    """
+    return os.getenv("KIS_LIVE_APP_KEY") or None
+
+
+def _resolve_kis_live_app_secret() -> str | None:
+    """Resolve live disclosure API secret from ``KIS_LIVE_APP_SECRET``.
+
+    Returns ``None`` when unset (disclosure 기능 비활성화).
+    """
+    return os.getenv("KIS_LIVE_APP_SECRET") or None
+
+
+def _resolve_kis_disclosure_token_cache_path() -> str:
+    """Resolve disclosure token cache file path from ``KIS_DISCLOSURE_TOKEN_CACHE_PATH``.
+
+    Default: ``.cache/kis_disclosure_token.json`` (기본 dev/paper cache와 충돌 방지).
+    """
+    return os.getenv("KIS_DISCLOSURE_TOKEN_CACHE_PATH", ".cache/kis_disclosure_token.json")
+
+
+def _resolve_kis_disclosure_token_cache_enabled() -> bool:
+    """Resolve disclosure token cache enabled flag from ``KIS_DISCLOSURE_TOKEN_CACHE_ENABLED``.
+
+    Enabled by default (live token 만료 86400s 고려).
+    """
+    raw = os.getenv("KIS_DISCLOSURE_TOKEN_CACHE_ENABLED", "true")
+    return raw.strip().lower() == "true"
+
+
+# ---------------------------------------------------------------------------
+# NAVER Search API settings (news search)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_naver_client_id() -> str:
+    """Resolve NAVER Search API client ID from ``NAVER_CLIENT_ID``.
+
+    Returns empty string when unset (news search 기능 비활성화).
+    """
+    return os.getenv("NAVER_CLIENT_ID", "")
+
+
+def _resolve_naver_client_secret() -> str:
+    """Resolve NAVER Search API client secret from ``NAVER_CLIENT_SECRET``.
+
+    Returns empty string when unset (news search 기능 비활성화).
+    """
+    return os.getenv("NAVER_CLIENT_SECRET", "")
+
+
+def _resolve_naver_search_api_url() -> str:
+    """Resolve NAVER Search API base URL from ``NAVER_SEARCH_API_URL``.
+
+    Default: ``https://openapi.naver.com/v1/search/news.json``.
+    """
+    return os.getenv(
+        "NAVER_SEARCH_API_URL",
+        "https://openapi.naver.com/v1/search/news.json",
+    )
+
+
+# ---------------------------------------------------------------------------
+# KIS snapshot sync settings
+# ---------------------------------------------------------------------------
+
+
 def _resolve_kis_snapshot_stale_threshold_seconds() -> int:
     """Resolve stale threshold for KIS snapshot sync freshness check.
 
@@ -268,6 +343,19 @@ class AppSettings:
     # ---- KIS live-info WebSocket URL (163 market state) -----------------------
     kis_live_info_ws_url: str = field(default_factory=lambda: os.getenv("KIS_LIVE_INFO_WS_URL", ""))
 
+    # ---- KIS disclosure (live 전용 공시 제목) 설정 ----------------------------
+    kis_live_app_key: str | None = field(default_factory=_resolve_kis_live_app_key)
+    """Live 환경 KIS API Key (공시 조회 전용). None이면 disclosure 기능 비활성화."""
+
+    kis_live_app_secret: str | None = field(default_factory=_resolve_kis_live_app_secret)
+    """Live 환경 KIS API Secret (공시 조회 전용). None이면 disclosure 기능 비활성화."""
+
+    kis_disclosure_token_cache_path: str = field(default_factory=_resolve_kis_disclosure_token_cache_path)
+    """Disclosure 전용 token cache 파일 경로. 기본 KIS cache와 충돌 방지."""
+
+    kis_disclosure_token_cache_enabled: bool = field(default_factory=_resolve_kis_disclosure_token_cache_enabled)
+    """Disclosure token cache 사용 여부. False면 매번 재인증."""
+
     # ---- KIS snapshot sync stale threshold -----------------------------------
     kis_snapshot_stale_threshold_seconds: int = field(
         default_factory=_resolve_kis_snapshot_stale_threshold_seconds,
@@ -331,6 +419,22 @@ class AppSettings:
 
     # ---- OpenDART API credentials (read from environment) --------------------
     opendart_api_key: str = field(default_factory=lambda: os.getenv("OPENDART_API_KEY", ""))
+
+    # ---- NAVER Search API (news search) --------------------------------------
+    # NEWS SEARCH 기능 활성화 조건:
+    #   ``NAVER_CLIENT_ID`` + ``NAVER_CLIENT_SECRET`` 모두 설정되어야 함.
+    # 둘 중 하나라도 비어 있으면 ``seeded_news_service``는 ``[]``를 반환한다.
+    naver_client_id: str = field(default_factory=_resolve_naver_client_id)
+    """NAVER Search API Client ID (``NAVER_CLIENT_ID`` env)."""
+
+    naver_client_secret: str = field(default_factory=_resolve_naver_client_secret)
+    """NAVER Search API Client Secret (``NAVER_CLIENT_SECRET`` env)."""
+
+    naver_search_api_url: str = field(default_factory=_resolve_naver_search_api_url)
+    """NAVER Search API endpoint URL (``NAVER_SEARCH_API_URL`` env).
+
+    Default: ``https://openapi.naver.com/v1/search/news.json``.
+    """
 
     # ---- Provider AI (OpenAI-compatible) ------------------------------------
     # External env var names are provider-specific; internal fields are

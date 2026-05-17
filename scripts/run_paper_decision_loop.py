@@ -491,6 +491,7 @@ def _serialize_cycle_result(
     precheck: dict[str, object] | None = None,
     dry_run: bool = False,
     error: str | None = None,
+    ei_output: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Serialize a single decision cycle result.
 
@@ -508,6 +509,8 @@ def _serialize_cycle_result(
         Whether this cycle was a dry-run (assemble + sizing only).
     error:
         Top-level error message, if the cycle failed before producing a result.
+    ei_output:
+        Optional EI Agent output (event_bias, event_conflict, event_reason_codes).
     """
     now = datetime.now(timezone.utc)
     started_at = now.isoformat()
@@ -562,6 +565,9 @@ def _serialize_cycle_result(
             data["requested_quantity"] = str(result.order.requested_quantity)
     else:
         data["status"] = "UNKNOWN"
+
+    if ei_output is not None:
+        data["ei_output"] = ei_output
 
     return data
 
@@ -649,10 +655,44 @@ async def _run_one_cycle(
                 metadata={"source_type": source_type},
             )
 
+            # ── 3.5 Seeded news → seeded_events conversion ──────────────
+            _SEEDED_NEWS_ENABLED = os.environ.get("SEEDED_NEWS_ENABLED", "1") == "1"
+            seeded_events: list[ExternalEventEntity] | None = None
+            if _SEEDED_NEWS_ENABLED:
+                try:
+                    disclosure_seed_service = runtime.get("disclosure_seed_service")
+                    seeded_news_service = runtime.get("seeded_news_service")
+                    if disclosure_seed_service is not None and seeded_news_service is not None:
+                        seeds = await disclosure_seed_service.fetch_disclosure_titles([symbol])
+                        if seeds:
+                            candidates, _metrics = await seeded_news_service.process_seeds(seeds)
+                            if candidates:
+                                from agent_trading.services.seeded_news_converter import (
+                                    convert_seeded_candidates,
+                                )
+                                seeded_events = convert_seeded_candidates(candidates)
+                                logger.info(
+                                    "Cycle %d symbol=%s: seeded %d events from %d candidates",
+                                    cycle, symbol, len(seeded_events), len(candidates),
+                                )
+                except Exception:
+                    logger.exception(
+                        "Cycle %d symbol=%s: seeded news processing failed, continuing without.",
+                        cycle, symbol,
+                    )
+            else:
+                logger.info(
+                    "Cycle %d symbol=%s: seeded news DISABLED (SEEDED_NEWS_ENABLED=0)",
+                    cycle, symbol,
+                )
+
             # ── 4. Execute cycle ────────────────────────────────────────
             if dry_run:
                 # Dry-run: assemble + sizing only
-                intent = await orchestrator.assemble(request)
+                intent = await orchestrator.assemble(
+                    request,
+                    seeded_events=seeded_events,
+                )
                 sizing_inputs = orchestrator._build_sizing_inputs(intent)
                 sizing_result = calculate_sizing(sizing_inputs)
 
@@ -679,6 +719,7 @@ async def _run_one_cycle(
                     request,
                     order_manager=order_manager,
                     broker=broker,
+                    seeded_events=seeded_events,
                 )
                 if result is not None:
                     logger.info(
@@ -698,6 +739,16 @@ async def _run_one_cycle(
                     error_message="Neither --submit nor --dry-run was set.",
                 )
 
+            # ── 4.5 Collect EI Agent output ──────────────────────────────
+            ei_output: dict[str, object] | None = None
+            if result is not None and result.intent is not None:
+                ai_inputs = result.intent.ai_backend_inputs
+                ei_output = {
+                    "event_bias": ai_inputs.event_bias,
+                    "event_conflict": ai_inputs.event_conflict,
+                    "event_reason_codes": list(ai_inputs.event_reason_codes),
+                }
+
             duration = time.monotonic() - start
             return _serialize_cycle_result(
                 cycle,
@@ -707,6 +758,7 @@ async def _run_one_cycle(
                 market=market,
                 precheck=precheck,
                 dry_run=dry_run,
+                ei_output=ei_output,
             )
 
     except Exception as exc:

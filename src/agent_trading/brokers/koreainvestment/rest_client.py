@@ -21,6 +21,11 @@ from agent_trading.brokers.errors import (
     BrokerError,
     BrokerErrorType,
 )
+from agent_trading.brokers.koreainvestment.token_cache import (
+    CachePurpose,
+    KisTokenCache,
+    KisTokenCacheConfig,
+)
 
 logger = logging.getLogger(__name__)
 from agent_trading.brokers.rate_limit import (
@@ -64,6 +69,9 @@ KIS_ENDPOINTS: Mapping[str, str] = {
     "inquire_price": "/uapi/domestic-stock/v1/quotations/inquire-price",            # 주식현재가 시세
     # --- Market Data ---
     "inquire_asking_price_exp_ccn": "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn", # 호가
+    # --- Disclosure (live only) ---
+    # Reference: FHKST01011800 — 종합 시황_공시(제목), 모의투자 미지원
+    "disclosure_title": "/uapi/domestic-stock/v1/quotations/news-title",
 }
 
 # TR ID mapping: (live_tr, paper_tr)
@@ -80,6 +88,8 @@ KIS_TR_IDS: Mapping[str, tuple[str, str]] = {
     "inquire_psbl_sell": ("TTTC8408R", None),               # 매도가능수량조회 (모의 미지원)
     "inquire_price": ("FHKST01010100", "FHKST01010100"),    # 주식현재가 시세
     "inquire_asking_price_exp_ccn": ("FHKST01010200", "FHKST01010200"), # 호가
+    # Disclosure (live only — 모의투자 미지원)
+    "disclosure_title": ("FHKST01011800", None),
 }
 
 # KIS error codes that indicate ambiguous / unknown state
@@ -241,9 +251,11 @@ class KISRestClient:
     # --- dev token cache (file-based, paper/dev only) -------------------------
     dev_token_cache_enabled: bool = False
     dev_token_cache_path: str = ".cache/kis_token.json"
+    cache_purpose: CachePurpose = CachePurpose.PAPER_ACCESS_TOKEN
 
     # --- internal state ---
     _client: httpx.AsyncClient | None = field(default=None, init=False, repr=False)
+    _token_cache: KisTokenCache | None = field(default=None, init=False, repr=False)
     _access_token: str | None = field(default=None, init=False, repr=False)
     _token_expires_at: float = field(default=0.0, init=False, repr=False)
     _approval_key: str | None = field(default=None, init=False, repr=False)
@@ -276,9 +288,21 @@ class KISRestClient:
     # ------------------------------------------------------------------
 
     def __post_init__(self) -> None:
-        """Normalize ``real`` → ``live`` for KIS_ENV compatibility."""
+        """Normalize ``real`` → ``live`` for KIS_ENV compatibility + init token cache."""
         if self.env.strip().lower() == "real":
             object.__setattr__(self, "env", "live")
+        self._token_cache = KisTokenCache(KisTokenCacheConfig(
+            enabled=self.dev_token_cache_enabled,
+            cache_path=Path(self.dev_token_cache_path),
+            cache_purpose=self.cache_purpose,
+            fingerprint_input=self.api_key,
+            extra_validators={
+                "kis_env": self.env,
+                "base_url": self._base_url,
+            },
+            load_expiry_buffer=60.0,
+            save_expiry_buffer=300.0,
+        ))
 
     @property
     def _base_url(self) -> str:
@@ -315,108 +339,6 @@ class KISRestClient:
             self._client = None
 
     # ------------------------------------------------------------------
-    # Dev token cache (file-based, paper/dev only)
-    # ------------------------------------------------------------------
-
-    async def _load_dev_token_cache(self) -> None:
-        """Load access token from file cache if valid.
-
-        Validates fingerprint, env, base_url, and expiry.
-        Logs explicit reason on cache miss — falls back to HTTP call.
-        """
-        if not self.dev_token_cache_enabled:
-            logger.info(
-                "Token cache: miss reason=disabled enabled=%s path=%s",
-                self.dev_token_cache_enabled,
-                self.dev_token_cache_path,
-            )
-            return
-        path = Path(self.dev_token_cache_path)
-        if not path.exists():
-            logger.info(
-                "Token cache: miss reason=file_missing enabled=%s path=%s",
-                self.dev_token_cache_enabled,
-                self.dev_token_cache_path,
-            )
-            return
-        try:
-            data = json.loads(path.read_text())
-            expected_fp = hashlib.sha256(self.api_key.encode()).hexdigest()[:16]
-            if data.get("app_key_fingerprint") != expected_fp:
-                logger.info(
-                    "Token cache: miss reason=fingerprint_mismatch enabled=%s path=%s",
-                    self.dev_token_cache_enabled,
-                    self.dev_token_cache_path,
-                )
-                return
-            if data.get("kis_env") != self.env:
-                logger.info(
-                    "Token cache: miss reason=env_mismatch enabled=%s path=%s cache_env=%s current_env=%s",
-                    self.dev_token_cache_enabled,
-                    self.dev_token_cache_path,
-                    data.get("kis_env"),
-                    self.env,
-                )
-                return
-            if data.get("base_url") != self._base_url:
-                logger.info(
-                    "Token cache: miss reason=base_url_mismatch enabled=%s path=%s cache_base_url=%s current_base_url=%s",
-                    self.dev_token_cache_enabled,
-                    self.dev_token_cache_path,
-                    data.get("base_url"),
-                    self._base_url,
-                )
-                return
-            expires_at = float(data["expires_at"])
-            if time.time() >= expires_at - 60:
-                logger.info(
-                    "Token cache: miss reason=expired enabled=%s path=%s expires_at=%s",
-                    self.dev_token_cache_enabled,
-                    self.dev_token_cache_path,
-                    expires_at,
-                )
-                return
-            self._access_token = data["access_token"]
-            self._token_expires_at = expires_at
-            logger.info(
-                "Token cache: hit fingerprint=%s expires_at=%s path=%s",
-                expected_fp,
-                expires_at,
-                self.dev_token_cache_path,
-            )
-        except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
-            logger.info(
-                "Token cache: miss reason=read_error enabled=%s path=%s error=%s",
-                self.dev_token_cache_enabled,
-                self.dev_token_cache_path,
-                exc,
-            )
-            return
-
-    async def _save_dev_token_cache(self) -> None:
-        """Save the current access token to file cache."""
-        if not self.dev_token_cache_enabled:
-            return
-        if self._access_token is None:
-            return
-        path = Path(self.dev_token_cache_path)
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            fingerprint = hashlib.sha256(self.api_key.encode()).hexdigest()[:16]
-            data: dict[str, object] = {
-                "access_token": self._access_token,
-                "token_type": "bearer",
-                "expires_at": self._token_expires_at,
-                "kis_env": self.env,
-                "base_url": self._base_url,
-                "app_key_fingerprint": fingerprint,
-                "created_at": time.time(),
-            }
-            path.write_text(json.dumps(data, indent=2))
-        except OSError:
-            return
-
-    # ------------------------------------------------------------------
     # Auth: access token
     # ------------------------------------------------------------------
 
@@ -446,12 +368,14 @@ class KISRestClient:
                 return self._access_token
 
             # 1b. Dev token cache: load from file if in-memory cache is empty
-            if self._access_token is None:
-                await self._load_dev_token_cache()
-                if self._access_token is not None and now_wall < self._token_expires_at:
+            if self._access_token is None and self._token_cache is not None:
+                cached_token = await self._token_cache.load()
+                if cached_token is not None:
+                    self._access_token = cached_token
+                    # 24h from now; will be refreshed by next successful HTTP call
+                    self._token_expires_at = now_wall + 86400 - 300
                     logger.debug(
-                        "Token cache: dev-file hit expires_at=%s path=%s",
-                        self._token_expires_at,
+                        "Token cache: dev-file hit path=%s",
                         self.dev_token_cache_path,
                     )
                     return self._access_token
@@ -481,8 +405,9 @@ class KISRestClient:
             # token expires in 86400s (24h); refresh 5 min early
             self._token_expires_at = now_wall + int(data.get("expires_in", 86400)) - 300
             self._last_auth_call_time = now_mono
-            # 4b. Dev token cache: persist to file
-            await self._save_dev_token_cache()
+            # 4b. Dev token cache: persist to file via KisTokenCache
+            if self._token_cache is not None:
+                await self._token_cache.save(self._access_token, int(data.get("expires_in", 86400)))
             return self._access_token  # type: ignore[return-value]
 
     # ------------------------------------------------------------------
@@ -1258,6 +1183,128 @@ class KISRestClient:
         if isinstance(output, list):
             output = output[0] if output else {}
         return output
+
+    # ------------------------------------------------------------------
+    # Disclosure (live-only 공시 제목 조회)
+    # ------------------------------------------------------------------
+
+    async def get_disclosure_news_title(
+        self,
+        symbol: str,
+    ) -> list[dict[str, Any]]:
+        """Fetch disclosure news title (공시 제목) for a stock symbol.
+
+        KIS FHKST01011800 — 종합 시황_공시(제목).
+        Live-only API (모의투자 미지원) — returns ``[]`` when called
+        in dev/paper env (``_get_tr_id`` raises ``BrokerError``, caught here).
+
+        KIS 요청 파라미터 (Reference: KIS OpenAPI Excel 84번 시트):
+        - ``FID_COND_MRKT_CLS_CODE``: 공백 (필수)
+        - ``FID_INPUT_ISCD``: 종목코드 (공백=전체)
+        - ``FID_NEWS_OFER_ENTP_CODE``: 공백 (필수)
+        - ``FID_TITL_CNTT``: 공백 (필수)
+        - ``FID_INPUT_DATE_1``: 공백=현재기준
+        - ``FID_INPUT_HOUR_1``: 공백=현재기준
+        - ``FID_RANK_SORT_CLS_CODE``: 공백 (필수)
+        - ``FID_INPUT_SRNO``: 공백 (필수)
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            Raw disclosure item list.  Each item contains:
+            - ``hts_pbnt_titl_cntt``: 공시 제목 (최대 400자)
+            - ``data_dt``: 작성일자 (YYYYMMDD)
+            - ``data_tm``: 작성시간 (HHMMSS)
+            - ``iscd1``~``iscd10``: 종목코드
+            - ``kor_isnm1``~``kor_isnm10``: 종목명
+            Returns ``[]`` on any error (graceful fallback).
+        """
+        tr_id = self._get_tr_id("disclosure_title")
+
+        # KIS FHKST01011800 requires all these query params (many must be empty)
+        params: dict[str, str] = {
+            "FID_COND_MRKT_CLS_CODE": "",       # 조건 시장 구분 코드 (공백 필수)
+            "FID_INPUT_ISCD": symbol,             # 입력 종목코드
+            "FID_NEWS_OFER_ENTP_CODE": "",        # 뉴스 제공 업체 코드 (공백 필수)
+            "FID_TITL_CNTT": "",                  # 제목 내용 (공백 필수)
+            "FID_INPUT_DATE_1": "",               # 입력 날짜 (공백=현재기준)
+            "FID_INPUT_HOUR_1": "",               # 입력 시간 (공백=현재기준)
+            "FID_RANK_SORT_CLS_CODE": "",         # 순위 정렬 구분 코드 (공백 필수)
+            "FID_INPUT_SRNO": "",                 # 입력 일련번호 (공백 필수)
+        }
+
+        try:
+            data = await self._request(
+                "GET",
+                endpoint_key="disclosure_title",
+                tr_id_key="disclosure_title",
+                bucket=BucketType.INQUIRY,
+                params=params,
+            )
+        except BrokerError as exc:
+            logger.warning(
+                "Disclosure: BrokerError symbol=%s env=%s error=%s",
+                symbol, self.env, exc,
+            )
+            return []
+        except Exception:
+            logger.warning(
+                "Disclosure: unexpected error symbol=%s env=%s",
+                symbol, self.env, exc_info=True,
+            )
+            return []
+
+        # KIS response: ``output`` is a list of items
+        output = data.get("output") or []
+        if not isinstance(output, list):
+            output = [output] if output else []
+
+        logger.info(
+            "Disclosure: success symbol=%s env=%s items=%d",
+            symbol, self.env, len(output),
+        )
+        return output
+
+    @staticmethod
+    def _normalize_disclosure_output(
+        raw: dict[str, Any],
+        symbol: str,
+    ) -> dict[str, Any]:
+        """Normalize a single KIS disclosure response item to a DTO-compatible dict.
+
+        Parameters
+        ----------
+        raw: Single item from FHKST01011800 response ``output`` list.
+        symbol: The queried stock symbol.
+
+        Returns
+        -------
+        dict[str, Any]
+            Normalized dict compatible with ``DisclosureTitleDTO`` fields.
+        """
+        # 회사명: kor_isnm1~10 중 첫 번째 비어있지 않은 값
+        company_name: str | None = None
+        for i in range(1, 11):
+            key = f"kor_isnm{i}"
+            val = raw.get(key)
+            if val and str(val).strip():
+                company_name = str(val).strip()
+                break
+
+        # 발행 시각: data_dt (YYYYMMDD) + data_tm (HHMMSS) 조합
+        data_dt = raw.get("data_dt", "")
+        data_tm = raw.get("data_tm", "")
+        published_at: str | None = None
+        if data_dt and data_tm:
+            published_at = f"{data_dt} {data_tm}"
+
+        return {
+            "symbol": symbol,
+            "company_name": company_name,
+            "headline": raw.get("hts_pbnt_titl_cntt"),
+            "published_at": published_at,
+            "source": "kis_disclosure_live",
+        }
 
     async def resolve_unknown_state(
         self,

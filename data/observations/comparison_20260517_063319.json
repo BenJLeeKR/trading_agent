@@ -1,0 +1,306 @@
+{
+  "timestamp": "2026-05-17T06:32:22.599671+00:00",
+  "symbols": [
+    "005930",
+    "000660",
+    "035420",
+    "005380"
+  ],
+  "mode": "both",
+  "005930": {
+    "on": {
+      "seeded_enabled": true,
+      "symbol": "005930",
+      "returncode": 0,
+      "cycle": 1,
+      "market": "KRX",
+      "started_at": "2026-05-17T06:32:29.536733+00:00",
+      "completed_at": "2026-05-17T06:32:29.536733+00:00",
+      "duration_seconds": 6.622,
+      "precheck": {
+        "health_status": "ok",
+        "last_successful_run_at": "2026-05-17T06:28:14.114770+00:00",
+        "last_run_status": "completed",
+        "consecutive_failures": 0,
+        "stale_threshold_seconds": 900
+      },
+      "status": "DRY_RUN",
+      "decision_context_id": "eae1b987-70e3-4659-b4ba-c6e9b1496f15",
+      "trade_decision_id": null,
+      "order_intent_id": "e0b8ee5a-9d0a-482f-ae03-8a4cc774f977",
+      "decision_type": "HOLD",
+      "sized_quantity": "10",
+      "ei_output": {
+        "event_bias": "neutral",
+        "event_conflict": false,
+        "event_reason_codes": []
+      },
+      "mode": "summary",
+      "total_cycles": 1,
+      "success": 1,
+      "skipped": 0,
+      "error": 0,
+      "success_rate": 100.0,
+      "total_duration_seconds": 6.628,
+      "stderr_preview": "2026-05-17 15:32:22 [INFO] paper-decision-loop: --dry-run overrides --submit. Running assemble + sizing only.\n2026-05-17 15:32:22 [INFO] paper-decision-loop: Starting paper decision loop (interval=300s, max_cycles=1, submit=False, dry_run=True, output=json) ...\n2026-05-17 15:32:22 [INFO] paper-decision-loop: Set PAPER_DECISION_LOOP_INTERVAL_SECONDS to change interval (default=300).\n2026-05-17 15:32:22 [INFO] paper-decision-loop: Trading universe (1): 005930:KRX\n2026-05-17 15:32:22 [INFO] paper-d"
+    },
+    "off": {
+      "seeded_enabled": false,
+      "symbol": "005930",
+      "returncode": 0,
+      "cycle": 1,
+      "market": "KRX",
+      "started_at": "2026-05-17T06:32:37.432453+00:00",
+      "completed_at": "2026-05-17T06:32:37.432453+00:00",
+      "duration_seconds": 7.541,
+      "precheck": {
+        "health_status": "ok",
+        "last_successful_run_at": "2026-05-17T06:28:14.114770+00:00",
+        "last_run_status": "completed",
+        "consecutive_failures": 0,
+        "stale_threshold_seconds": 900
+      },
+      "status": "DRY_RUN",
+      "decision_context_id": "6ffee9ed-ec1d-4967-b384-d6443a80e309",
+      "trade_decision_id": null,
+      "order_intent_id": "d1612008-1076-40d8-b2fa-bbb2b609a4a0",
+      "decision_type": "HOLD",
+      "sized_quantity": "10",
+      "ei_output": {
+        "event_bias": "neutral",
+        "event_conflict": false,
+        "event_reason_codes": []
+      },
+      "mode": "summary",
+      "total_cycles": 1,
+      "success": 1,
+      "skipped": 0,
+      "error": 0,
+      "success_rate": 100.0,
+      "total_duration_seconds": 7.547,
+      "stderr_preview": "2026-05-17 15:32:29 [INFO] paper-decision-loop: --dry-run overrides --submit. Running assemble + sizing only.\n2026-05-17 15:32:29 [INFO] paper-decision-loop: Starting paper decision loop (interval=300s, max_cycles=1, submit=False, dry_run=True, output=json) ...\n2026-05-17 15:32:29 [INFO] paper-decision-loop: Set PAPER_DECISION_LOOP_INTERVAL_SECONDS to change interval (default=300).\n2026-05-17 15:32:29 [INFO] paper-decision-loop: Trading universe (1): 005930:KRX\n2026-05-17 15:32:29 [INFO] paper-d"
+    }
+  },
+  "000660": {
+    "on": {
+      "seeded_enabled": true,
+      "symbol": "000660",
+      "returncode": 0,
+      "cycle": 1,
+      "market": "KRX",
+      "started_at": "2026-05-17T06:32:44.365829+00:00",
+      "completed_at": "2026-05-17T06:32:44.365829+00:00",
+      "duration_seconds": 6.558,
+      "precheck": {
+        "health_status": "ok",
+        "last_successful_run_at": "2026-05-17T06:28:14.114770+00:00",
+        "last_run_status": "completed",
+        "consecutive_failures": 0,
+        "stale_threshold_seconds": 900
+      },
+      "status": "DRY_RUN",
+      "decision_context_id": "e3816f44-13d6-47c4-bf74-2e28ea0cc8c3",
+      "trade_decision_id": null,
+      "order_intent_id": "0c4d72d1-f8d9-4c32-850d-f9745b8043a7",
+      "decision_type": "HOLD",
+      "sized_quantity": "10",
+      "ei_output": {
+        "event_bias": "neutral",
+        "event_conflict": false,
+        "event_reason_codes": []
+      },
+      "mode": "summary",
+      "total_cycles": 1,
+      "success": 1,
+      "skipped": 0,
+      "error": 0,
+      "success_rate": 100.0,
+      "total_duration_seconds": 6.563,
+      "stderr_preview": "2026-05-17 15:32:37 [INFO] paper-decision-loop: --dry-run overrides --submit. Running assemble + sizing only.\n2026-05-17 15:32:37 [INFO] paper-decision-loop: Starting paper decision loop (interval=300s, max_cycles=1, submit=False, dry_run=True, output=json) ...\n2026-05-17 15:32:37 [INFO] paper-decision-loop: Set PAPER_DECISION_LOOP_INTERVAL_SECONDS to change interval (default=300).\n2026-05-17 15:32:37 [INFO] paper-decision-loop: Trading universe (1): 000660:KRX\n2026-05-17 15:32:37 [INFO] paper-d"
+    },
+    "off": {
+      "seeded_enabled": false,
+      "symbol": "000660",
+      "returncode": 0,
+      "cycle": 1,
+      "market": "KRX",
+      "started_at": "2026-05-17T06:32:51.140415+00:00",
+      "completed_at": "2026-05-17T06:32:51.140415+00:00",
+      "duration_seconds": 6.426,
+      "precheck": {
+        "health_status": "ok",
+        "last_successful_run_at": "2026-05-17T06:28:14.114770+00:00",
+        "last_run_status": "completed",
+        "consecutive_failures": 0,
+        "stale_threshold_seconds": 900
+      },
+      "status": "DRY_RUN",
+      "decision_context_id": "31f375c1-8502-4752-a455-6faf1f593e6f",
+      "trade_decision_id": null,
+      "order_intent_id": "f45f2a82-aad7-4719-961c-042fe1f95f4c",
+      "decision_type": "HOLD",
+      "sized_quantity": "10",
+      "ei_output": {
+        "event_bias": "neutral",
+        "event_conflict": false,
+        "event_reason_codes": []
+      },
+      "mode": "summary",
+      "total_cycles": 1,
+      "success": 1,
+      "skipped": 0,
+      "error": 0,
+      "success_rate": 100.0,
+      "total_duration_seconds": 6.431,
+      "stderr_preview": "2026-05-17 15:32:44 [INFO] paper-decision-loop: --dry-run overrides --submit. Running assemble + sizing only.\n2026-05-17 15:32:44 [INFO] paper-decision-loop: Starting paper decision loop (interval=300s, max_cycles=1, submit=False, dry_run=True, output=json) ...\n2026-05-17 15:32:44 [INFO] paper-decision-loop: Set PAPER_DECISION_LOOP_INTERVAL_SECONDS to change interval (default=300).\n2026-05-17 15:32:44 [INFO] paper-decision-loop: Trading universe (1): 000660:KRX\n2026-05-17 15:32:44 [INFO] paper-d"
+    }
+  },
+  "035420": {
+    "on": {
+      "seeded_enabled": true,
+      "symbol": "035420",
+      "returncode": 0,
+      "cycle": 1,
+      "market": "KRX",
+      "started_at": "2026-05-17T06:32:58.328268+00:00",
+      "completed_at": "2026-05-17T06:32:58.328268+00:00",
+      "duration_seconds": 6.824,
+      "precheck": {
+        "health_status": "ok",
+        "last_successful_run_at": "2026-05-17T06:28:14.114770+00:00",
+        "last_run_status": "completed",
+        "consecutive_failures": 0,
+        "stale_threshold_seconds": 900
+      },
+      "status": "DRY_RUN",
+      "decision_context_id": "300d2655-0c4e-44c1-8a31-eae6aab02ada",
+      "trade_decision_id": null,
+      "order_intent_id": "f7aff100-e9ad-4340-8bfb-c725299fdd19",
+      "decision_type": "HOLD",
+      "sized_quantity": "10",
+      "ei_output": {
+        "event_bias": "neutral",
+        "event_conflict": false,
+        "event_reason_codes": []
+      },
+      "mode": "summary",
+      "total_cycles": 1,
+      "success": 1,
+      "skipped": 0,
+      "error": 0,
+      "success_rate": 100.0,
+      "total_duration_seconds": 6.829,
+      "stderr_preview": "2026-05-17 15:32:51 [INFO] paper-decision-loop: --dry-run overrides --submit. Running assemble + sizing only.\n2026-05-17 15:32:51 [INFO] paper-decision-loop: Starting paper decision loop (interval=300s, max_cycles=1, submit=False, dry_run=True, output=json) ...\n2026-05-17 15:32:51 [INFO] paper-decision-loop: Set PAPER_DECISION_LOOP_INTERVAL_SECONDS to change interval (default=300).\n2026-05-17 15:32:51 [INFO] paper-decision-loop: Trading universe (1): 035420:KRX\n2026-05-17 15:32:51 [INFO] paper-d"
+    },
+    "off": {
+      "seeded_enabled": false,
+      "symbol": "035420",
+      "returncode": 0,
+      "cycle": 1,
+      "market": "KRX",
+      "started_at": "2026-05-17T06:33:05.163991+00:00",
+      "completed_at": "2026-05-17T06:33:05.163991+00:00",
+      "duration_seconds": 6.473,
+      "precheck": {
+        "health_status": "ok",
+        "last_successful_run_at": "2026-05-17T06:28:14.114770+00:00",
+        "last_run_status": "completed",
+        "consecutive_failures": 0,
+        "stale_threshold_seconds": 900
+      },
+      "status": "DRY_RUN",
+      "decision_context_id": "d61c7dca-9b96-4718-830e-8d97e74fb6c9",
+      "trade_decision_id": null,
+      "order_intent_id": "f4dac22c-4d52-416c-b21b-b50e28305158",
+      "decision_type": "HOLD",
+      "sized_quantity": "10",
+      "ei_output": {
+        "event_bias": "neutral",
+        "event_conflict": false,
+        "event_reason_codes": []
+      },
+      "mode": "summary",
+      "total_cycles": 1,
+      "success": 1,
+      "skipped": 0,
+      "error": 0,
+      "success_rate": 100.0,
+      "total_duration_seconds": 6.479,
+      "stderr_preview": "2026-05-17 15:32:58 [INFO] paper-decision-loop: --dry-run overrides --submit. Running assemble + sizing only.\n2026-05-17 15:32:58 [INFO] paper-decision-loop: Starting paper decision loop (interval=300s, max_cycles=1, submit=False, dry_run=True, output=json) ...\n2026-05-17 15:32:58 [INFO] paper-decision-loop: Set PAPER_DECISION_LOOP_INTERVAL_SECONDS to change interval (default=300).\n2026-05-17 15:32:58 [INFO] paper-decision-loop: Trading universe (1): 035420:KRX\n2026-05-17 15:32:58 [INFO] paper-d"
+    }
+  },
+  "005380": {
+    "on": {
+      "seeded_enabled": true,
+      "symbol": "005380",
+      "returncode": 0,
+      "cycle": 1,
+      "market": "KRX",
+      "started_at": "2026-05-17T06:33:12.735433+00:00",
+      "completed_at": "2026-05-17T06:33:12.735433+00:00",
+      "duration_seconds": 7.219,
+      "precheck": {
+        "health_status": "ok",
+        "last_successful_run_at": "2026-05-17T06:28:14.114770+00:00",
+        "last_run_status": "completed",
+        "consecutive_failures": 0,
+        "stale_threshold_seconds": 900
+      },
+      "status": "DRY_RUN",
+      "decision_context_id": "eab81431-0a9b-410e-976a-a3e127efc4b2",
+      "trade_decision_id": null,
+      "order_intent_id": "e910e1be-1592-4de2-b427-b2f0d42bfee7",
+      "decision_type": "HOLD",
+      "sized_quantity": "10",
+      "ei_output": {
+        "event_bias": "neutral",
+        "event_conflict": false,
+        "event_reason_codes": []
+      },
+      "mode": "summary",
+      "total_cycles": 1,
+      "success": 1,
+      "skipped": 0,
+      "error": 0,
+      "success_rate": 100.0,
+      "total_duration_seconds": 7.224,
+      "stderr_preview": "2026-05-17 15:33:05 [INFO] paper-decision-loop: --dry-run overrides --submit. Running assemble + sizing only.\n2026-05-17 15:33:05 [INFO] paper-decision-loop: Starting paper decision loop (interval=300s, max_cycles=1, submit=False, dry_run=True, output=json) ...\n2026-05-17 15:33:05 [INFO] paper-decision-loop: Set PAPER_DECISION_LOOP_INTERVAL_SECONDS to change interval (default=300).\n2026-05-17 15:33:05 [INFO] paper-decision-loop: Trading universe (1): 005380:KRX\n2026-05-17 15:33:05 [INFO] paper-d"
+    },
+    "off": {
+      "seeded_enabled": false,
+      "symbol": "005380",
+      "returncode": 0,
+      "cycle": 1,
+      "market": "KRX",
+      "started_at": "2026-05-17T06:33:19.845721+00:00",
+      "completed_at": "2026-05-17T06:33:19.845721+00:00",
+      "duration_seconds": 6.742,
+      "precheck": {
+        "health_status": "ok",
+        "last_successful_run_at": "2026-05-17T06:28:14.114770+00:00",
+        "last_run_status": "completed",
+        "consecutive_failures": 0,
+        "stale_threshold_seconds": 900
+      },
+      "status": "DRY_RUN",
+      "decision_context_id": "a5b81c63-5a0f-4b9d-9681-1660b97c7b4d",
+      "trade_decision_id": null,
+      "order_intent_id": "3840f613-c927-4aaf-9bb1-7bec367123ce",
+      "decision_type": "HOLD",
+      "sized_quantity": "10",
+      "ei_output": {
+        "event_bias": "neutral",
+        "event_conflict": false,
+        "event_reason_codes": []
+      },
+      "mode": "summary",
+      "total_cycles": 1,
+      "success": 1,
+      "skipped": 0,
+      "error": 0,
+      "success_rate": 100.0,
+      "total_duration_seconds": 6.748,
+      "stderr_preview": "2026-05-17 15:33:13 [INFO] paper-decision-loop: --dry-run overrides --submit. Running assemble + sizing only.\n2026-05-17 15:33:13 [INFO] paper-decision-loop: Starting paper decision loop (interval=300s, max_cycles=1, submit=False, dry_run=True, output=json) ...\n2026-05-17 15:33:13 [INFO] paper-decision-loop: Set PAPER_DECISION_LOOP_INTERVAL_SECONDS to change interval (default=300).\n2026-05-17 15:33:13 [INFO] paper-decision-loop: Trading universe (1): 005380:KRX\n2026-05-17 15:33:13 [INFO] paper-d"
+    }
+  }
+}

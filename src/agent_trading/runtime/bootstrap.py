@@ -7,6 +7,7 @@ from typing import Any
 
 from agent_trading.brokers.koreainvestment.adapter import KoreaInvestmentAdapter
 from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
+from agent_trading.brokers.koreainvestment.token_cache import CachePurpose
 from agent_trading.brokers.rate_limit import build_kis_budget_manager
 from agent_trading.brokers.polling_worker import PollingConfig, PollingWorker
 from agent_trading.brokers.source_adapter import SourceAdapter
@@ -27,6 +28,9 @@ from agent_trading.services.ai_agents import (
 from agent_trading.services.ai_agents.recorder import AgentRunRecorder
 from agent_trading.services.decision_orchestrator import (
     DecisionOrchestratorService,
+)
+from agent_trading.services.seeded_news_service import (
+    SeededNewsCandidateService,
 )
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.services.reconciliation_service import ReconciliationService
@@ -117,6 +121,60 @@ def _build_polling_workers(
     )
     if external_event_repo is None:
         return workers
+    
+    
+    def _build_live_disclosure_client(
+        settings: AppSettings,
+    ) -> KISRestClient | None:
+        """Build a live-only KISRestClient for 공시(제목) seed collection.
+    
+        Uses a dedicated live API key/secret (``kis_live_app_key`` /
+        ``kis_live_app_secret``) and a dedicated token cache path
+        (``.cache/kis_disclosure_token.json``) to avoid conflict with
+        the primary dev/paper client.
+    
+        Returns ``None`` when live credentials are not configured (graceful disable).
+    
+        Parameters
+        ----------
+        settings : AppSettings
+            Application settings with disclosure-specific fields.
+    
+        Returns
+        -------
+        KISRestClient | None
+            Configured client, or ``None`` if disclosure is disabled.
+        """
+        if not settings.kis_live_app_key or not settings.kis_live_app_secret:
+            logger.warning(
+                "Live disclosure client disabled: "
+                "kis_live_app_key or kis_live_app_secret not configured. "
+                "Set KIS_LIVE_APP_KEY / KIS_LIVE_APP_SECRET to enable.",
+            )
+            return None
+    
+        cache_path = settings.kis_disclosure_token_cache_path or ".cache/kis_disclosure_token.json"
+    
+        client = KISRestClient(
+            env="live",
+            api_key=settings.kis_live_app_key,
+            api_secret=settings.kis_live_app_secret,
+            # Disclosure API uses query params, not account info
+            account_number="",
+            account_product_code="",
+            base_url="",  # KIS_API_BASE_URLS["live"] will be used
+            dev_token_cache_path=cache_path,
+            dev_token_cache_enabled=settings.kis_disclosure_token_cache_enabled,
+            cache_purpose=CachePurpose.LIVE_DISCLOSURE_ACCESS_TOKEN,
+        )
+    
+        logger.info(
+            "Live disclosure client created: env=live, "
+            "cache_path=%s, cache_enabled=%s",
+            cache_path,
+            settings.kis_disclosure_token_cache_enabled,
+        )
+        return client
 
     # OpenDART polling worker (T1_REGULATORY)
     if settings.opendart_api_key:
@@ -138,6 +196,46 @@ def _build_polling_workers(
         workers.append(PollingWorker(adapter, config, external_event_repo))
 
     return workers
+
+
+def _build_live_disclosure_client(
+    settings: AppSettings,
+) -> KISRestClient | None:
+    """Build a ``KISRestClient`` dedicated to the live-only disclosure API.
+
+    Returns ``None`` (and logs a warning) when live credentials are missing.
+    The returned client uses its own token cache path so it does not interfere
+    with the primary live/paper client's token.
+    """
+    if not settings.kis_live_app_key or not settings.kis_live_app_secret:
+        logger.warning(
+            "Live disclosure client disabled: "
+            "kis_live_app_key or kis_live_app_secret not configured. "
+            "Set KIS_LIVE_APP_KEY / KIS_LIVE_APP_SECRET to enable.",
+        )
+        return None
+
+    cache_path = settings.kis_disclosure_token_cache_path or ".cache/kis_disclosure_token.json"
+
+    client = KISRestClient(
+        env="live",
+        api_key=settings.kis_live_app_key,
+        api_secret=settings.kis_live_app_secret,
+        account_number="",
+        account_product_code="",
+        base_url="",
+        dev_token_cache_path=cache_path,
+        dev_token_cache_enabled=settings.kis_disclosure_token_cache_enabled,
+        cache_purpose=CachePurpose.LIVE_DISCLOSURE_ACCESS_TOKEN,
+    )
+
+    logger.info(
+        "Live disclosure client created: env=live, "
+        "cache_path=%s, cache_enabled=%s",
+        cache_path,
+        settings.kis_disclosure_token_cache_enabled,
+    )
+    return client
 
 
 def _build_provider_agent(settings: AppSettings) -> EventInterpretationAgent | None:
@@ -246,6 +344,47 @@ def _build_final_decision_agent(
     )
 
 
+def _build_naver_search_adapter(
+    settings: AppSettings,
+) -> NaverNewsSearchAdapter | None:
+    """Build NAVER News Search Adapter if credentials are configured.
+
+    Returns ``None`` (and logs a warning) when NAVER credentials are missing.
+    The caller (``_build_seeded_news_service``) handles ``None`` gracefully.
+    """
+    if not settings.naver_client_id or not settings.naver_client_secret:
+        logger.warning(
+            "NAVER search adapter disabled: "
+            "NAVER_CLIENT_ID or NAVER_CLIENT_SECRET not configured. "
+            "Set NAVER_CLIENT_ID / NAVER_CLIENT_SECRET to enable.",
+        )
+        return None
+
+    from agent_trading.brokers.naver_news_adapter import NaverNewsSearchAdapter
+
+    return NaverNewsSearchAdapter(
+        client_id=settings.naver_client_id,
+        client_secret=settings.naver_client_secret,
+        api_url=settings.naver_search_api_url,
+    )
+
+
+def _build_seeded_news_service(
+    settings: AppSettings,
+) -> SeededNewsCandidateService | None:
+    """Build SeededNewsCandidateService if NAVER credentials are configured.
+
+    Returns ``None`` when NAVER is disabled — caller must handle gracefully.
+    """
+    naver_adapter = _build_naver_search_adapter(settings)
+    if naver_adapter is None:
+        return None
+
+    return SeededNewsCandidateService(
+        search_adapter=naver_adapter,
+    )
+
+
 async def _close_provider_agent(agent: object | None) -> None:
     """Safely close the provider agent's underlying HTTP client.
 
@@ -332,6 +471,16 @@ def build_default_runtime() -> dict[str, object]:
         final_decision_agent=final_decision_agent,
     )
     order_manager = _build_order_manager(repositories)
+
+    # Build live disclosure seed service
+    from agent_trading.services.disclosure_seed_service import LiveDisclosureSeedService
+
+    disclosure_client = _build_live_disclosure_client(settings)
+    disclosure_seed_service = LiveDisclosureSeedService(client=disclosure_client)
+
+    # Build seeded news service (NAVER news candidate MVP)
+    seeded_news_service = _build_seeded_news_service(settings)
+
     return {
         "settings": settings,
         "primary_broker_adapter": broker_adapter,
@@ -342,6 +491,9 @@ def build_default_runtime() -> dict[str, object]:
         "event_interpretation_agent": event_interpretation_agent,
         "ai_risk_agent": ai_risk_agent,
         "final_decision_agent": final_decision_agent,
+        "disclosure_seed_service": disclosure_seed_service,
+        "disclosure_client": disclosure_client,
+        "seeded_news_service": seeded_news_service,
     }
 
 
@@ -405,6 +557,15 @@ async def build_postgres_runtime(
     )
     order_manager = _build_order_manager(repositories)
 
+    # Build live disclosure seed service
+    from agent_trading.services.disclosure_seed_service import LiveDisclosureSeedService
+
+    disclosure_client = _build_live_disclosure_client(settings)
+    disclosure_seed_service = LiveDisclosureSeedService(client=disclosure_client)
+
+    # Build seeded news service (NAVER news candidate MVP)
+    seeded_news_service = _build_seeded_news_service(settings)
+
     return {
         "settings": settings,
         "primary_broker_adapter": broker_adapter,
@@ -416,6 +577,9 @@ async def build_postgres_runtime(
         "event_interpretation_agent": event_interpretation_agent,
         "ai_risk_agent": ai_risk_agent,
         "final_decision_agent": final_decision_agent,
+        "disclosure_seed_service": disclosure_seed_service,
+        "disclosure_client": disclosure_client,
+        "seeded_news_service": seeded_news_service,
     }
 
 
@@ -423,12 +587,24 @@ async def shutdown_postgres_runtime(runtime: dict[str, Any]) -> None:
     """Clean up a PostgreSQL runtime.
 
     Closes the underlying HTTP clients of all provider agents (if any),
-    then closes the connection pool.  Any open database transaction
-    must be closed by the caller before calling this function.
+    closes the disclosure client, then closes the connection pool.
+    Any open database transaction must be closed by the caller before
+    calling this function.
     """
     for key in ("event_interpretation_agent", "ai_risk_agent", "final_decision_agent"):
         agent = runtime.get(key)
         await _close_provider_agent(agent)
+
+    # Close disclosure client if present
+    disclosure_client: KISRestClient | None = runtime.get("disclosure_client")
+    if disclosure_client:
+        await disclosure_client.close()
+
+    # Close seeded news service if present
+    seeded_news_service = runtime.get("seeded_news_service")
+    if seeded_news_service is not None and hasattr(seeded_news_service, "close"):
+        await seeded_news_service.close()
+
     await close_pool()
 
 
@@ -483,6 +659,15 @@ async def postgres_runtime(
             final_decision_agent=final_decision_agent,
         )
         order_manager = _build_order_manager(repositories)
+        # Build live disclosure seed service
+        from agent_trading.services.disclosure_seed_service import LiveDisclosureSeedService
+
+        disclosure_client = _build_live_disclosure_client(settings)
+        disclosure_seed_service = LiveDisclosureSeedService(client=disclosure_client)
+
+        # Build seeded news service (NAVER news candidate MVP)
+        seeded_news_service = _build_seeded_news_service(settings)
+
         runtime: dict[str, Any] = {
             "settings": settings,
             "primary_broker_adapter": broker_adapter,
@@ -494,6 +679,9 @@ async def postgres_runtime(
             "event_interpretation_agent": event_interpretation_agent,
             "ai_risk_agent": ai_risk_agent,
             "final_decision_agent": final_decision_agent,
+            "disclosure_seed_service": disclosure_seed_service,
+            "disclosure_client": disclosure_client,
+            "seeded_news_service": seeded_news_service,
         }
         yield runtime
 

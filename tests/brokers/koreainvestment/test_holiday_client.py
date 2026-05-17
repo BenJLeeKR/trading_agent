@@ -668,8 +668,8 @@ class TestOAuthFileCache:
         assert cache_file.exists()
         saved = json.loads(cache_file.read_text())
         assert saved["access_token"] == "test-access-token-12345"
-        assert saved["token_purpose"] == "holiday_oauth"
-        assert saved["fingerprint"] == cl._fingerprint
+        assert saved.get("token_purpose") == "holiday_oauth"
+        assert saved["credential_fingerprint"] == _compute_test_fingerprint()
 
     @pytest.mark.asyncio
     async def test_oauth_file_cache_expired(

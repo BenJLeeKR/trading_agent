@@ -80,6 +80,12 @@ services:
       # P2: Live-info token cache (WebSocket approval key persistence)
       KIS_LIVE_TOKEN_CACHE_ENABLED: "${KIS_LIVE_TOKEN_CACHE_ENABLED:-true}"
       KIS_LIVE_TOKEN_CACHE_PATH: "${KIS_LIVE_TOKEN_CACHE_PATH:-.cache/kis_live_token.json}"
+      # P3: Seeded News — KIS live disclosure (공시 제목 조회용)
+      KIS_LIVE_APP_KEY: "${KIS_LIVE_APP_KEY:-}"
+      KIS_LIVE_APP_SECRET: "${KIS_LIVE_APP_SECRET:-}"
+      # P3: Seeded News — NAVER Search API (news candidate 수집용)
+      NAVER_CLIENT_ID: "${NAVER_CLIENT_ID:-}"
+      NAVER_CLIENT_SECRET: "${NAVER_CLIENT_SECRET:-}"
       LLM_PROVIDER: "${LLM_PROVIDER:-deepseek}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
       DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
@@ -292,6 +298,12 @@ services:
       KIS_LIVE_INFO_WS_URL: "${KIS_LIVE_INFO_WS_URL}"
       KIS_LIVE_TOKEN_CACHE_ENABLED: "${KIS_LIVE_TOKEN_CACHE_ENABLED:-true}"
       KIS_LIVE_TOKEN_CACHE_PATH: "${KIS_LIVE_TOKEN_CACHE_PATH:-.cache/kis_live_token.json}"
+      # P3: Seeded News — KIS live disclosure (공시 제목 조회용)
+      KIS_LIVE_APP_KEY: "${KIS_LIVE_APP_KEY:-}"
+      KIS_LIVE_APP_SECRET: "${KIS_LIVE_APP_SECRET:-}"
+      # P3: Seeded News — NAVER Search API (news candidate 수집용)
+      NAVER_CLIENT_ID: "${NAVER_CLIENT_ID:-}"
+      NAVER_CLIENT_SECRET: "${NAVER_CLIENT_SECRET:-}"
       # Scheduler Specific
       SCHEDULER_AFTER_HOURS_WINDOW: "${SCHEDULER_AFTER_HOURS_WINDOW:-3600}"
       SCHEDULER_INSTANCE_ID: "${SCHEDULER_INSTANCE_ID:-default}"

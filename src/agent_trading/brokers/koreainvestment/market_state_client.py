@@ -30,6 +30,11 @@ from typing import Any, Protocol
 
 import httpx
 
+from agent_trading.brokers.koreainvestment.token_cache import (
+    CachePurpose,
+    KisTokenCache,
+    KisTokenCacheConfig,
+)
 from agent_trading.config.settings import AppSettings
 
 logger = logging.getLogger(__name__)
@@ -188,100 +193,6 @@ _APPROVAL_KEY_REFRESH_MARGIN = 300  # refresh 5 min early
 # ---------------------------------------------------------------------------
 
 
-def _live_info_cache_fingerprint(app_key: str, api_secret: str) -> str:
-    """SHA-256 fingerprint for live-info token cache.
-
-    Format: ``live_info_{app_key}_{api_secret}``
-    """
-    raw = f"live_info_{app_key}_{api_secret}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:16]
-
-
-async def _load_live_info_approval_key_cache(
-    settings: AppSettings, app_key: str, api_secret: str
-) -> str | None:
-    """Load approval key from live-info token cache file.
-
-    Returns the cached approval key, or ``None`` if cache is disabled,
-    missing, or invalid.
-    """
-    if not settings.kis_live_token_cache_enabled:
-        logger.info(
-            "Live-info token cache: miss reason=disabled path=%s",
-            settings.kis_live_token_cache_path,
-        )
-        return None
-    path = Path(settings.kis_live_token_cache_path)
-    if not path.exists():
-        logger.info(
-            "Live-info token cache: miss reason=file_missing path=%s",
-            settings.kis_live_token_cache_path,
-        )
-        return None
-    try:
-        data = json.loads(path.read_text())
-        expected_fp = _live_info_cache_fingerprint(app_key, api_secret)
-        if data.get("app_key_fingerprint") != expected_fp:
-            logger.info(
-                "Live-info token cache: miss reason=fingerprint_mismatch path=%s",
-                settings.kis_live_token_cache_path,
-            )
-            return None
-        if data.get("cache_type") != "approval_key":
-            logger.info(
-                "Live-info token cache: miss reason=cache_type_mismatch path=%s",
-                settings.kis_live_token_cache_path,
-            )
-            return None
-        expires_at = float(data["expires_at"])
-        if time.time() >= expires_at - 60:
-            logger.info(
-                "Live-info token cache: miss reason=expired path=%s expires_at=%s",
-                settings.kis_live_token_cache_path,
-                expires_at,
-            )
-            return None
-        logger.info(
-            "Live-info token cache: hit fingerprint=%s path=%s",
-            expected_fp,
-            settings.kis_live_token_cache_path,
-        )
-        return data["approval_key"]
-    except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
-        logger.info(
-            "Live-info token cache: miss reason=read_error path=%s error=%s",
-            settings.kis_live_token_cache_path,
-            exc,
-        )
-        return None
-
-
-async def _save_live_info_approval_key_cache(
-    settings: AppSettings,
-    app_key: str,
-    api_secret: str,
-    approval_key: str,
-    expires_at: float,
-) -> None:
-    """Save approval key to live-info token cache file."""
-    if not settings.kis_live_token_cache_enabled:
-        return
-    path = Path(settings.kis_live_token_cache_path)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fingerprint = _live_info_cache_fingerprint(app_key, api_secret)
-        data: dict[str, object] = {
-            "cache_type": "approval_key",
-            "approval_key": approval_key,
-            "expires_at": expires_at,
-            "app_key_fingerprint": fingerprint,
-            "created_at": time.time(),
-        }
-        path.write_text(json.dumps(data, indent=2))
-    except OSError:
-        return
-
-
 # ---------------------------------------------------------------------------
 # KisMarketStateClient (full implementation)
 # ---------------------------------------------------------------------------
@@ -340,6 +251,19 @@ class KisMarketStateClient(MarketStateProvider):
         self._tasks: list[asyncio.Task[None]] = []
         self._reconnect_attempts = 0
         self._shutdown_event = asyncio.Event()
+
+        # Approval key cache via KisTokenCache
+        self._approval_cache = KisTokenCache(KisTokenCacheConfig(
+            enabled=settings.kis_live_token_cache_enabled,
+            cache_path=Path(settings.kis_live_token_cache_path),
+            cache_purpose=CachePurpose.LIVE_APPROVAL_KEY,
+            fingerprint_input=f"live_info_{app_key}_{api_secret}",
+            extra_validators={
+                "cache_type": "approval_key",
+            },
+            load_expiry_buffer=60.0,
+            save_expiry_buffer=300.0,
+        ))
 
         # 163 WebSocket is driven by live-info dedicated credentials,
         # not by the trading environment (paper/mock/live).
@@ -443,17 +367,15 @@ class KisMarketStateClient(MarketStateProvider):
     async def _ensure_approval_key(self) -> str:
         """Obtain (or return cached) WebSocket approval key.
 
-        Uses live-info token cache for persistence across restarts.
+        Uses KisTokenCache for persistence across restarts.
         """
         # 1. Try in-memory cache
         now_wall = time.time()
         if self._approval_key is not None and now_wall < self._approval_key_expires_at:
             return self._approval_key
 
-        # 2. Try file cache (live-info token cache)
-        cached = await _load_live_info_approval_key_cache(
-            self._settings, self._app_key, self._api_secret
-        )
+        # 2. Try file cache via KisTokenCache
+        cached = await self._approval_cache.load()
         if cached is not None:
             self._approval_key = cached
             # Set expiry from cache (24h from file creation — conservative)
@@ -488,14 +410,8 @@ class KisMarketStateClient(MarketStateProvider):
         self._approval_key = approval_key
         self._approval_key_expires_at = expires_at
 
-        # 4. Persist to live-info token cache
-        await _save_live_info_approval_key_cache(
-            self._settings,
-            self._app_key,
-            self._api_secret,
-            approval_key,
-            expires_at,
-        )
+        # 4. Persist to live-info token cache via KisTokenCache
+        await self._approval_cache.save(approval_key, expires_in)
 
         logger.info(
             "KisMarketStateClient: approval key obtained (expires_at=%s)",

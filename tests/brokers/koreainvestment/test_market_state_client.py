@@ -13,8 +13,6 @@ from agent_trading.brokers.koreainvestment.market_state_client import (
     KisMarketStateClient,
     MarketPhaseCode,
     MarketState,
-    _load_live_info_approval_key_cache,
-    _save_live_info_approval_key_cache,
 )
 from agent_trading.config.settings import AppSettings
 
@@ -168,10 +166,8 @@ class TestApprovalKey:
         mock_http.post.return_value = mock_response
 
         with patch.object(live_client, "_get_http_client", return_value=mock_http):
-            with patch(
-                "agent_trading.brokers.koreainvestment.market_state_client."
-                "_load_live_info_approval_key_cache",
-                AsyncMock(return_value=None),
+            with patch.object(
+                live_client._approval_cache, "load", AsyncMock(return_value=None)
             ):
                 key = await live_client._ensure_approval_key()
 
@@ -190,10 +186,8 @@ class TestApprovalKey:
         self, live_client: KisMarketStateClient
     ) -> None:
         """기존 cache에서 approval key 로드 검증."""
-        with patch(
-            "agent_trading.brokers.koreainvestment.market_state_client."
-            "_load_live_info_approval_key_cache",
-            AsyncMock(return_value="cached-approval-key"),
+        with patch.object(
+            live_client._approval_cache, "load", AsyncMock(return_value="cached-approval-key")
         ):
             key = await live_client._ensure_approval_key()
 
@@ -215,23 +209,18 @@ class TestApprovalKey:
         mock_http.post.return_value = mock_response
 
         with patch.object(live_client, "_get_http_client", return_value=mock_http):
-            with patch(
-                "agent_trading.brokers.koreainvestment.market_state_client."
-                "_load_live_info_approval_key_cache",
-                AsyncMock(return_value=None),
+            with patch.object(
+                live_client._approval_cache, "load", AsyncMock(return_value=None)
             ):
-                with patch(
-                    "agent_trading.brokers.koreainvestment.market_state_client."
-                    "_save_live_info_approval_key_cache",
+                with patch.object(
+                    live_client._approval_cache,
+                    "save",
                     AsyncMock(),
                 ) as mock_save:
                     key = await live_client._ensure_approval_key()
 
         assert key == "new-approval-key"
-        mock_save.assert_called_once()
-        args, _ = mock_save.call_args
-        # 4th positional arg = approval_key
-        assert args[3] == "new-approval-key"
+        mock_save.assert_called_once_with("new-approval-key", 86400)
 
 
 # ===========================================================================
@@ -535,9 +524,9 @@ class TestHeartbeat:
         with patch(
             "websockets.connect",
             mock_connect,
-        ), patch(
-            "agent_trading.brokers.koreainvestment.market_state_client."
-            "_load_live_info_approval_key_cache",
+        ), patch.object(
+            live_client._approval_cache,
+            "load",
             AsyncMock(return_value="test-approval"),
         ), patch.object(
             live_client, "_send_subscribe", AsyncMock(),

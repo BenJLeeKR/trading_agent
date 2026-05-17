@@ -323,6 +323,18 @@ class StubScoreCalculator:
 # ---------------------------------------------------------------------------
 
 
+def _event_sort_key(e: ExternalEventEntity) -> tuple:
+    """Sort key: importance(high=3/medium=2/low=1) → tier(T1=4/T2=3/T3=2/T4=1) → published_at DESC."""
+    importance_map: dict[str, int] = {"high": 3, "medium": 2, "low": 1}
+    tier_map: dict[str, int] = {"T1": 4, "T2": 3, "T3": 2, "T4": 1}
+    imp = importance_map.get(
+        (e.metadata or {}).get("importance", "medium"), 2
+    )
+    tier = tier_map.get(e.source_reliability_tier, 1)
+    ts = e.published_at.timestamp() if e.published_at else 0
+    return (imp, tier, ts)
+
+
 class DecisionOrchestratorService:
     """Deterministic stub for order intent assembly.
 
@@ -405,6 +417,7 @@ class DecisionOrchestratorService:
         *,
         decision_context_id: UUID | None = None,
         order_intent_id: UUID | None = None,
+        seeded_events: list[ExternalEventEntity] | None = None,
     ) -> OrderIntent:
         """Assemble a structured order intent from a raw request.
 
@@ -418,6 +431,9 @@ class DecisionOrchestratorService:
         order_intent_id : UUID | None
             The order intent ID (P1 field, optional). If not provided,
             a new UUID is generated.
+        seeded_events : list[ExternalEventEntity] | None
+            Transient seeded news events (T3) to inject alongside authoritative
+            events. Passed from ``_run_one_cycle()`` — not persisted to DB.
 
         Returns
         -------
@@ -458,21 +474,16 @@ class DecisionOrchestratorService:
                 symbol=request.symbol,
                 since=datetime.now(timezone.utc) - timedelta(hours=72),
             )
-            # Sort by importance (H > M > L), then by published_at DESC
-            _IMPORTANCE_ORDER: dict[str, int] = {"high": 0, "medium": 1, "low": 2}
-            sorted_events = sorted(
-                events,
-                key=lambda e: (
-                    _IMPORTANCE_ORDER.get(
-                        (e.metadata or {}).get("importance", "low"), 2
-                    ),
-                    # Negate timestamp for DESC order (newest first)
-                    -(
-                        (e.published_at or datetime.min.replace(tzinfo=timezone.utc))
-                    ).timestamp(),
-                ),
-            )
-            recent_events = tuple(sorted_events)
+            events = list(events)
+
+            # Inject seeded news events as lower-priority supplement
+            if seeded_events:
+                symbol_seeded = [e for e in seeded_events if e.symbol == request.symbol]
+                events.extend(symbol_seeded)
+
+            # Sort: importance desc → T1/T2 first → T3/T4 later → published_at desc
+            events.sort(key=_event_sort_key, reverse=True)
+            recent_events = tuple(events)
         except Exception:
             pass
 
@@ -656,6 +667,7 @@ class DecisionOrchestratorService:
         broker: BrokerAdapter,
         decision_context_id: UUID | None = None,
         order_intent_id: UUID | None = None,
+        seeded_events: list[ExternalEventEntity] | None = None,
         actor_type: str = "system",
         actor_id: str = "decision_orchestrator",
     ) -> SubmitResult:
@@ -688,6 +700,8 @@ class DecisionOrchestratorService:
             Optional explicit decision context ID.  Auto-resolved when ``None``.
         order_intent_id : UUID | None
             Optional explicit order intent ID.  Auto-generated when ``None``.
+        seeded_events : list[ExternalEventEntity] | None
+            Transient seeded news events (T3) to inject into assemble context.
         actor_type, actor_id :
             Identity used for audit-log entries.
 
@@ -703,6 +717,7 @@ class DecisionOrchestratorService:
                 request,
                 decision_context_id=decision_context_id,
                 order_intent_id=order_intent_id,
+                seeded_events=seeded_events,
             )
         except Exception as exc:
             logger.exception(
