@@ -132,6 +132,7 @@ class AIDecisionInputs:
         default_factory=ExecutionPreferences
     )
     sizing_hint: SizingHint = field(default_factory=SizingHint)
+    side: str = ""  # FDC에서 결정된 side (buy/sell)
 
     # ── AR-derived ───────────────────────────────────────────────────
     risk_opinion: str = "allow"
@@ -649,6 +650,14 @@ class DecisionOrchestratorService:
             client_timestamp=request.client_timestamp,
             metadata=request.metadata,
         )
+
+        # --- REDUCE/EXIT + sell side override ---
+        # FDC가 REDUCE/EXIT + side="sell"을 결정하면, assembled_request.side를
+        # OrderSide.SELL로 오버라이드한다. BUY/APPROVE decision_type일 때는
+        # side가 오버라이드되지 않도록 조건 검사.
+        fdc_side = agent_bundle.ai_inputs.side if agent_bundle else ""
+        if agent_bundle.ai_inputs.decision_type in ("REDUCE", "EXIT") and fdc_side.lower() == OrderSide.SELL.value:
+            assembled_request = replace(assembled_request, side=OrderSide.SELL)
 
         return OrderIntent(
             decision_context_id=resolved_context_id,
@@ -1175,6 +1184,7 @@ class DecisionOrchestratorService:
         pos_qty = ctx.position_snapshot.quantity if ctx.position_snapshot else None
         pos_avg_price = ctx.position_snapshot.average_price if ctx.position_snapshot else None
         available_cash = ctx.cash_balance_snapshot.available_cash if ctx.cash_balance_snapshot else None
+        orderable_amount = ctx.cash_balance_snapshot.orderable_amount if ctx.cash_balance_snapshot else None
         nav = ctx.risk_limit_snapshot.nav if ctx.risk_limit_snapshot else None
         # Fallback: risk_limit_snapshot이 없으면 cash_balance_snapshot.total_asset을 NAV로 사용
         if nav is None and ctx.cash_balance_snapshot is not None and ctx.cash_balance_snapshot.total_asset is not None:
@@ -1216,6 +1226,19 @@ class DecisionOrchestratorService:
             else "max_order_value (legacy flat)"
         )
 
+        # ── Cash source logging (operational traceability) ──
+        if orderable_amount is not None:
+            logger.info(
+                "Cash source: orderable_amount=%s (preferred) | "
+                "available_cash=%s (fallback)",
+                orderable_amount, available_cash,
+            )
+        else:
+            logger.info(
+                "Cash source: available_cash=%s (fallback, orderable_amount not available)",
+                available_cash,
+            )
+
         logger.info(
             "SizingInputs: max_single_position_pct=%s (src=%s) "
             "min_cash_buffer_pct=%s (src=%s) "
@@ -1235,6 +1258,7 @@ class DecisionOrchestratorService:
             current_position_qty=pos_qty,
             current_position_avg_price=pos_avg_price,
             available_cash=available_cash,
+            orderable_amount=orderable_amount,
             nav=nav,
             max_single_position_pct=max_single_position_pct,
             min_cash_buffer_pct=min_cash_buffer_pct,
@@ -1742,6 +1766,7 @@ class DecisionOrchestratorService:
             opposing_evidence=composer_output.opposing_evidence,
             execution_preferences=composer_output.execution_preferences,
             sizing_hint=composer_output.sizing_hint,
+            side=composer_output.side if composer_output and hasattr(composer_output, 'side') else "",
             # AR-derived
             risk_opinion=risk_output.risk_opinion,
             risk_score=risk_output.risk_score,

@@ -33,9 +33,11 @@ from agent_trading.services.decision_orchestrator import (
     AIDecisionInputs,
     AssembledContext,
     DecisionOrchestratorService,
+    OrderIntent,
     ScoreResult,
     StubScoreCalculator,
 )
+from agent_trading.services.sizing_engine import SizingInputs
 
 
 # ---------------------------------------------------------------------------
@@ -1143,3 +1145,81 @@ async def test_ensure_or_create_decision_context_none_no_connection_crash(
     # In-memory에서는 account lookup 실패 → fail-open → None
     # (crash만 안 나면 OK)
     _ = ctx_id
+
+
+# ---------------------------------------------------------------------------
+# Phase AF: _build_sizing_inputs — orderable_amount priority
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSizingInputs:
+    """``DecisionOrchestratorService._build_sizing_inputs()`` — orderable_amount."""
+
+    def test_orderable_amount_passed_to_sizing_inputs(self, service: DecisionOrchestratorService) -> None:
+        """_build_sizing_inputs passes orderable_amount to SizingInputs."""
+        now = datetime.now(timezone.utc)
+        cash_snapshot = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            currency="KRW",
+            available_cash=Decimal("5000000"),
+            settled_cash=Decimal("3000000"),
+            unsettled_cash=Decimal("2000000"),
+            source_of_truth="broker",
+            snapshot_at=now,
+            orderable_amount=Decimal("-81419050"),
+        )
+        ctx = AssembledContext(
+            cash_balance_snapshot=cash_snapshot,
+        )
+        intent = OrderIntent(
+            decision_context_id=None,
+            order_intent_id=None,
+            request=SubmitOrderRequest(
+                account_ref="test",
+                client_order_id="test-001",
+                correlation_id="corr-001",
+                strategy_id="strat-001",
+                symbol="005930",
+                market="KRX",
+                side=OrderSide.BUY,
+                order_type=OrderType.LIMIT,
+                quantity=Decimal("10"),
+                price=Decimal("50000"),
+                time_in_force=TimeInForce.DAY,
+            ),
+            context=ctx,
+            ai_backend_inputs=AIDecisionInputs(decision_type="BUY"),
+        )
+        sizing = service._build_sizing_inputs(intent)
+        assert isinstance(sizing, SizingInputs)
+        assert sizing.orderable_amount == Decimal("-81419050")
+        assert sizing.available_cash == Decimal("5000000")
+
+    def test_orderable_amount_none_when_no_cash_snapshot(
+        self, service: DecisionOrchestratorService
+    ) -> None:
+        """No cash_balance_snapshot → orderable_amount is None."""
+        ctx = AssembledContext(cash_balance_snapshot=None)
+        intent = OrderIntent(
+            decision_context_id=None,
+            order_intent_id=None,
+            request=SubmitOrderRequest(
+                account_ref="test",
+                client_order_id="test-002",
+                correlation_id="corr-002",
+                strategy_id="strat-001",
+                symbol="005930",
+                market="KRX",
+                side=OrderSide.BUY,
+                order_type=OrderType.LIMIT,
+                quantity=Decimal("10"),
+                price=Decimal("50000"),
+                time_in_force=TimeInForce.DAY,
+            ),
+            context=ctx,
+            ai_backend_inputs=AIDecisionInputs(decision_type="BUY"),
+        )
+        sizing = service._build_sizing_inputs(intent)
+        assert sizing.orderable_amount is None
+        assert sizing.available_cash is None

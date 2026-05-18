@@ -30,6 +30,7 @@ def _make_run(
     status: str = "completed",
 ) -> SnapshotSyncRunEntity:
     """Build a ``SnapshotSyncRunEntity`` with minimal fields for health tests."""
+    resolved_started_at = started_at or datetime.now(timezone.utc)
     return SnapshotSyncRunEntity(
         snapshot_sync_run_id=uuid4(),
         trigger_type="manual",
@@ -45,8 +46,8 @@ def _make_run(
         cash_synced_count=1,
         error_count=0,
         status=status,
-        started_at=started_at or datetime.now(timezone.utc),
-        completed_at=datetime.now(timezone.utc),
+        started_at=resolved_started_at,
+        completed_at=resolved_started_at,
     )
 
 
@@ -134,8 +135,9 @@ class TestHealthSnapshotSync:
 class TestReadyzSnapshotSync:
     """``GET /health/readyz`` reflects snapshot sync freshness (grace expired)."""
 
-    def test_readyz_fresh_sync(self) -> None:
+    def test_readyz_fresh_sync(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Fresh (non-stale) sync → readyz returns ``ok``."""
+        monkeypatch.setenv("SNAPSHOT_STARTUP_GRACE_SECONDS", "0")
         repos = build_in_memory_repositories()
         now = datetime.now(timezone.utc)
         run = _make_run(started_at=now, status="completed")
@@ -147,9 +149,12 @@ class TestReadyzSnapshotSync:
         assert response.status_code == 200
         assert response.json()["status"] == "ok"
 
-    def test_readyz_stale_sync(self) -> None:
+    def test_readyz_stale_sync(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Stale sync + grace expired → readyz returns ``degraded`` with reason."""
+        monkeypatch.setenv("SNAPSHOT_STARTUP_GRACE_SECONDS", "0")
         repos = build_in_memory_repositories()
+        # Clear the seeded fresh sync run so our stale run is the only item
+        repos.snapshot_sync_runs._items.clear()
         old = datetime.now(timezone.utc) - timedelta(seconds=2000)
         run = _make_run(started_at=old, status="completed")
         repos.snapshot_sync_runs._items[run.snapshot_sync_run_id] = run
@@ -165,10 +170,12 @@ class TestReadyzSnapshotSync:
         assert data["reason"] == "snapshot_sync_stale"
         assert data["snapshot_sync_consecutive_failures"] == 0
 
-    def test_readyz_no_history(self) -> None:
+    def test_readyz_no_history(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """No sync history + grace expired → readyz returns ``degraded``."""
+        monkeypatch.setenv("SNAPSHOT_STARTUP_GRACE_SECONDS", "0")
         repos = build_in_memory_repositories()
-        # No runs added → empty history
+        # Clear the seeded fresh sync run so history is truly empty
+        repos.snapshot_sync_runs._items.clear()
 
         app = create_app(repos=repos, auth_enabled=False)
         with TestClient(app) as tc:
@@ -207,9 +214,12 @@ class TestReadyzStartupGrace:
         assert response.status_code == 200
         assert response.json()["status"] == "ok"
 
-    def test_readyz_grace_expired_stale(self) -> None:
+    def test_readyz_grace_expired_stale(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Grace expired + stale data → readyz returns ``degraded``."""
+        monkeypatch.setenv("SNAPSHOT_STARTUP_GRACE_SECONDS", "0")
         repos = build_in_memory_repositories()
+        # Clear the seeded fresh sync run so our stale run is the only item
+        repos.snapshot_sync_runs._items.clear()
         old = datetime.now(timezone.utc) - timedelta(seconds=2000)
         run = _make_run(started_at=old, status="completed")
         repos.snapshot_sync_runs._items[run.snapshot_sync_run_id] = run

@@ -206,6 +206,27 @@ class TestKISSyncSnapshotProvider:
         assert cash.unsettled_cash == 200000  # 1,000,000 - 800,000
         assert cash.currency == "KRW"
 
+    async def test_cash_balance_ord_psbl_amt_mapping(self) -> None:
+        """ord_psbl_amt in KIS response → CashBalanceSnapshotEntity.orderable_amount."""
+        account_id = uuid4()
+        client = FakeKISRestClient(
+            positions=[],
+            cash_balance={
+                "dnca_tot_amt": "1000000",
+                "nxdy_excc_amt": "800000",
+                "ord_psbl_amt": "-81419050",
+            },
+        )
+        provider = KISSyncSnapshotProvider(client)
+        inst_repo = InMemoryInstrumentRepository()
+
+        result = await provider.fetch_snapshot(account_id, inst_repo)
+        assert result.cash_balance is not None
+        cash = result.cash_balance
+        assert cash.orderable_amount == -81419050
+        assert cash.available_cash == 1000000  # unchanged
+        assert cash.currency == "KRW"
+
     async def test_cash_balance_without_settled(self) -> None:
         """No nxdy_excc_amt → settled_cash falls back to available_cash."""
         account_id = uuid4()

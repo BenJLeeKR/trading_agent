@@ -144,9 +144,11 @@ class CashBalanceSnapshotEntity:
     # total_asset: KIS tot_evlu_amt (총평가금액 = 유가증권 평가금액 합계 + D+2 예수금)
     # settlement_amount: KIS prvs_rcdl_excc_amt (가수도정산금액, D+2 예수금 기준)
     # total_unrealized_pnl: KIS evlu_pfls_smtl_amt (평가손익합계금액, 계좌 총괄)
+    # orderable_amount: KIS ord_psbl_amt (주문가능금액, 실제 주문 가능 현금)
     total_asset: Decimal | None = None
     settlement_amount: Decimal | None = None
     total_unrealized_pnl: Decimal | None = None
+    orderable_amount: Decimal | None = None
     created_at: datetime | None = None
 
 

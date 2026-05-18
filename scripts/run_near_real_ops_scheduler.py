@@ -758,7 +758,7 @@ async def _run_intraday_due_tasks(
         # Must be > 3 × _PER_AGENT_TIMEOUT (25s) = 75s to allow all 3 agents
         # to complete their per-agent timeout + fallback path before the
         # scheduler-level subprocess timeout fires.
-        _DECISION_TIMEOUT = 85  # seconds; 3 × 25s per-agent + 10s buffer
+        _DECISION_TIMEOUT = 180  # seconds; subprocess 완료에 충분한 시간 (99초 소요 확인됨)
         result = await _run_and_record(
             state,
             "decision_dry_run" if dry_run else "decision_submit_gate",

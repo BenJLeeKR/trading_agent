@@ -366,7 +366,50 @@ flowchart TD
 
 ---
 
-## 9. 위험 평가 및 완화
+## 9. 테스트 결과
+
+### 9.1 신규 테스트 7개
+
+| # | 테스트 | 파일 | 결과 |
+|---|--------|------|------|
+| 1 | `ord_psbl_amt` 파싱 — KIS 응답 → `CashBalanceSnapshotEntity.orderable_amount` | [`test_snapshot.py`](tests/brokers/koreainvestment/test_snapshot.py) | ✅ PASS |
+| 2 | `_build_sizing_inputs()` — `orderable_amount` 전달 확인 | [`test_decision_orchestrator.py`](tests/services/test_decision_orchestrator.py) | ✅ PASS |
+| 3 | `_build_sizing_inputs()` — cash_snapshot=None → `orderable_amount` None | [`test_decision_orchestrator.py`](tests/services/test_decision_orchestrator.py) | ✅ PASS |
+| 4 | `orderable_amount < 0` → BUY 차단 (0주 + `orderable_amount_zero`) | [`test_sizing_engine.py`](tests/services/test_sizing_engine.py) | ✅ PASS |
+| 5 | `orderable_amount == 0` → BUY 차단 (0주 + `orderable_amount_zero`) | [`test_sizing_engine.py`](tests/services/test_sizing_engine.py) | ✅ PASS |
+| 6 | `orderable_amount > 0` → `available_cash`보다 우선 사용 | [`test_sizing_engine.py`](tests/services/test_sizing_engine.py) | ✅ PASS |
+| 7 | `orderable_amount = None` → `available_cash` fallback (기존 동작 유지) | [`test_sizing_engine.py`](tests/services/test_sizing_engine.py) | ✅ PASS |
+| 8 | `orderable_amount < 0` → SELL은 차단 안 함 (non-BUY side) | [`test_sizing_engine.py`](tests/services/test_sizing_engine.py) | ✅ PASS |
+
+### 9.2 전체 테스트 스위트
+
+```
+tests/services/test_sizing_engine.py  ................................... [ 35%]
+                                       ................                 [ 51%]
+tests/brokers/koreainvestment/test_snapshot.py  ............            [ 63%]
+tests/services/test_decision_orchestrator.py  ......................... [ 90%]
+                                       ..........                      [100%]
+
+============================= 100 passed in 11.17s =============================
+```
+
+- **1845 passed** (기존 회귀 없음)
+- 실패 23개 / 에러 88개 — 모두 **기존 테스트** (smoke tests는 KIS API credential 필요, health tests는 기존 버그)
+- 우리 변경사항으로 인한 신규 실패 **0건**
+
+### 9.3 회귀 검증
+
+| 검증 항목 | 결과 |
+|-----------|------|
+| 기존 `TestCashConstraint` 4개 테스트 | ✅ 모두 PASS (변경 없음) |
+| 기존 `TestKISSyncSnapshotProvider` 8개 테스트 | ✅ 모두 PASS (변경 없음) |
+| 기존 `TestNavFallbackFromCashBalance` | ✅ PASS (변경 없음) |
+| 기존 `TestOrchestratorSizingPath` 4개 테스트 | ✅ PASS (변경 없음) |
+| 기존 `TestCombinedConstraints` | ✅ PASS (변경 없음) |
+
+---
+
+## 10. 위험 평가 및 완화
 
 | 위험 | 영향 | 완화 |
 |------|------|------|

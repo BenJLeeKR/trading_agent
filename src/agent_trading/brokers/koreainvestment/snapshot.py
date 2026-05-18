@@ -43,6 +43,7 @@ _KIS_NXDY_EXCC_AMT = "nxdy_excc_amt"  # 익일초과액
 _KIS_TOT_EVL_AMT = "tot_evlu_amt"  # 총평가금액 (유가증권 평가금액 합계 + D+2 예수금)
 _KIS_PRVS_RCDL_EXCC_AMT = "prvs_rcdl_excc_amt"  # 가수도정산금액 (D+2 예수금 기준)
 _KIS_EVL_PFLS_SMTL_AMT = "evlu_pfls_smtl_amt"  # 평가손익합계금액 (계좌 총괄)
+_KIS_ORD_PSBL_AMT = "ord_psbl_amt"  # 주문가능금액
 
 _SOURCE_OF_TRUTH = "broker"
 _DEFAULT_MARKET_CODE = "KRX"
@@ -193,6 +194,7 @@ class KISSyncSnapshotProvider:
                 total_asset = safe_optional_decimal(raw_cash.get(_KIS_TOT_EVL_AMT))
                 settlement_amount = safe_optional_decimal(raw_cash.get(_KIS_PRVS_RCDL_EXCC_AMT))
                 total_unrealized_pnl = safe_optional_decimal(raw_cash.get(_KIS_EVL_PFLS_SMTL_AMT))
+                orderable_amount = safe_optional_decimal(raw_cash.get(_KIS_ORD_PSBL_AMT))
 
                 cash_balance = CashBalanceSnapshotEntity(
                     cash_balance_snapshot_id=uuid4(),
@@ -204,6 +206,7 @@ class KISSyncSnapshotProvider:
                     total_asset=total_asset,
                     settlement_amount=settlement_amount,
                     total_unrealized_pnl=total_unrealized_pnl,
+                    orderable_amount=orderable_amount,
                     source_of_truth=_SOURCE_OF_TRUTH,
                     snapshot_at=snapshot_at,
                 )

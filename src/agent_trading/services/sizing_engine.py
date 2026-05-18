@@ -78,7 +78,11 @@ class SizingInputs:
 
     # ── Cash (nullable, for cash-aware constraint) ──────────────────────
     available_cash: Decimal | None = None
-    """Available cash balance from the latest snapshot."""
+    """Available cash balance from the latest snapshot (dnca_tot_amt)."""
+
+    orderable_amount: Decimal | None = None
+    """Orderable amount from broker (ord_psbl_amt).  Preferred over
+    ``available_cash`` when present.  Negative means no buying power."""
 
     # ── Risk / NAV (nullable, for concentration limit) ──────────────────
     nav: Decimal | None = None
@@ -269,18 +273,37 @@ def _apply_cash_constraint(
     available_cash: Decimal | None,
     min_cash_buffer_pct: Decimal | None,
     constraints: list[str],
+    orderable_amount: Decimal | None = None,
 ) -> Decimal:
     """Apply cash availability constraint for BUY orders.
 
-    When ``available_cash`` and ``price`` are both available, cap the
-    quantity so that ``price × qty ≤ available_cash × (1 - buffer)``.
+    Cash source priority:
+      1. ``orderable_amount`` (KIS ``ord_psbl_amt``) — broker's actual
+         orderable cash.  When ≤ 0, BUY is blocked entirely.
+      2. ``available_cash`` (KIS ``dnca_tot_amt``) — fallback when
+         orderable_amount is not available.
+
+    When the chosen cash source and ``price`` are both available, cap the
+    quantity so that ``price × qty ≤ cash × (1 - buffer)``.
     """
-    if price is None or available_cash is None or price <= 0:
+    if price is None or price <= 0:
         return qty
 
-    effective_cash = available_cash
+    # ── Determine effective cash source ──
+    # Priority: orderable_amount > available_cash
+    if orderable_amount is not None:
+        if orderable_amount <= 0:
+            constraints.append("orderable_amount_zero")
+            logger.info("BUY blocked: orderable_amount=%s <= 0", orderable_amount)
+            return Decimal("0")
+        effective_cash = orderable_amount
+    elif available_cash is not None:
+        effective_cash = available_cash
+    else:
+        return qty  # No cash info available — skip constraint
+
     if min_cash_buffer_pct is not None and min_cash_buffer_pct > 0:
-        effective_cash = available_cash * (Decimal("1") - min_cash_buffer_pct / Decimal("100"))
+        effective_cash = effective_cash * (Decimal("1") - min_cash_buffer_pct / Decimal("100"))
 
     max_qty_by_cash = (effective_cash / price).to_integral_value(rounding=ROUND_DOWN)
     if max_qty_by_cash < qty:
@@ -462,6 +485,7 @@ def calculate_sizing(inputs: SizingInputs) -> SizingResult:
             inputs.available_cash,
             inputs.min_cash_buffer_pct,
             constraints,
+            orderable_amount=inputs.orderable_amount,
         )
 
     # ── Step 6: position concentration ──

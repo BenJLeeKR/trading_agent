@@ -50,6 +50,7 @@ def _inputs(
     current_position_qty: str | None = None,
     current_position_avg_price: str | None = None,
     available_cash: str | None = None,
+    orderable_amount: str | None = None,
     nav: str | None = None,
     max_single_position_pct: str | None = None,
     min_cash_buffer_pct: str | None = None,
@@ -74,6 +75,8 @@ def _inputs(
         kwargs["current_position_avg_price"] = Decimal(current_position_avg_price)
     if available_cash is not None:
         kwargs["available_cash"] = Decimal(available_cash)
+    if orderable_amount is not None:
+        kwargs["orderable_amount"] = Decimal(orderable_amount)
     if nav is not None:
         kwargs["nav"] = Decimal(nav)
     if max_single_position_pct is not None:
@@ -178,6 +181,86 @@ class TestCashConstraint:
             )
         )
         assert result.quantity == Decimal("100")
+
+    # ── orderable_amount (ord_psbl_amt) priority tests ──
+
+    def test_orderable_amount_negative_blocks_buy(self) -> None:
+        """orderable_amount < 0 → BUY blocked entirely (0 qty + constraint)."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="100",
+                requested_price="10",
+                available_cash="5000",
+                orderable_amount="-1000",
+            )
+        )
+        assert result.quantity == Decimal("0")
+        assert "orderable_amount_zero" in result.applied_constraints
+
+    def test_orderable_amount_zero_blocks_buy(self) -> None:
+        """orderable_amount == 0 → BUY blocked entirely (0 qty + constraint)."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="100",
+                requested_price="10",
+                available_cash="5000",
+                orderable_amount="0",
+            )
+        )
+        assert result.quantity == Decimal("0")
+        assert "orderable_amount_zero" in result.applied_constraints
+
+    def test_orderable_amount_positive_used_as_cash_source(self) -> None:
+        """orderable_amount > 0 → used as cash source (priority over available_cash)."""
+        # available_cash=5000 → max 500 shares at price 10
+        # orderable_amount=200 → max 20 shares at price 10
+        # Requested 100 → capped to 20 (orderable_amount takes priority)
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="100",
+                requested_price="10",
+                available_cash="5000",
+                orderable_amount="200",
+            )
+        )
+        assert result.quantity == Decimal("20")
+        assert "cash_limit" in result.applied_constraints
+
+    def test_orderable_amount_none_fallback_to_available_cash(self) -> None:
+        """orderable_amount=None → falls back to available_cash (existing behaviour)."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="100",
+                requested_price="10",
+                available_cash="500",
+                orderable_amount=None,
+            )
+        )
+        assert result.quantity == Decimal("50")
+        assert "cash_limit" in result.applied_constraints
+
+    def test_orderable_amount_negative_does_not_block_sell(self) -> None:
+        """orderable_amount < 0 → SELL is NOT blocked (non-BUY side)."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="SELL",
+                side=OrderSide.SELL,
+                requested_quantity="100",
+                requested_price="10",
+                available_cash="5000",
+                orderable_amount="-1000",
+            )
+        )
+        assert result.quantity == Decimal("100")
+        assert "orderable_amount_zero" not in result.applied_constraints
 
 
 # ======================================================================
