@@ -973,3 +973,82 @@ class TestOrchestratorSizingPath:
         # requested 50 < 190 → passes through
         assert result.quantity == Decimal("50")
         assert "position_concentration" not in result.applied_constraints
+
+
+class TestNavFallbackFromCashBalance:
+    """risk_limit_snapshot=None일 때 cash_balance_snapshot.total_asset에서
+    NAV를 fallback 읽어오는지 검증합니다."""
+
+    @pytest.mark.asyncio
+    async def test_nav_fallback_from_cash_balance(
+        self, in_memory_repos,
+    ) -> None:
+        """Fallback to cash_balance_snapshot.total_asset when
+        risk_limit_snapshot is not available."""
+        from datetime import datetime, timezone
+        from decimal import Decimal
+        from uuid import UUID, uuid4
+
+        from agent_trading.domain.entities import CashBalanceSnapshotEntity
+        from agent_trading.domain.enums import OrderSide, OrderType
+        from agent_trading.domain.models import SubmitOrderRequest
+        from agent_trading.services.decision_orchestrator import (
+            AssembledContext,
+            DecisionOrchestratorService,
+            OrderIntent,
+            ScoreResult,
+        )
+
+        service = DecisionOrchestratorService(
+            repos=in_memory_repos,
+            event_interpretation_agent=None,
+            ai_risk_agent=None,
+            final_decision_agent=None,
+        )
+
+        # cash_balance_snapshot with total_asset set
+        cash_snapshot = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=UUID("00000000-0000-0000-0000-000000000001"),
+            currency="KRW",
+            available_cash=Decimal("10000000"),
+            settled_cash=Decimal("0"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="KIS",
+            snapshot_at=datetime.now(timezone.utc),
+            total_asset=Decimal("50000000"),
+            settlement_amount=Decimal("0"),
+            total_unrealized_pnl=Decimal("0"),
+        )
+
+        ctx = AssembledContext(
+            score=ScoreResult(score=75.0),
+            position_snapshot=None,
+            cash_balance_snapshot=cash_snapshot,
+            risk_limit_snapshot=None,  # 핵심: None
+        )
+
+        request = SubmitOrderRequest(
+            account_ref="test-account",
+            client_order_id="test-order-001",
+            correlation_id="test-corr-001",
+            strategy_id="test-strategy-001",
+            symbol="005930",
+            market="KRX",
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            quantity=Decimal("100"),
+            price=Decimal("50000"),
+        )
+
+        intent = OrderIntent(
+            decision_context_id=None,
+            order_intent_id=None,
+            request=request,
+            context=ctx,
+        )
+
+        inputs = service._build_sizing_inputs(intent)
+        assert inputs.nav == Decimal("50000000"), (
+            f"Expected nav=50000000, got {inputs.nav}"
+        )

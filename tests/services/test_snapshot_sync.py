@@ -152,11 +152,13 @@ class MockSnapshotProvider:
     def __init__(self, positions: list[PositionSnapshotEntity] | None = None,
                  cash: CashBalanceSnapshotEntity | None = None,
                  errors: list[str] | None = None,
-                 fail: bool = False) -> None:
+                 fail: bool = False,
+                 risk_limit: RiskLimitSnapshotEntity | None = None) -> None:
         self._positions = positions or []
         self._cash = cash
         self._errors = errors or []
         self._fail = fail
+        self._risk_limit = risk_limit
 
     async def fetch_snapshot(
         self,
@@ -172,11 +174,13 @@ class MockSnapshotProvider:
             return FetchedSnapshot(
                 positions=[],
                 cash_balance=self._cash,
+                risk_limit_snapshot=self._risk_limit,
                 errors=self._errors,
             )
         return FetchedSnapshot(
             positions=self._positions,
             cash_balance=self._cash,
+            risk_limit_snapshot=self._risk_limit,
             errors=self._errors,
         )
 
@@ -191,6 +195,7 @@ class TestSyncAccountSnapshots:
         provider = MockSnapshotProvider()
         pos_repo = InMemoryPositionSnapshotRepository()
         cash_repo = InMemoryCashBalanceSnapshotRepository()
+        risk_repo = InMemoryRiskLimitSnapshotRepository()
         inst_repo = InMemoryInstrumentRepository()
 
         result = await sync_account_snapshots(
@@ -198,6 +203,7 @@ class TestSyncAccountSnapshots:
             instrument_repo=inst_repo,
             position_snapshot_repo=pos_repo,
             cash_balance_snapshot_repo=cash_repo,
+            risk_limit_snapshot_repo=risk_repo,
             account_id=uuid4(),
         )
         assert result.positions_synced == 0
@@ -220,6 +226,7 @@ class TestSyncAccountSnapshots:
         provider = MockSnapshotProvider(positions=[pos])
         pos_repo = InMemoryPositionSnapshotRepository()
         cash_repo = InMemoryCashBalanceSnapshotRepository()
+        risk_repo = InMemoryRiskLimitSnapshotRepository()
         inst_repo = InMemoryInstrumentRepository()
 
         result = await sync_account_snapshots(
@@ -227,6 +234,7 @@ class TestSyncAccountSnapshots:
             instrument_repo=inst_repo,
             position_snapshot_repo=pos_repo,
             cash_balance_snapshot_repo=cash_repo,
+            risk_limit_snapshot_repo=risk_repo,
             account_id=account_id,
         )
         assert result.positions_synced == 1
@@ -247,6 +255,7 @@ class TestSyncAccountSnapshots:
         provider = MockSnapshotProvider(cash=cash)
         pos_repo = InMemoryPositionSnapshotRepository()
         cash_repo = InMemoryCashBalanceSnapshotRepository()
+        risk_repo = InMemoryRiskLimitSnapshotRepository()
         inst_repo = InMemoryInstrumentRepository()
 
         result = await sync_account_snapshots(
@@ -254,6 +263,7 @@ class TestSyncAccountSnapshots:
             instrument_repo=inst_repo,
             position_snapshot_repo=pos_repo,
             cash_balance_snapshot_repo=cash_repo,
+            risk_limit_snapshot_repo=risk_repo,
             account_id=account_id,
         )
         assert result.cash_balance_synced is True
@@ -262,6 +272,7 @@ class TestSyncAccountSnapshots:
         provider = MockSnapshotProvider(fail=True)
         pos_repo = InMemoryPositionSnapshotRepository()
         cash_repo = InMemoryCashBalanceSnapshotRepository()
+        risk_repo = InMemoryRiskLimitSnapshotRepository()
         inst_repo = InMemoryInstrumentRepository()
 
         result = await sync_account_snapshots(
@@ -269,6 +280,7 @@ class TestSyncAccountSnapshots:
             instrument_repo=inst_repo,
             position_snapshot_repo=pos_repo,
             cash_balance_snapshot_repo=cash_repo,
+            risk_limit_snapshot_repo=risk_repo,
             account_id=uuid4(),
         )
         assert result.positions_synced == 0
@@ -279,6 +291,7 @@ class TestSyncAccountSnapshots:
         provider = MockSnapshotProvider(errors=["Instrument lookup failed"])
         pos_repo = InMemoryPositionSnapshotRepository()
         cash_repo = InMemoryCashBalanceSnapshotRepository()
+        risk_repo = InMemoryRiskLimitSnapshotRepository()
         inst_repo = InMemoryInstrumentRepository()
 
         result = await sync_account_snapshots(
@@ -286,6 +299,7 @@ class TestSyncAccountSnapshots:
             instrument_repo=inst_repo,
             position_snapshot_repo=pos_repo,
             cash_balance_snapshot_repo=cash_repo,
+            risk_limit_snapshot_repo=risk_repo,
             account_id=uuid4(),
         )
         assert result.errors == ["Instrument lookup failed"]
@@ -301,6 +315,7 @@ class TestSyncAccountsByIds:
         provider = MockSnapshotProvider()
         pos_repo = InMemoryPositionSnapshotRepository()
         cash_repo = InMemoryCashBalanceSnapshotRepository()
+        risk_repo = InMemoryRiskLimitSnapshotRepository()
         inst_repo = InMemoryInstrumentRepository()
 
         batch = await sync_accounts_by_ids(
@@ -308,6 +323,7 @@ class TestSyncAccountsByIds:
             instrument_repo=inst_repo,
             position_snapshot_repo=pos_repo,
             cash_balance_snapshot_repo=cash_repo,
+            risk_limit_snapshot_repo=risk_repo,
             account_ids=[],
         )
         assert batch.total_accounts == 0
@@ -347,6 +363,7 @@ class TestSyncAccountsByIds:
         provider = MockSnapshotProvider(positions=[pos_a, pos_b])
         pos_repo = InMemoryPositionSnapshotRepository()
         cash_repo = InMemoryCashBalanceSnapshotRepository()
+        risk_repo = InMemoryRiskLimitSnapshotRepository()
         inst_repo = InMemoryInstrumentRepository()
 
         batch = await sync_accounts_by_ids(
@@ -354,6 +371,7 @@ class TestSyncAccountsByIds:
             instrument_repo=inst_repo,
             position_snapshot_repo=pos_repo,
             cash_balance_snapshot_repo=cash_repo,
+            risk_limit_snapshot_repo=risk_repo,
             account_ids=[account_a, account_b],
         )
         assert batch.total_accounts == 2
@@ -374,6 +392,7 @@ class TestSyncAllAccounts:
         acc_repo = InMemoryAccountRepository()
         pos_repo = InMemoryPositionSnapshotRepository()
         cash_repo = InMemoryCashBalanceSnapshotRepository()
+        risk_repo = InMemoryRiskLimitSnapshotRepository()
         inst_repo = InMemoryInstrumentRepository()
 
         batch = await sync_all_accounts(
@@ -381,6 +400,7 @@ class TestSyncAllAccounts:
             instrument_repo=inst_repo,
             position_snapshot_repo=pos_repo,
             cash_balance_snapshot_repo=cash_repo,
+            risk_limit_snapshot_repo=risk_repo,
             broker_account_repo=ba_repo,
             account_repo=acc_repo,
             broker_name="koreainvestment",
@@ -428,6 +448,7 @@ class TestSyncAllAccounts:
         provider = MockSnapshotProvider(positions=[pos])
         pos_repo = InMemoryPositionSnapshotRepository()
         cash_repo = InMemoryCashBalanceSnapshotRepository()
+        risk_repo = InMemoryRiskLimitSnapshotRepository()
         inst_repo = InMemoryInstrumentRepository()
 
         batch = await sync_all_accounts(
@@ -435,6 +456,7 @@ class TestSyncAllAccounts:
             instrument_repo=inst_repo,
             position_snapshot_repo=pos_repo,
             cash_balance_snapshot_repo=cash_repo,
+            risk_limit_snapshot_repo=risk_repo,
             broker_account_repo=ba_repo,
             account_repo=acc_repo,
             broker_name="koreainvestment",
@@ -450,6 +472,7 @@ class TestSyncAllAccounts:
         provider = MockSnapshotProvider()
         pos_repo = InMemoryPositionSnapshotRepository()
         cash_repo = InMemoryCashBalanceSnapshotRepository()
+        risk_repo = InMemoryRiskLimitSnapshotRepository()
         inst_repo = InMemoryInstrumentRepository()
 
         # Register a broker account for "test_broker"
@@ -469,6 +492,7 @@ class TestSyncAllAccounts:
             instrument_repo=inst_repo,
             position_snapshot_repo=pos_repo,
             cash_balance_snapshot_repo=cash_repo,
+            risk_limit_snapshot_repo=risk_repo,
             broker_account_repo=ba_repo,
             account_repo=acc_repo,
             broker_name="test_broker",
@@ -514,18 +538,13 @@ class TestRiskLimitSnapshot:
     async def test_risk_limit_snapshot_created_from_total_asset(self) -> None:
         """``RiskLimitSnapshotEntity.nav`` is populated from ``total_asset``."""
         account_id = uuid4()
-        cash = CashBalanceSnapshotEntity(
-            cash_balance_snapshot_id=uuid4(),
+        risk = RiskLimitSnapshotEntity(
+            risk_limit_snapshot_id=uuid4(),
             account_id=account_id,
-            currency="KRW",
-            available_cash=_d("50000"),
-            settled_cash=_d("50000"),
-            unsettled_cash=None,
-            total_asset=_d("1000000"),
-            source_of_truth="broker",
+            nav=_d("1000000"),
             snapshot_at=None,
         )
-        provider = MockSnapshotProvider(cash=cash)
+        provider = MockSnapshotProvider(risk_limit=risk)
         pos_repo = InMemoryPositionSnapshotRepository()
         cash_repo = InMemoryCashBalanceSnapshotRepository()
         risk_repo = InMemoryRiskLimitSnapshotRepository()
@@ -547,18 +566,13 @@ class TestRiskLimitSnapshot:
     async def test_risk_limit_snapshot_persisted_via_repo(self) -> None:
         """``sync_account_snapshots()`` persists ``RiskLimitSnapshotEntity``."""
         account_id = uuid4()
-        cash = CashBalanceSnapshotEntity(
-            cash_balance_snapshot_id=uuid4(),
+        risk = RiskLimitSnapshotEntity(
+            risk_limit_snapshot_id=uuid4(),
             account_id=account_id,
-            currency="KRW",
-            available_cash=_d("50000"),
-            settled_cash=_d("50000"),
-            unsettled_cash=None,
-            total_asset=_d("2000000"),
-            source_of_truth="broker",
+            nav=_d("2000000"),
             snapshot_at=None,
         )
-        provider = MockSnapshotProvider(cash=cash)
+        provider = MockSnapshotProvider(risk_limit=risk)
         pos_repo = InMemoryPositionSnapshotRepository()
         cash_repo = InMemoryCashBalanceSnapshotRepository()
         risk_repo = InMemoryRiskLimitSnapshotRepository()

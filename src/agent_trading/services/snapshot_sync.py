@@ -86,8 +86,8 @@ class FetchedSnapshot:
     """
     positions: Sequence[PositionSnapshotEntity]
     cash_balance: CashBalanceSnapshotEntity | None
-    risk_limit_snapshot: RiskLimitSnapshotEntity | None = None
     errors: list[str]
+    risk_limit_snapshot: RiskLimitSnapshotEntity | None = None
 
 
 class SnapshotFetchProvider(Protocol):

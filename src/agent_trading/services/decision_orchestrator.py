@@ -1176,6 +1176,14 @@ class DecisionOrchestratorService:
         pos_avg_price = ctx.position_snapshot.average_price if ctx.position_snapshot else None
         available_cash = ctx.cash_balance_snapshot.available_cash if ctx.cash_balance_snapshot else None
         nav = ctx.risk_limit_snapshot.nav if ctx.risk_limit_snapshot else None
+        # Fallback: risk_limit_snapshot이 없으면 cash_balance_snapshot.total_asset을 NAV로 사용
+        if nav is None and ctx.cash_balance_snapshot is not None and ctx.cash_balance_snapshot.total_asset is not None:
+            nav = ctx.cash_balance_snapshot.total_asset
+            logger.warning(
+                "risk_limit_snapshot not available; using cash_balance_snapshot.total_asset as NAV fallback. "
+                "account_id=%s nav=%s",
+                ctx.cash_balance_snapshot.account_id, nav,
+            )
 
         # ── Resolve keys with legacy flat-key fallback ──────────────────
         max_single_position_pct = _decimal_or_none(

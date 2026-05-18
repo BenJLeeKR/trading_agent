@@ -16,6 +16,8 @@ import json
 import logging
 from datetime import datetime, timezone
 
+from decimal import Decimal
+
 from agent_trading.services.ai_agents.base import (
     AgentExecutionRequest,
     AIProviderClient,
@@ -363,6 +365,60 @@ class FinalDecisionComposerAgent:
                 lines.append("Opposing evidence:")
                 for oe in ar_output.opposing_evidence:
                     lines.append(f"  - {oe}")
+
+        # ── Position Concentration ────────────────────────────────────────
+        nav: Decimal | None = None
+        if context.risk_limit_snapshot is not None and context.risk_limit_snapshot.nav is not None:
+            nav = context.risk_limit_snapshot.nav
+        elif context.cash_balance_snapshot is not None and context.cash_balance_snapshot.total_asset is not None:
+            nav = context.cash_balance_snapshot.total_asset
+
+        current_position_value: Decimal | None = None
+        concentration_pct: float | None = None
+        over_concentrated: bool = False
+        remaining_capacity_pct: float | None = None
+
+        if (
+            context.position_snapshot is not None
+            and context.position_snapshot.quantity is not None
+            and context.position_snapshot.average_price is not None
+        ):
+            current_position_value = context.position_snapshot.quantity * context.position_snapshot.average_price
+
+        if nav is not None and current_position_value is not None and nav > 0:
+            concentration_pct = float(current_position_value / nav * 100)
+            over_concentrated = concentration_pct > 15.0
+            remaining_capacity_pct = max(0.0, 15.0 - concentration_pct)
+
+        lines.append("")
+        lines.append("=== Position Concentration ===")
+        if current_position_value is not None:
+            lines.append(f"  Current position value: {float(current_position_value):,.0f} KRW")
+        else:
+            lines.append("  Current position value: N/A")
+        if nav is not None:
+            lines.append(f"  NAV: {float(nav):,.0f} KRW")
+        else:
+            lines.append("  NAV: N/A")
+        if concentration_pct is not None:
+            lines.append(f"  Concentration: {concentration_pct:.1f}% of NAV")
+        else:
+            lines.append("  Concentration: N/A")
+        lines.append(f"  Over-concentrated: {'Yes' if over_concentrated else 'No'}")
+        lines.append("  Max single position limit: ~15% of NAV")
+        if remaining_capacity_pct is not None:
+            lines.append(f"  Remaining capacity: {remaining_capacity_pct:.1f}%p")
+        else:
+            lines.append("  Remaining capacity: N/A")
+        lines.append("")
+        lines.append("**Decision Policy**:")
+        lines.append("- When over-concentrated (over_concentrated=true), suppress BUY/APPROVE decisions unless there is a strong justification.")
+        lines.append("- When over-concentrated, actively consider REDUCE (partial reduction) as a valid decision_type.")
+        lines.append("- REDUCE vs EXIT criteria:")
+        lines.append("  * REDUCE: over-concentrated with no strong negative signals. Recommend 20-50% reduction of position.")
+        lines.append("  * EXIT: over-concentrated with multiple risk signals or concentration far exceeds limit (>=30% etc.).")
+        lines.append("- When concentration is within normal range, maintain existing policy.")
+        # ==================================================
 
         # === Recent events ===
         lines.append("")

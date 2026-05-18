@@ -900,6 +900,142 @@ class TestAIRiskAgent:
             {"allow", "reduce", "reject", "review"}
         ), f"Unexpected values: {_ALLOWED_RISK_OPINIONS}"
 
+    # ------------------------------------------------------------------
+    # Position Concentration tests
+    # ------------------------------------------------------------------
+
+    def _build_ar_prompt_with_context(
+        self,
+        *,
+        position_qty: str | None = None,
+        position_avg_price: str | None = None,
+        risk_limit_nav: str | None = None,
+        cash_total_asset: str | None = None,
+    ) -> str:
+        """Helper to build an AR user prompt with given context snapshots."""
+        from datetime import datetime, timezone
+        from decimal import Decimal
+        from uuid import uuid4
+
+        from agent_trading.domain.entities import (
+            CashBalanceSnapshotEntity,
+            PositionSnapshotEntity,
+            RiskLimitSnapshotEntity,
+        )
+
+        now = datetime.now(timezone.utc)
+        pos = None
+        if position_qty is not None and position_avg_price is not None:
+            pos = PositionSnapshotEntity(
+                position_snapshot_id=uuid4(),
+                account_id=uuid4(),
+                instrument_id=uuid4(),
+                quantity=Decimal(position_qty),
+                average_price=Decimal(position_avg_price),
+                market_price=Decimal(position_avg_price),
+                unrealized_pnl=Decimal("0"),
+                source_of_truth="broker",
+                snapshot_at=now,
+            )
+        cash = None
+        if cash_total_asset is not None:
+            cash = CashBalanceSnapshotEntity(
+                cash_balance_snapshot_id=uuid4(),
+                account_id=uuid4(),
+                currency="KRW",
+                available_cash=Decimal("1000000"),
+                settled_cash=Decimal("500000"),
+                unsettled_cash=Decimal("500000"),
+                total_asset=Decimal(cash_total_asset),
+                source_of_truth="broker",
+                snapshot_at=now,
+            )
+        rl = None
+        if risk_limit_nav is not None:
+            rl = RiskLimitSnapshotEntity(
+                risk_limit_snapshot_id=uuid4(),
+                account_id=uuid4(),
+                snapshot_at=now,
+                kill_switch_active=False,
+                nav=Decimal(risk_limit_nav),
+            )
+
+        context = AssembledContext(
+            position_snapshot=pos,
+            cash_balance_snapshot=cash,
+            risk_limit_snapshot=rl,
+        )
+        request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="test-ar-concentration",
+            context=context,
+        )
+        agent = AIRiskAgent(provider_client=AsyncMock())
+        return agent._build_user_prompt(request)
+
+    def test_ar_prompt_contains_concentration(self) -> None:
+        """AR prompt contains 'Position Concentration' section with key fields."""
+        prompt = self._build_ar_prompt_with_context(
+            position_qty="1000",
+            position_avg_price="50000",
+            risk_limit_nav="100000000",
+        )
+        assert "Position Concentration" in prompt
+        assert "Over-concentrated" in prompt
+        assert "NAV" in prompt
+        assert "Max single position limit" in prompt
+
+    def test_ar_concentration_calculation_over(self) -> None:
+        """Over-concentrated (50%) → over_concentrated=true, concentration > 15%."""
+        prompt = self._build_ar_prompt_with_context(
+            position_qty="1000",
+            position_avg_price="50000",
+            risk_limit_nav="100000000",
+        )
+        # position_value = 1000 * 50000 = 50,000,000
+        # concentration = 50,000,000 / 100,000,000 * 100 = 50%
+        assert "Concentration: 50.0% of NAV" in prompt
+        assert "Over-concentrated: Yes" in prompt
+        assert "Remaining capacity: 0.0%p" in prompt
+
+    def test_ar_concentration_calculation_normal(self) -> None:
+        """Normal concentration (5%) → over_concentrated=false."""
+        prompt = self._build_ar_prompt_with_context(
+            position_qty="100",
+            position_avg_price="50000",
+            risk_limit_nav="100000000",
+        )
+        # position_value = 100 * 50000 = 5,000,000
+        # concentration = 5,000,000 / 100,000,000 * 100 = 5%
+        assert "Concentration: 5.0% of NAV" in prompt
+        assert "Over-concentrated: No" in prompt
+        assert "Remaining capacity: 10.0%p" in prompt
+
+    def test_ar_nav_fallback_from_cash(self) -> None:
+        """When risk_limit_snapshot is None, fallback to cash_balance_snapshot.total_asset."""
+        prompt = self._build_ar_prompt_with_context(
+            position_qty="500",
+            position_avg_price="20000",
+            risk_limit_nav=None,
+            cash_total_asset="50000000",
+        )
+        # position_value = 500 * 20000 = 10,000,000
+        # nav = 50,000,000 (from cash total_asset)
+        # concentration = 10,000,000 / 50,000,000 * 100 = 20%
+        assert "Concentration: 20.0% of NAV" in prompt
+        assert "Over-concentrated: Yes" in prompt
+        assert "NAV: 50,000,000 KRW" in prompt
+
+    def test_ar_concentration_no_position(self) -> None:
+        """When position_snapshot is None, concentration shows N/A."""
+        prompt = self._build_ar_prompt_with_context(
+            risk_limit_nav="100000000",
+        )
+        assert "Position Concentration" in prompt
+        assert "Current position value: N/A" in prompt
+        assert "Concentration: N/A" in prompt
+        assert "Over-concentrated: No" in prompt
+
 
 # ---------------------------------------------------------------------------
 # StubFinalDecisionComposerAgent

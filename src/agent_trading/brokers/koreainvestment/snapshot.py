@@ -6,10 +6,11 @@ API response fields to domain entities.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid7
 
 from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
 from agent_trading.domain.entities import (
@@ -18,7 +19,6 @@ from agent_trading.domain.entities import (
     RiskLimitSnapshotEntity,
 )
 from agent_trading.repositories.contracts import InstrumentRepository
-from agent_trading.repositories.base import uuid7
 from agent_trading.services.snapshot_sync import (
     FetchedSnapshot,
     SnapshotFetchProvider,
@@ -155,13 +155,17 @@ class KISSyncSnapshotProvider:
 
         # ── 2. Fetch cash balance ─────────────────────────────────────────
         cash_balance: CashBalanceSnapshotEntity | None = None
+
+        # Paper 1 RPS pacing: ensure at least 1s between consecutive KIS calls
+        await asyncio.sleep(1.0)
+
         try:
             raw_cash: dict[str, Any] = await self._rest.get_cash_balance(
                 after_hours=after_hours,
             )
         except Exception as exc:
             msg = f"Failed to fetch cash balance from KIS: {exc}"
-            logger.error(msg)
+            logger.error(msg, exc_info=True)
             errors.append(msg)
             raw_cash = {}
 
