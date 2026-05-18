@@ -222,6 +222,15 @@ else:
 
 ## 4. Sizing Cash 우선순위 정책
 
+### 중요: 매수 계열만 차단
+
+`orderable_amount <= 0` 조건은 **매수 계열에만** 적용합니다. `_apply_cash_constraint()`는 이미 `sizing_engine.py` line 457-465에서 `if inputs.side == OrderSide.BUY:` 조건으로 감싸져 있으므로 SELL/REDUCE/EXIT에는 영향 없음.
+
+| Side | `orderable_amount <= 0` 영향 |
+|------|-----------------------------|
+| BUY / APPROVE+BUY | 차단 (0주, constraint=`orderable_amount_zero`) |
+| SELL / REDUCE / EXIT | 영향 없음 (cash constraint 미적용) |
+
 ```
 _apply_cash_constraint() cash 결정 로직:
 
