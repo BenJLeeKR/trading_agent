@@ -616,6 +616,17 @@ def _build_aggregate_summary(
 # recording, and request-building between agents.
 PER_AGENT_HARD_TIMEOUT = 90  # seconds
 
+# ── T3 (Seeded News) timeout & freshness ─────────────────────────────────────
+# T3 pipeline (KIS disclosure + NAVER news search) has no hard timeout
+# and can block the critical path for minutes.  Decoupled via parallel
+# execution with this timeout for the live pipeline.
+_T3_TIMEOUT = 30            # T3 pipeline 전체 timeout (초)
+_T3_FRESHNESS_SECONDS = 3600  # T3 freshness window (1시간)
+_T3_GATHER_WAIT = 5         # decision 완료 후 T3 추가 대기시간 (초)
+
+# Active T3 background tasks — gathered at end of each cycle.
+# Module-level list so _run_one_cycle() can register and await them.
+_active_t3_tasks: list[asyncio.Task[None]] = []
 
 async def _run_one_cycle(
     cycle: int,
@@ -633,6 +644,9 @@ async def _run_one_cycle(
     """
     start = time.monotonic()
     precheck: dict[str, object] | None = None
+
+    # Clear any stale T3 tasks from previous cycles
+    _active_t3_tasks.clear()
 
     try:
         async with postgres_runtime(run_migrations=False) as runtime:
@@ -672,52 +686,37 @@ async def _run_one_cycle(
                 metadata={"source_type": source_type},
             )
 
-            # ── 3.5 Seeded news → seeded_events conversion ──────────────
+            # ── 3.5 Seeded news → degraded path with parallel T3 ─────────
+            # T3 pipeline is decoupled from the critical decision/submit path.
+            # Decision path: reads persisted T3 events from DB only (fast, non-blocking).
+            # T3 live path: runs in parallel via create_task, results persisted
+            # for future cycles.  Freshness check prevents unnecessary live calls.
             _SEEDED_NEWS_ENABLED = os.environ.get("SEEDED_NEWS_ENABLED", "1") == "1"
-            seeded_events: list[ExternalEventEntity] | None = None
-            if _SEEDED_NEWS_ENABLED:
-                try:
-                    disclosure_seed_service = runtime.get("disclosure_seed_service")
-                    seeded_news_service = runtime.get("seeded_news_service")
-                    if disclosure_seed_service is not None and seeded_news_service is not None:
-                        seeds = await disclosure_seed_service.fetch_disclosure_titles([symbol])
-                        if seeds:
-                            candidates, _metrics = await seeded_news_service.process_seeds(seeds)
-                            if candidates:
-                                from agent_trading.services.seeded_news_converter import (
-                                    convert_seeded_candidates,
-                                )
-                                seeded_events = convert_seeded_candidates(candidates)
-                                logger.info(
-                                    "Cycle %d symbol=%s: seeded %d events from %d candidates",
-                                    cycle, symbol, len(seeded_events), len(candidates),
-                                )
+            seeded_events: list[ExternalEventEntity] = []
 
-                                # NEW: DB persistence (best-effort, non-fatal)
-                                if seeded_events:
-                                    try:
-                                        persisted = await persist_seeded_events(
-                                            seeded_events,
-                                            repos.external_events,
-                                        )
-                                        logger.info(
-                                            "Cycle %d symbol=%s: persisted %d seeded events to DB",
-                                            cycle, symbol, persisted,
-                                        )
-                                    except Exception:
-                                        logger.exception(
-                                            "Cycle %d symbol=%s: seeded event persistence "
-                                            "failed (non-fatal, transient injection continues).",
-                                            cycle, symbol,
-                                        )
-                except Exception:
-                    logger.exception(
-                        "Cycle %d symbol=%s: seeded news processing failed, continuing without.",
-                        cycle, symbol,
+            if _SEEDED_NEWS_ENABLED:
+                # ── Decision path: read persisted T3 events (non-blocking) ──
+                seeded_events = await _collect_persisted_seeded_events(repos, symbol)
+
+                # ── T3 live path: run in parallel if data is stale ──
+                t3_fresh = await _is_t3_fresh_for_symbol(repos, symbol)
+                if not t3_fresh:
+                    t3_task = asyncio.create_task(
+                        _run_t3_live_pipeline(runtime, repos, symbol)
                     )
+                    _active_t3_tasks.append(t3_task)
+
+                # ── Logging ──
+                freshness_hint = "fresh" if t3_fresh else "stale"
+                logger.info(
+                    "Cycle %d symbol=%s: T3 decision path: %d persisted events "
+                    "live_pipeline=%s",
+                    cycle, symbol, len(seeded_events),
+                    "skipped (fresh)" if t3_fresh else "scheduled",
+                )
             else:
                 logger.info(
-                    "Cycle %d symbol=%s: seeded news DISABLED (SEEDED_NEWS_ENABLED=0)",
+                    "Cycle %d symbol=%s: T3 skipped (SEEDED_NEWS_ENABLED=0)",
                     cycle, symbol,
                 )
 
@@ -794,6 +793,20 @@ async def _run_one_cycle(
                     "event_reason_codes": list(ai_inputs.event_reason_codes),
                 }
 
+            # ── 5. Wait for outstanding T3 tasks (grace period) ──────────
+            if _active_t3_tasks:
+                done, pending = await asyncio.wait(
+                    _active_t3_tasks,
+                    timeout=_T3_GATHER_WAIT,
+                )
+                for t in pending:
+                    t.cancel()
+                    logger.debug(
+                        "Cycle %d symbol=%s: T3 task cancelled (grace period expired)",
+                        cycle, symbol,
+                    )
+                _active_t3_tasks.clear()
+
             duration = time.monotonic() - start
             return _serialize_cycle_result(
                 cycle,
@@ -863,6 +876,129 @@ async def persist_seeded_events(
             persisted, skipped, len(events),
         )
     return persisted
+
+
+# ── T3 degraded path helpers ─────────────────────────────────────────────────
+
+
+async def _collect_persisted_seeded_events(
+    repos: RepositoryContainer,
+    symbol: str,
+) -> list[ExternalEventEntity]:
+    """Read persisted T3 events from external_events table.
+
+    This is the **degraded** path: only events persisted by previous
+    T3 runs are available.  Returns [] if none found — the decision
+    cycle proceeds gracefully without seeded news.
+
+    Freshness: events within 72h window (same as current list_by_symbol
+    default).  The caller decides whether to fire live pipeline based
+    on _T3_FRESHNESS_SECONDS.
+    """
+    try:
+        since = datetime.now(timezone.utc) - timedelta(hours=72)
+        events = await repos.external_events.list_by_symbol(
+            symbol=symbol,
+            since=since,
+        )
+        # Filter to T3 events only (seeded news = T3 reliability tier)
+        t3_events = [e for e in events if e.source_reliability_tier == "T3"]
+        return t3_events
+    except Exception:
+        logger.exception(
+            "Failed to read persisted seeded events for symbol=%s", symbol,
+        )
+        return []
+
+
+async def _is_t3_fresh_for_symbol(
+    repos: RepositoryContainer,
+    symbol: str,
+) -> bool:
+    """Check if there are _T3_FRESHNESS_SECONDS-fresh T3 events for symbol.
+
+    Prevents unnecessary live pipeline calls when recent data exists.
+    """
+    try:
+        since = datetime.now(timezone.utc) - timedelta(seconds=_T3_FRESHNESS_SECONDS)
+        events = await repos.external_events.list_by_symbol(
+            symbol=symbol,
+            since=since,
+        )
+        t3_events = [e for e in events if e.source_reliability_tier == "T3"]
+        return len(t3_events) > 0
+    except Exception:
+        return False
+
+
+async def _run_t3_live_pipeline(
+    runtime: dict[str, object],
+    repos: RepositoryContainer,
+    symbol: str,
+) -> None:
+    """Run live T3 pipeline (KIS disclosure + NAVER news) with timeout.
+
+    This is designed to run **as a parallel task** via asyncio.create_task()
+    alongside the decision path.  Results are persisted to DB for
+    consumption by future cycles.
+
+    Log tags:
+    - "T3 used live" — live pipeline 성공, DB persist 완료
+    - "T3 skipped" — timeout 또는 disable로 skip
+    """
+    try:
+        disclosure_seed_service = runtime.get("disclosure_seed_service")
+        seeded_news_service = runtime.get("seeded_news_service")
+        if disclosure_seed_service is None or seeded_news_service is None:
+            logger.info("symbol=%s T3 skipped: services not available", symbol)
+            return
+
+        # Step 1: Fetch disclosure titles (KIS API)
+        seeds = await asyncio.wait_for(
+            disclosure_seed_service.fetch_disclosure_titles([symbol]),
+            timeout=_T3_TIMEOUT,
+        )
+        if not seeds:
+            logger.info("symbol=%s T3 skipped: no disclosure seeds", symbol)
+            return
+
+        # Step 2: Process seeds via NAVER news search
+        candidates, metrics = await asyncio.wait_for(
+            seeded_news_service.process_seeds(seeds),
+            timeout=_T3_TIMEOUT,
+        )
+        if not candidates:
+            logger.info("symbol=%s T3 skipped: no candidates after processing", symbol)
+            return
+
+        # Step 3: Convert to ExternalEventEntity
+        from agent_trading.services.seeded_news_converter import (
+            convert_seeded_candidates,
+        )
+        seeded_events = convert_seeded_candidates(candidates)
+
+        # Step 4: Persist to DB (for future cycles)
+        persisted = await persist_seeded_events(
+            seeded_events,
+            repos.external_events,
+        )
+        logger.info(
+            "symbol=%s T3 used live: %d events from %d candidates "
+            "persisted=%d",
+            symbol,
+            len(seeded_events), len(candidates),
+            persisted,
+        )
+
+    except asyncio.TimeoutError:
+        logger.warning(
+            "symbol=%s T3 skipped: live pipeline timed out after %ds",
+            symbol, _T3_TIMEOUT,
+        )
+    except Exception:
+        logger.exception(
+            "symbol=%s T3 skipped: live pipeline failed", symbol,
+        )
 
 
 # ── Main loop ───────────────────────────────────────────────────────────────

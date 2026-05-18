@@ -483,9 +483,16 @@ class DecisionOrchestratorService:
             events = list(events)
 
             # Inject seeded news events as lower-priority supplement
+            # Dedup by event_id: seeded_events may overlap with list_by_symbol
+            # results since both originate from external_events table.
             if seeded_events:
-                symbol_seeded = [e for e in seeded_events if e.symbol == request.symbol]
-                events.extend(symbol_seeded)
+                existing_ids = {e.event_id for e in events}
+                symbol_seeded = [
+                    e for e in seeded_events
+                    if e.symbol == request.symbol and e.event_id not in existing_ids
+                ]
+                if symbol_seeded:
+                    events.extend(symbol_seeded)
 
             # Sort: importance desc → T1/T2 first → T3/T4 later → published_at desc
             events.sort(key=_event_sort_key, reverse=True)

@@ -408,42 +408,39 @@ async def _run_command(
         timed_out = True
         # partial stdout/stderr 로깅 — timeout 후에도 subprocess가 생성한
         # 출력이 있으면 디버깅에 활용할 수 있도록 로그에 남긴다.
-        # proc.communicate() 호출 전에는 stdout_b/stderr_b가 정의되지 않았을
-        # 수 있으므로 try/except로 안전하게 처리한다.
+        partial_stdout = b""
+        partial_stderr = b""
         try:
             if proc.stdout and not proc.stdout.at_eof():
                 partial_stdout = await asyncio.wait_for(proc.stdout.read(), timeout=2)
-                if partial_stdout:
-                    logger.warning(
-                        "Subprocess timed out — partial stdout (last 2KB): %s",
-                        partial_stdout[-2048:].decode(errors="replace"),
-                    )
         except Exception:
             pass
         try:
             if proc.stderr and not proc.stderr.at_eof():
                 partial_stderr = await asyncio.wait_for(proc.stderr.read(), timeout=2)
-                if partial_stderr:
-                    logger.warning(
-                        "Subprocess timed out — partial stderr (last 2KB): %s",
-                        partial_stderr[-2048:].decode(errors="replace"),
-                    )
         except Exception:
             pass
+        if partial_stdout:
+            logger.warning(
+                "Subprocess timed out — partial stdout (last 4KB): %s",
+                partial_stdout[-4096:].decode(errors="replace"),
+            )
+        if partial_stderr:
+            logger.warning(
+                "Subprocess timed out — partial stderr (last 4KB): %s",
+                partial_stderr[-4096:].decode(errors="replace"),
+            )
         # terminate → wait → kill (if needed) — communicate() is called only
         # once before the timeout, so no double communicate() issue.
-        # NOTE: 3s grace period is sufficient because the subprocess either
-        # responds to SIGTERM quickly or is stuck in C-level I/O (httpx)
-        # where only SIGKILL works.
         proc.terminate()
         try:
             await asyncio.wait_for(proc.wait(), timeout=3)
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
-        # Output is meaningless after timeout; use empty strings to avoid
-        # stale pipe reads.
-        stdout_b, stderr_b = (b"", b"")
+        # Preserve partial output for debugging even after timeout
+        stdout_b = partial_stdout
+        stderr_b = partial_stderr
 
     duration = time.monotonic() - start
     result = CommandResult(
@@ -758,7 +755,7 @@ async def _run_intraday_due_tasks(
         # Must be > 3 × _PER_AGENT_TIMEOUT (25s) = 75s to allow all 3 agents
         # to complete their per-agent timeout + fallback path before the
         # scheduler-level subprocess timeout fires.
-        _DECISION_TIMEOUT = 180  # seconds; subprocess 완료에 충분한 시간 (99초 소요 확인됨)
+        _DECISION_TIMEOUT = 300  # seconds; subprocess 완료에 충분한 시간 (184초 소요 확인됨, 300초로 증설)
         result = await _run_and_record(
             state,
             "decision_dry_run" if dry_run else "decision_submit_gate",

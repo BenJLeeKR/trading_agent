@@ -12,6 +12,7 @@ env/
 .env.bak
 .env.org
 .env.example
+.env.example_bak
 
 # --- IDE / Editor ---
 .vscode/
@@ -36,7 +37,3 @@ build/
 # --- OS ---
 .DS_Store
 Thumbs.db
-
-# --- ETC ---
-.cache
-.cursor

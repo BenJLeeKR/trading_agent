@@ -61,11 +61,14 @@ from scripts.run_paper_decision_loop import (
     KISRestClient,
     UniverseSymbol,
     _build_aggregate_summary,
+    _collect_persisted_seeded_events,
+    _is_t3_fresh_for_symbol,
     _parse_args,
     _parse_universe_symbols,
     _read_trading_universe,
     _resolve_symbol_price,
     _run_one_cycle,
+    _run_t3_live_pipeline,
     _serialize_cycle_result,
     _serialize_precheck,
     persist_seeded_events,
@@ -1196,3 +1199,270 @@ class TestSigtermHandler:
         assert "_shutdown_event.set()" in source, (
             "_handle_signal() must set _shutdown_event"
         )
+
+
+# ---------------------------------------------------------------------------
+# T3 degraded path tests
+# ---------------------------------------------------------------------------
+
+
+class TestCollectPersistedSeededEvents:
+    """``_collect_persisted_seeded_events()`` — DB에서 T3 events 조회."""
+
+    @pytest.mark.asyncio
+    async def test_empty_when_no_events(self) -> None:
+        """persisted T3 events 없을 때 [] 반환."""
+        repos = build_in_memory_repositories()
+        result = await _collect_persisted_seeded_events(repos, SYMBOL)
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_filters_to_t3_only(self) -> None:
+        """T3가 아닌 events는 제외."""
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+
+        # T1 event (should be filtered out)
+        t1 = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="Y|disclosure",
+            source_name="kis",
+            source_reliability_tier="T1",
+            symbol=SYMBOL,
+            market=MARKET,
+            published_at=now - timedelta(hours=1),
+            ingested_at=now,
+            severity="high",
+            direction="positive",
+            headline="T1 event",
+        )
+        # T3 event (should be included)
+        t3 = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="Y|seeded_news",
+            source_name="naver",
+            source_reliability_tier="T3",
+            symbol=SYMBOL,
+            market=MARKET,
+            published_at=now - timedelta(hours=1),
+            ingested_at=now,
+            severity="medium",
+            direction="neutral",
+            headline="T3 seeded event",
+        )
+        await repos.external_events.add(t1)
+        await repos.external_events.add(t3)
+
+        result = await _collect_persisted_seeded_events(repos, SYMBOL)
+        assert len(result) == 1
+        assert result[0].event_id == t3.event_id
+
+    @pytest.mark.asyncio
+    async def test_with_data(self) -> None:
+        """persisted T3 events 있을 때 올바르게 반환."""
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+
+        events = [
+            ExternalEventEntity(
+                event_id=uuid4(),
+                event_type="Y|seeded_news",
+                source_name="naver",
+                source_reliability_tier="T3",
+                symbol=SYMBOL,
+                market=MARKET,
+                published_at=now - timedelta(hours=i),
+                ingested_at=now,
+                severity="medium",
+                direction="neutral",
+                headline=f"T3 event {i}",
+            )
+            for i in range(3)
+        ]
+        for e in events:
+            await repos.external_events.add(e)
+
+        result = await _collect_persisted_seeded_events(repos, SYMBOL)
+        assert len(result) == 3
+
+
+class TestIsT3FreshForSymbol:
+    """``_is_t3_fresh_for_symbol()`` — T3 freshness check."""
+
+    @pytest.mark.asyncio
+    async def test_true_when_fresh_events_exist(self) -> None:
+        """freshness window 내 T3 events 존재 → True."""
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+
+        event = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="Y|seeded_news",
+            source_name="naver",
+            source_reliability_tier="T3",
+            symbol=SYMBOL,
+            market=MARKET,
+            published_at=now - timedelta(minutes=30),  # 30분 전 → fresh
+            ingested_at=now,
+            severity="medium",
+            direction="neutral",
+            headline="Fresh T3 event",
+        )
+        await repos.external_events.add(event)
+
+        assert await _is_t3_fresh_for_symbol(repos, SYMBOL) is True
+
+    @pytest.mark.asyncio
+    async def test_false_when_no_events(self) -> None:
+        """T3 events 없을 때 False."""
+        repos = build_in_memory_repositories()
+        assert await _is_t3_fresh_for_symbol(repos, SYMBOL) is False
+
+    @pytest.mark.asyncio
+    async def test_false_when_only_stale_events(self) -> None:
+        """freshness window 초과 T3 events만 있을 때 False."""
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+
+        event = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="Y|seeded_news",
+            source_name="naver",
+            source_reliability_tier="T3",
+            symbol=SYMBOL,
+            market=MARKET,
+            published_at=now - timedelta(hours=2),  # 2시간 전 → stale
+            ingested_at=now,
+            severity="medium",
+            direction="neutral",
+            headline="Stale T3 event",
+        )
+        await repos.external_events.add(event)
+
+        assert await _is_t3_fresh_for_symbol(repos, SYMBOL) is False
+
+
+class TestRunT3LivePipeline:
+    """``_run_t3_live_pipeline()`` — T3 live pipeline 실행."""
+
+    @pytest.mark.asyncio
+    async def test_skip_when_services_unavailable(self) -> None:
+        """서비스 미설치시 graceful skip."""
+        runtime: dict[str, object] = {}
+        repos = build_in_memory_repositories()
+        # Should not raise
+        await _run_t3_live_pipeline(runtime, repos, SYMBOL)
+
+    @pytest.mark.asyncio
+    async def test_timeout_handled_gracefully(self) -> None:
+        """timeout 발생시 graceful degrade."""
+        runtime = {
+            "disclosure_seed_service": AsyncMock(),
+            "seeded_news_service": AsyncMock(),
+        }
+        repos = build_in_memory_repositories()
+
+        # Simulate timeout
+        import asyncio
+        runtime["disclosure_seed_service"].fetch_disclosure_titles = AsyncMock(
+            side_effect=asyncio.TimeoutError,
+        )
+
+        # Should not raise
+        await _run_t3_live_pipeline(runtime, repos, SYMBOL)
+
+    @pytest.mark.asyncio
+    async def test_exception_handled_gracefully(self) -> None:
+        """예외 발생시 graceful degrade."""
+        runtime = {
+            "disclosure_seed_service": AsyncMock(),
+            "seeded_news_service": AsyncMock(),
+        }
+        repos = build_in_memory_repositories()
+
+        runtime["disclosure_seed_service"].fetch_disclosure_titles = AsyncMock(
+            side_effect=RuntimeError("API failure"),
+        )
+
+        # Should not raise
+        await _run_t3_live_pipeline(runtime, repos, SYMBOL)
+
+    @pytest.mark.asyncio
+    async def test_success_path(self) -> None:
+        """정상 경로: fetch → process → persist."""
+        from agent_trading.domain.models import SeededNewsCandidate
+
+        runtime = {
+            "disclosure_seed_service": AsyncMock(),
+            "seeded_news_service": AsyncMock(),
+        }
+        repos = build_in_memory_repositories()
+
+        # Mock disclosure seeds
+        from agent_trading.services.disclosure_seed_service import DisclosureTitleDTO
+        seed = DisclosureTitleDTO(
+            symbol=SYMBOL,
+            company_name="Samsung",
+            headline="Test disclosure",
+        )
+        runtime["disclosure_seed_service"].fetch_disclosure_titles = AsyncMock(
+            return_value=[seed],
+        )
+
+        # Mock processed candidates
+        candidate = SeededNewsCandidate(
+            symbol=SYMBOL,
+            company_name="Samsung",
+            seed_headline="Test disclosure",
+            related_news_title="Test news",
+            related_news_summary="Test summary",
+            link="https://news.example.com",
+            confidence_score=0.8,
+        )
+        runtime["seeded_news_service"].process_seeds = AsyncMock(
+            return_value=([candidate], {}),
+        )
+
+        await _run_t3_live_pipeline(runtime, repos, SYMBOL)
+
+        # Verify events were persisted
+        events = await repos.external_events.list_by_symbol(
+            symbol=SYMBOL,
+            since=datetime.now(timezone.utc) - timedelta(hours=1),
+        )
+        assert len(events) > 0
+        assert all(e.source_reliability_tier == "T3" for e in events)
+
+
+class TestT3DegradedPath:
+    """T3 degraded path 통합 검증."""
+
+    @pytest.mark.asyncio
+    async def test_collect_and_freshness_integration(self) -> None:
+        """_collect_persisted_seeded_events + _is_t3_fresh_for_symbol 통합."""
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+
+        # Add a fresh T3 event
+        event = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="Y|seeded_news",
+            source_name="naver",
+            source_reliability_tier="T3",
+            symbol=SYMBOL,
+            market=MARKET,
+            published_at=now - timedelta(minutes=5),
+            ingested_at=now,
+            severity="medium",
+            direction="neutral",
+            headline="Fresh T3",
+        )
+        await repos.external_events.add(event)
+
+        # Should be fresh
+        assert await _is_t3_fresh_for_symbol(repos, SYMBOL) is True
+
+        # Should return the event
+        events = await _collect_persisted_seeded_events(repos, SYMBOL)
+        assert len(events) == 1
+        assert events[0].event_id == event.event_id
