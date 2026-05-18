@@ -406,12 +406,44 @@ async def _run_command(
         )
     except asyncio.TimeoutError:
         timed_out = True
+        # partial stdout/stderr 로깅 — timeout 후에도 subprocess가 생성한
+        # 출력이 있으면 디버깅에 활용할 수 있도록 로그에 남긴다.
+        # proc.communicate() 호출 전에는 stdout_b/stderr_b가 정의되지 않았을
+        # 수 있으므로 try/except로 안전하게 처리한다.
+        try:
+            if proc.stdout and not proc.stdout.at_eof():
+                partial_stdout = await asyncio.wait_for(proc.stdout.read(), timeout=2)
+                if partial_stdout:
+                    logger.warning(
+                        "Subprocess timed out — partial stdout (last 2KB): %s",
+                        partial_stdout[-2048:].decode(errors="replace"),
+                    )
+        except Exception:
+            pass
+        try:
+            if proc.stderr and not proc.stderr.at_eof():
+                partial_stderr = await asyncio.wait_for(proc.stderr.read(), timeout=2)
+                if partial_stderr:
+                    logger.warning(
+                        "Subprocess timed out — partial stderr (last 2KB): %s",
+                        partial_stderr[-2048:].decode(errors="replace"),
+                    )
+        except Exception:
+            pass
+        # terminate → wait → kill (if needed) — communicate() is called only
+        # once before the timeout, so no double communicate() issue.
+        # NOTE: 3s grace period is sufficient because the subprocess either
+        # responds to SIGTERM quickly or is stuck in C-level I/O (httpx)
+        # where only SIGKILL works.
         proc.terminate()
         try:
-            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=10)
+            await asyncio.wait_for(proc.wait(), timeout=3)
         except asyncio.TimeoutError:
             proc.kill()
-            stdout_b, stderr_b = await proc.communicate()
+            await proc.wait()
+        # Output is meaningless after timeout; use empty strings to avoid
+        # stale pipe reads.
+        stdout_b, stderr_b = (b"", b"")
 
     duration = time.monotonic() - start
     result = CommandResult(
@@ -435,11 +467,19 @@ async def _run_command(
         result.duration_seconds,
     )
     if result.stderr.strip():
-        logger.error(
-            "task=%s stderr:\n%s",
-            name,
-            result.stderr.strip(),
-        )
+        # Child scripts (e.g. run_snapshot_sync_loop.py) use logging.basicConfig()
+        # which defaults to stderr.  A non-empty stderr does NOT indicate failure;
+        # it often contains normal INFO-level log lines.
+        #
+        # - If returncode == 0: log stderr at INFO level (normal logging output).
+        # - If returncode != 0: log stderr at ERROR level (likely actual errors).
+        # - Additionally, if stderr contains Python traceback lines, always ERROR.
+        _stderr_text = result.stderr.strip()
+        _has_traceback = "Traceback" in _stderr_text or "Error:" in _stderr_text
+        if result.returncode == 0 and not _has_traceback:
+            logger.info("task=%s stderr:\n%s", name, _stderr_text)
+        else:
+            logger.error("task=%s stderr:\n%s", name, _stderr_text)
     if result.stdout.strip():
         logger.log(
             logging.ERROR if not result.ok else logging.DEBUG,
@@ -498,12 +538,25 @@ async def _run_and_record(
     timeout_seconds: int,
     env: dict[str, str],
 ) -> CommandResult:
+    # KIS subprocess pacing-delay 로깅 (디버깅/운영 가시성용)
+    if name in ("snapshot_sync", "post_submit_sync", "decision_submit_gate", "decision_dry_run"):
+        logger.info("[pacing] Starting KIS subprocess: %s", name)
+
     result = await _run_command(
         name,
         argv,
         timeout_seconds=timeout_seconds,
         env=env,
     )
+
+    if name in ("snapshot_sync", "post_submit_sync", "decision_submit_gate", "decision_dry_run"):
+        logger.info(
+            "[pacing] Completed KIS subprocess: %s (rc=%s, %.1fs)",
+            name,
+            result.returncode,
+            result.duration_seconds,
+        )
+
     state.command_results.append(result)
     return result
 
@@ -697,11 +750,20 @@ async def _run_intraday_due_tasks(
         db_submit_count = await _get_db_submit_count(state.run_date)
         effective_submit_count = max(state.submit_count, db_submit_count)
         dry_run = effective_submit_count >= max_submit_per_day
+        # decision_submit_gate uses a shorter timeout (65s) than the default
+        # task timeout (240s) because the subprocess has its own per-agent
+        # hard timeout (60s) via asyncio.wait_for(). If the LLM call hangs
+        # on C-level I/O (httpx), os._exit(1) may not terminate immediately,
+        # so the scheduler-level timeout must be tight to avoid 244s stalls.
+        # Must be > 3 × _PER_AGENT_TIMEOUT (25s) = 75s to allow all 3 agents
+        # to complete their per-agent timeout + fallback path before the
+        # scheduler-level subprocess timeout fires.
+        _DECISION_TIMEOUT = 85  # seconds; 3 × 25s per-agent + 10s buffer
         result = await _run_and_record(
             state,
             "decision_dry_run" if dry_run else "decision_submit_gate",
             _decision_command(dry_run=dry_run),
-            timeout_seconds=timeout_seconds,
+            timeout_seconds=min(timeout_seconds, _DECISION_TIMEOUT),
             env=env,
         )
         if not dry_run and _is_submit_consuming_result(result):
@@ -1033,7 +1095,13 @@ def _build_dsn(env: dict[str, str]) -> str | None:
 
 
 async def _heartbeat_task(state: SchedulerState, pool) -> None:
-    """10초 간격으로 DB heartbeat 업데이트."""
+    """10초 간격으로 DB heartbeat 업데이트.
+
+    ``state.session_db_id``가 설정되어 있으면 해당 row를 UPDATE하고,
+    ``None``이면 ``run_date`` 기준으로 UPSERT를 시도한다.
+    이렇게 하면 ``_persist_session_state()``가 호출되기 전에도 heartbeat이
+    유지되어 ``last_heartbeat_at`` stale 문제를 방지한다.
+    """
     while True:
         try:
             if state.session_db_id is not None:
@@ -1041,10 +1109,21 @@ async def _heartbeat_task(state: SchedulerState, pool) -> None:
                     "UPDATE trading.market_sessions SET last_heartbeat_at = NOW(), updated_at = NOW() WHERE id = $1",
                     state.session_db_id,
                 )
+            else:
+                # session 미존재 시 run_date로 UPSERT — heartbeat 연속성 보장
+                is_trading_day = state.session_info.is_trading_day if state.session_info else True
+                await pool.execute(
+                    """INSERT INTO trading.market_sessions (run_date, is_trading_day, last_heartbeat_at)
+                       VALUES ($1, $2, NOW())
+                       ON CONFLICT (run_date) DO UPDATE SET last_heartbeat_at = NOW(), updated_at = NOW()""",
+                    state.run_date,
+                    is_trading_day,
+                )
+                logger.debug("Heartbeat UPSERT via run_date=%s (session not yet persisted)", state.run_date)
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.debug("Heartbeat update skipped (session not yet persisted)")
+            logger.exception("Heartbeat task failed — DB error during heartbeat update")
         try:
             await asyncio.sleep(10)
         except asyncio.CancelledError:
@@ -1118,18 +1197,34 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
         )
         logger.info("Phase monitor background task created")
 
-    # P3: Create DB pool for advisory lock and heartbeat
+    # P3: Create DB pool for advisory lock and heartbeat (with retries)
     pool = None
     if dsn:
-        try:
-            import asyncpg
-            pool = await asyncpg.create_pool(
-                dsn=dsn,
-                min_size=int(env.get("DB_POOL_MIN", "2")),
-                max_size=int(env.get("DB_POOL_MAX", "10")),
-            )
-        except Exception:
-            logger.warning("Failed to create DB pool — advisory lock and heartbeat disabled")
+        import asyncpg
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                pool = await asyncpg.create_pool(
+                    dsn=dsn,
+                    min_size=int(env.get("DB_POOL_MIN", "2")),
+                    max_size=int(env.get("DB_POOL_MAX", "10")),
+                )
+                logger.info("DB pool created successfully (attempt %d/%d)", attempt, max_retries)
+                break  # 성공 시 루프 탈출
+            except Exception:
+                if attempt < max_retries:
+                    wait = 2 ** attempt  # 2s, 4s, 8s
+                    logger.warning(
+                        "DB pool creation attempt %d/%d failed, retrying in %ds",
+                        attempt, max_retries, wait,
+                    )
+                    await asyncio.sleep(wait)
+                else:
+                    logger.exception(
+                        "Failed to create DB pool after %d attempts — advisory lock and heartbeat disabled",
+                        max_retries,
+                    )
+                    pool = None
 
     # P3: Startup info logging
     await _log_startup_info(env, state, pool is not None)
@@ -1155,6 +1250,14 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                     decision_interval=args.decision_interval,
                     post_submit_interval=args.post_submit_interval,
                 )
+                # P2: Persist session state BEFORE running tasks — critical for
+                # heartbeat continuity. If decision_submit_gate times out and
+                # the subprocess is SIGKILL'd, _persist_session_state() after
+                # tasks would never be reached, leaving state.session_db_id=None
+                # and causing heartbeat UPDATE to skip.
+                if state.session_info is not None:
+                    await _persist_session_state(state, dsn)
+
                 # --once mode: session gate applies to all phases
                 if not args.skip_pre_market:
                     if await _session_gate(session_provider, run_date, state, "pre_market"):
@@ -1189,7 +1292,8 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                     else:
                         logger.info("--once: end-of-day phase skipped by session gate")
 
-                # P2: Persist final session state on --once exit
+                # P2: Persist final session state on --once exit (second call is
+                # safe — upsert by run_date)
                 if state.session_info is not None:
                     await _persist_session_state(state, dsn)
                 _log_summary(state)
@@ -1235,6 +1339,16 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                     intraday_at = _combine(run_date, args.intraday_start)
                     market_close_at = _combine(run_date, args.market_close)
                     end_at = _combine(run_date, args.end_of_day_end)
+                    # Heartbeat task 재생성: 새 state 참조하도록 교체
+                    if heartbeat_task is not None and not heartbeat_task.done():
+                        heartbeat_task.cancel()
+                        try:
+                            await heartbeat_task
+                        except asyncio.CancelledError:
+                            pass
+                    if pool is not None:
+                        heartbeat_task = asyncio.create_task(_heartbeat_task(state, pool))
+                        logger.info("Heartbeat background task recreated after idle rollover (interval=10s)")
                     logger.info("═══ Next run_date: %s — waiting for market hours ═══", run_date)
                     continue
 
@@ -1255,6 +1369,16 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                     intraday_at = _combine(run_date, args.intraday_start)
                     market_close_at = _combine(run_date, args.market_close)
                     end_at = _combine(run_date, args.end_of_day_end)
+                    # Heartbeat task 재생성: 새 state 참조하도록 교체
+                    if heartbeat_task is not None and not heartbeat_task.done():
+                        heartbeat_task.cancel()
+                        try:
+                            await heartbeat_task
+                        except asyncio.CancelledError:
+                            pass
+                    if pool is not None:
+                        heartbeat_task = asyncio.create_task(_heartbeat_task(state, pool))
+                        logger.info("Heartbeat background task recreated after non-trading day rollover (interval=10s)")
                     logger.info("═══ Next run_date: %s — waiting for next trading day ═══", run_date)
                     continue
 

@@ -398,6 +398,7 @@ def build_kis_budget_manager(
     kis_env: str,
     real_rest_rps: int = 18,
     paper_rest_rps: int = 1,
+    shared_budget_file: str | None = None,
 ) -> RateLimitBudgetManager:
     """Create a ``RateLimitBudgetManager`` with per-bucket safety scaling
     based on the KIS environment's aggregate REST RPS **baseline**.
@@ -473,7 +474,7 @@ def build_kis_budget_manager(
         # Paper: very conservative — auth is the bottleneck (1 token/min).
         # Capacities are scaled proportionally from the 1-RPS baseline.
         # Global REST cap = total RPS (strict upper bound).
-        return RateLimitBudgetManager(
+        manager = RateLimitBudgetManager(
             auth_capacity=max(1, int(total * 1)),
             auth_refill_rate=0.017 * total,
             order_capacity=max(1, int(total * 1)),
@@ -487,6 +488,17 @@ def build_kis_budget_manager(
             global_rest_capacity=total,
             global_rest_refill_rate=1.0 * total,
         )
+        # Paper 환경: shared_budget_file이 제공되면 in-process global_rest 대신
+        # 프로세스 간 공유 FileBackedGlobalBucket 사용
+        if shared_budget_file is not None:
+            from agent_trading.brokers.shared_budget import FileBackedGlobalBucket
+
+            manager.global_rest = FileBackedGlobalBucket(
+                capacity=float(total),
+                refill_rate=1.0 * total,
+                file_path=shared_budget_file,
+            )
+        return manager
 
     # Live / real environment
     total = max(1, real_rest_rps)

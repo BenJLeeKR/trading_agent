@@ -119,11 +119,25 @@ class OpenAICompatibleClient:
         self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
-        """Lazy-initialise the HTTP client."""
+        """Lazy-initialise the HTTP client with granular timeouts.
+
+        Timeout breakdown
+        -----------------
+        * ``connect=10.0``  — fail fast on network issues
+        * ``read=25.0``    — aligned with per-agent timeout (25s) in
+                             ``decision_orchestrator._run_agents()``
+        * ``write=10.0``   — generous write window
+        * ``pool=10.0``    — connection pool acquisition timeout
+        """
         if self._client is None:
             self._client = httpx.AsyncClient(
                 base_url=self._base_url,
-                timeout=httpx.Timeout(self._timeout),
+                timeout=httpx.Timeout(
+                    connect=10.0,
+                    read=25.0,
+                    write=10.0,
+                    pool=10.0,
+                ),
                 headers={"Authorization": f"Bearer {self._api_key}"},
             )
         return self._client

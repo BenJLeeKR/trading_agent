@@ -149,3 +149,70 @@ class TestStrictGlobalRestCap:
         mgr = RateLimitBudgetManager()
         snap = mgr.snapshot()
         assert "global" not in snap
+
+
+class TestSharedBudgetFile:
+    """``build_kis_budget_manager()`` with ``shared_budget_file`` parameter."""
+
+    def test_paper_with_shared_budget_file(self) -> None:
+        """Paper env with ``shared_budget_file`` creates a ``FileBackedGlobalBucket``."""
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            path = tmp.name
+
+        try:
+            mgr = build_kis_budget_manager(
+                kis_env="paper",
+                shared_budget_file=path,
+            )
+            from agent_trading.brokers.shared_budget import FileBackedGlobalBucket
+
+            assert isinstance(mgr.global_rest, FileBackedGlobalBucket)
+            assert mgr.global_rest.capacity == 1
+        finally:
+            import os
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_paper_shared_budget_blocks_across_instances(self) -> None:
+        """Two managers sharing the same file enforce cross-process budget."""
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            path = tmp.name
+
+        try:
+            mgr1 = build_kis_budget_manager(
+                kis_env="paper",
+                shared_budget_file=path,
+            )
+            mgr2 = build_kis_budget_manager(
+                kis_env="paper",
+                shared_budget_file=path,
+            )
+
+            # First consume from mgr1 should succeed
+            mgr1.consume_or_raise(BucketType.INQUIRY)
+
+            # Second consume from mgr2 should fail on global bucket
+            from agent_trading.brokers.rate_limit import BudgetExhaustedError
+
+            with pytest.raises(BudgetExhaustedError) as exc_info:
+                mgr2.consume_or_raise(BucketType.INQUIRY)
+            assert exc_info.value.bucket == "global"
+        finally:
+            import os
+            if os.path.exists(path):
+                os.unlink(path)
+
+    def test_live_with_shared_budget_file_ignored(self) -> None:
+        """Live env ignores ``shared_budget_file`` (only paper uses it)."""
+        mgr = build_kis_budget_manager(
+            kis_env="live",
+            shared_budget_file="/tmp/.should_not_exist",
+        )
+        from agent_trading.brokers.rate_limit import OperationBucket
+
+        assert isinstance(mgr.global_rest, OperationBucket)
+        assert mgr.global_rest.capacity == 18

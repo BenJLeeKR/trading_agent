@@ -1152,3 +1152,47 @@ class TestPersistSeededEvents:
         events = await repo.list_by_symbol("005930", since=datetime(2020, 1, 1, tzinfo=timezone.utc),
                                              include_non_listed=True)
         assert len(events) == 3
+
+
+class TestSigtermHandler:
+    """``run_paper_decision_loop.py`` — SIGTERM 핸들러 등록 검증."""
+
+    def test_sigterm_handler_uses_add_signal_handler(self) -> None:
+        """SIGTERM handler should use loop.add_signal_handler, not signal.signal in main()."""
+        import inspect
+        import scripts.run_paper_decision_loop as module
+
+        # _install_signal_handlers() should contain add_signal_handler(...)
+        install_source = inspect.getsource(module._install_signal_handlers)
+        assert "loop.add_signal_handler(sig, _handle_signal)" in install_source, (
+            "_install_signal_handlers() must register SIGTERM/SIGINT via loop.add_signal_handler()"
+        )
+
+        # main() should NOT contain signal.signal(SIGTERM, ...) — that is now
+        # handled by _install_signal_handlers() which is called from _run_loop().
+        main_source = inspect.getsource(module.main)
+        assert "signal.signal(signal.SIGTERM" not in main_source, (
+            "main() must NOT register SIGTERM via signal.signal() — "
+            "use _install_signal_handlers() instead"
+        )
+        # _handle_sigterm should no longer be defined in main()
+        assert "def _handle_sigterm" not in main_source, (
+            "_handle_sigterm should not be defined in main() — "
+            "use _handle_signal() instead"
+        )
+
+    def test_handle_signal_cancels_all_tasks(self) -> None:
+        """_handle_signal() should cancel all asyncio tasks to unblock httpx I/O."""
+        import inspect
+        import scripts.run_paper_decision_loop as module
+
+        source = inspect.getsource(module._handle_signal)
+        assert "task.cancel()" in source, (
+            "_handle_signal() must call task.cancel() on all pending tasks"
+        )
+        assert "asyncio.all_tasks()" in source, (
+            "_handle_signal() must iterate over asyncio.all_tasks()"
+        )
+        assert "_shutdown_event.set()" in source, (
+            "_handle_signal() must set _shutdown_event"
+        )

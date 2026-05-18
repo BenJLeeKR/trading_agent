@@ -430,7 +430,7 @@ class TestInitSessionProvider:
 
     @pytest.mark.asyncio
     async def test_returns_fallback_by_default(self) -> None:
-        with patch.dict("os.environ", {}, clear=False):
+        with patch.dict("os.environ", {"KIS_LIVE_INFO_ENABLED": "false"}, clear=True):
             provider = await _init_session_provider()
             assert isinstance(provider, FallbackSessionProvider)
 
@@ -552,12 +552,10 @@ class TestInitMarketStateProvider:
             "os.environ",
             {
                 "KIS_LIVE_INFO_ENABLED": "true",
-                "KIS_APP_KEY": "",
-                "KIS_APP_SECRET": "",
-                "KIS_PAPER_APP_KEY": "",
-                "KIS_PAPER_APP_SECRET": "",
+                "KIS_LIVE_INFO_APP_KEY": "",
+                "KIS_LIVE_INFO_APP_SECRET": "",
             },
-            clear=False,
+            clear=True,
         ):
             provider = await _init_market_state_provider()
             assert provider is None
@@ -722,8 +720,8 @@ class TestHeartbeatTask:
         )
 
     @pytest.mark.asyncio
-    async def test_skips_when_no_session(self) -> None:
-        """session_db_id가 None이면 heartbeat update를 skip."""
+    async def test_upserts_when_no_session(self) -> None:
+        """session_db_id가 None이면 run_date로 UPSERT 시도."""
         state = SchedulerState(run_date=date(2026, 5, 18))
         state.session_db_id = None
         pool = AsyncMock()
@@ -736,7 +734,39 @@ class TestHeartbeatTask:
         except asyncio.CancelledError:
             pass
 
-        pool.execute.assert_not_called()
+        # UPSERT by run_date가 호출되어야 함
+        pool.execute.assert_called()
+        call_args = pool.execute.call_args[0]
+        assert "INSERT INTO trading.market_sessions" in call_args[0]
+        assert "ON CONFLICT (run_date)" in call_args[0]
+        assert call_args[1] == date(2026, 5, 18)
+
+    @pytest.mark.asyncio
+    async def test_upsert_with_session_info(self) -> None:
+        """session_info가 있으면 is_trading_day를 반영한 UPSERT."""
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        state.session_db_id = None
+        state.session_info = SessionInfo(
+            is_trading_day=True,
+            source="test",
+            reason="test",
+        )
+        pool = AsyncMock()
+
+        task = asyncio.create_task(_heartbeat_task(state, pool))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        pool.execute.assert_called()
+        call_args = pool.execute.call_args[0]
+        assert "INSERT INTO trading.market_sessions" in call_args[0]
+        assert "ON CONFLICT (run_date)" in call_args[0]
+        assert call_args[1] == date(2026, 5, 18)
+        assert call_args[2] is True  # is_trading_day
 
     @pytest.mark.asyncio
     async def test_handles_db_error_gracefully(self) -> None:

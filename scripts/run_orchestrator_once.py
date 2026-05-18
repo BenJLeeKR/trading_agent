@@ -233,7 +233,17 @@ async def _seed_if_empty(repos: RepositoryContainer) -> bool:
             client_id=CLIENT_ID,
             environment=Environment.PAPER,
             version_tag="v1.0",
-            config_json={"max_position_size": "0.1"},
+            config_json={
+                "risk": {
+                    "max_single_position_pct": "10",    # 10% = NAV 대비 단일 종목 최대 10%
+                    "min_cash_buffer_pct": "5",         # 5% = 최소 현금 보유 5%
+                },
+                "execution": {
+                    "max_order_value": "50000000",      # 5천만원 = 1회 주문 최대 금액
+                    "min_order_qty": "1",
+                    "max_order_qty": "10000",
+                },
+            },
             checksum="entrypoint-checksum",
             activated_at=datetime.now(timezone.utc),
         )

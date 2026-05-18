@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Broker-agnostic snapshot sync loop — dedicated scheduler process.
+"""Broker-agnostic snapshot sync loop — manual/debug job or scheduler subprocess.
 
 Usage
 -----
@@ -13,8 +13,13 @@ Usage
     # Explicit broker (currently only koreainvestment)
     python scripts/run_snapshot_sync_loop.py --broker koreainvestment
 
-Designed to be run as a dedicated Docker service (``snapshot-sync``) that
-continuously keeps broker account snapshots fresh.  Each iteration:
+Designed to be run either:
+
+* manually via ``docker compose run snapshot-sync`` for debug/isolation, or
+* as a one-shot subprocess launched by ``ops-scheduler`` during pre-market,
+  intraday, and after-hours phases.
+
+It is **not** the steady-state primary scheduler container.  Each iteration:
 
 1. Creates an authenticated broker REST client via a ``SnapshotFetchProvider``.
 2. Connects to Postgres and builds repositories.
@@ -207,6 +212,7 @@ async def _run_one_cycle(settings: AppSettings, broker: str, after_hours: bool =
                 instrument_repo=repos.instruments,
                 position_snapshot_repo=repos.position_snapshots,
                 cash_balance_snapshot_repo=repos.cash_balance_snapshots,
+                risk_limit_snapshot_repo=repos.risk_limit_snapshots,
                 broker_account_repo=repos.broker_accounts,
                 account_repo=repos.accounts,
                 broker_name=broker,

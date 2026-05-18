@@ -727,3 +727,249 @@ class TestCombinedConstraints:
         # Cash limits to 50; concentration doesn't further cap
         assert result.quantity == Decimal("50")
         assert "cash_limit" in result.applied_constraints
+
+
+# ======================================================================
+# 18. Config key normalization — legacy flat-key fallback
+# ======================================================================
+# These tests verify that the sizing engine correctly interprets config
+# values regardless of whether they come from the nested ``risk.*`` /
+# ``execution.*`` structure or the legacy flat keys.
+#
+# NOTE: ``_build_sizing_inputs()`` is a method on
+# ``DecisionOrchestratorService`` and requires a full context mock.
+# The tests below validate the *sizing engine* side (pure function) —
+# i.e. that when ``max_single_position_pct`` is correctly resolved and
+# passed to ``calculate_sizing()``, the concentration constraint works
+# as expected.  The key-resolution logic itself is tested via the
+# orchestrator's unit tests.
+# ======================================================================
+
+
+class TestLegacyMaxPositionSizeFallback:
+    """``max_single_position_pct`` resolved from legacy flat key
+    ``max_position_size`` behaves identically to the nested key."""
+
+    def test_legacy_flat_key_10pct(self) -> None:
+        """max_position_size='10' → max_single_position_pct=10%.
+        NAV=100M, current_position=0 → allows up to 10M worth of shares."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="200",
+                requested_price="100000",   # 100,000 won per share
+                nav="100000000",            # 100M NAV
+                max_single_position_pct="10",  # 10% = 10M max
+                current_position_qty="0",
+                current_position_avg_price="0",
+            )
+        )
+        # max_position_value = 100M * 10% = 10M
+        # max_additional_qty = 10M / 100,000 = 100
+        # Requested 200 → capped to 100
+        assert result.quantity == Decimal("100")
+        assert "position_concentration" in result.applied_constraints
+
+    def test_nested_key_takes_priority(self) -> None:
+        """When both nested ``risk.max_single_position_pct`` and legacy
+        ``max_position_size`` are present, nested key wins.
+        (This test simulates the orchestrator resolving the nested key
+        and passing the correct value to the sizing engine.)"""
+        # Simulate nested key resolved to 15%
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="200",
+                requested_price="100000",
+                nav="100000000",
+                max_single_position_pct="15",  # 15% (nested key won)
+                current_position_qty="0",
+                current_position_avg_price="0",
+            )
+        )
+        # max_position_value = 100M * 15% = 15M
+        # max_additional_qty = 15M / 100,000 = 150
+        # Requested 200 → capped to 150
+        assert result.quantity == Decimal("150")
+        assert "position_concentration" in result.applied_constraints
+
+
+class TestConcentrationConstraintWithPositionValue:
+    """Verify the concentration constraint math with real position values."""
+
+    def test_concentration_constraint_with_position_value_check(self) -> None:
+        """NAV=100M, max_single_position_pct=10, current_position=5M won,
+        new order=100 shares @ 100,000 won.
+
+        max_position_value = 10M
+        current_value = 5M
+        remaining = 5M
+        max_additional_qty = 5M / 100,000 = 50
+        Requested 100 → capped to 50."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="100",
+                requested_price="100000",
+                nav="100000000",
+                max_single_position_pct="10",
+                current_position_qty="50",       # 50 shares held
+                current_position_avg_price="100000",  # avg price 100,000
+            )
+        )
+        # current_value = 50 * 100,000 = 5,000,000
+        # max_position_value = 100,000,000 * 10% = 10,000,000
+        # remaining = 10,000,000 - 5,000,000 = 5,000,000
+        # max_additional_qty = 5,000,000 / 100,000 = 50
+        assert result.quantity == Decimal("50")
+        assert "position_concentration" in result.applied_constraints
+
+    def test_concentration_constraint_blocks_over_limit(self) -> None:
+        """NAV=100M, max_single_position_pct=10, current_position=12M won.
+        current_value(12M) > max_position_value(10M) → remaining <= 0
+        → qty = 0."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="100",
+                requested_price="100000",
+                nav="100000000",
+                max_single_position_pct="10",
+                current_position_qty="120",      # 120 shares held
+                current_position_avg_price="100000",  # avg price 100,000
+            )
+        )
+        # current_value = 120 * 100,000 = 12,000,000
+        # max_position_value = 100,000,000 * 10% = 10,000,000
+        # remaining = 10,000,000 - 12,000,000 = -2,000,000 <= 0
+        assert result.quantity == Decimal("0")
+        assert "position_concentration" in result.applied_constraints
+
+
+# ======================================================================
+# Orchestrator-path integration tests
+# ======================================================================
+
+
+class TestOrchestratorSizingPath:
+    """Simulate orchestrator-path scenarios for concentration constraint.
+
+    These tests use ``calculate_sizing()`` directly (pure function) but
+    with input values that mirror what ``_build_sizing_inputs()`` would
+    produce when called from ``assemble_and_submit()`` Phase 1.5.
+    """
+
+    def test_legacy_key_fallback(self) -> None:
+        """Legacy flat key ``max_position_size`` is interpreted as
+        ``max_single_position_pct``.
+
+        config_json = {"max_position_size": "10"}
+        → max_single_position_pct = 10
+        → NAV 100M → max_position_value = 10M
+        → current_value = 0, remaining = 10M
+        → requested 100 shares at 50,000 = 5M < 10M → passes
+        """
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="100",
+                requested_price="50000",
+                nav="100000000",
+                max_single_position_pct="10",
+            )
+        )
+        # 100 * 50,000 = 5,000,000 < 10,000,000 → no constraint
+        assert result.quantity == Decimal("100")
+        assert "position_concentration" not in result.applied_constraints
+
+    def test_over_limit_blocked(self) -> None:
+        """Position already exceeds max_single_position_pct → qty = 0.
+
+        config_json = {"risk": {"max_single_position_pct": "5"}}
+        → max_single_position_pct = 5
+        → NAV 100M → max_position_value = 5M
+        → current: qty=100, avg_price=100,000 → current_value = 10M
+        → remaining = 5M - 10M = -5M ≤ 0 → blocked
+        """
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="50",
+                requested_price="100000",
+                nav="100000000",
+                max_single_position_pct="5",
+                current_position_qty="100",
+                current_position_avg_price="100000",
+            )
+        )
+        # current_value = 100 * 100,000 = 10,000,000
+        # max_position_value = 100,000,000 * 5% = 5,000,000
+        # remaining = 5,000,000 - 10,000,000 = -5,000,000 ≤ 0
+        assert result.quantity == Decimal("0")
+        assert "position_concentration" in result.applied_constraints
+
+    def test_partial_reduce(self) -> None:
+        """Requested qty exceeds remaining capacity → capped.
+
+        config_json = {"risk": {"max_single_position_pct": "10"}}
+        → max_single_position_pct = 10
+        → NAV 100M → max_position_value = 10M
+        → current: qty=30, avg_price=100,000 → current_value = 3M
+        → remaining = 10M - 3M = 7M
+        → max_additional_qty = 7M / 100,000 = 70
+        → requested 100 → capped to 70
+        """
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="100",
+                requested_price="100000",
+                nav="100000000",
+                max_single_position_pct="10",
+                current_position_qty="30",
+                current_position_avg_price="100000",
+            )
+        )
+        # current_value = 30 * 100,000 = 3,000,000
+        # max_position_value = 100,000,000 * 10% = 10,000,000
+        # remaining = 10,000,000 - 3,000,000 = 7,000,000
+        # max_additional_qty = 7,000,000 / 100,000 = 70
+        assert result.quantity == Decimal("70")
+        assert "position_concentration" in result.applied_constraints
+
+    def test_under_limit_passes(self) -> None:
+        """Requested qty is within remaining capacity → passes through.
+
+        config_json = {"risk": {"max_single_position_pct": "10"}}
+        → max_single_position_pct = 10
+        → NAV 100M → max_position_value = 10M
+        → current: qty=10, avg_price=50,000 → current_value = 500K
+        → remaining = 10M - 500K = 9.5M
+        → requested 50 at 50,000 = 2.5M < 9.5M → passes
+        """
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="50",
+                requested_price="50000",
+                nav="100000000",
+                max_single_position_pct="10",
+                current_position_qty="10",
+                current_position_avg_price="50000",
+            )
+        )
+        # current_value = 10 * 50,000 = 500,000
+        # max_position_value = 100,000,000 * 10% = 10,000,000
+        # remaining = 10,000,000 - 500,000 = 9,500,000
+        # max_additional_qty = 9,500,000 / 50,000 = 190
+        # requested 50 < 190 → passes through
+        assert result.quantity == Decimal("50")
+        assert "position_concentration" not in result.applied_constraints

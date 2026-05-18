@@ -209,6 +209,7 @@ async def _run_single(
         instrument_repo=repos["instruments"],
         position_snapshot_repo=repos["position_snapshots"],
         cash_balance_snapshot_repo=repos["cash_balance_snapshots"],
+        risk_limit_snapshot_repo=repos["risk_limit_snapshots"],
         account_id=account_id,
     )
 
@@ -252,6 +253,7 @@ async def _run_single_by_ref(
         instrument_repo=repos["instruments"],
         position_snapshot_repo=repos["position_snapshots"],
         cash_balance_snapshot_repo=repos["cash_balance_snapshots"],
+        risk_limit_snapshot_repo=repos["risk_limit_snapshots"],
         account_id=account.account_id,
     )
 
@@ -274,6 +276,7 @@ async def _run_multi(
         instrument_repo=repos["instruments"],
         position_snapshot_repo=repos["position_snapshots"],
         cash_balance_snapshot_repo=repos["cash_balance_snapshots"],
+        risk_limit_snapshot_repo=repos["risk_limit_snapshots"],
         account_ids=account_ids,
     )
 
@@ -297,6 +300,7 @@ async def _run_all(
         instrument_repo=repos["instruments"],
         position_snapshot_repo=repos["position_snapshots"],
         cash_balance_snapshot_repo=repos["cash_balance_snapshots"],
+        risk_limit_snapshot_repo=repos["risk_limit_snapshots"],
         broker_account_repo=repos["broker_accounts"],
         account_repo=repos["accounts"],
         broker_name=broker,
@@ -323,6 +327,7 @@ def _build_repos() -> dict[str, object]:
         InMemoryCashBalanceSnapshotRepository,
         InMemoryInstrumentRepository,
         InMemoryPositionSnapshotRepository,
+        InMemoryRiskLimitSnapshotRepository,
         InMemorySnapshotSyncRunRepository,
     )
 
@@ -332,6 +337,7 @@ def _build_repos() -> dict[str, object]:
         "instruments": InMemoryInstrumentRepository(),
         "position_snapshots": InMemoryPositionSnapshotRepository(),
         "cash_balance_snapshots": InMemoryCashBalanceSnapshotRepository(),
+        "risk_limit_snapshots": InMemoryRiskLimitSnapshotRepository(),
         "snapshot_sync_runs": InMemorySnapshotSyncRunRepository(),
     }
 

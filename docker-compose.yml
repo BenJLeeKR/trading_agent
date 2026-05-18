@@ -185,11 +185,13 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # ---- KIS Snapshot Sync Scheduler (Manual/Debug) ---------------------------
-  # NOTE: This service is for manual/debug snapshot sync only.
-  # The primary orchestration is handled by ops-scheduler service.
-  # To run manually: docker compose run snapshot-sync
+  # ---- KIS Snapshot Sync (Manual/Debug Only) --------------------------------
+  #  profiles: ["debug"] → NOT started by `docker compose up -d`
+  #  Use: docker compose run --rm snapshot-sync
+  #       docker compose run --rm snapshot-sync python3 scripts/run_snapshot_sync_loop.py --after-hours
+  # ─────────────────────────────────────────────────────────────────
   snapshot-sync:
+    profiles: ["debug"]
     build: .
     depends_on:
       db:
@@ -238,10 +240,10 @@ services:
       # Share KIS dev token cache to avoid 1-per-minute oauth2 rate limit
       - ./.cache:/app/.cache
     command:
-      - python
+      - python3
       - scripts/run_snapshot_sync_loop.py
       - "--after-hours"
-    restart: "no"  # was "unless-stopped" — scheduler handles snapshot sync
+    restart: "no"
 
   # ---- Operations Scheduler --------------------------------------------------
   # Primary orchestration service for the trading day.
@@ -298,6 +300,17 @@ services:
       # P3: Seeded News — NAVER Search API (news candidate 수집용)
       NAVER_CLIENT_ID: "${NAVER_CLIENT_ID:-}"
       NAVER_CLIENT_SECRET: "${NAVER_CLIENT_SECRET:-}"
+      # LLM Provider (needed by decision_submit_gate subprocess)
+      LLM_PROVIDER: "${LLM_PROVIDER:-deepseek}"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
+      DEEPSEEK_MODEL_ID: "${DEEPSEEK_MODEL_ID:-deepseek-v4-pro}"
+      DEEPSEEK_TIMEOUT_SECONDS: "${DEEPSEEK_TIMEOUT_SECONDS:-30}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-https://api.openai.com/v1}"
+      OPENAI_MODEL_ID: "${OPENAI_MODEL_ID:-gpt-4o}"
+      OPENAI_TIMEOUT_SECONDS: "${OPENAI_TIMEOUT_SECONDS:-30}"
+      OPENDART_API_KEY: "${OPENDART_API_KEY:-}"
       # Scheduler Specific
       SCHEDULER_AFTER_HOURS_WINDOW: "${SCHEDULER_AFTER_HOURS_WINDOW:-3600}"
       SCHEDULER_INSTANCE_ID: "${SCHEDULER_INSTANCE_ID:-default}"
@@ -319,15 +332,19 @@ services:
           loop = asyncio.new_event_loop();
           pool = loop.run_until_complete(create_pool(DatabaseConfig(dsn=os.environ['DATABASE_URL'])));
           row = loop.run_until_complete(pool.fetchrow(
-              'SELECT last_heartbeat_at, checked_at, is_trading_day '
+              'SELECT last_heartbeat_at, checked_at, is_trading_day, market_phase '
               'FROM trading.market_sessions ORDER BY updated_at DESC LIMIT 1'
           ));
           now = datetime.now(timezone.utc);
           healthy = False;
-          if row and row['last_heartbeat_at'] and (now - row['last_heartbeat_at']).total_seconds() < 120:
-              healthy = True;
-          elif row and row['is_trading_day'] == False and row['checked_at'] and (now - row['checked_at']).total_seconds() < 86400:
-              healthy = True;
+          if row is None:
+              healthy = True;  # No session yet — skip health check
+          elif row['market_phase'] in ('after_hours', 'idle'):
+              healthy = True;  # After-hours/idle: heartbeat not expected
+          elif row['last_heartbeat_at'] and (now - row['last_heartbeat_at']).total_seconds() < 120:
+              healthy = True;  # Active session with recent heartbeat
+          elif row['is_trading_day'] == False and row['checked_at'] and (now - row['checked_at']).total_seconds() < 86400:
+              healthy = True;  # Non-trading day with recent check
           loop.run_until_complete(pool.close());
           exit(0 if healthy else 1)
           "

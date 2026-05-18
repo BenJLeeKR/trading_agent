@@ -215,11 +215,14 @@ class UniverseSymbol:
 _shutdown_event = asyncio.Event()
 
 
-def _handle_signal(signum: int, _frame: object) -> None:
-    """Set shutdown event on SIGTERM/SIGINT."""
-    sig_name = signal.Signals(signum).name
-    logger.info("Received %s — completing current cycle then exiting ...", sig_name)
+def _handle_signal() -> None:
+    """SIGTERM/SIGINT handler — cancel all tasks and exit."""
+    logger.warning("Received shutdown signal — cancelling all pending tasks")
     _shutdown_event.set()
+    # Cancel all asyncio tasks to unblock httpx I/O waits
+    for task in asyncio.all_tasks():
+        if task is not asyncio.current_task():
+            task.cancel()
 
 
 def _install_signal_handlers() -> None:
@@ -227,9 +230,9 @@ def _install_signal_handlers() -> None:
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         try:
-            loop.add_signal_handler(sig, lambda s=sig: _handle_signal(s, None))
+            loop.add_signal_handler(sig, _handle_signal)
         except NotImplementedError:
-            signal.signal(sig, _handle_signal)
+            signal.signal(sig, lambda s, f: _handle_signal())
 
 
 # ── Config helpers ──────────────────────────────────────────────────────────
@@ -604,6 +607,16 @@ def _build_aggregate_summary(
 # ── Core cycle ──────────────────────────────────────────────────────────────
 
 
+# Per-agent hard timeout: prevents LLM API stall from blocking the cycle
+# for more than this duration. Each agent.run() call is wrapped with
+# asyncio.wait_for() to enforce this limit.
+# Must be > 3 × _PER_AGENT_TIMEOUT (25s) = 75s to allow all 3 agents
+# to complete their per-agent timeout + fallback path before the outer
+# asyncio.wait_for() timeout fires.  15s overhead buffer for logging,
+# recording, and request-building between agents.
+PER_AGENT_HARD_TIMEOUT = 90  # seconds
+
+
 async def _run_one_cycle(
     cycle: int,
     *,
@@ -711,9 +724,14 @@ async def _run_one_cycle(
             # ── 4. Execute cycle ────────────────────────────────────────
             if dry_run:
                 # Dry-run: assemble + sizing only
-                intent = await orchestrator.assemble(
-                    request,
-                    seeded_events=seeded_events,
+                # Per-agent hard timeout: prevents LLM API stall from blocking
+                # the cycle indefinitely.
+                intent = await asyncio.wait_for(
+                    orchestrator.assemble(
+                        request,
+                        seeded_events=seeded_events,
+                    ),
+                    timeout=PER_AGENT_HARD_TIMEOUT,
                 )
                 sizing_inputs = orchestrator._build_sizing_inputs(intent)
                 sizing_result = calculate_sizing(sizing_inputs)
@@ -737,11 +755,16 @@ async def _run_one_cycle(
                 # Full pipeline: assemble → submit
                 order_manager = runtime["order_manager"]
                 broker = runtime["primary_broker_adapter"]
-                result = await orchestrator.assemble_and_submit(
-                    request,
-                    order_manager=order_manager,
-                    broker=broker,
-                    seeded_events=seeded_events,
+                # Per-agent hard timeout: prevents LLM API stall from blocking
+                # the cycle indefinitely.
+                result = await asyncio.wait_for(
+                    orchestrator.assemble_and_submit(
+                        request,
+                        order_manager=order_manager,
+                        broker=broker,
+                        seeded_events=seeded_events,
+                    ),
+                    timeout=PER_AGENT_HARD_TIMEOUT,
                 )
                 if result is not None:
                     logger.info(
@@ -783,6 +806,14 @@ async def _run_one_cycle(
                 ei_output=ei_output,
             )
 
+    except asyncio.TimeoutError:
+        duration = time.monotonic() - start
+        logger.error("Cycle %d timed out after %.1fs (per-agent hard timeout)", cycle, duration)
+        # Force immediate process exit — asyncio.wait_for() cannot reliably
+        # cancel tasks blocked on C-level I/O (e.g. httpx socket read).
+        # Without os._exit(), the subprocess may hang until the scheduler's
+        # 240s timeout kills it via SIGTERM.
+        os._exit(1)
     except Exception as exc:
         duration = time.monotonic() - start
         logger.exception("Cycle %d failed: %s", cycle, exc)
@@ -1044,6 +1075,8 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s [%(levelname)s] paper-decision-loop: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+    # SIGTERM 핸들러 등록은 _install_signal_handlers()에서 loop.add_signal_handler()로 처리됨
 
     _load_env()
 

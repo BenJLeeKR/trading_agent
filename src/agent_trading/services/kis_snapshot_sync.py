@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -261,6 +262,8 @@ async def sync_kis_account_snapshots(
             result._add_error(f"Persist error for pdno={pdno}: {exc}")
 
     # ── 2. Sync cash balance ───────────────────────────────────────────
+    # Paper 1 RPS pacing: ensure at least 1s between consecutive KIS calls
+    await asyncio.sleep(1.0)
     try:
         raw_cash: dict[str, Any] = await rest_client.get_cash_balance()
     except Exception as exc:

@@ -15,8 +15,10 @@ from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
 from agent_trading.domain.entities import (
     CashBalanceSnapshotEntity,
     PositionSnapshotEntity,
+    RiskLimitSnapshotEntity,
 )
 from agent_trading.repositories.contracts import InstrumentRepository
+from agent_trading.repositories.base import uuid7
 from agent_trading.services.snapshot_sync import (
     FetchedSnapshot,
     SnapshotFetchProvider,
@@ -206,8 +208,19 @@ class KISSyncSnapshotProvider:
                 logger.error(msg)
                 errors.append(msg)
 
+        # ── 3. Build RiskLimitSnapshotEntity from available data ────────────
+        risk_limit: RiskLimitSnapshotEntity | None = None
+        if cash_balance is not None and cash_balance.total_asset is not None:
+            risk_limit = RiskLimitSnapshotEntity(
+                risk_limit_snapshot_id=uuid7(),
+                account_id=account_id,
+                nav=cash_balance.total_asset,
+                snapshot_at=cash_balance.snapshot_at,
+            )
+
         return FetchedSnapshot(
             positions=positions,
             cash_balance=cash_balance,
+            risk_limit_snapshot=risk_limit,
             errors=errors,
         )

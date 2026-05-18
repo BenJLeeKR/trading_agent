@@ -22,6 +22,7 @@ from uuid import UUID, uuid4
 from agent_trading.domain.entities import (
     CashBalanceSnapshotEntity,
     PositionSnapshotEntity,
+    RiskLimitSnapshotEntity,
     SnapshotSyncRunEntity,
 )
 from agent_trading.domain.enums import Environment
@@ -31,6 +32,7 @@ from agent_trading.repositories.contracts import (
     CashBalanceSnapshotRepository,
     InstrumentRepository,
     PositionSnapshotRepository,
+    RiskLimitSnapshotRepository,
 )
 from agent_trading.services.kis_snapshot_sync import (
     BatchSyncResult,
@@ -84,6 +86,7 @@ class FetchedSnapshot:
     """
     positions: Sequence[PositionSnapshotEntity]
     cash_balance: CashBalanceSnapshotEntity | None
+    risk_limit_snapshot: RiskLimitSnapshotEntity | None = None
     errors: list[str]
 
 
@@ -132,6 +135,7 @@ async def sync_account_snapshots(
     instrument_repo: InstrumentRepository,
     position_snapshot_repo: PositionSnapshotRepository,
     cash_balance_snapshot_repo: CashBalanceSnapshotRepository,
+    risk_limit_snapshot_repo: RiskLimitSnapshotRepository,
     account_id: UUID,
     *,
     after_hours: bool = False,
@@ -207,7 +211,17 @@ async def sync_account_snapshots(
             )
             result._add_error(f"Cash balance persist error: {exc}")
 
-    # ── 4. Collect provider errors ────────────────────────────────────
+    # ── 4. Persist risk_limit_snapshot ────────────────────────────────
+    if fetched.risk_limit_snapshot is not None:
+        try:
+            await risk_limit_snapshot_repo.add(fetched.risk_limit_snapshot)
+        except Exception:
+            logger.exception(
+                "Failed to persist risk_limit_snapshot for account %s", account_id
+            )
+            result._add_error("risk_limit_snapshot_persist_failed")
+
+    # ── 5. Collect provider errors ────────────────────────────────────
     for err in fetched.errors:
         result._add_error(err)
 
@@ -219,6 +233,7 @@ async def sync_accounts_by_ids(
     instrument_repo: InstrumentRepository,
     position_snapshot_repo: PositionSnapshotRepository,
     cash_balance_snapshot_repo: CashBalanceSnapshotRepository,
+    risk_limit_snapshot_repo: RiskLimitSnapshotRepository,
     account_ids: Sequence[UUID],
     *,
     after_hours: bool = False,
@@ -258,6 +273,7 @@ async def sync_accounts_by_ids(
                 instrument_repo=instrument_repo,
                 position_snapshot_repo=position_snapshot_repo,
                 cash_balance_snapshot_repo=cash_balance_snapshot_repo,
+                risk_limit_snapshot_repo=risk_limit_snapshot_repo,
                 account_id=account_id,
                 after_hours=after_hours,
             )
@@ -290,6 +306,7 @@ async def sync_all_accounts(
     instrument_repo: InstrumentRepository,
     position_snapshot_repo: PositionSnapshotRepository,
     cash_balance_snapshot_repo: CashBalanceSnapshotRepository,
+    risk_limit_snapshot_repo: RiskLimitSnapshotRepository,
     broker_account_repo: BrokerAccountRepository,
     account_repo: AccountRepository,
     *,
@@ -400,6 +417,7 @@ async def sync_all_accounts(
                 instrument_repo=instrument_repo,
                 position_snapshot_repo=position_snapshot_repo,
                 cash_balance_snapshot_repo=cash_balance_snapshot_repo,
+                risk_limit_snapshot_repo=risk_limit_snapshot_repo,
                 account_id=account.account_id,
                 after_hours=after_hours,
             )

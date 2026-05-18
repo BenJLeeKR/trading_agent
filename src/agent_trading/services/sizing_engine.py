@@ -24,12 +24,15 @@ Phase 1.5, between ``assemble()`` and
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_DOWN
 from typing import Sequence
 
 from agent_trading.domain.enums import OrderSide
 from agent_trading.services.ai_agents.schemas import SizingHint
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -319,11 +322,29 @@ def _apply_concentration_constraint(
     remaining_capacity = max_position_value - current_value
     if remaining_capacity <= 0:
         constraints.append("position_concentration")
+        logger.info(
+            "Sizing concentration constraint activated: "
+            "nav=%s max_pct=%s max_position_value=%s "
+            "current_value=%s remaining_capacity=%s "
+            "price=%s req_qty=%s max_addl_qty=0 final_qty=0",
+            nav, max_single_position_pct, max_position_value,
+            current_value, remaining_capacity,
+            price, qty,
+        )
         return Decimal("0")
 
     max_additional_qty = (remaining_capacity / price).to_integral_value(rounding=ROUND_DOWN)
     if max_additional_qty < qty:
         constraints.append("position_concentration")
+        logger.info(
+            "Sizing concentration constraint activated: "
+            "nav=%s max_pct=%s max_position_value=%s "
+            "current_value=%s remaining_capacity=%s "
+            "price=%s req_qty=%s max_addl_qty=%s final_qty=%s",
+            nav, max_single_position_pct, max_position_value,
+            current_value, remaining_capacity,
+            price, qty, max_additional_qty, max_additional_qty,
+        )
         return max_additional_qty
     return qty
 

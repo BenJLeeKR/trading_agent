@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -226,6 +227,8 @@ class OrderSyncService:
             status_changed = order.status != previous_status
 
         # ── 6. Sync fill events ──
+        # Paper 1 RPS pacing: ensure at least 1s between consecutive KIS calls
+        await asyncio.sleep(1.0)
         fills_synced, fills_skipped = await self._sync_fills(
             broker_order,
             broker,

@@ -83,6 +83,9 @@ class SchedulerHealth(BaseModel):
     checked_at: datetime | None = None
     """When the market session was last checked."""
 
+    phase: str | None = None
+    """Current market phase (e.g. ``after_hours``, ``idle``, ``intraday``)."""
+
     healthy: bool | None = None
     """Derived health: True if heartbeat is recent (for trading days) or session
     is fresh (for non-trading days)."""

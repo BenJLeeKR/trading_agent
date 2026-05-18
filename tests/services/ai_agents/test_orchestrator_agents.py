@@ -74,56 +74,9 @@ def sample_request() -> SubmitOrderRequest:
 
 @pytest.fixture
 def repos() -> RepositoryContainer:
-    """Return an empty in-memory repository container."""
-    from agent_trading.repositories.memory import (
-        InMemoryAccountRepository,
-        InMemoryAgentRunRepository,
-        InMemoryBrokerAccountRepository,
-        InMemoryCashBalanceSnapshotRepository,
-        InMemoryClientRepository,
-        InMemoryConfigVersionRepository,
-        InMemoryDecisionContextRepository,
-        InMemoryExternalEventRepository,
-        InMemoryFillEventRepository,
-        InMemoryGuardrailEvaluationRepository,
-        InMemoryInstrumentRepository,
-        InMemoryOrderRepository,
-        InMemoryOrderStateEventRepository,
-        InMemoryPositionSnapshotRepository,
-        InMemoryReconciliationRepository,
-        InMemoryRiskLimitSnapshotRepository,
-        InMemorySnapshotSyncRunRepository,
-        InMemoryStrategyRepository,
-        InMemoryTradeDecisionRepository,
-        InMemoryUnitOfWork,
-        InMemoryBrokerOrderRepository,
-        InMemoryAuditLogRepository,
-    )
-
-    return RepositoryContainer(
-        unit_of_work=InMemoryUnitOfWork(),
-        clients=InMemoryClientRepository(),
-        accounts=InMemoryAccountRepository(),
-        strategies=InMemoryStrategyRepository(),
-        config_versions=InMemoryConfigVersionRepository(),
-        instruments=InMemoryInstrumentRepository(),
-        decision_contexts=InMemoryDecisionContextRepository(),
-        position_snapshots=InMemoryPositionSnapshotRepository(),
-        cash_balance_snapshots=InMemoryCashBalanceSnapshotRepository(),
-        trade_decisions=InMemoryTradeDecisionRepository(),
-        orders=InMemoryOrderRepository(),
-        broker_orders=InMemoryBrokerOrderRepository(),
-        fill_events=InMemoryFillEventRepository(),
-        reconciliations=InMemoryReconciliationRepository(),
-        audit_logs=InMemoryAuditLogRepository(),
-        broker_accounts=InMemoryBrokerAccountRepository(),
-        order_state_events=InMemoryOrderStateEventRepository(),
-        guardrail_evaluations=InMemoryGuardrailEvaluationRepository(),
-        risk_limit_snapshots=InMemoryRiskLimitSnapshotRepository(),
-        external_events=InMemoryExternalEventRepository(),
-        snapshot_sync_runs=InMemorySnapshotSyncRunRepository(),
-        agent_runs=InMemoryAgentRunRepository(),
-    )
+    """Return an in-memory repository container with all repos seeded."""
+    from agent_trading.repositories.bootstrap import build_in_memory_repositories
+    return build_in_memory_repositories()
 
 
 @pytest.fixture
@@ -432,6 +385,44 @@ class TestAgentSafeFallback:
         assert sv["ai_risk"] == "v1"
         assert sv["final_decision_composer"] == "v1"
 
+    @pytest.mark.asyncio
+    async def test_per_agent_timeout_fallback_on_hang(
+        self, repos: RepositoryContainer, sample_request: SubmitOrderRequest
+    ) -> None:
+        """When an agent hangs (asyncio.TimeoutError), fallback output is used.
+
+        Verifies that ``_run_agents()`` catches ``asyncio.TimeoutError``
+        separately from generic ``Exception`` and produces a safe default
+        output — the remaining agents still execute normally.
+        """
+        import asyncio
+
+        class HangingAgent:
+            agent_name = "hanging_agent"
+            schema_version = "v1"
+            async def run(self, request: AgentExecutionRequest) -> object:
+                # Simulate a hang that exceeds the per-agent timeout
+                await asyncio.sleep(999)
+
+        orchestrator = DecisionOrchestratorService(
+            repos,
+            event_interpretation_agent=HangingAgent(),  # type: ignore[arg-type]
+        )
+
+        # assemble() should NOT raise despite the hanging EI agent
+        intent = await orchestrator.assemble(sample_request)
+        assert isinstance(intent, OrderIntent)
+
+        # Recorder should still have 3 runs (hanging agent recorded with default output)
+        runs = await orchestrator._agent_recorder.list_all()
+        assert len(runs) == 3
+
+        # EI output should be fallback defaults
+        ai = intent.ai_backend_inputs
+        assert ai.event_bias == "neutral"
+        assert ai.event_conflict is False
+        assert ai.event_reason_codes == ()
+
 
 # ---------------------------------------------------------------------------
 # Schema alignment consistency
@@ -548,10 +539,12 @@ class TestRealAgentsIntegration:
         assert ei_run.structured_output_json.get("agent_name") == "event_interpretation"
 
         # AR run should have structured_output_json with risk_opinion from mock
-        # Korean normalizer wraps narrative fields with [ko: ...] marker
+        # risk_opinion is a code-type field (used in backend logic like
+        # risk_check_passed = ai_inputs.risk_opinion in {"allow", "reduce"}),
+        # so it should NOT be Korean-normalized with [ko: ...] marker.
         ar_run = next(r for r in runs if r.agent_type == "ai_risk")
         assert ar_run.structured_output_json is not None
-        assert ar_run.structured_output_json.get("risk_opinion") == "[ko: reduce]"
+        assert ar_run.structured_output_json.get("risk_opinion") == "reduce"
         assert ar_run.structured_output_json.get("risk_score") == 0.65
         assert ar_run.structured_output_json.get("agent_name") == "ai_risk"
 
@@ -687,10 +680,12 @@ class TestRealAgentsIntegration:
         assert ei_run.structured_output_json.get("agent_name") == "event_interpretation"
 
         # AR run should have structured_output_json from mock provider
-        # Korean normalizer wraps narrative fields with [ko: ...] marker
+        # risk_opinion is a code-type field (used in backend logic like
+        # risk_check_passed = ai_inputs.risk_opinion in {"allow", "reduce"}),
+        # so it should NOT be Korean-normalized with [ko: ...] marker.
         ar_run = next(r for r in runs if r.agent_type == "ai_risk")
         assert ar_run.structured_output_json is not None
-        assert ar_run.structured_output_json.get("risk_opinion") == "[ko: reduce]"
+        assert ar_run.structured_output_json.get("risk_opinion") == "reduce"
         assert ar_run.structured_output_json.get("risk_score") == 0.65
         assert ar_run.structured_output_json.get("agent_name") == "ai_risk"
 

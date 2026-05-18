@@ -22,6 +22,7 @@ from agent_trading.domain.entities import (
     CashBalanceSnapshotEntity,
     InstrumentEntity,
     PositionSnapshotEntity,
+    RiskLimitSnapshotEntity,
 )
 from agent_trading.domain.enums import Environment
 from agent_trading.repositories.contracts import InstrumentRepository
@@ -31,6 +32,7 @@ from agent_trading.repositories.memory import (
     InMemoryCashBalanceSnapshotRepository,
     InMemoryInstrumentRepository,
     InMemoryPositionSnapshotRepository,
+    InMemoryRiskLimitSnapshotRepository,
     InMemorySnapshotSyncRunRepository,
 )
 from agent_trading.services.snapshot_sync import (
@@ -501,3 +503,169 @@ class TestSnapshotFetchProviderProtocol:
         provider: SnapshotFetchProvider = CustomProvider()  # type: ignore[assignment]
         result = await provider.fetch_snapshot(uuid4(), InMemoryInstrumentRepository())
         assert isinstance(result, FetchedSnapshot)
+
+
+# ── Test: RiskLimitSnapshot ──────────────────────────────────────────────
+
+
+class TestRiskLimitSnapshot:
+    """``RiskLimitSnapshotEntity`` creation and persistence during sync."""
+
+    async def test_risk_limit_snapshot_created_from_total_asset(self) -> None:
+        """``RiskLimitSnapshotEntity.nav`` is populated from ``total_asset``."""
+        account_id = uuid4()
+        cash = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=account_id,
+            currency="KRW",
+            available_cash=_d("50000"),
+            settled_cash=_d("50000"),
+            unsettled_cash=None,
+            total_asset=_d("1000000"),
+            source_of_truth="broker",
+            snapshot_at=None,
+        )
+        provider = MockSnapshotProvider(cash=cash)
+        pos_repo = InMemoryPositionSnapshotRepository()
+        cash_repo = InMemoryCashBalanceSnapshotRepository()
+        risk_repo = InMemoryRiskLimitSnapshotRepository()
+        inst_repo = InMemoryInstrumentRepository()
+
+        await sync_account_snapshots(
+            fetch_provider=provider,
+            instrument_repo=inst_repo,
+            position_snapshot_repo=pos_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            risk_limit_snapshot_repo=risk_repo,
+            account_id=account_id,
+        )
+
+        latest = await risk_repo.get_latest_by_account(account_id)
+        assert latest is not None
+        assert latest.nav == _d("1000000")
+
+    async def test_risk_limit_snapshot_persisted_via_repo(self) -> None:
+        """``sync_account_snapshots()`` persists ``RiskLimitSnapshotEntity``."""
+        account_id = uuid4()
+        cash = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=account_id,
+            currency="KRW",
+            available_cash=_d("50000"),
+            settled_cash=_d("50000"),
+            unsettled_cash=None,
+            total_asset=_d("2000000"),
+            source_of_truth="broker",
+            snapshot_at=None,
+        )
+        provider = MockSnapshotProvider(cash=cash)
+        pos_repo = InMemoryPositionSnapshotRepository()
+        cash_repo = InMemoryCashBalanceSnapshotRepository()
+        risk_repo = InMemoryRiskLimitSnapshotRepository()
+        inst_repo = InMemoryInstrumentRepository()
+
+        result = await sync_account_snapshots(
+            fetch_provider=provider,
+            instrument_repo=inst_repo,
+            position_snapshot_repo=pos_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            risk_limit_snapshot_repo=risk_repo,
+            account_id=account_id,
+        )
+
+        # Verify no persist error
+        assert "risk_limit_snapshot_persist_failed" not in result.errors
+        # Verify the snapshot was stored
+        latest = await risk_repo.get_latest_by_account(account_id)
+        assert latest is not None
+        assert latest.nav == _d("2000000")
+
+    async def test_risk_limit_snapshot_none_when_no_cash(self) -> None:
+        """When ``cash_balance`` is ``None``, ``risk_limit_snapshot`` is also ``None``."""
+        account_id = uuid4()
+        provider = MockSnapshotProvider(cash=None)
+        pos_repo = InMemoryPositionSnapshotRepository()
+        cash_repo = InMemoryCashBalanceSnapshotRepository()
+        risk_repo = InMemoryRiskLimitSnapshotRepository()
+        inst_repo = InMemoryInstrumentRepository()
+
+        await sync_account_snapshots(
+            fetch_provider=provider,
+            instrument_repo=inst_repo,
+            position_snapshot_repo=pos_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            risk_limit_snapshot_repo=risk_repo,
+            account_id=account_id,
+        )
+
+        latest = await risk_repo.get_latest_by_account(account_id)
+        assert latest is None
+
+    async def test_risk_limit_snapshot_none_when_total_asset_none(self) -> None:
+        """When ``total_asset`` is ``None``, ``risk_limit_snapshot`` is also ``None``."""
+        account_id = uuid4()
+        cash = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=account_id,
+            currency="KRW",
+            available_cash=_d("50000"),
+            settled_cash=_d("50000"),
+            unsettled_cash=None,
+            total_asset=None,
+            source_of_truth="broker",
+            snapshot_at=None,
+        )
+        provider = MockSnapshotProvider(cash=cash)
+        pos_repo = InMemoryPositionSnapshotRepository()
+        cash_repo = InMemoryCashBalanceSnapshotRepository()
+        risk_repo = InMemoryRiskLimitSnapshotRepository()
+        inst_repo = InMemoryInstrumentRepository()
+
+        await sync_account_snapshots(
+            fetch_provider=provider,
+            instrument_repo=inst_repo,
+            position_snapshot_repo=pos_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            risk_limit_snapshot_repo=risk_repo,
+            account_id=account_id,
+        )
+
+        latest = await risk_repo.get_latest_by_account(account_id)
+        assert latest is None
+
+    async def test_concentration_constraint_active_with_nav(self) -> None:
+        """``_apply_concentration_constraint()`` with valid ``nav`` does not early-return."""
+        from decimal import Decimal
+        from agent_trading.services.sizing_engine import _apply_concentration_constraint
+
+        # With nav=1000000, max_single_position_pct=10, price=5000:
+        # max_position_value = 1000000 * 10 / 100 = 100000
+        # max_qty = 100000 / 5000 = 20
+        # qty=30 > 20 → capped to 20
+        qty = Decimal("30")
+        result = _apply_concentration_constraint(
+            qty=qty,
+            price=Decimal("5000"),
+            current_position_qty=Decimal("0"),
+            current_position_avg_price=None,
+            nav=Decimal("1000000"),
+            max_single_position_pct=Decimal("10"),
+            constraints=[],
+        )
+        assert result == Decimal("20"), (
+            f"Expected 20 (capped by concentration), got {result}"
+        )
+
+        # With nav=None → early return (no constraint applied)
+        result_no_nav = _apply_concentration_constraint(
+            qty=qty,
+            price=Decimal("5000"),
+            current_position_qty=Decimal("0"),
+            current_position_avg_price=None,
+            nav=None,
+            max_single_position_pct=Decimal("10"),
+            constraints=[],
+        )
+        assert result_no_nav == qty, (
+            f"Expected {qty} (no constraint, nav=None), got {result_no_nav}"
+        )

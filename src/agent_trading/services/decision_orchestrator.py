@@ -62,6 +62,11 @@ logger = logging.getLogger(__name__)
 # Phase 5.5: post-submit sync timeout (seconds)
 _PHASE55_SYNC_TIMEOUT: int = 5
 
+# Per-agent timeout: each LLM call is capped at 25s so that a single
+# hanging agent cannot stall the entire decision cycle beyond 75s.
+# This value is aligned with the provider client's read timeout (25s).
+_PER_AGENT_TIMEOUT = 25  # seconds per agent
+
 
 # ---------------------------------------------------------------------------
 # Scoring protocol (deterministic stub)
@@ -754,6 +759,15 @@ class DecisionOrchestratorService:
         sizing_inputs = self._build_sizing_inputs(intent)
         sizing_result = calculate_sizing(sizing_inputs)
 
+        logger.info(
+            "Sizing Phase 1.5: request_qty=%s sizing_qty=%s "
+            "applied_constraints=%s skip_reason=%s",
+            intent.request.quantity,
+            sizing_result.quantity,
+            sizing_result.applied_constraints,
+            sizing_result.skip_reason or "none",
+        )
+
         if sizing_result.quantity <= 0:
             logger.info(
                 "Phase 1.5 SKIPPED (sizing): reason=%s, trade_decision_id=%s",
@@ -1139,6 +1153,16 @@ class DecisionOrchestratorService:
 
         Extracts position, cash, NAV, and config data from the assembled
         context and maps them to the sizing engine's input format.
+
+        **Key resolution order** (nested ``risk.*`` / ``execution.*`` first,
+        then legacy flat key fallback):
+
+        * ``max_single_position_pct`` ← ``risk.max_single_position_pct``
+          | ``max_position_size`` (legacy)
+        * ``min_cash_buffer_pct``    ← ``risk.min_cash_buffer_pct``
+          | ``min_cash_buffer_pct`` (legacy flat)
+        * ``max_order_value``        ← ``execution.max_order_value``
+          | ``max_order_value`` (legacy flat)
         """
         ctx = intent.context
         ai = intent.ai_backend_inputs
@@ -1153,6 +1177,47 @@ class DecisionOrchestratorService:
         available_cash = ctx.cash_balance_snapshot.available_cash if ctx.cash_balance_snapshot else None
         nav = ctx.risk_limit_snapshot.nav if ctx.risk_limit_snapshot else None
 
+        # ── Resolve keys with legacy flat-key fallback ──────────────────
+        max_single_position_pct = _decimal_or_none(
+            risk.get("max_single_position_pct")
+            or config.get("max_position_size")
+        )
+        min_cash_buffer_pct = _decimal_or_none(
+            risk.get("min_cash_buffer_pct")
+            or config.get("min_cash_buffer_pct")
+        )
+        max_order_value = _decimal_or_none(
+            execution.get("max_order_value")
+            or config.get("max_order_value")
+        )
+
+        # ── Operational visibility logging ──────────────────────────────
+        max_pct_source = (
+            "risk.max_single_position_pct"
+            if risk.get("max_single_position_pct")
+            else "max_position_size (legacy)"
+        )
+        cash_buffer_source = (
+            "risk.min_cash_buffer_pct"
+            if risk.get("min_cash_buffer_pct")
+            else "min_cash_buffer_pct (legacy flat)"
+        )
+        max_ov_source = (
+            "execution.max_order_value"
+            if execution.get("max_order_value")
+            else "max_order_value (legacy flat)"
+        )
+
+        logger.info(
+            "SizingInputs: max_single_position_pct=%s (src=%s) "
+            "min_cash_buffer_pct=%s (src=%s) "
+            "max_order_value=%s (src=%s) nav=%s",
+            max_single_position_pct, max_pct_source,
+            min_cash_buffer_pct, cash_buffer_source,
+            max_order_value, max_ov_source,
+            nav,
+        )
+
         return SizingInputs(
             decision_type=ai.decision_type,
             side=req.side,
@@ -1163,9 +1228,9 @@ class DecisionOrchestratorService:
             current_position_avg_price=pos_avg_price,
             available_cash=available_cash,
             nav=nav,
-            max_single_position_pct=_decimal_or_none(risk.get("max_single_position_pct")),
-            min_cash_buffer_pct=_decimal_or_none(risk.get("min_cash_buffer_pct")),
-            max_order_value=_decimal_or_none(execution.get("max_order_value")),
+            max_single_position_pct=max_single_position_pct,
+            min_cash_buffer_pct=min_cash_buffer_pct,
+            max_order_value=max_order_value,
             min_order_qty=_decimal_or_none(execution.get("min_order_qty")),
             max_order_qty=_decimal_or_none(execution.get("max_order_qty")),
         )
@@ -1466,6 +1531,14 @@ class DecisionOrchestratorService:
         agent's output defaults to an empty / safe structured output.
         The orchestrator **always** proceeds — agent failures never
         block order assembly.
+
+        Per-agent timeout
+        -----------------
+        Each agent call is wrapped with ``asyncio.wait_for()`` using
+        ``_PER_AGENT_TIMEOUT`` (25s).  If an agent hangs beyond this
+        limit, ``asyncio.TimeoutError`` is caught separately and the
+        agent's output falls back to a safe default — the remaining
+        agents still execute normally.
         """
         # --- Build the shared request envelope ---
         request = AgentExecutionRequest(
@@ -1490,7 +1563,18 @@ class DecisionOrchestratorService:
         # --- 1. Event Interpretation Agent ---
         event_output: EventInterpretationOutput
         try:
-            event_output = await self._event_interpretation_agent.run(request)
+            event_output = await asyncio.wait_for(
+                self._event_interpretation_agent.run(request),
+                timeout=_PER_AGENT_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Event Interpretation Agent timed out after %ds — "
+                "using default output (safe fallback). decision_context_id=%s",
+                _PER_AGENT_TIMEOUT,
+                decision_context_id,
+            )
+            event_output = EventInterpretationOutput()
         except Exception:
             logger.warning(
                 "Event Interpretation Agent failed — using default output "
@@ -1538,7 +1622,18 @@ class DecisionOrchestratorService:
         # --- 2. AI Risk Agent ---
         risk_output: AIRiskOutput
         try:
-            risk_output = await self._ai_risk_agent.run(request_with_ei)
+            risk_output = await asyncio.wait_for(
+                self._ai_risk_agent.run(request_with_ei),
+                timeout=_PER_AGENT_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "AI Risk Agent timed out after %ds — "
+                "using default output (safe fallback). decision_context_id=%s",
+                _PER_AGENT_TIMEOUT,
+                decision_context_id,
+            )
+            risk_output = AIRiskOutput()
         except Exception:
             logger.warning(
                 "AI Risk Agent failed — using default output "
@@ -1577,7 +1672,18 @@ class DecisionOrchestratorService:
         # --- 3. Final Decision Composer Agent ---
         composer_output: FinalDecisionComposerOutput
         try:
-            composer_output = await self._final_decision_agent.run(request_with_ei_and_ar)
+            composer_output = await asyncio.wait_for(
+                self._final_decision_agent.run(request_with_ei_and_ar),
+                timeout=_PER_AGENT_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Final Decision Composer Agent timed out after %ds — "
+                "using default output (safe fallback). decision_context_id=%s",
+                _PER_AGENT_TIMEOUT,
+                decision_context_id,
+            )
+            composer_output = FinalDecisionComposerOutput()
         except Exception:
             logger.warning(
                 "Final Decision Composer Agent failed — using default output "

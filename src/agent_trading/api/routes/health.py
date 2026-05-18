@@ -211,7 +211,7 @@ async def _get_scheduler_health(database_status: str) -> SchedulerHealth | None:
         conn = await asyncpg.connect(dsn=dsn)
         try:
             row = await conn.fetchrow(
-                "SELECT last_heartbeat_at, checked_at, is_trading_day "
+                "SELECT last_heartbeat_at, checked_at, is_trading_day, market_phase "
                 "FROM trading.market_sessions ORDER BY updated_at DESC LIMIT 1"
             )
         finally:
@@ -223,11 +223,16 @@ async def _get_scheduler_health(database_status: str) -> SchedulerHealth | None:
         last_heartbeat: datetime | None = row["last_heartbeat_at"]
         checked_at: datetime | None = row["checked_at"]
         is_trading_day: bool | None = row["is_trading_day"]
+        market_phase: str | None = row["market_phase"]
         now = datetime.now(timezone.utc)
 
         # Derive healthy flag using same logic as Docker healthcheck
+        # after_hours/idle phase에서는 heartbeat timeout을 적용하지 않음
+        # (Docker healthcheck와 일관성 유지)
         healthy: bool | None = None
-        if is_trading_day and last_heartbeat and (now - last_heartbeat).total_seconds() < 120:
+        if market_phase in ("after_hours", "idle"):
+            healthy = True
+        elif is_trading_day and last_heartbeat and (now - last_heartbeat).total_seconds() < 120:
             healthy = True
         elif is_trading_day:
             healthy = False
@@ -240,6 +245,7 @@ async def _get_scheduler_health(database_status: str) -> SchedulerHealth | None:
             last_heartbeat_at=last_heartbeat,
             is_trading_day=is_trading_day,
             checked_at=checked_at,
+            phase=market_phase,
             healthy=healthy,
         )
     except Exception:
