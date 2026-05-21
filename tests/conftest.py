@@ -14,6 +14,12 @@ from dotenv import load_dotenv
 # a separate ``python -c "load_dotenv(); pytest(...)"`` wrapper.
 load_dotenv()
 
+# ── Phase 4: Disable subprocess isolation for all tests ──────────────────────
+# Tests use in-memory repositories / mock agents that cannot be serialised
+# to a subprocess.  Setting this env var before the module is imported
+# ensures ``_USE_SUBPROCESS_ISOLATION`` defaults to ``False`` in tests.
+os.environ.setdefault("AGENT_SUBPROCESS_ISOLATION", "0")
+
 from agent_trading.domain.entities import (
     AccountEntity,
     ClientEntity,

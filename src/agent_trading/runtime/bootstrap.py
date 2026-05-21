@@ -436,6 +436,12 @@ def _build_orchestrator(
         ai_risk_agent=ai_risk_agent,
         final_decision_agent=final_decision_agent,
         agent_recorder=AgentRunRecorder(repo=repos.agent_runs),
+        # Provider configuration for subprocess agent creation
+        llm_provider=settings.llm_provider,
+        provider_api_key=settings.provider_api_key or "",
+        provider_base_url=settings.provider_base_url or "",
+        provider_model_id=settings.provider_model_id or "",
+        provider_timeout_seconds=settings.provider_timeout_seconds or 120,
     )
 
 

@@ -181,9 +181,11 @@ async def sync_account_snapshots(
         return result
 
     # ── 2. Persist positions ──────────────────────────────────────────
+    current_instrument_ids: set[UUID] = set()
     for pos in fetched.positions:
         try:
             await position_snapshot_repo.add(pos)
+            current_instrument_ids.add(pos.instrument_id)
             result._incr("positions_synced")
         except Exception as exc:
             logger.error(
@@ -196,6 +198,48 @@ async def sync_account_snapshots(
             result._add_error(
                 f"Persist error for instrument_id={pos.instrument_id}: {exc}"
             )
+
+    # ── 2b. Zero-out positions missing from broker response ──────────
+    # broker 응답에서 사라진 종목 = 전량 매도 → quantity=0으로 기록
+    # 장 마감 후(after_hours)에는 snapshot이 비어있을 수 있으므로 zero-out 건너뜀
+    if not after_hours:
+        try:
+            latest_snapshots = await position_snapshot_repo.list_latest_by_account(
+                account_id,
+            )
+
+            zeroed_count = 0
+            for snap in latest_snapshots:
+                if snap.quantity == Decimal("0"):
+                    continue  # 이미 0 처리됨
+                if snap.instrument_id in current_instrument_ids:
+                    continue  # broker 응답에 있는 종목
+
+                # broker 응답에 없고 quantity>0인 종목 → quantity=0 snapshot 추가
+                zero_snapshot = PositionSnapshotEntity(
+                    position_snapshot_id=uuid4(),
+                    account_id=account_id,
+                    instrument_id=snap.instrument_id,
+                    quantity=Decimal("0"),
+                    average_price=snap.average_price,
+                    market_price=snap.market_price,
+                    unrealized_pnl=snap.unrealized_pnl,
+                    source_of_truth=snap.source_of_truth,
+                    snapshot_at=datetime.now(tz=timezone.utc),
+                )
+                await position_snapshot_repo.add(zero_snapshot)
+                zeroed_count += 1
+
+            if zeroed_count > 0:
+                logger.info(
+                    "[ZERO_OUT] account=%s: zeroed %d positions missing from broker response",
+                    account_id, zeroed_count,
+                )
+        except Exception:
+            logger.exception(
+                "[ZERO_OUT] failed for account=%s", account_id,
+            )
+            # zero-out 실패는 치명적이지 않음 — 다음 cycle에서 재시도
 
     # ── 3. Persist cash balance ───────────────────────────────────────
     cash = fetched.cash_balance

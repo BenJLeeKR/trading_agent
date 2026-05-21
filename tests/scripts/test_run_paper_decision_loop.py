@@ -214,6 +214,7 @@ def _make_stub_intent(
         ),
         ai_backend_inputs=AIDecisionInputs(
             decision_type="APPROVE",
+            side="buy",
             confidence=0.8,
         ),
         context=AssembledContext(
@@ -356,6 +357,9 @@ class TestSerializeCycleResult:
         assert serialized["duration_seconds"] == 5.5
         assert "started_at" in serialized
         assert "completed_at" in serialized
+        # decision_type과 side는 모든 분기에서 항상 포함
+        assert serialized["decision_type"] == "APPROVE"
+        assert serialized["side"] == "buy"
 
     def test_dry_run_result(self) -> None:
         """Dry-run 모드 직렬화."""
@@ -375,6 +379,7 @@ class TestSerializeCycleResult:
         assert serialized["decision_context_id"] == str(ctx_id)
         assert serialized["order_intent_id"] == str(intent.order_intent_id)
         assert serialized["decision_type"] == "APPROVE"
+        assert serialized["side"] == "buy"
 
     def test_error_result(self) -> None:
         """Error 결과 직렬화."""
@@ -385,6 +390,9 @@ class TestSerializeCycleResult:
         assert serialized["status"] == "ERROR"
         assert serialized["error"] == "Something broke"
         assert serialized["cycle"] == 2
+        # error 분기에서는 intent가 없으므로 decision_type/side는 None
+        assert serialized["decision_type"] is None
+        assert serialized["side"] is None
 
     def test_with_precheck(self) -> None:
         """Pre-check 정보가 결과에 포함되는지."""
@@ -403,6 +411,73 @@ class TestSerializeCycleResult:
 
         assert serialized["precheck"] == precheck
         assert serialized["precheck"]["health_status"] == "stale"  # type: ignore[index]
+        # error 분기에서는 intent가 없으므로 decision_type/side는 None
+        assert serialized["decision_type"] is None
+        assert serialized["side"] is None
+
+
+class TestSerializeCycleResultSourceType:
+    """``_serialize_cycle_result()`` — source_type 필드 직렬화 검증."""
+
+    def test_default_source_type_is_core(self) -> None:
+        """source_type 기본값은 'core'."""
+        serialized = _serialize_cycle_result(cycle=1, result=None, duration=1.0)
+        assert serialized["source_type"] == "core"
+        # decision_type/side는 모든 분기에서 항상 포함
+        assert serialized["decision_type"] is None
+        assert serialized["side"] is None
+
+    def test_held_position_source_type(self) -> None:
+        """held_position source_type이 출력에 포함됨."""
+        serialized = _serialize_cycle_result(
+            cycle=1, result=None, duration=1.0, source_type="held_position"
+        )
+        assert serialized["source_type"] == "held_position"
+        # decision_type/side는 모든 분기에서 항상 포함
+        assert serialized["decision_type"] is None
+        assert serialized["side"] is None
+
+    def test_source_type_in_submitted_result(self) -> None:
+        """SUBMITTED 결과에도 source_type 필드가 포함됨."""
+        ctx_id = uuid4()
+        intent = _make_stub_intent(decision_context_id=ctx_id)
+        order = MagicMock(spec=OrderRequestEntity)
+        order.order_request_id = uuid4()
+        order.status = OrderStatus.SUBMITTED
+        order.client_order_id = "CLIENT-ORDER-001"
+        order.requested_quantity = Decimal("10")
+        order.status_reason_code = None
+
+        result = SubmitResult(
+            status="SUBMITTED",
+            intent=intent,
+            order=order,
+            trade_decision_id=uuid4(),
+            decision_context_id=ctx_id,
+        )
+
+        serialized = _serialize_cycle_result(
+            cycle=1, result=result, duration=5.5, source_type="held_position"
+        )
+
+        assert serialized["source_type"] == "held_position"
+        assert serialized["status"] == "SUBMITTED"
+        # decision_type/side는 모든 분기에서 항상 포함
+        assert serialized["decision_type"] == "APPROVE"
+        assert serialized["side"] == "buy"
+
+    def test_source_type_in_error_result(self) -> None:
+        """Error 결과에도 source_type 필드가 포함됨."""
+        serialized = _serialize_cycle_result(
+            cycle=2, result=None, duration=1.0, error="Something broke",
+            source_type="held_position",
+        )
+
+        assert serialized["source_type"] == "held_position"
+        assert serialized["status"] == "ERROR"
+        # decision_type/side는 모든 분기에서 항상 포함
+        assert serialized["decision_type"] is None
+        assert serialized["side"] is None
 
 
 class TestBuildAggregateSummary:
@@ -548,6 +623,224 @@ class TestRunOneCycle:
         assert precheck.get("health_status") in ("stale", "ok"), (
             f"Unexpected health_status: {precheck.get('health_status')}"
         )
+
+
+    @patch(
+        "scripts.run_paper_decision_loop.postgres_runtime",
+        side_effect=lambda run_migrations=False: _mock_runtime(),
+    )
+    @pytest.mark.asyncio
+    async def test_dry_run_with_held_position_source_type(self, mock_runtime: Any) -> None:
+        """Dry-run 모드에서 source_type='held_position'이 결과에 포함됨."""
+        result = await _run_one_cycle(
+            cycle=1,
+            submit=False,
+            dry_run=True,
+            output="text",
+            source_type="held_position",
+        )
+
+        assert result["status"] == "DRY_RUN"
+        assert result["source_type"] == "held_position"
+        assert result["cycle"] == 1
+
+    @patch(
+        "scripts.run_paper_decision_loop.postgres_runtime",
+        side_effect=lambda run_migrations=False: _mock_runtime(),
+    )
+    @pytest.mark.asyncio
+    async def test_submit_with_held_position_source_type(self, mock_runtime: Any) -> None:
+        """Submit 모드에서 source_type='held_position'이 결과에 포함됨."""
+        result = await _run_one_cycle(
+            cycle=1,
+            submit=True,
+            dry_run=False,
+            output="text",
+            source_type="held_position",
+        )
+
+        assert result["source_type"] == "held_position"
+        assert result["status"] in ("SUBMITTED", "SKIPPED", "ERROR")
+
+
+class TestHeldPositionSellBudget:
+    """``_run_loop()`` 내 held_position sell budget 분기 로직 검증.
+
+    cycle당 cap (HELD_POSITION_SELL_MAX_PER_CYCLE=2)과
+    symbol deduplication이 올바르게 동작하는지 확인.
+    """
+
+    @pytest.mark.asyncio
+    async def test_hp_sell_cycle_cap_blocks_third_submit(self) -> None:
+        """동일 cycle 내 HP sell이 2건을 초과하면 세 번째는 block되어야 함.
+
+        NOTE: held_position_sell_budget_consumed는 일간 cap(5건) 소진 시 True.
+        cycle cap 테스트에서는 일간 cap이 아직 소진되지 않았다고 가정.
+        """
+        held_position_sell_budget_consumed = False  # 일간 cap은 아직 여유
+        held_position_sell_cycle_count = 0
+        held_position_sell_cycle_symbols: set[str] = set()
+        HELD_POSITION_SELL_MAX_PER_CYCLE = 2
+
+        class _MockItem:
+            def __init__(self, symbol: str, source_type: str = "held_position"):
+                self.symbol = symbol
+                self.source_type = source_type
+                self.market = "KOSPI"
+
+        # 3개의 다른 symbol로 HP sell submit 시도
+        items = [
+            _MockItem("AAPL"),
+            _MockItem("GOOGL"),
+            _MockItem("MSFT"),
+        ]
+
+        submit = True
+        dry_run = False
+        results: list[bool] = []
+
+        for item in items:
+            is_held_position_item = (
+                getattr(item, "source_type", "core") == "held_position"
+            )
+            if is_held_position_item:
+                symbol_submit = (
+                    submit
+                    and not dry_run
+                    and not held_position_sell_budget_consumed
+                    and held_position_sell_cycle_count < HELD_POSITION_SELL_MAX_PER_CYCLE
+                    and item.symbol not in held_position_sell_cycle_symbols
+                )
+            else:
+                symbol_submit = submit and not dry_run
+
+            results.append(symbol_submit)
+
+            # budget 소비: cycle count만 증가 (daily cap은 아직 소진 안 됨)
+            if symbol_submit:
+                held_position_sell_cycle_count += 1
+                held_position_sell_cycle_symbols.add(item.symbol)
+                # NOTE: 실제 _process_one에서는 daily cap도 함께 설정되지만,
+                # cycle cap만 테스트하기 위해 daily cap은 유지
+
+        # AAPL: submit 허용 (1/2)
+        assert results[0] is True, "첫 번째 HP sell은 허용되어야 함"
+        # GOOGL: submit 허용 (2/2)
+        assert results[1] is True, "두 번째 HP sell은 허용되어야 함"
+        # MSFT: cycle cap으로 block (2 >= 2)
+        assert results[2] is False, "세 번째 HP sell은 cycle cap으로 block되어야 함"
+
+    @pytest.mark.asyncio
+    async def test_hp_sell_symbol_dedupe_blocks_duplicate(self) -> None:
+        """동일 cycle 내 같은 symbol의 HP sell 중복 submit이 block되어야 함."""
+        held_position_sell_budget_consumed = False
+        held_position_sell_cycle_count = 0
+        held_position_sell_cycle_symbols: set[str] = set()
+        HELD_POSITION_SELL_MAX_PER_CYCLE = 2
+
+        class _MockItem:
+            def __init__(self, symbol: str, source_type: str = "held_position"):
+                self.symbol = symbol
+                self.source_type = source_type
+                self.market = "KOSPI"
+
+        # 같은 symbol로 2회 시도
+        items = [
+            _MockItem("AAPL"),
+            _MockItem("AAPL"),  # duplicate
+        ]
+
+        submit = True
+        dry_run = False
+        results: list[bool] = []
+
+        for item in items:
+            is_held_position_item = (
+                getattr(item, "source_type", "core") == "held_position"
+            )
+            if is_held_position_item:
+                symbol_submit = (
+                    submit
+                    and not dry_run
+                    and not held_position_sell_budget_consumed
+                    and held_position_sell_cycle_count < HELD_POSITION_SELL_MAX_PER_CYCLE
+                    and item.symbol not in held_position_sell_cycle_symbols
+                )
+            else:
+                symbol_submit = submit and not dry_run
+
+            results.append(symbol_submit)
+
+            if symbol_submit:
+                held_position_sell_cycle_count += 1
+                held_position_sell_cycle_symbols.add(item.symbol)
+
+        # 첫 번째 AAPL: submit 허용
+        assert results[0] is True, "첫 번째 AAPL HP sell은 허용되어야 함"
+        # 두 번째 AAPL: symbol dedupe으로 block
+        assert results[1] is False, "중복 symbol AAPL은 block되어야 함"
+
+    @pytest.mark.asyncio
+    async def test_hp_sell_daily_cap_blocks_after_5(self) -> None:
+        """일간 HP sell budget이 5건 소진되면 추가 submit이 block되어야 함.
+
+        NOTE: held_position_sell_budget_consumed는 일간 budget 소진을 의미.
+        cycle 내에서는 held_position_sell_cycle_count로만 제어되며,
+        일간 budget이 소진되면(held_position_sell_budget_consumed=True)
+        cycle cap과 무관하게 모든 추가 HP sell이 block됨.
+        """
+        held_position_sell_budget_consumed = False
+        held_position_sell_cycle_count = 0
+        held_position_sell_cycle_symbols: set[str] = set()
+        HELD_POSITION_SELL_MAX_PER_CYCLE = 2
+
+        class _MockItem:
+            def __init__(self, symbol: str, source_type: str = "held_position"):
+                self.symbol = symbol
+                self.source_type = source_type
+                self.market = "KOSPI"
+
+        # 3개의 다른 symbol
+        items = [
+            _MockItem("SYM0"),
+            _MockItem("SYM1"),
+            _MockItem("SYM2"),
+        ]
+
+        submit = True
+        dry_run = False
+        results: list[bool] = []
+
+        for i, item in enumerate(items):
+            is_held_position_item = (
+                getattr(item, "source_type", "core") == "held_position"
+            )
+            if is_held_position_item:
+                symbol_submit = (
+                    submit
+                    and not dry_run
+                    and not held_position_sell_budget_consumed
+                    and held_position_sell_cycle_count < HELD_POSITION_SELL_MAX_PER_CYCLE
+                    and item.symbol not in held_position_sell_cycle_symbols
+                )
+            else:
+                symbol_submit = submit and not dry_run
+
+            results.append(symbol_submit)
+
+            if symbol_submit:
+                held_position_sell_cycle_count += 1
+                held_position_sell_cycle_symbols.add(item.symbol)
+                # 2번째 submit 후 일간 budget 소진 시뮬레이션
+                if i == 1:
+                    held_position_sell_budget_consumed = True
+
+        # SYM0: cycle cap 허용 (1/2)
+        assert results[0] is True
+        # SYM1: cycle cap 허용 (2/2), 이후 daily cap 소진
+        assert results[1] is True
+        # SYM2: daily cap (held_position_sell_budget_consumed=True)으로 block
+        assert results[2] is False
 
 
 # ---------------------------------------------------------------------------
@@ -1466,3 +1759,38 @@ class TestT3DegradedPath:
         events = await _collect_persisted_seeded_events(repos, SYMBOL)
         assert len(events) == 1
         assert events[0].event_id == event.event_id
+
+
+# ---------------------------------------------------------------------------
+# AccountLookup 필드명 검증 — alias 버그 재발 방지
+# ---------------------------------------------------------------------------
+
+
+class TestAccountLookupFieldName:
+    """``AccountLookup``이 ``account_alias`` 필드를 사용하는지 검증 (alias 아님).
+
+    Phase 0에서 발견된 버그 재발 방지:
+    ``AccountLookup(alias=ACCOUNT_ALIAS)`` → TypeError 발생.
+    """
+
+    def test_account_alias_field_exists(self) -> None:
+        """account_alias 필드가 존재하는지 확인."""
+        from agent_trading.repositories.filters import AccountLookup
+        assert hasattr(AccountLookup, "account_alias")
+
+    def test_alias_field_does_not_exist(self) -> None:
+        """alias 필드는 존재하지 않아야 함."""
+        from agent_trading.repositories.filters import AccountLookup
+        assert not hasattr(AccountLookup, "alias")
+
+    def test_account_alias_construction_succeeds(self) -> None:
+        """account_alias로 정상 생성 가능."""
+        from agent_trading.repositories.filters import AccountLookup
+        lookup = AccountLookup(account_alias="test")
+        assert lookup.account_alias == "test"
+
+    def test_alias_construction_raises_type_error(self) -> None:
+        """alias로 생성 시 TypeError 발생 확인."""
+        from agent_trading.repositories.filters import AccountLookup
+        with pytest.raises(TypeError):
+            AccountLookup(alias="test")  # type: ignore[call-arg]

@@ -58,10 +58,36 @@ class PostgresPositionSnapshotRepository:
     async def list_latest_by_account(
         self, account_id: UUID
     ) -> Sequence[PositionSnapshotEntity]:
+        """각 instrument별 최신 position snapshot 1건만 반환.
+
+        ``DISTINCT ON (instrument_id)``를 사용하여 동일 instrument의
+        중복 snapshot 중 가장 최신(``snapshot_at DESC``) 1건만 반환한다.
+        전량 매도되어 수량이 0인 snapshot도 최신 row가 반환되므로,
+        호출자(consumer)가 필요시 ``quantity > 0`` 필터를 적용할 수 있다.
+        DB에는 모든 이력이 보존되어 디버깅이 가능하다.
+        """
         rows = await self._tx.connection.fetch(
-            "SELECT * FROM trading.position_snapshots "
+            "SELECT DISTINCT ON (instrument_id) * "
+            "FROM trading.position_snapshots "
             "WHERE account_id = $1 "
-            "ORDER BY snapshot_at DESC",
+            "ORDER BY instrument_id, snapshot_at DESC",
             account_id,
         )
         return tuple(row_to_entity(r, PositionSnapshotEntity) for r in rows)
+
+    async def get_latest_by_account_and_instrument_before(
+        self,
+        account_id: UUID,
+        instrument_id: UUID,
+        before: datetime,
+    ) -> PositionSnapshotEntity | None:
+        row = await self._tx.connection.fetchrow(
+            "SELECT * FROM trading.position_snapshots "
+            "WHERE account_id = $1 AND instrument_id = $2 AND snapshot_at < $3 "
+            "ORDER BY snapshot_at DESC "
+            "LIMIT 1",
+            account_id,
+            instrument_id,
+            before,
+        )
+        return row_to_entity(row, PositionSnapshotEntity) if row else None

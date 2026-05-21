@@ -213,6 +213,9 @@ async def sync_kis_account_snapshots(
         result._add_error(msg)
         raw_positions = []
 
+    # pdno → instrument_id 매핑을 수집 (zero-out 로직에서 사용)
+    pdno_to_instrument_id: dict[str, UUID] = {}
+
     for raw in raw_positions:
         pdno = raw.get(_KIS_PDNO, "")
         if not pdno:
@@ -234,6 +237,8 @@ async def sync_kis_account_snapshots(
             result._incr("positions_skipped")
             result._add_error(f"Instrument not found for pdno={pdno} — skipped")
             continue
+
+        pdno_to_instrument_id[pdno] = instrument.instrument_id
 
         # Map KIS raw fields → PositionSnapshotEntity
         try:
@@ -260,6 +265,45 @@ async def sync_kis_account_snapshots(
         except Exception as exc:
             logger.error("Failed to persist position snapshot pdno=%s: %s", pdno, exc)
             result._add_error(f"Persist error for pdno={pdno}: {exc}")
+
+    # ── 1b. Zero-out positions missing from KIS response ───────────────
+    # KIS 응답에서 사라진 종목 = 전량 매도 → quantity=0으로 기록
+    try:
+        current_instrument_ids = set(pdno_to_instrument_id.values())
+        latest_snapshots = await position_snapshot_repo.list_latest_by_account(account_id)
+
+        zeroed_count = 0
+        for snap in latest_snapshots:
+            if snap.quantity == Decimal("0"):
+                continue  # 이미 0 처리됨
+            if snap.instrument_id in current_instrument_ids:
+                continue  # KIS 응답에 있는 종목
+
+            # KIS 응답에 없고 quantity>0인 종목 → quantity=0 snapshot 추가
+            zero_snapshot = PositionSnapshotEntity(
+                position_snapshot_id=uuid4(),
+                account_id=account_id,
+                instrument_id=snap.instrument_id,
+                quantity=Decimal("0"),
+                average_price=snap.average_price,
+                market_price=snap.market_price,
+                unrealized_pnl=snap.unrealized_pnl,
+                source_of_truth=_SOURCE_OF_TRUTH,
+                snapshot_at=snapshot_at,
+            )
+            await position_snapshot_repo.add(zero_snapshot)
+            zeroed_count += 1
+
+        if zeroed_count > 0:
+            logger.info(
+                "[ZERO_OUT] account=%s: zeroed %d positions missing from KIS response",
+                account_id, zeroed_count,
+            )
+    except Exception:
+        logger.exception(
+            "[ZERO_OUT] failed for account=%s", account_id,
+        )
+        # zero-out 실패는 치명적이지 않음 — 다음 cycle에서 재시도
 
     # ── 2. Sync cash balance ───────────────────────────────────────────
     # Paper 1 RPS pacing: ensure at least 1s between consecutive KIS calls
@@ -293,6 +337,50 @@ async def sync_kis_account_snapshots(
             settlement_amount = _safe_optional_decimal(raw_cash.get(_KIS_PRVS_RCDL_EXCC_AMT))
             total_unrealized_pnl = _safe_optional_decimal(raw_cash.get(_KIS_EVL_PFLS_SMTL_AMT))
 
+            # ── orderable_amount: prefer VTTC8908R over VTTC8434R ──
+            # get_cash_balance() uses VTTC8434R (inquire-balance) which
+            # does NOT return ord_psbl_cash in paper environment.
+            # get_orderable_cash() uses VTTC8908R (inquire-psbl-order)
+            # which provides ord_psbl_cash even in paper mode.
+            orderable_amount: Decimal | None = None
+
+            # Paper 1 RPS pacing: ensure at least 1s between consecutive KIS calls
+            await asyncio.sleep(1.0)
+
+            try:
+                orderable_cash = await rest_client.get_orderable_cash(
+                    account_ref="",
+                )
+            except Exception:
+                logger.warning(
+                    "VTTC8908R get_orderable_cash() failed (legacy sync path); "
+                    "falling back to VTTC8434R ord_psbl_amt",
+                    exc_info=True,
+                )
+                orderable_cash = None
+
+            if orderable_cash is not None:
+                orderable_amount = orderable_cash
+                logger.info(
+                    "orderable_amount=%s (source: VTTC8908R, legacy sync path)",
+                    orderable_cash,
+                )
+            else:
+                # Fallback: use ord_psbl_amt from VTTC8434R output2
+                orderable_amount = _safe_optional_decimal(
+                    raw_cash.get(_KIS_ORD_PSBL_AMT)
+                )
+                if orderable_amount is not None:
+                    logger.info(
+                        "orderable_amount=%s (source: VTTC8434R fallback, legacy sync path)",
+                        orderable_amount,
+                    )
+                else:
+                    logger.info(
+                        "orderable_amount=None (VTTC8908R unavailable, "
+                        "VTTC8434R ord_psbl_amt also missing, legacy sync path)"
+                    )
+
             cash_entity = CashBalanceSnapshotEntity(
                 cash_balance_snapshot_id=uuid4(),
                 account_id=account_id,
@@ -303,6 +391,7 @@ async def sync_kis_account_snapshots(
                 total_asset=total_asset,
                 settlement_amount=settlement_amount,
                 total_unrealized_pnl=total_unrealized_pnl,
+                orderable_amount=orderable_amount,
                 source_of_truth=_SOURCE_OF_TRUTH,
                 snapshot_at=snapshot_at,
             )

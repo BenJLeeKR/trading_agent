@@ -298,6 +298,13 @@ def _apply_cash_constraint(
             return Decimal("0")
         effective_cash = orderable_amount
     elif available_cash is not None:
+        # orderable_amount가 None (KIS paper API 미지원) → available_cash fallback
+        # 실전 환경(KIS real API)에서는 ord_psbl_amt가 정상 제공되므로
+        # 이 fallback은 paper 환경에서만 동작함
+        logger.info(
+            "orderable_amount=None (KIS paper API), falling back to available_cash=%s",
+            available_cash,
+        )
         effective_cash = available_cash
     else:
         return qty  # No cash info available — skip constraint

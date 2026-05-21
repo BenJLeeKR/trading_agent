@@ -301,11 +301,13 @@ async def test_decision_column_nullable(
     )
 
     # Confirm read-back via repository also works
+    # UNIQUE 제약 제거 후 get_by_context()는 가장 최신 TD를 반환
     fetched = await repos.trade_decisions.get_by_context(seeded_decision_context)
     assert fetched is not None
-    # The second insert created a new row, but get_by_context returns the first
-    # one by UNIQUE constraint (decision_context_id is UNIQUE).
-    # We just verify the query doesn't crash.
+    assert fetched.trade_decision_id == trade_decision_id, (
+        f"get_by_context() should return the latest TD. "
+        f"Expected {trade_decision_id}, got {fetched.trade_decision_id}"
+    )
 
 
 # ============================================================================
@@ -446,3 +448,157 @@ async def test_source_type_null_compatibility(
     assert fetched.source_type is None, (
         f"Expected source_type=None, got {fetched.source_type!r}"
     )
+
+
+# ============================================================================
+# Test 6: get_by_context() returns the latest TD among multiple rows
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_get_by_context_returns_latest_td(
+    seeded_postgres_data: RepositoryContainer,
+    seeded_strategy_id: UUID,
+    sample_account: AccountEntity,
+) -> None:
+    """동일 context에 3개 TD INSERT 후 get_by_context()가 가장 최신 것을 반환하는지 검증."""
+    repos = seeded_postgres_data
+    conn = repos.unit_of_work.connection
+    account_id = sample_account.account_id
+
+    # Resolve the config_version_id from the seeded decision_context
+    dc_row = await conn.fetchrow(
+        "SELECT config_version_id FROM trading.decision_contexts "
+        "WHERE decision_context_id = ("
+        "  SELECT decision_context_id FROM trading.decision_contexts "
+        "  WHERE correlation_id = 'test-correlation' LIMIT 1"
+        ")"
+    )
+    assert dc_row is not None, "seeded decision_context must have a config_version_id"
+    config_version_id: UUID = dc_row["config_version_id"]
+
+    # Create a fresh decision context for this test
+    ctx_id = uuid4()
+    await conn.execute(
+        "INSERT INTO trading.decision_contexts "
+        "(decision_context_id, account_id, strategy_id, config_version_id, "
+        " market_timestamp, correlation_id, created_at) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        ctx_id,
+        account_id,
+        seeded_strategy_id,
+        config_version_id,
+        datetime.now(timezone.utc),
+        "get-by-context-latest-test",
+        datetime.now(timezone.utc),
+    )
+
+    # Insert 3 TD rows with increasing created_at
+    td_ids: list[UUID] = []
+    for i in range(3):
+        td_id = uuid4()
+        td_ids.append(td_id)
+        created_at = datetime(2026, 5, 20, 10, 0, i, tzinfo=timezone.utc)
+        await conn.execute(
+            """
+            INSERT INTO trading.trade_decisions
+                (trade_decision_id, decision_context_id,
+                 decision_type, side, strategy_id, symbol, market,
+                 entry_style, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            """,
+            td_id,
+            ctx_id,
+            "approve",
+            "buy",
+            seeded_strategy_id,
+            "AAPL",
+            "NASDAQ",
+            "limit",
+            created_at,
+        )
+
+    # get_by_context() should return the latest (last inserted) TD
+    fetched = await repos.trade_decisions.get_by_context(ctx_id)
+    assert fetched is not None
+    assert fetched.trade_decision_id == td_ids[2], (
+        f"get_by_context() should return the latest TD. "
+        f"Expected {td_ids[2]}, got {fetched.trade_decision_id}"
+    )
+
+
+# ============================================================================
+# Test 7: list_by_context() returns all TDs in order
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_list_by_context_returns_all_in_order(
+    seeded_postgres_data: RepositoryContainer,
+    seeded_strategy_id: UUID,
+    sample_account: AccountEntity,
+) -> None:
+    """list_by_context()가 모든 TD를 최신순으로 반환하는지 검증."""
+    repos = seeded_postgres_data
+    conn = repos.unit_of_work.connection
+    account_id = sample_account.account_id
+
+    # Resolve the config_version_id from the seeded decision_context
+    dc_row = await conn.fetchrow(
+        "SELECT config_version_id FROM trading.decision_contexts "
+        "WHERE decision_context_id = ("
+        "  SELECT decision_context_id FROM trading.decision_contexts "
+        "  WHERE correlation_id = 'test-correlation' LIMIT 1"
+        ")"
+    )
+    assert dc_row is not None, "seeded decision_context must have a config_version_id"
+    config_version_id: UUID = dc_row["config_version_id"]
+
+    # Create a fresh decision context for this test
+    ctx_id = uuid4()
+    await conn.execute(
+        "INSERT INTO trading.decision_contexts "
+        "(decision_context_id, account_id, strategy_id, config_version_id, "
+        " market_timestamp, correlation_id, created_at) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        ctx_id,
+        account_id,
+        seeded_strategy_id,
+        config_version_id,
+        datetime.now(timezone.utc),
+        "list-by-context-test",
+        datetime.now(timezone.utc),
+    )
+
+    # Insert 3 TD rows with increasing created_at
+    td_ids: list[UUID] = []
+    for i in range(3):
+        td_id = uuid4()
+        td_ids.append(td_id)
+        created_at = datetime(2026, 5, 20, 10, 0, i, tzinfo=timezone.utc)
+        await conn.execute(
+            """
+            INSERT INTO trading.trade_decisions
+                (trade_decision_id, decision_context_id,
+                 decision_type, side, strategy_id, symbol, market,
+                 entry_style, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            """,
+            td_id,
+            ctx_id,
+            "approve",
+            "buy",
+            seeded_strategy_id,
+            "AAPL",
+            "NASDAQ",
+            "limit",
+            created_at,
+        )
+
+    # list_by_context() should return all TDs in reverse chronological order
+    decisions = await repos.trade_decisions.list_by_context(ctx_id)
+    assert len(decisions) == 3, f"Expected 3 decisions, got {len(decisions)}"
+    # Most recent first
+    assert decisions[0].trade_decision_id == td_ids[2]
+    assert decisions[1].trade_decision_id == td_ids[1]
+    assert decisions[2].trade_decision_id == td_ids[0]

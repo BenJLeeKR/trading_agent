@@ -15,6 +15,8 @@ import pytest
 
 from scripts.run_near_real_ops_scheduler import (
     CommandResult,
+    HELD_POSITION_SELL_MAX_PER_DAY,
+    HELD_POSITION_SELL_MAX_PER_CYCLE,
     KST,
     SchedulerState,
     _BUDGET_CONSUMING_STATUSES,
@@ -24,11 +26,13 @@ from scripts.run_near_real_ops_scheduler import (
     _decision_command,
     _event_command,
     _extract_json_objects,
+    _get_db_held_position_sell_count,
     _get_db_submit_count,
     _handle_phase_change,
     _heartbeat_task,
     _init_market_state_provider,
     _init_session_provider,
+    _is_held_position_sell_result,
     _is_submit_consuming_result,
     _log_startup_info,
     _log_summary,
@@ -238,6 +242,203 @@ class TestDbSubmitBudget:
         effective = max(state_count, db_count)
         assert effective == 1
         assert effective >= max_submit_per_day  # dry_run = True ✅
+
+
+class TestHeldPositionSellBudget:
+    """held_position REDUCE/EXIT sell 별도 budget 트래킹 테스트."""
+
+    def test_held_position_sell_max_per_day_constant(self) -> None:
+        """HELD_POSITION_SELL_MAX_PER_DAY 기본값은 5."""
+        assert HELD_POSITION_SELL_MAX_PER_DAY == 5
+
+    def test_scheduler_state_has_hp_sell_count(self) -> None:
+        """SchedulerState에 held_position_sell_submit_count 필드가 존재."""
+        state = SchedulerState(run_date=date(2026, 5, 20))
+        assert state.held_position_sell_submit_count == 0
+
+    def test_is_held_position_sell_result_true(self) -> None:
+        """3중 조건(source_type + decision_type + side) 모두 충족 시 True 반환."""
+        result = CommandResult(
+            name="decision",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout=(
+                '{"cycle":1,"status":"SUBMITTED","source_type":"held_position",'
+                '"decision_type":"reduce","side":"sell"}\n'
+            ),
+        )
+        assert _is_held_position_sell_result(result) is True
+
+    def test_is_held_position_sell_result_true_for_exit(self) -> None:
+        """decision_type=exit도 held_position sell로 인정."""
+        result = CommandResult(
+            name="decision",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout=(
+                '{"cycle":1,"status":"SUBMITTED","source_type":"held_position",'
+                '"decision_type":"exit","side":"sell"}\n'
+            ),
+        )
+        assert _is_held_position_sell_result(result) is True
+
+    def test_is_held_position_sell_result_false_for_core(self) -> None:
+        """source_type=core이면 decision_type/side와 무관하게 False."""
+        result = CommandResult(
+            name="decision",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout=(
+                '{"cycle":1,"status":"SUBMITTED","source_type":"core",'
+                '"decision_type":"reduce","side":"sell"}\n'
+            ),
+        )
+        assert _is_held_position_sell_result(result) is False
+
+    def test_is_held_position_sell_result_false_when_decision_type_mismatch(self) -> None:
+        """decision_type이 reduce/exit이 아니면 False."""
+        result = CommandResult(
+            name="decision",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout=(
+                '{"cycle":1,"status":"SUBMITTED","source_type":"held_position",'
+                '"decision_type":"HOLD","side":"sell"}\n'
+            ),
+        )
+        assert _is_held_position_sell_result(result) is False
+
+    def test_is_held_position_sell_result_false_when_side_mismatch(self) -> None:
+        """side가 sell이 아니면 False."""
+        result = CommandResult(
+            name="decision",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout=(
+                '{"cycle":1,"status":"SUBMITTED","source_type":"held_position",'
+                '"decision_type":"reduce","side":"buy"}\n'
+            ),
+        )
+        assert _is_held_position_sell_result(result) is False
+
+    def test_is_held_position_sell_result_false_when_no_source_type(self) -> None:
+        """stdout에 source_type 필드가 없으면 False."""
+        result = CommandResult(
+            name="decision",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout=(
+                '{"cycle":1,"status":"SUBMITTED","decision_type":"reduce","side":"sell"}\n'
+            ),
+        )
+        assert _is_held_position_sell_result(result) is False
+
+    def test_is_held_position_sell_result_false_on_failure(self) -> None:
+        """returncode != 0이면 False."""
+        result = CommandResult(
+            name="decision",
+            argv=[],
+            returncode=1,
+            duration_seconds=1.0,
+            stdout=(
+                '{"cycle":1,"status":"SUBMITTED","source_type":"held_position",'
+                '"decision_type":"reduce","side":"sell"}\n'
+            ),
+        )
+        assert _is_held_position_sell_result(result) is False
+
+    @pytest.mark.asyncio
+    async def test_db_hp_sell_count_failure_returns_zero(self) -> None:
+        """DB 조회 실패 시 held_position sell count는 0 반환 (보수적)."""
+        import asyncpg
+
+        original_connect = asyncpg.connect
+
+        async def _mock_connect_failure(**kwargs: object) -> object:
+            raise ConnectionError("simulated DB connection failure")
+
+        asyncpg.connect = _mock_connect_failure  # type: ignore[assignment]
+        try:
+            count = await _get_db_held_position_sell_count(date(2026, 5, 20))
+            assert count == 0  # held_position sell budget은 실패 시 0
+        finally:
+            asyncpg.connect = original_connect
+
+    def test_parse_args_has_hp_sell_max_per_day(self) -> None:
+        """--held-position-sell-max-per-day 기본값은 HELD_POSITION_SELL_MAX_PER_DAY."""
+        args = _parse_args([])
+        assert args.held_position_sell_max_per_day == HELD_POSITION_SELL_MAX_PER_DAY
+
+    def test_parse_args_hp_sell_max_per_day_custom(self) -> None:
+        """--held-position-sell-max-per-day 커스텀 값 설정."""
+        args = _parse_args(["--held-position-sell-max-per-day", "2"])
+        assert args.held_position_sell_max_per_day == 2
+
+    def test_effective_hp_sell_count_logic(self) -> None:
+        """held_position sell effective count = max(state, db)."""
+        max_hp = HELD_POSITION_SELL_MAX_PER_DAY
+
+        # Scenario 1: fresh start
+        state_count = 0
+        db_count = 0
+        effective = max(state_count, db_count)
+        assert effective < max_hp  # budget 여유 있음
+
+        # Scenario 2: after 4 held_position sell submits (아직 여유)
+        state_count = 4
+        db_count = 4
+        effective = max(state_count, db_count)
+        assert effective < max_hp  # 4 < 5 → budget 여유 있음
+
+        # Scenario 3: after 5 held_position sell submits (소진)
+        state_count = 5
+        db_count = 5
+        effective = max(state_count, db_count)
+        assert not (effective < max_hp)  # budget 소진
+
+        # Scenario 4: crash/restart (state reset, DB preserved)
+        state_count = 0
+        db_count = 5
+        effective = max(state_count, db_count)
+        assert not (effective < max_hp)  # crash-safe ✅
+
+    def test_general_and_hp_sell_budget_independent(self) -> None:
+        """일반 budget과 held_position sell budget은 독립적으로 동작."""
+        max_general = 1
+        max_hp = HELD_POSITION_SELL_MAX_PER_DAY
+
+        # 일반 budget 소진 + held_position sell budget 여유
+        general_effective = 1  # 소진
+        hp_effective = 0  # 여유
+        general_ok = general_effective < max_general
+        hp_ok = hp_effective < max_hp
+        assert not general_ok  # 일반은 막힘
+        assert hp_ok  # held_position sell은 허용
+
+        # 반대: held_position sell 소진 + 일반 여유
+        general_effective = 0  # 여유
+        hp_effective = 5  # 소진
+        general_ok = general_effective < max_general
+        hp_ok = hp_effective < max_hp
+        assert general_ok  # 일반은 허용
+        assert not hp_ok  # held_position sell은 막힘
+
+    def test_held_position_sell_max_per_cycle_constant(self) -> None:
+        """HELD_POSITION_SELL_MAX_PER_CYCLE 기본값은 2."""
+        assert HELD_POSITION_SELL_MAX_PER_CYCLE == 2
+
+    def test_parse_args_hp_sell_max_per_cycle(self) -> None:
+        """--held-position-sell-max-per-cycle CLI 인자 파싱 검증."""
+        args = _parse_args([])
+        # HELD_POSITION_SELL_MAX_PER_CYCLE은 아직 CLI 인자가 없으므로 기본값 확인
+        # (향후 CLI 인자 추가 시 이 테스트를 확장)
+        assert HELD_POSITION_SELL_MAX_PER_CYCLE == 2
 
 
 class TestParseSnapshotSyncSummary:

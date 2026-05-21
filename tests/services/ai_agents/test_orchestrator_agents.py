@@ -81,7 +81,10 @@ def repos() -> RepositoryContainer:
 
 @pytest.fixture
 def service(repos: RepositoryContainer) -> DecisionOrchestratorService:
-    return DecisionOrchestratorService(repos)
+    return DecisionOrchestratorService(
+        repos,
+        use_subprocess_isolation=False,
+    )
 
 
 @pytest.fixture
@@ -222,6 +225,7 @@ class TestAgentInjection:
             ai_risk_agent=mock_ar,
             final_decision_agent=mock_fdc,
             agent_recorder=recorder,
+            use_subprocess_isolation=False,
         )
 
         intent = await orchestrator.assemble(sample_request)
@@ -268,6 +272,7 @@ class TestAgentInjection:
             event_interpretation_agent=TrackingEI(),
             ai_risk_agent=TrackingAR(),
             final_decision_agent=TrackingFDC(),
+            use_subprocess_isolation=False,
         )
 
         await orchestrator.assemble(sample_request)
@@ -302,6 +307,7 @@ class TestAgentSafeFallback:
         orchestrator = DecisionOrchestratorService(
             repos,
             event_interpretation_agent=FailingAgent(),  # type: ignore[arg-type]
+            use_subprocess_isolation=False,
         )
 
         intent = await orchestrator.assemble(sample_request)
@@ -329,6 +335,7 @@ class TestAgentSafeFallback:
             event_interpretation_agent=FailingAgent(),  # type: ignore[arg-type]
             ai_risk_agent=FailingAgent(),  # type: ignore[arg-type]
             final_decision_agent=FailingAgent(),  # type: ignore[arg-type]
+            use_subprocess_isolation=False,
         )
 
         intent = await orchestrator.assemble(sample_request)
@@ -351,6 +358,7 @@ class TestAgentSafeFallback:
             event_interpretation_agent=FailingAgent(),  # type: ignore[arg-type]
             ai_risk_agent=FailingAgent(),  # type: ignore[arg-type]
             final_decision_agent=FailingAgent(),  # type: ignore[arg-type]
+            use_subprocess_isolation=False,
         )
 
         intent = await orchestrator.assemble(sample_request)
@@ -407,6 +415,7 @@ class TestAgentSafeFallback:
         orchestrator = DecisionOrchestratorService(
             repos,
             event_interpretation_agent=HangingAgent(),  # type: ignore[arg-type]
+            use_subprocess_isolation=False,
         )
 
         # assemble() should NOT raise despite the hanging EI agent
@@ -515,6 +524,7 @@ class TestRealAgentsIntegration:
             event_interpretation_agent=ei_agent,
             ai_risk_agent=ar_agent,
             agent_recorder=recorder,
+            use_subprocess_isolation=False,
         )
 
         intent = await orchestrator.assemble(sample_request)
@@ -572,6 +582,7 @@ class TestRealAgentsIntegration:
             event_interpretation_agent=ei_agent,
             ai_risk_agent=ar_agent,
             agent_recorder=recorder,
+            use_subprocess_isolation=False,
         )
 
         await orchestrator.assemble(sample_request, decision_context_id=ctx_id)
@@ -622,6 +633,7 @@ class TestRealAgentsIntegration:
             event_interpretation_agent=ei_agent,
             ai_risk_agent=ar_agent,  # type: ignore[arg-type]
             agent_recorder=recorder,
+            use_subprocess_isolation=False,
         )
 
         await orchestrator.assemble(sample_request)
@@ -656,6 +668,7 @@ class TestRealAgentsIntegration:
             ai_risk_agent=ar_agent,
             final_decision_agent=fdc_agent,
             agent_recorder=recorder,
+            use_subprocess_isolation=False,
         )
 
         intent = await orchestrator.assemble(sample_request)
@@ -734,6 +747,7 @@ class TestRealAgentsIntegration:
             ai_risk_agent=ar_agent,
             final_decision_agent=fdc_agent,  # type: ignore[arg-type]
             agent_recorder=recorder,
+            use_subprocess_isolation=False,
         )
 
         await orchestrator.assemble(sample_request)
@@ -780,6 +794,7 @@ class TestRealAgentsIntegration:
             ai_risk_agent=ar_agent,
             final_decision_agent=fdc_agent,
             agent_recorder=recorder,
+            use_subprocess_isolation=False,
         )
 
         intent = await orchestrator.assemble(sample_request)
@@ -868,7 +883,10 @@ class TestExistingBehaviourPreserved:
         )
         await repos.decision_contexts.add(ctx)
 
-        service = DecisionOrchestratorService(repos)
+        service = DecisionOrchestratorService(
+            repos,
+            use_subprocess_isolation=False,
+        )
         intent = await service.assemble(
             sample_request,
             decision_context_id=ctx_id,

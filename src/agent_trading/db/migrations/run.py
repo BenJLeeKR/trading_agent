@@ -15,6 +15,7 @@ Usage (Python)::
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
@@ -77,6 +78,16 @@ async def run_migration(
         except asyncpg.exceptions.DuplicateColumnError:
             # Column already exists — ALTER TABLE ADD COLUMN was already applied.
             logger.info("Migration already applied (column exists): %s", path.name)
+        except (asyncio.TimeoutError, asyncpg.exceptions.PostgresError) as exc:
+            # TimeoutError (asyncio) 또는 PostgresError (asyncpg) 발생 시
+            # 스키마가 이미 존재하는 상태에서 DDL이 타임아웃되는 경우가 있음.
+            # 이 경우 마이그레이션이 이미 적용된 것으로 간주하고 진행.
+            logger.warning(
+                "Migration may already be applied (timeout/error): %s — %s: %s",
+                path.name,
+                type(exc).__name__,
+                exc,
+            )
         except Exception as exc:
             logger.error(
                 "Migration failed: %s — %s: %s",

@@ -266,6 +266,9 @@ class EventInterpretationOutput:
         Ordered tuple of interpreted events.
     aggregate_view
         Aggregate view across all events.
+    summary
+        Deterministic Korean summary string generated from aggregate_view
+        and events (no additional LLM call).
     """
 
     schema_version: str = "v1"
@@ -275,6 +278,8 @@ class EventInterpretationOutput:
     issuer_code: str = ""
     events: tuple[InterpretedEvent, ...] = ()
     aggregate_view: AggregateEventView = field(default_factory=AggregateEventView)
+    summary: str = ""
+    """Deterministic Korean summary (no LLM call)."""
 
     def __post_init__(self) -> None:
         """Coerce malformed fields to safe defaults.

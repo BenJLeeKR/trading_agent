@@ -164,6 +164,7 @@ class TestReplayDeterministicBuildSubmitRequest:
         service = DecisionOrchestratorService(
             repos=repos,
             final_decision_agent=_make_stub_fdc(),  # type: ignore[arg-type]
+            use_subprocess_isolation=False,
         )
         intent = await service.assemble(request)
 
@@ -193,6 +194,7 @@ class TestReplayDeterministicBuildSubmitRequest:
         service = DecisionOrchestratorService(
             repos=repos,
             final_decision_agent=hold_fdc,  # type: ignore[arg-type]
+            use_subprocess_isolation=False,
         )
         intent = await service.assemble(request)
 
@@ -228,6 +230,7 @@ class TestReplayDeterministicAssemble:
         service = DecisionOrchestratorService(
             repos=repos,
             final_decision_agent=_make_stub_fdc(),  # type: ignore[arg-type]
+            use_subprocess_isolation=False,
         )
 
         intent1 = await service.assemble(request1)
@@ -256,6 +259,7 @@ class TestReplayDeterministicAssemble:
         service = DecisionOrchestratorService(
             repos=repos,
             final_decision_agent=_make_stub_fdc(),  # type: ignore[arg-type]
+            use_subprocess_isolation=False,
         )
 
         intent = await service.assemble(request)
@@ -333,6 +337,7 @@ class TestReplayDeterministicPipeline:
         service = DecisionOrchestratorService(
             repos=repos,
             final_decision_agent=_make_stub_fdc(),  # type: ignore[arg-type]
+            use_subprocess_isolation=False,
         )
 
         result1 = await service.assemble_and_submit(
@@ -366,6 +371,7 @@ class TestReplayDeterministicPipeline:
         service2 = DecisionOrchestratorService(
             repos=repos2,
             final_decision_agent=_make_stub_fdc(),  # type: ignore[arg-type]
+            use_subprocess_isolation=False,
         )
 
         result2 = await service2.assemble_and_submit(
@@ -484,6 +490,7 @@ class TestReplayDeterministicParametrized:
         service = DecisionOrchestratorService(
             repos=bundle.repos,
             final_decision_agent=bundle.stub_fdc,  # type: ignore[arg-type]
+            use_subprocess_isolation=False,
         )
 
         # ── When ──
@@ -565,8 +572,21 @@ class TestReplayDeterministicParametrized:
 
         2회차에도 동일한 ``SubmitResult.status``가 나오는지 검증하여
         결정론적 특성을 확인한다.
+
+        Note: bundle.repos는 이전 parametrized 테스트에서 mutate되었을 수
+        있으므로(OrderRequestEntity 등이 추가됨), 첫 번째 실행에서도
+        ``_build_repos()``로 fresh repos를 생성하여 사용한다.
         """
-        # ── First run ──
+        # ── First run (fresh repos, same inputs) ──
+        repos1 = _build_repos(
+            seed_cash=bundle.repos.cash_balance_snapshots._items[
+                next(iter(bundle.repos.cash_balance_snapshots._items), None)
+            ].available_cash if bundle.repos.cash_balance_snapshots._items else None,
+            seed_position_qty=next(
+                (p.quantity for p in bundle.repos.position_snapshots._items.values()),
+                None,
+            ),
+        )
         mock_broker1 = MagicMock(spec=BrokerAdapter)
         mock_broker1.submit_order = AsyncMock()
         mock_broker1.submit_order.return_value = SubmitOrderResult(
@@ -579,11 +599,12 @@ class TestReplayDeterministicParametrized:
             raw_code="0000",
             raw_message="Accepted",
         )
-        rs1 = ReconciliationService(bundle.repos)
-        om1 = OrderManager(repos=bundle.repos, reconciliation_service=rs1)
+        rs1 = ReconciliationService(repos1)
+        om1 = OrderManager(repos=repos1, reconciliation_service=rs1)
         service1 = DecisionOrchestratorService(
-            repos=bundle.repos,
+            repos=repos1,
             final_decision_agent=bundle.stub_fdc,  # type: ignore[arg-type]
+            use_subprocess_isolation=False,
         )
         result1 = await service1.assemble_and_submit(
             bundle.request,
@@ -618,6 +639,7 @@ class TestReplayDeterministicParametrized:
         service2 = DecisionOrchestratorService(
             repos=repos2,
             final_decision_agent=bundle.stub_fdc,  # type: ignore[arg-type]
+            use_subprocess_isolation=False,
         )
         result2 = await service2.assemble_and_submit(
             bundle.request,

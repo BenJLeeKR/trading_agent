@@ -8,6 +8,7 @@ These are minimal **read models** — not 1:1 mirrors of domain entities.
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -903,3 +904,56 @@ class ExternalEventsResponse(BaseModel):
 
     status: str = "ok"
     data: list[ExternalEventView]
+
+
+# ---------------------------------------------------------------------------
+# Phase D — Inspection API: Broker Truth & Sell Availability
+# ---------------------------------------------------------------------------
+
+
+class BrokerTruthResponse(BaseModel):
+    """``GET /orders/{order_request_id}/broker-truth`` — KIS broker truth result.
+
+    Returns the raw KIS inquiry result mapped to domain status, with fallback
+    to cached ``broker_orders`` data when the KIS API is unavailable.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    order_request_id: UUID
+    broker_order_id: str | None = None
+    kis_status_code: str | None = None
+    mapped_status: str | None = None
+    filled_qty: Decimal | None = None
+    open_qty: Decimal | None = None
+    avg_fill_price: Decimal | None = None
+    order_qty: Decimal | None = None
+    order_price: Decimal | None = None
+    last_synced_at: datetime | None = None
+    source: str = "VTTC0081R"
+
+
+class SellAvailabilityResponse(BaseModel):
+    """``GET /orders/sell-availability`` — available sell quantity calculation result.
+
+    Returns the computed available sell quantity considering open orders and
+    partially filled orders, along with block status.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    account_id: UUID
+    symbol: str
+    current_position_qty: Decimal
+    open_sell_qty: Decimal
+    partially_filled_qty: Decimal
+    available_sell_qty: Decimal
+    is_blocked: bool
+    block_reason: str | None = None
+
+
+# Rebuild models to resolve forward references under ``from __future__ import annotations``.
+# The ``_types_namespace`` provides the necessary type mappings that are otherwise
+# evaluated lazily as strings under PEP 563.
+BrokerTruthResponse.model_rebuild(_types_namespace={"Decimal": Decimal, "UUID": UUID, "datetime": datetime})
+SellAvailabilityResponse.model_rebuild(_types_namespace={"Decimal": Decimal, "UUID": UUID, "datetime": datetime})

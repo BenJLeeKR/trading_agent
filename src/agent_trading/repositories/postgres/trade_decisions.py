@@ -137,14 +137,29 @@ class PostgresTradeDecisionRepository:
     async def get_by_context(
         self, decision_context_id: UUID
     ) -> TradeDecisionEntity | None:
+        """최신 TD 반환 (ORDER BY created_at DESC, trade_decision_id DESC LIMIT 1)."""
         row = await self._tx.connection.fetchrow(
             "SELECT * FROM trading.trade_decisions "
-            "WHERE decision_context_id = $1",
+            "WHERE decision_context_id = $1 "
+            "ORDER BY created_at DESC, trade_decision_id DESC "
+            "LIMIT 1",
             decision_context_id,
         )
         if row is None:
             return None
         return row_to_entity(row, TradeDecisionEntity)
+
+    async def list_by_context(
+        self, decision_context_id: UUID
+    ) -> list[TradeDecisionEntity]:
+        """주어진 decision_context에 속한 모든 TD를 최신순으로 반환."""
+        rows = await self._tx.connection.fetch(
+            "SELECT * FROM trading.trade_decisions "
+            "WHERE decision_context_id = $1 "
+            "ORDER BY created_at DESC, trade_decision_id DESC",
+            decision_context_id,
+        )
+        return [row_to_entity(row, TradeDecisionEntity) for row in rows]
 
     async def list_all(self) -> list[TradeDecisionEntity]:
         rows = await self._tx.connection.fetch(

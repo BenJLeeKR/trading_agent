@@ -308,6 +308,24 @@ class InMemoryPositionSnapshotRepository:
         results.sort(key=lambda item: item.snapshot_at, reverse=True)
         return tuple(results)
 
+    async def get_latest_by_account_and_instrument_before(
+        self,
+        account_id: UUID,
+        instrument_id: UUID,
+        before: datetime,
+    ) -> PositionSnapshotEntity | None:
+        candidates = [
+            item
+            for item in self._items.values()
+            if item.account_id == account_id
+            and item.instrument_id == instrument_id
+            and item.snapshot_at < before
+        ]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item.snapshot_at, reverse=True)
+        return candidates[0]
+
 
 class InMemoryCashBalanceSnapshotRepository:
     def __init__(self) -> None:
@@ -347,10 +365,16 @@ class InMemoryTradeDecisionRepository:
         return self._items.get(trade_decision_id)
 
     async def get_by_context(self, decision_context_id: UUID) -> TradeDecisionEntity | None:
-        return next(
-            (item for item in self._items.values() if item.decision_context_id == decision_context_id),
-            None,
-        )
+        """최신 TD 반환 (created_at DESC, tie-break: trade_decision_id DESC)."""
+        matches = [item for item in self._items.values() if item.decision_context_id == decision_context_id]
+        if not matches:
+            return None
+        return max(matches, key=lambda td: (td.created_at, td.trade_decision_id))
+
+    async def list_by_context(self, decision_context_id: UUID) -> list[TradeDecisionEntity]:
+        """주어진 decision_context에 속한 모든 TD를 최신순으로 반환."""
+        items = [item for item in self._items.values() if item.decision_context_id == decision_context_id]
+        return sorted(items, key=lambda td: (td.created_at, td.trade_decision_id), reverse=True)
 
     async def list_all(self) -> Sequence[TradeDecisionEntity]:
         return tuple(self._items.values())

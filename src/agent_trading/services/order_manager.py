@@ -101,6 +101,18 @@ _ALLOWED_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
         OrderStatus.REJECTED,
         OrderStatus.EXPIRED,
     },
+    # EXPIRED → FILLED/PARTIALLY_FILLED: 후행 체결 복구.
+    # sync_order_post_submit()의 broker truth 재조회 결과 실제 체결이 확인된 경우에만
+    # 허용되며, 호출자(caller)가 안전 조건을 사전 검증한다.
+    # 안전 조건 (order_sync_service._can_recover_expired() 참조):
+    #   - explicit broker reject/cancel 아님
+    #   - after-hours 또는 강한 후행 증거 존재
+    #   - 최근 주문만 대상 (24시간 이내)
+    #   - BUY는 broker truth 직접 확인 필요
+    OrderStatus.EXPIRED: {
+        OrderStatus.FILLED,
+        OrderStatus.PARTIALLY_FILLED,
+    },
 }
 
 _TERMINAL_STATES: frozenset[OrderStatus] = frozenset(
@@ -137,6 +149,12 @@ def _validate_transition(
     current_status: OrderStatus,
     target_status: OrderStatus,
 ) -> None:
+    # 먼저 _ALLOWED_TRANSITIONS 확인 — 명시적으로 허용된 전이는 terminal state여도 통과
+    # (EXPIRED → FILLED/PARTIALLY_FILLED 복구 경로 허용)
+    allowed = _ALLOWED_TRANSITIONS.get(current_status)
+    if allowed is not None and target_status in allowed:
+        return
+
     if current_status in _TERMINAL_STATES:
         raise InvalidStateTransitionError(
             order_request_id,
@@ -145,7 +163,6 @@ def _validate_transition(
             reason=f"{current_status.value} is a terminal state",
         )
 
-    allowed = _ALLOWED_TRANSITIONS.get(current_status)
     if allowed is None or target_status not in allowed:
         raise InvalidStateTransitionError(
             order_request_id,

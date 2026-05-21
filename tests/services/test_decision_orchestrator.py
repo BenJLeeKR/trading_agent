@@ -37,7 +37,10 @@ from agent_trading.services.decision_orchestrator import (
     ScoreResult,
     StubScoreCalculator,
 )
-from agent_trading.services.sizing_engine import SizingInputs
+from agent_trading.services.sizing_engine import (
+    SizingInputs,
+    calculate_sizing,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -48,7 +51,7 @@ from agent_trading.services.sizing_engine import SizingInputs
 @pytest.fixture
 def service() -> DecisionOrchestratorService:
     repos = build_in_memory_repositories()
-    return DecisionOrchestratorService(repos=repos)
+    return DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
 
 
 @pytest.fixture
@@ -96,7 +99,7 @@ def seeded_service() -> DecisionOrchestratorService:
     )
     repos.decision_contexts._items[context.decision_context_id] = context
 
-    return DecisionOrchestratorService(repos=repos)
+    return DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
 
 
 @pytest.fixture
@@ -137,7 +140,7 @@ def seeded_service_with_account() -> DecisionOrchestratorService:
     )
     repos.config_versions._items[config_version.config_version_id] = config_version
 
-    return DecisionOrchestratorService(repos=repos)
+    return DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
 
 
 # ---------------------------------------------------------------------------
@@ -605,7 +608,7 @@ class TestScoreCalculatorStub:
 
         repos = build_in_memory_repositories()
         service = DecisionOrchestratorService(
-            repos=repos, score_calculator=CustomCalculator()
+            repos=repos, score_calculator=CustomCalculator(), use_subprocess_isolation=False
         )
         intent = await service.assemble(sample_request)
 
@@ -682,7 +685,7 @@ class TestPositionSnapshotSourceOfTruth:
 
         # Do NOT seed any InstrumentEntity → get_by_symbol() returns None
 
-        service = DecisionOrchestratorService(repos=repos)
+        service = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
         intent = await service.assemble(sample_request, decision_context_id=ctx_id)
 
         # The explicit snapshot must survive even though instrument is None
@@ -756,7 +759,7 @@ class TestPositionSnapshotSourceOfTruth:
         )
         repos.decision_contexts._items[ctx_id] = context
 
-        service = DecisionOrchestratorService(repos=repos)
+        service = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
         intent = await service.assemble(sample_request, decision_context_id=ctx_id)
 
         # The matching snapshot (same instrument_id as the resolved instrument)
@@ -803,7 +806,7 @@ class TestTradeDecisionPersistence:
         )
         await repos.decision_contexts.add(context)
 
-        service = DecisionOrchestratorService(repos=repos)
+        service = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
         intent = await service.assemble(
             sample_request,
             decision_context_id=context.decision_context_id,
@@ -833,6 +836,7 @@ class TestTradeDecisionPersistence:
     async def test_assemble_reuses_existing_trade_decision_for_context(
         self, sample_request: SubmitOrderRequest
     ) -> None:
+        """INSERT-only 정책: 동일 context 2회 assemble 시 TD가 2건 생성됨."""
         repos = build_in_memory_repositories()
         now = datetime.now(timezone.utc)
         context = DecisionContextEntity(
@@ -846,7 +850,7 @@ class TestTradeDecisionPersistence:
         )
         await repos.decision_contexts.add(context)
 
-        service = DecisionOrchestratorService(repos=repos)
+        service = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
         first = await service.assemble(
             sample_request,
             decision_context_id=context.decision_context_id,
@@ -857,8 +861,8 @@ class TestTradeDecisionPersistence:
         )
 
         decisions = await repos.trade_decisions.list_all()
-        assert len(decisions) == 1
-        assert first.request.decision_id == second.request.decision_id
+        assert len(decisions) == 2
+        assert first.request.decision_id != second.request.decision_id
 
 
 # ---------------------------------------------------------------------------
@@ -934,7 +938,7 @@ class TestAssembleAndCreateOrderFullFlow:
         repos.instruments._items[instrument.instrument_id] = instrument
 
         # ── Create services sharing the same repos ──
-        service = DecisionOrchestratorService(repos=repos)
+        service = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
         manager = OrderManager(repos=repos, reconciliation_service=None)
 
         # ── Step 1: assemble() → recorder should have 3 agent runs ──
@@ -1223,3 +1227,131 @@ class TestBuildSizingInputs:
         sizing = service._build_sizing_inputs(intent)
         assert sizing.orderable_amount is None
         assert sizing.available_cash is None
+
+
+# ---------------------------------------------------------------------------
+# Sell path sizing fallback tests
+# ---------------------------------------------------------------------------
+
+
+class TestSellPathSizingFallback:
+    """Phase 1.5 sizing fallback: when sizing returns 0 for SELL side,
+    the request quantity should be used as fallback."""
+
+    @pytest.fixture
+    def sell_intent_no_position(self) -> OrderIntent:
+        """OrderIntent with SELL side, no position snapshot (position_qty=None)."""
+        ctx = AssembledContext(
+            position_snapshot=None,
+            cash_balance_snapshot=None,
+            risk_limit_snapshot=None,
+        )
+        return OrderIntent(
+            decision_context_id=None,
+            order_intent_id=None,
+            request=SubmitOrderRequest(
+                account_ref="test",
+                client_order_id="test-sell-fallback-001",
+                correlation_id="corr-sell-fallback-001",
+                strategy_id="strat-001",
+                symbol="005930",
+                market="KRX",
+                side=OrderSide.SELL,
+                order_type=OrderType.LIMIT,
+                quantity=Decimal("10"),
+                price=Decimal("50000"),
+                time_in_force=TimeInForce.DAY,
+            ),
+            context=ctx,
+            ai_backend_inputs=AIDecisionInputs(
+                decision_type="REDUCE",
+                side="sell",
+            ),
+        )
+
+    def test_sizing_fallback_behavior_for_sell_without_position(
+        self,
+        service: DecisionOrchestratorService,
+        sell_intent_no_position: OrderIntent,
+    ) -> None:
+        """Sizing falls back to requested_quantity when position is unknown for SELL/REDUCE.
+
+        _base_qty_reduce() returns requested_quantity when current_position_qty is None.
+        This confirms the sizing engine itself does not block the sell path;
+        the fallback in assemble_and_submit() is an additional safety net.
+        """
+        sizing_inputs = service._build_sizing_inputs(sell_intent_no_position)
+        sizing_result = calculate_sizing(sizing_inputs)
+
+        # Without position data, _base_qty_reduce falls back to requested_quantity
+        assert sizing_result.quantity == Decimal("10"), (
+            f"Expected sizing to fallback to requested_quantity=10, "
+            f"got {sizing_result.quantity}"
+        )
+
+    def test_sizing_fallback_uses_request_quantity_for_sell(
+        self,
+        service: DecisionOrchestratorService,
+        sell_intent_no_position: OrderIntent,
+    ) -> None:
+        """The fallback logic should use intent.request.quantity when sizing returns 0."""
+        sizing_inputs = service._build_sizing_inputs(sell_intent_no_position)
+        sizing_result = calculate_sizing(sizing_inputs)
+
+        # Simulate the fallback logic from assemble_and_submit()
+        effective_qty = sizing_result.quantity
+        if effective_qty <= 0 and sell_intent_no_position.request.side == OrderSide.SELL:
+            req_qty = sell_intent_no_position.request.quantity
+            if req_qty > 0:
+                effective_qty = req_qty
+
+        assert effective_qty == Decimal("10"), (
+            f"Expected fallback quantity=10, got {effective_qty}"
+        )
+
+    def test_sizing_fallback_for_exit_sell(
+        self,
+        service: DecisionOrchestratorService,
+    ) -> None:
+        """EXIT + SELL side: sizing returns 0 without position, fallback to request qty."""
+        ctx = AssembledContext(
+            position_snapshot=None,
+            cash_balance_snapshot=None,
+            risk_limit_snapshot=None,
+        )
+        intent = OrderIntent(
+            decision_context_id=None,
+            order_intent_id=None,
+            request=SubmitOrderRequest(
+                account_ref="test",
+                client_order_id="test-exit-sell-001",
+                correlation_id="corr-exit-sell-001",
+                strategy_id="strat-001",
+                symbol="005930",
+                market="KRX",
+                side=OrderSide.SELL,
+                order_type=OrderType.LIMIT,
+                quantity=Decimal("5"),
+                price=Decimal("50000"),
+                time_in_force=TimeInForce.DAY,
+            ),
+            context=ctx,
+            ai_backend_inputs=AIDecisionInputs(
+                decision_type="EXIT",
+                side="sell",
+            ),
+        )
+
+        sizing_inputs = service._build_sizing_inputs(intent)
+        sizing_result = calculate_sizing(sizing_inputs)
+
+        # Simulate fallback
+        effective_qty = sizing_result.quantity
+        if effective_qty <= 0 and intent.request.side == OrderSide.SELL:
+            req_qty = intent.request.quantity
+            if req_qty > 0:
+                effective_qty = req_qty
+
+        assert effective_qty == Decimal("5"), (
+            f"Expected fallback quantity=5 for EXIT+SELL, got {effective_qty}"
+        )

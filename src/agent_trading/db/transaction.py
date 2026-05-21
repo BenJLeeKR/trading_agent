@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -7,6 +8,8 @@ from typing import Any
 import asyncpg
 
 from agent_trading.db.connection import connection
+
+logger = logging.getLogger(__name__)
 
 
 class TransactionManager:
@@ -24,6 +27,17 @@ class TransactionManager:
 
     If neither ``commit()`` nor ``rollback()`` is called explicitly, the
     transaction is rolled back on exit (safe default).
+
+    Savepoint support
+    -----------------
+    Use ``savepoint()`` as a nested context manager to create an isolated
+    sub-transaction.  If the savepoint body raises, only the savepoint is
+    rolled back; the outer transaction remains usable::
+
+        async with TransactionManager() as tx:
+            async with tx.savepoint("sp1"):
+                await tx.connection.fetch("INSERT ...")  # may fail safely
+            # outer transaction is still valid
     """
 
     def __init__(self, *, force_rollback: bool = False) -> None:
@@ -32,6 +46,7 @@ class TransactionManager:
         self._conn_ctx: Any = None
         self._finalized = False
         self._force_rollback = force_rollback
+        self._savepoint_counter = 0
 
     @property
     def connection(self) -> asyncpg.Connection:
@@ -91,6 +106,59 @@ class TransactionManager:
             return
         await self._transaction.rollback()
         self._finalized = True
+
+    # ------------------------------------------------------------------
+    # Savepoint support
+    # ------------------------------------------------------------------
+
+    @asynccontextmanager
+    async def savepoint(self, name: str | None = None) -> AsyncIterator[str]:
+        """Create a named savepoint within the current transaction.
+
+        If the body raises, the savepoint is rolled back and the exception
+        is re-raised.  The outer transaction remains usable after rollback.
+
+        Parameters
+        ----------
+        name:
+            Optional savepoint name.  If omitted, an auto-incrementing name
+            ``sp_1``, ``sp_2``, … is generated.
+
+        Yields
+        ------
+        str
+            The savepoint name (useful for logging).
+
+        Raises
+        ------
+        RuntimeError
+            If there is no active connection.
+        """
+        if self._connection is None:
+            raise RuntimeError("No active connection. Use 'async with' first.")
+
+        if name is None:
+            self._savepoint_counter += 1
+            name = f"sp_{self._savepoint_counter}"
+
+        await self._connection.execute(f"SAVEPOINT {name}")
+        logger.debug("Savepoint %s created", name)
+        try:
+            yield name
+        except Exception:
+            logger.warning(
+                "Rolling back savepoint %s due to exception",
+                name,
+                exc_info=True,
+            )
+            await self._connection.execute(f"ROLLBACK TO SAVEPOINT {name}")
+            raise
+        finally:
+            # Release the savepoint so it doesn't accumulate.
+            try:
+                await self._connection.execute(f"RELEASE SAVEPOINT {name}")
+            except Exception:
+                pass
 
 
 @asynccontextmanager

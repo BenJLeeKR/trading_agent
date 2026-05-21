@@ -4,6 +4,7 @@ Verifies:
 - Provider conforms to ``SnapshotFetchProvider`` protocol
 - Position field mapping (pdno → instrument_id, qty, price)
 - Cash balance mapping (dnca_tot_amt → available_cash, etc.)
+- ``get_orderable_cash()`` integration — ``orderable_amount`` populated from ``VTTC8908R``
 - Instrument lookup failure → skip + error
 - Empty responses
 - Error propagation from REST client failures
@@ -11,6 +12,7 @@ Verifies:
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -21,6 +23,7 @@ from agent_trading.brokers.koreainvestment.snapshot import (
     KISSyncSnapshotProvider,
 )
 from agent_trading.domain.entities import (
+    CashBalanceSnapshotEntity,
     InstrumentEntity,
     PositionSnapshotEntity,
 )
@@ -36,7 +39,10 @@ from agent_trading.services.snapshot_sync import (
 
 
 class FakeKISRestClient:
-    """Simulates KIS REST client with configurable responses."""
+    """Simulates KIS REST client with configurable responses.
+
+    Supports ``get_orderable_cash()`` for ``VTTC8908R`` integration testing.
+    """
 
     def __init__(
         self,
@@ -44,11 +50,15 @@ class FakeKISRestClient:
         cash_balance: dict[str, Any] | None = None,
         fail_positions: bool = False,
         fail_cash: bool = False,
+        orderable_cash: Decimal | None = None,
+        fail_orderable_cash: bool = False,
     ) -> None:
         self._positions = positions or []
         self._cash_balance = cash_balance or {}
         self._fail_positions = fail_positions
         self._fail_cash = fail_cash
+        self._orderable_cash = orderable_cash
+        self._fail_orderable_cash = fail_orderable_cash
         self.closed = False
 
     async def get_positions(self) -> list[dict[str, Any]]:
@@ -60,6 +70,17 @@ class FakeKISRestClient:
         if self._fail_cash:
             raise RuntimeError("KIS cash balance fetch failed")
         return self._cash_balance
+
+    async def get_orderable_cash(
+        self,
+        account_ref: str = "",
+        symbol: str = "",
+        price: str = "",
+        order_type: str = "00",
+    ) -> Decimal | None:
+        if self._fail_orderable_cash:
+            raise RuntimeError("KIS orderable cash fetch failed")
+        return self._orderable_cash
 
     async def close(self) -> None:
         self.closed = True
@@ -206,8 +227,34 @@ class TestKISSyncSnapshotProvider:
         assert cash.unsettled_cash == 200000  # 1,000,000 - 800,000
         assert cash.currency == "KRW"
 
-    async def test_cash_balance_ord_psbl_amt_mapping(self) -> None:
-        """ord_psbl_amt in KIS response → CashBalanceSnapshotEntity.orderable_amount."""
+    async def test_cash_balance_orderable_amount_from_vttc8908r(self) -> None:
+        """``get_orderable_cash()`` returns value → ``orderable_amount`` uses VTTC8908R."""
+        account_id = uuid4()
+        client = FakeKISRestClient(
+            positions=[],
+            cash_balance={
+                "dnca_tot_amt": "1000000",
+                "nxdy_excc_amt": "800000",
+                "ord_psbl_amt": "-81419050",  # VTTC8434R fallback — should be overridden
+            },
+            orderable_cash=Decimal("500000"),  # VTTC8908R response
+        )
+        provider = KISSyncSnapshotProvider(client)
+        inst_repo = InMemoryInstrumentRepository()
+
+        result = await provider.fetch_snapshot(account_id, inst_repo)
+        assert result.cash_balance is not None
+        cash = result.cash_balance
+        # VTTC8908R 값이 우선 적용되어야 함
+        assert cash.orderable_amount == 500000, (
+            f"Expected 500000 from VTTC8908R, got {cash.orderable_amount}"
+        )
+        assert cash.available_cash == 1000000  # unchanged
+        assert cash.settled_cash == 800000  # unchanged
+        assert cash.currency == "KRW"
+
+    async def test_cash_balance_orderable_amount_fallback_to_vttc8434r(self) -> None:
+        """``get_orderable_cash()`` returns None → falls back to ``ord_psbl_amt`` from VTTC8434R."""
         account_id = uuid4()
         client = FakeKISRestClient(
             positions=[],
@@ -216,6 +263,7 @@ class TestKISSyncSnapshotProvider:
                 "nxdy_excc_amt": "800000",
                 "ord_psbl_amt": "-81419050",
             },
+            orderable_cash=None,  # VTTC8908R unavailable
         )
         provider = KISSyncSnapshotProvider(client)
         inst_repo = InMemoryInstrumentRepository()
@@ -223,7 +271,60 @@ class TestKISSyncSnapshotProvider:
         result = await provider.fetch_snapshot(account_id, inst_repo)
         assert result.cash_balance is not None
         cash = result.cash_balance
-        assert cash.orderable_amount == -81419050
+        # VTTC8908R이 None → VTTC8434R의 ord_psbl_amt로 fallback
+        assert cash.orderable_amount == -81419050, (
+            f"Expected -81419050 from VTTC8434R fallback, got {cash.orderable_amount}"
+        )
+        assert cash.available_cash == 1000000  # unchanged
+        assert cash.currency == "KRW"
+
+    async def test_cash_balance_orderable_amount_all_none(self) -> None:
+        """Both VTTC8908R and VTTC8434R unavailable → ``orderable_amount`` stays None."""
+        account_id = uuid4()
+        client = FakeKISRestClient(
+            positions=[],
+            cash_balance={
+                "dnca_tot_amt": "1000000",
+                "nxdy_excc_amt": "800000",
+                # No ord_psbl_amt in VTTC8434R response
+            },
+            orderable_cash=None,  # VTTC8908R also unavailable
+        )
+        provider = KISSyncSnapshotProvider(client)
+        inst_repo = InMemoryInstrumentRepository()
+
+        result = await provider.fetch_snapshot(account_id, inst_repo)
+        assert result.cash_balance is not None
+        cash = result.cash_balance
+        assert cash.orderable_amount is None, (
+            f"Expected None, got {cash.orderable_amount}"
+        )
+        assert cash.available_cash == 1000000  # unchanged
+        assert cash.currency == "KRW"
+
+    async def test_cash_balance_orderable_amount_vttc8908r_failure(self) -> None:
+        """``get_orderable_cash()`` raises → falls back to VTTC8434R ``ord_psbl_amt``."""
+        account_id = uuid4()
+        client = FakeKISRestClient(
+            positions=[],
+            cash_balance={
+                "dnca_tot_amt": "1000000",
+                "nxdy_excc_amt": "800000",
+                "ord_psbl_amt": "300000",
+            },
+            orderable_cash=None,
+            fail_orderable_cash=True,  # VTTC8908R raises exception
+        )
+        provider = KISSyncSnapshotProvider(client)
+        inst_repo = InMemoryInstrumentRepository()
+
+        result = await provider.fetch_snapshot(account_id, inst_repo)
+        assert result.cash_balance is not None
+        cash = result.cash_balance
+        # VTTC8908R 실패 → VTTC8434R의 ord_psbl_amt로 fallback
+        assert cash.orderable_amount == 300000, (
+            f"Expected 300000 from VTTC8434R fallback, got {cash.orderable_amount}"
+        )
         assert cash.available_cash == 1000000  # unchanged
         assert cash.currency == "KRW"
 
@@ -275,6 +376,7 @@ class TestFetchSnapshot:
         mock_rest = AsyncMock(spec=KISRestClient)
         mock_rest.get_positions = AsyncMock(return_value=[])
         mock_rest.get_cash_balance = AsyncMock(return_value={})
+        mock_rest.get_orderable_cash = AsyncMock(return_value=None)
 
         provider = KISSyncSnapshotProvider(mock_rest)
         inst_repo = InMemoryInstrumentRepository()
@@ -297,6 +399,7 @@ class TestFetchSnapshot:
         mock_rest.get_cash_balance = AsyncMock(
             return_value={"dnca_tot_amt": "2000000", "nxdy_excc_amt": "1500000"}
         )
+        mock_rest.get_orderable_cash = AsyncMock(return_value=None)
 
         provider = KISSyncSnapshotProvider(mock_rest)
         inst_repo = InMemoryInstrumentRepository()

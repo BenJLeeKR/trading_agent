@@ -197,6 +197,7 @@ async def _run_one_cycle(
     settings: AppSettings,
     *,
     account_ref: str | None,
+    after_hours: bool = False,
 ) -> SyncCycleResult:
     """Execute a single post-submit sync cycle."""
     from agent_trading.brokers.koreainvestment.adapter import (
@@ -260,7 +261,16 @@ async def _run_one_cycle(
                 "Running post-submit sync cycle (account_ref=%s) ...",
                 account_ref or "(default)",
             )
-            result = await runner.run_sync_cycle(account_ref=account_ref)
+            # Pass tx_manager so run_sync_cycle can use per-order savepoints.
+            # If a single order's sync fails (e.g. DB constraint violation),
+            # only that order's savepoint is rolled back; the outer
+            # transaction remains valid for remaining orders and the final
+            # commit.
+            result = await runner.run_sync_cycle(
+                account_ref=account_ref,
+                tx_manager=tx,
+                after_hours=after_hours,
+            )
             await tx.commit()
 
         return result
@@ -291,6 +301,7 @@ async def _run_loop(
     account_ref: str | None,
     interval: int,
     max_cycles: int,
+    after_hours: bool = False,
 ) -> None:
     """Main loop: run sync cycles until shutdown or count limit."""
     logger.info(
@@ -317,7 +328,11 @@ async def _run_loop(
         logger.info("=== Cycle %d ===", cycle_count)
 
         cycle_start = time.monotonic()
-        result = await _run_one_cycle(settings, account_ref=account_ref)
+        result = await _run_one_cycle(
+            settings,
+            account_ref=account_ref,
+            after_hours=after_hours,
+        )
         elapsed = time.monotonic() - cycle_start
 
         _log_cycle_summary(result, elapsed)
@@ -379,6 +394,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Broker account reference (default: settings.kis_account_number).",
     )
+    parser.add_argument(
+        "--after-hours",
+        action="store_true",
+        help="After-hours mode: allow EXPIRED fallback for unfilled orders",
+    )
     return parser.parse_args(argv)
 
 
@@ -399,6 +419,7 @@ def main(argv: list[str] | None = None) -> int:
                 account_ref=args.account_ref,
                 interval=interval,
                 max_cycles=max_cycles,
+                after_hours=args.after_hours,
             )
         )
     except KeyboardInterrupt:

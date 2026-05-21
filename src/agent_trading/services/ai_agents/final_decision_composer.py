@@ -235,28 +235,15 @@ class FinalDecisionComposerAgent:
             "- time_horizon: short, swing, long\n"
             "- reason_codes: machine-readable English codes\n\n"
             "## No-Event Policy\n"
-            "- 'No material events' is NOT the same as 'negative signal'.\n"
-            "- If EI reports no_material_events=True, differentiate:\n"
-            "  * evidence_strength=none + source_type=market_overlay: "
-            "You may consider WATCH or even APPROVE if price/flow actionability is high.\n"
-            "  * evidence_strength=none + source_type=core: "
-            "Prefer HOLD when no events — insufficient information to act.\n"
-            "  * evidence_strength=weak + source_type=core: "
-            "WATCH may be considered as an intermediate state. "
-            "WATCH means 'monitor without entering' — it is a valid non-HOLD option.\n"
-            "  * evidence_strength=weak + source_type=event_overlay/market_overlay: "
-            "Consider WATCH instead of HOLD.\n"
-            "  * evidence_strength=moderate/strong + source_type=core: "
-            "Evaluate normally for APPROVE/REDUCE/EXIT.\n"
-            "- 'negative signal' means EI found events with bearish bias. "
-            "In that case, HOLD or REDUCE is appropriate regardless of source_type.\n\n"
+            "- no_material_events + evidence_strength=none: "
+            "Prefer HOLD for core; WATCH/APPROVE OK for market_overlay.\n"
+            "- no_material_events + evidence_strength=weak: "
+            "WATCH viable for non-core; HOLD for core.\n"
+            "- evidence_strength=moderate/strong: Evaluate normally.\n"
+            "- 'negative signal' (bearish bias): HOLD/REDUCE regardless of source.\n\n"
             "## Source Type Consideration\n"
-            "- core: Conservative — prefer HOLD when no material events. "
-            "WATCH may be viable when evidence is weak.\n"
-            "- held_position: Already holding — require clear signal to change.\n"
-            "- event_overlay: Added due to recent events — consider the events.\n"
-            "- market_overlay: Added due to market flow — no-event is acceptable. "
-            "Market overlay symbols CAN be APPROVED or WATCHed even without events.\n\n"
+            "- core → conservative; held_position → need clear signal;\n"
+            "- event_overlay → consider events; market_overlay → no-event OK.\n\n"
             "Narrative fields (summary, opposing_evidence) MUST be written in Korean. "
             "Machine-readable fields listed above MUST remain in English."
         )
@@ -411,25 +398,16 @@ class FinalDecisionComposerAgent:
         else:
             lines.append("  Remaining capacity: N/A")
         lines.append("")
-        lines.append("**Decision Policy**:")
-        lines.append("- When over-concentrated (over_concentrated=true), suppress BUY/APPROVE decisions unless there is a strong justification.")
-        lines.append("- When over-concentrated, actively consider REDUCE (partial reduction) as a valid decision_type.")
-        lines.append("- REDUCE vs EXIT criteria:")
-        lines.append("  * REDUCE: over-concentrated with no strong negative signals. Recommend 20-50% reduction of position.")
-        lines.append("  * EXIT: over-concentrated with multiple risk signals or concentration far exceeds limit (>=30% etc.).")
-        lines.append("- When concentration is within normal range, maintain existing policy.")
+        lines.append("**Policy**: over-concentrated → suppress BUY/APPROVE, consider REDUCE/EXIT.")
         # ==================================================
 
         # === Recent events ===
         lines.append("")
         lines.append(f"Recent events ({len(events)}):")
         now = datetime.now(timezone.utc)
-        for e in events[:20]:
+        for e in events[:5]:
             headline = e.headline or "(no headline)"
-            summary = e.body_summary or ""
 
-            # Provenance tags — same rules as EI (severity/direction default omission,
-            # stale check, issuer_code condition, etc.)
             parts: list[str] = []
             if e.source_name:
                 parts.append(f"[src:{e.source_name}]")
@@ -446,13 +424,11 @@ class FinalDecisionComposerAgent:
             if e.direction and e.direction not in ("neutral", ""):
                 parts.append(f"[{e.direction}]")
 
-            # Stale check — based on ingested_at, not published_at
             stale_mark = ""
             if e.ingested_at and (now - e.ingested_at).total_seconds() > 86400:
                 stale_mark = " ⚠️STALE"
 
             tagged = " ".join(parts)
-            body = f" — {summary[:200]}" if summary else ""
-            lines.append(f"  {tagged}{stale_mark} {headline}{body}")
+            lines.append(f"  {tagged}{stale_mark} {headline}")
 
         return "\n".join(lines)

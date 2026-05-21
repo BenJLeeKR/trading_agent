@@ -239,15 +239,30 @@ class RateLimitBudgetManager:
         b = self._bucket(bucket)
         return b.try_consume(tokens)
 
-    def consume_or_raise(self, bucket: BucketType, tokens: int = 1) -> None:
+    def consume_or_raise(
+        self,
+        bucket: BucketType,
+        tokens: int = 1,
+        *,
+        skip_global_rest: bool = False,
+    ) -> None:
         """Consume *tokens* from *bucket* or raise ``BudgetExhaustedError``.
 
         2-tier enforcement:
         1. **Global REST bucket** (Tier 1) — if the global REST cap is
            configured, check it first.  If the global bucket is exhausted
            the request is blocked regardless of the per-bucket state.
+           Can be skipped via ``skip_global_rest=True`` for the
+           reconciliation fallback path.
         2. **Per-operation bucket** (Tier 2) — the existing per-bucket
            check for the specific operation type.
+
+        Parameters
+        ----------
+        skip_global_rest:
+            If ``True``, skip the global REST cap check (Tier 1).
+            Used by the reconciliation fallback path where the
+            reconciliation reserve has already been verified.
 
         Raises
         ------
@@ -255,8 +270,8 @@ class RateLimitBudgetManager:
             If either the global REST cap or the per-operation bucket
             does not have enough tokens.
         """
-        # Tier 1: global REST gate
-        if self.global_rest is not None:
+        # Tier 1: global REST gate (optional skip for reconcile fallback)
+        if not skip_global_rest and self.global_rest is not None:
             if not self.global_rest.try_consume(tokens):
                 raise BudgetExhaustedError(
                     bucket="global",
@@ -483,8 +498,8 @@ def build_kis_budget_manager(
             inquiry_refill_rate=0.5 * total,
             market_data_capacity=max(1, int(total * 1)),
             market_data_refill_rate=0.5 * total,
-            reconciliation_capacity=max(1, int(total * 1)),
-            reconciliation_refill_rate=0.1 * total,
+            reconciliation_capacity=max(1, int(10 * total)),
+            reconciliation_refill_rate=1.0 * total,
             global_rest_capacity=total,
             global_rest_refill_rate=1.0 * total,
         )

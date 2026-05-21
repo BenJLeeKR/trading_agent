@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4, uuid7
 
@@ -194,7 +195,50 @@ class KISSyncSnapshotProvider:
                 total_asset = safe_optional_decimal(raw_cash.get(_KIS_TOT_EVL_AMT))
                 settlement_amount = safe_optional_decimal(raw_cash.get(_KIS_PRVS_RCDL_EXCC_AMT))
                 total_unrealized_pnl = safe_optional_decimal(raw_cash.get(_KIS_EVL_PFLS_SMTL_AMT))
-                orderable_amount = safe_optional_decimal(raw_cash.get(_KIS_ORD_PSBL_AMT))
+
+                # ── orderable_amount: prefer VTTC8908R over VTTC8434R ──
+                # get_cash_balance() uses VTTC8434R (inquire-balance) which
+                # does NOT return ord_psbl_cash in paper environment.
+                # get_orderable_cash() uses VTTC8908R (inquire-psbl-order)
+                # which provides ord_psbl_cash even in paper mode.
+                orderable_amount: Decimal | None = None
+
+                # Paper 1 RPS pacing: ensure at least 1s between consecutive KIS calls
+                await asyncio.sleep(1.0)
+
+                try:
+                    orderable_cash = await self._rest.get_orderable_cash(
+                        account_ref="",
+                    )
+                except Exception:
+                    logger.warning(
+                        "VTTC8908R get_orderable_cash() failed; "
+                        "falling back to VTTC8434R ord_psbl_amt",
+                        exc_info=True,
+                    )
+                    orderable_cash = None
+
+                if orderable_cash is not None:
+                    orderable_amount = orderable_cash
+                    logger.info(
+                        "orderable_amount=%s (source: VTTC8908R)",
+                        orderable_cash,
+                    )
+                else:
+                    # Fallback: use ord_psbl_amt from VTTC8434R output2
+                    orderable_amount = safe_optional_decimal(
+                        raw_cash.get(_KIS_ORD_PSBL_AMT)
+                    )
+                    if orderable_amount is not None:
+                        logger.info(
+                            "orderable_amount=%s (source: VTTC8434R fallback)",
+                            orderable_amount,
+                        )
+                    else:
+                        logger.info(
+                            "orderable_amount=None (VTTC8908R unavailable, "
+                            "VTTC8434R ord_psbl_amt also missing)"
+                        )
 
                 cash_balance = CashBalanceSnapshotEntity(
                     cash_balance_snapshot_id=uuid4(),

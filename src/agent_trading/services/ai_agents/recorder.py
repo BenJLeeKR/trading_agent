@@ -161,16 +161,27 @@ class AgentRunRecorder:
                 )
                 output_dict.pop("decision_context_id", None)
 
-        # ── decision_context_id: None을 그대로 전달 (synthetic UUID 금지) ──
+        # ── decision_context_id: None → synthetic UUID fallback ──
         #
-        # AgentRunEntity.decision_context_id는 UUID | None 타입이므로
-        # None을 허용합니다. InMemoryAgentRunRepository는 None을 그대로
-        # 저장하며, PostgresAgentRunRepository는 NOT NULL + FK 제약으로
-        # 인해 None인 경우 DB 예외가 발생합니다.
-        # 호출자(orchestrator)가 유효한 UUID를 제공해야 합니다.
+        # AgentRunEntity.decision_context_id는 UUID | None 타입이지만,
+        # PostgresAgentRunRepository는 NOT NULL + FK 제약이 있습니다.
+        # 호출자(orchestrator)가 유효한 UUID를 제공해야 하지만, 일부
+        # edge case(decision context 생성 실패 등)에서는 None이 전달될
+        # 수 있습니다. 이 경우 Postgres 제약 위반을 방지하기 위해
+        # synthetic UUID를 생성합니다.
+        resolved_decision_context_id = decision_context_id
+        if resolved_decision_context_id is None and self._repo is not None:
+            resolved_decision_context_id = uuid4()
+            logger.warning(
+                "decision_context_id is None but Postgres repo is configured — "
+                "using synthetic UUID=%s as fallback. "
+                "Caller should provide a valid decision_context_id.",
+                resolved_decision_context_id,
+            )
+
         run = AgentRunEntity(
             agent_run_id=uuid4(),
-            decision_context_id=decision_context_id,
+            decision_context_id=resolved_decision_context_id,
             agent_type=agent_type,
             started_at=now,
             model_id=None,  # UUID lookup deferred
@@ -185,8 +196,6 @@ class AgentRunRecorder:
         self._runs.append(run)
 
         # Persist via repository when available.
-        # The caller (orchestrator) is responsible for providing a valid
-        # decision_context_id when Postgres persistence is required.
         if self._repo is not None:
             persisted = await self._repo.add(run)
         else:

@@ -78,10 +78,26 @@ DEFAULT_SNAPSHOT_INTERVAL_SECONDS = 300
 DEFAULT_EVENT_INTERVAL_SECONDS = 300
 DEFAULT_DECISION_INTERVAL_SECONDS = 300
 DEFAULT_POST_SUBMIT_INTERVAL_SECONDS = 30
-DEFAULT_TASK_TIMEOUT_SECONDS = 240
+# Phase 4: subprocess isolation provides SIGKILL-guaranteed timeout,
+# so the scheduler-level timeout can be reduced from 240s to 120s.
+# The subprocess itself enforces a 35s timeout for agent execution.
+# Increased from 300s to 420s because 14 symbols × 3 batches × ~110s
+# (even with FDC skip) exceeds 300s. FDC skip confirmed working, so
+# the remaining bottleneck is the total cycle wall-clock.
+DEFAULT_TASK_TIMEOUT_SECONDS = 420
 PYTHON_BIN = "python3"
 
+# timeout 후 partial stdout/stderr capture 시
+# 마지막 64KB tail만 보존 (전체 버퍼를 decode하지 않음)
+_MAX_PARTIAL_LOG_BYTES: int = 65536  # 64KB — 마지막 64KB tail만 보존
+_PARTIAL_READ_TIMEOUT: float = 10.0  # partial read timeout (초) — 424초 누적 버퍼 대응
+
 DEFAULT_MAX_SUBMIT_PER_DAY = 1
+# Held-position REDUCE/EXIT sell은 위험 축소 목적이므로 별도 budget 허용.
+# 신규 진입(BUY) budget과 분리하여 held_position sell만 추가 통과시킨다.
+HELD_POSITION_SELL_MAX_PER_DAY = 5
+# Cycle당 held_position REDUCE/EXIT sell 최대 건수 (같은 cycle 내 중복 submit 방지)
+HELD_POSITION_SELL_MAX_PER_CYCLE = 2
 
 # After-hours snapshot window (seconds after EOD phase)
 AFTER_HOURS_SNAPSHOT_WINDOW_SECONDS: int = 3600  # 1 hour
@@ -149,6 +165,8 @@ class SchedulerState:
     after_hours_mode: bool = False
     after_hours_next_snapshot_at: datetime | None = None
     submit_count: int = 0
+    # held_position REDUCE/EXIT sell 전용 submit count (별도 budget)
+    held_position_sell_submit_count: int = 0
     cycles: int = 0
     command_results: list[CommandResult] = field(default_factory=list)
     # P1: Session gate state
@@ -286,6 +304,32 @@ def _is_submit_consuming_result(result: CommandResult) -> bool:
     return False
 
 
+def _is_held_position_sell_result(result: CommandResult) -> bool:
+    """Check if the submitted result was a held_position REDUCE/EXIT sell.
+
+    stdout JSON에서 3중 조건을 모두 확인한다:
+    1. ``source_type == 'held_position'``
+    2. ``decision_type in ('reduce', 'exit')``
+    3. ``side == 'sell'``
+
+    세 조건이 모두 충족되어야 held_position sell budget을 소비한 것으로 간주한다.
+    """
+    if not result.ok:
+        return False
+    for obj in _extract_json_objects(result.stdout):
+        source_type = str(obj.get("source_type", "")).lower()
+        if source_type != "held_position":
+            continue
+        decision_type = str(obj.get("decision_type", "")).lower()
+        if decision_type not in ("reduce", "exit"):
+            continue
+        side = str(obj.get("side", "")).lower()
+        if side != "sell":
+            continue
+        return True
+    return False
+
+
 def _parse_snapshot_sync_summary(result: CommandResult) -> dict[str, Any]:
     """Parse snapshot sync summary metrics from command stdout.
 
@@ -380,6 +424,72 @@ async def _get_db_submit_count(run_date: date) -> int:
         return DEFAULT_MAX_SUBMIT_PER_DAY
 
 
+async def _get_db_held_position_sell_count(run_date: date) -> int:
+    """Query today's held_position REDUCE/EXIT sell submit count.
+
+    ``trade_decisions`` 테이블과 JOIN하여 3중 조건을 모두 확인한다:
+    1. ``td.source_type = 'held_position'``
+    2. ``td.decision_type IN ('reduce', 'exit')``
+    3. ``td.side = 'sell'``
+
+    세 조건이 모두 충족되어야 held_position sell budget을 소비한 것으로 간주한다.
+    이는 crash-safe한 budget 트래킹을 위해 DB 레벨에서도 동일한 조건을 적용한다.
+
+    On any failure, returns 0 (held_position sell budget을 소비하지 않은 것으로 간주).
+    """
+    import asyncpg
+
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    dsn = os.getenv("DATABASE_DSN")
+    if dsn is None:
+        host = os.getenv("DATABASE_HOST") or os.getenv("DB_HOST") or "localhost"
+        port = os.getenv("DATABASE_PORT") or os.getenv("DB_PORT") or "5432"
+        user = os.getenv("DATABASE_USER") or os.getenv("DB_USER") or "trading"
+        password = os.getenv("DATABASE_PASSWORD") or os.getenv("DB_PASSWORD") or "trading"
+        database = os.getenv("DATABASE_NAME") or os.getenv("DB_NAME") or "trading"
+        dsn = f"postgresql://{user}:{password}@{host}:{port}/{database}"
+
+    try:
+        conn = await asyncpg.connect(dsn=dsn)
+        try:
+            kst_midnight = datetime.combine(run_date, dtime(0, 0, 0), tzinfo=KST)
+            kst_end_of_day = kst_midnight + timedelta(days=1)
+
+            row = await conn.fetchrow(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM trading.order_requests o
+                JOIN trading.trade_decisions td ON o.trade_decision_id = td.trade_decision_id
+                WHERE o.created_at >= $1
+                  AND o.created_at < $2
+                  AND o.status = ANY($3::text[])
+                  AND td.source_type = 'held_position'
+                  AND td.decision_type IN ('reduce', 'exit')
+                  AND td.side = 'sell'
+                """,
+                kst_midnight,
+                kst_end_of_day,
+                list(_BUDGET_CONSUMING_STATUSES),
+            )
+            count: int = row["cnt"] if row else 0
+            logger.info(
+                "db_held_position_sell_count=%d run_date=%s",
+                count,
+                run_date.isoformat(),
+            )
+            return count
+        finally:
+            await conn.close()
+    except Exception:
+        logger.exception(
+            "db_held_position_sell_count query failed — returning 0"
+        )
+        return 0
+
+
 async def _run_command(
     name: str,
     argv: list[str],
@@ -406,41 +516,65 @@ async def _run_command(
         )
     except asyncio.TimeoutError:
         timed_out = True
-        # partial stdout/stderr 로깅 — timeout 후에도 subprocess가 생성한
-        # 출력이 있으면 디버깅에 활용할 수 있도록 로그에 남긴다.
-        partial_stdout = b""
-        partial_stderr = b""
+        # timeout 후 partial stdout/stderr capture:
+        # - read timeout 2→10초로 확대 (424초 누적 버퍼 수백 KB~MB 대응)
+        # - tail 64KB trim: 전체 버퍼 대신 마지막 64KB tail만 보존 (decode 부하 최소화)
+        # - 실패 시에도 logger.warning으로 가시성 확보
+        partial_stdout = ""
+        partial_stderr = ""
         try:
             if proc.stdout and not proc.stdout.at_eof():
-                partial_stdout = await asyncio.wait_for(proc.stdout.read(), timeout=2)
-        except Exception:
-            pass
+                partial_stdout_bytes = await asyncio.wait_for(
+                    proc.stdout.read(_MAX_PARTIAL_LOG_BYTES), timeout=_PARTIAL_READ_TIMEOUT
+                )
+                partial_stdout = partial_stdout_bytes.decode("utf-8", errors="replace")
+                if partial_stdout:
+                    logger.info(
+                        "[PARTIAL_CAPTURE] stdout tail (%d bytes):\n%s",
+                        len(partial_stdout_bytes), partial_stdout[:2000],
+                    )
+        except Exception as exc:
+            logger.warning(
+                "[PARTIAL_READ_FAILED] stdout partial read failed after timeout: %s", exc
+            )
         try:
             if proc.stderr and not proc.stderr.at_eof():
-                partial_stderr = await asyncio.wait_for(proc.stderr.read(), timeout=2)
-        except Exception:
-            pass
+                partial_stderr_bytes = await asyncio.wait_for(
+                    proc.stderr.read(_MAX_PARTIAL_LOG_BYTES), timeout=_PARTIAL_READ_TIMEOUT
+                )
+                partial_stderr = partial_stderr_bytes.decode("utf-8", errors="replace")
+                if partial_stderr:
+                    logger.info(
+                        "[PARTIAL_CAPTURE] stderr tail (%d bytes):\n%s",
+                        len(partial_stderr_bytes), partial_stderr[:2000],
+                    )
+        except Exception as exc:
+            logger.warning(
+                "[PARTIAL_READ_FAILED] stderr partial read failed after timeout: %s", exc
+            )
         if partial_stdout:
             logger.warning(
-                "Subprocess timed out — partial stdout (last 4KB): %s",
-                partial_stdout[-4096:].decode(errors="replace"),
+                "[PARTIAL_CAPTURE] Subprocess timed out — partial stdout "
+                "(tail %d bytes):\n%s",
+                min(len(partial_stdout.encode("utf-8")), _MAX_PARTIAL_LOG_BYTES),
+                partial_stdout[-4096:],
             )
         if partial_stderr:
             logger.warning(
-                "Subprocess timed out — partial stderr (last 4KB): %s",
-                partial_stderr[-4096:].decode(errors="replace"),
+                "[PARTIAL_CAPTURE] Subprocess timed out — partial stderr "
+                "(tail %d bytes):\n%s",
+                min(len(partial_stderr.encode("utf-8")), _MAX_PARTIAL_LOG_BYTES),
+                partial_stderr[-4096:],
             )
-        # terminate → wait → kill (if needed) — communicate() is called only
-        # once before the timeout, so no double communicate() issue.
+        # terminate → wait → kill (if needed)
         proc.terminate()
         try:
             await asyncio.wait_for(proc.wait(), timeout=3)
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
-        # Preserve partial output for debugging even after timeout
-        stdout_b = partial_stdout
-        stderr_b = partial_stderr
+        stdout_b = partial_stdout.encode("utf-8")
+        stderr_b = partial_stderr.encode("utf-8")
 
     duration = time.monotonic() - start
     result = CommandResult(
@@ -523,8 +657,11 @@ def _decision_command(*, dry_run: bool) -> list[str]:
     return argv
 
 
-def _post_submit_command() -> list[str]:
-    return [PYTHON_BIN, "scripts/run_post_submit_sync_loop.py", "--once"]
+def _post_submit_command(*, after_hours: bool = False) -> list[str]:
+    argv = [PYTHON_BIN, "scripts/run_post_submit_sync_loop.py", "--once"]
+    if after_hours:
+        argv.append("--after-hours")
+    return argv
 
 
 async def _run_and_record(
@@ -656,7 +793,7 @@ async def _run_end_of_day(
     await _run_and_record(
         state,
         "eod_post_submit_sync",
-        _post_submit_command(),
+        _post_submit_command(after_hours=True),
         timeout_seconds=timeout_seconds,
         env=env,
     )
@@ -717,6 +854,7 @@ async def _run_intraday_due_tasks(
     tasks: dict[str, ScheduledTask],
     *,
     max_submit_per_day: int,
+    held_position_sell_max_per_day: int,
     timeout_seconds: int,
     env: dict[str, str],
     now: datetime,
@@ -746,7 +884,18 @@ async def _run_intraday_due_tasks(
         # DB-based submit budget check (survives process crash/restart)
         db_submit_count = await _get_db_submit_count(state.run_date)
         effective_submit_count = max(state.submit_count, db_submit_count)
-        dry_run = effective_submit_count >= max_submit_per_day
+
+        # held_position REDUCE/EXIT sell은 별도 budget으로 관리
+        db_hp_sell_count = await _get_db_held_position_sell_count(state.run_date)
+        effective_hp_sell_count = max(
+            state.held_position_sell_submit_count, db_hp_sell_count
+        )
+
+        # 일반 submit budget이 남았거나, held_position sell budget이 남았으면 submit 허용
+        general_budget_ok = effective_submit_count < max_submit_per_day
+        hp_sell_budget_ok = effective_hp_sell_count < held_position_sell_max_per_day
+        dry_run = not general_budget_ok and not hp_sell_budget_ok
+
         # decision_submit_gate uses a shorter timeout (65s) than the default
         # task timeout (240s) because the subprocess has its own per-agent
         # hard timeout (60s) via asyncio.wait_for(). If the LLM call hangs
@@ -755,7 +904,7 @@ async def _run_intraday_due_tasks(
         # Must be > 3 × _PER_AGENT_TIMEOUT (25s) = 75s to allow all 3 agents
         # to complete their per-agent timeout + fallback path before the
         # scheduler-level subprocess timeout fires.
-        _DECISION_TIMEOUT = 300  # seconds; subprocess 완료에 충분한 시간 (184초 소요 확인됨, 300초로 증설)
+        _DECISION_TIMEOUT = 420  # seconds; 14 symbols × 3 batches × ~110s = ~330s needed
         result = await _run_and_record(
             state,
             "decision_dry_run" if dry_run else "decision_submit_gate",
@@ -764,15 +913,27 @@ async def _run_intraday_due_tasks(
             env=env,
         )
         if not dry_run and _is_submit_consuming_result(result):
-            state.submit_count += 1
-            logger.warning(
-                "submit budget consumed: submit_count=%d db_submit_count=%d "
-                "effective=%d max=%d",
-                state.submit_count,
-                db_submit_count,
-                effective_submit_count,
-                max_submit_per_day,
-            )
+            if _is_held_position_sell_result(result):
+                state.held_position_sell_submit_count += 1
+                logger.warning(
+                    "held_position sell submit budget consumed: "
+                    "hp_sell_count=%d db_hp_sell_count=%d "
+                    "effective_hp=%d max_hp=%d",
+                    state.held_position_sell_submit_count,
+                    db_hp_sell_count,
+                    effective_hp_sell_count,
+                    held_position_sell_max_per_day,
+                )
+            else:
+                state.submit_count += 1
+                logger.warning(
+                    "submit budget consumed: submit_count=%d db_submit_count=%d "
+                    "effective=%d max=%d",
+                    state.submit_count,
+                    db_submit_count,
+                    effective_submit_count,
+                    max_submit_per_day,
+                )
         tasks["decision"].mark_ran(now)
 
     if tasks["post_submit"].due(now):
@@ -814,6 +975,7 @@ def _log_summary(state: SchedulerState) -> None:
     logger.info("  tasks               : %d", total)
     logger.info("  failed_tasks         : %d", len(failed))
     logger.info("  submit_count         : %d", state.submit_count)
+    logger.info("  hp_sell_submit_count : %d", state.held_position_sell_submit_count)
     logger.info("  pre_market_done      : %s", state.pre_market_done)
     logger.info("  end_of_day_done      : %s", state.end_of_day_done)
     logger.info("  after_hours_active   : %s", state.after_hours_mode)
@@ -1271,6 +1433,7 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                         state,
                         tasks,
                         max_submit_per_day=args.max_submit_per_day,
+                        held_position_sell_max_per_day=args.held_position_sell_max_per_day,
                         timeout_seconds=args.task_timeout,
                         env=env,
                         now=now,
@@ -1400,6 +1563,7 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                             state,
                             tasks,
                             max_submit_per_day=args.max_submit_per_day,
+                            held_position_sell_max_per_day=args.held_position_sell_max_per_day,
                             timeout_seconds=args.task_timeout,
                             env=env,
                             now=now,
@@ -1505,6 +1669,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--tick-seconds", type=int, default=5)
     parser.add_argument("--task-timeout", type=int, default=DEFAULT_TASK_TIMEOUT_SECONDS)
     parser.add_argument("--max-submit-per-day", type=int, default=1)
+    parser.add_argument(
+        "--held-position-sell-max-per-day",
+        type=int,
+        default=HELD_POSITION_SELL_MAX_PER_DAY,
+        help="Max held_position REDUCE/EXIT sell submits per day (별도 budget).",
+    )
     parser.add_argument("--skip-pre-market", action="store_true", default=False)
     parser.add_argument(
         "--once",

@@ -8,8 +8,9 @@ from __future__ import annotations
 
 from typing import AsyncIterator
 
-from fastapi import Depends, Request
+from fastapi import Depends, HTTPException, Request
 
+from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.services.order_manager import OrderManager
 
@@ -101,3 +102,21 @@ async def get_order_manager(
         budget_manager=None,
     )
     yield om
+
+
+def get_kis_client(request: Request) -> KISRestClient | None:
+    """Extract the ``KISRestClient`` from the broker adapter stored on app state.
+
+    Returns ``None`` when no broker adapter is configured (graceful fallback).
+    The caller should handle ``None`` by falling back to cached data.
+
+    Usage::
+
+        kis_client = get_kis_client(request)
+        if kis_client is not None:
+            records = await kis_client.inquire_daily_ccld(...)
+    """
+    broker_adapter: object | None = getattr(request.app.state, "broker_adapter", None)
+    if broker_adapter is None:
+        return None
+    return getattr(broker_adapter, "rest_client", None)

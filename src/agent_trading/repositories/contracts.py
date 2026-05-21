@@ -272,6 +272,19 @@ class PositionSnapshotRepository(Protocol):
     async def list_latest_by_account(self, account_id: UUID) -> Sequence[PositionSnapshotEntity]:
         ...
 
+    async def get_latest_by_account_and_instrument_before(
+        self,
+        account_id: UUID,
+        instrument_id: UUID,
+        before: datetime,
+    ) -> PositionSnapshotEntity | None:
+        """Return the most recent position snapshot for a given account and
+        instrument whose ``snapshot_at`` is strictly before ``before``.
+
+        Returns ``None`` if no such snapshot exists.
+        """
+        ...
+
 
 class CashBalanceSnapshotRepository(Protocol):
     async def add(self, snapshot: CashBalanceSnapshotEntity) -> CashBalanceSnapshotEntity:
@@ -308,6 +321,16 @@ class TradeDecisionRepository(Protocol):
         ...
 
     async def get_by_context(self, decision_context_id: UUID) -> TradeDecisionEntity | None:
+        """최신 TD 반환 (ORDER BY created_at DESC, trade_decision_id DESC LIMIT 1).
+
+        동일 decision_context_id에 여러 TD가 존재할 수 있으므로,
+        가장 최근에 생성된 TD를 반환합니다.
+        Tie-break: created_at DESC, trade_decision_id DESC.
+        """
+        ...
+
+    async def list_by_context(self, decision_context_id: UUID) -> list[TradeDecisionEntity]:
+        """주어진 decision_context에 속한 모든 TD를 최신순으로 반환."""
         ...
 
     async def list_all(self) -> Sequence[TradeDecisionEntity]:

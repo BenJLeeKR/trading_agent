@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import time as time_module
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
@@ -36,6 +38,7 @@ from agent_trading.services.ai_agents.base import (
 )
 from agent_trading.services.ai_agents.event_interpretation import (
     StubEventInterpretationAgent,
+    _build_ei_summary,
 )
 from agent_trading.services.ai_agents.ai_risk import StubAIRiskAgent
 from agent_trading.services.ai_agents.final_decision_composer import (
@@ -56,16 +59,31 @@ from agent_trading.services.sizing_engine import (
     SizingInputs,
     calculate_sizing,
 )
+from agent_trading.services.sell_guard import (
+    AvailableSellQtyResolver,
+    SellAvailability,
+)
 
 logger = logging.getLogger(__name__)
 
 # Phase 5.5: post-submit sync timeout (seconds)
 _PHASE55_SYNC_TIMEOUT: int = 5
 
-# Per-agent timeout: each LLM call is capped at 25s so that a single
-# hanging agent cannot stall the entire decision cycle beyond 75s.
+# Per-agent timeout: each LLM call is capped at 35s so that a single
+# hanging agent cannot stall the entire decision cycle beyond 105s.
+# Increased from 25s to 35s in Phase 4 to accommodate subprocess
+# creation/teardown overhead when subprocess isolation is enabled.
 # This value is aligned with the provider client's read timeout (25s).
-_PER_AGENT_TIMEOUT = 25  # seconds per agent
+_PER_AGENT_TIMEOUT = 35  # seconds per agent
+
+# Phase 4: subprocess isolation for agent calls.
+# When True, _run_agents() delegates to _run_agents_in_subprocess()
+# which runs all 3 agents in a separate subprocess with SIGKILL-guaranteed
+# timeout.  Set to False in tests for compatibility.
+# Can be overridden via the AGENT_SUBPROCESS_ISOLATION env var.
+_USE_SUBPROCESS_ISOLATION: bool = (
+    os.environ.get("AGENT_SUBPROCESS_ISOLATION", "1") == "1"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -403,6 +421,14 @@ class DecisionOrchestratorService:
         # --- Phase 5.5: post-submit sync ---
         sync_service: OrderSyncService | None = None,
         snapshot_refresh_cb: Callable[[UUID], Awaitable[None]] | None = None,
+        # --- Phase 4: subprocess isolation ---
+        use_subprocess_isolation: bool | None = None,
+        # --- Provider configuration for subprocess agent creation ---
+        llm_provider: str = "deepseek",
+        provider_api_key: str = "",
+        provider_base_url: str = "",
+        provider_model_id: str = "",
+        provider_timeout_seconds: int = 120,
     ) -> None:
         self._repos = repos
         self._stale_threshold_seconds = stale_threshold_seconds
@@ -416,6 +442,80 @@ class DecisionOrchestratorService:
         # --- Phase 5.5 ---
         self._sync_service = sync_service
         self._snapshot_refresh_cb = snapshot_refresh_cb
+        # --- Phase 4: subprocess isolation ---
+        # Default to module-level constant; tests can override via constructor.
+        self._use_subprocess_isolation = (
+            _USE_SUBPROCESS_ISOLATION if use_subprocess_isolation is None
+            else use_subprocess_isolation
+        )
+        # --- Phase 1.5+: Duplicate Sell Guard ---
+        self._sell_guard_resolver = AvailableSellQtyResolver(repos=repos)
+        # --- Provider configuration for subprocess ---
+        self._llm_provider = llm_provider
+        self._provider_api_key = provider_api_key
+        self._provider_base_url = provider_base_url
+        self._provider_model_id = provider_model_id
+        self._provider_timeout_seconds = provider_timeout_seconds
+
+    def _check_held_position_sell_override(
+        self,
+        source_type: str,
+        ar_output: AIRiskOutput | None,
+        fdc_output: FinalDecisionComposerOutput | None,
+    ) -> tuple[str, str, str] | None:
+        """보유 포지션 + 강한 리스크 신호 → REDUCE/EXIT sell override 판단.
+
+        Args:
+            source_type: 출처 타입 (``"held_position"`` 등)
+            ar_output: AI Risk agent 출력
+            fdc_output: FDC agent 출력
+
+        Returns:
+            ``(decision_type, side, rationale)`` 튜플 (override 필요 시),
+            ``None`` (override 불필요 시)
+        """
+        # held position이 아니면 override 절대 안 함
+        if source_type != "held_position":
+            return None
+
+        if ar_output is None or fdc_output is None:
+            return None
+
+        # FDC가 이미 REDUCE/EXIT로 판단했으면 override 불필요
+        if fdc_output.decision_type in ("REDUCE", "EXIT"):
+            return None
+
+        # AI risk가 강한 부정 신호인지 확인
+        risk_override = False
+        override_reason = ""
+
+        if ar_output.risk_opinion in ("reject", "reduce"):
+            risk_override = True
+            override_reason = f"리스크 경고({ar_output.risk_opinion})"
+        elif ar_output.risk_opinion == "review" and ar_output.risk_score >= 0.6:
+            risk_override = True
+            override_reason = f"리스크 검토 필요(score:{ar_output.risk_score:.1f})"
+        elif ar_output.risk_score >= 0.8:
+            risk_override = True
+            override_reason = f"리스크 점수高危({ar_output.risk_score:.1f})"
+
+        if not risk_override:
+            return None
+
+        # FDC가 HOLD인데 risk 신호가 강하면 → REDUCE로 전환
+        # FDC가 APPROVE/BUY여도 held position + risk 신호면 → REDUCE
+        rationale = (
+            f"[held_position_override] 보유 포지션 {override_reason}. "
+            f"FDC={fdc_output.decision_type}→REDUCE 전환. "
+            f"AR opinion={ar_output.risk_opinion} score={ar_output.risk_score:.2f}"
+        )
+
+        # 과집중(risk_flags에 concentration 관련)이면 EXIT 고려
+        risk_flags_lower = tuple(f.lower() for f in ar_output.risk_flags)
+        if any("concent" in f or "expos" in f or "over" in f for f in risk_flags_lower):
+            return ("EXIT", "SELL", rationale)
+
+        return ("REDUCE", "SELL", rationale)
 
     async def assemble(
         self,
@@ -610,13 +710,109 @@ class DecisionOrchestratorService:
             correlation_id = str(uuid4())
 
         # --- Run AI agents → persistence bundle + normalised backend inputs ---
-        agent_bundle = await self._run_agents(
-            assembled_context=assembled_context,
-            decision_context_id=resolved_context_id,
-            correlation_id=correlation_id,
-            symbol=request.symbol,
-            market=request.market,
+        # Phase 4: subprocess isolation — when enabled, agents run in a separate
+        # subprocess with SIGKILL-guaranteed timeout.  When disabled (tests),
+        # the original in-process _run_agents() is used.
+        if self._use_subprocess_isolation:
+            agent_bundle = await self._run_agents_in_subprocess(
+                assembled_context=assembled_context,
+                decision_context_id=resolved_context_id,
+                correlation_id=correlation_id,
+                symbol=request.symbol,
+                market=request.market,
+            )
+            # ── Phase 5.6: Rehydrate AgentRunEntity records from subprocess output ──
+            # The subprocess path does NOT call recorder.record() internally
+            # (unlike _run_agents()).  We rehydrate here so that AgentRuns
+            # persistence works identically for both paths.
+            _fdc_run_id: UUID | None = None
+            try:
+                _ei_run = await self._agent_recorder.record(
+                    decision_context_id=resolved_context_id,
+                    agent_type=self._event_interpretation_agent.agent_name,
+                    structured_output=_dataclass_to_dict(agent_bundle.event_output),
+                )
+                _ar_run = await self._agent_recorder.record(
+                    decision_context_id=resolved_context_id,
+                    agent_type=self._ai_risk_agent.agent_name,
+                    structured_output=_dataclass_to_dict(agent_bundle.risk_output),
+                )
+                _fdc_run = await self._agent_recorder.record(
+                    decision_context_id=resolved_context_id,
+                    agent_type=self._final_decision_agent.agent_name,
+                    structured_output=_dataclass_to_dict(agent_bundle.composer_output),
+                )
+                _fdc_run_id = _fdc_run.agent_run_id
+                logger.info(
+                    'Rehydrated %d agent runs from subprocess output '
+                    '(decision_context_id=%s fdc_run_id=%s)',
+                    3, resolved_context_id, _fdc_run_id,
+                )
+            except Exception:
+                logger.warning(
+                    'Failed to rehydrate agent runs from subprocess output — '
+                    'AgentRuns will be missing for this cycle. '
+                    'decision_context_id=%s',
+                    resolved_context_id,
+                    exc_info=True,
+                )
+        else:
+            agent_bundle = await self._run_agents(
+                assembled_context=assembled_context,
+                decision_context_id=resolved_context_id,
+                correlation_id=correlation_id,
+                symbol=request.symbol,
+                market=request.market,
+            )
+            # In-process path: _run_agents() already calls recorder.record()
+            # internally, so we extract the FDC run_id from the recorder's
+            # in-memory buffer for _ensure_trade_decision linkage.
+            _fdc_run_id = None
+            try:
+                _recent = await self._agent_recorder.list_by_decision_context(
+                    resolved_context_id
+                ) if resolved_context_id else []
+                if _recent:
+                    _fdc_run_id = _recent[0].agent_run_id
+            except Exception:
+                pass
+
+        # ── Held position sell override ──
+        # 보유 포지션(held_position) 종목에 대해 AI risk가 강한 부정 신호를 보내면
+        # FDC의 HOLD/APPROVE/BUY 결정을 REDUCE/EXIT sell로 override한다.
+        # recording 이후, _ensure_trade_decision() 이전에 수행하여
+        # override된 값이 DB에 저장되도록 한다.
+        override = self._check_held_position_sell_override(
+            source_type=source_type,
+            ar_output=agent_bundle.risk_output,
+            fdc_output=agent_bundle.composer_output,
         )
+        if override is not None:
+            override_dt, override_side, override_rationale = override
+            # frozen dataclass 수정을 위해 object.__setattr__ 사용
+            object.__setattr__(agent_bundle.ai_inputs, "decision_type", override_dt)
+            object.__setattr__(agent_bundle.ai_inputs, "side", override_side)
+            # ★ composer_output도 함께 override
+            # _ensure_trade_decision()에서 composer_output.decision_type/side를
+            # trade_decisions에 저장하므로, override 값을 반영해야 함
+            if agent_bundle.composer_output is not None:
+                object.__setattr__(
+                    agent_bundle.composer_output, "decision_type", override_dt,
+                )
+                object.__setattr__(
+                    agent_bundle.composer_output, "side", override_side,
+                )
+                fdc_summary = agent_bundle.composer_output.summary
+                object.__setattr__(
+                    agent_bundle.composer_output, "summary",
+                    (fdc_summary + f" | {override_rationale}") if fdc_summary else override_rationale,
+                )
+            logger.info(
+                "Held position sell override: symbol=%s source_type=%s "
+                "decision_type=%s side=%s rationale=%s",
+                request.symbol, source_type, override_dt, override_side,
+                override_rationale,
+            )
 
         # --- Persist or reuse trade decision when a concrete context exists ---
         trade_decision_id = await self._ensure_trade_decision(
@@ -624,6 +820,7 @@ class DecisionOrchestratorService:
             assembled_context=assembled_context,
             agent_bundle=agent_bundle,
             decision_context_id=resolved_context_id,
+            fdc_run_id=_fdc_run_id,
         )
 
         # --- Generate decision_id if not provided ---
@@ -784,7 +981,23 @@ class DecisionOrchestratorService:
             sizing_result.skip_reason or "none",
         )
 
-        if sizing_result.quantity <= 0:
+        # For SELL/REDUCE/EXIT: fallback to request quantity when sizing returns 0.
+        # The AI (FDC) already determined the quantity in trade_decision; sizing
+        # may return 0 when position snapshot is unavailable (current_position_qty
+        # is None/0), which incorrectly blocks valid sell orders.
+        effective_qty = sizing_result.quantity
+        if effective_qty <= 0 and intent.request.side == OrderSide.SELL:
+            req_qty = intent.request.quantity
+            if req_qty > 0:
+                effective_qty = req_qty
+                logger.info(
+                    "Phase 1.5: sizing returned 0 for SELL; "
+                    "fallback to request quantity=%s (skip_reason=%s)",
+                    req_qty,
+                    sizing_result.skip_reason,
+                )
+
+        if effective_qty <= 0:
             logger.info(
                 "Phase 1.5 SKIPPED (sizing): reason=%s, trade_decision_id=%s",
                 sizing_result.skip_reason,
@@ -799,6 +1012,17 @@ class DecisionOrchestratorService:
                 error_message=sizing_result.skip_reason or "Sizing rejected order",
             )
 
+        # Apply sizing result — override intent request quantity
+        # (use effective_qty which may be trade_decision fallback for SELL)
+        if effective_qty != intent.request.quantity:
+            sized_request = replace(intent.request, quantity=effective_qty)
+            intent = replace(intent, request=sized_request)
+            logger.info(
+                "Phase 1.5: quantity overridden by sizing — original=%s sized=%s",
+                intent.request.quantity,
+                effective_qty,
+            )
+
         # Log applied constraints
         if sizing_result.applied_constraints:
             logger.info(
@@ -807,15 +1031,61 @@ class DecisionOrchestratorService:
                 sizing_result.quantity,
             )
 
-        # Apply sizing result — override intent request quantity
-        if sizing_result.quantity != intent.request.quantity:
-            sized_request = replace(intent.request, quantity=sizing_result.quantity)
-            intent = replace(intent, request=sized_request)
-            logger.info(
-                "Phase 1.5: quantity overridden by sizing — original=%s sized=%s",
-                intent.request.quantity,
-                sizing_result.quantity,
+        # ── Phase 1.5+: Duplicate Sell Guard (SELL only) ──
+        if intent.request.side == OrderSide.SELL and effective_qty > 0:
+            account_id: UUID | None = (
+                intent.context.decision_context.account_id
+                if intent.context is not None
+                and intent.context.decision_context is not None
+                else None
             )
+            if account_id is not None:
+                try:
+                    sell_availability: SellAvailability = (
+                        await self._sell_guard_resolver.resolve(
+                            account_id=account_id,
+                            symbol=intent.request.symbol,
+                            requested_qty=effective_qty,
+                        )
+                    )
+                    if sell_availability.is_blocked:
+                        logger.info(
+                            "Phase 1.5+ SELL GUARD BLOCKED: "
+                            "symbol=%s requested=%s reason=%s "
+                            "trade_decision_id=%s",
+                            intent.request.symbol,
+                            effective_qty,
+                            sell_availability.blocking_reason,
+                            trade_decision_id,
+                        )
+                        return SubmitResult(
+                            status="SKIPPED",
+                            intent=intent,
+                            trade_decision_id=trade_decision_id,
+                            decision_context_id=intent.decision_context_id,
+                            error_phase="sell_guard",
+                            error_message=(
+                                sell_availability.blocking_reason
+                                or "Sell guard blocked duplicate sell"
+                            ),
+                        )
+                    logger.info(
+                        "Phase 1.5+ SELL GUARD ALLOW: "
+                        "symbol=%s available=%s requested=%s",
+                        intent.request.symbol,
+                        sell_availability.available_sell_qty,
+                        effective_qty,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Phase 1.5+ sell guard check failed for "
+                        "symbol=%s: %s — allowing through",
+                        intent.request.symbol, exc,
+                    )
+            else:
+                logger.debug(
+                    "Phase 1.5+: no account_id available, skipping sell guard",
+                )
 
         # ── Phase 2: validate intent (skip HOLD/WATCH) ──
         _dt = intent.ai_backend_inputs.decision_type
@@ -1057,15 +1327,19 @@ class DecisionOrchestratorService:
         _decision_type: str = "unknown"
         if intent.ai_backend_inputs is not None:
             _decision_type = intent.ai_backend_inputs.decision_type or "unknown"
-        logger.info(
-            "Phase 5: submit_order_to_broker — order_id=%s broker=%s "
-            "symbol=%s decision_type=%s quantity=%s",
-            pending_order.order_request_id,
-            broker.__class__.__name__,
-            submit_request.symbol if hasattr(submit_request, "symbol") else "unknown",
-            _decision_type,
-            submit_request.quantity if hasattr(submit_request, "quantity") else "unknown",
+        _submit_symbol = (
+            submit_request.symbol
+            if hasattr(submit_request, "symbol")
+            else "unknown"
         )
+        logger.info(
+            "[SUBMIT_START] symbol=%s decision_type=%s side=%s order_id=%s",
+            _submit_symbol,
+            _decision_type,
+            submit_request.side if hasattr(submit_request, "side") else "unknown",
+            pending_order.order_request_id,
+        )
+        _submit_start = time_module.monotonic()
         try:
             submitted_order = await order_manager.submit_order_to_broker(
                 pending_order,
@@ -1074,7 +1348,22 @@ class DecisionOrchestratorService:
                 actor_type=actor_type,
                 actor_id=actor_id,
             )
+            _submit_elapsed = time_module.monotonic() - _submit_start
+            logger.info(
+                "[SUBMIT_DONE] symbol=%s elapsed=%.1fs status=%s order_id=%s",
+                _submit_symbol,
+                _submit_elapsed,
+                submitted_order.status.value if hasattr(submitted_order, "status") else "unknown",
+                pending_order.order_request_id,
+            )
         except Exception as exc:
+            _submit_elapsed = time_module.monotonic() - _submit_start
+            logger.info(
+                "[SUBMIT_DONE] symbol=%s elapsed=%.1fs status=ERROR order_id=%s",
+                _submit_symbol,
+                _submit_elapsed,
+                pending_order.order_request_id,
+            )
             logger.exception(
                 "Phase 5 FAILED (order_submit): order_id=%s symbol=%s "
                 "decision_type=%s trade_decision_id=%s",
@@ -1601,27 +1890,39 @@ class DecisionOrchestratorService:
 
         # --- 1. Event Interpretation Agent ---
         event_output: EventInterpretationOutput
+        _t0 = time_module.monotonic()
         try:
             event_output = await asyncio.wait_for(
                 self._event_interpretation_agent.run(request),
                 timeout=_PER_AGENT_TIMEOUT,
             )
+            logger.info(
+                "EI agent completed in %.2fs — decision_context_id=%s",
+                time_module.monotonic() - _t0,
+                decision_context_id,
+            )
         except asyncio.TimeoutError:
             logger.warning(
-                "Event Interpretation Agent timed out after %ds — "
+                "Event Interpretation Agent timed out after %ds (actual %.2fs) — "
                 "using default output (safe fallback). decision_context_id=%s",
                 _PER_AGENT_TIMEOUT,
+                time_module.monotonic() - _t0,
                 decision_context_id,
             )
             event_output = EventInterpretationOutput()
+            # ★ timeout fallback에서도 EI summary 생성
+            object.__setattr__(event_output, "summary", _build_ei_summary(event_output))
         except Exception:
             logger.warning(
-                "Event Interpretation Agent failed — using default output "
-                "(safe fallback). decision_context_id=%s",
+                "Event Interpretation Agent failed after %.2fs — using default "
+                "output (safe fallback). decision_context_id=%s",
+                time_module.monotonic() - _t0,
                 decision_context_id,
                 exc_info=True,
             )
             event_output = EventInterpretationOutput()
+            # ★ exception fallback에서도 EI summary 생성
+            object.__setattr__(event_output, "summary", _build_ei_summary(event_output))
 
         if _is_missing_agent_symbol(event_output.symbol) and symbol:
             event_output = replace(event_output, symbol=symbol)
@@ -1660,23 +1961,31 @@ class DecisionOrchestratorService:
 
         # --- 2. AI Risk Agent ---
         risk_output: AIRiskOutput
+        _t1 = time_module.monotonic()
         try:
             risk_output = await asyncio.wait_for(
                 self._ai_risk_agent.run(request_with_ei),
                 timeout=_PER_AGENT_TIMEOUT,
             )
+            logger.info(
+                "AR agent completed in %.2fs — decision_context_id=%s",
+                time_module.monotonic() - _t1,
+                decision_context_id,
+            )
         except asyncio.TimeoutError:
             logger.warning(
-                "AI Risk Agent timed out after %ds — "
+                "AI Risk Agent timed out after %ds (actual %.2fs) — "
                 "using default output (safe fallback). decision_context_id=%s",
                 _PER_AGENT_TIMEOUT,
+                time_module.monotonic() - _t1,
                 decision_context_id,
             )
             risk_output = AIRiskOutput()
         except Exception:
             logger.warning(
-                "AI Risk Agent failed — using default output "
+                "AI Risk Agent failed after %.2fs — using default output "
                 "(safe fallback). decision_context_id=%s",
+                time_module.monotonic() - _t1,
                 decision_context_id,
                 exc_info=True,
             )
@@ -1710,23 +2019,31 @@ class DecisionOrchestratorService:
 
         # --- 3. Final Decision Composer Agent ---
         composer_output: FinalDecisionComposerOutput
+        _t2 = time_module.monotonic()
         try:
             composer_output = await asyncio.wait_for(
                 self._final_decision_agent.run(request_with_ei_and_ar),
                 timeout=_PER_AGENT_TIMEOUT,
             )
+            logger.info(
+                "FDC agent completed in %.2fs — decision_context_id=%s",
+                time_module.monotonic() - _t2,
+                decision_context_id,
+            )
         except asyncio.TimeoutError:
             logger.warning(
-                "Final Decision Composer Agent timed out after %ds — "
+                "Final Decision Composer Agent timed out after %ds (actual %.2fs) — "
                 "using default output (safe fallback). decision_context_id=%s",
                 _PER_AGENT_TIMEOUT,
+                time_module.monotonic() - _t2,
                 decision_context_id,
             )
             composer_output = FinalDecisionComposerOutput()
         except Exception:
             logger.warning(
-                "Final Decision Composer Agent failed — using default output "
-                "(safe fallback). decision_context_id=%s",
+                "Final Decision Composer Agent failed after %.2fs — using default "
+                "output (safe fallback). decision_context_id=%s",
+                time_module.monotonic() - _t2,
                 decision_context_id,
                 exc_info=True,
             )
@@ -1805,6 +2122,177 @@ class DecisionOrchestratorService:
             composer_output=composer_output,
         )
 
+    # ------------------------------------------------------------------
+    # Phase 4: Subprocess isolation for agent calls
+    # ------------------------------------------------------------------
+
+    async def _run_agents_in_subprocess(
+        self,
+        *,
+        assembled_context: AssembledContext,
+        decision_context_id: UUID | None,
+        correlation_id: str,
+        symbol: str | None = None,
+        market: str | None = None,
+    ) -> AgentExecutionBundle:
+        """Run agents in a subprocess with SIGKILL-guaranteed timeout.
+
+        This is the Phase 4 subprocess-isolated alternative to
+        ``_run_agents()``.  It serializes the agent input, spawns a
+        subprocess via ``scripts.run_agent_subprocess``, and enforces a
+        35s timeout.  If the subprocess times out, SIGTERM (10s grace)
+        → SIGKILL is used to forcibly terminate C-level httpx I/O
+        blocking.
+
+        Returns
+        -------
+        AgentExecutionBundle
+            Always returned — even on timeout or subprocess failure,
+            a deterministic fallback ``AgentExecutionBundle`` is
+            provided (same safe-fallback policy as ``_run_agents()``).
+
+        Timeout handling
+        ----------------
+        The combined timeout (35s) covers all 3 agents plus subprocess
+        creation/teardown overhead.  This is intentionally longer than
+        3 × _PER_AGENT_TIMEOUT (105s → 35s) because the subprocess
+        runs agents sequentially with its own per-agent timeout.
+        """
+        # If subprocess isolation is disabled, fall back to in-process execution.
+        # This preserves test compatibility (tests use mock repos that cannot
+        # be serialised to a subprocess).
+        if not self._use_subprocess_isolation:
+            return await self._run_agents(
+                assembled_context=assembled_context,
+                decision_context_id=decision_context_id,
+                correlation_id=correlation_id,
+                symbol=symbol,
+                market=market,
+            )
+
+        import json
+        import os
+        import signal
+        import sys
+
+        # ── 1. Serialize input ────────────────────────────────────────
+        inp = _serialize_agent_input(
+            assembled_context=assembled_context,
+            decision_context_id=decision_context_id,
+            correlation_id=correlation_id,
+            symbol=symbol,
+            market=market,
+            llm_provider=self._llm_provider,
+            provider_api_key=self._provider_api_key,
+            provider_base_url=self._provider_base_url,
+            provider_model_id=self._provider_model_id,
+            provider_timeout_seconds=self._provider_timeout_seconds,
+        )
+        def _json_default(obj: object) -> str:
+            """Convert non-serializable objects to JSON-safe strings."""
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            if isinstance(obj, Decimal):
+                return str(obj)
+            raise TypeError(
+                f"Object of type {obj.__class__.__name__} ({obj!r}) "
+                f"is not JSON serializable"
+            )
+
+        input_bytes = json.dumps(inp, default=_json_default).encode("utf-8")
+
+        # ── 2. Combined timeout ─────────────────────────────────────────
+        # The outer timeout covers 3 sequential agent API calls (EI, AR,
+        # FDC) plus subprocess startup/teardown overhead.  It is NOT
+        # configurable per-agent — each agent uses the httpx client timeout
+        # (provider_timeout_seconds) internally.  The outer timeout should
+        # be generous enough to allow 3× provider_timeout with headroom.
+        _SUBPROCESS_TIMEOUT = 300.0  # seconds (FDC skip + 축소 prompt + 3× provider)
+
+        # ── 3. Create subprocess ──────────────────────────────────────
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "scripts.run_agent_subprocess",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        # ── 4. Communicate with timeout ───────────────────────────────
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(input_bytes),
+                timeout=_SUBPROCESS_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            # ── Capture stderr before killing ─────────────────────────────
+            # This is critical for diagnosing subprocess hangs. On timeout,
+            # communicate() was cancelled but the pipe may still have data.
+            stderr_hint = ""
+            try:
+                stderr_data = await asyncio.wait_for(
+                    proc.stderr.read(), timeout=2.0
+                )
+                if stderr_data:
+                    stderr_hint = stderr_data.decode("utf-8", errors="replace")[:2000]
+            except (asyncio.TimeoutError, ProcessLookupError, Exception):
+                pass
+
+            # SIGTERM first (10s grace period)
+            try:
+                proc.terminate()
+                await asyncio.wait_for(proc.wait(), timeout=10.0)
+            except (asyncio.TimeoutError, ProcessLookupError):
+                # SIGKILL — forcibly terminate C-level blocking
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except ProcessLookupError:
+                    pass
+
+            logger.warning(
+                "Agent subprocess timed out after %ds — "
+                "using fallback output. decision_context_id=%s "
+                "correlation_id=%s%s",
+                _SUBPROCESS_TIMEOUT,
+                decision_context_id,
+                correlation_id,
+                f" stderr_hint={stderr_hint}" if stderr_hint else "",
+            )
+            return _build_fallback_bundle()
+
+        # ── 5. Log subprocess stderr (diagnostics) ────────────────────
+        if stderr and stderr.strip():
+            logger.info(
+                "Agent subprocess stderr (decision_context_id=%s): %s",
+                decision_context_id,
+                stderr.decode("utf-8", errors="replace")[:2000],
+            )
+
+        # ── 6. Parse output ───────────────────────────────────────────
+        try:
+            result = json.loads(stdout)
+            if not result.get("success"):
+                logger.warning(
+                    "Agent subprocess reported failure: %s — "
+                    "using fallback output. decision_context_id=%s",
+                    result.get("error", "unknown error"),
+                    decision_context_id,
+                )
+                return _build_fallback_bundle()
+
+            return _deserialize_agent_output(result)
+
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            logger.error(
+                "Failed to parse agent subprocess output: %s — "
+                "using fallback output. decision_context_id=%s "
+                "stdout_preview=%s",
+                exc,
+                decision_context_id,
+                stdout[:500] if stdout else "(empty)",
+            )
+            return _build_fallback_bundle()
+
     async def _ensure_trade_decision(
         self,
         *,
@@ -1812,32 +2300,16 @@ class DecisionOrchestratorService:
         assembled_context: AssembledContext,
         agent_bundle: AgentExecutionBundle,
         decision_context_id: UUID | None,
+        fdc_run_id: UUID | None = None,
     ) -> UUID | None:
-        """Persist or reuse a ``TradeDecisionEntity`` for this context.
+        """항상 새 TradeDecisionEntity를 생성 (INSERT-only 정책).
 
-        This keeps ``trade_decisions`` aligned with the live AI assembly
-        path without changing the submit/order/reconciliation boundaries.
-        When the orchestrator cannot build a valid entity, it fails open
-        and simply omits the trade-decision link from the order path.
+        동일 decision_context_id에 대해 여러 TD row가 존재할 수 있으며,
+        order_request는 가장 최신 TD에 연결됩니다.
         """
+        _td_start = time_module.monotonic()
         if decision_context_id is None:
             return None
-
-        try:
-            existing = await self._repos.trade_decisions.get_by_context(
-                decision_context_id
-            )
-        except Exception:
-            logger.warning(
-                "Trade decision lookup failed before persistence. "
-                "decision_context_id=%s",
-                decision_context_id,
-                exc_info=True,
-            )
-            return None
-
-        if existing is not None:
-            return existing.trade_decision_id
 
         decision_context = assembled_context.decision_context
         if decision_context is None:
@@ -1863,6 +2335,7 @@ class DecisionOrchestratorService:
                 created_at=now,
                 # --- Axis 2: Source type ---
                 source_type=assembled_context.source_type,
+                agent_run_id=fdc_run_id,
                 entry_price=_decimal_or_none(request.price),
                 quantity=_decimal_or_none(request.quantity),
                 max_order_value=_calculate_max_order_value(
@@ -1908,6 +2381,17 @@ class DecisionOrchestratorService:
                 },
             )
             saved = await self._repos.trade_decisions.add(decision)
+            _td_elapsed = time_module.monotonic() - _td_start
+            logger.info(
+                "[TD_CREATED] decision_context_id=%s decision_type=%s side=%s "
+                "source_type=%s symbol=%s elapsed=%.3fs",
+                decision_context_id,
+                _resolve_decision_type(composer_output.decision_type),
+                _resolve_order_side(composer_output.side, request.side),
+                assembled_context.source_type,
+                request.symbol,
+                _td_elapsed,
+            )
             return saved.trade_decision_id
         except Exception:
             logger.warning(
@@ -2006,6 +2490,238 @@ def _is_missing_agent_symbol(value: str | None) -> bool:
         return True
     normalized = value.strip().upper()
     return normalized in {"", "UNKNOWN", "(NOT AVAILABLE)", "N/A", "NONE", "NULL"}
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Subprocess isolation — serialize / deserialize helpers
+# ---------------------------------------------------------------------------
+
+
+def _serialize_agent_input(
+    *,
+    assembled_context: AssembledContext,
+    decision_context_id: UUID | None,
+    correlation_id: str,
+    symbol: str | None = None,
+    market: str | None = None,
+    llm_provider: str = "deepseek",
+    provider_api_key: str = "",
+    provider_base_url: str = "",
+    provider_model_id: str = "",
+    provider_timeout_seconds: int = 120,
+) -> dict[str, object]:
+    """Serialize agent execution input to a JSON-safe dict.
+
+    This is the inverse of ``_deserialize_agent_output()``.  The
+    serialized dict is sent to the subprocess via stdin.
+    """
+    return {
+        "decision_context_id": str(decision_context_id) if decision_context_id else None,
+        "correlation_id": correlation_id,
+        "symbol": symbol,
+        "market": market,
+        "source_type": assembled_context.source_type,
+        "context": _dataclass_to_dict(assembled_context),
+        "event_interpretation_output": None,
+        "ai_risk_output": None,
+        "model_id": None,
+        "prompt_id": None,
+        # Provider configuration for subprocess agent creation
+        "llm_provider": llm_provider,
+        "provider_api_key": provider_api_key,
+        "provider_base_url": provider_base_url,
+        "provider_model_id": provider_model_id,
+        "provider_timeout_seconds": provider_timeout_seconds,
+    }
+
+
+def _deserialize_agent_output(
+    result: dict[str, object],
+) -> AgentExecutionBundle:
+    """Deserialize subprocess output into an ``AgentExecutionBundle``.
+
+    Parameters
+    ----------
+    result
+        Parsed JSON dict from the subprocess stdout.  Must contain
+        ``event_output``, ``risk_output``, and ``composer_output`` keys.
+
+    Returns
+    -------
+    AgentExecutionBundle
+        Fully reconstructed bundle with ``AIDecisionInputs`` assembled
+        from the three agent outputs.
+    """
+    event_raw: dict[str, object] = result.get("event_output", {})  # type: ignore[assignment]
+    risk_raw: dict[str, object] = result.get("risk_output", {})  # type: ignore[assignment]
+    composer_raw: dict[str, object] = result.get("composer_output", {})  # type: ignore[assignment]
+
+    # Reconstruct dataclass instances from dicts
+    event_output = _dict_to_dataclass(EventInterpretationOutput, event_raw)
+    risk_output = _dict_to_dataclass(AIRiskOutput, risk_raw)
+    composer_output = _dict_to_dataclass(FinalDecisionComposerOutput, composer_raw)
+
+    # --- Assemble AIDecisionInputs (same logic as _run_agents()) ---
+    ai_inputs = AIDecisionInputs(
+        # FDC-derived
+        decision_type=composer_output.decision_type,
+        confidence=composer_output.confidence,
+        conviction=composer_output.conviction,
+        reason_codes=composer_output.reason_codes,
+        opposing_evidence=composer_output.opposing_evidence,
+        execution_preferences=composer_output.execution_preferences,
+        sizing_hint=composer_output.sizing_hint,
+        side=composer_output.side if hasattr(composer_output, 'side') else "",
+        # AR-derived
+        risk_opinion=risk_output.risk_opinion,
+        risk_score=risk_output.risk_score,
+        risk_confidence=risk_output.confidence,
+        size_adjustment_factor=risk_output.size_adjustment_factor,
+        risk_reason_codes=risk_output.reason_codes,
+        risk_flags=risk_output.risk_flags,
+        # EI-derived
+        event_bias=event_output.aggregate_view.overall_bias,
+        event_conflict=event_output.aggregate_view.event_conflict,
+        event_reason_codes=event_output.aggregate_view.top_reason_codes,
+        # Metadata
+        source_agent_names=(
+            event_output.agent_name,
+            risk_output.agent_name,
+            composer_output.agent_name,
+        ),
+        schema_versions=(
+            ("event_interpretation", event_output.schema_version),
+            ("ai_risk", risk_output.schema_version),
+            ("final_decision_composer", composer_output.schema_version),
+        ),
+    )
+
+    return AgentExecutionBundle(
+        ai_inputs=ai_inputs,
+        event_output=event_output,
+        risk_output=risk_output,
+        composer_output=composer_output,
+    )
+
+
+def _build_fallback_bundle() -> AgentExecutionBundle:
+    """Build a deterministic fallback ``AgentExecutionBundle``.
+
+    Used when the subprocess times out or fails.  All agent outputs
+    are default (empty / safe) instances, matching the safe-fallback
+    policy in ``_run_agents()``.
+
+    .. warning::
+
+        Fallback bundles produce empty ``summary=""``, ``symbol=""``,
+        ``confidence=0``, ``decision_type="HOLD"`` in ``agent_runs``.
+        This is a known limitation — the subprocess must receive a valid
+        ``provider_client`` to produce meaningful output.
+    """
+    logger.warning(
+        "Building fallback AgentExecutionBundle — all agent outputs will be "
+        "default (empty/safe) instances. This typically means the subprocess "
+        "failed or timed out, or provider configuration was missing."
+    )
+    event_output = EventInterpretationOutput()
+    # ★ fallback bundle에서도 EI summary 생성 (summary="" 방지)
+    object.__setattr__(event_output, "summary", _build_ei_summary(event_output))
+    risk_output = AIRiskOutput()
+    composer_output = FinalDecisionComposerOutput()
+
+    ai_inputs = AIDecisionInputs(
+        decision_type=composer_output.decision_type,
+        confidence=composer_output.confidence,
+        conviction=composer_output.conviction,
+        reason_codes=composer_output.reason_codes,
+        opposing_evidence=composer_output.opposing_evidence,
+        execution_preferences=composer_output.execution_preferences,
+        sizing_hint=composer_output.sizing_hint,
+        side="",
+        risk_opinion=risk_output.risk_opinion,
+        risk_score=risk_output.risk_score,
+        risk_confidence=risk_output.confidence,
+        size_adjustment_factor=risk_output.size_adjustment_factor,
+        risk_reason_codes=risk_output.reason_codes,
+        risk_flags=risk_output.risk_flags,
+        event_bias=event_output.aggregate_view.overall_bias,
+        event_conflict=event_output.aggregate_view.event_conflict,
+        event_reason_codes=event_output.aggregate_view.top_reason_codes,
+        source_agent_names=(
+            event_output.agent_name,
+            risk_output.agent_name,
+            composer_output.agent_name,
+        ),
+        schema_versions=(
+            ("event_interpretation", event_output.schema_version),
+            ("ai_risk", risk_output.schema_version),
+            ("final_decision_composer", composer_output.schema_version),
+        ),
+    )
+
+    return AgentExecutionBundle(
+        ai_inputs=ai_inputs,
+        event_output=event_output,
+        risk_output=risk_output,
+        composer_output=composer_output,
+    )
+
+
+def _dict_to_dataclass(
+    dataclass_type: type,
+    data: dict[str, object],
+) -> object:
+    """Convert a JSON-safe dict back into a dataclass instance.
+
+    Handles nested dataclasses and tuples of dataclasses by recursing
+    into fields that are themselves dataclasses.  Unknown fields are
+    silently ignored (forward-compatible with schema additions).
+    """
+    import dataclasses
+    import typing
+
+    if not data:
+        return dataclass_type()
+
+    # Resolve string annotations to actual types (PEP 563)
+    try:
+        resolved_hints = typing.get_type_hints(dataclass_type)
+    except Exception:
+        resolved_hints = {}
+
+    kwargs: dict[str, object] = {}
+    for f in dataclasses.fields(dataclass_type):
+        if f.name not in data:
+            continue
+        value = data[f.name]
+        field_type = resolved_hints.get(f.name, f.type)
+        origin = getattr(field_type, "__origin__", None)
+
+        if value is None:
+            kwargs[f.name] = None
+        elif hasattr(field_type, "__dataclass_fields__"):
+            # Nested dataclass
+            if isinstance(value, dict):
+                kwargs[f.name] = _dict_to_dataclass(field_type, value)
+            else:
+                kwargs[f.name] = value
+        elif origin is tuple:
+            # Tuple of dataclasses
+            args = getattr(field_type, "__args__", ())
+            if args and hasattr(args[0], "__dataclass_fields__") and isinstance(value, (list, tuple)):
+                kwargs[f.name] = tuple(
+                    _dict_to_dataclass(args[0], item) if isinstance(item, dict) else item
+                    for item in value
+                )
+            else:
+                kwargs[f.name] = tuple(value) if isinstance(value, (list, tuple)) else value
+        elif isinstance(value, (list, tuple)) and not isinstance(value, str):
+            # Plain tuple (e.g. tuple[str, ...])
+            kwargs[f.name] = tuple(value)
+        else:
+            kwargs[f.name] = value
+
+    return dataclass_type(**kwargs)
 
 
 def _resolve_decision_type(value: str | None) -> DecisionType:

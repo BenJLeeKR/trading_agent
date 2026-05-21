@@ -15,17 +15,29 @@ from agent_trading.repositories.container import RepositoryContainer
 router = APIRouter(tags=["decisions"])
 
 
+def _safe_enum_str(value: object) -> str:
+    """Enum 또는 문자열 값을 API 응답용 문자열로 정규화."""
+    if value is None:
+        return ""
+    enum_value = getattr(value, "value", None)
+    if isinstance(enum_value, str):
+        return enum_value
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
 def _to_detail(d: object) -> TradeDecisionDetail:
     """Convert domain entity to API schema."""
     return TradeDecisionDetail(
         trade_decision_id=str(d.trade_decision_id),
         decision_context_id=str(d.decision_context_id),
-        decision_type=d.decision_type.value,
-        side=d.side.value,
+        decision_type=_safe_enum_str(d.decision_type),
+        side=_safe_enum_str(d.side),
         strategy_id=str(d.strategy_id),
         symbol=d.symbol,
         market=d.market,
-        entry_style=d.entry_style.value,
+        entry_style=_safe_enum_str(d.entry_style),
         created_at=d.created_at,
         entry_price=float(d.entry_price) if d.entry_price is not None else None,
         quantity=float(d.quantity) if d.quantity is not None else None,
@@ -63,10 +75,10 @@ async def list_trade_decisions(
                 status_code=400, detail=f"Invalid UUID: {decision_context_id}"
             ) from exc
 
-        decision = await repos.trade_decisions.get_by_context(ctx_id)
-        if decision is not None:
-            return [await _enrich_decision_detail(_to_detail(decision), repos)]
-        return []
+        decisions = await repos.trade_decisions.list_by_context(ctx_id)
+        if not decisions:
+            return []
+        return [await _enrich_decision_detail(_to_detail(d), repos) for d in decisions]
     else:
         decisions = await repos.trade_decisions.list_all()
         return [await _enrich_decision_detail(_to_detail(d), repos) for d in decisions]

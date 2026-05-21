@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol, Sequence
 
 from agent_trading.domain.models import (
@@ -190,7 +191,7 @@ class BrokerAdapter(Protocol):
         self,
         account_ref: str,
         broker_order_id: str,
-        from_ts: str | None = None,
+        from_ts: str | datetime | None = None,
     ) -> Sequence[FillEvent]:
         """Fetch normalized fill events for an order."""
 
@@ -209,6 +210,7 @@ class BrokerAdapter(Protocol):
         *,
         client_order_id: str | None = None,
         broker_order_id: str | None = None,
+        symbol: str | None = None,
     ) -> OrderStatusResult:
         """Resolve an unknown order state by inquiring the broker.
 

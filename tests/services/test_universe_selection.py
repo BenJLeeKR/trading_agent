@@ -1026,3 +1026,135 @@ class TestCompositionContextP2:
         )
         assert ctx.market_overlay_cap == 10
         assert ctx.pre_pool_size == 100
+
+
+# ---------------------------------------------------------------------------
+# Held position — _add_held_positions 단위 테스트
+# ---------------------------------------------------------------------------
+
+
+class TestAddHeldPositions:
+    """``_add_held_positions()`` 단위 검증.
+
+    실제 계정의 포지션 스냅샷 기준으로 held_position이 추가되는지,
+    source_type='held_position'이 정상 전파되는지 검증.
+    """
+
+    @pytest.mark.asyncio
+    async def test_add_held_positions_with_real_account(self) -> None:
+        """실제 계정의 포지션 스냅샷 기준으로 held_position이 추가되는지 검증."""
+        repos = build_in_memory_repositories()
+        inst = _make_instrument("005930")
+        await repos.instruments.add(inst)
+        pos = _make_position(instrument_id=inst.instrument_id, quantity=Decimal("10"))
+        await repos.position_snapshots.add(pos)
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+
+        # held_position source_type이 포함되어야 함
+        held = [s for s in result if s.source_type == SourceType.HELD_POSITION]
+        assert len(held) >= 1
+        assert held[0].symbol == "005930"
+        assert held[0].inclusion_reason == INCLUSION_REASON_HELD
+
+    @pytest.mark.asyncio
+    async def test_add_held_positions_fallback_account_no_positions(self) -> None:
+        """Fallback 계정(FALLBACK_ACCOUNT_ID)으로는 held_position이 추가되지 않음."""
+        repos = build_in_memory_repositories()
+        inst = _make_instrument("005930")
+        await repos.instruments.add(inst)
+        pos = _make_position(instrument_id=inst.instrument_id, quantity=Decimal("10"))
+        await repos.position_snapshots.add(pos)
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+
+        # fallback 계정에는 포지션이 없으므로 HELD_POSITION이 없어야 함
+        held = [s for s in result if s.source_type == SourceType.HELD_POSITION]
+        assert len(held) == 0
+
+    @pytest.mark.asyncio
+    async def test_multiple_held_positions(self) -> None:
+        """여러 보유 포지션이 모두 HELD_POSITION으로 추가되는지 검증."""
+        repos = build_in_memory_repositories()
+        inst1 = _make_instrument("005930")
+        inst2 = _make_instrument("000660")
+        await repos.instruments.add(inst1)
+        await repos.instruments.add(inst2)
+        await repos.position_snapshots.add(
+            _make_position(instrument_id=inst1.instrument_id, quantity=Decimal("5"))
+        )
+        await repos.position_snapshots.add(
+            _make_position(instrument_id=inst2.instrument_id, quantity=Decimal("3"))
+        )
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+
+        held_symbols = {s.symbol for s in result if s.source_type == SourceType.HELD_POSITION}
+        assert "005930" in held_symbols
+        assert "000660" in held_symbols
+
+
+# ---------------------------------------------------------------------------
+# SourceType 전파 검증 — UniverseSymbol → trade_decision.source_type
+# ---------------------------------------------------------------------------
+
+
+class TestSourceTypePropagation:
+    """``UniverseSymbol.source_type`` → request metadata → trade_decision.source_type 경로 검증.
+
+    ``compose()``가 반환한 ``SelectedSymbol``의 ``source_type``이
+    ``UniverseSymbol``로 올바르게 전파되는지 확인.
+    """
+
+    @pytest.mark.asyncio
+    async def test_source_type_propagation_core(self) -> None:
+        """Core source_type이 UniverseSymbol에 올바르게 전파됨."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(_make_instrument("005930"))
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+
+        core = [s for s in result if s.symbol == "005930"]
+        assert len(core) == 1
+        assert core[0].source_type == SourceType.CORE
+
+    @pytest.mark.asyncio
+    async def test_source_type_propagation_held(self) -> None:
+        """Held_position source_type이 UniverseSymbol에 올바르게 전파됨."""
+        repos = build_in_memory_repositories()
+        inst = _make_instrument("005930")
+        await repos.instruments.add(inst)
+        await repos.position_snapshots.add(
+            _make_position(instrument_id=inst.instrument_id, quantity=Decimal("10"))
+        )
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+
+        held = [s for s in result if s.symbol == "005930"]
+        assert len(held) == 1
+        assert held[0].source_type == SourceType.HELD_POSITION
+
+    @pytest.mark.asyncio
+    async def test_source_type_propagation_event(self) -> None:
+        """Event_overlay source_type이 UniverseSymbol에 올바르게 전파됨."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(_make_instrument("005930"))
+        await repos.external_events.add(_make_event("005930", severity="high"))
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+
+        event = [s for s in result if s.symbol == "005930"]
+        assert len(event) == 1
+        assert event[0].source_type == SourceType.EVENT_OVERLAY

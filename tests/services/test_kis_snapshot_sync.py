@@ -1486,3 +1486,222 @@ class TestSyncAllWithStatusFilter:
         assert batch.failed == 0
         assert batch.total_positions_synced == 2
         assert len(position_repo._items) == 2
+
+
+# ── Zero-out Tests ─────────────────────────────────────────────────────────
+
+
+class TestZeroOutMissingPositions:
+    """``sync_kis_account_snapshots()`` zero-out logic for positions missing
+    from the KIS response."""
+
+    async def _seed_snapshot(
+        self,
+        position_repo: InMemoryPositionSnapshotRepository,
+        account_id: UUID,
+        instrument_id: UUID,
+        quantity: Decimal,
+        snapshot_at: datetime | None = None,
+    ) -> PositionSnapshotEntity:
+        """Helper to seed a position snapshot into the in-memory repo."""
+        snap = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=account_id,
+            instrument_id=instrument_id,
+            quantity=quantity,
+            average_price=Decimal("70000"),
+            market_price=Decimal("72000"),
+            unrealized_pnl=Decimal("20000"),
+            source_of_truth="broker",
+            snapshot_at=snapshot_at or datetime.now(tz=timezone.utc),
+        )
+        await position_repo.add(snap)
+        return snap
+
+    async def test_sync_zeroes_out_missing_positions(
+        self,
+        account_id: UUID,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+    ) -> None:
+        """KIS 응답에 없는 종목이 quantity=0으로 저장되는지 검증.
+
+        시나리오:
+        1. 기존 snapshot: 000990=10, 005930=10
+        2. KIS 응답: 005930=10만 있음
+        3. zero-out 후: 000990=0, 005930=10
+        """
+        # Given: fixture가 pre-seed한 005930(삼성전자)을 재사용하고,
+        #        000990(한국금융지주)을 추가로 등록
+        kiwoom = _make_instrument("000990")
+        await instrument_repo.add(kiwoom)
+
+        # fixture의 005930 instrument 조회 (get_by_symbol 사용)
+        samsung = await instrument_repo.get_by_symbol("005930", "KRX")
+        assert samsung is not None
+
+        now = datetime.now(tz=timezone.utc)
+        await self._seed_snapshot(position_repo, account_id, kiwoom.instrument_id, Decimal("10"), now)
+        await self._seed_snapshot(position_repo, account_id, samsung.instrument_id, Decimal("10"), now)
+
+        # When: KIS 응답에는 005930만 있음
+        client = FakeKISRestClient(
+            positions=[_make_position(pdno="005930", hldg_qty="10")],
+            cash_balance={},
+        )
+        result = await sync_kis_account_snapshots(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            account_id=account_id,
+        )
+
+        # Then: 005930은 그대로, 000990은 quantity=0으로 zero-out
+        assert result.positions_synced == 1  # 005930만 sync됨
+
+        # list_latest_by_account로 최신 snapshot 확인
+        latest = await position_repo.list_latest_by_account(account_id)
+        latest_by_instrument: dict[UUID, PositionSnapshotEntity] = {}
+        for snap in latest:
+            if snap.instrument_id not in latest_by_instrument or snap.snapshot_at > latest_by_instrument[snap.instrument_id].snapshot_at:
+                latest_by_instrument[snap.instrument_id] = snap
+
+        # 005930은 quantity=10 유지
+        samsung_latest = latest_by_instrument[samsung.instrument_id]
+        assert samsung_latest.quantity == Decimal("10")
+
+        # 000990은 quantity=0으로 zero-out됨
+        kiwoom_latest = latest_by_instrument[kiwoom.instrument_id]
+        assert kiwoom_latest.quantity == Decimal("0")
+        assert kiwoom_latest.source_of_truth == "broker"
+
+    async def test_sync_preserves_existing_positions(
+        self,
+        account_id: UUID,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+    ) -> None:
+        """KIS 응답에 있는 종목은 그대로 유지되는지 검증.
+
+        시나리오:
+        1. 기존 snapshot: 005930=10
+        2. KIS 응답: 005930=10
+        3. zero-out 후: 005930=10 (변화 없음)
+        """
+        # fixture의 005930 instrument 재사용
+        samsung = await instrument_repo.get_by_symbol("005930", "KRX")
+        assert samsung is not None
+
+        now = datetime.now(tz=timezone.utc)
+        await self._seed_snapshot(position_repo, account_id, samsung.instrument_id, Decimal("10"), now)
+
+        client = FakeKISRestClient(
+            positions=[_make_position(pdno="005930", hldg_qty="10")],
+            cash_balance={},
+        )
+        result = await sync_kis_account_snapshots(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            account_id=account_id,
+        )
+
+        assert result.positions_synced == 1
+
+        latest = await position_repo.list_latest_by_account(account_id)
+        samsung_snaps = [s for s in latest if s.instrument_id == samsung.instrument_id]
+        # 최신 snapshot의 quantity가 10인지 확인
+        latest_snap = max(samsung_snaps, key=lambda s: s.snapshot_at)
+        assert latest_snap.quantity == Decimal("10")
+
+    async def test_sync_does_not_zero_out_recently_zeroed(
+        self,
+        account_id: UUID,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+    ) -> None:
+        """이미 quantity=0인 종목은 다시 zero-out하지 않는지 검증.
+
+        시나리오:
+        1. 기존 snapshot: 000990=0 (이미 zero-out됨)
+        2. KIS 응답: 005930=10만 있음
+        3. zero-out 후: 000990=0 (중복 zero-out 없음)
+        """
+        kiwoom = _make_instrument("000990")
+        await instrument_repo.add(kiwoom)
+        samsung = await instrument_repo.get_by_symbol("005930", "KRX")
+        assert samsung is not None
+
+        now = datetime.now(tz=timezone.utc)
+        # 이미 zero-out된 snapshot
+        await self._seed_snapshot(position_repo, account_id, kiwoom.instrument_id, Decimal("0"), now)
+        await self._seed_snapshot(position_repo, account_id, samsung.instrument_id, Decimal("10"), now)
+
+        client = FakeKISRestClient(
+            positions=[_make_position(pdno="005930", hldg_qty="10")],
+            cash_balance={},
+        )
+        result = await sync_kis_account_snapshots(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            account_id=account_id,
+        )
+
+        assert result.positions_synced == 1
+
+        # 000990의 snapshot 수가 1개인지 확인 (중복 zero-out 없음)
+        kiwoom_snaps = [s for s in position_repo._items.values()
+                        if s.instrument_id == kiwoom.instrument_id]
+        assert len(kiwoom_snaps) == 1  # 중복 zero-out 없음
+        assert kiwoom_snaps[0].quantity == Decimal("0")
+
+    async def test_sync_zero_out_handles_exception_gracefully(
+        self,
+        account_id: UUID,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+    ) -> None:
+        """zero-out 중 예외 발생 시 graceful handling 검증.
+
+        전체 sync 실패로 이어지지 않아야 함.
+        """
+        samsung = await instrument_repo.get_by_symbol("005930", "KRX")
+        assert samsung is not None
+
+        now = datetime.now(tz=timezone.utc)
+        await self._seed_snapshot(position_repo, account_id, samsung.instrument_id, Decimal("10"), now)
+
+        # list_latest_by_account가 예외를 던지도록 mocking
+        original_list_latest = position_repo.list_latest_by_account
+
+        async def failing_list_latest(_account_id: UUID) -> list[PositionSnapshotEntity]:
+            raise RuntimeError("DB connection lost")
+
+        position_repo.list_latest_by_account = failing_list_latest  # type: ignore[assignment]
+
+        client = FakeKISRestClient(
+            positions=[_make_position(pdno="005930", hldg_qty="10")],
+            cash_balance={},
+        )
+        # zero-out 실패에도 전체 sync는 성공해야 함
+        result = await sync_kis_account_snapshots(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            account_id=account_id,
+        )
+
+        # zero-out 실패가 전체 sync를 중단시키지 않음
+        assert result.positions_synced == 1
+
+        # list_latest_by_account 복원
+        position_repo.list_latest_by_account = original_list_latest

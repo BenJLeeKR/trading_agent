@@ -173,6 +173,23 @@ async def _resolve_symbol_price(
     )
     return _DEFAULT_SAFE_PRICE
 
+
+def _resolve_order_type_and_price(
+    *,
+    side: str,
+    decision_type: str | None = None,
+    default_price: Decimal | None = None,
+) -> tuple[OrderType, Decimal | None]:
+    """의사결정 유형과 매매방향에 따라 execution 정책 결정.
+
+    현재는 전면 MARKET 정책 — 항상 ``(OrderType.MARKET, None)`` 반환.
+    ``side`` / ``decision_type`` / ``default_price`` 파라미터는
+    향후 시장성 지정가 등 확장에 대비해 预留(reserved)해 둠.
+    """
+    _ = side, decision_type, default_price  # 향후 확장 대비 预留
+    return OrderType.MARKET, None
+
+
 logger = logging.getLogger(__name__)
 
 # ── Defaults ────────────────────────────────────────────────────────────────
@@ -369,12 +386,16 @@ async def _read_trading_universe() -> tuple[UniverseSymbol, ...]:
             account_id: UUID = FALLBACK_ACCOUNT_ID
             try:
                 account = await repos.accounts.find_one(
-                    AccountLookup(alias=ACCOUNT_ALIAS)
+                    AccountLookup(account_alias=ACCOUNT_ALIAS)
                 )
                 if account is not None:
                     account_id = account.account_id
+            except TypeError as e:
+                logger.error("AccountLookup field name mismatch: %s", e)
+                # TypeError는 복구 불가능한 프로그래밍 오류 → 재발생
+                raise
             except Exception:
-                logger.debug("Account lookup failed — using fallback account ID.")
+                logger.warning("Account lookup failed — using fallback account ID.")
 
             ctx = CompositionContext(
                 account_id=account_id,
@@ -395,11 +416,17 @@ async def _read_trading_universe() -> tuple[UniverseSymbol, ...]:
                     )
                     for s in selected
                 )
+                # source_type 분포 로깅 — held_position 포함 여부 추적
+                source_counts: dict[str, int] = {}
+                for sym in universe:
+                    source_counts[sym.source_type] = source_counts.get(sym.source_type, 0) + 1
                 logger.info(
                     "Trading universe from UniverseSelectionService: "
-                    "%d symbols loaded (cap=%d).",
+                    "%d symbols loaded (cap=%d).  "
+                    "source_type distribution: %s",
                     len(universe),
                     ctx.max_cap,
+                    source_counts,
                 )
                 return universe
 
@@ -499,6 +526,7 @@ def _serialize_cycle_result(
     dry_run: bool = False,
     error: str | None = None,
     ei_output: dict[str, object] | None = None,
+    source_type: str = "core",
 ) -> dict[str, object]:
     """Serialize a single decision cycle result.
 
@@ -518,15 +546,31 @@ def _serialize_cycle_result(
         Top-level error message, if the cycle failed before producing a result.
     ei_output:
         Optional EI Agent output (event_bias, event_conflict, event_reason_codes).
+    source_type:
+        Source type of the universe item (core, held_position, etc.).
+        scheduler-level budget 분기에서 사용된다.
     """
     now = datetime.now(timezone.utc)
     started_at = now.isoformat()
     completed_at = now.isoformat()
 
+    # decision_type과 side는 모든 분기에서 항상 포함되어야 한다.
+    # scheduler-level budget 분기(_is_held_position_sell_result)에서
+    # 3중 조건(source_type + decision_type + side) 판별에 사용된다.
+    decision_type: str | None = None
+    side: str | None = None
+
+    if result is not None and result.intent is not None:
+        decision_type = result.intent.ai_backend_inputs.decision_type
+        side = result.intent.ai_backend_inputs.side
+
     data: dict[str, object] = {
         "cycle": cycle,
         "symbol": symbol,
         "market": market,
+        "source_type": source_type,
+        "decision_type": decision_type,
+        "side": side,
         "started_at": started_at,
         "completed_at": completed_at,
         "duration_seconds": round(duration, 3),
@@ -549,7 +593,6 @@ def _serialize_cycle_result(
                 str(result.trade_decision_id) if result.trade_decision_id else None
             )
             data["order_intent_id"] = str(result.intent.order_intent_id)
-            data["decision_type"] = result.intent.ai_backend_inputs.decision_type
             data["sized_quantity"] = str(result.intent.request.quantity)
     elif result is not None:
         data["status"] = result.status
@@ -563,7 +606,6 @@ def _serialize_cycle_result(
         )
         if result.intent is not None:
             data["order_intent_id"] = str(result.intent.order_intent_id)
-            data["decision_type"] = result.intent.ai_backend_inputs.decision_type
             data["sized_quantity"] = str(result.intent.request.quantity)
         if result.order is not None:
             data["order_request_id"] = str(result.order.order_request_id)
@@ -607,14 +649,13 @@ def _build_aggregate_summary(
 # ── Core cycle ──────────────────────────────────────────────────────────────
 
 
-# Per-agent hard timeout: prevents LLM API stall from blocking the cycle
-# for more than this duration. Each agent.run() call is wrapped with
-# asyncio.wait_for() to enforce this limit.
-# Must be > 3 × _PER_AGENT_TIMEOUT (25s) = 75s to allow all 3 agents
-# to complete their per-agent timeout + fallback path before the outer
-# asyncio.wait_for() timeout fires.  15s overhead buffer for logging,
-# recording, and request-building between agents.
-PER_AGENT_HARD_TIMEOUT = 90  # seconds
+# Per-agent hard timeout: safety net for the assemble_and_submit() call.
+# Phase 4 subprocess isolation provides SIGKILL-guaranteed timeout at the
+# subprocess level (35s), so this outer timeout is a last-resort safety
+# net rather than the primary timeout mechanism.
+# Increased from 90s to 120s to accommodate subprocess creation/teardown
+# overhead and avoid false positives during normal operation.
+PER_AGENT_HARD_TIMEOUT = 300  # seconds
 
 # ── T3 (Seeded News) timeout & freshness ─────────────────────────────────────
 # T3 pipeline (KIS disclosure + NAVER news search) has no hard timeout
@@ -644,6 +685,10 @@ async def _run_one_cycle(
     """
     start = time.monotonic()
     precheck: dict[str, object] | None = None
+    logger.info(
+        "[SYMBOL_START] cycle=%d symbol=%s market=%s submit=%s dry_run=%s source_type=%s",
+        cycle, symbol, market, submit, dry_run, source_type,
+    )
 
     # Clear any stale T3 tasks from previous cycles
     _active_t3_tasks.clear()
@@ -664,6 +709,10 @@ async def _run_one_cycle(
             precheck = await _run_precheck(repos)
 
             # ── 2.5 Resolve symbol-specific price ───────────────────────
+            # 현재는 전면 MARKET 정책으로 price=None을 사용하므로
+            # _resolve_symbol_price()의 반환값은 주문 가격에 직접 쓰이지 않음.
+            # 그러나 내부에서 broker.get_quote()를 통해 실시간 quote를 수집하고
+            # 로그로 기록하므로 quote 수집/observability 용도로 유지.
             broker = runtime.get("primary_broker_adapter")
             resolved_price = await _resolve_symbol_price(
                 symbol=symbol,
@@ -672,6 +721,11 @@ async def _run_one_cycle(
             )
 
             # ── 3. Build request ────────────────────────────────────────
+            order_type, price = _resolve_order_type_and_price(
+                side="buy",
+                decision_type=None,
+                default_price=resolved_price,
+            )
             request = SubmitOrderRequest(
                 account_ref=ACCOUNT_ALIAS,
                 client_order_id=f"paper-loop-{symbol}-{cycle}-{int(start)}",
@@ -680,9 +734,9 @@ async def _run_one_cycle(
                 symbol=symbol,
                 market=market,
                 side=OrderSide.BUY,
-                order_type=OrderType.LIMIT,
+                order_type=order_type,
                 quantity=Decimal("10"),
-                price=resolved_price,
+                price=price,
                 metadata={"source_type": source_type},
             )
 
@@ -808,6 +862,12 @@ async def _run_one_cycle(
                 _active_t3_tasks.clear()
 
             duration = time.monotonic() - start
+            logger.info(
+                "[SYMBOL_DONE] cycle=%d symbol=%s status=%s duration=%.1fs",
+                cycle, symbol,
+                result.status if result is not None else "ERROR",
+                duration,
+            )
             return _serialize_cycle_result(
                 cycle,
                 result,
@@ -817,19 +877,37 @@ async def _run_one_cycle(
                 precheck=precheck,
                 dry_run=dry_run,
                 ei_output=ei_output,
+                source_type=source_type,
             )
 
     except asyncio.TimeoutError:
         duration = time.monotonic() - start
-        logger.error("Cycle %d timed out after %.1fs (per-agent hard timeout)", cycle, duration)
-        # Force immediate process exit — asyncio.wait_for() cannot reliably
-        # cancel tasks blocked on C-level I/O (e.g. httpx socket read).
-        # Without os._exit(), the subprocess may hang until the scheduler's
+        logger.error(
+            "PER_AGENT_HARD_TIMEOUT=%ds exceeded after %.1fs — "
+            "forcing process exit with asyncio cancellation + threading.Timer "
+            "dual-guard.  decision_context_id=%s",
+            PER_AGENT_HARD_TIMEOUT, duration, decision_context_id,
+        )
+        # Cancel all pending asyncio tasks to allow C-level I/O (e.g. httpx
+        # socket read) to unblock.  Without explicit cancellation, os._exit(1)
+        # may not terminate immediately when the event loop is blocked on
+        # C-level I/O, causing the subprocess to hang until the scheduler's
         # 240s timeout kills it via SIGTERM.
+        for task in asyncio.all_tasks():
+            if task is not asyncio.current_task():
+                task.cancel()
+        # threading.Timer runs in a separate thread and is NOT affected by
+        # C-level I/O blocking on the main thread.  It guarantees os._exit(1)
+        # is called even when asyncio cancellation cannot unblock httpx socket
+        # reads.
+        import threading
+        threading.Timer(0.5, os._exit, args=[1]).start()
+        # Allow cancellations to propagate through the event loop
+        await asyncio.sleep(0.5)
         os._exit(1)
     except Exception as exc:
         duration = time.monotonic() - start
-        logger.exception("Cycle %d failed: %s", cycle, exc)
+        logger.exception("[SYMBOL_DONE] cycle=%d symbol=%s status=ERROR duration=%.1fs error=%s", cycle, symbol, duration, exc)
         return _serialize_cycle_result(
             cycle,
             None,
@@ -839,6 +917,7 @@ async def _run_one_cycle(
             precheck=precheck,
             dry_run=dry_run,
             error=str(exc),
+            source_type=source_type,
         )
 
 
@@ -1051,52 +1130,138 @@ async def _run_loop(
         cycle_count += 1
         logger.info("=== Decision Cycle %d ===", cycle_count)
 
+        # Semaphore-based parallel symbol processing.
+        # Max 5 concurrent symbols to avoid overwhelming broker/LLM resources
+        # while reducing total wall-clock time from ~190s to ~40s for 35 symbols.
+        _SEMAPHORE_MAX = 5
+        sem = asyncio.Semaphore(_SEMAPHORE_MAX)
         submit_budget_consumed = False
-        for item in universe:
-            # In submit mode, evaluate all symbols but allow at most one
-            # budget-consuming broker submit per script invocation.
-            symbol_submit = submit and not dry_run and not submit_budget_consumed
-            symbol_dry_run = dry_run or (submit and submit_budget_consumed)
+        # held_position REDUCE/EXIT sell 전용 budget 플래그 (별도 budget)
+        held_position_sell_budget_consumed = False
+        # cycle당 HP sell 카운터 및 symbol 중복 방지 집합
+        held_position_sell_cycle_count = 0
+        held_position_sell_cycle_symbols: set[str] = set()
+        _submit_lock = asyncio.Lock()
 
-            result = await _run_one_cycle(
-                cycle=cycle_count,
-                submit=symbol_submit,
-                dry_run=symbol_dry_run,
-                output=output,
-                symbol=item.symbol,
-                market=item.market,
-                source_type=item.source_type,
-            )
-            results.append(result)
+        async def _process_one(item: object) -> dict[str, object]:
+            """Process a single universe item with semaphore concurrency cap."""
+            nonlocal submit_budget_consumed
+            nonlocal held_position_sell_budget_consumed
+            nonlocal held_position_sell_cycle_count
+            nonlocal held_position_sell_cycle_symbols
+            async with sem:
+                # In submit mode, evaluate all symbols but allow at most one
+                # budget-consuming broker submit per script invocation.
+                # held_position sell은 별도 budget으로 관리되어 일반 submit과 분리된다.
+                async with _submit_lock:
+                    # held_position sell special lane: source_type + decision_type + side 3중 조건
+                    # result가 아직 없으므로 item의 source_type만으로 1차 필터링하고,
+                    # 실제 budget 소비 판정은 result 수신 후 3중 조건으로 재확인한다.
+                    is_held_position_item = (
+                        getattr(item, "source_type", "core") == "held_position"
+                    )
+                    if is_held_position_item:
+                        symbol_submit = (
+                            submit
+                            and not dry_run
+                            and not held_position_sell_budget_consumed
+                            and held_position_sell_cycle_count < 2  # HELD_POSITION_SELL_MAX_PER_CYCLE
+                            and item.symbol not in held_position_sell_cycle_symbols  # symbol dedupe
+                        )
+                    else:
+                        symbol_submit = submit and not dry_run and not submit_budget_consumed
+                    symbol_dry_run = dry_run or (submit and not symbol_submit)
 
-            status = result.get("status", "UNKNOWN")
-            if status in ("SUBMITTED", "DRY_RUN", "SKIPPED"):
+                # HP sell budget block 이유 로깅 (explainability)
+                if is_held_position_item and not symbol_submit and submit and not dry_run:
+                    reasons = []
+                    if held_position_sell_budget_consumed:
+                        reasons.append("daily_cap_reached")
+                    if held_position_sell_cycle_count >= 2:
+                        reasons.append("cycle_cap_reached")
+                    if item.symbol in held_position_sell_cycle_symbols:
+                        reasons.append("symbol_duplicate")
+                    if reasons:
+                        logger.info(
+                            "HP sell block: symbol=%s reasons=%s",
+                            item.symbol, ",".join(reasons),
+                        )
+
+                try:
+                    result = await _run_one_cycle(
+                        cycle=cycle_count,
+                        submit=symbol_submit,
+                        dry_run=symbol_dry_run,
+                        output=output,
+                        symbol=item.symbol,
+                        market=item.market,
+                        source_type=item.source_type,
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        "Cycle %d symbol=%s:%s: unexpected error in parallel processing: %s",
+                        cycle_count, item.symbol, item.market, exc,
+                    )
+                    result = {
+                        "status": "ERROR",
+                        "symbol": item.symbol,
+                        "market": item.market,
+                        "error": str(exc),
+                        "duration_seconds": 0.0,
+                    }
+
+                status = result.get("status", "UNKNOWN")
+                if status in ("SUBMITTED", "RECONCILE_REQUIRED"):
+                    async with _submit_lock:
+                        # 3중 조건: source_type == held_position AND decision_type in (reduce, exit) AND side == sell
+                        result_decision_type = str(result.get("decision_type", "")).lower()
+                        result_side = str(result.get("side", "")).lower()
+                        is_held_position_sell = (
+                            getattr(item, "source_type", "core") == "held_position"
+                            and result_decision_type in ("reduce", "exit")
+                            and result_side == "sell"
+                        )
+                        if is_held_position_sell:
+                            held_position_sell_budget_consumed = True
+                            held_position_sell_cycle_count += 1
+                            held_position_sell_cycle_symbols.add(item.symbol)
+                        else:
+                            submit_budget_consumed = True
+
+                # Output per-symbol result
+                if output == "json":
+                    print(json.dumps(result, ensure_ascii=False))
+                else:
+                    precheck_str = ""
+                    precheck_data = result.get("precheck")
+                    if isinstance(precheck_data, dict):
+                        h = precheck_data.get("health_status", "?")
+                        precheck_str = f" [health={h}]"
+                    logger.info(
+                        "Cycle %d/%s symbol=%s:%s complete — status=%s duration=%.2fs%s",
+                        cycle_count,
+                        "∞" if max_cycles == 0 else str(max_cycles),
+                        item.symbol,
+                        item.market,
+                        status,
+                        result.get("duration_seconds", 0),
+                        precheck_str,
+                    )
+
+                return result
+
+        # Process ALL symbols concurrently with semaphore cap
+        coros = [_process_one(item) for item in universe]
+        cycle_results: list[dict[str, object]] = await asyncio.gather(*coros)
+        results.extend(cycle_results)
+
+        # Aggregate success/fail counts from parallel results
+        for r in cycle_results:
+            s = r.get("status", "UNKNOWN")
+            if s in ("SUBMITTED", "DRY_RUN", "SKIPPED"):
                 total_success += 1
             else:
                 total_fail += 1
-
-            if status in ("SUBMITTED", "RECONCILE_REQUIRED"):
-                submit_budget_consumed = True
-
-            # Output per-symbol result
-            if output == "json":
-                print(json.dumps(result, ensure_ascii=False))
-            else:
-                precheck_str = ""
-                precheck_data = result.get("precheck")
-                if isinstance(precheck_data, dict):
-                    h = precheck_data.get("health_status", "?")
-                    precheck_str = f" [health={h}]"
-                logger.info(
-                    "Cycle %d/%s symbol=%s:%s complete — status=%s duration=%.2fs%s",
-                    cycle_count,
-                    "∞" if max_cycles == 0 else str(max_cycles),
-                    item.symbol,
-                    item.market,
-                    status,
-                    result.get("duration_seconds", 0),
-                    precheck_str,
-                )
 
         # Wait for next cycle (or shutdown)
         if max_cycles > 0 and cycle_count >= max_cycles:

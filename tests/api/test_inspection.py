@@ -9,13 +9,16 @@ Covers: ``GET /orders``, ``GET /orders/{id}``, ``GET /orders/{id}/events``,
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 
 from agent_trading.api.routes.orders import _safe_str
+from agent_trading.domain.entities import TradeDecisionEntity
+from agent_trading.repositories.container import RepositoryContainer
 from tests.api.conftest import client  # noqa: F401
 
 
@@ -192,6 +195,38 @@ class TestTradeDecisions:
         assert "opposing_evidence" in td["decision_json"]
         assert "confidence" in td["decision_json"]
         assert "conviction" in td["decision_json"]
+
+    async def test_list_trade_decisions_accepts_plain_string_enum_fields(
+        self,
+        client: TestClient,
+        seeded_repos: RepositoryContainer,
+        decision_context_id: UUID,
+        strategy_id: UUID,
+    ) -> None:
+        """문자열 enum 값이 섞여 있어도 500 없이 응답해야 한다."""
+        td = TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=decision_context_id,
+            decision_type="sell",  # type: ignore[arg-type]
+            side="buy",  # type: ignore[arg-type]
+            strategy_id=strategy_id,
+            symbol="TEST",
+            market="KRX",
+            entry_style="market",  # type: ignore[arg-type]
+            created_at=datetime.now(timezone.utc),
+            decision_json={},
+        )
+        await seeded_repos.trade_decisions.add(td)
+
+        resp = client.get("/trade-decisions")
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        injected = next(
+            row for row in data if row["trade_decision_id"] == str(td.trade_decision_id)
+        )
+        assert injected["decision_type"] == "sell"
+        assert injected["side"] == "buy"
+        assert injected["entry_style"] == "market"
 
 
 class TestAuditLogs:
@@ -547,7 +582,6 @@ class TestBrokerOrders:
         """``GET /orders/{id}/broker-orders`` returns 400 for invalid UUID."""
         response = client.get("/orders/not-a-uuid/broker-orders")
         assert response.status_code == 400
-
 
 
 

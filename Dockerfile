@@ -12,8 +12,9 @@ WORKDIR /app
 # Copy project definition files first (for Docker layer caching)
 COPY pyproject.toml README.md ./
 
-# Copy source code and migrations (needed for editable install)
+# Copy source code, scripts, and migrations (needed for editable install)
 COPY src/ src/
+COPY scripts/ scripts/
 COPY db/ db/
 
 # Install project with dev dependencies

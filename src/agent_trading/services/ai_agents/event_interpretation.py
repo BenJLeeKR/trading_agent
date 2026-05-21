@@ -39,6 +39,52 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_ei_summary(output: EventInterpretationOutput) -> str:
+    """EI 출력에서 deterministic 한국어 요약 문자열 생성 (추가 LLM 호출 없음).
+
+    ``aggregate_view``와 ``events`` 정보만 사용.
+    """
+    av = output.aggregate_view
+
+    # 유의미한 이벤트 없음
+    if av.no_material_events or not output.events:
+        if av.overall_bias == "negative":
+            return "유의미한 신규 이벤트 없음. 전반 부정적."
+        elif av.overall_bias == "positive":
+            return "유의미한 신규 이벤트 없음. 전반 긍정."
+        else:
+            return "유의미한 신규 이벤트 없음. 전반 중립."
+
+    # 이벤트가 있음
+    event_count = len(output.events)
+    parts: list[str] = []
+
+    # bias 한국어 매핑
+    bias_kor = {"positive": "긍정", "negative": "부정", "neutral": "중립"}
+    bias_str = bias_kor.get(av.overall_bias, av.overall_bias)
+    parts.append(f"전반 {bias_str}")
+
+    # 대표 이벤트 1건 요약 (있으면)
+    first = output.events[0]
+    if first.summary:
+        # 첫 문장 또는 80자 이내로 자르기
+        preview = first.summary.split(".")[0] if "." in first.summary else first.summary
+        if len(preview) > 80:
+            preview = preview[:77] + "..."
+        parts.insert(0, preview)
+
+    # evidence strength
+    if av.evidence_strength and av.evidence_strength not in ("none", ""):
+        parts.append(f"근거:{av.evidence_strength}")
+
+    return f"({event_count}건) " + ", ".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # Stub (existing, unchanged)
 # ---------------------------------------------------------------------------
 
@@ -84,7 +130,10 @@ class StubEventInterpretationAgent:
 
         try:
             # --- Stub: no actual Provider call ---
-            return EventInterpretationOutput()
+            output = EventInterpretationOutput()
+            # deterministic 한국어 summary 생성 (LLM 호출 없음)
+            object.__setattr__(output, "summary", _build_ei_summary(output))
+            return output
         except Exception:
             logger.warning(
                 "StubEventInterpretationAgent.run() failed — "
@@ -167,8 +216,10 @@ class EventInterpretationAgent:
             result: EventInterpretationOutput = raw_response.parsed  # type: ignore[assignment]
 
             # Override metadata fields from request / agent identity
+            # ★ schema_version은 항상 agent 설정값 사용 (LLM 응답 무시)
+            # LLM이 "v1"/"1.0"/"1" 등 다양한 형식으로 반환하는 것을 방지
             result = EventInterpretationOutput(
-                schema_version=result.schema_version or self._schema_version,
+                schema_version=self._schema_version,
                 agent_name=result.agent_name or self.agent_name,
                 decision_context_id=(
                     str(request.decision_context_id)
@@ -180,6 +231,9 @@ class EventInterpretationAgent:
                 events=result.events,
                 aggregate_view=result.aggregate_view,
             )
+
+            # ★ deterministic 한국어 summary 생성 (LLM 호출 없음)
+            object.__setattr__(result, "summary", _build_ei_summary(result))
 
             logger.info(
                 "EventInterpretationAgent succeeded: "

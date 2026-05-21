@@ -287,7 +287,15 @@ class TestForbiddenTransitions:
     async def test_terminal_state_any_transition(
         self, order_manager: OrderManager, in_memory_repos: RepositoryContainer
     ) -> None:
-        """No transition from any terminal state should be allowed."""
+        """No transition from any terminal state should be allowed.
+
+        Note: EXPIRED → FILLED and EXPIRED → PARTIALLY_FILLED are explicitly
+        allowed via ``_ALLOWED_TRANSITIONS`` for post-submit sync recovery
+        (see ``_validate_transition`` and ``_can_recover_expired``).
+        """
+        # Allowed EXPIRED recovery targets — skip in the blanket check
+        _EXPIRED_ALLOWED = {OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED}
+
         for terminal in [
             OrderStatus.FILLED,
             OrderStatus.CANCELLED,
@@ -298,6 +306,9 @@ class TestForbiddenTransitions:
             await in_memory_repos.orders.add(order)
             for target in OrderStatus:
                 if target == terminal:
+                    continue
+                # EXPIRED recovery targets are explicitly allowed
+                if terminal == OrderStatus.EXPIRED and target in _EXPIRED_ALLOWED:
                     continue
                 with pytest.raises(InvalidStateTransitionError):
                     await order_manager.transition_to(order, target)

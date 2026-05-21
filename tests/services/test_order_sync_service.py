@@ -7,21 +7,25 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+from unittest.mock import AsyncMock
 
 from agent_trading.brokers.base import BrokerAdapter
 from agent_trading.domain.entities import (
+    AccountEntity,
+    BrokerAccountEntity,
     BrokerOrderEntity,
     FillEventEntity,
     OrderRequestEntity,
 )
 from agent_trading.domain.enums import (
     BrokerName,
+    Environment,
     OrderSide,
     OrderStatus,
     OrderType,
@@ -38,6 +42,7 @@ from agent_trading.services.order_sync_service import (
     SyncCycleResult,
     SyncOrderResult,
     _ACTIVE_SYNC_STATUSES,
+    _STUCK_EXPIRY_SECONDS,
     _SYNCABLE_STATUSES,
 )
 
@@ -158,9 +163,10 @@ def _make_broker_order(
     broker_native_order_id: str = "BRK-SYNC-001",
     broker_status: str = "submitted",
     last_synced_at: datetime | None = None,
+    created_at: datetime | None = None,
 ) -> BrokerOrderEntity:
     """Create and persist a broker order linked to ``order``."""
-    now = datetime.now(timezone.utc)
+    now = created_at or datetime.now(timezone.utc)
     broker_order = BrokerOrderEntity(
         broker_order_id=uuid4(),
         order_request_id=order.order_request_id,
@@ -306,7 +312,9 @@ class TestSyncFilled:
 
         assert result.status_changed is True
         assert result.current_status == OrderStatus.FILLED
-        assert result.fills_synced == 1
+        # Terminal 상태에서는 get_fills() 중복 호출을 건너뛰므로 fills_synced=0
+        # (get_order_status()가 이미 fill 데이터를 포함하고 있음)
+        assert result.fills_synced == 0
         assert result.terminal is True
         assert result.snapshot_triggered is True
         assert len(snapshot_called) == 1
@@ -798,9 +806,11 @@ class TestSyncFilledNoFillIncrease:
         assert result.current_status == OrderStatus.FILLED
         assert result.terminal is True
         assert result.fills_synced == 0
-        # 새 조건: fills_synced > 0 을 만족하지 못하므로 refresh 미호출
-        assert result.snapshot_triggered is False
-        assert len(snapshot_called) == 0
+        # Terminal 상태에서 FILLED로 전이되면 fills_synced=0이어도
+        # snapshot refresh는 트리거됨 (get_fills() 중복 호출 최적화로
+        # fills_synced=0이지만 상태 변경은 확실하므로)
+        assert result.snapshot_triggered is True
+        assert len(snapshot_called) == 1
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -1238,7 +1248,7 @@ class TestPostSubmitSyncRunner:
         assert result.total_orders == 3    # 3개 모두 조회됨
         assert len(result.errors) == 1     # order2만 실패
         assert result.updated == 2         # order1, order3은 성공 (SUBMITTED→ACK)
-        assert result.partial == 3         # 모두 non-terminal
+        assert result.partial == 2         # order1, order3만 non-terminal (order2 실패는 partial 미포함)
 
     async def test_runner_broker_exception_isolation(
         self,
@@ -1277,7 +1287,7 @@ class TestPostSubmitSyncRunner:
         assert "get_order_status failed" in result.errors[0]
         assert result.updated == 0
         assert result.filled == 0
-        assert result.partial == 1  # non-terminal (error case)
+        assert result.partial == 0  # error case → partial 미포함
 
     async def test_runner_multiple_broker_orders_per_order(
         self,
@@ -1306,6 +1316,1139 @@ class TestPostSubmitSyncRunner:
         assert result.filled == 0
         assert result.errors == []
 
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: PostSubmitSyncRunner — snapshot refresh tracking
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestRunnerSnapshotsRefreshed:
+    """``run_sync_cycle()`` snapshot_refreshed 집계 검증."""
+
+    async def test_runner_snapshots_refreshed_count(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """FILLED로 전이된 주문 수만큼 snapshot_refreshed가 집계되어야 함."""
+        now = datetime.now(timezone.utc)
+        order1 = _make_order(repos, status=OrderStatus.PARTIALLY_FILLED, client_order_id="SNAP-001")
+        order2 = _make_order(repos, status=OrderStatus.PARTIALLY_FILLED, client_order_id="SNAP-002")
+        order3 = _make_order(repos, status=OrderStatus.ACKNOWLEDGED, client_order_id="SNAP-003")
+
+        _make_broker_order(repos, order1, broker_native_order_id="BRK-SNAP-001")
+        _make_broker_order(repos, order2, broker_native_order_id="BRK-SNAP-002")
+        _make_broker_order(repos, order3, broker_native_order_id="BRK-SNAP-003")
+
+        fills = [
+            FillEvent(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                broker_order_id="BRK-SNAP-001",
+                symbol="005930",
+                side=OrderSide.BUY,
+                fill_quantity=Decimal("10"),
+                fill_price=Decimal("50000"),
+                fill_timestamp=now,
+                fee=Decimal("500"),
+                tax=Decimal("0"),
+            ),
+        ]
+        # order1만 FILLED, order2는 ACK, order3은 ACK
+        class _MultiStatusBroker:
+            def __init__(self) -> None:
+                self.call_count = 0
+
+            async def get_order_status(
+                self,
+                account_ref: str,
+                client_order_id: str,
+                broker_order_id: str,
+            ) -> OrderStatusResult:
+                self.call_count += 1
+                if client_order_id == "SNAP-001":
+                    status = OrderStatus.FILLED
+                else:
+                    status = OrderStatus.ACKNOWLEDGED
+                return OrderStatusResult(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
+                    client_order_id=client_order_id,
+                    broker_order_id=broker_order_id,
+                    status=status,
+                    filled_quantity=Decimal("0"),
+                    remaining_quantity=Decimal("0"),
+                    average_fill_price=Decimal("0"),
+                    last_updated_at=datetime.now(timezone.utc),
+                )
+
+            async def get_fills(
+                self,
+                account_ref: str,
+                broker_order_id: str,
+                from_ts: datetime | None = None,
+            ) -> Sequence[FillEvent]:
+                if broker_order_id == "BRK-SNAP-001":
+                    return fills
+                return []
+
+        snapshot_called: list[UUID] = []
+
+        async def _refresh_cb(account_id: UUID) -> None:
+            snapshot_called.append(account_id)
+
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=sync_service,
+            broker=_MultiStatusBroker(),  # type: ignore[arg-type]
+            snapshot_refresh_cb=_refresh_cb,
+        )
+
+        result = await runner.run_sync_cycle(account_ref="test-account")
+
+        assert result.total_orders == 3
+        assert result.filled == 1
+        assert result.snapshots_refreshed == 1
+        assert len(snapshot_called) == 1
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: ReconcileRequiredSyncPolicy — RECONCILE_REQUIRED 해소
+# ═════════════════════════════════════════════════════════════════════
+
+
+class _MultiStatusBroker:
+    """Broker stub that returns different statuses per client_order_id."""
+
+    def __init__(self, default_status: OrderStatus = OrderStatus.ACKNOWLEDGED) -> None:
+        self._default_status = default_status
+        self._overrides: dict[str, OrderStatus] = {}
+        self.get_order_status_call_count = 0
+        self.get_fills_call_count = 0
+
+    def set_status(self, client_order_id: str, status: OrderStatus) -> None:
+        self._overrides[client_order_id] = status
+
+    async def get_order_status(
+        self,
+        account_ref: str,
+        client_order_id: str,
+        broker_order_id: str,
+    ) -> OrderStatusResult:
+        self.get_order_status_call_count += 1
+        status = self._overrides.get(client_order_id, self._default_status)
+        return OrderStatusResult(
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id=client_order_id,
+            broker_order_id=broker_order_id,
+            status=status,
+            filled_quantity=Decimal("0"),
+            remaining_quantity=Decimal("0"),
+            average_fill_price=Decimal("0"),
+            last_updated_at=datetime.now(timezone.utc),
+        )
+
+    async def get_fills(
+        self,
+        account_ref: str,
+        broker_order_id: str,
+        from_ts: datetime | None = None,
+    ) -> Sequence[FillEvent]:
+        self.get_fills_call_count += 1
+        return []
+
+    async def resolve_unknown_state(
+        self,
+        account_ref: str,
+        *,
+        broker_order_id: str,
+        symbol: str | None = None,
+    ) -> OrderStatusResult:
+        status = self._overrides.get("__resolve__", self._default_status)
+        return OrderStatusResult(
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="",
+            broker_order_id=broker_order_id,
+            status=status,
+            filled_quantity=Decimal("0"),
+            remaining_quantity=Decimal("0"),
+            average_fill_price=Decimal("0"),
+            last_updated_at=datetime.now(timezone.utc),
+        )
+
+
+class TestReconcileRequiredSyncPolicy:
+    """``_sync_reconcile_required_orders()`` — RECONCILE_REQUIRED 해소 정책."""
+
+    async def test_sync_reconcile_required_resolves(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """RECONCILE_REQUIRED 주문이 broker truth 조회를 통해 해소됨."""
+        order = _make_order(repos, status=OrderStatus.RECONCILE_REQUIRED, client_order_id="REC-001")
+        _make_broker_order(repos, order, broker_native_order_id="BRK-REC-001")
+
+        broker = _MultiStatusBroker(default_status=OrderStatus.ACKNOWLEDGED)
+
+        resolved = await sync_service._sync_reconcile_required_orders(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            is_after_hours=True,
+        )
+
+        assert resolved == 1
+
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.ACKNOWLEDGED
+
+    async def test_sync_reconcile_required_skip_non_reconcile(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """RECONCILE_REQUIRED가 아닌 주문은 skip."""
+        _make_order(repos, status=OrderStatus.SUBMITTED, client_order_id="NORM-001")
+
+        broker = _MultiStatusBroker()
+
+        resolved = await sync_service._sync_reconcile_required_orders(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+        )
+
+        assert resolved == 0
+
+    async def test_sync_reconcile_required_limit(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """limit 파라미터로 처리할 RECONCILE_REQUIRED 주문 수를 제한."""
+        for i in range(5):
+            o = _make_order(repos, status=OrderStatus.RECONCILE_REQUIRED, client_order_id=f"REC-{i:03d}")
+            _make_broker_order(repos, o, broker_native_order_id=f"BRK-REC-{i:03d}")
+
+        broker = _MultiStatusBroker(default_status=OrderStatus.ACKNOWLEDGED)
+
+        resolved = await sync_service._sync_reconcile_required_orders(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            limit=3,
+        )
+
+        assert resolved == 3
+
+    async def test_sync_reconcile_required_no_broker_order_skipped(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """BrokerOrderEntity가 없는 RECONCILE_REQUIRED 주문은 skip."""
+        _make_order(repos, status=OrderStatus.RECONCILE_REQUIRED, client_order_id="NOBRK-REC")
+        # Broker order를 생성하지 않음
+
+        broker = _MultiStatusBroker()
+
+        resolved = await sync_service._sync_reconcile_required_orders(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+        )
+
+        assert resolved == 0
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: PostSubmitSyncRunner — savepoint isolation
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestPostSubmitSyncRunnerSavepointIsolation:
+    """``run_sync_cycle()`` savepoint 격리 — 개별 sync 실패가 전체 cycle에 영향 없음."""
+
+    async def test_runner_savepoint_isolation(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Broker.get_order_status() 예외 발생 시 savepoint rollback으로
+        해당 broker_order만 격리되고 다른 주문 sync는 정상 진행."""
+        order1 = _make_order(repos, status=OrderStatus.SUBMITTED, client_order_id="ISO-001")
+        order2 = _make_order(repos, status=OrderStatus.SUBMITTED, client_order_id="ISO-002")
+        order3 = _make_order(repos, status=OrderStatus.SUBMITTED, client_order_id="ISO-003")
+
+        bo1 = _make_broker_order(repos, order1, broker_native_order_id="BRK-ISO-001")
+        bo2 = _make_broker_order(repos, order2, broker_native_order_id="BRK-ISO-002")
+        bo3 = _make_broker_order(repos, order3, broker_native_order_id="BRK-ISO-003")
+
+        class _IsolationFailingBroker:
+            def __init__(self) -> None:
+                self._fail_id = bo2.broker_native_order_id
+
+            async def get_order_status(
+                self,
+                account_ref: str,
+                client_order_id: str,
+                broker_order_id: str,
+            ) -> OrderStatusResult:
+                if broker_order_id == self._fail_id:
+                    raise RuntimeError("Isolated broker failure")
+                return OrderStatusResult(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
+                    client_order_id=client_order_id,
+                    broker_order_id=broker_order_id,
+                    status=OrderStatus.ACKNOWLEDGED,
+                    filled_quantity=Decimal("0"),
+                    remaining_quantity=Decimal("10"),
+                    average_fill_price=Decimal("0"),
+                    last_updated_at=datetime.now(timezone.utc),
+                )
+
+            async def get_fills(
+                self,
+                account_ref: str,
+                broker_order_id: str,
+                from_ts: datetime | None = None,
+            ) -> Sequence[FillEvent]:
+                return []
+
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=sync_service,
+            broker=_IsolationFailingBroker(),  # type: ignore[arg-type]
+        )
+
+        result = await runner.run_sync_cycle(account_ref="test-account")
+
+        assert result.total_orders == 3
+        assert len(result.errors) == 1
+        assert result.updated == 2
+        assert result.partial == 2  # order2 실패는 partial 미포함
+
+        # order1, order3은 ACKNOWLEDGED로 전이
+        updated1 = await repos.orders.get(order1.order_request_id)
+        assert updated1 is not None
+        assert updated1.status == OrderStatus.ACKNOWLEDGED
+
+        updated3 = await repos.orders.get(order3.order_request_id)
+        assert updated3 is not None
+        assert updated3.status == OrderStatus.ACKNOWLEDGED
+
+        # order2는 여전히 SUBMITTED
+        updated2 = await repos.orders.get(order2.order_request_id)
+        assert updated2 is not None
+        assert updated2.status == OrderStatus.SUBMITTED
+
+
+    async def test_runner_sync_single_error_no_crash(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """``_sync_single_order()`` 예외 발생 시 ``(None, err_msg)`` 반환 → crash 없이
+        ``errors``에 기록되고 cycle 정상 진행."""
+        order1 = _make_order(repos, status=OrderStatus.SUBMITTED, client_order_id="ERR-001")
+        order2 = _make_order(repos, status=OrderStatus.SUBMITTED, client_order_id="ERR-002")
+
+        bo1 = _make_broker_order(repos, order1, broker_native_order_id="BRK-ERR-001")
+        bo2 = _make_broker_order(repos, order2, broker_native_order_id="BRK-ERR-002")
+
+        class _ErrorReturningBroker:
+            async def get_order_status(
+                self,
+                account_ref: str,
+                client_order_id: str,
+                broker_order_id: str,
+            ) -> OrderStatusResult:
+                if broker_order_id == "BRK-ERR-001":
+                    # _sync_single_order() 내부에서 예외 발생 → (None, err_msg) 반환 유도
+                    raise RuntimeError("Simulated sync failure")
+                return OrderStatusResult(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
+                    client_order_id=client_order_id,
+                    broker_order_id=broker_order_id,
+                    status=OrderStatus.ACKNOWLEDGED,
+                    filled_quantity=Decimal("0"),
+                    remaining_quantity=Decimal("10"),
+                    average_fill_price=Decimal("0"),
+                    last_updated_at=datetime.now(timezone.utc),
+                )
+
+            async def get_fills(
+                self,
+                account_ref: str,
+                broker_order_id: str,
+                from_ts: datetime | None = None,
+            ) -> Sequence[FillEvent]:
+                return []
+
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=sync_service,
+            broker=_ErrorReturningBroker(),  # type: ignore[arg-type]
+        )
+
+        result = await runner.run_sync_cycle(account_ref="test-account")
+
+        # crash 없이 정상 완료
+        assert result.total_orders == 2
+        assert len(result.errors) == 1  # order1만 실패
+        # 에러 메시지에는 broker_order_id(UUID)가 포함됨
+        assert "get_order_status failed" in result.errors[0]
+        assert result.updated == 1  # order2는 ACKNOWLEDGED로 전이
+
+        # order1은 여전히 SUBMITTED
+        updated1 = await repos.orders.get(order1.order_request_id)
+        assert updated1 is not None
+        assert updated1.status == OrderStatus.SUBMITTED
+
+        # order2는 ACKNOWLEDGED로 전이
+        updated2 = await repos.orders.get(order2.order_request_id)
+        assert updated2 is not None
+        assert updated2.status == OrderStatus.ACKNOWLEDGED
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: _infer_sell_order_fill_via_position
+# ═════════════════════════════════════════════════════════════════════
+
+
+def _make_position_snapshot(
+    repos: RepositoryContainer,
+    *,
+    account_id: UUID,
+    instrument_id: UUID,
+    quantity: Decimal,
+    snapshot_time: datetime | None = None,
+) -> UUID:
+    """Create a position snapshot and return its ID."""
+    from agent_trading.domain.entities import PositionSnapshotEntity
+
+    snap_id = uuid4()
+    entity = PositionSnapshotEntity(
+        position_snapshot_id=snap_id,
+        account_id=account_id,
+        instrument_id=instrument_id,
+        quantity=quantity,
+        average_price=Decimal("0"),
+        market_price=Decimal("0"),
+        unrealized_pnl=Decimal("0"),
+        source_of_truth="test",
+        snapshot_at=snapshot_time or datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+    )
+    repos.position_snapshots._items[snap_id] = entity  # type: ignore[attr-defined]
+    return snap_id
+
+
+class TestInferSellOrderFillViaPosition:
+    """``_infer_sell_order_fill_via_position()`` — SELL 주문 position 기반 fill 추론."""
+
+    async def test_infer_sell_filled(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Position 감소량 >= requested_quantity → FILLED 추론."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="SELL-FILLED-001",
+        )
+        order = replace(order, side=OrderSide.SELL, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        # Pre-order snapshot: quantity=20 (broker_order.created_at보다 이전)
+        pre_snap_time = now - timedelta(hours=2)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=pre_snap_time,
+        )
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-SELL-FILLED",
+        )
+
+        # Current snapshot: quantity=5 (delta=15 >= 10 → FILLED)
+        # broker_order.created_at 이후로 설정하여 pre-order snapshot만 조회되도록 함
+        current_snap_time = broker_order.created_at + timedelta(seconds=1)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("5"),
+            snapshot_time=current_snap_time,
+        )
+
+        result = await sync_service._infer_sell_order_fill_via_position(
+            order, broker_order,
+        )
+
+        assert result == OrderStatus.FILLED
+
+    async def test_infer_sell_partially_filled(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """0 < Position 감소량 < requested_quantity → PARTIALLY_FILLED 추론."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="SELL-PARTIAL-001",
+        )
+        order = replace(order, side=OrderSide.SELL, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        # Pre-order snapshot: quantity=20 (broker_order.created_at보다 이전)
+        pre_snap_time = now - timedelta(hours=2)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=pre_snap_time,
+        )
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-SELL-PARTIAL",
+        )
+
+        # Current snapshot: quantity=15 (delta=5, 0 < 5 < 10 → PARTIALLY_FILLED)
+        # broker_order.created_at 이후로 설정하여 pre-order snapshot만 조회되도록 함
+        current_snap_time = broker_order.created_at + timedelta(seconds=1)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("15"),
+            snapshot_time=current_snap_time,
+        )
+
+        result = await sync_service._infer_sell_order_fill_via_position(
+            order, broker_order,
+        )
+
+        assert result == OrderStatus.PARTIALLY_FILLED
+
+    async def test_infer_sell_no_decrease_returns_none(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Position 감소 없음 → None (추론 불가)."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="SELL-NO-DEC-001",
+        )
+        order = replace(order, side=OrderSide.SELL, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        # Pre-order snapshot: quantity=20 (broker_order.created_at보다 이전)
+        pre_snap_time = now - timedelta(hours=2)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=pre_snap_time,
+        )
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-SELL-NO-DEC",
+        )
+
+        # Current snapshot: quantity=20 (delta=0 → no decrease)
+        # broker_order.created_at 이후로 설정하여 pre-order snapshot만 조회되도록 함
+        current_snap_time = broker_order.created_at + timedelta(seconds=1)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=current_snap_time,
+        )
+
+        result = await sync_service._infer_sell_order_fill_via_position(
+            order, broker_order,
+        )
+
+        assert result is None
+
+    async def test_infer_sell_buy_order_returns_none(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """BUY 주문은 position inference 대상이 아님."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="BUY-NO-INFER-001",
+        )
+        order = replace(order, side=OrderSide.BUY, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-BUY-NO-INFER",
+        )
+
+        result = await sync_service._infer_sell_order_fill_via_position(
+            order, broker_order,
+        )
+
+        assert result is None
+
+    async def test_infer_sell_no_pre_order_snapshot_returns_none(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Pre-order snapshot이 없으면 None 반환."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="SELL-NO-SNAP-001",
+        )
+        order = replace(order, side=OrderSide.SELL, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-SELL-NO-SNAP",
+        )
+
+        # No position snapshots at all
+        result = await sync_service._infer_sell_order_fill_via_position(
+            order, broker_order,
+        )
+
+        assert result is None
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: transition_to_authoritative — is_after_hours parameter
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestTransitionToAuthoritativeIsAfterHours:
+    """``transition_to_authoritative()`` — ``is_after_hours`` 파라미터 검증.
+
+    장중(intraday, is_after_hours=False)에는 EXPIRED fallback이 차단되어
+    RECONCILE_REQUIRED 상태가 유지되고, 장마감 후(after-hours,
+    is_after_hours=True)에는 EXPIRED fallback이 정상 동작한다.
+    """
+
+    # ── Path A: resolve_unknown_state()가 예외 발생 ──
+
+    async def test_intraday_suppress_expired_fallback_path_a(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Path A (resolve_unknown_state 예외) + 장중 → EXPIRED fallback 차단, None 반환."""
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="INTRA-A-001",
+        )
+        order = replace(order, side=OrderSide.BUY, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-INTRA-A",
+        )
+
+        # resolve_unknown_state()가 예외를 던지도록 mock
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            side_effect=RuntimeError("Broker API timeout"),
+        )
+
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=False,  # 장중
+        )
+
+        # EXPIRED fallback이 차단되어 None 반환
+        assert result is None
+
+        # Order 상태가 RECONCILE_REQUIRED로 유지됨
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.RECONCILE_REQUIRED
+
+    async def test_after_hours_allows_expired_fallback_path_a(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Path A (resolve_unknown_state 예외) + 장마감 후 → EXPIRED fallback 허용."""
+        now = datetime.now(timezone.utc)
+        old_created_at = now - timedelta(minutes=45)  # 45분 전 (grace period 30분 초과)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="AH-A-001",
+        )
+        order = replace(order, side=OrderSide.BUY, requested_quantity=Decimal("10"),
+                        created_at=old_created_at)
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-AH-A",
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            side_effect=RuntimeError("Broker API timeout"),
+        )
+
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=True,  # 장마감 후
+        )
+
+        # EXPIRED fallback 허용
+        assert result is not None
+        assert result.status == OrderStatus.EXPIRED
+
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.EXPIRED
+
+    # ── Path B: resolve_unknown_state()가 RECONCILE_REQUIRED 반환 ──
+
+    async def test_intraday_suppress_expired_fallback_path_b(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Path B (resolve_unknown_state → RECONCILE_REQUIRED) + 장중 → EXPIRED fallback 차단."""
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="INTRA-B-001",
+        )
+        order = replace(order, side=OrderSide.BUY, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-INTRA-B",
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        # resolve_unknown_state()가 RECONCILE_REQUIRED 반환
+        broker.resolve_unknown_state = AsyncMock(
+            return_value=OrderStatusResult(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                client_order_id="",
+                broker_order_id=broker_order.broker_native_order_id,
+                status=OrderStatus.RECONCILE_REQUIRED,
+                filled_quantity=Decimal("0"),
+                remaining_quantity=Decimal("0"),
+                average_fill_price=Decimal("0"),
+                last_updated_at=datetime.now(timezone.utc),
+            ),
+        )
+
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=False,  # 장중
+        )
+
+        # EXPIRED fallback 차단 → None 반환
+        assert result is None
+
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.RECONCILE_REQUIRED
+
+    async def test_after_hours_allows_expired_fallback_path_b(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Path B (resolve_unknown_state → RECONCILE_REQUIRED) + 장마감 후 → EXPIRED fallback 허용."""
+        now = datetime.now(timezone.utc)
+        old_created_at = now - timedelta(minutes=45)  # 45분 전 (grace period 30분 초과)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="AH-B-001",
+        )
+        order = replace(order, side=OrderSide.BUY, requested_quantity=Decimal("10"),
+                        created_at=old_created_at)
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-AH-B",
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            return_value=OrderStatusResult(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                client_order_id="",
+                broker_order_id=broker_order.broker_native_order_id,
+                status=OrderStatus.RECONCILE_REQUIRED,
+                filled_quantity=Decimal("0"),
+                remaining_quantity=Decimal("0"),
+                average_fill_price=Decimal("0"),
+                last_updated_at=datetime.now(timezone.utc),
+            ),
+        )
+
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=True,  # 장마감 후
+        )
+
+        # EXPIRED fallback 허용
+        assert result is not None
+        assert result.status == OrderStatus.EXPIRED
+
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.EXPIRED
+
+    # ── SELL position inference (Path A, 장중) ──
+
+    async def test_intraday_sell_position_inference_still_works(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Path A (resolve_unknown_state 예외) + SELL + 장중 → position inference 우선 동작."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="SELL-INFER-001",
+        )
+        order = replace(order, side=OrderSide.SELL, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-SELL-INFER",
+        )
+
+        # Position snapshot: pre=20 (broker_order.created_at 이전), current=5 (이후)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=broker_order.created_at - timedelta(hours=1),
+        )
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("5"),
+            snapshot_time=broker_order.created_at + timedelta(seconds=1),
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            side_effect=RuntimeError("Broker API timeout"),
+        )
+
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=False,  # 장중
+        )
+
+        # Position inference가 EXPIRED fallback보다 우선하여 FILLED 반환
+        assert result is not None
+        assert result.status == OrderStatus.FILLED
+
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.FILLED
+
+    # ── After-hours young order grace period (Path A: resolve_unknown_state 예외) ──
+
+    async def test_after_hours_young_order_blocks_expired_fallback_path_a(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Path A (resolve_unknown_state 예외) + after-hours + young order (age < 30min)
+        → Grace period가 EXPIRED fallback을 차단하고 RECONCILE_REQUIRED 유지."""
+        now = datetime.now(timezone.utc)
+        young_created_at = now - timedelta(minutes=5)  # 5분 전 생성 (young)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="AH-YOUNG-A-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.BUY,
+            requested_quantity=Decimal("10"),
+            created_at=young_created_at,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-AH-YOUNG-A",
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            side_effect=RuntimeError("Broker API timeout"),
+        )
+
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=True,  # 장마감 후
+        )
+
+        # Grace period가 EXPIRED fallback을 차단 → None 반환
+        assert result is None
+
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.RECONCILE_REQUIRED
+
+    async def test_after_hours_old_order_allows_expired_fallback_path_a(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Path A (resolve_unknown_state 예외) + after-hours + old order (age >= 30min)
+        → Grace period 초과로 EXPIRED fallback 허용."""
+        now = datetime.now(timezone.utc)
+        old_created_at = now - timedelta(minutes=45)  # 45분 전 생성 (old, >= 30min)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="AH-OLD-A-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.BUY,
+            requested_quantity=Decimal("10"),
+            created_at=old_created_at,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-AH-OLD-A",
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            side_effect=RuntimeError("Broker API timeout"),
+        )
+
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=True,  # 장마감 후
+        )
+
+        # EXPIRED fallback 허용
+        assert result is not None
+        assert result.status == OrderStatus.EXPIRED
+
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.EXPIRED
+
+    # ── After-hours young order grace period (broker has no record) ──
+
+    async def test_after_hours_young_order_blocks_expired_fallback_broker_no_record(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Broker no record 경로 + after-hours + young order (age < 30min)
+        → Grace period가 EXPIRED fallback을 차단하고 RECONCILE_REQUIRED 유지."""
+        now = datetime.now(timezone.utc)
+        young_created_at = now - timedelta(minutes=5)  # 5분 전 생성 (young)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="AH-YOUNG-BNR-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.BUY,
+            requested_quantity=Decimal("10"),
+            created_at=young_created_at,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-AH-YOUNG-BNR",
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        # resolve_unknown_state가 RECONCILE_REQUIRED 반환 → broker has no record 경로로 fall through
+        broker.resolve_unknown_state = AsyncMock(
+            return_value=OrderStatusResult(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                client_order_id="",
+                broker_order_id=broker_order.broker_native_order_id,
+                status=OrderStatus.RECONCILE_REQUIRED,
+                filled_quantity=Decimal("0"),
+                remaining_quantity=Decimal("0"),
+                average_fill_price=Decimal("0"),
+                last_updated_at=datetime.now(timezone.utc),
+            ),
+        )
+
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=True,  # 장마감 후
+        )
+
+        # Grace period가 EXPIRED fallback을 차단 → None 반환
+        assert result is None
+
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.RECONCILE_REQUIRED
+
+    async def test_after_hours_old_order_allows_expired_fallback_broker_no_record(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Broker no record 경로 + after-hours + old order (age >= 30min)
+        → Grace period 초과로 EXPIRED fallback 허용."""
+        now = datetime.now(timezone.utc)
+        old_created_at = now - timedelta(minutes=45)  # 45분 전 생성 (old, >= 30min)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="AH-OLD-BNR-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.BUY,
+            requested_quantity=Decimal("10"),
+            created_at=old_created_at,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-AH-OLD-BNR",
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            return_value=OrderStatusResult(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                client_order_id="",
+                broker_order_id=broker_order.broker_native_order_id,
+                status=OrderStatus.RECONCILE_REQUIRED,
+                filled_quantity=Decimal("0"),
+                remaining_quantity=Decimal("0"),
+                average_fill_price=Decimal("0"),
+                last_updated_at=datetime.now(timezone.utc),
+            ),
+        )
+
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=True,  # 장마감 후
+        )
+
+        # EXPIRED fallback 허용 (age=45min >= 30min grace period)
+        assert result is not None
+        assert result.status == OrderStatus.EXPIRED
+
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.EXPIRED
+
+    # ── Genuine manual reconciliation (Path B, 장중) ──
+
+    async def test_intraday_genuine_manual_keeps_reconcile(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Path B (resolve_unknown_state → RECONCILE_REQUIRED) + 장중 +
+        genuine manual reconciliation → RECONCILE_REQUIRED 유지."""
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="MANUAL-001",
+        )
+        order = replace(order, side=OrderSide.BUY, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-MANUAL",
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        # broker_order_id가 빈 문자열 → genuine manual reconciliation
+        broker.resolve_unknown_state = AsyncMock(
+            return_value=OrderStatusResult(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                client_order_id="",
+                broker_order_id="",  # 빈 broker_order_id → genuine manual
+                status=OrderStatus.RECONCILE_REQUIRED,
+                filled_quantity=Decimal("0"),
+                remaining_quantity=Decimal("0"),
+                average_fill_price=Decimal("0"),
+                last_updated_at=datetime.now(timezone.utc),
+            ),
+        )
+
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=False,  # 장중
+        )
+
+        # Genuine manual reconciliation → RECONCILE_REQUIRED 유지
+        assert result is None
+
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.RECONCILE_REQUIRED
+
     async def test_runner_no_broker_order_skipped(
         self,
         sync_service: OrderSyncService,
@@ -1332,224 +2475,1901 @@ class TestPostSubmitSyncRunner:
         assert result.errors == []
 
 
-class TestRunnerSnapshotsRefreshed:
-    """``PostSubmitSyncRunner``가 ``SyncCycleResult.snapshots_refreshed``를
-    올바르게 누적하는지 검증."""
+# ═════════════════════════════════════════════════════════════════════
+# Test: transition_to_authoritative — broker_status 동기화 (P0 fix)
+# ═════════════════════════════════════════════════════════════════════
 
-    async def test_runner_snapshots_refreshed_counted(
+
+class TestTransitionToAuthoritativeBrokerStatusSync:
+    """``transition_to_authoritative()`` — position-derived fill 추론 후
+    ``broker_orders.broker_status`` 동기화 및 ``snapshot_refresh_cb`` 호출 검증.
+
+    관련 수정: exception handler 경로 (line 696-740) 및 RECONCILE_REQUIRED
+    persistence 경로 (line 832-876)에서 ``broker_status``를 ``'filled'``로
+    업데이트하고 ``snapshot_refresh_cb``를 호출한다.
+    """
+
+    async def test_exception_handler_path_updates_broker_status_on_fill(
         self,
         sync_service: OrderSyncService,
         repos: RepositoryContainer,
     ) -> None:
-        """FILLED 도달 + fill 증가 → snapshots_refreshed=1 누적."""
+        """Exception handler 경로 (resolve_unknown_state 예외)에서
+        position-derived fill 추론 후 broker_status가 'filled'로 업데이트됨."""
         now = datetime.now(timezone.utc)
-
-        # Order 1: PARTIALLY_FILLED → broker가 FILLED + fill 반환
-        order1 = _make_order(
-            repos, status=OrderStatus.PARTIALLY_FILLED,
-            client_order_id="SNAP-CNT-001",
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="EXC-BRK-001",
         )
-        bo1 = _make_broker_order(
-            repos, order1, broker_native_order_id="BRK-SNAP-CNT-A",
-        )
-        fills1 = [
-            FillEvent(
-                broker_name=BrokerName.KOREA_INVESTMENT,
-                broker_order_id=bo1.broker_native_order_id,
-                symbol="005930",
-                side=OrderSide.BUY,
-                fill_quantity=Decimal("10"),
-                fill_price=Decimal("50000"),
-                fill_timestamp=now,
-                fee=Decimal("500"),
-                tax=Decimal("0"),
-            ),
-        ]
+        order = replace(order, side=OrderSide.SELL, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
 
-        # Order 2: SUBMITTED → broker가 PARTIALLY_FILLED + fill 반환 (FILLED 아님)
-        order2 = _make_order(
-            repos, status=OrderStatus.SUBMITTED,
-            client_order_id="SNAP-CNT-002",
-        )
-        bo2 = _make_broker_order(
-            repos, order2, broker_native_order_id="BRK-SNAP-CNT-B",
-        )
-        fills2 = [
-            FillEvent(
-                broker_name=BrokerName.KOREA_INVESTMENT,
-                broker_order_id=bo2.broker_native_order_id,
-                symbol="005930",
-                side=OrderSide.BUY,
-                fill_quantity=Decimal("3"),
-                fill_price=Decimal("50000"),
-                fill_timestamp=now,
-                fee=Decimal("150"),
-                tax=Decimal("0"),
-            ),
-        ]
-
-        snapshot_called: list[UUID] = []
-
-        async def _refresh_cb(account_id: UUID) -> None:
-            snapshot_called.append(account_id)
-
-        runner = PostSubmitSyncRunner(
-            repos=repos,
-            sync_service=sync_service,
-            broker=_MultiStatusBroker(  # type: ignore[arg-type]
-                [(bo1.broker_native_order_id, OrderStatus.FILLED, fills1),
-                 (bo2.broker_native_order_id, OrderStatus.PARTIALLY_FILLED, fills2)],
-            ),
-            snapshot_refresh_cb=_refresh_cb,
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-EXC-BRK",
+            broker_status="reconcile_required",
         )
 
-        result = await runner.run_sync_cycle(account_ref="test-account")
-
-        assert result.total_orders == 2
-        assert result.filled == 1
-        assert result.partial == 1
-        assert result.snapshots_refreshed == 1
-        assert len(snapshot_called) == 1
-        assert snapshot_called[0] == order1.account_id
-
-
-class _MultiStatusBroker:
-    """여러 broker_order_id에 대해 서로 다른 status/fills를 반환하는 stub."""
-
-    def __init__(self, entries: list[tuple[str, OrderStatus, list[FillEvent]]]) -> None:
-        self._map: dict[str, tuple[OrderStatus, list[FillEvent]]] = {
-            native_id: (status, fills) for native_id, status, fills in entries
-        }
-        self.get_order_status_call_count = 0
-        self.get_fills_call_count = 0
-
-    async def get_order_status(
-        self,
-        account_ref: str,
-        client_order_id: str,
-        broker_order_id: str,
-    ) -> OrderStatusResult:
-        self.get_order_status_call_count += 1
-        status, _ = self._map.get(broker_order_id, (OrderStatus.SUBMITTED, []))
-        return OrderStatusResult(
-            broker_name=BrokerName.KOREA_INVESTMENT,
-            client_order_id=client_order_id,
-            broker_order_id=broker_order_id,
-            status=status,
-            filled_quantity=Decimal("0"),
-            remaining_quantity=Decimal("0"),
-            average_fill_price=Decimal("0"),
-            last_updated_at=datetime.now(timezone.utc),
+        # Position snapshot: pre=20, current=5 → delta=15, requested=10 → FILLED
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=broker_order.created_at - timedelta(hours=1),
+        )
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("5"),
+            snapshot_time=broker_order.created_at + timedelta(seconds=1),
         )
 
-    async def get_fills(
-        self,
-        account_ref: str,
-        broker_order_id: str,
-        from_ts: datetime | None = None,
-    ) -> Sequence[FillEvent]:
-        self.get_fills_call_count += 1
-        _, fills = self._map.get(broker_order_id, (OrderStatus.SUBMITTED, []))
-        return fills
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            side_effect=RuntimeError("Broker API timeout"),
+        )
 
+        snapshot_refresh_cb = AsyncMock()
 
-# ═════════════════════════════════════════════════════════════════════
-# Test: P0 — reconcile_required sync policy
-# ═════════════════════════════════════════════════════════════════════
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=False,
+            snapshot_refresh_cb=snapshot_refresh_cb,
+        )
 
+        # Position inference가 FILLED를 반환
+        assert result is not None
+        assert result.status == OrderStatus.FILLED
 
-class TestReconcileRequiredSyncPolicy:
-    """P0: ``reconcile_required`` 주문이 ``OrderSyncService``의 sync 대상에 포함되는지 검증."""
+        # broker_orders.broker_status가 'filled'로 업데이트되었는지 검증
+        updated_bo = await repos.broker_orders.get(broker_order.broker_order_id)
+        assert updated_bo is not None
+        assert updated_bo.broker_status == "filled"
 
-    def test_syncable_statuses_include_reconcile_required(self) -> None:
-        """P0: _SYNCABLE_STATUSES에 RECONCILE_REQUIRED가 포함되어야 함."""
-        assert OrderStatus.RECONCILE_REQUIRED in _SYNCABLE_STATUSES
+        # snapshot_refresh_cb가 호출되었는지 검증
+        snapshot_refresh_cb.assert_awaited_once_with(order.account_id)
 
-    def test_active_sync_statuses_include_reconcile_required(self) -> None:
-        """P0: _ACTIVE_SYNC_STATUSES에 RECONCILE_REQUIRED가 포함되어야 함."""
-        assert OrderStatus.RECONCILE_REQUIRED in _ACTIVE_SYNC_STATUSES
-
-    def test_submitted_acknowledged_partial_still_syncable(self) -> None:
-        """P0: 기존 syncable statuses는 여전히 포함되어야 함."""
-        assert OrderStatus.SUBMITTED in _SYNCABLE_STATUSES
-        assert OrderStatus.ACKNOWLEDGED in _SYNCABLE_STATUSES
-        assert OrderStatus.PARTIALLY_FILLED in _SYNCABLE_STATUSES
-
-    async def test_reconcile_required_order_not_auto_rejected(
+    async def test_reconcile_required_path_updates_broker_status_on_fill(
         self,
         sync_service: OrderSyncService,
         repos: RepositoryContainer,
     ) -> None:
-        """P0: reconcile_required 주문이 broker truth 미확인 시 자동 reject되지 않음.
+        """RECONCILE_REQUIRED persistence 경로 (resolve_unknown_state →
+        RECONCILE_REQUIRED → position inference)에서 position-derived fill
+        추론 후 broker_status가 'filled'로 업데이트됨."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="REC-BRK-001",
+        )
+        order = replace(order, side=OrderSide.SELL, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
 
-        broker.get_order_status()가 실패하면 현재 상태를 유지해야 함.
-        """
-        # Given: reconcile_required 상태의 주문
-        order = _make_order(repos, status=OrderStatus.RECONCILE_REQUIRED)
-        broker_order = _make_broker_order(repos, order)
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-REC-BRK",
+            broker_status="reconcile_required",
+        )
 
-        # When: broker가 실패를 반환
-        broker = _StubBroker(status=OrderStatus.RECONCILE_REQUIRED, fail_get_order_status=True)
+        # Position snapshot: pre=20, current=5 → delta=15, requested=10 → FILLED
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=broker_order.created_at - timedelta(hours=1),
+        )
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("5"),
+            snapshot_time=broker_order.created_at + timedelta(seconds=1),
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        # resolve_unknown_state()가 RECONCILE_REQUIRED 반환 → Path B
+        broker.resolve_unknown_state = AsyncMock(
+            return_value=OrderStatusResult(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                client_order_id="",
+                broker_order_id=broker_order.broker_native_order_id,
+                status=OrderStatus.RECONCILE_REQUIRED,
+                filled_quantity=Decimal("0"),
+                remaining_quantity=Decimal("0"),
+                average_fill_price=Decimal("0"),
+                last_updated_at=datetime.now(timezone.utc),
+            ),
+        )
+
+        snapshot_refresh_cb = AsyncMock()
+
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=True,  # after-hours여야 EXPIRED fallback이 아닌 position inference 우선
+            snapshot_refresh_cb=snapshot_refresh_cb,
+        )
+
+        # Position inference가 FILLED를 반환
+        assert result is not None
+        assert result.status == OrderStatus.FILLED
+
+        # broker_orders.broker_status가 'filled'로 업데이트되었는지 검증
+        updated_bo = await repos.broker_orders.get(broker_order.broker_order_id)
+        assert updated_bo is not None
+        assert updated_bo.broker_status == "filled"
+
+        # snapshot_refresh_cb가 호출되었는지 검증
+        snapshot_refresh_cb.assert_awaited_once_with(order.account_id)
+
+    async def test_fill_inference_triggers_snapshot_refresh(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Exception handler 경로에서 position-derived fill 추론 후
+        snapshot_refresh_cb가 정확히 한 번 호출됨."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="SNAP-REF-001",
+        )
+        order = replace(order, side=OrderSide.SELL, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-SNAP-REF",
+            broker_status="reconcile_required",
+        )
+
+        # Position snapshot: pre=20, current=5 → delta=15, requested=10 → FILLED
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=broker_order.created_at - timedelta(hours=1),
+        )
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("5"),
+            snapshot_time=broker_order.created_at + timedelta(seconds=1),
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            side_effect=RuntimeError("Broker API timeout"),
+        )
+
+        snapshot_refresh_cb = AsyncMock()
+
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=False,
+            snapshot_refresh_cb=snapshot_refresh_cb,
+        )
+
+        assert result is not None
+        assert result.status == OrderStatus.FILLED
+
+        # snapshot_refresh_cb가 정확히 한 번 호출되었는지 검증
+        snapshot_refresh_cb.assert_awaited_once_with(order.account_id)
+
+        # broker_status도 함께 업데이트되었는지 검증
+        updated_bo = await repos.broker_orders.get(broker_order.broker_order_id)
+        assert updated_bo is not None
+        assert updated_bo.broker_status == "filled"
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: Stuck timeout EXPIRED fallback (Stage 2.5)
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestStuckTimeoutExpiredFallback:
+    """``transition_to_authoritative()`` — Stage 2.5 stuck timeout EXPIRED fallback 검증.
+
+    장중 intraday(08:50~15:30 KST)에는 EXPIRED fallback이 금지되고
+    after-hours(15:30~)에만 허용된다.
+    BUY/SELL 모두 적용되며, after-hours에는 SELL은 KIS truth fallback,
+    BUY는 체결 이벤트 기반으로 우선 복구를 시도한 뒤 EXPIRED fallback한다.
+    """
+
+    async def test_stuck_timeout_suppressed_during_intraday(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """장중 intraday(``is_after_hours=False``)에는 STUCK_EXPIRY timeout이
+        초과되어도 EXPIRED fallback이 금지되고 RECONCILE_REQUIRED를 유지한다."""
+        # 오래된 created_at으로 order 생성 (stuck timeout 초과)
+        old_time = datetime.now(timezone.utc) - timedelta(seconds=_STUCK_EXPIRY_SECONDS + 100)
+        order = OrderRequestEntity(
+            order_request_id=uuid4(),
+            account_id=uuid4(),
+            instrument_id=uuid4(),
+            client_order_id="STUCK-INTRA-001",
+            idempotency_key="idem-stuck-intra-001",
+            correlation_id="corr-stuck-intra-001",
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            time_in_force=TimeInForce.DAY,
+            requested_price=Decimal("0"),
+            requested_quantity=Decimal("10"),
+            status=OrderStatus.RECONCILE_REQUIRED,
+            trade_decision_id=None,
+            submitted_at=None,
+            status_reason_code=None,
+            status_reason_message=None,
+            created_at=old_time,
+            updated_at=old_time,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-STUCK-INTRA",
+            broker_status="reconcile_required",
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            return_value=OrderStatusResult(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                client_order_id="",
+                broker_order_id=broker_order.broker_native_order_id,
+                status=OrderStatus.RECONCILE_REQUIRED,
+                filled_quantity=Decimal("0"),
+                remaining_quantity=Decimal("0"),
+                average_fill_price=Decimal("0"),
+                last_updated_at=datetime.now(timezone.utc),
+            ),
+        )
+
+        # is_after_hours=False (intraday) → EXPIRED fallback 금지
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=False,
+        )
+
+        # Intraday: EXPIRED suppression → None 반환, RECONCILE_REQUIRED 유지
+        assert result is None
+
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.RECONCILE_REQUIRED
+
+    async def test_stuck_timeout_expires_after_hours_sell(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """After-hours(``is_after_hours=True``)에 RECONCILE_REQUIRED SELL 주문이
+        ``_STUCK_EXPIRY_SECONDS`` 이상 지속되고 KIS truth도 fill을 확인하지 못하면
+        EXPIRED로 fallback된다."""
+        # 오래된 created_at으로 order 생성 (stuck timeout 초과)
+        old_time = datetime.now(timezone.utc) - timedelta(seconds=_STUCK_EXPIRY_SECONDS + 100)
+        order = OrderRequestEntity(
+            order_request_id=uuid4(),
+            account_id=uuid4(),
+            instrument_id=uuid4(),
+            client_order_id="STUCK-AH-SELL-001",
+            idempotency_key="idem-stuck-ah-sell-001",
+            correlation_id="corr-stuck-ah-sell-001",
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            time_in_force=TimeInForce.DAY,
+            requested_price=Decimal("0"),
+            requested_quantity=Decimal("10"),
+            status=OrderStatus.RECONCILE_REQUIRED,
+            trade_decision_id=None,
+            submitted_at=None,
+            status_reason_code=None,
+            status_reason_message=None,
+            created_at=old_time,
+            updated_at=old_time,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-STUCK-AH-SELL",
+            broker_status="reconcile_required",
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        # resolve_unknown_state()가 RECONCILE_REQUIRED 반환 → Stage 2.5 진입
+        broker.resolve_unknown_state = AsyncMock(
+            return_value=OrderStatusResult(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                client_order_id="",
+                broker_order_id=broker_order.broker_native_order_id,
+                status=OrderStatus.RECONCILE_REQUIRED,
+                filled_quantity=Decimal("0"),
+                remaining_quantity=Decimal("0"),
+                average_fill_price=Decimal("0"),
+                last_updated_at=datetime.now(timezone.utc),
+            ),
+        )
+        # KIS truth fallback도 fill 감지 실패
+        broker.inquire_balance = AsyncMock(
+            return_value={"output1": [{"pchs_amt": "0", "hldg_qty": "10"}]},
+        )
+
+        # is_after_hours=True → EXPIRED fallback 허용
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=True,
+        )
+
+        assert result is not None
+        assert result.status == OrderStatus.EXPIRED
+
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.EXPIRED
+
+        # broker_status도 'expired'로 업데이트되었는지 검증
+        updated_bo = await repos.broker_orders.get(broker_order.broker_order_id)
+        assert updated_bo is not None
+        assert updated_bo.broker_status == "expired"
+
+    async def test_stuck_timeout_not_applied_to_recent_orders(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """생성된 지 얼마 안 된 SELL RECONCILE_REQUIRED 주문은
+        EXPIRED되지 않고 RECONCILE_REQUIRED를 유지한다."""
+        # 최근 created_at으로 order 생성 (stuck timeout 미만)
+        recent_time = datetime.now(timezone.utc) - timedelta(seconds=60)
+        order = OrderRequestEntity(
+            order_request_id=uuid4(),
+            account_id=uuid4(),
+            instrument_id=uuid4(),
+            client_order_id="STUCK-RECENT-001",
+            idempotency_key="idem-stuck-recent-001",
+            correlation_id="corr-stuck-recent-001",
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            time_in_force=TimeInForce.DAY,
+            requested_price=Decimal("0"),
+            requested_quantity=Decimal("10"),
+            status=OrderStatus.RECONCILE_REQUIRED,
+            trade_decision_id=None,
+            submitted_at=None,
+            status_reason_code=None,
+            status_reason_message=None,
+            created_at=recent_time,
+            updated_at=recent_time,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-STUCK-RECENT",
+            broker_status="reconcile_required",
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            return_value=OrderStatusResult(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                client_order_id="",
+                broker_order_id=broker_order.broker_native_order_id,
+                status=OrderStatus.RECONCILE_REQUIRED,
+                filled_quantity=Decimal("0"),
+                remaining_quantity=Decimal("0"),
+                average_fill_price=Decimal("0"),
+                last_updated_at=datetime.now(timezone.utc),
+            ),
+        )
+
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=False,
+        )
+
+        # Stuck timeout 미만이므로 EXPIRED fallback 차단 → None 반환
+        assert result is None
+
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.RECONCILE_REQUIRED
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: _ACTIVE_SYNC_STATUSES에 PENDING_SUBMIT 포함
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestActiveSyncStatusesIncludesPendingSubmit:
+    """``_ACTIVE_SYNC_STATUSES``에 PENDING_SUBMIT이 포함되었는지 검증."""
+
+    async def test_pending_submit_included_in_active_sync_statuses(self) -> None:
+        """``_ACTIVE_SYNC_STATUSES``에 PENDING_SUBMIT이 포함되어 있어야 한다."""
+        assert OrderStatus.PENDING_SUBMIT in _ACTIVE_SYNC_STATUSES
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: _infer_sell_order_fill_via_position — retry on delta=0
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestInferSellFillRetry:
+    """``_infer_sell_order_fill_via_position()`` — retry 로직 검증.
+
+    delta=0 첫 시도 → snapshot refresh 재시도 → delta>0 감지 → fill 반환.
+    """
+
+    async def test_infer_sell_fill_retry_on_delta_zero(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """delta=0 첫 시도 → retry에서 delta>0 감지 → FILLED 반환."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="SELL-RETRY-001",
+        )
+        order = replace(order, side=OrderSide.SELL, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-SELL-RETRY",
+        )
+
+        # Pre-order snapshot: quantity=20
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=broker_order.created_at - timedelta(hours=1),
+        )
+
+        # First attempt: current_qty=20 (delta=0) → retry triggered
+        # Second attempt: current_qty=5 (delta=15) → FILLED
+        # Simulate by adding a later snapshot that appears on re-query
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("5"),
+            snapshot_time=broker_order.created_at + timedelta(seconds=10),
+        )
+
+        result = await sync_service._infer_sell_order_fill_via_position(
+            order, broker_order,
+        )
+
+        # Should detect delta=15 >= 10 → FILLED
+        assert result == OrderStatus.FILLED
+
+    async def test_infer_sell_fill_retry_exhausted(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """delta=0 모든 재시도 소진 → None 반환."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="SELL-RETRY-EXH-001",
+        )
+        order = replace(order, side=OrderSide.SELL, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-SELL-RETRY-EXH",
+        )
+
+        # Pre-order snapshot: quantity=20
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=broker_order.created_at - timedelta(hours=1),
+        )
+
+        # Only one snapshot at quantity=20 — no decrease ever
+        # (same quantity, so delta=0 on every retry)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=broker_order.created_at + timedelta(seconds=1),
+        )
+
+        result = await sync_service._infer_sell_order_fill_via_position(
+            order, broker_order,
+        )
+
+        # All retries exhausted → None
+        assert result is None
+
+    async def test_infer_sell_fill_first_attempt_success(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """첫 시도 delta>0 → 즉시 fill 반환 (retry 불필요)."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="SELL-FIRST-001",
+        )
+        order = replace(order, side=OrderSide.SELL, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-SELL-FIRST",
+        )
+
+        # Pre-order snapshot: quantity=20
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=broker_order.created_at - timedelta(hours=1),
+        )
+
+        # Current snapshot: quantity=5 (delta=15 >= 10 → FILLED immediately)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("5"),
+            snapshot_time=broker_order.created_at + timedelta(seconds=1),
+        )
+
+        result = await sync_service._infer_sell_order_fill_via_position(
+            order, broker_order,
+        )
+
+        assert result == OrderStatus.FILLED
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: _try_kis_truth_fallback
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestTryKisTruthFallback:
+    """``_try_kis_truth_fallback()`` — KIS truth 기반 fill 추론 검증."""
+
+    async def test_kis_truth_fallback_on_ccld_mismatch(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """inquire-daily-ccld 매칭 실패 → KIS position 조회 → position 감소 확인 → fill 추론."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="KIS-TRUTH-001",
+        )
+        order = replace(order, side=OrderSide.SELL, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-KIS-TRUTH",
+        )
+
+        # Pre-order snapshot: quantity=20
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=broker_order.created_at - timedelta(hours=1),
+        )
+
+        # Current snapshot: quantity=5 (delta=15)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("5"),
+            snapshot_time=broker_order.created_at + timedelta(seconds=1),
+        )
+
+        result = await sync_service._try_kis_truth_fallback(
+            order=order,
+            broker_order=broker_order,
+            account_id=order.account_id,
+        )
+
+        assert result is not None
+        assert result.inferred_fill_qty == Decimal("15")
+        assert result.source == "kis_truth_fallback"
+
+    async def test_kis_truth_fallback_handles_exception(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """KIS position 조회 예외 발생 → graceful fallback (crash 없음)."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="KIS-EXC-001",
+        )
+        order = replace(order, side=OrderSide.SELL, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-KIS-EXC",
+        )
+
+        # No position snapshots → _get_latest_position_qty returns None gracefully
+        result = await sync_service._try_kis_truth_fallback(
+            order=order,
+            broker_order=broker_order,
+            account_id=order.account_id,
+        )
+
+        # No pre-order snapshot → None (no crash)
+        assert result is None
+
+    async def test_kis_truth_fallback_buy_order_returns_none(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """BUY 주문은 KIS truth fallback 대상이 아님."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="KIS-BUY-001",
+        )
+        order = replace(order, side=OrderSide.BUY, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-KIS-BUY",
+        )
+
+        result = await sync_service._try_kis_truth_fallback(
+            order=order,
+            broker_order=broker_order,
+            account_id=order.account_id,
+        )
+
+        assert result is None
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: STUCK_EXPIRY KIS truth 재확인
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestStuckExpiryKisTruth:
+    """``transition_to_authoritative()`` — STUCK_EXPIRY KIS truth 재확인 검증.
+
+    Stage 2.5에서 EXPIRED fallback 직전 KIS truth를 재확인하여
+    fill이 확인되면 filled로 전이, fill이 없으면 EXPIRED fallback.
+    """
+
+    async def test_stuck_expiry_kis_truth_before_expired(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """STUCK_EXPIRY threshold 도달 → KIS truth 재확인 → fill 확인 → filled 전이."""
+        old_time = datetime.now(timezone.utc) - timedelta(seconds=_STUCK_EXPIRY_SECONDS + 100)
+        order = OrderRequestEntity(
+            order_request_id=uuid4(),
+            account_id=uuid4(),
+            instrument_id=uuid4(),
+            client_order_id="STUCK-KIS-001",
+            idempotency_key="idem-stuck-kis-001",
+            correlation_id="corr-stuck-kis-001",
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            time_in_force=TimeInForce.DAY,
+            requested_price=Decimal("0"),
+            requested_quantity=Decimal("10"),
+            status=OrderStatus.RECONCILE_REQUIRED,
+            trade_decision_id=None,
+            submitted_at=None,
+            status_reason_code=None,
+            status_reason_message=None,
+            created_at=old_time,
+            updated_at=old_time,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-STUCK-KIS",
+            broker_status="reconcile_required",
+        )
+
+        # Position snapshot: pre=20, current=5 → delta=15 → FILLED
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=broker_order.created_at - timedelta(hours=1),
+        )
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("5"),
+            snapshot_time=broker_order.created_at + timedelta(seconds=1),
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            return_value=OrderStatusResult(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                client_order_id="",
+                broker_order_id=broker_order.broker_native_order_id,
+                status=OrderStatus.RECONCILE_REQUIRED,
+                filled_quantity=Decimal("0"),
+                remaining_quantity=Decimal("0"),
+                average_fill_price=Decimal("0"),
+                last_updated_at=datetime.now(timezone.utc),
+            ),
+        )
+
+        snapshot_refresh_cb = AsyncMock()
+
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=False,
+            snapshot_refresh_cb=snapshot_refresh_cb,
+        )
+
+        # KIS truth confirms fill → FILLED (not EXPIRED)
+        assert result is not None
+        assert result.status == OrderStatus.FILLED
+
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.FILLED
+
+        # broker_status should be 'filled'
+        updated_bo = await repos.broker_orders.get(broker_order.broker_order_id)
+        assert updated_bo is not None
+        assert updated_bo.broker_status == "filled"
+
+        # snapshot_refresh_cb should have been called
+        snapshot_refresh_cb.assert_awaited_once_with(order.account_id)
+
+    async def test_stuck_expiry_proceeds_when_kis_truth_empty(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """STUCK_EXPIRY threshold 도달 → KIS truth 재확인 → fill 없음 → EXPIRED fallback."""
+        old_time = datetime.now(timezone.utc) - timedelta(seconds=_STUCK_EXPIRY_SECONDS + 100)
+        order = OrderRequestEntity(
+            order_request_id=uuid4(),
+            account_id=uuid4(),
+            instrument_id=uuid4(),
+            client_order_id="STUCK-KIS-EMPTY-001",
+            idempotency_key="idem-stuck-kis-empty-001",
+            correlation_id="corr-stuck-kis-empty-001",
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            time_in_force=TimeInForce.DAY,
+            requested_price=Decimal("0"),
+            requested_quantity=Decimal("10"),
+            status=OrderStatus.RECONCILE_REQUIRED,
+            trade_decision_id=None,
+            submitted_at=None,
+            status_reason_code=None,
+            status_reason_message=None,
+            created_at=old_time,
+            updated_at=old_time,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-STUCK-KIS-EMPTY",
+            broker_status="reconcile_required",
+        )
+
+        # No position snapshots → KIS truth cannot confirm fill
+        # (no pre-order snapshot → _try_kis_truth_fallback returns None)
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            return_value=OrderStatusResult(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                client_order_id="",
+                broker_order_id=broker_order.broker_native_order_id,
+                status=OrderStatus.RECONCILE_REQUIRED,
+                filled_quantity=Decimal("0"),
+                remaining_quantity=Decimal("0"),
+                average_fill_price=Decimal("0"),
+                last_updated_at=datetime.now(timezone.utc),
+            ),
+        )
+
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=True,
+        )
+
+        # After-hours: KIS truth did not confirm fill → EXPIRED fallback
+        assert result is not None
+        assert result.status == OrderStatus.EXPIRED
+
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.EXPIRED
+
+        # broker_status should be 'expired'
+        updated_bo = await repos.broker_orders.get(broker_order.broker_order_id)
+        assert updated_bo is not None
+        assert updated_bo.broker_status == "expired"
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: _try_kis_truth_fallback — KIS API 직접 호출 + rate limit 보호
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestKisTruthFallback:
+    """``_try_kis_truth_fallback()`` — KIS API 직접 호출 + rate limit 보호."""
+
+    async def test_kis_truth_fallback_uses_kis_api_when_broker_provided(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """broker 파라미터 제공 시 KIS API를 호출하여 포지션을 확인한다."""
+        now = datetime.now(timezone.utc)
+        account_id = uuid4()
+        instrument_id = uuid4()
+        broker_account_id = uuid4()
+        _make_account(repos, account_id=account_id, broker_account_id=broker_account_id)
+        _make_broker_account(repos, broker_account_id=broker_account_id)
+
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="KIS-TRUTH-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            requested_quantity=Decimal("10"),
+            account_id=account_id,
+            instrument_id=instrument_id,
+        )
+        repos.orders._items[order.order_request_id] = order
+
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_status="reconcile_required",
+        )
+
+        # Pre-order snapshot: quantity=20
+        _make_position_snapshot(
+            repos,
+            account_id=account_id,
+            instrument_id=instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=now - timedelta(hours=2),
+        )
+
+        # Mock broker that returns positions via fetch_positions
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.fetch_positions = AsyncMock(return_value=[
+            _make_position_entity(
+                account_id=account_id,
+                instrument_id=instrument_id,
+                quantity=Decimal("5"),
+            ),
+        ])
+
+        result = await sync_service._try_kis_truth_fallback(
+            order=order,
+            broker_order=broker_order,
+            account_id=account_id,
+            pre_qty=Decimal("20"),
+            broker=broker,
+        )
+
+        assert result is not None
+        assert result.inferred_fill_qty == Decimal("15")
+        assert result.source == "kis_truth_fallback"
+        broker.fetch_positions.assert_awaited_once()
+
+    async def test_kis_truth_fallback_falls_back_to_local_snapshot_when_no_broker(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """broker 미제공 시 로컬 snapshot으로 fallback한다."""
+        now = datetime.now(timezone.utc)
+        account_id = uuid4()
+        instrument_id = uuid4()
+        broker_account_id = uuid4()
+        _make_account(repos, account_id=account_id, broker_account_id=broker_account_id)
+        _make_broker_account(repos, broker_account_id=broker_account_id)
+
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="KIS-TRUTH-NOBROKER-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            requested_quantity=Decimal("10"),
+            account_id=account_id,
+            instrument_id=instrument_id,
+        )
+        repos.orders._items[order.order_request_id] = order
+
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_status="reconcile_required",
+        )
+
+        # Pre-order snapshot: quantity=20
+        _make_position_snapshot(
+            repos,
+            account_id=account_id,
+            instrument_id=instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=now - timedelta(hours=2),
+        )
+        # Current snapshot: quantity=5 (delta=15)
+        _make_position_snapshot(
+            repos,
+            account_id=account_id,
+            instrument_id=instrument_id,
+            quantity=Decimal("5"),
+            snapshot_time=now,
+        )
+
+        result = await sync_service._try_kis_truth_fallback(
+            order=order,
+            broker_order=broker_order,
+            account_id=account_id,
+            pre_qty=Decimal("20"),
+            broker=None,
+        )
+
+        assert result is not None
+        assert result.inferred_fill_qty == Decimal("15")
+        assert result.source == "kis_truth_fallback"
+
+    async def test_kis_truth_fallback_rate_limit_cooldown(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Cooldown 기간 내 동일 account 재호출 시 KIS API를 건너뛴다."""
+        now = datetime.now(timezone.utc)
+        account_id = uuid4()
+        instrument_id = uuid4()
+        broker_account_id = uuid4()
+        _make_account(repos, account_id=account_id, broker_account_id=broker_account_id)
+        _make_broker_account(repos, broker_account_id=broker_account_id)
+
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="KIS-COOLDOWN-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            requested_quantity=Decimal("10"),
+            account_id=account_id,
+            instrument_id=instrument_id,
+        )
+        repos.orders._items[order.order_request_id] = order
+
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_status="reconcile_required",
+        )
+
+        # Pre-order snapshot: quantity=20
+        _make_position_snapshot(
+            repos,
+            account_id=account_id,
+            instrument_id=instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=now - timedelta(hours=2),
+        )
+        # Current snapshot: quantity=5 (delta=15)
+        _make_position_snapshot(
+            repos,
+            account_id=account_id,
+            instrument_id=instrument_id,
+            quantity=Decimal("5"),
+            snapshot_time=now,
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.fetch_positions = AsyncMock(return_value=[
+            _make_position_entity(
+                account_id=account_id,
+                instrument_id=instrument_id,
+                quantity=Decimal("5"),
+            ),
+        ])
+
+        # First call: should hit KIS API
+        result1 = await sync_service._try_kis_truth_fallback(
+            order=order,
+            broker_order=broker_order,
+            account_id=account_id,
+            pre_qty=Decimal("20"),
+            broker=broker,
+        )
+        assert result1 is not None
+        assert result1.inferred_fill_qty == Decimal("15")
+        assert broker.fetch_positions.await_count == 1
+
+        # Second call (immediate, within cooldown): should skip KIS API
+        result2 = await sync_service._try_kis_truth_fallback(
+            order=order,
+            broker_order=broker_order,
+            account_id=account_id,
+            pre_qty=Decimal("20"),
+            broker=broker,
+        )
+        assert result2 is not None
+        assert result2.inferred_fill_qty == Decimal("15")
+        # fetch_positions should NOT have been called again
+        assert broker.fetch_positions.await_count == 1
+
+    async def test_kis_truth_fallback_per_order_one_call_limit(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """동일 주문에 대해 KIS API는 최대 1회만 호출된다."""
+        now = datetime.now(timezone.utc)
+        account_id = uuid4()
+        instrument_id = uuid4()
+        broker_account_id = uuid4()
+        _make_account(repos, account_id=account_id, broker_account_id=broker_account_id)
+        _make_broker_account(repos, broker_account_id=broker_account_id)
+
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="KIS-1CALL-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            requested_quantity=Decimal("10"),
+            account_id=account_id,
+            instrument_id=instrument_id,
+        )
+        repos.orders._items[order.order_request_id] = order
+
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_status="reconcile_required",
+        )
+
+        _make_position_snapshot(
+            repos,
+            account_id=account_id,
+            instrument_id=instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=now - timedelta(hours=2),
+        )
+        _make_position_snapshot(
+            repos,
+            account_id=account_id,
+            instrument_id=instrument_id,
+            quantity=Decimal("5"),
+            snapshot_time=now,
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.fetch_positions = AsyncMock(return_value=[
+            _make_position_entity(
+                account_id=account_id,
+                instrument_id=instrument_id,
+                quantity=Decimal("5"),
+            ),
+        ])
+
+        # Clear _kis_inquiry_seen to ensure clean state
+        sync_service._kis_inquiry_seen.clear()
+
+        # First call: should hit KIS API
+        result1 = await sync_service._try_kis_truth_fallback(
+            order=order,
+            broker_order=broker_order,
+            account_id=account_id,
+            pre_qty=Decimal("20"),
+            broker=broker,
+        )
+        assert result1 is not None
+        assert broker.fetch_positions.await_count == 1
+
+        # Reset cooldown to allow second call if not for per-order limit
+        sync_service._last_kis_inquiry_at.pop(account_id, None)
+
+        # Second call: should skip KIS API due to per-order 1-call limit
+        result2 = await sync_service._try_kis_truth_fallback(
+            order=order,
+            broker_order=broker_order,
+            account_id=account_id,
+            pre_qty=Decimal("20"),
+            broker=broker,
+        )
+        assert result2 is not None
+        # fetch_positions should NOT have been called again
+        assert broker.fetch_positions.await_count == 1
+
+    async def test_kis_truth_fallback_silent_failure_on_api_error(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """KIS API 호출 실패 시 예외를 버블링하지 않고 조용히 fallback한다."""
+        now = datetime.now(timezone.utc)
+        account_id = uuid4()
+        instrument_id = uuid4()
+        broker_account_id = uuid4()
+        _make_account(repos, account_id=account_id, broker_account_id=broker_account_id)
+        _make_broker_account(repos, broker_account_id=broker_account_id)
+
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="KIS-ERROR-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            requested_quantity=Decimal("10"),
+            account_id=account_id,
+            instrument_id=instrument_id,
+        )
+        repos.orders._items[order.order_request_id] = order
+
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_status="reconcile_required",
+        )
+
+        _make_position_snapshot(
+            repos,
+            account_id=account_id,
+            instrument_id=instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=now - timedelta(hours=2),
+        )
+        _make_position_snapshot(
+            repos,
+            account_id=account_id,
+            instrument_id=instrument_id,
+            quantity=Decimal("5"),
+            snapshot_time=now,
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.fetch_positions = AsyncMock(side_effect=RuntimeError("KIS API unavailable"))
+
+        # Should not raise — silently falls back to local snapshot
+        result = await sync_service._try_kis_truth_fallback(
+            order=order,
+            broker_order=broker_order,
+            account_id=account_id,
+            pre_qty=Decimal("20"),
+            broker=broker,
+        )
+        assert result is not None
+        assert result.inferred_fill_qty == Decimal("15")
+        broker.fetch_positions.assert_awaited_once()
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: _infer_sell_order_fill_via_position — snapshot_refresh_cb
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestInferSellOrderFillViaPositionWithRefreshCb:
+    """``_infer_sell_order_fill_via_position()`` — snapshot_refresh_cb 전달 시 동작."""
+
+    async def test_infer_sell_fill_calls_snapshot_refresh_cb_on_delta_zero(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """delta=0일 때 snapshot_refresh_cb가 호출되고 retry 후 delta가 감지된다."""
+        now = datetime.now(timezone.utc)
+        account_id = uuid4()
+        instrument_id = uuid4()
+
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="REFRESH-CB-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            requested_quantity=Decimal("10"),
+            account_id=account_id,
+            instrument_id=instrument_id,
+        )
+        repos.orders._items[order.order_request_id] = order
+
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_status="reconcile_required",
+        )
+
+        # Pre-order snapshot: quantity=20
+        _make_position_snapshot(
+            repos,
+            account_id=account_id,
+            instrument_id=instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=now - timedelta(hours=2),
+        )
+        # Current snapshot: quantity=20 (delta=0 initially)
+        _make_position_snapshot(
+            repos,
+            account_id=account_id,
+            instrument_id=instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=now,
+        )
+
+        refresh_call_count = 0
+
+        async def snapshot_refresh_cb(_: UUID) -> None:
+            nonlocal refresh_call_count
+            refresh_call_count += 1
+            # Simulate snapshot sync by adding a new snapshot with reduced quantity
+            _make_position_snapshot(
+                repos,
+                account_id=account_id,
+                instrument_id=instrument_id,
+                quantity=Decimal("5"),
+                snapshot_time=datetime.now(timezone.utc),
+            )
+
+        result = await sync_service._infer_sell_order_fill_via_position(
+            order,
+            broker_order,
+            snapshot_refresh_cb=snapshot_refresh_cb,
+        )
+
+        assert result == OrderStatus.FILLED
+        assert refresh_call_count >= 1
+
+    async def test_infer_sell_fill_skips_cb_when_not_provided(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """snapshot_refresh_cb 미제공 시에도 정상 동작한다 (기존 동작 유지)."""
+        now = datetime.now(timezone.utc)
+        account_id = uuid4()
+        instrument_id = uuid4()
+
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="REFRESH-CB-NONE-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            requested_quantity=Decimal("10"),
+            account_id=account_id,
+            instrument_id=instrument_id,
+        )
+        repos.orders._items[order.order_request_id] = order
+
+        # broker_order.created_at must be BEFORE the latest snapshot_time
+        # so that get_latest_by_account_and_instrument_before() returns
+        # the pre-order snapshot (quantity=20), not the post-order one (quantity=5).
+        broker_order = _make_broker_order(
+            repos,
+            order=order,
+            broker_status="reconcile_required",
+            last_synced_at=now - timedelta(hours=1),
+            created_at=now - timedelta(hours=1, minutes=30),
+        )
+
+        _make_position_snapshot(
+            repos,
+            account_id=account_id,
+            instrument_id=instrument_id,
+            quantity=Decimal("20"),
+            snapshot_time=now - timedelta(hours=2),
+        )
+        _make_position_snapshot(
+            repos,
+            account_id=account_id,
+            instrument_id=instrument_id,
+            quantity=Decimal("5"),
+            snapshot_time=now,
+        )
+
+        # No snapshot_refresh_cb — should still work via local snapshots
+        result = await sync_service._infer_sell_order_fill_via_position(
+            order,
+            broker_order,
+            snapshot_refresh_cb=None,
+        )
+
+        assert result == OrderStatus.FILLED
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Helper: _make_position_entity
+# ═════════════════════════════════════════════════════════════════════
+
+
+def _make_position_entity(
+    *,
+    account_id: UUID,
+    instrument_id: UUID,
+    quantity: Decimal,
+) -> Any:
+    """Create a minimal position entity for KIS API mock responses."""
+    from agent_trading.domain.entities import PositionSnapshotEntity
+
+    return PositionSnapshotEntity(
+        position_snapshot_id=uuid4(),
+        account_id=account_id,
+        instrument_id=instrument_id,
+        quantity=quantity,
+        average_price=Decimal("0"),
+        market_price=Decimal("0"),
+        unrealized_pnl=Decimal("0"),
+        source_of_truth="kis_api",
+        snapshot_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+def _make_account(
+    repos: RepositoryContainer,
+    *,
+    account_id: UUID,
+    broker_account_id: UUID,
+) -> None:
+    """Create and persist an AccountEntity for testing."""
+    from agent_trading.domain.entities import AccountEntity
+
+    entity = AccountEntity(
+        account_id=account_id,
+        client_id=uuid4(),
+        broker_account_id=broker_account_id,
+        environment=Environment.PAPER,
+        account_alias="test-account",
+        account_masked="****1234",
+        status="active",
+    )
+    repos.accounts._items[account_id] = entity  # type: ignore[attr-defined]
+
+
+def _make_broker_account(
+    repos: RepositoryContainer,
+    *,
+    broker_account_id: UUID,
+) -> None:
+    """Create and persist a BrokerAccountEntity for testing."""
+    from agent_trading.domain.entities import BrokerAccountEntity
+
+    entity = BrokerAccountEntity(
+        broker_account_id=broker_account_id,
+        broker_name=BrokerName.KOREA_INVESTMENT.value,
+        account_ref="test-account-ref",
+        environment=Environment.PAPER,
+        credential_ref="test-cred",
+    )
+    repos.broker_accounts._items[broker_account_id] = entity  # type: ignore[attr-defined]
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: EXPIRED SELL position-delta 후행 복구 (sync_order_post_submit)
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestExpiredSellPositionDeltaRecovery:
+    """``sync_order_post_submit()`` — EXPIRED SELL position-delta 기반 복구.
+
+    Position snapshot이 quantity=0으로 정상 수집되면 position-delta 증거를
+    통해 EXPIRED SELL을 FILLED/PARTIALLY_FILLED로 복구한다.
+    Broker truth가 EXPIRED를 반환하는 paper broker 환경에서 유효하다.
+    """
+
+    async def test_expired_sell_position_delta_zero_out_filled(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """EXPIRED SELL, position=10→0 delta=10 ≥ requested=10 → FILLED 복구."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.EXPIRED,
+            client_order_id="PD-FILLED-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            requested_quantity=Decimal("10"),
+            updated_at=now,  # _RECENT_EXPIRY_WINDOW_SECONDS 이내
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order,
+            broker_native_order_id="BRK-PD-FILLED-001",
+            broker_status="expired",
+            created_at=now - timedelta(minutes=5),
+        )
+
+        # Pre-order snapshot: quantity=10 (before broker_order.created_at)
+        pre_snap_time = now - timedelta(hours=1)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("10"),
+            snapshot_time=pre_snap_time,
+        )
+        # Post-order snapshot: quantity=0 (delta=10 → FILLED)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("0"),
+            snapshot_time=now,
+        )
+
+        # Broker returns EXPIRED → broker truth recovery 실패
+        broker = _StubBroker(status=OrderStatus.EXPIRED)
 
         result = await sync_service.sync_order_post_submit(
             account_ref="test-account",
-            broker=broker,
+            broker=broker,  # type: ignore[arg-type]
             broker_order_id=broker_order.broker_order_id,
         )
 
-        # Then: reconcile_required 상태 유지 (자동 reject 금지)
-        assert result.status_changed is False
-        assert result.current_status == OrderStatus.RECONCILE_REQUIRED
-        assert result.error is not None
+        # Position-delta recovery should succeed → FILLED
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.FILLED
+        # broker_status도 'filled'로 동기화
+        updated_bo = await repos.broker_orders.get(broker_order.broker_order_id)
+        assert updated_bo is not None
+        assert updated_bo.broker_status == "filled"
 
-    async def test_reconcile_required_order_syncs_when_broker_truth_available(
+    async def test_expired_sell_position_delta_partial_fill(
         self,
         sync_service: OrderSyncService,
         repos: RepositoryContainer,
     ) -> None:
-        """P0: reconcile_required 주문이 broker truth 확인 시 정상 전이.
+        """EXPIRED SELL, position=10→3 delta=7 < requested=10 → PARTIALLY_FILLED 복구."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.EXPIRED,
+            client_order_id="PD-PARTIAL-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            requested_quantity=Decimal("10"),
+            updated_at=now,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
 
-        broker가 FILLED를 반환하면 transition_to()를 통해 FILLED로 전이되어야 함.
-        """
-        # Given: reconcile_required 상태의 주문
-        order = _make_order(repos, status=OrderStatus.RECONCILE_REQUIRED)
-        broker_order = _make_broker_order(repos, order)
+        broker_order = _make_broker_order(
+            repos, order,
+            broker_native_order_id="BRK-PD-PARTIAL-001",
+            broker_status="expired",
+            created_at=now - timedelta(minutes=5),
+        )
 
-        # When: broker가 FILLED를 반환
+        # Pre-order snapshot: quantity=10
+        pre_snap_time = now - timedelta(hours=1)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("10"),
+            snapshot_time=pre_snap_time,
+        )
+        # Post-order snapshot: quantity=3 (delta=7 < 10)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("3"),
+            snapshot_time=now,
+        )
+
+        broker = _StubBroker(status=OrderStatus.EXPIRED)
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+
+        # Position-delta recovery → PARTIALLY_FILLED
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.PARTIALLY_FILLED
+        updated_bo = await repos.broker_orders.get(broker_order.broker_order_id)
+        assert updated_bo is not None
+        assert updated_bo.broker_status == "partially_filled"
+
+    async def test_expired_sell_no_position_delta_no_recovery(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """EXPIRED SELL, delta=0 → 복구 안 함, EXPIRED 유지."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.EXPIRED,
+            client_order_id="PD-NO-DELTA-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            requested_quantity=Decimal("10"),
+            updated_at=now,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order,
+            broker_native_order_id="BRK-PD-NO-DELTA-001",
+            broker_status="expired",
+            created_at=now - timedelta(minutes=5),
+        )
+
+        # Pre-order snapshot: quantity=10
+        pre_snap_time = now - timedelta(hours=1)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("10"),
+            snapshot_time=pre_snap_time,
+        )
+        # Post-order snapshot: quantity=10 (delta=0)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("10"),
+            snapshot_time=now,
+        )
+
+        broker = _StubBroker(status=OrderStatus.EXPIRED)
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+
+        # No position delta → EXPIRED 유지
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.EXPIRED
+
+    async def test_expired_buy_ignores_position_delta(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """EXPIRED BUY → position-delta 시도 안 함 (SELL 전용)."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.EXPIRED,
+            client_order_id="PD-BUY-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.BUY,  # BUY — should skip position-delta
+            requested_quantity=Decimal("10"),
+            updated_at=now,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order,
+            broker_native_order_id="BRK-PD-BUY-001",
+            broker_status="expired",
+            created_at=now - timedelta(minutes=5),
+        )
+
+        # Position snapshots exist but should not be used (BUY)
+        pre_snap_time = now - timedelta(hours=1)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("10"),
+            snapshot_time=pre_snap_time,
+        )
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("0"),
+            snapshot_time=now,
+        )
+
+        broker = _StubBroker(status=OrderStatus.EXPIRED)
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+
+        # BUY → position-delta skip, EXPIRED 유지
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.EXPIRED
+
+    async def test_expired_sell_broker_truth_takes_priority(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Broker truth FILLED 반환 → position-delta보다 broker truth 우선."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.EXPIRED,
+            client_order_id="PD-PRIORITY-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            requested_quantity=Decimal("10"),
+            updated_at=now,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order,
+            broker_native_order_id="BRK-PD-PRIORITY-001",
+            broker_status="expired",
+            created_at=now - timedelta(minutes=5),
+        )
+
+        # Position snapshots show no delta (quantity unchanged)
+        pre_snap_time = now - timedelta(hours=1)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("10"),
+            snapshot_time=pre_snap_time,
+        )
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("10"),
+            snapshot_time=now,
+        )
+
+        # Broker returns FILLED → broker truth recovery succeeds
         broker = _StubBroker(status=OrderStatus.FILLED)
 
         result = await sync_service.sync_order_post_submit(
             account_ref="test-account",
-            broker=broker,
+            broker=broker,  # type: ignore[arg-type]
             broker_order_id=broker_order.broker_order_id,
         )
 
-        # Then: FILLED로 전이
-        assert result.status_changed is True
-        assert result.current_status == OrderStatus.FILLED
-        assert result.terminal is True
+        # Broker truth → FILLED (position-delta would have returned None)
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.FILLED
 
-    async def test_broker_truth_order_not_cleaned_by_cleanup_script(
+    async def test_expired_sell_old_order_no_recovery(
         self,
         sync_service: OrderSyncService,
         repos: RepositoryContainer,
     ) -> None:
-        """P0: 000880 류 broker truth 존재 주문이 오정리되지 않음.
+        """EXPIRED SELL, created_at 24h 초과 → ``_can_recover_expired`` 차단."""
+        now = datetime.now(timezone.utc)
+        old_created = now - timedelta(hours=25)  # > 24h
+        order = _make_order(
+            repos,
+            status=OrderStatus.EXPIRED,
+            client_order_id="PD-OLD-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            requested_quantity=Decimal("10"),
+            created_at=old_created,
+            updated_at=now,  # recent updated_at → passes window check
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
 
-        broker_orders가 존재하는 주문은 _cleanup_pending_submit.py의
-        cleanup 대상에서 제외되어야 함 (broker_orders NOT IN subquery).
-        """
-        # Given: pending_submit 상태지만 broker_orders가 존재하는 주문
-        order = _make_order(repos, status=OrderStatus.PENDING_SUBMIT)
-        broker_order = _make_broker_order(repos, order)
+        broker_order = _make_broker_order(
+            repos, order,
+            broker_native_order_id="BRK-PD-OLD-001",
+            broker_status="expired",
+            created_at=now - timedelta(minutes=5),
+        )
 
-        # When: cleanup query와 동일한 조건으로 조회
-        # In-memory repository에서는 직접 SQL을 실행할 수 없으므로
-        # cleanup 스크립트의 조건을 검증: broker_orders 존재 시 제외
-        bo_exists = await repos.broker_orders.get(broker_order.broker_order_id)
-        assert bo_exists is not None  # broker_orders 존재 확인
+        # Position delta exists (10→0)
+        pre_snap_time = now - timedelta(hours=1)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("10"),
+            snapshot_time=pre_snap_time,
+        )
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("0"),
+            snapshot_time=now,
+        )
 
-        # cleanup 스크립트는 broker_orders NOT IN subquery로 보호
-        # 이 주문은 broker_orders가 존재하므로 cleanup 대상이 아님
-        assert order.status == OrderStatus.PENDING_SUBMIT
-        assert bo_exists.order_request_id == order.order_request_id
+        broker = _StubBroker(status=OrderStatus.EXPIRED)
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+
+        # _can_recover_expired blocks recovery → EXPIRED 유지
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.EXPIRED
+
+    async def test_expired_sell_position_delta_with_snapshot_refresh(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Position-delta 복구 후 snapshot_refresh_cb 호출 확인."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.EXPIRED,
+            client_order_id="PD-REFRESH-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            requested_quantity=Decimal("10"),
+            updated_at=now,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order,
+            broker_native_order_id="BRK-PD-REFRESH-001",
+            broker_status="expired",
+            created_at=now - timedelta(minutes=5),
+        )
+
+        # Position delta 10→0 → FILLED
+        pre_snap_time = now - timedelta(hours=1)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("10"),
+            snapshot_time=pre_snap_time,
+        )
+        # Post-order snapshot: quantity=0 (delta=10 → FILLED)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("0"),
+            snapshot_time=now,
+        )
+
+        broker = _StubBroker(status=OrderStatus.EXPIRED)
+
+        refresh_called = False
+
+        async def snapshot_refresh_cb(account_id: UUID) -> None:
+            nonlocal refresh_called
+            refresh_called = True
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+            snapshot_refresh_cb=snapshot_refresh_cb,
+        )
+
+        # FILLED 복구 및 snapshot_refresh_cb 호출 확인
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.FILLED
+        assert refresh_called is True

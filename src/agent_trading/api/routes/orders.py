@@ -1,34 +1,40 @@
 """Order inspection endpoints: ``GET /orders``, ``GET /orders/{id}``,
-``GET /orders/{id}/events``, ``GET /orders/{id}/broker-orders``.
+``GET /orders/{id}/events``, ``GET /orders/{id}/broker-orders``,
+``GET /orders/{id}/broker-truth``, ``GET /orders/sell-availability``.
 
 Results are sorted by ``created_at`` descending (newest first).
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from enum import Enum
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from agent_trading.api.deps import get_order_manager, get_repos
+from agent_trading.api.deps import get_kis_client, get_order_manager, get_repos
 from agent_trading.api.schemas import (
     BrokerOrderView,
+    BrokerTruthResponse,
     ManualStatusChangeRequest,
     ManualStatusChangeResponse,
     OrderDetail,
     OrderEvent,
     OrderSummary,
+    SellAvailabilityResponse,
 )
 from agent_trading.api.security import Principal, require_admin
 from agent_trading.domain.enums import OrderStatus
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import OrderQuery
 from agent_trading.services.order_manager import InvalidStateTransitionError, OrderManager
-from agent_trading.domain.enums import OrderStatus
-from agent_trading.repositories.container import RepositoryContainer
-from agent_trading.repositories.filters import OrderQuery
+from agent_trading.services.sell_guard import AvailableSellQtyResolver
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/orders", tags=["orders"])
 
@@ -289,4 +295,233 @@ async def manual_resolve_order_status(
         new_status=updated.status.value,
         updated_at=updated.updated_at,
         actor=principal.role,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase D — Broker Truth Inspection
+# ---------------------------------------------------------------------------
+
+
+def _match_order_by_broker_order_id(
+    order: object,
+    records: list[dict],
+) -> dict | None:
+    """Match a KIS daily settlement record by ``ODNO`` (broker native order ID).
+
+    Iterates through KIS ``inquire_daily_ccld`` output records and returns
+    the first record whose ``odno`` matches the order's broker native order ID.
+
+    Returns ``None`` when no match is found.
+    """
+    broker_native_id: str | None = getattr(order, "broker_native_order_id", None)
+    if not broker_native_id:
+        return None
+    for rec in records:
+        if rec.get("odno") == broker_native_id:
+            return rec
+    return None
+
+
+def _map_kis_status(status_code: str) -> str:
+    """Map KIS ``ord_tmd`` / ``ord_dvsn_cd`` status code to domain status.
+
+    KIS status codes (``ord_tmd``):
+        - ``01`` : 체결 (filled)
+        - ``02`` : 접수 (submitted/acknowledged)
+        - ``03`` : 취소 (cancelled)
+        - ``04`` : 정정 (amended)
+        - ``05`` : 거부 (rejected)
+        - ``00`` : 미체결 (open/pending)
+
+    Falls back to ``"unknown"`` for unrecognised codes.
+    """
+    _KIS_STATUS_MAP: dict[str, str] = {
+        "00": "pending",
+        "01": "filled",
+        "02": "submitted",
+        "03": "cancelled",
+        "04": "amended",
+        "05": "rejected",
+    }
+    return _KIS_STATUS_MAP.get(status_code, "unknown")
+
+
+def _safe_decimal(value: object) -> Decimal | None:
+    """Safely convert a value to ``Decimal``, returning ``None`` for empty/invalid values."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        return Decimal(s)
+    except Exception:
+        return None
+
+
+def _to_broker_truth_response(
+    matched: dict,
+    order: object,
+) -> BrokerTruthResponse:
+    """Convert a matched KIS record and order entity to ``BrokerTruthResponse``."""
+    return BrokerTruthResponse(
+        order_request_id=getattr(order, "order_request_id"),
+        broker_order_id=str(matched.get("odno", "")),
+        kis_status_code=str(matched.get("ord_tmd", "")),
+        mapped_status=_map_kis_status(str(matched.get("ord_tmd", ""))),
+        filled_qty=_safe_decimal(matched.get("tot_ccld_qty")),
+        open_qty=_safe_decimal(matched.get("rmmn_qty")),
+        avg_fill_price=_safe_decimal(matched.get("avg_prvs")),
+        order_qty=_safe_decimal(matched.get("ord_qty")),
+        order_price=_safe_decimal(matched.get("ord_unpr")),
+        last_synced_at=datetime.now(timezone.utc),
+        source="VTTC0081R",
+    )
+
+
+def _to_cached_broker_truth_response(order: object) -> BrokerTruthResponse:
+    """Build a ``BrokerTruthResponse`` from cached ``broker_orders`` data.
+
+    Used as fallback when the KIS API is unavailable.
+    """
+    broker_native_id: str | None = getattr(order, "broker_native_order_id", None)
+    status_val = getattr(order, "status", None)
+    mapped_status: str | None = _safe_str(status_val) if status_val is not None else None
+
+    return BrokerTruthResponse(
+        order_request_id=getattr(order, "order_request_id"),
+        broker_order_id=broker_native_id,
+        kis_status_code=None,
+        mapped_status=mapped_status,
+        filled_qty=_safe_decimal(getattr(order, "filled_quantity", None)),
+        open_qty=None,
+        avg_fill_price=_safe_decimal(getattr(order, "average_fill_price", None)),
+        order_qty=_safe_decimal(getattr(order, "requested_quantity", None)),
+        order_price=_safe_decimal(getattr(order, "requested_price", None)),
+        last_synced_at=getattr(order, "updated_at", None),
+        source="cached",
+    )
+
+
+@router.get("/{order_request_id}/broker-truth", response_model=BrokerTruthResponse)
+async def get_order_broker_truth(
+    order_request_id: str,
+    request: Request,
+    repos: RepositoryContainer = Depends(get_repos),
+) -> BrokerTruthResponse:
+    """Query KIS broker truth for a specific order.
+
+    Calls KIS ``inquire_daily_ccld`` and returns the matched record.
+    Falls back to cached ``broker_orders`` data if KIS API is unavailable.
+
+    The KIS real-time query uses the ``VTTC0081R`` (inquire-daily-ccld) endpoint
+    with a date range spanning from one day before the order was created to today.
+    """
+    # 1. Parse UUID
+    try:
+        uid = UUID(order_request_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid UUID: {order_request_id}")
+
+    # 2. Find order
+    order = await repos.orders.get(uid)
+    if order is None:
+        raise HTTPException(status_code=404, detail=f"Order not found: {order_request_id}")
+
+    # 3. Try KIS real-time query
+    kis_client = get_kis_client(request)
+    if kis_client is not None:
+        try:
+            # Determine date range: from one day before order creation to today
+            created_at: datetime = getattr(order, "created_at", datetime.now(timezone.utc))
+            from_date = (created_at - timedelta(days=1)).strftime("%Y%m%d")
+            to_date = datetime.now(timezone.utc).strftime("%Y%m%d")
+
+            records = await kis_client.inquire_daily_ccld(
+                strt_dt=from_date,
+                end_dt=to_date,
+            )
+            matched = _match_order_by_broker_order_id(order, records)
+            if matched:
+                return _to_broker_truth_response(matched, order)
+        except Exception:
+            logger.warning("KIS broker truth query failed, falling back to cached data", exc_info=True)
+
+    # 4. Fallback to cached data
+    return _to_cached_broker_truth_response(order)
+
+
+# ---------------------------------------------------------------------------
+# Phase D — Sell Availability Inspection
+# ---------------------------------------------------------------------------
+
+
+@router.get("/sell-availability", response_model=SellAvailabilityResponse)
+async def get_sell_availability(
+    account_id: UUID,
+    symbol: str,
+    position_qty: Decimal | None = Query(None, description="Optional override for current position quantity"),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> SellAvailabilityResponse:
+    """Calculate available sell quantity considering open orders.
+
+    Uses ``AvailableSellQtyResolver`` to compute the available sell quantity
+    by considering:
+    - Current position quantity (from position snapshot, or overridden via query param)
+    - Open sell orders (PENDING_SUBMIT / SUBMITTED / ACKNOWLEDGED)
+    - Partially filled sell orders (remaining quantity)
+
+    When ``position_qty`` is provided, it overrides the current position quantity
+    from the snapshot (useful for manual inspection with hypothetical values).
+    """
+    resolver = AvailableSellQtyResolver(repos=repos)
+
+    # Resolve symbol → instrument_id
+    instrument = await repos.instruments.get_by_symbol_any_market(symbol)
+    instrument_id: UUID | None = instrument.instrument_id if instrument else None
+
+    # Determine the requested_qty for the resolver.
+    # When position_qty is provided as an override, use it as the requested_qty
+    # so the resolver computes availability against that hypothetical position.
+    # Otherwise, use Decimal("1") as a minimal positive value — we only need
+    # the resolver's intermediate calculations (open_sell_qty, partial_remaining).
+    requested_qty = position_qty if position_qty is not None else Decimal("1")
+
+    availability = await resolver.resolve(
+        account_id=account_id,
+        symbol=symbol,
+        requested_qty=requested_qty,
+    )
+
+    # When position_qty override is provided, use it as the current position
+    # instead of what the resolver fetched from snapshots.
+    current_position_qty = position_qty if position_qty is not None else availability.current_position_qty
+
+    # Recalculate available_sell_qty with the (possibly overridden) position qty
+    available_sell_qty = current_position_qty - availability.open_sell_qty - availability.partially_filled_remaining_qty
+
+    # Determine block status: blocked when available <= 0
+    is_blocked = available_sell_qty <= 0
+    block_reason: str | None = None
+    if is_blocked:
+        parts: list[str] = []
+        if current_position_qty <= 0:
+            parts.append(f"position_qty={current_position_qty} (no position)")
+        if availability.open_sell_qty > 0:
+            parts.append(f"open_sell_qty={availability.open_sell_qty}")
+        if availability.partially_filled_remaining_qty > 0:
+            parts.append(f"partial_remaining={availability.partially_filled_remaining_qty}")
+        parts.append(f"available={available_sell_qty}")
+        block_reason = "Sell guard blocked: " + "; ".join(parts)
+
+    return SellAvailabilityResponse(
+        account_id=account_id,
+        symbol=symbol,
+        current_position_qty=current_position_qty,
+        open_sell_qty=availability.open_sell_qty,
+        partially_filled_qty=availability.partially_filled_remaining_qty,
+        available_sell_qty=available_sell_qty,
+        is_blocked=is_blocked,
+        block_reason=block_reason,
     )

@@ -396,9 +396,12 @@ class KoreaInvestmentAdapter(BrokerAdapter):
         self,
         account_ref: str,
         broker_order_id: str,
-        from_ts: str | None = None,
+        from_ts: str | datetime | None = None,
     ) -> Sequence[FillEvent]:
         try:
+            # datetime 객체가 전달되면 str로 변환
+            if isinstance(from_ts, datetime):
+                from_ts = from_ts.strftime("%Y%m%d")
             return await self._rest.get_fills(account_ref, broker_order_id, from_ts=from_ts)
         except BudgetExhaustedError:
             return ()
@@ -508,6 +511,7 @@ class KoreaInvestmentAdapter(BrokerAdapter):
         *,
         client_order_id: str | None = None,
         broker_order_id: str | None = None,
+        symbol: str | None = None,
     ) -> OrderStatusResult:
         """Resolve an unknown order state by inquiring KIS.
 
@@ -517,7 +521,7 @@ class KoreaInvestmentAdapter(BrokerAdapter):
         """
         return await self._rest.resolve_unknown_state(
             broker_order_id=broker_order_id or "",
-            symbol="",
+            symbol=symbol or None,  # 빈 문자열 → None으로 정규화하여 post-fetch filtering 통과
         )
 
     # ------------------------------------------------------------------

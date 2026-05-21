@@ -111,10 +111,12 @@ class OpenAICompatibleClient:
         *,
         api_key: str,
         base_url: str = "https://api.deepseek.com",
+        model_id: str = "deepseek-chat",
         timeout_seconds: int = 30,
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
+        self._model_id = model_id
         self._timeout = timeout_seconds
         self._client: httpx.AsyncClient | None = None
 
@@ -124,17 +126,24 @@ class OpenAICompatibleClient:
         Timeout breakdown
         -----------------
         * ``connect=10.0``  — fail fast on network issues
-        * ``read=25.0``    — aligned with per-agent timeout (25s) in
-                             ``decision_orchestrator._run_agents()``
+        * ``read``          — derived from ``self._timeout`` (minus connect/write
+                             buffer) so that httpx raises ``ReadTimeout`` before
+                             the per-agent ``asyncio.wait_for()`` fires, allowing
+                             the agent's ``except Exception`` handler to produce
+                             a fallback output instead of hanging the event loop
+                             on C-level I/O blocking.
         * ``write=10.0``   — generous write window
         * ``pool=10.0``    — connection pool acquisition timeout
         """
         if self._client is None:
+            # Use self._timeout as the total timeout budget; reserve
+            # connect+write+pool overhead so read timeout fits within it.
+            read_timeout = max(10.0, float(self._timeout) - 30.0)
             self._client = httpx.AsyncClient(
                 base_url=self._base_url,
                 timeout=httpx.Timeout(
                     connect=10.0,
-                    read=25.0,
+                    read=read_timeout,
                     write=10.0,
                     pool=10.0,
                 ),

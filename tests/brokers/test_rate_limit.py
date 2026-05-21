@@ -31,7 +31,11 @@ class TestBuildKisBudgetManager:
         assert snap["order"]["capacity"] == 1
         assert snap["inquiry"]["capacity"] == 1
         assert snap["market_data"]["capacity"] == 1
-        assert snap["reconciliation"]["capacity"] == 1
+        # Paper RECONCILIATION bucket capacity increased from 5 to 10
+        # to prevent budget starvation for reconcile-required resolution.
+        # (2026-05-19: 25 RR orders need at least 25 tokens; capacity=10,
+        #  refill=1.0/sec allows ~10 orders per cycle with continuous refill)
+        assert snap["reconciliation"]["capacity"] == 10
 
     def test_live_budget_default_rps(self) -> None:
         """Live env with default 18 RPS (per KIS notice 2026-04-20) creates scaled buckets."""
@@ -64,7 +68,8 @@ class TestBuildKisBudgetManager:
         assert snap["order"]["capacity"] == 3
         assert snap["inquiry"]["capacity"] == 3
         assert snap["market_data"]["capacity"] == 3
-        assert snap["reconciliation"]["capacity"] == 3
+        # RECONCILIATION bucket: capacity = max(1, int(10 * total)) = max(1, 30) = 30
+        assert snap["reconciliation"]["capacity"] == 30
 
     def test_custom_live_rps_scales_buckets(self) -> None:
         """Custom ``real_rest_rps=30`` scales live bucket capacities relative to baseline."""

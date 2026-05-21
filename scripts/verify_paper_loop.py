@@ -153,9 +153,10 @@ async def _run_one_cycle(
                 symbol=SYMBOL,
                 market=MARKET,
                 side=OrderSide.BUY,
-                order_type=OrderType.LIMIT,
+                # 전면 MARKET 정책 — price=None으로 시장가 주문
+                order_type=OrderType.MARKET,
                 quantity=Decimal("10"),
-                price=Decimal("50000"),
+                price=None,
             )
 
             if submit:

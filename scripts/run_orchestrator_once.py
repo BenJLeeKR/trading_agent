@@ -80,6 +80,11 @@ MARKET = "KRX"
 def _resolve_smoke_price() -> Decimal:
     """Return order price for smoke/test execution.
 
+    .. note::
+       현재는 전면 MARKET 정책이므로 ``SubmitOrderRequest.price=None``으로
+       전달되며 이 함수의 반환값은 주문 가격에 직접 사용되지 않는다.
+       quote 수집 및 observability 용도로만 유지.
+
     Priority:
     1. ``KIS_SMOKE_PRICE`` env var (for smoke runs with a specific price).
     2. ``Decimal("50000")`` safe default (dry-run / non-submit usage).
@@ -337,11 +342,9 @@ async def main() -> int:
 
         # Step 2: build SubmitOrderRequest with valid UUID strategy_id
         resolved_price = _resolve_smoke_price()
-        if args.submit and resolved_price == Decimal("50000"):
-            logger.warning(
-                "KIS_SMOKE_PRICE not set — using default price=%s. "
-                "This may cause KIS price validation error (msg_cd=40270000). "
-                "Set KIS_SMOKE_PRICE env var for paper submit smoke.",
+        if args.submit:
+            logger.info(
+                "KIS_SMOKE_PRICE=%s (ignored under MARKET order policy — price=None is used).",
                 resolved_price,
             )
         request = SubmitOrderRequest(
@@ -352,9 +355,9 @@ async def main() -> int:
             symbol=SYMBOL,
             market=MARKET,
             side=OrderSide.BUY,
-            order_type=OrderType.LIMIT,
+            order_type=OrderType.MARKET,
             quantity=Decimal("10"),
-            price=resolved_price,
+            price=None,
         )
 
         # ── Dry-run: assemble + sizing only, no broker submit ──
