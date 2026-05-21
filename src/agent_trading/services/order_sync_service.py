@@ -4,7 +4,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
@@ -20,7 +20,7 @@ from agent_trading.domain.entities import (
     InstrumentEntity,
     OrderRequestEntity,
 )
-from agent_trading.domain.enums import OrderSide, OrderStatus
+from agent_trading.domain.enums import OrderSide, OrderStatus, OrderType
 from agent_trading.domain.models import FillEvent, OrderStatusResult
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import OrderQuery
@@ -55,7 +55,7 @@ _STUCK_EXPIRY_SECONDS: int = 7200
 
 # EXPIRED → FILLED/PARTIALLY_FILLED 후행 복구 관련 상수
 # 최근 N시간 이내에 EXPIRED된 주문만 broker truth 재조회 대상
-_RECENT_EXPIRY_WINDOW_SECONDS: int = 3600  # 1시간
+_RECENT_EXPIRY_WINDOW_SECONDS: int = 86400  # 24시간
 # 한 sync cycle당 최대 복구 처리 건수 (KIS API 비용 통제)
 _MAX_EXPIRY_RECOVERY_PER_CYCLE: int = 10
 
@@ -63,6 +63,11 @@ _MAX_EXPIRY_RECOVERY_PER_CYCLE: int = 10
 # 장 종료 직전(15:20~15:30) 제출된 주문이 after-hours 첫 sync cycle(15:30~)에서
 # 잘못 EXPIRED되는 것을 방지하기 위해, 생성 후 30분 미만이면 EXPIRED fallback을 금지한다.
 _GRACE_PERIOD_AFTER_HOURS_EXPIRED_SECONDS: int = 1800  # 30분
+
+# 시장가 + broker_native_order_id 존재 주문에 대한 after-hours Grace Period 연장 (초).
+# Paper 환경에서 inquire-daily-ccld의 ODNO 미반환으로 인한 false EXPIRED를 방지하기 위해
+# 30분 → 60분으로 연장한다. Live 환경에도 안전하게 적용 가능.
+_GRACE_PERIOD_AFTER_HOURS_EXPIRED_MARKET_SECONDS: int = 3600  # 60분
 
 
 @dataclass(slots=True, frozen=True)
@@ -117,6 +122,135 @@ class OrderSyncService:
 
     # 주문당 KIS inquiry 1회 제한 (order_request_id_str → True)
     _kis_inquiry_seen: dict[str, bool] = field(default_factory=dict)
+
+    # ------------------------------------------------------------------
+    # Backfill API (position-delta based EXPIRED SELL recovery)
+    # ------------------------------------------------------------------
+
+    async def recover_expired_sell_by_position(
+        self,
+        order: OrderRequestEntity,
+        broker_order: BrokerOrderEntity,
+        *,
+        snapshot_refresh_cb: Callable[[UUID], Awaitable[None]] | None = None,
+    ) -> SyncOrderResult | None:
+        """Backfill: position-delta 기반 EXPIRED SELL 시장가 주문 복구.
+
+        이미 broker truth 조회 없이 EXPIRED된 SELL market 주문에 대해
+        position snapshot delta를 증거로 FILLED/PARTIALLY_FILLED로 복구한다.
+
+        ``sync_order_post_submit()``의 position-delta recovery 로직과
+        동일한 ``_infer_sell_order_fill_via_position()``을 사용하지만,
+        broker truth 재조회 단계를 거치지 않고 곧바로 position-delta를
+        확인한다는 점이 다르다.
+
+        Args:
+            order: EXPIRED 상태의 SELL market 주문
+            broker_order: 해당 order의 BrokerOrderEntity
+            snapshot_refresh_cb: (선택) FILLED 복구 후 snapshot refresh 콜백
+
+        Returns:
+            SyncOrderResult (복구 성공 시) | None (추론 실패/조건 불만족)
+        """
+        # Step 1: SELL + expired + market 사전 조건 검증
+        if order.side != OrderSide.SELL:
+            logger.warning("[BACKFILL] not SELL, skip: order=%s", order.order_request_id)
+            return None
+        if order.status != OrderStatus.EXPIRED:
+            logger.warning("[BACKFILL] not EXPIRED, skip: order=%s", order.order_request_id)
+            return None
+        if order.order_type != OrderType.MARKET:
+            logger.warning("[BACKFILL] not MARKET, skip: order=%s type=%s", order.order_request_id, order.order_type)
+            return None
+
+        # Step 2: Broker order 상태 확인 (거절/취소된 주문은 복구 불가)
+        if broker_order.broker_status in ('rejected', 'cancelled'):
+            logger.warning(
+                "[BACKFILL] broker_status=%s, skip: order=%s",
+                broker_order.broker_status, order.order_request_id,
+            )
+            return None
+
+        # Step 3: 안전 조건 검증 (_can_recover_expired)
+        if not self._can_recover_expired(order, OrderStatus.FILLED):
+            logger.warning(
+                "[BACKFILL] _can_recover_expired=False, skip: order=%s age=%s",
+                order.order_request_id,
+                datetime.now(timezone.utc) - order.created_at,
+            )
+            return None
+
+        # Step 4: Position-delta inference
+        try:
+            inferred: OrderStatus | None = await self._infer_sell_order_fill_via_position(
+                order, broker_order, snapshot_refresh_cb=snapshot_refresh_cb,
+            )
+        except Exception:
+            logger.exception(
+                "[BACKFILL] _infer_sell_order_fill_via_position failed: order=%s",
+                order.order_request_id,
+            )
+            return None
+
+        if inferred not in (OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED):
+            logger.info(
+                "[BACKFILL] position-delta no inference, skip: order=%s inferred=%s",
+                order.order_request_id, inferred,
+            )
+            return None
+
+        previous_status = order.status
+        now = datetime.now(timezone.utc)
+
+        # Step 5: 상태 전이
+        try:
+            updated_order = await self._try_transition(order, inferred)
+        except Exception:
+            logger.exception(
+                "[BACKFILL] _try_transition failed: order=%s status=%s",
+                order.order_request_id, inferred,
+            )
+            return None
+
+        status_changed = updated_order.status != previous_status
+
+        # Step 6: broker_status 동기화
+        await self.repos.broker_orders.update(
+            broker_order.broker_order_id,
+            broker_status=inferred.value,
+            updated_at=now,
+        )
+
+        # Step 7: FILLED 도달 시 snapshot refresh (실패해도 복구는 성공)
+        snapshot_triggered = False
+        if inferred == OrderStatus.FILLED and snapshot_refresh_cb is not None:
+            try:
+                await snapshot_refresh_cb(order.account_id)
+                snapshot_triggered = True
+            except Exception:
+                logger.exception(
+                    "[BACKFILL] snapshot_refresh_cb failed (non-fatal): order=%s",
+                    order.order_request_id,
+                )
+
+        logger.info(
+            "[BACKFILL] recovered: order=%s %s→%s",
+            order.order_request_id,
+            OrderStatus.EXPIRED.value,
+            inferred.value,
+        )
+
+        return SyncOrderResult(
+            broker_order_id=broker_order.broker_order_id,
+            previous_status=previous_status,
+            current_status=updated_order.status,
+            status_changed=status_changed,
+            fills_synced=0,
+            fills_skipped=0,
+            terminal=updated_order.status in _TERMINAL_STATUSES,
+            snapshot_triggered=snapshot_triggered,
+            last_synced_at=now,
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -892,20 +1026,30 @@ class OrderSyncService:
                 )
                 return None  # RECONCILE_REQUIRED 유지, 다음 sync cycle에 재시도
 
-            # After-hours: young order 보호 — 생성 후 30분 미만이면 EXPIRED 금지
+            # After-hours: young order 보호 — 생성 후 grace period 미만이면 EXPIRED 금지
             # 장 종료 직전(15:20~15:30) 제출된 주문이 after-hours 첫 sync cycle에서
             # 잘못 EXPIRED되는 것을 방지한다.
+            # 시장가 + broker_native_order_id 존재 주문은 grace period 60분 적용.
             if order.created_at is not None:
+                # ── MARKET_PROTECT: broker_native_order_id + 시장가 → grace period 60분 ──
+                grace_period = _GRACE_PERIOD_AFTER_HOURS_EXPIRED_SECONDS
+                if (broker_order.broker_native_order_id
+                    and order.order_type == OrderType.MARKET):
+                    grace_period = _GRACE_PERIOD_AFTER_HOURS_EXPIRED_MARKET_SECONDS
+
                 age_seconds = (datetime.now(timezone.utc) - order.created_at).total_seconds()
-                if age_seconds < _GRACE_PERIOD_AFTER_HOURS_EXPIRED_SECONDS:
+                if age_seconds < grace_period:
                     logger.warning(
                         "After-hours: EXPIRED fallback suppressed for recent order %s "
-                        "[age=%.0fs < %ds, resolve_unknown_state failed: %s] — "
+                        "[age=%.0fs < %ds, resolve_unknown_state failed: %s, "
+                        "broker_native_order_id=%s, order_type=%s] — "
                         "keeping RECONCILE_REQUIRED",
                         broker_order.broker_order_id,
                         age_seconds,
-                        _GRACE_PERIOD_AFTER_HOURS_EXPIRED_SECONDS,
+                        grace_period,
                         exc,
+                        broker_order.broker_native_order_id or "none",
+                        order.order_type.value,
                     )
                     return None  # 다음 sync cycle에 재시도
 
@@ -1160,6 +1304,16 @@ class OrderSyncService:
                         "[stuck=%.0fs] — keeping RECONCILE_REQUIRED",
                         broker_order.broker_order_id, order.side.value, stuck_duration,
                     )
+                    # ── MARKET_PROTECT: broker_native_order_id + 시장가 주문 보호 ──
+                    if (broker_order.broker_native_order_id
+                        and order.order_type == OrderType.MARKET):
+                        logger.info(
+                            "[MARKET_PROTECT] Intraday STUCK_EXPIRY: "
+                            "broker_native_order_id=%s + 시장가 → EXPIRED 차단, "
+                            "RECONCILE_REQUIRED 유지 [recovery batch에서 복구 시도]",
+                            broker_order.broker_native_order_id,
+                        )
+                        return None  # RECONCILE_REQUIRED 유지
                     # RECONCILE_REQUIRED 유지, 다음 sync cycle에 재시도
                     # stage 2.5를 빠져나가면 경로 D(broker has no record)로 이어짐
 
@@ -1376,19 +1530,29 @@ class OrderSyncService:
             )
             return None  # RECONCILE_REQUIRED 유지
 
-        # After-hours: young order 보호 — 생성 후 30분 미만이면 EXPIRED 금지
+        # After-hours: young order 보호 — 생성 후 grace period 미만이면 EXPIRED 금지
         # 장 종료 직전(15:20~15:30) 제출된 주문이 after-hours 첫 sync cycle에서
         # 잘못 EXPIRED되는 것을 방지한다.
+        # 시장가 + broker_native_order_id 존재 주문은 grace period 60분 적용.
         if order.created_at is not None:
+            # ── MARKET_PROTECT: broker_native_order_id + 시장가 → grace period 60분 ──
+            grace_period = _GRACE_PERIOD_AFTER_HOURS_EXPIRED_SECONDS
+            if (broker_order.broker_native_order_id
+                and order.order_type == OrderType.MARKET):
+                grace_period = _GRACE_PERIOD_AFTER_HOURS_EXPIRED_MARKET_SECONDS
+
             age_seconds = (datetime.now(timezone.utc) - order.created_at).total_seconds()
-            if age_seconds < _GRACE_PERIOD_AFTER_HOURS_EXPIRED_SECONDS:
+            if age_seconds < grace_period:
                 logger.warning(
                     "After-hours: EXPIRED fallback suppressed for recent order %s "
-                    "[age=%.0fs < %ds, broker has no record] — "
+                    "[age=%.0fs < %ds, broker has no record, "
+                    "broker_native_order_id=%s, order_type=%s] — "
                     "keeping RECONCILE_REQUIRED",
                     broker_order.broker_order_id,
                     age_seconds,
-                    _GRACE_PERIOD_AFTER_HOURS_EXPIRED_SECONDS,
+                    grace_period,
+                    broker_order.broker_native_order_id or "none",
+                    order.order_type.value,
                 )
                 return None  # 다음 sync cycle에 재시도
 
@@ -1969,6 +2133,16 @@ _ACTIVE_SYNC_STATUSES: list[OrderStatus] = [
     OrderStatus.PENDING_SUBMIT,  # broker 미도달 orphan polling
 ]
 
+# Recovery 모드(16:00 KST after-hours 복구 배치)에서 sync 대상 상태 — EXPIRED 포함
+_RECOVERY_SYNC_STATUSES: list[OrderStatus] = [
+    OrderStatus.SUBMITTED,
+    OrderStatus.ACKNOWLEDGED,
+    OrderStatus.PARTIALLY_FILLED,
+    OrderStatus.RECONCILE_REQUIRED,
+    OrderStatus.PENDING_SUBMIT,
+    OrderStatus.EXPIRED,  # ← 복구 대상에 EXPIRED 포함
+]
+
 
 @dataclass(slots=True)
 class PostSubmitSyncRunner:
@@ -2011,6 +2185,7 @@ class PostSubmitSyncRunner:
         limit: int = _DEFAULT_BATCH_LIMIT,
         tx_manager: TransactionManager | None = None,
         after_hours: bool | None = None,
+        recovery_mode: bool = False,
     ) -> SyncCycleResult:
         """Query active (non-terminal) orders and sync each one.
 
@@ -2033,19 +2208,35 @@ class PostSubmitSyncRunner:
             cycle uses savepoints on this transaction for per-order
             isolation.  If ``None``, no savepoint isolation is applied
             (fallback for callers that don't use transactions).
+        recovery_mode:
+            If ``True``, also includes EXPIRED orders and filters
+            to today's orders only (used for after-hours recovery batch).
 
         Returns
         -------
         SyncCycleResult
             Aggregated summary of the cycle.
         """
-        # ── 1. Query active orders ────────────────────────────────────────
-        orders = await self.repos.orders.list(
-            OrderQuery(
-                statuses=_ACTIVE_SYNC_STATUSES,
+        # ── 1. Query orders ───────────────────────────────────────────────
+        # recovery_mode=True → EXPIRED 포함 + 당일 주문만 필터
+        active_statuses = _RECOVERY_SYNC_STATUSES if recovery_mode else _ACTIVE_SYNC_STATUSES
+
+        if recovery_mode:
+            now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
+            today_start = now_kst.replace(hour=0, minute=0, second=0, microsecond=0)
+            today_end = today_start + timedelta(days=1)
+            # NOTE: expired / pending_submit 주문은 submitted_at=NULL이므로
+            # submitted_at 대신 created_at으로 필터링해야 함.
+            order_query = OrderQuery(
+                statuses=active_statuses,
                 limit=limit,
+                created_from=today_start.astimezone(timezone.utc),
+                created_to=today_end.astimezone(timezone.utc),
             )
-        )
+        else:
+            order_query = OrderQuery(statuses=active_statuses, limit=limit)
+
+        orders = await self.repos.orders.list(order_query)
 
         if not orders:
             return SyncCycleResult(

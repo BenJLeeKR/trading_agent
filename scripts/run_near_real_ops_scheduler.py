@@ -175,6 +175,8 @@ class SchedulerState:
     market_phase: str | None = None
     last_phase_change: datetime | None = None
     session_db_id: int | None = None
+    # 16:00 KST after-hours 복구 배치 완료 여부 (1회만 실행)
+    recovery_batch_done: bool = False
 
 
 def _parse_hhmm(value: str) -> dtime:
@@ -657,10 +659,14 @@ def _decision_command(*, dry_run: bool) -> list[str]:
     return argv
 
 
-def _post_submit_command(*, after_hours: bool = False) -> list[str]:
+def _post_submit_command(*, after_hours: bool = False, recovery: bool = False) -> list[str]:
     argv = [PYTHON_BIN, "scripts/run_post_submit_sync_loop.py", "--once"]
-    if after_hours:
+    # recovery=True는 항상 after-hours를 수반한다 (EXPIRED fallback 허용 조건)
+    effective_after_hours = after_hours or recovery
+    if effective_after_hours:
         argv.append("--after-hours")
+    if recovery:
+        argv.append("--recovery")
     return argv
 
 
@@ -1597,6 +1603,22 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                         env=env,
                         now=now,
                     )
+
+                    # 16:00 KST after-hours 복구 배치 (1회만 실행)
+                    if not state.recovery_batch_done and now.hour >= 16:
+                        logger.info(
+                            "[RECOVERY_BATCH] 16:00 KST 도달 — "
+                            "after-hours 복구 배치 실행"
+                        )
+                        await _run_and_record(
+                            state,
+                            "eod_recovery_batch",
+                            _post_submit_command(recovery=True),
+                            timeout_seconds=args.task_timeout,
+                            env=env,
+                        )
+                        state.recovery_batch_done = True
+                        logger.info("[RECOVERY_BATCH] 복구 배치 완료")
 
                 # Idle/non-trading day: 긴 polling interval (60초)
                 if state.session_info is None or state.cycles == 0:

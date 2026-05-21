@@ -14,13 +14,15 @@ verify successful parsing and safe fallback behaviour.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
-from agent_trading.domain.entities import ExternalEventEntity
+from agent_trading.domain.entities import CashBalanceSnapshotEntity, ExternalEventEntity
 from agent_trading.services.ai_agents.ai_risk import (
     AIRiskAgent,
     StubAIRiskAgent,
@@ -639,7 +641,8 @@ class TestAIRiskAgent:
         assert "Unrealised P&L: 250.00" in user_prompt
         # Verify cash section
         assert "Cash Balance" in user_prompt
-        assert "Available cash: 5000000" in user_prompt
+        assert "Effective buying cash (primary): 5000000" in user_prompt
+        assert "Available cash (accounting reference): 5000000" in user_prompt
         assert "Settled cash: 3000000" in user_prompt
         # Verify risk limit section
         assert "Risk Limit State" in user_prompt
@@ -1035,6 +1038,170 @@ class TestAIRiskAgent:
         assert "Current position value: N/A" in prompt
         assert "Concentration: N/A" in prompt
         assert "Over-concentrated: No" in prompt
+
+    # ------------------------------------------------------------------
+    # Layer 2: Post-processing Guard tests
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_layer2_guard_converts_reject_to_review_when_orderable_amount_positive(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """orderable_amount > 0이고 LLM이 reject를 출력하면 Guard가 review로 완화."""
+        from unittest.mock import AsyncMock
+        from uuid import uuid4
+
+        now = datetime.now(timezone.utc)
+        cash_snapshot = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            currency="KRW",
+            total_asset=Decimal("20000000"),
+            available_cash=Decimal("-6629580"),
+            orderable_amount=Decimal("9050070"),
+            settled_cash=Decimal("-2794295"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+
+        provider = AsyncMock(spec=AIProviderClient)
+
+        async def _generate(**kwargs: object) -> RawProviderResponse:
+            return RawProviderResponse(
+                parsed=AIRiskOutput(
+                    symbol="TEST",
+                    proposed_side="BUY",
+                    risk_opinion="reject",
+                    reason_codes=("insufficient_cash",),
+                ),
+                raw_content='{"risk_opinion": "reject"}',
+            )
+
+        provider.generate_structured = _generate  # type: ignore[method-assign]
+
+        context = AssembledContext(
+            cash_balance_snapshot=cash_snapshot,
+        )
+        request = AgentExecutionRequest(
+            decision_context_id=sample_request.decision_context_id,
+            correlation_id=sample_request.correlation_id,
+            context=context,
+        )
+
+        agent = AIRiskAgent(provider_client=provider)
+        result = await agent.run(request)
+        # Guard가 reject를 review로 변환
+        assert result.risk_opinion == "review", (
+            f"Expected 'review', got {result.risk_opinion!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_layer2_guard_keeps_reject_when_orderable_amount_zero(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """orderable_amount=0이면 Guard 미적용, reject 유지."""
+        from unittest.mock import AsyncMock
+        from uuid import uuid4
+
+        now = datetime.now(timezone.utc)
+        cash_snapshot = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            currency="KRW",
+            total_asset=Decimal("20000000"),
+            available_cash=Decimal("-6629580"),
+            orderable_amount=Decimal("0"),
+            settled_cash=Decimal("-2794295"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+
+        provider = AsyncMock(spec=AIProviderClient)
+
+        async def _generate(**kwargs: object) -> RawProviderResponse:
+            return RawProviderResponse(
+                parsed=AIRiskOutput(
+                    symbol="TEST",
+                    proposed_side="BUY",
+                    risk_opinion="reject",
+                ),
+                raw_content='{"risk_opinion": "reject"}',
+            )
+
+        provider.generate_structured = _generate  # type: ignore[method-assign]
+
+        context = AssembledContext(
+            cash_balance_snapshot=cash_snapshot,
+        )
+        request = AgentExecutionRequest(
+            decision_context_id=sample_request.decision_context_id,
+            correlation_id=sample_request.correlation_id,
+            context=context,
+        )
+
+        agent = AIRiskAgent(provider_client=provider)
+        result = await agent.run(request)
+        # Guard 미적용 → reject 유지
+        assert result.risk_opinion == "reject", (
+            f"Expected 'reject', got {result.risk_opinion!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_layer2_guard_keeps_allow_when_orderable_amount_positive(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """orderable_amount > 0이고 LLM이 allow를 출력하면 Guard 미적용, allow 유지."""
+        from unittest.mock import AsyncMock
+        from uuid import uuid4
+
+        now = datetime.now(timezone.utc)
+        cash_snapshot = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            currency="KRW",
+            total_asset=Decimal("20000000"),
+            available_cash=Decimal("-6629580"),
+            orderable_amount=Decimal("9050070"),
+            settled_cash=Decimal("-2794295"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+
+        provider = AsyncMock(spec=AIProviderClient)
+
+        async def _generate(**kwargs: object) -> RawProviderResponse:
+            return RawProviderResponse(
+                parsed=AIRiskOutput(
+                    symbol="TEST",
+                    proposed_side="BUY",
+                    risk_opinion="allow",
+                ),
+                raw_content='{"risk_opinion": "allow"}',
+            )
+
+        provider.generate_structured = _generate  # type: ignore[method-assign]
+
+        context = AssembledContext(
+            cash_balance_snapshot=cash_snapshot,
+        )
+        request = AgentExecutionRequest(
+            decision_context_id=sample_request.decision_context_id,
+            correlation_id=sample_request.correlation_id,
+            context=context,
+        )
+
+        agent = AIRiskAgent(provider_client=provider)
+        result = await agent.run(request)
+        # Guard 미적용 → allow 유지
+        assert result.risk_opinion == "allow", (
+            f"Expected 'allow', got {result.risk_opinion!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1719,16 +1886,23 @@ class TestAIRiskAgentPrompt:
         self,
         events: list[ExternalEventEntity],
         score: ScoreResult | None = None,
+        cash_balance_snapshot: CashBalanceSnapshotEntity | None = None,
     ) -> str:
         """Call ``AIRiskAgent._build_user_prompt()`` and return the result string."""
         agent = AIRiskAgent(provider_client=AsyncMock())
+        context = AssembledContext(
+            recent_events=tuple(events),
+            score=score or ScoreResult(),
+        )
+        if cash_balance_snapshot is not None:
+            context = dataclasses.replace(
+                context,
+                cash_balance_snapshot=cash_balance_snapshot,
+            )
         request = AgentExecutionRequest(
             decision_context_id=uuid4(),
             correlation_id="test-ar-provenance",
-            context=AssembledContext(
-                recent_events=tuple(events),
-                score=score or ScoreResult(),
-            ),
+            context=context,
         )
         return agent._build_user_prompt(request)
 
@@ -1877,6 +2051,141 @@ class TestAIRiskAgentPrompt:
         assert "Symbol: 030200" in prompt
         # No stale mark
         assert "⚠️STALE" not in prompt
+
+    # ------------------------------------------------------------------
+    # Test 11: Cash Balance — orderable_amount is included
+    # ------------------------------------------------------------------
+
+    def test_cash_balance_includes_orderable_amount(self) -> None:
+        """AR prompt에 effective_buying_cash가 orderable_amount로 설정되는지 검증."""
+        cash_snapshot = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            currency="KRW",
+            total_asset=Decimal("20000000"),
+            available_cash=Decimal("-6629580"),
+            orderable_amount=Decimal("9050070"),
+            settled_cash=Decimal("-2794295"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=datetime.now(timezone.utc),
+        )
+        prompt = self._build_prompt(
+            [],
+            cash_balance_snapshot=cash_snapshot,
+        )
+        # effective_buying_cash가 orderable_amount 값으로 설정
+        assert "Effective buying cash (primary): 9050070" in prompt
+        # available_cash는 accounting reference로 표시
+        assert "Available cash (accounting reference): -6629580" in prompt
+
+    # ------------------------------------------------------------------
+    # Test 12: Cash Balance — Effective buying cash 우선 지침 확인
+    # ------------------------------------------------------------------
+
+    def test_cash_balance_priority_orderable_amount_over_available(self) -> None:
+        """두 값이 다를 때 Effective buying cash가 BUY 판단 기준임을 지침이 명시하는지 검증."""
+        cash_snapshot = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            currency="KRW",
+            total_asset=Decimal("20000000"),
+            available_cash=Decimal("-6629580"),
+            orderable_amount=Decimal("9050070"),
+            settled_cash=Decimal("-2794295"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=datetime.now(timezone.utc),
+        )
+        prompt = self._build_prompt(
+            [],
+            cash_balance_snapshot=cash_snapshot,
+        )
+        assert "'Effective buying cash' (listed first above) as the primary criterion" in prompt
+        assert "Do NOT conclude 'cannot buy'" in prompt
+
+    # ------------------------------------------------------------------
+    # Test 13: Cash Balance — orderable_amount가 None이면 available_cash로 fallback
+    # ------------------------------------------------------------------
+
+    def test_cash_balance_orderable_amount_none_skipped(self) -> None:
+        """orderable_amount가 None이면 effective_buying_cash가 available_cash로 fallback되는지 검증."""
+        cash_snapshot = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            currency="KRW",
+            total_asset=Decimal("20000000"),
+            available_cash=Decimal("-6629580"),
+            orderable_amount=None,
+            settled_cash=Decimal("-2794295"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=datetime.now(timezone.utc),
+        )
+        prompt = self._build_prompt(
+            [],
+            cash_balance_snapshot=cash_snapshot,
+        )
+        # effective_buying_cash가 available_cash로 fallback
+        assert "Effective buying cash (primary): -6629580" in prompt
+        # orderable_amount 라인은 표시되지 않음
+        assert "Orderable amount (actual buyable cash):" not in prompt
+        # Cash Judgment Guide 텍스트는 포함되어야 함
+        assert "BUY feasibility MUST use 'Effective buying cash'" in prompt
+        # available_cash 라인은 항상 표시
+        assert "Available cash (accounting reference)" in prompt
+
+    # ------------------------------------------------------------------
+    # Test 14: Layer 1 — orderable_amount 존재 시 effective_buying_cash 검증
+    # ------------------------------------------------------------------
+
+    def test_cash_balance_effective_buying_cash_uses_orderable_amount(self) -> None:
+        """orderable_amount가 있을 때 effective_buying_cash가 orderable_amount와 일치하는지 검증."""
+        cash_snapshot = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            currency="KRW",
+            total_asset=Decimal("20000000"),
+            available_cash=Decimal("-6629580"),
+            orderable_amount=Decimal("9050070"),
+            settled_cash=Decimal("-2794295"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=datetime.now(timezone.utc),
+        )
+        prompt = self._build_prompt(
+            [],
+            cash_balance_snapshot=cash_snapshot,
+        )
+        assert "Effective buying cash (primary): 9050070" in prompt
+        assert "Available cash (accounting reference): -6629580" in prompt
+
+    # ------------------------------------------------------------------
+    # Test 15: Layer 1 — orderable_amount가 None이면 available_cash로 fallback
+    # ------------------------------------------------------------------
+
+    def test_cash_balance_effective_buying_cash_fallback_to_available(self) -> None:
+        """orderable_amount가 None일 때 effective_buying_cash가 available_cash로 fallback되는지 검증."""
+        cash_snapshot = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            currency="KRW",
+            total_asset=Decimal("20000000"),
+            available_cash=Decimal("5000000"),
+            orderable_amount=None,
+            settled_cash=Decimal("3000000"),
+            unsettled_cash=Decimal("2000000"),
+            source_of_truth="broker",
+            snapshot_at=datetime.now(timezone.utc),
+        )
+        prompt = self._build_prompt(
+            [],
+            cash_balance_snapshot=cash_snapshot,
+        )
+        # effective_buying_cash가 available_cash로 fallback
+        assert "Effective buying cash (primary): 5000000" in prompt
+        # orderable_amount가 None이므로 별도 라인 없음
+        assert "Orderable amount (actual buyable cash):" not in prompt
 
 
 # ---------------------------------------------------------------------------

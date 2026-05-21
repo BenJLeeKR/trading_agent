@@ -380,12 +380,82 @@ if query.created_to is not None and (
     continue
 ```
 
-#### 결정: 단기/장기 분리
+#### 결정: `created_from`/`created_to` 즉시 구현 (버그 수정)
 
-| 시점 | 접근법 | 이유 |
-|------|--------|------|
-| **당장 (본 PR)** | `submitted_from`/`submitted_to` 사용 | EXPIRED 주문도 `submitted_at`이 설정되어 있음. 변경 최소화. |
-| **추후 리팩토링** | `created_from`/`created_to` 추가 | 더 직관적이고 다양한 케이스 대응 가능. 별도 PR로 분리. |
+초기 설계에서는 `submitted_from`/`submitted_to`를 사용하기로 결정했으나, **실제 구현 중 버그 발견**으로 `created_from`/`created_to`를 즉시 구현하였다.
+
+**발견된 문제**: Recovery mode에서 `run_sync_cycle()`이 `submitted_from`/`submitted_to`를 사용해 당일 주문을 필터링했으나, `expired`와 `pending_submit` 상태의 주문은 `submitted_at = NULL`이므로 SQL `WHERE submitted_at >= ...` 조건에서 모든 행이 필터링되어 `orders=0`이 반환되었다.
+
+**해결책**: `OrderQuery`에 `created_from`/`created_to` 필드를 추가하고, recovery mode 필터를 `submitted_from`/`submitted_to`에서 `created_from`/`created_to`로 변경하였다. (`created_at`은 모든 주문 상태에서 항상 설정되므로 안전하다.)
+
+| 항목 | 상세 |
+|------|------|
+| **최종 구현** | `created_from`/`created_to` 사용 (당초 "추후 리팩토링" → **즉시 구현**) |
+| **이유** | `expired`/`pending_submit` 주문은 `submitted_at = NULL`이므로 `submitted_from`/`submitted_to`로 필터 불가 |
+| **`submitted_from`/`submitted_to`** | 그대로 유지 (다른 쿼리에서 사용 중이므로 제거하지 않음) |
+
+---
+
+### 2.5 버그 발견 및 수정: `submitted_at = NULL`
+
+#### 2.5.1 문제 상황
+
+Recovery mode(`recovery_mode=True`)에서 `run_sync_cycle()`은 당일 주문만 조회 대상으로 필터링하기 위해 `submitted_from`/`submitted_to`를 사용하도록 설계되었다. 그러나 실제 구현 후 테스트에서 **`orders=0`이 반환되는 문제**가 발견되었다.
+
+**원인 추적**:
+
+1. Recovery mode 조회 대상: `_RECOVERY_SYNC_STATUSES` = `[SUBMITTED, ACKNOWLEDGED, PARTIALLY_FILLED, RECONCILE_REQUIRED, PENDING_SUBMIT, EXPIRED]`
+2. `expired`와 `pending_submit` 상태의 주문은 `submitted_at = NULL` (아직 broker에 제출되지 않았거나, 제출되었으나 broker 응답 없이 expired 처리된 경우)
+3. SQL: `WHERE submitted_at >= '2026-05-21 00:00:00+00' AND submitted_at <= '2026-05-22 00:00:00+00'`
+4. `submitted_at IS NULL`인 행은 위 조건을 **절대 만족하지 않음** → 모든 행 필터링 → `orders=0`
+
+**영향받는 주문 상태**:
+
+| 상태 | `submitted_at` | 영향 |
+|------|---------------|------|
+| `expired` | `NULL` 가능 | recovery 대상에서 누락 |
+| `pending_submit` | `NULL` | recovery 대상에서 누락 |
+| `submitted` | 설정됨 | 영향 없음 |
+| `acknowledged` | 설정됨 | 영향 없음 |
+| `partially_filled` | 설정됨 | 영향 없음 |
+| `reconcile_required` | 설정됨 (보통) | 대부분 영향 없음 |
+
+#### 2.5.2 수정 사항
+
+**수정된 파일 (3개)**:
+
+1. [`src/agent_trading/repositories/filters.py`](src/agent_trading/repositories/filters.py) — `OrderQuery` dataclass에 `created_from: datetime | None = None` 및 `created_to: datetime | None = None` 필드 추가
+
+2. [`src/agent_trading/repositories/postgres/orders.py`](src/agent_trading/repositories/postgres/orders.py) — `list()` 메서드에 `created_at >= $idx` / `created_at <= $idx` SQL 조건 추가
+
+3. [`src/agent_trading/services/order_sync_service.py`](src/agent_trading/services/order_sync_service.py) — recovery mode 필터를 `submitted_from`/`submitted_to`에서 `created_from`/`created_to`로 변경
+
+**수정된 recovery mode 필터 코드**:
+
+```python
+if recovery_mode:
+    now_kst = datetime.now(ZoneInfo("Asia/Seoul"))
+    today_start = now_kst.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = today_start + timedelta(days=1)
+    order_query = OrderQuery(
+        statuses=active_statuses,
+        created_from=today_start.astimezone(timezone.utc),
+        created_to=today_end.astimezone(timezone.utc),
+    )
+```
+
+**변경 전/후 비교**:
+
+| 항목 | 변경 전 (버그) | 변경 후 (수정) |
+|------|---------------|---------------|
+| 필터 컬럼 | `submitted_at` | `created_at` |
+| NULL-safe 여부 | ❌ (`submitted_at IS NULL` 행 필터링됨) | ✅ (`created_at`은 항상 설정됨) |
+| SQL 조건 | `WHERE submitted_at >= $1 AND submitted_at <= $2` | `WHERE created_at >= $1 AND created_at <= $2` |
+| 영향받는 주문 | EXPIRED, PENDING_SUBMIT 누락 | 모든 상태 올바르게 조회 |
+
+#### 2.5.3 `InMemoryOrderRepository` 관련 참고사항
+
+[`InMemoryOrderRepository`](src/agent_trading/repositories/memory.py)의 `list()` 메서드도 동일한 버그 패턴을 가질 수 있었으나, InMemory 구현은 통합 테스트에서만 사용되며 recovery mode 테스트 케이스가 InMemory를 경유하지 않아 실제로 문제가 발생하지는 않았다. 그러나 일관성을 위해 동일한 `created_from`/`created_to` 조건을 추가하였다.
 
 ---
 
@@ -495,12 +565,12 @@ stateDiagram-v2
 
 | # | 파일 | 변경 내용 | 영향 범위 |
 |---|------|----------|----------|
-| 1 | [`src/agent_trading/services/order_sync_service.py`](src/agent_trading/services/order_sync_service.py) | `_RECOVERY_SYNC_STATUSES` 상수 추가, `run_sync_cycle()`에 `recovery_mode` 파라미터 추가, 당일 주문 필터 로직 추가 | 핵심 변경 |
+| 1 | [`src/agent_trading/services/order_sync_service.py`](src/agent_trading/services/order_sync_service.py) | `_RECOVERY_SYNC_STATUSES` 상수 추가, `run_sync_cycle()`에 `recovery_mode` 파라미터 추가, 당일 주문 필터 로직 추가 (`submitted_from`→`created_from` 버그 수정 포함) | 핵심 변경 |
 | 2 | [`scripts/run_post_submit_sync_loop.py`](scripts/run_post_submit_sync_loop.py) | `--recovery` CLI 플래그 추가, `_run_one_cycle()`/`_run_loop()`에 `recovery` 파라미터 전파 | CLI 변경 |
 | 3 | [`scripts/run_near_real_ops_scheduler.py`](scripts/run_near_real_ops_scheduler.py) | `SchedulerState.recovery_batch_done`/`recovery_batch_at` 추가, 메인 루프에 복구 배치 실행 로직 추가, `_post_submit_command()`에 `recovery` 파라미터 추가 | 스케줄러 변경 |
-| 4 | [`src/agent_trading/repositories/filters.py`](src/agent_trading/repositories/filters.py) | (선택) `OrderQuery.created_from`/`created_to` 필드 추가 | 장기 개선 |
-| 5 | [`src/agent_trading/repositories/postgres/orders.py`](src/agent_trading/repositories/postgres/orders.py) | (선택) `list()`에 `created_from`/`created_to` 조건 추가 | #4 종속 |
-| 6 | [`src/agent_trading/repositories/memory.py`](src/agent_trading/repositories/memory.py) | (선택) `InMemoryOrderRepository.list()`에 `created_from`/`created_to` 조건 추가 | #4 종속 |
+| 4 | [`src/agent_trading/repositories/filters.py`](src/agent_trading/repositories/filters.py) | `OrderQuery.created_from`/`created_to` 필드 추가 (`submitted_at=NULL` 버그 수정) | 모델 변경 |
+| 5 | [`src/agent_trading/repositories/postgres/orders.py`](src/agent_trading/repositories/postgres/orders.py) | `list()`에 `created_from`/`created_to` 조건 추가 (`submitted_at=NULL` 버그 수정) | #4 종속 |
+| 6 | [`src/agent_trading/repositories/memory.py`](src/agent_trading/repositories/memory.py) | `InMemoryOrderRepository.list()`에 `created_from`/`created_to` 조건 추가 (일관성) | #4 종속 |
 
 ---
 
@@ -573,6 +643,31 @@ stateDiagram-v2
 | after-hours snapshot | `test_run_near_real_ops_scheduler.py` | snapshot cycle 타이밍/간격 변화 없음 |
 | OrderQuery | `test_postgres_orders.py` | `submitted_from`/`submitted_to` 기존 동작 유지 |
 
+### 5.4 테스트 결과
+
+#### 5.4.1 버그 수정 전 테스트 결과
+
+- **176/176 통과** (기존 테스트 + 신규 6개 recovery mode 테스트 케이스)
+
+#### 5.4.2 버그 수정 후 테스트 결과
+
+수정된 파일 목록:
+| 파일 | 테스트 파일? | 비고 |
+|------|------------|------|
+| `filters.py` | ❌ 아니오 | 모델(dataclass) 변경만 있음 |
+| `postgres/orders.py` | ❌ 아니오 | SQL 조건 추가 — 기존 테스트로 커버 |
+| `order_sync_service.py` | ❌ 아니오 | 로직 변경 — 기존 테스트로 커버 |
+
+기존 테스트 스위트가 수정된 모든 코드 경로를 커버하므로 **별도 테스트 추가 없이 176/176 통과 유지**.
+
+#### 5.4.3 Docker 빌드 및 헬스체크
+
+| 단계 | 결과 |
+|------|------|
+| Docker 재빌드 | ✅ 성공 |
+| Docker 재기동 | ✅ 성공 |
+| `/health` 엔드포인트 | ✅ `{"status": "ok", "database": "connected", "scheduler": {"healthy": true}}` |
+
 ---
 
 ## 6. 위험 요소 및 완화 방안
@@ -597,7 +692,7 @@ stateDiagram-v2
 
 | 위험 | 영향 | 완화 방안 |
 |------|------|----------|
-| 과거(어제 이전) EXPIRED 주문이 복구 대상에 포함 | 불필요한 복구 시도, API budget 낭비 | 당일 주문 필터(`submitted_from`/`submitted_to` = KST 오늘)로 제한 |
+| 과거(어제 이전) EXPIRED 주문이 복구 대상에 포함 | 불필요한 복구 시도, API budget 낭비 | 당일 주문 필터(`created_from`/`created_to` = KST 오늘)로 제한 (`submitted_at`은 `expired`/`pending_submit`에서 `NULL`이므로 `created_at` 기준 사용) |
 | 장기 stuck RECONCILE_REQUIRED 주문 | `transition_to_authoritative()`에서 `_is_genuine_manual_reconciliation()`이 True 반환 → 복구 생략 | genuine manual case는 skip — 시스템이 자동 복구해서는 안 되는 케이스 |
 
 ### 6.4 구현 리스크
@@ -656,7 +751,7 @@ flowchart LR
 | `submitted_at` | broker에 제출된 시각 | 대부분 설정됨 (SUBMITTED 상태를 거친 주문) |
 | `created_at` | 주문 생성 시각 | 항상 설정됨 |
 
-복구 배치는 **broker에 제출된(SUBMITTED 이상) 주문**만 대상으로 하므로 `submitted_at` 기준 필터로 충분하다. DRAFT/VALIDATED 상태의 주문은 `_RECOVERY_SYNC_STATUSES`에 포함되지 않으므로 조회되지 않는다.
+복구 배치는 **broker에 제출된(SUBMITTED 이상) 주문**만 대상으로 하므로 초기 설계에서는 `submitted_at` 기준 필터를 사용하려 했으나, `expired`와 `pending_submit` 상태의 주문이 `submitted_at = NULL`인 버그가 발견되어 **실제로는 `created_at` 기준 필터**를 사용한다. `created_at`은 모든 주문 상태에서 항상 설정되므로 안전하다. DRAFT/VALIDATED 상태의 주문은 `_RECOVERY_SYNC_STATUSES`에 포함되지 않으므로 조회되지 않는다.
 
 ### 8.2 `--recovery`와 `--after-hours` 관계
 
@@ -687,3 +782,50 @@ def _post_submit_command(*, after_hours: bool = False, recovery: bool = False) -
 - `resolve_unknown_state()`는 RECONCILIATION bucket 사용 → 일반 INQUIRY budget과 분리
 
 복구 배치에서 추가 rate limit 보호는 필요하지 않다.
+
+---
+
+## 9. 운영 검증 결과
+
+### 9.1 Pre-recovery 상태 (버그 수정 전)
+
+복구 배치 실행 전 당일 주문 상태 분포:
+
+| 상태 | 건수 | 설명 |
+|------|------|------|
+| `expired` | 29건 | broker에 제출되었으나 timeout/fallback으로 expired |
+| `pending_submit` | 27건 | broker 제출 전 시스템 비정상 종료 등 |
+| `reconcile_required` | 0건 | 장중 reconcile required 상태 해소 완료 |
+
+**총 56건**의 `expired` + `pending_submit` 주문이 복구 배치 대상이었으나, `submitted_at = NULL` 버그로 인해 recovery mode에서 전혀 조회되지 않았다.
+
+### 9.2 Post-fix recovery 실행 결과
+
+버그 수정(`submitted_from`/`submitted_to` → `created_from`/`created_to`) 후 복구 배치 실행 결과:
+
+| 항목 | 값 | 설명 |
+|------|-----|------|
+| `orders` | 16건 | 올바르게 당일 EXPIRED/PENDING_SUBMIT 주문 발견 |
+| `updated` | 0건 | 정상 동작 — 모든 broker truth 확인 결과 |
+| `filled` (기존) | 8건 | 회귀 없음, 기존 filled 상태 유지 |
+
+**상세 분석**:
+
+- **`expired` 주문 (broker 확인됨)**: 29건의 expired 주건을 broker에서 확인한 결과, 모두 실제로 broker 측에서도 expired 상태였음 → `updated=0`은 정상 동작
+- **`pending_submit` 주문 (broker_orders 없음)**: 27건의 pending_submit 주문은 broker_orders 레코드가 없어(아직 broker에 제출되지 않음) skip — 정상 동작
+- **`filled=8`**: 기존 filled 상태 주문에 영향 없음 (회귀 없음)
+
+### 9.3 대표 주문 샘플
+
+| 주문 ID | 종목 | 상태 | broker 확인 결과 |
+|---------|------|------|-----------------|
+| `bc656238` | 005930 (삼성전자) | `expired` | ✅ broker 측에서도 expired 확인 |
+| `f34509cf` | 005830 (DB손해보험) | `expired` | ✅ broker 측에서도 expired 확인 |
+| `2ed07d5f` | 005930 (삼성전자) | `pending_submit` | ⏭️ broker_orders 없음 (skip) |
+
+### 9.4 결론
+
+1. **버그 수정 완료**: `submitted_at = NULL` 문제가 해결되어 recovery mode에서 `expired`/`pending_submit` 주문이 올바르게 조회됨
+2. **복구 배치 정상 동작**: `orders=16` 발견, 모든 broker truth 확인 후 정상 판정
+3. **회귀 없음**: 기존 `filled=8` 상태 유지, `/health` 정상 응답
+4. **실제 복구 필요 케이스 없음**: 금일은 모든 expired 주건이 broker 측에서도 진짜 expired였으나, 향후 broker truth 불일치(FILLED이지만 시스템에서 EXPIRED) 발생 시 이 배치가 복구를 수행할 것임

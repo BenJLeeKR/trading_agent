@@ -28,6 +28,8 @@ class OrderQuery:
     decision_context_id: UUID | None = None
     submitted_from: datetime | None = None
     submitted_to: datetime | None = None
+    created_from: datetime | None = None
+    created_to: datetime | None = None
     limit: int = 100
 
 

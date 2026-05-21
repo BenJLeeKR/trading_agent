@@ -129,6 +129,14 @@ class PostgresOrderRepository:
             conditions.append(f"submitted_at <= ${idx}")
             params.append(query.submitted_to)
             idx += 1
+        if query.created_from is not None:
+            conditions.append(f"created_at >= ${idx}")
+            params.append(query.created_from)
+            idx += 1
+        if query.created_to is not None:
+            conditions.append(f"created_at <= ${idx}")
+            params.append(query.created_to)
+            idx += 1
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         sql = f"SELECT * FROM trading.order_requests {where_clause} ORDER BY created_at DESC LIMIT ${idx}"

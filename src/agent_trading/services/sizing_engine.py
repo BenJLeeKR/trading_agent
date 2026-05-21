@@ -63,6 +63,12 @@ class SizingInputs:
     requested_price: Decimal | None = None
     """Original price from the assembled request (or ``None`` for MARKET)."""
 
+    reference_price: Decimal | None = None
+    """Reference price for MARKET order sizing (from live quote).
+    Used as fallback when ``requested_price`` is ``None`` (MARKET orders).
+    ``None`` = no reference price available → cash/concentration/max-order-value
+    constraints are skipped (existing behaviour)."""
+
     # ── AI sizing hint (advisory only, non-binding) ─────────────────────
     sizing_hint: SizingHint = field(default_factory=SizingHint)
     """Advisory sizing hint from the AI.  ``size_mode`` and
@@ -274,6 +280,7 @@ def _apply_cash_constraint(
     min_cash_buffer_pct: Decimal | None,
     constraints: list[str],
     orderable_amount: Decimal | None = None,
+    reference_price: Decimal | None = None,
 ) -> Decimal:
     """Apply cash availability constraint for BUY orders.
 
@@ -283,10 +290,16 @@ def _apply_cash_constraint(
       2. ``available_cash`` (KIS ``dnca_tot_amt``) — fallback when
          orderable_amount is not available.
 
-    When the chosen cash source and ``price`` are both available, cap the
+    When the chosen cash source and a price are both available, cap the
     quantity so that ``price × qty ≤ cash × (1 - buffer)``.
+
+    For MARKET orders (``price is None``), ``reference_price`` is used as
+    fallback.  When ``reference_price`` is used, a safety factor of 0.95
+    is applied to account for price slippage between quote and execution.
     """
-    if price is None or price <= 0:
+    # effective_price: requested_price 우선, 없으면 reference_price fallback
+    effective_price = price if (price is not None and price > 0) else reference_price
+    if effective_price is None or effective_price <= 0:
         return qty
 
     # ── Determine effective cash source ──
@@ -312,7 +325,12 @@ def _apply_cash_constraint(
     if min_cash_buffer_pct is not None and min_cash_buffer_pct > 0:
         effective_cash = effective_cash * (Decimal("1") - min_cash_buffer_pct / Decimal("100"))
 
-    max_qty_by_cash = (effective_cash / price).to_integral_value(rounding=ROUND_DOWN)
+    # Apply safety factor for reference_price-based sizing (MARKET orders)
+    # 5% buffer for price slippage between quote and execution
+    if price is None and reference_price is not None and reference_price > 0:
+        effective_cash = (effective_cash * Decimal("0.95")).to_integral_value(rounding=ROUND_DOWN)
+
+    max_qty_by_cash = (effective_cash / effective_price).to_integral_value(rounding=ROUND_DOWN)
     if max_qty_by_cash < qty:
         constraints.append("cash_limit")
         return max_qty_by_cash
@@ -327,19 +345,24 @@ def _apply_concentration_constraint(
     nav: Decimal | None,
     max_single_position_pct: Decimal | None,
     constraints: list[str],
+    reference_price: Decimal | None = None,
 ) -> Decimal:
     """Apply position concentration constraint.
 
     Ensures that the total position value after adding the new order does
     not exceed ``max_single_position_pct`` of NAV.
+
+    For MARKET orders (``price is None``), ``reference_price`` is used as
+    fallback for computing notional values.
     """
+    effective_price = price if (price is not None and price > 0) else reference_price
     if (
         nav is None
         or nav <= 0
         or max_single_position_pct is None
         or max_single_position_pct <= 0
-        or price is None
-        or price <= 0
+        or effective_price is None
+        or effective_price <= 0
     ):
         return qty
 
@@ -356,24 +379,24 @@ def _apply_concentration_constraint(
             "Sizing concentration constraint activated: "
             "nav=%s max_pct=%s max_position_value=%s "
             "current_value=%s remaining_capacity=%s "
-            "price=%s req_qty=%s max_addl_qty=0 final_qty=0",
+            "effective_price=%s req_qty=%s max_addl_qty=0 final_qty=0",
             nav, max_single_position_pct, max_position_value,
             current_value, remaining_capacity,
-            price, qty,
+            effective_price, qty,
         )
         return Decimal("0")
 
-    max_additional_qty = (remaining_capacity / price).to_integral_value(rounding=ROUND_DOWN)
+    max_additional_qty = (remaining_capacity / effective_price).to_integral_value(rounding=ROUND_DOWN)
     if max_additional_qty < qty:
         constraints.append("position_concentration")
         logger.info(
             "Sizing concentration constraint activated: "
             "nav=%s max_pct=%s max_position_value=%s "
             "current_value=%s remaining_capacity=%s "
-            "price=%s req_qty=%s max_addl_qty=%s final_qty=%s",
+            "effective_price=%s req_qty=%s max_addl_qty=%s final_qty=%s",
             nav, max_single_position_pct, max_position_value,
             current_value, remaining_capacity,
-            price, qty, max_additional_qty, max_additional_qty,
+            effective_price, qty, max_additional_qty, max_additional_qty,
         )
         return max_additional_qty
     return qty
@@ -402,19 +425,24 @@ def _apply_max_order_value(
     price: Decimal | None,
     max_order_value: Decimal | None,
     constraints: list[str],
+    reference_price: Decimal | None = None,
 ) -> Decimal:
     """Apply max order value constraint.
 
-    When ``price`` is known and ``price × qty > max_order_value``,
+    When a price is known and ``price × qty > max_order_value``,
     reduce quantity.
+
+    For MARKET orders (``price is None``), ``reference_price`` is used as
+    fallback for computing notional values.
     """
-    if max_order_value is None or max_order_value <= 0 or price is None or price <= 0:
+    effective_price = price if (price is not None and price > 0) else reference_price
+    if max_order_value is None or max_order_value <= 0 or effective_price is None or effective_price <= 0:
         return qty
 
-    current_value = price * qty
+    current_value = effective_price * qty
     if current_value > max_order_value:
         constraints.append("max_order_value")
-        return (max_order_value / price).to_integral_value(rounding=ROUND_DOWN)
+        return (max_order_value / effective_price).to_integral_value(rounding=ROUND_DOWN)
     return qty
 
 
@@ -470,7 +498,10 @@ def calculate_sizing(inputs: SizingInputs) -> SizingResult:
         )
 
     # ── Step 3: max order value ──
-    qty = _apply_max_order_value(qty, inputs.requested_price, inputs.max_order_value, constraints)
+    qty = _apply_max_order_value(
+        qty, inputs.requested_price, inputs.max_order_value, constraints,
+        reference_price=inputs.reference_price,
+    )
 
     # ── Step 4: max order qty ──
     qty = _apply_qty_bounds(qty, inputs.max_order_qty, inputs.min_order_qty, constraints)
@@ -493,6 +524,7 @@ def calculate_sizing(inputs: SizingInputs) -> SizingResult:
             inputs.min_cash_buffer_pct,
             constraints,
             orderable_amount=inputs.orderable_amount,
+            reference_price=inputs.reference_price,
         )
 
     # ── Step 6: position concentration ──
@@ -504,6 +536,7 @@ def calculate_sizing(inputs: SizingInputs) -> SizingResult:
         inputs.nav,
         inputs.max_single_position_pct,
         constraints,
+        reference_price=inputs.reference_price,
     )
 
     # ── Step 7: lot size rounding ──
@@ -520,8 +553,9 @@ def calculate_sizing(inputs: SizingInputs) -> SizingResult:
 
     # ── Calculate max order value ──
     max_order_value: Decimal | None = None
-    if inputs.requested_price is not None and qty > 0:
-        max_order_value = inputs.requested_price * qty
+    effective_price = inputs.requested_price if inputs.requested_price is not None else inputs.reference_price
+    if effective_price is not None and effective_price > 0 and qty > 0:
+        max_order_value = effective_price * qty
 
     return SizingResult(
         quantity=qty,

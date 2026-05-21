@@ -418,6 +418,14 @@ class InMemoryOrderRepository:
                 item.submitted_at is None or item.submitted_at > query.submitted_to
             ):
                 continue
+            if query.created_from is not None and (
+                item.created_at is None or item.created_at < query.created_from
+            ):
+                continue
+            if query.created_to is not None and (
+                item.created_at is None or item.created_at > query.created_to
+            ):
+                continue
             results.append(item)
         results.sort(key=lambda item: item.created_at or item.submitted_at, reverse=True)
         return tuple(results[: query.limit])

@@ -92,6 +92,35 @@ class TestCommandBuilders:
             "--once",
         ]
 
+    def test_post_submit_command_with_recovery(self) -> None:
+        """복구 배치 명령에 --after-hours와 --recovery가 포함되어야 함."""
+        cmd = _post_submit_command(recovery=True)
+        assert "--after-hours" in cmd
+        assert "--recovery" in cmd
+
+    def test_post_submit_command_recovery_implies_after_hours(self) -> None:
+        """recovery=True일 때 --after-hours가 자동으로 포함되어야 함."""
+        cmd = _post_submit_command(recovery=True)
+        assert "--after-hours" in cmd
+        # recovery만 True여도 after-hours가 자동 추가
+        assert cmd.count("--after-hours") == 1
+        assert cmd.count("--recovery") == 1
+
+    def test_post_submit_command_recovery_with_after_hours(self) -> None:
+        """after_hours=True + recovery=True에서 중복 플래그가 없어야 함."""
+        cmd = _post_submit_command(after_hours=True, recovery=True)
+        assert "--after-hours" in cmd
+        assert "--recovery" in cmd
+        assert cmd.count("--after-hours") == 1
+        assert cmd.count("--recovery") == 1
+
+    def test_post_submit_command_no_recovery_by_default(self) -> None:
+        """recovery=False(default)일 때 --recovery가 포함되지 않아야 함."""
+        cmd = _post_submit_command()
+        assert "--recovery" not in cmd
+        cmd2 = _post_submit_command(after_hours=True)
+        assert "--recovery" not in cmd2
+
 
 class TestSubmitBudgetDetection:
     """Decision result parsing for daily submit budget."""
@@ -681,6 +710,17 @@ class TestSchedulerStateP2Fields:
         assert state.market_phase == "OPEN"
         assert state.last_phase_change == now
         assert state.session_db_id == 42
+
+    def test_recovery_batch_done_default_false(self) -> None:
+        """SchedulerState.recovery_batch_done 기본값은 False여야 함."""
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        assert state.recovery_batch_done is False
+
+    def test_recovery_batch_done_settable(self) -> None:
+        """recovery_batch_done이 True로 설정 가능해야 함."""
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        state.recovery_batch_done = True
+        assert state.recovery_batch_done is True
 
 
 class TestHandlePhaseChange:

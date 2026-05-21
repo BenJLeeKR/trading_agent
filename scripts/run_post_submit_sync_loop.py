@@ -198,6 +198,7 @@ async def _run_one_cycle(
     *,
     account_ref: str | None,
     after_hours: bool = False,
+    recovery: bool = False,
 ) -> SyncCycleResult:
     """Execute a single post-submit sync cycle."""
     from agent_trading.brokers.koreainvestment.adapter import (
@@ -270,6 +271,7 @@ async def _run_one_cycle(
                 account_ref=account_ref,
                 tx_manager=tx,
                 after_hours=after_hours,
+                recovery_mode=recovery,
             )
             await tx.commit()
 
@@ -302,6 +304,7 @@ async def _run_loop(
     interval: int,
     max_cycles: int,
     after_hours: bool = False,
+    recovery: bool = False,
 ) -> None:
     """Main loop: run sync cycles until shutdown or count limit."""
     logger.info(
@@ -332,6 +335,7 @@ async def _run_loop(
             settings,
             account_ref=account_ref,
             after_hours=after_hours,
+            recovery=recovery,
         )
         elapsed = time.monotonic() - cycle_start
 
@@ -399,6 +403,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="After-hours mode: allow EXPIRED fallback for unfilled orders",
     )
+    parser.add_argument(
+        "--recovery",
+        action="store_true",
+        help="Recovery mode: include EXPIRED orders, filter to today's orders only",
+    )
     return parser.parse_args(argv)
 
 
@@ -420,6 +429,7 @@ def main(argv: list[str] | None = None) -> int:
                 interval=interval,
                 max_cycles=max_cycles,
                 after_hours=args.after_hours,
+                recovery=args.recovery,
             )
         )
     except KeyboardInterrupt:

@@ -58,6 +58,7 @@ def _inputs(
     min_order_qty: str | None = None,
     max_order_qty: str | None = None,
     lot_size: str | None = None,
+    reference_price: str | None = None,
 ) -> SizingInputs:
     """Factory that converts string kwargs to ``Decimal`` for test readability."""
     kwargs: dict = dict(
@@ -67,6 +68,8 @@ def _inputs(
     )
     if requested_price is not None:
         kwargs["requested_price"] = Decimal(requested_price)
+    if reference_price is not None:
+        kwargs["reference_price"] = Decimal(reference_price)
     if sizing_hint is not None:
         kwargs["sizing_hint"] = sizing_hint
     if current_position_qty is not None:
@@ -1135,3 +1138,309 @@ class TestNavFallbackFromCashBalance:
         assert inputs.nav == Decimal("50000000"), (
             f"Expected nav=50000000, got {inputs.nav}"
         )
+
+
+# ======================================================================
+# 19.  MARKET order + reference_price — cash constraint
+# ======================================================================
+
+
+class TestMarketBuyReferencePriceCashConstraint:
+    """BUY MARKET + reference_price로 cash constraint가 적용되어야 함."""
+
+    def test_market_buy_cash_constraint_with_reference_price(self) -> None:
+        """MARKET BUY: reference_price=60000, orderable_amount=9000000
+        → effective_cash = 9000000 * 0.95 = 8550000
+        → max_qty = floor(8550000 / 60000) = 142
+        Requested 1000 → capped to 142."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="1000",
+                requested_price=None,
+                reference_price="60000",
+                orderable_amount="9000000",
+            )
+        )
+        assert result.quantity == Decimal("142"), (
+            f"Expected 142, got {result.quantity}"
+        )
+        assert "cash_limit" in result.applied_constraints
+
+    def test_market_buy_no_reference_price_skips_cash_constraint(self) -> None:
+        """MARKET BUY: reference_price=None → cash constraint skip,
+        requested_quantity 유지."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="1000",
+                requested_price=None,
+                reference_price=None,
+                orderable_amount="9000000",
+            )
+        )
+        assert result.quantity == Decimal("1000"), (
+            "Cash constraint should be skipped"
+        )
+        assert "cash_limit" not in result.applied_constraints
+
+    def test_market_buy_zero_orderable_amount_returns_zero(self) -> None:
+        """MARKET BUY: orderable_amount=0 → cash constraint가 0을 반환."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="1000",
+                requested_price=None,
+                reference_price="60000",
+                orderable_amount="0",
+            )
+        )
+        assert result.quantity == Decimal("0")
+        assert "orderable_amount_zero" in result.applied_constraints
+
+    def test_market_buy_cash_constraint_fallback_to_available_cash(self) -> None:
+        """orderable_amount=None → available_cash로 fallback.
+        effective_cash = 5000000 * 0.95 = 4750000
+        max_qty = floor(4750000 / 60000) = 79
+        Requested 1000 → capped to 79."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="1000",
+                requested_price=None,
+                reference_price="60000",
+                orderable_amount=None,
+                available_cash="5000000",
+            )
+        )
+        assert result.quantity == Decimal("79"), (
+            f"Expected 79, got {result.quantity}"
+        )
+        assert "cash_limit" in result.applied_constraints
+
+
+# ======================================================================
+# 20.  LIMIT order with reference_price — reference_price 무시됨
+# ======================================================================
+
+
+class TestLimitBuyIgnoresReferencePrice:
+    """LIMIT BUY: requested_price가 있으면 reference_price는 영향을 주지 않음."""
+
+    def test_limit_buy_cash_constraint_uses_requested_price_not_reference(self) -> None:
+        """LIMIT BUY: requested_price=50000, reference_price=60000,
+        orderable_amount=9000000 → effective_cash = 9000000 (safety_factor 1.0)
+        → max_qty = floor(9000000 / 50000) = 180
+        Requested 1000 → capped to 180."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="1000",
+                requested_price="50000",
+                reference_price="60000",
+                orderable_amount="9000000",
+            )
+        )
+        assert result.quantity == Decimal("180"), (
+            f"Expected 180, got {result.quantity}"
+        )
+        assert "cash_limit" in result.applied_constraints
+
+
+# ======================================================================
+# 21.  SELL MARKET + reference_price — cash constraint 미적용
+# ======================================================================
+
+
+class TestMarketSellNoCashConstraint:
+    """SELL MARKET: reference_price가 있어도 cash constraint는 BUY에만 적용."""
+
+    def test_market_sell_ignores_cash_constraint_even_with_reference_price(self) -> None:
+        """SELL: cash constraint는 BUY에만 적용되므로 SELL은 skip."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="SELL",
+                side=OrderSide.SELL,
+                requested_quantity="100",
+                requested_price=None,
+                reference_price="60000",
+                current_position_qty="100",  # full exit → qty=100
+            )
+        )
+        assert result.quantity == Decimal("100"), (
+            "SELL should not apply cash constraint"
+        )
+        assert "cash_limit" not in result.applied_constraints
+
+
+# ======================================================================
+# 22.  safety_factor — MARKET에만 적용, LIMIT에는 미적용
+# ======================================================================
+
+
+class TestSafetyFactorMarketOnly:
+    """safety_factor=0.95는 MARKET(requested_price=None)에만 적용됨."""
+
+    def test_safety_factor_only_for_market_not_limit(self) -> None:
+        """MARKET: 1000000 / 10000 * 0.95 = 95
+        LIMIT: 1000000 / 10000 = 100
+        MARKET qty < LIMIT qty여야 함."""
+        market = SizingInputs(
+            decision_type="BUY",
+            side=OrderSide.BUY,
+            requested_quantity=Decimal("1000"),
+            requested_price=None,
+            reference_price=Decimal("10000"),
+            orderable_amount=Decimal("1000000"),
+        )
+        limit = SizingInputs(
+            decision_type="BUY",
+            side=OrderSide.BUY,
+            requested_quantity=Decimal("1000"),
+            requested_price=Decimal("10000"),
+            reference_price=None,
+            orderable_amount=Decimal("1000000"),
+        )
+        m_result = calculate_sizing(market)
+        l_result = calculate_sizing(limit)
+        assert m_result.quantity == Decimal("95"), (
+            f"Expected MARKET=95, got {m_result.quantity}"
+        )
+        assert l_result.quantity == Decimal("100"), (
+            f"Expected LIMIT=100, got {l_result.quantity}"
+        )
+        assert m_result.quantity < l_result.quantity, (
+            "MARKET with safety_factor should be less than LIMIT without it"
+        )
+
+
+# ======================================================================
+# 23.  MARKET + concentration constraint with reference_price
+# ======================================================================
+
+
+class TestMarketBuyConcentrationWithReferencePrice:
+    """MARKET BUY: concentration constraint도 reference_price 기반으로 적용."""
+
+    def test_market_buy_concentration_constraint_with_reference_price(self) -> None:
+        """NAV=10000000, max_single=10%, reference_price=50000
+        → max_position_value = 10000000 * 0.1 = 1000000
+        → max_addl_qty = floor(1000000 / 50000) = 20
+        Requested 50 → capped to 20."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="50",
+                requested_price=None,
+                reference_price="50000",
+                nav="10000000",
+                max_single_position_pct="10",
+            )
+        )
+        assert result.quantity == Decimal("20"), (
+            f"Expected 20, got {result.quantity}"
+        )
+        assert "position_concentration" in result.applied_constraints
+
+
+# ======================================================================
+# 24.  MARKET + max_order_value with reference_price
+# ======================================================================
+
+
+class TestMarketBuyMaxOrderValueWithReferencePrice:
+    """MARKET BUY: max_order_value constraint도 reference_price 기반으로 적용."""
+
+    def test_market_buy_max_order_value_with_reference_price(self) -> None:
+        """reference_price=50000, max_order_value=500000
+        → max_qty = floor(500000 / 50000) = 10
+        Requested 50 → capped to 10."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="50",
+                requested_price=None,
+                reference_price="50000",
+                max_order_value="500000",
+            )
+        )
+        assert result.quantity == Decimal("10"), (
+            f"Expected 10, got {result.quantity}"
+        )
+        assert "max_order_value" in result.applied_constraints
+
+
+# ======================================================================
+# 25.  SizingResult.max_order_value with reference_price
+# ======================================================================
+
+
+class TestMaxOrderValueWithReferencePrice:
+    """SizingResult.max_order_value가 reference_price 기반으로 계산되어야 함."""
+
+    def test_max_order_value_with_reference_price(self) -> None:
+        """reference_price=50000, qty=10 → max_order_value=500000."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="10",
+                requested_price=None,
+                reference_price="50000",
+            )
+        )
+        assert result.max_order_value == Decimal("500000"), (
+            f"Expected max_order_value=500000, got {result.max_order_value}"
+        )
+
+    def test_max_order_value_none_when_no_price_and_no_reference(self) -> None:
+        """requested_price=None, reference_price=None → max_order_value=None."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="10",
+                requested_price=None,
+                reference_price=None,
+            )
+        )
+        assert result.max_order_value is None, (
+            f"Expected max_order_value=None, got {result.max_order_value}"
+        )
+
+
+# ======================================================================
+# 26.  min_cash_buffer_pct + safety_factor compounding
+# ======================================================================
+
+
+class TestMarketBuyCashBufferAndSafetyFactor:
+    """min_cash_buffer_pct와 safety_factor가 함께 적용되어야 함."""
+
+    def test_market_buy_cash_buffer_and_safety_factor(self) -> None:
+        """available_cash=1000000, min_cash_buffer=10%, reference_price=50000
+        → effective_cash = 1000000 * 0.9 * 0.95 = 855000
+        → max_qty = floor(855000 / 50000) = 17
+        Requested 100 → capped to 17."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="100",
+                requested_price=None,
+                reference_price="50000",
+                available_cash="1000000",
+                min_cash_buffer_pct="10",
+            )
+        )
+        assert result.quantity == Decimal("17"), (
+            f"Expected 17, got {result.quantity}"
+        )
+        assert "cash_limit" in result.applied_constraints

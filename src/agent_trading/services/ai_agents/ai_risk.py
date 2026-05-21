@@ -193,6 +193,47 @@ class AIRiskAgent:
             # strip().lower() 후 canonical 4값(allow/reduce/reject/review)과 비교.
             # drift 감지 시 의미 해석 없이 "allow"로 fallback + 경고 로그.
             risk_opinion_normalized = result.risk_opinion.strip().lower()
+
+            # === Layer 2: Post-processing Guard for orderable_amount ===
+            # orderable_amount > 0인데 LLM이 reject를 출력하면 review로 완화
+            cash_snapshot = (
+                request.context.cash_balance_snapshot
+                if hasattr(request, 'context')
+                else None
+            )
+            if (
+                cash_snapshot is not None
+                and cash_snapshot.orderable_amount is not None
+                and cash_snapshot.orderable_amount > 0
+                and risk_opinion_normalized == "reject"
+            ):
+                logger.warning(
+                    "Layer2 Guard applied: orderable_amount=%s > 0 but "
+                    "risk_opinion='reject' \u2192 downgraded to 'review'. "
+                    "symbol=%s decision_context_id=%s",
+                    cash_snapshot.orderable_amount,
+                    result.symbol,
+                    result.decision_context_id,
+                )
+                result = AIRiskOutput(
+                    schema_version=result.schema_version,
+                    agent_name=result.agent_name,
+                    decision_context_id=result.decision_context_id,
+                    symbol=result.symbol,
+                    proposed_side=result.proposed_side,
+                    risk_opinion="review",
+                    risk_score=result.risk_score,
+                    confidence=result.confidence,
+                    size_adjustment_factor=result.size_adjustment_factor,
+                    max_holding_horizon=result.max_holding_horizon,
+                    risk_flags=result.risk_flags,
+                    reason_codes=result.reason_codes,
+                    opposing_evidence=result.opposing_evidence,
+                    summary=result.summary,
+                )
+                risk_opinion_normalized = "review"
+            # === End Layer 2 Guard ===
+
             if risk_opinion_normalized not in _ALLOWED_RISK_OPINIONS:
                 logger.warning(
                     "risk_opinion drift detected — falling back to 'allow'. "
@@ -367,16 +408,28 @@ class AIRiskAgent:
         # ==================================================
 
         # === Cash balance snapshot summary (if available) ===
+        # Layer 1: effective_buying_cash = orderable_amount 우선, 없으면 available_cash fallback
         cash = context.cash_balance_snapshot
         if cash is not None:
+            if cash.orderable_amount is not None:
+                effective_buying_cash = cash.orderable_amount
+            else:
+                effective_buying_cash = cash.available_cash
+
             lines.append("")
             lines.append("=== Cash Balance ===")
-            lines.append(f"  Available cash: {cash.available_cash}")
+            lines.append(f"  Effective buying cash (primary): {effective_buying_cash}")
+            lines.append(f"  Available cash (accounting reference): {cash.available_cash}")
             lines.append(f"  Currency: {cash.currency}")
             if cash.settled_cash is not None:
                 lines.append(f"  Settled cash: {cash.settled_cash}")
             if cash.unsettled_cash is not None:
                 lines.append(f"  Unsettled cash: {cash.unsettled_cash}")
+            lines.append("")
+            lines.append("  【Cash Judgment Guide】")
+            lines.append("  - BUY feasibility MUST use 'Effective buying cash' (listed first above) as the primary criterion")
+            lines.append("  - 'Available cash' is D+2 settlement basis — accounting reference only, do NOT use for BUY feasibility")
+            lines.append("  - Do NOT conclude 'cannot buy' solely because 'Available cash' is negative")
         # ==================================================
 
         # ── Position Concentration ────────────────────────────────────────

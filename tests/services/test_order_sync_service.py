@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from unittest.mock import AsyncMock
@@ -42,6 +43,8 @@ from agent_trading.services.order_sync_service import (
     SyncCycleResult,
     SyncOrderResult,
     _ACTIVE_SYNC_STATUSES,
+    _GRACE_PERIOD_AFTER_HOURS_EXPIRED_MARKET_SECONDS,
+    _RECOVERY_SYNC_STATUSES,
     _STUCK_EXPIRY_SECONDS,
     _SYNCABLE_STATUSES,
 )
@@ -2474,6 +2477,84 @@ class TestTransitionToAuthoritativeIsAfterHours:
         assert result.partial == 0   # sync 수행 안 됨 → partial 집계 없음
         assert result.errors == []
 
+    async def test_runner_recovery_mode_includes_expired(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Recovery 모드에서 EXPIRED 상태 주문도 sync 대상에 포함되어야 함."""
+        # EXPIRED 주문 생성 (submitted_at을 오늘로 설정)
+        now_utc = datetime.now(timezone.utc)
+        expired_order = _make_order(
+            repos, status=OrderStatus.EXPIRED, client_order_id="RECOV-EXP-001",
+        )
+        expired_order = replace(
+            expired_order,
+            submitted_at=now_utc,
+        )
+        repos.orders._items[expired_order.order_request_id] = expired_order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, expired_order, broker_native_order_id="BRK-RECOV-EXP",
+        )
+
+        # Broker가 FILLED 반환 → EXPIRED → FILLED 복구
+        broker = _StubBroker(status=OrderStatus.FILLED)
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=sync_service,
+            broker=broker,  # type: ignore[arg-type]
+        )
+
+        result = await runner.run_sync_cycle(
+            account_ref="test-account",
+            recovery_mode=True,
+        )
+
+        # EXPIRED 주문이 sync되어 FILLED로 전이되어야 함
+        assert result.total_orders >= 1
+        assert result.filled >= 1
+
+        # 실제로 FILLED로 전이되었는지 확인
+        updated_order = await repos.orders.get(expired_order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.FILLED
+
+    async def test_runner_non_recovery_mode_excludes_expired(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Recovery 모드가 아닐 때 EXPIRED 주문은 조회되지 않아야 함."""
+        now_utc = datetime.now(timezone.utc)
+        expired_order = _make_order(
+            repos, status=OrderStatus.EXPIRED, client_order_id="RECOV-SKIP-001",
+        )
+        expired_order = replace(
+            expired_order,
+            submitted_at=now_utc,
+        )
+        repos.orders._items[expired_order.order_request_id] = expired_order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, expired_order, broker_native_order_id="BRK-RECOV-SKIP",
+        )
+
+        broker = _StubBroker(status=OrderStatus.FILLED)
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=sync_service,
+            broker=broker,  # type: ignore[arg-type]
+        )
+
+        result = await runner.run_sync_cycle(
+            account_ref="test-account",
+            recovery_mode=False,
+        )
+
+        # EXPIRED 주문은 조회되지 않아야 함
+        assert result.total_orders == 0
+
 
 # ═════════════════════════════════════════════════════════════════════
 # Test: transition_to_authoritative — broker_status 동기화 (P0 fix)
@@ -2916,6 +2997,291 @@ class TestStuckTimeoutExpiredFallback:
         updated_order = await repos.orders.get(order.order_request_id)
         assert updated_order is not None
         assert updated_order.status == OrderStatus.RECONCILE_REQUIRED
+
+    async def test_stuck_expiry_intraday_market_order_protection(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Intraday에서 broker_native_order_id + 시장가 주문의 EXPIRED 방지.
+
+        broker_native_order_id가 존재하고 order_type=market인 주문은
+        STUCK_EXPIRY timeout(7200초)을 초과해도 EXPIRED로 전이되지 않고
+        RECONCILE_REQUIRED를 유지해야 한다."""
+        # 오래된 created_at으로 order 생성 (stuck timeout 초과)
+        old_time = datetime.now(timezone.utc) - timedelta(seconds=_STUCK_EXPIRY_SECONDS + 100)
+        order = OrderRequestEntity(
+            order_request_id=uuid4(),
+            account_id=uuid4(),
+            instrument_id=uuid4(),
+            client_order_id="MRKT-PROTECT-INTRA-001",
+            idempotency_key="idem-mrkt-protect-intra-001",
+            correlation_id="corr-mrkt-protect-intra-001",
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,  # 시장가
+            time_in_force=TimeInForce.DAY,
+            requested_price=Decimal("0"),
+            requested_quantity=Decimal("10"),
+            status=OrderStatus.RECONCILE_REQUIRED,
+            trade_decision_id=None,
+            submitted_at=None,
+            status_reason_code=None,
+            status_reason_message=None,
+            created_at=old_time,
+            updated_at=old_time,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        # broker_native_order_id가 존재하는 broker_order 생성 (Paper 환경 시뮬레이션)
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="0000004770",  # 실제 ODNO
+            broker_status="reconcile_required",
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            return_value=OrderStatusResult(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                client_order_id="",
+                broker_order_id=broker_order.broker_native_order_id,
+                status=OrderStatus.RECONCILE_REQUIRED,
+                filled_quantity=Decimal("0"),
+                remaining_quantity=Decimal("0"),
+                average_fill_price=Decimal("0"),
+                last_updated_at=datetime.now(timezone.utc),
+            ),
+        )
+
+        # is_after_hours=False (intraday) → MARKET_PROTECT 적용, EXPIRED 금지
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=False,
+        )
+
+        # Intraday: MARKET_PROTECT → None 반환, RECONCILE_REQUIRED 유지
+        assert result is None, (
+            "broker_native_order_id + MARKET 주문이 intraday에서 EXPIRED로 "
+            "전이되면 안 됨"
+        )
+
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.RECONCILE_REQUIRED
+
+    async def test_stuck_expiry_after_hours_market_order_grace_period(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """After-hours에서 시장가 주문의 grace period 60분 연장 확인.
+
+        broker_native_order_id + MARKET 주문이 after-hours에서
+        30~60분 사이에 생성된 경우, 기존 30분 grace period로는 EXPIRED되지만
+        60분 grace period로는 보호되어야 한다."""
+        # 45분 전 생성된 주문 (기존 30분 grace period 초과, 신규 60분 이내)
+        grace_age = datetime.now(timezone.utc) - timedelta(minutes=45)
+        order = OrderRequestEntity(
+            order_request_id=uuid4(),
+            account_id=uuid4(),
+            instrument_id=uuid4(),
+            client_order_id="MRKT-PROTECT-AH-001",
+            idempotency_key="idem-mrkt-protect-ah-001",
+            correlation_id="corr-mrkt-protect-ah-001",
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            time_in_force=TimeInForce.DAY,
+            requested_price=Decimal("0"),
+            requested_quantity=Decimal("10"),
+            status=OrderStatus.RECONCILE_REQUIRED,
+            trade_decision_id=None,
+            submitted_at=None,
+            status_reason_code=None,
+            status_reason_message=None,
+            created_at=grace_age,
+            updated_at=grace_age,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="0000004770",
+            broker_status="reconcile_required",
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            return_value=OrderStatusResult(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                client_order_id="",
+                broker_order_id=broker_order.broker_native_order_id,
+                status=OrderStatus.RECONCILE_REQUIRED,
+                filled_quantity=Decimal("0"),
+                remaining_quantity=Decimal("0"),
+                average_fill_price=Decimal("0"),
+                last_updated_at=datetime.now(timezone.utc),
+            ),
+        )
+
+        # is_after_hours=True → 45분 < 60분(grace period) → EXPIRED 방지
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=True,
+        )
+
+        # 45분 < 60분 → MARKET_PROTECT로 EXPIRED 방지
+        assert result is None, (
+            "broker_native_order_id + MARKET 주문이 after-hours 45분에 "
+            "EXPIRED로 전이되면 안 됨 (grace period 60분)"
+        )
+
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.RECONCILE_REQUIRED
+
+    async def test_explicit_reject_still_terminal_for_market_orders(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """명시적 broker reject/cancel은 시장가 보호 정책과 무관하게 terminal 유지.
+
+        broker_native_order_id + MARKET이어도
+        resolve_unknown_state()가 REJECTED/CANCELLED를 반환하면
+        정상적으로 terminal 상태로 전이되어야 한다."""
+        order = OrderRequestEntity(
+            order_request_id=uuid4(),
+            account_id=uuid4(),
+            instrument_id=uuid4(),
+            client_order_id="MRKT-REJECT-001",
+            idempotency_key="idem-mrkt-reject-001",
+            correlation_id="corr-mrkt-reject-001",
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            time_in_force=TimeInForce.DAY,
+            requested_price=Decimal("0"),
+            requested_quantity=Decimal("10"),
+            status=OrderStatus.RECONCILE_REQUIRED,
+            trade_decision_id=None,
+            submitted_at=None,
+            status_reason_code=None,
+            status_reason_message=None,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="0000004770",
+            broker_status="reconcile_required",
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            return_value=OrderStatusResult(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                client_order_id="",
+                broker_order_id=broker_order.broker_native_order_id,
+                status=OrderStatus.REJECTED,  # 명시적 reject
+                filled_quantity=Decimal("0"),
+                remaining_quantity=Decimal("0"),
+                average_fill_price=Decimal("0"),
+                last_updated_at=datetime.now(timezone.utc),
+            ),
+        )
+
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=False,
+        )
+
+        # REJECTED로 정상 전이 (보호 정책 적용 안 함)
+        assert result is not None, (
+            "명시적 reject는 MARKET_PROTECT와 무관하게 terminal 전이되어야 함"
+        )
+        assert result.status == OrderStatus.REJECTED
+
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.REJECTED
+
+    async def test_non_market_order_no_protection(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """LIMIT/stoploss 등 시장가 아닌 주문은 기존 EXPIRED 정책 유지.
+
+        broker_native_order_id가 존재해도 order_type이 MARKET이 아니면
+        MARKET_PROTECT를 적용하지 않고 기존 정책대로 처리된다."""
+        # LIMIT 주문, broker_native_order_id 존재
+        old_time = datetime.now(timezone.utc) - timedelta(seconds=_STUCK_EXPIRY_SECONDS + 100)
+        order = OrderRequestEntity(
+            order_request_id=uuid4(),
+            account_id=uuid4(),
+            instrument_id=uuid4(),
+            client_order_id="LIMIT-NO-PROTECT-001",
+            idempotency_key="idem-limit-no-protect-001",
+            correlation_id="corr-limit-no-protect-001",
+            side=OrderSide.SELL,
+            order_type=OrderType.LIMIT,  # 시장가 아님
+            time_in_force=TimeInForce.DAY,
+            requested_price=Decimal("50000"),
+            requested_quantity=Decimal("10"),
+            status=OrderStatus.RECONCILE_REQUIRED,
+            trade_decision_id=None,
+            submitted_at=None,
+            status_reason_code=None,
+            status_reason_message=None,
+            created_at=old_time,
+            updated_at=old_time,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="0000004770",
+            broker_status="reconcile_required",
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            return_value=OrderStatusResult(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                client_order_id="",
+                broker_order_id=broker_order.broker_native_order_id,
+                status=OrderStatus.RECONCILE_REQUIRED,
+                filled_quantity=Decimal("0"),
+                remaining_quantity=Decimal("0"),
+                average_fill_price=Decimal("0"),
+                last_updated_at=datetime.now(timezone.utc),
+            ),
+        )
+        # KIS truth fallback도 fill 감지 실패
+        broker.inquire_balance = AsyncMock(
+            return_value={"output1": [{"pchs_amt": "0", "hldg_qty": "10"}]},
+        )
+
+        # After-hours, stuck timeout 초과, LIMIT 주문 → MARKET_PROTECT 미적용
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=True,
+        )
+
+        # LIMIT 주문은 보호 없이 EXPIRED로 전이됨
+        assert result is not None, (
+            "LIMIT 주문은 MARKET_PROTECT 미적용, EXPIRED로 전이되어야 함"
+        )
+        assert result.status == OrderStatus.EXPIRED
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -4373,3 +4739,470 @@ class TestExpiredSellPositionDeltaRecovery:
         assert updated is not None
         assert updated.status == OrderStatus.FILLED
         assert refresh_called is True
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: Backfill EXPIRED SELL (recover_expired_sell_by_position)
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestBackfillExpiredSellByPosition:
+    """``recover_expired_sell_by_position()`` — 백필 EXPIRED SELL 복구.
+
+    ``sync_order_post_submit()``을 통한 position-delta 복구와 달리,
+    이 클래스는 ``recover_expired_sell_by_position()`` public 메서드를
+    직접 호출하여 이미 EXPIRED된 SELL market 주문을 복구한다.
+
+    기존 ``TestExpiredSellPositionDeltaRecovery``와 독립적으로 동작하며,
+    broker truth 재조회 없이 곧바로 position-delta를 확인한다.
+    """
+
+    async def test_backfill_expired_market_sell_filled(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """EXPIRED SELL MARKET, delta=10/10 → FILLED 복구."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.EXPIRED,
+            client_order_id="BACKFILL-FILLED-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            requested_quantity=Decimal("10"),
+            updated_at=now,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order,
+            broker_native_order_id="BRK-BACKFILL-FILLED-001",
+            broker_status="expired",
+            created_at=now - timedelta(minutes=5),
+        )
+
+        # Pre-order snapshot: quantity=10
+        pre_snap_time = now - timedelta(hours=1)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("10"),
+            snapshot_time=pre_snap_time,
+        )
+        # Post-order snapshot: quantity=0 (delta=10 → FILLED)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("0"),
+            snapshot_time=now,
+        )
+
+        result = await sync_service.recover_expired_sell_by_position(
+            order, broker_order,
+        )
+
+        assert result is not None
+        assert result.status_changed is True
+        assert result.current_status == OrderStatus.FILLED
+        # broker_status 동기화 확인
+        updated_bo = await repos.broker_orders.get(broker_order.broker_order_id)
+        assert updated_bo is not None
+        assert updated_bo.broker_status == "filled"
+
+    async def test_backfill_expired_market_sell_partial(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """EXPIRED SELL MARKET, delta=5/10 → PARTIALLY_FILLED 복구."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.EXPIRED,
+            client_order_id="BACKFILL-PARTIAL-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            requested_quantity=Decimal("10"),
+            updated_at=now,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order,
+            broker_native_order_id="BRK-BACKFILL-PARTIAL-001",
+            broker_status="expired",
+            created_at=now - timedelta(minutes=5),
+        )
+
+        # Pre-order snapshot: quantity=10
+        pre_snap_time = now - timedelta(hours=1)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("10"),
+            snapshot_time=pre_snap_time,
+        )
+        # Post-order snapshot: quantity=5 (delta=5 < 10)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("5"),
+            snapshot_time=now,
+        )
+
+        result = await sync_service.recover_expired_sell_by_position(
+            order, broker_order,
+        )
+
+        assert result is not None
+        assert result.status_changed is True
+        assert result.current_status == OrderStatus.PARTIALLY_FILLED
+        # broker_status 동기화 확인
+        updated_bo = await repos.broker_orders.get(broker_order.broker_order_id)
+        assert updated_bo is not None
+        assert updated_bo.broker_status == "partially_filled"
+
+    async def test_backfill_skip_rejected(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Broker_status='rejected' → 복구 skip."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.EXPIRED,
+            client_order_id="BACKFILL-REJECTED-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            requested_quantity=Decimal("10"),
+            updated_at=now,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order,
+            broker_native_order_id="BRK-BACKFILL-REJECTED-001",
+            broker_status="rejected",  # Rejected — should skip
+            created_at=now - timedelta(minutes=5),
+        )
+
+        # Position delta exists but should not be used
+        pre_snap_time = now - timedelta(hours=1)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("10"),
+            snapshot_time=pre_snap_time,
+        )
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("0"),
+            snapshot_time=now,
+        )
+
+        result = await sync_service.recover_expired_sell_by_position(
+            order, broker_order,
+        )
+
+        assert result is None
+        # 상태 변경 없음 — EXPIRED 유지
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.EXPIRED
+
+    async def test_backfill_skip_non_market(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Order_type=LIMIT → 복구 skip (MARKET 전용)."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.EXPIRED,
+            client_order_id="BACKFILL-LIMIT-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            order_type=OrderType.LIMIT,  # LIMIT — should skip
+            requested_quantity=Decimal("10"),
+            updated_at=now,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order,
+            broker_native_order_id="BRK-BACKFILL-LIMIT-001",
+            broker_status="expired",
+            created_at=now - timedelta(minutes=5),
+        )
+
+        # Position delta exists but should not be used
+        pre_snap_time = now - timedelta(hours=1)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("10"),
+            snapshot_time=pre_snap_time,
+        )
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("0"),
+            snapshot_time=now,
+        )
+
+        result = await sync_service.recover_expired_sell_by_position(
+            order, broker_order,
+        )
+
+        assert result is None
+        # 상태 변경 없음 — EXPIRED 유지
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.EXPIRED
+
+    async def test_backfill_skip_no_position_delta(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Position delta=0 → 복구 skip, EXPIRED 유지."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.EXPIRED,
+            client_order_id="BACKFILL-NO-DELTA-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            requested_quantity=Decimal("10"),
+            updated_at=now,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order,
+            broker_native_order_id="BRK-BACKFILL-NO-DELTA-001",
+            broker_status="expired",
+            created_at=now - timedelta(minutes=5),
+        )
+
+        # Pre-order snapshot: quantity=10
+        pre_snap_time = now - timedelta(hours=1)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("10"),
+            snapshot_time=pre_snap_time,
+        )
+        # Post-order snapshot: quantity=10 (delta=0)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("10"),
+            snapshot_time=now,
+        )
+
+        result = await sync_service.recover_expired_sell_by_position(
+            order, broker_order,
+        )
+
+        assert result is None
+        # EXPIRED 유지
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.EXPIRED
+
+    async def test_backfill_skip_buy_side(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """BUY side → 복구 skip (SELL 전용)."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.EXPIRED,
+            client_order_id="BACKFILL-BUY-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.BUY,  # BUY — should skip
+            order_type=OrderType.MARKET,
+            requested_quantity=Decimal("10"),
+            updated_at=now,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order,
+            broker_native_order_id="BRK-BACKFILL-BUY-001",
+            broker_status="expired",
+            created_at=now - timedelta(minutes=5),
+        )
+
+        # Position delta exists but should not be used
+        pre_snap_time = now - timedelta(hours=1)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("10"),
+            snapshot_time=pre_snap_time,
+        )
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("0"),
+            snapshot_time=now,
+        )
+
+        result = await sync_service.recover_expired_sell_by_position(
+            order, broker_order,
+        )
+
+        assert result is None
+        # EXPIRED 유지
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.EXPIRED
+
+    async def test_backfill_old_order_24h(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """created_at 24h 초과 → ``_can_recover_expired`` 차단."""
+        now = datetime.now(timezone.utc)
+        old_created = now - timedelta(hours=25)  # > 24h
+        order = _make_order(
+            repos,
+            status=OrderStatus.EXPIRED,
+            client_order_id="BACKFILL-OLD-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            requested_quantity=Decimal("10"),
+            created_at=old_created,
+            updated_at=now,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order,
+            broker_native_order_id="BRK-BACKFILL-OLD-001",
+            broker_status="expired",
+            created_at=now - timedelta(minutes=5),
+        )
+
+        # Position delta exists but blocked by _can_recover_expired
+        pre_snap_time = now - timedelta(hours=1)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("10"),
+            snapshot_time=pre_snap_time,
+        )
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("0"),
+            snapshot_time=now,
+        )
+
+        result = await sync_service.recover_expired_sell_by_position(
+            order, broker_order,
+        )
+
+        assert result is None
+        # EXPIRED 유지
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.EXPIRED
+
+    async def test_backfill_dry_run_no_side_effects(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """snapshot_refresh_cb 미전달 → side effect 없이 FILLED 복구."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.EXPIRED,
+            client_order_id="BACKFILL-DRY-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            requested_quantity=Decimal("10"),
+            updated_at=now,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order,
+            broker_native_order_id="BRK-BACKFILL-DRY-001",
+            broker_status="expired",
+            created_at=now - timedelta(minutes=5),
+        )
+
+        # Position delta 10→0 → FILLED
+        pre_snap_time = now - timedelta(hours=1)
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("10"),
+            snapshot_time=pre_snap_time,
+        )
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("0"),
+            snapshot_time=now,
+        )
+
+        # snapshot_refresh_cb 미전달
+        result = await sync_service.recover_expired_sell_by_position(
+            order, broker_order,
+        )
+
+        assert result is not None
+        assert result.status_changed is True
+        assert result.current_status == OrderStatus.FILLED
+        # snapshot_refresh_cb가 없으므로 snapshot_triggered=False
+        assert result.snapshot_triggered is False

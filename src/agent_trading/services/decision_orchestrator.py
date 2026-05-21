@@ -969,7 +969,40 @@ class DecisionOrchestratorService:
             intent.request.side,
             intent.request.quantity,
         )
-        sizing_inputs = self._build_sizing_inputs(intent)
+
+        # Resolve reference_price for MARKET orders from live broker quote.
+        # When price is None (MARKET order), try to get a live quote so that
+        # cash / concentration / max-order-value constraints can be applied.
+        reference_price: Decimal | None = None
+        if intent.request.price is None:
+            try:
+                quote = await broker.get_quote(
+                    intent.request.symbol,
+                    intent.request.market,
+                )
+                # Priority: last > ask > bid
+                if quote.last is not None and quote.last > 0:
+                    reference_price = quote.last
+                elif quote.ask is not None and quote.ask > 0:
+                    reference_price = quote.ask
+                elif quote.bid is not None and quote.bid > 0:
+                    reference_price = quote.bid
+                if reference_price is not None:
+                    logger.info(
+                        "Phase 1.5: resolved reference_price=%s from quote "
+                        "(last=%s ask=%s bid=%s) for symbol=%s MARKET order",
+                        reference_price, quote.last, quote.ask, quote.bid,
+                        intent.request.symbol,
+                    )
+            except Exception:
+                logger.warning(
+                    "Phase 1.5: failed to resolve reference_price from broker quote "
+                    "for symbol=%s — cash constraint will be skipped",
+                    intent.request.symbol,
+                    exc_info=True,
+                )
+
+        sizing_inputs = self._build_sizing_inputs(intent, reference_price=reference_price)
         sizing_result = calculate_sizing(sizing_inputs)
 
         logger.info(
@@ -1453,7 +1486,11 @@ class DecisionOrchestratorService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _build_sizing_inputs(self, intent: OrderIntent) -> SizingInputs:
+    def _build_sizing_inputs(
+        self,
+        intent: OrderIntent,
+        reference_price: Decimal | None = None,
+    ) -> SizingInputs:
         """Build ``SizingInputs`` from an ``OrderIntent``.
 
         Extracts position, cash, NAV, and config data from the assembled
@@ -1468,6 +1505,16 @@ class DecisionOrchestratorService:
           | ``min_cash_buffer_pct`` (legacy flat)
         * ``max_order_value``        ← ``execution.max_order_value``
           | ``max_order_value`` (legacy flat)
+
+        Parameters
+        ----------
+        intent : OrderIntent
+            The assembled order intent.
+        reference_price : Decimal | None
+            Reference price for MARKET order sizing (from live quote).
+            When ``None`` (LIMIT orders or quote unavailable), the existing
+            behaviour is preserved — ``requested_price`` is the sole price
+            source for constraints.
         """
         ctx = intent.context
         ai = intent.ai_backend_inputs
@@ -1550,6 +1597,7 @@ class DecisionOrchestratorService:
             side=req.side,
             requested_quantity=req.quantity,
             requested_price=req.price,
+            reference_price=reference_price,
             sizing_hint=ai.sizing_hint,
             current_position_qty=pos_qty,
             current_position_avg_price=pos_avg_price,
