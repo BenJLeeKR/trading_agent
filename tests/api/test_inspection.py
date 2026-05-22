@@ -175,13 +175,15 @@ class TestTradeDecisions:
     """Trade decision inspection endpoints."""
 
     def test_list_trade_decisions_includes_decision_json(self, client: TestClient) -> None:
-        """``GET /trade-decisions`` returns ``decision_json`` field."""
+        """``GET /trade-decisions`` returns ``decision_json`` field (paginated)."""
         # The fixture seeds a trade decision with decision_json data
         resp = client.get("/trade-decisions")
         assert resp.status_code == 200
-        data = resp.json()
-        assert len(data) >= 1
-        td = data[0]
+        body = resp.json()
+        assert isinstance(body, dict)
+        items = body["items"]
+        assert len(items) >= 1
+        td = items[0]
         assert "decision_json" in td, "decision_json field missing from TradeDecisionDetail"
         assert td["decision_json"] is not None
         assert "event_bias" in td["decision_json"]
@@ -220,9 +222,11 @@ class TestTradeDecisions:
 
         resp = client.get("/trade-decisions")
         assert resp.status_code == 200, resp.text
-        data = resp.json()
+        body = resp.json()
+        assert isinstance(body, dict)
+        items = body["items"]
         injected = next(
-            row for row in data if row["trade_decision_id"] == str(td.trade_decision_id)
+            row for row in items if row["trade_decision_id"] == str(td.trade_decision_id)
         )
         assert injected["decision_type"] == "sell"
         assert injected["side"] == "buy"

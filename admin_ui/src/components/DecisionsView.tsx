@@ -89,8 +89,8 @@ export default function DecisionsView() {
       : getTradeDecisions(undefined, pageSize, offset);
     fetchPromise
       .then((resp) => {
-        setDecisions(resp.items);
-        setTotalCount(resp.total);
+        setDecisions(resp.items ?? []);
+        setTotalCount(resp.total ?? 0);
       })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "의사결정을 불러오지 못했습니다";

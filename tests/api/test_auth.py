@@ -120,13 +120,18 @@ class TestProtectedEndpointsAuthenticated:
         assert resp.status_code == 200
 
     def test_trade_decisions_authorized(self, auth_client: TestClient) -> None:
-        """``GET /trade-decisions`` with valid Bearer token → 200 (empty list)."""
+        """``GET /trade-decisions`` with valid Bearer token → 200 (paginated)."""
         resp = auth_client.get(
             "/trade-decisions?decision_context_id=00000000-0000-0000-0000-000000000000",
             headers=_auth_header(),
         )
         assert resp.status_code == 200
-        assert resp.json() == []
+        body = resp.json()
+        assert isinstance(body, dict)
+        assert body["items"] == []
+        assert body["total"] == 0
+        assert body["limit"] == 50
+        assert body["offset"] == 0
 
     def test_health_still_public_with_token(self, empty_client: TestClient) -> None:
         """Health still works even with Bearer token (no auth dependency)."""
