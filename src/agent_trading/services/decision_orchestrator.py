@@ -937,6 +937,19 @@ class DecisionOrchestratorService:
                 order_intent_id=order_intent_id,
                 seeded_events=seeded_events,
             )
+        except asyncio.TimeoutError:
+            logger.error(
+                "Phase 1 TIMEOUT: assemble() exceeded timeout. "
+                "decision_context_id=%s symbol=%s",
+                decision_context_id,
+                request.symbol,
+            )
+            return SubmitResult(
+                status="ERROR",
+                error_phase="ai_timeout",
+                error_message=f"assemble() timed out for symbol={request.symbol}",
+                decision_context_id=decision_context_id,
+            )
         except Exception as exc:
             logger.exception(
                 "Phase 1 FAILED (ai): assemble() raised unexpectedly. "
@@ -975,10 +988,21 @@ class DecisionOrchestratorService:
         # cash / concentration / max-order-value constraints can be applied.
         reference_price: Decimal | None = None
         if intent.request.price is None:
+            logger.info(
+                "PHASE_TRACE: symbol=%s phase=quote_resolution start",
+                intent.request.symbol,
+            )
             try:
-                quote = await broker.get_quote(
-                    intent.request.symbol,
-                    intent.request.market,
+                quote = await asyncio.wait_for(
+                    broker.get_quote(
+                        intent.request.symbol,
+                        intent.request.market,
+                    ),
+                    timeout=10.0,
+                )
+                logger.info(
+                    "PHASE_TRACE: symbol=%s phase=quote_resolution done quote_keys=%s",
+                    intent.request.symbol, list(quote.keys()),
                 )
                 # Priority: last > ask > bid
                 if quote.last is not None and quote.last > 0:
@@ -994,13 +1018,14 @@ class DecisionOrchestratorService:
                         reference_price, quote.last, quote.ask, quote.bid,
                         intent.request.symbol,
                     )
-            except Exception:
+            except (asyncio.TimeoutError, Exception):
                 logger.warning(
-                    "Phase 1.5: failed to resolve reference_price from broker quote "
-                    "for symbol=%s — cash constraint will be skipped",
+                    "Phase 1.5: broker quote timeout or error for symbol=%s — "
+                    "proceeding with best-effort fallback (empty quote).",
                     intent.request.symbol,
                     exc_info=True,
                 )
+                quote = {}
 
         sizing_inputs = self._build_sizing_inputs(intent, reference_price=reference_price)
         sizing_result = calculate_sizing(sizing_inputs)
@@ -1031,6 +1056,17 @@ class DecisionOrchestratorService:
                 )
 
         if effective_qty <= 0:
+            # held_position sell skip audit
+            if (intent is not None and intent.request.side == OrderSide.SELL
+                    and intent.ai_backend_inputs.decision_type in ("REDUCE", "EXIT")):
+                logger.warning(
+                    "HELD_POSITION_SELL skipped at sizing: symbol=%s "
+                    "decision_type=%s skip_reason=%s trade_decision_id=%s",
+                    intent.request.symbol,
+                    intent.ai_backend_inputs.decision_type,
+                    sizing_result.skip_reason,
+                    trade_decision_id,
+                )
             logger.info(
                 "Phase 1.5 SKIPPED (sizing): reason=%s, trade_decision_id=%s",
                 sizing_result.skip_reason,
@@ -1082,6 +1118,17 @@ class DecisionOrchestratorService:
                         )
                     )
                     if sell_availability.is_blocked:
+                        # held_position sell skip audit
+                        if (intent.request.side == OrderSide.SELL
+                                and intent.ai_backend_inputs.decision_type in ("REDUCE", "EXIT")):
+                            logger.warning(
+                                "HELD_POSITION_SELL skipped at sell_guard: symbol=%s "
+                                "decision_type=%s reason=%s trade_decision_id=%s",
+                                intent.request.symbol,
+                                intent.ai_backend_inputs.decision_type,
+                                sell_availability.blocking_reason,
+                                trade_decision_id,
+                            )
                         logger.info(
                             "Phase 1.5+ SELL GUARD BLOCKED: "
                             "symbol=%s requested=%s reason=%s "
@@ -1129,6 +1176,18 @@ class DecisionOrchestratorService:
         submit_request = build_submit_order_request_from_decision(intent)
         if submit_request is None:
             skip_reason = "watch" if _dt == "WATCH" else "hold"
+            # held_position sell skip audit
+            if (intent.request.side == OrderSide.SELL
+                    and _dt in ("REDUCE", "EXIT")):
+                logger.warning(
+                    "HELD_POSITION_SELL skipped at Phase 2 (translation): "
+                    "symbol=%s decision_type=%s skip_reason=%s "
+                    "trade_decision_id=%s",
+                    intent.request.symbol,
+                    _dt,
+                    skip_reason,
+                    trade_decision_id,
+                )
             logger.info(
                 "Phase 2 SKIPPED (%s): decision_type=%s, trade_decision_id=%s",
                 skip_reason,
@@ -1237,124 +1296,158 @@ class DecisionOrchestratorService:
             and intent.context.decision_context is not None
             else None
         )
+
+        # held_position sell bypass check: 위험 축소 목적의 sell은 stale snapshot이어도 진행
+        _is_held_position_sell: bool = (
+            intent.request.side == OrderSide.SELL
+            and intent.ai_backend_inputs.decision_type in ("REDUCE", "EXIT")
+        )
+
         if account_id is not None:
             freshness = await self._check_account_snapshot_freshness(account_id)
             if freshness.is_stale:
-                logger.info(
-                    "Phase 4c BLOCKED STALE_SNAPSHOT_ACCOUNT: account_id=%s "
-                    "cash_stale=%s pos_stale=%s threshold=%ds trade_decision_id=%s",
-                    account_id,
-                    freshness.is_cash_stale,
-                    freshness.is_position_stale,
-                    self._stale_threshold_seconds,
-                    trade_decision_id,
-                )
-                try:
-                    guardrail_eval = GuardrailEvaluationEntity(
-                        guardrail_evaluation_id=uuid4(),
-                        decision_context_id=intent.decision_context_id,
-                        trade_decision_id=trade_decision_id,
-                        order_request_id=pending_order.order_request_id,
-                        rule_set_version="stale_snapshot_guard_v1",
-                        overall_passed=False,
-                        evaluated_at=datetime.now(timezone.utc),
-                        rule_results={
-                            "is_stale": True,
-                            "stale_level": "account",
-                            "account_id": str(account_id),
-                            "latest_cash_snapshot_at": (
-                                str(freshness.latest_cash_snapshot_at)
-                                if freshness.latest_cash_snapshot_at
-                                else None
-                            ),
-                            "latest_position_snapshot_at": (
-                                str(freshness.latest_position_snapshot_at)
-                                if freshness.latest_position_snapshot_at
-                                else None
-                            ),
-                            "is_cash_stale": freshness.is_cash_stale,
-                            "is_position_stale": freshness.is_position_stale,
-                            "stale_threshold_seconds": self._stale_threshold_seconds,
-                        },
-                        blocking_rule_codes=["STALE_SNAPSHOT_ACCOUNT"],
-                    )
-                    await self._repos.guardrail_evaluations.add(guardrail_eval)
-                except Exception:
+                # held_position sell bypass: stale snapshot이어도 위험 축소를 위해 진행
+                if _is_held_position_sell:
                     logger.warning(
-                        "Failed to record guardrail evaluation for stale snapshot (account)",
-                        exc_info=True,
+                        "Phase 4c HELD_POSITION_SELL bypass stale snapshot: "
+                        "account_id=%s cash_stale=%s pos_stale=%s "
+                        "threshold=%ds trade_decision_id=%s symbol=%s",
+                        account_id,
+                        freshness.is_cash_stale,
+                        freshness.is_position_stale,
+                        self._stale_threshold_seconds,
+                        trade_decision_id,
+                        intent.request.symbol,
                     )
+                else:
+                    logger.info(
+                        "Phase 4c BLOCKED STALE_SNAPSHOT_ACCOUNT: account_id=%s "
+                        "cash_stale=%s pos_stale=%s threshold=%ds trade_decision_id=%s",
+                        account_id,
+                        freshness.is_cash_stale,
+                        freshness.is_position_stale,
+                        self._stale_threshold_seconds,
+                        trade_decision_id,
+                    )
+                    try:
+                        guardrail_eval = GuardrailEvaluationEntity(
+                            guardrail_evaluation_id=uuid4(),
+                            decision_context_id=intent.decision_context_id,
+                            trade_decision_id=trade_decision_id,
+                            order_request_id=pending_order.order_request_id,
+                            rule_set_version="stale_snapshot_guard_v1",
+                            overall_passed=False,
+                            evaluated_at=datetime.now(timezone.utc),
+                            rule_results={
+                                "is_stale": True,
+                                "stale_level": "account",
+                                "account_id": str(account_id),
+                                "latest_cash_snapshot_at": (
+                                    str(freshness.latest_cash_snapshot_at)
+                                    if freshness.latest_cash_snapshot_at
+                                    else None
+                                ),
+                                "latest_position_snapshot_at": (
+                                    str(freshness.latest_position_snapshot_at)
+                                    if freshness.latest_position_snapshot_at
+                                    else None
+                                ),
+                                "is_cash_stale": freshness.is_cash_stale,
+                                "is_position_stale": freshness.is_position_stale,
+                                "stale_threshold_seconds": self._stale_threshold_seconds,
+                            },
+                            blocking_rule_codes=["STALE_SNAPSHOT_ACCOUNT"],
+                        )
+                        await self._repos.guardrail_evaluations.add(guardrail_eval)
+                    except Exception:
+                        logger.warning(
+                            "Failed to record guardrail evaluation for stale snapshot (account)",
+                            exc_info=True,
+                        )
 
-                return SubmitResult(
-                    status="SKIPPED",
-                    intent=intent,
-                    order=pending_order,
-                    error_phase="stale_snapshot",
-                    error_message=(
-                        f"Account-level snapshot stale: account_id={account_id}, "
-                        f"cash_stale={freshness.is_cash_stale}, "
-                        f"pos_stale={freshness.is_position_stale}, "
-                        f"threshold={self._stale_threshold_seconds}s"
-                    ),
-                    trade_decision_id=trade_decision_id,
-                    decision_context_id=intent.decision_context_id,
-                )
+                    return SubmitResult(
+                        status="SKIPPED",
+                        intent=intent,
+                        order=pending_order,
+                        error_phase="stale_snapshot",
+                        error_message=(
+                            f"Account-level snapshot stale: account_id={account_id}, "
+                            f"cash_stale={freshness.is_cash_stale}, "
+                            f"pos_stale={freshness.is_position_stale}, "
+                            f"threshold={self._stale_threshold_seconds}s"
+                        ),
+                        trade_decision_id=trade_decision_id,
+                        decision_context_id=intent.decision_context_id,
+                    )
         else:
             # Fallback: run-level summary
             health = await self._repos.snapshot_sync_runs.get_sync_health_summary(
                 stale_threshold_seconds=self._stale_threshold_seconds,
             )
             if health.is_stale:
-                logger.info(
-                    "Phase 4c BLOCKED stale_snapshot (run-level fallback): "
-                    "last_successful_run_at=%s threshold=%ds trade_decision_id=%s",
-                    health.last_successful_run_at,
-                    self._stale_threshold_seconds,
-                    trade_decision_id,
-                )
-                try:
-                    guardrail_eval = GuardrailEvaluationEntity(
-                        guardrail_evaluation_id=uuid4(),
-                        decision_context_id=intent.decision_context_id,
-                        trade_decision_id=trade_decision_id,
-                        order_request_id=pending_order.order_request_id,
-                        rule_set_version="stale_snapshot_guard_v1",
-                        overall_passed=False,
-                        evaluated_at=datetime.now(timezone.utc),
-                        rule_results={
-                            "is_stale": True,
-                            "stale_level": "run",
-                            "last_successful_run_at": (
-                                str(health.last_successful_run_at)
-                                if health.last_successful_run_at
-                                else None
-                            ),
-                            "stale_threshold_seconds": self._stale_threshold_seconds,
-                            "last_run_status": health.last_status,
-                        },
-                        blocking_rule_codes=["STALE_SNAPSHOT"],
-                    )
-                    await self._repos.guardrail_evaluations.add(guardrail_eval)
-                except Exception:
+                # held_position sell bypass: stale snapshot이어도 위험 축소를 위해 진행
+                if _is_held_position_sell:
                     logger.warning(
-                        "Failed to record guardrail evaluation for stale snapshot (run-level)",
-                        exc_info=True,
+                        "Phase 4c HELD_POSITION_SELL bypass stale snapshot "
+                        "(run-level fallback): "
+                        "last_successful_run_at=%s threshold=%ds "
+                        "trade_decision_id=%s symbol=%s",
+                        health.last_successful_run_at,
+                        self._stale_threshold_seconds,
+                        trade_decision_id,
+                        intent.request.symbol,
                     )
+                else:
+                    logger.info(
+                        "Phase 4c BLOCKED stale_snapshot (run-level fallback): "
+                        "last_successful_run_at=%s threshold=%ds trade_decision_id=%s",
+                        health.last_successful_run_at,
+                        self._stale_threshold_seconds,
+                        trade_decision_id,
+                    )
+                    try:
+                        guardrail_eval = GuardrailEvaluationEntity(
+                            guardrail_evaluation_id=uuid4(),
+                            decision_context_id=intent.decision_context_id,
+                            trade_decision_id=trade_decision_id,
+                            order_request_id=pending_order.order_request_id,
+                            rule_set_version="stale_snapshot_guard_v1",
+                            overall_passed=False,
+                            evaluated_at=datetime.now(timezone.utc),
+                            rule_results={
+                                "is_stale": True,
+                                "stale_level": "run",
+                                "last_successful_run_at": (
+                                    str(health.last_successful_run_at)
+                                    if health.last_successful_run_at
+                                    else None
+                                ),
+                                "stale_threshold_seconds": self._stale_threshold_seconds,
+                                "last_run_status": health.last_status,
+                            },
+                            blocking_rule_codes=["STALE_SNAPSHOT"],
+                        )
+                        await self._repos.guardrail_evaluations.add(guardrail_eval)
+                    except Exception:
+                        logger.warning(
+                            "Failed to record guardrail evaluation for stale snapshot (run-level)",
+                            exc_info=True,
+                        )
 
-                return SubmitResult(
-                    status="SKIPPED",
-                    intent=intent,
-                    order=pending_order,
-                    error_phase="stale_snapshot",
-                    error_message=(
-                        f"Snapshot sync is stale (run-level fallback): "
-                        f"last successful run at "
-                        f"{health.last_successful_run_at}, "
-                        f"threshold={self._stale_threshold_seconds}s"
-                    ),
-                    trade_decision_id=trade_decision_id,
-                    decision_context_id=intent.decision_context_id,
-                )
+                    return SubmitResult(
+                        status="SKIPPED",
+                        intent=intent,
+                        order=pending_order,
+                        error_phase="stale_snapshot",
+                        error_message=(
+                            f"Snapshot sync is stale (run-level fallback): "
+                            f"last successful run at "
+                            f"{health.last_successful_run_at}, "
+                            f"threshold={self._stale_threshold_seconds}s"
+                        ),
+                        trade_decision_id=trade_decision_id,
+                        decision_context_id=intent.decision_context_id,
+                    )
 
         # ── Phase 5: submit to broker ──
         _decision_type: str = "unknown"

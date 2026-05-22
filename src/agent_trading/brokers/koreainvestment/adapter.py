@@ -249,6 +249,26 @@ class KoreaInvestmentAdapter(BrokerAdapter):
         try:
             result = await self._rest.submit_order(request)
         except BudgetExhaustedError:
+            # Held-position sell special lane: retry with reserved budget
+            if self._is_held_position_sell(request):
+                logger.info(
+                    "Held-position sell detected for symbol=%s — "
+                    "retrying with reserved budget lane",
+                    request.symbol,
+                )
+                try:
+                    result = await self._rest.submit_order(
+                        request,
+                        _held_position_sell=True,
+                    )
+                    return self._normalize_submit_result(result)
+                except BudgetExhaustedError:
+                    # Reserve also exhausted — fall through to normal error
+                    logger.warning(
+                        "Held-position sell reserve also exhausted for symbol=%s",
+                        request.symbol,
+                    )
+
             # Budget exhausted — return a requires_reconciliation result.
             return SubmitOrderResult(
                 accepted=False,
@@ -265,6 +285,19 @@ class KoreaInvestmentAdapter(BrokerAdapter):
             )
 
         return self._normalize_submit_result(result)
+
+    @staticmethod
+    def _is_held_position_sell(request: SubmitOrderRequest) -> bool:
+        """Check if the request is a held-position sell order.
+
+        ``SubmitOrderRequest.metadata``에 ``source_type`` 키가 있고
+        값이 ``"held_position"``이며, side가 SELL이면 held_position sell로 간주한다.
+        """
+        if request.side != OrderSide.SELL:
+            return False
+        metadata = request.metadata or {}
+        source_type = metadata.get("source_type", "")
+        return str(source_type).lower() == "held_position"
 
     def _validate_order_request(self, request: SubmitOrderRequest) -> list[str]:
         """Run pre-validation checks on the order request.

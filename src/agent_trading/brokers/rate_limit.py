@@ -19,11 +19,14 @@ Design
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
+
+logger = logging.getLogger(__name__)
 
 
 class BucketType(str, Enum):
@@ -123,6 +126,14 @@ class RateLimitBudgetManager:
     protection. The reconciliation bucket is a **reserve** — it is never
     consumed by general inquiry or order calls.
 
+    Held-position sell reserve
+    --------------------------
+    ``held_position_sell_reserve`` is a **protected reserve** for ORDER bucket.
+    When ``consume_or_raise(bucket=ORDER, held_position_sell=True)`` is called,
+    the reserve is consumed first (if available).  If the reserve is exhausted,
+    falls back to the general ORDER bucket.  This ensures held-position sell
+    orders are never starved by general BUY/SELL orders.
+
     Parameters
     ----------
     session_id : UUID
@@ -158,6 +169,9 @@ class RateLimitBudgetManager:
         REST cap (backward compatible).  Default 0.
     global_rest_refill_rate : float
         Global REST bucket tokens per second (the total environment RPS).
+    held_position_sell_reserve_capacity : int
+        Reserved ORDER tokens for held-position sell orders only.
+        Default 1 (minimum guarantee).  ``0`` disables the reserve.
     """
 
     session_id: UUID
@@ -172,6 +186,9 @@ class RateLimitBudgetManager:
     # --- Thresholds ---
     inquiry_block_threshold: float = 0.2
     reconciliation_reserve_min: float = 0.5
+    # --- Held-position sell reserve (protected ORDER tokens) ---
+    _held_sell_reserve: int = 0
+    _held_sell_reserve_capacity: int = 0
 
     def __init__(
         self,
@@ -191,6 +208,7 @@ class RateLimitBudgetManager:
         reconciliation_reserve_min: float = 0.5,
         global_rest_capacity: int = 0,
         global_rest_refill_rate: float = 0.0,
+        held_position_sell_reserve_capacity: int = 1,
     ) -> None:
         self.session_id = session_id or uuid4()
         self.order = OperationBucket(
@@ -228,6 +246,9 @@ class RateLimitBudgetManager:
             self.global_rest = None
         self.inquiry_block_threshold = inquiry_block_threshold
         self.reconciliation_reserve_min = reconciliation_reserve_min
+        # Held-position sell reserve: protected ORDER tokens
+        self._held_sell_reserve_capacity = max(0, held_position_sell_reserve_capacity)
+        self._held_sell_reserve = self._held_sell_reserve_capacity
 
     def try_consume(self, bucket: BucketType, tokens: int = 1) -> bool:
         """Try to consume *tokens* from the given *bucket*.
@@ -239,12 +260,52 @@ class RateLimitBudgetManager:
         b = self._bucket(bucket)
         return b.try_consume(tokens)
 
+    def _try_consume_held_sell_reserve(self, tokens: int = 1) -> bool:
+        """Try to consume *tokens* from the held-position sell reserve.
+
+        The reserve is a **protected pool** — it is only consumed by
+        held-position sell orders.  It refills when the general ORDER
+        bucket refills (proportional to capacity ratio).
+
+        Returns ``True`` if tokens were consumed, ``False`` if the
+        reserve is exhausted.
+        """
+        if self._held_sell_reserve_capacity <= 0:
+            return False
+        if self._held_sell_reserve >= tokens:
+            self._held_sell_reserve -= tokens
+            return True
+        return False
+
+    def _refill_held_sell_reserve(self) -> None:
+        """Refill the held-position sell reserve based on ORDER bucket refill.
+
+        The reserve refills proportionally: when the ORDER bucket refills,
+        the reserve gets a proportional share of the refilled tokens.
+        """
+        if self._held_sell_reserve_capacity <= 0:
+            return
+        # Refill based on ORDER bucket utilization
+        self.order._refill()
+        # Reserve refills at the same rate as ORDER bucket, capped at capacity
+        elapsed = (datetime.now(tz=timezone.utc) - self.order.refill_at).total_seconds()
+        if elapsed > 0:
+            # Proportional refill: reserve gets (reserve_capacity / order_capacity) share
+            ratio = self._held_sell_reserve_capacity / max(1, self.order.capacity)
+            tokens_to_add = int(elapsed * self.order.refill_rate * ratio)
+            if tokens_to_add > 0:
+                self._held_sell_reserve = min(
+                    self._held_sell_reserve_capacity,
+                    self._held_sell_reserve + tokens_to_add,
+                )
+
     def consume_or_raise(
         self,
         bucket: BucketType,
         tokens: int = 1,
         *,
         skip_global_rest: bool = False,
+        held_position_sell: bool = False,
     ) -> None:
         """Consume *tokens* from *bucket* or raise ``BudgetExhaustedError``.
 
@@ -257,18 +318,28 @@ class RateLimitBudgetManager:
         2. **Per-operation bucket** (Tier 2) — the existing per-bucket
            check for the specific operation type.
 
+        **Held-position sell special lane**:
+        When ``held_position_sell=True`` and ``bucket=ORDER``, the
+        held-position sell reserve is consumed first (if available).
+        If the reserve is exhausted, falls back to the general ORDER
+        bucket.  This ensures held-position sell orders are never
+        starved by general BUY/SELL orders.
+
         Parameters
         ----------
         skip_global_rest:
             If ``True``, skip the global REST cap check (Tier 1).
             Used by the reconciliation fallback path where the
             reconciliation reserve has already been verified.
+        held_position_sell:
+            If ``True`` and ``bucket=ORDER``, use the held-position
+            sell reserve first.
 
         Raises
         ------
         BudgetExhaustedError
-            If either the global REST cap or the per-operation bucket
-            does not have enough tokens.
+            If neither the reserve nor the per-operation bucket
+            has enough tokens.
         """
         # Tier 1: global REST gate (optional skip for reconcile fallback)
         if not skip_global_rest and self.global_rest is not None:
@@ -281,6 +352,21 @@ class RateLimitBudgetManager:
                         f"/{self.global_rest.capacity})"
                     ),
                 )
+
+        # Tier 1.5: held-position sell reserve (ORDER bucket only)
+        if held_position_sell and bucket == BucketType.ORDER:
+            self._refill_held_sell_reserve()
+            if self._try_consume_held_sell_reserve(tokens):
+                # Consumed from reserve — skip general ORDER bucket check
+                return
+            # Reserve exhausted — fall through to general ORDER bucket
+            logger.info(
+                "Held-position sell reserve exhausted (remaining=%d/%d) — "
+                "falling back to general ORDER bucket",
+                self._held_sell_reserve,
+                self._held_sell_reserve_capacity,
+            )
+
         # Tier 2: per-operation bucket
         if not self.try_consume(bucket, tokens):
             b = self._bucket(bucket)

@@ -653,9 +653,11 @@ def _build_aggregate_summary(
 # Phase 4 subprocess isolation provides SIGKILL-guaranteed timeout at the
 # subprocess level (35s), so this outer timeout is a last-resort safety
 # net rather than the primary timeout mechanism.
-# Increased from 90s to 120s to accommodate subprocess creation/teardown
-# overhead and avoid false positives during normal operation.
-PER_AGENT_HARD_TIMEOUT = 300  # seconds
+# Increased from 300s to 420s to accommodate held_position sell symbols
+# (REDUCE/EXIT) which may require additional AI agent execution time.
+# The scheduler-level _DECISION_TIMEOUT (600s) covers the entire
+# asyncio.gather() for all universe symbols.
+PER_AGENT_HARD_TIMEOUT = 420  # seconds
 
 # ── T3 (Seeded News) timeout & freshness ─────────────────────────────────────
 # T3 pipeline (KIS disclosure + NAVER news search) has no hard timeout
@@ -882,29 +884,26 @@ async def _run_one_cycle(
 
     except asyncio.TimeoutError:
         duration = time.monotonic() - start
+        _dc_id = getattr(request, 'decision_context_id', None) if 'request' in dir() else None
         logger.error(
             "PER_AGENT_HARD_TIMEOUT=%ds exceeded after %.1fs — "
-            "forcing process exit with asyncio cancellation + threading.Timer "
-            "dual-guard.  decision_context_id=%s",
-            PER_AGENT_HARD_TIMEOUT, duration, decision_context_id,
+            "raising to skip this symbol only.  symbol=%s decision_context_id=%s",
+            PER_AGENT_HARD_TIMEOUT, duration, symbol, _dc_id,
         )
         # Cancel all pending asyncio tasks to allow C-level I/O (e.g. httpx
-        # socket read) to unblock.  Without explicit cancellation, os._exit(1)
-        # may not terminate immediately when the event loop is blocked on
-        # C-level I/O, causing the subprocess to hang until the scheduler's
-        # 240s timeout kills it via SIGTERM.
+        # socket read) to unblock.  Without explicit cancellation, the event
+        # loop may remain blocked on C-level I/O.
         for task in asyncio.all_tasks():
             if task is not asyncio.current_task():
                 task.cancel()
-        # threading.Timer runs in a separate thread and is NOT affected by
-        # C-level I/O blocking on the main thread.  It guarantees os._exit(1)
-        # is called even when asyncio cancellation cannot unblock httpx socket
-        # reads.
-        import threading
-        threading.Timer(0.5, os._exit, args=[1]).start()
         # Allow cancellations to propagate through the event loop
         await asyncio.sleep(0.5)
-        os._exit(1)
+        # Raise to let _process_one()'s except Exception handler catch this
+        # and record ERROR status, so remaining symbols continue processing.
+        raise RuntimeError(
+            f"TIMEOUT for symbol={symbol} "
+            f"(PER_AGENT_HARD_TIMEOUT={PER_AGENT_HARD_TIMEOUT}s)"
+        )
     except Exception as exc:
         duration = time.monotonic() - start
         logger.exception("[SYMBOL_DONE] cycle=%d symbol=%s status=ERROR duration=%.1fs error=%s", cycle, symbol, duration, exc)
@@ -1136,9 +1135,8 @@ async def _run_loop(
         _SEMAPHORE_MAX = 5
         sem = asyncio.Semaphore(_SEMAPHORE_MAX)
         submit_budget_consumed = False
-        # held_position REDUCE/EXIT sell 전용 budget 플래그 (별도 budget)
-        held_position_sell_budget_consumed = False
-        # cycle당 HP sell 카운터 및 symbol 중복 방지 집합
+        # held_position REDUCE/EXIT sell은 위험 축소 목적이므로 일일 제출 상한 없음.
+        # cycle 내 중복 submit 방지용 카운터만 유지 (symbol dedupe + cycle cap).
         held_position_sell_cycle_count = 0
         held_position_sell_cycle_symbols: set[str] = set()
         _submit_lock = asyncio.Lock()
@@ -1146,7 +1144,6 @@ async def _run_loop(
         async def _process_one(item: object) -> dict[str, object]:
             """Process a single universe item with semaphore concurrency cap."""
             nonlocal submit_budget_consumed
-            nonlocal held_position_sell_budget_consumed
             nonlocal held_position_sell_cycle_count
             nonlocal held_position_sell_cycle_symbols
             async with sem:
@@ -1161,10 +1158,11 @@ async def _run_loop(
                         getattr(item, "source_type", "core") == "held_position"
                     )
                     if is_held_position_item:
+                        # held_position sell은 일일 상한 없이 항상 submit 가능.
+                        # 단, 동일 cycle 내 동일 symbol 중복 submit과 cycle cap(2건)은 유지.
                         symbol_submit = (
                             submit
                             and not dry_run
-                            and not held_position_sell_budget_consumed
                             and held_position_sell_cycle_count < 2  # HELD_POSITION_SELL_MAX_PER_CYCLE
                             and item.symbol not in held_position_sell_cycle_symbols  # symbol dedupe
                         )
@@ -1172,11 +1170,9 @@ async def _run_loop(
                         symbol_submit = submit and not dry_run and not submit_budget_consumed
                     symbol_dry_run = dry_run or (submit and not symbol_submit)
 
-                # HP sell budget block 이유 로깅 (explainability)
+                # HP sell block 이유 로깅 (explainability)
                 if is_held_position_item and not symbol_submit and submit and not dry_run:
                     reasons = []
-                    if held_position_sell_budget_consumed:
-                        reasons.append("daily_cap_reached")
                     if held_position_sell_cycle_count >= 2:
                         reasons.append("cycle_cap_reached")
                     if item.symbol in held_position_sell_cycle_symbols:
@@ -1222,7 +1218,8 @@ async def _run_loop(
                             and result_side == "sell"
                         )
                         if is_held_position_sell:
-                            held_position_sell_budget_consumed = True
+                            # held_position sell은 일일 상한 없음 (위험 축소 목적).
+                            # cycle 내 중복 방지용 카운터만 증가.
                             held_position_sell_cycle_count += 1
                             held_position_sell_cycle_symbols.add(item.symbol)
                         else:

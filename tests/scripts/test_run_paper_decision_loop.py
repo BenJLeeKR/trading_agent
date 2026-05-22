@@ -781,15 +781,12 @@ class TestHeldPositionSellBudget:
         assert results[1] is False, "중복 symbol AAPL은 block되어야 함"
 
     @pytest.mark.asyncio
-    async def test_hp_sell_daily_cap_blocks_after_5(self) -> None:
-        """일간 HP sell budget이 5건 소진되면 추가 submit이 block되어야 함.
+    async def test_hp_sell_daily_cap_removed(self) -> None:
+        """일간 HP sell budget 상한이 제거되었으므로 daily cap으로 block되지 않음.
 
-        NOTE: held_position_sell_budget_consumed는 일간 budget 소진을 의미.
-        cycle 내에서는 held_position_sell_cycle_count로만 제어되며,
-        일간 budget이 소진되면(held_position_sell_budget_consumed=True)
-        cycle cap과 무관하게 모든 추가 HP sell이 block됨.
+        NOTE: held_position sell은 위험 축소 목적이므로 일일 제출 상한이
+        제거되었습니다. cycle cap(2건)과 symbol dedupe만 유지됩니다.
         """
-        held_position_sell_budget_consumed = False
         held_position_sell_cycle_count = 0
         held_position_sell_cycle_symbols: set[str] = set()
         HELD_POSITION_SELL_MAX_PER_CYCLE = 2
@@ -800,7 +797,7 @@ class TestHeldPositionSellBudget:
                 self.source_type = source_type
                 self.market = "KOSPI"
 
-        # 3개의 다른 symbol
+        # 3개의 다른 symbol — daily cap이 없으므로 cycle cap(2)까지만 허용
         items = [
             _MockItem("SYM0"),
             _MockItem("SYM1"),
@@ -816,10 +813,10 @@ class TestHeldPositionSellBudget:
                 getattr(item, "source_type", "core") == "held_position"
             )
             if is_held_position_item:
+                # daily cap 조건 제거됨 — cycle cap + symbol dedupe만 확인
                 symbol_submit = (
                     submit
                     and not dry_run
-                    and not held_position_sell_budget_consumed
                     and held_position_sell_cycle_count < HELD_POSITION_SELL_MAX_PER_CYCLE
                     and item.symbol not in held_position_sell_cycle_symbols
                 )
@@ -831,15 +828,12 @@ class TestHeldPositionSellBudget:
             if symbol_submit:
                 held_position_sell_cycle_count += 1
                 held_position_sell_cycle_symbols.add(item.symbol)
-                # 2번째 submit 후 일간 budget 소진 시뮬레이션
-                if i == 1:
-                    held_position_sell_budget_consumed = True
 
         # SYM0: cycle cap 허용 (1/2)
         assert results[0] is True
-        # SYM1: cycle cap 허용 (2/2), 이후 daily cap 소진
+        # SYM1: cycle cap 허용 (2/2)
         assert results[1] is True
-        # SYM2: daily cap (held_position_sell_budget_consumed=True)으로 block
+        # SYM2: cycle cap 초과 (2/2)로 block (daily cap이 아닌 cycle cap)
         assert results[2] is False
 
 

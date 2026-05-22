@@ -81,10 +81,13 @@ DEFAULT_POST_SUBMIT_INTERVAL_SECONDS = 30
 # Phase 4: subprocess isolation provides SIGKILL-guaranteed timeout,
 # so the scheduler-level timeout can be reduced from 240s to 120s.
 # The subprocess itself enforces a 35s timeout for agent execution.
-# Increased from 300s to 420s because 14 symbols × 3 batches × ~110s
-# (even with FDC skip) exceeds 300s. FDC skip confirmed working, so
-# the remaining bottleneck is the total cycle wall-clock.
-DEFAULT_TASK_TIMEOUT_SECONDS = 420
+# Increased from 420s to 600s because 14 symbols × 3 batches × ~110s
+# = ~330s, plus held_position sell (REDUCE/EXIT) symbols may need
+# additional time for AI agent execution. The subprocess-level
+# PER_AGENT_HARD_TIMEOUT (300s) provides per-symbol safety, and the
+# scheduler-level timeout is the outer safety net for the entire
+# subprocess (all symbols via asyncio.gather).
+DEFAULT_TASK_TIMEOUT_SECONDS = 600
 PYTHON_BIN = "python3"
 
 # timeout 후 partial stdout/stderr capture 시
@@ -897,20 +900,27 @@ async def _run_intraday_due_tasks(
             state.held_position_sell_submit_count, db_hp_sell_count
         )
 
-        # 일반 submit budget이 남았거나, held_position sell budget이 남았으면 submit 허용
+        # 일반 submit budget이 남았으면 submit 허용
         general_budget_ok = effective_submit_count < max_submit_per_day
-        hp_sell_budget_ok = effective_hp_sell_count < held_position_sell_max_per_day
+
+        # held_position REDUCE/EXIT sell은 위험 축소 목적이므로 일일 제출 상한에 묶이지 않음.
+        # 항상 submit path 진입 가능 (일반 BUY budget과 독립적).
+        hp_sell_budget_ok = True  # held_position sell은 항상 허용
+
+        # dry_run = 일반 budget도 없고 held_position sell budget도 없을 때
+        # hp_sell_budget_ok가 항상 True이므로, held_position sell 모드에서는
+        # dry_run이 절대 발생하지 않음 (일반 BUY만 budget 소진 시 dry-run)
         dry_run = not general_budget_ok and not hp_sell_budget_ok
 
-        # decision_submit_gate uses a shorter timeout (65s) than the default
-        # task timeout (240s) because the subprocess has its own per-agent
-        # hard timeout (60s) via asyncio.wait_for(). If the LLM call hangs
-        # on C-level I/O (httpx), os._exit(1) may not terminate immediately,
-        # so the scheduler-level timeout must be tight to avoid 244s stalls.
-        # Must be > 3 × _PER_AGENT_TIMEOUT (25s) = 75s to allow all 3 agents
-        # to complete their per-agent timeout + fallback path before the
-        # scheduler-level subprocess timeout fires.
-        _DECISION_TIMEOUT = 420  # seconds; 14 symbols × 3 batches × ~110s = ~330s needed
+        # decision_submit_gate timeout: must accommodate all universe symbols
+        # running concurrently via asyncio.gather() with semaphore(5).
+        # 14 symbols × ~110s average = ~330s, but held_position sell symbols
+        # (REDUCE/EXIT) may take longer due to AI agent execution.
+        # Increased from 420s to 600s to prevent premature subprocess kill
+        # when held_position sell symbols are still being processed.
+        # The per-symbol PER_AGENT_HARD_TIMEOUT (300s) provides individual
+        # safety, while this outer timeout covers the entire gather().
+        _DECISION_TIMEOUT = 600  # seconds; 14 symbols × ~110s + held_position sell headroom
         result = await _run_and_record(
             state,
             "decision_dry_run" if dry_run else "decision_submit_gate",

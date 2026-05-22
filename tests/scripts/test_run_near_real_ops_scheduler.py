@@ -410,7 +410,12 @@ class TestHeldPositionSellBudget:
         assert args.held_position_sell_max_per_day == 2
 
     def test_effective_hp_sell_count_logic(self) -> None:
-        """held_position sell effective count = max(state, db)."""
+        """held_position sell effective count = max(state, db).
+
+        NOTE: held_position sell은 위험 축소 목적이므로 일일 제출 상한이
+        제거되었습니다. hp_sell_budget_ok는 항상 True입니다.
+        effective count는 로깅/모니터링 목적으로만 계산됩니다.
+        """
         max_hp = HELD_POSITION_SELL_MAX_PER_DAY
 
         # Scenario 1: fresh start
@@ -425,38 +430,41 @@ class TestHeldPositionSellBudget:
         effective = max(state_count, db_count)
         assert effective < max_hp  # 4 < 5 → budget 여유 있음
 
-        # Scenario 3: after 5 held_position sell submits (소진)
+        # Scenario 3: after 5 held_position sell submits
+        # (더 이상 budget 소진으로 간주하지 않음 — hp_sell_budget_ok는 항상 True)
         state_count = 5
         db_count = 5
         effective = max(state_count, db_count)
-        assert not (effective < max_hp)  # budget 소진
+        # effective >= max_hp 이지만, hp_sell_budget_ok는 항상 True이므로
+        # 이 조건은 더 이상 submit gate 결정에 사용되지 않음
 
         # Scenario 4: crash/restart (state reset, DB preserved)
         state_count = 0
         db_count = 5
         effective = max(state_count, db_count)
-        assert not (effective < max_hp)  # crash-safe ✅
+        # 마찬가지로 budget 소진 여부와 무관하게 submit 가능
 
     def test_general_and_hp_sell_budget_independent(self) -> None:
-        """일반 budget과 held_position sell budget은 독립적으로 동작."""
+        """일반 budget과 held_position sell budget은 독립적으로 동작.
+
+        NOTE: held_position sell은 위험 축소 목적이므로 일일 제출 상한이
+        제거되었습니다. hp_sell_budget_ok는 항상 True입니다.
+        """
         max_general = 1
-        max_hp = HELD_POSITION_SELL_MAX_PER_DAY
 
-        # 일반 budget 소진 + held_position sell budget 여유
+        # 일반 budget 소진 + held_position sell budget은 항상 허용
         general_effective = 1  # 소진
-        hp_effective = 0  # 여유
         general_ok = general_effective < max_general
-        hp_ok = hp_effective < max_hp
+        hp_ok = True  # held_position sell은 항상 허용
         assert not general_ok  # 일반은 막힘
-        assert hp_ok  # held_position sell은 허용
+        assert hp_ok  # held_position sell은 항상 허용
 
-        # 반대: held_position sell 소진 + 일반 여유
+        # 반대: 일반 여유 + held_position sell도 항상 허용
         general_effective = 0  # 여유
-        hp_effective = 5  # 소진
         general_ok = general_effective < max_general
-        hp_ok = hp_effective < max_hp
+        hp_ok = True  # held_position sell은 항상 허용
         assert general_ok  # 일반은 허용
-        assert not hp_ok  # held_position sell은 막힘
+        assert hp_ok  # held_position sell도 항상 허용
 
     def test_held_position_sell_max_per_cycle_constant(self) -> None:
         """HELD_POSITION_SELL_MAX_PER_CYCLE 기본값은 2."""

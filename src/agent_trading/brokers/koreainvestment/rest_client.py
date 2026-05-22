@@ -759,6 +759,7 @@ class KISRestClient:
         *,
         requires_hashkey: bool = False,
         skip_global_rest: bool = False,
+        held_position_sell: bool = False,
     ) -> dict[str, Any]:
         """Unified request helper with budget consumption and circuit breaker.
 
@@ -775,10 +776,16 @@ class KISRestClient:
             If ``True``, skip the global REST cap check (Tier 1).
             Used by the reconciliation fallback path where the
             reconciliation reserve has already been verified.
+        held_position_sell:
+            If ``True``, use the held-position sell reserved budget lane.
         """
         # 1. Budget check
         if self.budget_manager is not None:
-            self.budget_manager.consume_or_raise(bucket, skip_global_rest=skip_global_rest)
+            self.budget_manager.consume_or_raise(
+                bucket,
+                skip_global_rest=skip_global_rest,
+                held_position_sell=held_position_sell,
+            )
 
         # 2. Circuit breaker
         if self._circuit_breaker.state == CircuitState.OPEN:
@@ -841,11 +848,21 @@ class KISRestClient:
     # Order operations
     # ------------------------------------------------------------------
 
-    async def submit_order(self, request: SubmitOrderRequest) -> SubmitOrderResult:
+    async def submit_order(
+        self,
+        request: SubmitOrderRequest,
+        _held_position_sell: bool = False,
+    ) -> SubmitOrderResult:
         """Submit a stock order (현금 매수/매도).
 
         Uses order-cash endpoint for regular orders.
         Hashkey is required for order requests.
+
+        Parameters
+        ----------
+        _held_position_sell:
+            If ``True``, use the held-position sell reserved budget lane.
+            Internal use only — called from ``KISAdapter.submit_order()``.
         """
         side = request.side
         tr_id_key = "order_buy" if side == OrderSide.BUY else "order_sell"
@@ -869,6 +886,7 @@ class KISRestClient:
             bucket=BucketType.ORDER,
             body=body,
             requires_hashkey=True,
+            held_position_sell=_held_position_sell,
         )
 
         output = data.get("output", data)
