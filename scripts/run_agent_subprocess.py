@@ -627,6 +627,14 @@ async def main() -> None:
 
         if skip_fdc:
             composer_output = skip_output
+            # ★ FDC skip 시 degraded 플래그 설정 (full pipeline 미완료)
+            from dataclasses import replace
+            degraded_av = replace(
+                event_output.aggregate_view,
+                interpretation_incomplete=True,
+                degraded_reason=f"fdc_skipped:{skip_reason}",
+            )
+            object.__setattr__(event_output, "aggregate_view", degraded_av)
             _diag(f"FDC skipped: reason={skip_reason} symbol={composer_output.symbol}")
             logger.info(
                 "FDC skipped: reason=%s symbol=%s decision_type=%s",

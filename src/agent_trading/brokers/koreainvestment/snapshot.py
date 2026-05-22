@@ -310,9 +310,13 @@ class KISSyncSnapshotProvider:
                 snapshot_at=cash_balance.snapshot_at,
             )
 
+        # fetch_success: cash나 positions 중 하나라도 확보되었으면 성공
+        fetch_success = cash_balance is not None or len(positions) > 0
+
         return FetchedSnapshot(
             positions=positions,
             cash_balance=cash_balance,
             risk_limit_snapshot=risk_limit,
             errors=errors,
+            fetch_success=fetch_success,
         )

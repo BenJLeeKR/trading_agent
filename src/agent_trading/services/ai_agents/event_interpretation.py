@@ -75,6 +75,10 @@ def _build_ei_summary(output: EventInterpretationOutput) -> str:
             f"세부 이벤트 추출 누락. 전반 {bias_str}, 근거:{strength}"
         )
 
+    # ── Case 2.5: events=[] 이지만 Case 1/2에 걸리지 않은 나머지 ──
+    if not output.events:
+        return "유의미한 신규 이벤트 없음. 전반 중립."
+
     # ── Case 3: 정상 events 존재 ──
     event_count = len(output.events)
     parts: list[str] = []
@@ -288,6 +292,8 @@ class EventInterpretationAgent:
                     evidence_strength=result.aggregate_view.evidence_strength,
                     event_count=input_event_count,
                     no_material_events=False,
+                    interpretation_incomplete=True,
+                    degraded_reason="self_contradiction_corrected",
                 )
                 result = EventInterpretationOutput(
                     schema_version=result.schema_version,

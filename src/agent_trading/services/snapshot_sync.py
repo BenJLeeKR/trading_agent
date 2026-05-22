@@ -83,10 +83,17 @@ class FetchedSnapshot:
     errors:
         Non-fatal errors encountered during fetch (e.g. instrument lookup
         failures, field mapping issues).
+    fetch_success:
+        Whether the fetch operation was successful overall.
+        ``True`` if at least cash balance or positions were fetched,
+        ``False`` if all data sources failed.
+    risk_limit_snapshot:
+        Optional risk limit snapshot derived from fetched data.
     """
     positions: Sequence[PositionSnapshotEntity]
     cash_balance: CashBalanceSnapshotEntity | None
     errors: list[str]
+    fetch_success: bool = True
     risk_limit_snapshot: RiskLimitSnapshotEntity | None = None
 
 
@@ -139,6 +146,7 @@ async def sync_account_snapshots(
     account_id: UUID,
     *,
     after_hours: bool = False,
+    fetch_positions: bool = True,
 ) -> SyncResult:
     """Broker-agnostic single-account snapshot sync.
 
@@ -161,6 +169,9 @@ async def sync_account_snapshots(
         When ``True``, passes ``after_hours=True`` to the provider's
         ``fetch_snapshot()`` so that broker-specific after-hours parameters
         (e.g. KIS ``AFHR_FLPR_YN=Y``) are applied.
+    fetch_positions:
+        When ``True`` (default), fetches positions via the provider.
+        When ``False``, only cash balance and risk limit snapshots are synced.
 
     Returns
     -------
@@ -281,6 +292,7 @@ async def sync_accounts_by_ids(
     account_ids: Sequence[UUID],
     *,
     after_hours: bool = False,
+    fetch_positions: bool = True,
 ) -> BatchSyncResult:
     """Broker-agnostic batch snapshot sync for specific account IDs.
 
@@ -302,6 +314,9 @@ async def sync_accounts_by_ids(
     after_hours:
         When ``True``, passes through to ``sync_account_snapshots()``
         for after-hours cash inquiry.
+    fetch_positions:
+        When ``True`` (default), fetches positions via the provider.
+        When ``False``, only cash balance and risk limit snapshots are synced.
 
     Returns
     -------
@@ -320,6 +335,7 @@ async def sync_accounts_by_ids(
                 risk_limit_snapshot_repo=risk_limit_snapshot_repo,
                 account_id=account_id,
                 after_hours=after_hours,
+                fetch_positions=fetch_positions,
             )
         except Exception as exc:
             msg = f"Unexpected error syncing account_id={account_id}: {exc}"
@@ -359,6 +375,7 @@ async def sync_all_accounts(
     env: Environment | None = None,
     account_status: str | None = None,
     after_hours: bool = False,
+    fetch_positions: bool = True,
 ) -> BatchSyncResult:
     """Broker-agnostic auto-discover + batch snapshot sync.
 
@@ -394,6 +411,9 @@ async def sync_all_accounts(
     after_hours:
         When ``True``, passes through to ``sync_account_snapshots()``
         for after-hours cash inquiry (AFHR_FLPR_YN=Y).
+    fetch_positions:
+        When ``True`` (default), fetches positions via the provider.
+        When ``False``, only cash balance and risk limit snapshots are synced.
 
     Returns
     -------
@@ -464,6 +484,7 @@ async def sync_all_accounts(
                 risk_limit_snapshot_repo=risk_limit_snapshot_repo,
                 account_id=account.account_id,
                 after_hours=after_hours,
+                fetch_positions=fetch_positions,
             )
         except Exception as exc:
             msg = f"Unexpected error syncing account_id={account.account_id}: {exc}"

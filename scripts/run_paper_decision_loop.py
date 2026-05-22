@@ -594,6 +594,11 @@ def _serialize_cycle_result(
             )
             data["order_intent_id"] = str(result.intent.order_intent_id)
             data["sized_quantity"] = str(result.intent.request.quantity)
+            # EXE-001: phase trace
+            data["phase_trace"] = [
+                {"phase": pt.phase, "elapsed_ms": pt.elapsed_ms, "status": pt.status}
+                for pt in result.phase_trace
+            ] if result.phase_trace else []
     elif result is not None:
         data["status"] = result.status
         data["error_phase"] = result.error_phase
@@ -612,6 +617,11 @@ def _serialize_cycle_result(
             data["order_status"] = result.order.status.value
             data["client_order_id"] = result.order.client_order_id
             data["requested_quantity"] = str(result.order.requested_quantity)
+        # EXE-001: phase trace
+        data["phase_trace"] = [
+            {"phase": pt.phase, "elapsed_ms": pt.elapsed_ms, "status": pt.status}
+            for pt in result.phase_trace
+        ] if result.phase_trace else []
     else:
         data["status"] = "UNKNOWN"
 

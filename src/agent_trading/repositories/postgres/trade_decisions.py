@@ -214,3 +214,22 @@ class PostgresTradeDecisionRepository:
             inst_name: str | None = row.get("_instrument_name")
             items.append((entity, inst_name))
         return items, total_count
+
+    async def update_pipeline_stop(
+        self,
+        trade_decision_id: UUID,
+        phase: str,
+        reason: str,
+        stopped_at: datetime,
+    ) -> None:
+        """trade_decision이 제출 파이프라인의 어느 단계에서 중단되었는지 기록."""
+        await self._tx.connection.execute(
+            """
+            UPDATE trading.trade_decisions
+            SET pipeline_stop_phase = $1,
+                pipeline_stop_reason = $2,
+                pipeline_stopped_at = $3
+            WHERE trade_decision_id = $4
+            """,
+            phase, reason, stopped_at, trade_decision_id,
+        )

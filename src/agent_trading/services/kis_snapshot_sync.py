@@ -223,6 +223,9 @@ async def sync_kis_account_snapshots(
     # cash/orderable은 submit에 가장 중요하므로 positions보다 먼저 확보
     cash_entity: CashBalanceSnapshotEntity | None = None
 
+    # KIS API 응답 유효성 추적 (zero-out gate에서 사용)
+    had_cash_response = False
+
     try:
         raw_cash: dict[str, Any] = await rest_client.get_cash_balance()
     except BudgetExhaustedError as exc:
@@ -312,6 +315,8 @@ async def sync_kis_account_snapshots(
                         "VTTC8434R ord_psbl_amt also missing, legacy sync path)"
                     )
 
+            had_cash_response = True
+
             cash_entity = CashBalanceSnapshotEntity(
                 cash_balance_snapshot_id=uuid4(),
                 account_id=account_id,
@@ -325,6 +330,7 @@ async def sync_kis_account_snapshots(
                 orderable_amount=orderable_amount,
                 source_of_truth=_SOURCE_OF_TRUTH,
                 snapshot_at=snapshot_at,
+                fetch_status="success",
             )
         except Exception as exc:
             msg = f"Failed to map cash balance: {exc}"
@@ -405,6 +411,7 @@ async def sync_kis_account_snapshots(
                 unrealized_pnl=_safe_optional_decimal(raw.get(_KIS_EVL_PFLS_AMT)),
                 source_of_truth=_SOURCE_OF_TRUTH,
                 snapshot_at=snapshot_at,
+                fetch_status="success",
             )
         except Exception as exc:
             logger.warning("Failed to build PositionSnapshotEntity for pdno=%s: %s", pdno, exc)
@@ -421,42 +428,56 @@ async def sync_kis_account_snapshots(
 
     # ── 2b. Zero-out positions missing from KIS response ───────────────
     # KIS 응답에서 사라진 종목 = 전량 매도 → quantity=0으로 기록
-    try:
-        current_instrument_ids = set(pdno_to_instrument_id.values())
-        latest_snapshots = await position_snapshot_repo.list_latest_by_account(account_id)
+    #
+    # zero-out 전 KIS API 응답 유효성 확인:
+    # 실제 position이 파싱되었거나 cash balance 응답이 정상인 경우에만 zero-out 수행
+    had_actual_positions = len(pdno_to_instrument_id) > 0
+    if had_actual_positions or had_cash_response:
+        try:
+            current_instrument_ids = set(pdno_to_instrument_id.values())
+            latest_snapshots = await position_snapshot_repo.list_latest_by_account(account_id)
 
-        zeroed_count = 0
-        for snap in latest_snapshots:
-            if snap.quantity == Decimal("0"):
-                continue  # 이미 0 처리됨
-            if snap.instrument_id in current_instrument_ids:
-                continue  # KIS 응답에 있는 종목
+            zeroed_count = 0
+            for snap in latest_snapshots:
+                if snap.quantity == Decimal("0"):
+                    continue  # 이미 0 처리됨
+                if snap.instrument_id in current_instrument_ids:
+                    continue  # KIS 응답에 있는 종목
 
-            # KIS 응답에 없고 quantity>0인 종목 → quantity=0 snapshot 추가
-            zero_snapshot = PositionSnapshotEntity(
-                position_snapshot_id=uuid4(),
-                account_id=account_id,
-                instrument_id=snap.instrument_id,
-                quantity=Decimal("0"),
-                average_price=snap.average_price,
-                market_price=snap.market_price,
-                unrealized_pnl=snap.unrealized_pnl,
-                source_of_truth=_SOURCE_OF_TRUTH,
-                snapshot_at=snapshot_at,
+                # KIS 응답에 없고 quantity>0인 종목 → quantity=0 snapshot 추가
+                zero_snapshot = PositionSnapshotEntity(
+                    position_snapshot_id=uuid4(),
+                    account_id=account_id,
+                    instrument_id=snap.instrument_id,
+                    quantity=Decimal("0"),
+                    average_price=snap.average_price,
+                    market_price=snap.market_price,
+                    unrealized_pnl=snap.unrealized_pnl,
+                    source_of_truth=_SOURCE_OF_TRUTH,
+                    snapshot_at=snapshot_at,
+                    fetch_status="zeroed_out",
+                )
+                await position_snapshot_repo.add(zero_snapshot)
+                zeroed_count += 1
+
+            if zeroed_count > 0:
+                logger.info(
+                    "[ZERO_OUT] account=%s: zeroed %d positions missing from KIS response",
+                    account_id, zeroed_count,
+                )
+        except Exception:
+            logger.exception(
+                "[ZERO_OUT] failed for account=%s", account_id,
             )
-            await position_snapshot_repo.add(zero_snapshot)
-            zeroed_count += 1
-
-        if zeroed_count > 0:
-            logger.info(
-                "[ZERO_OUT] account=%s: zeroed %d positions missing from KIS response",
-                account_id, zeroed_count,
-            )
-    except Exception:
-        logger.exception(
-            "[ZERO_OUT] failed for account=%s", account_id,
+            # zero-out 실패는 치명적이지 않음 — 다음 cycle에서 재시도
+    else:
+        logger.warning(
+            "SKIP_ZERO_OUT account=%s — KIS response had no actual positions/cash "
+            "(pdno_mapped=%d, had_cash=%s)",
+            account_id,
+            len(pdno_to_instrument_id),
+            had_cash_response,
         )
-        # zero-out 실패는 치명적이지 않음 — 다음 cycle에서 재시도
 
     return result
 

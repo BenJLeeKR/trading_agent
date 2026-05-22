@@ -354,6 +354,14 @@ class TradeDecisionRepository(Protocol):
         """
         ...
 
+    async def update_pipeline_stop(
+        self,
+        trade_decision_id: UUID,
+        phase: str,
+        reason: str,
+        stopped_at: datetime,
+    ) -> None: ...
+
 class OrderRepository(Protocol):
     async def add(self, order: OrderRequestEntity) -> OrderRequestEntity:
         ...

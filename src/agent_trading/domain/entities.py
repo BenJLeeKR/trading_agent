@@ -128,6 +128,8 @@ class PositionSnapshotEntity:
     purchase_amount: Decimal | None = None
     evaluation_amount: Decimal | None = None
     created_at: datetime | None = None
+    fetch_status: str = "success"
+    """Status of this snapshot fetch: 'success' | 'partial' | 'stale' | 'fetch_failed' | 'zeroed_out'"""
 
 
 @dataclass(slots=True, frozen=True)
@@ -150,6 +152,8 @@ class CashBalanceSnapshotEntity:
     total_unrealized_pnl: Decimal | None = None
     orderable_amount: Decimal | None = None
     created_at: datetime | None = None
+    fetch_status: str = "success"
+    """Status of this snapshot fetch: 'success' | 'stale' | 'fetch_failed'"""
 
 
 @dataclass(slots=True, frozen=True)
@@ -235,6 +239,14 @@ class TradeDecisionEntity:
     # -- Axis 2: Source type for no-event policy differentiation --
     source_type: str | None = None
     """Origin of this symbol's inclusion: ``"core"`` | ``"held_position"`` | ``"event_overlay"`` | ``"market_overlay"`` | ``"manual"``."""
+
+    # -- Pipeline stop tracking (EXE-005A) --
+    pipeline_stop_phase: str | None = None
+    """제출 파이프라인 중 중단된 단계 (예: ``"pre_checks"``, ``"order_submission"``, ``"post_checks"``)."""
+    pipeline_stop_reason: str | None = None
+    """중단 사유 (예: ``"risk_check_failed"``, ``"no_order_request"``)."""
+    pipeline_stopped_at: datetime | None = None
+    """파이프라인이 중단된 시각."""
 
     # -- Legacy fields (kept for backward compatibility) --
     agent_run_id: UUID | None = None

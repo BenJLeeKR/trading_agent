@@ -399,6 +399,24 @@ class InMemoryTradeDecisionRepository:
         paged = items[offset : offset + limit]
         return [(item, None) for item in paged], total_count
 
+    async def update_pipeline_stop(
+        self,
+        trade_decision_id: UUID,
+        phase: str,
+        reason: str,
+        stopped_at: datetime,
+    ) -> None:
+        """In-memory 저장소에서 pipeline stop 필드를 업데이트.
+
+        ``TradeDecisionEntity``는 frozen dataclass이므로 ``object.__setattr__``로
+        필드를 직접 설정한다.
+        """
+        entity = self._items.get(trade_decision_id)
+        if entity is not None:
+            object.__setattr__(entity, "pipeline_stop_phase", phase)
+            object.__setattr__(entity, "pipeline_stop_reason", reason)
+            object.__setattr__(entity, "pipeline_stopped_at", stopped_at)
+
 class InMemoryOrderRepository:
     def __init__(self) -> None:
         self._items: dict[UUID, OrderRequestEntity] = {}

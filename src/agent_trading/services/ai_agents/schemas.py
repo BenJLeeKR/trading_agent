@@ -231,6 +231,10 @@ class AggregateEventView:
     """Number of material events actually grounded for this symbol."""
     no_material_events: bool = True
     """``True`` when there are no material events to analyze."""
+    interpretation_incomplete: bool = False
+    """True when the agent could not complete interpretation (timeout, provider error, etc.)"""
+    degraded_reason: str | None = None
+    """Machine-readable reason for degradation: ``'timeout'`` | ``'provider_error'`` | ``'self_contradiction_corrected'`` | ``None``"""
 
     def __post_init__(self) -> None:
         _logger = logging.getLogger(self.__class__.__module__)
@@ -340,6 +344,11 @@ class EventInterpretationOutput:
             # If items were removed, replace with filtered tuple
             if len(safe) != len(ev):
                 object.__setattr__(self, "events", tuple(safe))
+
+    @property
+    def is_degraded(self) -> bool:
+        """True when interpretation was incomplete or degraded."""
+        return self.aggregate_view.interpretation_incomplete
 
 
 # ============================================================================

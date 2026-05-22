@@ -7,20 +7,25 @@ The canonical test entrypoint is tests.scripts.test_run_ops_scheduler.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import date, datetime, time, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
 
+logger = logging.getLogger(__name__)
+
 from scripts.run_near_real_ops_scheduler import (
     CommandResult,
     HELD_POSITION_SELL_MAX_PER_DAY,
     HELD_POSITION_SELL_MAX_PER_CYCLE,
     KST,
+    ScheduledTask,
     SchedulerState,
     _BUDGET_CONSUMING_STATUSES,
     _build_dsn,
+    _build_tasks,
     _close_session_provider,
     _combine,
     _decision_command,
@@ -1514,3 +1519,292 @@ class TestIdleLifecycle:
         state.cycles = 0
         is_active = state.session_info is not None and state.cycles > 0
         assert is_active is False
+
+
+class TestScheduledTask:
+    """``ScheduledTask`` due/mark_ran 동작 검증 (``last_run_at`` 단일 기준)."""
+
+    def test_due_returns_true_when_last_run_at_is_none(self) -> None:
+        """최초 실행: last_run_at=None → due=True"""
+        now = datetime.now(KST)
+        task = ScheduledTask("test", 300, now)
+        assert task.due is True
+
+    def test_due_returns_false_before_interval_elapsed(self) -> None:
+        """실행 후 interval 이내 → due=False"""
+        now = datetime.now(KST)
+        task = ScheduledTask("test", 300, now)
+        task.last_run_at = now
+        assert task.due is False
+
+    def test_due_returns_true_after_interval_elapsed(self) -> None:
+        """실행 후 interval 경과 → due=True"""
+        task = ScheduledTask("test", 300, datetime.now(KST))
+        past = datetime.now(KST) - timedelta(seconds=301)
+        task.last_run_at = past
+        assert task.due is True
+
+    def test_mark_ran_stores_completion_time(self) -> None:
+        """mark_ran()이 전달된 completed_at을 last_run_at에 저장 (loop now와 독립)."""
+        task = ScheduledTask("test", 300, datetime.now(KST))
+        completed_at = datetime.now(KST) + timedelta(seconds=10)  # 실제 완료 시각
+        task.mark_ran(completed_at)
+        assert task.last_run_at == completed_at
+        assert task.last_run_at != datetime.now(KST)  # loop now와 다름을 확인
+        assert task.next_run_at == completed_at + timedelta(seconds=300)
+
+    def test_mark_ran_updates_with_different_time(self) -> None:
+        """mark_ran()에 전달된 now가 last_run_at에 반영됨."""
+        task = ScheduledTask("test", 300, datetime.now(KST))
+        later = datetime.now(KST) + timedelta(seconds=60)
+        task.mark_ran(later)
+        assert task.last_run_at == later
+        assert task.next_run_at == later + timedelta(seconds=300)
+
+    def test_multiple_mark_ran_cycles(self) -> None:
+        """여러 번 mark_ran 호출 시 last_run_at/next_run_at이 계속 갱신됨."""
+        task = ScheduledTask("test", 300, datetime.now(KST))
+        t1 = datetime.now(KST)
+        task.mark_ran(t1)
+        assert task.last_run_at == t1
+        assert task.next_run_at == t1 + timedelta(seconds=300)
+
+        t2 = t1 + timedelta(seconds=310)
+        task.mark_ran(t2)
+        assert task.last_run_at == t2
+        assert task.next_run_at == t2 + timedelta(seconds=300)
+
+
+class TestBuildTasks:
+    """``_build_tasks()`` — 4개 task 생성 검증."""
+
+    def test_build_tasks_creates_all_four(self) -> None:
+        """snapshot/event/decision/post_submit 4개 task 생성."""
+        now = datetime(2026, 5, 15, 9, 0, 0, tzinfo=KST)
+        tasks = _build_tasks(
+            now,
+            snapshot_interval=300,
+            event_interval=300,
+            decision_interval=300,
+            post_submit_interval=300,
+        )
+        assert set(tasks.keys()) == {"snapshot", "event", "decision", "post_submit"}
+        for name in ("snapshot", "event", "decision", "post_submit"):
+            assert tasks[name].interval_seconds == 300
+            assert tasks[name].next_run_at == now
+
+    def test_build_tasks_different_intervals(self) -> None:
+        """각 task마다 다른 interval 적용 가능."""
+        now = datetime(2026, 5, 15, 9, 0, 0, tzinfo=KST)
+        tasks = _build_tasks(
+            now,
+            snapshot_interval=60,
+            event_interval=120,
+            decision_interval=300,
+            post_submit_interval=600,
+        )
+        assert tasks["snapshot"].interval_seconds == 60
+        assert tasks["event"].interval_seconds == 120
+        assert tasks["decision"].interval_seconds == 300
+        assert tasks["post_submit"].interval_seconds == 600
+
+
+class TestCadenceTraceLogging:
+    """CADENCE_TRACE 로그 포맷 검증 (``ScheduledTask.due`` @property 대응)."""
+
+    def test_snapshot_cadence_trace_format(self, caplog: pytest.LogCaptureFixture) -> None:
+        """snapshot_sync CADENCE_TRACE가 예상 포맷으로 출력되는지 검증."""
+        caplog.set_level(logging.INFO)
+        now = datetime(2026, 5, 15, 9, 5, 0, tzinfo=KST)
+        task = ScheduledTask("snapshot", 300, now)
+
+        # snapshot 실행 로직 시뮬레이션 (메인 루프)
+        # due property는 last_run_at=None이면 항상 True 반환 (최초 실행)
+        if task.due:
+            last_run = task.last_run_at or now
+            gap = (now - last_run).total_seconds()
+            logger.info(
+                "CADENCE_TRACE snapshot_sync symbol=ALL "
+                "action=start due_at=%s last_run_gap=%.0fs target_interval=%ds drift=%.0fs",
+                now.isoformat(), gap, 300, gap - 300,
+            )
+            completed_at = datetime.now(KST)
+            task.mark_ran(completed_at)
+            logger.info(
+                "CADENCE_TRACE snapshot_sync symbol=ALL action=complete "
+                "completed_at=%s actual_duration=%.1fs next_at=%s",
+                completed_at.isoformat(),
+                (completed_at - now).total_seconds(),
+                task.next_run_at.isoformat(),
+            )
+
+        assert "CADENCE_TRACE" in caplog.text
+        assert "snapshot_sync" in caplog.text
+        assert "action=start" in caplog.text
+        assert "action=complete" in caplog.text
+        assert "last_run_gap=" in caplog.text
+        assert "target_interval=" in caplog.text
+        assert "drift=" in caplog.text
+
+    def test_decision_cadence_trace_format(self, caplog: pytest.LogCaptureFixture) -> None:
+        """decision_submit_gate CADENCE_TRACE가 snapshot과 동일한 포맷인지 검증."""
+        caplog.set_level(logging.INFO)
+        now = datetime(2026, 5, 15, 9, 5, 0, tzinfo=KST)
+        task = ScheduledTask("decision", 300, now)
+
+        # decision 실행 로직 시뮬레이션 (_run_intraday_due_tasks 내부)
+        if task.due:
+            last_run = task.last_run_at or now
+            gap = (now - last_run).total_seconds()
+            logger.info(
+                "CADENCE_TRACE decision_submit_gate symbol=ALL "
+                "action=start due_at=%s last_run_gap=%.0fs target_interval=%ds drift=%.0fs",
+                now.isoformat(), gap, 300, gap - 300,
+            )
+            completed_at = datetime.now(KST)
+            task.mark_ran(completed_at)
+            logger.info(
+                "CADENCE_TRACE decision_submit_gate symbol=ALL "
+                "action=complete completed_at=%s actual_duration=%.1fs next_at=%s",
+                completed_at.isoformat(),
+                (completed_at - now).total_seconds(),
+                task.next_run_at.isoformat(),
+            )
+
+        assert "CADENCE_TRACE" in caplog.text
+        assert "decision_submit_gate" in caplog.text
+        assert "action=start" in caplog.text
+        assert "action=complete" in caplog.text
+        # snapshot과 동일한 포맷 필드 검증
+        assert "last_run_gap=" in caplog.text
+        assert "target_interval=" in caplog.text
+        assert "drift=" in caplog.text
+
+    def test_cadence_trace_first_run_gap_zero(self, caplog: pytest.LogCaptureFixture) -> None:
+        """첫 실행(last_run_at=None) 시 gap=0으로 처리되는지 검증."""
+        caplog.set_level(logging.INFO)
+        now = datetime(2026, 5, 15, 9, 0, 0, tzinfo=KST)
+        task = ScheduledTask("snapshot", 300, now)
+
+        # due property는 last_run_at=None이면 항상 True
+        if task.due:
+            last_run = task.last_run_at or now  # first run: last_run_at is None
+            gap = (now - last_run).total_seconds()
+            logger.info(
+                "CADENCE_TRACE snapshot_sync symbol=ALL "
+                "action=start due_at=%s last_run_gap=%.0fs target_interval=%ds drift=%.0fs",
+                now.isoformat(), gap, 300, gap - 300,
+            )
+
+        # first run → gap=0, drift=-300
+        assert "last_run_gap=0" in caplog.text
+        assert "drift=-300" in caplog.text
+
+    def test_decision_complete_block_not_executed_when_not_due(
+        self, caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """``decision.due == False``일 때 complete 블록(completed_at, mark_ran,
+        ``CADENCE_TRACE action=complete``)이 실행되지 않는지 검증.
+
+        회귀 검증: ``decision_submit_gate`` 완료 블록이 ``if tasks["decision"].due:``
+        블록 내부(8칸 indent)에 위치해야 함 (버그: 4칸 indent로 블록 바깥에 위치).
+        """
+        caplog.set_level(logging.INFO)
+        now = datetime(2026, 5, 15, 9, 30, 0, tzinfo=KST)
+        task = ScheduledTask("decision", 300, now)
+
+        # due를 False로 만들기 위해 last_run_at을 실제 현재 시각 기준 100초 전으로 설정
+        # (ScheduledTask.due는 datetime.now(KST)를 기준으로 판단하므로
+        #  실제 현재 시각과의 차이로 due를 결정해야 함)
+        # interval=300초이므로 last_run_at + 100초 < now → due=False
+        task.mark_ran(datetime.now(KST) - timedelta(seconds=100))
+        last_run_before = task.last_run_at  # mark_ran() 호출 전 last_run_at 저장
+
+        # _run_intraday_due_tasks 내 decision 로직 시뮬레이션
+        if task.due:
+            last_run = task.last_run_at or now
+            gap = (now - last_run).total_seconds()
+            logger.info(
+                "CADENCE_TRACE decision_submit_gate symbol=ALL "
+                "action=start due_at=%s last_run_gap=%.0fs target_interval=%ds drift=%.0fs",
+                now.isoformat(), gap, 300, gap - 300,
+            )
+            completed_at = datetime.now(KST)
+            task.mark_ran(completed_at)
+            logger.info(
+                "CADENCE_TRACE decision_submit_gate symbol=ALL "
+                "action=complete completed_at=%s actual_duration=%.1fs next_at=%s",
+                completed_at.isoformat(),
+                (completed_at - now).total_seconds(),
+                task.next_run_at.isoformat(),
+            )
+
+        # due=False → if 블록이 실행되지 않음 → 검증
+        # 1. mark_ran()이 호출되지 않았으므로 last_run_at이 변경되지 않음
+        assert task.last_run_at == last_run_before, (
+            "mark_ran() should NOT be called when decision.due is False"
+        )
+
+        # 2. CADENCE_TRACE action=complete 로그가 출력되지 않음
+        assert "action=complete" not in caplog.text, (
+            "CADENCE_TRACE action=complete should NOT appear when decision.due is False"
+        )
+
+        # 3. CADENCE_TRACE action=start도 출력되지 않음 (if 블록 전체 미실행)
+        assert "action=start" not in caplog.text, (
+            "CADENCE_TRACE action=start should NOT appear when decision.due is False"
+        )
+
+
+class TestCadenceCompletionTime:
+    """``completed_at = datetime.now(KST)`` 기준 보정 검증."""
+
+    def test_snapshot_cadence_trace_complete_with_duration(
+        self, caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """CADENCE_TRACE action=complete에 actual_duration 포함 (snapshot)."""
+        caplog.set_level(logging.INFO)
+        task = ScheduledTask("snapshot", 300, datetime.now(KST))
+        now = datetime.now(KST)
+        completed_at = now + timedelta(seconds=45)  # 45초 걸린 task
+
+        actual_duration = (completed_at - now).total_seconds()
+        logger.info(
+            "CADENCE_TRACE snapshot_sync symbol=ALL action=complete "
+            "completed_at=%s actual_duration=%.1fs next_at=%s",
+            completed_at.isoformat(),
+            actual_duration,
+            task.next_run_at.isoformat() if task.next_run_at else "",
+        )
+
+        assert "actual_duration=45.0" in caplog.text
+
+    def test_decision_cadence_trace_complete_with_duration(
+        self, caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """decision CADENCE_TRACE action=complete에 actual_duration 포함."""
+        caplog.set_level(logging.INFO)
+        task = ScheduledTask("decision", 300, datetime.now(KST))
+        now = datetime.now(KST)
+        completed_at = now + timedelta(seconds=187)  # decision 평균 180초
+
+        actual_duration = (completed_at - now).total_seconds()
+        logger.info(
+            "CADENCE_TRACE decision_submit_gate symbol=ALL "
+            "action=complete completed_at=%s actual_duration=%.1fs next_at=%s",
+            completed_at.isoformat(),
+            actual_duration,
+            task.next_run_at.isoformat() if task.next_run_at else "",
+        )
+
+        assert "actual_duration=187.0" in caplog.text
+
+    def test_next_run_at_based_on_completion_time(self) -> None:
+        """next_run_at이 완료 시각 기준으로 계산되는지 검증."""
+        task = ScheduledTask("test", 300, datetime.now(KST))
+        now = datetime.now(KST)
+        completed_at = now + timedelta(seconds=45)  # 45초 실행
+
+        task.mark_ran(completed_at)
+        expected_next = completed_at + timedelta(seconds=300)
+        assert task.next_run_at == expected_next

@@ -145,16 +145,33 @@ class CommandResult:
 
 @dataclass(slots=True)
 class ScheduledTask:
-    """Periodic task state."""
+    """Periodic task state.
+
+    ``due``는 ``last_run_at + interval_seconds``를 기준으로 판단하여,
+    ``next_run_at``과 무관하게 동작한다.  ``next_run_at``은 CADENCE_TRACE
+    로깅에서 다음 예정 시각 표시용으로만 유지한다.
+    """
 
     name: str
     interval_seconds: int
     next_run_at: datetime
+    last_run_at: datetime | None = None
 
-    def due(self, now: datetime) -> bool:
-        return now >= self.next_run_at
+    @property
+    def due(self) -> bool:
+        """``last_run_at`` 단일 기준 due 판정.
+
+        - ``last_run_at is None`` (최초 실행) → ``True``
+        - ``last_run_at + interval_seconds <= now`` → ``True``
+        - 그 외 → ``False``
+        """
+        now = datetime.now(KST)
+        if self.last_run_at is None:
+            return True
+        return now >= self.last_run_at + timedelta(seconds=self.interval_seconds)
 
     def mark_ran(self, now: datetime) -> None:
+        self.last_run_at = now
         self.next_run_at = now + timedelta(seconds=self.interval_seconds)
 
 
@@ -867,19 +884,14 @@ async def _run_intraday_due_tasks(
     timeout_seconds: int,
     env: dict[str, str],
     now: datetime,
+    decision_interval: int = 300,
 ) -> None:
-    """Run due intraday periodic tasks sequentially."""
-    if tasks["snapshot"].due(now):
-        await _run_and_record(
-            state,
-            "snapshot_sync",
-            _snapshot_command(),
-            timeout_seconds=timeout_seconds,
-            env=env,
-        )
-        tasks["snapshot"].mark_ran(now)
+    """Run due intraday periodic tasks sequentially.
 
-    if tasks["event"].due(now):
+    Note: snapshot_sync is handled in the main loop to decouple
+    its cadence from decision_submit_gate's potential long runtime.
+    """
+    if tasks["event"].due:
         await _run_and_record(
             state,
             "event_ingestion",
@@ -887,9 +899,10 @@ async def _run_intraday_due_tasks(
             timeout_seconds=timeout_seconds,
             env=env,
         )
-        tasks["event"].mark_ran(now)
+        completed_at = datetime.now(KST)
+        tasks["event"].mark_ran(completed_at)
 
-    if tasks["decision"].due(now):
+    if tasks["decision"].due:
         # DB-based submit budget check (survives process crash/restart)
         db_submit_count = await _get_db_submit_count(state.run_date)
         effective_submit_count = max(state.submit_count, db_submit_count)
@@ -914,13 +927,20 @@ async def _run_intraday_due_tasks(
 
         # decision_submit_gate timeout: must accommodate all universe symbols
         # running concurrently via asyncio.gather() with semaphore(5).
-        # 14 symbols × ~110s average = ~330s, but held_position sell symbols
-        # (REDUCE/EXIT) may take longer due to AI agent execution.
-        # Increased from 420s to 600s to prevent premature subprocess kill
-        # when held_position sell symbols are still being processed.
-        # The per-symbol PER_AGENT_HARD_TIMEOUT (300s) provides individual
-        # safety, while this outer timeout covers the entire gather().
-        _DECISION_TIMEOUT = 600  # seconds; 14 symbols × ~110s + held_position sell headroom
+        # Subprocess 내부에 PER_AGENT_HARD_TIMEOUT=300s가 이미 존재하므로
+        # scheduler-level timeout을 300s로 통일.
+        # 실제 운영 기준 177~206초면 완료 (HP sell 활성화 시 모니터링 필요).
+        _DECISION_TIMEOUT = 300  # seconds; PER_AGENT_HARD_TIMEOUT와 일치
+
+        # ★ CADENCE_TRACE: decision_submit_gate start
+        last_run = tasks["decision"].last_run_at or now
+        gap = (now - last_run).total_seconds()
+        logger.info(
+            "CADENCE_TRACE decision_submit_gate symbol=ALL "
+            "action=start due_at=%s last_run_gap=%.0fs target_interval=%ds drift=%.0fs",
+            now.isoformat(), gap, decision_interval, gap - decision_interval,
+        )
+
         result = await _run_and_record(
             state,
             "decision_dry_run" if dry_run else "decision_submit_gate",
@@ -950,9 +970,19 @@ async def _run_intraday_due_tasks(
                     effective_submit_count,
                     max_submit_per_day,
                 )
-        tasks["decision"].mark_ran(now)
+        completed_at = datetime.now(KST)
+        tasks["decision"].mark_ran(completed_at)
 
-    if tasks["post_submit"].due(now):
+        # ★ CADENCE_TRACE: decision_submit_gate complete
+        logger.info(
+            "CADENCE_TRACE decision_submit_gate symbol=ALL "
+            "action=complete completed_at=%s actual_duration=%.1fs next_at=%s",
+            completed_at.isoformat(),
+            (completed_at - now).total_seconds(),
+            tasks["decision"].next_run_at.isoformat(),
+        )
+
+    if tasks["post_submit"].due:
         await _run_and_record(
             state,
             "post_submit_sync",
@@ -960,7 +990,8 @@ async def _run_intraday_due_tasks(
             timeout_seconds=timeout_seconds,
             env=env,
         )
-        tasks["post_submit"].mark_ran(now)
+        completed_at = datetime.now(KST)
+        tasks["post_submit"].mark_ran(completed_at)
 
 
 def _build_tasks(
@@ -1574,16 +1605,50 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                         )
 
                 if intraday_at <= now < market_close_at:
-                    if await _session_gate(session_provider, run_date, state, "intraday"):
-                        await _run_intraday_due_tasks(
+                    # ★ P0: snapshot은 session_gate와 무관하게 자체 due 체크
+                    # decision_submit_gate의 장기 timeout과 독립적인 cadence 유지
+                    if tasks["snapshot"].due:
+                        last_run = tasks["snapshot"].last_run_at or now
+                        gap = (now - last_run).total_seconds()
+                        logger.info(
+                            "CADENCE_TRACE snapshot_sync symbol=ALL "
+                            "action=start due_at=%s last_run_gap=%.0fs target_interval=%ds drift=%.0fs",
+                            now.isoformat(), gap, args.snapshot_interval,
+                            gap - args.snapshot_interval,
+                        )
+                        await _run_and_record(
                             state,
-                            tasks,
-                            max_submit_per_day=args.max_submit_per_day,
-                            held_position_sell_max_per_day=args.held_position_sell_max_per_day,
+                            "snapshot_sync",
+                            _snapshot_command(),
                             timeout_seconds=args.task_timeout,
                             env=env,
-                            now=now,
                         )
+                        completed_at = datetime.now(KST)
+                        tasks["snapshot"].mark_ran(completed_at)
+                        logger.info(
+                            "CADENCE_TRACE snapshot_sync symbol=ALL action=complete "
+                            "completed_at=%s actual_duration=%.1fs next_at=%s",
+                            completed_at.isoformat(),
+                            (completed_at - now).total_seconds(),
+                            tasks["snapshot"].next_run_at.isoformat(),
+                        )
+
+                    if await _session_gate(session_provider, run_date, state, "intraday"):
+                        # snapshot이 이미 위에서 처리되었으므로 event/decision/post_submit만 전달
+                        if any(
+                            tasks[k].due
+                            for k in ("event", "decision", "post_submit")
+                        ):
+                            await _run_intraday_due_tasks(
+                                state,
+                                tasks,
+                                max_submit_per_day=args.max_submit_per_day,
+                                held_position_sell_max_per_day=args.held_position_sell_max_per_day,
+                                timeout_seconds=args.task_timeout,
+                                env=env,
+                                now=now,
+                                decision_interval=args.decision_interval,
+                            )
                     else:
                         logger.info(
                             "Intraday tasks skipped by session gate for %s",

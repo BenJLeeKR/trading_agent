@@ -15,6 +15,7 @@ See Also
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -34,7 +35,7 @@ from agent_trading.domain.entities import (
     RiskLimitSnapshotEntity,
 )
 from agent_trading.domain.enums import AssetClass, Environment, OrderSide, OrderStatus, OrderType, TimeInForce
-from agent_trading.domain.models import SubmitOrderRequest
+from agent_trading.domain.models import Quote, SubmitOrderRequest
 from agent_trading.services.decision_orchestrator import (
     AIDecisionInputs,
     AgentExecutionBundle,
@@ -42,6 +43,7 @@ from agent_trading.services.decision_orchestrator import (
     DecisionOrchestratorService,
     OrderIntent,
     SubmitResult,
+    PhaseTraceEntry,
     _normalize_decision_type,
     build_submit_order_request_from_decision,
 )
@@ -1977,4 +1979,602 @@ class TestEIPostProcessingGuard:
         )
         assert "근거:weak" in summary, (
             f"Expected '근거:weak' in summary, got: {summary}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# EXE-001: PhaseTraceEntry + SubmitResult.phase_trace 검증
+# ---------------------------------------------------------------------------
+
+
+class TestPhaseTrace:
+    """EXE-001: PhaseTraceEntry + SubmitResult.phase_trace 검증"""
+
+    class _ApproveFDCAgent:
+        """APPROVE를 반환하는 FDC agent stub (pipeline 진행용)."""
+
+        @property
+        def agent_name(self) -> str:
+            return "final_decision_composer"
+
+        @property
+        def schema_version(self) -> str:
+            return "1.0.0"
+
+        async def run(self, request: AgentExecutionRequest) -> FinalDecisionComposerOutput:
+            return FinalDecisionComposerOutput(
+                decision_type="APPROVE",
+                side="BUY",
+                symbol="AAPL",
+                confidence=0.8,
+                conviction=0.7,
+                summary="Approved by test stub",
+            )
+
+    @pytest.fixture
+    def repos(self) -> Any:
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        account = AccountEntity(
+            account_id=uuid4(),
+            client_id=uuid4(),
+            broker_account_id=uuid4(),
+            environment=Environment.PAPER,
+            account_alias="test-account",
+            account_masked="test-****",
+            status="active",
+        )
+        repos.accounts._items[account.account_id] = account
+        config_version = ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=account.client_id,
+            environment=Environment.PAPER,
+            version_tag="v1.0",
+            config_json={},
+            checksum="abc123",
+            activated_at=now,
+        )
+        repos.config_versions._items[config_version.config_version_id] = config_version
+        instrument = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="005930",
+            market_code="KRX",
+            asset_class=AssetClass.KR_STOCK,
+            currency="KRW",
+            name="Samsung Electronics",
+        )
+        repos.instruments._items[instrument.instrument_id] = instrument
+        fresh_cash = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            currency="KRW",
+            available_cash=Decimal("1000000"),
+            settled_cash=Decimal("0"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        repos.cash_balance_snapshots._items[fresh_cash.cash_balance_snapshot_id] = fresh_cash
+        fresh_pos = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            instrument_id=instrument.instrument_id,
+            quantity=Decimal("10"),
+            average_price=Decimal("50000"),
+            market_price=Decimal("50000"),
+            unrealized_pnl=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        repos.position_snapshots._items[fresh_pos.position_snapshot_id] = fresh_pos
+        return repos
+
+    @pytest.fixture
+    def service(self, repos: Any) -> DecisionOrchestratorService:
+        return DecisionOrchestratorService(
+            repos=repos,
+            final_decision_agent=self._ApproveFDCAgent(),
+        )
+
+    @pytest.fixture
+    def hold_service(self, repos: Any) -> DecisionOrchestratorService:
+        return DecisionOrchestratorService(repos=repos)
+
+    @pytest.fixture
+    def sample_request(self) -> SubmitOrderRequest:
+        return _make_request()
+
+    @pytest.fixture
+    def order_manager(self, repos: Any) -> OrderManager:
+        from agent_trading.services.reconciliation_service import ReconciliationService
+        return OrderManager(
+            repos=repos,
+            reconciliation_service=ReconciliationService(repos=repos),
+        )
+
+    @pytest.mark.asyncio
+    async def test_phase_trace_in_submit_result(
+        self,
+        service: DecisionOrchestratorService,
+        order_manager: OrderManager,
+        sample_request: SubmitOrderRequest,
+    ) -> None:
+        """성공 submit에서 phase_trace가 올바르게 누적되는지 검증."""
+        submitted_entity = _make_order_entity(status=OrderStatus.SUBMITTED, request=sample_request)
+
+        async def _mock_submit(*args: Any, **kwargs: Any) -> OrderRequestEntity:
+            return submitted_entity
+
+        broker_stub = object()
+        with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):
+            result = await service.assemble_and_submit(
+                sample_request,
+                order_manager=order_manager,
+                broker=broker_stub,
+            )
+
+        assert result.phase_trace is not None
+        assert len(result.phase_trace) > 0
+        # 첫 번째는 ai_assemble start
+        assert result.phase_trace[0].phase == "ai_assemble"
+        assert result.phase_trace[0].status == "start"
+        # 마지막은 broker_submit ok
+        assert result.phase_trace[-1].status in ("ok", "reconcile")
+
+    @pytest.mark.asyncio
+    async def test_phase_trace_elapsed_ms_positive(
+        self,
+        service: DecisionOrchestratorService,
+        order_manager: OrderManager,
+        sample_request: SubmitOrderRequest,
+    ) -> None:
+        """elapsed_ms가 양수인지 검증."""
+        submitted_entity = _make_order_entity(status=OrderStatus.SUBMITTED, request=sample_request)
+
+        async def _mock_submit(*args: Any, **kwargs: Any) -> OrderRequestEntity:
+            return submitted_entity
+
+        broker_stub = object()
+        with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):
+            result = await service.assemble_and_submit(
+                sample_request,
+                order_manager=order_manager,
+                broker=broker_stub,
+            )
+
+        for entry in result.phase_trace:
+            assert entry.elapsed_ms >= 0, (
+                f"phase={entry.phase} elapsed_ms={entry.elapsed_ms}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_phase_trace_in_skipped_result(
+        self,
+        hold_service: DecisionOrchestratorService,
+        order_manager: OrderManager,
+    ) -> None:
+        """SKIPPED result에도 phase_trace가 포함되는지 검증 (HOLD decision)."""
+        request = _make_request()
+
+        async def _mock_submit(*args: Any, **kwargs: Any) -> OrderRequestEntity:
+            raise AssertionError("Broker should not be called for HOLD decisions")
+
+        broker_stub = object()
+        with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):
+            result = await hold_service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=broker_stub,
+            )
+
+        assert result.status == "SKIPPED"
+        assert len(result.phase_trace) > 0
+        # sizing 단계에서 skipped 상태 확인 (HOLD decision은 sizing에서 skip됨)
+        assert any(
+            pt.status == "skipped" for pt in result.phase_trace
+        ), f"No skipped phase in phase_trace: {result.phase_trace}"
+
+
+# ---------------------------------------------------------------------------
+# EXE-002: quote_resolution circuit breaker + cache 검증
+# ---------------------------------------------------------------------------
+
+
+class TestQuoteCircuitBreaker:
+    """EXE-002: quote_resolution circuit breaker + cache 검증"""
+
+    class _ApproveFDCAgent:
+        """APPROVE를 반환하는 FDC agent stub."""
+
+        @property
+        def agent_name(self) -> str:
+            return "final_decision_composer"
+
+        @property
+        def schema_version(self) -> str:
+            return "1.0.0"
+
+        async def run(self, request: AgentExecutionRequest) -> FinalDecisionComposerOutput:
+            return FinalDecisionComposerOutput(
+                decision_type="APPROVE",
+                side="BUY",
+                symbol="AAPL",
+                confidence=0.8,
+                conviction=0.7,
+                summary="Approved by test stub",
+            )
+
+    @pytest.fixture
+    def repos(self) -> Any:
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        account = AccountEntity(
+            account_id=uuid4(),
+            client_id=uuid4(),
+            broker_account_id=uuid4(),
+            environment=Environment.PAPER,
+            account_alias="test-account",
+            account_masked="test-****",
+            status="active",
+        )
+        repos.accounts._items[account.account_id] = account
+        config_version = ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=account.client_id,
+            environment=Environment.PAPER,
+            version_tag="v1.0",
+            config_json={},
+            checksum="abc123",
+            activated_at=now,
+        )
+        repos.config_versions._items[config_version.config_version_id] = config_version
+        instrument = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="005930",
+            market_code="KRX",
+            asset_class=AssetClass.KR_STOCK,
+            currency="KRW",
+            name="Samsung Electronics",
+        )
+        repos.instruments._items[instrument.instrument_id] = instrument
+        fresh_cash = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            currency="KRW",
+            available_cash=Decimal("1000000"),
+            settled_cash=Decimal("0"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        repos.cash_balance_snapshots._items[fresh_cash.cash_balance_snapshot_id] = fresh_cash
+        fresh_pos = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            instrument_id=instrument.instrument_id,
+            quantity=Decimal("10"),
+            average_price=Decimal("50000"),
+            market_price=Decimal("50000"),
+            unrealized_pnl=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+        )
+        repos.position_snapshots._items[fresh_pos.position_snapshot_id] = fresh_pos
+        return repos
+
+    @pytest.fixture
+    def service(self, repos: Any) -> DecisionOrchestratorService:
+        return DecisionOrchestratorService(
+            repos=repos,
+            final_decision_agent=self._ApproveFDCAgent(),
+        )
+
+    @pytest.fixture
+    def order_manager(self, repos: Any) -> OrderManager:
+        from agent_trading.services.reconciliation_service import ReconciliationService
+        return OrderManager(
+            repos=repos,
+            reconciliation_service=ReconciliationService(repos=repos),
+        )
+
+    @pytest.mark.asyncio
+    async def test_quote_cache_hit(
+        self,
+        service: DecisionOrchestratorService,
+        order_manager: OrderManager,
+    ) -> None:
+        """동일 symbol 연속 호출 시 cache hit.
+
+        MARKET order(price=None)로 quote_resolution 경로를 활성화하고,
+        broker.get_quote()가 Quote를 반환하도록 mock한다.
+        첫 번째 호출 → cache miss → get_quote() 호출.
+        두 번째 호출 → cache hit (5s TTL 이내).
+        """
+        # MARKET order: price=None으로 quote resolution 경로 진입
+        request = _make_request(price=None)
+
+        submitted_entity = _make_order_entity(status=OrderStatus.SUBMITTED, request=request)
+
+        async def _mock_submit(*args: Any, **kwargs: Any) -> OrderRequestEntity:
+            return submitted_entity
+
+        # get_quote()가 정상 Quote를 반환하도록 mock
+        mock_quote = Quote(
+            symbol="005930",
+            market="KRX",
+            bid=Decimal("50000"),
+            ask=Decimal("50100"),
+            last=Decimal("50050"),
+            as_of=datetime.now(timezone.utc),
+        )
+
+        broker_mock = MagicMock()
+        broker_mock.get_quote = AsyncMock(return_value=mock_quote)
+
+        with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):
+            # 1st call — cache miss
+            result1 = await service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=broker_mock,
+            )
+            assert result1.status == "SUBMITTED"
+
+            # 2nd call — should be cache hit (within 5s TTL)
+            result2 = await service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=broker_mock,
+            )
+            assert result2.status == "SUBMITTED"
+
+        # 두 번째 호출에서 cache_hit phase trace 확인
+        cache_hit_found = any(
+            "cache_hit" in pt.status for pt in result2.phase_trace
+        )
+        assert cache_hit_found, (
+            f"No cache_hit in phase_trace: {result2.phase_trace}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_quote_circuit_breaker_after_failures(
+        self,
+        service: DecisionOrchestratorService,
+        order_manager: OrderManager,
+    ) -> None:
+        """연속 quote 실패 → circuit breaker open.
+
+        broker.get_quote()가 TimeoutError를 4회 발생시키고,
+        4번째 호출에서 circuit_breaker_skip이 phase_trace에 기록되는지 검증.
+        """
+        request = _make_request(price=None)
+
+        submitted_entity = _make_order_entity(status=OrderStatus.SUBMITTED, request=request)
+
+        async def _mock_submit(*args: Any, **kwargs: Any) -> OrderRequestEntity:
+            return submitted_entity
+
+        broker_mock = MagicMock()
+        broker_mock.get_quote = AsyncMock(side_effect=asyncio.TimeoutError("quote timeout"))
+
+        with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):
+            for i in range(4):
+                result = await service.assemble_and_submit(
+                    request,
+                    order_manager=order_manager,
+                    broker=broker_mock,
+                )
+                # 실패해도 pipeline은 계속 진행 (empty quote fallback)
+                assert result.status == "SUBMITTED", (
+                    f"Call {i+1}: expected SUBMITTED, got {result.status}"
+                )
+
+        # 4번째 호출에서는 circuit_breaker_skip 확인
+        circuit_breaker_found = any(
+            "circuit_breaker_skip" in pt.status for pt in result.phase_trace
+        )
+        assert circuit_breaker_found, (
+            f"No circuit_breaker_skip in phase_trace: {result.phase_trace}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# EXE-005A: pipeline_stop_phase/reason 기록 검증
+# ---------------------------------------------------------------------------
+
+
+class TestPipelineStop:
+    """EXE-005A: pipeline_stop_phase/reason 기록 검증"""
+
+    class _ApproveFDCAgent:
+        """APPROVE를 반환하는 FDC agent stub."""
+
+        @property
+        def agent_name(self) -> str:
+            return "final_decision_composer"
+
+        @property
+        def schema_version(self) -> str:
+            return "1.0.0"
+
+        async def run(self, request: AgentExecutionRequest) -> FinalDecisionComposerOutput:
+            return FinalDecisionComposerOutput(
+                decision_type="APPROVE",
+                side="BUY",
+                symbol="AAPL",
+                confidence=0.8,
+                conviction=0.7,
+                summary="Approved by test stub",
+            )
+
+    @pytest.fixture
+    def repos(self) -> Any:
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        account = AccountEntity(
+            account_id=uuid4(),
+            client_id=uuid4(),
+            broker_account_id=uuid4(),
+            environment=Environment.PAPER,
+            account_alias="test-account",
+            account_masked="test-****",
+            status="active",
+        )
+        repos.accounts._items[account.account_id] = account
+        config_version = ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=account.client_id,
+            environment=Environment.PAPER,
+            version_tag="v1.0",
+            config_json={},
+            checksum="abc123",
+            activated_at=now,
+        )
+        repos.config_versions._items[config_version.config_version_id] = config_version
+        instrument = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="005930",
+            market_code="KRX",
+            asset_class=AssetClass.KR_STOCK,
+            currency="KRW",
+            name="Samsung Electronics",
+        )
+        repos.instruments._items[instrument.instrument_id] = instrument
+        repos.cash_balance_snapshots._items.clear()
+        repos.position_snapshots._items.clear()
+        return repos
+
+    @pytest.fixture
+    def order_manager(self, repos: Any) -> OrderManager:
+        from agent_trading.services.reconciliation_service import ReconciliationService
+        return OrderManager(
+            repos=repos,
+            reconciliation_service=ReconciliationService(repos=repos),
+        )
+
+    @pytest.mark.asyncio
+    async def test_pipeline_stop_set_on_sizing_skip(
+        self,
+        repos: Any,
+        order_manager: OrderManager,
+    ) -> None:
+        """sizing skip 시 pipeline_stop이 기록되는지 검증."""
+        request = _make_request(quantity=Decimal("100"), price=Decimal("50000"))
+
+        account = next(
+            a for a in repos.accounts._items.values()
+            if a.account_alias == "test-account"
+        )
+
+        # 현금 부족 → sizing zero → SKIPPED
+        repos.cash_balance_snapshots._items[account.account_id] = (
+            CashBalanceSnapshotEntity(
+                cash_balance_snapshot_id=uuid4(),
+                account_id=account.account_id,
+                available_cash=Decimal("1000"),
+                settled_cash=Decimal("1000"),
+                unsettled_cash=Decimal("0"),
+                currency="KRW",
+                source_of_truth="broker",
+                snapshot_at=datetime.now(timezone.utc),
+            )
+        )
+
+        async def _mock_submit(*args: Any, **kwargs: Any) -> OrderRequestEntity:
+            raise AssertionError("Broker should not be called when sizing returns zero")
+
+        broker_stub = object()
+        service = DecisionOrchestratorService(
+            repos=repos,
+            final_decision_agent=self._ApproveFDCAgent(),
+        )
+        with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):
+            result = await service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=broker_stub,
+            )
+
+        assert result.status == "SKIPPED", f"Expected SKIPPED, got {result.status}"
+        assert result.error_phase == "sizing", (
+            f"Expected error_phase='sizing', got {result.error_phase}"
+        )
+
+        # DB에 pipeline_stop이 기록되었는지 확인
+        td = await repos.trade_decisions.get(result.trade_decision_id)
+        assert td is not None, "TradeDecisionEntity must exist"
+        assert td.pipeline_stop_phase == "sizing", (
+            f"Expected pipeline_stop_phase='sizing', got {td.pipeline_stop_phase}"
+        )
+        assert td.pipeline_stop_reason == "sizing_rejected", (
+            f"Expected pipeline_stop_reason='sizing_rejected', got {td.pipeline_stop_reason}"
+        )
+        assert td.pipeline_stopped_at is not None, (
+            "pipeline_stopped_at must be set"
+        )
+
+    @pytest.mark.asyncio
+    async def test_pipeline_stop_not_set_on_success(
+        self,
+        repos: Any,
+        order_manager: OrderManager,
+    ) -> None:
+        """성공 submit 시 pipeline_stop이 'completed'로 기록되는지 검증."""
+        request = _make_request()
+
+        account = next(
+            a for a in repos.accounts._items.values()
+            if a.account_alias == "test-account"
+        )
+
+        # 충분한 현금 seed
+        repos.cash_balance_snapshots._items[account.account_id] = (
+            CashBalanceSnapshotEntity(
+                cash_balance_snapshot_id=uuid4(),
+                account_id=account.account_id,
+                available_cash=Decimal("1000000"),
+                settled_cash=Decimal("1000000"),
+                unsettled_cash=Decimal("0"),
+                currency="KRW",
+                source_of_truth="broker",
+                snapshot_at=datetime.now(timezone.utc),
+            )
+        )
+
+        # Instrument seed (repos fixture에서 instrument를 clear했으므로 다시 추가)
+        instrument = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="005930",
+            market_code="KRX",
+            asset_class=AssetClass.KR_STOCK,
+            currency="KRW",
+            name="Samsung Electronics",
+        )
+        repos.instruments._items[instrument.instrument_id] = instrument
+
+        submitted_entity = _make_order_entity(status=OrderStatus.SUBMITTED, request=request)
+
+        async def _mock_submit(*args: Any, **kwargs: Any) -> OrderRequestEntity:
+            return submitted_entity
+
+        broker_stub = object()
+        service = DecisionOrchestratorService(
+            repos=repos,
+            final_decision_agent=self._ApproveFDCAgent(),
+        )
+        with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):
+            result = await service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=broker_stub,
+            )
+
+        assert result.status == "SUBMITTED", (
+            f"Expected SUBMITTED, got {result.status}"
+        )
+
+        td = await repos.trade_decisions.get(result.trade_decision_id)
+        assert td is not None, "TradeDecisionEntity must exist"
+        assert td.pipeline_stop_phase == "completed", (
+            f"Expected pipeline_stop_phase='completed', got {td.pipeline_stop_phase}"
         )

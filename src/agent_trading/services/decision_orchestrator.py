@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -27,7 +27,7 @@ from agent_trading.domain.entities import (
     TradeDecisionEntity,
 )
 from agent_trading.domain.enums import DecisionType, EntryStyle, OrderSide, OrderStatus, OrderType
-from agent_trading.domain.models import SubmitOrderRequest
+from agent_trading.domain.models import Quote, SubmitOrderRequest
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.services.order_sync_service import OrderSyncService
 from agent_trading.repositories.container import RepositoryContainer
@@ -84,6 +84,11 @@ _PER_AGENT_TIMEOUT = 35  # seconds per agent
 _USE_SUBPROCESS_ISOLATION: bool = (
     os.environ.get("AGENT_SUBPROCESS_ISOLATION", "1") == "1"
 )
+
+# Phase 1.5 quote circuit breaker (EXE-002)
+_CIRCUIT_BREAKER_THRESHOLD = 3  # 연속 실패 횟수 → 서킷 오픈
+_CIRCUIT_BREAKER_COOLDOWN = 60  # 서킷 오픈 지속 시간(초)
+_QUOTE_CACHE_TTL = 5  # quote 캐시 TTL(초)
 
 
 # ---------------------------------------------------------------------------
@@ -279,6 +284,34 @@ class OrderIntent:
 
 
 # ---------------------------------------------------------------------------
+# Phase trace entry — per-phase timing/diagnostics for the submit pipeline
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True, frozen=True)
+class PhaseTraceEntry:
+    """단일 파이프라인 단계의 실행 추적 정보.
+
+    ``assemble_and_submit()``의 각 주요 단계(phase)가
+    언제 시작/종료되었는지, 어떤 상태로 끝났는지를 기록한다.
+
+    Parameters
+    ----------
+    phase : str
+        단계 식별자 (예: ``"ai_assemble"``, ``"quote_resolution/AAPL"``).
+    elapsed_ms : int
+        해당 단계의 소요 시간 (밀리초).
+    status : str
+        단계 결과: ``"start"`` | ``"ok"`` | ``"skipped"`` | ``"error"`` |
+        ``"cache_hit"`` | ``"circuit_breaker_skip"`` | ``"reconcile"``.
+    """
+
+    phase: str
+    elapsed_ms: int
+    status: str
+
+
+# ---------------------------------------------------------------------------
 # Submit result — return type for the full assemble → submit pipeline
 # ---------------------------------------------------------------------------
 
@@ -315,6 +348,8 @@ class SubmitResult:
         Human-readable error detail, if any.
     trade_decision_id
         UUID of the persisted ``TradeDecisionEntity``, if available.
+    phase_trace
+        각 파이프라인 단계의 실행 추적 정보 (``PhaseTraceEntry`` 튜플).
     """
 
     status: str
@@ -324,6 +359,7 @@ class SubmitResult:
     error_message: str | None = None
     trade_decision_id: UUID | None = None
     decision_context_id: UUID | None = None
+    phase_trace: tuple[PhaseTraceEntry, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -456,6 +492,10 @@ class DecisionOrchestratorService:
         self._provider_base_url = provider_base_url
         self._provider_model_id = provider_model_id
         self._provider_timeout_seconds = provider_timeout_seconds
+        # --- EXE-002: quote circuit breaker + cache state ---
+        self._quote_failures: dict[str, int] = {}  # symbol → 연속 실패 횟수
+        self._quote_skip_until: dict[str, datetime] = {}  # symbol → 서킷 오픈 deadline
+        self._quote_cache: dict[str, tuple[Quote, datetime]] = {}  # symbol → (quote, cached_at)
 
     def _check_held_position_sell_override(
         self,
@@ -942,7 +982,23 @@ class DecisionOrchestratorService:
         SubmitResult
             Structured result with status, intent, order, and error details.
         """
+        # ── Phase trace accumulator (EXE-001) ──
+        _phase_start = time_module.monotonic()
+        _phase_trace: list[PhaseTraceEntry] = []
+
+        def _add_phase(phase: str, status: str) -> None:
+            """현재 단계 추적을 기록하고 타이머를 재설정한다."""
+            nonlocal _phase_start
+            now = time_module.monotonic()
+            elapsed = int((now - _phase_start) * 1000)
+            _phase_trace.append(PhaseTraceEntry(phase=phase, elapsed_ms=elapsed, status=status))
+            _phase_start = now
+
         # ── Phase 1: assemble() ──
+        _symbol = request.symbol
+        _add_phase("ai_assemble", "start")
+        logger.info("PHASE_TRACE symbol=%s phase=assemble_start elapsed_ms=0 status=start", _symbol)
+        _assemble_t0 = time_module.monotonic()
         logger.info("Phase 1: assemble() — running AI agents …")
         try:
             intent = await self.assemble(
@@ -951,6 +1007,12 @@ class DecisionOrchestratorService:
                 order_intent_id=order_intent_id,
                 seeded_events=seeded_events,
             )
+            _assemble_elapsed = time_module.monotonic() - _assemble_t0
+            logger.info(
+                "PHASE_TRACE symbol=%s phase=assemble_done elapsed_ms=%d status=ok",
+                _symbol, int(_assemble_elapsed * 1000),
+            )
+            _add_phase("ai_assemble", "ok")
         except asyncio.TimeoutError:
             logger.error(
                 "Phase 1 TIMEOUT: assemble() exceeded timeout. "
@@ -1019,22 +1081,77 @@ class DecisionOrchestratorService:
             )
             quote = {}
         elif intent.request.price is None:
+            _symbol_q = intent.request.symbol
+            _add_phase(f"quote_resolution/{_symbol_q}", "start")
             logger.info(
                 "PHASE_TRACE: symbol=%s phase=quote_resolution start",
-                intent.request.symbol,
+                _symbol_q,
             )
-            try:
-                quote = await asyncio.wait_for(
-                    broker.get_quote(
-                        intent.request.symbol,
-                        intent.request.market,
-                    ),
-                    timeout=10.0,
-                )
+            # EXE-002: circuit breaker check
+            skip_until = self._quote_skip_until.get(_symbol_q)
+            if skip_until and datetime.now(timezone.utc) < skip_until:
                 logger.info(
-                    "PHASE_TRACE: symbol=%s phase=quote_resolution done quote_keys=%s",
-                    intent.request.symbol, list(quote.keys()),
+                    "PHASE_TRACE 1.5 quote_circuit_breaker_skip/%s", _symbol_q,
                 )
+                quote = {}
+                _add_phase(f"quote_resolution/{_symbol_q}", "circuit_breaker_skip")
+            else:
+                # EXE-002: cache check
+                cached = self._quote_cache.get(_symbol_q)
+                quote: Quote | None = None
+                if cached is not None:
+                    cached_quote, cached_at = cached
+                    if (datetime.now(timezone.utc) - cached_at).total_seconds() < _QUOTE_CACHE_TTL:
+                        quote = cached_quote
+                        logger.info(
+                            "PHASE_TRACE 1.5 quote_cache_hit/%s", _symbol_q,
+                        )
+                        _add_phase(f"quote_resolution/{_symbol_q}", "cache_hit")
+                    else:
+                        del self._quote_cache[_symbol_q]
+                if quote is None:  # 캐시 미스 → 실제 호출
+                    try:
+                        quote = await asyncio.wait_for(
+                            broker.get_quote(
+                                intent.request.symbol,
+                                intent.request.market,
+                            ),
+                            timeout=10.0,
+                        )
+                        # 캐시 저장
+                        self._quote_cache[_symbol_q] = (quote, datetime.now(timezone.utc))
+                        # 실패 카운트 리셋
+                        self._quote_failures.pop(_symbol_q, None)
+                        logger.info(
+                            "PHASE_TRACE: symbol=%s phase=quote_resolution done quote=%s",
+                            _symbol_q, str(quote),
+                        )
+                        _add_phase(f"quote_resolution/{_symbol_q}", "ok")
+                    except (asyncio.TimeoutError, Exception):
+                        # 실패 추적
+                        failures = self._quote_failures.get(_symbol_q, 0) + 1
+                        self._quote_failures[_symbol_q] = failures
+                        if failures >= _CIRCUIT_BREAKER_THRESHOLD:
+                            self._quote_skip_until[_symbol_q] = datetime.now(timezone.utc) + timedelta(seconds=_CIRCUIT_BREAKER_COOLDOWN)
+                            logger.warning(
+                                "CADENCE_TRACE quote_circuit_breaker_open symbol=%s failures=%d cooldown=%ds",
+                                _symbol_q, failures, _CIRCUIT_BREAKER_COOLDOWN,
+                            )
+                        logger.warning(
+                            "Phase 1.5: broker quote timeout or error for symbol=%s — "
+                            "proceeding with best-effort fallback (empty quote).",
+                            _symbol_q,
+                            exc_info=True,
+                        )
+                        quote = Quote(
+                            symbol=_symbol_q,
+                            market=intent.request.market,
+                            bid=None,
+                            ask=None,
+                            last=None,
+                            as_of=datetime.now(timezone.utc),
+                        )
+                        _add_phase(f"quote_resolution/{_symbol_q}", "error")
                 # Priority: last > ask > bid
                 if quote.last is not None and quote.last > 0:
                     reference_price = quote.last
@@ -1047,20 +1164,21 @@ class DecisionOrchestratorService:
                         "Phase 1.5: resolved reference_price=%s from quote "
                         "(last=%s ask=%s bid=%s) for symbol=%s MARKET order",
                         reference_price, quote.last, quote.ask, quote.bid,
-                        intent.request.symbol,
+                        _symbol_q,
                     )
-            except (asyncio.TimeoutError, Exception):
-                logger.warning(
-                    "Phase 1.5: broker quote timeout or error for symbol=%s — "
-                    "proceeding with best-effort fallback (empty quote).",
-                    intent.request.symbol,
-                    exc_info=True,
-                )
-                quote = {}
+        else:
+            quote = {}
 
+        _sizing_t0 = time_module.monotonic()
+        _add_phase(f"sizing/{_symbol}", "start")
+        logger.info(
+            "PHASE_TRACE symbol=%s phase=sizing_start elapsed_ms=0 status=start",
+            _symbol,
+        )
         sizing_inputs = self._build_sizing_inputs(intent, reference_price=reference_price)
         sizing_result = calculate_sizing(sizing_inputs)
 
+        _sizing_elapsed = time_module.monotonic() - _sizing_t0
         logger.info(
             "Sizing Phase 1.5: request_qty=%s sizing_qty=%s "
             "applied_constraints=%s skip_reason=%s",
@@ -1098,11 +1216,27 @@ class DecisionOrchestratorService:
                     sizing_result.skip_reason,
                     trade_decision_id,
                 )
+                _sizing_elapsed_hp = time_module.monotonic() - _sizing_t0
+                logger.info(
+                    "PHASE_TRACE symbol=%s phase=sizing_skip_held_position elapsed_ms=%d "
+                    "status=skip_reason=%s",
+                    _symbol, int(_sizing_elapsed_hp * 1000),
+                    sizing_result.skip_reason or "unknown",
+                )
             logger.info(
                 "Phase 1.5 SKIPPED (sizing): reason=%s, trade_decision_id=%s",
                 sizing_result.skip_reason,
                 trade_decision_id,
             )
+            _add_phase(f"sizing/{_symbol}", "skipped")
+            # EXE-005A: pipeline_stop 기록
+            if trade_decision_id is not None:
+                await self._repos.trade_decisions.update_pipeline_stop(
+                    trade_decision_id,
+                    "sizing",
+                    "sizing_rejected",
+                    datetime.now(timezone.utc),
+                )
             return SubmitResult(
                 status="SKIPPED",
                 intent=intent,
@@ -1110,6 +1244,7 @@ class DecisionOrchestratorService:
                 decision_context_id=intent.decision_context_id,
                 error_phase="sizing",
                 error_message=sizing_result.skip_reason or "Sizing rejected order",
+                phase_trace=tuple(_phase_trace),
             )
 
         # Apply sizing result — override intent request quantity
@@ -1131,7 +1266,19 @@ class DecisionOrchestratorService:
                 sizing_result.quantity,
             )
 
+        _add_phase(f"sizing/{_symbol}", "ok")
+        logger.info(
+            "PHASE_TRACE symbol=%s phase=sizing_done elapsed_ms=%d status=ok",
+            _symbol, int((time_module.monotonic() - _sizing_t0) * 1000),
+        )
+
         # ── Phase 1.5+: Duplicate Sell Guard (SELL only) ──
+        _sell_guard_t0 = time_module.monotonic()
+        _add_phase(f"sell_guard/{_symbol}", "start")
+        logger.info(
+            "PHASE_TRACE symbol=%s phase=sell_guard_start elapsed_ms=0 status=start",
+            _symbol,
+        )
         if intent.request.side == OrderSide.SELL and effective_qty > 0:
             account_id: UUID | None = (
                 intent.context.decision_context.account_id
@@ -1169,6 +1316,15 @@ class DecisionOrchestratorService:
                             sell_availability.blocking_reason,
                             trade_decision_id,
                         )
+                        _add_phase(f"sell_guard/{_symbol}", "skipped")
+                        # EXE-005A: pipeline_stop 기록
+                        if trade_decision_id is not None:
+                            await self._repos.trade_decisions.update_pipeline_stop(
+                                trade_decision_id,
+                                "sell_guard",
+                                "sell_guard_blocked",
+                                datetime.now(timezone.utc),
+                            )
                         return SubmitResult(
                             status="SKIPPED",
                             intent=intent,
@@ -1179,6 +1335,7 @@ class DecisionOrchestratorService:
                                 sell_availability.blocking_reason
                                 or "Sell guard blocked duplicate sell"
                             ),
+                            phase_trace=tuple(_phase_trace),
                         )
                     logger.info(
                         "Phase 1.5+ SELL GUARD ALLOW: "
@@ -1198,7 +1355,17 @@ class DecisionOrchestratorService:
                     "Phase 1.5+: no account_id available, skipping sell guard",
                 )
 
+        logger.info(
+            "PHASE_TRACE symbol=%s phase=sell_guard_done elapsed_ms=%d status=ok",
+            _symbol, int((time_module.monotonic() - _sell_guard_t0) * 1000),
+        )
+
         # ── Phase 2: validate intent (skip HOLD/WATCH) ──
+        _validate_t0 = time_module.monotonic()
+        logger.info(
+            "PHASE_TRACE symbol=%s phase=validate_start elapsed_ms=0 status=start",
+            _symbol,
+        )
         _dt = intent.ai_backend_inputs.decision_type
         logger.info(
             "Phase 2: validate intent — decision_type=%s",
@@ -1225,6 +1392,21 @@ class DecisionOrchestratorService:
                 _dt,
                 trade_decision_id,
             )
+            logger.info(
+                "PHASE_TRACE symbol=%s phase=validate_skip_%s elapsed_ms=%d status=skipped",
+                _symbol, skip_reason,
+                int((time_module.monotonic() - _validate_t0) * 1000),
+            )
+            _add_phase(f"translation/{_symbol}", "skipped")
+            # EXE-005A: pipeline_stop 기록
+            if trade_decision_id is not None:
+                reason = "decision_hold" if _dt == "HOLD" else "decision_watch"
+                await self._repos.trade_decisions.update_pipeline_stop(
+                    trade_decision_id,
+                    "translation",
+                    reason,
+                    datetime.now(timezone.utc),
+                )
             return SubmitResult(
                 status="SKIPPED",
                 intent=intent,
@@ -1235,9 +1417,18 @@ class DecisionOrchestratorService:
                     f"Decision type '{_dt}' "
                     f"produced no order request"
                 ),
+                phase_trace=tuple(_phase_trace),
             )
 
+        _add_phase(f"translation/{_symbol}", "ok")
+
         # ── Phase 3: OrderManager.create_order() ──
+        _order_create_t0 = time_module.monotonic()
+        _add_phase(f"order_create/{_symbol}", "start")
+        logger.info(
+            "PHASE_TRACE symbol=%s phase=order_create_start elapsed_ms=0 status=start",
+            _symbol,
+        )
         logger.info(
             "Phase 3: create_order — client_order_id=%s symbol=%s side=%s",
             submit_request.client_order_id,
@@ -1255,6 +1446,15 @@ class DecisionOrchestratorService:
                 "Phase 3 FAILED (order_create): client_order_id=%s",
                 submit_request.client_order_id,
             )
+            _add_phase(f"order_create/{_symbol}", "error")
+            # EXE-005A: pipeline_stop 기록
+            if trade_decision_id is not None:
+                await self._repos.trade_decisions.update_pipeline_stop(
+                    trade_decision_id,
+                    "order_create",
+                    "order_create_failed",
+                    datetime.now(timezone.utc),
+                )
             return SubmitResult(
                 status="ERROR",
                 intent=intent,
@@ -1262,9 +1462,11 @@ class DecisionOrchestratorService:
                 error_message=f"create_order() failed: {exc}",
                 trade_decision_id=trade_decision_id,
                 decision_context_id=intent.decision_context_id,
+                phase_trace=tuple(_phase_trace),
             )
 
         # ── Phase 4a: transition DRAFT → VALIDATED ──
+        _add_phase(f"transition_validated/{_symbol}", "start")
         logger.info(
             "Phase 4a: transition_to(VALIDATED) — order_id=%s",
             order.order_request_id,
@@ -1282,6 +1484,14 @@ class DecisionOrchestratorService:
                 "failed for order_id=%s",
                 order.order_request_id,
             )
+            # EXE-005A: pipeline_stop 기록
+            if trade_decision_id is not None:
+                await self._repos.trade_decisions.update_pipeline_stop(
+                    trade_decision_id,
+                    "transition",
+                    "transition_failed",
+                    datetime.now(timezone.utc),
+                )
             return SubmitResult(
                 status="ERROR",
                 intent=intent,
@@ -1290,9 +1500,11 @@ class DecisionOrchestratorService:
                 error_message=f"transition_to(VALIDATED) failed: {exc}",
                 trade_decision_id=trade_decision_id,
                 decision_context_id=intent.decision_context_id,
+                phase_trace=tuple(_phase_trace),
             )
 
         # ── Phase 4b: transition VALIDATED → PENDING_SUBMIT ──
+        _add_phase(f"transition_pending_submit/{_symbol}", "start")
         logger.info(
             "Phase 4b: transition_to(PENDING_SUBMIT) — order_id=%s",
             validated_order.order_request_id,
@@ -1310,6 +1522,14 @@ class DecisionOrchestratorService:
                 "failed for order_id=%s",
                 validated_order.order_request_id,
             )
+            # EXE-005A: pipeline_stop 기록
+            if trade_decision_id is not None:
+                await self._repos.trade_decisions.update_pipeline_stop(
+                    trade_decision_id,
+                    "transition",
+                    "transition_failed",
+                    datetime.now(timezone.utc),
+                )
             return SubmitResult(
                 status="ERROR",
                 intent=intent,
@@ -1318,9 +1538,26 @@ class DecisionOrchestratorService:
                 error_message=f"transition_to(PENDING_SUBMIT) failed: {exc}",
                 trade_decision_id=trade_decision_id,
                 decision_context_id=intent.decision_context_id,
+                phase_trace=tuple(_phase_trace),
             )
 
+        _order_create_elapsed = time_module.monotonic() - _order_create_t0
+        logger.info(
+            "PHASE_TRACE symbol=%s phase=order_create_done elapsed_ms=%d status=ok",
+            _symbol, int(_order_create_elapsed * 1000),
+        )
+        logger.info(
+            "PHASE_TRACE symbol=%s phase=validate_done elapsed_ms=%d status=ok",
+            _symbol, int((time_module.monotonic() - _validate_t0) * 1000),
+        )
+
         # ── Phase 4c: stale snapshot guard (account-level preferred) ──
+        _stale_guard_t0 = time_module.monotonic()
+        _add_phase(f"stale_snapshot_guard/{_symbol}", "start")
+        logger.info(
+            "PHASE_TRACE symbol=%s phase=stale_snapshot_guard_start elapsed_ms=0 status=start",
+            _symbol,
+        )
         account_id: UUID | None = (
             intent.context.decision_context.account_id
             if intent.context is not None
@@ -1396,6 +1633,21 @@ class DecisionOrchestratorService:
                             exc_info=True,
                         )
 
+                    logger.info(
+                        "PHASE_TRACE symbol=%s phase=stale_snapshot_guard_blocked "
+                        "elapsed_ms=%d status=stale_account",
+                        _symbol,
+                        int((time_module.monotonic() - _stale_guard_t0) * 1000),
+                    )
+                    _add_phase(f"stale_snapshot_guard/{_symbol}", "skipped")
+                    # EXE-005A: pipeline_stop 기록
+                    if trade_decision_id is not None:
+                        await self._repos.trade_decisions.update_pipeline_stop(
+                            trade_decision_id,
+                            "stale_snapshot_guard",
+                            "stale_snapshot",
+                            datetime.now(timezone.utc),
+                        )
                     return SubmitResult(
                         status="SKIPPED",
                         intent=intent,
@@ -1409,6 +1661,7 @@ class DecisionOrchestratorService:
                         ),
                         trade_decision_id=trade_decision_id,
                         decision_context_id=intent.decision_context_id,
+                        phase_trace=tuple(_phase_trace),
                     )
         else:
             # Fallback: run-level summary
@@ -1465,6 +1718,21 @@ class DecisionOrchestratorService:
                             exc_info=True,
                         )
 
+                    logger.info(
+                        "PHASE_TRACE symbol=%s phase=stale_snapshot_guard_blocked "
+                        "elapsed_ms=%d status=stale_run",
+                        _symbol,
+                        int((time_module.monotonic() - _stale_guard_t0) * 1000),
+                    )
+                    _add_phase(f"stale_snapshot_guard/{_symbol}", "skipped")
+                    # EXE-005A: pipeline_stop 기록
+                    if trade_decision_id is not None:
+                        await self._repos.trade_decisions.update_pipeline_stop(
+                            trade_decision_id,
+                            "stale_snapshot_guard",
+                            "stale_snapshot",
+                            datetime.now(timezone.utc),
+                        )
                     return SubmitResult(
                         status="SKIPPED",
                         intent=intent,
@@ -1478,7 +1746,15 @@ class DecisionOrchestratorService:
                         ),
                         trade_decision_id=trade_decision_id,
                         decision_context_id=intent.decision_context_id,
+                        phase_trace=tuple(_phase_trace),
                     )
+
+        logger.info(
+            "PHASE_TRACE symbol=%s phase=stale_snapshot_guard_passed "
+            "elapsed_ms=%d status=ok",
+            _symbol,
+            int((time_module.monotonic() - _stale_guard_t0) * 1000),
+        )
 
         # ── Phase 5: submit to broker ──
         _decision_type: str = "unknown"
@@ -1490,13 +1766,18 @@ class DecisionOrchestratorService:
             else "unknown"
         )
         logger.info(
+            "PHASE_TRACE symbol=%s phase=submit_start elapsed_ms=0 status=start",
+            _symbol,
+        )
+        logger.info(
             "[SUBMIT_START] symbol=%s decision_type=%s side=%s order_id=%s",
             _submit_symbol,
             _decision_type,
             submit_request.side if hasattr(submit_request, "side") else "unknown",
             pending_order.order_request_id,
         )
-        _submit_start = time_module.monotonic()
+        _add_phase(f"broker_submit/{_symbol}", "start")
+        _submit_t0 = time_module.monotonic()
         try:
             submitted_order = await order_manager.submit_order_to_broker(
                 pending_order,
@@ -1505,7 +1786,11 @@ class DecisionOrchestratorService:
                 actor_type=actor_type,
                 actor_id=actor_id,
             )
-            _submit_elapsed = time_module.monotonic() - _submit_start
+            _submit_elapsed = time_module.monotonic() - _submit_t0
+            logger.info(
+                "PHASE_TRACE symbol=%s phase=submit_done elapsed_ms=%d status=ok",
+                _symbol, int(_submit_elapsed * 1000),
+            )
             logger.info(
                 "[SUBMIT_DONE] symbol=%s elapsed=%.1fs status=%s order_id=%s",
                 _submit_symbol,
@@ -1513,8 +1798,21 @@ class DecisionOrchestratorService:
                 submitted_order.status.value if hasattr(submitted_order, "status") else "unknown",
                 pending_order.order_request_id,
             )
+            # broker_submit 결과에 따라 phase_trace 상태 설정 (최종 매핑 전에)
+            if submitted_order.status == OrderStatus.SUBMITTED:
+                _add_phase(f"broker_submit/{_symbol}", "ok")
+            elif submitted_order.status == OrderStatus.RECONCILE_REQUIRED:
+                _add_phase(f"broker_submit/{_symbol}", "reconcile")
+            elif submitted_order.status == OrderStatus.REJECTED:
+                _add_phase(f"broker_submit/{_symbol}", "error")
+            else:
+                _add_phase(f"broker_submit/{_symbol}", "ok")
         except Exception as exc:
-            _submit_elapsed = time_module.monotonic() - _submit_start
+            _submit_elapsed = time_module.monotonic() - _submit_t0
+            logger.info(
+                "PHASE_TRACE symbol=%s phase=submit_done elapsed_ms=%d status=error",
+                _symbol, int(_submit_elapsed * 1000),
+            )
             logger.info(
                 "[SUBMIT_DONE] symbol=%s elapsed=%.1fs status=ERROR order_id=%s",
                 _submit_symbol,
@@ -1529,6 +1827,15 @@ class DecisionOrchestratorService:
                 _decision_type,
                 trade_decision_id,
             )
+            _add_phase(f"broker_submit/{_symbol}", "error")
+            # EXE-005A: pipeline_stop 기록
+            if trade_decision_id is not None:
+                await self._repos.trade_decisions.update_pipeline_stop(
+                    trade_decision_id,
+                    "broker_submit",
+                    "broker_submit_failed",
+                    datetime.now(timezone.utc),
+                )
             return SubmitResult(
                 status="ERROR",
                 intent=intent,
@@ -1537,6 +1844,7 @@ class DecisionOrchestratorService:
                 error_message=f"submit_order_to_broker() failed: {exc}",
                 trade_decision_id=trade_decision_id,
                 decision_context_id=intent.decision_context_id,
+                phase_trace=tuple(_phase_trace),
             )
 
         # ── Phase 5.5: post-submit sync (fire-and-forget with timeout) ──
@@ -1592,6 +1900,14 @@ class DecisionOrchestratorService:
         else:
             result_status = f"UNEXPECTED:{final_status.value}"
 
+        # EXE-005A: pipeline_stop 기록 (completed)
+        if trade_decision_id is not None:
+            await self._repos.trade_decisions.update_pipeline_stop(
+                trade_decision_id,
+                "completed",
+                "",
+                datetime.now(timezone.utc),
+            )
         logger.info(
             "Pipeline complete: status=%s order_id=%s trade_decision_id=%s",
             result_status,
@@ -1604,6 +1920,7 @@ class DecisionOrchestratorService:
             order=submitted_order,
             trade_decision_id=trade_decision_id,
             decision_context_id=intent.decision_context_id,
+            phase_trace=tuple(_phase_trace),
         )
 
     # ------------------------------------------------------------------
@@ -2082,6 +2399,13 @@ class DecisionOrchestratorService:
                 decision_context_id,
             )
             event_output = EventInterpretationOutput()
+            # ★ P0: timeout 시 degraded 플래그 설정
+            degraded_av = replace(
+                event_output.aggregate_view,
+                interpretation_incomplete=True,
+                degraded_reason="timeout",
+            )
+            object.__setattr__(event_output, "aggregate_view", degraded_av)
             # ★ timeout fallback에서도 EI summary 생성
             object.__setattr__(event_output, "summary", _build_ei_summary(event_output))
         except Exception:
@@ -2093,6 +2417,13 @@ class DecisionOrchestratorService:
                 exc_info=True,
             )
             event_output = EventInterpretationOutput()
+            # ★ P0: provider_error 시 degraded 플래그 설정
+            degraded_av = replace(
+                event_output.aggregate_view,
+                interpretation_incomplete=True,
+                degraded_reason="provider_error",
+            )
+            object.__setattr__(event_output, "aggregate_view", degraded_av)
             # ★ exception fallback에서도 EI summary 생성
             object.__setattr__(event_output, "summary", _build_ei_summary(event_output))
 
