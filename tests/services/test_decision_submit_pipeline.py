@@ -1428,10 +1428,14 @@ class TestEIPostProcessingGuard:
     """
 
     @pytest.mark.asyncio
-    async def test_guard_corrects_when_input_events_exist_but_output_zero(
+    async def test_self_contradiction_guard_preserves_llm_output(
         self,
     ) -> None:
-        """input events > 0, output event_count=0 → guard가 aggregate_view 보정."""
+        """Self-contradiction guard: LLM 응답 유지 + degraded 플래그만 설정.
+
+        input events > 0, output event_count=0 → guard가 LLM 값을 유지하고
+        degraded 플래그만 추가.
+        """
         from agent_trading.services.ai_agents.base import RawProviderResponse
         from agent_trading.services.ai_agents.schemas import (
             AggregateEventView,
@@ -1440,7 +1444,7 @@ class TestEIPostProcessingGuard:
         from agent_trading.services.decision_orchestrator import ScoreResult
         from agent_trading.domain.entities import ExternalEventEntity
 
-        # Provider가 events=[]를 반환하는 상황 시뮬레이션
+        # Provider가 events=[], event_count=0, no_material_events=True 반환
         provider_output = EventInterpretationOutput(
             symbol="005930",
             events=(),
@@ -1489,16 +1493,34 @@ class TestEIPostProcessingGuard:
 
         result = await agent.run(request)
 
-        # Guard가 aggregate_view를 보정했는지 확인
-        assert result.aggregate_view.event_count == 1, (
-            f"Expected event_count=1 after guard correction, got {result.aggregate_view.event_count}"
+        # LLM 응답이 유지되어야 함 (override되지 않음)
+        assert result.aggregate_view.event_count == 0, (
+            f"Expected event_count=0 (LLM preserved), got {result.aggregate_view.event_count}"
         )
-        assert result.aggregate_view.no_material_events is False, (
-            "Expected no_material_events=False after guard correction"
+        assert result.aggregate_view.no_material_events is True, (
+            "Expected no_material_events=True (LLM preserved)"
         )
         # events tuple은 그대로 유지 (LLM이 반환한 그대로)
         assert len(result.events) == 0, (
             "events tuple should remain empty (LLM output preserved)"
+        )
+        # Degraded 플래그가 설정되어야 함
+        assert result.aggregate_view.interpretation_incomplete is True, (
+            "Expected interpretation_incomplete=True"
+        )
+        assert result.aggregate_view.degraded_reason == "self_contradiction_corrected", (
+            f"Expected degraded_reason='self_contradiction_corrected', got {result.aggregate_view.degraded_reason}"
+        )
+        assert result.is_degraded is True, (
+            "Expected is_degraded=True"
+        )
+        # Summary 확인 (Case 3: self-contradiction)
+        assert result.summary is not None, "Summary should be set"
+        assert "입력 이벤트 감지됨" in result.summary, (
+            f"Expected '입력 이벤트 감지됨' in summary, got: {result.summary}"
+        )
+        assert "세부 이벤트 추출 누락" in result.summary, (
+            f"Expected '세부 이벤트 추출 누락' in summary, got: {result.summary}"
         )
 
     @pytest.mark.asyncio
@@ -1642,10 +1664,17 @@ class TestEIPostProcessingGuard:
         )
 
     @pytest.mark.asyncio
-    async def test_guard_fallback_when_provider_raises_exception(
+    async def test_exception_fallback_sets_degraded_flags_with_input(
         self,
     ) -> None:
-        """Provider가 exception을 던지면 fallback이 input_event_count를 보존."""
+        """Provider exception + input_events>0 → fallback에 degraded flags 설정.
+
+        - event_count=0 (LLM 응답 없음 → 0)
+        - no_material_events=True (fallback-safe)
+        - interpretation_incomplete=True
+        - degraded_reason='provider_error'
+        - summary: "(1건) 입력 이벤트 감지됨. AI 분석 실패."
+        """
         from agent_trading.services.ai_agents.base import RawProviderResponse
         from agent_trading.services.ai_agents.schemas import (
             AggregateEventView,
@@ -1691,12 +1720,20 @@ class TestEIPostProcessingGuard:
 
         result = await agent.run(request)
 
-        # Fallback에서 input_event_count를 보존했는지 확인
-        assert result.aggregate_view.event_count == 1, (
-            f"Expected event_count=1 from fallback guard, got {result.aggregate_view.event_count}"
+        # Degraded flags 확인
+        assert result.aggregate_view.interpretation_incomplete is True, (
+            "Expected interpretation_incomplete=True"
         )
-        assert result.aggregate_view.no_material_events is False, (
-            "Expected no_material_events=False from fallback guard"
+        assert result.aggregate_view.degraded_reason == "provider_error", (
+            f"Expected degraded_reason='provider_error', got {result.aggregate_view.degraded_reason}"
+        )
+        # event_count는 LLM 응답이 없으므로 0
+        assert result.aggregate_view.event_count == 0, (
+            f"Expected event_count=0 (no LLM response), got {result.aggregate_view.event_count}"
+        )
+        # no_material_events는 fallback-safe → True
+        assert result.aggregate_view.no_material_events is True, (
+            "Expected no_material_events=True (fallback-safe)"
         )
         # symbol이 빈 값이 아닌 request.symbol로 설정되어야 함
         assert result.symbol == "000810", (
@@ -1706,12 +1743,22 @@ class TestEIPostProcessingGuard:
         assert result.aggregate_view.evidence_strength == "weak", (
             f"Expected evidence_strength='weak' from fallback, got '{result.aggregate_view.evidence_strength}'"
         )
+        # Summary 확인 (Case 4: provider failure)
+        assert result.summary is not None and len(result.summary) > 0, (
+            f"Summary should be set, got: '{result.summary}'"
+        )
+        assert "입력 이벤트 감지됨" in result.summary, (
+            f"Expected '입력 이벤트 감지됨' in summary, got: {result.summary}"
+        )
+        assert "AI 분석 실패" in result.summary, (
+            f"Expected 'AI 분석 실패' in summary, got: {result.summary}"
+        )
 
     @pytest.mark.asyncio
-    async def test_guard_fallback_when_input_events_zero(
+    async def test_exception_fallback_sets_degraded_flags_no_input(
         self,
     ) -> None:
-        """Provider가 exception을 던져도 input events=0이면 event_count=0 유지."""
+        """Provider exception + input events=0 → fallback에 degraded flags 설정."""
         from agent_trading.services.ai_agents.base import RawProviderResponse
         from agent_trading.services.ai_agents.schemas import (
             AggregateEventView,
@@ -1740,7 +1787,14 @@ class TestEIPostProcessingGuard:
 
         result = await agent.run(request)
 
-        # input events=0이므로 event_count=0 유지
+        # Degraded flags 확인
+        assert result.aggregate_view.interpretation_incomplete is True, (
+            "Expected interpretation_incomplete=True"
+        )
+        assert result.aggregate_view.degraded_reason == "provider_error", (
+            f"Expected degraded_reason='provider_error', got {result.aggregate_view.degraded_reason}"
+        )
+        # event_count=0 유지
         assert result.aggregate_view.event_count == 0, (
             f"Expected event_count=0 when input events=0, got {result.aggregate_view.event_count}"
         )
@@ -1751,18 +1805,84 @@ class TestEIPostProcessingGuard:
         assert result.symbol == "000150", (
             f"Expected symbol='000150', got '{result.symbol}'"
         )
+        # Summary 확인
+        assert result.summary is not None and len(result.summary) > 0, (
+            f"Summary should be set, got: '{result.summary}'"
+        )
 
     # ------------------------------------------------------------------
     # Round 12: Summary 보정 + 진단 로깅 테스트
     # ------------------------------------------------------------------
 
-    def test_summary_fallback_when_event_count_positive_but_events_empty(
+    def test_summary_case2_degraded_with_events(
         self,
     ) -> None:
-        """event_count>0, no_material_events=False, events=[] → fallback summary.
+        """Degraded + events 있음 → summary에 "(일부 해석 누락)" 포함.
 
-        ``_build_ei_summary()``가 "유의미한 신규 이벤트 없음" 대신
-        "(N건) 입력 이벤트 N건 감지됨..."을 반환해야 함.
+        Case 2: degraded 상태에서 events가 있으면 "(일부 해석 누락)"을 추가.
+        """
+        from agent_trading.services.ai_agents.event_interpretation import (
+            _build_ei_summary,
+        )
+        from agent_trading.services.ai_agents.schemas import (
+            AggregateEventView,
+            EventInterpretationOutput,
+            InterpretedEvent,
+        )
+
+        output = EventInterpretationOutput(
+            symbol="000150",
+            events=(
+                InterpretedEvent(
+                    source_event_id="evt-001",
+                    event_type="earnings",
+                    source_name="DART",
+                    source_reliability_tier="tier1",
+                    stale=False,
+                    impact_direction="positive",
+                    impact_horizon="short_term",
+                    confidence=0.8,
+                    novelty="routine",
+                    supports_entry=True,
+                    supports_exit=False,
+                    risk_flags=(),
+                    reason_codes=("earnings_surprise",),
+                    summary="호실적 발표: 매출 15% 증가",
+                ),
+            ),
+            aggregate_view=AggregateEventView(
+                overall_bias="positive",
+                event_conflict=False,
+                top_reason_codes=("earnings_surprise",),
+                opposing_evidence=(),
+                evidence_strength="moderate",
+                event_count=1,
+                no_material_events=False,
+                interpretation_incomplete=True,
+                degraded_reason="partial_failure",
+            ),
+        )
+
+        summary = _build_ei_summary(output)
+
+        # 정상 요약 포맷 유지
+        assert "(1건)" in summary, (
+            f"Expected '(1건)' in summary, got: {summary}"
+        )
+        assert "호실적" in summary, (
+            f"Expected event summary in output, got: {summary}"
+        )
+        # "(일부 해석 누락)" 포함
+        assert "일부 해석 누락" in summary, (
+            f"Expected '(일부 해석 누락)' in summary, got: {summary}"
+        )
+
+    def test_summary_case3_self_contradiction(
+        self,
+    ) -> None:
+        """Self-contradiction → "(N건) 입력 이벤트 감지됨. 세부 이벤트 추출 누락."
+
+        Case 3: events=[], input>0, degraded, degraded_reason="self_contradiction_corrected"
         """
         from agent_trading.services.ai_agents.event_interpretation import (
             _build_ei_summary,
@@ -1780,70 +1900,25 @@ class TestEIPostProcessingGuard:
                 event_conflict=False,
                 top_reason_codes=(),
                 opposing_evidence=(),
-                evidence_strength="weak",
-                event_count=3,
-                no_material_events=False,
+                evidence_strength="none",
+                event_count=0,  # LLM 응답 유지
+                no_material_events=True,  # LLM 응답 유지
+                interpretation_incomplete=True,
+                degraded_reason="self_contradiction_corrected",
             ),
         )
 
-        summary = _build_ei_summary(output)
+        # input_event_count=3 전달
+        summary = _build_ei_summary(output, input_event_count=3)
 
-        # "유의미한 신규 이벤트 없음"이 아니어야 함
-        assert "유의미한 신규 이벤트 없음" not in summary, (
-            f"Expected fallback summary, got: {summary}"
-        )
-        # event_count 정보 포함
         assert "(3건)" in summary, (
             f"Expected '(3건)' in summary, got: {summary}"
         )
-        # "입력 이벤트" 문구 포함
-        assert "입력 이벤트" in summary, (
-            f"Expected '입력 이벤트' in summary, got: {summary}"
+        assert "입력 이벤트 감지됨" in summary, (
+            f"Expected '입력 이벤트 감지됨' in summary, got: {summary}"
         )
-        # "추출 누락" 문구 포함
-        assert "추출 누락" in summary, (
-            f"Expected '추출 누락' in summary, got: {summary}"
-        )
-
-    def test_summary_fallback_with_positive_bias(
-        self,
-    ) -> None:
-        """event_count>0, events=[], overall_bias=positive → fallback summary with bias."""
-        from agent_trading.services.ai_agents.event_interpretation import (
-            _build_ei_summary,
-        )
-        from agent_trading.services.ai_agents.schemas import (
-            AggregateEventView,
-            EventInterpretationOutput,
-        )
-
-        output = EventInterpretationOutput(
-            symbol="000150",
-            events=(),
-            aggregate_view=AggregateEventView(
-                overall_bias="positive",
-                event_conflict=False,
-                top_reason_codes=(),
-                opposing_evidence=(),
-                evidence_strength="moderate",
-                event_count=2,
-                no_material_events=False,
-            ),
-        )
-
-        summary = _build_ei_summary(output)
-
-        assert "유의미한 신규 이벤트 없음" not in summary, (
-            f"Expected fallback summary, got: {summary}"
-        )
-        assert "(2건)" in summary, (
-            f"Expected '(2건)' in summary, got: {summary}"
-        )
-        assert "긍정" in summary, (
-            f"Expected '긍정' in summary, got: {summary}"
-        )
-        assert "근거:moderate" in summary, (
-            f"Expected '근거:moderate' in summary, got: {summary}"
+        assert "세부 이벤트 추출 누락" in summary, (
+            f"Expected '세부 이벤트 추출 누락' in summary, got: {summary}"
         )
 
     def test_summary_preserves_no_events_when_no_material_events_true(
@@ -1940,10 +2015,14 @@ class TestEIPostProcessingGuard:
             f"Expected event summary in output, got: {summary}"
         )
 
-    def test_summary_fallback_when_event_count_positive_but_events_empty_negative_bias(
+    def test_summary_case4_provider_failure(
         self,
     ) -> None:
-        """event_count>0, events=[], overall_bias=negative → fallback summary with negative bias."""
+        """Provider failure → "(N건) 입력 이벤트 감지됨. AI 분석 실패."
+
+        Case 4: events=[], degraded, degraded_reason="provider_error",
+        input_event_count > 0
+        """
         from agent_trading.services.ai_agents.event_interpretation import (
             _build_ei_summary,
         )
@@ -1956,29 +2035,70 @@ class TestEIPostProcessingGuard:
             symbol="000150",
             events=(),
             aggregate_view=AggregateEventView(
-                overall_bias="negative",
+                overall_bias="neutral",
                 event_conflict=False,
                 top_reason_codes=(),
                 opposing_evidence=(),
-                evidence_strength="weak",
-                event_count=5,
-                no_material_events=False,
+                evidence_strength="none",
+                event_count=0,
+                no_material_events=True,
+                interpretation_incomplete=True,
+                degraded_reason="provider_error",
+            ),
+        )
+
+        # input_event_count > 0인 경우
+        summary = _build_ei_summary(output, input_event_count=2)
+
+        assert "(2건)" in summary, (
+            f"Expected '(2건)' in summary, got: {summary}"
+        )
+        assert "입력 이벤트 감지됨" in summary, (
+            f"Expected '입력 이벤트 감지됨' in summary, got: {summary}"
+        )
+        assert "AI 분석 실패" in summary, (
+            f"Expected 'AI 분석 실패' in summary, got: {summary}"
+        )
+
+    def test_summary_case5_true_no_event(
+        self,
+    ) -> None:
+        """진짜 no-event → "유의미한 신규 이벤트 없음. 전반 중립."
+
+        Case 5: no_material_events=True, events=[], not degraded,
+        input_event_count=0
+        """
+        from agent_trading.services.ai_agents.event_interpretation import (
+            _build_ei_summary,
+        )
+        from agent_trading.services.ai_agents.schemas import (
+            AggregateEventView,
+            EventInterpretationOutput,
+        )
+
+        output = EventInterpretationOutput(
+            symbol="000150",
+            events=(),
+            aggregate_view=AggregateEventView(
+                overall_bias="neutral",
+                event_conflict=False,
+                top_reason_codes=(),
+                opposing_evidence=(),
+                evidence_strength="none",
+                event_count=0,
+                no_material_events=True,
+                interpretation_incomplete=False,
+                degraded_reason=None,
             ),
         )
 
         summary = _build_ei_summary(output)
 
-        assert "유의미한 신규 이벤트 없음" not in summary, (
-            f"Expected fallback summary, got: {summary}"
+        assert "유의미한 신규 이벤트 없음" in summary, (
+            f"Expected '유의미한 신규 이벤트 없음' in summary, got: {summary}"
         )
-        assert "(5건)" in summary, (
-            f"Expected '(5건)' in summary, got: {summary}"
-        )
-        assert "부정" in summary, (
-            f"Expected '부정' in summary, got: {summary}"
-        )
-        assert "근거:weak" in summary, (
-            f"Expected '근거:weak' in summary, got: {summary}"
+        assert "전반 중립" in summary, (
+            f"Expected '전반 중립' in summary, got: {summary}"
         )
 
 

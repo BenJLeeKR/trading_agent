@@ -361,6 +361,8 @@ export interface EiInterpretationView {
   eventCount: number;
   hasMaterialEvents: boolean;
   operatorSummary: string;
+  isDegraded: boolean;
+  degradedReason: string | null;
 }
 
 export function formatEiOutput(so: Record<string, unknown> | null | undefined): EiInterpretationView | null {
@@ -379,6 +381,10 @@ export function formatEiOutput(so: Record<string, unknown> | null | undefined): 
   const conflictLabel = formatConflictLabel(conflict);
   const reasonCodeLabels = rawReasonCodes.map(formatReasonCodeLabel);
   const evidenceStrengthLabel = formatEvidenceStrength(evidenceStrength);
+
+  // Degraded status from aggregate_view
+  const interpretationIncomplete = av.interpretation_incomplete as boolean | undefined;
+  const degradedReason = av.degraded_reason as string | null | undefined;
 
   // Generate deterministic operator summary
   const parts: string[] = [`성향: ${biasLabel}`];
@@ -400,5 +406,7 @@ export function formatEiOutput(so: Record<string, unknown> | null | undefined): 
     eventCount,
     hasMaterialEvents: !noMaterialEvents,
     operatorSummary,
+    isDegraded: interpretationIncomplete === true,
+    degradedReason: degradedReason ?? null,
   };
 }

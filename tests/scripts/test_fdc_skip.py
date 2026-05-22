@@ -23,6 +23,7 @@ import pytest
 
 from agent_trading.domain.entities import (
     CashBalanceSnapshotEntity,
+    ExternalEventEntity,
     PositionSnapshotEntity,
 )
 from agent_trading.services.ai_agents.base import AgentExecutionRequest
@@ -121,6 +122,23 @@ def _make_empty_context(source_type: str = "core") -> AssembledContext:
     return AssembledContext(
         source_type=source_type,
         recent_events=(),
+        position_snapshot=None,
+        cash_balance_snapshot=None,
+    )
+
+
+def _make_context_with_events(source_type: str = "core") -> AssembledContext:
+    """최근 이벤트 1건이 있지만 포지션/현금은 없는 컨텍스트."""
+    return AssembledContext(
+        source_type=source_type,
+        recent_events=(
+            ExternalEventEntity(
+                event_id=uuid4(),
+                event_type="test_event",
+                source_name="test",
+                published_at=datetime(2026, 5, 22, tzinfo=timezone.utc),
+            ),
+        ),
         position_snapshot=None,
         cash_balance_snapshot=None,
     )
@@ -529,6 +547,119 @@ class TestFdcSkipEligible:
         )
         assert skip is False
         assert reason == ""
+
+
+# =========================================================================
+# Test: Degraded 상태에서 FDC skip 방지
+# =========================================================================
+
+
+class TestFdcSkipDegraded:
+    """degraded 상태(is_degraded=True)에서는 FDC skip하지 않음."""
+
+    def test_fdc_skip_does_not_skip_when_self_contradiction_degraded(
+        self,
+        sample_subprocess_input: AgentSubprocessInput,
+        risk_allow_output: AIRiskOutput,
+    ) -> None:
+        """Self-contradiction (degraded) 상태에서는 skip=False.
+
+        no_material_events=True이지만 is_degraded=True이므로
+        Condition 2가 보호되어 FDC skip하지 않음.
+        """
+        context = _make_context_with_events()
+        # Self-contradiction 상태: no_material_events=True + is_degraded=True
+        degraded_output = EventInterpretationOutput(
+            agent_name="event_interpretation",
+            schema_version="v1",
+            symbol="005930",
+            aggregate_view=AggregateEventView(
+                overall_bias="neutral",
+                event_conflict=False,
+                top_reason_codes=(),
+                opposing_evidence=(),
+                evidence_strength="none",
+                event_count=0,
+                no_material_events=True,
+                interpretation_incomplete=True,
+                degraded_reason="self_contradiction_corrected",
+            ),
+        )
+        request = AgentExecutionRequest(
+            decision_context_id=None,
+            correlation_id="test",
+            context=context,
+        )
+        skip, reason, output = _check_fdc_skip(
+            sample_subprocess_input, request,
+            degraded_output, risk_allow_output,
+        )
+        assert skip is False, (
+            "Should NOT skip FDC when is_degraded=True"
+        )
+        assert reason == "", (
+            f"Expected empty reason, got: {reason}"
+        )
+
+    def test_fdc_skip_does_not_skip_when_provider_failure_degraded(
+        self,
+        sample_subprocess_input: AgentSubprocessInput,
+        risk_allow_output: AIRiskOutput,
+    ) -> None:
+        """Provider failure (degraded) 상태에서도 skip=False."""
+        context = _make_context_with_events()
+        degraded_output = EventInterpretationOutput(
+            agent_name="event_interpretation",
+            schema_version="v1",
+            symbol="005930",
+            aggregate_view=AggregateEventView(
+                overall_bias="neutral",
+                event_conflict=False,
+                top_reason_codes=(),
+                opposing_evidence=(),
+                evidence_strength="none",
+                event_count=0,
+                no_material_events=True,
+                interpretation_incomplete=True,
+                degraded_reason="provider_error",
+            ),
+        )
+        request = AgentExecutionRequest(
+            decision_context_id=None,
+            correlation_id="test",
+            context=context,
+        )
+        skip, reason, output = _check_fdc_skip(
+            sample_subprocess_input, request,
+            degraded_output, risk_allow_output,
+        )
+        assert skip is False, (
+            "Should NOT skip FDC when is_degraded=True (provider_error)"
+        )
+
+    def test_fdc_skip_normal_no_material_events_regression(
+        self,
+        sample_subprocess_input: AgentSubprocessInput,
+        no_material_event_output: EventInterpretationOutput,
+        risk_allow_output: AIRiskOutput,
+    ) -> None:
+        """정상 no_material_events(is_degraded=False) → 정상 FDC skip (regression)."""
+        context = _make_empty_context()
+        request = AgentExecutionRequest(
+            decision_context_id=None,
+            correlation_id="test",
+            context=context,
+        )
+        skip, reason, output = _check_fdc_skip(
+            sample_subprocess_input, request,
+            no_material_event_output, risk_allow_output,
+        )
+        assert skip is True, (
+            "Should skip FDC when no_material_events=True and not degraded"
+        )
+        assert reason == "no_material_events_no_position", (
+            f"Expected 'no_material_events_no_position', got: {reason}"
+        )
 
     def test_allow_with_position_and_no_events(
         self,

@@ -43,21 +43,92 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _build_ei_summary(output: EventInterpretationOutput) -> str:
+def _build_ei_summary(
+    output: EventInterpretationOutput,
+    input_event_count: int = 0,
+) -> str:
     """EI 출력에서 deterministic 한국어 요약 문자열 생성 (추가 LLM 호출 없음).
 
     ``aggregate_view``와 ``events`` 정보만 사용.
 
+    Parameters
+    ----------
+    output
+        EI 출력 객체.
+    input_event_count
+        LLM 호출 전 입력 이벤트 수. self-contradiction/provider-failure 케이스에서
+        감지된 이벤트 수를 표시하는 데 사용.
+
     Notes
     -----
-    * ``no_material_events=True`` → "유의미한 신규 이벤트 없음" (기존)
-    * ``event_count > 0`` 이지만 ``events=[]`` (exception fallback 등) → fallback summary
-    * 정상 ``events`` 존재 → 기존 상세 요약
+    Case 1 — 정상 + events 있음: ``(N건) {preview}, 전반 {bias}, 근거:{strength}``
+    Case 2 — Degraded + events 있음: ``(N건) {preview}, 전반 {bias}, (일부 해석 누락)``
+    Case 3 — Self-contradiction: ``(N건) 입력 이벤트 감지됨. 세부 이벤트 추출 누락.``
+    Case 4 — Provider failure: ``(N건) 입력 이벤트 감지됨. AI 분석 실패.``
+    Case 5 — 진짜 no-event: ``유의미한 신규 이벤트 없음. 전반 {bias}.``
+    Case 6 — Fallback default: ``이벤트 분석을 수행할 수 없습니다.``
     """
     av = output.aggregate_view
+    is_degraded = output.is_degraded
+    degraded_reason = av.degraded_reason
+    has_events = bool(output.events)
+    _event_count = av.event_count  # LLM 응답 (신뢰)
 
-    # ── Case 1: 진정한 "이벤트 없음" (no_material_events=True) ──
-    if av.no_material_events and not output.events:
+    # 편의 변수
+    bias_kor = {"positive": "긍정", "negative": "부정", "neutral": "중립"}
+    bias_str = bias_kor.get(av.overall_bias, av.overall_bias)
+
+    # ── Case 1: 정상 + events 있음 ──
+    if has_events and not is_degraded:
+        event_count_display = len(output.events)
+        parts: list[str] = []
+        parts.append(f"전반 {bias_str}")
+
+        # 대표 이벤트 1건 요약 (있으면)
+        first = output.events[0]
+        if first.summary:
+            preview = first.summary.split(".")[0] if "." in first.summary else first.summary
+            if len(preview) > 80:
+                preview = preview[:77] + "..."
+            parts.insert(0, preview)
+
+        # evidence strength
+        if av.evidence_strength and av.evidence_strength not in ("none", ""):
+            parts.append(f"근거:{av.evidence_strength}")
+
+        return f"({event_count_display}건) " + ", ".join(parts)
+
+    # ── Case 2: Degraded + events 있음 ──
+    if has_events and is_degraded:
+        event_count_display = len(output.events)
+        parts = [f"전반 {bias_str}"]
+        first = output.events[0]
+        if first.summary:
+            preview = first.summary.split(".")[0] if "." in first.summary else first.summary
+            if len(preview) > 80:
+                preview = preview[:77] + "..."
+            parts.insert(0, preview)
+        if av.evidence_strength and av.evidence_strength not in ("none", ""):
+            parts.append(f"근거:{av.evidence_strength}")
+        parts.append("(일부 해석 누락)")
+        return f"({event_count_display}건) " + ", ".join(parts)
+
+    # ── Case 3: Self-contradiction (events=[] + input>0) ──
+    if is_degraded and degraded_reason == "self_contradiction_corrected":
+        return (
+            f"({input_event_count}건) 입력 이벤트 감지됨. "
+            f"세부 이벤트 추출 누락."
+        )
+
+    # ── Case 4: Provider failure (events=[] + degraded) ──
+    if is_degraded and not has_events and degraded_reason in ("provider_error",):
+        return (
+            f"({input_event_count}건) 입력 이벤트 감지됨. "
+            f"AI 분석 실패."
+        )
+
+    # ── Case 5: 진짜 no-event (events=[] + input=0, 정상) ──
+    if av.no_material_events and not has_events and not is_degraded:
         if av.overall_bias == "negative":
             return "유의미한 신규 이벤트 없음. 전반 부정적."
         elif av.overall_bias == "positive":
@@ -65,43 +136,8 @@ def _build_ei_summary(output: EventInterpretationOutput) -> str:
         else:
             return "유의미한 신규 이벤트 없음. 전반 중립."
 
-    # ── Case 2: event_count > 0 이지만 events=[] (exception fallback 등) ──
-    if av.event_count > 0 and not av.no_material_events and not output.events:
-        bias_kor = {"positive": "긍정", "negative": "부정", "neutral": "중립"}
-        bias_str = bias_kor.get(av.overall_bias, av.overall_bias)
-        strength = av.evidence_strength or "weak"
-        return (
-            f"({av.event_count}건) 입력 이벤트 {av.event_count}건 감지됨. "
-            f"세부 이벤트 추출 누락. 전반 {bias_str}, 근거:{strength}"
-        )
-
-    # ── Case 2.5: events=[] 이지만 Case 1/2에 걸리지 않은 나머지 ──
-    if not output.events:
-        return "유의미한 신규 이벤트 없음. 전반 중립."
-
-    # ── Case 3: 정상 events 존재 ──
-    event_count = len(output.events)
-    parts: list[str] = []
-
-    # bias 한국어 매핑
-    bias_kor = {"positive": "긍정", "negative": "부정", "neutral": "중립"}
-    bias_str = bias_kor.get(av.overall_bias, av.overall_bias)
-    parts.append(f"전반 {bias_str}")
-
-    # 대표 이벤트 1건 요약 (있으면)
-    first = output.events[0]
-    if first.summary:
-        # 첫 문장 또는 80자 이내로 자르기
-        preview = first.summary.split(".")[0] if "." in first.summary else first.summary
-        if len(preview) > 80:
-            preview = preview[:77] + "..."
-        parts.insert(0, preview)
-
-    # evidence strength
-    if av.evidence_strength and av.evidence_strength not in ("none", ""):
-        parts.append(f"근거:{av.evidence_strength}")
-
-    return f"({event_count}건) " + ", ".join(parts)
+    # ── Case 6: Fallback default ──
+    return "이벤트 분석을 수행할 수 없습니다."
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +196,14 @@ class StubEventInterpretationAgent:
                 "returning default output (safe fallback).",
                 exc_info=True,
             )
-            return EventInterpretationOutput()
+            fallback = EventInterpretationOutput(
+                aggregate_view=AggregateEventView(
+                    interpretation_incomplete=True,
+                    degraded_reason="provider_error",
+                ),
+            )
+            object.__setattr__(fallback, "summary", _build_ei_summary(fallback))
+            return fallback
 
 
 # ---------------------------------------------------------------------------
@@ -274,24 +317,24 @@ class EventInterpretationAgent:
 
             # ★ Deterministic post-processing guard:
             #   입력 events > 0인데 output event_count=0이면 LLM이 이벤트를 무시한 것.
-            #   명백한 self-contradiction만 보정 — LLM 판단을 완전히 대체하지 않음.
+            #   LLM 판단은 존중하되(LLM 응답 유지), 시스템이 개입했음을 표시.
             if input_event_count > 0 and result.aggregate_view.event_count == 0:
                 logger.warning(
                     "EI self-contradiction detected: symbol=%s "
                     "input_events=%d but output event_count=0 — "
-                    "correcting aggregate_view to reflect input events",
+                    "preserving LLM output, marking as degraded",
                     request_symbol,
                     input_event_count,
                 )
-                # aggregate_view만 보정: event_count와 no_material_events 수정
+                # LLM 원본 응답 유지 + degraded 플래그만 추가
                 corrected_av = AggregateEventView(
                     overall_bias=result.aggregate_view.overall_bias,
                     event_conflict=result.aggregate_view.event_conflict,
                     top_reason_codes=result.aggregate_view.top_reason_codes,
                     opposing_evidence=result.aggregate_view.opposing_evidence,
                     evidence_strength=result.aggregate_view.evidence_strength,
-                    event_count=input_event_count,
-                    no_material_events=False,
+                    event_count=result.aggregate_view.event_count,  # LLM 응답 유지 (0)
+                    no_material_events=result.aggregate_view.no_material_events,  # LLM 응답 유지 (True)
                     interpretation_incomplete=True,
                     degraded_reason="self_contradiction_corrected",
                 )
@@ -306,7 +349,7 @@ class EventInterpretationAgent:
                 )
 
             # ★ deterministic 한국어 summary 생성 (LLM 호출 없음)
-            object.__setattr__(result, "summary", _build_ei_summary(result))
+            object.__setattr__(result, "summary", _build_ei_summary(result, input_event_count=input_event_count))
 
             # ★ 진단 로깅: 정상 경로에서 event_count=0인 경우 분류
             if result.aggregate_view.event_count == 0:
@@ -352,15 +395,15 @@ class EventInterpretationAgent:
                 request.decision_context_id,
                 exc_info=True,
             )
-            # ★ fallback에서도 input_event_count를 aggregate_view에 반영
-            #   exception으로 인해 LLM 응답을 받지 못했지만,
-            #   입력 events가 있었다면 event_count=0은 명백한 오정보.
+            # ★ fallback: LLM 응답을 받지 못했으므로 모든 필드를 fallback-safe 값으로 설정.
+            #   event_count=0, no_material_events=True (LLM 판단 없음 → fallback-safe).
+            #   interpretation_incomplete=True + degraded_reason 설정.
+            degraded_reason = "provider_error"
             if input_event_count > 0:
                 logger.warning(
                     "EI diagnostic: fallback_applied — symbol=%s "
-                    "input_events=%d aggregate_view.event_count set to %d",
+                    "input_events=%d aggregate_view is degraded",
                     request_symbol,
-                    input_event_count,
                     input_event_count,
                 )
                 fallback_av = AggregateEventView(
@@ -369,19 +412,31 @@ class EventInterpretationAgent:
                     top_reason_codes=(),
                     opposing_evidence=(),
                     evidence_strength="weak",
-                    event_count=input_event_count,
-                    no_material_events=False,
+                    event_count=0,                    # LLM 응답 없음 → 0
+                    no_material_events=True,          # LLM 판단 없음 → True (fallback-safe)
+                    interpretation_incomplete=True,
+                    degraded_reason=degraded_reason,
                 )
-                return EventInterpretationOutput(
+                fallback = EventInterpretationOutput(
                     symbol=request_symbol,
                     aggregate_view=fallback_av,
                 )
+                object.__setattr__(fallback, "summary", _build_ei_summary(fallback, input_event_count=input_event_count))
+                return fallback
             logger.warning(
                 "EI diagnostic: unknown_zero — symbol=%s "
                 "input_events=0 exception occurred (no fallback correction needed)",
                 request_symbol,
             )
-            return EventInterpretationOutput(symbol=request_symbol)
+            fallback = EventInterpretationOutput(
+                symbol=request_symbol,
+                aggregate_view=AggregateEventView(
+                    interpretation_incomplete=True,
+                    degraded_reason=degraded_reason,
+                ),
+            )
+            object.__setattr__(fallback, "summary", _build_ei_summary(fallback))
+            return fallback
 
     def _build_system_prompt(self) -> str:
         """Build the system prompt describing the expected output schema."""

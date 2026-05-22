@@ -478,9 +478,11 @@ def _check_fdc_skip(
         ))
 
     # Condition 2: 유의미한 이벤트 없음 + 미보유 → 결정론적 HOLD
+    # ★ is_degraded가 True이면 skip하지 않음 (degraded 상태에서는 FDC가 필요)
     no_material = (
         hasattr(event_output, "aggregate_view")
         and event_output.aggregate_view.no_material_events
+        and not event_output.is_degraded
     )
     if no_material and not has_position:
         return (True, "no_material_events_no_position", FinalDecisionComposerOutput(
