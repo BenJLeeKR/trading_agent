@@ -258,12 +258,14 @@ class TestBuildKisAdapterRuntimeWiring:
         assert isinstance(rest_client.budget_manager, RateLimitBudgetManager)
 
         # Paper env → conservative bucket capacities
+        # order=3 (Fix 3: capacity increased from 1→3)
         snap = rest_client.budget_manager.snapshot()
         assert snap["auth"]["capacity"] == 1
-        assert snap["order"]["capacity"] == 1
+        assert snap["order"]["capacity"] == 3
         assert snap["inquiry"]["capacity"] == 1
         assert snap["market_data"]["capacity"] == 1
-        assert snap["reconciliation"]["capacity"] == 1
+        # reconciliation=10 (기존: max(1, int(10 * total)) = max(1, 10) = 10)
+        assert snap["reconciliation"]["capacity"] == 10
 
 
 class TestKisAdapterSubscriptionBudget:

@@ -100,9 +100,11 @@ export default function AccountsView() {
   }, [selectedAccount]);
 
   // ── Snapshot dedup: instrument별 최신 snapshot 1건 ──────────────
+  // 수량 0인 종목(전량 매도 후 잔여 row)은 현재 포지션에서 제외
   const latestPositions = useMemo(() => {
     const map = new Map<string, PositionSnapshotView>();
     for (const pos of positions) {
+      if (pos.quantity <= 0) continue; // 수량 0 스냅샷 제외
       const existing = map.get(pos.instrument_id);
       if (!existing || pos.snapshot_at > existing.snapshot_at) {
         map.set(pos.instrument_id, pos);

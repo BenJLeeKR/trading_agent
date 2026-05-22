@@ -1,7 +1,7 @@
 # 정합성 점검(ReconciliationView) 로딩 지연 진단 및 개선
 
 > 작성일: 2026-05-17  
-> 대상 파일: `admin_ui/src/components/ReconciliationView.tsx`, `admin_ui/src/__tests__/reconciliation.test.tsx`
+> 대상 파일: `admin_ui/src/components/ReconciliationView.tsx`, `admin_ui/src/__tests__/reconciliation.test.tsx`, `admin_ui/src/lib/reconcileRequired.ts`
 
 ---
 
@@ -36,7 +36,7 @@
 | lazy (on click) | brokerOrders × M | M | 개별 lazy load |
 | **합계** | | **3 + N + M** | N=계정 수, M=확장 행 수 |
 
-### 1.3 상태 관리 분석
+### 1.3 상태 관리 분석 (변경 전)
 
 | 상태 변수 | 타입 | 초기값 | 해제 시점 | 영향 범위 |
 |-----------|------|--------|-----------|-----------|
@@ -144,27 +144,21 @@ const [runsLocksLoading, setRunsLocksLoading] = useState(true);
 - reconcile_required가 로딩 중이어도 runs/locks 영역은 조작 가능
 - 사용자 체감 성능 향상
 
-### 개선 2: useEffect #1 실패 시 partial render
+### 개선 2: Error 상태 3-way 완전 분리 — `runsError` / `locksError` / `reconcileError`
 
-**현재 (326행)**:
-```tsx
-if (error) return <ErrorBanner message={error} onDismiss={() => setError(null)} />;
-```
+**현재**: `error` 하나로 runs/locks/reconcile 모든 섹션의 실패를 통합 관리하여 한 섹션 실패가 다른 섹션까지 가림
 
-**변경**: `error`를 `runsError`, `locksError`로 분리하여 각 섹션별로 독립적 에러 처리
+**변경**: runs, locks, reconcile 각각 독립적인 error 상태 변수 사용
 
 ```tsx
-// Before:
-const [error, setError] = useState<string | null>(null);
-
-// After:
 const [runsError, setRunsError] = useState<string | null>(null);
 const [locksError, setLocksError] = useState<string | null>(null);
+// reconcileError는 이미 존재 — 유지
 ```
 
-fetchData 로직 변경:
+**fetchData 로직 변경 (72-94행)**:
 ```typescript
-// Before:
+// Before: Promise.all + 단일 catch
 try {
   const [runsData, locksData] = await Promise.all([
     getReconciliationRuns(),
@@ -178,7 +172,7 @@ try {
   setLoading(false);
 }
 
-// After:
+// After: 개별 try/catch — 한쪽 실패가 다른쪽에 영향 없음
 try {
   const runsData = await getReconciliationRuns();
   if (!cancelled) setRuns(runsData);
@@ -200,77 +194,112 @@ try {
 if (!cancelled) setRunsLocksLoading(false);
 ```
 
-렌더 구조:
+**중요**: `getReconciliationRuns()`와 `getReconciliationLocks()`는 이제 `Promise.all`이 아닌 **직렬**로 실행됨. 이로 인한 지연은 없음 (2개 API, 각각 sub-second 응답). 병렬 처리 유지가 필요하다면 별도로 진행.
+
+**렌더 구조**:
 ```tsx
-{runsError && <ErrorBanner message={runsError} onDismiss={() => setRunsError(null)} />}
-{locksError && <ErrorBanner message={locksError} onDismiss={() => setLocksError(null)} />}
+{/* runs error */}
+{runsError && (
+  <ErrorBanner message={runsError} onDismiss={() => setRunsError(null)} />
+)}
 
-{/* Active Locks Section (locksError가 있어도 기존 locks 데이터 표시 가능) */}
-{/* Reconciliation Runs Section (runsError가 있어도 기존 runs 데이터 표시 가능) */}
+{/* locks error */}
+{locksError && (
+  <ErrorBanner message={locksError} onDismiss={() => setLocksError(null)} />
+)}
+
+{/* reconcile error (기존 유지) */}
+{reconcileError && (
+  <ErrorBanner message={reconcileError} onDismiss={() => setReconcileError(null)} />
+)}
 ```
 
-**장점**:
-- runs만 실패해도 locks 섹션은 정상 표시
-- runs 실패 시 reconcile 섹션까지 블랭크되지 않음
-- `onDismiss`로 각 에러를 개별 해제 가능
+**핵심 원칙**: 한 섹션 실패가 다른 섹션을 empty처럼 보이게 하지 않음. 예: runs 실패로 `runsError` 배너가 떠도, locks 데이터가 정상이면 locks 섹션은 정상 렌더링되어야 함.
 
-### 개선 3: `findMatchingPosition()` Map lookup 최적화
+### 개선 3: `deriveReconcileRequiredCases()` — 계정별 symbol→position Map 인덱스 최적화
 
-**현재** ([`reconcileRequired.ts`](../admin_ui/src/lib/reconcileRequired.ts:38-48)):
-```typescript
-function findMatchingPosition(
-  order: OrderSummary,
-  positions: PositionSnapshotView[],
-): PositionSnapshotView | null {
-  if (!order.symbol) return null;
-  return positions.find((p) => p.symbol === order.symbol) ?? null;
-}
-```
-
-**변경**: `deriveReconcileRequiredCases()`에서 계정별 `symbol → position` Map을 미리 생성하여 lookup
-
+**변경 전** ([`reconcileRequired.ts`](admin_ui/src/lib/reconcileRequired.ts:131)):
 ```typescript
 export function deriveReconcileRequiredCases(
   orders: OrderSummary[],
   positionsByAccount: Map<string, PositionSnapshotView[]>,
 ): ReconcileRequiredCase[] {
-  // Pre-build symbol → position lookup maps per account
-  const positionMapByAccount = new Map<string, Map<string, PositionSnapshotView>>();
+  for (const order of orders) {
+    const accountPositions = positionsByAccount.get(order.account_id) ?? [];
+    // O(P) linear search per order → O(N × P) total
+    const matchedPosition = findMatchingPosition(order, accountPositions);
+    // ...
+  }
+}
+```
+
+**변경 후**: `Map<accountId, Map<symbol, PositionSnapshotView>>` pre-index 구축
+```typescript
+export function deriveReconcileRequiredCases(
+  orders: OrderSummary[],
+  positionsByAccount: Map<string, PositionSnapshotView[]>,
+): ReconcileRequiredCase[] {
+  // Step 1: Build account-level symbol→position index (O(P))
+  const positionIndex = new Map<string, Map<string, PositionSnapshotView>>();
   for (const [accountId, positions] of positionsByAccount) {
     const symbolMap = new Map<string, PositionSnapshotView>();
     for (const pos of positions) {
       if (pos.symbol) symbolMap.set(pos.symbol, pos);
     }
-    positionMapByAccount.set(accountId, symbolMap);
+    positionIndex.set(accountId, symbolMap);
   }
 
+  // Step 2: Lookup per order using index (O(1) per order)
   const cases: ReconcileRequiredCase[] = [];
   for (const order of orders) {
-    const accountPositions = positionMapByAccount.get(order.account_id);
+    const acctIndex = positionIndex.get(order.account_id);
     const matchedPosition = order.symbol
-      ? (accountPositions?.get(order.symbol) ?? null)
+      ? (acctIndex?.get(order.symbol) ?? null)
       : null;
-    // ... (이하 동일)
+    // ... (나머지 로직 동일)
   }
 }
 ```
 
-**장점**:
-- O(n²) → O(n)으로 차수 감소
-- 계정별 Map을 한 번만 빌드하므로 orders × positions 반복 회피
-- 주문 수가 많을수록 효과 큼
+**복잡도**:
+- **Before**: O(계정별 positions 배열 길이의 합 × orders 수) = O(P × N)
+- **After**: O(positions 총합) + O(orders 수) = O(P + N)
+- Map.get()은 O(1)이므로 orders 루프 내에서 추가 비용 없음
 
-### 개선 4: loading/error/empty 상태 시각적 구분 개선
+### 개선 4: Partial render 상태에서 summary semantics 보호
 
-**변경 요약**:
+**문제**: reconcile 섹션이 loading 중이거나 일부만 로드되었을 때 summary 카드가 "0건"처럼 표시되면 사용자가 오해할 수 있음
 
-| 상태 | 현재 | 개선 후 |
-|------|------|---------|
-| runs/locks loading | 화면 전체 LoadingSpinner | runs/locks 영역만 LoadingSpinner |
-| runs/locks error | 화면 전체 ErrorBanner | runs/locks 각 섹션 내 ErrorBanner |
-| reconcile loading | spinner 아이콘만 | reconcile 영역 자체를 LoadingSpinner |
-| reconcile empty | "조정이 필요한 주문이 없습니다." | 동일 (유지) |
-| reconcile error | reconcileError ErrorBanner | 동일 (유지) |
+**변경**:
+- reconcile 섹션 내 summary 카드에 **로딩 중** 또는 **일부만 반영됨** 표시 추가
+- `reconcileLoading === true`일 때 summary 카드 대신 "로딩 중..." 표시
+- reconcileError가 있을 때 summary 카드에 "일부 데이터를 불러오지 못했습니다" 경고 표시
+
+```tsx
+{/* Summary card — semantics-safe */}
+{!reconcileLoading && !reconcileError && reconcileCases.length > 0 && (
+  <div className="grid grid-cols-2 gap-4">
+    <SummaryCard label="조정 필요 주문" value={summaryCard.total} />
+    <SummaryCard label="포지션 반영됨" value={summaryCard.reflected} />
+  </div>
+)}
+
+{/* Loading indicator instead of misleading "0" */}
+{reconcileLoading && (
+  <div className="bg-white rounded-xl border border-[#e2e8f0] p-4 text-center">
+    <p className="text-sm text-[#94a3b8]">조정 필요 주문 데이터를 불러오는 중...</p>
+  </div>
+)}
+
+{/* Partial data warning */}
+{!reconcileLoading && reconcileError && reconcileCases.length > 0 && (
+  <WarningBanner
+    variant="warning"
+    title="데이터 일부 누락"
+    message="일부 계정의 포지션 데이터를 불러오지 못했습니다. 표시된 정보는 불완전할 수 있습니다."
+  />
+)}
+```
 
 ---
 
@@ -283,15 +312,15 @@ export function deriveReconcileRequiredCases(
 | 변경 전 | 변경 후 | 비고 |
 |---------|---------|------|
 | `loading` | `runsLocksLoading` | runs/locks 전용 loading |
-| `error` | `runsError` + `locksError` | 각 섹션별 error |
+| `error` | **`runsError`** + **`locksError`** | 3-way error 완전 분리 |
 | `reconcileLoading` | 유지 | reconcile 전용 loading |
-| `reconcileError` | 유지 | reconcile 전용 error |
+| `reconcileError` | 유지 | reconcile 전용 error (기존) |
 
 #### useEffect #1 변경 (72-94행)
 
-- `Promise.all` → 개별 try/catch로 분리
-- runs 실패 → `runsError`만 설정, locks 실패 → `locksError`만 설정
-- 두 API 중 하나만 실패해도 나머지 데이터는 정상 렌더링
+- `Promise.all` → 개별 try/catch로 분리 (직렬 실행, 지연 없음)
+- `setRunsError()` / `setLocksError()` 각각 설정
+- `setError()` 삭제 — 더 이상 사용하지 않음
 
 #### 렌더 구조 변경 (325-326행 → 새로운 구조)
 
@@ -301,17 +330,15 @@ if (loading) return <LoadingSpinner />;
 if (error) return <ErrorBanner message={error} onDismiss={() => setError(null)} />;
 
 return (
-  <div className="p-6 space-y-6">
-    {/* ... 모든 컨텐츠 ... */}
-  </div>
+  <div className="p-6 space-y-6">{/* ... */}</div>
 );
 
 // After (제안):
 return (
   <div className="p-6 space-y-6">
     {/* Page Header (항상 표시) */}
-    
-    {/* runs/locks 영역 - runsLocksLoading 동안만 LoadingSpinner */}
+
+    {/* ── runs/locks 영역 ── */}
     {runsLocksLoading ? (
       <LoadingSpinner text="정합성 데이터 로딩 중..." />
     ) : (
@@ -324,14 +351,14 @@ return (
       </>
     )}
 
-    {/* reconcile 섹션 - reconcileLoading 동안만 LoadingSpinner */}
+    {/* ── reconcile 섹션 ── */}
     {reconcileLoading ? (
       <LoadingSpinner text="조정 필요 주문 로딩 중..." />
     ) : (
       <>
         {reconcileError && <ErrorBanner ... />}
+        {/* Summary card (semantics-safe) */}
         {/* Reconcile-required table */}
-        {/* Summary card */}
       </>
     )}
   </div>
@@ -339,42 +366,47 @@ return (
 ```
 
 #### BrokerInfoPanel (변경 없음)
-
-- lazy load 패턴은 그대로 유지 — 회귀 방지
+- lazy load 패턴 그대로 유지 — 회귀 방지
 
 ### 5.2 `admin_ui/src/lib/reconcileRequired.ts`
 
-- `deriveReconcileRequiredCases()` 내부에 `symbol → position` Map pre-build 로직 추가
-- `findMatchingPosition()` 함수는 유지하되, Map 기반 lookup으로 변경
+- [`deriveReconcileRequiredCases()`](admin_ui/src/lib/reconcileRequired.ts:131) 내부에 `Map<accountId, Map<symbol, PositionSnapshotView>>` pre-index 구축
+- [`findMatchingPosition()`](admin_ui/src/lib/reconcileRequired.ts:38) 함수 시그니처 변경 가능 — (order, positionIndex) 형태로 변경
+- 기존 `findMatchingPosition()`은 더 이상 사용되지 않을 수 있음
 
 ### 5.3 `admin_ui/src/__tests__/reconciliation.test.tsx`
 
 #### 신규 테스트 케이스
 
 1. **runs/locks loading이 reconcile loading과 독립적인지**
-   - `getReconciliationRuns`와 `getReconciliationLocks`를 지연시킴
+   - `getReconciliationRuns` / `getReconciliationLocks`를 지연
    - reconcile_required orders가 먼저 도착해도 runs/locks 영역만 LoadingSpinner
    - reconcile 섹션은 정상 렌더링
 
-2. **runs API 실패 시 reconcile 섹션은 정상 렌더링**
-   - `getReconciliationRuns`를 reject
-   - `getReconciliationLocks`는 resolve
-   - runs 영역에 ErrorBanner 표시
-   - reconcile 섹션은 정상 표시
+2. **runs API 실패 시 reconcile 섹션 정상 렌더링** (회귀 방지)
+   - `getReconciliationRuns` reject, `getReconciliationLocks` resolve
+   - runs 영역에 `runsError` ErrorBanner
+   - reconcile 섹션 정상 표시
 
-3. **locks API 실패 시 runs 섹션은 정상 렌더링**
-   - `getReconciliationLocks`를 reject
-   - runs 영역 정상, locks 영역에 ErrorBanner
+3. **locks API 실패 시 runs 섹션 정상 렌더링**
+   - `getReconciliationLocks` reject, `getReconciliationRuns` resolve
+   - locks 영역에 `locksError` ErrorBanner
+   - runs 섹션 정상 표시
 
-4. **모든 API 성공 시 기존 동작과 동일**
-   - 회귀 방지: 기존 테스트 모두 통과 확인
+4. **모든 API 성공 시 기존 동작과 동일** (회귀 방지)
+   - 기존 테스트 모두 통과 확인
 
-5. **empty/loading 상태 구분 테스트**
-   - runsLocksLoading=true → LoadingSpinner 표시
-   - reconcileLoading=true → reconcile 영역만 LoadingSpinner
+5. **Partial render 상태에서 summary semantics**
+   - reconcileLoading=true → summary 대신 "로딩 중..." 표시
+   - reconcileError=true + 데이터 있음 → warning 배너 표시
+   - reconcileError=true + 데이터 없음 → empty 상태
 
 6. **broker lazy load 회귀 없음**
    - 기존 broker info expand 테스트 유지
+
+7. **`deriveReconcileRequiredCases` Map lookup 정확성**
+   - 여러 계정, 여러 symbol의 positions이 올바르게 매칭되는지
+   - symbol이 겹치는 경우 올바른 계정의 position 사용
 
 ---
 
@@ -382,27 +414,23 @@ return (
 
 ### 6.1 단위 테스트 (vitest)
 
-| 테스트 | 설명 | 우선순위 |
-|--------|------|---------|
-| `deriveReconcileRequiredCases` Map lookup | symbol → position lookup이 올바른지 | 필수 |
-| runs/locks loading 독립성 | runsLocksLoading과 reconcileLoading이 독립적인지 | 필수 |
-| partial render on error | 한 API 실패 시 다른 섹션 렌더링 | 필수 |
-| runs error + locks error 동시 표시 | 두 API 모두 실패 시 두 ErrorBanner 표시 | 권장 |
-| empty state 유지 | 데이터가 없을 때 empty 메시지 표시 | 필수 |
-| broker lazy load 회귀 | broker info expand 동작 변경 없음 | 필수 |
-
-### 6.2 실행 명령어
-
 ```bash
-cd admin_ui && npm test -- --run  # 단위 테스트
-cd admin_ui && npm run build      # 빌드 검증
+cd admin_ui && npm test -- --run
 ```
 
-### 6.3 통합 확인
+### 6.2 통합 확인
+
+```bash
+cd admin_ui && npm run build
+```
+
+### 6.3 수동 확인 항목
 
 - Docker 재빌드 후 reconcile view 접속
-- runs/locks/reconcile 모든 섹션 정상 표시 확인
-- 브라우저 개발자 도구 Network 탭에서 API 호출 수 확인
+- 브라우저 DevTools Network 탭에서 API 호출 수 확인
+- runs/locks/reconcile 각 섹션 독립적 표시 확인
+- 각 API 강제 실패 시 ErrorBanner 섹션별 분리 확인
+- Summary 카드가 loading/error 상태에서 오해 없이 표시되는지 확인
 
 ---
 
@@ -410,16 +438,17 @@ cd admin_ui && npm run build      # 빌드 검증
 
 ```
 Step 1: ReconciliationView.tsx 수정
-  ├── 상태 변수 분리 (runsLocksLoading, runsError, locksError)
-  ├── useEffect #1 개별 try/catch 분리
-  └── 렌더 구조 section-level loading/error 분리
+  ├── 상태 변수: runsLocksLoading, runsError, locksError (기존 reconcileError 유지)
+  ├── useEffect #1: 개별 try/catch로 분리 (직렬 실행)
+  └── 렌더 구조: section-level loading/error + summary semantics
 
 Step 2: reconcileRequired.ts 최적화
-  └── deriveReconcileRequiredCases Map lookup 도입
+  └── deriveReconcileRequiredCases: Map<accountId, Map<symbol, Position>> pre-index
 
 Step 3: reconciliation.test.tsx 업데이트
   ├── section-level loading 독립성 테스트
-  ├── partial error render 테스트
+  ├── partial error render 테스트 (3-way error)
+  ├── summary semantics 테스트
   └── broker lazy load 회귀 테스트 유지
 
 Step 4: npm test + npm run build
@@ -437,6 +466,7 @@ Step 5: Docker 재빌드 + API 확인
 2. **점진적 개선**: 한 번에 모든 것을 바꾸지 않고, 병목 순위대로 처리
 3. **회귀 방지**: broker lazy load (handleToggleBrokerInfo) 패턴을 건드리지 않음
 4. **확장성**: 추후 bulk position API 도입 시 구조 개편이 필요 없도록 useEffect #2는 그대로 유지
+5. **semantics 보호**: partial render 상태에서 summary 숫자가 오해를 부르지 않도록 처리
 
 ---
 
@@ -454,18 +484,18 @@ sequenceDiagram
     Component->>API1: getReconciliationRuns
     Component->>API2: getReconciliationLocks
     Component->>API3: getOrders reconcile_required
-    
-    Note over API1,API2: 개별 try/catch - 독립적 실패 처리
+
+    Note over API1,API2: 개별 try/catch - runsError/locksError 독립적 처리
     Note over API3,API4: 기존 직렬→병렬 패턴 유지
 
-    API1-->>Component: runs data (or error)
-    API2-->>Component: locks data (or error)
+    API1-->>Component: runs data (or runsError)
+    API2-->>Component: locks data (or locksError)
     Note over Component: setRunsLocksLoading = false
-    Note over Component: runs/locks 영역 렌더링 시작
+    Note over Component: runs/locks 영역 렌더링 시작 (부분 실패 허용)
 
     API3-->>Component: orders
     Component->>API4: getPositions x N (parallel)
     API4-->>Component: positions map
     Note over Component: setReconcileLoading = false
-    Note over Component: reconcile 영역 렌더링 시작
+    Note over Component: reconcile 영역 렌더링 (summary semantics 보호)
 ```

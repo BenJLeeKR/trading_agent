@@ -69,6 +69,12 @@ _GRACE_PERIOD_AFTER_HOURS_EXPIRED_SECONDS: int = 1800  # 30분
 # 30분 → 60분으로 연장한다. Live 환경에도 안전하게 적용 가능.
 _GRACE_PERIOD_AFTER_HOURS_EXPIRED_MARKET_SECONDS: int = 3600  # 60분
 
+# Stale PENDING_SUBMIT 주문 자동 REJECTED 기준 시간 (초).
+# submit_order_to_broker() 호출 전에 실패하여 PENDING_SUBMIT에 stuck된
+# orphan 주문을 정리하기 위한 timeout. broker_native_order_id가 없는
+# PENDING_SUBMIT 주문이 이 시간 이상 경과하면 REJECTED로 전이한다.
+_PENDING_SUBMIT_STALE_SECONDS: int = 1800  # 30분
+
 
 @dataclass(slots=True, frozen=True)
 class FillInferenceResult:
@@ -2178,6 +2184,85 @@ class PostSubmitSyncRunner:
     broker: BrokerAdapter
     snapshot_refresh_cb: Callable[[UUID], Awaitable[None]] | None = None
 
+    async def _reject_stale_pending_submit_orders(self) -> list[OrderRequestEntity]:
+        """30분 이상 PENDING_SUBMIT에 stuck된 orphan 주문을 REJECTED로 전이.
+
+        Stale 판정 기준 (ALL):
+        1. status = PENDING_SUBMIT
+        2. broker_native_order_id IS NULL (broker에 도달하지 않음)
+        3. created_at < (now - 30분) (30분 이상 경과)
+        4. side = sell (매도 주문)
+
+        처리:
+        - OrderStatus.PENDING_SUBMIT → OrderStatus.REJECTED
+        - order_state_event 레코드 생성 (reason: submission_failed_no_broker_id)
+
+        Returns:
+            REJECTED로 전이된 주문 목록
+        """
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(seconds=_PENDING_SUBMIT_STALE_SECONDS)
+
+        # PENDING_SUBMIT 상태의 모든 주문 조회
+        pending_orders = await self.repos.orders.list(
+            OrderQuery(statuses=[OrderStatus.PENDING_SUBMIT], limit=500),
+        )
+
+        rejected_orders: list[OrderRequestEntity] = []
+        for order in pending_orders:
+            # SELL 주문만 처리
+            if order.side != OrderSide.SELL:
+                continue
+
+            # created_at이 None이거나 30분 미만이면 skip
+            if order.created_at is None or order.created_at > cutoff:
+                continue
+
+            # broker_native_order_id 존재 여부 확인 (broker에 도달했으면 skip)
+            broker_orders = await self.repos.broker_orders.list_by_order_request(
+                order.order_request_id,
+            )
+            has_broker_order = any(
+                bo.broker_native_order_id is not None for bo in broker_orders
+            )
+            if has_broker_order:
+                continue
+
+            # Stale PENDING_SUBMIT → REJECTED 전이
+            try:
+                await self.sync_service.order_manager.transition_to(
+                    order,
+                    OrderStatus.REJECTED,
+                    reason_code="submission_failed_no_broker_id",
+                    reason_message=(
+                        f"Stale PENDING_SUBMIT rejected after "
+                        f"{_PENDING_SUBMIT_STALE_SECONDS}s: "
+                        f"created_at={order.created_at.isoformat()}, "
+                        f"side={order.side.value}"
+                    ),
+                    actor_type="system",
+                    actor_id="post_submit_sync",
+                )
+                rejected_orders.append(order)
+                logger.info(
+                    "Rejected stale PENDING_SUBMIT: order_id=%s created_at=%s side=%s",
+                    order.order_request_id, order.created_at, order.side.value,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to reject stale PENDING_SUBMIT: order_id=%s: %s",
+                    order.order_request_id, exc,
+                    exc_info=True,
+                )
+
+        if rejected_orders:
+            logger.info(
+                "Stale PENDING_SUBMIT cleanup: rejected %d orders (submission_failed_no_broker_id)",
+                len(rejected_orders),
+            )
+
+        return rejected_orders
+
     async def run_sync_cycle(
         self,
         account_ref: str | None = None,
@@ -2217,6 +2302,9 @@ class PostSubmitSyncRunner:
         SyncCycleResult
             Aggregated summary of the cycle.
         """
+        # ── 0. Stale PENDING_SUBMIT 정리 (sync 전에 먼저 실행) ──────────
+        await self._reject_stale_pending_submit_orders()
+
         # ── 1. Query orders ───────────────────────────────────────────────
         # recovery_mode=True → EXPIRED 포함 + 당일 주문만 필터
         active_statuses = _RECOVERY_SYNC_STATUSES if recovery_mode else _ACTIVE_SYNC_STATUSES

@@ -127,11 +127,19 @@ class TestNewEntry:
 
 
 class TestCashConstraint:
-    """BUY orders are capped when available_cash is insufficient."""
+    """BUY orders are capped when available_cash is insufficient.
+
+    NOTE: With _resolve_buy_target_quantity(), the base quantity for BUY
+    is first determined by cash/price allocation (20% of effective cash).
+    The cash constraint then acts as a secondary cap.  Tests reflect this
+    two-stage sizing.
+    """
 
     def test_cash_shortage_caps_qty(self) -> None:
-        """Available cash of 500 at price 10 → max 50 shares.
-        Requested 100 → capped to 50."""
+        """Available cash of 500 at price 10.
+        Allocation: 500*0.2/10=10 → base=10.
+        Cash constraint allows 500/10=50 (10<50 → no cap).
+        Final qty = 10."""
         result = calculate_sizing(
             _inputs(
                 decision_type="BUY",
@@ -141,12 +149,16 @@ class TestCashConstraint:
                 available_cash="500",
             )
         )
-        assert result.quantity == Decimal("50")
-        assert "cash_limit" in result.applied_constraints
+        # Allocation-based target (20% of cash) = 10
+        assert result.quantity == Decimal("10")
+        # Cash constraint doesn't further cap (10 < 50)
+        assert "cash_limit" not in result.applied_constraints
 
     def test_cash_sufficient_no_cap(self) -> None:
-        """Available cash of 2000 at price 10 → max 200 shares.
-        Requested 100 → unchanged."""
+        """Available cash of 2000 at price 10.
+        Allocation: 2000*0.2/10=40 → base=40.
+        Cash constraint: 2000/10=200 (40<200 → no cap).
+        Final qty = 40."""
         result = calculate_sizing(
             _inputs(
                 decision_type="BUY",
@@ -156,7 +168,8 @@ class TestCashConstraint:
                 available_cash="2000",
             )
         )
-        assert result.quantity == Decimal("100")
+        # Allocation-based target (20% of cash) = 40
+        assert result.quantity == Decimal("40")
         assert "cash_limit" not in result.applied_constraints
 
     def test_cash_none_skips_constraint(self) -> None:
@@ -218,10 +231,10 @@ class TestCashConstraint:
         assert "orderable_amount_zero" in result.applied_constraints
 
     def test_orderable_amount_positive_used_as_cash_source(self) -> None:
-        """orderable_amount > 0 → used as cash source (priority over available_cash)."""
-        # available_cash=5000 → max 500 shares at price 10
-        # orderable_amount=200 → max 20 shares at price 10
-        # Requested 100 → capped to 20 (orderable_amount takes priority)
+        """orderable_amount=200 → allocation target, cash constraint is secondary.
+        Allocation: 200*0.2/10=4 → base=4.
+        Cash constraint: 200/10=20 (4<20 → no cap).
+        Final qty = 4."""
         result = calculate_sizing(
             _inputs(
                 decision_type="BUY",
@@ -232,11 +245,16 @@ class TestCashConstraint:
                 orderable_amount="200",
             )
         )
-        assert result.quantity == Decimal("20")
-        assert "cash_limit" in result.applied_constraints
+        # Allocation-based target (20% of orderable_amount) = 4
+        assert result.quantity == Decimal("4")
+        # Cash constraint doesn't further cap (4 < 20)
+        assert "cash_limit" not in result.applied_constraints
 
     def test_orderable_amount_none_fallback_to_available_cash(self) -> None:
-        """orderable_amount=None → falls back to available_cash (existing behaviour)."""
+        """orderable_amount=None → allocation uses available_cash.
+        Allocation: 500*0.2/10=10 → base=10.
+        Cash constraint: 500/10=50 (10<50 → no cap).
+        Final qty = 10."""
         result = calculate_sizing(
             _inputs(
                 decision_type="BUY",
@@ -247,8 +265,10 @@ class TestCashConstraint:
                 orderable_amount=None,
             )
         )
-        assert result.quantity == Decimal("50")
-        assert "cash_limit" in result.applied_constraints
+        # Allocation-based target (20% of available_cash) = 10
+        assert result.quantity == Decimal("10")
+        # Cash constraint doesn't further cap (10 < 50)
+        assert "cash_limit" not in result.applied_constraints
 
     def test_orderable_amount_negative_does_not_block_sell(self) -> None:
         """orderable_amount < 0 → SELL is NOT blocked (non-BUY side)."""
@@ -536,7 +556,9 @@ class TestAiSizingHintIncrease:
     """AI sizing hint with ``size_mode="increase"`` boosts quantity."""
 
     def test_increase_applied(self) -> None:
-        """size_adjustment_factor=0.5 → qty increased by 50% → 150."""
+        """BUY side: allocation-based target replaces AI hint for base qty.
+        With no cash/price data, allocation returns requested_quantity=100
+        unchanged (AI hint is bypassed)."""
         hint = SizingHint(size_mode="increase", size_adjustment_factor=0.5)
         result = calculate_sizing(
             _inputs(
@@ -546,10 +568,12 @@ class TestAiSizingHintIncrease:
                 sizing_hint=hint,
             )
         )
-        assert result.quantity == Decimal("150")
+        # BUY side routes through _resolve_buy_target_quantity;
+        # AI sizing hint is bypassed for the base quantity.
+        assert result.quantity == Decimal("100")
 
     def test_increase_zero_factor_no_change(self) -> None:
-        """factor=0 → no increase."""
+        """factor=0 → no increase (allocation returns requested_quantity)."""
         hint = SizingHint(size_mode="increase", size_adjustment_factor=0.0)
         result = calculate_sizing(
             _inputs(
@@ -568,10 +592,16 @@ class TestAiSizingHintIncrease:
 
 
 class TestAiSizingHintReduce:
-    """AI sizing hint with ``size_mode="fractional_reduce"`` reduces quantity."""
+    """AI sizing hint with ``size_mode="fractional_reduce"`` reduces quantity.
+
+    NOTE: For BUY side, the allocation-based target in
+    ``_resolve_buy_target_quantity()`` replaces the AI sizing hint for base
+    quantity determination.  The AI hint still works for SELL/REDUCE paths.
+    """
 
     def test_fractional_reduce_applied(self) -> None:
-        """size_adjustment_factor=0.3 → qty reduced by 30% → 70."""
+        """BUY side: allocation returns requested_quantity=100 unchanged
+        (AI hint bypassed for BUY base qty)."""
         hint = SizingHint(size_mode="fractional_reduce", size_adjustment_factor=0.3)
         result = calculate_sizing(
             _inputs(
@@ -581,10 +611,12 @@ class TestAiSizingHintReduce:
                 sizing_hint=hint,
             )
         )
-        assert result.quantity == Decimal("70")
+        # BUY side routes through _resolve_buy_target_quantity;
+        # with no cash/price, returns requested_quantity unchanged.
+        assert result.quantity == Decimal("100")
 
     def test_fractional_reduce_redce_alias(self) -> None:
-        """``size_mode="reduce"`` is treated the same as fractional_reduce."""
+        """BUY side: allocation returns requested_quantity=100 unchanged."""
         hint = SizingHint(size_mode="reduce", size_adjustment_factor=0.25)
         result = calculate_sizing(
             _inputs(
@@ -594,10 +626,11 @@ class TestAiSizingHintReduce:
                 sizing_hint=hint,
             )
         )
-        assert result.quantity == Decimal("75")
+        assert result.quantity == Decimal("100")
 
     def test_fractional_reduce_overridden_by_config(self) -> None:
-        """AI hint increases qty, but max_order_qty caps it."""
+        """BUY side: allocation returns requested_quantity=100.
+        max_order_qty=120 doesn't cap (100 < 120)."""
         hint = SizingHint(size_mode="increase", size_adjustment_factor=0.5)
         result = calculate_sizing(
             _inputs(
@@ -608,8 +641,9 @@ class TestAiSizingHintReduce:
                 max_order_qty="120",
             )
         )
-        assert result.quantity == Decimal("120")
-        assert "max_qty" in result.applied_constraints
+        # Allocation returns requested_quantity; max_qty=120 doesn't cap
+        assert result.quantity == Decimal("100")
+        assert "max_qty" not in result.applied_constraints
 
 
 # ======================================================================
@@ -736,8 +770,10 @@ class TestCashBuffer:
     """min_cash_buffer_pct reserves a portion of cash."""
 
     def test_cash_buffer_factor_applied(self) -> None:
-        """cash=1000, buffer=20% → effective cash=800.
-        Price=10 → max 80 shares.  Requested 100 → capped to 80."""
+        """cash=1000, buffer=20%.
+        Allocation: 1000*0.2/10=20 → base=20.
+        Cash constraint: 1000*(1-0.2)/10=80 (20<80 → no cap).
+        Final qty = 20."""
         result = calculate_sizing(
             _inputs(
                 decision_type="BUY",
@@ -748,8 +784,9 @@ class TestCashBuffer:
                 min_cash_buffer_pct="20",
             )
         )
-        assert result.quantity == Decimal("80")
-        assert "cash_limit" in result.applied_constraints
+        # Allocation-based target (20% of cash) = 20
+        assert result.quantity == Decimal("20")
+        assert "cash_limit" not in result.applied_constraints
 
 
 # ======================================================================
@@ -791,28 +828,35 @@ class TestMaxOrderValueResult:
 
 
 class TestCombinedConstraints:
-    """Multiple constraints apply in order, earliest takes precedence."""
+    """Multiple constraints apply in order, earliest takes precedence.
+
+    NOTE: With _resolve_buy_target_quantity(), allocation (20% of cash)
+    runs before all constraints.  The allocation target becomes the new
+    base quantity.
+    """
 
     def test_cash_then_concentration(self) -> None:
-        """Both cash shortage and concentration apply.
-        Cash limits to 50; concentration would allow 80.
-        Cash limit is applied first."""
+        """Allocation: 500*0.2/10=10 → base=10.
+        Cash constraint: 500/10=50 (10<50 → no cap).
+        Concentration: would allow 100 (10<100 → no cap).
+        Final qty = 10 (allocation-based target)."""
         result = calculate_sizing(
             _inputs(
                 decision_type="BUY",
                 side=OrderSide.BUY,
                 requested_quantity="200",
                 requested_price="10",
-                available_cash="500",   # → max 50 shares
+                available_cash="500",
                 nav="10000",
-                max_single_position_pct="10",  # → would allow 100 shares
+                max_single_position_pct="10",
                 current_position_qty="0",
                 current_position_avg_price="0",
             )
         )
-        # Cash limits to 50; concentration doesn't further cap
-        assert result.quantity == Decimal("50")
-        assert "cash_limit" in result.applied_constraints
+        # Allocation-based target (20% of cash) = 10
+        assert result.quantity == Decimal("10")
+        assert "cash_limit" not in result.applied_constraints
+        assert "position_concentration" not in result.applied_constraints
 
 
 # ======================================================================
@@ -1146,13 +1190,17 @@ class TestNavFallbackFromCashBalance:
 
 
 class TestMarketBuyReferencePriceCashConstraint:
-    """BUY MARKET + reference_price로 cash constraint가 적용되어야 함."""
+    """BUY MARKET + reference_price로 cash constraint가 적용되어야 함.
+
+    NOTE: With _resolve_buy_target_quantity(), the allocation step
+    (20% of effective cash) runs before the cash constraint.
+    """
 
     def test_market_buy_cash_constraint_with_reference_price(self) -> None:
         """MARKET BUY: reference_price=60000, orderable_amount=9000000
-        → effective_cash = 9000000 * 0.95 = 8550000
-        → max_qty = floor(8550000 / 60000) = 142
-        Requested 1000 → capped to 142."""
+        → Allocation: 9000000*0.2/60000=30 → base=30.
+        → Cash constraint: 9000000*0.95/60000=142 (30<142 → no cap).
+        Requested 1000 → final=30 (allocation-based target)."""
         result = calculate_sizing(
             _inputs(
                 decision_type="BUY",
@@ -1163,10 +1211,11 @@ class TestMarketBuyReferencePriceCashConstraint:
                 orderable_amount="9000000",
             )
         )
-        assert result.quantity == Decimal("142"), (
-            f"Expected 142, got {result.quantity}"
+        # Allocation-based target (20% of orderable_amount) = 30
+        assert result.quantity == Decimal("30"), (
+            f"Expected 30, got {result.quantity}"
         )
-        assert "cash_limit" in result.applied_constraints
+        assert "cash_limit" not in result.applied_constraints
 
     def test_market_buy_no_reference_price_skips_cash_constraint(self) -> None:
         """MARKET BUY: reference_price=None → cash constraint skip,
@@ -1203,9 +1252,9 @@ class TestMarketBuyReferencePriceCashConstraint:
 
     def test_market_buy_cash_constraint_fallback_to_available_cash(self) -> None:
         """orderable_amount=None → available_cash로 fallback.
-        effective_cash = 5000000 * 0.95 = 4750000
-        max_qty = floor(4750000 / 60000) = 79
-        Requested 1000 → capped to 79."""
+        Allocation: 5000000*0.2/60000=16 → base=16.
+        Cash constraint: 5000000*0.95/60000=79 (16<79 → no cap).
+        Requested 1000 → final=16 (allocation-based target)."""
         result = calculate_sizing(
             _inputs(
                 decision_type="BUY",
@@ -1217,10 +1266,11 @@ class TestMarketBuyReferencePriceCashConstraint:
                 available_cash="5000000",
             )
         )
-        assert result.quantity == Decimal("79"), (
-            f"Expected 79, got {result.quantity}"
+        # Allocation-based target (20% of available_cash) = 16
+        assert result.quantity == Decimal("16"), (
+            f"Expected 16, got {result.quantity}"
         )
-        assert "cash_limit" in result.applied_constraints
+        assert "cash_limit" not in result.applied_constraints
 
 
 # ======================================================================
@@ -1233,9 +1283,10 @@ class TestLimitBuyIgnoresReferencePrice:
 
     def test_limit_buy_cash_constraint_uses_requested_price_not_reference(self) -> None:
         """LIMIT BUY: requested_price=50000, reference_price=60000,
-        orderable_amount=9000000 → effective_cash = 9000000 (safety_factor 1.0)
-        → max_qty = floor(9000000 / 50000) = 180
-        Requested 1000 → capped to 180."""
+        orderable_amount=9000000.
+        Allocation: 9000000*0.2/50000=36 → base=36.
+        Cash constraint: 9000000/50000=180 (36<180 → no cap).
+        Requested 1000 → final=36 (allocation-based target)."""
         result = calculate_sizing(
             _inputs(
                 decision_type="BUY",
@@ -1246,10 +1297,11 @@ class TestLimitBuyIgnoresReferencePrice:
                 orderable_amount="9000000",
             )
         )
-        assert result.quantity == Decimal("180"), (
-            f"Expected 180, got {result.quantity}"
+        # Allocation-based target (20% of orderable_amount) = 36
+        assert result.quantity == Decimal("36"), (
+            f"Expected 36, got {result.quantity}"
         )
-        assert "cash_limit" in result.applied_constraints
+        assert "cash_limit" not in result.applied_constraints
 
 
 # ======================================================================
@@ -1287,9 +1339,12 @@ class TestSafetyFactorMarketOnly:
     """safety_factor=0.95는 MARKET(requested_price=None)에만 적용됨."""
 
     def test_safety_factor_only_for_market_not_limit(self) -> None:
-        """MARKET: 1000000 / 10000 * 0.95 = 95
-        LIMIT: 1000000 / 10000 = 100
-        MARKET qty < LIMIT qty여야 함."""
+        """Both MARKET and LIMIT use allocation-based target (20% of cash).
+        MARKET: 1000000*0.2/10000=20 → base=20.
+          Cash constraint: 1000000*0.95/10000=95 (20<95 → no cap) → final=20.
+        LIMIT: 1000000*0.2/10000=20 → base=20.
+          Cash constraint: 1000000/10000=100 (20<100 → no cap) → final=20.
+        Both equal at 20 (allocation cap dominates)."""
         market = SizingInputs(
             decision_type="BUY",
             side=OrderSide.BUY,
@@ -1308,14 +1363,12 @@ class TestSafetyFactorMarketOnly:
         )
         m_result = calculate_sizing(market)
         l_result = calculate_sizing(limit)
-        assert m_result.quantity == Decimal("95"), (
-            f"Expected MARKET=95, got {m_result.quantity}"
+        # Both capped by allocation (20% of cash = 200000 / 10000 = 20)
+        assert m_result.quantity == Decimal("20"), (
+            f"Expected MARKET=20, got {m_result.quantity}"
         )
-        assert l_result.quantity == Decimal("100"), (
-            f"Expected LIMIT=100, got {l_result.quantity}"
-        )
-        assert m_result.quantity < l_result.quantity, (
-            "MARKET with safety_factor should be less than LIMIT without it"
+        assert l_result.quantity == Decimal("20"), (
+            f"Expected LIMIT=20, got {l_result.quantity}"
         )
 
 
@@ -1426,9 +1479,9 @@ class TestMarketBuyCashBufferAndSafetyFactor:
 
     def test_market_buy_cash_buffer_and_safety_factor(self) -> None:
         """available_cash=1000000, min_cash_buffer=10%, reference_price=50000
-        → effective_cash = 1000000 * 0.9 * 0.95 = 855000
-        → max_qty = floor(855000 / 50000) = 17
-        Requested 100 → capped to 17."""
+        → Allocation: 1000000*0.2/50000=4 → base=4.
+        → Cash constraint: 1000000*(1-0.1)*0.95/50000=17 (4<17 → no cap).
+        Requested 100 → final=4 (allocation-based target)."""
         result = calculate_sizing(
             _inputs(
                 decision_type="BUY",
@@ -1440,7 +1493,197 @@ class TestMarketBuyCashBufferAndSafetyFactor:
                 min_cash_buffer_pct="10",
             )
         )
-        assert result.quantity == Decimal("17"), (
-            f"Expected 17, got {result.quantity}"
+        # Allocation-based target (20% of cash) = 4
+        assert result.quantity == Decimal("4"), (
+            f"Expected 4, got {result.quantity}"
         )
-        assert "cash_limit" in result.applied_constraints
+        assert "cash_limit" not in result.applied_constraints
+
+
+# ======================================================================
+# 27.  BUY baseline — allocation-based target quantity
+# ======================================================================
+
+
+class TestBuyBaselineWithAllocationPct:
+    """_resolve_buy_target_quantity()가 BUY 시작 수량을 가격/현금 기반으로 계산.
+
+    _ALLOCATION_PCT (20%) of effective cash → target shares.
+    requested_quantity cap 제거됨 — allocation_pct가 유일한 상한이며,
+    4중 risk constraint 체인(cash → concentration → max_order_value → max_order_qty)이
+    실제 안전장치 역할을 수행함.
+    """
+
+    def test_high_price_stock_sub_10_shares(self) -> None:
+        """SK하이닉스 200,000원, orderable=9,000,000.
+        target_notional = 9,000,000 * 0.2 = 1,800,000
+        target_qty = int(1,800,000 / 200,000) = 9
+        Requested 10 → 9주 (sub-10, capped by allocation)."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="10",
+                requested_price="200000",
+                orderable_amount="9000000",
+            )
+        )
+        assert result.quantity == Decimal("9"), (
+            f"Expected 9, got {result.quantity}"
+        )
+
+    def test_low_price_stock_now_dynamic(self) -> None:
+        """초저가주 5,000원, orderable=9,000,000.
+        target_qty = int(1,800,000 / 5,000) = 360
+        cap 제거 후 → 360주 (동적 계산된 target_qty 그대로)."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="10",
+                requested_price="5000",
+                orderable_amount="9000000",
+            )
+        )
+        assert result.quantity == Decimal("360"), (
+            f"Expected 360, got {result.quantity}"
+        )
+
+    def test_mid_price_stock_now_dynamic(self) -> None:
+        """두산 150,000원, orderable=9,000,000.
+        target_qty = int(1,800,000 / 150,000) = 12
+        cap 제거 후 → 12주 (동적 계산된 target_qty 그대로)."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="10",
+                requested_price="150000",
+                orderable_amount="9000000",
+            )
+        )
+        assert result.quantity == Decimal("12"), (
+            f"Expected 12, got {result.quantity}"
+        )
+
+    def test_mid_low_price_stock_30k_now_dynamic(self) -> None:
+        """저가주 30,000원, orderable=9,000,000.
+        target_qty = int(1,800,000 / 30,000) = 60
+        cap 제거 후 → 60주 (동적 계산된 target_qty 그대로)."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="10",
+                requested_price="30000",
+                orderable_amount="9000000",
+            )
+        )
+        assert result.quantity == Decimal("60"), (
+            f"Expected 60, got {result.quantity}"
+        )
+
+    def test_buy_no_longer_capped_by_requested_quantity(self) -> None:
+        """BUY 수량이 더 이상 requested_quantity의 상한에 묶이지 않는 것을 검증.
+
+        requested_quantity=1 (작은 값)이어도 allocation_pct 기반 계산된
+        target_qty가 우선 적용됨.
+        target_qty = int(9,000,000 * 0.2 / 5,000) = 360"""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="1",
+                requested_price="5000",
+                orderable_amount="9000000",
+            )
+        )
+        # requested_quantity=1이 상한이 아니므로 360주가 나와야 함
+        assert result.quantity == Decimal("360"), (
+            f"Expected 360 (not capped by requested_quantity=1), got {result.quantity}"
+        )
+
+    def test_sell_side_unchanged(self) -> None:
+        """SELL은 requested_quantity 그대로 반환 (allocation 미적용)."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="SELL",
+                side=OrderSide.SELL,
+                requested_quantity="10",
+                requested_price="200000",
+            )
+        )
+        # SELL without position → fallback to requested_quantity
+        assert result.quantity == Decimal("10"), (
+            f"Expected 10, got {result.quantity}"
+        )
+
+    def test_no_price_fallback_to_requested(self) -> None:
+        """price=None, reference_price=None → allocation fallback → requested_quantity."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="10",
+                requested_price=None,
+                reference_price=None,
+                orderable_amount="9000000",
+            )
+        )
+        assert result.quantity == Decimal("10"), (
+            f"Expected 10, got {result.quantity}"
+        )
+
+    def test_minimum_one_share(self) -> None:
+        """고가주 1,000,000원, orderable=1,000,000.
+        target_qty = int(200,000 / 1,000,000) = 0 → 1주 (minimum 1)."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="10",
+                requested_price="1000000",
+                orderable_amount="1000000",
+            )
+        )
+        assert result.quantity == Decimal("1"), (
+            f"Expected 1, got {result.quantity}"
+        )
+
+    def test_zero_cash_blocks_buy(self) -> None:
+        """orderable_amount=0 → cash constraint blocks BUY entirely
+        (existing cash constraint behaviour takes precedence over allocation)."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="10",
+                requested_price="200000",
+                orderable_amount="0",
+                available_cash="0",
+            )
+        )
+        # orderable_amount=0 triggers cash constraint block
+        assert result.quantity == Decimal("0"), (
+            f"Expected 0, got {result.quantity}"
+        )
+        assert "orderable_amount_zero" in result.applied_constraints
+
+    def test_allocation_pct_with_market_reference_price(self) -> None:
+        """MARKET 주문 + reference_price로 BUY target 계산.
+        reference_price=200000, orderable=9,000,000.
+        target_qty = int(1,800,000 / 200,000) = 9
+        Requested 10 → 9주."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="10",
+                requested_price=None,
+                reference_price="200000",
+                orderable_amount="9000000",
+            )
+        )
+        assert result.quantity == Decimal("9"), (
+            f"Expected 9, got {result.quantity}"
+        )

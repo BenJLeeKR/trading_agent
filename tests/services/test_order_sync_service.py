@@ -5206,3 +5206,260 @@ class TestBackfillExpiredSellByPosition:
         assert result.current_status == OrderStatus.FILLED
         # snapshot_refresh_cb가 없으므로 snapshot_triggered=False
         assert result.snapshot_triggered is False
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: Stale PENDING_SUBMIT expire
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestRejectStalePendingSubmit:
+    """PostSubmitSyncRunner._reject_stale_pending_submit_orders() 테스트."""
+
+    async def test_reject_stale_pending_submit(
+        self,
+        repos: RepositoryContainer,
+        order_manager: OrderManager,
+    ) -> None:
+        """Stale PENDING_SUBMIT (30분↑ + broker_native_order_id=NULL)을
+        REJECTED로 전이하고 reason_code가 submission_failed_no_broker_id인지 검증."""
+        # PostSubmitSyncRunner 생성
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=OrderSyncService(repos=repos, order_manager=order_manager),
+            broker=_StubBroker(status=OrderStatus.FILLED),  # not used in reject
+        )
+
+        # 31분 전 생성된 stale PENDING_SUBMIT SELL 주문
+        stale_created_at = datetime.now(timezone.utc) - timedelta(minutes=31)
+        stale_order = _make_order(
+            repos,
+            status=OrderStatus.PENDING_SUBMIT,
+            client_order_id="STALE-PS-001",
+        )
+        # created_at override (frozen dataclass)
+        stale_order = OrderRequestEntity(
+            order_request_id=stale_order.order_request_id,
+            account_id=stale_order.account_id,
+            instrument_id=stale_order.instrument_id,
+            client_order_id=stale_order.client_order_id,
+            idempotency_key=stale_order.idempotency_key,
+            correlation_id=stale_order.correlation_id,
+            side=OrderSide.SELL,
+            order_type=stale_order.order_type,
+            requested_quantity=stale_order.requested_quantity,
+            status=stale_order.status,
+            trade_decision_id=stale_order.trade_decision_id,
+            decision_context_id=stale_order.decision_context_id,
+            requested_price=stale_order.requested_price,
+            time_in_force=stale_order.time_in_force,
+            status_reason_code=stale_order.status_reason_code,
+            status_reason_message=stale_order.status_reason_message,
+            submitted_at=stale_order.submitted_at,
+            created_at=stale_created_at,
+            updated_at=stale_created_at,
+            version=stale_order.version,
+            order_intent_id=stale_order.order_intent_id,
+        )
+        repos.orders._items[stale_order.order_request_id] = stale_order  # type: ignore[attr-defined]
+
+        # broker_native_order_id가 없는 BrokerOrderEntity (orphan)
+        _make_broker_order(
+            repos,
+            stale_order,
+            broker_native_order_id=None,
+        )
+
+        rejected = await runner._reject_stale_pending_submit_orders()
+
+        assert len(rejected) == 1, f"Expected 1 rejected, got {len(rejected)}"
+        assert rejected[0].order_request_id == stale_order.order_request_id
+
+        # DB에서 상태 확인
+        updated = await repos.orders.get(stale_order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.REJECTED, (
+            f"Expected REJECTED, got {updated.status}"
+        )
+        assert updated.status_reason_code == "submission_failed_no_broker_id", (
+            f"Expected reason_code='submission_failed_no_broker_id', "
+            f"got {updated.status_reason_code}"
+        )
+
+    async def test_reject_skips_fresh_pending_submit(
+        self,
+        repos: RepositoryContainer,
+        order_manager: OrderManager,
+    ) -> None:
+        """Fresh PENDING_SUBMIT (30분 미만)은 REJECTED되지 않는지 검증."""
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=OrderSyncService(repos=repos, order_manager=order_manager),
+            broker=_StubBroker(status=OrderStatus.FILLED),
+        )
+
+        # 5분 전 생성된 fresh PENDING_SUBMIT SELL 주문
+        fresh_created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+        fresh_order = _make_order(
+            repos,
+            status=OrderStatus.PENDING_SUBMIT,
+            client_order_id="FRESH-PS-001",
+        )
+        fresh_order = OrderRequestEntity(
+            order_request_id=fresh_order.order_request_id,
+            account_id=fresh_order.account_id,
+            instrument_id=fresh_order.instrument_id,
+            client_order_id=fresh_order.client_order_id,
+            idempotency_key=fresh_order.idempotency_key,
+            correlation_id=fresh_order.correlation_id,
+            side=OrderSide.SELL,
+            order_type=fresh_order.order_type,
+            requested_quantity=fresh_order.requested_quantity,
+            status=fresh_order.status,
+            trade_decision_id=fresh_order.trade_decision_id,
+            decision_context_id=fresh_order.decision_context_id,
+            requested_price=fresh_order.requested_price,
+            time_in_force=fresh_order.time_in_force,
+            status_reason_code=fresh_order.status_reason_code,
+            status_reason_message=fresh_order.status_reason_message,
+            submitted_at=fresh_order.submitted_at,
+            created_at=fresh_created_at,
+            updated_at=fresh_created_at,
+            version=fresh_order.version,
+            order_intent_id=fresh_order.order_intent_id,
+        )
+        repos.orders._items[fresh_order.order_request_id] = fresh_order  # type: ignore[attr-defined]
+
+        # broker_native_order_id가 없는 BrokerOrderEntity
+        _make_broker_order(
+            repos,
+            fresh_order,
+            broker_native_order_id=None,
+        )
+
+        rejected = await runner._reject_stale_pending_submit_orders()
+
+        assert len(rejected) == 0, (
+            f"Expected 0 rejected for fresh PENDING_SUBMIT, got {len(rejected)}"
+        )
+
+        # DB에서 상태가 그대로인지 확인
+        updated = await repos.orders.get(fresh_order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.PENDING_SUBMIT, (
+            f"Expected PENDING_SUBMIT unchanged, got {updated.status}"
+        )
+
+    async def test_reject_skips_pending_submit_with_broker_native_id(
+        self,
+        repos: RepositoryContainer,
+        order_manager: OrderManager,
+    ) -> None:
+        """Stale PENDING_SUBMIT이지만 broker_native_order_id가 있으면
+        REJECTED되지 않는지 검증."""
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=OrderSyncService(repos=repos, order_manager=order_manager),
+            broker=_StubBroker(status=OrderStatus.FILLED),
+        )
+
+        # 31분 전 생성되었지만 broker_native_order_id가 있는 PENDING_SUBMIT
+        stale_created_at = datetime.now(timezone.utc) - timedelta(minutes=31)
+        order = _make_order(
+            repos,
+            status=OrderStatus.PENDING_SUBMIT,
+            client_order_id="STALE-WITH-BROKER-001",
+        )
+        order = OrderRequestEntity(
+            order_request_id=order.order_request_id,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            client_order_id=order.client_order_id,
+            idempotency_key=order.idempotency_key,
+            correlation_id=order.correlation_id,
+            side=OrderSide.SELL,
+            order_type=order.order_type,
+            requested_quantity=order.requested_quantity,
+            status=order.status,
+            trade_decision_id=order.trade_decision_id,
+            decision_context_id=order.decision_context_id,
+            requested_price=order.requested_price,
+            time_in_force=order.time_in_force,
+            status_reason_code=order.status_reason_code,
+            status_reason_message=order.status_reason_message,
+            submitted_at=order.submitted_at,
+            created_at=stale_created_at,
+            updated_at=stale_created_at,
+            version=order.version,
+            order_intent_id=order.order_intent_id,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        # broker_native_order_id가 있는 BrokerOrderEntity
+        _make_broker_order(
+            repos,
+            order,
+            broker_native_order_id="BRK-EXISTING-001",
+        )
+
+        rejected = await runner._reject_stale_pending_submit_orders()
+
+        assert len(rejected) == 0, (
+            f"Expected 0 rejected (has broker_native_order_id), got {len(rejected)}"
+        )
+
+    async def test_reject_skips_buy_pending_submit(
+        self,
+        repos: RepositoryContainer,
+        order_manager: OrderManager,
+    ) -> None:
+        """BUY PENDING_SUBMIT은 REJECTED되지 않는지 검증."""
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=OrderSyncService(repos=repos, order_manager=order_manager),
+            broker=_StubBroker(status=OrderStatus.FILLED),
+        )
+
+        # 31분 전 생성된 stale PENDING_SUBMIT BUY 주문
+        stale_created_at = datetime.now(timezone.utc) - timedelta(minutes=31)
+        buy_order = _make_order(
+            repos,
+            status=OrderStatus.PENDING_SUBMIT,
+            client_order_id="STALE-BUY-001",
+        )
+        buy_order = OrderRequestEntity(
+            order_request_id=buy_order.order_request_id,
+            account_id=buy_order.account_id,
+            instrument_id=buy_order.instrument_id,
+            client_order_id=buy_order.client_order_id,
+            idempotency_key=buy_order.idempotency_key,
+            correlation_id=buy_order.correlation_id,
+            side=OrderSide.BUY,
+            order_type=buy_order.order_type,
+            requested_quantity=buy_order.requested_quantity,
+            status=buy_order.status,
+            trade_decision_id=buy_order.trade_decision_id,
+            decision_context_id=buy_order.decision_context_id,
+            requested_price=buy_order.requested_price,
+            time_in_force=buy_order.time_in_force,
+            status_reason_code=buy_order.status_reason_code,
+            status_reason_message=buy_order.status_reason_message,
+            submitted_at=buy_order.submitted_at,
+            created_at=stale_created_at,
+            updated_at=stale_created_at,
+            version=buy_order.version,
+            order_intent_id=buy_order.order_intent_id,
+        )
+        repos.orders._items[buy_order.order_request_id] = buy_order  # type: ignore[attr-defined]
+
+        _make_broker_order(
+            repos,
+            buy_order,
+            broker_native_order_id=None,
+        )
+
+        rejected = await runner._reject_stale_pending_submit_orders()
+
+        assert len(rejected) == 0, (
+            f"Expected 0 rejected for BUY PENDING_SUBMIT, got {len(rejected)}"
+        )

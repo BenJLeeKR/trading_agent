@@ -155,6 +155,8 @@ class SizingResult:
 
 _SKIP_DECISION_TYPES: frozenset[str] = frozenset({"HOLD", "WATCH"})
 
+_ALLOCATION_PCT = Decimal("0.2")  # 20% of effective cash per single BUY order
+
 
 def _is_new_entry(decision_type: str, side: OrderSide) -> bool:
     """Return ``True`` when the decision represents a **new** position entry.
@@ -195,6 +197,34 @@ def _apply_ai_size_hint(
         return (base_qty - reduction).to_integral_value(rounding=ROUND_DOWN)
     # "no_change" or unknown mode → return as-is
     return base_qty
+
+
+def _resolve_buy_target_quantity(inputs: SizingInputs) -> Decimal:
+    """Calculate target BUY quantity based on cash/price allocation.
+
+    Uses ALLOCATION_PCT (20%) of effective cash to determine a reasonable
+    starting quantity for BUY orders, preventing excessive share counts
+    on high-price stocks.
+    """
+    # Determine effective price: requested_price > reference_price > fallback
+    effective_price = inputs.requested_price or inputs.reference_price
+    if effective_price is None or effective_price <= 0:
+        return inputs.requested_quantity
+
+    # Determine effective cash: orderable_amount > available_cash > fallback
+    effective_cash = inputs.orderable_amount or inputs.available_cash
+    if effective_cash is None or effective_cash <= 0:
+        return inputs.requested_quantity
+
+    # Calculate target quantity
+    target_notional = effective_cash * _ALLOCATION_PCT
+    target_qty = int(target_notional / effective_price)
+
+    # Minimum 1 share (requested_quantity cap removed — allocation_pct is the sole bound)
+    if target_qty < 1:
+        target_qty = 1
+
+    return Decimal(str(target_qty))
 
 
 def _base_qty_new_entry(inputs: SizingInputs) -> Decimal:
@@ -253,6 +283,10 @@ def _resolve_base_quantity(inputs: SizingInputs) -> Decimal:
     if dt in _SKIP_DECISION_TYPES:
         return Decimal("0")
 
+    # BUY side: use cash/price allocation-based target quantity
+    if side == OrderSide.BUY:
+        return _resolve_buy_target_quantity(inputs)
+
     if dt == "REDUCE":
         return _base_qty_reduce(inputs)
 
@@ -264,7 +298,7 @@ def _resolve_base_quantity(inputs: SizingInputs) -> Decimal:
     if dt == "SELL" or (dt == "APPROVE" and side == OrderSide.SELL and dt != "REDUCE"):
         return _base_qty_exit(inputs)
 
-    # BUY or APPROVE + BUY → new entry
+    # BUY or APPROVE + BUY → new entry (non-BUY side fallback)
     return _base_qty_new_entry(inputs)
 
 

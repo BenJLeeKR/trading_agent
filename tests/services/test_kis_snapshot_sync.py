@@ -7,6 +7,7 @@ Tests use in-memory repositories and a mock KIS REST client to verify:
 - Partial success when some positions fail
 - Empty responses
 - Batch sync (multiple account IDs, auto-discovery, filtering)
+- Budget exhaustion recovery (cash snapshot 우선 저장, orderable_cash fallback)
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from agent_trading.brokers.rate_limit import BudgetExhaustedError
 from agent_trading.domain.entities import (
     AccountEntity,
     BrokerAccountEntity,
@@ -48,25 +50,39 @@ from agent_trading.services.kis_snapshot_sync import (
 
 
 class FakeKISRestClient:
-    """Simulates ``KISRestClient.get_positions()`` and ``get_cash_balance()``."""
+    """Simulates ``KISRestClient.get_positions()``, ``get_cash_balance()``,
+    and ``get_orderable_cash()``."""
 
     def __init__(
         self,
         positions: list[dict[str, Any]] | None = None,
         cash_balance: dict[str, Any] | None = None,
+        orderable_cash: Decimal | None = None,
     ) -> None:
         self._positions = positions or []
         self._cash_balance = cash_balance or {}
+        self._orderable_cash = orderable_cash
         self.get_positions_called = False
         self.get_cash_balance_called = False
+        self.get_orderable_cash_called = False
 
     async def get_positions(self) -> list[dict[str, Any]]:
         self.get_positions_called = True
         return self._positions
 
-    async def get_cash_balance(self) -> dict[str, Any]:
+    async def get_cash_balance(self, after_hours: bool = False) -> dict[str, Any]:
         self.get_cash_balance_called = True
         return self._cash_balance
+
+    async def get_orderable_cash(
+        self,
+        account_ref: str = "",
+        symbol: str = "",
+        price: str = "",
+        order_type: str = "00",
+    ) -> Decimal | None:
+        self.get_orderable_cash_called = True
+        return self._orderable_cash
 
     async def close(self) -> None:
         pass
@@ -316,6 +332,8 @@ class TestSyncPositions:
 class TestSyncCashBalance:
     """Cash balance snapshot mapping tests."""
 
+    # ── 정상 케이스 ────────────────────────────────────────────────────
+
     async def test_sync_cash_balance(
         self,
         account_id: UUID,
@@ -426,6 +444,215 @@ class TestSyncCashBalance:
 
         assert result.cash_balance_synced is False
         assert any("KIS cash timeout" in err for err in result.errors)
+
+    # ── Budget exhaustion 복구 테스트 ──────────────────────────────────
+
+    async def test_cash_balance_budget_exhausted_cash_not_saved(
+        self,
+        account_id: UUID,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+    ) -> None:
+        """cash 조회가 BudgetExhaustedError로 실패해도 cash snapshot은 저장되지 않지만
+        (cash 조회 자체가 실패했으므로), cash 실패가 positions 실패에 영향을 주지 않는다.
+        cash 조회 실패 시 CASH_SYNC_ZERO가 아닌 errors에 기록된다."""
+
+        class BudgetExhaustedCashClient(FakeKISRestClient):
+            async def get_cash_balance(self) -> dict[str, Any]:
+                raise BudgetExhaustedError(
+                    bucket="inquiry",
+                    message="Bucket 'inquiry' exhausted (remaining=0/1)",
+                )
+
+        client = BudgetExhaustedCashClient(
+            positions=[_make_position(pdno="005930")],
+        )
+        result = await sync_kis_account_snapshots(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            account_id=account_id,
+        )
+
+        # cash 조회 실패 → cash_balance_synced=False
+        assert result.cash_balance_synced is False
+        assert len(cash_repo._items) == 0
+        # budget exhaustion 에러 메시지 확인
+        assert any("budget exhausted" in err.lower() for err in result.errors)
+        # positions는 FakeKISRestClient가 budget 관리를 하지 않으므로 정상 조회됨
+        # (실제 환경에서는 budget 소진으로 실패하겠지만, 여기서는 mock이므로 positions는 성공)
+        assert result.positions_synced == 1
+
+    async def test_orderable_cash_budget_exhausted_fallback_to_raw_cash(
+        self,
+        account_id: UUID,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+    ) -> None:
+        """orderable_cash 조회가 BudgetExhaustedError로 실패해도
+        raw_cash(available_cash)로 fallback하여 cash snapshot 저장."""
+
+        class BudgetExhaustedOrderableClient(FakeKISRestClient):
+            async def get_orderable_cash(
+                self,
+                account_ref: str = "",
+                symbol: str = "",
+                price: str = "",
+                order_type: str = "00",
+            ) -> Decimal | None:
+                raise BudgetExhaustedError(
+                    bucket="inquiry",
+                    message="Bucket 'inquiry' exhausted (remaining=0/1)",
+                )
+
+        client = BudgetExhaustedOrderableClient(
+            positions=[],
+            cash_balance=_make_cash_balance(
+                dnca_tot_amt="5000000",
+                nxdy_excc_amt="3000000",
+            ),
+        )
+        result = await sync_kis_account_snapshots(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            account_id=account_id,
+        )
+
+        # cash snapshot은 저장되어야 함 (orderable_cash 실패에도 불구하고)
+        assert result.cash_balance_synced is True
+        assert len(cash_repo._items) == 1
+        snap = list(cash_repo._items.values())[0]
+        # available_cash는 정상 조회됨
+        assert snap.available_cash == Decimal("5000000")
+        # orderable_amount는 raw_cash(available_cash)로 fallback
+        assert snap.orderable_amount == Decimal("5000000")
+        # CASH_SYNC_ZERO가 아닌 값으로 저장됨
+        assert snap.available_cash > 0
+
+    async def test_positions_budget_exhausted_cash_still_saved(
+        self,
+        account_id: UUID,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+    ) -> None:
+        """positions 조회가 BudgetExhaustedError로 실패해도
+        cash snapshot은 정상 저장됨 (cash가 positions보다 먼저 조회되므로)."""
+
+        class BudgetExhaustedPositionsClient(FakeKISRestClient):
+            async def get_positions(self) -> list[dict[str, Any]]:
+                raise BudgetExhaustedError(
+                    bucket="inquiry",
+                    message="Bucket 'inquiry' exhausted (remaining=0/1)",
+                )
+
+        client = BudgetExhaustedPositionsClient(
+            cash_balance=_make_cash_balance(
+                dnca_tot_amt="5000000",
+                nxdy_excc_amt="3000000",
+            ),
+        )
+        result = await sync_kis_account_snapshots(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            account_id=account_id,
+        )
+
+        # cash는 정상 저장
+        assert result.cash_balance_synced is True
+        assert len(cash_repo._items) == 1
+        snap = list(cash_repo._items.values())[0]
+        assert snap.available_cash == Decimal("5000000")
+        # positions는 budget 부족으로 실패
+        assert result.positions_synced == 0
+        assert any("budget exhausted" in err.lower() for err in result.errors)
+
+    async def test_orderable_cash_general_exception_fallback_to_available_cash(
+        self,
+        account_id: UUID,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+    ) -> None:
+        """orderable_cash가 BudgetExhaustedError가 아닌 일반 예외로 실패하면
+        available_cash로 fallback (VTTC8434R ord_psbl_amt는 paper에서 unreliable)."""
+
+        class FailingOrderableClient(FakeKISRestClient):
+            async def get_orderable_cash(
+                self,
+                account_ref: str = "",
+                symbol: str = "",
+                price: str = "",
+                order_type: str = "00",
+            ) -> Decimal | None:
+                raise RuntimeError("VTTC8908R network error")
+
+        client = FailingOrderableClient(
+            positions=[],
+            cash_balance=_make_cash_balance(
+                dnca_tot_amt="5000000",
+                nxdy_excc_amt="3000000",
+                ord_psbl_amt="2000000",
+            ),
+        )
+        result = await sync_kis_account_snapshots(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            account_id=account_id,
+        )
+
+        assert result.cash_balance_synced is True
+        snap = list(cash_repo._items.values())[0]
+        # 일반 Exception → available_cash로 fallback
+        assert snap.orderable_amount == Decimal("5000000"), (
+            f"Expected 5000000 (available_cash) from Exception fallback, "
+            f"got {snap.orderable_amount}"
+        )
+        assert snap.available_cash == Decimal("5000000")
+
+    async def test_fetch_positions_false_skips_positions(
+        self,
+        account_id: UUID,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+    ) -> None:
+        """``fetch_positions=False`` → positions 조회를 건너뛰고 cash+orderable만 저장."""
+        client = FakeKISRestClient(
+            positions=[{"pdno": "005930", "hldg_qty": "10", "pchs_avg_pric": "70000"}],
+            cash_balance=_make_cash_balance(
+                dnca_tot_amt="5000000",
+                nxdy_excc_amt="3000000",
+            ),
+            orderable_cash=Decimal("4500000"),
+        )
+        result = await sync_kis_account_snapshots(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            account_id=account_id,
+            fetch_positions=False,
+        )
+
+        # cash는 저장됨
+        assert result.cash_balance_synced is True
+        snap = list(cash_repo._items.values())[0]
+        assert snap.orderable_amount == Decimal("4500000")
+        assert snap.available_cash == Decimal("5000000")
+
+        # positions는 저장되지 않음
+        assert result.positions_synced == 0
+        assert len(position_repo._items) == 0
 
 
 class TestSyncCombined:

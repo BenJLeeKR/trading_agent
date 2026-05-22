@@ -482,17 +482,24 @@ class ReconciliationRunProcessor:
         run: ReconciliationRunEntity,
         error: str | None = None,
     ) -> None:
-        """Mark the run as failed."""
+        """Mark the run as failed and release the blocking lock.
+
+        Lock release is critical — without it, subsequent order attempts
+        for the same account remain permanently BLOCKED until the lock
+        TTL expires (30 minutes).
+        """
+        now = datetime.now(timezone.utc)
         summary = {
             "resolved_via": "reconciliation_worker",
             "status": "failed",
             "error": error or "unknown error",
-            "failed_at": datetime.now(timezone.utc).isoformat(),
+            "failed_at": now.isoformat(),
         }
         try:
             await self.repos.reconciliations.update_run_status(
                 reconciliation_run_id=run.reconciliation_run_id,
                 status="failed",
+                completed_at=now,
                 summary_json=summary,
             )
             logger.info(
@@ -504,22 +511,40 @@ class ReconciliationRunProcessor:
                 run.reconciliation_run_id, exc,
             )
 
+        # Fix 1: reconciliation 실패 시 lock 해제 — 연쇄 차단 방지
+        try:
+            await self.reconciliation_service.release_blocking_lock(
+                account_id=run.account_id,
+                locked_by_run_id=run.reconciliation_run_id,
+            )
+            logger.info(
+                "Blocking lock released for failed run: run_id=%s account_id=%s",
+                run.reconciliation_run_id, run.account_id,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to release blocking lock for failed run: run_id=%s error=%s",
+                run.reconciliation_run_id, exc,
+            )
+
     async def _mark_run_reflection_failed(
         self,
         run: ReconciliationRunEntity,
         order_links: list[ReconciliationOrderLinkEntity],
     ) -> None:
-        """Mark the run as reflection_failed (partial resolution)."""
+        """Mark the run as reflection_failed (partial resolution) and release lock."""
+        now = datetime.now(timezone.utc)
         summary = {
             "resolved_via": "reconciliation_worker",
             "status": "reflection_failed",
             "orders_processed": len(order_links),
-            "reflection_failed_at": datetime.now(timezone.utc).isoformat(),
+            "reflection_failed_at": now.isoformat(),
         }
         try:
             await self.repos.reconciliations.update_run_status(
                 reconciliation_run_id=run.reconciliation_run_id,
                 status="reflection_failed",
+                completed_at=now,
                 summary_json=summary,
             )
             logger.info(
@@ -528,5 +553,21 @@ class ReconciliationRunProcessor:
         except Exception as exc:
             logger.error(
                 "Failed to mark run reflection_failed: run_id=%s error=%s",
+                run.reconciliation_run_id, exc,
+            )
+
+        # Fix 1: reconciliation 실패 시 lock 해제 — 연쇄 차단 방지
+        try:
+            await self.reconciliation_service.release_blocking_lock(
+                account_id=run.account_id,
+                locked_by_run_id=run.reconciliation_run_id,
+            )
+            logger.info(
+                "Blocking lock released for reflection_failed run: run_id=%s account_id=%s",
+                run.reconciliation_run_id, run.account_id,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to release blocking lock for reflection_failed run: run_id=%s error=%s",
                 run.reconciliation_run_id, exc,
             )

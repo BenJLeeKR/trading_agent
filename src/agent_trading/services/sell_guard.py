@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -230,6 +231,10 @@ class AvailableSellQtyResolver:
         """Sum quantities of open SELL orders (non-terminal, non-partial).
 
         Includes: PENDING_SUBMIT, SUBMITTED, ACKNOWLEDGED, RECONCILE_REQUIRED
+
+        Stale PENDING_SUBMIT 주문 (30분 이상 경과 + broker_native_order_id 없음)은
+        broker에 도달하지 못한 orphan으로 간주하여 open_sell_qty에서 제외한다.
+        신선한 (30분 미만) PENDING_SUBMIT은 계속 집계하여 중복 매도를 방지한다.
         """
         if instrument_id is None:
             return Decimal("0")
@@ -240,7 +245,47 @@ class AvailableSellQtyResolver:
             OrderStatus.ACKNOWLEDGED,
             OrderStatus.RECONCILE_REQUIRED,
         ]
-        return await self._sum_sell_order_qty(account_id, instrument_id, open_statuses)
+        orders = await self.repos.orders.list(
+            OrderQuery(
+                account_id=account_id,
+                statuses=open_statuses,
+                limit=200,
+            )
+        )
+
+        now = datetime.now(timezone.utc)
+        # 30분 이상 경과한 PENDING_SUBMIT을 stale로 판정
+        stale_cutoff = now - timedelta(seconds=1800)
+
+        total = Decimal("0")
+        for order in orders:
+            if order.instrument_id != instrument_id:
+                continue
+            if order.side != OrderSide.SELL:
+                continue
+
+            # Stale PENDING_SUBMIT 판정: 30분 이상 경과 + broker_native_order_id 없음
+            if order.status == OrderStatus.PENDING_SUBMIT:
+                if order.created_at is not None and order.created_at < stale_cutoff:
+                    # broker_native_order_id 존재 여부 확인
+                    broker_orders = await self.repos.broker_orders.list_by_order_request(
+                        order.order_request_id,
+                    )
+                    has_broker_native_id = any(
+                        bo.broker_native_order_id is not None for bo in broker_orders
+                    )
+                    if not has_broker_native_id:
+                        # Stale PENDING_SUBMIT — open_sell_qty에서 제외
+                        logger.debug(
+                            "Excluding stale PENDING_SUBMIT from open_sell_qty: "
+                            "order_id=%s created_at=%s",
+                            order.order_request_id, order.created_at,
+                        )
+                        continue
+
+            total += order.requested_quantity
+
+        return total
 
     async def _get_partially_filled_remaining_qty(
         self,

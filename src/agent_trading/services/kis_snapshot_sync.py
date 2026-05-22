@@ -10,6 +10,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
+from agent_trading.brokers.rate_limit import BudgetExhaustedError
 from agent_trading.domain.entities import (
     CashBalanceSnapshotEntity,
     PositionSnapshotEntity,
@@ -178,8 +179,18 @@ async def sync_kis_account_snapshots(
     position_snapshot_repo: PositionSnapshotRepository,
     cash_balance_snapshot_repo: CashBalanceSnapshotRepository,
     account_id: UUID,
+    *,
+    fetch_positions: bool = True,
 ) -> SyncResult:
-    """Fetch KIS positions and cash balance, then store as snapshots.
+    """Fetch KIS cash balance and positions, then store as snapshots.
+
+    Cash/orderable 조회를 positions보다 먼저 수행하여, 제한된 inquiry
+    budget 환경에서도 cash snapshot이 우선적으로 성공하도록 보장한다.
+    (BudgetExhaustedError 발생 시 positions는 실패해도 cash는 저장됨)
+
+    ``fetch_positions=False``로 호출하면 positions 조회를 건너뛰어,
+    budget이 부족한 상황에서도 cash+orderable을 안전하게 확보할 수 있다.
+    positions는 별도 사이클(``fetch_positions=True``)에서 가져온다.
 
     Parameters
     ----------
@@ -195,6 +206,10 @@ async def sync_kis_account_snapshots(
     account_id:
         The ``AccountEntity.account_id`` (UUID) to associate with the
         snapshots.
+    fetch_positions:
+        When ``False``, skip positions fetch entirely (cash+orderable only).
+        Use this in Phase 1 of a split sync cycle; call again with
+        ``fetch_positions=True`` in Phase 2.
 
     Returns
     -------
@@ -204,112 +219,17 @@ async def sync_kis_account_snapshots(
     result = SyncResult()
     snapshot_at = datetime.now(tz=timezone.utc)
 
-    # ── 1. Sync positions ──────────────────────────────────────────────
-    try:
-        raw_positions: Sequence[dict[str, Any]] = await rest_client.get_positions()
-    except Exception as exc:
-        msg = f"Failed to fetch positions from KIS: {exc}"
-        logger.error(msg)
-        result._add_error(msg)
-        raw_positions = []
+    # ── 1. Sync cash balance (우선) ────────────────────────────────────
+    # cash/orderable은 submit에 가장 중요하므로 positions보다 먼저 확보
+    cash_entity: CashBalanceSnapshotEntity | None = None
 
-    # pdno → instrument_id 매핑을 수집 (zero-out 로직에서 사용)
-    pdno_to_instrument_id: dict[str, UUID] = {}
-
-    for raw in raw_positions:
-        pdno = raw.get(_KIS_PDNO, "")
-        if not pdno:
-            result._incr("positions_skipped")
-            result._add_error("Position row missing 'pdno' — skipped")
-            continue
-
-        # Resolve instrument_id via symbol lookup
-        try:
-            instrument = await instrument_repo.get_by_symbol(pdno, _DEFAULT_MARKET_CODE)
-        except Exception as exc:
-            logger.warning("Instrument lookup failed for pdno=%s: %s", pdno, exc)
-            instrument = None
-
-        if instrument is None:
-            logger.warning(
-                "Skipping position pdno=%s — instrument not found in DB", pdno
-            )
-            result._incr("positions_skipped")
-            result._add_error(f"Instrument not found for pdno={pdno} — skipped")
-            continue
-
-        pdno_to_instrument_id[pdno] = instrument.instrument_id
-
-        # Map KIS raw fields → PositionSnapshotEntity
-        try:
-            entity = PositionSnapshotEntity(
-                position_snapshot_id=uuid4(),
-                account_id=account_id,
-                instrument_id=instrument.instrument_id,
-                quantity=_safe_decimal(raw.get(_KIS_HLDG_QTY, "0")),
-                average_price=_safe_decimal(raw.get(_KIS_PCHS_AVG_PRIC, "0")),
-                market_price=_safe_optional_decimal(raw.get(_KIS_PRPR)),
-                unrealized_pnl=_safe_optional_decimal(raw.get(_KIS_EVL_PFLS_AMT)),
-                source_of_truth=_SOURCE_OF_TRUTH,
-                snapshot_at=snapshot_at,
-            )
-        except Exception as exc:
-            logger.warning("Failed to build PositionSnapshotEntity for pdno=%s: %s", pdno, exc)
-            result._incr("positions_skipped")
-            result._add_error(f"Mapping error for pdno={pdno}: {exc}")
-            continue
-
-        try:
-            await position_snapshot_repo.add(entity)
-            result._incr("positions_synced")
-        except Exception as exc:
-            logger.error("Failed to persist position snapshot pdno=%s: %s", pdno, exc)
-            result._add_error(f"Persist error for pdno={pdno}: {exc}")
-
-    # ── 1b. Zero-out positions missing from KIS response ───────────────
-    # KIS 응답에서 사라진 종목 = 전량 매도 → quantity=0으로 기록
-    try:
-        current_instrument_ids = set(pdno_to_instrument_id.values())
-        latest_snapshots = await position_snapshot_repo.list_latest_by_account(account_id)
-
-        zeroed_count = 0
-        for snap in latest_snapshots:
-            if snap.quantity == Decimal("0"):
-                continue  # 이미 0 처리됨
-            if snap.instrument_id in current_instrument_ids:
-                continue  # KIS 응답에 있는 종목
-
-            # KIS 응답에 없고 quantity>0인 종목 → quantity=0 snapshot 추가
-            zero_snapshot = PositionSnapshotEntity(
-                position_snapshot_id=uuid4(),
-                account_id=account_id,
-                instrument_id=snap.instrument_id,
-                quantity=Decimal("0"),
-                average_price=snap.average_price,
-                market_price=snap.market_price,
-                unrealized_pnl=snap.unrealized_pnl,
-                source_of_truth=_SOURCE_OF_TRUTH,
-                snapshot_at=snapshot_at,
-            )
-            await position_snapshot_repo.add(zero_snapshot)
-            zeroed_count += 1
-
-        if zeroed_count > 0:
-            logger.info(
-                "[ZERO_OUT] account=%s: zeroed %d positions missing from KIS response",
-                account_id, zeroed_count,
-            )
-    except Exception:
-        logger.exception(
-            "[ZERO_OUT] failed for account=%s", account_id,
-        )
-        # zero-out 실패는 치명적이지 않음 — 다음 cycle에서 재시도
-
-    # ── 2. Sync cash balance ───────────────────────────────────────────
-    # Paper 1 RPS pacing: ensure at least 1s between consecutive KIS calls
-    await asyncio.sleep(1.0)
     try:
         raw_cash: dict[str, Any] = await rest_client.get_cash_balance()
+    except BudgetExhaustedError as exc:
+        msg = f"Cash balance inquiry budget exhausted: {exc}"
+        logger.error(msg)
+        result._add_error(msg)
+        raw_cash = {}
     except Exception as exc:
         msg = f"Failed to fetch cash balance from KIS: {exc}"
         logger.error(msg)
@@ -337,11 +257,11 @@ async def sync_kis_account_snapshots(
             settlement_amount = _safe_optional_decimal(raw_cash.get(_KIS_PRVS_RCDL_EXCC_AMT))
             total_unrealized_pnl = _safe_optional_decimal(raw_cash.get(_KIS_EVL_PFLS_SMTL_AMT))
 
-            # ── orderable_amount: prefer VTTC8908R over VTTC8434R ──
-            # get_cash_balance() uses VTTC8434R (inquire-balance) which
-            # does NOT return ord_psbl_cash in paper environment.
-            # get_orderable_cash() uses VTTC8908R (inquire-psbl-order)
-            # which provides ord_psbl_cash even in paper mode.
+            # ── orderable_amount: VTTC8908R 시도, 실패 시 raw_cash fallback ──
+            # get_cash_balance()는 VTTC8434R(inquire-balance) 사용 — paper에서
+            # ord_psbl_cash를 반환하지 않음. get_orderable_cash()는 VTTC8908R
+            # (inquire-psbl-order) 사용 — paper에서도 ord_psbl_cash 제공.
+            # BudgetExhaustedError 발생 시 raw_cash(available_cash)로 fallback.
             orderable_amount: Decimal | None = None
 
             # Paper 1 RPS pacing: ensure at least 1s between consecutive KIS calls
@@ -351,16 +271,27 @@ async def sync_kis_account_snapshots(
                 orderable_cash = await rest_client.get_orderable_cash(
                     account_ref="",
                 )
+            except BudgetExhaustedError:
+                # Budget 소진 → raw_cash로 fallback (CASH_SYNC_ZERO 방지)
+                logger.warning(
+                    "VTTC8908R get_orderable_cash() budget exhausted (legacy sync path); "
+                    "falling back to raw_cash (available_cash=%s)",
+                    available_cash,
+                )
+                orderable_cash = available_cash
             except Exception:
+                # 일반 Exception → available_cash로 fallback (VTTC8434R ord_psbl_amt는
+                # paper에서 unreliable하므로 available_cash가 더 안전)
                 logger.warning(
                     "VTTC8908R get_orderable_cash() failed (legacy sync path); "
-                    "falling back to VTTC8434R ord_psbl_amt",
+                    "falling back to available_cash=%s",
+                    available_cash,
                     exc_info=True,
                 )
-                orderable_cash = None
+                orderable_cash = available_cash
 
             if orderable_cash is not None:
-                orderable_amount = orderable_cash
+                orderable_amount = Decimal(str(orderable_cash))
                 logger.info(
                     "orderable_amount=%s (source: VTTC8908R, legacy sync path)",
                     orderable_cash,
@@ -415,6 +346,117 @@ async def sync_kis_account_snapshots(
             account_id,
             getattr(rest_client, "env", "unknown"),
         )
+
+    # ── 2. Sync positions (cash 다음, skip when fetch_positions=False) ──
+    raw_positions: Sequence[dict[str, Any]] = []
+    if fetch_positions:
+        try:
+            raw_positions = await rest_client.get_positions()
+        except BudgetExhaustedError as exc:
+            msg = f"Positions inquiry budget exhausted: {exc}"
+            logger.error(msg)
+            result._add_error(msg)
+        except Exception as exc:
+            msg = f"Failed to fetch positions from KIS: {exc}"
+            logger.error(msg)
+            result._add_error(msg)
+    else:
+        logger.info(
+            "fetch_positions=False — skipping positions fetch "
+            "(Phase 1: cash+orderable only; positions will be fetched in Phase 2)"
+        )
+
+    # pdno → instrument_id 매핑을 수집 (zero-out 로직에서 사용)
+    pdno_to_instrument_id: dict[str, UUID] = {}
+
+    for raw in raw_positions:
+        pdno = raw.get(_KIS_PDNO, "")
+        if not pdno:
+            result._incr("positions_skipped")
+            result._add_error("Position row missing 'pdno' — skipped")
+            continue
+
+        # Resolve instrument_id via symbol lookup
+        try:
+            instrument = await instrument_repo.get_by_symbol(pdno, _DEFAULT_MARKET_CODE)
+        except Exception as exc:
+            logger.warning("Instrument lookup failed for pdno=%s: %s", pdno, exc)
+            instrument = None
+
+        if instrument is None:
+            logger.warning(
+                "Skipping position pdno=%s — instrument not found in DB", pdno
+            )
+            result._incr("positions_skipped")
+            result._add_error(f"Instrument not found for pdno={pdno} — skipped")
+            continue
+
+        pdno_to_instrument_id[pdno] = instrument.instrument_id
+
+        # Map KIS raw fields → PositionSnapshotEntity
+        try:
+            entity = PositionSnapshotEntity(
+                position_snapshot_id=uuid4(),
+                account_id=account_id,
+                instrument_id=instrument.instrument_id,
+                quantity=_safe_decimal(raw.get(_KIS_HLDG_QTY, "0")),
+                average_price=_safe_decimal(raw.get(_KIS_PCHS_AVG_PRIC, "0")),
+                market_price=_safe_optional_decimal(raw.get(_KIS_PRPR)),
+                unrealized_pnl=_safe_optional_decimal(raw.get(_KIS_EVL_PFLS_AMT)),
+                source_of_truth=_SOURCE_OF_TRUTH,
+                snapshot_at=snapshot_at,
+            )
+        except Exception as exc:
+            logger.warning("Failed to build PositionSnapshotEntity for pdno=%s: %s", pdno, exc)
+            result._incr("positions_skipped")
+            result._add_error(f"Mapping error for pdno={pdno}: {exc}")
+            continue
+
+        try:
+            await position_snapshot_repo.add(entity)
+            result._incr("positions_synced")
+        except Exception as exc:
+            logger.error("Failed to persist position snapshot pdno=%s: %s", pdno, exc)
+            result._add_error(f"Persist error for pdno={pdno}: {exc}")
+
+    # ── 2b. Zero-out positions missing from KIS response ───────────────
+    # KIS 응답에서 사라진 종목 = 전량 매도 → quantity=0으로 기록
+    try:
+        current_instrument_ids = set(pdno_to_instrument_id.values())
+        latest_snapshots = await position_snapshot_repo.list_latest_by_account(account_id)
+
+        zeroed_count = 0
+        for snap in latest_snapshots:
+            if snap.quantity == Decimal("0"):
+                continue  # 이미 0 처리됨
+            if snap.instrument_id in current_instrument_ids:
+                continue  # KIS 응답에 있는 종목
+
+            # KIS 응답에 없고 quantity>0인 종목 → quantity=0 snapshot 추가
+            zero_snapshot = PositionSnapshotEntity(
+                position_snapshot_id=uuid4(),
+                account_id=account_id,
+                instrument_id=snap.instrument_id,
+                quantity=Decimal("0"),
+                average_price=snap.average_price,
+                market_price=snap.market_price,
+                unrealized_pnl=snap.unrealized_pnl,
+                source_of_truth=_SOURCE_OF_TRUTH,
+                snapshot_at=snapshot_at,
+            )
+            await position_snapshot_repo.add(zero_snapshot)
+            zeroed_count += 1
+
+        if zeroed_count > 0:
+            logger.info(
+                "[ZERO_OUT] account=%s: zeroed %d positions missing from KIS response",
+                account_id, zeroed_count,
+            )
+    except Exception:
+        logger.exception(
+            "[ZERO_OUT] failed for account=%s", account_id,
+        )
+        # zero-out 실패는 치명적이지 않음 — 다음 cycle에서 재시도
 
     return result
 

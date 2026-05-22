@@ -20,7 +20,7 @@ Test matrix
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -917,3 +917,309 @@ class TestSellAvailabilityDataclass:
         )
         with pytest.raises(AttributeError):
             sa.available_sell_qty = Decimal("20")  # type: ignore[misc]
+
+
+# ======================================================================
+# Stale PENDING_SUBMIT 관련 테스트
+# ======================================================================
+
+
+async def test_sell_guard_stale_pending_submit_excluded() -> None:
+    """Stale PENDING_SUBMIT sell (30분↑ + broker_native_order_id=NULL)은
+    open_sell_qty에 포함되지 않아야 한다."""
+    repos = build_in_memory_repositories()
+    resolver = AvailableSellQtyResolver(repos=repos)
+
+    account_id = uuid4()
+    instrument = _make_instrument()
+    await repos.instruments.add(instrument)
+
+    # 31분 전 생성된 stale PENDING_SUBMIT SELL 주문
+    stale_created_at = datetime.now(timezone.utc) - timedelta(minutes=31)
+    stale_order = _make_order(
+        account_id=account_id,
+        instrument_id=instrument.instrument_id,
+        side=OrderSide.SELL,
+        quantity="10",
+        status=OrderStatus.PENDING_SUBMIT,
+    )
+    # created_at을 31분 전으로 override (frozen dataclass)
+    stale_order = OrderRequestEntity(
+        order_request_id=stale_order.order_request_id,
+        account_id=stale_order.account_id,
+        instrument_id=stale_order.instrument_id,
+        client_order_id=stale_order.client_order_id,
+        idempotency_key=stale_order.idempotency_key,
+        correlation_id=stale_order.correlation_id,
+        side=stale_order.side,
+        order_type=stale_order.order_type,
+        requested_quantity=stale_order.requested_quantity,
+        status=stale_order.status,
+        trade_decision_id=stale_order.trade_decision_id,
+        decision_context_id=stale_order.decision_context_id,
+        requested_price=stale_order.requested_price,
+        time_in_force=stale_order.time_in_force,
+        status_reason_code=stale_order.status_reason_code,
+        status_reason_message=stale_order.status_reason_message,
+        submitted_at=stale_order.submitted_at,
+        created_at=stale_created_at,  # 31분 전
+        updated_at=stale_created_at,
+        version=stale_order.version,
+        order_intent_id=stale_order.order_intent_id,
+    )
+    await repos.orders.add(stale_order)
+
+    # broker_native_order_id가 없는 BrokerOrderEntity 추가 (orphan)
+    bo = _make_broker_order(
+        order_request_id=stale_order.order_request_id,
+        native_order_id=None,
+    )
+    await repos.broker_orders.add(bo)
+
+    # Position 10주
+    snap = _make_position_snapshot(
+        account_id=account_id,
+        instrument_id=instrument.instrument_id,
+        quantity="10",
+    )
+    await repos.position_snapshots.add(snap)
+
+    sa = await resolver.resolve(
+        account_id=account_id,
+        symbol=instrument.symbol,
+        requested_qty=Decimal("1"),
+    )
+
+    # stale PENDING_SUBMIT은 제외 → open_sell_qty=0, available=10
+    assert sa.open_sell_qty == Decimal("0"), (
+        f"Expected open_sell_qty=0 for stale PENDING_SUBMIT, got {sa.open_sell_qty}"
+    )
+    assert sa.available_sell_qty == Decimal("10"), (
+        f"Expected available_sell_qty=10, got {sa.available_sell_qty}"
+    )
+    assert sa.is_blocked is False, "Stale PENDING_SUBMIT should not block sell"
+
+
+async def test_sell_guard_fresh_pending_submit_included() -> None:
+    """Fresh PENDING_SUBMIT sell (30분 미만)은 계속 open_sell_qty에 포함되어
+    매도를 차단해야 한다."""
+    repos = build_in_memory_repositories()
+    resolver = AvailableSellQtyResolver(repos=repos)
+
+    account_id = uuid4()
+    instrument = _make_instrument()
+    await repos.instruments.add(instrument)
+
+    # 5분 전 생성된 fresh PENDING_SUBMIT SELL 주문
+    fresh_created_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+    fresh_order = _make_order(
+        account_id=account_id,
+        instrument_id=instrument.instrument_id,
+        side=OrderSide.SELL,
+        quantity="10",
+        status=OrderStatus.PENDING_SUBMIT,
+    )
+    fresh_order = OrderRequestEntity(
+        order_request_id=fresh_order.order_request_id,
+        account_id=fresh_order.account_id,
+        instrument_id=fresh_order.instrument_id,
+        client_order_id=fresh_order.client_order_id,
+        idempotency_key=fresh_order.idempotency_key,
+        correlation_id=fresh_order.correlation_id,
+        side=fresh_order.side,
+        order_type=fresh_order.order_type,
+        requested_quantity=fresh_order.requested_quantity,
+        status=fresh_order.status,
+        trade_decision_id=fresh_order.trade_decision_id,
+        decision_context_id=fresh_order.decision_context_id,
+        requested_price=fresh_order.requested_price,
+        time_in_force=fresh_order.time_in_force,
+        status_reason_code=fresh_order.status_reason_code,
+        status_reason_message=fresh_order.status_reason_message,
+        submitted_at=fresh_order.submitted_at,
+        created_at=fresh_created_at,  # 5분 전
+        updated_at=fresh_created_at,
+        version=fresh_order.version,
+        order_intent_id=fresh_order.order_intent_id,
+    )
+    await repos.orders.add(fresh_order)
+
+    # broker_native_order_id가 없는 BrokerOrderEntity
+    bo = _make_broker_order(
+        order_request_id=fresh_order.order_request_id,
+        native_order_id=None,
+    )
+    await repos.broker_orders.add(bo)
+
+    # Position 10주
+    snap = _make_position_snapshot(
+        account_id=account_id,
+        instrument_id=instrument.instrument_id,
+        quantity="10",
+    )
+    await repos.position_snapshots.add(snap)
+
+    sa = await resolver.resolve(
+        account_id=account_id,
+        symbol=instrument.symbol,
+        requested_qty=Decimal("1"),
+    )
+
+    # fresh PENDING_SUBMIT은 포함 → open_sell_qty=10, available=0
+    assert sa.open_sell_qty == Decimal("10"), (
+        f"Expected open_sell_qty=10 for fresh PENDING_SUBMIT, got {sa.open_sell_qty}"
+    )
+    assert sa.available_sell_qty == Decimal("0"), (
+        f"Expected available_sell_qty=0, got {sa.available_sell_qty}"
+    )
+    assert sa.is_blocked is True, "Fresh PENDING_SUBMIT should block sell"
+
+
+async def test_sell_guard_stale_pending_submit_buy_unaffected() -> None:
+    """BUY PENDING_SUBMIT 주문은 stale/exclusion과 무관하게 기존 동작 유지."""
+    repos = build_in_memory_repositories()
+    resolver = AvailableSellQtyResolver(repos=repos)
+
+    account_id = uuid4()
+    instrument = _make_instrument()
+    await repos.instruments.add(instrument)
+
+    # 31분 전 생성된 stale PENDING_SUBMIT BUY 주문
+    stale_created_at = datetime.now(timezone.utc) - timedelta(minutes=31)
+    buy_order = _make_order(
+        account_id=account_id,
+        instrument_id=instrument.instrument_id,
+        side=OrderSide.BUY,
+        quantity="10",
+        status=OrderStatus.PENDING_SUBMIT,
+    )
+    buy_order = OrderRequestEntity(
+        order_request_id=buy_order.order_request_id,
+        account_id=buy_order.account_id,
+        instrument_id=buy_order.instrument_id,
+        client_order_id=buy_order.client_order_id,
+        idempotency_key=buy_order.idempotency_key,
+        correlation_id=buy_order.correlation_id,
+        side=buy_order.side,
+        order_type=buy_order.order_type,
+        requested_quantity=buy_order.requested_quantity,
+        status=buy_order.status,
+        trade_decision_id=buy_order.trade_decision_id,
+        decision_context_id=buy_order.decision_context_id,
+        requested_price=buy_order.requested_price,
+        time_in_force=buy_order.time_in_force,
+        status_reason_code=buy_order.status_reason_code,
+        status_reason_message=buy_order.status_reason_message,
+        submitted_at=buy_order.submitted_at,
+        created_at=stale_created_at,
+        updated_at=stale_created_at,
+        version=buy_order.version,
+        order_intent_id=buy_order.order_intent_id,
+    )
+    await repos.orders.add(buy_order)
+
+    bo = _make_broker_order(
+        order_request_id=buy_order.order_request_id,
+        native_order_id=None,
+    )
+    await repos.broker_orders.add(bo)
+
+    # Position 10주
+    snap = _make_position_snapshot(
+        account_id=account_id,
+        instrument_id=instrument.instrument_id,
+        quantity="10",
+    )
+    await repos.position_snapshots.add(snap)
+
+    sa = await resolver.resolve(
+        account_id=account_id,
+        symbol=instrument.symbol,
+        requested_qty=Decimal("1"),
+    )
+
+    # BUY 주문은 open_sell_qty에 영향을 주지 않음
+    assert sa.open_sell_qty == Decimal("0"), (
+        f"Expected open_sell_qty=0 for BUY order, got {sa.open_sell_qty}"
+    )
+    assert sa.available_sell_qty == Decimal("10"), (
+        f"Expected available_sell_qty=10, got {sa.available_sell_qty}"
+    )
+    assert sa.is_blocked is False, "BUY PENDING_SUBMIT should not affect sell guard"
+
+
+async def test_sell_guard_stale_pending_submit_with_broker_native_id_included() -> None:
+    """Stale PENDING_SUBMIT이지만 broker_native_order_id가 있으면
+    broker에 도달한 것으로 간주하여 open_sell_qty에 포함."""
+    repos = build_in_memory_repositories()
+    resolver = AvailableSellQtyResolver(repos=repos)
+
+    account_id = uuid4()
+    instrument = _make_instrument()
+    await repos.instruments.add(instrument)
+
+    # 31분 전 생성되었지만 broker_native_order_id가 있는 PENDING_SUBMIT
+    stale_created_at = datetime.now(timezone.utc) - timedelta(minutes=31)
+    order = _make_order(
+        account_id=account_id,
+        instrument_id=instrument.instrument_id,
+        side=OrderSide.SELL,
+        quantity="10",
+        status=OrderStatus.PENDING_SUBMIT,
+    )
+    order = OrderRequestEntity(
+        order_request_id=order.order_request_id,
+        account_id=order.account_id,
+        instrument_id=order.instrument_id,
+        client_order_id=order.client_order_id,
+        idempotency_key=order.idempotency_key,
+        correlation_id=order.correlation_id,
+        side=order.side,
+        order_type=order.order_type,
+        requested_quantity=order.requested_quantity,
+        status=order.status,
+        trade_decision_id=order.trade_decision_id,
+        decision_context_id=order.decision_context_id,
+        requested_price=order.requested_price,
+        time_in_force=order.time_in_force,
+        status_reason_code=order.status_reason_code,
+        status_reason_message=order.status_reason_message,
+        submitted_at=order.submitted_at,
+        created_at=stale_created_at,
+        updated_at=stale_created_at,
+        version=order.version,
+        order_intent_id=order.order_intent_id,
+    )
+    await repos.orders.add(order)
+
+    # broker_native_order_id가 있는 BrokerOrderEntity
+    bo = _make_broker_order(
+        order_request_id=order.order_request_id,
+        native_order_id="BROKER-12345",
+    )
+    await repos.broker_orders.add(bo)
+
+    # Position 10주
+    snap = _make_position_snapshot(
+        account_id=account_id,
+        instrument_id=instrument.instrument_id,
+        quantity="10",
+    )
+    await repos.position_snapshots.add(snap)
+
+    sa = await resolver.resolve(
+        account_id=account_id,
+        symbol=instrument.symbol,
+        requested_qty=Decimal("1"),
+    )
+
+    # broker_native_order_id가 있으므로 open_sell_qty에 포함
+    assert sa.open_sell_qty == Decimal("10"), (
+        f"Expected open_sell_qty=10 (has broker_native_order_id), got {sa.open_sell_qty}"
+    )
+    assert sa.available_sell_qty == Decimal("0"), (
+        f"Expected available_sell_qty=0, got {sa.available_sell_qty}"
+    )
+    assert sa.is_blocked is True, (
+        "Stale PENDING_SUBMIT with broker_native_order_id should block sell"
+    )

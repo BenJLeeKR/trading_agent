@@ -303,7 +303,7 @@ class TestKISSyncSnapshotProvider:
         assert cash.currency == "KRW"
 
     async def test_cash_balance_orderable_amount_vttc8908r_failure(self) -> None:
-        """``get_orderable_cash()`` raises → falls back to VTTC8434R ``ord_psbl_amt``."""
+        """``get_orderable_cash()`` raises → falls back to ``available_cash``."""
         account_id = uuid4()
         client = FakeKISRestClient(
             positions=[],
@@ -321,9 +321,11 @@ class TestKISSyncSnapshotProvider:
         result = await provider.fetch_snapshot(account_id, inst_repo)
         assert result.cash_balance is not None
         cash = result.cash_balance
-        # VTTC8908R 실패 → VTTC8434R의 ord_psbl_amt로 fallback
-        assert cash.orderable_amount == 300000, (
-            f"Expected 300000 from VTTC8434R fallback, got {cash.orderable_amount}"
+        # VTTC8908R 일반 Exception 실패 → available_cash로 fallback
+        # (VTTC8434R ord_psbl_amt는 paper에서 unreliable하므로 available_cash가 더 안전)
+        assert cash.orderable_amount == 1000000, (
+            f"Expected 1000000 (available_cash) from Exception fallback, "
+            f"got {cash.orderable_amount}"
         )
         assert cash.available_cash == 1000000  # unchanged
         assert cash.currency == "KRW"
@@ -415,4 +417,37 @@ class TestFetchSnapshot:
         assert result.cash_balance.settled_cash == 1500000
 
         # 에러 리스트에 positions 관련 에러가 없어야 함
+        assert not any("position" in err.lower() for err in result.errors)
+
+    async def test_fetch_snapshot_fetch_positions_false(self) -> None:
+        """``fetch_positions=False`` → positions는 빈 리스트, cash+orderable은 정상."""
+        from unittest.mock import AsyncMock
+
+        account_id = uuid4()
+        mock_rest = AsyncMock(spec=KISRestClient)
+        mock_rest.get_positions = AsyncMock(return_value=[])
+        mock_rest.get_cash_balance = AsyncMock(
+            return_value={"dnca_tot_amt": "2000000", "nxdy_excc_amt": "1500000"}
+        )
+        mock_rest.get_orderable_cash = AsyncMock(return_value=Decimal("1800000"))
+
+        provider = KISSyncSnapshotProvider(mock_rest)
+        inst_repo = InMemoryInstrumentRepository()
+
+        result = await provider.fetch_snapshot(
+            account_id, inst_repo, fetch_positions=False,
+        )
+
+        # get_positions()는 호출되지 않아야 함
+        mock_rest.get_positions.assert_not_called()
+
+        # cash_balance는 정상
+        assert result.cash_balance is not None
+        assert result.cash_balance.available_cash == 2000000
+        assert result.cash_balance.orderable_amount == 1800000
+
+        # positions는 빈 리스트
+        assert result.positions == []
+
+        # positions 관련 에러가 없어야 함
         assert not any("position" in err.lower() for err in result.errors)

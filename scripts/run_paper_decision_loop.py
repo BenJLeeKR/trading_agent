@@ -735,7 +735,7 @@ async def _run_one_cycle(
                 market=market,
                 side=OrderSide.BUY,
                 order_type=order_type,
-                quantity=Decimal("10"),
+                quantity=Decimal("1"),
                 price=price,
                 metadata={"source_type": source_type},
             )

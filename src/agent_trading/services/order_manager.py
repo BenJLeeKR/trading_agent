@@ -69,6 +69,7 @@ _ALLOWED_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
         OrderStatus.SUBMITTED,
         OrderStatus.RECONCILE_REQUIRED,
         OrderStatus.REJECTED,
+        OrderStatus.EXPIRED,  # Stale PENDING_SUBMIT → REJECTED (order_sync_service, submission_failed_no_broker_id)
     },
     OrderStatus.SUBMITTED: {
         OrderStatus.ACKNOWLEDGED,

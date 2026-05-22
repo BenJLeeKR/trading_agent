@@ -26,9 +26,12 @@ class TestBuildKisBudgetManager:
         mgr = build_kis_budget_manager(kis_env="paper")
         assert isinstance(mgr, RateLimitBudgetManager)
         snap = mgr.snapshot()
-        # Paper baseline capacities (1 RPS): all buckets = 1
+        # Paper baseline capacities (1 RPS):
+        #   auth=1, inquiry=1, market_data=1, reconciliation=10
+        #   order=3 (Fix 3: capacity increased from 1→3 to prevent
+        #   BudgetExhaustedError → lock → 연쇄 차단)
         assert snap["auth"]["capacity"] == 1
-        assert snap["order"]["capacity"] == 1
+        assert snap["order"]["capacity"] == 3
         assert snap["inquiry"]["capacity"] == 1
         assert snap["market_data"]["capacity"] == 1
         # Paper RECONCILIATION bucket capacity increased from 5 to 10
@@ -63,9 +66,11 @@ class TestBuildKisBudgetManager:
         """Custom ``paper_rest_rps=3`` scales bucket capacities relative to baseline."""
         mgr = build_kis_budget_manager(kis_env="paper", paper_rest_rps=3)
         snap = mgr.snapshot()
-        # With 3 RPS (3x default): all capacities = 3
+        # With 3 RPS (3x default):
+        #   auth=3, inquiry=3, market_data=3, reconciliation=30
+        #   order=max(3, int(3*3)) = 9 (Fix 3: min floor=3, multiplier=3)
         assert snap["auth"]["capacity"] == 3
-        assert snap["order"]["capacity"] == 3
+        assert snap["order"]["capacity"] == 9
         assert snap["inquiry"]["capacity"] == 3
         assert snap["market_data"]["capacity"] == 3
         # RECONCILIATION bucket: capacity = max(1, int(10 * total)) = max(1, 30) = 30

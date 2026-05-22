@@ -542,3 +542,174 @@ describe("AccountsView snapshot dedup", () => {
     expect(await screen.findByText("1,028,250원", { exact: false }, { timeout: 3000 })).toBeInTheDocument();
   });
 });
+
+/* ───────────────────────────────────────────
+ * AccountsView — zero-quantity position filter
+ * ─────────────────────────────────────────── */
+describe("AccountsView zero-quantity position filter", () => {
+  const positionsWithZeroQty = [
+    {
+      position_snapshot_id: "ps-zero-aaaa",
+      account_id: "ac-22222222-2222-2222-2222-222222222222",
+      instrument_id: "in-77777777-7777-7777-7777-777777777777",
+      quantity: 100,
+      average_price: 150.0,
+      market_price: 155.0,
+      unrealized_pnl: 500.0,
+      purchase_amount: 15000.0,
+      evaluation_amount: 15500.0,
+      source_of_truth: "broker",
+      snapshot_at: "2024-01-01T12:00:00Z",
+      symbol: "AAPL",
+      instrument_name: "Apple Inc.",
+    },
+    {
+      position_snapshot_id: "ps-zero-bbbb",
+      account_id: "ac-22222222-2222-2222-2222-222222222222",
+      instrument_id: "in-88888888-8888-8888-8888-888888888888",
+      quantity: 0, // 전량 매도되어 수량 0
+      average_price: 250.0,
+      market_price: 245.0,
+      unrealized_pnl: 0.0,
+      purchase_amount: null,
+      evaluation_amount: null,
+      source_of_truth: "broker",
+      snapshot_at: "2024-01-01T12:00:00Z",
+      symbol: "MSFT",
+      instrument_name: "Microsoft Corporation",
+    },
+    {
+      position_snapshot_id: "ps-zero-cccc",
+      account_id: "ac-22222222-2222-2222-2222-222222222222",
+      instrument_id: "in-99999999-9999-9999-9999-999999999999",
+      quantity: 0, // 전량 매도되어 수량 0
+      average_price: 50000.0,
+      market_price: 51000.0,
+      unrealized_pnl: 0.0,
+      purchase_amount: null,
+      evaluation_amount: null,
+      source_of_truth: "broker",
+      snapshot_at: "2024-01-01T12:00:00Z",
+      symbol: "TSLA",
+      instrument_name: "Tesla Inc.",
+    },
+  ];
+
+  it("hides zero-quantity positions in default latest view", async () => {
+    vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
+    vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
+    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(positionsWithZeroQty);
+    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
+
+    render(<AccountsView />, { wrapper: RouterWrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+    });
+
+    screen.getByText("CLIENT1-PAPER-PAPER").click();
+
+    // Wait for positions to load
+    await waitFor(() => {
+      expect(screen.getByText("브로커 스냅샷 — 포지션")).toBeInTheDocument();
+    });
+
+    // AAPL (quantity=100)은 표시되어야 함
+    expect(screen.getByText("AAPL")).toBeInTheDocument();
+
+    // MSFT (quantity=0)은 기본 뷰에서 숨겨져야 함
+    expect(screen.queryByText("MSFT")).not.toBeInTheDocument();
+
+    // TSLA (quantity=0)도 기본 뷰에서 숨겨져야 함
+    expect(screen.queryByText("TSLA")).not.toBeInTheDocument();
+
+    // 수량 0이 아닌 종목만 표시되므로 1개 row만 있어야 함
+    const symbolElements = screen.getAllByText("AAPL");
+    expect(symbolElements.length).toBe(1);
+  });
+
+  it("shows quantity>0 positions normally", async () => {
+    vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
+    vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
+    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(positionsWithZeroQty);
+    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
+
+    render(<AccountsView />, { wrapper: RouterWrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+    });
+
+    screen.getByText("CLIENT1-PAPER-PAPER").click();
+
+    await waitFor(() => {
+      expect(screen.getByText("브로커 스냅샷 — 포지션")).toBeInTheDocument();
+    });
+
+    // AAPL (quantity=100)은 정상 표시
+    expect(screen.getByText("AAPL")).toBeInTheDocument();
+    // AAPL의 수량 100이 표시되어야 함
+    expect(screen.getByText("100")).toBeInTheDocument();
+  });
+
+  it("shows zero-quantity positions in snapshot history mode", async () => {
+    vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
+    vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
+    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(positionsWithZeroQty);
+    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
+
+    render(<AccountsView />, { wrapper: RouterWrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+    });
+
+    screen.getByText("CLIENT1-PAPER-PAPER").click();
+
+    await waitFor(() => {
+      expect(screen.getByText("스냅샷 이력 보기 (3건)")).toBeInTheDocument();
+    });
+
+    // 기본 뷰에서는 MSFT가 보이지 않음
+    expect(screen.queryByText("MSFT")).not.toBeInTheDocument();
+
+    // 스냅샷 이력 보기로 전환
+    screen.getByText("스냅샷 이력 보기 (3건)").click();
+
+    // 이력 모드에서는 MSFT (quantity=0)도 표시되어야 함
+    await waitFor(() => {
+      expect(screen.getByText("MSFT")).toBeInTheDocument();
+    });
+
+    // 이력 모드에서는 TSLA (quantity=0)도 표시되어야 함
+    expect(screen.getByText("TSLA")).toBeInTheDocument();
+
+    // 이력 모드에서는 AAPL도 당연히 표시
+    expect(screen.getByText("AAPL")).toBeInTheDocument();
+
+    // 토글 텍스트 변경 확인
+    expect(screen.getByText("최신 포지션만 보기")).toBeInTheDocument();
+  });
+
+  it("shows empty message when all positions have zero quantity", async () => {
+    const allZeroPositions = positionsWithZeroQty.filter(p => p.quantity === 0);
+
+    vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
+    vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
+    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(allZeroPositions);
+    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
+
+    render(<AccountsView />, { wrapper: RouterWrapper });
+
+    await waitFor(() => {
+      expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+    });
+
+    screen.getByText("CLIENT1-PAPER-PAPER").click();
+
+    // 모든 포지션이 수량 0이므로 빈 상태 메시지 표시
+    await waitFor(() => {
+      expect(screen.getByText("이 계좌의 포지션이 없습니다.")).toBeInTheDocument();
+    });
+  });
+});

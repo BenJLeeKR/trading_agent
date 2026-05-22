@@ -489,10 +489,14 @@ def build_kis_budget_manager(
         # Paper: very conservative — auth is the bottleneck (1 token/min).
         # Capacities are scaled proportionally from the 1-RPS baseline.
         # Global REST cap = total RPS (strict upper bound).
+        #
+        # Fix 3: ORDER bucket capacity=1 → 3 (burst 여유 확보).
+        #   BudgetExhaustedError 발생 시 reconciliation trigger → lock
+        #   → 연쇄 차단을 방지하기 위해 최소 3회 연속 주문 가능하도록 완화.
         manager = RateLimitBudgetManager(
             auth_capacity=max(1, int(total * 1)),
             auth_refill_rate=0.017 * total,
-            order_capacity=max(1, int(total * 1)),
+            order_capacity=max(3, int(total * 3)),
             order_refill_rate=0.1 * total,
             inquiry_capacity=max(1, int(total * 1)),
             inquiry_refill_rate=0.5 * total,

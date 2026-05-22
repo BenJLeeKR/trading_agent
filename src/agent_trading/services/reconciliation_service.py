@@ -195,13 +195,26 @@ class ReconciliationService:
         locked_by_run_id: UUID,
         ttl_minutes: int = 30,
     ) -> None:
-        """Insert a blocking lock row.
+        """Insert or update a blocking lock row.
 
         The lock prevents new orders from being submitted for the
         combination of ``(account_id, strategy_id, symbol, side)``.
 
-        If a lock already exists (UNIQUE violation), the call is a no-op
-        — the existing lock remains in place.
+        If a lock already exists:
+        - If the existing lock is **expired** (``expires_at < NOW()``),
+          it is **taken over**: ``locked_by_run_id``, ``locked_at``,
+          and ``expires_at`` are updated to the new values.
+        - If the existing lock is **still active**, it is **preserved**
+          (no-op). This prevents a newer reconciliation run from
+          overwriting an active lock owned by an earlier run.
+
+        .. note::
+
+           PostgreSQL's UNIQUE constraint treats NULLs as distinct, so
+           ``(acct_id, NULL, symbol, side)`` rows are **not** considered
+           conflicting.  To work around this, the migration
+           ``0017_null_safe_blocking_lock_unique.sql`` replaces the
+           UNIQUE constraint with a ``COALESCE``-based expression index.
         """
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(minutes=ttl_minutes)
@@ -213,8 +226,14 @@ class ReconciliationService:
                     (lock_id, account_id, strategy_id, symbol, side,
                      reason, locked_by_run_id, locked_at, expires_at)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                ON CONFLICT (account_id, strategy_id, symbol, side)
-                DO NOTHING
+                ON CONFLICT (account_id,
+                             COALESCE(strategy_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                             symbol, side)
+                DO UPDATE SET
+                    locked_by_run_id = EXCLUDED.locked_by_run_id,
+                    locked_at = EXCLUDED.locked_at,
+                    expires_at = EXCLUDED.expires_at
+                    WHERE trading.order_blocking_locks.expires_at < NOW()
                 """,
                 uuid4(),
                 account_id,
@@ -259,6 +278,14 @@ class ReconciliationService:
             If provided, only release locks created by this reconciliation
             run. This prevents releasing locks from other active runs on
             the same account.
+
+        Raises
+        ------
+        RuntimeError
+            If the DELETE affected 0 rows **and** a non-expired lock still
+            exists for the same scope.  This indicates a ``locked_by_run_id``
+            mismatch — the caller should escalate rather than silently
+            leaving the lock in place.
         """
         conditions = ["account_id = $1"]
         params: list[object] = [account_id]
@@ -287,7 +314,23 @@ class ReconciliationService:
         )
 
         try:
-            await self._repos.reconciliations._tx.connection.execute(sql, *params)
+            deleted = await self._repos.reconciliations._tx.connection.execute(sql, *params)
+            if deleted == 0 and locked_by_run_id is not None:
+                # 0 rows deleted — possible locked_by_run_id mismatch.
+                # Check if a non-expired lock still exists for this scope.
+                still_blocked = await self.is_blocked(
+                    account_id=account_id,
+                    strategy_id=strategy_id,
+                    symbol=symbol,
+                    side=side,
+                )
+                if still_blocked:
+                    logger.warning(
+                        "release_blocking_lock: DELETE affected 0 rows but a non-expired lock "
+                        "still exists. locked_by_run_id=%s does not match the lock owner. "
+                        "account_id=%s strategy_id=%s symbol=%s side=%s",
+                        locked_by_run_id, account_id, strategy_id, symbol, side,
+                    )
         except AttributeError:
             # In-memory fallback: delegate to InMemoryReconciliationRepository.
             self._repos.reconciliations.release_lock(
