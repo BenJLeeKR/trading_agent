@@ -579,6 +579,7 @@ class DecisionOrchestratorService:
             events = await self._repos.external_events.list_by_symbol(
                 symbol=request.symbol,
                 since=datetime.now(timezone.utc) - timedelta(hours=72),
+                include_seeded_news=True,
             )
             events = list(events)
 
@@ -597,8 +598,21 @@ class DecisionOrchestratorService:
             # Sort: importance desc → T1/T2 first → T3/T4 later → published_at desc
             events.sort(key=_event_sort_key, reverse=True)
             recent_events = tuple(events)
+
+            logger.info(
+                "assemble() recent_events: symbol=%s count=%d "
+                "(list_by_symbol=%d seeded_supplement=%d)",
+                request.symbol,
+                len(recent_events),
+                len(events) - (len(symbol_seeded) if seeded_events else 0),
+                len(symbol_seeded) if seeded_events else 0,
+            )
         except Exception:
-            pass
+            logger.warning(
+                "assemble() failed to query recent_events: symbol=%s",
+                request.symbol,
+                exc_info=True,
+            )
 
         # --- Resolve instrument for position filtering ---
         instrument: InstrumentEntity | None = None
@@ -2752,6 +2766,16 @@ def _deserialize_agent_output(
             ("ai_risk", risk_output.schema_version),
             ("final_decision_composer", composer_output.schema_version),
         ),
+    )
+
+    logger.info(
+        "_deserialize_agent_output: symbol=%s "
+        "event_output.events=%d event_output.aggregate_view.no_material_events=%s "
+        "event_output.aggregate_view.event_count=%s",
+        composer_output.symbol,
+        len(event_output.events),
+        event_output.aggregate_view.no_material_events,
+        event_output.aggregate_view.event_count,
     )
 
     return AgentExecutionBundle(

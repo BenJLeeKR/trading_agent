@@ -796,6 +796,56 @@ class TestEventQueryWindow:
             "Event published 96h ago must NOT be included in 72h window"
         )
 
+    @pytest.mark.asyncio
+    async def test_assemble_includes_seeded_news(self) -> None:
+        """``assemble()`` calls ``list_by_symbol()`` with ``include_seeded_news=True``.
+
+        EI가 persisted seeded 뉴스를 읽을 수 있도록 assemble()이
+        include_seeded_news=True를 전달하는지 검증.
+        """
+        repos = build_in_memory_repositories()
+        svc = DecisionOrchestratorService(repos=repos)
+        now = datetime.now(timezone.utc)
+
+        # Seed a listed event (Y| prefix)
+        listed_event = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="K|분기보고서 (2026.03)",
+            source_name="opendart",
+            published_at=now - timedelta(hours=2),
+            source_reliability_tier="T1",
+            symbol="005930",
+            issuer_code="00123456",
+            ingested_at=now - timedelta(hours=2),
+            headline="분기보고서",
+        )
+        await repos.external_events.add(listed_event)
+
+        # Seed a seeded_news event (event_type='seeded_news')
+        seeded_event = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="seeded_news",
+            source_name="naver_news_seeded",
+            published_at=now - timedelta(hours=1),
+            source_reliability_tier="T3",
+            symbol="005930",
+            ingested_at=now - timedelta(hours=1),
+            headline="Seeded news headline",
+        )
+        await repos.external_events.add(seeded_event)
+
+        request = _make_request()
+        intent = await svc.assemble(request)
+
+        # Both events should be included (listed + seeded_news)
+        event_ids = {e.event_id for e in intent.context.recent_events}
+        assert listed_event.event_id in event_ids, (
+            "Listed event must be included in recent_events"
+        )
+        assert seeded_event.event_id in event_ids, (
+            "Seeded news event must be included in recent_events when include_seeded_news=True"
+        )
+
 
 class TestP1AandP1BIntegration:
     """P1-A (prompt provenance) + P1-B (72h retention) 통합 검증.
@@ -1366,3 +1416,565 @@ class TestPhase5BrokerSubmitFailureLogging:
             "Phase 5 FAILED" in record.message and "BUY" in record.message
             for record in caplog.records
         ), "Phase 5 FAILED log must contain decision_type"
+
+
+class TestEIPostProcessingGuard:
+    """EI post-processing guard 검증.
+
+    ``EventInterpretationAgent.run()``에서 input events > 0인데
+    output event_count=0이면 deterministic 보정이 적용되는지 확인.
+    """
+
+    @pytest.mark.asyncio
+    async def test_guard_corrects_when_input_events_exist_but_output_zero(
+        self,
+    ) -> None:
+        """input events > 0, output event_count=0 → guard가 aggregate_view 보정."""
+        from agent_trading.services.ai_agents.base import RawProviderResponse
+        from agent_trading.services.ai_agents.schemas import (
+            AggregateEventView,
+            EventInterpretationOutput,
+        )
+        from agent_trading.services.decision_orchestrator import ScoreResult
+        from agent_trading.domain.entities import ExternalEventEntity
+
+        # Provider가 events=[]를 반환하는 상황 시뮬레이션
+        provider_output = EventInterpretationOutput(
+            symbol="005930",
+            events=(),
+            aggregate_view=AggregateEventView(
+                overall_bias="neutral",
+                event_count=0,
+                no_material_events=True,
+                evidence_strength="none",
+            ),
+        )
+
+        mock_provider = AsyncMock()
+        mock_provider.generate_structured.return_value = RawProviderResponse(
+            parsed=provider_output,
+            raw_content='{"symbol":"005930","events":[],"aggregate_view":{"event_count":0,"no_material_events":true}}',
+        )
+
+        agent = EventInterpretationAgent(provider_client=mock_provider)
+
+        # input events > 0인 request 생성 (ExternalEventEntity 사용)
+        now = datetime.now(timezone.utc)
+        input_events = (
+            ExternalEventEntity(
+                event_id=uuid4(),
+                event_type="seeded_news",
+                source_name="naver_news_seeded",
+                source_reliability_tier="T3",
+                published_at=now,
+                headline="Test event 1",
+                body_summary="Test summary",
+                severity="medium",
+                direction="neutral",
+            ),
+        )
+
+        request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="test-correlation",
+            context=AssembledContext(
+                score=ScoreResult(score=0.5, threshold=0.3),
+                recent_events=input_events,
+            ),
+            symbol="005930",
+            market="KRX",
+        )
+
+        result = await agent.run(request)
+
+        # Guard가 aggregate_view를 보정했는지 확인
+        assert result.aggregate_view.event_count == 1, (
+            f"Expected event_count=1 after guard correction, got {result.aggregate_view.event_count}"
+        )
+        assert result.aggregate_view.no_material_events is False, (
+            "Expected no_material_events=False after guard correction"
+        )
+        # events tuple은 그대로 유지 (LLM이 반환한 그대로)
+        assert len(result.events) == 0, (
+            "events tuple should remain empty (LLM output preserved)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_guard_does_not_correct_when_input_events_zero(
+        self,
+    ) -> None:
+        """input events = 0 → guard가 보정하지 않음 (정상 케이스)."""
+        from agent_trading.services.ai_agents.base import RawProviderResponse
+        from agent_trading.services.ai_agents.schemas import (
+            AggregateEventView,
+            EventInterpretationOutput,
+        )
+        from agent_trading.services.decision_orchestrator import ScoreResult
+
+        provider_output = EventInterpretationOutput(
+            symbol="005930",
+            events=(),
+            aggregate_view=AggregateEventView(
+                overall_bias="neutral",
+                event_count=0,
+                no_material_events=True,
+                evidence_strength="none",
+            ),
+        )
+
+        mock_provider = AsyncMock()
+        mock_provider.generate_structured.return_value = RawProviderResponse(
+            parsed=provider_output,
+            raw_content='{"symbol":"005930","events":[],"aggregate_view":{"event_count":0,"no_material_events":true}}',
+        )
+
+        agent = EventInterpretationAgent(provider_client=mock_provider)
+
+        # input events = 0
+        request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="test-correlation",
+            context=AssembledContext(
+                score=ScoreResult(score=0.5, threshold=0.3),
+                recent_events=(),
+            ),
+            symbol="005930",
+            market="KRX",
+        )
+
+        result = await agent.run(request)
+
+        # Guard가 보정하지 않아야 함
+        assert result.aggregate_view.event_count == 0, (
+            "event_count should remain 0 when input events is 0"
+        )
+        assert result.aggregate_view.no_material_events is True, (
+            "no_material_events should remain True when input events is 0"
+        )
+
+    @pytest.mark.asyncio
+    async def test_guard_preserves_llm_events_when_output_has_events(
+        self,
+    ) -> None:
+        """LLM이 정상적으로 events를 반환하면 guard가 개입하지 않음."""
+        from agent_trading.services.ai_agents.base import RawProviderResponse
+        from agent_trading.services.ai_agents.schemas import (
+            AggregateEventView,
+            EventInterpretationOutput,
+            InterpretedEvent,
+        )
+        from agent_trading.services.decision_orchestrator import ScoreResult
+        from agent_trading.domain.entities import ExternalEventEntity
+
+        # LLM이 정상적으로 1개 event를 반환
+        llm_event = InterpretedEvent(
+            source_event_id="src-001",
+            event_type="K|분기보고서",
+            source_name="opendart",
+            source_reliability_tier="T1",
+            impact_direction="positive",
+            summary="LLM analysis",
+        )
+
+        provider_output = EventInterpretationOutput(
+            symbol="005930",
+            events=(llm_event,),
+            aggregate_view=AggregateEventView(
+                overall_bias="positive",
+                event_count=1,
+                no_material_events=False,
+                evidence_strength="moderate",
+                top_reason_codes=("earnings",),
+            ),
+        )
+
+        mock_provider = AsyncMock()
+        mock_provider.generate_structured.return_value = RawProviderResponse(
+            parsed=provider_output,
+            raw_content='{"symbol":"005930","events":[{"source_event_id":"src-001","event_type":"K|분기보고서"}],"aggregate_view":{"event_count":1,"no_material_events":false}}',
+        )
+
+        agent = EventInterpretationAgent(provider_client=mock_provider)
+
+        # input events > 0 (ExternalEventEntity 사용)
+        now = datetime.now(timezone.utc)
+        input_events = (
+            ExternalEventEntity(
+                event_id=uuid4(),
+                event_type="seeded_news",
+                source_name="naver_news_seeded",
+                source_reliability_tier="T3",
+                published_at=now,
+                headline="Input event",
+                body_summary="Input summary",
+                severity="medium",
+                direction="neutral",
+            ),
+        )
+
+        request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="test-correlation",
+            context=AssembledContext(
+                score=ScoreResult(score=0.5, threshold=0.3),
+                recent_events=input_events,
+            ),
+            symbol="005930",
+            market="KRX",
+        )
+
+        result = await agent.run(request)
+
+        # LLM이 반환한 events가 그대로 유지되어야 함
+        assert len(result.events) == 1, (
+            "LLM events should be preserved"
+        )
+        assert result.events[0].summary == "LLM analysis", (
+            "LLM event summary should be preserved"
+        )
+        assert result.aggregate_view.event_count == 1, (
+            "event_count should remain 1 (LLM output preserved)"
+        )
+        assert result.aggregate_view.no_material_events is False, (
+            "no_material_events should remain False"
+        )
+
+    @pytest.mark.asyncio
+    async def test_guard_fallback_when_provider_raises_exception(
+        self,
+    ) -> None:
+        """Provider가 exception을 던지면 fallback이 input_event_count를 보존."""
+        from agent_trading.services.ai_agents.base import RawProviderResponse
+        from agent_trading.services.ai_agents.schemas import (
+            AggregateEventView,
+            EventInterpretationOutput,
+        )
+        from agent_trading.services.decision_orchestrator import ScoreResult
+        from agent_trading.domain.entities import ExternalEventEntity
+
+        # Provider가 exception을 던지는 상황 시뮬레이션
+        mock_provider = AsyncMock()
+        mock_provider.generate_structured.side_effect = RuntimeError(
+            "Provider API timeout"
+        )
+
+        agent = EventInterpretationAgent(provider_client=mock_provider)
+
+        # input events > 0인 request 생성
+        now = datetime.now(timezone.utc)
+        input_events = (
+            ExternalEventEntity(
+                event_id=uuid4(),
+                event_type="seeded_news",
+                source_name="naver_news_seeded",
+                source_reliability_tier="T3",
+                published_at=now,
+                headline="Test event 1",
+                body_summary="Test summary",
+                severity="medium",
+                direction="neutral",
+            ),
+        )
+
+        request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="test-correlation",
+            context=AssembledContext(
+                score=ScoreResult(score=0.5, threshold=0.3),
+                recent_events=input_events,
+            ),
+            symbol="000810",
+            market="KRX",
+        )
+
+        result = await agent.run(request)
+
+        # Fallback에서 input_event_count를 보존했는지 확인
+        assert result.aggregate_view.event_count == 1, (
+            f"Expected event_count=1 from fallback guard, got {result.aggregate_view.event_count}"
+        )
+        assert result.aggregate_view.no_material_events is False, (
+            "Expected no_material_events=False from fallback guard"
+        )
+        # symbol이 빈 값이 아닌 request.symbol로 설정되어야 함
+        assert result.symbol == "000810", (
+            f"Expected symbol='000810' from fallback, got '{result.symbol}'"
+        )
+        # evidence_strength는 fallback에서 'weak'으로 설정
+        assert result.aggregate_view.evidence_strength == "weak", (
+            f"Expected evidence_strength='weak' from fallback, got '{result.aggregate_view.evidence_strength}'"
+        )
+
+    @pytest.mark.asyncio
+    async def test_guard_fallback_when_input_events_zero(
+        self,
+    ) -> None:
+        """Provider가 exception을 던져도 input events=0이면 event_count=0 유지."""
+        from agent_trading.services.ai_agents.base import RawProviderResponse
+        from agent_trading.services.ai_agents.schemas import (
+            AggregateEventView,
+            EventInterpretationOutput,
+        )
+        from agent_trading.services.decision_orchestrator import ScoreResult
+
+        mock_provider = AsyncMock()
+        mock_provider.generate_structured.side_effect = RuntimeError(
+            "Provider API timeout"
+        )
+
+        agent = EventInterpretationAgent(provider_client=mock_provider)
+
+        # input events = 0
+        request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="test-correlation",
+            context=AssembledContext(
+                score=ScoreResult(score=0.5, threshold=0.3),
+                recent_events=(),
+            ),
+            symbol="000150",
+            market="KRX",
+        )
+
+        result = await agent.run(request)
+
+        # input events=0이므로 event_count=0 유지
+        assert result.aggregate_view.event_count == 0, (
+            f"Expected event_count=0 when input events=0, got {result.aggregate_view.event_count}"
+        )
+        assert result.aggregate_view.no_material_events is True, (
+            "Expected no_material_events=True when input events=0"
+        )
+        # symbol 보존
+        assert result.symbol == "000150", (
+            f"Expected symbol='000150', got '{result.symbol}'"
+        )
+
+    # ------------------------------------------------------------------
+    # Round 12: Summary 보정 + 진단 로깅 테스트
+    # ------------------------------------------------------------------
+
+    def test_summary_fallback_when_event_count_positive_but_events_empty(
+        self,
+    ) -> None:
+        """event_count>0, no_material_events=False, events=[] → fallback summary.
+
+        ``_build_ei_summary()``가 "유의미한 신규 이벤트 없음" 대신
+        "(N건) 입력 이벤트 N건 감지됨..."을 반환해야 함.
+        """
+        from agent_trading.services.ai_agents.event_interpretation import (
+            _build_ei_summary,
+        )
+        from agent_trading.services.ai_agents.schemas import (
+            AggregateEventView,
+            EventInterpretationOutput,
+        )
+
+        output = EventInterpretationOutput(
+            symbol="000150",
+            events=(),
+            aggregate_view=AggregateEventView(
+                overall_bias="neutral",
+                event_conflict=False,
+                top_reason_codes=(),
+                opposing_evidence=(),
+                evidence_strength="weak",
+                event_count=3,
+                no_material_events=False,
+            ),
+        )
+
+        summary = _build_ei_summary(output)
+
+        # "유의미한 신규 이벤트 없음"이 아니어야 함
+        assert "유의미한 신규 이벤트 없음" not in summary, (
+            f"Expected fallback summary, got: {summary}"
+        )
+        # event_count 정보 포함
+        assert "(3건)" in summary, (
+            f"Expected '(3건)' in summary, got: {summary}"
+        )
+        # "입력 이벤트" 문구 포함
+        assert "입력 이벤트" in summary, (
+            f"Expected '입력 이벤트' in summary, got: {summary}"
+        )
+        # "추출 누락" 문구 포함
+        assert "추출 누락" in summary, (
+            f"Expected '추출 누락' in summary, got: {summary}"
+        )
+
+    def test_summary_fallback_with_positive_bias(
+        self,
+    ) -> None:
+        """event_count>0, events=[], overall_bias=positive → fallback summary with bias."""
+        from agent_trading.services.ai_agents.event_interpretation import (
+            _build_ei_summary,
+        )
+        from agent_trading.services.ai_agents.schemas import (
+            AggregateEventView,
+            EventInterpretationOutput,
+        )
+
+        output = EventInterpretationOutput(
+            symbol="000150",
+            events=(),
+            aggregate_view=AggregateEventView(
+                overall_bias="positive",
+                event_conflict=False,
+                top_reason_codes=(),
+                opposing_evidence=(),
+                evidence_strength="moderate",
+                event_count=2,
+                no_material_events=False,
+            ),
+        )
+
+        summary = _build_ei_summary(output)
+
+        assert "유의미한 신규 이벤트 없음" not in summary, (
+            f"Expected fallback summary, got: {summary}"
+        )
+        assert "(2건)" in summary, (
+            f"Expected '(2건)' in summary, got: {summary}"
+        )
+        assert "긍정" in summary, (
+            f"Expected '긍정' in summary, got: {summary}"
+        )
+        assert "근거:moderate" in summary, (
+            f"Expected '근거:moderate' in summary, got: {summary}"
+        )
+
+    def test_summary_preserves_no_events_when_no_material_events_true(
+        self,
+    ) -> None:
+        """no_material_events=True, events=[] → "유의미한 신규 이벤트 없음" 유지."""
+        from agent_trading.services.ai_agents.event_interpretation import (
+            _build_ei_summary,
+        )
+        from agent_trading.services.ai_agents.schemas import (
+            AggregateEventView,
+            EventInterpretationOutput,
+        )
+
+        output = EventInterpretationOutput(
+            symbol="000150",
+            events=(),
+            aggregate_view=AggregateEventView(
+                overall_bias="neutral",
+                event_conflict=False,
+                top_reason_codes=(),
+                opposing_evidence=(),
+                evidence_strength="none",
+                event_count=0,
+                no_material_events=True,
+            ),
+        )
+
+        summary = _build_ei_summary(output)
+
+        assert "유의미한 신규 이벤트 없음" in summary, (
+            f"Expected '유의미한 신규 이벤트 없음' in summary, got: {summary}"
+        )
+        assert "전반 중립" in summary, (
+            f"Expected '전반 중립' in summary, got: {summary}"
+        )
+
+    def test_summary_normal_path_with_events(
+        self,
+    ) -> None:
+        """정상 events 존재 시 기존 상세 요약 경로 유지."""
+        from agent_trading.services.ai_agents.event_interpretation import (
+            _build_ei_summary,
+        )
+        from agent_trading.services.ai_agents.schemas import (
+            AggregateEventView,
+            EventInterpretationOutput,
+            InterpretedEvent,
+        )
+
+        output = EventInterpretationOutput(
+            symbol="000150",
+            events=(
+                InterpretedEvent(
+                    source_event_id="evt-001",
+                    event_type="earnings",
+                    source_name="DART",
+                    source_reliability_tier="tier1",
+                    stale=False,
+                    impact_direction="positive",
+                    impact_horizon="short_term",
+                    confidence=0.8,
+                    novelty="routine",
+                    supports_entry=True,
+                    supports_exit=False,
+                    risk_flags=(),
+                    reason_codes=("earnings_surprise",),
+                    summary="호실적 발표: 매출 15% 증가",
+                ),
+            ),
+            aggregate_view=AggregateEventView(
+                overall_bias="positive",
+                event_conflict=False,
+                top_reason_codes=("earnings_surprise",),
+                opposing_evidence=(),
+                evidence_strength="moderate",
+                event_count=1,
+                no_material_events=False,
+            ),
+        )
+
+        summary = _build_ei_summary(output)
+
+        # 정상 경로: (1건) 형식
+        assert "(1건)" in summary, (
+            f"Expected '(1건)' in summary, got: {summary}"
+        )
+        # "유의미한 신규 이벤트 없음"이 아니어야 함
+        assert "유의미한 신규 이벤트 없음" not in summary, (
+            f"Expected normal summary, got: {summary}"
+        )
+        # 이벤트 요약 포함
+        assert "호실적" in summary, (
+            f"Expected event summary in output, got: {summary}"
+        )
+
+    def test_summary_fallback_when_event_count_positive_but_events_empty_negative_bias(
+        self,
+    ) -> None:
+        """event_count>0, events=[], overall_bias=negative → fallback summary with negative bias."""
+        from agent_trading.services.ai_agents.event_interpretation import (
+            _build_ei_summary,
+        )
+        from agent_trading.services.ai_agents.schemas import (
+            AggregateEventView,
+            EventInterpretationOutput,
+        )
+
+        output = EventInterpretationOutput(
+            symbol="000150",
+            events=(),
+            aggregate_view=AggregateEventView(
+                overall_bias="negative",
+                event_conflict=False,
+                top_reason_codes=(),
+                opposing_evidence=(),
+                evidence_strength="weak",
+                event_count=5,
+                no_material_events=False,
+            ),
+        )
+
+        summary = _build_ei_summary(output)
+
+        assert "유의미한 신규 이벤트 없음" not in summary, (
+            f"Expected fallback summary, got: {summary}"
+        )
+        assert "(5건)" in summary, (
+            f"Expected '(5건)' in summary, got: {summary}"
+        )
+        assert "부정" in summary, (
+            f"Expected '부정' in summary, got: {summary}"
+        )
+        assert "근거:weak" in summary, (
+            f"Expected '근거:weak' in summary, got: {summary}"
+        )

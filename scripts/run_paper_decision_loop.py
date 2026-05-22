@@ -972,12 +972,17 @@ async def _collect_persisted_seeded_events(
     Freshness: events within 72h window (same as current list_by_symbol
     default).  The caller decides whether to fire live pipeline based
     on _T3_FRESHNESS_SECONDS.
+
+    Uses ``include_seeded_news=True`` so that ``event_type='seeded_news'``
+    events (which do not carry the listed-event prefix) are included in
+    the query result alongside listed OpenDART events.
     """
     try:
         since = datetime.now(timezone.utc) - timedelta(hours=72)
         events = await repos.external_events.list_by_symbol(
             symbol=symbol,
             since=since,
+            include_seeded_news=True,
         )
         # Filter to T3 events only (seeded news = T3 reliability tier)
         t3_events = [e for e in events if e.source_reliability_tier == "T3"]
@@ -996,12 +1001,16 @@ async def _is_t3_fresh_for_symbol(
     """Check if there are _T3_FRESHNESS_SECONDS-fresh T3 events for symbol.
 
     Prevents unnecessary live pipeline calls when recent data exists.
+
+    Uses ``include_seeded_news=True`` so that ``event_type='seeded_news'``
+    events are included in the query result.
     """
     try:
         since = datetime.now(timezone.utc) - timedelta(seconds=_T3_FRESHNESS_SECONDS)
         events = await repos.external_events.list_by_symbol(
             symbol=symbol,
             since=since,
+            include_seeded_news=True,
         )
         t3_events = [e for e in events if e.source_reliability_tier == "T3"]
         return len(t3_events) > 0

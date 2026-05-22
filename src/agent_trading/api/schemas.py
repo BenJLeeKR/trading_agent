@@ -312,6 +312,19 @@ class TradeDecisionDetail(BaseModel):
     """Raw decision payload from EI/AR agents (``event_bias``, ``risk_opinion``, etc.)."""
 
 
+class PaginatedTradeDecisionsResponse(BaseModel):
+    """``GET /trade-decisions`` — paginated response wrapper."""
+
+    items: list[TradeDecisionDetail]
+    """현재 페이지의 trade decision 목록."""
+    total: int
+    """조건에 맞는 전체 trade decision 수 (페이지네이션 UI용)."""
+    limit: int
+    """요청된 페이지 크기."""
+    offset: int
+    """요청된 오프셋."""
+
+
 # ── Phase 2: Account, Client, Instrument, Position, Cash-balance, Broker-order ──
 
 

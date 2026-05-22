@@ -93,6 +93,7 @@ class PostgresExternalEventRepository(ExternalEventRepository):
         symbol: str,
         since: datetime,
         include_non_listed: bool = False,
+        include_seeded_news: bool = False,
     ) -> Sequence[ExternalEventEntity]:
         """List events by symbol, excluding non-listed (corp_cls=E) by default.
 
@@ -100,12 +101,32 @@ class PostgresExternalEventRepository(ExternalEventRepository):
         (``Y|``, ``K|``, ``N|`` = listed; ``E|`` = non-listed). When
         ``include_non_listed=False`` (default), only listed-entity events
         are returned.
+
+        Seeded news events (``event_type='seeded_news'``) do not carry the
+        listed prefix.  Pass ``include_seeded_news=True`` to include them
+        alongside listed events — this is the intended mode for EI decision
+        context assembly.
         """
         if include_non_listed:
             rows = await self._tx.connection.fetch(
                 """
                 SELECT * FROM trading.external_events
                 WHERE symbol = $1 AND published_at >= $2
+                ORDER BY published_at DESC
+                """,
+                symbol,
+                since,
+            )
+        elif include_seeded_news:
+            rows = await self._tx.connection.fetch(
+                """
+                SELECT * FROM trading.external_events
+                WHERE symbol = $1
+                  AND published_at >= $2
+                  AND (
+                      (event_type LIKE 'Y|%' OR event_type LIKE 'K|%' OR event_type LIKE 'N|%')
+                      OR event_type = 'seeded_news'
+                  )
                 ORDER BY published_at DESC
                 """,
                 symbol,
@@ -130,6 +151,7 @@ class PostgresExternalEventRepository(ExternalEventRepository):
         event_type: str,
         since: datetime,
         include_non_listed: bool = False,
+        include_seeded_news: bool = False,
     ) -> Sequence[ExternalEventEntity]:
         """List events by type, excluding non-listed (corp_cls=E) by default.
 
@@ -137,12 +159,31 @@ class PostgresExternalEventRepository(ExternalEventRepository):
         (``Y|``, ``K|``, ``N|`` = listed; ``E|`` = non-listed). When
         ``include_non_listed=False`` (default), only listed-entity events
         are returned.
+
+        Seeded news events (``event_type='seeded_news'``) do not carry the
+        listed prefix.  Pass ``include_seeded_news=True`` to include them
+        alongside listed events.
         """
         if include_non_listed:
             rows = await self._tx.connection.fetch(
                 """
                 SELECT * FROM trading.external_events
                 WHERE event_type = $1 AND published_at >= $2
+                ORDER BY published_at DESC
+                """,
+                event_type,
+                since,
+            )
+        elif include_seeded_news:
+            rows = await self._tx.connection.fetch(
+                """
+                SELECT * FROM trading.external_events
+                WHERE event_type = $1
+                  AND published_at >= $2
+                  AND (
+                      (event_type LIKE 'Y|%' OR event_type LIKE 'K|%' OR event_type LIKE 'N|%')
+                      OR event_type = 'seeded_news'
+                  )
                 ORDER BY published_at DESC
                 """,
                 event_type,

@@ -83,7 +83,11 @@ logging.basicConfig(
 )
 
 # File-based diagnostic logging (bypasses pipe — survives timeout).
-_DIAG_LOG = f"/tmp/subprocess_diag_{os.getpid()}.log"
+# ★ 반드시 /workspace/agent_trading/logs 경로 사용 (운영 정책)
+import os as _os
+_DIAG_LOG_DIR = "/workspace/agent_trading/logs"
+_os.makedirs(_DIAG_LOG_DIR, exist_ok=True)
+_DIAG_LOG = f"{_DIAG_LOG_DIR}/subprocess_diag_{os.getpid()}.log"
 
 
 def _diag(msg: str) -> None:
@@ -353,12 +357,22 @@ def _reconstruct_context(raw: dict[str, Any]) -> AssembledContext:
 
     recent_events_raw = raw.get("recent_events", ())
     if isinstance(recent_events_raw, (list, tuple)):
-        recent_events: tuple[ExternalEventEntity, ...] = tuple(
-            _reconstruct_external_event(ev) if isinstance(ev, dict) else ev
-            for ev in recent_events_raw
+        recent_events_list: list[ExternalEventEntity] = []
+        for ev in recent_events_raw:
+            reconstructed = _reconstruct_external_event(ev) if isinstance(ev, dict) else ev
+            if reconstructed is not None:
+                recent_events_list.append(reconstructed)
+        recent_events = tuple(recent_events_list)
+        _diag(
+            f"_reconstruct_context: recent_events_raw count={len(recent_events_raw)} "
+            f"→ reconstructed count={len(recent_events)}"
         )
     else:
         recent_events = recent_events_raw  # already a tuple of ExternalEventEntity
+        _diag(
+            f"_reconstruct_context: recent_events already ExternalEventEntity tuple, "
+            f"count={len(recent_events)}"
+        )
 
     # Reconstruct DecisionContextEntity (used by AIRiskAgent)
     decision_context_raw = raw.get("decision_context")
@@ -561,13 +575,24 @@ async def main() -> None:
         _diag("Starting EventInterpretationAgent.run() ...")
         ei_agent = EventInterpretationAgent(provider_client=provider_client)
         request = _reconstruct_request(inp)
-        _diag(f"Context reconstructed: events={len(request.context.recent_events)}")
+        input_event_count = len(request.context.recent_events)
+        _diag(f"Context reconstructed: events={input_event_count}")
         event_output: EventInterpretationOutput = await ei_agent.run(request)
-        _diag(f"EventInterpretationAgent completed: symbol={event_output.symbol}")
+        _diag(
+            f"EventInterpretationAgent completed: symbol={event_output.symbol} "
+            f"input_events={input_event_count} "
+            f"output_events={len(event_output.events)} "
+            f"event_count={event_output.aggregate_view.event_count} "
+            f"no_material_events={event_output.aggregate_view.no_material_events}"
+        )
         logger.info(
-            "EventInterpretationAgent completed: symbol=%s events=%s",
+            "EventInterpretationAgent completed: symbol=%s "
+            "input_events=%d output_events=%d event_count=%s no_material_events=%s",
             event_output.symbol,
+            input_event_count,
             len(event_output.events),
+            event_output.aggregate_view.event_count,
+            event_output.aggregate_view.no_material_events,
         )
 
         if _is_missing_agent_symbol(event_output.symbol) and inp.symbol:

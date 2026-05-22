@@ -73,7 +73,7 @@ describe("DecisionsView with data", () => {
     });
 
     // Verify all tickers are rendered
-    expect(screen.getByText("AAPL")).toBeInTheDocument();
+    expect(await screen.findByText("AAPL")).toBeInTheDocument();
     expect(screen.getByText("TSLA")).toBeInTheDocument();
     expect(screen.getByText("MSFT")).toBeInTheDocument();
 
@@ -106,7 +106,7 @@ describe("DecisionsView confidence color", () => {
     });
 
     // AAPL confidence 0.85 >= 0.7 → green (#22c55e)
-    const aaplConf = screen.getByText("85%");
+    const aaplConf = await screen.findByText("85%");
     expect(aaplConf).toHaveStyle("color: #22c55e");
 
     // TSLA confidence 0.55 >= 0.4 → amber (#f59e0b)
@@ -126,7 +126,7 @@ describe("DecisionsView empty list", () => {
   it("shows empty message when no decisions", async () => {
     mockUrlRouter({
       "/metadata/enums": mockEnumMetadataResponse,
-      "/trade-decisions": [],
+      "/trade-decisions": { items: [], total: 0, limit: 50, offset: 0 },
     });
 
     render(
@@ -165,7 +165,7 @@ describe("DecisionsView detail panel", () => {
     });
 
     // Click the first row (AAPL)
-    const aaplRow = screen.getByText("AAPL");
+    const aaplRow = await screen.findByText("AAPL");
     await user.click(aaplRow);
 
     // Detail panel shows decision fields
@@ -222,7 +222,7 @@ describe("DecisionsView detail panel", () => {
     });
 
     // Click the first row
-    const aaplRow = screen.getByText("AAPL");
+    const aaplRow = await screen.findByText("AAPL");
     await user.click(aaplRow);
 
     await waitFor(() => {
@@ -262,7 +262,7 @@ describe("DecisionsView side filter", () => {
     await user.selectOptions(sideSelect, "buy");
 
     // AAPL (buy) should remain, TSLA (hold) and MSFT (sell) should be hidden
-    expect(screen.getByText("AAPL")).toBeInTheDocument();
+    expect(await screen.findByText("AAPL")).toBeInTheDocument();
     expect(screen.queryByText("TSLA")).not.toBeInTheDocument();
     expect(screen.queryByText("MSFT")).not.toBeInTheDocument();
   });
@@ -293,7 +293,7 @@ describe("DecisionsView symbol search", () => {
     await user.type(searchInput, "AAPL");
 
     // Only AAPL should be visible
-    expect(screen.getByText("AAPL")).toBeInTheDocument();
+    expect(await screen.findByText("AAPL")).toBeInTheDocument();
     expect(screen.queryByText("TSLA")).not.toBeInTheDocument();
   });
 });
@@ -322,7 +322,7 @@ describe("DecisionsView agent runs panel", () => {
     });
 
     // Click AAPL row
-    const aaplRow = screen.getByText("AAPL");
+    const aaplRow = await screen.findByText("AAPL");
     await user.click(aaplRow);
 
     // Agent Runs card appears
@@ -358,7 +358,8 @@ describe("DecisionsView agent runs panel", () => {
       expect(screen.getByText("의사결정")).toBeInTheDocument();
     });
 
-    const aaplRow = screen.getByText("AAPL");
+    // DataTable이 로딩을 마치고 AAPL 행이 표시될 때까지 대기
+    const aaplRow = await screen.findByText("AAPL");
     await user.click(aaplRow);
 
     await waitFor(() => {
@@ -423,7 +424,8 @@ describe("DecisionsView agent runs panel", () => {
       expect(screen.getByText("의사결정")).toBeInTheDocument();
     });
 
-    const aaplRow = screen.getByText("AAPL");
+    // DataTable이 로딩을 마치고 AAPL 행이 표시될 때까지 대기
+    const aaplRow = await screen.findByText("AAPL");
     await user.click(aaplRow);
 
     await waitFor(() => {
@@ -454,7 +456,7 @@ describe("DecisionsView agent runs panel", () => {
       expect(screen.getByText("의사결정")).toBeInTheDocument();
     });
 
-    const aaplRow = screen.getByText("AAPL");
+    const aaplRow = await screen.findByText("AAPL");
     await user.click(aaplRow);
 
     await waitFor(() => {
@@ -528,7 +530,7 @@ describe("DecisionsView agent runs panel", () => {
     });
 
     // Click AAPL row
-    const aaplRow = screen.getByText("AAPL");
+    const aaplRow = await screen.findByText("AAPL");
     await user.click(aaplRow);
 
     // Agent Runs card appears
@@ -590,7 +592,7 @@ describe("DecisionsView agent runs panel", () => {
     });
 
     // Click AAPL row
-    const aaplRow = screen.getByText("AAPL");
+    const aaplRow = await screen.findByText("AAPL");
     await user.click(aaplRow);
 
     // Agent Runs card appears
@@ -645,7 +647,7 @@ describe("DecisionsView contextId query param", () => {
         return Promise.resolve({
           ok: true,
           status: 200,
-          json: async () => [],
+          json: async () => ({ items: [], total: 0, limit: 50, offset: 0 }),
         } as Response);
       }
       return Promise.reject(new Error(`No mock for ${url}`));
@@ -766,7 +768,7 @@ describe("DecisionsView EI interpreted labels", () => {
 
     mockUrlRouter({
       "/metadata/enums": mockEnumMetadataResponse,
-      "/trade-decisions": decisionsWithBiasCode,
+      "/trade-decisions": { items: decisionsWithBiasCode, total: 1, limit: 50, offset: 0 },
       "/decision-contexts/": mockDecisionContext,
       "/agent-runs": mockAgentRuns,
     });
@@ -830,7 +832,7 @@ describe("DecisionsView EI interpreted labels", () => {
 
     mockUrlRouter({
       "/metadata/enums": mockEnumMetadataResponse,
-      "/trade-decisions": decisionsNoReasonCodes,
+      "/trade-decisions": { items: decisionsNoReasonCodes, total: 1, limit: 50, offset: 0 },
       "/decision-contexts/": mockDecisionContext,
       "/agent-runs": mockAgentRuns,
     });
@@ -892,7 +894,7 @@ describe("Recent Events Section", () => {
     const user = userEvent.setup();
     mockUrlRouter({
       "/metadata/enums": mockEnumMetadataResponse,
-      "/trade-decisions": [decisionWithEvents],
+      "/trade-decisions": { items: [decisionWithEvents], total: 1, limit: 50, offset: 0 },
       "/external-events/recent": { status: "ok", data: mockRecentEvents005930 },
       "/decision-contexts/": mockDecisionContext,
       "/agent-runs": mockAgentRuns,
@@ -931,7 +933,7 @@ describe("Recent Events Section", () => {
     const user = userEvent.setup();
     mockUrlRouter({
       "/metadata/enums": mockEnumMetadataResponse,
-      "/trade-decisions": [decisionWithEvents],
+      "/trade-decisions": { items: [decisionWithEvents], total: 1, limit: 50, offset: 0 },
       "/external-events/recent": { status: "ok", data: mockRecentEvents005930 },
       "/decision-contexts/": mockDecisionContext,
       "/agent-runs": mockAgentRuns,
@@ -969,7 +971,7 @@ describe("Recent Events Section", () => {
     const user = userEvent.setup();
     mockUrlRouter({
       "/metadata/enums": mockEnumMetadataResponse,
-      "/trade-decisions": [decisionWithEvents],
+      "/trade-decisions": { items: [decisionWithEvents], total: 1, limit: 50, offset: 0 },
       "/external-events/recent": { status: "ok", data: [] },
       "/decision-contexts/": mockDecisionContext,
       "/agent-runs": mockAgentRuns,
@@ -998,7 +1000,7 @@ describe("Recent Events Section", () => {
     const user = userEvent.setup();
     mockUrlRouter({
       "/metadata/enums": mockEnumMetadataResponse,
-      "/trade-decisions": [noSymbolDecision],
+      "/trade-decisions": { items: [noSymbolDecision], total: 1, limit: 50, offset: 0 },
       "/decision-contexts/": mockDecisionContext,
       "/agent-runs": mockAgentRuns,
     });
@@ -1013,7 +1015,7 @@ describe("Recent Events Section", () => {
       expect(screen.getByText("의사결정")).toBeInTheDocument();
     });
 
-    const row = screen.getByText("Samsung Electronics");
+    const row = await screen.findByText("Samsung Electronics");
     await user.click(row);
 
     // Wait briefly — no fetch for external-events should occur

@@ -8,7 +8,7 @@
 
 ## 1. Current Status (현재 상태)
 
-이번 세션에서는 **Round 4~8까지 총 5개 라운드**를 완료했습니다. 모든 코드 변경은 테스트(264/264 통과, 16개 테스트 파일) 및 vite build 성공까지 완료되었습니다.
+이번 세션에서는 **Round 4~10까지 총 7개 라운드**를 완료했습니다. 모든 코드 변경은 테스트(264/264 통과, 16개 테스트 파일) 및 vite build 성공까지 완료되었습니다.
 
 | Round | 작업 | 상태 |
 |-------|------|------|
@@ -17,6 +17,8 @@
 | **Round 6** | quote_resolution hang 근본 수정 (Fix K/L/M) + Docker 재빌드 + 12:56 batch 재현 검증 | ✅ 완료 |
 | **Round 7** | Admin UI AgentsRunsView 전체 판단내용(row expand + raw JSON) 표시 (→ Round 8에서 롤백) | ⏪ 롤백 |
 | **Round 8** | Round 7 롤백 + 구조화된 출력 확장형 key/value preview 구현 | ✅ 완료 |
+| **Round 9** | EI seeded news consumption fix — `include_seeded_news` 파라미터 도입 | ✅ 완료 |
+| **Round 10** | EI event loss tracing after seeded_news query fix — debug logging + `_diag()` path fix | ✅ 완료 |
 
 ---
 
@@ -185,6 +187,194 @@ Round 7의 raw JSON 전체 노출 방향을 롤백하고, `구조화된 출력` 
 | **User Request 13c** | `requested_quantity=10` 상한 제거 + 완전 동적 BUY 수량 |
 | **AR 2-layer guard** | 코드 배포 완료, 장중 검증 pending |
 
+### G. Round 9 — EI seeded news consumption fix ✅ 완료 (2026-05-22)
+
+**상태**: **코드 변경 완료, 테스트 통과, 보고서 문서 생성 완료.**
+
+#### 문제 상황
+Event Interpretation(EI)가 `external_events` 테이블에 persisted된 `event_type='seeded_news'`를 읽지 못함.
+- [`list_by_symbol()`](src/agent_trading/repositories/postgres/external_events.py:91) SQL filter: `WHERE (event_type LIKE 'Y|%' OR event_type LIKE 'K|%' OR event_type LIKE 'N|%')` — `seeded_news` 제외
+- EI는 항상 `events=[]`, `event_count=0` → "유의미한 신규 이벤트 없음" 결론 반복
+- [`_collect_persisted_seeded_events()`](scripts/run_paper_decision_loop.py:962)가 `list_by_symbol()` 호출 → 항상 빈 리스트 반환
+- [`_is_t3_fresh_for_symbol()`](scripts/run_paper_decision_loop.py:997)도 동일 문제
+
+#### 해결 방법: `include_seeded_news` 파라미터 도입
+`list_by_symbol()`과 `list_by_type()`에 `include_seeded_news: bool = False` 파라미터 추가.
+- **3-way branching**: `include_non_listed` → no filter, `include_seeded_news` → listed + seeded_news, default → listed only
+- **3개 구현체 수정**: Protocol contract, Postgres, InMemory
+- **3개 호출 지점 수정**: `assemble()`, `_collect_persisted_seeded_events()`, `_is_t3_fresh_for_symbol()`
+
+#### 추가 발견: `_is_listed_event()` 버그
+[`InMemoryExternalEventRepository._is_listed_event()`](src/agent_trading/repositories/memory.py:1081)가 `event_type='seeded_news'`에 대해 `True` 반환 (prefix 없음 → "unknown → treat as listed"). `seeded_news`에 대해 `False`를 반환하도록 수정.
+
+#### 수정된 파일
+| 파일 | 변경 내용 |
+|------|----------|
+| [`contracts.py`](src/agent_trading/repositories/contracts.py:698) | `include_seeded_news: bool = False` 파라미터 프로토콜에 추가 |
+| [`external_events.py`](src/agent_trading/repositories/postgres/external_events.py:91) | SQL 3-way branching (`include_non_listed` / `include_seeded_news` / default) |
+| [`memory.py`](src/agent_trading/repositories/memory.py:1081) | `_is_seeded_news()` 추가, `_is_listed_event()` 버그 수정, `include_seeded_news` 지원 |
+| [`decision_orchestrator.py`](src/agent_trading/services/decision_orchestrator.py:528) | `assemble()` → `include_seeded_news=True` |
+| [`run_paper_decision_loop.py`](scripts/run_paper_decision_loop.py:962) | `_collect_persisted_seeded_events()` + `_is_t3_fresh_for_symbol()` → `include_seeded_news=True` |
+
+#### 테스트 결과
+| 테스트 파일 | 결과 |
+|------------|------|
+| [`test_external_events.py`](tests/repositories/test_external_events.py) | InMemory 8/8 통과 (Postgres 2개는 실제 DB 데이터로 pre-existing issue) |
+| [`test_decision_submit_pipeline.py`](tests/services/test_decision_submit_pipeline.py) | `test_assemble_includes_seeded_news` 통과 |
+| [`test_run_paper_decision_loop.py`](tests/scripts/test_run_paper_decision_loop.py) | `test_includes_seeded_news_event_type` + `test_true_with_seeded_news_event_type` 통과 |
+
+#### 보고서 문서
+[`plans/fix_event_interpretation_not_reading_persisted_seeded_news_from_external_events_2026-05-22.md`](plans/fix_event_interpretation_not_reading_persisted_seeded_news_from_external_events_2026-05-22.md)
+
+---
+
+### H. Round 10 — EI event loss tracing after seeded_news query fix ✅ 완료 (2026-05-22)
+
+**상태**: **코드 변경 완료, 테스트 통과, 보고서 문서 생성 완료. 운영 배포 후 로그 확인 필요.**
+
+#### 문제 상황
+Round 9에서 `include_seeded_news` 파라미터를 도입하여 EI가 seeded 뉴스를 읽도록 수정했음에도, EI 실행 결과가 여전히 `events=[]`, `event_count=0`, `no_material_events=true`를 반환.
+
+#### 분석 결과: 3가지 가설
+| 가설 | 설명 | 가능성 |
+|------|------|--------|
+| **Hypothesis A** | 컨테이너 재시작 누락 — 코드 변경이 운영에 반영되지 않음 | ⭐ 가장 높음 |
+| **Hypothesis B** | `assemble()` 내 `try/except pass`로 exception이 silent catch됨 | 중간 |
+| **Hypothesis C** | Provider가 prompt의 events를 무시하고 빈 output 반환 | 중간 |
+
+#### 코드 분석 결론: 직렬화/역직렬화 경로는 정상
+- `_dataclass_to_dict()`: `ExternalEventEntity`의 모든 필드(`event_type='seeded_news'` 포함)를 JSON-safe dict로 변환
+- `_reconstruct_external_event()`: dict에서 `ExternalEventEntity`로 복원, `event_type` 보존
+- `_reconstruct_context()`: `recent_events` tuple 복원
+- `_build_user_prompt()`: `context.recent_events`를 prompt에 포함 (최대 20건)
+- `_deserialize_agent_output()`: subprocess stdout → `EventInterpretationOutput` 역직렬화
+
+#### 적용한 수정
+
+| # | 파일 | 변경 내용 |
+|---|------|----------|
+| 1 | [`run_agent_subprocess.py:86`](scripts/run_agent_subprocess.py:86) | `_diag()` 경로 변경: `/tmp` → `/workspace/agent_trading/logs/` |
+| 2 | [`run_agent_subprocess.py:332`](scripts/run_agent_subprocess.py:332) | `_reconstruct_context()`에 `_diag()` 로깅 추가 — raw vs reconstructed event count |
+| 3 | [`decision_orchestrator.py:528`](src/agent_trading/services/decision_orchestrator.py:528) | `assemble()` 성공/예외 로깅 추가 — recent_events symbol + count |
+| 4 | [`decision_orchestrator.py:2710`](src/agent_trading/services/decision_orchestrator.py:2710) | `_deserialize_agent_output()` 로깅 추가 — EI output event count + aggregate_view |
+| 5 | [`event_interpretation.py:260`](src/agent_trading/services/ai_agents/event_interpretation.py:260) | `_build_user_prompt()` 로깅 추가 — prompt에 포함된 event count |
+| 6 | [`event_interpretation.py:185`](src/agent_trading/services/ai_agents/event_interpretation.py:185) | `run()` 성공 로그 강화 — events 수 + aggregate_view 필드 전체 로깅 |
+
+#### Debug 로그 추적 절차 (5개 Checkpoint)
+운영 환경에서 아래 grep 명령어로 event loss 지점을 특정할 수 있음:
+
+```bash
+# Checkpoint 1: assemble()가 recent_events를 몇 건 조회했는지
+grep "assemble() recent_events" /workspace/agent_trading/logs/*.log
+
+# Checkpoint 2: subprocess가 recent_events를 몇 건 수신했는지
+grep "_reconstruct_context: recent_events_raw count" /workspace/agent_trading/logs/subprocess_diag_*.log
+
+# Checkpoint 3: EI prompt에 몇 건의 event가 포함되었는지
+grep "EI _build_user_prompt:" /workspace/agent_trading/logs/*.log
+
+# Checkpoint 4: EI output에 몇 건의 event가 있는지
+grep "_deserialize_agent_output:" /workspace/agent_trading/logs/*.log
+
+# Checkpoint 5: EI run() 결과 요약
+grep "EventInterpretationAgent succeeded:" /workspace/agent_trading/logs/*.log
+```
+
+#### 테스트 결과
+- **18개 관련 테스트 모두 통과** (InMemory external_events 8개 + service 2개 + script 8개)
+- 기존 테스트에 영향 없음 (264/264 통과)
+
+#### 보고서 문서
+[`plans/trace_remaining_event_interpretation_event_loss_after_seeded_news_query_fix_2026-05-22.md`](plans/trace_remaining_event_interpretation_event_loss_after_seeded_news_query_fix_2026-05-22.md)
+
+### I. Round 11 — EI `events=[]` 근본 원인 분석 및 수정 (Phase 1 + Phase 2) ✅ 완료 (2026-05-22)
+
+#### Phase 1 (이전 커밋): Provider LLM이 `events=[]` 반환 가정
+- **Fix 1**: Prompt 강화 — "CRITICAL: Event count MUST match input"
+- **Fix 2**: Post-processing guard — `input_event_count > 0 && output event_count=0` → 보정
+- **Fix 3**: Raw response 로깅 — `raw_content` INFO/DEBUG 로깅
+
+#### Phase 2 (본 커밋): 실제 근본 원인 발견 — Exception Fallback
+운영 데이터에서 다음 패턴 발견:
+- `EI self-contradiction detected` 로그가 전혀 없음 (guard 미발동)
+- 모든 symbol에서 `symbol=""` (빈 값)
+- 모든 symbol이 동일한 `event_count=0`, `no_material_events=True`
+
+**코드 분석 결과**: guard가 `try` 블록 내부에 있어 exception 발생 시 도달 불가능.
+`except Exception` 블록이 `EventInterpretationOutput()` (symbol="", event_count=0) 반환.
+
+**Fix 4 — Exception Fallback에서 input_event_count 보존**:
+- `input_event_count`와 `request_symbol`을 try 블록 **밖**에서 캡처
+- `except` 블록에서 `input_event_count > 0`이면 `event_count=input_event_count`, `no_material_events=False`로 보정
+- `symbol`을 `request_symbol`으로 설정 (빈 값 방지)
+- `evidence_strength="weak"` — exception으로 LLM 응답을 받지 못했음을 명시
+
+#### 수정된 파일 (Phase 2)
+1. [`src/agent_trading/services/ai_agents/event_interpretation.py`](src/agent_trading/services/ai_agents/event_interpretation.py:185) — `run()`: `input_event_count`/`request_symbol` try 밖 캡처, except 블록 보강, `symbol=result.symbol or request_symbol` fallback
+2. [`tests/services/test_decision_submit_pipeline.py`](tests/services/test_decision_submit_pipeline.py:1643) — `TestEIPostProcessingGuard`에 2개 테스트 추가 (exception fallback 시나리오)
+
+#### 테스트 결과
+- **5개 신규 테스트 모두 통과** (TestEIPostProcessingGuard: 3개 guard + 2개 fallback)
+- **전체 51개 테스트 모두 통과** (test_decision_submit_pipeline.py) — 기존 테스트 회귀 없음
+
+#### 보고서 문서
+- Phase 1: [`plans/trace_and_fix_event_interpretation_provider_returning_zero_events_despite_nonempty_input_2026-05-22.md`](plans/trace_and_fix_event_interpretation_provider_returning_zero_events_despite_nonempty_input_2026-05-22.md)
+- Phase 2 (본 문서): [`plans/trace_raw_response_fallback_and_guard_failure_in_event_interpretation_zero_event_outputs_2026-05-22.md`](plans/trace_raw_response_fallback_and_guard_failure_in_event_interpretation_zero_event_outputs_2026-05-22.md)
+
+---
+
+### J. Round 12 — EI Summary 불일치 수정 + 0-event 분류 진단 로깅 ✅ 완료 (2026-05-22)
+
+#### 문제 상황
+
+Fix 4 (exception fallback에서 `input_event_count` 보존) 배포 후 운영 데이터:
+- 일부 symbol에서 `event_count` 보정 성공: `000670` (2→2), `000990` (3→3), `001740` (2→2), `009150` (4→4), `000210` (4→4)
+- 하지만 **summary 불일치**: `event_count>0`, `no_material_events=False`인데도 summary는 `"유의미한 신규 이벤트 없음"`
+- 일부 symbol은 여전히 `event_count=0` (미분류): `000810`, `000660`, `000210`, `000100`, `000270`, `001440`
+
+#### 근본 원인
+
+[`_build_ei_summary()`](src/agent_trading/services/ai_agents/event_interpretation.py:46)의 조건:
+```python
+if av.no_material_events or not output.events:
+    return "유의미한 신규 이벤트 없음..."
+```
+- Fix 4는 `aggregate_view.event_count`와 `no_material_events`만 보정
+- `events` tuple은 여전히 `()` (빈 튜플)
+- `not output.events`가 `True` → 무조건 "유의미한 신규 이벤트 없음" 반환
+
+#### 적용한 수정
+
+**Fix 5**: [`_build_ei_summary()`](src/agent_trading/services/ai_agents/event_interpretation.py:46) 3-way 분기
+- Case 1: `no_material_events=True and not output.events` → "유의미한 신규 이벤트 없음" (기존 유지)
+- Case 2: `event_count>0 and not no_material_events and not output.events` → fallback summary
+  - 예: `"(3건) 입력 이벤트 3건 감지됨. 세부 이벤트 추출 누락. 전반 중립, 근거:weak"`
+- Case 3: 정상 events 존재 → 기존 상세 요약
+
+**진단 로깅 추가**: [`run()`](src/agent_trading/services/ai_agents/event_interpretation.py:201) 메서드에 4가지 분류 로깅
+- `WARNING: EI diagnostic: provider_zero` — 정상 경로, event_count=0, input_events>0
+- `INFO: EI diagnostic: no_input_events` — 정상 경로, event_count=0, input_events=0
+- `WARNING: EI diagnostic: fallback_applied` — Exception 경로, input_events>0 (Fix 4 발동)
+- `WARNING: EI diagnostic: unknown_zero` — Exception 경로, input_events=0
+
+#### 수정된 파일
+
+| 파일 | 변경 내용 |
+|------|----------|
+| [`event_interpretation.py`](src/agent_trading/services/ai_agents/event_interpretation.py:46) | `_build_ei_summary()` 3-way 분기 |
+| [`event_interpretation.py`](src/agent_trading/services/ai_agents/event_interpretation.py:302) | 진단 로깅 추가 |
+| [`test_decision_submit_pipeline.py`](tests/services/test_decision_submit_pipeline.py:1754) | 5개 신규 테스트 추가 |
+
+#### 테스트 결과
+
+```
+56 passed in 0.35s  (기존 51 + 신규 5)
+```
+
+#### 보고서 문서
+
+- [`plans/classify_remaining_zero_event_ei_runs_and_fix_summary_mismatch_when_event_count_is_corrected_2026-05-22.md`](plans/classify_remaining_zero_event_ei_runs_and_fix_summary_mismatch_when_event_count_is_corrected_2026-05-22.md)
+
 ---
 
 ## 2. Work In Progress (진행 중인 작업)
@@ -334,15 +524,20 @@ Round 7의 raw JSON 전체 노출 방향을 롤백하고, `구조화된 출력` 
 | [`plans/held_position_sell_silent_drop_root_cause_final_2026-05-22.md`](plans/held_position_sell_silent_drop_root_cause_final_2026-05-22.md) | **Round 6**: 12:56 batch silent drop 최종 원인 분석 보고서 |
 | [`plans/trace_and_fix_quote_resolution_hang_blocking_order_request_creation_for_held_position_sell_2026-05-22.md`](plans/trace_and_fix_quote_resolution_hang_blocking_order_request_creation_for_held_position_sell_2026-05-22.md) | **Round 6**: Fix K/L/M 설계 및 검증 |
 | [`plans/show_full_agent_judgment_content_in_agents_runs_view_2026-05-22.md`](plans/show_full_agent_judgment_content_in_agents_runs_view_2026-05-22.md) | **Round 7** (참고용, 현재 코드와 불일치): Row expand + raw JSON 전체 표시 |
+| [`plans/fix_event_interpretation_not_reading_persisted_seeded_news_from_external_events_2026-05-22.md`](plans/fix_event_interpretation_not_reading_persisted_seeded_news_from_external_events_2026-05-22.md) | **Round 9**: EI seeded news consumption fix — `include_seeded_news` 파라미터 도입 |
+| [`plans/trace_remaining_event_interpretation_event_loss_after_seeded_news_query_fix_2026-05-22.md`](plans/trace_remaining_event_interpretation_event_loss_after_seeded_news_query_fix_2026-05-22.md) | **Round 10**: EI event loss tracing — debug logging + `_diag()` path fix + 3 hypotheses |
+| [`plans/trace_and_fix_event_interpretation_provider_returning_zero_events_despite_nonempty_input_2026-05-22.md`](plans/trace_and_fix_event_interpretation_provider_returning_zero_events_despite_nonempty_input_2026-05-22.md) | **Round 11 Phase 1**: EI provider가 events를 받고도 `events=[]` 반환 — prompt 강화 + post-processing guard + raw response 로깅 |
+| [`plans/trace_raw_response_fallback_and_guard_failure_in_event_interpretation_zero_event_outputs_2026-05-22.md`](plans/trace_raw_response_fallback_and_guard_failure_in_event_interpretation_zero_event_outputs_2026-05-22.md) | **Round 11 Phase 2**: EI `events=[]` 근본 원인 — Exception Fallback이 실제 원인. Fix 4: except 블록에서 input_event_count 보존 |
+| [`plans/classify_remaining_zero_event_ei_runs_and_fix_summary_mismatch_when_event_count_is_corrected_2026-05-22.md`](plans/classify_remaining_zero_event_ei_runs_and_fix_summary_mismatch_when_event_count_is_corrected_2026-05-22.md) | **Round 12**: EI Summary 불일치 수정 (Fix 5) + 0-event 분류 진단 로깅 |
 
 ---
 
 ## 5. 요약 체크리스트 — 차기 세션 시작 시
 
 ### P0 (즉시 수행)
-- [ ] **Migration 0020 적용 확인**: `SELECT * FROM trading.order_blocking_locks WHERE expires_at > NOW()` — active lock 정상 동작 확인
-- [ ] **Docker rebuild + 재시작**: `docker compose build && docker compose up -d`
+- [ ] **Docker rebuild + 재시작**: `docker compose build && docker compose up -d` (Round 9 + Round 10 코드 반영)
 - [ ] **Health check**: `curl -sf http://localhost:8000/health`
+- [ ] **Migration 0020 적용 확인**: `SELECT * FROM trading.order_blocking_locks WHERE expires_at > NOW()` — active lock 정상 동작 확인
 
 ### P1 (장중 확인)
 - [ ] **Reconciliation lock 정상 해제 확인**: worker 로그에서 `"Blocking lock released"` 검색
@@ -351,11 +546,31 @@ Round 7의 raw JSON 전체 노출 방향을 롤백하고, `구조화된 출력` 
 - [ ] **Fix E 검증**: held_position sell이 일일 제출 상한에 막히지 않고 submit path 진입 확인
 - [ ] **Fix K 검증**: `HP_SELL_QUOTE_BYPASS` 로그 발생 확인 (grep)
 - [ ] **Fix L 검증**: httpx timeout 8s 단축으로 인한 영향 없음 확인
+- [ ] **Round 9+10+11 검증 — EI event count 정상화 확인** (6개 Checkpoint):
+  - [ ] **CP1**: `grep "assemble() recent_events" /workspace/agent_trading/logs/*.log` — recent_events count > 0 확인
+  - [ ] **CP2**: `grep "_reconstruct_context: recent_events_raw count" /workspace/agent_trading/logs/subprocess_diag_*.log` — subprocess 수신 count 확인
+  - [ ] **CP3**: `grep "EI _build_user_prompt:" /workspace/agent_trading/logs/*.log` — prompt event count 확인
+  - [ ] **CP4**: `grep "_deserialize_agent_output:" /workspace/agent_trading/logs/*.log` — EI output event count 확인
+  - [ ] **CP5**: `grep "EventInterpretationAgent succeeded:" /workspace/agent_trading/logs/*.log` — 최종 EI 결과 확인 (input_events, output_events, event_count, no_material_events 포함)
+  - [ ] **CP6**: `grep "EI raw_response:" /workspace/agent_trading/logs/*.log` — raw response 길이 확인 (DEBUG 레벨에서 raw_content 전체 확인 가능)
+- [ ] **Round 9 검증**: `_collect_persisted_seeded_events()`가 T3 seeded_news 반환하는지 로그 확인
+- [ ] **Round 11 검증 — exception fallback + guard 발동 확인**:
+  - [ ] `grep "returning fallback output" /workspace/agent_trading/logs/*.log` — Fix 4 발동: exception fallback에서 input_event_count 보존 확인
+  - [ ] `grep "EI self-contradiction detected" /workspace/agent_trading/logs/*.log` — Fix 2 발동: LLM이 events=[] 반환 + guard 보정 확인
+  - [ ] `grep "EI raw_response:" /workspace/agent_trading/logs/*.log` — Fix 3 발동: 정상 경로에서 raw response 로깅 확인
+  - [ ] `grep "EventInterpretationAgent succeeded:" /workspace/agent_trading/logs/*.log` — 최종 EI 결과 확인 (event_count>0 기대)
+  - [ ] `000150` 회귀 없음: `grep "000150.*event_count=0" /workspace/agent_trading/logs/*.log` — genuinely 0 event symbol 유지
+  - [ ] DB 확인: `SELECT symbol, structured_output_json->'aggregate_view'->>'event_count' FROM trading.agent_runs WHERE agent_name='event_interpretation' ORDER BY created_at DESC LIMIT 20;`
+- [ ] **Round 12 검증 — Summary 보정 + 진단 로깅 확인**:
+ - [ ] `grep "EI diagnostic:" /workspace/agent_trading/logs/*.log` — 0-event symbol 분류 확인 (fallback_applied / provider_zero / unknown_zero / no_input_events)
+ - [ ] `grep "EventInterpretationAgent succeeded:" /workspace/agent_trading/logs/*.log` — summary에 "유의미한 신규 이벤트 없음"이 아닌 fallback summary 확인 (event_count>0 symbol)
+ - [ ] DB 확인: `SELECT symbol, structured_output_json->>'summary' FROM trading.agent_runs WHERE agent_name='event_interpretation' AND structured_output_json->'aggregate_view'->>'event_count' != '0' ORDER BY created_at DESC LIMIT 10;` — summary에 "입력 이벤트" 문구 포함 확인
 
 ### P2 (참고)
 - [ ] (선택) AR Layer 2 guard 생산 검증 (이전 세션 pending)
 - [ ] (선택) Fix F: expired lock cleanup 스케줄러 검토
 - [ ] (선택) Admin UI AgentsRunsView 구조화된 출력 확장 UX 피드백 수집
+- [ ] (선택) Postgres `test_postgres_list_by_symbol` 실제 DB 데이터로 인한 pre-existing test failure 수정
 
 ---
 

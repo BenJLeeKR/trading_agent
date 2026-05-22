@@ -195,13 +195,23 @@ export async function getCashBalance(
 }
 
 export async function getTradeDecisions(
-  decisionContextId?: string
-): Promise<import("../types/api").TradeDecisionDetail[]> {
-  const params = decisionContextId
-    ? `?decision_context_id=${encodeURIComponent(decisionContextId)}`
-    : "";
-  return request<import("../types/api").TradeDecisionDetail[]>(
-    `/trade-decisions${params}`
+  decisionContextId?: string,
+  limit?: number,
+  offset?: number,
+): Promise<import("../types/api").PaginatedTradeDecisionsResponse> {
+  const searchParams = new URLSearchParams();
+  if (decisionContextId) {
+    searchParams.set("decision_context_id", decisionContextId);
+  }
+  if (limit !== undefined) {
+    searchParams.set("limit", String(limit));
+  }
+  if (offset !== undefined) {
+    searchParams.set("offset", String(offset));
+  }
+  const qs = searchParams.toString();
+  return request<import("../types/api").PaginatedTradeDecisionsResponse>(
+    `/trade-decisions${qs ? `?${qs}` : ""}`
   );
 }
 

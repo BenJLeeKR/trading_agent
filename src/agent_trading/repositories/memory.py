@@ -379,6 +379,26 @@ class InMemoryTradeDecisionRepository:
     async def list_all(self) -> Sequence[TradeDecisionEntity]:
         return tuple(self._items.values())
 
+    async def list_all_paginated(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        decision_context_id: UUID | None = None,
+    ) -> tuple[list[tuple[TradeDecisionEntity, str | None]], int]:
+        """In-memory pagination: (items, total_count) 반환.
+
+        각 item은 ``(entity, instrument_name)`` 튜플.
+        In-memory 구현에서는 instrument_name을 resolve할 수 없으므로 None.
+        """
+        items = list(self._items.values())
+        if decision_context_id is not None:
+            items = [i for i in items if i.decision_context_id == decision_context_id]
+        # 최신순 정렬
+        items.sort(key=lambda td: (td.created_at, td.trade_decision_id), reverse=True)
+        total_count = len(items)
+        paged = items[offset : offset + limit]
+        return [(item, None) for item in paged], total_count
+
 class InMemoryOrderRepository:
     def __init__(self) -> None:
         self._items: dict[UUID, OrderRequestEntity] = {}
@@ -1084,8 +1104,14 @@ class InMemoryExternalEventRepository:
 
         Uses the ``event_type`` prefix convention: ``Y|``, ``K|``, ``N|``
         indicate listed entities; ``E|`` indicates non-listed.
+        ``seeded_news`` is a synthetic event type (not from OpenDART) and
+        is NOT considered a listed event — it must be explicitly included
+        via ``include_seeded_news=True``.
         Events without a corp_cls prefix are considered listed (conservative).
         """
+        # seeded_news is never a listed event
+        if event.event_type == "seeded_news":
+            return False
         for prefix in ("Y|", "K|", "N|"):
             if event.event_type.startswith(prefix):
                 return True
@@ -1094,17 +1120,32 @@ class InMemoryExternalEventRepository:
             return False
         return True
 
+    @staticmethod
+    def _is_seeded_news(event: ExternalEventEntity) -> bool:
+        """Check if an event is a seeded news event (T3 reliability tier)."""
+        return event.event_type == "seeded_news"
+
     async def list_by_symbol(
         self,
         symbol: str,
         since: datetime,
         include_non_listed: bool = False,
+        include_seeded_news: bool = False,
     ) -> Sequence[ExternalEventEntity]:
+        def _include(item: ExternalEventEntity) -> bool:
+            if include_non_listed:
+                return True
+            if self._is_listed_event(item):
+                return True
+            if include_seeded_news and self._is_seeded_news(item):
+                return True
+            return False
+
         results = [
             item for item in self._items.values()
             if item.symbol == symbol
             and item.published_at >= since
-            and (include_non_listed or self._is_listed_event(item))
+            and _include(item)
         ]
         results.sort(key=lambda item: item.published_at, reverse=True)
         return tuple(results)
@@ -1114,12 +1155,22 @@ class InMemoryExternalEventRepository:
         event_type: str,
         since: datetime,
         include_non_listed: bool = False,
+        include_seeded_news: bool = False,
     ) -> Sequence[ExternalEventEntity]:
+        def _include(item: ExternalEventEntity) -> bool:
+            if include_non_listed:
+                return True
+            if self._is_listed_event(item):
+                return True
+            if include_seeded_news and self._is_seeded_news(item):
+                return True
+            return False
+
         results = [
             item for item in self._items.values()
             if item.event_type == event_type
             and item.published_at >= since
-            and (include_non_listed or self._is_listed_event(item))
+            and _include(item)
         ]
         results.sort(key=lambda item: item.published_at, reverse=True)
         return tuple(results)

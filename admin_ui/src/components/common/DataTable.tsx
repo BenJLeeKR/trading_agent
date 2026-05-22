@@ -72,7 +72,7 @@ export function DataTable<T extends Record<string, any>>({
   onPageSizeChange,
   pageSizeOptions = [10, 20, 50],
 }: DataTableProps<T>) {
-  if (isLoading) {
+  if (isLoading && data.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center p-8 gap-3">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-[#e2e8f0] border-t-[#3b82f6]" />
@@ -81,7 +81,7 @@ export function DataTable<T extends Record<string, any>>({
     );
   }
 
-  if (data.length === 0) {
+  if (!isLoading && data.length === 0) {
     return (
       <div className="bg-white rounded-xl border border-[#e2e8f0] p-8 text-center">
         <p className="text-sm text-[#94a3b8]">{emptyMessage}</p>
@@ -98,6 +98,13 @@ export function DataTable<T extends Record<string, any>>({
 
   return (
     <div className="bg-white rounded-xl border border-[#e2e8f0] overflow-hidden">
+      {/* 로딩 중 오버레이 인디케이터 (데이터 유지) */}
+      {isLoading && data.length > 0 && (
+        <div className="flex items-center justify-center gap-2 py-2 bg-[#f8fafc] border-b border-[#e2e8f0]">
+          <div className="h-3 w-3 animate-spin rounded-full border-2 border-[#e2e8f0] border-t-[#3b82f6]" />
+          <span className="text-xs text-[#64748b]">로딩 중...</span>
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className={cn("w-full", compact && "text-xs")}>
           <thead>

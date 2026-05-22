@@ -201,6 +201,13 @@ export interface TradeDecisionDetail {
   decision_json?: Record<string, unknown>;
 }
 
+export interface PaginatedTradeDecisionsResponse {
+  items: TradeDecisionDetail[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface DecisionContextDetail {
   decision_context_id: string;
   account_id: string;

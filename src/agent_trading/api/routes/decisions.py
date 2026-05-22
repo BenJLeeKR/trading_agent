@@ -9,7 +9,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from agent_trading.api.deps import get_repos
-from agent_trading.api.schemas import DecisionContextDetail, TradeDecisionDetail
+from agent_trading.api.schemas import (
+    DecisionContextDetail,
+    PaginatedTradeDecisionsResponse,
+    TradeDecisionDetail,
+)
 from agent_trading.repositories.container import RepositoryContainer
 
 router = APIRouter(tags=["decisions"])
@@ -27,8 +31,12 @@ def _safe_enum_str(value: object) -> str:
     return str(value)
 
 
-def _to_detail(d: object) -> TradeDecisionDetail:
-    """Convert domain entity to API schema."""
+def _to_detail(d: object, instrument_name: str | None = None) -> TradeDecisionDetail:
+    """Convert domain entity to API schema.
+
+    ``instrument_name``은 SQL LEFT JOIN으로 미리 resolve된 값을 받아
+    N+1 문제를 방지한다.
+    """
     return TradeDecisionDetail(
         trade_decision_id=str(d.trade_decision_id),
         decision_context_id=str(d.decision_context_id),
@@ -46,27 +54,27 @@ def _to_detail(d: object) -> TradeDecisionDetail:
         rationale_summary=d.rationale_summary,
         source_type=d.source_type,
         decision_json=d.decision_json,
+        instrument_name=instrument_name,
     )
 
 
-async def _enrich_decision_detail(
-    detail: TradeDecisionDetail,
-    repos: RepositoryContainer,
-) -> TradeDecisionDetail:
-    """Resolve ``instrument_name`` from the decision's symbol + market."""
-    if detail.symbol:
-        inst = await repos.instruments.get_by_symbol(detail.symbol, detail.market)
-        if inst is not None:
-            detail.instrument_name = inst.name
-    return detail
-
-
-@router.get("/trade-decisions", response_model=list[TradeDecisionDetail])
+@router.get("/trade-decisions", response_model=PaginatedTradeDecisionsResponse)
 async def list_trade_decisions(
     decision_context_id: str | None = Query(None, description="Decision context ID (optional)"),
+    limit: int = Query(50, ge=1, le=500, description="페이지당 최대 항목 수"),
+    offset: int = Query(0, ge=0, description="건너뛸 항목 수"),
     repos: RepositoryContainer = Depends(get_repos),
-) -> list[TradeDecisionDetail]:
-    """List trade decisions, optionally filtered by ``decision_context_id``."""
+) -> PaginatedTradeDecisionsResponse:
+    """List trade decisions with server-side pagination.
+
+    ``decision_context_id``가 주어지면 해당 컨텍스트로 필터링.
+    ``limit``: 페이지당 최대 항목 수 (기본 50, 최대 500).
+    ``offset``: 건너뛸 항목 수 (기본 0).
+
+    SQL LEFT JOIN으로 instrument_name을 한 번에 resolve하여
+    N+1 문제를 방지한다.
+    """
+    ctx_id: UUID | None = None
     if decision_context_id is not None:
         try:
             ctx_id = UUID(decision_context_id)
@@ -75,13 +83,21 @@ async def list_trade_decisions(
                 status_code=400, detail=f"Invalid UUID: {decision_context_id}"
             ) from exc
 
-        decisions = await repos.trade_decisions.list_by_context(ctx_id)
-        if not decisions:
-            return []
-        return [await _enrich_decision_detail(_to_detail(d), repos) for d in decisions]
-    else:
-        decisions = await repos.trade_decisions.list_all()
-        return [await _enrich_decision_detail(_to_detail(d), repos) for d in decisions]
+    items_with_names, total = await repos.trade_decisions.list_all_paginated(
+        limit=limit,
+        offset=offset,
+        decision_context_id=ctx_id,
+    )
+
+    # SQL LEFT JOIN으로 instrument_name이 이미 resolve되어 있음
+    details = [_to_detail(d, instrument_name=name) for d, name in items_with_names]
+
+    return PaginatedTradeDecisionsResponse(
+        items=details,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/decision-contexts/{decision_context_id}", response_model=DecisionContextDetail)

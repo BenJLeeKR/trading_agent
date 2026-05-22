@@ -5,19 +5,23 @@ Covers both ``InMemoryExternalEventRepository`` (unit) and
 
 Test matrix
 -----------
-InMemory (6):
+InMemory (8):
   1. add + get — round-trip
   2. get — nonexistent returns None
   3. find_by_dedup_key — hit
   4. find_by_dedup_key — miss
   5. list_by_symbol — filters by symbol + since
   6. list_by_type — filters by event_type + since
+  7. list_by_symbol — include_seeded_news=True includes seeded_news
+  8. list_by_symbol — include_seeded_news=False (default) excludes seeded_news
 
-Postgres (4):
-  7. add + get — round-trip
-  8. find_by_dedup_key — hit
-  9. list_by_symbol — filters by symbol + since
-  10. list_by_type — filters by event_type + since
+Postgres (6):
+  9. add + get — round-trip
+  10. find_by_dedup_key — hit
+  11. list_by_symbol — filters by symbol + since
+  12. list_by_type — filters by event_type + since
+  13. list_by_symbol — include_seeded_news=True includes seeded_news
+  14. list_by_symbol — include_seeded_news=False (default) excludes seeded_news
 """
 
 from __future__ import annotations
@@ -143,6 +147,47 @@ async def test_inmemory_list_by_symbol(repo) -> None:
 
 
 @pytest.mark.asyncio
+async def test_inmemory_list_by_symbol_excludes_seeded_news_by_default(repo) -> None:
+    """7. list_by_symbol — include_seeded_news=False (default) excludes seeded_news."""
+    e1 = make_event(symbol="005930", event_type="Y|분기보고서", published_at=T0)
+    e2 = make_event(symbol="005930", event_type="seeded_news", published_at=T1)
+
+    await repo.add(e1)
+    await repo.add(e2)
+
+    # Default (include_seeded_news=False) → only listed event
+    results = await repo.list_by_symbol("005930", since=T0 - timedelta(hours=1))
+    assert len(results) == 1
+    assert results[0].event_id == e1.event_id
+
+    # Explicit False → same result
+    results = await repo.list_by_symbol(
+        "005930", since=T0 - timedelta(hours=1), include_seeded_news=False,
+    )
+    assert len(results) == 1
+    assert results[0].event_id == e1.event_id
+
+
+@pytest.mark.asyncio
+async def test_inmemory_list_by_symbol_includes_seeded_news(repo) -> None:
+    """8. list_by_symbol — include_seeded_news=True includes seeded_news alongside listed."""
+    e1 = make_event(symbol="005930", event_type="Y|분기보고서", published_at=T0)
+    e2 = make_event(symbol="005930", event_type="seeded_news", published_at=T1)
+
+    await repo.add(e1)
+    await repo.add(e2)
+
+    # include_seeded_news=True → both listed + seeded_news
+    results = await repo.list_by_symbol(
+        "005930", since=T0 - timedelta(hours=1), include_seeded_news=True,
+    )
+    assert len(results) == 2
+    # e2 (T1) is newer → first
+    assert results[0].event_id == e2.event_id
+    assert results[1].event_id == e1.event_id
+
+
+@pytest.mark.asyncio
 async def test_inmemory_list_by_type(repo) -> None:
     """6. list_by_type — filters by event_type + since."""
     e1 = make_event(event_type="disclosure", published_at=T0)
@@ -229,5 +274,48 @@ async def test_postgres_list_by_type(postgres_repos) -> None:
 
     results = await repo.list_by_type("disclosure", since=T0 - timedelta(hours=1))
     assert len(results) == 2
+    assert results[0].event_id == e2.event_id
+    assert results[1].event_id == e1.event_id
+
+
+@pytest.mark.asyncio
+async def test_postgres_list_by_symbol_excludes_seeded_news_by_default(postgres_repos) -> None:
+    """13. list_by_symbol — include_seeded_news=False (default) excludes seeded_news."""
+    repo = postgres_repos.external_events
+    e1 = make_event(symbol="005930", event_type="Y|분기보고서", published_at=T0)
+    e2 = make_event(symbol="005930", event_type="seeded_news", published_at=T1)
+
+    await repo.add(e1)
+    await repo.add(e2)
+
+    # Default → only listed event
+    results = await repo.list_by_symbol("005930", since=T0 - timedelta(hours=1))
+    assert len(results) == 1
+    assert results[0].event_id == e1.event_id
+
+    # Explicit False → same result
+    results = await repo.list_by_symbol(
+        "005930", since=T0 - timedelta(hours=1), include_seeded_news=False,
+    )
+    assert len(results) == 1
+    assert results[0].event_id == e1.event_id
+
+
+@pytest.mark.asyncio
+async def test_postgres_list_by_symbol_includes_seeded_news(postgres_repos) -> None:
+    """14. list_by_symbol — include_seeded_news=True includes seeded_news alongside listed."""
+    repo = postgres_repos.external_events
+    e1 = make_event(symbol="005930", event_type="Y|분기보고서", published_at=T0)
+    e2 = make_event(symbol="005930", event_type="seeded_news", published_at=T1)
+
+    await repo.add(e1)
+    await repo.add(e2)
+
+    # include_seeded_news=True → both listed + seeded_news
+    results = await repo.list_by_symbol(
+        "005930", since=T0 - timedelta(hours=1), include_seeded_news=True,
+    )
+    assert len(results) == 2
+    # e2 (T1) is newer → first
     assert results[0].event_id == e2.event_id
     assert results[1].event_id == e1.event_id

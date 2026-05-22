@@ -54,7 +54,9 @@ export default function DecisionsView() {
   const [searchParams, setSearchParams] = useSearchParams();
   const contextIdParam = searchParams.get("contextId");
 
+  // Server-side pagination state
   const [decisions, setDecisions] = useState<TradeDecisionDetail[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,26 +72,32 @@ export default function DecisionsView() {
   const [eventsError, setEventsError] = useState<string | null>(null);
   const [eventsExpanded, setEventsExpanded] = useState(false);
 
-  // Filter state
+  // Filter & pagination state
   const [searchText, setSearchText] = useState("");
   const [sideFilter, setSideFilter] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
 
+  // Server-side page fetch: contextIdParam, currentPage, pageSize 변경 시 재조회
+  // 페이지 전환 시 이전 데이터를 유지하면서 loading 표시 (전체 화면 초기화 방지)
   useEffect(() => {
     setLoading(true);
     setError(null);
+    const offset = (currentPage - 1) * pageSize;
     const fetchPromise = contextIdParam
-      ? getTradeDecisions(contextIdParam)
-      : getTradeDecisions();
+      ? getTradeDecisions(contextIdParam, pageSize, offset)
+      : getTradeDecisions(undefined, pageSize, offset);
     fetchPromise
-      .then(setDecisions)
+      .then((resp) => {
+        setDecisions(resp.items);
+        setTotalCount(resp.total);
+      })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "의사결정을 불러오지 못했습니다";
         setError(msg);
       })
       .finally(() => setLoading(false));
-  }, [contextIdParam]);
+  }, [contextIdParam, currentPage, pageSize]);
 
   // Lazy-load decision context on row select (with stale-response guard)
   useEffect(() => {
@@ -159,6 +167,8 @@ export default function DecisionsView() {
     }
   }, [selectedDecision]);
 
+  // Client-side filter는 현재 페이지 데이터에만 적용 (search/filter는 전체 데이터셋이 아닌
+  // 현재 서버 페이지 내에서만 동작). 서버사이드 search/filter는 향후 확장 가능.
   const filteredDecisions = useMemo(() => {
     return decisions.filter((d) => {
       const matchSide = !sideFilter || d.side === sideFilter;
@@ -168,11 +178,10 @@ export default function DecisionsView() {
     });
   }, [decisions, searchText, sideFilter]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredDecisions.length / pageSize));
+  // totalPages는 서버 totalCount 기준 (client-side filter는 현재 페이지만)
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
   const safePage = Math.min(currentPage, totalPages);
-  const pagedDecisions = useMemo(() => {
-    return filteredDecisions.slice((safePage - 1) * pageSize, safePage * pageSize);
-  }, [filteredDecisions, safePage, pageSize]);
+  // filteredDecisions는 이미 서버에서 받은 현재 페이지 데이터이므로 추가 slice 불필요
 
   const decisionColumns: Column<TradeDecisionDetail>[] = [
     {
@@ -218,7 +227,6 @@ export default function DecisionsView() {
     },
   ];
 
-  if (loading) return <LoadingSpinner />;
   if (error) return <ErrorBanner message={error} onDismiss={() => setError(null)} />;
 
   return (
@@ -280,11 +288,12 @@ export default function DecisionsView() {
           </div>
           <DataTable
             columns={decisionColumns}
-            data={pagedDecisions}
+            data={filteredDecisions}
             idKey="trade_decision_id"
+            isLoading={loading}
             currentPage={safePage}
             pageSize={pageSize}
-            totalItems={filteredDecisions.length}
+            totalItems={totalCount}
             onPageChange={setCurrentPage}
             onPageSizeChange={(size) => { setPageSize(size); setCurrentPage(1); }}
             onRowClick={(row) => setSelectedDecision(

@@ -1572,6 +1572,41 @@ class TestCollectPersistedSeededEvents:
         result = await _collect_persisted_seeded_events(repos, SYMBOL)
         assert len(result) == 3
 
+    @pytest.mark.asyncio
+    async def test_includes_seeded_news_event_type(self) -> None:
+        """event_type='seeded_news' (Y| prefix 없음)도 조회되는지 검증.
+
+        이 테스트는 Round 9 수정의 핵심 검증:
+        _collect_persisted_seeded_events()가 include_seeded_news=True를
+        전달하므로 event_type='seeded_news'인 이벤트도 반환되어야 함.
+        """
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+
+        # event_type='seeded_news' (순수 seeded_news, Y| prefix 없음)
+        seeded = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="seeded_news",
+            source_name="naver_news_seeded",
+            source_reliability_tier="T3",
+            symbol=SYMBOL,
+            market=MARKET,
+            published_at=now - timedelta(minutes=30),
+            ingested_at=now,
+            severity="medium",
+            direction="neutral",
+            headline="Seeded news without Y| prefix",
+        )
+        await repos.external_events.add(seeded)
+
+        result = await _collect_persisted_seeded_events(repos, SYMBOL)
+        assert len(result) == 1, (
+            f"Expected 1 seeded_news event, got {len(result)}. "
+            "This means _collect_persisted_seeded_events() is NOT passing "
+            "include_seeded_news=True to list_by_symbol()."
+        )
+        assert result[0].event_id == seeded.event_id
+
 
 class TestIsT3FreshForSymbol:
     """``_is_t3_fresh_for_symbol()`` — T3 freshness check."""
@@ -1627,6 +1662,36 @@ class TestIsT3FreshForSymbol:
         await repos.external_events.add(event)
 
         assert await _is_t3_fresh_for_symbol(repos, SYMBOL) is False
+
+    @pytest.mark.asyncio
+    async def test_true_with_seeded_news_event_type(self) -> None:
+        """event_type='seeded_news' (Y| prefix 없음)도 fresh로 감지되는지 검증.
+
+        Round 9 수정 후 _is_t3_fresh_for_symbol()이 include_seeded_news=True를
+        전달하므로 event_type='seeded_news'인 이벤트도 fresh로 감지되어야 함.
+        """
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+
+        event = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type="seeded_news",  # Y| prefix 없음
+            source_name="naver_news_seeded",
+            source_reliability_tier="T3",
+            symbol=SYMBOL,
+            market=MARKET,
+            published_at=now - timedelta(minutes=30),  # 30분 전 → fresh
+            ingested_at=now,
+            severity="medium",
+            direction="neutral",
+            headline="Fresh seeded news",
+        )
+        await repos.external_events.add(event)
+
+        assert await _is_t3_fresh_for_symbol(repos, SYMBOL) is True, (
+            "event_type='seeded_news' must be detected as fresh when "
+            "include_seeded_news=True is passed to list_by_symbol()"
+        )
 
 
 class TestRunT3LivePipeline:

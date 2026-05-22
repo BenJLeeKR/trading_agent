@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -602,3 +602,148 @@ async def test_list_by_context_returns_all_in_order(
     assert decisions[0].trade_decision_id == td_ids[2]
     assert decisions[1].trade_decision_id == td_ids[1]
     assert decisions[2].trade_decision_id == td_ids[0]
+
+
+@pytest.mark.asyncio
+async def test_list_all_paginated_basic(
+    seeded_postgres_data: RepositoryContainer,
+) -> None:
+    """``list_all_paginated()`` returns correct items and total count."""
+    repos = seeded_postgres_data
+    items_with_names, total = await repos.trade_decisions.list_all_paginated(
+        limit=10, offset=0
+    )
+    assert total >= 1, "Expected at least 1 seeded decision"
+    assert len(items_with_names) <= 10
+    # Each item is a (entity, instrument_name) tuple
+    for entity, inst_name in items_with_names:
+        assert entity.trade_decision_id is not None
+        # instrument_name may be None if no matching instrument row
+
+
+@pytest.mark.asyncio
+async def test_list_all_paginated_limit_offset(
+    seeded_postgres_data: RepositoryContainer,
+    seeded_decision_context: UUID,
+    seeded_strategy_id: UUID,
+) -> None:
+    """``list_all_paginated()`` respects limit and offset.
+
+    We insert 5 decisions with ascending ``created_at`` timestamps that are
+    *newer* than any fixture-seeded data, then verify that pagination returns
+    them in descending order (most recent first).
+    """
+    repos = seeded_postgres_data
+    conn = repos.unit_of_work.connection
+
+    # Insert 5 decisions with ascending timestamps (all newer than fixture data)
+    td_ids: list[UUID] = []
+    # Use a far-future base so our rows sort after any fixture-seeded data
+    base = datetime.now(timezone.utc) + timedelta(days=1)
+    for i in range(5):
+        td_id = uuid4()
+        td_ids.append(td_id)
+        created_at = base.replace(hour=9, minute=i)
+        await conn.execute(
+            """
+            INSERT INTO trading.trade_decisions
+                (trade_decision_id, decision_context_id,
+                 decision_type, side, strategy_id, symbol, market,
+                 entry_style, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            """,
+            td_id,
+            seeded_decision_context,
+            "approve",
+            "buy",
+            seeded_strategy_id,
+            "AAPL",
+            "NASDAQ",
+            "limit",
+            created_at,
+        )
+
+    # Collect all decision IDs from the DB that are >= our base time
+    # so we can verify pagination order without assuming total count.
+    all_rows = await conn.fetch(
+        "SELECT trade_decision_id FROM trading.trade_decisions "
+        "WHERE created_at >= $1 ORDER BY created_at DESC, trade_decision_id DESC",
+        base.replace(hour=9, minute=0),
+    )
+    all_ids = [r["trade_decision_id"] for r in all_rows]
+    assert len(all_ids) == 5, f"Expected exactly 5 test decisions, got {len(all_ids)}"
+
+    # Page 1: limit=2, offset=0 → first 2 items
+    items1, total1 = await repos.trade_decisions.list_all_paginated(
+        limit=2, offset=0
+    )
+    assert total1 >= 5
+    assert len(items1) == 2
+    assert items1[0][0].trade_decision_id == all_ids[0]  # most recent
+    assert items1[1][0].trade_decision_id == all_ids[1]
+
+    # Page 2: limit=2, offset=2 → next 2 items
+    items2, total2 = await repos.trade_decisions.list_all_paginated(
+        limit=2, offset=2
+    )
+    assert total2 == total1
+    assert len(items2) == 2
+    assert items2[0][0].trade_decision_id == all_ids[2]
+    assert items2[1][0].trade_decision_id == all_ids[3]
+
+    # Page 3: limit=2, offset=4 → last 1 item (our 5th test decision)
+    items3, total3 = await repos.trade_decisions.list_all_paginated(
+        limit=2, offset=4
+    )
+    assert total3 == total1
+    # items3 may contain fixture-seeded rows after our 5 test decisions
+    assert items3[0][0].trade_decision_id == all_ids[4]
+
+
+@pytest.mark.asyncio
+async def test_list_all_paginated_with_context_filter(
+    seeded_postgres_data: RepositoryContainer,
+    seeded_decision_context: UUID,
+    seeded_strategy_id: UUID,
+) -> None:
+    """``list_all_paginated()`` with ``decision_context_id`` filter."""
+    repos = seeded_postgres_data
+    conn = repos.unit_of_work.connection
+
+    # Insert 2 decisions for the seeded context
+    td_id_1 = uuid4()
+    td_id_2 = uuid4()
+    base = datetime(2026, 5, 20, tzinfo=timezone.utc)
+    await conn.execute(
+        """
+        INSERT INTO trading.trade_decisions
+            (trade_decision_id, decision_context_id,
+             decision_type, side, strategy_id, symbol, market,
+             entry_style, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        """,
+        td_id_1, seeded_decision_context,
+        "approve", "buy", seeded_strategy_id, "AAPL", "NASDAQ", "limit",
+        base.replace(hour=9, minute=0),
+    )
+    await conn.execute(
+        """
+        INSERT INTO trading.trade_decisions
+            (trade_decision_id, decision_context_id,
+             decision_type, side, strategy_id, symbol, market,
+             entry_style, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        """,
+        td_id_2, seeded_decision_context,
+        "hold", "hold", seeded_strategy_id, "TSLA", "NASDAQ", "market",
+        base.replace(hour=9, minute=1),
+    )
+
+    # Filter by context
+    items, total = await repos.trade_decisions.list_all_paginated(
+        limit=50, offset=0, decision_context_id=seeded_decision_context,
+    )
+    assert total >= 2
+    # Most recent first
+    assert items[0][0].trade_decision_id == td_id_2
+    assert items[1][0].trade_decision_id == td_id_1

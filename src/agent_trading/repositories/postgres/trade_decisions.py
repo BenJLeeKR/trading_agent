@@ -166,3 +166,51 @@ class PostgresTradeDecisionRepository:
             "SELECT * FROM trading.trade_decisions ORDER BY created_at DESC",
         )
         return [row_to_entity(row, TradeDecisionEntity) for row in rows]
+
+    async def list_all_paginated(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        decision_context_id: UUID | None = None,
+    ) -> tuple[list[tuple[TradeDecisionEntity, str | None]], int]:
+        """서버사이드 페이지네이션: (items, total_count) 반환.
+
+        각 item은 ``(entity, instrument_name)`` 튜플.
+        ``instrument_name``은 SQL LEFT JOIN으로 한 번에 resolve (N+1 방지).
+
+        ``decision_context_id``가 주어지면 해당 컨텍스트로 필터링.
+        """
+        where_clause = ""
+        params: list[object] = []
+        param_idx = 1
+
+        if decision_context_id is not None:
+            where_clause = f"WHERE td.decision_context_id = ${param_idx}"
+            params.append(decision_context_id)
+            param_idx += 1
+
+        # Total count query
+        count_sql = f"SELECT COUNT(*) FROM trading.trade_decisions td {where_clause}"
+        total_row = await self._tx.connection.fetchval(count_sql, *params)
+        total_count = total_row if total_row is not None else 0
+
+        # Paginated query with LEFT JOIN for instrument_name
+        items_sql = f"""
+            SELECT td.*, i.name AS _instrument_name
+            FROM trading.trade_decisions td
+            LEFT JOIN trading.instruments i
+                ON td.symbol = i.symbol AND td.market = i.market_code
+            {where_clause}
+            ORDER BY td.created_at DESC, td.trade_decision_id DESC
+            LIMIT ${param_idx} OFFSET ${param_idx + 1}
+        """
+        params.append(limit)
+        params.append(offset)
+
+        rows = await self._tx.connection.fetch(items_sql, *params)
+        items: list[tuple[TradeDecisionEntity, str | None]] = []
+        for row in rows:
+            entity = row_to_entity(row, TradeDecisionEntity)
+            inst_name: str | None = row.get("_instrument_name")
+            items.append((entity, inst_name))
+        return items, total_count

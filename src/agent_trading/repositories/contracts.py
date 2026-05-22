@@ -336,6 +336,24 @@ class TradeDecisionRepository(Protocol):
     async def list_all(self) -> Sequence[TradeDecisionEntity]:
         ...
 
+    async def list_all_paginated(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        decision_context_id: UUID | None = None,
+    ) -> tuple[list[tuple[TradeDecisionEntity, str | None]], int]:
+        """서버사이드 페이지네이션: (items, total_count) 반환.
+
+        각 item은 ``(entity, instrument_name)`` 튜플.
+        ``instrument_name``은 SQL LEFT JOIN으로 한 번에 resolve (N+1 방지).
+
+        ``decision_context_id``가 주어지면 해당 컨텍스트로 필터링.
+        ``limit``: 페이지당 최대 row 수 (기본 50).
+        ``offset``: 건너뛸 row 수.
+        반환값: (해당 페이지의 (entity, instrument_name) 리스트, 조건에 맞는 전체 row 수).
+        """
+        ...
+
 class OrderRepository(Protocol):
     async def add(self, order: OrderRequestEntity) -> OrderRequestEntity:
         ...
@@ -676,6 +694,14 @@ class ExternalEventRepository(Protocol):
 
     Pass ``include_non_listed=True`` to bypass this filter when
     administrative inspection is needed.
+
+    Seeded-news filtering (P1):
+    ``event_type='seeded_news'`` events (T3 reliability tier) are
+    excluded from the default listed-event filter because they do not
+    carry the ``Y|``/``K|``/``N|`` prefix.  Pass
+    ``include_seeded_news=True`` to include them alongside listed
+    events — this is the intended mode for EI decision context
+    assembly.
     """
 
     async def add(self, event: ExternalEventEntity) -> ExternalEventEntity:
@@ -692,6 +718,7 @@ class ExternalEventRepository(Protocol):
         symbol: str,
         since: datetime,
         include_non_listed: bool = False,
+        include_seeded_news: bool = False,
     ) -> Sequence[ExternalEventEntity]:
         ...
 
@@ -700,6 +727,7 @@ class ExternalEventRepository(Protocol):
         event_type: str,
         since: datetime,
         include_non_listed: bool = False,
+        include_seeded_news: bool = False,
     ) -> Sequence[ExternalEventEntity]:
         ...
 
