@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, afterEach, beforeEach, vi } from "vitest";
 import AgentRunsView from "../components/AgentRunsView";
 import { setStoredToken, clearStoredToken } from "../api/client";
-import { mockAgentRuns, VALID_TOKEN } from "./test-utils/fixtures";
+import { mockAgentRuns, VALID_TOKEN, mockEiAgentRunNoSummary } from "./test-utils/fixtures";
 
 /**
  * URL-based fetch mock — routes are matched by `url.includes(pattern)`.
@@ -140,53 +140,6 @@ describe("AgentRunsView error state", () => {
 });
 
 /* ──────────────────────────────────────────────
- * AgentRunsView — row selection & detail panel
- * ────────────────────────────────────────────── */
-
-describe("AgentRunsView detail panel", () => {
-  it("shows metadata when a row is clicked", async () => {
-    mockUrlRouter({ "/agent-runs": mockAgentRuns });
-    renderView();
-
-    // Wait for data to load
-    await waitFor(() => {
-      expect(screen.getByText("EI")).toBeInTheDocument();
-    });
-
-    // Click the first row (EI)
-    const eiRow = screen.getByText("EI").closest("tr");
-    expect(eiRow).not.toBeNull();
-    await userEvent.click(eiRow!);
-
-    // Detail panel should show metadata fields
-    // Use getAllByText because labels appear both as label text and as values
-    await waitFor(() => {
-      expect(screen.getAllByText("에이전트 실행 ID").length).toBeGreaterThanOrEqual(1);
-    });
-    expect(screen.getAllByText("의사결정 컨텍스트 ID").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("에이전트 유형").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("상태").length).toBeGreaterThanOrEqual(1);
-  });
-
-  it("shows structured output section when run has structured_output_json", async () => {
-    mockUrlRouter({ "/agent-runs": mockAgentRuns });
-    renderView();
-
-    await waitFor(() => {
-      expect(screen.getByText("EI")).toBeInTheDocument();
-    });
-
-    // Click the first row (EI has structured_output_json with summary)
-    const eiRow = screen.getByText("EI").closest("tr");
-    await userEvent.click(eiRow!);
-
-    await waitFor(() => {
-      expect(screen.getByText("구조화된 출력")).toBeInTheDocument();
-    });
-  });
-});
-
-/* ──────────────────────────────────────────────
  * AgentRunsView — search filter
  * ────────────────────────────────────────────── */
 
@@ -301,5 +254,126 @@ describe("AgentRunsView context ID link", () => {
       "href",
       `/decisions?contextId=${encodeURIComponent(mockAgentRuns[0].decision_context_id)}`
     );
+  });
+});
+
+/* ──────────────────────────────────────────────
+ * 구조화된 출력 확장형 뷰 테스트
+ * ────────────────────────────────────────────── */
+
+describe("AgentRunsView structured output", () => {
+  it("displays collapsed keys when structured output exists", async () => {
+    mockUrlRouter({ "/agent-runs": mockAgentRuns });
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText("EI")).toBeInTheDocument();
+    });
+
+    // EI run has: signal, confidence, summary — first 3 keys shown
+    expect(screen.getByText(/signal/)).toBeInTheDocument();
+    // AR run has: risk_score, max_order_value, approved — 3 keys, no "+N more"
+    // FDC run has: decision, quantity, entry_price — 3 keys, no "+N more"
+  });
+
+  it("shows '-' for runs without structured output", async () => {
+    // Create a run with null structured_output_json
+    const runsWithoutSo = [
+      {
+        ...mockAgentRuns[0],
+        structured_output_json: null,
+      },
+    ];
+    mockUrlRouter({ "/agent-runs": runsWithoutSo });
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText("EI")).toBeInTheDocument();
+    });
+
+    // Should show '-' in the structured output column
+    const dashes = screen.getAllByText("-");
+    expect(dashes.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("expands structured output on toggle click", async () => {
+    mockUrlRouter({ "/agent-runs": mockAgentRuns });
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText("EI")).toBeInTheDocument();
+    });
+
+    // Find and click the "구조화된 출력 펼치기" button
+    const toggleButtons = screen.getAllByText("구조화된 출력 펼치기");
+    expect(toggleButtons.length).toBeGreaterThanOrEqual(1);
+
+    await userEvent.click(toggleButtons[0]);
+
+    // After expanding, we should see key/value rows (use getAllByText since
+    // "구조화된 출력" appears both in the table header <th> and the expanded button)
+    await waitFor(() => {
+      const matches = screen.getAllByText("구조화된 출력");
+      expect(matches.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  it("expands nested object in structured output", async () => {
+    // Use the EI run with aggregate_view (nested object)
+    mockUrlRouter({ "/agent-runs": [mockEiAgentRunNoSummary] });
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText("EI")).toBeInTheDocument();
+    });
+
+    // Expand the structured output
+    const toggleButtons = screen.getAllByText("구조화된 출력 펼치기");
+    await userEvent.click(toggleButtons[0]);
+
+    // Should show the aggregate_view as a nested toggle
+    await waitFor(() => {
+      expect(screen.getByText(/객체/)).toBeInTheDocument();
+    });
+
+    // Click to expand the nested object
+    const nestedToggle = screen.getByText(/객체/);
+    await userEvent.click(nestedToggle);
+
+    // After expanding, nested fields should be visible
+    await waitFor(() => {
+      expect(screen.getByText("overall_bias")).toBeInTheDocument();
+    });
+  });
+
+  it("copies full JSON on copy action", async () => {
+    // Mock clipboard API
+    const writeText = vi.fn();
+    Object.assign(navigator, {
+      clipboard: { writeText },
+    });
+
+    mockUrlRouter({ "/agent-runs": mockAgentRuns });
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText("EI")).toBeInTheDocument();
+    });
+
+    // Expand the structured output
+    const toggleButtons = screen.getAllByText("구조화된 출력 펼치기");
+    await userEvent.click(toggleButtons[0]);
+
+    // Click the copy button
+    const copyButton = screen.getByText("전체 JSON 복사");
+    await userEvent.click(copyButton);
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalled();
+    });
+
+    // Verify the copied content is valid JSON
+    const calledArg = writeText.mock.calls[0][0];
+    expect(() => JSON.parse(calledArg)).not.toThrow();
   });
 });

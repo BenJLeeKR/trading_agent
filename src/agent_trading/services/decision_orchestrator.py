@@ -987,7 +987,24 @@ class DecisionOrchestratorService:
         # When price is None (MARKET order), try to get a live quote so that
         # cash / concentration / max-order-value constraints can be applied.
         reference_price: Decimal | None = None
-        if intent.request.price is None:
+
+        # Held position sell (REDUCE/EXIT SELL): quote is optional reference only.
+        # Skip broker.get_quote() to avoid 10s per-symbol overhead and eliminate
+        # C-level I/O block risk entirely. The sizing engine will fall back to
+        # _resolve_smoke_price() when reference_price is None.
+        _is_hp_sell = (
+            intent.request.side == OrderSide.SELL
+            and intent.ai_backend_inputs.decision_type in ("REDUCE", "EXIT")
+        )
+
+        if _is_hp_sell:
+            logger.info(
+                "HP_SELL_QUOTE_BYPASS: symbol=%s skipping broker.get_quote(), "
+                "using smoke price fallback",
+                intent.request.symbol,
+            )
+            quote = {}
+        elif intent.request.price is None:
             logger.info(
                 "PHASE_TRACE: symbol=%s phase=quote_resolution start",
                 intent.request.symbol,

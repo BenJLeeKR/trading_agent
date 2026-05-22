@@ -410,7 +410,7 @@ class KISRestClient:
         if self._client is None:
             self._client = httpx.AsyncClient(
                 base_url=self._base_url,
-                timeout=httpx.Timeout(30.0, connect=10.0),
+                timeout=httpx.Timeout(8.0, connect=5.0, read=5.0),
                 limits=httpx.Limits(max_keepalive_connections=0, max_connections=10),
             )
         return self._client
