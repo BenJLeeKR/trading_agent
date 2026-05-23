@@ -13,6 +13,7 @@ from agent_trading.repositories.contracts import (
     ClientRepository,
     ConfigVersionRepository,
     DecisionContextRepository,
+    ExecutionAttemptRepository,
     ExternalEventRepository,
     FillEventRepository,
     GuardrailEvaluationRepository,
@@ -33,6 +34,7 @@ from agent_trading.repositories.contracts import (
 class RepositoryContainer:
     unit_of_work: UnitOfWork
     agent_runs: AgentRunRepository
+    execution_attempts: ExecutionAttemptRepository
     clients: ClientRepository
     accounts: AccountRepository
     strategies: StrategyRepository

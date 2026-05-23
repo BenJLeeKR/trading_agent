@@ -199,3 +199,121 @@ class TestKoreanNormalizerIntegration:
         assert contains_korean(normalized) is True
         # Second pass unchanged
         assert validate_or_normalize_korean(normalized) == original
+
+
+# ============================================================================
+# Recorder top_reason_codes empty detection — Phase 3-1 fallback semantics
+# ============================================================================
+
+
+class TestRecorderEventCountFallback:
+    """``AgentRunRecorder.record()`` top_reason_codes empty detection with
+    ``detected_event_count`` vs ``aggregate_view.event_count`` fallback.
+
+    Phase 3-1: ``detected_event_count`` is the primary field.
+    ``aggregate_view.event_count`` fallback is *backward compatibility only*
+    — for old serialized payloads that predate Phase 1.
+    """
+
+    @pytest.mark.asyncio
+    async def test_new_payload_detected_event_count_zero_preserved(self) -> None:
+        """신버전 payload: ``detected_event_count=0`` 유지 — ``aggregate_view.event_count``로 fallback하지 않음.
+
+        ``aggregate_view.event_count=3``이지만 ``detected_event_count=0``이
+        명시적으로 설정되어 있으므로, recorder는 0을 truth로 사용하고
+        top_reason_codes empty 경고를 발생시키지 않아야 함.
+        """
+        recorder = AgentRunRecorder()
+        run = await recorder.record(
+            decision_context_id=uuid4(),
+            agent_type="event_interpretation",
+            structured_output={
+                "agent_name": "event_interpretation",
+                "detected_event_count": 0,  # ★ 신버전: 명시적 0
+                "aggregate_view": {
+                    "event_count": 3,  # deprecated — 무시되어야 함
+                    "top_reason_codes": [],
+                    "overall_bias": "neutral",
+                    "no_material_events": False,
+                },
+                "events": [],
+            },
+        )
+        stored = run.structured_output_json
+        assert stored is not None
+        # detected_event_count=0이 유지되어야 함 (aggregate_view.event_count=3으로 오염되지 않음)
+        assert stored.get("detected_event_count") == 0, (
+            f"Expected detected_event_count=0 preserved, got {stored.get('detected_event_count')}"
+        )
+        # aggregate_view.event_count는 deprecated 필드로 여전히 존재
+        av = stored.get("aggregate_view", {})
+        assert av.get("event_count") == 3, (
+            "aggregate_view.event_count should remain 3 (deprecated field preserved)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_old_payload_fallback_to_aggregate_view_event_count(self) -> None:
+        """구버전 payload: ``detected_event_count`` 키 없음 → ``aggregate_view.event_count`` fallback.
+
+        Phase 1 이전에 저장된 payload에는 ``detected_event_count`` 필드가 없음.
+        이 경우 recorder는 ``aggregate_view.event_count``로 fallback하여
+        top_reason_codes empty detection을 수행해야 함.
+        """
+        recorder = AgentRunRecorder()
+        # detected_event_count 키가 없는 구버전 payload
+        run = await recorder.record(
+            decision_context_id=uuid4(),
+            agent_type="event_interpretation",
+            structured_output={
+                "agent_name": "event_interpretation",
+                # ★ detected_event_count 키 없음 (구버전)
+                "aggregate_view": {
+                    "event_count": 2,  # fallback source
+                    "top_reason_codes": [],
+                    "overall_bias": "neutral",
+                    "no_material_events": False,
+                },
+                "events": [],
+            },
+        )
+        stored = run.structured_output_json
+        assert stored is not None
+        # detected_event_count 키가 없어야 함 (구버전 payload 유지)
+        assert "detected_event_count" not in stored, (
+            "Old payload should not have detected_event_count key"
+        )
+        # aggregate_view.event_count는 여전히 존재
+        av = stored.get("aggregate_view", {})
+        assert av.get("event_count") == 2, (
+            "aggregate_view.event_count should remain 2 (backward compat)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_new_payload_detected_event_count_nonzero(self) -> None:
+        """신버전 payload: ``detected_event_count>0``, 경고 발생 확인.
+
+        ``detected_event_count=2``이고 ``top_reason_codes=[]``이면
+        recorder가 경고를 로깅해야 함 (LLM이 필드를 누락).
+        """
+        recorder = AgentRunRecorder()
+        run = await recorder.record(
+            decision_context_id=uuid4(),
+            agent_type="event_interpretation",
+            structured_output={
+                "agent_name": "event_interpretation",
+                "detected_event_count": 2,
+                "aggregate_view": {
+                    "event_count": 2,  # deprecated
+                    "top_reason_codes": [],
+                    "overall_bias": "neutral",
+                    "no_material_events": False,
+                },
+                "events": [],
+            },
+        )
+        stored = run.structured_output_json
+        assert stored is not None
+        # detected_event_count=2 유지
+        assert stored.get("detected_event_count") == 2, (
+            f"Expected detected_event_count=2, got {stored.get('detected_event_count')}"
+        )

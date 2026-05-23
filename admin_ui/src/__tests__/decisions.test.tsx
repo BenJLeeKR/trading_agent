@@ -551,6 +551,74 @@ describe("DecisionsView agent runs panel", () => {
     expect(priceDeclineMatches.length).toBeGreaterThanOrEqual(1);
   });
 
+  it("shows degraded warning when EI run has interpretation_incomplete", async () => {
+    const user = userEvent.setup();
+    // Degraded EI run fixture
+    const degradedEiRuns = [{
+      agent_run_id: "degraded-ei-run-001",
+      decision_context_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00dc1",
+      agent_type: "event_interpretation",
+      started_at: "2026-05-05T00:00:02Z",
+      status: "completed",
+      structured_output_json: {
+        symbol: "005930",
+        agent_name: "event_interpretation",
+        events: [],
+        aggregate_view: {
+          overall_bias: "neutral",
+          event_conflict: false,
+          top_reason_codes: [],
+          event_count: 0,
+          no_material_events: true,
+          interpretation_incomplete: true,
+          degraded_reason: "provider_error",
+        },
+        schema_version: "1.0",
+        decision_context_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00dc1",
+      },
+      completed_at: "2026-05-05T00:00:05Z",
+      model_id: null,
+      prompt_id: null,
+      temperature: null,
+      seed: null,
+      raw_output_uri: null,
+      created_at: null,
+    }];
+    mockUrlRouter({
+      "/metadata/enums": mockEnumMetadataResponse,
+      "/trade-decisions": mockTradeDecisions,
+      "/decision-contexts/": mockDecisionContext,
+      "/agent-runs": degradedEiRuns,
+    });
+
+    render(
+      <MemoryRouter>
+        <DecisionsView />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("의사결정")).toBeInTheDocument();
+    });
+
+    // Click AAPL row
+    const aaplRow = await screen.findByText("AAPL");
+    await user.click(aaplRow);
+
+    // Agent Runs card appears
+    await waitFor(() => {
+      expect(screen.getByText("에이전트 실행")).toBeInTheDocument();
+    });
+
+    // EI badge visible
+    expect(screen.getByText("EI")).toBeInTheDocument();
+
+    // Degraded warning 텍스트가 표시되는지 확인
+    expect(screen.getByText(/분석이 불완전/)).toBeInTheDocument();
+    // provider_error에 해당하는 한글 라벨 확인
+    expect(screen.getByText(/AI 분석 중 오류/)).toBeInTheDocument();
+  });
+
   it("FDC/AR run still displays top-level summary (regression)", async () => {
     const user = userEvent.setup();
     // FDC run fixture (top-level summary 있음)

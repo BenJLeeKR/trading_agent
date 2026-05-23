@@ -6,6 +6,7 @@ from uuid import UUID
 from agent_trading.db.row_mapper import row_to_entity
 from agent_trading.db.transaction import TransactionManager
 from agent_trading.domain.entities import TradeDecisionEntity
+from agent_trading.repositories.contracts import TradeDecisionRow
 
 
 class PostgresTradeDecisionRepository:
@@ -53,26 +54,26 @@ class PostgresTradeDecisionRepository:
                  source_type,
                  -- Metadata
                  created_at)
-            VALUES ($1, $2,
-                    $3, $4,
-                    $5, $6, $7,
-                    $8, $9,
-                    $10, $11,
-                    $12, $13,
-                    $14, $15,
-                    $16, $17,
-                    $18,
-                    $19, $20,
-                    $21, $22, $23,
-                    $24::jsonb, $25::jsonb,
-                    $26::jsonb, $27::jsonb,
-                    $28,
-                    $29::jsonb, $30::jsonb, $31::jsonb,
-                    $32, $33,
-                    $34, $35, $36,
-                    $37, $38, $39::jsonb,
-                    $40,
-                    $41)
+           VALUES ($1, $2,
+                   $3, $4,
+                   $5, $6, $7,
+                   $8, $9,
+                   $10, $11,
+                   $12, $13,
+                   $14, $15,
+                   $16, $17,
+                   $18,
+                   $19, $20,
+                   $21, $22, $23,
+                   $24::jsonb, $25::jsonb,
+                   $26::jsonb, $27::jsonb,
+                   $28,
+                   $29::jsonb, $30::jsonb, $31::jsonb,
+                   $32, $33,
+                   $34, $35, $36,
+                   $37, $38, $39::jsonb,
+                   $40,
+                   $41)
             RETURNING *
             """,
             # PK
@@ -172,10 +173,10 @@ class PostgresTradeDecisionRepository:
         limit: int = 50,
         offset: int = 0,
         decision_context_id: UUID | None = None,
-    ) -> tuple[list[tuple[TradeDecisionEntity, str | None]], int]:
+    ) -> tuple[list[TradeDecisionRow], int]:
         """서버사이드 페이지네이션: (items, total_count) 반환.
 
-        각 item은 ``(entity, instrument_name)`` 튜플.
+        각 item은 ``TradeDecisionRow`` (entity + order_request_id + order_status).
         ``instrument_name``은 SQL LEFT JOIN으로 한 번에 resolve (N+1 방지).
 
         ``decision_context_id``가 주어지면 해당 컨텍스트로 필터링.
@@ -194,12 +195,40 @@ class PostgresTradeDecisionRepository:
         total_row = await self._tx.connection.fetchval(count_sql, *params)
         total_count = total_row if total_row is not None else 0
 
-        # Paginated query with LEFT JOIN for instrument_name
+        # Paginated query with LEFT JOIN for instrument_name AND order_requests
+        # phase_trace는 LEFT JOIN LATERAL의 execution_attempts에서 조회
+        # execution_attempt_status is resolved via LEFT JOIN LATERAL to get the
+        # latest execution_attempt status per trade_decision (P2).
         items_sql = f"""
-            SELECT td.*, i.name AS _instrument_name
+            SELECT td.*, i.name AS _instrument_name,
+                   o.order_request_id AS _order_request_id,
+                   o.status AS _order_status,
+                   eas.execution_attempt_id AS _latest_execution_attempt_id,
+                   eas.status AS _execution_attempt_status,
+                   eas.stop_phase AS _latest_stop_phase,
+                   eas.stop_reason AS _latest_stop_reason,
+                   eas.completed_at AS _latest_completed_at,
+                   eas.phase_count AS _latest_phase_count,
+                   eas.phase_trace AS _phase_trace
             FROM trading.trade_decisions td
             LEFT JOIN trading.instruments i
                 ON td.symbol = i.symbol AND td.market = i.market_code
+            LEFT JOIN trading.order_requests o
+                ON td.trade_decision_id = o.trade_decision_id
+            LEFT JOIN LATERAL (
+                SELECT
+                    ea.execution_attempt_id,
+                    ea.status,
+                    ea.stop_phase,
+                    ea.stop_reason,
+                    ea.completed_at,
+                    jsonb_array_length(ea.phase_trace) AS phase_count,
+                    ea.phase_trace
+                FROM trading.execution_attempts ea
+                WHERE ea.trade_decision_id = td.trade_decision_id
+                ORDER BY ea.started_at DESC
+                LIMIT 1
+            ) eas ON TRUE
             {where_clause}
             ORDER BY td.created_at DESC, td.trade_decision_id DESC
             LIMIT ${param_idx} OFFSET ${param_idx + 1}
@@ -208,28 +237,39 @@ class PostgresTradeDecisionRepository:
         params.append(offset)
 
         rows = await self._tx.connection.fetch(items_sql, *params)
-        items: list[tuple[TradeDecisionEntity, str | None]] = []
+        items: list[TradeDecisionRow] = []
         for row in rows:
             entity = row_to_entity(row, TradeDecisionEntity)
-            inst_name: str | None = row.get("_instrument_name")
-            items.append((entity, inst_name))
+            # _order_request_id, _order_status, _instrument_name are unknown to
+            # row_to_entity so they are automatically dropped from TradeDecisionEntity.
+            # We read them separately from the raw row.
+            order_request_id: str | None = row.get("_order_request_id")
+            order_status: str | None = row.get("_order_status")
+            instrument_name: str | None = row.get("_instrument_name")
+            execution_attempt_status: str | None = row.get("_execution_attempt_status")
+            # Phase 5: Latest execution attempt summary fields
+            latest_execution_attempt_id: str | None = row.get("_latest_execution_attempt_id")
+            latest_stop_phase: str | None = row.get("_latest_stop_phase")
+            latest_stop_reason: str | None = row.get("_latest_stop_reason")
+            latest_completed_at: str | None = row.get("_latest_completed_at")
+            latest_phase_count: int | None = row.get("_latest_phase_count")
+            # Convert UUID to string if needed
+            if order_request_id is not None:
+                order_request_id = str(order_request_id)
+            # Convert execution_attempt_id (UUID) to string if needed
+            if latest_execution_attempt_id is not None:
+                latest_execution_attempt_id = str(latest_execution_attempt_id)
+            items.append(TradeDecisionRow(
+                entity=entity,
+                order_request_id=order_request_id,
+                order_status=order_status,
+                instrument_name=instrument_name,
+                phase_trace=row.get("_phase_trace"),  # execution_attempts 출처 (LEFT JOIN LATERAL)
+                execution_attempt_status=execution_attempt_status,
+                latest_execution_attempt_id=latest_execution_attempt_id,
+                latest_stop_phase=latest_stop_phase,
+                latest_stop_reason=latest_stop_reason,
+                latest_completed_at=latest_completed_at,
+                latest_phase_count=latest_phase_count,
+            ))
         return items, total_count
-
-    async def update_pipeline_stop(
-        self,
-        trade_decision_id: UUID,
-        phase: str,
-        reason: str,
-        stopped_at: datetime,
-    ) -> None:
-        """trade_decision이 제출 파이프라인의 어느 단계에서 중단되었는지 기록."""
-        await self._tx.connection.execute(
-            """
-            UPDATE trading.trade_decisions
-            SET pipeline_stop_phase = $1,
-                pipeline_stop_reason = $2,
-                pipeline_stopped_at = $3
-            WHERE trade_decision_id = $4
-            """,
-            phase, reason, stopped_at, trade_decision_id,
-        )

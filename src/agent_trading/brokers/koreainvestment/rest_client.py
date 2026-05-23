@@ -1297,12 +1297,32 @@ class KISRestClient:
             output2 = output2[0] if output2 else {}
         return output2
 
+    def _has_budget_for_inquiry(self) -> bool:
+        """VTTC8908R 호출 전 budget 사전 확인.
+
+        ``self.budget_manager``가 없으면(테스트 환경 등) 항상 ``True`` 반환.
+        refill을 우선 적용하여 가능한 많은 token을 확보한 후 판단.
+        """
+        mgr = self.budget_manager
+        if mgr is None:
+            return True
+        # refill 우선 적용
+        mgr.inquiry._refill()
+        if mgr.inquiry.remaining < 1:
+            return False
+        if mgr.global_rest is not None:
+            mgr.global_rest._refill()
+            if mgr.global_rest.remaining < 1:
+                return False
+        return True
+
     async def get_orderable_cash(
         self,
         account_ref: str = "",
         symbol: str = "",
         price: str = "",
         order_type: str = "00",  # 00=지정가
+        fallback_cash: Decimal | None = None,  # NEW: budget 부족 시 반환할 fallback 값
     ) -> Decimal | None:
         """Fetch ``ord_psbl_cash`` from ``VTTC8908R`` (inquire-psbl-order).
 
@@ -1311,6 +1331,11 @@ class KISRestClient:
         ``ord_psbl_cash`` in paper environment — it returns ``"0"`` or
         omits the field entirely.  ``VTTC8908R`` provides the actual
         orderable cash amount even in paper mode.
+
+        Budget 사전 확인(``_has_budget_for_inquiry``)을 수행하여,
+        INQUIRY/global_rest budget이 부족하면 API 호출 없이
+        ``fallback_cash``를 반환한다. 이를 통해
+        ``BudgetExhaustedError`` 발생을 사전에 방지한다.
 
         Parameters
         ----------
@@ -1324,12 +1349,28 @@ class KISRestClient:
             Order unit price (``ORD_UNPR``).  Empty for market estimate.
         order_type:
             Order division code (``ORD_DVSN``).  ``"00"`` = 지정가 (limit).
+        fallback_cash:
+            Budget 부족 시 API 호출 없이 반환할 fallback 값.
+            ``None``이면 budget 사전 확인을 건너뛰고 항상 API 호출 시도.
 
         Returns
         -------
         Decimal | None
             The orderable cash amount, or ``None`` if the API call failed.
+            When ``fallback_cash`` is provided and budget is insufficient,
+            returns ``fallback_cash`` without making any API call.
         """
+        # ── P2: budget 사전 확인 ─────────────────────────────────────────
+        if fallback_cash is not None and not self._has_budget_for_inquiry():
+            logger.warning(
+                "BUDGET_FALLBACK VTTC8908R budget insufficient for account=%s; "
+                "using available_cash fallback=%s",
+                account_ref or self.account_number,
+                fallback_cash,
+            )
+            return fallback_cash
+
+        # ── P2: 실제 API 호출 ────────────────────────────────────────────
         try:
             params = {
                 "CANO": self.account_number,

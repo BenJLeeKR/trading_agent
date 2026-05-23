@@ -363,6 +363,12 @@ export interface EiInterpretationView {
   operatorSummary: string;
   isDegraded: boolean;
   degradedReason: string | null;
+  // ★ 신규 Phase 1 필드
+  detectedEventCount: number;
+  interpretedEventCount: number;
+  summaryBasis: string;
+  // ★ 신규 Phase 2 필드
+  isReconstructed: boolean;
 }
 
 export function formatEiOutput(so: Record<string, unknown> | null | undefined): EiInterpretationView | null {
@@ -376,6 +382,17 @@ export function formatEiOutput(so: Record<string, unknown> | null | undefined): 
   const evidenceStrength = av.evidence_strength as string | undefined;
   const eventCount = (av.event_count as number) ?? 0;
   const noMaterialEvents = av.no_material_events as boolean | undefined;
+  const events = (so.events as Array<Record<string, unknown>>) ?? [];
+
+  // ★ 신규: 최상위 필드 우선, 없으면 aggregate_view에서 fallback
+  const detectedEventCount = (so.detected_event_count as number) ?? eventCount;
+  const interpretedEventCount = (so.interpreted_event_count as number) ?? events.length;
+  const summaryBasis = (so.summary_basis as string) ?? "none";
+
+  // ★ 모든 events가 is_reconstructed=True인지 확인
+  const isReconstructed = events.length > 0 && events.every(
+    (ev) => (ev as Record<string, unknown>).is_reconstructed === true
+  );
 
   const biasLabel = formatBiasLabel(bias);
   const conflictLabel = formatConflictLabel(conflict);
@@ -392,8 +409,8 @@ export function formatEiOutput(so: Record<string, unknown> | null | undefined): 
   if (rawReasonCodes.length > 0) {
     parts.push(`사유: ${reasonCodeLabels.slice(0, 3).join(', ')}${rawReasonCodes.length > 3 ? ' 외' : ''}`);
   }
-  if (!noMaterialEvents && eventCount > 0) {
-    parts.push(`이벤트 ${eventCount}건`);
+  if (!noMaterialEvents && interpretedEventCount > 0) {
+    parts.push(`이벤트 ${interpretedEventCount}건`);
   }
   const operatorSummary = parts.join(' | ');
 
@@ -403,10 +420,15 @@ export function formatEiOutput(so: Record<string, unknown> | null | undefined): 
     reasonCodeLabels,
     reasonCodes: rawReasonCodes,
     evidenceStrengthLabel,
-    eventCount,
+    eventCount: interpretedEventCount,  // eventCount는 interpreted count로 재정의
     hasMaterialEvents: !noMaterialEvents,
     operatorSummary,
     isDegraded: interpretationIncomplete === true,
     degradedReason: degradedReason ?? null,
+    // ★ 신규
+    detectedEventCount,
+    interpretedEventCount,
+    summaryBasis,
+    isReconstructed,
   };
 }

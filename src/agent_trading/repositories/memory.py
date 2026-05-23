@@ -18,6 +18,7 @@ from agent_trading.domain.entities import (
     ClientEntity,
     ConfigVersionEntity,
     DecisionContextEntity,
+    ExecutionAttemptEntity,
     ExternalEventEntity,
     FillEventEntity,
     GuardrailEvaluationEntity,
@@ -36,7 +37,7 @@ from agent_trading.domain.entities import (
     TradeDecisionEntity,
 )
 from agent_trading.domain.enums import Environment, OrderStatus
-from agent_trading.repositories.contracts import SnapshotSyncHealthSummary
+from agent_trading.repositories.contracts import SnapshotSyncHealthSummary, TradeDecisionRow
 from agent_trading.repositories.filters import AccountLookup, DecisionContextQuery, OrderQuery
 
 from collections import defaultdict
@@ -384,11 +385,12 @@ class InMemoryTradeDecisionRepository:
         limit: int = 50,
         offset: int = 0,
         decision_context_id: UUID | None = None,
-    ) -> tuple[list[tuple[TradeDecisionEntity, str | None]], int]:
+    ) -> tuple[list[TradeDecisionRow], int]:
         """In-memory pagination: (items, total_count) 반환.
 
-        각 item은 ``(entity, instrument_name)`` 튜플.
-        In-memory 구현에서는 instrument_name을 resolve할 수 없으므로 None.
+        각 item은 ``TradeDecisionRow``.
+        In-memory 구현에서는 instrument_name과 order 정보를 resolve할 수 없으므로
+        ``entity``만 채워서 반환.
         """
         items = list(self._items.values())
         if decision_context_id is not None:
@@ -397,25 +399,7 @@ class InMemoryTradeDecisionRepository:
         items.sort(key=lambda td: (td.created_at, td.trade_decision_id), reverse=True)
         total_count = len(items)
         paged = items[offset : offset + limit]
-        return [(item, None) for item in paged], total_count
-
-    async def update_pipeline_stop(
-        self,
-        trade_decision_id: UUID,
-        phase: str,
-        reason: str,
-        stopped_at: datetime,
-    ) -> None:
-        """In-memory 저장소에서 pipeline stop 필드를 업데이트.
-
-        ``TradeDecisionEntity``는 frozen dataclass이므로 ``object.__setattr__``로
-        필드를 직접 설정한다.
-        """
-        entity = self._items.get(trade_decision_id)
-        if entity is not None:
-            object.__setattr__(entity, "pipeline_stop_phase", phase)
-            object.__setattr__(entity, "pipeline_stop_reason", reason)
-            object.__setattr__(entity, "pipeline_stopped_at", stopped_at)
+        return [TradeDecisionRow(entity=item) for item in paged], total_count
 
 class InMemoryOrderRepository:
     def __init__(self) -> None:
@@ -1308,6 +1292,60 @@ class InMemoryAgentRunRepository:
 
     async def clear(self) -> None:
         self._runs.clear()
+
+
+class InMemoryExecutionAttemptRepository:
+    """In-memory implementation of ``ExecutionAttemptRepository``.
+
+    ``ExecutionAttemptEntity``는 frozen dataclass이므로 ``update_status()``에서는
+    ``object.__setattr__``로 필드를 직접 설정한다.
+    """
+
+    def __init__(self) -> None:
+        self._items: dict[UUID, ExecutionAttemptEntity] = {}
+
+    async def add(self, attempt: ExecutionAttemptEntity) -> ExecutionAttemptEntity:
+        self._items[attempt.execution_attempt_id] = attempt
+        return attempt
+
+    async def get(self, execution_attempt_id: UUID) -> ExecutionAttemptEntity | None:
+        return self._items.get(execution_attempt_id)
+
+    async def update_status(
+        self,
+        execution_attempt_id: UUID,
+        status: str,
+        *,
+        stop_phase: str | None = None,
+        stop_reason: str | None = None,
+        phase_trace: list[dict[str, object]] | None = None,
+        order_request_id: UUID | None = None,
+        completed_at: datetime | None = None,
+    ) -> None:
+        entity = self._items.get(execution_attempt_id)
+        if entity is not None:
+            object.__setattr__(entity, "status", status)
+            if stop_phase is not None:
+                object.__setattr__(entity, "stop_phase", stop_phase)
+            if stop_reason is not None:
+                object.__setattr__(entity, "stop_reason", stop_reason)
+            if phase_trace is not None:
+                object.__setattr__(entity, "phase_trace", phase_trace)
+            if order_request_id is not None:
+                object.__setattr__(entity, "order_request_id", order_request_id)
+            if completed_at is not None:
+                object.__setattr__(entity, "completed_at", completed_at)
+
+    async def list_by_trade_decision(
+        self, trade_decision_id: UUID
+    ) -> Sequence[ExecutionAttemptEntity]:
+        results = [
+            item
+            for item in self._items.values()
+            if item.trade_decision_id == trade_decision_id
+        ]
+        results.sort(key=lambda ea: ea.started_at, reverse=True)
+        return tuple(results)
 
 
 class InMemoryMarketSessionRepository:

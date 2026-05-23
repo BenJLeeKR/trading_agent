@@ -23,6 +23,9 @@ from agent_trading.repositories.postgres.config_versions import (
 from agent_trading.repositories.postgres.decision_contexts import (
     PostgresDecisionContextRepository,
 )
+from agent_trading.repositories.postgres.execution_attempts import (
+    PostgresExecutionAttemptRepository,
+)
 from agent_trading.repositories.postgres.external_events import (
     PostgresExternalEventRepository,
 )
@@ -90,6 +93,7 @@ def build_postgres_repositories(
     return RepositoryContainer(
         unit_of_work=PostgresUnitOfWork(tx),
         agent_runs=PostgresAgentRunRepository(tx),
+        execution_attempts=PostgresExecutionAttemptRepository(tx),
         clients=PostgresClientRepository(tx),
         accounts=PostgresAccountRepository(tx),
         strategies=PostgresStrategyRepository(tx),

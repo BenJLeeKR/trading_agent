@@ -25,6 +25,19 @@ const STATUS_STYLES: Record<string, string> = {
   info: "bg-[#eff6ff] text-[#2563eb]",
 };
 
+/**
+ * degraded_reason → 한글 라벨 매핑.
+ */
+function degradedReasonLabel(reason: string | null): string {
+  const LABELS: Record<string, string> = {
+    self_contradiction_corrected: "LLM이 이벤트를 감지했으나 해석에 실패했습니다",
+    provider_error: "AI 분석 중 오류가 발생했습니다",
+    timeout: "LLM 응답 시간 초과로 해석이 불완전합니다",
+    fdc_skipped: "FDC skip 경로로 해석이 생략되었습니다",
+  };
+  return reason ? (LABELS[reason] || reason) : "";
+}
+
 /* ───────────────────────────────────────────
  * Props
  * ─────────────────────────────────────────── */
@@ -157,6 +170,20 @@ export default function AgentRunsPanel({ decisionContextId }: AgentRunsPanelProp
                   {run.status}
                 </span>
               </div>
+
+              {/* Degraded warning banner (EI only) */}
+              {run.agent_type === 'event_interpretation' && (() => {
+                const eiView = formatEiOutput(run.structured_output_json as Record<string, unknown>);
+                if (eiView?.isDegraded) {
+                  const reasonLabel = degradedReasonLabel(eiView.degradedReason);
+                  return (
+                    <div className="bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5 mb-2 text-xs text-amber-800">
+                      ⚠️ 이벤트 분석이 불완전합니다{reasonLabel ? `: ${reasonLabel}` : ''}
+                    </div>
+                  );
+                }
+                return null;
+              })()}
 
               {/* Structured output summary — limited key fields */}
               {run.structured_output_json && (

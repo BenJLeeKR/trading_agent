@@ -105,11 +105,16 @@ class AgentRunRecorder:
             av = output_dict.get("aggregate_view", {})
             if isinstance(av, dict):
                 trc = av.get("top_reason_codes", [])
-                ec = av.get("event_count", 0)
+                # Phase 3-1: detected_event_count is primary.
+                # aggregate_view.event_count fallback is backward compatibility
+                # only — for old serialized payloads that predate Phase 1.
+                ec = output_dict.get("detected_event_count")
+                if ec is None:
+                    ec = av.get("event_count", 0)  # backward compat: deprecated field
                 if not trc and ec is not None and ec > 0:
                     logger.warning(
                         "EI top_reason_codes is empty after normalization "
-                        "(event_count=%d) — LLM may have omitted the field",
+                        "(detected_event_count=%d) — LLM may have omitted the field",
                         ec,
                     )
 

@@ -77,6 +77,7 @@ class FakeKISRestClient:
         symbol: str = "",
         price: str = "",
         order_type: str = "00",
+        fallback_cash: Decimal | None = None,
     ) -> Decimal | None:
         if self._fail_orderable_cash:
             raise RuntimeError("KIS orderable cash fetch failed")

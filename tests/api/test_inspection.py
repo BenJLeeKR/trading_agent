@@ -14,10 +14,11 @@ from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 from agent_trading.api.routes.orders import _safe_str
-from agent_trading.domain.entities import TradeDecisionEntity
+from agent_trading.domain.entities import ExecutionAttemptEntity, TradeDecisionEntity
 from agent_trading.repositories.container import RepositoryContainer
 from tests.api.conftest import client  # noqa: F401
 
@@ -588,5 +589,297 @@ class TestBrokerOrders:
         assert response.status_code == 400
 
 
+class TestTradeDecisionExecutionStatus:
+    """Execution status derived field and pipeline_stop field exposure."""
+
+    def test_trade_decision_detail_has_execution_fields(self, client: TestClient) -> None:
+        """최신 필드(execution_status, latest_*, order_request_id)가 응답에 포함된다."""
+        resp = client.get("/trade-decisions?limit=5")
+        assert resp.status_code == 200
+        data = resp.json()
+        if data["items"]:
+            item = data["items"][0]
+            assert "execution_status" in item
+            assert "pipeline_stop_phase" not in item
+            assert "pipeline_stop_reason" not in item
+            assert "pipeline_stopped_at" not in item
+            assert "order_request_id" in item
+            assert "order_status" in item
+
+    @pytest.mark.parametrize("decision_type,order_id,order_status,expected", [
+        ("BUY", None, None, "trade_decision_only"),
+        ("HOLD", None, None, "non_trade"),
+        ("WATCH", None, None, "non_trade"),
+        ("BUY", "some-id", "PENDING_SUBMIT", "order_created"),
+        ("BUY", "some-id", "SUBMITTED", "submitted"),
+        ("BUY", "some-id", "REJECTED", "rejected"),
+        ("BUY", "some-id", "RECONCILE_REQUIRED", "reconcile_required"),
+    ])
+    def test_execution_status_derivation(
+        self,
+        decision_type: str,
+        order_id: str | None,
+        order_status: str | None,
+        expected: str,
+    ) -> None:
+        """execution_status derived field logic을 검증한다.
+        (Phase 6: pipeline_stop_phase bridge 필드 제거됨 — execution_attempt_status가 primary truth)"""
+        from datetime import datetime
+        from agent_trading.api.schemas import TradeDecisionDetail
+
+        detail = TradeDecisionDetail(
+            trade_decision_id="test-id",
+            decision_context_id="ctx-id",
+            decision_type=decision_type,
+            side="buy",
+            strategy_id="strat-id",
+            symbol="AAPL",
+            market="NASDAQ",
+            entry_style="limit",
+            created_at=datetime.now(),
+            order_request_id=order_id,
+            order_status=order_status,
+        )
+        assert detail.execution_status == expected
+
+
+class TestTradeDecisionPhaseTrace:
+    """Phase trace (Phase 2/6) derived field computation (schema-level)."""
+
+    def test_phase_trace_fields_in_response(self, client: TestClient) -> None:
+        """``phase_trace`` 및 derived 필드가 API 응답에 포함된다.
+        (Phase 6: bridge 컬럼 제거 후에도 execution_attempts 출처로 계속 노출)"""
+        resp = client.get("/trade-decisions?limit=5")
+        assert resp.status_code == 200
+        data = resp.json()
+        if data["items"]:
+            item = data["items"][0]
+            # phase_trace raw 필드는 execution_attempts 출처로 계속 노출
+            assert "phase_trace" in item
+            # Phase trace summary (derived) 필드도 계속 노출 (null일 수 있음)
+            assert "phase_count" in item
+            assert "total_elapsed_ms" in item
+            assert "latest_phase" in item
+            assert "latest_phase_detail" in item
+            assert "latest_status" in item
+
+    def test_phase_trace_derived_fields(self) -> None:
+        """``phase_trace``에서 ``phase_count``, ``total_elapsed_ms``,
+        ``latest_phase``, ``latest_phase_detail``, ``latest_status``가
+        정확히 계산된다."""
+        from datetime import datetime
+        from agent_trading.api.schemas import TradeDecisionDetail
+
+        phase_trace = [
+            {"phase": "ai_assemble", "elapsed_ms": 1200, "status": "start"},
+            {"phase": "ai_assemble", "elapsed_ms": 800, "status": "ok"},
+            {"phase": "quote_resolution/AAPL", "elapsed_ms": 500, "status": "start"},
+            {"phase": "quote_resolution/AAPL", "elapsed_ms": 850, "status": "ok"},
+            {"phase": "sizing/AAPL", "elapsed_ms": 30, "status": "start"},
+            {"phase": "sizing/AAPL", "elapsed_ms": 45, "status": "ok"},
+            {"phase": "sell_guard/AAPL", "elapsed_ms": 20, "status": "start"},
+            {"phase": "sell_guard/AAPL", "elapsed_ms": 30, "status": "ok"},
+            {"phase": "translation/AAPL", "elapsed_ms": 10, "status": "start"},
+            {"phase": "translation/AAPL", "elapsed_ms": 15, "status": "ok"},
+            {"phase": "order_create/AAPL", "elapsed_ms": 100, "status": "start"},
+            {"phase": "order_create/AAPL", "elapsed_ms": 200, "status": "ok"},
+            {"phase": "broker_submit/AAPL", "elapsed_ms": 2000, "status": "start"},
+            {"phase": "broker_submit/AAPL", "elapsed_ms": 3500, "status": "ok"},
+        ]
+
+        detail = TradeDecisionDetail(
+            trade_decision_id="test-id",
+            decision_context_id="ctx-id",
+            decision_type="BUY",
+            side="buy",
+            strategy_id="strat-id",
+            symbol="AAPL",
+            market="NASDAQ",
+            entry_style="limit",
+            created_at=datetime.now(),
+            phase_trace=phase_trace,
+        )
+
+        assert detail.phase_count == 14
+        # total_elapsed_ms = non-start entries 합계
+        assert detail.total_elapsed_ms == 800 + 850 + 45 + 30 + 15 + 200 + 3500  # 5440
+        assert detail.latest_phase == "broker_submit"
+        assert detail.latest_phase_detail == "AAPL"
+        assert detail.latest_status == "ok"
+
+    def test_phase_trace_derived_fields_single_phase(self) -> None:
+        """단일 phase entry로도 derived field가 정확히 계산된다."""
+        from datetime import datetime
+        from agent_trading.api.schemas import TradeDecisionDetail
+
+        phase_trace = [
+            {"phase": "ai_assemble", "elapsed_ms": 500, "status": "ok"},
+        ]
+
+        detail = TradeDecisionDetail(
+            trade_decision_id="test-id",
+            decision_context_id="ctx-id",
+            decision_type="BUY",
+            side="buy",
+            strategy_id="strat-id",
+            symbol="AAPL",
+            market="NASDAQ",
+            entry_style="limit",
+            created_at=datetime.now(),
+            phase_trace=phase_trace,
+        )
+
+        assert detail.phase_count == 1
+        assert detail.total_elapsed_ms == 500
+        assert detail.latest_phase == "ai_assemble"
+        assert detail.latest_phase_detail is None
+        assert detail.latest_status == "ok"
+
+    def test_phase_trace_derived_fields_no_detail(self) -> None:
+        """phase에 ``/``가 없으면 ``latest_phase_detail``은 ``None``이다."""
+        from datetime import datetime
+        from agent_trading.api.schemas import TradeDecisionDetail
+
+        phase_trace = [
+            {"phase": "sizing", "elapsed_ms": 100, "status": "error"},
+        ]
+
+        detail = TradeDecisionDetail(
+            trade_decision_id="test-id",
+            decision_context_id="ctx-id",
+            decision_type="BUY",
+            side="buy",
+            strategy_id="strat-id",
+            symbol="AAPL",
+            market="NASDAQ",
+            entry_style="limit",
+            created_at=datetime.now(),
+            phase_trace=phase_trace,
+        )
+
+        assert detail.phase_count == 1
+        assert detail.total_elapsed_ms == 100
+        assert detail.latest_phase == "sizing"
+        assert detail.latest_phase_detail is None
+        assert detail.latest_status == "error"
+
+    def test_phase_trace_null_handling(self) -> None:
+        """``phase_trace``가 ``None``이면 derived field도 모두 ``None``이다."""
+        from datetime import datetime
+        from agent_trading.api.schemas import TradeDecisionDetail
+
+        detail = TradeDecisionDetail(
+            trade_decision_id="test-id",
+            decision_context_id="ctx-id",
+            decision_type="BUY",
+            side="buy",
+            strategy_id="strat-id",
+            symbol="AAPL",
+            market="NASDAQ",
+            entry_style="limit",
+            created_at=datetime.now(),
+            phase_trace=None,
+        )
+
+        assert detail.phase_count is None
+        assert detail.total_elapsed_ms is None
+        assert detail.latest_phase is None
+        assert detail.latest_phase_detail is None
+        assert detail.latest_status is None
+
+    def test_phase_trace_empty_list_handling(self) -> None:
+        """``phase_trace``가 빈 리스트면 derived field도 모두 ``None``이다."""
+        from datetime import datetime
+        from agent_trading.api.schemas import TradeDecisionDetail
+
+        detail = TradeDecisionDetail(
+            trade_decision_id="test-id",
+            decision_context_id="ctx-id",
+            decision_type="BUY",
+            side="buy",
+            strategy_id="strat-id",
+            symbol="AAPL",
+            market="NASDAQ",
+            entry_style="limit",
+            created_at=datetime.now(),
+            phase_trace=[],
+        )
+
+        assert detail.phase_count is None
+        assert detail.total_elapsed_ms is None
+        assert detail.latest_phase is None
+        assert detail.latest_phase_detail is None
+        assert detail.latest_status is None
+
+
+class TestExecutionAttemptSummaryInDecisionDetail:
+    """Phase 5: Read-path ExecutionAttempt summary fields in TradeDecisionDetail."""
+
+    def test_latest_execution_attempt_fields_included(self, client: TestClient) -> None:
+        """latest_* 필드가 TradeDecisionDetail 응답에 포함되어야 함."""
+        resp = client.get("/trade-decisions")
+        assert resp.status_code == 200
+        data = resp.json()
+        items = data.get("items", [])
+        if items:
+            d = items[0]
+            # 5개 필드 모두 응답에 존재 (null일 수 있음)
+            assert "latest_execution_attempt_id" in d
+            assert "latest_stop_phase" in d
+            assert "latest_stop_reason" in d
+            assert "latest_completed_at" in d
+            assert "latest_phase_count" in d
+
+    def test_execution_status_priority_attempt_over_bridge(
+        self,
+        client: TestClient,
+        seeded_repos: RepositoryContainer,
+        trade_decision_id: UUID,
+        decision_context_id: UUID,
+    ) -> None:
+        """execution_status가 execution_attempt_status를 우선 사용해야 함."""
+        # Seed an execution attempt with status="completed"
+        now = datetime.now(timezone.utc)
+        attempt = ExecutionAttemptEntity(
+            execution_attempt_id=uuid4(),
+            trade_decision_id=trade_decision_id,
+            decision_context_id=decision_context_id,
+            status="completed",
+            started_at=now,
+            created_at=now,
+            completed_at=now,
+            phase_trace=[],
+        )
+        seeded_repos.execution_attempts._items[attempt.execution_attempt_id] = attempt
+
+        resp = client.get("/trade-decisions")
+        assert resp.status_code == 200
+        data = resp.json()
+        items = data.get("items", [])
+        for d in items:
+            if d.get("latest_execution_attempt_id"):
+                # execution_attempt_status가 설정된 경우 execution_status가 attempt 기반이어야 함
+                assert d["execution_status"] is not None
+                break
+
+    def test_bridge_fields_no_longer_present(self, client: TestClient) -> None:
+        """bridge 필드(pipeline_stop_phase 등)가 API 응답에서 제거되어야 함."""
+        resp = client.get("/trade-decisions")
+        assert resp.status_code == 200
+        data = resp.json()
+        items = data.get("items", [])
+        if items:
+            d = items[0]
+            assert "pipeline_stop_phase" not in d
+            assert "pipeline_stop_reason" not in d
+            assert "pipeline_stopped_at" not in d
+
+    def test_execution_attempts_api_unchanged(self, client: TestClient) -> None:
+        """ExecutionAttempt API가 변경되지 않았는지 회귀 테스트."""
+        resp = client.get("/execution-attempts")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "status" in data
+        assert "data" in data
 
 

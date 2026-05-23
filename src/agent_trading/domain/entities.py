@@ -240,14 +240,6 @@ class TradeDecisionEntity:
     source_type: str | None = None
     """Origin of this symbol's inclusion: ``"core"`` | ``"held_position"`` | ``"event_overlay"`` | ``"market_overlay"`` | ``"manual"``."""
 
-    # -- Pipeline stop tracking (EXE-005A) --
-    pipeline_stop_phase: str | None = None
-    """제출 파이프라인 중 중단된 단계 (예: ``"pre_checks"``, ``"order_submission"``, ``"post_checks"``)."""
-    pipeline_stop_reason: str | None = None
-    """중단 사유 (예: ``"risk_check_failed"``, ``"no_order_request"``)."""
-    pipeline_stopped_at: datetime | None = None
-    """파이프라인이 중단된 시각."""
-
     # -- Legacy fields (kept for backward compatibility) --
     agent_run_id: UUID | None = None
     instrument_id: UUID | None = None
@@ -515,6 +507,29 @@ class SessionEventEntity:
     trigger_source: str | None = None
     metadata: dict[str, object] | None = None
     occurred_at: datetime | None = None
+    created_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class ExecutionAttemptEntity:
+    """각 trade_decision의 1회 실행 시도를 추적.
+
+    의사결정(trade_decisions)과 실행 흐름(phase progression, order 생성/제출)을
+    명시적으로 분리한다. Phase 3 도입.
+
+    상태 모델 (6개 값):
+        running → submitted / failed / reconcile_required / non_trade / stopped
+    """
+    execution_attempt_id: UUID
+    trade_decision_id: UUID
+    decision_context_id: UUID
+    status: str
+    started_at: datetime
+    stop_phase: str | None = None
+    stop_reason: str | None = None
+    phase_trace: list[dict[str, object]] | None = None
+    order_request_id: UUID | None = None
+    completed_at: datetime | None = None
     created_at: datetime | None = None
 
 

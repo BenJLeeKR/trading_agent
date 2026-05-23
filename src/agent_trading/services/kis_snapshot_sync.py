@@ -180,13 +180,23 @@ async def sync_kis_account_snapshots(
     cash_balance_snapshot_repo: CashBalanceSnapshotRepository,
     account_id: UUID,
     *,
+    after_hours: bool = False,
     fetch_positions: bool = True,
 ) -> SyncResult:
     """Fetch KIS cash balance and positions, then store as snapshots.
 
-    Cash/orderable 조회를 positions보다 먼저 수행하여, 제한된 inquiry
-    budget 환경에서도 cash snapshot이 우선적으로 성공하도록 보장한다.
-    (BudgetExhaustedError 발생 시 positions는 실패해도 cash는 저장됨)
+    P1: 호출 순서 변경 — cash → positions → orderable_cash.
+    positions이 orderable_cash보다 먼저 확보되어,
+    budget 부족 시 positions 손실을 방지한다.
+
+    P2: budget 사전 확인 + fallback_cash로 BudgetExhaustedError 사전 방지.
+    ``rest_client.get_orderable_cash()``의 ``fallback_cash`` 파라미터로
+    INQUIRY budget이 부족하면 API 호출 없이 available_cash를 반환한다.
+
+    P3: after-hours 모드에서는 VTTC8908R(inquire-psbl-order) 완전 생략.
+    장 마감 후(15:30 KST 이후)에는 매수 주문이 불가능하므로
+    orderable_amount(orderable_cash)가 의미 없음.
+    cash balance(dnca_tot_amt)만으로 충분.
 
     ``fetch_positions=False``로 호출하면 positions 조회를 건너뛰어,
     budget이 부족한 상황에서도 cash+orderable을 안전하게 확보할 수 있다.
@@ -206,6 +216,9 @@ async def sync_kis_account_snapshots(
     account_id:
         The ``AccountEntity.account_id`` (UUID) to associate with the
         snapshots.
+    after_hours:
+        When ``True``, skip positions fetch and skip orderable_cash fetch
+        (VTTC8908R).  After-hours (15:30 KST) 매수 불가 → cash-only sync.
     fetch_positions:
         When ``False``, skip positions fetch entirely (cash+orderable only).
         Use this in Phase 1 of a split sync cycle; call again with
@@ -219,15 +232,17 @@ async def sync_kis_account_snapshots(
     result = SyncResult()
     snapshot_at = datetime.now(tz=timezone.utc)
 
-    # ── 1. Sync cash balance (우선) ────────────────────────────────────
-    # cash/orderable은 submit에 가장 중요하므로 positions보다 먼저 확보
+    # ── 1. Sync cash balance (최우선) ──────────────────────────────────
+    # cash는 submit gate에 가장 중요하므로 항상 먼저 확보
     cash_entity: CashBalanceSnapshotEntity | None = None
 
     # KIS API 응답 유효성 추적 (zero-out gate에서 사용)
     had_cash_response = False
 
     try:
-        raw_cash: dict[str, Any] = await rest_client.get_cash_balance()
+        raw_cash: dict[str, Any] = await rest_client.get_cash_balance(
+            after_hours=after_hours,
+        )
     except BudgetExhaustedError as exc:
         msg = f"Cash balance inquiry budget exhausted: {exc}"
         logger.error(msg)
@@ -239,123 +254,44 @@ async def sync_kis_account_snapshots(
         result._add_error(msg)
         raw_cash = {}
 
+    # cash_raw에서 필드를 조기 추출 (positions/orderable에서 fallback용)
+    available_cash: Decimal = Decimal("0")
+    settled_cash: Decimal = Decimal("0")
+    unsettled_cash: Decimal | None = None
+    total_asset: Decimal | None = None
+    settlement_amount: Decimal | None = None
+    total_unrealized_pnl: Decimal | None = None
+
     if raw_cash:
         try:
             available_cash = _safe_decimal(raw_cash.get(_KIS_DNCA_TOT_AMT, "0"))
-            # settled_cash: prefer nxdy_excc_amt, fall back to dnca_tot_amt
             settled_raw = raw_cash.get(_KIS_NXDY_EXCC_AMT)
             if settled_raw is not None and str(settled_raw).strip():
                 settled_cash = _safe_decimal(settled_raw)
             else:
                 settled_cash = available_cash
-
-            # unsettled_cash: difference if both are positive
             if available_cash > 0 and settled_cash > 0 and settled_cash < available_cash:
                 unsettled_cash = available_cash - settled_cash
-            else:
-                unsettled_cash = None
-
-            # KIS output2 account-level summary fields
             total_asset = _safe_optional_decimal(raw_cash.get(_KIS_TOT_EVL_AMT))
             settlement_amount = _safe_optional_decimal(raw_cash.get(_KIS_PRVS_RCDL_EXCC_AMT))
             total_unrealized_pnl = _safe_optional_decimal(raw_cash.get(_KIS_EVL_PFLS_SMTL_AMT))
-
-            # ── orderable_amount: VTTC8908R 시도, 실패 시 raw_cash fallback ──
-            # get_cash_balance()는 VTTC8434R(inquire-balance) 사용 — paper에서
-            # ord_psbl_cash를 반환하지 않음. get_orderable_cash()는 VTTC8908R
-            # (inquire-psbl-order) 사용 — paper에서도 ord_psbl_cash 제공.
-            # BudgetExhaustedError 발생 시 raw_cash(available_cash)로 fallback.
-            orderable_amount: Decimal | None = None
-
-            # Paper 1 RPS pacing: ensure at least 1s between consecutive KIS calls
-            await asyncio.sleep(1.0)
-
-            try:
-                orderable_cash = await rest_client.get_orderable_cash(
-                    account_ref="",
-                )
-            except BudgetExhaustedError:
-                # Budget 소진 → raw_cash로 fallback (CASH_SYNC_ZERO 방지)
-                logger.warning(
-                    "VTTC8908R get_orderable_cash() budget exhausted (legacy sync path); "
-                    "falling back to raw_cash (available_cash=%s)",
-                    available_cash,
-                )
-                orderable_cash = available_cash
-            except Exception:
-                # 일반 Exception → available_cash로 fallback (VTTC8434R ord_psbl_amt는
-                # paper에서 unreliable하므로 available_cash가 더 안전)
-                logger.warning(
-                    "VTTC8908R get_orderable_cash() failed (legacy sync path); "
-                    "falling back to available_cash=%s",
-                    available_cash,
-                    exc_info=True,
-                )
-                orderable_cash = available_cash
-
-            if orderable_cash is not None:
-                orderable_amount = Decimal(str(orderable_cash))
-                logger.info(
-                    "orderable_amount=%s (source: VTTC8908R, legacy sync path)",
-                    orderable_cash,
-                )
-            else:
-                # Fallback: use ord_psbl_amt from VTTC8434R output2
-                orderable_amount = _safe_optional_decimal(
-                    raw_cash.get(_KIS_ORD_PSBL_AMT)
-                )
-                if orderable_amount is not None:
-                    logger.info(
-                        "orderable_amount=%s (source: VTTC8434R fallback, legacy sync path)",
-                        orderable_amount,
-                    )
-                else:
-                    logger.info(
-                        "orderable_amount=None (VTTC8908R unavailable, "
-                        "VTTC8434R ord_psbl_amt also missing, legacy sync path)"
-                    )
-
             had_cash_response = True
-
-            cash_entity = CashBalanceSnapshotEntity(
-                cash_balance_snapshot_id=uuid4(),
-                account_id=account_id,
-                currency="KRW",
-                available_cash=available_cash,
-                settled_cash=settled_cash,
-                unsettled_cash=unsettled_cash,
-                total_asset=total_asset,
-                settlement_amount=settlement_amount,
-                total_unrealized_pnl=total_unrealized_pnl,
-                orderable_amount=orderable_amount,
-                source_of_truth=_SOURCE_OF_TRUTH,
-                snapshot_at=snapshot_at,
-                fetch_status="success",
-            )
         except Exception as exc:
-            msg = f"Failed to map cash balance: {exc}"
+            msg = f"Failed to parse cash balance fields: {exc}"
             logger.error(msg)
             result._add_error(msg)
-            cash_entity = None
 
-        if cash_entity is not None:
-            try:
-                await cash_balance_snapshot_repo.add(cash_entity)
-                result._set("cash_balance_synced", True)
-            except Exception as exc:
-                msg = f"Failed to persist cash balance snapshot: {exc}"
-                logger.error(msg)
-                result._add_error(msg)
-    else:
-        logger.warning(
-            "Cash balance empty for account_id=%s env=%s broker=koreainvestment endpoint=inquire-balance",
-            account_id,
-            getattr(rest_client, "env", "unknown"),
-        )
-
-    # ── 2. Sync positions (cash 다음, skip when fetch_positions=False) ──
+    # ── 2. Sync positions (cash 다음, positions > orderable_cash 우선순위) ──
+    # P1: positions을 orderable_cash보다 먼저 확보하여,
+    # budget 부족 시 positions 손실을 방지한다.
     raw_positions: Sequence[dict[str, Any]] = []
-    if fetch_positions:
+    if after_hours:
+        logger.info(
+            "AFTER_HOURS_SKIP After-hours mode (account=%s) — "
+            "skipping positions fetch (cash-only sync)",
+            account_id,
+        )
+    elif fetch_positions:
         try:
             raw_positions = await rest_client.get_positions()
         except BudgetExhaustedError as exc:
@@ -477,6 +413,103 @@ async def sync_kis_account_snapshots(
             account_id,
             len(pdno_to_instrument_id),
             had_cash_response,
+        )
+
+    # ── 3. Orderable cash (VTTC8908R, 마지막, 조건부) ─────────────────
+    # P1: orderable_cash를 positions 이후로 이동.
+    # P2: budget 사전 확인 + fallback_cash로 BudgetExhaustedError 사전 방지.
+    # P3: after-hours에는 VTTC8908R 완전 생략.
+    #     (장 마감 후 15:30 KST 이후 매수 주문 불가 → orderable_amount 불필요)
+    orderable_amount: Decimal | None = None
+    if raw_cash and not after_hours:
+        # Paper 1 RPS pacing: ensure at least 1s between consecutive KIS calls
+        await asyncio.sleep(1.0)
+
+        try:
+            orderable_cash = await rest_client.get_orderable_cash(
+                account_ref="",
+                fallback_cash=available_cash,
+            )
+        except BudgetExhaustedError:
+            # Race condition: budget pre-check 통과했으나 다른 task가 소진
+            logger.warning(
+                "BUDGET_EXHAUSTED VTTC8908R budget exhausted after pre-check "
+                "(account=%s, legacy sync); falling back to available_cash=%s",
+                account_id, available_cash,
+            )
+            orderable_cash = available_cash
+        except Exception:
+            # 일반 Exception → available_cash로 fallback
+            logger.warning(
+                "API_FAILURE VTTC8908R get_orderable_cash() failed "
+                "(account=%s, legacy sync); falling back to available_cash=%s",
+                account_id, available_cash,
+                exc_info=True,
+            )
+            orderable_cash = available_cash
+
+        if orderable_cash is not None:
+            orderable_amount = Decimal(str(orderable_cash))
+            logger.info(
+                "orderable_amount=%s (source: VTTC8908R, legacy sync path)",
+                orderable_cash,
+            )
+        else:
+            # Fallback: use ord_psbl_amt from VTTC8434R output2
+            orderable_amount = _safe_optional_decimal(
+                raw_cash.get(_KIS_ORD_PSBL_AMT)
+            )
+            if orderable_amount is not None:
+                logger.info(
+                    "orderable_amount=%s (source: VTTC8434R fallback, legacy sync path)",
+                    orderable_amount,
+                )
+            else:
+                logger.info(
+                    "orderable_amount=None (VTTC8908R unavailable, "
+                    "VTTC8434R ord_psbl_amt also missing, legacy sync path)"
+                )
+    elif after_hours and raw_cash:
+        logger.info(
+            "AFTER_HOURS_SKIP After-hours mode (account=%s, legacy sync) — "
+            "skipping VTTC8908R (orderable_amount not needed); "
+            "using available_cash=%s",
+            account_id, available_cash,
+        )
+    elif not raw_cash:
+        logger.info(
+            "No cash balance data available — orderable_amount remains None"
+        )
+
+    # ── 4. Build and persist CashBalanceSnapshotEntity ─────────────────
+    if raw_cash:
+        cash_entity = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=account_id,
+            currency="KRW",
+            available_cash=available_cash,
+            settled_cash=settled_cash,
+            unsettled_cash=unsettled_cash,
+            total_asset=total_asset,
+            settlement_amount=settlement_amount,
+            total_unrealized_pnl=total_unrealized_pnl,
+            orderable_amount=orderable_amount,
+            source_of_truth=_SOURCE_OF_TRUTH,
+            snapshot_at=snapshot_at,
+            fetch_status="success",
+        )
+        try:
+            await cash_balance_snapshot_repo.add(cash_entity)
+            result._set("cash_balance_synced", True)
+        except Exception as exc:
+            msg = f"Failed to persist cash balance snapshot: {exc}"
+            logger.error(msg)
+            result._add_error(msg)
+    else:
+        logger.warning(
+            "Cash balance empty for account_id=%s env=%s broker=koreainvestment endpoint=inquire-balance",
+            account_id,
+            getattr(rest_client, "env", "unknown"),
         )
 
     return result

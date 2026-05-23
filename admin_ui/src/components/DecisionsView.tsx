@@ -8,10 +8,29 @@ import { StatusBadge } from "./common/StatusBadge";
 import { FilterBar } from "./common/FilterBar";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
-import { formatKstDateTime, formatBiasLabel, formatConflictLabel, formatReasonCodeLabel } from "../lib/utils";
+import { cn, formatKstDateTime, formatBiasLabel, formatConflictLabel, formatReasonCodeLabel } from "../lib/utils";
 import { useEnumMetadata, getEnumLabel } from "../hooks/useEnumMetadata";
 import type { Column } from "./common/DataTable";
 import { X, Brain } from "lucide-react";
+
+/* ───────────────────────────────────────────
+ * formatTimeAgo — relative time display helper
+ * ─────────────────────────────────────────── */
+/* ───────────────────────────────────────────
+ * executionStatusLabel — execution_status 표시 레이블
+ * ─────────────────────────────────────────── */
+function executionStatusLabel(status: string | null): string {
+  const labels: Record<string, string> = {
+    'trade_decision_only': '결정만 생성됨',
+    'pipeline_stopped': '실행 중단',
+    'non_trade': 'HOLD/WATCH',
+    'order_created': '주문 생성됨',
+    'submitted': '제출 완료',
+    'rejected': '거부됨',
+    'reconcile_required': '조정 필요',
+  };
+  return labels[status ?? ''] ?? status ?? '알 수 없음';
+}
 
 /* ───────────────────────────────────────────
  * formatTimeAgo — relative time display helper
@@ -336,6 +355,98 @@ export default function DecisionsView() {
                   {((selectedDecision.confidence ?? 0) * 100).toFixed(0)}%
                 </StatusBadge>
               </div>
+
+              {/* Execution Status Badge */}
+              {selectedDecision.execution_status && (
+                <div className="mb-4">
+                  <span className={cn(
+                    "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium",
+                    selectedDecision.execution_status === 'trade_decision_only' && "bg-red-100 text-red-800",
+                    selectedDecision.execution_status === 'pipeline_stopped' && "bg-orange-100 text-orange-800",
+                    selectedDecision.execution_status === 'non_trade' && "bg-gray-100 text-gray-800",
+                    selectedDecision.execution_status === 'order_created' && "bg-blue-100 text-blue-800",
+                    selectedDecision.execution_status === 'submitted' && "bg-green-100 text-green-800",
+                    selectedDecision.execution_status === 'rejected' && "bg-red-100 text-red-800",
+                    selectedDecision.execution_status === 'reconcile_required' && "bg-yellow-100 text-yellow-800",
+                  )}>
+                    {executionStatusLabel(selectedDecision.execution_status)}
+                  </span>
+                </div>
+              )}
+
+              {/* Execution Attempt Summary (Phase 5) */}
+              {(selectedDecision.latest_execution_attempt_id || selectedDecision.latest_stop_phase) && (
+                <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 mb-4">
+                  <div className="flex items-center justify-between mb-1">
+                    <h4 className="text-xs font-semibold text-orange-800">Execution Attempt</h4>
+                    {selectedDecision.latest_execution_attempt_id && (
+                      <a
+                        href={`/execution-attempts/${selectedDecision.latest_execution_attempt_id}`}
+                        className="text-xs text-blue-600 hover:underline"
+                        onClick={(e) => { e.preventDefault(); window.open(`/execution-attempts/${selectedDecision.latest_execution_attempt_id}`, '_blank'); }}
+                      >
+                        #{selectedDecision.latest_execution_attempt_id.slice(0, 8)}
+                      </a>
+                    )}
+                  </div>
+                  <dl className="space-y-1 text-xs">
+                    <div className="flex justify-between">
+                      <dt className="text-[#64748b]">중단 단계</dt>
+                      <dd className="font-mono">{selectedDecision.latest_stop_phase ?? "-"}</dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt className="text-[#64748b]">중단 사유</dt>
+                      <dd className="font-mono">{selectedDecision.latest_stop_reason ?? "-"}</dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt className="text-[#64748b]">완료 시각</dt>
+                      <dd className="font-mono">
+                        {selectedDecision.latest_completed_at
+                          ? new Date(selectedDecision.latest_completed_at).toLocaleString()
+                          : "-"}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt className="text-[#64748b]">Phase 수</dt>
+                      <dd className="font-mono">
+                        {selectedDecision.latest_phase_count != null
+                          ? `${selectedDecision.latest_phase_count}개`
+                          : "-"}
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
+              )}
+
+              {/* 실행 Phase 이력 — latest_phase_count 축약 표시 */}
+              {selectedDecision.latest_execution_attempt_id && (
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-4">
+                  <h4 className="text-xs font-semibold text-gray-700 mb-2">실행 Phase 이력</h4>
+                  <p className="text-xs text-gray-500">
+                    phase_count: {selectedDecision.latest_phase_count ?? 0}개
+                    (execution_attempt #{selectedDecision.latest_execution_attempt_id.slice(0, 8)})
+                  </p>
+                </div>
+              )}
+
+              {/* Order Info */}
+              {selectedDecision.order_request_id && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                  <h4 className="text-xs font-semibold text-blue-800 mb-1">주문 정보</h4>
+                  <dl className="space-y-1 text-xs">
+                    <div className="flex justify-between">
+                      <dt className="text-gray-500">Order ID</dt>
+                      <dd className="font-mono text-xs truncate max-w-[200px]">{selectedDecision.order_request_id}</dd>
+                    </div>
+                    {selectedDecision.order_status && (
+                      <div className="flex justify-between">
+                        <dt className="text-gray-500">상태</dt>
+                        <dd className="font-mono">{selectedDecision.order_status}</dd>
+                      </div>
+                    )}
+                  </dl>
+                </div>
+              )}
 
               <dl className="space-y-3">
                 <div className="flex justify-between">

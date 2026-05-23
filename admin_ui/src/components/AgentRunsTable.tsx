@@ -1,7 +1,7 @@
 import type { AgentRunResponse } from "../types/api";
 import { AgentTypeBadge } from "./AgentTypeBadge";
 import { StatusBadge } from "./common/StatusBadge";
-import { cn, formatKstTime } from "@/lib/utils";
+import { cn, formatKstTime, formatEiOutput } from "@/lib/utils";
 import { Link } from "react-router-dom";
 
 interface AgentRunsTableProps {
@@ -59,6 +59,11 @@ export function AgentRunsTable({ runs, selectedId, onRowClick, loading }: AgentR
             {runs.map((run) => {
               const isSelected = selectedId === run.agent_run_id;
               const summary = run.structured_output_json?.["summary"] as string | undefined;
+              // EI degraded check
+              const eiView = run.agent_type === "event_interpretation" && run.structured_output_json
+                ? formatEiOutput(run.structured_output_json as Record<string, unknown>)
+                : null;
+              const isDegraded = eiView?.isDegraded ?? false;
               return (
                 <tr
                   key={run.agent_run_id}
@@ -89,7 +94,12 @@ export function AgentRunsTable({ runs, selectedId, onRowClick, loading }: AgentR
                   </td>
                   <td className="px-4 py-3 text-sm text-[#64748b] truncate max-w-xs">
                     {summary ? (
-                      <span className="text-[#0f172a]">{summary}</span>
+                      <span
+                        title={isDegraded && eiView?.degradedReason ? eiView.degradedReason : undefined}
+                        className="text-[#0f172a]"
+                      >
+                        {isDegraded ? '⚠️ ' : ''}{summary}
+                      </span>
                     ) : (
                       <span>-</span>
                     )}

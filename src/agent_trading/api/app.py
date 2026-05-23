@@ -246,6 +246,13 @@ def create_app(
 
     protected_routers.append(external_events_router)
 
+    # Phase 3 — Execution Attempt inspection
+    from agent_trading.api.routes.execution_attempts import (
+        router as execution_attempts_router,
+    )
+
+    protected_routers.append(execution_attempts_router)
+
     if auth_enabled:
         for router in protected_routers:
             app.include_router(router, dependencies=[Depends(require_viewer)])

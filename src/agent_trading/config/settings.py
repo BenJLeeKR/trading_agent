@@ -447,3 +447,10 @@ class AppSettings:
     provider_base_url: str = field(default_factory=_resolve_provider_base_url)
     provider_model_id: str = field(default_factory=_resolve_provider_model_id)
     provider_timeout_seconds: int = field(default_factory=_resolve_provider_timeout)
+
+    # ---- Execution Attempt Primary Truth ------------------------------------
+    execution_attempt_primary_truth: bool = True
+    """When ``True``, :class:`ExecutionAttemptEntity` is the authoritative
+    source for execution status.  The ``trade_decisions`` bridge write is
+    conditional with try/except warning-only on failure (P1).
+    """

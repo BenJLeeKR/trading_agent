@@ -191,6 +191,10 @@ class InterpretedEvent:
     risk_flags: tuple[str, ...] = ()
     reason_codes: tuple[str, ...] = ()
     summary: str = ""
+    is_reconstructed: bool = False
+    """True when this event was deterministically reconstructed from input
+    ExternalEventEntity without LLM interpretation. LLM-only fields
+    (confidence, novelty, supports_entry, etc.) are set to defaults."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -228,23 +232,14 @@ class AggregateEventView:
     evidence_strength: str = "none"
     """Quality/quantity of evidence: ``"none"`` | ``"weak"`` | ``"moderate"`` | ``"strong"``."""
     event_count: int = 0
-    """Number of material events actually grounded for this symbol."""
+    """DEPRECATED: Use ``EventInterpretationOutput.detected_event_count`` instead.
+    Number of material events actually grounded for this symbol."""
     no_material_events: bool = True
     """``True`` when there are no material events to analyze."""
     interpretation_incomplete: bool = False
     """True when the agent could not complete interpretation (timeout, provider error, etc.)"""
     degraded_reason: str | None = None
     """Machine-readable reason for degradation: ``'timeout'`` | ``'provider_error'`` | ``'self_contradiction_corrected'`` | ``None``"""
-
-    def __post_init__(self) -> None:
-        _logger = logging.getLogger(self.__class__.__module__)
-        if not self.top_reason_codes and self.event_count > 0:
-            _logger.warning(
-                "AggregateEventView.top_reason_codes is empty but "
-                "event_count=%d — LLM may have omitted the field",
-                self.event_count,
-            )
-
 
 @dataclass(slots=True, frozen=True)
 class EventInterpretationOutput:
@@ -280,13 +275,39 @@ class EventInterpretationOutput:
     decision_context_id: str | None = None
     symbol: str = ""
     issuer_code: str = ""
+    detected_event_count: int = 0
+    """LLM raw 응답 event_count (절대 변형 금지)"""
     events: tuple[InterpretedEvent, ...] = ()
+    interpreted_event_count: int = 0
+    """len(events)와 항상 일치하는 derived field"""
     aggregate_view: AggregateEventView = field(default_factory=AggregateEventView)
+    summary_basis: str = "none"
+    """"interpreted" | "interpreted_degraded" | "detected_only" | "none" — summary의 truth source"""
     summary: str = ""
     """Deterministic Korean summary (no LLM call)."""
 
     def __post_init__(self) -> None:
         """Coerce malformed fields to safe defaults.
+
+        Phase 3-1: aggregate_view.event_count is DEPRECATED — always sync to
+        detected_event_count for backward compat. Use max() so that
+        detected_event_count takes precedence when both are set.
+        """
+        # aggregate_view.event_count is DEPRECATED — sync to detected_event_count
+        # for backward compat (Phase 3-1 event_count alias migration).
+        agg_ec = self.aggregate_view.event_count
+        if max(self.detected_event_count, agg_ec, 0) != self.detected_event_count:
+            object.__setattr__(
+                self,
+                "detected_event_count",
+                max(self.detected_event_count, agg_ec, 0),
+            )
+
+        self._coerce_fields()
+
+    def _coerce_fields(self) -> None:
+        """Coerce malformed fields to safe defaults.
+
 
         Some providers (e.g. DeepSeek) may return nested objects as serialised
         JSON strings instead of proper nested JSON objects.  Because

@@ -11,7 +11,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agent_trading.domain.enums import OrderStatus
 
@@ -287,6 +287,55 @@ class DecisionContextDetail(BaseModel):
     created_at: datetime | None = None
 
 
+def _split_phase(phase: str | None) -> tuple[str | None, str | None]:
+    """복합 phase 문자열(예: "broker_submit/AAPL")을 (phase, detail)로 분할합니다.
+
+    Returns:
+        (phase, detail) 튜플. "/" 구분자가 없으면 detail은 None.
+        입력이 None이거나 빈 문자열이면 (None, None) 반환.
+    """
+    if not phase:
+        return (None, None)
+    if "/" in phase:
+        parts = phase.split("/", 1)
+        return (parts[0], parts[1])
+    return (phase, None)
+
+
+def _map_attempt_status_to_execution_status(attempt_status: str) -> str:
+    """Map ``ExecutionAttemptEntity.status`` → ``execution_status`` string.
+
+    **Mapping**:
+
+    ====================  ======================
+    ``attempt_status``    ``execution_status``
+    ====================  ======================
+    ``running``           ``pipeline_stopped``
+    ``stopped``           ``pipeline_stopped``
+    ``submitted``         ``submitted``
+    ``failed``            ``rejected``
+    ``non_trade``         ``non_trade``
+    ``reconcile_required`` ``reconcile_required``
+    ====================  ======================
+    """
+    mapping: dict[str, str] = {
+        "running": "pipeline_stopped",
+        "stopped": "pipeline_stopped",
+        "submitted": "submitted",
+        "failed": "rejected",
+        "non_trade": "non_trade",
+        "reconcile_required": "reconcile_required",
+    }
+    return mapping.get(attempt_status, "pipeline_stopped")
+    """'broker_submit/AAPL' → ('broker_submit', 'AAPL')
+    'ai_assemble' → ('ai_assemble', None)
+    """
+    if "/" in phase:
+        parts = phase.split("/", maxsplit=1)
+        return parts[0], parts[1]
+    return phase, None
+
+
 class TradeDecisionDetail(BaseModel):
     """``GET /trade-decisions`` — trade decision detail."""
 
@@ -310,6 +359,132 @@ class TradeDecisionDetail(BaseModel):
     """Origin of this symbol: ``"core"`` | ``"held_position"`` | ``"event_overlay"`` | ``"market_overlay"`` | ``"manual"``."""
     decision_json: dict[str, object] | None = None
     """Raw decision payload from EI/AR agents (``event_bias``, ``risk_opinion``, etc.)."""
+
+    # ── Pipeline stop / order exposure (Phase 1) ──
+    order_request_id: str | None = None
+    """Order request ID resolved via LEFT JOIN on trade_decision_id."""
+    order_status: str | None = None
+    """Order status from the order_requests table."""
+
+    # ── Execution Attempt status (P2: LEFT JOIN LATERAL from execution_attempts) ──
+    execution_attempt_status: str | None = None
+    """Status of the latest ``ExecutionAttemptEntity`` for this trade decision,
+    resolved via ``LEFT JOIN LATERAL`` on ``trading.execution_attempts``.
+
+    ``None`` when no execution attempt exists yet (Phase 3 backfill / pre-P3 data).
+    When present, this is the **primary** source for ``execution_status``.
+    """
+
+    # ── Latest execution attempt summary (Phase 5: LEFT JOIN LATERAL 확장) ──
+    latest_execution_attempt_id: str | None = None
+    """ID of the latest ``ExecutionAttemptEntity`` for this trade decision,
+    resolved via ``LEFT JOIN LATERAL`` on ``trading.execution_attempts``.
+
+    ``None`` when no execution attempt exists yet.
+    """
+
+    latest_stop_phase: str | None = None
+    """Stop phase of the latest ``ExecutionAttemptEntity`` for this trade decision,
+    resolved via ``LEFT JOIN LATERAL`` on ``trading.execution_attempts``.
+
+    ``None`` when no execution attempt exists yet.
+    """
+
+    latest_stop_reason: str | None = None
+    """Stop reason of the latest ``ExecutionAttemptEntity`` for this trade decision,
+    resolved via ``LEFT JOIN LATERAL`` on ``trading.execution_attempts``.
+
+    ``None`` when no execution attempt exists yet.
+    """
+
+    latest_completed_at: str | None = None
+    """Completed-at timestamp of the latest ``ExecutionAttemptEntity`` for this trade decision,
+    resolved via ``LEFT JOIN LATERAL`` on ``trading.execution_attempts``.
+
+    ``None`` when no execution attempt exists yet.
+    """
+
+    latest_phase_count: int | None = None
+    """Number of phases in the latest ``ExecutionAttemptEntity`` for this trade decision,
+    resolved via ``LEFT JOIN LATERAL`` (``jsonb_array_length(ea.phase_trace)``).
+
+    ``None`` when no execution attempt exists yet.
+    """
+
+    # ── Phase trace (from execution_attempts LEFT JOIN LATERAL, NOT from bridge) ──
+    phase_trace: list[dict[str, object]] | None = None
+    """Raw phase trace JSON list (from ``execution_attempts.phase_trace``).
+    Each entry: ``{"phase": str, "elapsed_ms": int, "status": str}``.
+    ``None`` when no execution attempt exists yet.
+    """
+
+    # ── Phase trace summary (computed from phase_trace, NOT stored) ──
+    phase_count: int | None = None
+    """총 phase 수 (phase_trace에서 계산, DB 저장 안 함)."""
+    total_elapsed_ms: int | None = None
+    """총 소요 시간(ms), non-start entry ``elapsed_ms`` 합계 (phase_trace에서 계산, DB 저장 안 함)."""
+    latest_phase: str | None = None
+    """마지막 entry의 phase 키 (예: ``"broker_submit"``). phase/detail 분리. (phase_trace에서 계산, DB 저장 안 함)."""
+    latest_phase_detail: str | None = None
+    """마지막 entry의 리소스 상세 (예: ``"AAPL"``). 없으면 ``None``. (phase_trace에서 계산, DB 저장 안 함)."""
+    latest_status: str | None = None
+    """마지막 entry의 status (예: ``"ok"``). (phase_trace에서 계산, DB 저장 안 함)."""
+
+    # ── Derived field (computed by model_validator) ──
+    execution_status: str | None = None
+    """Derived execution status.
+
+    **Priority (P2: execution_attempt_status 가 primary truth가 됨):**
+
+    1. ``execution_attempt_status`` 가 존재하면 → ``_map_attempt_status_to_execution_status()``
+    2. 그 외 fallback (P3 이전 데이터):
+       - ``order_request_id`` + ``order_status`` → ``submitted`` / ``rejected`` / ``order_created``
+       - ``decision_type`` HOLD/WATCH → ``non_trade``
+       - 그 외 → ``trade_decision_only``
+    """
+
+    @model_validator(mode='after')
+    def _compute_execution_status(self) -> 'TradeDecisionDetail':
+        # Primary: execution_attempt_status (P2, LEFT JOIN LATERAL)
+        if self.execution_attempt_status is not None:
+            self.execution_status = _map_attempt_status_to_execution_status(
+                self.execution_attempt_status
+            )
+        # Fallback: P3 이전 데이터 (execution_attempts 테이블이 없던 시기)
+        elif self.order_request_id is not None:
+            if self.order_status in ('SUBMITTED', 'REJECTED', 'RECONCILE_REQUIRED'):
+                self.execution_status = self.order_status.lower()
+            else:
+                self.execution_status = 'order_created'
+        elif self.decision_type in ('HOLD', 'WATCH'):
+            self.execution_status = 'non_trade'
+        else:
+            self.execution_status = 'trade_decision_only'
+
+        # ── Phase trace summary (Phase 2/6: phase_trace에서 계산, DB 저장 안 함) ──
+        if self.phase_trace:
+            self.phase_count = len(self.phase_trace)
+            # total_elapsed_ms = 모든 non-start entry의 elapsed_ms 합계
+            non_start = [e for e in self.phase_trace if e.get("status") != "start"]
+            self.total_elapsed_ms = sum(
+                e.get("elapsed_ms", 0) or 0 for e in non_start
+            ) if non_start else 0
+            # 마지막 entry에서 phase/detail 분리
+            last_entry = self.phase_trace[-1]
+            raw_phase = last_entry.get("phase", "") if isinstance(last_entry, dict) else ""
+            if "/" in raw_phase:
+                parts = raw_phase.split("/", 1)
+                self.latest_phase = parts[0]
+                self.latest_phase_detail = parts[1]
+            else:
+                self.latest_phase = raw_phase or None
+                self.latest_phase_detail = None
+            self.latest_status = last_entry.get("status") if isinstance(last_entry, dict) else None
+        elif self.phase_trace is not None and len(self.phase_trace) == 0:
+            # 빈 리스트는 None과 동일하게 처리
+            pass  # 모든 derived field는 기본값 None 유지
+
+        return self
 
 
 class PaginatedTradeDecisionsResponse(BaseModel):
@@ -965,8 +1140,37 @@ class SellAvailabilityResponse(BaseModel):
     block_reason: str | None = None
 
 
+class ExecutionAttemptDetail(BaseModel):
+    """``GET /execution-attempts`` — execution attempt detail.
+
+    Maps 1:1 to ``ExecutionAttemptEntity`` for read-only inspection.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    execution_attempt_id: UUID
+    trade_decision_id: UUID
+    decision_context_id: UUID
+    status: str
+    stop_phase: str | None = None
+    stop_reason: str | None = None
+    phase_trace: list[dict[str, object]] | None = None
+    order_request_id: UUID | None = None
+    started_at: datetime
+    completed_at: datetime | None = None
+    created_at: datetime | None = None
+
+
+class ExecutionAttemptListResponse(BaseModel):
+    """``GET /execution-attempts?trade_decision_id=...`` — paginated list."""
+
+    status: str = "ok"
+    data: list[ExecutionAttemptDetail]
+
+
 # Rebuild models to resolve forward references under ``from __future__ import annotations``.
 # The ``_types_namespace`` provides the necessary type mappings that are otherwise
 # evaluated lazily as strings under PEP 563.
 BrokerTruthResponse.model_rebuild(_types_namespace={"Decimal": Decimal, "UUID": UUID, "datetime": datetime})
+ExecutionAttemptDetail.model_rebuild(_types_namespace={"Decimal": Decimal, "UUID": UUID, "datetime": datetime})
 SellAvailabilityResponse.model_rebuild(_types_namespace={"Decimal": Decimal, "UUID": UUID, "datetime": datetime})

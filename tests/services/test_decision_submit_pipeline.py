@@ -1494,8 +1494,9 @@ class TestEIPostProcessingGuard:
         result = await agent.run(request)
 
         # LLM 응답이 유지되어야 함 (override되지 않음)
-        assert result.aggregate_view.event_count == 0, (
-            f"Expected event_count=0 (LLM preserved), got {result.aggregate_view.event_count}"
+        # Phase 3-1: detected_event_count가 primary field
+        assert result.detected_event_count == 0, (
+            f"Expected detected_event_count=0 (LLM preserved), got {result.detected_event_count}"
         )
         assert result.aggregate_view.no_material_events is True, (
             "Expected no_material_events=True (LLM preserved)"
@@ -1521,6 +1522,16 @@ class TestEIPostProcessingGuard:
         )
         assert "세부 이벤트 추출 누락" in result.summary, (
             f"Expected '세부 이벤트 추출 누락' in summary, got: {result.summary}"
+        )
+        # ★ Phase 1: 신규 필드 검증
+        assert result.detected_event_count == 0, (
+            f"detected_event_count should be 0 (LLM raw preserved), got {result.detected_event_count}"
+        )
+        assert result.interpreted_event_count == 0, (
+            f"interpreted_event_count should be 0 (no events), got {result.interpreted_event_count}"
+        )
+        assert result.summary_basis == "detected_only", (
+            f"summary_basis should be 'detected_only', got {result.summary_basis}"
         )
 
     @pytest.mark.asyncio
@@ -1569,11 +1580,22 @@ class TestEIPostProcessingGuard:
         result = await agent.run(request)
 
         # Guard가 보정하지 않아야 함
-        assert result.aggregate_view.event_count == 0, (
-            "event_count should remain 0 when input events is 0"
+        # Phase 3-1: detected_event_count가 primary field
+        assert result.detected_event_count == 0, (
+            "detected_event_count should remain 0 when input events is 0"
         )
         assert result.aggregate_view.no_material_events is True, (
             "no_material_events should remain True when input events is 0"
+        )
+        # ★ Phase 1: 신규 필드 검증
+        assert result.detected_event_count == 0, (
+            f"detected_event_count should be 0 (no input, LLM returned 0), got {result.detected_event_count}"
+        )
+        assert result.interpreted_event_count == 0, (
+            f"interpreted_event_count should be 0 (no events), got {result.interpreted_event_count}"
+        )
+        assert result.summary_basis == "none", (
+            f"summary_basis should be 'none', got {result.summary_basis}"
         )
 
     @pytest.mark.asyncio
@@ -1656,11 +1678,21 @@ class TestEIPostProcessingGuard:
         assert result.events[0].summary == "LLM analysis", (
             "LLM event summary should be preserved"
         )
-        assert result.aggregate_view.event_count == 1, (
-            "event_count should remain 1 (LLM output preserved)"
+        assert result.detected_event_count == 1, (
+            "detected_event_count should remain 1 (LLM output preserved)"
         )
         assert result.aggregate_view.no_material_events is False, (
             "no_material_events should remain False"
+        )
+        # ★ Phase 1: 신규 필드 검증
+        assert result.detected_event_count == 1, (
+            f"detected_event_count should be 1 (LLM raw event_count), got {result.detected_event_count}"
+        )
+        assert result.interpreted_event_count == 1, (
+            f"interpreted_event_count should be 1 (1 event), got {result.interpreted_event_count}"
+        )
+        assert result.summary_basis == "interpreted", (
+            f"summary_basis should be 'interpreted', got {result.summary_basis}"
         )
 
     @pytest.mark.asyncio
@@ -1727,13 +1759,13 @@ class TestEIPostProcessingGuard:
         assert result.aggregate_view.degraded_reason == "provider_error", (
             f"Expected degraded_reason='provider_error', got {result.aggregate_view.degraded_reason}"
         )
-        # event_count는 LLM 응답이 없으므로 0
-        assert result.aggregate_view.event_count == 0, (
-            f"Expected event_count=0 (no LLM response), got {result.aggregate_view.event_count}"
+        # detected_event_count는 input_event_count 보존 (Phase 1: exception fallback에서 input 보존)
+        assert result.detected_event_count == 1, (
+            f"Expected detected_event_count=1 (input_event_count preserved), got {result.detected_event_count}"
         )
-        # no_material_events는 fallback-safe → True
-        assert result.aggregate_view.no_material_events is True, (
-            "Expected no_material_events=True (fallback-safe)"
+        # no_material_events는 False (Phase 1: input이 있으므로 False)
+        assert result.aggregate_view.no_material_events is False, (
+            f"Expected no_material_events=False (input_event_count preserved), got {result.aggregate_view.no_material_events}"
         )
         # symbol이 빈 값이 아닌 request.symbol로 설정되어야 함
         assert result.symbol == "000810", (
@@ -1752,6 +1784,17 @@ class TestEIPostProcessingGuard:
         )
         assert "AI 분석 실패" in result.summary, (
             f"Expected 'AI 분석 실패' in summary, got: {result.summary}"
+        )
+        # ★ Phase 1: 신규 필드 검증
+        assert result.detected_event_count == 1, (
+            f"detected_event_count should be 1 (input preserved), got {result.detected_event_count}"
+        )
+        assert result.interpreted_event_count == 0, (
+            f"interpreted_event_count should be 0 (fallback, no events), got {result.interpreted_event_count}"
+        )
+        # Fallback: detected=1, input_event_count=1, events=() → "detected_only"
+        assert result.summary_basis == "detected_only", (
+            f"summary_basis should be 'detected_only', got {result.summary_basis}"
         )
 
     @pytest.mark.asyncio
@@ -1794,9 +1837,9 @@ class TestEIPostProcessingGuard:
         assert result.aggregate_view.degraded_reason == "provider_error", (
             f"Expected degraded_reason='provider_error', got {result.aggregate_view.degraded_reason}"
         )
-        # event_count=0 유지
-        assert result.aggregate_view.event_count == 0, (
-            f"Expected event_count=0 when input events=0, got {result.aggregate_view.event_count}"
+        # detected_event_count=0 유지
+        assert result.detected_event_count == 0, (
+            f"Expected detected_event_count=0 when input events=0, got {result.detected_event_count}"
         )
         assert result.aggregate_view.no_material_events is True, (
             "Expected no_material_events=True when input events=0"
@@ -1808,6 +1851,16 @@ class TestEIPostProcessingGuard:
         # Summary 확인
         assert result.summary is not None and len(result.summary) > 0, (
             f"Summary should be set, got: '{result.summary}'"
+        )
+        # ★ Phase 1: 신규 필드 검증
+        assert result.detected_event_count == 0, (
+            f"detected_event_count should be 0 (no input, no LLM), got {result.detected_event_count}"
+        )
+        assert result.interpreted_event_count == 0, (
+            f"interpreted_event_count should be 0 (fallback), got {result.interpreted_event_count}"
+        )
+        assert result.summary_basis == "none", (
+            f"summary_basis should be 'none', got {result.summary_basis}"
         )
 
     # ------------------------------------------------------------------
@@ -1822,7 +1875,7 @@ class TestEIPostProcessingGuard:
         Case 2: degraded 상태에서 events가 있으면 "(일부 해석 누락)"을 추가.
         """
         from agent_trading.services.ai_agents.event_interpretation import (
-            _build_ei_summary,
+            _build_summary_text,
         )
         from agent_trading.services.ai_agents.schemas import (
             AggregateEventView,
@@ -1863,7 +1916,7 @@ class TestEIPostProcessingGuard:
             ),
         )
 
-        summary = _build_ei_summary(output)
+        summary = _build_summary_text(output)
 
         # 정상 요약 포맷 유지
         assert "(1건)" in summary, (
@@ -1885,7 +1938,7 @@ class TestEIPostProcessingGuard:
         Case 3: events=[], input>0, degraded, degraded_reason="self_contradiction_corrected"
         """
         from agent_trading.services.ai_agents.event_interpretation import (
-            _build_ei_summary,
+            _build_summary_text,
         )
         from agent_trading.services.ai_agents.schemas import (
             AggregateEventView,
@@ -1909,7 +1962,7 @@ class TestEIPostProcessingGuard:
         )
 
         # input_event_count=3 전달
-        summary = _build_ei_summary(output, input_event_count=3)
+        summary = _build_summary_text(output, input_event_count=3)
 
         assert "(3건)" in summary, (
             f"Expected '(3건)' in summary, got: {summary}"
@@ -1926,7 +1979,7 @@ class TestEIPostProcessingGuard:
     ) -> None:
         """no_material_events=True, events=[] → "유의미한 신규 이벤트 없음" 유지."""
         from agent_trading.services.ai_agents.event_interpretation import (
-            _build_ei_summary,
+            _build_summary_text,
         )
         from agent_trading.services.ai_agents.schemas import (
             AggregateEventView,
@@ -1947,7 +2000,7 @@ class TestEIPostProcessingGuard:
             ),
         )
 
-        summary = _build_ei_summary(output)
+        summary = _build_summary_text(output)
 
         assert "유의미한 신규 이벤트 없음" in summary, (
             f"Expected '유의미한 신규 이벤트 없음' in summary, got: {summary}"
@@ -1961,7 +2014,7 @@ class TestEIPostProcessingGuard:
     ) -> None:
         """정상 events 존재 시 기존 상세 요약 경로 유지."""
         from agent_trading.services.ai_agents.event_interpretation import (
-            _build_ei_summary,
+            _build_summary_text,
         )
         from agent_trading.services.ai_agents.schemas import (
             AggregateEventView,
@@ -2000,7 +2053,7 @@ class TestEIPostProcessingGuard:
             ),
         )
 
-        summary = _build_ei_summary(output)
+        summary = _build_summary_text(output)
 
         # 정상 경로: (1건) 형식
         assert "(1건)" in summary, (
@@ -2024,7 +2077,7 @@ class TestEIPostProcessingGuard:
         input_event_count > 0
         """
         from agent_trading.services.ai_agents.event_interpretation import (
-            _build_ei_summary,
+            _build_summary_text,
         )
         from agent_trading.services.ai_agents.schemas import (
             AggregateEventView,
@@ -2048,7 +2101,7 @@ class TestEIPostProcessingGuard:
         )
 
         # input_event_count > 0인 경우
-        summary = _build_ei_summary(output, input_event_count=2)
+        summary = _build_summary_text(output, input_event_count=2)
 
         assert "(2건)" in summary, (
             f"Expected '(2건)' in summary, got: {summary}"
@@ -2069,7 +2122,7 @@ class TestEIPostProcessingGuard:
         input_event_count=0
         """
         from agent_trading.services.ai_agents.event_interpretation import (
-            _build_ei_summary,
+            _build_summary_text,
         )
         from agent_trading.services.ai_agents.schemas import (
             AggregateEventView,
@@ -2092,7 +2145,7 @@ class TestEIPostProcessingGuard:
             ),
         )
 
-        summary = _build_ei_summary(output)
+        summary = _build_summary_text(output)
 
         assert "유의미한 신규 이벤트 없음" in summary, (
             f"Expected '유의미한 신규 이벤트 없음' in summary, got: {summary}"
@@ -2498,203 +2551,3 @@ class TestQuoteCircuitBreaker:
         )
 
 
-# ---------------------------------------------------------------------------
-# EXE-005A: pipeline_stop_phase/reason 기록 검증
-# ---------------------------------------------------------------------------
-
-
-class TestPipelineStop:
-    """EXE-005A: pipeline_stop_phase/reason 기록 검증"""
-
-    class _ApproveFDCAgent:
-        """APPROVE를 반환하는 FDC agent stub."""
-
-        @property
-        def agent_name(self) -> str:
-            return "final_decision_composer"
-
-        @property
-        def schema_version(self) -> str:
-            return "1.0.0"
-
-        async def run(self, request: AgentExecutionRequest) -> FinalDecisionComposerOutput:
-            return FinalDecisionComposerOutput(
-                decision_type="APPROVE",
-                side="BUY",
-                symbol="AAPL",
-                confidence=0.8,
-                conviction=0.7,
-                summary="Approved by test stub",
-            )
-
-    @pytest.fixture
-    def repos(self) -> Any:
-        repos = build_in_memory_repositories()
-        now = datetime.now(timezone.utc)
-        account = AccountEntity(
-            account_id=uuid4(),
-            client_id=uuid4(),
-            broker_account_id=uuid4(),
-            environment=Environment.PAPER,
-            account_alias="test-account",
-            account_masked="test-****",
-            status="active",
-        )
-        repos.accounts._items[account.account_id] = account
-        config_version = ConfigVersionEntity(
-            config_version_id=uuid4(),
-            client_id=account.client_id,
-            environment=Environment.PAPER,
-            version_tag="v1.0",
-            config_json={},
-            checksum="abc123",
-            activated_at=now,
-        )
-        repos.config_versions._items[config_version.config_version_id] = config_version
-        instrument = InstrumentEntity(
-            instrument_id=uuid4(),
-            symbol="005930",
-            market_code="KRX",
-            asset_class=AssetClass.KR_STOCK,
-            currency="KRW",
-            name="Samsung Electronics",
-        )
-        repos.instruments._items[instrument.instrument_id] = instrument
-        repos.cash_balance_snapshots._items.clear()
-        repos.position_snapshots._items.clear()
-        return repos
-
-    @pytest.fixture
-    def order_manager(self, repos: Any) -> OrderManager:
-        from agent_trading.services.reconciliation_service import ReconciliationService
-        return OrderManager(
-            repos=repos,
-            reconciliation_service=ReconciliationService(repos=repos),
-        )
-
-    @pytest.mark.asyncio
-    async def test_pipeline_stop_set_on_sizing_skip(
-        self,
-        repos: Any,
-        order_manager: OrderManager,
-    ) -> None:
-        """sizing skip 시 pipeline_stop이 기록되는지 검증."""
-        request = _make_request(quantity=Decimal("100"), price=Decimal("50000"))
-
-        account = next(
-            a for a in repos.accounts._items.values()
-            if a.account_alias == "test-account"
-        )
-
-        # 현금 부족 → sizing zero → SKIPPED
-        repos.cash_balance_snapshots._items[account.account_id] = (
-            CashBalanceSnapshotEntity(
-                cash_balance_snapshot_id=uuid4(),
-                account_id=account.account_id,
-                available_cash=Decimal("1000"),
-                settled_cash=Decimal("1000"),
-                unsettled_cash=Decimal("0"),
-                currency="KRW",
-                source_of_truth="broker",
-                snapshot_at=datetime.now(timezone.utc),
-            )
-        )
-
-        async def _mock_submit(*args: Any, **kwargs: Any) -> OrderRequestEntity:
-            raise AssertionError("Broker should not be called when sizing returns zero")
-
-        broker_stub = object()
-        service = DecisionOrchestratorService(
-            repos=repos,
-            final_decision_agent=self._ApproveFDCAgent(),
-        )
-        with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):
-            result = await service.assemble_and_submit(
-                request,
-                order_manager=order_manager,
-                broker=broker_stub,
-            )
-
-        assert result.status == "SKIPPED", f"Expected SKIPPED, got {result.status}"
-        assert result.error_phase == "sizing", (
-            f"Expected error_phase='sizing', got {result.error_phase}"
-        )
-
-        # DB에 pipeline_stop이 기록되었는지 확인
-        td = await repos.trade_decisions.get(result.trade_decision_id)
-        assert td is not None, "TradeDecisionEntity must exist"
-        assert td.pipeline_stop_phase == "sizing", (
-            f"Expected pipeline_stop_phase='sizing', got {td.pipeline_stop_phase}"
-        )
-        assert td.pipeline_stop_reason == "sizing_rejected", (
-            f"Expected pipeline_stop_reason='sizing_rejected', got {td.pipeline_stop_reason}"
-        )
-        assert td.pipeline_stopped_at is not None, (
-            "pipeline_stopped_at must be set"
-        )
-
-    @pytest.mark.asyncio
-    async def test_pipeline_stop_not_set_on_success(
-        self,
-        repos: Any,
-        order_manager: OrderManager,
-    ) -> None:
-        """성공 submit 시 pipeline_stop이 'completed'로 기록되는지 검증."""
-        request = _make_request()
-
-        account = next(
-            a for a in repos.accounts._items.values()
-            if a.account_alias == "test-account"
-        )
-
-        # 충분한 현금 seed
-        repos.cash_balance_snapshots._items[account.account_id] = (
-            CashBalanceSnapshotEntity(
-                cash_balance_snapshot_id=uuid4(),
-                account_id=account.account_id,
-                available_cash=Decimal("1000000"),
-                settled_cash=Decimal("1000000"),
-                unsettled_cash=Decimal("0"),
-                currency="KRW",
-                source_of_truth="broker",
-                snapshot_at=datetime.now(timezone.utc),
-            )
-        )
-
-        # Instrument seed (repos fixture에서 instrument를 clear했으므로 다시 추가)
-        instrument = InstrumentEntity(
-            instrument_id=uuid4(),
-            symbol="005930",
-            market_code="KRX",
-            asset_class=AssetClass.KR_STOCK,
-            currency="KRW",
-            name="Samsung Electronics",
-        )
-        repos.instruments._items[instrument.instrument_id] = instrument
-
-        submitted_entity = _make_order_entity(status=OrderStatus.SUBMITTED, request=request)
-
-        async def _mock_submit(*args: Any, **kwargs: Any) -> OrderRequestEntity:
-            return submitted_entity
-
-        broker_stub = object()
-        service = DecisionOrchestratorService(
-            repos=repos,
-            final_decision_agent=self._ApproveFDCAgent(),
-        )
-        with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):
-            result = await service.assemble_and_submit(
-                request,
-                order_manager=order_manager,
-                broker=broker_stub,
-            )
-
-        assert result.status == "SUBMITTED", (
-            f"Expected SUBMITTED, got {result.status}"
-        )
-
-        td = await repos.trade_decisions.get(result.trade_decision_id)
-        assert td is not None, "TradeDecisionEntity must exist"
-        assert td.pipeline_stop_phase == "completed", (
-            f"Expected pipeline_stop_phase='completed', got {td.pipeline_stop_phase}"
-        )

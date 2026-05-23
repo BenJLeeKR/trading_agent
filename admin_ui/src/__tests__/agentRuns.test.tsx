@@ -90,6 +90,47 @@ describe("AgentRunsView with data", () => {
       expect(screen.getByText("Strong earnings momentum")).toBeInTheDocument();
     });
   });
+
+  it("shows degraded indicator for EI run with incomplete interpretation", async () => {
+    const degradedEiRun = [{
+      agent_run_id: "degraded-ei-run-001",
+      decision_context_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00dc1",
+      agent_type: "event_interpretation",
+      started_at: "2026-05-05T00:00:02Z",
+      status: "completed",
+      structured_output_json: {
+        summary: "입력 이벤트 감지됐으나 LLM이 이벤트를 무시함. [degraded: self_contradiction_corrected]. 전반 중립.",
+        aggregate_view: {
+          overall_bias: "neutral",
+          event_conflict: false,
+          top_reason_codes: [],
+          event_count: 0,
+          no_material_events: true,
+          interpretation_incomplete: true,
+          degraded_reason: "self_contradiction_corrected",
+        },
+      },
+      completed_at: "2026-05-05T00:00:05Z",
+      model_id: null,
+      prompt_id: null,
+      temperature: null,
+      seed: null,
+      raw_output_uri: null,
+      created_at: null,
+    }];
+    mockUrlRouter({ "/agent-runs": degradedEiRun });
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText("EI")).toBeInTheDocument();
+    });
+
+    // ⚠️ prefix가 summary 텍스트 앞에 표시되는지 확인
+    expect(screen.getByText(/⚠️/)).toBeInTheDocument();
+    // degraded reason이 title 속성으로 표시되는지 확인 (span의 title)
+    const summarySpan = screen.getByText(/⚠️/).closest('span');
+    expect(summarySpan).toBeInTheDocument();
+  });
 });
 
 /* ──────────────────────────────────────────────

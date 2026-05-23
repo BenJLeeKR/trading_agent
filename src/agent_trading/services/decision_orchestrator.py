@@ -18,6 +18,7 @@ from agent_trading.domain.entities import (
     CashBalanceSnapshotEntity,
     ConfigVersionEntity,
     DecisionContextEntity,
+    ExecutionAttemptEntity,
     ExternalEventEntity,
     GuardrailEvaluationEntity,
     InstrumentEntity,
@@ -38,7 +39,8 @@ from agent_trading.services.ai_agents.base import (
 )
 from agent_trading.services.ai_agents.event_interpretation import (
     StubEventInterpretationAgent,
-    _build_ei_summary,
+    _build_summary_text,
+    _finalize_ei_output,
 )
 from agent_trading.services.ai_agents.ai_risk import StubAIRiskAgent
 from agent_trading.services.ai_agents.final_decision_composer import (
@@ -994,62 +996,56 @@ class DecisionOrchestratorService:
             _phase_trace.append(PhaseTraceEntry(phase=phase, elapsed_ms=elapsed, status=status))
             _phase_start = now
 
-        # ── Phase 1: assemble() ──
-        _symbol = request.symbol
-        _add_phase("ai_assemble", "start")
-        logger.info("PHASE_TRACE symbol=%s phase=assemble_start elapsed_ms=0 status=start", _symbol)
-        _assemble_t0 = time_module.monotonic()
-        logger.info("Phase 1: assemble() — running AI agents …")
-        try:
-            intent = await self.assemble(
-                request,
-                decision_context_id=decision_context_id,
-                order_intent_id=order_intent_id,
-                seeded_events=seeded_events,
-            )
-            _assemble_elapsed = time_module.monotonic() - _assemble_t0
-            logger.info(
-                "PHASE_TRACE symbol=%s phase=assemble_done elapsed_ms=%d status=ok",
-                _symbol, int(_assemble_elapsed * 1000),
-            )
-            _add_phase("ai_assemble", "ok")
-        except asyncio.TimeoutError:
-            logger.error(
-                "Phase 1 TIMEOUT: assemble() exceeded timeout. "
-                "decision_context_id=%s symbol=%s",
-                decision_context_id,
-                request.symbol,
-            )
-            return SubmitResult(
-                status="ERROR",
-                error_phase="ai_timeout",
-                error_message=f"assemble() timed out for symbol={request.symbol}",
-                decision_context_id=decision_context_id,
-            )
-        except Exception as exc:
-            logger.exception(
-                "Phase 1 FAILED (ai): assemble() raised unexpectedly. "
-                "decision_context_id=%s",
-                decision_context_id,
-            )
-            return SubmitResult(
-                status="ERROR",
-                error_phase="ai",
-                error_message=f"assemble() failed: {exc}",
-                decision_context_id=decision_context_id,
-            )
+        # ── Phase 1: Decision pipeline (AI assemble → TD resolve → EA create) ──
+        intent, trade_decision_id, _attempt_id, pipeline_result = await self._run_decision_pipeline(
+            request,
+            decision_context_id=decision_context_id,
+            order_intent_id=order_intent_id,
+            seeded_events=seeded_events,
+            _add_phase=_add_phase,
+            _phase_trace=_phase_trace,
+        )
+        if pipeline_result is not None:
+            return pipeline_result
 
-        # Resolve trade_decision_id from the intent for diagnostics.
-        trade_decision_id: UUID | None = None
-        if intent.decision_context_id is not None:
-            try:
-                td = await self._repos.trade_decisions.get_by_context(
-                    intent.decision_context_id
-                )
-                if td is not None:
-                    trade_decision_id = td.trade_decision_id
-            except Exception:
-                pass
+        # ── Phase 1.5–5.5: Execution pipeline (sizing → guard → translate → create → submit) ──
+        return await self._run_execution_pipeline(
+            intent,
+            trade_decision_id,
+            _attempt_id,
+            request,
+            order_manager,
+            broker,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            _add_phase=_add_phase,
+            _phase_trace=_phase_trace,
+        )
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    async def _run_execution_pipeline(
+        self,
+        intent: OrderIntent,
+        trade_decision_id: UUID | None,
+        _attempt_id: UUID | None,
+        request: SubmitOrderRequest,
+        order_manager: OrderManager,
+        broker: BrokerAdapter,
+        *,
+        actor_type: str = "system",
+        actor_id: str = "decision_orchestrator",
+        _add_phase: Callable[[str, str], None],
+        _phase_trace: list[PhaseTraceEntry],
+    ) -> SubmitResult:
+        """Execution pipeline: sizing → guard → translate → create → submit.
+
+        Called by :meth:`assemble_and_submit` after the decision pipeline
+        has produced ``(intent, trade_decision_id, _attempt_id)``.
+        """
+        _symbol = intent.request.symbol
 
         # ── Phase 1.5: deterministic sizing engine ──
         logger.info(
@@ -1229,13 +1225,13 @@ class DecisionOrchestratorService:
                 trade_decision_id,
             )
             _add_phase(f"sizing/{_symbol}", "skipped")
-            # EXE-005A: pipeline_stop 기록
-            if trade_decision_id is not None:
-                await self._repos.trade_decisions.update_pipeline_stop(
-                    trade_decision_id,
-                    "sizing",
-                    "sizing_rejected",
-                    datetime.now(timezone.utc),
+            if _attempt_id is not None:
+                await self._repos.execution_attempts.update_status(
+                    _attempt_id, "stopped",
+                    stop_phase="sizing",
+                    stop_reason="sizing_rejected",
+                    phase_trace=_phase_trace_to_dicts(_phase_trace),
+                    completed_at=datetime.now(timezone.utc),
                 )
             return SubmitResult(
                 status="SKIPPED",
@@ -1317,13 +1313,13 @@ class DecisionOrchestratorService:
                             trade_decision_id,
                         )
                         _add_phase(f"sell_guard/{_symbol}", "skipped")
-                        # EXE-005A: pipeline_stop 기록
-                        if trade_decision_id is not None:
-                            await self._repos.trade_decisions.update_pipeline_stop(
-                                trade_decision_id,
-                                "sell_guard",
-                                "sell_guard_blocked",
-                                datetime.now(timezone.utc),
+                        if _attempt_id is not None:
+                            await self._repos.execution_attempts.update_status(
+                                _attempt_id, "stopped",
+                                stop_phase="sell_guard",
+                                stop_reason="sell_guard_blocked",
+                                phase_trace=_phase_trace_to_dicts(_phase_trace),
+                                completed_at=datetime.now(timezone.utc),
                             )
                         return SubmitResult(
                             status="SKIPPED",
@@ -1398,14 +1394,14 @@ class DecisionOrchestratorService:
                 int((time_module.monotonic() - _validate_t0) * 1000),
             )
             _add_phase(f"translation/{_symbol}", "skipped")
-            # EXE-005A: pipeline_stop 기록
-            if trade_decision_id is not None:
-                reason = "decision_hold" if _dt == "HOLD" else "decision_watch"
-                await self._repos.trade_decisions.update_pipeline_stop(
-                    trade_decision_id,
-                    "translation",
-                    reason,
-                    datetime.now(timezone.utc),
+            reason = "decision_hold" if _dt == "HOLD" else "decision_watch"
+            if _attempt_id is not None:
+                await self._repos.execution_attempts.update_status(
+                    _attempt_id, "non_trade",
+                    stop_phase="translation",
+                    stop_reason=reason,
+                    phase_trace=_phase_trace_to_dicts(_phase_trace),
+                    completed_at=datetime.now(timezone.utc),
                 )
             return SubmitResult(
                 status="SKIPPED",
@@ -1447,13 +1443,13 @@ class DecisionOrchestratorService:
                 submit_request.client_order_id,
             )
             _add_phase(f"order_create/{_symbol}", "error")
-            # EXE-005A: pipeline_stop 기록
-            if trade_decision_id is not None:
-                await self._repos.trade_decisions.update_pipeline_stop(
-                    trade_decision_id,
-                    "order_create",
-                    "order_create_failed",
-                    datetime.now(timezone.utc),
+            if _attempt_id is not None:
+                await self._repos.execution_attempts.update_status(
+                    _attempt_id, "stopped",
+                    stop_phase="order_create",
+                    stop_reason="order_create_failed",
+                    phase_trace=_phase_trace_to_dicts(_phase_trace),
+                    completed_at=datetime.now(timezone.utc),
                 )
             return SubmitResult(
                 status="ERROR",
@@ -1484,13 +1480,14 @@ class DecisionOrchestratorService:
                 "failed for order_id=%s",
                 order.order_request_id,
             )
-            # EXE-005A: pipeline_stop 기록
-            if trade_decision_id is not None:
-                await self._repos.trade_decisions.update_pipeline_stop(
-                    trade_decision_id,
-                    "transition",
-                    "transition_failed",
-                    datetime.now(timezone.utc),
+            if _attempt_id is not None:
+                await self._repos.execution_attempts.update_status(
+                    _attempt_id, "stopped",
+                    stop_phase="transition",
+                    stop_reason="transition_failed",
+                    phase_trace=_phase_trace_to_dicts(_phase_trace),
+                    order_request_id=order.order_request_id,
+                    completed_at=datetime.now(timezone.utc),
                 )
             return SubmitResult(
                 status="ERROR",
@@ -1522,13 +1519,14 @@ class DecisionOrchestratorService:
                 "failed for order_id=%s",
                 validated_order.order_request_id,
             )
-            # EXE-005A: pipeline_stop 기록
-            if trade_decision_id is not None:
-                await self._repos.trade_decisions.update_pipeline_stop(
-                    trade_decision_id,
-                    "transition",
-                    "transition_failed",
-                    datetime.now(timezone.utc),
+            if _attempt_id is not None:
+                await self._repos.execution_attempts.update_status(
+                    _attempt_id, "stopped",
+                    stop_phase="transition",
+                    stop_reason="transition_failed",
+                    phase_trace=_phase_trace_to_dicts(_phase_trace),
+                    order_request_id=validated_order.order_request_id,
+                    completed_at=datetime.now(timezone.utc),
                 )
             return SubmitResult(
                 status="ERROR",
@@ -1640,13 +1638,14 @@ class DecisionOrchestratorService:
                         int((time_module.monotonic() - _stale_guard_t0) * 1000),
                     )
                     _add_phase(f"stale_snapshot_guard/{_symbol}", "skipped")
-                    # EXE-005A: pipeline_stop 기록
-                    if trade_decision_id is not None:
-                        await self._repos.trade_decisions.update_pipeline_stop(
-                            trade_decision_id,
-                            "stale_snapshot_guard",
-                            "stale_snapshot",
-                            datetime.now(timezone.utc),
+                    if _attempt_id is not None:
+                        await self._repos.execution_attempts.update_status(
+                            _attempt_id, "stopped",
+                            stop_phase="stale_snapshot_guard",
+                            stop_reason="stale_snapshot",
+                            phase_trace=_phase_trace_to_dicts(_phase_trace),
+                            order_request_id=pending_order.order_request_id,
+                            completed_at=datetime.now(timezone.utc),
                         )
                     return SubmitResult(
                         status="SKIPPED",
@@ -1725,13 +1724,14 @@ class DecisionOrchestratorService:
                         int((time_module.monotonic() - _stale_guard_t0) * 1000),
                     )
                     _add_phase(f"stale_snapshot_guard/{_symbol}", "skipped")
-                    # EXE-005A: pipeline_stop 기록
-                    if trade_decision_id is not None:
-                        await self._repos.trade_decisions.update_pipeline_stop(
-                            trade_decision_id,
-                            "stale_snapshot_guard",
-                            "stale_snapshot",
-                            datetime.now(timezone.utc),
+                    if _attempt_id is not None:
+                        await self._repos.execution_attempts.update_status(
+                            _attempt_id, "stopped",
+                            stop_phase="stale_snapshot_guard",
+                            stop_reason="stale_snapshot",
+                            phase_trace=_phase_trace_to_dicts(_phase_trace),
+                            order_request_id=pending_order.order_request_id,
+                            completed_at=datetime.now(timezone.utc),
                         )
                     return SubmitResult(
                         status="SKIPPED",
@@ -1828,13 +1828,14 @@ class DecisionOrchestratorService:
                 trade_decision_id,
             )
             _add_phase(f"broker_submit/{_symbol}", "error")
-            # EXE-005A: pipeline_stop 기록
-            if trade_decision_id is not None:
-                await self._repos.trade_decisions.update_pipeline_stop(
-                    trade_decision_id,
-                    "broker_submit",
-                    "broker_submit_failed",
-                    datetime.now(timezone.utc),
+            if _attempt_id is not None:
+                await self._repos.execution_attempts.update_status(
+                    _attempt_id, "failed",
+                    stop_phase="broker_submit",
+                    stop_reason="broker_submit_failed",
+                    phase_trace=_phase_trace_to_dicts(_phase_trace),
+                    order_request_id=pending_order.order_request_id,
+                    completed_at=datetime.now(timezone.utc),
                 )
             return SubmitResult(
                 status="ERROR",
@@ -1900,13 +1901,21 @@ class DecisionOrchestratorService:
         else:
             result_status = f"UNEXPECTED:{final_status.value}"
 
-        # EXE-005A: pipeline_stop 기록 (completed)
-        if trade_decision_id is not None:
-            await self._repos.trade_decisions.update_pipeline_stop(
-                trade_decision_id,
-                "completed",
-                "",
-                datetime.now(timezone.utc),
+        if _attempt_id is not None:
+            if final_status == OrderStatus.SUBMITTED:
+                _ea_status = "submitted"
+            elif final_status == OrderStatus.RECONCILE_REQUIRED:
+                _ea_status = "reconcile_required"
+            elif final_status == OrderStatus.REJECTED:
+                _ea_status = "failed"
+            else:
+                _ea_status = "submitted"  # fallback
+            await self._repos.execution_attempts.update_status(
+                _attempt_id, _ea_status,
+                stop_phase="completed",
+                phase_trace=_phase_trace_to_dicts(_phase_trace),
+                order_request_id=submitted_order.order_request_id,
+                completed_at=datetime.now(timezone.utc),
             )
         logger.info(
             "Pipeline complete: status=%s order_id=%s trade_decision_id=%s",
@@ -1923,9 +1932,111 @@ class DecisionOrchestratorService:
             phase_trace=tuple(_phase_trace),
         )
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
+    async def _run_decision_pipeline(
+        self,
+        request: SubmitOrderRequest,
+        *,
+        decision_context_id: UUID | None = None,
+        order_intent_id: UUID | None = None,
+        seeded_events: list[ExternalEventEntity] | None = None,
+        _add_phase: Callable[[str, str], None],
+        _phase_trace: list[PhaseTraceEntry],
+    ) -> tuple[OrderIntent | None, UUID | None, UUID | None, SubmitResult | None]:
+        """Decision pipeline: AI assemble → TD resolve → EA create.
+
+        Returns ``(intent, trade_decision_id, _attempt_id, None)`` on success,
+        or ``(None, None, None, submit_result)`` on error (caller should return
+        the ``submit_result`` immediately).
+        """
+        _symbol = request.symbol
+        _add_phase("ai_assemble", "start")
+        logger.info(
+            "PHASE_TRACE symbol=%s phase=assemble_start elapsed_ms=0 status=start",
+            _symbol,
+        )
+        _assemble_t0 = time_module.monotonic()
+        logger.info("Phase 1: assemble() — running AI agents …")
+        try:
+            intent = await self.assemble(
+                request,
+                decision_context_id=decision_context_id,
+                order_intent_id=order_intent_id,
+                seeded_events=seeded_events,
+            )
+            _assemble_elapsed = time_module.monotonic() - _assemble_t0
+            logger.info(
+                "PHASE_TRACE symbol=%s phase=assemble_done elapsed_ms=%d status=ok",
+                _symbol, int(_assemble_elapsed * 1000),
+            )
+            _add_phase("ai_assemble", "ok")
+        except asyncio.TimeoutError:
+            logger.error(
+                "Phase 1 TIMEOUT: assemble() exceeded timeout. "
+                "decision_context_id=%s symbol=%s",
+                decision_context_id,
+                request.symbol,
+            )
+            return None, None, None, SubmitResult(
+                status="ERROR",
+                error_phase="ai_timeout",
+                error_message=f"assemble() timed out for symbol={request.symbol}",
+                decision_context_id=decision_context_id,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Phase 1 FAILED (ai): assemble() raised unexpectedly. "
+                "decision_context_id=%s",
+                decision_context_id,
+            )
+            return None, None, None, SubmitResult(
+                status="ERROR",
+                error_phase="ai",
+                error_message=f"assemble() failed: {exc}",
+                decision_context_id=decision_context_id,
+            )
+
+        # Resolve trade_decision_id from the intent for diagnostics.
+        trade_decision_id: UUID | None = None
+        if intent.decision_context_id is not None:
+            try:
+                td = await self._repos.trade_decisions.get_by_context(
+                    intent.decision_context_id
+                )
+                if td is not None:
+                    trade_decision_id = td.trade_decision_id
+            except Exception:
+                pass
+
+        # ── ExecutionAttempt 생성 (running) ──
+        _attempt_id: UUID | None = None
+        if trade_decision_id is not None and intent.decision_context_id is not None:
+            try:
+                _now = datetime.now(timezone.utc)
+                attempt = ExecutionAttemptEntity(
+                    execution_attempt_id=uuid4(),
+                    trade_decision_id=trade_decision_id,
+                    decision_context_id=intent.decision_context_id,
+                    status="running",
+                    started_at=_now,
+                    created_at=_now,
+                )
+                saved = await self._repos.execution_attempts.add(attempt)
+                _attempt_id = saved.execution_attempt_id
+                logger.info(
+                    "[ATTEMPT_CREATED] execution_attempt_id=%s trade_decision_id=%s",
+                    _attempt_id,
+                    trade_decision_id,
+                )
+            except Exception:
+                logger.warning(
+                    "ExecutionAttempt creation failed (non-fatal). "
+                    "trade_decision_id=%s",
+                    trade_decision_id,
+                    exc_info=True,
+                )
+                _attempt_id = None
+
+        return intent, trade_decision_id, _attempt_id, None
 
     def _build_sizing_inputs(
         self,
@@ -2406,8 +2517,8 @@ class DecisionOrchestratorService:
                 degraded_reason="timeout",
             )
             object.__setattr__(event_output, "aggregate_view", degraded_av)
-            # ★ timeout fallback에서도 EI summary 생성
-            object.__setattr__(event_output, "summary", _build_ei_summary(event_output))
+            # ★ timeout fallback: _finalize_ei_output()로 interpreted_event_count, summary_basis, summary 설정
+            event_output = _finalize_ei_output(event_output)
         except Exception:
             logger.warning(
                 "Event Interpretation Agent failed after %.2fs — using default "
@@ -2424,8 +2535,8 @@ class DecisionOrchestratorService:
                 degraded_reason="provider_error",
             )
             object.__setattr__(event_output, "aggregate_view", degraded_av)
-            # ★ exception fallback에서도 EI summary 생성
-            object.__setattr__(event_output, "summary", _build_ei_summary(event_output))
+            # ★ exception fallback: _finalize_ei_output()로 interpreted_event_count, summary_basis, summary 설정
+            event_output = _finalize_ei_output(event_output)
 
         if _is_missing_agent_symbol(event_output.symbol) and symbol:
             event_output = replace(event_output, symbol=symbol)
@@ -2439,11 +2550,11 @@ class DecisionOrchestratorService:
         # ── EI top_reason_codes empty detection ─────────────────────
         if (event_output.aggregate_view
                 and not event_output.aggregate_view.top_reason_codes
-                and event_output.aggregate_view.event_count > 0):
+                and event_output.detected_event_count > 0):
             logger.warning(
-                "EI top_reason_codes is empty but event_count=%d "
+                "EI top_reason_codes is empty but detected_event_count=%d "
                 "(symbol=%s) — LLM may have omitted the field in aggregation",
-                event_output.aggregate_view.event_count, symbol,
+                event_output.detected_event_count, symbol,
             )
 
         # --- Build a new request with the EI output for downstream agents ---
@@ -2906,6 +3017,24 @@ class DecisionOrchestratorService:
 
 
 # ---------------------------------------------------------------------------
+# Helper: convert PhaseTraceEntry list to JSON-serializable dicts
+# ---------------------------------------------------------------------------
+
+
+def _phase_trace_to_dicts(phase_trace: list[PhaseTraceEntry]) -> list[dict[str, object]]:
+    """``list[PhaseTraceEntry]`` → ``list[dict]`` (JSONB 저장용).
+
+    ``PhaseTraceEntry`` dataclass를 DB JSONB 컬럼에 저장할 수 있는
+    plain dict 리스트로 변환한다. 각 dict는 ``phase``, ``elapsed_ms``,
+    ``status`` 키를 가진다.
+    """
+    return [
+        {"phase": e.phase, "elapsed_ms": e.elapsed_ms, "status": e.status}
+        for e in phase_trace
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Helper: convert a frozen dataclass to a plain dict
 # ---------------------------------------------------------------------------
 
@@ -3102,11 +3231,11 @@ def _deserialize_agent_output(
     logger.info(
         "_deserialize_agent_output: symbol=%s "
         "event_output.events=%d event_output.aggregate_view.no_material_events=%s "
-        "event_output.aggregate_view.event_count=%s",
+        "event_output.detected_event_count=%s",
         composer_output.symbol,
         len(event_output.events),
         event_output.aggregate_view.no_material_events,
-        event_output.aggregate_view.event_count,
+        event_output.detected_event_count,
     )
 
     return AgentExecutionBundle(
@@ -3137,8 +3266,8 @@ def _build_fallback_bundle() -> AgentExecutionBundle:
         "failed or timed out, or provider configuration was missing."
     )
     event_output = EventInterpretationOutput()
-    # ★ fallback bundle에서도 EI summary 생성 (summary="" 방지)
-    object.__setattr__(event_output, "summary", _build_ei_summary(event_output))
+    # ★ fallback bundle: _finalize_ei_output()로 interpreted_event_count, summary_basis, summary 설정
+    event_output = _finalize_ei_output(event_output)
     risk_output = AIRiskOutput()
     composer_output = FinalDecisionComposerOutput()
 

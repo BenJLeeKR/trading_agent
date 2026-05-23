@@ -198,7 +198,23 @@ export interface TradeDecisionDetail {
   max_order_value: number | null;
   confidence: number | null;
   rationale_summary: string | null;
+  source_type: string | null;
   decision_json?: Record<string, unknown>;
+  // ── Pipeline stop / order exposure ──
+  order_request_id: string | null;
+  order_status: string | null;
+
+  // ── Execution Attempt status (P2: LEFT JOIN LATERAL from execution_attempts) ──
+  execution_attempt_status: string | null;
+
+  // ── Latest execution attempt summary (Phase 5) ──
+  latest_execution_attempt_id: string | null;
+  latest_stop_phase: string | null;
+  latest_stop_reason: string | null;
+  latest_completed_at: string | null;
+  latest_phase_count: number | null;
+
+  execution_status: string | null;
 }
 
 export interface PaginatedTradeDecisionsResponse {
@@ -388,6 +404,25 @@ export interface ExternalEventView {
 export interface ExternalEventsResponse {
   status: string;
   data: ExternalEventView[];
+}
+
+export interface ExecutionAttemptDetail {
+  execution_attempt_id: string;
+  trade_decision_id: string;
+  decision_context_id: string;
+  status: string;
+  stop_phase: string | null;
+  stop_reason: string | null;
+  phase_trace: Record<string, unknown>[] | null;
+  order_request_id: string | null;
+  started_at: string;
+  completed_at: string | null;
+  created_at: string | null;
+}
+
+export interface ExecutionAttemptListResponse {
+  status: string;
+  data: ExecutionAttemptDetail[];
 }
 
 export interface ApiError {

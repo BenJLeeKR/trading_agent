@@ -8,6 +8,7 @@ import pytest
 
 from agent_trading.domain.entities import AccountEntity, TradeDecisionEntity
 from agent_trading.domain.enums import DecisionType, EntryStyle, OrderSide
+from agent_trading.repositories.contracts import TradeDecisionRow
 from agent_trading.repositories.container import RepositoryContainer
 
 
@@ -610,15 +611,15 @@ async def test_list_all_paginated_basic(
 ) -> None:
     """``list_all_paginated()`` returns correct items and total count."""
     repos = seeded_postgres_data
-    items_with_names, total = await repos.trade_decisions.list_all_paginated(
+    rows, total = await repos.trade_decisions.list_all_paginated(
         limit=10, offset=0
     )
     assert total >= 1, "Expected at least 1 seeded decision"
-    assert len(items_with_names) <= 10
-    # Each item is a (entity, instrument_name) tuple
-    for entity, inst_name in items_with_names:
-        assert entity.trade_decision_id is not None
-        # instrument_name may be None if no matching instrument row
+    assert len(rows) <= 10
+    # Each item is a TradeDecisionRow
+    for row in rows:
+        assert row.entity.trade_decision_id is not None
+        # row.instrument_name may be None if no matching instrument row
 
 
 @pytest.mark.asyncio
@@ -674,30 +675,30 @@ async def test_list_all_paginated_limit_offset(
     assert len(all_ids) == 5, f"Expected exactly 5 test decisions, got {len(all_ids)}"
 
     # Page 1: limit=2, offset=0 → first 2 items
-    items1, total1 = await repos.trade_decisions.list_all_paginated(
+    rows1, total1 = await repos.trade_decisions.list_all_paginated(
         limit=2, offset=0
     )
     assert total1 >= 5
-    assert len(items1) == 2
-    assert items1[0][0].trade_decision_id == all_ids[0]  # most recent
-    assert items1[1][0].trade_decision_id == all_ids[1]
+    assert len(rows1) == 2
+    assert rows1[0].entity.trade_decision_id == all_ids[0]  # most recent
+    assert rows1[1].entity.trade_decision_id == all_ids[1]
 
     # Page 2: limit=2, offset=2 → next 2 items
-    items2, total2 = await repos.trade_decisions.list_all_paginated(
+    rows2, total2 = await repos.trade_decisions.list_all_paginated(
         limit=2, offset=2
     )
     assert total2 == total1
-    assert len(items2) == 2
-    assert items2[0][0].trade_decision_id == all_ids[2]
-    assert items2[1][0].trade_decision_id == all_ids[3]
+    assert len(rows2) == 2
+    assert rows2[0].entity.trade_decision_id == all_ids[2]
+    assert rows2[1].entity.trade_decision_id == all_ids[3]
 
     # Page 3: limit=2, offset=4 → last 1 item (our 5th test decision)
-    items3, total3 = await repos.trade_decisions.list_all_paginated(
+    rows3, total3 = await repos.trade_decisions.list_all_paginated(
         limit=2, offset=4
     )
     assert total3 == total1
-    # items3 may contain fixture-seeded rows after our 5 test decisions
-    assert items3[0][0].trade_decision_id == all_ids[4]
+    # rows3 may contain fixture-seeded rows after our 5 test decisions
+    assert rows3[0].entity.trade_decision_id == all_ids[4]
 
 
 @pytest.mark.asyncio
@@ -740,10 +741,12 @@ async def test_list_all_paginated_with_context_filter(
     )
 
     # Filter by context
-    items, total = await repos.trade_decisions.list_all_paginated(
+    rows, total = await repos.trade_decisions.list_all_paginated(
         limit=50, offset=0, decision_context_id=seeded_decision_context,
     )
     assert total >= 2
     # Most recent first
-    assert items[0][0].trade_decision_id == td_id_2
-    assert items[1][0].trade_decision_id == td_id_1
+    assert rows[0].entity.trade_decision_id == td_id_2
+    assert rows[1].entity.trade_decision_id == td_id_1
+
+

@@ -33,7 +33,9 @@ from agent_trading.domain.entities import (
     SnapshotSyncRunEntity,
     StrategyEntity,
     TradeDecisionEntity,
+    ExecutionAttemptEntity,
 )
+from agent_trading.domain.entities import ExecutionAttemptEntity
 from agent_trading.domain.enums import Environment, OrderStatus
 from agent_trading.repositories.filters import AccountLookup, DecisionContextQuery, OrderQuery
 
@@ -68,6 +70,70 @@ class SnapshotSyncHealthSummary:
 
     after_hours: bool = False
     """``True`` when the most recent run was an after-hours (cash-only) sync."""
+
+
+@dataclass(slots=True, frozen=True)
+class TradeDecisionRow:
+    """TradeDecisionEntity + resolved fields from LEFT JOINs.
+
+    ``entity`` contains the full ``TradeDecisionEntity``.
+    ``order_request_id`` / ``order_status`` are resolved via
+    ``LEFT JOIN trading.order_requests``.
+    ``instrument_name`` is resolved via ``LEFT JOIN trading.instruments``.
+    ``phase_trace`` is the raw JSONB column from ``execution_attempts``
+    (resolved via ``LEFT JOIN LATERAL`` at the row level).
+    """
+
+    entity: TradeDecisionEntity
+    order_request_id: str | None = None
+    order_status: str | None = None
+    instrument_name: str | None = None
+    phase_trace: list[dict[str, object]] | None = None
+    """Raw phase_trace JSONB from ``execution_attempts``
+    (resolved via ``LEFT JOIN LATERAL`` in ``list_all_paginated()``).
+    """
+
+    execution_attempt_status: str | None = None
+    """Status of the latest ``ExecutionAttemptEntity`` for this trade decision,
+    resolved via ``LEFT JOIN LATERAL`` on ``trading.execution_attempts``.
+
+    ``None`` when no execution attempt exists yet.
+    """
+
+    latest_execution_attempt_id: str | None = None
+    """ID of the latest ``ExecutionAttemptEntity`` for this trade decision,
+    resolved via ``LEFT JOIN LATERAL`` on ``trading.execution_attempts``.
+
+    ``None`` when no execution attempt exists yet.
+    """
+
+    latest_stop_phase: str | None = None
+    """Stop phase of the latest ``ExecutionAttemptEntity`` for this trade decision,
+    resolved via ``LEFT JOIN LATERAL`` on ``trading.execution_attempts``.
+
+    ``None`` when no execution attempt exists yet.
+    """
+
+    latest_stop_reason: str | None = None
+    """Stop reason of the latest ``ExecutionAttemptEntity`` for this trade decision,
+    resolved via ``LEFT JOIN LATERAL`` on ``trading.execution_attempts``.
+
+    ``None`` when no execution attempt exists yet.
+    """
+
+    latest_completed_at: str | None = None
+    """Completed-at timestamp of the latest ``ExecutionAttemptEntity`` for this trade decision,
+    resolved via ``LEFT JOIN LATERAL`` on ``trading.execution_attempts``.
+
+    ``None`` when no execution attempt exists yet.
+    """
+
+    latest_phase_count: int | None = None
+    """Number of phases in the latest ``ExecutionAttemptEntity`` for this trade decision,
+    resolved via ``LEFT JOIN LATERAL`` (``jsonb_array_length(ea.phase_trace)``).
+
+    ``None`` when no execution attempt exists yet.
+    """
 
 
 class ClientRepository(Protocol):
@@ -341,26 +407,18 @@ class TradeDecisionRepository(Protocol):
         limit: int = 50,
         offset: int = 0,
         decision_context_id: UUID | None = None,
-    ) -> tuple[list[tuple[TradeDecisionEntity, str | None]], int]:
+    ) -> tuple[list[TradeDecisionRow], int]:
         """서버사이드 페이지네이션: (items, total_count) 반환.
 
-        각 item은 ``(entity, instrument_name)`` 튜플.
+        각 item은 ``TradeDecisionRow`` (entity + order_request_id + order_status).
         ``instrument_name``은 SQL LEFT JOIN으로 한 번에 resolve (N+1 방지).
 
         ``decision_context_id``가 주어지면 해당 컨텍스트로 필터링.
         ``limit``: 페이지당 최대 row 수 (기본 50).
         ``offset``: 건너뛸 row 수.
-        반환값: (해당 페이지의 (entity, instrument_name) 리스트, 조건에 맞는 전체 row 수).
+        반환값: (해당 페이지의 TradeDecisionRow 리스트, 조건에 맞는 전체 row 수).
         """
         ...
-
-    async def update_pipeline_stop(
-        self,
-        trade_decision_id: UUID,
-        phase: str,
-        reason: str,
-        stopped_at: datetime,
-    ) -> None: ...
 
 class OrderRepository(Protocol):
     async def add(self, order: OrderRequestEntity) -> OrderRequestEntity:
@@ -827,6 +885,36 @@ class AgentRunRepository(Protocol):
 
     async def list_all(self, limit: int = 100) -> Sequence[AgentRunEntity]:
         """Return recent runs ordered by started_at DESC."""
+        ...
+
+
+class ExecutionAttemptRepository(Protocol):
+    async def add(
+        self, attempt: ExecutionAttemptEntity
+    ) -> ExecutionAttemptEntity:
+        ...
+
+    async def get(
+        self, execution_attempt_id: UUID
+    ) -> ExecutionAttemptEntity | None:
+        ...
+
+    async def update_status(
+        self,
+        execution_attempt_id: UUID,
+        status: str,
+        *,
+        stop_phase: str | None = None,
+        stop_reason: str | None = None,
+        phase_trace: list[dict[str, object]] | None = None,
+        order_request_id: UUID | None = None,
+        completed_at: datetime | None = None,
+    ) -> None:
+        ...
+
+    async def list_by_trade_decision(
+        self, trade_decision_id: UUID
+    ) -> Sequence[ExecutionAttemptEntity]:
         ...
 
 

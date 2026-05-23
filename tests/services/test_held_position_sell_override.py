@@ -172,7 +172,7 @@ class TestFallbackBundleEiSummary:
         bundle = _build_fallback_bundle()
         assert bundle.event_output is not None
         summary = bundle.event_output.summary
-        # _build_ei_summary()는 항상 한국어 요약을 생성하므로
+        # _build_summary_text()는 항상 한국어 요약을 생성하므로
         # "유의미한 신규 이벤트 없음"과 같은 문자열이 포함되어야 함
         assert "이벤트" in summary or "전반" in summary or "건" in summary
 

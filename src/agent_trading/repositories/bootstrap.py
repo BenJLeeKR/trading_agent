@@ -14,6 +14,7 @@ from agent_trading.repositories.memory import (
     InMemoryClientRepository,
     InMemoryConfigVersionRepository,
     InMemoryDecisionContextRepository,
+    InMemoryExecutionAttemptRepository,
     InMemoryExternalEventRepository,
     InMemoryFillEventRepository,
     InMemoryGuardrailEvaluationRepository,
@@ -71,6 +72,7 @@ def build_in_memory_repositories() -> RepositoryContainer:
     repos = RepositoryContainer(
         unit_of_work=InMemoryUnitOfWork(),
         agent_runs=InMemoryAgentRunRepository(),
+        execution_attempts=InMemoryExecutionAttemptRepository(),
         clients=InMemoryClientRepository(),
         accounts=InMemoryAccountRepository(),
         strategies=InMemoryStrategyRepository(),

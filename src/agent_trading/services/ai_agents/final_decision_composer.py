@@ -309,7 +309,7 @@ class FinalDecisionComposerAgent:
             lines.append(f"Overall bias: {ei_output.aggregate_view.overall_bias}")
             lines.append(f"Event conflict: {ei_output.aggregate_view.event_conflict}")
             lines.append(f"Evidence strength: {ei_output.aggregate_view.evidence_strength}")
-            lines.append(f"Event count: {ei_output.aggregate_view.event_count}")
+            lines.append(f"Event count: {ei_output.detected_event_count}")
             lines.append(f"No material events: {ei_output.aggregate_view.no_material_events}")
             if ei_output.aggregate_view.top_reason_codes:
                 lines.append(

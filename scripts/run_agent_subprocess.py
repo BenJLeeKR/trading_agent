@@ -584,16 +584,16 @@ async def main() -> None:
             f"EventInterpretationAgent completed: symbol={event_output.symbol} "
             f"input_events={input_event_count} "
             f"output_events={len(event_output.events)} "
-            f"event_count={event_output.aggregate_view.event_count} "
+            f"detected_event_count={event_output.detected_event_count} "
             f"no_material_events={event_output.aggregate_view.no_material_events}"
         )
         logger.info(
             "EventInterpretationAgent completed: symbol=%s "
-            "input_events=%d output_events=%d event_count=%s no_material_events=%s",
+            "input_events=%d output_events=%d detected_event_count=%s no_material_events=%s",
             event_output.symbol,
             input_event_count,
             len(event_output.events),
-            event_output.aggregate_view.event_count,
+            event_output.detected_event_count,
             event_output.aggregate_view.no_material_events,
         )
 
@@ -637,6 +637,14 @@ async def main() -> None:
                 degraded_reason=f"fdc_skipped:{skip_reason}",
             )
             object.__setattr__(event_output, "aggregate_view", degraded_av)
+            # ★ 신규: FDC skip은 EI 분석 결과와 무관하므로 summary_basis="none"
+            object.__setattr__(event_output, "summary_basis", "none")
+            # ★ 신규: interpreted_event_count 동기화
+            object.__setattr__(
+                event_output,
+                "interpreted_event_count",
+                len(event_output.events),
+            )
             _diag(f"FDC skipped: reason={skip_reason} symbol={composer_output.symbol}")
             logger.info(
                 "FDC skipped: reason=%s symbol=%s decision_type=%s",

@@ -382,7 +382,8 @@ describe("formatEiOutput", () => {
         evidence_strength: 'moderate',
         event_count: 2,
         no_material_events: false,
-      }
+      },
+      interpreted_event_count: 2,
     });
     expect(result).not.toBeNull();
     expect(result!.biasLabel).toBe('부정');
@@ -451,5 +452,116 @@ describe("formatEiOutput", () => {
     expect(result!.eventCount).toBe(0);
     expect(result!.hasMaterialEvents).toBe(true);
     expect(result!.operatorSummary).toBe('성향: —');
+  });
+
+  it('returns new Phase 1 fields from top-level (T7)', () => {
+    const result = formatEiOutput({
+      aggregate_view: {
+        overall_bias: 'positive',
+        event_conflict: false,
+        top_reason_codes: ['earnings_surprise'],
+        evidence_strength: 'moderate',
+        event_count: 5,
+        no_material_events: false,
+        interpretation_incomplete: false,
+      },
+      detected_event_count: 5,
+      interpreted_event_count: 2,
+      summary_basis: 'interpreted',
+    });
+    expect(result).not.toBeNull();
+    // 신규 필드가 최상위 값 사용
+    expect(result!.detectedEventCount).toBe(5);
+    expect(result!.interpretedEventCount).toBe(2);
+    expect(result!.summaryBasis).toBe('interpreted');
+    // eventCount는 interpretedEventCount와 같아야 함
+    expect(result!.eventCount).toBe(2);
+    // operatorSummary에는 interpretedEventCount 사용
+    expect(result!.operatorSummary).toContain('이벤트 2건');
+  });
+
+  it('fallback to aggregate_view when new fields are missing (T8)', () => {
+    const result = formatEiOutput({
+      aggregate_view: {
+        overall_bias: 'negative',
+        event_conflict: false,
+        top_reason_codes: ['price_decline'],
+        evidence_strength: 'weak',
+        event_count: 3,
+        no_material_events: false,
+      },
+      // detected_event_count, interpreted_event_count, summary_basis 없음
+    });
+    expect(result).not.toBeNull();
+    // detectedEventCount는 aggregate_view.event_count로 fallback
+    expect(result!.detectedEventCount).toBe(3);
+    // interpretedEventCount는 events.length로 fallback (events 없음 → 0)
+    expect(result!.interpretedEventCount).toBe(0);
+    // summaryBasis는 "none"으로 fallback
+    expect(result!.summaryBasis).toBe('none');
+    // eventCount는 interpretedEventCount (0) 사용
+    expect(result!.eventCount).toBe(0);
+    // operatorSummary에 events count 없음 (interpretedEventCount=0)
+    expect(result!.operatorSummary).not.toContain('이벤트');
+  });
+
+  it('returns isReconstructed=true when all events have is_reconstructed=true', () => {
+    const result = formatEiOutput({
+      aggregate_view: {
+        overall_bias: 'neutral',
+        event_conflict: false,
+        evidence_strength: 'weak',
+        event_count: 2,
+        no_material_events: false,
+      },
+      events: [
+        { is_reconstructed: true, summary: '재구성 이벤트 1' },
+        { is_reconstructed: true, summary: '재구성 이벤트 2' },
+      ],
+      detected_event_count: 2,
+      interpreted_event_count: 2,
+      summary_basis: 'detected_only',
+    });
+    expect(result).not.toBeNull();
+    expect(result!.isReconstructed).toBe(true);
+  });
+
+  it('returns isReconstructed=false when some events lack is_reconstructed', () => {
+    const result = formatEiOutput({
+      aggregate_view: {
+        overall_bias: 'positive',
+        event_conflict: false,
+        evidence_strength: 'moderate',
+        event_count: 2,
+        no_material_events: false,
+      },
+      events: [
+        { is_reconstructed: true, summary: '재구성 이벤트' },
+        { summary: '정상 해석 이벤트' },
+      ],
+      detected_event_count: 2,
+      interpreted_event_count: 2,
+      summary_basis: 'interpreted',
+    });
+    expect(result).not.toBeNull();
+    expect(result!.isReconstructed).toBe(false);
+  });
+
+  it('returns isReconstructed=false when events array is empty', () => {
+    const result = formatEiOutput({
+      aggregate_view: {
+        overall_bias: 'neutral',
+        event_conflict: false,
+        evidence_strength: 'none',
+        event_count: 0,
+        no_material_events: true,
+      },
+      events: [],
+      detected_event_count: 0,
+      interpreted_event_count: 0,
+      summary_basis: 'none',
+    });
+    expect(result).not.toBeNull();
+    expect(result!.isReconstructed).toBe(false);
   });
 });

@@ -1,9 +1,9 @@
 {
-  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJ0b2tlbiIsImF1ZCI6IjY3NmU3MGEzLWEwNTQtNDlkMC1hYmQ4LTI2MTNiMzQ5MTRjZSIsInByZHRfY2QiOiIiLCJpc3MiOiJ1bm9ndyIsImV4cCI6MTc3OTQ5MzgwNCwiaWF0IjoxNzc5NDA3NDA0LCJqdGkiOiJQUzV2TkRZMlg4YUVMU2M5ZjY0aEZhbnBCWmxqU21xVGdSSXkifQ.0_oGWO7FHE8sYbWtMYnd1HczndDFh2Iaxgy51UYoObTLYXPJquqI5t4OxTd0ZGxF94L1WjCxWeSQnCcj5zR-wA",
-  "expires_at": 1779493504.8198104,
+  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJ0b2tlbiIsImF1ZCI6IjkzOWJhN2U0LTI2MjAtNDRlZi05MWI2LWYyNTAwODkyNWYwNSIsInByZHRfY2QiOiIiLCJpc3MiOiJ1bm9ndyIsImV4cCI6MTc3OTU4MDA4MiwiaWF0IjoxNzc5NDkzNjgyLCJqdGkiOiJQUzV2TkRZMlg4YUVMU2M5ZjY0aEZhbnBCWmxqU21xVGdSSXkifQ.MUXNZhJ7Shh0Pkk9c3Rf4caqhKLB_49KNrDvc4QpXHuytVA5o6gjNCWbOgW4fgIuWH6n9fkw6YKzdEAFSzTpHA",
+  "expires_at": 1779579782.4333112,
   "credential_fingerprint": "b5d0fe1dcbdd94ed",
   "cache_purpose": "paper_access_token",
-  "created_at": 1779407404.8198104,
+  "created_at": 1779493682.4333112,
   "kis_env": "paper",
   "base_url": "https://openapivts.koreainvestment.com:29443"
 }

@@ -15,6 +15,7 @@ from agent_trading.api.schemas import (
     TradeDecisionDetail,
 )
 from agent_trading.repositories.container import RepositoryContainer
+from agent_trading.repositories.contracts import TradeDecisionRow
 
 router = APIRouter(tags=["decisions"])
 
@@ -31,12 +32,16 @@ def _safe_enum_str(value: object) -> str:
     return str(value)
 
 
-def _to_detail(d: object, instrument_name: str | None = None) -> TradeDecisionDetail:
-    """Convert domain entity to API schema.
+def _to_detail(row: TradeDecisionRow, instrument_name: str | None = None) -> TradeDecisionDetail:
+    """Convert ``TradeDecisionRow`` to API schema.
+
+    ``TradeDecisionRow`` contains the domain entity plus optional
+    ``order_request_id`` and ``order_status`` from a LEFT JOIN.
 
     ``instrument_name``은 SQL LEFT JOIN으로 미리 resolve된 값을 받아
     N+1 문제를 방지한다.
     """
+    d = row.entity
     return TradeDecisionDetail(
         trade_decision_id=str(d.trade_decision_id),
         decision_context_id=str(d.decision_context_id),
@@ -55,6 +60,15 @@ def _to_detail(d: object, instrument_name: str | None = None) -> TradeDecisionDe
         source_type=d.source_type,
         decision_json=d.decision_json,
         instrument_name=instrument_name,
+        # 신규 pipeline_stop / order 노출 필드
+        order_request_id=str(row.order_request_id) if row.order_request_id else None,
+        order_status=row.order_status,
+        # Phase 5: Latest execution attempt summary fields
+        latest_execution_attempt_id=row.latest_execution_attempt_id,
+        latest_stop_phase=row.latest_stop_phase,
+        latest_stop_reason=row.latest_stop_reason,
+        latest_completed_at=row.latest_completed_at,
+        latest_phase_count=row.latest_phase_count,
     )
 
 
@@ -83,14 +97,15 @@ async def list_trade_decisions(
                 status_code=400, detail=f"Invalid UUID: {decision_context_id}"
             ) from exc
 
-    items_with_names, total = await repos.trade_decisions.list_all_paginated(
+    rows, total = await repos.trade_decisions.list_all_paginated(
         limit=limit,
         offset=offset,
         decision_context_id=ctx_id,
     )
 
-    # SQL LEFT JOIN으로 instrument_name이 이미 resolve되어 있음
-    details = [_to_detail(d, instrument_name=name) for d, name in items_with_names]
+    # SQL LEFT JOIN으로 instrument_name이 이미 TradeDecisionRow.instrument_name에
+    # resolve되어 있음
+    details = [_to_detail(row, instrument_name=row.instrument_name) for row in rows]
 
     return PaginatedTradeDecisionsResponse(
         items=details,
