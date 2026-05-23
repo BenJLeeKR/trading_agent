@@ -36,6 +36,7 @@ from agent_trading.repositories.memory import (
     InMemoryPositionSnapshotRepository,
     InMemorySnapshotSyncRunRepository,
 )
+from agent_trading.brokers.koreainvestment.rest_client import CashAndPositionsResult
 from agent_trading.services.kis_snapshot_sync import (
     BatchSyncResult,
     SyncResult,
@@ -84,6 +85,28 @@ class FakeKISRestClient:
     ) -> Decimal | None:
         self.get_orderable_cash_called = True
         return self._orderable_cash
+
+    async def get_cash_and_positions(
+        self,
+        *,
+        after_hours: bool = False,
+    ) -> CashAndPositionsResult:
+        """Fake implementation: delegates to get_positions() and get_cash_balance().
+
+        Delegating to the individual methods allows subclasses (e.g. FailingClient)
+        to override ``get_positions()`` or ``get_cash_balance()`` and still have
+        those overrides exercised through ``get_cash_and_positions()``.
+        """
+        positions = await self.get_positions()
+        cash_balance = await self.get_cash_balance(after_hours=after_hours)
+        return CashAndPositionsResult(
+            positions=positions,
+            cash_balance=cash_balance,
+            raw_response={
+                "output1": positions,
+                "output2": cash_balance,
+            },
+        )
 
     async def close(self) -> None:
         pass
@@ -455,12 +478,17 @@ class TestSyncCashBalance:
         position_repo: InMemoryPositionSnapshotRepository,
         cash_repo: InMemoryCashBalanceSnapshotRepository,
     ) -> None:
-        """cash 조회가 BudgetExhaustedError로 실패해도 cash snapshot은 저장되지 않지만
-        (cash 조회 자체가 실패했으므로), cash 실패가 positions 실패에 영향을 주지 않는다.
-        cash 조회 실패 시 CASH_SYNC_ZERO가 아닌 errors에 기록된다."""
+        """``get_cash_and_positions()``가 BudgetExhaustedError로 실패하면
+        cash snapshot은 저장되지 않고 positions도 함께 실패한다.
+        리팩토링 후 ``get_cash_and_positions()`` 1회 호출이므로
+        cash/positions가 함께 실패하는 것이 production contract와 일치한다."""
 
         class BudgetExhaustedCashClient(FakeKISRestClient):
-            async def get_cash_balance(self, after_hours: bool = False) -> dict[str, Any]:
+            async def get_cash_and_positions(
+                self,
+                *,
+                after_hours: bool = False,
+            ) -> CashAndPositionsResult:
                 raise BudgetExhaustedError(
                     bucket="inquiry",
                     message="Bucket 'inquiry' exhausted (remaining=0/1)",
@@ -480,11 +508,10 @@ class TestSyncCashBalance:
         # cash 조회 실패 → cash_balance_synced=False
         assert result.cash_balance_synced is False
         assert len(cash_repo._items) == 0
-        # budget exhaustion 에러 메시지 확인
-        assert any("budget exhausted" in err.lower() for err in result.errors)
-        # positions는 FakeKISRestClient가 budget 관리를 하지 않으므로 정상 조회됨
-        # (실제 환경에서는 budget 소진으로 실패하겠지만, 여기서는 mock이므로 positions는 성공)
-        assert result.positions_synced == 1
+        # budget exhaustion 에러 메시지 확인 (BudgetExhaustedError → "exhausted" 포함)
+        assert any("exhausted" in err.lower() for err in result.errors)
+        # get_cash_and_positions() 1회 호출 실패 → positions도 함께 실패
+        assert result.positions_synced == 0
 
     async def test_orderable_cash_budget_exhausted_fallback_to_raw_cash(
         self,
@@ -543,11 +570,17 @@ class TestSyncCashBalance:
         position_repo: InMemoryPositionSnapshotRepository,
         cash_repo: InMemoryCashBalanceSnapshotRepository,
     ) -> None:
-        """positions 조회가 BudgetExhaustedError로 실패해도
-        cash snapshot은 정상 저장됨 (cash가 positions보다 먼저 조회되므로)."""
+        """``get_cash_and_positions()``가 BudgetExhaustedError로 실패하면
+        cash도 positions도 모두 저장되지 않는다.
+        리팩토링 후 ``get_cash_and_positions()`` 1회 호출이므로
+        cash/positions가 함께 실패하는 것이 production contract와 일치한다."""
 
         class BudgetExhaustedPositionsClient(FakeKISRestClient):
-            async def get_positions(self) -> list[dict[str, Any]]:
+            async def get_cash_and_positions(
+                self,
+                *,
+                after_hours: bool = False,
+            ) -> CashAndPositionsResult:
                 raise BudgetExhaustedError(
                     bucket="inquiry",
                     message="Bucket 'inquiry' exhausted (remaining=0/1)",
@@ -567,14 +600,13 @@ class TestSyncCashBalance:
             account_id=account_id,
         )
 
-        # cash는 정상 저장
-        assert result.cash_balance_synced is True
-        assert len(cash_repo._items) == 1
-        snap = list(cash_repo._items.values())[0]
-        assert snap.available_cash == Decimal("5000000")
-        # positions는 budget 부족으로 실패
+        # cash도 함께 실패 (get_cash_and_positions() 1회 호출이므로)
+        assert result.cash_balance_synced is False
+        assert len(cash_repo._items) == 0
+        # positions도 budget 부족으로 실패
         assert result.positions_synced == 0
-        assert any("budget exhausted" in err.lower() for err in result.errors)
+        # budget exhaustion 에러 메시지 확인 (BudgetExhaustedError → "exhausted" 포함)
+        assert any("exhausted" in err.lower() for err in result.errors)
 
     async def test_orderable_cash_general_exception_fallback_to_available_cash(
         self,

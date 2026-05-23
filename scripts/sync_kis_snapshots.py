@@ -43,7 +43,7 @@ import json
 import logging
 import sys
 from datetime import datetime, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from agent_trading.config.settings import AppSettings
 from agent_trading.db.connection import DatabaseConfig, create_pool
@@ -243,6 +243,8 @@ async def _run_single(
     repos: Any,
     account_id: UUID,
     fmt: str = "text",
+    *,
+    snapshot_sync_run_id: UUID | None = None,
 ) -> tuple[int, SyncResult]:
     """Run sync for a single account."""
     logger.info("Syncing snapshots for account_id=%s ...", account_id)
@@ -252,6 +254,7 @@ async def _run_single(
         position_snapshot_repo=repos.position_snapshots,
         cash_balance_snapshot_repo=repos.cash_balance_snapshots,
         account_id=account_id,
+        snapshot_sync_run_id=snapshot_sync_run_id,
     )
 
     if fmt == "text":
@@ -275,6 +278,8 @@ async def _run_single_by_ref(
     account_ref: str,
     env: Environment | None,
     fmt: str = "text",
+    *,
+    snapshot_sync_run_id: UUID | None = None,
 ) -> tuple[int, SyncResult]:
     """Lookup account by reference string, then sync.
 
@@ -314,7 +319,10 @@ async def _run_single_by_ref(
         return 2, SyncResult()
 
     # 3. Sync
-    return await _run_single(rest_client, repos, account.account_id, fmt=fmt)
+    return await _run_single(
+        rest_client, repos, account.account_id, fmt=fmt,
+        snapshot_sync_run_id=snapshot_sync_run_id,
+    )
 
 
 async def _run_multi(

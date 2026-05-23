@@ -194,6 +194,14 @@ export async function getCashBalance(
   );
 }
 
+export async function getAccountSnapshots(
+  accountId: string
+): Promise<import("../types/api").AccountSnapshotResponse> {
+  return request<import("../types/api").AccountSnapshotResponse>(
+    `/account-snapshots/latest?account_id=${encodeURIComponent(accountId)}`
+  );
+}
+
 export async function getTradeDecisions(
   decisionContextId?: string,
   limit?: number,

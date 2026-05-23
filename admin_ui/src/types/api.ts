@@ -162,6 +162,17 @@ export interface CashBalanceSnapshotView {
   snapshot_at: string;
 }
 
+export type AlignmentStatus = "aligned" | "partial" | "unknown";
+
+export interface AccountSnapshotResponse {
+  account_id: string;
+  positions: PositionSnapshotView[];
+  cash_balance: CashBalanceSnapshotView | null;
+  alignment_status: AlignmentStatus;
+  positions_snapshot_at: string | null;
+  cash_snapshot_at: string | null;
+}
+
 export interface ClientDetail {
   client_id: string;
   client_code: string;

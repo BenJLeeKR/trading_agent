@@ -183,6 +183,7 @@ async def sync_account_snapshots(
     *,
     after_hours: bool = False,
     fetch_positions: bool = True,
+    snapshot_sync_run_id: UUID | None = None,
 ) -> SyncResult:
     """Broker-agnostic single-account snapshot sync.
 
@@ -208,6 +209,8 @@ async def sync_account_snapshots(
     fetch_positions:
         When ``True`` (default), fetches positions via the provider.
         When ``False``, only cash balance and risk limit snapshots are synced.
+    snapshot_sync_run_id:
+        Optional pre-generated run ID to stamp on each snapshot row.
 
     Returns
     -------
@@ -226,6 +229,18 @@ async def sync_account_snapshots(
         logger.error(msg)
         result._add_error(msg)
         return result
+
+    # ── 1b. Stamp snapshot_sync_run_id on fetched entities ───────────
+    # The provider builds entities without knowledge of the current run.
+    # We stamp the run ID here so that broker-agnostic sync also carries
+    # the FK, enabling exact same-run queries in the API layer.
+    if snapshot_sync_run_id is not None:
+        for pos in fetched.positions:
+            object.__setattr__(pos, "snapshot_sync_run_id", snapshot_sync_run_id)
+        if fetched.cash_balance is not None:
+            object.__setattr__(
+                fetched.cash_balance, "snapshot_sync_run_id", snapshot_sync_run_id,
+            )
 
     # ── 2. Persist positions ──────────────────────────────────────────
     current_instrument_ids: set[UUID] = set()
@@ -273,6 +288,7 @@ async def sync_account_snapshots(
                     unrealized_pnl=snap.unrealized_pnl,
                     source_of_truth=snap.source_of_truth,
                     snapshot_at=datetime.now(tz=timezone.utc),
+                    snapshot_sync_run_id=snapshot_sync_run_id,
                 )
                 await position_snapshot_repo.add(zero_snapshot)
                 zeroed_count += 1
@@ -329,6 +345,7 @@ async def sync_accounts_by_ids(
     *,
     after_hours: bool = False,
     fetch_positions: bool = True,
+    snapshot_sync_run_id: UUID | None = None,
 ) -> BatchSyncResult:
     """Broker-agnostic batch snapshot sync for specific account IDs.
 
@@ -353,6 +370,8 @@ async def sync_accounts_by_ids(
     fetch_positions:
         When ``True`` (default), fetches positions via the provider.
         When ``False``, only cash balance and risk limit snapshots are synced.
+    snapshot_sync_run_id:
+        Optional pre-generated run ID to stamp on each snapshot row.
 
     Returns
     -------
@@ -374,6 +393,7 @@ async def sync_accounts_by_ids(
                 account_id=account_id,
                 after_hours=after_hours,
                 fetch_positions=fetch_positions,
+                snapshot_sync_run_id=snapshot_sync_run_id,
             )
         except Exception as exc:
             msg = f"Unexpected error syncing account_id={account_id}: {exc}"
@@ -430,6 +450,7 @@ async def sync_all_accounts(
     account_status: str | None = None,
     after_hours: bool = False,
     fetch_positions: bool = True,
+    snapshot_sync_run_id: UUID | None = None,
 ) -> BatchSyncResult:
     """Broker-agnostic auto-discover + batch snapshot sync.
 
@@ -542,6 +563,7 @@ async def sync_all_accounts(
                 account_id=account.account_id,
                 after_hours=after_hours,
                 fetch_positions=fetch_positions,
+                snapshot_sync_run_id=snapshot_sync_run_id,
             )
         except Exception as exc:
             msg = f"Unexpected error syncing account_id={account.account_id}: {exc}"

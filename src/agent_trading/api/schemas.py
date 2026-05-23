@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from enum import Enum
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -620,6 +621,44 @@ class CashBalanceSnapshotView(BaseModel):
     source_of_truth: str
     snapshot_at: datetime
     created_at: datetime
+
+
+class AlignmentStatus(str, Enum):
+    """Snapshot alignment status between cash and position snapshots.
+
+    ``"aligned"`` — both snapshots share the same ``snapshot_at`` timestamp.
+    ``"partial"`` — timestamps differ by more than the tolerance threshold.
+    ``"unknown"`` — one or both snapshots are missing (null).
+    """
+
+    ALIGNED = "aligned"
+    PARTIAL = "partial"
+    UNKNOWN = "unknown"
+
+
+class AccountSnapshotResponse(BaseModel):
+    """``GET /account-snapshots/latest`` — combined account snapshot view.
+
+    Returns the latest position snapshots and cash balance snapshot for
+    a single account in one response, along with an ``alignment_status``
+    field that tells the UI whether the two data sets were captured at
+    the same point in time.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    account_id: UUID
+    positions: list[PositionSnapshotView]
+    cash_balance: CashBalanceSnapshotView | None
+    alignment_status: AlignmentStatus
+    """``"aligned"`` — equal snapshots / ``"partial"`` — timestamp differs /
+    ``"unknown"`` — data missing."""
+
+    positions_snapshot_at: datetime | None
+    """Most recent ``snapshot_at`` among position snapshots."""
+
+    cash_snapshot_at: datetime | None
+    """Most recent ``snapshot_at`` of the cash balance snapshot."""
 
 
 class BrokerOrderView(BaseModel):

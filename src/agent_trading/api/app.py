@@ -253,6 +253,13 @@ def create_app(
 
     protected_routers.append(execution_attempts_router)
 
+    # Phase 6 — Account Snapshots combined endpoint (cash + positions alignment)
+    from agent_trading.api.routes.account_snapshots import (
+        router as account_snapshots_router,
+    )
+
+    protected_routers.append(account_snapshots_router)
+
     if auth_enabled:
         for router in protected_routers:
             app.include_router(router, dependencies=[Depends(require_viewer)])

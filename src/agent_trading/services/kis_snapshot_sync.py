@@ -109,6 +109,7 @@ def build_sync_run_entity(
     started_at: datetime | None = None,
     summary_json: dict[str, object] | None = None,
     after_hours: bool = False,
+    snapshot_sync_run_id: UUID | None = None,
 ) -> SnapshotSyncRunEntity:
     """Build a ``SnapshotSyncRunEntity`` from a ``BatchSyncResult`` + metadata.
 
@@ -132,6 +133,11 @@ def build_sync_run_entity(
         Optional structured summary data.
     after_hours : bool
         Whether this sync was an after-hours cash-only run.
+    snapshot_sync_run_id : UUID | None
+        Pre-generated run ID to use. When ``None`` (default), a new UUID
+        is generated internally.  Pass the same value that was injected
+        into the sync functions so that individual snapshot rows carry the
+        same FK.
 
     Returns
     -------
@@ -153,7 +159,7 @@ def build_sync_run_entity(
         status = "failed"
 
     return SnapshotSyncRunEntity(
-        snapshot_sync_run_id=uuid4(),
+        snapshot_sync_run_id=snapshot_sync_run_id or uuid4(),
         trigger_type=trigger_type,
         scope=scope,
         env_filter=env_filter,
@@ -185,6 +191,7 @@ async def sync_kis_account_snapshots(
     *,
     after_hours: bool = False,
     fetch_positions: bool = True,
+    snapshot_sync_run_id: UUID | None = None,
 ) -> SyncResult:
     """Fetch KIS cash balance and positions, then store as snapshots.
 
@@ -362,6 +369,7 @@ async def sync_kis_account_snapshots(
                 source_of_truth=_SOURCE_OF_TRUTH,
                 snapshot_at=snapshot_at,
                 fetch_status="success",
+                snapshot_sync_run_id=snapshot_sync_run_id,
             )
         except Exception as exc:
             logger.warning("Failed to build PositionSnapshotEntity for pdno=%s: %s", pdno, exc)
@@ -406,6 +414,7 @@ async def sync_kis_account_snapshots(
                     source_of_truth=_SOURCE_OF_TRUTH,
                     snapshot_at=snapshot_at,
                     fetch_status="zeroed_out",
+                    snapshot_sync_run_id=snapshot_sync_run_id,
                 )
                 await position_snapshot_repo.add(zero_snapshot)
                 zeroed_count += 1
@@ -516,6 +525,7 @@ async def sync_kis_account_snapshots(
             source_of_truth=_SOURCE_OF_TRUTH,
             snapshot_at=snapshot_at,
             fetch_status="success",
+            snapshot_sync_run_id=snapshot_sync_run_id,
         )
         try:
             await cash_balance_snapshot_repo.add(cash_entity)
@@ -543,6 +553,8 @@ async def sync_kis_accounts_by_ids(
     position_snapshot_repo: PositionSnapshotRepository,
     cash_balance_snapshot_repo: CashBalanceSnapshotRepository,
     account_ids: Sequence[UUID],
+    *,
+    snapshot_sync_run_id: UUID | None = None,
 ) -> BatchSyncResult:
     """Sync snapshots for multiple account IDs sequentially.
 
@@ -561,6 +573,8 @@ async def sync_kis_accounts_by_ids(
         Repository for persisting cash-balance snapshots.
     account_ids:
         Sequence of ``AccountEntity.account_id`` (UUID) values to sync.
+    snapshot_sync_run_id:
+        Optional pre-generated run ID to stamp on each snapshot row.
 
     Returns
     -------
@@ -577,6 +591,7 @@ async def sync_kis_accounts_by_ids(
                 position_snapshot_repo=position_snapshot_repo,
                 cash_balance_snapshot_repo=cash_balance_snapshot_repo,
                 account_id=account_id,
+                snapshot_sync_run_id=snapshot_sync_run_id,
             )
         except Exception as exc:
             msg = f"Unexpected error syncing account_id={account_id}: {exc}"
@@ -614,6 +629,7 @@ async def sync_all_kis_accounts(
     kis_account_number: str | None = None,
     env: Environment | None = None,
     account_status: str | None = None,
+    snapshot_sync_run_id: UUID | None = None,
 ) -> BatchSyncResult:
     """Discover all KIS accounts and sync snapshots for each.
 
@@ -722,6 +738,7 @@ async def sync_all_kis_accounts(
                 position_snapshot_repo=position_snapshot_repo,
                 cash_balance_snapshot_repo=cash_balance_snapshot_repo,
                 account_id=account.account_id,
+                snapshot_sync_run_id=snapshot_sync_run_id,
             )
         except Exception as exc:
             msg = f"Unexpected error syncing account_id={account.account_id}: {exc}"

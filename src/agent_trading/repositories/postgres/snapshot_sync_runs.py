@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from uuid import UUID
@@ -59,7 +60,7 @@ class PostgresSnapshotSyncRunRepository:
             run.status,
             run.started_at,
             run.completed_at,
-            run.summary_json,
+            json.dumps(run.summary_json) if run.summary_json is not None else json.dumps({}),
             run.after_hours,
             run.created_at or datetime.now(timezone.utc),
         )

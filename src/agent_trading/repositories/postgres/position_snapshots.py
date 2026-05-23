@@ -30,8 +30,9 @@ class PostgresPositionSnapshotRepository:
                  quantity, average_price, market_price, unrealized_pnl,
                  purchase_amount, evaluation_amount,
                  source_of_truth, snapshot_at,
-                 fetch_status)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                 fetch_status,
+                 snapshot_sync_run_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             RETURNING *
             """,
             snapshot.position_snapshot_id,
@@ -46,6 +47,7 @@ class PostgresPositionSnapshotRepository:
             snapshot.source_of_truth,
             snapshot.snapshot_at,
             snapshot.fetch_status,
+            snapshot.snapshot_sync_run_id,
         )
         return row_to_entity(row, PositionSnapshotEntity)
 

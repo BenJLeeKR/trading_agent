@@ -130,6 +130,9 @@ class PositionSnapshotEntity:
     created_at: datetime | None = None
     fetch_status: str = "success"
     """Status of this snapshot fetch: 'success' | 'partial' | 'stale' | 'fetch_failed' | 'zeroed_out'"""
+    snapshot_sync_run_id: UUID | None = None
+    """FK to ``snapshot_sync_runs.snapshot_sync_run_id``.
+    Allows exact same-run alignment with cash balance snapshots."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -154,6 +157,9 @@ class CashBalanceSnapshotEntity:
     created_at: datetime | None = None
     fetch_status: str = "success"
     """Status of this snapshot fetch: 'success' | 'stale' | 'fetch_failed'"""
+    snapshot_sync_run_id: UUID | None = None
+    """FK to ``snapshot_sync_runs.snapshot_sync_run_id``.
+    Allows exact same-run alignment with position snapshots."""
 
 
 @dataclass(slots=True, frozen=True)

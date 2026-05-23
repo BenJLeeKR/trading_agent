@@ -30,8 +30,9 @@ class PostgresCashBalanceSnapshotRepository:
                  source_of_truth, snapshot_at,
                  total_asset, settlement_amount, total_unrealized_pnl,
                  orderable_amount,
-                 fetch_status)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                 fetch_status,
+                 snapshot_sync_run_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             RETURNING *
             """,
             snapshot.cash_balance_snapshot_id,
@@ -47,6 +48,7 @@ class PostgresCashBalanceSnapshotRepository:
             snapshot.total_unrealized_pnl,
             snapshot.orderable_amount,
             snapshot.fetch_status,
+            snapshot.snapshot_sync_run_id,
         )
         return row_to_entity(row, CashBalanceSnapshotEntity)
 

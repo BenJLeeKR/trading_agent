@@ -41,6 +41,7 @@ import signal
 import sys
 import time
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from agent_trading.brokers.snapshot_factory import build_snapshot_sync_components
 from agent_trading.config.settings import AppSettings
@@ -208,6 +209,9 @@ async def _run_one_cycle(
         await create_pool(db_config)
 
         # ── 3. Run auto-discover sync ──────────────────────────────────
+        # Pre-generate run_id so that individual snapshot rows can carry
+        # the same FK, enabling exact same-run queries in the API layer.
+        run_id = uuid4()
         async with transaction() as tx:
             repos = build_postgres_repositories(tx)
             logger.info(
@@ -228,6 +232,7 @@ async def _run_one_cycle(
                 account_number=settings.kis_account_number,
                 after_hours=after_hours,
                 fetch_positions=fetch_positions,
+                snapshot_sync_run_id=run_id,
             )
 
             # ── 4. Save execution history ──────────────────────────────
@@ -240,6 +245,7 @@ async def _run_one_cycle(
                 started_at=started_at,
                 after_hours=after_hours,
                 summary_json=counters,
+                snapshot_sync_run_id=run_id,
             )
             await repos.snapshot_sync_runs.add(run_entity)
 

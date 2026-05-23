@@ -3,11 +3,12 @@ import { useNavigate } from "react-router-dom";
 import type {
   AccountSummary,
   ClientDetail,
+  AlignmentStatus,
   PositionSnapshotView,
   CashBalanceSnapshotView,
   SnapshotSyncRunSummary,
 } from "../types/api";
-import { getClients, getAccounts, getPositions, getCashBalance, getSnapshotSyncRuns } from "../api/client";
+import { getClients, getAccounts, getAccountSnapshots, getSnapshotSyncRuns } from "../api/client";
 import { DataTable } from "./common/DataTable";
 import { StatusBadge } from "./common/StatusBadge";
 import { FilterBar } from "./common/FilterBar";
@@ -45,6 +46,8 @@ export default function AccountsView() {
   const [positions, setPositions] = useState<PositionSnapshotView[]>([]);
   const [cashBalance, setCashBalance] = useState<CashBalanceSnapshotView | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [snapshotAlignment, setSnapshotAlignment] = useState<AlignmentStatus | null>(null);
+
   const [latestSyncRun, setLatestSyncRun] = useState<SnapshotSyncRunSummary | null>(null);
   const [syncRunError, setSyncRunError] = useState(false);
   const [showSnapshotHistory, setShowSnapshotHistory] = useState(false);
@@ -96,21 +99,25 @@ export default function AccountsView() {
   }, []);
 
   // ── Fetch positions / cash balance on account selection ─────────
+  // 단일 /account-snapshots/latest 호출로 변경 → cash/position 시점 정합성 보장
   useEffect(() => {
     if (!selectedAccount) {
       setPositions([]);
       setCashBalance(null);
+      setSnapshotAlignment(null);
       return;
     }
     setDetailLoading(true);
-    Promise.all([getPositions(selectedAccount), getCashBalance(selectedAccount)])
-      .then(([p, c]) => {
-        setPositions(p);
-        setCashBalance(c);
+    getAccountSnapshots(selectedAccount)
+      .then((data) => {
+        setPositions(data.positions);
+        setCashBalance(data.cash_balance);
+        setSnapshotAlignment(data.alignment_status);
       })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "계좌 상세를 불러오지 못했습니다";
         setError(msg);
+        setSnapshotAlignment(null);
       })
       .finally(() => setDetailLoading(false));
   }, [selectedAccount]);
@@ -556,6 +563,31 @@ export default function AccountsView() {
                 </span>
                 <div className="h-px flex-1 bg-[#e2e8f0]" />
               </div>
+
+              {/* ── Snapshot alignment status badge ───────────────── */}
+              {snapshotAlignment && (
+                <div className="flex items-center gap-3 text-xs">
+                  {snapshotAlignment === "aligned" ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-[#ecfdf5] text-[#16a34a] px-2.5 py-1 font-medium">
+                      <span className="h-1.5 w-1.5 rounded-full bg-[#16a34a]" />
+                      동일 snapshot 기준
+                    </span>
+                  ) : snapshotAlignment === "partial" ? (
+                    <span
+                      className="inline-flex items-center gap-1.5 rounded-full bg-[#fef9c3] text-[#b45309] px-2.5 py-1 font-medium"
+                      title="포지션과 현금 잔고의 스냅샷 시점이 다릅니다"
+                    >
+                      <span className="h-1.5 w-1.5 rounded-full bg-[#b45309]" />
+                      시점 어긋남
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-[#f1f5f9] text-[#64748b] px-2.5 py-1 font-medium">
+                      <span className="h-1.5 w-1.5 rounded-full bg-[#64748b]" />
+                      snapshot 정보 없음
+                    </span>
+                  )}
+                </div>
+              )}
 
               {detailLoading ? (
                 <LoadingSpinner text="계좌 상세 로딩 중..." />
