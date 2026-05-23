@@ -57,6 +57,7 @@ from agent_trading.services.kis_snapshot_sync import (
     sync_kis_account_snapshots,
     sync_kis_accounts_by_ids,
 )
+from agent_trading.services.snapshot_sync import get_budget_fallback_counters
 
 # ── KISRestClient import (lazy to avoid circular issues at module level) ──
 
@@ -484,6 +485,7 @@ async def _run(args: argparse.Namespace) -> int:
                 return 2
 
             # ── 4. Save execution history ────────────────────────────
+            counters = get_budget_fallback_counters()
             run_entity = build_sync_run_entity(
                 batch,
                 trigger_type="manual",
@@ -492,6 +494,7 @@ async def _run(args: argparse.Namespace) -> int:
                 status_filter=status_filter,
                 dry_run=args.dry_run,
                 started_at=started_at,
+                summary_json=counters,
             )
             await repos.snapshot_sync_runs.add(run_entity)
 

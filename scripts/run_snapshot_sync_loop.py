@@ -51,7 +51,10 @@ from agent_trading.services.kis_snapshot_sync import (
     BatchSyncResult,
     build_sync_run_entity,
 )
-from agent_trading.services.snapshot_sync import sync_all_accounts
+from agent_trading.services.snapshot_sync import (
+    get_budget_fallback_counters,
+    sync_all_accounts,
+)
 
 # ── Logging ────────────────────────────────────────────────────────────────
 
@@ -228,6 +231,7 @@ async def _run_one_cycle(
             )
 
             # ── 4. Save execution history ──────────────────────────────
+            counters = get_budget_fallback_counters()
             run_entity = build_sync_run_entity(
                 batch,
                 trigger_type="scheduler",
@@ -235,6 +239,7 @@ async def _run_one_cycle(
                 dry_run=False,
                 started_at=started_at,
                 after_hours=after_hours,
+                summary_json=counters,
             )
             await repos.snapshot_sync_runs.add(run_entity)
 

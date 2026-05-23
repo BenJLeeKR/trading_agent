@@ -5,15 +5,16 @@ import type {
   ClientDetail,
   PositionSnapshotView,
   CashBalanceSnapshotView,
+  SnapshotSyncRunSummary,
 } from "../types/api";
-import { getClients, getAccounts, getPositions, getCashBalance } from "../api/client";
+import { getClients, getAccounts, getPositions, getCashBalance, getSnapshotSyncRuns } from "../api/client";
 import { DataTable } from "./common/DataTable";
 import { StatusBadge } from "./common/StatusBadge";
 import { FilterBar } from "./common/FilterBar";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import type { Column } from "./common/DataTable";
-import { Lock, Wallet, TrendingUp, TrendingDown, X, Users } from "lucide-react";
+import { AlertCircle, Lock, Wallet, TrendingUp, TrendingDown, X, Users } from "lucide-react";
 import { formatKrw, formatKstElapsed, formatKstDateTime } from "@/lib/utils";
 
 /* ───────────────────────────────────────────
@@ -44,12 +45,27 @@ export default function AccountsView() {
   const [positions, setPositions] = useState<PositionSnapshotView[]>([]);
   const [cashBalance, setCashBalance] = useState<CashBalanceSnapshotView | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [latestSyncRun, setLatestSyncRun] = useState<SnapshotSyncRunSummary | null>(null);
+  const [syncRunError, setSyncRunError] = useState(false);
   const [showSnapshotHistory, setShowSnapshotHistory] = useState(false);
   const navigate = useNavigate();
 
   // Filter state
   const [searchText, setSearchText] = useState("");
   const [envFilter, setEnvFilter] = useState("");
+
+  // ── Fetch latest snapshot sync run ──────────────────────────────
+  useEffect(() => {
+    getSnapshotSyncRuns(1)
+      .then((runs) => {
+        if (runs.length > 0) {
+          setLatestSyncRun(runs[0]);
+        }
+      })
+      .catch(() => {
+        setSyncRunError(true);
+      });
+  }, []);
 
   // ── Fetch clients → accounts ───────────────────────────────────
   useEffect(() => {
@@ -320,6 +336,60 @@ export default function AccountsView() {
           </div>
         )}
       </div>
+
+      {/* Snapshot Sync Run Summary Bar */}
+      {!syncRunError && latestSyncRun && (
+        <div className="bg-white rounded-xl border border-[#e2e8f0] px-4 py-3 flex items-center gap-3 text-sm">
+          <AlertCircle className="h-4 w-4 text-[#64748b]" />
+          <span className="text-[#64748b]">스냅샷 동기화:</span>
+          <StatusBadge
+            variant={
+              latestSyncRun.status === "completed"
+                ? "success"
+                : latestSyncRun.status === "partial"
+                  ? "warning"
+                  : latestSyncRun.status === "failed"
+                    ? "error"
+                    : "info"
+            }
+          >
+            {latestSyncRun.status === "completed"
+              ? "정상"
+              : latestSyncRun.status === "partial"
+                ? "부분 성공"
+                : latestSyncRun.status === "failed"
+                  ? "실패"
+                  : latestSyncRun.status}
+          </StatusBadge>
+          <span className="text-[#94a3b8]">
+            {latestSyncRun.succeeded_accounts}/{latestSyncRun.total_accounts} 계좌
+          </span>
+          {(() => {
+            const sj = latestSyncRun.summary_json as Record<string, number> | null;
+            if (!sj) return null;
+            const parts: string[] = [];
+            const preCheck = sj["VTTC8908R_pre_check"] ?? 0;
+            const budgetExhausted = sj["VTTC8908R_budget_exhausted"] ?? 0;
+            const apiFailure = sj["VTTC8908R_api_failure"] ?? 0;
+            const afterHoursSkip = sj["after_hours_skip"] ?? 0;
+            if (preCheck > 0) parts.push(`pre-check fallback ${preCheck}회`);
+            if (budgetExhausted > 0) parts.push(`budget exhausted ${budgetExhausted}회`);
+            if (apiFailure > 0) parts.push(`API 실패 fallback ${apiFailure}회`);
+            if (afterHoursSkip > 0) parts.push(`장후 skip ${afterHoursSkip}회`);
+            if (parts.length === 0) return null;
+            return (
+              <span className="text-[#f59e0b] text-xs ml-1">
+                {parts.join(" | ")}
+              </span>
+            );
+          })()}
+          {latestSyncRun.started_at && (
+            <span className="text-[#94a3b8] text-xs ml-auto">
+              {formatKstElapsed(latestSyncRun.started_at)}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Empty state when no clients exist */}
       {clients.length === 0 ? (

@@ -523,15 +523,39 @@ export default function OperationsAlertsView() {
                 : snapshotSyncRun.status === "failed"
                   ? { text: "긴급", variant: "error" as const }
                   : { text: snapshotSyncRun.status, variant: "info" as const };
+          const budgetParts: string[] = [];
+          const sj = snapshotSyncRun.summary_json as Record<string, number> | null;
+          if (sj) {
+            const preCheck = sj["VTTC8908R_pre_check"] ?? 0;
+            const budgetExhausted = sj["VTTC8908R_budget_exhausted"] ?? 0;
+            const apiFailure = sj["VTTC8908R_api_failure"] ?? 0;
+            const afterHoursSkip = sj["after_hours_skip"] ?? 0;
+            if (preCheck > 0) budgetParts.push(`pre-check fallback ${preCheck}회`);
+            if (budgetExhausted > 0) budgetParts.push(`budget exhausted ${budgetExhausted}회`);
+            if (apiFailure > 0) budgetParts.push(`API 실패 fallback ${apiFailure}회`);
+            if (afterHoursSkip > 0) budgetParts.push(`장후 skip ${afterHoursSkip}회`);
+          }
           return (
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-[#0f172a]">
-                <span className="font-medium">Pre-Market 스냅샷 동기화 실행</span>
-                <span className="ml-2 text-[#64748b]">
-                  ({formatKstDateTime(snapshotSyncRun.started_at)})
-                </span>
+            <div>
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-[#0f172a]">
+                  <span className="font-medium">Pre-Market 스냅샷 동기화 실행</span>
+                  <span className="ml-2 text-[#64748b]">
+                    ({formatKstDateTime(snapshotSyncRun.started_at)})
+                  </span>
+                </div>
+                <StatusBadge variant={statusLabel.variant}>{statusLabel.text}</StatusBadge>
               </div>
-              <StatusBadge variant={statusLabel.variant}>{statusLabel.text}</StatusBadge>
+              {budgetParts.length > 0 && (
+                <div className="mt-2 text-xs text-[#64748b] space-y-0.5">
+                  {budgetParts.map((p, i) => (
+                    <div key={i} className="flex items-center gap-1">
+                      <AlertCircle className="h-3 w-3 text-[#f59e0b]" />
+                      <span>{p}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })()}

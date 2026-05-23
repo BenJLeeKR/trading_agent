@@ -721,7 +721,26 @@ export default function OperationsDashboardView() {
     const snapshotTimeStr = d.latestSnapshotAt
       ? `snapshot_at: ${formatKstElapsed(d.latestSnapshotAt)}`
       : "snapshot 데이터 없음";
-    snapshotSubtitle = `${snapshotTimeStr} (${syncRun.succeeded_accounts}/${syncRun.total_accounts} 계좌 성공)`;
+
+    // Budget fallback / after-hours skip summary from summary_json
+    let budgetLabel = "";
+    const sj = syncRun.summary_json;
+    if (sj) {
+      const preCheck = (sj as Record<string, number>)["VTTC8908R_pre_check"] ?? 0;
+      const budgetExhausted = (sj as Record<string, number>)["VTTC8908R_budget_exhausted"] ?? 0;
+      const apiFailure = (sj as Record<string, number>)["VTTC8908R_api_failure"] ?? 0;
+      const afterHoursSkip = (sj as Record<string, number>)["after_hours_skip"] ?? 0;
+      const parts: string[] = [];
+      if (preCheck > 0) parts.push(`pre-check fallback ${preCheck}회`);
+      if (budgetExhausted > 0) parts.push(`budget exhausted ${budgetExhausted}회`);
+      if (apiFailure > 0) parts.push(`API 실패 fallback ${apiFailure}회`);
+      if (afterHoursSkip > 0) parts.push(`장후 skip ${afterHoursSkip}회`);
+      if (parts.length > 0) {
+        budgetLabel = ` | ${parts.join(", ")}`;
+      }
+    }
+
+    snapshotSubtitle = `${snapshotTimeStr} (${syncRun.succeeded_accounts}/${syncRun.total_accounts} 계좌 성공${budgetLabel})`;
   }
 
   const reconStatus = d.incompleteReconCount > 0 || d.activeLocksCount > 0

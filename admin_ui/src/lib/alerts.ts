@@ -288,6 +288,45 @@ export function deriveAlerts(input: AlertRuleInput): AlertItem[] {
     }
   }
 
+  // SNAP-BUDGET-001: budget fallback 발생 (VTTC8908R_pre_check > 0) → 주의
+  if (!input.snapshotSyncError && input.snapshotSyncRun?.summary_json) {
+    const sj = input.snapshotSyncRun.summary_json as Record<string, number>;
+    const preCheck = sj["VTTC8908R_pre_check"] ?? 0;
+    const budgetExhausted = sj["VTTC8908R_budget_exhausted"] ?? 0;
+    const apiFailure = sj["VTTC8908R_api_failure"] ?? 0;
+    const totalBudgetFallback = preCheck + budgetExhausted + apiFailure;
+    if (totalBudgetFallback > 0) {
+      const detailParts: string[] = [];
+      if (preCheck > 0) detailParts.push(`pre-check ${preCheck}회`);
+      if (budgetExhausted > 0) detailParts.push(`budget exhausted ${budgetExhausted}회`);
+      if (apiFailure > 0) detailParts.push(`API 실패 ${apiFailure}회`);
+      alerts.push({
+        id: "SNAP-BUDGET-001",
+        level: "주의",
+        title: "스냅샷 Budget Fallback 발생",
+        description: `총 ${totalBudgetFallback}회 fallback: ${detailParts.join(", ")}. orderable_cash가 KIS API 응답 대신 fallback 값으로 설정되었습니다.`,
+        time: now,
+        status: "OPEN",
+      });
+    }
+  }
+
+  // SNAP-BUDGET-002: after_hours_skip > 0 → 정보
+  if (!input.snapshotSyncError && input.snapshotSyncRun?.summary_json) {
+    const sj = input.snapshotSyncRun.summary_json as Record<string, number>;
+    const afterHoursSkip = sj["after_hours_skip"] ?? 0;
+    if (afterHoursSkip > 0) {
+      alerts.push({
+        id: "SNAP-BUDGET-002",
+        level: "정보",
+        title: "장후 스냅샷 skip",
+        description: `${afterHoursSkip}개 계좌가 장후(after-hours) 상태로 스냅샷이 생략되었습니다.`,
+        time: now,
+        status: afterHoursSkip > 0 ? "OPEN" : "RESOLVED",
+      });
+    }
+  }
+
   // ── Scheduler Alert Rules ──
 
   const scheduler = input.schedulerHealth;
