@@ -42,6 +42,42 @@ from agent_trading.services.kis_snapshot_sync import (
 
 logger = logging.getLogger(__name__)
 
+# ── Budget fallback counters (module-level, reset per cycle) ──────────────
+
+_budget_fallback_counters: dict[str, int] = {
+    "VTTC8908R_pre_check": 0,
+    "VTTC8908R_budget_exhausted": 0,
+    "VTTC8908R_api_failure": 0,
+    "after_hours_skip": 0,
+}
+
+
+def inc_budget_fallback(counter_name: str, delta: int = 1) -> None:
+    """Increment a budget fallback counter by *delta* (default 1).
+
+    Parameters
+    ----------
+    counter_name:
+        One of ``"VTTC8908R_pre_check"``, ``"VTTC8908R_budget_exhausted"``,
+        ``"VTTC8908R_api_failure"``, ``"after_hours_skip"``.
+    delta:
+        Increment amount (default 1).
+    """
+    _budget_fallback_counters[counter_name] = (
+        _budget_fallback_counters.get(counter_name, 0) + delta
+    )
+
+
+def get_budget_fallback_counters() -> dict[str, int]:
+    """Return a snapshot of current budget fallback counters."""
+    return dict(_budget_fallback_counters)
+
+
+def reset_budget_fallback_counters() -> None:
+    """Reset all budget fallback counters to zero (call before a cycle)."""
+    for k in _budget_fallback_counters:
+        _budget_fallback_counters[k] = 0
+
 
 # ── Public helpers (moved from kis_snapshot_sync for broker-agnostic use) ──
 
@@ -323,6 +359,8 @@ async def sync_accounts_by_ids(
     BatchSyncResult
         Aggregated summary across all accounts.
     """
+    # Reset budget fallback counters for this cycle
+    reset_budget_fallback_counters()
     batch = BatchSyncResult(total_accounts=len(account_ids))
 
     for account_id in account_ids:
@@ -357,6 +395,22 @@ async def sync_accounts_by_ids(
                 batch._incr("failed")
         else:
             batch._incr("succeeded")
+
+    # ── Log budget fallback summary ─────────────────────────────────────
+    cnt = get_budget_fallback_counters()
+    logger.info(
+        "Snapshot cycle complete — accounts=%d success=%d partial=%d fail=%d | "
+        "budget_fallbacks: VTTC8908R_pre_check=%d VTTC8908R_budget_exhausted=%d "
+        "VTTC8908R_api_failure=%d after_hours_skip=%d",
+        batch.total_accounts,
+        batch.succeeded,
+        batch.partial,
+        batch.failed,
+        cnt.get("VTTC8908R_pre_check", 0),
+        cnt.get("VTTC8908R_budget_exhausted", 0),
+        cnt.get("VTTC8908R_api_failure", 0),
+        cnt.get("after_hours_skip", 0),
+    )
 
     return batch
 
@@ -420,6 +474,9 @@ async def sync_all_accounts(
     BatchSyncResult
         Aggregated summary across all discovered accounts.
     """
+    # Reset budget fallback counters for this cycle
+    reset_budget_fallback_counters()
+
     if env is not None:
         broker_accounts = await broker_account_repo.list_by_broker_and_env(
             broker_name, env
@@ -506,5 +563,21 @@ async def sync_all_accounts(
                 batch._incr("failed")
         else:
             batch._incr("succeeded")
+
+    # ── Log budget fallback summary ─────────────────────────────────────
+    cnt = get_budget_fallback_counters()
+    logger.info(
+        "Snapshot cycle complete — accounts=%d success=%d partial=%d fail=%d | "
+        "budget_fallbacks: VTTC8908R_pre_check=%d VTTC8908R_budget_exhausted=%d "
+        "VTTC8908R_api_failure=%d after_hours_skip=%d",
+        batch.total_accounts,
+        batch.succeeded,
+        batch.partial,
+        batch.failed,
+        cnt.get("VTTC8908R_pre_check", 0),
+        cnt.get("VTTC8908R_budget_exhausted", 0),
+        cnt.get("VTTC8908R_api_failure", 0),
+        cnt.get("after_hours_skip", 0),
+    )
 
     return batch

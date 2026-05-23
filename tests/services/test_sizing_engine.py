@@ -1122,18 +1122,11 @@ class TestNavFallbackFromCashBalance:
         from agent_trading.domain.entities import CashBalanceSnapshotEntity
         from agent_trading.domain.enums import OrderSide, OrderType
         from agent_trading.domain.models import SubmitOrderRequest
+        from agent_trading.services.execution_service import ExecutionService
         from agent_trading.services.decision_orchestrator import (
             AssembledContext,
-            DecisionOrchestratorService,
             OrderIntent,
             ScoreResult,
-        )
-
-        service = DecisionOrchestratorService(
-            repos=in_memory_repos,
-            event_interpretation_agent=None,
-            ai_risk_agent=None,
-            final_decision_agent=None,
         )
 
         # cash_balance_snapshot with total_asset set
@@ -1178,7 +1171,7 @@ class TestNavFallbackFromCashBalance:
             context=ctx,
         )
 
-        inputs = service._build_sizing_inputs(intent)
+        inputs = ExecutionService._build_sizing_inputs(intent)
         assert inputs.nav == Decimal("50000000"), (
             f"Expected nav=50000000, got {inputs.nav}"
         )
@@ -1509,7 +1502,8 @@ class TestBuyBaselineWithAllocationPct:
     """_resolve_buy_target_quantity()가 BUY 시작 수량을 가격/현금 기반으로 계산.
 
     _ALLOCATION_PCT (20%) of effective cash → target shares.
-    requested_quantity cap 제거됨 — allocation_pct가 유일한 상한이며,
+    allocation target은 requested_quantity를 초과할 수 없음 (cap).
+    allocation은 cash/price 제약으로 수량을 줄일 수만 있음.
     4중 risk constraint 체인(cash → concentration → max_order_value → max_order_qty)이
     실제 안전장치 역할을 수행함.
     """
@@ -1532,10 +1526,10 @@ class TestBuyBaselineWithAllocationPct:
             f"Expected 9, got {result.quantity}"
         )
 
-    def test_low_price_stock_now_dynamic(self) -> None:
+    def test_low_price_stock_capped_by_requested(self) -> None:
         """초저가주 5,000원, orderable=9,000,000.
-        target_qty = int(1,800,000 / 5,000) = 360
-        cap 제거 후 → 360주 (동적 계산된 target_qty 그대로)."""
+        allocation target = int(1,800,000 / 5,000) = 360,
+        but capped by requested_quantity=10 → 10주."""
         result = calculate_sizing(
             _inputs(
                 decision_type="BUY",
@@ -1545,14 +1539,14 @@ class TestBuyBaselineWithAllocationPct:
                 orderable_amount="9000000",
             )
         )
-        assert result.quantity == Decimal("360"), (
-            f"Expected 360, got {result.quantity}"
+        assert result.quantity == Decimal("10"), (
+            f"Expected 10 (capped by requested), got {result.quantity}"
         )
 
-    def test_mid_price_stock_now_dynamic(self) -> None:
+    def test_mid_price_stock_capped_by_requested(self) -> None:
         """두산 150,000원, orderable=9,000,000.
-        target_qty = int(1,800,000 / 150,000) = 12
-        cap 제거 후 → 12주 (동적 계산된 target_qty 그대로)."""
+        allocation target = int(1,800,000 / 150,000) = 12,
+        but capped by requested_quantity=10 → 10주."""
         result = calculate_sizing(
             _inputs(
                 decision_type="BUY",
@@ -1562,14 +1556,14 @@ class TestBuyBaselineWithAllocationPct:
                 orderable_amount="9000000",
             )
         )
-        assert result.quantity == Decimal("12"), (
-            f"Expected 12, got {result.quantity}"
+        assert result.quantity == Decimal("10"), (
+            f"Expected 10 (capped by requested), got {result.quantity}"
         )
 
-    def test_mid_low_price_stock_30k_now_dynamic(self) -> None:
+    def test_mid_low_price_stock_capped_by_requested(self) -> None:
         """저가주 30,000원, orderable=9,000,000.
-        target_qty = int(1,800,000 / 30,000) = 60
-        cap 제거 후 → 60주 (동적 계산된 target_qty 그대로)."""
+        allocation target = int(1,800,000 / 30,000) = 60,
+        but capped by requested_quantity=10 → 10주."""
         result = calculate_sizing(
             _inputs(
                 decision_type="BUY",
@@ -1579,16 +1573,15 @@ class TestBuyBaselineWithAllocationPct:
                 orderable_amount="9000000",
             )
         )
-        assert result.quantity == Decimal("60"), (
-            f"Expected 60, got {result.quantity}"
+        assert result.quantity == Decimal("10"), (
+            f"Expected 10 (capped by requested), got {result.quantity}"
         )
 
-    def test_buy_no_longer_capped_by_requested_quantity(self) -> None:
-        """BUY 수량이 더 이상 requested_quantity의 상한에 묶이지 않는 것을 검증.
+    def test_allocation_reduces_but_never_exceeds_requested(self) -> None:
+        """BUX 수량은 requested_quantity를 초과할 수 없음을 검증.
 
-        requested_quantity=1 (작은 값)이어도 allocation_pct 기반 계산된
-        target_qty가 우선 적용됨.
-        target_qty = int(9,000,000 * 0.2 / 5,000) = 360"""
+        requested_quantity=1 → allocation target=360이어도
+        requested_quantity=1이 상한 → 1주 반환."""
         result = calculate_sizing(
             _inputs(
                 decision_type="BUY",
@@ -1598,9 +1591,9 @@ class TestBuyBaselineWithAllocationPct:
                 orderable_amount="9000000",
             )
         )
-        # requested_quantity=1이 상한이 아니므로 360주가 나와야 함
-        assert result.quantity == Decimal("360"), (
-            f"Expected 360 (not capped by requested_quantity=1), got {result.quantity}"
+        # requested_quantity=1이 상한 → 1주
+        assert result.quantity == Decimal("1"), (
+            f"Expected 1 (capped by requested_quantity=1), got {result.quantity}"
         )
 
     def test_sell_side_unchanged(self) -> None:

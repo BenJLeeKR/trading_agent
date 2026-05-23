@@ -45,6 +45,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from agent_trading.brokers.base import BrokerAdapter
+from agent_trading.services.execution_service import ExecutionService
 from agent_trading.domain.entities import (
     AccountEntity,
     CashBalanceSnapshotEntity,
@@ -263,7 +264,7 @@ class TestReplayDeterministicAssemble:
         )
 
         intent = await service.assemble(request)
-        sizing_inputs = service._build_sizing_inputs(intent)
+        sizing_inputs = ExecutionService._build_sizing_inputs(intent)
 
         # 동일 SizingInputs로 2회 실행
         result1 = calculate_sizing(sizing_inputs)

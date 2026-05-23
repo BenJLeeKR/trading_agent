@@ -18,7 +18,10 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
+from agent_trading.brokers.koreainvestment.rest_client import (
+    CashAndPositionsResult,
+    KISRestClient,
+)
 from agent_trading.brokers.koreainvestment.snapshot import (
     KISSyncSnapshotProvider,
 )
@@ -52,6 +55,7 @@ class FakeKISRestClient:
         fail_cash: bool = False,
         orderable_cash: Decimal | None = None,
         fail_orderable_cash: bool = False,
+        account_number: str = "test_account",
     ) -> None:
         self._positions = positions or []
         self._cash_balance = cash_balance or {}
@@ -59,6 +63,7 @@ class FakeKISRestClient:
         self._fail_cash = fail_cash
         self._orderable_cash = orderable_cash
         self._fail_orderable_cash = fail_orderable_cash
+        self.account_number = account_number
         self.closed = False
 
     async def get_positions(self) -> list[dict[str, Any]]:
@@ -70,6 +75,24 @@ class FakeKISRestClient:
         if self._fail_cash:
             raise RuntimeError("KIS cash balance fetch failed")
         return self._cash_balance
+
+    async def get_cash_and_positions(
+        self,
+        *,
+        after_hours: bool = False,
+    ) -> CashAndPositionsResult:
+        """Simulate VTTC8434R 1회 통합 호출.
+
+        ``fail_cash`` 설정 시 예외 발생 (기존 get_cash_balance 실패 시뮬레이션).
+        ``fail_positions`` 단독 설정은 통합 호출에서 전체 실패로 처리.
+        """
+        if self._fail_cash or self._fail_positions:
+            raise RuntimeError("KIS cash+positions fetch failed")
+        return CashAndPositionsResult(
+            cash_balance=self._cash_balance if self._cash_balance else None,
+            positions=self._positions,
+            raw_response={},
+        )
 
     async def get_orderable_cash(
         self,
@@ -356,53 +379,66 @@ class TestKISSyncSnapshotProvider:
 
         result = await provider.fetch_snapshot(uuid4(), inst_repo)
         assert result.cash_balance is None
-        assert any("cash balance" in err.lower() for err in result.errors)
+        # 통합 호출(get_cash_and_positions) 실패 → cash+positions 메시지
+        assert any("cash+positions" in err.lower() for err in result.errors)
 
     async def test_positions_fetch_failure(self) -> None:
-        """REST client failure → error, empty positions."""
+        """REST client failure → error, empty positions (통합 호출 전체 실패)."""
         client = FakeKISRestClient(fail_positions=True)
         provider = KISSyncSnapshotProvider(client)
         inst_repo = InMemoryInstrumentRepository()
 
         result = await provider.fetch_snapshot(uuid4(), inst_repo)
+        # 통합 호출 실패로 positions도 빔
         assert len(result.positions) == 0
-        assert any("positions" in err.lower() for err in result.errors)
+        # cash+positions 통합 에러 메시지 (통합 호출이므로)
+        assert any("cash+positions" in err.lower() for err in result.errors)
 
 
 class TestFetchSnapshot:
     """fetch_snapshot — after-hours rate-limit hotfix tests."""
 
-    async def test_fetch_snapshot_after_hours_skips_positions(self) -> None:
-        """after_hours=True → get_positions() 호출 안 됨, get_cash_balance(after_hours=True)는 정상 호출."""
+    async def _make_cp_mock(
+        self,
+        cash_balance: dict[str, Any] | None = None,
+        positions: list[dict[str, Any]] | None = None,
+    ) -> AsyncMock:
+        """Helper: create a mock ``KISRestClient`` with ``get_cash_and_positions``."""
         from unittest.mock import AsyncMock
 
-        mock_rest = AsyncMock(spec=KISRestClient)
-        mock_rest.get_positions = AsyncMock(return_value=[])
-        mock_rest.get_cash_balance = AsyncMock(return_value={})
-        mock_rest.get_orderable_cash = AsyncMock(return_value=None)
+        mock = AsyncMock(spec=KISRestClient)
+        cp_result = CashAndPositionsResult(
+            cash_balance=cash_balance,
+            positions=positions or [],
+            raw_response={},
+        )
+        mock.get_cash_and_positions = AsyncMock(return_value=cp_result)
+        mock.get_orderable_cash = AsyncMock(return_value=None)
+        return mock
+
+    async def test_fetch_snapshot_after_hours_skips_positions(self) -> None:
+        """after_hours=True → get_cash_and_positions()만 호출, positions는 건너뜀."""
+        mock_rest = await self._make_cp_mock(
+            cash_balance={},
+        )
 
         provider = KISSyncSnapshotProvider(mock_rest)
         inst_repo = InMemoryInstrumentRepository()
 
         result = await provider.fetch_snapshot(uuid4(), inst_repo, after_hours=True)
 
-        # get_positions()는 호출되지 않아야 함
-        mock_rest.get_positions.assert_not_called()
+        # get_cash_and_positions(after_hours=True)는 호출되어야 함
+        mock_rest.get_cash_and_positions.assert_awaited_once_with(after_hours=True)
 
-        # get_cash_balance(after_hours=True)는 호출되어야 함
-        mock_rest.get_cash_balance.assert_awaited_once_with(after_hours=True)
+        # positions는 빈 리스트 (after_hours로 skip)
+        assert result.positions == []
 
     async def test_fetch_snapshot_after_hours_returns_cash_only(self) -> None:
         """after_hours=True → positions는 빈 리스트, cash_balance는 정상, 에러 없음."""
-        from unittest.mock import AsyncMock
-
         account_id = uuid4()
-        mock_rest = AsyncMock(spec=KISRestClient)
-        mock_rest.get_positions = AsyncMock(return_value=[])
-        mock_rest.get_cash_balance = AsyncMock(
-            return_value={"dnca_tot_amt": "2000000", "nxdy_excc_amt": "1500000"}
+        mock_rest = await self._make_cp_mock(
+            cash_balance={"dnca_tot_amt": "2000000", "nxdy_excc_amt": "1500000"},
         )
-        mock_rest.get_orderable_cash = AsyncMock(return_value=None)
 
         provider = KISSyncSnapshotProvider(mock_rest)
         inst_repo = InMemoryInstrumentRepository()
@@ -425,10 +461,11 @@ class TestFetchSnapshot:
         from unittest.mock import AsyncMock
 
         account_id = uuid4()
-        mock_rest = AsyncMock(spec=KISRestClient)
-        mock_rest.get_positions = AsyncMock(return_value=[])
-        mock_rest.get_cash_balance = AsyncMock(
-            return_value={"dnca_tot_amt": "2000000", "nxdy_excc_amt": "1500000"}
+        mock_rest = await self._make_cp_mock(
+            cash_balance={"dnca_tot_amt": "2000000", "nxdy_excc_amt": "1500000"},
+            positions=[
+                {"pdno": "005930", "hldg_qty": "10"},
+            ],
         )
         mock_rest.get_orderable_cash = AsyncMock(return_value=Decimal("1800000"))
 
@@ -439,15 +476,15 @@ class TestFetchSnapshot:
             account_id, inst_repo, fetch_positions=False,
         )
 
-        # get_positions()는 호출되지 않아야 함
-        mock_rest.get_positions.assert_not_called()
+        # get_cash_and_positions()는 호출되어야 함 (after_hours가 아니므로)
+        mock_rest.get_cash_and_positions.assert_awaited_once_with(after_hours=False)
 
         # cash_balance는 정상
         assert result.cash_balance is not None
         assert result.cash_balance.available_cash == 2000000
         assert result.cash_balance.orderable_amount == 1800000
 
-        # positions는 빈 리스트
+        # positions는 빈 리스트 (fetch_positions=False로 skip)
         assert result.positions == []
 
         # positions 관련 에러가 없어야 함

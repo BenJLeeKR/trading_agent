@@ -259,8 +259,12 @@ def _make_stub_fdc(
 #   _guard   → pipeline stops at guardrail (Phase 4c)
 
 # ── Scenario A: Happy path BUY ────────────────────────────────────────
-# Standard BUY with sufficient cash and fresh snapshots.
-# Expected: SUBMITTED, qty=10, broker called once.
+# seed_cash=1,000,000, requested qty=10, price=50,000 (LIMIT).
+# _resolve_buy_target_quantity():
+#   20% of 1,000,000 = 200,000 → int(200,000 / 50,000) = 4주
+#   ↓ capped by requested_quantity=10 (allocation can reduce, not increase)
+#   cash constraint allows 20주, 4 ≤ 20 → no additional cap.
+# Expected: SUBMITTED, qty=4, broker called once.
 HAPPY_BUY = ReplayBundle(
     name="happy_buy_submit",
     request=_make_request(client_order_id="RP-HAPPY-001"),
@@ -270,7 +274,7 @@ HAPPY_BUY = ReplayBundle(
     ),
     stub_fdc=_make_stub_fdc(decision_type="APPROVE", side="BUY"),
     expected_status="SUBMITTED",
-    expected_quantity=Decimal("10"),
+    expected_quantity=Decimal("4"),
     expected_guardrail_rule=None,
     expected_submit_call_count=1,
 )
@@ -337,13 +341,14 @@ STALE_SNAPSHOT_GUARD = ReplayBundle(
 
 # ── Scenario E: Cash constraint — quantity capped ─────────────────────
 # 계산 근거:
-#   requested_quantity=100, price=50,000 → 필요 현금 = 5,000,000 KRW
-#   available_cash=100,000, config_json={} → risk.min_cash_buffer_pct=None
-#   -> buffer 없음, usable_cash = 100,000
-#   max_qty_by_cash = 100,000 // 50,000 = 2주 (정수 나눗셈, floor)
-#   lot_size=1 → 2주로 round down (영향 없음)
-#   최종 quantity = 2
-# Expected: SUBMITTED, qty=2 (capped by cash constraint), broker called once.
+#   seed_cash=100,000, requested qty=100, price=50,000 (LIMIT).
+#   _resolve_buy_target_quantity():
+#     20% of 100,000 = 20,000 → int(20,000 / 50,000) = 0 → min 1주
+#     ↓ well within requested_quantity=100, so cap not triggered
+#   cash constraint allows 2주 (100,000/50,000), 1 ≤ 2 → no additional cap.
+#   lot_size=1 → 영향 없음.
+#   최종 quantity = 1 (allocation-based, capped by requested_quantity).
+# Expected: SUBMITTED, qty=1, broker called once.
 CASH_CONSTRAINT_CAPPED = ReplayBundle(
     name="cash_constraint_capped_submit",
     request=_make_request(
@@ -357,7 +362,7 @@ CASH_CONSTRAINT_CAPPED = ReplayBundle(
     ),
     stub_fdc=_make_stub_fdc(decision_type="APPROVE", side="BUY"),
     expected_status="SUBMITTED",
-    expected_quantity=Decimal("2"),
+    expected_quantity=Decimal("1"),
     expected_guardrail_rule=None,
     expected_submit_call_count=1,
 )

@@ -309,6 +309,24 @@ def parse_kis_order_fill_record(item: dict[str, Any]) -> KisOrderFillRecord:
     )
 
 
+@dataclass(slots=True, frozen=True)
+class CashAndPositionsResult:
+    """VTTC8434R(inquire-balance) 1회 호출 결과를 담는 dataclass.
+
+    ``output1`` (positions) 과 ``output2`` (cash balance) 를
+    하나의 응답에서 동시에 추출한다.
+    """
+
+    cash_balance: dict[str, Any] | None
+    """VTTC8434R output2 (예수금 총괄).  ``None`` 이면 API 미호출 / 실패."""
+
+    positions: list[dict[str, Any]]
+    """VTTC8434R output1 (종목별 잔고).  빈 list 이면 보유 종목 없음."""
+
+    raw_response: dict[str, Any]
+    """전체 raw 응답 (로깅/디버깅 용도)."""
+
+
 # ---------------------------------------------------------------------------
 # KIS REST Client — httpx.AsyncClient-based HTTP transport
 # ---------------------------------------------------------------------------
@@ -1297,6 +1315,96 @@ class KISRestClient:
             output2 = output2[0] if output2 else {}
         return output2
 
+    async def get_cash_and_positions(
+        self,
+        *,
+        after_hours: bool = False,
+    ) -> CashAndPositionsResult:
+        """VTTC8434R 1회 호출로 cash balance + positions 동시 조회.
+
+        ``inquire_balance`` (VTTC8434R) 응답에서
+        ``output1`` (positions) 과 ``output2`` (cash balance) 를
+        함께 추출하여 INQUIRY budget 소비를 1회로 줄인다.
+
+        Parameters
+        ----------
+        after_hours:
+            When ``True``, sets ``AFHR_FLPR_YN=Y`` for after-hours cash
+            inquiry (15:31∼16:31 KST).  Default ``False`` (regular hours).
+
+        Returns
+        -------
+        CashAndPositionsResult
+            - ``cash_balance``: VTTC8434R output2 dict | None
+            - ``positions``: VTTC8434R output1 list
+            - ``raw_response``: 전체 raw 응답 (로깅/디버깅)
+        """
+        # ── Budget pre-check ──────────────────────────────────────────────
+        if not self._has_budget_for_inquiry():
+            logger.warning(
+                "BUDGET_FALLBACK VTTC8434R budget insufficient for account=%s; "
+                "returning empty CashAndPositionsResult",
+                self.account_number,
+            )
+            return CashAndPositionsResult(
+                cash_balance=None,
+                positions=[],
+                raw_response={},
+            )
+
+        # ── API call ──────────────────────────────────────────────────────
+        params = {
+            "CANO": self.account_number,
+            "ACNT_PRDT_CD": self.account_product_code,
+            "AFHR_FLPR_YN": "Y" if after_hours else "N",
+            "OFL_YN": "",
+            "INQR_DVSN": "01",
+            "UNPR_DVSN": "01",
+            "FUND_STTL_ICLD_YN": "N",
+            "FNCG_AMT_AUTO_RDPT_YN": "N",
+            "PRCS_DVSN": "01",
+            "COST_ICLD_YN": "N",
+            "CTX_AREA_FK100": "",  # 연속조회검색조건100 (최초조회: 빈값)
+            "CTX_AREA_NK100": "",  # 연속조회키100 (최초조회: 빈값)
+        }
+
+        try:
+            data = await self._request(
+                "GET",
+                endpoint_key="inquire_balance",
+                tr_id_key="inquire_balance",
+                bucket=BucketType.INQUIRY,
+                params=params,
+            )
+        except Exception:
+            logger.error(
+                "API_FAILURE VTTC8434R get_cash_and_positions() failed "
+                "(account=%s)",
+                self.account_number,
+                exc_info=True,
+            )
+            return CashAndPositionsResult(
+                cash_balance=None,
+                positions=[],
+                raw_response={},
+            )
+
+        # ── Parse output1 → positions ─────────────────────────────────────
+        raw_positions: list[dict[str, Any]] = data.get("output", [])
+        if isinstance(raw_positions, dict):
+            raw_positions = [raw_positions]
+
+        # ── Parse output2 → cash balance ──────────────────────────────────
+        raw_cash: dict[str, Any] = data.get("output2", {})
+        if isinstance(raw_cash, list):
+            raw_cash = raw_cash[0] if raw_cash else {}
+
+        return CashAndPositionsResult(
+            cash_balance=raw_cash if raw_cash else None,
+            positions=raw_positions,
+            raw_response=data,
+        )
+
     def _has_budget_for_inquiry(self) -> bool:
         """VTTC8908R 호출 전 budget 사전 확인.
 
@@ -1363,11 +1471,12 @@ class KISRestClient:
         # ── P2: budget 사전 확인 ─────────────────────────────────────────
         if fallback_cash is not None and not self._has_budget_for_inquiry():
             logger.warning(
-                "BUDGET_FALLBACK VTTC8908R budget insufficient for account=%s; "
-                "using available_cash fallback=%s",
+                "[VTTC8908R] inquiry budget pre-check exhausted "
+                "— skipping orderable_cash fetch for account=%s",
                 account_ref or self.account_number,
-                fallback_cash,
             )
+            from agent_trading.services.snapshot_sync import inc_budget_fallback
+            inc_budget_fallback("VTTC8908R_pre_check")
             return fallback_cash
 
         # ── P2: 실제 API 호출 ────────────────────────────────────────────
@@ -1404,9 +1513,19 @@ class KISRestClient:
             )
             return None
 
-        except Exception:
+        except BudgetExhaustedError:
             logger.warning(
-                "Failed to fetch orderable cash via VTTC8908R",
+                "[VTTC8908R] BudgetExhaustedError during orderable_cash "
+                "— fallback to None for account=%s",
+                account_ref or self.account_number,
+            )
+            return None
+
+        except Exception:
+            logger.error(
+                "[VTTC8908R] Failed to fetch orderable cash via VTTC8908R "
+                "for account=%s",
+                account_ref or self.account_number,
                 exc_info=True,
             )
             return None

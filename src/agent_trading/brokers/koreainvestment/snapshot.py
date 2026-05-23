@@ -14,7 +14,10 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4, uuid7
 
-from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
+from agent_trading.brokers.koreainvestment.rest_client import (
+    CashAndPositionsResult,
+    KISRestClient,
+)
 from agent_trading.brokers.rate_limit import BudgetExhaustedError
 from agent_trading.domain.entities import (
     CashBalanceSnapshotEntity,
@@ -25,6 +28,7 @@ from agent_trading.repositories.contracts import InstrumentRepository
 from agent_trading.services.snapshot_sync import (
     FetchedSnapshot,
     SnapshotFetchProvider,
+    inc_budget_fallback,
     safe_decimal,
     safe_optional_decimal,
 )
@@ -110,24 +114,40 @@ class KISSyncSnapshotProvider:
         positions: list[PositionSnapshotEntity] = []
         raw_positions: Sequence[Any] = []
 
-        # ── 1. Fetch cash balance (최우선) ────────────────────────────────
-        # cash는 submit gate에 가장 중요하므로 항상 먼저 확보
+        # ── 1. Fetch cash + positions (VTTC8434R 1회 통합 호출) ─────────────
+        # Phase 1 budget 절감: get_cash_balance() + get_positions() 2회 호출을
+        # get_cash_and_positions() 1회 호출로 통합하여 INQUIRY budget 33% 절감.
+        # get_cash_and_positions()는 budget pre-check를 내부에서 처리하며,
+        # budget 부족 시 빈 CashAndPositionsResult를 반환(예외 발생 안 함).
         cash_balance: CashBalanceSnapshotEntity | None = None
+        raw_cash: dict[str, Any] = {}
 
         try:
-            raw_cash: dict[str, Any] = await self._rest.get_cash_balance(
+            cp_result = await self._rest.get_cash_and_positions(
                 after_hours=after_hours,
             )
-        except BudgetExhaustedError as exc:
-            msg = f"Cash balance inquiry budget exhausted: {exc}"
-            logger.error(msg)
-            errors.append(msg)
-            raw_cash = {}
         except Exception as exc:
-            msg = f"Failed to fetch cash balance from KIS: {exc}"
+            msg = f"Failed to fetch cash+positions from KIS: {exc}"
             logger.error(msg, exc_info=True)
             errors.append(msg)
-            raw_cash = {}
+            cp_result = None
+
+        if cp_result is not None and cp_result.cash_balance is not None:
+            raw_cash = cp_result.cash_balance
+            logger.info(
+                "CASH_POSITIONS_MERGE VTTC8434R merged call succeeded "
+                "(account=%s, positions=%d, cash_keys=%s)",
+                self._rest.account_number,
+                len(cp_result.positions),
+                list(raw_cash.keys()),
+            )
+        elif cp_result is not None:
+            logger.info(
+                "CASH_POSITIONS_MERGE VTTC8434R merged call succeeded "
+                "(account=%s, positions=%d, cash=None)",
+                self._rest.account_number,
+                len(cp_result.positions),
+            )
 
         # cash_raw에서 available_cash를 조기 추출 (positions/orderable에서 fallback용)
         available_cash: Decimal = Decimal("0")
@@ -158,10 +178,8 @@ class KISSyncSnapshotProvider:
                 logger.error(msg)
                 errors.append(msg)
 
-        # ── 2. Fetch positions (cash 다음, positions > orderable_cash 우선순위) ──
-        # P1: positions을 orderable_cash보다 먼저 확보하여,
-        # budget 부족 시 positions 손실을 방지한다.
-        # positions은 VTTC8434R(inquire-balance)의 별도 API 호출이 필요.
+        # ── 2. Extract positions from merged result ─────────────────────
+        # VTTC8434R output1 에서 이미 추출된 positions 을 조건부로 사용.
         if after_hours:
             logger.info("AFTER_HOURS_SKIP After-hours mode — skipping positions fetch (cash-only sync)")
             raw_positions = []
@@ -171,19 +189,13 @@ class KISSyncSnapshotProvider:
                 "(Phase 1: cash+orderable only; positions will be fetched in Phase 2)"
             )
             raw_positions = []
+        elif cp_result is not None:
+            raw_positions = cp_result.positions
         else:
-            try:
-                raw_positions = await self._rest.get_positions()
-            except BudgetExhaustedError as exc:
-                msg = f"Positions inquiry budget exhausted: {exc}"
-                logger.error(msg)
-                errors.append(msg)
-                raw_positions = []
-            except Exception as exc:
-                msg = f"Failed to fetch positions from KIS: {exc}"
-                logger.error(msg)
-                errors.append(msg)
-                raw_positions = []
+            msg = "CashAndPositionsResult is None — no positions available"
+            logger.error(msg)
+            errors.append(msg)
+            raw_positions = []
 
         for raw in raw_positions:
             pdno = raw.get(_KIS_PDNO, "")
@@ -251,19 +263,21 @@ class KISSyncSnapshotProvider:
             except BudgetExhaustedError:
                 # Race condition: budget pre-check 통과했으나 다른 task가 소진
                 logger.warning(
-                    "BUDGET_EXHAUSTED VTTC8908R budget exhausted after pre-check "
-                    "(account=%s); falling back to available_cash=%s",
+                    "[VTTC8908R] BudgetExhaustedError fallback "
+                    "(account=%s); fallback to available_cash=%s",
                     account_id, available_cash,
                 )
+                inc_budget_fallback("VTTC8908R_budget_exhausted")
                 orderable_cash = available_cash
             except Exception:
                 # 일반 Exception → available_cash로 fallback
                 logger.warning(
-                    "API_FAILURE VTTC8908R get_orderable_cash() failed "
-                    "(account=%s); falling back to available_cash=%s",
+                    "[VTTC8908R] API failure "
+                    "(account=%s); fallback to available_cash=%s",
                     account_id, available_cash,
                     exc_info=True,
                 )
+                inc_budget_fallback("VTTC8908R_api_failure")
                 orderable_cash = available_cash
 
             if orderable_cash is not None:
@@ -289,10 +303,11 @@ class KISSyncSnapshotProvider:
                     )
         elif after_hours and raw_cash:
             logger.info(
-                "AFTER_HOURS_SKIP After-hours mode — skipping VTTC8908R "
-                "(orderable_amount not needed); using available_cash=%s",
-                available_cash,
+                "[VTTC8908R] after-hours skip "
+                "(account=%s); orderable_amount not needed after market close",
+                account_id,
             )
+            inc_budget_fallback("after_hours_skip")
         elif not raw_cash:
             logger.info(
                 "No cash balance data available — orderable_amount remains None"

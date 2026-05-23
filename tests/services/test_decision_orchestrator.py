@@ -37,6 +37,7 @@ from agent_trading.services.decision_orchestrator import (
     ScoreResult,
     StubScoreCalculator,
 )
+from agent_trading.services.execution_service import ExecutionService
 from agent_trading.services.sizing_engine import (
     SizingInputs,
     calculate_sizing,
@@ -1195,7 +1196,7 @@ class TestBuildSizingInputs:
             context=ctx,
             ai_backend_inputs=AIDecisionInputs(decision_type="BUY"),
         )
-        sizing = service._build_sizing_inputs(intent)
+        sizing = ExecutionService._build_sizing_inputs(intent)
         assert isinstance(sizing, SizingInputs)
         assert sizing.orderable_amount == Decimal("-81419050")
         assert sizing.available_cash == Decimal("5000000")
@@ -1224,7 +1225,7 @@ class TestBuildSizingInputs:
             context=ctx,
             ai_backend_inputs=AIDecisionInputs(decision_type="BUY"),
         )
-        sizing = service._build_sizing_inputs(intent)
+        sizing = ExecutionService._build_sizing_inputs(intent)
         assert sizing.orderable_amount is None
         assert sizing.available_cash is None
 
@@ -1280,7 +1281,7 @@ class TestSellPathSizingFallback:
         This confirms the sizing engine itself does not block the sell path;
         the fallback in assemble_and_submit() is an additional safety net.
         """
-        sizing_inputs = service._build_sizing_inputs(sell_intent_no_position)
+        sizing_inputs = ExecutionService._build_sizing_inputs(sell_intent_no_position)
         sizing_result = calculate_sizing(sizing_inputs)
 
         # Without position data, _base_qty_reduce falls back to requested_quantity
@@ -1295,7 +1296,7 @@ class TestSellPathSizingFallback:
         sell_intent_no_position: OrderIntent,
     ) -> None:
         """The fallback logic should use intent.request.quantity when sizing returns 0."""
-        sizing_inputs = service._build_sizing_inputs(sell_intent_no_position)
+        sizing_inputs = ExecutionService._build_sizing_inputs(sell_intent_no_position)
         sizing_result = calculate_sizing(sizing_inputs)
 
         # Simulate the fallback logic from assemble_and_submit()
@@ -1342,7 +1343,7 @@ class TestSellPathSizingFallback:
             ),
         )
 
-        sizing_inputs = service._build_sizing_inputs(intent)
+        sizing_inputs = ExecutionService._build_sizing_inputs(intent)
         sizing_result = calculate_sizing(sizing_inputs)
 
         # Simulate fallback
