@@ -33,12 +33,14 @@ from agent_trading.services.ai_agents.schemas import (
     EventInterpretationOutput,
     FinalDecisionComposerOutput,
 )
-from agent_trading.services.decision_orchestrator import (
+from agent_trading.services.common_types import (
     AIDecisionInputs,
     AssembledContext,
     OrderIntent,
-    _normalize_decision_type,
+)
+from agent_trading.services.translation import (
     build_submit_order_request_from_decision,
+    normalize_decision_type,
 )
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.domain.enums import OrderSide, OrderType, TimeInForce
@@ -228,19 +230,19 @@ class TestFDCUserPromptEvidenceStrength:
 
 
 class TestNormalizeDecisionTypeWatch:
-    """``_normalize_decision_type()`` must preserve WATCH as canonical."""
+    """``normalize_decision_type()`` must preserve WATCH as canonical."""
 
     def test_watch_passthrough(self) -> None:
         """WATCH passes through unchanged."""
-        assert _normalize_decision_type("WATCH") == "WATCH"
+        assert normalize_decision_type("WATCH") == "WATCH"
 
     def test_watch_lowercase_passthrough(self) -> None:
         """watch (lowercase) normalizes to WATCH."""
-        assert _normalize_decision_type("watch") == "WATCH"
+        assert normalize_decision_type("watch") == "WATCH"
 
     def test_watch_mixed_case_passthrough(self) -> None:
         """Watch (mixed case) normalizes to WATCH."""
-        assert _normalize_decision_type("Watch") == "WATCH"
+        assert normalize_decision_type("Watch") == "WATCH"
 
 
 # ===========================================================================
@@ -312,7 +314,7 @@ class TestWatchDecisionRecording:
     def test_watch_not_mapped_to_hold(self) -> None:
         """WATCH must NOT be silently mapped to HOLD in AIDecisionInputs."""
         # Simulate the _run_agents() normalization path
-        normalized = _normalize_decision_type("WATCH")
+        normalized = normalize_decision_type("WATCH")
         assert normalized == "WATCH"
         inputs = AIDecisionInputs(decision_type=normalized)
         assert inputs.decision_type == "WATCH"
@@ -339,7 +341,7 @@ class TestSubmitResultForWatch:
 
     def test_submit_result_skipped_for_watch(self) -> None:
         """Simulate the assemble_and_submit Phase 2 check for WATCH."""
-        from agent_trading.services.decision_orchestrator import SubmitResult
+        from agent_trading.services.common_types import SubmitResult
 
         result = SubmitResult(
             status="SKIPPED",

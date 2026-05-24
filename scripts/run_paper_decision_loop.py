@@ -71,7 +71,7 @@ from agent_trading.repositories.contracts import (
 )
 from agent_trading.repositories.filters import AccountLookup
 from agent_trading.runtime.bootstrap import postgres_runtime
-from agent_trading.services.decision_orchestrator import SubmitResult
+from agent_trading.services.common_types import SubmitResult
 from agent_trading.services.sizing_engine import calculate_sizing
 from agent_trading.services.universe_selection import UniverseSelectionService
 from agent_trading.services.universe_selection_types import (
@@ -560,9 +560,9 @@ def _serialize_cycle_result(
     decision_type: str | None = None
     side: str | None = None
 
-    if result is not None and result.intent is not None:
-        decision_type = result.intent.ai_backend_inputs.decision_type
-        side = result.intent.ai_backend_inputs.side
+    if result is not None and result.order_intent is not None:
+        decision_type = result.order_intent.ai_backend_inputs.decision_type
+        side = result.order_intent.ai_backend_inputs.side
 
     data: dict[str, object] = {
         "cycle": cycle,
@@ -585,15 +585,15 @@ def _serialize_cycle_result(
     elif dry_run:
         # Dry-run mode: assemble + sizing, no broker submit
         data["status"] = "DRY_RUN"
-        if result is not None and result.intent is not None:
+        if result is not None and result.order_intent is not None:
             data["decision_context_id"] = (
                 str(result.decision_context_id) if result.decision_context_id else None
             )
             data["trade_decision_id"] = (
                 str(result.trade_decision_id) if result.trade_decision_id else None
             )
-            data["order_intent_id"] = str(result.intent.order_intent_id)
-            data["sized_quantity"] = str(result.intent.request.quantity)
+            data["order_intent_id"] = str(result.order_intent.order_intent_id)
+            data["sized_quantity"] = str(result.order_intent.request.quantity)
             # EXE-001: phase trace
             data["phase_trace"] = [
                 {"phase": pt.phase, "elapsed_ms": pt.elapsed_ms, "status": pt.status}
@@ -609,14 +609,14 @@ def _serialize_cycle_result(
         data["trade_decision_id"] = (
             str(result.trade_decision_id) if result.trade_decision_id else None
         )
-        if result.intent is not None:
-            data["order_intent_id"] = str(result.intent.order_intent_id)
-            data["sized_quantity"] = str(result.intent.request.quantity)
-        if result.order is not None:
-            data["order_request_id"] = str(result.order.order_request_id)
-            data["order_status"] = result.order.status.value
-            data["client_order_id"] = result.order.client_order_id
-            data["requested_quantity"] = str(result.order.requested_quantity)
+        if result.order_intent is not None:
+            data["order_intent_id"] = str(result.order_intent.order_intent_id)
+            data["sized_quantity"] = str(result.order_intent.request.quantity)
+        if result.submit_response is not None:
+            data["order_request_id"] = str(result.submit_response.order_request_id)
+            data["order_status"] = result.submit_response.status.value
+            data["client_order_id"] = result.submit_response.client_order_id
+            data["requested_quantity"] = str(result.submit_response.requested_quantity)
         # EXE-001: phase trace
         data["phase_trace"] = [
             {"phase": pt.phase, "elapsed_ms": pt.elapsed_ms, "status": pt.status}
@@ -798,13 +798,13 @@ async def _run_one_cycle(
                     ),
                     timeout=PER_AGENT_HARD_TIMEOUT,
                 )
-                sizing_inputs = orchestrator._build_sizing_inputs(intent)
+                sizing_inputs = orchestrator.build_sizing_inputs(intent)
                 sizing_result = calculate_sizing(sizing_inputs)
 
                 # Build synthetic SubmitResult for consistent serialization
                 result = SubmitResult(
                     status="DRY_RUN",
-                    intent=intent,
+                    order_intent=intent,
                     trade_decision_id=None,
                     decision_context_id=intent.decision_context_id,
                 )
@@ -851,8 +851,8 @@ async def _run_one_cycle(
 
             # ── 4.5 Collect EI Agent output ──────────────────────────────
             ei_output: dict[str, object] | None = None
-            if result is not None and result.intent is not None:
-                ai_inputs = result.intent.ai_backend_inputs
+            if result is not None and result.order_intent is not None:
+                ai_inputs = result.order_intent.ai_backend_inputs
                 ei_output = {
                     "event_bias": ai_inputs.event_bias,
                     "event_conflict": ai_inputs.event_conflict,

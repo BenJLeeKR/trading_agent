@@ -10,6 +10,8 @@ interface StatusCardProps {
   subtitle?: string | React.ReactNode;
   /** Override the default status label text on the badge (e.g. "미수집" for neutral) */
   badgeLabel?: string;
+  /** Optional content rendered at the bottom of the card, below subtitle */
+  children?: ReactNode;
 }
 
 const statusColors: Record<StatusVariant, string> = {
@@ -33,7 +35,7 @@ const statusLabels: Record<StatusVariant, string> = {
   neutral: "정보",
 };
 
-export function StatusCard({ title, value, status, subtitle, badgeLabel }: StatusCardProps) {
+export function StatusCard({ title, value, status, subtitle, badgeLabel, children }: StatusCardProps) {
   return (
     <div className="bg-white rounded-lg border border-[#e2e8f0] p-3">
       <div className="flex items-center justify-between mb-2">
@@ -53,6 +55,9 @@ export function StatusCard({ title, value, status, subtitle, badgeLabel }: Statu
         typeof subtitle === "string"
           ? <p className="text-[10px] text-[#94a3b8] mt-0.5">{subtitle}</p>
           : <div className="text-[10px] text-[#94a3b8] mt-0.5">{subtitle}</div>
+      )}
+      {children && (
+        <div className="mt-2 pt-2 border-t border-[#e2e8f0]">{children}</div>
       )}
     </div>
   );

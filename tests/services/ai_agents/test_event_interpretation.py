@@ -289,10 +289,14 @@ class TestFinalizeEiOutput:
         )
         assert "유의미한 신규 이벤트 없음" in result.summary
 
-    def test_finalize_aggregate_view_event_count_synced(self) -> None:
-        """T6: __post_init__에서 detected_event_count가 aggregate_view.event_count와 동기화 (Phase 3-1: max() 방식)."""
-        # aggregate_view.event_count > 0 이지만 detected_event_count=0 인 경우
-        # __post_init__ (max 방식)이 자동으로 detected_event_count를 설정
+    def test_finalize_detected_event_count_no_longer_synced_from_aggregate_view(self) -> None:
+        """T6 (Phase 2): detected_event_count는 더 이상 aggregate_view.event_count에서 sync되지 않음.
+
+        Phase 2에서 aggregate_view.event_count → detected_event_count max() sync를 제거.
+        detected_event_count는 _finalize_ei_output()에서만 설정되는 canonical source.
+        aggregate_view.event_count는 LEGACY (LLM prompt schema compatibility only).
+        """
+        # aggregate_view.event_count=3 이지만 detected_event_count=0 → sync되지 않음
         output = EventInterpretationOutput(
             symbol="005930",
             events=(),
@@ -302,21 +306,21 @@ class TestFinalizeEiOutput:
                 overall_bias="neutral",
                 evidence_strength="weak",
             ),
-            # detected_event_count 명시하지 않음 → 기본값 0
+            # detected_event_count 명시하지 않음 → 기본값 0 유지 (더 이상 sync되지 않음)
         )
-        # __post_init__에서 detected_event_count=3으로 설정
-        assert output.detected_event_count == 3, (
-            f"Expected detected_event_count=3 (synced from aggregate_view), got {output.detected_event_count}"
+        assert output.detected_event_count == 0, (
+            f"Expected detected_event_count=0 (no longer synced), got {output.detected_event_count}"
         )
 
+        # _finalize_ei_output는 detected_event_count=0을 그대로 사용
         result = _finalize_ei_output(output, input_event_count=0)
 
         assert result.interpreted_event_count == 0, (
             f"Expected interpreted_event_count=0, got {result.interpreted_event_count}"
         )
-        # detected=3, events=() → not has_events AND detected>0 → "detected_only"
-        assert result.summary_basis == "detected_only", (
-            f"Expected summary_basis='detected_only', got {result.summary_basis}"
+        # detected=0, events=() → "none"
+        assert result.summary_basis == "none", (
+            f"Expected summary_basis='none' (detected_event_count=0), got {result.summary_basis}"
         )
 
     # ──────────────────────────────────────────────────────────────
@@ -718,3 +722,128 @@ class TestReconstruction:
         assert result.events[0].is_reconstructed is False  # original event
         assert result.summary_basis == "interpreted"
         assert "AI 분석이 완료되지 않았으나" not in result.summary
+
+
+class TestDictEventTypeSafety:
+    """dict 타입 events가 InterpretedEvent로 변환/방어되는지 검증.
+
+    배경: _coerce_fields()에서 dict → InterpretedEvent 변환 후
+    len(safe)==len(ev)이면 replacement가 skip되어 events가 dict로 남는 버그.
+    """
+
+    def test_coerce_fields_converts_dict_events(self) -> None:
+        """EventInterpretationOutput 생성 시 dict events → InterpretedEvent로 변환."""
+        output = EventInterpretationOutput(
+            symbol="005930",
+            events=(
+                {"source_event_id": "evt-001", "summary": "매출 증가", "event_type": "disclosure"},
+                {"source_event_id": "evt-002", "summary": "환율 하락", "event_type": "macro"},
+            ),
+            aggregate_view=AggregateEventView(
+                no_material_events=False,
+                overall_bias="positive",
+                evidence_strength="moderate",
+            ),
+            detected_event_count=2,
+        )
+        # _coerce_fields()가 dict → InterpretedEvent로 변환했는지 검증
+        assert len(output.events) == 2
+        for ev in output.events:
+            assert isinstance(ev, InterpretedEvent), (
+                f"Expected InterpretedEvent, got {type(ev)}"
+            )
+        assert output.events[0].summary == "매출 증가"
+        assert output.events[1].summary == "환율 하락"
+
+    def test_coerce_fields_mixed_dict_and_interpreted(self) -> None:
+        """혼합(list에 dict + InterpretedEvent)도 모두 InterpretedEvent로 정규화."""
+        output = EventInterpretationOutput(
+            symbol="005930",
+            events=(
+                {"source_event_id": "evt-001", "summary": "dict event", "event_type": "news"},
+                InterpretedEvent(source_event_id="evt-002", summary="obj event", event_type="news"),
+            ),
+            aggregate_view=AggregateEventView(
+                no_material_events=False,
+                overall_bias="neutral",
+            ),
+            detected_event_count=2,
+        )
+        assert len(output.events) == 2
+        for ev in output.events:
+            assert isinstance(ev, InterpretedEvent), (
+                f"Expected InterpretedEvent, got {type(ev)}"
+            )
+        assert output.events[0].summary == "dict event"
+        assert output.events[1].summary == "obj event"
+
+    def test_build_summary_text_with_dict_events_no_crash(self) -> None:
+        """_build_summary_text()에 dict events가 전달되어도 crash하지 않고 요약 생성."""
+        dict_events = (
+            {"source_event_id": "evt-001", "summary": "매출 호조", "event_type": "disclosure"},
+            {"source_event_id": "evt-002", "summary": "환율 안정", "event_type": "macro"},
+        )
+        output = EventInterpretationOutput(
+            symbol="005930",
+            events=dict_events,  # type: ignore[arg-type]
+            aggregate_view=AggregateEventView(
+                no_material_events=False,
+                overall_bias="positive",
+                evidence_strength="moderate",
+            ),
+            detected_event_count=2,
+        )
+        # dict events가 _build_summary_text에서 crash 없이 처리되는지 검증
+        summary = _build_summary_text(output)
+        assert "(2건)" in summary
+        assert "긍정" in summary or "positive" in summary
+        assert "매출 호조" in summary or "환율 안정" in summary
+
+    def test_build_summary_text_with_dict_events_reconstructed(self) -> None:
+        """all_reconstructed=True + dict events → Case 7 경로에서도 crash 없음."""
+        dict_events = (
+            {"source_event_id": "evt-001", "summary": "급등", "event_type": "price", "is_reconstructed": True},
+            {"source_event_id": "evt-002", "summary": "급락", "event_type": "price", "is_reconstructed": True},
+        )
+        # EventInterpretationOutput 생성 시 __post_init__ → _coerce_fields가 변환
+        output = EventInterpretationOutput(
+            symbol="005930",
+            events=dict_events,  # type: ignore[arg-type]
+            aggregate_view=AggregateEventView(
+                no_material_events=False,
+                overall_bias="positive",
+            ),
+            detected_event_count=2,
+        )
+        # all_reconstructed=True로 호출
+        summary = _build_summary_text(
+            output,
+            events=output.events,
+            all_reconstructed=True,
+        )
+        assert "AI 분석이 완료되지 않았으나" in summary
+        assert "2건" in summary
+
+    def test_reconstruct_events_returns_interpreted_events(self) -> None:
+        """_reconstruct_events()가 항상 InterpretedEvent tuple을 반환하는지 검증."""
+        from uuid import UUID
+        from agent_trading.domain.entities import ExternalEventEntity
+
+        events = (
+            ExternalEventEntity(
+                event_id=UUID(int=1),
+                event_type="disclosure",
+                source_name="test",
+                source_reliability_tier="T1",
+                source_event_id="evt-001",
+                direction="positive",
+                headline="매출 호조",
+                published_at=None,  # type: ignore[arg-type]
+            ),
+        )
+        result = _reconstruct_events(events)
+        assert isinstance(result, tuple)
+        assert len(result) == 1
+        assert isinstance(result[0], InterpretedEvent)
+        assert result[0].summary == "매출 호조"
+        assert result[0].is_reconstructed is True

@@ -224,6 +224,114 @@ describe("deriveAlerts — Snapshot Sync Rules", () => {
 });
 
 /* ───────────────────────────────────────────
+ * Test Suite: Alignment Detail Rules
+ * ─────────────────────────────────────────── */
+
+describe("deriveAlerts — Alignment Detail Rules", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /* ── SNAP-ALIGN-001: partial_position_only → 주의 ── */
+  it("SNAP-ALIGN-001: partial_position_only 계좌 존재 → 주의 alert 발생", () => {
+    const input = defaultInput({
+      alignmentDetails: [
+        { account_id: "ac-1111", detail: "partial_position_only" },
+        { account_id: "ac-2222", detail: "same_run" },
+      ],
+    });
+    const alerts = deriveAlerts(input);
+
+    const alert = findAlert(alerts, "SNAP-ALIGN-001");
+    expect(alert).toBeDefined();
+    expect(alert!.level).toBe("주의");
+    expect(alert!.title).toContain("포지션 데이터만 조회");
+    expect(alert!.description).toContain("ac-1111");
+  });
+
+  /* ── SNAP-ALIGN-002: timestamp_proximity → 정보 ── */
+  it("SNAP-ALIGN-002: timestamp_proximity 계좌 존재 → 정보 alert 발생", () => {
+    const input = defaultInput({
+      alignmentDetails: [
+        { account_id: "ac-3333", detail: "timestamp_proximity" },
+      ],
+    });
+    const alerts = deriveAlerts(input);
+
+    const alert = findAlert(alerts, "SNAP-ALIGN-002");
+    expect(alert).toBeDefined();
+    expect(alert!.level).toBe("정보");
+    expect(alert!.title).toContain("시간 근사 정합");
+    expect(alert!.description).toContain("ac-3333");
+  });
+
+  /* ── SNAP-ALIGN-003: cash_only → 주의 ── */
+  it("SNAP-ALIGN-003: cash_only 계좌 존재 → 주의 alert 발생", () => {
+    const input = defaultInput({
+      alignmentDetails: [
+        { account_id: "ac-4444", detail: "cash_only" },
+      ],
+    });
+    const alerts = deriveAlerts(input);
+
+    const alert = findAlert(alerts, "SNAP-ALIGN-003");
+    expect(alert).toBeDefined();
+    expect(alert!.level).toBe("주의");
+    expect(alert!.title).toContain("현금 데이터만 조회");
+    expect(alert!.description).toContain("ac-4444");
+  });
+
+  /* ── 정상 상태: 해당 detail 없음 → alert 미발생 ── */
+  it("SNAP-ALIGN: 문제 상태 계좌 없음 → SNAP-ALIGN alert 미발생", () => {
+    const input = defaultInput({
+      alignmentDetails: [
+        { account_id: "ac-5555", detail: "same_run" },
+        { account_id: "ac-6666", detail: "after_hours_cash_updated" },
+      ],
+    });
+    const alerts = deriveAlerts(input);
+
+    expect(findAlert(alerts, "SNAP-ALIGN-001")).toBeUndefined();
+    expect(findAlert(alerts, "SNAP-ALIGN-002")).toBeUndefined();
+    expect(findAlert(alerts, "SNAP-ALIGN-003")).toBeUndefined();
+  });
+
+  /* ── alignmentDetails가 undefined일 때 → alert 미발생 ── */
+  it("SNAP-ALIGN: alignmentDetails=undefined → SNAP-ALIGN alert 미발생", () => {
+    const input = defaultInput({
+      alignmentDetails: undefined,
+    });
+    const alerts = deriveAlerts(input);
+
+    expect(findAlert(alerts, "SNAP-ALIGN-001")).toBeUndefined();
+    expect(findAlert(alerts, "SNAP-ALIGN-002")).toBeUndefined();
+    expect(findAlert(alerts, "SNAP-ALIGN-003")).toBeUndefined();
+  });
+
+  /* ── 다수 계좌 description에 account_id truncation 검증 ── */
+  it("SNAP-ALIGN: 3개 초과 계좌는 외 N개로 표시", () => {
+    const input = defaultInput({
+      alignmentDetails: [
+        { account_id: "ac-0001", detail: "cash_only" },
+        { account_id: "ac-0002", detail: "cash_only" },
+        { account_id: "ac-0003", detail: "cash_only" },
+        { account_id: "ac-0004", detail: "cash_only" },
+      ],
+    });
+    const alerts = deriveAlerts(input);
+
+    const alert = findAlert(alerts, "SNAP-ALIGN-003");
+    expect(alert).toBeDefined();
+    expect(alert!.description).toContain("외 1개");
+  });
+});
+
+/* ───────────────────────────────────────────
  * Test Suite: Scheduler Rules
  * ─────────────────────────────────────────── */
 

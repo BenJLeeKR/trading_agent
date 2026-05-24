@@ -164,6 +164,14 @@ export interface CashBalanceSnapshotView {
 
 export type AlignmentStatus = "aligned" | "partial" | "unknown";
 
+export type AlignmentDetail =
+  | "same_run"
+  | "after_hours_cash_updated"
+  | "cash_only"
+  | "partial_position_only"
+  | "timestamp_proximity"
+  | "unknown";
+
 export interface AccountSnapshotResponse {
   account_id: string;
   positions: PositionSnapshotView[];
@@ -171,6 +179,12 @@ export interface AccountSnapshotResponse {
   alignment_status: AlignmentStatus;
   positions_snapshot_at: string | null;
   cash_snapshot_at: string | null;
+  /** 어떤 sync_run 기준인지 나타내는 UUID (truncated for display) */
+  snapshot_sync_run_id: string | null;
+  /** 상세 alignment 구분: same_run | after_hours_cash_updated | cash_only | partial_position_only | timestamp_proximity | unknown */
+  alignment_detail: AlignmentDetail;
+  /** alignment_detail 값에 대한 사람이 읽기 쉬운 설명 */
+  alignment_detail_description?: string;
 }
 
 export interface ClientDetail {

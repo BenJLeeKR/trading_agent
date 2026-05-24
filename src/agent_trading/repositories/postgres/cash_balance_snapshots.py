@@ -93,3 +93,25 @@ class PostgresCashBalanceSnapshotRepository:
             sync_run_id,
         )
         return row_to_entity(row, CashBalanceSnapshotEntity) if row else None
+
+    async def get_latest_sync_run_id(self, account_id: UUID) -> UUID | None:
+        """Return the most recent ``snapshot_sync_run_id`` that has cash
+        snapshots for the given account.
+
+        Parameters
+        ----------
+        account_id:
+            대상 계좌 UUID.
+
+        Returns
+        -------
+        UUID | None
+            가장 최신 ``snapshot_sync_run_id``. 없으면 ``None``.
+        """
+        row = await self._tx.connection.fetchrow(
+            "SELECT snapshot_sync_run_id FROM trading.cash_balance_snapshots "
+            "WHERE account_id = $1 AND snapshot_sync_run_id IS NOT NULL "
+            "ORDER BY created_at DESC LIMIT 1",
+            account_id,
+        )
+        return row["snapshot_sync_run_id"] if row else None

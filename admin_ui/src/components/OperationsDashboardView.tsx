@@ -36,6 +36,7 @@ import type {
   SessionEventsResponse,
   SessionEventSummary,
   MarketSessionSummary,
+  AlignmentDetail,
 } from "../types/api";
 import { deriveAlerts } from "../lib/alerts";
 
@@ -100,6 +101,55 @@ function formatPercent(val: number | null | undefined): string {
   if (val == null) return "N/A";
   const prefix = val >= 0 ? "+" : "";
   return `${prefix}${val.toFixed(2)}%`;
+}
+
+/* ── Alignment detail helpers ── */
+interface AlignmentBadgeConfig {
+  bg: string;
+  icon: string;
+  label: string;
+}
+
+function getAlignmentBadgeConfig(detail: AlignmentDetail): AlignmentBadgeConfig {
+  switch (detail) {
+    case "same_run":
+      return { bg: "bg-[#ecfdf5] text-[#16a34a]", icon: "✓", label: "동기화 완료" };
+    case "after_hours_cash_updated":
+      return { bg: "bg-[#eff6ff] text-[#2563eb]", icon: "↻", label: "장후 현금 업데이트" };
+    case "cash_only":
+      return { bg: "bg-[#fef9c3] text-[#b45309]", icon: "₩", label: "현금만 조회" };
+    case "partial_position_only":
+      return { bg: "bg-[#fff7ed] text-[#c2410c]", icon: "⊞", label: "포지션만 조회" };
+    case "timestamp_proximity":
+      return { bg: "bg-[#fef2f2] text-[#dc2626]", icon: "⚠", label: "시간 근사 정합" };
+    default:
+      return { bg: "bg-[#f1f5f9] text-[#64748b]", icon: "?", label: "정보 없음" };
+  }
+}
+
+/* ── Alignment detail derivation (simplified from positionsMap / cashMap) ── */
+function deriveAlignmentDetail(
+  accountId: string,
+  positionsMap: Map<string, PositionSnapshotView[]>,
+  cashMap: Map<string, CashBalanceSnapshotView | null>,
+): AlignmentDetail {
+  const positions = positionsMap.get(accountId) ?? [];
+  const cash = cashMap.get(accountId) ?? null;
+  const hasPositions = positions.length > 0;
+  const hasCash = cash !== null;
+
+  if (hasPositions && hasCash) {
+    // Both exist — best guess same_run (can't distinguish after_hours_cash_updated
+    // or timestamp_proximity without sync_run_id from AccountSnapshotResponse)
+    return "same_run";
+  }
+  if (hasCash && !hasPositions) {
+    return "cash_only";
+  }
+  if (hasPositions && !hasCash) {
+    return "partial_position_only";
+  }
+  return "unknown";
 }
 
 /* ── Scheduler Status Types & Helper ── */
@@ -505,6 +555,23 @@ export default function OperationsDashboardView() {
       session?.market_phase === 'AFTER_HOURS' ? 'info' :
       session?.market_phase === 'HALT' ? 'error' : 'neutral';
 
+    // ── Alignment detail summary (derived from positionsMap / cashMap) ──
+    const alignmentCounts: Record<string, number> = {};
+    const alignmentAccountIds: Record<string, string[]> = {};
+
+    for (const account of data.accounts) {
+      const detail = deriveAlignmentDetail(
+        account.account_id,
+        data.positionsMap,
+        data.cashMap,
+      );
+      alignmentCounts[detail] = (alignmentCounts[detail] || 0) + 1;
+      if (!alignmentAccountIds[detail]) {
+        alignmentAccountIds[detail] = [];
+      }
+      alignmentAccountIds[detail].push(account.account_id.slice(0, 8));
+    }
+
     return {
       totalPositions,
       totalAvailableCash,
@@ -528,6 +595,8 @@ export default function OperationsDashboardView() {
       phaseVariant,
       sessionEvents: data.sessionEvents,
       schedulerState,
+      alignmentCounts,
+      alignmentAccountIds,
     };
   }, [data, apiErrors]);
 
@@ -810,7 +879,79 @@ export default function OperationsDashboardView() {
           value={snapshotStatus}
           status={snapshotVariant}
           subtitle={snapshotSubtitle}
-        />
+        >
+          {/* ── 계좌별 alignment_detail 요약 ── */}
+          {(() => {
+            const totalAccounts = data.accounts.length;
+            if (totalAccounts === 0) return null;
+
+            const displayStates: AlignmentDetail[] = [
+              "same_run",
+              "after_hours_cash_updated",
+              "cash_only",
+              "partial_position_only",
+              "timestamp_proximity",
+              "unknown",
+            ];
+            const activeStates = displayStates.filter(
+              (s) => (d.alignmentCounts[s] || 0) > 0,
+            );
+            const abnormalStates: AlignmentDetail[] = [
+              "cash_only",
+              "partial_position_only",
+              "timestamp_proximity",
+            ];
+            const hasAbnormal = abnormalStates.some(
+              (s) => (d.alignmentCounts[s] || 0) > 0,
+            );
+
+            return (
+              <div className="space-y-1.5">
+                <div className="text-[10px] font-medium text-[#64748b]">
+                  계좌 정합 상태
+                </div>
+                {/* 각 alignment 상태별 라인 */}
+                <div className="space-y-1">
+                  {activeStates.map((state) => {
+                    const count = d.alignmentCounts[state] ?? 0;
+                    if (count === 0) return null;
+                    const cfg = getAlignmentBadgeConfig(state);
+                    const abnormalIds = hasAbnormal
+                      ? d.alignmentAccountIds[state]
+                      : undefined;
+                    return (
+                      <div
+                        key={state}
+                        className="flex items-center gap-1.5 text-[10px]"
+                      >
+                        <span
+                          className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-medium ${cfg.bg}`}
+                        >
+                          <span className="text-[10px]">{cfg.icon}</span>
+                          {cfg.label}
+                        </span>
+                        <span className="text-[#64748b] font-medium">
+                          {count}개
+                        </span>
+                        {abnormalIds && abnormalIds.length > 0 && (
+                          <span className="text-[#94a3b8] font-mono">
+                            ({abnormalIds.join(", ")})
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* 모든 계좌 정합 메시지 (특이 상태 없음) */}
+                {!hasAbnormal && (
+                  <div className="text-[10px] text-[#16a34a] font-medium">
+                    ✓ 모든 계좌 정합
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </StatusCard>
         <StatusCard
           title="오늘 주문 제출"
           value={`${orderCount}건`}

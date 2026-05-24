@@ -48,7 +48,7 @@ from agent_trading.services.ai_agents.schemas import (
     EventInterpretationOutput,
     FinalDecisionComposerOutput,
 )
-from agent_trading.services.decision_orchestrator import (
+from agent_trading.services.common_types import (
     AssembledContext,
     ScoreResult,
 )
@@ -568,7 +568,7 @@ class TestAIRiskAgent:
             PositionSnapshotEntity,
             RiskLimitSnapshotEntity,
         )
-        from agent_trading.services.decision_orchestrator import AssembledContext
+        from agent_trading.services.common_types import AssembledContext
 
         provider = AsyncMock(spec=AIProviderClient)
         captured_kwargs: dict[str, object] = {}

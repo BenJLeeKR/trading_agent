@@ -5,8 +5,7 @@ This module contains **pure transformation functions only**.  Design rules:
 1. **No repository access** — no DB queries, no async repo calls.
 2. **No logger** — no logging side effects; callers log if needed.
 3. **No settings** — no config, env vars, or runtime context.
-4. **No domain entity imports** — only ``SubmitOrderRequest`` (API model) and
-   ``OrderIntent`` (local dataclass).
+4. **No domain entity imports** — only ``SubmitOrderRequest`` (API model).
 5. **No AI agent references** — this is deterministic backend logic.
 
 The sole function ``build_submit_order_request_from_decision()`` translates an
@@ -18,171 +17,28 @@ or the quantity is zero/negative, the function returns ``None``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
-from uuid import UUID
+from decimal import Decimal, ROUND_DOWN
 
+from agent_trading.domain.enums import DecisionType, OrderSide, EntryStyle
 from agent_trading.domain.models import SubmitOrderRequest
-from agent_trading.services.ai_agents.schemas import (
-    ExecutionPreferences,
-    SizingHint,
+from agent_trading.services.common_types import (
+    AIDecisionInputs,
+    AssembledContext,
+    OrderIntent,
+    ScoreResult,
 )
 
-if TYPE_CHECKING:
-    from agent_trading.domain.entities import (
-        CashBalanceSnapshotEntity,
-        ConfigVersionEntity,
-        DecisionContextEntity,
-        ExternalEventEntity,
-        PositionSnapshotEntity,
-        RiskLimitSnapshotEntity,
-    )
-
 __all__ = [
-    "AIDecisionInputs",
-    "AssembledContext",
-    "OrderIntent",
-    "ScoreResult",
     "build_submit_order_request_from_decision",
+    "resolve_decision_type",
+    "resolve_order_side",
+    "resolve_entry_style",
+    "decimal_or_none",
+    "calculate_max_order_value",
+    "normalize_decision_type",
+    "is_missing_agent_symbol",
 ]
-
-
-# ---------------------------------------------------------------------------
-# Scoring result (stub)
-# ---------------------------------------------------------------------------
-
-
-@dataclass(slots=True, frozen=True)
-class ScoreResult:
-    """Deterministic scoring result from a ``ScoreCalculator``.
-
-    This is a **stub** — actual scoring logic is deferred. The structure
-    is defined now so that downstream consumers (``OrderIntent``,
-    ``AssembledContext``) can reference it.
-    """
-
-    score: float = 0.0
-    threshold: float = 0.0
-    reason_codes: tuple[str, ...] = ()
-
-
-# ---------------------------------------------------------------------------
-# Normalised AI decision inputs
-# ---------------------------------------------------------------------------
-
-
-@dataclass(slots=True, frozen=True)
-class AIDecisionInputs:
-    """Normalised backend contract carrying v1 Provider AI Agent outputs.
-
-    This is the **only** channel through which EI / AR / FDC agent outputs
-    reach the deterministic backend (``OrderIntent`` → ``OrderManager``).
-
-    Design rules
-    ------------
-    1. Raw agent outputs are **not** carried — only normalised fields
-       that the deterministic backend can consume.
-    2. Every field has a deterministic default — safe fallback guaranteed
-       even when every agent fails.
-    3. This contract does **not** modify ``SubmitOrderRequest``.
-    4. ``OrderManager``, ``BrokerAdapter``, ``ReconciliationService``
-       boundaries are unchanged.
-    """
-
-    # ── FDC-derived ──────────────────────────────────────────────────
-    decision_type: str = "HOLD"
-    confidence: float = 0.0
-    conviction: float = 0.0
-    reason_codes: tuple[str, ...] = ()
-    opposing_evidence: tuple[str, ...] = ()
-    execution_preferences: ExecutionPreferences = field(
-        default_factory=ExecutionPreferences
-    )
-    sizing_hint: SizingHint = field(default_factory=SizingHint)
-    side: str = ""  # FDC에서 결정된 side (buy/sell)
-
-    # ── AR-derived ───────────────────────────────────────────────────
-    risk_opinion: str = "allow"
-    risk_score: float = 0.0
-    risk_confidence: float = 0.0
-    size_adjustment_factor: float = 0.0
-    risk_reason_codes: tuple[str, ...] = ()
-    risk_flags: tuple[str, ...] = ()
-
-    # ── EI-derived ───────────────────────────────────────────────────
-    event_bias: str = "neutral"
-    event_conflict: bool = False
-    event_reason_codes: tuple[str, ...] = ()
-
-    # ── Metadata ─────────────────────────────────────────────────────
-    source_agent_names: tuple[str, ...] = ()
-    schema_versions: tuple[tuple[str, str], ...] = ()
-
-
-# ---------------------------------------------------------------------------
-# Assembled context
-# ---------------------------------------------------------------------------
-
-
-@dataclass(slots=True, frozen=True)
-class AssembledContext:
-    """Fully assembled context for a single order intent.
-
-    This aggregates all available information at decision time:
-    the active decision context, the governing config version,
-    recent external events, a deterministic score, and richer
-    deterministic account / risk data (position, cash, risk limits).
-
-    All fields are optional — the service assembles what it can and
-    leaves missing pieces as ``None`` or empty.
-
-    Parameters
-    ----------
-    source_type
-        Origin of this symbol in the trading universe:
-        ``"core"`` | ``"held_position"`` | ``"event_overlay"`` | ``"market_overlay"``.
-        Used by FDC to differentiate no-event policy per source type.
-    """
-
-    decision_context: DecisionContextEntity | None = None
-    config_version: ConfigVersionEntity | None = None
-    recent_events: tuple[ExternalEventEntity, ...] = ()
-    score: ScoreResult = field(default_factory=ScoreResult)
-    position_snapshot: PositionSnapshotEntity | None = None
-    cash_balance_snapshot: CashBalanceSnapshotEntity | None = None
-    risk_limit_snapshot: RiskLimitSnapshotEntity | None = None
-    # --- Axis 2: Source type for no-event policy differentiation ---
-    source_type: str = "core"
-    """Origin of this symbol: ``"core"`` | ``"held_position"`` | ``"event_overlay"`` | ``"market_overlay"``."""
-
-
-# ---------------------------------------------------------------------------
-# Order intent — the interface between decision pipeline and translation
-# ---------------------------------------------------------------------------
-
-
-@dataclass(slots=True, frozen=True)
-class OrderIntent:
-    """Structured order intent assembled by the DecisionOrchestratorService.
-
-    This is a **deterministic stub** — it does not perform any LLM
-    orchestration. Its sole responsibility is to assemble P1 fields
-    (``decision_context_id``, ``order_intent_id``) into a
-    ``SubmitOrderRequest``.
-
-    Full LLM-based orchestration is deferred to a later milestone.
-    """
-
-    decision_context_id: UUID | None
-    order_intent_id: UUID | None
-    request: SubmitOrderRequest
-    # --- Priority 3 extensions ---
-    context: AssembledContext = field(default_factory=AssembledContext)
-    config_version_id: UUID | None = None
-    reason_codes: tuple[str, ...] = ()
-    # --- Normalised AI backend contract (Priority A coupling) ---
-    ai_backend_inputs: AIDecisionInputs = field(default_factory=AIDecisionInputs)
 
 
 # ---------------------------------------------------------------------------
@@ -266,3 +122,129 @@ def build_submit_order_request_from_decision(
         client_timestamp=intent.request.client_timestamp,
         metadata=intent.request.metadata,
     )
+
+
+import decimal
+
+
+# =============================================================================
+# Enum 변환 헬퍼
+# =============================================================================
+
+
+def resolve_decision_type(value: str | None) -> DecisionType:
+    """Normalize AI output decision_type to canonical backend contract values."""
+    if not value:
+        return DecisionType.HOLD
+    cleaned = value.strip().lower()
+    mapping: dict[str, DecisionType] = {
+        "buy": DecisionType.BUY,
+        "strong_buy": DecisionType.BUY,
+        "sell": DecisionType.SELL,
+        "strong_sell": DecisionType.SELL,
+        "hold": DecisionType.HOLD,
+        "neutral": DecisionType.HOLD,
+        "close": DecisionType.CLOSE,
+        "reduce": DecisionType.REDUCE,
+        "review": DecisionType.HOLD,
+    }
+    return mapping.get(cleaned, DecisionType.HOLD)
+
+
+def resolve_order_side(value: str | None, fallback: OrderSide) -> OrderSide:
+    """Convert a decision_type string into an OrderSide, falling back to a default."""
+    dt = resolve_decision_type(value)
+    if dt in (DecisionType.BUY,):
+        return OrderSide.BUY
+    if dt in (DecisionType.SELL, DecisionType.CLOSE):
+        return OrderSide.SELL
+    return fallback
+
+
+def resolve_entry_style(value: str | None, fallback: EntryStyle) -> EntryStyle:
+    """Map order_type from AI output to a canonical EntryStyle."""
+    if not value:
+        return fallback
+    cleaned = value.strip().lower()
+    if "limit" in cleaned:
+        return EntryStyle.LIMIT
+    if "market" in cleaned:
+        return EntryStyle.MARKET
+    return fallback
+
+
+def decimal_or_none(value: object) -> Decimal | None:
+    """Safely convert an arbitrary value to Decimal | None."""
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (ValueError, TypeError, decimal.InvalidOperation):
+        return None
+
+
+def calculate_max_order_value(price: Decimal | None, quantity: Decimal | None) -> Decimal | None:
+    """Calculate max order value = price * quantity, floored at 0.
+
+    Returns ``None`` when either *price* or *quantity* is ``None``
+    (e.g. MARKET orders where price is not yet known).
+    """
+    if price is None or quantity is None:
+        return None
+    return max(price * quantity, Decimal("0"))
+
+
+# =============================================================================
+# AI 출력 정규화 헬퍼 (decision_orchestrator.py에서 이동)
+# =============================================================================
+
+
+def normalize_decision_type(decision_type: str) -> str:
+    """Normalize AI output decision_type to canonical backend contract values.
+
+    Maps known drift vocabulary to equivalent canonical values while
+    preserving direct matches and existing BUY/SELL handling.
+
+    == Canonical pass-through (그대로 유지) ==
+    APPROVE, REJECT, HOLD, WATCH, EXIT, REDUCE
+    BUY, SELL  (actionable_types에서 이미 처리 중이므로 보존)
+
+    == Known drift → canonical mapping (대소문자 불변) ==
+    entry → APPROVE  (단, side=BUY/SELL이 별도로 존재한다는 전제)
+    no_action → HOLD
+    no_trade → HOLD
+    none → HOLD
+
+    == 대소문자/표기 변형 처리 ==
+    - 입력을 strip() + upper()로 정규화 후 매핑
+    - ENTRY, entry, Entry → 모두 "ENTRY" → APPROVE
+    - NO_TRADE, no_trade, No_Trade → 모두 "NO_TRADE" → HOLD
+
+    == Fallback ==
+    Any other unknown value → HOLD (same as existing _resolve_decision_type)
+    """
+    normalized = decision_type.strip().upper()
+
+    # Direct canonical match — pass through
+    if normalized in {
+        "APPROVE", "REJECT", "HOLD", "WATCH", "EXIT", "REDUCE",
+        "BUY", "SELL",
+    }:
+        return normalized
+
+    # Known drift vocabulary → canonical mapping
+    mapping: dict[str, str] = {
+        "ENTRY": "APPROVE",
+        "NO_ACTION": "HOLD",
+        "NO_TRADE": "HOLD",
+        "NONE": "HOLD",
+    }
+    return mapping.get(normalized, "HOLD")
+
+
+def is_missing_agent_symbol(value: str | None) -> bool:
+    """Return true when an agent omitted or emitted an unknown symbol."""
+    if value is None:
+        return True
+    normalized = value.strip().upper()
+    return normalized in {"", "UNKNOWN", "(NOT AVAILABLE)", "N/A", "NONE", "NULL"}

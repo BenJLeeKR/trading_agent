@@ -4,6 +4,7 @@ import type {
   AccountSummary,
   ClientDetail,
   AlignmentStatus,
+  AlignmentDetail,
   PositionSnapshotView,
   CashBalanceSnapshotView,
   SnapshotSyncRunSummary,
@@ -47,6 +48,9 @@ export default function AccountsView() {
   const [cashBalance, setCashBalance] = useState<CashBalanceSnapshotView | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [snapshotAlignment, setSnapshotAlignment] = useState<AlignmentStatus | null>(null);
+  const [snapshotSyncRunId, setSnapshotSyncRunId] = useState<string | null>(null);
+  const [alignmentDetail, setAlignmentDetail] = useState<AlignmentDetail>("unknown");
+  const [alignmentDetailDescription, setAlignmentDetailDescription] = useState<string | null>(null);
 
   const [latestSyncRun, setLatestSyncRun] = useState<SnapshotSyncRunSummary | null>(null);
   const [syncRunError, setSyncRunError] = useState(false);
@@ -105,6 +109,9 @@ export default function AccountsView() {
       setPositions([]);
       setCashBalance(null);
       setSnapshotAlignment(null);
+      setSnapshotSyncRunId(null);
+      setAlignmentDetail("unknown");
+      setAlignmentDetailDescription(null);
       return;
     }
     setDetailLoading(true);
@@ -113,11 +120,17 @@ export default function AccountsView() {
         setPositions(data.positions);
         setCashBalance(data.cash_balance);
         setSnapshotAlignment(data.alignment_status);
+        setSnapshotSyncRunId(data.snapshot_sync_run_id ?? null);
+        setAlignmentDetail(data.alignment_detail ?? "unknown");
+        setAlignmentDetailDescription(data.alignment_detail_description ?? null);
       })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "계좌 상세를 불러오지 못했습니다";
         setError(msg);
         setSnapshotAlignment(null);
+        setSnapshotSyncRunId(null);
+        setAlignmentDetail("unknown");
+        setAlignmentDetailDescription(null);
       })
       .finally(() => setDetailLoading(false));
   }, [selectedAccount]);
@@ -564,33 +577,80 @@ export default function AccountsView() {
                 <div className="h-px flex-1 bg-[#e2e8f0]" />
               </div>
 
-              {/* ── Snapshot alignment status badge (FK-based, exact same-run) ── */}
-              {snapshotAlignment && (
+              {/* ── Snapshot alignment status badge (alignment_detail 기반) ── */}
+              {snapshotAlignment && alignmentDetail ? (
                 <div className="flex items-center gap-3 text-xs">
-                  {snapshotAlignment === "aligned" ? (
+                  {alignmentDetail === "same_run" ? (
                     <span
-                      className="inline-flex items-center gap-1.5 rounded-full bg-[#ecfdf5] text-[#16a34a] px-2.5 py-1 font-medium"
-                      title="포지션과 현금 잔고가 동일 sync-run에서 캡처되었습니다"
+                      className="inline-flex items-center gap-1 rounded-full bg-[#ecfdf5] text-[#16a34a] px-2.5 py-1 font-medium"
+                      title="포지션과 현금 잔고가 동일 sync-run에서 캡처되어 완전히 정합된 상태입니다"
                     >
-                      <span className="h-1.5 w-1.5 rounded-full bg-[#16a34a]" />
-                      동일 sync-run 기준
+                      ✓ 동기화 완료
+                    </span>
+                  ) : alignmentDetail === "after_hours_cash_updated" ? (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-[#eff6ff] text-[#2563eb] px-2.5 py-1 font-medium"
+                      title="포지션은 정규장 기준, 현금은 after-hours 업데이트 기준입니다. after-hours에는 정상"
+                    >
+                      ↻ 장후 현금 업데이트
+                    </span>
+                  ) : alignmentDetail === "cash_only" ? (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-[#fef9c3] text-[#b45309] px-2.5 py-1 font-medium"
+                      title="현금 잔고 데이터만 조회되었습니다. 포지션 데이터가 없어 트레이딩 불가"
+                    >
+                      ₩ 현금만 조회
+                    </span>
+                  ) : alignmentDetail === "partial_position_only" ? (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-[#fff7ed] text-[#c2410c] px-2.5 py-1 font-medium"
+                      title="포지션 데이터만 조회되었습니다. 현금 잔고 데이터가 없습니다"
+                    >
+                      ⊞ 포지션만 조회
+                    </span>
+                  ) : alignmentDetail === "timestamp_proximity" ? (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-[#fef2f2] text-[#dc2626] px-2.5 py-1 font-medium"
+                      title="FK 연결 없이 timestamp 근사치로 정합된 legacy 데이터입니다. 정확도 낮음"
+                    >
+                      ⚠ 시간 근사 정합
+                    </span>
+                  ) : snapshotAlignment === "aligned" ? (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-[#ecfdf5] text-[#16a34a] px-2.5 py-1 font-medium"
+                      title="포지션과 현금 잔고가 동일 sync-run에서 캡처되어 완전히 정합된 상태입니다"
+                    >
+                      ✓ 동기화 완료
                     </span>
                   ) : snapshotAlignment === "partial" ? (
                     <span
-                      className="inline-flex items-center gap-1.5 rounded-full bg-[#fef9c3] text-[#b45309] px-2.5 py-1 font-medium"
+                      className="inline-flex items-center gap-1 rounded-full bg-[#fef9c3] text-[#b45309] px-2.5 py-1 font-medium"
                       title="포지션 또는 현금 잔고 중 일부만 조회되었습니다"
                     >
-                      <span className="h-1.5 w-1.5 rounded-full bg-[#b45309]" />
-                      일부만 조회됨
+                      ? 부분 조회
                     </span>
                   ) : (
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-[#f1f5f9] text-[#64748b] px-2.5 py-1 font-medium">
-                      <span className="h-1.5 w-1.5 rounded-full bg-[#64748b]" />
-                      snapshot 정보 없음
+                    <span className="inline-flex items-center gap-1 rounded-full bg-[#f1f5f9] text-[#64748b] px-2.5 py-1 font-medium">
+                      ? 정보 없음
+                    </span>
+                  )}
+                  {/* 보조 설명 문구 */}
+                  {alignmentDetailDescription && (
+                    <span className="ml-2 text-xs text-gray-500">
+                      {alignmentDetailDescription}
+                    </span>
+                  )}
+                  {/* snapshot_sync_run_id 표시 */}
+                  {snapshotSyncRunId && (
+                    <span
+                      className="text-[#94a3b8] font-mono"
+                      title={`Sync Run ID: ${snapshotSyncRunId}`}
+                    >
+                      run: {truncateUuid(snapshotSyncRunId)}
                     </span>
                   )}
                 </div>
-              )}
+              ) : null}
 
               {detailLoading ? (
                 <LoadingSpinner text="계좌 상세 로딩 중..." />

@@ -65,7 +65,7 @@ class ReplayBundle:
     expected_status
         Expected ``SubmitResult.status`` (``"SUBMITTED"``, ``"SKIPPED"``, etc.).
     expected_quantity
-        Expected ``SubmitResult.order.quantity`` (``None`` when no order created).
+        Expected ``SubmitResult.submit_response.quantity`` (``None`` when no order created).
     expected_guardrail_rule
         Expected guardrail blocking rule code (``"STALE_SNAPSHOT_ACCOUNT"``,
         ``"STALE_SNAPSHOT"``, or ``None`` when no guardrail block).

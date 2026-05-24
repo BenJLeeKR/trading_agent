@@ -5,20 +5,20 @@ import logging
 import os
 import time as time_module
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Protocol
+from typing import Any
 from uuid import UUID, uuid4
 
 import asyncpg
 
 from agent_trading.brokers.base import BrokerAdapter
 from agent_trading.domain.entities import (
+    AccountEntity,
     CashBalanceSnapshotEntity,
     ConfigVersionEntity,
     DecisionContextEntity,
-    ExecutionAttemptEntity,
     ExternalEventEntity,
     GuardrailEvaluationEntity,
     InstrumentEntity,
@@ -39,8 +39,6 @@ from agent_trading.services.ai_agents.base import (
 )
 from agent_trading.services.ai_agents.event_interpretation import (
     StubEventInterpretationAgent,
-    _build_summary_text,
-    _finalize_ei_output,
 )
 from agent_trading.services.ai_agents.ai_risk import StubAIRiskAgent
 from agent_trading.services.ai_agents.final_decision_composer import (
@@ -53,25 +51,51 @@ from agent_trading.services.ai_agents.recorder import AgentRunRecorder
 from agent_trading.services.ai_agents.schemas import (
     AIRiskOutput,
     EventInterpretationOutput,
-    ExecutionPreferences,
     FinalDecisionComposerOutput,
-    SizingHint,
+)
+from agent_trading.services.common_types import (
+    AgentExecutionBundle,
+    AIDecisionInputs,
+    AssembledContext,
+    OrderIntent,
+    PhaseTraceEntry,
+    ScoreCalculator,
+    ScoreResult,
+    StubScoreCalculator,
+    SubmitResult,
+    dataclass_to_dict,
+    dict_to_dataclass,
+    event_sort_key,
+)
+from agent_trading.services.decision_factory import (
+    build_trade_decision_entity,
+    DecisionContextService,
 )
 from agent_trading.services.execution_service import (
-    AccountSnapshotFreshness,
     ExecutionService,
-    PhaseTraceEntry,
-    SubmitResult,
 )
 from agent_trading.services.sizing_engine import (
     SizingInputs,
     calculate_sizing,
 )
+from agent_trading.services.subprocess_helpers import (
+    build_fallback_bundle,
+    deserialize_agent_output,
+    serialize_agent_input,
+)
+from agent_trading.services.translation import (
+    build_submit_order_request_from_decision,
+    calculate_max_order_value,
+    decimal_or_none,
+    is_missing_agent_symbol,
+    normalize_decision_type,
+    resolve_decision_type,
+    resolve_entry_style,
+    resolve_order_side,
+)
+from agent_trading.services.decision_agent_runner import DecisionAgentRunner
 
 logger = logging.getLogger(__name__)
-
-# Phase 5.5: post-submit sync timeout (seconds)
-_PHASE55_SYNC_TIMEOUT: int = 5
 
 # Per-agent timeout: each LLM call is capped at 35s so that a single
 # hanging agent cannot stall the entire decision cycle beyond 105s.
@@ -88,222 +112,6 @@ _PER_AGENT_TIMEOUT = 35  # seconds per agent
 _USE_SUBPROCESS_ISOLATION: bool = (
     os.environ.get("AGENT_SUBPROCESS_ISOLATION", "1") == "1"
 )
-
-# Phase 1.5 quote circuit breaker (EXE-002)
-_CIRCUIT_BREAKER_THRESHOLD = 3  # 연속 실패 횟수 → 서킷 오픈
-_CIRCUIT_BREAKER_COOLDOWN = 60  # 서킷 오픈 지속 시간(초)
-_QUOTE_CACHE_TTL = 5  # quote 캐시 TTL(초)
-
-
-# ---------------------------------------------------------------------------
-# Scoring protocol (deterministic stub)
-# ---------------------------------------------------------------------------
-
-
-@dataclass(slots=True, frozen=True)
-class ScoreResult:
-    """Deterministic scoring result from a ``ScoreCalculator``.
-
-    This is a **stub** — actual scoring logic is deferred. The structure
-    is defined now so that downstream consumers (``OrderIntent``,
-    ``AssembledContext``) can reference it.
-    """
-
-    score: float = 0.0
-    threshold: float = 0.0
-    reason_codes: tuple[str, ...] = ()
-
-
-@dataclass(slots=True, frozen=True)
-class AIDecisionInputs:
-    """Normalised backend contract carrying v1 Provider AI Agent outputs.
-
-    This is the **only** channel through which EI / AR / FDC agent outputs
-    reach the deterministic backend (``OrderIntent`` → ``OrderManager``).
-
-    Design rules
-    ------------
-    1. Raw agent outputs are **not** carried — only normalised fields
-       that the deterministic backend can consume.
-    2. Every field has a deterministic default — safe fallback guaranteed
-       even when every agent fails.
-    3. This contract does **not** modify ``SubmitOrderRequest``.
-    4. ``OrderManager``, ``BrokerAdapter``, ``ReconciliationService``
-       boundaries are unchanged.
-    """
-
-    # ── FDC-derived ──────────────────────────────────────────────────
-    decision_type: str = "HOLD"
-    confidence: float = 0.0
-    conviction: float = 0.0
-    reason_codes: tuple[str, ...] = ()
-    opposing_evidence: tuple[str, ...] = ()
-    execution_preferences: ExecutionPreferences = field(
-        default_factory=ExecutionPreferences
-    )
-    sizing_hint: SizingHint = field(default_factory=SizingHint)
-    side: str = ""  # FDC에서 결정된 side (buy/sell)
-
-    # ── AR-derived ───────────────────────────────────────────────────
-    risk_opinion: str = "allow"
-    risk_score: float = 0.0
-    risk_confidence: float = 0.0
-    size_adjustment_factor: float = 0.0
-    risk_reason_codes: tuple[str, ...] = ()
-    risk_flags: tuple[str, ...] = ()
-
-    # ── EI-derived ───────────────────────────────────────────────────
-    event_bias: str = "neutral"
-    event_conflict: bool = False
-    event_reason_codes: tuple[str, ...] = ()
-
-    # ── Metadata ─────────────────────────────────────────────────────
-    source_agent_names: tuple[str, ...] = ()
-    schema_versions: tuple[tuple[str, str], ...] = ()
-
-
-@dataclass(slots=True, frozen=True)
-class AgentExecutionBundle:
-    """Internal result bundle from the three-agent chain.
-
-    Keeps raw structured outputs available for persistence while exposing
-    only the normalised ``AIDecisionInputs`` to downstream execution code.
-    """
-
-    ai_inputs: AIDecisionInputs = field(default_factory=AIDecisionInputs)
-    event_output: EventInterpretationOutput = field(
-        default_factory=EventInterpretationOutput
-    )
-    risk_output: AIRiskOutput = field(default_factory=AIRiskOutput)
-    composer_output: FinalDecisionComposerOutput = field(
-        default_factory=FinalDecisionComposerOutput
-    )
-    # ★ subprocess isolation 경로에서 EI 실패 시 error metadata
-    #   (orchestrator가 structured_output_json["__error__"] 주입에 사용)
-    ei_error_metadata: dict[str, object] | None = None
-
-
-class ScoreCalculator(Protocol):
-    """Protocol for deterministic scoring of an assembled context.
-
-    This is a **hook** — the actual implementation will be added in a
-    later milestone. The protocol exists now so that
-    ``DecisionOrchestratorService`` can call it when present.
-    """
-
-    async def calculate(self, context: AssembledContext) -> ScoreResult:
-        """Calculate a deterministic score for the given context.
-
-        Parameters
-        ----------
-        context : AssembledContext
-            The fully assembled context including decision context,
-            config version, and recent external events.
-
-        Returns
-        -------
-        ScoreResult
-            A deterministic score with threshold and reason codes.
-        """
-        ...
-
-
-# ---------------------------------------------------------------------------
-# Assembled context
-# ---------------------------------------------------------------------------
-
-
-@dataclass(slots=True, frozen=True)
-class AssembledContext:
-    """Fully assembled context for a single order intent.
-
-    This aggregates all available information at decision time:
-    the active decision context, the governing config version,
-    recent external events, a deterministic score, and richer
-    deterministic account / risk data (position, cash, risk limits).
-
-    All fields are optional — the service assembles what it can and
-    leaves missing pieces as ``None`` or empty.
-
-    Parameters
-    ----------
-    source_type
-        Origin of this symbol in the trading universe:
-        ``"core"`` | ``"held_position"`` | ``"event_overlay"`` | ``"market_overlay"``.
-        Used by FDC to differentiate no-event policy per source type.
-    """
-
-    decision_context: DecisionContextEntity | None = None
-    config_version: ConfigVersionEntity | None = None
-    recent_events: tuple[ExternalEventEntity, ...] = ()
-    score: ScoreResult = field(default_factory=ScoreResult)
-    position_snapshot: PositionSnapshotEntity | None = None
-    cash_balance_snapshot: CashBalanceSnapshotEntity | None = None
-    risk_limit_snapshot: RiskLimitSnapshotEntity | None = None
-    # --- Axis 2: Source type for no-event policy differentiation ---
-    source_type: str = "core"
-    """Origin of this symbol: ``"core"`` | ``"held_position"`` | ``"event_overlay"`` | ``"market_overlay"``."""
-
-
-# ---------------------------------------------------------------------------
-# Order intent
-# ---------------------------------------------------------------------------
-
-
-@dataclass(slots=True, frozen=True)
-class OrderIntent:
-    """Structured order intent assembled by the DecisionOrchestratorService.
-
-    This is a **deterministic stub** — it does not perform any LLM
-    orchestration. Its sole responsibility is to assemble P1 fields
-    (``decision_context_id``, ``order_intent_id``) into a
-    ``SubmitOrderRequest``.
-
-    Full LLM-based orchestration is deferred to a later milestone.
-    """
-
-    decision_context_id: UUID | None
-    order_intent_id: UUID | None
-    request: SubmitOrderRequest
-    # --- Priority 3 extensions ---
-    context: AssembledContext = field(default_factory=AssembledContext)
-    config_version_id: UUID | None = None
-    reason_codes: tuple[str, ...] = ()
-    # --- Normalised AI backend contract (Priority A coupling) ---
-    ai_backend_inputs: AIDecisionInputs = field(default_factory=AIDecisionInputs)
-
-
-# ---------------------------------------------------------------------------
-# Stub score calculator (default when no real calculator is configured)
-# ---------------------------------------------------------------------------
-
-
-class StubScoreCalculator:
-    """Default stub implementation of ``ScoreCalculator``.
-
-    Returns a zero-score ``ScoreResult`` with no reason codes.
-    This is the fallback when no real calculator is injected.
-    """
-
-    async def calculate(self, context: AssembledContext) -> ScoreResult:
-        return ScoreResult()
-
-
-# ---------------------------------------------------------------------------
-# Orchestrator service
-# ---------------------------------------------------------------------------
-
-
-def _event_sort_key(e: ExternalEventEntity) -> tuple:
-    """Sort key: importance(high=3/medium=2/low=1) → tier(T1=4/T2=3/T3=2/T4=1) → published_at DESC."""
-    importance_map: dict[str, int] = {"high": 3, "medium": 2, "low": 1}
-    tier_map: dict[str, int] = {"T1": 4, "T2": 3, "T3": 2, "T4": 1}
-    imp = importance_map.get(
-        (e.metadata or {}).get("importance", "medium"), 2
-    )
-    tier = tier_map.get(e.source_reliability_tier, 1)
-    ts = e.published_at.timestamp() if e.published_at else 0
-    return (imp, tier, ts)
 
 
 class DecisionOrchestratorService:
@@ -378,6 +186,7 @@ class DecisionOrchestratorService:
         provider_timeout_seconds: int = 120,
     ) -> None:
         self._repos = repos
+        self._decision_context_service = DecisionContextService(repos)
         self._stale_threshold_seconds = stale_threshold_seconds
         self._score_calculator = score_calculator or StubScoreCalculator()
         self._event_interpretation_agent = (
@@ -407,6 +216,17 @@ class DecisionOrchestratorService:
             stale_threshold_seconds=stale_threshold_seconds,
             sync_service=sync_service,
             snapshot_refresh_cb=snapshot_refresh_cb,
+        )
+
+        # Initialize DecisionAgentRunner (Phase 5 refactoring)
+        self._agent_runner = DecisionAgentRunner(
+            repos=self._repos,
+            event_interpretation_agent=self._event_interpretation_agent,
+            ai_risk_agent=self._ai_risk_agent,
+            final_decision_composer_agent=self._final_decision_agent,
+            agent_run_recorder=self._agent_recorder,
+            score_calculator=self._score_calculator,
+            subprocess_timeout=120,
         )
 
     def _check_held_position_sell_override(
@@ -469,6 +289,60 @@ class DecisionOrchestratorService:
 
         return ("REDUCE", "SELL", rationale)
 
+    async def _ensure_or_create_decision_context(
+        self,
+        request: SubmitOrderRequest,
+        existing_context_id: UUID | None,
+    ) -> UUID | None:
+        """Thin wrapper — delegates to DecisionContextService.ensure_or_create()."""
+        return await self._decision_context_service.ensure_or_create(
+            request=request,
+            existing_context_id=existing_context_id,
+        )
+
+    async def _ensure_trade_decision(
+        self,
+        *,
+        decision_context_id: UUID | None,
+        request: SubmitOrderRequest,
+        assembled_context: AssembledContext,
+        agent_bundle: AgentExecutionBundle,
+        fdc_run_id: UUID | None = None,
+    ) -> TradeDecisionEntity | None:
+        """Thin wrapper — delegates to build_trade_decision_entity() + repository add."""
+        td_entity = build_trade_decision_entity(
+            decision_context_id=decision_context_id,
+            request=request,
+            assembled_context=assembled_context,
+            agent_bundle=agent_bundle,
+            fdc_run_id=fdc_run_id,
+        )
+        if td_entity is not None:
+            td_entity = await self._repos.trade_decisions.add(td_entity)
+        return td_entity
+
+    # ------------------------------------------------------------------
+    # Sizing input builder — public delegation to ExecutionService boundary
+    # ------------------------------------------------------------------
+
+    def build_sizing_inputs(
+        self,
+        intent: OrderIntent,
+        reference_price: Decimal | None = None,
+    ) -> SizingInputs:
+        """Build ``SizingInputs`` from an ``OrderIntent``.
+
+        Public delegation method — forwards to
+        ``ExecutionService._build_sizing_inputs()`` (a ``@staticmethod``)
+        to avoid duplicating the sizing-input mapping logic.  External
+        callers (scripts, tests) must use this method instead of reaching
+        into execution-boundary internals directly.
+        """
+        return ExecutionService._build_sizing_inputs(
+            intent=intent,
+            reference_price=reference_price,
+        )
+
     async def assemble(
         self,
         request: SubmitOrderRequest,
@@ -508,7 +382,7 @@ class DecisionOrchestratorService:
         # --- Resolve full DecisionContextEntity ---
         decision_context: DecisionContextEntity | None = None
         if resolved_context_id is not None:
-            decision_context = await self._resolve_decision_context(
+            decision_context = await self._decision_context_service.resolve(
                 resolved_context_id
             )
 
@@ -548,7 +422,7 @@ class DecisionOrchestratorService:
                     events.extend(symbol_seeded)
 
             # Sort: importance desc → T1/T2 first → T3/T4 later → published_at desc
-            events.sort(key=_event_sort_key, reverse=True)
+            events.sort(key=event_sort_key, reverse=True)
             recent_events = tuple(events)
 
             logger.info(
@@ -679,13 +553,19 @@ class DecisionOrchestratorService:
         # Phase 4: subprocess isolation — when enabled, agents run in a separate
         # subprocess with SIGKILL-guaranteed timeout.  When disabled (tests),
         # the original in-process _run_agents() is used.
+        # Build shared AgentExecutionRequest for the agent runner wrappers.
+        agent_request = AgentExecutionRequest(
+            decision_context_id=resolved_context_id,
+            correlation_id=correlation_id,
+            context=assembled_context,
+            symbol=request.symbol,
+            market=request.market,
+            source_type=assembled_context.source_type,
+        )
         if self._use_subprocess_isolation:
             agent_bundle = await self._run_agents_in_subprocess(
+                request=agent_request,
                 assembled_context=assembled_context,
-                decision_context_id=resolved_context_id,
-                correlation_id=correlation_id,
-                symbol=request.symbol,
-                market=request.market,
             )
             # ── Phase 5.6: Rehydrate AgentRunEntity records from subprocess output ──
             # The subprocess path does NOT call recorder.record() internally
@@ -694,7 +574,7 @@ class DecisionOrchestratorService:
             _fdc_run_id: UUID | None = None
             try:
                 # ★ subprocess 경로: EI 실패 시 error metadata를 __error__로 주입
-                _ei_structured = _dataclass_to_dict(agent_bundle.event_output)
+                _ei_structured = dataclass_to_dict(agent_bundle.event_output)
                 if agent_bundle.ei_error_metadata is not None:
                     _ei_structured["__error__"] = agent_bundle.ei_error_metadata
                 _ei_run = await self._agent_recorder.record(
@@ -705,12 +585,12 @@ class DecisionOrchestratorService:
                 _ar_run = await self._agent_recorder.record(
                     decision_context_id=resolved_context_id,
                     agent_type=self._ai_risk_agent.agent_name,
-                    structured_output=_dataclass_to_dict(agent_bundle.risk_output),
+                    structured_output=dataclass_to_dict(agent_bundle.risk_output),
                 )
                 _fdc_run = await self._agent_recorder.record(
                     decision_context_id=resolved_context_id,
                     agent_type=self._final_decision_agent.agent_name,
-                    structured_output=_dataclass_to_dict(agent_bundle.composer_output),
+                    structured_output=dataclass_to_dict(agent_bundle.composer_output),
                 )
                 _fdc_run_id = _fdc_run.agent_run_id
                 logger.info(
@@ -728,11 +608,8 @@ class DecisionOrchestratorService:
                 )
         else:
             agent_bundle = await self._run_agents(
+                request=agent_request,
                 assembled_context=assembled_context,
-                decision_context_id=resolved_context_id,
-                correlation_id=correlation_id,
-                symbol=request.symbol,
-                market=request.market,
             )
             # In-process path: _run_agents() already calls recorder.record()
             # internally, so we extract the FDC run_id from the recorder's
@@ -785,13 +662,17 @@ class DecisionOrchestratorService:
             )
 
         # --- Persist or reuse trade decision when a concrete context exists ---
-        trade_decision_id = await self._ensure_trade_decision(
+        td_entity = await self._ensure_trade_decision(
+            decision_context_id=resolved_context_id,
             request=request,
             assembled_context=assembled_context,
             agent_bundle=agent_bundle,
-            decision_context_id=resolved_context_id,
             fdc_run_id=_fdc_run_id,
         )
+        if td_entity is not None:
+            trade_decision_id = td_entity.trade_decision_id
+        else:
+            trade_decision_id = None
 
         # --- Generate decision_id if not provided ---
         decision_id = request.decision_id
@@ -841,6 +722,7 @@ class DecisionOrchestratorService:
             config_version_id=config_version_id,
             reason_codes=score_result.reason_codes,
             ai_backend_inputs=agent_bundle.ai_inputs,
+            trade_decision_id=trade_decision_id,
         )
 
     # ------------------------------------------------------------------
@@ -910,8 +792,8 @@ class DecisionOrchestratorService:
             _phase_trace.append(PhaseTraceEntry(phase=phase, elapsed_ms=elapsed, status=status))
             _phase_start = now
 
-        # ── Phase 1: Decision pipeline (AI assemble → TD resolve → EA create) ──
-        intent, trade_decision_id, _attempt_id, pipeline_result = await self._run_decision_pipeline(
+        # ── Phase 1: Decision pipeline (AI assemble → TD resolve) ──
+        intent, trade_decision_id, pipeline_result = await self._run_decision_pipeline(
             request,
             decision_context_id=decision_context_id,
             order_intent_id=order_intent_id,
@@ -926,7 +808,6 @@ class DecisionOrchestratorService:
         return await self._execution_service.run_execution_pipeline(
             intent,
             trade_decision_id,
-            _attempt_id,
             request,
             order_manager,
             broker,
@@ -950,12 +831,17 @@ class DecisionOrchestratorService:
         seeded_events: list[ExternalEventEntity] | None = None,
         _add_phase: Callable[[str, str], None],
         _phase_trace: list[PhaseTraceEntry],
-    ) -> tuple[OrderIntent | None, UUID | None, UUID | None, SubmitResult | None]:
-        """Decision pipeline: AI assemble → TD resolve → EA create.
+    ) -> tuple[OrderIntent | None, UUID | None, SubmitResult | None]:
+        """Decision pipeline: AI assemble → TD resolve.
 
-        Returns ``(intent, trade_decision_id, _attempt_id, None)`` on success,
-        or ``(None, None, None, submit_result)`` on error (caller should return
+        Returns ``(intent, trade_decision_id, None)`` on success,
+        or ``(None, None, submit_result)`` on error (caller should return
         the ``submit_result`` immediately).
+
+        Note
+        ----
+        ``ExecutionAttemptEntity`` creation has moved to
+        ``ExecutionService.run_execution_pipeline()``.
         """
         _symbol = request.symbol
         _add_phase("ai_assemble", "start")
@@ -985,7 +871,7 @@ class DecisionOrchestratorService:
                 decision_context_id,
                 request.symbol,
             )
-            return None, None, None, SubmitResult(
+            return None, None, SubmitResult(
                 status="ERROR",
                 error_phase="ai_timeout",
                 error_message=f"assemble() timed out for symbol={request.symbol}",
@@ -997,1352 +883,55 @@ class DecisionOrchestratorService:
                 "decision_context_id=%s",
                 decision_context_id,
             )
-            return None, None, None, SubmitResult(
+            return None, None, SubmitResult(
                 status="ERROR",
                 error_phase="ai",
                 error_message=f"assemble() failed: {exc}",
                 decision_context_id=decision_context_id,
             )
 
-        # Resolve trade_decision_id from the intent for diagnostics.
-        trade_decision_id: UUID | None = None
-        if intent.decision_context_id is not None:
-            try:
-                td = await self._repos.trade_decisions.get_by_context(
-                    intent.decision_context_id
-                )
-                if td is not None:
-                    trade_decision_id = td.trade_decision_id
-            except Exception:
-                pass
+        # trade_decision_id is already stored on the intent by assemble()
+        trade_decision_id = intent.trade_decision_id
 
-        # ── ExecutionAttempt 생성 (running) ──
-        _attempt_id: UUID | None = None
-        if trade_decision_id is not None and intent.decision_context_id is not None:
-            try:
-                _now = datetime.now(timezone.utc)
-                attempt = ExecutionAttemptEntity(
-                    execution_attempt_id=uuid4(),
-                    trade_decision_id=trade_decision_id,
-                    decision_context_id=intent.decision_context_id,
-                    status="running",
-                    started_at=_now,
-                    created_at=_now,
-                )
-                saved = await self._repos.execution_attempts.add(attempt)
-                _attempt_id = saved.execution_attempt_id
-                logger.info(
-                    "[ATTEMPT_CREATED] execution_attempt_id=%s trade_decision_id=%s",
-                    _attempt_id,
-                    trade_decision_id,
-                )
-            except Exception:
-                logger.warning(
-                    "ExecutionAttempt creation failed (non-fatal). "
-                    "trade_decision_id=%s",
-                    trade_decision_id,
-                    exc_info=True,
-                )
-                _attempt_id = None
+        # NOTE: ExecutionAttemptEntity creation has moved to
+        # ExecutionService.run_execution_pipeline().
 
-        return intent, trade_decision_id, _attempt_id, None
+        return intent, trade_decision_id, None
 
 
 
-    async def _ensure_or_create_decision_context(
-        self,
-        request: SubmitOrderRequest,
-        existing_context_id: UUID | None,
-    ) -> UUID | None:
-        """Resolve or create a valid ``decision_context_id`` before agent execution.
 
-        Strategy
-        --------
-        1. ``existing_context_id``가 제공되면 → DB 존재 여부와 관계없이 그 ID를 반환.
-           (caller가 명시적으로 ID를 제공했으므로 책임을 가짐)
-        2. ``existing_context_id``가 ``None``이면 → request fields에서 FK chain을
-           resolve하여 새 context 생성:
-           - ``request.account_ref`` → ``repos.accounts.find_one()`` → ``account_id``
-           - ``request.strategy_id`` → ``UUID`` 파싱 → ``strategy_id``
-           - ``account.client_id + account.environment`` → ``repos.config_versions.get_active()``
-        3. **3개 조건이 모두 충족될 때만** 생성하고, 하나라도 실패하면 ``None`` 반환 (fail-open).
 
-        Returns
-        -------
-        UUID | None
-            유효한 ``decision_context_id`` 또는 ``None`` (생성 불가).
-        """
-        # Case 1: existing_context_id가 제공됨 → caller가 책임지고 사용
-        if existing_context_id is not None:
-            return existing_context_id
-
-        # Case 2: request fields에서 FK chain resolution
-        try:
-            # 조건 1: account_ref → account
-            account = await self._repos.accounts.find_one(
-                AccountLookup(account_alias=request.account_ref)
-            )
-            if account is None:
-                logger.warning(
-                    "Cannot create decision context: account not found for ref=%s",
-                    request.account_ref,
-                )
-                return None
-
-            # 조건 2: strategy_id UUID 파싱
-            try:
-                strategy_id = UUID(request.strategy_id)
-            except (ValueError, AttributeError):
-                logger.warning(
-                    "Cannot create decision context: invalid strategy_id=%s",
-                    request.strategy_id,
-                )
-                return None
-
-            # 조건 3: client_id + environment → active config version
-            config_version = await self._repos.config_versions.get_active(
-                client_id=account.client_id,
-                environment=account.environment,
-            )
-            if config_version is None:
-                logger.warning(
-                    "Cannot create decision context: no active config version "
-                    "for client=%s env=%s",
-                    account.client_id,
-                    account.environment,
-                )
-                return None
-
-            # Best-effort snapshot anchoring for replayability and agent context.
-            # The assemble path can still fall back to latest snapshots, but storing
-            # the IDs here makes the exact inputs auditable after the cycle.
-            position_snapshot_id: UUID | None = None
-            cash_balance_snapshot_id: UUID | None = None
-            try:
-                instrument = await self._repos.instruments.get_by_symbol(
-                    symbol=request.symbol,
-                    market_code=request.market,
-                )
-                if instrument is not None:
-                    positions = await self._repos.position_snapshots.list_latest_by_account(
-                        account.account_id,
-                    )
-                    for snapshot in positions:
-                        if snapshot.instrument_id == instrument.instrument_id:
-                            position_snapshot_id = snapshot.position_snapshot_id
-                            break
-            except Exception:
-                logger.debug(
-                    "Unable to anchor latest position snapshot for symbol=%s market=%s",
-                    request.symbol,
-                    request.market,
-                    exc_info=True,
-                )
-
-            try:
-                cash = await self._repos.cash_balance_snapshots.get_latest_by_account(
-                    account.account_id,
-                )
-                if cash is not None:
-                    cash_balance_snapshot_id = cash.cash_balance_snapshot_id
-            except Exception:
-                logger.debug(
-                    "Unable to anchor latest cash balance snapshot for account=%s",
-                    account.account_id,
-                    exc_info=True,
-                )
-
-            # --- 모든 조건 충족 → DecisionContextEntity 생성 ---
-            now = datetime.now(timezone.utc)
-            context_id = existing_context_id or uuid4()
-            correlation_id = request.correlation_id or str(uuid4())
-
-            context = DecisionContextEntity(
-                decision_context_id=context_id,
-                account_id=account.account_id,
-                strategy_id=strategy_id,
-                config_version_id=config_version.config_version_id,
-                position_snapshot_id=position_snapshot_id,
-                cash_balance_snapshot_id=cash_balance_snapshot_id,
-                market_timestamp=now,
-                correlation_id=correlation_id,
-                created_at=now,
-            )
-
-            # Savepoint-protected insert: UniqueViolationError 격리
-            # PostgreSQL nested connection.transaction() creates a savepoint,
-            # so a UniqueViolationError only rolls back the savepoint, not
-            # the outer transaction. In-memory UoW has no connection attr.
-            try:
-                conn = getattr(self._repos.unit_of_work, "connection", None)
-                if conn is not None:
-                    async with conn.transaction():
-                        saved = await self._repos.decision_contexts.add(context)
-                else:
-                    saved = await self._repos.decision_contexts.add(context)
-            except asyncpg.exceptions.UniqueViolationError:
-                logger.warning(
-                    "correlation_id=%s already exists — savepoint rollback, "
-                    "continuing with decision_context_id=None",
-                    correlation_id,
-                )
-                return None
-
-            logger.info(
-                "Created decision context: id=%s account_id=%s strategy_id=%s "
-                "correlation_id=%s",
-                saved.decision_context_id,
-                saved.account_id,
-                saved.strategy_id,
-                saved.correlation_id,
-            )
-            return saved.decision_context_id
-
-        except Exception:
-            logger.warning(
-                "Failed to create decision context — agent runs will proceed "
-                "without persistence. account_ref=%s",
-                request.account_ref,
-                exc_info=True,
-            )
-            return None
-
-    async def _resolve_active_context(self) -> UUID | None:
-        """Resolve the most recent active decision context.
-
-        .. note::
-           This is a future hook. The current implementation always returns
-           ``None`` because ``DecisionContextQuery`` does not yet support a
-           ``status`` filter. Once the query model is extended, this method
-           should query for active contexts and return the most recent one.
-
-        Returns ``None`` (future hook).
-        """
-        # Future: query decision_contexts with status="active" filter
-        # once DecisionContextQuery supports it.
-        return None
-
-    async def _resolve_decision_context(
-        self, context_id: UUID
-    ) -> DecisionContextEntity | None:
-        """Resolve a full ``DecisionContextEntity`` by ID.
-
-        Returns ``None`` if the context is not found or on error.
-        """
-        try:
-            return await self._repos.decision_contexts.get(context_id)
-        except Exception:
-            pass
-        return None
 
     # ------------------------------------------------------------------
-    # AI Agent execution
+    # AI Agent execution — thin wrappers delegating to DecisionAgentRunner
     # ------------------------------------------------------------------
 
     async def _run_agents(
         self,
-        *,
+        request: AgentExecutionRequest,
         assembled_context: AssembledContext,
-        decision_context_id: UUID | None,
-        correlation_id: str,
-        symbol: str | None = None,
-        market: str | None = None,
     ) -> AgentExecutionBundle:
-        """Execute the three v1 Provider AI Agents sequentially.
-
-        Execution order
-        ---------------
-        1. Event Interpretation Agent
-        2. AI Risk Agent
-        3. Final Decision Composer
-
-        Each agent receives an ``AgentExecutionRequest`` built from the
-        assembled context.  Individual outputs are kept as local variables
-        and recorded via ``self._agent_recorder``.
-
-        Returns
-        -------
-        AIDecisionInputs
-            Normalised backend contract aggregating outputs from all three
-            agents.  Always returned — even when every agent fails, a
-            deterministic default ``AIDecisionInputs()`` is provided.
-
-        Safe-fallback policy
-        --------------------
-        If any agent raises an exception, a warning is logged and the
-        agent's output defaults to an empty / safe structured output.
-        The orchestrator **always** proceeds — agent failures never
-        block order assembly.
-
-        Per-agent timeout
-        -----------------
-        Each agent call is wrapped with ``asyncio.wait_for()`` using
-        ``_PER_AGENT_TIMEOUT`` (25s).  If an agent hangs beyond this
-        limit, ``asyncio.TimeoutError`` is caught separately and the
-        agent's output falls back to a safe default — the remaining
-        agents still execute normally.
-        """
-        # --- Build the shared request envelope ---
-        request = AgentExecutionRequest(
-            decision_context_id=decision_context_id,
-            correlation_id=correlation_id,
-            context=assembled_context,
-            symbol=symbol,
-            market=market,
-            source_type=assembled_context.source_type,
-        )
-
-        # Log when no decision context is available — agent runs will be
-        # recorded in-memory only (not persisted to Postgres) because
-        # PostgresAgentRunRepository requires a valid FK reference.
-        if decision_context_id is None:
-            logger.info(
-                "No active decision context — agent runs will be kept "
-                "in-memory only (not persisted). correlation_id=%s",
-                correlation_id,
-            )
-
-        # --- 1. Event Interpretation Agent ---
-        event_output: EventInterpretationOutput
-        ei_error_metadata: dict[str, object] | None = None
-        _t0 = time_module.monotonic()
-        try:
-            event_output = await asyncio.wait_for(
-                self._event_interpretation_agent.run(request),
-                timeout=_PER_AGENT_TIMEOUT,
-            )
-            logger.info(
-                "EI agent completed in %.2fs — decision_context_id=%s",
-                time_module.monotonic() - _t0,
-                decision_context_id,
-            )
-            # ★ 성공 경로: agent가 내부적으로 예외를 catch한 경우
-            #   _last_error_metadata에 분류된 error metadata가 있음.
-            #   정상 성공 시에는 None이 보장됨.
-            ei_error_metadata = self._event_interpretation_agent.last_error_metadata
-        except asyncio.TimeoutError:
-            logger.warning(
-                "Event Interpretation Agent timed out after %ds (actual %.2fs) — "
-                "using default output (safe fallback). decision_context_id=%s",
-                _PER_AGENT_TIMEOUT,
-                time_module.monotonic() - _t0,
-                decision_context_id,
-            )
-            event_output = EventInterpretationOutput()
-            # ★ P0: timeout 시 degraded 플래그 설정
-            degraded_av = replace(
-                event_output.aggregate_view,
-                interpretation_incomplete=True,
-                degraded_reason="timeout",
-            )
-            object.__setattr__(event_output, "aggregate_view", degraded_av)
-            # ★ timeout fallback: _finalize_ei_output()로 interpreted_event_count, summary_basis, summary 설정
-            event_output = _finalize_ei_output(event_output)
-            ei_error_metadata = {
-                "error_type": "timeout",
-                "error_message": f"asyncio.TimeoutError after {_PER_AGENT_TIMEOUT}s",
-                "http_status": None,
-                "retryable": True,
-                "timeout_source": "orchestrator",
-            }
-        except Exception:
-            logger.warning(
-                "Event Interpretation Agent failed after %.2fs — using default "
-                "output (safe fallback). decision_context_id=%s",
-                time_module.monotonic() - _t0,
-                decision_context_id,
-                exc_info=True,
-            )
-            event_output = EventInterpretationOutput()
-            # ★ P0: provider_error 시 degraded 플래그 설정
-            degraded_av = replace(
-                event_output.aggregate_view,
-                interpretation_incomplete=True,
-                degraded_reason="provider_error",
-            )
-            object.__setattr__(event_output, "aggregate_view", degraded_av)
-            # ★ exception fallback: _finalize_ei_output()로 interpreted_event_count, summary_basis, summary 설정
-            event_output = _finalize_ei_output(event_output)
-            ei_error_metadata = {
-                "error_type": "provider_error",
-                "error_message": "Unexpected agent failure at orchestrator level",
-                "http_status": None,
-                "retryable": None,
-                "timeout_source": None,
-            }
-
-        if _is_missing_agent_symbol(event_output.symbol) and symbol:
-            event_output = replace(event_output, symbol=symbol)
-
-        # ★ structured_output에 __error__ 메타데이터 포함 (실패 시에만)
-        ei_structured_output: dict[str, object] = _dataclass_to_dict(event_output)
-        if ei_error_metadata is not None:
-            ei_structured_output["__error__"] = ei_error_metadata  # type: ignore[typeddict-unknown-key]
-
-        await self._agent_recorder.record(
-            decision_context_id=decision_context_id,
-            agent_type=self._event_interpretation_agent.agent_name,
-            structured_output=ei_structured_output,
-        )
-
-        # ── EI top_reason_codes empty detection ─────────────────────
-        if (event_output.aggregate_view
-                and not event_output.aggregate_view.top_reason_codes
-                and event_output.detected_event_count > 0):
-            logger.warning(
-                "EI top_reason_codes is empty but detected_event_count=%d "
-                "(symbol=%s) — LLM may have omitted the field in aggregation",
-                event_output.detected_event_count, symbol,
-            )
-
-        # --- Build a new request with the EI output for downstream agents ---
-        # AgentExecutionRequest is frozen, so we must create a new instance.
-        # When EI fails, event_output is an empty EventInterpretationOutput(),
-        # so downstream agents always receive a structured value (never None).
-        request_with_ei = AgentExecutionRequest(
-            decision_context_id=request.decision_context_id,
-            correlation_id=request.correlation_id,
-            context=request.context,
-            symbol=request.symbol,
-            market=request.market,
-            event_interpretation_output=event_output,
-            model_id=request.model_id,
-            prompt_id=request.prompt_id,
-            source_type=request.source_type,
-        )
-
-        # --- 2. AI Risk Agent ---
-        risk_output: AIRiskOutput
-        _t1 = time_module.monotonic()
-        try:
-            risk_output = await asyncio.wait_for(
-                self._ai_risk_agent.run(request_with_ei),
-                timeout=_PER_AGENT_TIMEOUT,
-            )
-            logger.info(
-                "AR agent completed in %.2fs — decision_context_id=%s",
-                time_module.monotonic() - _t1,
-                decision_context_id,
-            )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "AI Risk Agent timed out after %ds (actual %.2fs) — "
-                "using default output (safe fallback). decision_context_id=%s",
-                _PER_AGENT_TIMEOUT,
-                time_module.monotonic() - _t1,
-                decision_context_id,
-            )
-            risk_output = AIRiskOutput()
-        except Exception:
-            logger.warning(
-                "AI Risk Agent failed after %.2fs — using default output "
-                "(safe fallback). decision_context_id=%s",
-                time_module.monotonic() - _t1,
-                decision_context_id,
-                exc_info=True,
-            )
-            risk_output = AIRiskOutput()
-
-        if _is_missing_agent_symbol(risk_output.symbol) and symbol:
-            risk_output = replace(risk_output, symbol=symbol)
-
-        await self._agent_recorder.record(
-            decision_context_id=decision_context_id,
-            agent_type=self._ai_risk_agent.agent_name,
-            structured_output=_dataclass_to_dict(risk_output),
-        )
-
-        # --- Build a new request with both EI and AR output for FDC ---
-        # AgentExecutionRequest is frozen, so we must create a new instance.
-        # When AR fails, risk_output is an empty AIRiskOutput(), so FDC always
-        # receives a structured value (never None).
-        request_with_ei_and_ar = AgentExecutionRequest(
-            decision_context_id=request.decision_context_id,
-            correlation_id=request.correlation_id,
-            context=request.context,
-            symbol=request.symbol,
-            market=request.market,
-            event_interpretation_output=event_output,
-            ai_risk_output=risk_output,
-            model_id=request.model_id,
-            prompt_id=request.prompt_id,
-            source_type=request.source_type,
-        )
-
-        # --- 3. Final Decision Composer Agent ---
-        composer_output: FinalDecisionComposerOutput
-        _t2 = time_module.monotonic()
-        try:
-            composer_output = await asyncio.wait_for(
-                self._final_decision_agent.run(request_with_ei_and_ar),
-                timeout=_PER_AGENT_TIMEOUT,
-            )
-            logger.info(
-                "FDC agent completed in %.2fs — decision_context_id=%s",
-                time_module.monotonic() - _t2,
-                decision_context_id,
-            )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "Final Decision Composer Agent timed out after %ds (actual %.2fs) — "
-                "using default output (safe fallback). decision_context_id=%s",
-                _PER_AGENT_TIMEOUT,
-                time_module.monotonic() - _t2,
-                decision_context_id,
-            )
-            composer_output = FinalDecisionComposerOutput()
-        except Exception:
-            logger.warning(
-                "Final Decision Composer Agent failed after %.2fs — using default "
-                "output (safe fallback). decision_context_id=%s",
-                time_module.monotonic() - _t2,
-                decision_context_id,
-                exc_info=True,
-            )
-            composer_output = FinalDecisionComposerOutput()
-
-        if _is_missing_agent_symbol(composer_output.symbol) and symbol:
-            composer_output = replace(composer_output, symbol=symbol)
-
-        await self._agent_recorder.record(
-            decision_context_id=decision_context_id,
-            agent_type=self._final_decision_agent.agent_name,
-            structured_output=_dataclass_to_dict(composer_output),
-        )
-
-        logger.info(
-            "AI agents executed: decision_context_id=%s "
-            "event=%s risk=%s composer=%s",
-            decision_context_id,
-            event_output.agent_name,
-            risk_output.risk_opinion,
-            composer_output.decision_type,
-        )
-
-        # --- 단일 정규화: composer raw output → canonical decision_type ---
-        # recording 이후, AIDecisionInputs 조립 전에 한 번만 normalize.
-        # 이후 모든 downstream (AIDecisionInputs, AgentExecutionBundle,
-        # _ensure_trade_decision)은 normalized value만 사용.
-        normalized_dt = _normalize_decision_type(composer_output.decision_type)
-        if normalized_dt != composer_output.decision_type:
-            composer_output = replace(composer_output, decision_type=normalized_dt)
-            logger.info(
-                "Normalized decision_type: %s → %s",
-                composer_output.decision_type,
-                normalized_dt,
-            )
-
-        # --- Assemble AIDecisionInputs from all three agent outputs ---
-        ai_inputs = AIDecisionInputs(
-            # FDC-derived
-            decision_type=composer_output.decision_type,
-            confidence=composer_output.confidence,
-            conviction=composer_output.conviction,
-            reason_codes=composer_output.reason_codes,
-            opposing_evidence=composer_output.opposing_evidence,
-            execution_preferences=composer_output.execution_preferences,
-            sizing_hint=composer_output.sizing_hint,
-            side=composer_output.side if composer_output and hasattr(composer_output, 'side') else "",
-            # AR-derived
-            risk_opinion=risk_output.risk_opinion,
-            risk_score=risk_output.risk_score,
-            risk_confidence=risk_output.confidence,
-            size_adjustment_factor=risk_output.size_adjustment_factor,
-            risk_reason_codes=risk_output.reason_codes,
-            risk_flags=risk_output.risk_flags,
-            # EI-derived
-            event_bias=event_output.aggregate_view.overall_bias,
-            event_conflict=event_output.aggregate_view.event_conflict,
-            event_reason_codes=event_output.aggregate_view.top_reason_codes,
-            # Metadata
-            source_agent_names=(
-                event_output.agent_name,
-                risk_output.agent_name,
-                composer_output.agent_name,
-            ),
-            schema_versions=(
-                ("event_interpretation", event_output.schema_version),
-                ("ai_risk", risk_output.schema_version),
-                ("final_decision_composer", composer_output.schema_version),
-            ),
-        )
-
-        return AgentExecutionBundle(
-            ai_inputs=ai_inputs,
-            event_output=event_output,
-            risk_output=risk_output,
-            composer_output=composer_output,
+        """Thin wrapper — delegates to DecisionAgentRunner.run_agents()."""
+        return await self._agent_runner.run_agents(
+            request=request,
+            assembled_context=assembled_context,
         )
 
     # ------------------------------------------------------------------
-    # Phase 4: Subprocess isolation for agent calls
+    # Phase 4: Subprocess isolation for agent calls — thin wrapper
     # ------------------------------------------------------------------
 
     async def _run_agents_in_subprocess(
         self,
-        *,
+        request: AgentExecutionRequest,
         assembled_context: AssembledContext,
-        decision_context_id: UUID | None,
-        correlation_id: str,
-        symbol: str | None = None,
-        market: str | None = None,
     ) -> AgentExecutionBundle:
-        """Run agents in a subprocess with SIGKILL-guaranteed timeout.
-
-        This is the Phase 4 subprocess-isolated alternative to
-        ``_run_agents()``.  It serializes the agent input, spawns a
-        subprocess via ``scripts.run_agent_subprocess``, and enforces a
-        35s timeout.  If the subprocess times out, SIGTERM (10s grace)
-        → SIGKILL is used to forcibly terminate C-level httpx I/O
-        blocking.
-
-        Returns
-        -------
-        AgentExecutionBundle
-            Always returned — even on timeout or subprocess failure,
-            a deterministic fallback ``AgentExecutionBundle`` is
-            provided (same safe-fallback policy as ``_run_agents()``).
-
-        Timeout handling
-        ----------------
-        The combined timeout (35s) covers all 3 agents plus subprocess
-        creation/teardown overhead.  This is intentionally longer than
-        3 × _PER_AGENT_TIMEOUT (105s → 35s) because the subprocess
-        runs agents sequentially with its own per-agent timeout.
-        """
-        # If subprocess isolation is disabled, fall back to in-process execution.
-        # This preserves test compatibility (tests use mock repos that cannot
-        # be serialised to a subprocess).
-        if not self._use_subprocess_isolation:
-            return await self._run_agents(
-                assembled_context=assembled_context,
-                decision_context_id=decision_context_id,
-                correlation_id=correlation_id,
-                symbol=symbol,
-                market=market,
-            )
-
-        import json
-        import os
-        import signal
-        import sys
-
-        # ── 1. Serialize input ────────────────────────────────────────
-        inp = _serialize_agent_input(
+        """Thin wrapper — delegates to DecisionAgentRunner.run_agents_in_subprocess()."""
+        return await self._agent_runner.run_agents_in_subprocess(
+            request=request,
             assembled_context=assembled_context,
-            decision_context_id=decision_context_id,
-            correlation_id=correlation_id,
-            symbol=symbol,
-            market=market,
-            llm_provider=self._llm_provider,
-            provider_api_key=self._provider_api_key,
-            provider_base_url=self._provider_base_url,
-            provider_model_id=self._provider_model_id,
-            provider_timeout_seconds=self._provider_timeout_seconds,
-        )
-        def _json_default(obj: object) -> str:
-            """Convert non-serializable objects to JSON-safe strings."""
-            if isinstance(obj, datetime):
-                return obj.isoformat()
-            if isinstance(obj, Decimal):
-                return str(obj)
-            raise TypeError(
-                f"Object of type {obj.__class__.__name__} ({obj!r}) "
-                f"is not JSON serializable"
-            )
-
-        input_bytes = json.dumps(inp, default=_json_default).encode("utf-8")
-
-        # ── 2. Combined timeout ─────────────────────────────────────────
-        # The outer timeout covers 3 sequential agent API calls (EI, AR,
-        # FDC) plus subprocess startup/teardown overhead.  It is NOT
-        # configurable per-agent — each agent uses the httpx client timeout
-        # (provider_timeout_seconds) internally.  The outer timeout should
-        # be generous enough to allow 3× provider_timeout with headroom.
-        _SUBPROCESS_TIMEOUT = 300.0  # seconds (FDC skip + 축소 prompt + 3× provider)
-
-        # ── 3. Create subprocess ──────────────────────────────────────
-        proc = await asyncio.create_subprocess_exec(
-            sys.executable, "-m", "scripts.run_agent_subprocess",
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
         )
 
-        # ── 4. Communicate with timeout ───────────────────────────────
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(input_bytes),
-                timeout=_SUBPROCESS_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            # ── Capture stderr before killing ─────────────────────────────
-            # This is critical for diagnosing subprocess hangs. On timeout,
-            # communicate() was cancelled but the pipe may still have data.
-            stderr_hint = ""
-            try:
-                stderr_data = await asyncio.wait_for(
-                    proc.stderr.read(), timeout=2.0
-                )
-                if stderr_data:
-                    stderr_hint = stderr_data.decode("utf-8", errors="replace")[:2000]
-            except (asyncio.TimeoutError, ProcessLookupError, Exception):
-                pass
 
-            # SIGTERM first (10s grace period)
-            try:
-                proc.terminate()
-                await asyncio.wait_for(proc.wait(), timeout=10.0)
-            except (asyncio.TimeoutError, ProcessLookupError):
-                # SIGKILL — forcibly terminate C-level blocking
-                try:
-                    proc.kill()
-                    await proc.wait()
-                except ProcessLookupError:
-                    pass
 
-            logger.warning(
-                "Agent subprocess timed out after %ds — "
-                "using fallback output. decision_context_id=%s "
-                "correlation_id=%s%s",
-                _SUBPROCESS_TIMEOUT,
-                decision_context_id,
-                correlation_id,
-                f" stderr_hint={stderr_hint}" if stderr_hint else "",
-            )
-            return _build_fallback_bundle()
-
-        # ── 5. Log subprocess stderr (diagnostics) ────────────────────
-        if stderr and stderr.strip():
-            logger.info(
-                "Agent subprocess stderr (decision_context_id=%s): %s",
-                decision_context_id,
-                stderr.decode("utf-8", errors="replace")[:2000],
-            )
-
-        # ── 6. Parse output ───────────────────────────────────────────
-        try:
-            result = json.loads(stdout)
-            if not result.get("success"):
-                logger.warning(
-                    "Agent subprocess reported failure: %s — "
-                    "using fallback output. decision_context_id=%s",
-                    result.get("error", "unknown error"),
-                    decision_context_id,
-                )
-                return _build_fallback_bundle()
-
-            return _deserialize_agent_output(result)
-
-        except (json.JSONDecodeError, KeyError, TypeError) as exc:
-            logger.error(
-                "Failed to parse agent subprocess output: %s — "
-                "using fallback output. decision_context_id=%s "
-                "stdout_preview=%s",
-                exc,
-                decision_context_id,
-                stdout[:500] if stdout else "(empty)",
-            )
-            return _build_fallback_bundle()
-
-    async def _ensure_trade_decision(
-        self,
-        *,
-        request: SubmitOrderRequest,
-        assembled_context: AssembledContext,
-        agent_bundle: AgentExecutionBundle,
-        decision_context_id: UUID | None,
-        fdc_run_id: UUID | None = None,
-    ) -> UUID | None:
-        """항상 새 TradeDecisionEntity를 생성 (INSERT-only 정책).
-
-        동일 decision_context_id에 대해 여러 TD row가 존재할 수 있으며,
-        order_request는 가장 최신 TD에 연결됩니다.
-        """
-        _td_start = time_module.monotonic()
-        if decision_context_id is None:
-            return None
-
-        decision_context = assembled_context.decision_context
-        if decision_context is None:
-            return None
-
-        now = datetime.now(timezone.utc)
-        composer_output = agent_bundle.composer_output
-        ai_inputs = agent_bundle.ai_inputs
-
-        try:
-            decision = TradeDecisionEntity(
-                trade_decision_id=uuid4(),
-                decision_context_id=decision_context_id,
-                decision_type=_resolve_decision_type(composer_output.decision_type),
-                side=_resolve_order_side(composer_output.side, request.side),
-                strategy_id=decision_context.strategy_id,
-                symbol=request.symbol,
-                market=request.market,
-                entry_style=_resolve_entry_style(
-                    composer_output.entry_style,
-                    request.order_type,
-                ),
-                created_at=now,
-                # --- Axis 2: Source type ---
-                source_type=assembled_context.source_type,
-                agent_run_id=fdc_run_id,
-                entry_price=_decimal_or_none(request.price),
-                quantity=_decimal_or_none(request.quantity),
-                max_order_value=_calculate_max_order_value(
-                    request.price,
-                    request.quantity,
-                ),
-                confidence=Decimal(str(composer_output.confidence)),
-                risk_check_passed=ai_inputs.risk_opinion in {"allow", "reduce"},
-                reason_codes=list(composer_output.reason_codes) or None,
-                opposing_evidence={
-                    "items": [
-                        validate_or_normalize_korean(item)
-                        for item in composer_output.opposing_evidence
-                    ],
-                }
-                if composer_output.opposing_evidence
-                else {},
-                exit_plan_json=_dataclass_to_dict(composer_output.exit_plan_hint),
-                calculation_version="decision_orchestrator.v1",
-                agent_version_json=dict(ai_inputs.schema_versions),
-                rationale_summary=validate_or_normalize_korean(
-                    composer_output.summary or None
-                ),
-                decision_json={
-                    "decision_type": composer_output.decision_type,
-                    "side": composer_output.side,
-                    "entry_style": composer_output.entry_style,
-                    "time_horizon": composer_output.time_horizon,
-                    "event_bias": ai_inputs.event_bias,
-                    "event_conflict": ai_inputs.event_conflict,
-                    "event_reason_codes": list(ai_inputs.event_reason_codes),
-                    "risk_reason_codes": list(ai_inputs.risk_reason_codes),
-                    "reason_codes": list(ai_inputs.reason_codes),
-                    "opposing_evidence": list(ai_inputs.opposing_evidence),
-                    "confidence": ai_inputs.confidence,
-                    "conviction": ai_inputs.conviction,
-                    "risk_opinion": ai_inputs.risk_opinion,
-                    "risk_flags": list(ai_inputs.risk_flags),
-                    "execution_preferences": _dataclass_to_dict(
-                        composer_output.execution_preferences
-                    ),
-                    "sizing_hint": _dataclass_to_dict(composer_output.sizing_hint),
-                },
-            )
-            saved = await self._repos.trade_decisions.add(decision)
-            _td_elapsed = time_module.monotonic() - _td_start
-            logger.info(
-                "[TD_CREATED] decision_context_id=%s decision_type=%s side=%s "
-                "source_type=%s symbol=%s elapsed=%.3fs",
-                decision_context_id,
-                _resolve_decision_type(composer_output.decision_type),
-                _resolve_order_side(composer_output.side, request.side),
-                assembled_context.source_type,
-                request.symbol,
-                _td_elapsed,
-            )
-            return saved.trade_decision_id
-        except Exception:
-            logger.warning(
-                "Trade decision persistence failed. decision_context_id=%s",
-                decision_context_id,
-                exc_info=True,
-            )
-            return None
-
-
-# ---------------------------------------------------------------------------
-# Helper: convert PhaseTraceEntry list to JSON-serializable dicts
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Helper: convert a frozen dataclass to a plain dict
-# ---------------------------------------------------------------------------
-
-
-def _dataclass_to_dict(obj: object) -> dict[str, object]:
-    """Recursively convert a frozen dataclass to a JSON-compatible dict.
-
-    Handles:
-    * Nested dataclasses (recursed into).
-    * Tuples of dataclasses (each element recursed).
-    * ``UUID`` objects (converted to ``str``).
-    * Tuples of ``UUID`` objects (each element converted to ``str``).
-    * Plain values (returned as-is).
-
-    The result is suitable for storage in
-    ``AgentRunEntity.structured_output_json``.
-    """
-    if not hasattr(obj, "__dataclass_fields__"):
-        return {}
-    result: dict[str, object] = {}
-    for field_name in obj.__dataclass_fields__:  # type: ignore[arg-type]
-        value = getattr(obj, field_name)
-        if isinstance(value, UUID):
-            result[field_name] = str(value)  # type: ignore[literal-required]
-        elif hasattr(value, "__dataclass_fields__"):
-            result[field_name] = _dataclass_to_dict(value)  # type: ignore[literal-required]
-        elif isinstance(value, tuple):
-            result[field_name] = tuple(  # type: ignore[literal-required]
-                _dataclass_to_dict(v) if hasattr(v, "__dataclass_fields__")
-                else str(v) if isinstance(v, UUID)
-                else v
-                for v in value
-            )
-        else:
-            result[field_name] = value  # type: ignore[literal-required]
-    return result
-
-
-def _normalize_decision_type(decision_type: str) -> str:
-    """Normalize AI output decision_type to canonical backend contract values.
-
-    Maps known drift vocabulary to equivalent canonical values while
-    preserving direct matches and existing BUY/SELL handling.
-
-    == Canonical pass-through (그대로 유지) ==
-    APPROVE, REJECT, HOLD, WATCH, EXIT, REDUCE
-    BUY, SELL  (actionable_types에서 이미 처리 중이므로 보존)
-
-    == Known drift → canonical mapping (대소문자 불변) ==
-    entry → APPROVE  (단, side=BUY/SELL이 별도로 존재한다는 전제)
-    no_action → HOLD
-    no_trade → HOLD
-    none → HOLD
-
-    == 대소문자/표기 변형 처리 ==
-    - 입력을 strip() + upper()로 정규화 후 매핑
-    - ENTRY, entry, Entry → 모두 "ENTRY" → APPROVE
-    - NO_TRADE, no_trade, No_Trade → 모두 "NO_TRADE" → HOLD
-
-    == Fallback ==
-    Any other unknown value → HOLD (same as existing _resolve_decision_type)
-    """
-    normalized = decision_type.strip().upper()
-
-    # Direct canonical match — pass through
-    if normalized in {
-        "APPROVE", "REJECT", "HOLD", "WATCH", "EXIT", "REDUCE",
-        "BUY", "SELL",
-    }:
-        return normalized
-
-    # Known drift vocabulary → canonical mapping
-    mapping: dict[str, str] = {
-        "ENTRY": "APPROVE",
-        "NO_ACTION": "HOLD",
-        "NO_TRADE": "HOLD",
-        "NONE": "HOLD",
-    }
-    return mapping.get(normalized, "HOLD")
-
-
-def _is_missing_agent_symbol(value: str | None) -> bool:
-    """Return true when an agent omitted or emitted an unknown symbol."""
-    if value is None:
-        return True
-    normalized = value.strip().upper()
-    return normalized in {"", "UNKNOWN", "(NOT AVAILABLE)", "N/A", "NONE", "NULL"}
-
-
-# ---------------------------------------------------------------------------
-# Phase 4: Subprocess isolation — serialize / deserialize helpers
-# ---------------------------------------------------------------------------
-
-
-def _serialize_agent_input(
-    *,
-    assembled_context: AssembledContext,
-    decision_context_id: UUID | None,
-    correlation_id: str,
-    symbol: str | None = None,
-    market: str | None = None,
-    llm_provider: str = "deepseek",
-    provider_api_key: str = "",
-    provider_base_url: str = "",
-    provider_model_id: str = "",
-    provider_timeout_seconds: int = 120,
-) -> dict[str, object]:
-    """Serialize agent execution input to a JSON-safe dict.
-
-    This is the inverse of ``_deserialize_agent_output()``.  The
-    serialized dict is sent to the subprocess via stdin.
-    """
-    return {
-        "decision_context_id": str(decision_context_id) if decision_context_id else None,
-        "correlation_id": correlation_id,
-        "symbol": symbol,
-        "market": market,
-        "source_type": assembled_context.source_type,
-        "context": _dataclass_to_dict(assembled_context),
-        "event_interpretation_output": None,
-        "ai_risk_output": None,
-        "model_id": None,
-        "prompt_id": None,
-        # Provider configuration for subprocess agent creation
-        "llm_provider": llm_provider,
-        "provider_api_key": provider_api_key,
-        "provider_base_url": provider_base_url,
-        "provider_model_id": provider_model_id,
-        "provider_timeout_seconds": provider_timeout_seconds,
-    }
-
-
-def _deserialize_agent_output(
-    result: dict[str, object],
-) -> AgentExecutionBundle:
-    """Deserialize subprocess output into an ``AgentExecutionBundle``.
-
-    Parameters
-    ----------
-    result
-        Parsed JSON dict from the subprocess stdout.  Must contain
-        ``event_output``, ``risk_output``, and ``composer_output`` keys.
-
-    Returns
-    -------
-    AgentExecutionBundle
-        Fully reconstructed bundle with ``AIDecisionInputs`` assembled
-        from the three agent outputs.
-    """
-    event_raw: dict[str, object] = result.get("event_output", {})  # type: ignore[assignment]
-    risk_raw: dict[str, object] = result.get("risk_output", {})  # type: ignore[assignment]
-    composer_raw: dict[str, object] = result.get("composer_output", {})  # type: ignore[assignment]
-    # ★ subprocess에서 EI 실패 시 error metadata 추출
-    ei_error_metadata: dict[str, object] | None = result.get("ei_error_metadata")  # type: ignore[assignment]
-
-    # Reconstruct dataclass instances from dicts
-    event_output = _dict_to_dataclass(EventInterpretationOutput, event_raw)
-    risk_output = _dict_to_dataclass(AIRiskOutput, risk_raw)
-    composer_output = _dict_to_dataclass(FinalDecisionComposerOutput, composer_raw)
-
-    # --- Assemble AIDecisionInputs (same logic as _run_agents()) ---
-    ai_inputs = AIDecisionInputs(
-        # FDC-derived
-        decision_type=composer_output.decision_type,
-        confidence=composer_output.confidence,
-        conviction=composer_output.conviction,
-        reason_codes=composer_output.reason_codes,
-        opposing_evidence=composer_output.opposing_evidence,
-        execution_preferences=composer_output.execution_preferences,
-        sizing_hint=composer_output.sizing_hint,
-        side=composer_output.side if hasattr(composer_output, 'side') else "",
-        # AR-derived
-        risk_opinion=risk_output.risk_opinion,
-        risk_score=risk_output.risk_score,
-        risk_confidence=risk_output.confidence,
-        size_adjustment_factor=risk_output.size_adjustment_factor,
-        risk_reason_codes=risk_output.reason_codes,
-        risk_flags=risk_output.risk_flags,
-        # EI-derived
-        event_bias=event_output.aggregate_view.overall_bias,
-        event_conflict=event_output.aggregate_view.event_conflict,
-        event_reason_codes=event_output.aggregate_view.top_reason_codes,
-        # Metadata
-        source_agent_names=(
-            event_output.agent_name,
-            risk_output.agent_name,
-            composer_output.agent_name,
-        ),
-        schema_versions=(
-            ("event_interpretation", event_output.schema_version),
-            ("ai_risk", risk_output.schema_version),
-            ("final_decision_composer", composer_output.schema_version),
-        ),
-    )
-
-    logger.info(
-        "_deserialize_agent_output: symbol=%s "
-        "event_output.events=%d event_output.aggregate_view.no_material_events=%s "
-        "event_output.detected_event_count=%s",
-        composer_output.symbol,
-        len(event_output.events),
-        event_output.aggregate_view.no_material_events,
-        event_output.detected_event_count,
-    )
-
-    return AgentExecutionBundle(
-        ai_inputs=ai_inputs,
-        event_output=event_output,
-        risk_output=risk_output,
-        composer_output=composer_output,
-        ei_error_metadata=ei_error_metadata,
-    )
-
-
-def _build_fallback_bundle() -> AgentExecutionBundle:
-    """Build a deterministic fallback ``AgentExecutionBundle``.
-
-    Used when the subprocess times out or fails.  All agent outputs
-    are default (empty / safe) instances, matching the safe-fallback
-    policy in ``_run_agents()``.
-
-    .. warning::
-
-        Fallback bundles produce empty ``summary=""``, ``symbol=""``,
-        ``confidence=0``, ``decision_type="HOLD"`` in ``agent_runs``.
-        This is a known limitation — the subprocess must receive a valid
-        ``provider_client`` to produce meaningful output.
-    """
-    logger.warning(
-        "Building fallback AgentExecutionBundle — all agent outputs will be "
-        "default (empty/safe) instances. This typically means the subprocess "
-        "failed or timed out, or provider configuration was missing."
-    )
-    event_output = EventInterpretationOutput()
-    # ★ fallback bundle: _finalize_ei_output()로 interpreted_event_count, summary_basis, summary 설정
-    event_output = _finalize_ei_output(event_output)
-    risk_output = AIRiskOutput()
-    composer_output = FinalDecisionComposerOutput()
-
-    ai_inputs = AIDecisionInputs(
-        decision_type=composer_output.decision_type,
-        confidence=composer_output.confidence,
-        conviction=composer_output.conviction,
-        reason_codes=composer_output.reason_codes,
-        opposing_evidence=composer_output.opposing_evidence,
-        execution_preferences=composer_output.execution_preferences,
-        sizing_hint=composer_output.sizing_hint,
-        side="",
-        risk_opinion=risk_output.risk_opinion,
-        risk_score=risk_output.risk_score,
-        risk_confidence=risk_output.confidence,
-        size_adjustment_factor=risk_output.size_adjustment_factor,
-        risk_reason_codes=risk_output.reason_codes,
-        risk_flags=risk_output.risk_flags,
-        event_bias=event_output.aggregate_view.overall_bias,
-        event_conflict=event_output.aggregate_view.event_conflict,
-        event_reason_codes=event_output.aggregate_view.top_reason_codes,
-        source_agent_names=(
-            event_output.agent_name,
-            risk_output.agent_name,
-            composer_output.agent_name,
-        ),
-        schema_versions=(
-            ("event_interpretation", event_output.schema_version),
-            ("ai_risk", risk_output.schema_version),
-            ("final_decision_composer", composer_output.schema_version),
-        ),
-    )
-
-    return AgentExecutionBundle(
-        ai_inputs=ai_inputs,
-        event_output=event_output,
-        risk_output=risk_output,
-        composer_output=composer_output,
-    )
-
-
-def _dict_to_dataclass(
-    dataclass_type: type,
-    data: dict[str, object],
-) -> object:
-    """Convert a JSON-safe dict back into a dataclass instance.
-
-    Handles nested dataclasses and tuples of dataclasses by recursing
-    into fields that are themselves dataclasses.  Unknown fields are
-    silently ignored (forward-compatible with schema additions).
-    """
-    import dataclasses
-    import typing
-
-    if not data:
-        return dataclass_type()
-
-    # Resolve string annotations to actual types (PEP 563)
-    try:
-        resolved_hints = typing.get_type_hints(dataclass_type)
-    except Exception:
-        resolved_hints = {}
-
-    kwargs: dict[str, object] = {}
-    for f in dataclasses.fields(dataclass_type):
-        if f.name not in data:
-            continue
-        value = data[f.name]
-        field_type = resolved_hints.get(f.name, f.type)
-        origin = getattr(field_type, "__origin__", None)
-
-        if value is None:
-            kwargs[f.name] = None
-        elif hasattr(field_type, "__dataclass_fields__"):
-            # Nested dataclass
-            if isinstance(value, dict):
-                kwargs[f.name] = _dict_to_dataclass(field_type, value)
-            else:
-                kwargs[f.name] = value
-        elif origin is tuple:
-            # Tuple of dataclasses
-            args = getattr(field_type, "__args__", ())
-            if args and hasattr(args[0], "__dataclass_fields__") and isinstance(value, (list, tuple)):
-                kwargs[f.name] = tuple(
-                    _dict_to_dataclass(args[0], item) if isinstance(item, dict) else item
-                    for item in value
-                )
-            else:
-                kwargs[f.name] = tuple(value) if isinstance(value, (list, tuple)) else value
-        elif isinstance(value, (list, tuple)) and not isinstance(value, str):
-            # Plain tuple (e.g. tuple[str, ...])
-            kwargs[f.name] = tuple(value)
-        else:
-            kwargs[f.name] = value
-
-    return dataclass_type(**kwargs)
-
-
-def _resolve_decision_type(value: str | None) -> DecisionType:
-    if not value:
-        return DecisionType.HOLD
-    try:
-        return DecisionType(value.lower())
-    except ValueError:
-        return DecisionType.HOLD
-
-
-def _resolve_order_side(value: str | None, fallback: OrderSide) -> OrderSide:
-    if value:
-        try:
-            return OrderSide(value.lower())
-        except ValueError:
-            pass
-    return fallback
-
-
-def _resolve_entry_style(
-    value: str | None,
-    fallback_order_type: OrderType,
-) -> EntryStyle:
-    if value:
-        try:
-            return EntryStyle(value.lower())
-        except ValueError:
-            pass
-
-    if fallback_order_type == OrderType.MARKET:
-        return EntryStyle.MARKET
-    if fallback_order_type == OrderType.LIMIT:
-        return EntryStyle.LIMIT
-    return EntryStyle.NO_ORDER
-
-
-def _decimal_or_none(value: object) -> Decimal | None:
-    if value is None:
-        return None
-    if isinstance(value, Decimal):
-        return value
-    return Decimal(str(value))
-
-
-def _calculate_max_order_value(
-    price: Decimal | None,
-    quantity: Decimal,
-) -> Decimal | None:
-    if price is None:
-        return None
-    return price * quantity
-
-
-# ---------------------------------------------------------------------------
-# Deterministic translation: OrderIntent → SubmitOrderRequest
-# ---------------------------------------------------------------------------
-
-
-def build_submit_order_request_from_decision(
-    intent: OrderIntent,
-    client_order_id: str | None = None,
-) -> SubmitOrderRequest | None:
-    """Translate an ``OrderIntent`` into a ``SubmitOrderRequest`` for broker submission.
-
-    This is the **deterministic backend translation** step.  It validates
-    that the AI decision is actionable and constructs a valid submission
-    request from the assembled intent.
-
-    Design rules
-    ------------
-    1. **AI = judgment only, backend = execution**: This function is pure
-       deterministic logic — no LLM calls, no AI judgment.
-    2. **HOLD / WATCH decisions are skipped**: The function returns ``None``
-       when the decision is not actionable.
-    3. **No broker semantics change**: The returned ``SubmitOrderRequest``
-       preserves all existing fields and does not modify ``SubmitOrderRequest``,
-       ``OrderManager``, or ``BrokerAdapter`` boundaries.
-    4. **Stateless**: The function does not access repositories, databases,
-       or external services.
-
-    Parameters
-    ----------
-    intent : OrderIntent
-        The fully assembled order intent from ``DecisionOrchestratorService``.
-    client_order_id : str | None
-        Optional explicit client order ID.  When ``None``, a deterministic
-        ID is generated from the decision context ID.
-
-    Returns
-    -------
-    SubmitOrderRequest | None
-        A valid submission request, or ``None`` when the decision type
-        indicates no order should be submitted (HOLD / WATCH / REDUCE with
-        no quantity).
-    """
-    # ── Decision type check: skip non-actionable decisions ──
-    # WATCH is recognised as a valid decision type (it is recorded in
-    # trade_decisions) but must NOT produce a submit order request.
-    decision_type = intent.ai_backend_inputs.decision_type
-    actionable_types = {"APPROVE", "BUY", "SELL", "EXIT", "REDUCE", "WATCH"}
-    if decision_type not in actionable_types:
-        return None
-
-    # WATCH decisions are monitored but never submitted
-    if decision_type == "WATCH":
-        logger.info(
-            "WATCH decision for symbol=%s — monitoring, order not submitted",
-            intent.request.symbol,
-        )
-        return None
-
-    # ── Quantity validation ──
-    if intent.request.quantity <= 0:
-        return None
-
-    # ── Generate client_order_id if not provided ──
-    resolved_client_order_id: str
-    if client_order_id:
-        resolved_client_order_id = client_order_id
-    elif intent.decision_context_id is not None:
-        # Deterministic: "dc-{short_uuid}-{timestamp_suffix}"
-        short = str(intent.decision_context_id).split("-")[0]
-        ts = datetime.now(timezone.utc).strftime("%H%M%S%f")[:10]
-        resolved_client_order_id = f"dc-{short}-{ts}"
-    else:
-        return None
-
-    # ── Build the SubmitOrderRequest from intent.request ──
-    # Preserve all fields from the assembled request; the assemble() method
-    # has already set decision_id, decision_context_id, order_intent_id, etc.
-    return SubmitOrderRequest(
-        account_ref=intent.request.account_ref,
-        client_order_id=resolved_client_order_id,
-        correlation_id=intent.request.correlation_id,
-        strategy_id=intent.request.strategy_id,
-        symbol=intent.request.symbol,
-        market=intent.request.market,
-        side=intent.request.side,
-        order_type=intent.request.order_type,
-        quantity=intent.request.quantity,
-        time_in_force=intent.request.time_in_force,
-        price=intent.request.price,
-        idempotency_key=intent.request.idempotency_key,
-        decision_id=intent.request.decision_id,
-        decision_context_id=intent.request.decision_context_id,
-        order_intent_id=intent.request.order_intent_id,
-        price_band_lower=intent.request.price_band_lower,
-        price_band_upper=intent.request.price_band_upper,
-        max_slippage_bps=intent.request.max_slippage_bps,
-        allow_partial_fill=intent.request.allow_partial_fill,
-        client_timestamp=intent.request.client_timestamp,
-        metadata=intent.request.metadata,
-    )

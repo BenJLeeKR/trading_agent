@@ -64,12 +64,14 @@ from agent_trading.domain.entities import (
     PositionSnapshotEntity,
     RiskLimitSnapshotEntity,
 )
+from agent_trading.services.common_types import dataclass_to_dict
 from agent_trading.services.decision_orchestrator import (
     AssembledContext,
     ScoreResult,
-    _dataclass_to_dict,
-    _is_missing_agent_symbol,
-    _normalize_decision_type,
+)
+from agent_trading.services.translation import (
+    is_missing_agent_symbol,
+    normalize_decision_type,
 )
 
 logger = logging.getLogger(__name__)
@@ -599,7 +601,7 @@ async def main() -> None:
             event_output.aggregate_view.no_material_events,
         )
 
-        if _is_missing_agent_symbol(event_output.symbol) and inp.symbol:
+        if is_missing_agent_symbol(event_output.symbol) and inp.symbol:
             from dataclasses import replace
             event_output = replace(event_output, symbol=inp.symbol)
 
@@ -617,7 +619,7 @@ async def main() -> None:
             risk_output.risk_opinion,
         )
 
-        if _is_missing_agent_symbol(risk_output.symbol) and inp.symbol:
+        if is_missing_agent_symbol(risk_output.symbol) and inp.symbol:
             from dataclasses import replace
             risk_output = replace(risk_output, symbol=inp.symbol)
 
@@ -672,12 +674,12 @@ async def main() -> None:
                 composer_output.confidence,
             )
 
-        if _is_missing_agent_symbol(composer_output.symbol) and inp.symbol:
+        if is_missing_agent_symbol(composer_output.symbol) and inp.symbol:
             from dataclasses import replace
             composer_output = replace(composer_output, symbol=inp.symbol)
 
         # --- Normalize decision_type ---
-        normalized_dt = _normalize_decision_type(composer_output.decision_type)
+        normalized_dt = normalize_decision_type(composer_output.decision_type)
         if normalized_dt != composer_output.decision_type:
             from dataclasses import replace
             composer_output = replace(composer_output, decision_type=normalized_dt)
@@ -690,9 +692,9 @@ async def main() -> None:
         # ── 3. Serialize output ────────────────────────────────────────
         output = AgentSubprocessOutput(
             success=True,
-            event_output=_dataclass_to_dict(event_output),
-            risk_output=_dataclass_to_dict(risk_output),
-            composer_output=_dataclass_to_dict(composer_output),
+            event_output=dataclass_to_dict(event_output),
+            risk_output=dataclass_to_dict(risk_output),
+            composer_output=dataclass_to_dict(composer_output),
             duration_seconds=duration,
             ei_error_metadata=ei_error_metadata,
         )

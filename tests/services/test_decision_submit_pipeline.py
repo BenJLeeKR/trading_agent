@@ -33,19 +33,33 @@ from agent_trading.domain.entities import (
     OrderRequestEntity,
     PositionSnapshotEntity,
     RiskLimitSnapshotEntity,
+    TradeDecisionEntity,
 )
-from agent_trading.domain.enums import AssetClass, Environment, OrderSide, OrderStatus, OrderType, TimeInForce
+from agent_trading.domain.enums import (
+    AssetClass,
+    DecisionType,
+    EntryStyle,
+    Environment,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    TimeInForce,
+)
 from agent_trading.domain.models import Quote, SubmitOrderRequest
-from agent_trading.services.decision_orchestrator import (
+from agent_trading.services.common_types import (
     AIDecisionInputs,
     AgentExecutionBundle,
     AssembledContext,
-    DecisionOrchestratorService,
     OrderIntent,
-    SubmitResult,
     PhaseTraceEntry,
-    _normalize_decision_type,
+    SubmitResult,
+)
+from agent_trading.services.decision_orchestrator import (
+    DecisionOrchestratorService,
+)
+from agent_trading.services.translation import (
     build_submit_order_request_from_decision,
+    normalize_decision_type,
 )
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
@@ -216,62 +230,62 @@ class TestBuildSubmitOrderRequest:
         result = build_submit_order_request_from_decision(intent)
         assert result is None
 
-    # ── Normalization tests: _normalize_decision_type() unit tests ──
+    # ── Normalization tests: normalize_decision_type() unit tests ──
     # These test the normalization function directly.
     # build_submit_order_request_from_decision() receives already-normalized
     # values from _run_agents(), so it is tested with canonical values.
 
     def test_entry_normalized_to_approve(self) -> None:
         """``entry`` → ``APPROVE`` (actionable)."""
-        assert _normalize_decision_type("entry") == "APPROVE"
+        assert normalize_decision_type("entry") == "APPROVE"
 
     def test_entry_uppercase_normalized_to_approve(self) -> None:
         """``ENTRY`` → ``APPROVE``."""
-        assert _normalize_decision_type("ENTRY") == "APPROVE"
+        assert normalize_decision_type("ENTRY") == "APPROVE"
 
     def test_entry_mixed_case_normalized_to_approve(self) -> None:
         """``Entry`` → ``APPROVE``."""
-        assert _normalize_decision_type("Entry") == "APPROVE"
+        assert normalize_decision_type("Entry") == "APPROVE"
 
     def test_no_action_normalized_to_hold(self) -> None:
         """``no_action`` → ``HOLD`` (non-actionable)."""
-        assert _normalize_decision_type("no_action") == "HOLD"
+        assert normalize_decision_type("no_action") == "HOLD"
 
     def test_no_trade_normalized_to_hold(self) -> None:
         """``no_trade`` → ``HOLD``."""
-        assert _normalize_decision_type("no_trade") == "HOLD"
+        assert normalize_decision_type("no_trade") == "HOLD"
 
     def test_none_normalized_to_hold(self) -> None:
         """``none`` → ``HOLD``."""
-        assert _normalize_decision_type("none") == "HOLD"
+        assert normalize_decision_type("none") == "HOLD"
 
     def test_approve_passthrough(self) -> None:
         """``APPROVE`` passes through unchanged."""
-        assert _normalize_decision_type("APPROVE") == "APPROVE"
+        assert normalize_decision_type("APPROVE") == "APPROVE"
 
     def test_hold_passthrough(self) -> None:
         """``HOLD`` passes through unchanged."""
-        assert _normalize_decision_type("HOLD") == "HOLD"
+        assert normalize_decision_type("HOLD") == "HOLD"
 
     def test_buy_passthrough(self) -> None:
         """``BUY`` passes through unchanged (actionable_types compatible)."""
-        assert _normalize_decision_type("BUY") == "BUY"
+        assert normalize_decision_type("BUY") == "BUY"
 
     def test_sell_passthrough(self) -> None:
         """``SELL`` passes through unchanged."""
-        assert _normalize_decision_type("SELL") == "SELL"
+        assert normalize_decision_type("SELL") == "SELL"
 
     def test_unknown_fallback_to_hold(self) -> None:
         """Unknown value falls back to ``HOLD``."""
-        assert _normalize_decision_type("foobar") == "HOLD"
+        assert normalize_decision_type("foobar") == "HOLD"
 
     def test_empty_fallback_to_hold(self) -> None:
         """Empty string falls back to ``HOLD``."""
-        assert _normalize_decision_type("") == "HOLD"
+        assert normalize_decision_type("") == "HOLD"
 
     def test_whitespace_fallback_to_hold(self) -> None:
         """Whitespace-only string falls back to ``HOLD``."""
-        assert _normalize_decision_type("  ") == "HOLD"
+        assert normalize_decision_type("  ") == "HOLD"
 
 
 # ---------------------------------------------------------------------------
@@ -425,16 +439,16 @@ class TestAssembleAndSubmit:
             )
 
         assert result.status == "SUBMITTED", f"Expected SUBMITTED, got {result.status}"
-        assert result.intent is not None
-        assert result.order is not None
-        assert result.order.status == OrderStatus.SUBMITTED
+        assert result.order_intent is not None
+        assert result.submit_response is not None
+        assert result.submit_response.status == OrderStatus.SUBMITTED
         assert result.error_phase is None
         # --- Gap 2: traceability assertions ---
         assert result.decision_context_id is not None, (
             "SubmitResult.decision_context_id must be set on happy path"
         )
-        assert result.decision_context_id == result.intent.decision_context_id, (
-            "SubmitResult.decision_context_id must match intent.decision_context_id"
+        assert result.decision_context_id == result.order_intent.decision_context_id, (
+            "SubmitResult.decision_context_id must match order_intent.decision_context_id"
         )
 
     # ── Broker reject ──
@@ -464,15 +478,15 @@ class TestAssembleAndSubmit:
             )
 
         assert result.status == "REJECTED", f"Expected REJECTED, got {result.status}"
-        assert result.intent is not None
-        assert result.order is not None
-        assert result.order.status == OrderStatus.REJECTED
+        assert result.order_intent is not None
+        assert result.submit_response is not None
+        assert result.submit_response.status == OrderStatus.REJECTED
         # --- Gap 2: traceability assertion ---
         assert result.decision_context_id is not None, (
             "SubmitResult.decision_context_id must be set on reject path"
         )
-        assert result.decision_context_id == result.intent.decision_context_id, (
-            "SubmitResult.decision_context_id must match intent.decision_context_id"
+        assert result.decision_context_id == result.order_intent.decision_context_id, (
+            "SubmitResult.decision_context_id must match order_intent.decision_context_id"
         )
 
     # ── RECONCILE_REQUIRED ──
@@ -504,15 +518,15 @@ class TestAssembleAndSubmit:
         assert result.status == "RECONCILE_REQUIRED", (
             f"Expected RECONCILE_REQUIRED, got {result.status}"
         )
-        assert result.intent is not None
-        assert result.order is not None
-        assert result.order.status == OrderStatus.RECONCILE_REQUIRED
+        assert result.order_intent is not None
+        assert result.submit_response is not None
+        assert result.submit_response.status == OrderStatus.RECONCILE_REQUIRED
         # --- Gap 2: traceability assertion ---
         assert result.decision_context_id is not None, (
             "SubmitResult.decision_context_id must be set on reconcile path"
         )
-        assert result.decision_context_id == result.intent.decision_context_id, (
-            "SubmitResult.decision_context_id must match intent.decision_context_id"
+        assert result.decision_context_id == result.order_intent.decision_context_id, (
+            "SubmitResult.decision_context_id must match order_intent.decision_context_id"
         )
 
     # ── HOLD decision -> SKIPPED ──
@@ -538,14 +552,14 @@ class TestAssembleAndSubmit:
             )
 
         assert result.status == "SKIPPED", f"Expected SKIPPED, got {result.status}"
-        assert result.intent is not None
-        assert result.order is None  # No order created for HOLD
+        assert result.order_intent is not None
+        assert result.submit_response is None  # No order created for HOLD
         # --- Gap 2: traceability assertion ---
         assert result.decision_context_id is not None, (
             "SubmitResult.decision_context_id must be set on SKIPPED path"
         )
-        assert result.decision_context_id == result.intent.decision_context_id, (
-            "SubmitResult.decision_context_id must match intent.decision_context_id"
+        assert result.decision_context_id == result.order_intent.decision_context_id, (
+            "SubmitResult.decision_context_id must match order_intent.decision_context_id"
         )
 
     # ── assemble() exception -> ERROR/ai ──
@@ -634,12 +648,12 @@ class TestAssembleAndSubmit:
             )
 
         assert result.status == "SUBMITTED", f"Expected SUBMITTED, got {result.status}"
-        assert result.order is not None, "Order must exist"
+        assert result.submit_response is not None, "Order must exist"
         # The order's requested_quantity should be the sized quantity (10),
         # not the original 100.
-        assert result.order.requested_quantity == Decimal("10"), (
+        assert result.submit_response.requested_quantity == Decimal("10"), (
             f"Expected sized quantity 10 (cash-limited), "
-            f"got {result.order.requested_quantity}"
+            f"got {result.submit_response.requested_quantity}"
         )
 
     # ── Phase 1.5 sizing — zero quantity → SKIPPED ──
@@ -694,8 +708,8 @@ class TestAssembleAndSubmit:
         assert result.error_phase == "sizing", (
             f"Expected error_phase='sizing', got {result.error_phase}"
         )
-        assert result.intent is not None
-        assert result.order is None  # No order created
+        assert result.order_intent is not None
+        assert result.submit_response is None  # No order created
         assert result.decision_context_id is not None
 
     # ── submit_order_to_broker() exception -> ERROR/order_submit ──
@@ -727,8 +741,8 @@ class TestAssembleAndSubmit:
         assert result.decision_context_id is not None, (
             "SubmitResult.decision_context_id must be set when assemble() succeeded"
         )
-        assert result.decision_context_id == result.intent.decision_context_id, (
-            "SubmitResult.decision_context_id must match intent.decision_context_id"
+        assert result.decision_context_id == result.order_intent.decision_context_id, (
+            "SubmitResult.decision_context_id must match order_intent.decision_context_id"
         )
 
 
@@ -1386,7 +1400,18 @@ class TestPhase5BrokerSubmitFailureLogging:
                 conviction=0.7,
             ),
         )
-        mock_ensure_trade.return_value = uuid4()
+        trade_decision_id = uuid4()
+        mock_ensure_trade.return_value = TradeDecisionEntity(
+            trade_decision_id=trade_decision_id,
+            decision_context_id=uuid4(),
+            decision_type=DecisionType.BUY,
+            side=OrderSide.BUY,
+            strategy_id=uuid4(),
+            symbol="005930",
+            market="KRX",
+            entry_style=EntryStyle.LIMIT,
+            created_at=datetime.now(timezone.utc),
+        )
 
         # Mock order_manager.submit_order_to_broker to raise
         mock_order_manager = AsyncMock(spec=OrderManager)
@@ -1441,7 +1466,7 @@ class TestEIPostProcessingGuard:
             AggregateEventView,
             EventInterpretationOutput,
         )
-        from agent_trading.services.decision_orchestrator import ScoreResult
+        from agent_trading.services.common_types import ScoreResult
         from agent_trading.domain.entities import ExternalEventEntity
 
         # Provider가 events=[], event_count=0, no_material_events=True 반환
@@ -1544,7 +1569,7 @@ class TestEIPostProcessingGuard:
             AggregateEventView,
             EventInterpretationOutput,
         )
-        from agent_trading.services.decision_orchestrator import ScoreResult
+        from agent_trading.services.common_types import ScoreResult
 
         provider_output = EventInterpretationOutput(
             symbol="005930",
@@ -1609,7 +1634,7 @@ class TestEIPostProcessingGuard:
             EventInterpretationOutput,
             InterpretedEvent,
         )
-        from agent_trading.services.decision_orchestrator import ScoreResult
+        from agent_trading.services.common_types import ScoreResult
         from agent_trading.domain.entities import ExternalEventEntity
 
         # LLM이 정상적으로 1개 event를 반환
@@ -1712,7 +1737,7 @@ class TestEIPostProcessingGuard:
             AggregateEventView,
             EventInterpretationOutput,
         )
-        from agent_trading.services.decision_orchestrator import ScoreResult
+        from agent_trading.services.common_types import ScoreResult
         from agent_trading.domain.entities import ExternalEventEntity
 
         # Provider가 exception을 던지는 상황 시뮬레이션
@@ -1807,7 +1832,7 @@ class TestEIPostProcessingGuard:
             AggregateEventView,
             EventInterpretationOutput,
         )
-        from agent_trading.services.decision_orchestrator import ScoreResult
+        from agent_trading.services.common_types import ScoreResult
 
         mock_provider = AsyncMock()
         mock_provider.generate_structured.side_effect = RuntimeError(

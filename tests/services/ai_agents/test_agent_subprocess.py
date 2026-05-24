@@ -2,10 +2,10 @@
 
 Test coverage
 -------------
-* ``_serialize_agent_input()`` — serialization of agent input to JSON-safe dict
-* ``_deserialize_agent_output()`` — deserialization of subprocess output
-* ``_build_fallback_bundle()`` — fallback bundle on timeout/failure
-* ``_dict_to_dataclass()`` — generic dict-to-dataclass conversion
+* ``serialize_agent_input()`` — serialization of agent input to JSON-safe dict
+* ``deserialize_agent_output()`` — deserialization of subprocess output
+* ``build_fallback_bundle()`` — fallback bundle on timeout/failure
+* ``dict_to_dataclass()`` — generic dict-to-dataclass conversion
 * ``_run_agents_in_subprocess()`` — subprocess timeout → fallback output
 * ``_run_agents_in_subprocess()`` — subprocess success → normal output
 * ``_run_agents_in_subprocess()`` — subprocess crash → fallback output
@@ -21,20 +21,23 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from agent_trading.services.ai_agents.base import AgentExecutionRequest
 from agent_trading.services.ai_agents.schemas import (
     AIRiskOutput,
     EventInterpretationOutput,
     FinalDecisionComposerOutput,
 )
-from agent_trading.services.decision_orchestrator import (
+from agent_trading.services.common_types import (
     AIDecisionInputs,
     AgentExecutionBundle,
     AssembledContext,
-    _build_fallback_bundle,
-    _dataclass_to_dict,
-    _deserialize_agent_output,
-    _dict_to_dataclass,
-    _serialize_agent_input,
+    dataclass_to_dict,
+    dict_to_dataclass,
+)
+from agent_trading.services.subprocess_helpers import (
+    build_fallback_bundle,
+    deserialize_agent_output,
+    serialize_agent_input,
 )
 
 
@@ -86,65 +89,76 @@ def sample_composer_output() -> FinalDecisionComposerOutput:
 
 
 # =========================================================================
-# _serialize_agent_input tests
+# serialize_agent_input tests
 # =========================================================================
 
 
 class TestSerializeAgentInput:
-    """Tests for ``_serialize_agent_input()``."""
+    """Tests for ``serialize_agent_input()``."""
 
     def test_basic_serialization(self, sample_context: AssembledContext) -> None:
-        """Basic serialization produces expected keys."""
-        ctx_id = uuid4()
-        result = _serialize_agent_input(
-            assembled_context=sample_context,
-            decision_context_id=ctx_id,
+        """Basic serialization produces expected JSON."""
+        request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
             correlation_id="test-correlation",
-            symbol="005930",
-            market="KRX",
+            context=sample_context,
         )
-        assert isinstance(result, dict)
-        assert result["correlation_id"] == "test-correlation"
-        assert result["symbol"] == "005930"
-        assert result["market"] == "KRX"
-        assert result["decision_context_id"] == str(ctx_id)
-        assert "context" in result
+        result = serialize_agent_input(
+            request=request,
+            context=sample_context,
+            score=None,
+        )
+        assert isinstance(result, str)
+        payload = json.loads(result)
+        assert "request" in payload
+        assert "context" in payload
+        assert payload["score"] is None
+        # request should contain correlation_id
+        assert payload["request"]["correlation_id"] == "test-correlation"
 
     def test_serialization_with_none_decision_context(
         self, sample_context: AssembledContext,
     ) -> None:
         """decision_context_id=None is serialized as None."""
-        result = _serialize_agent_input(
-            assembled_context=sample_context,
+        request = AgentExecutionRequest(
             decision_context_id=None,
             correlation_id="test-no-ctx",
-            symbol=None,
-            market=None,
+            context=sample_context,
         )
-        assert result["decision_context_id"] is None
-        assert result["symbol"] is None
-        assert result["market"] is None
+        result = serialize_agent_input(
+            request=request,
+            context=sample_context,
+            score=None,
+        )
+        assert isinstance(result, str)
+        payload = json.loads(result)
+        assert payload["request"]["decision_context_id"] is None
 
     def test_serialized_context_is_json_safe(
         self, sample_context: AssembledContext,
     ) -> None:
         """Serialized output must be JSON-serializable."""
-        result = _serialize_agent_input(
-            assembled_context=sample_context,
+        request = AgentExecutionRequest(
             decision_context_id=None,
             correlation_id="test-json-safe",
+            context=sample_context,
+        )
+        result = serialize_agent_input(
+            request=request,
+            context=sample_context,
+            score=None,
         )
         # Should not raise
-        json.dumps(result)
+        json.loads(result)
 
 
 # =========================================================================
-# _dict_to_dataclass tests
+# dict_to_dataclass tests
 # =========================================================================
 
 
 class TestDictToDataclass:
-    """Tests for ``_dict_to_dataclass()``."""
+    """Tests for ``dict_to_dataclass()``."""
 
     def test_simple_dataclass(self) -> None:
         """Simple flat dataclass round-trips correctly."""
@@ -165,7 +179,7 @@ class TestDictToDataclass:
                 "no_material_events": True,
             },
         }
-        result = _dict_to_dataclass(EventInterpretationOutput, data)
+        result = dict_to_dataclass(data, EventInterpretationOutput)
         assert isinstance(result, EventInterpretationOutput)
         assert result.agent_name == "test_agent"
         assert result.symbol == "005930"
@@ -204,7 +218,7 @@ class TestDictToDataclass:
             },
             "summary": "",
         }
-        result = _dict_to_dataclass(FinalDecisionComposerOutput, data)
+        result = dict_to_dataclass(data, FinalDecisionComposerOutput)
         assert isinstance(result, FinalDecisionComposerOutput)
         assert result.decision_type == "BUY"
         assert result.execution_preferences.use_limit_order is True
@@ -213,7 +227,7 @@ class TestDictToDataclass:
 
     def test_empty_dict_fallback(self) -> None:
         """Empty dict produces default instance."""
-        result = _dict_to_dataclass(EventInterpretationOutput, {})
+        result = dict_to_dataclass({}, EventInterpretationOutput)
         assert isinstance(result, EventInterpretationOutput)
         assert result.agent_name == "event_interpretation"
         assert result.schema_version == "v1"
@@ -221,19 +235,19 @@ class TestDictToDataclass:
     def test_partial_dict(self) -> None:
         """Partial dict fills missing fields with defaults."""
         data = {"symbol": "000660"}
-        result = _dict_to_dataclass(EventInterpretationOutput, data)
+        result = dict_to_dataclass(data, EventInterpretationOutput)
         assert result.symbol == "000660"
         # Other fields should have defaults
         assert result.agent_name == "event_interpretation"
 
 
 # =========================================================================
-# _deserialize_agent_output tests
+# deserialize_agent_output tests
 # =========================================================================
 
 
 class TestDeserializeAgentOutput:
-    """Tests for ``_deserialize_agent_output()``."""
+    """Tests for ``deserialize_agent_output()``."""
 
     def test_deserialize_full_output(
         self,
@@ -242,14 +256,15 @@ class TestDeserializeAgentOutput:
         sample_composer_output: FinalDecisionComposerOutput,
     ) -> None:
         """Full agent output round-trips correctly."""
-        # Build a serialized dict matching the subprocess output format
-        serialized: dict[str, Any] = {
+        # Build a serialized JSON string matching the subprocess output format
+        serialized_dict: dict[str, Any] = {
             "success": True,
-            "event_output": _dataclass_to_dict(sample_event_output),
-            "risk_output": _dataclass_to_dict(sample_risk_output),
-            "composer_output": _dataclass_to_dict(sample_composer_output),
+            "ei_output": dataclass_to_dict(sample_event_output),
+            "ar_output": dataclass_to_dict(sample_risk_output),
+            "fdc_output": dataclass_to_dict(sample_composer_output),
+            "score": None,
         }
-        bundle = _deserialize_agent_output(serialized)
+        bundle = deserialize_agent_output(json.dumps(serialized_dict))
         assert isinstance(bundle, AgentExecutionBundle)
         assert bundle.event_output.symbol == "005930"
         assert bundle.risk_output.risk_opinion == "allow"
@@ -267,13 +282,14 @@ class TestDeserializeAgentOutput:
         ar = replace(sample_risk_output, decision_context_id=str(ctx_id))
         fdc = replace(sample_composer_output, decision_context_id=str(ctx_id))
 
-        serialized: dict[str, Any] = {
+        serialized_dict: dict[str, Any] = {
             "success": True,
-            "event_output": _dataclass_to_dict(ei),
-            "risk_output": _dataclass_to_dict(ar),
-            "composer_output": _dataclass_to_dict(fdc),
+            "ei_output": dataclass_to_dict(ei),
+            "ar_output": dataclass_to_dict(ar),
+            "fdc_output": dataclass_to_dict(fdc),
+            "score": None,
         }
-        bundle = _deserialize_agent_output(serialized)
+        bundle = deserialize_agent_output(json.dumps(serialized_dict))
         assert bundle.event_output.decision_context_id == str(ctx_id)
         assert bundle.risk_output.decision_context_id == str(ctx_id)
         assert bundle.composer_output.decision_context_id == str(ctx_id)
@@ -285,29 +301,30 @@ class TestDeserializeAgentOutput:
         sample_composer_output: FinalDecisionComposerOutput,
     ) -> None:
         """AIDecisionInputs metadata is populated from agent outputs."""
-        serialized: dict[str, Any] = {
+        serialized_dict: dict[str, Any] = {
             "success": True,
-            "event_output": _dataclass_to_dict(sample_event_output),
-            "risk_output": _dataclass_to_dict(sample_risk_output),
-            "composer_output": _dataclass_to_dict(sample_composer_output),
+            "ei_output": dataclass_to_dict(sample_event_output),
+            "ar_output": dataclass_to_dict(sample_risk_output),
+            "fdc_output": dataclass_to_dict(sample_composer_output),
+            "score": None,
         }
-        bundle = _deserialize_agent_output(serialized)
+        bundle = deserialize_agent_output(json.dumps(serialized_dict))
         assert "event_interpretation" in bundle.ai_inputs.source_agent_names
         assert "ai_risk" in bundle.ai_inputs.source_agent_names
         assert "final_decision_composer" in bundle.ai_inputs.source_agent_names
 
 
 # =========================================================================
-# _build_fallback_bundle tests
+# build_fallback_bundle tests
 # =========================================================================
 
 
 class TestBuildFallbackBundle:
-    """Tests for ``_build_fallback_bundle()``."""
+    """Tests for ``build_fallback_bundle()``."""
 
     def test_fallback_bundle_is_valid(self) -> None:
         """Fallback bundle has all required fields."""
-        bundle = _build_fallback_bundle()
+        bundle = build_fallback_bundle()
         assert isinstance(bundle, AgentExecutionBundle)
         assert isinstance(bundle.event_output, EventInterpretationOutput)
         assert isinstance(bundle.risk_output, AIRiskOutput)
@@ -316,17 +333,17 @@ class TestBuildFallbackBundle:
 
     def test_fallback_bundle_decision_type_is_hold(self) -> None:
         """Fallback decision_type is HOLD (safest default)."""
-        bundle = _build_fallback_bundle()
+        bundle = build_fallback_bundle()
         assert bundle.ai_inputs.decision_type == "HOLD"
 
     def test_fallback_bundle_risk_opinion_is_allow(self) -> None:
         """Fallback risk_opinion is 'allow' (does not block)."""
-        bundle = _build_fallback_bundle()
+        bundle = build_fallback_bundle()
         assert bundle.ai_inputs.risk_opinion == "allow"
 
     def test_fallback_bundle_event_bias_is_neutral(self) -> None:
         """Fallback event_bias is 'neutral' (safest default)."""
-        bundle = _build_fallback_bundle()
+        bundle = build_fallback_bundle()
         # neutral is the safest default event bias
         assert bundle.ai_inputs.event_bias == "neutral"
 
@@ -370,14 +387,18 @@ async def test_run_agents_in_subprocess_timeout_fallback() -> None:
     )
 
     context = AssembledContext(source_type="core")
+    request = AgentExecutionRequest(
+        decision_context_id=None,
+        correlation_id="test-timeout-fallback",
+        context=context,
+        symbol="005930",
+        market="KRX",
+    )
 
     # With subprocess isolation disabled, this calls _run_agents() directly
     result = await orchestrator._run_agents_in_subprocess(
+        request=request,
         assembled_context=context,
-        decision_context_id=None,
-        correlation_id="test-timeout-fallback",
-        symbol="005930",
-        market="KRX",
     )
 
     assert isinstance(result, AgentExecutionBundle)
@@ -409,13 +430,17 @@ async def test_run_agents_in_subprocess_success() -> None:
     )
 
     context = AssembledContext(source_type="core")
-
-    result = await orchestrator._run_agents_in_subprocess(
-        assembled_context=context,
+    request = AgentExecutionRequest(
         decision_context_id=None,
         correlation_id="test-success",
+        context=context,
         symbol="005930",
         market="KRX",
+    )
+
+    result = await orchestrator._run_agents_in_subprocess(
+        request=request,
+        assembled_context=context,
     )
 
     assert isinstance(result, AgentExecutionBundle)
@@ -444,13 +469,17 @@ async def test_run_agents_in_subprocess_with_decision_context() -> None:
 
     ctx_id = uuid4()
     context = AssembledContext(source_type="core")
-
-    result = await orchestrator._run_agents_in_subprocess(
-        assembled_context=context,
+    request = AgentExecutionRequest(
         decision_context_id=ctx_id,
         correlation_id="test-with-ctx-id",
+        context=context,
         symbol="005930",
         market="KRX",
+    )
+
+    result = await orchestrator._run_agents_in_subprocess(
+        request=request,
+        assembled_context=context,
     )
 
     assert isinstance(result, AgentExecutionBundle)

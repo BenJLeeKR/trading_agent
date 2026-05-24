@@ -436,6 +436,25 @@ class CashBalanceSnapshotRepository(Protocol):
         """
         ...
 
+    async def get_latest_sync_run_id(
+        self, account_id: UUID,
+    ) -> UUID | None:
+        """Return the latest ``snapshot_sync_run_id`` recorded for the
+        given account (from any cash snapshot), or ``None`` if no FK data
+        exists.
+
+        Parameters
+        ----------
+        account_id:
+            대상 계좌 UUID.
+
+        Returns
+        -------
+        UUID | None
+            가장 최신 ``snapshot_sync_run_id``. FK가 전혀 없으면 ``None``.
+        """
+        ...
+
 
 class TradeDecisionRepository(Protocol):
     async def add(self, decision: TradeDecisionEntity) -> TradeDecisionEntity:

@@ -9,7 +9,9 @@ import pytest
 from agent_trading.services.ai_agents.schemas import AIRiskOutput, FinalDecisionComposerOutput
 from agent_trading.services.decision_orchestrator import (
     DecisionOrchestratorService,
-    _build_fallback_bundle,
+)
+from agent_trading.services.subprocess_helpers import (
+    build_fallback_bundle,
 )
 
 
@@ -158,18 +160,18 @@ class TestCheckHeldPositionSellOverride:
 
 
 class TestFallbackBundleEiSummary:
-    """``_build_fallback_bundle()``의 EI summary non-empty 검증."""
+    """``build_fallback_bundle()``의 EI summary non-empty 검증."""
 
     def test_fallback_bundle_ei_summary_non_empty(self) -> None:
-        """``_build_fallback_bundle()``의 EI output summary가 비공란인지 검증."""
-        bundle = _build_fallback_bundle()
+        """``build_fallback_bundle()``의 EI output summary가 비공란인지 검증."""
+        bundle = build_fallback_bundle()
         assert bundle.event_output is not None
         assert bundle.event_output.summary != ""
         assert bundle.event_output.summary is not None
 
     def test_fallback_bundle_ei_summary_contains_korean(self) -> None:
-        """``_build_fallback_bundle()``의 EI summary가 한국어 문자열을 포함하는지 검증."""
-        bundle = _build_fallback_bundle()
+        """``build_fallback_bundle()``의 EI summary가 한국어 문자열을 포함하는지 검증."""
+        bundle = build_fallback_bundle()
         assert bundle.event_output is not None
         summary = bundle.event_output.summary
         # _build_summary_text()는 항상 한국어 요약을 생성하므로

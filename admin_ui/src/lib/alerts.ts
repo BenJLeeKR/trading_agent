@@ -4,7 +4,7 @@
  * UI-only computation.  No side effects, no API calls.
  * Shared between OperationsAlertsView and OperationsDashboardView.
  * ─────────────────────────────────────────── */
-import type { HealthResponse, OrderSummary, SnapshotSyncRunSummary, SchedulerStatusResponse } from "../types/api";
+import type { HealthResponse, OrderSummary, SnapshotSyncRunSummary, SchedulerStatusResponse, AlignmentDetail } from "../types/api";
 import { formatKstDateTime } from "./utils";
 
 /* ── Public types ────────────────────────── */
@@ -41,6 +41,11 @@ export interface AlertRuleInput {
   sessionData: SchedulerStatusResponse | null;
   // ── Failed API names (for ALT-SYS-001) ──
   apiErrors?: { apiName: string; message: string }[];
+  // ── Account-level alignment detail ──
+  alignmentDetails?: Array<{
+    account_id: string;
+    detail: AlignmentDetail;
+  }>;
 }
 
 /* ── Priority sort order ── */
@@ -323,6 +328,74 @@ export function deriveAlerts(input: AlertRuleInput): AlertItem[] {
         description: `${afterHoursSkip}개 계좌가 장후(after-hours) 상태로 스냅샷이 생략되었습니다.`,
         time: now,
         status: afterHoursSkip > 0 ? "OPEN" : "RESOLVED",
+      });
+    }
+  }
+
+  // ── Alignment Detail Alert Rules ──
+
+  // SNAP-ALIGN-001: partial_position_only → 주의
+  if (input.alignmentDetails) {
+    const partialPosOnly = input.alignmentDetails.filter(
+      (a) => a.detail === "partial_position_only"
+    );
+    if (partialPosOnly.length > 0) {
+      const ids = partialPosOnly.map((a) => a.account_id);
+      const displayed = ids.slice(0, 3);
+      const remainder = ids.length - 3;
+      let desc = displayed.join(", ");
+      if (remainder > 0) desc += ` 외 ${remainder}개`;
+      alerts.push({
+        id: "SNAP-ALIGN-001",
+        level: "주의",
+        title: "포지션 데이터만 조회된 계좌가 있습니다",
+        description: `계좌: ${desc}`,
+        time: now,
+        status: "OPEN",
+      });
+    }
+  }
+
+  // SNAP-ALIGN-002: timestamp_proximity → 정보
+  if (input.alignmentDetails) {
+    const tsProximity = input.alignmentDetails.filter(
+      (a) => a.detail === "timestamp_proximity"
+    );
+    if (tsProximity.length > 0) {
+      const ids = tsProximity.map((a) => a.account_id);
+      const displayed = ids.slice(0, 3);
+      const remainder = ids.length - 3;
+      let desc = displayed.join(", ");
+      if (remainder > 0) desc += ` 외 ${remainder}개`;
+      alerts.push({
+        id: "SNAP-ALIGN-002",
+        level: "정보",
+        title: "시간 근사 정합된 계좌가 있습니다 (legacy 데이터)",
+        description: `계좌: ${desc}`,
+        time: now,
+        status: "OPEN",
+      });
+    }
+  }
+
+  // SNAP-ALIGN-003: cash_only → 주의
+  if (input.alignmentDetails) {
+    const cashOnly = input.alignmentDetails.filter(
+      (a) => a.detail === "cash_only"
+    );
+    if (cashOnly.length > 0) {
+      const ids = cashOnly.map((a) => a.account_id);
+      const displayed = ids.slice(0, 3);
+      const remainder = ids.length - 3;
+      let desc = displayed.join(", ");
+      if (remainder > 0) desc += ` 외 ${remainder}개`;
+      alerts.push({
+        id: "SNAP-ALIGN-003",
+        level: "주의",
+        title: "현금 데이터만 조회된 계좌가 있습니다",
+        description: `계좌: ${desc}`,
+        time: now,
+        status: "OPEN",
       });
     }
   }

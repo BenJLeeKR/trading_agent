@@ -343,8 +343,8 @@ class TestSerializeCycleResult:
 
         result = SubmitResult(
             status="SUBMITTED",
-            intent=intent,
-            order=order,
+            order_intent=intent,
+            submit_response=order,
             trade_decision_id=uuid4(),
             decision_context_id=ctx_id,
         )
@@ -367,7 +367,7 @@ class TestSerializeCycleResult:
         intent = _make_stub_intent(decision_context_id=ctx_id)
         result = SubmitResult(
             status="DRY_RUN",
-            intent=intent,
+            order_intent=intent,
             decision_context_id=ctx_id,
         )
 
@@ -450,8 +450,8 @@ class TestSerializeCycleResultSourceType:
 
         result = SubmitResult(
             status="SUBMITTED",
-            intent=intent,
-            order=order,
+            order_intent=intent,
+            submit_response=order,
             trade_decision_id=uuid4(),
             decision_context_id=ctx_id,
         )
@@ -1781,6 +1781,7 @@ class TestRunT3LivePipeline:
         events = await repos.external_events.list_by_symbol(
             symbol=SYMBOL,
             since=datetime.now(timezone.utc) - timedelta(hours=1),
+            include_seeded_news=True,
         )
         assert len(events) > 0
         assert all(e.source_reliability_tier == "T3" for e in events)

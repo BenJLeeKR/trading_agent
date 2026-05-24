@@ -50,7 +50,7 @@ from agent_trading.domain.enums import AssetClass, Environment, OrderSide, Order
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.runtime.bootstrap import postgres_runtime
-from agent_trading.services.decision_orchestrator import SubmitResult
+from agent_trading.services.common_types import SubmitResult
 
 logger = logging.getLogger(__name__)
 
@@ -276,16 +276,16 @@ def _serialize_result(result: SubmitResult) -> dict[str, object]:
         "trade_decision_id": str(result.trade_decision_id) if result.trade_decision_id else None,
         "decision_context_id": str(result.decision_context_id) if result.decision_context_id else None,
     }
-    if result.intent is not None:
-        data["order_intent_id"] = str(result.intent.order_intent_id)
-        data["decision_type"] = result.intent.ai_backend_inputs.decision_type
-        data["sized_quantity"] = str(result.intent.request.quantity)
-    if result.order is not None:
-        data["order_id"] = str(result.order.order_request_id)
-        data["order_status"] = result.order.status.value
-        data["client_order_id"] = result.order.client_order_id
-        data["status_reason_code"] = result.order.status_reason_code
-        data["requested_quantity"] = str(result.order.requested_quantity)
+    if result.order_intent is not None:
+        data["order_intent_id"] = str(result.order_intent.order_intent_id)
+        data["decision_type"] = result.order_intent.ai_backend_inputs.decision_type
+        data["sized_quantity"] = str(result.order_intent.request.quantity)
+    if result.submit_response is not None:
+        data["order_id"] = str(result.submit_response.order_request_id)
+        data["order_status"] = result.submit_response.status.value
+        data["client_order_id"] = result.submit_response.client_order_id
+        data["status_reason_code"] = result.submit_response.status_reason_code
+        data["requested_quantity"] = str(result.submit_response.requested_quantity)
     return data
 
 
@@ -366,7 +366,7 @@ async def main() -> int:
             intent = await orchestrator.assemble(request)
 
             # Run sizing engine (same as Phase 1.5 in full pipeline)
-            sizing_inputs = orchestrator._build_sizing_inputs(intent)
+            sizing_inputs = orchestrator.build_sizing_inputs(intent)
             from agent_trading.services.sizing_engine import calculate_sizing
             sizing_result = calculate_sizing(sizing_inputs)
 
@@ -431,13 +431,13 @@ async def main() -> int:
                 logger.info("  error_phase         : %s", result.error_phase)
                 logger.info("  error_message       : %s", result.error_message)
                 logger.info("  trade_decision_id   : %s", result.trade_decision_id)
-                if result.intent is not None:
-                    logger.info("  decision_context_id : %s", result.intent.decision_context_id)
-                    logger.info("  order_intent_id     : %s", result.intent.order_intent_id)
-                if result.order is not None:
-                    logger.info("  order_id            : %s", result.order.order_request_id)
-                    logger.info("  order_status        : %s", result.order.status)
-                    logger.info("  requested_quantity  : %s", result.order.requested_quantity)
+                if result.order_intent is not None:
+                    logger.info("  decision_context_id : %s", result.order_intent.decision_context_id)
+                    logger.info("  order_intent_id     : %s", result.order_intent.order_intent_id)
+                if result.submit_response is not None:
+                    logger.info("  order_id            : %s", result.submit_response.order_request_id)
+                    logger.info("  order_status        : %s", result.submit_response.status)
+                    logger.info("  requested_quantity  : %s", result.submit_response.requested_quantity)
                 logger.info("=" * 60)
 
             # Return exit code based on result status
@@ -446,7 +446,7 @@ async def main() -> int:
             if result.status == "RECONCILE_REQUIRED":
                 # Recoverable — warn but return success
                 logger.warning("Order requires reconciliation (code=%s)",
-                               result.order.status_reason_code if result.order else "N/A")
+                               result.submit_response.status_reason_code if result.submit_response else "N/A")
                 return 0
             # ERROR or REJECTED
             return 1

@@ -660,6 +660,27 @@ class AccountSnapshotResponse(BaseModel):
     cash_snapshot_at: datetime | None
     """Most recent ``snapshot_at`` of the cash balance snapshot."""
 
+    snapshot_sync_run_id: str | None = None
+    """The ``snapshot_sync_run_id`` used as the basis for this response.
+    ``None`` when FK-based alignment was not possible (legacy data)."""
+
+    alignment_detail: str = "unknown"
+    """상세 alignment 구분 문자열.
+
+    - ``"same_run"`` — position과 cash가 동일 sync_run에서 조회됨 (정규 장)
+    - ``"after_hours_cash_updated"`` — after-hours cash 업데이트 반영,
+      position은 이전 정규 장 기준
+    - ``"cash_only"`` — position 정보 없이 cash만 조회됨 (PARTIAL)
+    - ``"partial_position_only"`` — cash 정보 없이 position만 조회됨
+    - ``"timestamp_proximity"`` — FK 없이 timestamp 근사치로 정합 (legacy)
+    - ``"unknown"`` — 분류 불가
+    """
+
+    alignment_detail_description: str | None = None
+    """``alignment_detail`` 값에 대한 사람이 읽기 쉬운 설명 문자열.
+    API 응답에서 UI에 표시할 목적으로 제공된다.
+    """
+
 
 class BrokerOrderView(BaseModel):
     """``GET /orders/{id}/broker-orders`` — broker-side order reference.

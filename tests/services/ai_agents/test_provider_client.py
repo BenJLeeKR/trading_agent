@@ -7,6 +7,7 @@ making real network calls.
 from __future__ import annotations
 
 import json
+import socket
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,6 +16,7 @@ import pytest
 
 from agent_trading.services.ai_agents.base import RawProviderResponse
 from agent_trading.services.ai_agents.provider_client import (
+    MAX_RETRIES,
     OpenAICompatibleClient,
     _coerce_nested_json_strings,
 )
@@ -287,3 +289,198 @@ class TestCoerceNestedJsonStrings:
         outer = _NestedOuter(**coerced)
         assert outer.decision == "sell"
         assert isinstance(outer.sizing_hint, _NestedInner)
+        assert outer.sizing_hint.size_mode == "decrease"
+        assert outer.sizing_hint.size_adjustment_factor == 0.1
+
+
+# ---------------------------------------------------------------------------
+# Retry / DNS error tests
+# ---------------------------------------------------------------------------
+
+
+class TestRetryAndDnsError:
+    """Retry 로직 및 DNS 에러 분류 테스트.
+
+    MockTransport 핸들러에서 예외를 발생시켜 transient 실패를 시뮬레이션.
+    """
+
+    @pytest.mark.asyncio
+    async def test_dns_error_retry_then_success(self) -> None:
+        """DNS resolution 실패 후 retry, 2번째 시도에서 성공."""
+        call_count: list[int] = [0]
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise socket.gaierror(-5, "No address associated with hostname")
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": '{"symbol": "AAPL", "score": 0.85}'}}],
+            })
+
+        client = _make_client(httpx.MockTransport(handler))
+        result = await client.generate_structured(
+            model_id="test-model",
+            system_prompt="system",
+            user_prompt="user",
+            response_format=_FakeOutput,
+        )
+        assert call_count[0] == 2
+        assert isinstance(result.parsed, _FakeOutput)
+        assert result.parsed.symbol == "AAPL"
+
+    @pytest.mark.asyncio
+    async def test_dns_error_all_retries_exhausted(self) -> None:
+        """DNS resolution 실패 → 모든 retry 소진 후 최종 실패."""
+        call_count: list[int] = [0]
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            call_count[0] += 1
+            raise socket.gaierror(-5, "No address associated with hostname")
+
+        client = _make_client(httpx.MockTransport(handler))
+        with pytest.raises(socket.gaierror, match="No address associated with hostname"):
+            await client.generate_structured(
+                model_id="test-model",
+                system_prompt="system",
+                user_prompt="user",
+                response_format=_FakeOutput,
+            )
+        # MAX_RETRIES만큼 시도했어야 함
+        assert call_count[0] == MAX_RETRIES
+
+    @pytest.mark.asyncio
+    async def test_http_429_retry_then_success(self) -> None:
+        """HTTP 429 (rate limit) → retry 후 성공."""
+        call_count: list[int] = [0]
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return httpx.Response(429, json={"error": "rate limited"})
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": '{"symbol": "AAPL", "score": 0.85}'}}],
+            })
+
+        client = _make_client(httpx.MockTransport(handler))
+        result = await client.generate_structured(
+            model_id="test-model",
+            system_prompt="system",
+            user_prompt="user",
+            response_format=_FakeOutput,
+        )
+        assert call_count[0] == 2
+        assert isinstance(result.parsed, _FakeOutput)
+        assert result.parsed.symbol == "AAPL"
+
+    @pytest.mark.asyncio
+    async def test_http_400_non_retryable_fails_immediately(self) -> None:
+        """HTTP 400 (client error) → retry 없이 즉시 실패."""
+        call_count: list[int] = [0]
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            call_count[0] += 1
+            return httpx.Response(400, json={"error": "bad request"})
+
+        client = _make_client(httpx.MockTransport(handler))
+        with pytest.raises(httpx.HTTPStatusError):
+            await client.generate_structured(
+                model_id="test-model",
+                system_prompt="system",
+                user_prompt="user",
+                response_format=_FakeOutput,
+            )
+        # 400은 non-retryable → 1번만 호출
+        assert call_count[0] == 1
+
+    @pytest.mark.asyncio
+    async def test_http_500_retry_then_success(self) -> None:
+        """HTTP 500 (server error) → retry 후 성공."""
+        call_count: list[int] = [0]
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return httpx.Response(500, json={"error": "internal error"})
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": '{"symbol": "AAPL", "score": 0.85}'}}],
+            })
+
+        client = _make_client(httpx.MockTransport(handler))
+        result = await client.generate_structured(
+            model_id="test-model",
+            system_prompt="system",
+            user_prompt="user",
+            response_format=_FakeOutput,
+        )
+        assert call_count[0] == 2
+        assert isinstance(result.parsed, _FakeOutput)
+
+    @pytest.mark.asyncio
+    async def test_json_decode_error_no_retry(self) -> None:
+        """JSON decode 에러 → retry 없이 즉시 실패."""
+        call_count: list[int] = [0]
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            call_count[0] += 1
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": "not-valid-json"}}],
+            })
+
+        client = _make_client(httpx.MockTransport(handler))
+        with pytest.raises(json.JSONDecodeError):
+            await client.generate_structured(
+                model_id="test-model",
+                system_prompt="system",
+                user_prompt="user",
+                response_format=_FakeOutput,
+            )
+        # JSON decode error는 retry 불필요 → 1번만 호출
+        assert call_count[0] == 1
+
+    @pytest.mark.asyncio
+    async def test_transport_error_retry_then_success(self) -> None:
+        """TransportError (connection refused 등) → retry 후 성공."""
+        call_count: list[int] = [0]
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise httpx.ConnectError("Connection refused")
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": '{"symbol": "AAPL", "score": 0.85}'}}],
+            })
+
+        client = _make_client(httpx.MockTransport(handler))
+        result = await client.generate_structured(
+            model_id="test-model",
+            system_prompt="system",
+            user_prompt="user",
+            response_format=_FakeOutput,
+        )
+        assert call_count[0] == 2
+        assert isinstance(result.parsed, _FakeOutput)
+        assert result.parsed.symbol == "AAPL"
+
+    @pytest.mark.asyncio
+    async def test_timeout_exception_retry_then_success(self) -> None:
+        """TimeoutException → retry 후 성공."""
+        call_count: list[int] = [0]
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise httpx.TimeoutException("Request timed out")
+            return httpx.Response(200, json={
+                "choices": [{"message": {"content": '{"symbol": "AAPL", "score": 0.85}'}}],
+            })
+
+        client = _make_client(httpx.MockTransport(handler))
+        result = await client.generate_structured(
+            model_id="test-model",
+            system_prompt="system",
+            user_prompt="user",
+            response_format=_FakeOutput,
+        )
+        assert call_count[0] == 2
+        assert isinstance(result.parsed, _FakeOutput)
+        assert result.parsed.symbol == "AAPL"

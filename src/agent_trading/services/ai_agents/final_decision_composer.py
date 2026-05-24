@@ -235,14 +235,24 @@ class FinalDecisionComposerAgent:
             "- time_horizon: short, swing, long\n"
             "- reason_codes: machine-readable English codes\n\n"
             "## No-Event Policy\n"
-            "- no_material_events + evidence_strength=none: "
-            "Prefer HOLD for core; WATCH/APPROVE OK for market_overlay.\n"
+            "- no_material_events + evidence_strength=none (core): "
+            "insufficient information to act → HOLD. "
+            "WATCH may be considered as a valid non-HOLD option "
+            "(monitor without entering).\n"
+            "- no_material_events + evidence_strength=none (market_overlay): "
+            "can be APPROVED or WATCHed.\n"
             "- no_material_events + evidence_strength=weak: "
-            "WATCH viable for non-core; HOLD for core.\n"
-            "- evidence_strength=moderate/strong: Evaluate normally.\n"
-            "- 'negative signal' (bearish bias): HOLD/REDUCE regardless of source.\n\n"
+            "WATCH viable for non-core; for core, "
+            "WATCH may be considered (monitor without entering) "
+            "as a valid non-HOLD option.\n"
+            "- evidence_strength=moderate/strong: "
+            "Evaluate normally → APPROVE/REDUCE/EXIT.\n"
+            "- 'negative signal' (bearish bias): "
+            "HOLD/REDUCE regardless of source. "
+            "IMPORTANT: 'negative signal' is NOT the same as 'no event'.\n\n"
             "## Source Type Consideration\n"
-            "- core → conservative; held_position → need clear signal;\n"
+            "- core → conservative; WATCH may be viable when evidence is weak.\n"
+            "- held_position → need clear signal;\n"
             "- event_overlay → consider events; market_overlay → no-event OK.\n\n"
             "Narrative fields (summary, opposing_evidence) MUST be written in Korean. "
             "Machine-readable fields listed above MUST remain in English."
@@ -398,7 +408,11 @@ class FinalDecisionComposerAgent:
         else:
             lines.append("  Remaining capacity: N/A")
         lines.append("")
-        lines.append("**Policy**: over-concentrated → suppress BUY/APPROVE, consider REDUCE/EXIT.")
+        lines.append("## Decision Policy")
+        if over_concentrated:
+            lines.append("  over-concentrated → suppress BUY/APPROVE, consider REDUCE/EXIT.")
+        else:
+            lines.append("  maintain existing policy (normal concentration).")
         # ==================================================
 
         # === Recent events ===

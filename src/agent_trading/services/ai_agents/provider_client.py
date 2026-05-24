@@ -7,8 +7,10 @@ OpenAI-compatible chat completion endpoint.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import socket
 from typing import Any
 
 import httpx
@@ -16,6 +18,10 @@ import httpx
 from agent_trading.services.ai_agents.base import AIProviderClient, RawProviderResponse
 
 logger = logging.getLogger(__name__)
+
+# Retry configuration for transient network / DNS / rate-limit errors.
+MAX_RETRIES = 3
+RETRY_DELAY = 1.0  # seconds, base for exponential backoff
 
 
 def _coerce_nested_json_strings(
@@ -207,22 +213,53 @@ class OpenAICompatibleClient:
         if seed is not None:
             body["seed"] = seed
 
-        response = await client.post("/v1/chat/completions", json=body)
-        response.raise_for_status()
-        data = response.json()
-        raw_content: str = data["choices"][0]["message"]["content"]
+        last_exception: Exception | None = None
 
-        # Parse JSON into the target dataclass
-        parsed_dict = json.loads(raw_content)
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = await client.post("/v1/chat/completions", json=body)
+                response.raise_for_status()
+                data = response.json()
+                raw_content: str = data["choices"][0]["message"]["content"]
 
-        # Recursively coerce nested JSON strings into dicts for nested dataclass fields.
-        # Some providers (e.g. DeepSeek) may return nested objects as serialised JSON
-        # strings instead of proper nested JSON objects.
-        parsed_dict = _coerce_nested_json_strings(response_format, parsed_dict)
+                # Parse JSON into the target dataclass
+                parsed_dict = json.loads(raw_content)
 
-        parsed = response_format(**parsed_dict)
+                # Recursively coerce nested JSON strings into dicts for nested dataclass fields.
+                # Some providers (e.g. DeepSeek) may return nested objects as serialised JSON
+                # strings instead of proper nested JSON objects.
+                parsed_dict = _coerce_nested_json_strings(response_format, parsed_dict)
 
-        return RawProviderResponse(parsed=parsed, raw_content=raw_content)
+                parsed = response_format(**parsed_dict)
+
+                return RawProviderResponse(parsed=parsed, raw_content=raw_content)
+
+            except (httpx.TransportError, httpx.TimeoutException, httpx.HTTPStatusError, socket.gaierror) as e:
+                last_exception = e
+                # HTTP 429 또는 5xx만 retry; 그 외 HTTP 에러는 즉시 실패
+                if isinstance(e, httpx.HTTPStatusError):
+                    status = e.response.status_code
+                    if status != 429 and not (500 <= status < 600):
+                        raise  # non-retryable HTTP error → 즉시 실패
+                # DNS/connect/timeout/429/5xx → retry
+                if attempt < MAX_RETRIES - 1:
+                    delay = RETRY_DELAY * (2 ** attempt)
+                    logger.warning(
+                        "Provider request failed (attempt %d/%d): %s. "
+                        "Retrying in %.1fs...",
+                        attempt + 1, MAX_RETRIES, e, delay,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                # 마지막 시도도 실패 → 원본 예외 throw
+                raise
+
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
+                # 파싱 에러는 retry 불필요 → 즉시 실패
+                raise
+
+        # 모든 retry 소진 (위 루프가 raise 없이 끝나면 여기 도달)
+        raise last_exception  # type: ignore[misc]
 
     async def close(self) -> None:
         """Release the underlying HTTP client connection."""

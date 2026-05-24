@@ -305,10 +305,10 @@ class TestEventSortingPriority:
             metadata={"importance": "medium"},
         )
 
-        # DecisionOrchestrator의 _event_sort_key 사용 가정
-        from agent_trading.services.decision_orchestrator import _event_sort_key
+        # common_types의 event_sort_key 사용
+        from agent_trading.services.common_types import event_sort_key
 
         events = [t3, t1]
-        events.sort(key=_event_sort_key, reverse=True)
+        events.sort(key=event_sort_key, reverse=True)
         assert events[0].source_name == "opendart"
         assert events[1].source_name == "naver_news_seeded"

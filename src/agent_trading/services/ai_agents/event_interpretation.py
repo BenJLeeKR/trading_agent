@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
 import sys
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -85,6 +86,20 @@ def _build_summary_text(
     degraded_reason = av.degraded_reason
     # Use provided events if given, otherwise fall back to output.events
     evts = events if events is not None else output.events
+    # ★ 방어: dict가 InterpretedEvent로 전달되면 변환 (schemas.py _coerce_fields 버그 보호)
+    if evts and not isinstance(evts, InterpretedEvent) and isinstance(evts, (list, tuple)):
+        first_item = next(iter(evts), None)
+        if isinstance(first_item, dict):
+            converted: list[InterpretedEvent] = []
+            for item in evts:
+                if isinstance(item, dict):
+                    try:
+                        converted.append(InterpretedEvent(**item))
+                    except (TypeError, ValueError):
+                        pass
+                elif isinstance(item, InterpretedEvent):
+                    converted.append(item)
+            evts = tuple(converted)
     has_events = bool(evts)
     _event_count = output.detected_event_count  # LLM raw detected count (Phase 3-1: aggregate_view.event_count → detected_event_count)
 
@@ -359,6 +374,14 @@ def _classify_exception() -> dict[str, object]:
             "retryable": False,
         }
 
+    if isinstance(exc_value, socket.gaierror):
+        return {
+            **base,
+            "error_type": "dns_error",
+            "http_status": None,
+            "retryable": True,
+        }
+
     if isinstance(exc_value, (TypeError, ValueError)):
         return {
             **base,
@@ -397,6 +420,11 @@ class StubEventInterpretationAgent:
     @property
     def agent_name(self) -> str:
         return "event_interpretation"
+
+    @property
+    def last_error_metadata(self) -> dict[str, object] | None:
+        """Stub never has error metadata."""
+        return None
 
     @property
     def schema_version(self) -> str:
@@ -575,8 +603,9 @@ class EventInterpretationAgent:
                 issuer_code=result.issuer_code,
                 events=result.events,
                 aggregate_view=result.aggregate_view,
-                # ★ Phase 3-1: detected_event_count가 이미 __post_init__에서 동기화됨
-                detected_event_count=result.detected_event_count,
+                # ★ LLM raw aggregate_view.event_count를 detected_event_count로 승격
+                #   (LLM은 detected_event_count를 직접 설정하지 않음)
+                detected_event_count=result.aggregate_view.event_count,
             )
 
             # ★ Deterministic post-processing guard:

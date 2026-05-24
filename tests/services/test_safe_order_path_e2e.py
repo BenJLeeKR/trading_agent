@@ -296,16 +296,16 @@ class TestSafeOrderPathE2E:
         expect_trade_decision_id: bool = True,
     ) -> None:
         """Assert traceability fields on SubmitResult."""
-        from agent_trading.services.decision_orchestrator import SubmitResult
+        from agent_trading.services.common_types import SubmitResult
 
         assert isinstance(result, SubmitResult)
         if expect_decision_context_id:
             assert result.decision_context_id is not None, (
                 "SubmitResult.decision_context_id must be set"
             )
-            if result.intent is not None:
-                assert result.decision_context_id == result.intent.decision_context_id, (
-                    "SubmitResult.decision_context_id must match intent"
+            if result.order_intent is not None:
+                assert result.decision_context_id == result.order_intent.decision_context_id, (
+                    "SubmitResult.decision_context_id must match order_intent"
                 )
         else:
             assert result.decision_context_id is None, (
@@ -357,9 +357,9 @@ class TestSafeOrderPathE2E:
         assert result.status == "SUBMITTED", (
             f"Expected SUBMITTED, got {result.status}"
         )
-        assert result.intent is not None
-        assert result.order is not None
-        assert result.order.status == OrderStatus.SUBMITTED
+        assert result.order_intent is not None
+        assert result.submit_response is not None
+        assert result.submit_response.status == OrderStatus.SUBMITTED
         assert result.error_phase is None
         mock_broker.submit_order.assert_awaited_once()
         await self._assert_traceability(result)
@@ -409,17 +409,17 @@ class TestSafeOrderPathE2E:
         assert result.status == "RECONCILE_REQUIRED", (
             f"Expected RECONCILE_REQUIRED, got {result.status}"
         )
-        assert result.intent is not None
-        assert result.order is not None
-        assert result.order.status == OrderStatus.RECONCILE_REQUIRED
-        assert result.order.status_reason_code == "TIMEOUT"
+        assert result.order_intent is not None
+        assert result.submit_response is not None
+        assert result.submit_response.status == OrderStatus.RECONCILE_REQUIRED
+        assert result.submit_response.status_reason_code == "TIMEOUT"
         mock_broker.submit_order.assert_awaited_once()
         await self._assert_traceability(result)
 
         # Verify blocking lock was acquired
-        assert result.order.account_id is not None
+        assert result.submit_response.account_id is not None
         is_blocked = await reconciliation_service.is_blocked(
-            account_id=result.order.account_id,
+            account_id=result.submit_response.account_id,
             symbol=sample_request.symbol,
             side=sample_request.side.value,
         )
@@ -480,11 +480,11 @@ class TestSafeOrderPathE2E:
         assert result.status == "RECONCILE_REQUIRED", (
             f"Expected RECONCILE_REQUIRED (blocked), got {result.status}"
         )
-        assert result.intent is not None
-        assert result.order is not None
-        assert result.order.status == OrderStatus.RECONCILE_REQUIRED
-        assert result.order.status_reason_code == "BLOCKED", (
-            f"Expected BLOCKED reason_code, got {result.order.status_reason_code}"
+        assert result.order_intent is not None
+        assert result.submit_response is not None
+        assert result.submit_response.status == OrderStatus.RECONCILE_REQUIRED
+        assert result.submit_response.status_reason_code == "BLOCKED", (
+            f"Expected BLOCKED reason_code, got {result.submit_response.status_reason_code}"
         )
         # Broker must NOT have been called
         mock_broker.submit_order.assert_not_called()
@@ -576,10 +576,10 @@ class TestSafeOrderPathE2E:
             f"Second call: expected RECONCILE_REQUIRED (blocked), "
             f"got {result2.status}"
         )
-        assert result2.order is not None
-        assert result2.order.status_reason_code == "BLOCKED", (
+        assert result2.submit_response is not None
+        assert result2.submit_response.status_reason_code == "BLOCKED", (
             f"Second call: expected BLOCKED reason_code, "
-            f"got {result2.order.status_reason_code}"
+            f"got {result2.submit_response.status_reason_code}"
         )
         # Broker must still have been called exactly once (only first call)
         assert mock_broker.submit_order.call_count == 1, (
@@ -641,9 +641,9 @@ class TestSafeOrderPathE2E:
         assert result.status == "REJECTED", (
             f"Expected REJECTED, got {result.status}"
         )
-        assert result.intent is not None
-        assert result.order is not None
-        assert result.order.status == OrderStatus.REJECTED
+        assert result.order_intent is not None
+        assert result.submit_response is not None
+        assert result.submit_response.status == OrderStatus.REJECTED
         mock_broker.submit_order.assert_awaited_once()
         await self._assert_traceability(result)
 
@@ -707,8 +707,8 @@ class TestSafeOrderPathE2E:
         assert mock_broker.submit_order.call_count == 1
 
         # ── Extract the generated client_order_id from the order ──
-        assert result.order is not None
-        generated_client_order_id = result.order.client_order_id
+        assert result.submit_response is not None
+        generated_client_order_id = result.submit_response.client_order_id
 
         # ── Attempt duplicate via create_order() directly ──
         dup_request = SubmitOrderRequest(
@@ -791,19 +791,19 @@ class TestSafeOrderPathE2E:
         assert result.status == "RECONCILE_REQUIRED", (
             f"Expected RECONCILE_REQUIRED, got {result.status}"
         )
-        assert result.intent is not None
-        assert result.order is not None
-        assert result.order.status == OrderStatus.RECONCILE_REQUIRED
-        assert result.order.status_reason_code == "NETWORK_ERROR"
+        assert result.order_intent is not None
+        assert result.submit_response is not None
+        assert result.submit_response.status == OrderStatus.RECONCILE_REQUIRED
+        assert result.submit_response.status_reason_code == "NETWORK_ERROR"
         mock_broker.submit_order.assert_awaited_once()
         await self._assert_traceability(result)
 
         # Verify blocking lock was acquired
-        assert result.order.account_id is not None
+        assert result.submit_response.account_id is not None
         # Reconstruct reconciliation service for lock check
         rs = ReconciliationService(service._repos)
         is_blocked = await rs.is_blocked(
-            account_id=result.order.account_id,
+            account_id=result.submit_response.account_id,
             symbol=sample_request.symbol,
             side=sample_request.side.value,
         )
@@ -846,8 +846,8 @@ class TestSafeOrderPathE2E:
 
         # Then: pipeline result unchanged
         assert result.status == "SUBMITTED"
-        assert result.order is not None
-        assert result.order.status == OrderStatus.SUBMITTED
+        assert result.submit_response is not None
+        assert result.submit_response.status == OrderStatus.SUBMITTED
         assert result.error_phase is None
 
         # Then: sync was called once
@@ -898,8 +898,8 @@ class TestSafeOrderPathE2E:
 
         # Then: pipeline result unchanged despite timeout
         assert result.status == "SUBMITTED"
-        assert result.order is not None
-        assert result.order.status == OrderStatus.SUBMITTED
+        assert result.submit_response is not None
+        assert result.submit_response.status == OrderStatus.SUBMITTED
         assert result.error_phase is None
         mock_sync_service.sync_order_post_submit.assert_awaited_once()
 
@@ -935,8 +935,8 @@ class TestSafeOrderPathE2E:
 
         # Then: pipeline result unchanged despite sync failure
         assert result.status == "SUBMITTED"
-        assert result.order is not None
-        assert result.order.status == OrderStatus.SUBMITTED
+        assert result.submit_response is not None
+        assert result.submit_response.status == OrderStatus.SUBMITTED
         assert result.error_phase is None
         mock_sync_service.sync_order_post_submit.assert_awaited_once()
 
@@ -1037,8 +1037,8 @@ class TestSafeOrderPathE2E:
 
         # Then: pipeline completes normally without sync
         assert result.status == "SUBMITTED"
-        assert result.order is not None
-        assert result.order.status == OrderStatus.SUBMITTED
+        assert result.submit_response is not None
+        assert result.submit_response.status == OrderStatus.SUBMITTED
         assert result.error_phase is None
 
     @pytest.mark.asyncio

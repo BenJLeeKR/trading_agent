@@ -26,6 +26,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+_log = logging.getLogger(__name__)
+
+
 # ---------------------------------------------------------------------------
 # Shared utility: generate a minimal JSON schema from a dataclass type
 # ---------------------------------------------------------------------------
@@ -232,7 +235,8 @@ class AggregateEventView:
     evidence_strength: str = "none"
     """Quality/quantity of evidence: ``"none"`` | ``"weak"`` | ``"moderate"`` | ``"strong"``."""
     event_count: int = 0
-    """DEPRECATED: Use ``EventInterpretationOutput.detected_event_count`` instead.
+    """LEGACY: Preserved for LLM prompt schema compatibility.
+    Canonical source is ``EventInterpretationOutput.detected_event_count``.
     Number of material events actually grounded for this symbol."""
     no_material_events: bool = True
     """``True`` when there are no material events to analyze."""
@@ -289,21 +293,24 @@ class EventInterpretationOutput:
     def __post_init__(self) -> None:
         """Coerce malformed fields to safe defaults.
 
-        Phase 3-1: aggregate_view.event_count is DEPRECATED — always sync to
-        detected_event_count for backward compat. Use max() so that
-        detected_event_count takes precedence when both are set.
+        Phase 2: aggregate_view.event_count sync removed.
+        detected_event_count is the canonical source and is set by
+        ``_finalize_ei_output()`` only.  aggregate_view.event_count is a
+        LEGACY field preserved for LLM prompt schema compatibility only.
         """
-        # aggregate_view.event_count is DEPRECATED — sync to detected_event_count
-        # for backward compat (Phase 3-1 event_count alias migration).
-        agg_ec = self.aggregate_view.event_count
-        if max(self.detected_event_count, agg_ec, 0) != self.detected_event_count:
-            object.__setattr__(
-                self,
-                "detected_event_count",
-                max(self.detected_event_count, agg_ec, 0),
-            )
-
+        # ★ _coerce_fields()를 먼저 실행: aggregate_view/events의 타입 정규화
+        #   (string/dict → dataclass instance) 후에 필드 접근.
         self._coerce_fields()
+
+        # Warning: detected_event_count > 0이지만 top_reason_codes가 빈 경우
+        # (이전에는 AggregateEventView.__post_init__()에서 event_count 기준으로 검사)
+        if (self.detected_event_count > 0
+                and not self.aggregate_view.top_reason_codes):
+            _log.warning(
+                "EventInterpretationOutput: detected_event_count=%d "
+                "but aggregate_view.top_reason_codes is empty",
+                self.detected_event_count,
+            )
 
     def _coerce_fields(self) -> None:
         """Coerce malformed fields to safe defaults.
@@ -352,18 +359,20 @@ class EventInterpretationOutput:
             # String events → empty tuple
             object.__setattr__(self, "events", ())
         elif isinstance(ev, (list, tuple)):
-            # Item-level skip: keep only valid InterpretedEvent items
+            # Item-level conversion: dict → InterpretedEvent, keep valid items only
             safe: list[InterpretedEvent] = []
+            had_dict_items = False
             for item in ev:
                 if isinstance(item, dict):
+                    had_dict_items = True
                     try:
                         safe.append(InterpretedEvent(**item))
                     except (TypeError, ValueError):
                         pass  # Malformed item — skip
                 elif isinstance(item, InterpretedEvent):
                     safe.append(item)
-            # If items were removed, replace with filtered tuple
-            if len(safe) != len(ev):
+            # Replace events when dict items were converted OR items were removed
+            if had_dict_items or len(safe) != len(ev):
                 object.__setattr__(self, "events", tuple(safe))
 
     @property

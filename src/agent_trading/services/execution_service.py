@@ -18,7 +18,7 @@ import asyncio
 import logging
 import time as time_module
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING
@@ -26,8 +26,8 @@ from uuid import UUID, uuid4
 
 from agent_trading.brokers.base import BrokerAdapter
 from agent_trading.domain.entities import (
+    ExecutionAttemptEntity,
     GuardrailEvaluationEntity,
-    OrderRequestEntity,
 )
 from agent_trading.domain.enums import OrderSide, OrderStatus
 from agent_trading.domain.models import Quote, SubmitOrderRequest
@@ -36,9 +36,16 @@ from agent_trading.services.order_manager import OrderManager
 from agent_trading.services.order_sync_service import OrderSyncService
 from agent_trading.services.sizing_engine import SizingInputs, calculate_sizing
 from agent_trading.services.sell_guard import AvailableSellQtyResolver, SellAvailability
-from agent_trading.services.translation import (
+from agent_trading.services.common_types import (
+    AccountSnapshotFreshness,
     OrderIntent,
+    PhaseTraceEntry,
+    SubmitResult,
+    phase_trace_to_dicts,
+)
+from agent_trading.services.translation import (
     build_submit_order_request_from_decision,
+    decimal_or_none,
 )
 
 if TYPE_CHECKING:
@@ -69,95 +76,8 @@ _CIRCUIT_BREAKER_COOLDOWN = 60  # 서킷 오픈 지속 시간(초)
 _QUOTE_CACHE_TTL = 5  # quote 캐시 TTL(초)
 
 
-# ---------------------------------------------------------------------------
-# Shared data types — moved here to break circular import between
-# execution_service.py ↔ decision_orchestrator.py
-# ---------------------------------------------------------------------------
-
-
-@dataclass(slots=True, frozen=True)
-class PhaseTraceEntry:
-    """단일 파이프라인 단계의 실행 추적 정보.
-
-    Parameters
-    ----------
-    phase : str
-        단계 식별자 (예: ``"ai_assemble"``, ``"quote_resolution/AAPL"``).
-    elapsed_ms : int
-        해당 단계의 소요 시간 (밀리초).
-    status : str
-        단계 결과: ``"start"`` | ``"ok"`` | ``"skipped"`` | ``"error"`` |
-        ``"cache_hit"`` | ``"circuit_breaker_skip"`` | ``"reconcile"``.
-    """
-
-    phase: str
-    elapsed_ms: int
-    status: str
-
-
-@dataclass(slots=True, frozen=True)
-class SubmitResult:
-    """Result of the full ``assemble_and_submit()`` pipeline.
-
-    Tracks the outcome across all phases from AI agent execution through
-    to broker submission, enabling the caller to distinguish between
-    different failure modes.
-
-    Parameters
-    ----------
-    status
-        One of:
-        * ``"SUBMITTED"`` — order was successfully submitted to the broker.
-        * ``"SKIPPED"`` — decision was HOLD/WATCH, no order created.
-        * ``"REJECTED"`` — broker explicitly rejected the order.
-        * ``"RECONCILE_REQUIRED"`` — broker returned uncertain result;
-          blocking lock acquired, reconciliation needed.
-        * ``"FAILED"`` — translation failure (e.g. HOLD decision skipped).
-        * ``"ERROR"`` — unexpected exception during any phase.
-    intent
-        The ``OrderIntent`` produced by ``assemble()``, if available.
-    order
-        The ``OrderRequestEntity`` created by ``OrderManager.create_order()``,
-        if available (``None`` when creation failed or was skipped).
-    error_phase
-        Which phase produced the error, for diagnostics:
-        ``None`` | ``"ai"`` | ``"decision_save"`` | ``"translation"`` |
-        ``"order_create"`` | ``"order_submit"``
-    error_message
-        Human-readable error detail, if any.
-    trade_decision_id
-        UUID of the persisted ``TradeDecisionEntity``, if available.
-    phase_trace
-        각 파이프라인 단계의 실행 추적 정보 (``PhaseTraceEntry`` 튜플).
-    """
-
-    status: str
-    intent: OrderIntent | None = None
-    order: OrderRequestEntity | None = None
-    error_phase: str | None = None
-    error_message: str | None = None
-    trade_decision_id: UUID | None = None
-    decision_context_id: UUID | None = None
-    phase_trace: tuple[PhaseTraceEntry, ...] = ()
-
-
-@dataclass(slots=True, frozen=True)
-class AccountSnapshotFreshness:
-    """Account-level snapshot freshness summary for Phase 4c guard."""
-
-    account_id: UUID
-    latest_cash_snapshot_at: datetime | None
-    latest_position_snapshot_at: datetime | None
-    is_cash_stale: bool
-    is_position_stale: bool
-    is_stale: bool
-
-
 __all__: list[str] = [
-    "AccountSnapshotFreshness",
     "ExecutionService",
-    "PhaseTraceEntry",
-    "SubmitResult",
 ]
 
 
@@ -196,23 +116,6 @@ class ExecutionService:
         self._quote_cache: dict[str, tuple[Quote, datetime]] = {}  # symbol → (quote, cached_at)
 
     # ------------------------------------------------------------------
-    # P1.1: _phase_trace_to_dicts helper
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _phase_trace_to_dicts(phase_trace: list[PhaseTraceEntry]) -> list[dict[str, object]]:
-        """``list[PhaseTraceEntry]`` → ``list[dict]`` (JSONB 저장용).
-
-        ``PhaseTraceEntry`` dataclass를 DB JSONB 컬럼에 저장할 수 있는
-        plain dict 리스트로 변환한다. 각 dict는 ``phase``, ``elapsed_ms``,
-        ``status`` 키를 가진다.
-        """
-        return [
-            {"phase": e.phase, "elapsed_ms": e.elapsed_ms, "status": e.status}
-            for e in phase_trace
-        ]
-
-    # ------------------------------------------------------------------
     # P2.1: _finalize_attempt — EA status update consolidation
     # ------------------------------------------------------------------
 
@@ -235,7 +138,7 @@ class ExecutionService:
             await self._repos.execution_attempts.update_status(
                 _attempt_id, status,
                 stop_phase=..., stop_reason=...,
-                phase_trace=self._phase_trace_to_dicts(_phase_trace),
+                phase_trace=phase_trace_to_dicts(_phase_trace),
                 order_request_id=...,
                 completed_at=datetime.now(timezone.utc),
             )
@@ -253,7 +156,7 @@ class ExecutionService:
                 status,
                 stop_phase=stop_phase,
                 stop_reason=stop_reason,
-                phase_trace=self._phase_trace_to_dicts(phase_trace),
+                phase_trace=phase_trace_to_dicts(tuple(phase_trace)),
                 order_request_id=order_request_id,
                 completed_at=datetime.now(timezone.utc),
             )
@@ -263,38 +166,6 @@ class ExecutionService:
                 attempt_id, status,
                 exc_info=True,
             )
-
-    # ------------------------------------------------------------------
-    # P2.2: _build_submit_result — SubmitResult factory
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _build_submit_result(
-        status: str,
-        *,
-        intent: OrderIntent | None = None,
-        order: OrderRequestEntity | None = None,
-        error_phase: str | None = None,
-        error_message: str | None = None,
-        trade_decision_id: UUID | None = None,
-        decision_context_id: UUID | None = None,
-        phase_trace: list[PhaseTraceEntry] | None = None,
-    ) -> SubmitResult:
-        """Factory method for ``SubmitResult``.
-
-        Consolidates the 10-site repetition of constructing ``SubmitResult``
-        with the same set of keyword arguments.
-        """
-        return SubmitResult(
-            status=status,
-            intent=intent,
-            order=order,
-            error_phase=error_phase,
-            error_message=error_message,
-            trade_decision_id=trade_decision_id,
-            decision_context_id=decision_context_id,
-            phase_trace=tuple(phase_trace) if phase_trace else (),
-        )
 
     # ------------------------------------------------------------------
     # P2.3: _resolve_quote — quote resolution with circuit breaker
@@ -541,15 +412,15 @@ class ExecutionService:
             )
 
         # ── Resolve keys with legacy flat-key fallback ──────────────────
-        max_single_position_pct = _decimal_or_none(
+        max_single_position_pct = decimal_or_none(
             risk.get("max_single_position_pct")
             or config.get("max_position_size")
         )
-        min_cash_buffer_pct = _decimal_or_none(
+        min_cash_buffer_pct = decimal_or_none(
             risk.get("min_cash_buffer_pct")
             or config.get("min_cash_buffer_pct")
         )
-        max_order_value = _decimal_or_none(
+        max_order_value = decimal_or_none(
             execution.get("max_order_value")
             or config.get("max_order_value")
         )
@@ -609,8 +480,8 @@ class ExecutionService:
             max_single_position_pct=max_single_position_pct,
             min_cash_buffer_pct=min_cash_buffer_pct,
             max_order_value=max_order_value,
-            min_order_qty=_decimal_or_none(execution.get("min_order_qty")),
-            max_order_qty=_decimal_or_none(execution.get("max_order_qty")),
+            min_order_qty=decimal_or_none(execution.get("min_order_qty")),
+            max_order_qty=decimal_or_none(execution.get("max_order_qty")),
         )
 
     # ------------------------------------------------------------------
@@ -621,7 +492,6 @@ class ExecutionService:
         self,
         intent: OrderIntent,
         trade_decision_id: UUID | None,
-        attempt_id: UUID | None,
         request: SubmitOrderRequest,
         order_manager: OrderManager,
         broker: BrokerAdapter,
@@ -634,10 +504,39 @@ class ExecutionService:
         """Execution pipeline: sizing → guard → translate → create → submit.
 
         Called by ``DecisionOrchestratorService.assemble_and_submit()`` after
-        the decision pipeline has produced ``(intent, trade_decision_id,
-        attempt_id)``.
+        the decision pipeline has produced ``(intent, trade_decision_id)``.
         """
         _symbol = intent.request.symbol
+
+        # ── ExecutionAttempt 생성 (running) ──
+        # (moved from DecisionOrchestratorService._run_decision_pipeline)
+        attempt_id: UUID | None = None
+        if trade_decision_id is not None and intent.decision_context_id is not None:
+            try:
+                _now = datetime.now(timezone.utc)
+                attempt = ExecutionAttemptEntity(
+                    execution_attempt_id=uuid4(),
+                    trade_decision_id=trade_decision_id,
+                    decision_context_id=intent.decision_context_id,
+                    status="running",
+                    started_at=_now,
+                    created_at=_now,
+                )
+                saved = await self._repos.execution_attempts.add(attempt)
+                attempt_id = saved.execution_attempt_id
+                logger.info(
+                    "[ATTEMPT_CREATED] execution_attempt_id=%s trade_decision_id=%s",
+                    attempt_id,
+                    trade_decision_id,
+                )
+            except Exception:
+                logger.warning(
+                    "ExecutionAttempt creation failed (non-fatal). "
+                    "trade_decision_id=%s",
+                    trade_decision_id,
+                    exc_info=True,
+                )
+                attempt_id = None
 
         # ── Phase 1.5: deterministic sizing engine ──
         logger.info(
@@ -738,14 +637,14 @@ class ExecutionService:
                 stop_reason="sizing_rejected",
                 phase_trace=_phase_trace,
             )
-            return self._build_submit_result(
-                "SKIPPED",
-                intent=intent,
+            return SubmitResult.build(
+                order_intent=intent,
                 trade_decision_id=trade_decision_id,
-                decision_context_id=intent.decision_context_id,
-                error_phase="sizing",
                 error_message=sizing_result.skip_reason or "Sizing rejected order",
-                phase_trace=_phase_trace,
+                phase_trace=tuple(_phase_trace) if _phase_trace else (),
+                is_skipped=True,
+                status="SKIPPED",
+                error_phase="sizing",
             )
 
         # Apply sizing result
@@ -822,17 +721,16 @@ class ExecutionService:
                             stop_reason="sell_guard_blocked",
                             phase_trace=_phase_trace,
                         )
-                        return self._build_submit_result(
-                            "SKIPPED",
-                            intent=intent,
+                        return SubmitResult.build(
+                            order_intent=intent,
                             trade_decision_id=trade_decision_id,
-                            decision_context_id=intent.decision_context_id,
-                            error_phase="sell_guard",
                             error_message=(
                                 sell_availability.blocking_reason
                                 or "Sell guard blocked duplicate sell"
                             ),
-                            phase_trace=_phase_trace,
+                            phase_trace=tuple(_phase_trace) if _phase_trace else (),
+                            is_skipped=True,
+                            status="SKIPPED",
                         )
                     logger.info(
                         "Phase 1.5+ SELL GUARD ALLOW: "
@@ -902,17 +800,16 @@ class ExecutionService:
                 stop_reason=reason,
                 phase_trace=_phase_trace,
             )
-            return self._build_submit_result(
-                "SKIPPED",
-                intent=intent,
+            return SubmitResult.build(
+                order_intent=intent,
                 trade_decision_id=trade_decision_id,
-                decision_context_id=intent.decision_context_id,
-                error_phase="translation",
                 error_message=(
                     f"Decision type '{_dt}' "
                     f"produced no order request"
                 ),
-                phase_trace=_phase_trace,
+                phase_trace=tuple(_phase_trace) if _phase_trace else (),
+                is_skipped=True,
+                status="SKIPPED",
             )
 
         _add_phase(f"translation/{_symbol}", "ok")
@@ -948,14 +845,13 @@ class ExecutionService:
                 stop_reason="order_create_failed",
                 phase_trace=_phase_trace,
             )
-            return self._build_submit_result(
-                "ERROR",
-                intent=intent,
-                error_phase="order_create",
+            return SubmitResult.build(
+                order_intent=intent,
                 error_message=f"create_order() failed: {exc}",
                 trade_decision_id=trade_decision_id,
-                decision_context_id=intent.decision_context_id,
-                phase_trace=_phase_trace,
+                phase_trace=tuple(_phase_trace) if _phase_trace else (),
+                status="ERROR",
+                error_phase="order_create",
             )
 
         # ── Phase 4a: transition DRAFT → VALIDATED ──
@@ -984,15 +880,13 @@ class ExecutionService:
                 order_request_id=order.order_request_id,
                 phase_trace=_phase_trace,
             )
-            return self._build_submit_result(
-                "ERROR",
-                intent=intent,
-                order=order,
-                error_phase="order_create",
+            return SubmitResult.build(
+                order_intent=intent,
                 error_message=f"transition_to(VALIDATED) failed: {exc}",
                 trade_decision_id=trade_decision_id,
-                decision_context_id=intent.decision_context_id,
-                phase_trace=_phase_trace,
+                phase_trace=tuple(_phase_trace) if _phase_trace else (),
+                status="ERROR",
+                error_phase="transition",
             )
 
         # ── Phase 4b: transition VALIDATED → PENDING_SUBMIT ──
@@ -1021,15 +915,13 @@ class ExecutionService:
                 order_request_id=validated_order.order_request_id,
                 phase_trace=_phase_trace,
             )
-            return self._build_submit_result(
-                "ERROR",
-                intent=intent,
-                order=validated_order,
-                error_phase="order_create",
+            return SubmitResult.build(
+                order_intent=intent,
                 error_message=f"transition_to(PENDING_SUBMIT) failed: {exc}",
                 trade_decision_id=trade_decision_id,
-                decision_context_id=intent.decision_context_id,
-                phase_trace=_phase_trace,
+                phase_trace=tuple(_phase_trace) if _phase_trace else (),
+                status="ERROR",
+                error_phase="transition",
             )
 
         _order_create_elapsed = time_module.monotonic() - _order_create_t0
@@ -1138,11 +1030,8 @@ class ExecutionService:
                         order_request_id=pending_order.order_request_id,
                         phase_trace=_phase_trace,
                     )
-                    return self._build_submit_result(
-                        "SKIPPED",
-                        intent=intent,
-                        order=pending_order,
-                        error_phase="stale_snapshot",
+                    return SubmitResult.build(
+                        order_intent=intent,
                         error_message=(
                             f"Account-level snapshot stale: account_id={account_id}, "
                             f"cash_stale={freshness.is_cash_stale}, "
@@ -1150,8 +1039,10 @@ class ExecutionService:
                             f"threshold={self._stale_threshold_seconds}s"
                         ),
                         trade_decision_id=trade_decision_id,
-                        decision_context_id=intent.decision_context_id,
-                        phase_trace=_phase_trace,
+                        phase_trace=tuple(_phase_trace) if _phase_trace else (),
+                        is_skipped=True,
+                        status="SKIPPED",
+                        error_phase="stale_snapshot",
                     )
         else:
             # Fallback: run-level summary
@@ -1222,11 +1113,8 @@ class ExecutionService:
                         order_request_id=pending_order.order_request_id,
                         phase_trace=_phase_trace,
                     )
-                    return self._build_submit_result(
-                        "SKIPPED",
-                        intent=intent,
-                        order=pending_order,
-                        error_phase="stale_snapshot",
+                    return SubmitResult.build(
+                        order_intent=intent,
                         error_message=(
                             f"Snapshot sync is stale (run-level fallback): "
                             f"last successful run at "
@@ -1234,8 +1122,10 @@ class ExecutionService:
                             f"threshold={self._stale_threshold_seconds}s"
                         ),
                         trade_decision_id=trade_decision_id,
-                        decision_context_id=intent.decision_context_id,
-                        phase_trace=_phase_trace,
+                        phase_trace=tuple(_phase_trace) if _phase_trace else (),
+                        is_skipped=True,
+                        status="SKIPPED",
+                        error_phase="stale_snapshot",
                     )
 
         logger.info(
@@ -1324,15 +1214,13 @@ class ExecutionService:
                 order_request_id=pending_order.order_request_id,
                 phase_trace=_phase_trace,
             )
-            return self._build_submit_result(
-                "ERROR",
-                intent=intent,
-                order=pending_order,
-                error_phase="order_submit",
+            return SubmitResult.build(
+                order_intent=intent,
                 error_message=f"submit_order_to_broker() failed: {exc}",
                 trade_decision_id=trade_decision_id,
-                decision_context_id=intent.decision_context_id,
-                phase_trace=_phase_trace,
+                phase_trace=tuple(_phase_trace) if _phase_trace else (),
+                status="ERROR",
+                error_phase="order_submit",
             )
 
         # ── Phase 5.5: post-submit sync (fire-and-forget with timeout) ──
@@ -1404,26 +1292,14 @@ class ExecutionService:
             submitted_order.order_request_id,
             trade_decision_id,
         )
-        return self._build_submit_result(
-            result_status,
-            intent=intent,
-            order=submitted_order,
+        return SubmitResult.build(
+            order_intent=intent,
             trade_decision_id=trade_decision_id,
-            decision_context_id=intent.decision_context_id,
-            phase_trace=_phase_trace,
+            phase_trace=tuple(_phase_trace) if _phase_trace else (),
+            is_submitted=(result_status == "SUBMITTED"),
+            is_skipped=(result_status in ("RECONCILE_REQUIRED", "REJECTED")),
+            status=result_status,
+            submit_response=submitted_order,
         )
 
 
-# ---------------------------------------------------------------------------
-# Module-level helpers (no class dependency)
-# ---------------------------------------------------------------------------
-
-
-def _decimal_or_none(value: object) -> Decimal | None:
-    """Convert a value to ``Decimal`` or ``None``."""
-    if value is None:
-        return None
-    try:
-        return Decimal(str(value))
-    except (ValueError, TypeError):
-        return None

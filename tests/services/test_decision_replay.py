@@ -59,6 +59,8 @@ from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.services.decision_orchestrator import (
     DecisionOrchestratorService,
+)
+from agent_trading.services.translation import (
     build_submit_order_request_from_decision,
 )
 from agent_trading.services.order_manager import OrderManager
@@ -509,16 +511,16 @@ class TestReplayDeterministicParametrized:
 
         # ── Then: quantity ──
         # NOTE: Pipeline creates the Order at Phase 4b (before guardrail).
-        # For guard-blocked scenarios (Phase 4c blocks), result.order is NOT
+        # For guard-blocked scenarios (Phase 4c blocks), result.submit_response is NOT
         # None — the order exists in PENDING_SUBMIT status.  We only verify
         # quantity when a submit scenario expects it.
         if bundle.expected_quantity is not None:
-            assert result.order is not None, (
+            assert result.submit_response is not None, (
                 f"[{bundle.name}] Expected order but got None"
             )
-            assert result.order.requested_quantity == bundle.expected_quantity, (
+            assert result.submit_response.requested_quantity == bundle.expected_quantity, (
                 f"[{bundle.name}] Expected qty {bundle.expected_quantity}, "
-                f"got {result.order.requested_quantity}"
+                f"got {result.submit_response.requested_quantity}"
             )
 
         # ── Then: guardrail rule ──

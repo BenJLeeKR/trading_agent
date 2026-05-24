@@ -285,9 +285,9 @@ class TestPaperTradingScenarios:
         assert result.status == "SUBMITTED", (
             f"Expected SUBMITTED, got {result.status}"
         )
-        assert result.intent is not None
-        assert result.order is not None
-        assert result.order.status == OrderStatus.SUBMITTED
+        assert result.order_intent is not None
+        assert result.submit_response is not None
+        assert result.submit_response.status == OrderStatus.SUBMITTED
         assert result.error_phase is None
         mock_broker.submit_order.assert_awaited_once()
 
@@ -298,9 +298,9 @@ class TestPaperTradingScenarios:
         assert result.decision_context_id is not None, (
             "decision_context_id must be present for traceability"
         )
-        if result.intent is not None:
-            assert result.decision_context_id == result.intent.decision_context_id, (
-                "SubmitResult.decision_context_id must match intent"
+        if result.order_intent is not None:
+            assert result.decision_context_id == result.order_intent.decision_context_id, (
+                "SubmitResult.decision_context_id must match order_intent"
             )
 
         # Audit log 검증: order.create 이벤트 존재
@@ -360,8 +360,8 @@ class TestPaperTradingScenarios:
         assert result.status == "SKIPPED", (
             f"Expected SKIPPED for HOLD decision, got {result.status}"
         )
-        assert result.intent is not None
-        assert result.order is None, "No order should be created for HOLD decision"
+        assert result.order_intent is not None
+        assert result.submit_response is None, "No order should be created for HOLD decision"
         mock_broker.submit_order.assert_not_called()
 
         # No blocking lock acquired
@@ -457,16 +457,16 @@ class TestPaperTradingScenarios:
         assert result.status == "RECONCILE_REQUIRED", (
             f"Expected RECONCILE_REQUIRED, got {result.status}"
         )
-        assert result.intent is not None
-        assert result.order is not None
-        assert result.order.status == OrderStatus.RECONCILE_REQUIRED
-        assert result.order.status_reason_code == "TIMEOUT"
+        assert result.order_intent is not None
+        assert result.submit_response is not None
+        assert result.submit_response.status == OrderStatus.RECONCILE_REQUIRED
+        assert result.submit_response.status_reason_code == "TIMEOUT"
         mock_broker.submit_order.assert_awaited_once()
 
         # Blocking lock 검증
-        assert result.order.account_id is not None
+        assert result.submit_response.account_id is not None
         is_blocked = await rs.is_blocked(
-            account_id=result.order.account_id,
+            account_id=result.submit_response.account_id,
             symbol=request.symbol,
             side=request.side.value,
         )
@@ -504,10 +504,10 @@ class TestPaperTradingScenarios:
             f"Second call: expected RECONCILE_REQUIRED (blocked), "
             f"got {result2.status}"
         )
-        assert result2.order is not None
-        assert result2.order.status_reason_code == "BLOCKED", (
+        assert result2.submit_response is not None
+        assert result2.submit_response.status_reason_code == "BLOCKED", (
             f"Second call: expected BLOCKED reason_code, "
-            f"got {result2.order.status_reason_code}"
+            f"got {result2.submit_response.status_reason_code}"
         )
         mock_broker.submit_order.assert_not_called()
 
@@ -818,10 +818,10 @@ class TestPaperTradingScenarios:
             f"Second call: expected RECONCILE_REQUIRED (blocked), "
             f"got {result2.status}"
         )
-        assert result2.order is not None
-        assert result2.order.status_reason_code == "BLOCKED", (
+        assert result2.submit_response is not None
+        assert result2.submit_response.status_reason_code == "BLOCKED", (
             f"Second call: expected BLOCKED reason_code, "
-            f"got {result2.order.status_reason_code}"
+            f"got {result2.submit_response.status_reason_code}"
         )
         # Broker must still have been called exactly once (only first call)
         assert mock_broker.submit_order.call_count == 1, (

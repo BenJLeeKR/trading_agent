@@ -19,6 +19,7 @@ import {
   getCashBalance,
   getSnapshotSyncRuns,
   getLatestMarketSession,
+  getAccountSnapshots,
 } from "../api/client";
 import type {
   HealthResponse,
@@ -27,6 +28,7 @@ import type {
   ClientDetail,
   SnapshotSyncRunSummary,
   SchedulerStatusResponse,
+  AlignmentDetail,
 } from "../types/api";
 import { deriveAlerts, LEVEL_PRIORITY, type AlertItem, type AlertRuleInput } from "../lib/alerts";
 
@@ -261,6 +263,22 @@ export default function OperationsAlertsView() {
         });
       }
 
+      // ── Account-level alignment details ──
+      let alignmentDetails: Array<{ account_id: string; detail: AlignmentDetail }> = [];
+      if (accounts.length > 0) {
+        const snapResults = await Promise.allSettled(
+          accounts.map((a) => getAccountSnapshots(a.account_id))
+        );
+        for (const r of snapResults) {
+          if (r.status === "fulfilled") {
+            alignmentDetails.push({
+              account_id: r.value.account_id,
+              detail: r.value.alignment_detail,
+            });
+          }
+        }
+      }
+
       const newAlerts = deriveAlerts({
         health: healthResult.data,
         healthError: healthResult.error,
@@ -279,6 +297,7 @@ export default function OperationsAlertsView() {
         schedulerHealth: healthResult.data?.scheduler ?? null,
         sessionData: sessionResult.data,
         apiErrors,
+        alignmentDetails,
       });
 
       setAlerts(newAlerts);

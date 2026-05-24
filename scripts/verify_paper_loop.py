@@ -51,7 +51,7 @@ from agent_trading.domain.enums import OrderSide, OrderType
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.runtime.bootstrap import postgres_runtime
-from agent_trading.services.decision_orchestrator import SubmitResult
+from agent_trading.services.common_types import SubmitResult
 from agent_trading.services.sizing_engine import calculate_sizing
 
 logger = logging.getLogger(__name__)
@@ -109,16 +109,16 @@ def _serialize_cycle_result(
         data["error_message"] = result.error_message
         data["trade_decision_id"] = str(result.trade_decision_id) if result.trade_decision_id else None
         data["decision_context_id"] = str(result.decision_context_id) if result.decision_context_id else None
-        if result.intent is not None:
-            data["order_intent_id"] = str(result.intent.order_intent_id)
-            data["decision_type"] = result.intent.ai_backend_inputs.decision_type
-            data["sized_quantity"] = str(result.intent.request.quantity)
-            data["sizing_constraints"] = result.intent.reason_codes
-        if result.order is not None:
-            data["order_id"] = str(result.order.order_request_id)
-            data["order_status"] = result.order.status.value
-            data["client_order_id"] = result.order.client_order_id
-            data["requested_quantity"] = str(result.order.requested_quantity)
+        if result.order_intent is not None:
+            data["order_intent_id"] = str(result.order_intent.order_intent_id)
+            data["decision_type"] = result.order_intent.ai_backend_inputs.decision_type
+            data["sized_quantity"] = str(result.order_intent.request.quantity)
+            data["sizing_constraints"] = result.order_intent.reason_codes
+        if result.submit_response is not None:
+            data["order_id"] = str(result.submit_response.order_request_id)
+            data["order_status"] = result.submit_response.status.value
+            data["client_order_id"] = result.submit_response.client_order_id
+            data["requested_quantity"] = str(result.submit_response.requested_quantity)
     else:
         data["status"] = "UNKNOWN"
     return data
@@ -170,14 +170,14 @@ async def _run_one_cycle(
             else:
                 # assemble only + sizing
                 intent = await orchestrator.assemble(request)
-                sizing_inputs = orchestrator._build_sizing_inputs(intent)
+                sizing_inputs = orchestrator.build_sizing_inputs(intent)
                 sizing_result = calculate_sizing(sizing_inputs)
 
                 # Build a synthetic SubmitResult for consistent serialization
-                from agent_trading.services.decision_orchestrator import SubmitResult
+                from agent_trading.services.common_types import SubmitResult
                 result = SubmitResult(
                     status="ASSEMBLED",
-                    intent=intent,
+                    order_intent=intent,
                     trade_decision_id=None,
                     decision_context_id=intent.decision_context_id,
                 )

@@ -88,10 +88,10 @@ def _serialize_result(
         data["decision_context_id"] = (
             str(result.decision_context_id) if result.decision_context_id else None
         )
-        if result.order is not None:
-            data["order_id"] = str(result.order.order_request_id)
-            data["order_status"] = result.order.status.value
-            data["requested_quantity"] = str(result.order.requested_quantity)
+        if result.submit_response is not None:
+            data["order_id"] = str(result.submit_response.order_request_id)
+            data["order_status"] = result.submit_response.status.value
+            data["requested_quantity"] = str(result.submit_response.requested_quantity)
         else:
             data["order_id"] = None
             data["requested_quantity"] = None

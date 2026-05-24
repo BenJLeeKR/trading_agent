@@ -26,6 +26,8 @@ function makeSnapshotResponse(
     alignment_status: "aligned",
     positions_snapshot_at: "2024-01-01T12:00:00Z",
     cash_snapshot_at: "2024-01-01T12:00:00Z",
+    snapshot_sync_run_id: "sr-99999999-9999-9999-9999-999999999999",
+    alignment_detail: "same_run",
     ...overrides,
   };
 }
@@ -742,6 +744,175 @@ describe("AccountsView zero-quantity position filter", () => {
     // 모든 포지션이 수량 0이므로 빈 상태 메시지 표시
     await waitFor(() => {
       expect(screen.getByText("이 계좌의 포지션이 없습니다.")).toBeInTheDocument();
+    });
+  });
+  
+  /* ───────────────────────────────────────────
+   * AccountsView — alignment_detail 배지 렌더링
+   * ─────────────────────────────────────────── */
+  describe("AccountsView alignment badges", () => {
+    it("renders same_run badge (green) by default", async () => {
+      vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
+      vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
+      vi.spyOn(await import("../api/client"), "getAccountSnapshots").mockResolvedValue(
+        makeSnapshotResponse(),
+      );
+  
+      render(<AccountsView />, { wrapper: RouterWrapper });
+  
+      await waitFor(() => {
+        expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+      });
+  
+      screen.getByText("CLIENT1-PAPER-PAPER").click();
+  
+      await waitFor(() => {
+        expect(screen.getByText("✓ 동기화 완료")).toBeInTheDocument();
+      });
+    });
+  
+    it("renders after_hours_cash_updated badge (blue)", async () => {
+      vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
+      vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
+      vi.spyOn(await import("../api/client"), "getAccountSnapshots").mockResolvedValue(
+        makeSnapshotResponse({
+          alignment_status: "aligned",
+          alignment_detail: "after_hours_cash_updated",
+        }),
+      );
+  
+      render(<AccountsView />, { wrapper: RouterWrapper });
+  
+      await waitFor(() => {
+        expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+      });
+  
+      screen.getByText("CLIENT1-PAPER-PAPER").click();
+  
+      await waitFor(() => {
+        expect(screen.getByText("↻ 장후 현금 업데이트")).toBeInTheDocument();
+      });
+    });
+  
+    it("renders partial_position_only badge (orange)", async () => {
+      vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
+      vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
+      vi.spyOn(await import("../api/client"), "getAccountSnapshots").mockResolvedValue(
+        makeSnapshotResponse({
+          alignment_status: "partial",
+          alignment_detail: "partial_position_only",
+        }),
+      );
+  
+      render(<AccountsView />, { wrapper: RouterWrapper });
+  
+      await waitFor(() => {
+        expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+      });
+  
+      screen.getByText("CLIENT1-PAPER-PAPER").click();
+  
+      await waitFor(() => {
+        expect(screen.getByText("⊞ 포지션만 조회")).toBeInTheDocument();
+      });
+    });
+  
+    it("renders timestamp_proximity badge (red)", async () => {
+      vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
+      vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
+      vi.spyOn(await import("../api/client"), "getAccountSnapshots").mockResolvedValue(
+        makeSnapshotResponse({
+          alignment_status: "aligned",
+          alignment_detail: "timestamp_proximity",
+        }),
+      );
+  
+      render(<AccountsView />, { wrapper: RouterWrapper });
+  
+      await waitFor(() => {
+        expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+      });
+  
+      screen.getByText("CLIENT1-PAPER-PAPER").click();
+  
+      await waitFor(() => {
+        expect(screen.getByText("⚠ 시간 근사 정합")).toBeInTheDocument();
+      });
+    });
+  
+    it("renders cash_only badge (amber)", async () => {
+      vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
+      vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
+      vi.spyOn(await import("../api/client"), "getAccountSnapshots").mockResolvedValue(
+        makeSnapshotResponse({
+          alignment_status: "partial",
+          alignment_detail: "cash_only",
+        }),
+      );
+  
+      render(<AccountsView />, { wrapper: RouterWrapper });
+  
+      await waitFor(() => {
+        expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+      });
+  
+      screen.getByText("CLIENT1-PAPER-PAPER").click();
+  
+      await waitFor(() => {
+        expect(screen.getByText("₩ 현금만 조회")).toBeInTheDocument();
+      });
+    });
+  
+    it("renders alignment_detail_description when present", async () => {
+      vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
+      vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
+      vi.spyOn(await import("../api/client"), "getAccountSnapshots").mockResolvedValue(
+        makeSnapshotResponse({
+          alignment_status: "aligned",
+          alignment_detail: "after_hours_cash_updated",
+          alignment_detail_description: "Position: 2026-05-16 05:55 -> Cash: 2026-05-16 06:10",
+        }),
+      );
+  
+      render(<AccountsView />, { wrapper: RouterWrapper });
+  
+      await waitFor(() => {
+        expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+      });
+  
+      screen.getByText("CLIENT1-PAPER-PAPER").click();
+  
+      await waitFor(() => {
+        expect(screen.getByText("↻ 장후 현금 업데이트")).toBeInTheDocument();
+      });
+  
+      // 보조 설명이 표시되어야 함
+      expect(
+        screen.getByText("Position: 2026-05-16 05:55 -> Cash: 2026-05-16 06:10"),
+      ).toBeInTheDocument();
+    });
+  
+    it("does not render alignment_detail_description when absent", async () => {
+      vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
+      vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
+      vi.spyOn(await import("../api/client"), "getAccountSnapshots").mockResolvedValue(
+        makeSnapshotResponse({
+          alignment_status: "aligned",
+          alignment_detail: "same_run",
+        }),
+      );
+  
+      render(<AccountsView />, { wrapper: RouterWrapper });
+  
+      await waitFor(() => {
+        expect(screen.getByText("CLIENT1-PAPER-PAPER")).toBeInTheDocument();
+      });
+  
+      screen.getByText("CLIENT1-PAPER-PAPER").click();
+  
+      await waitFor(() => {
+        expect(screen.getByText("✓ 동기화 완료")).toBeInTheDocument();
+      });
     });
   });
 });
