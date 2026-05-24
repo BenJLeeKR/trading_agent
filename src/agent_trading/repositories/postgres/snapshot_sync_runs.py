@@ -106,6 +106,58 @@ class PostgresSnapshotSyncRunRepository:
         )
         return row_to_entity(row, SnapshotSyncRunEntity) if row else None
 
+    async def update_run(self, run: SnapshotSyncRunEntity) -> SnapshotSyncRunEntity:
+        """Update an existing sync run record in-place.
+
+        Used when the run was inserted with a ``running`` status before the
+        actual sync, and needs to be updated with final results after completion.
+        """
+        row = await self._tx.connection.fetchrow(
+            """UPDATE trading.snapshot_sync_runs SET
+                trigger_type = $2,
+                scope = $3,
+                env_filter = $4,
+                status_filter = $5,
+                dry_run = $6,
+                total_accounts = $7,
+                succeeded_accounts = $8,
+                partial_accounts = $9,
+                failed_accounts = $10,
+                skipped_accounts = $11,
+                positions_synced_total = $12,
+                positions_skipped_total = $13,
+                cash_synced_count = $14,
+                error_count = $15,
+                status = $16,
+                started_at = $17,
+                completed_at = $18,
+                summary_json = $19,
+                after_hours = $20
+             WHERE snapshot_sync_run_id = $1
+             RETURNING *""",
+            run.snapshot_sync_run_id,
+            run.trigger_type,
+            run.scope,
+            run.env_filter,
+            run.status_filter,
+            run.dry_run,
+            run.total_accounts,
+            run.succeeded_accounts,
+            run.partial_accounts,
+            run.failed_accounts,
+            run.skipped_accounts,
+            run.positions_synced_total,
+            run.positions_skipped_total,
+            run.cash_synced_count,
+            run.error_count,
+            run.status,
+            run.started_at,
+            run.completed_at,
+            json.dumps(run.summary_json) if run.summary_json is not None else json.dumps({}),
+            run.after_hours,
+        )
+        return row_to_entity(row, SnapshotSyncRunEntity) if row else None
+
     async def get_sync_health_summary(
         self,
         stale_threshold_seconds: int = 900,

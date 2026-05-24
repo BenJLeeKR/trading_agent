@@ -330,6 +330,8 @@ async def _run_multi(
     repos: Any,
     account_ids: list[UUID],
     fmt: str = "text",
+    *,
+    snapshot_sync_run_id: UUID | None = None,
 ) -> tuple[int, BatchSyncResult]:
     """Run sync for multiple account IDs."""
     logger.info("Syncing snapshots for %d account(s) ...", len(account_ids))
@@ -339,6 +341,7 @@ async def _run_multi(
         position_snapshot_repo=repos.position_snapshots,
         cash_balance_snapshot_repo=repos.cash_balance_snapshots,
         account_ids=account_ids,
+        snapshot_sync_run_id=snapshot_sync_run_id,
     )
     _print_batch_summary(batch, fmt=fmt)
 
@@ -361,6 +364,8 @@ async def _run_all(
     env: Environment | None = None,
     account_status: str | None = None,
     fmt: str = "text",
+    *,
+    snapshot_sync_run_id: UUID | None = None,
 ) -> tuple[int, BatchSyncResult]:
     """Auto-discover and sync all KIS accounts (with optional filters)."""
     logger.info("Discovering all KIS accounts (env=%s, status=%s) ...", env, account_status)
@@ -374,6 +379,7 @@ async def _run_all(
         kis_account_number=settings.kis_account_number,
         env=env,
         account_status=account_status,
+        snapshot_sync_run_id=snapshot_sync_run_id,
     )
     _print_batch_summary(batch, fmt=fmt)
 
@@ -413,6 +419,11 @@ async def _run(args: argparse.Namespace) -> int:
     else:
         scope = "single"
 
+    # ── Pre-generate snapshot_sync_run_id ──────────────────────────────
+    # Same UUID is used for all snapshot entities AND the sync run record,
+    # so cash_balance_snapshots / position_snapshots can be joined by run.
+    run_id = uuid4()
+
     # ── 1. KIS REST client ─────────────────────────────────────────────
     logger.info("Creating KISRestClient (env=%s) ...", settings.kis_env)
     budget_manager = build_kis_budget_manager(
@@ -449,6 +460,7 @@ async def _run(args: argparse.Namespace) -> int:
             if args.account_ref:
                 exit_code, sync_result = await _run_single_by_ref(
                     rest_client, repos, args.account_ref, env, fmt=args.format,
+                    snapshot_sync_run_id=run_id,
                 )
                 batch = BatchSyncResult(
                     total_accounts=1,
@@ -467,11 +479,13 @@ async def _run(args: argparse.Namespace) -> int:
                     env=env,
                     account_status=args.status,
                     fmt=args.format,
+                    snapshot_sync_run_id=run_id,
                 )
             elif args.account_ids:
                 if len(args.account_ids) == 1:
                     exit_code, sync_result = await _run_single(
                         rest_client, repos, args.account_ids[0], fmt=args.format,
+                        snapshot_sync_run_id=run_id,
                     )
                     batch = BatchSyncResult(
                         total_accounts=1,
@@ -487,6 +501,7 @@ async def _run(args: argparse.Namespace) -> int:
                 else:
                     exit_code, batch = await _run_multi(
                         rest_client, repos, args.account_ids, fmt=args.format,
+                        snapshot_sync_run_id=run_id,
                     )
             else:
                 logger.error("Either --account-id, --all, or --account-ref is required.")
@@ -503,6 +518,7 @@ async def _run(args: argparse.Namespace) -> int:
                 dry_run=args.dry_run,
                 started_at=started_at,
                 summary_json=counters,
+                snapshot_sync_run_id=run_id,
             )
             await repos.snapshot_sync_runs.add(run_entity)
 

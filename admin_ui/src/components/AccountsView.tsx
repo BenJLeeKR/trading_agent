@@ -564,21 +564,24 @@ export default function AccountsView() {
                 <div className="h-px flex-1 bg-[#e2e8f0]" />
               </div>
 
-              {/* ── Snapshot alignment status badge ───────────────── */}
+              {/* ── Snapshot alignment status badge (FK-based, exact same-run) ── */}
               {snapshotAlignment && (
                 <div className="flex items-center gap-3 text-xs">
                   {snapshotAlignment === "aligned" ? (
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-[#ecfdf5] text-[#16a34a] px-2.5 py-1 font-medium">
+                    <span
+                      className="inline-flex items-center gap-1.5 rounded-full bg-[#ecfdf5] text-[#16a34a] px-2.5 py-1 font-medium"
+                      title="포지션과 현금 잔고가 동일 sync-run에서 캡처되었습니다"
+                    >
                       <span className="h-1.5 w-1.5 rounded-full bg-[#16a34a]" />
-                      동일 snapshot 기준
+                      동일 sync-run 기준
                     </span>
                   ) : snapshotAlignment === "partial" ? (
                     <span
                       className="inline-flex items-center gap-1.5 rounded-full bg-[#fef9c3] text-[#b45309] px-2.5 py-1 font-medium"
-                      title="포지션과 현금 잔고의 스냅샷 시점이 다릅니다"
+                      title="포지션 또는 현금 잔고 중 일부만 조회되었습니다"
                     >
                       <span className="h-1.5 w-1.5 rounded-full bg-[#b45309]" />
-                      시점 어긋남
+                      일부만 조회됨
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1.5 rounded-full bg-[#f1f5f9] text-[#64748b] px-2.5 py-1 font-medium">

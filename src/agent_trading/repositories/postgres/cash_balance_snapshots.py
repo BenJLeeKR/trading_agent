@@ -22,6 +22,9 @@ class PostgresCashBalanceSnapshotRepository:
         self._tx = tx
 
     async def add(self, snapshot: CashBalanceSnapshotEntity) -> CashBalanceSnapshotEntity:
+        fk_val = snapshot.snapshot_sync_run_id
+        import sys
+        print(f"DEBUG_FK_REPO: cash_balance_snapshot_id={snapshot.cash_balance_snapshot_id} snapshot_sync_run_id={fk_val}", file=sys.stderr)
         row = await self._tx.connection.fetchrow(
             """
             INSERT INTO trading.cash_balance_snapshots
@@ -48,8 +51,9 @@ class PostgresCashBalanceSnapshotRepository:
             snapshot.total_unrealized_pnl,
             snapshot.orderable_amount,
             snapshot.fetch_status,
-            snapshot.snapshot_sync_run_id,
+            fk_val,
         )
+        print(f"DEBUG_FK_REPO: AFTER INSERT fk_val={fk_val} row_sync_run_id={row['snapshot_sync_run_id'] if row else 'NO_ROW'}", file=sys.stderr)
         return row_to_entity(row, CashBalanceSnapshotEntity)
 
     async def get(self, cash_balance_snapshot_id: UUID) -> CashBalanceSnapshotEntity | None:
@@ -78,5 +82,18 @@ class PostgresCashBalanceSnapshotRepository:
             "ORDER BY snapshot_at DESC "
             "LIMIT 1",
             account_id,
+        )
+        return row_to_entity(row, CashBalanceSnapshotEntity) if row else None
+
+    async def get_by_sync_run(
+        self, account_id: UUID, sync_run_id: UUID,
+    ) -> CashBalanceSnapshotEntity | None:
+        row = await self._tx.connection.fetchrow(
+            "SELECT * FROM trading.cash_balance_snapshots "
+            "WHERE account_id = $1 AND snapshot_sync_run_id = $2 "
+            "ORDER BY snapshot_at DESC "
+            "LIMIT 1",
+            account_id,
+            sync_run_id,
         )
         return row_to_entity(row, CashBalanceSnapshotEntity) if row else None

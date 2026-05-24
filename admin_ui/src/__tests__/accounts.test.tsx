@@ -4,12 +4,30 @@ import { describe, expect, it, afterEach, vi, beforeEach } from "vitest";
 import AccountsView from "../components/AccountsView";
 import { setStoredToken, clearStoredToken } from "../api/client";
 import { VALID_TOKEN } from "./test-utils/fixtures";
-import type { AccountSummary } from "../types/api";
+import type { AccountSummary, AccountSnapshotResponse } from "../types/api";
 import type { ReactNode } from "react";
 
 /** Wraps component in MemoryRouter so useNavigate() works. */
 function RouterWrapper({ children }: { children: ReactNode }) {
   return <MemoryRouter>{children}</MemoryRouter>;
+}
+
+/**
+ * Build an ``AccountSnapshotResponse`` for test mocks.
+ * ``overrides`` lets individual tests customise positions / cash / alignment.
+ */
+function makeSnapshotResponse(
+  overrides?: Partial<AccountSnapshotResponse>,
+): AccountSnapshotResponse {
+  return {
+    account_id: "ac-22222222-2222-2222-2222-222222222222",
+    positions: mockPositions,
+    cash_balance: mockCashBalance,
+    alignment_status: "aligned",
+    positions_snapshot_at: "2024-01-01T12:00:00Z",
+    cash_snapshot_at: "2024-01-01T12:00:00Z",
+    ...overrides,
+  };
 }
 
 /* ───────────────────────────────────────────
@@ -170,8 +188,9 @@ describe("AccountsView detail panel", () => {
   it("shows positions and cash balance when account is selected", async () => {
     vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
     vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
-    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(mockPositions);
-    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
+    vi.spyOn(await import("../api/client"), "getAccountSnapshots").mockResolvedValue(
+      makeSnapshotResponse(),
+    );
 
     render(<AccountsView />, { wrapper: RouterWrapper });
 
@@ -221,8 +240,9 @@ describe("AccountsView detail panel", () => {
   it("handles null cash balance", async () => {
     vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
     vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
-    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(mockPositions);
-    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(null);
+    vi.spyOn(await import("../api/client"), "getAccountSnapshots").mockResolvedValue(
+      makeSnapshotResponse({ cash_balance: null, alignment_status: "partial" }),
+    );
 
     render(<AccountsView />, { wrapper: RouterWrapper });
 
@@ -254,8 +274,9 @@ describe("AccountsView detail panel", () => {
 
     vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
     vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(lockedAccounts);
-    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue([]);
-    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(null);
+    vi.spyOn(await import("../api/client"), "getAccountSnapshots").mockResolvedValue(
+      makeSnapshotResponse({ positions: [], cash_balance: null, alignment_status: "partial" }),
+    );
 
     render(<AccountsView />, { wrapper: RouterWrapper });
 
@@ -326,8 +347,9 @@ describe("AccountsView snapshot dedup", () => {
   it("shows only latest snapshot per instrument by default", async () => {
     vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
     vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
-    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(multiSnapshotPositions);
-    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
+    vi.spyOn(await import("../api/client"), "getAccountSnapshots").mockResolvedValue(
+      makeSnapshotResponse({ positions: multiSnapshotPositions }),
+    );
 
     render(<AccountsView />, { wrapper: RouterWrapper });
 
@@ -359,8 +381,9 @@ describe("AccountsView snapshot dedup", () => {
   it("shows toggle button when snapshot history exists", async () => {
     vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
     vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
-    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(multiSnapshotPositions);
-    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
+    vi.spyOn(await import("../api/client"), "getAccountSnapshots").mockResolvedValue(
+      makeSnapshotResponse({ positions: multiSnapshotPositions }),
+    );
 
     render(<AccountsView />, { wrapper: RouterWrapper });
 
@@ -378,8 +401,9 @@ describe("AccountsView snapshot dedup", () => {
   it("toggle shows all snapshots when activated", async () => {
     vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
     vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
-    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(multiSnapshotPositions);
-    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
+    vi.spyOn(await import("../api/client"), "getAccountSnapshots").mockResolvedValue(
+      makeSnapshotResponse({ positions: multiSnapshotPositions }),
+    );
 
     render(<AccountsView />, { wrapper: RouterWrapper });
 
@@ -411,8 +435,9 @@ describe("AccountsView snapshot dedup", () => {
     // Single snapshot per instrument — no history to show
     vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
     vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
-    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(mockPositions);
-    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
+    vi.spyOn(await import("../api/client"), "getAccountSnapshots").mockResolvedValue(
+      makeSnapshotResponse(),
+    );
 
     render(<AccountsView />, { wrapper: RouterWrapper });
 
@@ -434,8 +459,9 @@ describe("AccountsView snapshot dedup", () => {
   it("shows 관련 주문 보기 button for each position row", async () => {
     vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
     vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
-    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(mockPositions);
-    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
+    vi.spyOn(await import("../api/client"), "getAccountSnapshots").mockResolvedValue(
+      makeSnapshotResponse(),
+    );
 
     render(<AccountsView />, { wrapper: RouterWrapper });
 
@@ -456,8 +482,9 @@ describe("AccountsView snapshot dedup", () => {
   it("summary cards use dedup data not raw positions", async () => {
     vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
     vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
-    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(multiSnapshotPositions);
-    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
+    vi.spyOn(await import("../api/client"), "getAccountSnapshots").mockResolvedValue(
+      makeSnapshotResponse({ positions: multiSnapshotPositions }),
+    );
 
     render(<AccountsView />, { wrapper: RouterWrapper });
 
@@ -515,8 +542,9 @@ describe("AccountsView snapshot dedup", () => {
 
     vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
     vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
-    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(multiSnapshotPositions);
-    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(cashBalanceWithoutKis);
+    vi.spyOn(await import("../api/client"), "getAccountSnapshots").mockResolvedValue(
+      makeSnapshotResponse({ positions: multiSnapshotPositions, cash_balance: cashBalanceWithoutKis }),
+    );
 
     render(<AccountsView />, { wrapper: RouterWrapper });
 
@@ -598,8 +626,9 @@ describe("AccountsView zero-quantity position filter", () => {
   it("hides zero-quantity positions in default latest view", async () => {
     vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
     vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
-    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(positionsWithZeroQty);
-    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
+    vi.spyOn(await import("../api/client"), "getAccountSnapshots").mockResolvedValue(
+      makeSnapshotResponse({ positions: positionsWithZeroQty }),
+    );
 
     render(<AccountsView />, { wrapper: RouterWrapper });
 
@@ -631,8 +660,9 @@ describe("AccountsView zero-quantity position filter", () => {
   it("shows quantity>0 positions normally", async () => {
     vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
     vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
-    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(positionsWithZeroQty);
-    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
+    vi.spyOn(await import("../api/client"), "getAccountSnapshots").mockResolvedValue(
+      makeSnapshotResponse({ positions: positionsWithZeroQty }),
+    );
 
     render(<AccountsView />, { wrapper: RouterWrapper });
 
@@ -655,8 +685,9 @@ describe("AccountsView zero-quantity position filter", () => {
   it("shows zero-quantity positions in snapshot history mode", async () => {
     vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
     vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
-    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(positionsWithZeroQty);
-    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
+    vi.spyOn(await import("../api/client"), "getAccountSnapshots").mockResolvedValue(
+      makeSnapshotResponse({ positions: positionsWithZeroQty }),
+    );
 
     render(<AccountsView />, { wrapper: RouterWrapper });
 
@@ -696,8 +727,9 @@ describe("AccountsView zero-quantity position filter", () => {
 
     vi.spyOn(await import("../api/client"), "getClients").mockResolvedValue(mockClients);
     vi.spyOn(await import("../api/client"), "getAccounts").mockResolvedValue(mockAccounts);
-    vi.spyOn(await import("../api/client"), "getPositions").mockResolvedValue(allZeroPositions);
-    vi.spyOn(await import("../api/client"), "getCashBalance").mockResolvedValue(mockCashBalance);
+    vi.spyOn(await import("../api/client"), "getAccountSnapshots").mockResolvedValue(
+      makeSnapshotResponse({ positions: allZeroPositions }),
+    );
 
     render(<AccountsView />, { wrapper: RouterWrapper });
 

@@ -47,6 +47,7 @@ from agent_trading.brokers.snapshot_factory import build_snapshot_sync_component
 from agent_trading.config.settings import AppSettings
 from agent_trading.db.connection import DatabaseConfig, close_pool, create_pool
 from agent_trading.db.transaction import transaction
+from agent_trading.domain.entities import SnapshotSyncRunEntity
 from agent_trading.repositories.postgres.bootstrap import build_postgres_repositories
 from agent_trading.services.kis_snapshot_sync import (
     BatchSyncResult,
@@ -214,12 +215,50 @@ async def _run_one_cycle(
         run_id = uuid4()
         async with transaction() as tx:
             repos = build_postgres_repositories(tx)
+
+            # ── 3a. Insert "running" sync run FIRST ────────────────────
+            # The FK constraint on snapshot_sync_run_id requires that the
+            # referenced row in snapshot_sync_runs already exists before
+            # we can INSERT snapshot rows with that FK.  We insert a
+            # placeholder run here, then UPDATE it with actual results
+            # after the sync completes.
+            running_entity = SnapshotSyncRunEntity(
+                snapshot_sync_run_id=run_id,
+                trigger_type="scheduler",
+                scope="all",
+                env_filter=None,
+                status_filter=None,
+                dry_run=False,
+                total_accounts=0,
+                succeeded_accounts=0,
+                partial_accounts=0,
+                failed_accounts=0,
+                skipped_accounts=0,
+                positions_synced_total=0,
+                positions_skipped_total=0,
+                cash_synced_count=0,
+                error_count=0,
+                status="running",
+                started_at=started_at,
+                after_hours=after_hours,
+                summary_json=None,
+                completed_at=None,
+            )
+            await repos.snapshot_sync_runs.add(running_entity)
+
             logger.info(
                 "Repositories ready. Running sync_all_accounts(after_hours=%s, fetch_positions=%s) ...",
                 after_hours,
                 fetch_positions,
             )
 
+            # ── 3b. Sync snapshots ─────────────────────────────────────
+            # FK constraint is now satisfied — the snapshot_sync_run_id
+            # row already exists in snapshot_sync_runs.
+            logger.info(
+                "DEBUG_FK: calling sync_all_accounts with after_hours=%s fetch_positions=%s snapshot_sync_run_id=%s",
+                after_hours, fetch_positions, run_id,
+            )
             batch = await sync_all_accounts(
                 fetch_provider=provider,
                 instrument_repo=repos.instruments,
@@ -235,7 +274,7 @@ async def _run_one_cycle(
                 snapshot_sync_run_id=run_id,
             )
 
-            # ── 4. Save execution history ──────────────────────────────
+            # ── 3c. Update sync run with actual results ────────────────
             counters = get_budget_fallback_counters()
             run_entity = build_sync_run_entity(
                 batch,
@@ -247,7 +286,7 @@ async def _run_one_cycle(
                 summary_json=counters,
                 snapshot_sync_run_id=run_id,
             )
-            await repos.snapshot_sync_runs.add(run_entity)
+            await repos.snapshot_sync_runs.update_run(run_entity)
 
             await tx.commit()
 

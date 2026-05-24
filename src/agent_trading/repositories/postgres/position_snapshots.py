@@ -95,3 +95,28 @@ class PostgresPositionSnapshotRepository:
             before,
         )
         return row_to_entity(row, PositionSnapshotEntity) if row else None
+
+    async def list_by_sync_run(
+        self, account_id: UUID, sync_run_id: UUID,
+    ) -> Sequence[PositionSnapshotEntity]:
+        rows = await self._tx.connection.fetch(
+            "SELECT * FROM trading.position_snapshots "
+            "WHERE account_id = $1 AND snapshot_sync_run_id = $2 "
+            "ORDER BY instrument_id",
+            account_id,
+            sync_run_id,
+        )
+        return tuple(row_to_entity(r, PositionSnapshotEntity) for r in rows)
+
+    async def get_latest_sync_run_id(
+        self, account_id: UUID,
+    ) -> UUID | None:
+        row = await self._tx.connection.fetchrow(
+            "SELECT snapshot_sync_run_id "
+            "FROM trading.position_snapshots "
+            "WHERE account_id = $1 AND snapshot_sync_run_id IS NOT NULL "
+            "ORDER BY snapshot_at DESC "
+            "LIMIT 1",
+            account_id,
+        )
+        return row["snapshot_sync_run_id"] if row else None

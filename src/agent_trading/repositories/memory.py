@@ -327,6 +327,32 @@ class InMemoryPositionSnapshotRepository:
         candidates.sort(key=lambda item: item.snapshot_at, reverse=True)
         return candidates[0]
 
+    async def list_by_sync_run(
+        self, account_id: UUID, sync_run_id: UUID,
+    ) -> Sequence[PositionSnapshotEntity]:
+        results = [
+            item
+            for item in self._items.values()
+            if item.account_id == account_id
+            and item.snapshot_sync_run_id == sync_run_id
+        ]
+        results.sort(key=lambda item: item.snapshot_at, reverse=True)
+        return tuple(results)
+
+    async def get_latest_sync_run_id(
+        self, account_id: UUID,
+    ) -> UUID | None:
+        candidates = [
+            item
+            for item in self._items.values()
+            if item.account_id == account_id
+            and item.snapshot_sync_run_id is not None
+        ]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item.snapshot_at, reverse=True)
+        return candidates[0].snapshot_sync_run_id
+
 
 class InMemoryCashBalanceSnapshotRepository:
     def __init__(self) -> None:
@@ -348,6 +374,20 @@ class InMemoryCashBalanceSnapshotRepository:
 
     async def get_latest_by_account(self, account_id: UUID) -> CashBalanceSnapshotEntity | None:
         results = [item for item in self._items.values() if item.account_id == account_id]
+        if not results:
+            return None
+        results.sort(key=lambda item: item.snapshot_at, reverse=True)
+        return results[0]
+
+    async def get_by_sync_run(
+        self, account_id: UUID, sync_run_id: UUID,
+    ) -> CashBalanceSnapshotEntity | None:
+        results = [
+            item
+            for item in self._items.values()
+            if item.account_id == account_id
+            and item.snapshot_sync_run_id == sync_run_id
+        ]
         if not results:
             return None
         results.sort(key=lambda item: item.snapshot_at, reverse=True)
@@ -1206,6 +1246,11 @@ class InMemorySnapshotSyncRunRepository:
     async def get(self, run_id: UUID) -> SnapshotSyncRunEntity | None:
         """Get a single sync run by its UUID."""
         return self._items.get(run_id)
+
+    async def update_run(self, run: SnapshotSyncRunEntity) -> SnapshotSyncRunEntity:
+        """Update an existing sync run record in-place."""
+        self._items[run.snapshot_sync_run_id] = run
+        return run
 
     async def get_sync_health_summary(
         self,

@@ -351,6 +351,44 @@ class PositionSnapshotRepository(Protocol):
         """
         ...
 
+    async def list_by_sync_run(
+        self, account_id: UUID, sync_run_id: UUID,
+    ) -> Sequence[PositionSnapshotEntity]:
+        """Return all position snapshots for an account that were created
+        during a specific snapshot sync run.
+
+        Parameters
+        ----------
+        account_id:
+            대상 계좌 UUID.
+        sync_run_id:
+            ``snapshot_sync_run_id`` FK 값.
+
+        Returns
+        -------
+        Sequence[PositionSnapshotEntity]
+            해당 sync run에 속한 position snapshot 목록.
+        """
+        ...
+
+    async def get_latest_sync_run_id(
+        self, account_id: UUID,
+    ) -> UUID | None:
+        """Return the latest ``snapshot_sync_run_id`` recorded for the
+        given account (from any snapshot), or ``None`` if no FK data exists.
+
+        Parameters
+        ----------
+        account_id:
+            대상 계좌 UUID.
+
+        Returns
+        -------
+        UUID | None
+            가장 최신 ``snapshot_sync_run_id``. FK가 전혀 없으면 ``None``.
+        """
+        ...
+
 
 class CashBalanceSnapshotRepository(Protocol):
     async def add(self, snapshot: CashBalanceSnapshotEntity) -> CashBalanceSnapshotEntity:
@@ -375,6 +413,26 @@ class CashBalanceSnapshotRepository(Protocol):
         Sequence[CashBalanceSnapshotEntity]
             snapshot_at 내림차순 정렬된 snapshot 목록.
             데이터가 없으면 빈 시퀀스.
+        """
+        ...
+
+    async def get_by_sync_run(
+        self, account_id: UUID, sync_run_id: UUID,
+    ) -> CashBalanceSnapshotEntity | None:
+        """Return the cash balance snapshot for an account that was created
+        during a specific snapshot sync run.
+
+        Parameters
+        ----------
+        account_id:
+            대상 계좌 UUID.
+        sync_run_id:
+            ``snapshot_sync_run_id`` FK 값.
+
+        Returns
+        -------
+        CashBalanceSnapshotEntity | None
+            해당 sync run에 속한 cash balance snapshot. 없으면 ``None``.
         """
         ...
 
@@ -846,6 +904,22 @@ class SnapshotSyncRunRepository(Protocol):
         SnapshotSyncRunEntity | None
             The matching run, or ``None`` if not found.
         """
+
+    async def update_run(self, run: SnapshotSyncRunEntity) -> SnapshotSyncRunEntity:
+        """Update an existing sync run record (e.g. from ``running`` → ``completed``).
+
+        Parameters
+        ----------
+        run:
+            The sync run entity with updated fields.  The ``snapshot_sync_run_id``
+            is used to identify the row to update.
+
+        Returns
+        -------
+        SnapshotSyncRunEntity
+            The updated record as returned by the database.
+        """
+        ...
 
     async def get_sync_health_summary(
         self,
