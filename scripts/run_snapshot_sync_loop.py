@@ -255,10 +255,6 @@ async def _run_one_cycle(
             # ── 3b. Sync snapshots ─────────────────────────────────────
             # FK constraint is now satisfied — the snapshot_sync_run_id
             # row already exists in snapshot_sync_runs.
-            logger.info(
-                "DEBUG_FK: calling sync_all_accounts with after_hours=%s fetch_positions=%s snapshot_sync_run_id=%s",
-                after_hours, fetch_positions, run_id,
-            )
             batch = await sync_all_accounts(
                 fetch_provider=provider,
                 instrument_repo=repos.instruments,

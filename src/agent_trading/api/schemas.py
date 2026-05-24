@@ -398,7 +398,7 @@ class TradeDecisionDetail(BaseModel):
     ``None`` when no execution attempt exists yet.
     """
 
-    latest_completed_at: str | None = None
+    latest_completed_at: datetime | None = None
     """Completed-at timestamp of the latest ``ExecutionAttemptEntity`` for this trade decision,
     resolved via ``LEFT JOIN LATERAL`` on ``trading.execution_attempts``.
 

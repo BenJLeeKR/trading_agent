@@ -178,6 +178,9 @@ class AgentExecutionBundle:
     composer_output: FinalDecisionComposerOutput = field(
         default_factory=FinalDecisionComposerOutput
     )
+    # ★ subprocess isolation 경로에서 EI 실패 시 error metadata
+    #   (orchestrator가 structured_output_json["__error__"] 주입에 사용)
+    ei_error_metadata: dict[str, object] | None = None
 
 
 class ScoreCalculator(Protocol):
@@ -690,10 +693,14 @@ class DecisionOrchestratorService:
             # persistence works identically for both paths.
             _fdc_run_id: UUID | None = None
             try:
+                # ★ subprocess 경로: EI 실패 시 error metadata를 __error__로 주입
+                _ei_structured = _dataclass_to_dict(agent_bundle.event_output)
+                if agent_bundle.ei_error_metadata is not None:
+                    _ei_structured["__error__"] = agent_bundle.ei_error_metadata
                 _ei_run = await self._agent_recorder.record(
                     decision_context_id=resolved_context_id,
                     agent_type=self._event_interpretation_agent.agent_name,
-                    structured_output=_dataclass_to_dict(agent_bundle.event_output),
+                    structured_output=_ei_structured,
                 )
                 _ar_run = await self._agent_recorder.record(
                     decision_context_id=resolved_context_id,
@@ -1297,6 +1304,7 @@ class DecisionOrchestratorService:
 
         # --- 1. Event Interpretation Agent ---
         event_output: EventInterpretationOutput
+        ei_error_metadata: dict[str, object] | None = None
         _t0 = time_module.monotonic()
         try:
             event_output = await asyncio.wait_for(
@@ -1308,6 +1316,10 @@ class DecisionOrchestratorService:
                 time_module.monotonic() - _t0,
                 decision_context_id,
             )
+            # ★ 성공 경로: agent가 내부적으로 예외를 catch한 경우
+            #   _last_error_metadata에 분류된 error metadata가 있음.
+            #   정상 성공 시에는 None이 보장됨.
+            ei_error_metadata = self._event_interpretation_agent.last_error_metadata
         except asyncio.TimeoutError:
             logger.warning(
                 "Event Interpretation Agent timed out after %ds (actual %.2fs) — "
@@ -1326,6 +1338,13 @@ class DecisionOrchestratorService:
             object.__setattr__(event_output, "aggregate_view", degraded_av)
             # ★ timeout fallback: _finalize_ei_output()로 interpreted_event_count, summary_basis, summary 설정
             event_output = _finalize_ei_output(event_output)
+            ei_error_metadata = {
+                "error_type": "timeout",
+                "error_message": f"asyncio.TimeoutError after {_PER_AGENT_TIMEOUT}s",
+                "http_status": None,
+                "retryable": True,
+                "timeout_source": "orchestrator",
+            }
         except Exception:
             logger.warning(
                 "Event Interpretation Agent failed after %.2fs — using default "
@@ -1344,14 +1363,26 @@ class DecisionOrchestratorService:
             object.__setattr__(event_output, "aggregate_view", degraded_av)
             # ★ exception fallback: _finalize_ei_output()로 interpreted_event_count, summary_basis, summary 설정
             event_output = _finalize_ei_output(event_output)
+            ei_error_metadata = {
+                "error_type": "provider_error",
+                "error_message": "Unexpected agent failure at orchestrator level",
+                "http_status": None,
+                "retryable": None,
+                "timeout_source": None,
+            }
 
         if _is_missing_agent_symbol(event_output.symbol) and symbol:
             event_output = replace(event_output, symbol=symbol)
 
+        # ★ structured_output에 __error__ 메타데이터 포함 (실패 시에만)
+        ei_structured_output: dict[str, object] = _dataclass_to_dict(event_output)
+        if ei_error_metadata is not None:
+            ei_structured_output["__error__"] = ei_error_metadata  # type: ignore[typeddict-unknown-key]
+
         await self._agent_recorder.record(
             decision_context_id=decision_context_id,
             agent_type=self._event_interpretation_agent.agent_name,
-            structured_output=_dataclass_to_dict(event_output),
+            structured_output=ei_structured_output,
         )
 
         # ── EI top_reason_codes empty detection ─────────────────────
@@ -1981,6 +2012,8 @@ def _deserialize_agent_output(
     event_raw: dict[str, object] = result.get("event_output", {})  # type: ignore[assignment]
     risk_raw: dict[str, object] = result.get("risk_output", {})  # type: ignore[assignment]
     composer_raw: dict[str, object] = result.get("composer_output", {})  # type: ignore[assignment]
+    # ★ subprocess에서 EI 실패 시 error metadata 추출
+    ei_error_metadata: dict[str, object] | None = result.get("ei_error_metadata")  # type: ignore[assignment]
 
     # Reconstruct dataclass instances from dicts
     event_output = _dict_to_dataclass(EventInterpretationOutput, event_raw)
@@ -2037,6 +2070,7 @@ def _deserialize_agent_output(
         event_output=event_output,
         risk_output=risk_output,
         composer_output=composer_output,
+        ei_error_metadata=ei_error_metadata,
     )
 
 

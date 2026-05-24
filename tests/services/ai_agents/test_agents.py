@@ -17,9 +17,10 @@ from __future__ import annotations
 import dataclasses
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import httpx
 import pytest
 
 from agent_trading.domain.entities import CashBalanceSnapshotEntity, ExternalEventEntity
@@ -1657,6 +1658,121 @@ class TestEventInterpretationAgent:
         result = await agent.run(sample_request)
         assert isinstance(result, EventInterpretationOutput)
         assert result.symbol == ""
+
+    # ── Error metadata tests ─────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_run_fallback_stores_error_metadata_on_provider_error(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """RuntimeError → error_type='provider_error', retryable=None."""
+        failing_provider = AsyncMock(spec=AIProviderClient)
+
+        async def _raise(**kwargs: object) -> object:
+            raise RuntimeError("Provider unavailable")
+
+        failing_provider.generate_structured = _raise  # type: ignore[method-assign]
+
+        agent = EventInterpretationAgent(provider_client=failing_provider)
+        result = await agent.run(sample_request)
+        assert isinstance(result, EventInterpretationOutput)
+        metadata = agent.last_error_metadata
+        assert metadata is not None
+        assert metadata["error_type"] == "provider_error"
+        assert metadata["retryable"] is None
+        assert metadata["http_status"] is None
+        assert metadata["timeout_source"] is None
+        assert "Provider unavailable" in str(metadata["error_message"])
+
+    @pytest.mark.asyncio
+    async def test_run_fallback_stores_error_metadata_on_parse_failure(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """ValueError → error_type='parse_failure', retryable=False."""
+        bad_provider = AsyncMock(spec=AIProviderClient)
+
+        async def _bad_generate(**kwargs: object) -> RawProviderResponse:
+            raise ValueError("Invalid schema field")
+
+        bad_provider.generate_structured = _bad_generate  # type: ignore[method-assign]
+
+        agent = EventInterpretationAgent(provider_client=bad_provider)
+        result = await agent.run(sample_request)
+        assert isinstance(result, EventInterpretationOutput)
+        metadata = agent.last_error_metadata
+        assert metadata is not None
+        assert metadata["error_type"] == "parse_failure"
+        assert metadata["retryable"] is False
+        assert metadata["http_status"] is None
+
+    @pytest.mark.asyncio
+    async def test_run_fallback_stores_error_metadata_on_timeout(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """httpx.TimeoutException → error_type='timeout',
+        timeout_source='provider_client'."""
+        timeout_provider = AsyncMock(spec=AIProviderClient)
+
+        async def _timeout(**kwargs: object) -> object:
+            raise httpx.TimeoutException("Connection timed out")
+
+        timeout_provider.generate_structured = _timeout  # type: ignore[method-assign]
+
+        agent = EventInterpretationAgent(provider_client=timeout_provider)
+        result = await agent.run(sample_request)
+        assert isinstance(result, EventInterpretationOutput)
+        metadata = agent.last_error_metadata
+        assert metadata is not None
+        assert metadata["error_type"] == "timeout"
+        assert metadata["timeout_source"] == "provider_client"
+        assert metadata["retryable"] is True
+        assert metadata["http_status"] is None
+
+    @pytest.mark.asyncio
+    async def test_run_fallback_stores_error_metadata_on_http_error_429(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """httpx.HTTPStatusError(429) → error_type='http_error',
+        http_status=429, retryable=True."""
+        http_provider = AsyncMock(spec=AIProviderClient)
+
+        async def _http_error(**kwargs: object) -> object:
+            mock_request = MagicMock(spec=httpx.Request)
+            mock_response = MagicMock(spec=httpx.Response)
+            mock_response.status_code = 429
+            raise httpx.HTTPStatusError(
+                "Rate limit exceeded",
+                request=mock_request,
+                response=mock_response,
+            )
+
+        http_provider.generate_structured = _http_error  # type: ignore[method-assign]
+
+        agent = EventInterpretationAgent(provider_client=http_provider)
+        result = await agent.run(sample_request)
+        assert isinstance(result, EventInterpretationOutput)
+        metadata = agent.last_error_metadata
+        assert metadata is not None
+        assert metadata["error_type"] == "http_error"
+        assert metadata["http_status"] == 429
+        assert metadata["retryable"] is True
+
+    @pytest.mark.asyncio
+    async def test_run_success_path_no_error_metadata(
+        self,
+        mock_provider: AIProviderClient,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """정상 응답 → last_error_metadata is None (성공 경로 오염 금지)."""
+        agent = EventInterpretationAgent(provider_client=mock_provider)
+        result = await agent.run(sample_request)
+        assert isinstance(result, EventInterpretationOutput)
+        # 성공 경로에서는 __error__가 절대 저장되지 않음
+        assert agent.last_error_metadata is None
 
     @pytest.mark.asyncio
     async def test_decision_context_id_set_when_provided(

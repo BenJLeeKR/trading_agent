@@ -241,16 +241,6 @@ async def sync_account_snapshots(
             object.__setattr__(
                 fetched.cash_balance, "snapshot_sync_run_id", snapshot_sync_run_id,
             )
-            logger.info(
-                "DEBUG_FK: stamped snapshot_sync_run_id=%s on cash_balance (id=%s, created_at=%s)",
-                fetched.cash_balance.snapshot_sync_run_id,
-                fetched.cash_balance.cash_balance_snapshot_id,
-                fetched.cash_balance.snapshot_at.isoformat() if fetched.cash_balance.snapshot_at else "N/A",
-            )
-        else:
-            logger.info("DEBUG_FK: fetched.cash_balance is None — no cash snapshot to stamp")
-    else:
-        logger.info("DEBUG_FK: snapshot_sync_run_id is None — skipping stamp")
 
     # ── 2. Persist positions ──────────────────────────────────────────
     current_instrument_ids: set[UUID] = set()

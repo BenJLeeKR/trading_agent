@@ -251,7 +251,7 @@ class PostgresTradeDecisionRepository:
             latest_execution_attempt_id: str | None = row.get("_latest_execution_attempt_id")
             latest_stop_phase: str | None = row.get("_latest_stop_phase")
             latest_stop_reason: str | None = row.get("_latest_stop_reason")
-            latest_completed_at: str | None = row.get("_latest_completed_at")
+            latest_completed_at: datetime | None = row.get("_latest_completed_at")
             latest_phase_count: int | None = row.get("_latest_phase_count")
             # Convert UUID to string if needed
             if order_request_id is not None:

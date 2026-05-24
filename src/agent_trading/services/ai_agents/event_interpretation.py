@@ -19,9 +19,12 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
+
+import httpx
 
 from agent_trading.services.ai_agents.base import (
     AIProviderClient,
@@ -295,6 +298,83 @@ def _finalize_ei_output(
     )
 
 
+def _classify_exception() -> dict[str, object]:
+    """현재 예외 컨텍스트(sys.exc_info)에서 구조화된 에러 메타데이터 반환.
+
+    ``except`` 블록 내부에서만 호출해야 함. 성공 경로에서 호출하지 않음.
+
+    Returns
+    -------
+    dict[str, object]
+        항상 ``error_type``, ``error_message``, ``http_status``,
+        ``retryable``, ``timeout_source`` 키를 포함.
+        절대 ``None``을 반환하지 않음.
+    """
+    exc_type, exc_value, _ = sys.exc_info()
+    if exc_type is None or exc_value is None:
+        return {
+            "error_type": "unknown",
+            "error_message": "No exception info",
+            "http_status": None,
+            "retryable": None,
+            "timeout_source": None,
+        }
+
+    exc_msg = str(exc_value) or (exc_type.__name__)
+    base: dict[str, object] = {
+        "error_message": exc_msg,
+        "timeout_source": None,
+    }
+
+    if isinstance(exc_value, httpx.TimeoutException):
+        return {
+            **base,
+            "error_type": "timeout",
+            "http_status": None,
+            "retryable": True,
+            "timeout_source": "provider_client",
+        }
+
+    if isinstance(exc_value, httpx.HTTPStatusError):
+        http_status: int = exc_value.response.status_code
+        retryable: bool | None
+        if http_status == 429:
+            retryable = True  # rate limit — retry after backoff
+        elif 500 <= http_status < 600:
+            retryable = True  # server error — may be transient
+        else:
+            retryable = False  # client error — likely permanent
+        return {
+            **base,
+            "error_type": "http_error",
+            "http_status": http_status,
+            "retryable": retryable,
+        }
+
+    if isinstance(exc_value, json.JSONDecodeError):
+        return {
+            **base,
+            "error_type": "parse_failure",
+            "http_status": None,
+            "retryable": False,
+        }
+
+    if isinstance(exc_value, (TypeError, ValueError)):
+        return {
+            **base,
+            "error_type": "parse_failure",
+            "http_status": None,
+            "retryable": False,
+        }
+
+    return {
+        **base,
+        "error_type": "provider_error",
+        "http_status": None,
+        "retryable": None,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Stub (existing, unchanged)
 # ---------------------------------------------------------------------------
@@ -390,6 +470,13 @@ class EventInterpretationAgent:
         self._provider = provider_client
         self._model_id = model_id
         self._schema_version = schema_version
+        # Error metadata from the most recent run() call.
+        # Reset to None at the start of every run() call.
+        # Set only when an exception is caught inside run().
+        # Caller MUST read immediately after run() returns,
+        # within the same async task, before any subsequent
+        # run() call on this instance.
+        self._last_error_metadata: dict[str, object] | None = None
 
     @property
     def agent_name(self) -> str:
@@ -398,6 +485,24 @@ class EventInterpretationAgent:
     @property
     def schema_version(self) -> str:
         return self._schema_version
+
+    @property
+    def last_error_metadata(self) -> dict[str, object] | None:
+        """Return error metadata from the most recent ``run()`` call.
+
+        Contract
+        --------
+        - Reset to ``None`` at the start of every ``run()`` call.
+        - Set to a non-None dict only when an exception is caught
+          inside ``run()``.
+        - Caller MUST read this property **immediately** after
+          ``run()`` returns, within the same async task, before
+          any subsequent call to ``run()`` on the same instance.
+        - NOT thread-safe (single-threaded async context only).
+        - 성공 경로에서는 ``None``이 보장됨 → ``structured_output_json``
+          에 ``__error__`` 키가 저장되지 않음.
+        """
+        return self._last_error_metadata
 
     async def run(
         self, request: AgentExecutionRequest
@@ -423,6 +528,9 @@ class EventInterpretationAgent:
         # ★ 입력 events 수와 symbol을 try 블록 밖에서 캡처 (exception 발생 시에도 사용)
         input_event_count = len(request.context.recent_events or ())
         request_symbol = request.symbol or ""
+
+        # ★ 이전 호출의 error metadata 초기화 — 성공 경로에서는 None 유지
+        self._last_error_metadata = None
 
         try:
             system_prompt = self._build_system_prompt()
@@ -552,6 +660,9 @@ class EventInterpretationAgent:
                 request.decision_context_id,
                 exc_info=True,
             )
+            # ★ 실패 원인 분류 → structured_output_json["__error__"]로 전달됨
+            self._last_error_metadata = _classify_exception()
+
             # ★ fallback: LLM 응답을 받지 못했으므로 모든 필드를 fallback-safe 값으로 설정.
             #   event_count=0, no_material_events=True (LLM 판단 없음 → fallback-safe).
             #   interpretation_incomplete=True + degraded_reason 설정.

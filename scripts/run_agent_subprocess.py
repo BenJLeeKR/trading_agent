@@ -155,6 +155,8 @@ class AgentSubprocessOutput:
     composer_output: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     duration_seconds: float = 0.0
+    # ★ EI 실패 시 error metadata (orchestrator가 structured_output_json["__error__"]에 주입)
+    ei_error_metadata: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -682,6 +684,9 @@ async def main() -> None:
 
         duration = time.monotonic() - t0
 
+        # ★ EI 실패 시 error metadata 캡처 → orchestrator가 __error__ 주입에 사용
+        ei_error_metadata: dict[str, Any] | None = getattr(ei_agent, "last_error_metadata", None)
+
         # ── 3. Serialize output ────────────────────────────────────────
         output = AgentSubprocessOutput(
             success=True,
@@ -689,6 +694,7 @@ async def main() -> None:
             risk_output=_dataclass_to_dict(risk_output),
             composer_output=_dataclass_to_dict(composer_output),
             duration_seconds=duration,
+            ei_error_metadata=ei_error_metadata,
         )
         _write_output(output)
         if skip_fdc:
@@ -714,6 +720,7 @@ def _write_output(output: AgentSubprocessOutput) -> None:
             "composer_output": output.composer_output,
             "error": output.error,
             "duration_seconds": output.duration_seconds,
+            "ei_error_metadata": output.ei_error_metadata,
         },
         sys.stdout,
         default=str,
