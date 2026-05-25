@@ -1,4 +1,4 @@
-"""KIS Paper/Sandbox read-only smoke tests.
+"""KIS Sandbox read-only smoke tests.
 
 Requirements (6 conditions):
   1. Read-only only — no submit_order / cancel_order / amend_order calls.
@@ -13,8 +13,8 @@ Usage:
     # Skip guard: credentials not set → all tests skipped automatically.
     # Live guard: KIS_ENV=live → pytest.fail() with explicit message.
 
-    pytest tests/smoke/test_kis_paper_smoke.py -v -m smoke
-    pytest tests/smoke/test_kis_paper_smoke.py -v -m slow   # includes WS
+    pytest tests/smoke/test_kis_sandbox_smoke.py -v -m smoke
+    pytest tests/smoke/test_kis_sandbox_smoke.py -v -m slow   # includes WS
 
 KIS capability notice (2026-04-20):
     - 실전 REST: 계좌당 초당 18건 (이전 15 → 18 상향)

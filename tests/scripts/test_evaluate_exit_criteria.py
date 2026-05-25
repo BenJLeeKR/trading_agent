@@ -1,4 +1,4 @@
-"""Tests for ``scripts.evaluate_paper_exit`` — Paper Exit Criteria evaluation.
+"""Tests for ``scripts.evaluate_exit_criteria`` — Paper Exit Criteria evaluation.
 
 Test suites
 ===========
@@ -41,7 +41,7 @@ from agent_trading.services.benchmark_comparison import (
     _DEFAULT_BENCHMARK_PRICES,
 )
 from agent_trading.services.risk_metric_constants import GateReasonCode
-from scripts.evaluate_paper_exit import (
+from scripts.evaluate_exit_criteria import (
     AutoCheckResult,
     FinalOverall,
     LayerAResult,

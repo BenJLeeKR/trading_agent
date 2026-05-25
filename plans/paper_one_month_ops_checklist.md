@@ -124,7 +124,7 @@ flowchart TD
 |---|---|---|---|
 | 1 | `KIS_APP_KEY` | `grep KIS_APP_KEY .env` | non-empty |
 | 2 | `KIS_APP_SECRET` | `grep KIS_APP_SECRET .env` | non-empty |
-| 3 | `KIS_PAPER_REST_RPS` | `grep KIS_PAPER_REST_RPS .env` | `2` 이상 (과거 RPS=1 실패 이력) |
+| 3 | `KIS_PAPER_REST_RPS` | `grep KIS_PAPER_REST_RPS .env` | `1` (canonical; 과거 RPS=1 실패 이력은 budget 분배 로직 개선으로 해소) |
 | 4 | `KIS_SMOKE_PRICE` | `grep KIS_SMOKE_PRICE .env` | non-empty, 시장가와 일치 |
 | 5 | `DEEPSEEK_API_KEY` | `grep DEEPSEEK_API_KEY .env` | non-empty |
 | 6 | `DEEPSEEK_MODEL_ID` | `grep DEEPSEEK_MODEL_ID .env` | non-empty (권장: `deepseek-chat`) |
@@ -979,7 +979,7 @@ asyncio.run(check())
 | **심각도** | 🟠 심각 — 시스템 판단 저하 |
 | **즉시 조치** | 오류 메시지 확인 → KIS API 상태 확인 → sync loop 재시작 |
 | **연속 3회 실패** | [Gate SYNC_FAILURES 체크](plans/paper_go_no_go_gate.md:154) 위반 → HOLD/NO_GO 가능성 |
-| **예방** | `KIS_PAPER_REST_RPS=2` 이상 설정 ([RPS=1 실패 경험](plans/paper_submit_smoke_ops_checklist.md:256)) |
+| **예방** | `KIS_PAPER_REST_RPS=1` (canonical; budget 분배 로직 개선으로 RPS=1에서 정상 동작) |
 
 ### E-5. Stale PENDING_SUBMIT 재발생
 

@@ -725,6 +725,19 @@ class ReconciliationRepository(Protocol):
         """
         ...
 
+    # -- EOD orphan cleanup --
+
+    async def get_latest_reconciliation_status_by_order(
+        self, order_request_id: object
+    ) -> str | None:
+        """Return the latest reconciliation run status linked to an order,
+        or ``None`` if no reconciliation run is linked.
+
+        Used by EOD orphan cleanup to determine whether a
+        ``reconcile_required`` order had a ``failed`` reconciliation run.
+        """
+        ...
+
     # -- Legacy run cleanup --
 
     async def list_legacy_runs(

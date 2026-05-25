@@ -104,7 +104,13 @@ class TransactionManager:
             raise RuntimeError("No active transaction to rollback.")
         if self._finalized:
             return
-        await self._transaction.rollback()
+        try:
+            await self._transaction.rollback()
+        except asyncpg.InterfaceError:
+            # asyncpg forbids manual rollback when the transaction was
+            # entered via __aenter__ (i.e. ``async with``).  We ignore
+            # this because __aexit__ already handles the actual rollback.
+            pass
         self._finalized = True
 
     # ------------------------------------------------------------------

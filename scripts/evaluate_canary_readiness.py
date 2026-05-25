@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live Gate / Canary Readiness evaluation — Paper Exit 이후 Live 검토 자격 판정.
+"""Canary Readiness evaluation — Exit Criteria 이후 Live 검토 자격 판정.
 
 Paper Exit Criteria (Layer A)를 재사용하여 paper 단계 합격 여부를 확인하고,
 그 위에 **live-specific 추가 기준**을 적용하여 최종 canary 진입 가능성을 평가한다.
@@ -16,13 +16,13 @@ Usage
 .. code-block:: bash
 
     # 기본 실행 (text 출력)
-    python -m scripts.evaluate_live_gate \\
+    python -m scripts.evaluate_canary_readiness \\
         --account-id <UUID> \\
         --start-date 2026-04-01 \\
         --end-date 2026-05-01
 
     # JSON 출력 + 수동 체크리스트 템플릿
-    python -m scripts.evaluate_live_gate \\
+    python -m scripts.evaluate_canary_readiness \\
         --account-id <UUID> \\
         --start-date 2026-04-01 \\
         --end-date 2026-05-01 \\
@@ -58,15 +58,15 @@ from agent_trading.services.benchmark_comparison import (
     InMemoryBenchmarkPriceRepository,
     _DEFAULT_BENCHMARK_PRICES,
 )
-from agent_trading.services.paper_gate import (
+from agent_trading.services.gate_evaluation import (
     GateStatus,
-    PaperGateService,
-    PaperGoNoGoEvaluation,
+    GateEvaluationService,
+    GateEvaluation,
     compute_reason_code_summary,
 )
 from agent_trading.services.performance_summary import PerformanceSummaryService
 from agent_trading.services.risk_metric_constants import GateReasonCode
-from scripts.evaluate_paper_exit import (
+from scripts.evaluate_exit_criteria import (
     PaperExitEvaluator,
     AutoCheckResult,
     LayerAResult,
@@ -139,7 +139,7 @@ class LiveGateEvaluator:
     # Paper Exit 평가 (Layer A 재사용)
     # ------------------------------------------------------------------
 
-    async def evaluate_paper_exit(
+    async def evaluate_exit_criteria(
         self,
         account_id: UUID,
         start_date: date,
@@ -936,7 +936,7 @@ class LiveGateEvaluator:
         lines.append("---")
         lines.append("")
         lines.append(
-            "모든 항목 완료 후 `evaluate_live_gate.py`를 다시 실행하여 "
+            "모든 항목 완료 후 `evaluate_canary_readiness.py`를 다시 실행하여 "
             "최종 READY 상태를 확인하세요."
         )
         return "\n".join(lines)
@@ -1057,7 +1057,7 @@ async def main(argv: list[str] | None = None) -> int:
 
     try:
         # 1. Paper Exit 평가 (Layer A)
-        paper_exit_status, paper_exit_auto = await evaluator.evaluate_paper_exit(
+        paper_exit_status, paper_exit_auto = await evaluator.evaluate_exit_criteria(
             account_id=args.account_id,
             start_date=args.start_date,
             end_date=args.end_date,

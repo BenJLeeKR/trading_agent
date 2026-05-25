@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""EI 실경로 검증: Postgres + OpenDART 데이터 → _build_user_prompt() 출력 확인.
+"""EI runtime verification: Postgres + OpenDART 데이터 → _build_user_prompt() 출력 확인.
 
 Read-only verification script.
 - No DB writes.
@@ -7,7 +7,7 @@ Read-only verification script.
 - Only queries Postgres, builds EI prompt, and verifies tags.
 
 사용법:
-    python -m scripts.ei_realpath_verification
+    python -m scripts.ei_runtime_verification
 
 Exit code:
     0 — all checks passed
@@ -41,7 +41,7 @@ async def verify() -> int:
     since = now - timedelta(hours=72)
 
     print(SEP)
-    print("  EI 실경로 검증 시작")
+    print("  EI runtime verification 시작")
     print(SEP)
     print(f"  현재 시각 (UTC): {now.strftime('%Y-%m-%d %H:%M:%S')}Z")
     print(f"  72h since       : {since.strftime('%Y-%m-%d %H:%M:%S')}Z")

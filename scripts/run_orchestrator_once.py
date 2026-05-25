@@ -3,7 +3,7 @@
 or ``assemble_and_submit()``, print results, and exit.
 
 **단발 실행 전용** — ``--interval`` 등 반복 실행 옵션 없음.
-반복 실행(continuous loop)이 필요하면 ``verify_paper_loop.py`` 사용.
+반복 실행(continuous loop)이 필요하면 ``verify_decision_loop.py`` 사용.
 
 Usage
 -----
@@ -307,7 +307,7 @@ async def main() -> int:
 
     parser = argparse.ArgumentParser(
         description="Run the orchestrator and optionally submit orders to the broker. "
-                    "One-shot only — for continuous mode use ``verify_paper_loop.py``.",
+                    "One-shot only — for continuous mode use ``verify_decision_loop.py``.",
     )
     parser.add_argument(
         "--submit",
@@ -356,7 +356,7 @@ async def main() -> int:
             market=MARKET,
             side=OrderSide.BUY,
             order_type=OrderType.MARKET,
-            quantity=Decimal("100"),
+            quantity=Decimal("1"),
             price=None,
         )
 

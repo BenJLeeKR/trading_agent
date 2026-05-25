@@ -818,6 +818,35 @@ class InMemoryReconciliationRepository:
         runs.sort(key=lambda r: r.started_at)
         return runs[:limit]
 
+    async def get_latest_reconciliation_status_by_order(
+        self, order_request_id: object
+    ) -> str | None:
+        """Return the latest reconciliation run status linked to an order,
+        or ``None`` if no reconciliation run is linked.
+
+        In-memory implementation: iterate order_links to find matching runs.
+        """
+        # Find run_ids linked to this order_request_id
+        matching_run_ids: set[UUID] = set()
+        for run_id, links in self._order_links.items():
+            for link in links:
+                if isinstance(link, dict) and link.get("order_request_id") == order_request_id:
+                    matching_run_ids.add(run_id)
+
+        if not matching_run_ids:
+            return None
+
+        # Find the latest run among matching run_ids
+        latest_run: ReconciliationRunEntity | None = None
+        for run_id in matching_run_ids:
+            run = self._runs.get(run_id)
+            if run is None:
+                continue
+            if latest_run is None or run.started_at > latest_run.started_at:
+                latest_run = run
+
+        return latest_run.status if latest_run is not None else None
+
     async def get_run_order_links(
         self,
         reconciliation_run_id: UUID,

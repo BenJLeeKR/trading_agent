@@ -455,7 +455,41 @@ async def _run(args: argparse.Namespace) -> int:
             repos = build_postgres_repositories(tx)
             logger.info("Postgres repositories ready.")
 
+            # ── 2b. Insert "running" sync run FIRST ──────────────────
+            # FK constraint on snapshot_sync_run_id requires that the
+            # referenced row in snapshot_sync_runs already exists before
+            # snapshot rows can reference it.  We insert a placeholder
+            # run with status="running" here, then UPDATE it with actual
+            # results after the sync completes.
+            from agent_trading.domain.entities import SnapshotSyncRunEntity
+
+            running_entity = SnapshotSyncRunEntity(
+                snapshot_sync_run_id=run_id,
+                trigger_type="manual",
+                scope=scope,
+                env_filter=env_filter,
+                status_filter=status_filter,
+                dry_run=args.dry_run,
+                total_accounts=0,
+                succeeded_accounts=0,
+                partial_accounts=0,
+                failed_accounts=0,
+                skipped_accounts=0,
+                positions_synced_total=0,
+                positions_skipped_total=0,
+                cash_synced_count=0,
+                error_count=0,
+                status="running",
+                started_at=started_at,
+                after_hours=False,
+                summary_json=None,
+                completed_at=None,
+            )
+            await repos.snapshot_sync_runs.add(running_entity)
+
             # ── 3. Route to appropriate sync mode ─────────────────────
+            # FK constraint is now satisfied — the snapshot_sync_run_id
+            # row already exists in snapshot_sync_runs.
             batch: BatchSyncResult
             if args.account_ref:
                 exit_code, sync_result = await _run_single_by_ref(
@@ -507,7 +541,9 @@ async def _run(args: argparse.Namespace) -> int:
                 logger.error("Either --account-id, --all, or --account-ref is required.")
                 return 2
 
-            # ── 4. Save execution history ────────────────────────────
+            # ── 4. Update sync run with actual results ────────────────
+            # Phase 3: UPDATE the running row (inserted in Phase 1)
+            # with the actual sync results.
             counters = get_budget_fallback_counters()
             run_entity = build_sync_run_entity(
                 batch,
@@ -520,7 +556,7 @@ async def _run(args: argparse.Namespace) -> int:
                 summary_json=counters,
                 snapshot_sync_run_id=run_id,
             )
-            await repos.snapshot_sync_runs.add(run_entity)
+            await repos.snapshot_sync_runs.update_run(run_entity)
 
             if args.dry_run:
                 logger.info("DRY RUN — rolling back transaction (no data persisted)")

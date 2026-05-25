@@ -877,6 +877,52 @@ class TestSyncCashBalance:
         assert snap.available_cash == Decimal("5000000")
         assert result.positions_synced == 0
 
+    async def test_orderable_cash_none_and_ord_psbl_amt_missing_fallback_to_available_cash(
+        self,
+        account_id: UUID,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """VTTC8908R이 None 반환 + VTTC8434R ord_psbl_amt도 없을 때
+        available_cash로 최종 fallback하여 NULL 저장을 방지한다."""
+        # ord_psbl_amt 필드 자체를 제거한 cash_balance 생성
+        cash_balance = _make_cash_balance(
+            dnca_tot_amt="5000000",
+            nxdy_excc_amt="3000000",
+        )
+        # ord_psbl_amt 키 제거 (필드 자체가 없는 상황 시뮬레이션)
+        cash_balance.pop("ord_psbl_amt", None)
+
+        client = FakeKISRestClient(
+            positions=[],
+            cash_balance=cash_balance,
+            orderable_cash=None,  # VTTC8908R이 None 반환
+        )
+        with caplog.at_level("WARNING", logger="agent_trading.services.kis_snapshot_sync"):
+            result = await sync_kis_account_snapshots(
+                rest_client=client,
+                instrument_repo=instrument_repo,
+                position_snapshot_repo=position_repo,
+                cash_balance_snapshot_repo=cash_repo,
+                account_id=account_id,
+            )
+
+        assert result.cash_balance_synced is True
+        assert len(cash_repo._items) == 1
+        snap = list(cash_repo._items.values())[0]
+
+        # available_cash로 fallback되어 NULL이 아닌 값 저장
+        assert snap.orderable_amount == Decimal("5000000")
+        assert snap.available_cash == Decimal("5000000")
+
+        # 경고 로그 출력 확인
+        assert any(
+            "orderable_amount not available from KIS" in record.message
+            for record in caplog.records
+        ), "fallback warning log should be emitted"
+
 
 class TestSyncCombined:
     """Combined position + cash balance sync tests."""

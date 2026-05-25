@@ -1,4 +1,4 @@
-"""Tests for ``scripts.run_paper_decision_loop`` — paper decision loop runner.
+"""Tests for ``scripts.run_decision_loop`` — paper decision loop runner.
 
 검증 범위
 ---------
@@ -56,7 +56,7 @@ from agent_trading.services.decision_orchestrator import (
 )
 
 # Module under test
-from scripts.run_paper_decision_loop import (
+from scripts.run_decision_loop import (
     ENV_TRADING_UNIVERSE,
     KISRestClient,
     UniverseSymbol,
@@ -567,7 +567,7 @@ class TestRunOneCycle:
     """``_run_one_cycle()`` — mocked runtime으로 cycle 실행 검증."""
 
     @patch(
-        "scripts.run_paper_decision_loop.postgres_runtime",
+        "scripts.run_decision_loop.postgres_runtime",
         side_effect=lambda run_migrations=False: _mock_runtime(),
     )
     @pytest.mark.asyncio
@@ -586,7 +586,7 @@ class TestRunOneCycle:
         assert result["duration_seconds"] > 0
 
     @patch(
-        "scripts.run_paper_decision_loop.postgres_runtime",
+        "scripts.run_decision_loop.postgres_runtime",
         side_effect=lambda run_migrations=False: _mock_runtime(),
     )
     @pytest.mark.asyncio
@@ -604,7 +604,7 @@ class TestRunOneCycle:
         assert result["cycle"] == 1
 
     @patch(
-        "scripts.run_paper_decision_loop.postgres_runtime",
+        "scripts.run_decision_loop.postgres_runtime",
         side_effect=lambda run_migrations=False: _mock_runtime(snapshot_stale=True),
     )
     @pytest.mark.asyncio
@@ -626,7 +626,7 @@ class TestRunOneCycle:
 
 
     @patch(
-        "scripts.run_paper_decision_loop.postgres_runtime",
+        "scripts.run_decision_loop.postgres_runtime",
         side_effect=lambda run_migrations=False: _mock_runtime(),
     )
     @pytest.mark.asyncio
@@ -645,7 +645,7 @@ class TestRunOneCycle:
         assert result["cycle"] == 1
 
     @patch(
-        "scripts.run_paper_decision_loop.postgres_runtime",
+        "scripts.run_decision_loop.postgres_runtime",
         side_effect=lambda run_migrations=False: _mock_runtime(),
     )
     @pytest.mark.asyncio
@@ -948,11 +948,11 @@ class TestTradingUniverse:
 
         with (
             patch(
-                "scripts.run_paper_decision_loop.postgres_runtime",
+                "scripts.run_decision_loop.postgres_runtime",
                 new=_mock_postgres_runtime,
             ),
             patch(
-                "scripts.run_paper_decision_loop._HAS_KIS",
+                "scripts.run_decision_loop._HAS_KIS",
                 False,
             ),
         ):
@@ -1001,11 +1001,11 @@ class TestTradingUniverse:
 
         with (
             patch(
-                "scripts.run_paper_decision_loop.postgres_runtime",
+                "scripts.run_decision_loop.postgres_runtime",
                 new=_mock_runtime,
             ),
             patch(
-                "scripts.run_paper_decision_loop.KISRestClient",
+                "scripts.run_decision_loop.KISRestClient",
                 return_value=mock_kis,
             ),
         ):
@@ -1058,11 +1058,11 @@ class TestTradingUniverse:
 
         with (
             patch(
-                "scripts.run_paper_decision_loop.postgres_runtime",
+                "scripts.run_decision_loop.postgres_runtime",
                 new=_mock_runtime,
             ),
             patch(
-                "scripts.run_paper_decision_loop.KISRestClient",
+                "scripts.run_decision_loop.KISRestClient",
                 return_value=mock_kis,
             ),
         ):
@@ -1107,11 +1107,11 @@ class TestTradingUniverse:
 
         with (
             patch(
-                "scripts.run_paper_decision_loop.postgres_runtime",
+                "scripts.run_decision_loop.postgres_runtime",
                 new=_mock_runtime,
             ),
             patch(
-                "scripts.run_paper_decision_loop.KISRestClient",
+                "scripts.run_decision_loop.KISRestClient",
                 side_effect=_raise_on_init,
             ),
             caplog.at_level("WARNING"),
@@ -1140,7 +1140,7 @@ class TestTradingUniverse:
             yield {"repositories": repos}
 
         with patch(
-            "scripts.run_paper_decision_loop.postgres_runtime",
+            "scripts.run_decision_loop.postgres_runtime",
             new=_mock_postgres_runtime,
         ):
             result = await _read_trading_universe()
@@ -1163,7 +1163,7 @@ class TestTradingUniverse:
                 pass
 
         with patch(
-            "scripts.run_paper_decision_loop.postgres_runtime",
+            "scripts.run_decision_loop.postgres_runtime",
             new=_MockRuntimeError,
         ):
             result = await _read_trading_universe()
@@ -1445,12 +1445,12 @@ class TestPersistSeededEvents:
 
 
 class TestSigtermHandler:
-    """``run_paper_decision_loop.py`` — SIGTERM 핸들러 등록 검증."""
+    """``run_decision_loop.py`` — SIGTERM 핸들러 등록 검증."""
 
     def test_sigterm_handler_uses_add_signal_handler(self) -> None:
         """SIGTERM handler should use loop.add_signal_handler, not signal.signal in main()."""
         import inspect
-        import scripts.run_paper_decision_loop as module
+        import scripts.run_decision_loop as module
 
         # _install_signal_handlers() should contain add_signal_handler(...)
         install_source = inspect.getsource(module._install_signal_handlers)
@@ -1474,7 +1474,7 @@ class TestSigtermHandler:
     def test_handle_signal_cancels_all_tasks(self) -> None:
         """_handle_signal() should cancel all asyncio tasks to unblock httpx I/O."""
         import inspect
-        import scripts.run_paper_decision_loop as module
+        import scripts.run_decision_loop as module
 
         source = inspect.getsource(module._handle_signal)
         assert "task.cancel()" in source, (

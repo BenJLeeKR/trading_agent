@@ -1,4 +1,4 @@
-"""KIS Paper + AI Layer Combined Runtime Smoke Verification (Plan 36).
+"""KIS Sandbox + AI Layer Combined Runtime Smoke Verification.
 
 Verifies that:
 
@@ -30,14 +30,14 @@ Safety guards
 Usage
 -----
     # Always-run tests (Scenario A + B + C1, C2):
-    pytest tests/smoke/test_kis_paper_ai_runtime_smoke.py -v
+    pytest tests/smoke/test_kis_sandbox_ai_runtime_smoke.py -v
 
     # With real provider (adds B3):
-    pytest tests/smoke/test_kis_paper_ai_runtime_smoke.py -v -m smoke
+    pytest tests/smoke/test_kis_sandbox_ai_runtime_smoke.py -v -m smoke
 
     # With KIS paper + opt-in (adds C3 actual submit):
     ENABLE_KIS_PAPER_SUBMIT_SMOKE=true \\
-        pytest tests/smoke/test_kis_paper_ai_runtime_smoke.py -v
+        pytest tests/smoke/test_kis_sandbox_ai_runtime_smoke.py -v
 """
 
 from __future__ import annotations

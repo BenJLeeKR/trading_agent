@@ -18,7 +18,7 @@
 | `KIS_APP_SECRET` | 설정됨 | ✅ |
 | `DATABASE_URL` | shell export 필요 (`.env` 미포함) | ⚠️ (export로 해결) |
 | `KIS_BASE_URL` | `openapivts.koreainvestment.com:29443` (paper) | ✅ |
-| `KIS_PAPER_REST_RPS` | 기본 1 → **2로 override 필요** (positions + cash) | ⚠️ (해결) |
+| `KIS_PAPER_REST_RPS` | 기본 1 (canonical) | ✅ |
 
 **결론**: Paper env 정상. `--all` flag는 현재 env에 등록된 paper 계좌만 대상.
 
@@ -36,7 +36,7 @@
 | `cash_synced_count` | 1 |
 | `failed_accounts` | 0 |
 
-**참고**: Paper env는 RPS 기본값이 1이라 positions + cash balance 동시 조회 시 budget을 초과. `KIS_PAPER_REST_RPS=2` env var 설정으로 해결.
+**참고**: Paper env는 RPS 기본값이 1(canonical)이다. 과거 Phase 1-C에서는 RPS=2로 override하여 positions + cash balance 동시 조회 문제를 해결했으나, 이후 budget 분배 로직 및 pacing 개선으로 RPS=1에서도 정상 동작한다.
 
 ---
 
@@ -136,7 +136,7 @@ JSONDecodeError: Expecting value: line 1 column 1 (char 0)
    (코드 변경 없음, 환경 변수만 수정)
 
 2. export DATABASE_URL="postgresql+asyncpg://..."  # DB 연결
-   export KIS_PAPER_REST_RPS=2                      # Paper RPS override
+   # KIS_PAPER_REST_RPS=1 (canonical, 별도 override 불필요)
    python scripts/run_orchestrator_once.py --dry-run --output json
    # Dry-run 재실행 → 성공 예상
 
@@ -153,7 +153,7 @@ JSONDecodeError: Expecting value: line 1 column 1 (char 0)
 |------|------|
 | KIS paper auth | ✅ 정상 (token cache 활용) |
 | Snapshot sync (stale) | ✅ 해소됨 |
-| Snapshot sync (RPS) | ⚠️ `KIS_PAPER_REST_RPS=2` 필요 (env var) |
+| Snapshot sync (RPS) | ✅ `KIS_PAPER_REST_RPS=1` (canonical) |
 | DB connection | ✅ 정상 |
 | LLM API key | ✅ 존재, 유효 |
 | LLM model ID | ❌ `deepseek-v4-pro` → 빈 응답 → `deepseek-chat` 필요 |

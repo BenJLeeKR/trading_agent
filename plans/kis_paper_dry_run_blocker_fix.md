@@ -288,7 +288,7 @@ async def test_correlation_duplicate_preserves_transaction(seeded_service):
 
 ```bash
 export DATABASE_URL="..."
-export KIS_PAPER_REST_RPS=2
+export KIS_PAPER_REST_RPS="${KIS_PAPER_REST_RPS:-1}"   # canonical=1
 
 # 1차 dry-run
 python scripts/run_orchestrator_once.py --dry-run --output json

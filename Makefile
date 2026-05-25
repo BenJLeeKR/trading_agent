@@ -20,10 +20,10 @@ test:
 	python -m pytest tests/ -v
 
 smoke:
-	python3 -m pytest tests/smoke/test_kis_paper_smoke.py -v -m "smoke" -W ignore::DeprecationWarning
+	python3 -m pytest tests/smoke/test_kis_sandbox_smoke.py -v -m "smoke" -W ignore::DeprecationWarning
 
 smoke-all:
-	python3 -m pytest tests/smoke/test_kis_paper_smoke.py -v -m "smoke or slow" -W ignore::DeprecationWarning
+	python3 -m pytest tests/smoke/test_kis_sandbox_smoke.py -v -m "smoke or slow" -W ignore::DeprecationWarning
 
 lint:
 	@echo "Running ruff ..."

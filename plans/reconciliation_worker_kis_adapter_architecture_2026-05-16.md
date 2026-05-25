@@ -382,7 +382,7 @@ if broker is None:
 | `KIS_ACCOUNT_PRODUCT_CODE` | ✅ `${KIS_ACCOUNT_PRODUCT_CODE:-01}` | 기본 "01" |
 | `KIS_BASE_URL` | ✅ `${KIS_BASE_URL:-}` | .env |
 | `KIS_WS_URL` | ✅ `${KIS_WS_URL:-}` | Worker는 WebSocket 불필요 |
-| `KIS_PAPER_REST_RPS` | ✅ `${KIS_PAPER_REST_RPS:-2}` | rate limit |
+| `KIS_PAPER_REST_RPS` | ✅ `${KIS_PAPER_REST_RPS:-1}` | rate limit (canonical=1) |
 | `KIS_API_KEY` | ✅ fallback (legacy) |
 | `KIS_API_SECRET` | ✅ fallback (legacy) |
 | `KIS_ACCOUNT_NUMBER` | ✅ fallback (legacy) |

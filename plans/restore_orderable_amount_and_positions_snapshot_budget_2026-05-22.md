@@ -44,7 +44,7 @@ Intraday snapshot sync에서 다음 두 가지 문제가 관찰되었다:
 - `_capacity = 1.0`
 - `_refill_rate = 1.0`
 
-[`rate_limit.py`](src/agent_trading/brokers/rate_limit.py:488)에서 paper 환경의 `KIS_PAPER_REST_RPS=2`로 설정되어도, `FileBackedGlobalBucket`이 `capacity=float(total)=2.0, refill_rate=1.0*total=2.0`로 생성되지만, 로그에는 `remaining=0/1`로 표시되어 capacity=1이 실제로 적용됨을 확인.
+[`rate_limit.py`](src/agent_trading/brokers/rate_limit.py:488)에서 paper 환경의 `KIS_PAPER_REST_RPS=1`(canonical)로 설정되어도, `FileBackedGlobalBucket`이 `capacity=float(total)=1.0, refill_rate=1.0*total=1.0`로 생성되지만, 로그에는 `remaining=0/1`로 표시되어 capacity=1이 실제로 적용됨을 확인.
 
 **핵심 문제**: 3회 API 호출에 3개의 token이 필요하지만, budget은 1 token만 제공. `asyncio.sleep(1.0)`으로 1초 간격을 두어도 1 token만 refill되므로 positions는 항상 실패.
 

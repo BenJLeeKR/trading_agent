@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Paper Exit Criteria evaluation — 자동/부분자동/수동 3층 검증.
+"""Exit Criteria evaluation — 자동/부분자동/수동 3층 검증.
 
 Layer A (자동 판정)
-  PaperGateService.evaluate() 8 checks + health endpoint 2 checks
+  GateEvaluationService.evaluate() 8 checks + health endpoint 2 checks
   → PASS / WARN / FAIL
 
 Layer B (부분 자동)
@@ -24,13 +24,13 @@ Usage
 .. code-block:: bash
 
     # 기본 실행 (Layer A만, text 출력)
-    python -m scripts.evaluate_paper_exit \\
+    python -m scripts.evaluate_exit_criteria \\
         --account-id <UUID> \\
         --start-date 2026-04-01 \\
         --end-date 2026-05-01
 
     # 벤치마크 + semi-auto 검증 + JSON 출력
-    python -m scripts.evaluate_paper_exit \\
+    python -m scripts.evaluate_exit_criteria \\
         --account-id <UUID> \\
         --start-date 2026-04-01 \\
         --end-date 2026-05-01 \\
@@ -39,7 +39,7 @@ Usage
         --output json
 
     # Manual 체크리스트 템플릿 출력
-    python -m scripts.evaluate_paper_exit \\
+    python -m scripts.evaluate_exit_criteria \\
         --account-id <UUID> \\
         --start-date 2026-04-01 \\
         --end-date 2026-05-01 \\
@@ -66,11 +66,11 @@ from agent_trading.services.benchmark_comparison import (
     InMemoryBenchmarkPriceRepository,
     _DEFAULT_BENCHMARK_PRICES,
 )
-from agent_trading.services.paper_gate import (
+from agent_trading.services.gate_evaluation import (
     GateStatus,
     OverallStatus,
-    PaperGateService,
-    PaperGoNoGoEvaluation,
+    GateEvaluationService,
+    GateEvaluation,
     compute_reason_code_summary,
 )
 from agent_trading.services.risk_metric_constants import GateReasonCode
@@ -124,7 +124,7 @@ class LayerAResult:
 
     status: str  # PASS / WARN / FAIL
     checks: Sequence[AutoCheckResult]
-    gate_evaluation: PaperGoNoGoEvaluation | None
+    gate_evaluation: GateEvaluation | None
     # --- 신규: reason_code 요약 집계 (read-only additive) ---
     reason_code_counts: dict[str, int] = field(default_factory=dict)
     warn_reason_codes: list[str] = field(default_factory=list)
@@ -178,7 +178,7 @@ class PaperExitEvaluator:
         self._settings = settings or AppSettings()
         self._bench_price_repo = benchmark_price_repo
 
-        self._gate_service = PaperGateService(
+        self._gate_service = GateEvaluationService(
             repos=repos,
             settings=self._settings,
             benchmark_price_repo=benchmark_price_repo,
@@ -196,7 +196,7 @@ class PaperExitEvaluator:
         strategy_id: UUID | None = None,
         benchmark_code: str | None = None,
     ) -> LayerAResult:
-        """Layer A 평가 — PaperGateService 재사용 + health/readyz 대응."""
+        """Layer A 평가 — GateEvaluationService 재사용 + health/readyz 대응."""
         gate_eval = await self._gate_service.evaluate(
             account_id=account_id,
             start_date=start_date,
@@ -214,7 +214,7 @@ class PaperExitEvaluator:
                     measured_value=self._fmt_decimal(c.measured_value),
                     threshold=self._fmt_decimal(c.threshold),
                     message=c.message,
-                    reason_code=c.reason_code,  # propagate from PaperGateCheck
+                    reason_code=c.reason_code,  # propagate from GateCheck
                 )
             )
 
@@ -338,7 +338,7 @@ class PaperExitEvaluator:
         # B2: Paper loop verification
         if run_semi:
             b2_ok, b2_detail = await self._run_script(
-                "python -m scripts.verify_paper_loop --count 1",
+                "python -m scripts.verify_decision_loop --count 1",
             )
             checks.append(
                 SemiCheckResult(
@@ -359,7 +359,7 @@ class PaperExitEvaluator:
         # B3: Decision loop dry-run
         if run_semi:
             b3_ok, b3_detail = await self._run_script(
-                "python -m scripts.run_paper_decision_loop --count 1 --dry-run",
+                "python -m scripts.run_decision_loop --count 1 --dry-run",
             )
             checks.append(
                 SemiCheckResult(
@@ -395,7 +395,7 @@ class PaperExitEvaluator:
                 ("safe_order_path", "tests/services/test_safe_order_path_e2e.py"),
                 ("sizing_engine", "tests/services/test_sizing_engine.py"),
                 ("pipeline", "tests/services/test_decision_submit_pipeline.py"),
-                ("scenarios", "tests/services/test_paper_trading_scenarios.py"),
+                ("scenarios", "tests/services/test_decision_loop_scenarios.py"),
             ]
             for label, path in test_targets:
                 ok, detail = await self._run_pytest(path)
@@ -889,14 +889,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  python -m scripts.evaluate_paper_exit \\\n"
+            "  python -m scripts.evaluate_exit_criteria \\\n"
             "      --account-id <UUID> \\\n"
             "      --start-date 2026-04-01 --end-date 2026-05-01\n\n"
-            "  python -m scripts.evaluate_paper_exit \\\n"
+            "  python -m scripts.evaluate_exit_criteria \\\n"
             "      --account-id <UUID> \\\n"
             "      --start-date 2026-04-01 --end-date 2026-05-01 \\\n"
             "      --benchmark-code KOSPI --run-semi --output json\n\n"
-            "  python -m scripts.evaluate_paper_exit \\\n"
+            "  python -m scripts.evaluate_exit_criteria \\\n"
             "      --account-id <UUID> \\\n"
             "      --start-date 2026-04-01 --end-date 2026-05-01 \\\n"
             "      --manual-template"

@@ -2093,6 +2093,185 @@ class OrderSyncService:
 
         return True
 
+    # ------------------------------------------------------------------
+    # EOD orphan cleanup
+    # ------------------------------------------------------------------
+
+    async def expire_eod_orphan_orders(
+        self,
+        age_threshold: timedelta = timedelta(hours=1),
+    ) -> tuple[int, int]:
+        """EOD orphan cleanup: expire pending_submit and reconcile_required
+        orders that never reached the broker.
+
+        Safety conditions (ALL must be true):
+        1. broker_orders.count = 0 — no broker order record exists
+        2. broker_native_order_id IS NULL — never assigned by broker
+        3. submitted_at IS NULL — never submitted to broker
+        4. created_at < NOW() - age_threshold — older than threshold
+        5. (reconcile_required only) reconciliation run is ``failed``
+           or no reconciliation run exists
+
+        State transitions:
+        - ``pending_submit`` → ``EXPIRED``
+          (reason_code: eod_orphan_cleanup_no_broker_order)
+        - ``reconcile_required`` → ``EXPIRED``
+          (reason_code: eod_orphan_cleanup_failed_reconciliation
+           or eod_orphan_cleanup_no_reconciliation)
+
+        Returns
+        -------
+        tuple[int, int]
+            (expired_pending_submit_count, expired_reconcile_required_count)
+        """
+        now = datetime.now(timezone.utc)
+        cutoff = now - age_threshold
+
+        expired_pending = 0
+        expired_reconcile = 0
+
+        # --------------------------------------------------------------
+        # 1. Process pending_submit orphans
+        # --------------------------------------------------------------
+        pending_orders = await self.repos.orders.list(
+            OrderQuery(statuses=[OrderStatus.PENDING_SUBMIT], limit=500),
+        )
+
+        # Filter by safety conditions and expire
+        for order in pending_orders:
+            if not await self._is_eod_orphan(order, cutoff, now):
+                continue
+
+            age_hours = (now - order.created_at).total_seconds() / 3600
+            try:
+                await self.order_manager.transition_to(
+                    order,
+                    OrderStatus.EXPIRED,
+                    reason_code="eod_orphan_cleanup_no_broker_order",
+                    reason_message=(
+                        f"EOD orphan cleanup: broker_orders=0, "
+                        f"native_order_id=null, submitted_at=null, "
+                        f"age={age_hours:.1f}h"
+                    ),
+                    actor_type="system",
+                    actor_id="eod_orphan_cleanup",
+                )
+                expired_pending += 1
+                logger.info(
+                    "  expire order %s: status=pending_submit "
+                    "reason=eod_orphan_cleanup_no_broker_order",
+                    order.order_request_id,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to expire pending_submit order %s: %s",
+                    order.order_request_id, exc,
+                    exc_info=True,
+                )
+
+        # --------------------------------------------------------------
+        # 2. Process reconcile_required orphans
+        # --------------------------------------------------------------
+        reconcile_orders = await self.repos.orders.list(
+            OrderQuery(statuses=[OrderStatus.RECONCILE_REQUIRED], limit=500),
+        )
+
+        for order in reconcile_orders:
+            if not await self._is_eod_orphan(order, cutoff, now):
+                continue
+
+            age_hours = (now - order.created_at).total_seconds() / 3600
+
+            # Determine reason_code based on reconciliation status
+            reason_code: str
+            try:
+                rec_status = (
+                    await self.repos.reconciliations
+                    .get_latest_reconciliation_status_by_order(
+                        order.order_request_id,
+                    )
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to query reconciliation status for order %s",
+                    order.order_request_id,
+                )
+                rec_status = None
+
+            if rec_status == "failed":
+                reason_code = "eod_orphan_cleanup_failed_reconciliation"
+            else:
+                reason_code = "eod_orphan_cleanup_no_reconciliation"
+
+            try:
+                await self.order_manager.transition_to(
+                    order,
+                    OrderStatus.EXPIRED,
+                    reason_code=reason_code,
+                    reason_message=(
+                        f"EOD orphan cleanup: broker_orders=0, "
+                        f"native_order_id=null, submitted_at=null, "
+                        f"age={age_hours:.1f}h, "
+                        f"reconciliation_status={rec_status or 'none'}"
+                    ),
+                    actor_type="system",
+                    actor_id="eod_orphan_cleanup",
+                )
+                expired_reconcile += 1
+                logger.info(
+                    "  expire order %s: status=reconcile_required "
+                    "reason=%s",
+                    order.order_request_id,
+                    reason_code,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to expire reconcile_required order %s: %s",
+                    order.order_request_id, exc,
+                    exc_info=True,
+                )
+
+        # --------------------------------------------------------------
+        # 3. Audit summary
+        # --------------------------------------------------------------
+        logger.info(
+            "EOD orphan cleanup: expired %d orders "
+            "(pending_submit=%d, reconcile_required=%d)",
+            expired_pending + expired_reconcile,
+            expired_pending,
+            expired_reconcile,
+        )
+
+        return expired_pending, expired_reconcile
+
+    async def _is_eod_orphan(
+        self,
+        order: OrderRequestEntity,
+        cutoff: datetime,
+        now: datetime,
+    ) -> bool:
+        """Check EOD orphan safety conditions for a single order.
+
+        Returns ``True`` if the order is safe to expire.
+        """
+        # Condition 1: created_at must exist and be older than cutoff
+        if order.created_at is None or order.created_at > cutoff:
+            return False
+
+        # Condition 2: submitted_at must be NULL (never submitted to broker)
+        if order.submitted_at is not None:
+            return False
+
+        # Condition 3: broker_orders must be empty
+        broker_orders = await self.repos.broker_orders.list_by_order_request(
+            order.order_request_id,
+        )
+        if len(broker_orders) > 0:
+            return False
+
+        # All conditions met
+        return True
+
 
 # ------------------------------------------------------------------
 # Batch runner
@@ -2119,6 +2298,12 @@ class SyncCycleResult:
     snapshots_refreshed:
         Number of orders for which a snapshot refresh was triggered
         upon reaching FILLED with new fills.
+    orphans_expired_pending:
+        Number of PENDING_SUBMIT orphan orders expired by EOD cleanup
+        (after-hours only).
+    orphans_expired_reconcile:
+        Number of RECONCILE_REQUIRED orphan orders expired by EOD cleanup
+        (after-hours only).
     """
 
     total_orders: int
@@ -2127,6 +2312,8 @@ class SyncCycleResult:
     partial: int
     errors: list[str]
     snapshots_refreshed: int = 0
+    orphans_expired_pending: int = 0
+    orphans_expired_reconcile: int = 0
 
 
 _DEFAULT_BATCH_LIMIT = 200
@@ -2339,6 +2526,8 @@ class PostSubmitSyncRunner:
         filled = 0
         partial = 0
         snapshots_refreshed = 0
+        orphans_expired_pending = 0
+        orphans_expired_reconcile = 0
         errors: list[str] = []
 
         # ── 2. Sync each order with per-order savepoint isolation ─────────
@@ -2434,13 +2623,38 @@ class PostSubmitSyncRunner:
                 exc_info=True,
             )
 
-        # ── 4. Return summary ─────────────────────────────────────────────
+        # ── 4. EOD orphan cleanup (after-hours only) ────────────────────────
+        # 장중(after_hours=False)에는 실행하지 않고,
+        # after-hours(15:30 KST~)에만 PENDING_SUBMIT / RECONCILE_REQUIRED
+        # orphan 주문을 EXPIRED로 정리한다.
+        if _is_after_hours:
+            try:
+                orphans_expired_pending, orphans_expired_reconcile = (
+                    await self.sync_service.expire_eod_orphan_orders()
+                )
+                if orphans_expired_pending > 0 or orphans_expired_reconcile > 0:
+                    logger.info(
+                        "sync-cycle: EOD orphan cleanup complete — "
+                        "pending_submit=%d reconcile_required=%d",
+                        orphans_expired_pending,
+                        orphans_expired_reconcile,
+                    )
+            except Exception as exc:
+                logger.error(
+                    "sync-cycle: EOD orphan cleanup failed: %s",
+                    exc,
+                    exc_info=True,
+                )
+
+        # ── 5. Return summary ─────────────────────────────────────────────
         return SyncCycleResult(
             total_orders=len(orders),
             updated=updated,
             filled=filled,
             partial=partial,
             snapshots_refreshed=snapshots_refreshed,
+            orphans_expired_pending=orphans_expired_pending,
+            orphans_expired_reconcile=orphans_expired_reconcile,
             errors=errors,
         )
 

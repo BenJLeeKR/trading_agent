@@ -173,8 +173,8 @@ asyncio.run(evaluate())
 # 선행 조건
 export ENABLE_KIS_PAPER_SUBMIT_SMOKE=true
 
-# Step 3-A: Snapshot sync (최신 상태 보장)
-export KIS_PAPER_REST_RPS=2
+# Step 3-A: Snapshot sync (최신 상태 보장; KIS_PAPER_REST_RPS=1 canonical)
+export KIS_PAPER_REST_RPS="${KIS_PAPER_REST_RPS:-1}"
 python3 scripts/sync_kis_snapshots.py --all --format json
 
 # Step 3-B: Dry-run 재확인
@@ -190,7 +190,7 @@ python3 scripts/run_orchestrator_once.py \
 **필요 env vars checklist**
 - `KIS_ENV=paper` ✅ (기본값)
 - `DATABASE_URL` 필요
-- `KIS_PAPER_REST_RPS=2` (snapshot sync용, Phase 1-C 경험)
+- `KIS_PAPER_REST_RPS=1` (canonical; snapshot sync용, budget 분배 로직 개선으로 RPS=1에서 정상 동작)
 - `ENABLE_KIS_PAPER_SUBMIT_SMOKE=true` (opt-in)
 - `DEEPSEEK_API_KEY` (설정됨)
 - `DEEPSEEK_BASE_URL` (설정됨)

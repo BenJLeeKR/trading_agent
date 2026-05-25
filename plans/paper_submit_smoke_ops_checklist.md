@@ -77,7 +77,7 @@ set -a; source /workspace/agent_trading/.env; set +a
 | `DEEPSEEK_BASE_URL` | ✅ | `https://api.deepseek.com` | DeepSeek LLM endpoint |
 | `DEEPSEEK_MODEL_ID` | ✅ | `deepseek-chat` | `deepseek-chat` smoke 재현에 더 안정적; `deepseek-v4-pro`도 동작 가능하나 timeout/품질 편차 가능 |
 | `DEEPSEEK_TIMEOUT_SECONDS` | 권장 | `120` | 기본 60초 → FDC ReadTimeout 방지 |
-| `KIS_PAPER_REST_RPS` | ✅ | `2` | ⚠️ `1`이면 snapshot sync **실패** (Global REST cap 소진) |
+| `KIS_PAPER_REST_RPS` | ✅ | `1` (canonical) | ⚠️ 과거 RPS=1에서 snapshot sync 실패 이력이 있었으나, budget 분배 로직 개선으로 RPS=1에서 정상 동작 |
 | `KIS_DEV_TOKEN_CACHE_ENABLED` | 권장 | `true` | Token cache 활성화 (paper 전용) |
 | `ENABLE_KIS_PAPER_SUBMIT_SMOKE` | 권장 | `true` | 운영상 opt-in safety flag (현재 스크립트 자체 필수 조건은 아님) |
 | `KIS_SMOKE_PRICE` | Smoke 전용 | `267000` (시장가) | Submit smoke용 price override (Phase 2.5에서 설정). **반드시 실제 시장가와 일치**해야 함. 모의투자 API가 가격 검증을 수행하므로 부정확한 값은 `msg_cd=40270000` 실패. |
@@ -230,8 +230,8 @@ Pre-Flight Check은 **건너뛰면 안 됨**. 특히 `KIS_ENV=live` 상태에서
 ```bash
 cd /workspace/agent_trading
 
-# KIS_PAPER_REST_RPS=2 필수 (Phase 1-C에서 RPS=1 실패 경험)
-export KIS_PAPER_REST_RPS=2
+# KIS_PAPER_REST_RPS=1 (canonical; Phase 1-C에서 RPS=1 실패 경험이 있었으나 budget 분배 로직 개선으로 해소)
+export KIS_PAPER_REST_RPS="${KIS_PAPER_REST_RPS:-1}"
 
 python3 scripts/sync_kis_snapshots.py --all --env paper --format json
 ```
@@ -249,13 +249,13 @@ python3 scripts/sync_kis_snapshots.py --all --env paper --format json
 
 | 증상 | 원인 | 조치 |
 |------|------|------|
-| `positions_synced=0, errors: RateLimit` | `KIS_PAPER_REST_RPS=1` → Global REST cap 소진 | `KIS_PAPER_REST_RPS=2`로 재실행 |
+| `positions_synced=0, errors: RateLimit` | `KIS_PAPER_REST_RPS=1` → Global REST cap 소진 (과거) | budget 분배 로직 개선으로 RPS=1에서 해소 |
 | Token 관련 에러 | Token cache 만료 또는 API key 오류 | `.cache/kis_token.json` 삭제 후 재시도 |
 | `Account not found` | DB에 paper account 미등록 | `run_orchestrator_once.py` 1회 실행 (seed 자동) 후 재시도 |
 
-### ⚠️ 실수 포인트 #3: `KIS_PAPER_REST_RPS=1`로 snapshot sync 실패
+### ⚠️ 실수 포인트 #3 (과거): `KIS_PAPER_REST_RPS=1`로 snapshot sync 실패
 
-[`kis_paper_order_phase1_execution.md`](plans/kis_paper_order_phase1_execution.md:42) 참조. RPS=1은 Global REST cap(2 RPS)을 순간적으로 소진하여 snapshot sync가 실패함. **반드시 RPS=2로 설정**.
+[`kis_paper_order_phase1_execution.md`](plans/kis_paper_order_phase1_execution.md:42) 참조. Phase 1-C 당시 RPS=1은 Global REST cap을 순간적으로 소진하여 snapshot sync가 실패했으나, 이후 budget 분배 로직 및 pacing 개선으로 RPS=1(canonical)에서 정상 동작한다.
 
 ---
 
@@ -668,7 +668,7 @@ python3 _cleanup_pending_submit.py
 |---|---------|-------------|--------|
 | □ | `KIS_ENV=paper` 확인 | ⚠️ **Live 계좌 오발송 위험** | 🔴 CRITICAL |
 | □ | `DATABASE_URL` shell export (`.env`에 없을 경우) | DB 연결 실패, 전체 pipeline 중단 | 🔴 BLOCKER |
-| □ | `KIS_PAPER_REST_RPS=2` 설정 (1→실패) | Snapshot sync 실패 (RateLimit) | 🔴 BLOCKER |
+| □ | `KIS_PAPER_REST_RPS=1` 설정 (canonical) | budget 분배 로직 개선으로 RPS=1에서 정상 동작 | ✅ 확인 |
 | □ | `DEEPSEEK_MODEL_ID=deepseek-chat` 권장 (v4-pro는 timeout/품질 편차 가능) | AI Agent 응답 불안정 | 🟡 HIGH |
 | □ | `DEEPSEEK_TIMEOUT_SECONDS=120` (기본 60→부족) | FDC ReadTimeout → HOLD 결정 | 🟡 HIGH |
 | □ | `KIS_SMOKE_PRICE` 설정 (기본 50000→에러) | `msg_cd=40270000` price validation error | 🔴 BLOCKER |
@@ -715,7 +715,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    A[RPS 부족 / token 만료] --> B[RPS=2 확인 / token 재발급]
+    A[RPS 부족 / token 만료] --> B[RPS=1(canonical) 확인 / token 재발급]
     B --> C[Phase 1 재실행]
 ```
 
@@ -766,7 +766,7 @@ flowchart LR
 set -a; source /workspace/agent_trading/.env; set +a
 export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/agent_trading"
 export KIS_SMOKE_PRICE=268500
-export KIS_PAPER_REST_RPS=2
+export KIS_PAPER_REST_RPS="${KIS_PAPER_REST_RPS:-1}"   # canonical=1
 
 # 1. Pre-Flight
 python3 -c "import asyncio; from agent_trading.db.connection import create_pool; ... (계정조회)"

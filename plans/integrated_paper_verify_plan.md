@@ -14,7 +14,7 @@
 |------|------|------|
 | 장중 여부 | ✅ **장중** | 09:16 KST 수요일 (08:30-15:30) |
 | KIS_ENV | ✅ paper | .env 확인 완료 |
-| KIS_PAPER_REST_RPS | ⚠️ **1** (2 권장) | .env: `KIS_PAPER_REST_RPS=1` |
+| KIS_PAPER_REST_RPS | ✅ **1** (canonical) | .env: `KIS_PAPER_REST_RPS=1` |
 | DB events with importance | **0건** | 모든 기존 이벤트는 코드 변경 전 수집 |
 | symbol=005930 OpenDART events | **없음** | synthetic smoke test만 존재 |
 

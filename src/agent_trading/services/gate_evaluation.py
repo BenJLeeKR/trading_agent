@@ -1,4 +1,4 @@
-"""Paper Go/No-Go Gate evaluation service.
+"""Gate evaluation service.
 
 Assesses paper-trading health across three axes:
 
@@ -7,7 +7,7 @@ Assesses paper-trading health across three axes:
 3. **Operational Health** — snapshot sync freshness, sync failure count,
    active reconciliation blocking locks.
 
-Each check produces a ``PaperGateCheck`` with a ``PASS`` / ``WARN`` / ``FAIL``
+Each check produces a ``GateCheck`` with a ``PASS`` / ``WARN`` / ``FAIL``
 status.  The overall evaluation aggregates them:
 
 - Any ``FAIL``    → ``NO_GO``
@@ -66,7 +66,7 @@ class OverallStatus(str, Enum):
 
 
 @dataclass(slots=True, frozen=True)
-class PaperGateCheck:
+class GateCheck:
     """Result of a single gate criterion check."""
 
     code: str
@@ -79,13 +79,13 @@ class PaperGateCheck:
 
 
 @dataclass(slots=True, frozen=True)
-class PaperGoNoGoEvaluation:
+class GateEvaluation:
     """Complete Go/No-Go evaluation result."""
 
     account_id: UUID
     strategy_id: UUID | None
     overall_status: OverallStatus
-    checks: Sequence[PaperGateCheck]
+    checks: Sequence[GateCheck]
     generated_at: datetime
     summary_reason: str
     # --- 신규: reason_code 요약 집계 (read-only additive) ---
@@ -101,13 +101,13 @@ class PaperGoNoGoEvaluation:
 
 
 def compute_reason_code_summary(
-    checks: Sequence[PaperGateCheck],
+    checks: Sequence[GateCheck],
 ) -> dict[str, Any]:
     """Compute reason_code summary aggregation from gate checks.
 
     Pure function — no side effects.  Operates on any check-like objects
     that have ``reason_code: str | None`` and ``status: str`` fields
-    (PaperGateCheck, AutoCheckResult, LiveGateCheck).
+    (GateCheck, AutoCheckResult, LiveGateCheck).
 
     Args:
         checks: Gate check sequence with status and reason_code attributes.
@@ -152,11 +152,11 @@ def compute_reason_code_summary(
 # ---------------------------------------------------------------------------
 
 
-class PaperGateService:
-    """Paper Go/No-Go Gate evaluation service.
+class GateEvaluationService:
+    """Gate evaluation service.
 
     Composes existing performance / benchmark / snapshot-sync / reconciliation
-    services to produce a single ``PaperGoNoGoEvaluation``.
+    services to produce a single ``GateEvaluation``.
     """
 
     def __init__(
@@ -185,7 +185,7 @@ class PaperGateService:
         end_date: date,
         strategy_id: UUID | None = None,
         benchmark_code: str | None = None,
-    ) -> PaperGoNoGoEvaluation:
+    ) -> GateEvaluation:
         """Execute a full Go/No-Go evaluation for *account_id* over the period.
 
         Parameters
@@ -204,10 +204,10 @@ class PaperGateService:
 
         Returns
         -------
-        PaperGoNoGoEvaluation
+        GateEvaluation
             Complete evaluation with overall status and individual checks.
         """
-        checks: list[PaperGateCheck] = []
+        checks: list[GateCheck] = []
 
         # -- 1. Performance metrics --
         metrics = await self._perf_service.get_performance_metrics(
@@ -255,7 +255,7 @@ class PaperGateService:
         summary = self._build_summary(overall, checks, metrics.total_filled_orders)
 
         summary_data = compute_reason_code_summary(checks)
-        return PaperGoNoGoEvaluation(
+        return GateEvaluation(
             account_id=account_id,
             strategy_id=strategy_id,
             overall_status=overall,
@@ -269,13 +269,13 @@ class PaperGateService:
     # Individual check methods
     # ------------------------------------------------------------------
 
-    def _check_min_return(self, value: Decimal | None) -> PaperGateCheck:
+    def _check_min_return(self, value: Decimal | None) -> GateCheck:
         threshold = self._settings.paper_gate_min_return_pct
         code = "MIN_RETURN"
         label = "최소 수익률"
 
         if value is None:
-            return PaperGateCheck(
+            return GateCheck(
                 code=code, label=label,
                 status=GateStatus.FAIL,
                 measured_value=None, threshold=threshold,
@@ -283,54 +283,54 @@ class PaperGateService:
                 reason_code=GateReasonCode.METRIC_UNAVAILABLE.value,
             )
         if value < threshold:
-            return PaperGateCheck(
+            return GateCheck(
                 code=code, label=label,
                 status=GateStatus.FAIL,
                 measured_value=value, threshold=threshold,
                 message=f"누적 수익률 {value}%이(가) 최소 기준 {threshold}%에 미달합니다",
                 reason_code=GateReasonCode.METRIC_BELOW_THRESHOLD.value,
             )
-        return PaperGateCheck(
+        return GateCheck(
             code=code, label=label,
             status=GateStatus.PASS,
             measured_value=value, threshold=threshold,
             message=f"누적 수익률 {value}% — 기준 통과",
         )
 
-    def _check_max_drawdown(self, value: Decimal | None) -> PaperGateCheck:
+    def _check_max_drawdown(self, value: Decimal | None) -> GateCheck:
         threshold = self._settings.paper_gate_max_drawdown_pct
         code = "MAX_DRAWDOWN"
         label = "최대 손실 폭"
 
         if value is None:
-            return PaperGateCheck(
+            return GateCheck(
                 code=code, label=label,
                 status=GateStatus.PASS,
                 measured_value=None, threshold=threshold,
                 message="손실 폭 데이터가 없습니다",
             )
         if value > threshold:
-            return PaperGateCheck(
+            return GateCheck(
                 code=code, label=label,
                 status=GateStatus.FAIL,
                 measured_value=value, threshold=threshold,
                 message=f"최대 손실 폭 {value}%이(가) 허용 기준 {threshold}%을 초과했습니다",
                 reason_code=GateReasonCode.METRIC_BELOW_THRESHOLD.value,
             )
-        return PaperGateCheck(
+        return GateCheck(
             code=code, label=label,
             status=GateStatus.PASS,
             measured_value=value, threshold=threshold,
             message=f"최대 손실 폭 {value}% — 기준 통과",
         )
 
-    def _check_excess_return(self, value: Decimal | None) -> PaperGateCheck:
+    def _check_excess_return(self, value: Decimal | None) -> GateCheck:
         threshold = self._settings.paper_gate_min_excess_return_pct
         code = "MIN_EXCESS_RETURN"
         label = "벤치마크 대비 초과수익"
 
         if value is None:
-            return PaperGateCheck(
+            return GateCheck(
                 code=code, label=label,
                 status=GateStatus.FAIL,
                 measured_value=None, threshold=threshold,
@@ -338,23 +338,23 @@ class PaperGateService:
                 reason_code=GateReasonCode.METRIC_UNAVAILABLE.value,
             )
         if value < threshold:
-            return PaperGateCheck(
+            return GateCheck(
                 code=code, label=label,
                 status=GateStatus.FAIL,
                 measured_value=value, threshold=threshold,
                 message=f"초과수익 {value}%p이(가) 최소 기준 {threshold}%p에 미달합니다",
                 reason_code=GateReasonCode.METRIC_BELOW_THRESHOLD.value,
             )
-        return PaperGateCheck(
+        return GateCheck(
             code=code, label=label,
             status=GateStatus.PASS,
             measured_value=value, threshold=threshold,
             message=f"초과수익 {value}%p — 기준 통과",
         )
 
-    def _check_excess_return_unavailable(self) -> PaperGateCheck:
+    def _check_excess_return_unavailable(self) -> GateCheck:
         """Benchmark data unavailable → WARN."""
-        return PaperGateCheck(
+        return GateCheck(
             code="MIN_EXCESS_RETURN",
             label="벤치마크 대비 초과수익",
             status=GateStatus.WARN,
@@ -364,27 +364,27 @@ class PaperGateService:
             reason_code=GateReasonCode.BENCHMARK_UNAVAILABLE.value,
         )
 
-    def _check_win_rate(self, value: Decimal | None) -> PaperGateCheck:
+    def _check_win_rate(self, value: Decimal | None) -> GateCheck:
         threshold = self._settings.paper_gate_min_win_rate_pct
         code = "MIN_WIN_RATE"
         label = "최소 승률"
 
         if value is None:
-            return PaperGateCheck(
+            return GateCheck(
                 code=code, label=label,
                 status=GateStatus.PASS,
                 measured_value=None, threshold=threshold,
                 message="승률 데이터가 없습니다",
             )
         if value < threshold:
-            return PaperGateCheck(
+            return GateCheck(
                 code=code, label=label,
                 status=GateStatus.WARN,
                 measured_value=value, threshold=threshold,
                 message=f"승률 {value}%이(가) 최소 기준 {threshold}%에 미달합니다",
                 reason_code=GateReasonCode.METRIC_BELOW_THRESHOLD.value,
             )
-        return PaperGateCheck(
+        return GateCheck(
             code=code, label=label,
             status=GateStatus.PASS,
             measured_value=value, threshold=threshold,
@@ -395,13 +395,13 @@ class PaperGateService:
     # Risk-adjusted performance checks (WARN-only)
     # ------------------------------------------------------------------
 
-    def _check_min_sharpe_ratio(self, value: Decimal | None) -> PaperGateCheck:
+    def _check_min_sharpe_ratio(self, value: Decimal | None) -> GateCheck:
         threshold = self._settings.paper_gate_min_sharpe_ratio
         code = "MIN_SHARPE_RATIO"
         label = "최소 Sharpe Ratio"
 
         if value is None:
-            return PaperGateCheck(
+            return GateCheck(
                 code=code, label=label,
                 status=GateStatus.WARN,
                 measured_value=None, threshold=threshold,
@@ -409,27 +409,27 @@ class PaperGateService:
                 reason_code=GateReasonCode.INSUFFICIENT_DATA.value,
             )
         if value < threshold:
-            return PaperGateCheck(
+            return GateCheck(
                 code=code, label=label,
                 status=GateStatus.WARN,
                 measured_value=value, threshold=threshold,
                 message=f"Sharpe Ratio {value}이(가) 최소 기준 {threshold}에 미달합니다",
                 reason_code=GateReasonCode.METRIC_BELOW_THRESHOLD.value,
             )
-        return PaperGateCheck(
+        return GateCheck(
             code=code, label=label,
             status=GateStatus.PASS,
             measured_value=value, threshold=threshold,
             message=f"Sharpe Ratio {value} — 기준 통과",
         )
 
-    def _check_min_sortino_ratio(self, value: Decimal | None) -> PaperGateCheck:
+    def _check_min_sortino_ratio(self, value: Decimal | None) -> GateCheck:
         threshold = self._settings.paper_gate_min_sortino_ratio
         code = "MIN_SORTINO_RATIO"
         label = "최소 Sortino Ratio"
 
         if value is None:
-            return PaperGateCheck(
+            return GateCheck(
                 code=code, label=label,
                 status=GateStatus.WARN,
                 measured_value=None, threshold=threshold,
@@ -437,27 +437,27 @@ class PaperGateService:
                 reason_code=GateReasonCode.INSUFFICIENT_DOWNSIDE_SAMPLES.value,
             )
         if value < threshold:
-            return PaperGateCheck(
+            return GateCheck(
                 code=code, label=label,
                 status=GateStatus.WARN,
                 measured_value=value, threshold=threshold,
                 message=f"Sortino Ratio {value}이(가) 최소 기준 {threshold}에 미달합니다",
                 reason_code=GateReasonCode.METRIC_BELOW_THRESHOLD.value,
             )
-        return PaperGateCheck(
+        return GateCheck(
             code=code, label=label,
             status=GateStatus.PASS,
             measured_value=value, threshold=threshold,
             message=f"Sortino Ratio {value} — 기준 통과",
         )
 
-    def _check_min_calmar_ratio(self, value: Decimal | None) -> PaperGateCheck:
+    def _check_min_calmar_ratio(self, value: Decimal | None) -> GateCheck:
         threshold = self._settings.paper_gate_min_calmar_ratio
         code = "MIN_CALMAR_RATIO"
         label = "최소 Calmar Ratio"
 
         if value is None:
-            return PaperGateCheck(
+            return GateCheck(
                 code=code, label=label,
                 status=GateStatus.WARN,
                 measured_value=None, threshold=threshold,
@@ -465,92 +465,92 @@ class PaperGateService:
                 reason_code=GateReasonCode.ZERO_DRAWDOWN.value,
             )
         if value < threshold:
-            return PaperGateCheck(
+            return GateCheck(
                 code=code, label=label,
                 status=GateStatus.WARN,
                 measured_value=value, threshold=threshold,
                 message=f"Calmar Ratio {value}이(가) 최소 기준 {threshold}에 미달합니다",
                 reason_code=GateReasonCode.METRIC_BELOW_THRESHOLD.value,
             )
-        return PaperGateCheck(
+        return GateCheck(
             code=code, label=label,
             status=GateStatus.PASS,
             measured_value=value, threshold=threshold,
             message=f"Calmar Ratio {value} — 기준 통과",
         )
 
-    def _check_filled_orders(self, value: int) -> PaperGateCheck:
+    def _check_filled_orders(self, value: int) -> GateCheck:
         threshold = self._settings.paper_gate_min_filled_orders
         code = "MIN_FILLED_ORDERS"
         label = "최소 체결 건수"
 
         if value < threshold:
-            return PaperGateCheck(
+            return GateCheck(
                 code=code, label=label,
                 status=GateStatus.FAIL,
                 measured_value=value, threshold=threshold,
                 message=f"체결 건수 {value}건이(가) 최소 기준 {threshold}건에 미달합니다",
                 reason_code=GateReasonCode.METRIC_BELOW_THRESHOLD.value,
             )
-        return PaperGateCheck(
+        return GateCheck(
             code=code, label=label,
             status=GateStatus.PASS,
             measured_value=value, threshold=threshold,
             message=f"체결 건수 {value}건 — 기준 통과",
         )
 
-    def _check_snapshot_freshness(self, is_stale: bool) -> PaperGateCheck:
+    def _check_snapshot_freshness(self, is_stale: bool) -> GateCheck:
         code = "SNAPSHOT_FRESHNESS"
         label = "스냅샷 신선도"
 
         if is_stale:
-            return PaperGateCheck(
+            return GateCheck(
                 code=code, label=label,
                 status=GateStatus.FAIL,
                 measured_value=1, threshold=0,
                 message="스냅샷이 최신 상태가 아닙니다",
                 reason_code=GateReasonCode.SNAPSHOT_STALE.value,
             )
-        return PaperGateCheck(
+        return GateCheck(
             code=code, label=label,
             status=GateStatus.PASS,
             measured_value=0, threshold=0,
             message="스냅샷 신선도 정상",
         )
 
-    def _check_sync_failures(self, consecutive_failures: int) -> PaperGateCheck:
+    def _check_sync_failures(self, consecutive_failures: int) -> GateCheck:
         threshold = self._settings.paper_gate_max_consecutive_failures
         code = "SYNC_FAILURES"
         label = "Sync 연속 실패"
 
         if consecutive_failures > threshold:
-            return PaperGateCheck(
+            return GateCheck(
                 code=code, label=label,
                 status=GateStatus.FAIL,
                 measured_value=consecutive_failures, threshold=threshold,
                 message=f"연속 실패 {consecutive_failures}회 — 허용 기준 {threshold}회 초과",
                 reason_code=GateReasonCode.EXCESSIVE_SYNC_FAILURES.value,
             )
-        return PaperGateCheck(
+        return GateCheck(
             code=code, label=label,
             status=GateStatus.PASS,
             measured_value=consecutive_failures, threshold=threshold,
             message=f"연속 실패 {consecutive_failures}회 — 기준 이내",
         )
 
-    def _check_blocking_locks(self, lock_count: int) -> PaperGateCheck:
+    def _check_blocking_locks(self, lock_count: int) -> GateCheck:
         code = "BLOCKING_LOCKS"
         label = "차단 락 존재"
 
         if lock_count > 0:
-            return PaperGateCheck(
+            return GateCheck(
                 code=code, label=label,
                 status=GateStatus.FAIL,
                 measured_value=lock_count, threshold=0,
                 message=f"활성 차단 락 {lock_count}개 존재 — 해결 후 재평가 필요",
                 reason_code=GateReasonCode.BLOCKING_LOCK_PRESENT.value,
             )
-        return PaperGateCheck(
+        return GateCheck(
             code=code, label=label,
             status=GateStatus.PASS,
             measured_value=0, threshold=0,
@@ -562,7 +562,7 @@ class PaperGateService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _determine_overall(checks: Sequence[PaperGateCheck]) -> OverallStatus:
+    def _determine_overall(checks: Sequence[GateCheck]) -> OverallStatus:
         """Determine the aggregate gate status from individual checks."""
         has_fail = any(c.status == GateStatus.FAIL for c in checks)
         has_warn = any(c.status == GateStatus.WARN for c in checks)
@@ -576,7 +576,7 @@ class PaperGateService:
     @staticmethod
     def _build_summary(
         overall: OverallStatus,
-        checks: Sequence[PaperGateCheck],
+        checks: Sequence[GateCheck],
         total_orders: int,
     ) -> str:
         """Produce a human-readable summary of the evaluation result."""

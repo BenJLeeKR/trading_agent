@@ -8,7 +8,7 @@
 --------------------------------
 * ``run_snapshot_sync_loop.py`` — Position/Cash 데이터 최신성 유지 (300s)
 * ``run_post_submit_sync_loop.py`` — 미체결/부분체결 주문 상태 Broker 수렴 (30s)
-* ``run_paper_decision_loop.py`` — AI Decision → Submit 반복 실행 (300s)
+* ``run_decision_loop.py`` — AI Decision → Submit 반복 실행 (300s)
 * ``run_event_ingestion_loop.py`` — 외부 이벤트 수집 (60s, 신규)
 
 Decision loop와의 연결

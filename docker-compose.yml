@@ -215,7 +215,7 @@ services:
       KIS_WS_URL: "${KIS_WS_URL:-}"
       KIS_ACCOUNT_PRODUCT_CODE: "${KIS_ACCOUNT_PRODUCT_CODE:-01}"
       KIS_REAL_REST_RPS: "${KIS_REAL_REST_RPS:-18}"
-      KIS_PAPER_REST_RPS: "2"
+      KIS_PAPER_REST_RPS: "${KIS_PAPER_REST_RPS:-1}"
       # Dev token cache — share host cache to avoid EGW00133 rate limit
       KIS_DEV_TOKEN_CACHE_ENABLED: "true"
       KIS_DEV_TOKEN_CACHE_PATH: ".cache/kis_token.json"
@@ -255,7 +255,7 @@ services:
       dockerfile: Dockerfile
     image: agent_trading-app:latest
     container_name: agent_trading-ops-scheduler
-    command: ["python3", "/app/scripts/run_near_real_ops_scheduler.py"]
+    command: ["python3", "/app/scripts/run_ops_scheduler.py"]
     restart: unless-stopped
     depends_on:
       db:
@@ -282,7 +282,7 @@ services:
       KIS_ACCOUNT_PRODUCT_CODE: "${KIS_ACCOUNT_PRODUCT_CODE:-01}"
       KIS_BASE_URL: "${KIS_BASE_URL:-}"
       KIS_WS_URL: "${KIS_WS_URL:-}"
-      KIS_PAPER_REST_RPS: "${KIS_PAPER_REST_RPS:-2}"
+      KIS_PAPER_REST_RPS: "${KIS_PAPER_REST_RPS:-1}"
       # Legacy fallback names (still supported)
       KIS_API_KEY: "${KIS_API_KEY:-}"
       KIS_API_SECRET: "${KIS_API_SECRET:-}"
@@ -389,7 +389,7 @@ services:
       KIS_ACCOUNT_PRODUCT_CODE: "${KIS_ACCOUNT_PRODUCT_CODE:-01}"
       KIS_BASE_URL: "${KIS_BASE_URL:-}"
       KIS_WS_URL: "${KIS_WS_URL:-}"
-      KIS_PAPER_REST_RPS: "${KIS_PAPER_REST_RPS:-2}"
+      KIS_PAPER_REST_RPS: "${KIS_PAPER_REST_RPS:-1}"
       # Legacy fallback names (still supported)
       KIS_API_KEY: "${KIS_API_KEY:-}"
       KIS_API_SECRET: "${KIS_API_SECRET:-}"

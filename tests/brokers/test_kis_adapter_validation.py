@@ -9,9 +9,9 @@ import pytest
 from agent_trading.brokers.koreainvestment.adapter import KoreaInvestmentAdapter
 from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
 from agent_trading.brokers.base import SubscriptionBudget
-from agent_trading.brokers.rate_limit import RateLimitBudgetManager
+from agent_trading.brokers.rate_limit import BudgetExhaustedError, RateLimitBudgetManager
 from agent_trading.domain.enums import BrokerName, OrderSide, OrderStatus, OrderType, TimeInForce
-from agent_trading.domain.models import SubmitOrderRequest
+from agent_trading.domain.models import SubmitOrderRequest, SubmitOrderResult
 
 
 @pytest.fixture
@@ -497,5 +497,161 @@ class TestAdapterGetOrderbook:
             ob = await adapter.get_orderbook("005930", "KRX")
             assert len(ob.bids) == 1  # level 2 skipped (no quantity)
             assert len(ob.asks) == 2
+        finally:
+            adapter._rest = original_rest
+
+
+def _make_sell_request(
+    metadata: dict[str, object] | None = None,
+) -> SubmitOrderRequest:
+    """Helper: create a SELL SubmitOrderRequest with optional metadata."""
+    return SubmitOrderRequest(
+        account_ref="test_account",
+        client_order_id="test-held-sell",
+        correlation_id="corr-held",
+        strategy_id="strat-001",
+        symbol="005930",
+        market="KRX",
+        side=OrderSide.SELL,
+        order_type=OrderType.LIMIT,
+        quantity=Decimal("10"),
+        price=Decimal("50000"),
+        time_in_force=TimeInForce.DAY,
+        metadata=metadata or {},
+    )
+
+
+def _make_buy_request(
+    metadata: dict[str, object] | None = None,
+) -> SubmitOrderRequest:
+    """Helper: create a BUY SubmitOrderRequest with optional metadata."""
+    return SubmitOrderRequest(
+        account_ref="test_account",
+        client_order_id="test-held-buy",
+        correlation_id="corr-held",
+        strategy_id="strat-001",
+        symbol="005930",
+        market="KRX",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=Decimal("10"),
+        price=Decimal("50000"),
+        time_in_force=TimeInForce.DAY,
+        metadata=metadata or {},
+    )
+
+
+class TestIsHeldPositionSell:
+    """``KoreaInvestmentAdapter._is_held_position_sell()`` 회귀 방지 테스트.
+
+    ``OrderSide`` 이름이 제대로 참조되는지도 함께 검증한다
+    (``NameError: name 'OrderSide' is not defined`` 재발 방지).
+    """
+
+    def test_is_held_position_sell_true(self, adapter: KoreaInvestmentAdapter) -> None:
+        """SELL + metadata={"source_type": "held_position"} -> True"""
+        request = _make_sell_request(metadata={"source_type": "held_position"})
+        assert adapter._is_held_position_sell(request) is True
+
+    def test_is_held_position_sell_buy_false(self, adapter: KoreaInvestmentAdapter) -> None:
+        """BUY + metadata={"source_type": "held_position"} -> False"""
+        request = _make_buy_request(metadata={"source_type": "held_position"})
+        assert adapter._is_held_position_sell(request) is False
+
+    def test_is_held_position_sell_no_metadata_false(self, adapter: KoreaInvestmentAdapter) -> None:
+        """SELL + metadata=None -> False"""
+        request = _make_sell_request(metadata=None)
+        assert adapter._is_held_position_sell(request) is False
+
+    def test_is_held_position_sell_core_source_false(self, adapter: KoreaInvestmentAdapter) -> None:
+        """SELL + metadata={"source_type": "core"} -> False"""
+        request = _make_sell_request(metadata={"source_type": "core"})
+        assert adapter._is_held_position_sell(request) is False
+
+
+class TestSubmitOrderBudgetExhausted:
+    """``KoreaInvestmentAdapter.submit_order()``의 ``BudgetExhaustedError`` 분기 테스트.
+
+    ``_is_held_position_sell()``이 ``submit_order()`` 경로에서
+    올바르게 호출되는지 검증한다.
+    """
+
+    @pytest.mark.asyncio
+    async def test_submit_order_budget_exhausted_returns_reconcile(
+        self, adapter: KoreaInvestmentAdapter
+    ) -> None:
+        """일반 주문(held_position sell 아님)에서 BudgetExhaustedError 발생 시
+        ``requires_reconciliation=True``인 결과를 반환한다."""
+        request = _make_sell_request(metadata={"source_type": "core"})
+        mock_rest = AsyncMock(spec=KISRestClient)
+        mock_rest.submit_order = AsyncMock(side_effect=BudgetExhaustedError("budget exhausted"))
+        mock_rest.get_positions = AsyncMock(return_value=[])
+        mock_rest.get_cash_balance = AsyncMock(return_value={})
+
+        original_rest = adapter._rest
+        adapter._rest = mock_rest
+        try:
+            result = await adapter.submit_order(request)
+            assert result.accepted is False
+            assert result.requires_reconciliation is True
+            assert result.raw_code == "BUDGET_EXHAUSTED"
+        finally:
+            adapter._rest = original_rest
+
+    @pytest.mark.asyncio
+    async def test_submit_order_budget_exhausted_held_position_sell_retry(
+        self, adapter: KoreaInvestmentAdapter
+    ) -> None:
+        """Held-position sell에서 BudgetExhaustedError 발생 시
+        reserved budget lane으로 재시도하고 성공 결과를 반환한다."""
+        request = _make_sell_request(metadata={"source_type": "held_position"})
+
+        mock_rest = AsyncMock(spec=KISRestClient)
+        # First call raises, second call succeeds (reserved budget lane)
+        mock_rest.submit_order = AsyncMock(
+            side_effect=[
+                BudgetExhaustedError("budget exhausted"),
+                SubmitOrderResult(
+                    accepted=True,
+                    broker_name=BrokerName.KOREA_INVESTMENT,
+                    client_order_id=request.client_order_id,
+                    broker_order_id="RESERVED-001",
+                    broker_status=OrderStatus.ACKNOWLEDGED,
+                    ack_timestamp=None,
+                ),
+            ]
+        )
+
+        original_rest = adapter._rest
+        adapter._rest = mock_rest
+        try:
+            result = await adapter.submit_order(request)
+            # Reserved budget retry should succeed
+            assert result.accepted is True
+            assert mock_rest.submit_order.call_count == 2
+        finally:
+            adapter._rest = original_rest
+
+    @pytest.mark.asyncio
+    async def test_submit_order_budget_exhausted_held_position_reserve_also_exhausted(
+        self, adapter: KoreaInvestmentAdapter
+    ) -> None:
+        """Held-position sell에서 reserved budget lane도 소진된 경우
+        ``requires_reconciliation=True``인 결과를 반환한다."""
+        request = _make_sell_request(metadata={"source_type": "held_position"})
+
+        mock_rest = AsyncMock(spec=KISRestClient)
+        # Both calls raise BudgetExhaustedError
+        mock_rest.submit_order = AsyncMock(
+            side_effect=BudgetExhaustedError("budget exhausted")
+        )
+
+        original_rest = adapter._rest
+        adapter._rest = mock_rest
+        try:
+            result = await adapter.submit_order(request)
+            assert result.accepted is False
+            assert result.requires_reconciliation is True
+            assert result.raw_code == "BUDGET_EXHAUSTED"
         finally:
             adapter._rest = original_rest

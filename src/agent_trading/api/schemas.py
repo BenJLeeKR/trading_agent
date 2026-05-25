@@ -959,7 +959,7 @@ class BenchmarkHistoryResponse(BaseModel):
     points: list[RelativeBenchmarkPointView]
 
 
-class PaperGateCheckView(BaseModel):
+class GateCheckView(BaseModel):
     """Individual gate criterion check result.
 
     Serialises ``measured_value`` and ``threshold`` as ``str`` to support
@@ -977,8 +977,8 @@ class PaperGateCheckView(BaseModel):
     reason_code: str | None = None
 
 
-class PaperGoNoGoEvaluationView(BaseModel):
-    """``GET /paper-go-no-go`` — Paper Go/No-Go Gate evaluation result.
+class GateEvaluationView(BaseModel):
+    """``GET /paper-go-no-go`` — Gate evaluation result.
 
     Aggregates individual checks across performance, stability and
     operational-health axes into a single ``GO`` / ``HOLD`` / ``NO_GO``
@@ -990,7 +990,7 @@ class PaperGoNoGoEvaluationView(BaseModel):
     account_id: str
     strategy_id: str | None
     overall_status: str  # GO / HOLD / NO_GO
-    checks: list[PaperGateCheckView]
+    checks: list[GateCheckView]
     generated_at: datetime
     summary_reason: str
     # --- 신규: reason_code 요약 집계 (read-only additive) ---

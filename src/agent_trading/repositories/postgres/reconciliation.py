@@ -308,6 +308,31 @@ class PostgresReconciliationRepository:
         rows = await self._tx.connection.fetch(sql, *params)
         return [row_to_entity(row, ReconciliationRunEntity) for row in rows]
 
+    # -- EOD orphan cleanup helpers --
+
+    async def get_latest_reconciliation_status_by_order(
+        self, order_request_id: object
+    ) -> str | None:
+        """Return the latest reconciliation run status linked to an order,
+        or ``None`` if no reconciliation run is linked.
+
+        Used by EOD orphan cleanup to determine whether a ``reconcile_required``
+        order had a ``failed`` reconciliation run.
+        """
+        row = await self._tx.connection.fetchrow(
+            """
+            SELECT r.status
+            FROM trading.reconciliation_order_links l
+            JOIN trading.reconciliation_runs r
+              ON r.reconciliation_run_id = l.reconciliation_run_id
+            WHERE l.order_request_id = $1
+            ORDER BY r.started_at DESC
+            LIMIT 1
+            """,
+            order_request_id,
+        )
+        return row["status"] if row else None
+
 
 def _row_to_blocking_lock(row: object) -> BlockingLockEntity:
     """Convert a ``trading.order_blocking_locks`` row to a ``BlockingLockEntity``."""

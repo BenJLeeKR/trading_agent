@@ -155,6 +155,7 @@ def _log_cycle_summary(result: SyncCycleResult, elapsed: float) -> None:
         "orders=%d (updated=%d filled=%d partial=%d)  "
         "snapshots=%d  "
         "errors=%d  "
+        "orphans_expired=%d (pending=%d reconcile=%d)  "
         "elapsed=%.2fs",
         result.total_orders,
         result.updated,
@@ -162,6 +163,9 @@ def _log_cycle_summary(result: SyncCycleResult, elapsed: float) -> None:
         result.partial,
         result.snapshots_refreshed,
         len(result.errors),
+        result.orphans_expired_pending + result.orphans_expired_reconcile,
+        result.orphans_expired_pending,
+        result.orphans_expired_reconcile,
         elapsed,
     )
     if result.errors:

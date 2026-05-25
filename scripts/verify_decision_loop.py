@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Paper loop verification script — 반복 실행 전용.
+"""Decision loop verification script — 반복 실행 전용.
 
 ``run_orchestrator_once.py``는 단발 실행을 유지하고,
 이 스크립트가 **연속 실행(continuous loop)** 역할을 담당한다.
@@ -9,19 +9,19 @@ Usage
 .. code-block:: bash
 
     # Basic verification (assemble only, 1회)
-    python -m scripts.verify_paper_loop
+    python -m scripts.verify_decision_loop
 
     # Full pipeline verification (assemble → sizing → submit, 1회)
-    python -m scripts.verify_paper_loop --submit
+    python -m scripts.verify_decision_loop --submit
 
     # Continuous verification (60초 간격, 5회)
-    python -m scripts.verify_paper_loop --interval 60 --count 5
+    python -m scripts.verify_decision_loop --interval 60 --count 5
 
     # 무한 반복 (Ctrl+C로 중단)
-    python -m scripts.verify_paper_loop --interval 300
+    python -m scripts.verify_decision_loop --interval 300
 
     # JSON output for automated analysis
-    python -m scripts.verify_paper_loop --submit --output json --count 1
+    python -m scripts.verify_decision_loop --submit --output json --count 1
 
 검증 항목
 ---------

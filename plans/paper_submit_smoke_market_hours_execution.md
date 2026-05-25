@@ -44,7 +44,7 @@ cd /workspace/agent_trading && bash -c 'set -a && source .env && set +a && expor
 **확인할 값:**
 - `KIS_ENV=paper`
 - `KIS_APP_KEY` / `KIS_APP_SECRET` / `KIS_ACCOUNT_NO=50186448`
-- `KIS_PAPER_REST_RPS=2` (1이면 먼저 2로 수정: `sed -i 's/KIS_PAPER_REST_RPS=1/KIS_PAPER_REST_RPS=2/' .env`)
+- `KIS_PAPER_REST_RPS=1` (canonical)
 - **`KIS_SMOKE_PRICE=268500`** (반드시 출력 확인. 없으면: `export KIS_SMOKE_PRICE=268500`)
 - `DEEPSEEK_MODEL_ID=deepseek-chat`
 

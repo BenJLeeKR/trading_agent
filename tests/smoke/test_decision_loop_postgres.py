@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""PostgreSQL-backed paper-trading smoke test.
+"""PostgreSQL-backed decision loop smoke test.
 
 This test exercises the full Postgres repository stack and OrderManager
 to verify that the core data flow works correctly with a real database.

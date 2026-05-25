@@ -21,7 +21,7 @@ from agent_trading.api.schemas import (
     BenchmarkComparisonView,
     BenchmarkHistoryResponse,
     DailyPerformancePointView,
-    PaperGoNoGoEvaluationView,
+    GateEvaluationView,
     PerformanceHistoryResponse,
     PerformanceMetricsView,
     RelativeBenchmarkPointView,
@@ -36,7 +36,7 @@ from agent_trading.services.benchmark_comparison import (
     InMemoryBenchmarkPriceRepository,
     _DEFAULT_BENCHMARK_PRICES,
 )
-from agent_trading.services.paper_gate import PaperGateService
+from agent_trading.services.gate_evaluation import GateEvaluationService
 from agent_trading.services.performance_summary import PerformanceSummaryService
 
 router = APIRouter(tags=["performance"])
@@ -468,7 +468,7 @@ async def get_performance_benchmark_history(
 
 @router.get(
     "/paper-go-no-go",
-    response_model=PaperGoNoGoEvaluationView,
+    response_model=GateEvaluationView,
 )
 async def get_paper_go_no_go(
     account_id: str = Query(..., description="Account UUID"),
@@ -481,7 +481,7 @@ async def get_paper_go_no_go(
         None, description=f"Optional benchmark code ({sorted(VALID_BENCHMARK_CODES)})"
     ),
     repos: RepositoryContainer = Depends(get_repos),
-) -> PaperGoNoGoEvaluationView:
+) -> GateEvaluationView:
     """Get Paper Go/No-Go Gate evaluation for an account.
 
     Aggregates performance, stability and operational-health checks into a
@@ -503,7 +503,7 @@ async def get_paper_go_no_go(
 
     Returns
     -------
-    PaperGoNoGoEvaluationView
+    GateEvaluationView
         Complete gate evaluation with overall status and individual checks.
     """
     # -- Validate account_id --
@@ -546,7 +546,7 @@ async def get_paper_go_no_go(
         benchmark_price_repo = InMemoryBenchmarkPriceRepository(
             prices=_DEFAULT_BENCHMARK_PRICES,
         )
-    service = PaperGateService(
+    service = GateEvaluationService(
         repos=repos,
         settings=settings,
         benchmark_price_repo=benchmark_price_repo,
@@ -558,4 +558,4 @@ async def get_paper_go_no_go(
         strategy_id=sid,
         benchmark_code=benchmark_code,
     )
-    return PaperGoNoGoEvaluationView.model_validate(evaluation)
+    return GateEvaluationView.model_validate(evaluation)

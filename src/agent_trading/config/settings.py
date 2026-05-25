@@ -139,7 +139,7 @@ def _resolve_kis_real_rest_rps() -> int:
 
 
 def _resolve_kis_paper_rest_rps() -> int:
-    """Resolve KIS paper REST RPS: ``KIS_PAPER_REST_RPS``, default 1.
+    """Resolve KIS paper REST RPS: ``KIS_PAPER_REST_RPS`` env var; defaults to ``"1"`` for paper.
 
     Clamped to ``max(1, value)`` to ensure a positive safety baseline.
     """

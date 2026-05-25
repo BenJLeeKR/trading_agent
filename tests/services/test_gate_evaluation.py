@@ -1,8 +1,8 @@
-"""Tests for ``agent_trading.services.paper_gate`` — Paper Go/No-Go Gate.
+"""Tests for ``agent_trading.services.gate_evaluation`` — Gate evaluation.
 
 Test suites
 ===========
-* :class:`TestPaperGateService` — :class:`PaperGateService` 통합 검증 (7 tests)
+* :class:`TestGateEvaluationService` — :class:`GateEvaluationService` 통합 검증 (7 tests)
 """
 
 from __future__ import annotations
@@ -43,12 +43,12 @@ from agent_trading.services.benchmark_comparison import (
     InMemoryBenchmarkPriceRepository,
     _DEFAULT_BENCHMARK_PRICES,
 )
-from agent_trading.services.paper_gate import (
+from agent_trading.services.gate_evaluation import (
     GateStatus,
     OverallStatus,
-    PaperGateCheck,
-    PaperGoNoGoEvaluation,
-    PaperGateService,
+    GateCheck,
+    GateEvaluation,
+    GateEvaluationService,
 )
 from agent_trading.services.risk_metric_constants import (
     CALMAR_ZERO_DRAWDOWN_NOTE,
@@ -305,7 +305,7 @@ def _add_blocking_lock(repos: RepositoryContainer) -> None:
 
 
 def _assert_check(
-    check: PaperGateCheck,
+    check: GateCheck,
     *,
     code: str,
     status: GateStatus,
@@ -318,12 +318,12 @@ def _assert_check(
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Integration: PaperGateService
+# Integration: GateEvaluationService
 # ═══════════════════════════════════════════════════════════════════
 
 
-class TestPaperGateService:
-    """``PaperGateService.evaluate()`` — 통합 검증."""
+class TestGateEvaluationService:
+    """``GateEvaluationService.evaluate()`` — 통합 검증."""
 
     # ------------------------------------------------------------------
     # 1. All PASS → GO
@@ -350,14 +350,14 @@ class TestPaperGateService:
             MIN_CALMAR_RATIO="-99",
         ):
             settings = AppSettings()
-            service = PaperGateService(repos, settings=settings)
+            service = GateEvaluationService(repos, settings=settings)
             evaluation = await service.evaluate(
                 account_id=_ACCOUNT_ID,
                 start_date=_START,
                 end_date=_END,
             )
 
-        assert isinstance(evaluation, PaperGoNoGoEvaluation)
+        assert isinstance(evaluation, GateEvaluation)
         assert evaluation.overall_status == OverallStatus.GO
         assert evaluation.account_id == _ACCOUNT_ID
         assert evaluation.strategy_id is None
@@ -395,7 +395,7 @@ class TestPaperGateService:
         # (Actually BUY orders have negative realized PnL → they are losses → win_rate=0%)
         with _env(MIN_WIN_RATE_PCT="1"):
             settings = AppSettings()
-            service = PaperGateService(repos, settings=settings)
+            service = GateEvaluationService(repos, settings=settings)
             evaluation = await service.evaluate(
                 account_id=_ACCOUNT_ID,
                 start_date=_START,
@@ -433,7 +433,7 @@ class TestPaperGateService:
         _add_stale_sync_run(repos)
 
         settings = AppSettings()
-        service = PaperGateService(repos, settings=settings)
+        service = GateEvaluationService(repos, settings=settings)
         evaluation = await service.evaluate(
             account_id=_ACCOUNT_ID,
             start_date=_START,
@@ -467,7 +467,7 @@ class TestPaperGateService:
         _add_fresh_sync_run(repos)
 
         settings = AppSettings()
-        service = PaperGateService(repos, settings=settings)
+        service = GateEvaluationService(repos, settings=settings)
         evaluation = await service.evaluate(
             account_id=_ACCOUNT_ID,
             start_date=_START,
@@ -498,7 +498,7 @@ class TestPaperGateService:
         _add_blocking_lock(repos)
 
         settings = AppSettings()
-        service = PaperGateService(repos, settings=settings)
+        service = GateEvaluationService(repos, settings=settings)
         evaluation = await service.evaluate(
             account_id=_ACCOUNT_ID,
             start_date=_START,
@@ -536,7 +536,7 @@ class TestPaperGateService:
         # BUY orders → negative risk metrics; override to PASS for this test.
         with _env(MIN_SHARPE_RATIO="-99", MIN_SORTINO_RATIO="-99", MIN_CALMAR_RATIO="-99"):
             settings = AppSettings()
-            service = PaperGateService(
+            service = GateEvaluationService(
                 repos=repos,
                 settings=settings,
                 benchmark_price_repo=benchmark_repo,
@@ -571,7 +571,7 @@ class TestPaperGateService:
         # BUY orders → negative risk metrics; override to PASS for this test.
         with _env(MIN_SHARPE_RATIO="-99", MIN_SORTINO_RATIO="-99", MIN_CALMAR_RATIO="-99"):
             settings = AppSettings()
-            service = PaperGateService(repos, settings=settings)
+            service = GateEvaluationService(repos, settings=settings)
             evaluation = await service.evaluate(
                 account_id=_ACCOUNT_ID,
                 start_date=_START,
@@ -603,7 +603,7 @@ class TestPaperGateService:
         # sharpe/sortino/calmar all trigger WARN.
         with _env(MIN_RETURN_PCT="-99"):
             settings = AppSettings()
-            service = PaperGateService(repos, settings=settings)
+            service = GateEvaluationService(repos, settings=settings)
             evaluation = await service.evaluate(
                 account_id=_ACCOUNT_ID,
                 start_date=_START,
@@ -628,7 +628,7 @@ class TestPaperGateService:
         assert warn_count >= 3, f"Expected >=3 WARNs, got {warn_count}"
 
         # ── 공유 상수 참조 의도 노출 ──
-        # paper_gate의 None-case WARN message가 performance_summary note와
+        # gate_evaluation의 None-case WARN message가 performance_summary note와
         # 동일한 공통 상수(SHARPE_INSUFFICIENT_DATA_NOTE 등)를 참조함을 검증.
         # (이 테스트에서는 value가 None이 아니므로 직접 비교로 대체)
         assert SHARPE_INSUFFICIENT_DATA_NOTE != ""
@@ -681,7 +681,7 @@ class TestPaperGateService:
             MIN_CALMAR_RATIO="-99",
         ):
             settings = AppSettings()
-            service = PaperGateService(repos, settings=settings)
+            service = GateEvaluationService(repos, settings=settings)
             evaluation = await service.evaluate(
                 account_id=_ACCOUNT_ID,
                 start_date=_START,
@@ -715,7 +715,7 @@ class TestPaperGateService:
         # MIN_RETURN이 None이면 PASS하도록 threshold 조정
         with _env(MIN_RETURN_PCT="-99"):
             settings = AppSettings()
-            service = PaperGateService(repos, settings=settings)
+            service = GateEvaluationService(repos, settings=settings)
             evaluation = await service.evaluate(
                 account_id=_ACCOUNT_ID,
                 start_date=_START,
@@ -774,7 +774,7 @@ class TestPaperGateService:
             MIN_CALMAR_RATIO="-99",
         ):
             settings = AppSettings()
-            service = PaperGateService(repos, settings=settings)
+            service = GateEvaluationService(repos, settings=settings)
             evaluation = await service.evaluate(
                 account_id=_ACCOUNT_ID,
                 start_date=_START,
@@ -810,7 +810,7 @@ class TestPaperGateService:
 
         with _env(MIN_RETURN_PCT="-99"):
             settings = AppSettings()
-            service = PaperGateService(repos, settings=settings)
+            service = GateEvaluationService(repos, settings=settings)
             evaluation = await service.evaluate(
                 account_id=_ACCOUNT_ID,
                 start_date=_START,
@@ -873,7 +873,7 @@ class TestPaperGateService:
         repos.snapshot_sync_runs._items[stale_run.snapshot_sync_run_id] = stale_run
 
         settings = AppSettings()
-        service = PaperGateService(repos, settings=settings)
+        service = GateEvaluationService(repos, settings=settings)
         evaluation = await service.evaluate(
             account_id=_ACCOUNT_ID,
             start_date=_START,

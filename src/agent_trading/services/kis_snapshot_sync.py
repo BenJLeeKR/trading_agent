@@ -492,10 +492,15 @@ async def sync_kis_account_snapshots(
                     orderable_amount,
                 )
             else:
-                logger.info(
-                    "orderable_amount=None (VTTC8908R unavailable, "
-                    "VTTC8434R ord_psbl_amt also missing, legacy sync path)"
+                # 최종 fallback: VTTC8908R ord_psbl_cash와 VTTC8434R ord_psbl_amt
+                # 모두 없으면 available_cash(dnca_tot_amt)를 사용하여 NULL 저장 방지
+                logger.warning(
+                    "orderable_amount not available from KIS (VTTC8908R ord_psbl_cash "
+                    "and VTTC8434R ord_psbl_amt both missing, account=%s); "
+                    "falling back to available_cash=%s",
+                    account_id, available_cash,
                 )
+                orderable_amount = available_cash
     elif after_hours and raw_cash:
         logger.info(
             "[VTTC8908R] after-hours skip "

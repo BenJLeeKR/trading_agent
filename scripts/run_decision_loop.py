@@ -1,36 +1,36 @@
 #!/usr/bin/env python3
-"""Paper continuous decision loop — 반복 운영 전용.
+"""Decision loop — 반복 운영 전용.
 
 ``run_orchestrator_once.py``는 단발 실행을 유지하고,
 이 스크립트가 **연속 실행(continuous loop)** 을 담당한다.
 
-기존 ``verify_paper_loop.py``는 **검증(verification)** 전용이며,
+기존 ``verify_decision_loop.py``는 **검증(verification)** 전용이며,
 이 스크립트는 **운영(operations)** 전용이다.
 
 역할 분리
 ---------
 * ``run_snapshot_sync_loop.py`` — position/cash 데이터 최신성 유지 (300s)
 * ``run_post_submit_sync_loop.py`` — 미체결/부분체결 주문 상태 Broker 수렴 (30s)
-* ``run_paper_decision_loop.py`` — AI Decision → Submit 반복 실행 (300s, 신규)
+* ``run_decision_loop.py`` — AI Decision → Submit 반복 실행 (300s)
 
 Usage
 -----
 .. code-block:: bash
 
     # 기본 실행 (5분 간격, 무한 반복, submit 모드)
-    python3 -m scripts.run_paper_decision_loop
+    python3 -m scripts.run_decision_loop
 
     # 1회 실행 후 종료
-    python3 -m scripts.run_paper_decision_loop --count 1
+    python3 -m scripts.run_decision_loop --count 1
 
     # Dry-run (assemble + sizing only, submit 없음)
-    python3 -m scripts.run_paper_decision_loop --count 1 --dry-run
+    python3 -m scripts.run_decision_loop --count 1 --dry-run
 
     # 60초 간격, 5회, JSON 출력
-    python3 -m scripts.run_paper_decision_loop --interval 60 --count 5 --output json
+    python3 -m scripts.run_decision_loop --interval 60 --count 5 --output json
 
     # 명시적 submit 모드 (기본값)
-    python3 -m scripts.run_paper_decision_loop --submit --count 1
+    python3 -m scripts.run_decision_loop --submit --count 1
 
 환경 변수
 ---------
@@ -1374,7 +1374,7 @@ def main(argv: list[str] | None = None) -> int:
     """Entry point for the continuous decision loop.
 
     .. note::
-       This script is named ``run_paper_decision_loop`` for historical
+       This script is named ``run_decision_loop`` for historical
        reasons (it was introduced during the paper-trading milestone),
        but the core runtime logic is **mode-agnostic**.  The same
        ``assemble()`` → sizing → submit pipeline works identically

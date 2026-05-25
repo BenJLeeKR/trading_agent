@@ -9,8 +9,8 @@
 #   1. LLM Hang/Timeout Subprocess Isolation (10 files)
 #      - scripts/run_agent_subprocess.py (new)
 #      - decision_orchestrator.py subprocess isolation
-#      - run_near_real_ops_scheduler.py timeout 240→120
-#      - run_paper_decision_loop.py timeout 90→120
+#      - run_ops_scheduler.py timeout 240→120
+#      - run_decision_loop.py timeout 90→120
 #      - tests/conftest.py AGENT_SUBPROCESS_ISOLATION=0
 #
 #   2. KIS Broker Truth Sync + Duplicate Sell Guard (9 files, 2 new)

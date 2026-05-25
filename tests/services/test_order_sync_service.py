@@ -23,6 +23,7 @@ from agent_trading.domain.entities import (
     BrokerOrderEntity,
     FillEventEntity,
     OrderRequestEntity,
+    ReconciliationRunEntity,
 )
 from agent_trading.domain.enums import (
     BrokerName,
@@ -1711,7 +1712,272 @@ class TestPostSubmitSyncRunnerSavepointIsolation:
 
 
 # ═════════════════════════════════════════════════════════════════════
-# Test: _infer_sell_order_fill_via_position
+# Test: PostSubmitSyncRunner — EOD orphan cleanup (Step 4)
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestRunnerEodOrphanCleanup:
+    """``run_sync_cycle()`` Step 4 — after-hours EOD orphan cleanup 검증.
+
+    run_sync_cycle(after_hours=True) 호출 시:
+    - PENDING_SUBMIT / RECONCILE_REQUIRED orphan 주문이 EXPIRED로 전이
+    - SyncCycleResult에 orphan cleanup count가 정확히 집계
+
+    run_sync_cycle(after_hours=False) 호출 시:
+    - orphan 주문이 그대로 유지 (cleanup 미실행)
+    """
+
+    async def test_runner_after_hours_triggers_eod_orphan_cleanup(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """after_hours=True → Step 4 실행, orphan 주문이 EXPIRED로 전이."""
+        now = datetime.now(timezone.utc)
+
+        # 대상 1: 오래된 PENDING_SUBMIT orphan (broker_order 없음)
+        ps_orphan = _make_orphan_order(
+            repos,
+            status=OrderStatus.PENDING_SUBMIT,
+            client_order_id="EOD-PS-001",
+            created_at=now - timedelta(hours=2),
+        )
+
+        # 대상 2: 오래된 RECONCILE_REQUIRED orphan + failed reconciliation
+        rr_orphan = _make_orphan_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="EOD-RR-001",
+            created_at=now - timedelta(hours=2),
+        )
+        run_id = uuid4()
+        run = ReconciliationRunEntity(
+            reconciliation_run_id=run_id,
+            account_id=rr_orphan.account_id,
+            trigger_type="scheduled",
+            status="failed",
+            started_at=now - timedelta(hours=1),
+            mismatch_count=1,
+        )
+        await repos.reconciliations.add_run(run)
+        await repos.reconciliations.attach_order_mismatch(
+            reconciliation_run_id=run_id,
+            order_request_id=rr_orphan.order_request_id,
+            mismatch_type="order_mismatch",
+            details={},
+        )
+
+        # 정상 주문 (broker_order 존재) — sync 정상 동작 확인
+        normal_order = _make_order(
+            repos,
+            status=OrderStatus.SUBMITTED,
+            client_order_id="EOD-NORM-001",
+        )
+        _make_broker_order(repos, normal_order, broker_native_order_id="BRK-EOD-NORM-001")
+
+        broker = _StubBroker(status=OrderStatus.ACKNOWLEDGED)
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=sync_service,
+            broker=broker,  # type: ignore[arg-type]
+        )
+
+        result = await runner.run_sync_cycle(
+            account_ref="test-account",
+            after_hours=True,
+        )
+
+        # SyncCycleResult 검증
+        assert result.orphans_expired_pending == 1, (
+            f"Expected 1 pending_submit expired, got {result.orphans_expired_pending}"
+        )
+        assert result.orphans_expired_reconcile == 1, (
+            f"Expected 1 reconcile_required expired, got {result.orphans_expired_reconcile}"
+        )
+        # 정상 sync는 그대로 동작
+        assert result.total_orders >= 1
+        assert result.updated >= 1  # normal_order가 SUBMITTED→ACK
+
+        # PENDING_SUBMIT orphan → EXPIRED 검증
+        updated_ps = await repos.orders.get(ps_orphan.order_request_id)
+        assert updated_ps is not None
+        assert updated_ps.status == OrderStatus.EXPIRED, (
+            f"Expected EXPIRED, got {updated_ps.status}"
+        )
+        assert updated_ps.status_reason_code == "eod_orphan_cleanup_no_broker_order"
+
+        # RECONCILE_REQUIRED orphan → EXPIRED 검증
+        updated_rr = await repos.orders.get(rr_orphan.order_request_id)
+        assert updated_rr is not None
+        assert updated_rr.status == OrderStatus.EXPIRED, (
+            f"Expected EXPIRED, got {updated_rr.status}"
+        )
+        assert updated_rr.status_reason_code == "eod_orphan_cleanup_failed_reconciliation"
+
+        # 정상 주문은 ACKNOWLEDGED로 전이
+        updated_normal = await repos.orders.get(normal_order.order_request_id)
+        assert updated_normal is not None
+        assert updated_normal.status == OrderStatus.ACKNOWLEDGED
+
+    async def test_runner_regular_hours_skips_eod_orphan_cleanup(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """after_hours=False → Step 4 미실행, orphan 주문이 그대로 유지."""
+        now = datetime.now(timezone.utc)
+
+        # PENDING_SUBMIT orphan
+        ps_orphan = _make_orphan_order(
+            repos,
+            status=OrderStatus.PENDING_SUBMIT,
+            client_order_id="REG-PS-001",
+            created_at=now - timedelta(hours=2),
+        )
+
+        # RECONCILE_REQUIRED orphan + failed reconciliation
+        rr_orphan = _make_orphan_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="REG-RR-001",
+            created_at=now - timedelta(hours=2),
+        )
+        run_id = uuid4()
+        run = ReconciliationRunEntity(
+            reconciliation_run_id=run_id,
+            account_id=rr_orphan.account_id,
+            trigger_type="scheduled",
+            status="failed",
+            started_at=now - timedelta(hours=1),
+            mismatch_count=1,
+        )
+        await repos.reconciliations.add_run(run)
+        await repos.reconciliations.attach_order_mismatch(
+            reconciliation_run_id=run_id,
+            order_request_id=rr_orphan.order_request_id,
+            mismatch_type="order_mismatch",
+            details={},
+        )
+
+        # 정상 주문
+        normal_order = _make_order(
+            repos,
+            status=OrderStatus.SUBMITTED,
+            client_order_id="REG-NORM-001",
+        )
+        _make_broker_order(repos, normal_order, broker_native_order_id="BRK-REG-NORM-001")
+
+        broker = _StubBroker(status=OrderStatus.ACKNOWLEDGED)
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=sync_service,
+            broker=broker,  # type: ignore[arg-type]
+        )
+
+        result = await runner.run_sync_cycle(
+            account_ref="test-account",
+            after_hours=False,
+        )
+
+        # after-hours가 아니므로 cleanup count는 0
+        assert result.orphans_expired_pending == 0
+        assert result.orphans_expired_reconcile == 0
+
+        # 정상 sync는 그대로 동작
+        assert result.total_orders >= 1
+        assert result.updated >= 1
+
+        # PENDING_SUBMIT orphan → 그대로 유지
+        updated_ps = await repos.orders.get(ps_orphan.order_request_id)
+        assert updated_ps is not None
+        assert updated_ps.status == OrderStatus.PENDING_SUBMIT, (
+            f"Expected PENDING_SUBMIT unchanged, got {updated_ps.status}"
+        )
+
+        # RECONCILE_REQUIRED orphan → 그대로 유지
+        updated_rr = await repos.orders.get(rr_orphan.order_request_id)
+        assert updated_rr is not None
+        assert updated_rr.status == OrderStatus.RECONCILE_REQUIRED, (
+            f"Expected RECONCILE_REQUIRED unchanged, got {updated_rr.status}"
+        )
+
+    async def test_runner_after_hours_orphan_counts_in_result(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """SyncCycleResult에 orphan cleanup count가 정확히 집계됨."""
+        now = datetime.now(timezone.utc)
+
+        # 2건의 PENDING_SUBMIT orphan
+        _make_orphan_order(
+            repos,
+            status=OrderStatus.PENDING_SUBMIT,
+            client_order_id="CNT-PS-001",
+            created_at=now - timedelta(hours=2),
+        )
+        _make_orphan_order(
+            repos,
+            status=OrderStatus.PENDING_SUBMIT,
+            client_order_id="CNT-PS-002",
+            created_at=now - timedelta(hours=3),
+        )
+
+        # 1건의 RECONCILE_REQUIRED orphan + failed reconciliation
+        rr_orphan = _make_orphan_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="CNT-RR-001",
+            created_at=now - timedelta(hours=2),
+        )
+        run_id = uuid4()
+        run = ReconciliationRunEntity(
+            reconciliation_run_id=run_id,
+            account_id=rr_orphan.account_id,
+            trigger_type="scheduled",
+            status="failed",
+            started_at=now - timedelta(hours=1),
+            mismatch_count=1,
+        )
+        await repos.reconciliations.add_run(run)
+        await repos.reconciliations.attach_order_mismatch(
+            reconciliation_run_id=run_id,
+            order_request_id=rr_orphan.order_request_id,
+            mismatch_type="order_mismatch",
+            details={},
+        )
+
+        # 1건의 fresh PENDING_SUBMIT (cleanup 제외)
+        _make_orphan_order(
+            repos,
+            status=OrderStatus.PENDING_SUBMIT,
+            client_order_id="CNT-PS-FRESH",
+            created_at=now - timedelta(minutes=10),
+        )
+
+        broker = _StubBroker(status=OrderStatus.ACKNOWLEDGED)
+        runner = PostSubmitSyncRunner(
+            repos=repos,
+            sync_service=sync_service,
+            broker=broker,  # type: ignore[arg-type]
+        )
+
+        result = await runner.run_sync_cycle(
+            account_ref="test-account",
+            after_hours=True,
+        )
+
+        assert result.orphans_expired_pending == 2, (
+            f"Expected 2 pending_submit expired, got {result.orphans_expired_pending}"
+        )
+        assert result.orphans_expired_reconcile == 1, (
+            f"Expected 1 reconcile_required expired, got {result.orphans_expired_reconcile}"
+        )
+        # total_orders는 query에 매칭된 전체 주문 수 (orphan 포함)
+        # 4 = 2 old PENDING_SUBMIT + 1 RECONCILE_REQUIRED + 1 fresh PENDING_SUBMIT
+        assert result.total_orders == 4
+        # 실제 sync가 실행된 주문 수 (broker_order 존재)는 0
+        assert result.updated == 0
 # ═════════════════════════════════════════════════════════════════════
 
 
@@ -5463,3 +5729,340 @@ class TestRejectStalePendingSubmit:
         assert len(rejected) == 0, (
             f"Expected 0 rejected for BUY PENDING_SUBMIT, got {len(rejected)}"
         )
+
+
+# ------------------------------------------------------------
+# Test: EOD Orphan Cleanup — expire_eod_orphan_orders
+# ------------------------------------------------------------
+
+
+def _make_orphan_order(
+    repos: RepositoryContainer,
+    *,
+    status: OrderStatus = OrderStatus.PENDING_SUBMIT,
+    client_order_id: str = "ORPHAN-TEST-001",
+    created_at: datetime | None = None,
+) -> OrderRequestEntity:
+    """Create and persist an orphan order candidate (no broker_order by default)."""
+    now = created_at or (datetime.now(timezone.utc) - timedelta(hours=2))
+    order = OrderRequestEntity(
+        order_request_id=uuid4(),
+        account_id=uuid4(),
+        instrument_id=uuid4(),
+        client_order_id=client_order_id,
+        idempotency_key="idem-orphan-001",
+        correlation_id="corr-orphan-001",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        time_in_force=TimeInForce.DAY,
+        requested_price=Decimal("50000"),
+        requested_quantity=Decimal("10"),
+        status=status,
+        trade_decision_id=None,
+        submitted_at=None,
+        status_reason_code=None,
+        status_reason_message=None,
+        created_at=now,
+        updated_at=now,
+    )
+    repos.orders._items[order.order_request_id] = order
+    return order
+
+
+class TestExpireEodOrphanOrders:
+    """expire_eod_orphan_orders() — EOD orphan cleanup 정책 검증."""
+
+    async def test_expire_eod_orphan_orders_pending_submit(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """pending_submit 주문이 broker_orders 없이 오래된 경우 EXPIRED로 전이."""
+        order = _make_orphan_order(
+            repos,
+            status=OrderStatus.PENDING_SUBMIT,
+            client_order_id="ORPHAN-PS-001",
+            created_at=datetime.now(timezone.utc) - timedelta(hours=2),
+        )
+
+        expired_pending, expired_reconcile = await sync_service.expire_eod_orphan_orders()
+
+        assert expired_pending == 1, f"Expected 1 pending_submit expired, got {expired_pending}"
+        assert expired_reconcile == 0
+
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.EXPIRED, (
+            f"Expected EXPIRED, got {updated.status}"
+        )
+        assert updated.status_reason_code == "eod_orphan_cleanup_no_broker_order", (
+            f"Expected reason_code 'eod_orphan_cleanup_no_broker_order', "
+            f"got {updated.status_reason_code}"
+        )
+
+    async def test_expire_eod_orphan_orders_skips_fresh_pending_submit(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """10분 전 생성된 pending_submit 주문은 threshold 미만으로 cleanup되지 않음."""
+        order = _make_orphan_order(
+            repos,
+            status=OrderStatus.PENDING_SUBMIT,
+            client_order_id="ORPHAN-FRESH-001",
+            created_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+        )
+
+        expired_pending, expired_reconcile = await sync_service.expire_eod_orphan_orders()
+
+        assert expired_pending == 0, f"Expected 0 expired, got {expired_pending}"
+        assert expired_reconcile == 0
+
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.PENDING_SUBMIT, (
+            f"Expected PENDING_SUBMIT unchanged, got {updated.status}"
+        )
+
+    async def test_expire_eod_orphan_orders_skips_when_broker_order_exists(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """BrokerOrderEntity가 존재하는 pending_submit 주문은 cleanup되지 않음."""
+        order = _make_orphan_order(
+            repos,
+            status=OrderStatus.PENDING_SUBMIT,
+            client_order_id="ORPHAN-HAS-BROKER-001",
+            created_at=datetime.now(timezone.utc) - timedelta(hours=2),
+        )
+        _make_broker_order(
+            repos, order, broker_native_order_id="TEST123",
+        )
+
+        expired_pending, expired_reconcile = await sync_service.expire_eod_orphan_orders()
+
+        assert expired_pending == 0, f"Expected 0 expired (broker_order exists), got {expired_pending}"
+        assert expired_reconcile == 0
+
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.PENDING_SUBMIT, (
+            f"Expected PENDING_SUBMIT unchanged, got {updated.status}"
+        )
+
+    async def test_expire_eod_orphan_orders_reconcile_required_failed_reconciliation(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """reconcile_required 주문 + failed reconciliation run -> EXPIRED 전이."""
+        order = _make_orphan_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="ORPHAN-RR-FAIL-001",
+            created_at=datetime.now(timezone.utc) - timedelta(hours=2),
+        )
+
+        run_id = uuid4()
+        run = ReconciliationRunEntity(
+            reconciliation_run_id=run_id,
+            account_id=order.account_id,
+            trigger_type="scheduled",
+            status="failed",
+            started_at=datetime.now(timezone.utc) - timedelta(hours=1),
+            mismatch_count=1,
+        )
+        await repos.reconciliations.add_run(run)
+        await repos.reconciliations.attach_order_mismatch(
+            reconciliation_run_id=run_id,
+            order_request_id=order.order_request_id,
+            mismatch_type="order_mismatch",
+            details={},
+        )
+
+        expired_pending, expired_reconcile = await sync_service.expire_eod_orphan_orders()
+
+        assert expired_pending == 0
+        assert expired_reconcile == 1, (
+            f"Expected 1 reconcile_required expired, got {expired_reconcile}"
+        )
+
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.EXPIRED, (
+            f"Expected EXPIRED, got {updated.status}"
+        )
+        assert updated.status_reason_code == "eod_orphan_cleanup_failed_reconciliation", (
+            f"Expected 'eod_orphan_cleanup_failed_reconciliation', "
+            f"got {updated.status_reason_code}"
+        )
+
+    async def test_expire_eod_orphan_orders_reconcile_required_no_reconciliation(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """reconcile_required 주문 + reconciliation run 없음 -> EXPIRED 전이."""
+        order = _make_orphan_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="ORPHAN-RR-NO-REC-001",
+            created_at=datetime.now(timezone.utc) - timedelta(hours=2),
+        )
+
+        expired_pending, expired_reconcile = await sync_service.expire_eod_orphan_orders()
+
+        assert expired_pending == 0
+        assert expired_reconcile == 1, (
+            f"Expected 1 reconcile_required expired, got {expired_reconcile}"
+        )
+
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.EXPIRED, (
+            f"Expected EXPIRED, got {updated.status}"
+        )
+        assert updated.status_reason_code == "eod_orphan_cleanup_no_reconciliation", (
+            f"Expected 'eod_orphan_cleanup_no_reconciliation', "
+            f"got {updated.status_reason_code}"
+        )
+
+    async def test_expire_eod_orphan_orders_skips_reconcile_required_completed_reconciliation(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """reconcile_required 주문 + completed reconciliation run -> cleanup되지 않음."""
+        order = _make_orphan_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="ORPHAN-RR-COMPLETE-001",
+            created_at=datetime.now(timezone.utc) - timedelta(hours=2),
+        )
+        # broker_order가 존재하면 _is_eod_orphan()이 False를 반환하여
+        # cleanup에서 제외됨. reconcile_required 상태에서 broker_order는
+        # broker에 제출되었으나 reconciliation 불일치가 발생한 경우를 의미.
+        _make_broker_order(
+            repos, order, broker_native_order_id="COMPLETED-BRK-001",
+        )
+
+        run_id = uuid4()
+        run = ReconciliationRunEntity(
+            reconciliation_run_id=run_id,
+            account_id=order.account_id,
+            trigger_type="scheduled",
+            status="completed",
+            started_at=datetime.now(timezone.utc) - timedelta(hours=1),
+            mismatch_count=0,
+        )
+        await repos.reconciliations.add_run(run)
+        await repos.reconciliations.attach_order_mismatch(
+            reconciliation_run_id=run_id,
+            order_request_id=order.order_request_id,
+            mismatch_type="order_mismatch",
+            details={},
+        )
+
+        expired_pending, expired_reconcile = await sync_service.expire_eod_orphan_orders()
+
+        assert expired_pending == 0
+        assert expired_reconcile == 0, (
+            f"Expected 0 expired (completed reconciliation), got {expired_reconcile}"
+        )
+
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.RECONCILE_REQUIRED, (
+            f"Expected RECONCILE_REQUIRED unchanged, got {updated.status}"
+        )
+
+    async def test_expire_eod_orphan_orders_returns_correct_counts(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """여러 orphan 주문 중 일부만 cleanup 대상일 때 카운트가 정확한지 검증."""
+        now = datetime.now(timezone.utc)
+
+        # 대상 1: 오래된 pending_submit (cleanup 대상)
+        _make_orphan_order(
+            repos,
+            status=OrderStatus.PENDING_SUBMIT,
+            client_order_id="ORPHAN-COUNT-PS-001",
+            created_at=now - timedelta(hours=2),
+        )
+
+        # 대상 2: 오래된 pending_submit (cleanup 대상)
+        _make_orphan_order(
+            repos,
+            status=OrderStatus.PENDING_SUBMIT,
+            client_order_id="ORPHAN-COUNT-PS-002",
+            created_at=now - timedelta(hours=3),
+        )
+
+        # 대상 3: fresh pending_submit (cleanup 제외)
+        _make_orphan_order(
+            repos,
+            status=OrderStatus.PENDING_SUBMIT,
+            client_order_id="ORPHAN-COUNT-PS-FRESH",
+            created_at=now - timedelta(minutes=10),
+        )
+
+        # 대상 4: 오래된 reconcile_required + failed reconciliation (cleanup 대상)
+        rr_order = _make_orphan_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="ORPHAN-COUNT-RR-001",
+            created_at=now - timedelta(hours=2),
+        )
+        run_id = uuid4()
+        run = ReconciliationRunEntity(
+            reconciliation_run_id=run_id,
+            account_id=rr_order.account_id,
+            trigger_type="scheduled",
+            status="failed",
+            started_at=now - timedelta(hours=1),
+            mismatch_count=1,
+        )
+        await repos.reconciliations.add_run(run)
+        await repos.reconciliations.attach_order_mismatch(
+            reconciliation_run_id=run_id,
+            order_request_id=rr_order.order_request_id,
+            mismatch_type="order_mismatch",
+            details={},
+        )
+
+        # 대상 5: 오래된 reconcile_required + completed reconciliation (cleanup 제외)
+        # broker_order가 존재하므로 _is_eod_orphan()이 False를 반환하여
+        # cleanup에서 제외됨.
+        rr_complete_order = _make_orphan_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="ORPHAN-COUNT-RR-COMPLETE",
+            created_at=now - timedelta(hours=2),
+        )
+        _make_broker_order(
+            repos, rr_complete_order, broker_native_order_id="COUNT-COMPLETE-BRK-001",
+        )
+        run_id2 = uuid4()
+        run2 = ReconciliationRunEntity(
+            reconciliation_run_id=run_id2,
+            account_id=rr_complete_order.account_id,
+            trigger_type="scheduled",
+            status="completed",
+            started_at=now - timedelta(hours=1),
+            mismatch_count=0,
+        )
+        await repos.reconciliations.add_run(run2)
+        await repos.reconciliations.attach_order_mismatch(
+            reconciliation_run_id=run_id2,
+            order_request_id=rr_complete_order.order_request_id,
+            mismatch_type="order_mismatch",
+            details={},
+        )
+
+        expired_pending, expired_reconcile = await sync_service.expire_eod_orphan_orders()
+
+        assert expired_pending == 2, f"Expected 2 pending_submit expired, got {expired_pending}"
+        assert expired_reconcile == 1, f"Expected 1 reconcile_required expired, got {expired_reconcile}"

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Paper-trading smoke test — seed → insert → query end-to-end.
+"""Decision loop smoke test — seed → insert → query end-to-end.
 
 This test exercises the full in-memory repository stack and OrderManager
 to verify that the core data flow works correctly without a database.

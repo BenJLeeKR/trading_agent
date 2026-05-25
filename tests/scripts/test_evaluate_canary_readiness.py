@@ -1,4 +1,4 @@
-"""Tests for ``scripts.evaluate_live_gate`` — Live Gate / Canary Readiness evaluation.
+"""Tests for ``scripts.evaluate_canary_readiness`` — Live Gate / Canary Readiness evaluation.
 
 Test suites
 ===========
@@ -41,9 +41,9 @@ from agent_trading.services.benchmark_comparison import (
     InMemoryBenchmarkPriceRepository,
     _DEFAULT_BENCHMARK_PRICES,
 )
-from agent_trading.services.paper_gate import compute_reason_code_summary
+from agent_trading.services.gate_evaluation import compute_reason_code_summary
 from agent_trading.services.risk_metric_constants import GateReasonCode
-from scripts.evaluate_live_gate import (
+from scripts.evaluate_canary_readiness import (
     LiveGateCheck,
     LiveGateEvaluator,
 )
@@ -343,7 +343,7 @@ class TestLiveGateEvaluator:
 
         evaluator = _build_evaluator(repos)
 
-        pe_status, pe_auto = await evaluator.evaluate_paper_exit(
+        pe_status, pe_auto = await evaluator.evaluate_exit_criteria(
             account_id=_ACCOUNT_ID,
             start_date=_START,
             end_date=_END,
@@ -378,7 +378,7 @@ class TestLiveGateEvaluator:
 
         evaluator = _build_evaluator(repos)
 
-        pe_status, pe_auto = await evaluator.evaluate_paper_exit(
+        pe_status, pe_auto = await evaluator.evaluate_exit_criteria(
             account_id=_ACCOUNT_ID,
             start_date=_START,
             end_date=_END,
@@ -428,7 +428,7 @@ class TestLiveGateEvaluator:
 
         evaluator = _build_evaluator(repos)
 
-        pe_status, pe_auto = await evaluator.evaluate_paper_exit(
+        pe_status, pe_auto = await evaluator.evaluate_exit_criteria(
             account_id=_ACCOUNT_ID,
             start_date=_START,
             end_date=_END,
@@ -628,7 +628,7 @@ class TestLiveGateEvaluator:
 
         evaluator = _build_evaluator(repos)
 
-        pe_status, pe_auto = await evaluator.evaluate_paper_exit(
+        pe_status, pe_auto = await evaluator.evaluate_exit_criteria(
             account_id=_ACCOUNT_ID,
             start_date=_START,
             end_date=_END,
@@ -716,7 +716,7 @@ class TestLiveGateEvaluator:
 
         evaluator = _build_evaluator(repos)
 
-        pe_status, pe_auto = await evaluator.evaluate_paper_exit(
+        pe_status, pe_auto = await evaluator.evaluate_exit_criteria(
             account_id=_ACCOUNT_ID,
             start_date=_START,
             end_date=_END,

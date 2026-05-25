@@ -3,7 +3,7 @@
 
 Read-only 관측 스크립트 — DB/API 쓰기 없음, 외부 Provider 호출 없음.
 
-Seeded News ON/OFF 상태에서 각각 ``run_paper_decision_loop``를 1회 실행하고,
+Seeded News ON/OFF 상태에서 각각 ``run_decision_loop``를 1회 실행하고,
 EI Agent output (event_bias, event_conflict, event_reason_codes)을 수집하여
 ON/OFF 비교 결과를 JSON 파일 + Markdown table로 출력한다.
 
@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SYMBOLS = "005930,000660,035420,005380"
 DEFAULT_OUTPUT_DIR = "data/observations"
-PAPER_LOOP_MODULE = "scripts.run_paper_decision_loop"
+PAPER_LOOP_MODULE = "scripts.run_decision_loop"
 
 SEP = "=" * 78
 DASH = "-" * 78
@@ -130,7 +130,7 @@ async def _run_one_cycle_and_collect(
     symbol: str,
     seeded_enabled: bool,
 ) -> dict[str, Any]:
-    """Run ``run_paper_decision_loop`` as subprocess and collect EI output.
+    """Run ``run_decision_loop`` as subprocess and collect EI output.
 
     The script is invoked in ``--dry-run`` mode (no broker submit) with
     a single cycle (``--count 1``) and JSON output (``--output json``).

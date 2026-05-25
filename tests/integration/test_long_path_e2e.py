@@ -605,7 +605,7 @@ class TestLongPathE2EPostgres:
     ) -> None:
         """Seed postgres repos with broker_account, client, account, instrument.
 
-        Follows the same pattern as ``test_paper_loop_postgres.py``.
+        Follows the same pattern as ``test_decision_loop_postgres.py``.
         ``BrokerAccountEntity`` is seeded first due to FK constraint.
         """
         broker_account = BrokerAccountEntity(
