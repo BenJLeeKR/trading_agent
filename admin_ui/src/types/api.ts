@@ -91,6 +91,13 @@ export interface ReconciliationRunSummary {
   started_at: string;
   completed_at: string | null;
   mismatch_count: number;
+  isActive: boolean;
+  /** 분류된 실패 사유 label (historical failed run에만 설정) */
+  failure_reason?: string | null;
+  /** summary_json.error 원문 */
+  summary_error?: string | null;
+  /** 이 run에 연결된 order link 수 */
+  order_count?: number;
 }
 
 export interface BlockingLockStatus {
@@ -109,6 +116,9 @@ export interface ReconciliationSummary {
   recent_active_locks: BlockingLockStatus[];
   recent_incomplete_runs: ReconciliationRunSummary[];
   generated_at: string;
+  activeIssueCount: number;
+  historicalFailedCount: number;
+  recentActiveIssues: ReconciliationRunSummary[];
 }
 
 export interface AccountSummary {

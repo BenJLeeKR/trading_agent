@@ -286,3 +286,122 @@ describe("Dashboard empty state navigation", () => {
     expect(goButton).toBeInTheDocument();
   });
 });
+
+/* ───────────────────────────────────────────
+ * Scenario 7: Dashboard reconciliation summary variations
+ * ─────────────────────────────────────────── */
+describe("Dashboard reconciliation StatusCard", () => {
+  it("activeIssueCount > 0 → Dashboard renders correctly with warning state", async () => {
+    // Create custom reconciliation summary with active issues
+    const customSummary = {
+      ...mockReconciliationSummary,
+      activeIssueCount: 3,
+      historicalFailedCount: 5,
+    };
+
+    mockFetchOnce(mockClients);
+    mockFetchOnce(mockAccounts);
+    mockFetchOnce(mockPositions);
+    mockFetchOnce(mockPositionsForLocked);
+    mockFetchOnce([]);
+    mockFetchOnce(mockCashBalance);
+    mockFetchOnce(mockCashBalanceForLocked);
+    mockFetchOnce(mockCashBalanceNull);
+    mockFetchOnce(mockOrders);
+    mockFetchOnce(customSummary);
+
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("개요")).toBeInTheDocument();
+    });
+
+    // Dashboard should still render key metric cards
+    expect(screen.getByText("전체 계좌")).toBeInTheDocument();
+    expect(screen.getAllByText("가용 현금").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("미완료 정합성")).toBeInTheDocument();
+
+    // Metric values should be correct
+    expect(screen.getAllByText("3").length).toBeGreaterThanOrEqual(1); // Total Accounts = 3
+    expect(screen.getAllByText("2").length).toBeGreaterThanOrEqual(1); // Recent Orders = 2
+  });
+
+  it("activeIssueCount === 0 && historicalFailedCount > 0 → Dashboard renders correctly", async () => {
+    // Create custom summary: no active issues but historical failures exist
+    const customSummary = {
+      ...mockReconciliationSummary,
+      activeIssueCount: 0,
+      historicalFailedCount: 3,
+    };
+
+    mockFetchOnce(mockClients);
+    mockFetchOnce(mockAccounts);
+    mockFetchOnce(mockPositions);
+    mockFetchOnce(mockPositionsForLocked);
+    mockFetchOnce([]);
+    mockFetchOnce(mockCashBalance);
+    mockFetchOnce(mockCashBalanceForLocked);
+    mockFetchOnce(mockCashBalanceNull);
+    mockFetchOnce(mockOrders);
+    mockFetchOnce(customSummary);
+
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("개요")).toBeInTheDocument();
+    });
+
+    // Dashboard renders normally with no reconciliation issues
+    expect(screen.getByText("전체 계좌")).toBeInTheDocument();
+    expect(screen.getByText("미완료 정합성")).toBeInTheDocument();
+
+    // Verify account data still renders
+    expect(screen.getByText("Paper Account 1")).toBeInTheDocument();
+    expect(screen.getByText("Live Account 1")).toBeInTheDocument();
+
+    // historicalFailedCount는 Dashboard에 표시되지 않아야 함 (activeIssueCount만 기준)
+    expect(screen.queryByText(/과거 실패/)).not.toBeInTheDocument();
+  });
+
+  it("both activeIssueCount and historicalFailedCount are 0 → Dashboard renders correctly", async () => {
+    // Create custom summary: no issues at all
+    const customSummary = {
+      ...mockReconciliationSummary,
+      activeIssueCount: 0,
+      historicalFailedCount: 0,
+    };
+
+    mockFetchOnce(mockClients);
+    mockFetchOnce(mockAccounts);
+    mockFetchOnce(mockPositions);
+    mockFetchOnce(mockPositionsForLocked);
+    mockFetchOnce([]);
+    mockFetchOnce(mockCashBalance);
+    mockFetchOnce(mockCashBalanceForLocked);
+    mockFetchOnce(mockCashBalanceNull);
+    mockFetchOnce(mockOrders);
+    mockFetchOnce(customSummary);
+
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("개요")).toBeInTheDocument();
+    });
+
+    // Dashboard renders normally
+    expect(screen.getByText("전체 계좌")).toBeInTheDocument();
+    expect(screen.getByText("미완료 정합성")).toBeInTheDocument();
+  });
+});

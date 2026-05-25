@@ -92,6 +92,7 @@ export const mockReconciliationRuns: ReconciliationRunSummary[] = [
     started_at: "2026-05-05T00:00:00Z",
     completed_at: "2026-05-05T00:00:05Z",
     mismatch_count: 0,
+    isActive: false,
   },
 ];
 
@@ -110,6 +111,9 @@ export const mockLocks: BlockingLockStatus[] = [
 export const mockReconciliationSummary: ReconciliationSummary = {
   active_locks_count: 1,
   incomplete_recon_count: 1,
+  activeIssueCount: 0,
+  historicalFailedCount: 0,
+  recentActiveIssues: [],
   recent_active_locks: [
     {
       account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a1",
@@ -130,6 +134,7 @@ export const mockReconciliationSummary: ReconciliationSummary = {
       started_at: "2026-05-05T00:01:00Z",
       completed_at: null,
       mismatch_count: 1,
+      isActive: false,
     },
   ],
   generated_at: "2026-05-08T05:00:00Z",
@@ -375,6 +380,7 @@ export const mockIncompleteReconRuns: ReconciliationRunSummary[] = [
     started_at: "2026-05-05T00:00:00Z",
     completed_at: null,
     mismatch_count: 3,
+    isActive: false,
   },
 ];
 
@@ -396,6 +402,16 @@ export const mockTradeDecisions: PaginatedTradeDecisionsResponse = {
       max_order_value: 20000,
       confidence: 0.85,
       rationale_summary: "Strong earnings outlook for AAPL",
+      source_type: null,
+      order_request_id: null,
+      order_status: null,
+      execution_attempt_status: null,
+      latest_execution_attempt_id: null,
+      latest_stop_phase: null,
+      latest_stop_reason: null,
+      latest_completed_at: null,
+      latest_phase_count: null,
+      execution_status: null,
       decision_json: {
         event_bias: "Positive earnings surprise expected",
         event_conflict: false,
@@ -426,6 +442,16 @@ export const mockTradeDecisions: PaginatedTradeDecisionsResponse = {
       max_order_value: 0,
       confidence: 0.55,
       rationale_summary: "Market uncertainty — holding position",
+      source_type: null,
+      order_request_id: null,
+      order_status: null,
+      execution_attempt_status: null,
+      latest_execution_attempt_id: null,
+      latest_stop_phase: null,
+      latest_stop_reason: null,
+      latest_completed_at: null,
+      latest_phase_count: null,
+      execution_status: null,
       decision_json: {
         event_bias: "Neutral — no significant catalysts",
         event_conflict: true,
@@ -450,6 +476,16 @@ export const mockTradeDecisions: PaginatedTradeDecisionsResponse = {
       max_order_value: 22000,
       confidence: 0.25,
       rationale_summary: "Stop-loss triggered for MSFT",
+      source_type: null,
+      order_request_id: null,
+      order_status: null,
+      execution_attempt_status: null,
+      latest_execution_attempt_id: null,
+      latest_stop_phase: null,
+      latest_stop_reason: null,
+      latest_completed_at: null,
+      latest_phase_count: null,
+      execution_status: null,
       decision_json: {
         event_bias: "Bearish — competitive pressure",
         event_conflict: false,

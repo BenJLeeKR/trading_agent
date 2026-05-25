@@ -284,7 +284,7 @@ export default function OperationsAlertsView() {
         healthError: healthResult.error,
         orders: ordersResult.data,
         ordersError: ordersResult.error,
-        reconSummary: reconSummaryResult.data as { active_locks_count: number; incomplete_recon_count: number } | null,
+        reconSummary: reconSummaryResult.data as { active_locks_count: number; incomplete_recon_count: number; activeIssueCount: number; historicalFailedCount: number } | null,
         reconSummaryError: reconSummaryResult.error,
         agentRuns: agentRunsResult.data,
         agentRunsError: agentRunsResult.error,

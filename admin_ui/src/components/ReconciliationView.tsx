@@ -15,6 +15,7 @@ import {
   getBrokerOrders,
   getReconciliationRuns,
   getReconciliationLocks,
+  getReconciliationSummary,
 } from "../api/client";
 import { DataTable } from "./common/DataTable";
 import { StatusBadge } from "./common/StatusBadge";
@@ -48,6 +49,14 @@ function formatStatusLabel(status: string): string {
   return labels[status] ?? status;
 }
 
+/** 3-값 배지 렌더링: completed → ✅ 완료, started+isActive → 🔄 진행 중, active → 🔴 조치 필요, 그 외 → 📋 과거 이력 */
+function getStatusBadge(status: string, isActive: boolean) {
+  if (status === "completed") return { text: "✅ 완료", className: "text-green-600" };
+  if (status === "started") return { text: "🔄 진행 중", className: "text-blue-600" };
+  if (isActive) return { text: "🔴 조치 필요", className: "text-red-600 font-semibold" };
+  return { text: "📋 과거 이력", className: "text-gray-400" };
+}
+
 export default function ReconciliationView() {
   /* ── Reconciliation runs / locks state ──── */
   const [runs, setRuns] = useState<ReconciliationRunSummary[]>([]);
@@ -57,6 +66,12 @@ export default function ReconciliationView() {
   const [locksError, setLocksError] = useState<string | null>(null);
   const [runStatusFilter, setRunStatusFilter] = useState("all");
   const [selectedRun, setSelectedRun] = useState<ReconciliationRunSummary | null>(null);
+
+  /* ── Historical failed state ────────────── */
+  const [showHistoricalFailed, setShowHistoricalFailed] = useState(false);
+  const [historicalFailedRuns, setHistoricalFailedRuns] = useState<ReconciliationRunSummary[]>([]);
+  const [historicalFailedLoading, setHistoricalFailedLoading] = useState(false);
+  const [selectedHistoricalRun, setSelectedHistoricalRun] = useState<ReconciliationRunSummary | null>(null);
 
   /* ── Reconcile-required state ───────────── */
   const [reconcileOrders, setReconcileOrders] = useState<OrderSummary[]>([]);
@@ -69,13 +84,14 @@ export default function ReconciliationView() {
 
   /* ── Data loading ───────────────────────── */
 
-  // Load reconciliation runs + locks — individual error handling per section
+  // Load reconciliation runs (active only by default) + locks
   useEffect(() => {
     let cancelled = false;
 
     async function loadRuns() {
       try {
-        const runsData = await getReconciliationRuns();
+        // 기본 동작: active_only=true → active issue만 반환
+        const runsData = await getReconciliationRuns(undefined, false);
         if (!cancelled) setRuns(runsData);
       } catch (err) {
         if (!cancelled) {
@@ -99,13 +115,38 @@ export default function ReconciliationView() {
       setRunsLocksLoading(true);
       setRunsError(null);
       setLocksError(null);
-      // Runs and locks fetched independently — one failure does not block the other
       await Promise.all([loadRuns(), loadLocks()]);
       if (!cancelled) setRunsLocksLoading(false);
     })();
 
     return () => { cancelled = true; };
   }, []);
+
+  // Load historical failed runs when section is expanded
+  useEffect(() => {
+    if (!showHistoricalFailed) return;
+    let cancelled = false;
+
+    async function loadHistorical() {
+      setHistoricalFailedLoading(true);
+      try {
+        // include_historical=true 로 모든 run 조회 후 historical failed 만 필터링
+        const allRuns = await getReconciliationRuns(undefined, true);
+        if (!cancelled) {
+          setHistoricalFailedRuns(
+            allRuns.filter((r) => !r.isActive && r.status !== "completed"),
+          );
+        }
+      } catch {
+        if (!cancelled) setHistoricalFailedRuns([]);
+      } finally {
+        if (!cancelled) setHistoricalFailedLoading(false);
+      }
+    }
+
+    loadHistorical();
+    return () => { cancelled = true; };
+  }, [showHistoricalFailed]);
 
   // Load reconcile_required orders + positions
   useEffect(() => {
@@ -164,13 +205,12 @@ export default function ReconciliationView() {
     [locks],
   );
 
-  const filteredRuns = useMemo(
-    () =>
-      runStatusFilter === "all"
-        ? runs
-        : runs.filter((r) => r.status === runStatusFilter),
-    [runs, runStatusFilter],
-  );
+  const filteredRuns = useMemo(() => {
+    let result = runStatusFilter === "all"
+      ? runs
+      : runs.filter((r) => r.status === runStatusFilter);
+    return result;
+  }, [runs, runStatusFilter]);
 
   /** Reconcile-required cases derived from orders + positions */
   const reconcileCases = useMemo(
@@ -225,6 +265,18 @@ export default function ReconciliationView() {
     }
   }
 
+  /* ── Derived: active issues ─────────────── */
+
+  const recentActiveIssues = useMemo(
+    () => runs.filter((r) => r.isActive),
+    [runs],
+  );
+
+  const historicalFailedCount = useMemo(
+    () => runs.filter((r) => !r.isActive && r.status !== "completed").length,
+    [runs],
+  );
+
   /* ── Columns ────────────────────────────── */
 
   const runColumns: Column<ReconciliationRunSummary>[] = [
@@ -246,6 +298,67 @@ export default function ReconciliationView() {
       render: (r) => <StatusBadge status={r.status} />,
     },
     { key: "mismatch_count", header: "Mismatch Count" },
+    {
+      key: "isActive",
+      header: "유형",
+      render: (r) => {
+        const badge = getStatusBadge(r.status, r.isActive);
+        return (
+          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${badge.className}`}>
+            {badge.text}
+          </span>
+        );
+      },
+    },
+  ];
+
+  /** Historical failed run 전용 컬럼 */
+  const historicalColumns: Column<ReconciliationRunSummary>[] = [
+    {
+      key: "status",
+      header: "상태",
+      render: (r) => <StatusBadge status={r.status} />,
+    },
+    {
+      key: "completed_at",
+      header: "완료 시각",
+      render: (r) => (r.completed_at ? formatKstDateTime(r.completed_at) : "—"),
+    },
+    {
+      key: "failure_reason",
+      header: "실패 사유",
+      render: (r) => (
+        <span
+          className="text-sm text-[#64748b] max-w-[300px] truncate block"
+          title={r.failure_reason ?? ""}
+        >
+          {r.failure_reason ?? "—"}
+        </span>
+      ),
+    },
+    {
+      key: "mismatch_count",
+      header: "불일치",
+      render: (r) => r.mismatch_count,
+    },
+    {
+      key: "summary_error",
+      header: "",
+      render: (r) => (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setSelectedHistoricalRun(
+              selectedHistoricalRun?.reconciliation_run_id === r.reconciliation_run_id ? null : r,
+            );
+          }}
+          className="text-xs text-[#3b82f6] hover:text-[#2563eb] font-medium"
+        >
+          상세 보기
+        </button>
+      ),
+    },
   ];
 
   const reconcileColumns: Column<ReconcileRequiredCase>[] = [
@@ -367,7 +480,75 @@ export default function ReconciliationView() {
             />
           )}
 
-          {/* ── Active Locks Section ────────────── */}
+          {/* ── 1. Active Issues Section ───────────── */}
+          {recentActiveIssues.length > 0 ? (
+            <div className="space-y-3">
+              <h2 className="text-lg font-semibold text-[#0f172a]">
+                🔴 조치 필요한 정합성 문제 ({recentActiveIssues.length}건)
+              </h2>
+              <p className="text-sm text-gray-500 mb-2">
+                이 정합성 run은 아직 해결되지 않은 주문과 연결되어 있습니다. 조치가 필요합니다.
+              </p>
+              <div className="bg-white rounded-xl border border-[#fca5a5] overflow-hidden">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-[#fee2e2] bg-[#fef2f2]">
+                      {["Run ID", "시작", "Status", "불일치 건수", ""].map((h) => (
+                        <th
+                          key={h}
+                          className="px-4 py-2.5 text-left text-xs font-medium text-[#991b1b] whitespace-nowrap"
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#fee2e2]">
+                    {recentActiveIssues.map((run) => (
+                      <tr key={run.reconciliation_run_id} className="hover:bg-[#fef2f2]">
+                        <td className="px-4 py-2.5">
+                          <code className="text-xs text-[#991b1b]">{run.reconciliation_run_id.slice(0, 8)}…</code>
+                        </td>
+                        <td className="px-4 py-2.5 text-sm text-[#991b1b]">
+                          {formatKstDateTime(run.started_at)}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <StatusBadge status={run.status} />
+                        </td>
+                        <td className={`px-4 py-2.5 text-sm font-semibold ${run.mismatch_count > 0 ? "text-[#dc2626]" : "text-[#991b1b]"}`}>
+                          {run.mismatch_count}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSelectedRun(
+                                selectedRun?.reconciliation_run_id === run.reconciliation_run_id ? null : run,
+                              )
+                            }
+                            className="text-xs text-[#3b82f6] hover:text-[#2563eb] font-medium"
+                          >
+                            상세 보기
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-green-50 border border-green-200 rounded p-3 mb-4">
+              <p className="text-green-700">✅ 현재 해결되지 않은 정합성 문제가 없습니다.</p>
+              {historicalFailedCount > 0 && (
+                <p className="text-green-600 text-sm mt-1">
+                  과거 실패 이력 {historicalFailedCount}건은 아래에서 확인할 수 있습니다.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* ── 2. Active Locks Section ────────────── */}
           <div className="space-y-3">
             <h2 className="text-lg font-semibold text-[#0f172a]">활성 잠금</h2>
             {locks.length === 0 ? (
@@ -419,7 +600,153 @@ export default function ReconciliationView() {
             )}
           </div>
 
-          {/* ── Reconciliation Runs Section ─────── */}
+          {/* ── 3. Historical Failed Section (collapsible) ── */}
+          <div className="space-y-3">
+            <button
+              type="button"
+              onClick={() => setShowHistoricalFailed(!showHistoricalFailed)}
+              className="flex items-center gap-2 w-full text-left"
+            >
+              <span className="text-lg font-semibold text-[#0f172a]">
+                {showHistoricalFailed ? "▼" : "▶"}{" "}
+                📋 과거 실패 이력 ({historicalFailedCount}건)
+              </span>
+            </button>
+
+            {showHistoricalFailed && (
+              <>
+                {historicalFailedLoading ? (
+                  <LoadingSpinner text="과거 실패 이력 로딩 중..." />
+                ) : historicalFailedRuns.length === 0 ? (
+                  <div className="bg-white rounded-xl border border-[#e2e8f0] p-8 text-center">
+                    <p className="text-sm text-[#94a3b8]">과거 실패 이력이 없습니다.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-12 gap-6">
+                    <div className={selectedHistoricalRun ? "col-span-7" : "col-span-12"}>
+                      <div className="bg-white rounded-xl border border-[#e2e8f0] overflow-hidden">
+                        <table className="w-full">
+                          <thead>
+                            <tr className="border-b border-[#e2e8f0] bg-[#f8fafc]">
+                              {["상태", "완료 시각", "실패 사유", "불일치", ""].map((h) => (
+                                <th
+                                  key={h}
+                                  className="px-4 py-2.5 text-left text-xs font-medium text-[#64748b] whitespace-nowrap"
+                                >
+                                  {h}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[#e2e8f0]">
+                            {historicalFailedRuns.map((run) => (
+                              <tr key={run.reconciliation_run_id} className="hover:bg-[#f8fafc]">
+                                <td className="px-4 py-2.5">
+                                  <StatusBadge status={run.status} />
+                                </td>
+                                <td className="px-4 py-2.5 text-sm text-[#64748b]">
+                                  {run.completed_at ? formatKstDateTime(run.completed_at) : "—"}
+                                </td>
+                                <td className="px-4 py-2.5">
+                                  <span
+                                    className="text-sm text-[#64748b] max-w-[300px] truncate block"
+                                    title={run.failure_reason ?? ""}
+                                  >
+                                    {run.failure_reason ?? "—"}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-2.5 text-sm text-[#64748b]">
+                                  {run.mismatch_count}
+                                </td>
+                                <td className="px-4 py-2.5">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setSelectedHistoricalRun(
+                                        selectedHistoricalRun?.reconciliation_run_id === run.reconciliation_run_id
+                                          ? null
+                                          : run,
+                                      )
+                                    }
+                                    className="text-xs text-[#3b82f6] hover:text-[#2563eb] font-medium"
+                                  >
+                                    상세 보기
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {/* Historical Run Detail Panel */}
+                    {selectedHistoricalRun && (
+                      <div className="col-span-5 space-y-4">
+                        <div className="bg-white rounded-xl border border-[#e2e8f0] p-5">
+                          <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-lg font-semibold text-[#0f172a]">실행 상세</h3>
+                            <button
+                              onClick={() => setSelectedHistoricalRun(null)}
+                              className="p-1 text-[#94a3b8] hover:text-[#64748b] transition-colors"
+                            >
+                              <X className="h-5 w-5" />
+                            </button>
+                          </div>
+                          <dl className="space-y-3">
+                            <div className="flex justify-between">
+                              <dt className="text-sm text-[#64748b]">실행 ID</dt>
+                              <dd className="text-sm font-mono text-[#0f172a]">{selectedHistoricalRun.reconciliation_run_id}</dd>
+                            </div>
+                            <div className="flex justify-between">
+                              <dt className="text-sm text-[#64748b]">상태</dt>
+                              <dd><StatusBadge status={selectedHistoricalRun.status} /></dd>
+                            </div>
+                            <div className="flex justify-between">
+                              <dt className="text-sm text-[#64748b]">실패 사유</dt>
+                              <dd className="text-sm text-[#0f172a] font-medium">{selectedHistoricalRun.failure_reason ?? "—"}</dd>
+                            </div>
+                            <div className="flex justify-between">
+                              <dt className="text-sm text-[#64748b]">완료 시각</dt>
+                              <dd className="text-sm text-[#0f172a]">
+                                {selectedHistoricalRun.completed_at ? formatKstDateTime(selectedHistoricalRun.completed_at) : "—"}
+                              </dd>
+                            </div>
+                            <div className="flex justify-between">
+                              <dt className="text-sm text-[#64748b]">불일치 건수</dt>
+                              <dd className={`text-sm font-semibold ${selectedHistoricalRun.mismatch_count > 0 ? "text-[#dc2626]" : "text-[#0f172a]"}`}>
+                                {selectedHistoricalRun.mismatch_count}
+                              </dd>
+                            </div>
+                          </dl>
+
+                          {/* 상세 오류 메시지 */}
+                          {selectedHistoricalRun.summary_error && (
+                            <div className="mt-4 pt-4 border-t border-[#e2e8f0]">
+                              <h4 className="text-xs font-medium text-[#64748b] mb-1">상세 오류 메시지</h4>
+                              <pre className="text-xs text-[#991b1b] bg-[#fef2f2] p-2 rounded whitespace-pre-wrap">
+                                {selectedHistoricalRun.summary_error}
+                              </pre>
+                            </div>
+                          )}
+
+                          {/* 기록용 안내 */}
+                          <div className="mt-4 pt-4 border-t border-[#e2e8f0] flex items-start gap-2">
+                            <span className="text-sm text-gray-400">📋</span>
+                            <span className="text-sm text-gray-400">
+                              이 run의 연결 주문은 모두 정리되었습니다. 감사 이력으로만 참고하세요.
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* ── 4. All Runs Section (with filter) ── */}
           <div className="space-y-3">
             <h2 className="text-lg font-semibold text-[#0f172a]">정합성 점검 실행</h2>
 
@@ -444,6 +771,11 @@ export default function ReconciliationView() {
               ))}
             </div>
 
+            {/* Runs table 상단 설명 */}
+            <p className="text-xs text-gray-400 mb-2">
+              🔴 Active: 조치 필요 / 📋 과거 이력: 참고용 (연결 주문 정리됨) / ✅ 완료: 정상
+            </p>
+
             {/* Runs table + detail side-by-side */}
             <div className="grid grid-cols-12 gap-6">
               <div className={selectedRun ? "col-span-7" : "col-span-12"}>
@@ -457,6 +789,9 @@ export default function ReconciliationView() {
                     )
                   }
                   selectedId={selectedRun?.reconciliation_run_id}
+                  rowClassName={(row) =>
+                    !row.isActive && row.status !== "completed" ? "opacity-50" : ""
+                  }
                   emptyMessage="정합성 점검 실행 기록이 없습니다."
                 />
               </div>
@@ -513,6 +848,25 @@ export default function ReconciliationView() {
                       <div className="mt-4 pt-4 border-t border-[#e2e8f0] flex items-center gap-2">
                         <AlertTriangle className="h-4 w-4 text-[#d97706]" />
                         <span className="text-sm text-[#d97706]">불일치 항목을 검토해야 합니다.</span>
+                      </div>
+                    )}
+
+                    {selectedRun.summary_error && (
+                      <div className="mt-4 pt-4 border-t border-[#e2e8f0]">
+                        <h4 className="text-xs font-medium text-[#64748b] mb-1">오류 메시지</h4>
+                        <pre className="text-xs text-[#991b1b] bg-[#fef2f2] p-2 rounded whitespace-pre-wrap">
+                          {selectedRun.summary_error}
+                        </pre>
+                      </div>
+                    )}
+
+                    {/* Historical failed 설명 */}
+                    {!selectedRun.isActive && selectedRun.status !== "completed" && (
+                      <div className="mt-4 pt-4 border-t border-[#e2e8f0] flex items-start gap-2">
+                        <span className="text-sm text-gray-400">📋</span>
+                        <span className="text-sm text-gray-400">
+                          이 run의 연결 주문은 모두 정리되었습니다. 감사 이력으로만 참고하세요.
+                        </span>
                       </div>
                     )}
                   </div>
@@ -748,4 +1102,3 @@ function BrokerInfoPanel({
     </div>
   );
 }
-

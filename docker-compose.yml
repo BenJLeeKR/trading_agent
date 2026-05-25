@@ -185,66 +185,6 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # ---- KIS Snapshot Sync (Manual/Debug Only) --------------------------------
-  #  profiles: ["debug"] → NOT started by `docker compose up -d`
-  #  Use: docker compose run --rm snapshot-sync
-  #       docker compose run --rm snapshot-sync python3 scripts/run_snapshot_sync_loop.py --after-hours
-  # ─────────────────────────────────────────────────────────────────
-  snapshot-sync:
-    profiles: ["debug"]
-    build: .
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      TZ: "Asia/Seoul"
-      DATABASE_HOST: db
-      DATABASE_PORT: "5432"
-      DATABASE_NAME: "${DATABASE_NAME:-trading}"
-      DATABASE_USER: "${DATABASE_USER:-trading}"
-      DATABASE_PASSWORD: "${DATABASE_PASSWORD:-trading}"
-      DATABASE_SCHEMA: "${DATABASE_SCHEMA:-trading}"
-      APP_ENV: "${APP_ENV:-paper}"
-      APP_TIMEZONE: "${APP_TIMEZONE:-Asia/Seoul}"
-      # KIS env
-      KIS_ENV: "${KIS_ENV:-paper}"
-      KIS_APP_KEY: "${KIS_APP_KEY:-}"
-      KIS_APP_SECRET: "${KIS_APP_SECRET:-}"
-      KIS_ACCOUNT_NO: "${KIS_ACCOUNT_NO:-}"
-      KIS_BASE_URL: "${KIS_BASE_URL:-}"
-      KIS_WS_URL: "${KIS_WS_URL:-}"
-      KIS_ACCOUNT_PRODUCT_CODE: "${KIS_ACCOUNT_PRODUCT_CODE:-01}"
-      KIS_REAL_REST_RPS: "${KIS_REAL_REST_RPS:-18}"
-      KIS_PAPER_REST_RPS: "${KIS_PAPER_REST_RPS:-1}"
-      # Dev token cache — share host cache to avoid EGW00133 rate limit
-      KIS_DEV_TOKEN_CACHE_ENABLED: "true"
-      KIS_DEV_TOKEN_CACHE_PATH: ".cache/kis_token.json"
-      # Legacy fallback names (still supported)
-      KIS_API_KEY: "${KIS_API_KEY:-}"
-      KIS_API_SECRET: "${KIS_API_SECRET:-}"
-      KIS_ACCOUNT_NUMBER: "${KIS_ACCOUNT_NUMBER:-}"
-      # P1: Live-info client (076 holiday / market session gate)
-      KIS_LIVE_INFO_ENABLED: "${KIS_LIVE_INFO_ENABLED:-false}"
-      KIS_LIVE_INFO_APP_KEY: "${KIS_LIVE_INFO_APP_KEY:-}"
-      KIS_LIVE_INFO_APP_SECRET: "${KIS_LIVE_INFO_APP_SECRET:-}"
-      KIS_LIVE_INFO_BASE_URL: "${KIS_LIVE_INFO_BASE_URL:-}"
-      KIS_LIVE_INFO_WS_URL: "${KIS_LIVE_INFO_WS_URL:-}"
-      # P2: Live-info token cache (WebSocket approval key persistence)
-      KIS_LIVE_TOKEN_CACHE_ENABLED: "${KIS_LIVE_TOKEN_CACHE_ENABLED:-true}"
-      KIS_LIVE_TOKEN_CACHE_PATH: "${KIS_LIVE_TOKEN_CACHE_PATH:-.cache/kis_live_token.json}"
-      # Sync interval (seconds, default 300 = 5 minutes)
-      KIS_SNAPSHOT_SYNC_INTERVAL_SECONDS: "${KIS_SNAPSHOT_SYNC_INTERVAL_SECONDS:-300}"
-    volumes:
-      - ./src:/app/src
-      - ./scripts:/app/scripts
-      # Share KIS dev token cache to avoid 1-per-minute oauth2 rate limit
-      - ./.cache:/app/.cache
-    command:
-      - python3
-      - scripts/run_snapshot_sync_loop.py
-      - "--after-hours"
-    restart: "no"
-
   # ---- Operations Scheduler --------------------------------------------------
   # Primary orchestration service for the trading day.
   # Runs run_ops_scheduler.py as a long-lived container with

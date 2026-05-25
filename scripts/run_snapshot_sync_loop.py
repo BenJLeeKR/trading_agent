@@ -15,7 +15,7 @@ Usage
 
 Designed to be run either:
 
-* manually via ``docker compose run snapshot-sync`` for debug/isolation, or
+* manually as a direct script invocation for debug/isolation, or
 * as a one-shot subprocess launched by ``ops-scheduler`` during pre-market,
   intraday, and after-hours phases.
 

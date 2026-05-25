@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 from agent_trading.domain.entities import (
@@ -763,6 +763,31 @@ class ReconciliationRepository(Protocol):
         Sequence[ReconciliationRunEntity]
             Runs ordered by ``started_at`` ASC (oldest first).
         """
+        ...
+
+    # -- Plan: Active/historical run 판별 --
+
+    async def list_all_runs_with_activity(
+        self,
+        limit: int = 50,
+        active_only: bool = True,
+        include_historical: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Reconciliation run 목록을 order activity 정보와 함께 조회.
+
+        각 run에 ``is_active`` 플래그를 포함하여 반환.
+
+        ``active_only=True`` (기본값): ``is_active=true`` 인 run만 반환.
+        ``include_historical=True`` 일 때만 ``is_active=false`` 인
+        historical failed/partial run 을 결과에 포함한다.
+
+        ``include_historical`` 은 ``active_only`` 보다 우선하지 않는다.
+        ``active_only=True`` 이면 ``include_historical`` 과 관계없이 active run 만 반환.
+        """
+        ...
+
+    async def get_historical_failed_run_count(self) -> int:
+        """``is_active=false + status IN ('failed','partial')`` 조건의 run 수 반환."""
         ...
 
 

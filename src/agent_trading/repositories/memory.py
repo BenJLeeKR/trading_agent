@@ -883,6 +883,61 @@ class InMemoryReconciliationRepository:
             )
         return result
 
+    # -- Plan: Active/historical run 판별 --
+
+    async def list_all_runs_with_activity(
+        self,
+        limit: int = 50,
+        active_only: bool = True,
+        include_historical: bool = False,
+    ) -> list[dict[str, Any]]:
+        """In-memory 스텁: reconciliation run 목록을 active 여부와 함께 반환.
+
+        ``active_only=True`` (기본값): ``is_active=true`` 인 run만 반환.
+        ``include_historical=True`` 일 때만 ``is_active=false`` 인
+        historical failed/partial run 을 결과에 포함한다.
+        """
+        rows: list[dict[str, Any]] = []
+        sorted_runs = sorted(
+            self._runs.values(), key=lambda r: r.started_at, reverse=True
+        )[:limit]
+        for run in sorted_runs:
+            is_active = run.status == "started" or (
+                run.status in ("failed", "partial") and False
+            )
+            rows.append({
+                "reconciliation_run_id": run.reconciliation_run_id,
+                "account_id": run.account_id,
+                "trigger_type": run.trigger_type,
+                "status": run.status,
+                "started_at": run.started_at,
+                "completed_at": run.completed_at,
+                "mismatch_count": run.mismatch_count,
+                "created_at": run.created_at,
+                "is_active": is_active,
+                "summary_json": None,
+            })
+        if active_only:
+            rows = [r for r in rows if r["is_active"]]
+        elif not include_historical:
+            # active + completed/started 만 보여주고 historical failed 는 숨김
+            rows = [
+                r for r in rows
+                if r["is_active"]
+                or r["status"] in ("started", "completed")
+            ]
+        return rows
+
+    async def get_historical_failed_run_count(self) -> int:
+        """``is_active=false + status IN ('failed','partial')`` 조건의 run 수 반환."""
+        count = 0
+        for run in self._runs.values():
+            if run.status not in ("failed", "partial"):
+                continue
+            # is_active=false (order link 없음으로 간주)
+            count += 1
+        return count
+
     # -- In-memory blocking lock support (for tests) --
 
     def _lock_key(

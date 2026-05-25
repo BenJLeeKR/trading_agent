@@ -192,6 +192,14 @@ class ReconciliationRunSummary(BaseModel):
     started_at: datetime
     completed_at: datetime | None = None
     mismatch_count: int = 0
+    is_active: bool = False
+    """``True`` if running, or failed/partial with unresolved (non-terminal) orders."""
+    failure_reason: str | None = None
+    """분류된 실패 사유 label (historical failed run에만 설정)."""
+    summary_error: str | None = None
+    """``summary_json.error`` 원문 (historical failed run의 상세 오류 메시지)."""
+    order_count: int = 0
+    """이 run에 연결된 order link 수."""
 
 
 class SnapshotSyncRunSummary(BaseModel):
@@ -273,6 +281,12 @@ class ReconciliationSummary(BaseModel):
     recent_active_locks: list[BlockingLockStatus]
     recent_incomplete_runs: list[ReconciliationRunSummary]
     generated_at: datetime
+    active_issue_count: int = 0
+    """Number of currently active reconciliation issues (running + unresolved failed/partial)."""
+    historical_failed_count: int = 0
+    """Number of historical failed/partial runs that are no longer active (is_active=false)."""
+    recent_active_issues: list[ReconciliationRunSummary] = Field(default_factory=list)
+    """Recent active-issue runs (running or unresolved failed/partial)."""
 
 
 class DecisionContextDetail(BaseModel):

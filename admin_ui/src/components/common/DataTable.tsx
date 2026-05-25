@@ -19,6 +19,9 @@ interface DataTableProps<T> {
   emptyMessage?: string;
   compact?: boolean;
 
+  /** Optional per-row class name — receives the row data, returns a CSS class string */
+  rowClassName?: (row: T) => string;
+
   // Pagination props (optional — when provided, show footer)
   currentPage?: number;
   pageSize?: number;
@@ -65,6 +68,7 @@ export function DataTable<T extends Record<string, any>>({
   isLoading,
   emptyMessage = "데이터가 없습니다.",
   compact = false,
+  rowClassName,
   currentPage,
   pageSize = 20,
   totalItems,
@@ -131,7 +135,8 @@ export function DataTable<T extends Record<string, any>>({
                   className={cn(
                     "transition-colors",
                     onRowClick && "cursor-pointer hover:bg-[#f8fafc]",
-                    isSelected && "bg-[#eff6ff]"
+                    isSelected && "bg-[#eff6ff]",
+                    rowClassName?.(row)
                   )}
                 >
                   {columns.map((col) => {

@@ -23,7 +23,7 @@ export interface AlertRuleInput {
   healthError: boolean;
   orders: OrderSummary[];
   ordersError: boolean;
-  reconSummary: { active_locks_count: number; incomplete_recon_count: number } | null;
+  reconSummary: { active_locks_count: number; incomplete_recon_count: number; activeIssueCount: number; historicalFailedCount: number } | null;
   reconSummaryError: boolean;
   agentRuns: { status?: string }[];
   agentRunsError: boolean;
@@ -159,7 +159,21 @@ export function deriveAlerts(input: AlertRuleInput): AlertItem[] {
     }
   }
 
-  // Rule 6: 활성 락 존재 (주의)
+  // Rule 6a: 활성 정합성 문제 (긴급) — ALT-RECON-002
+  if (!input.reconSummaryError && input.reconSummary) {
+    if (input.reconSummary.activeIssueCount > 0) {
+      alerts.push({
+        id: "ALT-RECON-002",
+        level: "긴급",
+        title: "정합성 문제 발생",
+        description: `${input.reconSummary.activeIssueCount}건의 정합성 run이 아직 해결되지 않았습니다`,
+        time: now,
+        status: "OPEN",
+      });
+    }
+  }
+
+  // Rule 6b: 활성 락 존재 (주의)
   if (!input.reconSummaryError && input.reconSummary) {
     if (input.reconSummary.active_locks_count > 0) {
       alerts.push({

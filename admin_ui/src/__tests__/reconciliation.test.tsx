@@ -12,6 +12,7 @@ import {
   mockBrokerOrderForReconcile,
   RECONCILE_ACCOUNT_ID,
   mockReconciliationRuns,
+  mockReconciliationSummary,
   mockLocks,
 } from "./test-utils/fixtures";
 import type {
@@ -307,6 +308,492 @@ describe("ReconciliationView reconcile_required section", () => {
     await waitFor(() => {
       expect(screen.getByText("KIS")).toBeTruthy();
       expect(screen.getByText("KIS-NATIVE-001")).toBeTruthy();
+    });
+  });
+});
+
+/* ───────────────────────────────────────────
+ * UI Policy Finalization: ReconciliationView
+ * ─────────────────────────────────────────── */
+
+/* ── Helper: dummy run factory ── */
+function makeRun(
+  overrides: Partial<ReconciliationRunSummary>,
+): ReconciliationRunSummary {
+  return {
+    reconciliation_run_id: "rrrrrrrr-rrrr-rrrr-rrrr-rrrrrrrrrr01",
+    account_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00a1",
+    trigger_type: "manual",
+    status: "completed",
+    started_at: "2026-05-05T00:00:00Z",
+    completed_at: "2026-05-05T00:00:05Z",
+    mismatch_count: 0,
+    isActive: false,
+    failure_reason: null,
+    summary_error: null,
+    order_count: 0,
+    ...overrides,
+  };
+}
+
+describe("ReconciliationView getStatusBadge", () => {
+  it("completed + isActive=false → ✅ 완료, text-green-600", async () => {
+    const runs = [makeRun({ status: "completed", isActive: false })];
+    vi.spyOn(client, "getReconciliationRuns").mockResolvedValue(runs);
+    vi.spyOn(client, "getReconciliationLocks").mockResolvedValue([]);
+    vi.spyOn(client, "getOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getPositions").mockResolvedValue([]);
+    vi.spyOn(client, "getAccounts").mockResolvedValue([]);
+    vi.spyOn(client, "getBrokerOrders").mockResolvedValue([]);
+
+    const { container } = render(<ReconciliationView />);
+
+    await waitFor(() => {
+      expect(screen.getByText("✅ 완료")).toBeTruthy();
+    });
+
+    const badge = container.querySelector(".text-green-600");
+    expect(badge).toBeTruthy();
+    expect(badge?.textContent).toContain("✅ 완료");
+  });
+
+  it("started + isActive=false → 🔄 진행 중, text-blue-600", async () => {
+    const runs = [makeRun({ status: "started", isActive: false })];
+    vi.spyOn(client, "getReconciliationRuns").mockResolvedValue(runs);
+    vi.spyOn(client, "getReconciliationLocks").mockResolvedValue([]);
+    vi.spyOn(client, "getOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getPositions").mockResolvedValue([]);
+    vi.spyOn(client, "getAccounts").mockResolvedValue([]);
+    vi.spyOn(client, "getBrokerOrders").mockResolvedValue([]);
+
+    const { container } = render(<ReconciliationView />);
+
+    await waitFor(() => {
+      expect(screen.getByText("🔄 진행 중")).toBeTruthy();
+    });
+
+    const badge = container.querySelector(".text-blue-600");
+    expect(badge).toBeTruthy();
+    expect(badge?.textContent).toContain("🔄 진행 중");
+  });
+
+  it("failed + isActive=true → 🔴 조치 필요, text-red-600", async () => {
+    const runs = [makeRun({ status: "failed", isActive: true })];
+    vi.spyOn(client, "getReconciliationRuns").mockResolvedValue(runs);
+    vi.spyOn(client, "getReconciliationLocks").mockResolvedValue([]);
+    vi.spyOn(client, "getOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getPositions").mockResolvedValue([]);
+    vi.spyOn(client, "getAccounts").mockResolvedValue([]);
+    vi.spyOn(client, "getBrokerOrders").mockResolvedValue([]);
+
+    const { container } = render(<ReconciliationView />);
+
+    await waitFor(() => {
+      expect(screen.getByText("🔴 조치 필요")).toBeTruthy();
+    });
+
+    const badge = container.querySelector(".text-red-600");
+    expect(badge).toBeTruthy();
+    expect(badge?.textContent).toContain("🔴 조치 필요");
+  });
+
+  it("failed + isActive=false → 📋 과거 이력, text-gray-400", async () => {
+    const runs = [makeRun({ status: "failed", isActive: false })];
+    vi.spyOn(client, "getReconciliationRuns").mockResolvedValue(runs);
+    vi.spyOn(client, "getReconciliationLocks").mockResolvedValue([]);
+    vi.spyOn(client, "getOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getPositions").mockResolvedValue([]);
+    vi.spyOn(client, "getAccounts").mockResolvedValue([]);
+    vi.spyOn(client, "getBrokerOrders").mockResolvedValue([]);
+
+    const { container } = render(<ReconciliationView />);
+
+    await waitFor(() => {
+      expect(screen.getByText("📋 과거 이력")).toBeTruthy();
+    });
+
+    const badge = container.querySelector(".text-gray-400");
+    expect(badge).toBeTruthy();
+    expect(badge?.textContent).toContain("📋 과거 이력");
+  });
+
+  it("partial + isActive=true → 🔴 조치 필요", async () => {
+    const runs = [makeRun({ status: "partial", isActive: true })];
+    vi.spyOn(client, "getReconciliationRuns").mockResolvedValue(runs);
+    vi.spyOn(client, "getReconciliationLocks").mockResolvedValue([]);
+    vi.spyOn(client, "getOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getPositions").mockResolvedValue([]);
+    vi.spyOn(client, "getAccounts").mockResolvedValue([]);
+    vi.spyOn(client, "getBrokerOrders").mockResolvedValue([]);
+
+    render(<ReconciliationView />);
+
+    await waitFor(() => {
+      expect(screen.getByText("🔴 조치 필요")).toBeTruthy();
+    });
+  });
+
+  it("partial + isActive=false → 📋 과거 이력", async () => {
+    const runs = [makeRun({ status: "partial", isActive: false })];
+    vi.spyOn(client, "getReconciliationRuns").mockResolvedValue(runs);
+    vi.spyOn(client, "getReconciliationLocks").mockResolvedValue([]);
+    vi.spyOn(client, "getOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getPositions").mockResolvedValue([]);
+    vi.spyOn(client, "getAccounts").mockResolvedValue([]);
+    vi.spyOn(client, "getBrokerOrders").mockResolvedValue([]);
+
+    render(<ReconciliationView />);
+
+    await waitFor(() => {
+      expect(screen.getByText("📋 과거 이력")).toBeTruthy();
+    });
+  });
+});
+
+describe("Active Issues section", () => {
+  it("shows active issue warning when active issues exist", async () => {
+    const activeRun = makeRun({
+      status: "failed",
+      isActive: true,
+      mismatch_count: 2,
+    });
+    vi.spyOn(client, "getReconciliationRuns").mockResolvedValue([activeRun]);
+    vi.spyOn(client, "getReconciliationLocks").mockResolvedValue([]);
+    vi.spyOn(client, "getOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getPositions").mockResolvedValue([]);
+    vi.spyOn(client, "getAccounts").mockResolvedValue([]);
+    vi.spyOn(client, "getBrokerOrders").mockResolvedValue([]);
+
+    render(<ReconciliationView />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/정합성 run/),
+      ).toBeTruthy();
+      expect(
+        screen.getByText(/해결되지 않은 주문/),
+      ).toBeTruthy();
+    });
+  });
+
+  it("shows all-clear message when no active issues exist", async () => {
+    const completedRun = makeRun({ status: "completed", isActive: false });
+    vi.spyOn(client, "getReconciliationRuns").mockResolvedValue([completedRun]);
+    vi.spyOn(client, "getReconciliationLocks").mockResolvedValue([]);
+    vi.spyOn(client, "getOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getPositions").mockResolvedValue([]);
+    vi.spyOn(client, "getAccounts").mockResolvedValue([]);
+    vi.spyOn(client, "getBrokerOrders").mockResolvedValue([]);
+
+    render(<ReconciliationView />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("✅ 현재 해결되지 않은 정합성 문제가 없습니다."),
+      ).toBeTruthy();
+    });
+  });
+
+  it("shows isActive badge in active issues list", async () => {
+    const activeRun = makeRun({
+      status: "failed",
+      isActive: true,
+      mismatch_count: 1,
+    });
+    vi.spyOn(client, "getReconciliationRuns").mockResolvedValue([activeRun]);
+    vi.spyOn(client, "getReconciliationLocks").mockResolvedValue([]);
+    vi.spyOn(client, "getOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getPositions").mockResolvedValue([]);
+    vi.spyOn(client, "getAccounts").mockResolvedValue([]);
+    vi.spyOn(client, "getBrokerOrders").mockResolvedValue([]);
+
+    render(<ReconciliationView />);
+
+    await waitFor(() => {
+      // The active issue section heading should show the count
+      expect(
+        screen.getByText(/조치 필요한 정합성 문제/),
+      ).toBeTruthy();
+    });
+  });
+});
+
+describe("Historical row dimming", () => {
+  it("applies opacity-50 to historical active runs via rowClassName", async () => {
+    const historicalRun = makeRun({
+      status: "failed",
+      isActive: false,
+    });
+    const completedRun = makeRun({
+      reconciliation_run_id: "rrrrrrrr-rrrr-rrrr-rrrr-rrrrrrrrrr99",
+      status: "completed",
+      isActive: false,
+    });
+    vi.spyOn(client, "getReconciliationRuns").mockResolvedValue([
+      historicalRun,
+      completedRun,
+    ]);
+    vi.spyOn(client, "getReconciliationLocks").mockResolvedValue([]);
+    vi.spyOn(client, "getOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getPositions").mockResolvedValue([]);
+    vi.spyOn(client, "getAccounts").mockResolvedValue([]);
+    vi.spyOn(client, "getBrokerOrders").mockResolvedValue([]);
+
+    render(<ReconciliationView />);
+
+    await waitFor(() => {
+      expect(screen.getByText("📋 과거 이력")).toBeTruthy();
+    });
+
+    // The DataTable applies rowClassName — check that at least one row has opacity-50
+    const dimmedRows = document.querySelectorAll("tr.opacity-50");
+    expect(dimmedRows.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("does not apply opacity-50 to completed runs", async () => {
+    const completedRun = makeRun({ status: "completed", isActive: false });
+    vi.spyOn(client, "getReconciliationRuns").mockResolvedValue([completedRun]);
+    vi.spyOn(client, "getReconciliationLocks").mockResolvedValue([]);
+    vi.spyOn(client, "getOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getPositions").mockResolvedValue([]);
+    vi.spyOn(client, "getAccounts").mockResolvedValue([]);
+    vi.spyOn(client, "getBrokerOrders").mockResolvedValue([]);
+
+    render(<ReconciliationView />);
+
+    await waitFor(() => {
+      expect(screen.getByText("✅ 완료")).toBeTruthy();
+    });
+
+    const dimmedRows = document.querySelectorAll("tr.opacity-50");
+    expect(dimmedRows.length).toBe(0);
+  });
+});
+
+describe("Table legend", () => {
+  it("renders legend with Active, Historical, and Completed descriptions", async () => {
+    vi.spyOn(client, "getReconciliationRuns").mockResolvedValue([]);
+    vi.spyOn(client, "getReconciliationLocks").mockResolvedValue([]);
+    vi.spyOn(client, "getOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getPositions").mockResolvedValue([]);
+    vi.spyOn(client, "getAccounts").mockResolvedValue([]);
+    vi.spyOn(client, "getBrokerOrders").mockResolvedValue([]);
+
+    render(<ReconciliationView />);
+
+    await waitFor(() => {
+      // "🔴 Active Issues Only" 토글 버튼과 충돌 방지를 위해 더 구체적인 패턴 사용
+      expect(
+        screen.getByText(/🔴 Active:/),
+      ).toBeTruthy();
+      expect(
+        screen.getByText(/📋 과거 이력/),
+      ).toBeTruthy();
+      expect(
+        screen.getByText(/✅ 완료/),
+      ).toBeTruthy();
+    });
+  });
+});
+
+describe("Run Detail panel historical note", () => {
+  it("shows historical note for historical failed runs", async () => {
+    const historicalRun = makeRun({
+      status: "failed",
+      isActive: false,
+    });
+    vi.spyOn(client, "getReconciliationRuns").mockResolvedValue([historicalRun]);
+    vi.spyOn(client, "getReconciliationLocks").mockResolvedValue([]);
+    vi.spyOn(client, "getOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getPositions").mockResolvedValue([]);
+    vi.spyOn(client, "getAccounts").mockResolvedValue([]);
+    vi.spyOn(client, "getBrokerOrders").mockResolvedValue([]);
+
+    render(<ReconciliationView />);
+
+    // Wait for data table to render then click to select the run
+    await waitFor(() => {
+      expect(screen.getByText("📋 과거 이력")).toBeTruthy();
+    });
+
+    // Click the row to open detail panel
+    const row = document.querySelector("tr.cursor-pointer") as HTMLElement | null;
+    if (row) {
+      row.click();
+    }
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/연결 주문은 모두 정리되었습니다/),
+      ).toBeTruthy();
+    });
+  });
+
+  it("does NOT show historical note for active runs", async () => {
+    const activeRun = makeRun({
+      status: "failed",
+      isActive: true,
+    });
+    vi.spyOn(client, "getReconciliationRuns").mockResolvedValue([activeRun]);
+    vi.spyOn(client, "getReconciliationLocks").mockResolvedValue([]);
+    vi.spyOn(client, "getOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getPositions").mockResolvedValue([]);
+    vi.spyOn(client, "getAccounts").mockResolvedValue([]);
+    vi.spyOn(client, "getBrokerOrders").mockResolvedValue([]);
+
+    render(<ReconciliationView />);
+
+    await waitFor(() => {
+      expect(screen.getByText("🔴 조치 필요")).toBeTruthy();
+    });
+
+    // Click the row to open detail panel
+    const row = document.querySelector("tr.cursor-pointer") as HTMLElement | null;
+    if (row) {
+      row.click();
+    }
+
+    await waitFor(() => {
+      // Active run detail should NOT show the historical note
+      expect(
+        screen.queryByText(/연결 주문은 모두 정리되었습니다/),
+      ).toBeNull();
+    });
+  });
+});
+
+/* ── Historical Failed Runs (collapsible section) ──── */
+
+describe("Historical Failed Runs collapsible section", () => {
+  it("renders collapsed historical section when historicalFailedCount > 0", async () => {
+    // historicalFailedCount is derived from runs.filter(r => !r.isActive && r.status !== "completed")
+    const runsWithHistorical = [
+      makeRun({ status: "failed", isActive: false }),
+      makeRun({ status: "failed", isActive: false }),
+      makeRun({ status: "partial", isActive: false }),
+    ];
+    vi.spyOn(client, "getReconciliationRuns").mockResolvedValue(runsWithHistorical);
+    vi.spyOn(client, "getReconciliationLocks").mockResolvedValue([]);
+    vi.spyOn(client, "getOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getPositions").mockResolvedValue([]);
+    vi.spyOn(client, "getAccounts").mockResolvedValue([]);
+    vi.spyOn(client, "getBrokerOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getReconciliationSummary").mockResolvedValue(mockReconciliationSummary);
+
+    render(<ReconciliationView />);
+
+    await waitFor(() => {
+      // JSX {historicalFailedCount} inserts a separate text node, so use regex
+      expect(screen.getByText(/📋 과거 실패 이력 \(3건\)/)).toBeInTheDocument();
+    });
+  });
+
+  it("lazy-loads historical failed runs when expanded", async () => {
+    const user = userEvent.setup();
+    const historicalRuns = [
+      makeRun({
+        reconciliation_run_id: "hhhhhhhh-hhhh-hhhh-hhhh-hhhhhhhhhh01",
+        status: "failed",
+        isActive: false,
+        failure_reason: "broker 오류: timeout",
+        summary_error: "Connection timeout",
+      }),
+    ];
+    // First call (initial load): return one run to make historicalFailedCount = 1
+    // Second call (historical fetch, includeHistorical=true): return detailed historical runs
+    const runsSpy = vi.spyOn(client, "getReconciliationRuns");
+    runsSpy.mockResolvedValueOnce([makeRun({ status: "failed", isActive: false })]);
+    runsSpy.mockResolvedValueOnce(historicalRuns);
+    vi.spyOn(client, "getReconciliationLocks").mockResolvedValue([]);
+    vi.spyOn(client, "getOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getPositions").mockResolvedValue([]);
+    vi.spyOn(client, "getAccounts").mockResolvedValue([]);
+    vi.spyOn(client, "getBrokerOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getReconciliationSummary").mockResolvedValue(mockReconciliationSummary);
+
+    render(<ReconciliationView />);
+
+    // Use getByRole to find the button by its role and partial text content
+    await waitFor(() => {
+      expect(screen.getByText(/📋 과거 실패 이력 \(1건\)/)).toBeInTheDocument();
+    });
+
+    // Click to expand
+    await user.click(screen.getByText(/📋 과거 실패 이력 \(1건\)/));
+
+    await waitFor(() => {
+      // Historical runs should now be visible with failure_reason
+      expect(screen.getByText("broker 오류: timeout")).toBeInTheDocument();
+    });
+
+    // Verify API was called with includeHistorical=true
+    const calls = runsSpy.mock.calls;
+    const historicalCall = calls.find(c => c[1] === true);
+    expect(historicalCall).toBeTruthy();
+  });
+
+  it("shows historical run detail with summary_error when selected", async () => {
+    const user = userEvent.setup();
+    const historicalRuns = [
+      makeRun({
+        reconciliation_run_id: "hhhhhhhh-hhhh-hhhh-hhhh-hhhhhhhhhh01",
+        status: "failed",
+        isActive: false,
+        failure_reason: "broker 오류: timeout",
+        summary_error: "Connection timeout\nRetry failed",
+      }),
+    ];
+
+    vi.spyOn(client, "getReconciliationRuns")
+      .mockResolvedValueOnce([makeRun({ status: "failed", isActive: false })])
+      .mockResolvedValueOnce(historicalRuns);
+    vi.spyOn(client, "getReconciliationLocks").mockResolvedValue([]);
+    vi.spyOn(client, "getOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getPositions").mockResolvedValue([]);
+    vi.spyOn(client, "getAccounts").mockResolvedValue([]);
+    vi.spyOn(client, "getBrokerOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getReconciliationSummary").mockResolvedValue(mockReconciliationSummary);
+
+    render(<ReconciliationView />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/📋 과거 실패 이력 \(1건\)/)).toBeInTheDocument();
+    });
+
+    // Expand
+    await user.click(screen.getByText(/📋 과거 실패 이력 \(1건\)/));
+
+    await waitFor(() => {
+      expect(screen.getByText("broker 오류: timeout")).toBeInTheDocument();
+    });
+
+    // Click detail button to view summary_error
+    const detailButtons = screen.getAllByText(/상세/);
+    await user.click(detailButtons[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Connection timeout/)).toBeInTheDocument();
+      expect(screen.getByText(/Retry failed/)).toBeInTheDocument();
+    });
+  });
+
+  it("does not show historical section when historicalFailedCount is 0", async () => {
+    // Default makeRun() has isActive: false, status: "completed" → filtered out (status === "completed" excludes it)
+    // So with completed runs, historicalFailedCount = 0
+    vi.spyOn(client, "getReconciliationRuns").mockResolvedValue([
+      makeRun({ status: "completed", isActive: false }),
+    ]);
+    vi.spyOn(client, "getReconciliationLocks").mockResolvedValue([]);
+    vi.spyOn(client, "getOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getPositions").mockResolvedValue([]);
+    vi.spyOn(client, "getAccounts").mockResolvedValue([]);
+    vi.spyOn(client, "getBrokerOrders").mockResolvedValue([]);
+    vi.spyOn(client, "getReconciliationSummary").mockResolvedValue(mockReconciliationSummary);
+
+    render(<ReconciliationView />);
+
+    await waitFor(() => {
+      expect(screen.queryByText(/과거 실패 이력/)).not.toBeInTheDocument();
     });
   });
 });

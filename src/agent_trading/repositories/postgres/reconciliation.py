@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from agent_trading.db.row_mapper import row_to_entity
@@ -332,6 +333,106 @@ class PostgresReconciliationRepository:
             order_request_id,
         )
         return row["status"] if row else None
+
+    # -- Plan: Active/historical run 판별 --
+
+    async def list_all_runs_with_activity(
+        self,
+        limit: int = 50,
+        active_only: bool = True,
+        include_historical: bool = False,
+    ) -> list[dict[str, Any]]:
+        """
+        Reconciliation run 목록을 order activity 정보와 함께 조회.
+
+        ``active_only=True`` (기본값): ``is_active=true`` 인 run만 반환.
+        ``include_historical=True`` 일 때만 ``is_active=false`` 인
+        historical failed/partial run 을 결과에 포함한다.
+
+        ``include_historical`` 은 ``active_only`` 보다 우선하지 않는다.
+        ``active_only=True`` 이면 ``include_historical`` 과 관계없이 active run 만 반환.
+        """
+        base_query = """
+            SELECT
+                r.reconciliation_run_id,
+                r.account_id,
+                r.trigger_type,
+                r.status,
+                r.started_at,
+                r.completed_at,
+                r.mismatch_count,
+                r.created_at,
+                r.summary_json,
+                (r.status = 'started') OR (
+                    r.status IN ('failed', 'partial')
+                    AND EXISTS (
+                        SELECT 1 FROM trading.reconciliation_order_links l
+                        JOIN trading.order_requests o
+                          ON o.order_request_id = l.order_request_id
+                        WHERE l.reconciliation_run_id = r.reconciliation_run_id
+                        AND o.status NOT IN ('filled', 'cancelled', 'rejected', 'expired')
+                    )
+                ) AS is_active
+            FROM trading.reconciliation_runs r
+            ORDER BY r.started_at DESC
+            LIMIT $1
+        """
+        params: list[object] = [limit]
+        if active_only:
+            query = f"""
+                SELECT * FROM ({base_query}) sub
+                WHERE sub.is_active = true
+            """
+        elif include_historical:
+            query = base_query
+        else:
+            # 기본 (active_only=False, include_historical=False):
+            # active + completed 는 보여주고 historical failed 는 숨김
+            query = f"""
+                SELECT * FROM ({base_query}) sub
+                WHERE sub.is_active = true
+                   OR sub.status = 'completed'
+                   OR sub.status = 'started'
+            """
+        rows = await self._tx.connection.fetch(query, *params)
+        return [dict(row) for row in rows]
+
+    async def get_historical_failed_run_count(self) -> int:
+        """``is_active=false + status IN ('failed','partial')`` 조건의 run 수 반환."""
+        query = """
+            SELECT COUNT(*) FROM trading.reconciliation_runs r
+            WHERE r.status IN ('failed', 'partial')
+            AND NOT EXISTS (
+                SELECT 1 FROM trading.reconciliation_order_links l
+                JOIN trading.order_requests o
+                  ON o.order_request_id = l.order_request_id
+                WHERE l.reconciliation_run_id = r.reconciliation_run_id
+                AND o.status NOT IN ('filled', 'cancelled', 'rejected', 'expired')
+            )
+        """
+        row = await self._tx.connection.fetchrow(query)
+        return row[0] if row else 0
+
+    async def list_all_active_locks_for_run(
+        self, reconciliation_run_id: UUID,
+    ) -> Sequence[BlockingLockEntity]:
+        """특정 reconciliation run에 의해 생성된 active lock 조회.
+
+        ``_classify_failure_reason()`` 에서 사용되어 ``failure_reason``
+        분류 시 lock 충돌 여부를 확인한다.
+        """
+        rows = await self._tx.connection.fetch(
+            """
+            SELECT lock_id, account_id, strategy_id, symbol, side,
+                   reason, locked_by_run_id, locked_at, expires_at
+            FROM trading.order_blocking_locks
+            WHERE locked_by_run_id = $1
+              AND expires_at > NOW()
+            ORDER BY locked_at DESC
+            """,
+            reconciliation_run_id,
+        )
+        return [_row_to_blocking_lock(r) for r in rows]
 
 
 def _row_to_blocking_lock(row: object) -> BlockingLockEntity:

@@ -127,11 +127,16 @@ export async function getBrokerOrders(
 }
 
 export async function getReconciliationRuns(
-  accountId?: string
+  accountId?: string,
+  includeHistorical?: boolean,
 ): Promise<import("../types/api").ReconciliationRunSummary[]> {
-  const params = accountId ? `?account_id=${encodeURIComponent(accountId)}` : "";
+  const params = new URLSearchParams();
+  if (accountId) params.set("account_id", accountId);
+  if (includeHistorical) params.set("include_historical", "true");
+  // 기본 동작: active_only=true → active issue만 반환
+  const qs = params.toString();
   return request<import("../types/api").ReconciliationRunSummary[]>(
-    `/reconciliation/runs${params}`
+    `/reconciliation/runs${qs ? `?${qs}` : ""}`
   );
 }
 
@@ -144,11 +149,14 @@ export async function getReconciliationLocks(
   );
 }
 
-export async function getReconciliationSummary(): Promise<
-  import("../types/api").ReconciliationSummary
-> {
+export async function getReconciliationSummary(
+  includeHistorical?: boolean,
+): Promise<import("../types/api").ReconciliationSummary> {
+  const params = new URLSearchParams();
+  if (includeHistorical) params.set("include_historical", "true");
+  const qs = params.toString();
   return request<import("../types/api").ReconciliationSummary>(
-    "/reconciliation/summary"
+    `/reconciliation/summary${qs ? `?${qs}` : ""}`
   );
 }
 

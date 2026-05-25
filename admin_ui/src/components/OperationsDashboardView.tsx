@@ -18,7 +18,6 @@ import {
   getPositions,
   getCashBalance,
   getReconciliationSummary,
-  getReconciliationRuns,
   getSnapshotSyncRuns,
   getLatestMarketSession,
   getRecentSessionEvents,
@@ -29,6 +28,7 @@ import type {
   PositionSnapshotView,
   CashBalanceSnapshotView,
   ReconciliationRunSummary,
+  ReconciliationSummary,
   AccountSummary,
   ClientDetail,
   SnapshotSyncRunSummary,
@@ -85,7 +85,7 @@ interface DashboardData {
   clients: ClientDetail[];
   health: HealthResponse | null;
   readyz: Record<string, string> | null;
-  reconSummary: { active_locks_count: number; incomplete_recon_count: number } | null;
+  reconSummary: ReconciliationSummary | null;
   reconRuns: ReconciliationRunSummary[];
   orders: OrderSummary[];
   accounts: AccountSummary[];
@@ -380,15 +380,10 @@ export default function OperationsDashboardView() {
       });
     }
 
-    // ── Reconciliation runs (first account) ──
-    let reconRuns: ReconciliationRunSummary[] = [];
-    if (accounts.length > 0) {
-      try {
-        reconRuns = await getReconciliationRuns(accounts[0].account_id);
-      } catch {
-        addError("GET /reconciliation/runs", "정합성 실행 이력 조회 실패");
-      }
-    }
+    // ── Reconciliation runs (from summary's recentActiveIssues — active-only data) ──
+    // NOTE: 별도 getReconciliationRuns API 호출 대신 이미 fetch된 summary 응답의
+    //       recentActiveIssues를 사용. 이 필드는 백엔드에서 active-only로 필터링됨.
+    const reconRuns: ReconciliationRunSummary[] = (reconSummary?.recentActiveIssues ?? []).slice(0, 5);
 
     // ── Snapshot sync runs ──
     let snapshotSyncRuns: SnapshotSyncRunSummary[] = [];
@@ -403,7 +398,7 @@ export default function OperationsDashboardView() {
       clients,
       health,
       readyz,
-      reconSummary: reconSummary as { active_locks_count: number; incomplete_recon_count: number } | null,
+      reconSummary: reconSummary as ReconciliationSummary | null,
       reconRuns,
       orders,
       accounts,
@@ -469,6 +464,8 @@ export default function OperationsDashboardView() {
 
     const incompleteReconCount = data.reconSummary?.incomplete_recon_count ?? 0;
     const activeLocksCount = data.reconSummary?.active_locks_count ?? 0;
+    const activeIssueCount = data.reconSummary?.activeIssueCount ?? 0;
+    const historicalFailedCount = data.reconSummary?.historicalFailedCount ?? 0;
 
     // Snapshot freshness: position/cash snapshot_at 최신값 (reconciliation run 아님)
     let latestSnapshotAt: string | null = null;
@@ -506,7 +503,12 @@ export default function OperationsDashboardView() {
       healthError: apiErrors.some((e) => e.apiName === "GET /health"),
       orders: data.orders,
       ordersError: apiErrors.some((e) => e.apiName === "GET /orders"),
-      reconSummary: data.reconSummary,
+      reconSummary: data.reconSummary ? {
+        active_locks_count: data.reconSummary.active_locks_count,
+        incomplete_recon_count: data.reconSummary.incomplete_recon_count,
+        activeIssueCount: data.reconSummary.activeIssueCount,
+        historicalFailedCount: data.reconSummary.historicalFailedCount,
+      } : null,
       reconSummaryError: apiErrors.some((e) => e.apiName === "GET /reconciliation/summary"),
       agentRuns: [],
       agentRunsError: false,
@@ -583,6 +585,8 @@ export default function OperationsDashboardView() {
       rejectedCount,
       incompleteReconCount,
       activeLocksCount,
+      activeIssueCount,
+      historicalFailedCount,
       readyzOk,
       latestSyncRun,
       urgentCount,
@@ -812,10 +816,10 @@ export default function OperationsDashboardView() {
     snapshotSubtitle = `${snapshotTimeStr} (${syncRun.succeeded_accounts}/${syncRun.total_accounts} 계좌 성공${budgetLabel})`;
   }
 
-  const reconStatus = d.incompleteReconCount > 0 || d.activeLocksCount > 0
-    ? `${d.incompleteReconCount + d.activeLocksCount}건`
+  const reconStatus = d.activeIssueCount > 0 || d.activeLocksCount > 0
+    ? `${d.activeIssueCount + d.activeLocksCount}건`
     : "정상";
-  const reconVariant = d.incompleteReconCount > 0 || d.activeLocksCount > 0
+  const reconVariant = d.activeIssueCount > 0 || d.activeLocksCount > 0
     ? "warning" as const
     : "healthy" as const;
 
@@ -833,11 +837,11 @@ export default function OperationsDashboardView() {
         <p className="text-sm text-[#64748b] mt-1">시스템 상태 및 오늘의 운영 현황</p>
       </div>
 
-      {/* Warning Banner — 정합성 */}
-      {(d.incompleteReconCount > 0 || d.activeLocksCount > 0) && (
+      {/* Warning Banner — 정합성 (active issue만 트리거) */}
+      {(d.activeIssueCount > 0 || d.activeLocksCount > 0) && (
         <WarningBanner
           variant="warning"
-          title={`미해결 정합성 상태: ${d.incompleteReconCount + d.activeLocksCount}건`}
+          title={`정합성 문제: ${d.activeIssueCount}건 조치 필요`}
           message="포지션 또는 현금 불일치가 발생했습니다. 정합성 점검 화면에서 확인하세요."
         />
       )}
@@ -1000,11 +1004,24 @@ export default function OperationsDashboardView() {
             <StatusCard title="API 상태" value={apiStatus} status={apiStatusVariant} subtitle="출처: GET /health" />
             <StatusCard title="DB 상태" value={dbStatus} status={dbStatusVariant} subtitle="출처: GET /health.database" />
             <StatusCard
-              title="미해결 정합성"
+              title="정합성"
               value={reconStatus}
               status={reconVariant}
-              subtitle={d.incompleteReconCount > 0 || d.activeLocksCount > 0 ? "수동 확인 필요" : "정상"}
-            />
+              subtitle={d.activeIssueCount > 0 || d.activeLocksCount > 0 ? "수동 확인 필요" : "정상"}
+            >
+              <div className="space-y-1 mt-1">
+                {d.activeIssueCount > 0 ? (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-[#64748b]">🟡 조치 필요</span>
+                    <span className="text-sm font-semibold text-[#0f172a]">{d.activeIssueCount}건</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-green-600">✅ 정합성 양호</span>
+                  </div>
+                )}
+              </div>
+            </StatusCard>
             <StatusCard
               title="미실현 손익"
               value="N/A"

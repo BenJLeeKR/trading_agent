@@ -105,7 +105,7 @@ function defaultInput(overrides: Partial<AlertRuleInput> = {}): AlertRuleInput {
     healthError: false,
     orders: [],
     ordersError: false,
-    reconSummary: { active_locks_count: 0, incomplete_recon_count: 0 },
+    reconSummary: { active_locks_count: 0, incomplete_recon_count: 0, activeIssueCount: 0, historicalFailedCount: 0 },
     reconSummaryError: false,
     agentRuns: [],
     agentRunsError: false,
@@ -490,4 +490,66 @@ describe("deriveAlerts — Existing Rules Regression", () => {
     expect(alert!.level).toBe("정보");
     expect(alert!.status).toBe("RESOLVED");
   });
+});
+
+/* ───────────────────────────────────────────
+* Test Suite: Reconciliation Alert Rules
+*/
+describe("deriveAlerts — Reconciliation Alert Rules", () => {
+beforeEach(() => {
+  // 기본 input: 모든 reconSummary 필드 0으로 정상 상태
+  // reconSummaryError 없음, ALT-RECON-001/002 모두 미발생 조건
+});
+
+/* ALT-RECON-002: activeIssueCount > 0 → 긴급 */
+it("activeIssueCount > 0 → ALT-RECON-002 발생 (긴급)", () => {
+  const input = defaultInput({
+    reconSummary: {
+      active_locks_count: 0,
+      incomplete_recon_count: 0,
+      activeIssueCount: 3,
+      historicalFailedCount: 0,
+    },
+  });
+  const alerts = deriveAlerts(input);
+
+  const alert = findAlert(alerts, "ALT-RECON-002");
+  expect(alert).toBeDefined();
+  expect(alert!.level).toBe("긴급");
+  expect(alert!.title).toBe("정합성 문제 발생");
+  expect(alert!.description).toContain("3건");
+  expect(alert!.status).toBe("OPEN");
+});
+
+/* ALT-RECON-002: activeIssueCount === 0 → 미발생 */
+it("activeIssueCount === 0 → ALT-RECON-002 미발생", () => {
+  const input = defaultInput({
+    reconSummary: {
+      active_locks_count: 0,
+      incomplete_recon_count: 0,
+      activeIssueCount: 0,
+      historicalFailedCount: 0,
+    },
+  });
+  const alerts = deriveAlerts(input);
+
+  const alert = findAlert(alerts, "ALT-RECON-002");
+  expect(alert).toBeUndefined();
+});
+
+/* ALT-RECON-002: historicalFailedCount만 있고 activeIssueCount === 0 → 미발생 (noise 정책) */
+it("historicalFailedCount > 0 + activeIssueCount === 0 → ALT-RECON-002 미발생 (noise 정책)", () => {
+  const input = defaultInput({
+    reconSummary: {
+      active_locks_count: 0,
+      incomplete_recon_count: 0,
+      activeIssueCount: 0,
+      historicalFailedCount: 5,
+    },
+  });
+  const alerts = deriveAlerts(input);
+
+  const alert = findAlert(alerts, "ALT-RECON-002");
+  expect(alert).toBeUndefined();
+});
 });
