@@ -1,0 +1,139 @@
+2026-05-25 13:10:36,317 [INFO] agent_trading.db.migrations.run: Running migration: 0001_initial_schema.sql
+2026-05-25 13:10:36,322 [INFO] agent_trading.db.migrations.run: Migration completed: 0001_initial_schema.sql
+2026-05-25 13:10:36,323 [INFO] agent_trading.db.migrations.run: Running migration: 0002_add_version_column.sql
+2026-05-25 13:10:36,323 [INFO] agent_trading.db.migrations.run: Migration already applied (column exists): 0002_add_version_column.sql
+2026-05-25 13:10:36,323 [ERROR] asyncio: Resetting connection with an active transaction <asyncpg.connection.Connection object at 0x7fa797a5bc50>
+2026-05-25 13:10:36,323 [INFO] agent_trading.db.migrations.run: Running migration: 0003_add_safe_order_path_tables.sql
+2026-05-25 13:10:36,326 [INFO] agent_trading.db.migrations.run: Migration completed: 0003_add_safe_order_path_tables.sql
+2026-05-25 13:10:36,326 [INFO] agent_trading.db.migrations.run: Running migration: 0004_expand_trade_decision.sql
+2026-05-25 13:10:36,328 [INFO] agent_trading.db.migrations.run: Migration completed: 0004_expand_trade_decision.sql
+2026-05-25 13:10:36,329 [INFO] agent_trading.db.migrations.run: Running migration: 0005_add_order_tracing_and_locks.sql
+2026-05-25 13:10:36,329 [INFO] agent_trading.db.migrations.run: Migration completed: 0005_add_order_tracing_and_locks.sql
+2026-05-25 13:10:36,330 [INFO] agent_trading.db.migrations.run: Running migration: 0006_add_external_event_data.sql
+2026-05-25 13:10:36,330 [INFO] agent_trading.db.migrations.run: Migration completed: 0006_add_external_event_data.sql
+2026-05-25 13:10:36,331 [INFO] agent_trading.db.migrations.run: Running migration: 0007_add_audit_log_seq.sql
+2026-05-25 13:10:36,331 [INFO] agent_trading.db.migrations.run: Migration already applied (column exists): 0007_add_audit_log_seq.sql
+2026-05-25 13:10:36,331 [ERROR] asyncio: Resetting connection with an active transaction <asyncpg.connection.Connection object at 0x7fa797a5bc50>
+2026-05-25 13:10:36,331 [INFO] agent_trading.db.migrations.run: Running migration: 0008_update_reconciliation_trigger_types.sql
+2026-05-25 13:10:36,334 [INFO] agent_trading.db.migrations.run: Migration already applied (table exists): 0008_update_reconciliation_trigger_types.sql
+2026-05-25 13:10:36,334 [ERROR] asyncio: Resetting connection with an active transaction <asyncpg.connection.Connection object at 0x7fa797a5bc50>
+2026-05-25 13:10:36,334 [INFO] agent_trading.db.migrations.run: Running migration: 0009_make_trade_decision_nullable.sql
+2026-05-25 13:10:36,335 [INFO] agent_trading.db.migrations.run: Migration completed: 0009_make_trade_decision_nullable.sql
+2026-05-25 13:10:36,335 [INFO] agent_trading.db.migrations.run: Running migration: 0010_add_identifier_codes.sql
+2026-05-25 13:10:36,335 [INFO] agent_trading.db.migrations.run: Migration already applied (column exists): 0010_add_identifier_codes.sql
+2026-05-25 13:10:36,335 [ERROR] asyncio: Resetting connection with an active transaction <asyncpg.connection.Connection object at 0x7fa797a5bc50>
+2026-05-25 13:10:36,335 [INFO] agent_trading.db.migrations.run: Running migration: 0011_add_snapshot_sync_runs.sql
+2026-05-25 13:10:36,336 [INFO] agent_trading.db.migrations.run: Migration already applied (table exists): 0011_add_snapshot_sync_runs.sql
+2026-05-25 13:10:36,336 [ERROR] asyncio: Resetting connection with an active transaction <asyncpg.connection.Connection object at 0x7fa797a5bc50>
+2026-05-25 13:10:36,336 [INFO] agent_trading.db.migrations.run: Running migration: 0012_add_kis_output2_fields.sql
+2026-05-25 13:10:36,336 [INFO] agent_trading.db.migrations.run: Migration already applied (column exists): 0012_add_kis_output2_fields.sql
+2026-05-25 13:10:36,336 [INFO] agent_trading.db.migrations.run: Running migration: 0013_add_source_type_to_trade_decisions.sql
+2026-05-25 13:10:36,337 [INFO] agent_trading.db.migrations.run: Migration completed: 0013_add_source_type_to_trade_decisions.sql
+2026-05-25 13:10:36,337 [INFO] agent_trading.db.migrations.run: Running migration: 0014_add_market_session_tables.sql
+2026-05-25 13:10:36,338 [INFO] agent_trading.db.migrations.run: Migration completed: 0014_add_market_session_tables.sql
+2026-05-25 13:10:36,339 [INFO] agent_trading.db.migrations.run: Running migration: 0015_add_last_heartbeat_at.sql
+2026-05-25 13:10:36,339 [INFO] agent_trading.db.migrations.run: Migration already applied (column exists): 0015_add_last_heartbeat_at.sql
+2026-05-25 13:10:36,339 [ERROR] asyncio: Resetting connection with an active transaction <asyncpg.connection.Connection object at 0x7fa797a5bc50>
+2026-05-25 13:10:36,339 [INFO] agent_trading.db.migrations.run: Running migration: 0016_add_after_hours_to_snapshot_sync_runs.sql
+2026-05-25 13:10:36,339 [INFO] agent_trading.db.migrations.run: Migration already applied (column exists): 0016_add_after_hours_to_snapshot_sync_runs.sql
+2026-05-25 13:10:36,340 [INFO] agent_trading.db.migrations.run: Running migration: 0017_add_position_amounts.sql
+2026-05-25 13:10:36,340 [INFO] agent_trading.db.migrations.run: Migration already applied (column exists): 0017_add_position_amounts.sql
+2026-05-25 13:10:36,340 [INFO] agent_trading.db.migrations.run: Running migration: 0018_add_orderable_amount.sql
+2026-05-25 13:10:36,340 [INFO] agent_trading.db.migrations.run: Migration already applied (column exists): 0018_add_orderable_amount.sql
+2026-05-25 13:10:36,340 [INFO] agent_trading.db.migrations.run: Running migration: 0019_remove_td_context_unique.sql
+2026-05-25 13:10:36,341 [INFO] agent_trading.db.migrations.run: Migration completed: 0019_remove_td_context_unique.sql
+2026-05-25 13:10:36,342 [INFO] agent_trading.db.migrations.run: Running migration: 0020_null_safe_blocking_lock_unique.sql
+2026-05-25 13:10:36,344 [INFO] agent_trading.db.migrations.run: Migration completed: 0020_null_safe_blocking_lock_unique.sql
+2026-05-25 13:10:36,345 [INFO] agent_trading.db.migrations.run: Running migration: 0021_add_pipeline_stop_fields.sql
+2026-05-25 13:10:36,347 [INFO] agent_trading.db.migrations.run: Migration completed: 0021_add_pipeline_stop_fields.sql
+2026-05-25 13:10:36,347 [INFO] agent_trading.db.migrations.run: Running migration: 0022_add_phase_trace_to_trade_decisions.sql
+2026-05-25 13:10:36,348 [INFO] agent_trading.db.migrations.run: Migration completed: 0022_add_phase_trace_to_trade_decisions.sql
+2026-05-25 13:10:36,349 [INFO] agent_trading.db.migrations.run: Running migration: 0023_add_execution_attempts.sql
+2026-05-25 13:10:36,349 [INFO] agent_trading.db.migrations.run: Migration already applied (table exists): 0023_add_execution_attempts.sql
+2026-05-25 13:10:36,349 [INFO] agent_trading.db.migrations.run: Running migration: 0024_make_execution_attempts_nullable.sql
+2026-05-25 13:10:36,350 [INFO] agent_trading.db.migrations.run: Migration completed: 0024_make_execution_attempts_nullable.sql
+2026-05-25 13:10:36,350 [INFO] agent_trading.db.migrations.run: Running migration: 0025_add_fetch_status_to_snapshot_tables.sql
+2026-05-25 13:10:36,350 [INFO] agent_trading.db.migrations.run: Migration already applied (column exists): 0025_add_fetch_status_to_snapshot_tables.sql
+2026-05-25 13:10:36,350 [INFO] agent_trading.db.migrations.run: Running migration: 0026_drop_bridge_columns_from_trade_decisions.sql
+2026-05-25 13:10:36,353 [INFO] agent_trading.db.migrations.run: Migration completed: 0026_drop_bridge_columns_from_trade_decisions.sql
+2026-05-25 13:10:36,353 [INFO] agent_trading.db.migrations.run: Running migration: 0027_add_snapshot_sync_run_id.sql
+2026-05-25 13:10:36,354 [INFO] agent_trading.db.migrations.run: Migration already applied (column exists): 0027_add_snapshot_sync_run_id.sql
+2026-05-25 13:10:36,355 [INFO] agent_trading.runtime.bootstrap: Live disclosure client created: env=live, cache_path=.cache/kis_disclosure_token.json, cache_enabled=True
+2026-05-25 13:10:36,355 [INFO] agent_trading.services.disclosure_seed_service: LiveDisclosureSeedService initialized (client=AVAILABLE)
+2026-05-25 13:10:36,386 [INFO] __main__: Seed already exists (client=301961b4-75d9-533c-92b7-69a306cdd435) — skipping.
+2026-05-25 13:10:36,386 [INFO] __main__: Using existing seed data.
+2026-05-25 13:10:36,386 [INFO] __main__: KIS_SMOKE_PRICE not set, using default price=50000
+2026-05-25 13:10:36,386 [INFO] __main__: KIS_SMOKE_PRICE=50000 (ignored under MARKET order policy — price=None is used).
+2026-05-25 13:10:36,386 [INFO] __main__: Calling orchestrator.assemble_and_submit() with broker=KoreaInvestmentAdapter …
+2026-05-25 13:10:36,386 [INFO] agent_trading.services.decision_orchestrator: PHASE_TRACE symbol=005930 phase=assemble_start elapsed_ms=0 status=start
+2026-05-25 13:10:36,386 [INFO] agent_trading.services.decision_orchestrator: Phase 1: assemble() — running AI agents …
+2026-05-25 13:10:36,394 [INFO] DecisionContextService: Created decision context: id=807b05a3-dae8-43fd-a67b-edaee0b05ec5 account_id=a44a02d1-7f32-5a62-99f7-235abeb58284 strategy_id=30a1d26b-8230-51fc-8548-30920effff0c correlation_id=entrypoint-correlation-f724c595-b355-4e1a-a5c5-5da351075100
+2026-05-25 13:10:36,397 [INFO] agent_trading.services.decision_orchestrator: assemble() recent_events: symbol=005930 count=8 (list_by_symbol=8 seeded_supplement=0)
+2026-05-25 13:12:44,226 [INFO] agent_trading.services.decision_agent_runner: Agent subprocess stderr (decision_context_id=807b05a3-dae8-43fd-a67b-edaee0b05ec5): 2026-05-25 13:10:36,542 [INFO] __main__: Creating OpenAICompatibleClient: base_url=https://api.deepseek.com model_id=deepseek-chat timeout=120
+2026-05-25 13:10:36,542 [INFO] __main__: Starting EventInterpretationAgent.run() ...
+2026-05-25 13:10:36,542 [INFO] agent_trading.services.ai_agents.event_interpretation: EI _build_user_prompt: symbol=005930 correlation_id=entrypoint-correlation-f724c595-b355-4e1a-a5c5-5da351075100 recent_events=8
+2026-05-25 13:10:36,995 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-25 13:11:42,853 [INFO] agent_trading.services.ai_agents.event_interpretation: EI raw_response: symbol=005930 correlation_id=entrypoint-correlation-f724c595-b355-4e1a-a5c5-5da351075100 input_events=8 raw_content_len=5298
+2026-05-25 13:11:42,853 [INFO] agent_trading.services.ai_agents.event_interpretation: EventInterpretationAgent succeeded: symbol=005930 input_events=8 output_events=8 detected_event_count=8 no_material_events=False overall_bias=bullish evidence_strength=strong
+2026-05-25 13:11:42,853 [INFO] __main__: EventInterpretationAgent completed: symbol=005930 input_events=8 output_events=8 detected_event_count=8 no_material_events=False
+2026-05-25 13:11:42,853 [INFO] __main__: Starting AIRiskAgent.run() ...
+2026-05-25 13:11:43,040 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-25 13:12:12,464 [INFO] agent_trading.services.ai_agents.ai_risk: AIRiskAgent succeeded: symbol=005930 risk_opinion=allow risk_score=0.90
+2026-05-25 13:12:12,465 [INFO] __main__: AIRiskAgent completed: summary_len=151 symbol=005930 risk_opinion=allow
+2026-05-25 13:12:12,465 [INFO] __main__: Starting FinalDecisionComposerAgent.run() ...
+2026-05-25 13:12:12,681 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-05-25 13:12:44,193 [INFO] agent_trading.services.ai_agents.final_decision_composer: FinalDecisionComposerAgent succee
+2026-05-25 13:12:44,228 [INFO] agent_trading.services.subprocess_helpers: deserialize_agent_output: ei_output.events=8 ei_output.aggregate_view.no_material_events=False ei_output.detected_event_count=8
+2026-05-25 13:12:44,228 [WARNING] agent_trading.services.ai_agents.recorder: Agent name mismatch in structured_output: output.agent_name='Event Interpretation Agent' != agent_type='event_interpretation' — overwriting output.agent_name to match
+2026-05-25 13:12:44,230 [WARNING] agent_trading.services.ai_agents.recorder: Agent name mismatch in structured_output: output.agent_name='risk_agent' != agent_type='ai_risk' — overwriting output.agent_name to match
+2026-05-25 13:12:44,230 [WARNING] agent_trading.services.ai_agents.recorder: Agent name mismatch in structured_output: output.agent_name='FinalDecisionComposer/1.0' != agent_type='final_decision_composer' — overwriting output.agent_name to match
+2026-05-25 13:12:44,230 [INFO] agent_trading.services.decision_orchestrator: Rehydrated 3 agent runs from subprocess output (decision_context_id=807b05a3-dae8-43fd-a67b-edaee0b05ec5 fdc_run_id=1733fa75-394e-4c0e-8f1e-a84d05e80d80)
+2026-05-25 13:12:44,237 [INFO] agent_trading.services.decision_orchestrator: PHASE_TRACE symbol=005930 phase=assemble_done elapsed_ms=127851 status=ok
+2026-05-25 13:12:44,239 [INFO] agent_trading.services.execution_service: [ATTEMPT_CREATED] execution_attempt_id=3d06c66b-d5f2-41fe-b0d1-10090752a8e8 trade_decision_id=07f47128-0e8a-40be-81fc-92bea3c082aa
+2026-05-25 13:12:44,239 [INFO] agent_trading.services.execution_service: Phase 1.5: sizing engine — decision_type=BUY side=OrderSide.BUY quantity=100
+2026-05-25 13:12:44,239 [INFO] agent_trading.services.execution_service: PHASE_TRACE: symbol=005930 phase=quote_resolution start
+2026-05-25 13:12:44,239 [INFO] agent_trading.brokers.koreainvestment.token_cache: paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-25 13:12:44,323 [INFO] httpx: HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=005930 "HTTP/1.1 200 OK"
+2026-05-25 13:12:44,324 [INFO] agent_trading.services.execution_service: PHASE_TRACE: symbol=005930 phase=quote_resolution done quote=Quote(symbol='005930', market='KRX', bid=None, ask=None, last=Decimal('292500'), as_of=datetime.datetime(2026, 5, 25, 4, 12, 44, 324018, tzinfo=datetime.timezone.utc), currency='KRW')
+2026-05-25 13:12:44,324 [INFO] agent_trading.services.execution_service: Phase 1.5: resolved reference_price=292500 from quote (last=292500 ask=None bid=None) for symbol=005930 MARKET order
+2026-05-25 13:12:44,324 [INFO] agent_trading.services.execution_service: PHASE_TRACE symbol=005930 phase=sizing_start elapsed_ms=0 status=start
+2026-05-25 13:12:44,324 [INFO] agent_trading.services.execution_service: Cash source: orderable_amount=9109140.000000 (preferred) | available_cash=9109140.00000000 (fallback)
+2026-05-25 13:12:44,324 [INFO] agent_trading.services.execution_service: SizingInputs: max_single_position_pct=100 (src=max_position_size (legacy)) min_cash_buffer_pct=None (src=min_cash_buffer_pct (legacy flat)) max_order_value=None (src=max_order_value (legacy flat)) nav=27568261.00000000
+2026-05-25 13:12:44,324 [INFO] agent_trading.services.execution_service: Sizing Phase 1.5: request_qty=100 sizing_qty=6 applied_constraints=() skip_reason=none
+2026-05-25 13:12:44,324 [INFO] agent_trading.services.execution_service: Phase 1.5: quantity overridden by sizing — original=6 sized=6
+2026-05-25 13:12:44,324 [INFO] agent_trading.services.execution_service: PHASE_TRACE symbol=005930 phase=sizing_done elapsed_ms=0 status=ok
+2026-05-25 13:12:44,324 [INFO] agent_trading.services.execution_service: PHASE_TRACE symbol=005930 phase=sell_guard_start elapsed_ms=0 status=start
+2026-05-25 13:12:44,324 [INFO] agent_trading.services.execution_service: PHASE_TRACE symbol=005930 phase=sell_guard_done elapsed_ms=0 status=ok
+2026-05-25 13:12:44,324 [INFO] agent_trading.services.execution_service: PHASE_TRACE symbol=005930 phase=validate_start elapsed_ms=0 status=start
+2026-05-25 13:12:44,324 [INFO] agent_trading.services.execution_service: Phase 2: validate intent — decision_type=BUY
+2026-05-25 13:12:44,324 [INFO] agent_trading.services.execution_service: PHASE_TRACE symbol=005930 phase=order_create_start elapsed_ms=0 status=start
+2026-05-25 13:12:44,324 [INFO] agent_trading.services.execution_service: Phase 3: create_order — client_order_id=dc-807b05a3-0412443244 symbol=005930 side=OrderSide.BUY
+2026-05-25 13:12:44,329 [INFO] agent_trading.services.execution_service: Phase 4a: transition_to(VALIDATED) — order_id=8cb99141-3109-451f-ba6c-8320aeae2751
+2026-05-25 13:12:44,331 [INFO] agent_trading.services.execution_service: Phase 4b: transition_to(PENDING_SUBMIT) — order_id=8cb99141-3109-451f-ba6c-8320aeae2751
+2026-05-25 13:12:44,383 [INFO] agent_trading.services.execution_service: PHASE_TRACE symbol=005930 phase=order_create_done elapsed_ms=59 status=ok
+2026-05-25 13:12:44,383 [INFO] agent_trading.services.execution_service: PHASE_TRACE symbol=005930 phase=validate_done elapsed_ms=59 status=ok
+2026-05-25 13:12:44,383 [INFO] agent_trading.services.execution_service: PHASE_TRACE symbol=005930 phase=stale_snapshot_guard_start elapsed_ms=0 status=start
+2026-05-25 13:12:44,386 [INFO] agent_trading.services.execution_service: PHASE_TRACE symbol=005930 phase=stale_snapshot_guard_passed elapsed_ms=3 status=ok
+2026-05-25 13:12:44,386 [INFO] agent_trading.services.execution_service: PHASE_TRACE symbol=005930 phase=submit_start elapsed_ms=0 status=start
+2026-05-25 13:12:44,386 [INFO] agent_trading.services.execution_service: [SUBMIT_START] symbol=005930 decision_type=BUY side=OrderSide.BUY order_id=8cb99141-3109-451f-ba6c-8320aeae2751
+2026-05-25 13:12:44,388 [INFO] agent_trading.services.order_manager: Broker submit: order_id=8cb99141-3109-451f-ba6c-8320aeae2751 symbol=005930 side=buy quantity=6 broker=KoreaInvestmentAdapter
+2026-05-25 13:12:44,389 [INFO] agent_trading.services.reconciliation_service: reconcile_required auto-trigger: creating new reconciliation run. account_id=a44a02d1-7f32-5a62-99f7-235abeb58284 trigger_type=requires_reconciliation strategy_id=None symbol=005930 side=buy
+2026-05-25 13:12:44,447 [INFO] agent_trading.services.reconciliation_service: reconcile_required auto-trigger: active reconciliation run already exists, reusing. run_id=73ff803a-9634-4634-b107-ea1df0c56537 account_id=a44a02d1-7f32-5a62-99f7-235abeb58284 trigger_type=requires_reconciliation
+2026-05-25 13:12:44,448 [INFO] agent_trading.services.reconciliation_service: order link created: run_id=73ff803a-9634-4634-b107-ea1df0c56537 order_id=8cb99141-3109-451f-ba6c-8320aeae2751
+2026-05-25 13:12:44,448 [INFO] agent_trading.services.order_manager: reconcile_required auto-triggered: order_id=8cb99141-3109-451f-ba6c-8320aeae2751 account_id=a44a02d1-7f32-5a62-99f7-235abeb58284 reconciliation_run_id=73ff803a-9634-4634-b107-ea1df0c56537 reason_code=BUDGET_EXHAUSTED
+2026-05-25 13:12:44,448 [INFO] agent_trading.services.execution_service: PHASE_TRACE symbol=005930 phase=submit_done elapsed_ms=61 status=ok
+2026-05-25 13:12:44,448 [INFO] agent_trading.services.execution_service: [SUBMIT_DONE] symbol=005930 elapsed=0.1s status=reconcile_required order_id=8cb99141-3109-451f-ba6c-8320aeae2751
+2026-05-25 13:12:44,449 [INFO] agent_trading.services.execution_service: Pipeline complete: status=RECONCILE_REQUIRED order_id=8cb99141-3109-451f-ba6c-8320aeae2751 trade_decision_id=07f47128-0e8a-40be-81fc-92bea3c082aa
+2026-05-25 13:12:44,449 [INFO] __main__: ============================================================
+2026-05-25 13:12:44,449 [INFO] __main__: Pipeline complete.
+2026-05-25 13:12:44,449 [INFO] __main__:   status              : RECONCILE_REQUIRED
+2026-05-25 13:12:44,449 [INFO] __main__:   error_phase         : None
+2026-05-25 13:12:44,449 [INFO] __main__:   error_message       : None
+2026-05-25 13:12:44,449 [INFO] __main__:   trade_decision_id   : 07f47128-0e8a-40be-81fc-92bea3c082aa
+2026-05-25 13:12:44,449 [INFO] __main__:   decision_context_id : 807b05a3-dae8-43fd-a67b-edaee0b05ec5
+2026-05-25 13:12:44,449 [INFO] __main__:   order_intent_id     : 00d54078-85c2-43a0-bcf6-8b668c73f21a
+2026-05-25 13:12:44,449 [INFO] __main__:   order_id            : 8cb99141-3109-451f-ba6c-8320aeae2751
+2026-05-25 13:12:44,449 [INFO] __main__:   order_status        : OrderStatus.RECONCILE_REQUIRED
+2026-05-25 13:12:44,450 [INFO] __main__:   requested_quantity  : 6.00000000
+2026-05-25 13:12:44,450 [INFO] __main__: ============================================================
+2026-05-25 13:12:44,450 [WARNING] __main__: Order requires reconciliation (code=BUDGET_EXHAUSTED)

@@ -226,7 +226,7 @@ class DecisionOrchestratorService:
             final_decision_composer_agent=self._final_decision_agent,
             agent_run_recorder=self._agent_recorder,
             score_calculator=self._score_calculator,
-            subprocess_timeout=120,
+            subprocess_timeout=300,
         )
 
     def _check_held_position_sell_override(

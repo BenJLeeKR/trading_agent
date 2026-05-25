@@ -498,7 +498,7 @@ class RateLimitBudgetManager:
 def build_kis_budget_manager(
     kis_env: str,
     real_rest_rps: int = 18,
-    paper_rest_rps: int = 1,
+    paper_rest_rps: int = 10,
     shared_budget_file: str | None = None,
 ) -> RateLimitBudgetManager:
     """Create a ``RateLimitBudgetManager`` with per-bucket safety scaling

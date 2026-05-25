@@ -356,7 +356,7 @@ async def main() -> int:
             market=MARKET,
             side=OrderSide.BUY,
             order_type=OrderType.MARKET,
-            quantity=Decimal("1"),
+            quantity=Decimal("100"),
             price=None,
         )
 

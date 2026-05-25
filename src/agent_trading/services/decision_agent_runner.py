@@ -81,7 +81,7 @@ class DecisionAgentRunner:
         final_decision_composer_agent: ProviderAIAgent,
         agent_run_recorder: AgentRunRecorder,
         score_calculator: ScoreCalculator | None = None,
-        subprocess_timeout: int = 120,
+        subprocess_timeout: int = 300,
     ) -> None:
         self._repos = repos
         self._ei_agent = event_interpretation_agent

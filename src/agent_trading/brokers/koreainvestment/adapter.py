@@ -19,6 +19,7 @@ from agent_trading.domain.enums import (
     AssetClass,
     BrokerErrorType,
     BrokerName,
+    OrderSide,
     OrderStatus,
     OrderType,
     TimeInForce,

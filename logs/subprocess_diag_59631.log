@@ -1,0 +1,2 @@
+[2026-05-25T09:08:01.438006] PID=59631 main() started
+[2026-05-25T09:08:01.438156] PID=59631 Failed to parse input: AgentSubprocessInput.__init__() got an unexpected keyword argument 'request'

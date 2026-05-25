@@ -49,11 +49,43 @@ def serialize_agent_input(
 ) -> str:
     """Serialize agent input for subprocess execution.
 
+    Produces a JSON payload that matches ``AgentSubprocessInput``
+    dataclass in ``scripts/run_agent_subprocess.py``.
+
     Extracted from DecisionOrchestratorService._serialize_agent_input().
     """
+    # Build provider config from environment (same as bootstrap)
+    import os as _os
     payload = {
-        "request": dataclass_to_dict(request),
+        # AgentSubprocessInput top-level fields (from request)
+        "decision_context_id": str(request.decision_context_id) if request.decision_context_id else None,
+        "correlation_id": request.correlation_id,
+        "symbol": request.symbol,
+        "market": request.market,
+        "source_type": request.source_type,
+
+        # AssembledContext (JSON-safe)
         "context": dataclass_to_dict(context),
+
+        # Provider configuration (from env, same as bootstrap)
+        "llm_provider": _os.environ.get("LLM_PROVIDER", "deepseek"),
+        "provider_api_key": (
+            _os.environ.get("DEEPSEEK_API_KEY")
+            or _os.environ.get("OPENAI_API_KEY", "")
+        ),
+        "provider_base_url": (
+            _os.environ.get("DEEPSEEK_BASE_URL")
+            or _os.environ.get("OPENAI_BASE_URL", "")
+        ),
+        "provider_model_id": (
+            _os.environ.get("DEEPSEEK_MODEL_ID")
+            or _os.environ.get("OPENAI_MODEL_ID", "")
+        ),
+        "provider_timeout_seconds": int(
+            _os.environ.get("DEEPSEEK_TIMEOUT_SECONDS", "30")
+        ),
+
+        # Legacy top-level keys (consumed by _reconstruct_context)
         "score": dataclass_to_dict(score) if score is not None else None,
         "positional_args": positional_args,
     }
@@ -89,9 +121,21 @@ def deserialize_agent_output(
     data = json.loads(raw_json)
 
     # Reconstruct dataclass instances from dicts
-    ei_output = dict_to_dataclass(data.get("ei_output", {}), EventInterpretationOutput)  # type: ignore[arg-type]
-    ar_output = dict_to_dataclass(data.get("ar_output", {}), AIRiskOutput)  # type: ignore[arg-type]
-    fdc_output = dict_to_dataclass(data.get("fdc_output", {}), FinalDecisionComposerOutput)  # type: ignore[arg-type]
+    # NOTE: The subprocess writes keys "event_output", "risk_output", "composer_output"
+    # (matching AgentSubprocessOutput field names).  Support both old-style
+    # ("ei_output", "ar_output", "fdc_output") and new-style for resilience.
+    ei_output = dict_to_dataclass(
+        data.get("event_output") or data.get("ei_output", {}),
+        EventInterpretationOutput,
+    )  # type: ignore[arg-type]
+    ar_output = dict_to_dataclass(
+        data.get("risk_output") or data.get("ar_output", {}),
+        AIRiskOutput,
+    )  # type: ignore[arg-type]
+    fdc_output = dict_to_dataclass(
+        data.get("composer_output") or data.get("fdc_output", {}),
+        FinalDecisionComposerOutput,
+    )  # type: ignore[arg-type]
 
     # Score
     score_data = data.get("score")

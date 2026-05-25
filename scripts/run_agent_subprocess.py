@@ -142,6 +142,10 @@ class AgentSubprocessInput:
     provider_model_id: str = ""
     provider_timeout_seconds: int = 120
 
+    # --- Fields from serialize_agent_input (top-level keys) ---
+    score: dict[str, Any] | None = None
+    positional_args: tuple[Any, ...] = ()
+
 
 @dataclass(slots=True, frozen=True)
 class AgentSubprocessOutput:
