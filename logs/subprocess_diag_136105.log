@@ -1,0 +1,15 @@
+[2026-05-26T10:47:40.757317] PID=136105 main() started
+[2026-05-26T10:47:40.757442] PID=136105 Input parsed: symbol=000720 market=KRX correlation_id=paper-loop-000720-1-10647
+[2026-05-26T10:47:40.757522] PID=136105 Creating OpenAICompatibleClient ...
+[2026-05-26T10:47:40.757538] PID=136105 OpenAICompatibleClient created
+[2026-05-26T10:47:40.757573] PID=136105 Starting EventInterpretationAgent.run() ...
+[2026-05-26T10:47:40.757645] PID=136105 _reconstruct_context: recent_events_raw count=7 → reconstructed count=7
+[2026-05-26T10:47:40.757800] PID=136105 Context reconstructed: events=7
+[2026-05-26T10:49:18.129314] PID=136105 EventInterpretationAgent completed: symbol=000720 input_events=7 output_events=7 detected_event_count=7 no_material_events=False
+[2026-05-26T10:49:18.129411] PID=136105 Starting AIRiskAgent.run() ...
+[2026-05-26T10:49:18.129646] PID=136105 _reconstruct_context: recent_events_raw count=7 → reconstructed count=7
+[2026-05-26T10:50:01.143415] PID=136105 AIRiskAgent completed: symbol=000720 risk_opinion=allow
+[2026-05-26T10:50:01.143530] PID=136105 Starting FinalDecisionComposerAgent.run() ...
+[2026-05-26T10:50:01.143676] PID=136105 _reconstruct_context: recent_events_raw count=7 → reconstructed count=7
+[2026-05-26T10:50:35.987805] PID=136105 FinalDecisionComposerAgent completed: symbol=000720 decision_type=APPROVE
+[2026-05-26T10:50:35.988162] PID=136105 SUCCESS: all 3 agents completed in 175.23s

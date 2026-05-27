@@ -1,0 +1,26 @@
+{
+  "phase": "22",
+  "description": "TTL 7200s 반영 후 dry-run 실측",
+  "source_file": "logs/phase22_dry_run_20260526_164522.json",
+  "execution_timestamp": "2026-05-26 16:45:22",
+  "total_symbols": 39,
+  "total_duration_seconds": 88.56,
+  "naver_429_count": 39,
+  "kis_500_count": 48,
+  "timeout_count": 0,
+  "ai_assemble_stats": {
+    "min_seconds": 5.39,
+    "max_seconds": 14.83,
+    "avg_seconds": 10.53,
+    "count": 39
+  },
+  "source_type_distribution": {
+    "held_position": 9,
+    "market_overlay": 2,
+    "core": 28
+  },
+  "t3_pipeline_status": {
+    "fresh_count": 0,
+    "scheduled_count": 28
+  }
+}

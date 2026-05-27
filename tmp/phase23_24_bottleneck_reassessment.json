@@ -1,0 +1,373 @@
+{
+  "analysis_type": "Phase 23 vs Phase 24 Bottleneck Re-assessment",
+  "methodology": "Timestamp-based wall clock calculation from actual log timestamps",
+  "files_analyzed": [
+    "/workspace/agent_trading/logs/phase23_dry_run_20260526_171136.json",
+    "/workspace/agent_trading/logs/phase24_dry_run_20260526_172730.json"
+  ],
+  "phase23": {
+    "phase": "phase23",
+    "file": "/workspace/agent_trading/logs/phase23_dry_run_20260526_171136.json",
+    "run_start": "17:11:36",
+    "run_duration_s": 83.5,
+    "symbol_count": 39,
+    "total_symbol_wall_clock_s": 386.4,
+    "avg_symbol_duration_s": 9.9,
+    "naver_429": {
+      "total_occurrences": 30,
+      "unique_queries_affected": 11,
+      "total_retry_attempts": 36,
+      "queries_max_retries_exceeded": 1,
+      "retry_attempt_distribution": {
+        "1": 13,
+        "2": 12,
+        "3": 11
+      },
+      "avg_backoff_s": 5.66,
+      "min_backoff_s": 2.02,
+      "max_backoff_s": 11.07,
+      "total_wall_clock_s": 130.01,
+      "wall_clock_pct_of_run": 155.6,
+      "query_details": {
+        "우리은행 ‘150만 유튜버’ 김선태, 우리은행장에 “예금 자산 얼마냐”": {
+          "first_429_ts": "17:11:53",
+          "last_retry_ts": "17:11:56",
+          "wall_clock_s": 3.0,
+          "retry_attempts": 2,
+          "max_retries_exceeded": false,
+          "attempt_distribution": {
+            "1": 1,
+            "2": 1
+          }
+        },
+        "unknown": {
+          "first_429_ts": "17:11:59",
+          "last_retry_ts": "17:12:48",
+          "wall_clock_s": 49.0,
+          "retry_attempts": 7,
+          "max_retries_exceeded": false,
+          "attempt_distribution": {
+            "1": 3,
+            "2": 2,
+            "3": 2
+          }
+        },
+        "DL LS MnM, LBMA 우수 공급업체 선정…“디지털 기반 데이터 관리 역량 강화”": {
+          "first_429_ts": "17:11:59",
+          "last_retry_ts": "17:12:06",
+          "wall_clock_s": 7.0,
+          "retry_attempts": 3,
+          "max_retries_exceeded": false,
+          "attempt_distribution": {
+            "1": 1,
+            "2": 1,
+            "3": 1
+          }
+        },
+        "신세계 정용진 고발 시민단체 “6월 호국보훈의 달에 스타벅스 할인 이벤트 진행하라”": {
+          "first_429_ts": "17:12:09",
+          "last_retry_ts": "17:12:17",
+          "wall_clock_s": 8.0,
+          "retry_attempts": 3,
+          "max_retries_exceeded": false,
+          "attempt_distribution": {
+            "1": 1,
+            "2": 1,
+            "3": 1
+          }
+        },
+        "대한항공 항공협회, 정부에 TCA 가입 건의서 제출…“생산유발효과만 5조”": {
+          "first_429_ts": "17:12:09",
+          "last_retry_ts": "17:12:17",
+          "wall_clock_s": 8.0,
+          "retry_attempts": 3,
+          "max_retries_exceeded": false,
+          "attempt_distribution": {
+            "1": 1,
+            "2": 1,
+            "3": 1
+          }
+        },
+        "삼성생명 삼성전자 덕분에 웃는다…조용히 오르는 보험주": {
+          "first_429_ts": "17:12:19",
+          "last_retry_ts": "17:12:27",
+          "wall_clock_s": 19.01,
+          "retry_attempts": 3,
+          "max_retries_exceeded": true,
+          "attempt_distribution": {
+            "1": 1,
+            "2": 1,
+            "3": 1
+          }
+        },
+        "신세계 평일·주말 모두 진수성찬…바야흐로 ‘한드 전성시대’": {
+          "first_429_ts": "17:12:19",
+          "last_retry_ts": "17:12:26",
+          "wall_clock_s": 7.0,
+          "retry_attempts": 3,
+          "max_retries_exceeded": false,
+          "attempt_distribution": {
+            "1": 1,
+            "2": 1,
+            "3": 1
+          }
+        },
+        "삼성전자 단일종목 레버리지 드디어 뜬다…삼전닉스 주가 탄력 받나": {
+          "first_429_ts": "17:12:30",
+          "last_retry_ts": "17:12:38",
+          "wall_clock_s": 8.0,
+          "retry_attempts": 3,
+          "max_retries_exceeded": false,
+          "attempt_distribution": {
+            "1": 1,
+            "2": 1,
+            "3": 1
+          }
+        },
+        "삼성전자 법원, 초기업노조 상대 가처분 \\": {
+          "first_429_ts": "17:12:40",
+          "last_retry_ts": "17:12:47",
+          "wall_clock_s": 7.0,
+          "retry_attempts": 3,
+          "max_retries_exceeded": false,
+          "attempt_distribution": {
+            "1": 1,
+            "2": 1,
+            "3": 1
+          }
+        },
+        "SK하이닉스 코스피, 삼전·하닉 강세에 8070선...기관 1조5000억 순매수[fn오후시황]": {
+          "first_429_ts": "17:12:50",
+          "last_retry_ts": "17:12:57",
+          "wall_clock_s": 7.0,
+          "retry_attempts": 3,
+          "max_retries_exceeded": false,
+          "attempt_distribution": {
+            "1": 1,
+            "2": 1,
+            "3": 1
+          }
+        },
+        "대우건설 \"종전하나?\" 코스피 건설업종 5% 점프": {
+          "first_429_ts": "17:12:50",
+          "last_retry_ts": "17:12:57",
+          "wall_clock_s": 7.0,
+          "retry_attempts": 3,
+          "max_retries_exceeded": false,
+          "attempt_distribution": {
+            "1": 1,
+            "2": 1,
+            "3": 1
+          }
+        }
+      }
+    },
+    "kis_500": {
+      "total_500_errors": 18,
+      "unique_symbols_affected": 18,
+      "budget_exhaustion_events": 1,
+      "quote_errors": 0,
+      "symbols_fetched_successfully": 2,
+      "symbols_in_batch": 20,
+      "failure_rate_pct": 90.0,
+      "wall_clock_s": 0.0,
+      "impact_type": "data_loss_not_delay",
+      "note": "18/20 symbols failed in same-second batch; wall clock ~0s but data loss prevents market_overlay from functioning"
+    },
+    "t3_timeouts": {
+      "count": 1
+    }
+  },
+  "phase24": {
+    "phase": "phase24",
+    "file": "/workspace/agent_trading/logs/phase24_dry_run_20260526_172730.json",
+    "run_start": "17:27:30",
+    "run_duration_s": 84.4,
+    "symbol_count": 39,
+    "total_symbol_wall_clock_s": 391.6,
+    "avg_symbol_duration_s": 10.0,
+    "naver_429": {
+      "total_occurrences": 29,
+      "unique_queries_affected": 11,
+      "total_retry_attempts": 38,
+      "queries_max_retries_exceeded": 0,
+      "retry_attempt_distribution": {
+        "1": 13,
+        "2": 13,
+        "3": 12
+      },
+      "avg_backoff_s": 5.7,
+      "min_backoff_s": 2.06,
+      "max_backoff_s": 11.18,
+      "total_wall_clock_s": 108.0,
+      "wall_clock_pct_of_run": 127.9,
+      "query_details": {
+        "우리은행 ‘150만 유튜버’ 김선태, 우리은행장에 “예금 자산 얼마냐”": {
+          "first_429_ts": "17:27:49",
+          "last_retry_ts": "17:27:52",
+          "wall_clock_s": 3.0,
+          "retry_attempts": 2,
+          "max_retries_exceeded": false,
+          "attempt_distribution": {
+            "1": 1,
+            "2": 1
+          }
+        },
+        "unknown": {
+          "first_429_ts": "17:27:54",
+          "last_retry_ts": "17:28:32",
+          "wall_clock_s": 38.0,
+          "retry_attempts": 9,
+          "max_retries_exceeded": false,
+          "attempt_distribution": {
+            "1": 3,
+            "2": 3,
+            "3": 3
+          }
+        },
+        "삼성생명 삼성전자 덕분에 웃는다…조용히 오르는 보험주": {
+          "first_429_ts": "17:27:54",
+          "last_retry_ts": "17:28:02",
+          "wall_clock_s": 8.0,
+          "retry_attempts": 3,
+          "max_retries_exceeded": false,
+          "attempt_distribution": {
+            "1": 1,
+            "2": 1,
+            "3": 1
+          }
+        },
+        "KCC KCC(002380) 상승폭 확대 +12.66%, 3거래일 연속 상승": {
+          "first_429_ts": "17:28:04",
+          "last_retry_ts": "17:28:12",
+          "wall_clock_s": 8.0,
+          "retry_attempts": 3,
+          "max_retries_exceeded": false,
+          "attempt_distribution": {
+            "1": 1,
+            "2": 1,
+            "3": 1
+          }
+        },
+        "신세계 與대변인 “정용진 사과, 진정성 있어” 내부선 “가식적 사과” 비판": {
+          "first_429_ts": "17:28:15",
+          "last_retry_ts": "17:28:22",
+          "wall_clock_s": 7.0,
+          "retry_attempts": 3,
+          "max_retries_exceeded": false,
+          "attempt_distribution": {
+            "1": 1,
+            "2": 1,
+            "3": 1
+          }
+        },
+        "현대제철 [장중수급포착] 현대제철, 외국인/기관 동시 순매수… 주가 +5.66%": {
+          "first_429_ts": "17:28:15",
+          "last_retry_ts": "17:28:22",
+          "wall_clock_s": 7.0,
+          "retry_attempts": 3,
+          "max_retries_exceeded": false,
+          "attempt_distribution": {
+            "1": 1,
+            "2": 1,
+            "3": 1
+          }
+        },
+        "삼성전자 [0526마감체크] 코스피, 미국-이란 협상 진전 기대감에 8000선 돌파 마감": {
+          "first_429_ts": "17:28:25",
+          "last_retry_ts": "17:28:33",
+          "wall_clock_s": 8.0,
+          "retry_attempts": 3,
+          "max_retries_exceeded": false,
+          "attempt_distribution": {
+            "1": 1,
+            "2": 1,
+            "3": 1
+          }
+        },
+        "삼성전자 삼성전자, 외부 생성형 AI 6월 도입…AX 전환 확대": {
+          "first_429_ts": "17:28:35",
+          "last_retry_ts": "17:28:43",
+          "wall_clock_s": 8.0,
+          "retry_attempts": 3,
+          "max_retries_exceeded": false,
+          "attempt_distribution": {
+            "1": 1,
+            "2": 1,
+            "3": 1
+          }
+        },
+        "LS LSㆍKKR, LS오토모티브 2100억 인수금융 리파이낸싱 착수": {
+          "first_429_ts": "17:28:35",
+          "last_retry_ts": "17:28:41",
+          "wall_clock_s": 6.0,
+          "retry_attempts": 3,
+          "max_retries_exceeded": false,
+          "attempt_distribution": {
+            "1": 1,
+            "2": 1,
+            "3": 1
+          }
+        },
+        "SK하이닉스 코스피, 삼전·하닉 강세에 8070선...기관 1조5000억 순매수[fn오후시황]": {
+          "first_429_ts": "17:28:45",
+          "last_retry_ts": "17:28:53",
+          "wall_clock_s": 8.0,
+          "retry_attempts": 3,
+          "max_retries_exceeded": false,
+          "attempt_distribution": {
+            "1": 1,
+            "2": 1,
+            "3": 1
+          }
+        },
+        "대우건설 \"종전하나?\" 코스피 건설업종 5% 점프": {
+          "first_429_ts": "17:28:45",
+          "last_retry_ts": "17:28:52",
+          "wall_clock_s": 7.0,
+          "retry_attempts": 3,
+          "max_retries_exceeded": false,
+          "attempt_distribution": {
+            "1": 1,
+            "2": 1,
+            "3": 1
+          }
+        }
+      }
+    },
+    "kis_500": {
+      "total_500_errors": 18,
+      "unique_symbols_affected": 18,
+      "budget_exhaustion_events": 1,
+      "quote_errors": 0,
+      "symbols_fetched_successfully": 2,
+      "symbols_in_batch": 20,
+      "failure_rate_pct": 90.0,
+      "wall_clock_s": 0.0,
+      "impact_type": "data_loss_not_delay",
+      "note": "18/20 symbols failed in same-second batch; wall clock ~0s but data loss prevents market_overlay from functioning"
+    },
+    "t3_timeouts": {
+      "count": 0
+    }
+  },
+  "comparison": {
+    "naver_429_wall_clock_delta_s": -22.01,
+    "kis_500_wall_clock_delta_s": 0.0,
+    "naver_429_occurrence_delta": -1,
+    "kis_500_error_delta": 0
+  },
+  "top_priority_bottleneck": {
+    "name": "NAVER API 429 (Rate Limit)",
+    "reason": "Naver 429 consumes 119.0s avg wall clock per run (141% of total run time), while KIS 500 contributes ~0s wall clock (same-second batch failure). Naver 429 causes active delay via exponential backoff (2s->5s->10s per query), affecting 11+11 unique queries across both runs. KIS 500 causes data loss (18/20 symbols fail) but no measurable wall clock delay.",
+    "wall_clock_impact_s": 119.0,
+    "wall_clock_impact_pct": 141.0,
+    "secondary_bottleneck": {
+      "name": "KIS 500 (Paper Environment Budget Exhaustion)",
+      "wall_clock_impact_s": 0.0,
+      "impact_type": "data_loss",
+      "note": "18/20 market_overlay symbols fail per run; no wall clock delay but prevents market_overlay feature from working"
+    },
+    "recommended_next_action": "Implement Naver API daily quota reset tracking + adaptive rate limiting to prevent 429 retry storms. Consider Naver API key rotation or paid tier upgrade for higher daily quota."
+  }
+}

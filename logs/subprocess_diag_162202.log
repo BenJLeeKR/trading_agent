@@ -1,0 +1,7 @@
+[2026-05-26T11:21:05.315217] PID=162202 main() started
+[2026-05-26T11:21:05.315355] PID=162202 Input parsed: symbol=004370 market=KRX correlation_id=paper-loop-004370-1-12651
+[2026-05-26T11:21:05.315451] PID=162202 Creating OpenAICompatibleClient ...
+[2026-05-26T11:21:05.315471] PID=162202 OpenAICompatibleClient created
+[2026-05-26T11:21:05.315517] PID=162202 Starting EventInterpretationAgent.run() ...
+[2026-05-26T11:21:05.315539] PID=162202 _reconstruct_context: recent_events_raw count=0 → reconstructed count=0
+[2026-05-26T11:21:05.315626] PID=162202 Context reconstructed: events=0

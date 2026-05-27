@@ -1,0 +1,10 @@
+[2026-05-26T09:10:47.852933] PID=60374 main() started
+[2026-05-26T09:10:47.853066] PID=60374 Input parsed: symbol=004020 market=KRX correlation_id=paper-loop-004020-1-4835
+[2026-05-26T09:10:47.853155] PID=60374 Creating OpenAICompatibleClient ...
+[2026-05-26T09:10:47.853184] PID=60374 OpenAICompatibleClient created
+[2026-05-26T09:10:47.853220] PID=60374 Starting EventInterpretationAgent.run() ...
+[2026-05-26T09:10:47.853240] PID=60374 _reconstruct_context: recent_events_raw count=0 → reconstructed count=0
+[2026-05-26T09:10:47.853312] PID=60374 Context reconstructed: events=0
+[2026-05-26T09:10:55.759932] PID=60374 EventInterpretationAgent completed: symbol=004020 input_events=0 output_events=0 detected_event_count=0 no_material_events=True
+[2026-05-26T09:10:55.760037] PID=60374 Starting AIRiskAgent.run() ...
+[2026-05-26T09:10:55.760100] PID=60374 _reconstruct_context: recent_events_raw count=0 → reconstructed count=0

@@ -1,0 +1,79 @@
+{
+  "timestamp": "2026-05-26T13:51:19+09:00",
+  "measurement_type": "final_submit_wall_clock",
+  "command": "python3 -m scripts.run_decision_loop --count 1 --submit --output json",
+  "optimizations_applied": [
+    "deepseek-chat 통일 (모든 AI 서비스)",
+    "Naver 429 완화 Phase 2 (_NaverTokenBucket 8 req/s + Semaphore 2 + backoff tuning)",
+    "KIS quote fetch 완화 (중복 _resolve_symbol_price() 제거, _QUOTE_CACHE_TTL 5s→180s, EGW00201 retry)",
+    "Subprocess timeout 조정 (4-layer timeout 420s→150s)"
+  ],
+  "summary": {
+    "total_cycles": 37,
+    "success": 33,
+    "skipped": 33,
+    "error": 0,
+    "success_rate_pct": 89.2,
+    "total_duration_seconds": 100.445,
+    "cadence_target_seconds": 300,
+    "cadence_met": true,
+    "margin_seconds": 199.555
+  },
+  "symbols_processed": 37,
+  "symbols_in_pool": 50,
+  "rejected_orders": [
+    {"symbol": "000150", "side": "BUY", "source_type": "held_position", "duration_s": 22.2, "ai_assemble_ms": 17018},
+    {"symbol": "005930", "side": "BUY", "source_type": "held_position", "duration_s": 21.8, "ai_assemble_ms": 19637},
+    {"symbol": "000720", "side": "BUY", "source_type": "core", "duration_s": 19.7, "ai_assemble_ms": 14895},
+    {"symbol": "004370", "side": "BUY", "source_type": "core", "duration_s": 16.7, "ai_assemble_ms": 11534}
+  ],
+  "bottleneck_analysis": {
+    "naver_429": {
+      "total_occurrences": 90,
+      "root_cause": "Naver API daily quota exhaustion (25,000/25,000) — 모든 요청이 429 응답",
+      "mitigation_status": "Phase 2 token bucket + semaphore 적용됐으나 daily quota는 해결 불가",
+      "recommendation": "Naver API daily quota 증설 필요 (유료 플랜 업그레이드) 또는 캐싱 강화로 쿼리 수 감소"
+    },
+    "kis_egw00201": {
+      "total_occurrences": 3,
+      "symbols": ["000270", "006650", "000990"],
+      "mitigation_status": "EGW00201 retry mechanism 정상 작동 (retry 1/2 in 0.5s)",
+      "impact": "미미 (각 0.5s 지연)"
+    },
+    "kis_quote_500_errors": {
+      "total_occurrences": 21,
+      "root_cause": "KIS paper trading API (openapivts) HTTP 500 — mock 서버 한계",
+      "mitigation_status": "best-effort fallback (empty quote) 정상 작동",
+      "impact": "Production 환경 (openapi.koreainvestment.com)에서는 발생하지 않을 이슈"
+    },
+    "subprocess_timeout": {
+      "total_occurrences": 0,
+      "mitigation_status": "4-layer timeout 150s 설정, 단 한 건도 트리거되지 않음"
+    },
+    "ai_assemble_times": {
+      "min_ms": 4072,
+      "max_ms": 19637,
+      "typical_range": "4,000~15,000ms",
+      "slowest_symbols": ["005930 (19,637ms)", "000150 (17,018ms)", "000270 (15,430ms)", "000720 (14,895ms)"]
+    },
+    "sell_guard_blocked": {
+      "symbol": "000660",
+      "reason": "open_sell_qty=2, available=0 < requested=2"
+    },
+    "sizing_concentration_blocked": {
+      "symbols": ["000270", "000880", "000990"],
+      "reason": "position_concentration constraint (max 10% of NAV)"
+    }
+  },
+  "phase_trace_summary": {
+    "ai_assemble": "4,072~19,637ms — 주 병목, deepseek-chat API 호출 시간",
+    "quote_resolution": "0ms (error fallback) — KIS paper trading 500으로 대부분 empty quote",
+    "sizing": "0ms — 즉시 완료",
+    "sell_guard": "0ms — 즉시 완료",
+    "order_create": "55~62ms — 미미",
+    "stale_snapshot_guard": "2~55ms — 미미",
+    "broker_submit": "53~55ms — 미미 (paper trading broker가 즉시 reject)"
+  },
+  "exit_code": 1,
+  "exit_error": "RuntimeError: Cannot send a request, as the client has been closed (cleanup 중 발생, 측정 결과에 영향 없음)"
+}
