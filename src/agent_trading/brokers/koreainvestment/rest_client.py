@@ -853,13 +853,44 @@ class KISRestClient:
         held_position_sell:
             If ``True``, use the held-position sell reserved budget lane.
         """
-        # 1. Budget check
+        # 1. Budget check — with async pacing for global REST cap
         if self.budget_manager is not None:
-            self.budget_manager.consume_or_raise(
-                bucket,
-                skip_global_rest=skip_global_rest,
-                held_position_sell=held_position_sell,
-            )
+            max_global_retries = 3
+            for attempt in range(1, max_global_retries + 1):
+                try:
+                    self.budget_manager.consume_or_raise(
+                        bucket,
+                        skip_global_rest=skip_global_rest,
+                        held_position_sell=held_position_sell,
+                    )
+                    break  # Success
+                except BudgetExhaustedError as exc:
+                    # Global REST cap exhaustion → async wait for refill, then retry.
+                    # Per-operation bucket exhaustion is NOT retried here (it is a
+                    # structural safety limit, not a transient pacing issue).
+                    if exc.bucket == "global":
+                        if attempt < max_global_retries:
+                            logger.info(
+                                "Global REST cap exhausted for %s — waiting for refill "
+                                "(remaining=%s/%s) [attempt %d/%d]",
+                                endpoint_key,
+                                self.budget_manager.global_rest.remaining
+                                if self.budget_manager.global_rest is not None
+                                else "N/A",
+                                self.budget_manager.global_rest.capacity
+                                if self.budget_manager.global_rest is not None
+                                else "N/A",
+                                attempt,
+                                max_global_retries,
+                            )
+                            await self.budget_manager.wait_until_global_rest_available()
+                            # Subsequent retries skip global REST (already consumed
+                            # by wait_until_global_rest_available)
+                            skip_global_rest = True
+                        else:
+                            raise  # Final attempt failed — propagate
+                    else:
+                        raise  # Per-bucket exhaustion — re-raise immediately
 
         # 2. Circuit breaker
         if self._circuit_breaker.state == CircuitState.OPEN:
@@ -1032,7 +1063,7 @@ class KISRestClient:
             bucket=BucketType.ORDER,
             body=body,
             requires_hashkey=True,
-            skip_global_rest=True,
+            skip_global_rest=False,
             held_position_sell=_held_position_sell,
         )
 

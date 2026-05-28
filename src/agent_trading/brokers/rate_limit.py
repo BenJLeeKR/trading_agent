@@ -19,6 +19,7 @@ Design
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -118,7 +119,6 @@ class BudgetExhaustedError(RuntimeError):
         super().__init__(f"[{bucket}] {message}" if message else f"[{bucket}] budget exhausted")
 
 
-@dataclass(slots=True)
 class RateLimitBudgetManager:
     """Session-level rate limit budget orchestration.
 
@@ -378,6 +378,57 @@ class RateLimitBudgetManager:
                 ),
             )
 
+    async def wait_until_global_rest_available(
+        self,
+        tokens: int = 1,
+        timeout: float = 30.0,
+    ) -> None:
+        """Block the current coroutine until the global REST bucket has
+        *tokens* available, or *timeout* seconds have elapsed.
+
+        This is the **async pacing** counterpart of
+        ``FileBackedGlobalBucket.wait_until_available()``.  It polls
+        ``global_rest.try_consume()`` with ``asyncio.sleep()`` so that
+        concurrent coroutines waiting on the same bucket yield control
+        back to the event loop.
+
+        Parameters
+        ----------
+        tokens:
+            Number of tokens to consume (default 1).
+        timeout:
+            Maximum seconds to wait (default 30.0).  If the budget is
+            still exhausted after *timeout*, ``BudgetExhaustedError``
+            is raised.
+
+        Raises
+        ------
+        BudgetExhaustedError
+            If the global REST bucket remains exhausted after *timeout*.
+        """
+        if self.global_rest is None:
+            return  # No global cap configured — nothing to wait for.
+
+        deadline = datetime.now(tz=timezone.utc) + timedelta(seconds=timeout)
+        # Poll interval: half the refill time for 1 token, clamped to
+        # [0.05, 0.5] seconds so we don't busy-loop or sleep too long.
+        poll_interval = max(0.05, min(0.5, 0.5 / max(self.global_rest.refill_rate, 0.01)))
+
+        while True:
+            if self.global_rest.try_consume(tokens):
+                return  # Token acquired.
+
+            if datetime.now(tz=timezone.utc) >= deadline:
+                raise BudgetExhaustedError(
+                    bucket="global",
+                    message=(
+                        f"Global REST cap still exhausted after {timeout}s timeout "
+                        f"(remaining={self.global_rest.remaining}/{self.global_rest.capacity})"
+                    ),
+                )
+
+            await asyncio.sleep(poll_interval)
+
     def reserve_reconciliation(self, tokens: int = 1) -> bool:
         """Reserve *tokens* from the reconciliation reserve.
 
@@ -498,7 +549,7 @@ class RateLimitBudgetManager:
 def build_kis_budget_manager(
     kis_env: str,
     real_rest_rps: int = 18,
-    paper_rest_rps: int = 1,
+    paper_rest_rps: int = 3,
     shared_budget_file: str | None = None,
 ) -> RateLimitBudgetManager:
     """Create a ``RateLimitBudgetManager`` with per-bucket safety scaling

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from agent_trading.db.row_mapper import entity_to_insert_kwargs, row_to_entity
@@ -209,16 +209,16 @@ class PostgresExternalEventRepository(ExternalEventRepository):
     ) -> bool:
         """Check if T3 events exist for symbol within freshness window.
 
-        Uses created_at (DB insert time) rather than published_at to determine
-        whether a recent T3 fetch already populated events for this symbol.
-        This prevents redundant T3 pipeline execution within the freshness window.
+        Uses ingested_at (system ingestion time) to determine freshness.
+        ingested_at reflects when the event was stored in the database,
+        which is the correct semantic for "has fresh data been collected".
         """
-        cutoff = datetime.utcnow() - timedelta(seconds=freshness_seconds)
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=freshness_seconds)
         query = """
             SELECT 1 FROM trading.external_events
              WHERE symbol = $1
                AND source_reliability_tier = 'T3'
-               AND COALESCE(created_at, ingested_at) >= $2
+               AND ingested_at >= $2
              LIMIT 1
         """
         result = await self._tx.connection.fetchval(query, symbol, cutoff)

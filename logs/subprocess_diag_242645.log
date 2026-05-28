@@ -1,0 +1,14 @@
+[2026-05-28T13:25:04.945290] PID=242645 main() started
+[2026-05-28T13:25:04.951284] PID=242645 Input parsed: symbol=005930 market=KRX correlation_id=verify-3-19904
+[2026-05-28T13:25:04.951600] PID=242645 No provider client created
+[2026-05-28T13:25:04.951910] PID=242645 Starting EventInterpretationAgent.run() ...
+[2026-05-28T13:25:04.955226] PID=242645 _reconstruct_context: recent_events_raw count=1055 → reconstructed count=1055
+[2026-05-28T13:25:04.955393] PID=242645 Context reconstructed: events=1055
+[2026-05-28T13:25:04.956547] PID=242645 EventInterpretationAgent completed: symbol=005930 input_events=1055 output_events=0 detected_event_count=1055 no_material_events=False
+[2026-05-28T13:25:04.956592] PID=242645 Starting AIRiskAgent.run() ...
+[2026-05-28T13:25:04.959954] PID=242645 _reconstruct_context: recent_events_raw count=1055 → reconstructed count=1055
+[2026-05-28T13:25:04.960629] PID=242645 AIRiskAgent completed: symbol= risk_opinion=allow
+[2026-05-28T13:25:04.960715] PID=242645 Starting FinalDecisionComposerAgent.run() ...
+[2026-05-28T13:25:04.964124] PID=242645 _reconstruct_context: recent_events_raw count=1055 → reconstructed count=1055
+[2026-05-28T13:25:04.964911] PID=242645 FinalDecisionComposerAgent completed: symbol= decision_type=HOLD
+[2026-05-28T13:25:04.965078] PID=242645 SUCCESS: all 3 agents completed in 0.02s

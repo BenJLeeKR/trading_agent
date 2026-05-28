@@ -4047,9 +4047,9 @@ class TestKisTruthFallback:
             snapshot_time=now - timedelta(hours=2),
         )
 
-        # Mock broker that returns positions via fetch_positions
+        # Mock broker that returns positions via get_positions
         broker = AsyncMock(spec=BrokerAdapter)
-        broker.fetch_positions = AsyncMock(return_value=[
+        broker.get_positions = AsyncMock(return_value=[
             _make_position_entity(
                 account_id=account_id,
                 instrument_id=instrument_id,
@@ -4068,7 +4068,7 @@ class TestKisTruthFallback:
         assert result is not None
         assert result.inferred_fill_qty == Decimal("15")
         assert result.source == "kis_truth_fallback"
-        broker.fetch_positions.assert_awaited_once()
+        broker.get_positions.assert_awaited_once()
 
     async def test_kis_truth_fallback_falls_back_to_local_snapshot_when_no_broker(
         self,
@@ -4183,7 +4183,7 @@ class TestKisTruthFallback:
         )
 
         broker = AsyncMock(spec=BrokerAdapter)
-        broker.fetch_positions = AsyncMock(return_value=[
+        broker.get_positions = AsyncMock(return_value=[
             _make_position_entity(
                 account_id=account_id,
                 instrument_id=instrument_id,
@@ -4201,7 +4201,7 @@ class TestKisTruthFallback:
         )
         assert result1 is not None
         assert result1.inferred_fill_qty == Decimal("15")
-        assert broker.fetch_positions.await_count == 1
+        assert broker.get_positions.await_count == 1
 
         # Second call (immediate, within cooldown): should skip KIS API
         result2 = await sync_service._try_kis_truth_fallback(
@@ -4213,8 +4213,8 @@ class TestKisTruthFallback:
         )
         assert result2 is not None
         assert result2.inferred_fill_qty == Decimal("15")
-        # fetch_positions should NOT have been called again
-        assert broker.fetch_positions.await_count == 1
+        # get_positions should NOT have been called again
+        assert broker.get_positions.await_count == 1
 
     async def test_kis_truth_fallback_per_order_one_call_limit(
         self,
@@ -4265,7 +4265,7 @@ class TestKisTruthFallback:
         )
 
         broker = AsyncMock(spec=BrokerAdapter)
-        broker.fetch_positions = AsyncMock(return_value=[
+        broker.get_positions = AsyncMock(return_value=[
             _make_position_entity(
                 account_id=account_id,
                 instrument_id=instrument_id,
@@ -4285,7 +4285,7 @@ class TestKisTruthFallback:
             broker=broker,
         )
         assert result1 is not None
-        assert broker.fetch_positions.await_count == 1
+        assert broker.get_positions.await_count == 1
 
         # Reset cooldown to allow second call if not for per-order limit
         sync_service._last_kis_inquiry_at.pop(account_id, None)
@@ -4299,8 +4299,8 @@ class TestKisTruthFallback:
             broker=broker,
         )
         assert result2 is not None
-        # fetch_positions should NOT have been called again
-        assert broker.fetch_positions.await_count == 1
+        # get_positions should NOT have been called again
+        assert broker.get_positions.await_count == 1
 
     async def test_kis_truth_fallback_silent_failure_on_api_error(
         self,
@@ -4351,7 +4351,7 @@ class TestKisTruthFallback:
         )
 
         broker = AsyncMock(spec=BrokerAdapter)
-        broker.fetch_positions = AsyncMock(side_effect=RuntimeError("KIS API unavailable"))
+        broker.get_positions = AsyncMock(side_effect=RuntimeError("KIS API unavailable"))
 
         # Should not raise — silently falls back to local snapshot
         result = await sync_service._try_kis_truth_fallback(
@@ -4363,7 +4363,7 @@ class TestKisTruthFallback:
         )
         assert result is not None
         assert result.inferred_fill_qty == Decimal("15")
-        broker.fetch_positions.assert_awaited_once()
+        broker.get_positions.assert_awaited_once()
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -6066,3 +6066,45 @@ class TestExpireEodOrphanOrders:
 
         assert expired_pending == 2, f"Expected 2 pending_submit expired, got {expired_pending}"
         assert expired_reconcile == 1, f"Expected 1 reconcile_required expired, got {expired_reconcile}"
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: _fetch_kis_current_position_qty — get_positions 호출 검증
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestFetchKisCurrentPositionQty:
+    """``_fetch_kis_current_position_qty()`` — get_positions 호출 검증."""
+
+    async def test_fetch_kis_current_position_qty_calls_get_positions(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """``_fetch_kis_current_position_qty``가 ``broker.get_positions(account_ref)``를
+        올바른 인자로 호출하는지 검증한다."""
+        account_id = uuid4()
+        instrument_id = uuid4()
+        broker_account_id = uuid4()
+
+        _make_account(repos, account_id=account_id, broker_account_id=broker_account_id)
+        _make_broker_account(repos, broker_account_id=broker_account_id)
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.get_positions = AsyncMock(return_value=[
+            _make_position_entity(
+                account_id=account_id,
+                instrument_id=instrument_id,
+                quantity=Decimal("10"),
+            ),
+        ])
+
+        result = await sync_service._fetch_kis_current_position_qty(
+            account_id=account_id,
+            instrument_id=instrument_id,
+            broker=broker,
+            _caller_order_id="test-order-001",
+        )
+
+        assert result == Decimal("10")
+        broker.get_positions.assert_awaited_once_with("test-account-ref")

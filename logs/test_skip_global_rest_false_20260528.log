@@ -1,0 +1,38 @@
+============================= test session starts ==============================
+platform linux -- Python 3.14.4, pytest-8.4.2, pluggy-1.6.0 -- /usr/bin/python3
+cachedir: .pytest_cache
+rootdir: /workspace/agent_trading
+configfile: pytest.ini
+plugins: asyncio-1.3.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 11 items
+
+tests/brokers/koreainvestment/test_rest_client_submit.py::TestSubmitOrderSuccess::test_submit_order_success PASSED [  9%]
+tests/brokers/koreainvestment/test_rest_client_submit.py::TestSubmitOrderSuccess::test_submit_order_empty_odno PASSED [ 18%]
+tests/brokers/koreainvestment/test_rest_client_submit.py::TestSubmitOrderBusinessError::test_submit_order_price_validation_error PASSED [ 27%]
+tests/brokers/koreainvestment/test_rest_client_submit.py::TestSubmitOrderBusinessError::test_submit_order_ambiguous_error PASSED [ 36%]
+tests/brokers/koreainvestment/test_rest_client_submit.py::TestSubmitOrderRequestBody::test_submit_request_body_structure PASSED [ 45%]
+tests/brokers/koreainvestment/test_rest_client_submit.py::TestSubmitOrderRequestBody::test_submit_sell_side_tr_id PASSED [ 54%]
+tests/brokers/koreainvestment/test_rest_client_submit.py::TestSubmitOrderSkipGlobalRest::test_submit_order_passes_skip_global_rest FAILED [ 63%]
+tests/brokers/koreainvestment/test_rest_client_submit.py::TestSubmitOrderSkipGlobalRest::test_submit_order_skip_global_rest_with_held_position_sell FAILED [ 72%]
+tests/brokers/koreainvestment/test_rest_client_submit.py::TestResolveSmokePrice::test_default_when_env_not_set PASSED [ 81%]
+tests/brokers/koreainvestment/test_rest_client_submit.py::TestResolveSmokePrice::test_from_env_valid PASSED [ 90%]
+tests/brokers/koreainvestment/test_rest_client_submit.py::TestResolveSmokePrice::test_from_env_invalid_falls_back PASSED [100%]
+
+=================================== FAILURES ===================================
+___ TestSubmitOrderSkipGlobalRest.test_submit_order_passes_skip_global_rest ____
+tests/brokers/koreainvestment/test_rest_client_submit.py:251: in test_submit_order_passes_skip_global_rest
+    assert mock_request.call_args[1].get("skip_global_rest") is True
+E   AssertionError: assert False is True
+E    +  where False = <built-in method get of dict object at 0x7cf3520802c0>('skip_global_rest')
+E    +    where <built-in method get of dict object at 0x7cf3520802c0> = {'body': {'ACNT_PRDT_CD': '01', 'ALGO': '01', 'CANO': '12345678', 'ORD_DVSN': '00', ...}, 'bucket': <BucketType.ORDER: 'order'>, 'endpoint_key': 'order_cash', 'held_position_sell': False, ...}.get
+_ TestSubmitOrderSkipGlobalRest.test_submit_order_skip_global_rest_with_held_position_sell _
+tests/brokers/koreainvestment/test_rest_client_submit.py:267: in test_submit_order_skip_global_rest_with_held_position_sell
+    assert call_kwargs.get("skip_global_rest") is True
+E   AssertionError: assert False is True
+E    +  where False = <built-in method get of dict object at 0x7cf351f254c0>('skip_global_rest')
+E    +    where <built-in method get of dict object at 0x7cf351f254c0> = {'body': {'ACNT_PRDT_CD': '01', 'ALGO': '01', 'CANO': '12345678', 'ORD_DVSN': '00', ...}, 'bucket': <BucketType.ORDER: 'order'>, 'endpoint_key': 'order_cash', 'held_position_sell': False, ...}.get
+=========================== short test summary info ============================
+FAILED tests/brokers/koreainvestment/test_rest_client_submit.py::TestSubmitOrderSkipGlobalRest::test_submit_order_passes_skip_global_rest
+FAILED tests/brokers/koreainvestment/test_rest_client_submit.py::TestSubmitOrderSkipGlobalRest::test_submit_order_skip_global_rest_with_held_position_sell
+========================= 2 failed, 9 passed in 0.03s ==========================

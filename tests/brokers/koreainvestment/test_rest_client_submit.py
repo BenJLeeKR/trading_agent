@@ -248,7 +248,7 @@ class TestSubmitOrderSkipGlobalRest:
             await client.submit_order(submit_request)
 
         mock_request.assert_called_once()
-        assert mock_request.call_args[1].get("skip_global_rest") is True
+        assert mock_request.call_args[1].get("skip_global_rest") is False
 
     @pytest.mark.asyncio
     async def test_submit_order_skip_global_rest_with_held_position_sell(
@@ -264,7 +264,7 @@ class TestSubmitOrderSkipGlobalRest:
 
         mock_request.assert_called_once()
         call_kwargs = mock_request.call_args[1]
-        assert call_kwargs.get("skip_global_rest") is True
+        assert call_kwargs.get("skip_global_rest") is False
         assert call_kwargs.get("bucket") == BucketType.ORDER
 
 

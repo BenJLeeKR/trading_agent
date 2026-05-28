@@ -2007,10 +2007,12 @@ class TestRunT3LivePipeline:
             nonlocal _added_count
             _added_count += 1
             # row_to_entity를 통과할 수 있는 최소 필드
+            # event_id는 UUID 필수값이므로 None이 아닌 유효한 UUID 필요
             return {
-                "event_id": None,
+                "event_id": uuid4(),
                 "event_type": "test",
                 "source_name": "test",
+                "symbol": SYMBOL,
                 "published_at": datetime.now(timezone.utc),
             }
 
@@ -2039,8 +2041,12 @@ class TestRunT3LivePipeline:
         await _run_t3_live_pipeline(runtime, repos, SYMBOL)
 
     @pytest.mark.asyncio
-    async def test_skip_when_naver_quota_exhausted(self) -> None:
-        """NAVER quota 소진 시 graceful skip (이중 방어)."""
+    @patch(
+        "agent_trading.db.transaction.transaction",
+        side_effect=_fake_db_transaction,
+    )
+    async def test_skip_when_naver_quota_exhausted(self, mock_tx: object) -> None:
+        """NAVER quota 소진 시 degraded mode: KIS disclosure → T3 persist."""
         from agent_trading.brokers.naver_news_adapter import (
             NaverDailyQuotaTracker,
         )
@@ -2059,8 +2065,8 @@ class TestRunT3LivePipeline:
         ):
             await _run_t3_live_pipeline(runtime, repos, SYMBOL)
 
-        # Verify that fetch_disclosure_titles was NOT called (early return)
-        runtime["disclosure_seed_service"].fetch_disclosure_titles.assert_not_called()
+        # Degraded mode: fetch_disclosure_titles IS called (KIS disclosure fetch)
+        runtime["disclosure_seed_service"].fetch_disclosure_titles.assert_called_once()
 
     @pytest.mark.asyncio
     @patch(
@@ -2101,6 +2107,10 @@ class TestRunT3LivePipeline:
         await _run_t3_live_pipeline(runtime, repos, SYMBOL)
 
     @pytest.mark.asyncio
+    @patch(
+        "agent_trading.db.transaction.transaction",
+        new=_fake_db_transaction,
+    )
     async def test_success_path(self) -> None:
         """정상 경로: fetch → process → persist."""
         from agent_trading.domain.models import SeededNewsCandidate
@@ -2136,7 +2146,22 @@ class TestRunT3LivePipeline:
             return_value=([candidate], {}),
         )
 
-        await _run_t3_live_pipeline(runtime, repos, SYMBOL)
+        # persist_seeded_events가 in-memory repo를 사용하도록 패치
+        # (Step 4에서 PostgresExternalEventRepository를 생성하므로,
+        #  in-memory repos.external_events에 직접 저장)
+        from scripts.run_decision_loop import persist_seeded_events as _real_persist
+
+        async def _persist_to_in_memory(
+            events: list,
+            repo: object,
+        ) -> int:
+            return await _real_persist(events, repos.external_events)
+
+        with patch(
+            "scripts.run_decision_loop.persist_seeded_events",
+            side_effect=_persist_to_in_memory,
+        ):
+            await _run_t3_live_pipeline(runtime, repos, SYMBOL)
 
         # Verify events were persisted
         events = await repos.external_events.list_by_symbol(

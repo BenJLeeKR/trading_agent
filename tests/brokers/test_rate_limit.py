@@ -22,23 +22,20 @@ class TestBuildKisBudgetManager:
     """``build_kis_budget_manager()`` factory function tests."""
 
     def test_paper_budget_default_rps(self) -> None:
-        """Paper env with default 1 RPS creates conservative buckets."""
+        """Paper env with default 3 RPS creates conservative buckets."""
         mgr = build_kis_budget_manager(kis_env="paper")
         assert isinstance(mgr, RateLimitBudgetManager)
         snap = mgr.snapshot()
-        # Paper baseline capacities (1 RPS):
-        #   auth=1, inquiry=1, market_data=1, reconciliation=10
-        #   order=3 (Fix 3: capacity increased from 1→3 to prevent
-        #   BudgetExhaustedError → lock → 연쇄 차단)
-        assert snap["auth"]["capacity"] == 1
-        assert snap["order"]["capacity"] == 3
-        assert snap["inquiry"]["capacity"] == 1
-        assert snap["market_data"]["capacity"] == 1
-        # Paper RECONCILIATION bucket capacity increased from 5 to 10
-        # to prevent budget starvation for reconcile-required resolution.
-        # (2026-05-19: 25 RR orders need at least 25 tokens; capacity=10,
-        #  refill=1.0/sec allows ~10 orders per cycle with continuous refill)
-        assert snap["reconciliation"]["capacity"] == 10
+        # Paper baseline capacities (3 RPS, paper_rest_rps default raised 1→3):
+        #   auth=3, inquiry=3, market_data=3, reconciliation=30
+        #   order=9 (Fix 3: capacity = max(3, int(3*3)) = 9)
+        assert snap["auth"]["capacity"] == 3
+        assert snap["order"]["capacity"] == 9
+        assert snap["inquiry"]["capacity"] == 3
+        assert snap["market_data"]["capacity"] == 3
+        # Paper RECONCILIATION bucket: capacity = max(1, int(10 * total))
+        # total = paper_rest_rps / 1.0 = 3 → max(1, int(10*3)) = 30
+        assert snap["reconciliation"]["capacity"] == 30
 
     def test_live_budget_default_rps(self) -> None:
         """Live env with default 18 RPS (per KIS notice 2026-04-20) creates scaled buckets."""
@@ -101,12 +98,12 @@ class TestStrictGlobalRestCap:
     """``build_kis_budget_manager()`` global REST bucket (2-tier enforcement)."""
 
     def test_global_bucket_paper_default(self) -> None:
-        """Paper env: global REST bucket capacity=1, refill_rate=1.0."""
+        """Paper env: global REST bucket capacity=3, refill_rate=3.0."""
         mgr = build_kis_budget_manager(kis_env="paper")
         snap = mgr.snapshot()
         assert "global" in snap
-        assert snap["global"]["capacity"] == 1
-        assert snap["global"]["refill_rate"] == 1.0
+        assert snap["global"]["capacity"] == 3
+        assert snap["global"]["refill_rate"] == 3.0
 
     def test_global_bucket_live_default(self) -> None:
         """Live env: global REST bucket capacity=18, refill_rate=18.0."""
@@ -126,10 +123,12 @@ class TestStrictGlobalRestCap:
 
     def test_global_bucket_exhausted_blocks_operation(self) -> None:
         """Global bucket empty → ``consume_or_raise()`` raises ``BudgetExhaustedError``."""
-        mgr = build_kis_budget_manager(kis_env="paper")  # global capacity=1
-        # First call consumes the only token
+        mgr = build_kis_budget_manager(kis_env="paper")  # global capacity=3
+        # Drain the global bucket by consuming 3 times
         mgr.consume_or_raise(BucketType.INQUIRY)
-        # Second call should fail on the global bucket (paper: 1 RPS)
+        mgr.consume_or_raise(BucketType.INQUIRY)
+        mgr.consume_or_raise(BucketType.INQUIRY)
+        # Fourth call should fail on the global bucket (paper: 3 RPS)
         with pytest.raises(BudgetExhaustedError) as exc_info:
             mgr.consume_or_raise(BucketType.INQUIRY)
         assert exc_info.value.bucket == "global"
@@ -179,7 +178,7 @@ class TestSharedBudgetFile:
             from agent_trading.brokers.shared_budget import FileBackedGlobalBucket
 
             assert isinstance(mgr.global_rest, FileBackedGlobalBucket)
-            assert mgr.global_rest.capacity == 1
+            assert mgr.global_rest.capacity == 3
         finally:
             import os
             if os.path.exists(path):
@@ -202,10 +201,12 @@ class TestSharedBudgetFile:
                 shared_budget_file=path,
             )
 
-            # First consume from mgr1 should succeed
+            # Drain the shared global bucket (capacity=3) by consuming 3 times
+            mgr1.consume_or_raise(BucketType.INQUIRY)
+            mgr1.consume_or_raise(BucketType.INQUIRY)
             mgr1.consume_or_raise(BucketType.INQUIRY)
 
-            # Second consume from mgr2 should fail on global bucket
+            # Fourth consume from mgr2 should fail on global bucket
             from agent_trading.brokers.rate_limit import BudgetExhaustedError
 
             with pytest.raises(BudgetExhaustedError) as exc_info:

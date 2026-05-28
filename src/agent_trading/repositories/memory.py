@@ -1322,8 +1322,9 @@ class InMemoryExternalEventRepository:
     ) -> bool:
         """Check if seeded_news events exist for symbol within freshness window.
 
-        Uses created_at (DB insert time) rather than published_at to determine
-        whether a recent T3 fetch already populated seeded_news events for this symbol.
+        Uses ingested_at (system ingestion time) to determine freshness.
+        ingested_at reflects when the event was stored in the database,
+        which is the correct semantic for "has fresh data been collected".
         """
         cutoff = datetime.now(timezone.utc) - timedelta(seconds=freshness_seconds)
         for e in self._items.values():
@@ -1331,7 +1332,7 @@ class InMemoryExternalEventRepository:
                 continue
             if e.source_reliability_tier != "T3":
                 continue
-            created_or_ingested = e.created_at or e.ingested_at
+            created_or_ingested = e.ingested_at
             if created_or_ingested is not None and created_or_ingested >= cutoff:
                 return True
         return False

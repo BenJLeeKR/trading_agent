@@ -1997,8 +1997,8 @@ class OrderSyncService:
             # KIS API 호출 시각 기록 (cooldown용)
             self._last_kis_inquiry_at[account_id] = datetime.now(timezone.utc)
 
-            # BrokerAdapter.fetch_positions()를 통해 KIS inquire-balance 호출
-            positions = await broker.fetch_positions(broker_account)
+            # BrokerAdapter.get_positions()를 통해 KIS inquire-balance 호출
+            positions = await broker.get_positions(broker_account.account_ref)
             for pos in positions:
                 if pos.instrument_id == instrument_id:
                     return pos.quantity

@@ -985,15 +985,22 @@ async def persist_seeded_events(
 
 def _convert_disclosure_seeds_to_events(
     seeds: list,
+    tier: str = "T2",
 ) -> list[ExternalEventEntity]:
     """Convert KIS disclosure seed DTOs to ExternalEventEntity list.
 
     These are KIS disclosure events (not seeded_news), so they have:
     - event_type = "Y|{headline}" (KIS disclosure prefix)
-    - source_reliability_tier = "T2" (KIS disclosure tier)
+    - source_reliability_tier = ``tier`` (default "T2")
 
-    This does NOT affect has_fresh_t3_events() since the tier is T2.
-    But provides decision context via _collect_persisted_seeded_events().
+    When ``tier="T2"`` (default), this does NOT affect
+    ``has_fresh_t3_events()`` since the tier is T2.  But provides
+    decision context via ``_collect_persisted_seeded_events()``.
+
+    When ``tier="T3"`` (degraded mode), KIS disclosure seeds are
+    stored as T3 events, which enables ``has_fresh_t3_events()``
+    freshness check and ``_collect_persisted_seeded_events()``
+    to include them in the decision context.
     """
     from uuid import uuid4
 
@@ -1008,7 +1015,7 @@ def _convert_disclosure_seeds_to_events(
             event_id=uuid4(),
             event_type=f"Y|{seed.headline}",
             source_name="kis_disclosure",
-            source_reliability_tier="T2",
+            source_reliability_tier=tier,
             symbol=seed.symbol,
             market="KR",
             published_at=datetime.now(timezone.utc),
@@ -1065,8 +1072,9 @@ async def _is_t3_fresh_for_symbol(
 ) -> bool:
     """Check if T3 events exist for symbol within freshness window.
 
-    Uses created_at (DB insert time) rather than published_at to determine
-    whether a recent T3 fetch already populated seeded_news events for this symbol.
+    Uses ingested_at (system ingestion time) to determine freshness.
+    ingested_at reflects when the event was stored in the database,
+    which is the correct semantic for "has fresh data been collected".
     """
     try:
         return await repos.external_events.has_fresh_t3_events(
@@ -1115,14 +1123,7 @@ async def _run_t3_live_pipeline(
         from agent_trading.brokers.naver_news_adapter import (
             NaverNewsSearchAdapter,
         )
-        if NaverNewsSearchAdapter.is_quota_exhausted():
-            logger.warning(
-                "symbol=%s T3 skipped: NAVER quota exhausted (%.1f%%) "
-                "before KIS disclosure fetch",
-                symbol,
-                NaverNewsSearchAdapter.get_daily_usage_ratio() * 100,
-            )
-            return
+        naver_quota_exhausted = NaverNewsSearchAdapter.is_quota_exhausted()
 
         disclosure_seed_service = runtime.get("disclosure_seed_service")
         seeded_news_service = runtime.get("seeded_news_service")
@@ -1137,6 +1138,33 @@ async def _run_t3_live_pipeline(
         )
         if not seeds:
             logger.info("symbol=%s T3 skipped: no disclosure seeds", symbol)
+            return
+
+        # ── Degraded mode: NAVER quota exhausted → persist KIS disclosure as T3 ──
+        if naver_quota_exhausted:
+            logger.warning(
+                "symbol=%s T3 degraded mode: NAVER quota exhausted (%.1f%%), "
+                "persisting %d KIS disclosure seeds as T3 events",
+                symbol,
+                NaverNewsSearchAdapter.get_daily_usage_ratio() * 100,
+                len(seeds),
+            )
+            # Persist KIS disclosure seeds as T3 events so that
+            # has_fresh_t3_events() freshness check and
+            # _collect_persisted_seeded_events() can include them.
+            from agent_trading.db.transaction import transaction as _db_transaction
+            from agent_trading.repositories.postgres.external_events import (
+                PostgresExternalEventRepository,
+            )
+
+            partial_events = _convert_disclosure_seeds_to_events(seeds, tier="T3")
+            async with _db_transaction() as tx:
+                tx_repo = PostgresExternalEventRepository(tx)
+                persisted = await persist_seeded_events(partial_events, tx_repo)
+            logger.info(
+                "symbol=%s T3 degraded: %d disclosure seeds persisted=%d as T3",
+                symbol, len(seeds), persisted,
+            )
             return
 
         # Step 2: Process seeds via NAVER news search
@@ -1161,11 +1189,15 @@ async def _run_t3_live_pipeline(
         )
         seeded_events = convert_seeded_candidates(candidates)
 
-        # Step 4: Persist to DB (for future cycles)
-        persisted = await persist_seeded_events(
-            seeded_events,
-            repos.external_events,
+        # Step 4: Persist to DB (use own transaction since parent context is closed)
+        from agent_trading.db.transaction import transaction as _db_transaction
+        from agent_trading.repositories.postgres.external_events import (
+            PostgresExternalEventRepository,
         )
+
+        async with _db_transaction() as tx:
+            ee_repo = PostgresExternalEventRepository(tx)
+            persisted = await persist_seeded_events(seeded_events, ee_repo)
         logger.info(
             "symbol=%s T3 used live: %d events from %d candidates "
             "persisted=%d",
