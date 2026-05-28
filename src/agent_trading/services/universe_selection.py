@@ -428,6 +428,18 @@ class UniverseSelectionService:
                     ),
                 )
 
+    def _effective_pre_pool_size(self, ctx: CompositionContext) -> int:
+        """Paper 환경에서는 pre-pool size를 20으로 제한.
+
+        Live 환경(capacity=24, refill=6.0)에서는 문제가 없으므로
+        ctx.pre_pool_size (50)을 그대로 사용.
+        Paper 환경(capacity=1, refill=0.5)에서는 budget exhaustion을
+        완화하기 위해 최대 20으로 축소.
+        """
+        if self._kis_client is not None and hasattr(self._kis_client, "env") and self._kis_client.env == "paper":
+            return min(ctx.pre_pool_size, 20)
+        return ctx.pre_pool_size
+
     async def _add_market_overlay(
         self,
         seen: dict[str, SelectedSymbol],
@@ -446,12 +458,25 @@ class UniverseSelectionService:
 
         If ``kis_client`` is ``None`` (no KIS configured), this is a no-op
         (P1-compatible stub behaviour).
+
+        Paper env: KIS paper mock quote API is structurally unstable (>90%
+        failure rate).  Skip market_overlay entirely to avoid log noise and
+        unnecessary KIS 500 errors.
         """
         if self._kis_client is None:
             logger.debug("_add_market_overlay: no KIS client — skipping (P1 stub).")
             return
 
+        # Paper env: KIS paper API 구조적 불안정(>90% failure)으로 market_overlay skip
+        if hasattr(self._kis_client, "env") and self._kis_client.env == "paper":
+            logger.info(
+                "market_overlay: skipped in paper env "
+                "(KIS paper mock quote API unstable, >90%% failure)"
+            )
+            return
+
         # ── Step 1: Build pre-pool ───────────────────────────────────────
+        effective_pool_size = self._effective_pre_pool_size(ctx)
         core_symbols = await self._repos.instruments.list_active_by_market("KRX")
         pre_pool_candidates: list[str] = []
         for inst in core_symbols:
@@ -460,7 +485,7 @@ class UniverseSelectionService:
             # Held/Event/Manual symbol만 제외 (이미 더 높은 우선순위로 포함됨).
             if sym not in seen or seen[sym].source_type == SourceType.CORE:
                 pre_pool_candidates.append(sym)
-            if len(pre_pool_candidates) >= ctx.pre_pool_size:
+            if len(pre_pool_candidates) >= effective_pool_size:
                 break
 
         if not pre_pool_candidates:
@@ -468,9 +493,10 @@ class UniverseSelectionService:
             return
 
         logger.info(
-            "market_overlay pre-pool: %d symbols (cap=%d).",
+            "market_overlay pre-pool: %d symbols (cap=%d, env=%s).",
             len(pre_pool_candidates),
-            ctx.pre_pool_size,
+            effective_pool_size,
+            getattr(self._kis_client, "env", "unknown"),
         )
 
         # ── Step 2: Fetch quotes batch ───────────────────────────────────
@@ -483,11 +509,19 @@ class UniverseSelectionService:
         # ── Step 2.5: Count successful quote fetches ─────────────────────
         total = len(pre_pool_candidates)
         success = sum(1 for sym in pre_pool_candidates if raw_batch.get(sym) is not None)
-        logger.info(
-            "market_overlay quotes fetched: %d/%d.",
-            success,
-            total,
-        )
+        if success < total:
+            logger.warning(
+                "market_overlay quotes fetched: %d/%d "
+                "(budget exhaustion expected in paper env).",
+                success,
+                total,
+            )
+        else:
+            logger.info(
+                "market_overlay quotes fetched: %d/%d.",
+                success,
+                total,
+            )
 
         # ── Step 3: Parse → Filter → Score ───────────────────────────────
         scored: list[tuple[float, MarketDataSnapshot]] = []

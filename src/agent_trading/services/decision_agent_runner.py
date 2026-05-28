@@ -61,9 +61,9 @@ from agent_trading.services.translation import (
 
 logger = logging.getLogger(__name__)
 
-# Per-agent timeout: each LLM call is capped at 35s so that a single
-# hanging agent cannot stall the entire decision cycle beyond 105s.
-_PER_AGENT_TIMEOUT = 35  # seconds per agent
+# Per-agent timeout: each LLM call is capped at 30s so that a single
+# hanging agent cannot stall the entire decision cycle beyond 90s.
+_PER_AGENT_TIMEOUT = 30  # seconds per agent
 
 
 class DecisionAgentRunner:
@@ -81,7 +81,7 @@ class DecisionAgentRunner:
         final_decision_composer_agent: ProviderAIAgent,
         agent_run_recorder: AgentRunRecorder,
         score_calculator: ScoreCalculator | None = None,
-        subprocess_timeout: int = 300,
+        subprocess_timeout: int = 90,
     ) -> None:
         self._repos = repos
         self._ei_agent = event_interpretation_agent

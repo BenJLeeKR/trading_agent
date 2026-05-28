@@ -36,7 +36,7 @@ _PROVIDER_BASE_URL_DEFAULTS: dict[str, str] = {
 }
 
 _PROVIDER_MODEL_ID_DEFAULTS: dict[str, str] = {
-    "deepseek": "deepseek-v4-pro",
+    "deepseek": "deepseek-chat",
     "openai": "gpt-4o",
 }
 

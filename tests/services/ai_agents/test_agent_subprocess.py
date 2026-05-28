@@ -110,11 +110,10 @@ class TestSerializeAgentInput:
         )
         assert isinstance(result, str)
         payload = json.loads(result)
-        assert "request" in payload
         assert "context" in payload
         assert payload["score"] is None
         # request should contain correlation_id
-        assert payload["request"]["correlation_id"] == "test-correlation"
+        assert payload["correlation_id"] == "test-correlation"
 
     def test_serialization_with_none_decision_context(
         self, sample_context: AssembledContext,
@@ -132,7 +131,7 @@ class TestSerializeAgentInput:
         )
         assert isinstance(result, str)
         payload = json.loads(result)
-        assert payload["request"]["decision_context_id"] is None
+        assert payload.get("decision_context_id") is None
 
     def test_serialized_context_is_json_safe(
         self, sample_context: AssembledContext,

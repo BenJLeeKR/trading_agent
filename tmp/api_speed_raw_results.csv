@@ -1,0 +1,16 @@
+﻿provider,model,run_index,ok,latency_sec,output_tokens,tokens_per_sec,text_chars,error
+openai,gpt-5.5,1,False,0.20829886600040481,,,,"Error code: 400 - {'error': {'message': ""Unsupported parameter: 'temperature' is not supported with this model."", 'type': 'invalid_request_error', 'param': 'temperature', 'code': None}}"
+openai,gpt-5.5,2,False,0.2042072209987964,,,,"Error code: 400 - {'error': {'message': ""Unsupported parameter: 'temperature' is not supported with this model."", 'type': 'invalid_request_error', 'param': 'temperature', 'code': None}}"
+openai,gpt-5.5,3,False,0.19182411600195337,,,,"Error code: 400 - {'error': {'message': ""Unsupported parameter: 'temperature' is not supported with this model."", 'type': 'invalid_request_error', 'param': 'temperature', 'code': None}}"
+openai,gpt-5.5,4,False,0.23109671699785395,,,,"Error code: 400 - {'error': {'message': ""Unsupported parameter: 'temperature' is not supported with this model."", 'type': 'invalid_request_error', 'param': 'temperature', 'code': None}}"
+openai,gpt-5.5,5,False,0.20178162600132055,,,,"Error code: 400 - {'error': {'message': ""Unsupported parameter: 'temperature' is not supported with this model."", 'type': 'invalid_request_error', 'param': 'temperature', 'code': None}}"
+deepseek,deepseek-chat,1,True,1.377191112998844,101.0,73.3376791693578,152.0,
+deepseek,deepseek-chat,2,True,1.6965816960000666,101.0,59.53146862194842,152.0,
+deepseek,deepseek-chat,3,True,1.8056710130003921,100.0,55.38107400518938,151.0,
+deepseek,deepseek-chat,4,True,1.5972811210012878,100.0,62.60638699423993,151.0,
+deepseek,deepseek-chat,5,True,1.463404336001986,101.0,69.0171523448752,152.0,
+gemini,gemini-3.5-flash,1,True,2.168120715999976,10.0,4.612289309448262,21.0,
+gemini,gemini-3.5-flash,2,True,2.296128164001857,10.0,4.355157589535979,21.0,
+gemini,gemini-3.5-flash,3,True,2.404645499002072,10.0,4.15861714508438,21.0,
+gemini,gemini-3.5-flash,4,True,2.496972557997651,10.0,4.004849780175039,21.0,
+gemini,gemini-3.5-flash,5,True,2.723073848999775,10.0,3.6723205298575166,21.0,

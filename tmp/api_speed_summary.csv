@@ -1,0 +1,4 @@
+﻿provider,model,success,fail,avg_latency_sec,median_latency_sec,min_latency_sec,max_latency_sec,avg_output_tokens,avg_tokens_per_sec
+deepseek,deepseek-chat,5,0,1.5880258558005154,1.5972811210012878,1.377191112998844,1.8056710130003921,100.6,63.974752227122146
+gemini,gemini-3.5-flash,5,0,2.417788157200266,2.404645499002072,2.168120715999976,2.723073848999775,10.0,4.160646870820235
+openai,gpt-5.5,0,5,,,,,,

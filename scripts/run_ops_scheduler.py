@@ -1204,6 +1204,43 @@ async def _persist_session_state(
         logger.exception("Failed to persist session state to DB")
 
 
+async def _insert_session_event(
+    state: SchedulerState,
+    dsn: str | None,
+    old_phase: str | None,
+    new_phase: str,
+) -> None:
+    """Insert a phase-change event into the ``trading.session_events`` table.
+
+    Requires ``state.session_db_id`` to be set (i.e., a prior
+    ``_persist_session_state()`` call must have succeeded).  If DSN is
+    ``None`` or ``session_db_id`` is ``None``, the operation is skipped.
+    """
+    if dsn is None or state.session_db_id is None:
+        return
+    try:
+        import asyncpg
+
+        conn = await asyncpg.connect(dsn=dsn)
+        try:
+            await conn.execute(
+                """INSERT INTO trading.session_events
+                   (market_session_id, previous_phase, new_phase,
+                    trigger_source, metadata, occurred_at)
+                   VALUES ($1, $2, $3, $4, $5, $6)""",
+                state.session_db_id,
+                old_phase,
+                new_phase,
+                "scheduler_phase_monitor",
+                None,
+                datetime.now(KST),
+            )
+        finally:
+            await conn.close()
+    except Exception:
+        logger.exception("Failed to insert session event to DB")
+
+
 async def _handle_phase_change(
     state: SchedulerState,
     old_phase: str | None,
@@ -1240,8 +1277,11 @@ async def _handle_phase_change(
             new_phase,
         )
 
-    # Persist session state to DB
+    # Persist session state to DB (market_sessions UPSERT)
     await _persist_session_state(state, dsn)
+
+    # Record phase-change event in session_events
+    await _insert_session_event(state, dsn, old_phase, new_phase)
 
 
 async def _session_phase_monitor(
@@ -1391,6 +1431,31 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
 
     # P1+P2: Initialize session provider (CombinedSessionProvider if WS available)
     session_provider = await _init_session_provider(market_state_provider)
+
+    # ── Seed initial market phase ──────────────────────────────────────
+    # Fetch the current phase from the market state provider (163 WebSocket)
+    # before the background phase monitor polls for the first time.  This
+    # ensures every _persist_session_state() call includes a non-NULL
+    # market_phase and prevents a NULL-phase row from being persisted.
+    if market_state_provider is not None and market_state_provider.is_connected:
+        try:
+            initial_state = await market_state_provider.get_current_state()
+            state.market_phase = initial_state.phase.value
+            state.last_phase_change = datetime.now(KST)
+            logger.info(
+                "Initial market phase seeded: %s (source=%s)",
+                state.market_phase,
+                type(market_state_provider).__name__,
+            )
+        except Exception:
+            logger.debug(
+                "Could not seed initial market phase — will be set by background monitor",
+                exc_info=True,
+            )
+
+    # Persist seeded state immediately so the very first market_sessions
+    # row carries a non-NULL market_phase.
+    await _persist_session_state(state, dsn)
 
     # P2: Start background phase monitor task
     phase_monitor_task: asyncio.Task[None] | None = None

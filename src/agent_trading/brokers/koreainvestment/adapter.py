@@ -249,7 +249,7 @@ class KoreaInvestmentAdapter(BrokerAdapter):
         # --- Submit via REST client (with budget check + circuit breaker) ---
         try:
             result = await self._rest.submit_order(request)
-        except BudgetExhaustedError:
+        except BudgetExhaustedError as exc:
             # Held-position sell special lane: retry with reserved budget
             if self._is_held_position_sell(request):
                 logger.info(
@@ -263,26 +263,32 @@ class KoreaInvestmentAdapter(BrokerAdapter):
                         _held_position_sell=True,
                     )
                     return self._normalize_submit_result(result)
-                except BudgetExhaustedError:
+                except BudgetExhaustedError as exc2:
                     # Reserve also exhausted — fall through to normal error
                     logger.warning(
-                        "Held-position sell reserve also exhausted for symbol=%s",
+                        "Held-position sell reserve also exhausted for symbol=%s "
+                        "(bucket=%s)",
                         request.symbol,
+                        exc2.bucket,
                     )
+                    # Use the inner exception's bucket for the error message
+                    exc = exc2
 
-            # Budget exhausted — return a requires_reconciliation result.
+            # Budget exhausted — return a REJECTED (terminal) result.
+            # BUDGET_EXHAUSTED는 RECONCILE_REQUIRED가 아닌 REJECTED로 전이되어야
+            # downstream(post-submit sync, reconciliation)에서 영구히 stuck되지 않는다.
             return SubmitOrderResult(
                 accepted=False,
                 broker_name=self.broker_name,
                 client_order_id=request.client_order_id,
                 broker_order_id=None,
-                broker_status=OrderStatus.RECONCILE_REQUIRED,
+                broker_status=OrderStatus.REJECTED,
                 ack_timestamp=None,
                 raw_code="BUDGET_EXHAUSTED",
-                raw_message="Order budget exhausted — cannot submit.",
-                normalized_status=OrderStatus.RECONCILE_REQUIRED,
+                raw_message=f"Budget exhausted ({exc.bucket}) — cannot submit.",
+                normalized_status=OrderStatus.REJECTED,
                 uncertain=False,
-                requires_reconciliation=True,
+                requires_reconciliation=False,
             )
 
         return self._normalize_submit_result(result)

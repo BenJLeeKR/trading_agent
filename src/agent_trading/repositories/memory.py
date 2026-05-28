@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -42,7 +42,7 @@ from agent_trading.repositories.filters import AccountLookup, DecisionContextQue
 
 from collections import defaultdict
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from agent_trading.repositories.postgres.orders import VersionConflictError
@@ -1314,6 +1314,27 @@ class InMemoryExternalEventRepository:
         ]
         results.sort(key=lambda item: item.published_at, reverse=True)
         return tuple(results)
+
+    async def has_fresh_t3_events(
+        self,
+        symbol: str,
+        freshness_seconds: int = 3600,
+    ) -> bool:
+        """Check if seeded_news events exist for symbol within freshness window.
+
+        Uses created_at (DB insert time) rather than published_at to determine
+        whether a recent T3 fetch already populated seeded_news events for this symbol.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=freshness_seconds)
+        for e in self._items.values():
+            if e.symbol != symbol:
+                continue
+            if e.source_reliability_tier != "T3":
+                continue
+            created_or_ingested = e.created_at or e.ingested_at
+            if created_or_ingested is not None and created_or_ingested >= cutoff:
+                return True
+        return False
 
 
 class InMemorySnapshotSyncRunRepository:

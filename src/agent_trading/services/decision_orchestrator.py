@@ -97,12 +97,11 @@ from agent_trading.services.decision_agent_runner import DecisionAgentRunner
 
 logger = logging.getLogger(__name__)
 
-# Per-agent timeout: each LLM call is capped at 35s so that a single
-# hanging agent cannot stall the entire decision cycle beyond 105s.
-# Increased from 25s to 35s in Phase 4 to accommodate subprocess
-# creation/teardown overhead when subprocess isolation is enabled.
-# This value is aligned with the provider client's read timeout (25s).
-_PER_AGENT_TIMEOUT = 35  # seconds per agent
+# Per-agent timeout: each LLM call is capped at 30s so that a single
+# hanging agent cannot stall the entire decision cycle beyond 90s.
+# Reduced from 35s to 30s in Phase 5.7 to align with deepseek-chat
+# P99 latency (~15.9s) with 1.9x safety margin.
+_PER_AGENT_TIMEOUT = 30  # seconds per agent
 
 # Phase 4: subprocess isolation for agent calls.
 # When True, _run_agents() delegates to _run_agents_in_subprocess()
@@ -183,7 +182,7 @@ class DecisionOrchestratorService:
         provider_api_key: str = "",
         provider_base_url: str = "",
         provider_model_id: str = "",
-        provider_timeout_seconds: int = 120,
+        provider_timeout_seconds: int = 60,
     ) -> None:
         self._repos = repos
         self._decision_context_service = DecisionContextService(repos)
@@ -194,7 +193,7 @@ class DecisionOrchestratorService:
         )
         self._ai_risk_agent = ai_risk_agent or StubAIRiskAgent()
         self._final_decision_agent = final_decision_agent or StubFinalDecisionComposerAgent()
-        self._agent_recorder = agent_recorder or AgentRunRecorder()
+        self._agent_recorder = agent_recorder or AgentRunRecorder(repo=self._repos.agent_runs)
         # --- Phase 5.5 ---
         self._sync_service = sync_service
         self._snapshot_refresh_cb = snapshot_refresh_cb
@@ -226,7 +225,7 @@ class DecisionOrchestratorService:
             final_decision_composer_agent=self._final_decision_agent,
             agent_run_recorder=self._agent_recorder,
             score_calculator=self._score_calculator,
-            subprocess_timeout=300,
+            subprocess_timeout=90,
         )
 
     def _check_held_position_sell_override(

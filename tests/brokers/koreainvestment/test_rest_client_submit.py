@@ -224,7 +224,51 @@ class TestSubmitOrderRequestBody:
         assert mock_request.call_args[1]["tr_id_key"] == "order_sell"
 
 
-# ── Tests 4-6: _resolve_smoke_price() ─────────────────────────────────────
+# ── Test 4: skip_global_rest ──────────────────────────────────────────────
+
+
+class TestSubmitOrderSkipGlobalRest:
+    """``submit_order()``가 ``_request()``에 ``skip_global_rest=True``를 전달하는지 검증.
+
+    ``_request()``는 이미 ``skip_global_rest`` 파라미터를 지원하지만,
+    ``submit_order()``에서 이를 전달하지 않아 ORDER bucket 요청이
+    ``global_rest`` Tier 1에서 차단되는 문제가 있었다.
+    """
+
+    @pytest.mark.asyncio
+    async def test_submit_order_passes_skip_global_rest(
+        self, client: KISRestClient, submit_request: SubmitOrderRequest
+    ) -> None:
+        """ORDER bucket submit에서 skip_global_rest=True 확인."""
+        mock_response: dict[str, Any] = {
+            "output": {"ODNO": "0000027326", "ORD_TMD": "152530"}
+        }
+
+        with patch.object(KISRestClient, "_request", AsyncMock(return_value=mock_response)) as mock_request:
+            await client.submit_order(submit_request)
+
+        mock_request.assert_called_once()
+        assert mock_request.call_args[1].get("skip_global_rest") is True
+
+    @pytest.mark.asyncio
+    async def test_submit_order_skip_global_rest_with_held_position_sell(
+        self, client: KISRestClient, submit_request: SubmitOrderRequest
+    ) -> None:
+        """Held-position sell에서도 skip_global_rest=True가 유지되는지 확인."""
+        mock_response: dict[str, Any] = {
+            "output": {"ODNO": "0000027327", "ORD_TMD": "152531"}
+        }
+
+        with patch.object(KISRestClient, "_request", AsyncMock(return_value=mock_response)) as mock_request:
+            await client.submit_order(submit_request)
+
+        mock_request.assert_called_once()
+        call_kwargs = mock_request.call_args[1]
+        assert call_kwargs.get("skip_global_rest") is True
+        assert call_kwargs.get("bucket") == BucketType.ORDER
+
+
+# ── Tests 5-7: _resolve_smoke_price() ─────────────────────────────────────
 
 
 class TestResolveSmokePrice:

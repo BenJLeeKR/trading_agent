@@ -1088,17 +1088,17 @@ class TestP1AandP1BIntegration:
         # Prompt 헤더에는 전체 count 표시
         assert "Recent events (25):" in prompt
 
-        # Prompt의 event 줄 수는 20개여야 함 ([:20] slice)
+        # Prompt의 event 줄 수는 10개여야 함 ([:MAX_EVENTS_EI] slice)
         event_lines = [line for line in prompt.split("\n") if line.startswith("  [src:")]
-        assert len(event_lines) == 20, (
-            f"Expected 20 event lines in prompt, got {len(event_lines)}"
+        assert len(event_lines) == 10, (
+            f"Expected 10 event lines in prompt, got {len(event_lines)}"
         )
 
-        # event_0 ~ event_19는 있어야 함
+        # event_0 ~ event_9는 있어야 함
         assert "event_0" in prompt
-        assert "event_19" in prompt
-        # event_20 ~ event_24는 없어야 함
-        assert "event_20" not in prompt
+        assert "event_9" in prompt
+        # event_10 ~ event_24는 없어야 함
+        assert "event_10" not in prompt
 
 
 # ---------------------------------------------------------------------------

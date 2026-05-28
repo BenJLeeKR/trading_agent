@@ -140,7 +140,7 @@ class AgentSubprocessInput:
     provider_api_key: str = ""
     provider_base_url: str = ""
     provider_model_id: str = ""
-    provider_timeout_seconds: int = 120
+    provider_timeout_seconds: int = 60
 
     # --- Fields from serialize_agent_input (top-level keys) ---
     score: dict[str, Any] | None = None
@@ -583,7 +583,7 @@ async def main() -> None:
         # --- 2a. Event Interpretation Agent ---
         logger.info("Starting EventInterpretationAgent.run() ...")
         _diag("Starting EventInterpretationAgent.run() ...")
-        ei_agent = EventInterpretationAgent(provider_client=provider_client)
+        ei_agent = EventInterpretationAgent(provider_client=provider_client, model_id=inp.provider_model_id)
         request = _reconstruct_request(inp)
         input_event_count = len(request.context.recent_events)
         _diag(f"Context reconstructed: events={input_event_count}")
@@ -612,7 +612,7 @@ async def main() -> None:
         # --- 2b. AI Risk Agent ---
         logger.info("Starting AIRiskAgent.run() ...")
         _diag("Starting AIRiskAgent.run() ...")
-        ar_agent = AIRiskAgent(provider_client=provider_client)
+        ar_agent = AIRiskAgent(provider_client=provider_client, model_id=inp.provider_model_id)
         request_with_ei = _reconstruct_request(inp, event_output=event_output)
         risk_output: AIRiskOutput = await ar_agent.run(request_with_ei)
         _diag(f"AIRiskAgent completed: symbol={risk_output.symbol} risk_opinion={risk_output.risk_opinion}")
@@ -664,7 +664,7 @@ async def main() -> None:
             # --- 2c. Final Decision Composer Agent ---
             logger.info("Starting FinalDecisionComposerAgent.run() ...")
             _diag("Starting FinalDecisionComposerAgent.run() ...")
-            fdc_agent = FinalDecisionComposerAgent(provider_client=provider_client)
+            fdc_agent = FinalDecisionComposerAgent(provider_client=provider_client, model_id=inp.provider_model_id)
             request_with_ei_ar = _reconstruct_request(
                 inp, event_output=event_output, risk_output=risk_output,
             )

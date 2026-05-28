@@ -281,6 +281,7 @@ class TestSeededNewsCandidateService:
         # with decreasing confidence scores so we can verify top-3 selection
         async def mock_process_one_seed(
             seed: DisclosureTitleDTO,
+            max_queries: int | None = None,
         ) -> tuple[list[SeededNewsCandidate], dict]:
             candidates = []
             seed_idx = seeds.index(seed)
@@ -421,6 +422,7 @@ class TestCrossSymbolNoiseAndScoring:
         - "결정"은 boilerplate token이므로 keyword overlap 미발생
         - symbol("005930")은 title/desc에 없음
         """
+        from datetime import datetime, timezone, timedelta
         service = SeededNewsCandidateService(
             search_adapter=Mock(spec=NaverNewsSearchAdapter),
         )
@@ -430,9 +432,13 @@ class TestCrossSymbolNoiseAndScoring:
             headline="유상증자 결정",
             published_at="20260517",
         )
+        # Use current time for freshness (within 24h → +20)
+        now = datetime.now(timezone.utc) + timedelta(hours=9)  # KST
+        pub_date = now.strftime("%a, %d %b %Y %H:%M:%S +0900")
         item = _make_news_item(
             title="삼성전자, 분기배당 결정",
             description="삼성전자가 분기배당을 결정했습니다.",
+            pub_date=pub_date,
         )
 
         score = service._compute_score(item, seed, "삼성전자", "005930")
@@ -562,7 +568,7 @@ class TestCrossSymbolNoiseAndScoring:
         service = SeededNewsCandidateService(search_adapter=search_adapter)
 
         # Mock _process_one_seed to return empty results quickly
-        async def mock_process(seed):
+        async def mock_process(seed, max_queries=None):
             return [], {
                 "has_queries": 1, "queries_count": 1, "raw_count": 0,
                 "hard_gate_passed": 0, "hard_gate_dropped": 0,
@@ -600,6 +606,7 @@ class TestCrossSymbolNoiseAndScoring:
         - seed with company_name='X' (1자) → quality filter drop
         - seed with company_name='삼성전자' (정상) → 통과
         """
+        from datetime import datetime, timezone, timedelta
         mock_http = AsyncMock(spec=httpx.AsyncClient)
         search_adapter = NaverNewsSearchAdapter(
             client_id="test", client_secret="test",
@@ -618,12 +625,14 @@ class TestCrossSymbolNoiseAndScoring:
             headline="HBM4 발표", published_at="20260517",
         )
 
-        # Mock search to return items for valid seed
+        # Mock search to return items for valid seed (with fresh pubDate)
+        now = datetime.now(timezone.utc) + timedelta(hours=9)  # KST
+        pub_date = now.strftime("%a, %d %b %Y %H:%M:%S +0900")
         items = [
             {
                 "title": "삼성전자 유상증자", "description": "desc",
                 "link": "link1", "originallink": "orig1",
-                "pubDate": "Fri, 17 May 2026 09:00:00 +0900",
+                "pubDate": pub_date,
             },
         ]
         mock_http.get.return_value = _make_mock_response(items)

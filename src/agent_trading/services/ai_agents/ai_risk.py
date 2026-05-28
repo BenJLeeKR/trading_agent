@@ -22,6 +22,10 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
+from agent_trading.services.ai_agents._prompt_config import (
+    MAX_EVENTS_AR,
+    MAX_INTERPRETED_EVENTS,
+)
 from agent_trading.services.ai_agents.base import (
     AIProviderClient,
     AgentExecutionRequest,
@@ -366,7 +370,7 @@ class AIRiskAgent:
             interpreted = ei_output.events or ()
             if interpreted:
                 lines.append(f"Interpreted events ({len(interpreted)}):")
-                for ie in interpreted[:10]:
+                for ie in interpreted[:MAX_INTERPRETED_EVENTS]:
                     if isinstance(ie, dict):
                         summary = ie.get("summary") or ie.get("headline") or "(no summary)"
                         lines.append(f"  - [{ie.get('event_type', '?')}] {summary}")
@@ -509,9 +513,8 @@ class AIRiskAgent:
 
         lines.append(f"Recent events ({len(events)}):")
         now = datetime.now(timezone.utc)
-        for e in events[:20]:
+        for e in events[:MAX_EVENTS_AR]:
             headline = e.headline or "(no headline)"
-            summary = e.body_summary or ""
 
             # Provenance tags — same rules as EI (severity/direction default omission,
             # stale check, issuer_code condition, etc.)
@@ -537,7 +540,6 @@ class AIRiskAgent:
                 stale_mark = " ⚠️STALE"
 
             tagged = " ".join(parts)
-            body = f" — {summary[:200]}" if summary else ""
-            lines.append(f"  {tagged}{stale_mark} {headline}{body}")
+            lines.append(f"  {tagged}{stale_mark} {headline}")
 
         return "\n".join(lines)

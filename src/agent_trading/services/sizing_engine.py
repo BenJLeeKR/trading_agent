@@ -216,8 +216,27 @@ def _resolve_buy_target_quantity(inputs: SizingInputs) -> Decimal:
         return inputs.requested_quantity
 
     # Determine effective cash: orderable_amount > available_cash > fallback
-    effective_cash = inputs.orderable_amount or inputs.available_cash
-    if effective_cash is None or effective_cash <= 0:
+    if inputs.orderable_amount is not None:
+        effective_cash = inputs.orderable_amount
+        logger.debug(
+            "effective_cash=%s (source=orderable_amount)",
+            effective_cash,
+        )
+    elif inputs.available_cash is not None:
+        effective_cash = inputs.available_cash
+        logger.warning(
+            "effective_cash=%s (source=available_cash fallback, "
+            "orderable_amount is None)",
+            effective_cash,
+        )
+    else:
+        logger.warning(
+            "cash constraint skipped: both orderable_amount and available_cash "
+            "are None",
+        )
+        return inputs.requested_quantity
+
+    if effective_cash <= 0:
         return inputs.requested_quantity
 
     # Calculate allocation-based target quantity

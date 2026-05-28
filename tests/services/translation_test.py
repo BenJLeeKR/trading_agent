@@ -28,6 +28,23 @@ class TestResolveDecisionType:
     def test_reduce(self) -> None:
         assert resolve_decision_type("reduce") == DecisionType.REDUCE
 
+    def test_approve(self) -> None:
+        assert resolve_decision_type("approve") == DecisionType.APPROVE
+        assert resolve_decision_type("APPROVE") == DecisionType.APPROVE
+        assert resolve_decision_type("Approve") == DecisionType.APPROVE
+
+    def test_exit(self) -> None:
+        assert resolve_decision_type("exit") == DecisionType.EXIT
+        assert resolve_decision_type("EXIT") == DecisionType.EXIT
+
+    def test_watch(self) -> None:
+        assert resolve_decision_type("watch") == DecisionType.WATCH
+        assert resolve_decision_type("WATCH") == DecisionType.WATCH
+
+    def test_reject(self) -> None:
+        assert resolve_decision_type("reject") == DecisionType.REJECT
+        assert resolve_decision_type("REJECT") == DecisionType.REJECT
+
     def test_none_fallback(self) -> None:
         assert resolve_decision_type(None) == DecisionType.HOLD
 

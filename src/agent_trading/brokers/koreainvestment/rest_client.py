@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import logging
+import random
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -20,6 +21,7 @@ from agent_trading.brokers.backoff import CircuitBreaker, CircuitState, Exponent
 from agent_trading.brokers.errors import (
     BrokerError,
     BrokerErrorType,
+    TokenExpiredError,
 )
 from agent_trading.brokers.koreainvestment.token_cache import (
     CachePurpose,
@@ -92,12 +94,21 @@ KIS_TR_IDS: Mapping[str, tuple[str, str]] = {
     "disclosure_title": ("FHKST01011800", None),
 }
 
+# KIS error codes that indicate token expired — recoverable via reauthentication.
+# These are checked BEFORE _AMBIGUOUS_ERROR_CODES / _KNOWN_FAILURE_CODES
+# in _raise_on_error(), so they get their own TokenExpiredError path.
+_TOKEN_EXPIRED_CODES: frozenset[str] = frozenset({
+    "EGW00101",  # 토큰만료 (기존 _KNOWN_FAILURE_CODES에도 있으나 token-expired 전용 경로 분리)
+    "EGW00123",  # "기간이 만료된 token 입니다."
+})
+
 # KIS error codes that indicate ambiguous / unknown state
 # These are codes where the broker cannot definitively confirm the outcome
 # of an order operation, requiring reconciliation via inquiry path.
 # Reference: KIS OpenAPI Excel — error code sheet
 _AMBIGUOUS_ERROR_CODES: frozenset[str] = frozenset({
-    "EGW00123",  # 주문전송 실패 (타사)
+    # EGW00123 is NOT here — it's in _TOKEN_EXPIRED_CODES above
+    "EGW00125",  # 주문전송 실패 (기타)
     "EGW00125",  # 주문전송 실패 (기타)
     "EGW00150",  # 모의투자 주문불가
     "EGW00215",  # 주문가격 제한폭 초과
@@ -390,6 +401,12 @@ class KISRestClient:
         repr=False,
     )
 
+    # --- quote cache (TTL-based, reduces MARKET_DATA budget consumption) ---
+    _quote_cache: dict[str, tuple[float, dict[str, Any]]] = field(
+        default_factory=dict, init=False, repr=False,
+    )
+    _QUOTE_CACHE_TTL: float = 180.0  # 3분 TTL
+
     # ------------------------------------------------------------------
     # Client lifecycle
     # ------------------------------------------------------------------
@@ -428,7 +445,7 @@ class KISRestClient:
         if self._client is None:
             self._client = httpx.AsyncClient(
                 base_url=self._base_url,
-                timeout=httpx.Timeout(8.0, connect=5.0, read=5.0),
+                timeout=httpx.Timeout(20.0, connect=5.0, read=15.0),
                 limits=httpx.Limits(max_keepalive_connections=0, max_connections=10),
             )
         return self._client
@@ -683,6 +700,15 @@ class KISRestClient:
             if error_description and not msg:
                 msg = error_description
 
+            # --- TOKEN EXPIRED: check BEFORE _AMBIGUOUS_ERROR_CODES / _KNOWN_FAILURE_CODES ---
+            if msg_cd in _TOKEN_EXPIRED_CODES or rt_cd in _TOKEN_EXPIRED_CODES:
+                raise TokenExpiredError(
+                    endpoint_key=endpoint,
+                    msg_cd=msg_cd,
+                    msg1=msg,
+                )
+            # --- END TOKEN EXPIRED ---
+
             if msg_cd in _AMBIGUOUS_ERROR_CODES or rt_cd in _AMBIGUOUS_ERROR_CODES:
                 raise BrokerError(
                     broker_name=BrokerName.KOREA_INVESTMENT,
@@ -712,6 +738,15 @@ class KISRestClient:
         msg = data.get("msg1", data.get("msg", ""))
 
         if rt_cd != "0":
+            # --- TOKEN EXPIRED: check BEFORE _AMBIGUOUS_ERROR_CODES / _KNOWN_FAILURE_CODES ---
+            if msg_cd in _TOKEN_EXPIRED_CODES or rt_cd in _TOKEN_EXPIRED_CODES:
+                raise TokenExpiredError(
+                    endpoint_key=endpoint,
+                    msg_cd=msg_cd,
+                    msg1=msg,
+                )
+            # --- END TOKEN EXPIRED ---
+
             if msg_cd in _AMBIGUOUS_ERROR_CODES or rt_cd in _AMBIGUOUS_ERROR_CODES:
                 raise BrokerError(
                     broker_name=BrokerName.KOREA_INVESTMENT,
@@ -763,6 +798,26 @@ class KISRestClient:
         return data
 
     # ------------------------------------------------------------------
+    # Token cache invalidation
+    # ------------------------------------------------------------------
+
+    async def _invalidate_token_cache(self) -> None:
+        """Invalidate both in-memory and file token cache.
+
+        Called when TokenExpiredError is caught in _request().
+        Next authenticate() call will re-fetch from KIS /oauth2/tokenP.
+        """
+        # 1. In-memory cache 무효화
+        self._access_token = None
+        self._token_expires_at = 0.0
+
+        # 2. File cache 무효화
+        if self._token_cache is not None:
+            await self._token_cache.invalidate()
+
+        logger.info("KIS token cache invalidated (token expired)")
+
+    # ------------------------------------------------------------------
     # Budget-aware request helper
     # ------------------------------------------------------------------
 
@@ -779,13 +834,14 @@ class KISRestClient:
         skip_global_rest: bool = False,
         held_position_sell: bool = False,
     ) -> dict[str, Any]:
-        """Unified request helper with budget consumption and circuit breaker.
+        """Unified request helper with budget consumption, circuit breaker,
+        and exponential backoff retry on timeout.
 
         Steps:
         1. Consume budget (if manager provided)
         2. Check circuit breaker
         3. Build headers + optional hashkey
-        4. Execute HTTP request
+        4. Execute HTTP request (with up to 2 retries on timeout)
         5. Normalise response
 
         Parameters
@@ -824,43 +880,115 @@ class KISRestClient:
 
         client = await self._get_client()
 
-        # 4. Execute
-        try:
-            if method.upper() == "GET":
-                resp = await client.get(url, headers=headers, params=params)
-            else:
-                resp = await client.post(url, headers=headers, json=body, params=params)
-        except httpx.TimeoutException:
-            self._circuit_breaker.record_failure()
-            raise BrokerError(
-                broker_name=BrokerName.KOREA_INVESTMENT,
-                error_type=BrokerErrorType.TIMEOUT,
-                retryable=True,
-                raw_message=f"KIS {endpoint_key}: timeout",
-            )
-        except httpx.RequestError as e:
-            self._circuit_breaker.record_failure()
-            raise BrokerError(
-                broker_name=BrokerName.KOREA_INVESTMENT,
-                error_type=BrokerErrorType.NETWORK_ERROR,
-                retryable=True,
-                raw_message=f"KIS {endpoint_key}: network error: {e}",
-            )
-        except RuntimeError:
-            # Python 3.14+: httpx/httpcore may raise RuntimeError('Event loop is closed')
-            # during teardown when the event loop has already been shut down.
-            # Re-raise as a clearer error so callers can distinguish this from
-            # a genuine API failure.
-            raise RuntimeError(
-                f"KIS {endpoint_key}: event loop closed during HTTP request "
-                f"(Python 3.14 httpx/httpcore teardown issue). "
-                f"This is an infrastructure issue, not a credential problem."
-            ) from None
+        # 4. Execute with exponential backoff retry on timeout
+        MAX_RETRIES = 2  # 최대 2회 추가 시도 (총 3회)
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                if method.upper() == "GET":
+                    resp = await client.get(url, headers=headers, params=params)
+                else:
+                    resp = await client.post(url, headers=headers, json=body, params=params)
+                break  # 성공 시 루프 탈출
+            except httpx.TimeoutException:
+                if attempt < MAX_RETRIES:
+                    wait = 1.0 * (2 ** attempt)  # 1.0s, 2.0s
+                    logger.warning(
+                        "KIS %s: timeout (attempt %d/%d), retrying in %.1fs",
+                        endpoint_key, attempt + 1, MAX_RETRIES + 1, wait,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                self._circuit_breaker.record_failure()
+                raise BrokerError(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
+                    error_type=BrokerErrorType.TIMEOUT,
+                    retryable=True,
+                    raw_message=f"KIS {endpoint_key}: timeout after {MAX_RETRIES + 1} attempts",
+                )
+            except httpx.RequestError as e:
+                self._circuit_breaker.record_failure()
+                raise BrokerError(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
+                    error_type=BrokerErrorType.NETWORK_ERROR,
+                    retryable=True,
+                    raw_message=f"KIS {endpoint_key}: network error: {e}",
+                )
+            except RuntimeError:
+                # Python 3.14+: httpx/httpcore may raise RuntimeError('Event loop is closed')
+                # during teardown when the event loop has already been shut down.
+                # Re-raise as a clearer error so callers can distinguish this from
+                # a genuine API failure.
+                raise RuntimeError(
+                    f"KIS {endpoint_key}: event loop closed during HTTP request "
+                    f"(Python 3.14 httpx/httpcore teardown issue). "
+                    f"This is an infrastructure issue, not a credential problem."
+                ) from None
 
-        # 5. Parse + normalise
-        data = self._raise_on_error(resp, endpoint=endpoint_key)
-        self._circuit_breaker.record_success()
-        return self._normalize_response(data, endpoint=endpoint_key)
+        # 5. Parse + normalise with TokenExpiredError auto-recovery
+        # Read-only bucket에서만 TokenExpiredError 자동 복구 시도
+        # ORDER bucket은 중복 주문 위험으로 자동 재시도 금지
+        max_reauth_attempts = 2 if bucket in (
+            BucketType.INQUIRY,
+            BucketType.MARKET_DATA,
+            BucketType.RECONCILIATION,
+        ) else 1
+
+        for reauth_attempt in range(max_reauth_attempts):
+            try:
+                data = self._raise_on_error(resp, endpoint=endpoint_key)
+                self._circuit_breaker.record_success()
+                return self._normalize_response(data, endpoint=endpoint_key)
+            except TokenExpiredError as e:
+                if reauth_attempt < max_reauth_attempts - 1:
+                    logger.warning(
+                        "KIS %s: token expired (attempt %d/%d), reauthenticating...",
+                        endpoint_key, reauth_attempt + 1, max_reauth_attempts,
+                    )
+                    # 5a. In-memory + file cache 무효화
+                    await self._invalidate_token_cache()
+                    # 5b. 재인증: authenticate()가 cache miss → HTTP /oauth2/tokenP 호출
+                    await self.authenticate()
+                    # 5c. 헤더에 새 token 반영 후 재시도
+                    tr_id = self._get_tr_id(tr_id_key)
+                    headers = await self._build_headers(tr_id)
+                    if body and requires_hashkey:
+                        headers["hashkey"] = self._generate_signature(body)
+                    # 5d. 동일 요청 재시도
+                    try:
+                        if method.upper() == "GET":
+                            resp = await client.get(url, headers=headers, params=params)
+                        else:
+                            resp = await client.post(url, headers=headers, json=body, params=params)
+                    except httpx.TimeoutException:
+                        logger.error(
+                            "KIS %s: timeout during reauth retry, "
+                            "bubbling original TokenExpiredError",
+                            endpoint_key,
+                        )
+                        raise BrokerError(
+                            broker_name=BrokerName.KOREA_INVESTMENT,
+                            error_type=BrokerErrorType.TIMEOUT,
+                            retryable=False,
+                            raw_message=f"KIS {endpoint_key}: timeout during reauth retry",
+                        ) from e
+                    except httpx.RequestError as exc:
+                        self._circuit_breaker.record_failure()
+                        raise BrokerError(
+                            broker_name=BrokerName.KOREA_INVESTMENT,
+                            error_type=BrokerErrorType.NETWORK_ERROR,
+                            retryable=True,
+                            raw_message=f"KIS {endpoint_key}: network error during reauth retry: {exc}",
+                        ) from e
+                    # 재시도 루프 계속 (다음 iteration에서 _raise_on_error 재호출)
+                    continue
+                else:
+                    # 재인증 후에도 동일 오류 → 원본 TokenExpiredError 전파
+                    logger.error(
+                        "KIS %s: token expired after re-authentication, "
+                        "bubbling original TokenExpiredError to caller",
+                        endpoint_key,
+                    )
+                    raise
 
     # ------------------------------------------------------------------
     # Order operations
@@ -904,6 +1032,7 @@ class KISRestClient:
             bucket=BucketType.ORDER,
             body=body,
             requires_hashkey=True,
+            skip_global_rest=True,
             held_position_sell=_held_position_sell,
         )
 
@@ -1530,11 +1659,33 @@ class KISRestClient:
             )
             return None
 
+    def _get_quote_from_cache(self, symbol: str) -> dict[str, Any] | None:
+        """Return cached quote if fresh, else None."""
+        entry = self._quote_cache.get(symbol)
+        if entry is None:
+            return None
+        cached_at, data = entry
+        if time.time() - cached_at < self._QUOTE_CACHE_TTL:
+            return data
+        # Expired → remove
+        del self._quote_cache[symbol]
+        return None
+
+    def _set_quote_cache(self, symbol: str, data: dict[str, Any]) -> None:
+        """Cache a successful quote response."""
+        self._quote_cache[symbol] = (time.time(), data)
+
     async def get_quote(self, symbol: str) -> dict[str, Any]:
         """Retrieve current price quote (주식현재가 시세).
 
-        Uses inquire-price endpoint.
+        Uses inquire-price endpoint with TTL-based quote cache.
+        Cache hit → no MARKET_DATA budget consumption.
         """
+        # Cache hit check (budget 소비 없음)
+        cached = self._get_quote_from_cache(symbol)
+        if cached is not None:
+            return cached
+
         params = {
             "FID_COND_MRKT_DIV_CODE": "J",
             "FID_INPUT_ISCD": symbol,
@@ -1551,6 +1702,11 @@ class KISRestClient:
         output = data.get("output", {})
         if isinstance(output, list):
             output = output[0] if output else {}
+
+        # Cache 저장 (성공 시에만)
+        if output:
+            self._set_quote_cache(symbol, output)
+
         return output
 
     async def get_quotes_batch(
@@ -1583,21 +1739,43 @@ class KISRestClient:
         sem = semaphore or asyncio.Semaphore(10)
 
         async def _fetch_one(sym: str) -> tuple[str, dict[str, Any]] | None:
-            try:
-                async with sem:
-                    output = await asyncio.wait_for(
-                        self.get_quote(sym),
-                        timeout=timeout,
+            """Fetch a single quote with retry for BudgetExhaustedError.
+
+            Retry up to 3 times with exponential backoff + jitter when the
+            MARKET_DATA budget is exhausted.  Other errors (timeout, HTTP)
+            are not retried — they return None immediately.
+            """
+            for attempt in range(3):
+                try:
+                    async with sem:
+                        output = await asyncio.wait_for(
+                            self.get_quote(sym),
+                            timeout=timeout,
+                        )
+                        if output:
+                            return sym, output
+                        return None
+                except BudgetExhaustedError:
+                    if attempt >= 2:
+                        logger.warning(
+                            "get_quotes_batch: budget exhausted for %s "
+                            "after %d attempts",
+                            sym, attempt + 1,
+                        )
+                        return None
+                    wait = 2.0 * (attempt + 1) + random.uniform(0, 1.0)
+                    logger.debug(
+                        "get_quotes_batch: budget exhausted for %s, "
+                        "retry %d in %.1fs",
+                        sym, attempt + 1, wait,
                     )
-                    if output:
-                        return sym, output
+                    await asyncio.sleep(wait)
+                except asyncio.TimeoutError:
+                    logger.debug("get_quotes_batch: timeout for %s (%.1fs)", sym, timeout)
                     return None
-            except asyncio.TimeoutError:
-                logger.debug("get_quotes_batch: timeout for %s (%.1fs)", sym, timeout)
-                return None
-            except Exception:
-                logger.debug("get_quotes_batch: failed for %s", sym, exc_info=True)
-                return None
+                except Exception:
+                    logger.debug("get_quotes_batch: failed for %s", sym, exc_info=True)
+                    return None
 
         tasks = [_fetch_one(sym) for sym in symbols]
         results = await asyncio.gather(*tasks)

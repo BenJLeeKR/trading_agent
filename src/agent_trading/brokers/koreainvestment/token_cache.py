@@ -357,6 +357,41 @@ class KisTokenCache:
         )
 
     # ------------------------------------------------------------------
+    # Invalidate
+    # ------------------------------------------------------------------
+
+    async def invalidate(self) -> None:
+        """Delete the cached token file, forcing next load() to return None.
+
+        1. enabled 확인 → disabled면 skip
+        2. 캐시 파일 존재 확인 → 없으면 skip
+        3. 파일 삭제
+        """
+        if not self.config.enabled:
+            self._log_miss("invalidate_skipped_disabled")
+            return
+
+        path = self.config.cache_path
+        if not path.exists():
+            self._log_miss("invalidate_skipped_missing")
+            return
+
+        try:
+            path.unlink(missing_ok=True)
+            logger.info(
+                "%s token cache: invalidated cache file %s",
+                self.config.cache_purpose.value,
+                path,
+            )
+        except OSError as exc:
+            logger.warning(
+                "%s token cache: failed to invalidate cache file %s: %s",
+                self.config.cache_purpose.value,
+                path,
+                exc,
+            )
+
+    # ------------------------------------------------------------------
     # Fingerprint
     # ------------------------------------------------------------------
 

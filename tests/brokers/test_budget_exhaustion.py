@@ -7,15 +7,22 @@ Verifies that:
    reconciliation reserve when the inquiry bucket is exhausted.
 3. When both inquiry and reconciliation reserves are exhausted, recovery
    fails with ``BudgetExhaustedError``.
+4. ``KoreaInvestmentAdapter.submit_order()`` returns ``REJECTED`` (not
+   ``RECONCILE_REQUIRED``) when ``BudgetExhaustedError`` is raised for a
+   BUY order.
+5. Held-position SELL reserve lane retry behaviour is preserved after
+   ``BudgetExhaustedError``.
 """
 
 from __future__ import annotations
 
 from decimal import Decimal
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
+from agent_trading.brokers.koreainvestment.adapter import KoreaInvestmentAdapter
 from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
 from agent_trading.brokers.rate_limit import (
     BudgetExhaustedError,
@@ -23,8 +30,8 @@ from agent_trading.brokers.rate_limit import (
     RateLimitBudgetManager,
 )
 from agent_trading.domain.entities import AccountEntity, OrderRequestEntity
-from agent_trading.domain.enums import Environment, OrderSide, OrderStatus, OrderType, TimeInForce
-from agent_trading.domain.models import SubmitOrderRequest
+from agent_trading.domain.enums import BrokerName, Environment, OrderSide, OrderStatus, OrderType, TimeInForce
+from agent_trading.domain.models import SubmitOrderRequest, SubmitOrderResult
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.services.reconciliation_service import ReconciliationService
@@ -38,6 +45,18 @@ from agent_trading.services.reconciliation_service import ReconciliationService
 @pytest.fixture
 def repos():
     return build_in_memory_repositories()
+
+
+@pytest.fixture
+def mock_rest_client() -> AsyncMock:
+    """Mock KISRestClient for adapter-level tests."""
+    return AsyncMock(spec=KISRestClient)
+
+
+@pytest.fixture
+def adapter(mock_rest_client: AsyncMock) -> KoreaInvestmentAdapter:
+    """KoreaInvestmentAdapter with a mocked rest client."""
+    return KoreaInvestmentAdapter(rest_client=mock_rest_client)
 
 
 @pytest.fixture
@@ -242,3 +261,81 @@ async def test_kis_reserve_exhausted_recovery_fails():
 
     # The error should reference the reconciliation reserve.
     assert "reconciliation" in str(exc_info.value).lower() or "reconciliation" in exc_info.value.message
+
+
+# ---------------------------------------------------------------------------
+# 3. BUDGET_EXHAUSTED BUY → REJECTED (not RECONCILE_REQUIRED)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_budget_exhausted_buy_returns_rejected_not_reconcile(
+    adapter, mock_rest_client
+):
+    """BUDGET_EXHAUSTED로 실패한 BUY 주문은 REJECTED로 반환되어야 함."""
+    mock_rest_client.submit_order.side_effect = BudgetExhaustedError(
+        "ORDER", "BUDGET_EXHAUSTED"
+    )
+    request = SubmitOrderRequest(
+        account_ref="test_account",
+        client_order_id="test-client-order-id",
+        correlation_id="corr-001",
+        strategy_id="strat-001",
+        symbol="005930",
+        market="KRX",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=Decimal("10"),
+        price=Decimal("50000"),
+        time_in_force=TimeInForce.DAY,
+    )
+    result = await adapter.submit_order(request)
+    assert result.normalized_status == OrderStatus.REJECTED
+    assert result.broker_status == OrderStatus.REJECTED
+    assert result.requires_reconciliation is False
+
+
+# ---------------------------------------------------------------------------
+# 4. Held-position SELL reserve lane preserved after BUDGET_EXHAUSTED
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_budget_exhausted_sell_reserve_lane_preserved(
+    adapter, mock_rest_client
+):
+    """Held-position SELL reserve lane은 BUDGET_EXHAUSTED 후에도 retry 동작 유지."""
+    # 첫 번째 호출은 BUDGET_EXHAUSTED, reserve 후 두 번째 호출 성공
+    from datetime import datetime, timezone
+
+    mock_rest_client.submit_order.side_effect = [
+        BudgetExhaustedError("ORDER", "BUDGET_EXHAUSTED"),
+        SubmitOrderResult(
+            accepted=True,
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            client_order_id="test-client-order-id",
+            broker_order_id="broker-order-123",
+            broker_status=OrderStatus.SUBMITTED,
+            ack_timestamp=datetime.now(timezone.utc),
+            normalized_status=OrderStatus.SUBMITTED,
+            requires_reconciliation=False,
+        ),
+    ]
+    request = SubmitOrderRequest(
+        account_ref="test_account",
+        client_order_id="test-client-order-id",
+        correlation_id="corr-001",
+        strategy_id="strat-001",
+        symbol="005930",
+        market="KRX",
+        side=OrderSide.SELL,
+        order_type=OrderType.LIMIT,
+        quantity=Decimal("10"),
+        price=Decimal("50000"),
+        time_in_force=TimeInForce.DAY,
+        metadata={"source_type": "held_position"},
+    )
+    result = await adapter.submit_order(request)
+    # reserve 성공 시 정상 SUBMITTED
+    assert result.normalized_status == OrderStatus.SUBMITTED
+    assert result.requires_reconciliation is False

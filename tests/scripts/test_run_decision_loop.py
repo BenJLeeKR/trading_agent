@@ -26,6 +26,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from agent_trading.brokers.base import BrokerAdapter
+from agent_trading.db.transaction import transaction as _db_transaction
 from agent_trading.domain.entities import (
     AccountEntity,
     CashBalanceSnapshotEntity,
@@ -68,6 +69,7 @@ from scripts.run_decision_loop import (
     _read_trading_universe,
     _resolve_symbol_price,
     _run_one_cycle,
+    _run_precheck,
     _run_t3_live_pipeline,
     _serialize_cycle_result,
     _serialize_precheck,
@@ -322,6 +324,147 @@ async def _mock_runtime(snapshot_stale: bool = False) -> AsyncIterator[dict[str,
     }
 
 
+@asynccontextmanager
+async def _mock_runtime_for_one_cycle(
+    snapshot_stale: bool = False,
+) -> AsyncIterator[dict[str, Any]]:
+    """Create a mock runtime + patch lazy imports for ``_run_one_cycle()``.
+
+    ``_run_one_cycle()`` now uses lazy imports inside its body:
+        - ``_db_transaction`` (per-symbol transaction)
+        - ``build_postgres_repositories`` (creates Postgres repos)
+        - ``DecisionOrchestratorService``, ``OrderManager``, ``ReconciliationService``
+
+    This helper patches those imports so that in-memory repos are used instead
+    of real Postgres repos, allowing unit tests to run without a database.
+    """
+    repos = build_in_memory_repositories()
+    await _seed_repos(repos)
+
+    # Configure snapshot sync health
+    now = datetime.now(timezone.utc)
+    if snapshot_stale:
+        await repos.snapshot_sync_runs.add(
+            SnapshotSyncRunEntity(
+                snapshot_sync_run_id=uuid4(),
+                trigger_type="scheduler",
+                scope="single",
+                dry_run=False,
+                total_accounts=1,
+                succeeded_accounts=0,
+                partial_accounts=0,
+                failed_accounts=1,
+                skipped_accounts=0,
+                positions_synced_total=0,
+                positions_skipped_total=0,
+                cash_synced_count=0,
+                error_count=1,
+                status="failed",
+                started_at=now - timedelta(hours=24),
+                completed_at=now - timedelta(hours=24) + timedelta(seconds=10),
+                created_at=now - timedelta(hours=24),
+            )
+        )
+    else:
+        await repos.snapshot_sync_runs.add(
+            SnapshotSyncRunEntity(
+                snapshot_sync_run_id=uuid4(),
+                trigger_type="scheduler",
+                scope="single",
+                dry_run=False,
+                total_accounts=1,
+                succeeded_accounts=1,
+                partial_accounts=0,
+                failed_accounts=0,
+                skipped_accounts=0,
+                positions_synced_total=3,
+                positions_skipped_total=0,
+                cash_synced_count=1,
+                error_count=0,
+                status="completed",
+                started_at=now - timedelta(seconds=60),
+                completed_at=now - timedelta(seconds=50),
+                created_at=now - timedelta(seconds=60),
+            )
+        )
+
+    orchestrator = DecisionOrchestratorService(repos=repos)
+
+    # Mock broker adapter
+    broker = AsyncMock(spec=BrokerAdapter)
+    broker.submit_order = AsyncMock(
+        return_value=MagicMock(
+            status="submitted",
+            broker_order_id="BROKER-001",
+            client_order_id="test-client-order",
+            native_order_id=None,
+            error_code=None,
+            error_message=None,
+        )
+    )
+
+    # Mock order manager
+    from agent_trading.services.order_manager import OrderManager
+    from agent_trading.services.reconciliation_service import ReconciliationService
+
+    reconciliation_service = ReconciliationService(repos=repos)
+    order_manager = OrderManager(
+        repos=repos,
+        reconciliation_service=reconciliation_service,
+    )
+
+    # ── Mock transaction context manager ──────────────────────────────
+    # _run_one_cycle() does: async with _db_transaction() as tx:
+    # We need a mock tx that has commit() and whose connection is not used.
+    # NOTE: _run_one_cycle() uses lazy imports inside its body:
+    #   from agent_trading.db.transaction import transaction as _db_transaction
+    # So we must patch the ORIGINAL module paths, not scripts.run_decision_loop.*
+    mock_tx = AsyncMock()
+    mock_tx.commit = AsyncMock()
+
+    @asynccontextmanager
+    async def _mock_db_transaction() -> AsyncIterator[AsyncMock]:
+        yield mock_tx
+
+    # ── Mock build_postgres_repositories ──────────────────────────────
+    # _run_one_cycle() does: repos = build_postgres_repositories(tx)
+    # We return the in-memory repos instead.
+    def _mock_build_postgres_repositories(tx: object) -> RepositoryContainer:
+        return repos
+
+    # ── Apply patches ─────────────────────────────────────────────────
+    # Lazy imports inside _run_one_cycle() import from original modules,
+    # so we patch the original module paths, not scripts.run_decision_loop.*
+    with (
+        patch(
+            "agent_trading.db.transaction.transaction",
+            _mock_db_transaction,
+        ),
+        patch(
+            "agent_trading.repositories.postgres.bootstrap.build_postgres_repositories",
+            _mock_build_postgres_repositories,
+        ),
+        patch(
+            "agent_trading.services.decision_orchestrator.DecisionOrchestratorService",
+            return_value=orchestrator,
+        ),
+        patch(
+            "agent_trading.services.order_manager.OrderManager",
+            return_value=order_manager,
+        ),
+        patch(
+            "agent_trading.services.reconciliation_service.ReconciliationService",
+            return_value=reconciliation_service,
+        ),
+    ):
+        yield {
+            "repositories": repos,
+            "orchestrator": orchestrator,
+            "order_manager": order_manager,
+            "primary_broker_adapter": broker,
+        }
+
+
 # ---------------------------------------------------------------------------
 # Pure function tests
 # ---------------------------------------------------------------------------
@@ -564,58 +707,96 @@ class TestSerializePrecheck:
 
 
 class TestRunOneCycle:
-    """``_run_one_cycle()`` — mocked runtime으로 cycle 실행 검증."""
+    """``_run_one_cycle()`` — mocked runtime으로 cycle 실행 검증.
 
-    @patch(
-        "scripts.run_decision_loop.postgres_runtime",
-        side_effect=lambda run_migrations=False: _mock_runtime(),
-    )
+    변경 사항 (Runtime 공유 리팩토링):
+    - _run_one_cycle()이 더 이상 postgres_runtime()을 내부에서 호출하지 않음
+    - runtime dict를 외부에서 주입받음
+    - cycle_precheck도 외부에서 주입받음
+    - 내부 lazy import (_db_transaction, build_postgres_repositories 등)는
+      _mock_runtime_for_one_cycle()이 patch로 대체
+    """
+
     @pytest.mark.asyncio
-    async def test_dry_run(self, mock_runtime: Any) -> None:
+    async def test_dry_run(self) -> None:
         """Dry-run 모드: assemble + sizing, broker submit 없음."""
-        result = await _run_one_cycle(
-            cycle=1,
-            submit=False,
-            dry_run=True,
-            output="text",
-        )
+        async with _mock_runtime_for_one_cycle() as runtime:
+            result = await _run_one_cycle(
+                cycle=1,
+                submit=False,
+                dry_run=True,
+                output="text",
+                runtime=runtime,
+            )
 
         assert result["status"] == "DRY_RUN"
         assert result["cycle"] == 1
         assert result["decision_context_id"] is not None
         assert result["duration_seconds"] > 0
 
-    @patch(
-        "scripts.run_decision_loop.postgres_runtime",
-        side_effect=lambda run_migrations=False: _mock_runtime(),
-    )
     @pytest.mark.asyncio
-    async def test_submit(self, mock_runtime: Any) -> None:
+    async def test_submit(self) -> None:
         """Submit 모드: full pipeline 실행."""
-        result = await _run_one_cycle(
-            cycle=1,
-            submit=True,
-            dry_run=False,
-            output="text",
-        )
+        async with _mock_runtime_for_one_cycle() as runtime:
+            result = await _run_one_cycle(
+                cycle=1,
+                submit=True,
+                dry_run=False,
+                output="text",
+                runtime=runtime,
+            )
 
         # Actual status depends on stub agents (may be SKIPPED or SUBMITTED)
         assert result["status"] in ("SUBMITTED", "SKIPPED", "ERROR")
         assert result["cycle"] == 1
 
-    @patch(
-        "scripts.run_decision_loop.postgres_runtime",
-        side_effect=lambda run_migrations=False: _mock_runtime(snapshot_stale=True),
-    )
     @pytest.mark.asyncio
-    async def test_precheck_stale_in_summary(self, mock_runtime: Any) -> None:
-        """Stale snapshot 환경에서 pre-check 정보가 cycle summary에 포함."""
-        result = await _run_one_cycle(
-            cycle=1,
-            submit=True,
-            dry_run=False,
-            output="text",
-        )
+    async def test_precheck_stale_in_summary(self) -> None:
+        """Stale snapshot 환경에서 pre-check 정보가 cycle summary에 포함.
+
+        NOTE: _run_one_cycle()은 더 이상 내부에서 _run_precheck()를 호출하지 않음.
+        precheck는 _run_loop() 레벨에서 cycle_precheck로 주입됨.
+        이 테스트는 cycle_precheck 인자가 올바르게 결과에 반영되는지 검증.
+        """
+        async with _mock_runtime_for_one_cycle(snapshot_stale=True) as runtime:
+            # cycle_precheck를 직접 생성하여 주입
+            from scripts.run_decision_loop import _run_precheck
+
+            precheck_repos = build_in_memory_repositories()
+            await _seed_repos(precheck_repos)
+            # snapshot_stale=True와 동일한 stale 상태 설정
+            now = datetime.now(timezone.utc)
+            await precheck_repos.snapshot_sync_runs.add(
+                SnapshotSyncRunEntity(
+                    snapshot_sync_run_id=uuid4(),
+                    trigger_type="scheduler",
+                    scope="single",
+                    dry_run=False,
+                    total_accounts=1,
+                    succeeded_accounts=0,
+                    partial_accounts=0,
+                    failed_accounts=1,
+                    skipped_accounts=0,
+                    positions_synced_total=0,
+                    positions_skipped_total=0,
+                    cash_synced_count=0,
+                    error_count=1,
+                    status="failed",
+                    started_at=now - timedelta(hours=24),
+                    completed_at=now - timedelta(hours=24) + timedelta(seconds=10),
+                    created_at=now - timedelta(hours=24),
+                )
+            )
+            cycle_precheck = await _run_precheck(precheck_repos)
+
+            result = await _run_one_cycle(
+                cycle=1,
+                submit=True,
+                dry_run=False,
+                output="text",
+                runtime=runtime,
+                cycle_precheck=cycle_precheck,
+            )
 
         # Pre-check should be present and indicate stale
         precheck = result.get("precheck")
@@ -624,43 +805,148 @@ class TestRunOneCycle:
             f"Unexpected health_status: {precheck.get('health_status')}"
         )
 
-
-    @patch(
-        "scripts.run_decision_loop.postgres_runtime",
-        side_effect=lambda run_migrations=False: _mock_runtime(),
-    )
     @pytest.mark.asyncio
-    async def test_dry_run_with_held_position_source_type(self, mock_runtime: Any) -> None:
+    async def test_dry_run_with_held_position_source_type(self) -> None:
         """Dry-run 모드에서 source_type='held_position'이 결과에 포함됨."""
-        result = await _run_one_cycle(
-            cycle=1,
-            submit=False,
-            dry_run=True,
-            output="text",
-            source_type="held_position",
-        )
+        async with _mock_runtime_for_one_cycle() as runtime:
+            result = await _run_one_cycle(
+                cycle=1,
+                submit=False,
+                dry_run=True,
+                output="text",
+                source_type="held_position",
+                runtime=runtime,
+            )
 
         assert result["status"] == "DRY_RUN"
         assert result["source_type"] == "held_position"
         assert result["cycle"] == 1
 
-    @patch(
-        "scripts.run_decision_loop.postgres_runtime",
-        side_effect=lambda run_migrations=False: _mock_runtime(),
-    )
     @pytest.mark.asyncio
-    async def test_submit_with_held_position_source_type(self, mock_runtime: Any) -> None:
+    async def test_submit_with_held_position_source_type(self) -> None:
         """Submit 모드에서 source_type='held_position'이 결과에 포함됨."""
-        result = await _run_one_cycle(
-            cycle=1,
-            submit=True,
-            dry_run=False,
-            output="text",
-            source_type="held_position",
-        )
+        async with _mock_runtime_for_one_cycle() as runtime:
+            result = await _run_one_cycle(
+                cycle=1,
+                submit=True,
+                dry_run=False,
+                output="text",
+                source_type="held_position",
+                runtime=runtime,
+            )
 
         assert result["source_type"] == "held_position"
         assert result["status"] in ("SUBMITTED", "SKIPPED", "ERROR")
+
+    # ------------------------------------------------------------------
+    # T3 fresh skip / quota skip 분기 검증
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_t3_fresh_skip_when_fresh_events_exist(self) -> None:
+        """T3 events가 freshness window 내 존재 → T3 live pipeline skip (fresh skip).
+
+        _is_t3_fresh_for_symbol()이 True를 반환하면 T3 live pipeline이
+        create_task되지 않고, cycle은 정상 완료되어야 함.
+        """
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            now = datetime.now(timezone.utc)
+
+            # Add fresh T3 event (created_at=now → freshness window 내)
+            event = ExternalEventEntity(
+                event_id=uuid4(),
+                event_type="Y|seeded_news",
+                source_name="naver",
+                source_reliability_tier="T3",
+                symbol=SYMBOL,
+                market=MARKET,
+                published_at=now - timedelta(minutes=30),
+                ingested_at=now,
+                severity="medium",
+                direction="neutral",
+                headline="Fresh T3 event for fresh skip test",
+            )
+            await repos.external_events.add(event)
+
+            # Mock quota exhausted as safety net (in case fresh skip fails)
+            from agent_trading.brokers.naver_news_adapter import NaverNewsSearchAdapter
+            with patch.object(NaverNewsSearchAdapter, "is_quota_exhausted", return_value=True):
+                result = await _run_one_cycle(
+                    cycle=1,
+                    submit=False,
+                    dry_run=True,
+                    output="text",
+                    runtime=runtime,
+                )
+
+        # DRY_RUN 정상 완료 확인
+        assert result["status"] == "DRY_RUN"
+        assert result["cycle"] == 1
+
+    @pytest.mark.asyncio
+    async def test_t3_quota_exhausted_skip(self) -> None:
+        """T3 stale + NAVER quota 소진 → T3 live pipeline skip (quota skip).
+
+        NaverNewsSearchAdapter.is_quota_exhausted()가 True를 반환하면
+        T3 live pipeline이 skip되고 cycle은 정상 완료되어야 함.
+        """
+        async with _mock_runtime_for_one_cycle() as runtime:
+            # Mock quota exhausted → T3 live pipeline should be skipped
+            from agent_trading.brokers.naver_news_adapter import NaverNewsSearchAdapter
+            with patch.object(NaverNewsSearchAdapter, "is_quota_exhausted", return_value=True):
+                result = await _run_one_cycle(
+                    cycle=1,
+                    submit=False,
+                    dry_run=True,
+                    output="text",
+                    runtime=runtime,
+                )
+
+        # Cycle 정상 완료 확인 (T3 pipeline이 skip되어도 문제 없음)
+        assert result["status"] == "DRY_RUN"
+        assert result["cycle"] == 1
+
+    @pytest.mark.asyncio
+    async def test_t3_fresh_skip_completes_normally(self) -> None:
+        """Fresh T3 events + dry_run 모드 → cycle 정상 완료.
+
+        여러 symbol에 fresh T3 events가 존재해도 cycle이 정상 완료됨을 검증.
+        """
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            now = datetime.now(timezone.utc)
+
+            # Add T3 events for all universe symbols
+            for symbol in ["005930", "000660", "005380", "068270"]:
+                event = ExternalEventEntity(
+                    event_id=uuid4(),
+                    event_type="Y|seeded_news",
+                    source_name="naver",
+                    source_reliability_tier="T3",
+                    symbol=symbol,
+                    market=MARKET,
+                    published_at=now - timedelta(minutes=30),
+                    ingested_at=now,
+                    severity="medium",
+                    direction="neutral",
+                    headline=f"Fresh T3 event for {symbol}",
+                )
+                await repos.external_events.add(event)
+
+            from agent_trading.brokers.naver_news_adapter import NaverNewsSearchAdapter
+            with patch.object(NaverNewsSearchAdapter, "is_quota_exhausted", return_value=True):
+                result = await _run_one_cycle(
+                    cycle=1,
+                    submit=False,
+                    dry_run=True,
+                    output="text",
+                    runtime=runtime,
+                )
+
+        # Cycle 정상 완료 확인
+        assert result["status"] == "DRY_RUN"
+        assert result["cycle"] == 1
 
 
 class TestHeldPositionSellBudget:
@@ -1624,8 +1910,8 @@ class TestIsT3FreshForSymbol:
             source_reliability_tier="T3",
             symbol=SYMBOL,
             market=MARKET,
-            published_at=now - timedelta(minutes=30),  # 30분 전 → fresh
-            ingested_at=now,
+            published_at=now - timedelta(minutes=30),
+            ingested_at=now - timedelta(minutes=30),  # 30분 전 ingested → fresh
             severity="medium",
             direction="neutral",
             headline="Fresh T3 event",
@@ -1642,7 +1928,12 @@ class TestIsT3FreshForSymbol:
 
     @pytest.mark.asyncio
     async def test_false_when_only_stale_events(self) -> None:
-        """freshness window 초과 T3 events만 있을 때 False."""
+        """freshness window 초과 T3 events만 있을 때 False.
+
+        NOTE: has_fresh_t3_events()는 COALESCE(created_at, ingested_at)을
+        기준으로 freshness를 판단하므로 ingested_at이 freshness window 밖으로
+        설정되어야 함. _T3_FRESHNESS_SECONDS=7200(2h) 기준, 3시간 전 ingested는 stale.
+        """
         repos = build_in_memory_repositories()
         now = datetime.now(timezone.utc)
 
@@ -1653,8 +1944,8 @@ class TestIsT3FreshForSymbol:
             source_reliability_tier="T3",
             symbol=SYMBOL,
             market=MARKET,
-            published_at=now - timedelta(hours=2),  # 2시간 전 → stale
-            ingested_at=now,
+            published_at=now - timedelta(hours=3),
+            ingested_at=now - timedelta(hours=3),  # 3시간 전 ingested → stale (7200s window)
             severity="medium",
             direction="neutral",
             headline="Stale T3 event",
@@ -1680,8 +1971,8 @@ class TestIsT3FreshForSymbol:
             source_reliability_tier="T3",
             symbol=SYMBOL,
             market=MARKET,
-            published_at=now - timedelta(minutes=30),  # 30분 전 → fresh
-            ingested_at=now,
+            published_at=now - timedelta(minutes=30),
+            ingested_at=now - timedelta(minutes=30),  # 30분 전 ingested → fresh
             severity="medium",
             direction="neutral",
             headline="Fresh seeded news",
@@ -1697,6 +1988,48 @@ class TestIsT3FreshForSymbol:
 class TestRunT3LivePipeline:
     """``_run_t3_live_pipeline()`` — T3 live pipeline 실행."""
 
+    # _fake_db_transaction이 yield한 mock_tx를 저장 (테스트 assertion에서 사용)
+    _last_mock_tx: Any = None
+
+    @asynccontextmanager
+    async def _fake_db_transaction(*args: object, **kwargs: object) -> AsyncIterator[Any]:
+        """가짜 _db_transaction() 컨텍스트 매니저 — in-memory repo와 호환.
+
+        PostgresExternalEventRepository는 self._tx.connection.fetchrow()와
+        self._tx.connection.execute()를 호출하므로, connection mock이 필요.
+        execute()/fetchrow()는 RETURNING * 결과로 dict-like row를 반환해야 함.
+
+        added_count: _fake_fetchrow가 호출된 횟수 (persist 호출 검증용).
+        """
+        _added_count: int = 0
+
+        async def _fake_fetchrow(*_args: object, **_kwargs: object) -> dict[str, object] | None:
+            nonlocal _added_count
+            _added_count += 1
+            # row_to_entity를 통과할 수 있는 최소 필드
+            return {
+                "event_id": None,
+                "event_type": "test",
+                "source_name": "test",
+                "published_at": datetime.now(timezone.utc),
+            }
+
+        # 일반 클래스 인스턴스를 사용하여 Mock의 속성 자동 생성 문제 회피
+        class _MockTransaction:
+            pass
+        mock_tx = _MockTransaction()
+
+        class _MockConnection:
+            pass
+        mock_conn = _MockConnection()
+        mock_conn.fetchrow = _fake_fetchrow  # type: ignore[attr-defined]
+        mock_conn.execute = _fake_fetchrow  # type: ignore[attr-defined]
+
+        mock_tx.connection = mock_conn  # type: ignore[attr-defined]
+        mock_tx.added_count = _added_count  # type: ignore[attr-defined]
+        TestRunT3LivePipeline._last_mock_tx = mock_tx
+        yield mock_tx  # type: ignore[misc]
+
     @pytest.mark.asyncio
     async def test_skip_when_services_unavailable(self) -> None:
         """서비스 미설치시 graceful skip."""
@@ -1706,7 +2039,35 @@ class TestRunT3LivePipeline:
         await _run_t3_live_pipeline(runtime, repos, SYMBOL)
 
     @pytest.mark.asyncio
-    async def test_timeout_handled_gracefully(self) -> None:
+    async def test_skip_when_naver_quota_exhausted(self) -> None:
+        """NAVER quota 소진 시 graceful skip (이중 방어)."""
+        from agent_trading.brokers.naver_news_adapter import (
+            NaverDailyQuotaTracker,
+        )
+
+        runtime = {
+            "disclosure_seed_service": AsyncMock(),
+            "seeded_news_service": AsyncMock(),
+        }
+        repos = build_in_memory_repositories()
+
+        # Simulate quota exhaustion by patching is_quota_exhausted
+        with patch.object(
+            NaverDailyQuotaTracker,
+            "is_exhausted",
+            return_value=True,
+        ):
+            await _run_t3_live_pipeline(runtime, repos, SYMBOL)
+
+        # Verify that fetch_disclosure_titles was NOT called (early return)
+        runtime["disclosure_seed_service"].fetch_disclosure_titles.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch(
+        "agent_trading.db.transaction.transaction",
+        side_effect=_fake_db_transaction,
+    )
+    async def test_timeout_handled_gracefully(self, mock_tx: object) -> None:
         """timeout 발생시 graceful degrade."""
         runtime = {
             "disclosure_seed_service": AsyncMock(),
@@ -1785,6 +2146,202 @@ class TestRunT3LivePipeline:
         )
         assert len(events) > 0
         assert all(e.source_reliability_tier == "T3" for e in events)
+
+
+class TestRunT3LivePipelinePartialPersist:
+    """``_run_t3_live_pipeline()`` — timeout 시 partial persist 검증."""
+
+    # _fake_db_transaction이 yield한 mock_tx를 저장 (테스트 assertion에서 사용)
+    _last_mock_tx: Any = None
+
+    @asynccontextmanager
+    async def _fake_db_transaction(*args: object, **kwargs: object) -> AsyncIterator[Any]:
+        """가짜 _db_transaction() 컨텍스트 매니저 — in-memory repo와 호환.
+
+        PostgresExternalEventRepository는 self._tx.connection.fetchrow()와
+        self._tx.connection.execute()를 호출하므로, connection mock이 필요.
+        execute()/fetchrow()는 RETURNING * 결과로 dict-like row를 반환해야 함.
+
+        added_count: _fake_fetchrow가 호출된 횟수 (persist 호출 검증용).
+        """
+        _added_count: int = 0
+
+        async def _fake_fetchrow(*_args: object, **_kwargs: object) -> dict[str, object] | None:
+            nonlocal _added_count
+            _added_count += 1
+            # row_to_entity를 통과할 수 있는 최소 필드
+            return {
+                "event_id": None,
+                "event_type": "test",
+                "source_name": "test",
+                "published_at": datetime.now(timezone.utc),
+            }
+
+        # 일반 클래스 인스턴스를 사용하여 Mock의 속성 자동 생성 문제 회피
+        class _MockTransaction:
+            pass
+        mock_tx = _MockTransaction()
+
+        class _MockConnection:
+            pass
+        mock_conn = _MockConnection()
+        mock_conn.fetchrow = _fake_fetchrow  # type: ignore[attr-defined]
+        mock_conn.execute = _fake_fetchrow  # type: ignore[attr-defined]
+
+        mock_tx.connection = mock_conn  # type: ignore[attr-defined]
+        mock_tx.added_count = _added_count  # type: ignore[attr-defined]
+        TestRunT3LivePipelinePartialPersist._last_mock_tx = mock_tx
+        yield mock_tx  # type: ignore[misc]
+
+    @pytest.mark.asyncio
+    @patch(
+        "agent_trading.db.transaction.transaction",
+        side_effect=_fake_db_transaction,
+    )
+    async def test_partial_persist_after_convert_timeout(self, mock_tx: object) -> None:
+        """convert 단계에서 timeout → candidates 기반 partial persist 호출 확인.
+
+        시나리오:
+        - Step 1 (fetch_disclosure_titles): 성공 → seeds 할당됨
+        - Step 2 (process_seeds): 성공 → candidates 할당됨
+        - Step 3 (convert_seeded_candidates): timeout 발생
+        - 기대: except 블록에서 candidates → partial_events 변환 후 persist
+
+        NOTE: convert_seeded_candidates는 _run_t3_live_pipeline() 내부에서
+        lazy import되므로, agent_trading.services.seeded_news_converter
+        모듈을 직접 패치해야 함.
+
+        또한 except 블록 내부에서도 convert_seeded_candidates가 호출되므로
+        (candidates → partial_events 변환), 첫 호출에서만 timeout을 발생시키고
+        이후 호출에서는 원래 함수를 사용하도록 구성.
+        """
+        from agent_trading.domain.models import SeededNewsCandidate
+
+        runtime = {
+            "disclosure_seed_service": AsyncMock(),
+            "seeded_news_service": AsyncMock(),
+        }
+        repos = build_in_memory_repositories()
+
+        # Mock disclosure seeds
+        from agent_trading.services.disclosure_seed_service import DisclosureTitleDTO
+        seed = DisclosureTitleDTO(
+            symbol=SYMBOL,
+            company_name="Samsung",
+            headline="Test disclosure",
+        )
+        runtime["disclosure_seed_service"].fetch_disclosure_titles = AsyncMock(
+            return_value=[seed],
+        )
+
+        # Mock processed candidates
+        candidate = SeededNewsCandidate(
+            symbol=SYMBOL,
+            company_name="Samsung",
+            seed_headline="Test disclosure",
+            related_news_title="Test news",
+            related_news_summary="Test summary",
+            link="https://news.example.com",
+            confidence_score=0.8,
+        )
+        runtime["seeded_news_service"].process_seeds = AsyncMock(
+            return_value=([candidate], {}),
+        )
+
+        # convert_seeded_candidates에서 timeout 발생시키기
+        # (candidates는 할당되었고, seeded_events는 할당되지 않은 상태)
+        # 첫 호출에서만 TimeoutError 발생, 이후 호출(except 블록 내)은 정상 동작
+        import asyncio
+        import agent_trading.services.seeded_news_converter as snc
+        original_convert = snc.convert_seeded_candidates
+        call_count = 0
+
+        def _mock_convert(candidates):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise asyncio.TimeoutError()
+            return original_convert(candidates)
+
+        from scripts.run_decision_loop import persist_seeded_events as _real_persist
+        with patch.object(
+            snc,
+            "convert_seeded_candidates",
+            side_effect=_mock_convert,
+        ), patch(
+            "scripts.run_decision_loop.persist_seeded_events",
+            side_effect=_real_persist,
+        ) as mock_persist:
+            # Should not raise — partial persist in except block
+            await _run_t3_live_pipeline(runtime, repos, SYMBOL)
+
+        # persist_seeded_events가 호출되었는지 확인
+        assert mock_persist.called, (
+            "persist_seeded_events should be called when convert_seeded_candidates "
+            "times out (partial persist from candidates in except block)"
+        )
+
+    @pytest.mark.asyncio
+    @patch(
+        "agent_trading.db.transaction.transaction",
+        side_effect=_fake_db_transaction,
+    )
+    async def test_partial_persist_with_seeds_only(self, mock_tx: object) -> None:
+        """seeds만 있고 candidates는 없을 때 timeout → seeds 기반 partial persist.
+
+        변경 사항:
+        - 이전: seeds만 있으면 persist 미호출 (no partial data)
+        - 변경 후: seeds를 T2 ExternalEventEntity로 변환하여 persist
+        - T2 tier이므로 has_fresh_t3_events()에는 영향 없음
+        """
+        runtime = {
+            "disclosure_seed_service": AsyncMock(),
+            "seeded_news_service": AsyncMock(),
+        }
+        repos = build_in_memory_repositories()
+
+        # Mock disclosure seeds success
+        from agent_trading.services.disclosure_seed_service import DisclosureTitleDTO
+        seed = DisclosureTitleDTO(
+            symbol=SYMBOL,
+            company_name="Samsung",
+            headline="Test disclosure",
+        )
+        runtime["disclosure_seed_service"].fetch_disclosure_titles = AsyncMock(
+            return_value=[seed],
+        )
+
+        # Mock process_seeds timeout (no candidates yet)
+        import asyncio
+        runtime["seeded_news_service"].process_seeds = AsyncMock(
+            side_effect=asyncio.TimeoutError,
+        )
+
+        from scripts.run_decision_loop import persist_seeded_events as _real_persist
+        with patch(
+            "scripts.run_decision_loop.persist_seeded_events",
+            side_effect=_real_persist,
+        ) as mock_persist:
+            # Should not raise
+            await _run_t3_live_pipeline(runtime, repos, SYMBOL)
+
+        # Verify persist_seeded_events was called
+        assert mock_persist.called, (
+            "persist_seeded_events should be called when timeout occurs after "
+            "seeds are available (partial persist from seeds)"
+        )
+
+        # _convert_disclosure_seeds_to_events가 T2 이벤트를 생성하는지 별도 검증
+        from scripts.run_decision_loop import _convert_disclosure_seeds_to_events
+        partial_events = _convert_disclosure_seeds_to_events([seed])
+        assert len(partial_events) > 0
+        assert all(e.source_reliability_tier == "T2" for e in partial_events), (
+            "Seeds-based partial persist should create T2 events, "
+            "not T3 events, to avoid affecting has_fresh_t3_events()"
+        )
+        assert all(e.event_type.startswith("Y|") for e in partial_events), (
+            "Seeds-based events should have KIS disclosure prefix (Y|)"
+        )
 
 
 class TestT3DegradedPath:

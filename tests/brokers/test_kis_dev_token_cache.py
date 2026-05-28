@@ -196,7 +196,7 @@ class TestCacheExpired:
         data = json.loads(cache_path.read_text())
         assert data["access_token"] == "test-access-token-xxxxxxxxxxxxxxxxxxxxxx"
         assert data["kis_env"] == "paper"
-        assert data["app_key_fingerprint"] == _fingerprint("dummy-key")
+        assert data["credential_fingerprint"] == _fingerprint("dummy-key")
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +343,7 @@ class TestSaveAfterAuth:
         assert data["access_token"] == "test-access-token-xxxxxxxxxxxxxxxxxxxxxx"
         assert data["kis_env"] == "paper"
         assert data["base_url"] == "https://openapivts.koreainvestment.com:29443"
-        assert data["app_key_fingerprint"] == _fingerprint("dummy-key")
+        assert data["credential_fingerprint"] == _fingerprint("dummy-key")
         assert "expires_at" in data
         assert "created_at" in data
 

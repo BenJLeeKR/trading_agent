@@ -110,6 +110,7 @@ class SeededNewsCandidateService:
     async def process_seeds(
         self,
         seeds: Sequence[DisclosureTitleDTO],
+        max_queries: int | None = None,
     ) -> tuple[list[SeededNewsCandidate], PipelineMetrics]:
         """Process multiple disclosure seeds through the pipeline.
 
@@ -117,6 +118,9 @@ class SeededNewsCandidateService:
         ----------
         seeds : Sequence[DisclosureTitleDTO]
             KIS disclosure title seeds from :class:`LiveDisclosureSeedService`.
+        max_queries : int | None, optional
+            Maximum number of Naver search queries to execute per seed.
+            ``None`` means no limit (use all built queries).
 
         Returns
         -------
@@ -152,7 +156,9 @@ class SeededNewsCandidateService:
                 seed_quality_drops += 1
                 continue
 
-            candidates, seed_metrics = await self._process_one_seed(seed)
+            candidates, seed_metrics = await self._process_one_seed(
+                seed, max_queries=max_queries,
+            )
             all_candidates.extend(candidates)
 
             # Accumulate per-symbol metrics (seed-level counts)
@@ -259,6 +265,7 @@ class SeededNewsCandidateService:
     async def _process_one_seed(
         self,
         seed: DisclosureTitleDTO,
+        max_queries: int | None = None,
     ) -> tuple[list[SeededNewsCandidate], dict[str, int]]:
         """Process a single disclosure seed through the pipeline.
 
@@ -266,6 +273,9 @@ class SeededNewsCandidateService:
         ----------
         seed : DisclosureTitleDTO
             Single KIS disclosure seed.
+        max_queries : int | None, optional
+            Maximum number of Naver search queries to execute.
+            ``None`` means no limit (use all built queries).
 
         Returns
         -------
@@ -299,7 +309,9 @@ class SeededNewsCandidateService:
 
         # Step 2: Search NAVER
         try:
-            raw_items = await self._search_adapter.search_by_seed(seed, queries)
+            raw_items = await self._search_adapter.search_by_seed(
+                seed, queries, max_queries=max_queries,
+            )
         except Exception:
             logger.exception(
                 "SeededNewsCandidateService: NAVER search failed "

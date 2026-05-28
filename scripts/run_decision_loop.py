@@ -661,25 +661,27 @@ def _build_aggregate_summary(
 
 # Per-agent hard timeout: safety net for the assemble_and_submit() call.
 # Phase 4 subprocess isolation provides SIGKILL-guaranteed timeout at the
-# subprocess level (35s), so this outer timeout is a last-resort safety
+# subprocess level (30s), so this outer timeout is a last-resort safety
 # net rather than the primary timeout mechanism.
-# Increased from 300s to 420s to accommodate held_position sell symbols
-# (REDUCE/EXIT) which may require additional AI agent execution time.
+# Reduced from 420s to 150s to align with deepseek-chat P99 latency
+# (~15.9s) with 9.4x safety margin covering all 3 agents + overhead.
 # The scheduler-level _DECISION_TIMEOUT (600s) covers the entire
 # asyncio.gather() for all universe symbols.
-PER_AGENT_HARD_TIMEOUT = 420  # seconds
+PER_AGENT_HARD_TIMEOUT = 150  # seconds
 
 # ── T3 (Seeded News) timeout & freshness ─────────────────────────────────────
 # T3 pipeline (KIS disclosure + NAVER news search) has no hard timeout
 # and can block the critical path for minutes.  Decoupled via parallel
 # execution with this timeout for the live pipeline.
-_T3_TIMEOUT = 30            # T3 pipeline 전체 timeout (초)
-_T3_FRESHNESS_SECONDS = 3600  # T3 freshness window (1시간)
+_T3_TIMEOUT = 20            # T3 pipeline 전체 timeout (초)
+_T3_FRESHNESS_SECONDS = 7200  # T3 freshness window (2시간)
 _T3_GATHER_WAIT = 5         # decision 완료 후 T3 추가 대기시간 (초)
 
-# Active T3 background tasks — gathered at end of each cycle.
-# Module-level list so _run_one_cycle() can register and await them.
-_active_t3_tasks: list[asyncio.Task[None]] = []
+# ── T3 async task tracking ──────────────────────────────────────────────────
+# Active T3 pipeline tasks running in background (fire-and-forget via
+# asyncio.create_task).  These are drained at cycle end so that persisted
+# events are available for the next cycle's freshness check.
+_active_t3_tasks: set[asyncio.Task] = set()
 
 async def _run_one_cycle(
     cycle: int,
@@ -690,53 +692,51 @@ async def _run_one_cycle(
     symbol: str = SYMBOL,
     market: str = MARKET,
     source_type: str = "core",
+    runtime: dict[str, object],              # ★ 공유 runtime (외부에서 주입)
+    cycle_precheck: dict[str, object] | None = None,  # ★ cycle precheck (외부에서 주입)
 ) -> dict[str, object]:
-    """Execute a single decision cycle.
+    """Execute a single decision cycle with shared runtime.
+
+    Per-symbol transaction을 생성하여 격리를 보장한다.
+    Runtime (pool, httpx clients, agents)은 외부에서 주입받아 공유한다.
 
     Returns a serialized result dict.
     """
     start = time.monotonic()
-    precheck: dict[str, object] | None = None
+    precheck: dict[str, object] | None = cycle_precheck
     logger.info(
         "[SYMBOL_START] cycle=%d symbol=%s market=%s submit=%s dry_run=%s source_type=%s",
         cycle, symbol, market, submit, dry_run, source_type,
     )
 
-    # Clear any stale T3 tasks from previous cycles
-    _active_t3_tasks.clear()
 
     try:
-        async with postgres_runtime(run_migrations=False) as runtime:
-            repos: RepositoryContainer = runtime["repositories"]
-            orchestrator = runtime["orchestrator"]
+        # ★ Per-symbol transaction 생성 (격리 보장)
+        # 변경 전: postgres_runtime()이 하나의 transaction을 모든 symbol이 공유
+        # 변경 후: 각 symbol이 독립적 transaction 사용
+        from agent_trading.db.transaction import transaction as _db_transaction
+        from agent_trading.repositories.postgres.bootstrap import build_postgres_repositories
+        from agent_trading.services.decision_orchestrator import DecisionOrchestratorService
+        from agent_trading.services.order_manager import OrderManager
+        from agent_trading.services.reconciliation_service import ReconciliationService
 
-            # ── 1. Seed FK chain if empty ───────────────────────────────
-            seeded = await _seed_if_empty(repos)
-            if seeded:
-                logger.info("Cycle %d: seed completed.", cycle)
-            else:
-                logger.debug("Cycle %d: seed already exists (skipped).", cycle)
-
-            # ── 2. Pre-check snapshot health ────────────────────────────
-            precheck = await _run_precheck(repos)
-
-            # ── 2.5 Resolve symbol-specific price ───────────────────────
-            # 현재는 전면 MARKET 정책으로 price=None을 사용하므로
-            # _resolve_symbol_price()의 반환값은 주문 가격에 직접 쓰이지 않음.
-            # 그러나 내부에서 broker.get_quote()를 통해 실시간 quote를 수집하고
-            # 로그로 기록하므로 quote 수집/observability 용도로 유지.
-            broker = runtime.get("primary_broker_adapter")
-            resolved_price = await _resolve_symbol_price(
-                symbol=symbol,
-                market=market,
-                broker=broker,
+        async with _db_transaction() as tx:
+            repos: RepositoryContainer = build_postgres_repositories(tx)
+            orchestrator = DecisionOrchestratorService(repos=repos)
+            reconciliation_service = ReconciliationService(repos=repos)
+            order_manager = OrderManager(
+                repos=repos,
+                reconciliation_service=reconciliation_service,
             )
 
             # ── 3. Build request ────────────────────────────────────────
+            # NOTE: _resolve_symbol_price() 호출 제거됨 — 현재 전면 MARKET 정책으로
+            # price=None을 사용하며, quote fetch는 execution_service._resolve_quote()에서
+            # 단일 경로로 처리됨. 중복 quote fetch로 인한 KIS rate limit 문제 해결.
             order_type, price = _resolve_order_type_and_price(
                 side="buy",
                 decision_type=None,
-                default_price=resolved_price,
+                default_price=None,
             )
             request = SubmitOrderRequest(
                 account_ref=ACCOUNT_ALIAS,
@@ -761,25 +761,53 @@ async def _run_one_cycle(
             seeded_events: list[ExternalEventEntity] = []
 
             if _SEEDED_NEWS_ENABLED:
-                # ── Decision path: read persisted T3 events (non-blocking) ──
-                seeded_events = await _collect_persisted_seeded_events(repos, symbol)
-
-                # ── T3 live path: run in parallel if data is stale ──
-                t3_fresh = await _is_t3_fresh_for_symbol(repos, symbol)
-                if not t3_fresh:
-                    t3_task = asyncio.create_task(
-                        _run_t3_live_pipeline(runtime, repos, symbol)
+                # ── T3 pipeline skip for held_position and market_overlay ──
+                # These source types do not benefit from seeded news context
+                # and skipping them saves Naver API quota.
+                if source_type in ("held_position", "market_overlay"):
+                    logger.debug(
+                        "Skipping T3 live pipeline for symbol=%s source_type=%s",
+                        symbol, source_type,
                     )
-                    _active_t3_tasks.append(t3_task)
+                    # Still read persisted events for decision context
+                    seeded_events = await _collect_persisted_seeded_events(repos, symbol)
+                else:
+                    # ── Decision path: read persisted T3 events (non-blocking) ──
+                    seeded_events = await _collect_persisted_seeded_events(repos, symbol)
 
-                # ── Logging ──
-                freshness_hint = "fresh" if t3_fresh else "stale"
-                logger.info(
-                    "Cycle %d symbol=%s: T3 decision path: %d persisted events "
-                    "live_pipeline=%s",
-                    cycle, symbol, len(seeded_events),
-                    "skipped (fresh)" if t3_fresh else "scheduled",
-                )
+                    # ── T3 live path: run synchronously (await) before assemble ──
+                    t3_fresh = await _is_t3_fresh_for_symbol(repos, symbol)
+                    if not t3_fresh:
+                        # ── NAVER quota preemptive check ──
+                        # If NAVER daily quota is >= 90% exhausted, skip the
+                        # live pipeline entirely to avoid 429 timeouts.
+                        from agent_trading.brokers.naver_news_adapter import (
+                            NaverNewsSearchAdapter,
+                        )
+                        if NaverNewsSearchAdapter.is_quota_exhausted():
+                            logger.warning(
+                                "T3 live pipeline skipped for symbol=%s: "
+                                "NAVER quota exhausted (%.1f%%)",
+                                symbol,
+                                NaverNewsSearchAdapter.get_daily_usage_ratio() * 100,
+                            )
+                        else:
+                            # Fire-and-forget: T3 pipeline runs in background,
+                            # decision path continues immediately (not blocked).
+                            task = asyncio.create_task(
+                                _run_t3_live_pipeline(runtime, repos, symbol, source_type=source_type)
+                            )
+                            _active_t3_tasks.add(task)
+                            task.add_done_callback(_active_t3_tasks.discard)
+
+                    # ── Logging ──
+                    freshness_hint = "fresh" if t3_fresh else "stale"
+                    logger.info(
+                        "Cycle %d symbol=%s: T3 decision path: %d persisted events "
+                        "live_pipeline=%s",
+                        cycle, symbol, len(seeded_events),
+                        "skipped (fresh)" if t3_fresh else "sync_executed",
+                    )
             else:
                 logger.info(
                     "Cycle %d symbol=%s: T3 skipped (SEEDED_NEWS_ENABLED=0)",
@@ -818,7 +846,7 @@ async def _run_one_cycle(
                     )
             elif submit:
                 # Full pipeline: assemble → submit
-                order_manager = runtime["order_manager"]
+                # order_manager와 broker는 runtime에서 공유 객체 사용
                 broker = runtime["primary_broker_adapter"]
                 # Per-agent hard timeout: prevents LLM API stall from blocking
                 # the cycle indefinitely.
@@ -859,19 +887,8 @@ async def _run_one_cycle(
                     "event_reason_codes": list(ai_inputs.event_reason_codes),
                 }
 
-            # ── 5. Wait for outstanding T3 tasks (grace period) ──────────
-            if _active_t3_tasks:
-                done, pending = await asyncio.wait(
-                    _active_t3_tasks,
-                    timeout=_T3_GATHER_WAIT,
-                )
-                for t in pending:
-                    t.cancel()
-                    logger.debug(
-                        "Cycle %d symbol=%s: T3 task cancelled (grace period expired)",
-                        cycle, symbol,
-                    )
-                _active_t3_tasks.clear()
+            # ── 5. Commit per-symbol transaction ─────────────────────────
+            await tx.commit()
 
             duration = time.monotonic() - start
             logger.info(
@@ -966,6 +983,44 @@ async def persist_seeded_events(
     return persisted
 
 
+def _convert_disclosure_seeds_to_events(
+    seeds: list,
+) -> list[ExternalEventEntity]:
+    """Convert KIS disclosure seed DTOs to ExternalEventEntity list.
+
+    These are KIS disclosure events (not seeded_news), so they have:
+    - event_type = "Y|{headline}" (KIS disclosure prefix)
+    - source_reliability_tier = "T2" (KIS disclosure tier)
+
+    This does NOT affect has_fresh_t3_events() since the tier is T2.
+    But provides decision context via _collect_persisted_seeded_events().
+    """
+    from uuid import uuid4
+
+    from agent_trading.domain.models import DisclosureTitleDTO
+
+    events: list[ExternalEventEntity] = []
+    for seed in seeds:
+        assert isinstance(seed, DisclosureTitleDTO), (
+            f"Expected DisclosureTitleDTO, got {type(seed).__name__}"
+        )
+        event = ExternalEventEntity(
+            event_id=uuid4(),
+            event_type=f"Y|{seed.headline}",
+            source_name="kis_disclosure",
+            source_reliability_tier="T2",
+            symbol=seed.symbol,
+            market="KR",
+            published_at=datetime.now(timezone.utc),
+            ingested_at=datetime.now(timezone.utc),
+            severity="medium",
+            direction="neutral",
+            headline=seed.headline,
+        )
+        events.append(event)
+    return events
+
+
 # ── T3 degraded path helpers ─────────────────────────────────────────────────
 
 
@@ -1008,22 +1063,16 @@ async def _is_t3_fresh_for_symbol(
     repos: RepositoryContainer,
     symbol: str,
 ) -> bool:
-    """Check if there are _T3_FRESHNESS_SECONDS-fresh T3 events for symbol.
+    """Check if T3 events exist for symbol within freshness window.
 
-    Prevents unnecessary live pipeline calls when recent data exists.
-
-    Uses ``include_seeded_news=True`` so that ``event_type='seeded_news'``
-    events are included in the query result.
+    Uses created_at (DB insert time) rather than published_at to determine
+    whether a recent T3 fetch already populated seeded_news events for this symbol.
     """
     try:
-        since = datetime.now(timezone.utc) - timedelta(seconds=_T3_FRESHNESS_SECONDS)
-        events = await repos.external_events.list_by_symbol(
+        return await repos.external_events.has_fresh_t3_events(
             symbol=symbol,
-            since=since,
-            include_seeded_news=True,
+            freshness_seconds=_T3_FRESHNESS_SECONDS,
         )
-        t3_events = [e for e in events if e.source_reliability_tier == "T3"]
-        return len(t3_events) > 0
     except Exception:
         return False
 
@@ -1032,6 +1081,7 @@ async def _run_t3_live_pipeline(
     runtime: dict[str, object],
     repos: RepositoryContainer,
     symbol: str,
+    source_type: str = "core",
 ) -> None:
     """Run live T3 pipeline (KIS disclosure + NAVER news) with timeout.
 
@@ -1039,11 +1089,41 @@ async def _run_t3_live_pipeline(
     alongside the decision path.  Results are persisted to DB for
     consumption by future cycles.
 
+    On timeout, persists any partially collected events so that subsequent
+    cycles can benefit from them even when NAVER API is degraded.
+
+    Parameters
+    ----------
+    source_type : str
+        Source type for query count policy.
+        - ``"core"``: max_queries=1
+        - ``"event_overlay"``: max_queries=1
+        - ``"held_position"`` / ``"market_overlay"``: 이 경로에 도달하지 않음
+
     Log tags:
     - "T3 used live" — live pipeline 성공, DB persist 완료
+    - "T3 partial persist on timeout" — timeout 시 partial persist 성공
     - "T3 skipped" — timeout 또는 disable로 skip
     """
+    # Declare variables outside try so they are accessible in except blocks
+    seeds = None
+    candidates = None
+    seeded_events = None
+
     try:
+        # ── Preemptive NAVER quota check (이중 방어) ──
+        from agent_trading.brokers.naver_news_adapter import (
+            NaverNewsSearchAdapter,
+        )
+        if NaverNewsSearchAdapter.is_quota_exhausted():
+            logger.warning(
+                "symbol=%s T3 skipped: NAVER quota exhausted (%.1f%%) "
+                "before KIS disclosure fetch",
+                symbol,
+                NaverNewsSearchAdapter.get_daily_usage_ratio() * 100,
+            )
+            return
+
         disclosure_seed_service = runtime.get("disclosure_seed_service")
         seeded_news_service = runtime.get("seeded_news_service")
         if disclosure_seed_service is None or seeded_news_service is None:
@@ -1060,8 +1140,15 @@ async def _run_t3_live_pipeline(
             return
 
         # Step 2: Process seeds via NAVER news search
+        # Source type별 Naver query 수 정책
+        _source_type_max_queries: dict[str, int | None] = {
+            "core": 1,
+            "event_overlay": 1,
+            "held_position": 1,
+        }
+        max_queries = _source_type_max_queries.get(source_type, None)
         candidates, metrics = await asyncio.wait_for(
-            seeded_news_service.process_seeds(seeds),
+            seeded_news_service.process_seeds(seeds, max_queries=max_queries),
             timeout=_T3_TIMEOUT,
         )
         if not candidates:
@@ -1088,10 +1175,54 @@ async def _run_t3_live_pipeline(
         )
 
     except asyncio.TimeoutError:
-        logger.warning(
-            "symbol=%s T3 skipped: live pipeline timed out after %ds",
-            symbol, _T3_TIMEOUT,
+        # Lazy imports for transaction-scoped repository
+        from agent_trading.db.transaction import transaction as _db_transaction
+        from agent_trading.repositories.postgres.external_events import (
+            PostgresExternalEventRepository,
         )
+
+        async with _db_transaction() as tx:
+            tx_repo = PostgresExternalEventRepository(tx)
+
+            if seeded_events is not None:
+                # Step 3 (convert) completed, Step 4 (persist) timed out
+                await persist_seeded_events(seeded_events, tx_repo)
+                logger.info(
+                    "symbol=%s T3 partial persist on timeout: %d events",
+                    symbol, len(seeded_events),
+                )
+            elif candidates is not None:
+                # Step 2 (process) completed, Step 3 (convert) timed out
+                from agent_trading.services.seeded_news_converter import (
+                    convert_seeded_candidates,
+                )
+                partial_events = convert_seeded_candidates(candidates)
+                await persist_seeded_events(partial_events, tx_repo)
+                logger.info(
+                    "symbol=%s T3 partial persist on timeout: "
+                    "%d candidates -> %d events",
+                    symbol, len(candidates), len(partial_events),
+                )
+            elif seeds is not None and len(seeds) > 0:
+                # Step 1 (disclosure) completed, Step 2 (process) timed out
+                # Persist KIS disclosure seeds as T2 events (not T3).
+                # ⚠️ This does NOT affect has_fresh_t3_events() since T2 events
+                # are filtered out by _is_t3_fresh_for_symbol(). However, it
+                # provides decision context via _collect_persisted_seeded_events().
+                partial_events = _convert_disclosure_seeds_to_events(seeds)
+                await persist_seeded_events(partial_events, tx_repo)
+                logger.info(
+                    "symbol=%s T3 partial persist on timeout: "
+                    "%d disclosure seeds -> %d events (step 1 only)",
+                    symbol, len(seeds), len(partial_events),
+                )
+            else:
+                logger.warning(
+                    "symbol=%s T3 skipped: live pipeline timed out after %ds "
+                    "(no partial data to persist)",
+                    symbol, _T3_TIMEOUT,
+                )
+            # tx.__aexit__ auto-commits on success
     except Exception:
         logger.exception(
             "symbol=%s T3 skipped: live pipeline failed", symbol,
@@ -1139,163 +1270,211 @@ async def _run_loop(
     results: list[dict[str, object]] = []
     loop_start = time.monotonic()
 
-    while not _shutdown_event.is_set():
-        # Check cycle limit
-        if max_cycles > 0 and cycle_count >= max_cycles:
-            logger.info("Reached requested cycle count (%d).", max_cycles)
-            break
+    # ── Runtime: 루프 진입 시 1회 생성, 모든 symbol이 공유 ──────────────
+    # 변경 전: _run_one_cycle()이 각 symbol마다 postgres_runtime() 생성
+    # 변경 후: _run_loop()에서 1회 생성, per-symbol transaction만 분리
+    async with postgres_runtime(run_migrations=False) as runtime:
+        # ── 최초 1회 seed (FK 체인) ─────────────────────────────────────
+        # 변경 전: 각 symbol의 _run_one_cycle()에서 _seed_if_empty() 호출
+        # 변경 후: 루프 진입 시 1회만 실행
+        from agent_trading.db.transaction import transaction as _db_transaction
+        from agent_trading.repositories.postgres.bootstrap import build_postgres_repositories
 
-        cycle_count += 1
-        logger.info("=== Decision Cycle %d ===", cycle_count)
-
-        # Semaphore-based parallel symbol processing.
-        # Max 5 concurrent symbols to avoid overwhelming broker/LLM resources
-        # while reducing total wall-clock time from ~190s to ~40s for 35 symbols.
-        _SEMAPHORE_MAX = 5
-        sem = asyncio.Semaphore(_SEMAPHORE_MAX)
-        submit_budget_consumed = False
-        # held_position REDUCE/EXIT sell은 위험 축소 목적이므로 일일 제출 상한 없음.
-        # cycle 내 중복 submit 방지용 카운터만 유지 (symbol dedupe + cycle cap).
-        held_position_sell_cycle_count = 0
-        held_position_sell_cycle_symbols: set[str] = set()
-        _submit_lock = asyncio.Lock()
-
-        async def _process_one(item: object) -> dict[str, object]:
-            """Process a single universe item with semaphore concurrency cap."""
-            nonlocal submit_budget_consumed
-            nonlocal held_position_sell_cycle_count
-            nonlocal held_position_sell_cycle_symbols
-            async with sem:
-                # In submit mode, evaluate all symbols but allow at most one
-                # budget-consuming broker submit per script invocation.
-                # held_position sell은 별도 budget으로 관리되어 일반 submit과 분리된다.
-                async with _submit_lock:
-                    # held_position sell special lane: source_type + decision_type + side 3중 조건
-                    # result가 아직 없으므로 item의 source_type만으로 1차 필터링하고,
-                    # 실제 budget 소비 판정은 result 수신 후 3중 조건으로 재확인한다.
-                    is_held_position_item = (
-                        getattr(item, "source_type", "core") == "held_position"
-                    )
-                    if is_held_position_item:
-                        # held_position sell은 일일 상한 없이 항상 submit 가능.
-                        # 단, 동일 cycle 내 동일 symbol 중복 submit과 cycle cap(2건)은 유지.
-                        symbol_submit = (
-                            submit
-                            and not dry_run
-                            and held_position_sell_cycle_count < 2  # HELD_POSITION_SELL_MAX_PER_CYCLE
-                            and item.symbol not in held_position_sell_cycle_symbols  # symbol dedupe
-                        )
-                    else:
-                        symbol_submit = submit and not dry_run and not submit_budget_consumed
-                    symbol_dry_run = dry_run or (submit and not symbol_submit)
-
-                # HP sell block 이유 로깅 (explainability)
-                if is_held_position_item and not symbol_submit and submit and not dry_run:
-                    reasons = []
-                    if held_position_sell_cycle_count >= 2:
-                        reasons.append("cycle_cap_reached")
-                    if item.symbol in held_position_sell_cycle_symbols:
-                        reasons.append("symbol_duplicate")
-                    if reasons:
-                        logger.info(
-                            "HP sell block: symbol=%s reasons=%s",
-                            item.symbol, ",".join(reasons),
-                        )
-
-                try:
-                    result = await _run_one_cycle(
-                        cycle=cycle_count,
-                        submit=symbol_submit,
-                        dry_run=symbol_dry_run,
-                        output=output,
-                        symbol=item.symbol,
-                        market=item.market,
-                        source_type=item.source_type,
-                    )
-                except Exception as exc:
-                    logger.exception(
-                        "Cycle %d symbol=%s:%s: unexpected error in parallel processing: %s",
-                        cycle_count, item.symbol, item.market, exc,
-                    )
-                    result = {
-                        "status": "ERROR",
-                        "symbol": item.symbol,
-                        "market": item.market,
-                        "error": str(exc),
-                        "duration_seconds": 0.0,
-                    }
-
-                status = result.get("status", "UNKNOWN")
-                if status in ("SUBMITTED", "RECONCILE_REQUIRED"):
-                    async with _submit_lock:
-                        # 3중 조건: source_type == held_position AND decision_type in (reduce, exit) AND side == sell
-                        result_decision_type = str(result.get("decision_type", "")).lower()
-                        result_side = str(result.get("side", "")).lower()
-                        is_held_position_sell = (
-                            getattr(item, "source_type", "core") == "held_position"
-                            and result_decision_type in ("reduce", "exit")
-                            and result_side == "sell"
-                        )
-                        if is_held_position_sell:
-                            # held_position sell은 일일 상한 없음 (위험 축소 목적).
-                            # cycle 내 중복 방지용 카운터만 증가.
-                            held_position_sell_cycle_count += 1
-                            held_position_sell_cycle_symbols.add(item.symbol)
-                        else:
-                            submit_budget_consumed = True
-
-                # Output per-symbol result
-                if output == "json":
-                    print(json.dumps(result, ensure_ascii=False))
-                else:
-                    precheck_str = ""
-                    precheck_data = result.get("precheck")
-                    if isinstance(precheck_data, dict):
-                        h = precheck_data.get("health_status", "?")
-                        precheck_str = f" [health={h}]"
-                    logger.info(
-                        "Cycle %d/%s symbol=%s:%s complete — status=%s duration=%.2fs%s",
-                        cycle_count,
-                        "∞" if max_cycles == 0 else str(max_cycles),
-                        item.symbol,
-                        item.market,
-                        status,
-                        result.get("duration_seconds", 0),
-                        precheck_str,
-                    )
-
-                return result
-
-        # Process ALL symbols concurrently with semaphore cap
-        coros = [_process_one(item) for item in universe]
-        cycle_results: list[dict[str, object]] = await asyncio.gather(*coros)
-        results.extend(cycle_results)
-
-        # Aggregate success/fail counts from parallel results
-        for r in cycle_results:
-            s = r.get("status", "UNKNOWN")
-            if s in ("SUBMITTED", "DRY_RUN", "SKIPPED"):
-                total_success += 1
+        async with _db_transaction() as tx:
+            seed_repos = build_postgres_repositories(tx)
+            seeded = await _seed_if_empty(seed_repos)
+            if seeded:
+                logger.info("Initial seed completed.")
             else:
-                total_fail += 1
+                logger.debug("Seed already exists (skipped).")
+            await tx.commit()
 
-        # Wait for next cycle (or shutdown)
-        if max_cycles > 0 and cycle_count >= max_cycles:
-            break
+        while not _shutdown_event.is_set():
+            # Check cycle limit
+            if max_cycles > 0 and cycle_count >= max_cycles:
+                logger.info("Reached requested cycle count (%d).", max_cycles)
+                break
 
-        logger.debug(
-            "Waiting %d seconds before next cycle …",
-            interval,
-        )
-        try:
-            await asyncio.wait_for(
-                _shutdown_event.wait(),
-                timeout=interval,
+            cycle_count += 1
+            logger.info("=== Decision Cycle %d ===", cycle_count)
+
+            # ── Cycle당 1회 precheck (snapshot sync health) ─────────────
+            # 변경 전: 각 symbol의 _run_one_cycle()에서 _run_precheck() 호출
+            # 변경 후: cycle당 1회만 실행, 모든 symbol이 동일한 precheck 공유
+            cycle_precheck: dict[str, object] | None = None
+            try:
+                async with _db_transaction() as tx:
+                    precheck_repos = build_postgres_repositories(tx)
+                    cycle_precheck = await _run_precheck(precheck_repos)
+                    await tx.commit()
+            except Exception as exc:
+                logger.warning("Cycle pre-check failed: %s", exc)
+
+            # Semaphore-based parallel symbol processing.
+            # Max 5 concurrent symbols to avoid overwhelming broker/LLM resources
+            # while reducing total wall-clock time from ~190s to ~40s for 35 symbols.
+            _SEMAPHORE_MAX = 5
+            sem = asyncio.Semaphore(_SEMAPHORE_MAX)
+            submit_budget_consumed = False
+            # held_position REDUCE/EXIT sell은 위험 축소 목적이므로 일일 제출 상한 없음.
+            # cycle 내 중복 submit 방지용 카운터만 유지 (symbol dedupe + cycle cap).
+            held_position_sell_cycle_count = 0
+            held_position_sell_cycle_symbols: set[str] = set()
+            _submit_lock = asyncio.Lock()
+
+            async def _process_one(item: object) -> dict[str, object]:
+                """Process a single universe item with semaphore concurrency cap."""
+                nonlocal submit_budget_consumed
+                nonlocal held_position_sell_cycle_count
+                nonlocal held_position_sell_cycle_symbols
+                async with sem:
+                    # In submit mode, evaluate all symbols but allow at most one
+                    # budget-consuming broker submit per script invocation.
+                    # held_position sell은 별도 budget으로 관리되어 일반 submit과 분리된다.
+                    async with _submit_lock:
+                        # held_position sell special lane: source_type + decision_type + side 3중 조건
+                        # result가 아직 없으므로 item의 source_type만으로 1차 필터링하고,
+                        # 실제 budget 소비 판정은 result 수신 후 3중 조건으로 재확인한다.
+                        is_held_position_item = (
+                            getattr(item, "source_type", "core") == "held_position"
+                        )
+                        if is_held_position_item:
+                            # held_position sell은 일일 상한 없이 항상 submit 가능.
+                            # 단, 동일 cycle 내 동일 symbol 중복 submit과 cycle cap(2건)은 유지.
+                            symbol_submit = (
+                                submit
+                                and not dry_run
+                                and held_position_sell_cycle_count < 2  # HELD_POSITION_SELL_MAX_PER_CYCLE
+                                and item.symbol not in held_position_sell_cycle_symbols  # symbol dedupe
+                            )
+                        else:
+                            symbol_submit = submit and not dry_run and not submit_budget_consumed
+                        symbol_dry_run = dry_run or (submit and not symbol_submit)
+
+                    # HP sell block 이유 로깅 (explainability)
+                    if is_held_position_item and not symbol_submit and submit and not dry_run:
+                        reasons = []
+                        if held_position_sell_cycle_count >= 2:
+                            reasons.append("cycle_cap_reached")
+                        if item.symbol in held_position_sell_cycle_symbols:
+                            reasons.append("symbol_duplicate")
+                        if reasons:
+                            logger.info(
+                                "HP sell block: symbol=%s reasons=%s",
+                                item.symbol, ",".join(reasons),
+                            )
+
+                    try:
+                        result = await _run_one_cycle(
+                            cycle=cycle_count,
+                            submit=symbol_submit,
+                            dry_run=symbol_dry_run,
+                            output=output,
+                            symbol=item.symbol,
+                            market=item.market,
+                            source_type=item.source_type,
+                            runtime=runtime,              # ★ 공유 runtime 전달
+                            cycle_precheck=cycle_precheck,  # ★ cycle precheck 전달
+                        )
+                    except Exception as exc:
+                        logger.exception(
+                            "Cycle %d symbol=%s:%s: unexpected error in parallel processing: %s",
+                            cycle_count, item.symbol, item.market, exc,
+                        )
+                        result = {
+                            "status": "ERROR",
+                            "symbol": item.symbol,
+                            "market": item.market,
+                            "error": str(exc),
+                            "duration_seconds": 0.0,
+                        }
+
+                    status = result.get("status", "UNKNOWN")
+                    if status in ("SUBMITTED", "RECONCILE_REQUIRED"):
+                        async with _submit_lock:
+                            # 3중 조건: source_type == held_position AND decision_type in (reduce, exit) AND side == sell
+                            result_decision_type = str(result.get("decision_type", "")).lower()
+                            result_side = str(result.get("side", "")).lower()
+                            is_held_position_sell = (
+                                getattr(item, "source_type", "core") == "held_position"
+                                and result_decision_type in ("reduce", "exit")
+                                and result_side == "sell"
+                            )
+                            if is_held_position_sell:
+                                # held_position sell은 일일 상한 없음 (위험 축소 목적).
+                                # cycle 내 중복 방지용 카운터만 증가.
+                                held_position_sell_cycle_count += 1
+                                held_position_sell_cycle_symbols.add(item.symbol)
+                            else:
+                                submit_budget_consumed = True
+
+                    # Output per-symbol result
+                    if output == "json":
+                        print(json.dumps(result, ensure_ascii=False))
+                    else:
+                        precheck_str = ""
+                        precheck_data = result.get("precheck")
+                        if isinstance(precheck_data, dict):
+                            h = precheck_data.get("health_status", "?")
+                            precheck_str = f" [health={h}]"
+                        logger.info(
+                            "Cycle %d/%s symbol=%s:%s complete — status=%s duration=%.2fs%s",
+                            cycle_count,
+                            "∞" if max_cycles == 0 else str(max_cycles),
+                            item.symbol,
+                            item.market,
+                            status,
+                            result.get("duration_seconds", 0),
+                            precheck_str,
+                        )
+
+                    return result
+
+            # Process ALL symbols concurrently with semaphore cap
+            coros = [_process_one(item) for item in universe]
+            cycle_results: list[dict[str, object]] = await asyncio.gather(*coros)
+            results.extend(cycle_results)
+
+            # ── Drain T3 background tasks ────────────────────────────────────
+            # Wait for all fire-and-forget T3 pipelines to complete so that
+            # persisted events are available for the next cycle's freshness check.
+            if _active_t3_tasks:
+                pending = list(_active_t3_tasks)
+                _active_t3_tasks.clear()
+                await asyncio.gather(*pending, return_exceptions=True)
+                logger.debug(
+                    "Drained %d T3 background task(s) after cycle %d.",
+                    len(pending), cycle_count,
+                )
+
+            # Aggregate success/fail counts from parallel results
+            for r in cycle_results:
+                s = r.get("status", "UNKNOWN")
+                if s in ("SUBMITTED", "DRY_RUN", "SKIPPED"):
+                    total_success += 1
+                else:
+                    total_fail += 1
+
+            # Wait for next cycle (or shutdown)
+            if max_cycles > 0 and cycle_count >= max_cycles:
+                break
+
+            logger.debug(
+                "Waiting %d seconds before next cycle …",
+                interval,
             )
-            # Shutdown event was set during sleep
-            break
-        except asyncio.TimeoutError:
-            pass
+            try:
+                await asyncio.wait_for(
+                    _shutdown_event.wait(),
+                    timeout=interval,
+                )
+                # Shutdown event was set during sleep
+                break
+            except asyncio.TimeoutError:
+                pass
+
+    # ── Runtime context exit: pool/agents 정리 ──────────────────────────
+    # postgres_runtime()의 __aexit__에서 shutdown_postgres_runtime() 호출
 
     # ── Final summary ──
     total_duration = time.monotonic() - loop_start

@@ -577,14 +577,17 @@ class TestSubmitOrderBudgetExhausted:
     """
 
     @pytest.mark.asyncio
-    async def test_submit_order_budget_exhausted_returns_reconcile(
+    async def test_submit_order_budget_exhausted_returns_rejected(
         self, adapter: KoreaInvestmentAdapter
     ) -> None:
         """일반 주문(held_position sell 아님)에서 BudgetExhaustedError 발생 시
-        ``requires_reconciliation=True``인 결과를 반환한다."""
+        ``REJECTED`` 상태와 ``requires_reconciliation=False``인 결과를 반환한다.
+        ``raw_message``에 bucket 정보가 포함되어야 한다."""
         request = _make_sell_request(metadata={"source_type": "core"})
         mock_rest = AsyncMock(spec=KISRestClient)
-        mock_rest.submit_order = AsyncMock(side_effect=BudgetExhaustedError("budget exhausted"))
+        mock_rest.submit_order = AsyncMock(
+            side_effect=BudgetExhaustedError(bucket="global", message="budget exhausted")
+        )
         mock_rest.get_positions = AsyncMock(return_value=[])
         mock_rest.get_cash_balance = AsyncMock(return_value={})
 
@@ -593,8 +596,12 @@ class TestSubmitOrderBudgetExhausted:
         try:
             result = await adapter.submit_order(request)
             assert result.accepted is False
-            assert result.requires_reconciliation is True
+            assert result.requires_reconciliation is False
             assert result.raw_code == "BUDGET_EXHAUSTED"
+            assert result.normalized_status == OrderStatus.REJECTED
+            # raw_message에 bucket 정보가 포함되어야 함
+            assert "global" in result.raw_message
+            assert "budget exhausted" in result.raw_message.lower()
         finally:
             adapter._rest = original_rest
 
@@ -637,7 +644,7 @@ class TestSubmitOrderBudgetExhausted:
         self, adapter: KoreaInvestmentAdapter
     ) -> None:
         """Held-position sell에서 reserved budget lane도 소진된 경우
-        ``requires_reconciliation=True``인 결과를 반환한다."""
+        ``REJECTED`` 상태와 ``requires_reconciliation=False``인 결과를 반환한다."""
         request = _make_sell_request(metadata={"source_type": "held_position"})
 
         mock_rest = AsyncMock(spec=KISRestClient)
@@ -651,7 +658,8 @@ class TestSubmitOrderBudgetExhausted:
         try:
             result = await adapter.submit_order(request)
             assert result.accepted is False
-            assert result.requires_reconciliation is True
+            assert result.requires_reconciliation is False
             assert result.raw_code == "BUDGET_EXHAUSTED"
+            assert result.normalized_status == OrderStatus.REJECTED
         finally:
             adapter._rest = original_rest

@@ -73,7 +73,7 @@ _PHASE55_SYNC_TIMEOUT: int = 5
 # Phase 1.5 quote circuit breaker (EXE-002)
 _CIRCUIT_BREAKER_THRESHOLD = 3  # 연속 실패 횟수 → 서킷 오픈
 _CIRCUIT_BREAKER_COOLDOWN = 60  # 서킷 오픈 지속 시간(초)
-_QUOTE_CACHE_TTL = 5  # quote 캐시 TTL(초)
+_QUOTE_CACHE_TTL = 180  # quote 캐시 TTL(초) — cycle-local cache: submit mode ~120초 커버
 
 
 __all__: list[str] = [
@@ -227,23 +227,44 @@ class ExecutionService:
             else:
                 del self._quote_cache[symbol]
 
-        if quote is None:  # 캐시 미스 → 실제 호출
-            try:
-                quote = await asyncio.wait_for(
-                    broker.get_quote(symbol, market),
-                    timeout=10.0,
-                )
-                # 캐시 저장
-                self._quote_cache[symbol] = (quote, datetime.now(timezone.utc))
-                # 실패 카운트 리셋
-                self._quote_failures.pop(symbol, None)
-                logger.info(
-                    "PHASE_TRACE: symbol=%s phase=quote_resolution done quote=%s",
-                    symbol, str(quote),
-                )
-                _add_phase(f"quote_resolution/{symbol}", "ok")
-            except (asyncio.TimeoutError, Exception):
-                # 실패 추적
+        if quote is None:  # 캐시 미스 → 실제 호출 (with retry + backoff)
+            MAX_RETRIES = 2
+            BACKOFF_BASE = 0.5
+            BACKOFF_MAX = 5.0
+            last_exc: Exception | None = None
+
+            for attempt in range(MAX_RETRIES):
+                try:
+                    quote = await asyncio.wait_for(
+                        broker.get_quote(symbol, market),
+                        timeout=10.0,
+                    )
+                    # 캐시 저장
+                    self._quote_cache[symbol] = (quote, datetime.now(timezone.utc))
+                    # 실패 카운트 리셋
+                    self._quote_failures.pop(symbol, None)
+                    logger.info(
+                        "PHASE_TRACE: symbol=%s phase=quote_resolution done quote=%s",
+                        symbol, str(quote),
+                    )
+                    _add_phase(f"quote_resolution/{symbol}", "ok")
+                    break  # 성공 → retry 루프 탈출
+                except (asyncio.TimeoutError, Exception) as exc:
+                    last_exc = exc
+                    # EGW00201 (KIS rate limit)인 경우에만 retry
+                    if "EGW00201" in str(exc) and attempt < MAX_RETRIES - 1:
+                        wait = min(BACKOFF_BASE * (2 ** attempt), BACKOFF_MAX)
+                        logger.warning(
+                            "KIS rate limit (EGW00201) for %s, retry %d/%d in %.1fs",
+                            symbol, attempt + 1, MAX_RETRIES, wait,
+                        )
+                        await asyncio.sleep(wait)
+                    else:
+                        # EGW00201이 아니거나 마지막 시도 실패 → 루프 탈출 후 fallback
+                        break
+
+            if quote is None:
+                # 모든 retry 실패 → 실패 추적 + fallback quote
                 failures = self._quote_failures.get(symbol, 0) + 1
                 self._quote_failures[symbol] = failures
                 if failures >= _CIRCUIT_BREAKER_THRESHOLD:

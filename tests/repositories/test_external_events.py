@@ -5,7 +5,7 @@ Covers both ``InMemoryExternalEventRepository`` (unit) and
 
 Test matrix
 -----------
-InMemory (8):
+InMemory (12):
   1. add + get — round-trip
   2. get — nonexistent returns None
   3. find_by_dedup_key — hit
@@ -14,14 +14,22 @@ InMemory (8):
   6. list_by_type — filters by event_type + since
   7. list_by_symbol — include_seeded_news=True includes seeded_news
   8. list_by_symbol — include_seeded_news=False (default) excludes seeded_news
+  9. has_fresh_t3_events — True when published_at within window
+  10. has_fresh_t3_events — False when published_at beyond window
+  11. has_fresh_t3_events — False when no T3 events
+  12. has_fresh_t3_events — True for seeded_news event_type
 
-Postgres (6):
-  9. add + get — round-trip
-  10. find_by_dedup_key — hit
-  11. list_by_symbol — filters by symbol + since
-  12. list_by_type — filters by event_type + since
-  13. list_by_symbol — include_seeded_news=True includes seeded_news
-  14. list_by_symbol — include_seeded_news=False (default) excludes seeded_news
+Postgres (10):
+  13. add + get — round-trip
+  14. find_by_dedup_key — hit
+  15. list_by_symbol — filters by symbol + since
+  16. list_by_type — filters by event_type + since
+  17. list_by_symbol — include_seeded_news=True includes seeded_news
+  18. list_by_symbol — include_seeded_news=False (default) excludes seeded_news
+  19. has_fresh_t3_events — True when published_at within window
+  20. has_fresh_t3_events — False when published_at beyond window
+  21. has_fresh_t3_events — False when no T3 events
+  22. has_fresh_t3_events — True for seeded_news event_type
 """
 
 from __future__ import annotations
@@ -51,21 +59,23 @@ def make_event(
     symbol: str | None = "005930",
     market: str | None = "KRX",
     published_at: datetime = T0,
+    ingested_at: datetime | None = None,
     dedup_key_hash: str | None = None,
     severity: str = "medium",
     direction: str = "neutral",
+    source_reliability_tier: str = "T3",
 ) -> ExternalEventEntity:
     return ExternalEventEntity(
         event_id=uuid4(),
         event_type=event_type,
         source_name=source_name,
         published_at=published_at,
-        source_reliability_tier="T3",
+        source_reliability_tier=source_reliability_tier,
         source_event_id=None,
         issuer_code=None,
         symbol=symbol,
         market=market,
-        ingested_at=None,
+        ingested_at=ingested_at,
         effective_at=None,
         severity=severity,
         direction=direction,
@@ -319,3 +329,175 @@ async def test_postgres_list_by_symbol_includes_seeded_news(postgres_repos) -> N
     # e2 (T1) is newer → first
     assert results[0].event_id == e2.event_id
     assert results[1].event_id == e1.event_id
+
+
+# ===================================================================
+# has_fresh_t3_events — published_at 기준 freshness
+# ===================================================================
+
+
+@pytest.mark.asyncio
+async def test_inmemory_has_fresh_t3_events_true_within_window(repo) -> None:
+    """9. has_fresh_t3_events — True when ingested_at within freshness window."""
+    now = datetime.now(timezone.utc)
+    event = make_event(
+        symbol="005930",
+        ingested_at=now - timedelta(minutes=30),  # 30분 전 ingested → fresh (7200s window)
+    )
+    await repo.add(event)
+
+    result = await repo.has_fresh_t3_events(
+        symbol="005930",
+        freshness_seconds=7200,
+    )
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_inmemory_has_fresh_t3_events_false_beyond_window(repo) -> None:
+    """10. has_fresh_t3_events — False when ingested_at beyond freshness window."""
+    now = datetime.now(timezone.utc)
+    event = make_event(
+        symbol="005930",
+        ingested_at=now - timedelta(hours=3),  # 3시간 전 ingested → stale (7200s window)
+    )
+    await repo.add(event)
+
+    result = await repo.has_fresh_t3_events(
+        symbol="005930",
+        freshness_seconds=7200,
+    )
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_inmemory_has_fresh_t3_events_false_no_t3(repo) -> None:
+    """11. has_fresh_t3_events — False when no T3 events exist."""
+    now = datetime.now(timezone.utc)
+    # Only non-T3 event (make_event always sets source_reliability_tier="T3",
+    # so create entity directly)
+    event = ExternalEventEntity(
+        event_id=uuid4(),
+        event_type="Y|disclosure",
+        source_name="kis",
+        source_reliability_tier="T1",
+        symbol="005930",
+        market="KRX",
+        published_at=now,
+        ingested_at=now,
+        severity="high",
+        direction="positive",
+        headline="Non-T3 event",
+    )
+    await repo.add(event)
+
+    result = await repo.has_fresh_t3_events(
+        symbol="005930",
+        freshness_seconds=7200,
+    )
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_inmemory_has_fresh_t3_events_seeded_news_type(repo) -> None:
+    """12. has_fresh_t3_events — True for seeded_news event_type (ingested_at 기준)."""
+    now = datetime.now(timezone.utc)
+    event = make_event(
+        symbol="005930",
+        event_type="seeded_news",
+        ingested_at=now - timedelta(minutes=30),  # 30분 전 ingested → fresh
+    )
+    await repo.add(event)
+
+    result = await repo.has_fresh_t3_events(
+        symbol="005930",
+        freshness_seconds=7200,
+    )
+    assert result is True
+
+
+# ===================================================================
+# Postgres: has_fresh_t3_events
+# ===================================================================
+
+
+@pytest.mark.asyncio
+async def test_postgres_has_fresh_t3_events_true_within_window(postgres_repos) -> None:
+    """19. has_fresh_t3_events — True when ingested_at within freshness window."""
+    repo = postgres_repos.external_events
+    now = datetime.now(timezone.utc)
+    event = make_event(
+        symbol="005930",
+        ingested_at=now - timedelta(minutes=30),
+    )
+    await repo.add(event)
+
+    result = await repo.has_fresh_t3_events(
+        symbol="005930",
+        freshness_seconds=7200,
+    )
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_postgres_has_fresh_t3_events_false_beyond_window(postgres_repos) -> None:
+    """20. has_fresh_t3_events — False when ingested_at beyond freshness window."""
+    repo = postgres_repos.external_events
+    now = datetime.now(timezone.utc)
+    event = make_event(
+        symbol="005930",
+        ingested_at=now - timedelta(hours=3),
+    )
+    await repo.add(event)
+
+    result = await repo.has_fresh_t3_events(
+        symbol="005930",
+        freshness_seconds=7200,
+    )
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_postgres_has_fresh_t3_events_false_no_t3(postgres_repos) -> None:
+    """21. has_fresh_t3_events — False when no T3 events exist."""
+    repo = postgres_repos.external_events
+    now = datetime.now(timezone.utc)
+    event = ExternalEventEntity(
+        event_id=uuid4(),
+        event_type="Y|disclosure",
+        source_name="kis",
+        source_reliability_tier="T1",
+        symbol="005930",
+        market="KRX",
+        published_at=now,
+        ingested_at=now,
+        severity="high",
+        direction="positive",
+        headline="Non-T3 event",
+    )
+    await repo.add(event)
+
+    result = await repo.has_fresh_t3_events(
+        symbol="005930",
+        freshness_seconds=7200,
+    )
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_postgres_has_fresh_t3_events_seeded_news_type(postgres_repos) -> None:
+    """22. has_fresh_t3_events — True for seeded_news event_type (ingested_at 기준)."""
+    repo = postgres_repos.external_events
+    now = datetime.now(timezone.utc)
+    event = make_event(
+        symbol="005930",
+        event_type="seeded_news",
+        ingested_at=now - timedelta(minutes=30),
+    )
+    await repo.add(event)
+
+    result = await repo.has_fresh_t3_events(
+        symbol="005930",
+        freshness_seconds=7200,
+    )
+    assert result is True

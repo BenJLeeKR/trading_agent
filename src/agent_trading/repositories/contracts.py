@@ -903,6 +903,19 @@ class ExternalEventRepository(Protocol):
     ) -> Sequence[ExternalEventEntity]:
         ...
 
+    async def has_fresh_t3_events(
+        self,
+        symbol: str,
+        freshness_seconds: int = 3600,
+    ) -> bool:
+        """Check if T3 events exist for symbol within freshness window.
+
+        Uses created_at (DB insert time) rather than published_at to determine
+        whether a recent T3 fetch already populated events for this symbol.
+        This prevents redundant T3 pipeline execution within the freshness window.
+        """
+        ...
+
     async def list_by_type(
         self,
         event_type: str,

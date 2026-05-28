@@ -147,6 +147,10 @@ def resolve_decision_type(value: str | None) -> DecisionType:
         "close": DecisionType.CLOSE,
         "reduce": DecisionType.REDUCE,
         "review": DecisionType.HOLD,
+        "approve": DecisionType.APPROVE,
+        "exit": DecisionType.EXIT,
+        "watch": DecisionType.WATCH,
+        "reject": DecisionType.REJECT,
     }
     return mapping.get(cleaned, DecisionType.HOLD)
 

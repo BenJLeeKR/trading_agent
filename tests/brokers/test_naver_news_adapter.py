@@ -2,20 +2,26 @@
 
 Tests cover:
 - 정상 API 응답 (기존)
-- 429 Rate Limit → retry → eventual success (신규)
-- 429 Rate Limit → retry exhaustion → empty (신규)
-- Transient error → retry → success (신규)
-- Non-retryable 4xx → immediate empty (신규)
-- sort=date 제거 검증 (신규)
+- 429 Fast-Fail → 즉시 empty, retry 없음 (변경)
+- 5xx transient error → retry → eventual success (변경)
+- 5xx retry exhaustion → empty (변경)
+- Transient timeout → retry → success (기존)
+- Non-retryable 4xx → immediate empty (기존)
+- sort=date 제거 검증 (기존)
+- NaverDailyQuotaTracker unit tests (신규)
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, Mock
+import json
+import os
+import tempfile
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
 
 from agent_trading.brokers.naver_news_adapter import (
+    NaverDailyQuotaTracker,
     NaverNewsItem,
     NaverNewsSearchAdapter,
     NaverSearchResponse,
@@ -224,26 +230,44 @@ class TestNaverNewsSearchAdapter:
         mock_http_client.aclose.assert_awaited_once()
 
     # ==================================================================
-    # 신규 테스트: 429 Rate Limit 대응
+    # 변경된 테스트: 429는 더 이상 retry하지 않음 (Fast-Fail)
+    # 5xx transient error → retry → eventual success
     # ==================================================================
 
     @pytest.mark.asyncio
-    async def test_429_triggers_retry_and_eventually_succeeds(
+    async def test_429_fast_fail_returns_empty_immediately(
         self,
         adapter: NaverNewsSearchAdapter,
         mock_http_client: AsyncMock,
     ) -> None:
-        """첫 2회 429 → 3회차 성공 (최대 3회 retry 내 성공)."""
+        """429 → 즉시 [] 반환 (retry 없음, 1회만 호출)."""
+        error_429 = _make_mock_response([], status_code=429)
+
+        mock_http_client.get.return_value = error_429
+
+        response = await adapter._call_api("test query")
+
+        assert len(response.items) == 0
+        # Exactly 1 call — no retry for 429
+        mock_http_client.get.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_5xx_triggers_retry_and_eventually_succeeds(
+        self,
+        adapter: NaverNewsSearchAdapter,
+        mock_http_client: AsyncMock,
+    ) -> None:
+        """첫 2회 500 → 3회차 성공 (최대 3회 retry 내 성공)."""
         success_response = _make_mock_response([
             {"title": "성공뉴스", "description": "desc", "link": "link1",
              "originallink": "orig1", "pubDate": "Fri, 17 May 2026 09:00:00 +0900"},
         ])
-        error_429 = _make_mock_response([], status_code=429)
+        error_500 = _make_mock_response([], status_code=500)
 
-        # side_effect: 429, 429, success (3rd attempt succeeds)
+        # side_effect: 500, 500, success (3rd attempt succeeds)
         mock_http_client.get.side_effect = [
-            error_429,   # attempt 1: 429
-            error_429,   # attempt 2: 429
+            error_500,   # attempt 1: 500
+            error_500,   # attempt 2: 500
             success_response,  # attempt 3 (retry 2): success
         ]
 
@@ -255,20 +279,20 @@ class TestNaverNewsSearchAdapter:
         assert mock_http_client.get.call_count == 3
 
     @pytest.mark.asyncio
-    async def test_429_retry_exhaustion_returns_empty(
+    async def test_5xx_retry_exhaustion_returns_empty(
         self,
         adapter: NaverNewsSearchAdapter,
         mock_http_client: AsyncMock,
     ) -> None:
-        """3회 모두 429 → [] 반환 (max_retries=3, 총 4회 시도 후 포기)."""
-        error_429 = _make_mock_response([], status_code=429)
+        """3회 모두 500 → [] 반환 (max_retries=3, 총 4회 시도 후 포기)."""
+        error_500 = _make_mock_response([], status_code=500)
 
-        # All 4 attempts return 429
+        # All 4 attempts return 500
         mock_http_client.get.side_effect = [
-            error_429,  # attempt 1: 429
-            error_429,  # attempt 2: 429
-            error_429,  # attempt 3: 429
-            error_429,  # attempt 4 (last): 429 → give up
+            error_500,  # attempt 1: 500
+            error_500,  # attempt 2: 500
+            error_500,  # attempt 3: 500
+            error_500,  # attempt 4 (last): 500 → give up
         ]
 
         response = await adapter._call_api("test query")
@@ -340,3 +364,122 @@ class TestNaverNewsSearchAdapter:
         call_kwargs = mock_http_client.get.call_args.kwargs
         assert call_kwargs["params"]["sort"] == "sim"
         assert len(results) == 1
+
+
+class TestNaverDailyQuotaTracker:
+    """NaverDailyQuotaTracker unit tests.
+
+    Uses a temporary file path to avoid interfering with production state.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _patch_file_path(self) -> None:
+        """Override NaverDailyQuotaTracker._FILE_PATH with a temp file."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False,
+        ) as f:
+            self._tmp_path = f.name
+        # Patch the class-level file path
+        self._original_path = NaverDailyQuotaTracker._FILE_PATH
+        NaverDailyQuotaTracker._FILE_PATH = self._tmp_path
+        yield
+        # Restore original path and clean up
+        NaverDailyQuotaTracker._FILE_PATH = self._original_path
+        if os.path.exists(self._tmp_path):
+            os.unlink(self._tmp_path)
+
+    def test_initial_state_is_zero(self) -> None:
+        """초기 상태: consumption=0, ratio=0.0, not exhausted."""
+        assert NaverDailyQuotaTracker.get_current_consumption() == 0
+        assert NaverDailyQuotaTracker.get_consumption_ratio() == 0.0
+        assert not NaverDailyQuotaTracker.is_exhausted()
+
+    def test_increment_increases_count(self) -> None:
+        """increment() 후 consumption이 1 증가."""
+        NaverDailyQuotaTracker.increment()
+        assert NaverDailyQuotaTracker.get_current_consumption() == 1
+
+    def test_multiple_increments(self) -> None:
+        """5회 increment → consumption=5."""
+        for _ in range(5):
+            NaverDailyQuotaTracker.increment()
+        assert NaverDailyQuotaTracker.get_current_consumption() == 5
+
+    def test_is_exhausted_at_threshold(self) -> None:
+        """22500회 (90%) → is_exhausted()=True (기본 threshold=0.9)."""
+        for _ in range(22500):
+            NaverDailyQuotaTracker.increment()
+        assert NaverDailyQuotaTracker.is_exhausted()
+        assert NaverDailyQuotaTracker.get_consumption_ratio() == pytest.approx(0.9, abs=0.001)
+
+    def test_not_exhausted_below_threshold(self) -> None:
+        """20000회 (80%) → is_exhausted()=False."""
+        for _ in range(20000):
+            NaverDailyQuotaTracker.increment()
+        assert not NaverDailyQuotaTracker.is_exhausted()
+
+    def test_custom_threshold(self) -> None:
+        """custom threshold=0.5 → 12500회에서 exhausted."""
+        for _ in range(12500):
+            NaverDailyQuotaTracker.increment()
+        assert NaverDailyQuotaTracker.is_exhausted(threshold=0.5)
+        assert not NaverDailyQuotaTracker.is_exhausted(threshold=0.6)
+
+    def test_file_persistence(self) -> None:
+        """increment() 후 파일에 count가 기록되어야 함."""
+        NaverDailyQuotaTracker.increment()
+        NaverDailyQuotaTracker.increment()
+        NaverDailyQuotaTracker.increment()
+
+        # Read file directly
+        with open(self._tmp_path, "r") as f:
+            data = json.load(f)
+        assert data["count"] == 3
+
+    def test_fail_open_on_corrupt_file(self) -> None:
+        """파일이 깨져도 예외 없이 0 반환 (fail-open)."""
+        # Write corrupt data
+        with open(self._tmp_path, "w") as f:
+            f.write("not valid json")
+
+        # Should not raise — returns 0
+        assert NaverDailyQuotaTracker.get_current_consumption() == 0
+        assert NaverDailyQuotaTracker.get_consumption_ratio() == 0.0
+        assert not NaverDailyQuotaTracker.is_exhausted()
+
+    def test_fail_open_on_missing_file(self) -> None:
+        """파일이 없어도 예외 없이 0 반환 (fail-open)."""
+        # Remove the file
+        if os.path.exists(self._tmp_path):
+            os.unlink(self._tmp_path)
+
+        assert NaverDailyQuotaTracker.get_current_consumption() == 0
+        assert NaverDailyQuotaTracker.get_consumption_ratio() == 0.0
+        assert not NaverDailyQuotaTracker.is_exhausted()
+
+    def test_fail_open_on_permission_error(self) -> None:
+        """파일 권한 오류 시 예외 없이 0 반환 (fail-open)."""
+        # Make file read-only
+        if os.path.exists(self._tmp_path):
+            os.chmod(self._tmp_path, 0o000)
+
+        try:
+            assert NaverDailyQuotaTracker.get_current_consumption() == 0
+            assert NaverDailyQuotaTracker.get_consumption_ratio() == 0.0
+            assert not NaverDailyQuotaTracker.is_exhausted()
+        finally:
+            # Restore permissions for cleanup
+            os.chmod(self._tmp_path, 0o644)
+
+    def test_get_daily_usage_ratio_class_method(self) -> None:
+        """NaverNewsSearchAdapter.get_daily_usage_ratio()가 tracker를 통해 동작."""
+        NaverDailyQuotaTracker.increment()
+        ratio = NaverNewsSearchAdapter.get_daily_usage_ratio()
+        assert ratio == pytest.approx(1.0 / 25000, abs=1e-6)
+
+    def test_is_quota_exhausted_class_method(self) -> None:
+        """NaverNewsSearchAdapter.is_quota_exhausted()가 tracker를 통해 동작."""
+        assert not NaverNewsSearchAdapter.is_quota_exhausted()
+        for _ in range(22500):
+            NaverDailyQuotaTracker.increment()
+        assert NaverNewsSearchAdapter.is_quota_exhausted()

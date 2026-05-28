@@ -76,3 +76,28 @@ class AmbiguousOrderStateError(BrokerError):
     """
     pass
 
+
+class TokenExpiredError(BrokerError):
+    """KIS API access token이 만료되어 재인증이 필요함을 나타냄.
+
+    ``_raise_on_error()``에서 EGW00123/EGW00101 감지 시 raise되며,
+    Read-only API 호출 시 ``_request()``에서 catch되어
+    token cache 무효화 + 재인증 + 재시도를 트리거한다.
+    ``retryable=True``로 설정되어 catch 가능.
+    """
+    def __init__(
+        self,
+        endpoint_key: str,
+        msg_cd: str,
+        msg1: str,
+    ) -> None:
+        msg = f"KIS {endpoint_key}: token expired (msg_cd={msg_cd}): {msg1}"
+        super().__init__(
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            error_type=BrokerErrorType.API_ERROR,
+            retryable=True,
+            raw_message=msg,
+        )
+        self.endpoint_key = endpoint_key
+        self.msg_cd = msg_cd
+

@@ -122,7 +122,7 @@ class PostgresExternalEventRepository(ExternalEventRepository):
                 """
                 SELECT * FROM trading.external_events
                 WHERE symbol = $1
-                  AND published_at >= $2
+                  AND COALESCE(created_at, ingested_at) >= $2
                   AND (
                       (event_type LIKE 'Y|%' OR event_type LIKE 'K|%' OR event_type LIKE 'N|%')
                       OR event_type = 'seeded_news'
@@ -138,7 +138,8 @@ class PostgresExternalEventRepository(ExternalEventRepository):
                 SELECT * FROM trading.external_events
                 WHERE symbol = $1
                   AND published_at >= $2
-                  AND (event_type LIKE 'Y|%' OR event_type LIKE 'K|%' OR event_type LIKE 'N|%')
+                  AND event_type != 'seeded_news'
+                  AND event_type NOT LIKE 'E|%'
                 ORDER BY published_at DESC
                 """,
                 symbol,
@@ -180,10 +181,7 @@ class PostgresExternalEventRepository(ExternalEventRepository):
                 SELECT * FROM trading.external_events
                 WHERE event_type = $1
                   AND published_at >= $2
-                  AND (
-                      (event_type LIKE 'Y|%' OR event_type LIKE 'K|%' OR event_type LIKE 'N|%')
-                      OR event_type = 'seeded_news'
-                  )
+                  AND event_type NOT LIKE 'E|%'
                 ORDER BY published_at DESC
                 """,
                 event_type,
@@ -195,10 +193,33 @@ class PostgresExternalEventRepository(ExternalEventRepository):
                 SELECT * FROM trading.external_events
                 WHERE event_type = $1
                   AND published_at >= $2
-                  AND (event_type LIKE 'Y|%' OR event_type LIKE 'K|%' OR event_type LIKE 'N|%')
+                  AND event_type != 'seeded_news'
+                  AND event_type NOT LIKE 'E|%'
                 ORDER BY published_at DESC
                 """,
                 event_type,
                 since,
             )
         return [row_to_entity(r, ExternalEventEntity) for r in rows]
+
+    async def has_fresh_t3_events(
+        self,
+        symbol: str,
+        freshness_seconds: int = 3600,
+    ) -> bool:
+        """Check if T3 events exist for symbol within freshness window.
+
+        Uses created_at (DB insert time) rather than published_at to determine
+        whether a recent T3 fetch already populated events for this symbol.
+        This prevents redundant T3 pipeline execution within the freshness window.
+        """
+        cutoff = datetime.utcnow() - timedelta(seconds=freshness_seconds)
+        query = """
+            SELECT 1 FROM trading.external_events
+             WHERE symbol = $1
+               AND source_reliability_tier = 'T3'
+               AND COALESCE(created_at, ingested_at) >= $2
+             LIMIT 1
+        """
+        result = await self._tx.connection.fetchval(query, symbol, cutoff)
+        return result == 1

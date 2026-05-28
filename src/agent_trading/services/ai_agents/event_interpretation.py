@@ -27,6 +27,10 @@ from typing import Any
 
 import httpx
 
+from agent_trading.services.ai_agents._prompt_config import (
+    MAX_EVENTS_EI,
+    MAX_INTERPRETED_EVENTS,
+)
 from agent_trading.services.ai_agents.base import (
     AIProviderClient,
     AgentExecutionRequest,
@@ -816,9 +820,8 @@ class EventInterpretationAgent:
                 lines.append(f"Reason codes: {', '.join(score.reason_codes)}")
 
         lines.append(f"Recent events ({len(events)}):")
-        for e in events[:20]:
+        for e in events[:MAX_EVENTS_EI]:
             headline = e.headline or "(no headline)"
-            summary = e.body_summary or ""
 
             # Provenance tags — only non-None/non-empty, non-default
             parts: list[str] = []
@@ -845,7 +848,6 @@ class EventInterpretationAgent:
                 stale_mark = " ⚠️STALE"
 
             tagged = " ".join(parts)
-            body = f" — {summary[:200]}" if summary else ""
-            lines.append(f"  {tagged}{stale_mark} {headline}{body}")
+            lines.append(f"  {tagged}{stale_mark} {headline}")
 
         return "\n".join(lines)

@@ -102,10 +102,10 @@ class TestResolveProviderModelId:
     """_resolve_provider_model_id() uses provider-specific defaults."""
 
     def test_deepseek_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """DeepSeek no env var → default deepseek-v4-pro."""
+        """DeepSeek no env var → default deepseek-chat."""
         monkeypatch.setenv("LLM_PROVIDER", "deepseek")
         monkeypatch.delenv("DEEPSEEK_MODEL_ID", raising=False)
-        assert _resolve_provider_model_id() == "deepseek-v4-pro"
+        assert _resolve_provider_model_id() == "deepseek-chat"
 
     def test_openai_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """OpenAI no env var → default gpt-4o."""

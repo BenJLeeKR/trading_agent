@@ -303,7 +303,7 @@ class TestKISSyncSnapshotProvider:
         assert cash.currency == "KRW"
 
     async def test_cash_balance_orderable_amount_all_none(self) -> None:
-        """Both VTTC8908R and VTTC8434R unavailable → ``orderable_amount`` stays None."""
+        """Both VTTC8908R and VTTC8434R unavailable → falls back to ``available_cash``."""
         account_id = uuid4()
         client = FakeKISRestClient(
             positions=[],
@@ -320,8 +320,9 @@ class TestKISSyncSnapshotProvider:
         result = await provider.fetch_snapshot(account_id, inst_repo)
         assert result.cash_balance is not None
         cash = result.cash_balance
-        assert cash.orderable_amount is None, (
-            f"Expected None, got {cash.orderable_amount}"
+        # 최종 fallback: available_cash(dnca_tot_amt) 사용
+        assert cash.orderable_amount == 1000000, (
+            f"Expected 1000000 (available_cash fallback), got {cash.orderable_amount}"
         )
         assert cash.available_cash == 1000000  # unchanged
         assert cash.currency == "KRW"

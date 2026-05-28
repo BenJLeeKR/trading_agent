@@ -33,6 +33,7 @@ from scripts.run_ops_scheduler import (
     _handle_phase_change,
     _heartbeat_task,
     _init_market_state_provider,
+    _insert_session_event,
     _init_session_provider,
     _is_held_position_sell_result,
     _is_submit_consuming_result,
@@ -784,6 +785,61 @@ class TestHandlePhaseChange:
         # Second AFTER_HOURS notification should not toggle
         await _handle_phase_change(state, MarketPhaseCode.AFTER_HOURS.value, MarketPhaseCode.AFTER_HOURS.value)
         assert state.after_hours_mode is True
+
+    @pytest.mark.asyncio
+    async def test_calls_insert_session_event_when_dsn_provided(self) -> None:
+        """DSN 제공 시 ``_insert_session_event``가 호출되어야 함."""
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        state.session_db_id = 42  # session_db_id가 있어야 INSERT 시도
+        state.session_info = SessionInfo(
+            is_trading_day=True,
+            source="test",
+            reason="test",
+        )
+
+        # _persist_session_state 내부의 asyncpg.connect가 실패하지만,
+        # _insert_session_event 호출 자체는 검증 가능
+        with patch("scripts.run_ops_scheduler._insert_session_event") as mock_insert:
+            await _handle_phase_change(
+                state, "PRE_MARKET", MarketPhaseCode.OPEN.value,
+                dsn="postgresql://localhost/test",
+            )
+            mock_insert.assert_awaited_once_with(
+                state, "postgresql://localhost/test",
+                "PRE_MARKET", MarketPhaseCode.OPEN.value,
+            )
+
+
+class TestInsertSessionEvent:
+    """``_insert_session_event()`` — session_events INSERT."""
+
+    @pytest.mark.asyncio
+    async def test_noop_when_dsn_none(self) -> None:
+        """DSN=None → 아무 동작 안 함."""
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        state.session_db_id = 42
+        await _insert_session_event(state, dsn=None, old_phase="OPEN", new_phase="CLOSING")
+        # 예외 없이 넘어가면 성공
+
+    @pytest.mark.asyncio
+    async def test_noop_when_session_db_id_none(self) -> None:
+        """session_db_id=None → 아무 동작 안 함."""
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        # session_db_id is None by default
+        await _insert_session_event(state, dsn="postgresql://localhost/test", old_phase="OPEN", new_phase="CLOSING")
+        # 예외 없이 넘어가면 성공
+
+    @pytest.mark.asyncio
+    async def test_logs_error_on_db_failure(self) -> None:
+        """DB 연결 실패 → logger.exception 호출."""
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        state.session_db_id = 42
+        with patch("scripts.run_ops_scheduler.logger") as mock_logger:
+            await _insert_session_event(
+                state, dsn="postgresql://invalid:5432/test",
+                old_phase="OPEN", new_phase="CLOSING",
+            )
+            mock_logger.exception.assert_called_once()
 
 
 class TestInitMarketStateProvider:
