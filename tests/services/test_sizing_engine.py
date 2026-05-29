@@ -501,6 +501,65 @@ class TestConcentration:
         assert "position_concentration" in result.applied_constraints
         assert result.skip_reason == "zero_after_constraints"
 
+    def test_new_position_min_entry_threshold_blocks_small_qty(self) -> None:
+        """신규 포지션(current_value=0), 저가주 1주(100,000원)가
+        최소 진입 금액(500,000원) 미만 → qty=0, min_entry_threshold."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="1",
+                requested_price="100000",        # 1주 = 100,000원 < 500,000원
+                nav="10000000",
+                max_single_position_pct="10",
+                # current_position_qty/avg_price를 전달하지 않음 → current_value=0
+            )
+        )
+        # entry_value = 1 * 100,000 = 100,000 < 500,000 → 차단
+        assert result.quantity == Decimal("0")
+        assert "min_entry_threshold" in result.applied_constraints
+        assert result.skip_reason == "zero_after_constraints"
+
+    def test_new_position_min_entry_threshold_allows_large_qty(self) -> None:
+        """신규 포지션(current_value=0), 충분한 금액(1,000,000원)은 통과."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="10",
+                requested_price="100000",        # 10주 = 1,000,000원 >= 500,000원
+                nav="10000000",
+                max_single_position_pct="10",
+            )
+        )
+        # entry_value = 10 * 100,000 = 1,000,000 >= 500,000 → 통과
+        assert result.quantity == Decimal("10")
+        assert "min_entry_threshold" not in result.applied_constraints
+
+    def test_existing_position_unchanged_by_min_entry_threshold(self) -> None:
+        """기존 보유 포지션이 있는 경우(current_value > 0), min_entry_threshold 미적용.
+        회귀 방지: 기존 concentration constraint 로직이 그대로 동작해야 함."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="100",
+                requested_price="100000",
+                nav="100000000",
+                max_single_position_pct="10",
+                current_position_qty="50",          # 50 shares held
+                current_position_avg_price="100000", # avg price 100,000
+            )
+        )
+        # current_value = 50 * 100,000 = 5,000,000 > 0 → min_entry_threshold 미적용
+        # max_position_value = 100,000,000 * 10% = 10,000,000
+        # remaining = 10,000,000 - 5,000,000 = 5,000,000
+        # max_additional_qty = 5,000,000 / 100,000 = 50
+        # requested 100 → capped to 50 by position_concentration
+        assert result.quantity == Decimal("50")
+        assert "position_concentration" in result.applied_constraints
+        assert "min_entry_threshold" not in result.applied_constraints
+
 
 # ======================================================================
 # 8.  Lot size rounding

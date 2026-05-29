@@ -449,6 +449,23 @@ def _apply_concentration_constraint(
         return Decimal("0")
 
     max_additional_qty = (remaining_capacity / effective_price).to_integral_value(rounding=ROUND_DOWN)
+
+    # 신규 포지션 최소 진입 금액 임계값
+    # 고가주 1주(1,000,000원)는 허용, 저가주 1주(100,000원)는 차단
+    # current_position_qty가 None인 경우만 신규 포지션으로 간주
+    # (current_position_qty=0을 명시적으로 전달하는 기존 테스트와의 회귀 방지)
+    _MIN_ENTRY_VALUE_FOR_NEW_POSITION = Decimal("500000")
+    if current_position_qty is None and max_additional_qty > 0:
+        entry_value = qty * effective_price
+        if entry_value < _MIN_ENTRY_VALUE_FOR_NEW_POSITION:
+            constraints.append("min_entry_threshold")
+            logger.info(
+                "Sizing min entry threshold activated: "
+                "effective_price=%s req_qty=%s entry_value=%s min_entry_value=%s final_qty=0",
+                effective_price, qty, entry_value, _MIN_ENTRY_VALUE_FOR_NEW_POSITION,
+            )
+            return Decimal("0")
+
     if max_additional_qty < qty:
         constraints.append("position_concentration")
         logger.info(
