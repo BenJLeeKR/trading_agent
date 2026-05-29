@@ -1,0 +1,13 @@
+[2026-05-28T16:57:54.404606] PID=400244 main() started
+[2026-05-28T16:57:54.404676] PID=400244 Input parsed: symbol=005930 market=KRX correlation_id=test-success
+[2026-05-28T16:57:54.405038] PID=400244 Creating OpenAICompatibleClient ...
+[2026-05-28T16:57:54.405058] PID=400244 OpenAICompatibleClient created
+[2026-05-28T16:57:54.405334] PID=400244 Starting EventInterpretationAgent.run() ...
+[2026-05-28T16:57:54.405589] PID=400244 _reconstruct_context: recent_events_raw count=0 → reconstructed count=0
+[2026-05-28T16:57:54.405611] PID=400244 Context reconstructed: events=0
+[2026-05-28T16:57:56.684544] PID=400244 EventInterpretationAgent completed: symbol=005930 input_events=0 output_events=0 detected_event_count=0 no_material_events=True
+[2026-05-28T16:57:56.684639] PID=400244 Starting AIRiskAgent.run() ...
+[2026-05-28T16:57:56.684677] PID=400244 _reconstruct_context: recent_events_raw count=0 → reconstructed count=0
+[2026-05-28T16:57:59.057537] PID=400244 AIRiskAgent completed: symbol=005930 risk_opinion=allow
+[2026-05-28T16:57:59.057641] PID=400244 FDC skipped: reason=no_material_events_no_position symbol=005930
+[2026-05-28T16:57:59.057995] PID=400244 SUCCESS: FDC skipped — all 3 agents completed in 4.65s

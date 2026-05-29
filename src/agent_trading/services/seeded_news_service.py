@@ -37,7 +37,7 @@ _MAX_CANDIDATES_PER_SEED = 3
 _MAX_CANDIDATES_PER_SYMBOL_GLOBAL = 3
 """Global maximum candidates per symbol after aggregation across all seeds."""
 
-_SEED_PACING_DELAY: float = 0.5
+_SEED_PACING_DELAY: float = 0.125
 """Seconds to wait between processing each seed (429 Rate Limit 대응)."""
 
 
@@ -76,6 +76,8 @@ class PipelineMetrics:
     """Seeds dropped by quality filter (suspicious company_name)."""
     retry_count: int = 0
     """Total API retry attempts across all queries."""
+    quota_exhausted_count: int = 0
+    """Seeds where NAVER 429 was detected (daily quota exhausted)."""
     per_symbol: dict[str, dict[str, int]] = field(default_factory=dict)
     """Per-symbol breakdown for granular quality inspection."""
 
@@ -177,6 +179,7 @@ class SeededNewsCandidateService:
                 "dropped_cross_symbol", 0,
             )
             metrics.retry_count += seed_metrics.get("retry_count", 0)
+            metrics.quota_exhausted_count += seed_metrics.get("quota_exhausted", 0)
 
             metrics.per_symbol[seed.symbol] = {
                 "raw": seed_metrics.get("raw_count", 0),
@@ -309,9 +312,17 @@ class SeededNewsCandidateService:
 
         # Step 2: Search NAVER
         try:
-            raw_items = await self._search_adapter.search_by_seed(
+            raw_items, quota_exhausted = await self._search_adapter.search_by_seed(
                 seed, queries, max_queries=max_queries,
             )
+            if quota_exhausted:
+                logger.warning(
+                    "NAVER quota exhausted for symbol=%s — degraded fallback",
+                    seed.symbol,
+                )
+                seed_metrics["quota_exhausted"] = 1
+                # 빈 결과를 반환하되, 호출자가 quota_exhausted를 알 수 있도록 metrics에 플래그 설정
+                return [], seed_metrics
         except Exception:
             logger.exception(
                 "SeededNewsCandidateService: NAVER search failed "

@@ -216,90 +216,114 @@ async def _run_one_cycle(
     )
 
     broker: BrokerAdapter | None = None
-    try:
-        # ── 1. Broker adapter ─────────────────────────────────────────
-        logger.info("Creating broker adapter (env=%s) ...", settings.kis_env)
-        budget_manager = build_kis_budget_manager(
-            kis_env=settings.kis_env,
-            real_rest_rps=settings.kis_real_rest_rps,
-            paper_rest_rps=settings.kis_paper_rest_rps,
-        )
-        rest_client = KISRestClient(
-            api_key=settings.kis_api_key,
-            api_secret=settings.kis_api_secret,
-            account_number=settings.kis_account_number,
-            account_product_code=settings.kis_account_product_code,
-            env=settings.kis_env,
-            base_url=settings.kis_base_url,
-            budget_manager=budget_manager,
-            dev_token_cache_enabled=settings.kis_dev_token_cache_enabled,
-            dev_token_cache_path=settings.kis_dev_token_cache_path,
-        )
-        broker = KoreaInvestmentAdapter(
-            rest_client=rest_client,
-            ws_url=settings.kis_ws_url,
-        )
-        await broker.authenticate()
-        logger.info("Broker authentication successful.")
+    MAX_RETRIES = 2
+    RETRY_DELAY = 5.0
 
-        # ── 2. Postgres connection ─────────────────────────────────────
-        logger.info("Connecting to Postgres ...")
-        db_config = DatabaseConfig()
-        await create_pool(db_config)
-
-        async with transaction() as tx:
-            repos = build_postgres_repositories(tx)
-            order_manager = OrderManager(repos=repos)
-            sync_service = OrderSyncService(
-                repos=repos,
-                order_manager=order_manager,
-            )
-            refresh_cb = _build_refresh_callback(repos, broker)
-            runner = PostSubmitSyncRunner(
-                repos=repos,
-                sync_service=sync_service,
-                broker=broker,
-                snapshot_refresh_cb=refresh_cb,
-            )
-
-            logger.info(
-                "Running post-submit sync cycle (account_ref=%s) ...",
-                account_ref or "(default)",
-            )
-            # Pass tx_manager so run_sync_cycle can use per-order savepoints.
-            # If a single order's sync fails (e.g. DB constraint violation),
-            # only that order's savepoint is rolled back; the outer
-            # transaction remains valid for remaining orders and the final
-            # commit.
-            result = await runner.run_sync_cycle(
-                account_ref=account_ref,
-                tx_manager=tx,
-                after_hours=after_hours,
-                recovery_mode=recovery,
-            )
-            await tx.commit()
-
-        return result
-
-    except Exception as exc:
-        logger.error("Sync cycle failed: %s", exc, exc_info=True)
-        return SyncCycleResult(
-            total_orders=0,
-            updated=0,
-            filled=0,
-            partial=0,
-            errors=[f"cycle_failed: {exc}"],
-        )
-    finally:
-        if broker is not None:
-            try:
-                await broker.close()  # type: ignore[union-attr]
-            except Exception:
-                pass
+    for attempt in range(1, MAX_RETRIES + 1):
+        _needs_cleanup = True
         try:
-            await close_pool()
-        except Exception:
-            pass
+            # ── 1. Broker adapter ─────────────────────────────────────────
+            logger.info("Creating broker adapter (env=%s) ...", settings.kis_env)
+            budget_manager = build_kis_budget_manager(
+                kis_env=settings.kis_env,
+                real_rest_rps=settings.kis_real_rest_rps,
+                paper_rest_rps=settings.kis_paper_rest_rps,
+            )
+            rest_client = KISRestClient(
+                api_key=settings.kis_api_key,
+                api_secret=settings.kis_api_secret,
+                account_number=settings.kis_account_number,
+                account_product_code=settings.kis_account_product_code,
+                env=settings.kis_env,
+                base_url=settings.kis_base_url,
+                budget_manager=budget_manager,
+                dev_token_cache_enabled=settings.kis_dev_token_cache_enabled,
+                dev_token_cache_path=settings.kis_dev_token_cache_path,
+            )
+            broker = KoreaInvestmentAdapter(
+                rest_client=rest_client,
+                ws_url=settings.kis_ws_url,
+            )
+            await broker.authenticate()
+            logger.info("Broker authentication successful.")
+
+            # ── 2. Postgres connection ─────────────────────────────────────
+            logger.info("Connecting to Postgres ...")
+            db_config = DatabaseConfig()
+            await create_pool(db_config)
+
+            async with transaction() as tx:
+                repos = build_postgres_repositories(tx)
+                order_manager = OrderManager(repos=repos)
+                sync_service = OrderSyncService(
+                    repos=repos,
+                    order_manager=order_manager,
+                )
+                refresh_cb = _build_refresh_callback(repos, broker)
+                runner = PostSubmitSyncRunner(
+                    repos=repos,
+                    sync_service=sync_service,
+                    broker=broker,
+                    snapshot_refresh_cb=refresh_cb,
+                )
+
+                logger.info(
+                    "Running post-submit sync cycle (account_ref=%s) ...",
+                    account_ref or "(default)",
+                )
+                # Pass tx_manager so run_sync_cycle can use per-order savepoints.
+                # If a single order's sync fails (e.g. DB constraint violation),
+                # only that order's savepoint is rolled back; the outer
+                # transaction remains valid for remaining orders and the final
+                # commit.
+                result = await runner.run_sync_cycle(
+                    account_ref=account_ref,
+                    tx_manager=tx,
+                    after_hours=after_hours,
+                    recovery_mode=recovery,
+                )
+                await tx.commit()
+
+            return result
+
+        except (ConnectionError, TimeoutError, OSError) as exc:
+            if attempt < MAX_RETRIES:
+                logger.warning(
+                    "Sync cycle transient failure (attempt %d/%d): %s. "
+                    "Retrying in %.0fs ...",
+                    attempt, MAX_RETRIES, exc, RETRY_DELAY,
+                )
+                _needs_cleanup = False
+                await asyncio.sleep(RETRY_DELAY)
+                continue
+            logger.error(
+                "Sync cycle failed after %d attempts: %s",
+                MAX_RETRIES, exc, exc_info=True,
+            )
+            return SyncCycleResult(
+                total_orders=0, updated=0, filled=0, partial=0,
+                errors=[f"cycle_failed: {exc}"],
+            )
+        except Exception as exc:
+            logger.error("Sync cycle failed: %s", exc, exc_info=True)
+            return SyncCycleResult(
+                total_orders=0,
+                updated=0,
+                filled=0,
+                partial=0,
+                errors=[f"cycle_failed: {exc}"],
+            )
+        finally:
+            if _needs_cleanup:
+                if broker is not None:
+                    try:
+                        await broker.close()  # type: ignore[union-attr]
+                    except Exception:
+                        pass
+                try:
+                    await close_pool()
+                except Exception:
+                    pass
 
 
 async def _run_loop(

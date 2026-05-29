@@ -589,9 +589,9 @@ class TestCrossSymbolNoiseAndScoring:
         candidates, metrics = await service.process_seeds(seeds)
         elapsed = time.monotonic() - start
 
-        # 2 delays × 0.5s = minimum ~1.0s
-        assert elapsed >= 0.8, (
-            f"Expected pacing delay ~1.0s for 3 seeds, got {elapsed:.2f}s"
+        # 2 delays × 0.125s = minimum ~0.25s
+        assert elapsed >= 0.2, (
+            f"Expected pacing delay ~0.25s for 3 seeds, got {elapsed:.2f}s"
         )
 
         await service.close()

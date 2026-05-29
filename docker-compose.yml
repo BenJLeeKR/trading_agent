@@ -83,6 +83,7 @@ services:
       # P3: Seeded News — NAVER Search API (news candidate 수집용)
       NAVER_CLIENT_ID: "${NAVER_CLIENT_ID:-}"
       NAVER_CLIENT_SECRET: "${NAVER_CLIENT_SECRET:-}"
+      SEEDED_NEWS_ENABLED: "${SEEDED_NEWS_ENABLED:-0}"
       LLM_PROVIDER: "${LLM_PROVIDER:-deepseek}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
       DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
@@ -101,6 +102,7 @@ services:
       - ./pyproject.toml:/app/pyproject.toml
       # Share KIS dev token cache to avoid 1-per-minute oauth2 rate limit
       - ./.cache:/app/.cache
+      - ./tmp:/app/tmp
     # Keep the container alive for interactive commands
     command: ["tail", "-f", "/dev/null"]
     restart: unless-stopped
@@ -260,6 +262,7 @@ services:
       - ./logs:/app/logs
       - ./.cache:/app/.cache
       - ./data:/app/data
+      - ./tmp:/app/tmp
     healthcheck:
       test:
         - "CMD-SHELL"

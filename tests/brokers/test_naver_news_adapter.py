@@ -108,12 +108,13 @@ class TestNaverNewsSearchAdapter:
         ]
         mock_http_client.get.return_value = _make_mock_response(mock_items)
 
-        results = await adapter.search_by_seed(sample_seed, queries)
+        results, quota_exhausted = await adapter.search_by_seed(sample_seed, queries)
 
         # 2 API calls (2 queries × 1 sort mode = sim only)
         assert mock_http_client.get.call_count == 2
         # 2 unique items (no duplicates across calls)
         assert len(results) == 2
+        assert quota_exhausted is False
 
     # ------------------------------------------------------------------
     # Case 6 (adapted): API 4xx 에러 (일부 실패 → 나머지 정상 진행)
@@ -141,10 +142,11 @@ class TestNaverNewsSearchAdapter:
             success_response,  # query 2 succeeds
         ]
 
-        results = await adapter.search_by_seed(sample_seed, queries)
+        results, quota_exhausted = await adapter.search_by_seed(sample_seed, queries)
 
         # Should have 1 result from the successful call
         assert len(results) == 1
+        assert quota_exhausted is False
         assert mock_http_client.get.call_count == 2
 
     # ------------------------------------------------------------------
@@ -165,9 +167,10 @@ class TestNaverNewsSearchAdapter:
             request=Mock(),
         )
 
-        results = await adapter.search_by_seed(sample_seed, queries)
+        results, quota_exhausted = await adapter.search_by_seed(sample_seed, queries)
 
         assert results == []
+        assert quota_exhausted is False
         # Initially expected 1 call + 3 retries = 4 total
         # But due to the way side_effect works with TimeoutException,
         # the exact count may vary. At minimum 1 call should be made.
@@ -184,9 +187,10 @@ class TestNaverNewsSearchAdapter:
         mock_http_client: AsyncMock,
     ) -> None:
         """queries=[] → [] 반환, API 호출 없음."""
-        results = await adapter.search_by_seed(sample_seed, [])
+        results, quota_exhausted = await adapter.search_by_seed(sample_seed, [])
 
         assert results == []
+        assert quota_exhausted is False
         mock_http_client.get.assert_not_called()
 
     # ------------------------------------------------------------------
@@ -357,13 +361,14 @@ class TestNaverNewsSearchAdapter:
         ]
         mock_http_client.get.return_value = _make_mock_response(mock_items)
 
-        results = await adapter.search_by_seed(sample_seed, queries)
+        results, quota_exhausted = await adapter.search_by_seed(sample_seed, queries)
 
         # sort=date가 제거되었으므로 1회만 호출 (query=1 × sort=sim)
         assert mock_http_client.get.call_count == 1
         call_kwargs = mock_http_client.get.call_args.kwargs
         assert call_kwargs["params"]["sort"] == "sim"
         assert len(results) == 1
+        assert quota_exhausted is False
 
 
 class TestNaverDailyQuotaTracker:
@@ -375,10 +380,13 @@ class TestNaverDailyQuotaTracker:
     @pytest.fixture(autouse=True)
     def _patch_file_path(self) -> None:
         """Override NaverDailyQuotaTracker._FILE_PATH with a temp file."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False,
-        ) as f:
-            self._tmp_path = f.name
+        self._tmp_path = os.path.join(
+            os.path.dirname(__file__), ".quota_test_tmp.json",
+        )
+        # Initialise with a valid empty-state record so the first read
+        # returns count=0 rather than hitting a fail-closed fallback.
+        with open(self._tmp_path, "w") as f:
+            json.dump({"count": 0, "date": ""}, f)
         # Patch the class-level file path
         self._original_path = NaverDailyQuotaTracker._FILE_PATH
         NaverDailyQuotaTracker._FILE_PATH = self._tmp_path
@@ -437,36 +445,36 @@ class TestNaverDailyQuotaTracker:
         assert data["count"] == 3
 
     def test_fail_open_on_corrupt_file(self) -> None:
-        """파일이 깨져도 예외 없이 0 반환 (fail-open)."""
+        """파일이 깨지면 _DAILY_LIMIT 반환 (fail-closed → quota 소진 가정)."""
         # Write corrupt data
         with open(self._tmp_path, "w") as f:
             f.write("not valid json")
 
-        # Should not raise — returns 0
-        assert NaverDailyQuotaTracker.get_current_consumption() == 0
-        assert NaverDailyQuotaTracker.get_consumption_ratio() == 0.0
-        assert not NaverDailyQuotaTracker.is_exhausted()
+        # Should not raise — returns _DAILY_LIMIT
+        assert NaverDailyQuotaTracker.get_current_consumption() == NaverDailyQuotaTracker._DAILY_LIMIT
+        assert NaverDailyQuotaTracker.get_consumption_ratio() == 1.0
+        assert NaverDailyQuotaTracker.is_exhausted()
 
     def test_fail_open_on_missing_file(self) -> None:
-        """파일이 없어도 예외 없이 0 반환 (fail-open)."""
+        """파일이 없으면 _DAILY_LIMIT 반환 (fail-closed → quota 소진 가정)."""
         # Remove the file
         if os.path.exists(self._tmp_path):
             os.unlink(self._tmp_path)
 
-        assert NaverDailyQuotaTracker.get_current_consumption() == 0
-        assert NaverDailyQuotaTracker.get_consumption_ratio() == 0.0
-        assert not NaverDailyQuotaTracker.is_exhausted()
+        assert NaverDailyQuotaTracker.get_current_consumption() == NaverDailyQuotaTracker._DAILY_LIMIT
+        assert NaverDailyQuotaTracker.get_consumption_ratio() == 1.0
+        assert NaverDailyQuotaTracker.is_exhausted()
 
     def test_fail_open_on_permission_error(self) -> None:
-        """파일 권한 오류 시 예외 없이 0 반환 (fail-open)."""
+        """파일 권한 오류 시 _DAILY_LIMIT 반환 (fail-closed → quota 소진 가정)."""
         # Make file read-only
         if os.path.exists(self._tmp_path):
             os.chmod(self._tmp_path, 0o000)
 
         try:
-            assert NaverDailyQuotaTracker.get_current_consumption() == 0
-            assert NaverDailyQuotaTracker.get_consumption_ratio() == 0.0
-            assert not NaverDailyQuotaTracker.is_exhausted()
+            assert NaverDailyQuotaTracker.get_current_consumption() == NaverDailyQuotaTracker._DAILY_LIMIT
+            assert NaverDailyQuotaTracker.get_consumption_ratio() == 1.0
+            assert NaverDailyQuotaTracker.is_exhausted()
         finally:
             # Restore permissions for cleanup
             os.chmod(self._tmp_path, 0o644)
@@ -483,3 +491,45 @@ class TestNaverDailyQuotaTracker:
         for _ in range(22500):
             NaverDailyQuotaTracker.increment()
         assert NaverNewsSearchAdapter.is_quota_exhausted()
+
+    def test_increment_logs_warning_on_read_failure(self, caplog, _patch_file_path):
+        """_read_or_init() 실패 시 logger.warning이 출력되는지 확인."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+
+        # _read_or_init()은 내부에서 모든 예외를 직접 처리(swallow)하므로,
+        # patch.object로 강제 예외 발생시켜 increment()의 예외 처리 경로 검증
+        with patch.object(NaverDailyQuotaTracker, "_read_or_init", side_effect=OSError("mock read error")):
+            NaverDailyQuotaTracker.increment()
+
+        warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("_read_or_init() failed" in msg for msg in warning_messages), \
+            f"Expected warning about _read_or_init failure, got: {warning_messages}"
+
+    def test_increment_logs_warning_on_write_failure(self, caplog, _patch_file_path):
+        """_write() 실패 시 logger.warning이 출력되는지 확인."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+
+        # _write()는 내부에서 모든 예외를 직접 처리(swallow)하므로,
+        # patch.object로 강제 예외 발생시켜 increment()의 예외 처리 경로 검증
+        with patch.object(NaverDailyQuotaTracker, "_write", side_effect=OSError("mock write error")):
+            NaverDailyQuotaTracker.increment()
+
+        warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("_write() failed" in msg for msg in warning_messages), \
+            f"Expected warning about _write failure, got: {warning_messages}"
+
+    def test_increment_success_no_warning(self, caplog, _patch_file_path):
+        """정상 increment() 시 warning이 출력되지 않는지 확인."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+
+        NaverDailyQuotaTracker.increment()
+
+        warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warning_messages) == 0, \
+            f"Expected no warnings on success, got: {warning_messages}"

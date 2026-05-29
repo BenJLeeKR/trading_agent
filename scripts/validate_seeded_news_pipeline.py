@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
 
 sys.path.insert(0, "src")
@@ -34,6 +35,11 @@ async def main() -> None:
         _build_live_disclosure_client,
         _build_naver_search_adapter,
     )
+
+    # ★ SEEDED_NEWS_ENABLED=0 이면 NAVER 관련 경로를 모두 skip
+    if os.environ.get("SEEDED_NEWS_ENABLED", "1") == "0":
+        print("⚠️  SEEDED_NEWS_ENABLED=0 — seeded news pipeline disabled, SKIP")
+        return
 
     settings = AppSettings()
 

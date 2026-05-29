@@ -213,21 +213,30 @@ async def test_kis_inquiry_fallback_to_reconciliation_reserve():
         budget_manager=budget,
     )
 
-    # resolve_unknown_state() calls get_order_status() which consumes INQUIRY.
-    # INQUIRY bucket is empty → BudgetExhaustedError → falls back to reserve.
-    # The actual HTTP call will fail (no network), but the budget fallback
-    # path is exercised before the HTTP call.
-    try:
-        result = await client.resolve_unknown_state(
-            broker_order_id="test-001",
-            symbol="005930",
-        )
-    except Exception:
-        # Network error is expected since we have no real KIS API.
-        # The important thing is that the reconciliation reserve was consumed.
-        pass
+    # resolve_unknown_state() 구조:
+    #   Step 1: inquire_daily_ccld(bucket=RECONCILIATION) — RECONCILIATION bucket 사용
+    #   Step 2: _request_with_fallback(INQUIRY) — INQUIRY bucket + reconciliation reserve fallback
+    #
+    # INQUIRY capacity=0이므로 Step 2에서 BudgetExhaustedError 발생 → reserve_reconciliation_or_raise()
+    # → reconciliation remaining이 5→4로 감소.
+    #
+    # Step 1의 HTTP 호출을 막기 위해 inquire_daily_ccld()를 mock 처리.
+    from unittest.mock import patch
 
-    # The reconciliation reserve should have been consumed.
+    # KISRestClient는 @dataclass(slots=True)이므로 인스턴스 속성 읽기 전용.
+    # 클래스 레벨에서 patch하여 Step 1의 HTTP 호출을 차단.
+    with patch.object(KISRestClient, "inquire_daily_ccld", AsyncMock(return_value=[])):
+        try:
+            await client.resolve_unknown_state(
+                broker_order_id="test-001",
+                symbol="005930",
+            )
+        except Exception:
+            # Step 2의 _request_with_fallback(INQUIRY)가 dummy API key로
+            # HTTP 실패하므로 예외는 정상. 중요한 것은 reconciliation reserve 소비 여부.
+            pass
+
+    # The reconciliation reserve should have been consumed by the fallback.
     assert budget.reconciliation.remaining < budget.reconciliation.capacity
 
 

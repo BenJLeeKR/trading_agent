@@ -38,7 +38,7 @@ _NAVER_RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({500, 502, 503, 504})
 
 # ── NAVER Daily Quota Tracker (best-effort, file-backed) ──────────────────────
 
-_NAVER_DAILY_QUOTA_FILE = "/workspace/agent_trading/tmp/naver_daily_quota.json"
+_NAVER_DAILY_QUOTA_FILE = "/app/tmp/naver_daily_quota.json"
 """File path for daily NAVER API call count tracking.
 
 Format: JSON with keys ``count``, ``date`` (YYYYMMDD KST), ``updated_at``.
@@ -52,15 +52,15 @@ _NAVER_QUOTA_THRESHOLD = 0.9
 
 
 class NaverDailyQuotaTracker:
-    """Best-effort, file-backed daily quota tracker for NAVER Search API.
+    """File-backed daily quota tracker for NAVER Search API (fail-closed).
 
     Tracks NAVER API calls made today using a flock-protected JSON file.
     Resets at midnight KST (UTC+9).
 
-    **Best-Effort:** All file I/O errors are silently ignored. If the tracker
-    is unavailable (file corrupt, flock failure, etc.), it returns ``0``
-    consumption — i.e., "quota OK, continue". The tracker NEVER blocks an
-    API call.
+    **Fail-Closed:** All file I/O errors are silently ignored. If the tracker
+    is unavailable (file corrupt, flock failure, etc.), it returns
+    ``_DAILY_LIMIT`` consumption — i.e., "quota exhausted, stop". This
+    prevents the 429 → retry → 429 vicious cycle.
 
     Design follows ``FileBackedGlobalBucket`` pattern from
     :mod:`agent_trading.brokers.shared_budget`.
@@ -111,15 +111,19 @@ class NaverDailyQuotaTracker:
         """
         try:
             count, date_str = cls._read_or_init()
+        except Exception:
+            logger.warning("NaverDailyQuotaTracker._read_or_init() failed", exc_info=True)
+            return
+        try:
             today = cls._today_kst()
             if date_str != today:
                 count = 0
             count += 1
             cls._write(count, today)
         except Exception:
-            logger.debug(
-                "NaverDailyQuotaTracker: failed to increment — "
-                "tracker unavailable, continuing",
+            logger.warning(
+                "NaverDailyQuotaTracker._write() failed (count=%s, date=%s)",
+                count, date_str, exc_info=True,
             )
 
     # ------------------------------------------------------------------
@@ -137,11 +141,12 @@ class NaverDailyQuotaTracker:
     def _read_or_init(cls) -> tuple[int, str]:
         """Read (count, date_str) from file; reset if date changed.
 
-        Returns ``(0, "")`` on any error (file missing, corrupt, etc.).
+        Returns ``(_DAILY_LIMIT, "")`` on any error (file missing, corrupt, etc.)
+        — fail-closed: if tracker state is unknown, assume quota is exhausted.
         """
         try:
             if not os.path.exists(cls._FILE_PATH):
-                return 0, ""
+                return cls._DAILY_LIMIT, ""
             with open(cls._FILE_PATH, "r") as f:
                 import fcntl
                 fcntl.flock(f, fcntl.LOCK_SH)
@@ -154,11 +159,11 @@ class NaverDailyQuotaTracker:
                         return 0, today
                     return count, date_str
                 except (json.JSONDecodeError, ValueError, KeyError):
-                    return 0, cls._today_kst()
+                    return cls._DAILY_LIMIT, cls._today_kst()
                 finally:
                     fcntl.flock(f, fcntl.LOCK_UN)
         except (OSError, ImportError):
-            return 0, ""
+            return cls._DAILY_LIMIT, ""
 
     @classmethod
     def _write(cls, count: int, date_str: str) -> None:
@@ -260,6 +265,7 @@ class NaverSearchResponse:
     items: list[NaverNewsItem]
     total: int = 0
     display: int = 0
+    is_quota_exhausted: bool = False
 
 
 class NaverNewsSearchAdapter:
@@ -314,28 +320,19 @@ class NaverNewsSearchAdapter:
         seed: DisclosureTitleDTO,
         queries: list[str],
         max_queries: int | None = None,
-    ) -> list[NaverNewsItem]:
+    ) -> tuple[list[NaverNewsItem], bool]:
         """KIS disclosure seed → NAVER 검색 → raw news items 반환.
 
         내부적으로 각 query별로 ``sort=sim`` 만 호출 (sort=date 제거,
         429 Rate Limit 대응을 위한 호출량 50% 감축).
         동일 API call 내 중복은 ``originallink`` 기준으로 제거한다.
 
-        Parameters
-        ----------
-        seed : DisclosureTitleDTO
-            The KIS disclosure seed to search for.
-        queries : list[str]
-            Pre-built search queries from DisclosureQueryBuilder.
-        max_queries : int | None
-            Maximum number of queries to execute (default None = all).
-            Used to reduce API calls for lower-priority source types.
-
         Returns
         -------
-        list[NaverNewsItem]
-            Raw news items (pre-dedupe, pre-scoring).
-            Empty if queries is empty or no results.
+        tuple[list[NaverNewsItem], bool]
+            (items, is_quota_exhausted).
+            ``is_quota_exhausted=True`` if any 429 was detected.
+            Empty items list if queries is empty or no results.
         """
         if max_queries is not None:
             queries = queries[:max_queries]
@@ -345,7 +342,7 @@ class NaverNewsSearchAdapter:
                 seed.symbol,
                 seed.headline,
             )
-            return []
+            return [], False
 
         query_count = len(queries)
         logger.info(
@@ -369,6 +366,15 @@ class NaverNewsSearchAdapter:
                 )
                 continue
 
+            # ── 429 감지: quota exhausted → early return ──
+            if response.is_quota_exhausted:
+                logger.warning(
+                    "NAVER quota exhausted during search_by_seed for symbol=%s — "
+                    "returning is_quota_exhausted=True",
+                    seed.symbol,
+                )
+                return [], True
+
             for item in response.items:
                 # Intra-batch dedupe by originallink
                 dedup_key = item.originallink or item.link
@@ -383,7 +389,7 @@ class NaverNewsSearchAdapter:
             len(queries),
             len(all_items),
         )
-        return all_items
+        return all_items, False
 
     @classmethod
     def get_daily_usage_ratio(cls) -> float:
@@ -463,7 +469,7 @@ class NaverNewsSearchAdapter:
                             "daily quota likely exhausted",
                             query,
                         )
-                        return NaverSearchResponse(items=[])
+                        return NaverSearchResponse(items=[], is_quota_exhausted=True)
 
                     # Non-retryable 4xx: 즉시 실패
                     if response.status_code in (400, 401, 403, 404):

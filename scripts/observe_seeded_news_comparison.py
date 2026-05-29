@@ -128,7 +128,7 @@ async def run_comparison(
 
 async def _run_one_cycle_and_collect(
     symbol: str,
-    seeded_enabled: bool,
+    seeded_enabled: bool,  # kept for API compatibility; always treated as False
 ) -> dict[str, Any]:
     """Run ``run_decision_loop`` as subprocess and collect EI output.
 
@@ -140,7 +140,8 @@ async def _run_one_cycle_and_collect(
     symbol:
         Ticker symbol (e.g. ``"005930"``).
     seeded_enabled:
-        If ``True``, set ``SEEDED_NEWS_ENABLED=1``; otherwise ``0``.
+        Kept only for API compatibility; **internally always treated as False**
+        to prevent accidental NAVER quota consumption.
 
     Returns
     -------
@@ -149,7 +150,8 @@ async def _run_one_cycle_and_collect(
         if available.  Falls back to an error dict if the subprocess fails.
     """
     env = os.environ.copy()
-    env["SEEDED_NEWS_ENABLED"] = "1" if seeded_enabled else "0"
+    # ★ Safety: always disable SEEDED_NEWS_ENABLED to prevent accidental NAVER quota consumption
+    env["SEEDED_NEWS_ENABLED"] = "0"
     env["TRADING_UNIVERSE_SYMBOLS"] = symbol
 
     cmd = [

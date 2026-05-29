@@ -78,7 +78,7 @@ class OperationBucket:
             tokens_to_add = int(elapsed * self.refill_rate)
             if tokens_to_add > 0:
                 self.remaining = min(self.capacity, self.remaining + tokens_to_add)
-                self.refill_at = now
+            self.refill_at = now  # Always update refill_at, even when tokens_to_add == 0
 
     def try_consume(self, tokens: int = 1) -> bool:
         """Try to consume *tokens* from the bucket.
@@ -91,6 +91,18 @@ class OperationBucket:
             self.remaining -= tokens
             return True
         return False
+
+    def release(self, tokens: int = 1) -> None:
+        """Release *tokens* back into the bucket.
+
+        This is the logical inverse of ``try_consume`` — it returns tokens
+        that were previously consumed but should not have been (e.g. because
+        the underlying API call failed).  The bucket is refilled first so
+        that time-based refill is not lost, and the final value is capped
+        at ``capacity`` to prevent overflow.
+        """
+        self._refill()
+        self.remaining = min(self.capacity, self.remaining + tokens)
 
     @property
     def utilization(self) -> float:
@@ -341,6 +353,8 @@ class RateLimitBudgetManager:
             If neither the reserve nor the per-operation bucket
             has enough tokens.
         """
+        _global_consumed = False
+
         # Tier 1: global REST gate (optional skip for reconcile fallback)
         if not skip_global_rest and self.global_rest is not None:
             if not self.global_rest.try_consume(tokens):
@@ -352,6 +366,7 @@ class RateLimitBudgetManager:
                         f"/{self.global_rest.capacity})"
                     ),
                 )
+            _global_consumed = True
 
         # Tier 1.5: held-position sell reserve (ORDER bucket only)
         if held_position_sell and bucket == BucketType.ORDER:
@@ -369,6 +384,9 @@ class RateLimitBudgetManager:
 
         # Tier 2: per-operation bucket
         if not self.try_consume(bucket, tokens):
+            # Rollback: global REST was consumed but per-bucket failed
+            if _global_consumed:
+                self.global_rest.release(tokens)
             b = self._bucket(bucket)
             raise BudgetExhaustedError(
                 bucket=bucket.value,

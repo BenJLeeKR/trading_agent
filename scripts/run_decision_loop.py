@@ -673,7 +673,7 @@ PER_AGENT_HARD_TIMEOUT = 150  # seconds
 # T3 pipeline (KIS disclosure + NAVER news search) has no hard timeout
 # and can block the critical path for minutes.  Decoupled via parallel
 # execution with this timeout for the live pipeline.
-_T3_TIMEOUT = 20            # T3 pipeline 전체 timeout (초)
+_T3_TIMEOUT = 60            # T3 pipeline 전체 timeout (초)
 _T3_FRESHNESS_SECONDS = 7200  # T3 freshness window (2시간)
 _T3_GATHER_WAIT = 5         # decision 완료 후 T3 추가 대기시간 (초)
 
@@ -795,7 +795,9 @@ async def _run_one_cycle(
                             # Fire-and-forget: T3 pipeline runs in background,
                             # decision path continues immediately (not blocked).
                             task = asyncio.create_task(
-                                _run_t3_live_pipeline(runtime, repos, symbol, source_type=source_type)
+                                _run_t3_live_pipeline_shielded(
+                                    runtime, repos, symbol, source_type=source_type
+                                )
                             )
                             _active_t3_tasks.add(task)
                             task.add_done_callback(_active_t3_tasks.discard)
@@ -1072,9 +1074,8 @@ async def _is_t3_fresh_for_symbol(
 ) -> bool:
     """Check if T3 events exist for symbol within freshness window.
 
-    Uses ingested_at (system ingestion time) to determine freshness.
-    ingested_at reflects when the event was stored in the database,
-    which is the correct semantic for "has fresh data been collected".
+    Returns ``True`` on DB error (fail-closed) to protect NAVER quota
+    by preventing unnecessary T3 live pipeline execution.
     """
     try:
         return await repos.external_events.has_fresh_t3_events(
@@ -1082,7 +1083,11 @@ async def _is_t3_fresh_for_symbol(
             freshness_seconds=_T3_FRESHNESS_SECONDS,
         )
     except Exception:
-        return False
+        logger.warning(
+            "T3 freshness check failed for symbol=%s — assuming fresh to protect NAVER quota",
+            symbol,
+        )
+        return True  # fail-closed: DB 장애 시 "fresh"로 간주하여 live pipeline 실행 방지
 
 
 async def _run_t3_live_pipeline(
@@ -1114,9 +1119,11 @@ async def _run_t3_live_pipeline(
     - "T3 skipped" — timeout 또는 disable로 skip
     """
     # Declare variables outside try so they are accessible in except blocks
+    t0 = time.monotonic()
     seeds = None
     candidates = None
     seeded_events = None
+    seed_errors = None
 
     try:
         # ── Preemptive NAVER quota check (이중 방어) ──
@@ -1179,6 +1186,35 @@ async def _run_t3_live_pipeline(
             seeded_news_service.process_seeds(seeds, max_queries=max_queries),
             timeout=_T3_TIMEOUT,
         )
+
+        # ── 429 감지: NAVER quota exhausted → degraded fallback ──
+        if metrics.quota_exhausted_count > 0:
+            logger.warning(
+                "T3 degraded for symbol=%s: NAVER quota exhausted (%d seeds affected) — "
+                "persisting KIS disclosure seeds as T3 events",
+                symbol,
+                metrics.quota_exhausted_count,
+            )
+            # KIS disclosure seeds를 T3 이벤트로 직접 persist (degraded mode)
+            try:
+                partial_events = _convert_disclosure_seeds_to_events(seeds, tier="T3")
+                async with _db_transaction() as tx:
+                    from agent_trading.repositories.postgres.external_events import (
+                        PostgresExternalEventRepository,
+                    )
+                    tx_repo = PostgresExternalEventRepository(tx)
+                    partial_persisted = await persist_seeded_events(partial_events, tx_repo)
+                    logger.info(
+                        "T3 degraded persist for symbol=%s: %d events persisted",
+                        symbol,
+                        partial_persisted,
+                    )
+            except Exception:
+                logger.exception(
+                    "T3 degraded persist failed for symbol=%s", symbol,
+                )
+            return  # early return: pipeline 완료
+
         if not candidates:
             logger.info("symbol=%s T3 skipped: no candidates after processing", symbol)
             return
@@ -1207,58 +1243,99 @@ async def _run_t3_live_pipeline(
         )
 
     except asyncio.TimeoutError:
+        elapsed = time.monotonic() - t0
+        logger.warning(
+            "T3 live pipeline timed out after %.1fs for symbol=%s "
+            "(source_type=%s, seeds=%d, candidates=%d, seed_errors=%d)",
+            elapsed, symbol, source_type, len(seeds or []),
+            len(candidates or []),
+            len(seed_errors or []),
+        )
         # Lazy imports for transaction-scoped repository
         from agent_trading.db.transaction import transaction as _db_transaction
         from agent_trading.repositories.postgres.external_events import (
             PostgresExternalEventRepository,
         )
 
-        async with _db_transaction() as tx:
-            tx_repo = PostgresExternalEventRepository(tx)
+        persisted = 0
+        try:
+            async with _db_transaction() as tx:
+                tx_repo = PostgresExternalEventRepository(tx)
 
-            if seeded_events is not None:
-                # Step 3 (convert) completed, Step 4 (persist) timed out
-                await persist_seeded_events(seeded_events, tx_repo)
-                logger.info(
-                    "symbol=%s T3 partial persist on timeout: %d events",
-                    symbol, len(seeded_events),
-                )
-            elif candidates is not None:
-                # Step 2 (process) completed, Step 3 (convert) timed out
-                from agent_trading.services.seeded_news_converter import (
-                    convert_seeded_candidates,
-                )
-                partial_events = convert_seeded_candidates(candidates)
-                await persist_seeded_events(partial_events, tx_repo)
-                logger.info(
-                    "symbol=%s T3 partial persist on timeout: "
-                    "%d candidates -> %d events",
-                    symbol, len(candidates), len(partial_events),
-                )
-            elif seeds is not None and len(seeds) > 0:
-                # Step 1 (disclosure) completed, Step 2 (process) timed out
-                # Persist KIS disclosure seeds as T2 events (not T3).
-                # ⚠️ This does NOT affect has_fresh_t3_events() since T2 events
-                # are filtered out by _is_t3_fresh_for_symbol(). However, it
-                # provides decision context via _collect_persisted_seeded_events().
-                partial_events = _convert_disclosure_seeds_to_events(seeds)
-                await persist_seeded_events(partial_events, tx_repo)
-                logger.info(
-                    "symbol=%s T3 partial persist on timeout: "
-                    "%d disclosure seeds -> %d events (step 1 only)",
-                    symbol, len(seeds), len(partial_events),
-                )
-            else:
-                logger.warning(
-                    "symbol=%s T3 skipped: live pipeline timed out after %ds "
-                    "(no partial data to persist)",
-                    symbol, _T3_TIMEOUT,
-                )
-            # tx.__aexit__ auto-commits on success
+                if seeded_events is not None:
+                    # Step 3 (convert) completed, Step 4 (persist) timed out
+                    persisted = await persist_seeded_events(seeded_events, tx_repo)
+                    logger.info(
+                        "symbol=%s T3 partial persist on timeout: %d events",
+                        symbol, len(seeded_events),
+                    )
+                elif candidates is not None:
+                    # Step 2 (process) completed, Step 3 (convert) timed out
+                    from agent_trading.services.seeded_news_converter import (
+                        convert_seeded_candidates,
+                    )
+                    partial_events = convert_seeded_candidates(candidates)
+                    persisted = await persist_seeded_events(partial_events, tx_repo)
+                    logger.info(
+                        "symbol=%s T3 partial persist on timeout: "
+                        "%d candidates -> %d events",
+                        symbol, len(candidates), len(partial_events),
+                    )
+                elif seeds is not None and len(seeds) > 0:
+                    # Step 1 (disclosure) completed, Step 2 (process) timed out
+                    # Persist KIS disclosure seeds as T3 events so that
+                    # has_fresh_t3_events() recognizes them and prevents
+                    # redundant T3 pipeline re-execution within the freshness window.
+                    # Also provides decision context via _collect_persisted_seeded_events().
+                    partial_events = _convert_disclosure_seeds_to_events(seeds, tier="T3")
+                    persisted = await persist_seeded_events(partial_events, tx_repo)
+                    logger.info(
+                        "symbol=%s T3 partial persist on timeout: "
+                        "%d disclosure seeds -> %d events (step 1 only)",
+                        symbol, len(seeds), len(partial_events),
+                    )
+                else:
+                    logger.warning(
+                        "symbol=%s T3 skipped: live pipeline timed out after %ds "
+                        "(no partial data to persist)",
+                        symbol, _T3_TIMEOUT,
+                    )
+                # tx.__aexit__ auto-commits on success
+        except Exception:
+            logger.exception(
+                "T3 partial persist failed for symbol=%s", symbol,
+            )
+        if persisted:
+            logger.info(
+                "T3 partial persist: %d seeded events for symbol=%s",
+                persisted, symbol,
+            )
     except Exception:
         logger.exception(
             "symbol=%s T3 skipped: live pipeline failed", symbol,
         )
+
+
+async def _run_t3_live_pipeline_shielded(
+    runtime: dict[str, object],
+    repos: RepositoryContainer,
+    symbol: str,
+    source_type: str = "core",
+) -> None:
+    """Wrapper that runs ``_run_t3_live_pipeline`` under ``asyncio.shield()``.
+
+    ``asyncio.shield()`` prevents external ``cancel()`` (e.g. from
+    ``_run_one_cycle()``'s ``all_tasks().cancel()``) from propagating to the
+    T3 live pipeline task, ensuring partial persist runs to completion.
+
+    This is used via ``asyncio.create_task(_run_t3_live_pipeline_shielded(...))``
+    rather than ``asyncio.create_task(asyncio.shield(...))``, because
+    ``asyncio.shield()`` returns a ``Future`` while ``create_task()`` requires a
+    coroutine.
+    """
+    return await asyncio.shield(
+        _run_t3_live_pipeline(runtime, repos, symbol, source_type=source_type)
+    )
 
 
 # ── Main loop ───────────────────────────────────────────────────────────────

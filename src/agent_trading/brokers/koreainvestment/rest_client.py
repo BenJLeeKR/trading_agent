@@ -854,6 +854,7 @@ class KISRestClient:
             If ``True``, use the held-position sell reserved budget lane.
         """
         # 1. Budget check — with async pacing for global REST cap
+        _token_consumed = False
         if self.budget_manager is not None:
             max_global_retries = 3
             for attempt in range(1, max_global_retries + 1):
@@ -891,135 +892,146 @@ class KISRestClient:
                             raise  # Final attempt failed — propagate
                     else:
                         raise  # Per-bucket exhaustion — re-raise immediately
+            _token_consumed = True
 
-        # 2. Circuit breaker
-        if self._circuit_breaker.state == CircuitState.OPEN:
-            raise BrokerError(
-                broker_name=BrokerName.KOREA_INVESTMENT,
-                error_type=BrokerErrorType.API_ERROR,
-                retryable=False,
-                raw_message=f"KIS circuit breaker open for {endpoint_key}",
-            )
-
-        # 3. Build request
-        tr_id = self._get_tr_id(tr_id_key)
-        headers = await self._build_headers(tr_id)
-        url = KIS_ENDPOINTS[endpoint_key]
-
-        if body and requires_hashkey:
-            headers["hashkey"] = self._generate_signature(body)
-
-        client = await self._get_client()
-
-        # 4. Execute with exponential backoff retry on timeout
-        MAX_RETRIES = 2  # 최대 2회 추가 시도 (총 3회)
-        for attempt in range(MAX_RETRIES + 1):
-            try:
-                if method.upper() == "GET":
-                    resp = await client.get(url, headers=headers, params=params)
-                else:
-                    resp = await client.post(url, headers=headers, json=body, params=params)
-                break  # 성공 시 루프 탈출
-            except httpx.TimeoutException:
-                if attempt < MAX_RETRIES:
-                    wait = 1.0 * (2 ** attempt)  # 1.0s, 2.0s
-                    logger.warning(
-                        "KIS %s: timeout (attempt %d/%d), retrying in %.1fs",
-                        endpoint_key, attempt + 1, MAX_RETRIES + 1, wait,
-                    )
-                    await asyncio.sleep(wait)
-                    continue
-                self._circuit_breaker.record_failure()
+        try:
+            # 2. Circuit breaker
+            if self._circuit_breaker.state == CircuitState.OPEN:
                 raise BrokerError(
                     broker_name=BrokerName.KOREA_INVESTMENT,
-                    error_type=BrokerErrorType.TIMEOUT,
-                    retryable=True,
-                    raw_message=f"KIS {endpoint_key}: timeout after {MAX_RETRIES + 1} attempts",
+                    error_type=BrokerErrorType.API_ERROR,
+                    retryable=False,
+                    raw_message=f"KIS circuit breaker open for {endpoint_key}",
                 )
-            except httpx.RequestError as e:
-                self._circuit_breaker.record_failure()
-                raise BrokerError(
-                    broker_name=BrokerName.KOREA_INVESTMENT,
-                    error_type=BrokerErrorType.NETWORK_ERROR,
-                    retryable=True,
-                    raw_message=f"KIS {endpoint_key}: network error: {e}",
-                )
-            except RuntimeError:
-                # Python 3.14+: httpx/httpcore may raise RuntimeError('Event loop is closed')
-                # during teardown when the event loop has already been shut down.
-                # Re-raise as a clearer error so callers can distinguish this from
-                # a genuine API failure.
-                raise RuntimeError(
-                    f"KIS {endpoint_key}: event loop closed during HTTP request "
-                    f"(Python 3.14 httpx/httpcore teardown issue). "
-                    f"This is an infrastructure issue, not a credential problem."
-                ) from None
 
-        # 5. Parse + normalise with TokenExpiredError auto-recovery
-        # Read-only bucket에서만 TokenExpiredError 자동 복구 시도
-        # ORDER bucket은 중복 주문 위험으로 자동 재시도 금지
-        max_reauth_attempts = 2 if bucket in (
-            BucketType.INQUIRY,
-            BucketType.MARKET_DATA,
-            BucketType.RECONCILIATION,
-        ) else 1
+            # 3. Build request
+            tr_id = self._get_tr_id(tr_id_key)
+            headers = await self._build_headers(tr_id)
+            url = KIS_ENDPOINTS[endpoint_key]
 
-        for reauth_attempt in range(max_reauth_attempts):
-            try:
-                data = self._raise_on_error(resp, endpoint=endpoint_key)
-                self._circuit_breaker.record_success()
-                return self._normalize_response(data, endpoint=endpoint_key)
-            except TokenExpiredError as e:
-                if reauth_attempt < max_reauth_attempts - 1:
-                    logger.warning(
-                        "KIS %s: token expired (attempt %d/%d), reauthenticating...",
-                        endpoint_key, reauth_attempt + 1, max_reauth_attempts,
+            if body and requires_hashkey:
+                headers["hashkey"] = self._generate_signature(body)
+
+            client = await self._get_client()
+
+            # 4. Execute with exponential backoff retry on timeout
+            MAX_RETRIES = 2  # 최대 2회 추가 시도 (총 3회)
+            for attempt in range(MAX_RETRIES + 1):
+                try:
+                    if method.upper() == "GET":
+                        resp = await client.get(url, headers=headers, params=params)
+                    else:
+                        resp = await client.post(url, headers=headers, json=body, params=params)
+                    break  # 성공 시 루프 탈출
+                except httpx.TimeoutException:
+                    if attempt < MAX_RETRIES:
+                        wait = 1.0 * (2 ** attempt)  # 1.0s, 2.0s
+                        logger.warning(
+                            "KIS %s: timeout (attempt %d/%d), retrying in %.1fs",
+                            endpoint_key, attempt + 1, MAX_RETRIES + 1, wait,
+                        )
+                        await asyncio.sleep(wait)
+                        continue
+                    self._circuit_breaker.record_failure()
+                    raise BrokerError(
+                        broker_name=BrokerName.KOREA_INVESTMENT,
+                        error_type=BrokerErrorType.TIMEOUT,
+                        retryable=True,
+                        raw_message=f"KIS {endpoint_key}: timeout after {MAX_RETRIES + 1} attempts",
                     )
-                    # 5a. In-memory + file cache 무효화
-                    await self._invalidate_token_cache()
-                    # 5b. 재인증: authenticate()가 cache miss → HTTP /oauth2/tokenP 호출
-                    await self.authenticate()
-                    # 5c. 헤더에 새 token 반영 후 재시도
-                    tr_id = self._get_tr_id(tr_id_key)
-                    headers = await self._build_headers(tr_id)
-                    if body and requires_hashkey:
-                        headers["hashkey"] = self._generate_signature(body)
-                    # 5d. 동일 요청 재시도
-                    try:
-                        if method.upper() == "GET":
-                            resp = await client.get(url, headers=headers, params=params)
-                        else:
-                            resp = await client.post(url, headers=headers, json=body, params=params)
-                    except httpx.TimeoutException:
+                except httpx.RequestError as e:
+                    self._circuit_breaker.record_failure()
+                    raise BrokerError(
+                        broker_name=BrokerName.KOREA_INVESTMENT,
+                        error_type=BrokerErrorType.NETWORK_ERROR,
+                        retryable=True,
+                        raw_message=f"KIS {endpoint_key}: network error: {e}",
+                    )
+                except RuntimeError:
+                    # Python 3.14+: httpx/httpcore may raise RuntimeError('Event loop is closed')
+                    # during teardown when the event loop has already been shut down.
+                    # Re-raise as a clearer error so callers can distinguish this from
+                    # a genuine API failure.
+                    raise RuntimeError(
+                        f"KIS {endpoint_key}: event loop closed during HTTP request "
+                        f"(Python 3.14 httpx/httpcore teardown issue). "
+                        f"This is an infrastructure issue, not a credential problem."
+                    ) from None
+
+            # 5. Parse + normalise with TokenExpiredError auto-recovery
+            # Read-only bucket에서만 TokenExpiredError 자동 복구 시도
+            # ORDER bucket은 중복 주문 위험으로 자동 재시도 금지
+            max_reauth_attempts = 2 if bucket in (
+                BucketType.INQUIRY,
+                BucketType.MARKET_DATA,
+                BucketType.RECONCILIATION,
+            ) else 1
+
+            for reauth_attempt in range(max_reauth_attempts):
+                try:
+                    data = self._raise_on_error(resp, endpoint=endpoint_key)
+                    self._circuit_breaker.record_success()
+                    _token_consumed = False  # 성공 → release 불필요
+                    return self._normalize_response(data, endpoint=endpoint_key)
+                except TokenExpiredError as e:
+                    if reauth_attempt < max_reauth_attempts - 1:
+                        logger.warning(
+                            "KIS %s: token expired (attempt %d/%d), reauthenticating...",
+                            endpoint_key, reauth_attempt + 1, max_reauth_attempts,
+                        )
+                        # 5a. In-memory + file cache 무효화
+                        await self._invalidate_token_cache()
+                        # 5b. 재인증: authenticate()가 cache miss → HTTP /oauth2/tokenP 호출
+                        await self.authenticate()
+                        # 5c. 헤더에 새 token 반영 후 재시도
+                        tr_id = self._get_tr_id(tr_id_key)
+                        headers = await self._build_headers(tr_id)
+                        if body and requires_hashkey:
+                            headers["hashkey"] = self._generate_signature(body)
+                        # 5d. 동일 요청 재시도
+                        try:
+                            if method.upper() == "GET":
+                                resp = await client.get(url, headers=headers, params=params)
+                            else:
+                                resp = await client.post(url, headers=headers, json=body, params=params)
+                        except httpx.TimeoutException:
+                            logger.error(
+                                "KIS %s: timeout during reauth retry, "
+                                "bubbling original TokenExpiredError",
+                                endpoint_key,
+                            )
+                            raise BrokerError(
+                                broker_name=BrokerName.KOREA_INVESTMENT,
+                                error_type=BrokerErrorType.TIMEOUT,
+                                retryable=False,
+                                raw_message=f"KIS {endpoint_key}: timeout during reauth retry",
+                            ) from e
+                        except httpx.RequestError as exc:
+                            self._circuit_breaker.record_failure()
+                            raise BrokerError(
+                                broker_name=BrokerName.KOREA_INVESTMENT,
+                                error_type=BrokerErrorType.NETWORK_ERROR,
+                                retryable=True,
+                                raw_message=f"KIS {endpoint_key}: network error during reauth retry: {exc}",
+                            ) from e
+                        # 재시도 루프 계속 (다음 iteration에서 _raise_on_error 재호출)
+                        continue
+                    else:
+                        # 재인증 후에도 동일 오류 → 원본 TokenExpiredError 전파
                         logger.error(
-                            "KIS %s: timeout during reauth retry, "
-                            "bubbling original TokenExpiredError",
+                            "KIS %s: token expired after re-authentication, "
+                            "bubbling original TokenExpiredError to caller",
                             endpoint_key,
                         )
-                        raise BrokerError(
-                            broker_name=BrokerName.KOREA_INVESTMENT,
-                            error_type=BrokerErrorType.TIMEOUT,
-                            retryable=False,
-                            raw_message=f"KIS {endpoint_key}: timeout during reauth retry",
-                        ) from e
-                    except httpx.RequestError as exc:
-                        self._circuit_breaker.record_failure()
-                        raise BrokerError(
-                            broker_name=BrokerName.KOREA_INVESTMENT,
-                            error_type=BrokerErrorType.NETWORK_ERROR,
-                            retryable=True,
-                            raw_message=f"KIS {endpoint_key}: network error during reauth retry: {exc}",
-                        ) from e
-                    # 재시도 루프 계속 (다음 iteration에서 _raise_on_error 재호출)
-                    continue
-                else:
-                    # 재인증 후에도 동일 오류 → 원본 TokenExpiredError 전파
-                    logger.error(
-                        "KIS %s: token expired after re-authentication, "
-                        "bubbling original TokenExpiredError to caller",
-                        endpoint_key,
-                    )
-                    raise
+                        raise
+        finally:
+            if _token_consumed:
+                # Release per-bucket token
+                b = self.budget_manager._bucket(bucket)
+                b.release(1)
+                # Release global REST token (if consumed)
+                if not skip_global_rest and self.budget_manager.global_rest is not None:
+                    self.budget_manager.global_rest.release(1)
 
     # ------------------------------------------------------------------
     # Order operations

@@ -71,6 +71,7 @@ from scripts.run_decision_loop import (
     _run_one_cycle,
     _run_precheck,
     _run_t3_live_pipeline,
+    _run_t3_live_pipeline_shielded,
     _serialize_cycle_result,
     _serialize_precheck,
     persist_seeded_events,
@@ -2142,8 +2143,9 @@ class TestRunT3LivePipeline:
             link="https://news.example.com",
             confidence_score=0.8,
         )
+        from agent_trading.services.seeded_news_service import PipelineMetrics
         runtime["seeded_news_service"].process_seeds = AsyncMock(
-            return_value=([candidate], {}),
+            return_value=([candidate], PipelineMetrics()),
         )
 
         # persist_seeded_events가 in-memory repo를 사용하도록 패치
@@ -2269,8 +2271,9 @@ class TestRunT3LivePipelinePartialPersist:
             link="https://news.example.com",
             confidence_score=0.8,
         )
+        from agent_trading.services.seeded_news_service import PipelineMetrics
         runtime["seeded_news_service"].process_seeds = AsyncMock(
-            return_value=([candidate], {}),
+            return_value=([candidate], PipelineMetrics()),
         )
 
         # convert_seeded_candidates에서 timeout 발생시키기
@@ -2367,6 +2370,53 @@ class TestRunT3LivePipelinePartialPersist:
         assert all(e.event_type.startswith("Y|") for e in partial_events), (
             "Seeds-based events should have KIS disclosure prefix (Y|)"
         )
+
+
+class TestRunT3LivePipelineShielded:
+    """``_run_t3_live_pipeline_shielded()`` — wrapper coroutine for shield.
+
+    이전 ``asyncio.create_task(asyncio.shield(coro))`` 구현은
+    ``asyncio.shield()``가 Future를 반환하므로 TypeError를 유발했다.
+    wrapper coroutine을 사용하면 create_task가 정상 동작한다.
+    """
+
+    @pytest.mark.asyncio
+    async def test_creatable_via_create_task(self) -> None:
+        """``create_task(_run_t3_live_pipeline_shielded(...))`` → 정상 Task 생성.
+
+        이전 ``create_task(asyncio.shield(...))``는 TypeError를 유발했으나,
+        wrapper coroutine을 사용하면 create_task가 정상 동작함을 검증.
+        """
+        import asyncio
+
+        runtime: dict[str, object] = {}
+        repos = build_in_memory_repositories()
+
+        # create_task가 TypeError 없이 성공해야 함
+        task = asyncio.create_task(
+            _run_t3_live_pipeline_shielded(runtime, repos, SYMBOL)
+        )
+        assert isinstance(task, asyncio.Task)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    @pytest.mark.asyncio
+    async def test_propagates_inner_result(self) -> None:
+        """wrapper coroutine이 ``asyncio.shield``를 통해 내부 결과를 전파."""
+        import asyncio
+
+        runtime: dict[str, object] = {}
+        repos = build_in_memory_repositories()
+
+        task = asyncio.create_task(
+            _run_t3_live_pipeline_shielded(runtime, repos, SYMBOL)
+        )
+        # _run_t3_live_pipeline은 서비스가 없으면 graceful skip (None 반환)
+        result = await task
+        assert result is None
 
 
 class TestT3DegradedPath:
