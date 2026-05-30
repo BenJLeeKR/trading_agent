@@ -300,7 +300,11 @@ class TestRunOneCycle:
             "scripts.run_event_ingestion_loop.postgres_runtime",
             return_value=_mock_runtime(),
         ):
-            result = await _run_one_cycle(cycle=1)
+            with patch(
+                "scripts.run_event_ingestion_loop._build_polling_workers",
+                return_value=[],
+            ):
+                result = await _run_one_cycle(cycle=1)
 
         assert result["cycle"] == 1
         assert result["total_new_events"] == 0
