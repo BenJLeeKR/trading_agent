@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "<string>", line 33, in check_broker
+    token = await client.authenticate()
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent_trading/src/agent_trading/brokers/koreainvestment/rest_client.py", line 525, in authenticate
+    data = self._raise_on_error(resp, endpoint="oauth2_token")
+  File "/workspace/agent_trading/src/agent_trading/brokers/koreainvestment/rest_client.py", line 728, in _raise_on_error
+    raise BrokerError(
+    ...<4 lines>...
+    )
+agent_trading.brokers.errors.BrokerError: koreainvestment | api_error | KIS oauth2_token: HTTP 403 (msg_cd=EGW00133): 접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)
+ERROR: koreainvestment | api_error | KIS oauth2_token: HTTP 403 (msg_cd=EGW00133): 접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)

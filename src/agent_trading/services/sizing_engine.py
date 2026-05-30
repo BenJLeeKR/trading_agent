@@ -206,9 +206,10 @@ def _resolve_buy_target_quantity(inputs: SizingInputs) -> Decimal:
     starting quantity for BUY orders, preventing excessive share counts
     on high-price stocks.
 
-    The allocation-based target is **capped by requested_quantity** —
-    allocation can reduce the quantity when cash/price warrants it,
-    but must never increase it beyond what was explicitly requested.
+    The allocation-based target **replaces** the caller's placeholder
+    quantity entirely.  Downstream constraints (cash, concentration,
+    min_entry_threshold, max_order_qty, max_order_value) provide actual
+    safety limits that protect against excessive order sizes.
     """
     # Determine effective price: requested_price > reference_price > fallback
     effective_price = inputs.requested_price or inputs.reference_price
@@ -242,11 +243,6 @@ def _resolve_buy_target_quantity(inputs: SizingInputs) -> Decimal:
     # Calculate allocation-based target quantity
     target_notional = effective_cash * _ALLOCATION_PCT
     target_qty = int(target_notional / effective_price)
-
-    # Cap by requested_quantity: allocation can reduce but never increase quantity
-    target_qty_decimal = Decimal(str(target_qty))
-    if target_qty_decimal > inputs.requested_quantity:
-        return inputs.requested_quantity
 
     # Minimum 1 share
     if target_qty < 1:

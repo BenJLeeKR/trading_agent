@@ -1,0 +1,33 @@
+2026-05-30 11:01:42 [DEBUG] Using selector: EpollSelector
+2026-05-30 11:01:42 [INFO] Found 16 stuck RECONCILE_REQUIRED order(s)
+2026-05-30 11:01:42 [INFO] [1/16] DRY-RUN order=c87f5ec3-2647-440c-a959-5c185a9886cd account=a44a02d1-7f32-5a62-99f7-235abeb58284 broker_native_ids=['0000032815'] (would trigger trigger_type=requires_reconciliation symbol=000990 side=buy)
+2026-05-30 11:01:42 [INFO] [2/16] DRY-RUN order=517c201f-89ca-4f26-83c8-db9235e440d2 account=a44a02d1-7f32-5a62-99f7-235abeb58284 broker_native_ids=['0000032810'] (would trigger trigger_type=requires_reconciliation symbol=000270 side=sell)
+2026-05-30 11:01:42 [INFO] [3/16] DRY-RUN order=2a513146-0b4f-43c9-a2c9-b5b37ef04eaa account=a44a02d1-7f32-5a62-99f7-235abeb58284 broker_native_ids=['0000031790'] (would trigger trigger_type=requires_reconciliation symbol=007070 side=buy)
+2026-05-30 11:01:42 [INFO] [4/16] DRY-RUN order=30393929-7c84-41c7-9c4d-a1f7b44dd268 account=a44a02d1-7f32-5a62-99f7-235abeb58284 broker_native_ids=['0000031759'] (would trigger trigger_type=requires_reconciliation symbol=001800 side=buy)
+2026-05-30 11:01:42 [INFO] [5/16] DRY-RUN order=75a3fee2-b222-4e2c-a992-a962e8ba365e account=a44a02d1-7f32-5a62-99f7-235abeb58284 broker_native_ids=['0000031736'] (would trigger trigger_type=requires_reconciliation symbol=000270 side=buy)
+2026-05-30 11:01:42 [INFO] [6/16] DRY-RUN order=a3616426-7eac-4b6e-8b4d-7a0d4bf4c9f6 account=a44a02d1-7f32-5a62-99f7-235abeb58284 broker_native_ids=['0000035537'] (would trigger trigger_type=requires_reconciliation symbol=004000 side=buy)
+2026-05-30 11:01:42 [INFO] [7/16] DRY-RUN order=3059e254-8582-4731-8683-691b387d2a1c account=a44a02d1-7f32-5a62-99f7-235abeb58284 broker_native_ids=['0000035534'] (would trigger trigger_type=requires_reconciliation symbol=001800 side=buy)
+2026-05-30 11:01:42 [INFO] [8/16] DRY-RUN order=e82bb4a7-2985-4259-bf35-e4b1e45708e3 account=a44a02d1-7f32-5a62-99f7-235abeb58284 broker_native_ids=['0000035513'] (would trigger trigger_type=requires_reconciliation symbol=000810 side=buy)
+2026-05-30 11:01:42 [INFO] [9/16] DRY-RUN order=2a12c8d2-8e75-4ead-ba5f-d6edac6f45c7 account=a44a02d1-7f32-5a62-99f7-235abeb58284 broker_native_ids=['0000034390'] (would trigger trigger_type=requires_reconciliation symbol=004000 side=buy)
+2026-05-30 11:01:42 [INFO] [10/16] DRY-RUN order=843fadae-b8d6-4dd2-80d9-601af2d8cf76 account=a44a02d1-7f32-5a62-99f7-235abeb58284 broker_native_ids=['0000034386'] (would trigger trigger_type=requires_reconciliation symbol=001450 side=buy)
+2026-05-30 11:01:42 [INFO] [11/16] DRY-RUN order=ed6f4413-37d6-4775-b3bc-467ed4622af8 account=a44a02d1-7f32-5a62-99f7-235abeb58284 broker_native_ids=['0000034364'] (would trigger trigger_type=requires_reconciliation symbol=000270 side=buy)
+2026-05-30 11:01:42 [INFO] [12/16] DRY-RUN order=57ead625-a044-40c6-8785-07093a1ad754 account=a44a02d1-7f32-5a62-99f7-235abeb58284 broker_native_ids=['0000023345'] (would trigger trigger_type=requires_reconciliation symbol=001450 side=sell)
+2026-05-30 11:01:42 [INFO] [13/16] DRY-RUN order=609c1ab6-2ddb-4c1c-92ac-101c2740e25c account=a44a02d1-7f32-5a62-99f7-235abeb58284 broker_native_ids=['0000000749'] (would trigger trigger_type=requires_reconciliation symbol=000150 side=buy)
+2026-05-30 11:01:42 [INFO] [14/16] DRY-RUN order=28b3d35d-160b-428e-949e-07bf618f11a7 account=a44a02d1-7f32-5a62-99f7-235abeb58284 broker_native_ids=['0000000673'] (would trigger trigger_type=requires_reconciliation symbol=000150 side=buy)
+2026-05-30 11:01:42 [INFO] [15/16] DRY-RUN order=922d6017-df8c-428e-aaf1-738b338a6c79 account=a44a02d1-7f32-5a62-99f7-235abeb58284 broker_native_ids=['0000035601'] (would trigger trigger_type=requires_reconciliation symbol=001230 side=buy)
+2026-05-30 11:01:42 [INFO] [16/16] DRY-RUN order=989236cb-6735-4adf-bb5c-ba6cd1151f0c account=a44a02d1-7f32-5a62-99f7-235abeb58284 broker_native_ids=['0000034878'] (would trigger trigger_type=requires_reconciliation symbol=001740 side=buy)
+2026-05-30 11:01:42 [INFO] 
+=== Backfill Summary ===
+  scanned:   16
+  triggered: 0
+  reused:    0
+  skipped:   16 (dry-run)
+  failed:    0
+  total:     16
+=== Backfill Summary ===
+  scanned:   16
+  triggered: 0
+  reused:    0
+  skipped:   16 (dry-run)
+  failed:    0
+  total:     16

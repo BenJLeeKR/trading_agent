@@ -1089,6 +1089,8 @@ async def test_build_adapter_for_broker_account(
         account_product_code=worker_with_settings.settings.kis_account_product_code,
         env=worker_with_settings.settings.kis_env,
         base_url=worker_with_settings.settings.kis_base_url,
+        dev_token_cache_enabled=worker_with_settings.settings.kis_dev_token_cache_enabled,
+        dev_token_cache_path=worker_with_settings.settings.kis_dev_token_cache_path,
     )
     MockKISAdapter.assert_called_once_with(rest_client=mock_rest_client)
     mock_adapter.authenticate.assert_awaited_once()

@@ -1,0 +1,74 @@
+=== Cached token check ===
+Token expiry: 1780198880.53588
+
+=== Running reconciliation worker (--once --run-id) ===
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: Using selector: EpollSelector
+2026-05-30 12:50:25 [INFO] reconciliation-worker: Starting reconciliation worker loop (interval=30s, limit=10, max_cycles=1, dry_run=False, account_id=None, run_id=5e1573f3-a0a8-4112-9d6f-60341aeeed90) ...
+2026-05-30 12:50:25 [INFO] reconciliation-worker: === Cycle 1 ===
+2026-05-30 12:50:25 [INFO] reconciliation-worker: Found 1 pending reconciliation run(s) to process.
+2026-05-30 12:50:25 [INFO] reconciliation-worker: Processing reconciliation run: run_id=5e1573f3-a0a8-4112-9d6f-60341aeeed90 account_id=a44a02d1-7f32-5a62-99f7-235abeb58284 trigger_type=requires_reconciliation
+2026-05-30 12:50:25 [INFO] reconciliation-worker: paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: Token cache: dev-file hit path=.cache/kis_token.json
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: connect_tcp.started host='openapivts.koreainvestment.com' port=29443 local_address=None timeout=5.0 socket_options=None
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: connect_tcp.complete return_value=<httpcore._backends.anyio.AnyIOStream object at 0x74bc32a10c20>
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: start_tls.started ssl_context=<ssl.SSLContext object at 0x74bc329a8390> server_hostname='openapivts.koreainvestment.com' timeout=5.0
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: start_tls.complete return_value=<httpcore._backends.anyio.AnyIOStream object at 0x74bc329cd090>
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: send_request_headers.started request=<Request [b'POST']>
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: send_request_headers.complete
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: send_request_body.started request=<Request [b'POST']>
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: send_request_body.complete
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: receive_response_headers.started request=<Request [b'POST']>
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Date', b'Sat, 30 May 2026 03:50:25 GMT'), (b'X-Content-Type-Options', b'nosniff'), (b'Content-Length', b'55'), (b'X-ORACLE-DMS-ECID', b'006Kk3SYzgnFw0zzzR06zzEiXqE0jYYz10006HC004Bcl'), (b'X-ORACLE-DMS-RID', b'0:1'), (b'X-XSS-Protection', b'1; mode=block'), (b'Keep-Alive', b'timeout=5, max=100'), (b'Connection', b'Keep-Alive'), (b'Content-Type', b'application/json')])
+2026-05-30 12:50:25 [INFO] reconciliation-worker: HTTP Request: POST https://openapivts.koreainvestment.com:29443/oauth2/Approval "HTTP/1.1 200 OK"
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: receive_response_body.started request=<Request [b'POST']>
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: receive_response_body.complete
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: response_closed.started
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: response_closed.complete
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: close.started
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: close.complete
+2026-05-30 12:50:25 [INFO] reconciliation-worker: KIS adapter created and authenticated: broker_account_id=7f39fc04-346a-5484-90ab-80e8a1d04a15 token_prefix=eyJ0eXAiOiJKV1Qi
+2026-05-30 12:50:25 [INFO] reconciliation-worker: Cached broker adapter: account_id=a44a02d1-7f32-5a62-99f7-235abeb58284
+2026-05-30 12:50:25 [INFO] reconciliation-worker: Inquiring broker for order: run_id=5e1573f3-a0a8-4112-9d6f-60341aeeed90 order_id=c87f5ec3-2647-440c-a959-5c185a9886cd broker_native_order_id=0000032815 account_ref=50186448
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: Token cache: in-memory hit expires_at=1780199125.4656305
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: connect_tcp.started host='openapivts.koreainvestment.com' port=29443 local_address=None timeout=5.0 socket_options=None
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: connect_tcp.complete return_value=<httpcore._backends.anyio.AnyIOStream object at 0x74bc329ced50>
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: start_tls.started ssl_context=<ssl.SSLContext object at 0x74bc329a8390> server_hostname='openapivts.koreainvestment.com' timeout=5.0
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: start_tls.complete return_value=<httpcore._backends.anyio.AnyIOStream object at 0x74bc32a00770>
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: send_request_headers.started request=<Request [b'GET']>
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: send_request_headers.complete
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: send_request_body.started request=<Request [b'GET']>
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: send_request_body.complete
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: receive_response_headers.started request=<Request [b'GET']>
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Date', b'Sat, 30 May 2026 03:50:25 GMT'), (b'X-Content-Type-Options', b'nosniff'), (b'Content-Length', b'11726'), (b'X-ORACLE-DMS-ECID', b'006Kk3SZBGDFw0zzzR06zzEjX2E0jYYz300047w002llb'), (b'tr_cont', b'F'), (b'tr_id', b'VTTC0081R'), (b'gt_uid', b'b1006f605bda11f1827ccb4fda3373f3'), (b'X-ORACLE-DMS-RID', b'0:1'), (b'X-XSS-Protection', b'1; mode=block'), (b'Keep-Alive', b'timeout=5, max=100'), (b'Connection', b'Keep-Alive'), (b'Content-Type', b'application/json')])
+2026-05-30 12:50:25 [INFO] reconciliation-worker: HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260523&INQR_END_DT=20260530&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100= "HTTP/1.1 200 OK"
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: receive_response_body.started request=<Request [b'GET']>
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: receive_response_body.complete
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: response_closed.started
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: response_closed.complete
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: close.started
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: close.complete
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: inquire-daily-ccld (paginated): total_count=15, odnos=['', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: Token cache: in-memory hit expires_at=1780199125.4656305
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: connect_tcp.started host='openapivts.koreainvestment.com' port=29443 local_address=None timeout=5.0 socket_options=None
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: connect_tcp.complete return_value=<httpcore._backends.anyio.AnyIOStream object at 0x74bc32a01350>
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: start_tls.started ssl_context=<ssl.SSLContext object at 0x74bc329a8390> server_hostname='openapivts.koreainvestment.com' timeout=5.0
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: start_tls.complete return_value=<httpcore._backends.anyio.AnyIOStream object at 0x74bc32a15910>
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: send_request_headers.started request=<Request [b'GET']>
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: send_request_headers.complete
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: send_request_body.started request=<Request [b'GET']>
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: send_request_body.complete
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: receive_response_headers.started request=<Request [b'GET']>
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: receive_response_headers.complete return_value=(b'HTTP/1.1', 500, b'Internal Server Error', [(b'Date', b'Sat, 30 May 2026 03:50:25 GMT'), (b'X-Content-Type-Options', b'nosniff'), (b'Content-Length', b'109'), (b'X-ORACLE-DMS-ECID', b'006Kk3SZcxvFw0zzzR06zzEjX2E0jYYz300047w002lld'), (b'X-ORACLE-DMS-RID', b'0:1'), (b'X-XSS-Protection', b'1; mode=block'), (b'Connection', b'close'), (b'Content-Type', b'application/json')])
+2026-05-30 12:50:25 [INFO] reconciliation-worker: HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-balance?CANO=50186448&ACNT_PRDT_CD=01&AFHR_FLPR_YN=N&OFL_YN=&INQR_DVSN=01&UNPR_DVSN=01&FUND_STTL_ICLD_YN=N&FNCG_AMT_AUTO_RDPT_YN=N&PRCS_DVSN=01&COST_ICLD_YN=N "HTTP/1.1 500 Internal Server Error"
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: receive_response_body.started request=<Request [b'GET']>
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: receive_response_body.complete
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: response_closed.started
+2026-05-30 12:50:25 [DEBUG] reconciliation-worker: response_closed.complete
+2026-05-30 12:50:25 [WARNING] reconciliation-worker: order_manager is None, falling back to direct status update for c87f5ec3-2647-440c-a959-5c185a9886cd
+2026-05-30 12:50:25 [INFO] reconciliation-worker: EXPIRED fallback applied to c87f5ec3-2647-440c-a959-5c185a9886cd (age=1290.6min, after_hours=False)
+2026-05-30 12:50:25 [INFO] reconciliation-worker: Run marked resolved: run_id=5e1573f3-a0a8-4112-9d6f-60341aeeed90
+2026-05-30 12:50:25 [INFO] reconciliation-worker: Run resolved: run_id=5e1573f3-a0a8-4112-9d6f-60341aeeed90 orders=1
+2026-05-30 12:50:25 [INFO] reconciliation-worker: cycle-complete  runs=1 (resolved=1 skipped=0 failed=0 retained=0)  orders=1  elapsed=0.4s
+2026-05-30 12:50:25 [INFO] reconciliation-worker: Cycle 1 complete (took 0.4s). Next cycle in 30s ...
+2026-05-30 12:50:25 [INFO] reconciliation-worker: Reached max_cycles=1 — exiting.
+2026-05-30 12:50:25 [INFO] reconciliation-worker: Shutdown complete (1 cycles executed).

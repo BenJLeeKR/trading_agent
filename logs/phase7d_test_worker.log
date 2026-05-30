@@ -1,0 +1,151 @@
+============================= test session starts ==============================
+platform linux -- Python 3.14.4, pytest-8.4.2, pluggy-1.6.0 -- /usr/bin/python3
+cachedir: .pytest_cache
+rootdir: /workspace/agent_trading
+configfile: pytest.ini
+plugins: asyncio-1.3.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 28 items
+
+tests/services/test_reconciliation_worker.py::test_trigger_and_link_creates_run_and_link PASSED [  3%]
+tests/services/test_reconciliation_worker.py::test_trigger_and_link_without_order_request_id PASSED [  7%]
+tests/services/test_reconciliation_worker.py::test_list_pending_runs_returns_started_only PASSED [ 10%]
+tests/services/test_reconciliation_worker.py::test_list_pending_runs_filter_by_account_id PASSED [ 14%]
+tests/services/test_reconciliation_worker.py::test_list_pending_runs_limit PASSED [ 17%]
+tests/services/test_reconciliation_worker.py::test_get_run_order_links_returns_links PASSED [ 21%]
+tests/services/test_reconciliation_worker.py::test_get_run_order_links_empty_for_unknown_run PASSED [ 25%]
+tests/services/test_reconciliation_worker.py::test_process_run_no_links PASSED [ 28%]
+tests/services/test_reconciliation_worker.py::test_process_run_no_account_found PASSED [ 32%]
+tests/services/test_reconciliation_worker.py::test_process_run_all_resolved PASSED [ 35%]
+tests/services/test_reconciliation_worker.py::test_process_run_order_fails PASSED [ 39%]
+tests/services/test_reconciliation_worker.py::test_process_run_no_broker_orders PASSED [ 42%]
+tests/services/test_reconciliation_worker.py::test_process_run_dry_run_retains_status PASSED [ 46%]
+tests/services/test_reconciliation_worker.py::test_process_run_multiple_orders_partial_fail PASSED [ 50%]
+tests/services/test_reconciliation_worker.py::test_process_run_idempotent_started_only PASSED [ 53%]
+tests/services/test_reconciliation_worker.py::test_service_list_pending_runs PASSED [ 57%]
+tests/services/test_reconciliation_worker.py::test_service_get_run_order_links PASSED [ 60%]
+tests/services/test_reconciliation_worker.py::test_build_adapter_for_broker_account FAILED [ 64%]
+tests/services/test_reconciliation_worker.py::test_build_adapter_for_broker_account_not_found PASSED [ 67%]
+tests/services/test_reconciliation_worker.py::test_build_adapter_for_broker_name_not_kis PASSED [ 71%]
+tests/services/test_reconciliation_worker.py::test_account_level_auth_reuse PASSED [ 75%]
+tests/services/test_reconciliation_worker.py::test_resolve_unknown_state_success PASSED [ 78%]
+tests/services/test_reconciliation_worker.py::test_resolve_unknown_state_truth_unavailable PASSED [ 82%]
+tests/services/test_reconciliation_worker.py::test_resolve_unknown_state_inquiry_failure PASSED [ 85%]
+tests/services/test_reconciliation_worker.py::test_authenticate_failure_worker_continues PASSED [ 89%]
+tests/services/test_reconciliation_worker.py::test_broker_adapter_creation_failure_graceful PASSED [ 92%]
+tests/services/test_reconciliation_worker.py::test_process_run_with_broker_adapter PASSED [ 96%]
+tests/services/test_reconciliation_worker.py::test_process_cycle_summary PASSED [100%]
+
+=================================== FAILURES ===================================
+____________________ test_build_adapter_for_broker_account _____________________
+
+repos = RepositoryContainer(unit_of_work=<agent_trading.repositories.memory.InMemoryUnitOfWork object at 0x75e1d538f5f0>, agen...940>, market_session_repo=<agent_trading.repositories.memory.InMemoryMarketSessionRepository object at 0x75e1d50d8ec0>)
+worker_with_settings = ReconciliationRunProcessor(repos=RepositoryContainer(unit_of_work=<agent_trading.repositories.memory.InMemoryUnitOfWor...ovider_timeout_seconds=120, execution_attempt_primary_truth=True), _broker_cache={}, dry_run=False, order_manager=None)
+
+    @pytest.mark.asyncio
+    async def test_build_adapter_for_broker_account(
+        repos: RepositoryContainer,
+        worker_with_settings: ReconciliationRunProcessor,
+    ) -> None:
+        """_build_adapter_for_broker_account creates & authenticates a KIS adapter."""
+        # Given: a koreainvestment broker account in the repo
+        broker_account_id = uuid4()
+        broker_account = BrokerAccountEntity(
+            broker_account_id=broker_account_id,
+            broker_name="koreainvestment",
+            account_ref="12345678-01",
+            environment=Environment.PAPER,
+            credential_ref="test-cred",
+            base_url="https://test.kis.com",
+            status="active",
+            broker_account_code="KIS-PAPER-****0001",
+        )
+        await repos.broker_accounts.add(broker_account)
+    
+        # When: building adapter → mock the lazy imports inside the method
+        with (
+            patch(
+                "agent_trading.brokers.koreainvestment.rest_client.KISRestClient",
+            ) as MockKISRestClient,
+            patch(
+                "agent_trading.brokers.koreainvestment.adapter.KoreaInvestmentAdapter",
+            ) as MockKISAdapter,
+        ):
+            mock_rest_client = AsyncMock()
+            MockKISRestClient.return_value = mock_rest_client
+    
+            mock_session = AsyncMock()
+            mock_session.metadata = {"token_prefix": "test-token"}
+    
+            mock_adapter = AsyncMock()
+            mock_adapter.authenticate = AsyncMock(return_value=mock_session)
+            MockKISAdapter.return_value = mock_adapter
+    
+            result = await worker_with_settings._build_adapter_for_broker_account(
+                broker_account_id=broker_account_id,
+                broker_name="koreainvestment",
+            )
+    
+        # Then: adapter is created, authenticated, and returned
+        assert result is mock_adapter
+    
+        # Verify REST client constructed with correct settings-driven params
+>       MockKISRestClient.assert_called_once_with(
+            api_key=worker_with_settings.settings.kis_api_key,
+            api_secret=worker_with_settings.settings.kis_api_secret,
+            account_number="12345678-01",
+            account_product_code=worker_with_settings.settings.kis_account_product_code,
+            env=worker_with_settings.settings.kis_env,
+            base_url=worker_with_settings.settings.kis_base_url,
+        )
+
+tests/services/test_reconciliation_worker.py:1085: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.14/unittest/mock.py:998: in assert_called_once_with
+    return self.assert_called_with(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <MagicMock name='KISRestClient' id='129612805121296'>, args = ()
+kwargs = {'account_number': '12345678-01', 'account_product_code': '01', 'api_key': 'PS5vNDY2X8aELSc9f64hFanpBZljSmqTgRIy', 'ap...B6rqCAIUMEf8R6XGF1TPZhdn0h0xWR7nMLTuz3tyeGEE+f8bd+EC/mNdefN7Ky55qgsKirDOVnx9UHmUujR23lEK/sUgfLTMOyKFB3827eOIeF8=', ...}
+expected = call(api_key='PS5vNDY2X8aELSc9f64hFanpBZljSmqTgRIy', api_secret='iRQ9gJqU+xHGTDnSQL4pSyC6fCLJz2QSIDIhJ4D1XxtOf2xbh77VE..._number='12345678-01', account_product_code='01', env='paper', base_url='https://openapivts.koreainvestment.com:29443')
+actual = call(api_key='PS5vNDY2X8aELSc9f64hFanpBZljSmqTgRIy', api_secret='iRQ9gJqU+xHGTDnSQL4pSyC6fCLJz2QSIDIhJ4D1XxtOf2xbh77VE...ps://openapivts.koreainvestment.com:29443', dev_token_cache_enabled=True, dev_token_cache_path='.cache/kis_token.json')
+_error_message = <function NonCallableMock.assert_called_with.<locals>._error_message at 0x75e1d50d9010>
+cause = None
+
+    def assert_called_with(self, /, *args, **kwargs):
+        """assert that the last call was made with the specified arguments.
+    
+        Raises an AssertionError if the args and keyword args passed in are
+        different to the last call to the mock."""
+        if self.call_args is None:
+            expected = self._format_mock_call_signature(args, kwargs)
+            actual = 'not called.'
+            error_message = ('expected call not found.\nExpected: %s\n  Actual: %s'
+                    % (expected, actual))
+            raise AssertionError(error_message)
+    
+        def _error_message():
+            msg = self._format_mock_failure_message(args, kwargs)
+            return msg
+        expected = self._call_matcher(_Call((args, kwargs), two=True))
+        actual = self._call_matcher(self.call_args)
+        if actual != expected:
+            cause = expected if isinstance(expected, Exception) else None
+>           raise AssertionError(_error_message()) from cause
+E           AssertionError: expected call not found.
+E           Expected: KISRestClient(api_key='PS5vNDY2X8aELSc9f64hFanpBZljSmqTgRIy', api_secret='iRQ9gJqU+xHGTDnSQL4pSyC6fCLJz2QSIDIhJ4D1XxtOf2xbh77VE/HVD7j61G4v2KhwB6rqCAIUMEf8R6XGF1TPZhdn0h0xWR7nMLTuz3tyeGEE+f8bd+EC/mNdefN7Ky55qgsKirDOVnx9UHmUujR23lEK/sUgfLTMOyKFB3827eOIeF8=', account_number='12345678-01', account_product_code='01', env='paper', base_url='https://openapivts.koreainvestment.com:29443')
+E             Actual: KISRestClient(api_key='PS5vNDY2X8aELSc9f64hFanpBZljSmqTgRIy', api_secret='iRQ9gJqU+xHGTDnSQL4pSyC6fCLJz2QSIDIhJ4D1XxtOf2xbh77VE/HVD7j61G4v2KhwB6rqCAIUMEf8R6XGF1TPZhdn0h0xWR7nMLTuz3tyeGEE+f8bd+EC/mNdefN7Ky55qgsKirDOVnx9UHmUujR23lEK/sUgfLTMOyKFB3827eOIeF8=', account_number='12345678-01', account_product_code='01', env='paper', base_url='https://openapivts.koreainvestment.com:29443', dev_token_cache_enabled=True, dev_token_cache_path='.cache/kis_token.json')
+
+/usr/lib/python3.14/unittest/mock.py:986: AssertionError
+=============================== warnings summary ===============================
+tests/services/test_reconciliation_worker.py::test_account_level_auth_reuse
+  /workspace/agent_trading/src/agent_trading/services/reconciliation_worker.py:345: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    logger.info(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/services/test_reconciliation_worker.py::test_build_adapter_for_broker_account
+=================== 1 failed, 27 passed, 1 warning in 0.10s ====================

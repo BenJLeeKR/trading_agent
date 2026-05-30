@@ -1,0 +1,100 @@
+[2026-05-30T04:16:35.622333+00:00] Expired fallback script started
+[SKIP] No started reconciliation run found.
+[2026-05-30T04:23:09.784856+00:00] Expired fallback script started
+[DSN] postgresql://trading:****@localhost:5432/trading
+[RUN] Found run: c1f4b7de-121e-4c87-86f3-e576c95926aa (account=a44a02d1-7f32-5a62-99f7-235abeb58284, status=failed, links=15)
+Traceback (most recent call last):
+  File "/workspace/agent_trading/tmp/apply_expired_fallback.py", line 212, in <module>
+    sys.exit(asyncio.run(main()))
+             ~~~~~~~~~~~^^^^^^^^
+  File "/usr/lib/python3.14/asyncio/runners.py", line 204, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.14/asyncio/runners.py", line 127, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.14/asyncio/base_events.py", line 719, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/workspace/agent_trading/tmp/apply_expired_fallback.py", line 73, in main
+    link_rows = await conn.fetch(
+                ^^^^^^^^^^^^^^^^^
+    ...<9 lines>...
+    )
+    ^
+  File "/home/project/.local/lib/python3.14/site-packages/asyncpg/connection.py", line 694, in fetch
+    return await self._execute(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "/home/project/.local/lib/python3.14/site-packages/asyncpg/connection.py", line 1873, in _execute
+    result, _ = await self.__execute(
+                ^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "/home/project/.local/lib/python3.14/site-packages/asyncpg/connection.py", line 1970, in __execute
+    result, stmt = await self._do_execute(
+                   ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "/home/project/.local/lib/python3.14/site-packages/asyncpg/connection.py", line 2013, in _do_execute
+    stmt = await self._get_statement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+  File "/home/project/.local/lib/python3.14/site-packages/asyncpg/connection.py", line 443, in _get_statement
+    statement = await self._protocol.prepare(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "asyncpg/protocol/protocol.pyx", line 165, in prepare
+asyncpg.exceptions.UndefinedColumnError: column o.reason_code does not exist
+[2026-05-30T04:23:26.800283+00:00] Expired fallback script started
+[DSN] postgresql://trading:****@localhost:5432/trading
+[RUN] Found run: c1f4b7de-121e-4c87-86f3-e576c95926aa (account=a44a02d1-7f32-5a62-99f7-235abeb58284, status=failed, links=15)
+[LINKS] Found 15 order(s) linked to run c1f4b7de-121e-4c87-86f3-e576c95926aa
+  Order 989236cb-6735-4adf-bb5c-ba6cd1151f0c: status=reconcile_required version=5 age=4217.6min status_reason_code=None
+    → EXPIRED ✓ (reason_code=reconciliation_expired_fallback, version=5→6)
+  Order 922d6017-df8c-428e-aaf1-738b338a6c79: status=reconcile_required version=5 age=4209.2min status_reason_code=None
+    → EXPIRED ✓ (reason_code=reconciliation_expired_fallback, version=5→6)
+  Order 28b3d35d-160b-428e-949e-07bf618f11a7: status=reconcile_required version=5 age=3152.8min status_reason_code=None
+    → EXPIRED ✓ (reason_code=reconciliation_expired_fallback, version=5→6)
+  Order 609c1ab6-2ddb-4c1c-92ac-101c2740e25c: status=reconcile_required version=5 age=3145.4min status_reason_code=None
+    → EXPIRED ✓ (reason_code=reconciliation_expired_fallback, version=5→6)
+  Order 57ead625-a044-40c6-8785-07093a1ad754: status=reconcile_required version=8 age=2933.6min status_reason_code=None
+    → EXPIRED ✓ (reason_code=reconciliation_expired_fallback, version=8→9)
+  Order ed6f4413-37d6-4775-b3bc-467ed4622af8: status=reconcile_required version=5 age=2776.7min status_reason_code=None
+    → EXPIRED ✓ (reason_code=reconciliation_expired_fallback, version=5→6)
+  Order 843fadae-b8d6-4dd2-80d9-601af2d8cf76: status=reconcile_required version=5 age=2776.3min status_reason_code=None
+    → EXPIRED ✓ (reason_code=reconciliation_expired_fallback, version=5→6)
+  Order 2a12c8d2-8e75-4ead-ba5f-d6edac6f45c7: status=reconcile_required version=5 age=2776.3min status_reason_code=None
+    → EXPIRED ✓ (reason_code=reconciliation_expired_fallback, version=5→6)
+  Order e82bb4a7-2985-4259-bf35-e4b1e45708e3: status=reconcile_required version=5 age=2762.0min status_reason_code=None
+    → EXPIRED ✓ (reason_code=reconciliation_expired_fallback, version=5→6)
+  Order 3059e254-8582-4731-8683-691b387d2a1c: status=reconcile_required version=5 age=2761.6min status_reason_code=None
+    → EXPIRED ✓ (reason_code=reconciliation_expired_fallback, version=5→6)
+  Order a3616426-7eac-4b6e-8b4d-7a0d4bf4c9f6: status=reconcile_required version=5 age=2761.5min status_reason_code=None
+    → EXPIRED ✓ (reason_code=reconciliation_expired_fallback, version=5→6)
+  Order 75a3fee2-b222-4e2c-a992-a962e8ba365e: status=reconcile_required version=5 age=1338.2min status_reason_code=None
+    → EXPIRED ✓ (reason_code=reconciliation_expired_fallback, version=5→6)
+  Order 30393929-7c84-41c7-9c4d-a1f7b44dd268: status=reconcile_required version=5 age=1337.9min status_reason_code=None
+    → EXPIRED ✓ (reason_code=reconciliation_expired_fallback, version=5→6)
+  Order 2a513146-0b4f-43c9-a2c9-b5b37ef04eaa: status=reconcile_required version=5 age=1337.6min status_reason_code=None
+    → EXPIRED ✓ (reason_code=reconciliation_expired_fallback, version=5→6)
+  Order 517c201f-89ca-4f26-83c8-db9235e440d2: status=reconcile_required version=5 age=1323.6min status_reason_code=None
+    → EXPIRED ✓ (reason_code=reconciliation_expired_fallback, version=5→6)
+[RUN] Marked run c1f4b7de-121e-4c87-86f3-e576c95926aa as completed
+
+=== Expired Fallback Summary ===
+  Reconciliation run:      c1f4b7de-121e-4c87-86f3-e576c95926aa
+  Total orders linked:     15
+  Expired transitions:     15
+  Skipped:                 0
+  Failed:                  0
+  Run new status:          completed
+=================================

@@ -1,0 +1,25 @@
+============================= test session starts ==============================
+platform linux -- Python 3.14.4, pytest-8.4.2, pluggy-1.6.0 -- /usr/bin/python3
+cachedir: .pytest_cache
+rootdir: /workspace/agent_trading
+configfile: pytest.ini
+plugins: asyncio-1.3.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 14 items
+
+tests/services/test_reconciliation_service.py::test_trigger_creates_run PASSED [  7%]
+tests/services/test_reconciliation_service.py::test_get_active_run_returns_most_recent PASSED [ 14%]
+tests/services/test_reconciliation_service.py::test_get_active_run_returns_none_when_no_active PASSED [ 21%]
+tests/services/test_reconciliation_service.py::test_attach_order_mismatch PASSED [ 28%]
+tests/services/test_reconciliation_service.py::test_attach_position_mismatch PASSED [ 35%]
+tests/services/test_reconciliation_service.py::test_mark_resolved_updates_status PASSED [ 42%]
+tests/services/test_reconciliation_service.py::test_mark_resolved_raises_on_nonexistent_run PASSED [ 50%]
+tests/services/test_reconciliation_service.py::test_is_blocked_returns_false_without_lock PASSED [ 57%]
+tests/services/test_reconciliation_service.py::test_acquire_and_release_blocking_lock PASSED [ 64%]
+tests/services/test_reconciliation_service.py::test_trigger_idempotent_reuses_active_run PASSED [ 71%]
+tests/services/test_reconciliation_service.py::test_trigger_creates_new_run_when_no_active PASSED [ 78%]
+tests/services/test_reconciliation_service.py::test_trigger_creates_new_run_after_previous_resolved PASSED [ 85%]
+tests/services/test_reconciliation_service.py::test_trigger_idempotent_different_trigger_type_same_account PASSED [ 92%]
+tests/services/test_reconciliation_service.py::test_trigger_idempotent_accounts_independent PASSED [100%]
+
+============================== 14 passed in 0.02s ==============================

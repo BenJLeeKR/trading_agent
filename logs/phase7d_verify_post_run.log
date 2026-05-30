@@ -1,0 +1,90 @@
+검증 시각: 2026-05-30 12:54:57.752333+09:00
+================================================================================
+
+0. 5/27~5/29 reconcile_required (baseline): 15건
+
+1. reconcile_required (전체): 15건 (Subtask 2에서 16건 → 변화: -1건)
+
+2. c87f5ec3 (target order):
+   order_request_id: c87f5ec3-2647-440c-a959-5c185a9886cd
+   status: expired
+   status_reason_code: reconciliation_expired_fallback
+   updated_at: 2026-05-30 03:50:25.316267+00:00
+
+3. reconciliation_runs (requires_reconciliation): 18건
+   5e1573f3... trigger=requires_reconciliation status=failed mismatch=0 started=2026-05-30 02:02:08 completed=2026-05-30 03:50:25
+   0614abb0... trigger=requires_reconciliation status=failed mismatch=0 started=2026-05-30 01:43:09 completed=2026-05-30 01:43:11
+   3415ed4d... trigger=requires_reconciliation status=failed mismatch=0 started=2026-05-26 00:31:22 completed=2026-05-26 00:31:32
+   3e8d4a8b... trigger=requires_reconciliation status=failed mismatch=0 started=2026-05-26 00:07:33 completed=2026-05-26 00:07:59
+   81e8adbc... trigger=requires_reconciliation status=failed mismatch=0 started=2026-05-26 00:02:29 completed=2026-05-26 00:02:58
+   3825f9f2... trigger=requires_reconciliation status=failed mismatch=0 started=2026-05-25 04:23:26 completed=2026-05-25 04:23:53
+   183bafca... trigger=requires_reconciliation status=failed mismatch=0 started=2026-05-25 04:19:23 completed=2026-05-25 04:19:53
+   73ff803a... trigger=requires_reconciliation status=failed mismatch=0 started=2026-05-25 04:12:44 completed=2026-05-25 04:12:52
+   77cb7d55... trigger=requires_reconciliation status=failed mismatch=0 started=2026-05-22 01:34:14 completed=N/A
+   b4129d58... trigger=requires_reconciliation status=failed mismatch=0 started=2026-05-22 01:16:51 completed=N/A
+   389e6ebb... trigger=requires_reconciliation status=failed mismatch=0 started=2026-05-22 01:09:24 completed=N/A
+   6d3fe012... trigger=requires_reconciliation status=failed mismatch=0 started=2026-05-22 01:03:44 completed=N/A
+   19851ba1... trigger=requires_reconciliation status=failed mismatch=0 started=2026-05-22 01:02:53 completed=N/A
+   ed177eba... trigger=requires_reconciliation status=failed mismatch=0 started=2026-05-22 00:36:03 completed=N/A
+   1453d5a2... trigger=requires_reconciliation status=failed mismatch=0 started=2026-05-16 11:07:12 completed=N/A
+   d68ec501... trigger=requires_reconciliation status=failed mismatch=0 started=2026-05-16 11:04:00 completed=N/A
+   e43955a2... trigger=requires_reconciliation status=failed mismatch=0 started=2026-05-16 10:47:07 completed=N/A
+   f7cf6333... trigger=requires_reconciliation status=halted mismatch=0 started=2026-05-16 09:27:40 completed=2026-05-16 10:47:07
+
+4. reconciliation_order_links: 17건
+   c87f5ec3... mismatch=pending_inquiry
+   c87f5ec3... mismatch=pending_inquiry
+   a96e04f3... mismatch=pending_inquiry
+   4ab21db0... mismatch=pending_inquiry
+   0308edc5... mismatch=pending_inquiry
+   7c8d1538... mismatch=pending_inquiry
+   be43a2ac... mismatch=pending_inquiry
+   8cb99141... mismatch=pending_inquiry
+   a4e1ab5e... mismatch=pending_inquiry
+   146ea036... mismatch=pending_inquiry
+   281060c8... mismatch=pending_inquiry
+   ba3debbf... mismatch=pending_inquiry
+   93a62b49... mismatch=pending_inquiry
+   d373f41f... mismatch=pending_inquiry
+   400353e9... mismatch=pending_inquiry
+   400353e9... mismatch=pending_inquiry
+   400353e9... mismatch=pending_inquiry
+
+5. order_state_events (c87f5ec3): 4건
+   draft → validated reason=None @ 2026-05-29 06:19:51.841355+00:00
+   validated → pending_submit reason=None @ 2026-05-29 06:19:51.894487+00:00
+   pending_submit → submitted reason=0000032815 @ 2026-05-29 06:19:53.090990+00:00
+   submitted → reconcile_required reason=None @ 2026-05-29 06:22:42.263957+00:00
+
+6. 잔여 reconcile_required 상세: 15건
+   989236cb... buy 001740 age=4189min reason=None
+   922d6017... buy 001230 age=4181min reason=None
+   28b3d35d... buy 000150 age=3124min reason=None
+   609c1ab6... buy 000150 age=3117min reason=None
+   57ead625... sell 001450 age=2905min reason=None
+   ed6f4413... buy 000270 age=2748min reason=None
+   843fadae... buy 001450 age=2748min reason=None
+   2a12c8d2... buy 004000 age=2748min reason=None
+   e82bb4a7... buy 000810 age=2734min reason=None
+   3059e254... buy 001800 age=2733min reason=None
+   a3616426... buy 004000 age=2733min reason=None
+   75a3fee2... buy 000270 age=1310min reason=None
+   30393929... buy 001800 age=1309min reason=None
+   2a513146... buy 007070 age=1309min reason=None
+   517c201f... sell 000270 age=1295min reason=None
+
+7. 비정상 expired (order status=expired + broker_status=reconcile_required): 75건
+
+8. 5/27~5/29 전체 상태 분포:
+   status=rejected                  count=233
+   status=expired                   count=210
+   status=filled                    count=22
+   status=reconcile_required        count=15
+
+9. broker_orders broker_status 분포 (5/27~5/29 연관):
+   broker_status=expired                   count=137
+   broker_status=reconcile_required        count=55
+   broker_status=filled                    count=22
+
+================================================================================
+검증 완료

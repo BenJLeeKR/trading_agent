@@ -1,0 +1,6 @@
+reconcile_required: 0
+  run completed: 1
+  run failed: 17
+  run halted: 1
+  link pending_inquiry: 32
+expired + fallback: 16

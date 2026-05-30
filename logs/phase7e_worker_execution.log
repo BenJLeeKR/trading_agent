@@ -1,0 +1,26 @@
+2026-05-30 13:15:46 [INFO] reconciliation-worker: Starting reconciliation worker loop (interval=30s, limit=10, max_cycles=1, dry_run=False, account_id=None, run_id=None) ...
+2026-05-30 13:15:46 [INFO] reconciliation-worker: === Cycle 1 ===
+2026-05-30 13:15:46 [INFO] reconciliation-worker: Found 1 pending reconciliation run(s) to process.
+2026-05-30 13:15:46 [INFO] reconciliation-worker: Processing reconciliation run: run_id=c1f4b7de-121e-4c87-86f3-e576c95926aa account_id=a44a02d1-7f32-5a62-99f7-235abeb58284 trigger_type=requires_reconciliation
+2026-05-30 13:15:46 [INFO] reconciliation-worker: paper_access_token token cache: miss reason=disabled path=.cache/kis_token.json
+2026-05-30 13:15:46 [INFO] reconciliation-worker: HTTP Request: POST https://openapivts.koreainvestment.com:29443/oauth2/tokenP "HTTP/1.1 403 Forbidden"
+2026-05-30 13:15:46 [ERROR] reconciliation-worker: Failed to create/authenticate KIS adapter: broker_account_id=7f39fc04-346a-5484-90ab-80e8a1d04a15 error=koreainvestment | order_rejected | KIS oauth2_token: known failure (msg_cd=EGW00102, rt_cd=): AppKey는 필수입니다.
+Traceback (most recent call last):
+  File "/workspace/agent_trading/src/agent_trading/services/reconciliation_worker.py", line 344, in _build_adapter_for_broker_account
+    session = await adapter.authenticate()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent_trading/src/agent_trading/brokers/koreainvestment/adapter.py", line 121, in authenticate
+    token = await self._rest.authenticate()
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent_trading/src/agent_trading/brokers/koreainvestment/rest_client.py", line 525, in authenticate
+    data = self._raise_on_error(resp, endpoint="oauth2_token")
+  File "/workspace/agent_trading/src/agent_trading/brokers/koreainvestment/rest_client.py", line 720, in _raise_on_error
+    raise BrokerError(
+    ...<4 lines>...
+    )
+agent_trading.brokers.errors.BrokerError: koreainvestment | order_rejected | KIS oauth2_token: known failure (msg_cd=EGW00102, rt_cd=): AppKey는 필수입니다.
+2026-05-30 13:15:46 [WARNING] reconciliation-worker: Broker adapter creation failed, retaining run. run_id=c1f4b7de-121e-4c87-86f3-e576c95926aa account_id=a44a02d1-7f32-5a62-99f7-235abeb58284
+2026-05-30 13:15:46 [INFO] reconciliation-worker: cycle-complete  runs=1 (resolved=0 skipped=0 failed=0 retained=1)  orders=0  elapsed=0.3s
+2026-05-30 13:15:46 [INFO] reconciliation-worker: Cycle 1 complete (took 0.3s). Next cycle in 30s ...
+2026-05-30 13:15:46 [INFO] reconciliation-worker: Reached max_cycles=1 — exiting.
+2026-05-30 13:15:46 [INFO] reconciliation-worker: Shutdown complete (1 cycles executed).

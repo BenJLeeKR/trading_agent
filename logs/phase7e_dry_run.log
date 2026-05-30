@@ -1,0 +1,18 @@
+2026-05-30 13:13:28 [INFO] Target orders: 15건 (accounts: 1개)
+2026-05-30 13:13:28 [INFO] 
+[DRY-RUN] retry_failed_reconciliation.py
+Target orders: 15건
+Account별 분포 (1개):
+  a44a02d1-7f32-5a62-99f7-235abeb58284: 15건 [989236cb-6735-4adf-bb5c-ba6cd1151f0c(buy), 922d6017-df8c-428e-aaf1-738b338a6c79(buy), 28b3d35d-160b-428e-949e-07bf618f11a7(buy), 609c1ab6-2ddb-4c1c-92ac-101c2740e25c(buy), 57ead625-a044-40c6-8785-07093a1ad754(sell) ...]
+
+[DRY-RUN] Would create:
+  - 1 reconciliation run(s) (started)
+  - 15 reconciliation_order_links (mismatch_type=pending_inquiry)
+[DRY-RUN] retry_failed_reconciliation.py
+Target orders: 15건
+Account별 분포 (1개):
+  a44a02d1-7f32-5a62-99f7-235abeb58284: 15건 [989236cb-6735-4adf-bb5c-ba6cd1151f0c(buy), 922d6017-df8c-428e-aaf1-738b338a6c79(buy), 28b3d35d-160b-428e-949e-07bf618f11a7(buy), 609c1ab6-2ddb-4c1c-92ac-101c2740e25c(buy), 57ead625-a044-40c6-8785-07093a1ad754(sell) ...]
+
+[DRY-RUN] Would create:
+  - 1 reconciliation run(s) (started)
+  - 15 reconciliation_order_links (mismatch_type=pending_inquiry)

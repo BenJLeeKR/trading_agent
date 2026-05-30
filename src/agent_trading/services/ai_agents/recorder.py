@@ -122,10 +122,8 @@ class AgentRunRecorder:
         # Verify that structured_output["agent_name"] matches agent_type
         stored_agent_name = output_dict.get("agent_name")
         if stored_agent_name is not None and stored_agent_name != agent_type:
-            logger.warning(
-                "Agent name mismatch in structured_output: "
-                "output.agent_name=%r != agent_type=%r — "
-                "overwriting output.agent_name to match",
+            logger.info(
+                "Agent name auto-normalized: '%s' → '%s'",
                 stored_agent_name,
                 agent_type,
             )

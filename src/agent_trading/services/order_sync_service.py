@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -98,6 +99,29 @@ class SyncOrderResult:
     snapshot_triggered: bool
     last_synced_at: datetime
     error: str | None = None
+
+
+class TruthProbeReason(str, Enum):
+    """``_try_truth_probe()``가 ``None``을 반환한 구체적 원인.
+
+    ``sync_order_post_submit()``의 fallback 경로에서 error 메시지와
+    로그에 포함되어 conflict 원인을 추적할 수 있게 한다.
+    """
+
+    PAPER_EMPTY = "paper_empty"
+    """ODNO match 성공 but all fields empty (paper env)."""
+    QTY_MISMATCH = "qty_mismatch"
+    """KIS truth qty ≠ DB requested_quantity."""
+    POSITION_CONFLICT = "position_conflict"
+    """KIS truth CCLD_QTY=0 but position delta > 0."""
+    MULTI_ODNO = "multi_odno"
+    """Same ODNO matched multiple records."""
+    API_FAILURE = "api_failure"
+    """resolve_unknown_state() exception."""
+    NO_ODNO = "no_odno"
+    """broker_native_order_id is None."""
+    NOT_TERMINAL = "not_terminal"
+    """resolve_unknown_state() returned non-terminal status."""
 
 
 @dataclass(slots=True)
@@ -441,7 +465,99 @@ class OrderSyncService:
                 error=f"Order in non-syncable status: {order.status.value}",
             )
 
-        # ── 3. Inquire broker for current status ──
+        # ── 3a. ODNO truth probe (RECONCILIATION budget, INQUIRY 무영향) ──
+        # broker_native_order_id(ODNO)가 있는 주문은 resolve_unknown_state()로
+        # 먼저 truth probe를 수행하여 명확한 terminal status면 바로 확정한다.
+        truth_probe_reason_str: str | None = None
+        if broker_order.broker_native_order_id:
+            probe_reason: TruthProbeReason | None = None
+            try:
+                probe_status, probe_reason = await self._try_truth_probe(
+                    order=order,
+                    broker_order=broker_order,
+                    broker=broker,
+                    account_ref=account_ref,
+                )
+            except Exception:
+                probe_status = None
+                probe_reason = TruthProbeReason.API_FAILURE
+
+            if probe_status is not None:
+                if probe_reason is not None:
+                    logger.warning(
+                        "Truth probe resolved order %s: %s (conflict: %s, ODNO=%s)",
+                        order.order_request_id, probe_status.value,
+                        probe_reason.value,
+                        broker_order.broker_native_order_id,
+                    )
+                else:
+                    logger.info(
+                        "Truth probe resolved order %s: %s (ODNO=%s)",
+                        order.order_request_id, probe_status.value,
+                        broker_order.broker_native_order_id,
+                    )
+                # 명확한 terminal status → transition + broker_status 동기화
+                status_changed = probe_status != previous_status
+                if status_changed:
+                    order = await self._try_transition(order, probe_status)
+
+                if broker_order.broker_status != probe_status.value:
+                    await self.repos.broker_orders.update(
+                        broker_order_id,
+                        broker_status=probe_status.value,
+                        updated_at=now,
+                    )
+
+                current_status = order.status
+                terminal = current_status in _TERMINAL_STATUSES
+
+                # last_synced_at 갱신
+                await self._update_last_synced_at(broker_order_id, now)
+
+                # FILLED 도달 시 snapshot refresh
+                snapshot_triggered = False
+                if (
+                    status_changed
+                    and current_status == OrderStatus.FILLED
+                    and snapshot_refresh_cb is not None
+                ):
+                    try:
+                        await snapshot_refresh_cb(order.account_id)
+                        snapshot_triggered = True
+                    except Exception as exc:
+                        logger.warning(
+                            "Snapshot refresh callback failed after truth probe "
+                            "for account=%s: %s", order.account_id, exc,
+                        )
+
+                # probe reason이 있으면 SyncOrderResult.error에 기록
+                error_msg: str | None = None
+                if probe_reason is not None:
+                    error_msg = f"truth_probe_conflict:{probe_reason.value}"
+
+                return SyncOrderResult(
+                    broker_order_id=broker_order_id,
+                    previous_status=previous_status,
+                    current_status=current_status,
+                    status_changed=status_changed,
+                    fills_synced=0,
+                    fills_skipped=0,
+                    terminal=terminal,
+                    snapshot_triggered=snapshot_triggered,
+                    last_synced_at=now,
+                    error=error_msg,
+                )
+
+            reason_str = probe_reason.value if probe_reason else "unknown"
+            truth_probe_reason_str = reason_str
+            logger.debug(
+                "Truth probe returned None for order %s (ODNO=%s) — reason=%s, "
+                "falling back to get_order_status",
+                order.order_request_id, broker_order.broker_native_order_id,
+                reason_str,
+            )
+
+        # ── 3b. Inquire broker for current status (기존 경로) ──
         try:
             status_result = await broker.get_order_status(
                 account_ref,
@@ -449,6 +565,9 @@ class OrderSyncService:
                 broker_order_id=broker_order.broker_native_order_id,
             )
         except Exception as exc:
+            error_msg = f"get_order_status failed: {exc}"
+            if truth_probe_reason_str is not None:
+                error_msg = f"truth_probe:{truth_probe_reason_str}: {error_msg}"
             logger.warning(
                 "get_order_status failed for broker_order=%s: %s",
                 broker_order_id, exc,
@@ -463,7 +582,7 @@ class OrderSyncService:
                 terminal=False,
                 snapshot_triggered=False,
                 last_synced_at=now,
-                error=f"get_order_status failed: {exc}",
+                error=error_msg,
             )
 
         broker_status: OrderStatus = status_result.status
@@ -646,6 +765,115 @@ class OrderSyncService:
         # Default: target is directly reachable (known from _ALLOWED_TRANSITIONS)
         return [target]
 
+    async def _try_truth_probe(
+        self,
+        order: OrderRequestEntity,
+        broker_order: BrokerOrderEntity,
+        broker: BrokerAdapter,
+        account_ref: str,
+    ) -> tuple[OrderStatus | None, TruthProbeReason | None]:
+        """ODNO가 있는 주문의 VTTC0081R truth probe.
+
+        ``resolve_unknown_state()``를 통해 broker의 settle/deal 데이터를
+        직접 조회하여 명확한 terminal status면 반환한다.
+        모호한 경우나 probe 실패 시 ``None``과 함께 구체적인
+        ``TruthProbeReason``을 반환하여 기존 경로로 fallback한다.
+
+        RECONCILIATION bucket을 사용하므로 INQUIRY budget에 영향을 주지 않는다.
+
+        Parameters
+        ----------
+        order : OrderRequestEntity
+            The order request entity.
+        broker_order : BrokerOrderEntity
+            The broker order entity with ``broker_native_order_id`` (ODNO).
+        broker : BrokerAdapter
+            The broker adapter for the order's account.
+        account_ref : str
+            Broker account reference.
+
+        Returns
+        -------
+        tuple[OrderStatus | None, TruthProbeReason | None]
+            ``(OrderStatus.FILLED or OrderStatus.EXPIRED, None)`` if clearly resolved;
+            ``(None, TruthProbeReason)`` if ambiguous or probe fails.
+        """
+        # ODNO가 없으면 probe skip
+        if not broker_order or not broker_order.broker_native_order_id:
+            return None, TruthProbeReason.NO_ODNO
+
+        # symbol 조회 (resolve_unknown_state에 symbol 전달하여 정확도 향상)
+        symbol: str | None = None
+        try:
+            instrument = await self.repos.instruments.get(order.instrument_id)
+            if instrument:
+                symbol = instrument.symbol
+        except Exception:
+            pass
+
+        try:
+            result = await broker.resolve_unknown_state(
+                account_ref=account_ref,
+                client_order_id=order.client_order_id,
+                broker_order_id=broker_order.broker_native_order_id,
+                symbol=symbol,
+            )
+
+            # 명확한 terminal status만 수용
+            if result.status in (OrderStatus.FILLED, OrderStatus.EXPIRED):
+                # ★ terminal result여도 qty mismatch 확인
+                if (
+                    result.filled_quantity is not None
+                    and result.filled_quantity != order.requested_quantity
+                ):
+                    logger.warning(
+                        "Truth probe FILLED but qty mismatch: KIS filled=%s, DB requested=%s "
+                        "(order=%s, symbol=%s)",
+                        result.filled_quantity, order.requested_quantity,
+                        order.order_request_id, symbol,
+                    )
+                    return result.status, TruthProbeReason.QTY_MISMATCH
+                return result.status, None
+
+            # non-terminal: raw_message 분석을 통해 reason 추론
+            reason = self._infer_truth_probe_reason(result, order, broker_order)
+            return None, reason
+
+        except Exception:
+            return None, TruthProbeReason.API_FAILURE
+
+    @staticmethod
+    def _infer_truth_probe_reason(
+        result: OrderStatusResult,
+        order: OrderRequestEntity,
+        broker_order: BrokerOrderEntity,
+    ) -> TruthProbeReason:
+        """``resolve_unknown_state()`` 결과에서 conflict reason 추론.
+
+        ``result.raw_message`` 또는 ``result.raw_code``에 특정 패턴이 있으면
+        해당 reason을 반환하고, 없으면 ``NOT_TERMINAL``을 기본값으로 반환한다.
+        """
+        raw_message = (result.raw_message or "").lower()
+        raw_code = (result.raw_code or "").lower()
+
+        # MULTI_ODNO: Same ODNO matched multiple records
+        if "multi" in raw_message or "duplicate" in raw_message:
+            return TruthProbeReason.MULTI_ODNO
+
+        # PAPER_EMPTY: ODNO match 성공 but all fields empty (paper env)
+        if "empty" in raw_message or "no data" in raw_message:
+            return TruthProbeReason.PAPER_EMPTY
+
+        # POSITION_CONFLICT: CCLD_QTY=0 but position delta > 0
+        if "ccld_qty=0" in raw_message or "ccld_qty 0" in raw_message:
+            return TruthProbeReason.POSITION_CONFLICT
+
+        # QTY_MISMATCH: KIS truth qty ≠ DB requested_quantity
+        if "qty" in raw_message and ("mismatch" in raw_message or "diff" in raw_message):
+            return TruthProbeReason.QTY_MISMATCH
+
+        # 기본값: 명확한 패턴 없음
+        return TruthProbeReason.NOT_TERMINAL
     async def _sync_fills(
         self,
         broker_order: BrokerOrderEntity,

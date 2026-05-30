@@ -1,0 +1,58 @@
+============================= test session starts ==============================
+platform linux -- Python 3.14.4, pytest-8.4.2, pluggy-1.6.0 -- /usr/bin/python3
+cachedir: .pytest_cache
+rootdir: /workspace/agent_trading
+configfile: pytest.ini
+plugins: asyncio-1.3.0, anyio-4.13.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 8 items
+
+tests/scripts/test_t1_t3_interaction_analysis.py::test_script_importable PASSED [ 12%]
+tests/scripts/test_t1_t3_interaction_analysis.py::test_t3_event_creation_consistent PASSED [ 25%]
+tests/scripts/test_t1_t3_interaction_analysis.py::test_t3_event_creation_conflicting PASSED [ 37%]
+tests/scripts/test_t1_t3_interaction_analysis.py::test_t3_event_creation_duplicate PASSED [ 50%]
+tests/scripts/test_t1_t3_interaction_analysis.py::test_t3_event_creation_low_quality PASSED [ 62%]
+tests/scripts/test_t1_t3_interaction_analysis.py::test_ei_agent_stub_run PASSED [ 75%]
+tests/scripts/test_t1_t3_interaction_analysis.py::test_classify_scenario_consistent PASSED [ 87%]
+tests/scripts/test_t1_t3_interaction_analysis.py::test_analysis_creates_output FAILED [100%]
+
+=================================== FAILURES ===================================
+_________________________ test_analysis_creates_output _________________________
+
+    @pytest.mark.asyncio
+    async def test_analysis_creates_output() -> None:
+        """Integration test: running the analysis produces a valid result.
+    
+        This test connects to the database and runs the full analysis.
+        It may be slow or unavailable in CI environments.
+        """
+        import tempfile
+    
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
+            output_path = tmp.name
+    
+        try:
+            result = await analyze_t1_t3_interaction(
+                symbols=["052770"],
+                output_path=output_path,
+            )
+            assert result is not None
+            assert "generated_at" in result
+            assert "scenarios" in result
+>           assert "052770" in result["scenarios"]
+E           AssertionError: assert '052770' in {}
+
+tests/scripts/test_t1_t3_interaction_analysis.py:1215: AssertionError
+------------------------------ Captured log call -------------------------------
+ERROR    asyncio:base_events.py:1886 Resetting connection with an active transaction <asyncpg.connection.Connection object at 0x733cb8c9f200>
+ERROR    asyncio:base_events.py:1886 Resetting connection with an active transaction <asyncpg.connection.Connection object at 0x733cb8c9f200>
+ERROR    asyncio:base_events.py:1886 Resetting connection with an active transaction <asyncpg.connection.Connection object at 0x733cb8c9f200>
+ERROR    asyncio:base_events.py:1886 Resetting connection with an active transaction <asyncpg.connection.Connection object at 0x733cb8c9f200>
+ERROR    asyncio:base_events.py:1886 Resetting connection with an active transaction <asyncpg.connection.Connection object at 0x733cb8c9f200>
+ERROR    asyncio:base_events.py:1886 Resetting connection with an active transaction <asyncpg.connection.Connection object at 0x733cb8c9f200>
+WARNING  agent_trading.db.migrations.run:run.py:85 Migration may already be applied (timeout/error): 0021_add_pipeline_stop_fields.sql — TooManyColumnsError: tables can have at most 1600 columns
+WARNING  agent_trading.db.migrations.run:run.py:85 Migration may already be applied (timeout/error): 0022_add_phase_trace_to_trade_decisions.sql — TooManyColumnsError: tables can have at most 1600 columns
+WARNING  tests.scripts.test_t1_t3_interaction_analysis:test_t1_t3_interaction_analysis.py:798 symbol=052770: OpenDART 이벤트 없음 — 건너뜀
+=========================== short test summary info ============================
+FAILED tests/scripts/test_t1_t3_interaction_analysis.py::test_analysis_creates_output
+========================= 1 failed, 7 passed in 0.14s ==========================

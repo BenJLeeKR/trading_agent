@@ -29,7 +29,7 @@ LIMIT $1;
 |------|-----|
 | **order_request_id** | `400353e9-9c09-49c9-b4cc-a03ac50474b1` |
 | **account_id** | `a44a02d1-7f32-5a62-99f7-235abeb58284` |
-| **instrument_id** | `e3b0c442-...` (종목코드: 001230 동국제강) |
+| **instrument_id** | `e3b0c442-...` (종목코드: 001230 동국홀딩스) |
 | **broker_native_order_id** | `0000035653` |
 | **side** | `buy` |
 | **stuck 기간** | 2026-05-15 14:34 ~ 현재 |

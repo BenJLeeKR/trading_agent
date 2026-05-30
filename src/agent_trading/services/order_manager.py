@@ -17,7 +17,7 @@ from agent_trading.domain.entities import (
     OrderRequestEntity,
     OrderStateEventEntity,
 )
-from agent_trading.domain.enums import EventSource, OrderStatus
+from agent_trading.domain.enums import DecisionType, EventSource, OrderStatus
 from agent_trading.domain.models import SubmitOrderRequest, SubmitOrderResult
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import AccountLookup
@@ -113,6 +113,7 @@ _ALLOWED_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
     OrderStatus.EXPIRED: {
         OrderStatus.FILLED,
         OrderStatus.PARTIALLY_FILLED,
+        OrderStatus.RECONCILE_REQUIRED,
     },
 }
 
@@ -303,6 +304,21 @@ class OrderManager:
                 request.client_order_id,
                 existing.order_request_id,
             )
+
+        # --- HOLD decision_type check (defense-in-depth, Layer 2) ---
+        # execution_service.py Phase 2에서 이미 HOLD/WATCH 필터링이 수행되지만,
+        # 다른 코드 경로(admin_ui 수동 생성, API 우회 등)를 통한 생성을 방지하는 2차 방어.
+        if hasattr(request, 'decision_type') and getattr(request, 'decision_type', None) in (
+            'HOLD', 'WATCH', DecisionType.HOLD, DecisionType.WATCH,
+        ):
+            logger.info(
+                "Skipping order creation for non-actionable decision_type=%s: "
+                "trade_decision_id=%s, client_order_id=%s",
+                getattr(request, 'decision_type'),
+                getattr(request, 'decision_id', 'N/A'),
+                request.client_order_id,
+            )
+            return None
 
         # --- resolve trade_decision_id from decision_id if provided ---
         trade_decision_id: UUID | None = None

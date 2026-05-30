@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID
 
@@ -70,6 +70,7 @@ class ReconciliationRunProcessor:
     settings: AppSettings
     _broker_cache: dict[UUID, Any] = field(default_factory=dict)
     dry_run: bool = False
+    order_manager: Any = None
 
     # ──────────────────────────────────────────────────────────────────────
     # Public API
@@ -335,6 +336,8 @@ class ReconciliationRunProcessor:
                 account_product_code=self.settings.kis_account_product_code,
                 env=self.settings.kis_env,
                 base_url=self.settings.kis_base_url,
+                dev_token_cache_enabled=self.settings.kis_dev_token_cache_enabled,
+                dev_token_cache_path=self.settings.kis_dev_token_cache_path,
             )
 
             adapter = KoreaInvestmentAdapter(rest_client=rest_client)
@@ -428,6 +431,13 @@ class ReconciliationRunProcessor:
                         result.status.value if result.status else "unknown",
                     )
                     return "resolved"
+                elif result.status == OrderStatus.RECONCILE_REQUIRED:
+                    # EXPIRED fallback: broker가 상태를 확정하지 못한 경우
+                    if await self._try_expired_fallback(
+                        link.order_request_id, bo, run.reconciliation_run_id,
+                    ):
+                        return "resolved"
+                    return "failed"
                 else:
                     logger.info(
                         "Broker truth unavailable for order: run_id=%s order_id=%s "
@@ -447,6 +457,88 @@ class ReconciliationRunProcessor:
                 return "failed"
 
         return "failed"
+
+    async def _try_expired_fallback(
+        self,
+        order_request_id: UUID,
+        broker_order: Any,
+        run_id: UUID,
+    ) -> bool:
+        """Try to fall back to EXPIRED when broker returns reconcile_required.
+
+        Conditions
+        ----------
+        1. Order must be in after-hours or past grace period (30 min since creation).
+        2. Broker status must be ``reconcile_required``.
+
+        Returns
+        -------
+        bool
+            ``True`` if successfully transitioned to EXPIRED.
+        """
+        from agent_trading.domain.enums import OrderStatus
+
+        # Grace period: 30 minutes from order creation
+        now = datetime.now(timezone.utc)
+
+        # Get order details
+        order = await self.repos.orders.get(order_request_id)
+        if order is None:
+            logger.warning(
+                "Order %s not found for expired fallback", order_request_id,
+            )
+            return False
+
+        created_at = order.created_at
+        if created_at is None:
+            return False
+
+        age_minutes = (now - created_at).total_seconds() / 60
+
+        # Only allow fallback if:
+        # 1. Order is at least 30 minutes old (grace period), OR
+        # 2. Current time is in after-hours (KST 15:30~)
+        kst_now = now.astimezone(timezone(timedelta(hours=9)))
+        is_after_hours = kst_now.hour >= 15 and kst_now.hour < 18  # 15:30~18:00 KST
+
+        if age_minutes < 30 and not is_after_hours:
+            logger.info(
+                "EXPIRED fallback skipped for %s: age=%.1fmin, after_hours=%s",
+                order_request_id, age_minutes, is_after_hours,
+            )
+            return False
+
+        try:
+            if self.order_manager is not None:
+                await self.order_manager.transition_to_authoritative(
+                    order,
+                    OrderStatus.EXPIRED,
+                    reconciliation_run_id=run_id,
+                    reason_message="reconciliation_expired_fallback",
+                )
+            else:
+                # Fallback: 직접 repos를 통해 EXPIRED 전이
+                logger.warning(
+                    "order_manager is None, falling back to direct status update for %s",
+                    order_request_id,
+                )
+                from agent_trading.domain.enums import OrderStatus as OS
+                await self.repos.orders.update_status(
+                    order_request_id=order_request_id,
+                    status=OS.EXPIRED,
+                    expected_version=order.version,
+                    reason_code="reconciliation_expired_fallback",
+                )
+            logger.info(
+                "EXPIRED fallback applied to %s (age=%.1fmin, after_hours=%s)",
+                order_request_id, age_minutes, is_after_hours,
+            )
+            return True
+        except Exception as e:
+            logger.error(
+                "EXPIRED fallback failed for %s: %s", order_request_id, e,
+            )
+            return False
 
     # ──────────────────────────────────────────────────────────────────────
     # Run status marking

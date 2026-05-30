@@ -301,7 +301,7 @@ steps:
 
 1. **✅ 시그니처 버그 수정 완료**: `TypeError`가 해결되었으며 worker 인증·API 호출 모두 정상 동작 확인.
 2. **✅ Worker 파이프라인 정상 동작**: 새 run 생성 → worker pick up → broker inquiry → 결과 반영까지 전체 사이클 이상 없음.
-3. **⚠️ Order 001230(동국제강) broker truth unavailable**: KIS `inquire-daily-ccld` 및 `inquire-balance` API에서 주문 `0000035653`이 조회되지 않음. 주문이 이미 broker 측에서 정산/소멸되었거나 미접수 상태.
+3. **⚠️ Order 001230(동국홀딩스) broker truth unavailable**: KIS `inquire-daily-ccld` 및 `inquire-balance` API에서 주문 `0000035653`이 조회되지 않음. 주문이 이미 broker 측에서 정산/소멸되었거나 미접수 상태.
 4. **🔧 권장 후속 조치**: KIS UI에서 주문 `0000035653` 실제 상태 수동 확인 후 `order_requests.status` 수동 업데이트 필요.
 
 ### 10.6 Worker 인프라 현황 (Phase 25 완료 시점)

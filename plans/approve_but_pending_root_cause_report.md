@@ -40,7 +40,7 @@
 | Phase 5: `submit_order_to_broker()` | **실행되지 않음** | — |
 | `broker_orders` row | **생성되지 않음** | — |
 
-### Sample 2: 001230 (동국제강) — REDUCE, Cycle 08:50 KST
+### Sample 2: 001230 (동국홀딩스) — REDUCE, Cycle 08:50 KST
 
 | 단계 | 상태 | 시각 (KST) |
 |------|------|-----------|

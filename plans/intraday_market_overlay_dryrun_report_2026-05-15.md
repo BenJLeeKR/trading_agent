@@ -136,7 +136,7 @@
 
 > 4건의 이벤트, 높은 evidence strength(0.75), positive bias → AR이 approve, FDC가 APPROVE. 일관된 패턴.
 
-### 6.2 001230 (동국제강) — 유일한 결정 변경
+### 6.2 001230 (동국홀딩스) — 유일한 결정 변경
 
 | Cycle | EI Event Count | EI Evidence Strength | EI Overall Bias | AR Risk Opinion | FDC Decision |
 |-------|---------------|---------------------|-----------------|----------------|--------------|

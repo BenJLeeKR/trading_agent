@@ -294,7 +294,11 @@ class TestForbiddenTransitions:
         (see ``_validate_transition`` and ``_can_recover_expired``).
         """
         # Allowed EXPIRED recovery targets — skip in the blanket check
-        _EXPIRED_ALLOWED = {OrderStatus.FILLED, OrderStatus.PARTIALLY_FILLED}
+        _EXPIRED_ALLOWED = {
+            OrderStatus.FILLED,
+            OrderStatus.PARTIALLY_FILLED,
+            OrderStatus.RECONCILE_REQUIRED,
+        }
 
         for terminal in [
             OrderStatus.FILLED,

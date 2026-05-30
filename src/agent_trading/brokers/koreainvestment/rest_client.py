@@ -300,23 +300,24 @@ class KisOrderFillRecord:
 
 def parse_kis_order_fill_record(item: dict[str, Any]) -> KisOrderFillRecord:
     """Convert a raw KIS inquire-daily-ccld dict to ``KisOrderFillRecord``."""
+    _gf = KISRestClient._get_kis_field
     return KisOrderFillRecord(
-        odno=item.get("ODNO", ""),
-        pdno=item.get("PDNO", ""),
-        ord_qty=Decimal(item.get("ORD_QTY", "0")),
-        ord_unpr=Decimal(item.get("ORD_UNPR", "0")),
-        sll_buy_dvsn_cd=item.get("SLL_BUY_DVSN_CD", ""),
-        ord_dvsn=item.get("ORD_DVSN", ""),
-        ccld_qty=Decimal(item.get("CCLD_QTY", "0")),
-        ccld_unpr=Decimal(item.get("CCLD_UNPR", "0")),
-        ccld_tmd=item.get("CCLD_TMD", ""),
-        ccld_num=item.get("CCLD_NUM"),
-        ord_stat=item.get("ORD_STAT", ""),
-        cncl_yn=item.get("CNCL_YN", "N"),
-        rvse_yn=item.get("RVSE_YN", "N"),
-        ord_tmd=item.get("ORD_TMD", ""),
-        rmn_qty=Decimal(item.get("RMN_QTY", "0")) if item.get("RMN_QTY") else None,
-        avg_prvs=Decimal(item.get("AVG_PRVS", "0")) if item.get("AVG_PRVS") else None,
+        odno=_gf(item, "ODNO"),
+        pdno=_gf(item, "PDNO"),
+        ord_qty=Decimal(_gf(item, "ORD_QTY", "0")),
+        ord_unpr=Decimal(_gf(item, "ORD_UNPR", "0")),
+        sll_buy_dvsn_cd=_gf(item, "SLL_BUY_DVSN_CD"),
+        ord_dvsn=_gf(item, "ORD_DVSN"),
+        ccld_qty=Decimal(_gf(item, "CCLD_QTY", "0")),
+        ccld_unpr=Decimal(_gf(item, "CCLD_UNPR", "0")),
+        ccld_tmd=_gf(item, "CCLD_TMD"),
+        ccld_num=_gf(item, "CCLD_NUM"),
+        ord_stat=_gf(item, "ORD_STAT"),
+        cncl_yn=_gf(item, "CNCL_YN", "N"),
+        rvse_yn=_gf(item, "RVSE_YN", "N"),
+        ord_tmd=_gf(item, "ORD_TMD"),
+        rmn_qty=Decimal(_gf(item, "RMN_QTY", "0")) if _gf(item, "RMN_QTY") else None,
+        avg_prvs=Decimal(_gf(item, "AVG_PRVS", "0")) if _gf(item, "AVG_PRVS") else None,
     )
 
 
@@ -1199,11 +1200,11 @@ class KISRestClient:
             params: dict[str, str] = {
                 "CANO": self.account_number,
                 "ACNT_PRDT_CD": self.account_product_code,
-                "INQR_STRT_DT": strt_dt,
-                "INQR_END_DT": end_dt,
-                "SLL_BUY_DVSN_CD": "00",      # 전체
+                "INQR_STRT_DT": strt_dt or "",
+                "INQR_END_DT": end_dt or "",
+                "SLL_BUY_DVSN_CD": self._map_side_code(order_side) if order_side else "00",
                 "INQR_DVSN": "00",            # 조회구분 (역순)
-                "PDNO": "",                   # 전체종목
+                "PDNO": symbol or "",
                 "ORD_GNO_BRNO": "00000",      # 주문채번지점번호 (KIS 표준 기본값)
                 "CCLD_DVSN": "00",            # 전체
                 "INQR_DVSN_1": "",            # 조회구분1 (""=전체)
@@ -1214,6 +1215,10 @@ class KISRestClient:
                 "CTX_AREA_FK100": ctx_fk,
                 "CTX_AREA_NK100": ctx_nk,
             }
+
+            # broker_order_id(ODNO)가 있으면 추가 (API 서버사이드 필터링)
+            if broker_order_id:
+                params["ODNO"] = broker_order_id
 
             data = await self._request(
                 "GET",
@@ -1255,21 +1260,22 @@ class KISRestClient:
 
         # ── Instrumentation ──
         if logger.isEnabledFor(logging.DEBUG):
-            odnos = [item.get("ODNO", "") for item in all_output]
+            odnos = [KISRestClient._get_kis_field(item, "ODNO") for item in all_output]
             logger.debug(
                 "inquire-daily-ccld (paginated): total_count=%d, odnos=%s",
                 len(all_output), odnos[:30],
             )
 
         # Post-fetch filtering
+        _gf = KISRestClient._get_kis_field
         filtered = all_output
         if broker_order_id is not None:
-            filtered = [it for it in filtered if it.get("ODNO") == broker_order_id]
+            filtered = [it for it in filtered if _gf(it, "ODNO") == broker_order_id]
         if symbol is not None:
-            filtered = [it for it in filtered if it.get("PDNO") == symbol]
+            filtered = [it for it in filtered if _gf(it, "PDNO") == symbol]
         if order_side is not None:
             side_code = "01" if order_side == OrderSide.SELL else "02"
-            filtered = [it for it in filtered if it.get("SLL_BUY_DVSN_CD") == side_code]
+            filtered = [it for it in filtered if _gf(it, "SLL_BUY_DVSN_CD") == side_code]
 
         return filtered
 
@@ -2021,6 +2027,7 @@ class KISRestClient:
         # reconciliation reserve를 확보한 후 skip_global_rest=True로 재시도한다.
         try:
             records = await self.inquire_daily_ccld(
+                broker_order_id=broker_order_id,
                 strt_dt=_strt_dt,
                 end_dt=None,
                 symbol=symbol,
@@ -2033,6 +2040,7 @@ class KISRestClient:
             if self.budget_manager is not None:
                 self.budget_manager.reserve_reconciliation_or_raise()
             records = await self.inquire_daily_ccld(
+                broker_order_id=broker_order_id,
                 strt_dt=_strt_dt,
                 end_dt=None,
                 symbol=symbol,
@@ -2043,7 +2051,7 @@ class KISRestClient:
 
         # Find the matching order
         for item in records:
-            if item.get("ODNO") == broker_order_id:
+            if KISRestClient._get_kis_field(item, "ODNO") == broker_order_id:
                 return self._parse_order_status_item(item)
 
         # 2. If not found in daily settlement, try positions
@@ -2173,6 +2181,18 @@ class KISRestClient:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _get_kis_field(item: dict[str, Any], field: str, default: Any = "") -> Any:
+        """KIS 응답 필드를 대소문자 무관하게 읽는다.
+
+        KIS API는 응답 키를 대문자(ODNO) 또는 소문자(odno)로 혼용하여 반환하므로,
+        두 케이스를 모두 시도한다.
+        """
+        value = item.get(field)
+        if value is not None and value != "":
+            return value
+        return item.get(field.lower(), default)
+
+    @staticmethod
     def _map_order_type(order_type: OrderType) -> str:
         """Map OrderType to KIS ORD_DVSN code."""
         mapping: dict[OrderType, str] = {
@@ -2182,6 +2202,21 @@ class KISRestClient:
             OrderType.STOP_LIMIT: "03",  # 조건부지정가 (확인필요)
         }
         return mapping.get(order_type, "00")
+
+    @staticmethod
+    def _map_side_code(order_side: str | None) -> str:
+        """Map order side to KIS SLL_BUY_DVSN_CD code.
+
+        "00": 전체, "01": 매도, "02": 매수
+        """
+        if order_side is None:
+            return "00"
+        side_upper = order_side.upper()
+        if side_upper in ("BUY", "매수", "2"):
+            return "02"
+        if side_upper in ("SELL", "매도", "1"):
+            return "01"
+        return "00"
 
     @staticmethod
     def _map_time_in_force(time_in_force: TimeInForce) -> str:
@@ -2226,9 +2261,11 @@ class KISRestClient:
         if not output or not broker_order_id:
             return None
 
+        _gf = KISRestClient._get_kis_field
+
         # ── 1순위: ODNO 정확 매칭 ──
         for item in output:
-            if item.get("ODNO") == broker_order_id:
+            if _gf(item, "ODNO") == broker_order_id:
                 return item
 
         # broker_order_id가 KIS ODNO 형식(숫자)인 경우
@@ -2236,7 +2273,7 @@ class KISRestClient:
             # ODNO 매칭 실패 → 모든 레코드의 odno가 비어있는지 확인
             # (paper 환경에서는 odno를 반환하지 않음)
             all_odno_empty = all(
-                not record.get("odno")
+                not _gf(record, "ODNO")
                 for record in output
             )
             if not all_odno_empty:
@@ -2249,8 +2286,8 @@ class KISRestClient:
         # 같은 종목(PDNO) + 같은 매매구분(SLL_BUY_DVSN_CD) 항목을 찾는다.
         candidates_2: list[dict[str, Any]] = []
         for item in output:
-            pdno = item.get("PDNO", "")
-            sll_buy = item.get("SLL_BUY_DVSN_CD", "")
+            pdno = _gf(item, "PDNO")
+            sll_buy = _gf(item, "SLL_BUY_DVSN_CD")
             if pdno and sll_buy:
                 candidates_2.append(item)
 

@@ -1588,7 +1588,7 @@ class TestBuyBaselineWithAllocationPct:
     def test_low_price_stock_capped_by_requested(self) -> None:
         """초저가주 5,000원, orderable=9,000,000.
         allocation target = int(1,800,000 / 5,000) = 360,
-        but capped by requested_quantity=10 → 10주."""
+        cap 제거로 allocation target=360 반환."""
         result = calculate_sizing(
             _inputs(
                 decision_type="BUY",
@@ -1598,14 +1598,14 @@ class TestBuyBaselineWithAllocationPct:
                 orderable_amount="9000000",
             )
         )
-        assert result.quantity == Decimal("10"), (
-            f"Expected 10 (capped by requested), got {result.quantity}"
+        assert result.quantity == Decimal("360"), (
+            f"Expected 360 (allocation target, cap removed), got {result.quantity}"
         )
 
     def test_mid_price_stock_capped_by_requested(self) -> None:
         """두산 150,000원, orderable=9,000,000.
         allocation target = int(1,800,000 / 150,000) = 12,
-        but capped by requested_quantity=10 → 10주."""
+        cap 제거로 allocation target=12 반환."""
         result = calculate_sizing(
             _inputs(
                 decision_type="BUY",
@@ -1615,14 +1615,14 @@ class TestBuyBaselineWithAllocationPct:
                 orderable_amount="9000000",
             )
         )
-        assert result.quantity == Decimal("10"), (
-            f"Expected 10 (capped by requested), got {result.quantity}"
+        assert result.quantity == Decimal("12"), (
+            f"Expected 12 (allocation target, cap removed), got {result.quantity}"
         )
 
     def test_mid_low_price_stock_capped_by_requested(self) -> None:
         """저가주 30,000원, orderable=9,000,000.
         allocation target = int(1,800,000 / 30,000) = 60,
-        but capped by requested_quantity=10 → 10주."""
+        cap 제거로 allocation target=60 반환."""
         result = calculate_sizing(
             _inputs(
                 decision_type="BUY",
@@ -1632,15 +1632,14 @@ class TestBuyBaselineWithAllocationPct:
                 orderable_amount="9000000",
             )
         )
-        assert result.quantity == Decimal("10"), (
-            f"Expected 10 (capped by requested), got {result.quantity}"
+        assert result.quantity == Decimal("60"), (
+            f"Expected 60 (allocation target, cap removed), got {result.quantity}"
         )
 
-    def test_allocation_reduces_but_never_exceeds_requested(self) -> None:
-        """BUX 수량은 requested_quantity를 초과할 수 없음을 검증.
+    def test_allocation_replaces_requested_quantity(self) -> None:
+        """Allocation 계산이 requested_quantity placeholder를 대체함을 검증.
 
-        requested_quantity=1 → allocation target=360이어도
-        requested_quantity=1이 상한 → 1주 반환."""
+        requested_quantity=1 (placeholder) → allocation target=360 반환."""
         result = calculate_sizing(
             _inputs(
                 decision_type="BUY",
@@ -1650,9 +1649,9 @@ class TestBuyBaselineWithAllocationPct:
                 orderable_amount="9000000",
             )
         )
-        # requested_quantity=1이 상한 → 1주
-        assert result.quantity == Decimal("1"), (
-            f"Expected 1 (capped by requested_quantity=1), got {result.quantity}"
+        # cap 제거로 allocation target=360 반환
+        assert result.quantity == Decimal("360"), (
+            f"Expected 360 (allocation target, cap removed), got {result.quantity}"
         )
 
     def test_sell_side_unchanged(self) -> None:

@@ -1,0 +1,15 @@
+2026-05-30 12:40:42 [INFO] reconciliation-worker: Starting reconciliation worker loop (interval=30s, limit=10, max_cycles=1, dry_run=True, account_id=None, run_id=None) ...
+2026-05-30 12:40:42 [INFO] reconciliation-worker: === Cycle 1 ===
+2026-05-30 12:40:42 [INFO] reconciliation-worker: Found 1 pending reconciliation run(s) to process.
+2026-05-30 12:40:42 [INFO] reconciliation-worker: Processing reconciliation run: run_id=5e1573f3-a0a8-4112-9d6f-60341aeeed90 account_id=a44a02d1-7f32-5a62-99f7-235abeb58284 trigger_type=requires_reconciliation
+2026-05-30 12:40:43 [INFO] reconciliation-worker: paper_access_token token cache: miss reason=disabled path=.cache/kis_token.json
+2026-05-30 12:40:43 [INFO] reconciliation-worker: HTTP Request: POST https://openapivts.koreainvestment.com:29443/oauth2/tokenP "HTTP/1.1 200 OK"
+2026-05-30 12:40:43 [INFO] reconciliation-worker: HTTP Request: POST https://openapivts.koreainvestment.com:29443/oauth2/Approval "HTTP/1.1 200 OK"
+2026-05-30 12:40:43 [INFO] reconciliation-worker: KIS adapter created and authenticated: broker_account_id=7f39fc04-346a-5484-90ab-80e8a1d04a15 token_prefix=eyJ0eXAiOiJKV1Qi
+2026-05-30 12:40:43 [INFO] reconciliation-worker: Cached broker adapter: account_id=a44a02d1-7f32-5a62-99f7-235abeb58284
+2026-05-30 12:40:43 [INFO] reconciliation-worker: [DRY-RUN] Would inquire broker: run_id=5e1573f3-a0a8-4112-9d6f-60341aeeed90 order_id=c87f5ec3-2647-440c-a959-5c185a9886cd broker_native_order_id=0000032815
+2026-05-30 12:40:43 [INFO] reconciliation-worker: Run resolved: run_id=5e1573f3-a0a8-4112-9d6f-60341aeeed90 orders=1
+2026-05-30 12:40:43 [INFO] reconciliation-worker: cycle-complete  runs=1 (resolved=1 skipped=0 failed=0 retained=0)  orders=1  elapsed=0.4s
+2026-05-30 12:40:43 [INFO] reconciliation-worker: Cycle 1 complete (took 0.4s). Next cycle in 30s ...
+2026-05-30 12:40:43 [INFO] reconciliation-worker: Reached max_cycles=1 — exiting.
+2026-05-30 12:40:43 [INFO] reconciliation-worker: Shutdown complete (1 cycles executed).
