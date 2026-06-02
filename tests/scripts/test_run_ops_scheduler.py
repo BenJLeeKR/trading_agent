@@ -88,6 +88,11 @@ class TestCommandBuilders:
         assert "--dry-run" in cmd
         assert "--submit" not in cmd
 
+    def test_decision_submit_command_disable_general_submit(self) -> None:
+        cmd = _decision_command(dry_run=False, allow_general_submit=False)
+        assert "--submit" in cmd
+        assert "--no-allow-general-submit" in cmd
+
     def test_post_submit_command_uses_python3(self) -> None:
         assert _post_submit_command() == [
             "python3",
@@ -551,6 +556,25 @@ class TestParseSnapshotSyncSummary:
         assert metrics["total_positions_skipped"] == 1
         assert metrics["total_cash_synced"] == 2
         assert metrics["errors"] == 1
+
+    def test_parses_metrics_from_stderr(self) -> None:
+        result = CommandResult(
+            name="pre_snapshot_sync",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout="",
+            stderr=(
+                "2026-06-01 15:34:17 [INFO] snapshot-sync: sync-cycle  "
+                "accounts=1 (ok=1 partial=0 fail=0 skip=0)  "
+                "positions=16 (skipped=0)  cash=1  errors=0\n"
+            ),
+        )
+        metrics = _parse_snapshot_sync_summary(result)
+        assert metrics["total_accounts"] == 1
+        assert metrics["succeeded"] == 1
+        assert metrics["total_positions_synced"] == 16
+        assert metrics["total_cash_synced"] == 1
 
 
 # =====================================================================

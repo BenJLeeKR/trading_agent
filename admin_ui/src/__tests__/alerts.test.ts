@@ -221,6 +221,41 @@ describe("deriveAlerts — Snapshot Sync Rules", () => {
     expect(alert!.level).toBe("긴급");
     expect(alert!.title).toContain("시각 불일치");
   });
+
+  it("SNAP-BUDGET-001: pre-check 대체만 존재 → budget alert 미발생", () => {
+    const input = defaultInput({
+      snapshotSyncRun: makeSyncRun({
+        summary_json: {
+          VTTC8908R_pre_check: 2,
+          VTTC8908R_budget_exhausted: 0,
+          VTTC8908R_api_failure: 0,
+        },
+      }),
+    });
+    const alerts = deriveAlerts(input);
+
+    expect(findAlert(alerts, "SNAP-BUDGET-001")).toBeUndefined();
+  });
+
+  it("SNAP-BUDGET-001: hard fallback 존재 → budget alert 발생", () => {
+    const input = defaultInput({
+      snapshotSyncRun: makeSyncRun({
+        summary_json: {
+          VTTC8908R_pre_check: 3,
+          VTTC8908R_budget_exhausted: 1,
+          VTTC8908R_api_failure: 1,
+        },
+      }),
+    });
+    const alerts = deriveAlerts(input);
+    const alert = findAlert(alerts, "SNAP-BUDGET-001");
+
+    expect(alert).toBeDefined();
+    expect(alert!.description).toContain("총 2회 hard fallback");
+    expect(alert!.description).toContain("budget exhausted 1회");
+    expect(alert!.description).toContain("API 실패 fallback 1회");
+    expect(alert!.description).not.toContain("pre-check 대체");
+  });
 });
 
 /* ───────────────────────────────────────────

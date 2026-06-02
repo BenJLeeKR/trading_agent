@@ -216,3 +216,61 @@ describe("OrderDetail order not found", () => {
     });
   });
 });
+
+/* ───────────────────────────────────────────
+ * Scenario 8: Submission Attempt Summary 섹션
+ * ─────────────────────────────────────────── */
+describe("OrderDetail submission attempt summary", () => {
+  it("renders the submission attempt section with summary data", async () => {
+    mockFetchOnce(mockOrderDetail);
+    mockFetchOnce(mockOrderEvents);
+    mockFetchOnce(mockBrokerOrders);
+
+    renderOrderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText("주문 상세")).toBeInTheDocument();
+    });
+
+    // Section title
+    expect(screen.getByText("제출 시도")).toBeInTheDocument();
+
+    // Attempt count
+    expect(screen.getByText("3회")).toBeInTheDocument();
+
+    // Latest outcome badge — "rejected" → error variant (renders "거부됨" text since mockOrderDetail.latest_outcome is "rejected")
+    // The StatusBadge renders the raw outcome value as children
+    expect(screen.getByText("rejected")).toBeInTheDocument();
+
+    // Rejection reason — raw_code and raw_message
+    expect(screen.getByText(/2011/)).toBeInTheDocument();
+    expect(screen.getByText("주문 수량이 1주 미만입니다.")).toBeInTheDocument();
+
+    // "전체 이력 보기" link
+    const historyLink = screen.getByRole("link", { name: /전체 이력 보기/ });
+    expect(historyLink).toBeInTheDocument();
+    expect(historyLink).toHaveAttribute(
+      "href",
+      "/orders/aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0001/submission-attempts",
+    );
+  });
+
+  it("hides the submission attempt section when summary is null", async () => {
+    // Create a variant of mockOrderDetail without submission_attempt_summary
+    const { submission_attempt_summary: _, ...orderWithoutSummary } = mockOrderDetail;
+
+    mockFetchOnce(orderWithoutSummary);
+    mockFetchOnce(mockOrderEvents);
+    mockFetchOnce(mockBrokerOrders);
+
+    renderOrderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText("주문 상세")).toBeInTheDocument();
+    });
+
+    // Section must NOT be present
+    expect(screen.queryByText("제출 시도")).not.toBeInTheDocument();
+    expect(screen.queryByText("전체 이력 보기")).not.toBeInTheDocument();
+  });
+});

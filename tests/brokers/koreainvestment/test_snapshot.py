@@ -21,6 +21,7 @@ import pytest
 from agent_trading.brokers.koreainvestment.rest_client import (
     CashAndPositionsResult,
     KISRestClient,
+    OrderableCashResult,
 )
 from agent_trading.brokers.koreainvestment.snapshot import (
     KISSyncSnapshotProvider,
@@ -105,6 +106,33 @@ class FakeKISRestClient:
         if self._fail_orderable_cash:
             raise RuntimeError("KIS orderable cash fetch failed")
         return self._orderable_cash
+
+    async def get_orderable_cash_result(
+        self,
+        account_ref: str = "",
+        symbol: str = "",
+        price: str = "",
+        order_type: str = "00",
+        fallback_cash: Decimal | None = None,
+    ) -> OrderableCashResult:
+        amount = await self.get_orderable_cash(
+            account_ref=account_ref,
+            symbol=symbol,
+            price=price,
+            order_type=order_type,
+            fallback_cash=fallback_cash,
+        )
+        if amount is not None and amount != fallback_cash:
+            return OrderableCashResult(
+                amount=amount,
+                source="vttc8908r",
+            )
+        if fallback_cash is not None:
+            return OrderableCashResult(
+                amount=amount,
+                source="budget_precheck_fallback",
+            )
+        return OrderableCashResult(amount=amount, source="missing_field")
 
     async def close(self) -> None:
         self.closed = True
@@ -354,6 +382,41 @@ class TestKISSyncSnapshotProvider:
         )
         assert cash.available_cash == 1000000  # unchanged
         assert cash.currency == "KRW"
+
+    async def test_cash_balance_logs_budget_precheck_fallback_source(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        caplog.set_level("INFO")
+        account_id = uuid4()
+        class BudgetPrecheckFallbackClient(FakeKISRestClient):
+            async def get_orderable_cash_result(
+                self,
+                account_ref: str = "",
+                symbol: str = "",
+                price: str = "",
+                order_type: str = "00",
+                fallback_cash: Decimal | None = None,
+            ) -> OrderableCashResult:
+                return OrderableCashResult(
+                    amount=fallback_cash,
+                    source="budget_precheck_fallback",
+                )
+
+        client = BudgetPrecheckFallbackClient(
+            positions=[],
+            cash_balance={
+                "dnca_tot_amt": "1000000",
+                "nxdy_excc_amt": "800000",
+            },
+            orderable_cash=None,
+        )
+        provider = KISSyncSnapshotProvider(client)
+        inst_repo = InMemoryInstrumentRepository()
+
+        await provider.fetch_snapshot(account_id, inst_repo)
+
+        assert "source: budget_precheck_fallback" in caplog.text
 
     async def test_cash_balance_without_settled(self) -> None:
         """No nxdy_excc_amt → settled_cash falls back to available_cash."""

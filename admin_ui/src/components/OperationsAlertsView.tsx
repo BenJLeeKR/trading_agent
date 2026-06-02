@@ -31,6 +31,10 @@ import type {
   AlignmentDetail,
 } from "../types/api";
 import { deriveAlerts, LEVEL_PRIORITY, type AlertItem, type AlertRuleInput } from "../lib/alerts";
+import {
+  formatSnapshotBudgetParts,
+  parseSnapshotBudgetCounters,
+} from "../lib/snapshotBudget";
 
 /* ── Types ── */
 interface OperationNote {
@@ -545,14 +549,11 @@ export default function OperationsAlertsView() {
           const budgetParts: string[] = [];
           const sj = snapshotSyncRun.summary_json as Record<string, number> | null;
           if (sj) {
-            const preCheck = sj["VTTC8908R_pre_check"] ?? 0;
-            const budgetExhausted = sj["VTTC8908R_budget_exhausted"] ?? 0;
-            const apiFailure = sj["VTTC8908R_api_failure"] ?? 0;
-            const afterHoursSkip = sj["after_hours_skip"] ?? 0;
-            if (preCheck > 0) budgetParts.push(`pre-check fallback ${preCheck}회`);
-            if (budgetExhausted > 0) budgetParts.push(`budget exhausted ${budgetExhausted}회`);
-            if (apiFailure > 0) budgetParts.push(`API 실패 fallback ${apiFailure}회`);
-            if (afterHoursSkip > 0) budgetParts.push(`장후 skip ${afterHoursSkip}회`);
+            budgetParts.push(
+              ...formatSnapshotBudgetParts(
+                parseSnapshotBudgetCounters(sj),
+              ),
+            );
           }
           return (
             <div>

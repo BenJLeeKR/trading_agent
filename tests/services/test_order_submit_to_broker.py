@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from agent_trading.brokers.base import BrokerAdapter
+from agent_trading.brokers.errors import BrokerError
 from agent_trading.domain.entities import (
     AccountEntity,
     InstrumentEntity,
@@ -15,6 +16,7 @@ from agent_trading.domain.entities import (
 )
 from agent_trading.domain.enums import (
     BrokerName,
+    BrokerErrorType,
     Environment,
     OrderSide,
     OrderStatus,
@@ -102,7 +104,7 @@ def submit_request() -> SubmitOrderRequest:
 
 
 @pytest.mark.asyncio
-async def test_submit_normal_path(manager, mock_broker, sample_order, submit_request):
+async def test_submit_normal_path(repos, manager, mock_broker, sample_order, submit_request):
     """Normal path: broker accepts → order transitions to SUBMITTED."""
     mock_broker.submit_order.return_value = SubmitOrderResult(
         accepted=True,
@@ -120,12 +122,25 @@ async def test_submit_normal_path(manager, mock_broker, sample_order, submit_req
     )
 
     assert result.status == OrderStatus.SUBMITTED
+    assert result.submitted_at is not None
     mock_broker.submit_order.assert_awaited_once_with(submit_request)
+
+    # 저장 row 검증
+    attempts = await repos.order_submission_attempts.list_by_order_request(
+        sample_order.order_request_id
+    )
+    assert len(attempts) == 1
+    assert attempts[0].accepted is True
+    assert attempts[0].broker_native_order_id == "BRK-001"
+
+    persisted = await repos.orders.get(sample_order.order_request_id)
+    assert persisted is not None
+    assert persisted.submitted_at is not None
 
 
 @pytest.mark.asyncio
 async def test_submit_uncertain_triggers_reconciliation(
-    manager, mock_broker, sample_order, submit_request
+    repos, manager, mock_broker, sample_order, submit_request
 ):
     """Uncertain result → order transitions to RECONCILE_REQUIRED."""
     mock_broker.submit_order.return_value = SubmitOrderResult(
@@ -148,10 +163,21 @@ async def test_submit_uncertain_triggers_reconciliation(
     assert result.status == OrderStatus.RECONCILE_REQUIRED
     assert result.status_reason_code == "TIMEOUT"
 
+    # 저장 row 검증
+    attempts = await repos.order_submission_attempts.list_by_order_request(
+        sample_order.order_request_id
+    )
+    assert len(attempts) == 1
+    assert attempts[0].accepted is True  # uncertain 플래그와 accepted는 독립적
+
+    persisted = await repos.orders.get(sample_order.order_request_id)
+    assert persisted is not None
+    assert persisted.submitted_at is not None
+
 
 @pytest.mark.asyncio
 async def test_submit_requires_reconciliation(
-    manager, mock_broker, sample_order, submit_request
+    repos, manager, mock_broker, sample_order, submit_request
 ):
     """requires_reconciliation result → order transitions to RECONCILE_REQUIRED."""
     mock_broker.submit_order.return_value = SubmitOrderResult(
@@ -174,9 +200,20 @@ async def test_submit_requires_reconciliation(
     assert result.status == OrderStatus.RECONCILE_REQUIRED
     assert result.status_reason_code == "NETWORK_ERROR"
 
+    # 저장 row 검증
+    attempts = await repos.order_submission_attempts.list_by_order_request(
+        sample_order.order_request_id
+    )
+    assert len(attempts) == 1
+    assert attempts[0].accepted is False  # requires_reconciliation일 때 accepted=False 일반적
+
+    persisted = await repos.orders.get(sample_order.order_request_id)
+    assert persisted is not None
+    assert persisted.submitted_at is not None
+
 
 @pytest.mark.asyncio
-async def test_submit_rejected(manager, mock_broker, sample_order, submit_request):
+async def test_submit_rejected(repos, manager, mock_broker, sample_order, submit_request):
     """Broker explicitly rejects → order transitions to REJECTED (terminal)."""
     mock_broker.submit_order.return_value = SubmitOrderResult(
         accepted=False,
@@ -198,6 +235,18 @@ async def test_submit_rejected(manager, mock_broker, sample_order, submit_reques
     # Broker rejection without uncertain/requires_reconciliation flags
     # goes to REJECTED (terminal state).
     assert result.status == OrderStatus.REJECTED
+    assert result.submitted_at is not None
+
+    # 저장 row 검증
+    attempts = await repos.order_submission_attempts.list_by_order_request(
+        sample_order.order_request_id
+    )
+    assert len(attempts) == 1
+    assert attempts[0].accepted is False
+
+    persisted = await repos.orders.get(sample_order.order_request_id)
+    assert persisted is not None
+    assert persisted.submitted_at is not None
 
 
 @pytest.mark.asyncio
@@ -228,6 +277,101 @@ async def test_submit_blocked_by_reconciliation_lock(
     mock_broker.submit_order.assert_not_called()
     assert result.status == OrderStatus.RECONCILE_REQUIRED
     assert result.status_reason_code == "BLOCKED"
+
+    # lock blocked는 broker 제출이 차단되므로 저장 row가 없어야 정상
+    attempts = await repos.order_submission_attempts.list_by_order_request(
+        sample_order.order_request_id
+    )
+    assert len(attempts) == 0  # 저장되지 않음
+
+
+@pytest.mark.asyncio
+async def test_submit_broker_exception_records_attempt(
+    repos,
+    manager,
+    mock_broker,
+    sample_order,
+    submit_request,
+):
+    """Broker가 예외를 raise하면 order_submission_attempts에 error_type이 저장되어야 함."""
+    # Given: broker가 예외를 발생시킴
+    mock_broker.submit_order.side_effect = ValueError("KIS API connection error")
+
+    # When: submit 실패 (예외 전파)
+    with pytest.raises(ValueError, match="KIS API connection error"):
+        await manager.submit_order_to_broker(
+            order=sample_order,
+            broker=mock_broker,
+            request=submit_request,
+        )
+
+    # Then: 저장 row가 1건 생성되고 error_type이 기록됨
+    attempts = await repos.order_submission_attempts.list_by_order_request(
+        sample_order.order_request_id
+    )
+    assert len(attempts) == 1, "예외 경로에서도 저장 row가 생성되어야 함"
+    assert attempts[0].accepted is False, "예외 시 accepted는 False"
+    assert attempts[0].error_type == "ValueError", "error_type에 예외 클래스명이 기록되어야 함"
+    assert attempts[0].duration_ms is not None, "duration_ms가 기록되어야 함"
+
+
+@pytest.mark.asyncio
+async def test_submit_broker_error_rejected_transitions_terminal(
+    repos, manager, mock_broker, sample_order, submit_request
+):
+    """명확한 BrokerError는 pending_submit에 남기지 않고 즉시 REJECTED 처리."""
+    mock_broker.submit_order.side_effect = BrokerError(
+        broker_name=BrokerName.KOREA_INVESTMENT,
+        error_type=BrokerErrorType.ORDER_REJECTED,
+        retryable=False,
+        raw_code="IGW00007",
+        raw_message="KIS order_cash: HTTP 500 (msg_cd=IGW00007): MCA 전문바디 구성 중 오류가 발생하였습니다.",
+    )
+
+    result = await manager.submit_order_to_broker(
+        order=sample_order,
+        broker=mock_broker,
+        request=submit_request,
+    )
+
+    assert result.status == OrderStatus.REJECTED
+    assert result.status_reason_code == "IGW00007"
+    attempts = await repos.order_submission_attempts.list_by_order_request(
+        sample_order.order_request_id
+    )
+    assert len(attempts) == 1
+    assert attempts[0].accepted is False
+    assert attempts[0].error_type == "BrokerError"
+
+
+@pytest.mark.asyncio
+async def test_submit_broker_error_reconcile_required_transitions_immediately(
+    repos, manager, mock_broker, sample_order, submit_request
+):
+    """모호한 BrokerError는 즉시 RECONCILE_REQUIRED로 전이하고 lock을 건다."""
+    mock_broker.submit_order.side_effect = BrokerError(
+        broker_name=BrokerName.KOREA_INVESTMENT,
+        error_type=BrokerErrorType.API_ERROR,
+        retryable=False,
+        raw_code="TIMEOUT",
+        raw_message="Broker submit timed out",
+        requires_reconciliation=True,
+        blocks_new_orders=True,
+    )
+
+    result = await manager.submit_order_to_broker(
+        order=sample_order,
+        broker=mock_broker,
+        request=submit_request,
+    )
+
+    assert result.status == OrderStatus.RECONCILE_REQUIRED
+    assert result.status_reason_code == "TIMEOUT"
+    attempts = await repos.order_submission_attempts.list_by_order_request(
+        sample_order.order_request_id
+    )
+    assert len(attempts) == 1
+    assert attempts[0].accepted is False
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { OrderDetail as OrderDetailType, OrderEvent, BrokerOrderView } from "../types/api";
+import type { OrderDetail as OrderDetailType, OrderEvent, BrokerOrderView, SubmissionAttemptSummary } from "../types/api";
 import { getOrderDetail, getOrderEvents, getBrokerOrders } from "../api/client";
 import { useEnumMetadata, getEnumLabel } from "../hooks/useEnumMetadata";
 import { DataTable } from "./common/DataTable";
@@ -56,6 +56,14 @@ export default function OrderDetail() {
   if (loading) return <LoadingSpinner />;
   if (error) return <ErrorBanner message={error} onDismiss={() => setError(null)} />;
   if (!order) return <p className="p-6 text-[#64748b]">주문을 찾을 수 없습니다.</p>;
+
+  /** Map latest_outcome string to StatusBadge variant */
+  function outcomeVariant(outcome: string | null | undefined): "success" | "warning" | "error" | "neutral" {
+    if (outcome === "accepted") return "success";
+    if (outcome === "rejected") return "error";
+    if (outcome === "exception") return "warning";
+    return "neutral";
+  }
 
   const eventColumns: Column<OrderEvent>[] = [
     { key: "event_timestamp", header: "시각" },
@@ -183,6 +191,57 @@ export default function OrderDetail() {
           <div className="mt-4 p-3 bg-[#fef2f2] border border-[#f87171] rounded-lg">
             <strong className="text-sm text-[#dc2626]">오류:</strong>
             <span className="text-sm text-[#dc2626] ml-1">{order.error_message}</span>
+          </div>
+        )}
+
+        {/* ── Submission Attempt Summary ── */}
+        {order.submission_attempt_summary && (
+          <div className="mt-4 pt-4 border-t border-[#e2e8f0]">
+            <p className="text-xs font-semibold text-[#64748b] mb-2">제출 시도</p>
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-2">
+              <div>
+                <dt className="text-xs text-[#64748b]">시도 횟수</dt>
+                <dd className="text-sm font-medium text-[#0f172a]">
+                  {order.submission_attempt_summary.attempt_count}회
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-[#64748b]">최종 결과</dt>
+                <dd className="mt-0.5">
+                  <StatusBadge
+                    variant={outcomeVariant(order.submission_attempt_summary.latest_outcome)}
+                  >
+                    {order.submission_attempt_summary.latest_outcome ?? "없음"}
+                  </StatusBadge>
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-[#64748b]">최종 제출 시각</dt>
+                <dd className="text-sm text-[#0f172a]">
+                  {formatKstDateTime(order.submission_attempt_summary.last_submitted_at)}
+                </dd>
+              </div>
+              {(order.submission_attempt_summary.latest_outcome === "rejected" ||
+                order.submission_attempt_summary.latest_outcome === "exception") && (
+                <div>
+                  <dt className="text-xs text-[#64748b]">거절 사유</dt>
+                  <dd className="text-sm text-[#dc2626]">
+                    {order.submission_attempt_summary.latest_raw_code && (
+                      <span className="font-mono">[{order.submission_attempt_summary.latest_raw_code}] </span>
+                    )}
+                    {order.submission_attempt_summary.latest_raw_message ?? "—"}
+                  </dd>
+                </div>
+              )}
+            </dl>
+            <div className="mt-2">
+              <Link
+                to={`/orders/${order.order_request_id}/submission-attempts`}
+                className="text-xs text-[#3b82f6] hover:text-[#2563eb]"
+              >
+                전체 이력 보기 →
+              </Link>
+            </div>
           </div>
         )}
 

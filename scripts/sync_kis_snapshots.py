@@ -430,6 +430,7 @@ async def _run(args: argparse.Namespace) -> int:
         kis_env=settings.kis_env,
         real_rest_rps=settings.kis_real_rest_rps,
         paper_rest_rps=settings.kis_paper_rest_rps,
+        shared_budget_file=settings.kis_shared_budget_file,
     )
     rest_client = KISRestClient(
         api_key=settings.kis_api_key,

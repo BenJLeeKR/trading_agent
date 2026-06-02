@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 from uuid import UUID, uuid4
 
 import httpx
@@ -339,9 +339,27 @@ class CashAndPositionsResult:
     """전체 raw 응답 (로깅/디버깅 용도)."""
 
 
+@dataclass(slots=True, frozen=True)
+class OrderableCashResult:
+    """Structured VTTC8908R lookup result for observability."""
+
+    amount: Decimal | None
+    source: str
+
+
 # ---------------------------------------------------------------------------
 # KIS REST Client — httpx.AsyncClient-based HTTP transport
 # ---------------------------------------------------------------------------
+
+
+def _format_order_quantity(quantity: Decimal) -> str:
+    """Return a KIS-compatible integer quantity string for domestic stock orders."""
+    normalized = quantity.normalize()
+    if normalized <= 0:
+        raise ValueError(f"Order quantity must be positive, got {quantity}")
+    if normalized != normalized.to_integral_value():
+        raise ValueError(f"Order quantity must be a whole share, got {quantity}")
+    return str(int(normalized))
 
 
 
@@ -385,6 +403,10 @@ class KISRestClient:
     _approval_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _last_auth_call_time: float = field(default=0.0, init=False, repr=False)
     _last_approval_call_time: float = field(default=0.0, init=False, repr=False)
+
+    # --- paper global REST pacing (shared 1s interval across instances) ---
+    _paper_global_rest_lock: ClassVar[asyncio.Lock] = asyncio.Lock()
+    _paper_last_global_rest_time: ClassVar[float] = 0.0
 
     # --- backoff / circuit breaker ---
     _backoff: ExponentialBackoff = field(
@@ -854,6 +876,9 @@ class KISRestClient:
         held_position_sell:
             If ``True``, use the held-position sell reserved budget lane.
         """
+        if self.env == "paper" and not skip_global_rest and bucket != BucketType.ORDER:
+            await self._pace_paper_global_rest()
+
         # 1. Budget check — with async pacing for global REST cap
         _token_consumed = False
         if self.budget_manager is not None:
@@ -1034,6 +1059,23 @@ class KISRestClient:
                 if not skip_global_rest and self.budget_manager.global_rest is not None:
                     self.budget_manager.global_rest.release(1)
 
+    async def _pace_paper_global_rest(self) -> None:
+        """Serialize paper REST calls behind a shared 1s global gate.
+
+        Submit pacing alone is not sufficient because quote/inquiry calls can
+        consume the same paper global 1 RPS slot first. This helper is shared
+        across all ``KISRestClient`` instances and is applied to every paper
+        REST call that participates in the global budget.
+        """
+        cls = type(self)
+        async with cls._paper_global_rest_lock:
+            now = time.monotonic()
+            elapsed = now - cls._paper_last_global_rest_time
+            if cls._paper_last_global_rest_time > 0.0 and elapsed < 1.0:
+                await asyncio.sleep(1.0 - elapsed)
+                now = time.monotonic()
+            cls._paper_last_global_rest_time = now
+
     # ------------------------------------------------------------------
     # Order operations
     # ------------------------------------------------------------------
@@ -1053,6 +1095,13 @@ class KISRestClient:
         _held_position_sell:
             If ``True``, use the held-position sell reserved budget lane.
             Internal use only — called from ``KISAdapter.submit_order()``.
+
+        Notes
+        -----
+        **Paper env pacing**: In paper environment, submit uses the same shared
+        1 second global REST gate as quote/inquiry calls. This prevents submit
+        and read-only requests from racing for the paper 1 RPS slot as separate
+        lanes.
         """
         side = request.side
         tr_id_key = "order_buy" if side == OrderSide.BUY else "order_sell"
@@ -1061,24 +1110,39 @@ class KISRestClient:
             "CANO": self.account_number,
             "ACNT_PRDT_CD": self.account_product_code,
             "PDNO": request.symbol,
-            "ORD_DVSN": self._map_order_type(request.order_type),
-            "ORD_QTY": str(request.quantity),
+            "ORD_DVSN": self._map_order_style(
+                request.order_type,
+                request.time_in_force,
+            ),
+            "ORD_QTY": _format_order_quantity(request.quantity),
             "ORD_UNPR": str(request.price) if request.price is not None else "0",
         }
 
-        if request.time_in_force is not None:
-            body["ALGO"] = self._map_time_in_force(request.time_in_force)
-
-        data = await self._request(
-            "POST",
-            endpoint_key="order_cash",
-            tr_id_key=tr_id_key,
-            bucket=BucketType.ORDER,
-            body=body,
-            requires_hashkey=True,
-            skip_global_rest=False,
-            held_position_sell=_held_position_sell,
-        )
+        # ── Paper env pacing: share the same global 1s gate as quote/inquiry ──
+        if self.env == "paper":
+            await self._pace_paper_global_rest()
+            data = await self._request(
+                "POST",
+                endpoint_key="order_cash",
+                tr_id_key=tr_id_key,
+                bucket=BucketType.ORDER,
+                body=body,
+                requires_hashkey=True,
+                skip_global_rest=False,
+                held_position_sell=_held_position_sell,
+            )
+        else:
+            # ── Live env: no pacing, direct call ───────────────────────────
+            data = await self._request(
+                "POST",
+                endpoint_key="order_cash",
+                tr_id_key=tr_id_key,
+                bucket=BucketType.ORDER,
+                body=body,
+                requires_hashkey=True,
+                skip_global_rest=False,
+                held_position_sell=_held_position_sell,
+            )
 
         output = data.get("output", data)
         # KIS order response: ODNO (주문번호), ORD_TMD (주문시각)
@@ -1117,7 +1181,7 @@ class KISRestClient:
             "ORGN_ODNO": broker_order_id,
             "ORD_DVSN": "00",  # 지정가 (default for cancellation)
             "RVSE_CNCL_DVSN_CD": "02",  # 02 = 취소
-            "ORD_QTY": str(quantity),
+            "ORD_QTY": _format_order_quantity(quantity),
             "ORD_UNPR": "0",
         }
 
@@ -1518,7 +1582,7 @@ class KISRestClient:
             - ``raw_response``: 전체 raw 응답 (로깅/디버깅)
         """
         # ── Budget pre-check ──────────────────────────────────────────────
-        if not self._has_budget_for_inquiry():
+        if not await self._wait_for_inquiry_budget(timeout=2.0):
             logger.warning(
                 "BUDGET_FALLBACK VTTC8434R budget insufficient for account=%s; "
                 "returning empty CashAndPositionsResult",
@@ -1583,6 +1647,25 @@ class KISRestClient:
             raw_response=data,
         )
 
+    async def _wait_for_inquiry_budget(self, timeout: float = 2.0) -> bool:
+        """Wait briefly for inquiry/global budget to become available.
+
+        This is used for critical snapshot paths such as ``VTTC8434R`` where
+        returning an empty result is worse than waiting a short moment for the
+        shared paper global REST token to refill.
+        """
+        mgr = self.budget_manager
+        if mgr is None:
+            return True
+
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            if self._has_budget_for_inquiry():
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            await asyncio.sleep(0.1)
+
     def _has_budget_for_inquiry(self) -> bool:
         """VTTC8908R 호출 전 budget 사전 확인.
 
@@ -1610,6 +1693,23 @@ class KISRestClient:
         order_type: str = "00",  # 00=지정가
         fallback_cash: Decimal | None = None,  # NEW: budget 부족 시 반환할 fallback 값
     ) -> Decimal | None:
+        result = await self.get_orderable_cash_result(
+            account_ref=account_ref,
+            symbol=symbol,
+            price=price,
+            order_type=order_type,
+            fallback_cash=fallback_cash,
+        )
+        return result.amount
+
+    async def get_orderable_cash_result(
+        self,
+        account_ref: str = "",
+        symbol: str = "",
+        price: str = "",
+        order_type: str = "00",  # 00=지정가
+        fallback_cash: Decimal | None = None,
+    ) -> OrderableCashResult:
         """Fetch ``ord_psbl_cash`` from ``VTTC8908R`` (inquire-psbl-order).
 
         This is a separate API call from ``get_cash_balance()``.  The
@@ -1641,10 +1741,10 @@ class KISRestClient:
 
         Returns
         -------
-        Decimal | None
-            The orderable cash amount, or ``None`` if the API call failed.
-            When ``fallback_cash`` is provided and budget is insufficient,
-            returns ``fallback_cash`` without making any API call.
+        OrderableCashResult
+            Structured amount + source. ``source`` is one of
+            ``"vttc8908r"``, ``"budget_precheck_fallback"``,
+            ``"budget_exhausted"``, ``"api_failure"``, ``"missing_field"``.
         """
         # ── P2: budget 사전 확인 ─────────────────────────────────────────
         if fallback_cash is not None and not self._has_budget_for_inquiry():
@@ -1655,7 +1755,10 @@ class KISRestClient:
             )
             from agent_trading.services.snapshot_sync import inc_budget_fallback
             inc_budget_fallback("VTTC8908R_pre_check")
-            return fallback_cash
+            return OrderableCashResult(
+                amount=fallback_cash,
+                source="budget_precheck_fallback",
+            )
 
         # ── P2: 실제 API 호출 ────────────────────────────────────────────
         try:
@@ -1683,13 +1786,16 @@ class KISRestClient:
 
             ord_psbl_cash = output.get("ord_psbl_cash")
             if ord_psbl_cash is not None and str(ord_psbl_cash).strip():
-                return Decimal(str(ord_psbl_cash))
+                return OrderableCashResult(
+                    amount=Decimal(str(ord_psbl_cash)),
+                    source="vttc8908r",
+                )
 
             logger.info(
                 "ord_psbl_cash not present in VTTC8908R response; "
                 "orderable_amount will remain None"
             )
-            return None
+            return OrderableCashResult(amount=None, source="missing_field")
 
         except BudgetExhaustedError:
             logger.warning(
@@ -1697,7 +1803,7 @@ class KISRestClient:
                 "— fallback to None for account=%s",
                 account_ref or self.account_number,
             )
-            return None
+            return OrderableCashResult(amount=None, source="budget_exhausted")
 
         except Exception:
             logger.error(
@@ -1706,7 +1812,7 @@ class KISRestClient:
                 account_ref or self.account_number,
                 exc_info=True,
             )
-            return None
+            return OrderableCashResult(amount=None, source="api_failure")
 
     def _get_quote_from_cache(self, symbol: str) -> dict[str, Any] | None:
         """Return cached quote if fresh, else None."""
@@ -1991,6 +2097,8 @@ class KISRestClient:
         self,
         broker_order_id: str,
         symbol: str | None = None,
+        order_side: OrderSide | None = None,
+        order_created_at: datetime | None = None,
         after_hours: bool = False,
     ) -> OrderStatusResult:
         """Resolve an unknown order state via broker inquiry.
@@ -2014,7 +2122,13 @@ class KISRestClient:
         #    전일/이전 주문을 찾기 위해 최근 7일 범위로 확장 (bounded override).
         #    max_pages/max_records 정책은 _resolve_ccld_policy()가 계속 적용.
         _kst = timezone(timedelta(hours=9))
-        _strt_dt = (datetime.now(_kst) - timedelta(days=7)).strftime("%Y%m%d")
+        if order_created_at is not None:
+            created_kst = order_created_at.astimezone(_kst)
+            _strt_dt = created_kst.strftime("%Y%m%d")
+            _end_dt = _strt_dt
+        else:
+            _strt_dt = (datetime.now(_kst) - timedelta(days=7)).strftime("%Y%m%d")
+            _end_dt = None
         # RECONCILE_REQUIRED 해소 전용: RECONCILIATION bucket 사용 + after_hours 정책
         # (inquire_daily_ccld 내부에서 _resolve_ccld_policy(after_hours=True)가
         #  더 보수적인 max_pages/max_records를 적용하여 budget 소비를 최소화)
@@ -2029,8 +2143,9 @@ class KISRestClient:
             records = await self.inquire_daily_ccld(
                 broker_order_id=broker_order_id,
                 strt_dt=_strt_dt,
-                end_dt=None,
+                end_dt=_end_dt,
                 symbol=symbol,
+                order_side=order_side,
                 after_hours=True,
                 bucket=BucketType.RECONCILIATION,
             )
@@ -2042,8 +2157,9 @@ class KISRestClient:
             records = await self.inquire_daily_ccld(
                 broker_order_id=broker_order_id,
                 strt_dt=_strt_dt,
-                end_dt=None,
+                end_dt=_end_dt,
                 symbol=symbol,
+                order_side=order_side,
                 after_hours=True,
                 bucket=BucketType.RECONCILIATION,
                 _skip_global_rest=True,
@@ -2193,15 +2309,33 @@ class KISRestClient:
         return item.get(field.lower(), default)
 
     @staticmethod
-    def _map_order_type(order_type: OrderType) -> str:
-        """Map OrderType to KIS ORD_DVSN code."""
-        mapping: dict[OrderType, str] = {
-            OrderType.MARKET: "01",   # 시장가
-            OrderType.LIMIT: "00",    # 지정가
-            OrderType.STOP: "02",     # 조건부지정가
-            OrderType.STOP_LIMIT: "03",  # 조건부지정가 (확인필요)
-        }
-        return mapping.get(order_type, "00")
+    def _map_order_style(
+        order_type: OrderType,
+        time_in_force: TimeInForce | None,
+    ) -> str:
+        """Map order type + TIF to KIS ``ORD_DVSN`` code.
+
+        KIS 국내주식 ``order-cash``는 IOC/FOK를 별도 ``ALGO`` 필드가 아니라
+        ``ORD_DVSN`` 코드로 표현한다. DAY 주문만 기본 호가 코드를 사용한다.
+        """
+        tif = time_in_force or TimeInForce.DAY
+        if order_type == OrderType.LIMIT:
+            if tif == TimeInForce.IOC:
+                return "11"
+            if tif == TimeInForce.FOK:
+                return "12"
+            return "00"
+        if order_type == OrderType.MARKET:
+            if tif == TimeInForce.IOC:
+                return "13"
+            if tif == TimeInForce.FOK:
+                return "14"
+            return "01"
+        if order_type == OrderType.STOP:
+            return "02"
+        if order_type == OrderType.STOP_LIMIT:
+            return "03"
+        return "00"
 
     @staticmethod
     def _map_side_code(order_side: str | None) -> str:
@@ -2217,16 +2351,6 @@ class KISRestClient:
         if side_upper in ("SELL", "매도", "1"):
             return "01"
         return "00"
-
-    @staticmethod
-    def _map_time_in_force(time_in_force: TimeInForce) -> str:
-        """Map TimeInForce to KIS ALGO code (if applicable)."""
-        mapping: dict[TimeInForce, str] = {
-            TimeInForce.DAY: "01",     # 당일
-            TimeInForce.IOC: "02",     # IOC
-            TimeInForce.FOK: "03",     # FOK
-        }
-        return mapping.get(time_in_force, "01")
 
     @staticmethod
     def _match_order(

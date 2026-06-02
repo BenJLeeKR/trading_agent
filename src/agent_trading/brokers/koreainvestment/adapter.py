@@ -70,11 +70,13 @@ class KoreaInvestmentAdapter(BrokerAdapter):
     def __init__(
         self,
         rest_client: KISRestClient,
+        quote_rest_client: KISRestClient | None = None,
         mode: str = "paper",
         subscription_budget: SubscriptionBudget | None = None,
         ws_url: str = "",
     ) -> None:
         self._rest = rest_client
+        self._quote_rest = quote_rest_client or rest_client
         self._mode = mode
         self._ws_url = ws_url
         self._ws: KISWebSocketClient | None = None
@@ -132,7 +134,7 @@ class KoreaInvestmentAdapter(BrokerAdapter):
         )
 
     async def get_quote(self, symbol: str, market: str) -> Quote:
-        raw = await self._rest.get_quote(symbol)
+        raw = await self._quote_rest.get_quote(symbol)
 
         def _decimal(key: str) -> Decimal | None:
             val = raw.get(key)
@@ -156,7 +158,7 @@ class KoreaInvestmentAdapter(BrokerAdapter):
         )
 
     async def get_orderbook(self, symbol: str, market: str) -> OrderBook:
-        raw = await self._rest.get_orderbook(symbol)
+        raw = await self._quote_rest.get_orderbook(symbol)
 
         def _decimal(key: str) -> Decimal | None:
             val = raw.get(key)
@@ -552,6 +554,8 @@ class KoreaInvestmentAdapter(BrokerAdapter):
         client_order_id: str | None = None,
         broker_order_id: str | None = None,
         symbol: str | None = None,
+        order_side: OrderSide | None = None,
+        order_created_at: datetime | None = None,
     ) -> OrderStatusResult:
         """Resolve an unknown order state by inquiring KIS.
 
@@ -562,6 +566,8 @@ class KoreaInvestmentAdapter(BrokerAdapter):
         return await self._rest.resolve_unknown_state(
             broker_order_id=broker_order_id or "",
             symbol=symbol or None,  # 빈 문자열 → None으로 정규화하여 post-fetch filtering 통과
+            order_side=order_side,
+            order_created_at=order_created_at,
         )
 
     # ------------------------------------------------------------------
@@ -587,4 +593,3 @@ class KoreaInvestmentAdapter(BrokerAdapter):
             "orderbook": "H0STASP0",
         }
         return mapping.get(channel)
-

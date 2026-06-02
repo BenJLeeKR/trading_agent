@@ -70,7 +70,10 @@ from agent_trading.repositories.contracts import (
     SnapshotSyncHealthSummary,
 )
 from agent_trading.repositories.filters import AccountLookup
-from agent_trading.runtime.bootstrap import postgres_runtime
+from agent_trading.runtime.bootstrap import (
+    _build_kis_live_quote_client,
+    postgres_runtime,
+)
 from agent_trading.services.common_types import SubmitResult
 from agent_trading.services.sizing_engine import calculate_sizing
 from agent_trading.services.universe_selection import UniverseSelectionService
@@ -102,6 +105,44 @@ from scripts.run_orchestrator_once import (
 
 _DEFAULT_SAFE_PRICE = Decimal("50000")
 """Ultimate fallback price when both live quote and KIS_SMOKE_PRICE are unavailable."""
+
+HELD_POSITION_SELL_MAX_PER_CYCLE = 2
+"""Per-cycle cap for held-position REDUCE/EXIT SELL submit lane."""
+
+
+def _compute_symbol_submit_mode(
+    *,
+    submit: bool,
+    dry_run: bool,
+    allow_general_submit: bool,
+    source_type: str,
+    submit_budget_consumed: bool,
+    held_position_sell_cycle_count: int,
+    held_position_sell_cycle_symbols: set[str],
+    symbol: str,
+) -> tuple[bool, bool]:
+    """Return per-symbol ``(submit, dry_run)`` mode for the current cycle.
+
+    ``held_position`` items use a dedicated lane so that a risk-reducing SELL
+    candidate is not downgraded to dry-run merely because a general BUY slot
+    was already reserved earlier in the same scheduler cycle.  That lane still
+    respects cycle-level cap and same-symbol deduplication.
+    """
+    if not submit or dry_run:
+        return False, True
+
+    if source_type == "held_position":
+        symbol_submit = (
+            held_position_sell_cycle_count < HELD_POSITION_SELL_MAX_PER_CYCLE
+            and symbol not in held_position_sell_cycle_symbols
+        )
+        return symbol_submit, not symbol_submit
+
+    if not allow_general_submit:
+        return False, True
+
+    symbol_submit = not submit_budget_consumed
+    return symbol_submit, not symbol_submit
 
 
 async def _resolve_symbol_price(
@@ -352,23 +393,33 @@ async def _read_trading_universe() -> tuple[UniverseSymbol, ...]:
         async with postgres_runtime(run_migrations=False) as runtime:
             repos: RepositoryContainer = runtime["repositories"]
 
-            # Create KIS client if available (P2 market overlay)
+            # Create KIS quote client if available (P2 market overlay)
             kis_client: KISRestClient | None = None
             if _HAS_KIS:
                 try:
                     from agent_trading.config.settings import AppSettings
+                    from agent_trading.brokers.rate_limit import build_kis_budget_manager
 
                     settings = AppSettings()
-                    kis_client = KISRestClient(
-                        api_key=settings.kis_api_key,
-                        api_secret=settings.kis_api_secret,
-                        account_number=settings.kis_account_number,
-                        account_product_code=settings.kis_account_product_code,
-                        env=settings.kis_env,
-                        base_url=settings.kis_base_url,
-                        dev_token_cache_enabled=settings.kis_dev_token_cache_enabled,
-                        dev_token_cache_path=settings.kis_dev_token_cache_path,
-                    )
+                    kis_client = _build_kis_live_quote_client(settings)
+                    if kis_client is None:
+                        budget_manager = build_kis_budget_manager(
+                            kis_env=settings.kis_env,
+                            real_rest_rps=settings.kis_real_rest_rps,
+                            paper_rest_rps=settings.kis_paper_rest_rps,
+                            shared_budget_file=settings.kis_shared_budget_file,
+                        )
+                        kis_client = KISRestClient(
+                            api_key=settings.kis_api_key,
+                            api_secret=settings.kis_api_secret,
+                            account_number=settings.kis_account_number,
+                            account_product_code=settings.kis_account_product_code,
+                            env=settings.kis_env,
+                            base_url=settings.kis_base_url,
+                            budget_manager=budget_manager,
+                            dev_token_cache_enabled=settings.kis_dev_token_cache_enabled,
+                            dev_token_cache_path=settings.kis_dev_token_cache_path,
+                        )
                 except Exception as exc:
                     logger.warning(
                         "KIS client init failed — market_overlay disabled "
@@ -573,7 +624,7 @@ def _serialize_cycle_result(
         "side": side,
         "started_at": started_at,
         "completed_at": completed_at,
-        "duration_seconds": round(duration, 3),
+        "duration_seconds": max(round(duration, 3), 0.001) if duration > 0 else 0.0,
     }
 
     if precheck is not None:
@@ -1138,6 +1189,11 @@ async def _run_t3_live_pipeline(
             logger.info("symbol=%s T3 skipped: services not available", symbol)
             return
 
+        from agent_trading.db.transaction import transaction as _db_transaction
+        from agent_trading.repositories.postgres.external_events import (
+            PostgresExternalEventRepository,
+        )
+
         # Step 1: Fetch disclosure titles (KIS API)
         seeds = await asyncio.wait_for(
             disclosure_seed_service.fetch_disclosure_titles([symbol]),
@@ -1159,11 +1215,6 @@ async def _run_t3_live_pipeline(
             # Persist KIS disclosure seeds as T3 events so that
             # has_fresh_t3_events() freshness check and
             # _collect_persisted_seeded_events() can include them.
-            from agent_trading.db.transaction import transaction as _db_transaction
-            from agent_trading.repositories.postgres.external_events import (
-                PostgresExternalEventRepository,
-            )
-
             partial_events = _convert_disclosure_seeds_to_events(seeds, tier="T3")
             async with _db_transaction() as tx:
                 tx_repo = PostgresExternalEventRepository(tx)
@@ -1199,9 +1250,6 @@ async def _run_t3_live_pipeline(
             try:
                 partial_events = _convert_disclosure_seeds_to_events(seeds, tier="T3")
                 async with _db_transaction() as tx:
-                    from agent_trading.repositories.postgres.external_events import (
-                        PostgresExternalEventRepository,
-                    )
                     tx_repo = PostgresExternalEventRepository(tx)
                     partial_persisted = await persist_seeded_events(partial_events, tx_repo)
                     logger.info(
@@ -1226,11 +1274,6 @@ async def _run_t3_live_pipeline(
         seeded_events = convert_seeded_candidates(candidates)
 
         # Step 4: Persist to DB (use own transaction since parent context is closed)
-        from agent_trading.db.transaction import transaction as _db_transaction
-        from agent_trading.repositories.postgres.external_events import (
-            PostgresExternalEventRepository,
-        )
-
         async with _db_transaction() as tx:
             ee_repo = PostgresExternalEventRepository(tx)
             persisted = await persist_seeded_events(seeded_events, ee_repo)
@@ -1347,6 +1390,7 @@ async def _run_loop(
     max_cycles: int,
     submit: bool,
     dry_run: bool,
+    allow_general_submit: bool,
     output: str,
 ) -> int:
     """Main loop: run decision cycles until shutdown or count limit.
@@ -1441,29 +1485,28 @@ async def _run_loop(
                     # budget-consuming broker submit per script invocation.
                     # held_position sell은 별도 budget으로 관리되어 일반 submit과 분리된다.
                     async with _submit_lock:
-                        # held_position sell special lane: source_type + decision_type + side 3중 조건
-                        # result가 아직 없으므로 item의 source_type만으로 1차 필터링하고,
-                        # 실제 budget 소비 판정은 result 수신 후 3중 조건으로 재확인한다.
-                        is_held_position_item = (
-                            getattr(item, "source_type", "core") == "held_position"
+                        item_source_type = getattr(item, "source_type", "core")
+                        symbol_submit, symbol_dry_run = _compute_symbol_submit_mode(
+                            submit=submit,
+                            dry_run=dry_run,
+                            allow_general_submit=allow_general_submit,
+                            source_type=item_source_type,
+                            submit_budget_consumed=submit_budget_consumed,
+                            held_position_sell_cycle_count=held_position_sell_cycle_count,
+                            held_position_sell_cycle_symbols=held_position_sell_cycle_symbols,
+                            symbol=item.symbol,
                         )
-                        if is_held_position_item:
-                            # held_position sell은 일일 상한 없이 항상 submit 가능.
-                            # 단, 동일 cycle 내 동일 symbol 중복 submit과 cycle cap(2건)은 유지.
-                            symbol_submit = (
-                                submit
-                                and not dry_run
-                                and held_position_sell_cycle_count < 2  # HELD_POSITION_SELL_MAX_PER_CYCLE
-                                and item.symbol not in held_position_sell_cycle_symbols  # symbol dedupe
-                            )
-                        else:
-                            symbol_submit = submit and not dry_run and not submit_budget_consumed
-                        symbol_dry_run = dry_run or (submit and not symbol_submit)
+                        if symbol_submit and item_source_type != "held_position":
+                            # Reserve before running the symbol.  Without this,
+                            # concurrent tasks can all observe False and submit
+                            # multiple BUY orders in the same cycle.
+                            submit_budget_consumed = True
 
                     # HP sell block 이유 로깅 (explainability)
+                    is_held_position_item = item_source_type == "held_position"
                     if is_held_position_item and not symbol_submit and submit and not dry_run:
                         reasons = []
-                        if held_position_sell_cycle_count >= 2:
+                        if held_position_sell_cycle_count >= HELD_POSITION_SELL_MAX_PER_CYCLE:
                             reasons.append("cycle_cap_reached")
                         if item.symbol in held_position_sell_cycle_symbols:
                             reasons.append("symbol_duplicate")
@@ -1645,6 +1688,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="text",
         help="Output format: ``text`` (human-readable) or ``json`` (machine-readable).",
     )
+    parser.add_argument(
+        "--allow-general-submit",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Allow general/core submit lane. Disable to keep only held_position sell submits.",
+    )
     return parser.parse_args(argv)
 
 
@@ -1713,6 +1762,7 @@ def main(argv: list[str] | None = None) -> int:
                 max_cycles=max_cycles,
                 submit=submit,
                 dry_run=dry_run,
+                allow_general_submit=args.allow_general_submit,
                 output=args.output,
             )
         )

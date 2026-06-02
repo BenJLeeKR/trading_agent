@@ -51,6 +51,17 @@ export interface OrderDetail extends OrderSummary {
   error_message: string | null;
   broker_order_id: string | null;
   broker_id: string | null;
+  /** Submission attempt summary (Phase 10) — optional; null = no attempts */
+  submission_attempt_summary?: SubmissionAttemptSummary | null;
+}
+
+export interface OrderDailySummary {
+  date: string;
+  timezone: string;
+  total_count: number;
+  filled_count: number;
+  pending_submit_count: number;
+  submitted_count: number;
 }
 
 export interface OrderEvent {
@@ -73,6 +84,20 @@ export interface BrokerOrderView {
   last_synced_at: string | null;
   created_at: string;
   updated_at: string | null;
+}
+
+/* ───────────────────────────────────────────
+ * Submission Attempt Summary type
+ * ─────────────────────────────────────────── */
+
+export interface SubmissionAttemptSummary {
+  attempt_count: number;
+  latest_accepted: boolean | null;
+  latest_raw_code: string | null;
+  latest_raw_message: string | null;
+  latest_error_type: string | null;
+  last_submitted_at: string | null;
+  latest_outcome: string | null;
 }
 
 export interface AuditLogEntry {
@@ -458,6 +483,52 @@ export interface ExecutionAttemptDetail {
 export interface ExecutionAttemptListResponse {
   status: string;
   data: ExecutionAttemptDetail[];
+}
+
+export interface SubmissionAttemptView {
+  order_submission_attempt_id: string;
+  order_request_id: string;
+  attempt_number: number;
+  submitted_at: string;
+  broker_name: string | null;
+  accepted: boolean | null;
+  broker_native_order_id: string | null;
+  broker_status: string | null;
+  raw_code: string | null;
+  raw_message: string | null;
+  error_type: string | null;
+  retryable: boolean | null;
+  http_status: number | null;
+  duration_ms: number | null;
+  created_at: string;
+  attempt_outcome: string | null;
+}
+
+export interface RecentFailureItem {
+  order_request_id: string;
+  symbol: string | null;
+  side: string | null;
+  latest_outcome: string;  // 'rejected' | 'exception'
+  latest_error_type: string | null;
+  latest_raw_code: string | null;
+  latest_raw_message: string | null;
+  last_submitted_at: string | null;
+  created_at: string | null;
+}
+
+export interface FailureSummary {
+  last_1h_count: number;
+  last_24h_count: number;
+  rejected_count: number;
+  exception_count: number;
+  total_submissions_24h: number;
+  /** Failure rate (0–100) or null when there are zero total submissions. */
+  failure_rate_pct_24h: number | null;
+  today_count: number;
+  rejected_count_today: number;
+  exception_count_today: number;
+  total_submissions_today: number;
+  failure_rate_pct_today: number | null;
 }
 
 export interface ApiError {

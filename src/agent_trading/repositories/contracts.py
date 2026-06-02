@@ -17,12 +17,14 @@ from agent_trading.domain.entities import (
     ClientEntity,
     ConfigVersionEntity,
     DecisionContextEntity,
+    ExecutionAttemptEntity,
     ExternalEventEntity,
     FillEventEntity,
     GuardrailEvaluationEntity,
     InstrumentEntity,
     MarketSessionEntity,
     OrderRequestEntity,
+    OrderSubmissionAttemptEntity,
     OrderStateEventEntity,
     PositionSnapshotEntity,
     ReconciliationOrderLinkEntity,
@@ -33,7 +35,6 @@ from agent_trading.domain.entities import (
     SnapshotSyncRunEntity,
     StrategyEntity,
     TradeDecisionEntity,
-    ExecutionAttemptEntity,
 )
 from agent_trading.domain.entities import ExecutionAttemptEntity
 from agent_trading.domain.enums import Environment, OrderStatus
@@ -351,6 +352,15 @@ class PositionSnapshotRepository(Protocol):
         """
         ...
 
+    async def get_earliest_by_account_and_instrument_after(
+        self,
+        account_id: UUID,
+        instrument_id: UUID,
+        after: datetime,
+    ) -> PositionSnapshotEntity | None:
+        """Return the earliest position snapshot strictly after ``after``."""
+        ...
+
     async def list_by_sync_run(
         self, account_id: UUID, sync_run_id: UUID,
     ) -> Sequence[PositionSnapshotEntity]:
@@ -510,6 +520,12 @@ class OrderRepository(Protocol):
     async def list(self, query: OrderQuery) -> Sequence[OrderRequestEntity]:
         ...
 
+    async def count(self, query: OrderQuery) -> int:
+        ...
+
+    async def count_by_status(self, query: OrderQuery) -> dict[str, int]:
+        ...
+
     async def update_status(
         self,
         order_request_id: UUID,
@@ -517,6 +533,7 @@ class OrderRepository(Protocol):
         reason_code: str | None = None,
         reason_message: str | None = None,
         expected_version: int | None = None,
+        submitted_at: datetime | None = None,
     ) -> None:
         ...
 
@@ -1093,4 +1110,49 @@ class MarketSessionRepository(Protocol):
         self, market_session_id: int, limit: int = 50
     ) -> Sequence[SessionEventEntity]:
         """Return events for a session, ordered by ``occurred_at DESC``."""
+        ...
+
+
+class OrderSubmissionAttemptRepository(Protocol):
+    """Repository for ``trading.order_submission_attempts``.
+
+    Records every broker submission attempt (success/rejection/exception)
+    so that the submission history is never lost.
+    """
+
+    async def add(
+        self, attempt: OrderSubmissionAttemptEntity
+    ) -> OrderSubmissionAttemptEntity:
+        """Insert a new submission attempt.
+
+        Returns the entity with server-generated defaults (attempt_id,
+        created_at, etc.).
+        """
+        ...
+
+    async def list_by_order_request(
+        self, order_request_id: UUID
+    ) -> Sequence[OrderSubmissionAttemptEntity]:
+        """Return all attempts for a given order, ordered by attempt_number ASC."""
+        ...
+
+    async def get_failure_summary(self) -> dict[str, Any]:
+        """Return aggregated failure counts for the last 1h, 24h, and KST today.
+
+        Returns a dict with keys:
+        - last_1h_count, last_24h_count, rejected_count, exception_count,
+          total_submissions_24h, failure_rate_pct_24h,
+          today_count, rejected_count_today, exception_count_today,
+          total_submissions_today, failure_rate_pct_today
+        """
+        ...
+
+    async def list_recent_failures(self, limit: int = 10) -> Sequence[dict[str, Any]]:
+        """Return the most recent submission failures (rejected or exception).
+
+        Returns a list of dicts with keys:
+        - order_request_id, symbol, side, latest_outcome,
+          latest_error_type, latest_raw_code, latest_raw_message,
+          last_submitted_at, created_at
+        """
         ...

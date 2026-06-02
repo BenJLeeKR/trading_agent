@@ -6,6 +6,11 @@
  * ─────────────────────────────────────────── */
 import type { HealthResponse, OrderSummary, SnapshotSyncRunSummary, SchedulerStatusResponse, AlignmentDetail } from "../types/api";
 import { formatKstDateTime } from "./utils";
+import {
+  countHardSnapshotFallbacks,
+  formatSnapshotBudgetParts,
+  parseSnapshotBudgetCounters,
+} from "./snapshotBudget";
 
 /* ── Public types ────────────────────────── */
 
@@ -307,23 +312,21 @@ export function deriveAlerts(input: AlertRuleInput): AlertItem[] {
     }
   }
 
-  // SNAP-BUDGET-001: budget fallback 발생 (VTTC8908R_pre_check > 0) → 주의
+  // SNAP-BUDGET-001: hard fallback 발생 (budget exhausted / API failure) → 주의
   if (!input.snapshotSyncError && input.snapshotSyncRun?.summary_json) {
-    const sj = input.snapshotSyncRun.summary_json as Record<string, number>;
-    const preCheck = sj["VTTC8908R_pre_check"] ?? 0;
-    const budgetExhausted = sj["VTTC8908R_budget_exhausted"] ?? 0;
-    const apiFailure = sj["VTTC8908R_api_failure"] ?? 0;
-    const totalBudgetFallback = preCheck + budgetExhausted + apiFailure;
-    if (totalBudgetFallback > 0) {
-      const detailParts: string[] = [];
-      if (preCheck > 0) detailParts.push(`pre-check ${preCheck}회`);
-      if (budgetExhausted > 0) detailParts.push(`budget exhausted ${budgetExhausted}회`);
-      if (apiFailure > 0) detailParts.push(`API 실패 ${apiFailure}회`);
+    const counters = parseSnapshotBudgetCounters(
+      input.snapshotSyncRun.summary_json as Record<string, number>,
+    );
+    const hardFallbackCount = countHardSnapshotFallbacks(counters);
+    if (hardFallbackCount > 0) {
+      const detailParts = formatSnapshotBudgetParts(counters).filter(
+        (part) => !part.startsWith("pre-check 대체 "),
+      );
       alerts.push({
         id: "SNAP-BUDGET-001",
         level: "주의",
         title: "스냅샷 Budget Fallback 발생",
-        description: `총 ${totalBudgetFallback}회 fallback: ${detailParts.join(", ")}. orderable_cash가 KIS API 응답 대신 fallback 값으로 설정되었습니다.`,
+        description: `총 ${hardFallbackCount}회 hard fallback: ${detailParts.join(", ")}. orderable_cash가 실제 KIS 응답 대신 대체 값으로 설정되었습니다.`,
         time: now,
         status: "OPEN",
       });

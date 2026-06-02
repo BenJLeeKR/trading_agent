@@ -62,6 +62,11 @@ class FileBackedGlobalBucket:
         return int(self._capacity)
 
     @property
+    def refill_rate(self) -> float:
+        """Configured token refill rate per second."""
+        return self._refill_rate
+
+    @property
     def remaining(self) -> int:
         """Approximate remaining tokens (best-effort read from file).
 
@@ -74,13 +79,42 @@ class FileBackedGlobalBucket:
                 try:
                     raw = f.read().strip()
                     if raw:
-                        tokens_str, _ = raw.split(",", 1)
-                        return max(0, int(float(tokens_str)))
+                        tokens_str, last_time_str = raw.split(",", 1)
+                        current_tokens = float(tokens_str)
+                        last_time = float(last_time_str)
+                        elapsed = max(0.0, time.time() - last_time)
+                        current_tokens = min(
+                            self._capacity,
+                            current_tokens + elapsed * self._refill_rate,
+                        )
+                        return max(0, int(current_tokens))
                     return self.capacity
                 finally:
                     fcntl.flock(f, fcntl.LOCK_UN)
         except (OSError, ValueError, FileNotFoundError):
             return self.capacity
+
+    @property
+    def utilization(self) -> float:
+        """Current bucket utilization ratio (0.0 = empty, 1.0 = full)."""
+        cap = self.capacity
+        if cap <= 0:
+            return 0.0
+        return self.remaining / cap
+
+    @property
+    def is_exhausted(self) -> bool:
+        """``True`` when the shared bucket has no tokens remaining."""
+        return self.remaining <= 0
+
+    def _refill(self) -> None:
+        """Compatibility no-op for ``OperationBucket`` callers.
+
+        File-backed buckets apply refill lazily during ``remaining`` reads and
+        consume/release operations, so no separate in-memory refill step is
+        required.
+        """
+        return None
 
     # ------------------------------------------------------------------
     # Public API — matches ``OperationBucket.try_consume()`` signature
@@ -115,6 +149,15 @@ class FileBackedGlobalBucket:
             if await self.consume(tokens):
                 return
             await asyncio.sleep(0.5)
+
+    def release(self, tokens: int = 1) -> None:
+        """Return tokens to the shared bucket.
+
+        Mirrors ``OperationBucket.release()`` for error-recovery paths where a
+        token was consumed optimistically but the underlying call did not
+        proceed.
+        """
+        self._release_sync(float(tokens))
 
     # ------------------------------------------------------------------
     # Internal
@@ -163,3 +206,38 @@ class FileBackedGlobalBucket:
                 exc,
             )
             return True  # Fail open: allow call on error
+
+    def _release_sync(self, tokens: float) -> None:
+        """Synchronous token release with flock protection."""
+        try:
+            with open(self._FILE_PATH, "a+") as f:
+                fcntl.flock(f, fcntl.LOCK_EX)
+                try:
+                    f.seek(0)
+                    raw = f.read().strip()
+                    if raw:
+                        last_tokens_str, last_time_str = raw.split(",", 1)
+                        current_tokens = float(last_tokens_str)
+                        last_time = float(last_time_str)
+                    else:
+                        current_tokens = self._capacity
+                        last_time = time.time()
+
+                    now = time.time()
+                    elapsed = now - last_time
+                    current_tokens = min(
+                        self._capacity,
+                        current_tokens + elapsed * self._refill_rate,
+                    )
+                    current_tokens = min(self._capacity, current_tokens + tokens)
+
+                    f.seek(0)
+                    f.truncate()
+                    f.write(f"{current_tokens},{now}")
+                finally:
+                    fcntl.flock(f, fcntl.LOCK_UN)
+        except (OSError, ValueError) as exc:
+            logger.warning(
+                "FileBackedGlobalBucket release error: %s — ignoring",
+                exc,
+            )

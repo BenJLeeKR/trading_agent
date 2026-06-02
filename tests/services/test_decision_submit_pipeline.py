@@ -177,6 +177,24 @@ class TestBuildSubmitOrderRequest:
         result = build_submit_order_request_from_decision(intent)
         assert result is not None
 
+    def test_held_position_buy_returns_none(self) -> None:
+        request = _make_request(
+            side=OrderSide.BUY,
+            metadata={"source_type": "held_position"},
+        )
+        intent = _make_intent(decision_type="APPROVE", request=request)
+        assert build_submit_order_request_from_decision(intent) is None
+
+    def test_held_position_sell_returns_request(self) -> None:
+        request = _make_request(
+            side=OrderSide.SELL,
+            metadata={"source_type": "held_position"},
+        )
+        intent = _make_intent(decision_type="REDUCE", request=request)
+        result = build_submit_order_request_from_decision(intent)
+        assert result is not None
+        assert result.side == OrderSide.SELL
+
     def test_exit_returns_request(self) -> None:
         intent = _make_intent(decision_type="EXIT")
         result = build_submit_order_request_from_decision(intent)
@@ -2517,6 +2535,7 @@ class TestQuoteCircuitBreaker:
                 broker=broker_mock,
             )
             assert result1.status == "SUBMITTED"
+            order_manager.repos.orders._items.clear()
 
             # 2nd call — should be cache hit (within 5s TTL)
             result2 = await service.assemble_and_submit(
@@ -2566,6 +2585,7 @@ class TestQuoteCircuitBreaker:
                 assert result.status == "SUBMITTED", (
                     f"Call {i+1}: expected SUBMITTED, got {result.status}"
                 )
+                order_manager.repos.orders._items.clear()
 
         # 4번째 호출에서는 circuit_breaker_skip 확인
         circuit_breaker_found = any(
@@ -2575,4 +2595,88 @@ class TestQuoteCircuitBreaker:
             f"No circuit_breaker_skip in phase_trace: {result.phase_trace}"
         )
 
+    @pytest.mark.asyncio
+    async def test_market_buy_quote_timeout_uses_price_band_fallback_for_sizing(
+        self,
+        repos: Any,
+        order_manager: OrderManager,
+    ) -> None:
+        """MARKET BUY quote timeout 시 price band fallback으로 1주 고정을 피해야 함."""
+        repos.position_snapshots._items.clear()
+        request = _make_request(
+            price=None,
+            order_type=OrderType.MARKET,
+            quantity=Decimal("1"),
+            price_band_lower=Decimal("49000"),
+            price_band_upper=Decimal("51000"),
+        )
+        submitted_requests: list[SubmitOrderRequest] = []
 
+        async def _mock_submit(
+            _self: Any,
+            order: OrderRequestEntity,
+            _broker: Any,
+            submit_request: SubmitOrderRequest,
+            *_args: Any,
+            **_kwargs: Any,
+        ) -> OrderRequestEntity:
+            submitted_requests.append(submit_request)
+            return _make_order_entity(status=OrderStatus.SUBMITTED, request=submit_request)
+
+        broker_mock = MagicMock()
+        broker_mock.get_quote = AsyncMock(side_effect=asyncio.TimeoutError("quote timeout"))
+        service = DecisionOrchestratorService(
+            repos=repos,
+            final_decision_agent=self._ApproveFDCAgent(),
+        )
+
+        with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):
+            result = await service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=broker_mock,
+        )
+
+        assert result.status == "SUBMITTED", f"Expected SUBMITTED, got {result.status}"
+        assert len(submitted_requests) == 1
+        assert submitted_requests[0].quantity == Decimal("4"), (
+            f"Expected fallback-sized quantity 4, got "
+            f"{submitted_requests[0].quantity}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_market_buy_quote_timeout_without_fallback_price_skips(
+        self,
+        repos: Any,
+        order_manager: OrderManager,
+    ) -> None:
+        """MARKET BUY quote timeout + fallback price 부재 → 1주 제출 대신 skip."""
+        repos.position_snapshots._items.clear()
+        request = _make_request(
+            price=None,
+            order_type=OrderType.MARKET,
+            quantity=Decimal("1"),
+            price_band_lower=None,
+            price_band_upper=None,
+        )
+
+        async def _mock_submit(*args: Any, **kwargs: Any) -> OrderRequestEntity:
+            raise AssertionError("Broker should not be called without a sizing reference price")
+
+        broker_mock = MagicMock()
+        broker_mock.get_quote = AsyncMock(side_effect=asyncio.TimeoutError("quote timeout"))
+        service = DecisionOrchestratorService(
+            repos=repos,
+            final_decision_agent=self._ApproveFDCAgent(),
+        )
+
+        with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):
+            result = await service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=broker_mock,
+            )
+
+        assert result.status == "SKIPPED", f"Expected SKIPPED, got {result.status}"
+        assert result.error_phase == "sizing"
+        assert result.error_message == "missing_reference_price_for_market_buy"

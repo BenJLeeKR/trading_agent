@@ -29,24 +29,25 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/market-sessions", tags=["market-sessions"])
 
-STALE_THRESHOLD_SECONDS = 120  # heartbeat threshold
+STALE_THRESHOLD_SECONDS = 120  # scheduler heartbeat threshold
 
 
 @router.get("/latest", response_model=SchedulerStatusResponse)
 async def get_latest_session(db=Depends(get_db)):
     """Return the most recent market_sessions row (today or latest available).
 
-    ``stale_seconds`` is the number of seconds since the last ``checked_at``,
-    or ``None`` when no data exists.  Always returns 200 — no 500 even when
-    the DB table is empty or the heartbeat is old.
+    ``stale_seconds`` is derived from ``last_heartbeat_at`` on trading days
+    (actual scheduler liveness) and from ``checked_at`` on non-trading days.
+    Always returns 200 — no 500 even when the DB table is empty or the
+    heartbeat is old.
     """
     row = await db.fetchrow(
         """
         SELECT id, run_date, is_trading_day, opnd_yn, bzdy_yn, tr_day_yn,
                market_phase, raw_opnd_yn, raw_mkop_cls_code, raw_antc_mkop_cls_code,
-               source, reason, checked_at, created_at, updated_at
+               source, reason, last_heartbeat_at, checked_at, created_at, updated_at
         FROM market_sessions
-        ORDER BY checked_at DESC NULLS LAST
+        ORDER BY COALESCE(last_heartbeat_at, checked_at, updated_at) DESC NULLS LAST
         LIMIT 1
         """
     )
@@ -59,9 +60,13 @@ async def get_latest_session(db=Depends(get_db)):
         )
 
     now = datetime.now(timezone.utc)
+    last_heartbeat = row["last_heartbeat_at"]
     checked = row["checked_at"]
-    stale_seconds = int((now - checked).total_seconds()) if checked else None
-    stale = checked is None or stale_seconds >= STALE_THRESHOLD_SECONDS
+    is_trading_day = bool(row["is_trading_day"])
+
+    freshness_ts = last_heartbeat if is_trading_day else checked
+    stale_seconds = int((now - freshness_ts).total_seconds()) if freshness_ts else None
+    stale = freshness_ts is None or stale_seconds >= STALE_THRESHOLD_SECONDS
 
     return SchedulerStatusResponse(
         status="ok",

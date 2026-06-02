@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, afterEach, vi, beforeEach } from "vitest";
 import Dashboard from "../components/Dashboard";
+import OperationsDashboardView from "../components/OperationsDashboardView";
 import { setStoredToken, clearStoredToken } from "../api/client";
 import {
   mockFetchOnce,
@@ -403,5 +404,308 @@ describe("Dashboard reconciliation StatusCard", () => {
     // Dashboard renders normally
     expect(screen.getByText("전체 계좌")).toBeInTheDocument();
     expect(screen.getByText("미완료 정합성")).toBeInTheDocument();
+  });
+});
+
+/* ───────────────────────────────────────────
+ * OperationsDashboardView — 최근 제출 실패 StatusCard
+ * ─────────────────────────────────────────── */
+
+/** Mock health response for OperationsDashboardView */
+const mockOpsHealth = {
+  status: "ok",
+  version: "1.0.0",
+  timestamp: "2026-05-30T00:00:00Z",
+  database: "connected",
+  runtime_mode: "postgres",
+  snapshot_sync_detail: null,
+  snapshot_sync_stale: null,
+  snapshot_sync_last_successful_run_at: null,
+  snapshot_sync_consecutive_failures: null,
+  scheduler: null,
+};
+
+/** Mock readyz response */
+const mockReadyz = { "db": "ok", "cache": "ok" };
+
+/** Mock session response */
+const mockSessionResponse = {
+  status: "ok",
+  data: null,
+  healthy: true,
+  stale_seconds: null,
+};
+
+/** Mock session events response */
+const mockSessionEvents = { status: "ok", data: [] };
+
+/** Mock recent failures data (2건: rejected + exception 혼합) */
+const mockRecentFailures = [
+  {
+    order_request_id: "fail-001",
+    symbol: "AAPL",
+    side: "BUY",
+    latest_outcome: "rejected",
+    latest_error_type: "INVALID_QUANTITY",
+    latest_raw_code: "2011",
+    latest_raw_message: "주문 수량이 1주 미만입니다.",
+    last_submitted_at: "2026-05-30T14:32:10+09:00",
+    created_at: "2026-05-30T14:32:00+09:00",
+  },
+  {
+    order_request_id: "fail-002",
+    symbol: "TSLA",
+    side: "SELL",
+    latest_outcome: "exception",
+    latest_error_type: "TIMEOUT",
+    latest_raw_code: null,
+    latest_raw_message: null,
+    last_submitted_at: "2026-05-30T14:33:00+09:00",
+    created_at: "2026-05-30T14:33:00+09:00",
+  },
+];
+
+/** Mock failure summary with data (1h/24h mixed) */
+const mockFailureSummary = {
+  last_1h_count: 1,
+  last_24h_count: 3,
+  rejected_count: 2,
+  exception_count: 1,
+  total_submissions_24h: 10,
+  failure_rate_pct_24h: 30.0,
+  today_count: 2,
+  rejected_count_today: 1,
+  exception_count_today: 1,
+  total_submissions_today: 4,
+  failure_rate_pct_today: 50.0,
+};
+
+/** Mock failure summary with zero failures */
+const mockFailureSummaryEmpty = {
+  last_1h_count: 0,
+  last_24h_count: 0,
+  rejected_count: 0,
+  exception_count: 0,
+  total_submissions_24h: 5,
+  failure_rate_pct_24h: 0.0,
+  today_count: 0,
+  rejected_count_today: 0,
+  exception_count_today: 0,
+  total_submissions_today: 2,
+  failure_rate_pct_today: 0.0,
+};
+
+const mockTodayOrderSummary = {
+  date: "2026-05-30",
+  timezone: "Asia/Seoul",
+  total_count: 2,
+  filled_count: 1,
+  pending_submit_count: 0,
+  submitted_count: 0,
+};
+
+/**
+ * Helper: mock all fetch calls required by OperationsDashboardView.fetchAll()
+ * before the final getRecentFailures(5) and getFailureSummary() calls.
+ *
+ * Call order (18 total):
+ *   1-8: Promise.all [health, readyz, recon, orders, daily-summary, clients, session, events]
+ *   9:   getAccounts(clientId)
+ *  10-12: getPositions(3 accounts)
+ *  13-15: getCashBalance(3 accounts)
+ *  16:  getSnapshotSyncRuns(10)
+ *  17:  getRecentFailures(5) — caller provides this mock
+ *  18:  getFailureSummary() — caller provides this mock
+ */
+function mockOpsDashboardCommon() {
+  // 1-8: Parallel batch
+  mockFetchOnce(mockOpsHealth);            // 1. GET /health
+  mockFetchOnce(mockReadyz);               // 2. GET /health/readyz
+  mockFetchOnce(mockReconciliationSummary); // 3. GET /reconciliation/summary
+  mockFetchOnce(mockOrders);               // 4. GET /orders
+  mockFetchOnce(mockTodayOrderSummary);    // 5. GET /orders/daily-summary
+  mockFetchOnce(mockClients);              // 6. GET /clients
+  mockFetchOnce(mockSessionResponse);      // 7. GET /market-sessions/latest
+  mockFetchOnce(mockSessionEvents);        // 8. GET /market-sessions/events/recent
+
+  // 9. getAccounts
+  mockFetchOnce(mockAccounts);
+
+  // 10-12. getPositions (3 accounts)
+  mockFetchOnce(mockPositions);
+  mockFetchOnce(mockPositionsForLocked);
+  mockFetchOnce([]);
+
+  // 13-15. getCashBalance (3 accounts)
+  mockFetchOnce(mockCashBalance);
+  mockFetchOnce(mockCashBalanceForLocked);
+  mockFetchOnce(mockCashBalanceNull);
+
+  // 16. getSnapshotSyncRuns
+  mockFetchOnce([]);
+}
+
+describe("OperationsDashboardView — recent failures", () => {
+  it("renders recent submission failures card with data", async () => {
+    mockOpsDashboardCommon();
+    // 17. getRecentFailures(5) returns mockRecentFailures
+    mockFetchOnce(mockRecentFailures);
+    // 18. getFailureSummary() returns aggregated counts
+    mockFetchOnce(mockFailureSummary);
+
+    render(
+      <MemoryRouter>
+        <OperationsDashboardView />
+      </MemoryRouter>,
+    );
+
+    // Wait for aggregated failureSummary value to appear (async)
+    await screen.findByText("오늘 2건");
+    expect(screen.getByText("오늘 주문 제출")).toBeInTheDocument();
+    expect(screen.getByText("2건")).toBeInTheDocument();
+
+    expect(screen.getByText(/실패율: 50% \(오늘\) \| 거절 1건 · 예외 1건/)).toBeInTheDocument();
+
+    // Should show failure items with symbols (AAPL also appears in orders table)
+    const symbols = screen.getAllByText("AAPL");
+    expect(symbols.length).toBeGreaterThanOrEqual(1);
+    const tslaSymbols = screen.getAllByText("TSLA");
+    expect(tslaSymbols.length).toBeGreaterThanOrEqual(1);
+
+    // Should show outcome badges
+    expect(screen.getByText("Rejected")).toBeInTheDocument();
+    expect(screen.getByText("Exception")).toBeInTheDocument();
+
+    // Should show error types
+    expect(screen.getByText("INVALID_QUANTITY")).toBeInTheDocument();
+    expect(screen.getByText("TIMEOUT")).toBeInTheDocument();
+
+    // Should show raw_code prefix (monospace [CODE] format)
+    expect(screen.getByText("[2011]")).toBeInTheDocument();
+
+    // Should show raw_message inline preview (truncated if needed)
+    expect(screen.getByText(/주문 수량이 1주 미만입니다/)).toBeInTheDocument();
+
+    // Should render title attribute for tooltip (full raw_message text)
+    const errorTypeSpan = screen.getByText(/INVALID_QUANTITY/).closest('span');
+    expect(errorTypeSpan).toHaveAttribute('title', '주문 수량이 1주 미만입니다.');
+
+    // Should render link to all failed orders
+    expect(screen.getByText("모든 실패 주문 보기 →")).toBeInTheDocument();
+
+    // Should show direct "제출 이력 보기" links to submission attempts
+    const submissionLinks = screen.getAllByText("제출 이력 보기 →");
+    expect(submissionLinks.length).toBe(2); // 2 failure items
+
+    // Verify first link goes to correct URL
+    expect(submissionLinks[0].closest('a')).toHaveAttribute(
+      'href',
+      '/orders/fail-001/submission-attempts'
+    );
+
+    // Verify second link
+    expect(submissionLinks[1].closest('a')).toHaveAttribute(
+      'href',
+      '/orders/fail-002/submission-attempts'
+    );
+  });
+
+  it("renders empty state when no failures", async () => {
+    mockOpsDashboardCommon();
+    // 17. getRecentFailures(5) returns empty array
+    mockFetchOnce([]);
+    // 18. getFailureSummary() returns empty aggregated counts
+    mockFetchOnce(mockFailureSummaryEmpty);
+
+    render(
+      <MemoryRouter>
+        <OperationsDashboardView />
+      </MemoryRouter>,
+    );
+
+    // Wait for aggregated failureSummary value to appear (async)
+    await screen.findByText("오늘 0건");
+
+    expect(screen.getByText(/실패율: 0% \(오늘\) \| 거절 0건 · 예외 0건/)).toBeInTheDocument();
+  });
+
+  it("handles fetch error gracefully", async () => {
+    mockOpsDashboardCommon();
+    // 17. getRecentFailures(5) fails with network error
+    mockFetchNetworkError();
+    // 18. getFailureSummary() also fails
+    mockFetchNetworkError();
+
+    render(
+      <MemoryRouter>
+        <OperationsDashboardView />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("최근 제출 실패")).toBeInTheDocument();
+    });
+
+    // Should show error state (value is "오류", which also appears in other cards)
+    const errorValues = screen.getAllByText("오류");
+    expect(errorValues.length).toBeGreaterThanOrEqual(1);
+
+    // Should show error message in subtitle area (contains "Error:" from API error)
+    expect(screen.getByText(/API 오류/)).toBeInTheDocument();
+  });
+
+  it("renders failure summary with zero failures — neutral status", async () => {
+    mockOpsDashboardCommon();
+    // 17. getRecentFailures(5) returns empty
+    mockFetchOnce([]);
+    // 18. getFailureSummary() returns zero counts
+    mockFetchOnce(mockFailureSummaryEmpty);
+
+    render(
+      <MemoryRouter>
+        <OperationsDashboardView />
+      </MemoryRouter>,
+    );
+
+    // Wait for aggregated failureSummary value to appear (async)
+    await screen.findByText("오늘 0건");
+
+    expect(screen.getByText(/실패율: 0% \(오늘\) \| 거절 0건 · 예외 0건/)).toBeInTheDocument();
+
+    // 개별 실패 목록은 보이지 않아야 함
+    expect(screen.queryByText("Rejected")).not.toBeInTheDocument();
+  });
+
+  it("renders failure summary with 1h errors — error status", async () => {
+    mockOpsDashboardCommon();
+    // 17. getRecentFailures(5) returns recent failures
+    mockFetchOnce(mockRecentFailures);
+    // 18. getFailureSummary() returns data with 1h count > 0
+    mockFetchOnce({
+      last_1h_count: 2,
+      last_24h_count: 5,
+      rejected_count: 3,
+      exception_count: 2,
+      total_submissions_24h: 20,
+      failure_rate_pct_24h: 25.0,
+      today_count: 4,
+      rejected_count_today: 2,
+      exception_count_today: 2,
+      total_submissions_today: 8,
+      failure_rate_pct_today: 50.0,
+    });
+
+    render(
+      <MemoryRouter>
+        <OperationsDashboardView />
+      </MemoryRouter>,
+    );
+
+    // Wait for aggregated failureSummary value to appear (async)
+    await screen.findByText("오늘 4건");
+
+    expect(screen.getByText(/실패율: 50% \(오늘\) \| 거절 2건 · 예외 2건/)).toBeInTheDocument();
+    expect(screen.getByText("Rejected")).toBeInTheDocument();
+    expect(screen.getByText("Exception")).toBeInTheDocument();
   });
 });

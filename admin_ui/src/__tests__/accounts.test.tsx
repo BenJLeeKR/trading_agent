@@ -3,6 +3,7 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, afterEach, vi, beforeEach } from "vitest";
 import AccountsView from "../components/AccountsView";
 import { setStoredToken, clearStoredToken } from "../api/client";
+import * as apiClient from "../api/client";
 import { VALID_TOKEN } from "./test-utils/fixtures";
 import type { AccountSummary, AccountSnapshotResponse } from "../types/api";
 import type { ReactNode } from "react";
@@ -115,6 +116,7 @@ const mockCashBalance = {
 
 beforeEach(() => {
   setStoredToken(VALID_TOKEN);
+  vi.spyOn(apiClient, "getDefaultClient").mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -158,6 +160,47 @@ describe("AccountsView data fetching", () => {
     expect(screen.getByText("(CLIENT01)")).toBeInTheDocument();
     // Data source label
     expect(screen.getByText("내부 데이터베이스 계좌 메타데이터")).toBeInTheDocument();
+  });
+
+  it("prefers the default client from .env mapping over the first client", async () => {
+    const e2eClient = {
+      client_id: "cl-e2e-e2e-e2e-e2e",
+      client_code: "E2E-SUMMARY-CLIENT",
+      name: "E2E Summary Client",
+      status: "active",
+      base_currency: "KRW",
+      created_at: "2024-01-01T00:00:00Z",
+      updated_at: null,
+    };
+    const operationalClient = {
+      client_id: "cl-op-op-op-op",
+      client_code: "EPC001",
+      name: "Entrypoint Client",
+      status: "active",
+      base_currency: "KRW",
+      created_at: "2024-01-01T00:00:00Z",
+      updated_at: null,
+    };
+    const getDefaultClientMock = vi
+      .spyOn(apiClient, "getDefaultClient")
+      .mockResolvedValue(operationalClient);
+    vi.spyOn(apiClient, "getClients").mockResolvedValue([
+      e2eClient,
+      operationalClient,
+    ]);
+    const getAccountsMock = vi
+      .spyOn(apiClient, "getAccounts")
+      .mockResolvedValue([]);
+
+    render(<AccountsView />, { wrapper: RouterWrapper });
+
+    await waitFor(() => {
+      expect(getDefaultClientMock).toHaveBeenCalled();
+      expect(getAccountsMock).toHaveBeenCalledWith(operationalClient.client_id);
+    });
+
+    expect(screen.getByText("Entrypoint Client")).toBeInTheDocument();
+    expect(screen.getByText("(EPC001)")).toBeInTheDocument();
   });
 
   it("shows empty state when no clients exist", async () => {

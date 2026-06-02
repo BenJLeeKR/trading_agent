@@ -7,7 +7,7 @@ import { WarningBanner } from "./common/WarningBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { ArrowRight, RefreshCw } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { formatKrw, formatKstDateTime, formatKstElapsed } from "../lib/utils";
 import {
   getHealth,
@@ -21,6 +21,9 @@ import {
   getSnapshotSyncRuns,
   getLatestMarketSession,
   getRecentSessionEvents,
+  getRecentFailures,
+  getFailureSummary,
+  getOrderDailySummary,
 } from "../api/client";
 import type {
   HealthResponse,
@@ -36,9 +39,15 @@ import type {
   SessionEventsResponse,
   SessionEventSummary,
   MarketSessionSummary,
-  AlignmentDetail,
+  RecentFailureItem,
+  FailureSummary,
+  OrderDailySummary,
 } from "../types/api";
 import { deriveAlerts } from "../lib/alerts";
+import {
+  formatSnapshotBudgetParts,
+  parseSnapshotBudgetCounters,
+} from "../lib/snapshotBudget";
 
 /* ── Feature flags ── */
 // 현재 운영 화면 단순화를 위해 숨김, 추후 필요 시 true
@@ -94,6 +103,7 @@ interface DashboardData {
   snapshotSyncRuns: SnapshotSyncRunSummary[];
   sessionData: SchedulerStatusResponse | null;
   sessionEvents: SessionEventSummary[];
+  todayOrderSummary: OrderDailySummary | null;
 }
 
 /* ── Helpers ── */
@@ -101,55 +111,6 @@ function formatPercent(val: number | null | undefined): string {
   if (val == null) return "N/A";
   const prefix = val >= 0 ? "+" : "";
   return `${prefix}${val.toFixed(2)}%`;
-}
-
-/* ── Alignment detail helpers ── */
-interface AlignmentBadgeConfig {
-  bg: string;
-  icon: string;
-  label: string;
-}
-
-function getAlignmentBadgeConfig(detail: AlignmentDetail): AlignmentBadgeConfig {
-  switch (detail) {
-    case "same_run":
-      return { bg: "bg-[#ecfdf5] text-[#16a34a]", icon: "✓", label: "동기화 완료" };
-    case "after_hours_cash_updated":
-      return { bg: "bg-[#eff6ff] text-[#2563eb]", icon: "↻", label: "장후 현금 업데이트" };
-    case "cash_only":
-      return { bg: "bg-[#fef9c3] text-[#b45309]", icon: "₩", label: "현금만 조회" };
-    case "partial_position_only":
-      return { bg: "bg-[#fff7ed] text-[#c2410c]", icon: "⊞", label: "포지션만 조회" };
-    case "timestamp_proximity":
-      return { bg: "bg-[#fef2f2] text-[#dc2626]", icon: "⚠", label: "시간 근사 정합" };
-    default:
-      return { bg: "bg-[#f1f5f9] text-[#64748b]", icon: "?", label: "정보 없음" };
-  }
-}
-
-/* ── Alignment detail derivation (simplified from positionsMap / cashMap) ── */
-function deriveAlignmentDetail(
-  accountId: string,
-  positionsMap: Map<string, PositionSnapshotView[]>,
-  cashMap: Map<string, CashBalanceSnapshotView | null>,
-): AlignmentDetail {
-  const positions = positionsMap.get(accountId) ?? [];
-  const cash = cashMap.get(accountId) ?? null;
-  const hasPositions = positions.length > 0;
-  const hasCash = cash !== null;
-
-  if (hasPositions && hasCash) {
-    // Both exist — best guess same_run (can't distinguish after_hours_cash_updated
-    // or timestamp_proximity without sync_run_id from AccountSnapshotResponse)
-    return "same_run";
-  }
-  if (hasCash && !hasPositions) {
-    return "cash_only";
-  }
-  if (hasPositions && !hasCash) {
-    return "partial_position_only";
-  }
-  return "unknown";
 }
 
 /* ── Scheduler Status Types & Helper ── */
@@ -285,6 +246,11 @@ export default function OperationsDashboardView() {
   const [error, setError] = useState<string | null>(null);
   const [apiErrors, setApiErrors] = useState<ApiErrorEntry[]>([]);
   const [data, setData] = useState<DashboardData | null>(null);
+  const [failureSummary, setFailureSummary] = useState<FailureSummary | null>(null);
+  const [failureSummaryLoading, setFailureSummaryLoading] = useState(false);
+  const [recentFailures, setRecentFailures] = useState<RecentFailureItem[]>([]);
+  const [failuresLoading, setFailuresLoading] = useState(false);
+  const [failuresError, setFailuresError] = useState<string | null>(null);
 
   const fetchAll = async () => {
     setLoading(true);
@@ -310,6 +276,10 @@ export default function OperationsDashboardView() {
       addError("GET /orders", e);
       return [];
     });
+    const todayOrderSummaryPromise = getOrderDailySummary().catch((e) => {
+      addError("GET /orders/daily-summary", e);
+      return null;
+    });
     const clientsPromise = getClients().catch((e) => {
       addError("GET /clients", e);
       return [] as ClientDetail[];
@@ -325,11 +295,12 @@ export default function OperationsDashboardView() {
       return null;
     });
 
-    const [health, readyz, reconSummary, orders, clients, sessionData, eventsResp] = await Promise.all([
+    const [health, readyz, reconSummary, orders, todayOrderSummary, clients, sessionData, eventsResp] = await Promise.all([
       healthPromise,
       readyzPromise,
       reconSummaryPromise,
       ordersPromise,
+      todayOrderSummaryPromise,
       clientsPromise,
       sessionPromise,
       eventsPromise,
@@ -393,6 +364,28 @@ export default function OperationsDashboardView() {
       addError("GET /snapshot-sync-runs", "스냅샷 동기화 이력 조회 실패");
     }
 
+    // ── Recent submission failures ──
+    setFailuresLoading(true);
+    try {
+      const failuresData = await getRecentFailures(5);
+      setRecentFailures(failuresData);
+      setFailuresError(null);
+    } catch (e) {
+      setRecentFailures([]);
+      setFailuresError(String(e));
+    }
+    setFailuresLoading(false);
+
+    // ── Submission failure summary (aggregated counts) ──
+    setFailureSummaryLoading(true);
+    try {
+      const summaryData = await getFailureSummary();
+      setFailureSummary(summaryData);
+    } catch {
+      setFailureSummary(null);
+    }
+    setFailureSummaryLoading(false);
+
     setApiErrors(errors);
     setData({
       clients,
@@ -407,6 +400,7 @@ export default function OperationsDashboardView() {
       snapshotSyncRuns,
       sessionData: sessionData as SchedulerStatusResponse | null,
       sessionEvents,
+      todayOrderSummary: todayOrderSummary as OrderDailySummary | null,
     });
     setLoading(false);
   };
@@ -449,15 +443,9 @@ export default function OperationsDashboardView() {
       }
     }
 
-    const pendingSubmitCount = data.orders.filter(
-      (o) => o.status === "submitted"
-    ).length;
-    const reconcileRequiredCount = data.orders.filter(
-      (o) => o.status === "reconcile_required"
-    ).length;
-    const filledCount = data.orders.filter(
-      (o) => o.status === "filled"
-    ).length;
+    const pendingSubmitCount = data.todayOrderSummary?.pending_submit_count ?? 0;
+    const filledCount = data.todayOrderSummary?.filled_count ?? 0;
+    const submittedCount = data.todayOrderSummary?.submitted_count ?? 0;
     const rejectedCount = data.orders.filter(
       (o) => o.status === "rejected"
     ).length;
@@ -557,31 +545,15 @@ export default function OperationsDashboardView() {
       session?.market_phase === 'AFTER_HOURS' ? 'info' :
       session?.market_phase === 'HALT' ? 'error' : 'neutral';
 
-    // ── Alignment detail summary (derived from positionsMap / cashMap) ──
-    const alignmentCounts: Record<string, number> = {};
-    const alignmentAccountIds: Record<string, string[]> = {};
-
-    for (const account of data.accounts) {
-      const detail = deriveAlignmentDetail(
-        account.account_id,
-        data.positionsMap,
-        data.cashMap,
-      );
-      alignmentCounts[detail] = (alignmentCounts[detail] || 0) + 1;
-      if (!alignmentAccountIds[detail]) {
-        alignmentAccountIds[detail] = [];
-      }
-      alignmentAccountIds[detail].push(account.account_id.slice(0, 8));
-    }
-
     return {
       totalPositions,
       totalAvailableCash,
       cashUsedFallback,
       latestSnapshotAt,
+      todayOrderSummary: data.todayOrderSummary,
       pendingSubmitCount,
-      reconcileRequiredCount,
       filledCount,
+      submittedCount,
       rejectedCount,
       incompleteReconCount,
       activeLocksCount,
@@ -599,8 +571,6 @@ export default function OperationsDashboardView() {
       phaseVariant,
       sessionEvents: data.sessionEvents,
       schedulerState,
-      alignmentCounts,
-      alignmentAccountIds,
     };
   }, [data, apiErrors]);
 
@@ -799,15 +769,9 @@ export default function OperationsDashboardView() {
     let budgetLabel = "";
     const sj = syncRun.summary_json;
     if (sj) {
-      const preCheck = (sj as Record<string, number>)["VTTC8908R_pre_check"] ?? 0;
-      const budgetExhausted = (sj as Record<string, number>)["VTTC8908R_budget_exhausted"] ?? 0;
-      const apiFailure = (sj as Record<string, number>)["VTTC8908R_api_failure"] ?? 0;
-      const afterHoursSkip = (sj as Record<string, number>)["after_hours_skip"] ?? 0;
-      const parts: string[] = [];
-      if (preCheck > 0) parts.push(`pre-check fallback ${preCheck}회`);
-      if (budgetExhausted > 0) parts.push(`budget exhausted ${budgetExhausted}회`);
-      if (apiFailure > 0) parts.push(`API 실패 fallback ${apiFailure}회`);
-      if (afterHoursSkip > 0) parts.push(`장후 skip ${afterHoursSkip}회`);
+      const parts = formatSnapshotBudgetParts(
+        parseSnapshotBudgetCounters(sj as Record<string, number>),
+      );
       if (parts.length > 0) {
         budgetLabel = ` | ${parts.join(", ")}`;
       }
@@ -823,7 +787,7 @@ export default function OperationsDashboardView() {
     ? "warning" as const
     : "healthy" as const;
 
-  const orderCount = data.orders.length;
+  const orderCount = data.todayOrderSummary?.total_count ?? 0;
 
   // Alert count status
   const alertStatusVariant: "error" | "warning" | "healthy" =
@@ -883,84 +847,12 @@ export default function OperationsDashboardView() {
           value={snapshotStatus}
           status={snapshotVariant}
           subtitle={snapshotSubtitle}
-        >
-          {/* ── 계좌별 alignment_detail 요약 ── */}
-          {(() => {
-            const totalAccounts = data.accounts.length;
-            if (totalAccounts === 0) return null;
-
-            const displayStates: AlignmentDetail[] = [
-              "same_run",
-              "after_hours_cash_updated",
-              "cash_only",
-              "partial_position_only",
-              "timestamp_proximity",
-              "unknown",
-            ];
-            const activeStates = displayStates.filter(
-              (s) => (d.alignmentCounts[s] || 0) > 0,
-            );
-            const abnormalStates: AlignmentDetail[] = [
-              "cash_only",
-              "partial_position_only",
-              "timestamp_proximity",
-            ];
-            const hasAbnormal = abnormalStates.some(
-              (s) => (d.alignmentCounts[s] || 0) > 0,
-            );
-
-            return (
-              <div className="space-y-1.5">
-                <div className="text-[10px] font-medium text-[#64748b]">
-                  계좌 정합 상태
-                </div>
-                {/* 각 alignment 상태별 라인 */}
-                <div className="space-y-1">
-                  {activeStates.map((state) => {
-                    const count = d.alignmentCounts[state] ?? 0;
-                    if (count === 0) return null;
-                    const cfg = getAlignmentBadgeConfig(state);
-                    const abnormalIds = hasAbnormal
-                      ? d.alignmentAccountIds[state]
-                      : undefined;
-                    return (
-                      <div
-                        key={state}
-                        className="flex items-center gap-1.5 text-[10px]"
-                      >
-                        <span
-                          className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-medium ${cfg.bg}`}
-                        >
-                          <span className="text-[10px]">{cfg.icon}</span>
-                          {cfg.label}
-                        </span>
-                        <span className="text-[#64748b] font-medium">
-                          {count}개
-                        </span>
-                        {abnormalIds && abnormalIds.length > 0 && (
-                          <span className="text-[#94a3b8] font-mono">
-                            ({abnormalIds.join(", ")})
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-                {/* 모든 계좌 정합 메시지 (특이 상태 없음) */}
-                {!hasAbnormal && (
-                  <div className="text-[10px] text-[#16a34a] font-medium">
-                    ✓ 모든 계좌 정합
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-        </StatusCard>
+        />
         <StatusCard
           title="오늘 주문 제출"
           value={`${orderCount}건`}
           status="neutral"
-          subtitle={`출처: GET /orders (체결 ${d.filledCount} / 대기 ${d.pendingSubmitCount})`}
+          subtitle={`출처: GET /orders/daily-summary (체결 ${d.filledCount} / 제출됨 ${d.submittedCount} / 제출대기 ${d.pendingSubmitCount})`}
         />
         <StatusCard
           title="현재 포지션"
@@ -997,6 +889,100 @@ export default function OperationsDashboardView() {
             </button>
           }
         />
+
+        {/* 최근 제출 실패 */}
+        <StatusCard
+          title="최근 제출 실패"
+          value={
+            failureSummary
+              ? `오늘 ${failureSummary.today_count}건`
+              : failureSummaryLoading || failuresLoading
+                ? "로딩 중..."
+                : failuresError
+                  ? "오류"
+                  : recentFailures.length === 0
+                    ? "0건"
+                    : `${recentFailures.length}건 발생`
+          }
+          status={
+            failuresError
+              ? "error"
+              : failureSummary && failureSummary.today_count > 0
+                  ? "warning"
+                  : "neutral"
+          }
+          subtitle={
+            failureSummary
+              ? `실패율: ${failureSummary.failure_rate_pct_today}% (오늘) | 거절 ${failureSummary.rejected_count_today}건 · 예외 ${failureSummary.exception_count_today}건`
+              : failureSummaryLoading || failuresLoading
+                ? "데이터를 불러오는 중..."
+                : failuresError
+                  ? `API 오류: ${failuresError}`
+                  : recentFailures.length === 0
+                    ? "오늘 제출 실패 없음"
+                    : undefined
+          }
+        >
+          {!failuresLoading && !failuresError && recentFailures.length > 0 && (
+            <div className="space-y-1.5">
+              {recentFailures.map((f) => (
+                <div key={f.order_request_id} className="flex items-center gap-1.5">
+                  <Link
+                    to={`/orders/${f.order_request_id}`}
+                    className="text-xs text-[#3b82f6] hover:text-[#2563eb] hover:underline flex items-center gap-1"
+                  >
+                    <span className="font-mono text-[10px]">
+                      {f.symbol || '(unknown)'}
+                    </span>
+                    {f.side && (
+                      <span className={`ml-0.5 text-[10px] font-medium ${
+                        f.side === 'BUY' ? 'text-red-600' : 'text-blue-600'
+                      }`}>
+                        {f.side}
+                      </span>
+                    )}
+                    <span className={`ml-1 inline-flex items-center px-1 py-0.5 rounded text-[10px] font-medium ${
+                      f.latest_outcome === 'exception'
+                        ? 'bg-yellow-100 text-yellow-800'
+                        : 'bg-red-100 text-red-800'
+                    }`}>
+                      {f.latest_outcome === 'exception' ? 'Exception' : 'Rejected'}
+                    </span>
+                    {f.latest_error_type && (
+                      <span
+                        className="ml-1 text-[10px] text-[#94a3b8]"
+                        title={f.latest_raw_message ?? undefined}
+                      >
+                        {f.latest_raw_code && (
+                          <span className="font-mono">[{f.latest_raw_code}] </span>
+                        )}
+                        {f.latest_error_type}
+                        {f.latest_raw_message && (
+                          <span className="italic">
+                            {" "}— "{f.latest_raw_message.length > 40 ? f.latest_raw_message.slice(0, 40) + '…' : f.latest_raw_message}"
+                          </span>
+                        )}
+                      </span>
+                    )}
+                  </Link>
+                  {/* 제출 이력 직접 링크 — OrderDetail 거치지 않고 바로 submission attempts 페이지로 */}
+                  <Link
+                    to={`/orders/${f.order_request_id}/submission-attempts`}
+                    className="text-[10px] text-[#3b82f6] hover:text-[#2563eb] hover:underline whitespace-nowrap"
+                  >
+                    제출 이력 보기 →
+                  </Link>
+                </div>
+              ))}
+              <Link
+                to="/orders?status=failed"
+                className="block text-[10px] text-[#94a3b8] hover:text-[#64748b] hover:underline mt-1"
+              >
+                모든 실패 주문 보기 →
+              </Link>
+            </div>
+          )}
+        </StatusCard>
 
         {/* ── 고급 카드 (feature flag로 제어) ── */}
         {SHOW_ADVANCED_OPERATION_CARDS && (

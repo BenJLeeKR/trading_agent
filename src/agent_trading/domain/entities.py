@@ -540,6 +540,35 @@ class ExecutionAttemptEntity:
 
 
 @dataclass(slots=True, frozen=True)
+class OrderSubmissionAttemptEntity:
+    """Record of a single broker submission attempt.
+
+    Captures success, rejection, and exception paths so that
+    submission history is never lost across retries or fallback
+    strategies.  MVP uses ``attempt_number=1``;  the value may
+    later be computed via COUNT queries.
+    """
+
+    attempt_id: UUID
+    order_request_id: UUID
+    attempt_number: int
+    submitted_at: datetime
+    broker_name: str | None = None
+    accepted: bool = False
+    broker_native_order_id: str | None = None
+    broker_status: str | None = None
+    raw_code: str | None = None
+    raw_message: str | None = None
+    error_type: str | None = None
+    retryable: bool | None = None
+    http_status: int | None = None
+    request_payload_uri: str | None = None
+    response_payload_uri: str | None = None
+    duration_ms: int | None = None
+    created_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class ExternalEventEntity:
     """Normalised external event data (disclosure, news, macro, etc.).
 

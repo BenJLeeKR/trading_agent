@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import uuid4
 
@@ -14,6 +14,7 @@ from agent_trading.domain.entities import (
     DecisionContextEntity,
     ExternalEventEntity,
     InstrumentEntity,
+    OrderRequestEntity,
     PositionSnapshotEntity,
     RiskLimitSnapshotEntity,
 )
@@ -1228,6 +1229,220 @@ class TestBuildSizingInputs:
         sizing = ExecutionService._build_sizing_inputs(intent)
         assert sizing.orderable_amount is None
         assert sizing.available_cash is None
+
+    def test_legacy_max_position_size_ratio_is_normalized_to_percent(
+        self, service: DecisionOrchestratorService
+    ) -> None:
+        """Legacy max_position_size=0.1 means 10%, not 0.1%.
+
+        This mirrors the production 004990 MARKET BUY case:
+        orderable_amount=9,014,583 and reference_price=25,400 should size near
+        70 shares from the 20% cash allocation.  Before normalization, the
+        concentration cap interpreted 0.1 as 0.1% of NAV and reduced this to
+        one share.
+        """
+        now = datetime.now(timezone.utc)
+        account_id = uuid4()
+        config_version = ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=uuid4(),
+            environment=Environment.PAPER,
+            version_tag="legacy-ratio",
+            config_json={"max_position_size": "0.1"},
+            checksum="legacy-ratio",
+            activated_at=now,
+        )
+        cash_snapshot = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=account_id,
+            currency="KRW",
+            available_cash=Decimal("9014583"),
+            settled_cash=Decimal("9014583"),
+            unsettled_cash=Decimal("0"),
+            source_of_truth="broker",
+            snapshot_at=now,
+            orderable_amount=Decimal("9014583"),
+            total_asset=Decimal("29880403"),
+        )
+        ctx = AssembledContext(
+            config_version=config_version,
+            cash_balance_snapshot=cash_snapshot,
+        )
+        intent = OrderIntent(
+            decision_context_id=None,
+            order_intent_id=None,
+            request=SubmitOrderRequest(
+                account_ref="test",
+                client_order_id="test-legacy-ratio-001",
+                correlation_id="corr-legacy-ratio-001",
+                strategy_id="strat-001",
+                symbol="004990",
+                market="KRX",
+                side=OrderSide.BUY,
+                order_type=OrderType.MARKET,
+                quantity=Decimal("1"),
+                price=None,
+                time_in_force=TimeInForce.DAY,
+            ),
+            context=ctx,
+            ai_backend_inputs=AIDecisionInputs(decision_type="BUY"),
+        )
+
+        sizing_inputs = ExecutionService._build_sizing_inputs(
+            intent,
+            reference_price=Decimal("25400"),
+        )
+        sizing_result = calculate_sizing(sizing_inputs)
+
+        assert sizing_inputs.max_single_position_pct == Decimal("10.0")
+        assert sizing_result.quantity == Decimal("70")
+        assert "position_concentration" not in sizing_result.applied_constraints
+
+    def test_nested_max_single_position_pct_keeps_percent_semantics(
+        self, service: DecisionOrchestratorService
+    ) -> None:
+        """Nested risk.max_single_position_pct remains an explicit percent."""
+        now = datetime.now(timezone.utc)
+        config_version = ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=uuid4(),
+            environment=Environment.PAPER,
+            version_tag="nested-percent",
+            config_json={
+                "max_position_size": "0.1",
+                "risk": {"max_single_position_pct": "5"},
+            },
+            checksum="nested-percent",
+            activated_at=now,
+        )
+        ctx = AssembledContext(config_version=config_version)
+        intent = OrderIntent(
+            decision_context_id=None,
+            order_intent_id=None,
+            request=SubmitOrderRequest(
+                account_ref="test",
+                client_order_id="test-nested-percent-001",
+                correlation_id="corr-nested-percent-001",
+                strategy_id="strat-001",
+                symbol="005930",
+                market="KRX",
+                side=OrderSide.BUY,
+                order_type=OrderType.LIMIT,
+                quantity=Decimal("10"),
+                price=Decimal("50000"),
+                time_in_force=TimeInForce.DAY,
+            ),
+            context=ctx,
+            ai_backend_inputs=AIDecisionInputs(decision_type="BUY"),
+        )
+
+        sizing_inputs = ExecutionService._build_sizing_inputs(intent)
+
+        assert sizing_inputs.max_single_position_pct == Decimal("5")
+
+    @pytest.mark.asyncio
+    async def test_recent_active_buy_order_guard_detects_same_symbol(
+        self,
+    ) -> None:
+        """Recent active BUY for the same symbol blocks re-entry."""
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        account_id = uuid4()
+        instrument_id = uuid4()
+        await repos.accounts.add(
+            AccountEntity(
+                account_id=account_id,
+                client_id=uuid4(),
+                broker_account_id=uuid4(),
+                environment=Environment.PAPER,
+                account_alias="test",
+                account_masked="****",
+                status="active",
+            )
+        )
+        await repos.instruments.add(
+            InstrumentEntity(
+                instrument_id=instrument_id,
+                symbol="004990",
+                market_code="KRX",
+                asset_class="equity",
+                currency="KRW",
+                name="롯데지주",
+            )
+        )
+        existing_order_id = uuid4()
+        await repos.orders.add(
+            OrderRequestEntity(
+                order_request_id=existing_order_id,
+                account_id=account_id,
+                instrument_id=instrument_id,
+                client_order_id="existing-buy",
+                idempotency_key="existing-buy",
+                correlation_id="existing-buy",
+                side=OrderSide.BUY,
+                order_type=OrderType.MARKET,
+                requested_quantity=Decimal("98"),
+                status=OrderStatus.SUBMITTED,
+                created_at=now,
+            )
+        )
+        service = ExecutionService(repos)
+
+        has_duplicate, duplicate_order_id = await service._has_recent_active_buy_order(
+            account_id=account_id,
+            symbol="004990",
+            market="KRX",
+            created_after=now - timedelta(minutes=15),
+        )
+
+        assert has_duplicate is True
+        assert duplicate_order_id == str(existing_order_id)
+
+    @pytest.mark.asyncio
+    async def test_recent_active_buy_order_guard_ignores_old_order(
+        self,
+    ) -> None:
+        """Old BUY orders outside the cooldown do not block new entries."""
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        account_id = uuid4()
+        instrument_id = uuid4()
+        await repos.instruments.add(
+            InstrumentEntity(
+                instrument_id=instrument_id,
+                symbol="004990",
+                market_code="KRX",
+                asset_class="equity",
+                currency="KRW",
+                name="롯데지주",
+            )
+        )
+        await repos.orders.add(
+            OrderRequestEntity(
+                order_request_id=uuid4(),
+                account_id=account_id,
+                instrument_id=instrument_id,
+                client_order_id="old-buy",
+                idempotency_key="old-buy",
+                correlation_id="old-buy",
+                side=OrderSide.BUY,
+                order_type=OrderType.MARKET,
+                requested_quantity=Decimal("98"),
+                status=OrderStatus.SUBMITTED,
+                created_at=now - timedelta(minutes=20),
+            )
+        )
+        service = ExecutionService(repos)
+
+        has_duplicate, duplicate_order_id = await service._has_recent_active_buy_order(
+            account_id=account_id,
+            symbol="004990",
+            market="KRX",
+            created_after=now - timedelta(minutes=15),
+        )
+
+        assert has_duplicate is False
+        assert duplicate_order_id is None
 
 
 # ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 from uuid import UUID
@@ -20,14 +20,20 @@ from agent_trading.api.deps import get_kis_client, get_order_manager, get_repos
 from agent_trading.api.schemas import (
     BrokerOrderView,
     BrokerTruthResponse,
+    FailureSummaryResponse,
     ManualStatusChangeRequest,
     ManualStatusChangeResponse,
+    OrderDailySummaryResponse,
     OrderDetail,
     OrderEvent,
     OrderSummary,
+    RecentFailureItem,
     SellAvailabilityResponse,
+    SubmissionAttemptSummary,
+    SubmissionAttemptView,
+    _derive_submission_outcome,
 )
-from agent_trading.api.security import Principal, require_admin
+from agent_trading.api.security import Principal, require_admin, require_viewer
 from agent_trading.domain.enums import OrderStatus
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import OrderQuery
@@ -37,6 +43,7 @@ from agent_trading.services.sell_guard import AvailableSellQtyResolver
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/orders", tags=["orders"])
+_KST = timezone(timedelta(hours=9))
 
 
 def _safe_str(val: object) -> str:
@@ -119,6 +126,60 @@ async def _enrich_order_detail(
     return detail
 
 
+@router.get("/recent-failures", response_model=list[RecentFailureItem])
+async def list_recent_submission_failures(
+    limit: int = Query(default=5, ge=1, le=20),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> list[RecentFailureItem]:
+    """Return the most recent order requests whose latest submission
+    attempt resulted in rejection or exception.
+
+    Results are sorted by ``submitted_at`` descending (newest first).
+    """
+    rows = await repos.order_submission_attempts.list_recent_failures(limit=limit)
+    return [RecentFailureItem(**row) for row in rows]
+
+
+@router.get("/failure-summary", response_model=FailureSummaryResponse)
+async def get_failure_summary(
+    repos: RepositoryContainer = Depends(get_repos),
+) -> FailureSummaryResponse:
+    """Return aggregated submission failure counts for the last 1h and 24h.
+
+    Useful for at-a-glance operational monitoring on the dashboard.
+    Data is computed from all submission attempts within the relevant
+    time windows and grouped by derived outcome (rejected / exception).
+    """
+    data = await repos.order_submission_attempts.get_failure_summary()
+    return FailureSummaryResponse(**data)
+
+
+@router.get("/daily-summary", response_model=OrderDailySummaryResponse)
+async def get_order_daily_summary(
+    target_date: date | None = Query(None, alias="date"),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> OrderDailySummaryResponse:
+    """Return KST day-bounded order counts for the dashboard."""
+    kst_now = datetime.now(_KST)
+    kst_date = target_date or kst_now.date()
+    kst_start = datetime.combine(kst_date, datetime.min.time(), tzinfo=_KST)
+    kst_end = kst_start + timedelta(days=1) - timedelta(microseconds=1)
+    query = OrderQuery(
+        created_from=kst_start.astimezone(timezone.utc),
+        created_to=kst_end.astimezone(timezone.utc),
+        limit=100,
+    )
+    total_count = await repos.orders.count(query)
+    status_counts = await repos.orders.count_by_status(query)
+    return OrderDailySummaryResponse(
+        date=kst_date,
+        total_count=total_count,
+        filled_count=status_counts.get(OrderStatus.FILLED.value, 0),
+        pending_submit_count=status_counts.get(OrderStatus.PENDING_SUBMIT.value, 0),
+        submitted_count=status_counts.get(OrderStatus.SUBMITTED.value, 0),
+    )
+
+
 @router.get("", response_model=list[OrderSummary])
 async def list_orders(
     account_id: str | None = Query(None),
@@ -168,7 +229,28 @@ async def get_order(
     order = await repos.orders.get(uid)
     if order is None:
         raise HTTPException(status_code=404, detail=f"Order not found: {order_request_id}")
-    return await _enrich_order_detail(order, repos)
+
+    detail = await _enrich_order_detail(order, repos)
+
+    # Phase 7: submission attempts 요약 조회
+    attempts = await repos.order_submission_attempts.list_by_order_request(uid)
+    if attempts:
+        latest = attempts[-1]  # attempt_number 오름차순 정렬됨
+        detail.submission_attempt_summary = SubmissionAttemptSummary(
+            attempt_count=len(attempts),
+            latest_accepted=latest.accepted,
+            latest_raw_code=latest.raw_code,
+            latest_raw_message=latest.raw_message,
+            latest_error_type=latest.error_type,
+            last_submitted_at=latest.submitted_at,
+            # Phase 8: derived outcome
+            latest_outcome=_derive_submission_outcome(
+                latest_accepted=latest.accepted,
+                latest_error_type=latest.error_type,
+            ),
+        )
+
+    return detail
 
 
 @router.get("/{order_request_id}/events", response_model=list[OrderEvent])
@@ -227,6 +309,46 @@ async def get_broker_orders(
 
     broker_orders = await repos.broker_orders.list_by_order_request(uid)
     return [BrokerOrderView.model_validate(bo) for bo in broker_orders]
+
+
+@router.get(
+    "/{order_request_id}/submission-attempts",
+    response_model=list[SubmissionAttemptView],
+    dependencies=[Depends(require_viewer)],
+)
+async def list_submission_attempts(
+    order_request_id: UUID,
+    repos: RepositoryContainer = Depends(get_repos),
+) -> list[SubmissionAttemptView]:
+    """Return all submission attempts for a given order request."""
+    attempts = await repos.order_submission_attempts.list_by_order_request(
+        order_request_id,
+    )
+    return [
+        SubmissionAttemptView(
+            order_submission_attempt_id=a.attempt_id,
+            order_request_id=a.order_request_id,
+            attempt_number=a.attempt_number,
+            submitted_at=a.submitted_at,
+            broker_name=a.broker_name,
+            accepted=a.accepted,
+            broker_native_order_id=a.broker_native_order_id,
+            broker_status=a.broker_status,
+            raw_code=a.raw_code,
+            raw_message=a.raw_message,
+            error_type=a.error_type,
+            retryable=a.retryable,
+            http_status=a.http_status,
+            duration_ms=a.duration_ms,
+            created_at=a.created_at,
+            # Phase 9: derived outcome for readability
+            attempt_outcome=_derive_submission_outcome(
+                latest_accepted=a.accepted,
+                latest_error_type=a.error_type,
+            ),
+        )
+        for a in attempts
+    ]
 
 
 @router.put("/{order_request_id}/status", response_model=ManualStatusChangeResponse)

@@ -104,7 +104,7 @@ class PostgresInstrumentRepository:
         rows = await self._tx.connection.fetch(
             """
             SELECT * FROM trading.instruments
-            WHERE market_code = $1 AND is_active = true
+            WHERE market_code = $1 AND is_active = true AND symbol != 'E2ESUM'
             ORDER BY symbol
             """,
             market_code,

@@ -66,6 +66,7 @@ services:
       # Dev token cache — share host cache to avoid EGW00133 rate limit
       KIS_DEV_TOKEN_CACHE_ENABLED: "true"
       KIS_DEV_TOKEN_CACHE_PATH: ".cache/kis_token.json"
+      KIS_SHARED_BUDGET_FILE: "${KIS_SHARED_BUDGET_FILE:-.cache/kis_paper_global_budget.json}"
       # Legacy fallback names (still supported)
       KIS_API_KEY: "${KIS_API_KEY:-}"
       KIS_API_SECRET: "${KIS_API_SECRET:-}"
@@ -141,6 +142,7 @@ services:
       # Dev token cache — share host cache to avoid EGW00133 rate limit
       KIS_DEV_TOKEN_CACHE_ENABLED: "true"
       KIS_DEV_TOKEN_CACHE_PATH: ".cache/kis_token.json"
+      KIS_SHARED_BUDGET_FILE: "${KIS_SHARED_BUDGET_FILE:-.cache/kis_paper_global_budget.json}"
       # Legacy fallback names (still supported)
       KIS_API_KEY: "${KIS_API_KEY:-}"
       KIS_API_SECRET: "${KIS_API_SECRET:-}"
@@ -231,6 +233,7 @@ services:
       KIS_ACCOUNT_NUMBER: "${KIS_ACCOUNT_NUMBER:-}"
       KIS_DEV_TOKEN_CACHE_ENABLED: "${KIS_DEV_TOKEN_CACHE_ENABLED:-true}"
       KIS_DEV_TOKEN_CACHE_PATH: "${KIS_DEV_TOKEN_CACHE_PATH:-.cache/kis_token.json}"
+      KIS_SHARED_BUDGET_FILE: "${KIS_SHARED_BUDGET_FILE:-.cache/kis_paper_global_budget.json}"
       # KIS Live Info (076/163)
       KIS_LIVE_INFO_ENABLED: "${KIS_LIVE_INFO_ENABLED:-false}"
       KIS_LIVE_INFO_APP_KEY: "${KIS_LIVE_INFO_APP_KEY:-}"
@@ -339,6 +342,7 @@ services:
       KIS_ACCOUNT_NUMBER: "${KIS_ACCOUNT_NUMBER:-}"
       KIS_DEV_TOKEN_CACHE_ENABLED: "${KIS_DEV_TOKEN_CACHE_ENABLED:-true}"
       KIS_DEV_TOKEN_CACHE_PATH: "${KIS_DEV_TOKEN_CACHE_PATH:-.cache/kis_token.json}"
+      KIS_SHARED_BUDGET_FILE: "${KIS_SHARED_BUDGET_FILE:-.cache/kis_paper_global_budget.json}"
       # KIS Live Info (076/163)
       KIS_LIVE_INFO_ENABLED: "${KIS_LIVE_INFO_ENABLED:-false}"
       KIS_LIVE_INFO_APP_KEY: "${KIS_LIVE_INFO_APP_KEY}"

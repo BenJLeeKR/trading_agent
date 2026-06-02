@@ -70,6 +70,15 @@ class TestFileBackedGlobalBucket:
         bucket.try_consume(1)
         assert bucket.remaining == 1
 
+    def test_remaining_property_applies_elapsed_refill(self) -> None:
+        """``remaining`` should reflect elapsed refill time even before consume."""
+        bucket = FileBackedGlobalBucket(capacity=1.0, refill_rate=1.0)
+        bucket._FILE_PATH = self.path
+        now = time.time()
+        with open(self.path, "w") as f:
+            f.write(f"0.0,{now - 1.2}")
+        assert bucket.remaining == 1
+
     def test_remaining_property_file_not_found(self) -> None:
         """``remaining`` returns capacity when file does not exist."""
         bucket = FileBackedGlobalBucket(capacity=5.0, refill_rate=1.0)
@@ -139,3 +148,19 @@ class TestFileBackedGlobalBucket:
         bucket._FILE_PATH = "/tmp/"
         # Should return True (fail open) rather than crashing
         assert bucket.try_consume(1) is True
+
+    def test_release_returns_token(self) -> None:
+        """``release()`` should restore a consumed token."""
+        bucket = FileBackedGlobalBucket(capacity=1.0, refill_rate=0.0)
+        bucket._FILE_PATH = self.path
+        assert bucket.try_consume(1) is True
+        assert bucket.remaining == 0
+        bucket.release(1)
+        assert bucket.remaining == 1
+
+    def test_refill_noop_compatibility(self) -> None:
+        """``_refill()`` exists for ``OperationBucket`` compatibility and does not crash."""
+        bucket = FileBackedGlobalBucket(capacity=1.0, refill_rate=1.0)
+        bucket._FILE_PATH = self.path
+        bucket._refill()
+        assert bucket.capacity == 1

@@ -96,6 +96,23 @@ class PostgresPositionSnapshotRepository:
         )
         return row_to_entity(row, PositionSnapshotEntity) if row else None
 
+    async def get_earliest_by_account_and_instrument_after(
+        self,
+        account_id: UUID,
+        instrument_id: UUID,
+        after: datetime,
+    ) -> PositionSnapshotEntity | None:
+        row = await self._tx.connection.fetchrow(
+            "SELECT * FROM trading.position_snapshots "
+            "WHERE account_id = $1 AND instrument_id = $2 AND snapshot_at > $3 "
+            "ORDER BY snapshot_at ASC "
+            "LIMIT 1",
+            account_id,
+            instrument_id,
+            after,
+        )
+        return row_to_entity(row, PositionSnapshotEntity) if row else None
+
     async def list_by_sync_run(
         self, account_id: UUID, sync_run_id: UUID,
     ) -> Sequence[PositionSnapshotEntity]:

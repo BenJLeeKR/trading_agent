@@ -324,11 +324,18 @@ class ReconciliationRunProcessor:
             from agent_trading.brokers.koreainvestment.adapter import (
                 KoreaInvestmentAdapter,
             )
+            from agent_trading.brokers.rate_limit import build_kis_budget_manager
             from agent_trading.brokers.koreainvestment.rest_client import (
                 KISRestClient,
             )
 
             # Build the REST client with env-config driven parameters
+            budget_manager = build_kis_budget_manager(
+                kis_env=self.settings.kis_env,
+                real_rest_rps=self.settings.kis_real_rest_rps,
+                paper_rest_rps=self.settings.kis_paper_rest_rps,
+                shared_budget_file=self.settings.kis_shared_budget_file,
+            )
             rest_client = KISRestClient(
                 api_key=self.settings.kis_api_key,
                 api_secret=self.settings.kis_api_secret,
@@ -336,6 +343,7 @@ class ReconciliationRunProcessor:
                 account_product_code=self.settings.kis_account_product_code,
                 env=self.settings.kis_env,
                 base_url=self.settings.kis_base_url,
+                budget_manager=budget_manager,
                 dev_token_cache_enabled=self.settings.kis_dev_token_cache_enabled,
                 dev_token_cache_path=self.settings.kis_dev_token_cache_path,
             )

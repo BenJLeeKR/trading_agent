@@ -9,7 +9,7 @@ Covers: ``GET /orders``, ``GET /orders/{id}``, ``GET /orders/{id}/events``,
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
@@ -17,9 +17,14 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+from agent_trading.api.app import create_app
+from agent_trading.api.deps import get_repos
 from agent_trading.api.routes.orders import _safe_str
+from agent_trading.domain.entities import InstrumentEntity, OrderRequestEntity
+from agent_trading.domain.enums import OrderSide, OrderStatus, OrderType, TimeInForce
 from agent_trading.domain.entities import ExecutionAttemptEntity, TradeDecisionEntity
 from agent_trading.repositories.container import RepositoryContainer
+from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from tests.api.conftest import client  # noqa: F401
 
 
@@ -170,6 +175,99 @@ class TestOrders:
         assert len(matching) >= 1
         assert matching[0]["event_source"] == "broker_truth_recovery"
         assert matching[0]["new_status"] == "filled"
+
+    def test_get_order_daily_summary_kst_date(self) -> None:
+        repos = build_in_memory_repositories()
+        app = create_app(auth_token="test-token")
+        app.dependency_overrides[get_repos] = lambda: repos
+
+        account_id = uuid4()
+        instrument_id = uuid4()
+        now = datetime.now(timezone.utc)
+        import asyncio
+        from decimal import Decimal
+
+        asyncio.run(
+            repos.instruments.add(
+                InstrumentEntity(
+                    instrument_id=instrument_id,
+                    symbol="005930",
+                    market_code="KRX",
+                    asset_class="stock",
+                    currency="KRW",
+                    name="Samsung Electronics",
+                    is_active=True,
+                    created_at=now,
+                )
+            )
+        )
+
+        def _seed_order(
+            *,
+            client_order_id: str,
+            status: OrderStatus,
+            created_at: datetime,
+        ) -> None:
+            asyncio.run(
+                repos.orders.add(
+                    OrderRequestEntity(
+                        order_request_id=uuid4(),
+                        account_id=account_id,
+                        instrument_id=instrument_id,
+                        client_order_id=client_order_id,
+                        idempotency_key=f"idem-{client_order_id}",
+                        correlation_id=f"corr-{client_order_id}",
+                        side=OrderSide.BUY,
+                        order_type=OrderType.LIMIT,
+                        requested_quantity=Decimal("1"),
+                        requested_price=Decimal("70000"),
+                        status=status,
+                        time_in_force=TimeInForce.DAY,
+                        created_at=created_at,
+                        updated_at=created_at,
+                        version=1,
+                    )
+                )
+            )
+
+        _seed_order(
+            client_order_id="today-filled",
+            status=OrderStatus.FILLED,
+            created_at=datetime(2026, 6, 1, 1, 0, tzinfo=timezone.utc),  # 10:00 KST
+        )
+        _seed_order(
+            client_order_id="today-pending",
+            status=OrderStatus.PENDING_SUBMIT,
+            created_at=datetime(2026, 6, 1, 2, 0, tzinfo=timezone.utc),  # 11:00 KST
+        )
+        _seed_order(
+            client_order_id="today-submitted",
+            status=OrderStatus.SUBMITTED,
+            created_at=datetime(2026, 6, 1, 3, 0, tzinfo=timezone.utc),  # 12:00 KST
+        )
+        _seed_order(
+            client_order_id="prev-day",
+            status=OrderStatus.FILLED,
+            created_at=datetime(2026, 5, 31, 14, 0, tzinfo=timezone.utc),  # 23:00 KST prev day
+        )
+
+        with TestClient(app) as client:
+            response = client.get(
+                "/orders/daily-summary",
+                params={"date": date(2026, 6, 1).isoformat()},
+                headers={"Authorization": "Bearer test-token"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["date"] == "2026-06-01"
+        assert data["timezone"] == "Asia/Seoul"
+        assert data["total_count"] == 3
+        assert data["filled_count"] == 1
+        assert data["pending_submit_count"] == 1
+        assert data["submitted_count"] == 1
+
+        app.dependency_overrides.clear()
 
 
 class TestTradeDecisions:
@@ -881,5 +979,4 @@ class TestExecutionAttemptSummaryInDecisionDetail:
         data = resp.json()
         assert "status" in data
         assert "data" in data
-
 

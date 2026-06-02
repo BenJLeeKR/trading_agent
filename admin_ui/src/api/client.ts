@@ -99,9 +99,37 @@ export async function getClients(): Promise<import("../types/api").ClientDetail[
   return request<import("../types/api").ClientDetail[]>("/clients");
 }
 
+export async function getDefaultClient(): Promise<import("../types/api").ClientDetail | null> {
+  try {
+    const res = await fetch("/clients/default", {
+      headers: getStoredToken()
+        ? { Authorization: `Bearer ${getStoredToken()}` }
+        : {},
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`Failed to fetch default client: ${res.status}`);
+    return (await res.json()) as import("../types/api").ClientDetail;
+  } catch {
+    return null;
+  }
+}
+
 export async function getOrders(status?: string): Promise<import("../types/api").OrderSummary[]> {
   const query = status ? `?status=${encodeURIComponent(status)}` : "";
   return request<import("../types/api").OrderSummary[]>(`/orders${query}`);
+}
+
+export async function getOrderDailySummary(date?: string): Promise<import("../types/api").OrderDailySummary> {
+  const query = date ? `?date=${encodeURIComponent(date)}` : "";
+  return request<import("../types/api").OrderDailySummary>(`/orders/daily-summary${query}`);
+}
+
+export async function getRecentFailures(limit = 5): Promise<import("../types/api").RecentFailureItem[]> {
+  return request<import("../types/api").RecentFailureItem[]>(`/orders/recent-failures?limit=${limit}`);
+}
+
+export async function getFailureSummary(): Promise<import("../types/api").FailureSummary> {
+  return request<import("../types/api").FailureSummary>("/orders/failure-summary");
 }
 
 export async function getOrderDetail(

@@ -166,10 +166,11 @@ class TestClassifyAutoFixSafe:
             kis_ccld_qty=10,
             kis_order_qty=10,
         )
-        classification, target_status, reason = _classify(result, requested_quantity=10)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
         assert classification == CLASS_AUTO_FIX_SAFE
         assert target_status == "filled"
         assert reason is None
+        assert conflict_type is None  # auto_fix_safe는 conflict_type=None
 
     def test_partially_filled_suspected_direct_odno(self):
         """partially_filled_suspected + direct_odno → auto_fix_safe → PARTIALLY_FILLED."""
@@ -179,10 +180,11 @@ class TestClassifyAutoFixSafe:
             kis_ccld_qty=5,
             kis_order_qty=10,
         )
-        classification, target_status, reason = _classify(result, requested_quantity=10)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
         assert classification == CLASS_AUTO_FIX_SAFE
         assert target_status == "partially_filled"
         assert reason is None
+        assert conflict_type is None
 
     def test_expired_confirmed_direct_odno(self):
         """expired_confirmed + direct_odno → auto_fix_safe → target_status=None (already expired)."""
@@ -192,10 +194,11 @@ class TestClassifyAutoFixSafe:
             kis_ccld_qty=0,
             kis_order_qty=10,
         )
-        classification, target_status, reason = _classify(result, requested_quantity=10)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
         assert classification == CLASS_AUTO_FIX_SAFE
         assert target_status is None
         assert reason is not None  # "Already expired confirmed"
+        assert conflict_type is None
 
     def test_ccld_qty_none_matches_requested_quantity(self):
         """kis_ccld_qty=None + requested_quantity=10 → auto_fix_safe (None 처리 안전)."""
@@ -205,9 +208,10 @@ class TestClassifyAutoFixSafe:
             kis_ccld_qty=None,
             kis_order_qty=10,
         )
-        classification, target_status, reason = _classify(result, requested_quantity=10)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
         assert classification == CLASS_AUTO_FIX_SAFE
         assert target_status == "filled"
+        assert conflict_type is None
 
     def test_requested_quantity_none_handled(self):
         """requested_quantity=None → auto_fix_safe (None 처리 안전)."""
@@ -217,9 +221,10 @@ class TestClassifyAutoFixSafe:
             kis_ccld_qty=10,
             kis_order_qty=10,
         )
-        classification, target_status, reason = _classify(result, requested_quantity=None)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=None)
         assert classification == CLASS_AUTO_FIX_SAFE
         assert target_status == "filled"
+        assert conflict_type is None
 
 
 # ---------------------------------------------------------------------------
@@ -229,17 +234,35 @@ class TestClassifyAutoFixSafe:
 
 class TestClassifyTruthProbeConflict:
     def test_position_delta_filled_verdict(self):
-        """position_delta_filled → truth_probe_conflict."""
+        """position_delta_filled + KIS cross-check 실패 → truth_probe_conflict."""
         result = _make_result(
             verdict=VERDICT_FILLED,
             match_method="direct_odno",
             position_verdict=VERDICT_POSITION_DELTA_FILLED,
             position_delta=15,
+            kis_ord_stat="00",   # KIS_FILL_CODES에 없음 → cross-check 실패
+            kis_ccld_qty=0,      # 체결 0건
         )
-        classification, target_status, reason = _classify(result, requested_quantity=10)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
         assert classification == CLASS_TRUTH_PROBE_CONFLICT
         assert target_status is None
-        assert reason is not None
+        assert "position_verdict" in reason
+        assert conflict_type == "position_delta_filled"
+
+    def test_position_delta_filled_with_kis_confirm(self):
+        """position_delta_filled + KIS cross-check 성공 → auto_fix_safe."""
+        result = _make_result(
+            verdict=VERDICT_FILLED,
+            match_method="direct_odno",
+            position_verdict=VERDICT_POSITION_DELTA_FILLED,
+            position_delta=15,
+            kis_ord_stat="21",   # KIS_FILL_CODES에 포함
+            kis_ccld_qty=10,     # req_qty=10과 같음 → 충족
+        )
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
+        assert classification == CLASS_AUTO_FIX_SAFE
+        assert target_status is not None
+        assert conflict_type is None  # cross-check 통과 → conflict 아님
 
     def test_position_delta_partial_verdict(self):
         """position_delta_partial → truth_probe_conflict."""
@@ -249,9 +272,10 @@ class TestClassifyTruthProbeConflict:
             position_verdict=VERDICT_POSITION_DELTA_PARTIAL,
             position_delta=5,
         )
-        classification, target_status, reason = _classify(result, requested_quantity=10)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
         assert classification == CLASS_TRUTH_PROBE_CONFLICT
         assert target_status is None
+        assert conflict_type == "position_delta_partial"
 
     def test_match_verdict_paper_missing(self):
         """match.verdict == paper_truth_missing → truth_probe_conflict."""
@@ -260,9 +284,10 @@ class TestClassifyTruthProbeConflict:
             match_method="direct_odno",
             match_verdict=VERDICT_PAPER_MISSING,
         )
-        classification, target_status, reason = _classify(result, requested_quantity=10)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
         assert classification == CLASS_TRUTH_PROBE_CONFLICT
         assert target_status is None
+        assert conflict_type == "paper_truth_missing"
 
     def test_match_verdict_position_delta_filled(self):
         """match.verdict == position_delta_filled → truth_probe_conflict."""
@@ -271,9 +296,10 @@ class TestClassifyTruthProbeConflict:
             match_method="direct_odno",
             match_verdict=VERDICT_POSITION_DELTA_FILLED,
         )
-        classification, target_status, reason = _classify(result, requested_quantity=10)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
         assert classification == CLASS_TRUTH_PROBE_CONFLICT
         assert target_status is None
+        assert conflict_type == "paper_truth_missing"  # match_verdict가 먼저 conflict_type 결정
 
     def test_kis_ccld_qty_mismatch(self):
         """kis_ccld_qty(5) != requested_quantity(10) → truth_probe_conflict."""
@@ -283,10 +309,11 @@ class TestClassifyTruthProbeConflict:
             kis_ccld_qty=5,
             kis_order_qty=10,
         )
-        classification, target_status, reason = _classify(result, requested_quantity=10)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
         assert classification == CLASS_TRUTH_PROBE_CONFLICT
         assert target_status is None
         assert "qty mismatch" in (reason or "")
+        assert conflict_type == "qty_mismatch"
 
     def test_non_fill_ord_stat_with_ccld_qty(self):
         """ORD_STAT non-fill(00) + ccld_qty>0 → truth_probe_conflict."""
@@ -297,9 +324,10 @@ class TestClassifyTruthProbeConflict:
             kis_ccld_qty=5,
             kis_order_qty=10,
         )
-        classification, target_status, reason = _classify(result, requested_quantity=10)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
         assert classification == CLASS_TRUTH_PROBE_CONFLICT
         assert target_status is None
+        assert conflict_type == "ord_stat_conflict"
 
     def test_position_delta_without_position_verdict(self):
         """position_delta>0 but position_verdict empty → truth_probe_conflict."""
@@ -309,9 +337,10 @@ class TestClassifyTruthProbeConflict:
             position_delta=10,
             position_verdict="",  # no position verdict
         )
-        classification, target_status, reason = _classify(result, requested_quantity=10)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
         assert classification == CLASS_TRUTH_PROBE_CONFLICT
         assert target_status is None
+        assert conflict_type == "position_delta_no_verdict"
 
     def test_qty_mismatch_in_auto_fix_path(self):
         """auto_fix_safe 조건에 들어갔는데도 qty mismatch가 있으면 conflict."""
@@ -321,9 +350,10 @@ class TestClassifyTruthProbeConflict:
             kis_ccld_qty=3,
             kis_order_qty=10,
         )
-        classification, target_status, reason = _classify(result, requested_quantity=10)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
         # 먼저 conflict 조건에 걸림 (2d: qty mismatch)
         assert classification == CLASS_TRUTH_PROBE_CONFLICT
+        assert conflict_type == "qty_mismatch"
 
     def test_multiple_conflicts(self):
         """여러 conflict 조건이 동시에 있어도 정상 분류."""
@@ -336,13 +366,16 @@ class TestClassifyTruthProbeConflict:
             kis_order_qty=10,
             position_delta=5,
         )
-        classification, target_status, reason = _classify(result, requested_quantity=10)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
         assert classification == CLASS_TRUTH_PROBE_CONFLICT
         assert target_status is None
         assert reason is not None
         # 여러 사유가 모두 포함되어야 함
         assert VERDICT_PAPER_MISSING in (reason or "")
         assert VERDICT_POSITION_DELTA_PARTIAL in (reason or "")
+        # conflict_type 결정 순서: 2a(position_verdict) → 2b(match_verdict) → ...
+        # position_verdict=VERDICT_POSITION_DELTA_PARTIAL이 2a에서 먼저 conflict_type 설정
+        assert conflict_type == "position_delta_partial"
 
 
 # ---------------------------------------------------------------------------
@@ -354,10 +387,11 @@ class TestClassifyManual:
     def test_error_in_result(self):
         """error 필드가 있으면 manual."""
         result = _make_result(error="API call failed")
-        classification, target_status, reason = _classify(result, requested_quantity=10)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
         assert classification == CLASS_MANUAL
         assert target_status is None
         assert "Error" in (reason or "")
+        assert conflict_type is None
 
     def test_needs_manual_reconciliation_verdict(self):
         """verdict=needs_manual_reconciliation → manual."""
@@ -366,9 +400,10 @@ class TestClassifyManual:
             matched=False,
             match_verdict=VERDICT_MANUAL,
         )
-        classification, target_status, reason = _classify(result, requested_quantity=10)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
         assert classification == CLASS_MANUAL
         assert target_status is None
+        assert conflict_type is None
 
     def test_odno_not_matched(self):
         """ODNO 매칭 실패 (matched=False) → manual."""
@@ -378,9 +413,10 @@ class TestClassifyManual:
             match_method="",
             match_verdict=VERDICT_MANUAL,
         )
-        classification, target_status, reason = _classify(result, requested_quantity=10)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
         assert classification == CLASS_MANUAL
         assert target_status is None
+        assert conflict_type is None
 
     def test_not_direct_odno_match_method(self):
         """match_method != direct_odno → manual."""
@@ -389,10 +425,11 @@ class TestClassifyManual:
             match_method="symbol_side_fallback",
             match_verdict=VERDICT_FILLED,
         )
-        classification, target_status, reason = _classify(result, requested_quantity=10)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
         assert classification == CLASS_MANUAL
         assert target_status is None
         assert "symbol_side_fallback" in (reason or "")
+        assert conflict_type is None
 
     def test_match_is_not_dict(self):
         """match 필드가 dict가 아니면 manual."""
@@ -400,9 +437,10 @@ class TestClassifyManual:
             "verdict": VERDICT_FILLED,
             "match": "not a dict",
         }
-        classification, target_status, reason = _classify(result, requested_quantity=10)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
         assert classification == CLASS_MANUAL
         assert target_status is None
+        assert conflict_type is None
 
     def test_unexpected_verdict(self):
         """예상치 못한 verdict + direct_odno → manual."""
@@ -411,9 +449,10 @@ class TestClassifyManual:
             match_method="direct_odno",
             match_verdict="some_unknown_verdict",
         )
-        classification, target_status, reason = _classify(result, requested_quantity=10)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
         assert classification == CLASS_MANUAL
         assert target_status is None
+        assert conflict_type is None
 
 
 # ---------------------------------------------------------------------------
@@ -431,9 +470,10 @@ class TestClassifyEdgeCases:
             kis_ccld_qty=0,
             kis_order_qty=10,
         )
-        classification, target_status, reason = _classify(result, requested_quantity=0)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=0)
         # fill code 21, ccld=0, req_qty=0 → qty match
         assert classification in (CLASS_AUTO_FIX_SAFE,)
+        assert conflict_type is None
 
     def test_ccld_qty_string_number_parsing(self):
         """kis_ccld_qty가 문자열 숫자여도 정상 파싱."""
@@ -443,8 +483,9 @@ class TestClassifyEdgeCases:
             kis_ccld_qty="10",
             kis_order_qty="10",
         )
-        classification, target_status, reason = _classify(result, requested_quantity="10")
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity="10")
         assert classification == CLASS_AUTO_FIX_SAFE
+        assert conflict_type is None
 
     def test_float_quantity(self):
         """requested_quantity가 float여도 정상 처리."""
@@ -454,8 +495,9 @@ class TestClassifyEdgeCases:
             kis_ccld_qty=10,
             kis_order_qty=10,
         )
-        classification, target_status, reason = _classify(result, requested_quantity=10.0)
+        classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10.0)
         assert classification == CLASS_AUTO_FIX_SAFE
+        assert conflict_type is None
 
     def test_all_kis_fill_codes_auto_fix(self):
         """모든 KIS fill 코드(21,22,11,12)에서 auto_fix_safe."""
@@ -467,8 +509,9 @@ class TestClassifyEdgeCases:
                 kis_ccld_qty=10,
                 kis_order_qty=10,
             )
-            classification, target_status, reason = _classify(result, requested_quantity=10)
+            classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
             assert classification == CLASS_AUTO_FIX_SAFE, f"fill_code={fill_code} should be auto_fix_safe"
+            assert conflict_type is None
 
     def test_all_kis_fill_codes_conflict_with_mismatch(self):
         """모든 KIS fill 코드에서 qty mismatch → truth_probe_conflict."""
@@ -480,5 +523,6 @@ class TestClassifyEdgeCases:
                 kis_ccld_qty=5,
                 kis_order_qty=10,
             )
-            classification, target_status, reason = _classify(result, requested_quantity=10)
+            classification, target_status, reason, conflict_type = _classify(result, requested_quantity=10)
             assert classification == CLASS_TRUTH_PROBE_CONFLICT, f"fill_code={fill_code} with mismatch should be conflict"
+            assert conflict_type == "qty_mismatch", f"fill_code={fill_code} conflict_type should be qty_mismatch"

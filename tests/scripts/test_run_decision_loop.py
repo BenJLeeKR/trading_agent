@@ -59,10 +59,12 @@ from agent_trading.services.decision_orchestrator import (
 # Module under test
 from scripts.run_decision_loop import (
     ENV_TRADING_UNIVERSE,
+    HELD_POSITION_SELL_MAX_PER_CYCLE,
     KISRestClient,
     UniverseSymbol,
     _build_aggregate_summary,
     _collect_persisted_seeded_events,
+    _compute_symbol_submit_mode,
     _is_t3_fresh_for_symbol,
     _parse_args,
     _parse_universe_symbols,
@@ -951,177 +953,86 @@ class TestRunOneCycle:
 
 
 class TestHeldPositionSellBudget:
-    """``_run_loop()`` 내 held_position sell budget 분기 로직 검증.
+    """``_compute_symbol_submit_mode()`` held_position sell lane 검증.
 
     cycle당 cap (HELD_POSITION_SELL_MAX_PER_CYCLE=2)과
     symbol deduplication이 올바르게 동작하는지 확인.
     """
 
-    @pytest.mark.asyncio
-    async def test_hp_sell_cycle_cap_blocks_third_submit(self) -> None:
-        """동일 cycle 내 HP sell이 2건을 초과하면 세 번째는 block되어야 함.
+    def test_hp_sell_ignores_general_submit_budget_consumed(self) -> None:
+        """앞선 BUY가 submit 슬롯을 예약해도 held_position은 submit 가능해야 함."""
+        symbol_submit, symbol_dry_run = _compute_symbol_submit_mode(
+            submit=True,
+            dry_run=False,
+            allow_general_submit=True,
+            source_type="held_position",
+            submit_budget_consumed=True,
+            held_position_sell_cycle_count=0,
+            held_position_sell_cycle_symbols=set(),
+            symbol="001740",
+        )
+        assert symbol_submit is True
+        assert symbol_dry_run is False
 
-        NOTE: held_position_sell_budget_consumed는 일간 cap(5건) 소진 시 True.
-        cycle cap 테스트에서는 일간 cap이 아직 소진되지 않았다고 가정.
-        """
-        held_position_sell_budget_consumed = False  # 일간 cap은 아직 여유
-        held_position_sell_cycle_count = 0
-        held_position_sell_cycle_symbols: set[str] = set()
-        HELD_POSITION_SELL_MAX_PER_CYCLE = 2
+    def test_hp_sell_cycle_cap_blocks_third_submit(self) -> None:
+        """동일 cycle 내 HP sell은 cap 초과 시 dry-run으로 내려가야 함."""
+        symbol_submit, symbol_dry_run = _compute_symbol_submit_mode(
+            submit=True,
+            dry_run=False,
+            allow_general_submit=True,
+            source_type="held_position",
+            submit_budget_consumed=False,
+            held_position_sell_cycle_count=HELD_POSITION_SELL_MAX_PER_CYCLE,
+            held_position_sell_cycle_symbols={"AAPL", "GOOGL"},
+            symbol="MSFT",
+        )
+        assert symbol_submit is False
+        assert symbol_dry_run is True
 
-        class _MockItem:
-            def __init__(self, symbol: str, source_type: str = "held_position"):
-                self.symbol = symbol
-                self.source_type = source_type
-                self.market = "KOSPI"
+    def test_hp_sell_symbol_dedupe_blocks_duplicate(self) -> None:
+        """동일 cycle 내 같은 symbol 중복 submit은 막아야 함."""
+        symbol_submit, symbol_dry_run = _compute_symbol_submit_mode(
+            submit=True,
+            dry_run=False,
+            allow_general_submit=True,
+            source_type="held_position",
+            submit_budget_consumed=False,
+            held_position_sell_cycle_count=1,
+            held_position_sell_cycle_symbols={"001740"},
+            symbol="001740",
+        )
+        assert symbol_submit is False
+        assert symbol_dry_run is True
 
-        # 3개의 다른 symbol로 HP sell submit 시도
-        items = [
-            _MockItem("AAPL"),
-            _MockItem("GOOGL"),
-            _MockItem("MSFT"),
-        ]
+    def test_core_symbol_still_respects_general_submit_budget(self) -> None:
+        """core 종목은 기존처럼 일반 submit 슬롯을 따라야 함."""
+        symbol_submit, symbol_dry_run = _compute_symbol_submit_mode(
+            submit=True,
+            dry_run=False,
+            allow_general_submit=True,
+            source_type="core",
+            submit_budget_consumed=True,
+            held_position_sell_cycle_count=0,
+            held_position_sell_cycle_symbols=set(),
+            symbol="005930",
+        )
+        assert symbol_submit is False
+        assert symbol_dry_run is True
 
-        submit = True
-        dry_run = False
-        results: list[bool] = []
-
-        for item in items:
-            is_held_position_item = (
-                getattr(item, "source_type", "core") == "held_position"
-            )
-            if is_held_position_item:
-                symbol_submit = (
-                    submit
-                    and not dry_run
-                    and not held_position_sell_budget_consumed
-                    and held_position_sell_cycle_count < HELD_POSITION_SELL_MAX_PER_CYCLE
-                    and item.symbol not in held_position_sell_cycle_symbols
-                )
-            else:
-                symbol_submit = submit and not dry_run
-
-            results.append(symbol_submit)
-
-            # budget 소비: cycle count만 증가 (daily cap은 아직 소진 안 됨)
-            if symbol_submit:
-                held_position_sell_cycle_count += 1
-                held_position_sell_cycle_symbols.add(item.symbol)
-                # NOTE: 실제 _process_one에서는 daily cap도 함께 설정되지만,
-                # cycle cap만 테스트하기 위해 daily cap은 유지
-
-        # AAPL: submit 허용 (1/2)
-        assert results[0] is True, "첫 번째 HP sell은 허용되어야 함"
-        # GOOGL: submit 허용 (2/2)
-        assert results[1] is True, "두 번째 HP sell은 허용되어야 함"
-        # MSFT: cycle cap으로 block (2 >= 2)
-        assert results[2] is False, "세 번째 HP sell은 cycle cap으로 block되어야 함"
-
-    @pytest.mark.asyncio
-    async def test_hp_sell_symbol_dedupe_blocks_duplicate(self) -> None:
-        """동일 cycle 내 같은 symbol의 HP sell 중복 submit이 block되어야 함."""
-        held_position_sell_budget_consumed = False
-        held_position_sell_cycle_count = 0
-        held_position_sell_cycle_symbols: set[str] = set()
-        HELD_POSITION_SELL_MAX_PER_CYCLE = 2
-
-        class _MockItem:
-            def __init__(self, symbol: str, source_type: str = "held_position"):
-                self.symbol = symbol
-                self.source_type = source_type
-                self.market = "KOSPI"
-
-        # 같은 symbol로 2회 시도
-        items = [
-            _MockItem("AAPL"),
-            _MockItem("AAPL"),  # duplicate
-        ]
-
-        submit = True
-        dry_run = False
-        results: list[bool] = []
-
-        for item in items:
-            is_held_position_item = (
-                getattr(item, "source_type", "core") == "held_position"
-            )
-            if is_held_position_item:
-                symbol_submit = (
-                    submit
-                    and not dry_run
-                    and not held_position_sell_budget_consumed
-                    and held_position_sell_cycle_count < HELD_POSITION_SELL_MAX_PER_CYCLE
-                    and item.symbol not in held_position_sell_cycle_symbols
-                )
-            else:
-                symbol_submit = submit and not dry_run
-
-            results.append(symbol_submit)
-
-            if symbol_submit:
-                held_position_sell_cycle_count += 1
-                held_position_sell_cycle_symbols.add(item.symbol)
-
-        # 첫 번째 AAPL: submit 허용
-        assert results[0] is True, "첫 번째 AAPL HP sell은 허용되어야 함"
-        # 두 번째 AAPL: symbol dedupe으로 block
-        assert results[1] is False, "중복 symbol AAPL은 block되어야 함"
-
-    @pytest.mark.asyncio
-    async def test_hp_sell_daily_cap_removed(self) -> None:
-        """일간 HP sell budget 상한이 제거되었으므로 daily cap으로 block되지 않음.
-
-        NOTE: held_position sell은 위험 축소 목적이므로 일일 제출 상한이
-        제거되었습니다. cycle cap(2건)과 symbol dedupe만 유지됩니다.
-        """
-        held_position_sell_cycle_count = 0
-        held_position_sell_cycle_symbols: set[str] = set()
-        HELD_POSITION_SELL_MAX_PER_CYCLE = 2
-
-        class _MockItem:
-            def __init__(self, symbol: str, source_type: str = "held_position"):
-                self.symbol = symbol
-                self.source_type = source_type
-                self.market = "KOSPI"
-
-        # 3개의 다른 symbol — daily cap이 없으므로 cycle cap(2)까지만 허용
-        items = [
-            _MockItem("SYM0"),
-            _MockItem("SYM1"),
-            _MockItem("SYM2"),
-        ]
-
-        submit = True
-        dry_run = False
-        results: list[bool] = []
-
-        for i, item in enumerate(items):
-            is_held_position_item = (
-                getattr(item, "source_type", "core") == "held_position"
-            )
-            if is_held_position_item:
-                # daily cap 조건 제거됨 — cycle cap + symbol dedupe만 확인
-                symbol_submit = (
-                    submit
-                    and not dry_run
-                    and held_position_sell_cycle_count < HELD_POSITION_SELL_MAX_PER_CYCLE
-                    and item.symbol not in held_position_sell_cycle_symbols
-                )
-            else:
-                symbol_submit = submit and not dry_run
-
-            results.append(symbol_submit)
-
-            if symbol_submit:
-                held_position_sell_cycle_count += 1
-                held_position_sell_cycle_symbols.add(item.symbol)
-
-        # SYM0: cycle cap 허용 (1/2)
-        assert results[0] is True
-        # SYM1: cycle cap 허용 (2/2)
-        assert results[1] is True
-        # SYM2: cycle cap 초과 (2/2)로 block (daily cap이 아닌 cycle cap)
-        assert results[2] is False
+    def test_core_symbol_blocked_when_general_submit_disabled(self) -> None:
+        """일반 budget 소진 후에는 core submit이 명시적으로 금지되어야 함."""
+        symbol_submit, symbol_dry_run = _compute_symbol_submit_mode(
+            submit=True,
+            dry_run=False,
+            allow_general_submit=False,
+            source_type="core",
+            submit_budget_consumed=False,
+            held_position_sell_cycle_count=0,
+            held_position_sell_cycle_symbols=set(),
+            symbol="003550",
+        )
+        assert symbol_submit is False
+        assert symbol_dry_run is True
 
 
 # ---------------------------------------------------------------------------
@@ -1292,7 +1203,7 @@ class TestTradingUniverse:
                 new=_mock_runtime,
             ),
             patch(
-                "scripts.run_decision_loop.KISRestClient",
+                "scripts.run_decision_loop._build_kis_live_quote_client",
                 return_value=mock_kis,
             ),
         ):
@@ -1349,7 +1260,7 @@ class TestTradingUniverse:
                 new=_mock_runtime,
             ),
             patch(
-                "scripts.run_decision_loop.KISRestClient",
+                "scripts.run_decision_loop._build_kis_live_quote_client",
                 return_value=mock_kis,
             ),
         ):
@@ -1398,7 +1309,7 @@ class TestTradingUniverse:
                 new=_mock_runtime,
             ),
             patch(
-                "scripts.run_decision_loop.KISRestClient",
+                "scripts.run_decision_loop._build_kis_live_quote_client",
                 side_effect=_raise_on_init,
             ),
             caplog.at_level("WARNING"),
@@ -2068,6 +1979,48 @@ class TestRunT3LivePipeline:
 
         # Degraded mode: fetch_disclosure_titles IS called (KIS disclosure fetch)
         runtime["disclosure_seed_service"].fetch_disclosure_titles.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch(
+        "agent_trading.db.transaction.transaction",
+        side_effect=_fake_db_transaction,
+    )
+    async def test_process_quota_exhausted_degraded_persist_does_not_crash(
+        self,
+        mock_tx: object,
+    ) -> None:
+        """process_seeds 후 quota exhausted 분기에서도 degrade persist가 정상 동작해야 함."""
+        from agent_trading.brokers.naver_news_adapter import NaverDailyQuotaTracker
+        from agent_trading.services.disclosure_seed_service import DisclosureTitleDTO
+        from agent_trading.services.seeded_news_service import PipelineMetrics
+
+        runtime = {
+            "disclosure_seed_service": AsyncMock(),
+            "seeded_news_service": AsyncMock(),
+        }
+        repos = build_in_memory_repositories()
+
+        seed = DisclosureTitleDTO(
+            symbol=SYMBOL,
+            company_name="Samsung",
+            headline="Quota exhausted disclosure",
+        )
+        runtime["disclosure_seed_service"].fetch_disclosure_titles = AsyncMock(
+            return_value=[seed],
+        )
+        runtime["seeded_news_service"].process_seeds = AsyncMock(
+            return_value=([], PipelineMetrics(quota_exhausted_count=1)),
+        )
+
+        with patch.object(
+            NaverDailyQuotaTracker,
+            "is_exhausted",
+            return_value=False,
+        ):
+            await _run_t3_live_pipeline(runtime, repos, SYMBOL)
+
+        runtime["disclosure_seed_service"].fetch_disclosure_titles.assert_called_once()
+        runtime["seeded_news_service"].process_seeds.assert_called_once()
 
     @pytest.mark.asyncio
     @patch(

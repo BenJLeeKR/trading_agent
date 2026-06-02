@@ -38,6 +38,7 @@ def _make_submit_request(
     quantity: Decimal = Decimal("10"),
     symbol: str = "AAPL",
     market: str = "NASDAQ",
+    metadata: dict[str, object] | None = None,
 ) -> SubmitOrderRequest:
     """Build a minimal ``SubmitOrderRequest`` for testing."""
     return SubmitOrderRequest(
@@ -50,6 +51,7 @@ def _make_submit_request(
         side=side,
         order_type="market",
         quantity=quantity,
+        metadata=metadata,
     )
 
 
@@ -151,6 +153,44 @@ class TestBuildSubmitOrderRequestSide:
         assert result.side == OrderSide.BUY, (
             f"Expected BUY for APPROVE+buy, got {result.side}"
         )
+
+    def test_held_position_buy_is_not_submitted(self) -> None:
+        """held_position + BUY side는 제출 request를 만들지 않아야 함."""
+        ctx_id = uuid4()
+        intent = OrderIntent(
+            decision_context_id=ctx_id,
+            order_intent_id=uuid4(),
+            request=_make_submit_request(
+                side=OrderSide.BUY,
+                metadata={"source_type": "held_position"},
+            ),
+            context=AssembledContext(),
+            ai_backend_inputs=AIDecisionInputs(
+                decision_type="APPROVE",
+                side="buy",
+            ),
+        )
+        assert build_submit_order_request_from_decision(intent) is None
+
+    def test_held_position_reduce_sell_still_submits(self) -> None:
+        """held_position + SELL side는 기존대로 제출 가능해야 함."""
+        ctx_id = uuid4()
+        intent = OrderIntent(
+            decision_context_id=ctx_id,
+            order_intent_id=uuid4(),
+            request=_make_submit_request(
+                side=OrderSide.SELL,
+                metadata={"source_type": "held_position"},
+            ),
+            context=AssembledContext(),
+            ai_backend_inputs=AIDecisionInputs(
+                decision_type="REDUCE",
+                side="sell",
+            ),
+        )
+        result = build_submit_order_request_from_decision(intent)
+        assert result is not None
+        assert result.side == OrderSide.SELL
 
     def test_reduce_empty_side_fallback(self) -> None:
         """REDUCE + side="" (empty) → original side preserved (BUY)."""

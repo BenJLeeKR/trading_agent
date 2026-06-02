@@ -153,6 +153,20 @@ class OrderDetail(OrderSummary):
     submitted_at: datetime | None = None
     time_in_force: str | None = None
 
+    # 신규: submission attempts 요약 (Phase 7)
+    submission_attempt_summary: SubmissionAttemptSummary | None = None
+
+
+class OrderDailySummaryResponse(BaseModel):
+    """KST 기준 일별 주문 집계 요약."""
+
+    date: date
+    timezone: str = "Asia/Seoul"
+    total_count: int
+    filled_count: int
+    pending_submit_count: int
+    submitted_count: int
+
 
 class OrderEvent(BaseModel):
     """``GET /orders/{id}/events`` — order state transition event."""
@@ -1052,6 +1066,7 @@ class MarketSessionSummary(BaseModel):
     raw_antc_mkop_cls_code: str | None = None
     source: str | None = None
     reason: str | None = None
+    last_heartbeat_at: datetime | None = None
     checked_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -1240,6 +1255,140 @@ class ExecutionAttemptListResponse(BaseModel):
 
     status: str = "ok"
     data: list[ExecutionAttemptDetail]
+
+
+class SubmissionAttemptView(BaseModel):
+    """Read-only view of a single order submission attempt."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    order_submission_attempt_id: UUID
+    order_request_id: UUID
+    attempt_number: int
+    submitted_at: datetime
+    broker_name: str | None = None
+    accepted: bool | None
+    broker_native_order_id: str | None = None
+    broker_status: str | None = None
+    raw_code: str | None = None
+    raw_message: str | None = None
+    error_type: str | None = None
+    retryable: bool | None = None
+    http_status: int | None = None
+    duration_ms: int | None = None
+    created_at: datetime | None = None
+    attempt_outcome: str | None = None
+    """Derived outcome for this attempt: 'accepted', 'rejected', 'exception', or None."""
+
+
+def _derive_submission_outcome(
+    latest_accepted: bool | None,
+    latest_error_type: str | None,
+) -> str | None:
+    """Derive ``latest_outcome`` from stored submission attempt fields.
+
+    Priority:
+    1. latest_error_type is not None  → "exception"
+    2. latest_accepted == True        → "accepted"
+    3. latest_accepted == False       → "rejected"
+    4. latest_accepted is None        → None (no attempts)
+    """
+    if latest_error_type is not None:
+        return "exception"
+    if latest_accepted is True:
+        return "accepted"
+    if latest_accepted is False:
+        return "rejected"
+    return None
+
+
+class SubmissionAttemptSummary(BaseModel):
+    """Order detail에 포함될 submission attempts 요약 (Phase 7)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    attempt_count: int = 0
+    """총 제출 시도 횟수 (0 = 시도 없음)."""
+    latest_accepted: bool | None = None
+    """마지막 시도의 accepted 여부. 시도가 없으면 None."""
+    latest_raw_code: str | None = None
+    """마지막 시도의 raw_code (예: ACC, PEN, REJ)."""
+    latest_raw_message: str | None = None
+    """마지막 시도의 raw_message."""
+    latest_error_type: str | None = None
+    """마지막 시도의 error_type (거부/실패 시)."""
+    last_submitted_at: datetime | None = None
+    """마지막 제출 시도 시각. 시도가 없으면 None."""
+    # Phase 8: derived outcome for readability
+    latest_outcome: str | None = None
+    """Derived outcome: 'accepted', 'rejected', 'exception', or None."""
+
+
+class RecentFailureItem(BaseModel):
+    """A single order request whose latest submission attempt failed.
+
+    Returned by ``GET /orders/recent-failures``.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    order_request_id: str
+    symbol: str | None = None
+    side: str | None = None
+    latest_outcome: str  # 'rejected' | 'exception'
+    latest_error_type: str | None = None
+    latest_raw_code: str | None = None
+    latest_raw_message: str | None = None
+    last_submitted_at: datetime | None = None
+    created_at: datetime | None = None
+
+
+class FailureSummaryResponse(BaseModel):
+    """Aggregated submission failure counts for the last 1h and 24h.
+
+    Returned by ``GET /orders/failure-summary``.
+    The ``failure_rate_pct_24h`` is computed as the ratio of failed
+    attempts to **all** submission attempts (accepted + rejected + exception)
+    within the last 24 hours.
+    """
+
+    last_1h_count: int = 0
+    """Number of failed attempts (rejected or exception) in the last hour."""
+
+    last_24h_count: int = 0
+    """Number of failed attempts (rejected or exception) in the last 24 hours."""
+
+    rejected_count: int = 0
+    """Number of rejected attempts in the last 24 hours."""
+
+    exception_count: int = 0
+    """Number of exception attempts in the last 24 hours."""
+
+    total_submissions_24h: int = 0
+    """Total number of submission attempts (accepted + rejected + exception)
+    in the last 24 hours.  Used as the denominator for ``failure_rate_pct_24h``."""
+
+    failure_rate_pct_24h: float | None = None
+    """Failure rate in the last 24 hours, computed as
+    ``last_24h_count / total_submissions_24h * 100``.
+    ``None`` when there are zero total submissions."""
+
+    today_count: int = 0
+    """Number of failed attempts (rejected or exception) since KST 00:00 today."""
+
+    rejected_count_today: int = 0
+    """Number of rejected attempts since KST 00:00 today."""
+
+    exception_count_today: int = 0
+    """Number of exception attempts since KST 00:00 today."""
+
+    total_submissions_today: int = 0
+    """Total number of submission attempts since KST 00:00 today."""
+
+    failure_rate_pct_today: float | None = None
+    """Failure rate since KST 00:00 today.
+    ``today_count / total_submissions_today * 100``.
+    ``None`` when there are zero total submissions today."""
 
 
 # Rebuild models to resolve forward references under ``from __future__ import annotations``.

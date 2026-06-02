@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol, Sequence
 
+from agent_trading.domain.enums import OrderSide
 from agent_trading.domain.models import (
     AmendOrderRequest,
     AmendOrderResult,
@@ -211,6 +212,8 @@ class BrokerAdapter(Protocol):
         client_order_id: str | None = None,
         broker_order_id: str | None = None,
         symbol: str | None = None,
+        order_side: OrderSide | None = None,
+        order_created_at: datetime | None = None,
     ) -> OrderStatusResult:
         """Resolve an unknown order state by inquiring the broker.
 
@@ -231,4 +234,3 @@ class BrokerAdapter(Protocol):
         OrderStatusResult
             The current order status as reported by the broker.
         """
-

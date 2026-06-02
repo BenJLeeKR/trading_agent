@@ -29,9 +29,10 @@ from agent_trading.domain.entities import (
     ExecutionAttemptEntity,
     GuardrailEvaluationEntity,
 )
-from agent_trading.domain.enums import OrderSide, OrderStatus
+from agent_trading.domain.enums import OrderSide, OrderStatus, OrderType
 from agent_trading.domain.models import Quote, SubmitOrderRequest
 from agent_trading.repositories.container import RepositoryContainer
+from agent_trading.repositories.filters import AccountLookup, OrderQuery
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.services.order_sync_service import OrderSyncService
 from agent_trading.services.sizing_engine import SizingInputs, calculate_sizing
@@ -74,6 +75,7 @@ _PHASE55_SYNC_TIMEOUT: int = 5
 _CIRCUIT_BREAKER_THRESHOLD = 3  # 연속 실패 횟수 → 서킷 오픈
 _CIRCUIT_BREAKER_COOLDOWN = 60  # 서킷 오픈 지속 시간(초)
 _QUOTE_CACHE_TTL = 180  # quote 캐시 TTL(초) — cycle-local cache: submit mode ~120초 커버
+_BUY_DUPLICATE_COOLDOWN_SECONDS = 15 * 60
 
 
 __all__: list[str] = [
@@ -166,6 +168,49 @@ class ExecutionService:
                 attempt_id, status,
                 exc_info=True,
             )
+
+    async def _has_recent_active_buy_order(
+        self,
+        *,
+        account_id: UUID,
+        symbol: str,
+        market: str,
+        created_after: datetime,
+    ) -> tuple[bool, str | None]:
+        """Return whether a recent active BUY order already exists.
+
+        This blocks rapid re-entry for the same symbol while broker/account
+        snapshots are still converging after a submit.
+        """
+        instrument = await self._repos.instruments.get_by_symbol(symbol, market)
+        if instrument is None:
+            return False, None
+
+        active_statuses = (
+            OrderStatus.DRAFT,
+            OrderStatus.VALIDATED,
+            OrderStatus.PENDING_SUBMIT,
+            OrderStatus.SUBMITTED,
+            OrderStatus.ACKNOWLEDGED,
+            OrderStatus.PARTIALLY_FILLED,
+            OrderStatus.FILLED,
+            OrderStatus.RECONCILE_REQUIRED,
+        )
+        recent_orders = await self._repos.orders.list(
+            OrderQuery(
+                account_id=account_id,
+                statuses=active_statuses,
+                created_from=created_after,
+                limit=100,
+            )
+        )
+        for order in recent_orders:
+            if (
+                order.instrument_id == instrument.instrument_id
+                and order.side == OrderSide.BUY
+            ):
+                return True, str(order.order_request_id)
+        return False, None
 
     # ------------------------------------------------------------------
     # P2.3: _resolve_quote — quote resolution with circuit breaker
@@ -391,6 +436,43 @@ class ExecutionService:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _resolve_market_buy_reference_price(
+        intent: OrderIntent,
+        live_reference_price: Decimal | None,
+    ) -> tuple[Decimal | None, str | None]:
+        """Resolve a usable reference price for MARKET BUY sizing.
+
+        Priority:
+        1. Live broker quote (`live_reference_price`)
+        2. Request price band midpoint / upper / lower
+        3. Existing position snapshot market_price / average_price
+
+        Returns ``(price, source_label)``.  ``(None, None)`` means no
+        deterministic fallback price was available and the BUY should be
+        skipped instead of silently using the placeholder quantity.
+        """
+        if live_reference_price is not None and live_reference_price > 0:
+            return live_reference_price, "live_quote"
+
+        req = intent.request
+        lower = req.price_band_lower
+        upper = req.price_band_upper
+        if lower is not None and lower > 0 and upper is not None and upper > 0:
+            return (lower + upper) / Decimal("2"), "price_band_midpoint"
+        if upper is not None and upper > 0:
+            return upper, "price_band_upper"
+        if lower is not None and lower > 0:
+            return lower, "price_band_lower"
+
+        pos = intent.context.position_snapshot if intent.context is not None else None
+        if pos is not None and pos.market_price is not None and pos.market_price > 0:
+            return pos.market_price, "position_market_price"
+        if pos is not None and pos.average_price is not None and pos.average_price > 0:
+            return pos.average_price, "position_average_price"
+
+        return None, None
+
+    @staticmethod
     def _build_sizing_inputs(
         intent: OrderIntent,
         reference_price: Decimal | None = None,
@@ -433,10 +515,17 @@ class ExecutionService:
             )
 
         # ── Resolve keys with legacy flat-key fallback ──────────────────
-        max_single_position_pct = decimal_or_none(
-            risk.get("max_single_position_pct")
-            or config.get("max_position_size")
-        )
+        max_single_position_pct = decimal_or_none(risk.get("max_single_position_pct"))
+        max_pct_source = "risk.max_single_position_pct"
+        if max_single_position_pct is None:
+            max_single_position_pct = decimal_or_none(config.get("max_position_size"))
+            max_pct_source = "max_position_size (legacy)"
+            if (
+                max_single_position_pct is not None
+                and Decimal("0") < max_single_position_pct <= Decimal("1")
+            ):
+                max_single_position_pct = max_single_position_pct * Decimal("100")
+                max_pct_source = "max_position_size (legacy ratio)"
         min_cash_buffer_pct = decimal_or_none(
             risk.get("min_cash_buffer_pct")
             or config.get("min_cash_buffer_pct")
@@ -447,11 +536,6 @@ class ExecutionService:
         )
 
         # ── Operational visibility logging ──────────────────────────────
-        max_pct_source = (
-            "risk.max_single_position_pct"
-            if risk.get("max_single_position_pct")
-            else "max_position_size (legacy)"
-        )
         cash_buffer_source = (
             "risk.min_cash_buffer_pct"
             if risk.get("min_cash_buffer_pct")
@@ -601,7 +685,51 @@ class ExecutionService:
             "PHASE_TRACE symbol=%s phase=sizing_start elapsed_ms=0 status=start",
             _symbol,
         )
-        sizing_inputs = self._build_sizing_inputs(intent, reference_price=reference_price)
+        sizing_reference_price = reference_price
+        if (
+            intent.request.side == OrderSide.BUY
+            and intent.request.price is None
+            and intent.request.order_type == OrderType.MARKET
+        ):
+            sizing_reference_price, sizing_price_source = (
+                self._resolve_market_buy_reference_price(intent, reference_price)
+            )
+            if sizing_reference_price is None:
+                logger.warning(
+                    "Phase 1.5 SKIPPED (sizing): missing reference price for MARKET BUY "
+                    "symbol=%s trade_decision_id=%s request_qty=%s",
+                    intent.request.symbol,
+                    trade_decision_id,
+                    intent.request.quantity,
+                )
+                _add_phase(f"sizing/{_symbol}", "skipped_missing_reference_price")
+                await self._finalize_attempt(
+                    attempt_id, "stopped",
+                    stop_phase="sizing",
+                    stop_reason="missing_reference_price_for_market_buy",
+                    phase_trace=_phase_trace,
+                )
+                return SubmitResult.build(
+                    order_intent=intent,
+                    trade_decision_id=trade_decision_id,
+                    error_message="missing_reference_price_for_market_buy",
+                    phase_trace=tuple(_phase_trace) if _phase_trace else (),
+                    is_skipped=True,
+                    status="SKIPPED",
+                    error_phase="sizing",
+                )
+            if reference_price is None and sizing_price_source != "live_quote":
+                logger.info(
+                    "Phase 1.5: MARKET BUY reference_price fallback=%s source=%s symbol=%s",
+                    sizing_reference_price,
+                    sizing_price_source,
+                    intent.request.symbol,
+                )
+
+        sizing_inputs = self._build_sizing_inputs(
+            intent,
+            reference_price=sizing_reference_price,
+        )
         sizing_result = calculate_sizing(sizing_inputs)
 
         _sizing_elapsed = time_module.monotonic() - _sizing_t0
@@ -834,6 +962,58 @@ class ExecutionService:
             )
 
         _add_phase(f"translation/{_symbol}", "ok")
+
+        # ── Phase 2.5: BUY duplicate re-entry guard ─────────────────────
+        if intent.request.side == OrderSide.BUY:
+            buy_guard_account_id: UUID | None = (
+                intent.context.decision_context.account_id
+                if intent.context is not None
+                and intent.context.decision_context is not None
+                else None
+            )
+            if buy_guard_account_id is None:
+                account = await self._repos.accounts.find_one(
+                    AccountLookup(account_alias=intent.request.account_ref)
+                )
+                buy_guard_account_id = account.account_id if account is not None else None
+
+            if buy_guard_account_id is not None:
+                created_after = datetime.now(timezone.utc) - timedelta(
+                    seconds=_BUY_DUPLICATE_COOLDOWN_SECONDS
+                )
+                has_duplicate, existing_order_id = await self._has_recent_active_buy_order(
+                    account_id=buy_guard_account_id,
+                    symbol=intent.request.symbol,
+                    market=intent.request.market,
+                    created_after=created_after,
+                )
+                if has_duplicate:
+                    logger.warning(
+                        "Phase 2.5 BUY duplicate guard blocked: symbol=%s "
+                        "account_id=%s existing_order_id=%s cooldown_seconds=%s "
+                        "trade_decision_id=%s",
+                        intent.request.symbol,
+                        buy_guard_account_id,
+                        existing_order_id,
+                        _BUY_DUPLICATE_COOLDOWN_SECONDS,
+                        trade_decision_id,
+                    )
+                    _add_phase(f"buy_duplicate_guard/{_symbol}", "skipped")
+                    await self._finalize_attempt(
+                        attempt_id, "stopped",
+                        stop_phase="buy_duplicate_guard",
+                        stop_reason="recent_active_buy_order",
+                        phase_trace=_phase_trace,
+                    )
+                    return SubmitResult.build(
+                        order_intent=intent,
+                        trade_decision_id=trade_decision_id,
+                        error_message="recent_active_buy_order",
+                        phase_trace=tuple(_phase_trace) if _phase_trace else (),
+                        is_skipped=True,
+                        status="SKIPPED",
+                        error_phase="buy_duplicate_guard",
+                    )
 
         # ── Phase 3: OrderManager.create_order() ──
         _order_create_t0 = time_module.monotonic()
@@ -1322,5 +1502,3 @@ class ExecutionService:
             status=result_status,
             submit_response=submitted_order,
         )
-
-

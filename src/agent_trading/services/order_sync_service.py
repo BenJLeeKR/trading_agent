@@ -293,6 +293,7 @@ class OrderSyncService:
         broker_order_id: UUID,
         *,
         snapshot_refresh_cb: Callable[[UUID], Awaitable[None]] | None = None,
+        after_hours: bool | None = None,
     ) -> SyncOrderResult:
         """Post-submit sync의 단일 진입점.
 
@@ -322,6 +323,7 @@ class OrderSyncService:
             Summary of the sync operation.
         """
         now = datetime.now(timezone.utc)
+        is_after_hours = self._is_after_hours_now() if after_hours is None else after_hours
 
         # ── 1. Resolve broker order entity ──
         broker_order = await self.repos.broker_orders.get(broker_order_id)
@@ -360,6 +362,8 @@ class OrderSyncService:
         # ── Skip if already terminal or not syncable ──
         if order.status in _TERMINAL_STATUSES:
             # EXPIRED 복구: 최근 N시간 이내 EXPIRED 주문에 한해 복구 시도
+            terminal_previous_status = order.status
+            recovery_snapshot_triggered = False
             if (
                 order.status == OrderStatus.EXPIRED
                 and order.updated_at is not None
@@ -386,7 +390,38 @@ class OrderSyncService:
                             order.order_request_id, broker_recovered.value,
                         )
                         order = await self._try_transition(order, broker_recovered)
-                        previous_status = order.status  # 갱신
+                        if broker_order.broker_status != broker_recovered.value:
+                            await self.repos.broker_orders.update(
+                                broker_order_id,
+                                broker_status=broker_recovered.value,
+                                updated_at=datetime.now(timezone.utc),
+                            )
+                        recovered = True
+                    elif (
+                        order.side == OrderSide.BUY
+                        and broker_order.broker_native_order_id
+                        and broker_recovered in (
+                            OrderStatus.SUBMITTED,
+                            OrderStatus.ACKNOWLEDGED,
+                            OrderStatus.RECONCILE_REQUIRED,
+                        )
+                    ):
+                        logger.warning(
+                            "EXPIRED BUY reopened to RECONCILE_REQUIRED: "
+                            "order_id=%s broker_reported=%s odno=%s",
+                            order.order_request_id,
+                            broker_recovered.value,
+                            broker_order.broker_native_order_id,
+                        )
+                        order = await self._try_transition(
+                            order, OrderStatus.RECONCILE_REQUIRED,
+                        )
+                        if broker_order.broker_status != broker_recovered.value:
+                            await self.repos.broker_orders.update(
+                                broker_order_id,
+                                broker_status=broker_recovered.value,
+                                updated_at=datetime.now(timezone.utc),
+                            )
                         recovered = True
                 except Exception:
                     logger.debug(
@@ -420,11 +455,11 @@ class OrderSyncService:
                                 broker_status=inferred.value,
                                 updated_at=datetime.now(timezone.utc),
                             )
-                            previous_status = order.status  # 갱신
                             # FILLED 도달 시 snapshot refresh
                             if inferred == OrderStatus.FILLED and snapshot_refresh_cb is not None:
                                 try:
                                     await snapshot_refresh_cb(order.account_id)
+                                    recovery_snapshot_triggered = True
                                 except Exception:
                                     logger.exception(
                                         "snapshot_refresh_cb failed after position-delta recovery "
@@ -436,12 +471,26 @@ class OrderSyncService:
                             broker_order_id, exc_info=True,
                         )
 
+                if recovered:
+                    await self._update_last_synced_at(broker_order_id, now)
+                    return SyncOrderResult(
+                        broker_order_id=broker_order_id,
+                        previous_status=terminal_previous_status,
+                        current_status=order.status,
+                        status_changed=order.status != terminal_previous_status,
+                        fills_synced=0,
+                        fills_skipped=0,
+                        terminal=order.status in _TERMINAL_STATUSES,
+                        snapshot_triggered=recovery_snapshot_triggered,
+                        last_synced_at=now,
+                    )
+
             # Still update last_synced_at for record-keeping.
             await self._update_last_synced_at(broker_order_id, now)
             return SyncOrderResult(
                 broker_order_id=broker_order_id,
-                previous_status=previous_status,
-                current_status=previous_status,
+                previous_status=terminal_previous_status,
+                current_status=terminal_previous_status,
                 status_changed=False,
                 fills_synced=0,
                 fills_skipped=0,
@@ -623,6 +672,60 @@ class OrderSyncService:
                 since=broker_order.last_synced_at,
             )
 
+        # ── 6.5. After-hours stuck active order → EXPIRED fallback ──
+        # Paper 환경에서 broker_status='submitted'가 장마감 후에도 그대로 남는 주문은
+        # RECONCILE_REQUIRED 경로에 들어오지 못하므로 별도 종료 처리가 필요하다.
+        # young order는 grace period 동안 보호하고, 이후에도 progress/fill이 없으면
+        # after-hours에서만 EXPIRED로 정리한다.
+        if (
+            is_after_hours
+            and fills_synced == 0
+            and order.side == OrderSide.SELL
+            and previous_status in {OrderStatus.SUBMITTED, OrderStatus.ACKNOWLEDGED}
+            and broker_status in {
+                OrderStatus.SUBMITTED,
+                OrderStatus.ACKNOWLEDGED,
+                OrderStatus.RECONCILE_REQUIRED,
+            }
+            and order.status in {
+                OrderStatus.SUBMITTED,
+                OrderStatus.ACKNOWLEDGED,
+                OrderStatus.RECONCILE_REQUIRED,
+            }
+            and order.created_at is not None
+        ):
+            grace_period = self._resolve_after_hours_grace_period(order, broker_order)
+            age_seconds = (datetime.now(timezone.utc) - order.created_at).total_seconds()
+            if age_seconds >= grace_period:
+                updated_order = await self._try_transition(order, OrderStatus.EXPIRED)
+                if updated_order.status != order.status:
+                    await self.repos.broker_orders.update(
+                        broker_order_id,
+                        broker_status="expired",
+                        updated_at=now,
+                    )
+                    await self._update_last_synced_at(broker_order_id, now)
+                    logger.warning(
+                        "[AFTER_HOURS_ACTIVE_EXPIRE] order_request_id=%s broker_order_id=%s "
+                        "status=%s age=%.0fs grace=%ds → EXPIRED",
+                        order.order_request_id,
+                        broker_order_id,
+                        order.status.value,
+                        age_seconds,
+                        grace_period,
+                    )
+                    return SyncOrderResult(
+                        broker_order_id=broker_order_id,
+                        previous_status=previous_status,
+                        current_status=updated_order.status,
+                        status_changed=True,
+                        fills_synced=0,
+                        fills_skipped=fills_skipped,
+                        terminal=True,
+                        snapshot_triggered=False,
+                        last_synced_at=now,
+                    )
+
         # ── 7. Update last_synced_at ──
         await self._update_last_synced_at(broker_order_id, now)
 
@@ -669,6 +772,25 @@ class OrderSyncService:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_after_hours_now() -> bool:
+        kst = ZoneInfo("Asia/Seoul")
+        now = datetime.now(kst)
+        market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
+        return now >= market_close
+
+    @staticmethod
+    def _resolve_after_hours_grace_period(
+        order: OrderRequestEntity,
+        broker_order: BrokerOrderEntity,
+    ) -> int:
+        if (
+            broker_order.broker_native_order_id
+            and order.order_type == OrderType.MARKET
+        ):
+            return _GRACE_PERIOD_AFTER_HOURS_EXPIRED_MARKET_SECONDS
+        return _GRACE_PERIOD_AFTER_HOURS_EXPIRED_SECONDS
 
     async def _try_transition(
         self,
@@ -817,6 +939,8 @@ class OrderSyncService:
                 client_order_id=order.client_order_id,
                 broker_order_id=broker_order.broker_native_order_id,
                 symbol=symbol,
+                order_side=order.side,
+                order_created_at=order.submitted_at or order.created_at,
             )
 
             # 명확한 terminal status만 수용
@@ -835,12 +959,95 @@ class OrderSyncService:
                     return result.status, TruthProbeReason.QTY_MISMATCH
                 return result.status, None
 
+            if order.side == OrderSide.BUY:
+                inferred_buy = await self._infer_buy_order_fill_via_position_safe(order)
+                if inferred_buy is not None:
+                    logger.info(
+                        "Truth probe BUY fill inferred via position: order=%s inferred=%s "
+                        "(broker_status=%s, odno=%s)",
+                        order.order_request_id,
+                        inferred_buy.value,
+                        result.status.value,
+                        broker_order.broker_native_order_id,
+                    )
+                    return inferred_buy, None
+
             # non-terminal: raw_message 분석을 통해 reason 추론
             reason = self._infer_truth_probe_reason(result, order, broker_order)
             return None, reason
 
         except Exception:
             return None, TruthProbeReason.API_FAILURE
+
+    async def _infer_buy_order_fill_via_position_safe(
+        self,
+        order: OrderRequestEntity,
+    ) -> OrderStatus | None:
+        """Safely infer BUY fill from earliest post-order position snapshot.
+
+        Safety gates
+        ------------
+        1. BUY only
+        2. earliest post-order snapshot must exist
+        3. positive delta required
+        4. if multiple BUY orders for the same symbol exist before the first
+           post snapshot, only exact burst-cohort matches are auto-confirmed
+        """
+        if order.side != OrderSide.BUY:
+            return None
+
+        order_time = order.submitted_at or order.created_at
+        if order_time is None:
+            return None
+
+        pre_snap = await self.repos.position_snapshots.get_latest_by_account_and_instrument_before(
+            order.account_id,
+            order.instrument_id,
+            order_time,
+        )
+        post_snap = await self.repos.position_snapshots.get_earliest_by_account_and_instrument_after(
+            order.account_id,
+            order.instrument_id,
+            order_time,
+        )
+        if post_snap is None:
+            return None
+
+        overlapping = await self.repos.orders.list(
+            OrderQuery(
+                account_id=order.account_id,
+                created_from=order_time,
+                created_to=post_snap.snapshot_at,
+                limit=100,
+            )
+        )
+        pre_qty = pre_snap.quantity if pre_snap is not None else Decimal("0")
+        delta = post_snap.quantity - pre_qty
+        if delta <= Decimal("0"):
+            return None
+
+        cohort: list[OrderRequestEntity] = []
+        for candidate in overlapping:
+            if candidate.instrument_id != order.instrument_id:
+                continue
+            if candidate.side != OrderSide.BUY:
+                continue
+            if candidate.created_at is None or candidate.created_at < order_time:
+                continue
+            cohort.append(candidate)
+
+        if len(cohort) > 1:
+            total_requested = sum(
+                (candidate.requested_quantity for candidate in cohort),
+                start=Decimal("0"),
+            )
+            if delta == total_requested:
+                return OrderStatus.FILLED
+            return None
+
+        if delta >= order.requested_quantity:
+            return OrderStatus.FILLED
+        return OrderStatus.PARTIALLY_FILLED
 
     @staticmethod
     def _infer_truth_probe_reason(
@@ -1166,6 +1373,8 @@ class OrderSyncService:
                 account_ref,
                 broker_order_id=broker_order.broker_native_order_id,
                 symbol=symbol,
+                order_side=order.side,
+                order_created_at=order.submitted_at or order.created_at,
             )
         except Exception as exc:
             logger.warning(
@@ -1252,6 +1461,15 @@ class OrderSyncService:
             #  불가능한 경우에도 RECONCILE_REQUIRED 상태를 해소)
             # Intraday (08:50~15:30 KST) 중에는 EXPIRED fallback 금지.
             # 장마감 후 after-hours(15:30~)에만 허용.
+            if order.side != OrderSide.SELL:
+                logger.warning(
+                    "BUY order broker truth exception for order %s "
+                    "[resolve_unknown_state failed: %s] — keeping RECONCILE_REQUIRED",
+                    broker_order.broker_order_id,
+                    exc,
+                )
+                return None
+
             if not is_after_hours:
                 logger.warning(
                     "Intraday: EXPIRED fallback suppressed for order %s "
@@ -1347,7 +1565,15 @@ class OrderSyncService:
                     updated_order.status.value,
                     order.order_request_id,
                 )
-            return status_result
+                return status_result
+            logger.warning(
+                "transition_to_authoritative: broker truth returned %s for "
+                "order_id=%s but local status remained %s",
+                status_result.status.value,
+                order.order_request_id,
+                order.status.value,
+            )
+            return None
 
         # 4. Still RECONCILE_REQUIRED — check if genuine manual reconciliation
         if self._is_genuine_manual_reconciliation(order, broker_order, status_result):
@@ -1519,15 +1745,14 @@ class OrderSyncService:
                     )
                     return None
 
-        # Stage 2.5: Stuck timeout → EXPIRED fallback (intraday suppression + BUY/SELL)
+        # Stage 2.5: Stuck timeout → EXPIRED fallback (SELL only)
         # Paper broker에서 position decrease가 감지되지 않아 RECONCILE_REQUIRED가
         # 장시간 해소되지 않는 경우, stuck timeout 기준으로 EXPIRED 처리한다.
         #
         # 장중 intraday(08:50~15:30 KST)에는 EXPIRED fallback을 금지하고
         # after-hours(15:30~)에만 허용한다.
-        # BUY/SELL 모두 적용하되, 근거 우선순위가 다르다:
-        #   SELL: KIS truth fallback (position-delta) → EXPIRED
-        #   BUY:  broker truth 직접 조회 → 체결 이벤트 확인 → stuck duration → EXPIRED
+        # SELL에만 자동 EXPIRED fallback을 허용한다.
+        # BUY는 VTTC0081R truth가 명확히 잡히지 않으면 RECONCILE_REQUIRED 유지.
         if order.created_at is not None:
             stuck_duration = (datetime.now(timezone.utc) - order.created_at).total_seconds()
             if stuck_duration > _STUCK_EXPIRY_SECONDS:
@@ -1551,8 +1776,17 @@ class OrderSyncService:
                     # RECONCILE_REQUIRED 유지, 다음 sync cycle에 재시도
                     # stage 2.5를 빠져나가면 경로 D(broker has no record)로 이어짐
 
-                # After-hours: BUY/SELL 각각 근거 우선순위 적용
+                # After-hours: SELL만 근거 부족 시 EXPIRED fallback 허용
                 else:
+                    if order.side == OrderSide.BUY:
+                        logger.warning(
+                            "After-hours: BUY stuck order %s remains RECONCILE_REQUIRED "
+                            "[stuck=%.0fs, no authoritative truth]",
+                            broker_order.broker_order_id,
+                            stuck_duration,
+                        )
+                        return None
+
                     # SELL: KIS truth fallback 시도 (position-delta 기반)
                     if order.side == OrderSide.SELL:
                         kis_fill = await self._try_kis_truth_fallback(
@@ -1631,78 +1865,7 @@ class OrderSyncService:
                                 )
                                 return None
 
-                    # BUY: KIS truth fallback 불가 (SELL 전용) → 체결 이벤트 확인
-                    elif order.side == OrderSide.BUY:
-                        # 체결 이벤트 확인 (FillEventEntity 조회)
-                        fill_events = await self.repos.fill_events.list_by_broker_order(
-                            broker_order.broker_order_id,
-                        )
-                        if fill_events:
-                            total_filled = sum(f.fill_quantity for f in fill_events)
-                            inferred_status = (
-                                OrderStatus.FILLED
-                                if total_filled >= order.requested_quantity
-                                else OrderStatus.PARTIALLY_FILLED
-                            )
-                            logger.info(
-                                "[STUCK_EXPIRY_BUY_FILL] order %s: found %d fill events "
-                                "(total=%s) → updating to %s instead of expired",
-                                order.order_request_id, len(fill_events), total_filled,
-                                inferred_status.value,
-                            )
-                            try:
-                                updated_order = await self._try_transition(
-                                    order, inferred_status,
-                                )
-                                if updated_order.status != order.status:
-                                    if inferred_status == OrderStatus.FILLED:
-                                        await self.repos.broker_orders.update(
-                                            broker_order.broker_order_id,
-                                            broker_status="filled",
-                                            updated_at=datetime.now(timezone.utc),
-                                        )
-                                        if snapshot_refresh_cb is not None:
-                                            try:
-                                                await snapshot_refresh_cb(order.account_id)
-                                            except Exception:
-                                                logger.exception(
-                                                    "snapshot_refresh_cb failed after fill "
-                                                    "inference for order_id=%s",
-                                                    order.order_request_id,
-                                                )
-                                    logger.info(
-                                        "transition_to_authoritative: %s → %s (order_id=%s) "
-                                        "[stuck_expiry_buy_fill]",
-                                        order.status.value,
-                                        updated_order.status.value,
-                                        order.order_request_id,
-                                    )
-                                    return OrderStatusResult(
-                                        broker_name=broker_order.broker_name,
-                                        client_order_id=None,
-                                        broker_order_id=broker_order.broker_native_order_id,
-                                        status=inferred_status,
-                                        filled_quantity=total_filled,
-                                        remaining_quantity=order.requested_quantity - total_filled,
-                                        raw_code="",
-                                        raw_message=(
-                                            f"BUY fill recovery: {len(fill_events)} fill events "
-                                            f"(total={total_filled})"
-                                        ),
-                                    )
-                            except Exception as exc:
-                                logger.error(
-                                    "BUY fill recovery transition to %s failed for "
-                                    "order_id=%s broker_order_id=%s: %s",
-                                    inferred_status.value,
-                                    order.order_request_id,
-                                    broker_order.broker_order_id,
-                                    exc,
-                                    exc_info=True,
-                                )
-                                return None
-
-                    # After-hours: KIS truth/fill 미확인 → EXPIRED fallback (BUY/SELL 공통)
+                    # After-hours: SELL만 KIS truth/fill 미확인 → EXPIRED fallback
                     logger.warning(
                         "[STUCK_EXPIRY] order_request_id=%s symbol=%s side=%s "
                         "stuck_duration=%.0fs > threshold=%ds → EXPIRED fallback "
@@ -1756,6 +1919,15 @@ class OrderSyncService:
         #    (Phase 4 fix: broker truth 부재 시 자동 해소)
         # Intraday (08:50~15:30 KST) 중에는 EXPIRED fallback 금지.
         # 장마감 후 after-hours(15:30~)에만 허용.
+        if order.side != OrderSide.SELL:
+            logger.warning(
+                "BUY order remains RECONCILE_REQUIRED after broker truth inquiry "
+                "for order_id=%s broker_order_id=%s — broker truth inconclusive",
+                order.order_request_id,
+                broker_order.broker_order_id,
+            )
+            return None
+
         if not is_after_hours:
             logger.warning(
                 "Intraday: EXPIRED fallback suppressed for order %s "
@@ -2757,6 +2929,7 @@ class PostSubmitSyncRunner:
         orphans_expired_pending = 0
         orphans_expired_reconcile = 0
         errors: list[str] = []
+        _is_after_hours = self._is_after_hours() if after_hours is None else after_hours
 
         # ── 2. Sync each order with per-order savepoint isolation ─────────
         resolved_account_ref = account_ref or ""
@@ -2782,6 +2955,7 @@ class PostSubmitSyncRunner:
                                 order=order,
                                 broker_order=broker_order,
                                 resolved_account_ref=resolved_account_ref,
+                                after_hours=_is_after_hours,
                             )
                     except asyncpg.PostgresError as exc:
                         # Savepoint rolled back the failed order's writes.
@@ -2802,6 +2976,7 @@ class PostSubmitSyncRunner:
                         order=order,
                         broker_order=broker_order,
                         resolved_account_ref=resolved_account_ref,
+                        after_hours=_is_after_hours,
                     )
 
                 # ── Aggregate result ──────────────────────────────────
@@ -2830,7 +3005,6 @@ class PostSubmitSyncRunner:
         # is_after_hours: 장중(08:50~15:30 KST)에는 EXPIRED fallback을
         # 억제하고 RECONCILE_REQUIRED를 유지한다.
         # after_hours 파라미터가 None이면 자동 감지, 명시적 값이면 그대로 사용.
-        _is_after_hours = self._is_after_hours() if after_hours is None else after_hours
         try:
             resolved = await self.sync_service._sync_reconcile_required_orders(
                 account_ref=resolved_account_ref,
@@ -2891,6 +3065,7 @@ class PostSubmitSyncRunner:
         order: OrderRequestEntity,
         broker_order: BrokerOrderEntity,
         resolved_account_ref: str,
+        after_hours: bool,
     ) -> tuple[SyncOrderResult, str | None] | None:
         """Sync a single broker order and return (result, error_message).
 
@@ -2902,6 +3077,7 @@ class PostSubmitSyncRunner:
                 broker=self.broker,
                 broker_order_id=broker_order.broker_order_id,
                 snapshot_refresh_cb=self.snapshot_refresh_cb,
+                after_hours=after_hours,
             )
         except asyncpg.PostgresError as exc:
             # DB-level error (e.g. constraint violation, aborted transaction).

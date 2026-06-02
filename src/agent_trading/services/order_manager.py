@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
@@ -10,12 +11,14 @@ from uuid import UUID, uuid4
 logger = logging.getLogger(__name__)
 
 from agent_trading.brokers.base import BrokerAdapter
+from agent_trading.brokers.errors import BrokerError, BrokerErrorType
 from agent_trading.brokers.rate_limit import BudgetExhaustedError, RateLimitBudgetManager
 from agent_trading.domain.entities import (
     AuditLogEntity,
     BrokerOrderEntity,
     OrderRequestEntity,
     OrderStateEventEntity,
+    OrderSubmissionAttemptEntity,
 )
 from agent_trading.domain.enums import DecisionType, EventSource, OrderStatus
 from agent_trading.domain.models import SubmitOrderRequest, SubmitOrderResult
@@ -74,6 +77,7 @@ _ALLOWED_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
     OrderStatus.SUBMITTED: {
         OrderStatus.ACKNOWLEDGED,
         OrderStatus.RECONCILE_REQUIRED,
+        OrderStatus.EXPIRED,
     },
     OrderStatus.ACKNOWLEDGED: {
         OrderStatus.PARTIALLY_FILLED,
@@ -81,6 +85,7 @@ _ALLOWED_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
         OrderStatus.CANCELLED,
         OrderStatus.REJECTED,
         OrderStatus.RECONCILE_REQUIRED,
+        OrderStatus.EXPIRED,
     },
     OrderStatus.PARTIALLY_FILLED: {
         OrderStatus.FILLED,
@@ -92,6 +97,7 @@ _ALLOWED_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
         OrderStatus.RECONCILE_REQUIRED,
     },
     OrderStatus.RECONCILE_REQUIRED: {
+        OrderStatus.SUBMITTED,
         OrderStatus.ACKNOWLEDGED,
         # FILLED intentionally removed — a fill notification during
         # reconciliation must NOT optimistically progress the order state.
@@ -377,6 +383,45 @@ class OrderManager:
 
         return created
 
+    async def _record_submission_attempt(
+        self,
+        order_request_id: UUID,
+        attempt_number: int,
+        accepted: bool,
+        broker_name: str | None = None,
+        broker_native_order_id: str | None = None,
+        broker_status: str | None = None,
+        raw_code: str | None = None,
+        raw_message: str | None = None,
+        error_type: str | None = None,
+        retryable: bool | None = None,
+        http_status: int | None = None,
+        duration_ms: int | None = None,
+    ) -> None:
+        """Record a submission attempt to ``trading.order_submission_attempts``.
+
+        This is called from all three paths in ``submit_order_to_broker``:
+        success (accepted=True), rejection (accepted=False), and exception.
+        """
+        attempt = OrderSubmissionAttemptEntity(
+            attempt_id=uuid4(),
+            order_request_id=order_request_id,
+            attempt_number=attempt_number,
+            submitted_at=datetime.now(timezone.utc),
+            accepted=accepted,
+            broker_name=broker_name,
+            broker_native_order_id=broker_native_order_id,
+            broker_status=broker_status,
+            raw_code=raw_code,
+            raw_message=raw_message,
+            error_type=error_type,
+            retryable=retryable,
+            http_status=http_status,
+            duration_ms=duration_ms,
+        )
+        repo = self.repos.order_submission_attempts
+        await repo.add(attempt)
+
     async def submit_order_to_broker(
         self,
         order: OrderRequestEntity,
@@ -453,6 +498,7 @@ class OrderManager:
                 )
 
         # --- Step 2: Submit to broker ---
+        t0 = time.monotonic()
         logger.info(
             "Broker submit: order_id=%s symbol=%s side=%s quantity=%s broker=%s",
             order.order_request_id,
@@ -463,7 +509,79 @@ class OrderManager:
         )
         try:
             result: SubmitOrderResult = await broker.submit_order(request)
+        except BrokerError as exc:
+            duration = int((time.monotonic() - t0) * 1000)
+            await self._record_submission_attempt(
+                order_request_id=order.order_request_id,
+                attempt_number=1,
+                accepted=False,
+                broker_name=exc.broker_name.value,
+                raw_code=exc.raw_code,
+                raw_message=exc.raw_message,
+                error_type=type(exc).__name__,
+                retryable=exc.retryable,
+                duration_ms=duration,
+            )
+            logger.warning(
+                "Broker submit failed: order_id=%s symbol=%s broker=%s "
+                "error_type=%s requires_reconciliation=%s retryable=%s message=%s",
+                order.order_request_id,
+                request.symbol,
+                broker.__class__.__name__,
+                exc.error_type.value,
+                exc.requires_reconciliation,
+                exc.retryable,
+                exc.raw_message or str(exc),
+            )
+
+            needs_reconciliation = exc.requires_reconciliation or exc.error_type in {
+                BrokerErrorType.API_ERROR,
+                BrokerErrorType.NETWORK,
+                BrokerErrorType.NETWORK_ERROR,
+                BrokerErrorType.TIMEOUT,
+                BrokerErrorType.TEMPORARY_BROKER,
+            }
+            if needs_reconciliation:
+                if self.reconciliation_service is not None:
+                    await self.reconciliation_service.trigger(
+                        account_id=order.account_id,
+                        trigger_type="broker_submit_exception",
+                        symbol=request.symbol,
+                        side=request.side.value,
+                    )
+                return await self.transition_to(
+                    order,
+                    OrderStatus.RECONCILE_REQUIRED,
+                    reason_code=exc.raw_code or exc.error_type.value.upper(),
+                    reason_message=exc.raw_message or str(exc),
+                    actor_type=actor_type,
+                    actor_id=actor_id,
+                    mark_submitted_at=True,
+                )
+
+            return await self.transition_to(
+                order,
+                OrderStatus.REJECTED,
+                reason_code=exc.raw_code or exc.error_type.value.upper(),
+                reason_message=exc.raw_message or str(exc),
+                actor_type=actor_type,
+                actor_id=actor_id,
+                mark_submitted_at=True,
+            )
         except Exception as exc:
+            duration = int((time.monotonic() - t0) * 1000)
+            await self._record_submission_attempt(
+                order_request_id=order.order_request_id,
+                attempt_number=1,  # MVP: always 1; future: COUNT from DB
+                accepted=False,
+                broker_name=getattr(exc, 'broker_name', broker.__class__.__name__),
+                raw_code=getattr(exc, 'raw_code', None),
+                raw_message=getattr(exc, 'raw_message', None),
+                error_type=type(exc).__name__,
+                retryable=getattr(exc, 'retryable', None),
+                http_status=getattr(exc, 'http_status', None),
+                duration_ms=duration,
+            )
             logger.exception(
                 "Broker submit RAISED: order_id=%s symbol=%s broker=%s — %s: %s",
                 order.order_request_id,
@@ -475,6 +593,8 @@ class OrderManager:
             raise
 
         # --- Step 3: Handle result ---
+        duration = int((time.monotonic() - t0) * 1000)
+
         if result.uncertain or result.requires_reconciliation:
             # Trigger reconciliation.
             if self.reconciliation_service is not None:
@@ -484,6 +604,17 @@ class OrderManager:
                     symbol=request.symbol,
                     side=request.side.value,
                 )
+
+            await self._record_submission_attempt(
+                order_request_id=order.order_request_id,
+                attempt_number=1,
+                accepted=result.accepted,
+                broker_name=result.broker_name.value if result.broker_name else None,
+                broker_native_order_id=result.broker_order_id,
+                raw_code=result.raw_code,
+                raw_message=result.raw_message,
+                duration_ms=duration,
+            )
 
             return await self.transition_to(
                 order,
@@ -496,6 +627,7 @@ class OrderManager:
                 ),
                 actor_type=actor_type,
                 actor_id=actor_id,
+                mark_submitted_at=True,
             )
 
         if result.accepted:
@@ -514,6 +646,18 @@ class OrderManager:
             )
             await self.repos.broker_orders.add(broker_order)
 
+            await self._record_submission_attempt(
+                order_request_id=order.order_request_id,
+                attempt_number=1,  # MVP: always 1
+                accepted=True,
+                broker_name=result.broker_name.value,
+                broker_native_order_id=result.broker_order_id,
+                broker_status=result.broker_status.value,
+                raw_code=result.raw_code,
+                raw_message=result.raw_message,
+                duration_ms=duration,
+            )
+
             return await self.transition_to(
                 order,
                 OrderStatus.SUBMITTED,
@@ -521,10 +665,20 @@ class OrderManager:
                 reason_message=result.raw_message,
                 actor_type=actor_type,
                 actor_id=actor_id,
+                mark_submitted_at=True,
             )
 
         # Order was explicitly rejected by broker.
-        # From PENDING_SUBMIT, REJECTED is now a valid transition.
+        await self._record_submission_attempt(
+            order_request_id=order.order_request_id,
+            attempt_number=1,  # MVP: always 1
+            accepted=False,
+            broker_name=result.broker_name.value,
+            raw_code=result.raw_code,
+            raw_message=result.raw_message,
+            duration_ms=duration,
+        )
+
         return await self.transition_to(
             order,
             OrderStatus.REJECTED,
@@ -532,6 +686,7 @@ class OrderManager:
             reason_message=result.raw_message or "Broker rejected the order",
             actor_type=actor_type,
             actor_id=actor_id,
+            mark_submitted_at=True,
         )
 
     async def transition_to(
@@ -545,6 +700,7 @@ class OrderManager:
         actor_id: str = "order_manager",
         max_retries: int = 3,
         retry_delay: float = 0.05,
+        mark_submitted_at: bool = False,
     ) -> OrderRequestEntity:
         """Validate and persist a state transition with optimistic locking.
 
@@ -585,6 +741,7 @@ class OrderManager:
             actor_id=actor_id,
             max_retries=max_retries,
             retry_delay=retry_delay,
+            mark_submitted_at=mark_submitted_at,
         )
 
     async def transition_to_authoritative(
@@ -659,6 +816,7 @@ class OrderManager:
         event_source: EventSource = EventSource.INTERNAL,
         max_retries: int = 3,
         retry_delay: float = 0.05,
+        mark_submitted_at: bool = False,
     ) -> OrderRequestEntity:
         """Shared core: optimistic locking retry + audit + order_state_event.
 
@@ -675,8 +833,16 @@ class OrderManager:
             ``EventSource.INTERNAL``.
         """
         before = order
+        submitted_at = None
+        if mark_submitted_at and order.submitted_at is None:
+            submitted_at = datetime.now(timezone.utc)
+
         after = _replace_status(
-            order, target_status, reason_code=reason_code, reason_message=reason_message
+            order,
+            target_status,
+            reason_code=reason_code,
+            reason_message=reason_message,
+            submitted_at=submitted_at,
         )
 
         # Retry loop: only update_status() is retried.
@@ -690,6 +856,7 @@ class OrderManager:
                     reason_code=reason_code,
                     reason_message=reason_message,
                     expected_version=after.version,
+                    submitted_at=submitted_at,
                 )
                 last_exc = None
                 break
@@ -713,7 +880,11 @@ class OrderManager:
                     ) from exc
                 # Rebuild `after` from the latest version.
                 after = _replace_status(
-                    latest, target_status, reason_code=reason_code, reason_message=reason_message
+                    latest,
+                    target_status,
+                    reason_code=reason_code,
+                    reason_message=reason_message,
+                    submitted_at=submitted_at or latest.submitted_at,
                 )
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay * (2**attempt))
@@ -978,14 +1149,20 @@ def _replace_status(
     *,
     reason_code: str | None = None,
     reason_message: str | None = None,
+    submitted_at: datetime | None = None,
 ) -> OrderRequestEntity:
     import dataclasses
+
+    resolved_submitted_at = submitted_at or order.submitted_at
+    if new_status == OrderStatus.SUBMITTED and resolved_submitted_at is None:
+        resolved_submitted_at = datetime.now(timezone.utc)
 
     return dataclasses.replace(
         order,
         status=new_status,
         status_reason_code=reason_code,
         status_reason_message=reason_message,
+        submitted_at=resolved_submitted_at,
         updated_at=datetime.now(timezone.utc),
     )
 

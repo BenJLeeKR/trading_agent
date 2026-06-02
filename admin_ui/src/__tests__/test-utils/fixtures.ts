@@ -18,6 +18,7 @@ import type {
   EnumMetadataListResponse,
   ExternalEventView,
   PaginatedTradeDecisionsResponse,
+  SubmissionAttemptView,
 } from "../../types/api";
 
 export const mockHealthOk: HealthResponse = {
@@ -176,6 +177,15 @@ export const mockOrderDetail: OrderDetail = {
   error_message: null,
   broker_order_id: "broker-ref-001",
   broker_id: "KIS",
+  submission_attempt_summary: {
+    attempt_count: 3,
+    latest_accepted: false,
+    latest_raw_code: "2011",
+    latest_raw_message: "주문 수량이 1주 미만입니다.",
+    latest_error_type: null,
+    last_submitted_at: "2026-05-30T14:32:10+09:00",
+    latest_outcome: "rejected",
+  },
 };
 
 /** OrderDetail variant without decision links — for testing conditional rendering */
@@ -846,5 +856,66 @@ export const mockRecentEvents005930: ExternalEventView[] = [
     body_summary: '삼성전자가 2026년 2분기 실적 가이던스를 발표...',
     published_at: '2026-05-16T23:00:00Z',
     created_at: '2026-05-16T23:05:00Z',
+  },
+];
+
+/* ───────────────────────────────────────────
+ * SubmissionAttemptView fixtures (Phase 11)
+ * ─────────────────────────────────────────── */
+
+export const mockSubmissionAttempts: SubmissionAttemptView[] = [
+  {
+    order_submission_attempt_id: 'att-001',
+    order_request_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0001',
+    attempt_number: 1,
+    submitted_at: '2026-05-30T14:31:05+09:00',
+    broker_name: 'KIS',
+    accepted: true,
+    broker_native_order_id: 'KIS12345',
+    broker_status: 'confirmed',
+    raw_code: null,
+    raw_message: null,
+    error_type: null,
+    retryable: false,
+    http_status: 200,
+    duration_ms: 145,
+    created_at: '2026-05-30T14:31:05+09:00',
+    attempt_outcome: 'accepted',
+  },
+  {
+    order_submission_attempt_id: 'att-002',
+    order_request_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0001',
+    attempt_number: 2,
+    submitted_at: '2026-05-30T14:32:10+09:00',
+    broker_name: 'KIS',
+    accepted: false,
+    broker_native_order_id: null,
+    broker_status: null,
+    raw_code: '2011',
+    raw_message: '주문 수량이 1주 미만입니다.',
+    error_type: null,
+    retryable: true,
+    http_status: 200,
+    duration_ms: 98,
+    created_at: '2026-05-30T14:32:10+09:00',
+    attempt_outcome: 'rejected',
+  },
+  {
+    order_submission_attempt_id: 'att-003',
+    order_request_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0001',
+    attempt_number: 3,
+    submitted_at: '2026-05-30T14:33:00+09:00',
+    broker_name: 'KIS',
+    accepted: null,
+    broker_native_order_id: null,
+    broker_status: null,
+    raw_code: null,
+    raw_message: null,
+    error_type: 'TIMEOUT',
+    retryable: true,
+    http_status: null,
+    duration_ms: 30000,
+    created_at: '2026-05-30T14:33:00+09:00',
+    attempt_outcome: 'exception',
   },
 ];

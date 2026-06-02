@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from uuid import UUID
 
 import asyncpg
@@ -88,62 +89,100 @@ class PostgresOrderRepository:
         return row_to_entity(row, OrderRequestEntity) if row else None
 
     async def list(self, query: OrderQuery) -> Sequence[OrderRequestEntity]:
+        where_clause, params, idx = self._build_where_clause(query)
+        sql = f"SELECT o.* FROM trading.order_requests o JOIN trading.accounts a ON o.account_id = a.account_id JOIN trading.instruments i ON o.instrument_id = i.instrument_id {where_clause} ORDER BY o.created_at DESC LIMIT ${idx}"
+        params.append(query.limit)
+
+        rows = await self._tx.connection.fetch(sql, *params)
+        return tuple(row_to_entity(r, OrderRequestEntity) for r in rows)
+
+    async def count(self, query: OrderQuery) -> int:
+        where_clause, params, _ = self._build_where_clause(query)
+        row = await self._tx.connection.fetchrow(
+            f"""
+            SELECT COUNT(*) AS cnt
+            FROM trading.order_requests o
+            JOIN trading.accounts a ON o.account_id = a.account_id
+            JOIN trading.instruments i ON o.instrument_id = i.instrument_id
+            {where_clause}
+            """,
+            *params,
+        )
+        return int(row["cnt"]) if row else 0
+
+    async def count_by_status(self, query: OrderQuery) -> dict[str, int]:
+        where_clause, params, _ = self._build_where_clause(query)
+        rows = await self._tx.connection.fetch(
+            f"""
+            SELECT o.status, COUNT(*) AS cnt
+            FROM trading.order_requests o
+            JOIN trading.accounts a ON o.account_id = a.account_id
+            JOIN trading.instruments i ON o.instrument_id = i.instrument_id
+            {where_clause}
+            GROUP BY o.status
+            """,
+            *params,
+        )
+        return {str(r["status"]): int(r["cnt"]) for r in rows}
+
+    def _build_where_clause(
+        self,
+        query: OrderQuery,
+    ) -> tuple[str, list[object], int]:
         conditions: list[str] = []
         params: list[object] = []
         idx = 1
 
         if query.account_id is not None:
-            conditions.append(f"account_id = ${idx}")
+            conditions.append(f"o.account_id = ${idx}")
             params.append(query.account_id)
             idx += 1
         if query.client_order_id is not None:
-            conditions.append(f"client_order_id = ${idx}")
+            conditions.append(f"o.client_order_id = ${idx}")
             params.append(query.client_order_id)
             idx += 1
         if query.correlation_id is not None:
-            conditions.append(f"correlation_id = ${idx}")
+            conditions.append(f"o.correlation_id = ${idx}")
             params.append(query.correlation_id)
             idx += 1
         if query.status is not None:
-            conditions.append(f"status = ${idx}")
+            conditions.append(f"o.status = ${idx}")
             params.append(query.status.value)
             idx += 1
         if query.statuses is not None:
             placeholders = ",".join(f"${idx + i}" for i in range(len(query.statuses)))
-            conditions.append(f"status IN ({placeholders})")
+            conditions.append(f"o.status IN ({placeholders})")
             params.extend(s.value for s in query.statuses)
             idx += len(query.statuses)
         if query.trade_decision_id is not None:
-            conditions.append(f"trade_decision_id = ${idx}")
+            conditions.append(f"o.trade_decision_id = ${idx}")
             params.append(query.trade_decision_id)
             idx += 1
         if query.decision_context_id is not None:
-            conditions.append(f"decision_context_id = ${idx}")
+            conditions.append(f"o.decision_context_id = ${idx}")
             params.append(query.decision_context_id)
             idx += 1
         if query.submitted_from is not None:
-            conditions.append(f"submitted_at >= ${idx}")
+            conditions.append(f"o.submitted_at >= ${idx}")
             params.append(query.submitted_from)
             idx += 1
         if query.submitted_to is not None:
-            conditions.append(f"submitted_at <= ${idx}")
+            conditions.append(f"o.submitted_at <= ${idx}")
             params.append(query.submitted_to)
             idx += 1
         if query.created_from is not None:
-            conditions.append(f"created_at >= ${idx}")
+            conditions.append(f"o.created_at >= ${idx}")
             params.append(query.created_from)
             idx += 1
         if query.created_to is not None:
-            conditions.append(f"created_at <= ${idx}")
+            conditions.append(f"o.created_at <= ${idx}")
             params.append(query.created_to)
             idx += 1
 
+        conditions.append("a.account_code NOT LIKE 'E2E-%'")
+        conditions.append("i.symbol != 'E2ESUM'")
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        sql = f"SELECT * FROM trading.order_requests {where_clause} ORDER BY created_at DESC LIMIT ${idx}"
-        params.append(query.limit)
-
-        rows = await self._tx.connection.fetch(sql, *params)
-        return tuple(row_to_entity(r, OrderRequestEntity) for r in rows)
+        return where_clause, params, idx
 
     async def update_status(
         self,
@@ -152,14 +191,19 @@ class PostgresOrderRepository:
         reason_code: str | None = None,
         reason_message: str | None = None,
         expected_version: int | None = None,
+        submitted_at: datetime | None = None,
     ) -> None:
         if expected_version is not None:
             result = await self._tx.connection.execute(
                 """
                 UPDATE trading.order_requests
-                SET status = $2,
+                SET status = $2::varchar,
                     status_reason_code = $3,
                     status_reason_message = $4,
+                    submitted_at = COALESCE($6, submitted_at, CASE
+                        WHEN $2::text = 'submitted' THEN NOW()
+                        ELSE NULL
+                    END),
                     version = version + 1,
                     updated_at = NOW()
                 WHERE order_request_id = $1 AND version = $5
@@ -169,6 +213,7 @@ class PostgresOrderRepository:
                 reason_code,
                 reason_message,
                 expected_version,
+                submitted_at,
             )
             if result != "UPDATE 1":
                 current = await self.get(order_request_id)
@@ -183,9 +228,13 @@ class PostgresOrderRepository:
             await self._tx.connection.execute(
                 """
                 UPDATE trading.order_requests
-                SET status = $2,
+                SET status = $2::varchar,
                     status_reason_code = $3,
                     status_reason_message = $4,
+                    submitted_at = COALESCE($5, submitted_at, CASE
+                        WHEN $2::text = 'submitted' THEN NOW()
+                        ELSE NULL
+                    END),
                     updated_at = NOW()
                 WHERE order_request_id = $1
                 """,
@@ -193,6 +242,7 @@ class PostgresOrderRepository:
                 status.value,
                 reason_code,
                 reason_message,
+                submitted_at,
             )
 
 

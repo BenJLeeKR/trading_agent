@@ -38,6 +38,34 @@ from agent_trading.services.reconciliation_service import ReconciliationService
 logger = logging.getLogger(__name__)
 
 
+def _build_kis_live_quote_client(settings: AppSettings) -> KISRestClient | None:
+    """Build a live read-only KIS client for quote/orderbook/market-data.
+
+    Orders, positions, cash, and truth queries remain on the primary paper/live
+    trading client.  This auxiliary client is only for market-data reads so
+    paper trading can still use live quote fidelity.
+    """
+    if not settings.kis_live_app_key or not settings.kis_live_app_secret:
+        logger.warning(
+            "Live quote client disabled: "
+            "kis_live_app_key or kis_live_app_secret not configured. "
+            "Falling back to primary KIS client for quotes.",
+        )
+        return None
+
+    return KISRestClient(
+        env="live",
+        api_key=settings.kis_live_app_key,
+        api_secret=settings.kis_live_app_secret,
+        account_number="",
+        account_product_code="",
+        base_url=settings.kis_live_info_base_url,
+        dev_token_cache_path=settings.kis_disclosure_token_cache_path,
+        dev_token_cache_enabled=settings.kis_disclosure_token_cache_enabled,
+        cache_purpose=CachePurpose.LIVE_DISCLOSURE_ACCESS_TOKEN,
+    )
+
+
 def _build_kis_adapter(settings: AppSettings) -> KoreaInvestmentAdapter:
     """Build a KoreaInvestmentAdapter with a configured KISRestClient.
 
@@ -49,6 +77,7 @@ def _build_kis_adapter(settings: AppSettings) -> KoreaInvestmentAdapter:
         kis_env=settings.kis_env,
         real_rest_rps=settings.kis_real_rest_rps,
         paper_rest_rps=settings.kis_paper_rest_rps,
+        shared_budget_file=settings.kis_shared_budget_file,
     )
     rest_client = KISRestClient(
         api_key=settings.kis_api_key,
@@ -61,8 +90,10 @@ def _build_kis_adapter(settings: AppSettings) -> KoreaInvestmentAdapter:
         dev_token_cache_enabled=settings.kis_dev_token_cache_enabled,
         dev_token_cache_path=settings.kis_dev_token_cache_path,
     )
+    live_quote_client = _build_kis_live_quote_client(settings)
     return KoreaInvestmentAdapter(
         rest_client=rest_client,
+        quote_rest_client=live_quote_client,
         ws_url=settings.kis_ws_url,
     )
 

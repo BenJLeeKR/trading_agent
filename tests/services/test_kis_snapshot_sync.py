@@ -37,6 +37,7 @@ from agent_trading.repositories.memory import (
     InMemorySnapshotSyncRunRepository,
 )
 from agent_trading.brokers.koreainvestment.rest_client import CashAndPositionsResult
+from agent_trading.brokers.koreainvestment.rest_client import OrderableCashResult
 from agent_trading.services.kis_snapshot_sync import (
     BatchSyncResult,
     SyncResult,
@@ -85,6 +86,33 @@ class FakeKISRestClient:
     ) -> Decimal | None:
         self.get_orderable_cash_called = True
         return self._orderable_cash
+
+    async def get_orderable_cash_result(
+        self,
+        account_ref: str = "",
+        symbol: str = "",
+        price: str = "",
+        order_type: str = "00",
+        fallback_cash: Decimal | None = None,
+    ) -> OrderableCashResult:
+        amount = await self.get_orderable_cash(
+            account_ref=account_ref,
+            symbol=symbol,
+            price=price,
+            order_type=order_type,
+            fallback_cash=fallback_cash,
+        )
+        if amount is not None and amount != fallback_cash:
+            return OrderableCashResult(
+                amount=amount,
+                source="vttc8908r",
+            )
+        if fallback_cash is not None:
+            return OrderableCashResult(
+                amount=amount,
+                source="budget_precheck_fallback",
+            )
+        return OrderableCashResult(amount=amount, source="missing_field")
 
     async def get_cash_and_positions(
         self,
@@ -653,6 +681,48 @@ class TestSyncCashBalance:
             f"got {snap.orderable_amount}"
         )
         assert snap.available_cash == Decimal("5000000")
+
+    async def test_orderable_cash_logs_budget_precheck_fallback_source(
+        self,
+        account_id: UUID,
+        instrument_repo: InMemoryInstrumentRepository,
+        position_repo: InMemoryPositionSnapshotRepository,
+        cash_repo: InMemoryCashBalanceSnapshotRepository,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        caplog.set_level("INFO")
+        class BudgetPrecheckFallbackClient(FakeKISRestClient):
+            async def get_orderable_cash_result(
+                self,
+                account_ref: str = "",
+                symbol: str = "",
+                price: str = "",
+                order_type: str = "00",
+                fallback_cash: Decimal | None = None,
+            ) -> OrderableCashResult:
+                return OrderableCashResult(
+                    amount=fallback_cash,
+                    source="budget_precheck_fallback",
+                )
+
+        client = BudgetPrecheckFallbackClient(
+            positions=[],
+            cash_balance=_make_cash_balance(
+                dnca_tot_amt="5000000",
+                nxdy_excc_amt="3000000",
+            ),
+            orderable_cash=None,
+        )
+        result = await sync_kis_account_snapshots(
+            rest_client=client,
+            instrument_repo=instrument_repo,
+            position_snapshot_repo=position_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            account_id=account_id,
+        )
+
+        assert result.cash_balance_synced is True
+        assert "source: budget_precheck_fallback, legacy sync path" in caplog.text
 
     async def test_fetch_positions_false_skips_positions(
         self,

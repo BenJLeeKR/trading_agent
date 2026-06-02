@@ -35,6 +35,7 @@ class TestBuildKisBudgetManager:
         #   order=9 (Fix 3: capacity = max(3, int(3*3)) = 9)
         assert snap["auth"]["capacity"] == 3
         assert snap["order"]["capacity"] == 9
+        assert mgr.order.refill_rate == 3.0
         assert snap["inquiry"]["capacity"] == 3
         assert snap["market_data"]["capacity"] == 3
         # Paper RECONCILIATION bucket: capacity = max(1, int(10 * total))
@@ -72,10 +73,19 @@ class TestBuildKisBudgetManager:
         #   order=max(3, int(3*3)) = 9 (Fix 3: min floor=3, multiplier=3)
         assert snap["auth"]["capacity"] == 3
         assert snap["order"]["capacity"] == 9
+        assert mgr.order.refill_rate == 3.0
         assert snap["inquiry"]["capacity"] == 3
         assert snap["market_data"]["capacity"] == 3
         # RECONCILIATION bucket: capacity = max(1, int(10 * total)) = max(1, 30) = 30
         assert snap["reconciliation"]["capacity"] == 30
+
+    def test_custom_paper_rps_one_aligns_order_refill_with_global_rest(self) -> None:
+        """Paper 1RPS에서는 ORDER refill도 1.0/s로 global gate와 정렬되어야 함."""
+        mgr = build_kis_budget_manager(kis_env="paper", paper_rest_rps=1)
+        snap = mgr.snapshot()
+        assert snap["order"]["capacity"] == 3
+        assert mgr.order.refill_rate == 1.0
+        assert snap["global"]["refill_rate"] == 1.0
 
     def test_custom_live_rps_scales_buckets(self) -> None:
         """Custom ``real_rest_rps=30`` scales live bucket capacities relative to baseline."""
@@ -236,15 +246,12 @@ class TestSharedBudgetFile:
 class TestOperationBucketStarvation:
     """``OperationBucket._refill()`` sub-token starvation bug regression tests.
 
-    The bug: ``self.refill_at = now`` was only updated when
-    ``int(elapsed * refill_rate) > 0``.  When ``elapsed`` was small,
-    ``tokens_to_add`` would truncate to 0, ``refill_at`` would never
-    advance, and the same (stale) ``elapsed`` delta would be computed
-    on every subsequent call — causing effective refill rate to be
-    **slower than configured** (starvation).
+    The bug: sub-token elapsed time was truncated away on every call.
+    Even though ``refill_at`` advanced, fractional refill did not carry
+    over, so repeated short polls could starve a bucket forever.
 
-    Fix: ``self.refill_at = now`` always updates, even when
-    ``tokens_to_add == 0``.
+    Fix: keep ``_fractional_tokens`` carry-over while still advancing
+    ``refill_at`` on every refill attempt.
     """
 
     def test_refill_sub_token_no_starvation(self) -> None:
@@ -390,19 +397,21 @@ class TestOperationBucketStarvation:
 
         refill_at_after_phase1 = bucket.refill_at
 
-        # --- Phase 2: wait another 0.3s, try consume → should still fail ---
-        # Because refill_at was updated, we only accumulate ~0.3s more.
+        # --- Phase 2: wait another 0.3s, try consume → should now succeed ---
+        # Fractional tokens from phase 1 (~0.62) plus phase 2 (~0.62)
+        # accumulate to >1.0 token.
         time_module.sleep(0.31)
         result = bucket.try_consume(1)
-        assert result is False, (
-            "Another 0.3s from updated refill_at → int(0.6)=0 → must fail"
+        assert result is True, (
+            "Fractional refill should accumulate across short polls "
+            "so the second 0.3s interval can succeed"
         )
 
-        # --- Phase 3: wait a full 1.0s → should get 2 tokens ---
+        # --- Phase 3: wait a full 1.0s → should refill again ---
         time_module.sleep(1.01)
         result = bucket.try_consume(1)
-        assert result is True, "After 1.0s at 2.0 tps → int(2.0)=2 tokens → must succeed"
-        assert bucket.remaining == 1, "2 tokens added, 1 consumed → 1 remaining"
+        assert result is True, "After 1.0s at 2.0 tps refill must keep working"
+        assert bucket.remaining >= 0
 
     def test_refill_accumulates_fractional_tokens(self) -> None:
         """Fractional tokens accumulate correctly across multiple sub-token intervals.

@@ -447,12 +447,15 @@ async def sync_kis_account_snapshots(
     if raw_cash and not after_hours:
         # Paper 1 RPS pacing: ensure at least 1s between consecutive KIS calls
         await asyncio.sleep(1.0)
+        orderable_source = "unknown"
 
         try:
-            orderable_cash = await rest_client.get_orderable_cash(
+            orderable_result = await rest_client.get_orderable_cash_result(
                 account_ref="",
                 fallback_cash=available_cash,
             )
+            orderable_cash = orderable_result.amount
+            orderable_source = orderable_result.source
         except BudgetExhaustedError:
             # Race condition: budget pre-check 통과했으나 다른 task가 소진
             logger.warning(
@@ -463,6 +466,7 @@ async def sync_kis_account_snapshots(
             from agent_trading.services.snapshot_sync import inc_budget_fallback
             inc_budget_fallback("VTTC8908R_budget_exhausted")
             orderable_cash = available_cash
+            orderable_source = "budget_exhausted_fallback"
         except Exception:
             # 일반 Exception → available_cash로 fallback
             logger.warning(
@@ -474,12 +478,14 @@ async def sync_kis_account_snapshots(
             from agent_trading.services.snapshot_sync import inc_budget_fallback
             inc_budget_fallback("VTTC8908R_api_failure")
             orderable_cash = available_cash
+            orderable_source = "api_failure_fallback"
 
         if orderable_cash is not None:
             orderable_amount = Decimal(str(orderable_cash))
             logger.info(
-                "orderable_amount=%s (source: VTTC8908R, legacy sync path)",
+                "orderable_amount=%s (source: %s, legacy sync path)",
                 orderable_cash,
+                orderable_source,
             )
         else:
             # Fallback: use ord_psbl_amt from VTTC8434R output2

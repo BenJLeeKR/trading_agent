@@ -81,6 +81,7 @@ def test_get_latest_session_healthy(_mock_get_db):
         "raw_antc_mkop_cls_code": None,
         "source": "kis_live",
         "reason": None,
+        "last_heartbeat_at": now,
         "checked_at": now,
         "created_at": now,
         "updated_at": now,
@@ -120,7 +121,8 @@ def test_get_latest_session_stale(_mock_get_db):
         "raw_antc_mkop_cls_code": None,
         "source": "kis_live",
         "reason": None,
-        "checked_at": old,
+        "last_heartbeat_at": old,
+        "checked_at": datetime.now(timezone.utc),
         "created_at": old,
         "updated_at": old,
     }
@@ -139,6 +141,43 @@ def test_get_latest_session_stale(_mock_get_db):
     # 300 seconds ago → stale_seconds ≈ 300
     assert data["stale_seconds"] is not None
     assert data["stale_seconds"] >= 300
+
+    app.dependency_overrides.clear()
+
+
+def test_get_latest_session_trading_day_uses_heartbeat_not_checked_at(_mock_get_db):
+    """Trading day status should remain healthy when heartbeat is fresh even if checked_at is old."""
+    override, mock_conn = _mock_get_db
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    mock_conn.fetchrow.return_value = {
+        "id": 3,
+        "run_date": now.date(),
+        "is_trading_day": True,
+        "opnd_yn": "Y",
+        "bzdy_yn": "Y",
+        "tr_day_yn": "Y",
+        "market_phase": "OPEN",
+        "raw_opnd_yn": None,
+        "raw_mkop_cls_code": None,
+        "raw_antc_mkop_cls_code": None,
+        "source": "scheduler",
+        "reason": None,
+        "last_heartbeat_at": now,
+        "checked_at": now - timedelta(minutes=20),
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    app = create_app(auth_enabled=False)
+    app.dependency_overrides[get_db] = override
+
+    with TestClient(app) as client:
+        resp = client.get("/market-sessions/latest")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["healthy"] is True
+    assert data["stale_seconds"] is not None
+    assert data["stale_seconds"] < 5
 
     app.dependency_overrides.clear()
 

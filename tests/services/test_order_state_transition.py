@@ -74,6 +74,11 @@ class TestAllowedTransitions:
         await in_memory_repos.orders.add(order)
         result = await order_manager.transition_to(order, OrderStatus.SUBMITTED)
         assert result.status == OrderStatus.SUBMITTED
+        assert result.submitted_at is not None
+
+        persisted = await in_memory_repos.orders.get(order.order_request_id)
+        assert persisted is not None
+        assert persisted.submitted_at is not None
 
     @pytest.mark.asyncio
     async def test_pending_submit_to_reconcile_required(
@@ -164,6 +169,15 @@ class TestAllowedTransitions:
         await in_memory_repos.orders.add(order)
         result = await order_manager.transition_to(order, OrderStatus.ACKNOWLEDGED)
         assert result.status == OrderStatus.ACKNOWLEDGED
+
+    @pytest.mark.asyncio
+    async def test_reconcile_required_to_submitted(
+        self, order_manager: OrderManager, in_memory_repos: RepositoryContainer
+    ) -> None:
+        order = _make_order(OrderStatus.RECONCILE_REQUIRED)
+        await in_memory_repos.orders.add(order)
+        result = await order_manager.transition_to(order, OrderStatus.SUBMITTED)
+        assert result.status == OrderStatus.SUBMITTED
 
     @pytest.mark.asyncio
     async def test_reconcile_required_to_filled_blocked(

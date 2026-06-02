@@ -1,0 +1,1401 @@
+2026-05-31 08:17:53 [INFO] Starting backfill_expired_odno_orders (dry_run=True, from=2026-05-28, to=2026-05-29)
+2026-05-31 08:17:53 [INFO] Found 92 expired+ODNO order(s) in date range 2026-05-28 ~ 2026-05-29
+2026-05-31 08:17:53 [INFO] Live disclosure client created: env=live, cache_path=.cache/kis_disclosure_token.json, cache_enabled=True
+2026-05-31 08:17:53 [INFO] LiveDisclosureSeedService initialized (client=AVAILABLE)
+2026-05-31 08:17:53 [INFO] [1/92] Processing order=a3616426-7eac-4b6e-8b4d-7a0d4bf4c9f6 symbol=004000 side=buy odno=0000035537
+2026-05-31 08:17:53 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:17:53 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000035537 "HTTP/1.1 200 OK"
+2026-05-31 08:17:53 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:17:53 [INFO] [2/92] Processing order=3059e254-8582-4731-8683-691b387d2a1c symbol=001800 side=buy odno=0000035534
+2026-05-31 08:17:55 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:17:55 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000035534 "HTTP/1.1 200 OK"
+2026-05-31 08:17:55 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:17:55 [INFO] [3/92] Processing order=e82bb4a7-2985-4259-bf35-e4b1e45708e3 symbol=000810 side=buy odno=0000035513
+2026-05-31 08:17:56 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:17:57 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000035513 "HTTP/1.1 200 OK"
+2026-05-31 08:17:57 [INFO]   → SKIP (already expired, no change needed)
+2026-05-31 08:17:57 [INFO] [4/92] Processing order=2a12c8d2-8e75-4ead-ba5f-d6edac6f45c7 symbol=004000 side=buy odno=0000034390
+2026-05-31 08:17:58 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:17:58 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000034390 "HTTP/1.1 200 OK"
+2026-05-31 08:17:58 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:17:58 [INFO] [5/92] Processing order=843fadae-b8d6-4dd2-80d9-601af2d8cf76 symbol=001450 side=buy odno=0000034386
+2026-05-31 08:18:00 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:00 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000034386 "HTTP/1.1 200 OK"
+2026-05-31 08:18:00 [INFO]   → SKIP (already expired, no change needed)
+2026-05-31 08:18:00 [INFO] [6/92] Processing order=ed6f4413-37d6-4775-b3bc-467ed4622af8 symbol=000270 side=buy odno=0000034364
+2026-05-31 08:18:01 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:02 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000034364 "HTTP/1.1 200 OK"
+2026-05-31 08:18:02 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:02 [INFO] [7/92] Processing order=4f42e7d6-0e7e-4b22-855f-a4721ac7c25d symbol=007070 side=buy odno=0000033448
+2026-05-31 08:18:03 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:03 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000033448 "HTTP/1.1 200 OK"
+2026-05-31 08:18:03 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:03 [INFO] [8/92] Processing order=b21ccf3f-05ec-482d-92e2-be73d36c6fcc symbol=003490 side=buy odno=0000033436
+2026-05-31 08:18:05 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:05 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000033436 "HTTP/1.1 200 OK"
+2026-05-31 08:18:05 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:05 [INFO] [9/92] Processing order=89e9745e-6ee7-4c01-9ec9-41b200e503bf symbol=003490 side=buy odno=0000032543
+2026-05-31 08:18:06 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:06 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000032543 "HTTP/1.1 200 OK"
+2026-05-31 08:18:06 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:06 [INFO] [10/92] Processing order=c613ab11-c8d8-4536-9a96-03fe9dbe4c04 symbol=001800 side=buy odno=0000032533
+2026-05-31 08:18:08 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:08 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000032533 "HTTP/1.1 200 OK"
+2026-05-31 08:18:08 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:08 [INFO] [11/92] Processing order=3c09e511-6f20-4065-bc46-9c38d47c64d4 symbol=000810 side=buy odno=0000032521
+2026-05-31 08:18:10 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:10 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000032521 "HTTP/1.1 200 OK"
+2026-05-31 08:18:10 [INFO]   → SKIP (already expired, no change needed)
+2026-05-31 08:18:10 [INFO] [12/92] Processing order=b8326b84-a0ef-44da-a8b2-7dac7cfa350e symbol=003490 side=buy odno=0000031567
+2026-05-31 08:18:11 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:11 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000031567 "HTTP/1.1 200 OK"
+2026-05-31 08:18:11 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:11 [INFO] [13/92] Processing order=95b81cd4-6a05-4e85-b74c-1d079bb018bf symbol=001450 side=buy odno=0000031565
+2026-05-31 08:18:13 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:13 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000031565 "HTTP/1.1 200 OK"
+2026-05-31 08:18:13 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:13 [INFO] [14/92] Processing order=40aa1119-920c-46f2-8bc9-a62a618896a2 symbol=000100 side=buy odno=0000031554
+2026-05-31 08:18:15 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:15 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000031554 "HTTP/1.1 200 OK"
+2026-05-31 08:18:15 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:15 [INFO] [15/92] Processing order=6097d661-528c-4943-9f73-0ed16b25ea9e symbol=000660 side=buy odno=0000031550
+2026-05-31 08:18:16 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:16 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000031550 "HTTP/1.1 200 OK"
+2026-05-31 08:18:16 [INFO]   → SKIP (already expired, no change needed)
+2026-05-31 08:18:16 [INFO] [16/92] Processing order=89cc9d2a-8dac-4d0f-a18f-478c76661df8 symbol=007070 side=buy odno=0000030716
+2026-05-31 08:18:18 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:18 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000030716 "HTTP/1.1 200 OK"
+2026-05-31 08:18:18 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:18 [INFO] [17/92] Processing order=5fd1313b-0903-47de-aa91-a9bdf5eef846 symbol=003490 side=buy odno=0000030696
+2026-05-31 08:18:20 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:20 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000030696 "HTTP/1.1 200 OK"
+2026-05-31 08:18:20 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:20 [INFO] [18/92] Processing order=69268c40-c817-425f-ad7f-ab69b4d8bb21 symbol=000810 side=buy odno=0000030650
+2026-05-31 08:18:21 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:21 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000030650 "HTTP/1.1 200 OK"
+2026-05-31 08:18:21 [INFO]   → SKIP (already expired, no change needed)
+2026-05-31 08:18:21 [INFO] [19/92] Processing order=fead9830-26ef-4a98-ba52-43a7a885516b symbol=000270 side=buy odno=0000030642
+2026-05-31 08:18:23 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:23 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000030642 "HTTP/1.1 200 OK"
+2026-05-31 08:18:23 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:23 [INFO] [20/92] Processing order=faf087f4-f9d1-429f-a256-e64a232f0044 symbol=004000 side=buy odno=0000029807
+2026-05-31 08:18:25 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:25 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000029807 "HTTP/1.1 200 OK"
+2026-05-31 08:18:25 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:25 [INFO] [21/92] Processing order=f04d8d21-dda2-4efa-aac0-19bb729dde6c symbol=000270 side=buy odno=0000029785
+2026-05-31 08:18:26 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:26 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000029785 "HTTP/1.1 200 OK"
+2026-05-31 08:18:26 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:26 [INFO] [22/92] Processing order=123b410b-4a79-464e-8567-7213b09636d2 symbol=000150 side=buy odno=0000029784
+2026-05-31 08:18:28 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:28 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000029784 "HTTP/1.1 200 OK"
+2026-05-31 08:18:28 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:28 [INFO] [23/92] Processing order=fe5555d2-c438-41f8-aaa5-efd8ff54c50b symbol=003490 side=buy odno=0000029086
+2026-05-31 08:18:29 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:30 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000029086 "HTTP/1.1 200 OK"
+2026-05-31 08:18:30 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:30 [INFO] [24/92] Processing order=a17f49c0-e382-41ad-bc93-d9f424b35aa7 symbol=000100 side=buy odno=0000029062
+2026-05-31 08:18:31 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:31 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000029062 "HTTP/1.1 200 OK"
+2026-05-31 08:18:31 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:31 [INFO] [25/92] Processing order=da993eb6-78de-42fa-8b0f-413fcf53a564 symbol=000270 side=buy odno=0000029056
+2026-05-31 08:18:33 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:33 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000029056 "HTTP/1.1 200 OK"
+2026-05-31 08:18:33 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:33 [INFO] [26/92] Processing order=50b6eb27-b4f2-40af-a552-3cb281f84475 symbol=004000 side=buy odno=0000028136
+2026-05-31 08:18:34 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:35 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000028136 "HTTP/1.1 200 OK"
+2026-05-31 08:18:35 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:35 [INFO] [27/92] Processing order=26bc13c4-ad3f-4789-b3ba-e8c56664f9b1 symbol=001800 side=buy odno=0000028132
+2026-05-31 08:18:36 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:36 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000028132 "HTTP/1.1 200 OK"
+2026-05-31 08:18:36 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:36 [INFO] [28/92] Processing order=9cf7d5eb-d5b6-4c07-893f-bf2bfa4519df symbol=000270 side=buy odno=0000028113
+2026-05-31 08:18:38 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:38 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000028113 "HTTP/1.1 200 OK"
+2026-05-31 08:18:38 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:38 [INFO] [29/92] Processing order=a69a6fca-e443-4e0e-ac3b-0942554a24a9 symbol=000660 side=sell odno=0000028112
+2026-05-31 08:18:39 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:39 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000028112 "HTTP/1.1 200 OK"
+2026-05-31 08:18:39 [INFO]   → SKIP (already expired, no change needed)
+2026-05-31 08:18:39 [INFO] [30/92] Processing order=de6a1741-9618-4c1e-a09f-ef30c0bb2faa symbol=003490 side=buy odno=0000026965
+2026-05-31 08:18:41 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:41 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000026965 "HTTP/1.1 200 OK"
+2026-05-31 08:18:41 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:41 [INFO] [31/92] Processing order=c316b8f9-327c-40cf-b65e-68f9e6a3202c symbol=000990 side=buy odno=0000026957
+2026-05-31 08:18:43 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:43 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000026957 "HTTP/1.1 200 OK"
+2026-05-31 08:18:43 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:43 [INFO] [32/92] Processing order=614c74e4-7c8a-4df2-8f14-e9124bc8c24b symbol=000270 side=buy odno=0000026923
+2026-05-31 08:18:44 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:44 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000026923 "HTTP/1.1 200 OK"
+2026-05-31 08:18:44 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:44 [INFO] [33/92] Processing order=24538148-0673-44dc-8a64-a38d295acbf8 symbol=000660 side=buy odno=0000026913
+2026-05-31 08:18:46 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:46 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000026913 "HTTP/1.1 200 OK"
+2026-05-31 08:18:46 [INFO]   → SKIP (already expired, no change needed)
+2026-05-31 08:18:46 [INFO] [34/92] Processing order=f23d8f0b-52c6-4939-813e-2359c32295c6 symbol=001800 side=buy odno=0000025631
+2026-05-31 08:18:48 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:48 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000025631 "HTTP/1.1 200 OK"
+2026-05-31 08:18:48 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:48 [INFO] [35/92] Processing order=11fd02c6-a8be-4479-8866-a80d95a2c825 symbol=000810 side=buy odno=0000025606
+2026-05-31 08:18:49 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:49 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000025606 "HTTP/1.1 200 OK"
+2026-05-31 08:18:49 [INFO]   → SKIP (already expired, no change needed)
+2026-05-31 08:18:49 [INFO] [36/92] Processing order=8da5bda8-4f7d-4212-9253-8b04d3a7a712 symbol=000270 side=buy odno=0000025601
+2026-05-31 08:18:51 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:51 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000025601 "HTTP/1.1 200 OK"
+2026-05-31 08:18:51 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:51 [INFO] [37/92] Processing order=5e3c99b3-1d73-44ab-a29a-762e2c973047 symbol=004000 side=buy odno=0000024684
+2026-05-31 08:18:52 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:53 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000024684 "HTTP/1.1 200 OK"
+2026-05-31 08:18:53 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:53 [INFO] [38/92] Processing order=de7f652a-da93-49c0-b194-478742b77e64 symbol=000270 side=buy odno=0000024641
+2026-05-31 08:18:54 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:54 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000024641 "HTTP/1.1 200 OK"
+2026-05-31 08:18:54 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:54 [INFO] [39/92] Processing order=5ead737f-8c7a-47ba-9563-673d24e62597 symbol=000150 side=sell odno=0000024644
+2026-05-31 08:18:56 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:56 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000024644 "HTTP/1.1 200 OK"
+2026-05-31 08:18:56 [INFO]   → SKIP (already expired, no change needed)
+2026-05-31 08:18:56 [INFO] [40/92] Processing order=a5b5290c-58c7-4f5a-8062-32bb2046f79a symbol=004000 side=buy odno=0000023350
+2026-05-31 08:18:57 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:58 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000023350 "HTTP/1.1 200 OK"
+2026-05-31 08:18:58 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:18:58 [INFO] [41/92] Processing order=57ead625-a044-40c6-8785-07093a1ad754 symbol=001450 side=sell odno=0000023345
+2026-05-31 08:18:59 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:18:59 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000023345 "HTTP/1.1 200 OK"
+2026-05-31 08:18:59 [INFO]   → SKIP (already expired, no change needed)
+2026-05-31 08:18:59 [INFO] [42/92] Processing order=7f04a90f-30d0-4335-8274-6e486f86b3ee symbol=001800 side=buy odno=0000023344
+2026-05-31 08:19:01 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:01 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000023344 "HTTP/1.1 200 OK"
+2026-05-31 08:19:01 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:01 [INFO] [43/92] Processing order=be563596-6838-4331-a7a0-169b8c15d352 symbol=000100 side=buy odno=0000023323
+2026-05-31 08:19:02 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:03 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000023323 "HTTP/1.1 200 OK"
+2026-05-31 08:19:03 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:03 [INFO] [44/92] Processing order=61d6c8ab-faf6-464b-b37a-b8cc864f9b18 symbol=007070 side=buy odno=0000022929
+2026-05-31 08:19:04 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:04 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000022929 "HTTP/1.1 200 OK"
+2026-05-31 08:19:04 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:04 [INFO] [45/92] Processing order=faa3dc4e-3974-4c97-8cf0-9ea5d8cd8106 symbol=003490 side=buy odno=0000022901
+2026-05-31 08:19:06 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:06 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000022901 "HTTP/1.1 200 OK"
+2026-05-31 08:19:06 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:06 [INFO] [46/92] Processing order=a30c1f50-de39-449d-9886-6b23ef82c3fa symbol=001800 side=buy odno=0000022898
+2026-05-31 08:19:07 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:07 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000022898 "HTTP/1.1 200 OK"
+2026-05-31 08:19:07 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:07 [INFO] [47/92] Processing order=fa715078-f5d1-444f-8ea8-0a0cefeab55d symbol=000100 side=buy odno=0000022871
+2026-05-31 08:19:09 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:09 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000022871 "HTTP/1.1 200 OK"
+2026-05-31 08:19:09 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:09 [INFO] [48/92] Processing order=b7b9dbc8-657b-4ecf-9bc5-98f424c88783 symbol=003490 side=buy odno=0000022618
+2026-05-31 08:19:11 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:11 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000022618 "HTTP/1.1 200 OK"
+2026-05-31 08:19:11 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:11 [INFO] [49/92] Processing order=469b322f-47bc-422e-b5c8-ec6c7f557e5c symbol=000150 side=buy odno=0000022585
+2026-05-31 08:19:12 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:12 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000022585 "HTTP/1.1 200 OK"
+2026-05-31 08:19:12 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:12 [INFO] [50/92] Processing order=f41bc0a1-eddb-425a-8849-c23e6d041c3c symbol=004000 side=buy odno=0000022414
+2026-05-31 08:19:14 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:14 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000022414 "HTTP/1.1 200 OK"
+2026-05-31 08:19:14 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:14 [INFO] [51/92] Processing order=524fdcdb-81cc-4efe-b732-0f9237406173 symbol=000150 side=buy odno=0000022392
+2026-05-31 08:19:16 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:16 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000022392 "HTTP/1.1 200 OK"
+2026-05-31 08:19:16 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:16 [INFO] [52/92] Processing order=0f755582-a288-4ab9-9fe2-d97907b0e3c8 symbol=000100 side=buy odno=0000022386
+2026-05-31 08:19:17 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:17 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000022386 "HTTP/1.1 200 OK"
+2026-05-31 08:19:17 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:17 [INFO] [53/92] Processing order=0a3d01f3-829a-49dd-82dc-4309e49eca76 symbol=004000 side=buy odno=0000022345
+2026-05-31 08:19:19 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:19 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000022345 "HTTP/1.1 200 OK"
+2026-05-31 08:19:19 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:19 [INFO] [54/92] Processing order=c2984c4a-4068-491f-aa40-9c6f268054dd symbol=000150 side=buy odno=0000022305
+2026-05-31 08:19:20 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:21 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000022305 "HTTP/1.1 200 OK"
+2026-05-31 08:19:21 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:21 [INFO] [55/92] Processing order=420b960c-8157-40da-ba1b-75a7dc9059cd symbol=000660 side=sell odno=0000022298
+2026-05-31 08:19:22 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:22 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000022298 "HTTP/1.1 200 OK"
+2026-05-31 08:19:22 [INFO]   → SKIP (already expired, no change needed)
+2026-05-31 08:19:22 [INFO] [56/92] Processing order=2130298a-b9f0-47c0-b6c0-9dc22b1f9854 symbol=007070 side=buy odno=0000021672
+2026-05-31 08:19:24 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:24 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000021672 "HTTP/1.1 200 OK"
+2026-05-31 08:19:24 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:24 [INFO] [57/92] Processing order=081907d7-bcd6-45c1-9e55-06b1868f4cdd symbol=003490 side=buy odno=0000021645
+2026-05-31 08:19:25 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:26 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000021645 "HTTP/1.1 200 OK"
+2026-05-31 08:19:26 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:26 [INFO] [58/92] Processing order=a1ecb21f-bf28-409a-8a1f-a518864dfe35 symbol=000100 side=buy odno=0000021609
+2026-05-31 08:19:27 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:27 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000021609 "HTTP/1.1 200 OK"
+2026-05-31 08:19:27 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:27 [INFO] [59/92] Processing order=1492e1b7-5af4-43f1-a429-1add2a90fb85 symbol=000270 side=buy odno=0000021607
+2026-05-31 08:19:29 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:29 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000021607 "HTTP/1.1 200 OK"
+2026-05-31 08:19:29 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:29 [INFO] [60/92] Processing order=a8633884-baee-421c-b084-6636b75555d7 symbol=001800 side=buy odno=0000020844
+2026-05-31 08:19:30 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:30 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000020844 "HTTP/1.1 200 OK"
+2026-05-31 08:19:30 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:30 [INFO] [61/92] Processing order=f70c2da7-5015-487c-a94a-60e36c4bbc6e symbol=000100 side=buy odno=0000020818
+2026-05-31 08:19:32 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:32 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000020818 "HTTP/1.1 200 OK"
+2026-05-31 08:19:32 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:32 [INFO] [62/92] Processing order=445639d9-1a93-4158-a3e1-cfc472e24029 symbol=001740 side=buy odno=0000020358
+2026-05-31 08:19:34 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:34 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000020358 "HTTP/1.1 200 OK"
+2026-05-31 08:19:34 [INFO]   → SKIP (already expired, no change needed)
+2026-05-31 08:19:34 [INFO] [63/92] Processing order=b36b1662-7a5c-439e-b62f-e91dae883c35 symbol=001230 side=buy odno=0000020339
+2026-05-31 08:19:35 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:35 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000020339 "HTTP/1.1 200 OK"
+2026-05-31 08:19:35 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:35 [INFO] [64/92] Processing order=c951494b-8148-4b27-b278-0324d4bc5dca symbol=001800 side=buy odno=0000019750
+2026-05-31 08:19:37 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:37 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000019750 "HTTP/1.1 200 OK"
+2026-05-31 08:19:37 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:37 [INFO] [65/92] Processing order=46ed64f2-7824-436f-910a-be3e98dbd825 symbol=000270 side=buy odno=0000019729
+2026-05-31 08:19:39 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:39 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000019729 "HTTP/1.1 200 OK"
+2026-05-31 08:19:39 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:39 [INFO] [66/92] Processing order=44428ed1-0869-4a79-985a-9449aa1761ac symbol=000810 side=buy odno=0000019722
+2026-05-31 08:19:40 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:40 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000019722 "HTTP/1.1 200 OK"
+2026-05-31 08:19:40 [INFO]   → SKIP (already expired, no change needed)
+2026-05-31 08:19:40 [INFO] [67/92] Processing order=06ecebbc-f6d7-4ba7-bc71-13f5f2f9c84a symbol=007070 side=buy odno=0000018760
+2026-05-31 08:19:42 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:42 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000018760 "HTTP/1.1 200 OK"
+2026-05-31 08:19:42 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:42 [INFO] [68/92] Processing order=d6ceb951-9ed2-4ec7-922c-f91da9e70b0f symbol=001230 side=buy odno=0000017936
+2026-05-31 08:19:44 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:44 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000017936 "HTTP/1.1 200 OK"
+2026-05-31 08:19:44 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:44 [INFO] [69/92] Processing order=d82d1f32-c518-4893-9837-bb8c7366b9e7 symbol=000880 side=buy odno=0000017930
+2026-05-31 08:19:45 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:45 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000017930 "HTTP/1.1 200 OK"
+2026-05-31 08:19:45 [INFO]   → SKIP (already expired, no change needed)
+2026-05-31 08:19:45 [INFO] [70/92] Processing order=89d8c20c-4fd8-4692-aa85-8def9d60f10c symbol=001230 side=buy odno=0000017388
+2026-05-31 08:19:47 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:47 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000017388 "HTTP/1.1 200 OK"
+2026-05-31 08:19:47 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:47 [INFO] [71/92] Processing order=edf06c86-e612-4240-b8cd-ea8eb3cbd7e0 symbol=004000 side=buy odno=0000014584
+2026-05-31 08:19:49 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:49 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000014584 "HTTP/1.1 200 OK"
+2026-05-31 08:19:49 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:49 [INFO] [72/92] Processing order=5ad494a1-ce44-476c-b420-1e5e0a0deea8 symbol=001450 side=buy odno=0000010816
+2026-05-31 08:19:50 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:50 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000010816 "HTTP/1.1 200 OK"
+2026-05-31 08:19:50 [INFO]   → SKIP (already expired, no change needed)
+2026-05-31 08:19:50 [INFO] [73/92] Processing order=c44c9669-0c39-4de9-aa47-702fbb81a208 symbol=003490 side=buy odno=0000008719
+2026-05-31 08:19:52 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:52 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000008719 "HTTP/1.1 200 OK"
+2026-05-31 08:19:52 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:52 [INFO] [74/92] Processing order=0d422573-613d-4bcc-9b84-c8fe3411262e symbol=001450 side=buy odno=0000008707
+2026-05-31 08:19:53 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:54 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000008707 "HTTP/1.1 200 OK"
+2026-05-31 08:19:54 [INFO]   → SKIP (already expired, no change needed)
+2026-05-31 08:19:54 [INFO] [75/92] Processing order=6f4bd64c-8b76-4f16-a2af-52e7467324ec symbol=000270 side=buy odno=0000008675
+2026-05-31 08:19:55 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:55 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000008675 "HTTP/1.1 200 OK"
+2026-05-31 08:19:55 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:55 [INFO] [76/92] Processing order=67bc0886-1018-4b99-a9bd-0e1893539a4a symbol=001800 side=buy odno=0000007144
+2026-05-31 08:19:57 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:57 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000007144 "HTTP/1.1 200 OK"
+2026-05-31 08:19:57 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:57 [INFO] [77/92] Processing order=44294355-0389-4742-90a0-d7f67e2a0dba symbol=001450 side=buy odno=0000007146
+2026-05-31 08:19:58 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:19:59 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000007146 "HTTP/1.1 200 OK"
+2026-05-31 08:19:59 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:19:59 [INFO] [78/92] Processing order=da02eefc-32f5-43e6-a561-91873f6e9916 symbol=000270 side=buy odno=0000007109
+2026-05-31 08:20:00 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:20:00 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000007109 "HTTP/1.1 200 OK"
+2026-05-31 08:20:00 [INFO]   → SKIP (conflict): position_verdict=position_delta_filled
+2026-05-31 08:20:00 [INFO] [79/92] Processing order=12bc28b8-cf2f-4658-b264-a1f5f74b85c6 symbol=000150 side=buy odno=0000006584
+2026-05-31 08:20:02 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:20:02 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000006584 "HTTP/1.1 200 OK"
+2026-05-31 08:20:02 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:20:02 [INFO] [80/92] Processing order=754df4a9-4ba3-4492-a6aa-d2ba9a023794 symbol=000270 side=buy odno=0000006563
+2026-05-31 08:20:03 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:20:03 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000006563 "HTTP/1.1 200 OK"
+2026-05-31 08:20:03 [INFO]   → SKIP (conflict): position_verdict=position_delta_filled
+2026-05-31 08:20:03 [INFO] [81/92] Processing order=9df6769d-d4ce-4458-9267-52128818840b symbol=001740 side=buy odno=0000006069
+2026-05-31 08:20:05 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:20:05 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000006069 "HTTP/1.1 200 OK"
+2026-05-31 08:20:05 [INFO]   → SKIP (already expired, no change needed)
+2026-05-31 08:20:05 [INFO] [82/92] Processing order=00c2a212-f042-4d0f-b8d1-f1e875a0dbef symbol=003490 side=buy odno=0000006059
+2026-05-31 08:20:07 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:20:07 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000006059 "HTTP/1.1 200 OK"
+2026-05-31 08:20:07 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:20:07 [INFO] [83/92] Processing order=d31f7d38-cd89-4509-b90e-d2860e36bdf8 symbol=000150 side=buy odno=0000006009
+2026-05-31 08:20:08 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:20:08 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000006009 "HTTP/1.1 200 OK"
+2026-05-31 08:20:08 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:20:08 [INFO] [84/92] Processing order=28acd291-55c5-46b2-9bd5-c2a1dc70a0b2 symbol=000270 side=buy odno=0000006006
+2026-05-31 08:20:10 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:20:10 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000006006 "HTTP/1.1 200 OK"
+2026-05-31 08:20:10 [INFO]   → SKIP (conflict): position_verdict=position_delta_filled
+2026-05-31 08:20:10 [INFO] [85/92] Processing order=76a963d3-71a4-4641-8fcd-a5dc17b2e137 symbol=003490 side=buy odno=0000005612
+2026-05-31 08:20:12 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:20:12 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000005612 "HTTP/1.1 200 OK"
+2026-05-31 08:20:12 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:20:12 [INFO] [86/92] Processing order=2b836827-cc3a-4bae-a94e-c999292312ff symbol=001450 side=buy odno=0000005596
+2026-05-31 08:20:13 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:20:13 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000005596 "HTTP/1.1 200 OK"
+2026-05-31 08:20:13 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:20:13 [INFO] [87/92] Processing order=e70e5b1b-8ce3-4fc3-b0b9-fbdbeb5a502a symbol=000270 side=buy odno=0000005555
+2026-05-31 08:20:15 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:20:15 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000005555 "HTTP/1.1 200 OK"
+2026-05-31 08:20:15 [INFO]   → SKIP (conflict): position_verdict=position_delta_filled
+2026-05-31 08:20:15 [INFO] [88/92] Processing order=fe67b1ac-6dd6-44ec-b741-2bbd4f35ceb5 symbol=001450 side=buy odno=0000003571
+2026-05-31 08:20:17 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:20:17 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000003571 "HTTP/1.1 200 OK"
+2026-05-31 08:20:17 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:20:17 [INFO] [89/92] Processing order=9eef50dd-8a4c-4f63-8f8c-c5d844a87241 symbol=000270 side=buy odno=0000003525
+2026-05-31 08:20:18 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:20:18 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000003525 "HTTP/1.1 200 OK"
+2026-05-31 08:20:18 [INFO]   → SKIP (conflict): position_verdict=position_delta_filled
+2026-05-31 08:20:18 [INFO] [90/92] Processing order=593460fd-e924-4523-bf4f-fce3e3e61b27 symbol=000990 side=buy odno=0000000750
+2026-05-31 08:20:20 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:20:20 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000000750 "HTTP/1.1 200 OK"
+2026-05-31 08:20:20 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:20:20 [INFO] [91/92] Processing order=609c1ab6-2ddb-4c1c-92ac-101c2740e25c symbol=000150 side=buy odno=0000000749
+2026-05-31 08:20:21 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:20:22 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000000749 "HTTP/1.1 200 OK"
+2026-05-31 08:20:22 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+2026-05-31 08:20:22 [INFO] [92/92] Processing order=28b3d35d-160b-428e-949e-07bf618f11a7 symbol=000150 side=buy odno=0000000673
+2026-05-31 08:20:23 [INFO] paper_access_token token cache: hit path=.cache/kis_token.json
+2026-05-31 08:20:23 [INFO] HTTP Request: GET https://openapivts.koreainvestment.com:29443/uapi/domestic-stock/v1/trading/inquire-daily-ccld?CANO=50186448&ACNT_PRDT_CD=01&INQR_STRT_DT=20260525&INQR_END_DT=20260531&SLL_BUY_DVSN_CD=00&INQR_DVSN=00&PDNO=&ORD_GNO_BRNO=00000&CCLD_DVSN=00&INQR_DVSN_1=&INQR_DVSN_3=00&EXCG_ID_DVSN_CD=KRX&ORD_GUBUN=00&ORD_SRT_DVSN=01&CTX_AREA_FK100=&CTX_AREA_NK100=&ODNO=0000000673 "HTTP/1.1 200 OK"
+2026-05-31 08:20:23 [INFO]   → SKIP (conflict): position_verdict=position_delta_partial
+{
+  "date_range": {
+    "from": "2026-05-28",
+    "to": "2026-05-29"
+  },
+  "dry_run": true,
+  "total": 92,
+  "auto_fix_safe": 17,
+  "truth_probe_conflict": 75,
+  "manual": 0,
+  "applied": {
+    "filled": 0,
+    "partially_filled": 0
+  },
+  "orders": [
+    {
+      "order_request_id": "a3616426-7eac-4b6e-8b4d-7a0d4bf4c9f6",
+      "symbol": "004000",
+      "side": "buy",
+      "requested_qty": "36.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "3059e254-8582-4731-8683-691b387d2a1c",
+      "symbol": "001800",
+      "side": "buy",
+      "requested_qty": "76.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "e82bb4a7-2985-4259-bf35-e4b1e45708e3",
+      "symbol": "000810",
+      "side": "buy",
+      "requested_qty": "3.00000000",
+      "classification": "auto_fix_safe",
+      "target_status": null,
+      "verdict": "expired_confirmed",
+      "match_method": "direct_odno",
+      "reason": "Already expired confirmed, no change needed"
+    },
+    {
+      "order_request_id": "2a12c8d2-8e75-4ead-ba5f-d6edac6f45c7",
+      "symbol": "004000",
+      "side": "buy",
+      "requested_qty": "37.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "843fadae-b8d6-4dd2-80d9-601af2d8cf76",
+      "symbol": "001450",
+      "side": "buy",
+      "requested_qty": "56.00000000",
+      "classification": "auto_fix_safe",
+      "target_status": null,
+      "verdict": "expired_confirmed",
+      "match_method": "direct_odno",
+      "reason": "Already expired confirmed, no change needed"
+    },
+    {
+      "order_request_id": "ed6f4413-37d6-4775-b3bc-467ed4622af8",
+      "symbol": "000270",
+      "side": "buy",
+      "requested_qty": "11.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "4f42e7d6-0e7e-4b22-855f-a4721ac7c25d",
+      "symbol": "007070",
+      "side": "buy",
+      "requested_qty": "60.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "b21ccf3f-05ec-482d-92e2-be73d36c6fcc",
+      "symbol": "003490",
+      "side": "buy",
+      "requested_qty": "57.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "89e9745e-6ee7-4c01-9ec9-41b200e503bf",
+      "symbol": "003490",
+      "side": "buy",
+      "requested_qty": "61.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "c613ab11-c8d8-4536-9a96-03fe9dbe4c04",
+      "symbol": "001800",
+      "side": "buy",
+      "requested_qty": "66.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "3c09e511-6f20-4065-bc46-9c38d47c64d4",
+      "symbol": "000810",
+      "side": "buy",
+      "requested_qty": "3.00000000",
+      "classification": "auto_fix_safe",
+      "target_status": null,
+      "verdict": "expired_confirmed",
+      "match_method": "direct_odno",
+      "reason": "Already expired confirmed, no change needed"
+    },
+    {
+      "order_request_id": "b8326b84-a0ef-44da-a8b2-7dac7cfa350e",
+      "symbol": "003490",
+      "side": "buy",
+      "requested_qty": "79.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "95b81cd4-6a05-4e85-b74c-1d079bb018bf",
+      "symbol": "001450",
+      "side": "buy",
+      "requested_qty": "61.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "40aa1119-920c-46f2-8bc9-a62a618896a2",
+      "symbol": "000100",
+      "side": "buy",
+      "requested_qty": "25.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "6097d661-528c-4943-9f73-0ed16b25ea9e",
+      "symbol": "000660",
+      "side": "buy",
+      "requested_qty": "10.00000000",
+      "classification": "auto_fix_safe",
+      "target_status": null,
+      "verdict": "expired_confirmed",
+      "match_method": "direct_odno",
+      "reason": "Already expired confirmed, no change needed"
+    },
+    {
+      "order_request_id": "89cc9d2a-8dac-4d0f-a18f-478c76661df8",
+      "symbol": "007070",
+      "side": "buy",
+      "requested_qty": "90.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "5fd1313b-0903-47de-aa91-a9bdf5eef846",
+      "symbol": "003490",
+      "side": "buy",
+      "requested_qty": "85.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "69268c40-c817-425f-ad7f-ab69b4d8bb21",
+      "symbol": "000810",
+      "side": "buy",
+      "requested_qty": "4.00000000",
+      "classification": "auto_fix_safe",
+      "target_status": null,
+      "verdict": "expired_confirmed",
+      "match_method": "direct_odno",
+      "reason": "Already expired confirmed, no change needed"
+    },
+    {
+      "order_request_id": "fead9830-26ef-4a98-ba52-43a7a885516b",
+      "symbol": "000270",
+      "side": "buy",
+      "requested_qty": "13.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "faf087f4-f9d1-429f-a256-e64a232f0044",
+      "symbol": "004000",
+      "side": "buy",
+      "requested_qty": "50.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "f04d8d21-dda2-4efa-aac0-19bb729dde6c",
+      "symbol": "000270",
+      "side": "buy",
+      "requested_qty": "15.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "123b410b-4a79-464e-8567-7213b09636d2",
+      "symbol": "000150",
+      "side": "buy",
+      "requested_qty": "10.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "fe5555d2-c438-41f8-aaa5-efd8ff54c50b",
+      "symbol": "003490",
+      "side": "buy",
+      "requested_qty": "100.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "a17f49c0-e382-41ad-bc93-d9f424b35aa7",
+      "symbol": "000100",
+      "side": "buy",
+      "requested_qty": "32.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "da993eb6-78de-42fa-8b0f-413fcf53a564",
+      "symbol": "000270",
+      "side": "buy",
+      "requested_qty": "15.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "50b6eb27-b4f2-40af-a552-3cb281f84475",
+      "symbol": "004000",
+      "side": "buy",
+      "requested_qty": "44.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "26bc13c4-ad3f-4789-b3ba-e8c56664f9b1",
+      "symbol": "001800",
+      "side": "buy",
+      "requested_qty": "92.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "9cf7d5eb-d5b6-4c07-893f-bf2bfa4519df",
+      "symbol": "000270",
+      "side": "buy",
+      "requested_qty": "13.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "a69a6fca-e443-4e0e-ac3b-0942554a24a9",
+      "symbol": "000660",
+      "side": "sell",
+      "requested_qty": "1.00000000",
+      "classification": "auto_fix_safe",
+      "target_status": null,
+      "verdict": "expired_confirmed",
+      "match_method": "direct_odno",
+      "reason": "Already expired confirmed, no change needed"
+    },
+    {
+      "order_request_id": "de6a1741-9618-4c1e-a09f-ef30c0bb2faa",
+      "symbol": "003490",
+      "side": "buy",
+      "requested_qty": "105.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "c316b8f9-327c-40cf-b65e-68f9e6a3202c",
+      "symbol": "000990",
+      "side": "buy",
+      "requested_qty": "15.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "614c74e4-7c8a-4df2-8f14-e9124bc8c24b",
+      "symbol": "000270",
+      "side": "buy",
+      "requested_qty": "16.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "24538148-0673-44dc-8a64-a38d295acbf8",
+      "symbol": "000660",
+      "side": "buy",
+      "requested_qty": "10.00000000",
+      "classification": "auto_fix_safe",
+      "target_status": null,
+      "verdict": "expired_confirmed",
+      "match_method": "direct_odno",
+      "reason": "Already expired confirmed, no change needed"
+    },
+    {
+      "order_request_id": "f23d8f0b-52c6-4939-813e-2359c32295c6",
+      "symbol": "001800",
+      "side": "buy",
+      "requested_qty": "118.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "11fd02c6-a8be-4479-8866-a80d95a2c825",
+      "symbol": "000810",
+      "side": "buy",
+      "requested_qty": "5.00000000",
+      "classification": "auto_fix_safe",
+      "target_status": null,
+      "verdict": "expired_confirmed",
+      "match_method": "direct_odno",
+      "reason": "Already expired confirmed, no change needed"
+    },
+    {
+      "order_request_id": "8da5bda8-4f7d-4212-9253-8b04d3a7a712",
+      "symbol": "000270",
+      "side": "buy",
+      "requested_qty": "17.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "5e3c99b3-1d73-44ab-a29a-762e2c973047",
+      "symbol": "004000",
+      "side": "buy",
+      "requested_qty": "51.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "de7f652a-da93-49c0-b194-478742b77e64",
+      "symbol": "000270",
+      "side": "buy",
+      "requested_qty": "15.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "5ead737f-8c7a-47ba-9563-673d24e62597",
+      "symbol": "000150",
+      "side": "sell",
+      "requested_qty": "1.00000000",
+      "classification": "auto_fix_safe",
+      "target_status": null,
+      "verdict": "expired_confirmed",
+      "match_method": "direct_odno",
+      "reason": "Already expired confirmed, no change needed"
+    },
+    {
+      "order_request_id": "a5b5290c-58c7-4f5a-8062-32bb2046f79a",
+      "symbol": "004000",
+      "side": "buy",
+      "requested_qty": "39.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "57ead625-a044-40c6-8785-07093a1ad754",
+      "symbol": "001450",
+      "side": "sell",
+      "requested_qty": "3.00000000",
+      "classification": "auto_fix_safe",
+      "target_status": null,
+      "verdict": "expired_confirmed",
+      "match_method": "direct_odno",
+      "reason": "Already expired confirmed, no change needed"
+    },
+    {
+      "order_request_id": "7f04a90f-30d0-4335-8274-6e486f86b3ee",
+      "symbol": "001800",
+      "side": "buy",
+      "requested_qty": "82.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "be563596-6838-4331-a7a0-169b8c15d352",
+      "symbol": "000100",
+      "side": "buy",
+      "requested_qty": "24.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "61d6c8ab-faf6-464b-b37a-b8cc864f9b18",
+      "symbol": "007070",
+      "side": "buy",
+      "requested_qty": "105.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "faa3dc4e-3974-4c97-8cf0-9ea5d8cd8106",
+      "symbol": "003490",
+      "side": "buy",
+      "requested_qty": "99.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "a30c1f50-de39-449d-9886-6b23ef82c3fa",
+      "symbol": "001800",
+      "side": "buy",
+      "requested_qty": "106.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "fa715078-f5d1-444f-8ea8-0a0cefeab55d",
+      "symbol": "000100",
+      "side": "buy",
+      "requested_qty": "31.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "b7b9dbc8-657b-4ecf-9bc5-98f424c88783",
+      "symbol": "003490",
+      "side": "buy",
+      "requested_qty": "99.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "469b322f-47bc-422e-b5c8-ec6c7f557e5c",
+      "symbol": "000150",
+      "side": "buy",
+      "requested_qty": "10.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "f41bc0a1-eddb-425a-8849-c23e6d041c3c",
+      "symbol": "004000",
+      "side": "buy",
+      "requested_qty": "50.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "524fdcdb-81cc-4efe-b732-0f9237406173",
+      "symbol": "000150",
+      "side": "buy",
+      "requested_qty": "10.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "0f755582-a288-4ab9-9fe2-d97907b0e3c8",
+      "symbol": "000100",
+      "side": "buy",
+      "requested_qty": "31.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "0a3d01f3-829a-49dd-82dc-4309e49eca76",
+      "symbol": "004000",
+      "side": "buy",
+      "requested_qty": "50.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "c2984c4a-4068-491f-aa40-9c6f268054dd",
+      "symbol": "000150",
+      "side": "buy",
+      "requested_qty": "10.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "420b960c-8157-40da-ba1b-75a7dc9059cd",
+      "symbol": "000660",
+      "side": "sell",
+      "requested_qty": "1.00000000",
+      "classification": "auto_fix_safe",
+      "target_status": null,
+      "verdict": "expired_confirmed",
+      "match_method": "direct_odno",
+      "reason": "Already expired confirmed, no change needed"
+    },
+    {
+      "order_request_id": "2130298a-b9f0-47c0-b6c0-9dc22b1f9854",
+      "symbol": "007070",
+      "side": "buy",
+      "requested_qty": "107.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "081907d7-bcd6-45c1-9e55-06b1868f4cdd",
+      "symbol": "003490",
+      "side": "buy",
+      "requested_qty": "101.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "a1ecb21f-bf28-409a-8a1f-a518864dfe35",
+      "symbol": "000100",
+      "side": "buy",
+      "requested_qty": "32.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "1492e1b7-5af4-43f1-a429-1add2a90fb85",
+      "symbol": "000270",
+      "side": "buy",
+      "requested_qty": "16.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "a8633884-baee-421c-b084-6636b75555d7",
+      "symbol": "001800",
+      "side": "buy",
+      "requested_qty": "109.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "f70c2da7-5015-487c-a94a-60e36c4bbc6e",
+      "symbol": "000100",
+      "side": "buy",
+      "requested_qty": "32.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "445639d9-1a93-4158-a3e1-cfc472e24029",
+      "symbol": "001740",
+      "side": "buy",
+      "requested_qty": "226.00000000",
+      "classification": "auto_fix_safe",
+      "target_status": null,
+      "verdict": "expired_confirmed",
+      "match_method": "direct_odno",
+      "reason": "Already expired confirmed, no change needed"
+    },
+    {
+      "order_request_id": "b36b1662-7a5c-439e-b62f-e91dae883c35",
+      "symbol": "001230",
+      "side": "buy",
+      "requested_qty": "1330.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "c951494b-8148-4b27-b278-0324d4bc5dca",
+      "symbol": "001800",
+      "side": "buy",
+      "requested_qty": "115.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "46ed64f2-7824-436f-910a-be3e98dbd825",
+      "symbol": "000270",
+      "side": "buy",
+      "requested_qty": "17.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "44428ed1-0869-4a79-985a-9449aa1761ac",
+      "symbol": "000810",
+      "side": "buy",
+      "requested_qty": "5.00000000",
+      "classification": "auto_fix_safe",
+      "target_status": null,
+      "verdict": "expired_confirmed",
+      "match_method": "direct_odno",
+      "reason": "Already expired confirmed, no change needed"
+    },
+    {
+      "order_request_id": "06ecebbc-f6d7-4ba7-bc71-13f5f2f9c84a",
+      "symbol": "007070",
+      "side": "buy",
+      "requested_qty": "113.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "d6ceb951-9ed2-4ec7-922c-f91da9e70b0f",
+      "symbol": "001230",
+      "side": "buy",
+      "requested_qty": "1405.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "d82d1f32-c518-4893-9837-bb8c7366b9e7",
+      "symbol": "000880",
+      "side": "buy",
+      "requested_qty": "20.00000000",
+      "classification": "auto_fix_safe",
+      "target_status": null,
+      "verdict": "expired_confirmed",
+      "match_method": "direct_odno",
+      "reason": "Already expired confirmed, no change needed"
+    },
+    {
+      "order_request_id": "89d8c20c-4fd8-4692-aa85-8def9d60f10c",
+      "symbol": "001230",
+      "side": "buy",
+      "requested_qty": "1405.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "edf06c86-e612-4240-b8cd-ea8eb3cbd7e0",
+      "symbol": "004000",
+      "side": "buy",
+      "requested_qty": "55.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "5ad494a1-ce44-476c-b420-1e5e0a0deea8",
+      "symbol": "001450",
+      "side": "buy",
+      "requested_qty": "83.00000000",
+      "classification": "auto_fix_safe",
+      "target_status": null,
+      "verdict": "expired_confirmed",
+      "match_method": "direct_odno",
+      "reason": "Already expired confirmed, no change needed"
+    },
+    {
+      "order_request_id": "c44c9669-0c39-4de9-aa47-702fbb81a208",
+      "symbol": "003490",
+      "side": "buy",
+      "requested_qty": "109.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "0d422573-613d-4bcc-9b84-c8fe3411262e",
+      "symbol": "001450",
+      "side": "buy",
+      "requested_qty": "84.00000000",
+      "classification": "auto_fix_safe",
+      "target_status": null,
+      "verdict": "expired_confirmed",
+      "match_method": "direct_odno",
+      "reason": "Already expired confirmed, no change needed"
+    },
+    {
+      "order_request_id": "6f4bd64c-8b76-4f16-a2af-52e7467324ec",
+      "symbol": "000270",
+      "side": "buy",
+      "requested_qty": "17.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "67bc0886-1018-4b99-a9bd-0e1893539a4a",
+      "symbol": "001800",
+      "side": "buy",
+      "requested_qty": "93.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "44294355-0389-4742-90a0-d7f67e2a0dba",
+      "symbol": "001450",
+      "side": "buy",
+      "requested_qty": "67.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "da02eefc-32f5-43e6-a561-91873f6e9916",
+      "symbol": "000270",
+      "side": "buy",
+      "requested_qty": "13.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_filled",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_filled"
+    },
+    {
+      "order_request_id": "12bc28b8-cf2f-4658-b264-a1f5f74b85c6",
+      "symbol": "000150",
+      "side": "buy",
+      "requested_qty": "10.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "754df4a9-4ba3-4492-a6aa-d2ba9a023794",
+      "symbol": "000270",
+      "side": "buy",
+      "requested_qty": "19.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_filled",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_filled"
+    },
+    {
+      "order_request_id": "9df6769d-d4ce-4458-9267-52128818840b",
+      "symbol": "001740",
+      "side": "buy",
+      "requested_qty": "268.00000000",
+      "classification": "auto_fix_safe",
+      "target_status": null,
+      "verdict": "expired_confirmed",
+      "match_method": "direct_odno",
+      "reason": "Already expired confirmed, no change needed"
+    },
+    {
+      "order_request_id": "00c2a212-f042-4d0f-b8d1-f1e875a0dbef",
+      "symbol": "003490",
+      "side": "buy",
+      "requested_qty": "121.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "d31f7d38-cd89-4509-b90e-d2860e36bdf8",
+      "symbol": "000150",
+      "side": "buy",
+      "requested_qty": "10.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "28acd291-55c5-46b2-9bd5-c2a1dc70a0b2",
+      "symbol": "000270",
+      "side": "buy",
+      "requested_qty": "19.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_filled",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_filled"
+    },
+    {
+      "order_request_id": "76a963d3-71a4-4641-8fcd-a5dc17b2e137",
+      "symbol": "003490",
+      "side": "buy",
+      "requested_qty": "121.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "2b836827-cc3a-4bae-a94e-c999292312ff",
+      "symbol": "001450",
+      "side": "buy",
+      "requested_qty": "93.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "e70e5b1b-8ce3-4fc3-b0b9-fbdbeb5a502a",
+      "symbol": "000270",
+      "side": "buy",
+      "requested_qty": "19.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_filled",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_filled"
+    },
+    {
+      "order_request_id": "fe67b1ac-6dd6-44ec-b741-2bbd4f35ceb5",
+      "symbol": "001450",
+      "side": "buy",
+      "requested_qty": "93.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "9eef50dd-8a4c-4f63-8f8c-c5d844a87241",
+      "symbol": "000270",
+      "side": "buy",
+      "requested_qty": "19.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_filled",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_filled"
+    },
+    {
+      "order_request_id": "593460fd-e924-4523-bf4f-fce3e3e61b27",
+      "symbol": "000990",
+      "side": "buy",
+      "requested_qty": "17.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "609c1ab6-2ddb-4c1c-92ac-101c2740e25c",
+      "symbol": "000150",
+      "side": "buy",
+      "requested_qty": "10.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    },
+    {
+      "order_request_id": "28b3d35d-160b-428e-949e-07bf618f11a7",
+      "symbol": "000150",
+      "side": "buy",
+      "requested_qty": "10.00000000",
+      "classification": "truth_probe_conflict",
+      "target_status": null,
+      "verdict": "position_delta_partial",
+      "match_method": "direct_odno",
+      "reason": "position_verdict=position_delta_partial"
+    }
+  ]
+}

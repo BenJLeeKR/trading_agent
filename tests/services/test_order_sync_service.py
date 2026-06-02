@@ -360,6 +360,162 @@ class TestSyncChainTransition:
         assert updated_order.status == OrderStatus.FILLED
 
 
+class TestAfterHoursSubmittedExpiry:
+    """After-hours에서 progress 없는 SELL submitted 주문은 grace 이후 EXPIRED."""
+
+    async def test_submitted_stale_expires_after_hours(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        created_at = datetime.now(timezone.utc) - timedelta(hours=2)
+        order = _make_order(repos, status=OrderStatus.SUBMITTED, client_order_id="AH-EXPIRE-001")
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            created_at=created_at,
+            updated_at=created_at,
+            submitted_at=created_at,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_status="submitted",
+            created_at=created_at,
+        )
+        broker = _StubBroker(status=OrderStatus.SUBMITTED)
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+            after_hours=True,
+        )
+
+        assert result.status_changed is True
+        assert result.current_status == OrderStatus.EXPIRED
+        assert result.terminal is True
+
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.EXPIRED
+
+        updated_bo = await repos.broker_orders.get(broker_order.broker_order_id)
+        assert updated_bo is not None
+        assert updated_bo.broker_status == "expired"
+
+    async def test_submitted_recent_kept_during_after_hours_grace(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        created_at = datetime.now(timezone.utc) - timedelta(minutes=20)
+        order = _make_order(repos, status=OrderStatus.SUBMITTED, client_order_id="AH-EXPIRE-002")
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            created_at=created_at,
+            updated_at=created_at,
+            submitted_at=created_at,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_status="submitted",
+            created_at=created_at,
+        )
+        broker = _StubBroker(status=OrderStatus.SUBMITTED)
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+            after_hours=True,
+        )
+
+        assert result.status_changed is False
+        assert result.current_status == OrderStatus.SUBMITTED
+        assert result.terminal is False
+
+    async def test_sell_submitted_old_reconcile_required_still_expires_after_hours(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        created_at = datetime.now(timezone.utc) - timedelta(hours=2)
+        order = _make_order(repos, status=OrderStatus.SUBMITTED, client_order_id="AH-EXPIRE-003")
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            created_at=created_at,
+            updated_at=created_at,
+            submitted_at=created_at,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_status="submitted",
+            created_at=created_at,
+        )
+        broker = _StubBroker(status=OrderStatus.RECONCILE_REQUIRED)
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+            after_hours=True,
+        )
+
+        assert result.status_changed is True
+        assert result.current_status == OrderStatus.EXPIRED
+        assert result.terminal is True
+
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.EXPIRED
+
+    async def test_buy_submitted_old_reconcile_required_kept_after_hours(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        created_at = datetime.now(timezone.utc) - timedelta(hours=2)
+        order = _make_order(repos, status=OrderStatus.SUBMITTED, client_order_id="AH-EXPIRE-004")
+        order = replace(
+            order,
+            side=OrderSide.BUY,
+            created_at=created_at,
+            updated_at=created_at,
+            submitted_at=created_at,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_status="submitted",
+            created_at=created_at,
+        )
+        broker = _StubBroker(status=OrderStatus.RECONCILE_REQUIRED)
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+            after_hours=True,
+        )
+
+        assert result.status_changed is True
+        assert result.current_status == OrderStatus.RECONCILE_REQUIRED
+        assert result.terminal is False
+
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.RECONCILE_REQUIRED
+
+
 # ═════════════════════════════════════════════════════════════════════
 # Test: Fill deduplication
 # ═════════════════════════════════════════════════════════════════════
@@ -1463,8 +1619,11 @@ class _MultiStatusBroker:
         self,
         account_ref: str,
         *,
+        client_order_id: str | None = None,
         broker_order_id: str,
         symbol: str | None = None,
+        order_side: OrderSide | None = None,
+        order_created_at: datetime | None = None,
     ) -> OrderStatusResult:
         status = self._overrides.get("__resolve__", self._default_status)
         return OrderStatusResult(
@@ -1541,6 +1700,217 @@ class TestReconcileRequiredSyncPolicy:
         )
 
         assert resolved == 3
+
+
+class TestTruthProbeBuyPositionInference:
+    """BUY truth probe + position snapshot 기반 안전 복구."""
+
+    async def test_submitted_buy_truth_probe_infers_filled(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.SUBMITTED,
+            client_order_id="BUY-TP-FILL-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.BUY,
+            requested_quantity=Decimal("37"),
+            created_at=now - timedelta(minutes=2),
+            submitted_at=now - timedelta(minutes=2),
+            updated_at=now - timedelta(minutes=2),
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_native_order_id="BRK-BUY-TP-FILL-001",
+            broker_status="submitted",
+            created_at=now - timedelta(minutes=2),
+        )
+
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("4"),
+            snapshot_time=now - timedelta(minutes=3),
+        )
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("41"),
+            snapshot_time=now - timedelta(minutes=1),
+        )
+
+        broker = _MultiStatusBroker(default_status=OrderStatus.SUBMITTED)
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+
+        updated = await repos.orders.get(order.order_request_id)
+        updated_bo = await repos.broker_orders.get(broker_order.broker_order_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.FILLED
+        assert updated_bo is not None
+        assert updated_bo.broker_status == "filled"
+        assert result.status_changed is True
+        assert result.current_status == OrderStatus.FILLED
+
+    async def test_submitted_buy_truth_probe_skips_when_overlap_delta_is_ambiguous(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.SUBMITTED,
+            client_order_id="BUY-TP-OVERLAP-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.BUY,
+            requested_quantity=Decimal("2"),
+            created_at=now - timedelta(minutes=3),
+            submitted_at=now - timedelta(minutes=3),
+            updated_at=now - timedelta(minutes=3),
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_native_order_id="BRK-BUY-TP-OVERLAP-001",
+            broker_status="submitted",
+            created_at=now - timedelta(minutes=3),
+        )
+
+        overlapping = _make_order(
+            repos,
+            status=OrderStatus.SUBMITTED,
+            client_order_id="BUY-TP-OVERLAP-002",
+        )
+        overlapping = replace(
+            overlapping,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            side=OrderSide.BUY,
+            requested_quantity=Decimal("3"),
+            created_at=now - timedelta(minutes=2),
+            submitted_at=now - timedelta(minutes=2),
+            updated_at=now - timedelta(minutes=2),
+        )
+        repos.orders._items[overlapping.order_request_id] = overlapping  # type: ignore[attr-defined]
+
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("0"),
+            snapshot_time=now - timedelta(minutes=4),
+        )
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("4"),
+            snapshot_time=now - timedelta(minutes=1),
+        )
+
+        broker = _MultiStatusBroker(default_status=OrderStatus.SUBMITTED)
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.SUBMITTED
+        assert result.status_changed is False
+
+    async def test_submitted_buy_truth_probe_infers_filled_for_exact_burst_cohort(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        first = _make_order(
+            repos,
+            status=OrderStatus.SUBMITTED,
+            client_order_id="BUY-TP-BURST-001",
+        )
+        first = replace(
+            first,
+            side=OrderSide.BUY,
+            requested_quantity=Decimal("2"),
+            created_at=now - timedelta(minutes=8),
+            submitted_at=now - timedelta(minutes=8),
+            updated_at=now - timedelta(minutes=8),
+        )
+        repos.orders._items[first.order_request_id] = first  # type: ignore[attr-defined]
+        first_bo = _make_broker_order(
+            repos,
+            first,
+            broker_native_order_id="BRK-BUY-TP-BURST-001",
+            broker_status="submitted",
+            created_at=now - timedelta(minutes=8),
+        )
+
+        second = _make_order(
+            repos,
+            status=OrderStatus.FILLED,
+            client_order_id="BUY-TP-BURST-002",
+        )
+        second = replace(
+            second,
+            account_id=first.account_id,
+            instrument_id=first.instrument_id,
+            side=OrderSide.BUY,
+            requested_quantity=Decimal("2"),
+            created_at=now - timedelta(minutes=1),
+            submitted_at=now - timedelta(minutes=1),
+            updated_at=now - timedelta(minutes=1),
+        )
+        repos.orders._items[second.order_request_id] = second  # type: ignore[attr-defined]
+
+        _make_position_snapshot(
+            repos,
+            account_id=first.account_id,
+            instrument_id=first.instrument_id,
+            quantity=Decimal("0"),
+            snapshot_time=now - timedelta(minutes=20),
+        )
+        _make_position_snapshot(
+            repos,
+            account_id=first.account_id,
+            instrument_id=first.instrument_id,
+            quantity=Decimal("4"),
+            snapshot_time=now,
+        )
+
+        broker = _MultiStatusBroker(default_status=OrderStatus.SUBMITTED)
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=first_bo.broker_order_id,
+        )
+
+        updated = await repos.orders.get(first.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.FILLED
+        assert result.status_changed is True
+        assert result.current_status == OrderStatus.FILLED
 
     async def test_sync_reconcile_required_no_broker_order_skipped(
         self,
@@ -2257,12 +2627,54 @@ class TestTransitionToAuthoritativeIsAfterHours:
         assert updated_order is not None
         assert updated_order.status == OrderStatus.RECONCILE_REQUIRED
 
-    async def test_after_hours_allows_expired_fallback_path_a(
+    async def test_reconcile_required_moves_back_to_submitted_when_broker_truth_submitted(
         self,
         sync_service: OrderSyncService,
         repos: RepositoryContainer,
     ) -> None:
-        """Path A (resolve_unknown_state 예외) + 장마감 후 → EXPIRED fallback 허용."""
+        """Broker truth가 submitted면 RECONCILE_REQUIRED를 다시 active 상태로 되돌린다."""
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="RECON-SUB-001",
+        )
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-RECON-SUB-001",
+        )
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            return_value=OrderStatusResult(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                client_order_id=order.client_order_id,
+                broker_order_id=broker_order.broker_native_order_id,
+                status=OrderStatus.SUBMITTED,
+                filled_quantity=Decimal("0"),
+                remaining_quantity=order.requested_quantity,
+                average_fill_price=None,
+                last_updated_at=datetime.now(timezone.utc),
+            ),
+        )
+
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=True,
+        )
+
+        assert result is not None
+        assert result.status == OrderStatus.SUBMITTED
+        updated_order = await repos.orders.get(order.order_request_id)
+        assert updated_order is not None
+        assert updated_order.status == OrderStatus.SUBMITTED
+
+    async def test_after_hours_buy_keeps_reconcile_required_path_a(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """Path A (resolve_unknown_state 예외) + BUY + 장마감 후 → RECONCILE_REQUIRED 유지."""
         now = datetime.now(timezone.utc)
         old_created_at = now - timedelta(minutes=45)  # 45분 전 (grace period 30분 초과)
         order = _make_order(
@@ -2291,13 +2703,45 @@ class TestTransitionToAuthoritativeIsAfterHours:
             is_after_hours=True,  # 장마감 후
         )
 
-        # EXPIRED fallback 허용
-        assert result is not None
-        assert result.status == OrderStatus.EXPIRED
+        assert result is None
 
         updated_order = await repos.orders.get(order.order_request_id)
         assert updated_order is not None
-        assert updated_order.status == OrderStatus.EXPIRED
+        assert updated_order.status == OrderStatus.RECONCILE_REQUIRED
+
+    async def test_after_hours_sell_allows_expired_fallback_path_a(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        old_created_at = now - timedelta(minutes=45)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="AH-A-SELL-001",
+        )
+        order = replace(order, side=OrderSide.SELL, requested_quantity=Decimal("10"),
+                        created_at=old_created_at)
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-AH-A-SELL",
+        )
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            side_effect=RuntimeError("Broker API timeout"),
+        )
+
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=True,
+        )
+
+        assert result is not None
+        assert result.status == OrderStatus.EXPIRED
 
     # ── Path B: resolve_unknown_state()가 RECONCILE_REQUIRED 반환 ──
 
@@ -2349,12 +2793,12 @@ class TestTransitionToAuthoritativeIsAfterHours:
         assert updated_order is not None
         assert updated_order.status == OrderStatus.RECONCILE_REQUIRED
 
-    async def test_after_hours_allows_expired_fallback_path_b(
+    async def test_after_hours_buy_keeps_reconcile_required_path_b(
         self,
         sync_service: OrderSyncService,
         repos: RepositoryContainer,
     ) -> None:
-        """Path B (resolve_unknown_state → RECONCILE_REQUIRED) + 장마감 후 → EXPIRED fallback 허용."""
+        """Path B (resolve_unknown_state → RECONCILE_REQUIRED) + BUY + 장마감 후 → RECONCILE_REQUIRED 유지."""
         now = datetime.now(timezone.utc)
         old_created_at = now - timedelta(minutes=45)  # 45분 전 (grace period 30분 초과)
         order = _make_order(
@@ -2392,13 +2836,54 @@ class TestTransitionToAuthoritativeIsAfterHours:
             is_after_hours=True,  # 장마감 후
         )
 
-        # EXPIRED fallback 허용
-        assert result is not None
-        assert result.status == OrderStatus.EXPIRED
+        assert result is None
 
         updated_order = await repos.orders.get(order.order_request_id)
         assert updated_order is not None
-        assert updated_order.status == OrderStatus.EXPIRED
+        assert updated_order.status == OrderStatus.RECONCILE_REQUIRED
+
+    async def test_after_hours_sell_allows_expired_fallback_path_b(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        old_created_at = now - timedelta(minutes=45)
+        order = _make_order(
+            repos,
+            status=OrderStatus.RECONCILE_REQUIRED,
+            client_order_id="AH-B-SELL-001",
+        )
+        order = replace(order, side=OrderSide.SELL, requested_quantity=Decimal("10"),
+                        created_at=old_created_at)
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+        broker_order = _make_broker_order(
+            repos, order, broker_native_order_id="BRK-AH-B-SELL",
+        )
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            return_value=OrderStatusResult(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                client_order_id="",
+                broker_order_id=broker_order.broker_native_order_id,
+                status=OrderStatus.RECONCILE_REQUIRED,
+                filled_quantity=Decimal("0"),
+                remaining_quantity=Decimal("0"),
+                average_fill_price=Decimal("0"),
+                last_updated_at=datetime.now(timezone.utc),
+            ),
+        )
+
+        result = await sync_service.transition_to_authoritative(
+            account_ref="test-account",
+            broker=broker,
+            order=order,
+            broker_order=broker_order,
+            is_after_hours=True,
+        )
+
+        assert result is not None
+        assert result.status == OrderStatus.EXPIRED
 
     # ── SELL position inference (Path A, 장중) ──
 
@@ -4822,6 +5307,52 @@ class TestExpiredSellPositionDeltaRecovery:
         updated = await repos.orders.get(order.order_request_id)
         assert updated is not None
         assert updated.status == OrderStatus.EXPIRED
+
+    async def test_expired_buy_submitted_truth_reopens_to_reconcile_required(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        """EXPIRED BUY + broker truth submitted → RECONCILE_REQUIRED로 재오픈."""
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.EXPIRED,
+            client_order_id="PD-BUY-REOPEN-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.BUY,
+            requested_quantity=Decimal("10"),
+            updated_at=now,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos, order,
+            broker_native_order_id="BRK-PD-BUY-REOPEN-001",
+            broker_status="expired",
+            created_at=now - timedelta(minutes=5),
+        )
+
+        broker = _StubBroker(status=OrderStatus.SUBMITTED)
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+
+        updated = await repos.orders.get(order.order_request_id)
+        updated_bo = await repos.broker_orders.get(broker_order.broker_order_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.RECONCILE_REQUIRED
+        assert updated_bo is not None
+        assert updated_bo.broker_status == "submitted"
+        assert result.status_changed is True
+        assert result.previous_status == OrderStatus.EXPIRED
+        assert result.current_status == OrderStatus.RECONCILE_REQUIRED
+        assert result.terminal is False
 
     async def test_expired_sell_broker_truth_takes_priority(
         self,

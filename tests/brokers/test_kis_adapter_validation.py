@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -246,6 +247,8 @@ class TestBuildKisAdapterRuntimeWiring:
         monkeypatch.setenv("KIS_APP_SECRET", "test-secret")
         monkeypatch.setenv("KIS_ACCOUNT_NO", "12345678")
         monkeypatch.setenv("KIS_ENV", "paper")
+        monkeypatch.setenv("KIS_LIVE_INFO_APP_KEY", "live-quote-key")
+        monkeypatch.setenv("KIS_LIVE_INFO_APP_SECRET", "live-quote-secret")
         monkeypatch.delenv("KIS_REAL_REST_RPS", raising=False)
         monkeypatch.delenv("KIS_PAPER_REST_RPS", raising=False)
 
@@ -256,6 +259,8 @@ class TestBuildKisAdapterRuntimeWiring:
         rest_client = adapter._rest
         assert rest_client.budget_manager is not None
         assert isinstance(rest_client.budget_manager, RateLimitBudgetManager)
+        assert rest_client.env == "paper"
+        assert adapter._quote_rest.env == "live"
 
         # Paper env → conservative bucket capacities
         # order=3 (Fix 3: capacity increased from 1→3)
@@ -266,6 +271,28 @@ class TestBuildKisAdapterRuntimeWiring:
         assert snap["market_data"]["capacity"] == 1
         # reconciliation=10 (기존: max(1, int(10 * total)) = max(1, 10) = 10)
         assert snap["reconciliation"]["capacity"] == 10
+
+    def test_build_kis_adapter_uses_shared_budget_file_in_paper(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Paper runtime wiring should use ``FileBackedGlobalBucket`` when configured."""
+        from agent_trading.brokers.shared_budget import FileBackedGlobalBucket
+        from agent_trading.config.settings import AppSettings
+        from agent_trading.runtime.bootstrap import _build_kis_adapter
+
+        monkeypatch.setenv("KIS_APP_KEY", "test-key")
+        monkeypatch.setenv("KIS_APP_SECRET", "test-secret")
+        monkeypatch.setenv("KIS_ACCOUNT_NO", "12345678")
+        monkeypatch.setenv("KIS_ENV", "paper")
+        monkeypatch.setenv("KIS_SHARED_BUDGET_FILE", str(tmp_path / "kis_paper_global_budget.json"))
+
+        settings = AppSettings()
+        adapter = _build_kis_adapter(settings)
+
+        rest_client = adapter._rest
+        assert isinstance(rest_client.budget_manager.global_rest, FileBackedGlobalBucket)
 
 
 class TestKisAdapterSubscriptionBudget:
@@ -305,18 +332,21 @@ class TestAdapterGetQuote:
     async def test_get_quote_calls_rest_with_symbol_only(
         self, adapter: KoreaInvestmentAdapter
     ) -> None:
-        """Adapter.get_quote(symbol, market) must call self._rest.get_quote(symbol)
+        """Adapter.get_quote(symbol, market) must call the quote client
         with only the symbol argument (not market) and map KIS keys correctly."""
-        mock_rest = AsyncMock(spec=KISRestClient)
-        mock_rest.get_quote = AsyncMock(
+        mock_quote_rest = AsyncMock(spec=KISRestClient)
+        mock_quote_rest.get_quote = AsyncMock(
             return_value={
                 "stck_prpr": "15000",
                 "stck_bidp": "14900",
                 "stck_askp": "15100",
             }
         )
+        mock_trade_rest = AsyncMock(spec=KISRestClient)
         original_rest = adapter._rest
-        adapter._rest = mock_rest
+        original_quote_rest = adapter._quote_rest
+        adapter._rest = mock_trade_rest
+        adapter._quote_rest = mock_quote_rest
         try:
             quote = await adapter.get_quote("005930", "KRX")
             assert quote.last == Decimal("15000")
@@ -324,106 +354,109 @@ class TestAdapterGetQuote:
             assert quote.ask == Decimal("15100")
             assert quote.symbol == "005930"
             assert quote.market == "KRX"
-            mock_rest.get_quote.assert_awaited_once_with("005930")
+            mock_quote_rest.get_quote.assert_awaited_once_with("005930")
+            mock_trade_rest.get_quote.assert_not_called()
         finally:
             adapter._rest = original_rest
+            adapter._quote_rest = original_quote_rest
 
     @pytest.mark.asyncio
     async def test_get_quote_empty_response(
         self, adapter: KoreaInvestmentAdapter
     ) -> None:
         """Adapter.get_quote() handles empty dict from rest client."""
-        mock_rest = AsyncMock(spec=KISRestClient)
-        mock_rest.get_quote = AsyncMock(return_value={})
-        original_rest = adapter._rest
-        adapter._rest = mock_rest
+        mock_quote_rest = AsyncMock(spec=KISRestClient)
+        mock_quote_rest.get_quote = AsyncMock(return_value={})
+        original_quote_rest = adapter._quote_rest
+        adapter._quote_rest = mock_quote_rest
         try:
             quote = await adapter.get_quote("005930", "KRX")
             assert quote.last is None
             assert quote.bid is None
             assert quote.ask is None
+            mock_quote_rest.get_quote.assert_awaited_once_with("005930")
         finally:
-            adapter._rest = original_rest
+            adapter._quote_rest = original_quote_rest
 
     @pytest.mark.asyncio
     async def test_get_quote_stck_prpr_with_comma(
         self, adapter: KoreaInvestmentAdapter
     ) -> None:
         """KIS returns comma-formatted string numbers (e.g. "67,200")."""
-        mock_rest = AsyncMock(spec=KISRestClient)
-        mock_rest.get_quote = AsyncMock(
+        mock_quote_rest = AsyncMock(spec=KISRestClient)
+        mock_quote_rest.get_quote = AsyncMock(
             return_value={
                 "stck_prpr": "67,200",
                 "stck_bidp": "67,100",
                 "stck_askp": "67,300",
             }
         )
-        original_rest = adapter._rest
-        adapter._rest = mock_rest
+        original_quote_rest = adapter._quote_rest
+        adapter._quote_rest = mock_quote_rest
         try:
             quote = await adapter.get_quote("005930", "KRX")
             assert quote.last == Decimal("67200")
             assert quote.bid == Decimal("67100")
             assert quote.ask == Decimal("67300")
         finally:
-            adapter._rest = original_rest
+            adapter._quote_rest = original_quote_rest
 
     @pytest.mark.asyncio
     async def test_get_quote_missing_stck_prpr(
         self, adapter: KoreaInvestmentAdapter
     ) -> None:
         """Missing stck_prpr key → last is None."""
-        mock_rest = AsyncMock(spec=KISRestClient)
-        mock_rest.get_quote = AsyncMock(
+        mock_quote_rest = AsyncMock(spec=KISRestClient)
+        mock_quote_rest.get_quote = AsyncMock(
             return_value={"stck_bidp": "14900", "stck_askp": "15100"}
         )
-        original_rest = adapter._rest
-        adapter._rest = mock_rest
+        original_quote_rest = adapter._quote_rest
+        adapter._quote_rest = mock_quote_rest
         try:
             quote = await adapter.get_quote("005930", "KRX")
             assert quote.last is None
             assert quote.bid == Decimal("14900")
             assert quote.ask == Decimal("15100")
         finally:
-            adapter._rest = original_rest
+            adapter._quote_rest = original_quote_rest
 
     @pytest.mark.asyncio
     async def test_get_quote_stck_prpr_is_none(
         self, adapter: KoreaInvestmentAdapter
     ) -> None:
         """stck_prpr is None → last is None."""
-        mock_rest = AsyncMock(spec=KISRestClient)
-        mock_rest.get_quote = AsyncMock(
+        mock_quote_rest = AsyncMock(spec=KISRestClient)
+        mock_quote_rest.get_quote = AsyncMock(
             return_value={"stck_prpr": None, "stck_bidp": None, "stck_askp": None}
         )
-        original_rest = adapter._rest
-        adapter._rest = mock_rest
+        original_quote_rest = adapter._quote_rest
+        adapter._quote_rest = mock_quote_rest
         try:
             quote = await adapter.get_quote("005930", "KRX")
             assert quote.last is None
             assert quote.bid is None
             assert quote.ask is None
         finally:
-            adapter._rest = original_rest
+            adapter._quote_rest = original_quote_rest
 
     @pytest.mark.asyncio
     async def test_get_quote_stck_prpr_invalid(
         self, adapter: KoreaInvestmentAdapter
     ) -> None:
         """stck_prpr is non-numeric → last is None (no crash)."""
-        mock_rest = AsyncMock(spec=KISRestClient)
-        mock_rest.get_quote = AsyncMock(
+        mock_quote_rest = AsyncMock(spec=KISRestClient)
+        mock_quote_rest.get_quote = AsyncMock(
             return_value={"stck_prpr": "N/A", "stck_bidp": "", "stck_askp": "---"}
         )
-        original_rest = adapter._rest
-        adapter._rest = mock_rest
+        original_quote_rest = adapter._quote_rest
+        adapter._quote_rest = mock_quote_rest
         try:
             quote = await adapter.get_quote("005930", "KRX")
             assert quote.last is None
             assert quote.bid is None
             assert quote.ask is None
         finally:
-            adapter._rest = original_rest
+            adapter._quote_rest = original_quote_rest
 
 
 class TestAdapterGetOrderbook:
@@ -436,17 +469,17 @@ class TestAdapterGetOrderbook:
         self, adapter: KoreaInvestmentAdapter
     ) -> None:
         """Adapter.get_orderbook(symbol, market) must call
-        self._rest.get_orderbook(symbol) with only the symbol argument
+        self._quote_rest.get_orderbook(symbol) with only the symbol argument
         and parse KIS askp/bidp keys into OrderBookLevel tuples."""
-        mock_rest = AsyncMock(spec=KISRestClient)
-        mock_rest.get_orderbook = AsyncMock(
+        mock_quote_rest = AsyncMock(spec=KISRestClient)
+        mock_quote_rest.get_orderbook = AsyncMock(
             return_value={
                 "bidp1": "50000", "bidp_rsqn1": "10",
                 "askp1": "50100", "askp_rsqn1": "5",
             }
         )
-        original_rest = adapter._rest
-        adapter._rest = mock_rest
+        original_quote_rest = adapter._quote_rest
+        adapter._quote_rest = mock_quote_rest
         try:
             ob = await adapter.get_orderbook("005930", "KRX")
             assert ob.symbol == "005930"
@@ -457,33 +490,33 @@ class TestAdapterGetOrderbook:
             assert ob.bids[0].quantity == Decimal("10")
             assert ob.asks[0].price == Decimal("50100")
             assert ob.asks[0].quantity == Decimal("5")
-            mock_rest.get_orderbook.assert_awaited_once_with("005930")
+            mock_quote_rest.get_orderbook.assert_awaited_once_with("005930")
         finally:
-            adapter._rest = original_rest
+            adapter._quote_rest = original_quote_rest
 
     @pytest.mark.asyncio
     async def test_get_orderbook_empty_response(
         self, adapter: KoreaInvestmentAdapter
     ) -> None:
         """Adapter.get_orderbook() handles empty dict from rest client."""
-        mock_rest = AsyncMock(spec=KISRestClient)
-        mock_rest.get_orderbook = AsyncMock(return_value={})
-        original_rest = adapter._rest
-        adapter._rest = mock_rest
+        mock_quote_rest = AsyncMock(spec=KISRestClient)
+        mock_quote_rest.get_orderbook = AsyncMock(return_value={})
+        original_quote_rest = adapter._quote_rest
+        adapter._quote_rest = mock_quote_rest
         try:
             ob = await adapter.get_orderbook("005930", "KRX")
             assert len(ob.bids) == 0
             assert len(ob.asks) == 0
         finally:
-            adapter._rest = original_rest
+            adapter._quote_rest = original_quote_rest
 
     @pytest.mark.asyncio
     async def test_get_orderbook_partial_levels(
         self, adapter: KoreaInvestmentAdapter
     ) -> None:
         """Only levels with both price and quantity are included."""
-        mock_rest = AsyncMock(spec=KISRestClient)
-        mock_rest.get_orderbook = AsyncMock(
+        mock_quote_rest = AsyncMock(spec=KISRestClient)
+        mock_quote_rest.get_orderbook = AsyncMock(
             return_value={
                 "bidp1": "50000", "bidp_rsqn1": "10",
                 "bidp2": "49900",  # missing bidp_rsqn2 → skip
@@ -491,14 +524,14 @@ class TestAdapterGetOrderbook:
                 "askp2": "50200", "askp_rsqn2": "3",
             }
         )
-        original_rest = adapter._rest
-        adapter._rest = mock_rest
+        original_quote_rest = adapter._quote_rest
+        adapter._quote_rest = mock_quote_rest
         try:
             ob = await adapter.get_orderbook("005930", "KRX")
             assert len(ob.bids) == 1  # level 2 skipped (no quantity)
             assert len(ob.asks) == 2
         finally:
-            adapter._rest = original_rest
+            adapter._quote_rest = original_quote_rest
 
 
 def _make_sell_request(

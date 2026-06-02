@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from dataclasses import dataclass, field, replace
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -25,6 +25,7 @@ from agent_trading.domain.entities import (
     InstrumentEntity,
     MarketSessionEntity,
     OrderRequestEntity,
+    OrderSubmissionAttemptEntity,
     OrderStateEventEntity,
     PositionSnapshotEntity,
     ReconciliationOrderLinkEntity,
@@ -101,7 +102,10 @@ class InMemoryAccountRepository:
         return None
 
     async def list_by_client(self, client_id: UUID) -> Sequence[AccountEntity]:
-        return tuple(item for item in self._items.values() if item.client_id == client_id)
+        return tuple(
+            item for item in self._items.values()
+            if item.client_id == client_id
+        )
 
     async def update_metadata(
         self,
@@ -257,7 +261,7 @@ class InMemoryInstrumentRepository:
         return [
             item
             for item in self._items.values()
-            if item.market_code == market_code and item.is_active
+            if item.market_code == market_code and item.is_active and item.symbol != 'E2ESUM'
         ]
 
 
@@ -325,6 +329,24 @@ class InMemoryPositionSnapshotRepository:
         if not candidates:
             return None
         candidates.sort(key=lambda item: item.snapshot_at, reverse=True)
+        return candidates[0]
+
+    async def get_earliest_by_account_and_instrument_after(
+        self,
+        account_id: UUID,
+        instrument_id: UUID,
+        after: datetime,
+    ) -> PositionSnapshotEntity | None:
+        candidates = [
+            item
+            for item in self._items.values()
+            if item.account_id == account_id
+            and item.instrument_id == instrument_id
+            and item.snapshot_at > after
+        ]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item.snapshot_at)
         return candidates[0]
 
     async def list_by_sync_run(
@@ -458,6 +480,21 @@ class InMemoryTradeDecisionRepository:
 class InMemoryOrderRepository:
     def __init__(self) -> None:
         self._items: dict[UUID, OrderRequestEntity] = {}
+        # E2E 계정 제외를 위한 account_code 패턴 목록
+        # PostgreSQL의 NOT LIKE 'E2E-%' 필터와 동기화
+        # account_code 기반 필터링은 account_id → account_code 매핑이 필요하므로,
+        # 실제 필터링은 _excluded_account_ids를 통해 account_id 레벨에서 수행됩니다.
+        self._excluded_account_code_patterns: list[str] = ['E2E-%']
+        self._excluded_account_ids: set[UUID] = set()
+
+    def exclude_account(self, account_id: UUID) -> None:
+        """Register an account UUID whose orders should be excluded from list()."""
+        self._excluded_account_ids.add(account_id)
+
+    def exclude_account_code(self, pattern: str) -> None:
+        """Register an account_code pattern whose orders should be excluded from list()."""
+        if pattern not in self._excluded_account_code_patterns:
+            self._excluded_account_code_patterns.append(pattern)
 
     async def add(self, order: OrderRequestEntity) -> OrderRequestEntity:
         self._items[order.order_request_id] = order
@@ -472,6 +509,9 @@ class InMemoryOrderRepository:
     async def list(self, query: OrderQuery) -> Sequence[OrderRequestEntity]:
         results: list[OrderRequestEntity] = []
         for item in self._items.values():
+            # E2E 계정(account_code가 'E2E-%' 패턴)의 주문 제외 (PostgreSQL NOT LIKE 'E2E-%' 필터와 동기화)
+            if item.account_id in self._excluded_account_ids:
+                continue
             if query.account_id is not None and item.account_id != query.account_id:
                 continue
             if query.client_order_id is not None and item.client_order_id != query.client_order_id:
@@ -506,6 +546,17 @@ class InMemoryOrderRepository:
         results.sort(key=lambda item: item.created_at or item.submitted_at, reverse=True)
         return tuple(results[: query.limit])
 
+    async def count(self, query: OrderQuery) -> int:
+        return len(await self.list(replace(query, limit=10**9)))
+
+    async def count_by_status(self, query: OrderQuery) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        items = await self.list(replace(query, limit=10**9))
+        for item in items:
+            key = item.status.value
+            counts[key] = counts.get(key, 0) + 1
+        return counts
+
     async def update_status(
         self,
         order_request_id: UUID,
@@ -513,6 +564,7 @@ class InMemoryOrderRepository:
         reason_code: str | None = None,
         reason_message: str | None = None,
         expected_version: int | None = None,
+        submitted_at: datetime | None = None,
     ) -> None:
         current = self._items[order_request_id]
         if expected_version is not None and current.version != expected_version:
@@ -526,6 +578,14 @@ class InMemoryOrderRepository:
             status=status,
             status_reason_code=reason_code,
             status_reason_message=reason_message,
+            submitted_at=(
+                submitted_at
+                or (
+                    datetime.now(timezone.utc)
+                    if status == OrderStatus.SUBMITTED and current.submitted_at is None
+                    else current.submitted_at
+                )
+            ),
             version=current.version + 1 if expected_version is not None else current.version,
         )
 
@@ -1511,6 +1571,168 @@ class InMemoryExecutionAttemptRepository:
         ]
         results.sort(key=lambda ea: ea.started_at, reverse=True)
         return tuple(results)
+
+
+class InMemoryOrderSubmissionAttemptRepository:
+    """In-memory implementation of ``OrderSubmissionAttemptRepository``."""
+
+    def __init__(self) -> None:
+        self._items: dict[UUID, OrderSubmissionAttemptEntity] = {}
+
+    async def add(
+        self, attempt: OrderSubmissionAttemptEntity
+    ) -> OrderSubmissionAttemptEntity:
+        self._items[attempt.attempt_id] = attempt
+        return attempt
+
+    async def list_by_order_request(
+        self, order_request_id: UUID
+    ) -> Sequence[OrderSubmissionAttemptEntity]:
+        results = [
+            item
+            for item in self._items.values()
+            if item.order_request_id == order_request_id
+        ]
+        results.sort(key=lambda a: a.attempt_number)
+        return tuple(results)
+
+    async def list_recent_failures(self, limit: int = 10) -> Sequence[dict[str, Any]]:
+        """In-memory implementation of list_recent_failures.
+
+        Groups attempts by ``order_request_id``, keeps the latest attempt
+        per order by ``attempt_number``, then filters to those whose
+        latest outcome is ``'rejected'`` or ``'exception'``.
+
+        .. note::
+
+           Since this in-memory store has no access to ``OrderRepository``,
+           ``symbol``, ``side``, and ``created_at`` are returned as ``None``.
+        """
+        # Group by order_request_id, keep latest attempt per order
+        latest: dict[UUID, OrderSubmissionAttemptEntity] = {}
+        for a in self._items.values():
+            prev = latest.get(a.order_request_id)
+            if prev is None or a.attempt_number > prev.attempt_number:
+                latest[a.order_request_id] = a
+
+        # Filter to rejected/exception
+        failures: list[OrderSubmissionAttemptEntity] = []
+        for a in latest.values():
+            if a.error_type is not None:
+                outcome = "exception"
+            elif a.accepted is False:
+                outcome = "rejected"
+            elif a.accepted is True:
+                outcome = "accepted"
+            else:
+                continue  # skip unknown / no-outcome
+
+            if outcome in ("rejected", "exception"):
+                failures.append(a)
+
+        # Sort by submitted_at DESC, apply limit
+        failures.sort(key=lambda a: a.submitted_at or datetime.min, reverse=True)
+        failures = failures[:limit]
+
+        return [
+            {
+                "order_request_id": str(a.order_request_id),
+                "latest_outcome": (
+                    "exception" if a.error_type is not None else "rejected"
+                ),
+                "latest_error_type": a.error_type,
+                "latest_raw_code": a.raw_code,
+                "latest_raw_message": a.raw_message,
+                "last_submitted_at": a.submitted_at,
+                "symbol": None,  # InMemory has no order join
+                "side": None,
+                "created_at": None,
+            }
+            for a in failures
+        ]
+
+    async def get_failure_summary(self) -> dict[str, Any]:
+        """In-memory implementation of ``get_failure_summary``.
+
+        Counts all attempts (per-attempt, not DISTINCT ON per order request)
+        using the same derived-outcome logic as ``list_recent_failures``.
+        Note: time-window filtering is approximated because in-memory tests
+        use explicit attempt timestamps.
+        """
+        now = datetime.now(timezone.utc)
+        one_hour_ago = now - timedelta(hours=1)
+        twenty_four_hours_ago = now - timedelta(hours=24)
+        kst_today_start = now.astimezone(timezone(timedelta(hours=9))).replace(
+            hour=0, minute=0, second=0, microsecond=0,
+        ).astimezone(timezone.utc)
+
+        last_1h_count = 0
+        last_24h_count = 0
+        rejected_count = 0
+        exception_count = 0
+        total_submissions_24h = 0
+        today_count = 0
+        rejected_count_today = 0
+        exception_count_today = 0
+        total_submissions_today = 0
+
+        for a in self._items.values():
+            if a.submitted_at is None:
+                continue
+
+            # Derive outcome
+            if a.error_type is not None:
+                outcome = "exception"
+            elif a.accepted is False:
+                outcome = "rejected"
+            elif a.accepted is True:
+                outcome = "accepted"
+            else:
+                continue
+
+            if a.submitted_at >= twenty_four_hours_ago:
+                total_submissions_24h += 1
+                if outcome in ("rejected", "exception"):
+                    last_24h_count += 1
+                    if outcome == "rejected":
+                        rejected_count += 1
+                    else:
+                        exception_count += 1
+
+                    if a.submitted_at >= one_hour_ago:
+                        last_1h_count += 1
+
+            if a.submitted_at >= kst_today_start:
+                total_submissions_today += 1
+                if outcome in ("rejected", "exception"):
+                    today_count += 1
+                    if outcome == "rejected":
+                        rejected_count_today += 1
+                    else:
+                        exception_count_today += 1
+
+        result: dict[str, Any] = {
+            "last_1h_count": last_1h_count,
+            "last_24h_count": last_24h_count,
+            "rejected_count": rejected_count,
+            "exception_count": exception_count,
+            "total_submissions_24h": total_submissions_24h,
+            "failure_rate_pct_24h": (
+                round(last_24h_count / total_submissions_24h * 100, 1)
+                if total_submissions_24h > 0
+                else None
+            ),
+            "today_count": today_count,
+            "rejected_count_today": rejected_count_today,
+            "exception_count_today": exception_count_today,
+            "total_submissions_today": total_submissions_today,
+            "failure_rate_pct_today": (
+                round(today_count / total_submissions_today * 100, 1)
+                if total_submissions_today > 0
+                else None
+            ),
+        }
+        return result
 
 
 class InMemoryMarketSessionRepository:

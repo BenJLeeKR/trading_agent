@@ -9,7 +9,7 @@ import type {
   CashBalanceSnapshotView,
   SnapshotSyncRunSummary,
 } from "../types/api";
-import { getClients, getAccounts, getAccountSnapshots, getSnapshotSyncRuns } from "../api/client";
+import { getClients, getDefaultClient, getAccounts, getAccountSnapshots, getSnapshotSyncRuns } from "../api/client";
 import { DataTable } from "./common/DataTable";
 import { StatusBadge } from "./common/StatusBadge";
 import { FilterBar } from "./common/FilterBar";
@@ -18,6 +18,10 @@ import { LoadingSpinner } from "./common/LoadingSpinner";
 import type { Column } from "./common/DataTable";
 import { AlertCircle, Lock, Wallet, TrendingUp, TrendingDown, X, Users } from "lucide-react";
 import { formatKrw, formatKstElapsed, formatKstDateTime } from "@/lib/utils";
+import {
+  formatSnapshotBudgetParts,
+  parseSnapshotBudgetCounters,
+} from "../lib/snapshotBudget";
 
 /* ───────────────────────────────────────────
  * Helpers
@@ -31,6 +35,16 @@ function formatQty(val: number | null | undefined): string {
 
 function truncateUuid(uuid: string): string {
   return uuid.length > 8 ? uuid.slice(0, 8) + "…" : uuid;
+}
+
+function prioritizeDefaultClient(
+  clients: ClientDetail[],
+  defaultClient: ClientDetail | null,
+): ClientDetail[] {
+  if (!defaultClient) return clients;
+  const idx = clients.findIndex((c) => c.client_id === defaultClient.client_id);
+  if (idx <= 0) return clients;
+  return [clients[idx], ...clients.slice(0, idx), ...clients.slice(idx + 1)];
 }
 
 
@@ -79,27 +93,32 @@ export default function AccountsView() {
     setLoading(true);
     setError(null);
 
-    getClients()
-      .then((allClients) => {
-        setClients(allClients);
+    (async () => {
+      try {
+        const defaultClient = await getDefaultClient();
+        const allClients = await getClients();
+        const orderedClients = prioritizeDefaultClient(allClients, defaultClient);
+        setClients(orderedClients);
         if (allClients.length === 0) {
           setAccounts([]);
           setLoading(false);
           return;
         }
-        // Auto-select first client
-        const first = allClients[0];
-        setSelectedClient(first);
-        return getAccounts(first.client_id);
-      })
-      .then((accts) => {
+
+        const target = defaultClient
+          ? orderedClients.find((c) => c.client_id === defaultClient.client_id) ?? orderedClients[0]
+          : orderedClients[0];
+
+        setSelectedClient(target);
+        const accts = await getAccounts(target.client_id);
         if (accts) setAccounts(accts);
-      })
-      .catch((err: unknown) => {
+      } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : "계좌를 불러오지 못했습니다";
         setError(msg);
-      })
-      .finally(() => setLoading(false));
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
 
   // ── Fetch positions / cash balance on account selection ─────────
@@ -387,15 +406,9 @@ export default function AccountsView() {
           {(() => {
             const sj = latestSyncRun.summary_json as Record<string, number> | null;
             if (!sj) return null;
-            const parts: string[] = [];
-            const preCheck = sj["VTTC8908R_pre_check"] ?? 0;
-            const budgetExhausted = sj["VTTC8908R_budget_exhausted"] ?? 0;
-            const apiFailure = sj["VTTC8908R_api_failure"] ?? 0;
-            const afterHoursSkip = sj["after_hours_skip"] ?? 0;
-            if (preCheck > 0) parts.push(`pre-check fallback ${preCheck}회`);
-            if (budgetExhausted > 0) parts.push(`budget exhausted ${budgetExhausted}회`);
-            if (apiFailure > 0) parts.push(`API 실패 fallback ${apiFailure}회`);
-            if (afterHoursSkip > 0) parts.push(`장후 skip ${afterHoursSkip}회`);
+            const parts = formatSnapshotBudgetParts(
+              parseSnapshotBudgetCounters(sj),
+            );
             if (parts.length === 0) return null;
             return (
               <span className="text-[#f59e0b] text-xs ml-1">

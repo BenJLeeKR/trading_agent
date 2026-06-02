@@ -354,16 +354,19 @@ def _is_held_position_sell_result(result: CommandResult) -> bool:
 
 
 def _parse_snapshot_sync_summary(result: CommandResult) -> dict[str, Any]:
-    """Parse snapshot sync summary metrics from command stdout.
+    """Parse snapshot sync summary metrics from command output.
 
     The snapshot sync loop logs a structured line like::
 
         sync-cycle  accounts=1 (ok=1 partial=0 fail=0 skip=0)  positions=5 (skipped=0)  cash=1  errors=0
 
+    Snapshot sync uses standard logging, so in subprocess execution the
+    structured line normally lands in ``stderr`` rather than ``stdout``.
     Returns a dict with parsed metrics or empty dict on failure.
     """
     metrics: dict[str, Any] = {}
-    for line in result.stdout.splitlines():
+    combined_output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    for line in combined_output.splitlines():
         stripped = line.strip()
         if "sync-cycle" in stripped:
             # Extract key=value pairs from the log line
@@ -663,7 +666,7 @@ def _event_command() -> list[str]:
     ]
 
 
-def _decision_command(*, dry_run: bool) -> list[str]:
+def _decision_command(*, dry_run: bool, allow_general_submit: bool = True) -> list[str]:
     argv = [
         PYTHON_BIN,
         "-m",
@@ -677,6 +680,8 @@ def _decision_command(*, dry_run: bool) -> list[str]:
         argv.append("--dry-run")
     else:
         argv.append("--submit")
+    if not allow_general_submit:
+        argv.append("--no-allow-general-submit")
     return argv
 
 
@@ -942,10 +947,14 @@ async def _run_intraday_due_tasks(
             now.isoformat(), gap, decision_interval, gap - decision_interval,
         )
 
+        allow_general_submit = general_budget_ok
         result = await _run_and_record(
             state,
             "decision_dry_run" if dry_run else "decision_submit_gate",
-            _decision_command(dry_run=dry_run),
+            _decision_command(
+                dry_run=dry_run,
+                allow_general_submit=allow_general_submit,
+            ),
             timeout_seconds=min(timeout_seconds, _DECISION_TIMEOUT),
             env=env,
         )

@@ -64,6 +64,7 @@ class OperationBucket:
     refill_rate: float
 
     remaining: int = 0
+    _fractional_tokens: float = 0.0
     refill_at: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
 
     def __post_init__(self) -> None:
@@ -75,7 +76,9 @@ class OperationBucket:
         now = datetime.now(tz=timezone.utc)
         elapsed = (now - self.refill_at).total_seconds()
         if elapsed > 0:
-            tokens_to_add = int(elapsed * self.refill_rate)
+            accrued = self._fractional_tokens + (elapsed * self.refill_rate)
+            tokens_to_add = int(accrued)
+            self._fractional_tokens = accrued - tokens_to_add
             if tokens_to_add > 0:
                 self.remaining = min(self.capacity, self.remaining + tokens_to_add)
             self.refill_at = now  # Always update refill_at, even when tokens_to_add == 0
@@ -648,11 +651,15 @@ def build_kis_budget_manager(
         # Fix 3: ORDER bucket capacity=1 → 3 (burst 여유 확보).
         #   BudgetExhaustedError 발생 시 reconciliation trigger → lock
         #   → 연쇄 차단을 방지하기 위해 최소 3회 연속 주문 가능하도록 완화.
+        #
+        # Fix 4: submit path는 paper global_rest(1RPS) pacing에 이미 정렬되어 있으므로
+        # ORDER refill_rate도 1.0/s로 맞춘다.  이전 0.1/s는 global gate보다 훨씬 느려서
+        # 짧은 burst 이후 BUY 주문이 로컬 ORDER bucket에서 먼저 고갈되었다.
         manager = RateLimitBudgetManager(
             auth_capacity=max(1, int(total * 1)),
             auth_refill_rate=0.017 * total,
             order_capacity=max(3, int(total * 3)),
-            order_refill_rate=0.1 * total,
+            order_refill_rate=1.0 * total,
             inquiry_capacity=max(1, int(total * 1)),
             inquiry_refill_rate=0.5 * total,
             market_data_capacity=max(1, int(total * 1)),

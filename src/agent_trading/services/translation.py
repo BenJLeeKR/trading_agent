@@ -82,6 +82,16 @@ def build_submit_order_request_from_decision(
     if decision_type == "WATCH":
         return None
 
+    source_type = "core"
+    metadata = intent.request.metadata
+    if isinstance(metadata, dict):
+        source_type = str(metadata.get("source_type", "core") or "core")
+
+    # held_position 경로는 위험 축소용 SELL만 실제 제출 대상으로 허용한다.
+    # 보유 종목 유지/추가 매수(BUY)는 결정은 남기되 submit request는 만들지 않는다.
+    if source_type == "held_position" and intent.request.side != OrderSide.SELL:
+        return None
+
     # ── Quantity validation ──
     if intent.request.quantity <= 0:
         return None

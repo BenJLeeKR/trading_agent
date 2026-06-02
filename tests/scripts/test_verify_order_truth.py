@@ -21,6 +21,7 @@ from scripts.verify_order_truth import (
     VERDICT_FILLED,
     VERDICT_MANUAL,
     VERDICT_PARTIAL,
+    VERDICT_PAPER_MISSING,
     _build_match_info,
     _classify_ccld_status,
     _format_kst,
@@ -129,8 +130,8 @@ class TestClassifyCcldStatus:
         assert _classify_ccld_status("00", 0, 0) == VERDICT_EXPIRED
 
     def test_empty_stat(self) -> None:
-        """빈 ORD_STAT 문자열."""
-        assert _classify_ccld_status("", 0, 100) == VERDICT_EXPIRED
+        """빈 ORD_STAT + 체결 0 → paper truth missing."""
+        assert _classify_ccld_status("", 0, 100) == VERDICT_PAPER_MISSING
 
 
 # =========================================================================

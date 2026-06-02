@@ -69,6 +69,18 @@ class TestPostgresInspectionAPI:
             assert "correlation_id" in order
             assert "created_at" in order
 
+    async def test_order_daily_summary_shape(self, postgres_client: TestClient) -> None:
+        """``GET /orders/daily-summary`` returns the expected aggregate shape."""
+        resp = postgres_client.get("/orders/daily-summary")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "date" in data
+        assert data["timezone"] == "Asia/Seoul"
+        assert "total_count" in data
+        assert "filled_count" in data
+        assert "pending_submit_count" in data
+        assert "submitted_count" in data
+
     async def test_audit_logs_requires_param(
         self, postgres_client: TestClient,
     ) -> None:

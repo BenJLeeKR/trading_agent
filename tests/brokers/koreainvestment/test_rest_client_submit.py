@@ -16,9 +16,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from agent_trading.brokers.errors import BrokerError, BrokerErrorType
-from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
+from agent_trading.brokers.koreainvestment.rest_client import (
+    KISRestClient,
+    _format_order_quantity,
+)
 from agent_trading.brokers.rate_limit import BucketType
-from agent_trading.domain.enums import BrokerName, OrderSide, OrderStatus, OrderType
+from agent_trading.domain.enums import BrokerName, OrderSide, OrderStatus, OrderType, TimeInForce
 from agent_trading.domain.models import SubmitOrderRequest, SubmitOrderResult
 
 
@@ -40,6 +43,12 @@ def client() -> KISRestClient:
         budget_manager=None,
         dev_token_cache_enabled=False,
     )
+
+
+@pytest.fixture(autouse=True)
+def _reset_shared_submit_pacing() -> None:
+    """Reset shared paper global REST pacing state between tests."""
+    KISRestClient._paper_last_global_rest_time = 0.0
 
 
 @pytest.fixture
@@ -192,9 +201,10 @@ class TestSubmitOrderRequestBody:
         assert body["PDNO"] == "005930"
         assert body["ORD_QTY"] == "10"
         assert body["ORD_UNPR"] == "50000"
-        assert body["ORD_DVSN"] in ("00", "03")  # LIMIT → "00" (지정가)
+        assert body["ORD_DVSN"] == "00"
         assert body["CANO"] == "12345678"
         assert body["ACNT_PRDT_CD"] == "01"
+        assert "ALGO" not in body
 
     @pytest.mark.asyncio
     async def test_submit_sell_side_tr_id(
@@ -222,6 +232,258 @@ class TestSubmitOrderRequestBody:
 
         mock_request.assert_called_once()
         assert mock_request.call_args[1]["tr_id_key"] == "order_sell"
+
+    @pytest.mark.asyncio
+    async def test_submit_ioc_market_encodes_ord_dvsn_without_algo(
+        self, client: KISRestClient, submit_request: SubmitOrderRequest
+    ) -> None:
+        request = SubmitOrderRequest(
+            account_ref=submit_request.account_ref,
+            client_order_id="ut-submit-ioc-market-001",
+            correlation_id=submit_request.correlation_id,
+            strategy_id=submit_request.strategy_id,
+            symbol=submit_request.symbol,
+            market=submit_request.market,
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=submit_request.quantity,
+            price=None,
+            time_in_force=TimeInForce.IOC,
+        )
+        mock_response: dict[str, Any] = {
+            "output": {"ODNO": "0000027330", "ORD_TMD": "152540"}
+        }
+
+        with patch.object(KISRestClient, "_request", AsyncMock(return_value=mock_response)) as mock_request:
+            await client.submit_order(request)
+
+        body: dict[str, object] = mock_request.call_args[1]["body"]
+        assert body["ORD_DVSN"] == "13"
+        assert body["ORD_UNPR"] == "0"
+        assert "ALGO" not in body
+
+    @pytest.mark.asyncio
+    async def test_submit_formats_integral_quantity_without_decimal_suffix(
+        self, client: KISRestClient, submit_request: SubmitOrderRequest
+    ) -> None:
+        request = SubmitOrderRequest(
+            account_ref=submit_request.account_ref,
+            client_order_id="ut-submit-int-qty-001",
+            correlation_id=submit_request.correlation_id,
+            strategy_id=submit_request.strategy_id,
+            symbol=submit_request.symbol,
+            market=submit_request.market,
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            quantity=Decimal("207.00000000"),
+            price=submit_request.price,
+        )
+        mock_response: dict[str, Any] = {
+            "output": {"ODNO": "0000027331", "ORD_TMD": "152541"}
+        }
+
+        with patch.object(KISRestClient, "_request", AsyncMock(return_value=mock_response)) as mock_request:
+            await client.submit_order(request)
+
+        body: dict[str, object] = mock_request.call_args[1]["body"]
+        assert body["ORD_QTY"] == "207"
+
+    @pytest.mark.asyncio
+    async def test_submit_rejects_fractional_quantity_before_request(
+        self, client: KISRestClient, submit_request: SubmitOrderRequest
+    ) -> None:
+        request = SubmitOrderRequest(
+            account_ref=submit_request.account_ref,
+            client_order_id="ut-submit-frac-qty-001",
+            correlation_id=submit_request.correlation_id,
+            strategy_id=submit_request.strategy_id,
+            symbol=submit_request.symbol,
+            market=submit_request.market,
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            quantity=Decimal("1.5"),
+            price=submit_request.price,
+        )
+
+        with patch.object(KISRestClient, "_request", AsyncMock()) as mock_request:
+            with pytest.raises(ValueError, match="whole share"):
+                await client.submit_order(request)
+
+        mock_request.assert_not_called()
+
+
+class TestSubmitOrderPaperPacing:
+    """Paper global REST pacing should serialize submit starts at 1s intervals."""
+
+    @pytest.mark.asyncio
+    async def test_paper_submit_sleeps_when_calls_are_too_close(
+        self, client: KISRestClient, submit_request: SubmitOrderRequest
+    ) -> None:
+        mock_response: dict[str, Any] = {
+            "output": {"ODNO": "0000027326", "ORD_TMD": "152530"}
+        }
+
+        sleep_mock = AsyncMock()
+        with (
+            patch.object(KISRestClient, "_request", AsyncMock(return_value=mock_response)) as mock_request,
+            patch("agent_trading.brokers.koreainvestment.rest_client.asyncio.sleep", sleep_mock),
+            patch(
+                "agent_trading.brokers.koreainvestment.rest_client.time.monotonic",
+                side_effect=[100.0, 100.2, 101.2],
+            ),
+        ):
+            await client.submit_order(submit_request)
+            await client.submit_order(submit_request)
+
+        assert mock_request.await_count == 2
+        sleep_mock.assert_awaited_once()
+        slept_for = sleep_mock.await_args.args[0]
+        assert slept_for == pytest.approx(0.8, abs=1e-6)
+
+    @pytest.mark.asyncio
+    async def test_paper_submit_pacing_is_shared_across_instances(
+        self, submit_request: SubmitOrderRequest
+    ) -> None:
+        client1 = KISRestClient(
+            api_key="test-api-key",
+            api_secret="test-api-secret",
+            account_number="12345678",
+            account_product_code="01",
+            env="paper",
+            budget_manager=None,
+            dev_token_cache_enabled=False,
+        )
+        client2 = KISRestClient(
+            api_key="test-api-key",
+            api_secret="test-api-secret",
+            account_number="12345678",
+            account_product_code="01",
+            env="paper",
+            budget_manager=None,
+            dev_token_cache_enabled=False,
+        )
+        mock_response: dict[str, Any] = {
+            "output": {"ODNO": "0000027326", "ORD_TMD": "152530"}
+        }
+
+        sleep_mock = AsyncMock()
+        with (
+            patch.object(KISRestClient, "_request", AsyncMock(return_value=mock_response)) as mock_request,
+            patch("agent_trading.brokers.koreainvestment.rest_client.asyncio.sleep", sleep_mock),
+            patch(
+                "agent_trading.brokers.koreainvestment.rest_client.time.monotonic",
+                side_effect=[200.0, 200.25, 201.25],
+            ),
+        ):
+            await client1.submit_order(submit_request)
+            await client2.submit_order(submit_request)
+
+        assert mock_request.await_count == 2
+        sleep_mock.assert_awaited_once()
+        slept_for = sleep_mock.await_args.args[0]
+        assert slept_for == pytest.approx(0.75, abs=1e-6)
+
+    @pytest.mark.asyncio
+    async def test_live_submit_does_not_use_paper_pacing(
+        self, submit_request: SubmitOrderRequest
+    ) -> None:
+        live_client = KISRestClient(
+            api_key="test-api-key",
+            api_secret="test-api-secret",
+            account_number="12345678",
+            account_product_code="01",
+            env="live",
+            budget_manager=None,
+            dev_token_cache_enabled=False,
+        )
+        mock_response: dict[str, Any] = {
+            "output": {"ODNO": "0000027326", "ORD_TMD": "152530"}
+        }
+
+        with (
+            patch.object(KISRestClient, "_request", AsyncMock(return_value=mock_response)) as mock_request,
+            patch("agent_trading.brokers.koreainvestment.rest_client.asyncio.sleep", AsyncMock()) as sleep_mock,
+            patch(
+                "agent_trading.brokers.koreainvestment.rest_client.time.monotonic",
+                side_effect=AssertionError("live submit should not use paper pacing"),
+            ),
+        ):
+            await live_client.submit_order(submit_request)
+
+        assert mock_request.await_count == 1
+        sleep_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_paper_quote_then_submit_shares_same_global_gate(
+        self, client: KISRestClient, submit_request: SubmitOrderRequest
+    ) -> None:
+        class _FakeClient:
+            async def get(self, url: str, headers: dict[str, str], params: dict[str, str] | None = None) -> object:
+                return object()
+
+            async def post(
+                self,
+                url: str,
+                headers: dict[str, str],
+                json: dict[str, object] | None = None,
+                params: dict[str, str] | None = None,
+            ) -> object:
+                return object()
+
+        sleep_mock = AsyncMock()
+        with (
+            patch.object(KISRestClient, "_build_headers", AsyncMock(return_value={})),
+            patch.object(KISRestClient, "_get_client", AsyncMock(return_value=_FakeClient())),
+            patch.object(KISRestClient, "_raise_on_error", return_value={"output": {"stck_prpr": "50000"}}),
+            patch.object(KISRestClient, "_normalize_response", side_effect=lambda data, endpoint=None: data),
+            patch("agent_trading.brokers.koreainvestment.rest_client.asyncio.sleep", sleep_mock),
+            patch(
+                "agent_trading.brokers.koreainvestment.rest_client.time.monotonic",
+                side_effect=[300.0, 300.3, 301.3],
+            ),
+        ):
+            await client.get_quote("005930")
+            await client.submit_order(submit_request)
+
+        sleep_mock.assert_awaited_once()
+        slept_for = sleep_mock.await_args.args[0]
+        assert slept_for == pytest.approx(0.7, abs=1e-6)
+
+    @pytest.mark.asyncio
+    async def test_paper_submit_then_quote_shares_same_global_gate(
+        self, client: KISRestClient, submit_request: SubmitOrderRequest
+    ) -> None:
+        class _FakeClient:
+            async def get(self, url: str, headers: dict[str, str], params: dict[str, str] | None = None) -> object:
+                return object()
+
+            async def post(
+                self,
+                url: str,
+                headers: dict[str, str],
+                json: dict[str, object] | None = None,
+                params: dict[str, str] | None = None,
+            ) -> object:
+                return object()
+
+        sleep_mock = AsyncMock()
+        with (
+            patch.object(KISRestClient, "_build_headers", AsyncMock(return_value={})),
+            patch.object(KISRestClient, "_get_client", AsyncMock(return_value=_FakeClient())),
+            patch.object(KISRestClient, "_raise_on_error", return_value={"output": {"ODNO": "0001", "ORD_TMD": "090001"}}),
+            patch.object(KISRestClient, "_normalize_response", side_effect=lambda data, endpoint=None: data),
+            patch("agent_trading.brokers.koreainvestment.rest_client.asyncio.sleep", sleep_mock),
+            patch(
+                "agent_trading.brokers.koreainvestment.rest_client.time.monotonic",
+                side_effect=[400.0, 400.25, 401.25],
+            ),
+        ):
+            await client.submit_order(submit_request)
+            await client.get_quote("005930")
+
+        sleep_mock.assert_awaited_once()
+        slept_for = sleep_mock.await_args.args[0]
+        assert slept_for == pytest.approx(0.75, abs=1e-6)
 
 
 # ── Test 4: skip_global_rest ──────────────────────────────────────────────
@@ -268,6 +530,75 @@ class TestSubmitOrderSkipGlobalRest:
         assert call_kwargs.get("bucket") == BucketType.ORDER
 
 
+class TestCashAndPositionsBudgetWait:
+    """Critical snapshot call should wait briefly for inquiry budget."""
+
+    @pytest.mark.asyncio
+    async def test_cash_and_positions_waits_then_requests(
+        self, client: KISRestClient
+    ) -> None:
+        mock_response: dict[str, Any] = {
+            "output": [{"pdno": "005930", "hldg_qty": "1"}],
+            "output2": {"dnca_tot_amt": "1000000"},
+        }
+
+        with (
+            patch.object(KISRestClient, "_wait_for_inquiry_budget", AsyncMock(return_value=True)),
+            patch.object(KISRestClient, "_request", AsyncMock(return_value=mock_response)) as mock_request,
+        ):
+            result = await client.get_cash_and_positions(after_hours=False)
+
+        assert result.cash_balance == {"dnca_tot_amt": "1000000"}
+        assert result.positions == [{"pdno": "005930", "hldg_qty": "1"}]
+        mock_request.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_cash_and_positions_returns_empty_on_budget_timeout(
+        self, client: KISRestClient
+    ) -> None:
+        with (
+            patch.object(KISRestClient, "_wait_for_inquiry_budget", AsyncMock(return_value=False)),
+            patch.object(KISRestClient, "_request", AsyncMock()) as mock_request,
+        ):
+            result = await client.get_cash_and_positions(after_hours=False)
+
+        assert result.cash_balance is None
+        assert result.positions == []
+        assert result.raw_response == {}
+        mock_request.assert_not_awaited()
+
+
+class TestOrderableCashSource:
+    @pytest.mark.asyncio
+    async def test_orderable_cash_result_marks_budget_precheck_fallback(
+        self, client: KISRestClient
+    ) -> None:
+        with patch.object(KISRestClient, "_has_budget_for_inquiry", return_value=False):
+            result = await client.get_orderable_cash_result(
+                fallback_cash=Decimal("123456"),
+            )
+
+        assert result.amount == Decimal("123456")
+        assert result.source == "budget_precheck_fallback"
+
+    @pytest.mark.asyncio
+    async def test_orderable_cash_result_marks_vttc8908r_success(
+        self, client: KISRestClient
+    ) -> None:
+        with (
+            patch.object(KISRestClient, "_has_budget_for_inquiry", return_value=True),
+            patch.object(
+                KISRestClient,
+                "_request",
+                AsyncMock(return_value={"output": {"ord_psbl_cash": "700000"}}),
+            ),
+        ):
+            result = await client.get_orderable_cash_result()
+
+        assert result.amount == Decimal("700000")
+        assert result.source == "vttc8908r"
+
+
 # ── Tests 5-7: _resolve_smoke_price() ─────────────────────────────────────
 
 
@@ -300,3 +631,12 @@ class TestResolveSmokePrice:
 
         assert _resolve_smoke_price() == Decimal("50000")
         assert "Invalid KIS_SMOKE_PRICE" in caplog.text
+
+
+class TestFormatOrderQuantity:
+    def test_format_order_quantity_strips_decimal_suffix(self) -> None:
+        assert _format_order_quantity(Decimal("10.00000000")) == "10"
+
+    def test_format_order_quantity_rejects_non_positive(self) -> None:
+        with pytest.raises(ValueError, match="positive"):
+            _format_order_quantity(Decimal("0"))

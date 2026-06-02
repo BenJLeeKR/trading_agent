@@ -166,6 +166,19 @@ def _resolve_kis_dev_token_cache_path() -> str:
     return os.getenv("KIS_DEV_TOKEN_CACHE_PATH", ".cache/kis_token.json")
 
 
+def _resolve_kis_shared_budget_file() -> str:
+    """Resolve shared paper global budget file from ``KIS_SHARED_BUDGET_FILE``.
+
+    Default: ``.cache/kis_paper_global_budget.json``.
+    The file is only used in ``KIS_ENV=paper`` paths that opt into the
+    shared cross-process global REST bucket.
+    """
+    return os.getenv(
+        "KIS_SHARED_BUDGET_FILE",
+        ".cache/kis_paper_global_budget.json",
+    )
+
+
 def _resolve_kis_live_token_cache_enabled() -> bool:
     """Resolve live-info token cache enabled flag from ``KIS_LIVE_TOKEN_CACHE_ENABLED``.
 
@@ -337,12 +350,14 @@ class AppSettings:
     # ---- KIS dev token cache (paper/dev only; disabled in live) ---------------
     kis_dev_token_cache_enabled: bool = field(default_factory=_resolve_kis_dev_token_cache_enabled)
     kis_dev_token_cache_path: str = field(default_factory=_resolve_kis_dev_token_cache_path)
+    kis_shared_budget_file: str = field(default_factory=_resolve_kis_shared_budget_file)
 
     # ---- KIS live-info token cache (WebSocket approval key persistence) ------
     kis_live_token_cache_enabled: bool = field(default_factory=_resolve_kis_live_token_cache_enabled)
     kis_live_token_cache_path: str = field(default_factory=_resolve_kis_live_token_cache_path)
 
     # ---- KIS live-info WebSocket URL (163 market state) -----------------------
+    kis_live_info_base_url: str = field(default_factory=lambda: os.getenv("KIS_LIVE_INFO_BASE_URL", ""))
     kis_live_info_ws_url: str = field(default_factory=lambda: os.getenv("KIS_LIVE_INFO_WS_URL", ""))
 
     # ---- KIS disclosure (live 전용 공시 제목) 설정 ----------------------------

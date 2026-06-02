@@ -126,6 +126,15 @@ def _classify_ccld_status(
     str
         ``VERDICT_FILLED`` | ``VERDICT_PARTIAL`` | ``VERDICT_EXPIRED``
     """
+    ord_stat = (ord_stat or "").strip()
+
+    # Paper VTTC0081R에서 direct ODNO 레코드는 존재하지만
+    # ORD_STAT/CCLD_QTY가 비어 있는 경우가 있다.
+    # 이 경우를 곧바로 expired_confirmed로 단정하면 오분류가 발생하므로
+    # 별도 "paper truth missing" 으로 분기하고 position snapshot과 함께 해석한다.
+    if not ord_stat and ccld_qty == 0 and ord_qty > 0:
+        return VERDICT_PAPER_MISSING
+
     # 21/22 = 전량체결 (full fill)
     if ord_stat in ("21", "22"):
         return VERDICT_FILLED
@@ -156,6 +165,14 @@ async def _build_rest_client(
 ) -> KISRestClient:
     """Build a KISRestClient following the same pattern as
     ``_build_adapter_for_broker_account()`` in reconciliation_worker.py."""
+    from agent_trading.brokers.rate_limit import build_kis_budget_manager
+
+    budget_manager = build_kis_budget_manager(
+        kis_env=settings.kis_env,
+        real_rest_rps=settings.kis_real_rest_rps,
+        paper_rest_rps=settings.kis_paper_rest_rps,
+        shared_budget_file=settings.kis_shared_budget_file,
+    )
     return KISRestClient(
         api_key=settings.kis_api_key,
         api_secret=settings.kis_api_secret,
@@ -163,6 +180,7 @@ async def _build_rest_client(
         account_product_code=settings.kis_account_product_code,
         env=settings.kis_env,
         base_url=settings.kis_base_url,
+        budget_manager=budget_manager,
         dev_token_cache_enabled=settings.kis_dev_token_cache_enabled,
         dev_token_cache_path=settings.kis_dev_token_cache_path,
     )
@@ -200,21 +218,19 @@ async def _inquire_and_match(
             "all_raw_records": [],
         }
 
-    # ── 2. Determine date range (±3 days around order creation, KST) ──
+    # ── 2. Determine strict KST date range (order creation day) ──
     kst_created = order_created_at.astimezone(timezone(timedelta(hours=9)))
-    strt_dt = (kst_created - timedelta(days=3)).strftime("%Y%m%d")
-    end_dt = (kst_created + timedelta(days=3)).strftime("%Y%m%d")
+    strt_dt = kst_created.strftime("%Y%m%d")
+    end_dt = strt_dt
 
     broker_order_id = broker_order.broker_native_order_id if broker_order else None
 
     # ── 3. Call VTTC0081R ──
-    # NOTE: We do NOT pass broker_order_id as a filter — we want ALL records
-    # in the date range so we can detect empty-ODNO (paper) scenarios.
     try:
         raw_records = await rest_client.inquire_daily_ccld(
             broker_order_id=broker_order_id,  # ODNO 필터링 — 서버 측에서 미리 필터링
-            symbol=None,           # 모든 심볼 조회 (paper fallback에서 symbol+side 역매칭)
-            order_side=None,       # 모든 사이드 조회
+            symbol=symbol,
+            order_side=order_side,
             strt_dt=strt_dt,
             end_dt=end_dt,
             after_hours=True,
@@ -398,8 +414,8 @@ async def _get_position_delta(
     Steps
     -----
     1. Fetch the latest position snapshot strictly before ``order_time``.
-    2. Fetch the absolute latest position snapshot via ``list_latest_by_account``.
-    3. If the latest snapshot is after ``order_time``, use it as post-qty.
+    2. Fetch the earliest position snapshot strictly after ``order_time``.
+    3. If such snapshot exists, use it as post-qty.
        Otherwise there is no post-order data → delta = 0.
     4. ``delta = post_qty - pre_qty``
 
@@ -428,20 +444,13 @@ async def _get_position_delta(
     )
     pre_qty = int(pre_snap.quantity) if pre_snap else 0
 
-    # ── Post-order snapshot (absolute latest per instrument) ──
-    latest_snapshots = await repos.position_snapshots.list_latest_by_account(account_id)
-    post_snap: PositionSnapshotEntity | None = None
-    for snap in latest_snapshots:
-        if snap.instrument_id == instrument_id:
-            post_snap = snap
-            break
+    # ── Post-order snapshot (strictly earliest after order_time) ──
+    post_snap = await repos.position_snapshots.get_earliest_by_account_and_instrument_after(
+        account_id, instrument_id, order_time,
+    )
 
     if post_snap is None:
         return 0  # No snapshot at all for this instrument
-
-    # If the latest snapshot is at or before order_time, no post-order data
-    if post_snap.snapshot_at <= order_time:
-        return 0
 
     post_qty = int(post_snap.quantity)
     return post_qty - pre_qty
@@ -479,15 +488,12 @@ async def _infer_buy_fill_from_position(
     )
     pre_qty = int(pre_snap.quantity) if pre_snap else 0
 
-    # ── Post-order snapshot ──
-    latest_snapshots = await repos.position_snapshots.list_latest_by_account(account_id)
-    post_snap: PositionSnapshotEntity | None = None
-    for snap in latest_snapshots:
-        if snap.instrument_id == instrument_id:
-            post_snap = snap
-            break
+    # ── Post-order snapshot (strictly earliest after order_time) ──
+    post_snap = await repos.position_snapshots.get_earliest_by_account_and_instrument_after(
+        account_id, instrument_id, order_time,
+    )
 
-    if post_snap is None or post_snap.snapshot_at <= order_time:
+    if post_snap is None:
         # No post-order data → cannot infer
         return ("", "No post-order position snapshot available", 0, pre_qty, 0)
 

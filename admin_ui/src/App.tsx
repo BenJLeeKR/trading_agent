@@ -6,6 +6,7 @@ import { ProtectedRoute } from "./components/ProtectedRoute";
 import Dashboard from "./components/Dashboard";
 import OrdersView from "./components/OrdersView";
 import OrderDetail from "./components/OrderDetail";
+import SubmissionAttemptsView from "./components/SubmissionAttemptsView";
 import ReconciliationView from "./components/ReconciliationView";
 import AccountsView from "./components/AccountsView";
 import DecisionsView from "./components/DecisionsView";
@@ -50,6 +51,7 @@ export default function App() {
             <Route path="overview" element={<Dashboard />} />
             <Route path="orders" element={<OrdersView />} />
             <Route path="orders/:orderId" element={<OrderDetail />} />
+            <Route path="orders/:orderId/submission-attempts" element={<SubmissionAttemptsView />} />
             <Route path="reconciliation" element={<ReconciliationView />} />
             <Route path="accounts" element={<AccountsView />} />
             <Route path="decisions" element={<DecisionsView />} />

@@ -44,6 +44,9 @@ from agent_trading.repositories.postgres.market_sessions import (
 from agent_trading.repositories.postgres.order_state_events import (
     PostgresOrderStateEventRepository,
 )
+from agent_trading.repositories.postgres.order_submission_attempts import (
+    PostgresOrderSubmissionAttemptRepository,
+)
 from agent_trading.repositories.postgres.orders import PostgresOrderRepository
 from agent_trading.repositories.postgres.position_snapshots import (
     PostgresPositionSnapshotRepository,
@@ -115,4 +118,5 @@ def build_postgres_repositories(
         guardrail_evaluations=PostgresGuardrailEvaluationRepository(tx),
         risk_limit_snapshots=PostgresRiskLimitSnapshotRepository(tx),
         market_session_repo=PostgresMarketSessionRepository(tx),
+        order_submission_attempts=PostgresOrderSubmissionAttemptRepository(tx),
     )
