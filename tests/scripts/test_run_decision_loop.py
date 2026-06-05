@@ -34,6 +34,7 @@ from agent_trading.domain.entities import (
     ClientEntity,
     ConfigVersionEntity,
     ExternalEventEntity,
+    InstrumentEntity,
     OrderRequestEntity,
     PositionSnapshotEntity,
     SnapshotSyncRunEntity,
@@ -173,20 +174,34 @@ async def _seed_repos(repos: RepositoryContainer) -> None:
             available_cash=Decimal("1000000"),
             settled_cash=Decimal("1000000"),
             unsettled_cash=Decimal("0"),
+            orderable_amount=Decimal("1000000"),
             source_of_truth="test",
             snapshot_at=now,
             created_at=now,
         )
     )
 
-    # Position snapshot (fresh, empty)
+    instrument_id = UUID("f0694572-df26-59fa-a6c9-130668e1eeed")
+    await repos.instruments.add(
+        InstrumentEntity(
+            instrument_id=instrument_id,
+            symbol=SYMBOL,
+            market_code=MARKET,
+            asset_class="KR_STOCK",
+            currency="KRW",
+            name="삼성전자",
+            is_active=True,
+        )
+    )
+
+    # Position snapshot (fresh, positive default to keep held_position path actionable)
     await repos.position_snapshots.add(
         PositionSnapshotEntity(
             position_snapshot_id=uuid4(),
             account_id=ACCOUNT_ID,
-            instrument_id=uuid4(),
-            quantity=Decimal("0"),
-            average_price=Decimal("0"),
+            instrument_id=instrument_id,
+            quantity=Decimal("10"),
+            average_price=Decimal("50000"),
             market_price=None,
             unrealized_pnl=None,
             source_of_truth="test",
@@ -843,6 +858,77 @@ class TestRunOneCycle:
 
         assert result["source_type"] == "held_position"
         assert result["status"] in ("SUBMITTED", "SKIPPED", "ERROR")
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_skip_when_orderable_amount_below_threshold(self) -> None:
+        """일반 BUY 후보는 주문가능금액이 기준 이하이면 AI 전에 SKIPPED 처리한다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            latest_cash = await repos.cash_balance_snapshots.get_latest_by_account(ACCOUNT_ID)
+            assert latest_cash is not None
+            repos.cash_balance_snapshots._items[latest_cash.cash_balance_snapshot_id] = (  # type: ignore[attr-defined]
+                CashBalanceSnapshotEntity(
+                    cash_balance_snapshot_id=latest_cash.cash_balance_snapshot_id,
+                    account_id=latest_cash.account_id,
+                    currency=latest_cash.currency,
+                    available_cash=latest_cash.available_cash,
+                    settled_cash=latest_cash.settled_cash,
+                    unsettled_cash=latest_cash.unsettled_cash,
+                    orderable_amount=Decimal("499999"),
+                    source_of_truth=latest_cash.source_of_truth,
+                    snapshot_at=latest_cash.snapshot_at,
+                    created_at=latest_cash.created_at,
+                )
+            )
+            result = await _run_one_cycle(
+                cycle=1,
+                submit=True,
+                dry_run=False,
+                output="text",
+                source_type="core",
+                runtime=runtime,
+            )
+
+        assert result["status"] == "SKIPPED"
+        assert result["error_phase"] == "pre_ai_gate"
+        assert result["error_message"] == "low_orderable_amount"
+        assert result["skip_reason"] == "low_orderable_amount"
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_skip_when_held_position_has_no_quantity(self) -> None:
+        """held_position 후보는 보유수량이 없으면 AI 전에 SKIPPED 처리한다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            snapshots = await repos.position_snapshots.list_latest_by_account(ACCOUNT_ID)
+            assert snapshots
+            latest_position = snapshots[0]
+            repos.position_snapshots._items[latest_position.position_snapshot_id] = (  # type: ignore[attr-defined]
+                PositionSnapshotEntity(
+                    position_snapshot_id=latest_position.position_snapshot_id,
+                    account_id=latest_position.account_id,
+                    instrument_id=latest_position.instrument_id,
+                    quantity=Decimal("0"),
+                    average_price=latest_position.average_price,
+                    market_price=latest_position.market_price,
+                    unrealized_pnl=latest_position.unrealized_pnl,
+                    source_of_truth=latest_position.source_of_truth,
+                    snapshot_at=latest_position.snapshot_at,
+                    created_at=latest_position.created_at,
+                )
+            )
+            result = await _run_one_cycle(
+                cycle=1,
+                submit=True,
+                dry_run=False,
+                output="text",
+                source_type="held_position",
+                runtime=runtime,
+            )
+
+        assert result["status"] == "SKIPPED"
+        assert result["error_phase"] == "pre_ai_gate"
+        assert result["error_message"] == "no_held_position"
+        assert result["skip_reason"] == "no_held_position"
 
     # ------------------------------------------------------------------
     # T3 fresh skip / quota skip 분기 검증

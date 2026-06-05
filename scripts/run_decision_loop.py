@@ -110,6 +110,13 @@ _DEFAULT_SAFE_PRICE = Decimal("50000")
 HELD_POSITION_SELL_MAX_PER_CYCLE = 2
 """Per-cycle cap for held-position REDUCE/EXIT SELL submit lane."""
 
+PRE_AI_BUY_MIN_ORDERABLE_AMOUNT = Decimal("500000")
+"""Skip BUY-side AI evaluation when verified orderable cash is too small.
+
+Aligned with the sizing engine's 신규 포지션 최소 진입 금액(500,000원) so
+that obviously non-actionable BUY candidates are filtered before any LLM call.
+"""
+
 
 def _infer_symbol_dry_run_reason(
     *,
@@ -177,6 +184,106 @@ def _compute_symbol_submit_mode(
 
     symbol_submit = submit_budget_consumed_count < max_general_submits_this_cycle
     return symbol_submit, not symbol_submit
+
+
+async def _evaluate_pre_ai_skip_reason(
+    repos: RepositoryContainer,
+    *,
+    account_alias: str,
+    symbol: str,
+    market: str,
+    source_type: str,
+) -> tuple[str | None, dict[str, str | None]]:
+    """Return a deterministic pre-AI skip reason to save LLM tokens.
+
+    Policy:
+    - ``held_position`` lane is treated as SELL-evaluation candidate. When no
+      current positive position exists for the symbol, skip before AI.
+    - Non-held-position lanes are treated as BUY-evaluation candidates. When
+      verified ``orderable_amount`` is negative or too small, skip before AI.
+    """
+    details: dict[str, str | None] = {}
+    try:
+        account = await repos.accounts.find_one(
+            AccountLookup(account_alias=account_alias)
+        )
+    except Exception:
+        logger.exception(
+            "Pre-AI skip gate account lookup failed: account_alias=%s symbol=%s",
+            account_alias,
+            symbol,
+        )
+        return None, details
+
+    if account is None:
+        return None, details
+
+    if source_type == "held_position":
+        instrument = None
+        try:
+            instrument = await repos.instruments.get_by_symbol(
+                symbol=symbol,
+                market_code=market,
+            )
+        except Exception:
+            logger.exception(
+                "Pre-AI held-position gate instrument lookup failed: symbol=%s market=%s",
+                symbol,
+                market,
+            )
+            return None, details
+
+        if instrument is None:
+            details["held_quantity"] = None
+            return "no_held_position", details
+
+        try:
+            snapshots = await repos.position_snapshots.list_latest_by_account(
+                account.account_id
+            )
+        except Exception:
+            logger.exception(
+                "Pre-AI held-position gate position lookup failed: account_id=%s symbol=%s",
+                account.account_id,
+                symbol,
+            )
+            return None, details
+
+        matched_qty: Decimal | None = None
+        for snapshot in snapshots:
+            if snapshot.instrument_id == instrument.instrument_id:
+                matched_qty = snapshot.quantity
+                break
+
+        details["held_quantity"] = str(matched_qty) if matched_qty is not None else None
+        if matched_qty is None or matched_qty <= 0:
+            return "no_held_position", details
+        return None, details
+
+    try:
+        cash_snapshot = await repos.cash_balance_snapshots.get_latest_by_account(
+            account.account_id
+        )
+    except Exception:
+        logger.exception(
+            "Pre-AI BUY gate cash lookup failed: account_id=%s symbol=%s",
+            account.account_id,
+            symbol,
+        )
+        return None, details
+
+    if cash_snapshot is None or cash_snapshot.orderable_amount is None:
+        return None, details
+
+    orderable_amount = cash_snapshot.orderable_amount
+    details["orderable_amount"] = str(orderable_amount)
+    details["threshold"] = str(PRE_AI_BUY_MIN_ORDERABLE_AMOUNT)
+
+    if orderable_amount < 0:
+        return "negative_orderable_amount", details
+    if orderable_amount <= PRE_AI_BUY_MIN_ORDERABLE_AMOUNT:
+        return "low_orderable_amount", details
+    return None, details
 
 
 async def _resolve_symbol_price(
@@ -816,6 +923,45 @@ async def _run_one_cycle(
                 repos=repos,
                 reconciliation_service=reconciliation_service,
             )
+
+            pre_ai_skip_reason, pre_ai_skip_details = await _evaluate_pre_ai_skip_reason(
+                repos,
+                account_alias=ACCOUNT_ALIAS,
+                symbol=symbol,
+                market=market,
+                source_type=source_type,
+            )
+            if pre_ai_skip_reason is not None:
+                result = SubmitResult(
+                    status="SKIPPED",
+                    error_phase="pre_ai_gate",
+                    error_message=pre_ai_skip_reason,
+                    is_skipped=True,
+                )
+                duration = time.monotonic() - start
+                logger.info(
+                    "[SYMBOL_DONE] cycle=%d symbol=%s status=SKIPPED duration=%.1fs "
+                    "pre_ai_skip_reason=%s details=%s",
+                    cycle,
+                    symbol,
+                    duration,
+                    pre_ai_skip_reason,
+                    pre_ai_skip_details,
+                )
+                serialized = _serialize_cycle_result(
+                    cycle,
+                    result,
+                    duration,
+                    symbol=symbol,
+                    market=market,
+                    precheck=precheck,
+                    dry_run=dry_run,
+                    source_type=source_type,
+                    dry_run_reason=dry_run_reason,
+                )
+                serialized["skip_reason"] = pre_ai_skip_reason
+                serialized["skip_details"] = pre_ai_skip_details
+                return serialized
 
             # ── 3. Build request ────────────────────────────────────────
             # NOTE: _resolve_symbol_price() 호출 제거됨 — 현재 전면 MARKET 정책으로

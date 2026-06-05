@@ -78,6 +78,7 @@
 | 11 | **Admin UI P1 — AccountsView filter/selection 개선**: 계좌 목록 필터 (type, strategy) 및 선택 시 상세 영역 시각적 개선 | [Plan 51](plans/51_admin_ui_operations_workflow_enhancements.md) | ❌ 미착수 |
 | 12 | **Admin UI — Dashboard reconciliation metrics**: Dashboard에 정합성 점검 메트릭 (불일치 수, 마지막 실행 시각) 추가. 현재는 locks만 표시 | Plan 53 | ❌ 미착수 |
 | 13 | **Admin UI — Dashboard/Accounts/Broker Capacity freshness visualization**: 데이터 신선도(freshness) 시각화. 각 데이터 소스별 마지막 업데이트 시각 표시 및 지연 경고 | Plan 53 | ❌ 미착수 |
+| 13a | **운영/업무자용 주문 흐름 문서 패키지**: 모든 핵심 개발이 끝난 뒤, 현재 작성된 end-to-end 주문 흐름 문서를 바탕으로 아래 3종 문서를 추가 작성. ① **매수 경로만 따로 분리한 요약본** ② **매도/체결/재조회 경로만 따로 분리한 운영 매뉴얼** ③ **장애 대응 체크리스트 버전**. 목적은 비개발 업무자가 주문 실패/체결/재조회 흐름을 더 빠르게 이해하도록 돕는 것. **개발 완료 전에는 착수하지 않고 보류** | 2026-06-05 운영 문서 정리 요청 | ❌ 미착수 |
 | 14 | **Position/Cash Refresh After Fill**: Fill 발생 후 position snapshot/cash balance snapshot 자동 갱신 경로. Snapshot sync loop와 decision pipeline 연결 | Paper Trading Loop Validation | ❌ 미착수 |
 | 15 | **Paper PnL / Performance Summary**: 체결/포지션/현금 데이터 기반 성과 집계. `AccountPerformanceSummary` + `StrategyPerformanceSummary`. Realized/Unrealized/Total PnL. `GET /performance-summary` API. 18개 신규 테스트 | Paper Trading Loop Validation | ✅ 승격됨 |
 | 16 | **Postgres BrokerOrderRepository.update() 구현**: 현재 InMemory 전용 `update()`를 Postgres에도 구현. `PostgresBrokerOrderRepository.update()`에 SQL UPDATE + `last_synced_at` 반영 | Fill Sync / Post-Submit Update | ✅ 승격됨 |
