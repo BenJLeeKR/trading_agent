@@ -148,7 +148,7 @@ sync trigger에서는 `_broker_order_repo.get_by_native_order_id()`를 직접 �
 |------|----------|------|
 | [`src/agent_trading/services/event_loop.py`](src/agent_trading/services/event_loop.py) | 수정 | `__init__()`에 sync_service/account_ref/snapshot_refresh_cb 추가, `_handle_fill_notification()`에 sync trigger + debounce 추가 |
 | [`tests/services/test_event_loop_integration.py`](tests/services/test_event_loop_integration.py) | 수정 | WS-triggered sync 신규 테스트 5개 추가 |
-| [`plans/BACKLOG.md`](plans/BACKLOG.md) | 수정 | Item 19 상태 변경 (❌ → ✅) |
+| [`plans/[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md) | 수정 | Item 19 상태 변경 (❌ → ✅) |
 
 ## 5. 테스트 계획 (5 tests)
 

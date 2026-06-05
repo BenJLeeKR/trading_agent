@@ -2,7 +2,7 @@
 
 ## 목적
 
-- `plans/2026-06-03_remaining_work_priority_map.md` 기준
+- `plans/[PRIORITY_MAP] remaining_work_priority_map.md` 기준
   `fill 발생 후 position/cash refresh 자동화` 후속 작업으로,
   `sync_account_snapshots()`의 `fetch_positions` 의도가 provider까지
   실제로 전달되도록 정리한다.

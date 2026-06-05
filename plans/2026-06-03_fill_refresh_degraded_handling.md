@@ -2,7 +2,7 @@
 
 ## 목적
 
-- `plans/2026-06-03_remaining_work_priority_map.md`의
+- `plans/[PRIORITY_MAP] remaining_work_priority_map.md`의
   `Fill 발생 후 position/cash refresh 자동화` 남은 세부 작업 중
   `refresh 중 quota 소진 시 degraded 처리 기준 명확화`를 1차 구현한다.
 - fill-triggered snapshot refresh 결과가

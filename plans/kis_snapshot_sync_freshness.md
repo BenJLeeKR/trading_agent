@@ -105,7 +105,7 @@ Response: JSON
 | 5 | `src/agent_trading/api/schemas.py` | 수정 | `SnapshotSyncRunHealthSummary` Pydantic model 추가 |
 | 6 | `src/agent_trading/api/routes/snapshot_sync_runs.py` | 수정 | `GET /snapshot-sync-runs/summary` route 추가 (`/{run_id}`보다 먼저 등록) |
 | 7 | `tests/api/test_snapshot_sync_runs.py` | 수정 | `TestSnapshotSyncRunHealthSummary` 클래스 추가 (4개 시나리오) |
-| 8 | `plans/BACKLOG.md` | 수정 | 승격 기록 업데이트 |
+| 8 | `plans/[BACKLOG] backlog.md` | 수정 | 승격 기록 업데이트 |
 
 ---
 
@@ -279,5 +279,5 @@ FastAPI `Depends(get_settings)` 사용.
 4. **API Schema 추가** (schemas.py)
 5. **Route 추가** (routes/snapshot_sync_runs.py)
 6. **테스트 작성** (test_snapshot_sync_runs.py)
-7. **문서 정리** (BACKLOG.md)
+7. **문서 정리** ([BACKLOG] backlog.md)
 8. **최종 검증** — pytest full suite

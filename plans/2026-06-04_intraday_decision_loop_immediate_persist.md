@@ -2,7 +2,7 @@
 
 ## 배경
 
-- `2026-06-03_remaining_work_priority_map.md`의 `3. 다음 거래일 장중 실운영 검증` 항목에는
+- `[PRIORITY_MAP] remaining_work_priority_map.md`의 `3. 다음 거래일 장중 실운영 검증` 항목에는
   다음 잔여 작업이 남아 있었다.
   - 장중 첫 `decision_submit_gate` 이후 `decision_loop` summary 자동 적재 재확인
 - 기존 구현은 `_run_intraday_due_tasks()`의 맨 마지막에서만

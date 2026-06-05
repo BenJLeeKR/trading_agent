@@ -196,7 +196,7 @@ def service_with_sync(
 |------|----------|
 | `src/agent_trading/services/decision_orchestrator.py` | `__init__()`에 `sync_service`/`snapshot_refresh_cb` param 추가; `assemble_and_submit()`에 Phase 5.5 블록 추가; `_PHASE55_SYNC_TIMEOUT` 상수; `asyncio`/`OrderSyncService`/`Callable`/`Awaitable` import |
 | `tests/services/test_safe_order_path_e2e.py` | `mock_sync_service`/`service_with_sync` fixture 추가; `TestPhase55` 또는 `TestSafeOrderPathE2E` 내 신규 7개 테스트 |
-| `plans/BACKLOG.md` | Item 20 → 승격됨 |
+| `plans/[BACKLOG] backlog.md` | Item 20 → 승격됨 |
 
 ---
 

@@ -444,7 +444,7 @@ Generated: 2026-05-09T12:00:00+00:00
 | `tests/scripts/test_evaluate_live_gate.py` | **신규** | 스크립트 단위/통합 테스트 (7개 시나리오) |
 | `src/agent_trading/config/settings.py` | **수정** | Live gate threshold 5개 env var 추가 |
 | `plans/live_gate_canary_readiness.md` | **신규** | 본 설계 문서 |
-| `plans/BACKLOG.md` | **수정** | 승격 기록 추가 |
+| `plans/[BACKLOG] backlog.md` | **수정** | 승격 기록 추가 |
 
 ---
 
@@ -468,4 +468,4 @@ flowchart LR
 | **Step 4** | Script 구현 — `evaluate_live_gate.py` | `code` | `scripts/evaluate_live_gate.py` |
 | **Step 5** | Manual checklist — 6개 항목 템플릿 | ✅ 완료 (본 문서 5장) | `plans/live_gate_canary_readiness.md` |
 | **Step 6** | 테스트 — 7개 시나리오 | `code` | `tests/scripts/test_evaluate_live_gate.py` |
-| **Step 7** | 문서 정리 — `BACKLOG.md` 업데이트 | `code` | `plans/BACKLOG.md` |
+| **Step 7** | 문서 정리 — `[BACKLOG] backlog.md` 업데이트 | `code` | `plans/[BACKLOG] backlog.md` |

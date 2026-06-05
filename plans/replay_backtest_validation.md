@@ -525,7 +525,7 @@ async def _run_scenario(bundle: ReplayBundle) -> dict:
 - 5.2절 Replay 테스트 설명 업데이트
 - 4번 Go/No-Go 기준 업데이트 (13/13 pass)
 
-### 7.2 `plans/BACKLOG.md` 업데이트
+### 7.2 `plans/[BACKLOG] backlog.md` 업데이트
 
 - Item 3 (Replay/Backtest) 상태 변경: ❌ 미착수 → ✅ 승격됨
 - 승격 기록 추가
@@ -540,7 +540,7 @@ async def _run_scenario(bundle: ReplayBundle) -> dict:
 | `tests/services/replay_test_harness.py` | **신규** | `_make_request()`, `_make_sizing_inputs()`, `_build_repos()`, `_make_stub_fdc()`, `ReplayBundle`, `REPLAY_SCENARIOS` |
 | `scripts/replay_verification.py` | **신규** (선택) | 경량 replay 검증 스크립트 |
 | `plans/paper_trading_loop_validation.md` | **수정** | 3.1절, 5.2절, Go/No-Go 업데이트 |
-| `plans/BACKLOG.md` | **수정** | Item 3 상태 변경 + 승격 기록 |
+| `plans/[BACKLOG] backlog.md` | **수정** | Item 3 상태 변경 + 승격 기록 |
 
 ---
 
@@ -592,5 +592,5 @@ flowchart TD
 3. **Step 3**: 4개 신규 시나리오 (REDUCE/EXIT/stale guard/cash constraint) + parametrize 테스트
 4. **Step 4**: `replay_test_harness.py` 공유 모듈 분리
 5. **Step 5**: `replay_verification.py` 경량 검증 스크립트
-6. **Step 6**: 문서 업데이트 (`paper_trading_loop_validation.md` + `BACKLOG.md`)
+6. **Step 6**: 문서 업데이트 (`paper_trading_loop_validation.md` + `[BACKLOG] backlog.md`)
 7. **테스트 결과**: 기존 9개 + 신규 4개 = 13/13 통과, 회귀 0

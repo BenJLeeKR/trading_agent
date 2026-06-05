@@ -351,7 +351,7 @@ Medium-term #11 (또는 #8과 통합)로 등록:
 | [`scripts/seed_instrument_master.py`](scripts/seed_instrument_master.py) | **신규** | Static seed 스크립트 (--dry-run / --apply) |
 | [`tests/scripts/test_seed_instrument_master.py`](tests/scripts/test_seed_instrument_master.py) | **신규** | Seed 스크립트 테스트 |
 | [`plans/krx_instrument_master_seed_plan.md`](plans/krx_instrument_master_seed_plan.md) | **신규** | 본 문서 |
-| [`plans/BACKLOG.md`](plans/BACKLOG.md) | 수정 | P1 KIS master sync 항목 추가 (선택) |
+| [`plans/[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md) | 수정 | P1 KIS master sync 항목 추가 (선택) |
 
 ---
 

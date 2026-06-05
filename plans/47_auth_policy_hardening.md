@@ -206,7 +206,7 @@ def test_principal_role_defaults_to_viewer(self, auth_client: TestClient) -> Non
 - Section 1.1: token 운영 정책 표 추가 (run-api / run-api-dev / docker 구분)
 - Section 5 (현재 한계): docs 공개 정책 명시, docs 보호는 future backlog임을 표기
 
-### 6.4 [`plans/BACKLOG.md`](../plans/BACKLOG.md)
+### 6.4 [`plans/[BACKLOG] backlog.md`](../plans/[BACKLOG] backlog.md)
 
 - Medium-term #2 "Auth / RBAC for admin API" → `✅ Plan 46으로 승격`
 - 새 항목 추가: "Docs/OpenAPI 보호 옵션 (inspection API)"
@@ -225,7 +225,7 @@ def test_principal_role_defaults_to_viewer(self, auth_client: TestClient) -> Non
 | `tests/api/test_auth.py` | 수정 | whitespace token startup fail 테스트 추가, role field 검증 |
 | `plans/47_auth_policy_hardening.md` | **신규** | 본 설계 문서 |
 | `plans/41_inspection_api_manual_verification.md` | 수정 | Rev 6 — 정책 결정 문서화 |
-| `plans/BACKLOG.md` | 수정 | Auth/RBAC 승격 기록, docs 보호 옵션 추가 |
+| `plans/[BACKLOG] backlog.md` | 수정 | Auth/RBAC 승격 기록, docs 보호 옵션 추가 |
 | `plans/README.md` | 수정 | Plan 46, 47 목록 추가 |
 
 ---
@@ -236,7 +236,7 @@ def test_principal_role_defaults_to_viewer(self, auth_client: TestClient) -> Non
 2. `src/agent_trading/api/app.py` — whitespace token 검증 + `auth_role` 파라미터 + role 전달 버그 수정
 3. `tests/api/test_auth.py` — 테스트 보강
 4. `plans/41_inspection_api_manual_verification.md` — Rev 6 업데이트
-5. `plans/BACKLOG.md` — 승격 기록
+5. `plans/[BACKLOG] backlog.md` — 승격 기록
 6. `plans/README.md` — 목록 추가
 7. pytest 검증
 

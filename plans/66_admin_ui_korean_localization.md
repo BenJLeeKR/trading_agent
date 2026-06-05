@@ -5,7 +5,7 @@
 > 2. `ACTIVE` → `활성` (서비스→활성)
 > 3. `YES/NO` → `허용/차단`은 문맥별 적용, 기계적 적용 금지
 > 4. Pretendard fallback + mono 영역 유지 확인
-> 5. 남은 개발 항목은 `plans/admin_ui_remaining_work.md` 대신 `BACKLOG.md`에 정리
+> 5. 남은 개발 항목은 `plans/admin_ui_remaining_work.md` 대신 `[BACKLOG] backlog.md`에 정리
 
 ## 목표
 
@@ -386,9 +386,9 @@ flowchart TD
 
 ---
 
-## Step 5: `BACKLOG.md` 업데이트
+## Step 5: `[BACKLOG] backlog.md` 업데이트
 
-[`plans/BACKLOG.md`](../plans/BACKLOG.md) 파일에 Admin UI 작업 완료 후 남은 개발 항목을 정리한다.
+[`plans/[BACKLOG] backlog.md`](../plans/[BACKLOG] backlog.md) 파일에 Admin UI 작업 완료 후 남은 개발 항목을 정리한다.
 
 ### 추가할 내용
 1. Admin UI Phase 2 — write/patch 작업 (주문 상태 변경, 잠금 해제 등)
@@ -411,7 +411,7 @@ flowchart LR
     D --> E[npm run build]
     D --> F[npx vitest run]
     F --> G[Step 4: 영문 유지 audit]
-    G --> H[Step 5: BACKLOG.md 업데이트]
+    G --> H[Step 5: [BACKLOG] backlog.md 업데이트]
     H --> I[최종 검증]
 ```
 
@@ -420,7 +420,7 @@ flowchart LR
 3. **Step 3**: 모든 테스트 파일 assertion 한국어로 변경
 4. **Build 검증**: `cd admin_ui && npm run build && npx vitest run`
 5. **Step 4**: 영문 유지 감사 — 코드 식별자가 모두 영문으로 남았는지 확인
-6. **Step 5**: [`BACKLOG.md`](../plans/BACKLOG.md) 업데이트
+6. **Step 5**: [`[BACKLOG] backlog.md`](../plans/[BACKLOG] backlog.md) 업데이트
 
 ---
 

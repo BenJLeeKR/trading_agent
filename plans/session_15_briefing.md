@@ -302,4 +302,4 @@ flowchart TB
 - [ ] AR Layer 2 guard 운영 검증 (`logs/` 및 DB `agent_run` 확인)
 - [ ] 최근 변경사항(13/13b/13c) 고가 `reference_price` 대비 `orderable_amount` 부족 시나리오 테스트
 - [ ] 서비스별 Docker 이미지 재빌드 필요 여부 확인 (app/api/reconciliation-worker/ops-scheduler)
-- [ ] BACKLOG.md 우선순위 재확인 및 필요시 업데이트
+- [ ] [BACKLOG] backlog.md 우선순위 재확인 및 필요시 업데이트

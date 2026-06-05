@@ -2,7 +2,7 @@
 
 ## 목적
 
-`2026-06-03_remaining_work_priority_map.md`의
+`[PRIORITY_MAP] remaining_work_priority_map.md`의
 `4. Fill 발생 후 position/cash refresh 자동화`에서 남아 있던 마지막 세부 항목
 `장중 실측 기준 수렴 속도 재검증`을 닫는다.
 

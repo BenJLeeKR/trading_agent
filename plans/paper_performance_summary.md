@@ -277,7 +277,7 @@ class StrategyPerformanceSummaryView(BaseModel):
 | `src/agent_trading/api/schemas.py` | **수정** | AccountPerformanceSummaryView, StrategyPerformanceSummaryView 추가 |
 | `src/agent_trading/api/app.py` | **수정** | performance router 등록 |
 | `tests/services/test_performance_summary.py` | **생성** | 6+ 단위 테스트 |
-| `plans/BACKLOG.md` | **수정** | Item 1b 상태 업데이트 + paper performance 항목 추가 |
+| `plans/[BACKLOG] backlog.md` | **수정** | Item 1b 상태 업데이트 + paper performance 항목 추가 |
 
 ## 6. 테스트 계획
 
@@ -336,4 +336,4 @@ flowchart LR
 | 4 | Schema + router 등록 | Pydantic models + app.py router include |
 | 5 | 단위 테스트 | 10 tests covering pure functions + service + edge cases |
 | 6 | 회귀 테스트 | 전체 pytest suite |
-| 7 | 문서 정리 | BACKLOG.md Item 1b → ✅ 승격됨, Paper Performance 항목 추가 |
+| 7 | 문서 정리 | [BACKLOG] backlog.md Item 1b → ✅ 승격됨, Paper Performance 항목 추가 |

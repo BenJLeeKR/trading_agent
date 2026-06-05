@@ -2,7 +2,7 @@
 
 ## 배경
 
-`plans/2026-06-03_remaining_work_priority_map.md`의 P0 항목 중
+`plans/[PRIORITY_MAP] remaining_work_priority_map.md`의 P0 항목 중
 `다음 거래일 장중 실운영 검증`은 여전히 수동 쿼리/로그 확인 의존도가 높았다.
 
 특히 최근에는 다음 신호를 함께 봐야 장중 상태를 판단할 수 있었다.

@@ -323,9 +323,9 @@ class SubmitResult:
 
 ---
 
-### Step 10: BACKLOG.md 업데이트 및 완료 보고
+### Step 10: [BACKLOG] backlog.md 업데이트 및 완료 보고
 
-**파일**: [`plans/BACKLOG.md`](plans/BACKLOG.md)
+**파일**: [`plans/[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md)
 
 - 승격 기록 섹션에 Gap 2 완료 기록 추가
 - 완료 보고서를 attempt_completion으로 전달

@@ -398,9 +398,9 @@ class TestSyncAllWithStatusFilter:
 
 ### Phase 5: 운영 문서 정리
 
-**파일**: [`plans/BACKLOG.md`](plans/BACKLOG.md)
+**파일**: [`plans/[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md)
 
-#### 5a. BACKLOG.md 업데이트
+#### 5a. [BACKLOG] backlog.md 업데이트
 
 기존 near-term 항목 "스케줄러가 동작 중인지 확인할 수 있는 Admin UI health indicator" 는 유지하되,
 완료된 `snapshot-sync` scheduler 도입 Task 상태를 업데이트.
@@ -457,7 +457,7 @@ python scripts/sync_kis_snapshots.py \
 | 2 | `kis_snapshot_sync.py` | `sync_all_kis_accounts()`에 env/status 파라미터 + import | +30 |
 | 3 | `sync_kis_snapshots.py` | argparse 옵션 5개 + _run 로직 + dry-run/format | +80 |
 | 4 | `test_kis_snapshot_sync.py` | 새 Test Class 2개 + 테스트 6-7개 | +150 |
-| 5 | `BACKLOG.md` | 상태 업데이트 | +5 |
+| 5 | `[BACKLOG] backlog.md` | 상태 업데이트 | +5 |
 
 ---
 
@@ -474,5 +474,5 @@ python scripts/sync_kis_snapshots.py \
 - [ ] **Phase 3-3**: `sync_kis_snapshots.py` — `_run_single()`/`_run_multi()`에 `--format json` 지원
 - [ ] **Phase 3-4**: `sync_kis_snapshots.py` — `_run()`에 `--dry-run` + `--account-ref` 분기 처리
 - [ ] **Phase 4**: `test_kis_snapshot_sync.py` — env filter 테스트 3개 + status filter 테스트 3개 추가
-- [ ] **Phase 5**: `BACKLOG.md` — near-term 항목 업데이트
+- [ ] **Phase 5**: `[BACKLOG] backlog.md` — near-term 항목 업데이트
 - [ ] **Phase 6**: 전체 pytest 실행 (신규 테스트 6개 포함) + E2E 검증

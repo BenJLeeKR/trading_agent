@@ -98,7 +98,7 @@ async def update(
 4. `test_update_not_found` — 존재하지 않는 UUID → ValueError
 5. `test_get_by_id` — broker_order_id로 조회
 
-### Step 5: BACKLOG.md #16 상태 업데이트
+### Step 5: [BACKLOG] backlog.md #16 상태 업데이트
 - #16: `Postgres BrokerOrderRepository.update() 구현` → ❌ 미착수 → ✅ 승격됨
 
 ## 3. 변경 파일 목록
@@ -106,7 +106,7 @@ async def update(
 |------|------|
 | `src/agent_trading/repositories/postgres/broker_orders.py` | `get()` + `update()` 구현 |
 | `tests/repositories/test_postgres_broker_orders.py` | 5개 신규 테스트 추가 |
-| `plans/BACKLOG.md` | #16 상태 업데이트 |
+| `plans/[BACKLOG] backlog.md` | #16 상태 업데이트 |
 
 ## 4. No-Go Items
 - Admin UI 변경 금지

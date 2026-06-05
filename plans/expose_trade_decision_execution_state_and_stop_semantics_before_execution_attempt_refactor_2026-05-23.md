@@ -486,7 +486,7 @@ async def update_pipeline_stop(
 | 문서 | 설명 |
 |------|------|
 | [`execution_status_derived_field_and_pipeline_stop_exposure_phase1_2026-05-23.md`](execution_status_derived_field_and_pipeline_stop_exposure_phase1_2026-05-23.md) | 상세 설계 문서 (구현 전 단계) |
-| [`BACKLOG.md`](./BACKLOG.md) | EXE-001, 002, 005A, 005B |
+| [`[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) | EXE-001, 002, 005A, 005B |
 | [`src/agent_trading/api/schemas.py:290-357`](../src/agent_trading/api/schemas.py:290) | `TradeDecisionDetail` 스키마 |
 | [`src/agent_trading/repositories/contracts.py:73-87`](../src/agent_trading/repositories/contracts.py:73) | `TradeDecisionRow` dataclass |
 | [`src/agent_trading/repositories/postgres/trade_decisions.py:171-234`](../src/agent_trading/repositories/postgres/trade_decisions.py:171) | `list_all_paginated()` 구현 |

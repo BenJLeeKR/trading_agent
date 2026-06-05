@@ -13,7 +13,7 @@ P2 minimum adds:
 
 Reference
 ---------
-- ``plans/trading_universe_policy_v1.md`` — 5-layer universe selection policy
+- ``plans/[POLICY] trading_universe_policy_v1.md`` — 5-layer universe selection policy
 - ``plans/universe_selection_service_p1_design.md`` — P1 design document
 - ``plans/universe_selection_service_p2_market_overlay_design.md`` — P2 design
 """

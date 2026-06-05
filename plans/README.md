@@ -7,15 +7,15 @@
 - **하나의 plan 번호 = 하나의 canonical 파일**: 같은 작업 단위에 대해 여러 버전의 plan 문서를 파일로 분리하지 않는다. 수정 이력이 필요한 경우, 문서 내부 `Revision History` 섹션에 누적 기록한다. 같은 task의 원본안/수정안/후속안을 별도 파일로 쪼개지 않는다.
 - **파일명**: 숫자 접두사 + 설명으로 구성 (예: `04.xxx.md`, `29_ai_decision_backend_contract.md`). 엄격한 패턴보다는 `plans/README.md` 목록에서 순서대로 식별 가능하게 하는 것이 목적이다.
 - **Rejected 접근법**: 문서 내 `부록(Appendix)` 섹션에 참고용으로 보관한다. 별도 파일로 분리하지 않는다.
-- **Backlog 관리**: "지금 당장 실행할 작업"은 numbered plan으로, "나중에 할 작업"은 [`BACKLOG.md`](./BACKLOG.md)에 기록한다. 실행할 때만 번호 Plan을 생성하고, 아직 시작하지 않을 작업은 BACKLOG에만 기록한다. BACKLOG 항목이 실제로 시작되면 해당 항목을 완료 표시하고 새 numbered plan으로 승격한다.
-- **참조**: [`plans/BACKLOG.md`](./BACKLOG.md) — Future work candidates 정리
+- **Backlog 관리**: "지금 당장 실행할 작업"은 numbered plan으로, "나중에 할 작업"은 [`[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md)에 기록한다. 실행할 때만 번호 Plan을 생성하고, 아직 시작하지 않을 작업은 BACKLOG에만 기록한다. BACKLOG 항목이 실제로 시작되면 해당 항목을 완료 표시하고 새 numbered plan으로 승격한다.
+- **참조**: [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) — Future work candidates 정리
 
 권장 읽기 방식:
 
 1. 처음부터 전체 흐름을 따라가려면 `01`부터 순서대로 읽는다.
 2. 현재 상태만 빠르게 파악하려면 `18` 이후 문서부터 읽는다.
 3. 특정 milestone의 맥락이 필요할 때만 그 이전 문서로 내려간다.
-4. **아직 실행하지 않은 작업 아이디어**는 [`BACKLOG.md`](./BACKLOG.md)를 참조한다.
+4. **아직 실행하지 않은 작업 아이디어**는 [`[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md)를 참조한다.
 
 ## 문서 목록
 

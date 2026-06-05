@@ -1,7 +1,7 @@
 # market_overlay 실운영 반영 여부 검증 보고서
 
 **작성일**: 2026-05-16  
-**우선순위**: P1 (BACKLOG.md)  
+**우선순위**: P1 ([BACKLOG] backlog.md)  
 **분석 모드**: Read-only (코드 수정 없음)
 
 ---

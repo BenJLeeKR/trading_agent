@@ -463,7 +463,7 @@ flowchart TD
 | 4 | `src/agent_trading/api/routes/performance.py` | 수정 | `GET /paper-go-no-go` endpoint 추가 + import |
 | 5 | `tests/services/test_paper_gate.py` | **신규** | 최소 7개 테스트 (pure + 통합) |
 | 6 | `plans/paper_trading_loop_validation.md` | 수정 | Go/No-Go 기준 문서에 Gate API 반영 |
-| 7 | `plans/BACKLOG.md` | 수정 | 승격 기록 추가 |
+| 7 | `plans/[BACKLOG] backlog.md` | 수정 | 승격 기록 추가 |
 
 ---
 
@@ -509,4 +509,4 @@ flowchart TD
 | 5 | `tests/services/test_paper_gate.py` 신규 생성 | `tests/services/test_paper_gate.py` | 7개 테스트 |
 | 6 | `pytest` 실행 및 회귀 확인 | — | 모든 기존 테스트 회귀 없음 확인 |
 | 7 | `plans/paper_trading_loop_validation.md` 업데이트 | `plans/paper_trading_loop_validation.md` | Go/No-Go 기준에 Gate API 반영 |
-| 8 | `plans/BACKLOG.md` 업데이트 | `plans/BACKLOG.md` | 승격 기록 추가 |
+| 8 | `plans/[BACKLOG] backlog.md` 업데이트 | `plans/[BACKLOG] backlog.md` | 승격 기록 추가 |

@@ -342,7 +342,7 @@ class AppSettings:
 ### Step 5: Backlog / Validation 문서 정리
 - [`paper_trading_loop_validation.md`](plans/paper_trading_loop_validation.md): §10 "Live Canary 이전 필수 항목"을 mode switch checklist와 연결
 - [`paper_exit_criteria.md`](plans/paper_exit_criteria.md): §7 "제약 조건 점검"에 mode boundary 관련 제약 추가
-- [`BACKLOG.md`](plans/BACKLOG.md): mode boundary backlog 항목 업데이트
+- [`[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md): mode boundary backlog 항목 업데이트
 
 ### Step 6: 테스트/검증
 - 기존 테스트 전체 통과 확인

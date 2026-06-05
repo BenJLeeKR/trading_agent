@@ -178,7 +178,7 @@ class InMemorySnapshotSyncRunRepository:
 | `scripts/sync_kis_snapshots.py` | `_run()` 함수에 history 기록 로직 추가 |
 | `scripts/run_snapshot_sync_loop.py` | `_run_one_cycle()` 함수에 history 기록 로직 추가 |
 | `tests/services/test_kis_snapshot_sync.py` | 신규 테스트 추가 |
-| `plans/BACKLOG.md` | 운영 문서 업데이트 |
+| `plans/[BACKLOG] backlog.md` | 운영 문서 업데이트 |
 
 ### 3.2 변경 금지 확인
 
@@ -342,5 +342,5 @@ class TestBuildSyncRunEntity:
 8. **CLI 연결** — `sync_kis_snapshots.py` `_run()`에 history 저장 로직
 9. **Scheduler 연결** — `run_snapshot_sync_loop.py` `_run_one_cycle()`에 history 저장 로직
 10. **테스트 보강** — entity/repository/helper unit tests
-11. **운영 문서 정리** — BACKLOG.md 업데이트
+11. **운영 문서 정리** — [BACKLOG] backlog.md 업데이트
 12. **최종 검증** — pytest 전체 실행

@@ -189,7 +189,7 @@ flowchart TD
 3. `scripts/run_snapshot_sync_loop.py` — `_run_one_cycle()` KIS wiring → factory 사용
 4. `tests/brokers/test_snapshot_factory.py` 신규 생성
 5. 전체 회귀 테스트 실행
-6. BACKLOG.md 업데이트
+6. [BACKLOG] backlog.md 업데이트
 
 ## 아직 broker-specific으로 남는 항목
 

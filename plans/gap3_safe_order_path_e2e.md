@@ -251,7 +251,7 @@ class TestSafeOrderPathE2E:
 | 파일 | 변경 유형 | 설명 |
 |------|----------|------|
 | `tests/services/test_safe_order_path_e2e.py` | **신규 생성** | 7개 E2E 시나리오 통합 테스트 (~350 lines) |
-| `plans/BACKLOG.md` | 수정 | Gap 3 상태 ✅ 완료로 업데이트 |
+| `plans/[BACKLOG] backlog.md` | 수정 | Gap 3 상태 ✅ 완료로 업데이트 |
 
 ## 제외 사항 (명시적 범위 외)
 

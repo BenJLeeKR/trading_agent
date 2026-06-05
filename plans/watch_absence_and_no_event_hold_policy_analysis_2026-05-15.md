@@ -2,7 +2,7 @@
 
 > **작성일**: 2026-05-15  
 > **분석 범위**: EI/FDC/AR 3-Agent Pipeline, Decision Orchestrator Backend, DB Decision Samples (7일, 2,891건)  
-> **관련 백로그**: [`BACKLOG.md`](plans/BACKLOG.md) Item #11 (P1 — WATCH 부재 분석), Item #12 (P1 — core+no_event HOLD 완화)
+> **관련 백로그**: [`[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md) Item #11 (P1 — WATCH 부재 분석), Item #12 (P1 — core+no_event HOLD 완화)
 
 ---
 
@@ -508,7 +508,7 @@ FDC user prompt에는 이미 score 정보가 포함되어 있으므로([`final_d
 
 **목표**: KIS ranking 분석 API를 구현하여 `market_overlay` 심볼을 실제로 생성
 
-**현재 상태**: [`BACKLOG.md`](plans/BACKLOG.md) Item #13 — KIS ranking analysis API not implemented
+**현재 상태**: [`[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md) Item #13 — KIS ranking analysis API not implemented
 
 **필요 작업**:
 1. KIS REST API 중 ranking 분석 엔드포인트 구현
@@ -658,4 +658,4 @@ no_material_events: bool | None = None  # True | False | None (unknown)
 | [`ei_fdc_hold_bias_analysis.md`](plans/ei_fdc_hold_bias_analysis.md) | HOLD 편향 원인 분석 (99.2% HOLD, event data 결핍) |
 | [`hold_bias_mitigation_effect_report.md`](plans/hold_bias_mitigation_effect_report.md) | Mitigation 효과 측정 (event symbols: 80% HOLD, no-event: 100% HOLD) |
 | [`intraday_market_overlay_dryrun_report_2026-05-15.md`](plans/intraday_market_overlay_dryrun_report_2026-05-15.md) | Intraday dry-run (177 FDC decisions, market_overlay=0) |
-| [`BACKLOG.md`](plans/BACKLOG.md) | Item #11 (WATCH), Item #12 (core+no_event), Item #13 (market_overlay) |
+| [`[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md) | Item #11 (WATCH), Item #12 (core+no_event), Item #13 (market_overlay) |

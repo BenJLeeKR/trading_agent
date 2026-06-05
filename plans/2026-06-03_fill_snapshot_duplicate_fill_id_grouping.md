@@ -2,7 +2,7 @@
 
 ## 목적
 
-- `plans/2026-06-03_remaining_work_priority_map.md`의
+- `plans/[PRIORITY_MAP] remaining_work_priority_map.md`의
   `Fill History Phase 3` 남은 세부 작업 중
   `같은 ODNO의 다회 조회/누적 체결 표현 차이를 흡수하는 규칙 정리`
   를 한 단계 더 진행한다.

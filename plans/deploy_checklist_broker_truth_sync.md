@@ -26,7 +26,7 @@
 | 13 | `tests/services/test_decision_orchestrator.py` | 수정 | 테스트 |
 | 14 | `tests/services/test_decision_replay.py` | 수정 | 테스트 |
 | 15 | `.gitignore` | 수정 | 캐시 파일 ignore |
-| 16 | `plans/BACKLOG.md` | 수정 | 백로그 업데이트 |
+| 16 | `plans/[BACKLOG] backlog.md` | 수정 | 백로그 업데이트 |
 | 17 | `plans/decouple_naver_t3_from_decision_submit_gate_2026-05-18.md` | 수정 | Plan 문서 |
 | 18 | `plans/reduce_exit_sell_submit_runtime_validation_2026-05-18.md` | 수정 | Plan 문서 |
 | 19-21 | `.cache/*.json` (3 files) | 수정 | 토큰 캐시 (git-tracked) |

@@ -132,4 +132,4 @@ AI Agent(Event Interpretation / AI Risk / Final Decision Composer)의 서술형 
 4. [`decision_orchestrator.py`](src/agent_trading/services/decision_orchestrator.py)의 `_ensure_trade_decision()`에 한국어 정규화 적용
 5. 단위 테스트 생성 (`test_korean_normalizer.py`)
 6. 통합 테스트 생성 (`test_korean_enforcement.py`)
-7. [`BACKLOG.md`](plans/BACKLOG.md) 업데이트
+7. [`[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md) 업데이트

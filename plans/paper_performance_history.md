@@ -307,5 +307,5 @@ flowchart LR
 3. API 추가 — GET /performance-history
 4. 테스트 — 13개 신규 테스트
 5. 회귀 검증 — 기존 18개 + 전체 테스트
-6. BACKLOG.md — Paper Performance History 항목 추가
+6. [BACKLOG] backlog.md — Paper Performance History 항목 추가
 7. 완료 보고

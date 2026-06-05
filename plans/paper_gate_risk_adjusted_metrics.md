@@ -343,7 +343,7 @@ with _env(
 | 6 | test_evaluate_paper_exit.py: 1개 신규 | `tests/scripts/test_evaluate_paper_exit.py` |
 | 7 | test_evaluate_live_gate.py: 2개 신규 | `tests/scripts/test_evaluate_live_gate.py` |
 | 8 | pytest 전체 suite 실행 + 회귀 검증 | - |
-| 9 | BACKLOG.md 업데이트 | `plans/BACKLOG.md` |
+| 9 | [BACKLOG] backlog.md 업데이트 | `plans/[BACKLOG] backlog.md` |
 
 ---
 

@@ -256,7 +256,7 @@ logger.info(
 | `scripts/run_post_submit_sync_loop.py` | `_log_cycle_summary()`에 `snapshots_refreshed` 카운트 추가 |
 | `tests/services/test_order_sync_service.py` | 신규 테스트 (아래 참조) |
 | `tests/services/test_event_loop_integration.py` | 신규 테스트 (아래 참조) |
-| `plans/BACKLOG.md` | Item 21 → ✅ 승격됨 |
+| `plans/[BACKLOG] backlog.md` | Item 21 → ✅ 승격됨 |
 
 ---
 
@@ -317,4 +317,4 @@ Polling:    sync → FILLED + fills>0 → refresh ✅ (조건 강화)
 7. `test_order_sync_service.py` — 3개 신규 테스트
 8. `test_event_loop_integration.py` — 2개 신규 테스트
 9. 전체 테스트 실행 (회귀 확인)
-10. `plans/BACKLOG.md` — Item 21 승격
+10. `plans/[BACKLOG] backlog.md` — Item 21 승격

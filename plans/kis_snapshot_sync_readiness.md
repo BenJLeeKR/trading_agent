@@ -30,7 +30,7 @@
 | 1 | `src/agent_trading/api/schemas.py` | `HealthResponse`에 snapshot sync 필드 4개 추가 (optional) |
 | 2 | `src/agent_trading/api/routes/health.py` | `/health`에 snapshot sync 정보 포함; `/health/readyz`에 `degraded` 로직 추가 |
 | 3 | `tests/api/test_health.py` | snapshot sync 관련 테스트 4개 추가 |
-| 4 | `plans/BACKLOG.md` | 승격 기록 추가 |
+| 4 | `plans/[BACKLOG] backlog.md` | 승격 기록 추가 |
 
 ---
 

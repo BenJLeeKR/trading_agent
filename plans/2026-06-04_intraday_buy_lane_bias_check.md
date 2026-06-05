@@ -2,7 +2,7 @@
 
 ## 배경
 
-- `2026-06-03_remaining_work_priority_map.md`의 `3. 다음 거래일 장중 실운영 검증`은 아직 진행중 상태였다.
+- `[PRIORITY_MAP] remaining_work_priority_map.md`의 `3. 다음 거래일 장중 실운영 검증`은 아직 진행중 상태였다.
 - 최근 수정으로 일반 BUY lane은 다시 열렸지만, 장중에
   - `submit_budget_consumed_*`
   - `general_submit_disabled_*`

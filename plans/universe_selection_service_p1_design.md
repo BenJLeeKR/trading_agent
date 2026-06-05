@@ -1,8 +1,8 @@
 # Universe Selection Service P1 설계안
 
-> **목적**: `plans/trading_universe_policy_v1.md` V1.1 정책과 `plans/BACKLOG.md` #28, #30을 코드로 옮기기 위한 설계.  
+> **목적**: `plans/[POLICY] trading_universe_policy_v1.md` V1.1 정책과 `plans/[BACKLOG] backlog.md` #28, #30을 코드로 옮기기 위한 설계.  
 > **상태**: ❌ 미구현 — 이 문서는 설계 및 변경 범위 고정이 목적  
-> **참조**: [`trading_universe_policy_v1.md`](plans/trading_universe_policy_v1.md), [`BACKLOG.md` #28](plans/BACKLOG.md#L90), [`BACKLOG.md` #30](plans/BACKLOG.md#L92)  
+> **참조**: [`[POLICY] trading_universe_policy_v1.md`](plans/[POLICY]%20trading_universe_policy_v1.md), [`[BACKLOG] backlog.md` #28](plans/[BACKLOG] backlog.md#L90), [`[BACKLOG] backlog.md` #30](plans/[BACKLOG] backlog.md#L92)  
 > **기준 코드**: [`run_paper_decision_loop.py`](scripts/run_paper_decision_loop.py), [`contracts.py`](src/agent_trading/repositories/contracts.py), [`decision_orchestrator.py`](src/agent_trading/services/decision_orchestrator.py), [`rest_client.py`](src/agent_trading/brokers/koreainvestment/rest_client.py)
 
 ---
@@ -823,7 +823,7 @@ flowchart TB
 
 ---
 
-## 부록 A: `trading_universe_policy_v1.md`와의 정합성
+## 부록 A: `[POLICY] trading_universe_policy_v1.md`와의 정합성
 
 | 정책 항목 | P1 구현 여부 | 비고 |
 |-----------|-------------|------|

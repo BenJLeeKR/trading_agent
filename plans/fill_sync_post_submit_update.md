@@ -573,7 +573,7 @@ class _StubBrokerForSync:
 | `src/agent_trading/services/order_manager.py` | 수정 (last_synced_at 초기값) | ~2 |
 | `src/agent_trading/services/decision_orchestrator.py` | 수정 (선택, pipeline 연동) | ~20 |
 | `tests/services/test_order_sync_service.py` | **신규 생성** | ~350 |
-| `plans/BACKLOG.md` | 수정 (후속 작업 기록) | ~5 |
+| `plans/[BACKLOG] backlog.md` | 수정 (후속 작업 기록) | ~5 |
 | `plans/fill_sync_post_submit_update.md` | **신규 생성** (본 문서) | ~1 |
 
 **Admin UI 변경**: 없음
@@ -667,7 +667,7 @@ stateDiagram-v2
 
 ### 13.2 Backlog 등록 항목
 
-다음 항목은 [`BACKLOG.md`](plans/BACKLOG.md)에 기록한다:
+다음 항목은 [`[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md)에 기록한다:
 
 | 항목 | 우선순위 | 설명 |
 |------|----------|------|

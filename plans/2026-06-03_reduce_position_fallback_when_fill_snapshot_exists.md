@@ -2,7 +2,7 @@
 
 ## 목적
 
-- `plans/2026-06-03_remaining_work_priority_map.md` 기준
+- `plans/[PRIORITY_MAP] remaining_work_priority_map.md` 기준
   `Fill History Phase 3` / `부분체결 자동 판정 고도화`의 다음 단계로,
   linked `VTTC0081R` snapshot이 이미 존재하는 주문에 대해서는
   `position_delta` fallback 의존을 더 줄인다.

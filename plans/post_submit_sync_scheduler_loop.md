@@ -62,7 +62,7 @@ BACKLOG #17 이 해결해야 할 문제:
 | 4 | [`src/agent_trading/services/order_sync_service.py`](src/agent_trading/services/order_sync_service.py) | 수정 | `PostSubmitSyncRunner` 클래스 추가 (batch sync runner) |
 | 5 | [`scripts/run_post_submit_sync_loop.py`](scripts/run_post_submit_sync_loop.py) | **신규** | Scheduler loop script |
 | 6 | [`tests/services/test_order_sync_service.py`](tests/services/test_order_sync_service.py) | 수정 | `PostSubmitSyncRunner` 테스트 추가 |
-| 7 | [`plans/BACKLOG.md`](plans/BACKLOG.md) | 수정 | Item 17 승격, 후속 정리 |
+| 7 | [`plans/[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md) | 수정 | Item 17 승격, 후속 정리 |
 
 ## 5. 상세 설계
 
@@ -267,7 +267,7 @@ flowchart TD
 - [`tests/services/test_order_sync_service.py`](tests/services/test_order_sync_service.py): `PostSubmitSyncRunner` 테스트 추가
 
 ### Step 5: Backlog 정리
-- [`plans/BACKLOG.md`](plans/BACKLOG.md): Item 17 승격, 후속 등록
+- [`plans/[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md): Item 17 승격, 후속 등록
 
 ## 8. 테스트 계획
 

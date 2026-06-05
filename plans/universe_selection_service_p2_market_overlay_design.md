@@ -5,9 +5,9 @@
 > **중요**: 이 문서는 **구현 착수 가능한 상태**로 설계를 고정하는 것이 목적이다. 추정(assumed)과 확정(verified) 사항을 명확히 구분하며, 모든 미확인 항목은 대체 경로(fallback)를 함께 명시한다.
 >
 > **기준 문서**:
-> - [`trading_universe_policy_v1.md`](plans/trading_universe_policy_v1.md) — Layer 4 Market-Driven Overlay, Layer 4.1 Liquidity Filter
+> - [`[POLICY] trading_universe_policy_v1.md`](plans/[POLICY]%20trading_universe_policy_v1.md) — Layer 4 Market-Driven Overlay, Layer 4.1 Liquidity Filter
 > - [`universe_selection_service_p1_design.md`](plans/universe_selection_service_p1_design.md) — P1 완료 상태, 섹션 10.1 P2 확장 방향
-> - [`BACKLOG.md`](plans/BACKLOG.md) #28 (Universe Selection Agent), #30 (Signal Agent)
+> - [`[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md) #28 (Universe Selection Agent), #30 (Signal Agent)
 > - [`trading_universe_decision_loop_p0_report.md`](plans/trading_universe_decision_loop_p0_report.md) — 100-symbol latency 측정 결과
 
 ---

@@ -131,7 +131,7 @@ for fill in fill_events:
 | 5 | [`src/agent_trading/services/order_sync_service.py`](../src/agent_trading/services/order_sync_service.py:396) | 수정 | dedup 로직 broker_fill_id 우선 + composite fallback(4-field). `broker_fill_id=""`→None 정규화. `source_channel` 동적 할당 |
 | 6 | [`src/agent_trading/brokers/koreainvestment/rest_client.py`](../src/agent_trading/brokers/koreainvestment/rest_client.py:933) | 수정 | `FillEvent` 생성 시 `broker_fill_id=item.get("CCLD_NUM")` 매핑 |
 | 7 | [`tests/services/test_order_sync_service.py`](../tests/services/test_order_sync_service.py:350) | 수정 | `TestSyncFillDedup`에 broker_fill_id 기반 dedup 테스트 추가 |
-| 8 | [`plans/BACKLOG.md`](../plans/BACKLOG.md:38) | 수정 | #18 상태 `❌ 미착수` → `✅ 승격됨` |
+| 8 | [`plans/[BACKLOG] backlog.md`](../plans/[BACKLOG] backlog.md:38) | 수정 | #18 상태 `❌ 미착수` → `✅ 승격됨` |
 
 ## 3. No-Go Items
 
@@ -234,7 +234,7 @@ fill = FillEvent(
 | 6 | `test_inmemory_get_by_broker_fill_id` | InMemory repo `get_by_broker_fill_id()` 동작 검증 |
 
 ### Step 8: BACKLOG #18 상태 업데이트
-`BACKLOG.md:38` — #18 상태를 `❌ 미착수` → `✅ 승격됨`으로 변경, 승격 기록 추가.
+`[BACKLOG] backlog.md:38` — #18 상태를 `❌ 미착수` → `✅ 승격됨`으로 변경, 승격 기록 추가.
 
 ---
 

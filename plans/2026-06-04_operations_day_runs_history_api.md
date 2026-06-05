@@ -14,7 +14,7 @@
 하지만 운영자가 특정 날짜의 scheduler 운영 상태를 다시 확인하거나,
 여러 날짜의 운영 흐름을 비교하려면 여전히 DB를 직접 조회해야 했다.
 
-`plans/2026-06-03_remaining_work_priority_map.md` 기준으로도
+`plans/[PRIORITY_MAP] remaining_work_priority_map.md` 기준으로도
 `operations_day_runs`의 남은 세부 작업은 `recent list / run_date filter 조회 추가`였다.
 
 ## 목표

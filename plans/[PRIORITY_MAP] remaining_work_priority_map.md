@@ -2,7 +2,7 @@
 
 ## 목적
 
-- `plans/BACKLOG.md`와 2026-06-01 ~ 2026-06-03 사이의 최근 작업 문서를 함께 기준으로 삼아,
+- `plans/[BACKLOG] backlog.md`와 2026-06-01 ~ 2026-06-03 사이의 최근 작업 문서를 함께 기준으로 삼아,
   지금 시점에서 **실제로 남은 작업**을 우선순위별로 재정리한다.
 - 추가로 `plan_docs/agents/`의 agent 설계 문서
   - `01_agent_inventory_and_status.md`
@@ -152,7 +152,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 
 ### 근거 문서
 - [`plans/2026-06-03_vttc0081r_fill_history_phase2_order_link.md`](./2026-06-03_vttc0081r_fill_history_phase2_order_link.md)
-- [`plans/BACKLOG.md`](./BACKLOG.md) 의 reconciliation / partially filled 관련 항목
+- [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 의 reconciliation / partially filled 관련 항목
 - `plan_docs/agents/03_risk_role_boundaries.md`
 
 ### 우선순위 이유
@@ -189,7 +189,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 6. `order_submission_attempts`, `fill snapshots`, `order sync`가 같은 주문에 대해 일관된지
 
 ### 근거 문서
-- [`plans/BACKLOG.md`](./BACKLOG.md) 항목 `8a`
+- [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `8a`
 - [`plans/2026-06-01_paper_order_stability_measurement.md`](./2026-06-01_paper_order_stability_measurement.md)
 
 ### 우선순위 이유
@@ -219,7 +219,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   - [`plans/2026-06-05_fill_refresh_convergence_measurement.md`](./2026-06-05_fill_refresh_convergence_measurement.md)
 
 ### 근거 문서
-- [`plans/BACKLOG.md`](./BACKLOG.md) 항목 `14`
+- [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `14`
 - `plan_docs/agents/01_agent_inventory_and_status.md`
 - `plan_docs/agents/02_agent_target_shapes.md`
 
@@ -246,7 +246,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - [ ] paper 전용 우회 정책이 live에도 불필요하게 남아 있지 않은지 확인
 
 ### 근거 문서
-- [`plans/BACKLOG.md`](./BACKLOG.md) 항목 `8`
+- [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `8`
 
 ---
 
@@ -262,7 +262,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - [ ] rest/holiday/market_state client 통합 적용
 
 ### 근거 문서
-- [`plans/BACKLOG.md`](./BACKLOG.md) 항목 `34`
+- [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `34`
 
 ### 우선순위 이유
 - 지금 당장 장애는 아니지만, KIS 관련 운영 안정성의 중기 핵심 기술부채다.
@@ -294,7 +294,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   - [`plans/2026-06-04_operations_day_runs_validation_summary_link.md`](./2026-06-04_operations_day_runs_validation_summary_link.md)
 
 ### 근거 문서
-- [`plans/BACKLOG.md`](./BACKLOG.md) 항목 `10`
+- [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `10`
 
 ### 우선순위 이유
 - 비거래일/장종료/운영중 상태를 더 명확히 표시할 수 있어 operator 혼선을 줄인다.
@@ -317,7 +317,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   - [`plans/2026-06-03_session_events_run_date_drilldown.md`](./2026-06-03_session_events_run_date_drilldown.md)
 
 ### 근거 문서
-- [`plans/BACKLOG.md`](./BACKLOG.md) 항목 `7`
+- [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `7`
 
 ---
 
@@ -338,8 +338,8 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - 주문 생성 / 제출 / 체결 / 재조회 / recovery 정책이 더 이상 크게 바뀌지 않을 것
 
 ### 근거 문서
-- [`plans/2026-06-05_end_to_end_order_flow_guide.md`](./2026-06-05_end_to_end_order_flow_guide.md)
-- [`plans/BACKLOG.md`](./BACKLOG.md) 항목 `13a`
+- [`plans/[GUIDE] end_to_end_order_flow_guide.md`](./[GUIDE]%20end_to_end_order_flow_guide.md)
+- [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `13a`
 
 ### 보류 이유
 - 지금 작성하면 이후 개발 변경으로 문서가 빠르게 낡을 가능성이 높다.
@@ -366,7 +366,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - [ ] snapshot/event mapping과의 정합성 확보
 
 ### 근거 문서
-- [`plans/BACKLOG.md`](./BACKLOG.md) 항목 `8`
+- [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `8`
 
 ### 우선순위 이유
 - symbol / market / 이름 / 활성상태의 authoritative source가 강화되면 universe, fill history, event mapping 품질이 같이 올라간다.
@@ -397,8 +397,8 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - liquidity filter와 market-driven overlay 정식화
 
 ### 근거 문서
-- [`plans/BACKLOG.md`](./BACKLOG.md) 항목 `28`
-- [`plans/trading_universe_policy_v1.md`](./trading_universe_policy_v1.md)
+- [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `28`
+- [`plans/[POLICY] trading_universe_policy_v1.md`](./[POLICY]%20trading_universe_policy_v1.md)
 - `plan_docs/agents/01_agent_inventory_and_status.md`
 - `plan_docs/agents/02_agent_target_shapes.md`
 
@@ -411,7 +411,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - fast/slow layer score 분리
 
 ### 근거 문서
-- [`plans/BACKLOG.md`](./BACKLOG.md) 항목 `30`
+- [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `30`
 - `plan_docs/agents/01_agent_inventory_and_status.md`
 - `plan_docs/agents/02_agent_target_shapes.md`
 
@@ -423,7 +423,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - 시장 국면, 전략 선택, 포트폴리오 배분 책임을 명시적 계층으로 분리
 
 ### 근거 문서
-- [`plans/BACKLOG.md`](./BACKLOG.md) 항목 `27`, `29`, `31`
+- [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `27`, `29`, `31`
 - `plan_docs/agents/01_agent_inventory_and_status.md`
 - `plan_docs/agents/02_agent_target_shapes.md`
 
@@ -436,7 +436,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - provider drift / fallback / replay divergence 모니터링 체계 구축
 
 ### 근거 문서
-- [`plans/BACKLOG.md`](./BACKLOG.md) 항목 `32`, `33`
+- [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `32`, `33`
 - `plan_docs/agents/01_agent_inventory_and_status.md`
 - `plan_docs/agents/02_agent_target_shapes.md`
 - `plan_docs/agents/03_risk_role_boundaries.md`
@@ -475,7 +475,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - [ ] 에이전트 판단근거 UI 추가 노출
 
 ### 근거 문서
-- [`plans/BACKLOG.md`](./BACKLOG.md) 항목 `8d`, `10`, `11`, `12`, `13`
+- [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `8d`, `10`, `11`, `12`, `13`
 - `plan_docs/agents/01_agent_inventory_and_status.md`
 
 ---

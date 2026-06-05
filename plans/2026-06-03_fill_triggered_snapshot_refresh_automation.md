@@ -2,7 +2,7 @@
 
 ## 목적
 
-- `plans/2026-06-03_remaining_work_priority_map.md`의 P0 항목
+- `plans/[PRIORITY_MAP] remaining_work_priority_map.md`의 P0 항목
   `Fill 발생 후 position/cash refresh 자동화`를 1차 구현한다.
 - 체결 확정 직후 실행되는 `snapshot_refresh_cb` 경로를
   KIS 전용 legacy sync에서 broker-agnostic snapshot runner로 전환한다.

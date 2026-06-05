@@ -2,7 +2,7 @@
 
 ## 목적
 
-`2026-06-03_remaining_work_priority_map.md`의
+`[PRIORITY_MAP] remaining_work_priority_map.md`의
 `5. KIS 실계정/실운영 smoke 검증` 항목을
 실주문 없이 안전하게 진전시킨다.
 

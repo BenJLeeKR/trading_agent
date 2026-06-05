@@ -233,7 +233,7 @@ blocking_rule_codes=["STALE_SNAPSHOT"],
 | [`decision_orchestrator.py`](src/agent_trading/services/decision_orchestrator.py:297) | 수정 | `AccountSnapshotFreshness` dataclass 추가, `_check_account_snapshot_freshness()` 메서드 추가, Phase 4c account-level 우선 guard로 변경 |
 | [`test_paper_trading_scenarios.py`](tests/services/test_paper_trading_scenarios.py:472) | 수정 | Scenario 4에 account-level seed 추가, Scenario 4b에 account-level seed 추가, 신규 6개 테스트 추가 |
 | [`stale_snapshot_submit_guard.md`](plans/stale_snapshot_submit_guard.md) | 수정 | `Future Work` 섹션 업데이트 또는 새 문서로 대체 |
-| [`BACKLOG.md`](plans/BACKLOG.md) | 수정 | 항목 상태 업데이트 |
+| [`[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md) | 수정 | 항목 상태 업데이트 |
 
 ---
 

@@ -2,7 +2,7 @@
 
 ## 목적
 
-- `2026-06-03_remaining_work_priority_map.md`의
+- `[PRIORITY_MAP] remaining_work_priority_map.md`의
   `다음 거래일 장중 실운영 검증`을 실제 실행 가능한 형태로 준비한다.
 - 비거래일에도 미리 돌려볼 수 있는 read-only CLI로,
   다음 거래일 오픈 전에 점검해야 할 핵심 신호를 한 번에 모은다.

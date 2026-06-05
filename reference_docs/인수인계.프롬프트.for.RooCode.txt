@@ -3,7 +3,7 @@
 이 문서에는 다음 사항이 반드시 포함되어야 해:
 1. **Current Status (현재 상태)**: 이번 세션에서 방금 완료한 핵심 작업과 가장 주요하게 변경된 파일 목록.
 2. **Work In Progress (진행 중인 작업)**: 완벽히 끝나지 않았거나 테스트가 통과되지 않은 채로 중단된 작업, 그리고 발생 중인 에러 메시지나 이슈.
-3. **Implicit Context (숨은 맥락 및 의사결정)**: 공식 설계 문서나 `BACKLOG.md`에는 아직 적혀있지 않지만, 코드를 짜면서 합의한 중요한 규칙, 임시 방편(Workaround), 또는 주의사항.
+3. **Implicit Context (숨은 맥락 및 의사결정)**: 공식 설계 문서나 `[BACKLOG] backlog.md`에는 아직 적혀있지 않지만, 코드를 짜면서 합의한 중요한 규칙, 임시 방편(Workaround), 또는 주의사항.
 
 문서 작성을 완료하면, 세션을 종료해도 좋다고 알려줘.
 
@@ -68,7 +68,7 @@
 3. `/workspace/agent_trading/plans/*.md`
 
 [앞으로 해야 할 일]
-1. `/workspace/agent_trading/plans/BACKLOG.md`
+1. `/workspace/agent_trading/plans/[BACKLOG] backlog.md`
 
 [브로커 참고 자료]
 1. `/workspace/agent_trading/reference_docs/한국투자증권_오픈API_핵심요약_자동매매용.md`
@@ -85,7 +85,7 @@
 # 현재 새 Task에서 원하는 작업 방식:
 
 1. 가장 최근에 작성된 `HANDOVER_TO_NEW_SESSION.md` 파일을 먼저 읽고 직전 세션의 상태와 당면 과제를 파악해.
-2. `BACKLOG.md`와 `plans/` 폴더 내의 가장 최근 실행/마일스톤 문서를 읽어줘.
+2. `[BACKLOG] backlog.md`와 `plans/` 폴더 내의 가장 최근 실행/마일스톤 문서를 읽어줘.
 3. 전체적인 시스템 구조 뼈대를 파악하기 위해 `ENTERPRISE_TRADING_SYSTEM_DESIGN.md` (또는 최상위 아키텍처 문서)를 가볍게 훑어봐.
 
 위 문서들을 모두 파악한 후, 네가 이해한 **"현재 시스템의 개발 단계"**를 나에게 간략히 브리핑해줘. 

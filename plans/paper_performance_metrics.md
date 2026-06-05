@@ -1,7 +1,7 @@
 # Paper Performance Metrics — 설계 문서
 
 > **상태**: ✅ 구현 완료 (2026-05-10) — **mode-agnostic**
-> **변경 파일**: [`performance_summary.py`](src/agent_trading/services/performance_summary.py), [`schemas.py`](src/agent_trading/api/schemas.py), [`routes/performance.py`](src/agent_trading/api/routes/performance.py), [`test_performance_summary.py`](tests/services/test_performance_summary.py), [`BACKLOG.md`](plans/BACKLOG.md)
+> **변경 파일**: [`performance_summary.py`](src/agent_trading/services/performance_summary.py), [`schemas.py`](src/agent_trading/api/schemas.py), [`routes/performance.py`](src/agent_trading/api/routes/performance.py), [`test_performance_summary.py`](tests/services/test_performance_summary.py), [`[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md)
 > **테스트 결과**: 53/53 (performance_summary) + 56/56 (inspection API) 통과
 > **mode-agnostic**: 이 모듈은 paper/live 모두에서 동일하게 동작합니다. broker env와 무관하게 repository의 fill/position/cash 데이터만 읽어 성과 지표를 계산합니다.
 > **⚠️ 후속 확장**: Sharpe/Sortino/Calmar ratio는 [`paper_performance_risk_adjusted_metrics.md`](plans/paper_performance_risk_adjusted_metrics.md) 참고
@@ -303,7 +303,7 @@ flowchart LR
 | [`src/agent_trading/api/schemas.py`](src/agent_trading/api/schemas.py) | `PerformanceMetricsView` Pydantic model 추가 (from_attributes, 19 fields) |
 | [`src/agent_trading/api/routes/performance.py`](src/agent_trading/api/routes/performance.py) | `GET /performance-metrics` endpoint 추가 |
 | [`tests/services/test_performance_summary.py`](tests/services/test_performance_summary.py) | 최소 6개 테스트 클래스/메서드 추가 |
-| [`plans/BACKLOG.md`](plans/BACKLOG.md) | Backlog item #23 등록 |
+| [`plans/[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md) | Backlog item #23 등록 |
 
 ---
 
@@ -339,4 +339,4 @@ flowchart LR
 | **Step 3** | API: `PerformanceMetricsView` Pydantic model + `GET /performance-metrics` | Code |
 | **Step 4** | Tests: 6개 pure function + 4개 통합 = 10 tests | Code |
 | **Step 5** | 회귀 검증: 전체 테스트 스위트 실행 | Code |
-| **Step 6** | BACKLOG.md 업데이트 + 완료 보고 | Code |
+| **Step 6** | [BACKLOG] backlog.md 업데이트 + 완료 보고 | Code |

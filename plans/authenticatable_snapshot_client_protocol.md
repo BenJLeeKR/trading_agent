@@ -115,7 +115,7 @@ def test_client_is_authenticatable_snapshot_client(self) -> None:
 
 ### Step 5: 문서 정리
 
-[`plans/BACKLOG.md`](plans/BACKLOG.md)에 승격 기록 추가.
+[`plans/[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md)에 승격 기록 추가.
 
 ## 변경 파일 요약
 
@@ -124,7 +124,7 @@ def test_client_is_authenticatable_snapshot_client(self) -> None:
 | `src/agent_trading/brokers/snapshot_factory.py` | 수정 | `AuthenticatableSnapshotClient` Protocol 추가, `client: Any` → `client: AuthenticatableSnapshotClient` |
 | `scripts/run_snapshot_sync_loop.py` | 수정 | `type: ignore[union-attr]` 제거, `\| None` 제거, `if rest_client is not None` 제거 |
 | `tests/brokers/test_snapshot_factory.py` | 수정 | Protocol 구조적 만족 테스트 1개 추가 |
-| `plans/BACKLOG.md` | 수정 | 승격 기록 추가 |
+| `plans/[BACKLOG] backlog.md` | 수정 | 승격 기록 추가 |
 
 변경 불필요:
 - `scripts/sync_snapshots.py` — `.client` 미사용

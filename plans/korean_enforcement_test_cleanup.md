@@ -42,7 +42,7 @@ assert ar_run.structured_output_json.get("risk_opinion") == "reduce"
 assert ar_run.structured_output_json.get("risk_opinion") == "[ko: reduce]"
 ```
 
-### 2. `plans/BACKLOG.md`
+### 2. `plans/[BACKLOG] backlog.md`
 
 Gap 2 완료 기록에서 "Pre-existing 2건(Gap 4 Korean AR mock) 제외" 문구 제거. 더 이상 pre-existing failure가 없음을 반영.
 

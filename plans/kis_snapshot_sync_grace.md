@@ -31,7 +31,7 @@ E# Snapshot Sync Startup Grace Period
 | 3 | `src/agent_trading/api/routes/health.py` | `_is_within_grace()` helper + `/health`에 grace `"starting_up"` detail + `/readyz`에 grace skip 로직 |
 | 4 | `tests/api/test_health.py` | Grace period 관련 테스트 5개 추가 |
 | 5 | `tests/api/test_auth.py` | `empty_client` fixture의 readyz auth 테스트 — grace 내 `"ok"`로 복원 가능 |
-| 6 | `plans/BACKLOG.md` | 승격 기록 추가 |
+| 6 | `plans/[BACKLOG] backlog.md` | 승격 기록 추가 |
 
 ---
 

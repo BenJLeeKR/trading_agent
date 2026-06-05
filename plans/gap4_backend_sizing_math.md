@@ -274,7 +274,7 @@ def _build_sizing_inputs(intent: OrderIntent) -> SizingInputs:
 | [`tests/services/test_sizing_engine.py`](tests/services/test_sizing_engine.py) | **생성** | Sizing engine 단위 테스트 (6개 시나리오) |
 | [`tests/services/test_decision_submit_pipeline.py`](tests/services/test_decision_submit_pipeline.py) | **수정** | 기존 pipeline에 sizing step 추가 검증, 회귀 방지 |
 | [`tests/services/test_safe_order_path_e2e.py`](tests/services/test_safe_order_path_e2e.py) | **수정** | E2E에 sizing step이 끼어들어도 문제없는지 확인 |
-| [`plans/BACKLOG.md`](plans/BACKLOG.md) | **수정** | Gap 4 row 추가 |
+| [`plans/[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md) | **수정** | Gap 4 row 추가 |
 
 ---
 
@@ -408,7 +408,7 @@ from agent_trading.services.sizing_engine import (
 | 3 | `tests/services/test_sizing_engine.py` | 생성 | ~250줄 (15개 테스트) |
 | 4 | `tests/services/test_decision_submit_pipeline.py` | 수정 | ~50줄 (2개 통합 테스트) |
 | 5 | `tests/services/test_safe_order_path_e2e.py` | 수정 (최소) | ~5줄 (필요시 fixture 조정) |
-| 6 | `plans/BACKLOG.md` | 수정 | ~2줄 (row 추가) |
+| 6 | `plans/[BACKLOG] backlog.md` | 수정 | ~2줄 (row 추가) |
 
 ---
 

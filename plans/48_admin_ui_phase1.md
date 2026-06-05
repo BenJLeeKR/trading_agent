@@ -576,7 +576,7 @@ if os.path.isdir(_admin_ui_dist):
 | `src/agent_trading/api/app.py` | 변경 (최소) | StaticFiles mount 추가 |
 | `plans/48_admin_ui_phase1.md` | 신규 | 본 설계 문서 |
 | `plans/README.md` | 변경 | Plan 48 추가 |
-| `plans/BACKLOG.md` | 변경 | Plan 48 승격 기록 |
+| `plans/[BACKLOG] backlog.md` | 변경 | Plan 48 승격 기록 |
 
 ## 11. 실행 순서
 

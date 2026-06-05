@@ -2,7 +2,7 @@
 
 ## 목적
 
-- `plans/2026-06-03_remaining_work_priority_map.md`의
+- `plans/[PRIORITY_MAP] remaining_work_priority_map.md`의
   `Fill 발생 후 position/cash refresh 자동화` 세부 작업 중
   `cash / positions / orderable amount 갱신 우선순위 정리`
   를 한 단계 더 진행한다.

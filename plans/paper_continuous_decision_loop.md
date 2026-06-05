@@ -326,7 +326,7 @@ async def test_single_cycle_dry_run():
 | `tests/scripts/__init__.py` | **신규** | Package init |
 | `tests/scripts/test_run_paper_decision_loop.py` | **신규** | 5개 단위 테스트 |
 | `plans/paper_trading_loop_validation.md` | **수정** | Section 4/7/10 업데이트, Continuous Decision Loop 추가 |
-| `plans/BACKLOG.md` | **수정** | Item 1 상태 변경 (Paper Continuous Decision Loop → ✅ 승격됨) |
+| `plans/[BACKLOG] backlog.md` | **수정** | Item 1 상태 변경 (Paper Continuous Decision Loop → ✅ 승격됨) |
 
 ---
 

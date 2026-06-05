@@ -2,7 +2,7 @@
 
 ## 목적
 
-- `2026-06-03_remaining_work_priority_map.md`의
+- `[PRIORITY_MAP] remaining_work_priority_map.md`의
   `fill 발생 후 snapshot refresh 자동화` 항목 중
   **실측 계측**을 보강한다.
 - 이제는 refresh가 동작하는지 여부만이 아니라,

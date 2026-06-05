@@ -431,7 +431,7 @@ flowchart LR
 | `src/agent_trading/api/schemas.py` | **수정** | `BenchmarkComparisonView` Pydantic model 추가 |
 | `src/agent_trading/api/routes/performance.py` | **수정** | `GET /performance-benchmark` endpoint 추가, `BenchmarkComparisonView` import |
 | `tests/services/test_benchmark_comparison.py` | **생성** | 순수 함수 + 통합 테스트 |
-| `plans/BACKLOG.md` | **수정** | Backlog item #24 등록 |
+| `plans/[BACKLOG] backlog.md` | **수정** | Backlog item #24 등록 |
 
 **변경 없음**:
 - 기존 `performance_summary.py` — 건드리지 않음 (재사용만 함)
@@ -476,7 +476,7 @@ flowchart LR
 | **Step 3** | API endpoint 추가 | `GET /performance-benchmark` (routes/performance.py) |
 | **Step 4** | 테스트 작성 | 8 tests (3 pure + 5 통합) |
 | **Step 5** | 회귀 검증 | 전체 pytest suite |
-| **Step 6** | 문서 정리 | BACKLOG.md 업데이트 + 완료 보고 |
+| **Step 6** | 문서 정리 | [BACKLOG] backlog.md 업데이트 + 완료 보고 |
 
 ---
 

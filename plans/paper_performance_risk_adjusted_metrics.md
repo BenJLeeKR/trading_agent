@@ -350,7 +350,7 @@ calmar_ratio = (
 | [`tests/services/test_performance_summary.py`](tests/services/test_performance_summary.py) | 🔹 수정 | `TestCalcSharpeSortino` pure function tests + `TestGetPerformanceMetrics` 확장 |
 | [`tests/api/test_inspection.py`](tests/api/test_inspection.py) 또는 신규 API test file | 🔹 수정 | `GET /performance-metrics` 응답에 신규 field 포함 검증 |
 | [`plans/paper_performance_metrics.md`](plans/paper_performance_metrics.md) | 🔹 수정 | 설계 문서에 Sharpe/Sortino/Calmar 섹션 추가, deferred 상태 해제 |
-| [`plans/BACKLOG.md`](plans/BACKLOG.md) | 🔹 수정 | 승격 기록 추가 |
+| [`plans/[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md) | 🔹 수정 | 승격 기록 추가 |
 
 **변경 불필요**:
 - [`benchmark_comparison.py`](src/agent_trading/services/benchmark_comparison.py) — 변경 없음 (순수 portfolio metrics)
@@ -431,7 +431,7 @@ flowchart LR
 | **Step 4** | `PerformanceMetricsView`에 3개 field 추가 (float \| None) | Code | `schemas.py` |
 | **Step 5** | 테스트 작성 — `TestCalcSharpeSortino` (6 tests) + `TestGetPerformanceMetrics` 확장 (3 tests) + API response (3 tests) | Code | `test_performance_summary.py` + API test file |
 | **Step 6** | 회귀 검증 — 전체 pytest suite | Code | — |
-| **Step 7** | 문서 정리 — `paper_performance_metrics.md` 업데이트 + `BACKLOG.md` 승격 기록 | Code | 문서 2건 |
+| **Step 7** | 문서 정리 — `paper_performance_metrics.md` 업데이트 + `[BACKLOG] backlog.md` 승격 기록 | Code | 문서 2건 |
 
 ---
 
@@ -463,7 +463,7 @@ flowchart LR
 7. ✅ 기존 44개 performance_summary 테스트 회귀 없음
 8. ✅ 전체 테스트 스위트 회귀 없음
 9. ✅ 설계 문서 업데이트 (`paper_performance_metrics.md`)
-10. ✅ `BACKLOG.md` 업데이트
+10. ✅ `[BACKLOG] backlog.md` 업데이트
 
 ---
 

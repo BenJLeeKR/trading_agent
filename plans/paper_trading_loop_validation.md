@@ -282,7 +282,7 @@ python -m scripts.verify_paper_loop --submit --output json
 
 ---
 
-## 6. BACKLOG.md 재정렬
+## 6. [BACKLOG] backlog.md 재정렬
 
 ### 변경 사항
 
@@ -306,7 +306,7 @@ python -m scripts.verify_paper_loop --submit --output json
 | **Step 2** | Replay bundle 모델 정의 + fixture 리팩터 | [`replay_test_harness.py`](tests/services/replay_test_harness.py) (ReplayBundle, _build_repos, _make_stub_fdc, REPLAY_SCENARIOS) | ✅ 완료 |
 | **Step 3** | Replay 검증 테스트 확장 (4개 신규 시나리오 + 2-run identity) | [`test_decision_replay.py`](tests/services/test_decision_replay.py) (19 tests, 5 classes) | ✅ 완료 |
 | **Step 4** | Replay verification 스크립트 | [`replay_verification.py`](scripts/replay_verification.py) | ✅ 완료 |
-| **Step 5** | 문서 업데이트 | [`paper_trading_loop_validation.md`](plans/paper_trading_loop_validation.md) + [`BACKLOG.md`](plans/BACKLOG.md) | ✅ 완료 |
+| **Step 5** | 문서 업데이트 | [`paper_trading_loop_validation.md`](plans/paper_trading_loop_validation.md) + [`[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md) | ✅ 완료 |
 | **Step 6** | Continuous Decision Loop 구현 | [`run_paper_decision_loop.py`](scripts/run_paper_decision_loop.py) 신규 생성. 설계 문서: [`paper_continuous_decision_loop.md`](plans/paper_continuous_decision_loop.md). 단위 테스트: [`test_run_paper_decision_loop.py`](tests/scripts/test_run_paper_decision_loop.py) (17 tests) | ✅ 완료 |
 
 ---
@@ -367,7 +367,7 @@ flowchart TD
 | `tests/services/test_decision_replay.py` | **수정** | 9→19 tests 확장, fixture 리팩터, parametrize 5개 시나리오 + 2-run identity |
 | `scripts/replay_verification.py` | **신규** | 운영 검증 스크립트 (test harness와 동일 scenario source 재사용) |
 | `plans/paper_trading_loop_validation.md` | **수정** | Section 3.1/5.2/4/7/9 업데이트 |
-| `plans/BACKLOG.md` | **수정** | Item 3 상태 변경 + 승격 기록 |
+| `plans/[BACKLOG] backlog.md` | **수정** | Item 3 상태 변경 + 승격 기록 |
 | `scripts/run_paper_decision_loop.py` | **신규** | Paper continuous decision loop runner (CLI, seed 재사용, pre-check, cycle summary, graceful shutdown, aggregate summary) |
 | `tests/scripts/__init__.py` | **신규** | 테스트 패키지 이니셜라이저 |
 | `tests/scripts/test_run_paper_decision_loop.py` | **신규** | 단위 테스트 17개 (serialize 4 + aggregate 3 + precheck 2 + cycle 3 + CLI 5) |
@@ -685,7 +685,7 @@ flowchart TD
 | `scripts/run_event_ingestion_loop.py` | **신규** | Event ingestion loop runner (~350 lines) |
 | `tests/scripts/test_run_event_ingestion_loop.py` | **신규** | 단위 테스트 ~14개 |
 | `plans/paper_trading_loop_validation.md` | **수정** | Section 11 (Event Ingestion Loop 설계) 추가 |
-| `plans/BACKLOG.md` | **수정** | Event ingestion loop backlog 항목 추가 + 승격 |
+| `plans/[BACKLOG] backlog.md` | **수정** | Event ingestion loop backlog 항목 추가 + 승격 |
 
 ### 11.7 Live Canary 영향
 

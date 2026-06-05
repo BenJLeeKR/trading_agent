@@ -405,7 +405,7 @@ flowchart TD
 | `tests/scripts/test_evaluate_paper_exit.py` | **신규** | 스크립트 단위/통합 테스트 |
 | `plans/paper_exit_criteria.md` | **신규** | 본 설계 문서 |
 | `plans/paper_trading_loop_validation.md` | **수정** | Paper → Live Canary 조건에 Exit Criteria 항목 추가, 문서 간 링크 |
-| `plans/BACKLOG.md` | **수정** | 승격 기록 추가 |
+| `plans/[BACKLOG] backlog.md` | **수정** | 승격 기록 추가 |
 
 ---
 
@@ -427,7 +427,7 @@ flowchart LR
 | **Step 3** | `scripts/evaluate_paper_exit.py` 구현 | `code` | `scripts/evaluate_paper_exit.py` |
 | **Step 4** | Gate 관계를 문서와 코드에 반영 (3.1~3.3) | ✅ 완료 (본 문서 3장) | `plans/paper_exit_criteria.md` |
 | **Step 5** | `tests/scripts/test_evaluate_paper_exit.py` — 7개 시나리오 | `code` | `tests/scripts/test_evaluate_paper_exit.py` |
-| **Step 6** | `paper_trading_loop_validation.md` + `BACKLOG.md` 업데이트 | `code` | 문서 2건 |
+| **Step 6** | `paper_trading_loop_validation.md` + `[BACKLOG] backlog.md` 업데이트 | `code` | 문서 2건 |
 
 ---
 

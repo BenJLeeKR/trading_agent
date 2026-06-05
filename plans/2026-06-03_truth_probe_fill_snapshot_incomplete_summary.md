@@ -2,7 +2,7 @@
 
 ## 목적
 
-- `2026-06-03_remaining_work_priority_map.md` 기준으로,
+- `[PRIORITY_MAP] remaining_work_priority_map.md` 기준으로,
   `FILL_SNAPSHOT_INCOMPLETE` 주문의 후속 수렴 상태를 운영자가 바로 확인할 수 있게 한다.
 - Admin UI 작업은 뒤로 미루고, 먼저 **read-only 백엔드 집계 API**를 제공한다.
 

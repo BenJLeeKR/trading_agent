@@ -401,7 +401,7 @@ await user.click(row);
 | [`admin_ui/src/__tests__/test-utils/fixtures.ts`](admin_ui/src/__tests__/test-utils/fixtures.ts) | **수정** | 신규 fixture 7개 추가 (mockOrderDetail, mockOrderEvents, mockBrokerOrders, mockAccounts, mockPositions, mockCashBalance, mockTradeDecisions) |
 | [`plans/50_admin_ui_test_coverage_phase2.md`](plans/50_admin_ui_test_coverage_phase2.md) | **생성** | 본 문서 |
 | [`plans/README.md`](plans/README.md) | **수정** | Plan 50 목록 추가 |
-| [`plans/BACKLOG.md`](plans/BACKLOG.md) | **수정** | 승격 기록 추가 |
+| [`plans/[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md) | **수정** | 승격 기록 추가 |
 
 ---
 
@@ -443,7 +443,7 @@ cd admin_ui && npm run test:run
 ### Step 8: 문서 업데이트
 
 - [`plans/README.md`](plans/README.md) — Plan 50 목록 추가
-- [`plans/BACKLOG.md`](plans/BACKLOG.md) — 승격 기록 추가
+- [`plans/[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md) — 승격 기록 추가
 
 ---
 

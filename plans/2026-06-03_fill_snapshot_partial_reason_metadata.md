@@ -2,7 +2,7 @@
 
 ## 목적
 
-- `plans/2026-06-03_remaining_work_priority_map.md`의
+- `plans/[PRIORITY_MAP] remaining_work_priority_map.md`의
   `Fill History Phase 3` / `부분체결 자동 판정 고도화` 흐름에 따라,
   linked `VTTC0081R` snapshot이 주문 상태를 직접 확정한 경우
   그 근거를 주문 row에 더 직접적으로 남긴다.

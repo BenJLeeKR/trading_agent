@@ -2,7 +2,7 @@
 
 ## 목적
 
-- `plans/2026-06-03_remaining_work_priority_map.md` 기준
+- `plans/[PRIORITY_MAP] remaining_work_priority_map.md` 기준
   `FILL_SNAPSHOT_INCOMPLETE 주문의 후속 수렴 경로 정리`를 진행한다.
 - linked `VTTC0081R` snapshot row는 들어왔지만 아직 positive fill quantity가 없어
   상태를 확정할 수 없는 주문을, 단순 내부 reason이 아니라

@@ -271,7 +271,7 @@ Seed data에 `GuardrailEvaluationEntity`와 `RiskLimitSnapshotEntity`를 [`conft
 - `test_guardrail_evaluations_empty` — 빈 결과 확인
 - `test_risk_limit_snapshots_requires_account` — account_id 없이 422 확인
 
-### Step 11: [`BACKLOG.md`](plans/BACKLOG.md) 업데이트
+### Step 11: [`[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md) 업데이트
 
 Backlog items #5 (Phase 2 API endpoints), #6 (Postgres-backed API mode), #7 (reconciliation locks) 상태를 "completed ✅"로 갱신하고 승격 기록 추가.
 
@@ -304,4 +304,4 @@ Backlog items #5 (Phase 2 API endpoints), #6 (Postgres-backed API mode), #7 (rec
 | `tests/api/conftest.py` | 수정 | GuardrailEvaluationEntity, RiskLimitSnapshotEntity seed data 추가 |
 | `tests/api/test_inspection.py` | 수정 | 3개 Test Class 추가 |
 | `tests/api/test_postgres_inspection.py` | 수정 | Smoke test 2-3개 추가 |
-| `plans/BACKLOG.md` | 수정 | #5, #6, #7 상태 갱신 |
+| `plans/[BACKLOG] backlog.md` | 수정 | #5, #6, #7 상태 갱신 |

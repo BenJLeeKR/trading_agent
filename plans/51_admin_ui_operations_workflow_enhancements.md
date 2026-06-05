@@ -455,7 +455,7 @@ interface DataTableProps<T> {
 | [`admin_ui/src/__tests__/test-utils/fixtures.ts`](admin_ui/src/__tests__/test-utils/fixtures.ts) | **수정** | 필요 시 신규 fixture 추가 |
 | [`plans/51_admin_ui_operations_workflow_enhancements.md`](plans/51_admin_ui_operations_workflow_enhancements.md) | **생성** | 본 문서 |
 | [`plans/README.md`](plans/README.md) | **수정** | Plan 51 항목 추가 |
-| [`plans/BACKLOG.md`](plans/BACKLOG.md) | **수정** | 승격/변경 기록 |
+| [`plans/[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md) | **수정** | 승격/변경 기록 |
 
 ---
 
@@ -526,7 +526,7 @@ interface DataTableProps<T> {
 ### Step 8: 문서 업데이트
 
 - [`plans/README.md`](plans/README.md) — Plan 51 목록 추가
-- [`plans/BACKLOG.md`](plans/BACKLOG.md) — Plan 51 완료 기록, 이번에 defer한 항목 승격
+- [`plans/[BACKLOG] backlog.md`](plans/[BACKLOG]%20backlog.md) — Plan 51 완료 기록, 이번에 defer한 항목 승격
 
 ---
 

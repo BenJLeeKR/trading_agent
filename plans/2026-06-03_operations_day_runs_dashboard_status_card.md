@@ -92,4 +92,4 @@ subtitle:
 ## 다음 단계
 
 - 필요 시 `operations_day_runs` recent list / `run_date` filter 조회 API 추가
-- 그 외 우선순위는 `2026-06-03_remaining_work_priority_map.md` 기준 다음 항목으로 이동
+- 그 외 우선순위는 `[PRIORITY_MAP] remaining_work_priority_map.md` 기준 다음 항목으로 이동

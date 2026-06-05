@@ -318,7 +318,7 @@ async def _run_one_cycle(settings: AppSettings, broker: str) -> None:
 | `src/agent_trading/services/kis_snapshot_sync.py` | `SyncResult`/`BatchSyncResult`/`build_sync_run_entity()` → `snapshot_sync.py`로 re-export 추가. `sync_all_kis_accounts()` → 내부적으로 `sync_all_accounts()` 호출하도록 리팩터 (선택). |
 | `scripts/run_snapshot_sync_loop.py` | `SnapshotFetchProvider` 기반으로 전환. env var alias 지원. `--broker` 옵션 추가. |
 | `src/agent_trading/config/settings.py` | env var alias (`SNAPSHOT_STALE_THRESHOLD_SECONDS`, `SNAPSHOT_STARTUP_GRACE_SECONDS`) 추가. `SNAPSHOT_SYNC_INTERVAL_SECONDS` alias. |
-| `plans/BACKLOG.md` | 승격 기록 + 잔여 KIS 전용 항목 정리 |
+| `plans/[BACKLOG] backlog.md` | 승격 기록 + 잔여 KIS 전용 항목 정리 |
 
 ### 변경 불필요 (이미 공통)
 
@@ -397,4 +397,4 @@ flowchart TD
 4. `scripts/run_snapshot_sync_loop.py` — `SnapshotFetchProvider` 기반 전환
 5. `src/agent_trading/config/settings.py` — env var alias 추가
 6. 테스트: 신규 테스트 파일 + 기존 테스트 회귀 확인
-7. BACKLOG.md 업데이트
+7. [BACKLOG] backlog.md 업데이트

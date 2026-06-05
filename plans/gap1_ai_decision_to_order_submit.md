@@ -222,7 +222,7 @@ flowchart TD
 | `src/agent_trading/runtime/bootstrap.py` | `OrderManager` + `ReconciliationService` wiring, runtime dict에 추가 |
 | `scripts/run_orchestrator_once.py` | `--submit` 모드 추가, `assemble_and_submit()` 호출 경로 |
 | `tests/services/test_decision_submit_pipeline.py` | 신규: 파이프라인 전체 테스트 |
-| `plans/BACKLOG.md` | Gap 1 해결 반영 |
+| `plans/[BACKLOG] backlog.md` | Gap 1 해결 반영 |
 
 ## 제외 사항
 
