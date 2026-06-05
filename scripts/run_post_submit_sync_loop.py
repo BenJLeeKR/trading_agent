@@ -37,6 +37,7 @@ import signal
 import sys
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -46,13 +47,13 @@ from agent_trading.config.settings import AppSettings
 from agent_trading.db.connection import DatabaseConfig, close_pool, create_pool
 from agent_trading.db.transaction import transaction
 from agent_trading.repositories.postgres.bootstrap import build_postgres_repositories
-from agent_trading.services.kis_snapshot_sync import sync_kis_account_snapshots
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.services.order_sync_service import (
     OrderSyncService,
     PostSubmitSyncRunner,
     SyncCycleResult,
 )
+from agent_trading.services.snapshot_sync import sync_account_snapshots
 
 # ── Logging ────────────────────────────────────────────────────────────────
 
@@ -68,6 +69,24 @@ logger = logging.getLogger("post_submit_sync_loop")
 DEFAULT_INTERVAL_SECONDS = 30
 
 ENV_INTERVAL = "POST_SUBMIT_SYNC_INTERVAL_SECONDS"
+
+
+@dataclass(slots=True)
+class SnapshotRefreshStats:
+    """Per-cycle fill-triggered snapshot refresh observability counters."""
+
+    scheduled_count: int = 0
+    deduped_count: int = 0
+    completed_count: int = 0
+    degraded_count: int = 0
+    failed_count: int = 0
+    total_elapsed_ms: int = 0
+    max_elapsed_ms: int = 0
+
+    def record_elapsed(self, elapsed_ms: int) -> None:
+        self.total_elapsed_ms += elapsed_ms
+        if elapsed_ms > self.max_elapsed_ms:
+            self.max_elapsed_ms = elapsed_ms
 
 
 def _read_interval() -> int:
@@ -101,6 +120,8 @@ def _read_interval() -> int:
 def _build_refresh_callback(
     repos: Any,
     broker_adapter: BrokerAdapter,
+    *,
+    after_hours: bool = False,
 ) -> Callable[[UUID], Awaitable[None]]:
     """Build an async callback that refreshes snapshots for a given account.
 
@@ -109,46 +130,128 @@ def _build_refresh_callback(
     failed snapshot refresh does not interrupt the sync cycle.
     """
 
-    async def _refresh(account_id: UUID) -> None:
+    from agent_trading.brokers.koreainvestment.snapshot import (
+        KISSyncSnapshotProvider,
+    )
+
+    refresh_tasks: dict[UUID, asyncio.Task[None]] = {}
+    refresh_lock = asyncio.Lock()
+    refresh_stats = SnapshotRefreshStats()
+
+    async def _perform_refresh(account_id: UUID) -> None:
+        started_at = time.monotonic()
         try:
-            # We need a KISRestClient for sync_kis_account_snapshots.
-            # If the adapter is a KoreaInvestmentAdapter, use its rest client.
-            # Otherwise log a warning and skip.
             client = getattr(broker_adapter, "_rest_client", None)
             if client is None:
+                client = getattr(broker_adapter, "_rest", None)
+            if client is None:
                 logger.warning(
-                    "Snapshot refresh skipped: broker adapter %r has no _rest_client",
+                    "Snapshot refresh skipped: broker adapter %r has no _rest_client/_rest",
                     type(broker_adapter).__name__,
                 )
+                elapsed_ms = int((time.monotonic() - started_at) * 1000)
+                refresh_stats.failed_count += 1
+                refresh_stats.record_elapsed(elapsed_ms)
                 return
-            result = await sync_kis_account_snapshots(
-                rest_client=client,
+            provider = KISSyncSnapshotProvider(client)
+            result = await sync_account_snapshots(
+                fetch_provider=provider,
                 instrument_repo=repos.instruments,
                 position_snapshot_repo=repos.position_snapshots,
                 cash_balance_snapshot_repo=repos.cash_balance_snapshots,
+                risk_limit_snapshot_repo=repos.risk_limit_snapshots,
                 account_id=account_id,
+                # Fill-confirmed refreshes must converge positions as well as
+                # cash/risk-limit, even during after-hours recovery runs.
+                after_hours=False,
+                fetch_positions=True,
             )
-            logger.info(
-                "Snapshot refresh complete for account=%s: "
-                "positions=%d cash=%s",
-                account_id,
-                result.positions_synced,
-                result.cash_synced,
+            has_any_sync = (
+                result.positions_synced > 0
+                or result.cash_balance_synced
+                or result.orderable_amount_synced
+                or result.risk_limit_snapshot_synced
             )
+            needs_degraded = bool(result.errors) or (
+                result.cash_balance_synced and not result.orderable_amount_synced
+            )
+            elapsed_ms = int((time.monotonic() - started_at) * 1000)
+            refresh_stats.record_elapsed(elapsed_ms)
+            if needs_degraded:
+                refresh_stats.degraded_count += 1
+                log_fn = logger.warning if not has_any_sync else logger.info
+                log_fn(
+                    "Snapshot refresh degraded for account=%s: "
+                    "positions=%d cash=%s orderable=%s risk_limit=%s errors=%d after_hours_cycle=%s elapsed_ms=%d",
+                    account_id,
+                    result.positions_synced,
+                    result.cash_balance_synced,
+                    result.orderable_amount_synced,
+                    result.risk_limit_snapshot_synced,
+                    len(result.errors),
+                    after_hours,
+                    elapsed_ms,
+                )
+                for err in result.errors[:5]:
+                    logger.warning(
+                        "Snapshot refresh detail account=%s: %s",
+                        account_id,
+                        err,
+                    )
+            else:
+                refresh_stats.completed_count += 1
+                logger.info(
+                    "Snapshot refresh complete for account=%s: "
+                    "positions=%d cash=%s orderable=%s risk_limit=%s after_hours_cycle=%s elapsed_ms=%d",
+                    account_id,
+                    result.positions_synced,
+                    result.cash_balance_synced,
+                    result.orderable_amount_synced,
+                    result.risk_limit_snapshot_synced,
+                    after_hours,
+                    elapsed_ms,
+                )
         except Exception as exc:
+            elapsed_ms = int((time.monotonic() - started_at) * 1000)
+            refresh_stats.failed_count += 1
+            refresh_stats.record_elapsed(elapsed_ms)
             logger.warning(
-                "Snapshot refresh failed for account=%s: %s",
+                "Snapshot refresh failed for account=%s: %s (elapsed_ms=%d)",
                 account_id,
                 exc,
+                elapsed_ms,
             )
 
+    async def _refresh(account_id: UUID) -> None:
+        created = False
+        async with refresh_lock:
+            task = refresh_tasks.get(account_id)
+            if task is None:
+                task = asyncio.create_task(_perform_refresh(account_id))
+                refresh_tasks[account_id] = task
+                refresh_stats.scheduled_count += 1
+                created = True
+
+        if not created:
+            refresh_stats.deduped_count += 1
+            logger.info(
+                "Snapshot refresh deduped for account=%s (already scheduled this cycle)",
+                account_id,
+            )
+        await task
+
+    setattr(_refresh, "_stats", refresh_stats)
     return _refresh
 
 
 # ── Structured logging helpers ─────────────────────────────────────────────
 
 
-def _log_cycle_summary(result: SyncCycleResult, elapsed: float) -> None:
+def _log_cycle_summary(
+    result: SyncCycleResult,
+    elapsed: float,
+    refresh_stats: SnapshotRefreshStats | None = None,
+) -> None:
     """Log a structured summary of a sync cycle."""
     logger.info(
         "sync-cycle  "
@@ -168,6 +271,26 @@ def _log_cycle_summary(result: SyncCycleResult, elapsed: float) -> None:
         result.orphans_expired_reconcile,
         elapsed,
     )
+    if refresh_stats is not None and (
+        refresh_stats.scheduled_count > 0 or refresh_stats.deduped_count > 0
+    ):
+        avg_elapsed_ms = (
+            int(refresh_stats.total_elapsed_ms / refresh_stats.scheduled_count)
+            if refresh_stats.scheduled_count > 0
+            else 0
+        )
+        logger.info(
+            "sync-cycle-refresh  "
+            "scheduled=%d deduped=%d completed=%d degraded=%d failed=%d "
+            "avg_elapsed_ms=%d max_elapsed_ms=%d",
+            refresh_stats.scheduled_count,
+            refresh_stats.deduped_count,
+            refresh_stats.completed_count,
+            refresh_stats.degraded_count,
+            refresh_stats.failed_count,
+            avg_elapsed_ms,
+            refresh_stats.max_elapsed_ms,
+        )
     if result.errors:
         for err in result.errors[:10]:
             logger.warning("sync-error %s", err)
@@ -203,7 +326,7 @@ async def _run_one_cycle(
     account_ref: str | None,
     after_hours: bool = False,
     recovery: bool = False,
-) -> SyncCycleResult:
+) -> tuple[SyncCycleResult, SnapshotRefreshStats | None]:
     """Execute a single post-submit sync cycle."""
     from agent_trading.brokers.koreainvestment.adapter import (
         KoreaInvestmentAdapter,
@@ -260,7 +383,11 @@ async def _run_one_cycle(
                     repos=repos,
                     order_manager=order_manager,
                 )
-                refresh_cb = _build_refresh_callback(repos, broker)
+                refresh_cb = _build_refresh_callback(
+                    repos,
+                    broker,
+                    after_hours=after_hours,
+                )
                 runner = PostSubmitSyncRunner(
                     repos=repos,
                     sync_service=sync_service,
@@ -285,7 +412,8 @@ async def _run_one_cycle(
                 )
                 await tx.commit()
 
-            return result
+            refresh_stats = getattr(refresh_cb, "_stats", None)
+            return result, refresh_stats
 
         except (ConnectionError, TimeoutError, OSError) as exc:
             if attempt < MAX_RETRIES:
@@ -304,7 +432,7 @@ async def _run_one_cycle(
             return SyncCycleResult(
                 total_orders=0, updated=0, filled=0, partial=0,
                 errors=[f"cycle_failed: {exc}"],
-            )
+            ), None
         except Exception as exc:
             logger.error("Sync cycle failed: %s", exc, exc_info=True)
             return SyncCycleResult(
@@ -313,7 +441,7 @@ async def _run_one_cycle(
                 filled=0,
                 partial=0,
                 errors=[f"cycle_failed: {exc}"],
-            )
+            ), None
         finally:
             if _needs_cleanup:
                 if broker is not None:
@@ -360,7 +488,7 @@ async def _run_loop(
         logger.info("=== Cycle %d ===", cycle_count)
 
         cycle_start = time.monotonic()
-        result = await _run_one_cycle(
+        result, refresh_stats = await _run_one_cycle(
             settings,
             account_ref=account_ref,
             after_hours=after_hours,
@@ -368,7 +496,7 @@ async def _run_loop(
         )
         elapsed = time.monotonic() - cycle_start
 
-        _log_cycle_summary(result, elapsed)
+        _log_cycle_summary(result, elapsed, refresh_stats)
 
         # Check if we should continue
         if max_cycles > 0 and cycle_count >= max_cycles:

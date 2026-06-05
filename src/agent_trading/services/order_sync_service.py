@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
@@ -16,6 +16,7 @@ import asyncpg
 from agent_trading.brokers.base import BrokerAdapter
 from agent_trading.db.transaction import TransactionManager
 from agent_trading.domain.entities import (
+    BrokerFillSnapshotEntity,
     BrokerOrderEntity,
     FillEventEntity,
     InstrumentEntity,
@@ -86,6 +87,14 @@ class FillInferenceResult:
 
 
 @dataclass(slots=True, frozen=True)
+class LinkedFillSnapshotTruth:
+    """Resolved fill quantity inferred from linked VTTC0081R snapshots."""
+
+    filled_quantity: Decimal
+    source: str
+
+
+@dataclass(slots=True, frozen=True)
 class SyncOrderResult:
     """Result of a single ``sync_order_post_submit()`` call."""
 
@@ -114,6 +123,12 @@ class TruthProbeReason(str, Enum):
     """KIS truth qty ≠ DB requested_quantity."""
     POSITION_CONFLICT = "position_conflict"
     """KIS truth CCLD_QTY=0 but position delta > 0."""
+    BUY_POSITION_FILL = "buy_position_fill"
+    """Exact ODNO record exists but paper fields are incomplete; BUY fill inferred via position."""
+    FILL_SNAPSHOT = "fill_snapshot"
+    """Linked VTTC0081R fill snapshot resolved filled/partial status."""
+    FILL_SNAPSHOT_INCOMPLETE = "fill_snapshot_incomplete"
+    """Linked VTTC0081R fill snapshot rows exist but do not yet resolve a fill quantity."""
     MULTI_ODNO = "multi_odno"
     """Same ODNO matched multiple records."""
     API_FAILURE = "api_failure"
@@ -532,9 +547,10 @@ class OrderSyncService:
                 probe_reason = TruthProbeReason.API_FAILURE
 
             if probe_status is not None:
+                log_fn = logger.info if probe_reason in (None, TruthProbeReason.POSITION_CONFLICT, TruthProbeReason.BUY_POSITION_FILL) else logger.warning
                 if probe_reason is not None:
-                    logger.warning(
-                        "Truth probe resolved order %s: %s (conflict: %s, ODNO=%s)",
+                    log_fn(
+                        "Truth probe resolved order %s: %s (%s, ODNO=%s)",
                         order.order_request_id, probe_status.value,
                         probe_reason.value,
                         broker_order.broker_native_order_id,
@@ -547,8 +563,41 @@ class OrderSyncService:
                     )
                 # 명확한 terminal status → transition + broker_status 동기화
                 status_changed = probe_status != previous_status
+                transition_reason_code, transition_reason_message = (
+                    await self._build_truth_probe_reason_message(
+                        order,
+                        broker_order,
+                        probe_status,
+                        probe_reason,
+                    )
+                )
+                reason_changed = (
+                    transition_reason_code is not None
+                    and transition_reason_message is not None
+                    and (
+                        order.status_reason_code != transition_reason_code
+                        or order.status_reason_message != transition_reason_message
+                    )
+                )
                 if status_changed:
-                    order = await self._try_transition(order, probe_status)
+                    order = await self._try_transition(
+                        order,
+                        probe_status,
+                        reason_code=transition_reason_code,
+                        reason_message=transition_reason_message,
+                    )
+                elif reason_changed:
+                    await self.repos.orders.update_status(
+                        order.order_request_id,
+                        order.status,
+                        reason_code=transition_reason_code,
+                        reason_message=transition_reason_message,
+                    )
+                    order = replace(
+                        order,
+                        status_reason_code=transition_reason_code,
+                        status_reason_message=transition_reason_message,
+                    )
 
                 if broker_order.broker_status != probe_status.value:
                     await self.repos.broker_orders.update(
@@ -563,11 +612,24 @@ class OrderSyncService:
                 # last_synced_at 갱신
                 await self._update_last_synced_at(broker_order_id, now)
 
-                # FILLED 도달 시 snapshot refresh
+                # FILLED / PARTIALLY_FILLED 도달 시 snapshot refresh
                 snapshot_triggered = False
+                fill_progress_updated = (
+                    probe_reason == TruthProbeReason.FILL_SNAPSHOT
+                    and current_status == OrderStatus.PARTIALLY_FILLED
+                    and reason_changed
+                )
                 if (
-                    status_changed
-                    and current_status == OrderStatus.FILLED
+                    (
+                        (
+                            status_changed
+                            and current_status in {
+                                OrderStatus.PARTIALLY_FILLED,
+                                OrderStatus.FILLED,
+                            }
+                        )
+                        or fill_progress_updated
+                    )
                     and snapshot_refresh_cb is not None
                 ):
                     try:
@@ -581,7 +643,11 @@ class OrderSyncService:
 
                 # probe reason이 있으면 SyncOrderResult.error에 기록
                 error_msg: str | None = None
-                if probe_reason is not None:
+                if probe_reason is not None and probe_reason not in (
+                    TruthProbeReason.FILL_SNAPSHOT,
+                    TruthProbeReason.POSITION_CONFLICT,
+                    TruthProbeReason.BUY_POSITION_FILL,
+                ):
                     error_msg = f"truth_probe_conflict:{probe_reason.value}"
 
                 return SyncOrderResult(
@@ -729,16 +795,43 @@ class OrderSyncService:
         # ── 7. Update last_synced_at ──
         await self._update_last_synced_at(broker_order_id, now)
 
-        # ── 8. Snapshot refresh if newly FILLED ──
+        if (
+            truth_probe_reason_str == TruthProbeReason.FILL_SNAPSHOT_INCOMPLETE.value
+            and not status_changed
+        ):
+            pending_reason = await self._build_pending_truth_probe_reason_message(
+                order,
+                broker_order,
+                TruthProbeReason.FILL_SNAPSHOT_INCOMPLETE,
+            )
+            if pending_reason is not None:
+                reason_code, reason_message = pending_reason
+                await self.repos.orders.update_status(
+                    order.order_request_id,
+                    order.status,
+                    reason_code=reason_code,
+                    reason_message=reason_message,
+                )
+                order = replace(
+                    order,
+                    status_reason_code=reason_code,
+                    status_reason_message=reason_message,
+                )
+
+        # ── 8. Snapshot refresh if newly filled/partially filled ──
         # Terminal 상태에서 get_fills()를 건너뛰더라도(fills_synced=0)
-        # FILLED 상태 변경 시 snapshot은 트리거되어야 함.
+        # FILLED 상태 변경 시 snapshot은 트리거되어야 한다.
+        # PARTIALLY_FILLED도 실제 현금/포지션 변화가 이미 발생한 상태이므로
+        # 다음 sizing/guard 수렴을 위해 refresh를 바로 트리거한다.
         current_status = order.status
         terminal = current_status in _TERMINAL_STATUSES
         snapshot_triggered = False
         if (
             status_changed
-            and current_status == OrderStatus.FILLED
-            and (fills_synced > 0 or status_changed)
+            and current_status in {
+                OrderStatus.PARTIALLY_FILLED,
+                OrderStatus.FILLED,
+            }
             and snapshot_refresh_cb is not None
         ):
             try:
@@ -767,6 +860,11 @@ class OrderSyncService:
             terminal=terminal,
             snapshot_triggered=snapshot_triggered,
             last_synced_at=now,
+            error=(
+                "truth_probe_pending:fill_snapshot_incomplete"
+                if truth_probe_reason_str == TruthProbeReason.FILL_SNAPSHOT_INCOMPLETE.value
+                else None
+            ),
         )
 
     # ------------------------------------------------------------------
@@ -796,6 +894,9 @@ class OrderSyncService:
         self,
         order: OrderRequestEntity,
         target_status: OrderStatus,
+        *,
+        reason_code: str | None = None,
+        reason_message: str | None = None,
     ) -> OrderRequestEntity:
         """Attempt to order to target status.
 
@@ -813,7 +914,12 @@ class OrderSyncService:
 
         # ── Direct transition attempt ──
         try:
-            return await self.order_manager.transition_to(order, target_status)
+            return await self.order_manager.transition_to(
+                order,
+                target_status,
+                reason_code=reason_code,
+                reason_message=reason_message,
+            )
         except Exception:
             logger.info(
                 "Direct transition %s→%s failed, trying chain",
@@ -835,7 +941,12 @@ class OrderSyncService:
             if current.status == step:
                 continue
             try:
-                current = await self.order_manager.transition_to(current, step)
+                current = await self.order_manager.transition_to(
+                    current,
+                    step,
+                    reason_code=reason_code if step == target_status else None,
+                    reason_message=reason_message if step == target_status else None,
+                )
             except Exception as exc:
                 logger.info(
                     "Chain transition %s→%s failed at step=%s: %s — stopping chain",
@@ -924,6 +1035,14 @@ class OrderSyncService:
         if not broker_order or not broker_order.broker_native_order_id:
             return None, TruthProbeReason.NO_ODNO
 
+        linked_snapshots = await self._list_linked_fill_snapshots(order)
+        snapshot_truth = await self._infer_linked_fill_snapshot_truth(
+            order,
+            snapshots=linked_snapshots,
+        )
+        if snapshot_truth is not None:
+            return snapshot_truth, TruthProbeReason.FILL_SNAPSHOT
+
         # symbol 조회 (resolve_unknown_state에 symbol 전달하여 정확도 향상)
         symbol: str | None = None
         try:
@@ -959,7 +1078,7 @@ class OrderSyncService:
                     return result.status, TruthProbeReason.QTY_MISMATCH
                 return result.status, None
 
-            if order.side == OrderSide.BUY:
+            if order.side == OrderSide.BUY and not linked_snapshots:
                 inferred_buy = await self._infer_buy_order_fill_via_position_safe(order)
                 if inferred_buy is not None:
                     logger.info(
@@ -970,7 +1089,16 @@ class OrderSyncService:
                         result.status.value,
                         broker_order.broker_native_order_id,
                     )
-                    return inferred_buy, None
+                    return inferred_buy, TruthProbeReason.BUY_POSITION_FILL
+            elif order.side == OrderSide.BUY and linked_snapshots:
+                logger.info(
+                    "Truth probe BUY position fallback skipped because linked fill snapshots exist "
+                    "(order=%s, odno=%s, snapshot_rows=%d)",
+                    order.order_request_id,
+                    broker_order.broker_native_order_id,
+                    len(linked_snapshots),
+                )
+                return None, TruthProbeReason.FILL_SNAPSHOT_INCOMPLETE
 
             # non-terminal: raw_message 분석을 통해 reason 추론
             reason = self._infer_truth_probe_reason(result, order, broker_order)
@@ -978,6 +1106,161 @@ class OrderSyncService:
 
         except Exception:
             return None, TruthProbeReason.API_FAILURE
+
+    async def _build_truth_probe_reason_message(
+        self,
+        order: OrderRequestEntity,
+        broker_order: BrokerOrderEntity,
+        probe_status: OrderStatus,
+        probe_reason: TruthProbeReason | None,
+    ) -> tuple[str | None, str | None]:
+        if probe_reason is None:
+            return (
+                "truth_probe_resolved",
+                f"Truth probe resolved via broker record: odno={broker_order.broker_native_order_id}, "
+                f"status={probe_status.value}",
+            )
+        if probe_reason == TruthProbeReason.FILL_SNAPSHOT:
+            resolved = await self._resolve_linked_fill_snapshot_quantity(order)
+            if resolved is not None:
+                remaining = order.requested_quantity - resolved.filled_quantity
+                if remaining < Decimal("0"):
+                    remaining = Decimal("0")
+                return (
+                    "truth_probe_fill_snapshot",
+                    "Truth probe resolved via linked fill snapshot: "
+                    f"status={probe_status.value}, "
+                    f"filled={resolved.filled_quantity}, "
+                    f"requested={order.requested_quantity}, "
+                    f"remaining={remaining}, "
+                    f"source={resolved.source}, "
+                    f"odno={broker_order.broker_native_order_id}",
+                )
+            return (
+                "truth_probe_fill_snapshot",
+                f"Truth probe resolved via linked fill snapshot: status={probe_status.value}, "
+                f"odno={broker_order.broker_native_order_id}",
+            )
+        if probe_reason == TruthProbeReason.BUY_POSITION_FILL:
+            return (
+                "truth_probe_buy_position_fill",
+                f"Truth probe exact ODNO matched but paper fields were incomplete; "
+                f"position evidence resolved status={probe_status.value}, "
+                f"odno={broker_order.broker_native_order_id}",
+            )
+        return (
+            "truth_probe_resolved",
+            f"Truth probe resolved status={probe_status.value} "
+            f"(reason={probe_reason.value}, odno={broker_order.broker_native_order_id})",
+        )
+
+    async def _build_pending_truth_probe_reason_message(
+        self,
+        order: OrderRequestEntity,
+        broker_order: BrokerOrderEntity,
+        probe_reason: TruthProbeReason,
+    ) -> tuple[str, str] | None:
+        if probe_reason != TruthProbeReason.FILL_SNAPSHOT_INCOMPLETE:
+            return None
+
+        snapshots = await self._list_linked_fill_snapshots(order)
+        positive_rows = sum(
+            1 for snapshot in snapshots if snapshot.filled_quantity > Decimal("0")
+        )
+        return (
+            "truth_probe_fill_snapshot_incomplete",
+            "Linked fill snapshots exist but do not yet resolve a positive filled quantity; "
+            f"snapshot_rows={len(snapshots)}, "
+            f"positive_rows={positive_rows}, "
+            f"odno={broker_order.broker_native_order_id}. "
+            "Awaiting next fill sync / broker status convergence.",
+        )
+
+    async def _infer_linked_fill_snapshot_truth(
+        self,
+        order: OrderRequestEntity,
+        *,
+        snapshots: Sequence[BrokerFillSnapshotEntity] | None = None,
+    ) -> OrderStatus | None:
+        """Resolve truth from fill snapshots already linked to this order.
+
+        VTTC0081R snapshot rows can be pulled asynchronously by the fill sync loop.
+        When a row is already linked to ``order_request_id``, prefer that evidence
+        over BUY position-delta inference.  To stay conservative across cumulative
+        vs per-fill representations, use the maximum observed filled quantity.
+        """
+        resolved = await self._resolve_linked_fill_snapshot_quantity(
+            order,
+            snapshots=snapshots,
+        )
+        if resolved is None or resolved.filled_quantity <= Decimal("0"):
+            return None
+        if resolved.filled_quantity >= order.requested_quantity:
+            return OrderStatus.FILLED
+        return OrderStatus.PARTIALLY_FILLED
+
+    async def _list_linked_fill_snapshots(
+        self,
+        order: OrderRequestEntity,
+    ) -> Sequence[BrokerFillSnapshotEntity]:
+        return await self.repos.broker_fill_snapshots.list_recent(
+            limit=50,
+            order_request_id=order.order_request_id,
+        )
+
+    async def _resolve_linked_fill_snapshot_quantity(
+        self,
+        order: OrderRequestEntity,
+        *,
+        snapshots: Sequence[BrokerFillSnapshotEntity] | None = None,
+    ) -> LinkedFillSnapshotTruth | None:
+        """Resolve filled quantity from linked VTTC0081R snapshots.
+
+        기본 규칙은 보수적으로 `max(filled_quantity)`를 사용한다. 다만,
+        `broker_fill_id`가 있으면 동일 fill id의 반복 수집(row 재조회)은
+        중복으로 보지 않고 fill id별 최대 수량만 취한다. 이후 서로 다른
+        fill id의 최대 수량 합이 요청 수량 이하일 때만 증분 체결 합산으로
+        해석한다.
+        """
+        if snapshots is None:
+            snapshots = await self._list_linked_fill_snapshots(order)
+        if not snapshots:
+            return None
+
+        positive_quantities = [
+            snapshot.filled_quantity
+            for snapshot in snapshots
+            if snapshot.filled_quantity > Decimal("0")
+        ]
+        if not positive_quantities:
+            return None
+
+        max_filled = max(positive_quantities, default=Decimal("0"))
+        fill_id_quantities: dict[str, Decimal] = {}
+        rows_without_fill_id = 0
+        for snapshot in snapshots:
+            if snapshot.filled_quantity <= Decimal("0"):
+                continue
+            fill_id = snapshot.broker_fill_id
+            if fill_id is None or fill_id == "":
+                rows_without_fill_id += 1
+                continue
+            previous = fill_id_quantities.get(fill_id)
+            if previous is None or snapshot.filled_quantity > previous:
+                fill_id_quantities[fill_id] = snapshot.filled_quantity
+
+        if fill_id_quantities and rows_without_fill_id == 0 and len(fill_id_quantities) > 1:
+            summed_filled = sum(fill_id_quantities.values(), start=Decimal("0"))
+            if summed_filled <= order.requested_quantity:
+                return LinkedFillSnapshotTruth(
+                    filled_quantity=summed_filled,
+                    source="fill_snapshot_fill_id_max_sum",
+                )
+
+        return LinkedFillSnapshotTruth(
+            filled_quantity=max_filled,
+            source="fill_snapshot_cumulative_max",
+        )
 
     async def _infer_buy_order_fill_via_position_safe(
         self,

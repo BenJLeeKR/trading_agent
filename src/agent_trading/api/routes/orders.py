@@ -20,7 +20,9 @@ from agent_trading.api.deps import get_kis_client, get_order_manager, get_repos
 from agent_trading.api.schemas import (
     BrokerOrderView,
     BrokerTruthResponse,
+    BuyBlockSummaryResponse,
     FailureSummaryResponse,
+    LinkedFillSnapshotSummary,
     ManualStatusChangeRequest,
     ManualStatusChangeResponse,
     OrderDailySummaryResponse,
@@ -31,6 +33,8 @@ from agent_trading.api.schemas import (
     SellAvailabilityResponse,
     SubmissionAttemptSummary,
     SubmissionAttemptView,
+    TruthProbePendingOrderItem,
+    TruthProbePendingSummaryResponse,
     _derive_submission_outcome,
 )
 from agent_trading.api.security import Principal, require_admin, require_viewer
@@ -126,9 +130,49 @@ async def _enrich_order_detail(
     return detail
 
 
+async def _build_truth_probe_pending_order_item(
+    order: object,
+    repos: RepositoryContainer,
+) -> TruthProbePendingOrderItem:
+    """Build a compact pending-truth-probe row for reporting."""
+    symbol: str | None = None
+    instrument_id: UUID | None = getattr(order, "instrument_id", None)
+    if instrument_id is not None:
+        inst = await repos.instruments.get(instrument_id)
+        if inst is not None:
+            symbol = inst.symbol
+
+    broker_native_order_id: str | None = None
+    broker_orders = await repos.broker_orders.list_by_order_request(  # type: ignore[attr-defined]
+        order.order_request_id  # type: ignore[attr-defined]
+    )
+    if broker_orders:
+        latest_broker_order = max(
+            broker_orders,
+            key=lambda item: item.updated_at or item.created_at or datetime.min.replace(tzinfo=timezone.utc),
+        )
+        broker_native_order_id = latest_broker_order.broker_native_order_id
+
+    return TruthProbePendingOrderItem(
+        order_request_id=str(order.order_request_id),  # type: ignore[attr-defined]
+        symbol=symbol,
+        side=order.side.value,  # type: ignore[attr-defined]
+        status=order.status.value,  # type: ignore[attr-defined]
+        requested_quantity=float(order.requested_quantity),  # type: ignore[attr-defined]
+        trade_decision_id=str(order.trade_decision_id) if order.trade_decision_id is not None else None,  # type: ignore[attr-defined]
+        broker_native_order_id=broker_native_order_id,
+        status_reason_code=order.status_reason_code,  # type: ignore[attr-defined]
+        status_reason_message=order.status_reason_message,  # type: ignore[attr-defined]
+        submitted_at=order.submitted_at,  # type: ignore[attr-defined]
+        created_at=order.created_at,  # type: ignore[attr-defined]
+        updated_at=order.updated_at,  # type: ignore[attr-defined]
+    )
+
+
 @router.get("/recent-failures", response_model=list[RecentFailureItem])
 async def list_recent_submission_failures(
     limit: int = Query(default=5, ge=1, le=20),
+    target_date: date | None = Query(default=None, alias="date"),
     repos: RepositoryContainer = Depends(get_repos),
 ) -> list[RecentFailureItem]:
     """Return the most recent order requests whose latest submission
@@ -136,7 +180,19 @@ async def list_recent_submission_failures(
 
     Results are sorted by ``submitted_at`` descending (newest first).
     """
-    rows = await repos.order_submission_attempts.list_recent_failures(limit=limit)
+    submitted_from: datetime | None = None
+    submitted_to: datetime | None = None
+    if target_date is not None:
+        kst_start = datetime.combine(target_date, datetime.min.time(), tzinfo=_KST)
+        kst_end = kst_start + timedelta(days=1) - timedelta(microseconds=1)
+        submitted_from = kst_start.astimezone(timezone.utc)
+        submitted_to = kst_end.astimezone(timezone.utc)
+
+    rows = await repos.order_submission_attempts.list_recent_failures(
+        limit=limit,
+        submitted_from=submitted_from,
+        submitted_to=submitted_to,
+    )
     return [RecentFailureItem(**row) for row in rows]
 
 
@@ -162,6 +218,21 @@ async def get_order_daily_summary(
     """Return KST day-bounded order counts for the dashboard."""
     kst_now = datetime.now(_KST)
     kst_date = target_date or kst_now.date()
+    is_in_memory = type(repos.trade_decisions).__name__.startswith("InMemory")
+    in_memory_order_decision_ids: set[UUID] = set()
+    if is_in_memory:
+        day_orders = await repos.orders.list(
+            OrderQuery(
+                created_from=datetime.combine(kst_date, datetime.min.time(), tzinfo=_KST).astimezone(timezone.utc),
+                created_to=(datetime.combine(kst_date, datetime.min.time(), tzinfo=_KST) + timedelta(days=1) - timedelta(microseconds=1)).astimezone(timezone.utc),
+                limit=5000,
+            )
+        )
+        in_memory_order_decision_ids = {
+            order.trade_decision_id
+            for order in day_orders
+            if order.trade_decision_id is not None
+        }
     kst_start = datetime.combine(kst_date, datetime.min.time(), tzinfo=_KST)
     kst_end = kst_start + timedelta(days=1) - timedelta(microseconds=1)
     query = OrderQuery(
@@ -177,6 +248,100 @@ async def get_order_daily_summary(
         filled_count=status_counts.get(OrderStatus.FILLED.value, 0),
         pending_submit_count=status_counts.get(OrderStatus.PENDING_SUBMIT.value, 0),
         submitted_count=status_counts.get(OrderStatus.SUBMITTED.value, 0),
+    )
+
+
+@router.get("/buy-block-summary", response_model=BuyBlockSummaryResponse)
+async def get_buy_block_summary(
+    target_date: date | None = Query(None, alias="date"),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> BuyBlockSummaryResponse:
+    """Return KST day-bounded BUY broker submission failure summary."""
+    kst_now = datetime.now(_KST)
+    kst_date = target_date or kst_now.date()
+    kst_start = datetime.combine(kst_date, datetime.min.time(), tzinfo=_KST)
+    kst_end = kst_start + timedelta(days=1) - timedelta(microseconds=1)
+    day_orders = await repos.orders.list(
+        OrderQuery(
+            created_from=kst_start.astimezone(timezone.utc),
+            created_to=kst_end.astimezone(timezone.utc),
+            limit=5000,
+        )
+    )
+
+    total_buy_orders_count = 0
+    buy_submission_attempted_count = 0
+    rejected_count = 0
+    exception_count = 0
+
+    for order in day_orders:
+        if _safe_str(order.side).lower() != "buy":
+            continue
+        total_buy_orders_count += 1
+        attempts = await repos.order_submission_attempts.list_by_order_request(
+            order.order_request_id
+        )
+        if not attempts:
+            continue
+        buy_submission_attempted_count += 1
+        latest_attempt = max(attempts, key=lambda item: item.attempt_number)
+        if latest_attempt.error_type is not None:
+            exception_count += 1
+        elif latest_attempt.accepted is False:
+            rejected_count += 1
+
+    return BuyBlockSummaryResponse(
+        date=kst_date,
+        total_buy_orders_count=total_buy_orders_count,
+        buy_submission_attempted_count=buy_submission_attempted_count,
+        blocked_count=rejected_count + exception_count,
+        rejected_count=rejected_count,
+        exception_count=exception_count,
+    )
+
+
+@router.get("/truth-probe-pending-summary", response_model=TruthProbePendingSummaryResponse)
+async def get_truth_probe_pending_summary(
+    target_date: date | None = Query(None, alias="date"),
+    limit: int = Query(default=20, ge=1, le=100),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> TruthProbePendingSummaryResponse:
+    """Return KST day-bounded orders awaiting next fill-sync truth convergence."""
+    kst_now = datetime.now(_KST)
+    kst_date = target_date or kst_now.date()
+    kst_start = datetime.combine(kst_date, datetime.min.time(), tzinfo=_KST)
+    kst_end = kst_start + timedelta(days=1) - timedelta(microseconds=1)
+    rows = await repos.orders.list(
+        OrderQuery(
+            created_from=kst_start.astimezone(timezone.utc),
+            created_to=kst_end.astimezone(timezone.utc),
+            limit=5000,
+        )
+    )
+    pending_rows = [
+        row
+        for row in rows
+        if getattr(row, "status_reason_code", None) == "truth_probe_fill_snapshot_incomplete"
+    ]
+    pending_rows.sort(
+        key=lambda row: getattr(row, "updated_at", None) or getattr(row, "created_at", None) or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+
+    status_counts: dict[str, int] = {}
+    for row in pending_rows:
+        status_key = row.status.value  # type: ignore[attr-defined]
+        status_counts[status_key] = status_counts.get(status_key, 0) + 1
+
+    recent_orders = [
+        await _build_truth_probe_pending_order_item(row, repos)
+        for row in pending_rows[:limit]
+    ]
+    return TruthProbePendingSummaryResponse(
+        date=kst_date,
+        total_count=len(pending_rows),
+        status_counts=status_counts,
+        recent_orders=recent_orders,
     )
 
 
@@ -248,6 +413,28 @@ async def get_order(
                 latest_accepted=latest.accepted,
                 latest_error_type=latest.error_type,
             ),
+        )
+
+    fill_rows = await repos.broker_fill_snapshots.list_recent(
+        limit=20,
+        order_request_id=uid,
+    )
+    if fill_rows:
+        latest_fill = fill_rows[0]
+        max_filled_quantity = max(row.filled_quantity for row in fill_rows)
+        detail.linked_fill_snapshot_summary = LinkedFillSnapshotSummary(
+            snapshot_count=len(fill_rows),
+            broker_native_order_id=latest_fill.broker_native_order_id,
+            symbol=latest_fill.symbol,
+            side=latest_fill.side,
+            latest_fill_timestamp=latest_fill.fill_timestamp,
+            latest_filled_quantity=float(latest_fill.filled_quantity),
+            max_filled_quantity=float(max_filled_quantity),
+            latest_fill_price=float(latest_fill.fill_price),
+            latest_ordered_quantity=float(latest_fill.ordered_quantity)
+            if latest_fill.ordered_quantity is not None
+            else None,
+            latest_order_status_code=latest_fill.order_status_code,
         )
 
     return detail

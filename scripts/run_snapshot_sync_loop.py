@@ -185,6 +185,7 @@ async def _run_one_cycle(
     broker: str,
     after_hours: bool = False,
     fetch_positions: bool = True,
+    allow_after_hours_positions: bool = False,
 ) -> None:
     """Execute a single sync cycle with its own broker client + DB connection."""
     # Lazy imports to keep module-level import fast
@@ -247,9 +248,10 @@ async def _run_one_cycle(
             await repos.snapshot_sync_runs.add(running_entity)
 
             logger.info(
-                "Repositories ready. Running sync_all_accounts(after_hours=%s, fetch_positions=%s) ...",
+                "Repositories ready. Running sync_all_accounts(after_hours=%s, fetch_positions=%s, allow_after_hours_positions=%s) ...",
                 after_hours,
                 fetch_positions,
+                allow_after_hours_positions,
             )
 
             # ── 3b. Sync snapshots ─────────────────────────────────────
@@ -267,6 +269,7 @@ async def _run_one_cycle(
                 account_number=settings.kis_account_number,
                 after_hours=after_hours,
                 fetch_positions=fetch_positions,
+                allow_after_hours_positions=allow_after_hours_positions,
                 snapshot_sync_run_id=run_id,
             )
 
@@ -307,6 +310,7 @@ async def _run_loop(
     max_cycles: int = 0,
     after_hours: bool = False,
     fetch_positions: bool = True,
+    allow_after_hours_positions: bool = False,
 ) -> None:
     """Main loop: run sync cycles until shutdown is requested."""
     interval = _read_interval()
@@ -342,6 +346,7 @@ async def _run_loop(
             settings, broker,
             after_hours=after_hours,
             fetch_positions=fetch_positions,
+            allow_after_hours_positions=allow_after_hours_positions,
         )
         elapsed = time.monotonic() - cycle_start
 
@@ -400,6 +405,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=True,
         help="Fetch positions (default: True). Set False for cash+orderable only.",
     )
+    parser.add_argument(
+        "--allow-after-hours-positions",
+        action="store_true",
+        default=False,
+        help="Allow positions fetch even with --after-hours enabled.",
+    )
     return parser.parse_args(argv)
 
 
@@ -410,6 +421,7 @@ def main(argv: list[str] | None = None) -> int:
     max_cycles = args.max_cycles
     after_hours = args.after_hours
     fetch_positions = args.fetch_positions
+    allow_after_hours_positions = args.allow_after_hours_positions
 
     # Install signal handlers before entering the event loop
     loop = asyncio.new_event_loop()
@@ -422,6 +434,7 @@ def main(argv: list[str] | None = None) -> int:
                 broker, max_cycles,
                 after_hours=after_hours,
                 fetch_positions=fetch_positions,
+                allow_after_hours_positions=allow_after_hours_positions,
             )
         )
     except KeyboardInterrupt:

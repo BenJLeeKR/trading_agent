@@ -226,6 +226,11 @@ def create_app(
 
     protected_routers.append(snapshot_sync_runs_router)
 
+    # Phase 4b — Fill history inspection
+    from agent_trading.api.routes.fill_history import router as fill_history_router
+
+    protected_routers.append(fill_history_router)
+
     # Phase 5 — Paper performance summary
     from agent_trading.api.routes.performance import router as performance_router
 

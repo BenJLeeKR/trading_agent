@@ -44,6 +44,7 @@ import os
 import signal
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, time as dtime, timedelta
 from pathlib import Path
@@ -79,6 +80,8 @@ DEFAULT_SNAPSHOT_INTERVAL_SECONDS = 300
 DEFAULT_EVENT_INTERVAL_SECONDS = 300
 DEFAULT_DECISION_INTERVAL_SECONDS = 300
 DEFAULT_POST_SUBMIT_INTERVAL_SECONDS = 30
+DEFAULT_FILL_SYNC_INTERVAL_SECONDS = 600
+DEFAULT_FILL_SYNC_AFTER_HOURS_INTERVAL_SECONDS = 1800
 # Phase 4: subprocess isolation provides SIGKILL-guaranteed timeout,
 # so the scheduler-level timeout can be reduced from 240s to 120s.
 # The subprocess itself enforces a 35s timeout for agent execution.
@@ -96,7 +99,7 @@ PYTHON_BIN = "python3"
 _MAX_PARTIAL_LOG_BYTES: int = 65536  # 64KB — 마지막 64KB tail만 보존
 _PARTIAL_READ_TIMEOUT: float = 10.0  # partial read timeout (초) — 424초 누적 버퍼 대응
 
-DEFAULT_MAX_SUBMIT_PER_DAY = 1
+DEFAULT_MAX_GENERAL_BUY_SUBMIT_PER_DAY = 6
 # Held-position REDUCE/EXIT sell은 위험 축소 목적이므로 별도 budget 허용.
 # 신규 진입(BUY) budget과 분리하여 held_position sell만 추가 통과시킨다.
 HELD_POSITION_SELL_MAX_PER_DAY = 5
@@ -121,7 +124,7 @@ _BUDGET_CONSUMING_STATUSES: frozenset[str] = frozenset({
 
 PRE_MARKET_START = dtime(8, 0)
 INTRADAY_START = dtime(8, 50)
-MARKET_CLOSE = dtime(15, 30)
+MARKET_CLOSE = dtime(15, 30, 30)
 END_OF_DAY_END = dtime(16, 30)
 
 logger = logging.getLogger("ops_scheduler")
@@ -198,6 +201,19 @@ class SchedulerState:
     session_db_id: int | None = None
     # 16:00 KST after-hours 복구 배치 완료 여부 (1회만 실행)
     recovery_batch_done: bool = False
+    # 장후 첫 1회 full snapshot(positions+cash) 완료 여부
+    after_hours_full_snapshot_done: bool = False
+
+
+def _derive_operations_day_status(state: SchedulerState) -> str:
+    """Derive a compact scheduler status label for ``operations_day_runs``."""
+    if state.after_hours_mode:
+        return "after_hours"
+    if state.end_of_day_done:
+        return "end_of_day_complete"
+    if state.pre_market_done:
+        return "intraday"
+    return "pre_market"
 
 
 def _parse_hhmm(value: str) -> dtime:
@@ -390,14 +406,233 @@ def _parse_snapshot_sync_summary(result: CommandResult) -> dict[str, Any]:
     return metrics
 
 
-async def _get_db_submit_count(run_date: date) -> int:
-    """Query ``trading.order_requests`` for today's submit budget consumption.
+def _parse_fill_sync_summary(result: CommandResult) -> dict[str, Any]:
+    """Parse fill sync summary metrics from command output."""
+    metrics: dict[str, Any] = {}
+    combined_output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    for line in combined_output.splitlines():
+        stripped = line.strip()
+        if "fill-sync-cycle" not in stripped:
+            continue
+        import re
 
-    Returns the count of orders whose status is in the budget-consuming set
-    and whose ``created_at`` falls on the KST operating date.
+        m = re.search(
+            r"accounts=(\d+).*?succeeded=(\d+).*?partial=(\d+).*?failed=(\d+).*?"
+            r"skipped=(\d+).*?fills=(\d+).*?skipped_fills=(\d+).*?retries=(\d+).*?"
+            r"retried_accounts=(\d+).*?errors=(\d+)",
+            stripped,
+        )
+        if not m:
+            break
+        metrics["total_accounts"] = int(m.group(1))
+        metrics["succeeded"] = int(m.group(2))
+        metrics["partial"] = int(m.group(3))
+        metrics["failed"] = int(m.group(4))
+        metrics["skipped"] = int(m.group(5))
+        metrics["fills"] = int(m.group(6))
+        metrics["skipped_fills"] = int(m.group(7))
+        metrics["retries"] = int(m.group(8))
+        metrics["retried_accounts"] = int(m.group(9))
+        metrics["errors"] = int(m.group(10))
+        break
+    return metrics
+
+
+def _parse_post_submit_sync_summary(result: CommandResult) -> dict[str, Any]:
+    """Parse post-submit sync summary and fill-triggered refresh metrics."""
+    metrics: dict[str, Any] = {}
+    refresh_metrics: dict[str, Any] = {}
+    combined_output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    for line in combined_output.splitlines():
+        stripped = line.strip()
+        if "sync-cycle-refresh" in stripped:
+            import re
+
+            m = re.search(
+                r"scheduled=(\d+).*?deduped=(\d+).*?completed=(\d+).*?degraded=(\d+).*?"
+                r"failed=(\d+).*?avg_elapsed_ms=(\d+).*?max_elapsed_ms=(\d+)",
+                stripped,
+            )
+            if m:
+                refresh_metrics["scheduled"] = int(m.group(1))
+                refresh_metrics["deduped"] = int(m.group(2))
+                refresh_metrics["completed"] = int(m.group(3))
+                refresh_metrics["degraded"] = int(m.group(4))
+                refresh_metrics["failed"] = int(m.group(5))
+                refresh_metrics["avg_elapsed_ms"] = int(m.group(6))
+                refresh_metrics["max_elapsed_ms"] = int(m.group(7))
+            continue
+        if "sync-cycle" not in stripped:
+            continue
+        import re
+
+        m = re.search(
+            r"orders=(\d+).*?updated=(\d+).*?filled=(\d+).*?partial=(\d+).*?"
+            r"snapshots=(\d+).*?errors=(\d+).*?orphans_expired=(\d+).*?"
+            r"pending=(\d+).*?reconcile=(\d+).*?elapsed=([0-9.]+)s",
+            stripped,
+        )
+        if not m:
+            continue
+        metrics["orders"] = int(m.group(1))
+        metrics["updated"] = int(m.group(2))
+        metrics["filled"] = int(m.group(3))
+        metrics["partial"] = int(m.group(4))
+        metrics["snapshots_refreshed"] = int(m.group(5))
+        metrics["errors"] = int(m.group(6))
+        metrics["orphans_expired"] = int(m.group(7))
+        metrics["orphans_expired_pending"] = int(m.group(8))
+        metrics["orphans_expired_reconcile"] = int(m.group(9))
+        metrics["elapsed_seconds"] = float(m.group(10))
+    if refresh_metrics:
+        metrics["refresh"] = refresh_metrics
+    return metrics
+
+
+def _latest_command_result(
+    state: SchedulerState,
+    names: set[str],
+) -> CommandResult | None:
+    """Return the most recent command result whose name is in ``names``."""
+    for result in reversed(state.command_results):
+        if result.name in names:
+            return result
+    return None
+
+
+def _command_result_summary(
+    result: CommandResult | None,
+    *,
+    metrics: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Build a compact JSON-safe summary for a command result."""
+    if result is None:
+        return None
+    payload: dict[str, Any] = {
+        "name": result.name,
+        "ok": result.ok,
+        "returncode": result.returncode,
+        "timed_out": result.timed_out,
+        "duration_seconds": result.duration_seconds,
+    }
+    if metrics:
+        payload["metrics"] = metrics
+    return payload
+
+
+def _command_family_stats(
+    state: SchedulerState,
+    *,
+    names: set[str],
+    metrics_parser: Callable[[CommandResult], dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """Build aggregate stats for one logical command family."""
+    results = [result for result in state.command_results if result.name in names]
+    if not results:
+        return None
+
+    last = results[-1]
+    payload: dict[str, Any] = {
+        "count": len(results),
+        "ok_count": sum(1 for result in results if result.ok),
+        "failed_count": sum(1 for result in results if not result.ok),
+        "timed_out_count": sum(1 for result in results if result.timed_out),
+        "last_name": last.name,
+        "last_ok": last.ok,
+        "last_returncode": last.returncode,
+        "last_timed_out": last.timed_out,
+        "last_duration_seconds": last.duration_seconds,
+    }
+    if metrics_parser is not None:
+        payload["last_metrics"] = metrics_parser(last)
+    return payload
+
+
+def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
+    """Build structured ``summary_json`` for ``operations_day_runs``."""
+    total = len(state.command_results)
+    ok_count = sum(1 for result in state.command_results if result.ok)
+    failed_count = sum(1 for result in state.command_results if not result.ok)
+    timed_out_count = sum(1 for result in state.command_results if result.timed_out)
+
+    latest_snapshot = _latest_command_result(
+        state,
+        {"pre_snapshot_sync", "snapshot_sync", "eod_snapshot_sync", "after_hours_snapshot_sync"},
+    )
+    latest_fill = _latest_command_result(
+        state,
+        {"pre_fill_sync", "fill_sync", "eod_fill_sync"},
+    )
+    latest_recovery = _latest_command_result(state, {"eod_recovery_batch"})
+    latest_decision_loop = _latest_command_result(
+        state,
+        {"decision_submit_gate", "decision_dry_run"},
+    )
+    command_health = {
+        "snapshot_sync": _command_family_stats(
+            state,
+            names={"pre_snapshot_sync", "snapshot_sync", "eod_snapshot_sync", "after_hours_snapshot_sync"},
+            metrics_parser=_parse_snapshot_sync_summary,
+        ),
+        "fill_sync": _command_family_stats(
+            state,
+            names={"pre_fill_sync", "fill_sync", "eod_fill_sync"},
+            metrics_parser=_parse_fill_sync_summary,
+        ),
+        "event_ingestion": _command_family_stats(
+            state,
+            names={"pre_event_ingestion", "event_ingestion"},
+        ),
+        "post_submit_sync": _command_family_stats(
+            state,
+            names={"pre_post_submit_sync", "post_submit_sync", "eod_post_submit_sync"},
+            metrics_parser=_parse_post_submit_sync_summary,
+        ),
+        "decision_loop": _command_family_stats(
+            state,
+            names={"decision_submit_gate", "decision_dry_run"},
+        ),
+        "recovery_batch": _command_family_stats(
+            state,
+            names={"eod_recovery_batch"},
+        ),
+    }
+
+    return {
+        "command_results_count": total,
+        "ok_count": ok_count,
+        "failed_count": failed_count,
+        "timed_out_count": timed_out_count,
+        "last_command_name": state.command_results[-1].name if state.command_results else None,
+        "session_reason": state.session_info.reason if state.session_info else None,
+        "after_hours_full_snapshot_done": state.after_hours_full_snapshot_done,
+        "command_health": {k: v for k, v in command_health.items() if v is not None},
+        "snapshot_sync": _command_result_summary(
+            latest_snapshot,
+            metrics=_parse_snapshot_sync_summary(latest_snapshot) if latest_snapshot else None,
+        ),
+        "fill_sync": _command_result_summary(
+            latest_fill,
+            metrics=_parse_fill_sync_summary(latest_fill) if latest_fill else None,
+        ),
+        "decision_loop": _command_result_summary(latest_decision_loop),
+        "recovery_batch": _command_result_summary(latest_recovery),
+    }
+
+
+async def _get_db_submit_count(run_date: date) -> int:
+    """Query ``trading.order_requests`` for today's general BUY submit count.
+
+    Returns the count of general BUY orders whose status is in the
+    budget-consuming set and whose ``created_at`` falls on the KST
+    operating date.
+
+    ``held_position`` ``REDUCE/EXIT`` ``SELL`` orders are intentionally
+    excluded because they use a dedicated budget lane and must not
+    consume the general BUY/core submit budget.
 
     On any failure (connection error, query error, etc.), returns
-    ``DEFAULT_MAX_SUBMIT_PER_DAY`` (conservative dry-run fallback).
+    ``DEFAULT_MAX_GENERAL_BUY_SUBMIT_PER_DAY`` (conservative dry-run fallback).
     """
     import asyncpg
 
@@ -424,10 +659,18 @@ async def _get_db_submit_count(run_date: date) -> int:
             row = await conn.fetchrow(
                 """
                 SELECT COUNT(*) AS cnt
-                FROM trading.order_requests
-                WHERE created_at >= $1
-                  AND created_at < $2
-                  AND status = ANY($3::text[])
+                FROM trading.order_requests o
+                LEFT JOIN trading.trade_decisions td
+                  ON o.trade_decision_id = td.trade_decision_id
+                WHERE o.created_at >= $1
+                  AND o.created_at < $2
+                  AND o.status = ANY($3::text[])
+                  AND td.side = 'buy'
+                  AND NOT (
+                    td.source_type = 'held_position'
+                    AND td.decision_type IN ('reduce', 'exit')
+                    AND td.side = 'sell'
+                  )
                 """,
                 kst_midnight,
                 kst_end_of_day,
@@ -435,7 +678,7 @@ async def _get_db_submit_count(run_date: date) -> int:
             )
             count: int = row["cnt"] if row else 0
             logger.info(
-                "db_submit_count=%d run_date=%s statuses=%s",
+                "db_general_buy_submit_count=%d run_date=%s statuses=%s",
                 count,
                 run_date.isoformat(),
                 sorted(_BUDGET_CONSUMING_STATUSES),
@@ -445,9 +688,9 @@ async def _get_db_submit_count(run_date: date) -> int:
             await conn.close()
     except Exception:
         logger.exception(
-            "db_submit_count query failed — conservative dry-run fallback"
+            "db_general_buy_submit_count query failed — conservative dry-run fallback"
         )
-        return DEFAULT_MAX_SUBMIT_PER_DAY
+        return DEFAULT_MAX_GENERAL_BUY_SUBMIT_PER_DAY
 
 
 async def _get_db_held_position_sell_count(run_date: date) -> int:
@@ -647,10 +890,16 @@ async def _run_command(
     return result
 
 
-def _snapshot_command(*, after_hours: bool = False) -> list[str]:
+def _snapshot_command(
+    *,
+    after_hours: bool = False,
+    allow_after_hours_positions: bool = False,
+) -> list[str]:
     argv = [PYTHON_BIN, "scripts/run_snapshot_sync_loop.py", "--max-cycles", "1"]
     if after_hours:
         argv.append("--after-hours")
+    if allow_after_hours_positions:
+        argv.append("--allow-after-hours-positions")
     return argv
 
 
@@ -666,7 +915,12 @@ def _event_command() -> list[str]:
     ]
 
 
-def _decision_command(*, dry_run: bool, allow_general_submit: bool = True) -> list[str]:
+def _decision_command(
+    *,
+    dry_run: bool,
+    allow_general_submit: bool = True,
+    max_general_submits_this_cycle: int = 1,
+) -> list[str]:
     argv = [
         PYTHON_BIN,
         "-m",
@@ -675,6 +929,8 @@ def _decision_command(*, dry_run: bool, allow_general_submit: bool = True) -> li
         "1",
         "--output",
         "json",
+        "--max-general-submits-this-cycle",
+        str(max(0, max_general_submits_this_cycle)),
     ]
     if dry_run:
         argv.append("--dry-run")
@@ -693,6 +949,13 @@ def _post_submit_command(*, after_hours: bool = False, recovery: bool = False) -
         argv.append("--after-hours")
     if recovery:
         argv.append("--recovery")
+    return argv
+
+
+def _fill_sync_command(*, after_hours: bool = False) -> list[str]:
+    argv = [PYTHON_BIN, "scripts/run_fill_sync_loop.py", "--once"]
+    if after_hours:
+        argv.append("--after-hours")
     return argv
 
 
@@ -732,6 +995,7 @@ async def _run_pre_market(
     *,
     timeout_seconds: int,
     env: dict[str, str],
+    dsn: str | None = None,
 ) -> None:
     """Run one-time pre-market preparation tasks.
 
@@ -797,7 +1061,16 @@ async def _run_pre_market(
         env=env,
     )
 
+    await _run_and_record(
+        state,
+        "pre_fill_sync",
+        _fill_sync_command(),
+        timeout_seconds=timeout_seconds,
+        env=env,
+    )
+
     state.pre_market_done = True
+    await _persist_operations_day_run(state, dsn)
     logger.info("phase=pre-market complete")
 
 
@@ -807,6 +1080,7 @@ async def _run_end_of_day(
     timeout_seconds: int,
     env: dict[str, str],
     snapshot_interval: int = DEFAULT_SNAPSHOT_INTERVAL_SECONDS,
+    dsn: str | None = None,
 ) -> None:
     """Run one-time end-of-day finalization tasks.
 
@@ -815,17 +1089,31 @@ async def _run_end_of_day(
     intervals (no decision loop, no event ingestion, no post-submit-sync).
     """
     logger.info("phase=end-of-day start")
-    await _run_and_record(
+    state.after_hours_full_snapshot_done = False
+    snap_result = await _run_and_record(
         state,
         "eod_snapshot_sync",
-        _snapshot_command(after_hours=True),  # EOD snapshot uses after-hours flag
+        _snapshot_command(
+            after_hours=True,
+            allow_after_hours_positions=True,
+        ),
+        timeout_seconds=timeout_seconds,
+        env=env,
+    )
+    snap_metrics = _parse_snapshot_sync_summary(snap_result)
+    if snap_result.ok and snap_metrics.get("total_positions_synced", 0) > 0:
+        state.after_hours_full_snapshot_done = True
+    await _run_and_record(
+        state,
+        "eod_post_submit_sync",
+        _post_submit_command(after_hours=True),
         timeout_seconds=timeout_seconds,
         env=env,
     )
     await _run_and_record(
         state,
-        "eod_post_submit_sync",
-        _post_submit_command(after_hours=True),
+        "eod_fill_sync",
+        _fill_sync_command(after_hours=True),
         timeout_seconds=timeout_seconds,
         env=env,
     )
@@ -834,6 +1122,7 @@ async def _run_end_of_day(
     state.after_hours_mode = True
     now = datetime.now(KST)
     state.after_hours_next_snapshot_at = now + timedelta(seconds=snapshot_interval)
+    await _persist_operations_day_run(state, dsn)
     logger.info(
         "phase=end-of-day complete — entering after-hours snapshot mode "
         "(next snapshot at %s, interval=%ds, window=%ds)",
@@ -849,6 +1138,7 @@ async def _run_after_hours_snapshot_cycle(
     timeout_seconds: int,
     env: dict[str, str],
     now: datetime,
+    dsn: str | None = None,
 ) -> None:
     """Run a single after-hours snapshot sync cycle.
 
@@ -860,21 +1150,30 @@ async def _run_after_hours_snapshot_cycle(
     """
     if state.after_hours_next_snapshot_at is None or now < state.after_hours_next_snapshot_at:
         return
+    allow_after_hours_positions = not state.after_hours_full_snapshot_done
     logger.info(
-        "phase=after-hours snapshot cycle due at %s",
+        "phase=after-hours snapshot cycle due at %s (allow_after_hours_positions=%s)",
         now.isoformat(),
+        allow_after_hours_positions,
     )
-    await _run_and_record(
+    result = await _run_and_record(
         state,
         "after_hours_snapshot_sync",
-        _snapshot_command(after_hours=True),  # after-hours cycle always uses --after-hours
+        _snapshot_command(
+            after_hours=True,
+            allow_after_hours_positions=allow_after_hours_positions,
+        ),
         timeout_seconds=timeout_seconds,
         env=env,
     )
+    metrics = _parse_snapshot_sync_summary(result)
+    if result.ok and metrics.get("total_positions_synced", 0) > 0:
+        state.after_hours_full_snapshot_done = True
     # Schedule next after-hours snapshot
     state.after_hours_next_snapshot_at = now + timedelta(
         seconds=DEFAULT_SNAPSHOT_INTERVAL_SECONDS,
     )
+    await _persist_operations_day_run(state, dsn)
     logger.info(
         "after-hours snapshot cycle complete — next at %s",
         state.after_hours_next_snapshot_at.isoformat(),
@@ -885,12 +1184,13 @@ async def _run_intraday_due_tasks(
     state: SchedulerState,
     tasks: dict[str, ScheduledTask],
     *,
-    max_submit_per_day: int,
+    max_general_buy_submit_per_day: int,
     held_position_sell_max_per_day: int,
     timeout_seconds: int,
     env: dict[str, str],
     now: datetime,
     decision_interval: int = 300,
+    dsn: str | None = None,
 ) -> None:
     """Run due intraday periodic tasks sequentially.
 
@@ -920,7 +1220,13 @@ async def _run_intraday_due_tasks(
         )
 
         # 일반 submit budget이 남았으면 submit 허용
-        general_budget_ok = effective_submit_count < max_submit_per_day
+        general_budget_ok = (
+            effective_submit_count < max_general_buy_submit_per_day
+        )
+        remaining_general_submit_budget = max(
+            0,
+            max_general_buy_submit_per_day - effective_submit_count,
+        )
 
         # held_position REDUCE/EXIT sell은 위험 축소 목적이므로 일일 제출 상한에 묶이지 않음.
         # 항상 submit path 진입 가능 (일반 BUY budget과 독립적).
@@ -954,6 +1260,7 @@ async def _run_intraday_due_tasks(
             _decision_command(
                 dry_run=dry_run,
                 allow_general_submit=allow_general_submit,
+                max_general_submits_this_cycle=remaining_general_submit_budget,
             ),
             timeout_seconds=min(timeout_seconds, _DECISION_TIMEOUT),
             env=env,
@@ -973,12 +1280,12 @@ async def _run_intraday_due_tasks(
             else:
                 state.submit_count += 1
                 logger.warning(
-                    "submit budget consumed: submit_count=%d db_submit_count=%d "
-                    "effective=%d max=%d",
+                    "general BUY submit budget consumed: submit_count=%d "
+                    "db_submit_count=%d effective=%d max=%d",
                     state.submit_count,
                     db_submit_count,
                     effective_submit_count,
-                    max_submit_per_day,
+                    max_general_buy_submit_per_day,
                 )
         completed_at = datetime.now(KST)
         tasks["decision"].mark_ran(completed_at)
@@ -992,6 +1299,11 @@ async def _run_intraday_due_tasks(
             tasks["decision"].next_run_at.isoformat(),
         )
 
+        # Persist immediately after decision loop completion so the first
+        # intraday submit-gate result is visible in ``operations_day_runs``
+        # even before later tasks in the same cycle complete.
+        await _persist_operations_day_run(state, dsn)
+
     if tasks["post_submit"].due:
         await _run_and_record(
             state,
@@ -1003,6 +1315,19 @@ async def _run_intraday_due_tasks(
         completed_at = datetime.now(KST)
         tasks["post_submit"].mark_ran(completed_at)
 
+    if tasks["fill_sync"].due:
+        await _run_and_record(
+            state,
+            "fill_sync",
+            _fill_sync_command(),
+            timeout_seconds=timeout_seconds,
+            env=env,
+        )
+        completed_at = datetime.now(KST)
+        tasks["fill_sync"].mark_ran(completed_at)
+
+    await _persist_operations_day_run(state, dsn)
+
 
 def _build_tasks(
     now: datetime,
@@ -1011,6 +1336,7 @@ def _build_tasks(
     event_interval: int,
     decision_interval: int,
     post_submit_interval: int,
+    fill_sync_interval: int = DEFAULT_FILL_SYNC_INTERVAL_SECONDS,
 ) -> dict[str, ScheduledTask]:
     """Build initial periodic task state."""
     return {
@@ -1018,6 +1344,7 @@ def _build_tasks(
         "event": ScheduledTask("event", event_interval, now),
         "decision": ScheduledTask("decision", decision_interval, now),
         "post_submit": ScheduledTask("post_submit", post_submit_interval, now),
+        "fill_sync": ScheduledTask("fill_sync", fill_sync_interval, now),
     }
 
 
@@ -1163,6 +1490,7 @@ async def _persist_session_state(
             tr_day_yn = state.session_info.tr_day_yn if state.session_info else None
             is_trading_day = state.session_info.is_trading_day if state.session_info else True
             source = state.session_info.source if state.session_info else "scheduler"
+            reason_code = state.session_info.reason_code if state.session_info else None
             reason = state.session_info.reason if state.session_info else ""
             market_phase = state.market_phase
             raw_opnd = state.session_info.raw_opnd_yn if state.session_info else None
@@ -1174,9 +1502,9 @@ async def _persist_session_state(
                 INSERT INTO trading.market_sessions
                     (run_date, is_trading_day, opnd_yn, bzdy_yn, tr_day_yn,
                      market_phase, raw_opnd_yn, raw_mkop_cls_code,
-                     raw_antc_mkop_cls_code, source, reason, checked_at)
+                     raw_antc_mkop_cls_code, source, reason_code, reason, checked_at)
                 VALUES
-                    ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 ON CONFLICT (run_date) DO UPDATE SET
                     is_trading_day = EXCLUDED.is_trading_day,
                     opnd_yn = EXCLUDED.opnd_yn,
@@ -1187,6 +1515,7 @@ async def _persist_session_state(
                     raw_mkop_cls_code = EXCLUDED.raw_mkop_cls_code,
                     raw_antc_mkop_cls_code = EXCLUDED.raw_antc_mkop_cls_code,
                     source = EXCLUDED.source,
+                    reason_code = EXCLUDED.reason_code,
                     reason = EXCLUDED.reason,
                     checked_at = EXCLUDED.checked_at,
                     updated_at = NOW()
@@ -1202,6 +1531,7 @@ async def _persist_session_state(
                 raw_mkop,
                 raw_antc,
                 source,
+                reason_code,
                 reason,
                 datetime.now(),
             )
@@ -1211,6 +1541,69 @@ async def _persist_session_state(
             await conn.close()
     except Exception:
         logger.exception("Failed to persist session state to DB")
+
+    await _persist_operations_day_run(state, dsn)
+
+
+async def _persist_operations_day_run(
+    state: SchedulerState,
+    dsn: str | None,
+) -> None:
+    """Persist current scheduler day summary to ``trading.operations_day_runs``."""
+    if dsn is None:
+        return
+    try:
+        import asyncpg
+
+        conn = await asyncpg.connect(dsn=dsn)
+        try:
+            is_trading_day = state.session_info.is_trading_day if state.session_info else True
+            session_source = state.session_info.source if state.session_info else "scheduler"
+            summary_json = _build_operations_day_summary_json(state)
+            await conn.execute(
+                """
+                INSERT INTO trading.operations_day_runs
+                    (run_date, scheduler_status, is_trading_day, session_source,
+                     market_phase, pre_market_done, end_of_day_done, after_hours_mode,
+                     recovery_batch_done, submit_count, held_position_sell_submit_count,
+                     cycles, last_phase_change_at, summary_json)
+                VALUES
+                    ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)
+                ON CONFLICT (run_date) DO UPDATE SET
+                    scheduler_status = EXCLUDED.scheduler_status,
+                    is_trading_day = EXCLUDED.is_trading_day,
+                    session_source = EXCLUDED.session_source,
+                    market_phase = EXCLUDED.market_phase,
+                    pre_market_done = EXCLUDED.pre_market_done,
+                    end_of_day_done = EXCLUDED.end_of_day_done,
+                    after_hours_mode = EXCLUDED.after_hours_mode,
+                    recovery_batch_done = EXCLUDED.recovery_batch_done,
+                    submit_count = EXCLUDED.submit_count,
+                    held_position_sell_submit_count = EXCLUDED.held_position_sell_submit_count,
+                    cycles = EXCLUDED.cycles,
+                    last_phase_change_at = EXCLUDED.last_phase_change_at,
+                    summary_json = EXCLUDED.summary_json,
+                    updated_at = NOW()
+                """,
+                state.run_date,
+                _derive_operations_day_status(state),
+                is_trading_day,
+                session_source,
+                state.market_phase,
+                state.pre_market_done,
+                state.end_of_day_done,
+                state.after_hours_mode,
+                state.recovery_batch_done,
+                state.submit_count,
+                state.held_position_sell_submit_count,
+                state.cycles,
+                state.last_phase_change,
+                json.dumps(summary_json),
+            )
+        finally:
+            await conn.close()
+    except Exception:
+        logger.exception("Failed to persist operations day run to DB")
 
 
 async def _insert_session_event(
@@ -1269,6 +1662,7 @@ async def _handle_phase_change(
     if new_phase == MarketPhaseCode.AFTER_HOURS.value:
         if not state.after_hours_mode:
             state.after_hours_mode = True
+            state.after_hours_full_snapshot_done = False
             logger.info(
                 "Phase change: %s -> AFTER_HOURS — enabling after-hours snapshot mode",
                 old_phase or "NONE",
@@ -1360,10 +1754,16 @@ async def _heartbeat_task(state: SchedulerState, pool) -> None:
     """
     while True:
         try:
+            summary_json = json.dumps(_build_operations_day_summary_json(state))
             if state.session_db_id is not None:
                 await pool.execute(
                     "UPDATE trading.market_sessions SET last_heartbeat_at = NOW(), updated_at = NOW() WHERE id = $1",
                     state.session_db_id,
+                )
+                await pool.execute(
+                    "UPDATE trading.operations_day_runs SET last_heartbeat_at = NOW(), summary_json = $2::jsonb, updated_at = NOW() WHERE run_date = $1",
+                    state.run_date,
+                    summary_json,
                 )
             else:
                 # session 미존재 시 run_date로 UPSERT — heartbeat 연속성 보장
@@ -1374,6 +1774,19 @@ async def _heartbeat_task(state: SchedulerState, pool) -> None:
                        ON CONFLICT (run_date) DO UPDATE SET last_heartbeat_at = NOW(), updated_at = NOW()""",
                     state.run_date,
                     is_trading_day,
+                )
+                await pool.execute(
+                    """INSERT INTO trading.operations_day_runs
+                           (run_date, scheduler_status, is_trading_day, last_heartbeat_at, summary_json)
+                       VALUES ($1, $2, $3, NOW(), $4::jsonb)
+                       ON CONFLICT (run_date) DO UPDATE
+                       SET last_heartbeat_at = NOW(),
+                           summary_json = EXCLUDED.summary_json,
+                           updated_at = NOW()""",
+                    state.run_date,
+                    _derive_operations_day_status(state),
+                    is_trading_day,
+                    summary_json,
                 )
                 logger.debug("Heartbeat UPSERT via run_date=%s (session not yet persisted)", state.run_date)
         except asyncio.CancelledError:
@@ -1530,6 +1943,7 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                     event_interval=args.event_interval,
                     decision_interval=args.decision_interval,
                     post_submit_interval=args.post_submit_interval,
+                    fill_sync_interval=args.fill_sync_interval,
                 )
                 # P2: Persist session state BEFORE running tasks — critical for
                 # heartbeat continuity. If decision_submit_gate times out and
@@ -1546,19 +1960,23 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                             state,
                             timeout_seconds=args.task_timeout,
                             env=env,
+                            dsn=dsn,
                         )
                     else:
                         logger.info("--once: pre-market phase skipped by session gate")
 
                 if await _session_gate(session_provider, run_date, state, "intraday"):
-                    await _run_intraday_due_tasks(
-                        state,
-                        tasks,
-                        max_submit_per_day=args.max_submit_per_day,
-                        held_position_sell_max_per_day=args.held_position_sell_max_per_day,
-                        timeout_seconds=args.task_timeout,
-                        env=env,
+                        await _run_intraday_due_tasks(
+                            state,
+                            tasks,
+                            max_general_buy_submit_per_day=(
+                                args.max_general_buy_submit_per_day
+                            ),
+                            held_position_sell_max_per_day=args.held_position_sell_max_per_day,
+                            timeout_seconds=args.task_timeout,
+                            env=env,
                         now=now,
+                        dsn=dsn,
                     )
                 else:
                     logger.info("--once: intraday phase skipped by session gate")
@@ -1570,6 +1988,7 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                             timeout_seconds=args.task_timeout,
                             env=env,
                             snapshot_interval=args.snapshot_interval,
+                            dsn=dsn,
                         )
                     else:
                         logger.info("--once: end-of-day phase skipped by session gate")
@@ -1588,6 +2007,7 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                 event_interval=args.event_interval,
                 decision_interval=args.decision_interval,
                 post_submit_interval=args.post_submit_interval,
+                fill_sync_interval=args.fill_sync_interval,
             )
 
             stop_event = asyncio.Event()
@@ -1671,6 +2091,7 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                             state,
                             timeout_seconds=args.task_timeout,
                             env=env,
+                            dsn=dsn,
                         )
                     else:
                         state.pre_market_done = True  # Mark done to avoid retry
@@ -1717,12 +2138,15 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                             await _run_intraday_due_tasks(
                                 state,
                                 tasks,
-                                max_submit_per_day=args.max_submit_per_day,
+                                max_general_buy_submit_per_day=(
+                                    args.max_general_buy_submit_per_day
+                                ),
                                 held_position_sell_max_per_day=args.held_position_sell_max_per_day,
                                 timeout_seconds=args.task_timeout,
                                 env=env,
                                 now=now,
                                 decision_interval=args.decision_interval,
+                                dsn=dsn,
                             )
                     else:
                         logger.info(
@@ -1737,6 +2161,7 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                             timeout_seconds=args.task_timeout,
                             env=env,
                             snapshot_interval=args.snapshot_interval,
+                            dsn=dsn,
                         )
                     else:
                         state.end_of_day_done = True  # Mark done to avoid retry
@@ -1752,6 +2177,7 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                         timeout_seconds=args.task_timeout,
                         env=env,
                         now=now,
+                        dsn=dsn,
                     )
 
                     # 16:00 KST after-hours 복구 배치 (1회만 실행)
@@ -1838,9 +2264,28 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--event-interval", type=int, default=DEFAULT_EVENT_INTERVAL_SECONDS)
     parser.add_argument("--decision-interval", type=int, default=DEFAULT_DECISION_INTERVAL_SECONDS)
     parser.add_argument("--post-submit-interval", type=int, default=DEFAULT_POST_SUBMIT_INTERVAL_SECONDS)
+    parser.add_argument("--fill-sync-interval", type=int, default=DEFAULT_FILL_SYNC_INTERVAL_SECONDS)
     parser.add_argument("--tick-seconds", type=int, default=5)
     parser.add_argument("--task-timeout", type=int, default=DEFAULT_TASK_TIMEOUT_SECONDS)
-    parser.add_argument("--max-submit-per-day", type=int, default=1)
+    parser.add_argument(
+        "--max-general-buy-submit-per-day",
+        type=int,
+        default=DEFAULT_MAX_GENERAL_BUY_SUBMIT_PER_DAY,
+        help=(
+            "Max general BUY submits per day for core/market_overlay lanes. "
+            "held_position risk-reducing SELL uses a separate budget."
+        ),
+    )
+    parser.add_argument(
+        "--max-submit-per-day",
+        type=int,
+        dest="legacy_max_submit_per_day",
+        default=None,
+        help=(
+            "Deprecated alias for --max-general-buy-submit-per-day. "
+            "Kept for backward compatibility."
+        ),
+    )
     parser.add_argument(
         "--held-position-sell-max-per-day",
         type=int,
@@ -1860,7 +2305,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         help="With --once, also run end-of-day tasks.",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.legacy_max_submit_per_day is not None:
+        args.max_general_buy_submit_per_day = args.legacy_max_submit_per_day
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -20,6 +20,7 @@ from agent_trading.brokers.base import BrokerAdapter
 from agent_trading.domain.entities import (
     AccountEntity,
     BrokerAccountEntity,
+    BrokerFillSnapshotEntity,
     BrokerOrderEntity,
     FillEventEntity,
     OrderRequestEntity,
@@ -43,6 +44,7 @@ from agent_trading.services.order_sync_service import (
     PostSubmitSyncRunner,
     SyncCycleResult,
     SyncOrderResult,
+    TruthProbeReason,
     _ACTIVE_SYNC_STATUSES,
     _GRACE_PERIOD_AFTER_HOURS_EXPIRED_MARKET_SECONDS,
     _RECOVERY_SYNC_STATUSES,
@@ -974,14 +976,14 @@ class TestSyncFilledNoFillIncrease:
 
 
 # ═════════════════════════════════════════════════════════════════════
-# Test: PARTIALLY_FILLED + fills > 0 → refresh 미호출 (FILLED 아님)
+# Test: PARTIALLY_FILLED + fills > 0 → refresh 호출
 # ═════════════════════════════════════════════════════════════════════
 
 
-class TestSyncPartialFillNoRefresh:
-    """PARTIALLY_FILLED로 전이 + fill 증가 → FILLED가 아니므로 refresh 미호출."""
+class TestSyncPartialFillRefresh:
+    """PARTIALLY_FILLED로 전이되면 현금/포지션 수렴을 위해 refresh 호출."""
 
-    async def test_partial_fill_no_refresh(
+    async def test_partial_fill_triggers_refresh(
         self,
         sync_service: OrderSyncService,
         repos: RepositoryContainer,
@@ -1022,9 +1024,9 @@ class TestSyncPartialFillNoRefresh:
         assert result.current_status == OrderStatus.PARTIALLY_FILLED
         assert result.terminal is False
         assert result.fills_synced >= 1
-        # FILLED가 아니므로 refresh 미호출
-        assert result.snapshot_triggered is False
-        assert len(snapshot_called) == 0
+        assert result.snapshot_triggered is True
+        assert len(snapshot_called) == 1
+        assert snapshot_called[0] == order.account_id
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -1760,10 +1762,14 @@ class TestTruthProbeBuyPositionInference:
         updated_bo = await repos.broker_orders.get(broker_order.broker_order_id)
         assert updated is not None
         assert updated.status == OrderStatus.FILLED
+        assert updated.status_reason_code == "truth_probe_buy_position_fill"
+        assert updated.status_reason_message is not None
+        assert "paper fields were incomplete" in updated.status_reason_message
         assert updated_bo is not None
         assert updated_bo.broker_status == "filled"
         assert result.status_changed is True
         assert result.current_status == OrderStatus.FILLED
+        assert result.error is None
 
     async def test_submitted_buy_truth_probe_skips_when_overlap_delta_is_ambiguous(
         self,
@@ -1909,8 +1915,10 @@ class TestTruthProbeBuyPositionInference:
         updated = await repos.orders.get(first.order_request_id)
         assert updated is not None
         assert updated.status == OrderStatus.FILLED
+        assert updated.status_reason_code == "truth_probe_buy_position_fill"
         assert result.status_changed is True
         assert result.current_status == OrderStatus.FILLED
+        assert result.error is None
 
     async def test_sync_reconcile_required_no_broker_order_skipped(
         self,
@@ -4192,6 +4200,607 @@ class TestInferSellFillRetry:
         )
 
         assert result == OrderStatus.FILLED
+
+
+# ═════════════════════════════════════════════════════════════════════
+# Test: linked fill snapshot truth source
+# ═════════════════════════════════════════════════════════════════════
+
+
+class TestLinkedFillSnapshotTruth:
+    """Linked VTTC0081R snapshot should resolve truth before position inference."""
+
+    async def test_try_truth_probe_prefers_linked_fill_snapshot(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        order = _make_order(
+            repos,
+            status=OrderStatus.SUBMITTED,
+            client_order_id="FILL-SNAPSHOT-001",
+        )
+        order = replace(order, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_native_order_id="BRK-FILL-SNAPSHOT-001",
+        )
+        await repos.broker_fill_snapshots.upsert(
+            BrokerFillSnapshotEntity(
+                broker_fill_snapshot_id=uuid4(),
+                fill_sync_run_id=uuid4(),
+                account_id=order.account_id,
+                order_request_id=order.order_request_id,
+                broker_name=BrokerName.KOREA_INVESTMENT.value,
+                broker_native_order_id=broker_order.broker_native_order_id or "",
+                broker_fill_id="CCLD-001",
+                symbol="001740",
+                side="buy",
+                order_date=datetime.now(timezone.utc).date(),
+                ordered_quantity=Decimal("10"),
+                filled_quantity=Decimal("10"),
+                fill_price=Decimal("11980"),
+                fill_timestamp=datetime.now(timezone.utc),
+                dedupe_key=f"{order.order_request_id}-fill",
+                raw_payload_json={},
+            )
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            return_value=OrderStatusResult(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                client_order_id=order.client_order_id,
+                broker_order_id=broker_order.broker_native_order_id,
+                status=OrderStatus.RECONCILE_REQUIRED,
+                filled_quantity=Decimal("0"),
+                remaining_quantity=Decimal("10"),
+                average_fill_price=None,
+                last_updated_at=datetime.now(timezone.utc),
+            )
+        )
+
+        probe_status, probe_reason = await sync_service._try_truth_probe(
+            order=order,
+            broker_order=broker_order,
+            broker=broker,
+            account_ref="test-account",
+        )
+
+        assert probe_status == OrderStatus.FILLED
+        assert probe_reason == TruthProbeReason.FILL_SNAPSHOT
+        assert broker.resolve_unknown_state.await_count == 0
+
+    async def test_try_truth_probe_sums_distinct_fill_ids_as_incremental_fills(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        order = _make_order(
+            repos,
+            status=OrderStatus.SUBMITTED,
+            client_order_id="FILL-SNAPSHOT-INCREMENTAL-001",
+        )
+        order = replace(order, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_native_order_id="BRK-FILL-SNAPSHOT-INCREMENTAL-001",
+        )
+        for idx, qty in enumerate((Decimal("3"), Decimal("7")), start=1):
+            await repos.broker_fill_snapshots.upsert(
+                BrokerFillSnapshotEntity(
+                    broker_fill_snapshot_id=uuid4(),
+                    fill_sync_run_id=uuid4(),
+                    account_id=order.account_id,
+                    order_request_id=order.order_request_id,
+                    broker_name=BrokerName.KOREA_INVESTMENT.value,
+                    broker_native_order_id=broker_order.broker_native_order_id or "",
+                    broker_fill_id=f"CCLD-INCR-{idx}",
+                    symbol="001740",
+                    side="buy",
+                    order_date=datetime.now(timezone.utc).date(),
+                    ordered_quantity=Decimal("10"),
+                    filled_quantity=qty,
+                    fill_price=Decimal("11980"),
+                    fill_timestamp=datetime.now(timezone.utc),
+                    dedupe_key=f"{order.order_request_id}-fill-incremental-{idx}",
+                    raw_payload_json={},
+                )
+            )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock()
+
+        probe_status, probe_reason = await sync_service._try_truth_probe(
+            order=order,
+            broker_order=broker_order,
+            broker=broker,
+            account_ref="test-account",
+        )
+
+        assert probe_status == OrderStatus.FILLED
+        assert probe_reason == TruthProbeReason.FILL_SNAPSHOT
+        assert broker.resolve_unknown_state.await_count == 0
+
+    async def test_try_truth_probe_distinct_fill_ids_partial_when_sum_below_requested(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        order = _make_order(
+            repos,
+            status=OrderStatus.SUBMITTED,
+            client_order_id="FILL-SNAPSHOT-INCREMENTAL-PARTIAL-001",
+        )
+        order = replace(order, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_native_order_id="BRK-FILL-SNAPSHOT-INCREMENTAL-PARTIAL-001",
+        )
+        for idx, qty in enumerate((Decimal("3"), Decimal("2")), start=1):
+            await repos.broker_fill_snapshots.upsert(
+                BrokerFillSnapshotEntity(
+                    broker_fill_snapshot_id=uuid4(),
+                    fill_sync_run_id=uuid4(),
+                    account_id=order.account_id,
+                    order_request_id=order.order_request_id,
+                    broker_name=BrokerName.KOREA_INVESTMENT.value,
+                    broker_native_order_id=broker_order.broker_native_order_id or "",
+                    broker_fill_id=f"CCLD-PARTIAL-{idx}",
+                    symbol="001740",
+                    side="buy",
+                    order_date=datetime.now(timezone.utc).date(),
+                    ordered_quantity=Decimal("10"),
+                    filled_quantity=qty,
+                    fill_price=Decimal("11980"),
+                    fill_timestamp=datetime.now(timezone.utc),
+                    dedupe_key=f"{order.order_request_id}-fill-partial-{idx}",
+                    raw_payload_json={},
+                )
+            )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock()
+
+        probe_status, probe_reason = await sync_service._try_truth_probe(
+            order=order,
+            broker_order=broker_order,
+            broker=broker,
+            account_ref="test-account",
+        )
+
+        assert probe_status == OrderStatus.PARTIALLY_FILLED
+        assert probe_reason == TruthProbeReason.FILL_SNAPSHOT
+        assert broker.resolve_unknown_state.await_count == 0
+
+    async def test_try_truth_probe_groups_duplicate_fill_ids_before_sum(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        order = _make_order(
+            repos,
+            status=OrderStatus.SUBMITTED,
+            client_order_id="FILL-SNAPSHOT-DUPLICATE-ID-001",
+        )
+        order = replace(order, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_native_order_id="BRK-FILL-SNAPSHOT-DUPLICATE-ID-001",
+        )
+        rows = (
+            ("CCLD-1", Decimal("3"), "dup-fill-1"),
+            ("CCLD-1", Decimal("3"), "dup-fill-1-repeat"),
+            ("CCLD-2", Decimal("7"), "dup-fill-2"),
+        )
+        for fill_id, qty, suffix in rows:
+            await repos.broker_fill_snapshots.upsert(
+                BrokerFillSnapshotEntity(
+                    broker_fill_snapshot_id=uuid4(),
+                    fill_sync_run_id=uuid4(),
+                    account_id=order.account_id,
+                    order_request_id=order.order_request_id,
+                    broker_name=BrokerName.KOREA_INVESTMENT.value,
+                    broker_native_order_id=broker_order.broker_native_order_id or "",
+                    broker_fill_id=fill_id,
+                    symbol="001740",
+                    side="buy",
+                    order_date=datetime.now(timezone.utc).date(),
+                    ordered_quantity=Decimal("10"),
+                    filled_quantity=qty,
+                    fill_price=Decimal("11980"),
+                    fill_timestamp=datetime.now(timezone.utc),
+                    dedupe_key=f"{order.order_request_id}-{suffix}",
+                    raw_payload_json={},
+                )
+            )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock()
+
+        probe_status, probe_reason = await sync_service._try_truth_probe(
+            order=order,
+            broker_order=broker_order,
+            broker=broker,
+            account_ref="test-account",
+        )
+
+        assert probe_status == OrderStatus.FILLED
+        assert probe_reason == TruthProbeReason.FILL_SNAPSHOT
+        assert broker.resolve_unknown_state.await_count == 0
+
+    async def test_sync_order_post_submit_records_fill_snapshot_reason_metadata_for_partial(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        order = _make_order(
+            repos,
+            status=OrderStatus.SUBMITTED,
+            client_order_id="FILL-SNAPSHOT-PARTIAL-STATUS-001",
+        )
+        order = replace(order, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_native_order_id="BRK-FILL-SNAPSHOT-PARTIAL-STATUS-001",
+        )
+        for idx, qty in enumerate((Decimal("3"), Decimal("2")), start=1):
+            await repos.broker_fill_snapshots.upsert(
+                BrokerFillSnapshotEntity(
+                    broker_fill_snapshot_id=uuid4(),
+                    fill_sync_run_id=uuid4(),
+                    account_id=order.account_id,
+                    order_request_id=order.order_request_id,
+                    broker_name=BrokerName.KOREA_INVESTMENT.value,
+                    broker_native_order_id=broker_order.broker_native_order_id or "",
+                    broker_fill_id=f"CCLD-PARTIAL-STATUS-{idx}",
+                    symbol="001740",
+                    side="buy",
+                    order_date=datetime.now(timezone.utc).date(),
+                    ordered_quantity=Decimal("10"),
+                    filled_quantity=qty,
+                    fill_price=Decimal("11980"),
+                    fill_timestamp=datetime.now(timezone.utc),
+                    dedupe_key=f"{order.order_request_id}-fill-partial-status-{idx}",
+                    raw_payload_json={},
+                )
+            )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock()
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.PARTIALLY_FILLED
+        assert updated.status_reason_code == "truth_probe_fill_snapshot"
+        assert updated.status_reason_message is not None
+        assert "filled=5" in updated.status_reason_message
+        assert "requested=10" in updated.status_reason_message
+        assert "remaining=5" in updated.status_reason_message
+        assert "source=fill_snapshot_fill_id_max_sum" in updated.status_reason_message
+        assert result.current_status == OrderStatus.PARTIALLY_FILLED
+        assert result.status_changed is True
+        assert broker.resolve_unknown_state.await_count == 0
+
+    async def test_sync_order_post_submit_triggers_refresh_for_fill_snapshot_partial(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        order = _make_order(
+            repos,
+            status=OrderStatus.SUBMITTED,
+            client_order_id="FILL-SNAPSHOT-PARTIAL-REFRESH-001",
+        )
+        order = replace(order, requested_quantity=Decimal("10"))
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_native_order_id="BRK-FILL-SNAPSHOT-PARTIAL-REFRESH-001",
+        )
+        for idx, qty in enumerate((Decimal("3"), Decimal("2")), start=1):
+            await repos.broker_fill_snapshots.upsert(
+                BrokerFillSnapshotEntity(
+                    broker_fill_snapshot_id=uuid4(),
+                    fill_sync_run_id=uuid4(),
+                    account_id=order.account_id,
+                    order_request_id=order.order_request_id,
+                    broker_name=BrokerName.KOREA_INVESTMENT.value,
+                    broker_native_order_id=broker_order.broker_native_order_id or "",
+                    broker_fill_id=f"CCLD-PARTIAL-REFRESH-{idx}",
+                    symbol="001740",
+                    side="buy",
+                    order_date=datetime.now(timezone.utc).date(),
+                    ordered_quantity=Decimal("10"),
+                    filled_quantity=qty,
+                    fill_price=Decimal("11980"),
+                    fill_timestamp=datetime.now(timezone.utc),
+                    dedupe_key=f"{order.order_request_id}-fill-partial-refresh-{idx}",
+                    raw_payload_json={},
+                )
+            )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock()
+        snapshot_refresh_cb = AsyncMock()
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+            snapshot_refresh_cb=snapshot_refresh_cb,
+        )
+
+        assert result.current_status == OrderStatus.PARTIALLY_FILLED
+        assert result.status_changed is True
+        assert result.snapshot_triggered is True
+        assert result.error is None
+        snapshot_refresh_cb.assert_awaited_once_with(order.account_id)
+
+    async def test_sync_order_post_submit_updates_partial_progress_and_refreshes(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        order = _make_order(
+            repos,
+            status=OrderStatus.PARTIALLY_FILLED,
+            client_order_id="FILL-SNAPSHOT-PARTIAL-PROGRESS-001",
+        )
+        order = replace(
+            order,
+            requested_quantity=Decimal("10"),
+            status_reason_code="truth_probe_fill_snapshot",
+            status_reason_message=(
+                "Truth probe resolved via linked fill snapshot: "
+                "status=partially_filled, filled=3, requested=10, remaining=7, "
+                "source=fill_snapshot_fill_id_max_sum, odno=BRK-FILL-SNAPSHOT-PARTIAL-PROGRESS-001"
+            ),
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_native_order_id="BRK-FILL-SNAPSHOT-PARTIAL-PROGRESS-001",
+            broker_status="partially_filled",
+        )
+        for idx, qty in enumerate((Decimal("3"), Decimal("2")), start=1):
+            await repos.broker_fill_snapshots.upsert(
+                BrokerFillSnapshotEntity(
+                    broker_fill_snapshot_id=uuid4(),
+                    fill_sync_run_id=uuid4(),
+                    account_id=order.account_id,
+                    order_request_id=order.order_request_id,
+                    broker_name=BrokerName.KOREA_INVESTMENT.value,
+                    broker_native_order_id=broker_order.broker_native_order_id or "",
+                    broker_fill_id=f"CCLD-PARTIAL-PROGRESS-{idx}",
+                    symbol="001740",
+                    side="buy",
+                    order_date=datetime.now(timezone.utc).date(),
+                    ordered_quantity=Decimal("10"),
+                    filled_quantity=qty,
+                    fill_price=Decimal("11980"),
+                    fill_timestamp=datetime.now(timezone.utc),
+                    dedupe_key=f"{order.order_request_id}-fill-partial-progress-{idx}",
+                    raw_payload_json={},
+                )
+            )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock()
+        snapshot_refresh_cb = AsyncMock()
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+            snapshot_refresh_cb=snapshot_refresh_cb,
+        )
+
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.PARTIALLY_FILLED
+        assert updated.status_reason_code == "truth_probe_fill_snapshot"
+        assert updated.status_reason_message is not None
+        assert "filled=5" in updated.status_reason_message
+        assert "remaining=5" in updated.status_reason_message
+        assert result.current_status == OrderStatus.PARTIALLY_FILLED
+        assert result.status_changed is False
+        assert result.snapshot_triggered is True
+        assert result.error is None
+        snapshot_refresh_cb.assert_awaited_once_with(order.account_id)
+
+    async def test_try_truth_probe_skips_buy_position_fallback_when_linked_snapshot_exists(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.SUBMITTED,
+            client_order_id="FILL-SNAPSHOT-SKIP-POSITION-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.BUY,
+            requested_quantity=Decimal("37"),
+            created_at=now - timedelta(minutes=2),
+            submitted_at=now - timedelta(minutes=2),
+            updated_at=now - timedelta(minutes=2),
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_native_order_id="BRK-FILL-SNAPSHOT-SKIP-POSITION-001",
+        )
+
+        await repos.broker_fill_snapshots.upsert(
+            BrokerFillSnapshotEntity(
+                broker_fill_snapshot_id=uuid4(),
+                fill_sync_run_id=uuid4(),
+                account_id=order.account_id,
+                order_request_id=order.order_request_id,
+                broker_name=BrokerName.KOREA_INVESTMENT.value,
+                broker_native_order_id=broker_order.broker_native_order_id or "",
+                broker_fill_id="CCLD-ZERO-001",
+                symbol="001740",
+                side="buy",
+                order_date=datetime.now(timezone.utc).date(),
+                ordered_quantity=Decimal("37"),
+                filled_quantity=Decimal("0"),
+                fill_price=Decimal("0"),
+                fill_timestamp=datetime.now(timezone.utc),
+                dedupe_key=f"{order.order_request_id}-fill-zero",
+                raw_payload_json={},
+            )
+        )
+
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("4"),
+            snapshot_time=now - timedelta(minutes=3),
+        )
+        _make_position_snapshot(
+            repos,
+            account_id=order.account_id,
+            instrument_id=order.instrument_id,
+            quantity=Decimal("41"),
+            snapshot_time=now - timedelta(minutes=1),
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            return_value=OrderStatusResult(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                client_order_id=order.client_order_id,
+                broker_order_id=broker_order.broker_native_order_id,
+                status=OrderStatus.SUBMITTED,
+                filled_quantity=Decimal("0"),
+                remaining_quantity=Decimal("37"),
+                average_fill_price=None,
+                last_updated_at=datetime.now(timezone.utc),
+            )
+        )
+
+        probe_status, probe_reason = await sync_service._try_truth_probe(
+            order=order,
+            broker_order=broker_order,
+            broker=broker,
+            account_ref="test-account",
+        )
+
+        assert probe_status is None
+        assert probe_reason == TruthProbeReason.FILL_SNAPSHOT_INCOMPLETE
+        assert broker.resolve_unknown_state.await_count == 1
+
+    async def test_sync_order_post_submit_persists_fill_snapshot_incomplete_reason(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        order = _make_order(
+            repos,
+            status=OrderStatus.SUBMITTED,
+            client_order_id="FILL-SNAPSHOT-INCOMPLETE-STATUS-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.BUY,
+            requested_quantity=Decimal("37"),
+            created_at=now - timedelta(minutes=2),
+            submitted_at=now - timedelta(minutes=2),
+            updated_at=now - timedelta(minutes=2),
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_native_order_id="BRK-FILL-SNAPSHOT-INCOMPLETE-STATUS-001",
+        )
+
+        await repos.broker_fill_snapshots.upsert(
+            BrokerFillSnapshotEntity(
+                broker_fill_snapshot_id=uuid4(),
+                fill_sync_run_id=uuid4(),
+                account_id=order.account_id,
+                order_request_id=order.order_request_id,
+                broker_name=BrokerName.KOREA_INVESTMENT.value,
+                broker_native_order_id=broker_order.broker_native_order_id or "",
+                broker_fill_id="CCLD-ZERO-STATUS-001",
+                symbol="001740",
+                side="buy",
+                order_date=datetime.now(timezone.utc).date(),
+                ordered_quantity=Decimal("37"),
+                filled_quantity=Decimal("0"),
+                fill_price=Decimal("0"),
+                fill_timestamp=datetime.now(timezone.utc),
+                dedupe_key=f"{order.order_request_id}-fill-zero-status",
+                raw_payload_json={},
+            )
+        )
+
+        broker = AsyncMock(spec=BrokerAdapter)
+        broker.resolve_unknown_state = AsyncMock(
+            return_value=OrderStatusResult(
+                broker_name=BrokerName.KOREA_INVESTMENT,
+                client_order_id=order.client_order_id,
+                broker_order_id=broker_order.broker_native_order_id,
+                status=OrderStatus.SUBMITTED,
+                filled_quantity=Decimal("0"),
+                remaining_quantity=Decimal("37"),
+                average_fill_price=None,
+                last_updated_at=datetime.now(timezone.utc),
+            )
+        )
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+        )
+
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.SUBMITTED
+        assert updated.status_reason_code == "truth_probe_fill_snapshot_incomplete"
+        assert updated.status_reason_message is not None
+        assert "snapshot_rows=1" in updated.status_reason_message
+        assert "positive_rows=0" in updated.status_reason_message
+        assert "Awaiting next fill sync" in updated.status_reason_message
+        assert result.current_status == OrderStatus.SUBMITTED
+        assert result.status_changed is False
+        assert result.error == "truth_probe_pending:fill_snapshot_incomplete"
 
 
 # ═════════════════════════════════════════════════════════════════════

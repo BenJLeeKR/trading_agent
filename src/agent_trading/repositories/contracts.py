@@ -12,6 +12,7 @@ from agent_trading.domain.entities import (
     AuditLogEntity,
     BlockingLockEntity,
     BrokerAccountEntity,
+    BrokerFillSnapshotEntity,
     BrokerOrderEntity,
     CashBalanceSnapshotEntity,
     ClientEntity,
@@ -20,6 +21,7 @@ from agent_trading.domain.entities import (
     ExecutionAttemptEntity,
     ExternalEventEntity,
     FillEventEntity,
+    FillSyncRunEntity,
     GuardrailEvaluationEntity,
     InstrumentEntity,
     MarketSessionEntity,
@@ -71,6 +73,22 @@ class SnapshotSyncHealthSummary:
 
     after_hours: bool = False
     """``True`` when the most recent run was an after-hours (cash-only) sync."""
+
+
+@dataclass(slots=True, frozen=True)
+class FillSyncHealthSummary:
+    """Freshness/health summary for the most recent fill sync runs."""
+
+    last_run_started_at: datetime | None
+    last_run_completed_at: datetime | None
+    last_status: str | None
+    last_successful_run_at: datetime | None
+    consecutive_failures: int
+    is_stale: bool
+    stale_threshold_seconds: int
+    retried_accounts: int = 0
+    retried_days: int = 0
+    total_retries: int = 0
 
 
 @dataclass(slots=True, frozen=True)
@@ -494,6 +512,14 @@ class TradeDecisionRepository(Protocol):
         limit: int = 50,
         offset: int = 0,
         decision_context_id: UUID | None = None,
+        created_date_kst: date | None = None,
+        side: str | None = None,
+        source_type: str | None = None,
+        decision_type: str | None = None,
+        execution_status: str | None = None,
+        latest_stop_reason: str | None = None,
+        latest_stop_reason_prefix: str | None = None,
+        has_order: bool | None = None,
     ) -> tuple[list[TradeDecisionRow], int]:
         """서버사이드 페이지네이션: (items, total_count) 반환.
 
@@ -611,6 +637,48 @@ class FillEventRepository(Protocol):
         ``broker_order_id``, callers should verify the ``broker_order_id``
         match after retrieval.
         """
+        ...
+
+
+class FillSyncRunRepository(Protocol):
+    async def add(self, run: FillSyncRunEntity) -> FillSyncRunEntity:
+        ...
+
+    async def list_runs(
+        self,
+        limit: int = 50,
+        trigger_type: str | None = None,
+        status: str | None = None,
+    ) -> Sequence[FillSyncRunEntity]:
+        ...
+
+    async def get(self, run_id: UUID) -> FillSyncRunEntity | None:
+        ...
+
+    async def update_run(self, run: FillSyncRunEntity) -> FillSyncRunEntity:
+        ...
+
+    async def get_sync_health_summary(
+        self,
+        stale_threshold_seconds: int = 1800,
+    ) -> FillSyncHealthSummary:
+        ...
+
+
+class BrokerFillSnapshotRepository(Protocol):
+    async def upsert(self, snapshot: BrokerFillSnapshotEntity) -> BrokerFillSnapshotEntity:
+        ...
+
+    async def list_recent(
+        self,
+        *,
+        limit: int = 200,
+        account_id: UUID | None = None,
+        order_date: date | None = None,
+        order_request_id: UUID | None = None,
+        symbol: str | None = None,
+        broker_native_order_id: str | None = None,
+    ) -> Sequence[BrokerFillSnapshotEntity]:
         ...
 
 
@@ -1147,7 +1215,13 @@ class OrderSubmissionAttemptRepository(Protocol):
         """
         ...
 
-    async def list_recent_failures(self, limit: int = 10) -> Sequence[dict[str, Any]]:
+    async def list_recent_failures(
+        self,
+        limit: int = 10,
+        *,
+        submitted_from: datetime | None = None,
+        submitted_to: datetime | None = None,
+    ) -> Sequence[dict[str, Any]]:
         """Return the most recent submission failures (rejected or exception).
 
         Returns a list of dicts with keys:

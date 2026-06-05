@@ -44,6 +44,16 @@ const KRW_FORMATTER = new Intl.NumberFormat("ko-KR", {
   maximumFractionDigits: 0,
 });
 
+export function getKstTodayString(now: Date = new Date()): string {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return formatter.format(now);
+}
+
 /**
  * Format an ISO datetime string as a full KST datetime.
  *

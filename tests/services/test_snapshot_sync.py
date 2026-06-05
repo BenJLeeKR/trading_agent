@@ -159,6 +159,9 @@ class MockSnapshotProvider:
         self._errors = errors or []
         self._fail = fail
         self._risk_limit = risk_limit
+        self.last_after_hours: bool | None = None
+        self.last_fetch_positions: bool | None = None
+        self.last_allow_after_hours_positions: bool | None = None
 
     async def fetch_snapshot(
         self,
@@ -166,11 +169,16 @@ class MockSnapshotProvider:
         instrument_repo: InstrumentRepository,
         *,
         after_hours: bool = False,
+        fetch_positions: bool = True,
+        allow_after_hours_positions: bool = False,
     ) -> FetchedSnapshot:
+        self.last_after_hours = after_hours
+        self.last_fetch_positions = fetch_positions
+        self.last_allow_after_hours_positions = allow_after_hours_positions
         if self._fail:
             msg = f"Mock failure for account_id={account_id}"
             raise RuntimeError(msg)
-        if after_hours:
+        if (after_hours and not allow_after_hours_positions) or not fetch_positions:
             return FetchedSnapshot(
                 positions=[],
                 cash_balance=self._cash,
@@ -209,6 +217,122 @@ class TestSyncAccountSnapshots:
         assert result.positions_synced == 0
         assert result.cash_balance_synced is False
         assert result.errors == []
+
+    async def test_sync_forwards_fetch_positions_flag_to_provider(self) -> None:
+        account_id = uuid4()
+        provider = MockSnapshotProvider(
+            positions=[
+                PositionSnapshotEntity(
+                    position_snapshot_id=uuid4(),
+                    account_id=account_id,
+                    instrument_id=uuid4(),
+                    quantity=_d("10"),
+                    average_price=_d("5000"),
+                    market_price=_d("5100"),
+                    unrealized_pnl=_d("1000"),
+                    source_of_truth="broker",
+                    snapshot_at=None,
+                )
+            ],
+            cash=CashBalanceSnapshotEntity(
+                cash_balance_snapshot_id=uuid4(),
+                account_id=account_id,
+                currency="KRW",
+                available_cash=_d("100000"),
+                settled_cash=_d("100000"),
+                unsettled_cash=None,
+                total_asset=_d("200000"),
+                source_of_truth="broker",
+                snapshot_at=None,
+            ),
+        )
+        pos_repo = InMemoryPositionSnapshotRepository()
+        cash_repo = InMemoryCashBalanceSnapshotRepository()
+        risk_repo = InMemoryRiskLimitSnapshotRepository()
+        inst_repo = InMemoryInstrumentRepository()
+
+        result = await sync_account_snapshots(
+            fetch_provider=provider,
+            instrument_repo=inst_repo,
+            position_snapshot_repo=pos_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            risk_limit_snapshot_repo=risk_repo,
+            account_id=account_id,
+            fetch_positions=False,
+        )
+
+        assert provider.last_fetch_positions is False
+        assert provider.last_after_hours is False
+        assert result.positions_synced == 0
+        assert result.cash_balance_synced is True
+        assert result.orderable_amount_synced is False
+
+    async def test_sync_forwards_allow_after_hours_positions(self) -> None:
+        account_id = uuid4()
+        pos = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=account_id,
+            instrument_id=uuid4(),
+            quantity=_d("1"),
+            average_price=_d("1000"),
+            market_price=None,
+            unrealized_pnl=None,
+            source_of_truth="broker",
+            snapshot_at=None,
+        )
+        provider = MockSnapshotProvider(positions=[pos])
+        pos_repo = InMemoryPositionSnapshotRepository()
+        cash_repo = InMemoryCashBalanceSnapshotRepository()
+        risk_repo = InMemoryRiskLimitSnapshotRepository()
+        inst_repo = InMemoryInstrumentRepository()
+
+        result = await sync_account_snapshots(
+            fetch_provider=provider,
+            instrument_repo=inst_repo,
+            position_snapshot_repo=pos_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            risk_limit_snapshot_repo=risk_repo,
+            account_id=account_id,
+            after_hours=True,
+            allow_after_hours_positions=True,
+        )
+
+        assert provider.last_after_hours is True
+        assert provider.last_allow_after_hours_positions is True
+        assert result.positions_synced == 1
+
+    async def test_sync_sets_orderable_amount_synced_when_cash_has_orderable_amount(self) -> None:
+        account_id = uuid4()
+        provider = MockSnapshotProvider(
+            cash=CashBalanceSnapshotEntity(
+                cash_balance_snapshot_id=uuid4(),
+                account_id=account_id,
+                currency="KRW",
+                available_cash=_d("100000"),
+                settled_cash=_d("100000"),
+                unsettled_cash=None,
+                total_asset=_d("200000"),
+                orderable_amount=_d("90000"),
+                source_of_truth="broker",
+                snapshot_at=None,
+            ),
+        )
+        pos_repo = InMemoryPositionSnapshotRepository()
+        cash_repo = InMemoryCashBalanceSnapshotRepository()
+        risk_repo = InMemoryRiskLimitSnapshotRepository()
+        inst_repo = InMemoryInstrumentRepository()
+
+        result = await sync_account_snapshots(
+            fetch_provider=provider,
+            instrument_repo=inst_repo,
+            position_snapshot_repo=pos_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            risk_limit_snapshot_repo=risk_repo,
+            account_id=account_id,
+        )
+
+        assert result.cash_balance_synced is True
+        assert result.orderable_amount_synced is True
 
     async def test_sync_with_positions(self) -> None:
         account_id = uuid4()
@@ -521,11 +645,19 @@ class TestSnapshotFetchProviderProtocol:
                 self,
                 account_id: UUID,
                 instrument_repo: InstrumentRepository,
+                *,
+                after_hours: bool = False,
+                fetch_positions: bool = True,
             ) -> FetchedSnapshot:
                 return FetchedSnapshot(positions=[], cash_balance=None, errors=[])
 
         provider: SnapshotFetchProvider = CustomProvider()  # type: ignore[assignment]
-        result = await provider.fetch_snapshot(uuid4(), InMemoryInstrumentRepository())
+        result = await provider.fetch_snapshot(
+            uuid4(),
+            InMemoryInstrumentRepository(),
+            after_hours=False,
+            fetch_positions=True,
+        )
         assert isinstance(result, FetchedSnapshot)
 
 
@@ -589,6 +721,7 @@ class TestRiskLimitSnapshot:
 
         # Verify no persist error
         assert "risk_limit_snapshot_persist_failed" not in result.errors
+        assert result.risk_limit_snapshot_synced is True
         # Verify the snapshot was stored
         latest = await risk_repo.get_latest_by_account(account_id)
         assert latest is not None

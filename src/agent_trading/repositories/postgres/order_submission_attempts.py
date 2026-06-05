@@ -151,12 +151,19 @@ class PostgresOrderSubmissionAttemptRepository:
         )
         return result
 
-    async def list_recent_failures(self, limit: int = 10) -> Sequence[dict[str, Any]]:
+    async def list_recent_failures(
+        self,
+        limit: int = 10,
+        *,
+        submitted_from: datetime | None = None,
+        submitted_to: datetime | None = None,
+    ) -> Sequence[dict[str, Any]]:
         """Return the most recent submission failures (rejected or exception).
 
         Uses ``DISTINCT ON`` to get the latest attempt per order request,
         then filters to rejected/exception outcomes and joins with
-        ``trading.order_requests`` for symbol/side/created_at.
+        ``trading.order_requests`` + ``trading.instruments`` for
+        symbol/side/created_at.
         """
         sql = """
             WITH latest_attempts AS (
@@ -184,14 +191,17 @@ class PostgresOrderSubmissionAttemptRepository:
                 la.raw_code AS latest_raw_code,
                 la.raw_message AS latest_raw_message,
                 la.submitted_at AS last_submitted_at,
-                o.symbol,
+                i.symbol,
                 o.side,
                 o.created_at
             FROM latest_attempts la
             JOIN trading.order_requests o ON o.order_request_id = la.order_request_id
+            LEFT JOIN trading.instruments i ON i.instrument_id = o.instrument_id
             WHERE la.latest_outcome IN ('rejected', 'exception')
+              AND ($2::timestamptz IS NULL OR la.submitted_at >= $2::timestamptz)
+              AND ($3::timestamptz IS NULL OR la.submitted_at <= $3::timestamptz)
             ORDER BY la.submitted_at DESC NULLS LAST
             LIMIT $1
         """
-        rows = await self._tx.connection.fetch(sql, limit)
+        rows = await self._tx.connection.fetch(sql, limit, submitted_from, submitted_to)
         return [dict(row) for row in rows]

@@ -74,6 +74,7 @@ class KISSyncSnapshotProvider:
         *,
         after_hours: bool = False,
         fetch_positions: bool = True,
+        allow_after_hours_positions: bool = False,
     ) -> FetchedSnapshot:
         """Fetch KIS cash balance and positions, return as domain entities.
 
@@ -101,6 +102,9 @@ class KISSyncSnapshotProvider:
             When ``False``, skip positions fetch entirely (cash+orderable only).
             Use this in Phase 1 of a split sync cycle; call again with
             ``fetch_positions=True`` in Phase 2.
+        allow_after_hours_positions:
+            When ``True``, after-hours mode still fetches positions once to
+            capture the closing portfolio state.
 
         Returns
         -------
@@ -180,9 +184,18 @@ class KISSyncSnapshotProvider:
 
         # ── 2. Extract positions from merged result ─────────────────────
         # VTTC8434R output1 에서 이미 추출된 positions 을 조건부로 사용.
-        if after_hours:
+        if after_hours and not allow_after_hours_positions:
             logger.info("AFTER_HOURS_SKIP After-hours mode — skipping positions fetch (cash-only sync)")
             raw_positions = []
+        elif after_hours and allow_after_hours_positions:
+            logger.info("AFTER_HOURS_FULL After-hours mode — fetching positions to capture closing state")
+            if cp_result is not None:
+                raw_positions = cp_result.positions
+            else:
+                msg = "CashAndPositionsResult is None — no positions available"
+                logger.error(msg)
+                errors.append(msg)
+                raw_positions = []
         elif not fetch_positions:
             logger.info(
                 "fetch_positions=False — skipping positions fetch "
@@ -251,6 +264,7 @@ class KISSyncSnapshotProvider:
         # P3: after-hours에는 VTTC8908R 완전 생략.
         #     (장 마감 후 15:30 KST 이후 매수 주문 불가 → orderable_amount 불필요)
         orderable_amount: Decimal | None = None
+        cash_fetch_status = "success"
         if raw_cash and not after_hours:
             # Paper 1 RPS pacing: ensure at least 1s between consecutive KIS calls
             await asyncio.sleep(1.0)
@@ -285,7 +299,21 @@ class KISSyncSnapshotProvider:
                 orderable_cash = available_cash
                 orderable_source = "api_failure_fallback"
 
-            if orderable_cash is not None:
+            if orderable_source in {
+                "budget_precheck_fallback",
+                "budget_exhausted_fallback",
+                "api_failure_fallback",
+            }:
+                logger.warning(
+                    "orderable_amount verification unavailable "
+                    "(source: %s, account=%s); forcing orderable_amount=0 "
+                    "to block BUY until next verified sync",
+                    orderable_source,
+                    account_id,
+                )
+                orderable_amount = Decimal("0")
+                cash_fetch_status = "stale"
+            elif orderable_cash is not None:
                 orderable_amount = Decimal(str(orderable_cash))
                 logger.info(
                     "orderable_amount=%s (source: %s)",
@@ -303,15 +331,17 @@ class KISSyncSnapshotProvider:
                         orderable_amount,
                     )
                 else:
-                    # 최종 fallback: VTTC8908R ord_psbl_cash와 VTTC8434R ord_psbl_amt
-                    # 모두 없으면 available_cash(dnca_tot_amt)를 사용하여 NULL 저장 방지
+                    # VTTC8908R/VTTC8434R 모두 주문가능금액을 제공하지 않으면
+                    # available_cash를 주문가능금액처럼 승격하지 않는다.
+                    # 검증되지 않은 BUY를 막기 위해 0으로 고정한다.
                     logger.warning(
                         "orderable_amount not available from KIS (VTTC8908R ord_psbl_cash "
                         "and VTTC8434R ord_psbl_amt both missing); "
-                        "falling back to available_cash=%s",
+                        "forcing orderable_amount=0 instead of available_cash=%s",
                         available_cash,
                     )
-                    orderable_amount = available_cash
+                    orderable_amount = Decimal("0")
+                    cash_fetch_status = "stale"
         elif after_hours and raw_cash:
             logger.info(
                 "[VTTC8908R] after-hours skip "
@@ -339,6 +369,7 @@ class KISSyncSnapshotProvider:
                 orderable_amount=orderable_amount,
                 source_of_truth=_SOURCE_OF_TRUTH,
                 snapshot_at=snapshot_at,
+                fetch_status=cash_fetch_status,
             )
 
         # ── 5. Build RiskLimitSnapshotEntity ────────────────────────────

@@ -122,6 +122,8 @@ class FakeKISRestClient:
             order_type=order_type,
             fallback_cash=fallback_cash,
         )
+        if amount is None:
+            return OrderableCashResult(amount=None, source="missing_field")
         if amount is not None and amount != fallback_cash:
             return OrderableCashResult(
                 amount=amount,
@@ -331,7 +333,7 @@ class TestKISSyncSnapshotProvider:
         assert cash.currency == "KRW"
 
     async def test_cash_balance_orderable_amount_all_none(self) -> None:
-        """Both VTTC8908R and VTTC8434R unavailable → falls back to ``available_cash``."""
+        """Both VTTC8908R and VTTC8434R unavailable → BUY-safe zero."""
         account_id = uuid4()
         client = FakeKISRestClient(
             positions=[],
@@ -348,15 +350,16 @@ class TestKISSyncSnapshotProvider:
         result = await provider.fetch_snapshot(account_id, inst_repo)
         assert result.cash_balance is not None
         cash = result.cash_balance
-        # 최종 fallback: available_cash(dnca_tot_amt) 사용
-        assert cash.orderable_amount == 1000000, (
-            f"Expected 1000000 (available_cash fallback), got {cash.orderable_amount}"
+        # 최종 fallback: available_cash 승격 금지 → 0으로 고정
+        assert cash.orderable_amount == 0, (
+            f"Expected 0 (safe zero fallback), got {cash.orderable_amount}"
         )
         assert cash.available_cash == 1000000  # unchanged
+        assert cash.fetch_status == "stale"
         assert cash.currency == "KRW"
 
     async def test_cash_balance_orderable_amount_vttc8908r_failure(self) -> None:
-        """``get_orderable_cash()`` raises → falls back to ``available_cash``."""
+        """``get_orderable_cash()`` raises → BUY-safe zero."""
         account_id = uuid4()
         client = FakeKISRestClient(
             positions=[],
@@ -374,13 +377,13 @@ class TestKISSyncSnapshotProvider:
         result = await provider.fetch_snapshot(account_id, inst_repo)
         assert result.cash_balance is not None
         cash = result.cash_balance
-        # VTTC8908R 일반 Exception 실패 → available_cash로 fallback
-        # (VTTC8434R ord_psbl_amt는 paper에서 unreliable하므로 available_cash가 더 안전)
-        assert cash.orderable_amount == 1000000, (
-            f"Expected 1000000 (available_cash) from Exception fallback, "
+        # VTTC8908R 일반 Exception 실패 → available_cash 승격 금지
+        assert cash.orderable_amount == 0, (
+            f"Expected 0 from Exception fallback, "
             f"got {cash.orderable_amount}"
         )
         assert cash.available_cash == 1000000  # unchanged
+        assert cash.fetch_status == "stale"
         assert cash.currency == "KRW"
 
     async def test_cash_balance_logs_budget_precheck_fallback_source(
@@ -496,6 +499,34 @@ class TestFetchSnapshot:
 
         # positions는 빈 리스트 (after_hours로 skip)
         assert result.positions == []
+
+    async def test_fetch_snapshot_after_hours_can_fetch_positions_once(self) -> None:
+        mock_rest = await self._make_cp_mock(
+            cash_balance={},
+            positions=[{"pdno": "005930", "hldg_qty": "10", "pchs_avg_pric": "50000"}],
+        )
+
+        provider = KISSyncSnapshotProvider(mock_rest)
+        inst_repo = InMemoryInstrumentRepository()
+        inst = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="005930",
+            name="Samsung Electronics",
+            market_code="KRX",
+            asset_class="stock",
+            currency="KRW",
+        )
+        inst_repo._items[inst.instrument_id] = inst
+
+        result = await provider.fetch_snapshot(
+            uuid4(),
+            inst_repo,
+            after_hours=True,
+            allow_after_hours_positions=True,
+        )
+
+        mock_rest.get_cash_and_positions.assert_awaited_once_with(after_hours=True)
+        assert len(result.positions) == 1
 
     async def test_fetch_snapshot_after_hours_returns_cash_only(self) -> None:
         """after_hours=True → positions는 빈 리스트, cash_balance는 정상, 에러 없음."""

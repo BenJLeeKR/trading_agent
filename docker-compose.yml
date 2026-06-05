@@ -199,7 +199,11 @@ services:
       dockerfile: Dockerfile
     image: agent_trading-app:latest
     container_name: agent_trading-ops-scheduler
-    command: ["python3", "/app/scripts/run_ops_scheduler.py"]
+    command:
+      - "python3"
+      - "/app/scripts/run_ops_scheduler.py"
+      - "--max-general-buy-submit-per-day"
+      - "${SCHEDULER_MAX_GENERAL_BUY_SUBMIT_PER_DAY:-6}"
     restart: unless-stopped
     depends_on:
       db:

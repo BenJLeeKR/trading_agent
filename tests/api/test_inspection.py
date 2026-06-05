@@ -9,7 +9,9 @@ Covers: ``GET /orders``, ``GET /orders/{id}``, ``GET /orders/{id}/events``,
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
@@ -19,12 +21,25 @@ from fastapi.testclient import TestClient
 
 from agent_trading.api.app import create_app
 from agent_trading.api.deps import get_repos
+from agent_trading.api.routes.decisions import _to_detail
 from agent_trading.api.routes.orders import _safe_str
-from agent_trading.domain.entities import InstrumentEntity, OrderRequestEntity
-from agent_trading.domain.enums import OrderSide, OrderStatus, OrderType, TimeInForce
+from agent_trading.domain.entities import (
+    InstrumentEntity,
+    OrderRequestEntity,
+    OrderSubmissionAttemptEntity,
+)
+from agent_trading.domain.enums import (
+    DecisionType,
+    EntryStyle,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    TimeInForce,
+)
 from agent_trading.domain.entities import ExecutionAttemptEntity, TradeDecisionEntity
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
+from agent_trading.repositories.contracts import TradeDecisionRow
 from tests.api.conftest import client  # noqa: F401
 
 
@@ -109,6 +124,211 @@ class TestOrders:
         """``GET /orders/{id}`` returns 400 for invalid UUID."""
         response = client.get("/orders/not-a-uuid")
         assert response.status_code == 400
+
+    def test_get_buy_block_summary(self) -> None:
+        """``GET /orders/buy-block-summary`` returns BUY broker submit failure counts."""
+        repos = build_in_memory_repositories()
+        app = create_app(repos=repos, auth_enabled=False)
+        account_id = uuid4()
+        instrument_id = uuid4()
+        decision_context_id = uuid4()
+        strategy_id = uuid4()
+        now = datetime(2026, 6, 2, 3, 0, tzinfo=timezone.utc)
+
+        td_buy_failed = TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=decision_context_id,
+            decision_type=DecisionType.APPROVE,
+            side=OrderSide.BUY,
+            strategy_id=strategy_id,
+            symbol="AAPL",
+            market="NASDAQ",
+            entry_style=EntryStyle.LIMIT,
+            created_at=now,
+            entry_price=Decimal("150"),
+            quantity=Decimal("10"),
+            decision_json={},
+            source_type="core",
+        )
+        td_buy_exception = TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=decision_context_id,
+            decision_type=DecisionType.APPROVE,
+            side=OrderSide.BUY,
+            strategy_id=strategy_id,
+            symbol="MSFT",
+            market="NASDAQ",
+            entry_style=EntryStyle.LIMIT,
+            created_at=now,
+            entry_price=Decimal("300"),
+            quantity=Decimal("5"),
+            decision_json={},
+            source_type="core",
+        )
+        td_buy_ok = TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=decision_context_id,
+            decision_type=DecisionType.APPROVE,
+            side=OrderSide.BUY,
+            strategy_id=strategy_id,
+            symbol="TSLA",
+            market="NASDAQ",
+            entry_style=EntryStyle.LIMIT,
+            created_at=now,
+            entry_price=Decimal("200"),
+            quantity=Decimal("3"),
+            decision_json={},
+            source_type="held_position",
+        )
+        td_sell_failed = TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=decision_context_id,
+            decision_type=DecisionType.APPROVE,
+            side=OrderSide.SELL,
+            strategy_id=strategy_id,
+            symbol="GOOG",
+            market="NASDAQ",
+            entry_style=EntryStyle.LIMIT,
+            created_at=now,
+            entry_price=Decimal("120"),
+            quantity=Decimal("2"),
+            decision_json={},
+            source_type="market_overlay",
+        )
+
+        for td in (td_buy_failed, td_buy_exception, td_buy_ok, td_sell_failed):
+            import asyncio
+            asyncio.run(repos.trade_decisions.add(td))
+
+        buy_failed_order = OrderRequestEntity(
+            order_request_id=uuid4(),
+            account_id=account_id,
+            instrument_id=instrument_id,
+            client_order_id="BUY-BLOCK-001",
+            idempotency_key=f"idem-{uuid4()}",
+            correlation_id="buy-block-test",
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            requested_quantity=Decimal("10"),
+            status=OrderStatus.SUBMITTED,
+            trade_decision_id=td_buy_failed.trade_decision_id,
+            decision_context_id=decision_context_id,
+            requested_price=Decimal("150"),
+            time_in_force=TimeInForce.DAY,
+            created_at=now,
+            updated_at=now,
+        )
+        buy_exception_order = OrderRequestEntity(
+            order_request_id=uuid4(),
+            account_id=account_id,
+            instrument_id=instrument_id,
+            client_order_id="BUY-BLOCK-002",
+            idempotency_key=f"idem-{uuid4()}",
+            correlation_id="buy-block-test",
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            requested_quantity=Decimal("5"),
+            status=OrderStatus.REJECTED,
+            trade_decision_id=td_buy_exception.trade_decision_id,
+            decision_context_id=decision_context_id,
+            requested_price=Decimal("300"),
+            time_in_force=TimeInForce.DAY,
+            created_at=now,
+            updated_at=now,
+        )
+        buy_ok_order = OrderRequestEntity(
+            order_request_id=uuid4(),
+            account_id=account_id,
+            instrument_id=instrument_id,
+            client_order_id="BUY-BLOCK-003",
+            idempotency_key=f"idem-{uuid4()}",
+            correlation_id="buy-block-test",
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            requested_quantity=Decimal("3"),
+            status=OrderStatus.FILLED,
+            trade_decision_id=td_buy_ok.trade_decision_id,
+            decision_context_id=decision_context_id,
+            requested_price=Decimal("200"),
+            time_in_force=TimeInForce.DAY,
+            created_at=now,
+            updated_at=now,
+        )
+        sell_failed_order = OrderRequestEntity(
+            order_request_id=uuid4(),
+            account_id=account_id,
+            instrument_id=instrument_id,
+            client_order_id="BUY-BLOCK-004",
+            idempotency_key=f"idem-{uuid4()}",
+            correlation_id="buy-block-test",
+            side=OrderSide.SELL,
+            order_type=OrderType.LIMIT,
+            requested_quantity=Decimal("2"),
+            status=OrderStatus.REJECTED,
+            trade_decision_id=td_sell_failed.trade_decision_id,
+            decision_context_id=decision_context_id,
+            requested_price=Decimal("120"),
+            time_in_force=TimeInForce.DAY,
+            created_at=now,
+            updated_at=now,
+        )
+        asyncio.run(repos.orders.add(buy_failed_order))
+        asyncio.run(repos.orders.add(buy_exception_order))
+        asyncio.run(repos.orders.add(buy_ok_order))
+        asyncio.run(repos.orders.add(sell_failed_order))
+
+        asyncio.run(repos.order_submission_attempts.add(OrderSubmissionAttemptEntity(
+            attempt_id=uuid4(),
+            order_request_id=buy_failed_order.order_request_id,
+            attempt_number=1,
+            submitted_at=now,
+            broker_name="kis",
+            accepted=False,
+            raw_code="REJECT",
+            raw_message="broker rejected",
+        )))
+        asyncio.run(repos.order_submission_attempts.add(OrderSubmissionAttemptEntity(
+            attempt_id=uuid4(),
+            order_request_id=buy_exception_order.order_request_id,
+            attempt_number=1,
+            submitted_at=now,
+            broker_name="kis",
+            accepted=False,
+            error_type="TIMEOUT",
+            raw_message="timeout",
+        )))
+        asyncio.run(repos.order_submission_attempts.add(OrderSubmissionAttemptEntity(
+            attempt_id=uuid4(),
+            order_request_id=buy_ok_order.order_request_id,
+            attempt_number=1,
+            submitted_at=now,
+            broker_name="kis",
+            accepted=True,
+            broker_native_order_id="BRK-001",
+        )))
+        asyncio.run(repos.order_submission_attempts.add(OrderSubmissionAttemptEntity(
+            attempt_id=uuid4(),
+            order_request_id=sell_failed_order.order_request_id,
+            attempt_number=1,
+            submitted_at=now,
+            broker_name="kis",
+            accepted=False,
+            raw_code="SELL-REJECT",
+            raw_message="sell rejected",
+        )))
+
+        with TestClient(app) as client:
+            response = client.get(
+                "/orders/buy-block-summary",
+                params={"date": date(2026, 6, 2).isoformat()},
+            )
+            assert response.status_code == 200, response.text
+            data = response.json()
+        assert data["total_buy_orders_count"] == 3
+        assert data["buy_submission_attempted_count"] == 3
+        assert data["blocked_count"] == 2
+        assert data["rejected_count"] == 1
+        assert data["exception_count"] == 1
 
     def test_get_order_events(self, client: TestClient) -> None:
         """``GET /orders/{id}/events`` returns state transition events."""
@@ -268,6 +488,148 @@ class TestOrders:
         assert data["submitted_count"] == 1
 
         app.dependency_overrides.clear()
+
+    def test_get_truth_probe_pending_summary(self) -> None:
+        repos = build_in_memory_repositories()
+        app = create_app(repos=repos, auth_enabled=False)
+        account_id = uuid4()
+        instrument_id = uuid4()
+        now = datetime(2026, 6, 3, 3, 0, tzinfo=timezone.utc)  # 12:00 KST
+
+        import asyncio
+
+        asyncio.run(
+            repos.instruments.add(
+                InstrumentEntity(
+                    instrument_id=instrument_id,
+                    symbol="001740",
+                    market_code="KRX",
+                    asset_class="stock",
+                    currency="KRW",
+                    name="SK Networks",
+                    is_active=True,
+                    created_at=now,
+                )
+            )
+        )
+
+        pending_submitted = OrderRequestEntity(
+            order_request_id=uuid4(),
+            account_id=account_id,
+            instrument_id=instrument_id,
+            client_order_id="TPP-001",
+            idempotency_key=f"idem-{uuid4()}",
+            correlation_id="truth-probe-pending-1",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            requested_quantity=Decimal("10"),
+            status=OrderStatus.SUBMITTED,
+            requested_price=None,
+            time_in_force=TimeInForce.DAY,
+            status_reason_code="truth_probe_fill_snapshot_incomplete",
+            status_reason_message="snapshot_rows=2 positive_rows=0 odno=000123 Awaiting next fill sync / broker status convergence.",
+            submitted_at=now,
+            created_at=now,
+            updated_at=now,
+            version=1,
+        )
+        pending_partial = OrderRequestEntity(
+            order_request_id=uuid4(),
+            account_id=account_id,
+            instrument_id=instrument_id,
+            client_order_id="TPP-002",
+            idempotency_key=f"idem-{uuid4()}",
+            correlation_id="truth-probe-pending-2",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            requested_quantity=Decimal("5"),
+            status=OrderStatus.PARTIALLY_FILLED,
+            requested_price=None,
+            time_in_force=TimeInForce.DAY,
+            status_reason_code="truth_probe_fill_snapshot_incomplete",
+            status_reason_message="snapshot_rows=1 positive_rows=0 odno=000124 Awaiting next fill sync / broker status convergence.",
+            submitted_at=now,
+            created_at=now,
+            updated_at=now.replace(minute=5),
+            version=1,
+        )
+        unrelated = OrderRequestEntity(
+            order_request_id=uuid4(),
+            account_id=account_id,
+            instrument_id=instrument_id,
+            client_order_id="TPP-003",
+            idempotency_key=f"idem-{uuid4()}",
+            correlation_id="truth-probe-pending-3",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            requested_quantity=Decimal("3"),
+            status=OrderStatus.FILLED,
+            requested_price=None,
+            time_in_force=TimeInForce.DAY,
+            status_reason_code="truth_probe_fill_snapshot",
+            status_reason_message="filled=3 requested=3 remaining=0 source=fill_snapshot_cumulative_max",
+            submitted_at=now,
+            created_at=now,
+            updated_at=now,
+            version=1,
+        )
+        for order in (pending_submitted, pending_partial, unrelated):
+            asyncio.run(repos.orders.add(order))
+
+        from agent_trading.domain.entities import BrokerOrderEntity
+
+        asyncio.run(
+            repos.broker_orders.add(
+                BrokerOrderEntity(
+                    broker_order_id=uuid4(),
+                    order_request_id=pending_partial.order_request_id,
+                    broker_name="koreainvestment",
+                    broker_status="submitted",
+                    broker_native_order_id="000124",
+                    created_at=now,
+                    updated_at=now.replace(minute=6),
+                )
+            )
+        )
+
+        with TestClient(app) as client:
+            response = client.get(
+                "/orders/truth-probe-pending-summary",
+                params={"date": date(2026, 6, 3).isoformat(), "limit": 10},
+            )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["date"] == "2026-06-03"
+        assert data["timezone"] == "Asia/Seoul"
+        assert data["reason_code"] == "truth_probe_fill_snapshot_incomplete"
+        assert data["total_count"] == 2
+        assert data["status_counts"] == {
+            "submitted": 1,
+            "partially_filled": 1,
+        }
+        assert len(data["recent_orders"]) == 2
+        assert data["recent_orders"][0]["order_request_id"] == str(pending_partial.order_request_id)
+        assert data["recent_orders"][0]["symbol"] == "001740"
+        assert data["recent_orders"][0]["broker_native_order_id"] == "000124"
+        assert data["recent_orders"][1]["order_request_id"] == str(pending_submitted.order_request_id)
+
+    def test_get_truth_probe_pending_summary_empty(self) -> None:
+        repos = build_in_memory_repositories()
+        app = create_app(repos=repos, auth_enabled=False)
+
+        with TestClient(app) as client:
+            response = client.get(
+                "/orders/truth-probe-pending-summary",
+                params={"date": date(2026, 6, 3).isoformat()},
+            )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["date"] == "2026-06-03"
+        assert data["total_count"] == 0
+        assert data["status_counts"] == {}
+        assert data["recent_orders"] == []
 
 
 class TestTradeDecisions:
@@ -690,6 +1052,94 @@ class TestBrokerOrders:
 class TestTradeDecisionExecutionStatus:
     """Execution status derived field and pipeline_stop field exposure."""
 
+    def test_trade_decisions_support_buy_block_drilldown_filters(self) -> None:
+        """``GET /trade-decisions`` supports date/side/source/stop_reason_prefix/has_order filters."""
+        repos = build_in_memory_repositories()
+        app = create_app(repos=repos, auth_enabled=False)
+        decision_context_id = uuid4()
+        strategy_id = uuid4()
+        account_id = uuid4()
+        instrument_id = uuid4()
+        now = datetime(2026, 6, 2, 3, 0, tzinfo=timezone.utc)
+
+        td_core = TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=decision_context_id,
+            decision_type=DecisionType.APPROVE,
+            side=OrderSide.BUY,
+            strategy_id=strategy_id,
+            symbol="AAPL",
+            market="NASDAQ",
+            entry_style=EntryStyle.LIMIT,
+            created_at=now,
+            decision_json={},
+            source_type="core",
+        )
+        td_overlay = TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=decision_context_id,
+            decision_type=DecisionType.APPROVE,
+            side=OrderSide.BUY,
+            strategy_id=strategy_id,
+            symbol="MSFT",
+            market="NASDAQ",
+            entry_style=EntryStyle.LIMIT,
+            created_at=now,
+            decision_json={},
+            source_type="market_overlay",
+        )
+
+        import asyncio
+        asyncio.run(repos.trade_decisions.add(td_core))
+        asyncio.run(repos.trade_decisions.add(td_overlay))
+        asyncio.run(repos.execution_attempts.add(
+            ExecutionAttemptEntity(
+                execution_attempt_id=uuid4(),
+                trade_decision_id=td_core.trade_decision_id,
+                decision_context_id=decision_context_id,
+                status="non_trade",
+                stop_phase="scheduler_gate",
+                stop_reason="general_submit_disabled_core",
+                phase_trace=[],
+                order_request_id=None,
+                started_at=now,
+                completed_at=now,
+                created_at=now,
+            )
+        ))
+        asyncio.run(repos.orders.add(
+            OrderRequestEntity(
+                order_request_id=uuid4(),
+                account_id=account_id,
+                instrument_id=instrument_id,
+                client_order_id="DRILL-001",
+                idempotency_key=f"idem-{uuid4()}",
+                correlation_id="drilldown-test",
+                side=OrderSide.BUY,
+                order_type=OrderType.LIMIT,
+                requested_quantity=Decimal("1"),
+                status=OrderStatus.SUBMITTED,
+                trade_decision_id=td_overlay.trade_decision_id,
+                decision_context_id=decision_context_id,
+                time_in_force=TimeInForce.DAY,
+                created_at=now,
+                updated_at=now,
+            )
+        ))
+
+        with TestClient(app) as client:
+            resp = client.get(
+                "/trade-decisions?date=2026-06-02&side=buy&source_type=core"
+                "&decision_type=approve&latest_stop_reason_prefix=general_submit_disabled&has_order=false"
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+
+        assert body["total"] == 1
+        assert len(body["items"]) == 1
+        assert body["items"][0]["trade_decision_id"] == str(td_core.trade_decision_id)
+        assert body["items"][0]["latest_stop_reason"] == "general_submit_disabled_core"
+
     def test_trade_decision_detail_has_execution_fields(self, client: TestClient) -> None:
         """최신 필드(execution_status, latest_*, order_request_id)가 응답에 포함된다."""
         resp = client.get("/trade-decisions?limit=5")
@@ -960,6 +1410,195 @@ class TestExecutionAttemptSummaryInDecisionDetail:
                 assert d["execution_status"] is not None
                 break
 
+    def test_to_detail_passes_execution_attempt_status_to_schema(self) -> None:
+        """Route helper가 execution_attempt_status를 누락하지 않아야 한다.
+
+        회귀 배경:
+        ``_to_detail()``가 ``TradeDecisionRow.execution_attempt_status``를
+        ``TradeDecisionDetail``에 전달하지 않으면, 스키마가 bridge fallback만
+        사용해 ``order_created``로 잘못 표시할 수 있다.
+        """
+        now = datetime.now(timezone.utc)
+        entity = TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=uuid4(),
+            decision_type=DecisionType.APPROVE,
+            side=OrderSide.BUY,
+            strategy_id=uuid4(),
+            symbol="AAPL",
+            market="NASDAQ",
+            entry_style=EntryStyle.LIMIT,
+            created_at=now,
+            rationale_summary="test",
+        )
+        row = TradeDecisionRow(
+            entity=entity,
+            order_request_id=str(uuid4()),
+            order_status="PENDING_SUBMIT",
+            execution_attempt_status="submitted",
+        )
+
+        detail = _to_detail(row)
+
+        assert detail.execution_status == "submitted"
+
+    def test_to_detail_coerces_string_phase_trace_to_list(self) -> None:
+        """Read path may surface phase_trace as JSON string; route should normalize it."""
+        now = datetime.now(timezone.utc)
+        entity = TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=uuid4(),
+            decision_type=DecisionType.APPROVE,
+            side=OrderSide.BUY,
+            strategy_id=uuid4(),
+            symbol="AAPL",
+            market="NASDAQ",
+            entry_style=EntryStyle.LIMIT,
+            created_at=now,
+            rationale_summary="test",
+        )
+        row = TradeDecisionRow(
+            entity=entity,
+            phase_trace="[]",
+        )
+
+        detail = _to_detail(row)
+        assert detail.phase_trace == []
+
+    def test_list_trade_decisions_filters_by_execution_status(
+        self,
+        seeded_repos: RepositoryContainer,
+        decision_context_id: UUID,
+    ) -> None:
+        """execution_status 필터가 submitted/rejected를 서버에서 정확히 걸러야 한다."""
+        now = datetime.now(timezone.utc)
+
+        submitted_td = TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=decision_context_id,
+            decision_type=DecisionType.APPROVE,
+            side=OrderSide.BUY,
+            strategy_id=uuid4(),
+            symbol="AAPL",
+            market="NASDAQ",
+            entry_style=EntryStyle.LIMIT,
+            created_at=now,
+            rationale_summary="submitted",
+        )
+        rejected_td = TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=decision_context_id,
+            decision_type=DecisionType.APPROVE,
+            side=OrderSide.BUY,
+            strategy_id=uuid4(),
+            symbol="TSLA",
+            market="NASDAQ",
+            entry_style=EntryStyle.LIMIT,
+            created_at=now,
+            rationale_summary="rejected",
+        )
+        watch_td = TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=decision_context_id,
+            decision_type=DecisionType.WATCH,
+            side=OrderSide.BUY,
+            strategy_id=uuid4(),
+            symbol="MSFT",
+            market="NASDAQ",
+            entry_style=EntryStyle.LIMIT,
+            created_at=now,
+            rationale_summary="watch",
+        )
+
+        asyncio.run(seeded_repos.trade_decisions.add(submitted_td))
+        asyncio.run(seeded_repos.trade_decisions.add(rejected_td))
+        asyncio.run(seeded_repos.trade_decisions.add(watch_td))
+
+        submitted_attempt = ExecutionAttemptEntity(
+            execution_attempt_id=uuid4(),
+            trade_decision_id=submitted_td.trade_decision_id,
+            decision_context_id=decision_context_id,
+            status="submitted",
+            started_at=now,
+            created_at=now,
+            completed_at=now,
+            phase_trace=[],
+        )
+        rejected_attempt = ExecutionAttemptEntity(
+            execution_attempt_id=uuid4(),
+            trade_decision_id=rejected_td.trade_decision_id,
+            decision_context_id=decision_context_id,
+            status="failed",
+            started_at=now,
+            created_at=now,
+            completed_at=now,
+            phase_trace=[],
+        )
+        seeded_repos.execution_attempts._items[submitted_attempt.execution_attempt_id] = submitted_attempt
+        seeded_repos.execution_attempts._items[rejected_attempt.execution_attempt_id] = rejected_attempt
+
+        from agent_trading.api.routes.decisions import list_trade_decisions
+
+        submitted_resp = asyncio.run(
+            list_trade_decisions(
+                decision_context_id=None,
+                created_date=None,
+                side=None,
+                source_type=None,
+                decision_type=None,
+                execution_status="submitted",
+                latest_stop_reason=None,
+                latest_stop_reason_prefix=None,
+                has_order=None,
+                limit=50,
+                offset=0,
+                repos=seeded_repos,
+            )
+        )
+        submitted_items = submitted_resp.model_dump()["items"]
+        assert any(item["trade_decision_id"] == str(submitted_td.trade_decision_id) for item in submitted_items)
+        assert all(item["execution_status"] == "submitted" for item in submitted_items)
+
+        rejected_resp = asyncio.run(
+            list_trade_decisions(
+                decision_context_id=None,
+                created_date=None,
+                side=None,
+                source_type=None,
+                decision_type=None,
+                execution_status="rejected",
+                latest_stop_reason=None,
+                latest_stop_reason_prefix=None,
+                has_order=None,
+                limit=50,
+                offset=0,
+                repos=seeded_repos,
+            )
+        )
+        rejected_items = rejected_resp.model_dump()["items"]
+        assert any(item["trade_decision_id"] == str(rejected_td.trade_decision_id) for item in rejected_items)
+        assert all(item["execution_status"] == "rejected" for item in rejected_items)
+
+        non_trade_resp = asyncio.run(
+            list_trade_decisions(
+                decision_context_id=None,
+                created_date=None,
+                side=None,
+                source_type=None,
+                decision_type=None,
+                execution_status="non_trade",
+                latest_stop_reason=None,
+                latest_stop_reason_prefix=None,
+                has_order=None,
+                limit=50,
+                offset=0,
+                repos=seeded_repos,
+            )
+        )
+        non_trade_items = non_trade_resp.model_dump()["items"]
+        assert any(item["trade_decision_id"] == str(watch_td.trade_decision_id) for item in non_trade_items)
+        assert all(item["execution_status"] == "non_trade" for item in non_trade_items)
+
     def test_bridge_fields_no_longer_present(self, client: TestClient) -> None:
         """bridge 필드(pipeline_stop_phase 등)가 API 응답에서 제거되어야 함."""
         resp = client.get("/trade-decisions")
@@ -979,4 +1618,3 @@ class TestExecutionAttemptSummaryInDecisionDetail:
         data = resp.json()
         assert "status" in data
         assert "data" in data
-

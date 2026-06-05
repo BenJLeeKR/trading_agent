@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import type { SubmissionAttemptView } from '../types/api';
+import { getSubmissionAttempts } from '../api/client';
 import type { Column } from './common/DataTable';
 import { DataTable } from './common/DataTable';
 import { StatusBadge } from './common/StatusBadge';
@@ -35,11 +36,7 @@ export default function SubmissionAttemptsView() {
   useEffect(() => {
     if (!orderId) return;
     setLoading(true);
-    fetch(`/api/orders/${orderId}/submission-attempts`)
-      .then(res => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
+    getSubmissionAttempts(orderId)
       .then(data => {
         setAttempts(data);
         setLoading(false);

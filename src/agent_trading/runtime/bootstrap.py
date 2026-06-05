@@ -8,7 +8,7 @@ from typing import Any
 from agent_trading.brokers.koreainvestment.adapter import KoreaInvestmentAdapter
 from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
 from agent_trading.brokers.koreainvestment.token_cache import CachePurpose
-from agent_trading.brokers.rate_limit import build_kis_budget_manager
+from agent_trading.brokers.rate_limit import RateLimitBudgetManager, build_kis_budget_manager
 from agent_trading.brokers.polling_worker import PollingConfig, PollingWorker
 from agent_trading.brokers.source_adapter import SourceAdapter
 from agent_trading.config.settings import AppSettings
@@ -53,6 +53,12 @@ def _build_kis_live_quote_client(settings: AppSettings) -> KISRestClient | None:
         )
         return None
 
+    budget_manager: RateLimitBudgetManager = build_kis_budget_manager(
+        kis_env="live",
+        real_rest_rps=settings.kis_real_rest_rps,
+        paper_rest_rps=settings.kis_paper_rest_rps,
+    )
+
     return KISRestClient(
         env="live",
         api_key=settings.kis_live_app_key,
@@ -60,6 +66,7 @@ def _build_kis_live_quote_client(settings: AppSettings) -> KISRestClient | None:
         account_number="",
         account_product_code="",
         base_url=settings.kis_live_info_base_url,
+        budget_manager=budget_manager,
         dev_token_cache_path=settings.kis_disclosure_token_cache_path,
         dev_token_cache_enabled=settings.kis_disclosure_token_cache_enabled,
         cache_purpose=CachePurpose.LIVE_DISCLOSURE_ACCESS_TOKEN,

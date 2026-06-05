@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import date, datetime, time, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 from scripts.run_ops_scheduler import (
     CommandResult,
+    DEFAULT_MAX_GENERAL_BUY_SUBMIT_PER_DAY,
     HELD_POSITION_SELL_MAX_PER_DAY,
     HELD_POSITION_SELL_MAX_PER_CYCLE,
     KST,
@@ -40,10 +42,14 @@ from scripts.run_ops_scheduler import (
     _log_startup_info,
     _log_summary,
     _parse_args,
+    _parse_fill_sync_summary,
     _parse_hhmm,
+    _parse_post_submit_sync_summary,
     _parse_snapshot_sync_summary,
+    _persist_operations_day_run,
     _persist_session_state,
     _post_submit_command,
+    _run_intraday_due_tasks,
     _session_gate,
     _session_phase_monitor,
     _snapshot_command,
@@ -70,6 +76,11 @@ class TestCommandBuilders:
             "--max-cycles",
             "1",
         ]
+
+    def test_snapshot_command_after_hours_full_positions(self) -> None:
+        cmd = _snapshot_command(after_hours=True, allow_after_hours_positions=True)
+        assert "--after-hours" in cmd
+        assert "--allow-after-hours-positions" in cmd
 
     def test_event_command_uses_python3(self) -> None:
         cmd = _event_command()
@@ -181,6 +192,37 @@ class TestSubmitBudgetDetection:
         assert objects == [{"status": "SKIPPED"}, {"x": 1}]
 
 
+class TestParseFillSyncSummary:
+    """``_parse_fill_sync_summary()`` — fill sync summary line parsing."""
+
+    def test_parses_fill_sync_cycle_metrics(self) -> None:
+        result = CommandResult(
+            name="fill_sync",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stderr=(
+                "2026-06-03 17:00:00 [INFO] fill-sync: "
+                "fill-sync-cycle accounts=1 succeeded=1 partial=0 failed=0 "
+                "skipped=0 fills=9 skipped_fills=0 retries=1 "
+                "retried_accounts=1 errors=0"
+            ),
+        )
+        metrics = _parse_fill_sync_summary(result)
+        assert metrics == {
+            "total_accounts": 1,
+            "succeeded": 1,
+            "partial": 0,
+            "failed": 0,
+            "skipped": 0,
+            "fills": 9,
+            "skipped_fills": 0,
+            "retries": 1,
+            "retried_accounts": 1,
+            "errors": 0,
+        }
+
+
 class TestParseArgs:
     """CLI parsing."""
 
@@ -188,8 +230,12 @@ class TestParseArgs:
         args = _parse_args([])
         assert args.pre_market_start == time(8, 0)
         assert args.intraday_start == time(8, 50)
-        assert args.market_close == time(15, 30)
-        assert args.max_submit_per_day == 1
+        assert args.market_close == time(15, 30, 30)
+        assert (
+            args.max_general_buy_submit_per_day
+            == DEFAULT_MAX_GENERAL_BUY_SUBMIT_PER_DAY
+        )
+        assert args.legacy_max_submit_per_day is None
         assert args.once is False
 
     def test_run_date(self) -> None:
@@ -203,6 +249,21 @@ class TestParseArgs:
         args = _parse_args(["--once", "--run-eod"])
         assert args.once is True
         assert args.run_eod is True
+
+    def test_legacy_submit_cap_alias_maps_to_general_buy_cap(self) -> None:
+        args = _parse_args(["--max-submit-per-day", "4"])
+        assert args.legacy_max_submit_per_day == 4
+        assert args.max_general_buy_submit_per_day == 4
+
+    def test_decision_command_passes_cycle_budget(self) -> None:
+        cmd = _decision_command(
+            dry_run=False,
+            allow_general_submit=True,
+            max_general_submits_this_cycle=4,
+        )
+        assert "--max-general-submits-this-cycle" in cmd
+        idx = cmd.index("--max-general-submits-this-cycle")
+        assert cmd[idx + 1] == "4"
 
 
 class TestDbSubmitBudget:
@@ -231,7 +292,7 @@ class TestDbSubmitBudget:
 
     @pytest.mark.asyncio
     async def test_db_failure_returns_conservative_fallback(self) -> None:
-        """T3: DB query failure returns DEFAULT_MAX_SUBMIT_PER_DAY (conservative)."""
+        """T3: DB query failure returns default general BUY cap (conservative)."""
         # Simulate a connection failure by patching asyncpg.connect
         import asyncpg
 
@@ -243,42 +304,78 @@ class TestDbSubmitBudget:
         asyncpg.connect = _mock_connect_failure  # type: ignore[assignment]
         try:
             count = await _get_db_submit_count(date(2026, 5, 14))
-            assert count == 1  # DEFAULT_MAX_SUBMIT_PER_DAY
+            assert count == DEFAULT_MAX_GENERAL_BUY_SUBMIT_PER_DAY
+        finally:
+            asyncpg.connect = original_connect
+
+    @pytest.mark.asyncio
+    async def test_db_submit_count_excludes_held_position_sell(self) -> None:
+        """held_position REDUCE/EXIT SELL은 일반 submit budget에 포함되면 안 된다."""
+        import asyncpg
+
+        captured: dict[str, object] = {}
+
+        class _FakeConn:
+            async def fetchrow(self, sql: str, *args: object) -> dict[str, int]:
+                captured["sql"] = sql
+                captured["args"] = args
+                return {"cnt": 2}
+
+            async def close(self) -> None:
+                return None
+
+        original_connect = asyncpg.connect
+
+        async def _mock_connect(**kwargs: object) -> _FakeConn:
+            captured["connect_kwargs"] = kwargs
+            return _FakeConn()
+
+        asyncpg.connect = _mock_connect  # type: ignore[assignment]
+        try:
+            count = await _get_db_submit_count(date(2026, 6, 2))
+            assert count == 2
+            sql = str(captured["sql"])
+            assert "LEFT JOIN trading.trade_decisions td" in sql
+            assert "td.source_type = 'held_position'" in sql
+            assert "td.decision_type IN ('reduce', 'exit')" in sql
+            assert "AND td.side = 'buy'" in sql
+            assert "td.side = 'sell'" in sql
+            assert "AND NOT (" in sql
         finally:
             asyncpg.connect = original_connect
 
     def test_effective_submit_count_logic(self) -> None:
         """T5: effective = max(state.submit_count, db_submit_count)."""
         # Simulate the logic from _run_intraday_due_tasks
-        max_submit_per_day = 1
+        max_general_buy_submit_per_day = DEFAULT_MAX_GENERAL_BUY_SUBMIT_PER_DAY
 
         # Scenario 1: fresh start
         state_count = 0
         db_count = 0
         effective = max(state_count, db_count)
         assert effective == 0
-        assert not (effective >= max_submit_per_day)  # dry_run = False
+        assert not (effective >= max_general_buy_submit_per_day)  # dry_run = False
 
         # Scenario 2: after successful submit
         state_count = 1
         db_count = 1
         effective = max(state_count, db_count)
         assert effective == 1
-        assert effective >= max_submit_per_day  # dry_run = True
+        assert not (effective >= max_general_buy_submit_per_day)
 
         # Scenario 3: crash/restart (state reset, DB preserved)
         state_count = 0
         db_count = 1
         effective = max(state_count, db_count)
         assert effective == 1
-        assert effective >= max_submit_per_day  # dry_run = True ✅
+        assert not (effective >= max_general_buy_submit_per_day)
 
         # Scenario 4: DB failure fallback
         state_count = 0
-        db_count = 1  # conservative fallback
+        db_count = DEFAULT_MAX_GENERAL_BUY_SUBMIT_PER_DAY  # conservative fallback
         effective = max(state_count, db_count)
-        assert effective == 1
-        assert effective >= max_submit_per_day  # dry_run = True ✅
+        assert effective == DEFAULT_MAX_GENERAL_BUY_SUBMIT_PER_DAY
+        assert effective >= max_general_buy_submit_per_day  # dry_run = True ✅
 
 
 class TestHeldPositionSellBudget:
@@ -507,6 +604,32 @@ class TestParseSnapshotSyncSummary:
         assert metrics["total_positions_synced"] == 5
         assert metrics["total_cash_synced"] == 1
         assert metrics["errors"] == 0
+
+
+class TestParsePostSubmitSyncSummary:
+    def test_parses_post_submit_sync_refresh_metrics(self) -> None:
+        result = CommandResult(
+            name="post_submit_sync",
+            argv=[],
+            returncode=0,
+            duration_seconds=3.2,
+            stdout=(
+                "sync-cycle  orders=3 (updated=2 filled=1 partial=1)  "
+                "snapshots=1  errors=0  orphans_expired=0 (pending=0 reconcile=0)  elapsed=1.23s\n"
+                "sync-cycle-refresh  scheduled=2 deduped=1 completed=1 degraded=1 failed=0 "
+                "avg_elapsed_ms=175 max_elapsed_ms=250\n"
+            ),
+        )
+
+        metrics = _parse_post_submit_sync_summary(result)
+
+        assert metrics["orders"] == 3
+        assert metrics["updated"] == 2
+        assert metrics["snapshots_refreshed"] == 1
+        assert metrics["elapsed_seconds"] == 1.23
+        assert metrics["refresh"]["scheduled"] == 2
+        assert metrics["refresh"]["degraded"] == 1
+        assert metrics["refresh"]["avg_elapsed_ms"] == 175
 
     def test_parses_zero_cash(self) -> None:
         """Cash=0 is a critical signal — pre-market must detect this."""
@@ -979,6 +1102,237 @@ class TestPersistSessionState:
             assert mock_logger.exception.called or True
 
 
+class TestPersistOperationsDayRun:
+    """``_persist_operations_day_run()`` — DB 저장."""
+
+    @pytest.mark.asyncio
+    async def test_noop_when_dsn_none(self) -> None:
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        await _persist_operations_day_run(state, dsn=None)
+
+    @pytest.mark.asyncio
+    async def test_upserts_operations_day_run(self) -> None:
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        state.pre_market_done = True
+        state.submit_count = 2
+        state.held_position_sell_submit_count = 1
+        state.cycles = 7
+        state.market_phase = "OPEN"
+        state.session_info = SessionInfo(
+            is_trading_day=True,
+            source="test_session",
+            reason="seeded",
+        )
+        state.command_results.extend(
+            [
+                CommandResult(
+                    name="pre_snapshot_sync",
+                    argv=[],
+                    returncode=0,
+                    duration_seconds=12.5,
+                    stderr=(
+                        "sync-cycle  accounts=1 (ok=1 partial=0 fail=0 skip=0)  "
+                        "positions=5 (skipped=0)  cash=1  errors=0"
+                    ),
+                ),
+                CommandResult(
+                    name="pre_fill_sync",
+                    argv=[],
+                    returncode=0,
+                    duration_seconds=8.2,
+                    stderr=(
+                        "fill-sync-cycle accounts=1 succeeded=1 partial=0 failed=0 "
+                        "skipped=0 fills=9 skipped_fills=0 retries=1 "
+                        "retried_accounts=1 errors=0"
+                    ),
+                ),
+                CommandResult(
+                    name="decision_submit_gate",
+                    argv=[],
+                    returncode=0,
+                    duration_seconds=41.3,
+                    timed_out=False,
+                ),
+                CommandResult(
+                    name="eod_recovery_batch",
+                    argv=[],
+                    returncode=1,
+                    duration_seconds=30.0,
+                    timed_out=True,
+                ),
+            ]
+        )
+
+        conn = AsyncMock()
+        conn.execute = AsyncMock()
+        with patch("asyncpg.connect", new=AsyncMock(return_value=conn)):
+            await _persist_operations_day_run(state, dsn="postgresql://localhost/test")
+
+        conn.execute.assert_called()
+        sql = conn.execute.call_args.args[0]
+        assert "INSERT INTO trading.operations_day_runs" in sql
+        assert "ON CONFLICT (run_date)" in sql
+        assert conn.execute.call_args.args[1] == date(2026, 5, 18)
+        assert conn.execute.call_args.args[2] == "intraday"
+        summary_json = json.loads(conn.execute.call_args.args[14])
+        assert summary_json["command_results_count"] == 4
+        assert summary_json["ok_count"] == 3
+        assert summary_json["failed_count"] == 1
+        assert summary_json["timed_out_count"] == 1
+        assert summary_json["snapshot_sync"]["name"] == "pre_snapshot_sync"
+        assert summary_json["snapshot_sync"]["metrics"]["total_positions_synced"] == 5
+        assert summary_json["fill_sync"]["metrics"]["fills"] == 9
+        assert summary_json["fill_sync"]["metrics"]["retries"] == 1
+        assert summary_json["decision_loop"]["name"] == "decision_submit_gate"
+        assert summary_json["decision_loop"]["ok"] is True
+        assert summary_json["recovery_batch"]["name"] == "eod_recovery_batch"
+        assert summary_json["recovery_batch"]["timed_out"] is True
+        assert summary_json["command_health"]["snapshot_sync"]["count"] == 1
+        assert summary_json["command_health"]["snapshot_sync"]["last_name"] == "pre_snapshot_sync"
+        assert summary_json["command_health"]["snapshot_sync"]["last_metrics"]["total_positions_synced"] == 5
+        assert summary_json["command_health"]["fill_sync"]["count"] == 1
+        assert summary_json["command_health"]["fill_sync"]["last_metrics"]["fills"] == 9
+        assert summary_json["command_health"]["decision_loop"]["count"] == 1
+        assert summary_json["command_health"]["decision_loop"]["last_ok"] is True
+        assert summary_json["command_health"]["recovery_batch"]["timed_out_count"] == 1
+
+
+class TestIntradayDecisionLoopPersistence:
+    """``_run_intraday_due_tasks()`` — decision loop summary 즉시 저장."""
+
+    @pytest.mark.asyncio
+    async def test_persists_immediately_after_decision_loop_before_followups(self) -> None:
+        state = SchedulerState(run_date=date(2026, 6, 4))
+        now = datetime(2026, 6, 4, 10, 0, 0, tzinfo=KST)
+        tasks = _build_tasks(
+            now,
+            snapshot_interval=300,
+            event_interval=300,
+            decision_interval=300,
+            post_submit_interval=300,
+            fill_sync_interval=600,
+        )
+        tasks["event"].mark_ran(datetime.now(KST))
+
+        decision_result = CommandResult(
+            name="decision_submit_gate",
+            argv=[],
+            returncode=0,
+            duration_seconds=12.3,
+            stdout='{"status":"SUBMITTED"}\n',
+        )
+        post_submit_result = CommandResult(
+            name="post_submit_sync",
+            argv=[],
+            returncode=0,
+            duration_seconds=4.2,
+        )
+        fill_sync_result = CommandResult(
+            name="fill_sync",
+            argv=[],
+            returncode=0,
+            duration_seconds=3.1,
+        )
+        results = [decision_result, post_submit_result, fill_sync_result]
+        persisted_snapshots: list[list[str]] = []
+
+        async def fake_run_and_record(
+            state: SchedulerState,
+            name: str,
+            argv: list[str],
+            *,
+            timeout_seconds: int,
+            env: dict[str, str],
+        ) -> CommandResult:
+            result = results.pop(0)
+            state.command_results.append(result)
+            return result
+
+        async def fake_persist(state: SchedulerState, dsn: str | None) -> None:
+            persisted_snapshots.append([r.name for r in state.command_results])
+
+        with (
+            patch("scripts.run_ops_scheduler._get_db_submit_count", new=AsyncMock(return_value=0)),
+            patch("scripts.run_ops_scheduler._get_db_held_position_sell_count", new=AsyncMock(return_value=0)),
+            patch("scripts.run_ops_scheduler._run_and_record", new=fake_run_and_record),
+            patch("scripts.run_ops_scheduler._persist_operations_day_run", new=fake_persist),
+        ):
+            await _run_intraday_due_tasks(
+                state,
+                tasks,
+                max_general_buy_submit_per_day=DEFAULT_MAX_GENERAL_BUY_SUBMIT_PER_DAY,
+                held_position_sell_max_per_day=HELD_POSITION_SELL_MAX_PER_DAY,
+                timeout_seconds=60,
+                env={},
+                now=now,
+                dsn="postgresql://localhost/test",
+            )
+
+        assert persisted_snapshots[0] == ["decision_submit_gate"]
+        assert persisted_snapshots[-1] == [
+            "decision_submit_gate",
+            "post_submit_sync",
+            "fill_sync",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_intraday_decision_command_uses_remaining_buy_budget(self) -> None:
+        state = SchedulerState(run_date=date(2026, 6, 5))
+        now = datetime(2026, 6, 5, 9, 0, tzinfo=KST)
+        def _task(name: str, seconds: int, *, due: bool) -> ScheduledTask:
+            last_run_at = None if due else now
+            next_run_at = now if due else now + timedelta(seconds=seconds)
+            return ScheduledTask(
+                name=name,
+                interval_seconds=seconds,
+                next_run_at=next_run_at,
+                last_run_at=last_run_at,
+            )
+        tasks = {
+            "event": _task("event", 300, due=False),
+            "snapshot": _task("snapshot", 300, due=False),
+            "decision": _task("decision", 300, due=True),
+            "post_submit": _task("post_submit", 30, due=False),
+            "fill_sync": _task("fill_sync", 600, due=False),
+        }
+        captured_argv: list[list[str]] = []
+
+        async def fake_run_and_record(
+            state: SchedulerState,
+            name: str,
+            argv: list[str],
+            *,
+            timeout_seconds: int,
+            env: dict[str, str],
+        ) -> CommandResult:
+            captured_argv.append(argv)
+            return CommandResult(name=name, argv=argv, returncode=0, duration_seconds=1.0)
+
+        with (
+            patch("scripts.run_ops_scheduler._get_db_submit_count", new=AsyncMock(return_value=2)),
+            patch("scripts.run_ops_scheduler._get_db_held_position_sell_count", new=AsyncMock(return_value=0)),
+            patch("scripts.run_ops_scheduler._run_and_record", new=fake_run_and_record),
+            patch("scripts.run_ops_scheduler._persist_operations_day_run", new=AsyncMock()),
+        ):
+            await _run_intraday_due_tasks(
+                state,
+                tasks,
+                max_general_buy_submit_per_day=6,
+                held_position_sell_max_per_day=HELD_POSITION_SELL_MAX_PER_DAY,
+                timeout_seconds=60,
+                env={},
+                now=now,
+                dsn=None,
+            )
+
+        decision_argv = next(
+            argv for argv in captured_argv
+            if "scripts.run_decision_loop" in " ".join(argv)
+        )
+        idx = decision_argv.index("--max-general-submits-this-cycle")
+        assert decision_argv[idx + 1] == "4"
+
+
 # =====================================================================
 # P3: Heartbeat / Startup log / Build DSN tests
 # =====================================================================
@@ -1045,9 +1399,20 @@ class TestHeartbeatTask:
         except asyncio.CancelledError:
             pass
 
-        pool.execute.assert_called_with(
-            "UPDATE trading.market_sessions SET last_heartbeat_at = NOW(), updated_at = NOW() WHERE id = $1",
-            42,
+        calls = pool.execute.call_args_list
+        assert any(
+            call.args
+            and "UPDATE trading.market_sessions SET last_heartbeat_at = NOW(), updated_at = NOW() WHERE id = $1"
+            in call.args[0]
+            and call.args[1] == 42
+            for call in calls
+        )
+        assert any(
+            call.args
+            and "UPDATE trading.operations_day_runs SET last_heartbeat_at = NOW(), summary_json = $2::jsonb, updated_at = NOW() WHERE run_date = $1"
+            in call.args[0]
+            and call.args[1] == date(2026, 5, 18)
+            for call in calls
         )
 
     @pytest.mark.asyncio
@@ -1065,12 +1430,22 @@ class TestHeartbeatTask:
         except asyncio.CancelledError:
             pass
 
-        # UPSERT by run_date가 호출되어야 함
-        pool.execute.assert_called()
-        call_args = pool.execute.call_args[0]
-        assert "INSERT INTO trading.market_sessions" in call_args[0]
-        assert "ON CONFLICT (run_date)" in call_args[0]
-        assert call_args[1] == date(2026, 5, 18)
+        calls = pool.execute.call_args_list
+        assert any(
+            call.args
+            and "INSERT INTO trading.market_sessions" in call.args[0]
+            and "ON CONFLICT (run_date)" in call.args[0]
+            and call.args[1] == date(2026, 5, 18)
+            for call in calls
+        )
+        assert any(
+            call.args
+            and "INSERT INTO trading.operations_day_runs" in call.args[0]
+            and "ON CONFLICT (run_date)" in call.args[0]
+            and call.args[1] == date(2026, 5, 18)
+            and isinstance(call.args[4], str)
+            for call in calls
+        )
 
     @pytest.mark.asyncio
     async def test_upsert_with_session_info(self) -> None:
@@ -1092,12 +1467,24 @@ class TestHeartbeatTask:
         except asyncio.CancelledError:
             pass
 
-        pool.execute.assert_called()
-        call_args = pool.execute.call_args[0]
-        assert "INSERT INTO trading.market_sessions" in call_args[0]
-        assert "ON CONFLICT (run_date)" in call_args[0]
-        assert call_args[1] == date(2026, 5, 18)
-        assert call_args[2] is True  # is_trading_day
+        calls = pool.execute.call_args_list
+        assert any(
+            call.args
+            and "INSERT INTO trading.market_sessions" in call.args[0]
+            and "ON CONFLICT (run_date)" in call.args[0]
+            and call.args[1] == date(2026, 5, 18)
+            and call.args[2] is True
+            for call in calls
+        )
+        assert any(
+            call.args
+            and "INSERT INTO trading.operations_day_runs" in call.args[0]
+            and "ON CONFLICT (run_date)" in call.args[0]
+            and call.args[1] == date(2026, 5, 18)
+            and call.args[3] is True
+            and isinstance(call.args[4], str)
+            for call in calls
+        )
 
     @pytest.mark.asyncio
     async def test_handles_db_error_gracefully(self) -> None:
@@ -1472,7 +1859,7 @@ class TestIdleLifecycle:
         # 기본 시간 설정
         pre_market_start = time(8, 0)
         intraday_start = time(8, 50)
-        market_close = time(15, 30)
+        market_close = time(15, 30, 30)
         end_of_day_end = time(16, 30)
 
         # 초기 시간 상수 (initial_date 기준)
@@ -1653,10 +2040,10 @@ class TestScheduledTask:
 
 
 class TestBuildTasks:
-    """``_build_tasks()`` — 4개 task 생성 검증."""
+    """``_build_tasks()`` — periodic task 생성 검증."""
 
-    def test_build_tasks_creates_all_four(self) -> None:
-        """snapshot/event/decision/post_submit 4개 task 생성."""
+    def test_build_tasks_creates_all_periodic_tasks(self) -> None:
+        """snapshot/event/decision/post_submit/fill_sync task 생성."""
         now = datetime(2026, 5, 15, 9, 0, 0, tzinfo=KST)
         tasks = _build_tasks(
             now,
@@ -1665,10 +2052,12 @@ class TestBuildTasks:
             decision_interval=300,
             post_submit_interval=300,
         )
-        assert set(tasks.keys()) == {"snapshot", "event", "decision", "post_submit"}
+        assert set(tasks.keys()) == {"snapshot", "event", "decision", "post_submit", "fill_sync"}
         for name in ("snapshot", "event", "decision", "post_submit"):
             assert tasks[name].interval_seconds == 300
             assert tasks[name].next_run_at == now
+        assert tasks["fill_sync"].interval_seconds == 600
+        assert tasks["fill_sync"].next_run_at == now
 
     def test_build_tasks_different_intervals(self) -> None:
         """각 task마다 다른 interval 적용 가능."""
@@ -1684,6 +2073,7 @@ class TestBuildTasks:
         assert tasks["event"].interval_seconds == 120
         assert tasks["decision"].interval_seconds == 300
         assert tasks["post_submit"].interval_seconds == 600
+        assert tasks["fill_sync"].interval_seconds == 600
 
 
 class TestCadenceTraceLogging:

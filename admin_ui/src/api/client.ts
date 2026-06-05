@@ -124,12 +124,37 @@ export async function getOrderDailySummary(date?: string): Promise<import("../ty
   return request<import("../types/api").OrderDailySummary>(`/orders/daily-summary${query}`);
 }
 
-export async function getRecentFailures(limit = 5): Promise<import("../types/api").RecentFailureItem[]> {
-  return request<import("../types/api").RecentFailureItem[]>(`/orders/recent-failures?limit=${limit}`);
+export async function getBuyBlockSummary(date?: string): Promise<import("../types/api").BuyBlockSummary> {
+  const query = date ? `?date=${encodeURIComponent(date)}` : "";
+  return request<import("../types/api").BuyBlockSummary>(`/orders/buy-block-summary${query}`);
+}
+
+export async function getRecentFailures(
+  limit = 5,
+  date?: string,
+): Promise<import("../types/api").RecentFailureItem[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (date) params.set("date", date);
+  return request<import("../types/api").RecentFailureItem[]>(
+    `/orders/recent-failures?${params.toString()}`
+  );
 }
 
 export async function getFailureSummary(): Promise<import("../types/api").FailureSummary> {
   return request<import("../types/api").FailureSummary>("/orders/failure-summary");
+}
+
+export async function getFillHistory(date?: string): Promise<import("../types/api").FillHistoryItem[]> {
+  const query = date ? `?date=${encodeURIComponent(date)}` : "";
+  return request<import("../types/api").FillHistoryItem[]>(`/fill-history${query}`);
+}
+
+export async function getFillSyncRuns(limit = 10): Promise<import("../types/api").FillSyncRunSummary[]> {
+  return request<import("../types/api").FillSyncRunSummary[]>(`/fill-sync-runs?limit=${limit}`);
+}
+
+export async function getFillSyncRunSummary(): Promise<import("../types/api").FillSyncRunHealthSummary> {
+  return request<import("../types/api").FillSyncRunHealthSummary>("/fill-sync-runs/summary");
 }
 
 export async function getOrderDetail(
@@ -151,6 +176,14 @@ export async function getBrokerOrders(
 ): Promise<import("../types/api").BrokerOrderView[]> {
   return request<import("../types/api").BrokerOrderView[]>(
     `/orders/${orderId}/broker-orders`
+  );
+}
+
+export async function getSubmissionAttempts(
+  orderId: string
+): Promise<import("../types/api").SubmissionAttemptView[]> {
+  return request<import("../types/api").SubmissionAttemptView[]>(
+    `/orders/${orderId}/submission-attempts`
   );
 }
 
@@ -242,6 +275,7 @@ export async function getTradeDecisions(
   decisionContextId?: string,
   limit?: number,
   offset?: number,
+  filters?: Record<string, string | boolean | undefined>,
 ): Promise<import("../types/api").PaginatedTradeDecisionsResponse> {
   const searchParams = new URLSearchParams();
   if (decisionContextId) {
@@ -252,6 +286,12 @@ export async function getTradeDecisions(
   }
   if (offset !== undefined) {
     searchParams.set("offset", String(offset));
+  }
+  if (filters) {
+    for (const [key, value] of Object.entries(filters)) {
+      if (value === undefined || value === "") continue;
+      searchParams.set(key, String(value));
+    }
   }
   const qs = searchParams.toString();
   return request<import("../types/api").PaginatedTradeDecisionsResponse>(
@@ -329,6 +369,10 @@ export async function getSnapshotSyncSummary(): Promise<
 
 export async function getLatestMarketSession(): Promise<import("../types/api").SchedulerStatusResponse> {
   return request<import("../types/api").SchedulerStatusResponse>("/market-sessions/latest");
+}
+
+export async function getLatestOperationsDay(): Promise<import("../types/api").OperationsDayStatusResponse> {
+  return request<import("../types/api").OperationsDayStatusResponse>("/market-sessions/operations-day/latest");
 }
 
 export async function getRecentSessionEvents(limit: number = 5): Promise<import("../types/api").SessionEventsResponse> {

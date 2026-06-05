@@ -13,6 +13,7 @@ from agent_trading.domain.entities import (
     AuditLogEntity,
     BlockingLockEntity,
     BrokerAccountEntity,
+    BrokerFillSnapshotEntity,
     BrokerOrderEntity,
     CashBalanceSnapshotEntity,
     ClientEntity,
@@ -21,6 +22,7 @@ from agent_trading.domain.entities import (
     ExecutionAttemptEntity,
     ExternalEventEntity,
     FillEventEntity,
+    FillSyncRunEntity,
     GuardrailEvaluationEntity,
     InstrumentEntity,
     MarketSessionEntity,
@@ -38,7 +40,11 @@ from agent_trading.domain.entities import (
     TradeDecisionEntity,
 )
 from agent_trading.domain.enums import Environment, OrderStatus
-from agent_trading.repositories.contracts import SnapshotSyncHealthSummary, TradeDecisionRow
+from agent_trading.repositories.contracts import (
+    FillSyncHealthSummary,
+    SnapshotSyncHealthSummary,
+    TradeDecisionRow,
+)
 from agent_trading.repositories.filters import AccountLookup, DecisionContextQuery, OrderQuery
 
 from collections import defaultdict
@@ -461,6 +467,14 @@ class InMemoryTradeDecisionRepository:
         limit: int = 50,
         offset: int = 0,
         decision_context_id: UUID | None = None,
+        created_date_kst: date | None = None,
+        side: str | None = None,
+        source_type: str | None = None,
+        decision_type: str | None = None,
+        execution_status: str | None = None,
+        latest_stop_reason: str | None = None,
+        latest_stop_reason_prefix: str | None = None,
+        has_order: bool | None = None,
     ) -> tuple[list[TradeDecisionRow], int]:
         """In-memory pagination: (items, total_count) 반환.
 
@@ -471,6 +485,39 @@ class InMemoryTradeDecisionRepository:
         items = list(self._items.values())
         if decision_context_id is not None:
             items = [i for i in items if i.decision_context_id == decision_context_id]
+        if created_date_kst is not None:
+            kst = timezone(timedelta(hours=9))
+            items = [i for i in items if i.created_at.astimezone(kst).date() == created_date_kst]
+        if side is not None:
+            side_lower = side.lower()
+            items = [i for i in items if str(i.side).lower() == side_lower or str(getattr(i.side, "value", "")).lower() == side_lower]
+        if source_type is not None:
+            source_type_lower = source_type.lower()
+            items = [i for i in items if str(i.source_type or "").lower() == source_type_lower]
+        if decision_type is not None:
+            decision_type_lower = decision_type.lower()
+            items = [
+                i
+                for i in items
+                if str(i.decision_type).lower() == decision_type_lower
+                or str(getattr(i.decision_type, "value", "")).lower() == decision_type_lower
+            ]
+        if execution_status is not None:
+            normalized_execution_status = execution_status.lower()
+            items = [
+                i
+                for i in items
+                if (
+                    (
+                        str(getattr(i.decision_type, "value", i.decision_type) or "").upper() in {"HOLD", "WATCH"}
+                        and normalized_execution_status == "non_trade"
+                    )
+                    or (
+                        str(getattr(i.decision_type, "value", i.decision_type) or "").upper() not in {"HOLD", "WATCH"}
+                        and normalized_execution_status == "trade_decision_only"
+                    )
+                )
+            ]
         # 최신순 정렬
         items.sort(key=lambda td: (td.created_at, td.trade_decision_id), reverse=True)
         total_count = len(items)
@@ -657,6 +704,145 @@ class InMemoryFillEventRepository:
 
     async def get_by_broker_fill_id(self, broker_fill_id: str) -> FillEventEntity | None:
         return self._by_fill_id.get(broker_fill_id)
+
+
+class InMemoryBrokerFillSnapshotRepository:
+    def __init__(self) -> None:
+        self._items: dict[UUID, BrokerFillSnapshotEntity] = {}
+        self._by_dedupe_key: dict[str, UUID] = {}
+
+    async def upsert(self, snapshot: BrokerFillSnapshotEntity) -> BrokerFillSnapshotEntity:
+        existing_id = self._by_dedupe_key.get(snapshot.dedupe_key)
+        if existing_id is not None:
+            existing = self._items[existing_id]
+            updated = replace(
+                existing,
+                order_request_id=snapshot.order_request_id,
+                fill_sync_run_id=snapshot.fill_sync_run_id,
+                broker_fill_id=snapshot.broker_fill_id,
+                order_status_code=snapshot.order_status_code,
+                cancel_yn=snapshot.cancel_yn,
+                ordered_quantity=snapshot.ordered_quantity,
+                filled_quantity=snapshot.filled_quantity,
+                fill_price=snapshot.fill_price,
+                order_time=snapshot.order_time,
+                fill_time=snapshot.fill_time,
+                fill_timestamp=snapshot.fill_timestamp,
+                raw_payload_json=snapshot.raw_payload_json,
+                updated_at=snapshot.updated_at,
+            )
+            self._items[existing_id] = updated
+            return updated
+        self._items[snapshot.broker_fill_snapshot_id] = snapshot
+        self._by_dedupe_key[snapshot.dedupe_key] = snapshot.broker_fill_snapshot_id
+        return snapshot
+
+    async def list_recent(
+        self,
+        *,
+        limit: int = 200,
+        account_id: UUID | None = None,
+        order_date: date | None = None,
+        order_request_id: UUID | None = None,
+        symbol: str | None = None,
+        broker_native_order_id: str | None = None,
+    ) -> Sequence[BrokerFillSnapshotEntity]:
+        items = list(self._items.values())
+        if account_id is not None:
+            items = [item for item in items if item.account_id == account_id]
+        if order_date is not None:
+            items = [item for item in items if item.order_date == order_date]
+        if order_request_id is not None:
+            items = [item for item in items if item.order_request_id == order_request_id]
+        if symbol is not None:
+            items = [item for item in items if item.symbol == symbol]
+        if broker_native_order_id is not None:
+            items = [item for item in items if item.broker_native_order_id == broker_native_order_id]
+        items.sort(
+            key=lambda item: (
+                item.order_date,
+                item.fill_timestamp or datetime.min.replace(tzinfo=timezone.utc),
+                item.created_at or datetime.min.replace(tzinfo=timezone.utc),
+            ),
+            reverse=True,
+        )
+        return tuple(items[:limit])
+
+
+class InMemoryFillSyncRunRepository:
+    def __init__(self) -> None:
+        self._items: dict[UUID, FillSyncRunEntity] = {}
+
+    async def add(self, run: FillSyncRunEntity) -> FillSyncRunEntity:
+        self._items[run.fill_sync_run_id] = run
+        return run
+
+    async def list_runs(
+        self,
+        limit: int = 50,
+        trigger_type: str | None = None,
+        status: str | None = None,
+    ) -> Sequence[FillSyncRunEntity]:
+        items = list(self._items.values())
+        if trigger_type is not None:
+            items = [item for item in items if item.trigger_type == trigger_type]
+        if status is not None:
+            items = [item for item in items if item.status == status]
+        items.sort(key=lambda item: item.started_at, reverse=True)
+        return tuple(items[:limit])
+
+    async def get(self, run_id: UUID) -> FillSyncRunEntity | None:
+        return self._items.get(run_id)
+
+    async def update_run(self, run: FillSyncRunEntity) -> FillSyncRunEntity:
+        self._items[run.fill_sync_run_id] = run
+        return run
+
+    async def get_sync_health_summary(
+        self,
+        stale_threshold_seconds: int = 1800,
+    ) -> FillSyncHealthSummary:
+        items = sorted(self._items.values(), key=lambda item: item.started_at, reverse=True)
+        if not items:
+            return FillSyncHealthSummary(
+                last_run_started_at=None,
+                last_run_completed_at=None,
+                last_status=None,
+                last_successful_run_at=None,
+                consecutive_failures=0,
+                is_stale=True,
+                stale_threshold_seconds=stale_threshold_seconds,
+                retried_accounts=0,
+                retried_days=0,
+                total_retries=0,
+            )
+
+        last = items[0]
+        last_successful = next((item for item in items if item.status == "completed"), None)
+        consecutive_failures = 0
+        for item in items:
+            if item.status == "failed":
+                consecutive_failures += 1
+            else:
+                break
+        now = datetime.now(timezone.utc)
+        last_successful_at = last_successful.started_at if last_successful else None
+        is_stale = True
+        if last_successful_at is not None:
+            is_stale = (now - last_successful_at).total_seconds() > stale_threshold_seconds
+        summary_json = last.summary_json or {}
+        return FillSyncHealthSummary(
+            last_run_started_at=last.started_at,
+            last_run_completed_at=last.completed_at,
+            last_status=last.status,
+            last_successful_run_at=last_successful_at,
+            consecutive_failures=consecutive_failures,
+            is_stale=is_stale,
+            stale_threshold_seconds=stale_threshold_seconds,
+            retried_accounts=int(summary_json.get("retried_accounts", 0) or 0),
+            retried_days=int(summary_json.get("retried_days", 0) or 0),
+            total_retries=int(summary_json.get("total_retries", 0) or 0),
+        )
 
 
 class InMemoryReconciliationRepository:
@@ -1596,7 +1782,13 @@ class InMemoryOrderSubmissionAttemptRepository:
         results.sort(key=lambda a: a.attempt_number)
         return tuple(results)
 
-    async def list_recent_failures(self, limit: int = 10) -> Sequence[dict[str, Any]]:
+    async def list_recent_failures(
+        self,
+        limit: int = 10,
+        *,
+        submitted_from: datetime | None = None,
+        submitted_to: datetime | None = None,
+    ) -> Sequence[dict[str, Any]]:
         """In-memory implementation of list_recent_failures.
 
         Groups attempts by ``order_request_id``, keeps the latest attempt
@@ -1629,6 +1821,17 @@ class InMemoryOrderSubmissionAttemptRepository:
 
             if outcome in ("rejected", "exception"):
                 failures.append(a)
+
+        if submitted_from is not None:
+            failures = [
+                a for a in failures
+                if a.submitted_at is not None and a.submitted_at >= submitted_from
+            ]
+        if submitted_to is not None:
+            failures = [
+                a for a in failures
+                if a.submitted_at is not None and a.submitted_at <= submitted_to
+            ]
 
         # Sort by submitted_at DESC, apply limit
         failures.sort(key=lambda a: a.submitted_at or datetime.min, reverse=True)
@@ -1760,6 +1963,7 @@ class InMemoryMarketSessionRepository:
                     raw_mkop_cls_code=session.raw_mkop_cls_code,
                     raw_antc_mkop_cls_code=session.raw_antc_mkop_cls_code,
                     source=session.source,
+                    reason_code=session.reason_code,
                     reason=session.reason,
                     checked_at=session.checked_at or datetime.now(timezone.utc),
                     created_at=existing.created_at or datetime.now(timezone.utc),
@@ -1780,6 +1984,7 @@ class InMemoryMarketSessionRepository:
             raw_mkop_cls_code=session.raw_mkop_cls_code,
             raw_antc_mkop_cls_code=session.raw_antc_mkop_cls_code,
             source=session.source,
+            reason_code=session.reason_code,
             reason=session.reason,
             checked_at=session.checked_at or datetime.now(timezone.utc),
             created_at=datetime.now(timezone.utc),

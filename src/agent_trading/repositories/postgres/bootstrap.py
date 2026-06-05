@@ -10,6 +10,9 @@ from agent_trading.repositories.postgres.audit_logs import PostgresAuditLogRepos
 from agent_trading.repositories.postgres.broker_accounts import (
     PostgresBrokerAccountRepository,
 )
+from agent_trading.repositories.postgres.broker_fill_snapshots import (
+    PostgresBrokerFillSnapshotRepository,
+)
 from agent_trading.repositories.postgres.broker_orders import (
     PostgresBrokerOrderRepository,
 )
@@ -31,6 +34,9 @@ from agent_trading.repositories.postgres.external_events import (
 )
 from agent_trading.repositories.postgres.fill_events import (
     PostgresFillEventRepository,
+)
+from agent_trading.repositories.postgres.fill_sync_runs import (
+    PostgresFillSyncRunRepository,
 )
 from agent_trading.repositories.postgres.guardrail_evaluations import (
     PostgresGuardrailEvaluationRepository,
@@ -109,11 +115,13 @@ def build_postgres_repositories(
         orders=PostgresOrderRepository(tx),
         broker_orders=PostgresBrokerOrderRepository(tx),
         fill_events=PostgresFillEventRepository(tx),
+        broker_fill_snapshots=PostgresBrokerFillSnapshotRepository(tx),
         external_events=PostgresExternalEventRepository(tx),
         reconciliations=PostgresReconciliationRepository(tx),
         audit_logs=PostgresAuditLogRepository(tx),
         broker_accounts=PostgresBrokerAccountRepository(tx),
         snapshot_sync_runs=PostgresSnapshotSyncRunRepository(tx),
+        fill_sync_runs=PostgresFillSyncRunRepository(tx),
         order_state_events=PostgresOrderStateEventRepository(tx),
         guardrail_evaluations=PostgresGuardrailEvaluationRepository(tx),
         risk_limit_snapshots=PostgresRiskLimitSnapshotRepository(tx),

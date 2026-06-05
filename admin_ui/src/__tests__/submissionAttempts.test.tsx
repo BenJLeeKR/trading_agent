@@ -46,13 +46,22 @@ describe("SubmissionAttemptsView loading state", () => {
  * ─────────────────────────────────────────── */
 describe("SubmissionAttemptsView with data", () => {
   it("renders DataTable with correct rows", async () => {
-    mockFetchOnce(mockSubmissionAttempts);
+    const fetchSpy = mockFetchOnce(mockSubmissionAttempts);
 
     renderView();
 
     await waitFor(() => {
       expect(screen.getByText("제출 시도 전체 이력")).toBeInTheDocument();
     });
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      `/orders/${ORDER_ID}/submission-attempts`,
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: `Bearer ${VALID_TOKEN}`,
+        }),
+      }),
+    );
 
     // Column headers
     expect(screen.getByText("시도")).toBeInTheDocument();
@@ -141,7 +150,7 @@ describe("SubmissionAttemptsView API error", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/HTTP 500/),
+        screen.getByText(/API error 500/i),
       ).toBeInTheDocument();
     });
   });

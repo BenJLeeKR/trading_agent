@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import type { DecisionContextDetail, ExternalEventView, TradeDecisionDetail } from "../types/api";
 import { getDecisionContext, getRecentExternalEvents, getTradeDecisions } from "../api/client";
 import AgentRunsPanel from "./AgentRunsPanel";
@@ -30,6 +30,52 @@ function executionStatusLabel(status: string | null): string {
     'reconcile_required': '조정 필요',
   };
   return labels[status ?? ''] ?? status ?? '알 수 없음';
+}
+
+function executionStatusVariant(status: string | null): "success" | "warning" | "error" | "info" {
+  const normalized = (status ?? "").toLowerCase();
+  if (normalized === "submitted" || normalized === "order_created") return "success";
+  if (normalized === "rejected") return "error";
+  if (normalized === "reconcile_required" || normalized === "pipeline_stopped") return "warning";
+  return "info";
+}
+
+function sourceTypeLabel(sourceType: string | null): string {
+  const labels: Record<string, string> = {
+    core: "core",
+    market_overlay: "overlay",
+    held_position: "보유종목",
+  };
+  return labels[(sourceType ?? "").toLowerCase()] ?? (sourceType || "—");
+}
+
+function stopReasonLabel(reason: string | null): string {
+  const labels: Record<string, string> = {
+    general_submit_disabled_core: "core 제출 비활성",
+    general_submit_disabled_market_overlay: "overlay 제출 비활성",
+    submit_budget_consumed_core: "core 예산 소진",
+    submit_budget_consumed_market_overlay: "overlay 예산 소진",
+    held_position_sell_cycle_cap: "보유매도 cap 도달",
+    held_position_sell_symbol_duplicate: "보유매도 중복 차단",
+    sizing_rejected: "sizing 차단",
+    missing_reference_price_for_market_buy: "시장가 기준가 없음",
+    decision_watch: "watch 결정",
+  };
+  return labels[(reason ?? "").toLowerCase()] ?? (reason || "—");
+}
+
+function stopReasonPrefixLabel(prefix: string | null): string {
+  const labels: Record<string, string> = {
+    general_submit_disabled: "제출 비활성",
+    submit_budget_consumed: "예산 소진",
+  };
+  return labels[(prefix ?? "").toLowerCase()] ?? (prefix || "—");
+}
+
+function hasOrderLabel(value: string | null): string {
+  if ((value ?? "").toLowerCase() === "true") return "주문 있음";
+  if ((value ?? "").toLowerCase() === "false") return "주문 없음";
+  return value || "—";
 }
 
 /* ───────────────────────────────────────────
@@ -72,6 +118,22 @@ export default function DecisionsView() {
   const { fieldMap } = useEnumMetadata();
   const [searchParams, setSearchParams] = useSearchParams();
   const contextIdParam = searchParams.get("contextId");
+  const sideParam = searchParams.get("side") ?? "";
+  const sourceTypeParam = searchParams.get("source_type") ?? "";
+  const decisionTypeParam = searchParams.get("decision_type") ?? "";
+  const latestStopReasonParam = searchParams.get("latest_stop_reason") ?? "";
+  const latestStopReasonPrefixParam = searchParams.get("latest_stop_reason_prefix") ?? "";
+  const createdDateParam = searchParams.get("date") ?? "";
+  const hasOrderParam = searchParams.get("has_order") ?? "";
+  const hasDrilldownFilters = Boolean(
+    sideParam ||
+    sourceTypeParam ||
+    decisionTypeParam ||
+    latestStopReasonParam ||
+    latestStopReasonPrefixParam ||
+    createdDateParam ||
+    hasOrderParam,
+  );
 
   // Server-side pagination state
   const [decisions, setDecisions] = useState<TradeDecisionDetail[]>([]);
@@ -93,7 +155,8 @@ export default function DecisionsView() {
 
   // Filter & pagination state
   const [searchText, setSearchText] = useState("");
-  const [sideFilter, setSideFilter] = useState("");
+  const [sideFilter, setSideFilter] = useState(sideParam);
+  const [executionFilter, setExecutionFilter] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
 
@@ -104,8 +167,26 @@ export default function DecisionsView() {
     setError(null);
     const offset = (currentPage - 1) * pageSize;
     const fetchPromise = contextIdParam
-      ? getTradeDecisions(contextIdParam, pageSize, offset)
-      : getTradeDecisions(undefined, pageSize, offset);
+      ? getTradeDecisions(contextIdParam, pageSize, offset, {
+          side: sideParam || undefined,
+          source_type: sourceTypeParam || undefined,
+          decision_type: decisionTypeParam || undefined,
+          execution_status: executionFilter || undefined,
+          latest_stop_reason: latestStopReasonParam || undefined,
+          latest_stop_reason_prefix: latestStopReasonPrefixParam || undefined,
+          date: createdDateParam || undefined,
+          has_order: hasOrderParam || undefined,
+        })
+      : getTradeDecisions(undefined, pageSize, offset, {
+          side: sideParam || undefined,
+          source_type: sourceTypeParam || undefined,
+          decision_type: decisionTypeParam || undefined,
+          execution_status: executionFilter || undefined,
+          latest_stop_reason: latestStopReasonParam || undefined,
+          latest_stop_reason_prefix: latestStopReasonPrefixParam || undefined,
+          date: createdDateParam || undefined,
+          has_order: hasOrderParam || undefined,
+        });
     fetchPromise
       .then((resp) => {
         setDecisions(resp.items ?? []);
@@ -116,7 +197,23 @@ export default function DecisionsView() {
         setError(msg);
       })
       .finally(() => setLoading(false));
-  }, [contextIdParam, currentPage, pageSize]);
+  }, [
+    contextIdParam,
+    currentPage,
+    pageSize,
+    sideParam,
+    sourceTypeParam,
+    decisionTypeParam,
+    executionFilter,
+    latestStopReasonParam,
+    latestStopReasonPrefixParam,
+    createdDateParam,
+    hasOrderParam,
+  ]);
+
+  useEffect(() => {
+    setSideFilter(sideParam);
+  }, [sideParam]);
 
   // Lazy-load decision context on row select (with stale-response guard)
   useEffect(() => {
@@ -191,11 +288,12 @@ export default function DecisionsView() {
   const filteredDecisions = useMemo(() => {
     return decisions.filter((d) => {
       const matchSide = !sideFilter || d.side === sideFilter;
+      const matchExecution = !executionFilter || (d.execution_status ?? "") === executionFilter;
       const matchSearch =
         !searchText || d.symbol.toLowerCase().includes(searchText.toLowerCase());
-      return matchSide && matchSearch;
+      return matchSide && matchExecution && matchSearch;
     });
-  }, [decisions, searchText, sideFilter]);
+  }, [decisions, executionFilter, searchText, sideFilter]);
 
   // totalPages는 서버 totalCount 기준 (client-side filter는 현재 페이지만)
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
@@ -213,7 +311,7 @@ export default function DecisionsView() {
       <span className="text-sm font-medium text-[#0f172a]">{r.symbol ?? "—"}</span>
     )},
     { key: "instrument_name", header: "종목명", width: "180px", render: (r) => (
-      <span className="block max-w-[180px] truncate text-sm text-[#334155]" title={r.instrument_name ?? undefined}>
+      <span className="block max-w-[120px] truncate text-sm text-[#334155]" title={r.instrument_name ?? undefined}>
         {r.instrument_name || "—"}
       </span>
     )},
@@ -228,15 +326,46 @@ export default function DecisionsView() {
       ),
     },
     {
-      key: "confidence",
-      header: "신뢰도",
-      width: "130px",
-      render: (r) => <ConfidenceBar value={r.confidence ?? 0} />,
+      key: "source_type",
+      header: "소스",
+      width: "100px",
+      render: (r) => <span className="text-xs text-[#475569]">{sourceTypeLabel(r.source_type)}</span>,
+    },
+    {
+      key: "execution_status",
+      header: "실행",
+      width: "110px",
+      render: (r) => (
+        <StatusBadge variant={executionStatusVariant(r.execution_status)}>
+          {executionStatusLabel(r.execution_status)}
+        </StatusBadge>
+      ),
+    },
+    {
+      key: "latest_stop_reason",
+      header: "차단 사유",
+      width: "160px",
+      render: (r) => (
+        <span
+          className="block max-w-[160px] truncate text-xs text-[#64748b]"
+          title={stopReasonLabel(r.latest_stop_reason)}
+        >
+          {stopReasonLabel(r.latest_stop_reason)}
+        </span>
+      ),
     },
     {
       key: "rationale_summary",
       header: "근거",
-      render: (r) => r.rationale_summary || "—",
+      width: "420px",
+      render: (r) => (
+        <span
+          className="block min-w-[360px] max-w-[520px] whitespace-normal break-words text-sm text-[#0f172a]"
+          title={r.rationale_summary ?? undefined}
+        >
+          {r.rationale_summary || "—"}
+        </span>
+      ),
     },
     {
       key: "created_at",
@@ -277,6 +406,53 @@ export default function DecisionsView() {
         )}
       </div>
 
+      {hasDrilldownFilters && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-[#fff7ed] border border-[#fed7aa]">
+            <div className="text-xs text-[#9a3412]">
+              드릴다운 필터 적용됨
+              {createdDateParam ? ` · 날짜 ${createdDateParam}` : ""}
+              {sideParam ? ` · 매매 ${sideParam}` : ""}
+              {sourceTypeParam ? ` · 소스 ${sourceTypeLabel(sourceTypeParam)}` : ""}
+              {decisionTypeParam ? ` · 결정 ${getEnumLabel(fieldMap, "decision_type", decisionTypeParam)}` : ""}
+              {latestStopReasonParam ? ` · 사유 ${stopReasonLabel(latestStopReasonParam)}` : ""}
+              {latestStopReasonPrefixParam ? ` · 사유 ${stopReasonPrefixLabel(latestStopReasonPrefixParam)}` : ""}
+              {hasOrderParam ? ` · ${hasOrderLabel(hasOrderParam)}` : ""}
+            </div>
+            <button
+              onClick={() => {
+                const next = new URLSearchParams(searchParams);
+                [
+                  "side",
+                  "source_type",
+                  "decision_type",
+                  "latest_stop_reason",
+                  "latest_stop_reason_prefix",
+                  "date",
+                  "has_order",
+                ].forEach((key) => next.delete(key));
+                setSearchParams(next);
+                setCurrentPage(1);
+              }}
+              className="text-xs font-medium text-[#c2410c] hover:text-[#9a3412] hover:underline"
+            >
+              드릴다운 필터 해제
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <span className="px-2 py-1 rounded-md bg-[#eff6ff] text-[#1d4ed8] text-xs font-medium">
+              필터 결과 {totalCount}건
+            </span>
+            <span className="px-2 py-1 rounded-md bg-[#f8fafc] text-[#475569] text-xs font-medium">
+              현재 페이지 {filteredDecisions.length}건
+            </span>
+            <span className="px-2 py-1 rounded-md bg-[#f8fafc] text-[#475569] text-xs font-medium">
+              페이지 {safePage}/{totalPages}
+            </span>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-12 gap-6">
         {/* Decisions List */}
         <div className={selectedDecision ? "col-span-7" : "col-span-12"}>
@@ -295,12 +471,47 @@ export default function DecisionsView() {
                     { label: "보류", value: "hold" },
                   ],
                   value: sideFilter,
-                  onChange: (v) => { setSideFilter(v); setCurrentPage(1); },
+                  onChange: (v) => {
+                    setSideFilter(v);
+                    const next = new URLSearchParams(searchParams);
+                    if (v) next.set("side", v);
+                    else next.delete("side");
+                    setSearchParams(next);
+                    setCurrentPage(1);
+                  },
+                },
+                {
+                  key: "execution_status",
+                  label: "실행",
+                  options: [
+                    { label: "결정만 생성됨", value: "trade_decision_only" },
+                    { label: "실행 중단", value: "pipeline_stopped" },
+                    { label: "HOLD/WATCH", value: "non_trade" },
+                    { label: "주문 생성됨", value: "order_created" },
+                    { label: "제출 완료", value: "submitted" },
+                    { label: "거부됨", value: "rejected" },
+                    { label: "조정 필요", value: "reconcile_required" },
+                  ],
+                  value: executionFilter,
+                  onChange: (v) => {
+                    setExecutionFilter(v);
+                    setCurrentPage(1);
+                  },
                 },
               ]}
               onClearAll={() => {
                 setSearchText("");
                 setSideFilter("");
+                setExecutionFilter("");
+                const next = new URLSearchParams(searchParams);
+                next.delete("side");
+                next.delete("source_type");
+                next.delete("decision_type");
+                next.delete("latest_stop_reason");
+                next.delete("latest_stop_reason_prefix");
+                next.delete("date");
+                next.delete("has_order");
+                setSearchParams(next);
                 setCurrentPage(1);
               }}
             />
@@ -445,6 +656,20 @@ export default function DecisionsView() {
                       </div>
                     )}
                   </dl>
+                  <div className="mt-3 flex flex-wrap gap-3">
+                    <Link
+                      to={`/orders/${selectedDecision.order_request_id}`}
+                      className="text-xs font-medium text-[#2563eb] hover:text-[#1d4ed8] hover:underline"
+                    >
+                      주문 상세 보기 →
+                    </Link>
+                    <Link
+                      to={`/orders/${selectedDecision.order_request_id}/submission-attempts`}
+                      className="text-xs font-medium text-[#2563eb] hover:text-[#1d4ed8] hover:underline"
+                    >
+                      제출 이력 보기 →
+                    </Link>
+                  </div>
                 </div>
               )}
 

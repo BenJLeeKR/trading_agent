@@ -80,7 +80,9 @@ describe("DecisionsView with data", () => {
     // Verify key column headers (template columns: Side, Reasoning, Timestamp)
     expect(screen.getByRole("columnheader", { name: "종목" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "매매" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "신뢰도" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "소스" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "실행" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "차단 사유" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "근거" })).toBeInTheDocument();
   });
 });
@@ -90,6 +92,7 @@ describe("DecisionsView with data", () => {
  * ─────────────────────────────────────────── */
 describe("DecisionsView confidence color", () => {
   it("applies correct color based on confidence value", async () => {
+    const user = userEvent.setup();
     mockUrlRouter({
       "/metadata/enums": mockEnumMetadataResponse,
       "/trade-decisions": mockTradeDecisions,
@@ -105,16 +108,25 @@ describe("DecisionsView confidence color", () => {
       expect(screen.getByText("의사결정")).toBeInTheDocument();
     });
 
-    // AAPL confidence 0.85 >= 0.7 → green (#22c55e)
-    const aaplConf = await screen.findByText("85%");
+    await user.click(await screen.findByText("AAPL"));
+    const aaplConf = (await screen.findAllByText("85%")).find(
+      (el) => (el as HTMLElement).style.color === "rgb(34, 197, 94)",
+    ) as HTMLElement | undefined;
+    expect(aaplConf).toBeDefined();
     expect(aaplConf).toHaveStyle("color: #22c55e");
 
-    // TSLA confidence 0.55 >= 0.4 → amber (#f59e0b)
-    const tslaConf = screen.getByText("55%");
+    await user.click(await screen.findByText("TSLA"));
+    const tslaConf = (await screen.findAllByText("55%")).find(
+      (el) => (el as HTMLElement).style.color === "rgb(245, 158, 11)",
+    ) as HTMLElement | undefined;
+    expect(tslaConf).toBeDefined();
     expect(tslaConf).toHaveStyle("color: #f59e0b");
 
-    // MSFT confidence 0.25 < 0.4 → red (#ef4444)
-    const msftConf = screen.getByText("25%");
+    await user.click(await screen.findByText("MSFT"));
+    const msftConf = (await screen.findAllByText("25%")).find(
+      (el) => (el as HTMLElement).style.color === "rgb(239, 68, 68)",
+    ) as HTMLElement | undefined;
+    expect(msftConf).toBeDefined();
     expect(msftConf).toHaveStyle("color: #ef4444");
   });
 });
@@ -180,6 +192,14 @@ describe("DecisionsView detail panel", () => {
     expect(screen.getAllByText("Strong earnings outlook for AAPL").length).toBeGreaterThanOrEqual(1);
     // Quantity "100" appears in Detail card and Signals card
     expect(screen.getAllByText("100").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("주문 상세 보기 →")).toHaveAttribute(
+      "href",
+      "/orders/aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00or1",
+    );
+    expect(screen.getByText("제출 이력 보기 →")).toHaveAttribute(
+      "href",
+      "/orders/aaaaaaaa-bbbb-cccc-dddd-eeeeeeee00or1/submission-attempts",
+    );
 
     // Market Context section loaded
     await waitFor(() => {
@@ -265,6 +285,139 @@ describe("DecisionsView side filter", () => {
     expect(await screen.findByText("AAPL")).toBeInTheDocument();
     expect(screen.queryByText("TSLA")).not.toBeInTheDocument();
     expect(screen.queryByText("MSFT")).not.toBeInTheDocument();
+  });
+});
+
+describe("DecisionsView execution filter", () => {
+  it("passes execution_status to the server query", async () => {
+    const user = userEvent.setup();
+    const urls: string[] = [];
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = typeof input === "string" ? input : input instanceof Request ? input.url : "";
+      urls.push(url);
+      if (url.includes("/metadata/enums")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => mockEnumMetadataResponse,
+        } as Response);
+      }
+      if (url.includes("/trade-decisions")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => mockTradeDecisions,
+        } as Response);
+      }
+      return Promise.reject(new Error(`No mock for ${url}`));
+    });
+
+    render(
+      <MemoryRouter>
+        <DecisionsView />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("의사결정")).toBeInTheDocument();
+    });
+
+    const executionSelect = screen.getByLabelText("실행");
+    await user.selectOptions(executionSelect, "submitted");
+
+    await waitFor(() => {
+      expect(
+        urls.some((url) => url.includes("/trade-decisions") && url.includes("execution_status=submitted")),
+      ).toBe(true);
+    });
+  });
+
+  it("filters decisions by execution status", async () => {
+    const user = userEvent.setup();
+    const executionFilteredDecisions = {
+      items: [
+        {
+          ...mockTradeDecisions.items[0],
+          symbol: "AAPL",
+          execution_status: "submitted",
+        },
+        {
+          ...mockTradeDecisions.items[1],
+          symbol: "TSLA",
+          execution_status: "pipeline_stopped",
+          latest_stop_reason: "general_submit_disabled_core",
+        },
+      ],
+      total: 2,
+      limit: 50,
+      offset: 0,
+    };
+
+    mockUrlRouter({
+      "/metadata/enums": mockEnumMetadataResponse,
+      "/trade-decisions": executionFilteredDecisions,
+    });
+
+    render(
+      <MemoryRouter>
+        <DecisionsView />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("의사결정")).toBeInTheDocument();
+    });
+
+    const executionSelect = screen.getByLabelText("실행");
+    await user.selectOptions(executionSelect, "pipeline_stopped");
+
+    expect(await screen.findByText("TSLA")).toBeInTheDocument();
+    expect(screen.queryByText("AAPL")).not.toBeInTheDocument();
+    expect(screen.getAllByText("실행 중단").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("filters decisions by order_created", async () => {
+    const user = userEvent.setup();
+    const executionFilteredDecisions = {
+      items: [
+        {
+          ...mockTradeDecisions.items[0],
+          symbol: "AAPL",
+          execution_status: "order_created",
+        },
+        {
+          ...mockTradeDecisions.items[1],
+          symbol: "TSLA",
+          execution_status: "submitted",
+        },
+      ],
+      total: 2,
+      limit: 50,
+      offset: 0,
+    };
+
+    mockUrlRouter({
+      "/metadata/enums": mockEnumMetadataResponse,
+      "/trade-decisions": executionFilteredDecisions,
+    });
+
+    render(
+      <MemoryRouter>
+        <DecisionsView />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("의사결정")).toBeInTheDocument();
+    });
+
+    const executionSelect = screen.getByLabelText("실행");
+    await user.selectOptions(executionSelect, "order_created");
+
+    expect(await screen.findByText("AAPL")).toBeInTheDocument();
+    expect(screen.queryByText("TSLA")).not.toBeInTheDocument();
+    expect(screen.getAllByText("주문 생성됨").length).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -684,7 +837,9 @@ describe("DecisionsView agent runs panel", () => {
     expect(neutralBiasMatches.length).toBeGreaterThanOrEqual(1);
 
     // decision_type 표시 확인
-    expect(screen.getByText(/HOLD/)).toBeInTheDocument();
+    expect(
+      screen.getAllByText((_, el) => (el?.textContent ?? "").includes("decision_type: HOLD")).length,
+    ).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -768,6 +923,67 @@ describe("DecisionsView contextId query param", () => {
     await waitFor(() => {
       expect(screen.queryByText(/컨텍스트별 필터링/i)).not.toBeInTheDocument();
     });
+  });
+});
+
+describe("DecisionsView drilldown visibility", () => {
+  it("renders drilldown filter banner and stop reason labels in table", async () => {
+    const drilldownDecisions = {
+      items: [
+        {
+          ...mockTradeDecisions.items[0],
+          source_type: "core",
+          execution_status: "pipeline_stopped",
+          latest_stop_reason: "general_submit_disabled_core",
+        },
+      ],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    };
+
+    mockUrlRouter({
+      "/metadata/enums": mockEnumMetadataResponse,
+      "/trade-decisions": drilldownDecisions,
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/decisions?date=2026-06-02&side=buy&source_type=core&latest_stop_reason=general_submit_disabled_core&has_order=false"]}>
+        <DecisionsView />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/드릴다운 필터 적용됨/)).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/소스 core/)).toBeInTheDocument();
+    expect(screen.getByText(/사유 core 제출 비활성/)).toBeInTheDocument();
+    expect(screen.getByText("필터 결과 1건")).toBeInTheDocument();
+    expect(screen.getByText("현재 페이지 1건")).toBeInTheDocument();
+    expect(screen.getByText("페이지 1/1")).toBeInTheDocument();
+    expect(screen.getAllByText("실행 중단").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("core 제출 비활성")).toBeInTheDocument();
+  });
+
+  it("renders readable prefix and has_order labels in drilldown banner", async () => {
+    mockUrlRouter({
+      "/metadata/enums": mockEnumMetadataResponse,
+      "/trade-decisions": { items: [], total: 0, limit: 50, offset: 0 },
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/decisions?date=2026-06-02&side=buy&latest_stop_reason_prefix=general_submit_disabled&has_order=false"]}>
+        <DecisionsView />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/드릴다운 필터 적용됨/)).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/사유 제출 비활성/)).toBeInTheDocument();
+    expect(screen.getByText(/주문 없음/)).toBeInTheDocument();
   });
 });
 
@@ -915,7 +1131,7 @@ describe("DecisionsView EI interpreted labels", () => {
       expect(screen.getByText("의사결정")).toBeInTheDocument();
     });
 
-    const row = screen.getByText("NORSN");
+    const row = await screen.findByText("NORSN");
     await user.click(row);
 
     await waitFor(() => {
@@ -979,7 +1195,7 @@ describe("Recent Events Section", () => {
     });
 
     // Click the symbol row to select decision
-    const row = screen.getByText(sampleSymbol);
+    const row = await screen.findByText(sampleSymbol);
     await user.click(row);
 
     // Recent events section should appear
@@ -1017,7 +1233,7 @@ describe("Recent Events Section", () => {
       expect(screen.getByText("의사결정")).toBeInTheDocument();
     });
 
-    const row = screen.getByText(sampleSymbol);
+    const row = await screen.findByText(sampleSymbol);
     await user.click(row);
 
     await waitFor(() => {

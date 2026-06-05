@@ -173,6 +173,14 @@ class PostgresTradeDecisionRepository:
         limit: int = 50,
         offset: int = 0,
         decision_context_id: UUID | None = None,
+        created_date_kst: date | None = None,
+        side: str | None = None,
+        source_type: str | None = None,
+        decision_type: str | None = None,
+        execution_status: str | None = None,
+        latest_stop_reason: str | None = None,
+        latest_stop_reason_prefix: str | None = None,
+        has_order: bool | None = None,
     ) -> tuple[list[TradeDecisionRow], int]:
         """서버사이드 페이지네이션: (items, total_count) 반환.
 
@@ -181,17 +189,110 @@ class PostgresTradeDecisionRepository:
 
         ``decision_context_id``가 주어지면 해당 컨텍스트로 필터링.
         """
-        where_clause = ""
+        where_parts: list[str] = []
         params: list[object] = []
         param_idx = 1
+        execution_status_expr = """
+            CASE
+                WHEN eas.status IS NOT NULL THEN
+                    CASE
+                        WHEN eas.status IN ('running', 'stopped') THEN 'pipeline_stopped'
+                        WHEN eas.status = 'submitted' THEN 'submitted'
+                        WHEN eas.status = 'failed' THEN 'rejected'
+                        WHEN eas.status = 'non_trade' THEN 'non_trade'
+                        WHEN eas.status = 'reconcile_required' THEN 'reconcile_required'
+                        ELSE 'pipeline_stopped'
+                    END
+                WHEN o.order_request_id IS NOT NULL THEN
+                    CASE
+                        WHEN o.status IN ('SUBMITTED', 'REJECTED', 'RECONCILE_REQUIRED') THEN LOWER(o.status)
+                        ELSE 'order_created'
+                    END
+                WHEN LOWER(CAST(td.decision_type AS text)) IN ('hold', 'watch') THEN 'non_trade'
+                ELSE 'trade_decision_only'
+            END
+        """
 
         if decision_context_id is not None:
-            where_clause = f"WHERE td.decision_context_id = ${param_idx}"
+            where_parts.append(f"td.decision_context_id = ${param_idx}")
             params.append(decision_context_id)
             param_idx += 1
+        if created_date_kst is not None:
+            where_parts.append(f"(td.created_at AT TIME ZONE 'Asia/Seoul')::date = ${param_idx}")
+            params.append(created_date_kst)
+            param_idx += 1
+        if side is not None:
+            where_parts.append(f"LOWER(CAST(td.side AS text)) = ${param_idx}")
+            params.append(side.lower())
+            param_idx += 1
+        if source_type is not None:
+            where_parts.append(f"LOWER(COALESCE(td.source_type, '')) = ${param_idx}")
+            params.append(source_type.lower())
+            param_idx += 1
+        if decision_type is not None:
+            where_parts.append(f"LOWER(CAST(td.decision_type AS text)) = ${param_idx}")
+            params.append(decision_type.lower())
+            param_idx += 1
+        if execution_status is not None:
+            where_parts.append(f"{execution_status_expr} = ${param_idx}")
+            params.append(execution_status.lower())
+            param_idx += 1
+        if latest_stop_reason is not None:
+            where_parts.append(
+                "("
+                "SELECT LOWER(COALESCE(ea2.stop_reason, '')) "
+                "FROM trading.execution_attempts ea2 "
+                "WHERE ea2.trade_decision_id = td.trade_decision_id "
+                "ORDER BY ea2.started_at DESC LIMIT 1"
+                f") = ${param_idx}"
+            )
+            params.append(latest_stop_reason.lower())
+            param_idx += 1
+        if latest_stop_reason_prefix is not None:
+            where_parts.append(
+                "("
+                "SELECT LOWER(COALESCE(ea2.stop_reason, '')) "
+                "FROM trading.execution_attempts ea2 "
+                "WHERE ea2.trade_decision_id = td.trade_decision_id "
+                "ORDER BY ea2.started_at DESC LIMIT 1"
+                f") LIKE ${param_idx}"
+            )
+            params.append(f"{latest_stop_reason_prefix.lower()}%")
+            param_idx += 1
+        if has_order is True:
+            where_parts.append(
+                "EXISTS (SELECT 1 FROM trading.order_requests o2 "
+                "WHERE o2.trade_decision_id = td.trade_decision_id)"
+            )
+        elif has_order is False:
+            where_parts.append(
+                "NOT EXISTS (SELECT 1 FROM trading.order_requests o2 "
+                "WHERE o2.trade_decision_id = td.trade_decision_id)"
+            )
+        where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
 
         # Total count query
-        count_sql = f"SELECT COUNT(*) FROM trading.trade_decisions td {where_clause}"
+        base_from_sql = """
+            FROM trading.trade_decisions td
+            LEFT JOIN trading.order_requests o
+                ON td.trade_decision_id = o.trade_decision_id
+            LEFT JOIN LATERAL (
+                SELECT
+                    ea.execution_attempt_id,
+                    ea.status,
+                    ea.stop_phase,
+                    ea.stop_reason,
+                    ea.completed_at,
+                    jsonb_array_length(ea.phase_trace) AS phase_count,
+                    ea.phase_trace
+                FROM trading.execution_attempts ea
+                WHERE ea.trade_decision_id = td.trade_decision_id
+                ORDER BY ea.started_at DESC
+                LIMIT 1
+            ) eas ON TRUE
+        """
+
+        count_sql = f"SELECT COUNT(DISTINCT td.trade_decision_id) {base_from_sql} {where_clause}"
         total_row = await self._tx.connection.fetchval(count_sql, *params)
         total_count = total_row if total_row is not None else 0
 

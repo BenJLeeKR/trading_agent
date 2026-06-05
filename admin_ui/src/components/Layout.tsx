@@ -16,6 +16,7 @@ import {
   Zap,
   AlertCircle,
   Search,
+  ListOrdered,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -47,6 +48,7 @@ const navSections: NavSection[] = [
     title: "기본 운영",
     items: [
       { icon: FileText, label: "주문", to: "/orders" },
+      { icon: ListOrdered, label: "체결내역", to: "/fills" },
       { icon: RefreshCcw, label: "정합성 점검", to: "/reconciliation" },
       { icon: Wallet, label: "계좌", to: "/accounts" },
       { icon: Brain, label: "의사결정", to: "/decisions" },

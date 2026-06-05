@@ -146,6 +146,8 @@ class SnapshotFetchProvider(Protocol):
         instrument_repo: InstrumentRepository,
         *,
         after_hours: bool = False,
+        fetch_positions: bool = True,
+        allow_after_hours_positions: bool = False,
     ) -> FetchedSnapshot:
         """Fetch current positions and cash balance for a single account.
 
@@ -158,9 +160,13 @@ class SnapshotFetchProvider(Protocol):
             Repository for resolving broker-native instrument codes (e.g.
             KIS ``pdno``) to ``InstrumentEntity.instrument_id``.
         after_hours:
-            When ``True``, the provider should skip fetching positions
-            (since they don't change after market close) and only query
-            cash balance with after-hours API parameters.
+            When ``True``, the provider may use after-hours API parameters.
+        fetch_positions:
+            When ``False``, the provider should skip positions fetch even
+            during regular hours and return only cash/risk-limit data.
+        allow_after_hours_positions:
+            When ``True``, the provider may still fetch positions during
+            after-hours. Used for the first post-close full snapshot.
 
         Returns
         -------
@@ -183,6 +189,7 @@ async def sync_account_snapshots(
     *,
     after_hours: bool = False,
     fetch_positions: bool = True,
+    allow_after_hours_positions: bool = False,
     snapshot_sync_run_id: UUID | None = None,
 ) -> SyncResult:
     """Broker-agnostic single-account snapshot sync.
@@ -222,7 +229,11 @@ async def sync_account_snapshots(
     # ── 1. Fetch via provider ─────────────────────────────────────────
     try:
         fetched = await fetch_provider.fetch_snapshot(
-            account_id, instrument_repo, after_hours=after_hours,
+            account_id,
+            instrument_repo,
+            after_hours=after_hours,
+            fetch_positions=fetch_positions,
+            allow_after_hours_positions=allow_after_hours_positions,
         )
     except Exception as exc:
         msg = f"Snapshot fetch failed for account_id={account_id}: {exc}"
@@ -310,6 +321,7 @@ async def sync_account_snapshots(
         try:
             await cash_balance_snapshot_repo.add(cash)
             result._set("cash_balance_synced", True)
+            result._set("orderable_amount_synced", cash.orderable_amount is not None)
         except Exception as exc:
             logger.error(
                 "Failed to persist cash balance for account_id=%s: %s",
@@ -322,6 +334,7 @@ async def sync_account_snapshots(
     if fetched.risk_limit_snapshot is not None:
         try:
             await risk_limit_snapshot_repo.add(fetched.risk_limit_snapshot)
+            result._set("risk_limit_snapshot_synced", True)
         except Exception:
             logger.exception(
                 "Failed to persist risk_limit_snapshot for account %s", account_id
@@ -450,6 +463,7 @@ async def sync_all_accounts(
     account_status: str | None = None,
     after_hours: bool = False,
     fetch_positions: bool = True,
+    allow_after_hours_positions: bool = False,
     snapshot_sync_run_id: UUID | None = None,
 ) -> BatchSyncResult:
     """Broker-agnostic auto-discover + batch snapshot sync.
@@ -489,6 +503,9 @@ async def sync_all_accounts(
     fetch_positions:
         When ``True`` (default), fetches positions via the provider.
         When ``False``, only cash balance and risk limit snapshots are synced.
+    allow_after_hours_positions:
+        When ``True``, allow positions sync during after-hours for the
+        first post-close full snapshot.
 
     Returns
     -------
@@ -563,6 +580,7 @@ async def sync_all_accounts(
                 account_id=account.account_id,
                 after_hours=after_hours,
                 fetch_positions=fetch_positions,
+                allow_after_hours_positions=allow_after_hours_positions,
                 snapshot_sync_run_id=snapshot_sync_run_id,
             )
         except Exception as exc:

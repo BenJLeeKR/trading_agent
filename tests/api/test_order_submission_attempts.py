@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from agent_trading.api.app import create_app
 from agent_trading.api.deps import get_repos
 from agent_trading.domain.entities import (
+    BrokerFillSnapshotEntity,
     InstrumentEntity,
     OrderRequestEntity,
     OrderSubmissionAttemptEntity,
@@ -276,6 +277,82 @@ def test_order_detail_summary_null_when_no_attempts():
     assert data.get("submission_attempt_summary") is None, (
         "summary should be None when no attempts exist"
     )
+
+    app.dependency_overrides.clear()
+
+
+def test_order_detail_has_linked_fill_snapshot_summary():
+    """linked fill snapshot이 있으면 주문 상세에 요약이 포함된다."""
+    repos = build_in_memory_repositories()
+    app = create_app(auth_token="test-token")
+    app.dependency_overrides[get_repos] = lambda: repos
+
+    order_request_id = _seed_order(repos, order_request_id=uuid.uuid4())
+    now = datetime.now(timezone.utc)
+
+    first = BrokerFillSnapshotEntity(
+        broker_fill_snapshot_id=uuid.uuid4(),
+        fill_sync_run_id=uuid.uuid4(),
+        account_id=uuid.uuid4(),
+        order_request_id=order_request_id,
+        broker_name="koreainvestment",
+        broker_native_order_id="0001234567",
+        broker_fill_id=None,
+        symbol="005930",
+        side="buy",
+        order_date=now.date(),
+        order_status_code="22",
+        ordered_quantity=Decimal("10"),
+        filled_quantity=Decimal("3"),
+        fill_price=Decimal("70100"),
+        order_time="091500",
+        fill_time="091501",
+        fill_timestamp=now - timedelta(minutes=1),
+        dedupe_key="fill-summary-1",
+        raw_payload_json={},
+    )
+    second = BrokerFillSnapshotEntity(
+        broker_fill_snapshot_id=uuid.uuid4(),
+        fill_sync_run_id=uuid.uuid4(),
+        account_id=first.account_id,
+        order_request_id=order_request_id,
+        broker_name="koreainvestment",
+        broker_native_order_id="0001234567",
+        broker_fill_id=None,
+        symbol="005930",
+        side="buy",
+        order_date=now.date(),
+        order_status_code="22",
+        ordered_quantity=Decimal("10"),
+        filled_quantity=Decimal("10"),
+        fill_price=Decimal("70300"),
+        order_time="091500",
+        fill_time="091530",
+        fill_timestamp=now,
+        dedupe_key="fill-summary-2",
+        raw_payload_json={},
+    )
+    asyncio.run(repos.broker_fill_snapshots.upsert(first))
+    asyncio.run(repos.broker_fill_snapshots.upsert(second))
+
+    with TestClient(app) as client:
+        resp = client.get(
+            f"/orders/{order_request_id}",
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+    assert resp.status_code == 200
+    summary = resp.json().get("linked_fill_snapshot_summary")
+    assert summary is not None
+    assert summary["snapshot_count"] == 2
+    assert summary["broker_native_order_id"] == "0001234567"
+    assert summary["symbol"] == "005930"
+    assert summary["side"] == "buy"
+    assert summary["latest_filled_quantity"] == 10.0
+    assert summary["max_filled_quantity"] == 10.0
+    assert summary["latest_fill_price"] == 70300.0
+    assert summary["latest_ordered_quantity"] == 10.0
+    assert summary["latest_order_status_code"] == "22"
 
     app.dependency_overrides.clear()
 
@@ -736,6 +813,50 @@ def test_list_recent_failures_limit():
     assert resp.status_code == 200
     data = resp.json()
     assert len(data) == 3, f"Expected 3, got {len(data)}"
+
+    app.dependency_overrides.clear()
+
+
+def test_list_recent_failures_filters_by_kst_date():
+    repos = build_in_memory_repositories()
+    app = create_app(auth_token="test-token")
+    app.dependency_overrides[get_repos] = lambda: repos
+
+    oid_today = uuid.uuid4()
+    oid_previous = uuid.uuid4()
+
+    # 2026-06-04 10:00 KST
+    asyncio.run(repos.order_submission_attempts.add(OrderSubmissionAttemptEntity(
+        attempt_id=uuid.uuid4(),
+        order_request_id=oid_today,
+        attempt_number=1,
+        submitted_at=datetime(2026, 6, 4, 1, 0, tzinfo=timezone.utc),
+        accepted=False,
+        raw_code="REJ",
+        raw_message="Rejected today",
+        error_type=None,
+    )))
+    # 2026-06-03 23:30 KST
+    asyncio.run(repos.order_submission_attempts.add(OrderSubmissionAttemptEntity(
+        attempt_id=uuid.uuid4(),
+        order_request_id=oid_previous,
+        attempt_number=1,
+        submitted_at=datetime(2026, 6, 3, 14, 30, tzinfo=timezone.utc),
+        accepted=False,
+        raw_code="REJ",
+        raw_message="Rejected previous day",
+        error_type=None,
+    )))
+
+    with TestClient(app) as client:
+        resp = client.get(
+            "/orders/recent-failures?date=2026-06-04",
+            headers={"Authorization": "Bearer test-token"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["order_request_id"] == str(oid_today)
 
     app.dependency_overrides.clear()
 

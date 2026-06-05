@@ -37,9 +37,9 @@ class PostgresMarketSessionRepository:
                 opnd_yn, bzdy_yn, tr_day_yn,
                 market_phase,
                 raw_opnd_yn, raw_mkop_cls_code, raw_antc_mkop_cls_code,
-                source, reason,
+                source, reason_code, reason,
                 checked_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
                ON CONFLICT (run_date) DO UPDATE SET
                    is_trading_day    = EXCLUDED.is_trading_day,
                    opnd_yn           = EXCLUDED.opnd_yn,
@@ -50,6 +50,7 @@ class PostgresMarketSessionRepository:
                    raw_mkop_cls_code = EXCLUDED.raw_mkop_cls_code,
                    raw_antc_mkop_cls_code = EXCLUDED.raw_antc_mkop_cls_code,
                    source            = EXCLUDED.source,
+                   reason_code       = EXCLUDED.reason_code,
                    reason            = EXCLUDED.reason,
                    checked_at        = EXCLUDED.checked_at,
                    updated_at        = EXCLUDED.updated_at
@@ -64,6 +65,7 @@ class PostgresMarketSessionRepository:
             session.raw_mkop_cls_code,
             session.raw_antc_mkop_cls_code,
             session.source,
+            session.reason_code,
             session.reason,
             session.checked_at or datetime.now(timezone.utc),
             datetime.now(timezone.utc),

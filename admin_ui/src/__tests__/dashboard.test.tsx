@@ -436,6 +436,36 @@ const mockSessionResponse = {
   stale_seconds: null,
 };
 
+/** Mock operations-day response */
+const mockOperationsDayResponse = {
+  status: "ok",
+  data: {
+    operations_day_run_id: 7,
+    run_date: "2026-05-30",
+    scheduler_status: "intraday",
+    is_trading_day: true,
+    session_source: "kis_live",
+    market_phase: "OPEN",
+    pre_market_done: true,
+    end_of_day_done: false,
+    after_hours_mode: false,
+    recovery_batch_done: false,
+    submit_count: 2,
+    held_position_sell_submit_count: 1,
+    cycles: 14,
+    last_phase_change_at: "2026-05-30T09:00:00+09:00",
+    last_heartbeat_at: "2026-05-30T09:05:00+09:00",
+    created_at: "2026-05-30T08:00:00+09:00",
+    updated_at: "2026-05-30T09:05:00+09:00",
+    summary_json: {
+      command_results_count: 4,
+      ok_count: 4,
+    },
+  },
+  healthy: true,
+  stale_seconds: 4,
+};
+
 /** Mock session events response */
 const mockSessionEvents = { status: "ok", data: [] };
 
@@ -504,44 +534,56 @@ const mockTodayOrderSummary = {
   submitted_count: 0,
 };
 
+const mockBuyBlockSummary = {
+  date: "2026-05-30",
+  timezone: "Asia/Seoul",
+  total_buy_orders_count: 12,
+  buy_submission_attempted_count: 2,
+  blocked_count: 1,
+  rejected_count: 1,
+  exception_count: 0,
+};
+
 /**
  * Helper: mock all fetch calls required by OperationsDashboardView.fetchAll()
  * before the final getRecentFailures(5) and getFailureSummary() calls.
  *
- * Call order (18 total):
- *   1-8: Promise.all [health, readyz, recon, orders, daily-summary, clients, session, events]
- *   9:   getAccounts(clientId)
- *  10-12: getPositions(3 accounts)
- *  13-15: getCashBalance(3 accounts)
- *  16:  getSnapshotSyncRuns(10)
- *  17:  getRecentFailures(5) — caller provides this mock
- *  18:  getFailureSummary() — caller provides this mock
+ * Call order (20 total):
+ *   1-10: Promise.all [health, readyz, recon, orders, daily-summary, buy-block-summary, clients, session, operations-day, events]
+ *   11:   getAccounts(clientId)
+ *   12-14: getPositions(3 accounts)
+ *   15-17: getCashBalance(3 accounts)
+ *   18:   getSnapshotSyncRuns(10)
+ *   19:   getRecentFailures(5) — caller provides this mock
+ *   20:   getFailureSummary() — caller provides this mock
  */
 function mockOpsDashboardCommon() {
-  // 1-8: Parallel batch
+  // 1-10: Parallel batch
   mockFetchOnce(mockOpsHealth);            // 1. GET /health
   mockFetchOnce(mockReadyz);               // 2. GET /health/readyz
   mockFetchOnce(mockReconciliationSummary); // 3. GET /reconciliation/summary
   mockFetchOnce(mockOrders);               // 4. GET /orders
   mockFetchOnce(mockTodayOrderSummary);    // 5. GET /orders/daily-summary
-  mockFetchOnce(mockClients);              // 6. GET /clients
-  mockFetchOnce(mockSessionResponse);      // 7. GET /market-sessions/latest
-  mockFetchOnce(mockSessionEvents);        // 8. GET /market-sessions/events/recent
+  mockFetchOnce(mockBuyBlockSummary);      // 6. GET /orders/buy-block-summary
+  mockFetchOnce(mockClients);              // 7. GET /clients
+  mockFetchOnce(mockSessionResponse);      // 8. GET /market-sessions/latest
+  mockFetchOnce(mockOperationsDayResponse);// 9. GET /market-sessions/operations-day/latest
+  mockFetchOnce(mockSessionEvents);        // 10. GET /market-sessions/events/recent
 
-  // 9. getAccounts
+  // 11. getAccounts
   mockFetchOnce(mockAccounts);
 
-  // 10-12. getPositions (3 accounts)
+  // 12-14. getPositions (3 accounts)
   mockFetchOnce(mockPositions);
   mockFetchOnce(mockPositionsForLocked);
   mockFetchOnce([]);
 
-  // 13-15. getCashBalance (3 accounts)
+  // 15-17. getCashBalance (3 accounts)
   mockFetchOnce(mockCashBalance);
   mockFetchOnce(mockCashBalanceForLocked);
   mockFetchOnce(mockCashBalanceNull);
 
-  // 16. getSnapshotSyncRuns
+  // 18. getSnapshotSyncRuns
   mockFetchOnce([]);
 }
 
@@ -561,8 +603,14 @@ describe("OperationsDashboardView — recent failures", () => {
 
     // Wait for aggregated failureSummary value to appear (async)
     await screen.findByText("오늘 2건");
+    expect(screen.getByText("Scheduler Status")).toBeInTheDocument();
+    expect(screen.getAllByText("운영중").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/OPEN \| 제출 2 \/ HP매도 1 \/ cycles 14/)).toBeInTheDocument();
     expect(screen.getByText("오늘 주문 제출")).toBeInTheDocument();
     expect(screen.getByText("2건")).toBeInTheDocument();
+    expect(screen.getByText("오늘 BUY 차단")).toBeInTheDocument();
+    expect(screen.getByText("1건")).toBeInTheDocument();
+    expect(screen.queryByText(/BUY 주문 12 \/ 제출시도 2 \| 거절 1 · 예외 0/)).not.toBeInTheDocument();
 
     expect(screen.getByText(/실패율: 50% \(오늘\) \| 거절 1건 · 예외 1건/)).toBeInTheDocument();
 

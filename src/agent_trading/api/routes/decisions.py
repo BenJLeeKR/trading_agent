@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import json
+from datetime import date
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -16,6 +18,7 @@ from agent_trading.api.schemas import (
 )
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.contracts import TradeDecisionRow
+from agent_trading.repositories.filters import OrderQuery
 
 router = APIRouter(tags=["decisions"])
 
@@ -30,6 +33,27 @@ def _safe_enum_str(value: object) -> str:
     if isinstance(value, str):
         return value
     return str(value)
+
+
+def _coerce_phase_trace(
+    value: object,
+) -> list[dict[str, object]] | None:
+    """Normalize ``phase_trace`` into a JSON list for the API schema.
+
+    Historical/driver-specific read paths may surface ``phase_trace`` as a
+    JSON-encoded string like ``"[]"`` instead of a decoded Python list.
+    """
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, list) else None
+    return None
 
 
 def _to_detail(row: TradeDecisionRow, instrument_name: str | None = None) -> TradeDecisionDetail:
@@ -63,6 +87,8 @@ def _to_detail(row: TradeDecisionRow, instrument_name: str | None = None) -> Tra
         # 신규 pipeline_stop / order 노출 필드
         order_request_id=str(row.order_request_id) if row.order_request_id else None,
         order_status=row.order_status,
+        execution_attempt_status=row.execution_attempt_status,
+        phase_trace=_coerce_phase_trace(row.phase_trace),
         # Phase 5: Latest execution attempt summary fields
         latest_execution_attempt_id=row.latest_execution_attempt_id,
         latest_stop_phase=row.latest_stop_phase,
@@ -75,6 +101,14 @@ def _to_detail(row: TradeDecisionRow, instrument_name: str | None = None) -> Tra
 @router.get("/trade-decisions", response_model=PaginatedTradeDecisionsResponse)
 async def list_trade_decisions(
     decision_context_id: str | None = Query(None, description="Decision context ID (optional)"),
+    created_date: date | None = Query(None, description="KST created_at date filter (YYYY-MM-DD)"),
+    side: str | None = Query(None, description="Filter by side"),
+    source_type: str | None = Query(None, description="Filter by source_type"),
+    decision_type: str | None = Query(None, description="Filter by decision_type"),
+    execution_status: str | None = Query(None, description="Filter by derived execution_status"),
+    latest_stop_reason: str | None = Query(None, description="Filter by latest stop_reason"),
+    latest_stop_reason_prefix: str | None = Query(None, description="Filter by latest stop_reason prefix"),
+    has_order: bool | None = Query(None, description="Filter by whether an order was created"),
     limit: int = Query(50, ge=1, le=500, description="페이지당 최대 항목 수"),
     offset: int = Query(0, ge=0, description="건너뛸 항목 수"),
     repos: RepositoryContainer = Depends(get_repos),
@@ -97,11 +131,96 @@ async def list_trade_decisions(
                 status_code=400, detail=f"Invalid UUID: {decision_context_id}"
             ) from exc
 
-    rows, total = await repos.trade_decisions.list_all_paginated(
-        limit=limit,
-        offset=offset,
-        decision_context_id=ctx_id,
-    )
+    is_in_memory = type(repos.trade_decisions).__name__.startswith("InMemory")
+    if is_in_memory:
+        in_memory_order_decision_ids: set[UUID] = set()
+        if has_order is not None:
+            day_orders = await repos.orders.list(OrderQuery(limit=10000))
+            in_memory_order_decision_ids = {
+                order.trade_decision_id
+                for order in day_orders
+                if order.trade_decision_id is not None
+            }
+        rows, _ = await repos.trade_decisions.list_all_paginated(
+            limit=5000,
+            offset=0,
+            decision_context_id=ctx_id,
+            created_date_kst=created_date,
+            side=side,
+            source_type=source_type,
+            decision_type=decision_type,
+        )
+        filtered_rows: list[TradeDecisionRow] = []
+        for row in rows:
+            resolved_stop_reason = str(row.latest_stop_reason or "").lower()
+            resolved_execution_attempt_status = row.execution_attempt_status
+            resolved_latest_execution_attempt_id = row.latest_execution_attempt_id
+            resolved_latest_stop_phase = row.latest_stop_phase
+            resolved_latest_completed_at = row.latest_completed_at
+            resolved_latest_phase_count = row.latest_phase_count
+            resolved_phase_trace = row.phase_trace
+            if not resolved_stop_reason:
+                attempts = await repos.execution_attempts.list_by_trade_decision(
+                    row.entity.trade_decision_id
+                )
+                if attempts:
+                    latest_attempt = max(attempts, key=lambda item: item.created_at or item.started_at)
+                    resolved_stop_reason = str(latest_attempt.stop_reason or "").lower()
+                    resolved_execution_attempt_status = latest_attempt.status
+                    resolved_latest_execution_attempt_id = str(latest_attempt.execution_attempt_id)
+                    resolved_latest_stop_phase = latest_attempt.stop_phase
+                    resolved_latest_completed_at = latest_attempt.completed_at
+                    resolved_latest_phase_count = len(latest_attempt.phase_trace or []) or None
+                    resolved_phase_trace = latest_attempt.phase_trace
+            has_order_resolved = row.order_request_id is not None or (
+                row.entity.trade_decision_id in in_memory_order_decision_ids
+            )
+
+            if latest_stop_reason is not None and resolved_stop_reason != latest_stop_reason.lower():
+                continue
+            if latest_stop_reason_prefix is not None and not resolved_stop_reason.startswith(
+                latest_stop_reason_prefix.lower()
+            ):
+                continue
+            if has_order is True and not has_order_resolved:
+                continue
+            if has_order is False and has_order_resolved:
+                continue
+
+            filtered_row = TradeDecisionRow(
+                entity=row.entity,
+                order_request_id=row.order_request_id,
+                order_status=row.order_status,
+                instrument_name=row.instrument_name,
+                phase_trace=resolved_phase_trace,
+                execution_attempt_status=resolved_execution_attempt_status,
+                latest_execution_attempt_id=resolved_latest_execution_attempt_id,
+                latest_stop_phase=resolved_latest_stop_phase,
+                latest_stop_reason=resolved_stop_reason or row.latest_stop_reason,
+                latest_completed_at=resolved_latest_completed_at,
+                latest_phase_count=resolved_latest_phase_count,
+            )
+            if execution_status is not None:
+                derived = _to_detail(filtered_row, instrument_name=row.instrument_name).execution_status
+                if (derived or "").lower() != execution_status.lower():
+                    continue
+            filtered_rows.append(filtered_row)
+        total = len(filtered_rows)
+        rows = filtered_rows[offset : offset + limit]
+    else:
+        rows, total = await repos.trade_decisions.list_all_paginated(
+            limit=limit,
+            offset=offset,
+            decision_context_id=ctx_id,
+            created_date_kst=created_date,
+            side=side,
+            source_type=source_type,
+            decision_type=decision_type,
+            execution_status=execution_status,
+            latest_stop_reason=latest_stop_reason,
+            latest_stop_reason_prefix=latest_stop_reason_prefix,
+            has_order=has_order,
+        )
 
     # SQL LEFT JOIN으로 instrument_name이 이미 TradeDecisionRow.instrument_name에
     # resolve되어 있음

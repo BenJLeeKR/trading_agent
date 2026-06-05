@@ -155,6 +155,7 @@ class OrderDetail(OrderSummary):
 
     # 신규: submission attempts 요약 (Phase 7)
     submission_attempt_summary: SubmissionAttemptSummary | None = None
+    linked_fill_snapshot_summary: LinkedFillSnapshotSummary | None = None
 
 
 class OrderDailySummaryResponse(BaseModel):
@@ -166,6 +167,46 @@ class OrderDailySummaryResponse(BaseModel):
     filled_count: int
     pending_submit_count: int
     submitted_count: int
+
+
+class BuyBlockSummaryResponse(BaseModel):
+    """KST 기준 일별 BUY 브로커 제출 실패 요약."""
+
+    date: date
+    timezone: str = "Asia/Seoul"
+    total_buy_orders_count: int
+    buy_submission_attempted_count: int
+    blocked_count: int
+    rejected_count: int
+    exception_count: int
+
+
+class TruthProbePendingOrderItem(BaseModel):
+    """`truth_probe_fill_snapshot_incomplete`가 걸린 주문의 최근 항목."""
+
+    order_request_id: str
+    symbol: str | None = None
+    side: str
+    status: str
+    requested_quantity: float
+    trade_decision_id: str | None = None
+    broker_native_order_id: str | None = None
+    status_reason_code: str | None = None
+    status_reason_message: str | None = None
+    submitted_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class TruthProbePendingSummaryResponse(BaseModel):
+    """KST 기준 일별 fill snapshot incomplete 대기 주문 집계."""
+
+    date: date
+    timezone: str = "Asia/Seoul"
+    reason_code: str = "truth_probe_fill_snapshot_incomplete"
+    total_count: int
+    status_counts: dict[str, int]
+    recent_orders: list[TruthProbePendingOrderItem]
 
 
 class OrderEvent(BaseModel):
@@ -268,6 +309,79 @@ class SnapshotSyncRunHealthSummary(BaseModel):
 
     after_hours: bool = False
     """``True`` when the most recent run was an after-hours (cash-only) sync."""
+
+
+class FillSyncRunSummary(BaseModel):
+    fill_sync_run_id: str
+    trigger_type: str
+    scope: str
+    dry_run: bool
+    total_accounts: int
+    succeeded_accounts: int
+    partial_accounts: int
+    failed_accounts: int
+    skipped_accounts: int
+    fills_synced_total: int
+    fills_skipped_total: int
+    error_count: int
+    status: str
+    started_at: datetime
+    completed_at: datetime | None = None
+    env_filter: str | None = None
+    summary_json: dict[str, object] | None = None
+
+
+class FillSyncRunHealthSummary(BaseModel):
+    last_run_started_at: datetime | None = None
+    last_run_completed_at: datetime | None = None
+    last_status: str | None = None
+    last_successful_run_at: datetime | None = None
+    consecutive_failures: int = 0
+    is_stale: bool = True
+    stale_threshold_seconds: int = 1800
+    retried_accounts: int = 0
+    retried_days: int = 0
+    total_retries: int = 0
+
+
+class FillHistoryItem(BaseModel):
+    broker_fill_snapshot_id: str
+    fill_sync_run_id: str | None = None
+    account_id: str
+    order_request_id: str | None = None
+    trade_decision_id: str | None = None
+    account_alias: str | None = None
+    account_code: str | None = None
+    broker_name: str
+    broker_native_order_id: str
+    broker_fill_id: str | None = None
+    symbol: str
+    instrument_name: str | None = None
+    side: str
+    order_date: date
+    order_status_code: str | None = None
+    cancel_yn: str | None = None
+    ordered_quantity: float | None = None
+    filled_quantity: float
+    fill_price: float
+    order_time: str | None = None
+    fill_time: str | None = None
+    fill_timestamp: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class LinkedFillSnapshotSummary(BaseModel):
+    snapshot_count: int
+    broker_native_order_id: str
+    symbol: str
+    side: str
+    latest_fill_timestamp: datetime | None = None
+    latest_filled_quantity: float
+    max_filled_quantity: float
+    latest_fill_price: float
+    latest_ordered_quantity: float | None = None
+    latest_order_status_code: str | None = None
 
 
 class BlockingLockStatus(BaseModel):
@@ -485,7 +599,7 @@ class TradeDecisionDetail(BaseModel):
                 self.execution_status = self.order_status.lower()
             else:
                 self.execution_status = 'order_created'
-        elif self.decision_type in ('HOLD', 'WATCH'):
+        elif (self.decision_type or "").upper() in ('HOLD', 'WATCH'):
             self.execution_status = 'non_trade'
         else:
             self.execution_status = 'trade_decision_only'
@@ -1065,7 +1179,12 @@ class MarketSessionSummary(BaseModel):
     raw_mkop_cls_code: str | None = None
     raw_antc_mkop_cls_code: str | None = None
     source: str | None = None
+    reason_code: str | None = None
     reason: str | None = None
+    operations_day_scheduler_status: str | None = None
+    operations_day_summary_json: dict[str, object] | None = None
+    next_trading_day_readiness: dict[str, object] | None = None
+    intraday_validation: dict[str, object] | None = None
     last_heartbeat_at: datetime | None = None
     checked_at: datetime | None = None
     created_at: datetime | None = None
@@ -1095,6 +1214,20 @@ class SessionEventsResponse(BaseModel):
     """Session events, newest first, up to the requested ``limit``."""
 
 
+class MarketSessionDetailResponse(BaseModel):
+    """``GET /market-sessions/by-date/{run_date}`` — single stored session row."""
+
+    status: str  # "ok" | "no_data"
+    data: MarketSessionSummary | None = None
+
+
+class MarketSessionHistoryResponse(BaseModel):
+    """``GET /market-sessions/history`` — stored session rows."""
+
+    status: str = "ok"
+    data: list[MarketSessionSummary]
+
+
 class SchedulerStatusResponse(BaseModel):
     """Scheduler health and current session status."""
 
@@ -1102,6 +1235,52 @@ class SchedulerStatusResponse(BaseModel):
     data: MarketSessionSummary | None = None
     healthy: bool = False
     stale_seconds: int | None = None
+
+
+class OperationsDayRunSummary(BaseModel):
+    """Latest operations-day scheduler state summary for admin/ops use."""
+
+    operations_day_run_id: int
+    run_date: date
+    scheduler_status: str
+    is_trading_day: bool
+    session_source: str | None = None
+    market_phase: str | None = None
+    pre_market_done: bool = False
+    end_of_day_done: bool = False
+    after_hours_mode: bool = False
+    recovery_batch_done: bool = False
+    submit_count: int = 0
+    held_position_sell_submit_count: int = 0
+    cycles: int = 0
+    last_phase_change_at: datetime | None = None
+    last_heartbeat_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    summary_json: dict[str, object] | None = None
+
+
+class OperationsDayStatusResponse(BaseModel):
+    """Latest ``operations_day_runs`` status with freshness metadata."""
+
+    status: str  # "ok" | "no_data"
+    data: OperationsDayRunSummary | None = None
+    healthy: bool = False
+    stale_seconds: int | None = None
+
+
+class OperationsDayDetailResponse(BaseModel):
+    """``GET /market-sessions/operations-day/by-date/{run_date}`` response."""
+
+    status: str  # "ok" | "no_data"
+    data: OperationsDayRunSummary | None = None
+
+
+class OperationsDayHistoryResponse(BaseModel):
+    """``GET /market-sessions/operations-day/history`` response."""
+
+    status: str = "ok"
+    data: list[OperationsDayRunSummary]
 
 
 class RiskLimitSnapshotView(BaseModel):

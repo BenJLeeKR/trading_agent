@@ -118,6 +118,7 @@ class TestKisHolidayProvider:
         )
         info = await kis_provider.get_session_info(date(2026, 5, 16))
         assert info.source == "kis_holiday_api"
+        assert info.reason_code == "KIS_HOLIDAY_TRADING_DAY"
         assert info.is_trading_day is True
         assert info.opnd_yn == "Y"
         assert info.bzdy_yn == "Y"

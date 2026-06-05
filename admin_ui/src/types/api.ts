@@ -404,6 +404,61 @@ export interface SnapshotSyncRunHealthSummary {
   after_hours: boolean;
 }
 
+export interface FillSyncRunSummary {
+  fill_sync_run_id: string;
+  trigger_type: string;
+  scope: string;
+  dry_run: boolean;
+  total_accounts: number;
+  succeeded_accounts: number;
+  partial_accounts: number;
+  failed_accounts: number;
+  skipped_accounts: number;
+  fills_synced_total: number;
+  fills_skipped_total: number;
+  error_count: number;
+  status: string;
+  started_at: string;
+  completed_at: string | null;
+  env_filter: string | null;
+  summary_json: Record<string, unknown> | null;
+}
+
+export interface FillSyncRunHealthSummary {
+  last_run_started_at: string | null;
+  last_run_completed_at: string | null;
+  last_status: string | null;
+  last_successful_run_at: string | null;
+  consecutive_failures: number;
+  is_stale: boolean;
+  stale_threshold_seconds: number;
+}
+
+export interface FillHistoryItem {
+  broker_fill_snapshot_id: string;
+  fill_sync_run_id: string | null;
+  account_id: string;
+  account_alias: string | null;
+  account_code: string | null;
+  broker_name: string;
+  broker_native_order_id: string;
+  broker_fill_id: string | null;
+  symbol: string;
+  instrument_name: string | null;
+  side: string;
+  order_date: string;
+  order_status_code: string | null;
+  cancel_yn: string | null;
+  ordered_quantity: number | null;
+  filled_quantity: number;
+  fill_price: number;
+  order_time: string | null;
+  fill_time: string | null;
+  fill_timestamp: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 /* ───────────────────────────────────────────
  * API response wrapper types
  * ─────────────────────────────────────────── */
@@ -440,6 +495,34 @@ export interface SessionEventSummary {
 export interface SchedulerStatusResponse {
   status: 'ok' | 'no_data';
   data: MarketSessionSummary | null;
+  healthy: boolean;
+  stale_seconds: number | null;
+}
+
+export interface OperationsDayRunSummary {
+  operations_day_run_id: number;
+  run_date: string;
+  scheduler_status: string;
+  is_trading_day: boolean;
+  session_source: string | null;
+  market_phase: string | null;
+  pre_market_done: boolean;
+  end_of_day_done: boolean;
+  after_hours_mode: boolean;
+  recovery_batch_done: boolean;
+  submit_count: number;
+  held_position_sell_submit_count: number;
+  cycles: number;
+  last_phase_change_at: string | null;
+  last_heartbeat_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  summary_json: Record<string, unknown> | null;
+}
+
+export interface OperationsDayStatusResponse {
+  status: "ok" | "no_data";
+  data: OperationsDayRunSummary | null;
   healthy: boolean;
   stale_seconds: number | null;
 }
@@ -502,6 +585,16 @@ export interface SubmissionAttemptView {
   duration_ms: number | null;
   created_at: string;
   attempt_outcome: string | null;
+}
+
+export interface BuyBlockSummary {
+  date: string;
+  timezone: string;
+  total_buy_orders_count: number;
+  buy_submission_attempted_count: number;
+  blocked_count: number;
+  rejected_count: number;
+  exception_count: number;
 }
 
 export interface RecentFailureItem {

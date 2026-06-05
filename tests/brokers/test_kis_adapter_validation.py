@@ -261,6 +261,10 @@ class TestBuildKisAdapterRuntimeWiring:
         assert isinstance(rest_client.budget_manager, RateLimitBudgetManager)
         assert rest_client.env == "paper"
         assert adapter._quote_rest.env == "live"
+        assert adapter._quote_rest.budget_manager is not None
+        assert isinstance(adapter._quote_rest.budget_manager, RateLimitBudgetManager)
+        quote_snap = adapter._quote_rest.budget_manager.snapshot()
+        assert quote_snap["global"]["capacity"] == 18
 
         # Paper env → conservative bucket capacities
         # order=3 (Fix 3: capacity increased from 1→3)

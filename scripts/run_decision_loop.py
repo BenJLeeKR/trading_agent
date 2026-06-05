@@ -53,6 +53,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, NoReturn
+from uuid import uuid4
 
 # Lazy import for python-dotenv (optional, for local dev)
 try:
@@ -62,7 +63,7 @@ except ImportError:
 
 from agent_trading.brokers.base import BrokerAdapter
 from agent_trading.domain.enums import OrderSide, OrderType
-from agent_trading.domain.entities import ExternalEventEntity
+from agent_trading.domain.entities import ExecutionAttemptEntity, ExternalEventEntity
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.contracts import (
@@ -110,13 +111,46 @@ HELD_POSITION_SELL_MAX_PER_CYCLE = 2
 """Per-cycle cap for held-position REDUCE/EXIT SELL submit lane."""
 
 
+def _infer_symbol_dry_run_reason(
+    *,
+    submit: bool,
+    dry_run: bool,
+    allow_general_submit: bool,
+    source_type: str,
+    submit_budget_consumed_count: int,
+    max_general_submits_this_cycle: int,
+    held_position_sell_cycle_count: int,
+    held_position_sell_cycle_symbols: set[str],
+    symbol: str,
+) -> str | None:
+    """Return an explicit dry-run reason for per-symbol scheduler gating."""
+    if not submit and dry_run:
+        return "cli_dry_run"
+
+    if source_type == "held_position":
+        if held_position_sell_cycle_count >= HELD_POSITION_SELL_MAX_PER_CYCLE:
+            return "held_position_sell_cycle_cap"
+        if symbol in held_position_sell_cycle_symbols:
+            return "held_position_sell_symbol_duplicate"
+        return None
+
+    if not allow_general_submit:
+        return f"general_submit_disabled_{source_type}"
+
+    if submit_budget_consumed_count >= max_general_submits_this_cycle:
+        return f"submit_budget_consumed_{source_type}"
+
+    return None
+
+
 def _compute_symbol_submit_mode(
     *,
     submit: bool,
     dry_run: bool,
     allow_general_submit: bool,
     source_type: str,
-    submit_budget_consumed: bool,
+    submit_budget_consumed_count: int,
+    max_general_submits_this_cycle: int,
     held_position_sell_cycle_count: int,
     held_position_sell_cycle_symbols: set[str],
     symbol: str,
@@ -141,7 +175,7 @@ def _compute_symbol_submit_mode(
     if not allow_general_submit:
         return False, True
 
-    symbol_submit = not submit_budget_consumed
+    symbol_submit = submit_budget_consumed_count < max_general_submits_this_cycle
     return symbol_submit, not symbol_submit
 
 
@@ -578,6 +612,7 @@ def _serialize_cycle_result(
     error: str | None = None,
     ei_output: dict[str, object] | None = None,
     source_type: str = "core",
+    dry_run_reason: str | None = None,
 ) -> dict[str, object]:
     """Serialize a single decision cycle result.
 
@@ -636,6 +671,7 @@ def _serialize_cycle_result(
     elif dry_run:
         # Dry-run mode: assemble + sizing, no broker submit
         data["status"] = "DRY_RUN"
+        data["dry_run_reason"] = dry_run_reason
         if result is not None and result.order_intent is not None:
             data["decision_context_id"] = (
                 str(result.decision_context_id) if result.decision_context_id else None
@@ -743,6 +779,7 @@ async def _run_one_cycle(
     symbol: str = SYMBOL,
     market: str = MARKET,
     source_type: str = "core",
+    dry_run_reason: str | None = None,
     runtime: dict[str, object],              # ★ 공유 runtime (외부에서 주입)
     cycle_precheck: dict[str, object] | None = None,  # ★ cycle precheck (외부에서 주입)
 ) -> dict[str, object]:
@@ -886,9 +923,36 @@ async def _run_one_cycle(
                 result = SubmitResult(
                     status="DRY_RUN",
                     order_intent=intent,
-                    trade_decision_id=None,
+                    trade_decision_id=str(intent.trade_decision_id) if intent.trade_decision_id else None,
                     decision_context_id=intent.decision_context_id,
                 )
+
+                if (
+                    dry_run_reason is not None
+                    and dry_run_reason != "cli_dry_run"
+                    and intent.trade_decision_id is not None
+                    and intent.decision_context_id is not None
+                ):
+                    _now = datetime.now(timezone.utc)
+                    attempt = ExecutionAttemptEntity(
+                        execution_attempt_id=uuid4(),
+                        trade_decision_id=intent.trade_decision_id,
+                        decision_context_id=intent.decision_context_id,
+                        status="non_trade",
+                        stop_phase="scheduler_gate",
+                        stop_reason=dry_run_reason,
+                        phase_trace=[],
+                        started_at=_now,
+                        completed_at=_now,
+                        created_at=_now,
+                    )
+                    await repos.execution_attempts.add(attempt)
+                    logger.info(
+                        "Recorded scheduler dry-run attempt: symbol=%s trade_decision_id=%s reason=%s",
+                        symbol,
+                        intent.trade_decision_id,
+                        dry_run_reason,
+                    )
 
                 if sizing_result.applied_constraints:
                     logger.info(
@@ -960,6 +1024,7 @@ async def _run_one_cycle(
                 dry_run=dry_run,
                 ei_output=ei_output,
                 source_type=source_type,
+                dry_run_reason=dry_run_reason,
             )
 
     except asyncio.TimeoutError:
@@ -1391,6 +1456,7 @@ async def _run_loop(
     submit: bool,
     dry_run: bool,
     allow_general_submit: bool,
+    max_general_submits_this_cycle: int,
     output: str,
 ) -> int:
     """Main loop: run decision cycles until shutdown or count limit.
@@ -1468,39 +1534,117 @@ async def _run_loop(
             # while reducing total wall-clock time from ~190s to ~40s for 35 symbols.
             _SEMAPHORE_MAX = 5
             sem = asyncio.Semaphore(_SEMAPHORE_MAX)
-            submit_budget_consumed = False
+            submit_budget_consumed_count = 0
             # held_position REDUCE/EXIT sell은 위험 축소 목적이므로 일일 제출 상한 없음.
             # cycle 내 중복 submit 방지용 카운터만 유지 (symbol dedupe + cycle cap).
             held_position_sell_cycle_count = 0
             held_position_sell_cycle_symbols: set[str] = set()
-            _submit_lock = asyncio.Lock()
+            _general_submit_lock = asyncio.Lock()
 
             async def _process_one(item: object) -> dict[str, object]:
                 """Process a single universe item with semaphore concurrency cap."""
-                nonlocal submit_budget_consumed
+                nonlocal submit_budget_consumed_count
                 nonlocal held_position_sell_cycle_count
                 nonlocal held_position_sell_cycle_symbols
                 async with sem:
-                    # In submit mode, evaluate all symbols but allow at most one
-                    # budget-consuming broker submit per script invocation.
-                    # held_position sell은 별도 budget으로 관리되어 일반 submit과 분리된다.
-                    async with _submit_lock:
-                        item_source_type = getattr(item, "source_type", "core")
+                    item_source_type = getattr(item, "source_type", "core")
+
+                    async def _execute_symbol_cycle(
+                        *,
+                        symbol_submit: bool,
+                        symbol_dry_run: bool,
+                        symbol_dry_run_reason: str | None,
+                    ) -> dict[str, object]:
+                        try:
+                            return await _run_one_cycle(
+                                cycle=cycle_count,
+                                submit=symbol_submit,
+                                dry_run=symbol_dry_run,
+                                output=output,
+                                symbol=item.symbol,
+                                market=item.market,
+                                source_type=item.source_type,
+                                dry_run_reason=symbol_dry_run_reason,
+                                runtime=runtime,
+                                cycle_precheck=cycle_precheck,
+                            )
+                        except Exception as exc:
+                            logger.exception(
+                                "Cycle %d symbol=%s:%s: unexpected error in parallel processing: %s",
+                                cycle_count, item.symbol, item.market, exc,
+                            )
+                            return {
+                                "status": "ERROR",
+                                "symbol": item.symbol,
+                                "market": item.market,
+                                "error": str(exc),
+                                "duration_seconds": 0.0,
+                            }
+
+                    if submit and not dry_run and item_source_type != "held_position":
+                        # General/core BUY lane uses at most one actual submit
+                        # attempt per cycle.  Keep the lane locked until the
+                        # candidate either truly submits or fails pre-submit so
+                        # a later symbol can inherit the slot in the same cycle.
+                        async with _general_submit_lock:
+                            symbol_dry_run_reason = _infer_symbol_dry_run_reason(
+                                submit=submit,
+                                dry_run=dry_run,
+                                allow_general_submit=allow_general_submit,
+                                source_type=item_source_type,
+                                submit_budget_consumed_count=submit_budget_consumed_count,
+                                max_general_submits_this_cycle=max_general_submits_this_cycle,
+                                held_position_sell_cycle_count=held_position_sell_cycle_count,
+                                held_position_sell_cycle_symbols=held_position_sell_cycle_symbols,
+                                symbol=item.symbol,
+                            )
+                            symbol_submit, symbol_dry_run = _compute_symbol_submit_mode(
+                                submit=submit,
+                                dry_run=dry_run,
+                                allow_general_submit=allow_general_submit,
+                                source_type=item_source_type,
+                                submit_budget_consumed_count=submit_budget_consumed_count,
+                                max_general_submits_this_cycle=max_general_submits_this_cycle,
+                                held_position_sell_cycle_count=held_position_sell_cycle_count,
+                                held_position_sell_cycle_symbols=held_position_sell_cycle_symbols,
+                                symbol=item.symbol,
+                            )
+                            result = await _execute_symbol_cycle(
+                                symbol_submit=symbol_submit,
+                                symbol_dry_run=symbol_dry_run,
+                                symbol_dry_run_reason=symbol_dry_run_reason,
+                            )
+                            status = result.get("status", "UNKNOWN")
+                            if status in ("SUBMITTED", "RECONCILE_REQUIRED"):
+                                submit_budget_consumed_count += 1
+                    else:
+                        symbol_dry_run_reason = _infer_symbol_dry_run_reason(
+                            submit=submit,
+                            dry_run=dry_run,
+                            allow_general_submit=allow_general_submit,
+                            source_type=item_source_type,
+                            submit_budget_consumed_count=submit_budget_consumed_count,
+                            max_general_submits_this_cycle=max_general_submits_this_cycle,
+                            held_position_sell_cycle_count=held_position_sell_cycle_count,
+                            held_position_sell_cycle_symbols=held_position_sell_cycle_symbols,
+                            symbol=item.symbol,
+                        )
                         symbol_submit, symbol_dry_run = _compute_symbol_submit_mode(
                             submit=submit,
                             dry_run=dry_run,
                             allow_general_submit=allow_general_submit,
                             source_type=item_source_type,
-                            submit_budget_consumed=submit_budget_consumed,
+                            submit_budget_consumed_count=submit_budget_consumed_count,
+                            max_general_submits_this_cycle=max_general_submits_this_cycle,
                             held_position_sell_cycle_count=held_position_sell_cycle_count,
                             held_position_sell_cycle_symbols=held_position_sell_cycle_symbols,
                             symbol=item.symbol,
                         )
-                        if symbol_submit and item_source_type != "held_position":
-                            # Reserve before running the symbol.  Without this,
-                            # concurrent tasks can all observe False and submit
-                            # multiple BUY orders in the same cycle.
-                            submit_budget_consumed = True
+                        result = await _execute_symbol_cycle(
+                            symbol_submit=symbol_submit,
+                            symbol_dry_run=symbol_dry_run,
+                            symbol_dry_run_reason=symbol_dry_run_reason,
+                        )
 
                     # HP sell block 이유 로깅 (explainability)
                     is_held_position_item = item_source_type == "held_position"
@@ -1516,34 +1660,9 @@ async def _run_loop(
                                 item.symbol, ",".join(reasons),
                             )
 
-                    try:
-                        result = await _run_one_cycle(
-                            cycle=cycle_count,
-                            submit=symbol_submit,
-                            dry_run=symbol_dry_run,
-                            output=output,
-                            symbol=item.symbol,
-                            market=item.market,
-                            source_type=item.source_type,
-                            runtime=runtime,              # ★ 공유 runtime 전달
-                            cycle_precheck=cycle_precheck,  # ★ cycle precheck 전달
-                        )
-                    except Exception as exc:
-                        logger.exception(
-                            "Cycle %d symbol=%s:%s: unexpected error in parallel processing: %s",
-                            cycle_count, item.symbol, item.market, exc,
-                        )
-                        result = {
-                            "status": "ERROR",
-                            "symbol": item.symbol,
-                            "market": item.market,
-                            "error": str(exc),
-                            "duration_seconds": 0.0,
-                        }
-
                     status = result.get("status", "UNKNOWN")
                     if status in ("SUBMITTED", "RECONCILE_REQUIRED"):
-                        async with _submit_lock:
+                        async with _general_submit_lock:
                             # 3중 조건: source_type == held_position AND decision_type in (reduce, exit) AND side == sell
                             result_decision_type = str(result.get("decision_type", "")).lower()
                             result_side = str(result.get("side", "")).lower()
@@ -1557,8 +1676,6 @@ async def _run_loop(
                                 # cycle 내 중복 방지용 카운터만 증가.
                                 held_position_sell_cycle_count += 1
                                 held_position_sell_cycle_symbols.add(item.symbol)
-                            else:
-                                submit_budget_consumed = True
 
                     # Output per-symbol result
                     if output == "json":
@@ -1694,6 +1811,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=True,
         help="Allow general/core submit lane. Disable to keep only held_position sell submits.",
     )
+    parser.add_argument(
+        "--max-general-submits-this-cycle",
+        type=int,
+        default=1,
+        help="Maximum number of general/core or market_overlay submits to allow in this cycle.",
+    )
     return parser.parse_args(argv)
 
 
@@ -1763,6 +1886,7 @@ def main(argv: list[str] | None = None) -> int:
                 submit=submit,
                 dry_run=dry_run,
                 allow_general_submit=args.allow_general_submit,
+                max_general_submits_this_cycle=max(0, args.max_general_submits_this_cycle),
                 output=args.output,
             )
         )

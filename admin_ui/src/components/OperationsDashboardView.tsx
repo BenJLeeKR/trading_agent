@@ -8,7 +8,7 @@ import { LoadingSpinner } from "./common/LoadingSpinner";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { ArrowRight, RefreshCw } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
-import { formatKrw, formatKstDateTime, formatKstElapsed } from "../lib/utils";
+import { formatKrw, formatKstDateTime, formatKstElapsed, getKstTodayString } from "../lib/utils";
 import {
   getHealth,
   getReadyz,
@@ -20,12 +20,15 @@ import {
   getReconciliationSummary,
   getSnapshotSyncRuns,
   getLatestMarketSession,
+  getLatestOperationsDay,
   getRecentSessionEvents,
   getRecentFailures,
   getFailureSummary,
   getOrderDailySummary,
+  getBuyBlockSummary,
 } from "../api/client";
 import type {
+  BuyBlockSummary,
   HealthResponse,
   OrderSummary,
   PositionSnapshotView,
@@ -39,6 +42,8 @@ import type {
   SessionEventsResponse,
   SessionEventSummary,
   MarketSessionSummary,
+  OperationsDayRunSummary,
+  OperationsDayStatusResponse,
   RecentFailureItem,
   FailureSummary,
   OrderDailySummary,
@@ -102,6 +107,7 @@ interface DashboardData {
   cashMap: Map<string, CashBalanceSnapshotView | null>;
   snapshotSyncRuns: SnapshotSyncRunSummary[];
   sessionData: SchedulerStatusResponse | null;
+  operationsDayData: OperationsDayStatusResponse | null;
   sessionEvents: SessionEventSummary[];
   todayOrderSummary: OrderDailySummary | null;
 }
@@ -126,12 +132,85 @@ export interface SchedulerCardState {
  * Distinguishes: No Data (neutral) vs Stale (warning) vs Real Error (error).
  */
 export function getSchedulerStatus(
+  operationsDay: OperationsDayRunSummary | null,
+  operationsDayHealthy: boolean,
+  operationsDayStaleSeconds: number | null,
+  operationsDayFetchError: string | null,
   session: MarketSessionSummary | null,
   sessionHealthy: boolean,
   staleSeconds: number | null,
   hasFetchError: boolean,
   fetchErrorMessage: string | null,
 ): SchedulerCardState {
+  // 0. Prefer operations-day scheduler state when available
+  if (operationsDay) {
+    if (operationsDayFetchError) {
+      return {
+        badgeLabel: "오류",
+        variant: "error",
+        value: "오류",
+        subtitle: operationsDayFetchError,
+      };
+    }
+
+    const schedulerStatus = operationsDay.scheduler_status;
+    const schedulerSubtitle =
+      `제출 ${operationsDay.submit_count} / HP매도 ${operationsDay.held_position_sell_submit_count} / cycles ${operationsDay.cycles}`;
+
+    if (operationsDay.is_trading_day === false) {
+      return {
+        badgeLabel: "휴장",
+        variant: "neutral",
+        value: "휴장",
+        subtitle: schedulerSubtitle,
+      };
+    }
+
+    const STALE_THRESHOLD_SECONDS = 600;
+    if (
+      !operationsDayHealthy ||
+      (operationsDayStaleSeconds != null && operationsDayStaleSeconds > STALE_THRESHOLD_SECONDS)
+    ) {
+      return {
+        badgeLabel: "지연",
+        variant: "warning",
+        value: "지연",
+        subtitle: `Last heartbeat: ${formatKstElapsed(operationsDay.last_heartbeat_at)} | ${schedulerSubtitle}`,
+      };
+    }
+
+    if (schedulerStatus === "intraday") {
+      return {
+        badgeLabel: "운영중",
+        variant: "healthy",
+        value: "운영중",
+        subtitle: `${operationsDay.market_phase ?? "-"} | ${schedulerSubtitle}`,
+      };
+    }
+    if (schedulerStatus === "after_hours") {
+      return {
+        badgeLabel: "장후",
+        variant: "neutral",
+        value: "장후",
+        subtitle: schedulerSubtitle,
+      };
+    }
+    if (schedulerStatus === "end_of_day_complete") {
+      return {
+        badgeLabel: "종료",
+        variant: "neutral",
+        value: "종료",
+        subtitle: schedulerSubtitle,
+      };
+    }
+    return {
+      badgeLabel: "준비",
+      variant: "neutral",
+      value: "준비",
+      subtitle: schedulerSubtitle,
+    };
+  }
+
   // 1. Fetch error → real error (red)
   if (hasFetchError) {
     return {
@@ -246,6 +325,8 @@ export default function OperationsDashboardView() {
   const [error, setError] = useState<string | null>(null);
   const [apiErrors, setApiErrors] = useState<ApiErrorEntry[]>([]);
   const [data, setData] = useState<DashboardData | null>(null);
+  const [buyBlockSummary, setBuyBlockSummary] = useState<BuyBlockSummary | null>(null);
+  const [buyBlockSummaryLoading, setBuyBlockSummaryLoading] = useState(false);
   const [failureSummary, setFailureSummary] = useState<FailureSummary | null>(null);
   const [failureSummaryLoading, setFailureSummaryLoading] = useState(false);
   const [recentFailures, setRecentFailures] = useState<RecentFailureItem[]>([]);
@@ -280,6 +361,10 @@ export default function OperationsDashboardView() {
       addError("GET /orders/daily-summary", e);
       return null;
     });
+    const buyBlockSummaryPromise = getBuyBlockSummary().catch((e) => {
+      addError("GET /orders/buy-block-summary", e);
+      return null;
+    });
     const clientsPromise = getClients().catch((e) => {
       addError("GET /clients", e);
       return [] as ClientDetail[];
@@ -290,19 +375,25 @@ export default function OperationsDashboardView() {
       addError("GET /market-sessions/latest", e);
       return null;
     });
+    const operationsDayPromise = getLatestOperationsDay().catch((e) => {
+      addError("GET /market-sessions/operations-day/latest", e);
+      return null;
+    });
     const eventsPromise = getRecentSessionEvents(5).catch((e) => {
       addError("GET /market-sessions/events/recent", e);
       return null;
     });
 
-    const [health, readyz, reconSummary, orders, todayOrderSummary, clients, sessionData, eventsResp] = await Promise.all([
+    const [health, readyz, reconSummary, orders, todayOrderSummary, buyBlockSummaryData, clients, sessionData, operationsDayData, eventsResp] = await Promise.all([
       healthPromise,
       readyzPromise,
       reconSummaryPromise,
       ordersPromise,
       todayOrderSummaryPromise,
+      buyBlockSummaryPromise,
       clientsPromise,
       sessionPromise,
+      operationsDayPromise,
       eventsPromise,
     ]);
     const sessionEvents = eventsResp?.data ?? [];
@@ -367,7 +458,7 @@ export default function OperationsDashboardView() {
     // ── Recent submission failures ──
     setFailuresLoading(true);
     try {
-      const failuresData = await getRecentFailures(5);
+      const failuresData = await getRecentFailures(5, getKstTodayString());
       setRecentFailures(failuresData);
       setFailuresError(null);
     } catch (e) {
@@ -385,6 +476,9 @@ export default function OperationsDashboardView() {
       setFailureSummary(null);
     }
     setFailureSummaryLoading(false);
+    setBuyBlockSummaryLoading(true);
+    setBuyBlockSummary(buyBlockSummaryData);
+    setBuyBlockSummaryLoading(false);
 
     setApiErrors(errors);
     setData({
@@ -399,6 +493,7 @@ export default function OperationsDashboardView() {
       cashMap,
       snapshotSyncRuns,
       sessionData: sessionData as SchedulerStatusResponse | null,
+      operationsDayData: operationsDayData as OperationsDayStatusResponse | null,
       sessionEvents,
       todayOrderSummary: todayOrderSummary as OrderDailySummary | null,
     });
@@ -528,10 +623,20 @@ export default function OperationsDashboardView() {
 
     // ── Session status derived ──
     const session = data.sessionData?.data;
+    const operationsDay = data.operationsDayData?.data;
+    const operationsDayHealthy = data.operationsDayData?.healthy ?? false;
+    const operationsDayStaleSeconds = data.operationsDayData?.stale_seconds;
     const sessionHealthy = data.sessionData?.healthy ?? false;
     const sessionStaleSeconds = data.sessionData?.stale_seconds;
     const sessionFetchError = apiErrors.find(e => e.apiName === "GET /market-sessions/latest");
+    const operationsDayFetchError = apiErrors.find(
+      (e) => e.apiName === "GET /market-sessions/operations-day/latest"
+    );
     const schedulerState = getSchedulerStatus(
+      operationsDay ?? null,
+      operationsDayHealthy,
+      operationsDayStaleSeconds ?? null,
+      operationsDayFetchError?.message ?? null,
       session ?? null,
       sessionHealthy,
       sessionStaleSeconds ?? null,
@@ -566,6 +671,7 @@ export default function OperationsDashboardView() {
       recentAlertItems,
       session,
       sessionData: data.sessionData,
+      operationsDayData: data.operationsDayData,
       sessionHealthy,
       sessionStaleSeconds,
       phaseVariant,
@@ -853,6 +959,24 @@ export default function OperationsDashboardView() {
           value={`${orderCount}건`}
           status="neutral"
           subtitle={`출처: GET /orders/daily-summary (체결 ${d.filledCount} / 제출됨 ${d.submittedCount} / 제출대기 ${d.pendingSubmitCount})`}
+        />
+        <StatusCard
+          title="오늘 BUY 차단"
+          value={
+            buyBlockSummary
+              ? `${buyBlockSummary.blocked_count}건`
+              : buyBlockSummaryLoading
+                ? "로딩 중..."
+                : "N/A"
+          }
+          status={
+            buyBlockSummary
+              ? buyBlockSummary.blocked_count > 0
+                ? "warning"
+                : "neutral"
+              : "neutral"
+          }
+          subtitle=""
         />
         <StatusCard
           title="현재 포지션"

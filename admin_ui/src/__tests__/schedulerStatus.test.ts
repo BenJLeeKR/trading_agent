@@ -38,12 +38,32 @@ function makeSession(overrides: Partial<MarketSessionSummary> = {}): MarketSessi
   };
 }
 
+function callSchedulerStatus(
+  session: MarketSessionSummary | null,
+  sessionHealthy: boolean,
+  staleSeconds: number | null,
+  hasFetchError: boolean,
+  fetchErrorMessage: string | null,
+): SchedulerCardState {
+  return getSchedulerStatus(
+    null,
+    false,
+    null,
+    null,
+    session,
+    sessionHealthy,
+    staleSeconds,
+    hasFetchError,
+    fetchErrorMessage,
+  );
+}
+
 /* ───────────────────────────────────────────
  * Scenario 1: No Data (session == null)
  * ─────────────────────────────────────────── */
 describe("getSchedulerStatus — No Data", () => {
   it("returns neutral/mic수집 when session is null and no fetch error", () => {
-    const result = getSchedulerStatus(null, false, null, false, null);
+    const result = callSchedulerStatus(null, false, null, false, null);
 
     expect(result.badgeLabel).toBe("미수집");
     expect(result.variant).toBe("neutral");
@@ -52,7 +72,7 @@ describe("getSchedulerStatus — No Data", () => {
   });
 
   it("does NOT return error variant when session is null", () => {
-    const result = getSchedulerStatus(null, false, null, false, null);
+    const result = callSchedulerStatus(null, false, null, false, null);
 
     // Critical: No Data should NOT look like an error
     expect(result.variant).not.toBe("error");
@@ -71,7 +91,7 @@ describe("getSchedulerStatus — Healthy", () => {
       checked_at: "2026-05-16T06:00:00Z",
     });
 
-    const result = getSchedulerStatus(session, true, 5, false, null);
+    const result = callSchedulerStatus(session, true, 5, false, null);
 
     expect(result.badgeLabel).toBe("정상");
     expect(result.variant).toBe("healthy");
@@ -86,7 +106,7 @@ describe("getSchedulerStatus — Healthy", () => {
       market_phase: "AFTER_HOURS",
     });
 
-    const result = getSchedulerStatus(session, true, 30, false, null);
+    const result = callSchedulerStatus(session, true, 30, false, null);
 
     expect(result.badgeLabel).toBe("정상");
     expect(result.variant).toBe("healthy");
@@ -100,7 +120,7 @@ describe("getSchedulerStatus — Stale", () => {
   it("returns warning/지연 when healthy is false", () => {
     const session = makeSession({ checked_at: "2026-05-16T05:00:00Z" });
 
-    const result = getSchedulerStatus(session, false, 3600, false, null);
+    const result = callSchedulerStatus(session, false, 3600, false, null);
 
     expect(result.badgeLabel).toBe("지연");
     expect(result.variant).toBe("warning");
@@ -112,7 +132,7 @@ describe("getSchedulerStatus — Stale", () => {
   it("returns warning/지연 when stale_seconds exceeds 10 min threshold", () => {
     const session = makeSession({ checked_at: "2026-05-16T04:00:00Z" });
 
-    const result = getSchedulerStatus(session, true, 7200, false, null);
+    const result = callSchedulerStatus(session, true, 7200, false, null);
 
     expect(result.badgeLabel).toBe("지연");
     expect(result.variant).toBe("warning");
@@ -121,7 +141,7 @@ describe("getSchedulerStatus — Stale", () => {
   it("does NOT return error for stale data", () => {
     const session = makeSession();
 
-    const result = getSchedulerStatus(session, false, 9999, false, null);
+    const result = callSchedulerStatus(session, false, 9999, false, null);
 
     // Stale is warning, NOT error
     expect(result.variant).not.toBe("error");
@@ -132,7 +152,7 @@ describe("getSchedulerStatus — Stale", () => {
     const session = makeSession({ checked_at: "2026-05-16T06:00:00Z" });
 
     // 5 seconds stale — well within threshold
-    const result = getSchedulerStatus(session, true, 5, false, null);
+    const result = callSchedulerStatus(session, true, 5, false, null);
 
     expect(result.badgeLabel).toBe("정상");
     expect(result.variant).toBe("healthy");
@@ -144,7 +164,7 @@ describe("getSchedulerStatus — Stale", () => {
  * ─────────────────────────────────────────── */
 describe("getSchedulerStatus — Error (fetch failure)", () => {
   it("returns error/오류 when fetch failed", () => {
-    const result = getSchedulerStatus(null, false, null, true, "Network error: 500");
+    const result = callSchedulerStatus(null, false, null, true, "Network error: 500");
 
     expect(result.badgeLabel).toBe("오류");
     expect(result.variant).toBe("error");
@@ -156,7 +176,7 @@ describe("getSchedulerStatus — Error (fetch failure)", () => {
     const session = makeSession();
 
     // Even with session data, fetch error takes precedence
-    const result = getSchedulerStatus(session, true, 0, true, "Internal Server Error");
+    const result = callSchedulerStatus(session, true, 0, true, "Internal Server Error");
 
     expect(result.badgeLabel).toBe("오류");
     expect(result.variant).toBe("error");
@@ -164,7 +184,7 @@ describe("getSchedulerStatus — Error (fetch failure)", () => {
   });
 
   it("provides fallback message when error message is null", () => {
-    const result = getSchedulerStatus(null, false, null, true, null);
+    const result = callSchedulerStatus(null, false, null, true, null);
 
     expect(result.badgeLabel).toBe("오류");
     expect(result.variant).toBe("error");
@@ -182,7 +202,7 @@ describe("getSchedulerStatus — Fallback", () => {
       market_phase: "PRE_MARKET",
     });
 
-    const result = getSchedulerStatus(session, true, 0, false, null);
+    const result = callSchedulerStatus(session, true, 0, false, null);
 
     expect(result.badgeLabel).toBe("대체");
     expect(result.variant).toBe("warning");
@@ -197,7 +217,7 @@ describe("getSchedulerStatus — Fallback", () => {
       market_phase: "OPEN",
     });
 
-    const result = getSchedulerStatus(session, true, 0, false, null);
+    const result = callSchedulerStatus(session, true, 0, false, null);
 
     expect(result.badgeLabel).toBe("대체");
     expect(result.variant).toBe("warning");
@@ -207,7 +227,7 @@ describe("getSchedulerStatus — Fallback", () => {
   it("does NOT return error for fallback source", () => {
     const session = makeSession({ source: "fallback" });
 
-    const result = getSchedulerStatus(session, true, 0, false, null);
+    const result = callSchedulerStatus(session, true, 0, false, null);
 
     // Fallback is warning, NOT error
     expect(result.variant).not.toBe("error");
@@ -224,7 +244,7 @@ describe("getSchedulerStatus — Mixed scenarios", () => {
     // Even with a healthy session and all good flags, fetch error wins
     const session = makeSession({ source: "kis_market_state_ws", market_phase: "OPEN" });
 
-    const result = getSchedulerStatus(session, true, 0, true, "Timeout");
+    const result = callSchedulerStatus(session, true, 0, true, "Timeout");
 
     expect(result.badgeLabel).toBe("오류");
     expect(result.variant).toBe("error");
@@ -232,7 +252,7 @@ describe("getSchedulerStatus — Mixed scenarios", () => {
 
   it("prioritizes no data over stale (session null beats stale flags)", () => {
     // No session but stale flags — no data wins (neutral, not warning)
-    const result = getSchedulerStatus(null, false, 99999, false, null);
+    const result = callSchedulerStatus(null, false, 99999, false, null);
 
     expect(result.badgeLabel).toBe("미수집");
     expect(result.variant).toBe("neutral");
@@ -251,9 +271,54 @@ describe("getSchedulerStatus — Mixed scenarios", () => {
 
       // Should never throw regardless of input
       expect(() =>
-        getSchedulerStatus(session, true, 0, false, null)
+        callSchedulerStatus(session, true, 0, false, null)
       ).not.toThrow();
     }
+  });
+});
+
+describe("getSchedulerStatus — Operations Day Preferred", () => {
+  it("prefers operations-day intraday state over session summary", () => {
+    const session = makeSession({
+      source: "fallback",
+      market_phase: "PRE_MARKET",
+    });
+
+    const result = getSchedulerStatus(
+      {
+        operations_day_run_id: 1,
+        run_date: "2026-05-16",
+        scheduler_status: "intraday",
+        is_trading_day: true,
+        session_source: "kis_live",
+        market_phase: "OPEN",
+        pre_market_done: true,
+        end_of_day_done: false,
+        after_hours_mode: false,
+        recovery_batch_done: false,
+        submit_count: 2,
+        held_position_sell_submit_count: 1,
+        cycles: 14,
+        last_phase_change_at: "2026-05-16T09:00:00Z",
+        last_heartbeat_at: "2026-05-16T09:05:00Z",
+        created_at: "2026-05-16T08:00:00Z",
+        updated_at: "2026-05-16T09:05:00Z",
+        summary_json: {},
+      },
+      true,
+      4,
+      null,
+      session,
+      true,
+      0,
+      false,
+      null,
+    );
+
+    expect(result.badgeLabel).toBe("운영중");
+    expect(result.variant).toBe("healthy");
+    expect(result.subtitle).toContain("OPEN");
+    expect(result.subtitle).toContain("제출 2");
   });
 });
 

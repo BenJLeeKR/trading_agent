@@ -15,6 +15,7 @@ CLI 진입점(main)과 graceful shutdown(asyncio.Event)은 smoke/integration 테
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -65,11 +66,13 @@ from scripts.run_decision_loop import (
     _build_aggregate_summary,
     _collect_persisted_seeded_events,
     _compute_symbol_submit_mode,
+    _infer_symbol_dry_run_reason,
     _is_t3_fresh_for_symbol,
     _parse_args,
     _parse_universe_symbols,
     _read_trading_universe,
     _resolve_symbol_price,
+    _run_loop,
     _run_one_cycle,
     _run_precheck,
     _run_t3_live_pipeline,
@@ -966,7 +969,8 @@ class TestHeldPositionSellBudget:
             dry_run=False,
             allow_general_submit=True,
             source_type="held_position",
-            submit_budget_consumed=True,
+            submit_budget_consumed_count=1,
+            max_general_submits_this_cycle=1,
             held_position_sell_cycle_count=0,
             held_position_sell_cycle_symbols=set(),
             symbol="001740",
@@ -981,7 +985,8 @@ class TestHeldPositionSellBudget:
             dry_run=False,
             allow_general_submit=True,
             source_type="held_position",
-            submit_budget_consumed=False,
+            submit_budget_consumed_count=0,
+            max_general_submits_this_cycle=1,
             held_position_sell_cycle_count=HELD_POSITION_SELL_MAX_PER_CYCLE,
             held_position_sell_cycle_symbols={"AAPL", "GOOGL"},
             symbol="MSFT",
@@ -996,7 +1001,8 @@ class TestHeldPositionSellBudget:
             dry_run=False,
             allow_general_submit=True,
             source_type="held_position",
-            submit_budget_consumed=False,
+            submit_budget_consumed_count=0,
+            max_general_submits_this_cycle=1,
             held_position_sell_cycle_count=1,
             held_position_sell_cycle_symbols={"001740"},
             symbol="001740",
@@ -1011,7 +1017,8 @@ class TestHeldPositionSellBudget:
             dry_run=False,
             allow_general_submit=True,
             source_type="core",
-            submit_budget_consumed=True,
+            submit_budget_consumed_count=1,
+            max_general_submits_this_cycle=1,
             held_position_sell_cycle_count=0,
             held_position_sell_cycle_symbols=set(),
             symbol="005930",
@@ -1026,13 +1033,236 @@ class TestHeldPositionSellBudget:
             dry_run=False,
             allow_general_submit=False,
             source_type="core",
-            submit_budget_consumed=False,
+            submit_budget_consumed_count=0,
+            max_general_submits_this_cycle=1,
             held_position_sell_cycle_count=0,
             held_position_sell_cycle_symbols=set(),
             symbol="003550",
         )
         assert symbol_submit is False
         assert symbol_dry_run is True
+
+    def test_infer_core_dry_run_reason_when_general_submit_disabled(self) -> None:
+        reason = _infer_symbol_dry_run_reason(
+            submit=True,
+            dry_run=False,
+            allow_general_submit=False,
+            source_type="core",
+            submit_budget_consumed_count=0,
+            max_general_submits_this_cycle=1,
+            held_position_sell_cycle_count=0,
+            held_position_sell_cycle_symbols=set(),
+            symbol="003550",
+        )
+        assert reason == "general_submit_disabled_core"
+
+    def test_infer_market_overlay_dry_run_reason_when_slot_consumed(self) -> None:
+        reason = _infer_symbol_dry_run_reason(
+            submit=True,
+            dry_run=False,
+            allow_general_submit=True,
+            source_type="market_overlay",
+            submit_budget_consumed_count=1,
+            max_general_submits_this_cycle=1,
+            held_position_sell_cycle_count=0,
+            held_position_sell_cycle_symbols=set(),
+            symbol="012330",
+        )
+        assert reason == "submit_budget_consumed_market_overlay"
+
+    def test_core_symbol_allows_submit_while_cycle_budget_remains(self) -> None:
+        symbol_submit, symbol_dry_run = _compute_symbol_submit_mode(
+            submit=True,
+            dry_run=False,
+            allow_general_submit=True,
+            source_type="core",
+            submit_budget_consumed_count=1,
+            max_general_submits_this_cycle=3,
+            held_position_sell_cycle_count=0,
+            held_position_sell_cycle_symbols=set(),
+            symbol="005930",
+        )
+        assert symbol_submit is True
+        assert symbol_dry_run is False
+
+
+class TestGeneralSubmitLane:
+    """일반 BUY submit lane 직렬화/승계 검증."""
+
+    @pytest.mark.asyncio
+    async def test_run_loop_allows_next_general_submit_after_pre_submit_failure(self) -> None:
+        """첫 일반 후보가 pre-submit 실패하면 같은 cycle 다음 BUY가 submit을 이어받아야 함."""
+        import scripts.run_decision_loop as module
+
+        universe = (
+            UniverseSymbol(symbol="000030", market="KRX", source_type="core"),
+            UniverseSymbol(symbol="000150", market="KRX", source_type="core"),
+            UniverseSymbol(symbol="003670", market="KRX", source_type="core"),
+        )
+        calls: list[dict[str, object]] = []
+
+        @asynccontextmanager
+        async def _mock_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": MagicMock()}
+
+        class _DummyTx:
+            async def commit(self) -> None:
+                return None
+
+        @asynccontextmanager
+        async def _mock_tx() -> AsyncIterator[_DummyTx]:
+            yield _DummyTx()
+
+        async def _mock_run_one_cycle(**kwargs: object) -> dict[str, object]:
+            calls.append(
+                {
+                    "symbol": kwargs["symbol"],
+                    "submit": kwargs["submit"],
+                    "dry_run": kwargs["dry_run"],
+                    "dry_run_reason": kwargs.get("dry_run_reason"),
+                }
+            )
+            if kwargs["symbol"] == "000030":
+                return {
+                    "status": "SIZING_REJECTED",
+                    "symbol": "000030",
+                    "market": "KRX",
+                    "duration_seconds": 0.01,
+                }
+            if kwargs["submit"]:
+                return {
+                    "status": "SUBMITTED",
+                    "symbol": str(kwargs["symbol"]),
+                    "market": "KRX",
+                    "duration_seconds": 0.01,
+                }
+            return {
+                "status": "DRY_RUN",
+                "symbol": str(kwargs["symbol"]),
+                "market": "KRX",
+                "duration_seconds": 0.01,
+            }
+
+        original_shutdown_event = module._shutdown_event
+        module._shutdown_event = asyncio.Event()
+        try:
+            with (
+                patch("scripts.run_decision_loop._install_signal_handlers", return_value=None),
+                patch("scripts.run_decision_loop._read_trading_universe", AsyncMock(return_value=universe)),
+                patch("scripts.run_decision_loop.postgres_runtime", new=_mock_runtime),
+                patch("scripts.run_decision_loop._seed_if_empty", AsyncMock(return_value=False)),
+                patch("scripts.run_decision_loop._run_precheck", AsyncMock(return_value=None)),
+                patch("scripts.run_decision_loop._run_one_cycle", side_effect=_mock_run_one_cycle),
+                patch("agent_trading.db.transaction.transaction", new=_mock_tx),
+                patch(
+                    "agent_trading.repositories.postgres.bootstrap.build_postgres_repositories",
+                    return_value=MagicMock(),
+                ),
+            ):
+                exit_code = await _run_loop(
+                    interval=0,
+                    max_cycles=1,
+                    submit=True,
+                    dry_run=False,
+                    allow_general_submit=True,
+                    max_general_submits_this_cycle=1,
+                    output="text",
+                )
+        finally:
+            module._shutdown_event = original_shutdown_event
+
+        assert exit_code == 1
+        submit_symbols = [str(call["symbol"]) for call in calls if call["submit"] is True]
+        dry_run_calls = [call for call in calls if call["dry_run"] is True]
+
+        assert "000030" in submit_symbols
+        assert len(submit_symbols) == 2
+        assert len(dry_run_calls) == 1
+        assert dry_run_calls[0]["dry_run_reason"] == "submit_budget_consumed_core"
+
+    @pytest.mark.asyncio
+    async def test_run_loop_allows_multiple_general_submits_up_to_cycle_budget(self) -> None:
+        import scripts.run_decision_loop as module
+
+        universe = (
+            UniverseSymbol(symbol="000030", market="KRX", source_type="core"),
+            UniverseSymbol(symbol="000150", market="KRX", source_type="core"),
+            UniverseSymbol(symbol="003670", market="KRX", source_type="core"),
+            UniverseSymbol(symbol="005930", market="KRX", source_type="core"),
+        )
+        calls: list[dict[str, object]] = []
+
+        @asynccontextmanager
+        async def _mock_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": MagicMock()}
+
+        class _DummyTx:
+            async def commit(self) -> None:
+                return None
+
+        @asynccontextmanager
+        async def _mock_tx() -> AsyncIterator[_DummyTx]:
+            yield _DummyTx()
+
+        async def _mock_run_one_cycle(**kwargs: object) -> dict[str, object]:
+            calls.append(
+                {
+                    "symbol": kwargs["symbol"],
+                    "submit": kwargs["submit"],
+                    "dry_run": kwargs["dry_run"],
+                    "dry_run_reason": kwargs.get("dry_run_reason"),
+                }
+            )
+            if kwargs["submit"]:
+                return {
+                    "status": "SUBMITTED",
+                    "symbol": str(kwargs["symbol"]),
+                    "market": "KRX",
+                    "duration_seconds": 0.01,
+                }
+            return {
+                "status": "DRY_RUN",
+                "symbol": str(kwargs["symbol"]),
+                "market": "KRX",
+                "duration_seconds": 0.01,
+            }
+
+        original_shutdown_event = module._shutdown_event
+        module._shutdown_event = asyncio.Event()
+        try:
+            with (
+                patch("scripts.run_decision_loop._install_signal_handlers", return_value=None),
+                patch("scripts.run_decision_loop._read_trading_universe", AsyncMock(return_value=universe)),
+                patch("scripts.run_decision_loop.postgres_runtime", new=_mock_runtime),
+                patch("scripts.run_decision_loop._seed_if_empty", AsyncMock(return_value=False)),
+                patch("scripts.run_decision_loop._run_precheck", AsyncMock(return_value=None)),
+                patch("scripts.run_decision_loop._run_one_cycle", side_effect=_mock_run_one_cycle),
+                patch("agent_trading.db.transaction.transaction", new=_mock_tx),
+                patch(
+                    "agent_trading.repositories.postgres.bootstrap.build_postgres_repositories",
+                    return_value=MagicMock(),
+                ),
+            ):
+                exit_code = await _run_loop(
+                    interval=0,
+                    max_cycles=1,
+                    submit=True,
+                    dry_run=False,
+                    allow_general_submit=True,
+                    max_general_submits_this_cycle=3,
+                    output="text",
+                )
+        finally:
+            module._shutdown_event = original_shutdown_event
+
+        assert exit_code == 0
+        submit_symbols = [str(call["symbol"]) for call in calls if call["submit"] is True]
+        dry_run_calls = [call for call in calls if call["dry_run"] is True]
+
+        assert submit_symbols == ["000030", "000150", "003670"]
+        assert len(dry_run_calls) == 1
+        assert dry_run_calls[0]["symbol"] == "005930"
+        assert dry_run_calls[0]["dry_run_reason"] == "submit_budget_consumed_core"
 
 
 # ---------------------------------------------------------------------------
@@ -1051,6 +1281,7 @@ class TestParseArgs:
         assert args.output == "text"
         assert args.interval == 0
         assert args.dry_run is False
+        assert args.max_general_submits_this_cycle == 1
 
     def test_count_one(self) -> None:
         """--count 1."""

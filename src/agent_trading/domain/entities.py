@@ -314,6 +314,54 @@ class FillEventEntity:
 
 
 @dataclass(slots=True, frozen=True)
+class FillSyncRunEntity:
+    fill_sync_run_id: UUID
+    trigger_type: str
+    scope: str
+    dry_run: bool
+    total_accounts: int
+    succeeded_accounts: int
+    partial_accounts: int
+    failed_accounts: int
+    skipped_accounts: int
+    fills_synced_total: int
+    fills_skipped_total: int
+    error_count: int
+    status: str
+    started_at: datetime
+    env_filter: str | None = None
+    summary_json: dict[str, object] | None = None
+    completed_at: datetime | None = None
+    created_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class BrokerFillSnapshotEntity:
+    broker_fill_snapshot_id: UUID
+    account_id: UUID
+    broker_name: str
+    broker_native_order_id: str
+    symbol: str
+    side: str
+    order_date: date
+    filled_quantity: Decimal
+    fill_price: Decimal
+    dedupe_key: str
+    order_request_id: UUID | None = None
+    fill_sync_run_id: UUID | None = None
+    broker_fill_id: str | None = None
+    order_status_code: str | None = None
+    cancel_yn: str | None = None
+    ordered_quantity: Decimal | None = None
+    order_time: str | None = None
+    fill_time: str | None = None
+    fill_timestamp: datetime | None = None
+    raw_payload_json: dict[str, object] = field(default_factory=dict)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class ReconciliationRunEntity:
     reconciliation_run_id: UUID
     account_id: UUID
@@ -492,6 +540,7 @@ class MarketSessionEntity:
     raw_mkop_cls_code: str | None = None
     raw_antc_mkop_cls_code: str | None = None
     source: str = "unknown"
+    reason_code: str | None = None
     reason: str | None = None
     checked_at: datetime | None = None
     created_at: datetime | None = None

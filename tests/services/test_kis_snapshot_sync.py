@@ -102,6 +102,8 @@ class FakeKISRestClient:
             order_type=order_type,
             fallback_cash=fallback_cash,
         )
+        if amount is None:
+            return OrderableCashResult(amount=None, source="missing_field")
         if amount is not None and amount != fallback_cash:
             return OrderableCashResult(
                 amount=amount,
@@ -586,8 +588,9 @@ class TestSyncCashBalance:
         snap = list(cash_repo._items.values())[0]
         # available_cash는 정상 조회됨
         assert snap.available_cash == Decimal("5000000")
-        # orderable_amount는 raw_cash(available_cash)로 fallback
-        assert snap.orderable_amount == Decimal("5000000")
+        # orderable_amount는 unsafe available_cash 승격 대신 0으로 고정
+        assert snap.orderable_amount == Decimal("0")
+        assert snap.fetch_status == "stale"
         # CASH_SYNC_ZERO가 아닌 값으로 저장됨
         assert snap.available_cash > 0
 
@@ -644,7 +647,7 @@ class TestSyncCashBalance:
         cash_repo: InMemoryCashBalanceSnapshotRepository,
     ) -> None:
         """orderable_cash가 BudgetExhaustedError가 아닌 일반 예외로 실패하면
-        available_cash로 fallback (VTTC8434R ord_psbl_amt는 paper에서 unreliable)."""
+        BUY-safe zero로 fallback."""
 
         class FailingOrderableClient(FakeKISRestClient):
             async def get_orderable_cash(
@@ -675,12 +678,13 @@ class TestSyncCashBalance:
 
         assert result.cash_balance_synced is True
         snap = list(cash_repo._items.values())[0]
-        # 일반 Exception → available_cash로 fallback
-        assert snap.orderable_amount == Decimal("5000000"), (
-            f"Expected 5000000 (available_cash) from Exception fallback, "
+        # 일반 Exception → available_cash 승격 금지
+        assert snap.orderable_amount == Decimal("0"), (
+            f"Expected 0 from Exception fallback, "
             f"got {snap.orderable_amount}"
         )
         assert snap.available_cash == Decimal("5000000")
+        assert snap.fetch_status == "stale"
 
     async def test_orderable_cash_logs_budget_precheck_fallback_source(
         self,
@@ -722,7 +726,7 @@ class TestSyncCashBalance:
         )
 
         assert result.cash_balance_synced is True
-        assert "source: budget_precheck_fallback, legacy sync path" in caplog.text
+        assert "source: budget_precheck_fallback" in caplog.text
 
     async def test_fetch_positions_false_skips_positions(
         self,
@@ -843,8 +847,9 @@ class TestSyncCashBalance:
         assert len(pos_snaps) == 1
         assert pos_snaps[0].quantity == Decimal("10")  # _make_position 기본값
 
-        # orderable_cash는 budget 부족으로 fallback → available_cash 사용
-        assert snap.orderable_amount == Decimal("5000000")
+        # orderable_cash는 budget 부족으로 fallback → BUY-safe zero
+        assert snap.orderable_amount == Decimal("0")
+        assert snap.fetch_status == "stale"
 
     # ── P3: after-hours 모드 ─────────────────────────────────────────────
 
@@ -942,9 +947,10 @@ class TestSyncCashBalance:
         assert result.cash_balance_synced is True
         assert len(cash_repo._items) == 1
         snap = list(cash_repo._items.values())[0]
-        # budget pre-check로 인해 available_cash가 orderable_amount로 fallback
-        assert snap.orderable_amount == Decimal("5000000")
+        # budget pre-check로 인해 available_cash 승격 금지 → 0
+        assert snap.orderable_amount == Decimal("0")
         assert snap.available_cash == Decimal("5000000")
+        assert snap.fetch_status == "stale"
         assert result.positions_synced == 0
 
     async def test_orderable_cash_none_and_ord_psbl_amt_missing_fallback_to_available_cash(
@@ -956,7 +962,7 @@ class TestSyncCashBalance:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """VTTC8908R이 None 반환 + VTTC8434R ord_psbl_amt도 없을 때
-        available_cash로 최종 fallback하여 NULL 저장을 방지한다."""
+        available_cash 승격 없이 0으로 저장한다."""
         # ord_psbl_amt 필드 자체를 제거한 cash_balance 생성
         cash_balance = _make_cash_balance(
             dnca_tot_amt="5000000",
@@ -983,8 +989,9 @@ class TestSyncCashBalance:
         assert len(cash_repo._items) == 1
         snap = list(cash_repo._items.values())[0]
 
-        # available_cash로 fallback되어 NULL이 아닌 값 저장
-        assert snap.orderable_amount == Decimal("5000000")
+        # available_cash 승격 없이 0으로 저장
+        assert snap.orderable_amount == Decimal("0")
+        assert snap.fetch_status == "stale"
         assert snap.available_cash == Decimal("5000000")
 
         # 경고 로그 출력 확인

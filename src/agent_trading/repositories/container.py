@@ -8,6 +8,7 @@ from agent_trading.repositories.contracts import (
     AgentRunRepository,
     AuditLogRepository,
     BrokerAccountRepository,
+    BrokerFillSnapshotRepository,
     BrokerOrderRepository,
     CashBalanceSnapshotRepository,
     ClientRepository,
@@ -16,6 +17,7 @@ from agent_trading.repositories.contracts import (
     ExecutionAttemptRepository,
     ExternalEventRepository,
     FillEventRepository,
+    FillSyncRunRepository,
     GuardrailEvaluationRepository,
     InstrumentRepository,
     MarketSessionRepository,
@@ -48,10 +50,12 @@ class RepositoryContainer:
     orders: OrderRepository
     broker_orders: BrokerOrderRepository
     fill_events: FillEventRepository
+    broker_fill_snapshots: BrokerFillSnapshotRepository
     reconciliations: ReconciliationRepository
     audit_logs: AuditLogRepository
     broker_accounts: BrokerAccountRepository
     snapshot_sync_runs: SnapshotSyncRunRepository
+    fill_sync_runs: FillSyncRunRepository
     order_state_events: OrderStateEventRepository
     guardrail_evaluations: GuardrailEvaluationRepository
     risk_limit_snapshots: RiskLimitSnapshotRepository

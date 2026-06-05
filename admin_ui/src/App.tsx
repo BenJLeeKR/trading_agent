@@ -14,6 +14,7 @@ import AgentRunsView from "./components/AgentRunsView";
 import OperationsDashboardView from "./components/OperationsDashboardView";
 import OperationsAlertsView from "./components/OperationsAlertsView";
 import OrderTrackingView from "./components/OrderTrackingView";
+import FillHistoryView from "./components/FillHistoryView";
 
 /** Redirect to "/" if already authenticated (reverse of ProtectedRoute). */
 function PublicRoute({ children }: { children: React.ReactNode }) {
@@ -54,6 +55,7 @@ export default function App() {
             <Route path="orders/:orderId/submission-attempts" element={<SubmissionAttemptsView />} />
             <Route path="reconciliation" element={<ReconciliationView />} />
             <Route path="accounts" element={<AccountsView />} />
+            <Route path="fills" element={<FillHistoryView />} />
             <Route path="decisions" element={<DecisionsView />} />
             <Route path="agent-runs" element={<AgentRunsView />} />
             <Route path="operations" element={<OperationsDashboardView />} />
