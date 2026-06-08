@@ -1,9 +1,9 @@
 {
-  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJ0b2tlbiIsImF1ZCI6ImQxYzEyZjlkLTI1NTItNDM3ZS1hN2IwLWMyYWY5ZjQyZjcwNCIsInByZHRfY2QiOiIiLCJpc3MiOiJ1bm9ndyIsImV4cCI6MTc4MDk1OTYwMCwiaWF0IjoxNzgwODczMjAwLCJqdGkiOiJQU2NEVkxxa3VmZEtFRXVuQWUwMDhRWnRadXdxUFZBN2FLMlMifQ.VFYVs-kk__Ik98Wp4rEywZYPjI977k13ZRbgj9H6CiDvjZxkmyhg8h9ZmRPmbGHIu7xdakjeGZsUwyhMrCO6_Q",
-  "expires_at": 1780962371.4994423,
+  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJ0b2tlbiIsImF1ZCI6IjliNGQxY2JiLTQyNWUtNDE5OS1iMGNmLWY4NmI2MmExODVhMyIsInByZHRfY2QiOiIiLCJpc3MiOiJ1bm9ndyIsImV4cCI6MTc4MTA0NjAwMywiaWF0IjoxNzgwOTU5NjAzLCJqdGkiOiJQU2NEVkxxa3VmZEtFRXVuQWUwMDhRWnRadXdxUFZBN2FLMlMifQ.u_eri93asFK84XQJlcwns4vWoTndnWFNFElF_k81Oi1Dn7lPrgRzLMBS66fvmjydSv89YwAK2S9QaDn-YccypQ",
+  "expires_at": 1781048712.636028,
   "credential_fingerprint": "1b966d6c22562dc3",
   "cache_purpose": "live_disclosure_access_token",
-  "created_at": 1780876271.4994423,
+  "created_at": 1780962612.636028,
   "kis_env": "live",
   "base_url": "https://openapi.koreainvestment.com:9443"
 }
