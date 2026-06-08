@@ -9,18 +9,20 @@ Verifies:
 
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import httpx
 
 from agent_trading.brokers.errors import BrokerError, BrokerErrorType
 from agent_trading.brokers.koreainvestment.rest_client import (
     KISRestClient,
     _format_order_quantity,
 )
-from agent_trading.brokers.rate_limit import BucketType
+from agent_trading.brokers.rate_limit import BucketType, BudgetExhaustedError
 from agent_trading.domain.enums import BrokerName, OrderSide, OrderStatus, OrderType, TimeInForce
 from agent_trading.domain.models import SubmitOrderRequest, SubmitOrderResult
 
@@ -232,6 +234,26 @@ class TestSubmitOrderRequestBody:
 
         mock_request.assert_called_once()
         assert mock_request.call_args[1]["tr_id_key"] == "order_sell"
+
+
+class TestCashAndPositionsBudgetLogging:
+    @pytest.mark.asyncio
+    async def test_get_cash_and_positions_treats_budget_exhaustion_separately(
+        self, client: KISRestClient, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.WARNING)
+
+        async def _mock_fetch(*args: Any, **kwargs: Any):
+            raise BudgetExhaustedError("inquiry", "Bucket 'inquiry' exhausted (remaining=0/1)")
+
+        with patch.object(KISRestClient, "_wait_for_inquiry_budget", AsyncMock(return_value=True)):
+            with patch.object(KISRestClient, "_fetch_inquire_balance_pages", _mock_fetch):
+                result = await client.get_cash_and_positions(after_hours=False)
+
+        assert result.cash_balance is None
+        assert result.positions == []
+        assert any("BUDGET_EXHAUSTED VTTC8434R" in rec.message for rec in caplog.records)
+        assert not any("API_FAILURE VTTC8434R" in rec.message for rec in caplog.records)
 
     @pytest.mark.asyncio
     async def test_submit_ioc_market_encodes_ord_dvsn_without_algo(
@@ -537,10 +559,13 @@ class TestCashAndPositionsBudgetWait:
     async def test_cash_and_positions_waits_then_requests(
         self, client: KISRestClient
     ) -> None:
-        mock_response: dict[str, Any] = {
-            "output": [{"pdno": "005930", "hldg_qty": "1"}],
-            "output2": {"dnca_tot_amt": "1000000"},
-        }
+        mock_response = (
+            {
+                "output": [{"pdno": "005930", "hldg_qty": "1"}],
+                "output2": {"dnca_tot_amt": "1000000"},
+            },
+            {"tr_cont": "D"},
+        )
 
         with (
             patch.object(KISRestClient, "_wait_for_inquiry_budget", AsyncMock(return_value=True)),
@@ -566,6 +591,180 @@ class TestCashAndPositionsBudgetWait:
         assert result.positions == []
         assert result.raw_response == {}
         mock_request.assert_not_awaited()
+
+
+class TestInquireBalancePagination:
+    @pytest.mark.asyncio
+    async def test_normalize_response_preserves_continuation_keys(
+        self, client: KISRestClient
+    ) -> None:
+        data = {
+            "output1": [{"pdno": "000660"}],
+            "output2": [{"dnca_tot_amt": "100000"}],
+            "CTX_AREA_FK100": "NEXT-FK",
+            "CTX_AREA_NK100": "NEXT-NK",
+        }
+
+        normalized = client._normalize_response(data, endpoint="inquire_balance")
+
+        assert normalized["output"] == [{"pdno": "000660"}]
+        assert normalized["output2"] == [{"dnca_tot_amt": "100000"}]
+        assert normalized["CTX_AREA_FK100"] == "NEXT-FK"
+        assert normalized["CTX_AREA_NK100"] == "NEXT-NK"
+
+    @pytest.mark.asyncio
+    async def test_get_cash_and_positions_aggregates_all_pages(
+        self, client: KISRestClient
+    ) -> None:
+        responses = [
+            (
+                {
+                    "output": [{"pdno": "000660", "hldg_qty": "1"}],
+                    "output2": {"dnca_tot_amt": "1000000"},
+                    "ctx_area_fk100": "NEXT-FK",
+                    "ctx_area_nk100": "NEXT-NK",
+                },
+                {"tr_cont": "M"},
+            ),
+            (
+                {
+                    "output": [{"pdno": "005940", "hldg_qty": "17"}],
+                    "output2": {"dnca_tot_amt": "1000000"},
+                    "ctx_area_fk100": "",
+                    "ctx_area_nk100": "",
+                },
+                {"tr_cont": "D"},
+            ),
+        ]
+
+        with (
+            patch.object(KISRestClient, "_wait_for_inquiry_budget", AsyncMock(return_value=True)),
+            patch.object(KISRestClient, "_request", AsyncMock(side_effect=responses)) as mock_request,
+            patch("agent_trading.brokers.koreainvestment.rest_client.asyncio.sleep", AsyncMock()),
+        ):
+            result = await client.get_cash_and_positions(after_hours=False)
+
+        assert result.cash_balance == {"dnca_tot_amt": "1000000"}
+        assert result.positions == [
+            {"pdno": "000660", "hldg_qty": "1"},
+            {"pdno": "005940", "hldg_qty": "17"},
+        ]
+        assert result.raw_response["pages_fetched"] == 2
+        assert mock_request.await_count == 2
+        assert mock_request.await_args_list[0].kwargs["tr_cont"] == ""
+        assert mock_request.await_args_list[1].kwargs["tr_cont"] == "N"
+
+    @pytest.mark.asyncio
+    async def test_get_positions_aggregates_all_pages(
+        self, client: KISRestClient
+    ) -> None:
+        responses = [
+            (
+                {
+                    "output": [{"pdno": "000660", "hldg_qty": "1"}],
+                    "ctx_area_fk100": "NEXT-FK",
+                    "ctx_area_nk100": "NEXT-NK",
+                },
+                {"tr_cont": "F"},
+            ),
+            (
+                {
+                    "output": [{"pdno": "005940", "hldg_qty": "17"}],
+                    "ctx_area_fk100": "",
+                    "ctx_area_nk100": "",
+                },
+                {"tr_cont": "E"},
+            ),
+        ]
+
+        with (
+            patch.object(KISRestClient, "_request", AsyncMock(side_effect=responses)) as mock_request,
+            patch("agent_trading.brokers.koreainvestment.rest_client.asyncio.sleep", AsyncMock()),
+        ):
+            positions = await client.get_positions()
+
+        assert list(positions) == [
+            {"pdno": "000660", "hldg_qty": "1"},
+            {"pdno": "005940", "hldg_qty": "17"},
+        ]
+        assert mock_request.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_request_can_return_response_headers(
+        self, client: KISRestClient
+    ) -> None:
+        mock_client = AsyncMock()
+        mock_response = AsyncMock(spec=httpx.Response)
+        mock_response.headers = {"tr_cont": "M"}
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"rt_cd": "0", "output": []}
+        mock_client.get.return_value = mock_response
+
+        with (
+            patch.object(KISRestClient, "_get_client", AsyncMock(return_value=mock_client)),
+            patch.object(KISRestClient, "_build_headers", AsyncMock(return_value={"tr_id": "VTTC8434R"})),
+        ):
+            data, headers = await client._request(
+                "GET",
+                endpoint_key="inquire_balance",
+                tr_id_key="inquire_balance",
+                bucket=BucketType.INQUIRY,
+                params={},
+                include_response_headers=True,
+                tr_cont="N",
+            )
+
+        assert data["output"] == []
+        assert headers["tr_cont"] == "M"
+
+    @pytest.mark.asyncio
+    async def test_extract_continuation_keys_trims_lowercase_response_fields(
+        self, client: KISRestClient
+    ) -> None:
+        ctx_fk, ctx_nk = client._extract_continuation_keys(
+            {
+                "ctx_area_fk100": "   NEXT-FK   ",
+                "ctx_area_nk100": "  005930                              ",
+            }
+        )
+
+        assert ctx_fk == "NEXT-FK"
+        assert ctx_nk == "005930"
+
+    @pytest.mark.asyncio
+    async def test_get_positions_continues_when_tr_cont_indicates_more_and_only_nk_exists(
+        self, client: KISRestClient
+    ) -> None:
+        responses = [
+            (
+                {
+                    "output": [{"pdno": "005380", "hldg_qty": "1"}],
+                    "ctx_area_fk100": "",
+                    "ctx_area_nk100": "005380",
+                },
+                {"tr_cont": "M"},
+            ),
+            (
+                {
+                    "output": [{"pdno": "005940", "hldg_qty": "17"}],
+                    "ctx_area_fk100": "",
+                    "ctx_area_nk100": "",
+                },
+                {"tr_cont": "D"},
+            ),
+        ]
+
+        with (
+            patch.object(KISRestClient, "_request", AsyncMock(side_effect=responses)) as mock_request,
+            patch("agent_trading.brokers.koreainvestment.rest_client.asyncio.sleep", AsyncMock()),
+        ):
+            positions = await client.get_positions()
+
+        assert list(positions) == [
+            {"pdno": "005380", "hldg_qty": "1"},
+            {"pdno": "005940", "hldg_qty": "17"},
+        ]
+        assert mock_request.await_count == 2
 
 
 class TestOrderableCashSource:

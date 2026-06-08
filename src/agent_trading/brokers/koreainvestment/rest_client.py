@@ -26,7 +26,8 @@ from agent_trading.brokers.errors import (
 from agent_trading.brokers.koreainvestment.token_cache import (
     CachePurpose,
     KisTokenCache,
-    KisTokenCacheConfig,
+    build_rest_approval_key_cache_config,
+    build_rest_access_token_cache_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -389,10 +390,13 @@ class KISRestClient:
     dev_token_cache_enabled: bool = False
     dev_token_cache_path: str = ".cache/kis_token.json"
     cache_purpose: CachePurpose = CachePurpose.PAPER_ACCESS_TOKEN
+    approval_cache_enabled: bool = False
+    approval_cache_path: str = ".cache/kis_rest_approval_key.json"
 
     # --- internal state ---
     _client: httpx.AsyncClient | None = field(default=None, init=False, repr=False)
     _token_cache: KisTokenCache | None = field(default=None, init=False, repr=False)
+    _approval_cache: KisTokenCache | None = field(default=None, init=False, repr=False)
     _access_token: str | None = field(default=None, init=False, repr=False)
     _token_expires_at: float = field(default=0.0, init=False, repr=False)
     _approval_key: str | None = field(default=None, init=False, repr=False)
@@ -438,17 +442,21 @@ class KISRestClient:
         """Normalize ``real`` → ``live`` for KIS_ENV compatibility + init token cache."""
         if self.env.strip().lower() == "real":
             object.__setattr__(self, "env", "live")
-        self._token_cache = KisTokenCache(KisTokenCacheConfig(
+        self._token_cache = KisTokenCache(build_rest_access_token_cache_config(
             enabled=self.dev_token_cache_enabled,
             cache_path=Path(self.dev_token_cache_path),
             cache_purpose=self.cache_purpose,
-            fingerprint_input=self.api_key,
-            extra_validators={
-                "kis_env": self.env,
-                "base_url": self._base_url,
-            },
-            load_expiry_buffer=60.0,
-            save_expiry_buffer=300.0,
+            api_key=self.api_key,
+            kis_env=self.env,
+            base_url=self._base_url,
+        ))
+        self._approval_cache = KisTokenCache(build_rest_approval_key_cache_config(
+            enabled=self.approval_cache_enabled,
+            cache_path=Path(self.approval_cache_path),
+            api_key=self.api_key,
+            api_secret=self.api_secret,
+            kis_env=self.env,
+            base_url=self._base_url,
         ))
 
     @property
@@ -580,6 +588,14 @@ class KISRestClient:
             if self._approval_key is not None and now_wall < self._approval_key_expires_at:
                 return self._approval_key
 
+            # 1b. File cache load
+            if self._approval_key is None and self._approval_cache is not None:
+                cached_key = await self._approval_cache.load()
+                if cached_key is not None:
+                    self._approval_key = cached_key
+                    self._approval_key_expires_at = now_wall + 86400 - 300
+                    return self._approval_key
+
             # 2. Strict 1 rps cooldown
             now_mono = time.monotonic()
             elapsed = now_mono - self._last_approval_call_time
@@ -616,6 +632,11 @@ class KISRestClient:
             # approval key expires in 86400s (24h); refresh 5 min early
             self._approval_key_expires_at = now_wall + int(data.get("expires_in", 86400)) - 300
             self._last_approval_call_time = now_mono
+            if self._approval_cache is not None:
+                await self._approval_cache.save(
+                    self._approval_key,
+                    int(data.get("expires_in", 86400)),
+                )
             return self._approval_key  # type: ignore[return-value]
 
     # ------------------------------------------------------------------
@@ -670,10 +691,11 @@ class KISRestClient:
         tr_id: str,
         *,
         content_type: str = "application/json; charset=utf-8",
+        tr_cont: str | None = None,
     ) -> dict[str, str]:
         """Assemble common KIS API request headers."""
         token = await self.authenticate()
-        return {
+        headers = {
             "content-type": content_type,
             "authorization": f"Bearer {token}",
             "appkey": self.api_key,
@@ -681,6 +703,9 @@ class KISRestClient:
             "tr_id": tr_id,
             "custtype": "P",  # 개인
         }
+        if tr_cont is not None:
+            headers["tr_cont"] = tr_cont
+        return headers
 
     # ------------------------------------------------------------------
     # Error handling / response normalisation
@@ -814,11 +839,29 @@ class KISRestClient:
             result: dict[str, Any] = {"output": data["output1"]}
             if "output2" in data:
                 result["output2"] = data["output2"]
+            for key, value in data.items():
+                if key not in {"output1", "output2"}:
+                    result[key] = value
             return result
         if "output" in data:
-            return {"output": data["output"]}
+            return dict(data)
         # Some endpoints return data directly in the root
         return data
+
+    @staticmethod
+    def _extract_continuation_keys(data: dict[str, Any]) -> tuple[str, str]:
+        """Read KIS continuation keys from either upper/lower-case fields.
+
+        Some KIS endpoints return ``ctx_area_fk100`` / ``ctx_area_nk100`` in
+        lowercase and space-padded, even when the request fields are uppercase.
+        """
+        ctx_fk = data.get("CTX_AREA_FK100")
+        if ctx_fk is None:
+            ctx_fk = data.get("ctx_area_fk100", "")
+        ctx_nk = data.get("CTX_AREA_NK100")
+        if ctx_nk is None:
+            ctx_nk = data.get("ctx_area_nk100", "")
+        return str(ctx_fk or "").strip(), str(ctx_nk or "").strip()
 
     # ------------------------------------------------------------------
     # Token cache invalidation
@@ -856,7 +899,9 @@ class KISRestClient:
         requires_hashkey: bool = False,
         skip_global_rest: bool = False,
         held_position_sell: bool = False,
-    ) -> dict[str, Any]:
+        tr_cont: str | None = None,
+        include_response_headers: bool = False,
+    ) -> dict[str, Any] | tuple[dict[str, Any], dict[str, str]]:
         """Unified request helper with budget consumption, circuit breaker,
         and exponential backoff retry on timeout.
 
@@ -932,7 +977,7 @@ class KISRestClient:
 
             # 3. Build request
             tr_id = self._get_tr_id(tr_id_key)
-            headers = await self._build_headers(tr_id)
+            headers = await self._build_headers(tr_id, tr_cont=tr_cont)
             url = KIS_ENDPOINTS[endpoint_key]
 
             if body and requires_hashkey:
@@ -998,7 +1043,10 @@ class KISRestClient:
                     data = self._raise_on_error(resp, endpoint=endpoint_key)
                     self._circuit_breaker.record_success()
                     _token_consumed = False  # 성공 → release 불필요
-                    return self._normalize_response(data, endpoint=endpoint_key)
+                    normalized = self._normalize_response(data, endpoint=endpoint_key)
+                    if include_response_headers:
+                        return normalized, dict(resp.headers)
+                    return normalized
                 except TokenExpiredError as e:
                     if reauth_attempt < max_reauth_attempts - 1:
                         logger.warning(
@@ -1011,7 +1059,7 @@ class KISRestClient:
                         await self.authenticate()
                         # 5c. 헤더에 새 token 반영 후 재시도
                         tr_id = self._get_tr_id(tr_id_key)
-                        headers = await self._build_headers(tr_id)
+                        headers = await self._build_headers(tr_id, tr_cont=tr_cont)
                         if body and requires_hashkey:
                             headers["hashkey"] = self._generate_signature(body)
                         # 5d. 동일 요청 재시도
@@ -1300,8 +1348,7 @@ class KISRestClient:
             all_output.extend(output)
 
             # Check continuation key
-            ctx_fk = data.get("CTX_AREA_FK100", "") or ""
-            ctx_nk = data.get("CTX_AREA_NK100", "") or ""
+            ctx_fk, ctx_nk = self._extract_continuation_keys(data)
             if not ctx_fk or not ctx_nk:
                 break  # No more pages
 
@@ -1475,33 +1522,10 @@ class KISRestClient:
         including the initial page.  Omitting them triggers
         ``OPSQ2001: INPUT_FIELD_NAME CTX_AREA_FK100``.
         """
-        params = {
-            "CANO": self.account_number,
-            "ACNT_PRDT_CD": self.account_product_code,
-            "AFHR_FLPR_YN": "N",
-            "OFL_YN": "",
-            "INQR_DVSN": "01",
-            "UNPR_DVSN": "01",
-            "FUND_STTL_ICLD_YN": "N",
-            "FNCG_AMT_AUTO_RDPT_YN": "N",
-            "PRCS_DVSN": "01",
-            "COST_ICLD_YN": "N",
-            "CTX_AREA_FK100": "",  # 연속조회검색조건100 (최초조회: 빈값)
-            "CTX_AREA_NK100": "",  # 연속조회키100 (최초조회: 빈값)
-        }
-
-        data = await self._request(
-            "GET",
-            endpoint_key="inquire_balance",
-            tr_id_key="inquire_balance",
-            bucket=BucketType.INQUIRY,
-            params=params,
+        positions, _cash, _raw = await self._fetch_inquire_balance_pages(
+            after_hours=False
         )
-
-        output = data.get("output", [])
-        if isinstance(output, dict):
-            output = [output]
-        return output
+        return positions
 
     async def get_cash_balance(self, after_hours: bool = False) -> dict[str, Any]:
         """Retrieve cash balance (잔고조회 — cash component).
@@ -1594,29 +1618,21 @@ class KISRestClient:
                 raw_response={},
             )
 
-        # ── API call ──────────────────────────────────────────────────────
-        params = {
-            "CANO": self.account_number,
-            "ACNT_PRDT_CD": self.account_product_code,
-            "AFHR_FLPR_YN": "Y" if after_hours else "N",
-            "OFL_YN": "",
-            "INQR_DVSN": "01",
-            "UNPR_DVSN": "01",
-            "FUND_STTL_ICLD_YN": "N",
-            "FNCG_AMT_AUTO_RDPT_YN": "N",
-            "PRCS_DVSN": "01",
-            "COST_ICLD_YN": "N",
-            "CTX_AREA_FK100": "",  # 연속조회검색조건100 (최초조회: 빈값)
-            "CTX_AREA_NK100": "",  # 연속조회키100 (최초조회: 빈값)
-        }
-
         try:
-            data = await self._request(
-                "GET",
-                endpoint_key="inquire_balance",
-                tr_id_key="inquire_balance",
-                bucket=BucketType.INQUIRY,
-                params=params,
+            raw_positions, raw_cash, raw_response = await self._fetch_inquire_balance_pages(
+                after_hours=after_hours,
+            )
+        except BudgetExhaustedError:
+            logger.warning(
+                "BUDGET_EXHAUSTED VTTC8434R get_cash_and_positions() exhausted "
+                "(account=%s)",
+                self.account_number,
+                exc_info=True,
+            )
+            return CashAndPositionsResult(
+                cash_balance=None,
+                positions=[],
+                raw_response={},
             )
         except Exception:
             logger.error(
@@ -1631,21 +1647,100 @@ class KISRestClient:
                 raw_response={},
             )
 
-        # ── Parse output1 → positions ─────────────────────────────────────
-        raw_positions: list[dict[str, Any]] = data.get("output", [])
-        if isinstance(raw_positions, dict):
-            raw_positions = [raw_positions]
-
-        # ── Parse output2 → cash balance ──────────────────────────────────
-        raw_cash: dict[str, Any] = data.get("output2", {})
-        if isinstance(raw_cash, list):
-            raw_cash = raw_cash[0] if raw_cash else {}
-
         return CashAndPositionsResult(
             cash_balance=raw_cash if raw_cash else None,
             positions=raw_positions,
-            raw_response=data,
+            raw_response=raw_response,
         )
+
+    async def _fetch_inquire_balance_pages(
+        self,
+        *,
+        after_hours: bool,
+        bucket: BucketType = BucketType.INQUIRY,
+        max_pages: int = 50,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+        """Fetch all ``inquire-balance`` pages and aggregate positions.
+
+        잔고조회는 연속조회키가 존재할 수 있으므로, 첫 페이지만 읽으면
+        신규 체결 종목이 누락될 수 있다. 이 helper는 모든 페이지를 합친다.
+        """
+        all_positions: list[dict[str, Any]] = []
+        raw_cash: dict[str, Any] = {}
+        ctx_fk = ""
+        ctx_nk = ""
+        pages_fetched = 0
+        request_tr_cont = ""
+
+        while pages_fetched < max_pages:
+            params = {
+                "CANO": self.account_number,
+                "ACNT_PRDT_CD": self.account_product_code,
+                "AFHR_FLPR_YN": "Y" if after_hours else "N",
+                "OFL_YN": "",
+                "INQR_DVSN": "01",
+                "UNPR_DVSN": "01",
+                "FUND_STTL_ICLD_YN": "N",
+                "FNCG_AMT_AUTO_RDPT_YN": "N",
+                "PRCS_DVSN": "01",
+                "COST_ICLD_YN": "N",
+                "CTX_AREA_FK100": ctx_fk,
+                "CTX_AREA_NK100": ctx_nk,
+            }
+
+            response = await self._request(
+                "GET",
+                endpoint_key="inquire_balance",
+                tr_id_key="inquire_balance",
+                bucket=bucket,
+                params=params,
+                tr_cont=request_tr_cont,
+                include_response_headers=True,
+            )
+            data, response_headers = response
+            pages_fetched += 1
+
+            page_positions = data.get("output", [])
+            if isinstance(page_positions, dict):
+                page_positions = [page_positions]
+            all_positions.extend(page_positions)
+
+            page_cash: dict[str, Any] = data.get("output2", {})
+            if isinstance(page_cash, list):
+                page_cash = page_cash[0] if page_cash else {}
+            if page_cash and not raw_cash:
+                raw_cash = page_cash
+
+            ctx_fk, ctx_nk = self._extract_continuation_keys(data)
+            response_tr_cont = (
+                str(
+                    response_headers.get("tr_cont")
+                    or response_headers.get("tr-cont")
+                    or ""
+                )
+                .strip()
+                .upper()
+            )
+            if response_tr_cont not in {"F", "M"}:
+                break
+            if not ctx_fk and not ctx_nk:
+                break
+
+            request_tr_cont = "N"
+            await asyncio.sleep(1.0)
+        else:
+            logger.warning(
+                "inquire-balance: reached max_pages=%d (account=%s positions=%d)",
+                max_pages,
+                self.account_number,
+                len(all_positions),
+            )
+
+        return all_positions, raw_cash, {
+            "output": all_positions,
+            "output2": raw_cash,
+            "pages_fetched": pages_fetched,
+        }
 
     async def _wait_for_inquiry_budget(self, timeout: float = 2.0) -> bool:
         """Wait briefly for inquiry/global budget to become available.

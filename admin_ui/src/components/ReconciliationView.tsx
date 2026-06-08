@@ -297,7 +297,7 @@ export default function ReconciliationView() {
       header: "Status",
       render: (r) => <StatusBadge status={r.status} />,
     },
-    { key: "mismatch_count", header: "Mismatch Count" },
+    { key: "mismatch_count", header: "Mismatch Count", align: "right" },
     {
       key: "isActive",
       header: "유형",
@@ -339,6 +339,7 @@ export default function ReconciliationView() {
     {
       key: "mismatch_count",
       header: "불일치",
+      align: "right",
       render: (r) => r.mismatch_count,
     },
     {
@@ -386,6 +387,7 @@ export default function ReconciliationView() {
     {
       key: "order" as any,
       header: "수량",
+      align: "right",
       render: (r: ReconcileRequiredCase) => (
         <span>{r.order.requested_quantity}</span>
       ),
@@ -393,6 +395,7 @@ export default function ReconciliationView() {
     {
       key: "order" as any,
       header: "주문가",
+      align: "right",
       render: (r: ReconcileRequiredCase) => (
         <span className="font-mono text-xs">
           {formatKrw(r.order.requested_price)}

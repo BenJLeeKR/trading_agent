@@ -110,6 +110,7 @@ const orderColumns: Column<OrderSummary>[] = [
     key: "requested_quantity",
     header: "수량",
     width: "90px",
+    align: "right",
     render: (row: OrderSummary) => `${row.requested_quantity}주`,
   },
   {
@@ -188,7 +189,7 @@ export default function OrderTrackingView() {
     setLoading(true);
     setError(null);
     try {
-      const data = await getOrders();
+      const data = await getOrders(undefined, 10000);
       setOrders(data);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "주문 데이터 로딩 실패";

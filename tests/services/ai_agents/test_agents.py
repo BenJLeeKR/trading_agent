@@ -385,6 +385,41 @@ class TestAIRiskAgent:
         assert result.schema_version == "v1"
 
     @pytest.mark.asyncio
+    async def test_run_normalizes_percent_scale_risk_score(
+        self,
+        sample_request: AgentExecutionRequest,
+    ) -> None:
+        """Provider drift `risk_score=65` should be normalized to `0.65`."""
+        risk_provider = AsyncMock(spec=AIProviderClient)
+
+        async def _generate(**kwargs: object) -> RawProviderResponse:
+            return RawProviderResponse(
+                parsed=AIRiskOutput(
+                    symbol="005930",
+                    proposed_side="buy",
+                    risk_opinion="review",
+                    risk_score=65.0,
+                    confidence=0.7,
+                    size_adjustment_factor=0.3,
+                    max_holding_horizon="short",
+                    risk_flags=("high_volatility",),
+                    reason_codes=("R001",),
+                    opposing_evidence=("Recent price gap",),
+                    summary="Percent-scale drift sample.",
+                ),
+                raw_content='{"symbol": "005930", "risk_opinion": "review", "risk_score": 65}',
+            )
+
+        risk_provider.generate_structured = _generate  # type: ignore[method-assign]
+
+        agent = AIRiskAgent(provider_client=risk_provider)
+        result = await agent.run(sample_request)
+
+        assert isinstance(result, AIRiskOutput)
+        assert result.risk_opinion == "review"
+        assert result.risk_score == 0.65
+
+    @pytest.mark.asyncio
     async def test_run_fallback_on_provider_error(
         self,
         sample_request: AgentExecutionRequest,

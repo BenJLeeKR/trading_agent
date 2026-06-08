@@ -1090,41 +1090,6 @@ class ExecutionService:
                 error_phase="transition",
             )
 
-        # ── Phase 4b: transition VALIDATED → PENDING_SUBMIT ──
-        _add_phase(f"transition_pending_submit/{_symbol}", "start")
-        logger.info(
-            "Phase 4b: transition_to(PENDING_SUBMIT) — order_id=%s",
-            validated_order.order_request_id,
-        )
-        try:
-            pending_order = await order_manager.transition_to(
-                validated_order,
-                OrderStatus.PENDING_SUBMIT,
-                actor_type=actor_type,
-                actor_id=actor_id,
-            )
-        except Exception as exc:
-            logger.exception(
-                "Phase 4b FAILED (order_create): transition to PENDING_SUBMIT "
-                "failed for order_id=%s",
-                validated_order.order_request_id,
-            )
-            await self._finalize_attempt(
-                attempt_id, "stopped",
-                stop_phase="transition",
-                stop_reason="transition_failed",
-                order_request_id=validated_order.order_request_id,
-                phase_trace=_phase_trace,
-            )
-            return SubmitResult.build(
-                order_intent=intent,
-                error_message=f"transition_to(PENDING_SUBMIT) failed: {exc}",
-                trade_decision_id=trade_decision_id,
-                phase_trace=tuple(_phase_trace) if _phase_trace else (),
-                status="ERROR",
-                error_phase="transition",
-            )
-
         _order_create_elapsed = time_module.monotonic() - _order_create_t0
         logger.info(
             "PHASE_TRACE symbol=%s phase=order_create_done elapsed_ms=%d status=ok",
@@ -1186,7 +1151,7 @@ class ExecutionService:
                             guardrail_evaluation_id=uuid4(),
                             decision_context_id=intent.decision_context_id,
                             trade_decision_id=trade_decision_id,
-                            order_request_id=pending_order.order_request_id,
+                            order_request_id=validated_order.order_request_id,
                             rule_set_version="stale_snapshot_guard_v1",
                             overall_passed=False,
                             evaluated_at=datetime.now(timezone.utc),
@@ -1228,7 +1193,7 @@ class ExecutionService:
                         attempt_id, "stopped",
                         stop_phase="stale_snapshot_guard",
                         stop_reason="stale_snapshot",
-                        order_request_id=pending_order.order_request_id,
+                        order_request_id=validated_order.order_request_id,
                         phase_trace=_phase_trace,
                     )
                     return SubmitResult.build(
@@ -1276,7 +1241,7 @@ class ExecutionService:
                             guardrail_evaluation_id=uuid4(),
                             decision_context_id=intent.decision_context_id,
                             trade_decision_id=trade_decision_id,
-                            order_request_id=pending_order.order_request_id,
+                            order_request_id=validated_order.order_request_id,
                             rule_set_version="stale_snapshot_guard_v1",
                             overall_passed=False,
                             evaluated_at=datetime.now(timezone.utc),
@@ -1311,7 +1276,7 @@ class ExecutionService:
                         attempt_id, "stopped",
                         stop_phase="stale_snapshot_guard",
                         stop_reason="stale_snapshot",
-                        order_request_id=pending_order.order_request_id,
+                        order_request_id=validated_order.order_request_id,
                         phase_trace=_phase_trace,
                     )
                     return SubmitResult.build(
@@ -1335,6 +1300,41 @@ class ExecutionService:
             _symbol,
             int((time_module.monotonic() - _stale_guard_t0) * 1000),
         )
+
+        # ── Phase 4b: transition VALIDATED → PENDING_SUBMIT ──
+        _add_phase(f"transition_pending_submit/{_symbol}", "start")
+        logger.info(
+            "Phase 4b: transition_to(PENDING_SUBMIT) — order_id=%s",
+            validated_order.order_request_id,
+        )
+        try:
+            pending_order = await order_manager.transition_to(
+                validated_order,
+                OrderStatus.PENDING_SUBMIT,
+                actor_type=actor_type,
+                actor_id=actor_id,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Phase 4b FAILED (order_create): transition to PENDING_SUBMIT "
+                "failed for order_id=%s",
+                validated_order.order_request_id,
+            )
+            await self._finalize_attempt(
+                attempt_id, "stopped",
+                stop_phase="transition",
+                stop_reason="transition_failed",
+                order_request_id=validated_order.order_request_id,
+                phase_trace=_phase_trace,
+            )
+            return SubmitResult.build(
+                order_intent=intent,
+                error_message=f"transition_to(PENDING_SUBMIT) failed: {exc}",
+                trade_decision_id=trade_decision_id,
+                phase_trace=tuple(_phase_trace) if _phase_trace else (),
+                status="ERROR",
+                error_phase="transition",
+            )
 
         # ── Phase 5: submit to broker ──
         _decision_type: str = "unknown"

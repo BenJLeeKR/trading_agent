@@ -7,6 +7,7 @@ import { Panel } from "./common/Panel";
 import { StatusBadge } from "./common/StatusBadge";
 import { getFillHistory, getFillSyncRunSummary, getFillSyncRuns } from "../api/client";
 import type { FillHistoryItem, FillSyncRunHealthSummary, FillSyncRunSummary } from "../types/api";
+import { formatKstDateTime } from "../lib/utils";
 
 function todayKst(): string {
   const formatter = new Intl.DateTimeFormat("sv-SE", {
@@ -16,11 +17,6 @@ function todayKst(): string {
     day: "2-digit",
   });
   return formatter.format(new Date());
-}
-
-function formatKstDateTime(value: string | null): string {
-  if (!value) return "-";
-  return new Date(value).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
 }
 
 function formatHms(value: string | null): string {
@@ -102,12 +98,13 @@ export default function FillHistoryView() {
     },
     { key: "broker_native_order_id", header: "ODNO", render: (row) => <span className="font-mono">{row.broker_native_order_id}</span> },
     { key: "broker_fill_id", header: "체결번호", render: (row) => row.broker_fill_id ?? "-" },
-    { key: "ordered_quantity", header: "주문수량", render: (row) => row.ordered_quantity ?? "-" },
-    { key: "filled_quantity", header: "체결수량", render: (row) => row.filled_quantity },
-    { key: "fill_price", header: "체결가격", render: (row) => formatNumber(row.fill_price) },
+    { key: "ordered_quantity", header: "주문수량", align: "right", render: (row) => row.ordered_quantity ?? "-" },
+    { key: "filled_quantity", header: "체결수량", align: "right", render: (row) => row.filled_quantity },
+    { key: "fill_price", header: "체결가격", align: "right", render: (row) => formatNumber(row.fill_price) },
     {
       key: "fill_amount",
       header: "체결금액",
+      align: "right",
       render: (row) => formatNumber(row.filled_quantity * row.fill_price),
     },
     { key: "order_status_code", header: "주문상태", render: (row) => row.order_status_code ?? "-" },

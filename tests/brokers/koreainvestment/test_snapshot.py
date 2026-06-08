@@ -562,7 +562,12 @@ class TestFetchSnapshot:
                 {"pdno": "005930", "hldg_qty": "10"},
             ],
         )
-        mock_rest.get_orderable_cash = AsyncMock(return_value=Decimal("1800000"))
+        mock_rest.get_orderable_cash_result = AsyncMock(
+            return_value=OrderableCashResult(
+                amount=Decimal("1800000"),
+                source="vttc8908r",
+            )
+        )
 
         provider = KISSyncSnapshotProvider(mock_rest)
         inst_repo = InMemoryInstrumentRepository()

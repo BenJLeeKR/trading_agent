@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
@@ -85,6 +85,102 @@ def test_list_fill_history_returns_rows() -> None:
     assert data[0]["instrument_name"] == "삼성전자"
     assert data[0]["account_alias"] == "테스트 계좌"
     assert data[0]["order_request_id"] is not None
+
+
+def test_list_fill_history_hides_zero_fill_polling_rows_and_keeps_latest_positive() -> None:
+    repos = build_in_memory_repositories()
+    app = create_app(auth_token="test-token")
+    app.dependency_overrides[get_repos] = lambda: repos
+
+    account_id = uuid.uuid4()
+    broker_account_id = uuid.uuid4()
+    order_request_id = uuid.uuid4()
+    repos.accounts._items[account_id] = AccountEntity(  # type: ignore[attr-defined]
+        account_id=account_id,
+        client_id=uuid.uuid4(),
+        broker_account_id=broker_account_id,
+        environment=Environment.PAPER,
+        account_alias="테스트 계좌",
+        account_masked="1234",
+        status="active",
+        account_code="TEST-001",
+    )
+    instrument_id = uuid.uuid4()
+    repos.instruments._items[instrument_id] = InstrumentEntity(  # type: ignore[attr-defined]
+        instrument_id=instrument_id,
+        symbol="005940",
+        market_code="KRX",
+        asset_class="equity",
+        currency="KRW",
+        name="NH투자증권우",
+        tick_size=Decimal("1"),
+        lot_size=Decimal("1"),
+        is_active=True,
+        metadata={},
+    )
+    base_time = datetime.now(timezone.utc)
+    for snapshot in (
+        BrokerFillSnapshotEntity(
+            broker_fill_snapshot_id=uuid.uuid4(),
+            fill_sync_run_id=uuid.uuid4(),
+            account_id=account_id,
+            order_request_id=order_request_id,
+            broker_name="koreainvestment",
+            broker_native_order_id="0000005097",
+            broker_fill_id=None,
+            symbol="005940",
+            side="buy",
+            order_date=date(2026, 6, 8),
+            order_status_code="시장가",
+            ordered_quantity=Decimal("17"),
+            filled_quantity=Decimal("0"),
+            fill_price=Decimal("0"),
+            order_time="091400",
+            fill_time="",
+            fill_timestamp=None,
+            dedupe_key="dedupe-zero",
+            raw_payload_json={},
+            created_at=base_time,
+            updated_at=base_time,
+        ),
+        BrokerFillSnapshotEntity(
+            broker_fill_snapshot_id=uuid.uuid4(),
+            fill_sync_run_id=uuid.uuid4(),
+            account_id=account_id,
+            order_request_id=order_request_id,
+            broker_name="koreainvestment",
+            broker_native_order_id="0000005097",
+            broker_fill_id=None,
+            symbol="005940",
+            side="buy",
+            order_date=date(2026, 6, 8),
+            order_status_code="시장가",
+            ordered_quantity=Decimal("17"),
+            filled_quantity=Decimal("17"),
+            fill_price=Decimal("29117"),
+            order_time="091400",
+            fill_time="091405",
+            fill_timestamp=base_time + timedelta(minutes=1),
+            dedupe_key="dedupe-positive",
+            raw_payload_json={},
+            created_at=base_time + timedelta(minutes=1),
+            updated_at=base_time + timedelta(minutes=1),
+        ),
+    ):
+        asyncio.run(repos.broker_fill_snapshots.upsert(snapshot))
+
+    with TestClient(app) as client:
+        resp = client.get(
+            "/fill-history?date=2026-06-08",
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["symbol"] == "005940"
+    assert data[0]["filled_quantity"] == 17.0
+    assert data[0]["fill_price"] == 29117.0
 
 
 def test_list_fill_history_supports_order_symbol_odno_and_trade_decision_filters() -> None:

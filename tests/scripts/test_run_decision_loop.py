@@ -39,9 +39,12 @@ from agent_trading.domain.entities import (
     PositionSnapshotEntity,
     SnapshotSyncRunEntity,
     StrategyEntity,
+    TradeDecisionEntity,
 )
 from agent_trading.domain.enums import (
     AssetClass,
+    DecisionType,
+    EntryStyle,
     Environment,
     OrderSide,
     OrderStatus,
@@ -67,6 +70,7 @@ from scripts.run_decision_loop import (
     _build_aggregate_summary,
     _collect_persisted_seeded_events,
     _compute_symbol_submit_mode,
+    _evaluate_pre_ai_skip_reason,
     _infer_symbol_dry_run_reason,
     _is_t3_fresh_for_symbol,
     _parse_args,
@@ -93,6 +97,29 @@ STRATEGY_ID = UUID("30a1d26b-8230-51fc-8548-30920effff0c")
 CONFIG_VERSION_ID = UUID("529ab376-183a-53df-b4ab-73d948c1404c")
 SYMBOL = "005930"
 MARKET = "KRX"
+
+
+def _make_trade_decision(
+    *,
+    symbol: str = SYMBOL,
+    source_type: str = "held_position",
+    decision_type: DecisionType = DecisionType.HOLD,
+    side: OrderSide = OrderSide.BUY,
+    created_at: datetime | None = None,
+) -> TradeDecisionEntity:
+    now = created_at or datetime.now(timezone.utc)
+    return TradeDecisionEntity(
+        trade_decision_id=uuid4(),
+        decision_context_id=uuid4(),
+        decision_type=decision_type,
+        side=side,
+        strategy_id=STRATEGY_ID,
+        symbol=symbol,
+        market=MARKET,
+        entry_style=EntryStyle.MARKET,
+        created_at=now,
+        source_type=source_type,
+    )
 
 
 async def _seed_repos(repos: RepositoryContainer) -> None:
@@ -929,6 +956,171 @@ class TestRunOneCycle:
         assert result["error_phase"] == "pre_ai_gate"
         assert result["error_message"] == "no_held_position"
         assert result["skip_reason"] == "no_held_position"
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_skip_when_held_position_recent_hold_has_no_change(self) -> None:
+        """held_position은 최근 HOLD였고 이벤트/주문 변화가 없으면 AI 전에 SKIP."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            now_utc = datetime(2026, 6, 8, 4, 0, 0, tzinfo=timezone.utc)  # 13:00 KST
+            await repos.trade_decisions.add(
+                _make_trade_decision(
+                    decision_type=DecisionType.HOLD,
+                    created_at=now_utc - timedelta(minutes=5),
+                )
+            )
+
+            class _FixedDateTime(datetime):
+                @classmethod
+                def now(cls, tz=None):
+                    if tz is None:
+                        return now_utc.replace(tzinfo=None)
+                    return now_utc.astimezone(tz)
+
+            with patch("scripts.run_decision_loop.datetime", _FixedDateTime):
+                reason, details = await _evaluate_pre_ai_skip_reason(
+                    repos,
+                    account_alias="Entrypoint Paper",
+                    symbol=SYMBOL,
+                    market=MARKET,
+                    source_type="held_position",
+                )
+
+        assert reason == "held_position_recent_hold_no_change"
+        assert details["latest_held_decision_type"] == "hold"
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_skip_not_triggered_for_held_position_after_cutoff(self) -> None:
+        """장 마감 임박 이후에는 held_position stable-hold skip을 끈다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            now_utc = datetime(2026, 6, 8, 5, 35, 0, tzinfo=timezone.utc)  # 14:35 KST
+            await repos.trade_decisions.add(
+                _make_trade_decision(
+                    decision_type=DecisionType.HOLD,
+                    created_at=now_utc - timedelta(minutes=5),
+                )
+            )
+
+            class _FixedDateTime(datetime):
+                @classmethod
+                def now(cls, tz=None):
+                    if tz is None:
+                        return now_utc.replace(tzinfo=None)
+                    return now_utc.astimezone(tz)
+
+            with patch("scripts.run_decision_loop.datetime", _FixedDateTime):
+                reason, details = await _evaluate_pre_ai_skip_reason(
+                    repos,
+                    account_alias="Entrypoint Paper",
+                    symbol=SYMBOL,
+                    market=MARKET,
+                    source_type="held_position",
+                )
+
+        assert reason is None
+        assert details["skip_guard"] == "disabled_after_cutoff"
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_skip_not_triggered_for_held_position_when_recent_event_exists(self) -> None:
+        """최근 이벤트가 있으면 held_position stable-hold skip을 하지 않는다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            now_utc = datetime(2026, 6, 8, 4, 0, 0, tzinfo=timezone.utc)  # 13:00 KST
+            await repos.trade_decisions.add(
+                _make_trade_decision(
+                    decision_type=DecisionType.HOLD,
+                    created_at=now_utc - timedelta(minutes=5),
+                )
+            )
+            await repos.external_events.add(
+                ExternalEventEntity(
+                    event_id=uuid4(),
+                    event_type="seeded_news",
+                    source_name="naver",
+                    source_reliability_tier="T3",
+                    symbol=SYMBOL,
+                    market=MARKET,
+                    published_at=now_utc - timedelta(minutes=2),
+                    ingested_at=now_utc - timedelta(minutes=2),
+                    severity="medium",
+                    direction="neutral",
+                    headline="Recent event should disable held-position skip",
+                )
+            )
+
+            class _FixedDateTime(datetime):
+                @classmethod
+                def now(cls, tz=None):
+                    if tz is None:
+                        return now_utc.replace(tzinfo=None)
+                    return now_utc.astimezone(tz)
+
+            with patch("scripts.run_decision_loop.datetime", _FixedDateTime):
+                reason, details = await _evaluate_pre_ai_skip_reason(
+                    repos,
+                    account_alias="Entrypoint Paper",
+                    symbol=SYMBOL,
+                    market=MARKET,
+                    source_type="held_position",
+                )
+
+        assert reason is None
+        assert details["recent_event_count"] == "1"
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_skip_when_general_buy_budget_exhausted_and_no_position(self) -> None:
+        """일반 lane 후보는 보유수량이 없고 일반 BUY 예산이 0이면 AI 전에 SKIP."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            snapshots = await repos.position_snapshots.list_latest_by_account(ACCOUNT_ID)
+            assert snapshots
+            latest_position = snapshots[0]
+            repos.position_snapshots._items[latest_position.position_snapshot_id] = (  # type: ignore[attr-defined]
+                PositionSnapshotEntity(
+                    position_snapshot_id=latest_position.position_snapshot_id,
+                    account_id=latest_position.account_id,
+                    instrument_id=latest_position.instrument_id,
+                    quantity=Decimal("0"),
+                    average_price=latest_position.average_price,
+                    market_price=latest_position.market_price,
+                    unrealized_pnl=latest_position.unrealized_pnl,
+                    source_of_truth=latest_position.source_of_truth,
+                    snapshot_at=latest_position.snapshot_at,
+                    created_at=latest_position.created_at,
+                )
+            )
+            result = await _run_one_cycle(
+                cycle=1,
+                submit=True,
+                dry_run=False,
+                output="text",
+                source_type="core",
+                remaining_general_buy_budget=0,
+                runtime=runtime,
+            )
+
+        assert result["status"] == "SKIPPED"
+        assert result["error_phase"] == "pre_ai_gate"
+        assert result["error_message"] == "general_buy_budget_exhausted"
+        assert result["skip_reason"] == "general_buy_budget_exhausted"
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_skip_reason_not_triggered_when_position_exists_even_if_buy_budget_zero(self) -> None:
+        """보유수량이 있으면 일반 BUY 예산 0이어도 SELL 후보 가능성을 위해 즉시 skip하지 않음."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            reason, details = await _evaluate_pre_ai_skip_reason(
+                repos,
+                account_alias="Entrypoint Paper",
+                symbol=SYMBOL,
+                market=MARKET,
+                source_type="core",
+                remaining_general_buy_budget=0,
+            )
+
+        assert reason is None
+        assert details["held_quantity"] == "10"
 
     # ------------------------------------------------------------------
     # T3 fresh skip / quota skip 분기 검증

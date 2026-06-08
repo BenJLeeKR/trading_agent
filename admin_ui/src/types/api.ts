@@ -36,6 +36,9 @@ export interface OrderSummary {
   requested_price: number | null;
   symbol: string | null;
   instrument_name: string | null;
+  filled_quantity: number | null;
+  avg_fill_price: number | string | null;
+  fill_amount: number | null;
   correlation_id: string;
   trade_decision_id: string | null;
   created_at: string | null;
@@ -46,7 +49,6 @@ export interface OrderSummary {
 export interface OrderDetail extends OrderSummary {
   instrument_id: string | null;
   filled_qty: string | null;
-  avg_fill_price: string | null;
   decision_context_id: string | null;
   error_message: string | null;
   broker_order_id: string | null;

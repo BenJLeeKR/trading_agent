@@ -108,6 +108,7 @@ class SessionInfo:
     source: str = "unknown"
     reason_code: str | None = None
     reason: str = ""
+    reason_metadata: dict[str, object] | None = None
     # P2: 163 WebSocket fields (None-default for backward compatibility)
     market_phase: str | None = None
     raw_opnd_yn: str | None = None
@@ -208,6 +209,12 @@ class KisHolidayProvider(MarketSessionProvider):
             source="kis_holiday_api",
             reason_code="KIS_HOLIDAY_TRADING_DAY" if status.is_trading_day else "KIS_HOLIDAY_CLOSED",
             reason=f"opnd_yn={status.opnd_yn} bzdy_yn={status.bzdy_yn} tr_day_yn={status.tr_day_yn}",
+            reason_metadata={
+                "provider": "kis_holiday_api",
+                "opnd_yn": status.opnd_yn,
+                "bzdy_yn": status.bzdy_yn,
+                "tr_day_yn": status.tr_day_yn,
+            },
         )
 
         # Cache for the day
@@ -260,6 +267,12 @@ class FallbackSessionProvider(MarketSessionProvider):
                 source="fallback",
                 reason_code="FALLBACK_WEEKEND",
                 reason=f"주말 감지: weekday={weekday} ({wday_names[weekday]}요일)",
+                reason_metadata={
+                    "provider": "fallback",
+                    "weekday": weekday,
+                    "weekday_label": wday_names[weekday],
+                    "is_weekend": True,
+                },
             )
 
         return SessionInfo(
@@ -270,6 +283,11 @@ class FallbackSessionProvider(MarketSessionProvider):
             source="fallback",
             reason_code="FALLBACK_WEEKDAY",
             reason=f"평일 감지: weekday={weekday}",
+            reason_metadata={
+                "provider": "fallback",
+                "weekday": weekday,
+                "is_weekend": False,
+            },
         )
 
 
@@ -334,6 +352,11 @@ class CombinedSessionProvider(MarketSessionProvider):
                 source="combined_error",
                 reason_code="COMBINED_076_ERROR",
                 reason=f"076 provider error: {exc}",
+                reason_metadata={
+                    "provider": "combined_error",
+                    "step": "holiday_provider",
+                    "error": str(exc),
+                },
             )
 
         # Step 2: 163 (real-time market state)
@@ -373,6 +396,15 @@ class CombinedSessionProvider(MarketSessionProvider):
                         f"076 not trading day; phase={market_phase} "
                         f"mkop={raw_mkop}"
                     ),
+                    reason_metadata={
+                        "provider": "combined",
+                        "holiday_is_trading_day": holiday_info.is_trading_day,
+                        "holiday_reason_code": holiday_info.reason_code,
+                        "phase": market_phase,
+                        "mkop_cls_code": raw_mkop,
+                        "antc_mkop_cls_code": raw_antc,
+                        "ws_connected": True,
+                    },
                     market_phase=market_phase,
                     raw_opnd_yn=holiday_info.opnd_yn,
                     raw_mkop_cls_code=raw_mkop,
@@ -392,6 +424,15 @@ class CombinedSessionProvider(MarketSessionProvider):
                         f"163 safe mode: phase={market_phase} "
                         f"mkop={raw_mkop}"
                     ),
+                    reason_metadata={
+                        "provider": "combined",
+                        "holiday_is_trading_day": holiday_info.is_trading_day,
+                        "holiday_reason_code": holiday_info.reason_code,
+                        "phase": market_phase,
+                        "mkop_cls_code": raw_mkop,
+                        "antc_mkop_cls_code": raw_antc,
+                        "ws_connected": True,
+                    },
                     market_phase=market_phase,
                     raw_opnd_yn=holiday_info.opnd_yn,
                     raw_mkop_cls_code=raw_mkop,
@@ -411,6 +452,15 @@ class CombinedSessionProvider(MarketSessionProvider):
                         f"076 trading_day + 163 phase={market_phase} "
                         f"mkop={raw_mkop}"
                     ),
+                    reason_metadata={
+                        "provider": "combined",
+                        "holiday_is_trading_day": holiday_info.is_trading_day,
+                        "holiday_reason_code": holiday_info.reason_code,
+                        "phase": market_phase,
+                        "mkop_cls_code": raw_mkop,
+                        "antc_mkop_cls_code": raw_antc,
+                        "ws_connected": True,
+                    },
                     market_phase=market_phase,
                     raw_opnd_yn=holiday_info.opnd_yn,
                     raw_mkop_cls_code=raw_mkop,
@@ -430,6 +480,12 @@ class CombinedSessionProvider(MarketSessionProvider):
                     f"{holiday_info.reason} "
                     f"(163 WS connected={is_ws_connected})"
                 ),
+                reason_metadata={
+                    "provider": "076_only",
+                    "holiday_is_trading_day": holiday_info.is_trading_day,
+                    "holiday_reason_code": holiday_info.reason_code,
+                    "ws_connected": is_ws_connected,
+                },
                 market_phase=None,
                 raw_opnd_yn=holiday_info.opnd_yn,
                 raw_mkop_cls_code=None,

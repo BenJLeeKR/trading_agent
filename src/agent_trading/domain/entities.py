@@ -542,6 +542,7 @@ class MarketSessionEntity:
     source: str = "unknown"
     reason_code: str | None = None
     reason: str | None = None
+    reason_metadata: dict[str, object] | None = None
     checked_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

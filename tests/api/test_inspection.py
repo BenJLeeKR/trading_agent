@@ -14,13 +14,14 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Any
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
 from agent_trading.api.app import create_app
-from agent_trading.api.deps import get_repos
+from agent_trading.api.deps import get_db, get_repos
 from agent_trading.api.routes.decisions import _to_detail
 from agent_trading.api.routes.orders import _safe_str
 from agent_trading.domain.entities import (
@@ -906,6 +907,55 @@ class TestInstruments:
         """``GET /instruments/{id}`` returns 400 for invalid UUID."""
         response = client.get("/instruments/not-a-uuid")
         assert response.status_code == 400
+
+    def test_get_instrument_mapping_consistency_summary(self) -> None:
+        """``GET /instruments/mapping-consistency/summary`` returns gap summary."""
+        mock_conn = AsyncMock()
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        mock_conn.fetchval.return_value = 123
+        mock_conn.fetch.side_effect = [
+            [
+                {
+                    "symbol": "UNMAPPED_EVT",
+                    "occurrence_count": 4,
+                    "latest_observed_at": now,
+                }
+            ],
+            [
+                {
+                    "symbol": "UNMAPPED_FILL",
+                    "occurrence_count": 2,
+                    "latest_observed_at": now,
+                }
+            ],
+        ]
+
+        async def override():
+            yield mock_conn
+
+        app = create_app(auth_enabled=False)
+        app.dependency_overrides[get_db] = override
+
+        with TestClient(app) as client:
+            response = client.get("/instruments/mapping-consistency/summary?lookback_days=14")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["lookback_days"] == 14
+        assert data["active_instrument_count"] == 123
+        assert data["has_gap"] is True
+        assert data["total_unmapped_external_event_symbols"] == 1
+        assert data["total_unmapped_broker_fill_symbols"] == 1
+        assert data["unmapped_external_event_symbols"][0]["symbol"] == "UNMAPPED_EVT"
+        assert data["unmapped_broker_fill_symbols"][0]["symbol"] == "UNMAPPED_FILL"
+
+        fetchval_sql = mock_conn.fetchval.await_args.args[0]
+        assert "FROM trading.instruments" in fetchval_sql
+        first_fetch_sql = mock_conn.fetch.await_args_list[0].args[0]
+        second_fetch_sql = mock_conn.fetch.await_args_list[1].args[0]
+        assert "FROM trading.external_events e" in first_fetch_sql
+        assert "FROM trading.broker_fill_snapshots bfs" in second_fetch_sql
+
+        app.dependency_overrides.clear()
 
 
 class TestPositions:

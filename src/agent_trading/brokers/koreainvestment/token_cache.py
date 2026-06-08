@@ -43,9 +43,15 @@ class CachePurpose(str, Enum):
     """
 
     PAPER_ACCESS_TOKEN = "paper_access_token"
+    TRADING_APPROVAL_KEY = "trading_approval_key"
     LIVE_HOLIDAY_OAUTH = "live_holiday_oauth"
     LIVE_APPROVAL_KEY = "live_approval_key"
     LIVE_DISCLOSURE_ACCESS_TOKEN = "live_disclosure_access_token"
+
+
+_STANDARD_LOAD_EXPIRY_BUFFER: float = 60.0
+_STANDARD_SAVE_EXPIRY_BUFFER: float = 300.0
+_HOLIDAY_SAVE_EXPIRY_BUFFER: float = 60.0
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +156,54 @@ class TokenData:
         )
 
 
+@dataclass(slots=True, frozen=True)
+class CacheInspectionResult:
+    """Non-mutating cache inspection result for operational observability."""
+
+    enabled: bool
+    path: str
+    cache_purpose: str
+    status: str
+    exists: bool
+    expires_at: float | None = None
+    remaining_seconds: float | None = None
+    expected_fingerprint: str | None = None
+    actual_fingerprint: str | None = None
+    expected_purpose: str | None = None
+    actual_purpose: str | None = None
+    validator_key: str | None = None
+    validator_expected: str | None = None
+    validator_actual: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "enabled": self.enabled,
+            "path": self.path,
+            "cache_purpose": self.cache_purpose,
+            "status": self.status,
+            "exists": self.exists,
+        }
+        if self.expires_at is not None:
+            payload["expires_at"] = self.expires_at
+        if self.remaining_seconds is not None:
+            payload["remaining_seconds"] = self.remaining_seconds
+        if self.expected_fingerprint is not None:
+            payload["expected_fingerprint"] = self.expected_fingerprint
+        if self.actual_fingerprint is not None:
+            payload["actual_fingerprint"] = self.actual_fingerprint
+        if self.expected_purpose is not None:
+            payload["expected_purpose"] = self.expected_purpose
+        if self.actual_purpose is not None:
+            payload["actual_purpose"] = self.actual_purpose
+        if self.validator_key is not None:
+            payload["validator_key"] = self.validator_key
+        if self.validator_expected is not None:
+            payload["validator_expected"] = self.validator_expected
+        if self.validator_actual is not None:
+            payload["validator_actual"] = self.validator_actual
+        return payload
+
+
 def _first_of(data: dict[str, object], *keys: str) -> str:
     """주어진 키 중 첫 번째로 존재하는 값을 반환.
 
@@ -197,6 +251,106 @@ class KisTokenCacheConfig:
     extra_validators: dict[str, str] = field(default_factory=dict)
     load_expiry_buffer: float = 60.0
     save_expiry_buffer: float = 300.0
+
+
+def build_rest_access_token_cache_config(
+    *,
+    enabled: bool,
+    cache_path: Path,
+    cache_purpose: CachePurpose,
+    api_key: str,
+    kis_env: str,
+    base_url: str,
+) -> KisTokenCacheConfig:
+    """Build a standard REST access-token cache config.
+
+    Used by ``KISRestClient`` for both paper/dev trading tokens and the
+    dedicated live disclosure token path.
+    """
+    return KisTokenCacheConfig(
+        enabled=enabled,
+        cache_path=cache_path,
+        cache_purpose=cache_purpose,
+        fingerprint_input=api_key,
+        extra_validators={
+            "kis_env": kis_env,
+            "base_url": base_url,
+        },
+        load_expiry_buffer=_STANDARD_LOAD_EXPIRY_BUFFER,
+        save_expiry_buffer=_STANDARD_SAVE_EXPIRY_BUFFER,
+    )
+
+
+def build_holiday_oauth_cache_config(
+    *,
+    enabled: bool,
+    cache_path: Path,
+    app_key: str,
+    app_secret: str,
+    base_url: str,
+) -> KisTokenCacheConfig:
+    """Build the standard live holiday OAuth token cache config."""
+    secret_hash = app_secret[-4:] if len(app_secret) >= 4 else app_secret
+    return KisTokenCacheConfig(
+        enabled=enabled,
+        cache_path=cache_path,
+        cache_purpose=CachePurpose.LIVE_HOLIDAY_OAUTH,
+        fingerprint_input=f"holiday_oauth_{app_key}_{secret_hash}_{base_url}",
+        extra_validators={
+            "token_purpose": "holiday_oauth",
+            "base_url": base_url,
+        },
+        load_expiry_buffer=_STANDARD_LOAD_EXPIRY_BUFFER,
+        save_expiry_buffer=_HOLIDAY_SAVE_EXPIRY_BUFFER,
+    )
+
+
+def build_live_approval_key_cache_config(
+    *,
+    enabled: bool,
+    cache_path: Path,
+    app_key: str,
+    api_secret: str,
+    base_ws_url: str,
+) -> KisTokenCacheConfig:
+    """Build the standard live approval-key cache config."""
+    return KisTokenCacheConfig(
+        enabled=enabled,
+        cache_path=cache_path,
+        cache_purpose=CachePurpose.LIVE_APPROVAL_KEY,
+        fingerprint_input=f"live_info_{app_key}_{api_secret}",
+        extra_validators={
+            "cache_type": "approval_key",
+            "base_ws_url": base_ws_url,
+        },
+        load_expiry_buffer=_STANDARD_LOAD_EXPIRY_BUFFER,
+        save_expiry_buffer=_STANDARD_SAVE_EXPIRY_BUFFER,
+    )
+
+
+def build_rest_approval_key_cache_config(
+    *,
+    enabled: bool,
+    cache_path: Path,
+    api_key: str,
+    api_secret: str,
+    kis_env: str,
+    base_url: str,
+) -> KisTokenCacheConfig:
+    """Build a standard REST trading approval-key cache config."""
+    return KisTokenCacheConfig(
+        enabled=enabled,
+        cache_path=cache_path,
+        cache_purpose=CachePurpose.TRADING_APPROVAL_KEY,
+        fingerprint_input=f"trading_approval_{api_key}_{api_secret}",
+        extra_validators={
+            "cache_type": "approval_key",
+            "kis_env": kis_env,
+            "base_url": base_url,
+        },
+        load_expiry_buffer=_STANDARD_LOAD_EXPIRY_BUFFER,
+        save_expiry_buffer=_STANDARD_SAVE_EXPIRY_BUFFER,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +460,139 @@ class KisTokenCache:
         # 성공
         self._log_hit()
         return data.access_token
+
+    def inspect(self) -> CacheInspectionResult:
+        """Return a non-mutating health snapshot for the cache file."""
+        path = self.config.cache_path
+        expected_fp = self._compute_fingerprint()
+
+        if not self.config.enabled:
+            return CacheInspectionResult(
+                enabled=False,
+                path=str(path),
+                cache_purpose=self.config.cache_purpose.value,
+                status="disabled",
+                exists=path.exists(),
+                expected_fingerprint=expected_fp,
+                expected_purpose=self.config.cache_purpose.value,
+            )
+
+        if not path.exists():
+            return CacheInspectionResult(
+                enabled=True,
+                path=str(path),
+                cache_purpose=self.config.cache_purpose.value,
+                status="file_missing",
+                exists=False,
+                expected_fingerprint=expected_fp,
+                expected_purpose=self.config.cache_purpose.value,
+            )
+
+        try:
+            raw = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError, ValueError):
+            return CacheInspectionResult(
+                enabled=True,
+                path=str(path),
+                cache_purpose=self.config.cache_purpose.value,
+                status="read_error",
+                exists=True,
+                expected_fingerprint=expected_fp,
+                expected_purpose=self.config.cache_purpose.value,
+            )
+
+        try:
+            data = TokenData.from_dict(raw)
+        except (KeyError, ValueError, TypeError):
+            return CacheInspectionResult(
+                enabled=True,
+                path=str(path),
+                cache_purpose=self.config.cache_purpose.value,
+                status="parse_error",
+                exists=True,
+                expected_fingerprint=expected_fp,
+                expected_purpose=self.config.cache_purpose.value,
+            )
+
+        if data.credential_fingerprint != expected_fp:
+            return CacheInspectionResult(
+                enabled=True,
+                path=str(path),
+                cache_purpose=self.config.cache_purpose.value,
+                status="fingerprint_mismatch",
+                exists=True,
+                expires_at=data.expires_at,
+                remaining_seconds=max(0.0, data.expires_at - time.time()),
+                expected_fingerprint=expected_fp,
+                actual_fingerprint=data.credential_fingerprint,
+                expected_purpose=self.config.cache_purpose.value,
+                actual_purpose=data.cache_purpose,
+            )
+
+        if data.cache_purpose and self.config.cache_purpose.value != data.cache_purpose:
+            return CacheInspectionResult(
+                enabled=True,
+                path=str(path),
+                cache_purpose=self.config.cache_purpose.value,
+                status="purpose_mismatch",
+                exists=True,
+                expires_at=data.expires_at,
+                remaining_seconds=max(0.0, data.expires_at - time.time()),
+                expected_fingerprint=expected_fp,
+                actual_fingerprint=data.credential_fingerprint,
+                expected_purpose=self.config.cache_purpose.value,
+                actual_purpose=data.cache_purpose,
+            )
+
+        for key, expected_val in self.config.extra_validators.items():
+            actual_val = data.extra.get(key)
+            if actual_val != expected_val:
+                return CacheInspectionResult(
+                    enabled=True,
+                    path=str(path),
+                    cache_purpose=self.config.cache_purpose.value,
+                    status="validator_mismatch",
+                    exists=True,
+                    expires_at=data.expires_at,
+                    remaining_seconds=max(0.0, data.expires_at - time.time()),
+                    expected_fingerprint=expected_fp,
+                    actual_fingerprint=data.credential_fingerprint,
+                    expected_purpose=self.config.cache_purpose.value,
+                    actual_purpose=data.cache_purpose,
+                    validator_key=key,
+                    validator_expected=expected_val,
+                    validator_actual=actual_val,
+                )
+
+        remaining_seconds = data.expires_at - time.time()
+        if remaining_seconds <= self.config.load_expiry_buffer:
+            return CacheInspectionResult(
+                enabled=True,
+                path=str(path),
+                cache_purpose=self.config.cache_purpose.value,
+                status="expired",
+                exists=True,
+                expires_at=data.expires_at,
+                remaining_seconds=max(0.0, remaining_seconds),
+                expected_fingerprint=expected_fp,
+                actual_fingerprint=data.credential_fingerprint,
+                expected_purpose=self.config.cache_purpose.value,
+                actual_purpose=data.cache_purpose,
+            )
+
+        return CacheInspectionResult(
+            enabled=True,
+            path=str(path),
+            cache_purpose=self.config.cache_purpose.value,
+            status="ready",
+            exists=True,
+            expires_at=data.expires_at,
+            remaining_seconds=max(0.0, remaining_seconds),
+            expected_fingerprint=expected_fp,
+            actual_fingerprint=data.credential_fingerprint,
+            expected_purpose=self.config.cache_purpose.value,
+            actual_purpose=data.cache_purpose,
+        )
 
     # ------------------------------------------------------------------
     # Save

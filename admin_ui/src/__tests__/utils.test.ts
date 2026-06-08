@@ -22,21 +22,21 @@ describe("formatKstDateTime", () => {
   });
 
   it("formats a valid UTC ISO string to KST datetime", () => {
-    // 2026-05-16T05:00:00Z → KST: 2026-05-16 14:00:00
+    // 2026-05-16T05:00:00Z → KST: 2026-05-16 14:00
     const result = formatKstDateTime("2026-05-16T05:00:00Z");
-    expect(result).toMatch(/^2026-05-16 14:00:00 KST$/);
+    expect(result).toMatch(/^2026-05-16 14:00$/);
   });
 
   it("formats another KST time correctly", () => {
-    // 2026-05-15T23:59:59Z → KST: 2026-05-16 08:59:59
+    // 2026-05-15T23:59:59Z → KST: 2026-05-16 08:59
     const result = formatKstDateTime("2026-05-15T23:59:59Z");
-    expect(result).toMatch(/^2026-05-16 08:59:59 KST$/);
+    expect(result).toMatch(/^2026-05-16 08:59$/);
   });
 
   it("handles midnight crossing correctly", () => {
-    // 2026-05-15T15:00:00Z → KST: 2026-05-16 24:00:00 (ko-KR locale)
+    // 2026-05-15T15:00:00Z → KST: 2026-05-16 24:00 (ko-KR locale)
     const result = formatKstDateTime("2026-05-15T15:00:00Z");
-    expect(result).toMatch(/^2026-05-16 24:00:00 KST$/);
+    expect(result).toMatch(/^2026-05-16 24:00$/);
   });
 });
 

@@ -292,30 +292,35 @@ export default function AccountsView() {
         </span>
       ),
     },
-    { key: "quantity", header: "수량", render: (r) => formatQty(r.quantity) },
+    { key: "quantity", header: "수량", align: "right", render: (r) => formatQty(r.quantity) },
     {
       key: "average_price",
       header: "평균단가",
+      align: "right",
       render: (r) => formatKrw(r.average_price),
     },
     {
       key: "purchase_amount",
       header: "매입금액",
+      align: "right",
       render: (r) => (r.purchase_amount != null ? formatKrw(r.purchase_amount) : "—"),
     },
     {
       key: "market_price",
       header: "현재가",
+      align: "right",
       render: (r) => formatKrw(r.market_price),
     },
     {
       key: "evaluation_amount",
       header: "평가금액",
+      align: "right",
       render: (r) => (r.evaluation_amount != null ? formatKrw(r.evaluation_amount) : "—"),
     },
     {
       key: "unrealized_pnl",
       header: "미실현 손익",
+      align: "right",
       render: (r) => {
         const pnl = r.unrealized_pnl ?? 0;
         return (

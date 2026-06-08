@@ -42,6 +42,7 @@ const navSections: NavSection[] = [
       { icon: Activity, label: "운영 대시보드", to: "/" },
       { icon: AlertCircle, label: "운영 경고", to: "/operations/alerts" },
       { icon: Search, label: "주문 추적", to: "/operations/orders" },
+      { icon: RefreshCcw, label: "정합성 점검", to: "/reconciliation" },
     ],
   },
   {
@@ -49,7 +50,6 @@ const navSections: NavSection[] = [
     items: [
       { icon: FileText, label: "주문", to: "/orders" },
       { icon: ListOrdered, label: "체결내역", to: "/fills" },
-      { icon: RefreshCcw, label: "정합성 점검", to: "/reconciliation" },
       { icon: Wallet, label: "계좌", to: "/accounts" },
       { icon: Brain, label: "의사결정", to: "/decisions" },
       { icon: Zap, label: "에이전트 실행", to: "/agent-runs" },

@@ -12,8 +12,19 @@ export function cn(...inputs: ClassValue[]) {
  * Input ISO strings are assumed to be UTC.
  * ─────────────────────────────────────────── */
 
-/** Pre-built KST datetime formatter (full). */
+/** Pre-built KST datetime formatter (minute precision). */
 const KST_DATETIME = new Intl.DateTimeFormat("ko-KR", {
+  timeZone: "Asia/Seoul",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+/** Pre-built KST datetime formatter (with seconds, for elapsed display). */
+const KST_DATETIME_WITH_SECONDS = new Intl.DateTimeFormat("ko-KR", {
   timeZone: "Asia/Seoul",
   year: "numeric",
   month: "2-digit",
@@ -58,21 +69,20 @@ export function getKstTodayString(now: Date = new Date()): string {
  * Format an ISO datetime string as a full KST datetime.
  *
  * Input:  ISO string (UTC assumed)
- * Output: `2026-05-15 14:32:44 KST`
+ * Output: `2026-05-15 14:32`
  * Null/empty → `"—"`
  */
 export function formatKstDateTime(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "—";
-  const parts = KST_DATETIME.formatToParts(d);
+  const parts = KST_DATETIME_WITH_SECONDS.formatToParts(d);
   const y = parts.find((p) => p.type === "year")?.value ?? "";
   const mo = parts.find((p) => p.type === "month")?.value ?? "";
   const dd = parts.find((p) => p.type === "day")?.value ?? "";
   const hh = parts.find((p) => p.type === "hour")?.value ?? "";
   const mm = parts.find((p) => p.type === "minute")?.value ?? "";
-  const ss = parts.find((p) => p.type === "second")?.value ?? "";
-  return `${y}-${mo}-${dd} ${hh}:${mm}:${ss} KST`;
+  return `${y}-${mo}-${dd} ${hh}:${mm}`;
 }
 
 /**
@@ -130,7 +140,7 @@ export function formatKstElapsed(iso: string | null | undefined): string {
   if (isNaN(d.getTime())) return "—";
 
   // Absolute KST datetime part
-  const parts = KST_DATETIME.formatToParts(d);
+  const parts = KST_DATETIME_WITH_SECONDS.formatToParts(d);
   const y = parts.find((p) => p.type === "year")?.value ?? "";
   const mo = parts.find((p) => p.type === "month")?.value ?? "";
   const dd = parts.find((p) => p.type === "day")?.value ?? "";

@@ -7,6 +7,7 @@ export interface Column<T> {
   header: string;
   render?: (row: T) => ReactNode;
   width?: string;
+  align?: "left" | "right" | "center";
 }
 
 interface DataTableProps<T> {
@@ -76,6 +77,17 @@ export function DataTable<T extends Record<string, any>>({
   onPageSizeChange,
   pageSizeOptions = [10, 20, 50],
 }: DataTableProps<T>) {
+  const alignmentClass = (align?: "left" | "right" | "center") => {
+    switch (align) {
+      case "right":
+        return "text-right";
+      case "center":
+        return "text-center";
+      default:
+        return "text-left";
+    }
+  };
+
   if (isLoading && data.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center p-8 gap-3">
@@ -116,7 +128,7 @@ export function DataTable<T extends Record<string, any>>({
               {columns.map((col) => (
                 <th
                   key={col.key}
-                  className="px-4 py-3 text-left text-xs font-semibold text-[#64748b] uppercase tracking-wider"
+                  className="px-4 py-3 text-center text-xs font-semibold text-[#64748b] uppercase tracking-wider"
                   style={{ width: col.width }}
                 >
                   {col.header}
@@ -144,7 +156,10 @@ export function DataTable<T extends Record<string, any>>({
                       ? col.key.split(".").reduce((obj: any, k: string) => obj?.[k], row)
                       : row[col.key];
                     return (
-                      <td key={col.key} className="px-4 py-3 text-sm text-[#0f172a]">
+                      <td
+                        key={col.key}
+                        className={cn("px-4 py-3 text-sm text-[#0f172a]", alignmentClass(col.align))}
+                      >
                         {col.render ? col.render(row) : String(value ?? "-")}
                       </td>
                     );

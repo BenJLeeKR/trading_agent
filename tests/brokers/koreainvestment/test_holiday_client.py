@@ -579,6 +579,7 @@ def _make_cache_data(
     expires_at: float | None = None,
     fingerprint: str | None = None,
     token_purpose: str = "holiday_oauth",
+    base_url: str = "https://api.test.com:9443",
 ) -> dict:
     """Helper to build mock cache file data."""
     return {
@@ -587,6 +588,7 @@ def _make_cache_data(
         "expires_at": expires_at or (time.time() + 3600),
         "fingerprint": fingerprint or _compute_test_fingerprint(),
         "token_purpose": token_purpose,
+        "base_url": base_url,
         "created_at": time.time(),
     }
 

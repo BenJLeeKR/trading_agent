@@ -183,6 +183,8 @@ async def _build_rest_client(
         budget_manager=budget_manager,
         dev_token_cache_enabled=settings.kis_dev_token_cache_enabled,
         dev_token_cache_path=settings.kis_dev_token_cache_path,
+        approval_cache_enabled=settings.kis_approval_key_cache_enabled,
+        approval_cache_path=settings.kis_approval_key_cache_path,
     )
 
 

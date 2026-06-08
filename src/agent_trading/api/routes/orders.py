@@ -100,6 +100,18 @@ async def _enrich_order_summary(
         if inst is not None:
             summary.symbol = inst.symbol
             summary.instrument_name = inst.name
+    fill_rows = await repos.broker_fill_snapshots.list_recent(
+        limit=20,
+        order_request_id=order.order_request_id,  # type: ignore[attr-defined]
+    )
+    if fill_rows:
+        latest_fill = fill_rows[0]
+        max_filled_quantity = max(row.filled_quantity for row in fill_rows)
+        latest_fill_price = float(latest_fill.fill_price)
+        filled_quantity = float(max_filled_quantity)
+        summary.filled_quantity = filled_quantity
+        summary.avg_fill_price = latest_fill_price
+        summary.fill_amount = filled_quantity * latest_fill_price
     return summary
 
 
@@ -352,7 +364,7 @@ async def list_orders(
     status: str | None = Query(None),
     trade_decision_id: str | None = Query(None, description="Filter by trade decision UUID"),
     decision_context_id: str | None = Query(None, description="Filter by decision context UUID"),
-    limit: int = Query(100, ge=1, le=1000),
+    limit: int = Query(100, ge=1, le=10000),
     repos: RepositoryContainer = Depends(get_repos),
 ) -> list[OrderSummary]:
     """List orders with optional filters.

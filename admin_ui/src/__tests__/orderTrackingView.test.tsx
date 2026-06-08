@@ -176,10 +176,7 @@ describe("OrderTrackingView KST timestamp", () => {
       expect(screen.getByText("상태 전이 타임라인")).toBeInTheDocument();
     });
 
-    // 2026-05-05T00:00:01Z → KST: 2026-05-05 09:00:01 KST
-    // 2026-05-05T00:00:05Z → KST: 2026-05-05 09:00:05 KST
-    expect(screen.getByText("2026-05-05 09:00:01 KST")).toBeInTheDocument();
-    expect(screen.getByText("2026-05-05 09:00:05 KST")).toBeInTheDocument();
+    expect(screen.getAllByText("2026-05-05 09:00").length).toBeGreaterThanOrEqual(2);
   });
 });
 

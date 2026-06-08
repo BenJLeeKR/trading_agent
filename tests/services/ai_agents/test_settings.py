@@ -13,10 +13,14 @@ import pytest
 
 from agent_trading.config.settings import (
     AppSettings,
+    KIS_DEFAULT_REST_URLS,
+    KIS_DEFAULT_WS_URLS,
     _resolve_kis_api_key,
     _resolve_kis_api_secret,
     _resolve_kis_account_number,
+    _resolve_kis_base_url,
     _resolve_kis_env,
+    _resolve_kis_ws_url,
     _resolve_provider_api_key,
     _resolve_provider_base_url,
     _resolve_provider_model_id,
@@ -365,8 +369,8 @@ class TestAppSettingsKisFields:
         assert settings.kis_api_secret == "legacy-secret"
         assert settings.kis_account_number == "legacy-acc"
         assert settings.kis_env == "live"
-        assert settings.kis_base_url == ""
-        assert settings.kis_ws_url == ""
+        assert settings.kis_base_url == KIS_DEFAULT_REST_URLS["live"]
+        assert settings.kis_ws_url == KIS_DEFAULT_WS_URLS["live"]
 
     def test_all_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """No KIS env vars set → empty strings + paper default."""
@@ -384,8 +388,27 @@ class TestAppSettingsKisFields:
         assert settings.kis_api_secret == ""
         assert settings.kis_account_number == ""
         assert settings.kis_env == "paper"
-        assert settings.kis_base_url == ""
-        assert settings.kis_ws_url == ""
+        assert settings.kis_base_url == KIS_DEFAULT_REST_URLS["paper"]
+        assert settings.kis_ws_url == KIS_DEFAULT_WS_URLS["paper"]
+
+    def test_live_env_ignores_paper_base_url_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("KIS_ENV", "real")
+        monkeypatch.setenv("KIS_BASE_URL", "https://openapivts.koreainvestment.com:29443")
+        settings = AppSettings()
+        assert settings.kis_env == "live"
+        assert settings.kis_base_url == KIS_DEFAULT_REST_URLS["live"]
+
+    def test_live_env_ignores_paper_ws_url_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("KIS_ENV", "live")
+        monkeypatch.setenv("KIS_WS_URL", "ws://ops.koreainvestment.com:31000")
+        settings = AppSettings()
+        assert settings.kis_ws_url == KIS_DEFAULT_WS_URLS["live"]
+
+    def test_paper_env_ignores_live_base_url_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("KIS_ENV", "paper")
+        monkeypatch.setenv("KIS_BASE_URL", "https://openapi.koreainvestment.com:9443")
+        settings = AppSettings()
+        assert settings.kis_base_url == KIS_DEFAULT_REST_URLS["paper"]
 
     # ------------------------------------------------------------------
     # KIS REST RPS resolver tests
@@ -402,6 +425,24 @@ class TestAppSettingsKisFields:
         monkeypatch.delenv("KIS_PAPER_REST_RPS", raising=False)
         settings = AppSettings()
         assert settings.kis_paper_rest_rps == 1
+
+
+class TestResolveKisEndpointOverrides:
+    def test_resolve_kis_base_url_ignores_mismatched_paper_override_in_live(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("KIS_ENV", "live")
+        monkeypatch.setenv("KIS_BASE_URL", "https://openapivts.koreainvestment.com:29443")
+        assert _resolve_kis_base_url() == KIS_DEFAULT_REST_URLS["live"]
+
+    def test_resolve_kis_ws_url_ignores_mismatched_paper_override_in_live(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("KIS_ENV", "live")
+        monkeypatch.setenv("KIS_WS_URL", "ws://ops.koreainvestment.com:31000")
+        assert _resolve_kis_ws_url() == KIS_DEFAULT_WS_URLS["live"]
 
 
 # ===========================================================================
@@ -537,10 +578,11 @@ class TestEventInterpretationOutputPostInit:
     # ------------------------------------------------------------------
 
     def test_kis_ws_url_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """``KIS_WS_URL`` unset → defaults to empty string."""
+        """``KIS_WS_URL`` unset → defaults to env-mapped websocket URL."""
+        monkeypatch.delenv("KIS_ENV", raising=False)
         monkeypatch.delenv("KIS_WS_URL", raising=False)
         settings = AppSettings()
-        assert settings.kis_ws_url == ""
+        assert settings.kis_ws_url == KIS_DEFAULT_WS_URLS["paper"]
 
     def test_kis_ws_url_custom(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``KIS_WS_URL`` set → uses env value."""

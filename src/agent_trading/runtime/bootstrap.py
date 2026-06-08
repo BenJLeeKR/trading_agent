@@ -70,6 +70,8 @@ def _build_kis_live_quote_client(settings: AppSettings) -> KISRestClient | None:
         dev_token_cache_path=settings.kis_disclosure_token_cache_path,
         dev_token_cache_enabled=settings.kis_disclosure_token_cache_enabled,
         cache_purpose=CachePurpose.LIVE_DISCLOSURE_ACCESS_TOKEN,
+        approval_cache_enabled=settings.kis_approval_key_cache_enabled,
+        approval_cache_path=settings.kis_approval_key_cache_path,
     )
 
 
@@ -96,6 +98,8 @@ def _build_kis_adapter(settings: AppSettings) -> KoreaInvestmentAdapter:
         budget_manager=budget_manager,
         dev_token_cache_enabled=settings.kis_dev_token_cache_enabled,
         dev_token_cache_path=settings.kis_dev_token_cache_path,
+        approval_cache_enabled=settings.kis_approval_key_cache_enabled,
+        approval_cache_path=settings.kis_approval_key_cache_path,
     )
     live_quote_client = _build_kis_live_quote_client(settings)
     return KoreaInvestmentAdapter(
@@ -204,6 +208,8 @@ def _build_polling_workers(
             dev_token_cache_path=cache_path,
             dev_token_cache_enabled=settings.kis_disclosure_token_cache_enabled,
             cache_purpose=CachePurpose.LIVE_DISCLOSURE_ACCESS_TOKEN,
+            approval_cache_enabled=settings.kis_approval_key_cache_enabled,
+            approval_cache_path=settings.kis_approval_key_cache_path,
         )
     
         logger.info(
@@ -265,6 +271,8 @@ def _build_live_disclosure_client(
         dev_token_cache_path=cache_path,
         dev_token_cache_enabled=settings.kis_disclosure_token_cache_enabled,
         cache_purpose=CachePurpose.LIVE_DISCLOSURE_ACCESS_TOKEN,
+        approval_cache_enabled=settings.kis_approval_key_cache_enabled,
+        approval_cache_path=settings.kis_approval_key_cache_path,
     )
 
     logger.info(

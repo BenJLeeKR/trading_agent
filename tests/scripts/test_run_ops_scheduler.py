@@ -1101,6 +1101,32 @@ class TestPersistSessionState:
             # Exception이 발생해도 logger.exception으로 처리됨
             assert mock_logger.exception.called or True
 
+    @pytest.mark.asyncio
+    async def test_persists_reason_metadata(self) -> None:
+        """session_info.reason_metadata가 market_sessions upsert에 저장되어야 함."""
+        state = SchedulerState(run_date=date(2026, 5, 18))
+        state.session_info = SessionInfo(
+            is_trading_day=False,
+            opnd_yn="N",
+            source="combined",
+            reason_code="COMBINED_163_SAFE_MODE",
+            reason="safe mode",
+            reason_metadata={"provider": "combined", "phase": "HALT"},
+        )
+        state.market_phase = "HALT"
+        conn = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value={"id": 77})
+        with patch("asyncpg.connect", new=AsyncMock(return_value=conn)):
+            with patch("scripts.run_ops_scheduler._persist_operations_day_run", new=AsyncMock()):
+                await _persist_session_state(state, dsn="postgresql://localhost/test")
+
+        sql = conn.fetchrow.call_args.args[0]
+        assert "reason_metadata" in sql
+        assert json.loads(conn.fetchrow.call_args.args[13]) == {
+            "provider": "combined",
+            "phase": "HALT",
+        }
+
 
 class TestPersistOperationsDayRun:
     """``_persist_operations_day_run()`` — DB 저장."""
@@ -1166,7 +1192,11 @@ class TestPersistOperationsDayRun:
         conn = AsyncMock()
         conn.execute = AsyncMock()
         with patch("asyncpg.connect", new=AsyncMock(return_value=conn)):
-            await _persist_operations_day_run(state, dsn="postgresql://localhost/test")
+            with patch(
+                "scripts.run_ops_scheduler._build_token_cache_health_summary",
+                return_value={"paper_rest_access_token": {"status": "ready"}},
+            ):
+                await _persist_operations_day_run(state, dsn="postgresql://localhost/test")
 
         conn.execute.assert_called()
         sql = conn.execute.call_args.args[0]
@@ -1195,6 +1225,7 @@ class TestPersistOperationsDayRun:
         assert summary_json["command_health"]["decision_loop"]["count"] == 1
         assert summary_json["command_health"]["decision_loop"]["last_ok"] is True
         assert summary_json["command_health"]["recovery_batch"]["timed_out_count"] == 1
+        assert summary_json["token_cache_health"]["paper_rest_access_token"]["status"] == "ready"
 
 
 class TestIntradayDecisionLoopPersistence:

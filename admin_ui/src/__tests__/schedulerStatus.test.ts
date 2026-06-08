@@ -126,7 +126,7 @@ describe("getSchedulerStatus — Stale", () => {
     expect(result.variant).toBe("warning");
     expect(result.value).toBe("지연");
     expect(result.subtitle).toContain("Last checked");
-    expect(result.subtitle).toContain("KST"); // KST formatter 사용 확인
+    expect(result.subtitle).toContain("2026-05-16 14:00"); // KST formatter 사용 확인
   });
 
   it("returns warning/지연 when stale_seconds exceeds 10 min threshold", () => {

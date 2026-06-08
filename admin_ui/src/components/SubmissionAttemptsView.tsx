@@ -8,6 +8,7 @@ import { StatusBadge } from './common/StatusBadge';
 import { LoadingSpinner } from './common/LoadingSpinner';
 import { ErrorBanner } from './common/ErrorBanner';
 import { Panel } from './common/Panel';
+import { formatKstDateTime } from '../lib/utils';
 
 function outcomeVariant(outcome: string | null): "success" | "error" | "warning" | "neutral" {
   switch (outcome) {
@@ -68,10 +69,7 @@ export default function SubmissionAttemptsView() {
     {
       key: 'submitted_at',
       header: '제출 시각',
-      render: (row) => {
-        const d = new Date(row.submitted_at);
-        return d.toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
-      },
+      render: (row) => formatKstDateTime(row.submitted_at),
     },
     {
       key: 'broker_name',
@@ -106,11 +104,13 @@ export default function SubmissionAttemptsView() {
     {
       key: 'http_status',
       header: 'HTTP',
+      align: 'right',
       render: (row) => row.http_status?.toString() ?? '-',
     },
     {
       key: 'duration_ms',
       header: '소요 시간',
+      align: 'right',
       render: (row) => row.duration_ms != null ? `${row.duration_ms}ms` : '-',
     },
   ];

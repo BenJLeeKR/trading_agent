@@ -78,8 +78,8 @@ class TestCheckHeldPositionSellOverride:
         assert side == "SELL"
 
     def test_held_position_risk_review_high_score_returns_reduce(self, service) -> None:
-        """held position + ``risk_opinion=review`` + ``risk_score>=0.6`` → override."""
-        ar = AIRiskOutput(risk_opinion="review", risk_score=0.65)
+        """held position + ``risk_opinion=review`` + ``risk_score>=0.8`` → override."""
+        ar = AIRiskOutput(risk_opinion="review", risk_score=0.85)
         fdc = FinalDecisionComposerOutput(decision_type="HOLD")
         result = service._check_held_position_sell_override(
             source_type="held_position",
@@ -93,8 +93,8 @@ class TestCheckHeldPositionSellOverride:
         assert "review" in rationale
 
     def test_held_position_risk_review_low_score_returns_none(self, service) -> None:
-        """held position + ``risk_opinion=review`` + ``risk_score<0.6`` → ``None``."""
-        ar = AIRiskOutput(risk_opinion="review", risk_score=0.4)
+        """held position + ``risk_opinion=review`` + ``risk_score<0.8`` → ``None``."""
+        ar = AIRiskOutput(risk_opinion="review", risk_score=0.65)
         fdc = FinalDecisionComposerOutput(decision_type="HOLD")
         result = service._check_held_position_sell_override(
             source_type="held_position",

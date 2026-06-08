@@ -1,4 +1,4 @@
-# 2026-06-03 남은 작업 우선순위 정리
+# 남은 작업 우선순위 정리
 
 ## 목적
 
@@ -231,38 +231,52 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 
 ## P1 — 높은 우선순위의 운영/플랫폼 과제
 
-### 5. KIS 실계정/실운영 smoke 검증 — `진행중`
+### 5. KIS 실계정/실운영 smoke 검증 — `완료`
 
 ### 목표
 - paper에서 정리한 제출/동기화 경로를 실제 KIS credential 환경에서도 검증한다.
 
 ### 세부 작업 상태
-- [ ] KIS real credential 확보 후 combined submit smoke
+- [x] KIS real credential + operator 승인 하의 실제 combined submit smoke 실행
+  - 실제 KIS 응답 확인: `KIOK0320 / 장운영시간이 아닙니다`
 - [x] live-info read-only smoke(`auth / approval / quote`) 경로 추가
   - [`plans/2026-06-05_kis_live_readonly_smoke_phase1.md`](./2026-06-05_kis_live_readonly_smoke_phase1.md)
+- [x] live submit preflight(read-only)
+  - [`plans/2026-06-05_kis_live_submit_preflight_phase3.md`](./2026-06-05_kis_live_submit_preflight_phase3.md)
+- [x] guarded combined submit smoke runner
+  - [`plans/2026-06-05_kis_live_combined_submit_smoke_runner.md`](./2026-06-05_kis_live_combined_submit_smoke_runner.md)
+- [x] guarded combined submit dry-run smoke 검증
+  - `status=READY`, `submitted=False`
 - [x] live info / paper submit 경로의 budget 분리 1차 정리
   - live quote client 전용 live budget manager 주입
-- [ ] fill sync와의 실제 budget 경쟁 실측
-- [ ] paper 전용 우회 정책이 live에도 불필요하게 남아 있지 않은지 확인
+- [x] fill sync와의 실제 budget 경쟁 실측
+  - [`plans/2026-06-05_kis_budget_isolation_smoke_phase2.md`](./2026-06-05_kis_budget_isolation_smoke_phase2.md)
+- [x] paper 전용 우회 정책이 live에도 불필요하게 남아 있지 않은지 확인
+  - [`plans/2026-06-05_kis_budget_isolation_smoke_phase2.md`](./2026-06-05_kis_budget_isolation_smoke_phase2.md)
 
 ### 근거 문서
 - [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `8`
 
 ---
 
-### 6. KIS token/approval cache 공통 모듈화 — `미완료`
+### 6. KIS token/approval cache 공통 모듈화 — `완료`
 
 ### 목표
 - paper/live/disclosure/holiday/approval key 경로에 흩어진 토큰 캐시 로직을 정리한다.
 
 ### 세부 작업 상태
-- [ ] 공통 cache contract
-- [ ] cache purpose 표준화
-- [ ] expiry/fingerprint/refresh 공통 helper 추출
-- [ ] rest/holiday/market_state client 통합 적용
+- [x] 공통 cache contract 1차 정리
+- [x] cache purpose 표준화 1차 정리
+- [x] expiry/fingerprint/validator helper 추출
+- [x] rest/holiday/market_state client 통합 적용
+- [x] approval key를 REST client 쪽에서도 파일 cache까지 확장
+  - [`plans/2026-06-08_kis_rest_approval_key_file_cache.md`](./2026-06-08_kis_rest_approval_key_file_cache.md)
+- [x] token cache health를 운영 관측값에 직접 노출
+  - [`plans/2026-06-08_kis_token_cache_health_observability.md`](./2026-06-08_kis_token_cache_health_observability.md)
 
 ### 근거 문서
 - [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `34`
+- [`plans/2026-06-05_kis_token_cache_common_module_phase1.md`](./2026-06-05_kis_token_cache_common_module_phase1.md)
 
 ### 우선순위 이유
 - 지금 당장 장애는 아니지만, KIS 관련 운영 안정성의 중기 핵심 기술부채다.
@@ -310,11 +324,13 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - `market_sessions` latest 조회 API는 이미 있음
 - `market_sessions` 날짜별 단건 조회 / 기간 history 조회도 완료
 - `market_sessions.reason_code` 구조화 저장도 완료
+- `market_sessions.reason_metadata` 구조화 저장도 완료
 - `session_events`도 `run_date` 기준 drill-down 가능
 - 관련 문서:
   - [`plans/2026-06-03_market_sessions_history_api.md`](./2026-06-03_market_sessions_history_api.md)
   - [`plans/2026-06-03_market_sessions_reason_code_structuring.md`](./2026-06-03_market_sessions_reason_code_structuring.md)
   - [`plans/2026-06-03_session_events_run_date_drilldown.md`](./2026-06-03_session_events_run_date_drilldown.md)
+  - [`plans/2026-06-08_market_sessions_reason_metadata_structuring.md`](./2026-06-08_market_sessions_reason_metadata_structuring.md)
 
 ### 근거 문서
 - [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `7`
@@ -349,21 +365,28 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - 이번 임시공휴일처럼 시장 캘린더 변동이 있을 때 운영 판단을 더 신뢰성 있게 할 수 있다.
 
 ### 세부 작업 상태
-- [ ] 조기종료/특수세션 reason을 더 구조적으로 저장할지 검토
+- [x] 조기종료/특수세션 reason 근거를 `reason_metadata`로 더 구조적으로 저장 완료
+  - [`plans/2026-06-08_market_sessions_reason_metadata_structuring.md`](./2026-06-08_market_sessions_reason_metadata_structuring.md)
 - [x] 비거래일 readiness / next-trading-day readiness와 session history를 더 직접 연결 완료
   - [`plans/2026-06-04_market_sessions_history_readiness_link.md`](./2026-06-04_market_sessions_history_readiness_link.md)
 
 ---
 
-### 9. KIS 기본종목정보 instrument master 적재/갱신 — `미완료`
+### 9. KIS 기본종목정보 instrument master 적재/갱신 — `진행중`
 
 ### 목표
 - 종목 메타데이터를 KIS 기준으로 더 안정적으로 관리한다.
 
 ### 세부 작업 상태
-- [ ] 기본종목정보 수집 파이프라인
-- [ ] instrument master 갱신 정책
+- [x] 정규화된 KIS master CSV 기반 기본종목정보 수집 파이프라인 1차 완료
+  - [`plans/2026-06-08_kis_instrument_master_sync_pipeline_phase1.md`](./2026-06-08_kis_instrument_master_sync_pipeline_phase1.md)
+- [x] instrument master 갱신 정책
+  - [`plans/2026-06-08_kis_instrument_master_update_policy.md`](./2026-06-08_kis_instrument_master_update_policy.md)
 - [ ] snapshot/event mapping과의 정합성 확보
+  - [x] recent `external_events` / `broker_fill_snapshots` unmapped symbol audit CLI
+    - [`plans/2026-06-08_instrument_mapping_consistency_audit.md`](./2026-06-08_instrument_mapping_consistency_audit.md)
+  - [x] unmapped symbol summary inspection API
+    - [`plans/2026-06-08_instrument_mapping_consistency_summary_api.md`](./2026-06-08_instrument_mapping_consistency_summary_api.md)
 
 ### 근거 문서
 - [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `8`
@@ -409,9 +432,27 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 ### 핵심
 - 기술/수급/모멘텀/변동성 점수의 deterministic backbone 구축
 - fast/slow layer score 분리
+- 최근 `n개월` 시세를 기반으로 한 기술지표/추세 feature를 장전 판단 입력으로 정착
+
+### 추가 구현 메모
+- 장중에 원시 시세를 길게 AI에 넣는 대신, 새벽 또는 장후 배치로 최근 `n개월` 시세를 수치 feature로 미리 계산해 DB에 저장한다.
+- 예시 feature:
+  - 이동평균(5/20/60/120)
+  - 이격도
+  - RSI
+  - ATR
+  - 변동성 percentile
+  - 기간 수익률(`1M/3M/6M`)
+  - 거래량/거래대금 급증률
+- 장 시작 전 decision loop / AI 판단은 이 구조화 수치를 읽어서 사용하도록 한다.
+- 목적:
+  - AI prompt 토큰 사용량 절감
+  - 장중 계산 부하 감소
+  - replay/backtest 가능한 deterministic signal backbone 강화
 
 ### 근거 문서
 - [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `30`
+- [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `30a`
 - `plan_docs/agents/01_agent_inventory_and_status.md`
 - `plan_docs/agents/02_agent_target_shapes.md`
 

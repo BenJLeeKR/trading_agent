@@ -1173,7 +1173,7 @@ export default function OperationsDashboardView() {
                   <span className="text-sm text-[#334155]">{row.instrumentName || "—"}</span>
                 )},
                 { key: "side", header: "매매", width: "90px" },
-                { key: "quantity", header: "수량", width: "80px" },
+                { key: "quantity", header: "수량", width: "80px", align: "right" },
                 {
                   key: "status",
                   header: "상태",
@@ -1213,7 +1213,7 @@ export default function OperationsDashboardView() {
                     <StatusBadge variant={row.statusVariant}>{row.status}</StatusBadge>
                   ),
                 },
-                { key: "mismatchCount", header: "불일치건수", width: "90px" },
+                { key: "mismatchCount", header: "불일치건수", width: "90px", align: "right" },
                 {
                   key: "completedAt",
                   header: "완료시각",

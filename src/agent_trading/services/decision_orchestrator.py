@@ -263,7 +263,7 @@ class DecisionOrchestratorService:
         if ar_output.risk_opinion in ("reject", "reduce"):
             risk_override = True
             override_reason = f"리스크 경고({ar_output.risk_opinion})"
-        elif ar_output.risk_opinion == "review" and ar_output.risk_score >= 0.6:
+        elif ar_output.risk_opinion == "review" and ar_output.risk_score >= 0.8:
             risk_override = True
             override_reason = f"리스크 검토 필요(score:{ar_output.risk_score:.1f})"
         elif ar_output.risk_score >= 0.8:
@@ -931,6 +931,5 @@ class DecisionOrchestratorService:
             request=request,
             assembled_context=assembled_context,
         )
-
 
 

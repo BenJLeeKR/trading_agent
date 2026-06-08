@@ -9,6 +9,16 @@ from agent_trading.domain.enums import Environment
 
 logger = logging.getLogger(__name__)
 
+KIS_DEFAULT_REST_URLS: dict[str, str] = {
+    "live": "https://openapi.koreainvestment.com:9443",
+    "paper": "https://openapivts.koreainvestment.com:29443",
+}
+
+KIS_DEFAULT_WS_URLS: dict[str, str] = {
+    "live": "ws://ops.koreainvestment.com:21000",
+    "paper": "ws://ops.koreainvestment.com:31000",
+}
+
 # ---------------------------------------------------------------------------
 # LLM Provider environment variable resolution
 # ---------------------------------------------------------------------------
@@ -126,6 +136,58 @@ def _resolve_kis_env() -> str:
     return raw.strip().lower().replace("real", "live")
 
 
+def _resolve_kis_base_url() -> str:
+    """Resolve KIS REST base URL with env-aware safety normalization.
+
+    ``KIS_BASE_URL`` is treated as an explicit override only when it matches
+    the selected ``KIS_ENV`` family.  This prevents a common misconfiguration
+    where ``KIS_ENV=live`` is paired with the paper VTS endpoint from an old
+    ``.env`` template.
+    """
+    raw = os.getenv("KIS_BASE_URL", "").strip()
+    env = _resolve_kis_env()
+    if not raw:
+        return KIS_DEFAULT_REST_URLS[env]
+    if env == "live" and "openapivts.koreainvestment.com" in raw:
+        logger.warning(
+            "KIS_BASE_URL=%r points to paper VTS while KIS_ENV=live. "
+            "Ignoring explicit override and using live default base URL.",
+            raw,
+        )
+        return KIS_DEFAULT_REST_URLS[env]
+    if env == "paper" and "openapi.koreainvestment.com:9443" in raw and "openapivts" not in raw:
+        logger.warning(
+            "KIS_BASE_URL=%r points to live REST while KIS_ENV=paper. "
+            "Ignoring explicit override and using paper default base URL.",
+            raw,
+        )
+        return KIS_DEFAULT_REST_URLS[env]
+    return raw
+
+
+def _resolve_kis_ws_url() -> str:
+    """Resolve KIS WebSocket URL with env-aware safety normalization."""
+    raw = os.getenv("KIS_WS_URL", "").strip()
+    env = _resolve_kis_env()
+    if not raw:
+        return KIS_DEFAULT_WS_URLS[env]
+    if env == "live" and raw.endswith(":31000"):
+        logger.warning(
+            "KIS_WS_URL=%r looks like the paper websocket endpoint while KIS_ENV=live. "
+            "Ignoring explicit override.",
+            raw,
+        )
+        return KIS_DEFAULT_WS_URLS[env]
+    if env == "paper" and raw.endswith(":21000"):
+        logger.warning(
+            "KIS_WS_URL=%r looks like the live websocket endpoint while KIS_ENV=paper. "
+            "Ignoring explicit override.",
+            raw,
+        )
+        return KIS_DEFAULT_WS_URLS[env]
+    return raw
+
+
 def _resolve_kis_real_rest_rps() -> int:
     """Resolve KIS real/live REST RPS: ``KIS_REAL_REST_RPS``, default 18.
 
@@ -195,6 +257,23 @@ def _resolve_kis_live_token_cache_path() -> str:
     Default: ``.cache/kis_live_token.json`` (separate from dev token cache).
     """
     return os.getenv("KIS_LIVE_TOKEN_CACHE_PATH", ".cache/kis_live_token.json")
+
+
+def _resolve_kis_approval_key_cache_enabled() -> bool:
+    """Resolve REST trading approval-key file cache enabled flag.
+
+    Disabled by default for conservative rollout.
+    """
+    raw = os.getenv("KIS_APPROVAL_KEY_CACHE_ENABLED", "false")
+    return raw.strip().lower() == "true"
+
+
+def _resolve_kis_approval_key_cache_path() -> str:
+    """Resolve REST trading approval-key cache file path."""
+    return os.getenv(
+        "KIS_APPROVAL_KEY_CACHE_PATH",
+        ".cache/kis_rest_approval_key.json",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -335,8 +414,8 @@ class AppSettings:
     kis_account_number: str = field(default_factory=_resolve_kis_account_number)
     kis_account_product_code: str = field(default_factory=lambda: os.getenv("KIS_ACCOUNT_PRODUCT_CODE", "01"))
     kis_env: str = field(default_factory=_resolve_kis_env)
-    kis_base_url: str = field(default_factory=lambda: os.getenv("KIS_BASE_URL", ""))
-    kis_ws_url: str = field(default_factory=lambda: os.getenv("KIS_WS_URL", ""))
+    kis_base_url: str = field(default_factory=_resolve_kis_base_url)
+    kis_ws_url: str = field(default_factory=_resolve_kis_ws_url)
 
     # ---- KIS REST rate limit safety budget (env override) --------------------
     # ``KIS_REAL_REST_RPS`` (default 15) and ``KIS_PAPER_REST_RPS`` (default 1)
@@ -355,6 +434,10 @@ class AppSettings:
     # ---- KIS live-info token cache (WebSocket approval key persistence) ------
     kis_live_token_cache_enabled: bool = field(default_factory=_resolve_kis_live_token_cache_enabled)
     kis_live_token_cache_path: str = field(default_factory=_resolve_kis_live_token_cache_path)
+
+    # ---- KIS trading REST approval-key file cache ----------------------------
+    kis_approval_key_cache_enabled: bool = field(default_factory=_resolve_kis_approval_key_cache_enabled)
+    kis_approval_key_cache_path: str = field(default_factory=_resolve_kis_approval_key_cache_path)
 
     # ---- KIS live-info WebSocket URL (163 market state) -----------------------
     kis_live_info_base_url: str = field(default_factory=lambda: os.getenv("KIS_LIVE_INFO_BASE_URL", ""))

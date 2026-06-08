@@ -43,6 +43,44 @@ _ALLOWED_RISK_OPINIONS: frozenset[str] = frozenset({
 })
 
 
+def _normalize_risk_score(score: float, *, symbol: str, context_id: str | None) -> float:
+    """Force AI risk scores into the canonical 0.0–1.0 range.
+
+    The schema contract is 0.0–1.0, but historical rows show a mixed 0–100
+    scale. Values above 1.0 are interpreted as percentages and divided by 100.
+    Final output is clamped into [0.0, 1.0].
+    """
+    normalized = score
+    if normalized > 1.0:
+        logger.warning(
+            "AIRiskAgent risk_score scale drift detected — normalizing from 0-100 to 0-1. "
+            "raw=%s symbol=%s decision_context_id=%s",
+            normalized,
+            symbol,
+            context_id,
+        )
+        normalized = normalized / 100.0
+    if normalized < 0.0:
+        logger.warning(
+            "AIRiskAgent negative risk_score detected — clamping to 0.0. "
+            "raw=%s symbol=%s decision_context_id=%s",
+            normalized,
+            symbol,
+            context_id,
+        )
+        normalized = 0.0
+    if normalized > 1.0:
+        logger.warning(
+            "AIRiskAgent out-of-range risk_score detected after normalization — clamping to 1.0. "
+            "raw=%s symbol=%s decision_context_id=%s",
+            normalized,
+            symbol,
+            context_id,
+        )
+        normalized = 1.0
+    return normalized
+
+
 # ---------------------------------------------------------------------------
 # Stub (existing, unchanged)
 # ---------------------------------------------------------------------------
@@ -183,7 +221,15 @@ class AIRiskAgent:
                 symbol=result.symbol,
                 proposed_side=result.proposed_side,
                 risk_opinion=result.risk_opinion,
-                risk_score=result.risk_score,
+                risk_score=_normalize_risk_score(
+                    result.risk_score,
+                    symbol=result.symbol,
+                    context_id=(
+                        str(request.decision_context_id)
+                        if request.decision_context_id
+                        else None
+                    ),
+                ),
                 confidence=result.confidence,
                 size_adjustment_factor=result.size_adjustment_factor,
                 max_holding_horizon=result.max_holding_horizon,

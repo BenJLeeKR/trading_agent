@@ -27,7 +27,7 @@ import httpx
 from agent_trading.brokers.koreainvestment.token_cache import (
     CachePurpose,
     KisTokenCache,
-    KisTokenCacheConfig,
+    build_holiday_oauth_cache_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -127,18 +127,12 @@ class KISHolidayClient:
         # File token cache (live-info OAuth token persistence across restarts)
         self._cache_enabled = enable_token_cache
         cache_path = token_cache_path or f".cache/{_HOLIDAY_OAUTH_CACHE_DEFAULT_FILENAME}"
-        # secret hash for fingerprint input
-        secret_hash = app_secret[-4:] if len(app_secret) >= 4 else app_secret
-        self._token_cache = KisTokenCache(KisTokenCacheConfig(
+        self._token_cache = KisTokenCache(build_holiday_oauth_cache_config(
             enabled=enable_token_cache,
             cache_path=Path(cache_path),
-            cache_purpose=CachePurpose.LIVE_HOLIDAY_OAUTH,
-            fingerprint_input=f"holiday_oauth_{app_key}_{secret_hash}_{self._base_url}",
-            extra_validators={
-                "token_purpose": "holiday_oauth",
-            },
-            load_expiry_buffer=60.0,
-            save_expiry_buffer=60.0,
+            app_key=app_key,
+            app_secret=app_secret,
+            base_url=self._base_url,
         ))
 
     # ------------------------------------------------------------------

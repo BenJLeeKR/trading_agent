@@ -20,6 +20,10 @@ from agent_trading.brokers.koreainvestment.token_cache import (
     KisTokenCache,
     KisTokenCacheConfig,
     TokenData,
+    build_holiday_oauth_cache_config,
+    build_live_approval_key_cache_config,
+    build_rest_approval_key_cache_config,
+    build_rest_access_token_cache_config,
 )
 
 
@@ -214,6 +218,33 @@ class TestLoad:
         _make_cache_file(tmp_path / "kis_token.json")
         result = await cache_disabled.load()
         assert result is None
+
+
+class TestInspect:
+    """KisTokenCache.inspect() 테스트."""
+
+    def test_inspect_ready(self, cache: KisTokenCache, tmp_path: Path) -> None:
+        fp = cache._compute_fingerprint()
+        _make_cache_file(
+            tmp_path / "kis_token.json",
+            access_token="cached-token-abc",
+            credential_fingerprint=fp,
+            cache_purpose=CachePurpose.PAPER_ACCESS_TOKEN.value,
+        )
+        result = cache.inspect()
+        assert result.status == "ready"
+        assert result.exists is True
+        assert result.enabled is True
+        assert result.actual_purpose == CachePurpose.PAPER_ACCESS_TOKEN.value
+        assert result.actual_fingerprint == fp
+        assert result.remaining_seconds is not None
+        assert result.remaining_seconds > 0
+
+    def test_inspect_disabled(self, cache_disabled: KisTokenCache) -> None:
+        result = cache_disabled.inspect()
+        assert result.status == "disabled"
+        assert result.enabled is False
+        assert result.exists is False
 
     @pytest.mark.asyncio
     async def test_load_invalid_json(
@@ -518,6 +549,83 @@ class TestTokenData:
         assert td2.credential_fingerprint == "fp123"
         assert td2.cache_purpose == "test"
         assert td2.extra.get("k") == "v"
+
+
+class TestStandardConfigBuilders:
+    """공통 cache config builder 검증."""
+
+    def test_build_rest_access_token_cache_config(self, tmp_path: Path) -> None:
+        config = build_rest_access_token_cache_config(
+            enabled=True,
+            cache_path=tmp_path / "rest.json",
+            cache_purpose=CachePurpose.PAPER_ACCESS_TOKEN,
+            api_key="rest-key",
+            kis_env="paper",
+            base_url="https://openapivts.koreainvestment.com:29443",
+        )
+        assert config.cache_purpose == CachePurpose.PAPER_ACCESS_TOKEN
+        assert config.fingerprint_input == "rest-key"
+        assert config.extra_validators == {
+            "kis_env": "paper",
+            "base_url": "https://openapivts.koreainvestment.com:29443",
+        }
+        assert config.load_expiry_buffer == 60.0
+        assert config.save_expiry_buffer == 300.0
+
+    def test_build_holiday_oauth_cache_config(self, tmp_path: Path) -> None:
+        config = build_holiday_oauth_cache_config(
+            enabled=True,
+            cache_path=tmp_path / "holiday.json",
+            app_key="holiday-key",
+            app_secret="holiday-secret",
+            base_url="https://api.test.com:9443",
+        )
+        assert config.cache_purpose == CachePurpose.LIVE_HOLIDAY_OAUTH
+        assert config.fingerprint_input == (
+            "holiday_oauth_holiday-key_cret_https://api.test.com:9443"
+        )
+        assert config.extra_validators == {
+            "token_purpose": "holiday_oauth",
+            "base_url": "https://api.test.com:9443",
+        }
+        assert config.load_expiry_buffer == 60.0
+        assert config.save_expiry_buffer == 60.0
+
+    def test_build_live_approval_key_cache_config(self, tmp_path: Path) -> None:
+        config = build_live_approval_key_cache_config(
+            enabled=True,
+            cache_path=tmp_path / "approval.json",
+            app_key="live-key",
+            api_secret="live-secret",
+            base_ws_url="ws://ops.koreainvestment.com:21000",
+        )
+        assert config.cache_purpose == CachePurpose.LIVE_APPROVAL_KEY
+        assert config.fingerprint_input == "live_info_live-key_live-secret"
+        assert config.extra_validators == {
+            "cache_type": "approval_key",
+            "base_ws_url": "ws://ops.koreainvestment.com:21000",
+        }
+        assert config.load_expiry_buffer == 60.0
+        assert config.save_expiry_buffer == 300.0
+
+    def test_build_rest_approval_key_cache_config(self, tmp_path: Path) -> None:
+        config = build_rest_approval_key_cache_config(
+            enabled=True,
+            cache_path=tmp_path / "rest_approval.json",
+            api_key="rest-key",
+            api_secret="rest-secret",
+            kis_env="paper",
+            base_url="https://openapivts.koreainvestment.com:29443",
+        )
+        assert config.cache_purpose == CachePurpose.TRADING_APPROVAL_KEY
+        assert config.fingerprint_input == "trading_approval_rest-key_rest-secret"
+        assert config.extra_validators == {
+            "cache_type": "approval_key",
+            "kis_env": "paper",
+            "base_url": "https://openapivts.koreainvestment.com:29443",
+        }
+        assert config.load_expiry_buffer == 60.0
+        assert config.save_expiry_buffer == 300.0
 
     def test_from_dict_old_fingerprint_field(self) -> None:
         """``app_key_fingerprint`` → ``credential_fingerprint`` 매핑."""

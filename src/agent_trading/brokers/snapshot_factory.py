@@ -130,6 +130,8 @@ def _build_kis_components(settings: AppSettings) -> SnapshotSyncComponents:
         budget_manager=budget_manager,
         dev_token_cache_enabled=settings.kis_dev_token_cache_enabled,
         dev_token_cache_path=settings.kis_dev_token_cache_path,
+        approval_cache_enabled=settings.kis_approval_key_cache_enabled,
+        approval_cache_path=settings.kis_approval_key_cache_path,
     )
     return SnapshotSyncComponents(
         provider=KISSyncSnapshotProvider(rest_client),

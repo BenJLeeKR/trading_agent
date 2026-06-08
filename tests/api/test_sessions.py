@@ -214,6 +214,7 @@ def test_get_session_by_date_found(_mock_get_db):
         "source": "kis_holiday_api",
         "reason_code": "KIS_HOLIDAY_CLOSED",
         "reason": "임시공휴일",
+        "reason_metadata": {"provider": "kis_holiday_api", "opnd_yn": "N"},
         "operations_day_scheduler_status": "after_hours",
         "operations_day_summary_json": {
             "next_trading_day_readiness": {"overall_status": "READY"},
@@ -236,6 +237,7 @@ def test_get_session_by_date_found(_mock_get_db):
     assert data["data"]["source"] == "kis_holiday_api"
     assert data["data"]["reason_code"] == "KIS_HOLIDAY_CLOSED"
     assert data["data"]["reason"] == "임시공휴일"
+    assert data["data"]["reason_metadata"]["provider"] == "kis_holiday_api"
     assert data["data"]["operations_day_scheduler_status"] == "after_hours"
     assert data["data"]["next_trading_day_readiness"]["overall_status"] == "READY"
     assert data["data"]["intraday_validation"]["overall_status"] == "WARN"
@@ -284,6 +286,7 @@ def test_get_session_history_with_date_filters(_mock_get_db):
             "source": "combined",
             "reason_code": "COMBINED_TRADING",
             "reason": "정상 장중",
+            "reason_metadata": {"provider": "combined", "phase": "OPEN"},
             "operations_day_scheduler_status": "intraday",
             "operations_day_summary_json": {
                 "next_trading_day_readiness": {"overall_status": "READY"},
@@ -307,6 +310,7 @@ def test_get_session_history_with_date_filters(_mock_get_db):
             "source": "kis_holiday_api",
             "reason_code": "KIS_HOLIDAY_CLOSED",
             "reason": "휴장",
+            "reason_metadata": {"provider": "kis_holiday_api", "opnd_yn": "N"},
             "operations_day_scheduler_status": "after_hours",
             "operations_day_summary_json": {
                 "next_trading_day_readiness": {"overall_status": "READY"},
@@ -333,6 +337,8 @@ def test_get_session_history_with_date_filters(_mock_get_db):
     assert len(data["data"]) == 2
     assert data["data"][0]["run_date"] == now.date().isoformat()
     assert data["data"][1]["run_date"] == (now - timedelta(days=1)).date().isoformat()
+    assert data["data"][0]["reason_metadata"]["phase"] == "OPEN"
+    assert data["data"][1]["reason_metadata"]["provider"] == "kis_holiday_api"
     assert data["data"][0]["next_trading_day_readiness"]["overall_status"] == "READY"
     assert data["data"][1]["intraday_validation"]["overall_status"] == "READY"
 
@@ -366,6 +372,7 @@ def test_get_latest_session_healthy(_mock_get_db):
         "source": "kis_live",
         "reason_code": "KIS_HOLIDAY_TRADING_DAY",
         "reason": None,
+        "reason_metadata": {"provider": "combined", "phase": "OPEN"},
         "operations_day_scheduler_status": "intraday",
         "operations_day_summary_json": {
             "intraday_validation": {"overall_status": "BLOCKED"},
@@ -386,6 +393,7 @@ def test_get_latest_session_healthy(_mock_get_db):
     assert data["status"] == "ok"
     assert data["data"] is not None
     assert data["data"]["market_phase"] == "OPEN"
+    assert data["data"]["reason_metadata"]["phase"] == "OPEN"
     assert data["data"]["intraday_validation"]["overall_status"] == "BLOCKED"
     assert data["healthy"] is True
     assert data["stale_seconds"] is not None

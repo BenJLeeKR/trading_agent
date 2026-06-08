@@ -440,6 +440,8 @@ async def _run(args: argparse.Namespace) -> int:
         env=settings.kis_env,
         base_url=settings.kis_base_url,
         budget_manager=budget_manager,
+        approval_cache_enabled=settings.kis_approval_key_cache_enabled,
+        approval_cache_path=settings.kis_approval_key_cache_path,
     )
 
     try:

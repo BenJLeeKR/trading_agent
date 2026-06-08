@@ -136,6 +136,9 @@ class OrderSummary(BaseModel):
     symbol: str | None = None
     instrument_name: str | None = None
     """Human-readable instrument name (e.g. ``Samsung Electronics``)."""
+    filled_quantity: float | None = None
+    avg_fill_price: float | None = None
+    fill_amount: float | None = None
     correlation_id: str
     trade_decision_id: str | None = None
     decision_context_id: str | None = None
@@ -698,6 +701,27 @@ class InstrumentDetail(BaseModel):
     updated_at: datetime | None = None
 
 
+class InstrumentMappingGapItem(BaseModel):
+    """최근 운영 데이터에서 instrument master에 없는 symbol 요약."""
+
+    symbol: str
+    occurrence_count: int
+    latest_observed_at: datetime
+
+
+class InstrumentMappingConsistencySummaryResponse(BaseModel):
+    """`GET /instruments/mapping-consistency/summary` 응답."""
+
+    lookback_days: int
+    timezone: str = "Asia/Seoul"
+    active_instrument_count: int
+    has_gap: bool
+    total_unmapped_external_event_symbols: int
+    total_unmapped_broker_fill_symbols: int
+    unmapped_external_event_symbols: list[InstrumentMappingGapItem]
+    unmapped_broker_fill_symbols: list[InstrumentMappingGapItem]
+
+
 class PositionSnapshotView(BaseModel):
     """``GET /positions`` — point-in-time position snapshot.
 
@@ -1181,6 +1205,7 @@ class MarketSessionSummary(BaseModel):
     source: str | None = None
     reason_code: str | None = None
     reason: str | None = None
+    reason_metadata: dict[str, object] | None = None
     operations_day_scheduler_status: str | None = None
     operations_day_summary_json: dict[str, object] | None = None
     next_trading_day_readiness: dict[str, object] | None = None

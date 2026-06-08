@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -107,6 +108,35 @@ class TestCacheHit:
         assert (
             mock_http_client.post.await_count == 0
         ), "HTTP client should not be accessed when cache is valid"
+
+    async def test_get_approval_key_returns_file_cached_key(
+        self,
+        mock_http_client: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Approval key file cache hit -> no HTTP call."""
+        client = KISRestClient(
+            api_key="dummy-key",
+            api_secret="dummy-secret",
+            account_number="12345678",
+            account_product_code="01",
+            env="paper",
+            approval_cache_enabled=True,
+            approval_cache_path=str(tmp_path / "kis_rest_approval_key.json"),
+        )
+
+        async def _mock_get_client(self) -> AsyncMock:
+            return mock_http_client
+
+        monkeypatch.setattr(KISRestClient, "_get_client", _mock_get_client)
+        assert client._approval_cache is not None
+        await client._approval_cache.save("cached-approval-key-file", 86400)
+
+        mock_http_client.post.reset_mock()
+        result = await client.get_approval_key()
+        assert result == "cached-approval-key-file"
+        assert mock_http_client.post.await_count == 0
 
     async def test_get_approval_key_returns_cached_key(
         self, client: KISRestClient, mock_http_client: AsyncMock
@@ -318,3 +348,33 @@ class TestFailureDoesNotAdvanceCooldown:
         assert client._last_auth_call_time == 0.0, (
             "Cooldown timestamp should not advance on failure"
         )
+
+
+class TestApprovalFileCacheSave:
+    """Approval key file cache persistence tests."""
+
+    async def test_get_approval_key_saves_file_cache(
+        self,
+        mock_http_client: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        client = KISRestClient(
+            api_key="dummy-key",
+            api_secret="dummy-secret",
+            account_number="12345678",
+            account_product_code="01",
+            env="paper",
+            approval_cache_enabled=True,
+            approval_cache_path=str(tmp_path / "kis_rest_approval_key.json"),
+        )
+
+        async def _mock_get_client(self) -> AsyncMock:
+            return mock_http_client
+
+        monkeypatch.setattr(KISRestClient, "_get_client", _mock_get_client)
+        result = await client.get_approval_key()
+        assert result == "test-approval-key-xxxxxxxx"
+        assert client._approval_cache is not None
+        cached = await client._approval_cache.load()
+        assert cached == "test-approval-key-xxxxxxxx"

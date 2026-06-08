@@ -34,12 +34,12 @@ describe("Layout navigation", () => {
     // Brand
     expect(screen.getByText("운영 콘솔")).toBeInTheDocument();
 
-    // All nav links (운영 모니터링 3 + 기본 운영 5)
+    // All nav links (운영 모니터링 4 + 기본 운영 4)
     expect(screen.getByText("운영 대시보드")).toBeInTheDocument();
     expect(screen.getByText("운영 경고")).toBeInTheDocument();
     expect(screen.getByText("주문 추적")).toBeInTheDocument();
-    expect(screen.getByText("주문")).toBeInTheDocument();
     expect(screen.getByText("정합성 점검")).toBeInTheDocument();
+    expect(screen.getByText("주문")).toBeInTheDocument();
     expect(screen.getByText("계좌")).toBeInTheDocument();
     expect(screen.getByText("의사결정")).toBeInTheDocument();
     expect(screen.getByText("에이전트 실행")).toBeInTheDocument();

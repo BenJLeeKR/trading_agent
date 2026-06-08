@@ -582,6 +582,10 @@ class TestPaperTradingScenarios:
         )
         # broker 미호출 강력 검증
         mock_broker.submit_order.assert_not_called()
+        persisted_orders = list(repos.orders._items.values())
+        assert all(order.status != OrderStatus.PENDING_SUBMIT for order in persisted_orders), (
+            "stale_snapshot guard must not leave orphan pending_submit orders"
+        )
 
         # GuardrailEvaluation 기록 확인
         assert repos.guardrail_evaluations._items, (
@@ -992,6 +996,10 @@ class TestPaperTradingScenarios:
         )
         assert result.error_phase == "stale_snapshot"
         mock_broker.submit_order.assert_not_called()
+        persisted_orders = list(repos.orders._items.values())
+        assert all(order.status != OrderStatus.PENDING_SUBMIT for order in persisted_orders), (
+            "stale_snapshot guard must not leave orphan pending_submit orders"
+        )
 
         # GuardrailEvaluation에 STALE_SNAPSHOT_ACCOUNT 기록 확인
         eval_records = list(repos.guardrail_evaluations._items.values())

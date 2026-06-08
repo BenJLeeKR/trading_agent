@@ -67,6 +67,14 @@ from agent_trading.brokers.koreainvestment.market_state_client import (
     MarketPhaseCode,
     MarketStateProvider,
 )
+from agent_trading.brokers.koreainvestment.token_cache import (
+    CachePurpose,
+    KisTokenCache,
+    build_holiday_oauth_cache_config,
+    build_live_approval_key_cache_config,
+    build_rest_approval_key_cache_config,
+    build_rest_access_token_cache_config,
+)
 from agent_trading.config.settings import AppSettings
 
 try:
@@ -597,6 +605,7 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
             names={"eod_recovery_batch"},
         ),
     }
+    token_cache_health = _build_token_cache_health_summary()
 
     return {
         "command_results_count": total,
@@ -607,6 +616,7 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
         "session_reason": state.session_info.reason if state.session_info else None,
         "after_hours_full_snapshot_done": state.after_hours_full_snapshot_done,
         "command_health": {k: v for k, v in command_health.items() if v is not None},
+        "token_cache_health": token_cache_health,
         "snapshot_sync": _command_result_summary(
             latest_snapshot,
             metrics=_parse_snapshot_sync_summary(latest_snapshot) if latest_snapshot else None,
@@ -617,6 +627,68 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
         ),
         "decision_loop": _command_result_summary(latest_decision_loop),
         "recovery_batch": _command_result_summary(latest_recovery),
+    }
+
+
+def _build_token_cache_health_summary() -> dict[str, Any]:
+    """Build a compact operational view of KIS token/approval cache files."""
+    settings = AppSettings()
+    live_token_cache_parent = Path(settings.kis_live_token_cache_path).parent
+    holiday_oauth_cache_path = live_token_cache_parent / "kis_live_oauth_token.json"
+    caches: dict[str, KisTokenCache] = {
+        "paper_rest_access_token": KisTokenCache(
+            build_rest_access_token_cache_config(
+                enabled=settings.kis_dev_token_cache_enabled,
+                cache_path=Path(settings.kis_dev_token_cache_path),
+                cache_purpose=CachePurpose.PAPER_ACCESS_TOKEN,
+                api_key=settings.kis_api_key,
+                kis_env=settings.kis_env,
+                base_url=settings.kis_base_url,
+            ),
+        ),
+        "trading_approval_key": KisTokenCache(
+            build_rest_approval_key_cache_config(
+                enabled=settings.kis_approval_key_cache_enabled,
+                cache_path=Path(settings.kis_approval_key_cache_path),
+                api_key=settings.kis_api_key,
+                api_secret=settings.kis_api_secret,
+                kis_env=settings.kis_env,
+                base_url=settings.kis_base_url,
+            ),
+        ),
+        "holiday_oauth": KisTokenCache(
+            build_holiday_oauth_cache_config(
+                enabled=settings.kis_live_token_cache_enabled,
+                cache_path=holiday_oauth_cache_path,
+                app_key=settings.kis_live_app_key or "",
+                app_secret=settings.kis_live_app_secret or "",
+                base_url=settings.kis_live_info_base_url or settings.kis_base_url,
+            ),
+        ),
+        "live_approval_key": KisTokenCache(
+            build_live_approval_key_cache_config(
+                enabled=settings.kis_live_token_cache_enabled,
+                cache_path=Path(settings.kis_live_token_cache_path),
+                app_key=settings.kis_live_app_key or "",
+                api_secret=settings.kis_live_app_secret or "",
+                base_ws_url=settings.kis_live_info_ws_url or settings.kis_ws_url,
+            ),
+        ),
+    }
+    if settings.kis_live_app_key and settings.kis_live_app_secret:
+        caches["live_disclosure_access_token"] = KisTokenCache(
+            build_rest_access_token_cache_config(
+                enabled=settings.kis_disclosure_token_cache_enabled,
+                cache_path=Path(settings.kis_disclosure_token_cache_path),
+                cache_purpose=CachePurpose.LIVE_DISCLOSURE_ACCESS_TOKEN,
+                api_key=settings.kis_live_app_key,
+                kis_env="live",
+                base_url=settings.kis_live_info_base_url or settings.kis_base_url,
+            ),
+        )
+    return {
+        name: cache.inspect().to_dict()
+        for name, cache in caches.items()
     }
 
 
@@ -1492,6 +1564,7 @@ async def _persist_session_state(
             source = state.session_info.source if state.session_info else "scheduler"
             reason_code = state.session_info.reason_code if state.session_info else None
             reason = state.session_info.reason if state.session_info else ""
+            reason_metadata = state.session_info.reason_metadata if state.session_info else None
             market_phase = state.market_phase
             raw_opnd = state.session_info.raw_opnd_yn if state.session_info else None
             raw_mkop = state.session_info.raw_mkop_cls_code if state.session_info else None
@@ -1502,9 +1575,9 @@ async def _persist_session_state(
                 INSERT INTO trading.market_sessions
                     (run_date, is_trading_day, opnd_yn, bzdy_yn, tr_day_yn,
                      market_phase, raw_opnd_yn, raw_mkop_cls_code,
-                     raw_antc_mkop_cls_code, source, reason_code, reason, checked_at)
+                     raw_antc_mkop_cls_code, source, reason_code, reason, reason_metadata, checked_at)
                 VALUES
-                    ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                    ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14)
                 ON CONFLICT (run_date) DO UPDATE SET
                     is_trading_day = EXCLUDED.is_trading_day,
                     opnd_yn = EXCLUDED.opnd_yn,
@@ -1517,6 +1590,7 @@ async def _persist_session_state(
                     source = EXCLUDED.source,
                     reason_code = EXCLUDED.reason_code,
                     reason = EXCLUDED.reason,
+                    reason_metadata = EXCLUDED.reason_metadata,
                     checked_at = EXCLUDED.checked_at,
                     updated_at = NOW()
                 RETURNING id
@@ -1533,6 +1607,7 @@ async def _persist_session_state(
                 source,
                 reason_code,
                 reason,
+                json.dumps(reason_metadata or {}),
                 datetime.now(),
             )
             if row:

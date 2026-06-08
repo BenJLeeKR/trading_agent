@@ -18,6 +18,42 @@ router = APIRouter(tags=["fill-history"])
 _KST = timezone(timedelta(hours=9))
 
 
+def _fill_history_dedupe_key(row: object) -> tuple[str, str, str, str]:
+    broker_fill_id = getattr(row, "broker_fill_id", None) or ""
+    return (
+        getattr(row, "broker_native_order_id"),
+        broker_fill_id,
+        getattr(row, "symbol"),
+        getattr(row, "side"),
+    )
+
+
+def _fill_history_sort_key(row: object) -> tuple[datetime, datetime]:
+    fallback = datetime.min.replace(tzinfo=timezone.utc)
+    return (
+        getattr(row, "fill_timestamp", None) or fallback,
+        getattr(row, "created_at", None) or fallback,
+    )
+
+
+def _normalize_fill_history_rows(rows: list[object], *, limit: int) -> list[object]:
+    """Collapse raw polling snapshots into visible final fill rows."""
+    latest_by_key: dict[tuple[str, str, str, str], object] = {}
+    for row in rows:
+        filled_quantity = getattr(row, "filled_quantity", None)
+        if filled_quantity is None or filled_quantity <= 0:
+            continue
+        key = _fill_history_dedupe_key(row)
+        current = latest_by_key.get(key)
+        if current is None or _fill_history_sort_key(row) > _fill_history_sort_key(current):
+            latest_by_key[key] = row
+    return sorted(
+        latest_by_key.values(),
+        key=_fill_history_sort_key,
+        reverse=True,
+    )[:limit]
+
+
 def _to_run_summary(run: object) -> FillSyncRunSummary:
     return FillSyncRunSummary(
         fill_sync_run_id=str(run.fill_sync_run_id),  # type: ignore[attr-defined]
@@ -124,15 +160,7 @@ async def list_fill_history(
                 broker_native_order_id=broker_native_order_id,
             )
             rows.extend(matched_rows)
-        rows.sort(
-            key=lambda row: (
-                row.order_date,
-                row.fill_timestamp or datetime.min.replace(tzinfo=timezone.utc),
-                row.created_at or datetime.min.replace(tzinfo=timezone.utc),
-            ),
-            reverse=True,
-        )
-        rows = rows[:limit]
+        rows = _normalize_fill_history_rows(rows, limit=limit)
     else:
         rows = list(
             await repos.broker_fill_snapshots.list_recent(
@@ -144,6 +172,7 @@ async def list_fill_history(
                 broker_native_order_id=broker_native_order_id,
             )
         )
+        rows = _normalize_fill_history_rows(rows, limit=limit)
     account_cache: dict[UUID, object | None] = {}
     order_cache: dict[UUID, object | None] = {}
     instrument_name_cache: dict[str, str | None] = {}

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import type { OrderSummary } from "../types/api";
 import { getOrders } from "../api/client";
-import { DataTable } from "./common/DataTable";
+import { DataTable, type Column } from "./common/DataTable";
 import { StatusBadge } from "./common/StatusBadge";
 import { ErrorBanner } from "./common/ErrorBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
@@ -10,6 +10,13 @@ import { FilterBar } from "./common/FilterBar";
 import { useEnumMetadata, getEnumLabel } from "../hooks/useEnumMetadata";
 import { X } from "lucide-react";
 import { formatKstDateTime } from "../lib/utils";
+
+function formatNumber(value: number | string | null | undefined) {
+  if (value == null) return "—";
+  const numeric = typeof value === "string" ? Number(value) : value;
+  if (!Number.isFinite(numeric)) return "—";
+  return new Intl.NumberFormat("ko-KR").format(numeric);
+}
 
 export default function OrdersView() {
   const { fieldMap } = useEnumMetadata();
@@ -38,7 +45,7 @@ export default function OrdersView() {
   useEffect(() => {
     setLoading(true);
     setError(null);
-    getOrders()
+    getOrders(undefined, 10000)
       .then(setOrders)
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "주문을 불러오지 못했습니다";
@@ -64,7 +71,7 @@ export default function OrdersView() {
     return filteredOrders.slice((safePage - 1) * pageSize, safePage * pageSize);
   }, [filteredOrders, safePage, pageSize]);
 
-  const orderColumns = [
+  const orderColumns: Column<OrderSummary>[] = [
     { key: "order_request_id", header: "주문 ID", width: "100px", render: (r: OrderSummary) => (
       <code className="text-xs">{r.order_request_id.slice(0, 8)}…</code>
     )},
@@ -77,7 +84,12 @@ export default function OrdersView() {
     { key: "side", header: "매매", width: "80px", render: (r: OrderSummary) => (
       <StatusBadge variant={r.side.toLowerCase() === "buy" ? "success" : "error"}>{getEnumLabel(fieldMap, "side", r.side)}</StatusBadge>
     )},
-    { key: "requested_quantity", header: "수량", width: "90px" },
+    { key: "requested_quantity", header: "수량", width: "90px", align: "right" },
+    { key: "order_type", header: "주문유형", width: "100px", render: (r: OrderSummary) => (
+      <span className="text-sm text-[#334155]">{getEnumLabel(fieldMap, "order_type", r.order_type)}</span>
+    )},
+    { key: "avg_fill_price", header: "체결가격", width: "110px", align: "right", render: (r: OrderSummary) => formatNumber(r.avg_fill_price) },
+    { key: "fill_amount", header: "체결금액", width: "130px", align: "right", render: (r: OrderSummary) => formatNumber(r.fill_amount) },
     { key: "status", header: "상태", width: "110px", render: (r: OrderSummary) => {
       const variants: Record<string, "success" | "warning" | "error" | "info" | "neutral"> = {
         filled: "success",
@@ -210,6 +222,18 @@ export default function OrdersView() {
                 <div className="flex justify-between">
                   <dt className="text-sm text-[#64748b]">수량</dt>
                   <dd className="text-sm font-medium text-[#0f172a]">{selectedOrder.requested_quantity}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-sm text-[#64748b]">주문유형</dt>
+                  <dd className="text-sm font-medium text-[#0f172a]">{getEnumLabel(fieldMap, "order_type", selectedOrder.order_type)}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-sm text-[#64748b]">체결가격</dt>
+                  <dd className="text-sm font-medium text-[#0f172a]">{formatNumber(selectedOrder.avg_fill_price)}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-sm text-[#64748b]">체결금액</dt>
+                  <dd className="text-sm font-medium text-[#0f172a]">{formatNumber(selectedOrder.fill_amount)}</dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-sm text-[#64748b]">상태</dt>

@@ -64,6 +64,13 @@
 - 필요한 보조 프로세스를 정해진 순서로 호출한다.
 - 하루 동안 몇 번 돌았는지, 어떤 단계가 성공/실패했는지를 `operations_day_runs`에 기록한다.
 
+운영 설정 메모:
+
+- 일반 BUY lane 하루 상한은 `.env`의 `SCHEDULER_MAX_GENERAL_BUY_SUBMIT_PER_DAY`로 조정한다.
+- 이 값은 `docker-compose.yml`에서 `ops-scheduler`의
+  `--max-general-buy-submit-per-day` 인자로 전달된다.
+- `MAX_GENERAL_BUY_SUBMIT_PER_DAY`라는 이름은 현재 읽지 않는다.
+
 ### 2-2. 스케줄러가 실제로 호출하는 하위 작업
 
 [scripts/run_ops_scheduler.py](/workspace/agent_trading/scripts/run_ops_scheduler.py) 안의 대표 함수:
@@ -177,6 +184,7 @@
 
 - `orderable_amount < 0`
 - 또는 `orderable_amount <= 500,000원`
+- 또는 `remaining_general_buy_budget <= 0` 이면서 해당 종목의 실제 보유수량도 없음
 
 이면 AI 호출 전 바로 `SKIPPED`
 
@@ -184,6 +192,7 @@
 
 ```text
 주문가능금액이 사실상 부족함
+또는 오늘 일반 BUY lane 예산이 이미 소진됨
 -> "이 종목 살까?"를 AI에 묻지 않음
 -> 어차피 주문이 안 될 가능성이 높으므로 미리 차단
 ```

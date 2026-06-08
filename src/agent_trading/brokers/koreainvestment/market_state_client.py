@@ -31,9 +31,8 @@ from typing import Any, Protocol
 import httpx
 
 from agent_trading.brokers.koreainvestment.token_cache import (
-    CachePurpose,
     KisTokenCache,
-    KisTokenCacheConfig,
+    build_live_approval_key_cache_config,
 )
 from agent_trading.config.settings import AppSettings
 
@@ -253,16 +252,15 @@ class KisMarketStateClient(MarketStateProvider):
         self._shutdown_event = asyncio.Event()
 
         # Approval key cache via KisTokenCache
-        self._approval_cache = KisTokenCache(KisTokenCacheConfig(
+        approval_cache_base_ws_url = self._base_ws_url or (
+            settings.kis_live_info_ws_url or settings.kis_ws_url
+        )
+        self._approval_cache = KisTokenCache(build_live_approval_key_cache_config(
             enabled=settings.kis_live_token_cache_enabled,
             cache_path=Path(settings.kis_live_token_cache_path),
-            cache_purpose=CachePurpose.LIVE_APPROVAL_KEY,
-            fingerprint_input=f"live_info_{app_key}_{api_secret}",
-            extra_validators={
-                "cache_type": "approval_key",
-            },
-            load_expiry_buffer=60.0,
-            save_expiry_buffer=300.0,
+            app_key=app_key,
+            api_secret=api_secret,
+            base_ws_url=approval_cache_base_ws_url,
         ))
 
         # 163 WebSocket is driven by live-info dedicated credentials,

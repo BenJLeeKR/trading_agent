@@ -74,6 +74,7 @@ def _coerce_json_field(row_dict: dict[str, object], field_name: str) -> dict[str
 
 def _coerce_market_session_row(row_dict: dict[str, object]) -> dict[str, object]:
     """Normalize linked operations-day JSON and expose validation summaries."""
+    row_dict = _coerce_json_field(row_dict, "reason_metadata")
     row_dict = _coerce_json_field(row_dict, "operations_day_summary_json")
     ops_summary = row_dict.get("operations_day_summary_json")
     if isinstance(ops_summary, dict):
@@ -92,7 +93,7 @@ async def get_session_by_date(run_date: date, db=Depends(get_db)):
         """
         SELECT ms.id, ms.run_date, ms.is_trading_day, ms.opnd_yn, ms.bzdy_yn, ms.tr_day_yn,
                ms.market_phase, ms.raw_opnd_yn, ms.raw_mkop_cls_code, ms.raw_antc_mkop_cls_code,
-               ms.source, ms.reason_code, ms.reason,
+               ms.source, ms.reason_code, ms.reason, ms.reason_metadata,
                odr.scheduler_status AS operations_day_scheduler_status,
                odr.summary_json AS operations_day_summary_json,
                ms.last_heartbeat_at, ms.checked_at, ms.created_at, ms.updated_at
@@ -122,7 +123,7 @@ async def get_session_history(
         """
         SELECT ms.id, ms.run_date, ms.is_trading_day, ms.opnd_yn, ms.bzdy_yn, ms.tr_day_yn,
                ms.market_phase, ms.raw_opnd_yn, ms.raw_mkop_cls_code, ms.raw_antc_mkop_cls_code,
-               ms.source, ms.reason_code, ms.reason,
+               ms.source, ms.reason_code, ms.reason, ms.reason_metadata,
                odr.scheduler_status AS operations_day_scheduler_status,
                odr.summary_json AS operations_day_summary_json,
                ms.last_heartbeat_at, ms.checked_at, ms.created_at, ms.updated_at
@@ -156,7 +157,7 @@ async def get_latest_session(db=Depends(get_db)):
         """
         SELECT ms.id, ms.run_date, ms.is_trading_day, ms.opnd_yn, ms.bzdy_yn, ms.tr_day_yn,
                ms.market_phase, ms.raw_opnd_yn, ms.raw_mkop_cls_code, ms.raw_antc_mkop_cls_code,
-               ms.source, ms.reason_code, ms.reason,
+               ms.source, ms.reason_code, ms.reason, ms.reason_metadata,
                odr.scheduler_status AS operations_day_scheduler_status,
                odr.summary_json AS operations_day_summary_json,
                ms.last_heartbeat_at, ms.checked_at, ms.created_at, ms.updated_at
