@@ -22,9 +22,8 @@ env/
 *~
 
 # --- Cache / Cursor ---
-.cache/
+.cache*/
 .cursor/
-..aider.tags.cache.v4/
 
 # --- Testing ---
 .pytest_cache/
