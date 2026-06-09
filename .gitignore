@@ -21,6 +21,10 @@ env/
 *.swo
 *~
 
+# --- Cache / Cursor ---
+.cache/
+.cursor/
+
 # --- Testing ---
 .pytest_cache/
 .mypy_cache/
