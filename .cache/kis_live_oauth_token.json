@@ -1,9 +1,0 @@
-{
-  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJ0b2tlbiIsImF1ZCI6IjliNGQxY2JiLTQyNWUtNDE5OS1iMGNmLWY4NmI2MmExODVhMyIsInByZHRfY2QiOiIiLCJpc3MiOiJ1bm9ndyIsImV4cCI6MTc4MTA0NjAwMywiaWF0IjoxNzgwOTU5NjAzLCJqdGkiOiJQU2NEVkxxa3VmZEtFRXVuQWUwMDhRWnRadXdxUFZBN2FLMlMifQ.u_eri93asFK84XQJlcwns4vWoTndnWFNFElF_k81Oi1Dn7lPrgRzLMBS66fvmjydSv89YwAK2S9QaDn-YccypQ",
-  "expires_at": 1781045943.4070804,
-  "credential_fingerprint": "77d8cecf942e7b1f",
-  "cache_purpose": "live_holiday_oauth",
-  "created_at": 1780959603.4070804,
-  "token_purpose": "holiday_oauth",
-  "base_url": "https://openapi.koreainvestment.com:9443"
-}
