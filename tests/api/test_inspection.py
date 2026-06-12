@@ -25,9 +25,11 @@ from agent_trading.api.deps import get_db, get_repos
 from agent_trading.api.routes.decisions import _to_detail
 from agent_trading.api.routes.orders import _safe_str
 from agent_trading.domain.entities import (
+    ExternalEventEntity,
     InstrumentEntity,
     OrderRequestEntity,
     OrderSubmissionAttemptEntity,
+    PositionSnapshotEntity,
 )
 from agent_trading.domain.enums import (
     DecisionType,
@@ -928,6 +930,13 @@ class TestInstruments:
                     "latest_observed_at": now,
                 }
             ],
+            [
+                {
+                    "symbol": "005940",
+                    "occurrence_count": 3,
+                    "latest_observed_at": now,
+                }
+            ],
         ]
 
         async def override():
@@ -945,17 +954,153 @@ class TestInstruments:
         assert data["has_gap"] is True
         assert data["total_unmapped_external_event_symbols"] == 1
         assert data["total_unmapped_broker_fill_symbols"] == 1
+        assert data["total_unmapped_snapshot_position_symbols"] == 1
         assert data["unmapped_external_event_symbols"][0]["symbol"] == "UNMAPPED_EVT"
         assert data["unmapped_broker_fill_symbols"][0]["symbol"] == "UNMAPPED_FILL"
+        assert data["unmapped_snapshot_position_symbols"][0]["symbol"] == "005940"
 
         fetchval_sql = mock_conn.fetchval.await_args.args[0]
         assert "FROM trading.instruments" in fetchval_sql
         first_fetch_sql = mock_conn.fetch.await_args_list[0].args[0]
         second_fetch_sql = mock_conn.fetch.await_args_list[1].args[0]
+        third_fetch_sql = mock_conn.fetch.await_args_list[2].args[0]
         assert "FROM trading.external_events e" in first_fetch_sql
         assert "FROM trading.broker_fill_snapshots bfs" in second_fetch_sql
+        assert "FROM trading.snapshot_sync_runs ssr" in third_fetch_sql
 
         app.dependency_overrides.clear()
+
+    def test_get_trading_universe_preview(self) -> None:
+        """``GET /instruments/trading-universe/preview`` returns composed universe."""
+        repos = build_in_memory_repositories()
+        account_id = uuid4()
+        now = datetime.now(timezone.utc)
+
+        held_inst = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="005930",
+            market_code="KRX",
+            asset_class="KR_STOCK",
+            currency="KRW",
+            name="Samsung Electronics",
+            is_active=True,
+        )
+        event_inst = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="000660",
+            market_code="KRX",
+            asset_class="KR_STOCK",
+            currency="KRW",
+            name="SK hynix",
+            is_active=True,
+        )
+        asyncio.run(repos.instruments.add(held_inst))
+        asyncio.run(repos.instruments.add(event_inst))
+        asyncio.run(
+            repos.position_snapshots.add(
+                PositionSnapshotEntity(
+                    position_snapshot_id=uuid4(),
+                    account_id=account_id,
+                    instrument_id=held_inst.instrument_id,
+                    quantity=Decimal("10"),
+                    average_price=Decimal("50000"),
+                    market_price=Decimal("51000"),
+                    unrealized_pnl=Decimal("10000"),
+                    source_of_truth="test",
+                    snapshot_at=now,
+                    created_at=now,
+                )
+            )
+        )
+        asyncio.run(
+            repos.external_events.add(
+                ExternalEventEntity(
+                    event_id=uuid4(),
+                    symbol="000660",
+                    market="KRX",
+                    source_name="opendart",
+                    event_type="disclosure",
+                    severity="high",
+                    headline="High importance disclosure",
+                    published_at=now,
+                    ingested_at=now,
+                    dedup_key_hash="evt-000660",
+                )
+            )
+        )
+
+        app = create_app(repos=repos, auth_enabled=False)
+        with TestClient(app) as client:
+            response = client.get(
+                f"/instruments/trading-universe/preview?account_id={account_id}"
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["account_id"] == str(account_id)
+        assert data["kis_env"] is None
+        assert data["total_count"] == 2
+        assert data["source_type_counts"] == {
+            "held_position": 1,
+            "event_overlay": 1,
+        }
+        assert data["inclusion_reason_counts"]["held_position_mandatory"] == 1
+        assert data["items"][0]["symbol"] == "005930"
+        assert data["items"][0]["source_type"] == "held_position"
+        assert data["items"][0]["priority"] == 0
+        assert data["items"][1]["symbol"] == "000660"
+        assert data["items"][1]["source_type"] == "event_overlay"
+        assert data["items"][1]["priority"] == 1
+
+    def test_get_trading_universe_preview_with_market_overlay(self) -> None:
+        """market overlay candidate is visible when a live/real KIS client exists."""
+        repos = build_in_memory_repositories()
+        account_id = uuid4()
+        instrument = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="001740",
+            market_code="KRX",
+            asset_class="KR_STOCK",
+            currency="KRW",
+            name="SK Networks",
+            is_active=True,
+        )
+        asyncio.run(repos.instruments.add(instrument))
+
+        class _MockRestClient:
+            env = "real"
+
+            async def get_quotes_batch(self, symbols, **kwargs):
+                return {
+                    "001740": {
+                        "stck_prpr": "5100",
+                        "prdy_ctrt": "4.1",
+                        "acml_tr_pbmn": "700000000000",
+                        "stck_hgpr": "5200",
+                        "stck_lwpr": "4900",
+                        "stck_oprc": "4950",
+                        "iscd_stat_cls_code": "",
+                    }
+                }
+
+        class _MockBrokerAdapter:
+            rest_client = _MockRestClient()
+
+        app = create_app(
+            repos=repos,
+            auth_enabled=False,
+            broker_adapter=_MockBrokerAdapter(),
+        )
+        with TestClient(app) as client:
+            response = client.get(
+                f"/instruments/trading-universe/preview?account_id={account_id}&market_overlay_cap=1"
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["kis_env"] == "real"
+        assert data["total_count"] == 1
+        assert data["source_type_counts"]["market_overlay"] == 1
+        assert data["items"][0]["symbol"] == "001740"
+        assert data["items"][0]["source_type"] == "market_overlay"
 
 
 class TestPositions:

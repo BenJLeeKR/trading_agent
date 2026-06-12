@@ -718,8 +718,36 @@ class InstrumentMappingConsistencySummaryResponse(BaseModel):
     has_gap: bool
     total_unmapped_external_event_symbols: int
     total_unmapped_broker_fill_symbols: int
+    total_unmapped_snapshot_position_symbols: int
     unmapped_external_event_symbols: list[InstrumentMappingGapItem]
     unmapped_broker_fill_symbols: list[InstrumentMappingGapItem]
+    unmapped_snapshot_position_symbols: list[InstrumentMappingGapItem]
+
+
+class TradingUniversePreviewItem(BaseModel):
+    """A single selected symbol from the current trading universe preview."""
+
+    symbol: str
+    market: str
+    source_type: str
+    inclusion_reason: str
+    priority: int
+
+
+class TradingUniversePreviewResponse(BaseModel):
+    """`GET /instruments/trading-universe/preview` 응답."""
+
+    account_id: UUID
+    lookback_hours: int
+    max_cap: int
+    exclude_held_from_cap: bool
+    market_overlay_cap: int
+    pre_pool_size: int
+    kis_env: str | None = None
+    total_count: int
+    source_type_counts: dict[str, int]
+    inclusion_reason_counts: dict[str, int]
+    items: list[TradingUniversePreviewItem]
 
 
 class PositionSnapshotView(BaseModel):

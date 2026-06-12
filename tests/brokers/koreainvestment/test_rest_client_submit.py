@@ -246,14 +246,45 @@ class TestCashAndPositionsBudgetLogging:
         async def _mock_fetch(*args: Any, **kwargs: Any):
             raise BudgetExhaustedError("inquiry", "Bucket 'inquiry' exhausted (remaining=0/1)")
 
-        with patch.object(KISRestClient, "_wait_for_inquiry_budget", AsyncMock(return_value=True)):
-            with patch.object(KISRestClient, "_fetch_inquire_balance_pages", _mock_fetch):
-                result = await client.get_cash_and_positions(after_hours=False)
+        with (
+            patch.object(KISRestClient, "_wait_for_inquiry_budget", AsyncMock(return_value=True)),
+            patch.object(KISRestClient, "_fetch_inquire_balance_pages", _mock_fetch),
+            patch("agent_trading.brokers.koreainvestment.rest_client.asyncio.sleep", AsyncMock()),
+        ):
+            result = await client.get_cash_and_positions(after_hours=False)
 
         assert result.cash_balance is None
         assert result.positions == []
         assert any("BUDGET_EXHAUSTED VTTC8434R" in rec.message for rec in caplog.records)
         assert not any("API_FAILURE VTTC8434R" in rec.message for rec in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_get_cash_and_positions_retries_once_on_paper_inquiry_budget_exhaustion(
+        self, client: KISRestClient
+    ) -> None:
+        mock_fetch = AsyncMock(
+            side_effect=[
+                BudgetExhaustedError("inquiry", "Bucket 'inquiry' exhausted (remaining=0/1)"),
+                (
+                    [{"pdno": "005930", "hldg_qty": "1"}],
+                    {"dnca_tot_amt": "1000000"},
+                    {"output": [{"pdno": "005930", "hldg_qty": "1"}], "output2": {"dnca_tot_amt": "1000000"}},
+                ),
+            ]
+        )
+        mock_sleep = AsyncMock()
+
+        with (
+            patch.object(KISRestClient, "_wait_for_inquiry_budget", AsyncMock(return_value=True)),
+            patch.object(KISRestClient, "_fetch_inquire_balance_pages", mock_fetch),
+            patch("agent_trading.brokers.koreainvestment.rest_client.asyncio.sleep", mock_sleep),
+        ):
+            result = await client.get_cash_and_positions(after_hours=False)
+
+        assert result.cash_balance == {"dnca_tot_amt": "1000000"}
+        assert result.positions == [{"pdno": "005930", "hldg_qty": "1"}]
+        assert mock_fetch.await_count == 2
+        mock_sleep.assert_awaited_once_with(1.0)
 
     @pytest.mark.asyncio
     async def test_submit_ioc_market_encodes_ord_dvsn_without_algo(

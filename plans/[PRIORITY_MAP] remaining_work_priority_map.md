@@ -372,7 +372,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 
 ---
 
-### 9. KIS 기본종목정보 instrument master 적재/갱신 — `진행중`
+### 9. KIS 기본종목정보 instrument master 적재/갱신 — `완료`
 
 ### 목표
 - 종목 메타데이터를 KIS 기준으로 더 안정적으로 관리한다.
@@ -382,11 +382,15 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   - [`plans/2026-06-08_kis_instrument_master_sync_pipeline_phase1.md`](./2026-06-08_kis_instrument_master_sync_pipeline_phase1.md)
 - [x] instrument master 갱신 정책
   - [`plans/2026-06-08_kis_instrument_master_update_policy.md`](./2026-06-08_kis_instrument_master_update_policy.md)
-- [ ] snapshot/event mapping과의 정합성 확보
+- [x] snapshot/event mapping과의 정합성 확보
   - [x] recent `external_events` / `broker_fill_snapshots` unmapped symbol audit CLI
     - [`plans/2026-06-08_instrument_mapping_consistency_audit.md`](./2026-06-08_instrument_mapping_consistency_audit.md)
   - [x] unmapped symbol summary inspection API
     - [`plans/2026-06-08_instrument_mapping_consistency_summary_api.md`](./2026-06-08_instrument_mapping_consistency_summary_api.md)
+  - [x] snapshot sync unknown-instrument 오류를 mapping summary와 연결
+    - [`plans/2026-06-11_instrument_mapping_snapshot_sync_error_link.md`](./2026-06-11_instrument_mapping_snapshot_sync_error_link.md)
+  - [x] unmapped symbol auto-seed / placeholder instrument 생성 정책
+    - [`plans/2026-06-11_placeholder_instrument_policy.md`](./2026-06-11_placeholder_instrument_policy.md)
 
 ### 근거 문서
 - [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `8`
@@ -412,12 +416,20 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - `AI Compliance`는 해석 보조일 수 있지만 최종 차단은 deterministic validator가 맡아야 함
 - `Model Monitor`는 운영 모니터링/오프라인 평가 서비스로 보는 것이 맞음
 
-### 10. Universe Selection Agent 분해 — `미완료`
+### 10. Universe Selection Agent 분해 — `진행중`
 
 ### 핵심
 - instrument master와 trading universe 분리
 - core / held_position / event_overlay / market_overlay 합성
 - liquidity filter와 market-driven overlay 정식화
+
+### 세부 작업 상태
+- [x] `UniverseSelectionService` 기반 deterministic composition 경로 정착
+- [x] `source_type` / `inclusion_reason`를 포함한 trading universe preview inspection API 추가
+  - [`plans/2026-06-12_trading_universe_preview_api.md`](./2026-06-12_trading_universe_preview_api.md)
+- [ ] market_overlay 실운영 편입/효과 장중 실측
+- [ ] universe selection 결과의 운영 UI 연계
+- [ ] manual watchlist/override 계층의 운영 정책 확정
 
 ### 근거 문서
 - [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `28`

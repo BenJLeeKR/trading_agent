@@ -1618,34 +1618,52 @@ class KISRestClient:
                 raw_response={},
             )
 
-        try:
-            raw_positions, raw_cash, raw_response = await self._fetch_inquire_balance_pages(
-                after_hours=after_hours,
-            )
-        except BudgetExhaustedError:
-            logger.warning(
-                "BUDGET_EXHAUSTED VTTC8434R get_cash_and_positions() exhausted "
-                "(account=%s)",
-                self.account_number,
-                exc_info=True,
-            )
-            return CashAndPositionsResult(
-                cash_balance=None,
-                positions=[],
-                raw_response={},
-            )
-        except Exception:
-            logger.error(
-                "API_FAILURE VTTC8434R get_cash_and_positions() failed "
-                "(account=%s)",
-                self.account_number,
-                exc_info=True,
-            )
-            return CashAndPositionsResult(
-                cash_balance=None,
-                positions=[],
-                raw_response={},
-            )
+        cash_and_positions_attempts = 2 if self.env == "paper" else 1
+        for attempt in range(1, cash_and_positions_attempts + 1):
+            try:
+                raw_positions, raw_cash, raw_response = await self._fetch_inquire_balance_pages(
+                    after_hours=after_hours,
+                )
+                break
+            except BudgetExhaustedError as exc:
+                should_retry = (
+                    self.env == "paper"
+                    and exc.bucket == BucketType.INQUIRY.value
+                    and attempt < cash_and_positions_attempts
+                )
+                if should_retry:
+                    logger.info(
+                        "BUDGET_RETRY VTTC8434R get_cash_and_positions() waiting 1.0s "
+                        "after inquiry exhaustion (account=%s attempt=%d/%d)",
+                        self.account_number,
+                        attempt + 1,
+                        cash_and_positions_attempts,
+                    )
+                    await asyncio.sleep(1.0)
+                    continue
+                logger.warning(
+                    "BUDGET_EXHAUSTED VTTC8434R get_cash_and_positions() exhausted "
+                    "(account=%s bucket=%s)",
+                    self.account_number,
+                    exc.bucket,
+                )
+                return CashAndPositionsResult(
+                    cash_balance=None,
+                    positions=[],
+                    raw_response={},
+                )
+            except Exception:
+                logger.error(
+                    "API_FAILURE VTTC8434R get_cash_and_positions() failed "
+                    "(account=%s)",
+                    self.account_number,
+                    exc_info=True,
+                )
+                return CashAndPositionsResult(
+                    cash_balance=None,
+                    positions=[],
+                    raw_response={},
+                )
 
         return CashAndPositionsResult(
             cash_balance=raw_cash if raw_cash else None,

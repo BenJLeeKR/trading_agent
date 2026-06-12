@@ -148,6 +148,11 @@ def build_sync_run_entity(
     """
     error_count = len(batch.errors)
     now = datetime.now(timezone.utc)
+    summary_payload = dict(summary_json or {})
+    if batch.errors:
+        summary_payload["errors"] = list(batch.errors[:50])
+    if batch.total_positions_skipped:
+        summary_payload["positions_skipped_total"] = batch.total_positions_skipped
 
     # Determine run status
     # "completed": no failures, no partial accounts, no errors
@@ -179,7 +184,7 @@ def build_sync_run_entity(
         status=status,
         started_at=started_at or now,
         completed_at=now,
-        summary_json=summary_json,
+        summary_json=summary_payload or None,
         after_hours=after_hours,
     )
 

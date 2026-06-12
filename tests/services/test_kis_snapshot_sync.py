@@ -1809,6 +1809,36 @@ class TestBuildSyncRunEntity:
         assert entity.env_filter == "live"
         assert entity.status_filter == "active"
 
+    def test_summary_json_embeds_errors_and_positions_skipped(self) -> None:
+        """run summary should retain snapshot mapping errors for later inspection."""
+        batch = BatchSyncResult(
+            total_accounts=1,
+            succeeded=0,
+            partial=1,
+            failed=0,
+            skipped=0,
+            total_positions_synced=0,
+            total_positions_skipped=2,
+            total_cash_synced=1,
+            errors=[
+                "Instrument not found for pdno=005940 — skipped",
+                "Instrument not found for pdno=001234 — skipped",
+            ],
+        )
+        entity = build_sync_run_entity(
+            batch,
+            trigger_type="scheduler",
+            scope="all",
+            summary_json={"VTTC8434R_pre_check": 1},
+        )
+        assert entity.summary_json is not None
+        assert entity.summary_json["VTTC8434R_pre_check"] == 1
+        assert entity.summary_json["positions_skipped_total"] == 2
+        assert entity.summary_json["errors"] == [
+            "Instrument not found for pdno=005940 — skipped",
+            "Instrument not found for pdno=001234 — skipped",
+        ]
+
 
 class TestSnapshotSyncRunRepository:
     """``InMemorySnapshotSyncRunRepository`` round-trip tests."""
