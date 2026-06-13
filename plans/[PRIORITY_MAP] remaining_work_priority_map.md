@@ -496,12 +496,21 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - `plan_docs/agents/02_agent_target_shapes.md`
 - `plan_docs/agents/03_risk_role_boundaries.md`
 
-### 14. Data Quality / Hard Guardrail 일원화 — `미완료`
+### 14. Data Quality / Hard Guardrail 일원화 — `진행중`
 
 ### 핵심
 - stale snapshot, blocked reason, kill switch, risk check, submit/reconcile 차단 규칙을
   명시적 deterministic 계층으로 더 정리
 - 현재 orchestrator / sizing / sync / snapshot 계층에 분산된 hard guardrail 책임을 수렴
+
+### 세부 작업 상태
+- [x] decision loop의 `pre-AI skip` 규칙을 공용 서비스 계층으로 승격
+  - `held_position` 무보유 skip
+  - 일반 BUY `orderable_amount` / general BUY budget 기반 skip
+  - late-session / recent-event / recent-order 기반 held-position stable-hold skip
+- [ ] stale snapshot / submit cap / sell guard / reconcile gate의 공통 reason code 체계 수렴
+- [ ] scheduler / decision loop / execution_service 간 중복 gate 제거
+- [ ] guardrail evaluation 저장 범위를 pre-AI deterministic gate까지 확장할지 결정
 
 ### 근거 문서
 - `plan_docs/agents/01_agent_inventory_and_status.md`

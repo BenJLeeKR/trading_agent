@@ -10,7 +10,7 @@ Covers: ``GET /orders``, ``GET /orders/{id}``, ``GET /orders/{id}/events``,
 from __future__ import annotations
 
 import asyncio
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Any
@@ -25,6 +25,7 @@ from agent_trading.api.deps import get_db, get_repos
 from agent_trading.api.routes.decisions import _to_detail
 from agent_trading.api.routes.orders import _safe_str
 from agent_trading.domain.entities import (
+    CashBalanceSnapshotEntity,
     ExternalEventEntity,
     InstrumentEntity,
     OrderRequestEntity,
@@ -1229,6 +1230,51 @@ class TestPositions:
         response = client.get("/cash-balances?account_id=00000000-0000-0000-0000-000000000000")
         assert response.status_code == 200
         assert response.json() is None
+
+    def test_get_account_snapshots_latest_backfills_recent_orderable_amount(self) -> None:
+        """Latest combined snapshot backfills recent non-null orderable_amount for UI."""
+        repos = build_in_memory_repositories()
+        app = create_app(repos=repos, auth_enabled=False)
+        account_id = uuid4()
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+
+        older = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=account_id,
+            currency="KRW",
+            available_cash=Decimal("2114882"),
+            settled_cash=Decimal("1576303"),
+            unsettled_cash=Decimal("538579"),
+            source_of_truth="broker",
+            snapshot_at=now,
+            settlement_amount=Decimal("445828"),
+            orderable_amount=Decimal("443598"),
+            created_at=now,
+        )
+        newer_at = now + timedelta(minutes=1)
+        newer = CashBalanceSnapshotEntity(
+            cash_balance_snapshot_id=uuid4(),
+            account_id=account_id,
+            currency="KRW",
+            available_cash=Decimal("2114882"),
+            settled_cash=Decimal("1576303"),
+            unsettled_cash=Decimal("538579"),
+            source_of_truth="broker",
+            snapshot_at=newer_at,
+            settlement_amount=Decimal("445828"),
+            orderable_amount=None,
+            created_at=newer_at,
+        )
+        asyncio.run(repos.cash_balance_snapshots.add(older))
+        asyncio.run(repos.cash_balance_snapshots.add(newer))
+
+        with TestClient(app) as client:
+            response = client.get(f"/account-snapshots/latest?account_id={account_id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["cash_balance"] is not None
+        assert data["cash_balance"]["orderable_amount"] == 443598.0
+        assert data["cash_balance"]["settlement_amount"] == 445828.0
 
 
 class TestClients:

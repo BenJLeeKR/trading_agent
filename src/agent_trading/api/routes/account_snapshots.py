@@ -32,6 +32,54 @@ router = APIRouter(tags=["account-snapshots"])
 _SNAPSHOT_ALIGNMENT_TOLERANCE_SECONDS = 5.0
 
 
+async def _build_cash_balance_view(
+    repos: RepositoryContainer,
+    account_id: UUID,
+    snapshot,
+) -> CashBalanceSnapshotView | None:
+    """Build cash balance view with a recent non-null orderable fallback.
+
+    Some latest after-hours / degraded snapshots legitimately store
+    ``orderable_amount=None``. For inspection UI readability, backfill the
+    most recent non-null ``orderable_amount`` from the same account when the
+    latest snapshot omits it.
+    """
+    if snapshot is None:
+        return None
+
+    effective_snapshot = snapshot
+    if snapshot.orderable_amount is None:
+        recent_cash_snapshots = await repos.cash_balance_snapshots.list_by_account(account_id)
+        fallback_orderable_amount = next(
+            (
+                item.orderable_amount
+                for item in recent_cash_snapshots
+                if item.orderable_amount is not None
+            ),
+            None,
+        )
+        if fallback_orderable_amount is not None:
+            effective_snapshot = type(snapshot)(
+                cash_balance_snapshot_id=snapshot.cash_balance_snapshot_id,
+                account_id=snapshot.account_id,
+                currency=snapshot.currency,
+                available_cash=snapshot.available_cash,
+                settled_cash=snapshot.settled_cash,
+                unsettled_cash=snapshot.unsettled_cash,
+                source_of_truth=snapshot.source_of_truth,
+                snapshot_at=snapshot.snapshot_at,
+                total_asset=snapshot.total_asset,
+                settlement_amount=snapshot.settlement_amount,
+                total_unrealized_pnl=snapshot.total_unrealized_pnl,
+                orderable_amount=fallback_orderable_amount,
+                created_at=snapshot.created_at,
+                fetch_status=snapshot.fetch_status,
+                snapshot_sync_run_id=snapshot.snapshot_sync_run_id,
+            )
+
+    return CashBalanceSnapshotView.model_validate(effective_snapshot)
+
+
 def _compute_alignment_status(
     positions_snapshot_at: datetime | None,
     cash_snapshot_at: datetime | None,
@@ -124,11 +172,7 @@ async def get_latest_account_snapshots(
                 view.instrument_name = inst.name
             positions.append(view)
 
-        cash_balance: CashBalanceSnapshotView | None = (
-            CashBalanceSnapshotView.model_validate(sync_cash)
-            if sync_cash is not None
-            else None
-        )
+        cash_balance = await _build_cash_balance_view(repos, aid, sync_cash)
 
         alignment_status = AlignmentStatus.ALIGNED if positions and cash_balance else AlignmentStatus.PARTIAL
 
@@ -166,11 +210,7 @@ async def get_latest_account_snapshots(
         sync_cash = await repos.cash_balance_snapshots.get_by_sync_run(
             aid, sync_run_id,
         )
-        cash_balance = (
-            CashBalanceSnapshotView.model_validate(sync_cash)
-            if sync_cash is not None
-            else None
-        )
+        cash_balance = await _build_cash_balance_view(repos, aid, sync_cash)
 
         positions = []
         positions_snapshot_at = None
@@ -249,11 +289,7 @@ async def get_latest_account_snapshots(
                 view.instrument_name = inst.name
             positions.append(view)
 
-        cash_balance = (
-            CashBalanceSnapshotView.model_validate(sync_cash)
-            if sync_cash is not None
-            else None
-        )
+        cash_balance = await _build_cash_balance_view(repos, aid, sync_cash)
 
         positions_snapshot_at = (
             max(s.snapshot_at for s in pos_positions)
@@ -289,11 +325,7 @@ async def get_latest_account_snapshots(
             positions_snapshot_at = s.snapshot_at
 
     cash_snapshot = await repos.cash_balance_snapshots.get_latest_by_account(aid)
-    cash_balance = (
-        CashBalanceSnapshotView.model_validate(cash_snapshot)
-        if cash_snapshot is not None
-        else None
-    )
+    cash_balance = await _build_cash_balance_view(repos, aid, cash_snapshot)
     cash_snapshot_at = cash_snapshot.snapshot_at if cash_snapshot is not None else None
 
     alignment_status = _compute_alignment_status(

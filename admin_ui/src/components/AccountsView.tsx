@@ -18,10 +18,6 @@ import { LoadingSpinner } from "./common/LoadingSpinner";
 import type { Column } from "./common/DataTable";
 import { AlertCircle, Lock, Wallet, TrendingUp, TrendingDown, X, Users } from "lucide-react";
 import { formatKrw, formatKstElapsed, formatKstDateTime } from "@/lib/utils";
-import {
-  formatSnapshotBudgetParts,
-  parseSnapshotBudgetCounters,
-} from "../lib/snapshotBudget";
 
 /* ───────────────────────────────────────────
  * Helpers
@@ -358,76 +354,59 @@ export default function AccountsView() {
   return (
     <div className="p-6 space-y-6">
       {/* Page Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-[#0f172a]">계좌</h1>
           <p className="text-sm text-[#64748b] mt-1">
             계좌 상태, 포지션, 현금 잔고 조회
           </p>
-          <p className="text-xs text-[#94a3b8] mt-0.5">
-            내부 데이터베이스 계좌 메타데이터
-          </p>
         </div>
-        {/* Selected client indicator */}
-        {selectedClient && (
-          <div className="flex items-center gap-2 bg-white rounded-lg border border-[#e2e8f0] px-3 py-2 text-sm">
-            <Users className="h-4 w-4 text-[#64748b]" />
-            <span className="text-[#64748b]">클라이언트:</span>
-            <span className="font-medium text-[#0f172a]">
-              {selectedClient.name}
-            </span>
-            <span className="text-[#94a3b8]">({selectedClient.client_code})</span>
-          </div>
-        )}
-      </div>
-
-      {/* Snapshot Sync Run Summary Bar */}
-      {!syncRunError && latestSyncRun && (
-        <div className="bg-white rounded-xl border border-[#e2e8f0] px-4 py-3 flex items-center gap-3 text-sm">
-          <AlertCircle className="h-4 w-4 text-[#64748b]" />
-          <span className="text-[#64748b]">스냅샷 동기화:</span>
-          <StatusBadge
-            variant={
-              latestSyncRun.status === "completed"
-                ? "success"
-                : latestSyncRun.status === "partial"
-                  ? "warning"
-                  : latestSyncRun.status === "failed"
-                    ? "error"
-                    : "info"
-            }
-          >
-            {latestSyncRun.status === "completed"
-              ? "정상"
-              : latestSyncRun.status === "partial"
-                ? "부분 성공"
-                : latestSyncRun.status === "failed"
-                  ? "실패"
-                  : latestSyncRun.status}
-          </StatusBadge>
-          <span className="text-[#94a3b8]">
-            {latestSyncRun.succeeded_accounts}/{latestSyncRun.total_accounts} 계좌
-          </span>
-          {(() => {
-            const sj = latestSyncRun.summary_json as Record<string, number> | null;
-            if (!sj) return null;
-            const parts = formatSnapshotBudgetParts(
-              parseSnapshotBudgetCounters(sj),
-            );
-            if (parts.length === 0) return null;
-            return (
-              <span className="text-[#f59e0b] text-xs ml-1">
-                {parts.join(" | ")}
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          {!syncRunError && latestSyncRun && (
+            <div className="flex items-center gap-2 bg-white rounded-lg border border-[#e2e8f0] px-3 py-2 text-xs">
+              <AlertCircle className="h-3.5 w-3.5 text-[#64748b]" />
+              <span className="text-[#64748b]">스냅 동기화</span>
+              <StatusBadge
+                variant={
+                  latestSyncRun.status === "completed"
+                    ? "success"
+                    : latestSyncRun.status === "partial"
+                      ? "warning"
+                      : latestSyncRun.status === "failed"
+                        ? "error"
+                        : "info"
+                }
+              >
+                {latestSyncRun.status === "completed"
+                  ? "정상"
+                  : latestSyncRun.status === "partial"
+                    ? "부분 성공"
+                    : latestSyncRun.status === "failed"
+                      ? "실패"
+                      : latestSyncRun.status}
+              </StatusBadge>
+              <span className="text-[#94a3b8]">
+                {latestSyncRun.succeeded_accounts}/{latestSyncRun.total_accounts}
               </span>
-            );
-          })()}
-          {latestSyncRun.started_at && (
-            <span className="text-[#94a3b8] text-xs ml-auto">
-              {formatKstElapsed(latestSyncRun.started_at)}
-            </span>
+              {latestSyncRun.started_at && (
+                <span className="text-[#94a3b8]">
+                  {formatKstElapsed(latestSyncRun.started_at)}
+                </span>
+              )}
+            </div>
+          )}
+          {selectedClient && (
+            <div className="flex items-center gap-2 bg-white rounded-lg border border-[#e2e8f0] px-3 py-2 text-sm">
+              <Users className="h-4 w-4 text-[#64748b]" />
+              <span className="text-[#64748b]">클라이언트:</span>
+              <span className="font-medium text-[#0f172a]">
+                {selectedClient.name}
+              </span>
+              <span className="text-[#94a3b8]">({selectedClient.client_code})</span>
+            </div>
           )}
         </div>
-      )}
+      </div>
 
       {/* Empty state when no clients exist */}
       {clients.length === 0 ? (
@@ -497,34 +476,34 @@ export default function AccountsView() {
                     <X className="h-5 w-5" />
                   </button>
                 </div>
-                <dl className="grid grid-cols-2 gap-4">
-                  <div>
-                    <dt className="text-sm text-[#64748b]">계좌 코드</dt>
-                    <dd className="text-sm font-mono text-[#0f172a] mt-0.5">
+                <dl className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+                  <div className="flex items-center gap-2">
+                    <dt className="text-[#64748b]">계좌 코드</dt>
+                    <dd className="font-mono text-[#0f172a]">
                       {selectedAccountDetail.account_code ?? "—"}
                     </dd>
                   </div>
-                  <div>
-                    <dt className="text-sm text-[#64748b]">별칭</dt>
-                    <dd className="text-sm font-medium text-[#0f172a] mt-0.5">
+                  <div className="flex items-center gap-2">
+                    <dt className="text-[#64748b]">별칭</dt>
+                    <dd className="font-medium text-[#0f172a]">
                       {selectedAccountDetail.account_alias ?? "—"}
                     </dd>
                   </div>
-                  <div>
-                    <dt className="text-sm text-[#64748b]">계좌번호</dt>
-                    <dd className="text-sm font-mono text-[#0f172a] mt-0.5">
+                  <div className="flex items-center gap-2">
+                    <dt className="text-[#64748b]">계좌번호</dt>
+                    <dd className="font-mono text-[#0f172a]">
                       {selectedAccountDetail.account_masked ?? "—"}
                     </dd>
                   </div>
-                  <div>
-                    <dt className="text-sm text-[#64748b]">브로커 코드</dt>
-                    <dd className="text-sm font-mono text-[#0f172a] mt-0.5">
+                  <div className="flex items-center gap-2">
+                    <dt className="text-[#64748b]">브로커 코드</dt>
+                    <dd className="font-mono text-[#0f172a]">
                       {selectedAccountDetail.broker_account_code ?? "—"}
                     </dd>
                   </div>
-                  <div>
-                    <dt className="text-sm text-[#64748b]">환경</dt>
-                    <dd className="mt-0.5">
+                  <div className="flex items-center gap-2">
+                    <dt className="text-[#64748b]">환경</dt>
+                    <dd>
                       <StatusBadge
                         variant={
                           selectedAccountDetail.environment === "live"
@@ -536,9 +515,9 @@ export default function AccountsView() {
                       </StatusBadge>
                     </dd>
                   </div>
-                  <div>
-                    <dt className="text-sm text-[#64748b]">상태</dt>
-                    <dd className="mt-0.5">
+                  <div className="flex items-center gap-2">
+                    <dt className="text-[#64748b]">상태</dt>
+                    <dd>
                       <StatusBadge
                         variant={
                           selectedAccountDetail.status === "active"
@@ -551,39 +530,6 @@ export default function AccountsView() {
                     </dd>
                   </div>
                 </dl>
-
-                {/* Technical IDs — muted section for UUIDs and raw refs */}
-                <div className="mt-6 pt-4 border-t border-[#e2e8f0]">
-                  <h4 className="text-xs font-medium text-[#94a3b8] uppercase tracking-wider mb-2">
-                    기술 ID
-                  </h4>
-                  <dl className="grid grid-cols-3 gap-3">
-                    <div>
-                      <dt className="text-xs text-[#94a3b8]">계좌 ID</dt>
-                      <dd className="text-xs font-mono text-[#94a3b8] mt-0.5" title={selectedAccountDetail.account_id}>
-                        {truncateUuid(selectedAccountDetail.account_id)}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-xs text-[#94a3b8]">브로커 계좌 ID</dt>
-                      <dd className="text-xs font-mono text-[#94a3b8] mt-0.5" title={selectedAccountDetail.broker_account_id}>
-                        {truncateUuid(selectedAccountDetail.broker_account_id)}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-xs text-[#94a3b8]">클라이언트 ID</dt>
-                      <dd className="text-xs font-mono text-[#94a3b8] mt-0.5" title={selectedAccountDetail.client_id}>
-                        {truncateUuid(selectedAccountDetail.client_id)}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-xs text-[#94a3b8]">브로커 참조</dt>
-                      <dd className="text-xs font-mono text-[#94a3b8] mt-0.5" title={selectedAccountDetail.broker_account_ref ?? undefined}>
-                        {selectedAccountDetail.broker_account_ref ?? "—"}
-                      </dd>
-                    </div>
-                  </dl>
-                </div>
               </div>
 
               {/* Broker Snapshot section label */}
@@ -747,15 +693,15 @@ export default function AccountsView() {
                           </span>
                         </div>
                         <div>
-                          <span className="text-[#64748b]">결제완료: </span>
+                          <span className="text-[#64748b]">주문가능금액: </span>
                           <span className="font-semibold text-[#0f172a]">
-                            {formatKrw(cashBalance.settled_cash)}
+                            {formatKrw(cashBalance.orderable_amount)}
                           </span>
                         </div>
                         <div>
-                          <span className="text-[#64748b]">미결제: </span>
+                          <span className="text-[#64748b]">정산금액: </span>
                           <span className="font-semibold text-[#0f172a]">
-                            {formatKrw(cashBalance.unsettled_cash)}
+                            {formatKrw(cashBalance.settlement_amount)}
                           </span>
                         </div>
                         <div>

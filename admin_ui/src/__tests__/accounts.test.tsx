@@ -108,6 +108,7 @@ const mockCashBalance = {
   unsettled_cash: 0,
   // ── KIS output2 계좌 총괄 필드 (optional, fallback 지원) ──
   total_asset: 1550000,
+  orderable_amount: 450000,
   settlement_amount: 980000,
   total_unrealized_pnl: 500,
   source_of_truth: "broker",
@@ -265,12 +266,10 @@ describe("AccountsView detail panel", () => {
     // in the positions table, so use getAllByText
     expect(screen.getAllByText("미실현 손익").length).toBeGreaterThanOrEqual(2);
 
-    // Cash balance detail — settled cash appears in the summary card
-    // and the cash balance detail section
+    // Cash balance detail — orderable amount label appears in the detail section
     await waitFor(() => {
-      // "1,000,000" might be split across text nodes in jsdom;
-      // verify via the parent text content instead
-      expect(screen.getByText(/결제완료:/)).toBeInTheDocument();
+      expect(screen.getByText(/주문가능금액:/)).toBeInTheDocument();
+      expect(screen.getByText(/정산금액:/)).toBeInTheDocument();
     });
 
     // Freshness indicator — "스냅샷:" with formatted timestamp appears

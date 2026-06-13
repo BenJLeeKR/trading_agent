@@ -970,21 +970,14 @@ class TestRunOneCycle:
                 )
             )
 
-            class _FixedDateTime(datetime):
-                @classmethod
-                def now(cls, tz=None):
-                    if tz is None:
-                        return now_utc.replace(tzinfo=None)
-                    return now_utc.astimezone(tz)
-
-            with patch("scripts.run_decision_loop.datetime", _FixedDateTime):
-                reason, details = await _evaluate_pre_ai_skip_reason(
-                    repos,
-                    account_alias="Entrypoint Paper",
-                    symbol=SYMBOL,
-                    market=MARKET,
-                    source_type="held_position",
-                )
+            reason, details = await _evaluate_pre_ai_skip_reason(
+                repos,
+                account_alias="Entrypoint Paper",
+                symbol=SYMBOL,
+                market=MARKET,
+                source_type="held_position",
+                now_utc=now_utc,
+            )
 
         assert reason == "held_position_recent_hold_no_change"
         assert details["latest_held_decision_type"] == "hold"
@@ -1002,21 +995,14 @@ class TestRunOneCycle:
                 )
             )
 
-            class _FixedDateTime(datetime):
-                @classmethod
-                def now(cls, tz=None):
-                    if tz is None:
-                        return now_utc.replace(tzinfo=None)
-                    return now_utc.astimezone(tz)
-
-            with patch("scripts.run_decision_loop.datetime", _FixedDateTime):
-                reason, details = await _evaluate_pre_ai_skip_reason(
-                    repos,
-                    account_alias="Entrypoint Paper",
-                    symbol=SYMBOL,
-                    market=MARKET,
-                    source_type="held_position",
-                )
+            reason, details = await _evaluate_pre_ai_skip_reason(
+                repos,
+                account_alias="Entrypoint Paper",
+                symbol=SYMBOL,
+                market=MARKET,
+                source_type="held_position",
+                now_utc=now_utc,
+            )
 
         assert reason is None
         assert details["skip_guard"] == "disabled_after_cutoff"
@@ -1049,21 +1035,14 @@ class TestRunOneCycle:
                 )
             )
 
-            class _FixedDateTime(datetime):
-                @classmethod
-                def now(cls, tz=None):
-                    if tz is None:
-                        return now_utc.replace(tzinfo=None)
-                    return now_utc.astimezone(tz)
-
-            with patch("scripts.run_decision_loop.datetime", _FixedDateTime):
-                reason, details = await _evaluate_pre_ai_skip_reason(
-                    repos,
-                    account_alias="Entrypoint Paper",
-                    symbol=SYMBOL,
-                    market=MARKET,
-                    source_type="held_position",
-                )
+            reason, details = await _evaluate_pre_ai_skip_reason(
+                repos,
+                account_alias="Entrypoint Paper",
+                symbol=SYMBOL,
+                market=MARKET,
+                source_type="held_position",
+                now_utc=now_utc,
+            )
 
         assert reason is None
         assert details["recent_event_count"] == "1"

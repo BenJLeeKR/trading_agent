@@ -195,6 +195,7 @@ export interface CashBalanceSnapshotView {
   total_asset?: number;
   settlement_amount?: number;
   total_unrealized_pnl?: number;
+  orderable_amount?: number;
   source_of_truth: string;
   snapshot_at: string;
 }

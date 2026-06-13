@@ -50,12 +50,10 @@ import signal
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, time as dtime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, NoReturn
 from uuid import uuid4
-from zoneinfo import ZoneInfo
-
 # Lazy import for python-dotenv (optional, for local dev)
 try:
     from dotenv import load_dotenv
@@ -71,12 +69,15 @@ from agent_trading.repositories.contracts import (
     ExternalEventRepository,
     SnapshotSyncHealthSummary,
 )
-from agent_trading.repositories.filters import AccountLookup, OrderQuery
 from agent_trading.runtime.bootstrap import (
     _build_kis_live_quote_client,
     postgres_runtime,
 )
 from agent_trading.services.common_types import SubmitResult
+from agent_trading.services.pre_ai_gate import (
+    DEFAULT_PRE_AI_BUY_MIN_ORDERABLE_AMOUNT,
+    evaluate_pre_ai_skip_reason,
+)
 from agent_trading.services.sizing_engine import calculate_sizing
 from agent_trading.services.universe_selection import UniverseSelectionService
 from agent_trading.services.universe_selection_types import (
@@ -111,18 +112,12 @@ _DEFAULT_SAFE_PRICE = Decimal("50000")
 HELD_POSITION_SELL_MAX_PER_CYCLE = 2
 """Per-cycle cap for held-position REDUCE/EXIT SELL submit lane."""
 
-PRE_AI_BUY_MIN_ORDERABLE_AMOUNT = Decimal("500000")
+PRE_AI_BUY_MIN_ORDERABLE_AMOUNT = DEFAULT_PRE_AI_BUY_MIN_ORDERABLE_AMOUNT
 """Skip BUY-side AI evaluation when verified orderable cash is too small.
 
 Aligned with the sizing engine's 신규 포지션 최소 진입 금액(500,000원) so
 that obviously non-actionable BUY candidates are filtered before any LLM call.
 """
-
-KST = ZoneInfo("Asia/Seoul")
-HELD_POSITION_SKIP_HOLD_TTL = timedelta(minutes=20)
-HELD_POSITION_SKIP_EVENT_LOOKBACK = timedelta(minutes=30)
-HELD_POSITION_SKIP_ORDER_COOLDOWN = timedelta(minutes=20)
-HELD_POSITION_SKIP_DISABLE_AFTER = dtime(14, 30)
 
 
 def _infer_symbol_dry_run_reason(
@@ -202,218 +197,20 @@ async def _evaluate_pre_ai_skip_reason(
     source_type: str,
     remaining_general_buy_budget: int | None = None,
     db_conn: Any | None = None,
+    now_utc: datetime | None = None,
 ) -> tuple[str | None, dict[str, str | None]]:
-    """Return a deterministic pre-AI skip reason to save LLM tokens.
-
-    Policy:
-    - ``held_position`` lane is treated as SELL-evaluation candidate. When no
-      current positive position exists for the symbol, skip before AI.
-    - Non-held-position lanes are treated as BUY-evaluation candidates. When
-      verified ``orderable_amount`` is negative or too small, skip before AI.
-    - Non-held-position lanes with **no current positive position** and **no
-      remaining general BUY budget** are skipped before AI because no
-      actionable BUY path remains for the symbol in this cycle/day.
-    """
-    details: dict[str, str | None] = {}
-    try:
-        account = await repos.accounts.find_one(
-            AccountLookup(account_alias=account_alias)
-        )
-    except Exception:
-        logger.exception(
-            "Pre-AI skip gate account lookup failed: account_alias=%s symbol=%s",
-            account_alias,
-            symbol,
-        )
-        return None, details
-
-    if account is None:
-        return None, details
-
-    instrument = None
-    try:
-        instrument = await repos.instruments.get_by_symbol(
-            symbol=symbol,
-            market_code=market,
-        )
-    except Exception:
-        logger.exception(
-            "Pre-AI gate instrument lookup failed: symbol=%s market=%s source_type=%s",
-            symbol,
-            market,
-            source_type,
-        )
-        return None, details
-
-    matched_qty: Decimal | None = None
-    if instrument is not None:
-        try:
-            snapshots = await repos.position_snapshots.list_latest_by_account(
-                account.account_id
-            )
-        except Exception:
-            logger.exception(
-                "Pre-AI gate position lookup failed: account_id=%s symbol=%s source_type=%s",
-                account.account_id,
-                symbol,
-                source_type,
-            )
-            return None, details
-
-        for snapshot in snapshots:
-            if snapshot.instrument_id == instrument.instrument_id:
-                matched_qty = snapshot.quantity
-                break
-
-    details["held_quantity"] = str(matched_qty) if matched_qty is not None else None
-
-    if source_type == "held_position":
-        if matched_qty is None or matched_qty <= 0:
-            return "no_held_position", details
-        held_skip_reason = await _evaluate_held_position_skip_reason(
-            repos,
-            account_id=account.account_id,
-            instrument_id=instrument.instrument_id if instrument is not None else None,
-            symbol=symbol,
-            matched_qty=matched_qty,
-            db_conn=db_conn,
-        )
-        if held_skip_reason is not None:
-            details.update(held_skip_reason[1])
-            return held_skip_reason[0], details
-        return None, details
-
-    if remaining_general_buy_budget is not None:
-        details["remaining_general_buy_budget"] = str(remaining_general_buy_budget)
-        if remaining_general_buy_budget <= 0 and (matched_qty is None or matched_qty <= 0):
-            return "general_buy_budget_exhausted", details
-
-    try:
-        cash_snapshot = await repos.cash_balance_snapshots.get_latest_by_account(
-            account.account_id
-        )
-    except Exception:
-        logger.exception(
-            "Pre-AI BUY gate cash lookup failed: account_id=%s symbol=%s",
-            account.account_id,
-            symbol,
-        )
-        return None, details
-
-    if cash_snapshot is None or cash_snapshot.orderable_amount is None:
-        return None, details
-
-    orderable_amount = cash_snapshot.orderable_amount
-    details["orderable_amount"] = str(orderable_amount)
-    details["threshold"] = str(PRE_AI_BUY_MIN_ORDERABLE_AMOUNT)
-
-    if orderable_amount < 0:
-        return "negative_orderable_amount", details
-    if orderable_amount <= PRE_AI_BUY_MIN_ORDERABLE_AMOUNT:
-        return "low_orderable_amount", details
-    return None, details
-
-
-async def _evaluate_held_position_skip_reason(
-    repos: RepositoryContainer,
-    *,
-    account_id,
-    instrument_id,
-    symbol: str,
-    matched_qty: Decimal,
-    db_conn: Any | None = None,
-) -> tuple[str | None, dict[str, str | None]] | None:
-    """Return a conservative held-position pre-AI skip reason.
-
-    Skip only when all of the following are true:
-    - current KST time is before the late-session cutoff
-    - no recent listed/seeded events for the symbol
-    - no recent orders for the symbol/account
-    - latest held_position BUY-side decision within TTL was HOLD
-
-    This intentionally never uses general BUY budget because that would risk
-    suppressing REDUCE/EXIT evaluation on held positions.
-    """
-    now_utc = datetime.now(timezone.utc)
-    now_kst = now_utc.astimezone(KST)
-    details: dict[str, str | None] = {
-        "held_quantity": str(matched_qty),
-        "evaluated_at_kst": now_kst.isoformat(timespec="seconds"),
-    }
-    if now_kst.time() >= HELD_POSITION_SKIP_DISABLE_AFTER:
-        details["skip_guard"] = "disabled_after_cutoff"
-        return None, details
-
-    recent_events = await repos.external_events.list_by_symbol(
-        symbol,
-        now_utc - HELD_POSITION_SKIP_EVENT_LOOKBACK,
-        include_seeded_news=True,
+    """Compatibility wrapper around shared deterministic pre-AI gate logic."""
+    return await evaluate_pre_ai_skip_reason(
+        repos,
+        account_alias=account_alias,
+        symbol=symbol,
+        market=market,
+        source_type=source_type,
+        remaining_general_buy_budget=remaining_general_buy_budget,
+        db_conn=db_conn,
+        now_utc=now_utc,
+        min_orderable_amount=PRE_AI_BUY_MIN_ORDERABLE_AMOUNT,
     )
-    details["recent_event_count"] = str(len(recent_events))
-    if recent_events:
-        return None, details
-
-    recent_orders = await repos.orders.list(
-        OrderQuery(
-            account_id=account_id,
-            created_from=now_utc - HELD_POSITION_SKIP_ORDER_COOLDOWN,
-            created_to=now_utc,
-            limit=50,
-        )
-    )
-    if instrument_id is not None:
-        recent_orders = [
-            order for order in recent_orders if order.instrument_id == instrument_id
-        ]
-    details["recent_order_count"] = str(len(recent_orders))
-    if recent_orders:
-        return None, details
-
-    latest_decision_type: str | None = None
-    latest_decision_created_at: datetime | None = None
-    cutoff = now_utc - HELD_POSITION_SKIP_HOLD_TTL
-    if db_conn is not None:
-        row = await db_conn.fetchrow(
-            """
-            SELECT decision_type, created_at
-            FROM trading.trade_decisions
-            WHERE symbol = $1
-              AND source_type = 'held_position'
-              AND side = 'buy'
-              AND created_at >= $2
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            symbol,
-            cutoff,
-        )
-        if row is not None:
-            latest_decision_type = str(getattr(row["decision_type"], "value", row["decision_type"])).lower()
-            latest_decision_created_at = row["created_at"]
-    else:
-        decisions = await repos.trade_decisions.list_all()
-        filtered = [
-            decision
-            for decision in decisions
-            if decision.symbol == symbol
-            and decision.source_type == "held_position"
-            and str(getattr(decision.side, "value", decision.side)).lower() == "buy"
-            and decision.created_at >= cutoff
-        ]
-        if filtered:
-            latest = max(filtered, key=lambda item: item.created_at)
-            latest_decision_type = str(getattr(latest.decision_type, "value", latest.decision_type)).lower()
-            latest_decision_created_at = latest.created_at
-
-    details["latest_held_decision_type"] = latest_decision_type
-    details["latest_held_decision_at"] = (
-        latest_decision_created_at.isoformat(timespec="seconds")
-        if latest_decision_created_at is not None
-        else None
-    )
-    if latest_decision_type == "hold":
-        return "held_position_recent_hold_no_change", details
-    return None, details
 
 
 async def _resolve_symbol_price(
