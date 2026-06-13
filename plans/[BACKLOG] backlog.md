@@ -138,6 +138,7 @@
 | 6 | **Reconciliation Run에 order_id 직접 매핑**: `_resolve_order_for_reflection()`이 broker_order_id/client_order_id로 찾는 방식. 향후 run에 직접 order_id 저장 검토 | [Plan 35](plans/35_reconciliation_authoritative_state_reflection.md:846) | ❌ 미착수 |
 | 7 | **장 운영 세션 정보 수집/저장 + 운영 체크리스트 자동 점검**: KIS 또는 대체 공식 소스에서 장전/장중/장후/휴장/조기종료/특수 세션 정보를 수집해 PostgreSQL에 저장하고, 이를 기반으로 “장 시작 전 할 일 / 장중에 할 일 / 장 종료 후 할 일” 점검 로직 및 운영 체크리스트를 구성 | User request (2026-05-13) | ❌ 미착수 |
 | 8 | **KIS 기본종목정보 instrument master 적재/갱신**: KIS 기본종목정보를 PostgreSQL instrument master로 적재하고 주기적으로 갱신하는 파이프라인. symbol/market/name/name_kr/식별코드/활성상태/metadata를 보존해 snapshot sync, external event mapping, UI/inspection 종목 정보 노출의 공통 기준 데이터로 사용 | User request (2026-05-13) | ❌ 미착수 |
+| 8a | **운영 수동 배치 Admin UI**: instrument master sync, placeholder instrument seed 등 운영성 배치를 Admin UI에서 `dry-run → apply → 실행 이력 조회` 구조로 실행할 수 있게 한다. 장중 override 권한 분리, 실행자/audit log, 파라미터 기록, 비동기 job 상태 조회를 포함한 안전한 실행 contract를 먼저 고정해야 함 | User request (2026-06-13) | ❌ 미착수 |
 
 ---
 

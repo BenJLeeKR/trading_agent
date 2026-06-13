@@ -11,6 +11,8 @@ from agent_trading.api.schemas import (
     InstrumentDetail,
     InstrumentMappingConsistencySummaryResponse,
     InstrumentMappingGapItem,
+    TradingUniverseCoverageItem,
+    TradingUniverseCoverageSummaryResponse,
     TradingUniversePreviewItem,
     TradingUniversePreviewResponse,
 )
@@ -203,6 +205,90 @@ async def get_trading_universe_preview(
         total_count=len(items),
         source_type_counts=dict(source_type_counts),
         inclusion_reason_counts=dict(inclusion_reason_counts),
+        items=items,
+    )
+
+
+@router.get(
+    "/instruments/trading-universe/coverage-summary",
+    response_model=TradingUniverseCoverageSummaryResponse,
+)
+async def get_trading_universe_coverage_summary(
+    lookback_days: int = Query(default=14, ge=1, le=90),
+    db=Depends(get_db),
+) -> TradingUniverseCoverageSummaryResponse:
+    """Summarize recent source-type coverage from decision to order creation.
+
+    This is an operational measurement endpoint for Universe Selection /
+    market_overlay effectiveness. It aggregates recent trade decisions and
+    created orders by ``source_type``.
+    """
+    since = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+    rows = await db.fetch(
+        """
+        WITH decision_stats AS (
+            SELECT
+                COALESCE(td.source_type, 'unknown') AS source_type,
+                COUNT(*)::int AS decision_count,
+                MIN(td.created_at) AS first_decision_at,
+                MAX(td.created_at) AS last_decision_at
+            FROM trading.trade_decisions td
+            WHERE td.created_at >= $1
+            GROUP BY COALESCE(td.source_type, 'unknown')
+        ),
+        order_stats AS (
+            SELECT
+                COALESCE(td.source_type, 'unknown') AS source_type,
+                COUNT(*)::int AS order_count,
+                MAX(o.created_at) AS last_order_at
+            FROM trading.order_requests o
+            JOIN trading.trade_decisions td
+              ON td.trade_decision_id = o.trade_decision_id
+            WHERE o.created_at >= $1
+            GROUP BY COALESCE(td.source_type, 'unknown')
+        )
+        SELECT
+            ds.source_type,
+            ds.decision_count,
+            COALESCE(os.order_count, 0)::int AS order_count,
+            ds.first_decision_at,
+            ds.last_decision_at,
+            os.last_order_at
+        FROM decision_stats ds
+        LEFT JOIN order_stats os
+          ON os.source_type = ds.source_type
+        ORDER BY ds.decision_count DESC, ds.source_type ASC
+        """,
+        since,
+    )
+
+    items = [
+        TradingUniverseCoverageItem(
+            source_type=row["source_type"],
+            decision_count=int(row["decision_count"] or 0),
+            order_count=int(row["order_count"] or 0),
+            order_conversion_rate=(
+                float(row["order_count"] or 0) / float(row["decision_count"])
+                if row["decision_count"]
+                else 0.0
+            ),
+            first_decision_at=row["first_decision_at"],
+            last_decision_at=row["last_decision_at"],
+            last_order_at=row["last_order_at"],
+        )
+        for row in rows
+    ]
+    total_decision_count = sum(item.decision_count for item in items)
+    total_order_count = sum(item.order_count for item in items)
+    market_overlay_active = any(
+        item.source_type == "market_overlay" and item.decision_count > 0
+        for item in items
+    )
+    return TradingUniverseCoverageSummaryResponse(
+        lookback_days=lookback_days,
+        total_decision_count=total_decision_count,
+        total_order_count=total_order_count,
+        market_overlay_active=market_overlay_active,
         items=items,
     )
 

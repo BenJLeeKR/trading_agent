@@ -1102,6 +1102,57 @@ class TestInstruments:
         assert data["items"][0]["symbol"] == "001740"
         assert data["items"][0]["source_type"] == "market_overlay"
 
+    def test_get_trading_universe_coverage_summary(self) -> None:
+        """``GET /instruments/trading-universe/coverage-summary`` returns source coverage."""
+        mock_conn = AsyncMock()
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        mock_conn.fetch.return_value = [
+            {
+                "source_type": "held_position",
+                "decision_count": 10,
+                "order_count": 4,
+                "first_decision_at": now,
+                "last_decision_at": now,
+                "last_order_at": now,
+            },
+            {
+                "source_type": "market_overlay",
+                "decision_count": 5,
+                "order_count": 1,
+                "first_decision_at": now,
+                "last_decision_at": now,
+                "last_order_at": now,
+            },
+        ]
+
+        async def override():
+            yield mock_conn
+
+        app = create_app(auth_enabled=False)
+        app.dependency_overrides[get_db] = override
+
+        with TestClient(app) as client:
+            response = client.get(
+                "/instruments/trading-universe/coverage-summary?lookback_days=21"
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["lookback_days"] == 21
+        assert data["total_decision_count"] == 15
+        assert data["total_order_count"] == 5
+        assert data["market_overlay_active"] is True
+        assert data["items"][0]["source_type"] == "held_position"
+        assert data["items"][0]["order_conversion_rate"] == 0.4
+        assert data["items"][1]["source_type"] == "market_overlay"
+        assert data["items"][1]["order_conversion_rate"] == 0.2
+
+        fetch_sql = mock_conn.fetch.await_args.args[0]
+        assert "WITH decision_stats AS" in fetch_sql
+        assert "FROM trading.trade_decisions td" in fetch_sql
+        assert "FROM trading.order_requests o" in fetch_sql
+
+        app.dependency_overrides.clear()
+
 
 class TestPositions:
     """Position / cash-balance inspection endpoints."""

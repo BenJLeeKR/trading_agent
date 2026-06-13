@@ -750,6 +750,28 @@ class TradingUniversePreviewResponse(BaseModel):
     items: list[TradingUniversePreviewItem]
 
 
+class TradingUniverseCoverageItem(BaseModel):
+    """Source-type level operating coverage over a recent lookback window."""
+
+    source_type: str
+    decision_count: int
+    order_count: int
+    order_conversion_rate: float
+    first_decision_at: datetime | None = None
+    last_decision_at: datetime | None = None
+    last_order_at: datetime | None = None
+
+
+class TradingUniverseCoverageSummaryResponse(BaseModel):
+    """`GET /instruments/trading-universe/coverage-summary` 응답."""
+
+    lookback_days: int
+    total_decision_count: int
+    total_order_count: int
+    market_overlay_active: bool
+    items: list[TradingUniverseCoverageItem]
+
+
 class PositionSnapshotView(BaseModel):
     """``GET /positions`` — point-in-time position snapshot.
 

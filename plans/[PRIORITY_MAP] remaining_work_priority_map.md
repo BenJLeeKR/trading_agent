@@ -427,6 +427,8 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - [x] `UniverseSelectionService` 기반 deterministic composition 경로 정착
 - [x] `source_type` / `inclusion_reason`를 포함한 trading universe preview inspection API 추가
   - [`plans/2026-06-12_trading_universe_preview_api.md`](./2026-06-12_trading_universe_preview_api.md)
+- [x] `source_type`별 decision → order 전환 현황 coverage summary API 추가
+  - [`plans/2026-06-13_trading_universe_coverage_summary_api.md`](./2026-06-13_trading_universe_coverage_summary_api.md)
 - [ ] market_overlay 실운영 편입/효과 장중 실측
 - [ ] universe selection 결과의 운영 UI 연계
 - [ ] manual watchlist/override 계층의 운영 정책 확정
@@ -526,6 +528,11 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - [ ] 주문 상세 ↔ 체결내역 교차 링크 UI polish
 - [ ] 계좌/대시보드 freshness indicator 추가 확장
 - [ ] 에이전트 판단근거 UI 추가 노출
+- [ ] 수동 배치 Admin UI
+  - instrument master sync / placeholder seed 같은 운영 배치를
+    `dry-run → apply → 실행 이력 조회` 구조로 다룰 수 있는 UI
+  - 장중 override 권한 / 실행자 / 파라미터 / 결과 로그를 함께 남기는
+    job 기반 실행 contract 선행 필요
 
 ### 근거 문서
 - [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `8d`, `10`, `11`, `12`, `13`
