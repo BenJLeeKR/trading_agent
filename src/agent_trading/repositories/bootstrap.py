@@ -28,6 +28,7 @@ from agent_trading.repositories.memory import (
     InMemoryPositionSnapshotRepository,
     InMemoryReconciliationRepository,
     InMemoryRiskLimitSnapshotRepository,
+    InMemorySignalFeatureSnapshotRepository,
     InMemorySnapshotSyncRunRepository,
     InMemoryStrategyRepository,
     InMemoryTradeDecisionRepository,
@@ -98,6 +99,7 @@ def build_in_memory_repositories() -> RepositoryContainer:
         order_state_events=InMemoryOrderStateEventRepository(),
         guardrail_evaluations=InMemoryGuardrailEvaluationRepository(),
         risk_limit_snapshots=InMemoryRiskLimitSnapshotRepository(),
+        signal_feature_snapshots=InMemorySignalFeatureSnapshotRepository(),
         market_session_repo=InMemoryMarketSessionRepository(),
         order_submission_attempts=InMemoryOrderSubmissionAttemptRepository(),
     )

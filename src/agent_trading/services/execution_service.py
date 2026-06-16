@@ -29,7 +29,12 @@ from agent_trading.domain.entities import (
     ExecutionAttemptEntity,
     GuardrailEvaluationEntity,
 )
-from agent_trading.domain.enums import OrderSide, OrderStatus, OrderType
+from agent_trading.domain.enums import (
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    PipelineStopReason,
+)
 from agent_trading.domain.models import Quote, SubmitOrderRequest
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import AccountLookup, OrderQuery
@@ -43,6 +48,12 @@ from agent_trading.services.common_types import (
     PhaseTraceEntry,
     SubmitResult,
     phase_trace_to_dicts,
+)
+from agent_trading.services.guardrail_audit import (
+    persist_blocking_guardrail_evaluation,
+)
+from agent_trading.services.held_position_policy import (
+    is_held_position_sell_path,
 )
 from agent_trading.services.translation import (
     build_submit_order_request_from_decision,
@@ -211,6 +222,50 @@ class ExecutionService:
             ):
                 return True, str(order.order_request_id)
         return False, None
+
+    async def _has_active_reconciliation_lock(
+        self,
+        *,
+        order_manager: OrderManager,
+        account_id: UUID,
+        symbol: str,
+        side: OrderSide,
+    ) -> bool:
+        """Return whether an active reconciliation lock already exists.
+
+        Unknown order state must take precedence over duplicate-entry
+        heuristics. When a blocking reconciliation lock exists, the
+        authoritative RECONCILE_REQUIRED path in OrderManager must be
+        allowed to run instead of being shadowed by the BUY duplicate guard.
+        """
+        if order_manager.reconciliation_service is None:
+            return False
+        return await order_manager.reconciliation_service.is_blocked(
+            account_id=account_id,
+            symbol=symbol,
+            side=side.value,
+        )
+
+    async def _record_blocking_guardrail_evaluation(
+        self,
+        *,
+        rule_set_version: str,
+        blocking_rule_codes: list[str],
+        rule_results: dict[str, object],
+        decision_context_id: UUID | None,
+        trade_decision_id: UUID | None,
+        order_request_id: UUID | None = None,
+    ) -> None:
+        """Persist a blocking guardrail evaluation without interrupting flow."""
+        await persist_blocking_guardrail_evaluation(
+            self._repos,
+            rule_set_version=rule_set_version,
+            blocking_rule_codes=blocking_rule_codes,
+            rule_results=rule_results,
+            decision_context_id=decision_context_id,
+            trade_decision_id=trade_decision_id,
+            order_request_id=order_request_id,
+        )
 
     # ------------------------------------------------------------------
     # P2.3: _resolve_quote — quote resolution with circuit breaker
@@ -612,6 +667,12 @@ class ExecutionService:
         the decision pipeline has produced ``(intent, trade_decision_id)``.
         """
         _symbol = intent.request.symbol
+        request_metadata = getattr(intent.request, "metadata", None) or {}
+        intent_source_type = (
+            intent.context.source_type
+            if intent.context is not None
+            else str(request_metadata.get("source_type") or "core")
+        )
 
         # ── ExecutionAttempt 생성 (running) ──
         # (moved from DecisionOrchestratorService._run_decision_pipeline)
@@ -655,9 +716,10 @@ class ExecutionService:
         reference_price: Decimal | None = None
 
         # Held position sell (REDUCE/EXIT SELL): quote is optional reference only.
-        _is_hp_sell = (
-            intent.request.side == OrderSide.SELL
-            and intent.ai_backend_inputs.decision_type in ("REDUCE", "EXIT")
+        _is_hp_sell = is_held_position_sell_path(
+            source_type=intent_source_type,
+            decision_type=intent.ai_backend_inputs.decision_type,
+            side=intent.request.side,
         )
 
         if _is_hp_sell:
@@ -706,13 +768,14 @@ class ExecutionService:
                 await self._finalize_attempt(
                     attempt_id, "stopped",
                     stop_phase="sizing",
-                    stop_reason="missing_reference_price_for_market_buy",
+                    stop_reason=PipelineStopReason.MISSING_REFERENCE_PRICE_FOR_MARKET_BUY.value,
                     phase_trace=_phase_trace,
                 )
                 return SubmitResult.build(
                     order_intent=intent,
                     trade_decision_id=trade_decision_id,
-                    error_message="missing_reference_price_for_market_buy",
+                    error_message=PipelineStopReason.MISSING_REFERENCE_PRICE_FOR_MARKET_BUY.value,
+                    stop_reason=PipelineStopReason.MISSING_REFERENCE_PRICE_FOR_MARKET_BUY.value,
                     phase_trace=tuple(_phase_trace) if _phase_trace else (),
                     is_skipped=True,
                     status="SKIPPED",
@@ -783,13 +846,14 @@ class ExecutionService:
             await self._finalize_attempt(
                 attempt_id, "stopped",
                 stop_phase="sizing",
-                stop_reason="sizing_rejected",
+                stop_reason=PipelineStopReason.SIZING_REJECTED.value,
                 phase_trace=_phase_trace,
             )
             return SubmitResult.build(
                 order_intent=intent,
                 trade_decision_id=trade_decision_id,
                 error_message=sizing_result.skip_reason or "Sizing rejected order",
+                stop_reason=PipelineStopReason.SIZING_REJECTED.value,
                 phase_trace=tuple(_phase_trace) if _phase_trace else (),
                 is_skipped=True,
                 status="SKIPPED",
@@ -844,8 +908,11 @@ class ExecutionService:
                     )
                     if sell_availability.is_blocked:
                         # held_position sell skip audit
-                        if (intent.request.side == OrderSide.SELL
-                                and intent.ai_backend_inputs.decision_type in ("REDUCE", "EXIT")):
+                        if is_held_position_sell_path(
+                            source_type=intent_source_type,
+                            decision_type=intent.ai_backend_inputs.decision_type,
+                            side=intent.request.side,
+                        ):
                             logger.warning(
                                 "HELD_POSITION_SELL skipped at sell_guard: symbol=%s "
                                 "decision_type=%s reason=%s trade_decision_id=%s",
@@ -863,11 +930,24 @@ class ExecutionService:
                             sell_availability.blocking_reason,
                             trade_decision_id,
                         )
+                        await self._record_blocking_guardrail_evaluation(
+                            rule_set_version="sell_guard_v1",
+                            blocking_rule_codes=[PipelineStopReason.SELL_GUARD_BLOCKED.value],
+                            rule_results={
+                                "account_id": str(account_id),
+                                "symbol": intent.request.symbol,
+                                "requested_qty": str(effective_qty),
+                                "available_sell_qty": str(sell_availability.available_sell_qty),
+                                "blocking_reason": sell_availability.blocking_reason,
+                            },
+                            decision_context_id=intent.decision_context_id,
+                            trade_decision_id=trade_decision_id,
+                        )
                         _add_phase(f"sell_guard/{_symbol}", "skipped")
                         await self._finalize_attempt(
                             attempt_id, "stopped",
                             stop_phase="sell_guard",
-                            stop_reason="sell_guard_blocked",
+                            stop_reason=PipelineStopReason.SELL_GUARD_BLOCKED.value,
                             phase_trace=_phase_trace,
                         )
                         return SubmitResult.build(
@@ -877,6 +957,7 @@ class ExecutionService:
                                 sell_availability.blocking_reason
                                 or "Sell guard blocked duplicate sell"
                             ),
+                            stop_reason=PipelineStopReason.SELL_GUARD_BLOCKED.value,
                             phase_trace=tuple(_phase_trace) if _phase_trace else (),
                             is_skipped=True,
                             status="SKIPPED",
@@ -919,8 +1000,11 @@ class ExecutionService:
         if submit_request is None:
             skip_reason = "watch" if _dt == "WATCH" else "hold"
             # held_position sell skip audit
-            if (intent.request.side == OrderSide.SELL
-                    and _dt in ("REDUCE", "EXIT")):
+            if is_held_position_sell_path(
+                source_type=intent_source_type,
+                decision_type=_dt,
+                side=intent.request.side,
+            ):
                 logger.warning(
                     "HELD_POSITION_SELL skipped at Phase 2 (translation): "
                     "symbol=%s decision_type=%s skip_reason=%s "
@@ -942,7 +1026,11 @@ class ExecutionService:
                 int((time_module.monotonic() - _validate_t0) * 1000),
             )
             _add_phase(f"translation/{_symbol}", "skipped")
-            reason = "decision_hold" if _dt == "HOLD" else "decision_watch"
+            reason = (
+                PipelineStopReason.DECISION_HOLD.value
+                if _dt == "HOLD"
+                else PipelineStopReason.DECISION_WATCH.value
+            )
             await self._finalize_attempt(
                 attempt_id, "non_trade",
                 stop_phase="translation",
@@ -956,6 +1044,7 @@ class ExecutionService:
                     f"Decision type '{_dt}' "
                     f"produced no order request"
                 ),
+                stop_reason=reason,
                 phase_trace=tuple(_phase_trace) if _phase_trace else (),
                 is_skipped=True,
                 status="SKIPPED",
@@ -978,42 +1067,71 @@ class ExecutionService:
                 buy_guard_account_id = account.account_id if account is not None else None
 
             if buy_guard_account_id is not None:
-                created_after = datetime.now(timezone.utc) - timedelta(
-                    seconds=_BUY_DUPLICATE_COOLDOWN_SECONDS
-                )
-                has_duplicate, existing_order_id = await self._has_recent_active_buy_order(
+                if await self._has_active_reconciliation_lock(
+                    order_manager=order_manager,
                     account_id=buy_guard_account_id,
                     symbol=intent.request.symbol,
-                    market=intent.request.market,
-                    created_after=created_after,
-                )
-                if has_duplicate:
-                    logger.warning(
-                        "Phase 2.5 BUY duplicate guard blocked: symbol=%s "
-                        "account_id=%s existing_order_id=%s cooldown_seconds=%s "
+                    side=intent.request.side,
+                ):
+                    logger.info(
+                        "Phase 2.5 BUY duplicate guard bypassed due to active "
+                        "reconciliation lock: symbol=%s account_id=%s "
                         "trade_decision_id=%s",
                         intent.request.symbol,
                         buy_guard_account_id,
-                        existing_order_id,
-                        _BUY_DUPLICATE_COOLDOWN_SECONDS,
                         trade_decision_id,
                     )
-                    _add_phase(f"buy_duplicate_guard/{_symbol}", "skipped")
-                    await self._finalize_attempt(
-                        attempt_id, "stopped",
-                        stop_phase="buy_duplicate_guard",
-                        stop_reason="recent_active_buy_order",
-                        phase_trace=_phase_trace,
+                else:
+                    created_after = datetime.now(timezone.utc) - timedelta(
+                        seconds=_BUY_DUPLICATE_COOLDOWN_SECONDS
                     )
-                    return SubmitResult.build(
-                        order_intent=intent,
-                        trade_decision_id=trade_decision_id,
-                        error_message="recent_active_buy_order",
-                        phase_trace=tuple(_phase_trace) if _phase_trace else (),
-                        is_skipped=True,
-                        status="SKIPPED",
-                        error_phase="buy_duplicate_guard",
+                    has_duplicate, existing_order_id = await self._has_recent_active_buy_order(
+                        account_id=buy_guard_account_id,
+                        symbol=intent.request.symbol,
+                        market=intent.request.market,
+                        created_after=created_after,
                     )
+                    if has_duplicate:
+                        logger.warning(
+                            "Phase 2.5 BUY duplicate guard blocked: symbol=%s "
+                            "account_id=%s existing_order_id=%s cooldown_seconds=%s "
+                            "trade_decision_id=%s",
+                            intent.request.symbol,
+                            buy_guard_account_id,
+                            existing_order_id,
+                            _BUY_DUPLICATE_COOLDOWN_SECONDS,
+                            trade_decision_id,
+                        )
+                        await self._record_blocking_guardrail_evaluation(
+                            rule_set_version="buy_duplicate_guard_v1",
+                            blocking_rule_codes=[PipelineStopReason.RECENT_ACTIVE_BUY_ORDER.value],
+                            rule_results={
+                                "account_id": str(buy_guard_account_id),
+                                "symbol": intent.request.symbol,
+                                "market": intent.request.market,
+                                "existing_order_id": existing_order_id,
+                                "cooldown_seconds": _BUY_DUPLICATE_COOLDOWN_SECONDS,
+                            },
+                            decision_context_id=intent.decision_context_id,
+                            trade_decision_id=trade_decision_id,
+                        )
+                        _add_phase(f"buy_duplicate_guard/{_symbol}", "skipped")
+                        await self._finalize_attempt(
+                            attempt_id, "stopped",
+                            stop_phase="buy_duplicate_guard",
+                            stop_reason=PipelineStopReason.RECENT_ACTIVE_BUY_ORDER.value,
+                            phase_trace=_phase_trace,
+                        )
+                        return SubmitResult.build(
+                            order_intent=intent,
+                            trade_decision_id=trade_decision_id,
+                            error_message=PipelineStopReason.RECENT_ACTIVE_BUY_ORDER.value,
+                            stop_reason=PipelineStopReason.RECENT_ACTIVE_BUY_ORDER.value,
+                            phase_trace=tuple(_phase_trace) if _phase_trace else (),
+                            is_skipped=True,
+                            status="SKIPPED",
+                            error_phase="buy_duplicate_guard",
+                        )
 
         # ── Phase 3: OrderManager.create_order() ──
         _order_create_t0 = time_module.monotonic()
@@ -1043,12 +1161,13 @@ class ExecutionService:
             await self._finalize_attempt(
                 attempt_id, "stopped",
                 stop_phase="order_create",
-                stop_reason="order_create_failed",
+                stop_reason=PipelineStopReason.ORDER_CREATE_FAILED.value,
                 phase_trace=_phase_trace,
             )
             return SubmitResult.build(
                 order_intent=intent,
                 error_message=f"create_order() failed: {exc}",
+                stop_reason=PipelineStopReason.ORDER_CREATE_FAILED.value,
                 trade_decision_id=trade_decision_id,
                 phase_trace=tuple(_phase_trace) if _phase_trace else (),
                 status="ERROR",
@@ -1077,13 +1196,14 @@ class ExecutionService:
             await self._finalize_attempt(
                 attempt_id, "stopped",
                 stop_phase="transition",
-                stop_reason="transition_failed",
+                stop_reason=PipelineStopReason.TRANSITION_FAILED.value,
                 order_request_id=order.order_request_id,
                 phase_trace=_phase_trace,
             )
             return SubmitResult.build(
                 order_intent=intent,
                 error_message=f"transition_to(VALIDATED) failed: {exc}",
+                stop_reason=PipelineStopReason.TRANSITION_FAILED.value,
                 trade_decision_id=trade_decision_id,
                 phase_trace=tuple(_phase_trace) if _phase_trace else (),
                 status="ERROR",
@@ -1115,9 +1235,10 @@ class ExecutionService:
         )
 
         # held_position sell bypass check: 위험 축소 목적의 sell은 stale snapshot이어도 진행
-        _is_held_position_sell: bool = (
-            intent.request.side == OrderSide.SELL
-            and intent.ai_backend_inputs.decision_type in ("REDUCE", "EXIT")
+        _is_held_position_sell = is_held_position_sell_path(
+            source_type=intent_source_type,
+            decision_type=intent.ai_backend_inputs.decision_type,
+            side=intent.request.side,
         )
 
         if account_id is not None:
@@ -1146,41 +1267,33 @@ class ExecutionService:
                         self._stale_threshold_seconds,
                         trade_decision_id,
                     )
-                    try:
-                        guardrail_eval = GuardrailEvaluationEntity(
-                            guardrail_evaluation_id=uuid4(),
-                            decision_context_id=intent.decision_context_id,
-                            trade_decision_id=trade_decision_id,
-                            order_request_id=validated_order.order_request_id,
-                            rule_set_version="stale_snapshot_guard_v1",
-                            overall_passed=False,
-                            evaluated_at=datetime.now(timezone.utc),
-                            rule_results={
-                                "is_stale": True,
-                                "stale_level": "account",
-                                "account_id": str(account_id),
-                                "latest_cash_snapshot_at": (
-                                    str(freshness.latest_cash_snapshot_at)
-                                    if freshness.latest_cash_snapshot_at
-                                    else None
-                                ),
-                                "latest_position_snapshot_at": (
-                                    str(freshness.latest_position_snapshot_at)
-                                    if freshness.latest_position_snapshot_at
-                                    else None
-                                ),
-                                "is_cash_stale": freshness.is_cash_stale,
-                                "is_position_stale": freshness.is_position_stale,
-                                "stale_threshold_seconds": self._stale_threshold_seconds,
-                            },
-                            blocking_rule_codes=["STALE_SNAPSHOT_ACCOUNT"],
-                        )
-                        await self._repos.guardrail_evaluations.add(guardrail_eval)
-                    except Exception:
-                        logger.warning(
-                            "Failed to record guardrail evaluation for stale snapshot (account)",
-                            exc_info=True,
-                        )
+                    await self._record_blocking_guardrail_evaluation(
+                        rule_set_version="stale_snapshot_guard_v1",
+                        blocking_rule_codes=[
+                            PipelineStopReason.STALE_SNAPSHOT_ACCOUNT.value
+                        ],
+                        rule_results={
+                            "is_stale": True,
+                            "stale_level": "account",
+                            "account_id": str(account_id),
+                            "latest_cash_snapshot_at": (
+                                str(freshness.latest_cash_snapshot_at)
+                                if freshness.latest_cash_snapshot_at
+                                else None
+                            ),
+                            "latest_position_snapshot_at": (
+                                str(freshness.latest_position_snapshot_at)
+                                if freshness.latest_position_snapshot_at
+                                else None
+                            ),
+                            "is_cash_stale": freshness.is_cash_stale,
+                            "is_position_stale": freshness.is_position_stale,
+                            "stale_threshold_seconds": self._stale_threshold_seconds,
+                        },
+                        decision_context_id=intent.decision_context_id,
+                        trade_decision_id=trade_decision_id,
+                        order_request_id=validated_order.order_request_id,
+                    )
 
                     logger.info(
                         "PHASE_TRACE symbol=%s phase=stale_snapshot_guard_blocked "
@@ -1192,7 +1305,7 @@ class ExecutionService:
                     await self._finalize_attempt(
                         attempt_id, "stopped",
                         stop_phase="stale_snapshot_guard",
-                        stop_reason="stale_snapshot",
+                        stop_reason=PipelineStopReason.STALE_SNAPSHOT.value,
                         order_request_id=validated_order.order_request_id,
                         phase_trace=_phase_trace,
                     )
@@ -1204,6 +1317,7 @@ class ExecutionService:
                             f"pos_stale={freshness.is_position_stale}, "
                             f"threshold={self._stale_threshold_seconds}s"
                         ),
+                        stop_reason=PipelineStopReason.STALE_SNAPSHOT.value,
                         trade_decision_id=trade_decision_id,
                         phase_trace=tuple(_phase_trace) if _phase_trace else (),
                         is_skipped=True,
@@ -1236,34 +1350,24 @@ class ExecutionService:
                         self._stale_threshold_seconds,
                         trade_decision_id,
                     )
-                    try:
-                        guardrail_eval = GuardrailEvaluationEntity(
-                            guardrail_evaluation_id=uuid4(),
-                            decision_context_id=intent.decision_context_id,
-                            trade_decision_id=trade_decision_id,
-                            order_request_id=validated_order.order_request_id,
-                            rule_set_version="stale_snapshot_guard_v1",
-                            overall_passed=False,
-                            evaluated_at=datetime.now(timezone.utc),
-                            rule_results={
-                                "is_stale": True,
-                                "stale_level": "run",
-                                "last_successful_run_at": (
-                                    str(health.last_successful_run_at)
-                                    if health.last_successful_run_at
-                                    else None
-                                ),
-                                "stale_threshold_seconds": self._stale_threshold_seconds,
-                                "last_run_status": health.last_status,
-                            },
-                            blocking_rule_codes=["STALE_SNAPSHOT"],
-                        )
-                        await self._repos.guardrail_evaluations.add(guardrail_eval)
-                    except Exception:
-                        logger.warning(
-                            "Failed to record guardrail evaluation for stale snapshot (run-level)",
-                            exc_info=True,
-                        )
+                    await self._record_blocking_guardrail_evaluation(
+                        rule_set_version="stale_snapshot_guard_v1",
+                        blocking_rule_codes=[PipelineStopReason.STALE_SNAPSHOT_RUN.value],
+                        rule_results={
+                            "is_stale": True,
+                            "stale_level": "run",
+                            "last_successful_run_at": (
+                                str(health.last_successful_run_at)
+                                if health.last_successful_run_at
+                                else None
+                            ),
+                            "stale_threshold_seconds": self._stale_threshold_seconds,
+                            "last_run_status": health.last_status,
+                        },
+                        decision_context_id=intent.decision_context_id,
+                        trade_decision_id=trade_decision_id,
+                        order_request_id=validated_order.order_request_id,
+                    )
 
                     logger.info(
                         "PHASE_TRACE symbol=%s phase=stale_snapshot_guard_blocked "
@@ -1275,7 +1379,7 @@ class ExecutionService:
                     await self._finalize_attempt(
                         attempt_id, "stopped",
                         stop_phase="stale_snapshot_guard",
-                        stop_reason="stale_snapshot",
+                        stop_reason=PipelineStopReason.STALE_SNAPSHOT.value,
                         order_request_id=validated_order.order_request_id,
                         phase_trace=_phase_trace,
                     )
@@ -1287,6 +1391,7 @@ class ExecutionService:
                             f"{health.last_successful_run_at}, "
                             f"threshold={self._stale_threshold_seconds}s"
                         ),
+                        stop_reason=PipelineStopReason.STALE_SNAPSHOT.value,
                         trade_decision_id=trade_decision_id,
                         phase_trace=tuple(_phase_trace) if _phase_trace else (),
                         is_skipped=True,
@@ -1323,13 +1428,14 @@ class ExecutionService:
             await self._finalize_attempt(
                 attempt_id, "stopped",
                 stop_phase="transition",
-                stop_reason="transition_failed",
+                stop_reason=PipelineStopReason.TRANSITION_FAILED.value,
                 order_request_id=validated_order.order_request_id,
                 phase_trace=_phase_trace,
             )
             return SubmitResult.build(
                 order_intent=intent,
                 error_message=f"transition_to(PENDING_SUBMIT) failed: {exc}",
+                stop_reason=PipelineStopReason.TRANSITION_FAILED.value,
                 trade_decision_id=trade_decision_id,
                 phase_trace=tuple(_phase_trace) if _phase_trace else (),
                 status="ERROR",
@@ -1411,13 +1517,14 @@ class ExecutionService:
             await self._finalize_attempt(
                 attempt_id, "failed",
                 stop_phase="broker_submit",
-                stop_reason="broker_submit_failed",
+                stop_reason=PipelineStopReason.BROKER_SUBMIT_FAILED.value,
                 order_request_id=pending_order.order_request_id,
                 phase_trace=_phase_trace,
             )
             return SubmitResult.build(
                 order_intent=intent,
                 error_message=f"submit_order_to_broker() failed: {exc}",
+                stop_reason=PipelineStopReason.BROKER_SUBMIT_FAILED.value,
                 trade_decision_id=trade_decision_id,
                 phase_trace=tuple(_phase_trace) if _phase_trace else (),
                 status="ERROR",
@@ -1477,6 +1584,42 @@ class ExecutionService:
         else:
             result_status = f"UNEXPECTED:{final_status.value}"
 
+        result_stop_reason = (
+            PipelineStopReason.ORDER_SUBMITTED.value
+            if result_status == "SUBMITTED"
+            else PipelineStopReason.ORDER_RECONCILE_REQUIRED.value
+            if result_status == "RECONCILE_REQUIRED"
+            else PipelineStopReason.ORDER_REJECTED.value
+            if result_status == "REJECTED"
+            else None
+        )
+
+        if result_status in ("RECONCILE_REQUIRED", "REJECTED") and result_stop_reason is not None:
+            await self._record_blocking_guardrail_evaluation(
+                rule_set_version="broker_submit_outcome_v1",
+                blocking_rule_codes=[result_stop_reason],
+                rule_results={
+                    "account_id": (
+                        str(account_id)
+                        if account_id is not None
+                        else None
+                    ),
+                    "symbol": submit_request.symbol,
+                    "market": submit_request.market,
+                    "source_type": (
+                        intent.context.source_type
+                        if intent.context is not None
+                        else None
+                    ),
+                    "decision_type": _decision_type,
+                    "order_status": final_status.value,
+                    "status_reason_code": submitted_order.status_reason_code,
+                },
+                decision_context_id=intent.decision_context_id,
+                trade_decision_id=trade_decision_id,
+                order_request_id=submitted_order.order_request_id,
+            )
+
         await self._finalize_attempt(
             attempt_id,
             "submitted" if result_status == "SUBMITTED"
@@ -1484,6 +1627,7 @@ class ExecutionService:
             else "failed" if result_status == "REJECTED"
             else "submitted",
             stop_phase="completed",
+            stop_reason=result_stop_reason or "",
             order_request_id=submitted_order.order_request_id,
             phase_trace=_phase_trace,
         )
@@ -1499,6 +1643,7 @@ class ExecutionService:
             phase_trace=tuple(_phase_trace) if _phase_trace else (),
             is_submitted=(result_status == "SUBMITTED"),
             is_skipped=(result_status in ("RECONCILE_REQUIRED", "REJECTED")),
+            stop_reason=result_stop_reason,
             status=result_status,
             submit_response=submitted_order,
         )

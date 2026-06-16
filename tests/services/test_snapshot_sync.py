@@ -153,12 +153,14 @@ class MockSnapshotProvider:
                  cash: CashBalanceSnapshotEntity | None = None,
                  errors: list[str] | None = None,
                  fail: bool = False,
-                 risk_limit: RiskLimitSnapshotEntity | None = None) -> None:
+                 risk_limit: RiskLimitSnapshotEntity | None = None,
+                 fetch_success: bool | None = None) -> None:
         self._positions = positions or []
         self._cash = cash
         self._errors = errors or []
         self._fail = fail
         self._risk_limit = risk_limit
+        self._fetch_success = fetch_success
         self.last_after_hours: bool | None = None
         self.last_fetch_positions: bool | None = None
         self.last_allow_after_hours_positions: bool | None = None
@@ -178,18 +180,23 @@ class MockSnapshotProvider:
         if self._fail:
             msg = f"Mock failure for account_id={account_id}"
             raise RuntimeError(msg)
+        fetch_success = self._fetch_success
+        if fetch_success is None:
+            fetch_success = self._cash is not None or len(self._positions) > 0
         if (after_hours and not allow_after_hours_positions) or not fetch_positions:
             return FetchedSnapshot(
                 positions=[],
                 cash_balance=self._cash,
                 risk_limit_snapshot=self._risk_limit,
                 errors=self._errors,
+                fetch_success=fetch_success if self._cash is not None else False,
             )
         return FetchedSnapshot(
             positions=self._positions,
             cash_balance=self._cash,
             risk_limit_snapshot=self._risk_limit,
             errors=self._errors,
+            fetch_success=fetch_success,
         )
 
 
@@ -216,7 +223,8 @@ class TestSyncAccountSnapshots:
         )
         assert result.positions_synced == 0
         assert result.cash_balance_synced is False
-        assert result.errors == []
+        assert len(result.errors) == 1
+        assert "no cash balance and no positions" in result.errors[0]
 
     async def test_sync_forwards_fetch_positions_flag_to_provider(self) -> None:
         account_id = uuid4()
@@ -452,6 +460,28 @@ class TestSyncAccountsByIds:
         )
         assert batch.total_accounts == 0
         assert batch.succeeded == 0
+
+    async def test_batch_empty_snapshot_result_counts_as_failed(self) -> None:
+        provider = MockSnapshotProvider()
+        pos_repo = InMemoryPositionSnapshotRepository()
+        cash_repo = InMemoryCashBalanceSnapshotRepository()
+        risk_repo = InMemoryRiskLimitSnapshotRepository()
+        inst_repo = InMemoryInstrumentRepository()
+
+        batch = await sync_accounts_by_ids(
+            fetch_provider=provider,
+            instrument_repo=inst_repo,
+            position_snapshot_repo=pos_repo,
+            cash_balance_snapshot_repo=cash_repo,
+            risk_limit_snapshot_repo=risk_repo,
+            account_ids=[uuid4()],
+        )
+        assert batch.total_accounts == 1
+        assert batch.succeeded == 0
+        assert batch.partial == 0
+        assert batch.failed == 1
+        assert len(batch.account_results) == 1
+        assert len(batch.account_results[0][1].errors) == 1
 
     async def test_batch_two_accounts(self) -> None:
         account_a = uuid4()

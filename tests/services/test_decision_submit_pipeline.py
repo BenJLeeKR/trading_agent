@@ -16,6 +16,7 @@ See Also
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -496,6 +497,7 @@ class TestAssembleAndSubmit:
             )
 
         assert result.status == "REJECTED", f"Expected REJECTED, got {result.status}"
+        assert result.stop_reason == "order_rejected"
         assert result.order_intent is not None
         assert result.submit_response is not None
         assert result.submit_response.status == OrderStatus.REJECTED
@@ -515,6 +517,7 @@ class TestAssembleAndSubmit:
         service: DecisionOrchestratorService,
         order_manager: OrderManager,
         sample_request: SubmitOrderRequest,
+        repos: Any,
     ) -> None:
         """Broker returns uncertain result -> RECONCILE_REQUIRED."""
         reconcile_entity = _make_order_entity(
@@ -536,9 +539,14 @@ class TestAssembleAndSubmit:
         assert result.status == "RECONCILE_REQUIRED", (
             f"Expected RECONCILE_REQUIRED, got {result.status}"
         )
+        assert result.stop_reason == "order_reconcile_required"
         assert result.order_intent is not None
         assert result.submit_response is not None
         assert result.submit_response.status == OrderStatus.RECONCILE_REQUIRED
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert len(evaluations) == 1
+        assert evaluations[0].rule_set_version == "broker_submit_outcome_v1"
+        assert evaluations[0].blocking_rule_codes == ["order_reconcile_required"]
         # --- Gap 2: traceability assertion ---
         assert result.decision_context_id is not None, (
             "SubmitResult.decision_context_id must be set on reconcile path"
@@ -546,6 +554,37 @@ class TestAssembleAndSubmit:
         assert result.decision_context_id == result.order_intent.decision_context_id, (
             "SubmitResult.decision_context_id must match order_intent.decision_context_id"
         )
+
+    @pytest.mark.asyncio
+    async def test_rejected_records_broker_submit_outcome_guardrail(
+        self,
+        service: DecisionOrchestratorService,
+        order_manager: OrderManager,
+        sample_request: SubmitOrderRequest,
+        repos: Any,
+    ) -> None:
+        rejected_entity = _make_order_entity(
+            status=OrderStatus.REJECTED,
+            request=sample_request,
+        )
+
+        async def _mock_submit(*args: Any, **kwargs: Any) -> OrderRequestEntity:
+            return rejected_entity
+
+        broker_stub = object()
+        with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):
+            result = await service.assemble_and_submit(
+                sample_request,
+                order_manager=order_manager,
+                broker=broker_stub,  # type: ignore[arg-type]
+            )
+
+        assert result.status == "REJECTED"
+        assert result.stop_reason == "order_rejected"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert len(evaluations) == 1
+        assert evaluations[0].rule_set_version == "broker_submit_outcome_v1"
+        assert evaluations[0].blocking_rule_codes == ["order_rejected"]
 
     # ── HOLD decision -> SKIPPED ──
 
@@ -2390,6 +2429,90 @@ class TestPhaseTrace:
             pt.status == "skipped" for pt in result.phase_trace
         ), f"No skipped phase in phase_trace: {result.phase_trace}"
 
+    @pytest.mark.asyncio
+    async def test_buy_duplicate_guard_records_guardrail_evaluation(
+        self,
+        service: DecisionOrchestratorService,
+        order_manager: OrderManager,
+        sample_request: SubmitOrderRequest,
+        repos: Any,
+    ) -> None:
+        broker_stub = object()
+        with patch.object(
+            service._execution_service,  # type: ignore[attr-defined]
+            "_has_recent_active_buy_order",
+            AsyncMock(return_value=(True, "existing-order-1")),
+        ):
+            result = await service.assemble_and_submit(
+                sample_request,
+                order_manager=order_manager,
+                broker=broker_stub,
+            )
+
+        assert result.status == "SKIPPED"
+        assert result.stop_reason == "recent_active_buy_order"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert len(evaluations) == 1
+        assert evaluations[0].rule_set_version == "buy_duplicate_guard_v1"
+        assert evaluations[0].blocking_rule_codes == ["recent_active_buy_order"]
+
+    @pytest.mark.asyncio
+    async def test_sell_guard_records_guardrail_evaluation(
+        self,
+        repos: Any,
+        order_manager: OrderManager,
+    ) -> None:
+        class _ReduceFDCAgent:
+            @property
+            def agent_name(self) -> str:
+                return "final_decision_composer"
+
+            @property
+            def schema_version(self) -> str:
+                return "1.0.0"
+
+            async def run(self, request: AgentExecutionRequest) -> FinalDecisionComposerOutput:
+                return FinalDecisionComposerOutput(
+                    decision_type="REDUCE",
+                    side="SELL",
+                    symbol="005930",
+                    confidence=0.8,
+                    conviction=0.7,
+                    summary="Reduce by test stub",
+                )
+
+        service = DecisionOrchestratorService(
+            repos=repos,
+            final_decision_agent=_ReduceFDCAgent(),
+        )
+        request = _make_request(
+            side=OrderSide.SELL,
+            metadata={"source_type": "held_position"},
+        )
+        broker_stub = object()
+        with patch(
+            "agent_trading.services.execution_service.AvailableSellQtyResolver.resolve",
+            AsyncMock(
+                return_value=MagicMock(
+                    is_blocked=True,
+                    blocking_reason="duplicate sell blocked",
+                    available_sell_qty=Decimal("0"),
+                )
+            ),
+        ):
+            result = await service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=broker_stub,
+            )
+
+        assert result.status == "SKIPPED"
+        assert result.stop_reason == "sell_guard_blocked"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert len(evaluations) == 1
+        assert evaluations[0].rule_set_version == "sell_guard_v1"
+        assert evaluations[0].blocking_rule_codes == ["sell_guard_blocked"]
+
 
 # ---------------------------------------------------------------------------
 # EXE-002: quote_resolution circuit breaker + cache 검증
@@ -2418,6 +2541,28 @@ class TestQuoteCircuitBreaker:
                 confidence=0.8,
                 conviction=0.7,
                 summary="Approved by test stub",
+            )
+
+    class _ReduceSellFDCAgent:
+        def __init__(self, *, source_symbol: str = "005930") -> None:
+            self._source_symbol = source_symbol
+
+        @property
+        def agent_name(self) -> str:
+            return "final_decision_composer"
+
+        @property
+        def schema_version(self) -> str:
+            return "1.0.0"
+
+        async def run(self, request: AgentExecutionRequest) -> FinalDecisionComposerOutput:
+            return FinalDecisionComposerOutput(
+                decision_type="REDUCE",
+                side="SELL",
+                symbol=self._source_symbol,
+                confidence=0.8,
+                conviction=0.7,
+                summary="Reduce by test stub",
             )
 
     @pytest.fixture
@@ -2554,6 +2699,81 @@ class TestQuoteCircuitBreaker:
         )
 
     @pytest.mark.asyncio
+    async def test_core_reduce_sell_does_not_bypass_stale_snapshot_guard(
+        self,
+        repos: Any,
+        order_manager: OrderManager,
+    ) -> None:
+        stale_time = datetime.now(timezone.utc) - timedelta(seconds=1000)
+        repos.cash_balance_snapshots._items = {
+            snapshot_id: replace(cash_snapshot, snapshot_at=stale_time)
+            for snapshot_id, cash_snapshot in repos.cash_balance_snapshots._items.items()
+        }
+
+        service = DecisionOrchestratorService(
+            repos=repos,
+            final_decision_agent=self._ReduceSellFDCAgent(),
+            stale_threshold_seconds=300,
+        )
+        request = _make_request(
+            side=OrderSide.SELL,
+            price=Decimal("50000"),
+            metadata={"source_type": "core"},
+        )
+        broker_mock = MagicMock()
+        broker_mock.submit_order = AsyncMock()
+
+        result = await service.assemble_and_submit(
+            request,
+            order_manager=order_manager,
+            broker=broker_mock,
+        )
+
+        assert result.status == "SKIPPED"
+        assert result.error_phase == "stale_snapshot"
+        assert result.stop_reason == "stale_snapshot"
+        broker_mock.submit_order.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_held_position_reduce_sell_bypasses_stale_snapshot_guard(
+        self,
+        repos: Any,
+        order_manager: OrderManager,
+    ) -> None:
+        stale_time = datetime.now(timezone.utc) - timedelta(seconds=1000)
+        repos.cash_balance_snapshots._items = {
+            snapshot_id: replace(cash_snapshot, snapshot_at=stale_time)
+            for snapshot_id, cash_snapshot in repos.cash_balance_snapshots._items.items()
+        }
+
+        service = DecisionOrchestratorService(
+            repos=repos,
+            final_decision_agent=self._ReduceSellFDCAgent(),
+            stale_threshold_seconds=300,
+        )
+        request = _make_request(
+            side=OrderSide.SELL,
+            price=Decimal("50000"),
+            metadata={"source_type": "held_position"},
+        )
+        submitted_entity = _make_order_entity(status=OrderStatus.SUBMITTED, request=request)
+
+        async def _mock_submit(*args: Any, **kwargs: Any) -> OrderRequestEntity:
+            return submitted_entity
+
+        broker_mock = MagicMock()
+        broker_mock.submit_order = AsyncMock()
+
+        with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):
+            result = await service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=broker_mock,
+            )
+
+        assert result.status == "SUBMITTED"
+
+    @pytest.mark.asyncio
     async def test_quote_circuit_breaker_after_failures(
         self,
         service: DecisionOrchestratorService,
@@ -2680,3 +2900,4 @@ class TestQuoteCircuitBreaker:
         assert result.status == "SKIPPED", f"Expected SKIPPED, got {result.status}"
         assert result.error_phase == "sizing"
         assert result.error_message == "missing_reference_price_for_market_buy"
+        assert result.stop_reason == "missing_reference_price_for_market_buy"

@@ -697,6 +697,111 @@ class TestTradeDecisions:
         assert injected["side"] == "buy"
         assert injected["entry_style"] == "market"
 
+    def test_get_watch_diagnostics(self) -> None:
+        """``GET /trade-decisions/watch-diagnostics`` returns WATCH/HOLD analysis."""
+        mock_conn = AsyncMock()
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        mock_conn.fetchrow.return_value = {
+            "total_decision_count": 120,
+            "hold_count": 100,
+            "watch_count": 5,
+            "no_material_events_watch_count": 1,
+            "no_material_events_hold_count": 80,
+        }
+        mock_conn.fetch.side_effect = [
+            [
+                {
+                    "source_type": "core",
+                    "decision_count": 90,
+                    "watch_count": 2,
+                    "hold_count": 80,
+                },
+                {
+                    "source_type": "market_overlay",
+                    "decision_count": 10,
+                    "watch_count": 3,
+                    "hold_count": 5,
+                },
+            ],
+            [
+                {
+                    "evidence_strength": "none",
+                    "decision_count": 80,
+                    "watch_count": 1,
+                    "hold_count": 75,
+                },
+                {
+                    "evidence_strength": "weak",
+                    "decision_count": 25,
+                    "watch_count": 4,
+                    "hold_count": 20,
+                },
+            ],
+            [
+                {"reason_code": "price_action", "decision_count": 3},
+                {"reason_code": "volume_surge", "decision_count": 2},
+            ],
+            [
+                {
+                    "trade_decision_id": uuid4(),
+                    "symbol": "004000",
+                    "market": "KRX",
+                    "source_type": "core",
+                    "decision_type": "watch",
+                    "evidence_strength": "weak",
+                    "no_material_events": False,
+                    "detected_event_count": 1,
+                    "interpreted_event_count": 1,
+                    "event_bias": "neutral",
+                    "rationale_summary": "watch sample",
+                    "created_at": now,
+                }
+            ],
+        ]
+
+        async def override():
+            yield mock_conn
+
+        app = create_app(auth_enabled=False)
+        app.dependency_overrides[get_db] = override
+
+        with TestClient(app) as client:
+            response = client.get(
+                "/trade-decisions/watch-diagnostics?lookback_days=30&sample_limit=5"
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["lookback_days"] == 30
+        assert data["sample_limit"] == 5
+        assert data["total_decision_count"] == 120
+        assert data["hold_count"] == 100
+        assert data["watch_count"] == 5
+        assert data["watch_rate"] == 5 / 120
+        assert data["no_material_events_watch_count"] == 1
+        assert data["no_material_events_hold_count"] == 80
+        assert data["source_type_items"][0]["source_type"] == "core"
+        assert data["source_type_items"][1]["source_type"] == "market_overlay"
+        assert data["evidence_strength_items"][0]["evidence_strength"] == "none"
+        assert data["top_watch_event_reason_codes"][0]["reason_code"] == "price_action"
+        assert data["recent_watch_items"][0]["decision_type"] == "watch"
+        assert data["recent_watch_items"][0]["evidence_strength"] == "weak"
+        assert data["recent_watch_items"][0]["no_material_events"] is False
+        assert data["recent_watch_items"][0]["detected_event_count"] == 1
+        assert data["recent_watch_items"][0]["interpreted_event_count"] == 1
+
+        summary_sql = mock_conn.fetchrow.await_args.args[0]
+        source_sql = mock_conn.fetch.await_args_list[0].args[0]
+        evidence_sql = mock_conn.fetch.await_args_list[1].args[0]
+        reason_sql = mock_conn.fetch.await_args_list[2].args[0]
+        sample_sql = mock_conn.fetch.await_args_list[3].args[0]
+        assert "no_material_events_watch_count" in summary_sql
+        assert "GROUP BY COALESCE(td.source_type, 'unknown')" in source_sql
+        assert "decision_json->>'evidence_strength'" in evidence_sql
+        assert "jsonb_array_elements_text" in reason_sql
+        assert "IN ('watch', 'hold')" in sample_sql
+
+        app.dependency_overrides.clear()
+
 
 class TestAuditLogs:
     """Audit log inspection endpoint."""
@@ -1044,6 +1149,8 @@ class TestInstruments:
             "held_position": 1,
             "event_overlay": 1,
         }
+        assert data["market_overlay_diagnostics"]["enabled"] is False
+        assert data["market_overlay_diagnostics"]["skipped_reason"] == "no_kis_client"
         assert data["inclusion_reason_counts"]["held_position_mandatory"] == 1
         assert data["items"][0]["symbol"] == "005930"
         assert data["items"][0]["source_type"] == "held_position"
@@ -1100,6 +1207,11 @@ class TestInstruments:
         assert data["kis_env"] == "real"
         assert data["total_count"] == 1
         assert data["source_type_counts"]["market_overlay"] == 1
+        assert data["market_overlay_diagnostics"]["enabled"] is True
+        assert data["market_overlay_diagnostics"]["skipped_reason"] is None
+        assert data["market_overlay_diagnostics"]["quotes_requested_count"] == 1
+        assert data["market_overlay_diagnostics"]["quotes_received_count"] == 1
+        assert data["market_overlay_diagnostics"]["added_count"] == 1
         assert data["items"][0]["symbol"] == "001740"
         assert data["items"][0]["source_type"] == "market_overlay"
 
@@ -1151,6 +1263,77 @@ class TestInstruments:
         assert "WITH decision_stats AS" in fetch_sql
         assert "FROM trading.trade_decisions td" in fetch_sql
         assert "FROM trading.order_requests o" in fetch_sql
+
+        app.dependency_overrides.clear()
+
+    def test_get_market_overlay_funnel(self) -> None:
+        """``GET /instruments/trading-universe/market-overlay-funnel`` returns recent funnel metrics."""
+        mock_conn = AsyncMock()
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        decision_id = uuid4()
+        order_id = uuid4()
+        mock_conn.fetchrow.return_value = {
+            "decision_count": 3,
+            "order_count": 1,
+        }
+        mock_conn.fetch.side_effect = [
+            [
+                {"decision_type": "hold", "decision_count": 2},
+                {"decision_type": "approve", "decision_count": 1},
+            ],
+            [
+                {"order_status": "submitted", "order_count": 1},
+            ],
+            [
+                {
+                    "trade_decision_id": decision_id,
+                    "symbol": "001740",
+                    "market": "KRX",
+                    "decision_type": "approve",
+                    "side": "buy",
+                    "inclusion_reason": "trade_strength",
+                    "rationale_summary": "Momentum confirmation",
+                    "created_at": now,
+                    "order_request_id": order_id,
+                    "order_status": "submitted",
+                    "order_created_at": now,
+                }
+            ],
+        ]
+
+        async def override():
+            yield mock_conn
+
+        app = create_app(auth_enabled=False)
+        app.dependency_overrides[get_db] = override
+
+        with TestClient(app) as client:
+            response = client.get(
+                "/instruments/trading-universe/market-overlay-funnel?lookback_days=7&sample_limit=5"
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["lookback_days"] == 7
+        assert data["sample_limit"] == 5
+        assert data["decision_count"] == 3
+        assert data["order_count"] == 1
+        assert data["order_conversion_rate"] == pytest.approx(1 / 3)
+        assert data["decision_type_counts"] == {"hold": 2, "approve": 1}
+        assert data["order_status_counts"] == {"submitted": 1}
+        assert len(data["recent_items"]) == 1
+        assert data["recent_items"][0]["trade_decision_id"] == str(decision_id)
+        assert data["recent_items"][0]["symbol"] == "001740"
+        assert data["recent_items"][0]["order_request_id"] == str(order_id)
+        assert data["recent_items"][0]["order_status"] == "submitted"
+
+        fetchrow_sql = mock_conn.fetchrow.await_args.args[0]
+        assert "FROM trading.trade_decisions td" in fetchrow_sql
+        first_fetch_sql = mock_conn.fetch.await_args_list[0].args[0]
+        second_fetch_sql = mock_conn.fetch.await_args_list[1].args[0]
+        third_fetch_sql = mock_conn.fetch.await_args_list[2].args[0]
+        assert "LOWER(COALESCE(td.source_type, '')) = 'market_overlay'" in first_fetch_sql
+        assert "FROM latest_orders" in second_fetch_sql
+        assert "LEFT JOIN latest_orders lo" in third_fetch_sql
 
         app.dependency_overrides.clear()
 

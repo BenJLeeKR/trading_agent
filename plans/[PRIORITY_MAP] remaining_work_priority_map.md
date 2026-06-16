@@ -315,7 +315,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 
 ---
 
-### 8. 장 운영 세션 정보 수집/저장 — `진행중`
+### 8. 장 운영 세션 정보 수집/저장 — `완료`
 
 ### 목표
 - 휴장/조기종료/특수 세션 정보를 정식 데이터로 보유하고 운영 정책에 반영한다.
@@ -334,6 +334,13 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 
 ### 근거 문서
 - [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `7`
+
+### 세부 작업 상태
+- [x] `market_sessions` latest / by-date / history API 정비 완료
+- [x] `reason_code` 구조화 저장 완료
+- [x] `reason_metadata` 구조화 저장 완료
+- [x] `session_events` run-date drill-down 완료
+- [x] `market_sessions`와 readiness / next-trading-day 상태 직접 연결 완료
 
 ---
 
@@ -429,9 +436,22 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   - [`plans/2026-06-12_trading_universe_preview_api.md`](./2026-06-12_trading_universe_preview_api.md)
 - [x] `source_type`별 decision → order 전환 현황 coverage summary API 추가
   - [`plans/2026-06-13_trading_universe_coverage_summary_api.md`](./2026-06-13_trading_universe_coverage_summary_api.md)
-- [ ] market_overlay 실운영 편입/효과 장중 실측
-- [ ] universe selection 결과의 운영 UI 연계
-- [ ] manual watchlist/override 계층의 운영 정책 확정
+- [x] trading universe preview에 `market_overlay` 진단 정보 추가
+  - `enabled/skipped_reason/quotes_requested_count/quotes_received_count/added_count` 등 운영 확인용 수치 노출
+- [x] `market_overlay` 전용 funnel inspection API 추가
+  - 최근 판단 건수 / 주문 전환 건수 / decision_type 분포 / order_status 분포 / 최근 샘플 확인 가능
+  - [`plans/2026-06-14_market_overlay_funnel_api.md`](./2026-06-14_market_overlay_funnel_api.md)
+- [x] market_overlay 실운영 편입/효과 장중 실측
+  - `evaluate_market_overlay_runtime_validation.py`로 preview/decision/order/bottleneck stage를 1회 평가 가능
+  - 결과를 `operations_day_runs.summary_json.market_overlay_runtime_validation`에 적재 가능
+  - [`plans/2026-06-14_market_overlay_runtime_validation_cli.md`](./2026-06-14_market_overlay_runtime_validation_cli.md)
+- [x] universe selection 결과의 운영 UI 연계
+  - 운영 대시보드에 `Universe Selection / Market Overlay` 패널 추가
+  - [`plans/2026-06-14_universe_selection_ops_dashboard_panel.md`](./2026-06-14_universe_selection_ops_dashboard_panel.md)
+- [x] manual watchlist/override 계층의 운영 정책 확정
+  - `manual`은 기본 비활성 / watchlist 용도 / cap·filter·submit gate 우회 없음
+  - preview query + decision loop env 기반의 최소 입력 경로 추가
+  - [`plans/2026-06-14_manual_watchlist_override_policy.md`](./2026-06-14_manual_watchlist_override_policy.md)
 
 ### 근거 문서
 - [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `28`
@@ -441,7 +461,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 
 ---
 
-### 11. Signal Agent 분해 — `미완료`
+### 11. Signal Agent 분해 — `진행중`
 
 ### 핵심
 - 기술/수급/모멘텀/변동성 점수의 deterministic backbone 구축
@@ -463,6 +483,18 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   - AI prompt 토큰 사용량 절감
   - 장중 계산 부하 감소
   - replay/backtest 가능한 deterministic signal backbone 강화
+
+### 세부 작업 상태
+- [x] 순수 helper 기반 deterministic signal backbone 1차 추가
+  - `services.signal_backbone`에 `PriceBar` / `TechnicalFeatureSnapshot` / `SignalScoreCard` 추가
+  - 최근 일봉 기준 `SMA(5/20/60)`, `1M/3M 수익률`, `RSI(14)`, `ATR(14)%`, `20일 변동성`, `거래량 급증률` 계산
+  - fast/slow layer 분리 score(`fast_score`, `slow_score`, `overall_score`)와 reason code 1차 규칙 추가
+- [x] feature snapshot DB 저장 기반 1차 추가
+  - `trading.signal_feature_snapshots` 테이블 migration 추가
+  - `SignalFeatureSnapshotEntity` / repository contract / in-memory / Postgres 저장소 추가
+  - 최신 snapshot 조회(`get_latest_by_instrument`) 및 이력 조회(`list_by_instrument`) 경로 추가
+- [ ] 새벽/장후 배치 계산 경로
+- [ ] decision loop / AI prompt read-only 주입 경로
 
 ### 근거 문서
 - [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `30`
@@ -496,7 +528,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - `plan_docs/agents/02_agent_target_shapes.md`
 - `plan_docs/agents/03_risk_role_boundaries.md`
 
-### 14. Data Quality / Hard Guardrail 일원화 — `진행중`
+### 14. Data Quality / Hard Guardrail 일원화 — `완료`
 
 ### 핵심
 - stale snapshot, blocked reason, kill switch, risk check, submit/reconcile 차단 규칙을
@@ -508,9 +540,54 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   - `held_position` 무보유 skip
   - 일반 BUY `orderable_amount` / general BUY budget 기반 skip
   - late-session / recent-event / recent-order 기반 held-position stable-hold skip
-- [ ] stale snapshot / submit cap / sell guard / reconcile gate의 공통 reason code 체계 수렴
-- [ ] scheduler / decision loop / execution_service 간 중복 gate 제거
-- [ ] guardrail evaluation 저장 범위를 pre-AI deterministic gate까지 확장할지 결정
+- [x] `pre-AI gate` / `execution_service` 공통 `PipelineStopReason` 코드 집합 1차 정리
+  - `stop_reason`를 `SubmitResult`/cycle serialization에도 직접 노출
+- [x] scheduler `dry_run_reason` / general submit gate 사유도 canonical helper로 정리
+  - dry-run 결과에도 `stop_reason` 동시 노출
+- [x] `pre-AI deterministic gate` 차단 결과를 `guardrail_evaluations`에 저장
+  - `rule_set_version=pre_ai_gate_v1`
+  - `symbol/account/source_type/skip_details` audit trail 보존
+- [x] `scheduler gate` dry-run 차단 결과도 `guardrail_evaluations`에 저장
+  - `rule_set_version=scheduler_gate_v1`
+  - `submit_budget_consumed_*` / `general_submit_disabled_*` 류 사유 audit trail 보존
+- [x] execution `sell_guard` / `buy_duplicate_guard` 차단 결과도 `guardrail_evaluations`에 저장
+  - `rule_set_version=sell_guard_v1`, `buy_duplicate_guard_v1`
+- [x] execution `stale_snapshot_guard` 차단 결과도 공통 helper로 수렴
+  - `rule_set_version=stale_snapshot_guard_v1`
+  - account-level / run-level stale 차단 모두 `_record_blocking_guardrail_evaluation()` 경유
+- [x] execution 최종 broker outcome도 canonical `stop_reason`으로 수렴
+  - `SUBMITTED → order_submitted`
+  - `RECONCILE_REQUIRED → order_reconcile_required`
+  - `REJECTED → order_rejected`
+- [x] stale snapshot guardrail blocking code도 canonical 소문자 코드로 수렴
+  - `STALE_SNAPSHOT_ACCOUNT → stale_snapshot_account`
+  - `STALE_SNAPSHOT → stale_snapshot_run`
+- [x] scheduler submit lane gate를 공통 helper로 추출해 중복 계산 제거
+  - `scripts/run_decision_loop.py`의 submit/dry-run/reason 계산을
+    `services.submit_lane_gate.evaluate_symbol_submit_lane()`로 수렴
+- [x] execution의 `RECONCILE_REQUIRED` / `REJECTED` broker outcome도 guardrail audit로 저장
+  - `rule_set_version=broker_submit_outcome_v1`
+  - `order_reconcile_required`, `order_rejected`를 `guardrail_evaluations`에서 직접 추적 가능
+- [x] guardrail evaluation 저장 스키마를 공통 helper로 수렴
+  - `services.guardrail_audit.persist_blocking_guardrail_evaluation()`
+  - pre-AI / scheduler / execution 경로가 동일한 저장 함수 사용
+- [x] `held_position` 위험축소 SELL 경계를 공통 helper로 수렴
+  - `services.held_position_policy.is_held_position_sell_path()`
+  - scheduler와 execution, ops scheduler가 동일하게 `held_position + REDUCE/EXIT + SELL`만
+    quote/stale bypass 및 전용 lane 대상으로 취급
+- [x] stale snapshot / submit cap / sell guard / reconcile gate의 공통 reason code 체계 수렴
+  - `PipelineStopReason` + `general_submit_disabled_reason()` +
+    `submit_budget_consumed_reason()` 기준으로 canonical code 정리
+  - `stale_snapshot_account`, `stale_snapshot_run`,
+    `order_reconcile_required`, `order_rejected`까지 수렴 완료
+- [x] scheduler / decision loop / execution_service 간 중복 gate 제거
+  - pre-AI skip은 `services.pre_ai_gate`
+  - submit lane gate는 `services.submit_lane_gate`
+  - held-position risk-reducing SELL 판별은 `services.held_position_policy`
+  - ops scheduler도 동일 helper 사용
+- [x] execution/scheduler 전 구간의 guardrail evaluation 저장 정책 최종 수렴
+  - `services.guardrail_audit.persist_blocking_guardrail_evaluation()`로 저장 경로 통일
+  - pre-AI / scheduler / execution / broker submit outcome이 동일 audit 축으로 기록
 
 ### 근거 문서
 - `plan_docs/agents/01_agent_inventory_and_status.md`
@@ -518,6 +595,8 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - `plan_docs/agents/03_risk_role_boundaries.md`
 
 ### 비고
+- 본 항목은 구현 관점에서는 닫힌 상태다.
+- 이후 추가 변경이 생기면 새 guardrail이 위 공통 helper/enum 체계를 따르는지만 검토하면 된다.
 - 이 항목은 AI agent 추가가 아니라 execution safety 계층 정리이므로,
   전략/신호 agent 분해와 병렬로 보는 것이 아니라 오히려 일부 선행 과제로 해석할 수 있다.
 

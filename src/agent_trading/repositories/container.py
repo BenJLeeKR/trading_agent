@@ -26,6 +26,7 @@ from agent_trading.repositories.contracts import (
     PositionSnapshotRepository,
     ReconciliationRepository,
     RiskLimitSnapshotRepository,
+    SignalFeatureSnapshotRepository,
     SnapshotSyncRunRepository,
     OrderSubmissionAttemptRepository,
     StrategyRepository,
@@ -59,6 +60,7 @@ class RepositoryContainer:
     order_state_events: OrderStateEventRepository
     guardrail_evaluations: GuardrailEvaluationRepository
     risk_limit_snapshots: RiskLimitSnapshotRepository
+    signal_feature_snapshots: SignalFeatureSnapshotRepository
     external_events: ExternalEventRepository
     market_session_repo: MarketSessionRepository
     order_submission_attempts: OrderSubmissionAttemptRepository

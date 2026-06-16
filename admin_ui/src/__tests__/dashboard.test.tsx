@@ -544,18 +544,114 @@ const mockBuyBlockSummary = {
   exception_count: 0,
 };
 
+const mockTradingUniverseCoverage = {
+  lookback_days: 14,
+  total_decision_count: 15,
+  total_order_count: 5,
+  market_overlay_active: true,
+  items: [
+    {
+      source_type: "held_position",
+      decision_count: 10,
+      order_count: 4,
+      order_conversion_rate: 0.4,
+      first_decision_at: "2026-05-29T01:00:00Z",
+      last_decision_at: "2026-05-30T05:00:00Z",
+      last_order_at: "2026-05-30T05:10:00Z",
+    },
+    {
+      source_type: "market_overlay",
+      decision_count: 5,
+      order_count: 1,
+      order_conversion_rate: 0.2,
+      first_decision_at: "2026-05-29T02:00:00Z",
+      last_decision_at: "2026-05-30T05:20:00Z",
+      last_order_at: "2026-05-30T05:21:00Z",
+    },
+  ],
+};
+
+const mockMarketOverlayFunnel = {
+  lookback_days: 14,
+  sample_limit: 10,
+  decision_count: 5,
+  order_count: 1,
+  order_conversion_rate: 0.2,
+  decision_type_counts: {
+    hold: 3,
+    approve: 2,
+  },
+  order_status_counts: {
+    submitted: 1,
+  },
+  recent_items: [
+    {
+      trade_decision_id: "td-overlay-001",
+      symbol: "001740",
+      market: "KRX",
+      decision_type: "approve",
+      side: "buy",
+      inclusion_reason: "trade_strength",
+      rationale_summary: "Momentum confirmation",
+      created_at: "2026-05-30T05:22:00Z",
+      order_request_id: "ord-overlay-001",
+      order_status: "submitted",
+      order_created_at: "2026-05-30T05:23:00Z",
+    },
+  ],
+};
+
+const mockTradingUniversePreview = {
+  account_id: "a1",
+  lookback_hours: 24,
+  max_cap: 30,
+  exclude_held_from_cap: true,
+  market_overlay_cap: 5,
+  pre_pool_size: 50,
+  kis_env: "real",
+  total_count: 12,
+  source_type_counts: {
+    held_position: 2,
+    event_overlay: 1,
+    market_overlay: 3,
+    core: 6,
+  },
+  inclusion_reason_counts: {
+    held_position_mandatory: 2,
+    "event_overlay:disclosure": 1,
+    trade_strength: 2,
+    volume_surge: 1,
+    core_universe: 6,
+  },
+  market_overlay_diagnostics: {
+    enabled: true,
+    skipped_reason: null,
+    effective_pre_pool_size: 50,
+    pre_pool_candidate_count: 50,
+    quotes_requested_count: 50,
+    quotes_received_count: 42,
+    filtered_out_count: 11,
+    scored_candidate_count: 31,
+    added_count: 3,
+  },
+  items: [],
+};
+
 /**
  * Helper: mock all fetch calls required by OperationsDashboardView.fetchAll()
  * before the final getRecentFailures(5) and getFailureSummary() calls.
  *
- * Call order (20 total):
+ * Call order (23 total):
  *   1-10: Promise.all [health, readyz, recon, orders, daily-summary, buy-block-summary, clients, session, operations-day, events]
  *   11:   getAccounts(clientId)
  *   12-14: getPositions(3 accounts)
  *   15-17: getCashBalance(3 accounts)
- *   18:   getSnapshotSyncRuns(10)
- *   19:   getRecentFailures(5) — caller provides this mock
- *   20:   getFailureSummary() — caller provides this mock
+ *   18:   getTradingUniverseCoverageSummary(14)
+ *   19:   getMarketOverlayFunnel(14, 10)
+ *   20:   getTradingUniversePreview(firstAccount)
+ *   21:   getSnapshotSyncRuns(10)
+ *   22:   getRecentFailures(5) — caller provides this mock
+ *   23:   getFailureSummary() — caller provides this mock
  */
 function mockOpsDashboardCommon() {
   // 1-10: Parallel batch
@@ -583,11 +679,36 @@ function mockOpsDashboardCommon() {
   mockFetchOnce(mockCashBalanceForLocked);
   mockFetchOnce(mockCashBalanceNull);
 
-  // 18. getSnapshotSyncRuns
+  // 18-20. universe selection observability
+  mockFetchOnce(mockTradingUniverseCoverage);
+  mockFetchOnce(mockMarketOverlayFunnel);
+  mockFetchOnce(mockTradingUniversePreview);
+  // 21. getSnapshotSyncRuns
   mockFetchOnce([]);
 }
 
 describe("OperationsDashboardView — recent failures", () => {
+  it("renders universe selection / market overlay panel", async () => {
+    mockOpsDashboardCommon();
+    mockFetchOnce([]);
+    mockFetchOnce(mockFailureSummaryEmpty);
+
+    render(
+      <MemoryRouter>
+        <OperationsDashboardView />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText("Universe Selection / Market Overlay");
+    expect(screen.getByText("실운영 편입 현황")).toBeInTheDocument();
+    expect(screen.getByText("Preview 편입")).toBeInTheDocument();
+    expect(screen.getByText("3건")).toBeInTheDocument();
+    expect(screen.getByText("활성")).toBeInTheDocument();
+    expect(screen.getByText("hold 3 · approve 2")).toBeInTheDocument();
+    expect(screen.getByText("submitted 1")).toBeInTheDocument();
+    expect(screen.getByText("001740")).toBeInTheDocument();
+  });
+
   it("renders recent submission failures card with data", async () => {
     mockOpsDashboardCommon();
     // 17. getRecentFailures(5) returns mockRecentFailures
@@ -609,7 +730,7 @@ describe("OperationsDashboardView — recent failures", () => {
     expect(screen.getByText("오늘 주문 제출")).toBeInTheDocument();
     expect(screen.getByText("2건")).toBeInTheDocument();
     expect(screen.getByText("오늘 BUY 차단")).toBeInTheDocument();
-    expect(screen.getByText("1건")).toBeInTheDocument();
+    expect(screen.getAllByText("1건").length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText(/BUY 주문 12 \/ 제출시도 2 \| 거절 1 · 예외 0/)).not.toBeInTheDocument();
 
     expect(screen.getByText(/실패율: 50% \(오늘\) \| 거절 1건 · 예외 1건/)).toBeInTheDocument();

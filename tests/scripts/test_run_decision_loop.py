@@ -60,18 +60,19 @@ from agent_trading.services.decision_orchestrator import (
     OrderIntent,
     SubmitResult,
 )
+from agent_trading.services.submit_lane_gate import (
+    HELD_POSITION_SELL_MAX_PER_CYCLE,
+    evaluate_symbol_submit_lane,
+)
 
 # Module under test
 from scripts.run_decision_loop import (
     ENV_TRADING_UNIVERSE,
-    HELD_POSITION_SELL_MAX_PER_CYCLE,
     KISRestClient,
     UniverseSymbol,
     _build_aggregate_summary,
     _collect_persisted_seeded_events,
-    _compute_symbol_submit_mode,
     _evaluate_pre_ai_skip_reason,
-    _infer_symbol_dry_run_reason,
     _is_t3_fresh_for_symbol,
     _parse_args,
     _parse_universe_symbols,
@@ -560,13 +561,20 @@ class TestSerializeCycleResult:
             status="DRY_RUN",
             order_intent=intent,
             decision_context_id=ctx_id,
+            stop_reason="submit_budget_consumed_core",
         )
 
         serialized = _serialize_cycle_result(
-            cycle=1, result=result, duration=3.0, dry_run=True
+            cycle=1,
+            result=result,
+            duration=3.0,
+            dry_run=True,
+            dry_run_reason="submit_budget_consumed_core",
         )
 
         assert serialized["status"] == "DRY_RUN"
+        assert serialized["dry_run_reason"] == "submit_budget_consumed_core"
+        assert serialized["stop_reason"] == "submit_budget_consumed_core"
         assert serialized["decision_context_id"] == str(ctx_id)
         assert serialized["order_intent_id"] == str(intent.order_intent_id)
         assert serialized["decision_type"] == "APPROVE"
@@ -687,6 +695,7 @@ class TestBuildAggregateSummary:
         assert summary["success"] == 3
         assert summary["error"] == 0
         assert summary["success_rate"] == 100.0
+        assert summary["metrics"]["processed_symbol_count"] == 3
 
     def test_mixed_results(self) -> None:
         """혼합 결과."""
@@ -710,6 +719,37 @@ class TestBuildAggregateSummary:
 
         assert summary["total_cycles"] == 0
         assert summary["success_rate"] == 0
+
+    def test_includes_universe_and_processed_source_metrics(self) -> None:
+        """운영 진단용 유니버스/source_type 메트릭을 포함한다."""
+        results = [
+            {"status": "SKIPPED", "source_type": "held_position"},
+            {"status": "ERROR", "source_type": "core"},
+        ]
+        universe = (
+            UniverseSymbol(symbol="005930", market="KRX", source_type="held_position"),
+            UniverseSymbol(symbol="000660", market="KRX", source_type="held_position"),
+            UniverseSymbol(symbol="000100", market="KRX", source_type="core"),
+        )
+
+        summary = _build_aggregate_summary(
+            results,
+            total_duration=12.0,
+            universe=universe,
+        )
+
+        assert summary["metrics"]["universe_symbol_count"] == 3
+        assert summary["metrics"]["held_position_count"] == 2
+        assert summary["metrics"]["processed_symbol_count"] == 2
+        assert summary["metrics"]["held_position_processed_count"] == 1
+        assert summary["metrics"]["universe_source_counts"] == {
+            "held_position": 2,
+            "core": 1,
+        }
+        assert summary["metrics"]["processed_source_counts"] == {
+            "held_position": 1,
+            "core": 1,
+        }
 
 
 class TestSerializePrecheck:
@@ -871,6 +911,29 @@ class TestRunOneCycle:
         assert result["cycle"] == 1
 
     @pytest.mark.asyncio
+    async def test_scheduler_dry_run_records_guardrail_evaluation(self) -> None:
+        """scheduler gate dry-run 사유도 guardrail_evaluations에 남겨야 한다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            result = await _run_one_cycle(
+                cycle=1,
+                submit=False,
+                dry_run=True,
+                output="text",
+                source_type="core",
+                dry_run_reason="submit_budget_consumed_core",
+                runtime=runtime,
+            )
+
+        assert result["status"] == "DRY_RUN"
+        assert result["dry_run_reason"] == "submit_budget_consumed_core"
+        assert result["stop_reason"] == "submit_budget_consumed_core"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert len(evaluations) == 1
+        assert evaluations[0].rule_set_version == "scheduler_gate_v1"
+        assert evaluations[0].blocking_rule_codes == ["submit_budget_consumed_core"]
+
+    @pytest.mark.asyncio
     async def test_submit_with_held_position_source_type(self) -> None:
         """Submit 모드에서 source_type='held_position'이 결과에 포함됨."""
         async with _mock_runtime_for_one_cycle() as runtime:
@@ -887,10 +950,58 @@ class TestRunOneCycle:
         assert result["status"] in ("SUBMITTED", "SKIPPED", "ERROR")
 
     @pytest.mark.asyncio
+    async def test_held_position_can_trigger_t3_live_pipeline_when_not_fresh(self) -> None:
+        """held_position도 T3 freshness가 stale이면 live pipeline을 태워야 한다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            live_pipeline = AsyncMock(return_value=None)
+            with (
+                patch(
+                    "scripts.run_decision_loop._collect_persisted_seeded_events",
+                    new=AsyncMock(return_value=[]),
+                ),
+                patch(
+                    "scripts.run_decision_loop._is_t3_fresh_for_symbol",
+                    new=AsyncMock(return_value=False),
+                ),
+                patch(
+                    "scripts.run_decision_loop._run_t3_live_pipeline_shielded",
+                    new=live_pipeline,
+                ),
+                patch(
+                    "agent_trading.brokers.naver_news_adapter.NaverNewsSearchAdapter.is_quota_exhausted",
+                    return_value=False,
+                ),
+            ):
+                result = await _run_one_cycle(
+                    cycle=1,
+                    submit=False,
+                    dry_run=True,
+                    output="text",
+                    source_type="held_position",
+                    runtime=runtime,
+                )
+                await asyncio.sleep(0)
+
+        assert result["source_type"] == "held_position"
+        live_pipeline.assert_called_once()
+        assert live_pipeline.await_args.kwargs["source_type"] == "held_position"
+
+    @pytest.mark.asyncio
     async def test_pre_ai_skip_when_orderable_amount_below_threshold(self) -> None:
         """일반 BUY 후보는 주문가능금액이 기준 이하이면 AI 전에 SKIPPED 처리한다."""
         async with _mock_runtime_for_one_cycle() as runtime:
             repos = runtime["repositories"]
+            await repos.instruments.add(
+                InstrumentEntity(
+                    instrument_id=uuid4(),
+                    symbol="000100",
+                    market_code=MARKET,
+                    asset_class="KR_STOCK",
+                    currency="KRW",
+                    name="유한양행",
+                    is_active=True,
+                )
+            )
             latest_cash = await repos.cash_balance_snapshots.get_latest_by_account(ACCOUNT_ID)
             assert latest_cash is not None
             repos.cash_balance_snapshots._items[latest_cash.cash_balance_snapshot_id] = (  # type: ignore[attr-defined]
@@ -912,6 +1023,7 @@ class TestRunOneCycle:
                 submit=True,
                 dry_run=False,
                 output="text",
+                symbol="000100",
                 source_type="core",
                 runtime=runtime,
             )
@@ -919,7 +1031,12 @@ class TestRunOneCycle:
         assert result["status"] == "SKIPPED"
         assert result["error_phase"] == "pre_ai_gate"
         assert result["error_message"] == "low_orderable_amount"
+        assert result["stop_reason"] == "low_orderable_amount"
         assert result["skip_reason"] == "low_orderable_amount"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert len(evaluations) == 1
+        assert evaluations[0].rule_set_version == "pre_ai_gate_v1"
+        assert evaluations[0].blocking_rule_codes == ["low_orderable_amount"]
 
     @pytest.mark.asyncio
     async def test_pre_ai_skip_when_held_position_has_no_quantity(self) -> None:
@@ -955,7 +1072,11 @@ class TestRunOneCycle:
         assert result["status"] == "SKIPPED"
         assert result["error_phase"] == "pre_ai_gate"
         assert result["error_message"] == "no_held_position"
+        assert result["stop_reason"] == "no_held_position"
         assert result["skip_reason"] == "no_held_position"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert len(evaluations) == 1
+        assert evaluations[0].blocking_rule_codes == ["no_held_position"]
 
     @pytest.mark.asyncio
     async def test_pre_ai_skip_when_held_position_recent_hold_has_no_change(self) -> None:
@@ -1082,7 +1203,11 @@ class TestRunOneCycle:
         assert result["status"] == "SKIPPED"
         assert result["error_phase"] == "pre_ai_gate"
         assert result["error_message"] == "general_buy_budget_exhausted"
+        assert result["stop_reason"] == "general_buy_budget_exhausted"
         assert result["skip_reason"] == "general_buy_budget_exhausted"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert len(evaluations) == 1
+        assert evaluations[0].blocking_rule_codes == ["general_buy_budget_exhausted"]
 
     @pytest.mark.asyncio
     async def test_pre_ai_skip_reason_not_triggered_when_position_exists_even_if_buy_budget_zero(self) -> None:
@@ -1096,6 +1221,43 @@ class TestRunOneCycle:
                 market=MARKET,
                 source_type="core",
                 remaining_general_buy_budget=0,
+            )
+
+        assert reason is None
+        assert details["held_quantity"] == "10"
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_cash_gate_not_triggered_when_position_exists_and_orderable_amount_low(self) -> None:
+        """보유 종목은 주문가능금액이 낮아도 매도/축소 판단 경로를 위해 현금 gate로 막지 않는다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            cash_snapshot = await repos.cash_balance_snapshots.get_latest_by_account(ACCOUNT_ID)
+            assert cash_snapshot is not None
+            repos.cash_balance_snapshots._items[cash_snapshot.cash_balance_snapshot_id] = (  # type: ignore[attr-defined]
+                CashBalanceSnapshotEntity(
+                    cash_balance_snapshot_id=cash_snapshot.cash_balance_snapshot_id,
+                    account_id=cash_snapshot.account_id,
+                    currency=cash_snapshot.currency,
+                    available_cash=cash_snapshot.available_cash,
+                    settled_cash=cash_snapshot.settled_cash,
+                    unsettled_cash=cash_snapshot.unsettled_cash,
+                    source_of_truth=cash_snapshot.source_of_truth,
+                    snapshot_at=cash_snapshot.snapshot_at,
+                    total_asset=cash_snapshot.total_asset,
+                    settlement_amount=cash_snapshot.settlement_amount,
+                    total_unrealized_pnl=cash_snapshot.total_unrealized_pnl,
+                    orderable_amount=Decimal("1000"),
+                    created_at=cash_snapshot.created_at,
+                )
+            )
+
+            reason, details = await _evaluate_pre_ai_skip_reason(
+                repos,
+                account_alias="Entrypoint Paper",
+                symbol=SYMBOL,
+                market=MARKET,
+                source_type="core",
+                remaining_general_buy_budget=5,
             )
 
         assert reason is None
@@ -1213,7 +1375,7 @@ class TestRunOneCycle:
 
 
 class TestHeldPositionSellBudget:
-    """``_compute_symbol_submit_mode()`` held_position sell lane 검증.
+    """``evaluate_symbol_submit_lane()`` held_position sell lane 검증.
 
     cycle당 cap (HELD_POSITION_SELL_MAX_PER_CYCLE=2)과
     symbol deduplication이 올바르게 동작하는지 확인.
@@ -1221,7 +1383,7 @@ class TestHeldPositionSellBudget:
 
     def test_hp_sell_ignores_general_submit_budget_consumed(self) -> None:
         """앞선 BUY가 submit 슬롯을 예약해도 held_position은 submit 가능해야 함."""
-        symbol_submit, symbol_dry_run = _compute_symbol_submit_mode(
+        decision = evaluate_symbol_submit_lane(
             submit=True,
             dry_run=False,
             allow_general_submit=True,
@@ -1232,12 +1394,13 @@ class TestHeldPositionSellBudget:
             held_position_sell_cycle_symbols=set(),
             symbol="001740",
         )
-        assert symbol_submit is True
-        assert symbol_dry_run is False
+        assert decision.submit is True
+        assert decision.dry_run is False
+        assert decision.dry_run_reason is None
 
     def test_hp_sell_cycle_cap_blocks_third_submit(self) -> None:
         """동일 cycle 내 HP sell은 cap 초과 시 dry-run으로 내려가야 함."""
-        symbol_submit, symbol_dry_run = _compute_symbol_submit_mode(
+        decision = evaluate_symbol_submit_lane(
             submit=True,
             dry_run=False,
             allow_general_submit=True,
@@ -1248,12 +1411,13 @@ class TestHeldPositionSellBudget:
             held_position_sell_cycle_symbols={"AAPL", "GOOGL"},
             symbol="MSFT",
         )
-        assert symbol_submit is False
-        assert symbol_dry_run is True
+        assert decision.submit is False
+        assert decision.dry_run is True
+        assert decision.dry_run_reason == "held_position_sell_cycle_cap"
 
     def test_hp_sell_symbol_dedupe_blocks_duplicate(self) -> None:
         """동일 cycle 내 같은 symbol 중복 submit은 막아야 함."""
-        symbol_submit, symbol_dry_run = _compute_symbol_submit_mode(
+        decision = evaluate_symbol_submit_lane(
             submit=True,
             dry_run=False,
             allow_general_submit=True,
@@ -1264,12 +1428,13 @@ class TestHeldPositionSellBudget:
             held_position_sell_cycle_symbols={"001740"},
             symbol="001740",
         )
-        assert symbol_submit is False
-        assert symbol_dry_run is True
+        assert decision.submit is False
+        assert decision.dry_run is True
+        assert decision.dry_run_reason == "held_position_sell_symbol_duplicate"
 
     def test_core_symbol_still_respects_general_submit_budget(self) -> None:
         """core 종목은 기존처럼 일반 submit 슬롯을 따라야 함."""
-        symbol_submit, symbol_dry_run = _compute_symbol_submit_mode(
+        decision = evaluate_symbol_submit_lane(
             submit=True,
             dry_run=False,
             allow_general_submit=True,
@@ -1280,12 +1445,13 @@ class TestHeldPositionSellBudget:
             held_position_sell_cycle_symbols=set(),
             symbol="005930",
         )
-        assert symbol_submit is False
-        assert symbol_dry_run is True
+        assert decision.submit is False
+        assert decision.dry_run is True
+        assert decision.dry_run_reason == "submit_budget_consumed_core"
 
     def test_core_symbol_blocked_when_general_submit_disabled(self) -> None:
         """일반 budget 소진 후에는 core submit이 명시적으로 금지되어야 함."""
-        symbol_submit, symbol_dry_run = _compute_symbol_submit_mode(
+        decision = evaluate_symbol_submit_lane(
             submit=True,
             dry_run=False,
             allow_general_submit=False,
@@ -1296,11 +1462,12 @@ class TestHeldPositionSellBudget:
             held_position_sell_cycle_symbols=set(),
             symbol="003550",
         )
-        assert symbol_submit is False
-        assert symbol_dry_run is True
+        assert decision.submit is False
+        assert decision.dry_run is True
+        assert decision.dry_run_reason == "general_submit_disabled_core"
 
     def test_infer_core_dry_run_reason_when_general_submit_disabled(self) -> None:
-        reason = _infer_symbol_dry_run_reason(
+        decision = evaluate_symbol_submit_lane(
             submit=True,
             dry_run=False,
             allow_general_submit=False,
@@ -1311,10 +1478,10 @@ class TestHeldPositionSellBudget:
             held_position_sell_cycle_symbols=set(),
             symbol="003550",
         )
-        assert reason == "general_submit_disabled_core"
+        assert decision.dry_run_reason == "general_submit_disabled_core"
 
     def test_infer_market_overlay_dry_run_reason_when_slot_consumed(self) -> None:
-        reason = _infer_symbol_dry_run_reason(
+        decision = evaluate_symbol_submit_lane(
             submit=True,
             dry_run=False,
             allow_general_submit=True,
@@ -1325,10 +1492,10 @@ class TestHeldPositionSellBudget:
             held_position_sell_cycle_symbols=set(),
             symbol="012330",
         )
-        assert reason == "submit_budget_consumed_market_overlay"
+        assert decision.dry_run_reason == "submit_budget_consumed_market_overlay"
 
     def test_core_symbol_allows_submit_while_cycle_budget_remains(self) -> None:
-        symbol_submit, symbol_dry_run = _compute_symbol_submit_mode(
+        decision = evaluate_symbol_submit_lane(
             submit=True,
             dry_run=False,
             allow_general_submit=True,
@@ -1339,8 +1506,9 @@ class TestHeldPositionSellBudget:
             held_position_sell_cycle_symbols=set(),
             symbol="005930",
         )
-        assert symbol_submit is True
-        assert symbol_dry_run is False
+        assert decision.submit is True
+        assert decision.dry_run is False
+        assert decision.dry_run_reason is None
 
 
 class TestGeneralSubmitLane:

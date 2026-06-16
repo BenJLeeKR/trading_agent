@@ -536,13 +536,13 @@ class TestPaperTradingScenarios:
         """Stale Snapshot (no_history) → Submit 차단 (account-level path).
 
         Given:  계좌에 cash/position snapshot 없음 → account-level
-                staleness 감지 → STALE_SNAPSHOT_ACCOUNT
+                staleness 감지 → stale_snapshot_account
                 stale_threshold_seconds=1
         When:   submit request (BUY, APPROVE)
         Then:   assemble() 정상 실행
                 pipeline returns SubmitResult(status="SKIPPED", error_phase="stale_snapshot")
                 broker.submit_order() 호출되지 않음
-                guardrail_evaluations에 STALE_SNAPSHOT_ACCOUNT 기록 존재
+                guardrail_evaluations에 stale_snapshot_account 기록 존재
         """
         # 계좌에 snapshot이 없으므로 account-level staleness가 먼저 차단
         # run-level run은 제거할 필요 없음 (account-level이 우선)
@@ -596,12 +596,12 @@ class TestPaperTradingScenarios:
             (
                 e
                 for e in eval_records
-                if "STALE_SNAPSHOT_ACCOUNT" in (e.blocking_rule_codes or [])
+                if "stale_snapshot_account" in (e.blocking_rule_codes or [])
             ),
             None,
         )
         assert stale_record is not None, (
-            "Expected a GuardrailEvaluation with STALE_SNAPSHOT_ACCOUNT blocking_rule_code"
+            "Expected a GuardrailEvaluation with stale_snapshot_account blocking_rule_code"
         )
         assert stale_record.overall_passed is False
         # decision_context_id는 pipeline 내부의 intent 기준이므로 result에서 확인
@@ -930,13 +930,13 @@ class TestPaperTradingScenarios:
         order_manager: OrderManager,
         mock_broker: BrokerAdapter,
     ) -> None:
-        """Test 2: Cash snapshot stale → STALE_SNAPSHOT_ACCOUNT 차단.
+        """Test 2: Cash snapshot stale → stale_snapshot_account 차단.
 
         Given:  cash snapshot exists but stale (> threshold)
                 position snapshot fresh
         When:   submit request (BUY, APPROVE)
         Then:   pipeline returns SKIPPED (stale_snapshot)
-                guardrail has STALE_SNAPSHOT_ACCOUNT
+                guardrail has stale_snapshot_account
                 broker.submit_order() 호출되지 않음
         """
         now = datetime.now(timezone.utc)
@@ -1001,14 +1001,14 @@ class TestPaperTradingScenarios:
             "stale_snapshot guard must not leave orphan pending_submit orders"
         )
 
-        # GuardrailEvaluation에 STALE_SNAPSHOT_ACCOUNT 기록 확인
+        # GuardrailEvaluation에 stale_snapshot_account 기록 확인
         eval_records = list(repos.guardrail_evaluations._items.values())
         stale_record = next(
-            (e for e in eval_records if "STALE_SNAPSHOT_ACCOUNT" in (e.blocking_rule_codes or [])),
+            (e for e in eval_records if "stale_snapshot_account" in (e.blocking_rule_codes or [])),
             None,
         )
         assert stale_record is not None, (
-            "Expected GuardrailEvaluation with STALE_SNAPSHOT_ACCOUNT"
+            "Expected GuardrailEvaluation with stale_snapshot_account"
         )
 
     @pytest.mark.asyncio
@@ -1018,13 +1018,13 @@ class TestPaperTradingScenarios:
         order_manager: OrderManager,
         mock_broker: BrokerAdapter,
     ) -> None:
-        """Test 3: Positions stale (cash fresh) → STALE_SNAPSHOT_ACCOUNT 차단.
+        """Test 3: Positions stale (cash fresh) → stale_snapshot_account 차단.
 
         Given:  cash snapshot fresh
                 position snapshots exist but max snapshot_at stale (> threshold)
         When:   submit request (BUY, APPROVE)
         Then:   pipeline returns SKIPPED (stale_snapshot)
-                guardrail has STALE_SNAPSHOT_ACCOUNT
+                guardrail has stale_snapshot_account
                 broker.submit_order() 호출되지 않음
         """
         now = datetime.now(timezone.utc)
@@ -1088,7 +1088,7 @@ class TestPaperTradingScenarios:
         # GuardrailEvaluation 확인
         eval_records = list(repos.guardrail_evaluations._items.values())
         stale_record = next(
-            (e for e in eval_records if "STALE_SNAPSHOT_ACCOUNT" in (e.blocking_rule_codes or [])),
+            (e for e in eval_records if "stale_snapshot_account" in (e.blocking_rule_codes or [])),
             None,
         )
         assert stale_record is not None
@@ -1100,7 +1100,7 @@ class TestPaperTradingScenarios:
         order_manager: OrderManager,
         mock_broker: BrokerAdapter,
     ) -> None:
-        """Test 4: No cash snapshot → STALE_SNAPSHOT_ACCOUNT 차단.
+        """Test 4: No cash snapshot → stale_snapshot_account 차단.
 
         Given:  cash snapshot None (never synced)
                 position snapshots empty
@@ -1149,7 +1149,7 @@ class TestPaperTradingScenarios:
                 account-level cash snapshot stale (> threshold)
         When:   submit request (BUY, APPROVE)
         Then:   account-level staleness이 run-level freshness보다 우선
-                pipeline returns SKIPPED (STALE_SNAPSHOT_ACCOUNT)
+                pipeline returns SKIPPED (stale_snapshot_account)
                 broker.submit_order() 호출되지 않음
         """
         now = datetime.now(timezone.utc)
@@ -1217,14 +1217,14 @@ class TestPaperTradingScenarios:
         assert result.error_phase == "stale_snapshot"
         mock_broker.submit_order.assert_not_called()
 
-        # Verify STALE_SNAPSHOT_ACCOUNT (not STALE_SNAPSHOT)
+        # Verify stale_snapshot_account (not stale_snapshot_run)
         eval_records = list(repos.guardrail_evaluations._items.values())
         stale_record = next(
-            (e for e in eval_records if "STALE_SNAPSHOT_ACCOUNT" in (e.blocking_rule_codes or [])),
+            (e for e in eval_records if "stale_snapshot_account" in (e.blocking_rule_codes or [])),
             None,
         )
         assert stale_record is not None, (
-            "Expected STALE_SNAPSHOT_ACCOUNT blocking code"
+            "Expected stale_snapshot_account blocking code"
         )
 
     @pytest.mark.asyncio

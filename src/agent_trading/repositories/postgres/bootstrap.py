@@ -66,6 +66,9 @@ from agent_trading.repositories.postgres.risk_limit_snapshots import (
 from agent_trading.repositories.postgres.snapshot_sync_runs import (
     PostgresSnapshotSyncRunRepository,
 )
+from agent_trading.repositories.postgres.signal_feature_snapshots import (
+    PostgresSignalFeatureSnapshotRepository,
+)
 from agent_trading.repositories.postgres.strategies import (
     PostgresStrategyRepository,
 )
@@ -125,6 +128,7 @@ def build_postgres_repositories(
         order_state_events=PostgresOrderStateEventRepository(tx),
         guardrail_evaluations=PostgresGuardrailEvaluationRepository(tx),
         risk_limit_snapshots=PostgresRiskLimitSnapshotRepository(tx),
+        signal_feature_snapshots=PostgresSignalFeatureSnapshotRepository(tx),
         market_session_repo=PostgresMarketSessionRepository(tx),
         order_submission_attempts=PostgresOrderSubmissionAttemptRepository(tx),
     )

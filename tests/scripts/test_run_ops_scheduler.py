@@ -42,6 +42,7 @@ from scripts.run_ops_scheduler import (
     _log_startup_info,
     _log_summary,
     _parse_args,
+    _parse_decision_loop_summary,
     _parse_fill_sync_summary,
     _parse_hhmm,
     _parse_post_submit_sync_summary,
@@ -220,6 +221,31 @@ class TestParseFillSyncSummary:
             "retries": 1,
             "retried_accounts": 1,
             "errors": 0,
+        }
+
+
+class TestParseDecisionLoopSummary:
+    """``_parse_decision_loop_summary()`` — decision loop JSON summary parsing."""
+
+    def test_parses_summary_metrics(self) -> None:
+        result = CommandResult(
+            name="decision_submit_gate",
+            argv=[],
+            returncode=0,
+            duration_seconds=5.3,
+            stdout=(
+                '{"cycle":1,"status":"SKIPPED","source_type":"held_position"}\n'
+                '{"mode":"summary","metrics":{"universe_symbol_count":63,'
+                '"processed_symbol_count":1,"held_position_count":33,'
+                '"held_position_processed_count":1}}\n'
+            ),
+        )
+
+        assert _parse_decision_loop_summary(result) == {
+            "universe_symbol_count": 63,
+            "processed_symbol_count": 1,
+            "held_position_count": 33,
+            "held_position_processed_count": 1,
         }
 
 

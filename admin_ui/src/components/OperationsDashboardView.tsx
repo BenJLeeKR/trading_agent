@@ -26,10 +26,14 @@ import {
   getFailureSummary,
   getOrderDailySummary,
   getBuyBlockSummary,
+  getTradingUniverseCoverageSummary,
+  getMarketOverlayFunnel,
+  getTradingUniversePreview,
 } from "../api/client";
 import type {
   BuyBlockSummary,
   HealthResponse,
+  MarketOverlayFunnelResponse,
   OrderSummary,
   PositionSnapshotView,
   CashBalanceSnapshotView,
@@ -47,6 +51,8 @@ import type {
   RecentFailureItem,
   FailureSummary,
   OrderDailySummary,
+  TradingUniverseCoverageSummaryResponse,
+  TradingUniversePreviewResponse,
 } from "../types/api";
 import { deriveAlerts } from "../lib/alerts";
 import {
@@ -95,6 +101,16 @@ interface CompactAlertItem {
   description: string;
 }
 
+interface MarketOverlayRecentRow {
+  id: string;
+  createdAt: string | null;
+  symbol: string;
+  decisionType: string;
+  side: string;
+  inclusionReason: string;
+  orderStatus: string;
+}
+
 interface DashboardData {
   clients: ClientDetail[];
   health: HealthResponse | null;
@@ -110,6 +126,10 @@ interface DashboardData {
   operationsDayData: OperationsDayStatusResponse | null;
   sessionEvents: SessionEventSummary[];
   todayOrderSummary: OrderDailySummary | null;
+  tradingUniverseCoverage: TradingUniverseCoverageSummaryResponse | null;
+  marketOverlayFunnel: MarketOverlayFunnelResponse | null;
+  tradingUniversePreview: TradingUniversePreviewResponse | null;
+  tradingUniversePreviewAccountLabel: string | null;
 }
 
 /* ── Helpers ── */
@@ -442,6 +462,29 @@ export default function OperationsDashboardView() {
       });
     }
 
+    // ── Trading universe / market overlay observability ──
+    const previewAccount = accounts.find((a) => a.status === "active") ?? accounts[0] ?? null;
+    const universeCoveragePromise = getTradingUniverseCoverageSummary(14).catch((e) => {
+      addError("GET /instruments/trading-universe/coverage-summary", e);
+      return null;
+    });
+    const marketOverlayFunnelPromise = getMarketOverlayFunnel(14, 10).catch((e) => {
+      addError("GET /instruments/trading-universe/market-overlay-funnel", e);
+      return null;
+    });
+    const universePreviewPromise = previewAccount
+      ? getTradingUniversePreview(previewAccount.account_id, {
+          lookbackHours: 24,
+          maxCap: 30,
+          excludeHeldFromCap: true,
+          marketOverlayCap: 5,
+          prePoolSize: 50,
+        }).catch((e) => {
+          addError("GET /instruments/trading-universe/preview", e);
+          return null;
+        })
+      : Promise.resolve(null);
+
     // ── Reconciliation runs (from summary's recentActiveIssues — active-only data) ──
     // NOTE: 별도 getReconciliationRuns API 호출 대신 이미 fetch된 summary 응답의
     //       recentActiveIssues를 사용. 이 필드는 백엔드에서 active-only로 필터링됨.
@@ -454,6 +497,12 @@ export default function OperationsDashboardView() {
     } catch {
       addError("GET /snapshot-sync-runs", "스냅샷 동기화 이력 조회 실패");
     }
+
+    const [tradingUniverseCoverage, marketOverlayFunnel, tradingUniversePreview] = await Promise.all([
+      universeCoveragePromise,
+      marketOverlayFunnelPromise,
+      universePreviewPromise,
+    ]);
 
     // ── Recent submission failures ──
     setFailuresLoading(true);
@@ -496,6 +545,13 @@ export default function OperationsDashboardView() {
       operationsDayData: operationsDayData as OperationsDayStatusResponse | null,
       sessionEvents,
       todayOrderSummary: todayOrderSummary as OrderDailySummary | null,
+      tradingUniverseCoverage,
+      marketOverlayFunnel,
+      tradingUniversePreview,
+      tradingUniversePreviewAccountLabel: previewAccount?.account_alias
+        ?? previewAccount?.account_code
+        ?? previewAccount?.broker_account_id
+        ?? null,
     });
     setLoading(false);
   };
@@ -794,6 +850,24 @@ export default function OperationsDashboardView() {
       });
   }, [data]);
 
+  const marketOverlayRecentRows: MarketOverlayRecentRow[] = useMemo(() => {
+    if (!data?.marketOverlayFunnel) return [];
+    return (data.marketOverlayFunnel.recent_items ?? []).map((item) => ({
+      id: item.trade_decision_id,
+      createdAt: item.created_at,
+      symbol: item.symbol ?? "—",
+      decisionType: item.decision_type ? item.decision_type.toUpperCase() : "—",
+      side:
+        item.side === "buy"
+          ? "매수"
+          : item.side === "sell"
+            ? "매도"
+            : item.side?.toUpperCase() ?? "—",
+      inclusionReason: item.inclusion_reason ?? "—",
+      orderStatus: item.order_status ? item.order_status.toUpperCase() : "미생성",
+    }));
+  }, [data]);
+
   /* ── Loading / Error ── */
   if (loading) return <LoadingSpinner text="운영 데이터 로딩 중..." />;
 
@@ -898,6 +972,13 @@ export default function OperationsDashboardView() {
   // Alert count status
   const alertStatusVariant: "error" | "warning" | "healthy" =
     d.urgentCount > 0 ? "error" : d.cautionCount > 0 ? "warning" : "healthy";
+
+  const marketOverlayCoverageItem = data.tradingUniverseCoverage?.items.find(
+    (item) => item.source_type === "market_overlay"
+  ) ?? null;
+  const marketOverlayPreviewCount =
+    data.tradingUniversePreview?.source_type_counts?.market_overlay ?? 0;
+  const marketOverlayDiagnostics = data.tradingUniversePreview?.market_overlay_diagnostics ?? null;
 
   return (
     <div className="p-6 space-y-6">
@@ -1262,7 +1343,125 @@ export default function OperationsDashboardView() {
             />
           </div>
 
-          {/* ── Section D: 최근 Session Events ── */}
+          {/* ── Section D: Universe Selection / Market Overlay ── */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-[#0f172a]">Universe Selection / Market Overlay</h2>
+              <span className="text-xs text-[#94a3b8]">
+                preview 계좌: {data.tradingUniversePreviewAccountLabel ?? "없음"}
+              </span>
+            </div>
+            <Panel
+              title="실운영 편입 현황"
+              subtitle="preview + coverage-summary + market-overlay-funnel"
+            >
+              <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-5">
+                <div className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
+                  <p className="text-xs text-[#64748b]">Preview 편입</p>
+                  <p className="mt-1 text-lg font-semibold text-[#0f172a]">{marketOverlayPreviewCount}건</p>
+                  <p className="text-xs text-[#94a3b8]">
+                    quotes {marketOverlayDiagnostics?.quotes_received_count ?? 0} / {marketOverlayDiagnostics?.quotes_requested_count ?? 0}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
+                  <p className="text-xs text-[#64748b]">최근 판단</p>
+                  <p className="mt-1 text-lg font-semibold text-[#0f172a]">
+                    {data.marketOverlayFunnel?.decision_count ?? 0}건
+                  </p>
+                  <p className="text-xs text-[#94a3b8]">
+                    최근 {data.marketOverlayFunnel?.lookback_days ?? 14}일
+                  </p>
+                </div>
+                <div className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
+                  <p className="text-xs text-[#64748b]">주문 전환</p>
+                  <p className="mt-1 text-lg font-semibold text-[#0f172a]">
+                    {data.marketOverlayFunnel?.order_count ?? 0}건
+                  </p>
+                  <p className="text-xs text-[#94a3b8]">
+                    전환율 {((data.marketOverlayFunnel?.order_conversion_rate ?? 0) * 100).toFixed(1)}%
+                  </p>
+                </div>
+                <div className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
+                  <p className="text-xs text-[#64748b]">Coverage 상태</p>
+                  <p className="mt-1 text-lg font-semibold text-[#0f172a]">
+                    {data.tradingUniverseCoverage?.market_overlay_active ? "활성" : "비활성"}
+                  </p>
+                  <p className="text-xs text-[#94a3b8]">
+                    source decision {marketOverlayCoverageItem?.decision_count ?? 0} / order {marketOverlayCoverageItem?.order_count ?? 0}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 mb-5">
+                <div className="rounded-lg border border-[#e2e8f0] p-4">
+                  <h3 className="text-sm font-semibold text-[#0f172a]">Overlay 진단</h3>
+                  <div className="mt-3 space-y-2 text-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[#64748b]">활성 여부</span>
+                      <StatusBadge variant={marketOverlayDiagnostics?.enabled ? "success" : "warning"}>
+                        {marketOverlayDiagnostics?.enabled ? "enabled" : "disabled"}
+                      </StatusBadge>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[#64748b]">skip 사유</span>
+                      <span className="font-mono text-xs text-[#0f172a]">
+                        {marketOverlayDiagnostics?.skipped_reason ?? "—"}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[#64748b]">pre-pool / scored</span>
+                      <span className="text-[#0f172a]">
+                        {marketOverlayDiagnostics?.pre_pool_candidate_count ?? 0} / {marketOverlayDiagnostics?.scored_candidate_count ?? 0}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[#64748b]">filtered out</span>
+                      <span className="text-[#0f172a]">{marketOverlayDiagnostics?.filtered_out_count ?? 0}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-[#e2e8f0] p-4">
+                  <h3 className="text-sm font-semibold text-[#0f172a]">판단 / 주문 분포</h3>
+                  <div className="mt-3 space-y-2 text-sm">
+                    <div>
+                      <p className="text-xs text-[#64748b] mb-1">Decision Type</p>
+                      <p className="text-[#0f172a]">
+                        {Object.entries(data.marketOverlayFunnel?.decision_type_counts ?? {})
+                          .map(([key, value]) => `${key} ${value}`)
+                          .join(" · ") || "—"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-[#64748b] mb-1">Order Status</p>
+                      <p className="text-[#0f172a]">
+                        {Object.entries(data.marketOverlayFunnel?.order_status_counts ?? {})
+                          .map(([key, value]) => `${key} ${value}`)
+                          .join(" · ") || "—"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <DataTable
+                columns={[
+                  { key: "createdAt", header: "판단시각", width: "150px", render: (row: MarketOverlayRecentRow) => formatKstDateTime(row.createdAt) },
+                  { key: "symbol", header: "종목", width: "90px" },
+                  { key: "decisionType", header: "판단", width: "90px", align: "center" },
+                  { key: "side", header: "매매", width: "80px", align: "center" },
+                  { key: "inclusionReason", header: "편입사유" },
+                  { key: "orderStatus", header: "주문상태", width: "110px", align: "center" },
+                ]}
+                data={marketOverlayRecentRows}
+                idKey="id"
+                compact
+                emptyMessage="최근 market_overlay 샘플이 없습니다."
+              />
+            </Panel>
+          </div>
+
+          {/* ── Section E: 최근 Session Events ── */}
           <Panel title="Session Events" subtitle="최근 5건">
             {d.sessionEvents.length > 0 ? (
               <table className="w-full text-sm">

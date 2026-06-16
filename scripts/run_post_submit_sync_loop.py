@@ -370,8 +370,11 @@ async def _run_one_cycle(
                 rest_client=rest_client,
                 ws_url=settings.kis_ws_url,
             )
-            await broker.authenticate()
-            logger.info("Broker authentication successful.")
+            # post-submit-sync는 REST polling only 경로다.
+            # WebSocket approval key(oauth2/Approval)는 여기서 사용하지 않으므로
+            # 불필요한 approval 발급 timeout이 전체 sync cycle을 죽이지 않게 한다.
+            await rest_client.authenticate()
+            logger.info("Broker REST authentication successful.")
 
             # ── 2. Postgres connection ─────────────────────────────────────
             logger.info("Connecting to Postgres ...")

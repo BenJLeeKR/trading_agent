@@ -171,6 +171,30 @@ class TestSubmitOrderBusinessError:
         assert "EGW00201" in str(exc_info.value)
 
 
+class TestRaiseOnErrorRateLimit:
+    """KIS rate limit 응답은 RATE_LIMIT으로 분류되어야 한다."""
+
+    def test_inquire_balance_rate_limit_maps_to_rate_limit_error(
+        self, client: KISRestClient
+    ) -> None:
+        resp = httpx.Response(
+            200,
+            json={
+                "rt_cd": "1",
+                "msg_cd": "EGW00215",
+                "msg1": "원장에서 허용 가능한 초당 거래건수를 초과하였습니다.",
+            },
+        )
+
+        with pytest.raises(BrokerError) as exc_info:
+            client._raise_on_error(resp, endpoint="inquire_balance")
+
+        assert exc_info.value.error_type == BrokerErrorType.RATE_LIMIT
+        assert exc_info.value.retryable is True
+        assert exc_info.value.raw_code == "EGW00215"
+        assert exc_info.value.retry_after_seconds == 1.0
+
+
 # ── Test 3: Request body structure ────────────────────────────────────────
 
 
@@ -265,6 +289,44 @@ class TestCashAndPositionsBudgetLogging:
         mock_fetch = AsyncMock(
             side_effect=[
                 BudgetExhaustedError("inquiry", "Bucket 'inquiry' exhausted (remaining=0/1)"),
+                (
+                    [{"pdno": "005930", "hldg_qty": "1"}],
+                    {"dnca_tot_amt": "1000000"},
+                    {"output": [{"pdno": "005930", "hldg_qty": "1"}], "output2": {"dnca_tot_amt": "1000000"}},
+                ),
+            ]
+        )
+        mock_sleep = AsyncMock()
+
+        with (
+            patch.object(KISRestClient, "_wait_for_inquiry_budget", AsyncMock(return_value=True)),
+            patch.object(KISRestClient, "_fetch_inquire_balance_pages", mock_fetch),
+            patch("agent_trading.brokers.koreainvestment.rest_client.asyncio.sleep", mock_sleep),
+        ):
+            result = await client.get_cash_and_positions(after_hours=False)
+
+        assert result.cash_balance == {"dnca_tot_amt": "1000000"}
+        assert result.positions == [{"pdno": "005930", "hldg_qty": "1"}]
+        assert mock_fetch.await_count == 2
+        mock_sleep.assert_awaited_once_with(1.0)
+
+    @pytest.mark.asyncio
+    async def test_get_cash_and_positions_retries_once_on_paper_broker_rate_limit(
+        self, client: KISRestClient
+    ) -> None:
+        mock_fetch = AsyncMock(
+            side_effect=[
+                BrokerError(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
+                    error_type=BrokerErrorType.RATE_LIMIT,
+                    retryable=True,
+                    raw_code="EGW00215",
+                    raw_message=(
+                        "KIS inquire_balance: rate limit (msg_cd=EGW00215, rt_cd=1): "
+                        "원장에서 허용 가능한 초당 거래건수를 초과하였습니다."
+                    ),
+                    retry_after_seconds=1.0,
+                ),
                 (
                     [{"pdno": "005930", "hldg_qty": "1"}],
                     {"dnca_tot_amt": "1000000"},

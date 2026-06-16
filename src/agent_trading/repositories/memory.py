@@ -34,6 +34,7 @@ from agent_trading.domain.entities import (
     ReconciliationPositionLinkEntity,
     ReconciliationRunEntity,
     RiskLimitSnapshotEntity,
+    SignalFeatureSnapshotEntity,
     SessionEventEntity,
     SnapshotSyncRunEntity,
     StrategyEntity,
@@ -1460,6 +1461,46 @@ class InMemoryRiskLimitSnapshotRepository:
         results = [
             item for item in self._items.values()
             if item.account_id == account_id
+        ]
+        results.sort(key=lambda item: item.snapshot_at, reverse=True)
+        return tuple(results[:limit])
+
+
+class InMemorySignalFeatureSnapshotRepository:
+    """In-memory implementation of ``SignalFeatureSnapshotRepository``."""
+
+    def __init__(self) -> None:
+        self._items: dict[UUID, SignalFeatureSnapshotEntity] = {}
+
+    async def add(
+        self, snapshot: SignalFeatureSnapshotEntity,
+    ) -> SignalFeatureSnapshotEntity:
+        self._items[snapshot.signal_feature_snapshot_id] = snapshot
+        return snapshot
+
+    async def get_latest_by_instrument(
+        self,
+        instrument_id: UUID,
+        timeframe: str = "1d",
+    ) -> SignalFeatureSnapshotEntity | None:
+        results = [
+            item for item in self._items.values()
+            if item.instrument_id == instrument_id and item.timeframe == timeframe
+        ]
+        if not results:
+            return None
+        results.sort(key=lambda item: item.snapshot_at, reverse=True)
+        return results[0]
+
+    async def list_by_instrument(
+        self,
+        instrument_id: UUID,
+        timeframe: str = "1d",
+        limit: int = 20,
+    ) -> Sequence[SignalFeatureSnapshotEntity]:
+        results = [
+            item for item in self._items.values()
+            if item.instrument_id == instrument_id and item.timeframe == timeframe
         ]
         results.sort(key=lambda item: item.snapshot_at, reverse=True)
         return tuple(results[:limit])

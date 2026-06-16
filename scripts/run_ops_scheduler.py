@@ -76,6 +76,9 @@ from agent_trading.brokers.koreainvestment.token_cache import (
     build_rest_access_token_cache_config,
 )
 from agent_trading.config.settings import AppSettings
+from agent_trading.services.held_position_policy import (
+    is_held_position_sell_path,
+)
 
 try:
     from dotenv import load_dotenv
@@ -364,16 +367,12 @@ def _is_held_position_sell_result(result: CommandResult) -> bool:
     if not result.ok:
         return False
     for obj in _extract_json_objects(result.stdout):
-        source_type = str(obj.get("source_type", "")).lower()
-        if source_type != "held_position":
-            continue
-        decision_type = str(obj.get("decision_type", "")).lower()
-        if decision_type not in ("reduce", "exit"):
-            continue
-        side = str(obj.get("side", "")).lower()
-        if side != "sell":
-            continue
-        return True
+        if is_held_position_sell_path(
+            source_type=str(obj.get("source_type", "")),
+            decision_type=str(obj.get("decision_type", "")),
+            side=str(obj.get("side", "")),
+        ):
+            return True
     return False
 
 
@@ -444,6 +443,18 @@ def _parse_fill_sync_summary(result: CommandResult) -> dict[str, Any]:
         metrics["errors"] = int(m.group(10))
         break
     return metrics
+
+
+def _parse_decision_loop_summary(result: CommandResult) -> dict[str, Any]:
+    """Parse decision loop aggregate summary metrics from JSON stdout."""
+    for obj in reversed(_extract_json_objects(result.stdout)):
+        if str(obj.get("mode", "")).lower() != "summary":
+            continue
+        metrics = obj.get("metrics")
+        if not isinstance(metrics, dict):
+            continue
+        return metrics
+    return {}
 
 
 def _parse_post_submit_sync_summary(result: CommandResult) -> dict[str, Any]:
@@ -599,6 +610,7 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
         "decision_loop": _command_family_stats(
             state,
             names={"decision_submit_gate", "decision_dry_run"},
+            metrics_parser=_parse_decision_loop_summary,
         ),
         "recovery_batch": _command_family_stats(
             state,
@@ -625,7 +637,10 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
             latest_fill,
             metrics=_parse_fill_sync_summary(latest_fill) if latest_fill else None,
         ),
-        "decision_loop": _command_result_summary(latest_decision_loop),
+        "decision_loop": _command_result_summary(
+            latest_decision_loop,
+            metrics=_parse_decision_loop_summary(latest_decision_loop) if latest_decision_loop else None,
+        ),
         "recovery_batch": _command_result_summary(latest_recovery),
     }
 

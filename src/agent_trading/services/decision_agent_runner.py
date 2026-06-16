@@ -407,6 +407,10 @@ class DecisionAgentRunner:
             event_bias=event_output.aggregate_view.overall_bias,
             event_conflict=event_output.aggregate_view.event_conflict,
             event_reason_codes=event_output.aggregate_view.top_reason_codes,
+            evidence_strength=event_output.aggregate_view.evidence_strength,
+            no_material_events=event_output.aggregate_view.no_material_events,
+            detected_event_count=event_output.detected_event_count,
+            interpreted_event_count=event_output.interpreted_event_count,
             # Metadata
             source_agent_names=(
                 event_output.agent_name,

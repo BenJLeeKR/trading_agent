@@ -103,6 +103,15 @@ _TOKEN_EXPIRED_CODES: frozenset[str] = frozenset({
     "EGW00123",  # "기간이 만료된 token 입니다."
 })
 
+# KIS rate-limit / throttle signals.
+# 코드값만으로 의미가 일관되지 않은 경우가 있어, 실제 분류는
+# ``_is_rate_limit_error()``에서 메시지와 함께 최종 판단한다.
+_RATE_LIMIT_ERROR_CODES: frozenset[str] = frozenset({
+    "EGW00160",  # 호출수초과
+    "EGW00201",  # 운영상 rate limit로도 관측됨
+    "EGW00215",  # inquire_balance에서 초당 거래건수 초과로 관측됨
+})
+
 # KIS error codes that indicate ambiguous / unknown state
 # These are codes where the broker cannot definitively confirm the outcome
 # of an order operation, requiring reconciliation via inquiry path.
@@ -112,7 +121,6 @@ _AMBIGUOUS_ERROR_CODES: frozenset[str] = frozenset({
     "EGW00125",  # 주문전송 실패 (기타)
     "EGW00125",  # 주문전송 실패 (기타)
     "EGW00150",  # 모의투자 주문불가
-    "EGW00215",  # 주문가격 제한폭 초과
     "EGW00220",  # 주문수량 제한초과
     "EGW00300",  # 주문실패 (주문번호 없음)
     "EGW00301",  # 주문실패 (시장조성)
@@ -200,6 +208,18 @@ _AMBIGUOUS_ERROR_CODES: frozenset[str] = frozenset({
     "OPR00049",  # 주문번호 처리 결과 재확인 필요
     "OPR00050",  # 주문번호 처리 결과 불일치
 })
+
+
+def _is_rate_limit_error(msg_cd: str, rt_cd: str, msg: str) -> bool:
+    """KIS 응답이 rate limit 계열인지 보수적으로 판별한다."""
+    normalized_msg = (msg or "").strip()
+    if (
+        "초당 거래건수" in normalized_msg
+        or "호출수초과" in normalized_msg
+        or "too many requests" in normalized_msg.lower()
+    ):
+        return True
+    return msg_cd in _RATE_LIMIT_ERROR_CODES or rt_cd in _RATE_LIMIT_ERROR_CODES
 
 # KIS error codes that are definitively known failures (no ambiguity)
 # These can be safely mapped to a known OrderStatus without reconciliation.
@@ -757,6 +777,15 @@ class KISRestClient:
                 )
             # --- END TOKEN EXPIRED ---
 
+            if _is_rate_limit_error(msg_cd, rt_cd, msg):
+                raise BrokerError(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
+                    error_type=BrokerErrorType.RATE_LIMIT,
+                    retryable=True,
+                    raw_code=msg_cd or rt_cd,
+                    raw_message=f"KIS {endpoint}: rate limit (msg_cd={msg_cd}, rt_cd={rt_cd}): {msg}",
+                    retry_after_seconds=1.0,
+                )
             if msg_cd in _AMBIGUOUS_ERROR_CODES or rt_cd in _AMBIGUOUS_ERROR_CODES:
                 raise BrokerError(
                     broker_name=BrokerName.KOREA_INVESTMENT,
@@ -795,6 +824,15 @@ class KISRestClient:
                 )
             # --- END TOKEN EXPIRED ---
 
+            if _is_rate_limit_error(msg_cd, rt_cd, msg):
+                raise BrokerError(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
+                    error_type=BrokerErrorType.RATE_LIMIT,
+                    retryable=True,
+                    raw_code=msg_cd or rt_cd,
+                    raw_message=f"KIS {endpoint}: rate limit (msg_cd={msg_cd}, rt_cd={rt_cd}): {msg}",
+                    retry_after_seconds=1.0,
+                )
             if msg_cd in _AMBIGUOUS_ERROR_CODES or rt_cd in _AMBIGUOUS_ERROR_CODES:
                 raise BrokerError(
                     broker_name=BrokerName.KOREA_INVESTMENT,
@@ -1646,6 +1684,37 @@ class KISRestClient:
                     "(account=%s bucket=%s)",
                     self.account_number,
                     exc.bucket,
+                )
+                return CashAndPositionsResult(
+                    cash_balance=None,
+                    positions=[],
+                    raw_response={},
+                )
+            except BrokerError as exc:
+                should_retry = (
+                    self.env == "paper"
+                    and exc.error_type == BrokerErrorType.RATE_LIMIT
+                    and attempt < cash_and_positions_attempts
+                )
+                if should_retry:
+                    wait = exc.retry_after_seconds or 1.0
+                    logger.info(
+                        "RATE_LIMIT_RETRY VTTC8434R get_cash_and_positions() waiting %.1fs "
+                        "after broker rate limit (account=%s code=%s attempt=%d/%d)",
+                        wait,
+                        self.account_number,
+                        exc.raw_code,
+                        attempt + 1,
+                        cash_and_positions_attempts,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                logger.warning(
+                    "RATE_LIMIT VTTC8434R get_cash_and_positions() broker throttled "
+                    "(account=%s code=%s message=%s)",
+                    self.account_number,
+                    exc.raw_code,
+                    exc.raw_message,
                 )
                 return CashAndPositionsResult(
                     cash_balance=None,

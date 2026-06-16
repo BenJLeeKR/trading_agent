@@ -49,6 +49,7 @@ import os
 import signal
 import sys
 import time
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -62,21 +63,35 @@ except ImportError:
 
 from agent_trading.brokers.base import BrokerAdapter
 from agent_trading.domain.enums import OrderSide, OrderType
-from agent_trading.domain.entities import ExecutionAttemptEntity, ExternalEventEntity
+from agent_trading.domain.entities import (
+    ExecutionAttemptEntity,
+    ExternalEventEntity,
+)
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.contracts import (
     ExternalEventRepository,
     SnapshotSyncHealthSummary,
 )
+from agent_trading.repositories.filters import AccountLookup
 from agent_trading.runtime.bootstrap import (
     _build_kis_live_quote_client,
     postgres_runtime,
 )
 from agent_trading.services.common_types import SubmitResult
+from agent_trading.services.guardrail_audit import (
+    persist_blocking_guardrail_evaluation,
+)
+from agent_trading.services.held_position_policy import (
+    is_held_position_sell_path,
+)
 from agent_trading.services.pre_ai_gate import (
     DEFAULT_PRE_AI_BUY_MIN_ORDERABLE_AMOUNT,
     evaluate_pre_ai_skip_reason,
+)
+from agent_trading.services.submit_lane_gate import (
+    HELD_POSITION_SELL_MAX_PER_CYCLE,
+    evaluate_symbol_submit_lane,
 )
 from agent_trading.services.sizing_engine import calculate_sizing
 from agent_trading.services.universe_selection import UniverseSelectionService
@@ -109,85 +124,12 @@ from scripts.run_orchestrator_once import (
 _DEFAULT_SAFE_PRICE = Decimal("50000")
 """Ultimate fallback price when both live quote and KIS_SMOKE_PRICE are unavailable."""
 
-HELD_POSITION_SELL_MAX_PER_CYCLE = 2
-"""Per-cycle cap for held-position REDUCE/EXIT SELL submit lane."""
-
 PRE_AI_BUY_MIN_ORDERABLE_AMOUNT = DEFAULT_PRE_AI_BUY_MIN_ORDERABLE_AMOUNT
 """Skip BUY-side AI evaluation when verified orderable cash is too small.
 
 Aligned with the sizing engine's 신규 포지션 최소 진입 금액(500,000원) so
 that obviously non-actionable BUY candidates are filtered before any LLM call.
 """
-
-
-def _infer_symbol_dry_run_reason(
-    *,
-    submit: bool,
-    dry_run: bool,
-    allow_general_submit: bool,
-    source_type: str,
-    submit_budget_consumed_count: int,
-    max_general_submits_this_cycle: int,
-    held_position_sell_cycle_count: int,
-    held_position_sell_cycle_symbols: set[str],
-    symbol: str,
-) -> str | None:
-    """Return an explicit dry-run reason for per-symbol scheduler gating."""
-    if not submit and dry_run:
-        return "cli_dry_run"
-
-    if source_type == "held_position":
-        if held_position_sell_cycle_count >= HELD_POSITION_SELL_MAX_PER_CYCLE:
-            return "held_position_sell_cycle_cap"
-        if symbol in held_position_sell_cycle_symbols:
-            return "held_position_sell_symbol_duplicate"
-        return None
-
-    if not allow_general_submit:
-        return f"general_submit_disabled_{source_type}"
-
-    if submit_budget_consumed_count >= max_general_submits_this_cycle:
-        return f"submit_budget_consumed_{source_type}"
-
-    return None
-
-
-def _compute_symbol_submit_mode(
-    *,
-    submit: bool,
-    dry_run: bool,
-    allow_general_submit: bool,
-    source_type: str,
-    submit_budget_consumed_count: int,
-    max_general_submits_this_cycle: int,
-    held_position_sell_cycle_count: int,
-    held_position_sell_cycle_symbols: set[str],
-    symbol: str,
-) -> tuple[bool, bool]:
-    """Return per-symbol ``(submit, dry_run)`` mode for the current cycle.
-
-    ``held_position`` items use a dedicated lane so that a risk-reducing SELL
-    candidate is not downgraded to dry-run merely because a general BUY slot
-    was already reserved earlier in the same scheduler cycle.  That lane still
-    respects cycle-level cap and same-symbol deduplication.
-    """
-    if not submit or dry_run:
-        return False, True
-
-    if source_type == "held_position":
-        symbol_submit = (
-            held_position_sell_cycle_count < HELD_POSITION_SELL_MAX_PER_CYCLE
-            and symbol not in held_position_sell_cycle_symbols
-        )
-        return symbol_submit, not symbol_submit
-
-    if not allow_general_submit:
-        return False, True
-
-    symbol_submit = submit_budget_consumed_count < max_general_submits_this_cycle
-    return symbol_submit, not symbol_submit
-
-
 async def _evaluate_pre_ai_skip_reason(
     repos: RepositoryContainer,
     *,
@@ -310,6 +252,7 @@ DEFAULT_EVENT_LOOKBACK_HOURS: int = 24
 P2.1+에서 trading calendar 기반 lookback으로 개선 필요."""
 ENV_INTERVAL = "PAPER_DECISION_LOOP_INTERVAL_SECONDS"
 ENV_TRADING_UNIVERSE = "TRADING_UNIVERSE_SYMBOLS"
+ENV_MANUAL_WATCHLIST = "TRADING_UNIVERSE_MANUAL_SYMBOLS"
 
 
 @dataclass(slots=True, frozen=True)
@@ -436,6 +379,43 @@ def _parse_universe_symbols(raw: str | None) -> tuple[UniverseSymbol, ...]:
     return tuple(parsed)
 
 
+def _parse_manual_watchlist_symbols(raw: str | None) -> tuple[tuple[str, str], ...]:
+    """Parse operator-supplied manual watchlist symbols.
+
+    Supported item formats:
+    - ``005930`` → ``("005930", "KRX")``
+    - ``005930:KRX`` → explicit symbol/market
+    - ``005930.KRX`` → explicit symbol/market
+    """
+    if raw is None or not raw.strip():
+        return ()
+
+    parsed: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in raw.split(","):
+        token = item.strip()
+        if not token:
+            continue
+
+        if ":" in token:
+            symbol, market = token.split(":", 1)
+        elif "." in token:
+            symbol, market = token.split(".", 1)
+        else:
+            symbol, market = token, MARKET
+
+        symbol = symbol.strip().upper()
+        market = (market.strip().upper() or MARKET)
+        if not symbol:
+            continue
+
+        key = (symbol, market)
+        if key not in seen:
+            parsed.append(key)
+            seen.add(key)
+    return tuple(parsed)
+
+
 async def _read_trading_universe() -> tuple[UniverseSymbol, ...]:
     """Read the trading universe with fallback chain.
 
@@ -524,6 +504,9 @@ async def _read_trading_universe() -> tuple[UniverseSymbol, ...]:
                 # P2 minimum: market overlay cap and pre-pool size
                 market_overlay_cap=5,
                 pre_pool_size=50,
+                manual_symbols=_parse_manual_watchlist_symbols(
+                    os.getenv(ENV_MANUAL_WATCHLIST)
+                ),
             )
             selected = await selector.compose(ctx)
 
@@ -708,6 +691,7 @@ def _serialize_cycle_result(
         # Dry-run mode: assemble + sizing, no broker submit
         data["status"] = "DRY_RUN"
         data["dry_run_reason"] = dry_run_reason
+        data["stop_reason"] = result.stop_reason if result is not None else dry_run_reason
         if result is not None and result.order_intent is not None:
             data["decision_context_id"] = (
                 str(result.decision_context_id) if result.decision_context_id else None
@@ -726,6 +710,7 @@ def _serialize_cycle_result(
         data["status"] = result.status
         data["error_phase"] = result.error_phase
         data["error_message"] = result.error_message
+        data["stop_reason"] = result.stop_reason
         data["decision_context_id"] = (
             str(result.decision_context_id) if result.decision_context_id else None
         )
@@ -754,9 +739,94 @@ def _serialize_cycle_result(
     return data
 
 
+async def _record_pre_ai_guardrail_evaluation(
+    repos: RepositoryContainer,
+    *,
+    account_alias: str,
+    symbol: str,
+    market: str,
+    source_type: str,
+    stop_reason: str,
+    details: dict[str, str | None],
+) -> None:
+    """Persist a deterministic pre-AI gate block as a guardrail evaluation."""
+    account_id = None
+    try:
+        account = await repos.accounts.find_one(AccountLookup(account_alias=account_alias))
+        account_id = account.account_id if account is not None else None
+    except Exception:
+        logger.warning(
+            "Pre-AI guardrail account lookup failed while recording evaluation: "
+            "account_alias=%s symbol=%s",
+            account_alias,
+            symbol,
+            exc_info=True,
+        )
+
+    await persist_blocking_guardrail_evaluation(
+        repos,
+        rule_set_version="pre_ai_gate_v1",
+        blocking_rule_codes=[stop_reason],
+        rule_results={
+            "account_alias": account_alias,
+            "account_id": str(account_id) if account_id is not None else None,
+            "symbol": symbol,
+            "market": market,
+            "source_type": source_type,
+            "stop_reason": stop_reason,
+            "details": details,
+        },
+    )
+
+
+async def _record_scheduler_guardrail_evaluation(
+    repos: RepositoryContainer,
+    *,
+    account_alias: str,
+    symbol: str,
+    market: str,
+    source_type: str,
+    stop_reason: str,
+    trade_decision_id: object | None,
+    decision_context_id: object | None,
+) -> None:
+    """Persist a scheduler gate dry-run decision as a guardrail evaluation."""
+    account_id = None
+    try:
+        account = await repos.accounts.find_one(AccountLookup(account_alias=account_alias))
+        account_id = account.account_id if account is not None else None
+    except Exception:
+        logger.warning(
+            "Scheduler guardrail account lookup failed while recording evaluation: "
+            "account_alias=%s symbol=%s",
+            account_alias,
+            symbol,
+            exc_info=True,
+        )
+
+    await persist_blocking_guardrail_evaluation(
+        repos,
+        rule_set_version="scheduler_gate_v1",
+        blocking_rule_codes=[stop_reason],
+        rule_results={
+            "account_alias": account_alias,
+            "account_id": str(account_id) if account_id is not None else None,
+            "symbol": symbol,
+            "market": market,
+            "source_type": source_type,
+            "stop_reason": stop_reason,
+            "gate_phase": "scheduler_gate",
+        },
+        decision_context_id=decision_context_id,
+        trade_decision_id=trade_decision_id,
+    )
+
+
 def _build_aggregate_summary(
     results: list[dict[str, object]],
     total_duration: float,
+    *,
+    universe: tuple[UniverseSymbol, ...] = (),
 ) -> dict[str, object]:
     """Build an aggregate summary from all cycle results."""
     total = len(results)
@@ -767,6 +837,11 @@ def _build_aggregate_summary(
     )
     skipped = sum(1 for r in results if r.get("status") == "SKIPPED")
     errors = sum(1 for r in results if r.get("status") in ("ERROR", "UNKNOWN"))
+    source_counts = Counter(item.source_type for item in universe)
+    processed_source_counts = Counter(
+        str(r.get("source_type", "unknown") or "unknown")
+        for r in results
+    )
 
     return {
         "mode": "summary",
@@ -776,6 +851,14 @@ def _build_aggregate_summary(
         "error": errors,
         "success_rate": round(success / total * 100, 1) if total > 0 else 0,
         "total_duration_seconds": round(total_duration, 3),
+        "metrics": {
+            "universe_symbol_count": len(universe),
+            "processed_symbol_count": total,
+            "held_position_count": source_counts.get("held_position", 0),
+            "held_position_processed_count": processed_source_counts.get("held_position", 0),
+            "universe_source_counts": dict(source_counts),
+            "processed_source_counts": dict(processed_source_counts),
+        },
     }
 
 
@@ -864,10 +947,28 @@ async def _run_one_cycle(
                 db_conn=tx.connection,
             )
             if pre_ai_skip_reason is not None:
+                try:
+                    await _record_pre_ai_guardrail_evaluation(
+                        repos,
+                        account_alias=ACCOUNT_ALIAS,
+                        symbol=symbol,
+                        market=market,
+                        source_type=source_type,
+                        stop_reason=pre_ai_skip_reason,
+                        details=pre_ai_skip_details,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to record pre-AI guardrail evaluation: symbol=%s reason=%s",
+                        symbol,
+                        pre_ai_skip_reason,
+                        exc_info=True,
+                    )
                 result = SubmitResult(
                     status="SKIPPED",
                     error_phase="pre_ai_gate",
                     error_message=pre_ai_skip_reason,
+                    stop_reason=pre_ai_skip_reason,
                     is_skipped=True,
                 )
                 duration = time.monotonic() - start
@@ -927,10 +1028,12 @@ async def _run_one_cycle(
             seeded_events: list[ExternalEventEntity] = []
 
             if _SEEDED_NEWS_ENABLED:
-                # ── T3 pipeline skip for held_position and market_overlay ──
-                # These source types do not benefit from seeded news context
-                # and skipping them saves Naver API quota.
-                if source_type in ("held_position", "market_overlay"):
+                # ── T3 pipeline skip for market_overlay only ──
+                # held_position은 REDUCE/EXIT 판단에 최신 T3 이벤트가 직접
+                # 영향을 줄 수 있으므로 live pipeline을 허용한다.
+                # market_overlay는 no-event 정책이 다르고 Naver quota 보호
+                # 효과가 커서 기존대로 skip 유지.
+                if source_type == "market_overlay":
                     logger.debug(
                         "Skipping T3 live pipeline for symbol=%s source_type=%s",
                         symbol, source_type,
@@ -1003,6 +1106,7 @@ async def _run_one_cycle(
                     order_intent=intent,
                     trade_decision_id=str(intent.trade_decision_id) if intent.trade_decision_id else None,
                     decision_context_id=intent.decision_context_id,
+                    stop_reason=dry_run_reason,
                 )
 
                 if (
@@ -1025,6 +1129,24 @@ async def _run_one_cycle(
                         created_at=_now,
                     )
                     await repos.execution_attempts.add(attempt)
+                    try:
+                        await _record_scheduler_guardrail_evaluation(
+                            repos,
+                            account_alias=ACCOUNT_ALIAS,
+                            symbol=symbol,
+                            market=market,
+                            source_type=source_type,
+                            stop_reason=dry_run_reason,
+                            trade_decision_id=intent.trade_decision_id,
+                            decision_context_id=intent.decision_context_id,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to record scheduler guardrail evaluation: symbol=%s reason=%s",
+                            symbol,
+                            dry_run_reason,
+                            exc_info=True,
+                        )
                     logger.info(
                         "Recorded scheduler dry-run attempt: symbol=%s trade_decision_id=%s reason=%s",
                         symbol,
@@ -1667,18 +1789,7 @@ async def _run_loop(
                         # candidate either truly submits or fails pre-submit so
                         # a later symbol can inherit the slot in the same cycle.
                         async with _general_submit_lock:
-                            symbol_dry_run_reason = _infer_symbol_dry_run_reason(
-                                submit=submit,
-                                dry_run=dry_run,
-                                allow_general_submit=allow_general_submit,
-                                source_type=item_source_type,
-                                submit_budget_consumed_count=submit_budget_consumed_count,
-                                max_general_submits_this_cycle=max_general_submits_this_cycle,
-                                held_position_sell_cycle_count=held_position_sell_cycle_count,
-                                held_position_sell_cycle_symbols=held_position_sell_cycle_symbols,
-                                symbol=item.symbol,
-                            )
-                            symbol_submit, symbol_dry_run = _compute_symbol_submit_mode(
+                            lane_decision = evaluate_symbol_submit_lane(
                                 submit=submit,
                                 dry_run=dry_run,
                                 allow_general_submit=allow_general_submit,
@@ -1690,9 +1801,9 @@ async def _run_loop(
                                 symbol=item.symbol,
                             )
                             result = await _execute_symbol_cycle(
-                                symbol_submit=symbol_submit,
-                                symbol_dry_run=symbol_dry_run,
-                                symbol_dry_run_reason=symbol_dry_run_reason,
+                                symbol_submit=lane_decision.submit,
+                                symbol_dry_run=lane_decision.dry_run,
+                                symbol_dry_run_reason=lane_decision.dry_run_reason,
                                 remaining_general_buy_budget=max(
                                     0,
                                     max_general_submits_this_cycle - submit_budget_consumed_count,
@@ -1702,18 +1813,7 @@ async def _run_loop(
                             if status in ("SUBMITTED", "RECONCILE_REQUIRED"):
                                 submit_budget_consumed_count += 1
                     else:
-                        symbol_dry_run_reason = _infer_symbol_dry_run_reason(
-                            submit=submit,
-                            dry_run=dry_run,
-                            allow_general_submit=allow_general_submit,
-                            source_type=item_source_type,
-                            submit_budget_consumed_count=submit_budget_consumed_count,
-                            max_general_submits_this_cycle=max_general_submits_this_cycle,
-                            held_position_sell_cycle_count=held_position_sell_cycle_count,
-                            held_position_sell_cycle_symbols=held_position_sell_cycle_symbols,
-                            symbol=item.symbol,
-                        )
-                        symbol_submit, symbol_dry_run = _compute_symbol_submit_mode(
+                        lane_decision = evaluate_symbol_submit_lane(
                             submit=submit,
                             dry_run=dry_run,
                             allow_general_submit=allow_general_submit,
@@ -1725,9 +1825,9 @@ async def _run_loop(
                             symbol=item.symbol,
                         )
                         result = await _execute_symbol_cycle(
-                            symbol_submit=symbol_submit,
-                            symbol_dry_run=symbol_dry_run,
-                            symbol_dry_run_reason=symbol_dry_run_reason,
+                            symbol_submit=lane_decision.submit,
+                            symbol_dry_run=lane_decision.dry_run,
+                            symbol_dry_run_reason=lane_decision.dry_run_reason,
                             remaining_general_buy_budget=max(
                                 0,
                                 max_general_submits_this_cycle - submit_budget_consumed_count,
@@ -1736,7 +1836,7 @@ async def _run_loop(
 
                     # HP sell block 이유 로깅 (explainability)
                     is_held_position_item = item_source_type == "held_position"
-                    if is_held_position_item and not symbol_submit and submit and not dry_run:
+                    if is_held_position_item and not lane_decision.submit and submit and not dry_run:
                         reasons = []
                         if held_position_sell_cycle_count >= HELD_POSITION_SELL_MAX_PER_CYCLE:
                             reasons.append("cycle_cap_reached")
@@ -1754,10 +1854,10 @@ async def _run_loop(
                             # 3중 조건: source_type == held_position AND decision_type in (reduce, exit) AND side == sell
                             result_decision_type = str(result.get("decision_type", "")).lower()
                             result_side = str(result.get("side", "")).lower()
-                            is_held_position_sell = (
-                                getattr(item, "source_type", "core") == "held_position"
-                                and result_decision_type in ("reduce", "exit")
-                                and result_side == "sell"
+                            is_held_position_sell = is_held_position_sell_path(
+                                source_type=getattr(item, "source_type", "core"),
+                                decision_type=result_decision_type,
+                                side=result_side,
                             )
                             if is_held_position_sell:
                                 # held_position sell은 일일 상한 없음 (위험 축소 목적).
@@ -1835,7 +1935,11 @@ async def _run_loop(
 
     # ── Final summary ──
     total_duration = time.monotonic() - loop_start
-    summary = _build_aggregate_summary(results, total_duration)
+    summary = _build_aggregate_summary(
+        results,
+        total_duration,
+        universe=universe,
+    )
 
     if output == "json":
         print(json.dumps(summary, ensure_ascii=False))

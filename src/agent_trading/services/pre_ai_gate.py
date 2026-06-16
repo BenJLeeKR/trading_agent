@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from agent_trading.domain.enums import PipelineStopReason
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import AccountLookup, OrderQuery
 
@@ -87,7 +88,7 @@ async def evaluate_pre_ai_skip_reason(
 
     if source_type == "held_position":
         if matched_qty is None or matched_qty <= 0:
-            return "no_held_position", details
+            return PipelineStopReason.NO_HELD_POSITION.value, details
         held_skip_reason = await evaluate_held_position_skip_reason(
             repos,
             account_id=account.account_id,
@@ -102,10 +103,19 @@ async def evaluate_pre_ai_skip_reason(
             return held_skip_reason[0], details
         return None, details
 
+    has_held_position = matched_qty is not None and matched_qty > 0
+
     if remaining_general_buy_budget is not None:
         details["remaining_general_buy_budget"] = str(remaining_general_buy_budget)
-        if remaining_general_buy_budget <= 0 and (matched_qty is None or matched_qty <= 0):
-            return "general_buy_budget_exhausted", details
+        if remaining_general_buy_budget <= 0 and not has_held_position:
+            return PipelineStopReason.GENERAL_BUY_BUDGET_EXHAUSTED.value, details
+
+    # Cash-based pre-AI gates are only safe for true 신규 진입 후보.
+    # If the account already holds the symbol, the later AI path may
+    # legitimately decide HOLD/REDUCE/EXIT, so do not suppress that path
+    # solely because orderable cash is low or negative.
+    if has_held_position:
+        return None, details
 
     try:
         cash_snapshot = await repos.cash_balance_snapshots.get_latest_by_account(
@@ -127,9 +137,9 @@ async def evaluate_pre_ai_skip_reason(
     details["threshold"] = str(min_orderable_amount)
 
     if orderable_amount < 0:
-        return "negative_orderable_amount", details
+        return PipelineStopReason.NEGATIVE_ORDERABLE_AMOUNT.value, details
     if orderable_amount <= min_orderable_amount:
-        return "low_orderable_amount", details
+        return PipelineStopReason.LOW_ORDERABLE_AMOUNT.value, details
     return None, details
 
 
@@ -226,5 +236,5 @@ async def evaluate_held_position_skip_reason(
         else None
     )
     if latest_decision_type == "hold":
-        return "held_position_recent_hold_no_change", details
+        return PipelineStopReason.HELD_POSITION_RECENT_HOLD_NO_CHANGE.value, details
     return None, details

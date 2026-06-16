@@ -10,11 +10,16 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from agent_trading.api.deps import get_repos
+from agent_trading.api.deps import get_db, get_repos
 from agent_trading.api.schemas import (
     DecisionContextDetail,
     PaginatedTradeDecisionsResponse,
     TradeDecisionDetail,
+    WatchDiagnosticsEvidenceStrengthItem,
+    WatchDiagnosticsReasonCodeItem,
+    WatchDiagnosticsResponse,
+    WatchDiagnosticsSampleItem,
+    WatchDiagnosticsSourceTypeItem,
 )
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.contracts import TradeDecisionRow
@@ -95,6 +100,216 @@ def _to_detail(row: TradeDecisionRow, instrument_name: str | None = None) -> Tra
         latest_stop_reason=row.latest_stop_reason,
         latest_completed_at=row.latest_completed_at,
         latest_phase_count=row.latest_phase_count,
+    )
+
+
+@router.get("/trade-decisions/watch-diagnostics", response_model=WatchDiagnosticsResponse)
+async def get_watch_diagnostics(
+    lookback_days: int = Query(default=14, ge=1, le=90),
+    sample_limit: int = Query(default=20, ge=1, le=100),
+    db=Depends(get_db),
+) -> WatchDiagnosticsResponse:
+    """Summarize recent WATCH/HOLD distribution and EI metadata.
+
+    This endpoint is intended for backlog items 11/12:
+    WATCH absence diagnosis and core+no_event HOLD concentration analysis.
+    """
+    since_sql = "NOW() - ($1::int * INTERVAL '1 day')"
+
+    summary_row = await db.fetchrow(
+        f"""
+        SELECT
+            COUNT(*)::int AS total_decision_count,
+            COUNT(*) FILTER (
+                WHERE LOWER(COALESCE(td.decision_type::text, '')) = 'hold'
+            )::int AS hold_count,
+            COUNT(*) FILTER (
+                WHERE LOWER(COALESCE(td.decision_type::text, '')) = 'watch'
+            )::int AS watch_count,
+            COUNT(*) FILTER (
+                WHERE LOWER(COALESCE(td.decision_type::text, '')) = 'watch'
+                  AND COALESCE((td.decision_json->>'no_material_events')::boolean, false) = true
+            )::int AS no_material_events_watch_count,
+            COUNT(*) FILTER (
+                WHERE LOWER(COALESCE(td.decision_type::text, '')) = 'hold'
+                  AND COALESCE((td.decision_json->>'no_material_events')::boolean, false) = true
+            )::int AS no_material_events_hold_count
+        FROM trading.trade_decisions td
+        WHERE td.created_at >= {since_sql}
+        """,
+        lookback_days,
+    )
+
+    source_type_rows = await db.fetch(
+        f"""
+        SELECT
+            COALESCE(td.source_type, 'unknown') AS source_type,
+            COUNT(*)::int AS decision_count,
+            COUNT(*) FILTER (
+                WHERE LOWER(COALESCE(td.decision_type::text, '')) = 'watch'
+            )::int AS watch_count,
+            COUNT(*) FILTER (
+                WHERE LOWER(COALESCE(td.decision_type::text, '')) = 'hold'
+            )::int AS hold_count
+        FROM trading.trade_decisions td
+        WHERE td.created_at >= {since_sql}
+        GROUP BY COALESCE(td.source_type, 'unknown')
+        ORDER BY decision_count DESC, source_type ASC
+        """,
+        lookback_days,
+    )
+
+    evidence_strength_rows = await db.fetch(
+        f"""
+        SELECT
+            COALESCE(NULLIF(td.decision_json->>'evidence_strength', ''), 'unknown') AS evidence_strength,
+            COUNT(*)::int AS decision_count,
+            COUNT(*) FILTER (
+                WHERE LOWER(COALESCE(td.decision_type::text, '')) = 'watch'
+            )::int AS watch_count,
+            COUNT(*) FILTER (
+                WHERE LOWER(COALESCE(td.decision_type::text, '')) = 'hold'
+            )::int AS hold_count
+        FROM trading.trade_decisions td
+        WHERE td.created_at >= {since_sql}
+        GROUP BY COALESCE(NULLIF(td.decision_json->>'evidence_strength', ''), 'unknown')
+        ORDER BY decision_count DESC, evidence_strength ASC
+        """,
+        lookback_days,
+    )
+
+    reason_code_rows = await db.fetch(
+        f"""
+        SELECT
+            reason_code,
+            COUNT(*)::int AS decision_count
+        FROM (
+            SELECT
+                jsonb_array_elements_text(
+                    CASE
+                        WHEN jsonb_typeof(td.decision_json->'event_reason_codes') = 'array'
+                            THEN td.decision_json->'event_reason_codes'
+                        ELSE '[]'::jsonb
+                    END
+                ) AS reason_code
+            FROM trading.trade_decisions td
+            WHERE td.created_at >= {since_sql}
+              AND LOWER(COALESCE(td.decision_type::text, '')) = 'watch'
+        ) codes
+        GROUP BY reason_code
+        ORDER BY decision_count DESC, reason_code ASC
+        LIMIT 10
+        """,
+        lookback_days,
+    )
+
+    sample_rows = await db.fetch(
+        f"""
+        SELECT
+            td.trade_decision_id,
+            td.symbol,
+            td.market,
+            COALESCE(td.source_type, 'unknown') AS source_type,
+            LOWER(COALESCE(td.decision_type::text, '')) AS decision_type,
+            COALESCE(NULLIF(td.decision_json->>'evidence_strength', ''), 'unknown') AS evidence_strength,
+            CASE
+                WHEN td.decision_json ? 'no_material_events'
+                    THEN (td.decision_json->>'no_material_events')::boolean
+                ELSE NULL
+            END AS no_material_events,
+            CASE
+                WHEN td.decision_json ? 'detected_event_count'
+                    THEN (td.decision_json->>'detected_event_count')::int
+                ELSE NULL
+            END AS detected_event_count,
+            CASE
+                WHEN td.decision_json ? 'interpreted_event_count'
+                    THEN (td.decision_json->>'interpreted_event_count')::int
+                ELSE NULL
+            END AS interpreted_event_count,
+            NULLIF(td.decision_json->>'event_bias', '') AS event_bias,
+            td.rationale_summary,
+            td.created_at
+        FROM trading.trade_decisions td
+        WHERE td.created_at >= {since_sql}
+          AND LOWER(COALESCE(td.decision_type::text, '')) IN ('watch', 'hold')
+        ORDER BY
+            CASE WHEN LOWER(COALESCE(td.decision_type::text, '')) = 'watch' THEN 0 ELSE 1 END,
+            td.created_at DESC,
+            td.trade_decision_id DESC
+        LIMIT $2
+        """,
+        lookback_days,
+        sample_limit,
+    )
+
+    total_decision_count = int((summary_row or {}).get("total_decision_count") or 0)
+    hold_count = int((summary_row or {}).get("hold_count") or 0)
+    watch_count = int((summary_row or {}).get("watch_count") or 0)
+    no_material_events_watch_count = int((summary_row or {}).get("no_material_events_watch_count") or 0)
+    no_material_events_hold_count = int((summary_row or {}).get("no_material_events_hold_count") or 0)
+
+    return WatchDiagnosticsResponse(
+        lookback_days=lookback_days,
+        sample_limit=sample_limit,
+        total_decision_count=total_decision_count,
+        hold_count=hold_count,
+        watch_count=watch_count,
+        watch_rate=(float(watch_count) / float(total_decision_count) if total_decision_count else 0.0),
+        no_material_events_watch_count=no_material_events_watch_count,
+        no_material_events_hold_count=no_material_events_hold_count,
+        source_type_items=[
+            WatchDiagnosticsSourceTypeItem(
+                source_type=str(row["source_type"]),
+                decision_count=int(row["decision_count"] or 0),
+                watch_count=int(row["watch_count"] or 0),
+                hold_count=int(row["hold_count"] or 0),
+                watch_rate=(
+                    float(row["watch_count"] or 0) / float(row["decision_count"])
+                    if row["decision_count"]
+                    else 0.0
+                ),
+            )
+            for row in source_type_rows
+        ],
+        evidence_strength_items=[
+            WatchDiagnosticsEvidenceStrengthItem(
+                evidence_strength=str(row["evidence_strength"]),
+                decision_count=int(row["decision_count"] or 0),
+                watch_count=int(row["watch_count"] or 0),
+                hold_count=int(row["hold_count"] or 0),
+                watch_rate=(
+                    float(row["watch_count"] or 0) / float(row["decision_count"])
+                    if row["decision_count"]
+                    else 0.0
+                ),
+            )
+            for row in evidence_strength_rows
+        ],
+        top_watch_event_reason_codes=[
+            WatchDiagnosticsReasonCodeItem(
+                reason_code=str(row["reason_code"]),
+                decision_count=int(row["decision_count"] or 0),
+            )
+            for row in reason_code_rows
+        ],
+        recent_watch_items=[
+            WatchDiagnosticsSampleItem(
+                trade_decision_id=row["trade_decision_id"],
+                symbol=row["symbol"],
+                market=row["market"],
+                source_type=row["source_type"],
+                decision_type=row["decision_type"],
+                evidence_strength=row["evidence_strength"],
+                no_material_events=row["no_material_events"],
+                detected_event_count=row["detected_event_count"],
+                interpreted_event_count=row["interpreted_event_count"],
+                event_bias=row["event_bias"],
+                rationale_summary=row["rationale_summary"],
+                created_at=row["created_at"],
+            )
+            for row in sample_rows
+        ],
     )
 
 

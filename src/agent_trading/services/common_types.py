@@ -92,6 +92,10 @@ class AIDecisionInputs:
     event_bias: str = "neutral"
     event_conflict: bool = False
     event_reason_codes: tuple[str, ...] = ()
+    evidence_strength: str = "none"
+    no_material_events: bool = True
+    detected_event_count: int = 0
+    interpreted_event_count: int = 0
 
     # ── Metadata ─────────────────────────────────────────────────────
     source_agent_names: tuple[str, ...] = ()
@@ -200,6 +204,7 @@ class SubmitResult:
     is_submitted: bool = False
     is_skipped: bool = False
     trade_decision_id: str | None = None
+    stop_reason: str | None = None
 
     # ── Decision pipeline / script interface ──────────────────────────
     status: str = ""
@@ -217,6 +222,7 @@ class SubmitResult:
         is_submitted: bool = False,
         is_skipped: bool = False,
         trade_decision_id: str | None = None,
+        stop_reason: str | None = None,
         status: str = "",
         error_phase: str | None = None,
         decision_context_id: UUID | None = None,
@@ -238,6 +244,7 @@ class SubmitResult:
             is_submitted=is_submitted,
             is_skipped=is_skipped,
             trade_decision_id=trade_decision_id,
+            stop_reason=stop_reason,
             status=status,
             error_phase=error_phase,
             decision_context_id=decision_context_id,

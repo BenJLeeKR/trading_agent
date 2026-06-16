@@ -734,6 +734,20 @@ class TradingUniversePreviewItem(BaseModel):
     priority: int
 
 
+class MarketOverlayDiagnosticsView(BaseModel):
+    """Operational diagnostics for the market overlay branch."""
+
+    enabled: bool
+    skipped_reason: str | None = None
+    effective_pre_pool_size: int
+    pre_pool_candidate_count: int
+    quotes_requested_count: int
+    quotes_received_count: int
+    filtered_out_count: int
+    scored_candidate_count: int
+    added_count: int
+
+
 class TradingUniversePreviewResponse(BaseModel):
     """`GET /instruments/trading-universe/preview` 응답."""
 
@@ -747,6 +761,7 @@ class TradingUniversePreviewResponse(BaseModel):
     total_count: int
     source_type_counts: dict[str, int]
     inclusion_reason_counts: dict[str, int]
+    market_overlay_diagnostics: MarketOverlayDiagnosticsView
     items: list[TradingUniversePreviewItem]
 
 
@@ -770,6 +785,96 @@ class TradingUniverseCoverageSummaryResponse(BaseModel):
     total_order_count: int
     market_overlay_active: bool
     items: list[TradingUniverseCoverageItem]
+
+
+class MarketOverlayFunnelItem(BaseModel):
+    """Recent `market_overlay` decision/order sample for ops inspection."""
+
+    trade_decision_id: UUID
+    symbol: str | None = None
+    market: str | None = None
+    decision_type: str | None = None
+    side: str | None = None
+    inclusion_reason: str | None = None
+    rationale_summary: str | None = None
+    created_at: datetime | None = None
+    order_request_id: UUID | None = None
+    order_status: str | None = None
+    order_created_at: datetime | None = None
+
+
+class MarketOverlayFunnelResponse(BaseModel):
+    """`GET /instruments/trading-universe/market-overlay-funnel` 응답."""
+
+    lookback_days: int
+    sample_limit: int
+    decision_count: int
+    order_count: int
+    order_conversion_rate: float
+    decision_type_counts: dict[str, int]
+    order_status_counts: dict[str, int]
+    recent_items: list[MarketOverlayFunnelItem]
+
+
+class WatchDiagnosticsSourceTypeItem(BaseModel):
+    """Source-type level WATCH/HOLD distribution summary."""
+
+    source_type: str
+    decision_count: int
+    watch_count: int
+    hold_count: int
+    watch_rate: float
+
+
+class WatchDiagnosticsEvidenceStrengthItem(BaseModel):
+    """Evidence-strength level WATCH/HOLD distribution summary."""
+
+    evidence_strength: str
+    decision_count: int
+    watch_count: int
+    hold_count: int
+    watch_rate: float
+
+
+class WatchDiagnosticsReasonCodeItem(BaseModel):
+    """Top EI reason code frequency inside recent WATCH decisions."""
+
+    reason_code: str
+    decision_count: int
+
+
+class WatchDiagnosticsSampleItem(BaseModel):
+    """Recent WATCH/HOLD sample row for operator inspection."""
+
+    trade_decision_id: UUID
+    symbol: str | None = None
+    market: str | None = None
+    source_type: str | None = None
+    decision_type: str | None = None
+    evidence_strength: str | None = None
+    no_material_events: bool | None = None
+    detected_event_count: int | None = None
+    interpreted_event_count: int | None = None
+    event_bias: str | None = None
+    rationale_summary: str | None = None
+    created_at: datetime | None = None
+
+
+class WatchDiagnosticsResponse(BaseModel):
+    """`GET /trade-decisions/watch-diagnostics` 응답."""
+
+    lookback_days: int
+    sample_limit: int
+    total_decision_count: int
+    hold_count: int
+    watch_count: int
+    watch_rate: float
+    no_material_events_watch_count: int
+    no_material_events_hold_count: int
+    source_type_items: list[WatchDiagnosticsSourceTypeItem]
+    evidence_strength_items: list[WatchDiagnosticsEvidenceStrengthItem]
+    top_watch_event_reason_codes: list[WatchDiagnosticsReasonCodeItem]
+    recent_watch_items: list[WatchDiagnosticsSampleItem]
 
 
 class PositionSnapshotView(BaseModel):

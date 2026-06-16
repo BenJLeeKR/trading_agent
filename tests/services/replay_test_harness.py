@@ -67,8 +67,8 @@ class ReplayBundle:
     expected_quantity
         Expected ``SubmitResult.submit_response.quantity`` (``None`` when no order created).
     expected_guardrail_rule
-        Expected guardrail blocking rule code (``"STALE_SNAPSHOT_ACCOUNT"``,
-        ``"STALE_SNAPSHOT"``, or ``None`` when no guardrail block).
+        Expected guardrail blocking rule code (``"stale_snapshot_account"``,
+        ``"stale_snapshot_run"``, or ``None`` when no guardrail block).
     expected_submit_call_count
         Expected number of ``broker.submit_order()`` calls.
         ``0`` for guard-blocked scenarios, ``1`` for submit scenarios.
@@ -323,7 +323,7 @@ EXIT_FULL_LIQUIDATION = ReplayBundle(
 
 # ── Scenario D: Stale snapshot guard (account-level) ──────────────────
 # Cash snapshot이 전혀 없음 → _check_account_snapshot_freshness()가
-# is_stale=True를 반환. STALE_SNAPSHOT_ACCOUNT blocking rule code로 기록됨.
+# is_stale=True를 반환. stale_snapshot_account blocking rule code로 기록됨.
 # Expected: SKIPPED, no order created, broker NOT called.
 STALE_SNAPSHOT_GUARD = ReplayBundle(
     name="stale_snapshot_account_guard",
@@ -335,7 +335,7 @@ STALE_SNAPSHOT_GUARD = ReplayBundle(
     stub_fdc=_make_stub_fdc(decision_type="APPROVE", side="BUY"),
     expected_status="SKIPPED",
     expected_quantity=None,
-    expected_guardrail_rule="STALE_SNAPSHOT_ACCOUNT",
+    expected_guardrail_rule="stale_snapshot_account",
     expected_submit_call_count=0,
 )
 

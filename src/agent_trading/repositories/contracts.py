@@ -33,6 +33,7 @@ from agent_trading.domain.entities import (
     ReconciliationPositionLinkEntity,
     ReconciliationRunEntity,
     RiskLimitSnapshotEntity,
+    SignalFeatureSnapshotEntity,
     SessionEventEntity,
     SnapshotSyncRunEntity,
     StrategyEntity,
@@ -944,6 +945,30 @@ class RiskLimitSnapshotRepository(Protocol):
     async def list_by_account(
         self, account_id: UUID, limit: int = 20
     ) -> Sequence[RiskLimitSnapshotEntity]:
+        ...
+
+
+class SignalFeatureSnapshotRepository(Protocol):
+    """Store for deterministic signal feature snapshots."""
+
+    async def add(
+        self, snapshot: SignalFeatureSnapshotEntity,
+    ) -> SignalFeatureSnapshotEntity:
+        ...
+
+    async def get_latest_by_instrument(
+        self,
+        instrument_id: UUID,
+        timeframe: str = "1d",
+    ) -> SignalFeatureSnapshotEntity | None:
+        ...
+
+    async def list_by_instrument(
+        self,
+        instrument_id: UUID,
+        timeframe: str = "1d",
+        limit: int = 20,
+    ) -> Sequence[SignalFeatureSnapshotEntity]:
         ...
 
 

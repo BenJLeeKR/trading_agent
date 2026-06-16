@@ -522,6 +522,36 @@ class RiskLimitSnapshotEntity:
 
 
 @dataclass(slots=True, frozen=True)
+class SignalFeatureSnapshotEntity:
+    """종목 단위 결정론적 signal feature snapshot."""
+
+    signal_feature_snapshot_id: UUID
+    instrument_id: UUID
+    timeframe: str
+    snapshot_at: datetime
+    feature_set_version: str
+    bar_count: int
+    sma_5: Decimal | None = None
+    sma_20: Decimal | None = None
+    sma_60: Decimal | None = None
+    price_vs_sma_20_pct: Decimal | None = None
+    price_vs_sma_60_pct: Decimal | None = None
+    return_1m_pct: Decimal | None = None
+    return_3m_pct: Decimal | None = None
+    volatility_20d_pct: Decimal | None = None
+    atr_14_pct: Decimal | None = None
+    rsi_14: Decimal | None = None
+    average_volume_20d: Decimal | None = None
+    volume_surge_ratio: Decimal | None = None
+    fast_score: Decimal | None = None
+    slow_score: Decimal | None = None
+    overall_score: Decimal | None = None
+    component_scores_json: dict[str, object] = field(default_factory=dict)
+    reason_codes: list[str] | None = None
+    created_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class MarketSessionEntity:
     """장운영 세션 상태 엔티티 — run_date 기준 1행, P2 scheduler가 주기적으로 upsert.
 

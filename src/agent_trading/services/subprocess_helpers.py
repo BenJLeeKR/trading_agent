@@ -169,6 +169,10 @@ def deserialize_agent_output(
         event_bias=ei_output.aggregate_view.overall_bias,
         event_conflict=ei_output.aggregate_view.event_conflict,
         event_reason_codes=ei_output.aggregate_view.top_reason_codes,
+        evidence_strength=ei_output.aggregate_view.evidence_strength,
+        no_material_events=ei_output.aggregate_view.no_material_events,
+        detected_event_count=ei_output.detected_event_count,
+        interpreted_event_count=ei_output.interpreted_event_count,
         # Metadata
         source_agent_names=(
             ei_output.agent_name,
@@ -286,6 +290,10 @@ def build_fallback_bundle(
         event_bias=resolved_ei.aggregate_view.overall_bias,
         event_conflict=resolved_ei.aggregate_view.event_conflict,
         event_reason_codes=resolved_ei.aggregate_view.top_reason_codes,
+        evidence_strength=resolved_ei.aggregate_view.evidence_strength,
+        no_material_events=resolved_ei.aggregate_view.no_material_events,
+        detected_event_count=resolved_ei.detected_event_count,
+        interpreted_event_count=resolved_ei.interpreted_event_count,
         # Metadata
         source_agent_names=(
             resolved_ei.agent_name,

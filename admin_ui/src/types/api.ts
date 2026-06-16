@@ -245,6 +245,84 @@ export interface InstrumentDetail {
   lot_size: number;
 }
 
+export interface MarketOverlayDiagnosticsView {
+  enabled: boolean;
+  skipped_reason: string | null;
+  effective_pre_pool_size: number;
+  pre_pool_candidate_count: number;
+  quotes_requested_count: number;
+  quotes_received_count: number;
+  filtered_out_count: number;
+  scored_candidate_count: number;
+  added_count: number;
+}
+
+export interface TradingUniversePreviewItem {
+  symbol: string;
+  market: string;
+  source_type: string;
+  inclusion_reason: string;
+  priority: number;
+}
+
+export interface TradingUniversePreviewResponse {
+  account_id: string;
+  lookback_hours: number;
+  max_cap: number;
+  exclude_held_from_cap: boolean;
+  market_overlay_cap: number;
+  pre_pool_size: number;
+  kis_env: string | null;
+  total_count: number;
+  source_type_counts: Record<string, number>;
+  inclusion_reason_counts: Record<string, number>;
+  market_overlay_diagnostics: MarketOverlayDiagnosticsView;
+  items: TradingUniversePreviewItem[];
+}
+
+export interface TradingUniverseCoverageItem {
+  source_type: string;
+  decision_count: number;
+  order_count: number;
+  order_conversion_rate: number;
+  first_decision_at: string | null;
+  last_decision_at: string | null;
+  last_order_at: string | null;
+}
+
+export interface TradingUniverseCoverageSummaryResponse {
+  lookback_days: number;
+  total_decision_count: number;
+  total_order_count: number;
+  market_overlay_active: boolean;
+  items: TradingUniverseCoverageItem[];
+}
+
+export interface MarketOverlayFunnelItem {
+  trade_decision_id: string;
+  symbol: string | null;
+  market: string | null;
+  decision_type: string | null;
+  side: string | null;
+  inclusion_reason: string | null;
+  rationale_summary: string | null;
+  created_at: string | null;
+  order_request_id: string | null;
+  order_status: string | null;
+  order_created_at: string | null;
+}
+
+export interface MarketOverlayFunnelResponse {
+  lookback_days: number;
+  sample_limit: number;
+  decision_count: number;
+  order_count: number;
+  order_conversion_rate: number;
+  decision_type_counts: Record<string, number>;
+  order_status_counts: Record<string, number>;
+  recent_items: MarketOverlayFunnelItem[];
+}
+
 export interface TradeDecisionDetail {
   trade_decision_id: string;
   decision_context_id: string;

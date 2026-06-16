@@ -241,6 +241,19 @@ async def sync_account_snapshots(
         result._add_error(msg)
         return result
 
+    if (
+        not fetched.fetch_success
+        and not fetched.errors
+        and fetched.risk_limit_snapshot is None
+    ):
+        msg = (
+            "Snapshot fetch returned no cash balance and no positions "
+            f"for account_id={account_id}"
+        )
+        logger.warning(msg)
+        result._add_error(msg)
+        return result
+
     # ── 1b. Stamp snapshot_sync_run_id on fetched entities ───────────
     # The provider builds entities without knowledge of the current run.
     # We stamp the run ID here so that broker-agnostic sync also carries

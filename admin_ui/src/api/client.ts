@@ -261,6 +261,50 @@ export async function getPositions(
   );
 }
 
+export async function getTradingUniversePreview(
+  accountId: string,
+  options?: {
+    lookbackHours?: number;
+    maxCap?: number;
+    excludeHeldFromCap?: boolean;
+    marketOverlayCap?: number;
+    prePoolSize?: number;
+  },
+): Promise<import("../types/api").TradingUniversePreviewResponse> {
+  const params = new URLSearchParams({
+    account_id: accountId,
+  });
+  if (options?.lookbackHours != null) params.set("lookback_hours", String(options.lookbackHours));
+  if (options?.maxCap != null) params.set("max_cap", String(options.maxCap));
+  if (options?.excludeHeldFromCap != null) {
+    params.set("exclude_held_from_cap", String(options.excludeHeldFromCap));
+  }
+  if (options?.marketOverlayCap != null) {
+    params.set("market_overlay_cap", String(options.marketOverlayCap));
+  }
+  if (options?.prePoolSize != null) params.set("pre_pool_size", String(options.prePoolSize));
+  return request<import("../types/api").TradingUniversePreviewResponse>(
+    `/instruments/trading-universe/preview?${params.toString()}`
+  );
+}
+
+export async function getTradingUniverseCoverageSummary(
+  lookbackDays = 14,
+): Promise<import("../types/api").TradingUniverseCoverageSummaryResponse> {
+  return request<import("../types/api").TradingUniverseCoverageSummaryResponse>(
+    `/instruments/trading-universe/coverage-summary?lookback_days=${lookbackDays}`
+  );
+}
+
+export async function getMarketOverlayFunnel(
+  lookbackDays = 14,
+  sampleLimit = 20,
+): Promise<import("../types/api").MarketOverlayFunnelResponse> {
+  return request<import("../types/api").MarketOverlayFunnelResponse>(
+    `/instruments/trading-universe/market-overlay-funnel?lookback_days=${lookbackDays}&sample_limit=${sampleLimit}`
+  );
+}
+
 export async function getCashBalance(
   accountId: string
 ): Promise<import("../types/api").CashBalanceSnapshotView | null> {

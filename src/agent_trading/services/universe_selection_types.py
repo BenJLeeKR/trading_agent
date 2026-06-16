@@ -114,6 +114,9 @@ class CompositionContext:
     pre_pool_size : int
         Maximum number of core-universe candidates to evaluate via
         ``inquire-price`` batch.  Default: 50 (P2 minimum).
+    manual_symbols : tuple[tuple[str, str], ...]
+        Operator-supplied manual watchlist entries.  Each item is
+        ``(symbol, market)``.  Default: empty tuple (disabled).
     """
 
     account_id: UUID
@@ -122,6 +125,7 @@ class CompositionContext:
     exclude_held_from_cap: bool = True
     market_overlay_cap: int = 5
     pre_pool_size: int = 50
+    manual_symbols: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -185,6 +189,21 @@ class LiquidityFilterResult:
 
     passed: bool
     fail_reason: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class MarketOverlayDiagnostics:
+    """Operational diagnostics for market-driven overlay composition."""
+
+    enabled: bool
+    skipped_reason: str | None = None
+    effective_pre_pool_size: int = 0
+    pre_pool_candidate_count: int = 0
+    quotes_requested_count: int = 0
+    quotes_received_count: int = 0
+    filtered_out_count: int = 0
+    scored_candidate_count: int = 0
+    added_count: int = 0
 
 
 # ── Default fallback ────────────────────────────────────────────────────────

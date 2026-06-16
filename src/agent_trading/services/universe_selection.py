@@ -29,6 +29,7 @@ from agent_trading.services.universe_selection_types import (
     INCLUSION_REASON_CORE,
     INCLUSION_REASON_EVENT,
     INCLUSION_REASON_HELD,
+    INCLUSION_REASON_MANUAL,
     INCLUSION_REASON_NEAR_HIGH,
     INCLUSION_REASON_PRICE_VOLUME_BREAKOUT,
     INCLUSION_REASON_TRADE_STRENGTH,
@@ -36,6 +37,7 @@ from agent_trading.services.universe_selection_types import (
     CompositionContext,
     LiquidityFilterResult,
     MarketDataSnapshot,
+    MarketOverlayDiagnostics,
     SelectedSymbol,
     SourceType,
 )
@@ -319,6 +321,13 @@ class UniverseSelectionService:
         self._kis_client = kis_client
 
     async def compose(self, ctx: CompositionContext) -> list[SelectedSymbol]:
+        selected, _ = await self.compose_with_diagnostics(ctx)
+        return selected
+
+    async def compose_with_diagnostics(
+        self,
+        ctx: CompositionContext,
+    ) -> tuple[list[SelectedSymbol], MarketOverlayDiagnostics]:
         """Compose the final trading universe for a single decision cycle.
 
         Parameters
@@ -342,17 +351,20 @@ class UniverseSelectionService:
         # Step 3: Event-Driven Overlay
         await self._add_event_overlay(seen, ctx)
 
-        # Step 4: Market-Driven Overlay (P2 minimum)
-        await self._add_market_overlay(seen, ctx)
+        # Step 4: Manual Watchlist Overlay
+        await self._add_manual_overlay(seen, ctx)
 
-        # Step 5: Exclusion Rules (Liquidity Filter)
+        # Step 5: Market-Driven Overlay (P2 minimum)
+        market_overlay_diagnostics = await self._add_market_overlay(seen, ctx)
+
+        # Step 6: Exclusion Rules (Liquidity Filter)
         candidates = await self._apply_exclusions(seen)
 
-        # Step 6: Priority Sort (ascending priority value = highest first)
+        # Step 7: Priority Sort (ascending priority value = highest first)
         candidates.sort(key=lambda s: s.priority)
 
-        # Step 7: Daily Cap
-        return self._apply_cap(candidates, ctx)
+        # Step 8: Daily Cap
+        return self._apply_cap(candidates, ctx), market_overlay_diagnostics
 
     # ── Step implementations ─────────────────────────────────────────────
 
@@ -428,6 +440,33 @@ class UniverseSelectionService:
                     ),
                 )
 
+    async def _add_manual_overlay(
+        self,
+        seen: dict[str, SelectedSymbol],
+        ctx: CompositionContext,
+    ) -> None:
+        """Add operator-supplied manual watchlist symbols.
+
+        Manual symbols are deterministic operator hints.  They are:
+        - opt-in only (empty by default)
+        - lower priority than event/market overlays
+        - still subject to the standard liquidity filter and daily cap
+        """
+        for symbol, market in ctx.manual_symbols:
+            normalized_symbol = str(symbol or "").strip()
+            normalized_market = str(market or "KRX").strip().upper() or "KRX"
+            if not normalized_symbol:
+                continue
+            self._upsert_with_priority(
+                seen,
+                SelectedSymbol(
+                    symbol=normalized_symbol,
+                    market=normalized_market,
+                    source_type=SourceType.MANUAL,
+                    inclusion_reason=INCLUSION_REASON_MANUAL,
+                ),
+            )
+
     def _effective_pre_pool_size(self, ctx: CompositionContext) -> int:
         """Paper 환경에서는 pre-pool size를 20으로 제한.
 
@@ -444,7 +483,7 @@ class UniverseSelectionService:
         self,
         seen: dict[str, SelectedSymbol],
         ctx: CompositionContext,
-    ) -> None:
+    ) -> MarketOverlayDiagnostics:
         """Add market-driven overlay candidates (P2 minimum).
 
         Flow
@@ -465,7 +504,10 @@ class UniverseSelectionService:
         """
         if self._kis_client is None:
             logger.debug("_add_market_overlay: no KIS client — skipping (P1 stub).")
-            return
+            return MarketOverlayDiagnostics(
+                enabled=False,
+                skipped_reason="no_kis_client",
+            )
 
         # Paper env: KIS paper API 구조적 불안정(>90% failure)으로 market_overlay skip
         if hasattr(self._kis_client, "env") and self._kis_client.env == "paper":
@@ -473,7 +515,10 @@ class UniverseSelectionService:
                 "market_overlay: skipped in paper env "
                 "(KIS paper mock quote API unstable, >90%% failure)"
             )
-            return
+            return MarketOverlayDiagnostics(
+                enabled=False,
+                skipped_reason="paper_env_skipped",
+            )
 
         # ── Step 1: Build pre-pool ───────────────────────────────────────
         effective_pool_size = self._effective_pre_pool_size(ctx)
@@ -490,7 +535,12 @@ class UniverseSelectionService:
 
         if not pre_pool_candidates:
             logger.debug("_add_market_overlay: pre-pool is empty — skipping.")
-            return
+            return MarketOverlayDiagnostics(
+                enabled=True,
+                skipped_reason="empty_pre_pool",
+                effective_pre_pool_size=effective_pool_size,
+                pre_pool_candidate_count=0,
+            )
 
         logger.info(
             "market_overlay pre-pool: %d symbols (cap=%d, env=%s).",
@@ -504,7 +554,14 @@ class UniverseSelectionService:
 
         if not raw_batch:
             logger.debug("_add_market_overlay: no quotes returned — skipping.")
-            return
+            return MarketOverlayDiagnostics(
+                enabled=True,
+                skipped_reason="no_quotes_returned",
+                effective_pre_pool_size=effective_pool_size,
+                pre_pool_candidate_count=len(pre_pool_candidates),
+                quotes_requested_count=len(pre_pool_candidates),
+                quotes_received_count=0,
+            )
 
         # ── Step 2.5: Count successful quote fetches ─────────────────────
         total = len(pre_pool_candidates)
@@ -525,6 +582,7 @@ class UniverseSelectionService:
 
         # ── Step 3: Parse → Filter → Score ───────────────────────────────
         scored: list[tuple[float, MarketDataSnapshot]] = []
+        filtered_out_count = 0
 
         for sym in pre_pool_candidates:
             raw = raw_batch.get(sym)
@@ -537,6 +595,7 @@ class UniverseSelectionService:
             # Step 4: F4 + F5 filter
             filter_result = await self._liquidity_filter.check_market_snapshot(snapshot)
             if not filter_result.passed:
+                filtered_out_count += 1
                 logger.debug(
                     "Market overlay candidate %s excluded: %s",
                     sym,
@@ -550,7 +609,17 @@ class UniverseSelectionService:
 
         if not scored:
             logger.debug("_add_market_overlay: no candidates passed filters — skipping.")
-            return
+            return MarketOverlayDiagnostics(
+                enabled=True,
+                skipped_reason="all_candidates_filtered",
+                effective_pre_pool_size=effective_pool_size,
+                pre_pool_candidate_count=len(pre_pool_candidates),
+                quotes_requested_count=total,
+                quotes_received_count=success,
+                filtered_out_count=filtered_out_count,
+                scored_candidate_count=0,
+                added_count=0,
+            )
 
         # ── Step 6: Select top N ─────────────────────────────────────────
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -573,6 +642,17 @@ class UniverseSelectionService:
             len(top_n),
             ctx.market_overlay_cap,
             len(scored),
+        )
+        return MarketOverlayDiagnostics(
+            enabled=True,
+            skipped_reason=None,
+            effective_pre_pool_size=effective_pool_size,
+            pre_pool_candidate_count=len(pre_pool_candidates),
+            quotes_requested_count=total,
+            quotes_received_count=success,
+            filtered_out_count=filtered_out_count,
+            scored_candidate_count=len(scored),
+            added_count=len(top_n),
         )
 
     async def _apply_exclusions(

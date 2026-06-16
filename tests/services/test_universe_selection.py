@@ -36,6 +36,7 @@ from agent_trading.services.universe_selection_types import (
     INCLUSION_REASON_CORE,
     INCLUSION_REASON_EVENT,
     INCLUSION_REASON_HELD,
+    INCLUSION_REASON_MANUAL,
     CompositionContext,
     MarketDataSnapshot,
     SelectedSymbol,
@@ -313,6 +314,44 @@ class TestUniverseSelectionServiceCompose:
         assert len(event) == 1
         assert event[0].source_type == SourceType.EVENT_OVERLAY
         assert "high_importance_event" in event[0].inclusion_reason
+
+    @pytest.mark.asyncio
+    async def test_manual_watchlist_promotes_core(self) -> None:
+        """manual watchlist symbol은 core를 override하고 MANUAL source_type을 가짐."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(_make_instrument("005930"))
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(
+            account_id=FALLBACK_ACCOUNT_ID,
+            since=NOW,
+            manual_symbols=(("005930", "KRX"),),
+        )
+        result = await svc.compose(ctx)
+
+        selected = [s for s in result if s.symbol == "005930"]
+        assert len(selected) == 1
+        assert selected[0].source_type == SourceType.MANUAL
+        assert selected[0].inclusion_reason == INCLUSION_REASON_MANUAL
+
+    @pytest.mark.asyncio
+    async def test_event_overlay_overrides_manual_watchlist(self) -> None:
+        """event overlay는 manual watchlist보다 우선해야 함."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(_make_instrument("005930"))
+        await repos.external_events.add(_make_event("005930", severity="high"))
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(
+            account_id=FALLBACK_ACCOUNT_ID,
+            since=NOW,
+            manual_symbols=(("005930", "KRX"),),
+        )
+        result = await svc.compose(ctx)
+
+        selected = [s for s in result if s.symbol == "005930"]
+        assert len(selected) == 1
+        assert selected[0].source_type == SourceType.EVENT_OVERLAY
 
     @pytest.mark.asyncio
     async def test_low_severity_event_does_not_promote(self) -> None:
