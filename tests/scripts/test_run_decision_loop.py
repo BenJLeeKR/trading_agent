@@ -2085,7 +2085,7 @@ class TestTradingUniverse:
             # source_type과 inclusion_reason이 설정되었는지 확인
             for u in result:
                 assert u.source_type == "core"
-                assert u.inclusion_reason == "kospi200_core"
+                assert u.inclusion_reason == "approved_core_universe"
 
     @pytest.mark.asyncio
     async def test_read_trading_universe_applies_cap_overrides(
@@ -2236,7 +2236,7 @@ class TestTradingUniverse:
             # market overlay returned empty batch → no market_overlay symbols
             for u in result:
                 assert u.source_type == "core"
-                assert u.inclusion_reason == "kospi200_core"
+                assert u.inclusion_reason == "approved_core_universe"
 
     @pytest.mark.asyncio
     async def test_universe_selection_service_with_kis_quotes_returned(

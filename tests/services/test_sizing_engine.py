@@ -44,6 +44,7 @@ def _inputs(
     *,
     decision_type: str = "BUY",
     side: OrderSide = OrderSide.BUY,
+    source_type: str | None = None,
     requested_quantity: str = "100",
     requested_price: str | None = None,
     sizing_hint: SizingHint | None = None,
@@ -72,6 +73,8 @@ def _inputs(
         side=side,
         requested_quantity=Decimal(requested_quantity),
     )
+    if source_type is not None:
+        kwargs["source_type"] = source_type
     if requested_price is not None:
         kwargs["requested_price"] = Decimal(requested_price)
     if reference_price is not None:
@@ -398,6 +401,20 @@ class TestReduce:
             )
         )
         assert result.quantity == Decimal("30")
+
+    def test_reduce_held_position_placeholder_uses_position_fraction(self) -> None:
+        """held_position REDUCE placeholder 1주는 보유수량 비율 기준으로 확장되어야 한다."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="REDUCE",
+                side=OrderSide.SELL,
+                source_type="held_position",
+                requested_quantity="1",
+                current_position_qty="100",
+                current_position_avg_price="50",
+            )
+        )
+        assert result.quantity == Decimal("25")
 
 
 # ======================================================================

@@ -318,6 +318,21 @@ class InMemoryDecisionContextRepository:
         self._items[decision_context_id] = updated
         return updated
 
+    async def attach_cash_balance_snapshot(
+        self,
+        decision_context_id: UUID,
+        cash_balance_snapshot_id: UUID,
+    ) -> DecisionContextEntity | None:
+        existing = self._items.get(decision_context_id)
+        if existing is None:
+            return None
+        updated = replace(
+            existing,
+            cash_balance_snapshot_id=cash_balance_snapshot_id,
+        )
+        self._items[decision_context_id] = updated
+        return updated
+
 
 class InMemoryPositionSnapshotRepository:
     def __init__(self) -> None:

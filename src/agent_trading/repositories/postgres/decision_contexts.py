@@ -136,3 +136,20 @@ class PostgresDecisionContextRepository:
             signal_feature_snapshot_id,
         )
         return row_to_entity(row, DecisionContextEntity) if row else None
+
+    async def attach_cash_balance_snapshot(
+        self,
+        decision_context_id: UUID,
+        cash_balance_snapshot_id: UUID,
+    ) -> DecisionContextEntity | None:
+        row = await self._tx.connection.fetchrow(
+            """
+            UPDATE trading.decision_contexts
+            SET cash_balance_snapshot_id = $2
+            WHERE decision_context_id = $1
+            RETURNING *
+            """,
+            decision_context_id,
+            cash_balance_snapshot_id,
+        )
+        return row_to_entity(row, DecisionContextEntity) if row else None

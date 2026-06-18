@@ -35,6 +35,13 @@
 - snapshot sync, external event mapping, UI 표시에 공통 사용
 - universe 선정을 위한 모수 풀 제공
 
+추가 원칙:
+
+- `instrument master`에 없는 종목은 Universe Selection 단계에서 `미등록 종목`으로 제외한다.
+- 따라서 KOSDAQ 종목을 판단/주문 대상에 넣으려면, 먼저 KIS 종목정보파일 기반 sync로
+  해당 종목의 master row를 `trading.instruments`에 적재해야 한다.
+- `decision loop`나 AI 계층에서 이 예외를 우회하지 않는다.
+
 ### 2.2 Trading Universe
 
 `trading universe`는 특정 시점에 decision loop가 실제로 순회하는 종목 집합이다.
@@ -97,6 +104,13 @@ v1 권장 기준:
 
 - `KOSPI100` 또는 이에 준하는 대형주 풀
 
+시장 확장 원칙:
+
+- KOSDAQ/중소형 탐색 확대는 허용하되, universe 편입 전제는 항상
+  `instrument master sync 완료`다.
+- 즉, `master sync → operational eligibility → strategy relevance / overlay`
+  순서를 유지한다.
+
 비즈니스 이유:
 
 - 유동성이 충분하다
@@ -114,6 +128,7 @@ v1 권장 기준:
 - 종목 정보 미완성 종목 제외
 - 브로커 주문 지원 범위 밖 종목 제외
 - 내부적으로 비활성 처리된 종목 제외
+- instrument master 미등록 종목 제외
 
 비즈니스 이유:
 
@@ -150,6 +165,8 @@ v1 권장 기준:
 - 체결강도 상위
 - 신고가 근접 또는 신고가 갱신 후보
 - 가격/거래대금 동반 급증 종목
+- 상대 거래량 급증 종목
+- 상대 거래대금 급증 종목
 
 역할:
 
@@ -162,6 +179,11 @@ v1 권장 기준:
 - `market-driven overlay`는 core universe를 대체하지 않는다
 - 별도의 동적 오버레이로 작동한다
 - 편입 직전 반드시 유동성/체결 안정성 필터를 통과해야 한다
+- 절대 거래대금 순위만으로 후보를 고정하지 않고,
+  `상대 거래량/거래대금 급증률`을 함께 사용해
+  새로 강해지는 종목을 조기 포착한다
+- 탐색 풀과 주문 가능 풀은 동일하지 않을 수 있으며,
+  탐색 풀은 더 넓게 보되 주문 가능 풀은 execution 안전성 기준을 유지한다
 
 #### 4.4.1 Liquidity Filter
 
@@ -174,6 +196,13 @@ v1 권장 기준:
 - 내부 기준 시가총액 하한 미만 종목 제외
 - micro-cap 또는 초저유동성 종목 제외
 - 단일호가/급격한 갭/이상체결로 해석되는 종목 제외
+
+추가 원칙:
+
+- 상대 거래량/거래대금 급증률이 낮은 종목은
+  단순 절대 거래대금이 높더라도 신규 진입 후보에서 후순위 처리하거나 제외할 수 있다
+- 유동성 필터는 “많이 거래되는 대형주만 남기기”가 목적이 아니라,
+  `기대수익률 대비 execution risk`가 과도한 종목을 제거하는 것이 목적이다
 
 비즈니스 이유:
 
@@ -190,6 +219,8 @@ v1 권장 기준:
 - `flow_trade_strength`
 - `flow_near_high_breakout`
 - `flow_price_value_breakout`
+- `flow_relative_volume_surge`
+- `flow_relative_turnover_surge`
 
 ### 4.5 Layer 5 — Daily Execution Cap
 
@@ -200,6 +231,13 @@ v1 권장 기준:
 - 최대 20~30종목
 - 중요도/우선순위 순으로 cut
 - 보유 종목은 cap과 무관하게 강제 포함
+
+추가 원칙:
+
+- cap을 무조건 크게 늘리는 대신,
+  먼저 `상대 활동성 feature 기반 ranking`으로 상위 후보 품질을 높인다
+- 시장 과열 구간에서도 단순 종목 수 확대보다
+  `top-k 후보 품질`과 `체결 가능성`을 우선한다
 
 비즈니스 이유:
 
@@ -386,6 +424,8 @@ Fast Layer 정책:
 - `market-driven overlay`에서 편입된 종목은 초/분 단위 Fast Layer scoring 후보로 우선 배정
 - Event/공시 중심 Slow Layer보다 높은 refresh cadence를 허용할 수 있다
 - 단, 실제 submit gate는 계좌 예산, snapshot freshness, compliance/risk guard를 그대로 통과해야 한다
+- Fast Layer 후보 우선순위는 절대 거래대금뿐 아니라
+  `relative volume`, `relative turnover`, `trade strength`를 함께 반영한다
 
 #### P2
 

@@ -539,6 +539,44 @@ class DecisionOrchestratorService:
         except Exception:
             return decision_context
 
+    async def _select_usable_cash_snapshot(
+        self,
+        account_id: UUID,
+    ) -> CashBalanceSnapshotEntity | None:
+        try:
+            snapshots = await self._repos.cash_balance_snapshots.list_by_account(
+                account_id,
+            )
+        except Exception:
+            return None
+
+        latest_any = snapshots[0] if snapshots else None
+        for snapshot in snapshots:
+            if snapshot.fetch_status == "success":
+                return snapshot
+        return latest_any
+
+    async def _attach_cash_balance_snapshot_to_context(
+        self,
+        decision_context: DecisionContextEntity | None,
+        cash_balance_snapshot: CashBalanceSnapshotEntity | None,
+    ) -> DecisionContextEntity | None:
+        if (
+            decision_context is None
+            or cash_balance_snapshot is None
+            or decision_context.cash_balance_snapshot_id
+            == cash_balance_snapshot.cash_balance_snapshot_id
+        ):
+            return decision_context
+        try:
+            updated = await self._repos.decision_contexts.attach_cash_balance_snapshot(
+                decision_context.decision_context_id,
+                cash_balance_snapshot.cash_balance_snapshot_id,
+            )
+            return updated or decision_context
+        except Exception:
+            return decision_context
+
     def _build_ai_policy_context_view(
         self,
         assembled_context: AssembledContext,
@@ -712,6 +750,15 @@ class DecisionOrchestratorService:
                     )
                 except Exception:
                     pass
+            if decision_context.account_id is not None and (
+                cash_balance_snapshot is None
+                or cash_balance_snapshot.fetch_status != "success"
+            ):
+                replacement_cash = await self._select_usable_cash_snapshot(
+                    decision_context.account_id,
+                )
+                if replacement_cash is not None:
+                    cash_balance_snapshot = replacement_cash
 
         # --- Query risk limit snapshot ---
         risk_limit_snapshot: RiskLimitSnapshotEntity | None = None
@@ -734,6 +781,10 @@ class DecisionOrchestratorService:
         decision_context = await self._attach_signal_feature_snapshot_to_context(
             decision_context,
             derivation.signal_feature_snapshot,
+        )
+        decision_context = await self._attach_cash_balance_snapshot_to_context(
+            decision_context,
+            cash_balance_snapshot,
         )
 
         # --- Assemble context (without score yet) ---

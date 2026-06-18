@@ -41,7 +41,9 @@ class TechnicalFeatureSnapshot:
     atr_14_pct: float | None
     rsi_14: float | None
     average_volume_20d: float | None
+    average_turnover_20d: float | None
     volume_surge_ratio: float | None
+    turnover_surge_ratio: float | None
 
 
 @dataclass(slots=True, frozen=True)
@@ -95,7 +97,9 @@ def build_signal_feature_entity(
         atr_14_pct=_decimal_or_none(features.atr_14_pct),
         rsi_14=_decimal_or_none(features.rsi_14),
         average_volume_20d=_decimal_or_none(features.average_volume_20d),
+        average_turnover_20d=_decimal_or_none(features.average_turnover_20d),
         volume_surge_ratio=_decimal_or_none(features.volume_surge_ratio),
+        turnover_surge_ratio=_decimal_or_none(features.turnover_surge_ratio),
         fast_score=_decimal_or_none(score_card.fast_score),
         slow_score=_decimal_or_none(score_card.slow_score),
         overall_score=_decimal_or_none(score_card.overall_score),
@@ -118,13 +122,21 @@ def _calculate_features(
 ) -> TechnicalFeatureSnapshot:
     closes = [bar.close_price for bar in bars]
     volumes = [bar.volume for bar in bars]
+    turnovers = [bar.turnover for bar in bars]
     as_of = bars[-1].timestamp
     sma_5 = _sma(closes, 5)
     sma_20 = _sma(closes, 20)
     sma_60 = _sma(closes, 60)
     last_close = closes[-1]
     avg_volume_20 = _average(volumes[-20:])
+    avg_turnover_20 = _average_optional(
+        [value for value in turnovers[-20:] if value is not None]
+    )
     prev_20_volumes = volumes[-21:-1] if len(volumes) >= 21 else volumes[-20:]
+    prev_turnover_bars = bars[-21:-1] if len(bars) >= 21 else bars[-20:]
+    prev_20_turnovers = [
+        bar.turnover for bar in prev_turnover_bars if bar.turnover is not None
+    ]
 
     return TechnicalFeatureSnapshot(
         symbol=symbol,
@@ -141,9 +153,17 @@ def _calculate_features(
         atr_14_pct=_atr_pct(bars, 14),
         rsi_14=_rsi(closes, 14),
         average_volume_20d=avg_volume_20,
+        average_turnover_20d=avg_turnover_20,
         volume_surge_ratio=(
             bars[-1].volume / _average(prev_20_volumes)
             if prev_20_volumes and _average(prev_20_volumes) > 0
+            else None
+        ),
+        turnover_surge_ratio=(
+            bars[-1].turnover / _average_optional(prev_20_turnovers)
+            if bars[-1].turnover is not None
+            and prev_20_turnovers
+            and (_average_optional(prev_20_turnovers) or 0.0) > 0
             else None
         ),
     )
@@ -168,6 +188,7 @@ def _score_features(features: TechnicalFeatureSnapshot) -> SignalScoreCard:
     )
     volume_confirmation = _score_volume_surge(
         features.volume_surge_ratio,
+        features.turnover_surge_ratio,
         reason_codes,
     )
     rsi_signal = _score_rsi(features.rsi_14, reason_codes)
@@ -212,6 +233,10 @@ def _sma(values: list[float], window: int) -> float | None:
 
 def _average(values: list[float]) -> float:
     return mean(values) if values else 0.0
+
+
+def _average_optional(values: list[float]) -> float | None:
+    return mean(values) if values else None
 
 
 def _decimal_or_none(value: float | None) -> Decimal | None:
@@ -327,19 +352,30 @@ def _score_price_vs_ma(
 
 
 def _score_volume_surge(
-    value: float | None,
+    volume_value: float | None,
+    turnover_value: float | None,
     reason_codes: list[str],
 ) -> float:
+    volume_score = _score_single_surge_ratio(volume_value)
+    turnover_score = _score_single_surge_ratio(turnover_value)
+    best_score = max(volume_score, turnover_score)
+    if best_score >= 0.75:
+        reason_codes.append("volume_surge_strong")
+    elif best_score >= 0.35:
+        reason_codes.append("volume_surge_supportive")
+    elif min(volume_score, turnover_score) <= -0.35:
+        reason_codes.append("volume_dry_up")
+    return best_score
+
+
+def _score_single_surge_ratio(value: float | None) -> float:
     if value is None:
         return 0.0
     if value >= 2.0:
-        reason_codes.append("volume_surge_strong")
         return 0.75
     if value >= 1.3:
-        reason_codes.append("volume_surge_supportive")
         return 0.35
     if value <= 0.6:
-        reason_codes.append("volume_dry_up")
         return -0.35
     return 0.0
 

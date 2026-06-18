@@ -6,8 +6,8 @@ This module defines the data contracts for the Universe Selection Service
 Reference
 ---------
 - ``plans/[POLICY] trading_universe_policy_v1.md`` — 5-layer universe selection policy
-- ``plans/universe_selection_service_p1_design.md`` — P1 design document
-- ``plans/universe_selection_service_p2_market_overlay_design.md`` — P2 design document
+- ``plans/[DESIGN] universe_selection_service.md`` — P1 design document
+- ``plans/[DESIGN] universe_selection_service.md`` — P2 design document
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ class SourceType(str, Enum):
     CORE = "core"                      # Core Universe (KOSPI200, etc.)
     MARKET_OVERLAY = "market_overlay"  # Market-Driven (KIS ranking)
     EVENT_OVERLAY = "event_overlay"    # Event-Driven (OpenDART, news)
+    RECONCILIATION_OVERLAY = "reconciliation_overlay"  # Open/reconcile-required orders
     HELD_POSITION = "held_position"    # Held position (mandatory)
     MANUAL = "manual"                  # Manual watchlist (future)
 
@@ -37,10 +38,11 @@ class SourceType(str, Enum):
         """Lower value = higher priority (0 = highest)."""
         mapping: tuple[SourceType, ...] = (
             SourceType.HELD_POSITION,    # 0 — mandatory
-            SourceType.EVENT_OVERLAY,    # 1 — important event
-            SourceType.MARKET_OVERLAY,   # 2 — market signal
-            SourceType.MANUAL,           # 3 — operator override
-            SourceType.CORE,             # 4 — baseline
+            SourceType.RECONCILIATION_OVERLAY,  # 1 — unknown/open order state
+            SourceType.EVENT_OVERLAY,    # 2 — important event
+            SourceType.MARKET_OVERLAY,   # 3 — market signal
+            SourceType.MANUAL,           # 4 — operator override
+            SourceType.CORE,             # 5 — baseline
         )
         try:
             return mapping.index(self)
@@ -50,9 +52,10 @@ class SourceType(str, Enum):
 
 # ── Inclusion reason constants ──────────────────────────────────────────────
 
-INCLUSION_REASON_CORE = "kospi200_core"
+INCLUSION_REASON_CORE = "approved_core_universe"
 INCLUSION_REASON_HELD = "held_position_mandatory"
 INCLUSION_REASON_EVENT = "high_importance_event"
+INCLUSION_REASON_RECONCILIATION = "reconciliation_required"
 INCLUSION_REASON_MANUAL = "manual_watchlist"
 
 # Market-driven overlay reasons (P2)
@@ -76,7 +79,7 @@ class SelectedSymbol:
         Origin of this symbol's inclusion.
     inclusion_reason : str
         Human-readable / machine-readable reason string.
-        Examples: ``"kospi200_core"``, ``"held_position_mandatory"``,
+        Examples: ``"approved_core_universe"``, ``"held_position_mandatory"``,
         ``"high_importance_event:disclosure"``, ``"volume_surge_top10"``.
     """
 
@@ -108,12 +111,19 @@ class CompositionContext:
     core_cap : int | None
         Maximum number of ``core`` source symbols allowed inside the
         non-held universe. ``None`` means no separate core-only limit.
+    event_overlay_cap : int | None
+        Maximum number of ``event_overlay`` source symbols allowed inside
+        the non-held universe. ``None`` means no separate event-only limit.
     exclude_held_from_cap : bool
         If True, held-position symbols do not count toward ``max_cap``.
         Default: True.
     market_overlay_cap : int
         Maximum number of market-driven overlay symbols to include per cycle.
         Default: 5 (P2 minimum).
+    reconciliation_overlay_reserve : int | None
+        Number of ``reconciliation_overlay`` symbols that are excluded from
+        the normal ``max_cap`` accounting. ``None`` preserves the current
+        behaviour where all reconciliation symbols are excluded from cap.
     pre_pool_size : int
         Maximum number of core-universe candidates to evaluate via
         ``inquire-price`` batch.  Default: 50 (P2 minimum).
@@ -126,8 +136,10 @@ class CompositionContext:
     since: datetime
     max_cap: int = 30
     core_cap: int | None = None
+    event_overlay_cap: int | None = None
     exclude_held_from_cap: bool = True
     market_overlay_cap: int = 5
+    reconciliation_overlay_reserve: int | None = None
     pre_pool_size: int = 50
     manual_symbols: tuple[tuple[str, str], ...] = ()
 
@@ -201,6 +213,8 @@ class MarketOverlayDiagnostics:
 
     enabled: bool
     skipped_reason: str | None = None
+    seed_pool_source: str | None = None
+    seed_pool_count: int = 0
     effective_pre_pool_size: int = 0
     pre_pool_candidate_count: int = 0
     quotes_requested_count: int = 0
@@ -208,6 +222,7 @@ class MarketOverlayDiagnostics:
     filtered_out_count: int = 0
     scored_candidate_count: int = 0
     added_count: int = 0
+    overlay_capture_rate: float | None = None
 
 
 # ── Default fallback ────────────────────────────────────────────────────────

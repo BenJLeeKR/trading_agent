@@ -275,13 +275,13 @@ class UniverseSymbol:
         Default: ``"core"``.
     inclusion_reason : str
         Machine-readable reason for inclusion.
-        Default: ``"kospi200_core"``.
+        Default: ``"approved_core_universe"``.
     """
 
     symbol: str
     market: str = MARKET
     source_type: str = "core"
-    inclusion_reason: str = "kospi200_core"
+    inclusion_reason: str = "approved_core_universe"
 
 # ── Signal handling ─────────────────────────────────────────────────────────
 

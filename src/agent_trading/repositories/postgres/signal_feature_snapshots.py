@@ -29,7 +29,8 @@ class PostgresSignalFeatureSnapshotRepository:
                  price_vs_sma_20_pct, price_vs_sma_60_pct,
                  return_1m_pct, return_3m_pct,
                  volatility_20d_pct, atr_14_pct, rsi_14,
-                 average_volume_20d, volume_surge_ratio,
+                 average_volume_20d, average_turnover_20d,
+                 volume_surge_ratio, turnover_surge_ratio,
                  fast_score, slow_score, overall_score,
                  component_scores_json, reason_codes)
             VALUES ($1, $2, $3, $4, $5, $6,
@@ -38,8 +39,9 @@ class PostgresSignalFeatureSnapshotRepository:
                     $12, $13,
                     $14, $15, $16,
                     $17, $18,
-                    $19, $20, $21,
-                    $22::jsonb, $23)
+                    $19, $20,
+                    $21, $22, $23,
+                    $24::jsonb, $25)
             RETURNING *
             """,
             snapshot.signal_feature_snapshot_id,
@@ -59,7 +61,9 @@ class PostgresSignalFeatureSnapshotRepository:
             snapshot.atr_14_pct,
             snapshot.rsi_14,
             snapshot.average_volume_20d,
+            snapshot.average_turnover_20d,
             snapshot.volume_surge_ratio,
+            snapshot.turnover_surge_ratio,
             snapshot.fast_score,
             snapshot.slow_score,
             snapshot.overall_score,

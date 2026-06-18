@@ -80,3 +80,33 @@
 - 운영 재검증 항목:
   - 동일 종목 반복 `REDUCE` 빈도 자체가 과도한지
   - `held_position_sell_cycle_cap` 계열 stop reason 잔존 경로가 남아 있는지
+
+## 2026-06-18 추가 수정
+
+- 장중 실측에서 `000227`이 `809주`, `816주` 보유 상태에서도
+  `REDUCE` 주문이 계속 `1주`로 계산되는 사례가 재확인되었다.
+- 직접 원인은 `size_adjustment_factor`가 비어 있는 held-position `REDUCE` 경로가
+  여전히 `requested_quantity=1` placeholder를 그대로 sizing base로 사용한 점이다.
+- 이에 따라 [`src/agent_trading/services/sizing_engine.py`](../src/agent_trading/services/sizing_engine.py)
+  에 `source_type="held_position"` + `REDUCE` + placeholder `1주` 조합일 때
+  기본 축소 수량을 `보유수량의 25%`로 해석하는 deterministic fallback을 추가했다.
+- 이 fallback은 AI hint가 없을 때만 동작하며, hint가 존재하면 기존의
+  `factor 기반 보유수량 비율` 계산이 우선한다.
+
+## 2026-06-18 stale 현금 스냅샷 재사용 방지
+
+- `2026-06-18 12:04 KST`에 `cash_balance_snapshots.fetch_status='stale'`,
+  `orderable_amount=0` 스냅샷이 1건 적재되었고,
+  이후 `12:45~12:59 KST` 다수 BUY 판단이 이 stale snapshot id를
+  `decision_context.cash_balance_snapshot_id`로 고정한 채 생성되었다.
+- 원인은 두 단계였다.
+  - `DecisionContextService.ensure_or_create()`가 최신 현금 snapshot 1건을
+    상태 구분 없이 그대로 anchor했다.
+  - `DecisionOrchestratorService.assemble()`가 anchor된 cash snapshot을 우선 사용하고,
+    최신 success cash snapshot으로 승격하지 않았다.
+- 수정 내용:
+  - `success` 상태의 최신 현금 snapshot을 우선 선택하고,
+    없을 때만 최신 snapshot(stale 포함)로 fallback한다.
+  - 이미 stale cash snapshot이 anchor된 기존 decision_context도
+    assemble 시 최신 success cash snapshot으로 교체하고,
+    그 결과를 `decision_context.cash_balance_snapshot_id`에 다시 반영한다.

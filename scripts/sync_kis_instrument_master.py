@@ -127,9 +127,15 @@ def _build_instrument(
 ) -> InstrumentEntity:
     symbol = record[headers["symbol"]].strip()
     name = record[headers["name"]].strip()
-    market_code = record.get(headers.get("market_code", ""), "").strip() or default_market_code
-    asset_class = record.get(headers.get("asset_class", ""), "").strip() or default_asset_class
-    currency = record.get(headers.get("currency", ""), "").strip() or default_currency
+    market_code = (
+        record.get(headers.get("market_code", ""), "").strip() or default_market_code
+    ).upper()
+    asset_class = (
+        record.get(headers.get("asset_class", ""), "").strip() or default_asset_class
+    ).lower()
+    currency = (
+        record.get(headers.get("currency", ""), "").strip() or default_currency
+    ).upper()
     tick_size = _parse_decimal(record.get(headers.get("tick_size", "")), "1")
     lot_size = _parse_decimal(record.get(headers.get("lot_size", "")), "1")
     is_active = _parse_bool(record.get(headers.get("is_active", "")), True)
@@ -426,9 +432,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--deactivate-market-code",
         default="KRX",
-        help="Market code scope for missing-row deactivation (default: KRX).",
+        help="누락 종목 비활성화 대상 market_code (예: KRX, KOSPI, KOSDAQ).",
     )
-    parser.add_argument("--default-market-code", default="KRX")
+    parser.add_argument(
+        "--default-market-code",
+        default="KRX",
+        help="CSV에 market_code가 비어 있을 때 사용할 기본 market_code.",
+    )
     parser.add_argument("--default-asset-class", default="kr_stock")
     parser.add_argument("--default-currency", default="KRW")
     parser.add_argument("--source-tag", default="kis_master_csv")

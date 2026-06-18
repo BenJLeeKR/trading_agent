@@ -29,6 +29,11 @@ DEFAULT_SIGNAL_FEATURE_BATCH_SIZE = 15
 DEFAULT_SIGNAL_FEATURE_BATCH_PAUSE_SECONDS = 1.0
 DEFAULT_SIGNAL_FEATURE_BUDGET_RETRY_ATTEMPTS = 6
 DEFAULT_SIGNAL_FEATURE_BUDGET_RETRY_SLEEP_SECONDS = 1.0
+_SUPPORTED_SIGNAL_FEATURE_MARKETS: frozenset[str] = frozenset({
+    "KRX",
+    "KOSPI",
+    "KOSDAQ",
+})
 
 
 @dataclass(slots=True, frozen=True)
@@ -205,14 +210,15 @@ async def _build_rows(
     normalized_budget_retry_sleep_seconds = max(0.1, budget_retry_sleep_seconds)
 
     for index, item in enumerate(universe, start=1):
-        if item.market != "KRX":
+        normalized_market = str(item.market or "").strip().upper()
+        if normalized_market not in _SUPPORTED_SIGNAL_FEATURE_MARKETS:
             errors.append(f"{item.symbol}:{item.market}:unsupported_market")
             continue
         try:
             raw_bars = await _fetch_daily_bars_with_budget_retry(
                 client=client,
                 symbol=item.symbol,
-                market=item.market,
+                market=normalized_market,
                 start_date=start_date_str,
                 end_date=end_date_str,
                 budget_retry_attempts=normalized_budget_retry_attempts,
@@ -232,7 +238,7 @@ async def _build_rows(
             rows.append(
                 SignalFeatureInputRow(
                     symbol=item.symbol,
-                    market=item.market,
+                    market=normalized_market,
                     timeframe=timeframe,
                     feature_set_version=feature_set_version,
                     bars=bars,

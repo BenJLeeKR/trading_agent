@@ -742,6 +742,8 @@ class MarketOverlayDiagnosticsView(BaseModel):
 
     enabled: bool
     skipped_reason: str | None = None
+    seed_pool_source: str | None = None
+    seed_pool_count: int
     effective_pre_pool_size: int
     pre_pool_candidate_count: int
     quotes_requested_count: int
@@ -749,6 +751,7 @@ class MarketOverlayDiagnosticsView(BaseModel):
     filtered_out_count: int
     scored_candidate_count: int
     added_count: int
+    overlay_capture_rate: float | None = None
 
 
 class TradingUniversePreviewResponse(BaseModel):
@@ -1597,7 +1600,9 @@ class SignalFeatureSnapshotView(BaseModel):
     atr_14_pct: float | None = None
     rsi_14: float | None = None
     average_volume_20d: float | None = None
+    average_turnover_20d: float | None = None
     volume_surge_ratio: float | None = None
+    turnover_surge_ratio: float | None = None
     fast_score: float | None = None
     slow_score: float | None = None
     overall_score: float | None = None

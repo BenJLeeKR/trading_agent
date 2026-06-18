@@ -760,6 +760,8 @@ flowchart TB
 | 시가총액 필터 | 시가총액 < 500억 제외 (KIS 기본종목정보 필요) | P2b |
 | 이상체결 탐지 | 당일 거래량 / 평균 거래량 > 100배 제외 | P2c |
 | Fast Layer 전용 평가 | sub-minute lightweight scoring (volume/strength/breakout only) | P2c |
+| 상대 활동성 feature 승격 | `relative volume`, `relative turnover`를 WATCH/BUY ranking 핵심 입력으로 승격 | P2c |
+| 탐색 풀과 주문 가능 풀 분리 | KOSDAQ/거래대금 상위 후보는 우선 탐색 풀에서 관찰 후 주문 가능 풀로 승격 | P2d |
 | DB migration | `universe_selection_runs` 또는 `daily_universe` 테이블 신규 검토 | P2d |
 | Universe Selection Config | 전략별 core universe 목록, cap size, filter threshold를 env/config로 주입 | P2d |
 

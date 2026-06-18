@@ -37,7 +37,7 @@
 
 **장중(09:22 KST)임에도 `market_overlay` 심볼이 단 1건도 포함되지 않았습니다.**
 
-이는 [`plans/universe_selection_service_p2_market_overlay_design.md`](plans/universe_selection_service_p2_market_overlay_design.md)에서 설계된 KIS ranking analysis API 기반 market_overlay 로직이 아직 구현되지 않았기 때문입니다. 현재 `UniverseSelectionService.compose()`는 `core` 심볼만 반환하며, `market_overlay`는 항상 빈 리스트입니다.
+이는 [`plans/[DESIGN] universe_selection_service.md`](plans/[DESIGN] universe_selection_service.md)에서 설계된 KIS ranking analysis API 기반 market_overlay 로직이 아직 구현되지 않았기 때문입니다. 현재 `UniverseSelectionService.compose()`는 `core` 심볼만 반환하며, `market_overlay`는 항상 빈 리스트입니다.
 
 > **결론**: market_overlay 기능은 아직 backend에 구현되지 않았으므로, 장중/장후 관계없이 항상 0건입니다. 이는 P2 수준의 backlog 항목입니다.
 
@@ -213,7 +213,7 @@
 | 장중에 market_overlay 심볼이 포함되는가? | **아니오** — 0건 |
 | 이유 | KIS ranking analysis API 기반 market_overlay 로직이 아직 backend에 구현되지 않음 |
 | 영향 | 4-bucket 분석에서 Bucket C, D는 데이터 없음 |
-| 필요 조치 | P2 수준으로 market_overlay 기능 구현 필요 ([`plans/universe_selection_service_p2_market_overlay_design.md`](plans/universe_selection_service_p2_market_overlay_design.md) 참조) |
+| 필요 조치 | P2 수준으로 market_overlay 기능 구현 필요 ([`plans/[DESIGN] universe_selection_service.md`](plans/[DESIGN] universe_selection_service.md) 참조) |
 
 ### 9.2 EI/FDC HOLD Bias Mitigation 효과
 
@@ -225,7 +225,7 @@
 
 ### 9.3 장 종료 후 권장 수정 우선순위
 
-1. **P1: market_overlay 기능 구현** — [`plans/universe_selection_service_p2_market_overlay_design.md`](plans/universe_selection_service_p2_market_overlay_design.md) 참조. KIS ranking analysis API를 호출하여 장중에 market_overlay 심볼을 추가하도록 `UniverseSelectionService.compose()` 구현 필요. 구현 후 재측정 필수.
+1. **P1: market_overlay 기능 구현** — [`plans/[DESIGN] universe_selection_service.md`](plans/[DESIGN] universe_selection_service.md) 참조. KIS ranking analysis API를 호출하여 장중에 market_overlay 심볼을 추가하도록 `UniverseSelectionService.compose()` 구현 필요. 구현 후 재측정 필수.
 
 2. **P2: WATCH Decision 부재 원인 분석** — FDC 프롬프트에 WATCH 결정을 출력할 수 있는 조건 추가 검토. 현재 FDC는 AR의 risk_opinion을 100% 따르고 있으며, WATCH를 선택할 근거가 없음.
 
@@ -238,7 +238,7 @@
 | 파일 | 설명 |
 |------|------|
 | [`plans/HANDOVER_TO_NEW_SESSION.md`](plans/HANDOVER_TO_NEW_SESSION.md) | 이전 세션 핸드오버 문서 (P1/P2/P3 정의) |
-| [`plans/universe_selection_service_p2_market_overlay_design.md`](plans/universe_selection_service_p2_market_overlay_design.md) | Market Overlay 설계 문서 |
+| [`plans/[DESIGN] universe_selection_service.md`](plans/[DESIGN] universe_selection_service.md) | Market Overlay 설계 문서 |
 | [`plans/ei_fdc_hold_bias_analysis.md`](plans/ei_fdc_hold_bias_analysis.md) | EI/FDC HOLD Bias 분석 문서 |
 | DB table: `trade_decisions` | 177건 FDC 결정 데이터 (dry-run, 실제 미체결) |
 | DB table: `agent_runs` | EI/AR 실행 내역 (agent_type, input, output) |

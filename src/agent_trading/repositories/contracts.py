@@ -356,6 +356,13 @@ class DecisionContextRepository(Protocol):
     ) -> DecisionContextEntity | None:
         ...
 
+    async def attach_cash_balance_snapshot(
+        self,
+        decision_context_id: UUID,
+        cash_balance_snapshot_id: UUID,
+    ) -> DecisionContextEntity | None:
+        ...
+
 
 class PositionSnapshotRepository(Protocol):
     async def add(self, snapshot: PositionSnapshotEntity) -> PositionSnapshotEntity:

@@ -14,22 +14,27 @@ P2 minimum adds:
 Reference
 ---------
 - ``plans/[POLICY] trading_universe_policy_v1.md`` — 5-layer universe selection policy
-- ``plans/universe_selection_service_p1_design.md`` — P1 design document
-- ``plans/universe_selection_service_p2_market_overlay_design.md`` — P2 design
+- ``plans/[DESIGN] universe_selection_service.md`` — P1 design document
+- ``plans/[DESIGN] universe_selection_service.md`` — P2 design
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from decimal import Decimal
 from typing import TYPE_CHECKING, Sequence
 
+from agent_trading.domain.enums import OrderStatus
 from agent_trading.repositories.container import RepositoryContainer
+from agent_trading.repositories.filters import OrderQuery
+from agent_trading.services.core_universe_seed import APPROVED_CORE_UNIVERSE_SYMBOLS
 from agent_trading.services.universe_selection_types import (
     INCLUSION_REASON_CORE,
     INCLUSION_REASON_EVENT,
     INCLUSION_REASON_HELD,
     INCLUSION_REASON_MANUAL,
+    INCLUSION_REASON_RECONCILIATION,
     INCLUSION_REASON_NEAR_HIGH,
     INCLUSION_REASON_PRICE_VOLUME_BREAKOUT,
     INCLUSION_REASON_TRADE_STRENGTH,
@@ -46,6 +51,23 @@ if TYPE_CHECKING:
     from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
 
 logger = logging.getLogger(__name__)
+
+_STANDARD_KRX_SYMBOL_PATTERN = re.compile(r"^\d{6}$")
+_SUPPORTED_KR_EQUITY_MARKETS: frozenset[str] = frozenset({
+    "KRX",
+    "KOSPI",
+    "KOSDAQ",
+})
+_ACTIVE_ORDER_STATUSES: tuple[OrderStatus, ...] = (
+    OrderStatus.DRAFT,
+    OrderStatus.VALIDATED,
+    OrderStatus.PENDING_SUBMIT,
+    OrderStatus.SUBMITTED,
+    OrderStatus.ACKNOWLEDGED,
+    OrderStatus.PARTIALLY_FILLED,
+    OrderStatus.CANCEL_PENDING,
+    OrderStatus.RECONCILE_REQUIRED,
+)
 
 # ── Liquidity Filter thresholds ─────────────────────────────────────────────
 
@@ -65,6 +87,69 @@ _SUSPENDED_STATUS_CODES: frozenset[str] = frozenset({
     "03",  # assumed: 투자경고
     "04",  # assumed: 투자주의
     "05",  # assumed: 거래정지
+})
+
+_EVENT_SEVERITY_ORDER: dict[str, int] = {
+    "low": 0,
+    "medium": 1,
+    "high": 2,
+    "critical": 3,
+}
+
+_EVENT_TYPE_ALIASES: dict[str, str] = {
+    "disclosure": "disclosure_material",
+    "y|disclosure": "disclosure_material",
+    "k|disclosure": "disclosure_material",
+    "n|disclosure": "disclosure_material",
+    "seeded_news": "news_breaking",
+    "y|seeded_news": "news_breaking",
+    "n|seeded_news": "news_breaking",
+}
+
+_EVENT_OVERLAY_POLICY: dict[str, str] = {
+    "earnings": "high",
+    "disclosure_material": "high",
+    "disclosure_correction": "high",
+    "trading_halt": "medium",
+    "investment_warning": "medium",
+    "management_issue": "medium",
+    "capital_change": "high",
+    "governance": "high",
+    "macro_release": "high",
+    "sector_policy": "high",
+    "broker_report_change": "high",
+    "news_breaking": "high",
+}
+
+_EVENT_FETCH_TYPES: tuple[str, ...] = (
+    "disclosure",
+    "Y|disclosure",
+    "K|disclosure",
+    "N|disclosure",
+    "seeded_news",
+    "Y|seeded_news",
+    "N|seeded_news",
+    "earnings",
+    "disclosure_material",
+    "disclosure_correction",
+    "trading_halt",
+    "investment_warning",
+    "management_issue",
+    "capital_change",
+    "governance",
+    "macro_release",
+    "sector_policy",
+    "broker_report_change",
+    "news_breaking",
+)
+
+_DISCOVERY_SEGMENT_CODES: frozenset[str] = frozenset({
+    "KOSPI100",
+    "KOSPI_100",
+    "KOSDAQ150",
+    "KOSDAQ_150",
+    "KOSPI_LARGE",
+    "KOSDAQ_GROWTH",
 })
 
 
@@ -222,6 +307,107 @@ def _check_acc_trade_amount(
     return LiquidityFilterResult(True)
 
 
+def _metadata_flag(metadata: dict[str, object], key: str) -> bool | None:
+    raw = metadata.get(key)
+    if isinstance(raw, bool):
+        return raw
+    return None
+
+
+def _normalize_asset_class(asset_class: str | None) -> str:
+    return str(asset_class or "").strip().lower()
+
+
+def _is_standard_krx_symbol(symbol: str) -> bool:
+    return _STANDARD_KRX_SYMBOL_PATTERN.match(str(symbol or "").strip()) is not None
+
+
+def _normalize_market_code(market: str | None) -> str:
+    return str(market or "").strip().upper()
+
+
+def _is_supported_kr_equity_market(market: str | None) -> bool:
+    return _normalize_market_code(market) in _SUPPORTED_KR_EQUITY_MARKETS
+
+
+def _looks_like_preferred_or_special_share(symbol: str, name: str) -> bool:
+    normalized_name = str(name or "").strip()
+    _ = symbol
+    if normalized_name.endswith("(전환)"):
+        return True
+    return re.search(r"(우|우B|[123]우|[123]우B)$", normalized_name) is not None
+
+
+def _is_core_seed_instrument_symbol(symbol: str) -> bool:
+    return str(symbol or "").strip() in APPROVED_CORE_UNIVERSE_SYMBOLS
+
+
+def _is_core_seed_instrument(instrument: object) -> bool:
+    metadata = getattr(instrument, "metadata", {}) or {}
+    flagged = _metadata_flag(metadata, "core_universe")
+    if flagged is not None:
+        return flagged
+    return _is_core_seed_instrument_symbol(getattr(instrument, "symbol", ""))
+
+
+def _segment_value(metadata: dict[str, object]) -> str | None:
+    for key in ("market_segment", "segment", "universe_segment"):
+        raw = metadata.get(key)
+        if raw is None:
+            continue
+        value = str(raw).strip().upper()
+        if value:
+            return value
+    return None
+
+
+def _is_market_discovery_seed_instrument(instrument: object) -> bool:
+    metadata = getattr(instrument, "metadata", {}) or {}
+    if _is_core_seed_instrument(instrument):
+        return True
+    if _metadata_flag(metadata, "market_discovery_pool") is True:
+        return True
+    segment = _segment_value(metadata)
+    if segment is not None and segment in _DISCOVERY_SEGMENT_CODES:
+        return True
+    return False
+
+
+def _calc_overlay_capture_rate(added_count: int, candidate_count: int) -> float | None:
+    if candidate_count <= 0:
+        return None
+    return added_count / candidate_count
+
+
+def _normalize_event_type(event_type: str | None) -> str:
+    normalized = str(event_type or "").strip()
+    lowered = normalized.lower()
+    return _EVENT_TYPE_ALIASES.get(lowered, lowered or "unknown")
+
+
+def _event_importance_level(metadata: dict[str, object] | None) -> str | None:
+    raw = (metadata or {}).get("importance")
+    if raw is None:
+        return None
+    return str(raw).strip().lower() or None
+
+
+def _meets_event_overlay_threshold(
+    event_type: str,
+    severity: str | None,
+    importance: str | None,
+) -> bool:
+    required = _EVENT_OVERLAY_POLICY.get(event_type)
+    if required is None:
+        return False
+    actual_level = max(
+        _EVENT_SEVERITY_ORDER.get(str(severity or "").strip().lower(), -1),
+        _EVENT_SEVERITY_ORDER.get(str(importance or "").strip().lower(), -1),
+    )
+    required_level = _EVENT_SEVERITY_ORDER[required]
+    return actual_level >= required_level
+
+
 # ── LiquidityFilter class ────────────────────────────────────────────────────
 
 
@@ -241,6 +427,24 @@ class LiquidityFilter:
     def __init__(self, repos: RepositoryContainer) -> None:
         self._repos = repos
 
+    async def _resolve_instrument(
+        self,
+        symbol: str,
+        market: str,
+    ) -> object | None:
+        normalized_market = _normalize_market_code(market)
+        instrument = await self._repos.instruments.get_by_symbol(symbol, normalized_market)
+        if instrument is not None:
+            return instrument
+        if not _is_supported_kr_equity_market(normalized_market):
+            return None
+        fallback = await self._repos.instruments.get_by_symbol_any_market(symbol)
+        if fallback is None:
+            return None
+        if not _is_supported_kr_equity_market(getattr(fallback, "market_code", None)):
+            return None
+        return fallback
+
     async def check(self, symbol: str, market: str) -> LiquidityFilterResult:
         """Run all deterministic liquidity checks for a single symbol.
 
@@ -248,12 +452,35 @@ class LiquidityFilter:
         or ``LiquidityFilterResult(passed=False, fail_reason=...)`` with
         the first failing reason.
         """
-        instrument = await self._repos.instruments.get_by_symbol(symbol, market)
+        normalized_market = _normalize_market_code(market)
+        if not _is_supported_kr_equity_market(normalized_market):
+            return LiquidityFilterResult(False, "unsupported_market")
+
+        instrument = await self._resolve_instrument(symbol, normalized_market)
         if instrument is None:
             return LiquidityFilterResult(False, "unknown_instrument")
 
         if not instrument.is_active:
             return LiquidityFilterResult(False, "inactive_instrument")
+
+        if _normalize_asset_class(instrument.asset_class) != "kr_stock":
+            return LiquidityFilterResult(False, "unsupported_asset_class")
+
+        metadata = instrument.metadata or {}
+        if _metadata_flag(metadata, "exclude_from_trading_universe") is True:
+            return LiquidityFilterResult(False, "metadata_excluded")
+
+        if _metadata_flag(metadata, "broker_supported") is False:
+            return LiquidityFilterResult(False, "broker_unsupported")
+
+        if _metadata_flag(metadata, "instrument_complete") is False:
+            return LiquidityFilterResult(False, "incomplete_instrument")
+
+        if not _is_standard_krx_symbol(instrument.symbol):
+            return LiquidityFilterResult(False, "non_standard_symbol")
+
+        if _looks_like_preferred_or_special_share(instrument.symbol, instrument.name):
+            return LiquidityFilterResult(False, "preferred_share_class")
 
         # Tick-size heuristic: large tick size often indicates low liquidity
         # or micro-cap stocks on KRX.
@@ -320,6 +547,17 @@ class UniverseSelectionService:
         self._liquidity_filter = liquidity_filter or LiquidityFilter(repos)
         self._kis_client = kis_client
 
+    async def _list_active_kr_equity_instruments(self) -> list[object]:
+        items_by_symbol: dict[str, object] = {}
+        for market_code in ("KOSPI", "KOSDAQ", "KRX"):
+            instruments = await self._repos.instruments.list_active_by_market(market_code)
+            for instrument in instruments:
+                symbol = getattr(instrument, "symbol", "")
+                if not symbol or symbol in items_by_symbol:
+                    continue
+                items_by_symbol[symbol] = instrument
+        return list(items_by_symbol.values())
+
     async def compose(self, ctx: CompositionContext) -> list[SelectedSymbol]:
         selected, _ = await self.compose_with_diagnostics(ctx)
         return selected
@@ -348,22 +586,25 @@ class UniverseSelectionService:
         # Step 2: Held Positions (mandatory override)
         await self._add_held_positions(seen, ctx)
 
-        # Step 3: Event-Driven Overlay
+        # Step 3: Reconciliation / open-order overlay (mandatory for order safety)
+        await self._add_reconciliation_overlay(seen, ctx)
+
+        # Step 4: Event-Driven Overlay
         await self._add_event_overlay(seen, ctx)
 
-        # Step 4: Manual Watchlist Overlay
+        # Step 5: Manual Watchlist Overlay
         await self._add_manual_overlay(seen, ctx)
 
-        # Step 5: Market-Driven Overlay (P2 minimum)
+        # Step 6: Market-Driven Overlay (P2 minimum)
         market_overlay_diagnostics = await self._add_market_overlay(seen, ctx)
 
-        # Step 6: Exclusion Rules (Liquidity Filter)
+        # Step 7: Exclusion Rules (Liquidity Filter)
         candidates = await self._apply_exclusions(seen)
 
-        # Step 7: Priority Sort (ascending priority value = highest first)
+        # Step 8: Priority Sort (ascending priority value = highest first)
         candidates.sort(key=lambda s: s.priority)
 
-        # Step 8: Daily Cap
+        # Step 9: Daily Cap
         return self._apply_cap(candidates, ctx), market_overlay_diagnostics
 
     # ── Step implementations ─────────────────────────────────────────────
@@ -372,9 +613,11 @@ class UniverseSelectionService:
         self,
         seen: dict[str, SelectedSymbol],
     ) -> None:
-        """Load all active KRX instruments as the Core Universe."""
-        instruments = await self._repos.instruments.list_active_by_market("KRX")
+        """Load only approved core-seed instruments as the Core Universe."""
+        instruments = await self._list_active_kr_equity_instruments()
         for inst in instruments:
+            if not _is_core_seed_instrument(inst):
+                continue
             sym = inst.symbol
             if sym not in seen:
                 seen[sym] = SelectedSymbol(
@@ -416,29 +659,135 @@ class UniverseSelectionService:
                     ),
                 )
 
+    async def _add_reconciliation_overlay(
+        self,
+        seen: dict[str, SelectedSymbol],
+        ctx: CompositionContext,
+    ) -> None:
+        """Force-include open-order / reconciliation-required symbols.
+
+        Policy rationale:
+        - unknown order state must be checked before new order creation
+        - open / reconcile-required lineage cannot fall out of the universe
+        """
+        instrument_cache: dict[object, object | None] = {}
+
+        async def _resolve_instrument(order_instrument_id: object) -> object | None:
+            if order_instrument_id not in instrument_cache:
+                instrument_cache[order_instrument_id] = await self._repos.instruments.get(
+                    order_instrument_id
+                )
+            return instrument_cache[order_instrument_id]
+
+        open_orders = await self._repos.orders.list(
+            OrderQuery(
+                account_id=ctx.account_id,
+                statuses=_ACTIVE_ORDER_STATUSES,
+                limit=500,
+            )
+        )
+        for order in open_orders:
+            instrument = await _resolve_instrument(order.instrument_id)
+            if instrument is None:
+                continue
+            self._upsert_with_priority(
+                seen,
+                SelectedSymbol(
+                    symbol=instrument.symbol,
+                    market=instrument.market_code,
+                    source_type=SourceType.RECONCILIATION_OVERLAY,
+                    inclusion_reason=f"{INCLUSION_REASON_RECONCILIATION}:{order.status.value}",
+                ),
+            )
+
+        pending_runs = await self._repos.reconciliations.list_pending_runs(
+            limit=50,
+            account_id=ctx.account_id,
+        )
+        for run in pending_runs:
+            links = await self._repos.reconciliations.get_run_order_links(
+                run.reconciliation_run_id
+            )
+            for link in links:
+                order = await self._repos.orders.get(link.order_request_id)
+                if order is None:
+                    continue
+                instrument = await _resolve_instrument(order.instrument_id)
+                if instrument is None:
+                    continue
+                self._upsert_with_priority(
+                    seen,
+                    SelectedSymbol(
+                        symbol=instrument.symbol,
+                        market=instrument.market_code,
+                        source_type=SourceType.RECONCILIATION_OVERLAY,
+                        inclusion_reason=(
+                            f"{INCLUSION_REASON_RECONCILIATION}:"
+                            f"{link.mismatch_type or 'pending_run'}"
+                        ),
+                    ),
+                )
+
+        locks = await self._repos.reconciliations.list_locks(ctx.account_id)
+        for lock in locks:
+            normalized_symbol = str(lock.symbol or "").strip()
+            if not normalized_symbol:
+                continue
+            self._upsert_with_priority(
+                seen,
+                SelectedSymbol(
+                    symbol=normalized_symbol,
+                    market="KRX",
+                    source_type=SourceType.RECONCILIATION_OVERLAY,
+                    inclusion_reason=f"{INCLUSION_REASON_RECONCILIATION}:blocking_lock",
+                ),
+            )
+
     async def _add_event_overlay(
         self,
         seen: dict[str, SelectedSymbol],
         ctx: CompositionContext,
     ) -> None:
-        """Promote symbols with high-severity events to event_overlay."""
-        events = await self._repos.external_events.list_by_type(
-            "disclosure", ctx.since
+        """정책상 의미 있는 최근 이벤트를 event_overlay로 승격한다."""
+        fetched: list[object] = []
+        for event_type in _EVENT_FETCH_TYPES:
+            events = await self._repos.external_events.list_by_type(
+                event_type,
+                ctx.since,
+                include_seeded_news=True,
+            )
+            fetched.extend(events)
+
+        fetched.sort(
+            key=lambda item: getattr(item, "published_at", None),
+            reverse=True,
         )
-        for event in events:
-            sym = event.symbol
+
+        for event in fetched:
+            sym = getattr(event, "symbol", None)
             if sym is None:
                 continue
-            if event.severity == "high":
-                self._upsert_with_priority(
-                    seen,
-                    SelectedSymbol(
-                        symbol=sym,
-                        market=event.market or "KRX",
-                        source_type=SourceType.EVENT_OVERLAY,
-                        inclusion_reason=f"{INCLUSION_REASON_EVENT}:{event.event_type}",
+
+            normalized_event_type = _normalize_event_type(getattr(event, "event_type", None))
+            importance = _event_importance_level(getattr(event, "metadata", None))
+            if not _meets_event_overlay_threshold(
+                normalized_event_type,
+                getattr(event, "severity", None),
+                importance,
+            ):
+                continue
+
+            self._upsert_with_priority(
+                seen,
+                SelectedSymbol(
+                    symbol=sym,
+                    market=getattr(event, "market", None) or "KRX",
+                    source_type=SourceType.EVENT_OVERLAY,
+                    inclusion_reason=(
+                        f"{INCLUSION_REASON_EVENT}:{normalized_event_type}"
                     ),
-                )
+                ),
+            )
 
     async def _add_manual_overlay(
         self,
@@ -486,14 +835,14 @@ class UniverseSelectionService:
     ) -> MarketOverlayDiagnostics:
         """Add market-driven overlay candidates (P2 minimum).
 
-        Flow
-        ----
-        1. Build pre-pool from core universe (exclude already-seen symbols).
-        2. Fetch quotes via KIS ``inquire-price`` batch (budget-safe).
-        3. Parse responses into ``MarketDataSnapshot``.
-        4. Apply F4 (iscd_stat_cls_code) and F5 (low volume) filters.
-        5. Calculate composite score for remaining candidates.
-        6. Select top N (``market_overlay_cap``) for inclusion.
+        처리 순서
+        --------
+        1. 가능하면 KIS 랭킹 API에서 seed pool을 구성한다.
+        2. 랭킹 seed가 비면 core seed pre-pool로 fallback한다.
+        3. ``inquire-price`` batch로 quote를 조회한다.
+        4. ``MarketDataSnapshot``으로 파싱한다.
+        5. F4/F5 필터를 적용한다.
+        6. composite score를 계산한 뒤 상위 N개를 편입한다.
 
         If ``kis_client`` is ``None`` (no KIS configured), this is a no-op
         (P1-compatible stub behaviour).
@@ -520,16 +869,48 @@ class UniverseSelectionService:
                 skipped_reason="paper_env_skipped",
             )
 
-        # ── Step 1: Build pre-pool ───────────────────────────────────────
+        # ── Step 1: seed pool / pre-pool 구성 ────────────────────────────
         effective_pool_size = self._effective_pre_pool_size(ctx)
-        core_symbols = await self._repos.instruments.list_active_by_market("KRX")
-        pre_pool_candidates: list[str] = []
-        for inst in core_symbols:
-            sym = inst.symbol
-            # Core symbol은 seen에 이미 있더라도 pre-pool에 포함.
-            # Held/Event/Manual symbol만 제외 (이미 더 높은 우선순위로 포함됨).
-            if sym not in seen or seen[sym].source_type == SourceType.CORE:
-                pre_pool_candidates.append(sym)
+        ranking_seed_symbols: list[str] = []
+        seed_pool_source = "core_fallback"
+
+        get_seed_symbols = getattr(self._kis_client, "get_market_overlay_seed_symbols", None)
+        if callable(get_seed_symbols):
+            ranking_seed_symbols = list(
+                await get_seed_symbols(limit=max(effective_pool_size, 30))
+            )
+            if ranking_seed_symbols:
+                seed_pool_source = "kis_ranking"
+
+        if ranking_seed_symbols:
+            seed_pool_symbols = ranking_seed_symbols
+        else:
+            core_symbols = await self._list_active_kr_equity_instruments()
+            seed_pool_symbols = [
+                inst.symbol
+                for inst in core_symbols
+                if _is_market_discovery_seed_instrument(inst)
+            ]
+
+        symbol_market_map: dict[str, str] = {}
+        for symbol in seed_pool_symbols:
+            instrument = await self._repos.instruments.get_by_symbol_any_market(symbol)
+            if instrument is None:
+                continue
+            market_code = getattr(instrument, "market_code", None)
+            if not _is_supported_kr_equity_market(market_code):
+                continue
+            symbol_market_map[symbol] = _normalize_market_code(market_code)
+
+        pre_pool_candidates: list[tuple[str, str]] = []
+        for sym in seed_pool_symbols:
+            market_code = symbol_market_map.get(sym, "KRX")
+            if sym in seen and seen[sym].source_type != SourceType.CORE:
+                continue
+            base_filter = await self._liquidity_filter.check(sym, market_code)
+            if not base_filter.passed:
+                continue
+            pre_pool_candidates.append((sym, market_code))
             if len(pre_pool_candidates) >= effective_pool_size:
                 break
 
@@ -538,6 +919,8 @@ class UniverseSelectionService:
             return MarketOverlayDiagnostics(
                 enabled=True,
                 skipped_reason="empty_pre_pool",
+                seed_pool_source=seed_pool_source,
+                seed_pool_count=len(seed_pool_symbols),
                 effective_pre_pool_size=effective_pool_size,
                 pre_pool_candidate_count=0,
             )
@@ -550,13 +933,17 @@ class UniverseSelectionService:
         )
 
         # ── Step 2: Fetch quotes batch ───────────────────────────────────
-        raw_batch = await self._kis_client.get_quotes_batch(pre_pool_candidates)
+        raw_batch = await self._kis_client.get_quotes_batch(
+            [symbol for symbol, _market in pre_pool_candidates]
+        )
 
         if not raw_batch:
             logger.debug("_add_market_overlay: no quotes returned — skipping.")
             return MarketOverlayDiagnostics(
                 enabled=True,
                 skipped_reason="no_quotes_returned",
+                seed_pool_source=seed_pool_source,
+                seed_pool_count=len(seed_pool_symbols),
                 effective_pre_pool_size=effective_pool_size,
                 pre_pool_candidate_count=len(pre_pool_candidates),
                 quotes_requested_count=len(pre_pool_candidates),
@@ -565,7 +952,9 @@ class UniverseSelectionService:
 
         # ── Step 2.5: Count successful quote fetches ─────────────────────
         total = len(pre_pool_candidates)
-        success = sum(1 for sym in pre_pool_candidates if raw_batch.get(sym) is not None)
+        success = sum(
+            1 for sym, _market in pre_pool_candidates if raw_batch.get(sym) is not None
+        )
         if success < total:
             logger.warning(
                 "market_overlay quotes fetched: %d/%d "
@@ -584,13 +973,13 @@ class UniverseSelectionService:
         scored: list[tuple[float, MarketDataSnapshot]] = []
         filtered_out_count = 0
 
-        for sym in pre_pool_candidates:
+        for sym, market_code in pre_pool_candidates:
             raw = raw_batch.get(sym)
             if raw is None:
                 # Failed quote → skip (not crash)
                 continue
 
-            snapshot = _parse_quote_to_snapshot(sym, "KRX", raw)
+            snapshot = _parse_quote_to_snapshot(sym, market_code, raw)
 
             # Step 4: F4 + F5 filter
             filter_result = await self._liquidity_filter.check_market_snapshot(snapshot)
@@ -612,6 +1001,8 @@ class UniverseSelectionService:
             return MarketOverlayDiagnostics(
                 enabled=True,
                 skipped_reason="all_candidates_filtered",
+                seed_pool_source=seed_pool_source,
+                seed_pool_count=len(seed_pool_symbols),
                 effective_pre_pool_size=effective_pool_size,
                 pre_pool_candidate_count=len(pre_pool_candidates),
                 quotes_requested_count=total,
@@ -619,6 +1010,7 @@ class UniverseSelectionService:
                 filtered_out_count=filtered_out_count,
                 scored_candidate_count=0,
                 added_count=0,
+                overlay_capture_rate=0.0,
             )
 
         # ── Step 6: Select top N ─────────────────────────────────────────
@@ -646,6 +1038,8 @@ class UniverseSelectionService:
         return MarketOverlayDiagnostics(
             enabled=True,
             skipped_reason=None,
+            seed_pool_source=seed_pool_source,
+            seed_pool_count=len(seed_pool_symbols),
             effective_pre_pool_size=effective_pool_size,
             pre_pool_candidate_count=len(pre_pool_candidates),
             quotes_requested_count=total,
@@ -653,6 +1047,10 @@ class UniverseSelectionService:
             filtered_out_count=filtered_out_count,
             scored_candidate_count=len(scored),
             added_count=len(top_n),
+            overlay_capture_rate=_calc_overlay_capture_rate(
+                len(top_n),
+                len(pre_pool_candidates),
+            ),
         )
 
     async def _apply_exclusions(
@@ -662,6 +1060,12 @@ class UniverseSelectionService:
         """Apply Liquidity Filter to all candidates."""
         result: list[SelectedSymbol] = []
         for sym in seen.values():
+            if sym.source_type in {
+                SourceType.HELD_POSITION,
+                SourceType.RECONCILIATION_OVERLAY,
+            }:
+                result.append(sym)
+                continue
             lf = await self._liquidity_filter.check(sym.symbol, sym.market)
             if lf.passed:
                 result.append(sym)
@@ -682,19 +1086,32 @@ class UniverseSelectionService:
         """Add or update ``seen`` respecting source-type priority hierarchy.
 
         Priority hierarchy (lower number = higher priority):
-            HELD_POSITION(0) > EVENT_OVERLAY(1) > MARKET_OVERLAY(2) > MANUAL(3) > CORE(4)
+            HELD_POSITION(0) > RECONCILIATION_OVERLAY(1) > EVENT_OVERLAY(2)
+            > MARKET_OVERLAY(3) > MANUAL(4) > CORE(5)
             - HELD_POSITION(0): highest — never overwritten (mandatory override).
-            - EVENT_OVERLAY(1) > MARKET_OVERLAY(2): event wins over market on same symbol.
-            - MARKET_OVERLAY(2) > MANUAL(3): market signal beats manual inclusion.
-            - MANUAL(3): reserved for future operator override; current precedence
+            - RECONCILIATION_OVERLAY(1): unknown/open order state management.
+            - EVENT_OVERLAY(2) > MARKET_OVERLAY(3): event wins over market on same symbol.
+            - MARKET_OVERLAY(3) > MANUAL(4): market signal beats manual inclusion.
+            - MANUAL(4): reserved for future operator override; current precedence
               follows ``SourceType.priority()``.
-            - CORE(4): lowest — always eligible for promotion.
+            - CORE(5): lowest — always eligible for promotion.
 
         Rule: ``incoming.priority < existing.priority`` → overwrite.
         Equal or lower priority → keep existing (first-writer wins).
         """
         existing = seen.get(incoming.symbol)
         if existing is None or incoming.priority < existing.priority:
+            seen[incoming.symbol] = incoming
+            return
+        if (
+            existing.source_type == SourceType.RECONCILIATION_OVERLAY
+            and incoming.source_type == SourceType.RECONCILIATION_OVERLAY
+            and existing.inclusion_reason.endswith(
+                f":{OrderStatus.RECONCILE_REQUIRED.value}"
+            )
+            and incoming.inclusion_reason
+            != f"{INCLUSION_REASON_RECONCILIATION}:{OrderStatus.RECONCILE_REQUIRED.value}"
+        ):
             seen[incoming.symbol] = incoming
 
     @staticmethod
@@ -709,20 +1126,41 @@ class UniverseSelectionService:
         capped: list[SelectedSymbol] = []
         non_held_count = 0
         core_count = 0
+        event_count = 0
+        reconciliation_exempt_count = 0
         for sym in candidates:
             if sym.source_type == SourceType.HELD_POSITION:
                 capped.append(sym)
-            else:
-                if non_held_count >= ctx.max_cap:
-                    break
+                continue
+
+            if sym.source_type == SourceType.RECONCILIATION_OVERLAY:
                 if (
-                    sym.source_type == SourceType.CORE
-                    and ctx.core_cap is not None
-                    and core_count >= ctx.core_cap
+                    ctx.reconciliation_overlay_reserve is None
+                    or reconciliation_exempt_count < ctx.reconciliation_overlay_reserve
                 ):
+                    capped.append(sym)
+                    reconciliation_exempt_count += 1
                     continue
-                capped.append(sym)
-                non_held_count += 1
-                if sym.source_type == SourceType.CORE:
-                    core_count += 1
+
+            if non_held_count >= ctx.max_cap:
+                break
+            if (
+                sym.source_type == SourceType.CORE
+                and ctx.core_cap is not None
+                and core_count >= ctx.core_cap
+            ):
+                continue
+            if (
+                sym.source_type == SourceType.EVENT_OVERLAY
+                and ctx.event_overlay_cap is not None
+                and event_count >= ctx.event_overlay_cap
+            ):
+                continue
+
+            capped.append(sym)
+            non_held_count += 1
+            if sym.source_type == SourceType.CORE:
+                core_count += 1
+            if sym.source_type == SourceType.EVENT_OVERLAY:
+                event_count += 1
         return capped

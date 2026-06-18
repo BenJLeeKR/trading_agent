@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Sequence
 from uuid import UUID, uuid4
@@ -24,8 +24,11 @@ import pytest
 from agent_trading.domain.entities import (
     ExternalEventEntity,
     InstrumentEntity,
+    OrderRequestEntity,
     PositionSnapshotEntity,
+    ReconciliationRunEntity,
 )
+from agent_trading.domain.enums import OrderSide, OrderStatus, OrderType, TimeInForce
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.services.universe_selection import (
@@ -37,6 +40,7 @@ from agent_trading.services.universe_selection_types import (
     INCLUSION_REASON_EVENT,
     INCLUSION_REASON_HELD,
     INCLUSION_REASON_MANUAL,
+    INCLUSION_REASON_RECONCILIATION,
     CompositionContext,
     MarketDataSnapshot,
     SelectedSymbol,
@@ -62,16 +66,21 @@ def _make_instrument(
     market_code: str = "KRX",
     is_active: bool = True,
     tick_size: Decimal | None = None,
+    *,
+    name: str | None = None,
+    asset_class: str = "KR_STOCK",
+    metadata: dict[str, object] | None = None,
 ) -> InstrumentEntity:
     return InstrumentEntity(
         instrument_id=uuid4(),
         symbol=symbol,
         market_code=market_code,
-        name=f"Test-{symbol}",
+        name=name or f"Test-{symbol}",
         is_active=is_active,
-        asset_class="KR_STOCK",
+        asset_class=asset_class,
         currency="KRW",
         tick_size=tick_size,
+        metadata={"core_universe": True} if metadata is None else metadata,
     )
 
 
@@ -113,6 +122,44 @@ def _make_event(
     )
 
 
+def _make_order(
+    instrument_id: UUID,
+    *,
+    status: OrderStatus = OrderStatus.PENDING_SUBMIT,
+    account_id: UUID = ACCOUNT_ID,
+) -> OrderRequestEntity:
+    return OrderRequestEntity(
+        order_request_id=uuid4(),
+        account_id=account_id,
+        instrument_id=instrument_id,
+        client_order_id=f"coid-{uuid4()}",
+        idempotency_key=f"idem-{uuid4()}",
+        correlation_id=f"corr-{uuid4()}",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        requested_quantity=Decimal("3"),
+        status=status,
+        time_in_force=TimeInForce.DAY,
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+
+def _make_reconciliation_run(
+    *,
+    account_id: UUID = ACCOUNT_ID,
+    status: str = "started",
+) -> ReconciliationRunEntity:
+    return ReconciliationRunEntity(
+        reconciliation_run_id=uuid4(),
+        account_id=account_id,
+        trigger_type="order_submit",
+        status=status,
+        started_at=NOW,
+        created_at=NOW,
+    )
+
+
 # ---------------------------------------------------------------------------
 # SourceType priority
 # ---------------------------------------------------------------------------
@@ -126,20 +173,24 @@ class TestSourceTypePriority:
         assert SourceType.HELD_POSITION.priority == 0
 
     def test_event_overlay_priority(self) -> None:
-        """EVENT_OVERLAY 우선순위는 1."""
-        assert SourceType.EVENT_OVERLAY.priority == 1
+        """EVENT_OVERLAY 우선순위는 2."""
+        assert SourceType.EVENT_OVERLAY.priority == 2
 
     def test_market_overlay_priority(self) -> None:
-        """MARKET_OVERLAY 우선순위는 2."""
-        assert SourceType.MARKET_OVERLAY.priority == 2
+        """MARKET_OVERLAY 우선순위는 3."""
+        assert SourceType.MARKET_OVERLAY.priority == 3
 
     def test_manual_priority(self) -> None:
-        """MANUAL 우선순위는 3."""
-        assert SourceType.MANUAL.priority == 3
+        """MANUAL 우선순위는 4."""
+        assert SourceType.MANUAL.priority == 4
+
+    def test_reconciliation_overlay_priority(self) -> None:
+        """RECONCILIATION_OVERLAY 우선순위는 1."""
+        assert SourceType.RECONCILIATION_OVERLAY.priority == 1
 
     def test_core_lowest_priority(self) -> None:
-        """CORE가 가장 낮은 우선순위(4)를 가져야 함."""
-        assert SourceType.CORE.priority == 4
+        """CORE가 가장 낮은 우선순위(5)를 가져야 함."""
+        assert SourceType.CORE.priority == 5
 
     def test_selected_symbol_priority_delegates(self) -> None:
         """SelectedSymbol.priority가 SourceType.priority에 위임."""
@@ -218,6 +269,63 @@ class TestLiquidityFilter:
         result = await lf.check("005930", "KRX")
         assert result.passed is True
 
+    @pytest.mark.asyncio
+    async def test_registered_kosdaq_instrument_passes(self) -> None:
+        """등록된 KOSDAQ 종목은 한국주식 지원 시장으로 통과."""
+        repos = build_in_memory_repositories()
+        inst = _make_instrument("090150", market_code="KOSDAQ", tick_size=Decimal("50"))
+        await repos.instruments.add(inst)
+        lf = LiquidityFilter(repos)
+        result = await lf.check("090150", "KOSDAQ")
+        assert result.passed is True
+
+    @pytest.mark.asyncio
+    async def test_registered_kosdaq_instrument_passes_via_krx_alias(self) -> None:
+        """이벤트/수동 입력이 KRX alias여도 등록된 KOSDAQ 종목은 lookup 가능해야 한다."""
+        repos = build_in_memory_repositories()
+        inst = _make_instrument("090150", market_code="KOSDAQ", tick_size=Decimal("50"))
+        await repos.instruments.add(inst)
+        lf = LiquidityFilter(repos)
+        result = await lf.check("090150", "KRX")
+        assert result.passed is True
+
+    @pytest.mark.asyncio
+    async def test_preferred_share_excluded(self) -> None:
+        """우선주/특수주는 공통 eligibility에서 제외."""
+        repos = build_in_memory_repositories()
+        inst = _make_instrument("000227", name="유유제약2우B", tick_size=Decimal("50"))
+        await repos.instruments.add(inst)
+        lf = LiquidityFilter(repos)
+        result = await lf.check("000227", "KRX")
+        assert result.passed is False
+        assert result.fail_reason == "preferred_share_class"
+
+    @pytest.mark.asyncio
+    async def test_non_standard_symbol_excluded(self) -> None:
+        """6자리 숫자 symbol이 아니면 공통 eligibility에서 제외."""
+        repos = build_in_memory_repositories()
+        inst = _make_instrument("00088K", name="한화3우B", tick_size=Decimal("50"))
+        await repos.instruments.add(inst)
+        lf = LiquidityFilter(repos)
+        result = await lf.check("00088K", "KRX")
+        assert result.passed is False
+        assert result.fail_reason == "non_standard_symbol"
+
+    @pytest.mark.asyncio
+    async def test_metadata_excluded_instrument_rejected(self) -> None:
+        """운영 제외 metadata가 명시되면 공통 eligibility에서 제외."""
+        repos = build_in_memory_repositories()
+        inst = _make_instrument(
+            "005930",
+            tick_size=Decimal("50"),
+            metadata={"core_universe": True, "exclude_from_trading_universe": True},
+        )
+        await repos.instruments.add(inst)
+        lf = LiquidityFilter(repos)
+        result = await lf.check("005930", "KRX")
+        assert result.passed is False
+        assert result.fail_reason == "metadata_excluded"
+
 
 # ---------------------------------------------------------------------------
 # UniverseSelectionService — compose()
@@ -242,6 +350,21 @@ class TestUniverseSelectionServiceCompose:
         assert "005930" in symbols
         assert "000660" in symbols
         assert all(s.source_type == SourceType.CORE for s in result)
+
+    @pytest.mark.asyncio
+    async def test_core_universe_loads_registered_kosdaq_seed(self) -> None:
+        """승인된 seed가 KOSDAQ market_code로 적재돼도 core universe에 포함돼야 한다."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(_make_instrument("090150", market_code="KOSDAQ"))
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+
+        assert any(
+            item.symbol == "090150" and item.market == "KOSDAQ"
+            for item in result
+        )
 
     @pytest.mark.asyncio
     async def test_inactive_instruments_excluded_from_core(self) -> None:
@@ -313,7 +436,179 @@ class TestUniverseSelectionServiceCompose:
         event = [s for s in result if s.symbol == "005930"]
         assert len(event) == 1
         assert event[0].source_type == SourceType.EVENT_OVERLAY
-        assert "high_importance_event" in event[0].inclusion_reason
+        assert event[0].inclusion_reason == "high_importance_event:disclosure_material"
+
+    @pytest.mark.asyncio
+    async def test_medium_severity_management_issue_promoted(self) -> None:
+        """management_issue는 medium severity여도 overlay 대상이다."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(_make_instrument("005930", metadata={"core_universe": False}))
+        await repos.external_events.add(
+            _make_event("005930", severity="medium", event_type="management_issue")
+        )
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+
+        event = [s for s in result if s.symbol == "005930"]
+        assert len(event) == 1
+        assert event[0].source_type == SourceType.EVENT_OVERLAY
+        assert event[0].inclusion_reason == "high_importance_event:management_issue"
+
+    @pytest.mark.asyncio
+    async def test_prefixed_disclosure_reason_normalized(self) -> None:
+        """Y|disclosure 같은 legacy 타입도 표준 reason으로 정규화한다."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(_make_instrument("005930"))
+        await repos.external_events.add(
+            _make_event("005930", severity="high", event_type="Y|disclosure")
+        )
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+
+        event = [s for s in result if s.symbol == "005930"]
+        assert len(event) == 1
+        assert event[0].inclusion_reason == "high_importance_event:disclosure_material"
+
+    @pytest.mark.asyncio
+    async def test_seeded_news_high_importance_promoted(self) -> None:
+        """seeded_news는 metadata importance가 high면 overlay 대상이다."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(_make_instrument("005930", metadata={"core_universe": False}))
+        await repos.external_events.add(
+            ExternalEventEntity(
+                event_id=uuid4(),
+                symbol="005930",
+                market="KRX",
+                source_name="naver_news_seeded",
+                event_type="seeded_news",
+                severity="medium",
+                headline="Seeded news",
+                published_at=NOW,
+                ingested_at=NOW,
+                dedup_key_hash="hash-seeded-news",
+                metadata={"importance": "high"},
+            )
+        )
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+
+        event = [s for s in result if s.symbol == "005930"]
+        assert len(event) == 1
+        assert event[0].source_type == SourceType.EVENT_OVERLAY
+        assert event[0].inclusion_reason == "high_importance_event:news_breaking"
+
+    @pytest.mark.asyncio
+    async def test_open_order_symbol_force_included_as_reconciliation_overlay(self) -> None:
+        """미체결/활성 주문 종목은 reconciliation overlay로 강제 포함."""
+        repos = build_in_memory_repositories()
+        inst = _make_instrument(
+            "299999",
+            tick_size=Decimal("50"),
+            metadata={"core_universe": False},
+        )
+        await repos.instruments.add(inst)
+        await repos.orders.add(
+            _make_order(inst.instrument_id, status=OrderStatus.PENDING_SUBMIT)
+        )
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+
+        selected = [s for s in result if s.symbol == "299999"]
+        assert len(selected) == 1
+        assert selected[0].source_type == SourceType.RECONCILIATION_OVERLAY
+        assert selected[0].inclusion_reason == (
+            f"{INCLUSION_REASON_RECONCILIATION}:{OrderStatus.PENDING_SUBMIT.value}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_reconciliation_run_link_symbol_force_included(self) -> None:
+        """진행 중 reconciliation run에 연결된 주문 종목은 강제 포함."""
+        repos = build_in_memory_repositories()
+        inst = _make_instrument(
+            "288888",
+            tick_size=Decimal("50"),
+            metadata={"core_universe": False},
+        )
+        await repos.instruments.add(inst)
+        order = _make_order(inst.instrument_id, status=OrderStatus.RECONCILE_REQUIRED)
+        await repos.orders.add(order)
+        run = _make_reconciliation_run()
+        await repos.reconciliations.add_run(run)
+        await repos.reconciliations.attach_order_mismatch(
+            run.reconciliation_run_id,
+            order.order_request_id,
+            "broker_order_missing",
+            {"symbol": "288888"},
+        )
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+
+        selected = [s for s in result if s.symbol == "288888"]
+        assert len(selected) == 1
+        assert selected[0].source_type == SourceType.RECONCILIATION_OVERLAY
+        assert selected[0].inclusion_reason == (
+            f"{INCLUSION_REASON_RECONCILIATION}:broker_order_missing"
+        )
+
+    @pytest.mark.asyncio
+    async def test_held_position_keeps_priority_over_reconciliation_overlay(self) -> None:
+        """보유 종목은 reconciliation overlay보다 높은 우선순위를 유지."""
+        repos = build_in_memory_repositories()
+        inst = _make_instrument("005930", tick_size=Decimal("50"))
+        await repos.instruments.add(inst)
+        await repos.position_snapshots.add(_make_position(inst.instrument_id, quantity=Decimal("7")))
+        await repos.orders.add(
+            _make_order(inst.instrument_id, status=OrderStatus.RECONCILE_REQUIRED)
+        )
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+
+        selected = next(s for s in result if s.symbol == "005930")
+        assert selected.source_type == SourceType.HELD_POSITION
+
+    @pytest.mark.asyncio
+    async def test_reconciliation_overlay_excluded_from_cap(self) -> None:
+        """reconciliation overlay는 held와 동일하게 일반 cap에서 제외."""
+        repos = build_in_memory_repositories()
+        recon_inst = _make_instrument(
+            "288888",
+            tick_size=Decimal("50"),
+            metadata={"core_universe": False},
+        )
+        core1 = _make_instrument("005930", tick_size=Decimal("50"))
+        core2 = _make_instrument("000660", tick_size=Decimal("50"))
+        await repos.instruments.add(recon_inst)
+        await repos.instruments.add(core1)
+        await repos.instruments.add(core2)
+        await repos.orders.add(
+            _make_order(recon_inst.instrument_id, status=OrderStatus.RECONCILE_REQUIRED)
+        )
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(
+            account_id=ACCOUNT_ID,
+            since=NOW,
+            max_cap=1,
+            exclude_held_from_cap=True,
+        )
+        result = await svc.compose(ctx)
+
+        assert len(result) == 2
+        source_types = {item.symbol: item.source_type for item in result}
+        assert source_types["288888"] == SourceType.RECONCILIATION_OVERLAY
+        assert sum(1 for item in result if item.source_type == SourceType.CORE) == 1
 
     @pytest.mark.asyncio
     async def test_manual_watchlist_promotes_core(self) -> None:
@@ -464,9 +759,77 @@ class TestUniverseSelectionServiceCompose:
         assert sum(1 for item in result if item.source_type == SourceType.CORE) == 1
 
     @pytest.mark.asyncio
+    async def test_event_overlay_cap_limits_event_symbols(self) -> None:
+        """event_overlay_cap 도달 시 추가 event 편입만 제한된다."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(_make_instrument("005930"))
+        await repos.instruments.add(_make_instrument("000660"))
+        await repos.instruments.add(_make_instrument("035420"))
+        await repos.external_events.add(_make_event("005930", severity="high"))
+        await repos.external_events.add(_make_event("000660", severity="high"))
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(
+            account_id=FALLBACK_ACCOUNT_ID,
+            since=NOW,
+            max_cap=3,
+            event_overlay_cap=1,
+            exclude_held_from_cap=True,
+        )
+        result = await svc.compose(ctx)
+
+        assert sum(1 for item in result if item.source_type == SourceType.EVENT_OVERLAY) == 1
+        assert sum(1 for item in result if item.source_type == SourceType.CORE) == 1
+
+    @pytest.mark.asyncio
+    async def test_reconciliation_overlay_reserve_limits_cap_exemption(self) -> None:
+        """reconciliation reserve 초과분은 일반 max_cap을 소비한다."""
+        repos = build_in_memory_repositories()
+        inst1 = _make_instrument("299999", metadata={"core_universe": False})
+        inst2 = _make_instrument("288888", metadata={"core_universe": False})
+        inst3 = _make_instrument("005930")
+        await repos.instruments.add(inst1)
+        await repos.instruments.add(inst2)
+        await repos.instruments.add(inst3)
+        await repos.orders.add(_make_order(inst1.instrument_id, status=OrderStatus.PENDING_SUBMIT))
+        await repos.orders.add(_make_order(inst2.instrument_id, status=OrderStatus.SUBMITTED))
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(
+            account_id=ACCOUNT_ID,
+            since=NOW,
+            max_cap=1,
+            reconciliation_overlay_reserve=1,
+            exclude_held_from_cap=True,
+        )
+        result = await svc.compose(ctx)
+
+        assert sum(
+            1 for item in result if item.source_type == SourceType.RECONCILIATION_OVERLAY
+        ) == 2
+        assert all(item.symbol != "005930" for item in result)
+
+    @pytest.mark.asyncio
     async def test_empty_universe_returns_empty_list(self) -> None:
         """DB에 instrument가 없으면 빈 리스트 반환."""
         repos = build_in_memory_repositories()
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_non_core_seed_instrument_not_loaded_into_core(self) -> None:
+        """core seed가 아닌 종목은 core universe에 자동 편입되지 않음."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(
+            _make_instrument(
+                "299999",
+                tick_size=Decimal("50"),
+                metadata={"core_universe": False},
+            )
+        )
+
         svc = UniverseSelectionService(repos)
         ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
         result = await svc.compose(ctx)
@@ -734,6 +1097,137 @@ class TestMarketOverlay:
         await svc.compose(ctx)
 
         assert len(mock_kis.called_symbols) == 2
+
+    @pytest.mark.asyncio
+    async def test_market_overlay_prefers_ranking_seed_pool(self) -> None:
+        """랭킹 seed가 있으면 core fallback보다 우선 사용한다."""
+        repos = build_in_memory_repositories()
+        for sym in ["005930", "000660", "010130", "012450"]:
+            await repos.instruments.add(_make_instrument(sym))
+
+        class _MockKIS:
+            def __init__(self) -> None:
+                self.called_symbols: list[str] = []
+
+            async def get_market_overlay_seed_symbols(self, *, limit: int = 60) -> list[str]:
+                assert limit >= 30
+                return ["010130", "012450"]
+
+            async def get_quotes_batch(
+                self, symbols: Sequence[str], **kwargs: object
+            ) -> dict[str, dict[str, object]]:
+                self.called_symbols = list(symbols)
+                return {
+                    "010130": {
+                        "stck_prpr": "30000",
+                        "prdy_ctrt": "4.5",
+                        "acml_tr_pbmn": "800000000000",
+                        "stck_hgpr": "30100",
+                        "stck_oprc": "29000",
+                        "stck_lwpr": "28900",
+                    },
+                    "012450": {
+                        "stck_prpr": "15000",
+                        "prdy_ctrt": "2.0",
+                        "acml_tr_pbmn": "400000000000",
+                        "stck_hgpr": "15100",
+                        "stck_oprc": "14500",
+                        "stck_lwpr": "14400",
+                    },
+                }
+
+        mock_kis = _MockKIS()
+        svc = UniverseSelectionService(repos, kis_client=mock_kis)  # type: ignore[arg-type]
+        ctx = CompositionContext(
+            account_id=FALLBACK_ACCOUNT_ID,
+            since=NOW,
+            pre_pool_size=5,
+            market_overlay_cap=2,
+        )
+        _, diagnostics = await svc.compose_with_diagnostics(ctx)
+
+        assert mock_kis.called_symbols == ["010130", "012450"]
+        assert diagnostics.seed_pool_source == "kis_ranking"
+        assert diagnostics.seed_pool_count == 2
+        assert diagnostics.pre_pool_candidate_count == 2
+        assert diagnostics.overlay_capture_rate == 1.0
+
+    @pytest.mark.asyncio
+    async def test_market_overlay_falls_back_to_core_seed_pool(self) -> None:
+        """랭킹 seed가 비면 approved core fallback으로 동작한다."""
+        repos = build_in_memory_repositories()
+        for sym in ["005930", "000660", "010130"]:
+            await repos.instruments.add(_make_instrument(sym))
+
+        class _MockKIS:
+            def __init__(self) -> None:
+                self.called_symbols: list[str] = []
+
+            async def get_market_overlay_seed_symbols(self, *, limit: int = 60) -> list[str]:
+                return []
+
+            async def get_quotes_batch(
+                self, symbols: Sequence[str], **kwargs: object
+            ) -> dict[str, dict[str, object]]:
+                self.called_symbols = list(symbols)
+                return {}
+
+        mock_kis = _MockKIS()
+        svc = UniverseSelectionService(repos, kis_client=mock_kis)  # type: ignore[arg-type]
+        ctx = CompositionContext(
+            account_id=FALLBACK_ACCOUNT_ID,
+            since=NOW,
+            pre_pool_size=2,
+        )
+        _, diagnostics = await svc.compose_with_diagnostics(ctx)
+
+        assert len(mock_kis.called_symbols) == 2
+        assert diagnostics.seed_pool_source == "core_fallback"
+        assert diagnostics.seed_pool_count == 3
+
+    @pytest.mark.asyncio
+    async def test_market_overlay_fallback_includes_discovery_pool_segment(self) -> None:
+        """탐색 풀 segment metadata가 있으면 core가 아니어도 fallback seed에 포함된다."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(
+            _make_instrument("005930", metadata={"core_universe": True})
+        )
+        await repos.instruments.add(
+            _make_instrument(
+                "123456",
+                metadata={
+                    "core_universe": False,
+                    "market_segment": "KOSDAQ150",
+                },
+            )
+        )
+
+        class _MockKIS:
+            def __init__(self) -> None:
+                self.called_symbols: list[str] = []
+
+            async def get_market_overlay_seed_symbols(self, *, limit: int = 60) -> list[str]:
+                return []
+
+            async def get_quotes_batch(
+                self, symbols: Sequence[str], **kwargs: object
+            ) -> dict[str, dict[str, object]]:
+                self.called_symbols = list(symbols)
+                return {}
+
+        mock_kis = _MockKIS()
+        svc = UniverseSelectionService(repos, kis_client=mock_kis)  # type: ignore[arg-type]
+        ctx = CompositionContext(
+            account_id=FALLBACK_ACCOUNT_ID,
+            since=NOW,
+            pre_pool_size=10,
+        )
+        _, diagnostics = await svc.compose_with_diagnostics(ctx)
+
+        assert "005930" in mock_kis.called_symbols
+        assert "123456" in mock_kis.called_symbols
+        assert diagnostics.seed_pool_source == "core_fallback"
+        assert diagnostics.seed_pool_count == 2
 
     @pytest.mark.asyncio
     async def test_market_overlay_adds_top_n(self) -> None:
@@ -1086,17 +1580,31 @@ class TestCompositionContextP2:
         ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
         assert ctx.core_cap is None
 
+    def test_event_overlay_cap_default(self) -> None:
+        """event_overlay_cap 기본값은 None."""
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+        assert ctx.event_overlay_cap is None
+
+    def test_reconciliation_overlay_reserve_default(self) -> None:
+        """reconciliation_overlay_reserve 기본값은 None."""
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+        assert ctx.reconciliation_overlay_reserve is None
+
     def test_custom_values(self) -> None:
         """커스텀 값 전달 가능."""
         ctx = CompositionContext(
             account_id=FALLBACK_ACCOUNT_ID,
             since=NOW,
             core_cap=15,
+            event_overlay_cap=4,
             market_overlay_cap=10,
+            reconciliation_overlay_reserve=3,
             pre_pool_size=100,
         )
         assert ctx.core_cap == 15
+        assert ctx.event_overlay_cap == 4
         assert ctx.market_overlay_cap == 10
+        assert ctx.reconciliation_overlay_reserve == 3
         assert ctx.pre_pool_size == 100
 
 

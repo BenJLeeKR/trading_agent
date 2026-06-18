@@ -78,6 +78,8 @@ def test_result_to_json_serializes_snapshot_payload() -> None:
         feature_set_version="signal_backbone_v1",
         bar_count=80,
         overall_score=Decimal("0.42"),
+        average_turnover_20d=Decimal("120000000.50"),
+        turnover_surge_ratio=Decimal("1.88"),
         component_scores_json={"slow_momentum": 0.5},
     )
 
@@ -97,6 +99,8 @@ def test_result_to_json_serializes_snapshot_payload() -> None:
     assert payload["persisted"] == 1
     assert payload["snapshots"][0]["timeframe"] == "1d"
     assert payload["snapshots"][0]["overall_score"] == "0.42"
+    assert payload["snapshots"][0]["average_turnover_20d"] == "120000000.50"
+    assert payload["snapshots"][0]["turnover_surge_ratio"] == "1.88"
 
 
 @pytest.mark.asyncio

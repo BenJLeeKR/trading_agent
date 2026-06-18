@@ -40,7 +40,7 @@ Comment block 수정.
 ### ❸ `plans/p2_backend_bugfix_plan.md:472-478`
 ❶과 동일한 docstring copy 수정.
 
-### ❹ `plans/universe_selection_service_p1_design.md:277`
+### ❹ `plans/[DESIGN] universe_selection_service.md:277`
 Priority 주석 값 보정.
 
 **변경사항**:

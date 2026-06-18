@@ -543,7 +543,9 @@ class SignalFeatureSnapshotEntity:
     atr_14_pct: Decimal | None = None
     rsi_14: Decimal | None = None
     average_volume_20d: Decimal | None = None
+    average_turnover_20d: Decimal | None = None
     volume_surge_ratio: Decimal | None = None
+    turnover_surge_ratio: Decimal | None = None
     fast_score: Decimal | None = None
     slow_score: Decimal | None = None
     overall_score: Decimal | None = None

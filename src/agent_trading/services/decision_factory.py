@@ -410,6 +410,28 @@ class DecisionContextService:
         self._repos = repos
         self._logger = logging.getLogger(self.__class__.__name__)
 
+    async def _select_usable_cash_snapshot(
+        self,
+        account_id: UUID,
+    ) -> CashBalanceSnapshotEntity | None:
+        try:
+            snapshots = await self._repos.cash_balance_snapshots.list_by_account(
+                account_id,
+            )
+        except Exception:
+            self._logger.debug(
+                "Unable to list cash balance snapshots for account=%s",
+                account_id,
+                exc_info=True,
+            )
+            return None
+
+        latest_any = snapshots[0] if snapshots else None
+        for snapshot in snapshots:
+            if snapshot.fetch_status == "success":
+                return snapshot
+        return latest_any
+
     async def ensure_or_create(
         self,
         request: SubmitOrderRequest,
@@ -502,18 +524,9 @@ class DecisionContextService:
                     exc_info=True,
                 )
 
-            try:
-                cash = await self._repos.cash_balance_snapshots.get_latest_by_account(
-                    account.account_id,
-                )
-                if cash is not None:
-                    cash_balance_snapshot_id = cash.cash_balance_snapshot_id
-            except Exception:
-                self._logger.debug(
-                    "Unable to anchor latest cash balance snapshot for account=%s",
-                    account.account_id,
-                    exc_info=True,
-                )
+            cash = await self._select_usable_cash_snapshot(account.account_id)
+            if cash is not None:
+                cash_balance_snapshot_id = cash.cash_balance_snapshot_id
 
             # --- 모든 조건 충족 → DecisionContextEntity 생성 ---
             now = datetime.now(timezone.utc)

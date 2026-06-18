@@ -63,6 +63,9 @@ class SizingInputs:
     requested_price: Decimal | None = None
     """Original price from the assembled request (or ``None`` for MARKET)."""
 
+    source_type: str | None = None
+    """Universe source type (예: ``core``, ``held_position``)."""
+
     reference_price: Decimal | None = None
     """Reference price for MARKET order sizing (from live quote).
     Used as fallback when ``requested_price`` is ``None`` (MARKET orders).
@@ -178,6 +181,7 @@ _ALLOCATION_PCT = Decimal("0.2")  # 20% of effective cash per single BUY order
 _DEFAULT_MAX_INTRADAY_VOLUME_PARTICIPATION_PCT = Decimal("3")
 _DEFAULT_MAX_INTRADAY_TURNOVER_PARTICIPATION_PCT = Decimal("5")
 _DEFAULT_MAX_AVG_DAILY_VOLUME_PARTICIPATION_PCT = Decimal("2")
+_DEFAULT_HELD_REDUCE_FRACTION = Decimal("0.25")
 
 
 def _is_new_entry(decision_type: str, side: OrderSide) -> bool:
@@ -296,6 +300,15 @@ def _base_qty_reduce(inputs: SizingInputs) -> Decimal:
                 inputs.current_position_qty * factor
             ).to_integral_value(rounding=ROUND_DOWN)
             if base_qty <= 0 and inputs.current_position_qty > 0:
+                base_qty = Decimal("1")
+        elif (
+            inputs.source_type == "held_position"
+            and inputs.requested_quantity <= 1
+        ):
+            base_qty = (
+                inputs.current_position_qty * _DEFAULT_HELD_REDUCE_FRACTION
+            ).to_integral_value(rounding=ROUND_DOWN)
+            if base_qty <= 0:
                 base_qty = Decimal("1")
         else:
             base_qty = inputs.requested_quantity

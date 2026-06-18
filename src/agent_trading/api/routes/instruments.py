@@ -245,6 +245,8 @@ async def get_trading_universe_preview(
         market_overlay_diagnostics=MarketOverlayDiagnosticsView(
             enabled=market_overlay_diagnostics.enabled,
             skipped_reason=market_overlay_diagnostics.skipped_reason,
+            seed_pool_source=market_overlay_diagnostics.seed_pool_source,
+            seed_pool_count=market_overlay_diagnostics.seed_pool_count,
             effective_pre_pool_size=market_overlay_diagnostics.effective_pre_pool_size,
             pre_pool_candidate_count=market_overlay_diagnostics.pre_pool_candidate_count,
             quotes_requested_count=market_overlay_diagnostics.quotes_requested_count,
@@ -252,6 +254,7 @@ async def get_trading_universe_preview(
             filtered_out_count=market_overlay_diagnostics.filtered_out_count,
             scored_candidate_count=market_overlay_diagnostics.scored_candidate_count,
             added_count=market_overlay_diagnostics.added_count,
+            overlay_capture_rate=market_overlay_diagnostics.overlay_capture_rate,
         ),
         items=items,
     )

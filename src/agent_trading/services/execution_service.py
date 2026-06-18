@@ -872,6 +872,7 @@ class ExecutionService:
         return SizingInputs(
             decision_type=ai.decision_type,
             side=req.side,
+            source_type=ctx.source_type,
             requested_quantity=req.quantity,
             requested_price=req.price,
             reference_price=reference_price,

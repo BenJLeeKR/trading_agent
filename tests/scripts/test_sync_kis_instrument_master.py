@@ -139,6 +139,34 @@ def test_build_instrument_extracts_metadata() -> None:
     assert instrument.metadata["sector"] == "전자"
 
 
+def test_build_instrument_normalizes_kosdaq_market_code() -> None:
+    record = {
+        "symbol": "090150",
+        "name": "광진윈텍",
+        "market_code": "kosdaq",
+        "asset_class": "KR_STOCK",
+        "currency": "krw",
+    }
+    headers = {
+        "symbol": "symbol",
+        "name": "name",
+        "market_code": "market_code",
+        "asset_class": "asset_class",
+        "currency": "currency",
+    }
+    instrument = _build_instrument(
+        record,
+        headers,
+        default_market_code="KRX",
+        default_asset_class="kr_stock",
+        default_currency="KRW",
+        source_tag="kis_master_csv",
+    )
+    assert instrument.market_code == "KOSDAQ"
+    assert instrument.asset_class == "kr_stock"
+    assert instrument.currency == "KRW"
+
+
 def test_load_csv_requires_symbol_and_name(tmp_path) -> None:
     path = tmp_path / "bad.csv"
     path.write_text("symbol\n005930\n", encoding="utf-8")

@@ -389,6 +389,9 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   - [`plans/2026-06-08_kis_instrument_master_sync_pipeline_phase1.md`](./2026-06-08_kis_instrument_master_sync_pipeline_phase1.md)
 - [x] instrument master 갱신 정책
   - [`plans/2026-06-08_kis_instrument_master_update_policy.md`](./2026-06-08_kis_instrument_master_update_policy.md)
+  - KOSDAQ 종목은 `instrument master`에 적재되기 전에는
+    Universe Selection에서 `unknown_instrument`로 제외되므로,
+    시장 확장 전제 조건을 문서/코드에 명시했다.
 - [x] snapshot/event mapping과의 정합성 확보
   - [x] recent `external_events` / `broker_fill_snapshots` unmapped symbol audit CLI
     - [`plans/2026-06-08_instrument_mapping_consistency_audit.md`](./2026-06-08_instrument_mapping_consistency_audit.md)
@@ -459,6 +462,230 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - `plan_docs/agents/01_agent_inventory_and_status.md`
 - `plan_docs/agents/02_agent_target_shapes.md`
 
+### 정책 대비 현재 불일치 요약
+
+- 현재 `core universe`는 정책 권고인 `KOSPI100` / 내부 승인 대형주 리스트가 아니라
+  `active KRX 전체`를 그대로 사용하고 있다.
+- `Operational Eligibility Filter`는 정책 요구 대비 약하다.
+  - 현재 공통 필터는 사실상 `unknown/inactive/tick_size` 위주다.
+  - `iscd_stat_cls_code`, `low volume`, 운영 금지 리스트, 브로커 미지원, 정보 불완전 차단이
+    공통 계층으로 닫혀 있지 않다.
+- 정책상 강제 포함 대상인
+  `미체결/정합성 확인 필요 주문`, `reconcile_required`, `recent_order_context`
+  계층이 아직 universe composition에 반영되지 않았다.
+- `market_overlay`는 정책상 “core 밖의 장중 강한 흐름 종목 탐지” 역할이어야 하나,
+  현재 구현은 `core pre-pool` 내부 quote 평가에 가깝다.
+- `inclusion_reason=kospi200_core`는 실제 구현(`KRX active core`)과 불일치한다.
+
+### 우선순위별 수정안
+
+#### 10-a. Core Universe 정의를 정책 기준으로 축소/명시화 — `완료`
+
+- 목표
+  - `core universe`를 `KRX active 전체`에서 분리한다.
+  - v1 정책대로 `KOSPI100` 또는 `내부 승인 대형주 리스트`를 authoritative source로 만든다.
+- 수정 방향
+  - instrument master 적재 시 `KOSPI/KOSDAQ/segment` 구분값을 보존한다.
+  - `UniverseSelectionService._add_core_universe()`는
+    `market_code='KRX'` 전체 조회 대신
+    `core watchlist` 또는 `segment + 시가총액/유동성 기준` 조회로 교체한다.
+  - `INCLUSION_REASON_CORE`는 실제 구현과 일치하는 명칭으로 정리한다.
+- 이번 작업 반영
+  - `active KRX 전체` 대신 코드 관리형 `approved core universe seed` allowlist를 도입했다.
+  - `INCLUSION_REASON_CORE`를 `approved_core_universe`로 변경했다.
+  - `market_overlay` pre-pool도 동일한 core seed 기준으로만 구성되도록 맞췄다.
+- 잔여 보완
+  - 현재는 `segment` 컬럼이 없어 allowlist 기반 운영 구현이다.
+  - 후속으로 instrument master에 `KOSPI/KOSDAQ/segment`를 정식 적재해
+    정책 테이블/DB authoritative source로 대체해야 한다.
+- 우선순위 이유
+  - 현재 `000227` 같은 저유동성/우선주가 `core`로 들어오는 가장 근본 원인이다.
+  - universe 상류를 먼저 좁혀야 downstream trigger / AI / execution이 불필요하게 소모되지 않는다.
+
+#### 10-b. 공통 Operational Eligibility Filter 강화 — `완료`
+
+- 목표
+  - 정책의 Layer 2를 universe 공통 deterministic pre-gate로 승격한다.
+- 수정 방향
+  - `core/event/manual/market` 전 계층에 동일하게 적용되는 공통 eligibility 필터 추가
+  - 포함 항목
+    - 거래정지/관리/감리/투자경고 계열 상태 차단
+    - 내부 운영 금지 리스트 차단
+    - 브로커 미지원/주문 불가 상품 차단
+    - 종목 메타데이터 불완전 차단
+    - 초저유동성/우선주/특수 share class 차단 여부를 정책으로 명시
+  - 현재 `market_overlay` 전용인 `F4/F5` 중 공통화 가능한 부분은 universe 공통 계층으로 이동
+- 이번 작업 반영
+  - 공통 eligibility에 다음 항목을 추가했다.
+    - `market != KRX` 차단
+    - `asset_class != kr_stock` 차단
+    - `exclude_from_trading_universe=true` metadata 차단
+    - `broker_supported=false` metadata 차단
+    - `instrument_complete=false` metadata 차단
+    - `6자리 숫자 symbol`이 아닌 비표준 symbol 차단
+    - 우선주/특수주 명칭 패턴 차단
+  - 다만 `held_position`은 관리 대상 강제 포함 원칙 때문에 공통 필터를 우회하도록 유지했다.
+- 잔여 보완
+  - `iscd_stat_cls_code` 등 브로커 상태값의 공통 적격성 계층 승격은
+    snapshot/quote 기반 데이터 결합 설계와 함께 추가 정리 필요하다.
+- 우선순위 이유
+  - `core`를 바로 못 바꾸더라도, execution 부적합 종목을 universe 단계에서 먼저 제거할 수 있다.
+  - 저유동성 종목이 판단/주문까지 내려오는 구조적 누수를 줄이는 데 가장 즉효다.
+
+#### 10-c. 정합성/미체결 관리 대상 강제 포함 계층 추가 — `완료`
+
+- 목표
+  - 정책상 강제 포함 대상인 `reconcile_required`, 미체결 관리, lineage 점검 종목을
+    universe authoritative source에 포함한다.
+- 수정 방향
+  - 신규 source_type 후보
+    - `order_context`
+    - 또는 `reconciliation_overlay`
+  - 포함 대상
+    - open order 존재 종목
+    - `reconcile_required` 주문 종목
+    - 최근 체결/취소/실패 후 후속 상태 확인이 필요한 종목
+  - cap 정책
+    - held_position과 동일하게 일반 cap보다 우선 또는 별도 reserve를 둔다.
+- 이번 작업 반영
+  - `reconciliation_overlay` source type을 추가했다.
+  - 다음 대상이 universe에 강제 포함되도록 연결했다.
+    - `pending_submit/submitted/acknowledged/partially_filled/cancel_pending/reconcile_required` 등 활성 주문 종목
+    - 진행 중 reconciliation run에 링크된 주문 종목
+    - active blocking lock이 걸린 symbol
+  - `reconciliation_overlay`는 held_position과 동일하게 일반 `max_cap`에서 제외되도록 처리했다.
+  - deterministic trigger에서는 `reconciliation_overlay`를 신규 BUY eligibility에서 차단해
+    “관리/상태확인 대상”이 신규 진입 후보로 오인되지 않게 했다.
+- 잔여 보완
+  - `recent_order_context`의 시간창/상태 범위는 아직 최소 구현 수준이다.
+  - 후속으로 `최근 취소/실패 후 재확인 대상`, `broker truth pending` 같은 세분 source reason을
+    추가 계측하는 작업이 필요하다.
+- 우선순위 이유
+  - 현재 정책 문서상 필수인데 구현 누락 상태다.
+  - unknown state / reconciliation 우선 원칙과 직접 연결된다.
+
+#### 10-d. Event Overlay 확장 및 중요도 정책 정합화 — `완료`
+
+- 목표
+  - 현재 `disclosure + severity=high` 단일 경로를 정책 수준으로 확장한다.
+- 수정 방향
+  - 최근 1~3영업일 의미 있는 공시 범위 반영
+  - 내부 이벤트 정책상 우선 관찰 대상 타입 반영
+  - `event_type`별 inclusion reason 표준화
+  - 필요 시 OpenDART 외 이벤트 source와의 병합 우선순위 정리
+- 이번 작업 반영
+  - 기존 `disclosure + severity=high` 단일 경로를 확장해,
+    정책상 의미 있는 event type taxonomy를 event overlay 승격 기준으로 반영했다.
+  - 현재 반영된 주요 type:
+    - `disclosure_material`
+    - `disclosure_correction`
+    - `earnings`
+    - `capital_change`
+    - `governance`
+    - `trading_halt`
+    - `investment_warning`
+    - `management_issue`
+    - `macro_release`
+    - `sector_policy`
+    - `broker_report_change`
+    - `news_breaking`
+  - legacy 저장값도 같이 흡수하도록 alias를 추가했다.
+    - `disclosure`, `Y|disclosure`, `K|disclosure`, `N|disclosure`
+      → `disclosure_material`
+    - `seeded_news`, `Y|seeded_news`, `N|seeded_news`
+      → `news_breaking`
+  - severity만 보지 않고 `metadata.importance`도 함께 반영해,
+    seeded news처럼 기본 severity가 `medium`인 소스도 중요도 승격 시
+    event overlay에 편입될 수 있도록 맞췄다.
+  - inclusion reason은 `high_importance_event:<normalized_event_type>` 형식으로 표준화했다.
+- 잔여 보완
+  - 현재는 repository contract 제약상 `list_by_type()` exact match 기반 구현이다.
+  - 후속으로 `external_events` recent scan/query contract를 추가하면
+    더 다양한 공시 subtype과 source를 한 번에 흡수하는 방향으로 개선할 수 있다.
+- 우선순위 이유
+  - 현재 event overlay가 지나치게 좁아 정책 문서의 전략 relevance filter 역할을 충분히 못 한다.
+
+#### 10-e. Market Overlay를 “core pre-pool scoring”에서 “시장 발굴 overlay”로 재정의 — `완료`
+
+- 목표
+  - 정책의 Layer 4 의도대로, core 밖의 장중 강한 흐름 종목을 동적으로 편입한다.
+- 수정 방향
+  - KIS 순위분석/동급 랭킹 기반 seed pool 확보
+  - 현재의 `core pre-pool -> quote batch` 경로는 보조 경로로 격하하거나 fallback으로 유지
+  - `quotes_requested_count / received_count / filtered_out_count` 외에
+    `seed_pool_source`, `seed_pool_count`, `overlay_capture_rate`를 추가 계측
+- 이번 작업 반영
+  - KIS REST client에 실전 전용 랭킹 seed helper를 추가했다.
+    - `ranking_volume` (`FHPST01710000`)
+    - `ranking_volume_power` (`FHPST01680000`)
+  - `market_overlay`는 우선 `KIS ranking`에서 seed symbol을 수집하고,
+    seed가 비었을 때만 `approved core universe` fallback pre-pool을 사용하도록 변경했다.
+  - ranking/core 어느 경로로 오더라도 quote batch 전 단계에서
+    universe 공통 eligibility를 다시 적용해 비표준/비지원/운영제외 종목을 미리 제거하도록 맞췄다.
+  - trading universe preview 진단 정보에 다음 필드를 추가했다.
+    - `seed_pool_source`
+    - `seed_pool_count`
+    - `overlay_capture_rate`
+- 잔여 보완
+  - 현재 ranking seed는 `거래대금 상위 + 체결강도 상위` 2개 소스만 사용한다.
+  - 후속으로 `등락률 순위`, 시간대별 pacing, seed cache, overlay source별 품질 실측을 추가해
+    실제 alpha discovery 품질을 더 정교화해야 한다.
+- 우선순위 이유
+  - 현재 구조는 정책 문서의 “market-driven alpha 후보 발굴”과 다르다.
+  - 기대수익률 최대화 관점에서도 `market overlay`는 core 내부 재정렬이 아니라
+    별도 alpha discovery lane이어야 한다.
+
+#### 10-f. Universe 우선순위와 cap 정책의 source별 reserve 정교화 — `완료`
+
+- 목표
+  - held / reconciliation / event / market / manual / core 간 예산 충돌을 줄인다.
+- 수정 방향
+  - `core_cap` 외에
+    - `event_overlay_cap`
+    - `market_overlay_cap`
+    - `reconciliation_overlay_reserve`
+    같은 source별 reserve 검토
+  - 시장 과열 구간에서 `market_overlay`가 `core/event`를 과도하게 침범하지 않도록 명시적 상한 정리
+- 이번 작업 반영
+  - `CompositionContext`에 다음 source-aware cap/reserve 필드를 추가했다.
+    - `event_overlay_cap`
+    - `reconciliation_overlay_reserve`
+  - `market_overlay_cap`은 이미 overlay 생성 단계에서 적용되고 있으므로,
+    이번 작업에서는 universe 최종 cap 단계와 충돌하지 않도록 현행 구조를 유지했다.
+  - `UniverseSelectionService._apply_cap()`에 다음 규칙을 반영했다.
+    - `held_position`은 계속 일반 `max_cap`에서 제외
+    - `reconciliation_overlay`는 `reconciliation_overlay_reserve` 범위까지는
+      일반 `max_cap`에서 제외
+    - reserve를 초과한 `reconciliation_overlay`부터는 일반 `max_cap`을 소비
+    - `event_overlay_cap`이 설정되면 event source가 해당 상한을 넘지 않도록 제한
+    - 기존 `core_cap`은 그대로 유지
+- 잔여 보완
+  - 현재 `seen` 구조는 symbol당 최고 우선순위 source 하나만 유지하므로,
+    `event_overlay_cap`에 의해 제외된 symbol이 자동으로 `core`로 복귀하지는 않는다.
+  - 후속으로 “동일 symbol의 fallback source 복원”이 필요하면
+    단일 `seen` 맵이 아니라 multi-candidate staging 구조로 바꿔야 한다.
+- 우선순위 이유
+  - 현재는 `core_cap`만 있고 나머지는 상대적으로 느슨하다.
+  - source별 목표 역할을 유지하려면 cap도 source-aware 해야 한다.
+
+### 권장 구현 순서
+
+1. `10-a` core universe 재정의
+2. `10-b` 공통 eligibility filter 강화
+3. `10-c` 정합성/미체결 강제 포함 계층 추가
+4. `10-e` market overlay sourcing 재정의
+5. `10-d` event overlay 확장
+6. `10-f` source별 reserve/cap 정교화
+
+### 구현 메모
+
+- `10-a`와 `10-b`는 별도 작업으로 분리하지 말고 함께 설계하는 것이 좋다.
+  - core를 좁히는 기준 자체가 eligibility 정책과 맞물리기 때문이다.
+- `10-c`는 execution/reconciliation 경계와 직접 연결되므로
+  universe selection 단독 작업이 아니라 order/reconciliation 문맥과 같이 검증해야 한다.
+- `10-e`는 KIS rate limit / market data budget 제약과 함께 설계해야 하며,
+  paper 환경에서는 pacing/seed pool 축소/캐시 전략을 반드시 동반해야 한다.
+
 ---
 
 ### 11. Signal Agent 분해 — `진행중`
@@ -492,6 +719,79 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - 다음 설계/구현 기준은
   [`plans/[DESIGN] deterministic_trigger_engine_v1.md`](./%5BDESIGN%5D%20deterministic_trigger_engine_v1.md)
   이다.
+
+### 추가 우선 반영 항목
+
+#### 11-a. 상대 거래량/거래대금 급증률 feature의 deterministic 승격 — `완료`
+
+- 배경
+  - 절대 거래대금 상위만으로는 이미 큰 종목 위주로 후보가 고정되기 쉽고,
+    장중에 새로 강해지는 종목을 늦게 포착한다.
+- 반영 방향
+  - 기존 `거래량 급증률`을 단순 참고 feature가 아니라
+    `WATCH / BUY_CANDIDATE` 생성의 핵심 deterministic backbone으로 승격한다.
+  - 우선 도입 대상
+    - `당일 거래량 / 최근 20일 평균 거래량`
+    - `당일 거래대금 / 최근 20일 평균 거래대금`
+    - 필요 시 `체결강도`, `단기 수익률`, `변동성 조정 점수`와 결합
+  - 적용 위치
+    - `signal_feature_snapshot` 장후/새벽 배치 계산
+    - `deterministic_trigger_engine`의 eligibility / ranking / top-k candidate projection
+- 이번 작업 반영
+  - `signal_feature_snapshot`에 다음 필드를 추가했다.
+    - `average_turnover_20d`
+    - `turnover_surge_ratio`
+  - signal backbone 계산 시
+    - `최근 20일 평균 거래대금`
+    - `당일 거래대금 / 최근 20일 평균 거래대금`
+    을 함께 계산하도록 보강했다.
+  - `volume_confirmation` 점수는 이제
+    `volume_surge_ratio`와 `turnover_surge_ratio`를 함께 반영한다.
+  - `deterministic_trigger_engine`의 BUY eligibility에
+    `eligibility_low_relative_activity` 차단을 추가해
+    상대 활동성이 너무 낮은 종목은 신규 진입 후보에서 제외하도록 했다.
+  - `deterministic_trigger_engine`의 entry/ranking score에
+    relative activity bonus를 추가해
+    거래량/거래대금 급증 종목이 `WATCH / BUY_CANDIDATE` 상단으로 더 빨리 올라오도록 맞췄다.
+  - inspection/API에도 신규 필드를 노출하도록 연결했다.
+- 잔여 보완
+  - 현재는 일봉 배치 기준의 상대 급증률만 반영했다.
+  - 후속으로 live quote의 `acml_vol`, `acml_tr_pbmn`과 결합한
+    장중 intraday relative activity 계측/랭킹으로 확장할 필요가 있다.
+- 우선순위 이유
+  - 기대수익률 관점에서 가장 직접적인 개선축이며,
+    universe를 무리하게 넓히지 않고도 “새로 주도주가 되는 종목”을 조기 포착할 수 있다.
+  - 현재 진행 중인 `Signal Agent 분해` 및 `feature 기반 deterministic trigger` 강화와
+    정확히 같은 방향의 작업이다.
+
+#### 11-b. Market Discovery Pool의 조건부 확장 준비 — `완료`
+
+- 배경
+  - 정책 문서상 `market-driven overlay`는 core 밖의 하이알파 후보 탐지가 목적이며,
+    장기적으로는 KOSDAQ/중소형 성장주까지 탐색 범위를 넓힐 필요가 있다.
+- 반영 방향
+  - 즉시 주문 universe를 넓히는 것이 아니라,
+    `탐색 풀`과 `주문 가능 풀`을 분리하는 구조를 우선 유지한다.
+  - 후속으로 instrument master에 `KOSPI/KOSDAQ/segment`를 정식 적재한 뒤,
+    `market discovery seed pool`에 한해 다음 후보군을 단계적으로 편입 검토한다.
+    - `KOSDAQ 150`
+    - `거래대금 상위 후보군`
+  - 단, 편입 조건은 공통 eligibility와 별도 liquidity gate를 통과하는 경우로 제한한다.
+- 이번 작업 반영
+  - `UniverseSelectionService`에 `market discovery seed pool` 판단 helper를 추가했다.
+  - 현재는 다음 metadata가 있는 경우에 한해
+    core seed 외 종목도 `market_overlay` fallback seed 후보로 편입될 수 있도록 준비했다.
+    - `market_discovery_pool=true`
+    - `market_segment` / `segment` / `universe_segment` in
+      `KOSPI100`, `KOSDAQ150`, `KOSPI_LARGE`, `KOSDAQ_GROWTH`
+  - 이 경로는 `market_overlay`의 fallback seed pool에만 적용되며,
+    `core universe`나 즉시 주문 가능 풀을 직접 넓히지는 않는다.
+  - 즉, 현재 단계에서는 “탐색 범위 확장 준비”만 반영하고,
+    주문/판단 안정성 경계는 유지했다.
+- 우선순위 이유
+  - KOSDAQ/중소형 탐색 자체는 기대수익률 확대 여지가 있지만,
+    현재 단계에서 곧바로 주문 universe까지 넓히면 체결 리스크와 운영 복잡도가 더 빨리 커진다.
+  - 따라서 `feature 기반 ranking backbone` 정교화 이후의 차상위 과제로 두는 것이 합리적이다.
 
 ### 세부 작업 상태
 - [x] 순수 helper 기반 deterministic signal backbone 1차 추가

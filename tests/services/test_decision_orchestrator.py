@@ -230,6 +230,155 @@ async def test_assemble_preserves_request_fields(service, sample_request):
 
 
 @pytest.mark.asyncio
+async def test_assemble_prefers_latest_success_cash_snapshot_over_latest_stale(
+    seeded_service_with_account: DecisionOrchestratorService,
+) -> None:
+    repos = seeded_service_with_account._repos
+    account = next(iter(repos.accounts._items.values()))
+    config_version = next(iter(repos.config_versions._items.values()))
+    now = datetime.now(timezone.utc)
+
+    stale_cash = CashBalanceSnapshotEntity(
+        cash_balance_snapshot_id=uuid4(),
+        account_id=account.account_id,
+        currency="KRW",
+        available_cash=Decimal("7000000"),
+        settled_cash=Decimal("7000000"),
+        unsettled_cash=Decimal("0"),
+        source_of_truth="broker",
+        snapshot_at=now,
+        orderable_amount=Decimal("0"),
+        fetch_status="stale",
+    )
+    fresh_cash = CashBalanceSnapshotEntity(
+        cash_balance_snapshot_id=uuid4(),
+        account_id=account.account_id,
+        currency="KRW",
+        available_cash=Decimal("7000000"),
+        settled_cash=Decimal("7000000"),
+        unsettled_cash=Decimal("0"),
+        source_of_truth="broker",
+        snapshot_at=now - timedelta(minutes=5),
+        orderable_amount=Decimal("16000000"),
+        fetch_status="success",
+    )
+    repos.cash_balance_snapshots._items[stale_cash.cash_balance_snapshot_id] = stale_cash
+    repos.cash_balance_snapshots._items[fresh_cash.cash_balance_snapshot_id] = fresh_cash
+
+    request = SubmitOrderRequest(
+        account_ref="test_account",
+        client_order_id="cash-select-001",
+        correlation_id="corr-cash-select-001",
+        strategy_id=str(config_version.config_version_id),
+        symbol="005930",
+        market="KRX",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=Decimal("10"),
+        price=Decimal("50000"),
+        time_in_force=TimeInForce.DAY,
+    )
+
+    intent = await seeded_service_with_account.assemble(request)
+
+    assert intent.context.cash_balance_snapshot is not None
+    assert intent.context.cash_balance_snapshot.cash_balance_snapshot_id == fresh_cash.cash_balance_snapshot_id
+    assert intent.context.cash_balance_snapshot.fetch_status == "success"
+
+
+@pytest.mark.asyncio
+async def test_assemble_replaces_anchored_stale_cash_snapshot_with_latest_success(
+    service: DecisionOrchestratorService,
+) -> None:
+    repos = service._repos
+    now = datetime.now(timezone.utc)
+
+    account = AccountEntity(
+        account_id=uuid4(),
+        client_id=uuid4(),
+        broker_account_id=uuid4(),
+        environment=Environment.PAPER,
+        account_alias="stale_context_account",
+        account_masked="stale-****",
+        status="active",
+    )
+    repos.accounts._items[account.account_id] = account
+
+    config_version = ConfigVersionEntity(
+        config_version_id=uuid4(),
+        client_id=account.client_id,
+        environment=Environment.PAPER,
+        version_tag="v1.0",
+        config_json={},
+        checksum="abc123",
+        activated_at=now,
+    )
+    repos.config_versions._items[config_version.config_version_id] = config_version
+
+    stale_cash = CashBalanceSnapshotEntity(
+        cash_balance_snapshot_id=uuid4(),
+        account_id=account.account_id,
+        currency="KRW",
+        available_cash=Decimal("7000000"),
+        settled_cash=Decimal("7000000"),
+        unsettled_cash=Decimal("0"),
+        source_of_truth="broker",
+        snapshot_at=now - timedelta(minutes=10),
+        orderable_amount=Decimal("0"),
+        fetch_status="stale",
+    )
+    fresh_cash = CashBalanceSnapshotEntity(
+        cash_balance_snapshot_id=uuid4(),
+        account_id=account.account_id,
+        currency="KRW",
+        available_cash=Decimal("7000000"),
+        settled_cash=Decimal("7000000"),
+        unsettled_cash=Decimal("0"),
+        source_of_truth="broker",
+        snapshot_at=now - timedelta(minutes=1),
+        orderable_amount=Decimal("16500000"),
+        fetch_status="success",
+    )
+    repos.cash_balance_snapshots._items[stale_cash.cash_balance_snapshot_id] = stale_cash
+    repos.cash_balance_snapshots._items[fresh_cash.cash_balance_snapshot_id] = fresh_cash
+
+    context = DecisionContextEntity(
+        decision_context_id=uuid4(),
+        account_id=account.account_id,
+        strategy_id=uuid4(),
+        config_version_id=config_version.config_version_id,
+        market_timestamp=now,
+        correlation_id="corr-stale-context",
+        cash_balance_snapshot_id=stale_cash.cash_balance_snapshot_id,
+    )
+    repos.decision_contexts._items[context.decision_context_id] = context
+
+    request = SubmitOrderRequest(
+        account_ref="stale_context_account",
+        client_order_id="cash-replace-001",
+        correlation_id="corr-cash-replace-001",
+        strategy_id="strat-001",
+        symbol="005930",
+        market="KRX",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=Decimal("10"),
+        price=Decimal("50000"),
+        time_in_force=TimeInForce.DAY,
+    )
+
+    intent = await service.assemble(
+        request,
+        decision_context_id=context.decision_context_id,
+    )
+    updated_context = repos.decision_contexts._items[context.decision_context_id]
+
+    assert intent.context.cash_balance_snapshot is not None
+    assert intent.context.cash_balance_snapshot.cash_balance_snapshot_id == fresh_cash.cash_balance_snapshot_id
+    assert updated_context.cash_balance_snapshot_id == fresh_cash.cash_balance_snapshot_id
+
+
+@pytest.mark.asyncio
 async def test_assemble_loads_latest_signal_feature_snapshot(
     seeded_service_with_account: DecisionOrchestratorService,
     sample_request: SubmitOrderRequest,

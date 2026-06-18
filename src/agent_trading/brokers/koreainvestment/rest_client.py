@@ -73,6 +73,8 @@ KIS_ENDPOINTS: Mapping[str, str] = {
     "inquire_daily_itemchartprice": "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",  # 국내주식기간별시세
     # --- Market Data ---
     "inquire_asking_price_exp_ccn": "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn", # 호가
+    "ranking_volume": "/uapi/domestic-stock/v1/quotations/volume-rank",  # 거래량/거래대금 순위
+    "ranking_volume_power": "/uapi/domestic-stock/v1/ranking/volume-power",  # 체결강도 상위
     # --- Disclosure (live only) ---
     # Reference: FHKST01011800 — 종합 시황_공시(제목), 모의투자 미지원
     "disclosure_title": "/uapi/domestic-stock/v1/quotations/news-title",
@@ -93,6 +95,8 @@ KIS_TR_IDS: Mapping[str, tuple[str, str]] = {
     "inquire_price": ("FHKST01010100", "FHKST01010100"),    # 주식현재가 시세
     "inquire_daily_itemchartprice": ("FHKST03010100", "FHKST03010100"),    # 국내주식기간별시세
     "inquire_asking_price_exp_ccn": ("FHKST01010200", "FHKST01010200"), # 호가
+    "ranking_volume": ("FHPST01710000", None),
+    "ranking_volume_power": ("FHPST01680000", None),
     # Disclosure (live only — 모의투자 미지원)
     "disclosure_title": ("FHKST01011800", None),
 }
@@ -2176,6 +2180,102 @@ class KISRestClient:
             len(symbols),
         )
         return batch
+
+    async def get_volume_rank(self) -> list[dict[str, Any]]:
+        """장중 시장 발굴용 거래대금/거래량 상위 목록을 조회한다.
+
+        실전 전용 API다. 모의/비지원 환경에서는 빈 목록을 반환한다.
+        """
+        try:
+            data = await self._request(
+                "GET",
+                endpoint_key="ranking_volume",
+                tr_id_key="ranking_volume",
+                bucket=BucketType.MARKET_DATA,
+                params={
+                    "FID_COND_MRKT_DIV_CODE": "J",
+                    "FID_COND_SCR_DIV_CODE": "20171",
+                    "FID_INPUT_ISCD": "0000",
+                    "FID_DIV_CLS_CODE": "0",
+                    "FID_BLNG_CLS_CODE": "3",
+                    "FID_TRGT_CLS_CODE": "111111111",
+                    "FID_TRGT_EXLS_CLS_CODE": "0000000000",
+                    "FID_INPUT_PRICE_1": "",
+                    "FID_INPUT_PRICE_2": "",
+                    "FID_VOL_CNT": "",
+                },
+            )
+        except BrokerError:
+            logger.debug("get_volume_rank: unavailable", exc_info=True)
+            return []
+
+        output = data.get("output", [])
+        if isinstance(output, dict):
+            return [output]
+        if isinstance(output, list):
+            return [row for row in output if isinstance(row, dict)]
+        return []
+
+    async def get_volume_power_rank(self) -> list[dict[str, Any]]:
+        """장중 시장 발굴용 체결강도 상위 목록을 조회한다."""
+        try:
+            data = await self._request(
+                "GET",
+                endpoint_key="ranking_volume_power",
+                tr_id_key="ranking_volume_power",
+                bucket=BucketType.MARKET_DATA,
+                params={
+                    "fid_cond_mrkt_div_code": "J",
+                    "fid_cond_scr_div_code": "20168",
+                    "fid_input_iscd": "0000",
+                    "fid_div_cls_code": "0",
+                    "fid_input_price_1": "",
+                    "fid_input_price_2": "",
+                    "fid_vol_cnt": "",
+                    "fid_trgt_exls_cls_code": "0",
+                    "fid_trgt_cls_code": "0",
+                },
+            )
+        except BrokerError:
+            logger.debug("get_volume_power_rank: unavailable", exc_info=True)
+            return []
+
+        output = data.get("output", [])
+        if isinstance(output, dict):
+            return [output]
+        if isinstance(output, list):
+            return [row for row in output if isinstance(row, dict)]
+        return []
+
+    async def get_market_overlay_seed_symbols(self, *, limit: int = 60) -> list[str]:
+        """시장 발굴 overlay용 seed symbol 목록을 생성한다.
+
+        거래대금 상위와 체결강도 상위를 합쳐 중복 제거한 뒤 반환한다.
+        """
+        if self.env != "live":
+            return []
+
+        seeds: list[str] = []
+        seen: set[str] = set()
+
+        def _append_symbol(raw_symbol: object) -> None:
+            symbol = str(raw_symbol or "").strip()
+            if not symbol or symbol in seen:
+                return
+            seen.add(symbol)
+            seeds.append(symbol)
+
+        for row in await self.get_volume_rank():
+            _append_symbol(row.get("mksc_shrn_iscd"))
+            if len(seeds) >= limit:
+                return seeds[:limit]
+
+        for row in await self.get_volume_power_rank():
+            _append_symbol(row.get("stck_shrn_iscd"))
+            if len(seeds) >= limit:
+                return seeds[:limit]
+
+        return seeds[:limit]
 
     async def get_orderbook(self, symbol: str) -> dict[str, Any]:
         """Retrieve orderbook (호가).

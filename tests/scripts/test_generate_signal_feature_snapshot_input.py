@@ -152,3 +152,43 @@ async def test_build_rows_retries_on_market_data_budget_exhaustion(monkeypatch) 
     assert errors == []
     assert sleep_calls == [1.0]
     assert client.inquire_daily_itemchartprice.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_build_rows_accepts_registered_kosdaq_market() -> None:
+    universe = [UniverseSymbol(symbol="090150", market="KOSDAQ", source_type="core")]
+    response = [
+        {
+            "stck_bsop_date": "20260616",
+            "stck_oprc": "100",
+            "stck_hgpr": "110",
+            "stck_lwpr": "95",
+            "stck_clpr": "108",
+            "acml_vol": "12345",
+        }
+        for _ in range(20)
+    ]
+    client = SimpleNamespace(
+        budget_manager=SimpleNamespace(
+            market_data=SimpleNamespace(refill_rate=1.0),
+            global_rest=SimpleNamespace(refill_rate=1.0),
+        ),
+        inquire_daily_itemchartprice=AsyncMock(return_value=response),
+    )
+
+    rows, errors = await _build_rows(
+        client,
+        universe=universe,
+        end_date=date(2026, 6, 17),
+        lookback_days=30,
+        timeframe="1d",
+        feature_set_version="signal_backbone_v1",
+        batch_size=0,
+        batch_pause_seconds=0.0,
+        budget_retry_attempts=1,
+        budget_retry_sleep_seconds=1.0,
+    )
+
+    assert len(rows) == 1
+    assert rows[0].market == "KOSDAQ"
+    assert errors == []

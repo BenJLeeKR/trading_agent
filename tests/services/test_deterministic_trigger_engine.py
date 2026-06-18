@@ -19,6 +19,9 @@ def _make_signal(
     fast: str,
     slow: str,
     average_volume_20d: str | None = "50000",
+    average_turnover_20d: str | None = "700000000",
+    volume_surge_ratio: str | None = "1.6",
+    turnover_surge_ratio: str | None = "1.7",
     sma_20: str | None = "10000",
 ) -> SignalFeatureSnapshotEntity:
     return SignalFeatureSnapshotEntity(
@@ -31,6 +34,17 @@ def _make_signal(
         sma_20=Decimal(sma_20) if sma_20 is not None else None,
         average_volume_20d=(
             Decimal(average_volume_20d) if average_volume_20d is not None else None
+        ),
+        average_turnover_20d=(
+            Decimal(average_turnover_20d)
+            if average_turnover_20d is not None else None
+        ),
+        volume_surge_ratio=(
+            Decimal(volume_surge_ratio) if volume_surge_ratio is not None else None
+        ),
+        turnover_surge_ratio=(
+            Decimal(turnover_surge_ratio)
+            if turnover_surge_ratio is not None else None
         ),
         overall_score=Decimal(overall),
         fast_score=Decimal(fast),
@@ -115,7 +129,7 @@ def test_trigger_engine_builds_buy_candidate_for_bullish_core() -> None:
     assert result.ranking_score is not None
     assert result.ranking_score > 0.8
     assert "eligibility_feature_coverage_ok" in result.eligibility_reasons
-    assert result.candidate_mode == "absolute_threshold_v1_instrumented"
+    assert result.candidate_mode == "relative_surge_v1_instrumented"
 
 
 def test_trigger_engine_builds_watch_candidate_for_core_setup() -> None:
@@ -228,3 +242,76 @@ def test_trigger_engine_blocks_excessive_turnover_participation() -> None:
     assert result.eligibility_passed is False
     assert result.buy_candidate is False
     assert "eligibility_participation_rate_blocked" in result.eligibility_reasons
+
+
+def test_trigger_engine_blocks_low_relative_activity() -> None:
+    result = assess_deterministic_triggers(
+        source_type="core",
+        signal_feature_snapshot=_make_signal(
+            overall="0.72",
+            fast="0.61",
+            slow="0.64",
+            volume_surge_ratio="1.02",
+            turnover_surge_ratio="1.03",
+        ),
+        market_regime=_make_regime(regime_label="bullish_trend", risk_tone="risk_on"),
+        strategy_selection=_make_strategy(),
+        portfolio_allocation=_make_portfolio(max_new_capital_pct=1.0, current_weight_pct=2.0),
+        position_snapshot=None,
+    )
+
+    assert result is not None
+    assert result.eligibility_passed is False
+    assert "eligibility_low_relative_activity" in result.eligibility_reasons
+
+
+def test_trigger_engine_ranking_reflects_turnover_surge() -> None:
+    low = assess_deterministic_triggers(
+        source_type="core",
+        signal_feature_snapshot=_make_signal(
+            overall="0.72",
+            fast="0.61",
+            slow="0.64",
+            volume_surge_ratio="1.20",
+            turnover_surge_ratio="1.20",
+        ),
+        market_regime=_make_regime(regime_label="bullish_trend", risk_tone="risk_on"),
+        strategy_selection=_make_strategy(),
+        portfolio_allocation=_make_portfolio(max_new_capital_pct=0.5, current_weight_pct=2.0),
+        position_snapshot=None,
+    )
+    high = assess_deterministic_triggers(
+        source_type="core",
+        signal_feature_snapshot=_make_signal(
+            overall="0.72",
+            fast="0.61",
+            slow="0.64",
+            volume_surge_ratio="2.80",
+            turnover_surge_ratio="2.90",
+        ),
+        market_regime=_make_regime(regime_label="bullish_trend", risk_tone="risk_on"),
+        strategy_selection=_make_strategy(),
+        portfolio_allocation=_make_portfolio(max_new_capital_pct=0.5, current_weight_pct=2.0),
+        position_snapshot=None,
+    )
+
+    assert low is not None and high is not None
+    assert high.ranking_score is not None
+    assert low.ranking_score is not None
+    assert high.ranking_score > low.ranking_score
+
+
+def test_trigger_engine_blocks_buy_path_for_reconciliation_overlay() -> None:
+    result = assess_deterministic_triggers(
+        source_type="reconciliation_overlay",
+        signal_feature_snapshot=_make_signal(overall="0.72", fast="0.61", slow="0.64"),
+        market_regime=_make_regime(regime_label="bullish_trend", risk_tone="risk_on"),
+        strategy_selection=_make_strategy(),
+        portfolio_allocation=_make_portfolio(max_new_capital_pct=5.0, current_weight_pct=0.0),
+        position_snapshot=None,
+    )
+
+    assert result is not None
+    assert result.eligibility_passed is False
+    assert result.buy_candidate is False
+    assert "eligibility_source_type_blocked" in result.eligibility_reasons

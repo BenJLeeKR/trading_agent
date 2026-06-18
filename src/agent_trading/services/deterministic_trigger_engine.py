@@ -76,6 +76,7 @@ def assess_deterministic_triggers(
         overall=overall,
         fast=fast,
         slow=slow,
+        signal_feature_snapshot=signal_feature_snapshot,
         market_regime=market_regime,
         strategy_selection=strategy_selection,
         portfolio_allocation=portfolio_allocation,
@@ -149,6 +150,7 @@ def assess_deterministic_triggers(
         ranking_score = _build_buy_ranking_score(
             entry_score=entry_score,
             coverage_score=coverage_score,
+            signal_feature_snapshot=signal_feature_snapshot,
             market_regime=market_regime,
             portfolio_allocation=portfolio_allocation,
             strategy_selection=strategy_selection,
@@ -213,6 +215,24 @@ def assess_deterministic_triggers(
             and signal_feature_snapshot.average_volume_20d is not None
             else None
         ),
+        "average_turnover_20d": (
+            str(signal_feature_snapshot.average_turnover_20d)
+            if signal_feature_snapshot is not None
+            and signal_feature_snapshot.average_turnover_20d is not None
+            else None
+        ),
+        "volume_surge_ratio": (
+            str(signal_feature_snapshot.volume_surge_ratio)
+            if signal_feature_snapshot is not None
+            and signal_feature_snapshot.volume_surge_ratio is not None
+            else None
+        ),
+        "turnover_surge_ratio": (
+            str(signal_feature_snapshot.turnover_surge_ratio)
+            if signal_feature_snapshot is not None
+            and signal_feature_snapshot.turnover_surge_ratio is not None
+            else None
+        ),
         "liquidity_reference_price": (
             _estimate_liquidity_reference_price(signal_feature_snapshot)
         ),
@@ -242,7 +262,7 @@ def assess_deterministic_triggers(
         eligibility_reasons=tuple(dict.fromkeys(eligibility_reasons)),
         coverage_score=round(coverage_score, 4),
         ranking_score=round(ranking_score, 4),
-        candidate_mode="absolute_threshold_v1_instrumented",
+        candidate_mode="relative_surge_v1_instrumented",
         reason_codes=tuple(dict.fromkeys(reason_codes)),
         thresholds=thresholds,
         metadata=metadata,
@@ -281,7 +301,7 @@ def _assess_buy_eligibility(
     portfolio_allocation: PortfolioAllocationAssessment | None,
 ) -> tuple[bool, tuple[str, ...]]:
     reasons: list[str] = []
-    if source_type == "held_position":
+    if source_type in {"held_position", "reconciliation_overlay"}:
         reasons.append("eligibility_source_type_blocked")
         return False, tuple(reasons)
     reasons.append("eligibility_source_type_allowed")
@@ -318,6 +338,21 @@ def _assess_buy_eligibility(
         if signal_feature_snapshot is not None
         else None
     )
+    average_turnover_20d = _float_or_none(
+        signal_feature_snapshot.average_turnover_20d
+        if signal_feature_snapshot is not None
+        else None
+    )
+    volume_surge_ratio = _float_or_none(
+        signal_feature_snapshot.volume_surge_ratio
+        if signal_feature_snapshot is not None
+        else None
+    )
+    turnover_surge_ratio = _float_or_none(
+        signal_feature_snapshot.turnover_surge_ratio
+        if signal_feature_snapshot is not None
+        else None
+    )
     if avg_daily_volume is not None and avg_daily_volume < 3000.0:
         reasons.append("eligibility_low_average_volume")
         return False, tuple(reasons)
@@ -330,12 +365,24 @@ def _assess_buy_eligibility(
         if portfolio_allocation is not None
         else None
     )
-    estimated_average_turnover = _estimate_average_turnover_20d(
-        average_volume_20d=avg_daily_volume,
-        liquidity_reference_price=liquidity_reference_price,
+    estimated_average_turnover = (
+        average_turnover_20d
+        if average_turnover_20d is not None
+        else _estimate_average_turnover_20d(
+            average_volume_20d=avg_daily_volume,
+            liquidity_reference_price=liquidity_reference_price,
+        )
     )
     if estimated_average_turnover is not None and estimated_average_turnover < 50_000_000.0:
         reasons.append("eligibility_low_turnover")
+        return False, tuple(reasons)
+
+    if (
+        volume_surge_ratio is not None
+        and turnover_surge_ratio is not None
+        and max(volume_surge_ratio, turnover_surge_ratio) < 1.10
+    ):
+        reasons.append("eligibility_low_relative_activity")
         return False, tuple(reasons)
 
     if (
@@ -427,6 +474,7 @@ def _build_buy_ranking_score(
     *,
     entry_score: float,
     coverage_score: float,
+    signal_feature_snapshot: SignalFeatureSnapshotEntity | None,
     market_regime: MarketRegimeAssessment | None,
     portfolio_allocation: PortfolioAllocationAssessment | None,
     strategy_selection: StrategySelectionAssessment | None,
@@ -451,8 +499,11 @@ def _build_buy_ranking_score(
     }:
         strategy_alignment = 1.0
 
+    relative_activity = _build_relative_activity_score(signal_feature_snapshot)
+
     score = (
-        0.65 * entry_score
+        0.55 * entry_score
+        + 0.10 * relative_activity
         + 0.20 * coverage_score
         + 0.10 * allocation_quality
         + 0.03 * regime_tailwind
@@ -500,6 +551,7 @@ def _build_entry_score(
     overall: float | None,
     fast: float | None,
     slow: float | None,
+    signal_feature_snapshot: SignalFeatureSnapshotEntity | None,
     market_regime: MarketRegimeAssessment | None,
     strategy_selection: StrategySelectionAssessment | None,
     portfolio_allocation: PortfolioAllocationAssessment | None,
@@ -543,6 +595,11 @@ def _build_entry_score(
     elif source_type == "held_position":
         score -= 0.35
         reason_codes.append("trigger_held_position_buy_block")
+
+    relative_activity_bonus = _build_relative_activity_score(signal_feature_snapshot)
+    if relative_activity_bonus > 0:
+        score += min(0.10, relative_activity_bonus * 0.10)
+        reason_codes.append("trigger_relative_activity_bonus")
 
     return _clamp(score)
 
@@ -630,6 +687,35 @@ def _normalize_signed_score(value: float | None) -> float:
     if value is None:
         return 0.5
     return _clamp((value + 1.0) / 2.0)
+
+
+def _build_relative_activity_score(
+    signal_feature_snapshot: SignalFeatureSnapshotEntity | None,
+) -> float:
+    if signal_feature_snapshot is None:
+        return 0.0
+    return _build_relative_activity_score_from_raw(
+        volume_surge_ratio=_float_or_none(signal_feature_snapshot.volume_surge_ratio),
+        turnover_surge_ratio=_float_or_none(signal_feature_snapshot.turnover_surge_ratio),
+    )
+
+
+def _build_relative_activity_score_from_raw(
+    *,
+    volume_surge_ratio: float | None,
+    turnover_surge_ratio: float | None,
+) -> float:
+    volume_component = _normalize_surge_ratio(volume_surge_ratio)
+    turnover_component = _normalize_surge_ratio(turnover_surge_ratio)
+    return max(volume_component, turnover_component)
+
+
+def _normalize_surge_ratio(value: float | None) -> float:
+    if value is None or value <= 1.0:
+        return 0.0
+    if value >= 3.0:
+        return 1.0
+    return _clamp((value - 1.0) / 2.0)
 
 
 def _clamp(value: float) -> float:
