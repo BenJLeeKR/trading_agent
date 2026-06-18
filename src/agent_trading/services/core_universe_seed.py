@@ -1,4 +1,4 @@
-"""Core universe seed 목록.
+"""Core / discovery universe seed 목록.
 
 정책상 `core universe`는 `active KRX 전체`가 아니라
 운영 승인된 대형주/고유동성 종목의 authoritative source여야 한다.
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 APPROVED_CORE_UNIVERSE_SYMBOLS: frozenset[str] = frozenset({
     # 테스트 및 현재 운영 핵심 종목
-    "000660", "005930", "010130", "012450", "016360", "035420", "090150",
+    "000660", "005930", "010130", "012450", "016360", "035420",
     # KOSPI 대형주 중심
     "000100", "000270", "000810", "001040", "001450", "002380", "003490",
     "003550", "003670", "004020", "005380", "005385", "005387", "005490",
@@ -32,3 +32,8 @@ APPROVED_CORE_UNIVERSE_SYMBOLS: frozenset[str] = frozenset({
     "357780", "373220", "377300", "402340", "454910",
 })
 
+
+APPROVED_DISCOVERY_UNIVERSE_SYMBOLS: frozenset[str] = frozenset({
+    # KOSDAQ는 아직 주문 core가 아니라 discovery seed로만 단계 편입한다.
+    "090150",
+})

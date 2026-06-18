@@ -751,6 +751,9 @@ class MarketOverlayDiagnosticsView(BaseModel):
     filtered_out_count: int
     scored_candidate_count: int
     added_count: int
+    quote_success_rate: float | None = None
+    filter_pass_rate: float | None = None
+    scored_capture_rate: float | None = None
     overlay_capture_rate: float | None = None
 
 
@@ -791,6 +794,7 @@ class TradingUniverseCoverageSummaryResponse(BaseModel):
     total_decision_count: int
     total_order_count: int
     market_overlay_active: bool
+    market_counts: dict[str, int]
     items: list[TradingUniverseCoverageItem]
 
 

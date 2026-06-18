@@ -408,6 +408,130 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 ### 우선순위 이유
 - symbol / market / 이름 / 활성상태의 authoritative source가 강화되면 universe, fill history, event mapping 품질이 같이 올라간다.
 
+### KOSDAQ 확장 후속 우선순위
+
+현재 판단 기준:
+
+- `instrument master` 미등록 종목이 `unknown_instrument`로 제외되는 경계는 유지하는 것이 맞다.
+- `core universe가 active KRX 전체를 그대로 먹는다`는 과거 문제 제기는 현재 구현 기준으로는 상당 부분 완화됐다.
+  - 현재는 `approved core universe seed` 기반으로 축소되어 있다.
+- `market overlay가 항상 알파벳 순 50개만 본다`는 진단도 현재 기준으로는 일부만 유효하다.
+  - 현재는 KIS ranking seed 우선, fallback pre-pool 보조 구조다.
+- 따라서 KOSDAQ 확장의 실제 선결과제는 `시장 구분이 보존된 instrument master 적재`와
+  `적재 이후 운영 경로 실측`이다.
+
+#### 9-a. KOSPI/KOSDAQ 통합 instrument master CSV 확보 및 장전 배치 연결 — `최우선`
+
+- 목표
+  - 장이 열리는 날 장전 시점에 KOSPI/KOSDAQ 구분이 보존된 CSV로
+    `instrument master`를 자동 갱신한다.
+- 이유
+  - master가 비어 있으면 Universe Selection 단계에서 그대로 탈락하므로,
+    이 단계가 없으면 이후 KOSDAQ 확장은 모두 무의미하다.
+- 완료 기준
+  - scheduler에서 거래일 `07:50 KST`에 instrument master sync가 1회 실행된다.
+  - 입력 CSV가 실제로 KOSDAQ row를 포함하고, `market_code`가 `KOSDAQ`로 보존된다.
+- 현재 진행 상태
+  - [x] `sync_kis_instrument_master.py`가 `market_code=KOSDAQ`를 보존하는 적재 경로를 가진다.
+  - [x] `ops-scheduler`에 거래일 `07:50 KST` 1회 실행 경로를 연결했다.
+  - [x] 원본 CSV 여러 개를 `data/instrument_master/normalized/kis_kospi_kosdaq_master_normalized_for_sync.csv`로 합치는
+    정규화 전처리 스크립트와 scheduler 선행 실행 경로를 추가했다.
+  - [x] 운영 원본 CSV 입력 경로와 보관 경로를 코드로 고정했다.
+    - 입력: `data/instrument_master/source/kospi_master.csv`
+    - 입력: `data/instrument_master/source/kosdaq_master.csv`
+    - 정규화 출력: `data/instrument_master/normalized/kis_kospi_kosdaq_master_normalized_for_sync.csv`
+    - 원본 보관: `data/instrument_master/archive/<YYYY-MM-DD>/...`
+  - [x] csv 미존재 / sync 실패 시에는 `done` 처리하지 않고 다음 tick에 재시도하도록 보정했다.
+  - [x] scheduler summary/runtime에 `instrument_master_sync` 상태와 기본 CSV 경로를 노출한다.
+
+#### 9-b. KOSDAQ master 적재 후 universe/feature 경로 실측 — `상`
+
+- 목표
+  - KOSDAQ row가 적재된 뒤 실제 운영 경로가 깨지지 않는지 확인한다.
+- 점검 범위
+  - Universe Selection에서 등록된 KOSDAQ 종목이 `unknown_instrument`로 잘못 차단되지 않는지
+  - `signal_feature_snapshot_input` 생성이 `KOSDAQ` market을 수용하는지
+  - decision loop / preview API / coverage summary에서 시장 코드가 일관되게 보이는지
+- 이유
+  - instrument master 적재만 되고 후속 배치/판단 경로가 `KRX` 고정이면
+    운영상 부분 실패가 발생한다.
+- 현재 진행 상태
+  - [x] Universe Selection에서 등록된 `KOSDAQ` 종목이 `unknown_instrument`로 잘못 차단되지 않는
+    경로를 테스트로 재확인했다.
+  - [x] `generate_signal_feature_snapshot_input.py`가 `market=KOSDAQ` universe row를
+    그대로 수용하는 경로를 테스트로 고정했다.
+  - [x] `run_decision_loop._read_trading_universe()`의 DB fallback이
+    `KOSDAQ` market_code를 유지하는 경로를 테스트로 고정했다.
+  - [x] `/instruments/trading-universe/preview` 응답이 `market=KOSDAQ`를 그대로 노출하는
+    경로를 테스트로 고정했다.
+  - [x] `/instruments/trading-universe/coverage-summary`에 `market_counts`를 추가해
+    최근 판단 시장 분포(`KOSPI/KOSDAQ/KRX`)를 운영에서 직접 확인할 수 있게 했다.
+
+#### 9-c. KOSDAQ 탐색 대상과 주문 가능 대상을 분리한 단계적 편입 — `상`
+
+- 목표
+  - KOSDAQ을 바로 `core universe`로 넣지 않고,
+    `market discovery seed pool` 또는 `event overlay` 쪽부터 단계적으로 편입한다.
+- 원칙
+  - `탐색 풀`과 `주문 가능 풀`을 동일시하지 않는다.
+  - KOSDAQ 확장은 우선 `탐색/랭킹/계측` 계층에서 시작하고,
+    execution 안정성 검증 후 주문 가능 풀로 승격한다.
+- 이유
+  - 기대수익률 확대 기회는 크지만,
+    현재 단계에서 즉시 주문 universe까지 넓히면 체결 리스크가 먼저 커진다.
+- 현재 진행 상태
+  - [x] `APPROVED_CORE_UNIVERSE_SYMBOLS`에서 KOSDAQ `090150` 직접 core 편입을 제거했다.
+  - [x] `APPROVED_DISCOVERY_UNIVERSE_SYMBOLS`를 추가해 KOSDAQ 시범 종목은
+    `market overlay fallback seed`로만 진입하도록 분리했다.
+  - [x] 명시적 `core_universe=true`가 없으면 KOSDAQ discovery seed가
+    `compose()` 결과의 주문 core에 포함되지 않는 테스트를 고정했다.
+  - [x] KOSDAQ discovery seed가 `compose_with_diagnostics()`의
+    `market overlay fallback seed`에는 포함되는 테스트를 고정했다.
+
+#### 9-d. instrument master의 KOSPI/KOSDAQ/segment authoritative source화 — `중`
+
+- 목표
+  - `market_segment`, `segment`, `universe_segment`, 필요 시 `exchange_code`까지
+    instrument master의 정식 기준 데이터로 고정한다.
+- 이유
+  - 현재 일부 로직은 allowlist와 metadata fallback에 의존한다.
+  - 장기적으로는 `KOSPI100`, `KOSDAQ150`, `KOSPI_LARGE`, `KOSDAQ_GROWTH`
+    같은 segment 기준으로 탐색 풀과 core seed를 더 정교하게 분리해야 한다.
+- 현재 진행 상태
+  - [x] `build_kis_instrument_master_sync_csv.py`가 normalized CSV에
+    `exchange_code`, `metadata_market_segment`, `metadata_segment`,
+    `metadata_universe_segment`를 함께 기록하도록 확장했다.
+  - [x] source CSV의 `market_segment/segment/universe_segment` 별칭을
+    `KOSPI100`, `KOSDAQ150`, `KOSPI_LARGE`, `KOSDAQ_GROWTH` 형태로
+    정규화하는 경로를 추가했다.
+  - [x] `sync_kis_instrument_master.py`가 위 필드들을 instrument metadata의
+    authoritative source로 적재하는 테스트를 고정했다.
+
+#### 9-e. market overlay seed 품질의 장중 실측 및 보정 — `중`
+
+- 목표
+  - 현재의 `KIS ranking seed 우선 + fallback pre-pool` 구조가
+    실제 장중에 KOSDAQ 하이알파 후보를 충분히 포착하는지 실측한다.
+- 점검 항목
+  - seed source별 후보 수
+  - quotes requested / received
+  - filtered out 수
+  - 최종 overlay capture rate
+- 이유
+  - 현재 구조는 과거의 “알파벳 순 고정” 문제를 일부 해소했지만,
+    seed 품질이 낮으면 기대수익률 확대 효과가 제한될 수 있다.
+- 현재 진행 상태
+  - [x] `GET /instruments/trading-universe/preview`의
+    `market_overlay_diagnostics`에 기본 count 계측
+    (`seed_pool_source`, `seed_pool_count`, `quotes_requested_count`,
+    `quotes_received_count`, `filtered_out_count`,
+    `scored_candidate_count`, `added_count`)이 노출되도록 유지했다.
+  - [x] 장중 실측용 비율 지표
+    (`quote_success_rate`, `filter_pass_rate`, `scored_capture_rate`)를 추가해
+    운영자가 raw count를 직접 계산하지 않고도 seed 품질을 즉시 판단할 수 있게 했다.
+  - [x] preview API와 `UniverseSelectionService.compose_with_diagnostics()` 테스트에
+    위 계측 필드를 고정했다.
+
 ---
 
 ## P2 — 정책/전략 계층의 구조화 작업
@@ -940,7 +1064,70 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
     비행동성 core 종목의 장중 assemble 부하를 줄이는 경로를 추가
   - decision loop 기본값은 `core_cap=12`, feature 장후 배치는 별도 `core_cap=80`으로 분리
   - [`plans/[IMPLEMENTATION] 2026-06-18_decision_loop_core_cap.md`](./%5BIMPLEMENTATION%5D%202026-06-18_decision_loop_core_cap.md)
-- [ ] 초저유동성 `core` BUY 실행 구멍 보완
+- [x] pre-AI short-circuit 2차 리팩토링
+  - 목적
+    - 이미 계산된 `deterministic_trigger`와 `recent_events`를 이용해
+      `EI -> AR -> FDC` 전부를 호출할 필요가 없는 신규 진입 후보를
+      AI 호출 전단에서 더 많이 잘라낸다.
+    - 토큰 절감 자체가 목적이 아니라,
+      `명백한 비적격 BUY 후보에 대한 불필요한 AI 해석`을 줄여
+      기대수익률과 장중 latency를 동시에 개선하는 것이 목적이다.
+  - 우선순위
+    - [x] `P1-1`: `core` 등 신규 BUY 후보 경로에서
+      `eligibility_low_average_volume`, `eligibility_low_turnover`,
+      `eligibility_allocation_blocked`, `eligibility_risk_off_block`,
+      `eligibility_participation_rate_blocked`가 있는 경우
+      EI/AR/FDC 호출 전 `HOLD` 또는 `WATCH`로 조기 종료
+    - [x] `P1-2`: `recent_events == 0`이면 EI를 생략하고
+      empty structured output으로 downstream을 계속 진행
+    - [x] `P1-3`: `primary_candidate == NO_ACTION` 이고 `recent_events == 0`인
+      신규 진입 후보에 한해 AR/FDC까지 생략하는 cut-out 적용
+    - [x] `P1-4`: AR 결과가 `reject` 또는 고위험 점수면
+      FDC 호출을 조건부 생략
+  - 이번 반영
+    - `DecisionOrchestratorService`에 pre-agent short-circuit을 추가했다.
+    - 적용 범위는 우선 `source_type=core` + `실보유 없음` 경로로 제한했다.
+    - `P1-1`, `P1-3` 조건에 해당하면 subprocess/in-process 경로에 들어가기 전에
+      synthetic `HOLD/WATCH` bundle을 조립해 AI 호출 자체를 생략한다.
+    - `DecisionAgentRunner`에 EI conditional skip을 추가했다.
+    - `source_type=core` + `실보유 없음` + `deterministic_trigger 존재` + `recent_events=0`
+      인 경우 EI provider 호출은 생략하고,
+      default structured EI output만 recorder/AR/FDC downstream에 전달한다.
+    - `DecisionAgentRunner`에 FDC conditional skip을 추가했다.
+    - `source_type=core` + `실보유 없음` 경로에서
+      AR 결과가 `risk_opinion=reject` 또는 `risk_score >= 0.85`이면
+      FDC provider 호출은 생략하고 synthetic `HOLD/WATCH` 결과로 종료한다.
+    - `TradeDecisionEntity.decision_json.ai_call_path`를 추가했다.
+    - `ei_skipped`, `ar_skipped`, `fdc_skipped`, `skip_reason_codes`를 저장해
+      short-circuit 적용 결과를 DB 조회만으로 바로 실측할 수 있게 했다.
+    - `run_decision_loop` 결과 직렬화와 운영 요약 집계에도
+      동일한 `ai_call_path` 계측을 반영했다.
+    - cycle result 단위로 `ei_skipped`, `ar_skipped`, `fdc_skipped`,
+      `skip_reason_codes`가 포함되며,
+      summary metrics에는 tracked count / 단계별 skip count /
+      skip reason 분포가 함께 기록된다.
+    - 기존 `WATCH guard` / `BUY eligibility guard`도
+      `core + 기존 보유 종목`에는 적용하지 않도록 보정해
+      신규 진입 제한과 보유종목 관리 경계를 분리했다.
+  - 적용 범위 제약
+    - 위 short-circuit은 우선 `source_type=core` 등
+      `신규 BUY 검토 경로`에만 적용한다.
+    - `held_position`, `reconciliation_overlay`,
+      상태 복구/정합성 확인 경로에는 동일 규칙을 적용하지 않는다.
+    - 이유:
+      보유종목의 `REDUCE/EXIT` 기회나
+      정합성 복구 우선 원칙을 토큰 절감 논리로 잘라내면
+      핵심 목표인 기대수익률 최대화와 운영 안전성을 함께 훼손할 수 있다.
+  - 선행 작업
+    - [x] skip/reject 사유를 `decision_json`에 구조화해
+      어떤 단계에서 EI/AR/FDC가 생략됐는지 실측 가능하게 만들 것
+    - [x] 운영 요약에도 같은 skip 계측을 반영할 것
+    - 계측 없이 `60~80% 절감` 같은 정성 기대치로 바로 고정하지 않을 것
+  - 기준 문서
+    - [`plans/[ADVICE] ai_token_optimization.md`](./%5BADVICE%5D%20ai_token_optimization.md)
+    - [`plans/2026-06-05_pre_ai_decision_skip_gate.md`](./2026-06-05_pre_ai_decision_skip_gate.md)
+    - [`plans/[ANALYSIS] expected_return_architecture_refactor_analysis.md`](./%5BANALYSIS%5D%20expected_return_architecture_refactor_analysis.md)
+- [x] 초저유동성 `core` BUY 실행 구멍 보완
   - 기대수익률 관점에서 부합하는 범위만 우선 반영:
     - [x] `core` BUY eligibility에도 저유동성 / execution feasibility gate 1차 추가
       - `signal_feature_snapshot.average_volume_20d`
@@ -963,6 +1150,12 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
       `average_daily_volume_participation_cap` 적용
   - blanket `NO_ACTION override 금지`는
     기대수익률 저해 가능성이 있어 채택하지 않음
+  - 검증 상태
+    - 관련 회귀 테스트로 아래 경로를 재확인했다.
+      - deterministic trigger의 `low_average_volume`, `participation_rate_blocked`
+      - orchestrator의 `buy_eligibility_guard`, pre-agent short-circuit
+      - execution 단계의 `LIMIT 강제` / `submit 차단`
+      - sizing 단계의 participation cap 3종
   - 기준 문서:
     - [`plans/[DESIGN] deterministic_trigger_eligibility_and_ranking_v1.md`](./%5BDESIGN%5D%20deterministic_trigger_eligibility_and_ranking_v1.md)
     - [`plans/[ANALYSIS] expected_return_architecture_refactor_analysis.md`](./%5BANALYSIS%5D%20expected_return_architecture_refactor_analysis.md)

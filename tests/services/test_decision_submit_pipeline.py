@@ -1571,6 +1571,7 @@ class TestPhase5BrokerSubmitFailureLogging:
 
         # Mock order_manager.submit_order_to_broker to raise
         mock_order_manager = AsyncMock(spec=OrderManager)
+        mock_order_manager.reconciliation_service = None
         mock_order_manager.submit_order_to_broker.side_effect = RuntimeError(
             "KIS API connection refused"
         )

@@ -28,7 +28,10 @@ from typing import TYPE_CHECKING, Sequence
 from agent_trading.domain.enums import OrderStatus
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import OrderQuery
-from agent_trading.services.core_universe_seed import APPROVED_CORE_UNIVERSE_SYMBOLS
+from agent_trading.services.core_universe_seed import (
+    APPROVED_CORE_UNIVERSE_SYMBOLS,
+    APPROVED_DISCOVERY_UNIVERSE_SYMBOLS,
+)
 from agent_trading.services.universe_selection_types import (
     INCLUSION_REASON_CORE,
     INCLUSION_REASON_EVENT,
@@ -342,6 +345,10 @@ def _is_core_seed_instrument_symbol(symbol: str) -> bool:
     return str(symbol or "").strip() in APPROVED_CORE_UNIVERSE_SYMBOLS
 
 
+def _is_discovery_seed_instrument_symbol(symbol: str) -> bool:
+    return str(symbol or "").strip() in APPROVED_DISCOVERY_UNIVERSE_SYMBOLS
+
+
 def _is_core_seed_instrument(instrument: object) -> bool:
     metadata = getattr(instrument, "metadata", {}) or {}
     flagged = _metadata_flag(metadata, "core_universe")
@@ -365,6 +372,8 @@ def _is_market_discovery_seed_instrument(instrument: object) -> bool:
     metadata = getattr(instrument, "metadata", {}) or {}
     if _is_core_seed_instrument(instrument):
         return True
+    if _is_discovery_seed_instrument_symbol(getattr(instrument, "symbol", "")):
+        return True
     if _metadata_flag(metadata, "market_discovery_pool") is True:
         return True
     segment = _segment_value(metadata)
@@ -377,6 +386,12 @@ def _calc_overlay_capture_rate(added_count: int, candidate_count: int) -> float 
     if candidate_count <= 0:
         return None
     return added_count / candidate_count
+
+
+def _calc_ratio(numerator: int, denominator: int) -> float | None:
+    if denominator <= 0:
+        return None
+    return numerator / denominator
 
 
 def _normalize_event_type(event_type: str | None) -> str:
@@ -948,6 +963,7 @@ class UniverseSelectionService:
                 pre_pool_candidate_count=len(pre_pool_candidates),
                 quotes_requested_count=len(pre_pool_candidates),
                 quotes_received_count=0,
+                quote_success_rate=0.0,
             )
 
         # ── Step 2.5: Count successful quote fetches ─────────────────────
@@ -1010,6 +1026,9 @@ class UniverseSelectionService:
                 filtered_out_count=filtered_out_count,
                 scored_candidate_count=0,
                 added_count=0,
+                quote_success_rate=_calc_ratio(success, total),
+                filter_pass_rate=0.0,
+                scored_capture_rate=0.0,
                 overlay_capture_rate=0.0,
             )
 
@@ -1047,6 +1066,9 @@ class UniverseSelectionService:
             filtered_out_count=filtered_out_count,
             scored_candidate_count=len(scored),
             added_count=len(top_n),
+            quote_success_rate=_calc_ratio(success, total),
+            filter_pass_rate=_calc_ratio(len(scored), success),
+            scored_capture_rate=_calc_ratio(len(top_n), len(scored)),
             overlay_capture_rate=_calc_overlay_capture_rate(
                 len(top_n),
                 len(pre_pool_candidates),

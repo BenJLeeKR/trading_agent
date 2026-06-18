@@ -16,6 +16,7 @@ CLI 진입점(main)과 graceful shutdown(asyncio.Event)은 smoke/integration 테
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -618,6 +619,40 @@ class TestSerializeCycleResult:
         assert serialized["decision_type"] is None
         assert serialized["side"] is None
 
+    def test_includes_ai_call_path(self) -> None:
+        """AI skip 계측이 결과 직렬화에 포함된다."""
+        ctx_id = uuid4()
+        intent = _make_stub_intent(decision_context_id=ctx_id)
+        intent = dataclasses.replace(
+            intent,
+            ai_backend_inputs=dataclasses.replace(
+                intent.ai_backend_inputs,
+                ei_skipped=True,
+                fdc_skipped=True,
+                skip_reason_codes=(
+                    "skip_ei_no_recent_events",
+                    "skip_fdc_high_risk",
+                ),
+            ),
+        )
+        result = SubmitResult(
+            status="SKIPPED",
+            order_intent=intent,
+            decision_context_id=ctx_id,
+        )
+
+        serialized = _serialize_cycle_result(cycle=1, result=result, duration=1.5)
+
+        assert serialized["ai_call_path"] == {
+            "ei_skipped": True,
+            "ar_skipped": False,
+            "fdc_skipped": True,
+            "skip_reason_codes": [
+                "skip_ei_no_recent_events",
+                "skip_fdc_high_risk",
+            ],
+        }
+
 
 class TestSerializeCycleResultSourceType:
     """``_serialize_cycle_result()`` — source_type 필드 직렬화 검증."""
@@ -753,6 +788,45 @@ class TestBuildAggregateSummary:
         assert summary["metrics"]["processed_source_counts"] == {
             "held_position": 1,
             "core": 1,
+        }
+
+    def test_includes_ai_call_path_metrics(self) -> None:
+        """AI skip 계측 집계를 운영 요약에 포함한다."""
+        results = [
+            {
+                "status": "SKIPPED",
+                "ai_call_path": {
+                    "ei_skipped": True,
+                    "ar_skipped": False,
+                    "fdc_skipped": True,
+                    "skip_reason_codes": [
+                        "skip_ei_no_recent_events",
+                        "skip_fdc_high_risk",
+                    ],
+                },
+            },
+            {
+                "status": "SUBMITTED",
+                "ai_call_path": {
+                    "ei_skipped": False,
+                    "ar_skipped": False,
+                    "fdc_skipped": False,
+                    "skip_reason_codes": [],
+                },
+            },
+        ]
+
+        summary = _build_aggregate_summary(results, total_duration=7.0)
+
+        assert summary["metrics"]["ai_call_path"] == {
+            "tracked_count": 2,
+            "ei_skipped_count": 1,
+            "ar_skipped_count": 0,
+            "fdc_skipped_count": 1,
+            "skip_reason_counts": {
+                "skip_ei_no_recent_events": 1,
+                "skip_fdc_high_risk": 1,
+            },
         }
 
 
@@ -2086,6 +2160,48 @@ class TestTradingUniverse:
             for u in result:
                 assert u.source_type == "core"
                 assert u.inclusion_reason == "approved_core_universe"
+
+    @pytest.mark.asyncio
+    async def test_universe_selection_service_fallback_preserves_kosdaq_market(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """DB fallback universe가 KOSDAQ instrument market_code를 유지해야 한다."""
+        monkeypatch.delenv(ENV_TRADING_UNIVERSE, raising=False)
+
+        repos = build_in_memory_repositories()
+        from agent_trading.domain.entities import InstrumentEntity
+
+        await repos.instruments.add(
+            InstrumentEntity(
+                instrument_id=UUID("33333333-3333-3333-3333-333333333333"),
+                symbol="090150",
+                market_code="KOSDAQ",
+                name="광진윈텍",
+                is_active=True,
+                asset_class="KR_STOCK",
+                currency="KRW",
+                tick_size=Decimal("50"),
+                metadata={"core_universe": True},
+            )
+        )
+
+        @asynccontextmanager
+        async def _mock_postgres_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": repos}
+
+        with (
+            patch(
+                "scripts.run_decision_loop.postgres_runtime",
+                new=_mock_postgres_runtime,
+            ),
+            patch("scripts.run_decision_loop._HAS_KIS", False),
+        ):
+            result = await _read_trading_universe()
+
+        assert any(
+            item.symbol == "090150" and item.market == "KOSDAQ"
+            for item in result
+        )
 
     @pytest.mark.asyncio
     async def test_read_trading_universe_applies_cap_overrides(

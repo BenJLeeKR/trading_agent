@@ -107,6 +107,10 @@ class AIDecisionInputs:
     # ── Metadata ─────────────────────────────────────────────────────
     source_agent_names: tuple[str, ...] = ()
     schema_versions: tuple[tuple[str, str], ...] = ()
+    ei_skipped: bool = False
+    ar_skipped: bool = False
+    fdc_skipped: bool = False
+    skip_reason_codes: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------

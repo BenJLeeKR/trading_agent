@@ -94,6 +94,15 @@ DEFAULT_POST_SUBMIT_INTERVAL_SECONDS = 30
 DEFAULT_FILL_SYNC_INTERVAL_SECONDS = 600
 DEFAULT_FILL_SYNC_AFTER_HOURS_INTERVAL_SECONDS = 1800
 DEFAULT_SIGNAL_FEATURE_BATCH_TIME = dtime(20, 10)
+DEFAULT_INSTRUMENT_MASTER_SYNC_TIME = dtime(7, 50)
+DEFAULT_INSTRUMENT_MASTER_SYNC_CSV_PATH = (
+    "data/instrument_master/normalized/kis_kospi_kosdaq_master_normalized_for_sync.csv"
+)
+DEFAULT_INSTRUMENT_MASTER_SOURCE_CSV_PATHS = (
+    "data/instrument_master/source/kospi_master.csv",
+    "data/instrument_master/source/kosdaq_master.csv",
+)
+DEFAULT_INSTRUMENT_MASTER_ARCHIVE_DIR = "data/instrument_master/archive"
 DEFAULT_DECISION_SUBMIT_TIMEOUT_SECONDS = 420
 # Phase 4: subprocess isolation provides SIGKILL-guaranteed timeout,
 # so the scheduler-level timeout can be reduced from 240s to 120s.
@@ -134,6 +143,17 @@ _BUDGET_CONSUMING_STATUSES: frozenset[str] = frozenset({
     "partially_filled",
     "filled",
 })
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _resolve_repo_path(path: str) -> str:
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return str(candidate)
+    return str((_repo_root() / candidate).resolve())
 
 PRE_MARKET_START = dtime(8, 0)
 INTRADAY_START = dtime(8, 50)
@@ -218,6 +238,8 @@ class SchedulerState:
     after_hours_full_snapshot_done: bool = False
     # Nextrade after-market 종료 후 signal feature batch 1회 실행 여부
     signal_feature_batch_done: bool = False
+    # 장전 instrument master sync 1회 실행 여부
+    instrument_master_sync_done: bool = False
 
 
 def _derive_operations_day_status(state: SchedulerState) -> str:
@@ -595,6 +617,47 @@ def _extract_command_failure_reason(result: CommandResult) -> str | None:
     return None
 
 
+def _extract_command_skip_metadata(result: CommandResult) -> dict[str, Any]:
+    """Extract structured skip metadata from command stdout JSON when present."""
+    for obj in reversed(_extract_json_objects(result.stdout)):
+        skipped = obj.get("skipped")
+        skipped_reason = obj.get("skipped_reason")
+        if skipped is None and skipped_reason is None:
+            continue
+        payload: dict[str, Any] = {}
+        if skipped is not None:
+            payload["skipped"] = bool(skipped)
+        if isinstance(skipped_reason, str) and skipped_reason.strip():
+            payload["skipped_reason"] = skipped_reason.strip()
+        details = obj.get("details")
+        if isinstance(details, dict) and details:
+            payload["details"] = details
+        return payload
+    return {}
+
+
+def _build_skip_command_result(
+    *,
+    name: str,
+    argv: list[str],
+    skipped_reason: str,
+    details: dict[str, Any] | None = None,
+) -> CommandResult:
+    payload: dict[str, Any] = {
+        "skipped": True,
+        "skipped_reason": skipped_reason,
+    }
+    if details:
+        payload["details"] = details
+    return CommandResult(
+        name=name,
+        argv=argv,
+        returncode=0,
+        duration_seconds=0.0,
+        stdout=json.dumps(payload, ensure_ascii=True),
+    )
+
+
 def _latest_command_result(
     state: SchedulerState,
     names: set[str],
@@ -623,6 +686,9 @@ def _command_result_summary(
     }
     if metrics:
         payload["metrics"] = metrics
+    skip_metadata = _extract_command_skip_metadata(result)
+    if skip_metadata:
+        payload.update(skip_metadata)
     if not result.ok:
         failure_reason = _extract_command_failure_reason(result)
         if failure_reason:
@@ -729,6 +795,14 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
             names={"after_market_signal_feature_input"},
             metrics_parser=_parse_signal_feature_input_summary,
         ),
+        "instrument_master_sync": _command_family_stats(
+            state,
+            names={"instrument_master_sync"},
+        ),
+        "instrument_master_normalize": _command_family_stats(
+            state,
+            names={"instrument_master_normalize"},
+        ),
     }
     token_cache_health = _build_token_cache_health_summary()
 
@@ -741,6 +815,7 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
         "session_reason": state.session_info.reason if state.session_info else None,
         "after_hours_full_snapshot_done": state.after_hours_full_snapshot_done,
         "signal_feature_batch_done": state.signal_feature_batch_done,
+        "instrument_master_sync_done": state.instrument_master_sync_done,
         "scheduler_runtime": _build_scheduler_runtime_summary(),
         "command_health": {k: v for k, v in command_health.items() if v is not None},
         "token_cache_health": token_cache_health,
@@ -773,16 +848,41 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
                 else None
             ),
         ),
+        "instrument_master_sync": _command_result_summary(
+            _latest_command_result(state, {"instrument_master_sync"}),
+        ),
+        "instrument_master_normalize": _command_result_summary(
+            _latest_command_result(state, {"instrument_master_normalize"}),
+        ),
     }
 
 
 def _build_scheduler_runtime_summary() -> dict[str, Any]:
     """Build runtime-identifying metadata for the live scheduler process."""
     script_path = Path(__file__).resolve()
+    repo_root = _repo_root()
     return {
         "pid": os.getpid(),
+        "cwd": os.getcwd(),
+        "repo_root": str(repo_root),
         "script_path": str(script_path),
         "python_bin": sys.executable,
+        "instrument_master_sync_supported": True,
+        "instrument_master_sync_time": DEFAULT_INSTRUMENT_MASTER_SYNC_TIME.strftime("%H:%M"),
+        "instrument_master_sync_csv_path": DEFAULT_INSTRUMENT_MASTER_SYNC_CSV_PATH,
+        "instrument_master_sync_csv_path_resolved": _resolve_repo_path(
+            DEFAULT_INSTRUMENT_MASTER_SYNC_CSV_PATH
+        ),
+        "instrument_master_source_csv_paths": list(
+            DEFAULT_INSTRUMENT_MASTER_SOURCE_CSV_PATHS
+        ),
+        "instrument_master_source_csv_paths_resolved": [
+            _resolve_repo_path(path) for path in DEFAULT_INSTRUMENT_MASTER_SOURCE_CSV_PATHS
+        ],
+        "instrument_master_archive_dir": DEFAULT_INSTRUMENT_MASTER_ARCHIVE_DIR,
+        "instrument_master_archive_dir_resolved": _resolve_repo_path(
+            DEFAULT_INSTRUMENT_MASTER_ARCHIVE_DIR
+        ),
         "signal_feature_batch_supported": True,
         "signal_feature_batch_time": DEFAULT_SIGNAL_FEATURE_BATCH_TIME.strftime("%H:%M"),
         "script_mtime_epoch": script_path.stat().st_mtime,
@@ -1204,6 +1304,45 @@ def _signal_feature_snapshot_command(
     ]
 
 
+def _instrument_master_sync_command(
+    *,
+    csv_path: str,
+) -> list[str]:
+    return [
+        PYTHON_BIN,
+        str((_repo_root() / "scripts/sync_kis_instrument_master.py").resolve()),
+        "--csv",
+        csv_path,
+        "--apply",
+    ]
+
+
+def _build_instrument_master_sync_csv_command(
+    *,
+    input_paths: list[str],
+    output_path: str,
+    archive_dir: str,
+    archive_label: str,
+) -> list[str]:
+    argv = [
+        PYTHON_BIN,
+        str((_repo_root() / "scripts/build_kis_instrument_master_sync_csv.py").resolve()),
+    ]
+    for path in input_paths:
+        argv.extend(["--input", path])
+    argv.extend(
+        [
+            "--output",
+            output_path,
+            "--archive-dir",
+            archive_dir,
+            "--archive-label",
+            archive_label,
+        ]
+    )
+    return argv
+
+
 def _generate_signal_feature_snapshot_input_command(
     *,
     output_path: str,
@@ -1331,6 +1470,110 @@ async def _run_pre_market(
     state.pre_market_done = True
     await _persist_operations_day_run(state, dsn)
     logger.info("phase=pre-market complete")
+
+
+async def _run_instrument_master_sync(
+    state: SchedulerState,
+    *,
+    timeout_seconds: int,
+    env: dict[str, str],
+    source_csv_paths: list[str],
+    csv_path: str,
+    archive_dir: str,
+    run_date: date,
+    dsn: str | None = None,
+) -> None:
+    """Run one-time pre-market instrument master sync."""
+    resolved_source_csv_paths = [
+        _resolve_repo_path(path) for path in source_csv_paths
+    ]
+    resolved_csv_path = _resolve_repo_path(csv_path)
+    resolved_archive_dir = _resolve_repo_path(archive_dir)
+    existing_inputs = [
+        path for path in resolved_source_csv_paths if Path(path).exists()
+    ]
+    if not existing_inputs:
+        state.command_results.append(
+            _build_skip_command_result(
+                name="instrument_master_sync",
+                argv=_instrument_master_sync_command(csv_path=resolved_csv_path),
+                skipped_reason="no_source_csv",
+                details={
+                    "source_csv_paths": resolved_source_csv_paths,
+                    "resolved_csv_path": resolved_csv_path,
+                },
+            )
+        )
+        logger.warning(
+            "phase=instrument-master-sync skipped — no source csv found: %s",
+            ",".join(resolved_source_csv_paths),
+        )
+        await _persist_operations_day_run(state, dsn)
+        return
+
+    logger.info(
+        "phase=instrument-master-sync normalize start inputs=%s output=%s",
+        ",".join(existing_inputs),
+        resolved_csv_path,
+    )
+    normalize_result = await _run_and_record(
+        state,
+        "instrument_master_normalize",
+        _build_instrument_master_sync_csv_command(
+            input_paths=existing_inputs,
+            output_path=resolved_csv_path,
+            archive_dir=resolved_archive_dir,
+            archive_label=run_date.isoformat(),
+        ),
+        timeout_seconds=timeout_seconds,
+        env=env,
+    )
+    if not normalize_result.ok:
+        await _persist_operations_day_run(state, dsn)
+        logger.warning(
+            "phase=instrument-master-normalize failed — will retry on next tick"
+        )
+        return
+
+    csv_file = Path(resolved_csv_path)
+    if not csv_file.exists():
+        state.command_results.append(
+            _build_skip_command_result(
+                name="instrument_master_sync",
+                argv=_instrument_master_sync_command(csv_path=resolved_csv_path),
+                skipped_reason="normalized_csv_missing",
+                details={
+                    "resolved_csv_path": resolved_csv_path,
+                },
+            )
+        )
+        logger.warning(
+            "phase=instrument-master-sync skipped — normalized csv not produced: %s",
+            resolved_csv_path,
+        )
+        await _persist_operations_day_run(state, dsn)
+        return
+
+    logger.info(
+        "phase=instrument-master-sync start csv=%s",
+        resolved_csv_path,
+    )
+    result = await _run_and_record(
+        state,
+        "instrument_master_sync",
+        _instrument_master_sync_command(csv_path=resolved_csv_path),
+        timeout_seconds=timeout_seconds,
+        env=env,
+    )
+    if not result.ok:
+        await _persist_operations_day_run(state, dsn)
+        logger.warning(
+            "phase=instrument-master-sync failed — will retry on next tick"
+        )
+        return
+    state.instrument_master_sync_done = True
+    await _persist_operations_day_run(state, dsn)
+    logger.info("phase=instrument-master-sync complete")
 
 
 async def _run_end_of_day(
@@ -2170,6 +2413,7 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
     state = SchedulerState(run_date=run_date)
 
     pre_market_at = _combine(run_date, args.pre_market_start)
+    instrument_master_sync_at = _combine(run_date, args.instrument_master_sync_time)
     intraday_at = _combine(run_date, args.intraday_start)
     market_close_at = _combine(run_date, args.market_close)
     end_at = _combine(run_date, args.end_of_day_end)
@@ -2252,7 +2496,8 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
     # P3: Advisory lock wrapper
     async def _run_with_lock() -> int:
         """Inner scheduler logic with lock context."""
-        nonlocal phase_monitor_task, run_date, state, pre_market_at, intraday_at, market_close_at, end_at
+        nonlocal phase_monitor_task, run_date, state, pre_market_at
+        nonlocal instrument_master_sync_at, intraday_at, market_close_at, end_at
 
         # P3: Heartbeat task
         heartbeat_task: asyncio.Task[None] | None = None
@@ -2282,6 +2527,20 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                 # --once mode: session gate applies to all phases
                 if not args.skip_pre_market:
                     if await _session_gate(session_provider, run_date, state, "pre_market"):
+                        if (
+                            now >= instrument_master_sync_at
+                            and not state.instrument_master_sync_done
+                        ):
+                            await _run_instrument_master_sync(
+                                state,
+                                timeout_seconds=args.task_timeout,
+                                env=env,
+                                source_csv_paths=args.instrument_master_source_csv_path,
+                                csv_path=args.instrument_master_sync_csv_path,
+                                archive_dir=args.instrument_master_archive_dir,
+                                run_date=run_date,
+                                dsn=dsn,
+                            )
                         await _run_pre_market(
                             state,
                             timeout_seconds=args.task_timeout,
@@ -2370,6 +2629,10 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                     state = SchedulerState(run_date=run_date)
                     # 시간 상수 재계산
                     pre_market_at = _combine(run_date, args.pre_market_start)
+                    instrument_master_sync_at = _combine(
+                        run_date,
+                        args.instrument_master_sync_time,
+                    )
                     intraday_at = _combine(run_date, args.intraday_start)
                     market_close_at = _combine(run_date, args.market_close)
                     end_at = _combine(run_date, args.end_of_day_end)
@@ -2412,6 +2675,10 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                     state = SchedulerState(run_date=run_date)
                     # 시간 상수 재계산
                     pre_market_at = _combine(run_date, args.pre_market_start)
+                    instrument_master_sync_at = _combine(
+                        run_date,
+                        args.instrument_master_sync_time,
+                    )
                     intraday_at = _combine(run_date, args.intraday_start)
                     market_close_at = _combine(run_date, args.market_close)
                     end_at = _combine(run_date, args.end_of_day_end)
@@ -2429,6 +2696,28 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                     continue
 
                 # P1: Session gate — check before each phase
+                if (
+                    instrument_master_sync_at <= now < intraday_at
+                    and not state.instrument_master_sync_done
+                    and not args.skip_pre_market
+                ):
+                    if await _session_gate(session_provider, run_date, state, "pre_market"):
+                            await _run_instrument_master_sync(
+                                state,
+                                timeout_seconds=args.task_timeout,
+                                env=env,
+                                source_csv_paths=args.instrument_master_source_csv_path,
+                                csv_path=args.instrument_master_sync_csv_path,
+                                archive_dir=args.instrument_master_archive_dir,
+                                run_date=run_date,
+                                dsn=dsn,
+                            )
+                    else:
+                        logger.info(
+                            "Instrument master sync skipped by session gate for %s",
+                            run_date.isoformat(),
+                        )
+
                 if now >= pre_market_at and not state.pre_market_done and not args.skip_pre_market:
                     if await _session_gate(session_provider, run_date, state, "pre_market"):
                         await _run_pre_market(
@@ -2619,6 +2908,28 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--decision-interval", type=int, default=DEFAULT_DECISION_INTERVAL_SECONDS)
     parser.add_argument("--post-submit-interval", type=int, default=DEFAULT_POST_SUBMIT_INTERVAL_SECONDS)
     parser.add_argument("--fill-sync-interval", type=int, default=DEFAULT_FILL_SYNC_INTERVAL_SECONDS)
+    parser.add_argument(
+        "--instrument-master-sync-time",
+        type=_parse_hhmm,
+        default=DEFAULT_INSTRUMENT_MASTER_SYNC_TIME,
+        help="Pre-market instrument master sync trigger time in KST.",
+    )
+    parser.add_argument(
+        "--instrument-master-sync-csv-path",
+        default=DEFAULT_INSTRUMENT_MASTER_SYNC_CSV_PATH,
+        help="Normalized KIS instrument master CSV path for pre-market sync.",
+    )
+    parser.add_argument(
+        "--instrument-master-source-csv-path",
+        action="append",
+        default=list(DEFAULT_INSTRUMENT_MASTER_SOURCE_CSV_PATHS),
+        help="Source KIS/raw instrument CSV path. 여러 번 지정 가능.",
+    )
+    parser.add_argument(
+        "--instrument-master-archive-dir",
+        default=DEFAULT_INSTRUMENT_MASTER_ARCHIVE_DIR,
+        help="원본 instrument master CSV 보관 디렉터리.",
+    )
     parser.add_argument(
         "--signal-feature-batch-time",
         type=_parse_hhmm,

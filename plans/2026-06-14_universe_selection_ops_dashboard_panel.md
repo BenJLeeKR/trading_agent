@@ -20,6 +20,7 @@
 - `Preview 편입`
   - 현재 preview 기준 `market_overlay` 편입 개수
   - quote 요청/수신 수
+  - quote 성공률 / filter 통과율 / scored capture 비율
 - `최근 판단`
   - 최근 N일 `market_overlay` decision 수
 - `주문 전환`
@@ -29,6 +30,9 @@
   - source_type 기준 decision / order 수
 - `Overlay 진단`
   - enabled / skipped_reason / pre-pool / scored / filtered out
+  - `quote_success_rate`
+  - `filter_pass_rate`
+  - `scored_capture_rate`
 - `판단 / 주문 분포`
   - decision_type_counts
   - order_status_counts

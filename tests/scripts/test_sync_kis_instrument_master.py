@@ -115,6 +115,10 @@ def test_build_instrument_extracts_metadata() -> None:
         "market_code": "KRX",
         "name_kr": "삼성전자",
         "isin_code": "KR7005930003",
+        "exchange_code": "KOSPI",
+        "metadata_market_segment": "KOSPI",
+        "metadata_segment": "KOSPI100",
+        "metadata_universe_segment": "KOSPI100",
         "metadata_sector": "전자",
     }
     headers = {
@@ -123,6 +127,10 @@ def test_build_instrument_extracts_metadata() -> None:
         "market_code": "market_code",
         "name_kr": "name_kr",
         "isin_code": "isin_code",
+        "exchange_code": "exchange_code",
+        "metadata_market_segment": "metadata_market_segment",
+        "metadata_segment": "metadata_segment",
+        "metadata_universe_segment": "metadata_universe_segment",
         "metadata_sector": "metadata_sector",
     }
     instrument = _build_instrument(
@@ -136,7 +144,36 @@ def test_build_instrument_extracts_metadata() -> None:
     assert instrument.symbol == "005930"
     assert instrument.metadata["name_kr"] == "삼성전자"
     assert instrument.metadata["isin_code"] == "KR7005930003"
+    assert instrument.metadata["exchange_code"] == "KOSPI"
+    assert instrument.metadata["market_segment"] == "KOSPI"
+    assert instrument.metadata["segment"] == "KOSPI100"
+    assert instrument.metadata["universe_segment"] == "KOSPI100"
     assert instrument.metadata["sector"] == "전자"
+
+
+def test_load_csv_preserves_segment_authoritative_fields(tmp_path) -> None:
+    path = tmp_path / "master.csv"
+    path.write_text(
+        (
+            "symbol,name,market_code,exchange_code,metadata_market_segment,"
+            "metadata_segment,metadata_universe_segment\n"
+            "090150,테스트,KOSDAQ,KOSDAQ,KOSDAQ,KOSDAQ150,KOSDAQ150\n"
+        ),
+        encoding="utf-8",
+    )
+    items = _load_csv(
+        str(path),
+        default_market_code="KRX",
+        default_asset_class="kr_stock",
+        default_currency="KRW",
+        source_tag="kis_master_csv",
+    )
+    assert len(items) == 1
+    assert items[0].market_code == "KOSDAQ"
+    assert items[0].metadata["exchange_code"] == "KOSDAQ"
+    assert items[0].metadata["market_segment"] == "KOSDAQ"
+    assert items[0].metadata["segment"] == "KOSDAQ150"
+    assert items[0].metadata["universe_segment"] == "KOSDAQ150"
 
 
 def test_build_instrument_normalizes_kosdaq_market_code() -> None:

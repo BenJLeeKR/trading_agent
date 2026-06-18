@@ -105,6 +105,17 @@ from agent_trading.services.decision_agent_runner import DecisionAgentRunner
 
 logger = logging.getLogger(__name__)
 
+_PRE_AI_SHORT_CIRCUIT_SOURCE_TYPES = frozenset({"core"})
+_PRE_AI_ELIGIBILITY_BLOCK_REASONS = frozenset(
+    {
+        "eligibility_low_average_volume",
+        "eligibility_low_turnover",
+        "eligibility_allocation_blocked",
+        "eligibility_risk_off_block",
+        "eligibility_participation_rate_blocked",
+    }
+)
+
 # Per-agent timeout: each LLM call is capped at 30s so that a single
 # hanging agent cannot stall the entire decision cycle beyond 90s.
 # Reduced from 35s to 30s in Phase 5.7 to align with deepseek-chat
@@ -314,6 +325,7 @@ class DecisionOrchestratorService:
         source_type: str,
         deterministic_trigger: Any | None,
         fdc_output: FinalDecisionComposerOutput | None,
+        position_snapshot: PositionSnapshotEntity | None = None,
     ) -> tuple[str, str] | None:
         """결정적 WATCH 후보가 AI 단계에서 진입/매도로 승격되는 것을 제한한다."""
         if deterministic_trigger is None or fdc_output is None:
@@ -322,6 +334,15 @@ class DecisionOrchestratorService:
         guarded_source_types = {"core", "held_position"}
         if source_type not in guarded_source_types:
             return None
+
+        if source_type == "core":
+            has_position = (
+                position_snapshot is not None
+                and position_snapshot.quantity is not None
+                and position_snapshot.quantity > 0
+            )
+            if has_position:
+                return None
 
         primary_candidate = (
             getattr(deterministic_trigger, "primary_candidate", "") or ""
@@ -345,12 +366,21 @@ class DecisionOrchestratorService:
         source_type: str,
         deterministic_trigger: Any | None,
         fdc_output: FinalDecisionComposerOutput | None,
+        position_snapshot: PositionSnapshotEntity | None = None,
     ) -> tuple[str, str] | None:
         """BUY 적격성 실패 상태에서 AI의 진입 승격을 제한한다."""
         if deterministic_trigger is None or fdc_output is None:
             return None
 
         if source_type != "core":
+            return None
+
+        has_position = (
+            position_snapshot is not None
+            and position_snapshot.quantity is not None
+            and position_snapshot.quantity > 0
+        )
+        if has_position:
             return None
 
         if bool(getattr(deterministic_trigger, "eligibility_passed", False)):
@@ -596,6 +626,130 @@ class DecisionOrchestratorService:
             deterministic_trigger=assembled_context.deterministic_trigger,
             source_type=assembled_context.source_type,
         )
+
+    def _build_short_circuit_agent_bundle(
+        self,
+        *,
+        decision_type: str,
+        rationale: str,
+        reason_codes: tuple[str, ...],
+    ) -> AgentExecutionBundle:
+        """AI 호출 없이 deterministic policy stage에서 종료할 bundle 생성."""
+        event_output = EventInterpretationOutput()
+        risk_output = AIRiskOutput(
+            reason_codes=("pre_ai_short_circuit",),
+            summary="AI 호출 전 deterministic short-circuit 적용",
+        )
+        composer_output = FinalDecisionComposerOutput(
+            decision_type=decision_type,
+            side="",
+            confidence=0.0,
+            conviction=0.0,
+            reason_codes=reason_codes,
+            summary=rationale,
+        )
+        ai_inputs = AIDecisionInputs(
+            decision_type=decision_type,
+            confidence=0.0,
+            conviction=0.0,
+            reason_codes=reason_codes,
+            side="",
+            risk_opinion=risk_output.risk_opinion,
+            risk_score=risk_output.risk_score,
+            risk_confidence=risk_output.confidence,
+            size_adjustment_factor=risk_output.size_adjustment_factor,
+            risk_reason_codes=risk_output.reason_codes,
+            risk_flags=risk_output.risk_flags,
+            event_bias=event_output.aggregate_view.overall_bias,
+            event_conflict=event_output.aggregate_view.event_conflict,
+            event_reason_codes=event_output.aggregate_view.top_reason_codes,
+            evidence_strength=event_output.aggregate_view.evidence_strength,
+            no_material_events=event_output.aggregate_view.no_material_events,
+            detected_event_count=event_output.detected_event_count,
+            interpreted_event_count=event_output.interpreted_event_count,
+            source_agent_names=(),
+            schema_versions=(
+                ("event_interpretation", event_output.schema_version),
+                ("ai_risk", risk_output.schema_version),
+                ("final_decision_composer", composer_output.schema_version),
+            ),
+            ei_skipped=True,
+            ar_skipped=True,
+            fdc_skipped=True,
+            skip_reason_codes=reason_codes,
+        )
+        return AgentExecutionBundle(
+            ai_inputs=ai_inputs,
+            event_output=event_output,
+            risk_output=risk_output,
+            composer_output=composer_output,
+        )
+
+    def _evaluate_pre_agent_short_circuit(
+        self,
+        *,
+        assembled_context: AIPolicyContextView,
+    ) -> AgentExecutionBundle | None:
+        """AI 호출 전 deterministic context만으로 종료 가능한 경우를 판정한다."""
+        source_type = (assembled_context.source_type or "core").strip().lower()
+        if source_type not in _PRE_AI_SHORT_CIRCUIT_SOURCE_TYPES:
+            return None
+
+        position_snapshot = assembled_context.position_snapshot
+        has_position = (
+            position_snapshot is not None
+            and position_snapshot.quantity is not None
+            and position_snapshot.quantity > 0
+        )
+        if has_position:
+            return None
+
+        deterministic_trigger = assembled_context.deterministic_trigger
+        if deterministic_trigger is None:
+            return None
+
+        eligibility_reasons = tuple(
+            deterministic_trigger.eligibility_reasons or ()
+        )
+        blocking_reasons = tuple(
+            reason
+            for reason in eligibility_reasons
+            if reason in _PRE_AI_ELIGIBILITY_BLOCK_REASONS
+        )
+        if blocking_reasons:
+            decision_type = (
+                "WATCH" if bool(deterministic_trigger.watch_candidate) else "HOLD"
+            )
+            rationale = (
+                "[pre_ai_short_circuit] core 신규 진입 비적격 종목. "
+                f"eligibility_reasons={','.join(blocking_reasons)} "
+                f"이므로 AI 호출 없이 {decision_type}로 종료"
+            )
+            reason_codes = ("pre_ai_short_circuit",) + blocking_reasons
+            return self._build_short_circuit_agent_bundle(
+                decision_type=decision_type,
+                rationale=rationale,
+                reason_codes=reason_codes,
+            )
+
+        primary_candidate = (
+            getattr(deterministic_trigger, "primary_candidate", "") or ""
+        ).strip().upper()
+        if primary_candidate == "NO_ACTION" and not assembled_context.recent_events:
+            rationale = (
+                "[pre_ai_short_circuit] deterministic_trigger=NO_ACTION 이고 "
+                "recent_events=0 이므로 AI 호출 없이 HOLD로 종료"
+            )
+            return self._build_short_circuit_agent_bundle(
+                decision_type="HOLD",
+                rationale=rationale,
+                reason_codes=(
+                    "pre_ai_short_circuit",
+                    "pre_ai_no_action_no_event",
+                ),
+            )
+
+        return None
 
     async def assemble(
         self,
@@ -846,7 +1000,21 @@ class DecisionOrchestratorService:
             market=request.market,
             source_type=assembled_context.source_type,
         )
-        if self._use_subprocess_isolation:
+        short_circuit_bundle = self._evaluate_pre_agent_short_circuit(
+            assembled_context=ai_policy_context,
+        )
+        if short_circuit_bundle is not None:
+            agent_bundle = short_circuit_bundle
+            _fdc_run_id = None
+            logger.info(
+                "Pre-agent short-circuit applied: symbol=%s source_type=%s "
+                "decision_type=%s reason_codes=%s",
+                request.symbol,
+                assembled_context.source_type,
+                agent_bundle.ai_inputs.decision_type,
+                agent_bundle.ai_inputs.reason_codes,
+            )
+        elif self._use_subprocess_isolation:
             agent_bundle = await self._run_agents_in_subprocess(
                 request=agent_request,
                 assembled_context=ai_policy_context,
@@ -949,6 +1117,7 @@ class DecisionOrchestratorService:
             source_type=derivation.source_type,
             deterministic_trigger=derivation.deterministic_trigger,
             fdc_output=agent_bundle.composer_output,
+            position_snapshot=position_snapshot,
         )
         if watch_guard is not None:
             guarded_dt, guard_rationale = watch_guard
@@ -988,6 +1157,7 @@ class DecisionOrchestratorService:
             source_type=derivation.source_type,
             deterministic_trigger=derivation.deterministic_trigger,
             fdc_output=agent_bundle.composer_output,
+            position_snapshot=position_snapshot,
         )
         if buy_eligibility_guard is not None:
             guarded_dt, guard_rationale = buy_eligibility_guard

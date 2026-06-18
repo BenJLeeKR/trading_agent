@@ -65,3 +65,60 @@
 - 명백한 비실행 대상에 대해 EI/AR/FDC 호출을 생략
 - 장중 토큰 사용량 감소
 - 의미 없는 `HOLD/WATCH` 생성 감소
+
+## 2026-06-18 후속 확장 원칙
+
+현재 문서는 `cash/orderable_amount/held_position` 중심의 1차 pre-AI gate만 다룬다.
+후속 2차 확장은 아래 순서와 범위를 따른다.
+
+### 1. 우선 확장할 항목
+
+- `deterministic_trigger.eligibility_reasons` 기반 조기 종료
+  - 대상:
+    - `eligibility_low_average_volume`
+    - `eligibility_low_turnover`
+    - `eligibility_allocation_blocked`
+    - `eligibility_risk_off_block`
+    - `eligibility_participation_rate_blocked`
+- `recent_events == 0`일 때 EI 생략
+- `primary_candidate == NO_ACTION` 이고 `recent_events == 0`인 경우
+  신규 진입 후보에 한해 AR/FDC까지 생략
+- AR이 `reject` 또는 고위험 점수를 반환한 경우
+  FDC 조건부 생략
+
+### 2. 적용 범위 제한
+
+- 위 확장은 우선 `core` 등 신규 BUY 검토 경로에만 적용한다.
+- `held_position` 경로에는 그대로 적용하지 않는다.
+- `reconciliation_overlay`, 상태 복구, snapshot 정합성 확인 경로에도 그대로 적용하지 않는다.
+
+이유는 다음과 같다.
+
+- 보유종목 경로는 `REDUCE/EXIT` 기회를 놓치지 않는 것이 토큰 절감보다 우선이다.
+- 정합성 복구 경로는 신규 진입보다 우선이며,
+  unknown state에서는 더더욱 AI 호출 최적화보다 상태 확인이 우선이다.
+
+### 3. 측정 원칙
+
+- 후속 구현 전후로 아래를 구조화해 측정한다.
+  - EI skip count
+  - AR skip count
+  - FDC skip count
+  - skip reason 분포
+  - source_type별 skip 비율
+- 토큰 절감 수치는 계측 결과를 기준으로만 판단한다.
+  정성 추정치만으로 목표치를 먼저 고정하지 않는다.
+
+### 4. 현재 구현 반영 상태
+
+- `TradeDecisionEntity.decision_json.ai_call_path`에
+  `ei_skipped`, `ar_skipped`, `fdc_skipped`, `skip_reason_codes`를 저장한다.
+- `run_decision_loop` cycle result에도 같은 필드를 직렬화한다.
+- `run_decision_loop` summary metrics에도 아래 집계를 포함한다.
+  - `tracked_count`
+  - `ei_skipped_count`
+  - `ar_skipped_count`
+  - `fdc_skipped_count`
+  - `skip_reason_counts`
+- 따라서 장중 운영에서는 DB 조회와 loop summary 양쪽에서
+  short-circuit 적용률을 동시에 실측할 수 있다.

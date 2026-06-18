@@ -222,6 +222,9 @@ class MarketOverlayDiagnostics:
     filtered_out_count: int = 0
     scored_candidate_count: int = 0
     added_count: int = 0
+    quote_success_rate: float | None = None
+    filter_pass_rate: float | None = None
+    scored_capture_rate: float | None = None
     overlay_capture_rate: float | None = None
 
 

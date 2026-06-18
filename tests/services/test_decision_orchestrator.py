@@ -35,7 +35,10 @@ from agent_trading.domain.enums import (
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
-from agent_trading.services.ai_agents.schemas import FinalDecisionComposerOutput
+from agent_trading.services.ai_agents.schemas import (
+    AIRiskOutput,
+    FinalDecisionComposerOutput,
+)
 from agent_trading.services.common_types import AgentExecutionBundle
 from agent_trading.services.decision_orchestrator import (
     AIDecisionInputs,
@@ -1584,7 +1587,339 @@ class TestWatchCandidateUpgradeGuard:
 
         assert intent.ai_backend_inputs.decision_type == "HOLD"
         assert intent.ai_backend_inputs.side == ""
-        assert "buy_eligibility_guard" in intent.ai_backend_inputs.reason_codes
+        assert "pre_ai_short_circuit" in intent.ai_backend_inputs.reason_codes
+        assert "eligibility_low_turnover" in intent.ai_backend_inputs.reason_codes
+
+    @pytest.mark.asyncio
+    async def test_core_pre_agent_short_circuit_on_execution_ineligible_buy(
+        self, sample_request: SubmitOrderRequest
+    ) -> None:
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        strategy_id = uuid4()
+
+        config_version = ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=uuid4(),
+            environment=Environment.PAPER,
+            version_tag="v1",
+            config_json={},
+            checksum="sum",
+            activated_at=now,
+        )
+        await repos.config_versions.add(config_version)
+
+        context = DecisionContextEntity(
+            decision_context_id=uuid4(),
+            account_id=uuid4(),
+            strategy_id=strategy_id,
+            config_version_id=config_version.config_version_id,
+            market_timestamp=now,
+            correlation_id="corr-pre-agent-eligibility",
+            created_at=now,
+        )
+        await repos.decision_contexts.add(context)
+
+        service = DecisionOrchestratorService(
+            repos=repos,
+            use_subprocess_isolation=False,
+        )
+        deterministic_trigger = DeterministicTriggerAssessment(
+            trigger_version="deterministic_trigger_v1",
+            primary_candidate="NO_ACTION",
+            candidate_set=("NO_ACTION",),
+            watch_candidate=False,
+            buy_candidate=False,
+            sell_candidate=False,
+            reduce_candidate=False,
+            candidate_confidence=0.31,
+            entry_score=0.31,
+            exit_score=0.12,
+            watch_score=0.20,
+            eligibility_passed=False,
+            eligibility_reasons=("eligibility_low_turnover",),
+            reason_codes=("trigger_no_action",),
+            thresholds={
+                "buy_candidate_threshold": 0.65,
+                "watch_candidate_threshold": 0.45,
+            },
+            metadata={"source_type": "core"},
+        )
+        service._derive_deterministic_context_components = AsyncMock(  # type: ignore[method-assign]
+            return_value=DeterministicDerivationBundle(
+                source_type="core",
+                deterministic_trigger=deterministic_trigger,
+            )
+        )
+        service._run_agents = AsyncMock(  # type: ignore[method-assign]
+            side_effect=AssertionError("AI agents must not run"),
+        )
+
+        intent = await service.assemble(
+            sample_request,
+            decision_context_id=context.decision_context_id,
+        )
+
+        assert intent.ai_backend_inputs.decision_type == "HOLD"
+        assert intent.ai_backend_inputs.side == ""
+        assert "pre_ai_short_circuit" in intent.ai_backend_inputs.reason_codes
+        assert "eligibility_low_turnover" in intent.ai_backend_inputs.reason_codes
+        assert intent.ai_backend_inputs.ei_skipped is True
+        assert intent.ai_backend_inputs.fdc_skipped is True
+        service._run_agents.assert_not_awaited()  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_core_pre_agent_short_circuit_on_no_action_without_events(
+        self, sample_request: SubmitOrderRequest
+    ) -> None:
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        strategy_id = uuid4()
+
+        config_version = ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=uuid4(),
+            environment=Environment.PAPER,
+            version_tag="v1",
+            config_json={},
+            checksum="sum",
+            activated_at=now,
+        )
+        await repos.config_versions.add(config_version)
+
+        context = DecisionContextEntity(
+            decision_context_id=uuid4(),
+            account_id=uuid4(),
+            strategy_id=strategy_id,
+            config_version_id=config_version.config_version_id,
+            market_timestamp=now,
+            correlation_id="corr-pre-agent-no-event",
+            created_at=now,
+        )
+        await repos.decision_contexts.add(context)
+
+        service = DecisionOrchestratorService(
+            repos=repos,
+            use_subprocess_isolation=False,
+        )
+        deterministic_trigger = DeterministicTriggerAssessment(
+            trigger_version="deterministic_trigger_v1",
+            primary_candidate="NO_ACTION",
+            candidate_set=("NO_ACTION",),
+            watch_candidate=False,
+            buy_candidate=False,
+            sell_candidate=False,
+            reduce_candidate=False,
+            candidate_confidence=0.29,
+            entry_score=0.29,
+            exit_score=0.11,
+            watch_score=0.18,
+            eligibility_passed=True,
+            eligibility_reasons=("eligibility_feature_coverage_ok",),
+            reason_codes=("trigger_no_action",),
+            thresholds={
+                "buy_candidate_threshold": 0.65,
+                "watch_candidate_threshold": 0.45,
+            },
+            metadata={"source_type": "core"},
+        )
+        service._derive_deterministic_context_components = AsyncMock(  # type: ignore[method-assign]
+            return_value=DeterministicDerivationBundle(
+                source_type="core",
+                deterministic_trigger=deterministic_trigger,
+            )
+        )
+        service._run_agents = AsyncMock(  # type: ignore[method-assign]
+            side_effect=AssertionError("AI agents must not run"),
+        )
+
+        intent = await service.assemble(
+            sample_request,
+            decision_context_id=context.decision_context_id,
+        )
+
+        assert intent.ai_backend_inputs.decision_type == "HOLD"
+        assert intent.ai_backend_inputs.side == ""
+        assert "pre_ai_short_circuit" in intent.ai_backend_inputs.reason_codes
+        assert "pre_ai_no_action_no_event" in intent.ai_backend_inputs.reason_codes
+        assert intent.ai_backend_inputs.ei_skipped is True
+        assert intent.ai_backend_inputs.fdc_skipped is True
+        service._run_agents.assert_not_awaited()  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_core_no_recent_events_skips_ei_but_runs_ar_fdc(
+        self, sample_request: SubmitOrderRequest
+    ) -> None:
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        strategy_id = uuid4()
+
+        config_version = ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=uuid4(),
+            environment=Environment.PAPER,
+            version_tag="v1",
+            config_json={},
+            checksum="sum",
+            activated_at=now,
+        )
+        await repos.config_versions.add(config_version)
+
+        context = DecisionContextEntity(
+            decision_context_id=uuid4(),
+            account_id=uuid4(),
+            strategy_id=strategy_id,
+            config_version_id=config_version.config_version_id,
+            market_timestamp=now,
+            correlation_id="corr-skip-ei-only",
+            created_at=now,
+        )
+        await repos.decision_contexts.add(context)
+
+        service = DecisionOrchestratorService(
+            repos=repos,
+            use_subprocess_isolation=False,
+        )
+        deterministic_trigger = DeterministicTriggerAssessment(
+            trigger_version="deterministic_trigger_v1",
+            primary_candidate="WATCH",
+            candidate_set=("WATCH",),
+            watch_candidate=True,
+            buy_candidate=False,
+            sell_candidate=False,
+            reduce_candidate=False,
+            candidate_confidence=0.57,
+            entry_score=0.57,
+            exit_score=0.12,
+            watch_score=0.57,
+            eligibility_passed=True,
+            eligibility_reasons=("eligibility_feature_coverage_ok",),
+            reason_codes=("trigger_watch_candidate",),
+            thresholds={
+                "buy_candidate_threshold": 0.65,
+                "watch_candidate_threshold": 0.45,
+            },
+            metadata={"source_type": "core"},
+        )
+        service._derive_deterministic_context_components = AsyncMock(  # type: ignore[method-assign]
+            return_value=DeterministicDerivationBundle(
+                source_type="core",
+                deterministic_trigger=deterministic_trigger,
+            )
+        )
+
+        mock_ei = AsyncMock(side_effect=AssertionError("EI must be skipped"))
+        mock_ar = AsyncMock(return_value=AIRiskOutput())
+        mock_fdc = AsyncMock(
+            return_value=FinalDecisionComposerOutput(
+                decision_type="HOLD",
+                side="",
+                summary="한국어 요약",
+            )
+        )
+        service._event_interpretation_agent.run = mock_ei  # type: ignore[method-assign]
+        service._ai_risk_agent.run = mock_ar  # type: ignore[method-assign]
+        service._final_decision_agent.run = mock_fdc  # type: ignore[method-assign]
+
+        intent = await service.assemble(
+            sample_request,
+            decision_context_id=context.decision_context_id,
+        )
+
+        assert intent.ai_backend_inputs.decision_type == "HOLD"
+        assert intent.ai_backend_inputs.detected_event_count == 0
+        assert intent.ai_backend_inputs.no_material_events is True
+        assert intent.ai_backend_inputs.ei_skipped is True
+        assert "skip_ei_no_recent_events" in intent.ai_backend_inputs.skip_reason_codes
+        mock_ei.assert_not_awaited()
+        mock_ar.assert_awaited_once()
+        mock_fdc.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_core_high_risk_ar_skips_fdc(
+        self, sample_request: SubmitOrderRequest
+    ) -> None:
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        strategy_id = uuid4()
+
+        config_version = ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=uuid4(),
+            environment=Environment.PAPER,
+            version_tag="v1",
+            config_json={},
+            checksum="sum",
+            activated_at=now,
+        )
+        await repos.config_versions.add(config_version)
+
+        context = DecisionContextEntity(
+            decision_context_id=uuid4(),
+            account_id=uuid4(),
+            strategy_id=strategy_id,
+            config_version_id=config_version.config_version_id,
+            market_timestamp=now,
+            correlation_id="corr-skip-fdc-risk",
+            created_at=now,
+        )
+        await repos.decision_contexts.add(context)
+
+        service = DecisionOrchestratorService(
+            repos=repos,
+            use_subprocess_isolation=False,
+        )
+        deterministic_trigger = DeterministicTriggerAssessment(
+            trigger_version="deterministic_trigger_v1",
+            primary_candidate="WATCH",
+            candidate_set=("WATCH",),
+            watch_candidate=True,
+            buy_candidate=False,
+            sell_candidate=False,
+            reduce_candidate=False,
+            candidate_confidence=0.56,
+            entry_score=0.56,
+            exit_score=0.12,
+            watch_score=0.56,
+            eligibility_passed=True,
+            eligibility_reasons=("eligibility_feature_coverage_ok",),
+            reason_codes=("trigger_watch_candidate",),
+            thresholds={
+                "buy_candidate_threshold": 0.65,
+                "watch_candidate_threshold": 0.45,
+            },
+            metadata={"source_type": "core"},
+        )
+        service._derive_deterministic_context_components = AsyncMock(  # type: ignore[method-assign]
+            return_value=DeterministicDerivationBundle(
+                source_type="core",
+                deterministic_trigger=deterministic_trigger,
+            )
+        )
+
+        mock_ar = AsyncMock(
+            return_value=AIRiskOutput(
+                risk_opinion="reject",
+                risk_score=0.91,
+                confidence=0.88,
+                reason_codes=("risk_block",),
+            )
+        )
+        mock_fdc = AsyncMock(side_effect=AssertionError("FDC must be skipped"))
+        service._ai_risk_agent.run = mock_ar  # type: ignore[method-assign]
+        service._final_decision_agent.run = mock_fdc  # type: ignore[method-assign]
+
+        intent = await service.assemble(
+            sample_request,
+            decision_context_id=context.decision_context_id,
+        )
+
+        assert intent.ai_backend_inputs.decision_type == "WATCH"
+        assert "pre_ai_risk_short_circuit" in intent.ai_backend_inputs.reason_codes
+        assert intent.ai_backend_inputs.fdc_skipped is True
+        assert "skip_fdc_high_risk" in intent.ai_backend_inputs.skip_reason_codes
+        mock_ar.assert_awaited_once()
+        mock_fdc.assert_not_awaited()
 
 # ---------------------------------------------------------------------------
 # Plan 32: AI-Broker Pre-Submit Safety Boundary — Test D

@@ -353,9 +353,15 @@ class TestUniverseSelectionServiceCompose:
 
     @pytest.mark.asyncio
     async def test_core_universe_loads_registered_kosdaq_seed(self) -> None:
-        """승인된 seed가 KOSDAQ market_code로 적재돼도 core universe에 포함돼야 한다."""
+        """명시적 core flag가 있으면 KOSDAQ 종목도 core universe에 포함된다."""
         repos = build_in_memory_repositories()
-        await repos.instruments.add(_make_instrument("090150", market_code="KOSDAQ"))
+        await repos.instruments.add(
+            _make_instrument(
+                "090150",
+                market_code="KOSDAQ",
+                metadata={"core_universe": True},
+            )
+        )
 
         svc = UniverseSelectionService(repos)
         ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
@@ -365,6 +371,24 @@ class TestUniverseSelectionServiceCompose:
             item.symbol == "090150" and item.market == "KOSDAQ"
             for item in result
         )
+
+    @pytest.mark.asyncio
+    async def test_kosdaq_discovery_seed_is_not_promoted_to_core_by_default(self) -> None:
+        """KOSDAQ discovery seed는 명시적 core flag 없이는 주문 core로 승격되지 않는다."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(
+            _make_instrument(
+                "090150",
+                market_code="KOSDAQ",
+                metadata={"core_universe": False},
+            )
+        )
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+
+        assert all(item.symbol != "090150" for item in result)
 
     @pytest.mark.asyncio
     async def test_inactive_instruments_excluded_from_core(self) -> None:
@@ -1150,6 +1174,9 @@ class TestMarketOverlay:
         assert diagnostics.seed_pool_source == "kis_ranking"
         assert diagnostics.seed_pool_count == 2
         assert diagnostics.pre_pool_candidate_count == 2
+        assert diagnostics.quote_success_rate == 1.0
+        assert diagnostics.filter_pass_rate == 1.0
+        assert diagnostics.scored_capture_rate == 1.0
         assert diagnostics.overlay_capture_rate == 1.0
 
     @pytest.mark.asyncio
@@ -1230,6 +1257,48 @@ class TestMarketOverlay:
         assert diagnostics.seed_pool_count == 2
 
     @pytest.mark.asyncio
+    async def test_market_overlay_fallback_includes_discovery_seed_allowlist(self) -> None:
+        """discovery seed allowlist KOSDAQ 종목은 core가 아니어도 fallback seed에 포함된다."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(
+            _make_instrument("005930", metadata={"core_universe": True})
+        )
+        await repos.instruments.add(
+            _make_instrument(
+                "090150",
+                market_code="KOSDAQ",
+                metadata={"core_universe": False},
+            )
+        )
+
+        class _MockKIS:
+            def __init__(self) -> None:
+                self.called_symbols: list[str] = []
+
+            async def get_market_overlay_seed_symbols(self, *, limit: int = 60) -> list[str]:
+                return []
+
+            async def get_quotes_batch(
+                self, symbols: Sequence[str], **kwargs: object
+            ) -> dict[str, dict[str, object]]:
+                self.called_symbols = list(symbols)
+                return {}
+
+        mock_kis = _MockKIS()
+        svc = UniverseSelectionService(repos, kis_client=mock_kis)  # type: ignore[arg-type]
+        ctx = CompositionContext(
+            account_id=FALLBACK_ACCOUNT_ID,
+            since=NOW,
+            pre_pool_size=10,
+        )
+        _, diagnostics = await svc.compose_with_diagnostics(ctx)
+
+        assert "005930" in mock_kis.called_symbols
+        assert "090150" in mock_kis.called_symbols
+        assert diagnostics.seed_pool_source == "core_fallback"
+        assert diagnostics.seed_pool_count == 2
+
+    @pytest.mark.asyncio
     async def test_market_overlay_adds_top_n(self) -> None:
         """Market overlay가 top-N symbols을 추가함."""
         repos = build_in_memory_repositories()
@@ -1282,6 +1351,59 @@ class TestMarketOverlay:
         assert len(market_symbols) <= 2
         # 적어도 1개 이상의 market overlay symbol이 있어야 함
         assert len(market_symbols) >= 1
+
+    @pytest.mark.asyncio
+    async def test_market_overlay_diagnostics_expose_quote_and_filter_rates(self) -> None:
+        """quote 성공률과 filter 통과율을 장중 실측용 비율로 노출한다."""
+        repos = build_in_memory_repositories()
+        for sym in ["005930", "000660", "010130"]:
+            await repos.instruments.add(_make_instrument(sym))
+
+        class _MockKIS:
+            env = "real"
+
+            async def get_quotes_batch(
+                self, symbols: Sequence[str], **kwargs: object
+            ) -> dict[str, dict[str, object] | None]:
+                return {
+                    "005930": {
+                        "stck_prpr": "70000",
+                        "prdy_ctrt": "4.0",
+                        "acml_tr_pbmn": "800000000000",
+                        "stck_hgpr": "70500",
+                        "stck_oprc": "68000",
+                        "stck_lwpr": "67900",
+                        "iscd_stat_cls_code": "",
+                    },
+                    "000660": {
+                        "stck_prpr": "200000",
+                        "prdy_ctrt": "2.0",
+                        "acml_tr_pbmn": "500000000",
+                        "stck_hgpr": "201000",
+                        "stck_oprc": "196000",
+                        "stck_lwpr": "195000",
+                        "iscd_stat_cls_code": "",
+                    },
+                    "010130": None,
+                }
+
+        svc = UniverseSelectionService(repos, kis_client=_MockKIS())  # type: ignore[arg-type]
+        ctx = CompositionContext(
+            account_id=FALLBACK_ACCOUNT_ID,
+            since=NOW,
+            market_overlay_cap=2,
+            pre_pool_size=3,
+        )
+        _, diagnostics = await svc.compose_with_diagnostics(ctx)
+
+        assert diagnostics.quotes_requested_count == 3
+        assert diagnostics.quotes_received_count == 2
+        assert diagnostics.filtered_out_count == 1
+        assert diagnostics.scored_candidate_count == 1
+        assert diagnostics.added_count == 1
+        assert diagnostics.quote_success_rate == pytest.approx(2 / 3)
+        assert diagnostics.filter_pass_rate == pytest.approx(1 / 2)
+        assert diagnostics.scored_capture_rate == 1.0
 
     @pytest.mark.asyncio
     async def test_partial_quote_failure_does_not_crash(self) -> None:

@@ -16,7 +16,11 @@ logger = logging.getLogger(__name__)
 
 from scripts.run_ops_scheduler import (
     CommandResult,
+    DEFAULT_INSTRUMENT_MASTER_ARCHIVE_DIR,
     DEFAULT_MAX_GENERAL_BUY_SUBMIT_PER_DAY,
+    DEFAULT_INSTRUMENT_MASTER_SOURCE_CSV_PATHS,
+    DEFAULT_INSTRUMENT_MASTER_SYNC_CSV_PATH,
+    DEFAULT_INSTRUMENT_MASTER_SYNC_TIME,
     DEFAULT_SIGNAL_FEATURE_BATCH_TIME,
     HELD_POSITION_SELL_MAX_PER_DAY,
     HELD_POSITION_SELL_MAX_PER_CYCLE,
@@ -31,7 +35,10 @@ from scripts.run_ops_scheduler import (
     _decision_command,
     _event_command,
     _build_operations_day_summary_json,
+    _build_instrument_master_sync_csv_command,
     _extract_command_failure_reason,
+    _build_skip_command_result,
+    _command_result_summary,
     _extract_json_objects,
     _generate_signal_feature_snapshot_input_command,
     _get_db_held_position_sell_count,
@@ -45,6 +52,7 @@ from scripts.run_ops_scheduler import (
     _is_submit_consuming_result,
     _log_startup_info,
     _log_summary,
+    _instrument_master_sync_command,
     _parse_args,
     _parse_decision_loop_summary,
     _parse_fill_sync_summary,
@@ -56,6 +64,7 @@ from scripts.run_ops_scheduler import (
     _persist_operations_day_run,
     _persist_session_state,
     _post_submit_command,
+    _run_instrument_master_sync,
     _run_after_market_signal_feature_batch,
     _run_intraday_due_tasks,
     _session_gate,
@@ -119,6 +128,46 @@ class TestCommandBuilders:
             "python3",
             "scripts/run_post_submit_sync_loop.py",
             "--once",
+        ]
+
+    def test_instrument_master_sync_command_uses_python3(self) -> None:
+        cmd = _instrument_master_sync_command(
+            csv_path="data/instrument_master/normalized/kis_kospi_kosdaq_master_normalized_for_sync.csv"
+        )
+        assert cmd[0] == "python3"
+        assert cmd[1].endswith("scripts/sync_kis_instrument_master.py")
+        assert cmd[2:] == [
+            "--csv",
+            "data/instrument_master/normalized/kis_kospi_kosdaq_master_normalized_for_sync.csv",
+            "--apply",
+        ]
+
+    def test_instrument_master_normalize_command_uses_python3(self) -> None:
+        cmd = _build_instrument_master_sync_csv_command(
+            input_paths=[
+                "data/instrument_master/source/kospi_master.csv",
+                "data/instrument_master/source/kosdaq_master.csv",
+            ],
+            output_path="data/instrument_master/normalized/kis_kospi_kosdaq_master_normalized_for_sync.csv",
+            archive_dir="data/instrument_master/archive",
+            archive_label="2026-06-18",
+        )
+        assert cmd[:2] == [
+            "python3",
+            cmd[1],
+        ]
+        assert cmd[1].endswith("scripts/build_kis_instrument_master_sync_csv.py")
+        assert cmd[2:] == [
+            "--input",
+            "data/instrument_master/source/kospi_master.csv",
+            "--input",
+            "data/instrument_master/source/kosdaq_master.csv",
+            "--output",
+            "data/instrument_master/normalized/kis_kospi_kosdaq_master_normalized_for_sync.csv",
+            "--archive-dir",
+            "data/instrument_master/archive",
+            "--archive-label",
+            "2026-06-18",
         ]
 
     def test_post_submit_command_with_recovery(self) -> None:
@@ -315,6 +364,18 @@ class TestParseArgs:
         args = _parse_args([])
         assert args.signal_feature_batch_time == DEFAULT_SIGNAL_FEATURE_BATCH_TIME
         assert args.signal_feature_input_path == "data/signal_feature_snapshot_input.json"
+
+    def test_instrument_master_sync_defaults(self) -> None:
+        args = _parse_args([])
+        assert args.instrument_master_sync_time == DEFAULT_INSTRUMENT_MASTER_SYNC_TIME
+        assert (
+            args.instrument_master_sync_csv_path
+            == DEFAULT_INSTRUMENT_MASTER_SYNC_CSV_PATH
+        )
+        assert args.instrument_master_source_csv_path == list(
+            DEFAULT_INSTRUMENT_MASTER_SOURCE_CSV_PATHS
+        )
+        assert args.instrument_master_archive_dir == DEFAULT_INSTRUMENT_MASTER_ARCHIVE_DIR
 
     def test_legacy_submit_cap_alias_maps_to_general_buy_cap(self) -> None:
         args = _parse_args(["--max-submit-per-day", "4"])
@@ -840,6 +901,191 @@ class TestAfterMarketSignalFeatureBatch:
         run_mock.assert_awaited_once()
         persist_mock.assert_awaited_once()
         assert state.signal_feature_batch_done is False
+
+
+class TestInstrumentMasterSync:
+    @pytest.mark.asyncio
+    async def test_retries_when_source_csv_is_missing(self, tmp_path) -> None:
+        state = SchedulerState(run_date=date(2026, 6, 18))
+        missing_path = tmp_path / "missing.csv"
+
+        with patch(
+            "scripts.run_ops_scheduler._run_and_record",
+            new=AsyncMock(),
+        ) as run_mock:
+            with patch(
+                "scripts.run_ops_scheduler._persist_operations_day_run",
+                new=AsyncMock(),
+            ) as persist_mock:
+                await _run_instrument_master_sync(
+                    state,
+                    timeout_seconds=60,
+                    env={},
+                    source_csv_paths=[str(missing_path)],
+                    csv_path=str(missing_path),
+                    archive_dir=str(tmp_path / "archive"),
+                    run_date=date(2026, 6, 18),
+                    dsn="postgresql://test",
+                )
+
+        run_mock.assert_not_awaited()
+        persist_mock.assert_awaited_once()
+        assert state.instrument_master_sync_done is False
+        assert state.command_results[-1].name == "instrument_master_sync"
+        summary = _command_result_summary(state.command_results[-1])
+        assert summary is not None
+        assert summary["skipped"] is True
+        assert summary["skipped_reason"] == "no_source_csv"
+
+    @pytest.mark.asyncio
+    async def test_retries_when_command_fails(self, tmp_path) -> None:
+        state = SchedulerState(run_date=date(2026, 6, 18))
+        source_csv = tmp_path / "master.csv"
+        source_csv.write_text("code,name,market\n005930,삼성전자,KOSPI\n", encoding="utf-8")
+        csv_path = tmp_path / "normalized.csv"
+        failed = CommandResult(
+            name="instrument_master_normalize",
+            argv=[],
+            returncode=1,
+            duration_seconds=1.0,
+        )
+
+        with patch(
+            "scripts.run_ops_scheduler._run_and_record",
+            new=AsyncMock(return_value=failed),
+        ) as run_mock:
+            with patch(
+                "scripts.run_ops_scheduler._persist_operations_day_run",
+                new=AsyncMock(),
+            ) as persist_mock:
+                await _run_instrument_master_sync(
+                    state,
+                    timeout_seconds=60,
+                    env={},
+                    source_csv_paths=[str(source_csv)],
+                    csv_path=str(csv_path),
+                    archive_dir=str(tmp_path / "archive"),
+                    run_date=date(2026, 6, 18),
+                    dsn="postgresql://test",
+                )
+
+        run_mock.assert_awaited_once()
+        persist_mock.assert_awaited_once()
+        assert state.instrument_master_sync_done is False
+
+    @pytest.mark.asyncio
+    async def test_marks_done_when_command_succeeds(self, tmp_path) -> None:
+        state = SchedulerState(run_date=date(2026, 6, 18))
+        source_csv = tmp_path / "master.csv"
+        source_csv.write_text(
+            "code,name,market\n005930,삼성전자,KOSPI\n091990,셀트리온헬스케어,KOSDAQ\n",
+            encoding="utf-8",
+        )
+        csv_path = tmp_path / "normalized.csv"
+        csv_path.write_text(
+            "symbol,name,market_code\n005930,삼성전자,KOSPI\n091990,셀트리온헬스케어,KOSDAQ\n",
+            encoding="utf-8",
+        )
+        normalize_ok = CommandResult(
+            name="instrument_master_normalize",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+        )
+        ok = CommandResult(
+            name="instrument_master_sync",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+        )
+
+        with patch(
+            "scripts.run_ops_scheduler._run_and_record",
+            new=AsyncMock(side_effect=[normalize_ok, ok]),
+        ) as run_mock:
+            with patch(
+                "scripts.run_ops_scheduler._persist_operations_day_run",
+                new=AsyncMock(),
+            ) as persist_mock:
+                await _run_instrument_master_sync(
+                    state,
+                    timeout_seconds=60,
+                    env={},
+                    source_csv_paths=[str(source_csv)],
+                    csv_path=str(csv_path),
+                    archive_dir=str(tmp_path / "archive"),
+                    run_date=date(2026, 6, 18),
+                    dsn="postgresql://test",
+                )
+
+        assert run_mock.await_count == 2
+        persist_mock.assert_awaited_once()
+        assert state.instrument_master_sync_done is True
+
+    def test_skip_command_result_summary_exposes_details(self) -> None:
+        result = _build_skip_command_result(
+            name="instrument_master_sync",
+            argv=["python3", "x.py"],
+            skipped_reason="no_source_csv",
+            details={"source_csv_paths": ["/a.csv", "/b.csv"]},
+        )
+        summary = _command_result_summary(result)
+        assert summary is not None
+        assert summary["ok"] is True
+        assert summary["skipped"] is True
+        assert summary["skipped_reason"] == "no_source_csv"
+        assert summary["details"]["source_csv_paths"] == ["/a.csv", "/b.csv"]
+
+    @pytest.mark.asyncio
+    async def test_resolves_relative_instrument_master_paths_from_repo_root(self, tmp_path) -> None:
+        state = SchedulerState(run_date=date(2026, 6, 18))
+        source_dir = tmp_path / "data/instrument_master/source"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        normalized_dir = tmp_path / "data/instrument_master/normalized"
+        normalized_dir.mkdir(parents=True, exist_ok=True)
+        source_csv = source_dir / "kospi_master.csv"
+        source_csv.write_text("code,name,market\n005930,삼성전자,KOSPI\n", encoding="utf-8")
+        normalized_csv = normalized_dir / "master.csv"
+        normalized_csv.write_text("symbol,name,market_code\n005930,삼성전자,KOSPI\n", encoding="utf-8")
+        normalize_ok = CommandResult(
+            name="instrument_master_normalize",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+        )
+        sync_ok = CommandResult(
+            name="instrument_master_sync",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+        )
+
+        with patch("scripts.run_ops_scheduler._repo_root", return_value=tmp_path):
+            with patch(
+                "scripts.run_ops_scheduler._run_and_record",
+                new=AsyncMock(side_effect=[normalize_ok, sync_ok]),
+            ) as run_mock:
+                with patch(
+                    "scripts.run_ops_scheduler._persist_operations_day_run",
+                    new=AsyncMock(),
+                ):
+                    await _run_instrument_master_sync(
+                        state,
+                        timeout_seconds=60,
+                        env={},
+                        source_csv_paths=["data/instrument_master/source/kospi_master.csv"],
+                        csv_path="data/instrument_master/normalized/master.csv",
+                        archive_dir="data/instrument_master/archive",
+                        run_date=date(2026, 6, 18),
+                        dsn="postgresql://test",
+                    )
+
+        normalize_call = run_mock.await_args_list[0]
+        sync_call = run_mock.await_args_list[1]
+        assert str(source_csv) in normalize_call.args[2]
+        assert str(normalized_csv) in normalize_call.args[2]
+        assert str(normalized_csv) in sync_call.args[2]
+        assert state.instrument_master_sync_done is True
 
 
 class TestSchedulerRollover:
@@ -1444,6 +1690,18 @@ class TestPersistOperationsDayRun:
         state.command_results.extend(
             [
                 CommandResult(
+                    name="instrument_master_normalize",
+                    argv=[],
+                    returncode=0,
+                    duration_seconds=3.1,
+                ),
+                CommandResult(
+                    name="instrument_master_sync",
+                    argv=[],
+                    returncode=0,
+                    duration_seconds=4.4,
+                ),
+                CommandResult(
                     name="pre_snapshot_sync",
                     argv=[],
                     returncode=0,
@@ -1497,10 +1755,12 @@ class TestPersistOperationsDayRun:
         assert conn.execute.call_args.args[1] == date(2026, 5, 18)
         assert conn.execute.call_args.args[2] == "intraday"
         summary_json = json.loads(conn.execute.call_args.args[14])
-        assert summary_json["command_results_count"] == 4
-        assert summary_json["ok_count"] == 3
+        assert summary_json["command_results_count"] == 6
+        assert summary_json["ok_count"] == 5
         assert summary_json["failed_count"] == 1
         assert summary_json["timed_out_count"] == 1
+        assert summary_json["instrument_master_sync"]["name"] == "instrument_master_sync"
+        assert summary_json["instrument_master_normalize"]["name"] == "instrument_master_normalize"
         assert summary_json["snapshot_sync"]["name"] == "pre_snapshot_sync"
         assert summary_json["snapshot_sync"]["metrics"]["total_positions_synced"] == 5
         assert summary_json["fill_sync"]["metrics"]["fills"] == 9
@@ -1517,6 +1777,31 @@ class TestPersistOperationsDayRun:
         assert summary_json["command_health"]["decision_loop"]["count"] == 1
         assert summary_json["command_health"]["decision_loop"]["last_ok"] is True
         assert summary_json["command_health"]["recovery_batch"]["timed_out_count"] == 1
+        assert summary_json["scheduler_runtime"]["instrument_master_sync_supported"] is True
+        assert summary_json["scheduler_runtime"]["instrument_master_sync_time"] == "07:50"
+        assert (
+            summary_json["scheduler_runtime"]["instrument_master_sync_csv_path"]
+            == "data/instrument_master/normalized/kis_kospi_kosdaq_master_normalized_for_sync.csv"
+        )
+        assert summary_json["scheduler_runtime"]["instrument_master_source_csv_paths"] == [
+            "data/instrument_master/source/kospi_master.csv",
+            "data/instrument_master/source/kosdaq_master.csv",
+        ]
+        assert (
+            summary_json["scheduler_runtime"]["instrument_master_archive_dir"]
+            == "data/instrument_master/archive"
+        )
+        assert summary_json["scheduler_runtime"]["cwd"]
+        assert summary_json["scheduler_runtime"]["repo_root"]
+        assert summary_json["scheduler_runtime"][
+            "instrument_master_sync_csv_path_resolved"
+        ].endswith("data/instrument_master/normalized/kis_kospi_kosdaq_master_normalized_for_sync.csv")
+        assert summary_json["scheduler_runtime"][
+            "instrument_master_archive_dir_resolved"
+        ].endswith("data/instrument_master/archive")
+        assert summary_json["scheduler_runtime"][
+            "instrument_master_source_csv_paths_resolved"
+        ][0].endswith("data/instrument_master/source/kospi_master.csv")
         assert summary_json["scheduler_runtime"]["signal_feature_batch_supported"] is True
         assert summary_json["scheduler_runtime"]["signal_feature_batch_time"] == "20:10"
         assert summary_json["scheduler_runtime"]["script_path"].endswith(
@@ -1581,6 +1866,30 @@ class TestPersistOperationsDayRun:
             summary_json["command_health"]["signal_feature_batch"]["last_error"]
             == "000660:KRX:instrument_not_found"
         )
+
+    def test_includes_instrument_master_sync_result_in_summary(self) -> None:
+        state = SchedulerState(run_date=date(2026, 6, 18))
+        state.instrument_master_sync_done = True
+        state.command_results.append(
+            CommandResult(
+                name="instrument_master_sync",
+                argv=[],
+                returncode=0,
+                duration_seconds=2.4,
+                stdout="loaded=2 inserted=1 updated=1 skipped=0\n",
+            )
+        )
+
+        with patch(
+            "scripts.run_ops_scheduler._build_token_cache_health_summary",
+            return_value={"paper_rest_access_token": {"status": "ready"}},
+        ):
+            summary_json = _build_operations_day_summary_json(state)
+
+        assert summary_json["instrument_master_sync_done"] is True
+        assert summary_json["instrument_master_sync"]["name"] == "instrument_master_sync"
+        assert summary_json["command_health"]["instrument_master_sync"]["count"] == 1
+        assert summary_json["command_health"]["instrument_master_sync"]["last_ok"] is True
 
 
 class TestIntradayDecisionLoopPersistence:

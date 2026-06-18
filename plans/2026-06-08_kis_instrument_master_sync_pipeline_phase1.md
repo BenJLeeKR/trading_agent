@@ -15,6 +15,10 @@
   - `name_kr`, `short_name`, `isin_code`, `standard_code`, `exchange_code`, `listing_date`, `delisting_date`, `source_updated_at`, `par_value`, `listing_shares`
     는 `metadata`로 보존
   - `metadata_*` prefix 컬럼도 `metadata`에 그대로 적재
+  - `market_segment`, `segment`, `universe_segment`는 normalized CSV에서
+    `metadata_market_segment`, `metadata_segment`, `metadata_universe_segment`로
+    보존하며, 알려진 별칭은 `KOSPI100`, `KOSDAQ150`, `KOSPI_LARGE`,
+    `KOSDAQ_GROWTH` 형태로 정규화한다.
 - 결과:
   - `(symbol, market_code)` 기준 upsert
   - 선택적으로 누락 active 종목 비활성화
@@ -22,7 +26,19 @@
 
 ## 구현
 - 신규 스크립트:
+  - [scripts/build_kis_instrument_master_sync_csv.py](/workspace/agent_trading/scripts/build_kis_instrument_master_sync_csv.py)
   - [scripts/sync_kis_instrument_master.py](/workspace/agent_trading/scripts/sync_kis_instrument_master.py)
+
+### 정규화 공급 경로
+- 원본 CSV 여러 개를 입력받아 하나의 normalized CSV로 합친 뒤 sync에 넘긴다.
+- 현재 기본 경로:
+  - 입력: `data/instrument_master/source/kospi_master.csv`
+  - 입력: `data/instrument_master/source/kosdaq_master.csv`
+  - 출력: `data/instrument_master/normalized/kis_kospi_kosdaq_master_normalized_for_sync.csv`
+  - 원본 보관: `data/instrument_master/archive/<YYYY-MM-DD>/...`
+- `ops-scheduler`는 거래일 `07:50 KST`에
+  `build_kis_instrument_master_sync_csv.py -> sync_kis_instrument_master.py`
+  순서로 1회 실행한다.
 
 ### 주요 옵션
 - `--csv <path>`
@@ -37,6 +53,14 @@
 - 비활성화 시 `metadata.deactivated_by_sync = true`와 timestamp 저장
 - 시장별 authoritative source를 유지하기 위해 `symbol`만이 아니라 `(symbol, market_code)`를 기준으로 관리한다.
 - KOSDAQ 확장은 decision loop override가 아니라 `instrument master sync` 완료 여부로 제어한다.
+- 2026-06-19 기준 시범 KOSDAQ 종목은 `core universe`가 아니라
+  `discovery seed`로만 먼저 편입되도록 코드 분리를 적용했다.
+  즉, 명시적 `core_universe=true`가 없는 KOSDAQ 종목은
+  `market overlay fallback seed`에는 포함될 수 있지만,
+  기본 `compose()`의 주문 core에는 자동 승격되지 않는다.
+- 2026-06-19 기준 `exchange_code`, `market_segment`, `segment`, `universe_segment`도
+  instrument metadata의 authoritative source로 적재되도록
+  normalized CSV 생성 경로를 확장했다.
 
 ## 검증
 - `pytest -q tests/scripts/test_sync_kis_instrument_master.py tests/scripts/test_seed_instrument_master.py tests/repositories/test_instruments.py`
@@ -52,3 +76,10 @@
   - [`plans/2026-06-08_kis_instrument_master_update_policy.md`](./2026-06-08_kis_instrument_master_update_policy.md)
 - snapshot/event mapping과의 정합성 검증 확대
 - KOSDAQ master sync 후 universe / signal feature / decision loop 경로 실측
+  - 2026-06-19 기준 테스트 고정 완료:
+    - `Universe Selection`의 KOSDAQ instrument 통과
+    - `signal_feature_snapshot_input`의 `market=KOSDAQ` 유지
+    - `run_decision_loop` DB fallback universe의 `market=KOSDAQ` 유지
+    - preview API의 `market=KOSDAQ` 노출
+    - coverage summary의 `market_counts` 노출
+    - KOSDAQ discovery seed의 `core 미승격 + overlay seed 편입` 분리

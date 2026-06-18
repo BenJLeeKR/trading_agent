@@ -8,7 +8,11 @@ from agent_trading.domain.entities import DecisionContextEntity
 from agent_trading.domain.enums import OrderSide, OrderType, TimeInForce
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.services.ai_agents.schemas import FinalDecisionComposerOutput
-from agent_trading.services.common_types import AgentExecutionBundle, AssembledContext
+from agent_trading.services.common_types import (
+    AIDecisionInputs,
+    AgentExecutionBundle,
+    AssembledContext,
+)
 from agent_trading.services.decision_factory import build_trade_decision_entity
 from agent_trading.services.deterministic_trigger_engine import (
     DeterministicTriggerAssessment,
@@ -122,3 +126,75 @@ def test_build_trade_decision_entity_stores_candidate_vs_final_downgraded() -> N
     assert entity.decision_json["candidate_vs_final"]["alignment_status"] == "downgraded"
     assert entity.decision_json["candidate_vs_final"]["override_applied"] is True
     assert entity.decision_json["deterministic_trigger"]["eligibility_reasons"] == []
+
+
+def test_build_trade_decision_entity_stores_ai_call_path_skip_metadata() -> None:
+    trigger = DeterministicTriggerAssessment(
+        trigger_version="deterministic_trigger_v1",
+        primary_candidate="WATCH",
+        candidate_set=("WATCH",),
+        watch_candidate=True,
+        buy_candidate=False,
+        sell_candidate=False,
+        reduce_candidate=False,
+        candidate_confidence=0.55,
+        entry_score=0.55,
+        exit_score=0.10,
+        watch_score=0.55,
+        reason_codes=("trigger_watch_candidate",),
+        thresholds={"watch_candidate_threshold": 0.45},
+        metadata={"source_type": "core"},
+    )
+    assembled = AssembledContext(
+        decision_context=DecisionContextEntity(
+            decision_context_id=uuid4(),
+            account_id=uuid4(),
+            strategy_id=uuid4(),
+            config_version_id=uuid4(),
+            market_timestamp=datetime.now(timezone.utc),
+            correlation_id="corr-ai-call-path",
+        ),
+        deterministic_trigger=trigger,
+        source_type="core",
+    )
+    bundle = AgentExecutionBundle(
+        ai_inputs=AIDecisionInputs(
+            decision_type="WATCH",
+            reason_codes=("pre_ai_risk_short_circuit",),
+            ei_skipped=True,
+            fdc_skipped=True,
+            skip_reason_codes=("skip_ei_no_recent_events", "skip_fdc_high_risk"),
+        ),
+        composer_output=FinalDecisionComposerOutput(
+            decision_type="WATCH",
+            summary="한국어 요약",
+        ),
+    )
+    entity = build_trade_decision_entity(
+        decision_context_id=assembled.decision_context.decision_context_id,
+        request=SubmitOrderRequest(
+            account_ref="test-account",
+            client_order_id="cid",
+            correlation_id="corr",
+            strategy_id="strat",
+            symbol="005930",
+            market="KRX",
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            quantity=Decimal("1"),
+            price=Decimal("50000"),
+            time_in_force=TimeInForce.DAY,
+        ),
+        assembled_context=assembled,
+        agent_bundle=bundle,
+    )
+
+    assert entity is not None
+    ai_call_path = entity.decision_json["ai_call_path"]
+    assert ai_call_path["ei_skipped"] is True
+    assert ai_call_path["ar_skipped"] is False
+    assert ai_call_path["fdc_skipped"] is True
+    assert ai_call_path["skip_reason_codes"] == [
+        "skip_ei_no_recent_events",
+        "skip_fdc_high_risk",
+    ]

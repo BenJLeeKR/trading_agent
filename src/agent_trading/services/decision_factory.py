@@ -165,6 +165,12 @@ def build_trade_decision_entity(
             "conviction": ai_inputs.conviction,
             "risk_opinion": ai_inputs.risk_opinion,
             "risk_flags": list(ai_inputs.risk_flags),
+            "ai_call_path": {
+                "ei_skipped": ai_inputs.ei_skipped,
+                "ar_skipped": ai_inputs.ar_skipped,
+                "fdc_skipped": ai_inputs.fdc_skipped,
+                "skip_reason_codes": list(ai_inputs.skip_reason_codes),
+            },
             "strategy_selection": (
                 {
                     "preferred_strategy": (

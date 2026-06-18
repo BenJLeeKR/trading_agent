@@ -9,12 +9,21 @@
 
 ## 반영 내용
 - 대상 스크립트:
+  - [scripts/build_kis_instrument_master_sync_csv.py](/workspace/agent_trading/scripts/build_kis_instrument_master_sync_csv.py)
   - [scripts/sync_kis_instrument_master.py](/workspace/agent_trading/scripts/sync_kis_instrument_master.py)
+  - [scripts/run_ops_scheduler.py](/workspace/agent_trading/scripts/run_ops_scheduler.py)
 - 시장 확장 원칙:
   - `KOSDAQ` 편입은 `decision loop`의 예외 허용으로 해결하지 않는다.
   - 먼저 `trading.instruments`에 `market_code=KOSDAQ` 종목 master를 sync한다.
   - 그 다음 Universe Selection / signal feature batch가 해당 master를 authoritative source로 사용한다.
   - 즉, `master sync → universe 편입 → decision loop` 순서를 깨지 않는다.
+  - 다만 초기 단계에서는 `탐색 대상`과 `주문 core`를 분리한다.
+    명시적 `core_universe=true`가 없는 KOSDAQ 종목은 기본 주문 core로 바로 승격하지 않고,
+    `market overlay fallback seed` 또는 event overlay 경로에서만 먼저 관측한다.
+  - `exchange_code`, `market_segment`, `segment`, `universe_segment`는
+    source CSV에서 normalized CSV를 거쳐 instrument metadata에 보존한다.
+    이후 Universe Selection은 이 값을 allowlist 보조가 아니라
+    segment authoritative source로 사용할 수 있어야 한다.
 - `--apply` 실행 시 기본 정책:
   - 비거래일: 허용
   - 거래일 장전 (`08:00` 이전 KST): 허용
@@ -30,6 +39,13 @@
 - `--default-market-code`
   - CSV에 `market_code`가 비어 있을 때 사용할 기본 시장 코드
   - `KRX`, `KOSPI`, `KOSDAQ` 같은 한국 주식 시장 코드를 명시적으로 사용할 수 있다.
+- scheduler 반영
+  - `ops-scheduler`는 거래일 `07:50 KST`에 `instrument master sync`를 1회 시도한다.
+  - 실제 실행 순서는 `원본 CSV 정규화 -> instrument master sync`다.
+  - 기본 CSV 경로는 `data/instrument_master/normalized/kis_kospi_kosdaq_master_normalized_for_sync.csv`다.
+  - 기본 원본 CSV 경로는 `data/instrument_master/source/kospi_master.csv`, `data/instrument_master/source/kosdaq_master.csv`다.
+  - 원본 CSV는 `data/instrument_master/archive/<YYYY-MM-DD>/` 아래로 자동 보관한다.
+  - CSV가 없거나 sync command가 실패하면 `done` 처리하지 않고 다음 tick에 재시도한다.
 
 ## 구현 포인트
 - `create_session_provider()`를 사용해 거래일 여부를 먼저 판정한다.

@@ -1242,7 +1242,36 @@ class TestInstruments:
         assert data["items"][0]["priority"] == 0
         assert data["items"][1]["symbol"] == "000660"
         assert data["items"][1]["source_type"] == "event_overlay"
-        assert data["items"][1]["priority"] == 1
+        assert data["items"][1]["priority"] == 2
+
+    def test_get_trading_universe_preview_preserves_kosdaq_market(self) -> None:
+        """등록된 KOSDAQ 종목은 preview 응답에서 market=KOSDAQ로 유지돼야 한다."""
+        repos = build_in_memory_repositories()
+        account_id = uuid4()
+        kosdaq_inst = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="090150",
+            market_code="KOSDAQ",
+            asset_class="KR_STOCK",
+            currency="KRW",
+            name="광진윈텍",
+            is_active=True,
+            metadata={"core_universe": True},
+        )
+        asyncio.run(repos.instruments.add(kosdaq_inst))
+
+        app = create_app(repos=repos, auth_enabled=False)
+        with TestClient(app) as client:
+            response = client.get(
+                f"/instruments/trading-universe/preview?account_id={account_id}&max_cap=3&core_cap=3"
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert any(
+            item["symbol"] == "090150" and item["market"] == "KOSDAQ"
+            for item in data["items"]
+        )
 
     def test_get_trading_universe_preview_with_market_overlay(self) -> None:
         """market overlay candidate is visible when a live/real KIS client exists."""
@@ -1256,6 +1285,7 @@ class TestInstruments:
             currency="KRW",
             name="SK Networks",
             is_active=True,
+            metadata={"market_discovery_pool": True},
         )
         asyncio.run(repos.instruments.add(instrument))
 
@@ -1298,6 +1328,9 @@ class TestInstruments:
         assert data["market_overlay_diagnostics"]["quotes_requested_count"] == 1
         assert data["market_overlay_diagnostics"]["quotes_received_count"] == 1
         assert data["market_overlay_diagnostics"]["added_count"] == 1
+        assert data["market_overlay_diagnostics"]["quote_success_rate"] == 1.0
+        assert data["market_overlay_diagnostics"]["filter_pass_rate"] == 1.0
+        assert data["market_overlay_diagnostics"]["scored_capture_rate"] == 1.0
         assert data["items"][0]["symbol"] == "001740"
         assert data["items"][0]["source_type"] == "market_overlay"
 
@@ -1336,24 +1369,32 @@ class TestInstruments:
         """``GET /instruments/trading-universe/coverage-summary`` returns source coverage."""
         mock_conn = AsyncMock()
         now = datetime.now(timezone.utc).replace(microsecond=0)
-        mock_conn.fetch.return_value = [
-            {
-                "source_type": "held_position",
-                "decision_count": 10,
-                "order_count": 4,
-                "first_decision_at": now,
-                "last_decision_at": now,
-                "last_order_at": now,
-            },
-            {
-                "source_type": "market_overlay",
-                "decision_count": 5,
-                "order_count": 1,
-                "first_decision_at": now,
-                "last_decision_at": now,
-                "last_order_at": now,
-            },
-        ]
+        mock_conn.fetch = AsyncMock(
+            side_effect=[
+                [
+                    {
+                        "source_type": "held_position",
+                        "decision_count": 10,
+                        "order_count": 4,
+                        "first_decision_at": now,
+                        "last_decision_at": now,
+                        "last_order_at": now,
+                    },
+                    {
+                        "source_type": "market_overlay",
+                        "decision_count": 5,
+                        "order_count": 1,
+                        "first_decision_at": now,
+                        "last_decision_at": now,
+                        "last_order_at": now,
+                    },
+                ],
+                [
+                    {"market": "KOSPI", "decision_count": 10},
+                    {"market": "KOSDAQ", "decision_count": 5},
+                ],
+            ]
+        )
 
         async def override():
             yield mock_conn
@@ -1371,15 +1412,18 @@ class TestInstruments:
         assert data["total_decision_count"] == 15
         assert data["total_order_count"] == 5
         assert data["market_overlay_active"] is True
+        assert data["market_counts"] == {"KOSPI": 10, "KOSDAQ": 5}
         assert data["items"][0]["source_type"] == "held_position"
         assert data["items"][0]["order_conversion_rate"] == 0.4
         assert data["items"][1]["source_type"] == "market_overlay"
         assert data["items"][1]["order_conversion_rate"] == 0.2
 
-        fetch_sql = mock_conn.fetch.await_args.args[0]
-        assert "WITH decision_stats AS" in fetch_sql
-        assert "FROM trading.trade_decisions td" in fetch_sql
-        assert "FROM trading.order_requests o" in fetch_sql
+        first_fetch_sql = mock_conn.fetch.await_args_list[0].args[0]
+        second_fetch_sql = mock_conn.fetch.await_args_list[1].args[0]
+        assert "WITH decision_stats AS" in first_fetch_sql
+        assert "FROM trading.trade_decisions td" in first_fetch_sql
+        assert "FROM trading.order_requests o" in first_fetch_sql
+        assert "COALESCE(td.market, 'unknown')" in second_fetch_sql
 
         app.dependency_overrides.clear()
 

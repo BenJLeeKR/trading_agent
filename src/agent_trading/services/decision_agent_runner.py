@@ -67,6 +67,83 @@ logger = logging.getLogger(__name__)
 _PER_AGENT_TIMEOUT = 30  # seconds per agent
 
 
+def _should_skip_event_interpretation(
+    assembled_context: AIPolicyContextView,
+) -> bool:
+    """이벤트가 없는 신규 BUY 경로에서는 EI를 생략한다."""
+    source_type = (assembled_context.source_type or "core").strip().lower()
+    if source_type != "core":
+        return False
+    if assembled_context.recent_events:
+        return False
+    if assembled_context.deterministic_trigger is None:
+        return False
+
+    position_snapshot = assembled_context.position_snapshot
+    has_position = (
+        position_snapshot is not None
+        and position_snapshot.quantity is not None
+        and position_snapshot.quantity > 0
+    )
+    if has_position:
+        return False
+    return True
+
+
+def _should_skip_final_decision_composer(
+    assembled_context: AIPolicyContextView,
+    risk_output: AIRiskOutput,
+) -> bool:
+    """신규 BUY 경로에서 AR 고위험 결과면 FDC를 생략한다."""
+    source_type = (assembled_context.source_type or "core").strip().lower()
+    if source_type != "core":
+        return False
+
+    position_snapshot = assembled_context.position_snapshot
+    has_position = (
+        position_snapshot is not None
+        and position_snapshot.quantity is not None
+        and position_snapshot.quantity > 0
+    )
+    if has_position:
+        return False
+
+    if (risk_output.risk_opinion or "").strip().lower() == "reject":
+        return True
+    if risk_output.risk_score >= 0.85:
+        return True
+    return False
+
+
+def _build_short_circuit_fdc_output(
+    assembled_context: AIPolicyContextView,
+    risk_output: AIRiskOutput,
+) -> FinalDecisionComposerOutput:
+    """AR 결과만으로 FDC를 생략할 때 사용할 synthetic composer output."""
+    deterministic_trigger = assembled_context.deterministic_trigger
+    decision_type = "HOLD"
+    if (
+        deterministic_trigger is not None
+        and bool(deterministic_trigger.watch_candidate)
+    ):
+        decision_type = "WATCH"
+
+    if (risk_output.risk_opinion or "").strip().lower() == "reject":
+        detail = "risk_reject"
+    else:
+        detail = f"high_risk_score:{risk_output.risk_score:.2f}"
+
+    return FinalDecisionComposerOutput(
+        decision_type=decision_type,
+        side="",
+        reason_codes=("pre_ai_risk_short_circuit", detail),
+        summary=(
+            "[pre_ai_risk_short_circuit] 신규 진입 후보에서 "
+            f"AR 결과({detail})로 FDC 호출을 생략하고 {decision_type}로 종료"
+        ),
+    )
+
+
 class DecisionAgentRunner:
     """Runs the three v1 Provider AI Agents (EI → AR → FDC) in sequence.
 
@@ -153,77 +230,99 @@ class DecisionAgentRunner:
         # --- 1. Event Interpretation Agent ---
         event_output: EventInterpretationOutput
         ei_error_metadata: dict[str, object] | None = None
-        _t0 = time_module.monotonic()
-        try:
-            event_output = await asyncio.wait_for(
-                self._ei_agent.run(request),
-                timeout=_PER_AGENT_TIMEOUT,
+        ei_skipped = False
+        fdc_skipped = False
+        skip_reason_codes: list[str] = []
+        if _should_skip_event_interpretation(assembled_context):
+            from agent_trading.services.ai_agents.event_interpretation import (
+                _finalize_ei_output,
+            )
+            event_output = EventInterpretationOutput()
+            event_output = _finalize_ei_output(
+                event_output,
+                input_event_count=0,
+                recent_events=(),
             )
             logger.info(
-                "EI agent completed in %.2fs — decision_context_id=%s",
-                time_module.monotonic() - _t0,
+                "EI agent skipped: source_type=%s recent_events=0 "
+                "decision_context_id=%s",
+                assembled_context.source_type,
                 decision_context_id,
             )
-            # ★ 성공 경로: agent가 내부적으로 예외를 catch한 경우
-            #   _last_error_metadata에 분류된 error metadata가 있음.
-            #   정상 성공 시에는 None이 보장됨.
-            ei_error_metadata = self._ei_agent.last_error_metadata
-        except asyncio.TimeoutError:
-            logger.warning(
-                "Event Interpretation Agent timed out after %ds (actual %.2fs) — "
-                "using default output (safe fallback). decision_context_id=%s",
-                _PER_AGENT_TIMEOUT,
-                time_module.monotonic() - _t0,
-                decision_context_id,
-            )
-            event_output = EventInterpretationOutput()
-            # ★ P0: timeout 시 degraded 플래그 설정
-            degraded_av = replace(
-                event_output.aggregate_view,
-                interpretation_incomplete=True,
-                degraded_reason="timeout",
-            )
-            object.__setattr__(event_output, "aggregate_view", degraded_av)
-            # ★ timeout fallback: _finalize_ei_output()로 interpreted_event_count, summary_basis, summary 설정
-            from agent_trading.services.ai_agents.event_interpretation import (
-                _finalize_ei_output,
-            )
-            event_output = _finalize_ei_output(event_output)
-            ei_error_metadata = {
-                "error_type": "timeout",
-                "error_message": f"asyncio.TimeoutError after {_PER_AGENT_TIMEOUT}s",
-                "http_status": None,
-                "retryable": True,
-                "timeout_source": "orchestrator",
-            }
-        except Exception:
-            logger.warning(
-                "Event Interpretation Agent failed after %.2fs — using default "
-                "output (safe fallback). decision_context_id=%s",
-                time_module.monotonic() - _t0,
-                decision_context_id,
-                exc_info=True,
-            )
-            event_output = EventInterpretationOutput()
-            # ★ P0: provider_error 시 degraded 플래그 설정
-            degraded_av = replace(
-                event_output.aggregate_view,
-                interpretation_incomplete=True,
-                degraded_reason="provider_error",
-            )
-            object.__setattr__(event_output, "aggregate_view", degraded_av)
-            # ★ exception fallback: _finalize_ei_output()로 interpreted_event_count, summary_basis, summary 설정
-            from agent_trading.services.ai_agents.event_interpretation import (
-                _finalize_ei_output,
-            )
-            event_output = _finalize_ei_output(event_output)
-            ei_error_metadata = {
-                "error_type": "provider_error",
-                "error_message": "Unexpected agent failure at orchestrator level",
-                "http_status": None,
-                "retryable": None,
-                "timeout_source": None,
-            }
+            ei_skipped = True
+            skip_reason_codes.append("skip_ei_no_recent_events")
+        else:
+            _t0 = time_module.monotonic()
+            try:
+                event_output = await asyncio.wait_for(
+                    self._ei_agent.run(request),
+                    timeout=_PER_AGENT_TIMEOUT,
+                )
+                logger.info(
+                    "EI agent completed in %.2fs — decision_context_id=%s",
+                    time_module.monotonic() - _t0,
+                    decision_context_id,
+                )
+                # ★ 성공 경로: agent가 내부적으로 예외를 catch한 경우
+                #   _last_error_metadata에 분류된 error metadata가 있음.
+                #   정상 성공 시에는 None이 보장됨.
+                ei_error_metadata = self._ei_agent.last_error_metadata
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Event Interpretation Agent timed out after %ds (actual %.2fs) — "
+                    "using default output (safe fallback). decision_context_id=%s",
+                    _PER_AGENT_TIMEOUT,
+                    time_module.monotonic() - _t0,
+                    decision_context_id,
+                )
+                event_output = EventInterpretationOutput()
+                # ★ P0: timeout 시 degraded 플래그 설정
+                degraded_av = replace(
+                    event_output.aggregate_view,
+                    interpretation_incomplete=True,
+                    degraded_reason="timeout",
+                )
+                object.__setattr__(event_output, "aggregate_view", degraded_av)
+                # ★ timeout fallback: _finalize_ei_output()로 interpreted_event_count, summary_basis, summary 설정
+                from agent_trading.services.ai_agents.event_interpretation import (
+                    _finalize_ei_output,
+                )
+                event_output = _finalize_ei_output(event_output)
+                ei_error_metadata = {
+                    "error_type": "timeout",
+                    "error_message": f"asyncio.TimeoutError after {_PER_AGENT_TIMEOUT}s",
+                    "http_status": None,
+                    "retryable": True,
+                    "timeout_source": "orchestrator",
+                }
+            except Exception:
+                logger.warning(
+                    "Event Interpretation Agent failed after %.2fs — using default "
+                    "output (safe fallback). decision_context_id=%s",
+                    time_module.monotonic() - _t0,
+                    decision_context_id,
+                    exc_info=True,
+                )
+                event_output = EventInterpretationOutput()
+                # ★ P0: provider_error 시 degraded 플래그 설정
+                degraded_av = replace(
+                    event_output.aggregate_view,
+                    interpretation_incomplete=True,
+                    degraded_reason="provider_error",
+                )
+                object.__setattr__(event_output, "aggregate_view", degraded_av)
+                # ★ exception fallback: _finalize_ei_output()로 interpreted_event_count, summary_basis, summary 설정
+                from agent_trading.services.ai_agents.event_interpretation import (
+                    _finalize_ei_output,
+                )
+                event_output = _finalize_ei_output(event_output)
+                ei_error_metadata = {
+                    "error_type": "provider_error",
+                    "error_message": "Unexpected agent failure at orchestrator level",
+                    "http_status": None,
+                    "retryable": None,
+                    "timeout_source": None,
+                }
 
         if is_missing_agent_symbol(event_output.symbol) and symbol:
             event_output = replace(event_output, symbol=symbol)
@@ -325,35 +424,51 @@ class DecisionAgentRunner:
 
         # --- 3. Final Decision Composer Agent ---
         composer_output: FinalDecisionComposerOutput
-        _t2 = time_module.monotonic()
-        try:
-            composer_output = await asyncio.wait_for(
-                self._fdc_agent.run(request_with_ei_and_ar),
-                timeout=_PER_AGENT_TIMEOUT,
+        if _should_skip_final_decision_composer(assembled_context, risk_output):
+            composer_output = _build_short_circuit_fdc_output(
+                assembled_context,
+                risk_output,
             )
             logger.info(
-                "FDC agent completed in %.2fs — decision_context_id=%s",
-                time_module.monotonic() - _t2,
+                "FDC agent skipped: source_type=%s risk_opinion=%s risk_score=%.2f "
+                "decision_context_id=%s",
+                assembled_context.source_type,
+                risk_output.risk_opinion,
+                risk_output.risk_score,
                 decision_context_id,
             )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "Final Decision Composer Agent timed out after %ds (actual %.2fs) — "
-                "using default output (safe fallback). decision_context_id=%s",
-                _PER_AGENT_TIMEOUT,
-                time_module.monotonic() - _t2,
-                decision_context_id,
-            )
-            composer_output = FinalDecisionComposerOutput()
-        except Exception:
-            logger.warning(
-                "Final Decision Composer Agent failed after %.2fs — using default "
-                "output (safe fallback). decision_context_id=%s",
-                time_module.monotonic() - _t2,
-                decision_context_id,
-                exc_info=True,
-            )
-            composer_output = FinalDecisionComposerOutput()
+            fdc_skipped = True
+            skip_reason_codes.append("skip_fdc_high_risk")
+        else:
+            _t2 = time_module.monotonic()
+            try:
+                composer_output = await asyncio.wait_for(
+                    self._fdc_agent.run(request_with_ei_and_ar),
+                    timeout=_PER_AGENT_TIMEOUT,
+                )
+                logger.info(
+                    "FDC agent completed in %.2fs — decision_context_id=%s",
+                    time_module.monotonic() - _t2,
+                    decision_context_id,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Final Decision Composer Agent timed out after %ds (actual %.2fs) — "
+                    "using default output (safe fallback). decision_context_id=%s",
+                    _PER_AGENT_TIMEOUT,
+                    time_module.monotonic() - _t2,
+                    decision_context_id,
+                )
+                composer_output = FinalDecisionComposerOutput()
+            except Exception:
+                logger.warning(
+                    "Final Decision Composer Agent failed after %.2fs — using default "
+                    "output (safe fallback). decision_context_id=%s",
+                    time_module.monotonic() - _t2,
+                    decision_context_id,
+                    exc_info=True,
+                )
+                composer_output = FinalDecisionComposerOutput()
 
         if is_missing_agent_symbol(composer_output.symbol) and symbol:
             composer_output = replace(composer_output, symbol=symbol)
@@ -423,6 +538,10 @@ class DecisionAgentRunner:
                 ("ai_risk", risk_output.schema_version),
                 ("final_decision_composer", composer_output.schema_version),
             ),
+            ei_skipped=ei_skipped,
+            ar_skipped=False,
+            fdc_skipped=fdc_skipped,
+            skip_reason_codes=tuple(skip_reason_codes),
         )
 
         return AgentExecutionBundle(

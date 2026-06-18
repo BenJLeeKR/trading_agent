@@ -254,6 +254,9 @@ async def get_trading_universe_preview(
             filtered_out_count=market_overlay_diagnostics.filtered_out_count,
             scored_candidate_count=market_overlay_diagnostics.scored_candidate_count,
             added_count=market_overlay_diagnostics.added_count,
+            quote_success_rate=market_overlay_diagnostics.quote_success_rate,
+            filter_pass_rate=market_overlay_diagnostics.filter_pass_rate,
+            scored_capture_rate=market_overlay_diagnostics.scored_capture_rate,
             overlay_capture_rate=market_overlay_diagnostics.overlay_capture_rate,
         ),
         items=items,
@@ -312,6 +315,18 @@ async def get_trading_universe_coverage_summary(
         """,
         since,
     )
+    market_rows = await db.fetch(
+        """
+        SELECT
+            COALESCE(td.market, 'unknown') AS market,
+            COUNT(*)::int AS decision_count
+        FROM trading.trade_decisions td
+        WHERE td.created_at >= $1
+        GROUP BY COALESCE(td.market, 'unknown')
+        ORDER BY decision_count DESC, market ASC
+        """,
+        since,
+    )
 
     items = [
         TradingUniverseCoverageItem(
@@ -335,11 +350,16 @@ async def get_trading_universe_coverage_summary(
         item.source_type == "market_overlay" and item.decision_count > 0
         for item in items
     )
+    market_counts = {
+        str(row["market"]): int(row["decision_count"] or 0)
+        for row in market_rows
+    }
     return TradingUniverseCoverageSummaryResponse(
         lookback_days=lookback_days,
         total_decision_count=total_decision_count,
         total_order_count=total_order_count,
         market_overlay_active=market_overlay_active,
+        market_counts=market_counts,
         items=items,
     )
 

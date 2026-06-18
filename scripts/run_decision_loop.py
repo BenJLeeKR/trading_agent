@@ -732,6 +732,13 @@ def _serialize_cycle_result(
             )
             data["order_intent_id"] = str(result.order_intent.order_intent_id)
             data["sized_quantity"] = str(result.order_intent.request.quantity)
+            ai_inputs = result.order_intent.ai_backend_inputs
+            data["ai_call_path"] = {
+                "ei_skipped": ai_inputs.ei_skipped,
+                "ar_skipped": ai_inputs.ar_skipped,
+                "fdc_skipped": ai_inputs.fdc_skipped,
+                "skip_reason_codes": list(ai_inputs.skip_reason_codes),
+            }
             # EXE-001: phase trace
             data["phase_trace"] = [
                 {"phase": pt.phase, "elapsed_ms": pt.elapsed_ms, "status": pt.status}
@@ -751,6 +758,13 @@ def _serialize_cycle_result(
         if result.order_intent is not None:
             data["order_intent_id"] = str(result.order_intent.order_intent_id)
             data["sized_quantity"] = str(result.order_intent.request.quantity)
+            ai_inputs = result.order_intent.ai_backend_inputs
+            data["ai_call_path"] = {
+                "ei_skipped": ai_inputs.ei_skipped,
+                "ar_skipped": ai_inputs.ar_skipped,
+                "fdc_skipped": ai_inputs.fdc_skipped,
+                "skip_reason_codes": list(ai_inputs.skip_reason_codes),
+            }
         if result.submit_response is not None:
             data["order_request_id"] = str(result.submit_response.order_request_id)
             data["order_status"] = result.submit_response.status.value
@@ -873,6 +887,18 @@ def _build_aggregate_summary(
         str(r.get("source_type", "unknown") or "unknown")
         for r in results
     )
+    ai_call_path_entries = [
+        payload
+        for payload in (r.get("ai_call_path") for r in results)
+        if isinstance(payload, dict)
+    ]
+    skip_reason_counts: Counter[str] = Counter()
+    for payload in ai_call_path_entries:
+        raw_codes = payload.get("skip_reason_codes")
+        if isinstance(raw_codes, (list, tuple)):
+            for code in raw_codes:
+                if code:
+                    skip_reason_counts[str(code)] += 1
 
     return {
         "mode": "summary",
@@ -889,6 +915,22 @@ def _build_aggregate_summary(
             "held_position_processed_count": processed_source_counts.get("held_position", 0),
             "universe_source_counts": dict(source_counts),
             "processed_source_counts": dict(processed_source_counts),
+            "ai_call_path": {
+                "tracked_count": len(ai_call_path_entries),
+                "ei_skipped_count": sum(
+                    1 for payload in ai_call_path_entries
+                    if bool(payload.get("ei_skipped"))
+                ),
+                "ar_skipped_count": sum(
+                    1 for payload in ai_call_path_entries
+                    if bool(payload.get("ar_skipped"))
+                ),
+                "fdc_skipped_count": sum(
+                    1 for payload in ai_call_path_entries
+                    if bool(payload.get("fdc_skipped"))
+                ),
+                "skip_reason_counts": dict(skip_reason_counts),
+            },
         },
     }
 
