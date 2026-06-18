@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import socket
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +20,8 @@ from agent_trading.services.ai_agents.provider_client import (
     MAX_RETRIES,
     OpenAICompatibleClient,
     _coerce_nested_json_strings,
+    _compute_retry_delay,
+    _parse_retry_after_seconds,
 )
 
 
@@ -484,3 +487,39 @@ class TestRetryAndDnsError:
         assert call_count[0] == 2
         assert isinstance(result.parsed, _FakeOutput)
         assert result.parsed.symbol == "AAPL"
+
+    def test_parse_retry_after_seconds_with_delta_seconds(self) -> None:
+        """Retry-After 숫자 헤더를 초 단위로 해석한다."""
+        response = httpx.Response(
+            503,
+            headers={"Retry-After": "4"},
+            request=httpx.Request("POST", "https://api.test.com/v1/chat/completions"),
+        )
+        assert _parse_retry_after_seconds(response) == 4.0
+
+    def test_parse_retry_after_seconds_with_http_date(self) -> None:
+        """Retry-After HTTP-date 헤더를 초 단위로 해석한다."""
+        retry_at = datetime.now(timezone.utc) + timedelta(seconds=3)
+        response = httpx.Response(
+            503,
+            headers={"Retry-After": retry_at.strftime("%a, %d %b %Y %H:%M:%S GMT")},
+            request=httpx.Request("POST", "https://api.test.com/v1/chat/completions"),
+        )
+        parsed = _parse_retry_after_seconds(response)
+        assert parsed is not None
+        assert 0.0 <= parsed <= 5.0
+
+    def test_compute_retry_delay_prefers_retry_after_header(self) -> None:
+        """Retry-After가 있으면 지수 백오프보다 우선한다."""
+        request = httpx.Request("POST", "https://api.test.com/v1/chat/completions")
+        response = httpx.Response(
+            503,
+            headers={"Retry-After": "4"},
+            request=request,
+        )
+        error = httpx.HTTPStatusError(
+            "503 Service Unavailable",
+            request=request,
+            response=response,
+        )
+        assert _compute_retry_delay(0, error) == 4.0

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, afterEach, beforeEach, vi } from "vitest";
@@ -957,6 +957,7 @@ describe("DecisionsView drilldown visibility", () => {
       expect(screen.getByText(/드릴다운 필터 적용됨/)).toBeInTheDocument();
     });
 
+    expect(screen.queryByText(/날짜 2026-06-02/)).not.toBeInTheDocument();
     expect(screen.getByText(/소스 core/)).toBeInTheDocument();
     expect(screen.getByText(/사유 core 제출 비활성/)).toBeInTheDocument();
     expect(screen.getByText("필터 결과 1건")).toBeInTheDocument();
@@ -964,6 +965,25 @@ describe("DecisionsView drilldown visibility", () => {
     expect(screen.getByText("페이지 1/1")).toBeInTheDocument();
     expect(screen.getAllByText("실행 중단").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("core 제출 비활성")).toBeInTheDocument();
+  });
+
+  it("does not show drilldown banner when only date filter is present", async () => {
+    mockUrlRouter({
+      "/metadata/enums": mockEnumMetadataResponse,
+      "/trade-decisions": mockTradeDecisions,
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/decisions?date=2026-06-18"]}>
+        <DecisionsView />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("의사결정")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText(/드릴다운 필터 적용됨/)).not.toBeInTheDocument();
   });
 
   it("renders readable prefix and has_order labels in drilldown banner", async () => {
@@ -1012,6 +1032,55 @@ describe("DecisionsView pagination footer", () => {
     // Page navigation should appear
     expect(screen.getByRole("button", { name: "Previous page" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Next page" })).toBeInTheDocument();
+  });
+
+  it("defaults date filter to today when query parameter is absent", async () => {
+    mockUrlRouter({
+      "/metadata/enums": mockEnumMetadataResponse,
+      "/trade-decisions": mockTradeDecisions,
+    });
+
+    const formatter = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: "Asia/Seoul",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    const today = formatter.format(new Date());
+
+    render(
+      <MemoryRouter>
+        <DecisionsView />
+      </MemoryRouter>,
+    );
+
+    const dateInput = await screen.findByLabelText("조회일");
+    expect(dateInput).toHaveValue(today);
+  });
+
+  it("shows date filter and updates query when changed", async () => {
+    const fetchSpy = mockUrlRouter({
+      "/metadata/enums": mockEnumMetadataResponse,
+      "/trade-decisions": mockTradeDecisions,
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/decisions?date=2026-06-18"]}>
+        <DecisionsView />
+      </MemoryRouter>,
+    );
+
+    const dateInput = await screen.findByLabelText("조회일");
+    expect(dateInput).toHaveValue("2026-06-18");
+
+    fireEvent.change(dateInput, { target: { value: "2026-06-17" } });
+
+    await waitFor(() => {
+      const urls = fetchSpy.mock.calls
+        .map(([input]) => (typeof input === "string" ? input : input instanceof Request ? input.url : ""))
+        .filter((url) => url.includes("/trade-decisions"));
+      expect(urls.some((url) => url.includes("date=2026-06-17"))).toBe(true);
+    });
   });
 });
 

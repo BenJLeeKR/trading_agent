@@ -12,6 +12,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from agent_trading.api.deps import get_db, get_repos
 from agent_trading.api.schemas import (
+    CandidateAlignmentDiagnosticsResponse,
+    CandidateAlignmentSampleItem,
+    CandidateAlignmentStatusItem,
+    CandidateIntentDistributionItem,
     DecisionContextDetail,
     PaginatedTradeDecisionsResponse,
     TradeDecisionDetail,
@@ -87,6 +91,7 @@ def _to_detail(row: TradeDecisionRow, instrument_name: str | None = None) -> Tra
         confidence=float(d.confidence) if d.confidence is not None else None,
         rationale_summary=d.rationale_summary,
         source_type=d.source_type,
+        signal_feature_snapshot_id=row.signal_feature_snapshot_id,
         decision_json=d.decision_json,
         instrument_name=instrument_name,
         # 신규 pipeline_stop / order 노출 필드
@@ -101,6 +106,31 @@ def _to_detail(row: TradeDecisionRow, instrument_name: str | None = None) -> Tra
         latest_completed_at=row.latest_completed_at,
         latest_phase_count=row.latest_phase_count,
     )
+
+
+async def _resolve_signal_feature_snapshot_ids(
+    repos: RepositoryContainer,
+    rows: list[TradeDecisionRow],
+) -> dict[str, str | None]:
+    """Resolve decision_context-level signal feature anchors for trade decisions."""
+    resolved: dict[str, str | None] = {}
+    seen_context_ids: set[str] = set()
+    for row in rows:
+        ctx_id = str(row.entity.decision_context_id)
+        if ctx_id in seen_context_ids:
+            continue
+        seen_context_ids.add(ctx_id)
+        try:
+            decision_context = await repos.decision_contexts.get(row.entity.decision_context_id)
+        except Exception:
+            decision_context = None
+        resolved[ctx_id] = (
+            str(decision_context.signal_feature_snapshot_id)
+            if decision_context is not None
+            and decision_context.signal_feature_snapshot_id is not None
+            else None
+        )
+    return resolved
 
 
 @router.get("/trade-decisions/watch-diagnostics", response_model=WatchDiagnosticsResponse)
@@ -313,10 +343,182 @@ async def get_watch_diagnostics(
     )
 
 
+@router.get(
+    "/trade-decisions/candidate-alignment-diagnostics",
+    response_model=CandidateAlignmentDiagnosticsResponse,
+)
+async def get_candidate_alignment_diagnostics(
+    lookback_days: int = Query(default=14, ge=1, le=90),
+    sample_limit: int = Query(default=20, ge=1, le=100),
+    db=Depends(get_db),
+) -> CandidateAlignmentDiagnosticsResponse:
+    """Summarize deterministic candidate vs final decision alignment."""
+    since_sql = "NOW() - ($1::int * INTERVAL '1 day')"
+    candidate_expr = (
+        "jsonb_typeof(td.decision_json->'candidate_vs_final') = 'object'"
+    )
+
+    summary_row = await db.fetchrow(
+        f"""
+        SELECT
+            COUNT(*)::int AS total_decision_count,
+            COUNT(*) FILTER (
+                WHERE {candidate_expr}
+            )::int AS candidate_tracked_count,
+            COUNT(*) FILTER (
+                WHERE {candidate_expr}
+                  AND COALESCE((td.decision_json#>>'{{candidate_vs_final,override_applied}}')::boolean, false) = true
+            )::int AS override_applied_count,
+            COUNT(*) FILTER (
+                WHERE {candidate_expr}
+                  AND COALESCE(td.decision_json#>>'{{candidate_vs_final,alignment_status}}', 'unknown') = 'matched'
+            )::int AS matched_count
+        FROM trading.trade_decisions td
+        WHERE td.created_at >= {since_sql}
+        """,
+        lookback_days,
+    )
+
+    alignment_rows = await db.fetch(
+        f"""
+        SELECT
+            COALESCE(td.decision_json#>>'{{candidate_vs_final,alignment_status}}', 'unknown') AS alignment_status,
+            COUNT(*)::int AS decision_count
+        FROM trading.trade_decisions td
+        WHERE td.created_at >= {since_sql}
+          AND {candidate_expr}
+        GROUP BY COALESCE(td.decision_json#>>'{{candidate_vs_final,alignment_status}}', 'unknown')
+        ORDER BY decision_count DESC, alignment_status ASC
+        """,
+        lookback_days,
+    )
+
+    candidate_intent_rows = await db.fetch(
+        f"""
+        SELECT
+            COALESCE(td.decision_json#>>'{{candidate_vs_final,candidate_intent}}', 'unknown') AS intent,
+            COUNT(*)::int AS decision_count
+        FROM trading.trade_decisions td
+        WHERE td.created_at >= {since_sql}
+          AND {candidate_expr}
+        GROUP BY COALESCE(td.decision_json#>>'{{candidate_vs_final,candidate_intent}}', 'unknown')
+        ORDER BY decision_count DESC, intent ASC
+        """,
+        lookback_days,
+    )
+
+    final_intent_rows = await db.fetch(
+        f"""
+        SELECT
+            COALESCE(td.decision_json#>>'{{candidate_vs_final,final_intent}}', 'unknown') AS intent,
+            COUNT(*)::int AS decision_count
+        FROM trading.trade_decisions td
+        WHERE td.created_at >= {since_sql}
+          AND {candidate_expr}
+        GROUP BY COALESCE(td.decision_json#>>'{{candidate_vs_final,final_intent}}', 'unknown')
+        ORDER BY decision_count DESC, intent ASC
+        """,
+        lookback_days,
+    )
+
+    sample_rows = await db.fetch(
+        f"""
+        SELECT
+            td.trade_decision_id,
+            td.symbol,
+            td.market,
+            COALESCE(td.source_type, 'unknown') AS source_type,
+            td.decision_json#>>'{{candidate_vs_final,primary_candidate}}' AS primary_candidate,
+            td.decision_json#>>'{{candidate_vs_final,candidate_intent}}' AS candidate_intent,
+            td.decision_json#>>'{{candidate_vs_final,final_decision_type}}' AS final_decision_type,
+            td.decision_json#>>'{{candidate_vs_final,final_intent}}' AS final_intent,
+            td.decision_json#>>'{{candidate_vs_final,alignment_status}}' AS alignment_status,
+            CASE
+                WHEN td.decision_json#>>'{{candidate_vs_final,override_applied}}' IS NOT NULL
+                    THEN (td.decision_json#>>'{{candidate_vs_final,override_applied}}')::boolean
+                ELSE NULL
+            END AS override_applied,
+            td.rationale_summary,
+            td.created_at
+        FROM trading.trade_decisions td
+        WHERE td.created_at >= {since_sql}
+          AND {candidate_expr}
+          AND COALESCE(td.decision_json#>>'{{candidate_vs_final,alignment_status}}', 'unknown') <> 'matched'
+        ORDER BY td.created_at DESC, td.trade_decision_id DESC
+        LIMIT $2
+        """,
+        lookback_days,
+        sample_limit,
+    )
+
+    total_decision_count = int((summary_row or {}).get("total_decision_count") or 0)
+    candidate_tracked_count = int((summary_row or {}).get("candidate_tracked_count") or 0)
+    override_applied_count = int((summary_row or {}).get("override_applied_count") or 0)
+    matched_count = int((summary_row or {}).get("matched_count") or 0)
+
+    return CandidateAlignmentDiagnosticsResponse(
+        lookback_days=lookback_days,
+        sample_limit=sample_limit,
+        total_decision_count=total_decision_count,
+        candidate_tracked_count=candidate_tracked_count,
+        candidate_missing_count=max(0, total_decision_count - candidate_tracked_count),
+        override_applied_count=override_applied_count,
+        matched_count=matched_count,
+        candidate_coverage_rate=(
+            float(candidate_tracked_count) / float(total_decision_count)
+            if total_decision_count
+            else 0.0
+        ),
+        match_rate=(
+            float(matched_count) / float(candidate_tracked_count)
+            if candidate_tracked_count
+            else 0.0
+        ),
+        alignment_status_items=[
+            CandidateAlignmentStatusItem(
+                alignment_status=str(row["alignment_status"]),
+                decision_count=int(row["decision_count"] or 0),
+            )
+            for row in alignment_rows
+        ],
+        candidate_intent_items=[
+            CandidateIntentDistributionItem(
+                intent=str(row["intent"]),
+                decision_count=int(row["decision_count"] or 0),
+            )
+            for row in candidate_intent_rows
+        ],
+        final_intent_items=[
+            CandidateIntentDistributionItem(
+                intent=str(row["intent"]),
+                decision_count=int(row["decision_count"] or 0),
+            )
+            for row in final_intent_rows
+        ],
+        recent_misaligned_items=[
+            CandidateAlignmentSampleItem(
+                trade_decision_id=row["trade_decision_id"],
+                symbol=row["symbol"],
+                market=row["market"],
+                source_type=row["source_type"],
+                primary_candidate=row["primary_candidate"],
+                candidate_intent=row["candidate_intent"],
+                final_decision_type=row["final_decision_type"],
+                final_intent=row["final_intent"],
+                alignment_status=row["alignment_status"],
+                override_applied=row["override_applied"],
+                rationale_summary=row["rationale_summary"],
+                created_at=row["created_at"],
+            )
+            for row in sample_rows
+        ],
+    )
+
+
 @router.get("/trade-decisions", response_model=PaginatedTradeDecisionsResponse)
 async def list_trade_decisions(
     decision_context_id: str | None = Query(None, description="Decision context ID (optional)"),
-    created_date: date | None = Query(None, description="KST created_at date filter (YYYY-MM-DD)"),
+    created_date: date | None = Query(None, alias="date", description="KST created_at date filter (YYYY-MM-DD)"),
     side: str | None = Query(None, description="Filter by side"),
     source_type: str | None = Query(None, description="Filter by source_type"),
     decision_type: str | None = Query(None, description="Filter by decision_type"),
@@ -437,9 +639,33 @@ async def list_trade_decisions(
             has_order=has_order,
         )
 
+    signal_feature_snapshot_ids = await _resolve_signal_feature_snapshot_ids(repos, rows)
+
     # SQL LEFT JOIN으로 instrument_name이 이미 TradeDecisionRow.instrument_name에
     # resolve되어 있음
-    details = [_to_detail(row, instrument_name=row.instrument_name) for row in rows]
+    details = []
+    for row in rows:
+        details.append(
+            _to_detail(
+                TradeDecisionRow(
+                    entity=row.entity,
+                    order_request_id=row.order_request_id,
+                    order_status=row.order_status,
+                    instrument_name=row.instrument_name,
+                    phase_trace=row.phase_trace,
+                    execution_attempt_status=row.execution_attempt_status,
+                    latest_execution_attempt_id=row.latest_execution_attempt_id,
+                    latest_stop_phase=row.latest_stop_phase,
+                    latest_stop_reason=row.latest_stop_reason,
+                    latest_completed_at=row.latest_completed_at,
+                    latest_phase_count=row.latest_phase_count,
+                    signal_feature_snapshot_id=signal_feature_snapshot_ids.get(
+                        str(row.entity.decision_context_id)
+                    ),
+                ),
+                instrument_name=row.instrument_name,
+            )
+        )
 
     return PaginatedTradeDecisionsResponse(
         items=details,
@@ -472,5 +698,10 @@ async def get_decision_context(
         market_timestamp=ctx.market_timestamp,
         correlation_id=ctx.correlation_id,
         trading_session_id=str(ctx.trading_session_id) if ctx.trading_session_id is not None else None,
+        signal_feature_snapshot_id=(
+            str(ctx.signal_feature_snapshot_id)
+            if ctx.signal_feature_snapshot_id is not None
+            else None
+        ),
         created_at=ctx.created_at,
     )

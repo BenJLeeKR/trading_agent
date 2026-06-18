@@ -104,6 +104,9 @@ describe("Dashboard with valid data", () => {
     expect(screen.getAllByText("3").length).toBeGreaterThanOrEqual(1); // Total Accounts = 3
     expect(screen.getAllByText("2").length).toBeGreaterThanOrEqual(1); // Recent Orders = 2
     expect(screen.getAllByText("1").length).toBeGreaterThanOrEqual(1); // Active Locks = 1, Incomplete Recon = 1
+    expect(screen.getByText("945,000원")).toBeInTheDocument(); // 45,000 + 900,000
+    expect(screen.getByText("45,000원")).toBeInTheDocument(); // a1 quick list orderable_amount
+    expect(screen.getByText("900,000원")).toBeInTheDocument(); // a3 quick list orderable_amount
 
     // Account table rows (3 accounts)
     expect(screen.getByText("Paper Account 1")).toBeInTheDocument();
@@ -727,6 +730,8 @@ describe("OperationsDashboardView — recent failures", () => {
     expect(screen.getByText("Scheduler Status")).toBeInTheDocument();
     expect(screen.getAllByText("운영중").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/OPEN \| 제출 2 \/ HP매도 1 \/ cycles 14/)).toBeInTheDocument();
+    expect(screen.getByText("945,000원")).toBeInTheDocument();
+    expect(screen.getByText("출처: /cash-balance (orderable_amount 합계)")).toBeInTheDocument();
     expect(screen.getByText("오늘 주문 제출")).toBeInTheDocument();
     expect(screen.getByText("2건")).toBeInTheDocument();
     expect(screen.getByText("오늘 BUY 차단")).toBeInTheDocument();

@@ -483,6 +483,15 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   - AI prompt 토큰 사용량 절감
   - 장중 계산 부하 감소
   - replay/backtest 가능한 deterministic signal backbone 강화
+- 구조 리팩토링 관점에서 남은 핵심은
+  `feature를 prompt input으로만 쓰는 상태`에서
+  `deterministic trigger / candidate 생성 계층`으로 승격하는 것이다.
+  관련 분석은
+  [`plans/[ANALYSIS] expected_return_architecture_refactor_analysis.md`](./%5BANALYSIS%5D%20expected_return_architecture_refactor_analysis.md)
+  를 기준 문서로 사용한다.
+- 다음 설계/구현 기준은
+  [`plans/[DESIGN] deterministic_trigger_engine_v1.md`](./%5BDESIGN%5D%20deterministic_trigger_engine_v1.md)
+  이다.
 
 ### 세부 작업 상태
 - [x] 순수 helper 기반 deterministic signal backbone 1차 추가
@@ -493,8 +502,170 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   - `trading.signal_feature_snapshots` 테이블 migration 추가
   - `SignalFeatureSnapshotEntity` / repository contract / in-memory / Postgres 저장소 추가
   - 최신 snapshot 조회(`get_latest_by_instrument`) 및 이력 조회(`list_by_instrument`) 경로 추가
-- [ ] 새벽/장후 배치 계산 경로
-- [ ] decision loop / AI prompt read-only 주입 경로
+- [x] signal feature snapshot inspection API 추가
+  - `GET /signal-feature-snapshots`
+  - `GET /signal-feature-snapshots/latest`
+  - 종목(`symbol + market + timeframe`) 기준으로 최신/이력 snapshot 조회 가능
+- [x] 새벽/장후 배치 계산 경로
+  - `SignalFeaturePipelineService` 추가
+  - `build_signal_feature_snapshots.py` CLI로 JSON 일봉 입력 기반 계산/적재 가능
+- [x] decision loop / AI prompt read-only 주입 경로
+  - `DecisionOrchestratorService.assemble()`가 최신 `signal_feature_snapshot`을 로드
+  - AI Risk / FDC prompt에 fast/slow/overall score, RSI, ATR, 수익률, reason code를 read-only로 주입
+- [x] deterministic trigger / candidate 계층 1차 추가
+  - `services.deterministic_trigger_engine`에 `DeterministicTriggerAssessment`,
+    `assess_deterministic_triggers()` 추가
+  - `signal_feature_snapshot + market_regime + strategy_selection + portfolio_allocation`
+    기반으로 `WATCH / BUY_CANDIDATE / SELL_CANDIDATE / REDUCE_CANDIDATE`
+    후보를 deterministic하게 생성
+  - `AssembledContext.deterministic_trigger`에 주입하고
+    AI Risk / FDC prompt에 read-only로 노출
+  - `TradeDecisionEntity.decision_json.deterministic_trigger`에 1차 반영
+- [x] candidate vs final decision 분리 저장 1차 추가
+  - `TradeDecisionEntity.decision_json.candidate_vs_final`에
+    `candidate_intent`, `final_intent`, `alignment_status`, `override_applied`
+    를 기록해 deterministic candidate와 AI 최종 판단의 차이를 구조화
+  - 향후 `override 효과 측정`, `candidate 분포 대비 최종 decision 분포 비교`의
+    최소 분석 기반 확보
+- [x] deterministic derivation stage 분리 1차 추가
+  - `DecisionOrchestratorService` 내부에서
+    `signal_feature_snapshot → market_regime → strategy_selection → portfolio_allocation → deterministic_trigger`
+    계산을 `_derive_deterministic_context_components()` helper로 분리
+  - 향후 `Context Assembly Stage` / `Deterministic Derivation Stage` /
+    `AI Policy Stage` 분리의 첫 단계 구조 정리
+- [x] prompt context projection 공통화 1차 추가
+  - `services.ai_agents.prompt_context_projection`에
+    signal / regime / strategy / portfolio / trigger 공통 렌더링 helper 추가
+  - `Final Decision Composer`는 전체 deterministic context section을 공통 helper로 재사용
+  - `AI Risk`는 별도 concentration 문맥을 유지하기 위해
+    portfolio section만 제외한 공통 projection 경로를 사용
+- [x] AI policy context view 분리 1차 추가
+  - `AIPolicyContextView`를 추가해
+    내부 조립용 `AssembledContext`와 AI 입력용 읽기 전용 뷰를 분리
+  - `DecisionOrchestratorService`가
+    `_build_ai_policy_context_view()`로 AI 입력 뷰를 명시적으로 조립한 뒤
+    in-process / subprocess agent runner에 동일하게 전달
+  - 향후 `policy input schema versioning`, `attribution`, `prompt contract 고정`
+    작업의 최소 구조 경계 확보
+- [x] after-market signal feature batch 자동화 1차 추가
+  - `ops-scheduler`가 Nextrade after-market 종료 시각인 `20:10 KST` 이후
+    `signal feature input 생성 → snapshot batch 적재`를 순차 실행
+  - `generate_signal_feature_snapshot_input.py`가
+    trading universe 기준 KIS 일봉을 조회해
+    `data/signal_feature_snapshot_input.json`을 생성
+  - `build_signal_feature_snapshots.py`가 같은 입력 파일을 읽어
+    `signal_feature_snapshots` 테이블 적재를 수행
+- [x] signal feature batch 운영 요약 노출 1차 추가
+  - `operations_day_runs.summary_json`에
+    `signal_feature_input` / `signal_feature_batch`의
+    `last_error`, 입력 생성 집계(`universe_count`, `generated_count`, `error_count`)를 기록
+  - `/market-sessions/operations-day/*` API에서 기존 `summary_json` 경로만으로
+    장후 feature 배치 실패 원인을 바로 확인할 수 있게 정리
+- [x] ops-scheduler runtime 식별 정보 노출 1차 추가
+  - `operations_day_runs.summary_json.scheduler_runtime`에
+    `script_path`, `python_bin`, `pid`,
+    `signal_feature_batch_supported`, `signal_feature_batch_time`를 기록
+  - 운영 중인 scheduler 프로세스가
+    실제로 signal feature batch 지원 코드를 로드했는지
+    DB 요약만으로 즉시 식별할 수 있게 정리
+- [x] signal feature batch 적재 runtime bug 수정 및 전일 누락분 수동 적재
+  - `build_signal_feature_snapshots.py`가
+    `postgres_runtime()`의 `repositories` 경로를 직접 사용하도록 수정해
+    운영 컨테이너에서 `db_pool` KeyError로 실패하던 문제를 제거
+  - 전일(`2026-06-16`) 장후 누락분은
+    `generate_signal_feature_snapshot_input.py` 수동 실행 후
+    `signal_feature_snapshots`에 47건 적재까지 완료
+  - 자동 배치 정상 동작 여부는
+    오늘 `20:10 KST` 이후 `operations_day_runs.summary_json`과
+    `signal_feature_snapshots` 적재 건수로 재확인 필요
+- [x] decision context ↔ signal feature snapshot point-in-time anchor 1차 추가
+  - `trading.decision_contexts.signal_feature_snapshot_id` nullable FK를 추가해
+    실제 판단에 사용한 `signal_feature_snapshot` 식별자를 context에 고정
+  - `DecisionOrchestratorService.assemble()`가
+    최신 signal snapshot을 로드한 뒤 해당 `decision_context`에
+    `signal_feature_snapshot_id`를 attach하도록 보강
+  - `GET /decision-contexts/{id}` 응답에
+    `signal_feature_snapshot_id`를 노출해
+    replay / 운영 점검 시 사용 snapshot 추적 경로를 확보
+- [x] signal feature anchor coverage 진단 API 1차 추가
+  - `GET /signal-feature-snapshots/decision-context-coverage` 추가
+  - 최근 `decision_contexts` 기준
+    `recent_context_count`, `anchored_context_count`,
+    `missing_context_count`, `coverage_rate`를 집계
+  - `sampled_missing_context_ids`를 함께 노출해
+    장후 batch 이후 어떤 판단 컨텍스트가 아직 anchor 없이 생성됐는지
+    운영 기준으로 즉시 확인 가능하게 정리
+- [x] trade decision read-path에 signal feature anchor 노출 1차 추가
+  - `GET /trade-decisions` 응답에
+    `signal_feature_snapshot_id`를 포함해
+    각 판단 row에서 참조한 signal feature snapshot을 직접 확인 가능하게 정리
+  - 운영자가 `decision_context` 상세를 별도로 다시 조회하지 않아도
+    판단 단위에서 point-in-time feature anchor 추적이 가능하도록 보강
+- [x] deterministic candidate vs final decision 진단 API 1차 추가
+  - `GET /trade-decisions/candidate-alignment-diagnostics` 추가
+  - 최근 의사결정의 `candidate_tracked_count`, `override_applied_count`,
+    `matched_count`, `candidate_coverage_rate`, `match_rate`를 집계
+  - `alignment_status`, `candidate_intent`, `final_intent` 분포와
+    최근 misaligned sample을 함께 노출해
+    deterministic trigger가 실제 final decision에서 어떻게 override되는지
+    운영 기준으로 즉시 점검 가능하게 정리
+- [x] trigger / override execution attribution API 1차 추가
+  - `GET /performance-trigger-attribution` 추가
+  - 계좌 기준 최근 의사결정의
+    `tracked_decision_count`, `actionable_decision_count`,
+    `ordered_decision_count`, `filled_decision_count`,
+    `decision_to_order_rate`, `decision_to_fill_rate`를 집계
+  - `alignment_status` / `candidate_intent` bucket별로
+    주문 전환율과 체결 전환율을 함께 노출해
+    deterministic trigger와 override가 실제 실행으로 얼마나 이어지는지
+    최소 성과 attribution 기반을 마련
+- [x] trigger / override performance attribution 설계 문서 1차 추가
+  - [`plans/[DESIGN] performance_attribution_for_trigger_and_override.md`](./%5BDESIGN%5D%20performance_attribution_for_trigger_and_override.md)
+    문서 추가
+  - 현재 구조에서 가능한 `execution attribution`과
+    아직 별도 설계가 필요한 `realized pnl attribution`의 경계를 명시
+  - 다음 구현 단위를
+    `post-decision return proxy attribution`으로 정의해
+    복잡한 포지션 close 귀속 이전에 deterministic 성과 관찰 경로를 먼저 여는 방향으로 정리
+- [x] deterministic trigger 계측 필드 1차 추가
+  - `coverage_score`, `eligibility_passed`, `eligibility_reasons`,
+    `ranking_score`, `candidate_mode`를
+    `DeterministicTriggerAssessment`와 `decision_json.deterministic_trigger`에 추가
+  - projection 변경 전 단계에서
+    `WATCH 급증 / BUY_CANDIDATE 부족`이
+    eligibility 병목인지 ranking 병목인지 분해 관측 가능한 최소 계측 기반 확보
+- [x] decision loop `core_cap` 도입으로 저우선순위 core LLM 부하 완화 1차 적용
+  - `max_cap`은 유지하되 `source_type=core`에만 별도 상한(`core_cap`)을 추가해
+    held / event / market / manual 우선순위는 유지하면서
+    비행동성 core 종목의 장중 assemble 부하를 줄이는 경로를 추가
+  - decision loop 기본값은 `core_cap=12`, feature 장후 배치는 별도 `core_cap=80`으로 분리
+  - [`plans/[IMPLEMENTATION] 2026-06-18_decision_loop_core_cap.md`](./%5BIMPLEMENTATION%5D%202026-06-18_decision_loop_core_cap.md)
+- [ ] 초저유동성 `core` BUY 실행 구멍 보완
+  - 기대수익률 관점에서 부합하는 범위만 우선 반영:
+    - [x] `core` BUY eligibility에도 저유동성 / execution feasibility gate 1차 추가
+      - `signal_feature_snapshot.average_volume_20d`
+      - `portfolio_allocation.recommended_max_order_value`
+      를 이용해 `eligibility_low_average_volume`, `eligibility_low_turnover`,
+      `eligibility_participation_rate_blocked`를 판단하도록 반영
+    - [x] `eligibility 실패`, 특히 execution infeasible 상태에서는
+      `NO_ACTION -> AI APPROVE` 승격 금지 1차 반영
+      - `buy_eligibility_guard`로 `core` BUY 승격을 `HOLD/WATCH`로 제한
+    - [x] 전면 `MARKET` 정책은 유지하지 않고,
+      저유동성 구간은 `LIMIT 강제` 또는 `submit 금지`로 1차 분기
+      - `ExecutionService`에서 `buy_execution_liquidity_v1` 적용
+      - 중간 저유동성: `quote.ask` / `reference_price` 기반 `LIMIT` 강제
+      - 심각 저유동성 또는 trigger execution infeasible: submit 차단
+    - [x] sizing에 participation cap 1차 추가
+      - live quote의 `acml_vol`, `acml_tr_pbmn`
+      - feature의 `average_volume_20d`
+      를 이용해 `intraday_volume_participation_cap`,
+      `intraday_turnover_participation_cap`,
+      `average_daily_volume_participation_cap` 적용
+  - blanket `NO_ACTION override 금지`는
+    기대수익률 저해 가능성이 있어 채택하지 않음
+  - 기준 문서:
+    - [`plans/[DESIGN] deterministic_trigger_eligibility_and_ranking_v1.md`](./%5BDESIGN%5D%20deterministic_trigger_eligibility_and_ranking_v1.md)
+    - [`plans/[ANALYSIS] expected_return_architecture_refactor_analysis.md`](./%5BANALYSIS%5D%20expected_return_architecture_refactor_analysis.md)
 
 ### 근거 문서
 - [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `30`
@@ -504,10 +675,38 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 
 ---
 
-### 12. Market Regime / Strategy Selection / Portfolio Agent 분해 — `미완료`
+### 12. Market Regime / Strategy Selection / Portfolio Agent 분해 — `완료`
 
 ### 핵심
 - 시장 국면, 전략 선택, 포트폴리오 배분 책임을 명시적 계층으로 분리
+
+### 세부 작업 상태
+- [x] Market Regime deterministic backbone 1차 추가
+  - `services.market_regime`에 `MarketRegimeAssessment`, `classify_market_regime()` 추가
+  - `signal_feature_snapshot` 기반 `bullish_trend` / `bearish_trend` / `range_bound` / `event_driven_unstable`
+    및 `high_volatility` / `risk_on` / `risk_off` 분류 규칙 1차 구현
+  - 전략군 가중치(`strategy_weights`), `confidence`, `half_life_hours`, `reason_codes` 산출
+- [x] decision pipeline 입력 연결 1차 완료
+  - `DecisionOrchestratorService.assemble()`가 최신 signal snapshot에서 market regime를 계산해
+    `AssembledContext.market_regime`에 주입
+  - AI Risk / FDC prompt에 regime label / volatility regime / risk tone / strategy weights를 read-only로 노출
+  - 생성되는 `TradeDecisionEntity.regime_label`에 1차 반영
+- [x] Strategy Selection deterministic registry / selector 1차 추가
+  - `services.strategy_selection`에 `StrategySelectionAssessment`, `select_strategy()` 추가
+  - `market_regime + source_type` 기반으로 `preferred_strategy`, `allowed_strategies`,
+    `preferred_entry_style`, `preferred_time_horizon`, `confidence`, `reason_codes` 산출
+  - `AssembledContext.strategy_selection`에 주입하고 AI Risk / FDC prompt에 read-only로 노출
+  - `TradeDecisionEntity.strategy_fit_score` 및 `decision_json.strategy_selection`에 1차 반영
+- [x] Portfolio allocation / concentration budget 계층 분리
+  - `services.portfolio_allocation`에 `PortfolioAllocationAssessment`,
+    `assess_portfolio_allocation()` 추가
+  - `DecisionOrchestratorService.assemble()`가 `config + snapshot + regime + strategy`
+    입력을 이용해 종목별 `target_weight_pct`, `remaining_concentration_pct`,
+    `remaining_gross_budget_pct`, `max_new_capital_pct`,
+    `recommended_max_order_value`를 계산해
+    `AssembledContext.portfolio_allocation`에 주입
+  - AI Risk / FDC prompt가 포트폴리오 배분 결과를 read-only로 노출하고,
+    `TradeDecisionEntity.decision_json.portfolio_allocation`에 1차 반영
 
 ### 근거 문서
 - [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `27`, `29`, `31`
@@ -575,6 +774,24 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   - `services.held_position_policy.is_held_position_sell_path()`
   - scheduler와 execution, ops scheduler가 동일하게 `held_position + REDUCE/EXIT + SELL`만
     quote/stale bypass 및 전용 lane 대상으로 취급
+- [x] held-position 전용 submit lane의 cycle cap 차단 제거
+  - `services.submit_lane_gate.evaluate_symbol_submit_lane()`에서
+    `source_type=held_position`만으로 `held_position_sell_cycle_cap`을
+    선적용하던 경로를 제거
+  - held-position 종목은 같은 cycle 내 동일 symbol 중복만 차단하고,
+    위험축소 SELL submit은 cycle count와 무관하게 진행되도록 정리
+- [x] held-position 반복 `REDUCE/EXIT` 판단 suppression 1차 추가
+  - `services.pre_ai_gate.evaluate_held_position_skip_reason()`가
+    최근 same-symbol SELL order + 최근 held-position `REDUCE/EXIT/SELL` 판단 +
+    포지션 증가 없음 조건에서
+    `held_position_recent_risk_sell_cooldown`으로 pre-AI skip
+  - 최근 이벤트가 있거나 장 마감 임박 이후에는 suppression을 적용하지 않음
+  - 후속 운영 검증:
+    `2거래일` 정도 장중 모니터링으로
+    `held_position_recent_risk_sell_cooldown` 분포,
+    동일 종목 반복 `REDUCE/EXIT` 감소율,
+    위험축소 SELL 지연/누락 부작용 유무를 먼저 실측한 뒤
+    `signal_feature_snapshot_id` 동일 여부까지 포함한 stricter duplicate policy 검토 진행
 - [x] stale snapshot / submit cap / sell guard / reconcile gate의 공통 reason code 체계 수렴
   - `PipelineStopReason` + `general_submit_disabled_reason()` +
     `submit_budget_consumed_reason()` 기준으로 canonical code 정리
@@ -648,6 +865,10 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 ### 4순위 묶음
 10. Data Quality / Hard Guardrail 일원화
 11. Universe / Signal / Strategy / Portfolio / Compliance / Monitor 구조화
+   - 단, 다음 단계는 단순 agent 추가가 아니라
+     `deterministic trigger / candidate / attribution` 구조를 세우는 방향이어야 한다.
+   - 기준 문서:
+     [`plans/[ANALYSIS] expected_return_architecture_refactor_analysis.md`](./%5BANALYSIS%5D%20expected_return_architecture_refactor_analysis.md)
 
 ---
 

@@ -23,7 +23,7 @@ KIS_DEFAULT_WS_URLS: dict[str, str] = {
 # LLM Provider environment variable resolution
 # ---------------------------------------------------------------------------
 
-_SUPPORTED_PROVIDERS: frozenset[str] = frozenset({"deepseek", "openai"})
+_SUPPORTED_PROVIDERS: frozenset[str] = frozenset({"deepseek", "openai", "gemini"})
 
 _PROVIDER_ENV_MAP: dict[str, dict[str, str]] = {
     "deepseek": {
@@ -38,16 +38,24 @@ _PROVIDER_ENV_MAP: dict[str, dict[str, str]] = {
         "model_id": "OPENAI_MODEL_ID",
         "timeout": "OPENAI_TIMEOUT_SECONDS",
     },
+    "gemini": {
+        "api_key": "GEMINI_API_KEY",
+        "base_url": "GEMINI_BASE_URL",
+        "model_id": "GEMINI_MODEL_ID",
+        "timeout": "GEMINI_TIMEOUT_SECONDS",
+    },
 }
 
 _PROVIDER_BASE_URL_DEFAULTS: dict[str, str] = {
     "deepseek": "https://api.deepseek.com",
     "openai": "https://api.openai.com/v1",
+    "gemini": "https://generativelanguage.googleapis.com/v1beta/openai/",
 }
 
 _PROVIDER_MODEL_ID_DEFAULTS: dict[str, str] = {
     "deepseek": "deepseek-chat",
     "openai": "gpt-4o",
+    "gemini": "gemini-3.5-flash",
 }
 
 
@@ -105,6 +113,17 @@ def _resolve_provider_timeout() -> int:
         return 30
     env_var = _PROVIDER_ENV_MAP[provider]["timeout"]
     return int(os.getenv(env_var, "30"))
+
+
+def resolve_provider_runtime_config() -> dict[str, str | int]:
+    """현재 ``LLM_PROVIDER`` 기준 provider 런타임 설정을 반환한다."""
+    return {
+        "llm_provider": _resolve_llm_provider(),
+        "provider_api_key": _resolve_provider_api_key(),
+        "provider_base_url": _resolve_provider_base_url(),
+        "provider_model_id": _resolve_provider_model_id(),
+        "provider_timeout_seconds": _resolve_provider_timeout(),
+    }
 
 
 # ---------------------------------------------------------------------------

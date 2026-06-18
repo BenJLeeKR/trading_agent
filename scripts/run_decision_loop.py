@@ -90,7 +90,6 @@ from agent_trading.services.pre_ai_gate import (
     evaluate_pre_ai_skip_reason,
 )
 from agent_trading.services.submit_lane_gate import (
-    HELD_POSITION_SELL_MAX_PER_CYCLE,
     evaluate_symbol_submit_lane,
 )
 from agent_trading.services.sizing_engine import calculate_sizing
@@ -233,7 +232,10 @@ def _resolve_order_type_and_price(
 ) -> tuple[OrderType, Decimal | None]:
     """의사결정 유형과 매매방향에 따라 execution 정책 결정.
 
-    현재는 전면 MARKET 정책 — 항상 ``(OrderType.MARKET, None)`` 반환.
+    초기 요청은 ``MARKET``으로 시작한다.
+    다만 실제 submit 직전에는 ``ExecutionService``가
+    저유동성 BUY에 대해 ``LIMIT`` 강제 또는 submit 차단을
+    추가로 적용할 수 있다.
     ``side`` / ``decision_type`` / ``default_price`` 파라미터는
     향후 시장성 지정가 등 확장에 대비해 预留(reserved)해 둠.
     """
@@ -250,9 +252,11 @@ DEFAULT_EVENT_LOOKBACK_HOURS: int = 24
 """Event lookback window (hours).  Calendar 24h proxy — not trading-session-aware.
 장 시작 직후/휴장일 경계에서는 실제 '1거래일'과 다를 수 있음.
 P2.1+에서 trading calendar 기반 lookback으로 개선 필요."""
+DEFAULT_TRADING_UNIVERSE_CORE_CAP = 12
 ENV_INTERVAL = "PAPER_DECISION_LOOP_INTERVAL_SECONDS"
 ENV_TRADING_UNIVERSE = "TRADING_UNIVERSE_SYMBOLS"
 ENV_MANUAL_WATCHLIST = "TRADING_UNIVERSE_MANUAL_SYMBOLS"
+ENV_TRADING_UNIVERSE_CORE_CAP = "TRADING_UNIVERSE_CORE_CAP"
 
 
 @dataclass(slots=True, frozen=True)
@@ -416,7 +420,14 @@ def _parse_manual_watchlist_symbols(raw: str | None) -> tuple[tuple[str, str], .
     return tuple(parsed)
 
 
-async def _read_trading_universe() -> tuple[UniverseSymbol, ...]:
+async def _read_trading_universe(
+    *,
+    max_cap: int | None = None,
+    core_cap: int | None = None,
+    market_overlay_cap: int | None = None,
+    pre_pool_size: int | None = None,
+    exclude_held_from_cap: bool | None = None,
+) -> tuple[UniverseSymbol, ...]:
     """Read the trading universe with fallback chain.
 
     Priority
@@ -438,6 +449,16 @@ async def _read_trading_universe() -> tuple[UniverseSymbol, ...]:
 
     # Priority 2: UniverseSelectionService (4-source composition)
     try:
+        resolved_core_cap = (
+            core_cap
+            if core_cap is not None
+            else int(
+                os.getenv(
+                    ENV_TRADING_UNIVERSE_CORE_CAP,
+                    str(DEFAULT_TRADING_UNIVERSE_CORE_CAP),
+                )
+            )
+        )
         async with postgres_runtime(run_migrations=False) as runtime:
             repos: RepositoryContainer = runtime["repositories"]
 
@@ -502,8 +523,17 @@ async def _read_trading_universe() -> tuple[UniverseSymbol, ...]:
                 account_id=account_id,
                 since=datetime.now(timezone.utc) - timedelta(hours=DEFAULT_EVENT_LOOKBACK_HOURS),
                 # P2 minimum: market overlay cap and pre-pool size
-                market_overlay_cap=5,
-                pre_pool_size=50,
+                max_cap=max_cap if max_cap is not None else 30,
+                core_cap=resolved_core_cap,
+                exclude_held_from_cap=(
+                    exclude_held_from_cap
+                    if exclude_held_from_cap is not None
+                    else True
+                ),
+                market_overlay_cap=(
+                    market_overlay_cap if market_overlay_cap is not None else 5
+                ),
+                pre_pool_size=pre_pool_size if pre_pool_size is not None else 50,
                 manual_symbols=_parse_manual_watchlist_symbols(
                     os.getenv(ENV_MANUAL_WATCHLIST)
                 ),
@@ -526,10 +556,11 @@ async def _read_trading_universe() -> tuple[UniverseSymbol, ...]:
                     source_counts[sym.source_type] = source_counts.get(sym.source_type, 0) + 1
                 logger.info(
                     "Trading universe from UniverseSelectionService: "
-                    "%d symbols loaded (cap=%d).  "
+                    "%d symbols loaded (cap=%d, core_cap=%s).  "
                     "source_type distribution: %s",
                     len(universe),
                     ctx.max_cap,
+                    ctx.core_cap,
                     source_counts,
                 )
                 return universe
@@ -997,9 +1028,9 @@ async def _run_one_cycle(
                 return serialized
 
             # ── 3. Build request ────────────────────────────────────────
-            # NOTE: _resolve_symbol_price() 호출 제거됨 — 현재 전면 MARKET 정책으로
-            # price=None을 사용하며, quote fetch는 execution_service._resolve_quote()에서
-            # 단일 경로로 처리됨. 중복 quote fetch로 인한 KIS rate limit 문제 해결.
+            # NOTE: 초기 request는 MARKET + price=None으로 시작한다.
+            # quote fetch는 execution_service._resolve_quote() 단일 경로에서 처리하고,
+            # 저유동성 BUY는 execution_service가 LIMIT 강제/차단까지 담당한다.
             order_type, price = _resolve_order_type_and_price(
                 side="buy",
                 decision_type=None,
@@ -1735,8 +1766,9 @@ async def _run_loop(
             _SEMAPHORE_MAX = 5
             sem = asyncio.Semaphore(_SEMAPHORE_MAX)
             submit_budget_consumed_count = 0
-            # held_position REDUCE/EXIT sell은 위험 축소 목적이므로 일일 제출 상한 없음.
-            # cycle 내 중복 submit 방지용 카운터만 유지 (symbol dedupe + cycle cap).
+            general_submit_inflight_count = 0
+            # held_position REDUCE/EXIT sell은 위험 축소 목적이므로
+            # 일반 BUY lane과 분리하고, cycle cap 없이 같은 symbol 중복만 막는다.
             held_position_sell_cycle_count = 0
             held_position_sell_cycle_symbols: set[str] = set()
             _general_submit_lock = asyncio.Lock()
@@ -1744,10 +1776,12 @@ async def _run_loop(
             async def _process_one(item: object) -> dict[str, object]:
                 """Process a single universe item with semaphore concurrency cap."""
                 nonlocal submit_budget_consumed_count
+                nonlocal general_submit_inflight_count
                 nonlocal held_position_sell_cycle_count
                 nonlocal held_position_sell_cycle_symbols
                 async with sem:
                     item_source_type = getattr(item, "source_type", "core")
+                    general_submit_reserved = False
 
                     async def _execute_symbol_cycle(
                         *,
@@ -1784,34 +1818,45 @@ async def _run_loop(
                             }
 
                     if submit and not dry_run and item_source_type != "held_position":
-                        # General/core BUY lane uses at most one actual submit
-                        # attempt per cycle.  Keep the lane locked until the
-                        # candidate either truly submits or fails pre-submit so
-                        # a later symbol can inherit the slot in the same cycle.
+                        # General/core BUY lane reserves submit slots atomically,
+                        # but runs the symbol cycle outside the lock so non-held
+                        # symbols are not effectively serialized.
                         async with _general_submit_lock:
+                            effective_general_submit_count = (
+                                submit_budget_consumed_count + general_submit_inflight_count
+                            )
                             lane_decision = evaluate_symbol_submit_lane(
                                 submit=submit,
                                 dry_run=dry_run,
                                 allow_general_submit=allow_general_submit,
                                 source_type=item_source_type,
-                                submit_budget_consumed_count=submit_budget_consumed_count,
+                                submit_budget_consumed_count=effective_general_submit_count,
                                 max_general_submits_this_cycle=max_general_submits_this_cycle,
                                 held_position_sell_cycle_count=held_position_sell_cycle_count,
                                 held_position_sell_cycle_symbols=held_position_sell_cycle_symbols,
                                 symbol=item.symbol,
                             )
-                            result = await _execute_symbol_cycle(
-                                symbol_submit=lane_decision.submit,
-                                symbol_dry_run=lane_decision.dry_run,
-                                symbol_dry_run_reason=lane_decision.dry_run_reason,
-                                remaining_general_buy_budget=max(
-                                    0,
-                                    max_general_submits_this_cycle - submit_budget_consumed_count,
-                                ),
-                            )
+                            if lane_decision.submit:
+                                general_submit_inflight_count += 1
+                                general_submit_reserved = True
+                        result = await _execute_symbol_cycle(
+                            symbol_submit=lane_decision.submit,
+                            symbol_dry_run=lane_decision.dry_run,
+                            symbol_dry_run_reason=lane_decision.dry_run_reason,
+                            remaining_general_buy_budget=max(
+                                0,
+                                max_general_submits_this_cycle - submit_budget_consumed_count,
+                            ),
+                        )
+                        if general_submit_reserved:
                             status = result.get("status", "UNKNOWN")
-                            if status in ("SUBMITTED", "RECONCILE_REQUIRED"):
-                                submit_budget_consumed_count += 1
+                            async with _general_submit_lock:
+                                general_submit_inflight_count = max(
+                                    0,
+                                    general_submit_inflight_count - 1,
+                                )
+                                if status in ("SUBMITTED", "RECONCILE_REQUIRED"):
+                                    submit_budget_consumed_count += 1
                     else:
                         lane_decision = evaluate_symbol_submit_lane(
                             submit=submit,
@@ -1838,8 +1883,6 @@ async def _run_loop(
                     is_held_position_item = item_source_type == "held_position"
                     if is_held_position_item and not lane_decision.submit and submit and not dry_run:
                         reasons = []
-                        if held_position_sell_cycle_count >= HELD_POSITION_SELL_MAX_PER_CYCLE:
-                            reasons.append("cycle_cap_reached")
                         if item.symbol in held_position_sell_cycle_symbols:
                             reasons.append("symbol_duplicate")
                         if reasons:

@@ -15,7 +15,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from agent_trading.api.deps import get_repos
+from agent_trading.api.deps import get_db, get_repos
 from agent_trading.api.schemas import (
     AccountPerformanceSummaryView,
     BenchmarkComparisonView,
@@ -26,6 +26,8 @@ from agent_trading.api.schemas import (
     PerformanceMetricsView,
     RelativeBenchmarkPointView,
     StrategyPerformanceSummaryView,
+    TriggerAttributionBucketItem,
+    TriggerPerformanceAttributionResponse,
 )
 from agent_trading.config.settings import AppSettings
 from agent_trading.repositories.container import RepositoryContainer
@@ -40,6 +42,35 @@ from agent_trading.services.gate_evaluation import GateEvaluationService
 from agent_trading.services.performance_summary import PerformanceSummaryService
 
 router = APIRouter(tags=["performance"])
+
+
+def _build_trigger_bucket_items(rows: list[object]) -> list[TriggerAttributionBucketItem]:
+    items: list[TriggerAttributionBucketItem] = []
+    for row in rows:
+        decision_count = int(row["decision_count"] or 0)
+        actionable_decision_count = int(row["actionable_decision_count"] or 0)
+        order_count = int(row["order_count"] or 0)
+        filled_order_count = int(row["filled_order_count"] or 0)
+        items.append(
+            TriggerAttributionBucketItem(
+                bucket=str(row["bucket"]),
+                decision_count=decision_count,
+                actionable_decision_count=actionable_decision_count,
+                order_count=order_count,
+                filled_order_count=filled_order_count,
+                order_conversion_rate=(
+                    float(order_count) / float(actionable_decision_count)
+                    if actionable_decision_count
+                    else 0.0
+                ),
+                fill_conversion_rate=(
+                    float(filled_order_count) / float(actionable_decision_count)
+                    if actionable_decision_count
+                    else 0.0
+                ),
+            )
+        )
+    return items
 
 
 @router.get(
@@ -92,6 +123,153 @@ async def get_performance_summary(
 
     summary = await service.get_account_summary(aid)
     return AccountPerformanceSummaryView.model_validate(summary)
+
+
+@router.get(
+    "/performance-trigger-attribution",
+    response_model=TriggerPerformanceAttributionResponse,
+)
+async def get_performance_trigger_attribution(
+    account_id: str = Query(..., description="Account UUID"),
+    lookback_days: int = Query(14, ge=1, le=90),
+    db=Depends(get_db),
+) -> TriggerPerformanceAttributionResponse:
+    """계좌 기준 deterministic trigger/override의 주문·체결 전환을 집계한다."""
+    try:
+        aid = UUID(account_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid account_id UUID")
+
+    since_sql = "NOW() - ($2::int * INTERVAL '1 day')"
+    candidate_expr = "jsonb_typeof(td.decision_json->'candidate_vs_final') = 'object'"
+    actionable_expr = (
+        "COALESCE(td.decision_json#>>'{candidate_vs_final,candidate_intent}', 'no_action') "
+        "IN ('buy', 'sell', 'watch')"
+    )
+    filled_expr = (
+        "LOWER(CAST(COALESCE(o.status, 'unknown') AS text)) "
+        "IN ('filled', 'partially_filled')"
+    )
+
+    summary_row = await db.fetchrow(
+        f"""
+        SELECT
+            COUNT(*)::int AS total_decision_count,
+            COUNT(*) FILTER (
+                WHERE {candidate_expr}
+            )::int AS tracked_decision_count,
+            COUNT(*) FILTER (
+                WHERE {candidate_expr}
+                  AND {actionable_expr}
+            )::int AS actionable_decision_count,
+            COUNT(*) FILTER (
+                WHERE {candidate_expr}
+                  AND o.order_request_id IS NOT NULL
+            )::int AS ordered_decision_count,
+            COUNT(*) FILTER (
+                WHERE {candidate_expr}
+                  AND o.order_request_id IS NOT NULL
+                  AND {filled_expr}
+            )::int AS filled_decision_count
+        FROM trading.trade_decisions td
+        JOIN trading.decision_contexts dc
+          ON dc.decision_context_id = td.decision_context_id
+        LEFT JOIN trading.order_requests o
+          ON o.trade_decision_id = td.trade_decision_id
+        WHERE dc.account_id = $1
+          AND td.created_at >= {since_sql}
+        """,
+        aid,
+        lookback_days,
+    )
+
+    alignment_rows = await db.fetch(
+        f"""
+        SELECT
+            COALESCE(td.decision_json#>>'{{candidate_vs_final,alignment_status}}', 'unknown') AS bucket,
+            COUNT(*)::int AS decision_count,
+            COUNT(*) FILTER (
+                WHERE {actionable_expr}
+            )::int AS actionable_decision_count,
+            COUNT(*) FILTER (
+                WHERE o.order_request_id IS NOT NULL
+            )::int AS order_count,
+            COUNT(*) FILTER (
+                WHERE o.order_request_id IS NOT NULL
+                  AND {filled_expr}
+            )::int AS filled_order_count
+        FROM trading.trade_decisions td
+        JOIN trading.decision_contexts dc
+          ON dc.decision_context_id = td.decision_context_id
+        LEFT JOIN trading.order_requests o
+          ON o.trade_decision_id = td.trade_decision_id
+        WHERE dc.account_id = $1
+          AND td.created_at >= {since_sql}
+          AND {candidate_expr}
+        GROUP BY COALESCE(td.decision_json#>>'{{candidate_vs_final,alignment_status}}', 'unknown')
+        ORDER BY decision_count DESC, bucket ASC
+        """,
+        aid,
+        lookback_days,
+    )
+
+    candidate_rows = await db.fetch(
+        f"""
+        SELECT
+            COALESCE(td.decision_json#>>'{{candidate_vs_final,candidate_intent}}', 'unknown') AS bucket,
+            COUNT(*)::int AS decision_count,
+            COUNT(*) FILTER (
+                WHERE {actionable_expr}
+            )::int AS actionable_decision_count,
+            COUNT(*) FILTER (
+                WHERE o.order_request_id IS NOT NULL
+            )::int AS order_count,
+            COUNT(*) FILTER (
+                WHERE o.order_request_id IS NOT NULL
+                  AND {filled_expr}
+            )::int AS filled_order_count
+        FROM trading.trade_decisions td
+        JOIN trading.decision_contexts dc
+          ON dc.decision_context_id = td.decision_context_id
+        LEFT JOIN trading.order_requests o
+          ON o.trade_decision_id = td.trade_decision_id
+        WHERE dc.account_id = $1
+          AND td.created_at >= {since_sql}
+          AND {candidate_expr}
+        GROUP BY COALESCE(td.decision_json#>>'{{candidate_vs_final,candidate_intent}}', 'unknown')
+        ORDER BY decision_count DESC, bucket ASC
+        """,
+        aid,
+        lookback_days,
+    )
+
+    total_decision_count = int((summary_row or {}).get("total_decision_count") or 0)
+    tracked_decision_count = int((summary_row or {}).get("tracked_decision_count") or 0)
+    actionable_decision_count = int((summary_row or {}).get("actionable_decision_count") or 0)
+    ordered_decision_count = int((summary_row or {}).get("ordered_decision_count") or 0)
+    filled_decision_count = int((summary_row or {}).get("filled_decision_count") or 0)
+
+    return TriggerPerformanceAttributionResponse(
+        account_id=account_id,
+        lookback_days=lookback_days,
+        total_decision_count=total_decision_count,
+        tracked_decision_count=tracked_decision_count,
+        actionable_decision_count=actionable_decision_count,
+        ordered_decision_count=ordered_decision_count,
+        filled_decision_count=filled_decision_count,
+        decision_to_order_rate=(
+            float(ordered_decision_count) / float(actionable_decision_count)
+            if actionable_decision_count
+            else 0.0
+        ),
+        decision_to_fill_rate=(
+            float(filled_decision_count) / float(actionable_decision_count)
+            if actionable_decision_count
+            else 0.0
+        ),
+        alignment_items=_build_trigger_bucket_items(alignment_rows),
+        candidate_intent_items=_build_trigger_bucket_items(candidate_rows),
+    )
 
 
 @router.get(

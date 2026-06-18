@@ -25,6 +25,7 @@ from agent_trading.domain.entities import (
     PositionSnapshotEntity,
     ReconciliationRunEntity,
     RiskLimitSnapshotEntity,
+    SignalFeatureSnapshotEntity,
     TradeDecisionEntity,
 )
 from agent_trading.domain.enums import (
@@ -355,6 +356,27 @@ async def seeded_repos(
             max_daily_loss_limit_pct=Decimal("20.0"),
             drawdown_state="normal",
             kill_switch_active=False,
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+
+    await repos.signal_feature_snapshots.add(
+        SignalFeatureSnapshotEntity(
+            signal_feature_snapshot_id=uuid4(),
+            instrument_id=instrument_id,
+            timeframe="1d",
+            snapshot_at=datetime.now(timezone.utc),
+            feature_set_version="signal_backbone_v1",
+            bar_count=80,
+            sma_20=Decimal("101.25"),
+            sma_60=Decimal("98.10"),
+            return_1m_pct=Decimal("5.20"),
+            rsi_14=Decimal("61.40"),
+            fast_score=Decimal("0.32"),
+            slow_score=Decimal("0.48"),
+            overall_score=Decimal("0.41"),
+            component_scores_json={"slow_momentum": 0.55},
+            reason_codes=["above_sma20", "momentum_3m_positive"],
             created_at=datetime.now(timezone.utc),
         )
     )

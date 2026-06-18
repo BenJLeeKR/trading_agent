@@ -63,18 +63,27 @@ from agent_trading.domain.entities import (
     ExternalEventEntity,
     PositionSnapshotEntity,
     RiskLimitSnapshotEntity,
+    SignalFeatureSnapshotEntity,
 )
 from agent_trading.services.common_types import dataclass_to_dict
-from agent_trading.services.decision_orchestrator import (
-    AssembledContext,
+from agent_trading.services.market_regime import MarketRegimeAssessment
+from agent_trading.services.deterministic_trigger_engine import (
+    DeterministicTriggerAssessment,
+)
+from agent_trading.services.portfolio_allocation import PortfolioAllocationAssessment
+from agent_trading.services.strategy_selection import StrategySelectionAssessment
+from agent_trading.services.common_types import (
+    AIPolicyContextView,
     ScoreResult,
 )
 from agent_trading.services.translation import (
     is_missing_agent_symbol,
     normalize_decision_type,
 )
+from agent_trading.config.settings import _resolve_provider_model_id
 
 logger = logging.getLogger(__name__)
+_PER_AGENT_TIMEOUT = 30
 
 # Configure logging to stderr so parent can capture subprocess diagnostics.
 # Without this, all logger.info() calls are silently dropped.
@@ -136,7 +145,7 @@ class AgentSubprocessInput:
     prompt_id: str | None = None
 
     # --- Provider configuration for AI client creation ---
-    llm_provider: str = "deepseek"
+    llm_provider: str = ""
     provider_api_key: str = ""
     provider_base_url: str = ""
     provider_model_id: str = ""
@@ -251,6 +260,7 @@ def _reconstruct_decision_context(
         strategy_version_id=_safe_uuid(d.get("strategy_version_id")),
         trading_session_id=_safe_uuid(d.get("trading_session_id")),
         feature_snapshot_id=_safe_uuid(d.get("feature_snapshot_id")),
+        signal_feature_snapshot_id=_safe_uuid(d.get("signal_feature_snapshot_id")),
         position_snapshot_id=_safe_uuid(d.get("position_snapshot_id")),
         cash_balance_snapshot_id=_safe_uuid(d.get("cash_balance_snapshot_id")),
         input_bundle_uri=d.get("input_bundle_uri"),
@@ -337,8 +347,194 @@ def _reconstruct_risk_limit_snapshot(
     )
 
 
-def _reconstruct_context(raw: dict[str, Any]) -> AssembledContext:
-    """Reconstruct an ``AssembledContext`` from a JSON-safe dict.
+def _reconstruct_signal_feature_snapshot(
+    d: dict[str, Any] | None,
+) -> SignalFeatureSnapshotEntity | None:
+    """JSON-safe dict → SignalFeatureSnapshotEntity 변환."""
+    if d is None:
+        return None
+    if not isinstance(d, dict):
+        return d
+    return SignalFeatureSnapshotEntity(
+        signal_feature_snapshot_id=_safe_uuid(d.get("signal_feature_snapshot_id")),
+        instrument_id=_safe_uuid(d.get("instrument_id")),
+        timeframe=d.get("timeframe", "1d"),
+        snapshot_at=_safe_datetime(d.get("snapshot_at")),
+        feature_set_version=d.get("feature_set_version", "signal_backbone_v1"),
+        bar_count=int(d.get("bar_count", 0)),
+        sma_5=_safe_decimal(d.get("sma_5")),
+        sma_20=_safe_decimal(d.get("sma_20")),
+        sma_60=_safe_decimal(d.get("sma_60")),
+        price_vs_sma_20_pct=_safe_decimal(d.get("price_vs_sma_20_pct")),
+        price_vs_sma_60_pct=_safe_decimal(d.get("price_vs_sma_60_pct")),
+        return_1m_pct=_safe_decimal(d.get("return_1m_pct")),
+        return_3m_pct=_safe_decimal(d.get("return_3m_pct")),
+        volatility_20d_pct=_safe_decimal(d.get("volatility_20d_pct")),
+        atr_14_pct=_safe_decimal(d.get("atr_14_pct")),
+        rsi_14=_safe_decimal(d.get("rsi_14")),
+        average_volume_20d=_safe_decimal(d.get("average_volume_20d")),
+        volume_surge_ratio=_safe_decimal(d.get("volume_surge_ratio")),
+        fast_score=_safe_decimal(d.get("fast_score")),
+        slow_score=_safe_decimal(d.get("slow_score")),
+        overall_score=_safe_decimal(d.get("overall_score")),
+        component_scores_json=d.get("component_scores_json", {}),
+        reason_codes=d.get("reason_codes"),
+        created_at=_safe_datetime(d.get("created_at")),
+    )
+
+
+def _reconstruct_market_regime(
+    d: dict[str, Any] | None,
+) -> MarketRegimeAssessment | None:
+    """JSON-safe dict → MarketRegimeAssessment 변환."""
+    if d is None:
+        return None
+    if not isinstance(d, dict):
+        return d
+    strategy_weights_raw = d.get("strategy_weights", {})
+    strategy_weights = (
+        {
+            str(key): float(value)
+            for key, value in strategy_weights_raw.items()
+        }
+        if isinstance(strategy_weights_raw, dict)
+        else {}
+    )
+    reason_codes_raw = d.get("reason_codes", ())
+    reason_codes = tuple(reason_codes_raw) if isinstance(reason_codes_raw, (list, tuple)) else ()
+    return MarketRegimeAssessment(
+        regime_label=d.get("regime_label", "range_bound"),
+        volatility_regime=d.get("volatility_regime", "normal_volatility"),
+        risk_tone=d.get("risk_tone", "neutral"),
+        confidence=float(d.get("confidence", 0.0)),
+        half_life_hours=int(d.get("half_life_hours", 0)),
+        strategy_weights=strategy_weights,
+        reason_codes=reason_codes,
+    )
+
+
+def _reconstruct_strategy_selection(
+    d: dict[str, Any] | None,
+) -> StrategySelectionAssessment | None:
+    """JSON-safe dict → StrategySelectionAssessment 변환."""
+    if d is None:
+        return None
+    if not isinstance(d, dict):
+        return d
+    allowed_raw = d.get("allowed_strategies", ())
+    allowed = tuple(allowed_raw) if isinstance(allowed_raw, (list, tuple)) else ()
+    reasons_raw = d.get("reason_codes", ())
+    reasons = tuple(reasons_raw) if isinstance(reasons_raw, (list, tuple)) else ()
+    metadata_raw = d.get("metadata", {})
+    metadata = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+    return StrategySelectionAssessment(
+        preferred_strategy=d.get("preferred_strategy", "swing_momentum"),
+        allowed_strategies=allowed,
+        preferred_entry_style=d.get("preferred_entry_style", "LIMIT"),
+        preferred_time_horizon=d.get("preferred_time_horizon", "swing"),
+        confidence=float(d.get("confidence", 0.0)),
+        reason_codes=reasons,
+        metadata=metadata,
+    )
+
+
+def _reconstruct_portfolio_allocation(
+    d: dict[str, Any] | None,
+) -> PortfolioAllocationAssessment | None:
+    """JSON-safe dict → PortfolioAllocationAssessment 변환."""
+    if d is None:
+        return None
+    if not isinstance(d, dict):
+        return d
+    reasons_raw = d.get("reason_codes", ())
+    reasons = tuple(reasons_raw) if isinstance(reasons_raw, (list, tuple)) else ()
+    metadata_raw = d.get("metadata", {})
+    metadata = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+    return PortfolioAllocationAssessment(
+        target_weight_pct=float(d.get("target_weight_pct", 0.0)),
+        current_weight_pct=(
+            float(d.get("current_weight_pct"))
+            if d.get("current_weight_pct") is not None
+            else None
+        ),
+        max_single_position_pct=float(d.get("max_single_position_pct", 0.0)),
+        remaining_concentration_pct=(
+            float(d.get("remaining_concentration_pct"))
+            if d.get("remaining_concentration_pct") is not None
+            else None
+        ),
+        remaining_gross_budget_pct=(
+            float(d.get("remaining_gross_budget_pct"))
+            if d.get("remaining_gross_budget_pct") is not None
+            else None
+        ),
+        max_new_capital_pct=float(d.get("max_new_capital_pct", 0.0)),
+        orderable_cash=_safe_decimal(d.get("orderable_cash")),
+        available_allocation_cash=_safe_decimal(d.get("available_allocation_cash")),
+        recommended_max_order_value=_safe_decimal(d.get("recommended_max_order_value")),
+        allocation_bias=d.get("allocation_bias", "neutral"),
+        confidence=float(d.get("confidence", 0.0)),
+        reason_codes=reasons,
+        metadata=metadata,
+    )
+
+
+def _reconstruct_deterministic_trigger(
+    d: dict[str, Any] | None,
+) -> DeterministicTriggerAssessment | None:
+    """JSON-safe dict → DeterministicTriggerAssessment 변환."""
+    if d is None:
+        return None
+    if not isinstance(d, dict):
+        return d
+    candidate_set_raw = d.get("candidate_set", ())
+    candidate_set = (
+        tuple(candidate_set_raw)
+        if isinstance(candidate_set_raw, (list, tuple))
+        else ()
+    )
+    reasons_raw = d.get("reason_codes", ())
+    reasons = tuple(reasons_raw) if isinstance(reasons_raw, (list, tuple)) else ()
+    thresholds_raw = d.get("thresholds", {})
+    thresholds = (
+        {str(key): float(value) for key, value in thresholds_raw.items()}
+        if isinstance(thresholds_raw, dict)
+        else {}
+    )
+    metadata_raw = d.get("metadata", {})
+    metadata = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+    return DeterministicTriggerAssessment(
+        trigger_version=d.get("trigger_version", "deterministic_trigger_v1"),
+        primary_candidate=d.get("primary_candidate", "NO_ACTION"),
+        candidate_set=candidate_set,
+        watch_candidate=bool(d.get("watch_candidate", False)),
+        buy_candidate=bool(d.get("buy_candidate", False)),
+        sell_candidate=bool(d.get("sell_candidate", False)),
+        reduce_candidate=bool(d.get("reduce_candidate", False)),
+        candidate_confidence=float(d.get("candidate_confidence", 0.0)),
+        entry_score=(
+            float(d.get("entry_score"))
+            if d.get("entry_score") is not None
+            else None
+        ),
+        exit_score=(
+            float(d.get("exit_score"))
+            if d.get("exit_score") is not None
+            else None
+        ),
+        watch_score=(
+            float(d.get("watch_score"))
+            if d.get("watch_score") is not None
+            else None
+        ),
+        reason_codes=reasons,
+        thresholds=thresholds,
+        metadata=metadata,
+    )
+
+
+def _reconstruct_context(raw: dict[str, Any]) -> AIPolicyContextView:
+    """Reconstruct an ``AIPolicyContextView`` from a JSON-safe dict.
 
     Nested dataclass fields (``ScoreResult``, ``ExternalEventEntity``,
     ``DecisionContextEntity``) are reconstructed from their dict
@@ -396,16 +592,35 @@ def _reconstruct_context(raw: dict[str, Any]) -> AssembledContext:
     risk_limit_snapshot = _reconstruct_risk_limit_snapshot(
         raw.get("risk_limit_snapshot")
     )
+    signal_feature_snapshot = _reconstruct_signal_feature_snapshot(
+        raw.get("signal_feature_snapshot")
+    )
+    market_regime = _reconstruct_market_regime(
+        raw.get("market_regime")
+    )
+    strategy_selection = _reconstruct_strategy_selection(
+        raw.get("strategy_selection")
+    )
+    portfolio_allocation = _reconstruct_portfolio_allocation(
+        raw.get("portfolio_allocation")
+    )
+    deterministic_trigger = _reconstruct_deterministic_trigger(
+        raw.get("deterministic_trigger")
+    )
 
-    # ── Build AssembledContext with reconstructed fields ─────────────
-    return AssembledContext(
+    # ── Build AI Policy context view with reconstructed fields ───────
+    return AIPolicyContextView(
         decision_context=decision_context,
-        config_version=raw.get("config_version"),  # None-safe
         recent_events=recent_events,
         score=score,
         position_snapshot=position_snapshot,
         cash_balance_snapshot=cash_balance_snapshot,
         risk_limit_snapshot=risk_limit_snapshot,
+        signal_feature_snapshot=signal_feature_snapshot,
+        market_regime=market_regime,
+        strategy_selection=strategy_selection,
+        portfolio_allocation=portfolio_allocation,
+        deterministic_trigger=deterministic_trigger,
         source_type=raw.get("source_type", "core"),
     )
 
@@ -531,6 +746,79 @@ def _check_fdc_skip(
     return (False, "", FinalDecisionComposerOutput())
 
 
+def _build_ei_timeout_fallback(
+    request: AgentExecutionRequest,
+    *,
+    symbol: str,
+    input_event_count: int,
+) -> EventInterpretationOutput:
+    """EI timeout 시 안전한 fallback output을 생성한다."""
+    from agent_trading.services.ai_agents.event_interpretation import (
+        _finalize_ei_output,
+    )
+
+    if input_event_count > 0:
+        fallback = EventInterpretationOutput(
+            symbol=symbol,
+            aggregate_view=AggregateEventView(
+                overall_bias="neutral",
+                event_conflict=False,
+                top_reason_codes=(),
+                opposing_evidence=(),
+                evidence_strength="weak",
+                no_material_events=False,
+                interpretation_incomplete=True,
+                degraded_reason="timeout",
+            ),
+            detected_event_count=input_event_count,
+        )
+        return _finalize_ei_output(fallback, input_event_count=input_event_count)
+
+    fallback = EventInterpretationOutput(
+        symbol=symbol,
+        aggregate_view=AggregateEventView(
+            interpretation_incomplete=True,
+            degraded_reason="timeout",
+        ),
+    )
+    return _finalize_ei_output(
+        fallback,
+        recent_events=request.context.recent_events or (),
+    )
+
+
+def _build_ar_timeout_fallback(
+    request: AgentExecutionRequest,
+    *,
+    symbol: str,
+) -> AIRiskOutput:
+    """AR timeout 시 안전한 fallback output을 생성한다."""
+    return AIRiskOutput(
+        decision_context_id=(
+            str(request.decision_context_id)
+            if request.decision_context_id
+            else None
+        ),
+        symbol=symbol,
+    )
+
+
+def _build_fdc_timeout_fallback(
+    request: AgentExecutionRequest,
+    *,
+    symbol: str,
+) -> FinalDecisionComposerOutput:
+    """FDC timeout 시 안전한 fallback output을 생성한다."""
+    return FinalDecisionComposerOutput(
+        decision_context_id=(
+            str(request.decision_context_id)
+            if request.decision_context_id
+            else None
+        ),
+        symbol=symbol,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -559,14 +847,14 @@ async def main() -> None:
         logger.info(
             "Creating OpenAICompatibleClient: base_url=%s model_id=%s timeout=%s",
             inp.provider_base_url,
-            inp.provider_model_id or "deepseek-chat",
+            inp.provider_model_id or _resolve_provider_model_id(),
             inp.provider_timeout_seconds,
         )
         _diag("Creating OpenAICompatibleClient ...")
         provider_client = OpenAICompatibleClient(
             api_key=inp.provider_api_key,
             base_url=inp.provider_base_url,
-            model_id=inp.provider_model_id or "deepseek-chat",
+            model_id=inp.provider_model_id or _resolve_provider_model_id(),
             timeout_seconds=inp.provider_timeout_seconds,
         )
         _diag("OpenAICompatibleClient created")
@@ -587,7 +875,23 @@ async def main() -> None:
         request = _reconstruct_request(inp)
         input_event_count = len(request.context.recent_events)
         _diag(f"Context reconstructed: events={input_event_count}")
-        event_output: EventInterpretationOutput = await ei_agent.run(request)
+        try:
+            event_output = await asyncio.wait_for(
+                ei_agent.run(request),
+                timeout=_PER_AGENT_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "EventInterpretationAgent timed out after %ss — using fallback output. symbol=%s decision_context_id=%s",
+                _PER_AGENT_TIMEOUT,
+                inp.symbol,
+                inp.decision_context_id,
+            )
+            event_output = _build_ei_timeout_fallback(
+                request,
+                symbol=inp.symbol or "",
+                input_event_count=input_event_count,
+            )
         _diag(
             f"EventInterpretationAgent completed: symbol={event_output.symbol} "
             f"input_events={input_event_count} "
@@ -614,7 +918,22 @@ async def main() -> None:
         _diag("Starting AIRiskAgent.run() ...")
         ar_agent = AIRiskAgent(provider_client=provider_client, model_id=inp.provider_model_id)
         request_with_ei = _reconstruct_request(inp, event_output=event_output)
-        risk_output: AIRiskOutput = await ar_agent.run(request_with_ei)
+        try:
+            risk_output = await asyncio.wait_for(
+                ar_agent.run(request_with_ei),
+                timeout=_PER_AGENT_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "AIRiskAgent timed out after %ss — using fallback output. symbol=%s decision_context_id=%s",
+                _PER_AGENT_TIMEOUT,
+                inp.symbol,
+                inp.decision_context_id,
+            )
+            risk_output = _build_ar_timeout_fallback(
+                request_with_ei,
+                symbol=inp.symbol or event_output.symbol or "",
+            )
         _diag(f"AIRiskAgent completed: symbol={risk_output.symbol} risk_opinion={risk_output.risk_opinion}")
         logger.info(
             "AIRiskAgent completed: summary_len=%s symbol=%s risk_opinion=%s",
@@ -668,7 +987,22 @@ async def main() -> None:
             request_with_ei_ar = _reconstruct_request(
                 inp, event_output=event_output, risk_output=risk_output,
             )
-            composer_output: FinalDecisionComposerOutput = await fdc_agent.run(request_with_ei_ar)
+            try:
+                composer_output = await asyncio.wait_for(
+                    fdc_agent.run(request_with_ei_ar),
+                    timeout=_PER_AGENT_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "FinalDecisionComposerAgent timed out after %ss — using fallback output. symbol=%s decision_context_id=%s",
+                    _PER_AGENT_TIMEOUT,
+                    inp.symbol,
+                    inp.decision_context_id,
+                )
+                composer_output = _build_fdc_timeout_fallback(
+                    request_with_ei_ar,
+                    symbol=inp.symbol or event_output.symbol or "",
+                )
             _diag(f"FinalDecisionComposerAgent completed: symbol={composer_output.symbol} decision_type={composer_output.decision_type}")
             logger.info(
                 "FinalDecisionComposerAgent completed: summary_len=%s symbol=%s decision_type=%s confidence=%s",

@@ -59,6 +59,12 @@ def _inputs(
     max_order_qty: str | None = None,
     lot_size: str | None = None,
     reference_price: str | None = None,
+    average_daily_volume_20d: str | None = None,
+    accumulated_intraday_volume: str | None = None,
+    accumulated_intraday_turnover: str | None = None,
+    max_intraday_volume_participation_pct: str | None = None,
+    max_intraday_turnover_participation_pct: str | None = None,
+    max_average_daily_volume_participation_pct: str | None = None,
 ) -> SizingInputs:
     """Factory that converts string kwargs to ``Decimal`` for test readability."""
     kwargs: dict = dict(
@@ -70,6 +76,24 @@ def _inputs(
         kwargs["requested_price"] = Decimal(requested_price)
     if reference_price is not None:
         kwargs["reference_price"] = Decimal(reference_price)
+    if average_daily_volume_20d is not None:
+        kwargs["average_daily_volume_20d"] = Decimal(average_daily_volume_20d)
+    if accumulated_intraday_volume is not None:
+        kwargs["accumulated_intraday_volume"] = Decimal(accumulated_intraday_volume)
+    if accumulated_intraday_turnover is not None:
+        kwargs["accumulated_intraday_turnover"] = Decimal(accumulated_intraday_turnover)
+    if max_intraday_volume_participation_pct is not None:
+        kwargs["max_intraday_volume_participation_pct"] = Decimal(
+            max_intraday_volume_participation_pct
+        )
+    if max_intraday_turnover_participation_pct is not None:
+        kwargs["max_intraday_turnover_participation_pct"] = Decimal(
+            max_intraday_turnover_participation_pct
+        )
+    if max_average_daily_volume_participation_pct is not None:
+        kwargs["max_average_daily_volume_participation_pct"] = Decimal(
+            max_average_daily_volume_participation_pct
+        )
     if sizing_hint is not None:
         kwargs["sizing_hint"] = sizing_hint
     if current_position_qty is not None:
@@ -295,7 +319,7 @@ class TestReduce:
     """REDUCE decision type uses position data."""
 
     def test_reduce_from_position(self) -> None:
-        """REDUCE with position data → quantity = requested (capped by position)."""
+        """REDUCE with position data + no hint → requested quantity 유지."""
         result = calculate_sizing(
             _inputs(
                 decision_type="REDUCE",
@@ -307,6 +331,48 @@ class TestReduce:
         )
         assert result.quantity == Decimal("30")
         assert result.skip_reason is None
+
+    def test_reduce_hint_uses_position_fraction_as_sell_qty(self) -> None:
+        """factor=0.5면 현재 보유수량의 절반을 매도 수량으로 계산한다."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="REDUCE",
+                side=OrderSide.SELL,
+                requested_quantity="1",
+                current_position_qty="100",
+                current_position_avg_price="50",
+                sizing_hint=SizingHint(size_mode="reduce", size_adjustment_factor=0.5),
+            )
+        )
+        assert result.quantity == Decimal("50")
+
+    def test_reduce_hint_full_exit_factor_one(self) -> None:
+        """factor=1.0이면 1주 fallback이 아니라 전량 매도가 되어야 한다."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="REDUCE",
+                side=OrderSide.SELL,
+                requested_quantity="1",
+                current_position_qty="24",
+                current_position_avg_price="50",
+                sizing_hint=SizingHint(size_mode="reduce", size_adjustment_factor=1.0),
+            )
+        )
+        assert result.quantity == Decimal("24")
+
+    def test_reduce_hint_small_fraction_keeps_minimum_one_share(self) -> None:
+        """factor가 매우 작아도 축소 의도가 있으면 최소 1주를 반환한다."""
+        result = calculate_sizing(
+            _inputs(
+                decision_type="REDUCE",
+                side=OrderSide.SELL,
+                requested_quantity="1",
+                current_position_qty="3",
+                current_position_avg_price="50",
+                sizing_hint=SizingHint(size_mode="reduce", size_adjustment_factor=0.1),
+            )
+        )
+        assert result.quantity == Decimal("1")
 
     def test_reduce_exceeds_position_capped(self) -> None:
         """REDUCE with requested qty > position → capped to position."""
@@ -1738,3 +1804,54 @@ class TestBuyBaselineWithAllocationPct:
         assert result.quantity == Decimal("9"), (
             f"Expected 9, got {result.quantity}"
         )
+
+
+class TestLiquidityParticipationConstraint:
+    def test_intraday_volume_participation_caps_buy_quantity(self) -> None:
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="500",
+                requested_price="10000",
+                orderable_amount="50000000",
+                accumulated_intraday_volume="2000",
+                max_intraday_volume_participation_pct="3",
+            )
+        )
+
+        assert result.quantity == Decimal("60")
+        assert "intraday_volume_participation_cap" in result.applied_constraints
+
+    def test_intraday_turnover_participation_caps_market_buy_quantity(self) -> None:
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="500",
+                requested_price=None,
+                reference_price="10000",
+                orderable_amount="50000000",
+                accumulated_intraday_turnover="3000000",
+                max_intraday_turnover_participation_pct="5",
+            )
+        )
+
+        assert result.quantity == Decimal("15")
+        assert "intraday_turnover_participation_cap" in result.applied_constraints
+
+    def test_average_daily_volume_participation_fallback_caps_buy_quantity(self) -> None:
+        result = calculate_sizing(
+            _inputs(
+                decision_type="BUY",
+                side=OrderSide.BUY,
+                requested_quantity="500",
+                requested_price="10000",
+                orderable_amount="50000000",
+                average_daily_volume_20d="1000",
+                max_average_daily_volume_participation_pct="2",
+            )
+        )
+
+        assert result.quantity == Decimal("20")
+        assert "average_daily_volume_participation_cap" in result.applied_constraints

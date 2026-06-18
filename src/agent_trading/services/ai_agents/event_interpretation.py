@@ -27,6 +27,7 @@ from typing import Any
 
 import httpx
 
+from agent_trading.config.settings import _resolve_provider_model_id
 from agent_trading.services.ai_agents._prompt_config import (
     MAX_EVENTS_EI,
     MAX_INTERPRETED_EVENTS,
@@ -487,7 +488,7 @@ class EventInterpretationAgent:
     provider_client
         The ``AIProviderClient`` instance used to call the external Provider.
     model_id
-        The model identifier (e.g. ``"deepseek-v4-pro"``).
+        The model identifier (e.g. ``"gemini-3.5-flash"``).
     schema_version
         Version string reported via the ``schema_version`` property.
     """
@@ -496,11 +497,11 @@ class EventInterpretationAgent:
         self,
         provider_client: AIProviderClient,
         *,
-        model_id: str = "deepseek-v4-pro",
+        model_id: str | None = None,
         schema_version: str = "v1",
     ) -> None:
         self._provider = provider_client
-        self._model_id = model_id
+        self._model_id = model_id or _resolve_provider_model_id()
         self._schema_version = schema_version
         # Error metadata from the most recent run() call.
         # Reset to None at the start of every run() call.

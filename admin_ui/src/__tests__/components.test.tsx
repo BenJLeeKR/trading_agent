@@ -316,6 +316,27 @@ describe("DataTable pagination", () => {
     expect(screen.getByText("3")).toBeInTheDocument();
   });
 
+  it("renders three adjacent page buttons on each side when total pages are large", () => {
+    render(
+      <DataTable
+        columns={testColumns}
+        data={testData}
+        idKey="id"
+        currentPage={1}
+        pageSize={20}
+        totalItems={300}
+        onPageChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "2" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "3" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "4" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "15" })).toBeInTheDocument();
+    expect(screen.getByText("...")).toBeInTheDocument();
+  });
+
   /* Scenario 17: Pagination 미제공 시 footer 미표시 */
   it("does not render pagination footer when pagination props are not provided", () => {
     render(

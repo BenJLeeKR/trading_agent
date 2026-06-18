@@ -35,6 +35,11 @@ from agent_trading.services.ai_agents.schemas import (
 )
 from agent_trading.services.decision_orchestrator import AssembledContext
 from scripts.run_agent_subprocess import AgentSubprocessInput, _check_fdc_skip
+from scripts.run_agent_subprocess import (
+    _build_ar_timeout_fallback,
+    _build_ei_timeout_fallback,
+    _build_fdc_timeout_fallback,
+)
 
 
 # =========================================================================
@@ -213,9 +218,67 @@ def _make_cash_shortage_context(
     )
 
 
+def _make_request(
+    context: AssembledContext,
+    *,
+    decision_context_id: UUID | None = None,
+    symbol: str = "005930",
+) -> AgentExecutionRequest:
+    """Timeout fallback 테스트용 request helper."""
+    return AgentExecutionRequest(
+        decision_context_id=decision_context_id,
+        correlation_id="test-timeout-fallback",
+        context=context,
+        symbol=symbol,
+        market="KRX",
+    )
+
+
 # =========================================================================
 # Test: Condition 1 — Risk "reject"
 # =========================================================================
+
+
+def test_build_ei_timeout_fallback_marks_degraded_with_events() -> None:
+    """EI timeout fallback은 degraded + detected_event_count를 보존해야 한다."""
+    context = _make_context_with_events()
+    request = _make_request(context)
+
+    output = _build_ei_timeout_fallback(
+        request,
+        symbol="005930",
+        input_event_count=1,
+    )
+
+    assert output.symbol == "005930"
+    assert output.detected_event_count == 1
+    assert output.aggregate_view.interpretation_incomplete is True
+    assert output.aggregate_view.degraded_reason == "timeout"
+    assert output.aggregate_view.no_material_events is False
+
+
+def test_build_ar_timeout_fallback_preserves_symbol_and_context() -> None:
+    """AR timeout fallback은 symbol과 decision_context_id를 보존해야 한다."""
+    ctx_id = uuid4()
+    request = _make_request(_make_empty_context(), decision_context_id=ctx_id)
+
+    output = _build_ar_timeout_fallback(request, symbol="000660")
+
+    assert output.symbol == "000660"
+    assert output.decision_context_id == str(ctx_id)
+    assert output.risk_opinion == "allow"
+
+
+def test_build_fdc_timeout_fallback_preserves_symbol_and_context() -> None:
+    """FDC timeout fallback은 symbol과 decision_context_id를 보존해야 한다."""
+    ctx_id = uuid4()
+    request = _make_request(_make_empty_context(), decision_context_id=ctx_id)
+
+    output = _build_fdc_timeout_fallback(request, symbol="000660")
+
+    assert output.symbol == "000660"
+    assert output.decision_context_id == str(ctx_id)
+    assert output.decision_type == "HOLD"
 
 
 class TestFdcSkipRiskReject:

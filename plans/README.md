@@ -72,6 +72,8 @@
 | 49 | [`49_admin_ui_test_hardening.md`](./49_admin_ui_test_hardening.md) | Admin UI Smoke / Component Test Hardening: Vitest + RTL + jsdom 기반 24개 테스트 (P0 16 + P1 8). Auth flow 완전 커버, Dashboard/OrdersView smoke, 공통 컴포넌트 smoke. URL+Method 분기 명확화. |
 | 50 | [`50_admin_ui_test_coverage_phase2.md`](./50_admin_ui_test_coverage_phase2.md) | Admin UI Test Coverage Phase 2: P0 19개 (OrderDetail 7, AccountsView 6, ReconciliationView 6) + P1 7개 (Layout 4, DecisionsView 3) = 26개 신규. 총 50개 테스트로 확장. Fixture 8종 추가. |
 | 51 | [`51_admin_ui_operations_workflow_enhancements.md`](./51_admin_ui_operations_workflow_enhancements.md) | Admin UI Operations Workflow Enhancements (P0): OrdersView filter/search, OrderDetail → Decisions drill-down, ReconciliationView quick-filter + lock 강조, Dashboard signal + drill-down links. Read-only UX enhancement. 8개 신규 테스트 = 총 58 tests. |
+| 52 | [`[ANALYSIS] expected_return_architecture_refactor_analysis.md`](./%5BANALYSIS%5D%20expected_return_architecture_refactor_analysis.md) | 기대수익률 극대화 관점에서 현재 구현의 구조 리팩토링 필요 영역 분석. deterministic trigger/candidate 계층 부재, orchestrator 비대화, prompt projection 중복, 판단 결과 스키마 분리 필요, order construction/attribution 계층 정리 우선순위 제시. |
+| 53 | [`[DESIGN] deterministic_trigger_engine_v1.md`](./%5BDESIGN%5D%20deterministic_trigger_engine_v1.md) | deterministic trigger/candidate 계층 V1 설계. `WATCH/BUY/SELL/REDUCE` 후보 생성 규칙, source_type별 정책, AI override 경계, persistence/observability/rollout/test 전략 정의. |
 
 ## 빠른 추천 경로
 

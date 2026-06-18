@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -17,6 +19,8 @@ from agent_trading.domain.entities import (
     OrderRequestEntity,
     PositionSnapshotEntity,
     RiskLimitSnapshotEntity,
+    SignalFeatureSnapshotEntity,
+    TradeDecisionEntity,
 )
 from agent_trading.domain.enums import (
     DecisionType,
@@ -25,21 +29,32 @@ from agent_trading.domain.enums import (
     OrderSide,
     OrderStatus,
     OrderType,
+    PipelineStopReason,
     TimeInForce,
 )
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
+from agent_trading.services.ai_agents.schemas import FinalDecisionComposerOutput
+from agent_trading.services.common_types import AgentExecutionBundle
 from agent_trading.services.decision_orchestrator import (
     AIDecisionInputs,
     AssembledContext,
+    DeterministicDerivationBundle,
     DecisionOrchestratorService,
     OrderIntent,
     ScoreResult,
     StubScoreCalculator,
 )
 from agent_trading.services.execution_service import ExecutionService
+from agent_trading.services.held_position_policy import is_held_position_sell_path
+from agent_trading.services.market_regime import MarketRegimeAssessment
+from agent_trading.services.deterministic_trigger_engine import (
+    DeterministicTriggerAssessment,
+)
+from agent_trading.services.portfolio_allocation import PortfolioAllocationAssessment
 from agent_trading.services.sizing_engine import (
+    SizingResult,
     SizingInputs,
     calculate_sizing,
 )
@@ -214,6 +229,217 @@ async def test_assemble_preserves_request_fields(service, sample_request):
     assert intent.request.time_in_force == TimeInForce.DAY
 
 
+@pytest.mark.asyncio
+async def test_assemble_loads_latest_signal_feature_snapshot(
+    seeded_service_with_account: DecisionOrchestratorService,
+    sample_request: SubmitOrderRequest,
+) -> None:
+    repos = seeded_service_with_account._repos
+    instrument = InstrumentEntity(
+        instrument_id=uuid4(),
+        symbol=sample_request.symbol,
+        market_code=sample_request.market,
+        asset_class="KR_STOCK",
+        currency="KRW",
+        name="삼성전자",
+    )
+    repos.instruments._items[instrument.instrument_id] = instrument
+    snapshot = SignalFeatureSnapshotEntity(
+        signal_feature_snapshot_id=uuid4(),
+        instrument_id=instrument.instrument_id,
+        timeframe="1d",
+        snapshot_at=datetime.now(timezone.utc),
+        feature_set_version="signal_backbone_v1",
+        bar_count=80,
+        fast_score=Decimal("0.31"),
+        slow_score=Decimal("0.42"),
+        overall_score=Decimal("0.37"),
+        return_3m_pct=Decimal("7.00"),
+        price_vs_sma_60_pct=Decimal("4.00"),
+        component_scores_json={"slow_momentum": 0.4},
+    )
+    await repos.signal_feature_snapshots.add(snapshot)
+
+    account = next(iter(repos.accounts._items.values()))
+    config = next(iter(repos.config_versions._items.values()))
+    repos.accounts.find_one = AsyncMock(return_value=account)  # type: ignore[method-assign]
+    repos.config_versions.get_active = AsyncMock(  # type: ignore[method-assign]
+        return_value=config
+    )
+    sample_request = dataclasses.replace(
+        sample_request,
+        strategy_id=str(uuid4()),
+    )
+
+    intent = await seeded_service_with_account.assemble(sample_request)
+
+    assert intent.context.signal_feature_snapshot is not None
+    assert (
+        intent.context.signal_feature_snapshot.signal_feature_snapshot_id
+        == snapshot.signal_feature_snapshot_id
+    )
+    assert intent.context.market_regime is not None
+    assert intent.context.market_regime.regime_label == "bullish_trend"
+    assert intent.context.strategy_selection is not None
+    assert intent.context.strategy_selection.preferred_strategy == "swing_momentum"
+    assert intent.context.portfolio_allocation is not None
+    assert intent.context.portfolio_allocation.target_weight_pct == 8.0
+    assert intent.context.deterministic_trigger is not None
+    assert intent.context.deterministic_trigger.primary_candidate in {
+        "BUY_CANDIDATE",
+        "WATCH",
+    }
+    assert intent.context.decision_context is not None
+    assert (
+        intent.context.decision_context.signal_feature_snapshot_id
+        == snapshot.signal_feature_snapshot_id
+    )
+
+
+@pytest.mark.asyncio
+async def test_derive_deterministic_context_components_returns_expected_bundle(
+    seeded_service_with_account: DecisionOrchestratorService,
+    sample_request: SubmitOrderRequest,
+) -> None:
+    repos = seeded_service_with_account._repos
+    instrument = InstrumentEntity(
+        instrument_id=uuid4(),
+        symbol=sample_request.symbol,
+        market_code=sample_request.market,
+        asset_class="KR_STOCK",
+        currency="KRW",
+        name="삼성전자",
+    )
+    repos.instruments._items[instrument.instrument_id] = instrument
+    snapshot = SignalFeatureSnapshotEntity(
+        signal_feature_snapshot_id=uuid4(),
+        instrument_id=instrument.instrument_id,
+        timeframe="1d",
+        snapshot_at=datetime.now(timezone.utc),
+        feature_set_version="signal_backbone_v1",
+        bar_count=80,
+        fast_score=Decimal("0.35"),
+        slow_score=Decimal("0.40"),
+        overall_score=Decimal("0.55"),
+        return_3m_pct=Decimal("8.00"),
+        price_vs_sma_60_pct=Decimal("5.00"),
+        component_scores_json={},
+    )
+    await repos.signal_feature_snapshots.add(snapshot)
+
+    bundle = await seeded_service_with_account._derive_deterministic_context_components(
+        request=dataclasses.replace(
+            sample_request,
+            strategy_id=str(uuid4()),
+            metadata={"source_type": "core"},
+        ),
+        config_version=next(iter(repos.config_versions._items.values())),
+        instrument=instrument,
+        position_snapshot=None,
+        cash_balance_snapshot=None,
+        risk_limit_snapshot=None,
+    )
+
+    assert bundle.source_type == "core"
+    assert bundle.signal_feature_snapshot is not None
+    assert bundle.signal_feature_snapshot.signal_feature_snapshot_id == snapshot.signal_feature_snapshot_id
+    assert bundle.market_regime is not None
+    assert bundle.strategy_selection is not None
+    assert bundle.portfolio_allocation is not None
+    assert bundle.deterministic_trigger is not None
+
+
+def test_build_ai_policy_context_view_projects_deterministic_fields(
+    service: DecisionOrchestratorService,
+) -> None:
+    now = datetime.now(timezone.utc)
+    decision_context = DecisionContextEntity(
+        decision_context_id=uuid4(),
+        account_id=uuid4(),
+        strategy_id=uuid4(),
+        config_version_id=uuid4(),
+        market_timestamp=now,
+        correlation_id="corr-policy-view",
+    )
+    event = ExternalEventEntity(
+        event_id=uuid4(),
+        event_type="filing",
+        source_name="dart",
+        published_at=now,
+        symbol="005930",
+        market="KRX",
+    )
+    score = ScoreResult(score=0.61, threshold=0.5, reason_codes=("momentum",))
+    market_regime = MarketRegimeAssessment(
+        regime_label="bullish_trend",
+        volatility_regime="normal_volatility",
+        risk_tone="risk_on",
+        confidence=0.7,
+        half_life_hours=24,
+        strategy_weights={"swing_momentum": 0.5},
+        reason_codes=("trend_up",),
+    )
+    portfolio_allocation = PortfolioAllocationAssessment(
+        target_weight_pct=8.0,
+        current_weight_pct=2.0,
+        max_single_position_pct=10.0,
+        remaining_concentration_pct=8.0,
+        remaining_gross_budget_pct=60.0,
+        max_new_capital_pct=6.0,
+        orderable_cash=Decimal("1000000"),
+        available_allocation_cash=Decimal("900000"),
+        recommended_max_order_value=Decimal("700000"),
+        allocation_bias="accumulate",
+        confidence=0.7,
+        reason_codes=("portfolio_bullish_target",),
+        metadata={"source_type": "core"},
+    )
+    deterministic_trigger = DeterministicTriggerAssessment(
+        trigger_version="deterministic_trigger_v1",
+        primary_candidate="WATCH",
+        candidate_set=("WATCH", "BUY_CANDIDATE"),
+        watch_candidate=True,
+        buy_candidate=True,
+        sell_candidate=False,
+        reduce_candidate=False,
+        candidate_confidence=0.58,
+        entry_score=0.58,
+        exit_score=0.20,
+        watch_score=0.61,
+        reason_codes=("trigger_core_watch_path",),
+        thresholds={"watch_candidate_threshold": 0.45},
+        metadata={"source_type": "core"},
+    )
+    assembled_context = AssembledContext(
+        decision_context=decision_context,
+        config_version=ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=uuid4(),
+            environment=Environment.PAPER,
+            version_tag="v1",
+            config_json={"internal_only": True},
+            checksum="checksum",
+        ),
+        recent_events=(event,),
+        score=score,
+        market_regime=market_regime,
+        portfolio_allocation=portfolio_allocation,
+        deterministic_trigger=deterministic_trigger,
+        source_type="core",
+    )
+
+    policy_view = service._build_ai_policy_context_view(assembled_context)
+
+    assert policy_view.decision_context is decision_context
+    assert policy_view.recent_events == (event,)
+    assert policy_view.score == score
+    assert policy_view.market_regime is market_regime
+    assert policy_view.portfolio_allocation is portfolio_allocation
+    assert policy_view.deterministic_trigger is deterministic_trigger
+    assert policy_view.source_type == "core"
+    assert not hasattr(policy_view, "config_version")
+
+
 # ---------------------------------------------------------------------------
 # Priority 3: AssembledContext
 # ---------------------------------------------------------------------------
@@ -235,6 +461,10 @@ class TestAssembledContext:
         assert ctx.position_snapshot is None
         assert ctx.cash_balance_snapshot is None
         assert ctx.risk_limit_snapshot is None
+        assert ctx.signal_feature_snapshot is None
+        assert ctx.market_regime is None
+        assert ctx.portfolio_allocation is None
+        assert ctx.deterministic_trigger is None
 
     def test_full_construction(self) -> None:
         """AssembledContext can be constructed with all fields."""
@@ -293,6 +523,66 @@ class TestAssembledContext:
             kill_switch_active=False,
             blocked_reason_codes=None,
         )
+        signal_feature_snapshot = SignalFeatureSnapshotEntity(
+            signal_feature_snapshot_id=uuid4(),
+            instrument_id=uuid4(),
+            timeframe="1d",
+            snapshot_at=now,
+            feature_set_version="signal_backbone_v1",
+            bar_count=80,
+            overall_score=Decimal("0.51"),
+            component_scores_json={"slow_momentum": 0.6},
+        )
+        market_regime = MarketRegimeAssessment(
+            regime_label="bullish_trend",
+            volatility_regime="normal_volatility",
+            risk_tone="risk_on",
+            confidence=0.8,
+            half_life_hours=24,
+            strategy_weights={"swing_momentum": 0.45},
+            reason_codes=("trend_up",),
+        )
+        from agent_trading.services.strategy_selection import StrategySelectionAssessment
+        strategy_selection = StrategySelectionAssessment(
+            preferred_strategy="swing_momentum",
+            allowed_strategies=("swing_momentum", "event_continuation"),
+            preferred_entry_style="LIMIT",
+            preferred_time_horizon="swing",
+            confidence=0.8,
+            reason_codes=("bullish_trend_momentum",),
+            metadata={"source_type": "core"},
+        )
+        portfolio_allocation = PortfolioAllocationAssessment(
+            target_weight_pct=8.0,
+            current_weight_pct=1.2,
+            max_single_position_pct=10.0,
+            remaining_concentration_pct=8.8,
+            remaining_gross_budget_pct=60.0,
+            max_new_capital_pct=6.8,
+            orderable_cash=Decimal("1000000"),
+            available_allocation_cash=Decimal("1000000"),
+            recommended_max_order_value=Decimal("1000000"),
+            allocation_bias="accumulate",
+            confidence=0.8,
+            reason_codes=("portfolio_bullish_target",),
+            metadata={"source_type": "core"},
+        )
+        deterministic_trigger = DeterministicTriggerAssessment(
+            trigger_version="deterministic_trigger_v1",
+            primary_candidate="WATCH",
+            candidate_set=("WATCH",),
+            watch_candidate=True,
+            buy_candidate=False,
+            sell_candidate=False,
+            reduce_candidate=False,
+            candidate_confidence=0.52,
+            entry_score=0.52,
+            exit_score=0.18,
+            watch_score=0.52,
+            reason_codes=("trigger_core_watch_path",),
+            thresholds={"watch_candidate_threshold": 0.45},
+            metadata={"source_type": "core"},
+        )
 
         ctx = AssembledContext(
             decision_context=decision_context,
@@ -302,6 +592,11 @@ class TestAssembledContext:
             position_snapshot=position_snapshot,
             cash_balance_snapshot=cash_balance_snapshot,
             risk_limit_snapshot=risk_limit_snapshot,
+            signal_feature_snapshot=signal_feature_snapshot,
+            market_regime=market_regime,
+            strategy_selection=strategy_selection,
+            portfolio_allocation=portfolio_allocation,
+            deterministic_trigger=deterministic_trigger,
         )
 
         assert ctx.decision_context is decision_context
@@ -314,6 +609,11 @@ class TestAssembledContext:
         assert ctx.position_snapshot is position_snapshot
         assert ctx.cash_balance_snapshot is cash_balance_snapshot
         assert ctx.risk_limit_snapshot is risk_limit_snapshot
+        assert ctx.signal_feature_snapshot is signal_feature_snapshot
+        assert ctx.market_regime is market_regime
+        assert ctx.strategy_selection is strategy_selection
+        assert ctx.portfolio_allocation is portfolio_allocation
+        assert ctx.deterministic_trigger is deterministic_trigger
 
     def test_frozen(self) -> None:
         """AssembledContext is frozen."""
@@ -866,6 +1166,276 @@ class TestTradeDecisionPersistence:
         assert len(decisions) == 2
         assert first.request.decision_id != second.request.decision_id
 
+
+class TestWatchCandidateUpgradeGuard:
+    @pytest.mark.asyncio
+    async def test_core_watch_candidate_blocks_fdc_approve_upgrade(
+        self, sample_request: SubmitOrderRequest
+    ) -> None:
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        strategy_id = uuid4()
+
+        config_version = ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=uuid4(),
+            environment=Environment.PAPER,
+            version_tag="v1",
+            config_json={},
+            checksum="sum",
+            activated_at=now,
+        )
+        await repos.config_versions.add(config_version)
+
+        context = DecisionContextEntity(
+            decision_context_id=uuid4(),
+            account_id=uuid4(),
+            strategy_id=strategy_id,
+            config_version_id=config_version.config_version_id,
+            market_timestamp=now,
+            correlation_id="corr-watch-guard",
+            created_at=now,
+        )
+        await repos.decision_contexts.add(context)
+
+        service = DecisionOrchestratorService(
+            repos=repos,
+            use_subprocess_isolation=False,
+        )
+        deterministic_trigger = DeterministicTriggerAssessment(
+            trigger_version="deterministic_trigger_v1",
+            primary_candidate="WATCH",
+            candidate_set=("WATCH",),
+            watch_candidate=True,
+            buy_candidate=False,
+            sell_candidate=False,
+            reduce_candidate=False,
+            candidate_confidence=0.58,
+            entry_score=0.58,
+            exit_score=0.22,
+            watch_score=0.58,
+            reason_codes=("trigger_watch_candidate",),
+            thresholds={
+                "buy_candidate_threshold": 0.65,
+                "watch_candidate_threshold": 0.45,
+            },
+            metadata={"source_type": "core"},
+        )
+        service._derive_deterministic_context_components = AsyncMock(  # type: ignore[method-assign]
+            return_value=DeterministicDerivationBundle(
+                source_type="core",
+                deterministic_trigger=deterministic_trigger,
+            )
+        )
+        service._run_agents = AsyncMock(  # type: ignore[method-assign]
+            return_value=AgentExecutionBundle(
+                ai_inputs=AIDecisionInputs(
+                    decision_type="APPROVE",
+                    side="BUY",
+                    confidence=0.81,
+                    conviction=0.77,
+                    reason_codes=("fdc_entry",),
+                ),
+                composer_output=FinalDecisionComposerOutput(
+                    decision_type="APPROVE",
+                    side="BUY",
+                    confidence=0.81,
+                    conviction=0.77,
+                    reason_codes=("fdc_entry",),
+                    summary="한국어 요약",
+                ),
+            )
+        )
+
+        intent = await service.assemble(
+            sample_request,
+            decision_context_id=context.decision_context_id,
+        )
+
+        assert intent.ai_backend_inputs.decision_type == "WATCH"
+        assert intent.ai_backend_inputs.side == ""
+        assert "watch_candidate_guard" in intent.ai_backend_inputs.reason_codes
+
+        persisted = await repos.trade_decisions.get_by_context(
+            context.decision_context_id
+        )
+        assert persisted is not None
+        assert persisted.decision_type == DecisionType.WATCH
+        assert persisted.side == OrderSide.BUY
+        assert (
+            persisted.decision_json["candidate_vs_final"]["alignment_status"]
+            == "matched"
+        )
+        assert (
+            persisted.decision_json["candidate_vs_final"]["final_decision_type"]
+            == "WATCH"
+        )
+
+    @pytest.mark.asyncio
+    async def test_market_overlay_watch_candidate_allows_fdc_approve_upgrade(
+        self, sample_request: SubmitOrderRequest
+    ) -> None:
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+
+        context = DecisionContextEntity(
+            decision_context_id=uuid4(),
+            account_id=uuid4(),
+            strategy_id=uuid4(),
+            config_version_id=uuid4(),
+            market_timestamp=now,
+            correlation_id="corr-market-overlay",
+            created_at=now,
+        )
+        await repos.decision_contexts.add(context)
+
+        service = DecisionOrchestratorService(
+            repos=repos,
+            use_subprocess_isolation=False,
+        )
+        deterministic_trigger = DeterministicTriggerAssessment(
+            trigger_version="deterministic_trigger_v1",
+            primary_candidate="WATCH",
+            candidate_set=("WATCH",),
+            watch_candidate=True,
+            buy_candidate=False,
+            sell_candidate=False,
+            reduce_candidate=False,
+            candidate_confidence=0.57,
+            entry_score=0.57,
+            exit_score=0.19,
+            watch_score=0.57,
+            reason_codes=("trigger_watch_candidate",),
+            thresholds={
+                "buy_candidate_threshold": 0.65,
+                "watch_candidate_threshold": 0.45,
+            },
+            metadata={"source_type": "market_overlay"},
+        )
+        service._derive_deterministic_context_components = AsyncMock(  # type: ignore[method-assign]
+            return_value=DeterministicDerivationBundle(
+                source_type="market_overlay",
+                deterministic_trigger=deterministic_trigger,
+            )
+        )
+        service._run_agents = AsyncMock(  # type: ignore[method-assign]
+            return_value=AgentExecutionBundle(
+                ai_inputs=AIDecisionInputs(
+                    decision_type="APPROVE",
+                    side="BUY",
+                    confidence=0.74,
+                    conviction=0.70,
+                    reason_codes=("fdc_overlay_entry",),
+                ),
+                composer_output=FinalDecisionComposerOutput(
+                    decision_type="APPROVE",
+                    side="BUY",
+                    confidence=0.74,
+                    conviction=0.70,
+                    reason_codes=("fdc_overlay_entry",),
+                    summary="한국어 요약",
+                ),
+            )
+        )
+
+        intent = await service.assemble(
+            sample_request,
+            decision_context_id=context.decision_context_id,
+        )
+
+        assert intent.ai_backend_inputs.decision_type == "APPROVE"
+        assert intent.ai_backend_inputs.side == "BUY"
+        assert "watch_candidate_guard" not in intent.ai_backend_inputs.reason_codes
+
+    @pytest.mark.asyncio
+    async def test_core_buy_eligibility_guard_blocks_no_action_to_approve_upgrade(
+        self, sample_request: SubmitOrderRequest
+    ) -> None:
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        strategy_id = uuid4()
+
+        config_version = ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=uuid4(),
+            environment=Environment.PAPER,
+            version_tag="v1",
+            config_json={},
+            checksum="sum",
+            activated_at=now,
+        )
+        await repos.config_versions.add(config_version)
+
+        context = DecisionContextEntity(
+            decision_context_id=uuid4(),
+            account_id=uuid4(),
+            strategy_id=strategy_id,
+            config_version_id=config_version.config_version_id,
+            market_timestamp=now,
+            correlation_id="corr-buy-eligibility-guard",
+            created_at=now,
+        )
+        await repos.decision_contexts.add(context)
+
+        service = DecisionOrchestratorService(
+            repos=repos,
+            use_subprocess_isolation=False,
+        )
+        deterministic_trigger = DeterministicTriggerAssessment(
+            trigger_version="deterministic_trigger_v1",
+            primary_candidate="NO_ACTION",
+            candidate_set=("NO_ACTION",),
+            watch_candidate=False,
+            buy_candidate=False,
+            sell_candidate=False,
+            reduce_candidate=False,
+            candidate_confidence=0.52,
+            entry_score=0.62,
+            exit_score=0.18,
+            watch_score=0.20,
+            eligibility_passed=False,
+            eligibility_reasons=("eligibility_low_turnover",),
+            reason_codes=("trigger_no_action",),
+            thresholds={
+                "buy_candidate_threshold": 0.65,
+                "watch_candidate_threshold": 0.45,
+            },
+            metadata={"source_type": "core"},
+        )
+        service._derive_deterministic_context_components = AsyncMock(  # type: ignore[method-assign]
+            return_value=DeterministicDerivationBundle(
+                source_type="core",
+                deterministic_trigger=deterministic_trigger,
+            )
+        )
+        service._run_agents = AsyncMock(  # type: ignore[method-assign]
+            return_value=AgentExecutionBundle(
+                ai_inputs=AIDecisionInputs(
+                    decision_type="APPROVE",
+                    side="BUY",
+                    confidence=0.83,
+                    conviction=0.78,
+                    reason_codes=("fdc_entry",),
+                ),
+                composer_output=FinalDecisionComposerOutput(
+                    decision_type="APPROVE",
+                    side="BUY",
+                    confidence=0.83,
+                    conviction=0.78,
+                    reason_codes=("fdc_entry",),
+                    summary="한국어 요약",
+                ),
+            )
+        )
+
+        intent = await service.assemble(
+            sample_request,
+            decision_context_id=context.decision_context_id,
+        )
+
+        assert intent.ai_backend_inputs.decision_type == "HOLD"
+        assert intent.ai_backend_inputs.side == ""
+        assert "buy_eligibility_guard" in intent.ai_backend_inputs.reason_codes
 
 # ---------------------------------------------------------------------------
 # Plan 32: AI-Broker Pre-Submit Safety Boundary — Test D
@@ -1525,11 +2095,159 @@ class TestSellPathSizingFallback:
             f"Expected fallback quantity=10, got {effective_qty}"
         )
 
+    def test_held_position_reduce_zero_does_not_use_placeholder_fallback(
+        self,
+        service: DecisionOrchestratorService,
+    ) -> None:
+        """held_position REDUCE/EXIT는 0수량일 때 placeholder 1주 fallback을 타지 않아야 한다."""
+        intent = OrderIntent(
+            decision_context_id=None,
+            order_intent_id=None,
+            request=SubmitOrderRequest(
+                account_ref="test",
+                client_order_id="hp-sell-fallback-001",
+                correlation_id="corr-hp-sell-fallback-001",
+                strategy_id="strat-001",
+                symbol="005930",
+                market="KRX",
+                side=OrderSide.SELL,
+                order_type=OrderType.LIMIT,
+                quantity=Decimal("1"),
+                price=Decimal("50000"),
+                time_in_force=TimeInForce.DAY,
+                metadata={"source_type": "held_position"},
+            ),
+            context=AssembledContext(source_type="held_position"),
+            ai_backend_inputs=AIDecisionInputs(
+                decision_type="REDUCE",
+                side="sell",
+            ),
+        )
+        sizing_result = SizingResult(
+            quantity=Decimal("0"),
+            skip_reason="sizing_rejected",
+        )
+
+        effective_qty = sizing_result.quantity
+        is_hp_sell = is_held_position_sell_path(
+            source_type=intent.context.source_type,
+            decision_type=intent.ai_backend_inputs.decision_type,
+            side=intent.request.side,
+        )
+        if effective_qty <= 0 and intent.request.side == OrderSide.SELL and not is_hp_sell:
+            req_qty = intent.request.quantity
+            if req_qty > 0:
+                effective_qty = req_qty
+
+        assert is_hp_sell is True
+        assert effective_qty == Decimal("0")
+
     def test_sizing_fallback_for_exit_sell(
         self,
         service: DecisionOrchestratorService,
     ) -> None:
         """EXIT + SELL side: sizing returns 0 without position, fallback to request qty."""
+
+
+class TestExecutionServiceSizingStopReason:
+    def test_non_actionable_hold_maps_to_decision_hold(self) -> None:
+        intent = OrderIntent(
+            decision_context_id=uuid4(),
+            order_intent_id=uuid4(),
+            request=SubmitOrderRequest(
+                account_ref="test",
+                client_order_id="hold-001",
+                correlation_id="corr-hold-001",
+                strategy_id="strat-001",
+                symbol="005930",
+                market="KRX",
+                side=OrderSide.BUY,
+                order_type=OrderType.MARKET,
+                quantity=Decimal("1"),
+                price=None,
+                time_in_force=TimeInForce.DAY,
+            ),
+            context=AssembledContext(),
+            ai_backend_inputs=AIDecisionInputs(decision_type="HOLD"),
+        )
+        sizing_result = SizingResult(
+            quantity=Decimal("0"),
+            skip_reason="non_actionable_decision",
+        )
+
+        attempt_status, stop_reason, error_message = (
+            ExecutionService._resolve_zero_quantity_outcome(intent, sizing_result)
+        )
+
+        assert attempt_status == "non_trade"
+        assert stop_reason == PipelineStopReason.DECISION_HOLD.value
+        assert error_message == PipelineStopReason.DECISION_HOLD.value
+
+    def test_non_actionable_watch_maps_to_decision_watch(self) -> None:
+        intent = OrderIntent(
+            decision_context_id=uuid4(),
+            order_intent_id=uuid4(),
+            request=SubmitOrderRequest(
+                account_ref="test",
+                client_order_id="watch-001",
+                correlation_id="corr-watch-001",
+                strategy_id="strat-001",
+                symbol="005930",
+                market="KRX",
+                side=OrderSide.BUY,
+                order_type=OrderType.MARKET,
+                quantity=Decimal("1"),
+                price=None,
+                time_in_force=TimeInForce.DAY,
+            ),
+            context=AssembledContext(),
+            ai_backend_inputs=AIDecisionInputs(decision_type="WATCH"),
+        )
+        sizing_result = SizingResult(
+            quantity=Decimal("0"),
+            skip_reason="non_actionable_decision",
+        )
+
+        attempt_status, stop_reason, error_message = (
+            ExecutionService._resolve_zero_quantity_outcome(intent, sizing_result)
+        )
+
+        assert attempt_status == "non_trade"
+        assert stop_reason == PipelineStopReason.DECISION_WATCH.value
+        assert error_message == PipelineStopReason.DECISION_WATCH.value
+
+    def test_real_sizing_failure_keeps_sizing_rejected(self) -> None:
+        intent = OrderIntent(
+            decision_context_id=uuid4(),
+            order_intent_id=uuid4(),
+            request=SubmitOrderRequest(
+                account_ref="test",
+                client_order_id="buy-001",
+                correlation_id="corr-buy-001",
+                strategy_id="strat-001",
+                symbol="005930",
+                market="KRX",
+                side=OrderSide.BUY,
+                order_type=OrderType.MARKET,
+                quantity=Decimal("1"),
+                price=None,
+                time_in_force=TimeInForce.DAY,
+            ),
+            context=AssembledContext(),
+            ai_backend_inputs=AIDecisionInputs(decision_type="APPROVE"),
+        )
+        sizing_result = SizingResult(
+            quantity=Decimal("0"),
+            skip_reason="below_min_qty",
+        )
+
+        attempt_status, stop_reason, error_message = (
+            ExecutionService._resolve_zero_quantity_outcome(intent, sizing_result)
+        )
+
+        assert attempt_status == "stopped"
+        assert stop_reason == PipelineStopReason.SIZING_REJECTED.value
+        assert error_message == "below_min_qty"
         ctx = AssembledContext(
             position_snapshot=None,
             cash_balance_snapshot=None,
@@ -1571,3 +2289,63 @@ class TestSellPathSizingFallback:
         assert effective_qty == Decimal("5"), (
             f"Expected fallback quantity=5 for EXIT+SELL, got {effective_qty}"
         )
+
+
+class TestExecutionSizingSync:
+    @pytest.mark.asyncio
+    async def test_sync_trade_decision_execution_sizing_updates_analysis_fields(self) -> None:
+        repos = build_in_memory_repositories()
+        service = ExecutionService(repos)
+        decision = TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=uuid4(),
+            decision_type=DecisionType.REDUCE,
+            side=OrderSide.SELL,
+            strategy_id=uuid4(),
+            symbol="005930",
+            market="KRX",
+            entry_style=EntryStyle.LIMIT,
+            created_at=datetime.now(timezone.utc),
+            quantity=Decimal("1"),
+            target_quantity=Decimal("1"),
+            decision_json={"existing": True},
+        )
+        await repos.trade_decisions.add(decision)
+
+        request = SubmitOrderRequest(
+            account_ref="test",
+            client_order_id="sizing-sync-001",
+            correlation_id="corr-sizing-sync-001",
+            strategy_id="strat-001",
+            symbol="005930",
+            market="KRX",
+            side=OrderSide.SELL,
+            order_type=OrderType.LIMIT,
+            quantity=Decimal("1"),
+            price=Decimal("50000"),
+            time_in_force=TimeInForce.DAY,
+        )
+        sizing_result = SizingResult(
+            quantity=Decimal("37"),
+            max_order_value=Decimal("1850000"),
+            applied_constraints=("max_qty",),
+        )
+
+        await service._sync_trade_decision_execution_sizing(
+            trade_decision_id=decision.trade_decision_id,
+            request=request,
+            original_request_quantity=Decimal("1"),
+            effective_qty=Decimal("37"),
+            sizing_result=sizing_result,
+        )
+
+        updated = await repos.trade_decisions.get(decision.trade_decision_id)
+        assert updated is not None
+        assert updated.quantity == Decimal("37")
+        assert updated.target_quantity == Decimal("37")
+        assert updated.max_order_value == Decimal("1850000")
+        assert updated.target_notional == Decimal("1850000")
+        assert updated.decision_json["existing"] is True
+        assert updated.decision_json["execution_sizing"]["requested_quantity_before_sizing"] == "1"
+        assert updated.decision_json["execution_sizing"]["resolved_quantity"] == "37"
+        assert updated.decision_json["execution_sizing"]["applied_constraints"] == ["max_qty"]

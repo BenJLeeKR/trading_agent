@@ -18,9 +18,13 @@ from datetime import datetime, timezone
 
 from decimal import Decimal
 
+from agent_trading.config.settings import _resolve_provider_model_id
 from agent_trading.services.ai_agents._prompt_config import (
     MAX_EVENTS_FDC,
     MAX_INTERPRETED_EVENTS,
+)
+from agent_trading.services.ai_agents.prompt_context_projection import (
+    append_shared_deterministic_context_sections,
 )
 from agent_trading.services.ai_agents.base import (
     AgentExecutionRequest,
@@ -119,11 +123,11 @@ class FinalDecisionComposerAgent:
         self,
         provider_client: AIProviderClient,
         *,
-        model_id: str = "deepseek-v4-pro",
+        model_id: str | None = None,
         schema_version: str = "v1",
     ) -> None:
         self._provider = provider_client
-        self._model_id = model_id
+        self._model_id = model_id or _resolve_provider_model_id()
         self._schema_version = schema_version
 
     @property
@@ -314,6 +318,12 @@ class FinalDecisionComposerAgent:
             lines.append(f"Score: {score.score} (threshold: {score.threshold})")
             if score.reason_codes:
                 lines.append(f"Reason codes: {', '.join(score.reason_codes)}")
+
+        append_shared_deterministic_context_sections(
+            lines,
+            context,
+            profile="final_decision_composer",
+        )
 
         # === Event Interpretation output (if available) ===
         ei_output = request.event_interpretation_output

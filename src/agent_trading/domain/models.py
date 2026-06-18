@@ -64,6 +64,8 @@ class Quote:
     last: Decimal | None
     as_of: datetime
     currency: str = "KRW"
+    accumulated_volume: Decimal | None = None
+    accumulated_turnover: Decimal | None = None
 
 
 @dataclass(slots=True, frozen=True)

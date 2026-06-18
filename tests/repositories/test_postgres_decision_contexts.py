@@ -171,6 +171,54 @@ async def test_list_with_filters(
 
 @pytest.mark.asyncio
 async def test_list_empty(postgres_repos) -> None:
-    query = DecisionContextQuery(limit=10)
+    now = datetime.now(timezone.utc)
+    query = DecisionContextQuery(
+        correlation_id="decision-context-empty-case",
+        market_timestamp_from=now + timedelta(days=1),
+        limit=10,
+    )
     results = await postgres_repos.decision_contexts.list(query)
     assert len(results) == 0
+
+
+@pytest.mark.asyncio
+async def test_attach_signal_feature_snapshot(
+    postgres_repos, sample_decision_context
+) -> None:
+    from agent_trading.domain.entities import InstrumentEntity, SignalFeatureSnapshotEntity
+    from decimal import Decimal
+
+    await postgres_repos.decision_contexts.add(sample_decision_context)
+    instrument = InstrumentEntity(
+        instrument_id=uuid4(),
+        symbol=f"T{uuid4().hex[:5].upper()}",
+        market_code="KRX",
+        asset_class="KR_STOCK",
+        currency="KRW",
+        name="테스트종목",
+    )
+    await postgres_repos.instruments.add(instrument)
+    snapshot = SignalFeatureSnapshotEntity(
+        signal_feature_snapshot_id=uuid4(),
+        instrument_id=instrument.instrument_id,
+        timeframe="1d",
+        snapshot_at=datetime.now(timezone.utc),
+        feature_set_version="signal_backbone_v1",
+        bar_count=80,
+        overall_score=Decimal("0.42"),
+    )
+    await postgres_repos.signal_feature_snapshots.add(snapshot)
+
+    updated = await postgres_repos.decision_contexts.attach_signal_feature_snapshot(
+        sample_decision_context.decision_context_id,
+        snapshot.signal_feature_snapshot_id,
+    )
+
+    assert updated is not None
+    assert updated.signal_feature_snapshot_id == snapshot.signal_feature_snapshot_id
+
+    fetched = await postgres_repos.decision_contexts.get(
+        sample_decision_context.decision_context_id
+    )
+    assert fetched is not None
+    assert fetched.signal_feature_snapshot_id == snapshot.signal_feature_snapshot_id

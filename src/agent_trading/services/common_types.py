@@ -24,6 +24,7 @@ from agent_trading.domain.entities import (
     ExternalEventEntity,
     PositionSnapshotEntity,
     RiskLimitSnapshotEntity,
+    SignalFeatureSnapshotEntity,
 )
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.services.ai_agents.schemas import (
@@ -33,7 +34,13 @@ from agent_trading.services.ai_agents.schemas import (
     FinalDecisionComposerOutput,
     SizingHint,
 )
+from agent_trading.services.deterministic_trigger_engine import (
+    DeterministicTriggerAssessment,
+)
+from agent_trading.services.market_regime import MarketRegimeAssessment
+from agent_trading.services.portfolio_allocation import PortfolioAllocationAssessment
 from agent_trading.services.sizing_engine import SizingResult
+from agent_trading.services.strategy_selection import StrategySelectionAssessment
 
 
 @dataclass(slots=True, frozen=True)
@@ -134,9 +141,36 @@ class AssembledContext:
     position_snapshot: PositionSnapshotEntity | None = None
     cash_balance_snapshot: CashBalanceSnapshotEntity | None = None
     risk_limit_snapshot: RiskLimitSnapshotEntity | None = None
+    signal_feature_snapshot: SignalFeatureSnapshotEntity | None = None
+    market_regime: MarketRegimeAssessment | None = None
+    strategy_selection: StrategySelectionAssessment | None = None
+    portfolio_allocation: PortfolioAllocationAssessment | None = None
+    deterministic_trigger: DeterministicTriggerAssessment | None = None
     # --- Axis 2: Source type for no-event policy differentiation ---
     source_type: str = "core"
     """Origin of this symbol: ``"core"`` | ``"held_position"`` | ``"event_overlay"`` | ``"market_overlay"``."""
+
+
+@dataclass(slots=True, frozen=True)
+class AIPolicyContextView:
+    """AI Policy Stage 전용 입력 뷰.
+
+    내부 조립용 ``AssembledContext`` 전체를 그대로 AI에 넘기지 않고,
+    실제 프롬프트/에이전트 판단에 필요한 읽기 전용 필드만 분리한다.
+    """
+
+    decision_context: DecisionContextEntity | None = None
+    recent_events: tuple[ExternalEventEntity, ...] = ()
+    score: ScoreResult = field(default_factory=ScoreResult)
+    position_snapshot: PositionSnapshotEntity | None = None
+    cash_balance_snapshot: CashBalanceSnapshotEntity | None = None
+    risk_limit_snapshot: RiskLimitSnapshotEntity | None = None
+    signal_feature_snapshot: SignalFeatureSnapshotEntity | None = None
+    market_regime: MarketRegimeAssessment | None = None
+    strategy_selection: StrategySelectionAssessment | None = None
+    portfolio_allocation: PortfolioAllocationAssessment | None = None
+    deterministic_trigger: DeterministicTriggerAssessment | None = None
+    source_type: str = "core"
 
 
 # ---------------------------------------------------------------------------

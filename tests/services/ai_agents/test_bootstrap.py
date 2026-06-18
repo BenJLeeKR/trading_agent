@@ -53,16 +53,18 @@ class TestBuildProviderAgent:
         """provider_api_key가 비어있으면 None 반환.
 
         Clears provider API key env vars to stay deterministic regardless
-        of ``.env`` content (which may set DEEPSEEK_API_KEY / OPENAI_API_KEY).
+        of ``.env`` content (which may set DEEPSEEK_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY).
         """
         monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
         settings = AppSettings()
         agent = _build_provider_agent(settings)
         assert agent is None
 
     def test_returns_none_when_no_base_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """provider_base_url이 비어있으면 None 반환."""
+        monkeypatch.setenv("LLM_PROVIDER", "deepseek")
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
         monkeypatch.setenv("DEEPSEEK_BASE_URL", "")
         settings = AppSettings()
@@ -71,6 +73,7 @@ class TestBuildProviderAgent:
 
     def test_returns_none_when_no_model_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """provider_model_id가 비어있으면 None 반환."""
+        monkeypatch.setenv("LLM_PROVIDER", "deepseek")
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
         monkeypatch.setenv("DEEPSEEK_MODEL_ID", "")
         settings = AppSettings()
@@ -81,6 +84,7 @@ class TestBuildProviderAgent:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """모든 provider 설정이 있으면 EventInterpretationAgent 반환."""
+        monkeypatch.setenv("LLM_PROVIDER", "deepseek")
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
         monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
         monkeypatch.setenv("DEEPSEEK_MODEL_ID", "deepseek-chat")
@@ -93,6 +97,7 @@ class TestBuildProviderAgent:
 
     def test_uses_custom_model_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """provider_model_id가 agent에 전달됨."""
+        monkeypatch.setenv("LLM_PROVIDER", "deepseek")
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
         monkeypatch.setenv("DEEPSEEK_MODEL_ID", "custom-model-v2")
         settings = AppSettings()
@@ -186,6 +191,7 @@ class TestBuildDefaultRuntime:
         """
         monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
         runtime = build_default_runtime()
         assert runtime["event_interpretation_agent"] is None
         assert runtime["ai_risk_agent"] is None
@@ -285,8 +291,10 @@ class TestBuildPostgresRuntime:
         Clears provider API key env vars to stay deterministic regardless
         of ``.env`` content.
         """
+        monkeypatch.setenv("LLM_PROVIDER", "deepseek")
         monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
         runtime = await build_postgres_runtime(run_migrations=False)
         assert runtime["event_interpretation_agent"] is None
         assert runtime["ai_risk_agent"] is None
@@ -546,3 +554,37 @@ class TestOpenAIWiring:
         agent = runtime["event_interpretation_agent"]
         assert agent is not None
         assert isinstance(agent, EventInterpretationAgent)
+
+
+class TestGeminiWiring:
+    """build_default_runtime() with LLM_PROVIDER=gemini."""
+
+    def test_gemini_complete_env_creates_real_agent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Gemini 설정 완전 → EventInterpretationAgent 주입."""
+        monkeypatch.setenv("LLM_PROVIDER", "gemini")
+        monkeypatch.setenv("GEMINI_API_KEY", "sk-gm-test")
+        monkeypatch.setenv(
+            "GEMINI_BASE_URL",
+            "https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
+        monkeypatch.setenv("GEMINI_MODEL_ID", "gemini-3.5-flash")
+        runtime = build_default_runtime()
+        agent = runtime["event_interpretation_agent"]
+        assert agent is not None
+        assert isinstance(agent, EventInterpretationAgent)
+
+    def test_gemini_missing_key_uses_stub(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Gemini key 없으면 stub fallback."""
+        monkeypatch.setenv("LLM_PROVIDER", "gemini")
+        monkeypatch.setenv("GEMINI_API_KEY", "")
+        monkeypatch.setenv(
+            "GEMINI_BASE_URL",
+            "https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
+        monkeypatch.setenv("GEMINI_MODEL_ID", "gemini-3.5-flash")
+        runtime = build_default_runtime()
+        assert runtime["event_interpretation_agent"] is None

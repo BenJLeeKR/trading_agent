@@ -11,6 +11,8 @@ import asyncio
 import json
 import logging
 import socket
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
@@ -22,6 +24,46 @@ logger = logging.getLogger(__name__)
 # Retry configuration for transient network / DNS / rate-limit errors.
 MAX_RETRIES = 3
 RETRY_DELAY = 1.0  # seconds, base for exponential backoff
+MAX_RETRY_DELAY = 5.0  # seconds, backoff 상한
+
+
+def _is_retryable_http_status(status_code: int) -> bool:
+    """재시도 가능한 HTTP 상태코드를 판정한다."""
+    return status_code == 429 or 500 <= status_code < 600
+
+
+def _parse_retry_after_seconds(response: httpx.Response) -> float | None:
+    """``Retry-After`` 헤더를 초 단위 지연으로 해석한다."""
+    raw = response.headers.get("Retry-After")
+    if not raw:
+        return None
+
+    value = raw.strip()
+    try:
+        delay = float(value)
+        return max(0.0, min(delay, MAX_RETRY_DELAY))
+    except ValueError:
+        pass
+
+    try:
+        retry_at = parsedate_to_datetime(value)
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=timezone.utc)
+
+    delay = (retry_at - datetime.now(timezone.utc)).total_seconds()
+    return max(0.0, min(delay, MAX_RETRY_DELAY))
+
+
+def _compute_retry_delay(attempt: int, error: Exception) -> float:
+    """예외 유형과 헤더를 고려해 재시도 지연을 계산한다."""
+    if isinstance(error, httpx.HTTPStatusError):
+        retry_after = _parse_retry_after_seconds(error.response)
+        if retry_after is not None:
+            return retry_after
+    return min(RETRY_DELAY * (2 ** attempt), MAX_RETRY_DELAY)
 
 
 def _coerce_nested_json_strings(
@@ -239,15 +281,18 @@ class OpenAICompatibleClient:
                 # HTTP 429 또는 5xx만 retry; 그 외 HTTP 에러는 즉시 실패
                 if isinstance(e, httpx.HTTPStatusError):
                     status = e.response.status_code
-                    if status != 429 and not (500 <= status < 600):
+                    if not _is_retryable_http_status(status):
                         raise  # non-retryable HTTP error → 즉시 실패
                 # DNS/connect/timeout/429/5xx → retry
                 if attempt < MAX_RETRIES - 1:
-                    delay = RETRY_DELAY * (2 ** attempt)
+                    delay = _compute_retry_delay(attempt, e)
+                    status_info = ""
+                    if isinstance(e, httpx.HTTPStatusError):
+                        status_info = f" status={e.response.status_code}"
                     logger.warning(
-                        "Provider request failed (attempt %d/%d): %s. "
+                        "Provider request failed (attempt %d/%d)%s: %s. "
                         "Retrying in %.1fs...",
-                        attempt + 1, MAX_RETRIES, e, delay,
+                        attempt + 1, MAX_RETRIES, status_info, e, delay,
                     )
                     await asyncio.sleep(delay)
                     continue

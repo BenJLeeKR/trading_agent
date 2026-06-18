@@ -4,6 +4,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from math import sqrt
 from statistics import mean, pstdev
+from decimal import Decimal
+from uuid import UUID, uuid4
+
+from agent_trading.domain.entities import SignalFeatureSnapshotEntity
 
 
 @dataclass(slots=True, frozen=True)
@@ -62,6 +66,44 @@ def build_signal_snapshot(
     features = _calculate_features(symbol, normalized)
     score_card = _score_features(features)
     return features, score_card
+
+
+def build_signal_feature_entity(
+    *,
+    instrument_id: UUID,
+    features: TechnicalFeatureSnapshot,
+    score_card: SignalScoreCard,
+    timeframe: str = "1d",
+    feature_set_version: str = "signal_backbone_v1",
+) -> SignalFeatureSnapshotEntity:
+    """계산된 feature/score를 저장용 엔티티로 변환한다."""
+    return SignalFeatureSnapshotEntity(
+        signal_feature_snapshot_id=uuid4(),
+        instrument_id=instrument_id,
+        timeframe=timeframe,
+        snapshot_at=features.as_of,
+        feature_set_version=feature_set_version,
+        bar_count=features.bar_count,
+        sma_5=_decimal_or_none(features.sma_5),
+        sma_20=_decimal_or_none(features.sma_20),
+        sma_60=_decimal_or_none(features.sma_60),
+        price_vs_sma_20_pct=_decimal_or_none(features.price_vs_sma_20_pct),
+        price_vs_sma_60_pct=_decimal_or_none(features.price_vs_sma_60_pct),
+        return_1m_pct=_decimal_or_none(features.return_1m_pct),
+        return_3m_pct=_decimal_or_none(features.return_3m_pct),
+        volatility_20d_pct=_decimal_or_none(features.volatility_20d_pct),
+        atr_14_pct=_decimal_or_none(features.atr_14_pct),
+        rsi_14=_decimal_or_none(features.rsi_14),
+        average_volume_20d=_decimal_or_none(features.average_volume_20d),
+        volume_surge_ratio=_decimal_or_none(features.volume_surge_ratio),
+        fast_score=_decimal_or_none(score_card.fast_score),
+        slow_score=_decimal_or_none(score_card.slow_score),
+        overall_score=_decimal_or_none(score_card.overall_score),
+        component_scores_json={
+            key: float(value) for key, value in score_card.component_scores.items()
+        },
+        reason_codes=list(score_card.reason_codes) or None,
+    )
 
 
 def _normalize_bars(bars: list[PriceBar]) -> list[PriceBar]:
@@ -170,6 +212,12 @@ def _sma(values: list[float], window: int) -> float | None:
 
 def _average(values: list[float]) -> float:
     return mean(values) if values else 0.0
+
+
+def _decimal_or_none(value: float | None) -> Decimal | None:
+    if value is None:
+        return None
+    return Decimal(str(round(value, 8)))
 
 
 def _pct_diff(last_value: float, baseline: float | None) -> float | None:

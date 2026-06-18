@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from uuid import UUID
 
 if TYPE_CHECKING:
-    from agent_trading.services.decision_orchestrator import AssembledContext
+    from agent_trading.services.common_types import AIPolicyContextView
     from agent_trading.services.ai_agents.schemas import EventInterpretationOutput
     from agent_trading.services.ai_agents.schemas import AIRiskOutput
 
@@ -65,7 +65,7 @@ class AgentExecutionRequest:
 
     decision_context_id: UUID | None
     correlation_id: str
-    context: AssembledContext
+    context: AIPolicyContextView
     symbol: str | None = None
     market: str | None = None
     event_interpretation_output: EventInterpretationOutput | None = None

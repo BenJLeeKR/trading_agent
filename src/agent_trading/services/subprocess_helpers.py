@@ -10,6 +10,7 @@ import json
 import logging
 from typing import Any
 
+from agent_trading.config.settings import resolve_provider_runtime_config
 from agent_trading.domain.entities import (
     AgentRunEntity,
     CashBalanceSnapshotEntity,
@@ -25,6 +26,7 @@ from agent_trading.services.ai_agents.schemas import (
     FinalDecisionComposerOutput,
 )
 from agent_trading.services.common_types import (
+    AIPolicyContextView,
     AssembledContext,
     ScoreResult,
     dataclass_to_dict,
@@ -43,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 def serialize_agent_input(
     request: AgentExecutionRequest,
-    context: AssembledContext,
+    context: AIPolicyContextView,
     score: ScoreResult | None,
     positional_args: tuple[Any, ...] = (),
 ) -> str:
@@ -54,8 +56,7 @@ def serialize_agent_input(
 
     Extracted from DecisionOrchestratorService._serialize_agent_input().
     """
-    # Build provider config from environment (same as bootstrap)
-    import os as _os
+    provider_runtime = resolve_provider_runtime_config()
     payload = {
         # AgentSubprocessInput top-level fields (from request)
         "decision_context_id": str(request.decision_context_id) if request.decision_context_id else None,
@@ -67,23 +68,12 @@ def serialize_agent_input(
         # AssembledContext (JSON-safe)
         "context": dataclass_to_dict(context),
 
-        # Provider configuration (from env, same as bootstrap)
-        "llm_provider": _os.environ.get("LLM_PROVIDER", "deepseek"),
-        "provider_api_key": (
-            _os.environ.get("DEEPSEEK_API_KEY")
-            or _os.environ.get("OPENAI_API_KEY", "")
-        ),
-        "provider_base_url": (
-            _os.environ.get("DEEPSEEK_BASE_URL")
-            or _os.environ.get("OPENAI_BASE_URL", "")
-        ),
-        "provider_model_id": (
-            _os.environ.get("DEEPSEEK_MODEL_ID")
-            or _os.environ.get("OPENAI_MODEL_ID", "")
-        ),
-        "provider_timeout_seconds": int(
-            _os.environ.get("DEEPSEEK_TIMEOUT_SECONDS", "30")
-        ),
+        # Provider configuration (settings.py와 동일한 해석 규칙 사용)
+        "llm_provider": provider_runtime["llm_provider"],
+        "provider_api_key": provider_runtime["provider_api_key"],
+        "provider_base_url": provider_runtime["provider_base_url"],
+        "provider_model_id": provider_runtime["provider_model_id"],
+        "provider_timeout_seconds": provider_runtime["provider_timeout_seconds"],
 
         # Legacy top-level keys (consumed by _reconstruct_context)
         "score": dataclass_to_dict(score) if score is not None else None,

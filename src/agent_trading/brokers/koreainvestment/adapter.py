@@ -155,6 +155,8 @@ class KoreaInvestmentAdapter(BrokerAdapter):
             ask=_decimal("stck_askp"),
             last=_decimal("stck_prpr"),
             as_of=datetime.now(tz=timezone.utc),
+            accumulated_volume=_decimal("acml_vol"),
+            accumulated_turnover=_decimal("acml_tr_pbmn"),
         )
 
     async def get_orderbook(self, symbol: str, market: str) -> OrderBook:

@@ -173,6 +173,7 @@ class DecisionContextEntity:
     strategy_version_id: UUID | None = None
     trading_session_id: UUID | None = None
     feature_snapshot_id: UUID | None = None
+    signal_feature_snapshot_id: UUID | None = None
     position_snapshot_id: UUID | None = None
     cash_balance_snapshot_id: UUID | None = None
     input_bundle_uri: str | None = None

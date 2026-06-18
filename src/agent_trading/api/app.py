@@ -206,9 +206,16 @@ def create_app(
     from agent_trading.api.routes.risk_limit_snapshots import (
         router as risk_limit_snapshots_router,
     )
+    from agent_trading.api.routes.signal_feature_snapshots import (
+        router as signal_feature_snapshots_router,
+    )
 
     protected_routers.extend(
-        [guardrail_evaluations_router, risk_limit_snapshots_router]
+        [
+            guardrail_evaluations_router,
+            risk_limit_snapshots_router,
+            signal_feature_snapshots_router,
+        ]
     )
 
     # Phase 3 — Agent Run inspection

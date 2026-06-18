@@ -37,7 +37,13 @@ import re
 import sys
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from uuid import UUID, uuid4
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
 
 from agent_trading.domain.entities import (
     AccountEntity,
@@ -53,6 +59,23 @@ from agent_trading.runtime.bootstrap import postgres_runtime
 from agent_trading.services.common_types import SubmitResult
 
 logger = logging.getLogger(__name__)
+
+
+def _load_local_dotenv() -> bool:
+    """프로젝트 루트의 ``.env``를 로드한다.
+
+    ``python-dotenv``가 없거나 ``.env`` 파일이 없으면 조용히 건너뛴다.
+    반환값은 실제 로드 시도 여부만 나타낸다.
+    """
+    if load_dotenv is None:
+        return False
+
+    dotenv_path = Path(__file__).resolve().parent.parent / ".env"
+    if not dotenv_path.exists():
+        return False
+
+    load_dotenv(dotenv_path)
+    return True
 
 # ---------------------------------------------------------------------------
 # Constants — deterministic IDs for idempotent seeding
@@ -81,9 +104,11 @@ def _resolve_smoke_price() -> Decimal:
     """Return order price for smoke/test execution.
 
     .. note::
-       현재는 전면 MARKET 정책이므로 ``SubmitOrderRequest.price=None``으로
-       전달되며 이 함수의 반환값은 주문 가격에 직접 사용되지 않는다.
-       quote 수집 및 observability 용도로만 유지.
+       초기 request는 ``MARKET`` + ``price=None``으로 전달된다.
+       다만 실제 submit 직전에는 ``ExecutionService``가
+       저유동성 BUY에 대해 ``LIMIT`` 강제 또는 submit 차단을
+       적용할 수 있다. 이 함수의 반환값은 주로 quote 수집 및
+       observability 용도로 유지된다.
 
     Priority:
     1. ``KIS_SMOKE_PRICE`` env var (for smoke runs with a specific price).
@@ -300,10 +325,13 @@ async def main() -> int:
     int
         ``0`` on success, ``1`` on failure.
     """
+    dotenv_loaded = _load_local_dotenv()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    if dotenv_loaded:
+        logger.info("Loaded environment from project .env")
 
     parser = argparse.ArgumentParser(
         description="Run the orchestrator and optionally submit orders to the broker. "

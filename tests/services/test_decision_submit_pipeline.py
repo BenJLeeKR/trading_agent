@@ -556,6 +556,105 @@ class TestAssembleAndSubmit:
         )
 
     @pytest.mark.asyncio
+    async def test_low_liquidity_market_buy_forces_limit_order(
+        self,
+        service: DecisionOrchestratorService,
+        order_manager: OrderManager,
+    ) -> None:
+        request = _make_request(
+            order_type=OrderType.MARKET,
+            price=None,
+            quantity=Decimal("1"),
+            metadata={"source_type": "market_overlay"},
+        )
+        submitted_requests: list[SubmitOrderRequest] = []
+
+        async def _mock_submit(
+            _self: Any,
+            _order: OrderRequestEntity,
+            _broker: Any,
+            submit_request: SubmitOrderRequest,
+            *_args: Any,
+            **_kwargs: Any,
+        ) -> OrderRequestEntity:
+            submitted_requests.append(submit_request)
+            return _make_order_entity(
+                status=OrderStatus.SUBMITTED,
+                request=submit_request,
+            )
+
+        broker_mock = MagicMock()
+        broker_mock.get_quote = AsyncMock(
+            return_value=Quote(
+                symbol="005930",
+                market="KRX",
+                bid=Decimal("50000"),
+                ask=Decimal("50010"),
+                last=Decimal("50005"),
+                as_of=datetime.now(timezone.utc),
+                accumulated_volume=Decimal("2500"),
+                accumulated_turnover=Decimal("40000000"),
+            )
+        )
+
+        with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):
+            result = await service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=broker_mock,
+            )
+
+        assert result.status == "SUBMITTED"
+        assert len(submitted_requests) == 1
+        assert submitted_requests[0].order_type == OrderType.LIMIT
+        assert submitted_requests[0].price == Decimal("50010")
+
+    @pytest.mark.asyncio
+    async def test_severe_low_liquidity_market_buy_is_blocked(
+        self,
+        service: DecisionOrchestratorService,
+        order_manager: OrderManager,
+        repos: Any,
+    ) -> None:
+        request = _make_request(
+            order_type=OrderType.MARKET,
+            price=None,
+            quantity=Decimal("1"),
+            metadata={"source_type": "market_overlay"},
+        )
+
+        async def _mock_submit(*args: Any, **kwargs: Any) -> OrderRequestEntity:
+            raise AssertionError("Broker should not be called for severe low-liquidity BUY")
+
+        broker_mock = MagicMock()
+        broker_mock.get_quote = AsyncMock(
+            return_value=Quote(
+                symbol="005930",
+                market="KRX",
+                bid=Decimal("50000"),
+                ask=Decimal("50010"),
+                last=Decimal("50005"),
+                as_of=datetime.now(timezone.utc),
+                accumulated_volume=Decimal("100"),
+                accumulated_turnover=Decimal("2000000"),
+            )
+        )
+
+        with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):
+            result = await service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=broker_mock,
+            )
+
+        assert result.status == "SKIPPED"
+        assert result.stop_reason == "low_liquidity_execution_blocked"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert len(evaluations) == 1
+        assert evaluations[0].rule_set_version == "buy_execution_liquidity_v1"
+        assert evaluations[0].blocking_rule_codes == ["low_liquidity_execution_blocked"]
+
+    @pytest.mark.asyncio
     async def test_rejected_records_broker_submit_outcome_guardrail(
         self,
         service: DecisionOrchestratorService,
@@ -2512,6 +2611,7 @@ class TestPhaseTrace:
         assert len(evaluations) == 1
         assert evaluations[0].rule_set_version == "sell_guard_v1"
         assert evaluations[0].blocking_rule_codes == ["sell_guard_blocked"]
+
 
 
 # ---------------------------------------------------------------------------

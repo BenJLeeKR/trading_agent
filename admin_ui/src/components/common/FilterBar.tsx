@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Search, Filter, X } from "lucide-react";
 
 interface FilterOption {
@@ -17,6 +18,7 @@ interface FilterBarProps {
     onChange?: (value: string) => void;
   }[];
   onClearAll?: () => void;
+  rightSlot?: ReactNode;
 }
 
 export function FilterBar({
@@ -25,6 +27,7 @@ export function FilterBar({
   onSearchChange,
   filters = [],
   onClearAll,
+  rightSlot,
 }: FilterBarProps) {
   const hasActiveFilters = searchValue || filters.some((f) => f.value);
 
@@ -72,6 +75,8 @@ export function FilterBar({
           초기화
         </button>
       )}
+
+      {rightSlot && <div className="ml-auto flex items-center gap-2">{rightSlot}</div>}
     </div>
   );
 }

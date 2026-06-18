@@ -32,9 +32,9 @@ class PostgresDecisionContextRepository:
             INSERT INTO trading.decision_contexts
                 (decision_context_id, account_id, strategy_id, config_version_id,
                  market_timestamp, correlation_id, strategy_version_id,
-                 trading_session_id, feature_snapshot_id, position_snapshot_id,
-                 cash_balance_snapshot_id, input_bundle_uri)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                 trading_session_id, feature_snapshot_id, signal_feature_snapshot_id,
+                 position_snapshot_id, cash_balance_snapshot_id, input_bundle_uri)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             RETURNING *
             """,
             context.decision_context_id,
@@ -46,6 +46,7 @@ class PostgresDecisionContextRepository:
             context.strategy_version_id,
             context.trading_session_id,
             context.feature_snapshot_id,
+            context.signal_feature_snapshot_id,
             context.position_snapshot_id,
             context.cash_balance_snapshot_id,
             context.input_bundle_uri,
@@ -118,3 +119,20 @@ class PostgresDecisionContextRepository:
 
         rows = await self._tx.connection.fetch(sql, *params)
         return [row_to_entity(row, DecisionContextEntity) for row in rows]
+
+    async def attach_signal_feature_snapshot(
+        self,
+        decision_context_id: UUID,
+        signal_feature_snapshot_id: UUID,
+    ) -> DecisionContextEntity | None:
+        row = await self._tx.connection.fetchrow(
+            """
+            UPDATE trading.decision_contexts
+            SET signal_feature_snapshot_id = $2
+            WHERE decision_context_id = $1
+            RETURNING *
+            """,
+            decision_context_id,
+            signal_feature_snapshot_id,
+        )
+        return row_to_entity(row, DecisionContextEntity) if row else None

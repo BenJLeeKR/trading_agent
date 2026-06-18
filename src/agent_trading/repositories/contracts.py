@@ -154,6 +154,8 @@ class TradeDecisionRow:
 
     ``None`` when no execution attempt exists yet.
     """
+    signal_feature_snapshot_id: str | None = None
+    """Point-in-time decision_context anchor to ``signal_feature_snapshots``."""
 
 
 class ClientRepository(Protocol):
@@ -347,6 +349,13 @@ class DecisionContextRepository(Protocol):
     async def list(self, query: DecisionContextQuery) -> Sequence[DecisionContextEntity]:
         ...
 
+    async def attach_signal_feature_snapshot(
+        self,
+        decision_context_id: UUID,
+        signal_feature_snapshot_id: UUID,
+    ) -> DecisionContextEntity | None:
+        ...
+
 
 class PositionSnapshotRepository(Protocol):
     async def add(self, snapshot: PositionSnapshotEntity) -> PositionSnapshotEntity:
@@ -532,6 +541,18 @@ class TradeDecisionRepository(Protocol):
         ``offset``: 건너뛸 row 수.
         반환값: (해당 페이지의 TradeDecisionRow 리스트, 조건에 맞는 전체 row 수).
         """
+        ...
+
+    async def sync_execution_sizing(
+        self,
+        trade_decision_id: UUID,
+        *,
+        quantity: Decimal,
+        max_order_value: Decimal | None,
+        target_notional: Decimal | None,
+        execution_sizing_payload: dict[str, object],
+    ) -> TradeDecisionEntity | None:
+        """Execution 단계의 deterministic sizing 결과를 TD에 반영한다."""
         ...
 
 class OrderRepository(Protocol):

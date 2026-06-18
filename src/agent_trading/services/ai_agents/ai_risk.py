@@ -22,9 +22,13 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
+from agent_trading.config.settings import _resolve_provider_model_id
 from agent_trading.services.ai_agents._prompt_config import (
     MAX_EVENTS_AR,
     MAX_INTERPRETED_EVENTS,
+)
+from agent_trading.services.ai_agents.prompt_context_projection import (
+    append_shared_deterministic_context_sections,
 )
 from agent_trading.services.ai_agents.base import (
     AIProviderClient,
@@ -152,7 +156,7 @@ class AIRiskAgent:
     provider_client
         The ``AIProviderClient`` instance used to call the external Provider.
     model_id
-        The model identifier (e.g. ``"deepseek-v4-pro"``).
+        The model identifier (e.g. ``"gemini-3.5-flash"``).
     schema_version
         Version string reported via the ``schema_version`` property.
     """
@@ -161,11 +165,11 @@ class AIRiskAgent:
         self,
         provider_client: AIProviderClient,
         *,
-        model_id: str = "deepseek-v4-pro",
+        model_id: str | None = None,
         schema_version: str = "v1",
     ) -> None:
         self._provider = provider_client
-        self._model_id = model_id
+        self._model_id = model_id or _resolve_provider_model_id()
         self._schema_version = schema_version
 
     @property
@@ -439,6 +443,13 @@ class AIRiskAgent:
             if score.reason_codes:
                 lines.append(f"Reason codes: {', '.join(score.reason_codes)}")
 
+        append_shared_deterministic_context_sections(
+            lines,
+            context,
+            profile="ai_risk",
+            include_portfolio_allocation=False,
+        )
+
         # Decision context info
         dc = context.decision_context
         if dc:
@@ -482,7 +493,8 @@ class AIRiskAgent:
             lines.append("  - Do NOT conclude 'cannot buy' solely because 'Available cash' is negative")
         # ==================================================
 
-        # ── Position Concentration ────────────────────────────────────────
+        # ── Portfolio allocation / Position concentration ────────────────
+        portfolio_allocation = context.portfolio_allocation
         nav: Decimal | None = None
         if context.risk_limit_snapshot is not None and context.risk_limit_snapshot.nav is not None:
             nav = context.risk_limit_snapshot.nav
@@ -506,6 +518,51 @@ class AIRiskAgent:
             over_concentrated = concentration_pct > 15.0
             remaining_capacity_pct = max(0.0, 15.0 - concentration_pct)
 
+        if portfolio_allocation is not None:
+            concentration_pct = portfolio_allocation.current_weight_pct
+            over_concentrated = (
+                portfolio_allocation.current_weight_pct is not None
+                and portfolio_allocation.current_weight_pct
+                >= portfolio_allocation.max_single_position_pct
+            )
+            remaining_capacity_pct = portfolio_allocation.remaining_concentration_pct
+
+            lines.append("")
+            lines.append("=== Portfolio Allocation ===")
+            lines.append(
+                f"  Target weight: {portfolio_allocation.target_weight_pct:.1f}%"
+            )
+            if portfolio_allocation.current_weight_pct is not None:
+                lines.append(
+                    "  Current weight: "
+                    f"{portfolio_allocation.current_weight_pct:.1f}%"
+                )
+            else:
+                lines.append("  Current weight: N/A")
+            lines.append(
+                "  Allocation bias: "
+                f"{portfolio_allocation.allocation_bias}"
+            )
+            lines.append(
+                "  Max new capital budget: "
+                f"{portfolio_allocation.max_new_capital_pct:.1f}%"
+            )
+            if portfolio_allocation.available_allocation_cash is not None:
+                lines.append(
+                    "  Available allocation cash: "
+                    f"{portfolio_allocation.available_allocation_cash}"
+                )
+            if portfolio_allocation.recommended_max_order_value is not None:
+                lines.append(
+                    "  Recommended max order value: "
+                    f"{portfolio_allocation.recommended_max_order_value}"
+                )
+            if portfolio_allocation.reason_codes:
+                lines.append(
+                    "  Portfolio reason codes: "
+                    f"{', '.join(portfolio_allocation.reason_codes)}"
+                )
+
         lines.append("")
         lines.append("=== Position Concentration ===")
         if current_position_value is not None:
@@ -521,7 +578,13 @@ class AIRiskAgent:
         else:
             lines.append("  Concentration: N/A")
         lines.append(f"  Over-concentrated: {'Yes' if over_concentrated else 'No'}")
-        lines.append("  Max single position limit: ~15% of NAV")
+        if portfolio_allocation is not None:
+            lines.append(
+                "  Max single position limit: "
+                f"{portfolio_allocation.max_single_position_pct:.1f}% of NAV"
+            )
+        else:
+            lines.append("  Max single position limit: ~15% of NAV")
         if remaining_capacity_pct is not None:
             lines.append(f"  Remaining capacity: {remaining_capacity_pct:.1f}%p")
         else:

@@ -51,6 +51,8 @@ from agent_trading.services.translation import (
 
 logger = logging.getLogger(__name__)
 
+_ACTIONABLE_DECISION_TYPES = {"APPROVE", "BUY", "SELL", "EXIT", "REDUCE"}
+
 
 # ---------------------------------------------------------------------------
 # Factory: TradeDecisionEntity
@@ -88,6 +90,10 @@ def build_trade_decision_entity(
         return None
 
     ai_inputs = agent_bundle.ai_inputs
+    candidate_vs_final = _build_candidate_vs_final_summary(
+        assembled_context=assembled_context,
+        composer_output=composer_output,
+    )
 
     now = datetime.now(timezone.utc)
 
@@ -115,6 +121,16 @@ def build_trade_decision_entity(
         ),
         confidence=Decimal(str(composer_output.confidence)),
         risk_check_passed=ai_inputs.risk_opinion in {"allow", "reduce"},
+        regime_label=(
+            assembled_context.market_regime.regime_label
+            if assembled_context.market_regime is not None
+            else None
+        ),
+        strategy_fit_score=(
+            Decimal(str(assembled_context.strategy_selection.confidence))
+            if assembled_context.strategy_selection is not None
+            else None
+        ),
         reason_codes=list(composer_output.reason_codes) or None,
         opposing_evidence={
             "items": [
@@ -149,6 +165,158 @@ def build_trade_decision_entity(
             "conviction": ai_inputs.conviction,
             "risk_opinion": ai_inputs.risk_opinion,
             "risk_flags": list(ai_inputs.risk_flags),
+            "strategy_selection": (
+                {
+                    "preferred_strategy": (
+                        assembled_context.strategy_selection.preferred_strategy
+                    ),
+                    "allowed_strategies": list(
+                        assembled_context.strategy_selection.allowed_strategies
+                    ),
+                    "preferred_entry_style": (
+                        assembled_context.strategy_selection.preferred_entry_style
+                    ),
+                    "preferred_time_horizon": (
+                        assembled_context.strategy_selection.preferred_time_horizon
+                    ),
+                    "confidence": assembled_context.strategy_selection.confidence,
+                    "reason_codes": list(
+                        assembled_context.strategy_selection.reason_codes
+                    ),
+                    "metadata": dict(
+                        assembled_context.strategy_selection.metadata
+                    ),
+                }
+                if assembled_context.strategy_selection is not None
+                else None
+            ),
+            "portfolio_allocation": (
+                {
+                    "target_weight_pct": (
+                        assembled_context.portfolio_allocation.target_weight_pct
+                    ),
+                    "current_weight_pct": (
+                        assembled_context.portfolio_allocation.current_weight_pct
+                    ),
+                    "max_single_position_pct": (
+                        assembled_context.portfolio_allocation.max_single_position_pct
+                    ),
+                    "remaining_concentration_pct": (
+                        assembled_context.portfolio_allocation.remaining_concentration_pct
+                    ),
+                    "remaining_gross_budget_pct": (
+                        assembled_context.portfolio_allocation.remaining_gross_budget_pct
+                    ),
+                    "max_new_capital_pct": (
+                        assembled_context.portfolio_allocation.max_new_capital_pct
+                    ),
+                    "orderable_cash": (
+                        str(assembled_context.portfolio_allocation.orderable_cash)
+                        if assembled_context.portfolio_allocation.orderable_cash is not None
+                        else None
+                    ),
+                    "available_allocation_cash": (
+                        str(
+                            assembled_context.portfolio_allocation.available_allocation_cash
+                        )
+                        if assembled_context.portfolio_allocation.available_allocation_cash
+                        is not None
+                        else None
+                    ),
+                    "recommended_max_order_value": (
+                        str(
+                            assembled_context.portfolio_allocation.recommended_max_order_value
+                        )
+                        if assembled_context.portfolio_allocation.recommended_max_order_value
+                        is not None
+                        else None
+                    ),
+                    "allocation_bias": (
+                        assembled_context.portfolio_allocation.allocation_bias
+                    ),
+                    "confidence": (
+                        assembled_context.portfolio_allocation.confidence
+                    ),
+                    "reason_codes": list(
+                        assembled_context.portfolio_allocation.reason_codes
+                    ),
+                    "metadata": dict(
+                        assembled_context.portfolio_allocation.metadata
+                    ),
+                }
+                if assembled_context.portfolio_allocation is not None
+                else None
+            ),
+            "deterministic_trigger": (
+                {
+                    "trigger_version": (
+                        assembled_context.deterministic_trigger.trigger_version
+                    ),
+                    "primary_candidate": (
+                        assembled_context.deterministic_trigger.primary_candidate
+                    ),
+                    "candidate_set": list(
+                        assembled_context.deterministic_trigger.candidate_set
+                    ),
+                    "watch_candidate": (
+                        assembled_context.deterministic_trigger.watch_candidate
+                    ),
+                    "buy_candidate": (
+                        assembled_context.deterministic_trigger.buy_candidate
+                    ),
+                    "sell_candidate": (
+                        assembled_context.deterministic_trigger.sell_candidate
+                    ),
+                    "reduce_candidate": (
+                        assembled_context.deterministic_trigger.reduce_candidate
+                    ),
+                    "candidate_confidence": (
+                        assembled_context.deterministic_trigger.candidate_confidence
+                    ),
+                    "entry_score": (
+                        assembled_context.deterministic_trigger.entry_score
+                    ),
+                    "exit_score": (
+                        assembled_context.deterministic_trigger.exit_score
+                    ),
+                    "watch_score": (
+                        assembled_context.deterministic_trigger.watch_score
+                    ),
+                    "eligibility_passed": (
+                        assembled_context.deterministic_trigger.eligibility_passed
+                    ),
+                    "eligibility_reasons": list(
+                        assembled_context.deterministic_trigger.eligibility_reasons
+                    ),
+                    "coverage_score": (
+                        assembled_context.deterministic_trigger.coverage_score
+                    ),
+                    "ranking_score": (
+                        assembled_context.deterministic_trigger.ranking_score
+                    ),
+                    "ranking_percentile": (
+                        assembled_context.deterministic_trigger.ranking_percentile
+                    ),
+                    "ranking_bucket": (
+                        assembled_context.deterministic_trigger.ranking_bucket
+                    ),
+                    "candidate_mode": (
+                        assembled_context.deterministic_trigger.candidate_mode
+                    ),
+                    "reason_codes": list(
+                        assembled_context.deterministic_trigger.reason_codes
+                    ),
+                    "thresholds": dict(
+                        assembled_context.deterministic_trigger.thresholds
+                    ),
+                    "metadata": dict(
+                        assembled_context.deterministic_trigger.metadata
+                    ),
+                }
+                if assembled_context.deterministic_trigger is not None
+                else None
+            ),
+            "candidate_vs_final": candidate_vs_final,
             "execution_preferences": dataclass_to_dict(
                 composer_output.execution_preferences
             ),
@@ -156,6 +324,74 @@ def build_trade_decision_entity(
         },
     )
     return decision
+
+
+def _build_candidate_vs_final_summary(
+    *,
+    assembled_context: AssembledContext,
+    composer_output: FinalDecisionComposerOutput,
+) -> dict[str, object] | None:
+    trigger = assembled_context.deterministic_trigger
+    if trigger is None:
+        return None
+
+    candidate_intent = _map_candidate_to_intent(trigger.primary_candidate)
+    final_intent = _map_decision_type_to_intent(composer_output.decision_type)
+    alignment_status = _classify_alignment_status(
+        candidate_intent=candidate_intent,
+        final_intent=final_intent,
+    )
+    return {
+        "primary_candidate": trigger.primary_candidate,
+        "candidate_set": list(trigger.candidate_set),
+        "candidate_intent": candidate_intent,
+        "candidate_confidence": trigger.candidate_confidence,
+        "final_decision_type": composer_output.decision_type,
+        "final_intent": final_intent,
+        "final_actionable": composer_output.decision_type in _ACTIONABLE_DECISION_TYPES,
+        "override_applied": candidate_intent != final_intent,
+        "alignment_status": alignment_status,
+    }
+
+
+def _map_candidate_to_intent(candidate: str) -> str:
+    normalized = (candidate or "NO_ACTION").strip().upper()
+    if normalized == "BUY_CANDIDATE":
+        return "buy"
+    if normalized in {"SELL_CANDIDATE", "REDUCE_CANDIDATE"}:
+        return "sell"
+    if normalized == "WATCH":
+        return "watch"
+    return "no_action"
+
+
+def _map_decision_type_to_intent(decision_type: str) -> str:
+    normalized = (decision_type or "HOLD").strip().upper()
+    if normalized in {"APPROVE", "BUY"}:
+        return "buy"
+    if normalized in {"SELL", "EXIT", "REDUCE"}:
+        return "sell"
+    if normalized == "WATCH":
+        return "watch"
+    return "no_action"
+
+
+def _classify_alignment_status(
+    *,
+    candidate_intent: str,
+    final_intent: str,
+) -> str:
+    if candidate_intent == final_intent:
+        return "matched"
+    if candidate_intent == "watch" and final_intent in {"buy", "sell"}:
+        return "upgraded"
+    if candidate_intent in {"buy", "sell"} and final_intent in {"watch", "no_action"}:
+        return "downgraded"
+    if candidate_intent == "no_action" and final_intent != "no_action":
+        return "promoted_from_no_action"
+    if candidate_intent != "no_action" and final_intent == "no_action":
+        return "suppressed"
+    return "diverged"
 
 
 # ---------------------------------------------------------------------------

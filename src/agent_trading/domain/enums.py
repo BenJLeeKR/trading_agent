@@ -109,6 +109,7 @@ class PipelineStopReason(str, Enum):
     NEGATIVE_ORDERABLE_AMOUNT = "negative_orderable_amount"
     LOW_ORDERABLE_AMOUNT = "low_orderable_amount"
     HELD_POSITION_RECENT_HOLD_NO_CHANGE = "held_position_recent_hold_no_change"
+    HELD_POSITION_RECENT_RISK_SELL_COOLDOWN = "held_position_recent_risk_sell_cooldown"
     CLI_DRY_RUN = "cli_dry_run"
     HELD_POSITION_SELL_CYCLE_CAP = "held_position_sell_cycle_cap"
     HELD_POSITION_SELL_SYMBOL_DUPLICATE = "held_position_sell_symbol_duplicate"
@@ -116,6 +117,7 @@ class PipelineStopReason(str, Enum):
     # Execution pipeline stops / skips
     MISSING_REFERENCE_PRICE_FOR_MARKET_BUY = "missing_reference_price_for_market_buy"
     SIZING_REJECTED = "sizing_rejected"
+    LOW_LIQUIDITY_EXECUTION_BLOCKED = "low_liquidity_execution_blocked"
     SELL_GUARD_BLOCKED = "sell_guard_blocked"
     DECISION_HOLD = "decision_hold"
     DECISION_WATCH = "decision_watch"

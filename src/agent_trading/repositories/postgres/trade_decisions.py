@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from uuid import UUID
 
 from agent_trading.db.row_mapper import row_to_entity
@@ -374,3 +375,38 @@ class PostgresTradeDecisionRepository:
                 latest_phase_count=latest_phase_count,
             ))
         return items, total_count
+
+    async def sync_execution_sizing(
+        self,
+        trade_decision_id: UUID,
+        *,
+        quantity: Decimal,
+        max_order_value: Decimal | None,
+        target_notional: Decimal | None,
+        execution_sizing_payload: dict[str, object],
+    ) -> TradeDecisionEntity | None:
+        row = await self._tx.connection.fetchrow(
+            """
+            UPDATE trading.trade_decisions
+            SET quantity = $2,
+                target_quantity = $2,
+                max_order_value = $3,
+                target_notional = $4,
+                decision_json = jsonb_set(
+                    COALESCE(decision_json, '{}'::jsonb),
+                    '{execution_sizing}',
+                    $5::jsonb,
+                    true
+                )
+            WHERE trade_decision_id = $1
+            RETURNING *
+            """,
+            trade_decision_id,
+            quantity,
+            max_order_value,
+            target_notional,
+            json.dumps(execution_sizing_payload),
+        )
+        if row is None:
+            return None
+        return row_to_entity(row, TradeDecisionEntity)

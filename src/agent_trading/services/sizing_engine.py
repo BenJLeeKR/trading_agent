@@ -69,6 +69,25 @@ class SizingInputs:
     ``None`` = no reference price available → cash/concentration/max-order-value
     constraints are skipped (existing behaviour)."""
 
+    average_daily_volume_20d: Decimal | None = None
+    """최근 20거래일 평균 거래량.
+    intraday 체결 가능성 정보가 부족할 때 보조 participation cap 기준으로 사용한다."""
+
+    accumulated_intraday_volume: Decimal | None = None
+    """실시간 누적 거래량 (`acml_vol`)."""
+
+    accumulated_intraday_turnover: Decimal | None = None
+    """실시간 누적 거래대금 (`acml_tr_pbmn`)."""
+
+    max_intraday_volume_participation_pct: Decimal | None = None
+    """주문수량 / 당일 누적거래량 상한 퍼센트."""
+
+    max_intraday_turnover_participation_pct: Decimal | None = None
+    """주문대금 / 당일 누적거래대금 상한 퍼센트."""
+
+    max_average_daily_volume_participation_pct: Decimal | None = None
+    """주문수량 / 20일 평균거래량 상한 퍼센트."""
+
     # ── AI sizing hint (advisory only, non-binding) ─────────────────────
     sizing_hint: SizingHint = field(default_factory=SizingHint)
     """Advisory sizing hint from the AI.  ``size_mode`` and
@@ -156,6 +175,9 @@ class SizingResult:
 _SKIP_DECISION_TYPES: frozenset[str] = frozenset({"HOLD", "WATCH"})
 
 _ALLOCATION_PCT = Decimal("0.2")  # 20% of effective cash per single BUY order
+_DEFAULT_MAX_INTRADAY_VOLUME_PARTICIPATION_PCT = Decimal("3")
+_DEFAULT_MAX_INTRADAY_TURNOVER_PARTICIPATION_PCT = Decimal("5")
+_DEFAULT_MAX_AVG_DAILY_VOLUME_PARTICIPATION_PCT = Decimal("2")
 
 
 def _is_new_entry(decision_type: str, side: OrderSide) -> bool:
@@ -261,24 +283,25 @@ def _base_qty_reduce(inputs: SizingInputs) -> Decimal:
     """Calculate the base quantity for a position reduction.
 
     Rules:
-    1. If position data is available → reduce from current position.
+    1. If position data is available → 현재 보유수량 기준 매도 수량 계산.
     2. If AI sizing hint is provided → apply reduction factor.
     3. Otherwise → use requested_quantity as fallback.
     """
     if _is_position_known(inputs.current_position_qty):
         hint = inputs.sizing_hint
         if hint.size_mode in ("fractional_reduce", "reduce") and hint.size_adjustment_factor > 0:
-            # AI-suggested reduction from current position
-            reduction = inputs.current_position_qty * Decimal(str(hint.size_adjustment_factor))
-            base_qty = (inputs.current_position_qty - reduction).to_integral_value(rounding=ROUND_DOWN)
+            factor = Decimal(str(hint.size_adjustment_factor))
+            factor = max(Decimal("0"), min(Decimal("1"), factor))
+            base_qty = (
+                inputs.current_position_qty * factor
+            ).to_integral_value(rounding=ROUND_DOWN)
+            if base_qty <= 0 and inputs.current_position_qty > 0:
+                base_qty = Decimal("1")
         else:
-            # No AI reduction hint → use requested_quantity, capped by position
             base_qty = inputs.requested_quantity
 
-        # Never reduce more than the current position
         return min(base_qty, inputs.current_position_qty)
 
-    # Position data unavailable → fallback to requested quantity
     return inputs.requested_quantity
 
 
@@ -528,6 +551,86 @@ def _apply_lot_size(qty: Decimal, lot_size: Decimal | None) -> Decimal:
     return qty
 
 
+def _apply_liquidity_participation_constraint(
+    qty: Decimal,
+    price: Decimal | None,
+    constraints: list[str],
+    *,
+    reference_price: Decimal | None = None,
+    accumulated_intraday_volume: Decimal | None = None,
+    accumulated_intraday_turnover: Decimal | None = None,
+    average_daily_volume_20d: Decimal | None = None,
+    max_intraday_volume_participation_pct: Decimal | None = None,
+    max_intraday_turnover_participation_pct: Decimal | None = None,
+    max_average_daily_volume_participation_pct: Decimal | None = None,
+) -> Decimal:
+    """BUY 주문을 거래량/거래대금 participation cap으로 제한한다."""
+    effective_price = price if (price is not None and price > 0) else reference_price
+    cap_candidates: list[Decimal] = []
+
+    volume_cap_pct = (
+        max_intraday_volume_participation_pct
+        if max_intraday_volume_participation_pct is not None
+        else _DEFAULT_MAX_INTRADAY_VOLUME_PARTICIPATION_PCT
+    )
+    if (
+        accumulated_intraday_volume is not None
+        and accumulated_intraday_volume > 0
+        and volume_cap_pct > 0
+    ):
+        max_qty_by_intraday_volume = (
+            accumulated_intraday_volume * volume_cap_pct / Decimal("100")
+        ).to_integral_value(rounding=ROUND_DOWN)
+        cap_candidates.append(max_qty_by_intraday_volume)
+        if max_qty_by_intraday_volume < qty:
+            constraints.append("intraday_volume_participation_cap")
+
+    turnover_cap_pct = (
+        max_intraday_turnover_participation_pct
+        if max_intraday_turnover_participation_pct is not None
+        else _DEFAULT_MAX_INTRADAY_TURNOVER_PARTICIPATION_PCT
+    )
+    if (
+        accumulated_intraday_turnover is not None
+        and accumulated_intraday_turnover > 0
+        and effective_price is not None
+        and effective_price > 0
+        and turnover_cap_pct > 0
+    ):
+        max_qty_by_intraday_turnover = (
+            (accumulated_intraday_turnover * turnover_cap_pct / Decimal("100"))
+            / effective_price
+        ).to_integral_value(rounding=ROUND_DOWN)
+        cap_candidates.append(max_qty_by_intraday_turnover)
+        if max_qty_by_intraday_turnover < qty:
+            constraints.append("intraday_turnover_participation_cap")
+
+    avg_daily_volume_cap_pct = (
+        max_average_daily_volume_participation_pct
+        if max_average_daily_volume_participation_pct is not None
+        else _DEFAULT_MAX_AVG_DAILY_VOLUME_PARTICIPATION_PCT
+    )
+    if (
+        average_daily_volume_20d is not None
+        and average_daily_volume_20d > 0
+        and avg_daily_volume_cap_pct > 0
+    ):
+        max_qty_by_average_daily_volume = (
+            average_daily_volume_20d * avg_daily_volume_cap_pct / Decimal("100")
+        ).to_integral_value(rounding=ROUND_DOWN)
+        cap_candidates.append(max_qty_by_average_daily_volume)
+        if max_qty_by_average_daily_volume < qty:
+            constraints.append("average_daily_volume_participation_cap")
+
+    if not cap_candidates:
+        return qty
+
+    max_qty = min(cap_candidates)
+    if max_qty < qty:
+        return max(Decimal("0"), max_qty)
+    return qty
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -546,8 +649,9 @@ def calculate_sizing(inputs: SizingInputs) -> SizingResult:
     5. **Min order qty** — reject if below configured minimum.
     6. **Cash availability** — cap for BUY orders based on available cash.
     7. **Position concentration** — cap so total position ≤ % of NAV.
-    8. **Lot size rounding** — round down to nearest trading unit.
-    9. **Zero-quantity guard** — set ``skip_reason`` if final quantity ≤ 0.
+    8. **Liquidity participation** — cap so order stays within volume/turnover participation.
+    9. **Lot size rounding** — round down to nearest trading unit.
+    10. **Zero-quantity guard** — set ``skip_reason`` if final quantity ≤ 0.
 
     Parameters
     ----------
@@ -614,7 +718,22 @@ def calculate_sizing(inputs: SizingInputs) -> SizingResult:
         reference_price=inputs.reference_price,
     )
 
-    # ── Step 7: lot size rounding ──
+    # ── Step 7: liquidity participation (BUY only) ──
+    if inputs.side == OrderSide.BUY:
+        qty = _apply_liquidity_participation_constraint(
+            qty,
+            inputs.requested_price,
+            constraints,
+            reference_price=inputs.reference_price,
+            accumulated_intraday_volume=inputs.accumulated_intraday_volume,
+            accumulated_intraday_turnover=inputs.accumulated_intraday_turnover,
+            average_daily_volume_20d=inputs.average_daily_volume_20d,
+            max_intraday_volume_participation_pct=inputs.max_intraday_volume_participation_pct,
+            max_intraday_turnover_participation_pct=inputs.max_intraday_turnover_participation_pct,
+            max_average_daily_volume_participation_pct=inputs.max_average_daily_volume_participation_pct,
+        )
+
+    # ── Step 8: lot size rounding ──
     qty = _apply_lot_size(qty, inputs.lot_size)
 
     # ── Step 8: zero-quantity guard ──

@@ -438,6 +438,32 @@ class TestUniverseSelectionServiceCompose:
         assert result[0].source_type == SourceType.HELD_POSITION
 
     @pytest.mark.asyncio
+    async def test_core_cap_limits_only_core_symbols(self) -> None:
+        """core_cap 도달 시에도 event overlay는 유지되고 core만 추가 제한된다."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(_make_instrument("005930"))
+        await repos.instruments.add(_make_instrument("000660"))
+        await repos.instruments.add(_make_instrument("035420"))
+        await repos.external_events.add(_make_event("000660", severity="high"))
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(
+            account_id=FALLBACK_ACCOUNT_ID,
+            since=NOW,
+            max_cap=3,
+            core_cap=1,
+            exclude_held_from_cap=True,
+        )
+        result = await svc.compose(ctx)
+
+        symbols = [item.symbol for item in result]
+        source_types = {item.symbol: item.source_type for item in result}
+        assert len(result) == 2
+        assert "000660" in symbols
+        assert source_types["000660"] == SourceType.EVENT_OVERLAY
+        assert sum(1 for item in result if item.source_type == SourceType.CORE) == 1
+
+    @pytest.mark.asyncio
     async def test_empty_universe_returns_empty_list(self) -> None:
         """DB에 instrument가 없으면 빈 리스트 반환."""
         repos = build_in_memory_repositories()
@@ -1055,14 +1081,21 @@ class TestCompositionContextP2:
         ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
         assert ctx.pre_pool_size == 50
 
+    def test_core_cap_default(self) -> None:
+        """core_cap 기본값은 None."""
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+        assert ctx.core_cap is None
+
     def test_custom_values(self) -> None:
         """커스텀 값 전달 가능."""
         ctx = CompositionContext(
             account_id=FALLBACK_ACCOUNT_ID,
             since=NOW,
+            core_cap=15,
             market_overlay_cap=10,
             pre_pool_size=100,
         )
+        assert ctx.core_cap == 15
         assert ctx.market_overlay_cap == 10
         assert ctx.pre_pool_size == 100
 

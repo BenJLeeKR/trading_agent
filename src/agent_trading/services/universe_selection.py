@@ -708,12 +708,21 @@ class UniverseSelectionService:
 
         capped: list[SelectedSymbol] = []
         non_held_count = 0
+        core_count = 0
         for sym in candidates:
             if sym.source_type == SourceType.HELD_POSITION:
                 capped.append(sym)
-            elif non_held_count < ctx.max_cap:
+            else:
+                if non_held_count >= ctx.max_cap:
+                    break
+                if (
+                    sym.source_type == SourceType.CORE
+                    and ctx.core_cap is not None
+                    and core_count >= ctx.core_cap
+                ):
+                    continue
                 capped.append(sym)
                 non_held_count += 1
-            else:
-                break
+                if sym.source_type == SourceType.CORE:
+                    core_count += 1
         return capped

@@ -70,6 +70,7 @@ KIS_ENDPOINTS: Mapping[str, str] = {
     "inquire_daily_ccld": "/uapi/domestic-stock/v1/trading/inquire-daily-ccld",     # 주식일별주문체결조회
     "inquire_psbl_rvsecncl": "/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl", # 정정취소가능주문조회
     "inquire_price": "/uapi/domestic-stock/v1/quotations/inquire-price",            # 주식현재가 시세
+    "inquire_daily_itemchartprice": "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",  # 국내주식기간별시세
     # --- Market Data ---
     "inquire_asking_price_exp_ccn": "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn", # 호가
     # --- Disclosure (live only) ---
@@ -90,6 +91,7 @@ KIS_TR_IDS: Mapping[str, tuple[str, str]] = {
     "inquire_psbl_order": ("TTTC8908R", "VTTC8908R"),       # 매수가능조회
     "inquire_psbl_sell": ("TTTC8408R", None),               # 매도가능수량조회 (모의 미지원)
     "inquire_price": ("FHKST01010100", "FHKST01010100"),    # 주식현재가 시세
+    "inquire_daily_itemchartprice": ("FHKST03010100", "FHKST03010100"),    # 국내주식기간별시세
     "inquire_asking_price_exp_ccn": ("FHKST01010200", "FHKST01010200"), # 호가
     # Disclosure (live only — 모의투자 미지원)
     "disclosure_title": ("FHKST01011800", None),
@@ -2045,6 +2047,51 @@ class KISRestClient:
             self._set_quote_cache(symbol, output)
 
         return output
+
+    async def inquire_daily_itemchartprice(
+        self,
+        *,
+        symbol: str,
+        market_code: str = "KRX",
+        start_date: str,
+        end_date: str,
+        period_div_code: str = "D",
+        adjusted_price: bool = True,
+    ) -> list[dict[str, Any]]:
+        """국내주식 기간별시세(일/주/월/년) 조회.
+
+        현재 signal feature batch upstream에서는 일봉(``D``)만 사용한다.
+        """
+        market_div_code = "J"
+        if market_code == "NXT":
+            market_div_code = "NX"
+        elif market_code in {"INTEGRATED", "UN"}:
+            market_div_code = "UN"
+
+        params = {
+            "FID_COND_MRKT_DIV_CODE": market_div_code,
+            "FID_INPUT_ISCD": symbol,
+            "FID_INPUT_DATE_1": start_date,
+            "FID_INPUT_DATE_2": end_date,
+            "FID_PERIOD_DIV_CODE": period_div_code,
+            "FID_ORG_ADJ_PRC": "0" if adjusted_price else "1",
+        }
+
+        data = await self._request(
+            "GET",
+            endpoint_key="inquire_daily_itemchartprice",
+            tr_id_key="inquire_daily_itemchartprice",
+            bucket=BucketType.MARKET_DATA,
+            params=params,
+        )
+
+        output = data.get("output2", [])
+        if not isinstance(output, list):
+            return []
+        return [
+            item for item in output
+            if isinstance(item, dict)
+        ]
 
     async def get_quotes_batch(
         self,

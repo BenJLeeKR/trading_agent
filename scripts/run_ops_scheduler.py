@@ -93,6 +93,8 @@ DEFAULT_DECISION_INTERVAL_SECONDS = 300
 DEFAULT_POST_SUBMIT_INTERVAL_SECONDS = 30
 DEFAULT_FILL_SYNC_INTERVAL_SECONDS = 600
 DEFAULT_FILL_SYNC_AFTER_HOURS_INTERVAL_SECONDS = 1800
+DEFAULT_SIGNAL_FEATURE_BATCH_TIME = dtime(20, 10)
+DEFAULT_DECISION_SUBMIT_TIMEOUT_SECONDS = 420
 # Phase 4: subprocess isolation provides SIGKILL-guaranteed timeout,
 # so the scheduler-level timeout can be reduced from 240s to 120s.
 # The subprocess itself enforces a 35s timeout for agent execution.
@@ -214,6 +216,8 @@ class SchedulerState:
     recovery_batch_done: bool = False
     # 장후 첫 1회 full snapshot(positions+cash) 완료 여부
     after_hours_full_snapshot_done: bool = False
+    # Nextrade after-market 종료 후 signal feature batch 1회 실행 여부
+    signal_feature_batch_done: bool = False
 
 
 def _derive_operations_day_status(state: SchedulerState) -> str:
@@ -241,6 +245,24 @@ def _parse_hhmm(value: str) -> dtime:
 def _combine(run_date: date, clock: dtime) -> datetime:
     """Return a timezone-aware KST datetime for ``run_date`` + ``clock``."""
     return datetime.combine(run_date, clock, tzinfo=KST)
+
+
+def _should_rollover_to_next_run_date(
+    *,
+    now: datetime,
+    run_date: date,
+    end_at: datetime,
+    state: SchedulerState,
+    signal_feature_batch_at: dtime,
+) -> bool:
+    """Decide whether the scheduler may safely roll over to the next run date."""
+    if now.date() > run_date:
+        return True
+    if now < end_at:
+        return False
+    if state.after_hours_mode and not state.signal_feature_batch_done:
+        return False
+    return True
 
 
 async def _session_gate(
@@ -508,6 +530,71 @@ def _parse_post_submit_sync_summary(result: CommandResult) -> dict[str, Any]:
     return metrics
 
 
+def _parse_signal_feature_batch_summary(result: CommandResult) -> dict[str, Any]:
+    """Parse signal feature snapshot batch summary from JSON/stdout."""
+    for obj in reversed(_extract_json_objects(result.stdout)):
+        processed = obj.get("processed")
+        persisted = obj.get("persisted")
+        skipped = obj.get("skipped")
+        errors = obj.get("errors")
+        if processed is None or persisted is None or skipped is None:
+            continue
+        return {
+            "processed": int(processed),
+            "persisted": int(persisted),
+            "skipped": int(skipped),
+            "errors": len(errors) if isinstance(errors, list) else 0,
+        }
+    return {}
+
+
+def _parse_signal_feature_input_summary(result: CommandResult) -> dict[str, Any]:
+    """Parse signal feature input generation summary from JSON/stdout."""
+    for obj in reversed(_extract_json_objects(result.stdout)):
+        universe_count = obj.get("universe_count")
+        generated_count = obj.get("generated_count")
+        error_count = obj.get("error_count")
+        if universe_count is None or generated_count is None or error_count is None:
+            continue
+        payload: dict[str, Any] = {
+            "universe_count": int(universe_count),
+            "generated_count": int(generated_count),
+            "error_count": int(error_count),
+        }
+        output = obj.get("output")
+        if output:
+            payload["output"] = str(output)
+        return payload
+    return {}
+
+
+def _extract_command_failure_reason(result: CommandResult) -> str | None:
+    """Extract a compact failure reason from command output."""
+    json_objects = _extract_json_objects(result.stdout)
+    for obj in reversed(json_objects):
+        errors = obj.get("errors")
+        if isinstance(errors, list) and errors:
+            first_error = errors[0]
+            if isinstance(first_error, str) and first_error.strip():
+                return first_error.strip()
+        error = obj.get("error")
+        if isinstance(error, str) and error.strip():
+            return error.strip()
+        detail = obj.get("detail")
+        if isinstance(detail, str) and detail.strip():
+            return detail.strip()
+
+    for source in (result.stderr, result.stdout):
+        for line in reversed(source.splitlines()):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("{") and stripped.endswith("}"):
+                continue
+            return stripped[:500]
+    return None
+
+
 def _latest_command_result(
     state: SchedulerState,
     names: set[str],
@@ -536,6 +623,10 @@ def _command_result_summary(
     }
     if metrics:
         payload["metrics"] = metrics
+    if not result.ok:
+        failure_reason = _extract_command_failure_reason(result)
+        if failure_reason:
+            payload["last_error"] = failure_reason
     return payload
 
 
@@ -564,6 +655,10 @@ def _command_family_stats(
     }
     if metrics_parser is not None:
         payload["last_metrics"] = metrics_parser(last)
+    if not last.ok:
+        failure_reason = _extract_command_failure_reason(last)
+        if failure_reason:
+            payload["last_error"] = failure_reason
     return payload
 
 
@@ -583,6 +678,14 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
         {"pre_fill_sync", "fill_sync", "eod_fill_sync"},
     )
     latest_recovery = _latest_command_result(state, {"eod_recovery_batch"})
+    latest_signal_feature_batch = _latest_command_result(
+        state,
+        {"after_market_signal_feature_batch"},
+    )
+    latest_signal_feature_input = _latest_command_result(
+        state,
+        {"after_market_signal_feature_input"},
+    )
     latest_decision_loop = _latest_command_result(
         state,
         {"decision_submit_gate", "decision_dry_run"},
@@ -616,6 +719,16 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
             state,
             names={"eod_recovery_batch"},
         ),
+        "signal_feature_batch": _command_family_stats(
+            state,
+            names={"after_market_signal_feature_batch"},
+            metrics_parser=_parse_signal_feature_batch_summary,
+        ),
+        "signal_feature_input": _command_family_stats(
+            state,
+            names={"after_market_signal_feature_input"},
+            metrics_parser=_parse_signal_feature_input_summary,
+        ),
     }
     token_cache_health = _build_token_cache_health_summary()
 
@@ -627,6 +740,8 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
         "last_command_name": state.command_results[-1].name if state.command_results else None,
         "session_reason": state.session_info.reason if state.session_info else None,
         "after_hours_full_snapshot_done": state.after_hours_full_snapshot_done,
+        "signal_feature_batch_done": state.signal_feature_batch_done,
+        "scheduler_runtime": _build_scheduler_runtime_summary(),
         "command_health": {k: v for k, v in command_health.items() if v is not None},
         "token_cache_health": token_cache_health,
         "snapshot_sync": _command_result_summary(
@@ -642,6 +757,35 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
             metrics=_parse_decision_loop_summary(latest_decision_loop) if latest_decision_loop else None,
         ),
         "recovery_batch": _command_result_summary(latest_recovery),
+        "signal_feature_batch": _command_result_summary(
+            latest_signal_feature_batch,
+            metrics=(
+                _parse_signal_feature_batch_summary(latest_signal_feature_batch)
+                if latest_signal_feature_batch
+                else None
+            ),
+        ),
+        "signal_feature_input": _command_result_summary(
+            latest_signal_feature_input,
+            metrics=(
+                _parse_signal_feature_input_summary(latest_signal_feature_input)
+                if latest_signal_feature_input
+                else None
+            ),
+        ),
+    }
+
+
+def _build_scheduler_runtime_summary() -> dict[str, Any]:
+    """Build runtime-identifying metadata for the live scheduler process."""
+    script_path = Path(__file__).resolve()
+    return {
+        "pid": os.getpid(),
+        "script_path": str(script_path),
+        "python_bin": sys.executable,
+        "signal_feature_batch_supported": True,
+        "signal_feature_batch_time": DEFAULT_SIGNAL_FEATURE_BATCH_TIME.strftime("%H:%M"),
+        "script_mtime_epoch": script_path.stat().st_mtime,
     }
 
 
@@ -1046,6 +1190,34 @@ def _fill_sync_command(*, after_hours: bool = False) -> list[str]:
     return argv
 
 
+def _signal_feature_snapshot_command(
+    *,
+    input_path: str,
+) -> list[str]:
+    return [
+        PYTHON_BIN,
+        "scripts/build_signal_feature_snapshots.py",
+        "--input",
+        input_path,
+        "--output",
+        "json",
+    ]
+
+
+def _generate_signal_feature_snapshot_input_command(
+    *,
+    output_path: str,
+) -> list[str]:
+    return [
+        PYTHON_BIN,
+        "scripts/generate_signal_feature_snapshot_input.py",
+        "--output",
+        output_path,
+        "--output-format",
+        "json",
+    ]
+
+
 async def _run_and_record(
     state: SchedulerState,
     name: str,
@@ -1267,6 +1439,59 @@ async def _run_after_hours_snapshot_cycle(
     )
 
 
+async def _run_after_market_signal_feature_batch(
+    state: SchedulerState,
+    *,
+    timeout_seconds: int,
+    env: dict[str, str],
+    now: datetime,
+    signal_feature_batch_at: dtime = DEFAULT_SIGNAL_FEATURE_BATCH_TIME,
+    signal_feature_input_path: str = "data/signal_feature_snapshot_input.json",
+    dsn: str | None = None,
+) -> None:
+    """Run one signal feature snapshot batch after Nextrade after-market closes."""
+    if state.signal_feature_batch_done:
+        return
+    trigger_at = _combine(state.run_date, signal_feature_batch_at)
+    if now < trigger_at:
+        return
+
+    logger.info(
+        "phase=after-market signal feature batch start at %s (input=%s)",
+        now.isoformat(),
+        signal_feature_input_path,
+    )
+    input_result = await _run_and_record(
+        state,
+        "after_market_signal_feature_input",
+        _generate_signal_feature_snapshot_input_command(
+            output_path=signal_feature_input_path,
+        ),
+        timeout_seconds=timeout_seconds,
+        env=env,
+    )
+    if not input_result.ok:
+        await _persist_operations_day_run(state, dsn)
+        logger.warning("phase=after-market signal feature input failed — will retry on next tick")
+        return
+
+    batch_result = await _run_and_record(
+        state,
+        "after_market_signal_feature_batch",
+        _signal_feature_snapshot_command(input_path=signal_feature_input_path),
+        timeout_seconds=timeout_seconds,
+        env=env,
+    )
+    if not batch_result.ok:
+        await _persist_operations_day_run(state, dsn)
+        logger.warning("phase=after-market signal feature batch failed — will retry on next tick")
+        return
+
+    state.signal_feature_batch_done = True
+    await _persist_operations_day_run(state, dsn)
+    logger.info("phase=after-market signal feature batch complete")
+
+
 async def _run_intraday_due_tasks(
     state: SchedulerState,
     tasks: dict[str, ScheduledTask],
@@ -1326,10 +1551,16 @@ async def _run_intraday_due_tasks(
 
         # decision_submit_gate timeout: must accommodate all universe symbols
         # running concurrently via asyncio.gather() with semaphore(5).
-        # Subprocess 내부에 PER_AGENT_HARD_TIMEOUT=300s가 이미 존재하므로
-        # scheduler-level timeout을 300s로 통일.
-        # 실제 운영 기준 177~206초면 완료 (HP sell 활성화 시 모니터링 필요).
-        _DECISION_TIMEOUT = 300  # seconds; PER_AGENT_HARD_TIMEOUT와 일치
+        # 장중 실측상 정상 완료도 160~185초 수준이며, 일부 symbol의
+        # EI fallback/held_position 경로가 겹치면 300초는 너무 타이트하다.
+        # 운영 안정성 우선으로 scheduler-level timeout을 별도 상향하고,
+        # 필요 시 env로 미세 조정 가능하게 둔다.
+        _DECISION_TIMEOUT = int(
+            os.environ.get(
+                "OPS_SCHEDULER_DECISION_TIMEOUT_SECONDS",
+                str(DEFAULT_DECISION_SUBMIT_TIMEOUT_SECONDS),
+            )
+        )
 
         # ★ CADENCE_TRACE: decision_submit_gate start
         last_run = tasks["decision"].last_run_at or now
@@ -1903,6 +2134,11 @@ async def _log_startup_info(env: dict[str, str], state: SchedulerState, pool_ok:
     logger.info("  Live-info WS URL:    %s", env.get("KIS_LIVE_INFO_WS_URL", "N/A"))
     logger.info("  Session source:      CombinedSessionProvider (076+163+fallback)")
     logger.info("  After-hours window:  %ss", env.get("SCHEDULER_AFTER_HOURS_WINDOW", "3600"))
+    logger.info("  Signal batch time:   %s", DEFAULT_SIGNAL_FEATURE_BATCH_TIME.strftime("%H:%M"))
+    logger.info(
+        "  Signal batch input:  %s",
+        env.get("SCHEDULER_SIGNAL_FEATURE_INPUT_PATH", "data/signal_feature_snapshot_input.json"),
+    )
     logger.info("  Instance ID:         %s", env.get("SCHEDULER_INSTANCE_ID", "default"))
     logger.info("  Run date:            %s", datetime.now(KST).strftime("%Y-%m-%d %A"))
     logger.info("  DB pool:             %s", "connected" if pool_ok else "not connected")
@@ -2117,7 +2353,13 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                 state.cycles += 1
                 now = datetime.now(KST)
 
-                if now.date() > run_date or now >= end_at:
+                if _should_rollover_to_next_run_date(
+                    now=now,
+                    run_date=run_date,
+                    end_at=end_at,
+                    state=state,
+                    signal_feature_batch_at=args.signal_feature_batch_time,
+                ):
                     logger.info(
                         "═══ Reached scheduler end time — entering idle mode until next run date ═══"
                     )
@@ -2143,6 +2385,18 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                         logger.info("Heartbeat background task recreated after idle rollover (interval=10s)")
                     logger.info("═══ Next run_date: %s — waiting for market hours ═══", run_date)
                     continue
+                if (
+                    now >= end_at
+                    and state.after_hours_mode
+                    and not state.signal_feature_batch_done
+                ):
+                    logger.info(
+                        "Rollover deferred — waiting for after-market signal feature batch "
+                        "(now=%s trigger=%s run_date=%s)",
+                        now.isoformat(),
+                        _combine(run_date, args.signal_feature_batch_time).isoformat(),
+                        run_date.isoformat(),
+                    )
 
                 # 비영업일 early termination — session gate가 모든 phase를 차단하면
                 # 16:30까지 대기하지 않고 즉시 graceful shutdown
@@ -2286,6 +2540,16 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                         state.recovery_batch_done = True
                         logger.info("[RECOVERY_BATCH] 복구 배치 완료")
 
+                    await _run_after_market_signal_feature_batch(
+                        state,
+                        timeout_seconds=args.task_timeout,
+                        env=env,
+                        now=now,
+                        signal_feature_batch_at=args.signal_feature_batch_time,
+                        signal_feature_input_path=args.signal_feature_input_path,
+                        dsn=dsn,
+                    )
+
                 # Idle/non-trading day: 긴 polling interval (60초)
                 if state.session_info is None or state.cycles == 0:
                     await asyncio.sleep(min(args.tick_seconds, 60))
@@ -2355,6 +2619,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--decision-interval", type=int, default=DEFAULT_DECISION_INTERVAL_SECONDS)
     parser.add_argument("--post-submit-interval", type=int, default=DEFAULT_POST_SUBMIT_INTERVAL_SECONDS)
     parser.add_argument("--fill-sync-interval", type=int, default=DEFAULT_FILL_SYNC_INTERVAL_SECONDS)
+    parser.add_argument(
+        "--signal-feature-batch-time",
+        type=_parse_hhmm,
+        default=DEFAULT_SIGNAL_FEATURE_BATCH_TIME,
+        help="After-market signal feature batch trigger time in KST.",
+    )
+    parser.add_argument(
+        "--signal-feature-input-path",
+        default="data/signal_feature_snapshot_input.json",
+        help="Input JSON path for signal feature snapshot batch.",
+    )
     parser.add_argument("--tick-seconds", type=int, default=5)
     parser.add_argument("--task-timeout", type=int, default=DEFAULT_TASK_TIMEOUT_SECONDS)
     parser.add_argument(

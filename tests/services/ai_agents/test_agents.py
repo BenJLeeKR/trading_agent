@@ -23,7 +23,11 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from agent_trading.domain.entities import CashBalanceSnapshotEntity, ExternalEventEntity
+from agent_trading.domain.entities import (
+    CashBalanceSnapshotEntity,
+    ExternalEventEntity,
+    SignalFeatureSnapshotEntity,
+)
 from agent_trading.services.ai_agents.ai_risk import (
     AIRiskAgent,
     StubAIRiskAgent,
@@ -52,6 +56,12 @@ from agent_trading.services.common_types import (
     AssembledContext,
     ScoreResult,
 )
+from agent_trading.services.deterministic_trigger_engine import (
+    DeterministicTriggerAssessment,
+)
+from agent_trading.services.market_regime import MarketRegimeAssessment
+from agent_trading.services.portfolio_allocation import PortfolioAllocationAssessment
+from agent_trading.services.strategy_selection import StrategySelectionAssessment
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +151,238 @@ class TestAgentPromptSymbolFallback:
 
         assert "Symbol: 005930" in prompt
         assert "Market: KRX" in prompt
+
+    def test_ai_risk_prompt_includes_signal_feature_snapshot(self) -> None:
+        agent = AIRiskAgent(provider_client=AsyncMock())
+        signal_snapshot = SignalFeatureSnapshotEntity(
+            signal_feature_snapshot_id=uuid4(),
+            instrument_id=uuid4(),
+            timeframe="1d",
+            snapshot_at=datetime.now(timezone.utc),
+            feature_set_version="signal_backbone_v1",
+            bar_count=80,
+            overall_score=Decimal("0.41"),
+            fast_score=Decimal("0.32"),
+            slow_score=Decimal("0.48"),
+            rsi_14=Decimal("61.2"),
+            reason_codes=["above_sma20", "momentum_3m_positive"],
+        )
+        request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="signal-ar",
+            context=AssembledContext(signal_feature_snapshot=signal_snapshot),
+            symbol="005930",
+            market="KRX",
+            event_interpretation_output=EventInterpretationOutput(symbol="005930"),
+        )
+
+        prompt = agent._build_user_prompt(request)
+
+        assert "=== Signal Feature Snapshot ===" in prompt
+        assert "Overall score: 0.41" in prompt
+        assert "Signal reason codes: above_sma20, momentum_3m_positive" in prompt
+
+    def test_fdc_prompt_includes_signal_feature_snapshot(self) -> None:
+        agent = FinalDecisionComposerAgent(provider_client=AsyncMock())
+        signal_snapshot = SignalFeatureSnapshotEntity(
+            signal_feature_snapshot_id=uuid4(),
+            instrument_id=uuid4(),
+            timeframe="1d",
+            snapshot_at=datetime.now(timezone.utc),
+            feature_set_version="signal_backbone_v1",
+            bar_count=80,
+            overall_score=Decimal("0.44"),
+            fast_score=Decimal("0.31"),
+            slow_score=Decimal("0.52"),
+            return_1m_pct=Decimal("5.1"),
+            reason_codes=["volume_surge_strong"],
+        )
+        request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="signal-fdc",
+            context=AssembledContext(signal_feature_snapshot=signal_snapshot),
+            symbol="005930",
+            market="KRX",
+            event_interpretation_output=EventInterpretationOutput(symbol="005930"),
+            ai_risk_output=AIRiskOutput(symbol="005930"),
+        )
+
+        prompt = agent._build_user_prompt(request)
+
+        assert "=== Signal Feature Snapshot ===" in prompt
+        assert "Overall score: 0.44" in prompt
+        assert "Signal reason codes: volume_surge_strong" in prompt
+
+    def test_prompts_include_market_regime(self) -> None:
+        regime = MarketRegimeAssessment(
+            regime_label="bullish_trend",
+            volatility_regime="normal_volatility",
+            risk_tone="risk_on",
+            confidence=0.78,
+            half_life_hours=24,
+            strategy_weights={"swing_momentum": 0.45, "event_continuation": 0.3},
+            reason_codes=("trend_up", "risk_on"),
+        )
+        context = AssembledContext(market_regime=regime)
+        ar_request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="regime-ar",
+            context=context,
+            symbol="005930",
+            market="KRX",
+            event_interpretation_output=EventInterpretationOutput(symbol="005930"),
+        )
+        fdc_request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="regime-fdc",
+            context=context,
+            symbol="005930",
+            market="KRX",
+            event_interpretation_output=EventInterpretationOutput(symbol="005930"),
+            ai_risk_output=AIRiskOutput(symbol="005930"),
+        )
+
+        ar_prompt = AIRiskAgent(provider_client=AsyncMock())._build_user_prompt(ar_request)
+        fdc_prompt = FinalDecisionComposerAgent(provider_client=AsyncMock())._build_user_prompt(
+            fdc_request
+        )
+
+        assert "=== Market Regime ===" in ar_prompt
+        assert "Regime label: bullish_trend" in ar_prompt
+        assert "Strategy weights: swing_momentum=0.45" in ar_prompt
+        assert "=== Market Regime ===" in fdc_prompt
+        assert "Risk tone: risk_on" in fdc_prompt
+
+    def test_prompts_include_strategy_selection(self) -> None:
+        strategy_selection = StrategySelectionAssessment(
+            preferred_strategy="event_continuation",
+            allowed_strategies=("event_continuation", "intraday_breakout"),
+            preferred_entry_style="MARKET",
+            preferred_time_horizon="short",
+            confidence=0.72,
+            reason_codes=("event_overlay_bias", "high_volatility_shorter_horizon"),
+            metadata={"source_type": "event_overlay"},
+        )
+        context = AssembledContext(strategy_selection=strategy_selection)
+        ar_request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="strategy-ar",
+            context=context,
+            symbol="005930",
+            market="KRX",
+            event_interpretation_output=EventInterpretationOutput(symbol="005930"),
+        )
+        fdc_request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="strategy-fdc",
+            context=context,
+            symbol="005930",
+            market="KRX",
+            event_interpretation_output=EventInterpretationOutput(symbol="005930"),
+            ai_risk_output=AIRiskOutput(symbol="005930"),
+        )
+
+        ar_prompt = AIRiskAgent(provider_client=AsyncMock())._build_user_prompt(ar_request)
+        fdc_prompt = FinalDecisionComposerAgent(provider_client=AsyncMock())._build_user_prompt(
+            fdc_request
+        )
+
+        assert "=== Strategy Selection ===" in ar_prompt
+        assert "Preferred strategy: event_continuation" in ar_prompt
+        assert "Preferred execution style: MARKET" in ar_prompt
+        assert "=== Strategy Selection ===" in fdc_prompt
+        assert "Allowed strategies: event_continuation, intraday_breakout" in fdc_prompt
+
+    def test_prompts_include_portfolio_allocation(self) -> None:
+        portfolio_allocation = PortfolioAllocationAssessment(
+            target_weight_pct=8.0,
+            current_weight_pct=2.0,
+            max_single_position_pct=10.0,
+            remaining_concentration_pct=8.0,
+            remaining_gross_budget_pct=55.0,
+            max_new_capital_pct=4.0,
+            orderable_cash=Decimal("5000000"),
+            available_allocation_cash=Decimal("4000000"),
+            recommended_max_order_value=Decimal("3000000"),
+            allocation_bias="accumulate",
+            confidence=0.77,
+            reason_codes=("portfolio_bullish_target",),
+            metadata={"source_type": "core"},
+        )
+        context = AssembledContext(portfolio_allocation=portfolio_allocation)
+        ar_request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="portfolio-ar",
+            context=context,
+            symbol="005930",
+            market="KRX",
+            event_interpretation_output=EventInterpretationOutput(symbol="005930"),
+        )
+        fdc_request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="portfolio-fdc",
+            context=context,
+            symbol="005930",
+            market="KRX",
+            event_interpretation_output=EventInterpretationOutput(symbol="005930"),
+            ai_risk_output=AIRiskOutput(symbol="005930"),
+        )
+
+        ar_prompt = AIRiskAgent(provider_client=AsyncMock())._build_user_prompt(ar_request)
+        fdc_prompt = FinalDecisionComposerAgent(provider_client=AsyncMock())._build_user_prompt(
+            fdc_request
+        )
+
+        assert "=== Portfolio Allocation ===" in ar_prompt
+        assert "Target weight: 8.0%" in ar_prompt
+        assert "=== Portfolio Allocation ===" in fdc_prompt
+        assert "Recommended max order value: 3000000" in fdc_prompt
+
+    def test_prompts_include_deterministic_trigger(self) -> None:
+        deterministic_trigger = DeterministicTriggerAssessment(
+            trigger_version="deterministic_trigger_v1",
+            primary_candidate="WATCH",
+            candidate_set=("WATCH", "BUY_CANDIDATE"),
+            watch_candidate=True,
+            buy_candidate=True,
+            sell_candidate=False,
+            reduce_candidate=False,
+            candidate_confidence=0.62,
+            entry_score=0.62,
+            exit_score=0.18,
+            watch_score=0.62,
+            reason_codes=("trigger_watch_candidate", "trigger_entry_score_high"),
+            thresholds={"watch_candidate_threshold": 0.45},
+            metadata={"source_type": "core"},
+        )
+        context = AssembledContext(deterministic_trigger=deterministic_trigger)
+        ar_request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="trigger-ar",
+            context=context,
+            symbol="005930",
+            market="KRX",
+            event_interpretation_output=EventInterpretationOutput(symbol="005930"),
+        )
+        fdc_request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="trigger-fdc",
+            context=context,
+            symbol="005930",
+            market="KRX",
+            event_interpretation_output=EventInterpretationOutput(symbol="005930"),
+            ai_risk_output=AIRiskOutput(symbol="005930"),
+        )
+
+        ar_prompt = AIRiskAgent(provider_client=AsyncMock())._build_user_prompt(ar_request)
+        fdc_prompt = FinalDecisionComposerAgent(provider_client=AsyncMock())._build_user_prompt(
+            fdc_request
+        )
+
+        assert "=== Deterministic Trigger ===" in ar_prompt
+        assert "Primary candidate: WATCH" in ar_prompt
+        assert "=== Deterministic Trigger ===" in fdc_prompt
+        assert "Candidate set: WATCH, BUY_CANDIDATE" in fdc_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -998,11 +1240,40 @@ class TestAIRiskAgent:
                 kill_switch_active=False,
                 nav=Decimal(risk_limit_nav),
             )
+        portfolio_allocation = None
+        if risk_limit_nav is not None:
+            position_value = None
+            current_weight_pct = None
+            remaining_concentration_pct = None
+            if position_qty is not None and position_avg_price is not None:
+                position_value = Decimal(position_qty) * Decimal(position_avg_price)
+                current_weight_pct = float(
+                    position_value / Decimal(risk_limit_nav) * Decimal("100")
+                )
+                remaining_concentration_pct = max(0.0, 15.0 - current_weight_pct)
+            portfolio_allocation = PortfolioAllocationAssessment(
+                target_weight_pct=8.0,
+                current_weight_pct=current_weight_pct,
+                max_single_position_pct=15.0,
+                remaining_concentration_pct=remaining_concentration_pct,
+                remaining_gross_budget_pct=50.0,
+                max_new_capital_pct=(
+                    remaining_concentration_pct or 0.0
+                ),
+                orderable_cash=Decimal("1000000"),
+                available_allocation_cash=Decimal("1000000"),
+                recommended_max_order_value=Decimal("1000000"),
+                allocation_bias="accumulate",
+                confidence=0.7,
+                reason_codes=("portfolio_test",),
+                metadata={"source_type": "core"},
+            )
 
         context = AssembledContext(
             position_snapshot=pos,
             cash_balance_snapshot=cash,
             risk_limit_snapshot=rl,
+            portfolio_allocation=portfolio_allocation,
         )
         request = AgentExecutionRequest(
             decision_context_id=uuid4(),
@@ -1020,6 +1291,7 @@ class TestAIRiskAgent:
             risk_limit_nav="100000000",
         )
         assert "Position Concentration" in prompt
+        assert "=== Portfolio Allocation ===" in prompt
         assert "Over-concentrated" in prompt
         assert "NAV" in prompt
         assert "Max single position limit" in prompt

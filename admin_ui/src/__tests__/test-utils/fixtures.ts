@@ -371,6 +371,7 @@ export const mockCashBalance: CashBalanceSnapshotView = {
   available_cash: 50000.0,
   settled_cash: 100000.0,
   unsettled_cash: 0,
+  orderable_amount: 45000.0,
   source_of_truth: "broker",
   snapshot_at: "2026-05-05T00:00:00Z",
 };
@@ -382,6 +383,7 @@ export const mockCashBalanceForLocked: CashBalanceSnapshotView = {
   available_cash: 1000000.0,
   settled_cash: 2000000.0,
   unsettled_cash: 0,
+  orderable_amount: 900000.0,
   source_of_truth: "broker",
   snapshot_at: "2026-05-05T00:00:00Z",
 };

@@ -579,16 +579,16 @@ export default function OperationsDashboardView() {
       (p) => (p.quantity ?? 0) > 0
     ).length;
 
-    // ── Cash balance: settled_cash 우선, fallback available_cash ──
+    // ── Cash balance: orderable_amount 우선, fallback available_cash ──
     let totalAvailableCash = 0;
     let cashUsedFallback = false;
     for (const cash of data.cashMap.values()) {
       if (cash) {
-        const val = cash.settled_cash ?? cash.available_cash;
+        const val = cash.orderable_amount ?? cash.available_cash;
         if (val !== null && val !== undefined) {
           totalAvailableCash += val;
         }
-        if (cash.settled_cash === null || cash.settled_cash === undefined) {
+        if (cash.orderable_amount === null || cash.orderable_amount === undefined) {
           cashUsedFallback = true;
         }
       }
@@ -1076,8 +1076,8 @@ export default function OperationsDashboardView() {
           subtitle={
             d.totalAvailableCash > 0
               ? d.cashUsedFallback
-                ? "출처: /cash-balance (settled_cash 없음, available_cash fallback)"
-                : "출처: /cash-balance (settled_cash 합계)"
+                ? "출처: /cash-balance (orderable_amount 없음, available_cash fallback)"
+                : "출처: /cash-balance (orderable_amount 합계)"
               : "데이터 없음"
           }
         />

@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from agent_trading.domain.enums import PipelineStopReason
+from agent_trading.domain.enums import OrderSide, OrderStatus, PipelineStopReason
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import AccountLookup, OrderQuery
 
@@ -18,6 +18,101 @@ HELD_POSITION_SKIP_HOLD_TTL = timedelta(minutes=20)
 HELD_POSITION_SKIP_EVENT_LOOKBACK = timedelta(minutes=30)
 HELD_POSITION_SKIP_ORDER_COOLDOWN = timedelta(minutes=20)
 HELD_POSITION_SKIP_DISABLE_AFTER = dtime(14, 30)
+_SELL_COOLDOWN_ELIGIBLE_STATUSES = {
+    OrderStatus.DRAFT,
+    OrderStatus.VALIDATED,
+    OrderStatus.PENDING_SUBMIT,
+    OrderStatus.SUBMITTED,
+    OrderStatus.ACKNOWLEDGED,
+    OrderStatus.PARTIALLY_FILLED,
+    OrderStatus.FILLED,
+    OrderStatus.RECONCILE_REQUIRED,
+}
+
+
+def _normalize_enum_value(value: object | None) -> str | None:
+    if value is None:
+        return None
+    return str(getattr(value, "value", value)).lower()
+
+
+async def _get_latest_recent_held_decision(
+    repos: RepositoryContainer,
+    *,
+    symbol: str,
+    cutoff: datetime,
+    db_conn: Any | None,
+    side: str,
+) -> tuple[str | None, datetime | None, Decimal | None, str | None]:
+    """최근 held_position 판단 1건과 앵커된 포지션/feature를 함께 조회한다."""
+    if db_conn is not None:
+        row = await db_conn.fetchrow(
+            """
+            SELECT
+                td.decision_type,
+                td.created_at,
+                ps.quantity AS anchored_position_qty,
+                dc.signal_feature_snapshot_id
+            FROM trading.trade_decisions td
+            LEFT JOIN trading.decision_contexts dc
+              ON dc.decision_context_id = td.decision_context_id
+            LEFT JOIN trading.position_snapshots ps
+              ON ps.position_snapshot_id = dc.position_snapshot_id
+            WHERE td.symbol = $1
+              AND td.source_type = 'held_position'
+              AND LOWER(CAST(td.side AS text)) = $2
+              AND td.created_at >= $3
+            ORDER BY td.created_at DESC
+            LIMIT 1
+            """,
+            symbol,
+            side,
+            cutoff,
+        )
+        if row is None:
+            return None, None, None, None
+        return (
+            _normalize_enum_value(row["decision_type"]),
+            row["created_at"],
+            row["anchored_position_qty"],
+            str(row["signal_feature_snapshot_id"])
+            if row["signal_feature_snapshot_id"] is not None
+            else None,
+        )
+
+    decisions = await repos.trade_decisions.list_all()
+    filtered = [
+        decision
+        for decision in decisions
+        if decision.symbol == symbol
+        and decision.source_type == "held_position"
+        and _normalize_enum_value(decision.side) == side
+        and decision.created_at >= cutoff
+    ]
+    if not filtered:
+        return None, None, None, None
+
+    latest = max(filtered, key=lambda item: item.created_at)
+    anchored_position_qty: Decimal | None = None
+    anchored_signal_feature_snapshot_id: str | None = None
+    if latest.decision_context_id is not None:
+        context = await repos.decision_contexts.get(latest.decision_context_id)
+        if context is not None:
+            if context.position_snapshot_id is not None:
+                snapshot = await repos.position_snapshots.get(context.position_snapshot_id)
+                if snapshot is not None:
+                    anchored_position_qty = snapshot.quantity
+            if context.signal_feature_snapshot_id is not None:
+                anchored_signal_feature_snapshot_id = str(
+                    context.signal_feature_snapshot_id
+                )
+
+    return (
+        _normalize_enum_value(latest.decision_type),
+        latest.created_at,
+        anchored_position_qty,
+        anchored_signal_feature_snapshot_id,
+    )
 
 
 async def evaluate_pre_ai_skip_reason(
@@ -132,6 +227,12 @@ async def evaluate_pre_ai_skip_reason(
     if cash_snapshot is None or cash_snapshot.orderable_amount is None:
         return None, details
 
+    fetch_status = str(getattr(cash_snapshot, "fetch_status", "") or "").lower()
+    details["cash_fetch_status"] = fetch_status or None
+    if fetch_status == "stale":
+        details["cash_gate_skipped"] = "stale_snapshot"
+        return None, details
+
     orderable_amount = cash_snapshot.orderable_amount
     details["orderable_amount"] = str(orderable_amount)
     details["threshold"] = str(min_orderable_amount)
@@ -186,55 +287,85 @@ async def evaluate_held_position_skip_reason(
             order for order in recent_orders if order.instrument_id == instrument_id
         ]
     details["recent_order_count"] = str(len(recent_orders))
-    if recent_orders:
-        return None, details
-
-    latest_decision_type: str | None = None
-    latest_decision_created_at: datetime | None = None
-    cutoff = current_utc - HELD_POSITION_SKIP_HOLD_TTL
-    if db_conn is not None:
-        row = await db_conn.fetchrow(
-            """
-            SELECT decision_type, created_at
-            FROM trading.trade_decisions
-            WHERE symbol = $1
-              AND source_type = 'held_position'
-              AND side = 'buy'
-              AND created_at >= $2
-            ORDER BY created_at DESC
-            LIMIT 1
-            """,
-            symbol,
-            cutoff,
+    recent_sell_orders = [
+        order
+        for order in recent_orders
+        if order.side == OrderSide.SELL
+        and order.status in _SELL_COOLDOWN_ELIGIBLE_STATUSES
+    ]
+    details["recent_sell_order_count"] = str(len(recent_sell_orders))
+    if recent_sell_orders:
+        latest_sell_order = max(
+            recent_sell_orders,
+            key=lambda order: order.submitted_at or order.created_at or current_utc,
         )
-        if row is not None:
-            latest_decision_type = str(
-                getattr(row["decision_type"], "value", row["decision_type"])
-            ).lower()
-            latest_decision_created_at = row["created_at"]
+        details["latest_sell_order_status"] = _normalize_enum_value(
+            latest_sell_order.status
+        )
+        latest_sell_order_at = latest_sell_order.submitted_at or latest_sell_order.created_at
+        details["latest_sell_order_at"] = (
+            latest_sell_order_at.isoformat(timespec="seconds")
+            if latest_sell_order_at is not None
+            else None
+        )
     else:
-        decisions = await repos.trade_decisions.list_all()
-        filtered = [
-            decision
-            for decision in decisions
-            if decision.symbol == symbol
-            and decision.source_type == "held_position"
-            and str(getattr(decision.side, "value", decision.side)).lower() == "buy"
-            and decision.created_at >= cutoff
-        ]
-        if filtered:
-            latest = max(filtered, key=lambda item: item.created_at)
-            latest_decision_type = str(
-                getattr(latest.decision_type, "value", latest.decision_type)
-            ).lower()
-            latest_decision_created_at = latest.created_at
+        details["latest_sell_order_status"] = None
+        details["latest_sell_order_at"] = None
 
+    cutoff = current_utc - HELD_POSITION_SKIP_HOLD_TTL
+    latest_decision_type, latest_decision_created_at, _, _ = (
+        await _get_latest_recent_held_decision(
+            repos,
+            symbol=symbol,
+            cutoff=cutoff,
+            db_conn=db_conn,
+            side="buy",
+        )
+    )
     details["latest_held_decision_type"] = latest_decision_type
     details["latest_held_decision_at"] = (
         latest_decision_created_at.isoformat(timespec="seconds")
         if latest_decision_created_at is not None
         else None
     )
-    if latest_decision_type == "hold":
+    if latest_decision_type == "hold" and not recent_orders:
         return PipelineStopReason.HELD_POSITION_RECENT_HOLD_NO_CHANGE.value, details
+
+    (
+        latest_sell_decision_type,
+        latest_sell_decision_created_at,
+        anchored_position_qty,
+        latest_sell_signal_feature_snapshot_id,
+    ) = await _get_latest_recent_held_decision(
+        repos,
+        symbol=symbol,
+        cutoff=cutoff,
+        db_conn=db_conn,
+        side="sell",
+    )
+    details["latest_held_sell_decision_type"] = latest_sell_decision_type
+    details["latest_held_sell_decision_at"] = (
+        latest_sell_decision_created_at.isoformat(timespec="seconds")
+        if latest_sell_decision_created_at is not None
+        else None
+    )
+    details["latest_held_sell_position_qty"] = (
+        str(anchored_position_qty) if anchored_position_qty is not None else None
+    )
+    details["latest_held_sell_signal_feature_snapshot_id"] = (
+        latest_sell_signal_feature_snapshot_id
+    )
+    if (
+        recent_sell_orders
+        and latest_sell_decision_type in {"reduce", "exit", "sell"}
+        and anchored_position_qty is not None
+        and matched_qty <= anchored_position_qty
+    ):
+        details["sell_cooldown_position_unchanged_or_reduced"] = "true"
+        return (
+            PipelineStopReason.HELD_POSITION_RECENT_RISK_SELL_COOLDOWN.value,
+            details,
+        )
+
+    details["sell_cooldown_position_unchanged_or_reduced"] = "false"
     return None, details

@@ -78,6 +78,16 @@ function hasOrderLabel(value: string | null): string {
   return value || "—";
 }
 
+function todayKst(): string {
+  const formatter = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return formatter.format(new Date());
+}
+
 /* ───────────────────────────────────────────
  * formatTimeAgo — relative time display helper
  * ─────────────────────────────────────────── */
@@ -123,7 +133,7 @@ export default function DecisionsView() {
   const decisionTypeParam = searchParams.get("decision_type") ?? "";
   const latestStopReasonParam = searchParams.get("latest_stop_reason") ?? "";
   const latestStopReasonPrefixParam = searchParams.get("latest_stop_reason_prefix") ?? "";
-  const createdDateParam = searchParams.get("date") ?? "";
+  const createdDateParam = searchParams.get("date") ?? todayKst();
   const hasOrderParam = searchParams.get("has_order") ?? "";
   const hasDrilldownFilters = Boolean(
     sideParam ||
@@ -131,7 +141,6 @@ export default function DecisionsView() {
     decisionTypeParam ||
     latestStopReasonParam ||
     latestStopReasonPrefixParam ||
-    createdDateParam ||
     hasOrderParam,
   );
 
@@ -411,7 +420,6 @@ export default function DecisionsView() {
           <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-[#fff7ed] border border-[#fed7aa]">
             <div className="text-xs text-[#9a3412]">
               드릴다운 필터 적용됨
-              {createdDateParam ? ` · 날짜 ${createdDateParam}` : ""}
               {sideParam ? ` · 매매 ${sideParam}` : ""}
               {sourceTypeParam ? ` · 소스 ${sourceTypeLabel(sourceTypeParam)}` : ""}
               {decisionTypeParam ? ` · 결정 ${getEnumLabel(fieldMap, "decision_type", decisionTypeParam)}` : ""}
@@ -499,6 +507,24 @@ export default function DecisionsView() {
                   },
                 },
               ]}
+              rightSlot={(
+                <>
+                  <label className="text-sm text-[#475569]" htmlFor="decision-date">조회일</label>
+                  <input
+                    id="decision-date"
+                    type="date"
+                    value={createdDateParam}
+                    onChange={(e) => {
+                      const next = new URLSearchParams(searchParams);
+                      if (e.target.value) next.set("date", e.target.value);
+                      else next.delete("date");
+                      setSearchParams(next);
+                      setCurrentPage(1);
+                    }}
+                    className="rounded-md border border-[#cbd5e1] px-3 py-2 text-sm"
+                  />
+                </>
+              )}
               onClearAll={() => {
                 setSearchText("");
                 setSideFilter("");

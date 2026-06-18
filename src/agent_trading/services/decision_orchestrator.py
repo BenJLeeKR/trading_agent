@@ -5,7 +5,7 @@ import logging
 import os
 import time as time_module
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -25,6 +25,7 @@ from agent_trading.domain.entities import (
     OrderRequestEntity,
     PositionSnapshotEntity,
     RiskLimitSnapshotEntity,
+    SignalFeatureSnapshotEntity,
     TradeDecisionEntity,
 )
 from agent_trading.domain.enums import DecisionType, EntryStyle, OrderSide, OrderStatus, OrderType
@@ -56,6 +57,7 @@ from agent_trading.services.ai_agents.schemas import (
 from agent_trading.services.common_types import (
     AgentExecutionBundle,
     AIDecisionInputs,
+    AIPolicyContextView,
     AssembledContext,
     OrderIntent,
     PhaseTraceEntry,
@@ -71,13 +73,19 @@ from agent_trading.services.decision_factory import (
     build_trade_decision_entity,
     DecisionContextService,
 )
+from agent_trading.services.deterministic_trigger_engine import (
+    assess_deterministic_triggers,
+)
 from agent_trading.services.execution_service import (
     ExecutionService,
 )
+from agent_trading.services.market_regime import classify_market_regime
+from agent_trading.services.portfolio_allocation import assess_portfolio_allocation
 from agent_trading.services.sizing_engine import (
     SizingInputs,
     calculate_sizing,
 )
+from agent_trading.services.strategy_selection import select_strategy
 from agent_trading.services.subprocess_helpers import (
     build_fallback_bundle,
     deserialize_agent_output,
@@ -111,6 +119,18 @@ _PER_AGENT_TIMEOUT = 30  # seconds per agent
 _USE_SUBPROCESS_ISOLATION: bool = (
     os.environ.get("AGENT_SUBPROCESS_ISOLATION", "1") == "1"
 )
+
+
+@dataclass(slots=True, frozen=True)
+class DeterministicDerivationBundle:
+    """assemble()의 deterministic 파생 계산 결과 묶음."""
+
+    source_type: str
+    signal_feature_snapshot: SignalFeatureSnapshotEntity | None = None
+    market_regime: Any | None = None
+    strategy_selection: Any | None = None
+    portfolio_allocation: Any | None = None
+    deterministic_trigger: Any | None = None
 
 
 class DecisionOrchestratorService:
@@ -178,7 +198,7 @@ class DecisionOrchestratorService:
         # --- Phase 4: subprocess isolation ---
         use_subprocess_isolation: bool | None = None,
         # --- Provider configuration for subprocess agent creation ---
-        llm_provider: str = "deepseek",
+        llm_provider: str = "",
         provider_api_key: str = "",
         provider_base_url: str = "",
         provider_model_id: str = "",
@@ -288,6 +308,84 @@ class DecisionOrchestratorService:
 
         return ("REDUCE", "SELL", rationale)
 
+    def _check_watch_candidate_upgrade_guard(
+        self,
+        *,
+        source_type: str,
+        deterministic_trigger: Any | None,
+        fdc_output: FinalDecisionComposerOutput | None,
+    ) -> tuple[str, str] | None:
+        """결정적 WATCH 후보가 AI 단계에서 진입/매도로 승격되는 것을 제한한다."""
+        if deterministic_trigger is None or fdc_output is None:
+            return None
+
+        guarded_source_types = {"core", "held_position"}
+        if source_type not in guarded_source_types:
+            return None
+
+        primary_candidate = (
+            getattr(deterministic_trigger, "primary_candidate", "") or ""
+        ).strip().upper()
+        if primary_candidate != "WATCH":
+            return None
+
+        decision_type = (fdc_output.decision_type or "").strip().upper()
+        if decision_type not in {"APPROVE", "BUY", "SELL", "EXIT", "REDUCE"}:
+            return None
+
+        rationale = (
+            f"[watch_candidate_guard] source_type={source_type} "
+            f"deterministic_trigger=WATCH 이므로 FDC={decision_type}를 WATCH로 제한"
+        )
+        return ("WATCH", rationale)
+
+    def _check_buy_eligibility_upgrade_guard(
+        self,
+        *,
+        source_type: str,
+        deterministic_trigger: Any | None,
+        fdc_output: FinalDecisionComposerOutput | None,
+    ) -> tuple[str, str] | None:
+        """BUY 적격성 실패 상태에서 AI의 진입 승격을 제한한다."""
+        if deterministic_trigger is None or fdc_output is None:
+            return None
+
+        if source_type != "core":
+            return None
+
+        if bool(getattr(deterministic_trigger, "eligibility_passed", False)):
+            return None
+
+        decision_type = (fdc_output.decision_type or "").strip().upper()
+        if decision_type not in {"APPROVE", "BUY"}:
+            return None
+
+        eligibility_reasons = tuple(
+            getattr(deterministic_trigger, "eligibility_reasons", ()) or ()
+        )
+        has_execution_feasibility_block = any(
+            reason in {
+                "eligibility_low_average_volume",
+                "eligibility_low_turnover",
+                "eligibility_participation_rate_blocked",
+            }
+            for reason in eligibility_reasons
+        )
+        if not has_execution_feasibility_block:
+            return None
+
+        downgrade_decision = (
+            "WATCH"
+            if (getattr(deterministic_trigger, "watch_candidate", False))
+            else "HOLD"
+        )
+        rationale = (
+            f"[buy_eligibility_guard] source_type={source_type} "
+            f"eligibility_reasons={','.join(eligibility_reasons)} "
+            f"이므로 FDC={decision_type} 진입 승격을 {downgrade_decision}로 제한"
+        )
+        return (downgrade_decision, rationale)
+
     async def _ensure_or_create_decision_context(
         self,
         request: SubmitOrderRequest,
@@ -340,6 +438,125 @@ class DecisionOrchestratorService:
         return ExecutionService._build_sizing_inputs(
             intent=intent,
             reference_price=reference_price,
+        )
+
+    def _extract_source_type(
+        self,
+        request: SubmitOrderRequest,
+    ) -> str:
+        """요청 metadata에서 source_type을 안전하게 추출한다."""
+        source_type = "core"
+        try:
+            if request.metadata and isinstance(request.metadata, dict):
+                source_type = request.metadata.get("source_type", "core") or "core"
+        except Exception:
+            pass
+        return source_type
+
+    async def _derive_deterministic_context_components(
+        self,
+        *,
+        request: SubmitOrderRequest,
+        config_version: ConfigVersionEntity | None,
+        instrument: InstrumentEntity | None,
+        position_snapshot: PositionSnapshotEntity | None,
+        cash_balance_snapshot: CashBalanceSnapshotEntity | None,
+        risk_limit_snapshot: RiskLimitSnapshotEntity | None,
+    ) -> DeterministicDerivationBundle:
+        """assemble()의 deterministic 파생 계산 단계를 별도 helper로 분리한다."""
+        signal_feature_snapshot: SignalFeatureSnapshotEntity | None = None
+        instrument_for_signal = instrument
+        if instrument_for_signal is None:
+            try:
+                instrument_for_signal = await self._repos.instruments.get_by_symbol(
+                    symbol=request.symbol,
+                    market_code=request.market,
+                )
+            except Exception:
+                instrument_for_signal = None
+        if instrument_for_signal is not None:
+            try:
+                signal_feature_snapshot = (
+                    await self._repos.signal_feature_snapshots.get_latest_by_instrument(
+                        instrument_for_signal.instrument_id,
+                    )
+                )
+            except Exception:
+                pass
+
+        market_regime = classify_market_regime(signal_feature_snapshot)
+        source_type = self._extract_source_type(request)
+        strategy_selection = select_strategy(
+            market_regime=market_regime,
+            source_type=source_type,
+        )
+        portfolio_allocation = assess_portfolio_allocation(
+            symbol=request.symbol,
+            source_type=source_type,
+            config_version=config_version,
+            position_snapshot=position_snapshot,
+            cash_balance_snapshot=cash_balance_snapshot,
+            risk_limit_snapshot=risk_limit_snapshot,
+            market_regime=market_regime,
+            strategy_selection=strategy_selection,
+        )
+        deterministic_trigger = assess_deterministic_triggers(
+            source_type=source_type,
+            signal_feature_snapshot=signal_feature_snapshot,
+            market_regime=market_regime,
+            strategy_selection=strategy_selection,
+            portfolio_allocation=portfolio_allocation,
+            position_snapshot=position_snapshot,
+        )
+        return DeterministicDerivationBundle(
+            source_type=source_type,
+            signal_feature_snapshot=signal_feature_snapshot,
+            market_regime=market_regime,
+            strategy_selection=strategy_selection,
+            portfolio_allocation=portfolio_allocation,
+            deterministic_trigger=deterministic_trigger,
+        )
+
+    async def _attach_signal_feature_snapshot_to_context(
+        self,
+        decision_context: DecisionContextEntity | None,
+        signal_feature_snapshot: SignalFeatureSnapshotEntity | None,
+    ) -> DecisionContextEntity | None:
+        """decision_context에 실제 사용한 signal feature snapshot 식별자를 고정한다."""
+        if (
+            decision_context is None
+            or signal_feature_snapshot is None
+            or decision_context.signal_feature_snapshot_id
+            == signal_feature_snapshot.signal_feature_snapshot_id
+        ):
+            return decision_context
+        try:
+            updated = await self._repos.decision_contexts.attach_signal_feature_snapshot(
+                decision_context.decision_context_id,
+                signal_feature_snapshot.signal_feature_snapshot_id,
+            )
+            return updated or decision_context
+        except Exception:
+            return decision_context
+
+    def _build_ai_policy_context_view(
+        self,
+        assembled_context: AssembledContext,
+    ) -> AIPolicyContextView:
+        """내부 assembled context를 AI Policy Stage 전용 입력 뷰로 축소한다."""
+        return AIPolicyContextView(
+            decision_context=assembled_context.decision_context,
+            recent_events=assembled_context.recent_events,
+            score=assembled_context.score,
+            position_snapshot=assembled_context.position_snapshot,
+            cash_balance_snapshot=assembled_context.cash_balance_snapshot,
+            risk_limit_snapshot=assembled_context.risk_limit_snapshot,
+            signal_feature_snapshot=assembled_context.signal_feature_snapshot,
+            market_regime=assembled_context.market_regime,
+            strategy_selection=assembled_context.strategy_selection,
+            portfolio_allocation=assembled_context.portfolio_allocation,
+            deterministic_trigger=assembled_context.deterministic_trigger,
+            source_type=assembled_context.source_type,
         )
 
     async def assemble(
@@ -506,13 +723,18 @@ class DecisionOrchestratorService:
             except Exception:
                 pass
 
-        # --- Extract source_type from request metadata (Axis 2) ---
-        source_type: str = "core"
-        try:
-            if request.metadata and isinstance(request.metadata, dict):
-                source_type = request.metadata.get("source_type", "core") or "core"
-        except Exception:
-            pass
+        derivation = await self._derive_deterministic_context_components(
+            request=request,
+            config_version=config_version,
+            instrument=instrument,
+            position_snapshot=position_snapshot,
+            cash_balance_snapshot=cash_balance_snapshot,
+            risk_limit_snapshot=risk_limit_snapshot,
+        )
+        decision_context = await self._attach_signal_feature_snapshot_to_context(
+            decision_context,
+            derivation.signal_feature_snapshot,
+        )
 
         # --- Assemble context (without score yet) ---
         assembled_context = AssembledContext(
@@ -522,7 +744,12 @@ class DecisionOrchestratorService:
             position_snapshot=position_snapshot,
             cash_balance_snapshot=cash_balance_snapshot,
             risk_limit_snapshot=risk_limit_snapshot,
-            source_type=source_type,
+            signal_feature_snapshot=derivation.signal_feature_snapshot,
+            market_regime=derivation.market_regime,
+            strategy_selection=derivation.strategy_selection,
+            portfolio_allocation=derivation.portfolio_allocation,
+            deterministic_trigger=derivation.deterministic_trigger,
+            source_type=derivation.source_type,
         )
 
         # --- Calculate score ---
@@ -537,7 +764,12 @@ class DecisionOrchestratorService:
             position_snapshot=position_snapshot,
             cash_balance_snapshot=cash_balance_snapshot,
             risk_limit_snapshot=risk_limit_snapshot,
-            source_type=source_type,
+            signal_feature_snapshot=derivation.signal_feature_snapshot,
+            market_regime=derivation.market_regime,
+            strategy_selection=derivation.strategy_selection,
+            portfolio_allocation=derivation.portfolio_allocation,
+            deterministic_trigger=derivation.deterministic_trigger,
+            source_type=derivation.source_type,
         )
 
         # --- Generate order_intent_id if not provided ---
@@ -552,11 +784,13 @@ class DecisionOrchestratorService:
         # Phase 4: subprocess isolation — when enabled, agents run in a separate
         # subprocess with SIGKILL-guaranteed timeout.  When disabled (tests),
         # the original in-process _run_agents() is used.
+        ai_policy_context = self._build_ai_policy_context_view(assembled_context)
+
         # Build shared AgentExecutionRequest for the agent runner wrappers.
         agent_request = AgentExecutionRequest(
             decision_context_id=resolved_context_id,
             correlation_id=correlation_id,
-            context=assembled_context,
+            context=ai_policy_context,
             symbol=request.symbol,
             market=request.market,
             source_type=assembled_context.source_type,
@@ -564,7 +798,7 @@ class DecisionOrchestratorService:
         if self._use_subprocess_isolation:
             agent_bundle = await self._run_agents_in_subprocess(
                 request=agent_request,
-                assembled_context=assembled_context,
+                assembled_context=ai_policy_context,
             )
             # ── Phase 5.6: Rehydrate AgentRunEntity records from subprocess output ──
             # The subprocess path does NOT call recorder.record() internally
@@ -608,7 +842,7 @@ class DecisionOrchestratorService:
         else:
             agent_bundle = await self._run_agents(
                 request=agent_request,
-                assembled_context=assembled_context,
+                assembled_context=ai_policy_context,
             )
             # In-process path: _run_agents() already calls recorder.record()
             # internally, so we extract the FDC run_id from the recorder's
@@ -629,7 +863,7 @@ class DecisionOrchestratorService:
         # recording 이후, _ensure_trade_decision() 이전에 수행하여
         # override된 값이 DB에 저장되도록 한다.
         override = self._check_held_position_sell_override(
-            source_type=source_type,
+            source_type=derivation.source_type,
             ar_output=agent_bundle.risk_output,
             fdc_output=agent_bundle.composer_output,
         )
@@ -658,6 +892,84 @@ class DecisionOrchestratorService:
                 "decision_type=%s side=%s rationale=%s",
                 request.symbol, source_type, override_dt, override_side,
                 override_rationale,
+            )
+
+        watch_guard = self._check_watch_candidate_upgrade_guard(
+            source_type=derivation.source_type,
+            deterministic_trigger=derivation.deterministic_trigger,
+            fdc_output=agent_bundle.composer_output,
+        )
+        if watch_guard is not None:
+            guarded_dt, guard_rationale = watch_guard
+            object.__setattr__(agent_bundle.ai_inputs, "decision_type", guarded_dt)
+            object.__setattr__(agent_bundle.ai_inputs, "side", "")
+            existing_reason_codes = tuple(agent_bundle.ai_inputs.reason_codes or ())
+            if "watch_candidate_guard" not in existing_reason_codes:
+                object.__setattr__(
+                    agent_bundle.ai_inputs,
+                    "reason_codes",
+                    existing_reason_codes + ("watch_candidate_guard",),
+                )
+            if agent_bundle.composer_output is not None:
+                object.__setattr__(agent_bundle.composer_output, "decision_type", guarded_dt)
+                object.__setattr__(agent_bundle.composer_output, "side", "")
+                composer_reason_codes = tuple(agent_bundle.composer_output.reason_codes or ())
+                if "watch_candidate_guard" not in composer_reason_codes:
+                    object.__setattr__(
+                        agent_bundle.composer_output,
+                        "reason_codes",
+                        composer_reason_codes + ("watch_candidate_guard",),
+                    )
+                fdc_summary = agent_bundle.composer_output.summary
+                object.__setattr__(
+                    agent_bundle.composer_output,
+                    "summary",
+                    (fdc_summary + f" | {guard_rationale}") if fdc_summary else guard_rationale,
+                )
+            logger.info(
+                "Watch candidate upgrade guard: symbol=%s source_type=%s rationale=%s",
+                request.symbol,
+                derivation.source_type,
+                guard_rationale,
+            )
+
+        buy_eligibility_guard = self._check_buy_eligibility_upgrade_guard(
+            source_type=derivation.source_type,
+            deterministic_trigger=derivation.deterministic_trigger,
+            fdc_output=agent_bundle.composer_output,
+        )
+        if buy_eligibility_guard is not None:
+            guarded_dt, guard_rationale = buy_eligibility_guard
+            object.__setattr__(agent_bundle.ai_inputs, "decision_type", guarded_dt)
+            object.__setattr__(agent_bundle.ai_inputs, "side", "")
+            existing_reason_codes = tuple(agent_bundle.ai_inputs.reason_codes or ())
+            if "buy_eligibility_guard" not in existing_reason_codes:
+                object.__setattr__(
+                    agent_bundle.ai_inputs,
+                    "reason_codes",
+                    existing_reason_codes + ("buy_eligibility_guard",),
+                )
+            if agent_bundle.composer_output is not None:
+                object.__setattr__(agent_bundle.composer_output, "decision_type", guarded_dt)
+                object.__setattr__(agent_bundle.composer_output, "side", "")
+                composer_reason_codes = tuple(agent_bundle.composer_output.reason_codes or ())
+                if "buy_eligibility_guard" not in composer_reason_codes:
+                    object.__setattr__(
+                        agent_bundle.composer_output,
+                        "reason_codes",
+                        composer_reason_codes + ("buy_eligibility_guard",),
+                    )
+                fdc_summary = agent_bundle.composer_output.summary
+                object.__setattr__(
+                    agent_bundle.composer_output,
+                    "summary",
+                    (fdc_summary + f" | {guard_rationale}") if fdc_summary else guard_rationale,
+                )
+            logger.info(
+                "Buy eligibility upgrade guard: symbol=%s source_type=%s rationale=%s",
+                request.symbol,
+                derivation.source_type,
+                guard_rationale,
             )
 
         # --- Persist or reuse trade decision when a concrete context exists ---
@@ -909,7 +1221,7 @@ class DecisionOrchestratorService:
     async def _run_agents(
         self,
         request: AgentExecutionRequest,
-        assembled_context: AssembledContext,
+        assembled_context: AIPolicyContextView,
     ) -> AgentExecutionBundle:
         """Thin wrapper — delegates to DecisionAgentRunner.run_agents()."""
         return await self._agent_runner.run_agents(
@@ -924,12 +1236,10 @@ class DecisionOrchestratorService:
     async def _run_agents_in_subprocess(
         self,
         request: AgentExecutionRequest,
-        assembled_context: AssembledContext,
+        assembled_context: AIPolicyContextView,
     ) -> AgentExecutionBundle:
         """Thin wrapper — delegates to DecisionAgentRunner.run_agents_in_subprocess()."""
         return await self._agent_runner.run_agents_in_subprocess(
             request=request,
             assembled_context=assembled_context,
         )
-
-

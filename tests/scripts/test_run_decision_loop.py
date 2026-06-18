@@ -33,6 +33,7 @@ from agent_trading.domain.entities import (
     CashBalanceSnapshotEntity,
     ClientEntity,
     ConfigVersionEntity,
+    DecisionContextEntity,
     ExternalEventEntity,
     InstrumentEntity,
     OrderRequestEntity,
@@ -67,6 +68,8 @@ from agent_trading.services.submit_lane_gate import (
 
 # Module under test
 from scripts.run_decision_loop import (
+    DEFAULT_TRADING_UNIVERSE_CORE_CAP,
+    ENV_TRADING_UNIVERSE_CORE_CAP,
     ENV_TRADING_UNIVERSE,
     KISRestClient,
     UniverseSymbol,
@@ -107,11 +110,12 @@ def _make_trade_decision(
     decision_type: DecisionType = DecisionType.HOLD,
     side: OrderSide = OrderSide.BUY,
     created_at: datetime | None = None,
+    decision_context_id: UUID | None = None,
 ) -> TradeDecisionEntity:
     now = created_at or datetime.now(timezone.utc)
     return TradeDecisionEntity(
         trade_decision_id=uuid4(),
-        decision_context_id=uuid4(),
+        decision_context_id=decision_context_id or uuid4(),
         decision_type=decision_type,
         side=side,
         strategy_id=STRATEGY_ID,
@@ -1039,6 +1043,42 @@ class TestRunOneCycle:
         assert evaluations[0].blocking_rule_codes == ["low_orderable_amount"]
 
     @pytest.mark.asyncio
+    async def test_pre_ai_does_not_skip_when_cash_snapshot_is_stale(self) -> None:
+        """stale cash snapshot의 orderable_amount=0은 신규 BUY 차단 근거로 쓰지 않는다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            latest_cash = await repos.cash_balance_snapshots.get_latest_by_account(ACCOUNT_ID)
+            assert latest_cash is not None
+            repos.cash_balance_snapshots._items[latest_cash.cash_balance_snapshot_id] = (  # type: ignore[attr-defined]
+                CashBalanceSnapshotEntity(
+                    cash_balance_snapshot_id=latest_cash.cash_balance_snapshot_id,
+                    account_id=latest_cash.account_id,
+                    currency=latest_cash.currency,
+                    available_cash=latest_cash.available_cash,
+                    settled_cash=latest_cash.settled_cash,
+                    unsettled_cash=latest_cash.unsettled_cash,
+                    orderable_amount=Decimal("0"),
+                    source_of_truth=latest_cash.source_of_truth,
+                    snapshot_at=latest_cash.snapshot_at,
+                    created_at=latest_cash.created_at,
+                    fetch_status="stale",
+                )
+            )
+            result = await _run_one_cycle(
+                cycle=1,
+                submit=True,
+                dry_run=False,
+                output="text",
+                symbol="000100",
+                source_type="core",
+                runtime=runtime,
+            )
+
+        assert result["status"] != "SKIPPED"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert evaluations == []
+
+    @pytest.mark.asyncio
     async def test_pre_ai_skip_when_held_position_has_no_quantity(self) -> None:
         """held_position 후보는 보유수량이 없으면 AI 전에 SKIPPED 처리한다."""
         async with _mock_runtime_for_one_cycle() as runtime:
@@ -1167,6 +1207,166 @@ class TestRunOneCycle:
 
         assert reason is None
         assert details["recent_event_count"] == "1"
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_skip_when_held_position_recent_risk_sell_has_no_change(self) -> None:
+        """최근 REDUCE/EXIT sell 이후 보유수량이 늘지 않았으면 새 AI 판단을 skip한다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            now_utc = datetime(2026, 6, 8, 4, 0, 0, tzinfo=timezone.utc)  # 13:00 KST
+            current_snapshots = await repos.position_snapshots.list_latest_by_account(ACCOUNT_ID)
+            assert current_snapshots
+            current_snapshot = current_snapshots[0]
+
+            anchor_snapshot = PositionSnapshotEntity(
+                position_snapshot_id=uuid4(),
+                account_id=current_snapshot.account_id,
+                instrument_id=current_snapshot.instrument_id,
+                quantity=Decimal("10"),
+                average_price=current_snapshot.average_price,
+                market_price=current_snapshot.market_price,
+                unrealized_pnl=current_snapshot.unrealized_pnl,
+                source_of_truth="test",
+                snapshot_at=now_utc - timedelta(minutes=6),
+                created_at=now_utc - timedelta(minutes=6),
+            )
+            await repos.position_snapshots.add(anchor_snapshot)
+            decision_context = DecisionContextEntity(
+                decision_context_id=uuid4(),
+                account_id=ACCOUNT_ID,
+                strategy_id=STRATEGY_ID,
+                config_version_id=CONFIG_VERSION_ID,
+                market_timestamp=now_utc - timedelta(minutes=5),
+                correlation_id="held-sell-cooldown",
+                position_snapshot_id=anchor_snapshot.position_snapshot_id,
+                created_at=now_utc - timedelta(minutes=5),
+            )
+            await repos.decision_contexts.add(decision_context)
+            await repos.trade_decisions.add(
+                _make_trade_decision(
+                    decision_type=DecisionType.REDUCE,
+                    side=OrderSide.SELL,
+                    created_at=now_utc - timedelta(minutes=5),
+                    decision_context_id=decision_context.decision_context_id,
+                )
+            )
+            await repos.orders.add(
+                OrderRequestEntity(
+                    order_request_id=uuid4(),
+                    account_id=ACCOUNT_ID,
+                    instrument_id=current_snapshot.instrument_id,
+                    client_order_id="held-reduce-1",
+                    idempotency_key="held-reduce-1",
+                    correlation_id="held-reduce-1",
+                    side=OrderSide.SELL,
+                    order_type=OrderType.MARKET,
+                    requested_quantity=Decimal("5"),
+                    status=OrderStatus.SUBMITTED,
+                    created_at=now_utc - timedelta(minutes=4),
+                    submitted_at=now_utc - timedelta(minutes=4),
+                )
+            )
+
+            reason, details = await _evaluate_pre_ai_skip_reason(
+                repos,
+                account_alias="Entrypoint Paper",
+                symbol=SYMBOL,
+                market=MARKET,
+                source_type="held_position",
+                now_utc=now_utc,
+            )
+
+        assert reason == "held_position_recent_risk_sell_cooldown"
+        assert details["recent_sell_order_count"] == "1"
+        assert details["latest_held_sell_decision_type"] == "reduce"
+        assert details["latest_held_sell_position_qty"] == "10"
+        assert details["sell_cooldown_position_unchanged_or_reduced"] == "true"
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_skip_not_triggered_when_position_increased_after_recent_risk_sell(self) -> None:
+        """최근 위험축소 SELL 뒤에 보유수량이 증가했다면 suppression하지 않는다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            now_utc = datetime(2026, 6, 8, 4, 0, 0, tzinfo=timezone.utc)  # 13:00 KST
+            current_snapshots = await repos.position_snapshots.list_latest_by_account(ACCOUNT_ID)
+            assert current_snapshots
+            current_snapshot = current_snapshots[0]
+            repos.position_snapshots._items[current_snapshot.position_snapshot_id] = (  # type: ignore[attr-defined]
+                PositionSnapshotEntity(
+                    position_snapshot_id=current_snapshot.position_snapshot_id,
+                    account_id=current_snapshot.account_id,
+                    instrument_id=current_snapshot.instrument_id,
+                    quantity=Decimal("12"),
+                    average_price=current_snapshot.average_price,
+                    market_price=current_snapshot.market_price,
+                    unrealized_pnl=current_snapshot.unrealized_pnl,
+                    source_of_truth=current_snapshot.source_of_truth,
+                    snapshot_at=current_snapshot.snapshot_at,
+                    created_at=current_snapshot.created_at,
+                )
+            )
+
+            anchor_snapshot = PositionSnapshotEntity(
+                position_snapshot_id=uuid4(),
+                account_id=current_snapshot.account_id,
+                instrument_id=current_snapshot.instrument_id,
+                quantity=Decimal("10"),
+                average_price=current_snapshot.average_price,
+                market_price=current_snapshot.market_price,
+                unrealized_pnl=current_snapshot.unrealized_pnl,
+                source_of_truth="test",
+                snapshot_at=now_utc - timedelta(minutes=6),
+                created_at=now_utc - timedelta(minutes=6),
+            )
+            await repos.position_snapshots.add(anchor_snapshot)
+            decision_context = DecisionContextEntity(
+                decision_context_id=uuid4(),
+                account_id=ACCOUNT_ID,
+                strategy_id=STRATEGY_ID,
+                config_version_id=CONFIG_VERSION_ID,
+                market_timestamp=now_utc - timedelta(minutes=5),
+                correlation_id="held-sell-cooldown-increased",
+                position_snapshot_id=anchor_snapshot.position_snapshot_id,
+                created_at=now_utc - timedelta(minutes=5),
+            )
+            await repos.decision_contexts.add(decision_context)
+            await repos.trade_decisions.add(
+                _make_trade_decision(
+                    decision_type=DecisionType.REDUCE,
+                    side=OrderSide.SELL,
+                    created_at=now_utc - timedelta(minutes=5),
+                    decision_context_id=decision_context.decision_context_id,
+                )
+            )
+            await repos.orders.add(
+                OrderRequestEntity(
+                    order_request_id=uuid4(),
+                    account_id=ACCOUNT_ID,
+                    instrument_id=current_snapshot.instrument_id,
+                    client_order_id="held-reduce-2",
+                    idempotency_key="held-reduce-2",
+                    correlation_id="held-reduce-2",
+                    side=OrderSide.SELL,
+                    order_type=OrderType.MARKET,
+                    requested_quantity=Decimal("5"),
+                    status=OrderStatus.SUBMITTED,
+                    created_at=now_utc - timedelta(minutes=4),
+                    submitted_at=now_utc - timedelta(minutes=4),
+                )
+            )
+
+            reason, details = await _evaluate_pre_ai_skip_reason(
+                repos,
+                account_alias="Entrypoint Paper",
+                symbol=SYMBOL,
+                market=MARKET,
+                source_type="held_position",
+                now_utc=now_utc,
+            )
+
+        assert reason is None
+        assert details["latest_held_sell_position_qty"] == "10"
+        assert details["sell_cooldown_position_unchanged_or_reduced"] == "false"
 
     @pytest.mark.asyncio
     async def test_pre_ai_skip_when_general_buy_budget_exhausted_and_no_position(self) -> None:
@@ -1377,8 +1577,8 @@ class TestRunOneCycle:
 class TestHeldPositionSellBudget:
     """``evaluate_symbol_submit_lane()`` held_position sell lane 검증.
 
-    cycle당 cap (HELD_POSITION_SELL_MAX_PER_CYCLE=2)과
-    symbol deduplication이 올바르게 동작하는지 확인.
+    일반 BUY lane과 분리되고, 같은 cycle 내 symbol deduplication이
+    올바르게 동작하는지 확인.
     """
 
     def test_hp_sell_ignores_general_submit_budget_consumed(self) -> None:
@@ -1398,8 +1598,8 @@ class TestHeldPositionSellBudget:
         assert decision.dry_run is False
         assert decision.dry_run_reason is None
 
-    def test_hp_sell_cycle_cap_blocks_third_submit(self) -> None:
-        """동일 cycle 내 HP sell은 cap 초과 시 dry-run으로 내려가야 함."""
+    def test_hp_sell_cycle_count_no_longer_blocks_submit(self) -> None:
+        """HP sell은 cycle count와 무관하게 submit 가능해야 함."""
         decision = evaluate_symbol_submit_lane(
             submit=True,
             dry_run=False,
@@ -1411,9 +1611,9 @@ class TestHeldPositionSellBudget:
             held_position_sell_cycle_symbols={"AAPL", "GOOGL"},
             symbol="MSFT",
         )
-        assert decision.submit is False
-        assert decision.dry_run is True
-        assert decision.dry_run_reason == "held_position_sell_cycle_cap"
+        assert decision.submit is True
+        assert decision.dry_run is False
+        assert decision.dry_run_reason is None
 
     def test_hp_sell_symbol_dedupe_blocks_duplicate(self) -> None:
         """동일 cycle 내 같은 symbol 중복 submit은 막아야 함."""
@@ -1689,6 +1889,74 @@ class TestGeneralSubmitLane:
         assert dry_run_calls[0]["symbol"] == "005930"
         assert dry_run_calls[0]["dry_run_reason"] == "submit_budget_consumed_core"
 
+    @pytest.mark.asyncio
+    async def test_run_loop_general_submit_lane_does_not_serialize_symbol_execution(self) -> None:
+        """general BUY lane lock은 submit slot 예약에만 사용되고 실행 전체는 병렬로 진행된다."""
+        import scripts.run_decision_loop as module
+
+        universe = (
+            UniverseSymbol(symbol="000030", market="KRX", source_type="core"),
+            UniverseSymbol(symbol="000150", market="KRX", source_type="core"),
+        )
+        active = 0
+        peak_active = 0
+
+        @asynccontextmanager
+        async def _mock_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": MagicMock()}
+
+        class _DummyTx:
+            async def commit(self) -> None:
+                return None
+
+        @asynccontextmanager
+        async def _mock_tx() -> AsyncIterator[_DummyTx]:
+            yield _DummyTx()
+
+        async def _mock_run_one_cycle(**kwargs: object) -> dict[str, object]:
+            nonlocal active, peak_active
+            active += 1
+            peak_active = max(peak_active, active)
+            await asyncio.sleep(0.05)
+            active -= 1
+            return {
+                "status": "SIZING_REJECTED",
+                "symbol": str(kwargs["symbol"]),
+                "market": "KRX",
+                "duration_seconds": 0.05,
+            }
+
+        original_shutdown_event = module._shutdown_event
+        module._shutdown_event = asyncio.Event()
+        try:
+            with (
+                patch("scripts.run_decision_loop._install_signal_handlers", return_value=None),
+                patch("scripts.run_decision_loop._read_trading_universe", AsyncMock(return_value=universe)),
+                patch("scripts.run_decision_loop.postgres_runtime", new=_mock_runtime),
+                patch("scripts.run_decision_loop._seed_if_empty", AsyncMock(return_value=False)),
+                patch("scripts.run_decision_loop._run_precheck", AsyncMock(return_value=None)),
+                patch("scripts.run_decision_loop._run_one_cycle", side_effect=_mock_run_one_cycle),
+                patch("agent_trading.db.transaction.transaction", new=_mock_tx),
+                patch(
+                    "agent_trading.repositories.postgres.bootstrap.build_postgres_repositories",
+                    return_value=MagicMock(),
+                ),
+            ):
+                exit_code = await _run_loop(
+                    interval=0,
+                    max_cycles=1,
+                    submit=True,
+                    dry_run=False,
+                    allow_general_submit=True,
+                    max_general_submits_this_cycle=1,
+                    output="text",
+                )
+        finally:
+            module._shutdown_event = original_shutdown_event
+
+        assert exit_code == 1
+        assert peak_active >= 2
+
 
 # ---------------------------------------------------------------------------
 # CLI argument parsing tests
@@ -1818,6 +2086,106 @@ class TestTradingUniverse:
             for u in result:
                 assert u.source_type == "core"
                 assert u.inclusion_reason == "kospi200_core"
+
+    @pytest.mark.asyncio
+    async def test_read_trading_universe_applies_cap_overrides(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """호출부 override 값이 universe cap에 반영되어야 한다."""
+        monkeypatch.delenv(ENV_TRADING_UNIVERSE, raising=False)
+
+        repos = build_in_memory_repositories()
+        from agent_trading.domain.entities import InstrumentEntity
+
+        await repos.instruments.add(
+            InstrumentEntity(
+                instrument_id=UUID("11111111-1111-1111-1111-111111111111"),
+                symbol="005930",
+                market_code="KRX",
+                name="Samsung Electronics",
+                is_active=True,
+                asset_class="KR_STOCK",
+                currency="KRW",
+                tick_size=Decimal("50"),
+            )
+        )
+        await repos.instruments.add(
+            InstrumentEntity(
+                instrument_id=UUID("22222222-2222-2222-2222-222222222222"),
+                symbol="000660",
+                market_code="KRX",
+                name="SK Hynix",
+                is_active=True,
+                asset_class="KR_STOCK",
+                currency="KRW",
+                tick_size=Decimal("50"),
+            )
+        )
+
+        @asynccontextmanager
+        async def _mock_postgres_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": repos}
+
+        with (
+            patch(
+                "scripts.run_decision_loop.postgres_runtime",
+                new=_mock_postgres_runtime,
+            ),
+            patch(
+                "scripts.run_decision_loop._HAS_KIS",
+                False,
+            ),
+        ):
+            result = await _read_trading_universe(max_cap=1)
+            assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_read_trading_universe_applies_core_cap(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """core_cap은 core source_type만 별도 제한해야 한다."""
+        monkeypatch.delenv(ENV_TRADING_UNIVERSE, raising=False)
+        monkeypatch.delenv(ENV_TRADING_UNIVERSE_CORE_CAP, raising=False)
+
+        repos = build_in_memory_repositories()
+        from agent_trading.domain.entities import InstrumentEntity
+
+        for instrument_id, symbol in (
+            (UUID("11111111-1111-1111-1111-111111111111"), "005930"),
+            (UUID("22222222-2222-2222-2222-222222222222"), "000660"),
+            (UUID("33333333-3333-3333-3333-333333333333"), "035420"),
+        ):
+            await repos.instruments.add(
+                InstrumentEntity(
+                    instrument_id=instrument_id,
+                    symbol=symbol,
+                    market_code="KRX",
+                    name=f"Test-{symbol}",
+                    is_active=True,
+                    asset_class="KR_STOCK",
+                    currency="KRW",
+                    tick_size=Decimal("50"),
+                )
+            )
+
+        @asynccontextmanager
+        async def _mock_postgres_runtime(run_migrations: bool = False) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": repos}
+
+        with (
+            patch(
+                "scripts.run_decision_loop.postgres_runtime",
+                new=_mock_postgres_runtime,
+            ),
+            patch(
+                "scripts.run_decision_loop._HAS_KIS",
+                False,
+            ),
+        ):
+            result = await _read_trading_universe(max_cap=3, core_cap=1)
+            assert len(result) == 1
+
+        assert DEFAULT_TRADING_UNIVERSE_CORE_CAP == 12
 
     @pytest.mark.asyncio
     async def test_universe_selection_service_with_kis_market_overlay(

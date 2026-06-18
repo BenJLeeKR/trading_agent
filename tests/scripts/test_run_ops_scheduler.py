@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 from scripts.run_ops_scheduler import (
     CommandResult,
     DEFAULT_MAX_GENERAL_BUY_SUBMIT_PER_DAY,
+    DEFAULT_SIGNAL_FEATURE_BATCH_TIME,
     HELD_POSITION_SELL_MAX_PER_DAY,
     HELD_POSITION_SELL_MAX_PER_CYCLE,
     KST,
@@ -29,7 +30,10 @@ from scripts.run_ops_scheduler import (
     _combine,
     _decision_command,
     _event_command,
+    _build_operations_day_summary_json,
+    _extract_command_failure_reason,
     _extract_json_objects,
+    _generate_signal_feature_snapshot_input_command,
     _get_db_held_position_sell_count,
     _get_db_submit_count,
     _handle_phase_change,
@@ -46,13 +50,18 @@ from scripts.run_ops_scheduler import (
     _parse_fill_sync_summary,
     _parse_hhmm,
     _parse_post_submit_sync_summary,
+    _parse_signal_feature_batch_summary,
+    _parse_signal_feature_input_summary,
     _parse_snapshot_sync_summary,
     _persist_operations_day_run,
     _persist_session_state,
     _post_submit_command,
+    _run_after_market_signal_feature_batch,
     _run_intraday_due_tasks,
     _session_gate,
     _session_phase_monitor,
+    _should_rollover_to_next_run_date,
+    _signal_feature_snapshot_command,
     _snapshot_command,
 )
 from agent_trading.brokers.koreainvestment.market_state_client import (
@@ -140,6 +149,32 @@ class TestCommandBuilders:
         assert "--recovery" not in cmd
         cmd2 = _post_submit_command(after_hours=True)
         assert "--recovery" not in cmd2
+
+    def test_signal_feature_snapshot_command_uses_python3(self) -> None:
+        cmd = _signal_feature_snapshot_command(
+            input_path="data/signal_feature_snapshot_input.json",
+        )
+        assert cmd == [
+            "python3",
+            "scripts/build_signal_feature_snapshots.py",
+            "--input",
+            "data/signal_feature_snapshot_input.json",
+            "--output",
+            "json",
+        ]
+
+    def test_generate_signal_feature_snapshot_input_command_uses_python3(self) -> None:
+        cmd = _generate_signal_feature_snapshot_input_command(
+            output_path="data/signal_feature_snapshot_input.json",
+        )
+        assert cmd == [
+            "python3",
+            "scripts/generate_signal_feature_snapshot_input.py",
+            "--output",
+            "data/signal_feature_snapshot_input.json",
+            "--output-format",
+            "json",
+        ]
 
 
 class TestSubmitBudgetDetection:
@@ -275,6 +310,11 @@ class TestParseArgs:
         args = _parse_args(["--once", "--run-eod"])
         assert args.once is True
         assert args.run_eod is True
+
+    def test_signal_feature_batch_defaults(self) -> None:
+        args = _parse_args([])
+        assert args.signal_feature_batch_time == DEFAULT_SIGNAL_FEATURE_BATCH_TIME
+        assert args.signal_feature_input_path == "data/signal_feature_snapshot_input.json"
 
     def test_legacy_submit_cap_alias_maps_to_general_buy_cap(self) -> None:
         args = _parse_args(["--max-submit-per-day", "4"])
@@ -630,6 +670,232 @@ class TestParseSnapshotSyncSummary:
         assert metrics["total_positions_synced"] == 5
         assert metrics["total_cash_synced"] == 1
         assert metrics["errors"] == 0
+
+
+class TestParseSignalFeatureBatchSummary:
+    def test_parses_json_summary(self) -> None:
+        result = CommandResult(
+            name="after_market_signal_feature_batch",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout=(
+                '{"processed":3,"persisted":3,"skipped":0,"errors":[],"snapshots":[]}\n'
+            ),
+        )
+        assert _parse_signal_feature_batch_summary(result) == {
+            "processed": 3,
+            "persisted": 3,
+            "skipped": 0,
+            "errors": 0,
+        }
+
+
+class TestParseSignalFeatureInputSummary:
+    def test_parses_json_summary(self) -> None:
+        result = CommandResult(
+            name="after_market_signal_feature_input",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout=(
+                '{"output":"data/signal_feature_snapshot_input.json","universe_count":14,'
+                '"generated_count":12,"error_count":2,"errors":["005930:KRX:x"]}\n'
+            ),
+        )
+        assert _parse_signal_feature_input_summary(result) == {
+            "output": "data/signal_feature_snapshot_input.json",
+            "universe_count": 14,
+            "generated_count": 12,
+            "error_count": 2,
+        }
+
+
+class TestExtractCommandFailureReason:
+    def test_prefers_first_json_error(self) -> None:
+        result = CommandResult(
+            name="after_market_signal_feature_input",
+            argv=[],
+            returncode=1,
+            duration_seconds=1.0,
+            stdout=(
+                '{"output":"data/custom.json","universe_count":2,"generated_count":0,'
+                '"error_count":2,"errors":["005930:KRX:RuntimeError:no_data","000660:KRX:x"]}\n'
+            ),
+        )
+        assert (
+            _extract_command_failure_reason(result)
+            == "005930:KRX:RuntimeError:no_data"
+        )
+
+    def test_falls_back_to_last_non_empty_stderr_line(self) -> None:
+        result = CommandResult(
+            name="after_market_signal_feature_batch",
+            argv=[],
+            returncode=1,
+            duration_seconds=1.0,
+            stderr="Traceback...\nValueError: invalid payload\n",
+        )
+        assert _extract_command_failure_reason(result) == "ValueError: invalid payload"
+
+
+class TestAfterMarketSignalFeatureBatch:
+    @pytest.mark.asyncio
+    async def test_skips_before_2010(self) -> None:
+        state = SchedulerState(run_date=date(2026, 6, 16))
+        with patch("scripts.run_ops_scheduler._run_and_record", new=AsyncMock()) as run_mock:
+            await _run_after_market_signal_feature_batch(
+                state,
+                timeout_seconds=60,
+                env={},
+                now=datetime(2026, 6, 16, 20, 9, 59, tzinfo=KST),
+                dsn=None,
+            )
+        run_mock.assert_not_awaited()
+        assert state.signal_feature_batch_done is False
+
+    @pytest.mark.asyncio
+    async def test_runs_once_at_or_after_2010(self) -> None:
+        state = SchedulerState(run_date=date(2026, 6, 16), after_hours_mode=True)
+        input_result = CommandResult(
+            name="after_market_signal_feature_input",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout='{"output":"data/custom.json","universe_count":2,"generated_count":1,"error_count":0,"errors":[]}\n',
+        )
+        batch_result = CommandResult(
+            name="after_market_signal_feature_batch",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout='{"processed":1,"persisted":1,"skipped":0,"errors":[],"snapshots":[]}\n',
+        )
+        with patch(
+            "scripts.run_ops_scheduler._run_and_record",
+            new=AsyncMock(side_effect=[input_result, batch_result]),
+        ) as run_mock:
+            with patch(
+                "scripts.run_ops_scheduler._persist_operations_day_run",
+                new=AsyncMock(),
+            ) as persist_mock:
+                await _run_after_market_signal_feature_batch(
+                    state,
+                    timeout_seconds=60,
+                    env={},
+                    now=datetime(2026, 6, 16, 20, 10, 0, tzinfo=KST),
+                    signal_feature_input_path="data/custom.json",
+                    dsn="postgresql://test",
+                )
+
+        assert run_mock.await_count == 2
+        first_argv = run_mock.await_args_list[0].args[2]
+        second_argv = run_mock.await_args_list[1].args[2]
+        assert first_argv == [
+            "python3",
+            "scripts/generate_signal_feature_snapshot_input.py",
+            "--output",
+            "data/custom.json",
+            "--output-format",
+            "json",
+        ]
+        assert second_argv == [
+            "python3",
+            "scripts/build_signal_feature_snapshots.py",
+            "--input",
+            "data/custom.json",
+            "--output",
+            "json",
+        ]
+        persist_mock.assert_awaited_once()
+        assert state.signal_feature_batch_done is True
+
+    @pytest.mark.asyncio
+    async def test_retries_when_input_generation_fails(self) -> None:
+        state = SchedulerState(run_date=date(2026, 6, 16), after_hours_mode=True)
+        failed_input = CommandResult(
+            name="after_market_signal_feature_input",
+            argv=[],
+            returncode=1,
+            duration_seconds=1.0,
+            stdout='{"output":"data/custom.json","universe_count":2,"generated_count":0,"error_count":2,"errors":["x","y"]}\n',
+        )
+        with patch(
+            "scripts.run_ops_scheduler._run_and_record",
+            new=AsyncMock(return_value=failed_input),
+        ) as run_mock:
+            with patch(
+                "scripts.run_ops_scheduler._persist_operations_day_run",
+                new=AsyncMock(),
+            ) as persist_mock:
+                await _run_after_market_signal_feature_batch(
+                    state,
+                    timeout_seconds=60,
+                    env={},
+                    now=datetime(2026, 6, 16, 20, 10, 0, tzinfo=KST),
+                    signal_feature_input_path="data/custom.json",
+                    dsn="postgresql://test",
+                )
+
+        run_mock.assert_awaited_once()
+        persist_mock.assert_awaited_once()
+        assert state.signal_feature_batch_done is False
+
+
+class TestSchedulerRollover:
+    def test_rollover_blocks_before_after_market_batch_time_when_pending(self) -> None:
+        run_date = date(2026, 6, 16)
+        state = SchedulerState(
+            run_date=run_date,
+            after_hours_mode=True,
+            signal_feature_batch_done=False,
+        )
+
+        should_rollover = _should_rollover_to_next_run_date(
+            now=datetime(2026, 6, 16, 16, 31, 0, tzinfo=KST),
+            run_date=run_date,
+            end_at=_combine(run_date, time(16, 30)),
+            state=state,
+            signal_feature_batch_at=DEFAULT_SIGNAL_FEATURE_BATCH_TIME,
+        )
+
+        assert should_rollover is False
+
+    def test_rollover_blocks_when_after_market_batch_pending(self) -> None:
+        run_date = date(2026, 6, 16)
+        state = SchedulerState(
+            run_date=run_date,
+            after_hours_mode=True,
+            signal_feature_batch_done=False,
+        )
+
+        should_rollover = _should_rollover_to_next_run_date(
+            now=datetime(2026, 6, 16, 20, 10, 0, tzinfo=KST),
+            run_date=run_date,
+            end_at=_combine(run_date, time(16, 30)),
+            state=state,
+            signal_feature_batch_at=DEFAULT_SIGNAL_FEATURE_BATCH_TIME,
+        )
+
+        assert should_rollover is False
+
+    def test_rollover_allows_after_batch_completion(self) -> None:
+        run_date = date(2026, 6, 16)
+        state = SchedulerState(
+            run_date=run_date,
+            after_hours_mode=True,
+            signal_feature_batch_done=True,
+        )
+
+        should_rollover = _should_rollover_to_next_run_date(
+            now=datetime(2026, 6, 16, 20, 10, 0, tzinfo=KST),
+            run_date=run_date,
+            end_at=_combine(run_date, time(16, 30)),
+            state=state,
+            signal_feature_batch_at=DEFAULT_SIGNAL_FEATURE_BATCH_TIME,
+        )
+
+        assert should_rollover is True
 
 
 class TestParsePostSubmitSyncSummary:
@@ -1251,7 +1517,70 @@ class TestPersistOperationsDayRun:
         assert summary_json["command_health"]["decision_loop"]["count"] == 1
         assert summary_json["command_health"]["decision_loop"]["last_ok"] is True
         assert summary_json["command_health"]["recovery_batch"]["timed_out_count"] == 1
+        assert summary_json["scheduler_runtime"]["signal_feature_batch_supported"] is True
+        assert summary_json["scheduler_runtime"]["signal_feature_batch_time"] == "20:10"
+        assert summary_json["scheduler_runtime"]["script_path"].endswith(
+            "scripts/run_ops_scheduler.py"
+        )
         assert summary_json["token_cache_health"]["paper_rest_access_token"]["status"] == "ready"
+
+    def test_includes_signal_feature_failure_reason_in_summary(self) -> None:
+        state = SchedulerState(run_date=date(2026, 6, 16), after_hours_mode=True)
+        state.command_results.extend(
+            [
+                CommandResult(
+                    name="after_market_signal_feature_input",
+                    argv=[],
+                    returncode=1,
+                    duration_seconds=4.2,
+                    stdout=(
+                        '{"output":"data/custom.json","universe_count":14,"generated_count":0,'
+                        '"error_count":1,"errors":["005930:KRX:RuntimeError:no_data"]}\n'
+                    ),
+                ),
+                CommandResult(
+                    name="after_market_signal_feature_batch",
+                    argv=[],
+                    returncode=1,
+                    duration_seconds=1.3,
+                    stdout=(
+                        '{"processed":3,"persisted":2,"skipped":1,'
+                        '"errors":["000660:KRX:instrument_not_found"],"snapshots":[]}\n'
+                    ),
+                ),
+            ]
+        )
+
+        with patch(
+            "scripts.run_ops_scheduler._build_token_cache_health_summary",
+            return_value={"paper_rest_access_token": {"status": "ready"}},
+        ):
+            summary_json = _build_operations_day_summary_json(state)
+
+        assert summary_json["signal_feature_input"]["metrics"]["generated_count"] == 0
+        assert (
+            summary_json["signal_feature_input"]["last_error"]
+            == "005930:KRX:RuntimeError:no_data"
+        )
+        assert summary_json["command_health"]["signal_feature_input"]["last_metrics"] == {
+            "output": "data/custom.json",
+            "universe_count": 14,
+            "generated_count": 0,
+            "error_count": 1,
+        }
+        assert (
+            summary_json["command_health"]["signal_feature_input"]["last_error"]
+            == "005930:KRX:RuntimeError:no_data"
+        )
+        assert summary_json["signal_feature_batch"]["metrics"]["persisted"] == 2
+        assert (
+            summary_json["signal_feature_batch"]["last_error"]
+            == "000660:KRX:instrument_not_found"
+        )
+        assert (
+            summary_json["command_health"]["signal_feature_batch"]["last_error"]
+            == "000660:KRX:instrument_not_found"
+        )
 
 
 class TestIntradayDecisionLoopPersistence:

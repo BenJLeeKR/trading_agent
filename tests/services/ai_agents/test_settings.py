@@ -51,6 +51,12 @@ class TestResolveProviderApiKey:
         monkeypatch.setenv("OPENAI_API_KEY", "sk-oa-test")
         assert _resolve_provider_api_key() == "sk-oa-test"
 
+    def test_gemini_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """LLM_PROVIDER=gemini → GEMINI_API_KEY."""
+        monkeypatch.setenv("LLM_PROVIDER", "gemini")
+        monkeypatch.setenv("GEMINI_API_KEY", "sk-gm-test")
+        assert _resolve_provider_api_key() == "sk-gm-test"
+
     def test_deepseek_missing_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """DeepSeek key missing → empty string."""
         monkeypatch.setenv("LLM_PROVIDER", "deepseek")
@@ -83,6 +89,15 @@ class TestResolveProviderBaseUrl:
         monkeypatch.setenv("LLM_PROVIDER", "openai")
         monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
         assert _resolve_provider_base_url() == "https://api.openai.com/v1"
+
+    def test_gemini_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Gemini no env var → OpenAI compatibility endpoint default."""
+        monkeypatch.setenv("LLM_PROVIDER", "gemini")
+        monkeypatch.delenv("GEMINI_BASE_URL", raising=False)
+        assert (
+            _resolve_provider_base_url()
+            == "https://generativelanguage.googleapis.com/v1beta/openai/"
+        )
 
     def test_deepseek_custom(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """DeepSeek custom base_url."""
@@ -117,6 +132,12 @@ class TestResolveProviderModelId:
         monkeypatch.delenv("OPENAI_MODEL_ID", raising=False)
         assert _resolve_provider_model_id() == "gpt-4o"
 
+    def test_gemini_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Gemini no env var → default gemini-3.5-flash."""
+        monkeypatch.setenv("LLM_PROVIDER", "gemini")
+        monkeypatch.delenv("GEMINI_MODEL_ID", raising=False)
+        assert _resolve_provider_model_id() == "gemini-3.5-flash"
+
 
 class TestResolveProviderTimeout:
     """_resolve_provider_timeout() defaults to 30."""
@@ -132,6 +153,12 @@ class TestResolveProviderTimeout:
         monkeypatch.setenv("LLM_PROVIDER", "deepseek")
         monkeypatch.setenv("DEEPSEEK_TIMEOUT_SECONDS", "60")
         assert _resolve_provider_timeout() == 60
+
+    def test_gemini_custom(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Gemini custom timeout."""
+        monkeypatch.setenv("LLM_PROVIDER", "gemini")
+        monkeypatch.setenv("GEMINI_TIMEOUT_SECONDS", "45")
+        assert _resolve_provider_timeout() == 45
 
 
 # ===========================================================================
@@ -173,6 +200,28 @@ class TestAppSettingsProviderResolution:
         assert settings.provider_base_url == "https://api.openai.com/v1"
         assert settings.provider_model_id == "gpt-4o"
         assert settings.provider_timeout_seconds == 60
+
+    def test_gemini_complete_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Gemini complete env → all provider fields populated."""
+        monkeypatch.setenv("LLM_PROVIDER", "gemini")
+        monkeypatch.setenv("GEMINI_API_KEY", "sk-gm-test")
+        monkeypatch.setenv(
+            "GEMINI_BASE_URL",
+            "https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
+        monkeypatch.setenv("GEMINI_MODEL_ID", "gemini-3.5-flash")
+        monkeypatch.setenv("GEMINI_TIMEOUT_SECONDS", "45")
+        settings = AppSettings()
+        assert settings.llm_provider == "gemini"
+        assert settings.provider_api_key == "sk-gm-test"
+        assert (
+            settings.provider_base_url
+            == "https://generativelanguage.googleapis.com/v1beta/openai/"
+        )
+        assert settings.provider_model_id == "gemini-3.5-flash"
+        assert settings.provider_timeout_seconds == 45
 
     def test_deepseek_missing_key(
         self, monkeypatch: pytest.MonkeyPatch
@@ -229,6 +278,17 @@ class TestAppSettingsProviderResolution:
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-ds-should-not-read")
         settings = AppSettings()
         assert settings.provider_api_key == "sk-oa-only"
+
+    def test_gemini_uses_only_gemini_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Gemini mode ignores DEEPSEEK_* / OPENAI_* env vars."""
+        monkeypatch.setenv("LLM_PROVIDER", "gemini")
+        monkeypatch.setenv("GEMINI_API_KEY", "sk-gm-only")
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-ds-should-not-read")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-oa-should-not-read")
+        settings = AppSettings()
+        assert settings.provider_api_key == "sk-gm-only"
 
 
 # ===========================================================================

@@ -40,6 +40,7 @@ from agent_trading.services.ai_agents.schemas import (
 from agent_trading.services.common_types import (
     AgentExecutionBundle,
     AIDecisionInputs,
+    AIPolicyContextView,
     AssembledContext,
     ScoreCalculator,
     ScoreResult,
@@ -98,7 +99,7 @@ class DecisionAgentRunner:
     async def run_agents(
         self,
         request: AgentExecutionRequest,
-        assembled_context: AssembledContext,
+        assembled_context: AIPolicyContextView,
     ) -> AgentExecutionBundle:
         """Execute the three v1 Provider AI Agents sequentially.
 
@@ -438,7 +439,7 @@ class DecisionAgentRunner:
     async def run_agents_in_subprocess(
         self,
         request: AgentExecutionRequest,
-        assembled_context: AssembledContext,
+        assembled_context: AIPolicyContextView,
     ) -> AgentExecutionBundle:
         """Run agents in a subprocess with SIGKILL-guaranteed timeout.
 

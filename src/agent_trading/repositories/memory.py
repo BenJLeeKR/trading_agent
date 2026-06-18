@@ -303,6 +303,21 @@ class InMemoryDecisionContextRepository:
         results.sort(key=lambda item: item.market_timestamp, reverse=True)
         return tuple(results[: query.limit])
 
+    async def attach_signal_feature_snapshot(
+        self,
+        decision_context_id: UUID,
+        signal_feature_snapshot_id: UUID,
+    ) -> DecisionContextEntity | None:
+        existing = self._items.get(decision_context_id)
+        if existing is None:
+            return None
+        updated = replace(
+            existing,
+            signal_feature_snapshot_id=signal_feature_snapshot_id,
+        )
+        self._items[decision_context_id] = updated
+        return updated
+
 
 class InMemoryPositionSnapshotRepository:
     def __init__(self) -> None:
@@ -524,6 +539,31 @@ class InMemoryTradeDecisionRepository:
         total_count = len(items)
         paged = items[offset : offset + limit]
         return [TradeDecisionRow(entity=item) for item in paged], total_count
+
+    async def sync_execution_sizing(
+        self,
+        trade_decision_id: UUID,
+        *,
+        quantity: Decimal,
+        max_order_value: Decimal | None,
+        target_notional: Decimal | None,
+        execution_sizing_payload: dict[str, object],
+    ) -> TradeDecisionEntity | None:
+        existing = self._items.get(trade_decision_id)
+        if existing is None:
+            return None
+        merged_decision_json = dict(existing.decision_json or {})
+        merged_decision_json["execution_sizing"] = dict(execution_sizing_payload)
+        updated = replace(
+            existing,
+            quantity=quantity,
+            target_quantity=quantity,
+            max_order_value=max_order_value,
+            target_notional=target_notional,
+            decision_json=merged_decision_json,
+        )
+        self._items[trade_decision_id] = updated
+        return updated
 
 class InMemoryOrderRepository:
     def __init__(self) -> None:

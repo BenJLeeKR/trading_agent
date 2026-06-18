@@ -430,6 +430,7 @@ class DecisionContextDetail(BaseModel):
     market_timestamp: datetime
     correlation_id: str
     trading_session_id: str | None = None
+    signal_feature_snapshot_id: str | None = None
     created_at: datetime | None = None
 
 
@@ -503,6 +504,8 @@ class TradeDecisionDetail(BaseModel):
     rationale_summary: str | None = None
     source_type: str | None = None
     """Origin of this symbol: ``"core"`` | ``"held_position"`` | ``"event_overlay"`` | ``"market_overlay"`` | ``"manual"``."""
+    signal_feature_snapshot_id: str | None = None
+    """Point-in-time anchor of the signal feature snapshot used by this decision."""
     decision_json: dict[str, object] | None = None
     """Raw decision payload from EI/AR agents (``event_bias``, ``risk_opinion``, etc.)."""
 
@@ -754,6 +757,7 @@ class TradingUniversePreviewResponse(BaseModel):
     account_id: UUID
     lookback_hours: int
     max_cap: int
+    core_cap: int | None = None
     exclude_held_from_cap: bool
     market_overlay_cap: int
     pre_pool_size: int
@@ -875,6 +879,83 @@ class WatchDiagnosticsResponse(BaseModel):
     evidence_strength_items: list[WatchDiagnosticsEvidenceStrengthItem]
     top_watch_event_reason_codes: list[WatchDiagnosticsReasonCodeItem]
     recent_watch_items: list[WatchDiagnosticsSampleItem]
+
+
+class CandidateAlignmentStatusItem(BaseModel):
+    """Deterministic candidate와 최종 decision의 정렬 상태 분포."""
+
+    alignment_status: str
+    decision_count: int
+
+
+class CandidateIntentDistributionItem(BaseModel):
+    """후보 intent 또는 최종 intent 분포 요약."""
+
+    intent: str
+    decision_count: int
+
+
+class CandidateAlignmentSampleItem(BaseModel):
+    """최근 candidate/final 불일치 sample row."""
+
+    trade_decision_id: UUID
+    symbol: str | None = None
+    market: str | None = None
+    source_type: str | None = None
+    primary_candidate: str | None = None
+    candidate_intent: str | None = None
+    final_decision_type: str | None = None
+    final_intent: str | None = None
+    alignment_status: str | None = None
+    override_applied: bool | None = None
+    rationale_summary: str | None = None
+    created_at: datetime | None = None
+
+
+class CandidateAlignmentDiagnosticsResponse(BaseModel):
+    """`GET /trade-decisions/candidate-alignment-diagnostics` 응답."""
+
+    lookback_days: int
+    sample_limit: int
+    total_decision_count: int
+    candidate_tracked_count: int
+    candidate_missing_count: int
+    override_applied_count: int
+    matched_count: int
+    candidate_coverage_rate: float
+    match_rate: float
+    alignment_status_items: list[CandidateAlignmentStatusItem]
+    candidate_intent_items: list[CandidateIntentDistributionItem]
+    final_intent_items: list[CandidateIntentDistributionItem]
+    recent_misaligned_items: list[CandidateAlignmentSampleItem]
+
+
+class TriggerAttributionBucketItem(BaseModel):
+    """Trigger/override bucket별 주문·체결 전환 집계."""
+
+    bucket: str
+    decision_count: int
+    actionable_decision_count: int
+    order_count: int
+    filled_order_count: int
+    order_conversion_rate: float
+    fill_conversion_rate: float
+
+
+class TriggerPerformanceAttributionResponse(BaseModel):
+    """`GET /performance-trigger-attribution` 응답."""
+
+    account_id: str
+    lookback_days: int
+    total_decision_count: int
+    tracked_decision_count: int
+    actionable_decision_count: int
+    ordered_decision_count: int
+    filled_decision_count: int
+    decision_to_order_rate: float
+    decision_to_fill_rate: float
+    alignment_items: list[TriggerAttributionBucketItem]
+    candidate_intent_items: list[TriggerAttributionBucketItem]
 
 
 class PositionSnapshotView(BaseModel):
@@ -1490,6 +1571,49 @@ class RiskLimitSnapshotView(BaseModel):
     kill_switch_active: bool = False
     blocked_reason_codes: list[str] | None = None
     created_at: datetime | None = None
+
+
+class SignalFeatureSnapshotView(BaseModel):
+    """``GET /signal-feature-snapshots`` — 종목 단위 signal feature snapshot."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    signal_feature_snapshot_id: UUID
+    instrument_id: UUID
+    symbol: str
+    market_code: str
+    timeframe: str
+    snapshot_at: datetime
+    feature_set_version: str
+    bar_count: int
+    sma_5: float | None = None
+    sma_20: float | None = None
+    sma_60: float | None = None
+    price_vs_sma_20_pct: float | None = None
+    price_vs_sma_60_pct: float | None = None
+    return_1m_pct: float | None = None
+    return_3m_pct: float | None = None
+    volatility_20d_pct: float | None = None
+    atr_14_pct: float | None = None
+    rsi_14: float | None = None
+    average_volume_20d: float | None = None
+    volume_surge_ratio: float | None = None
+    fast_score: float | None = None
+    slow_score: float | None = None
+    overall_score: float | None = None
+    component_scores_json: dict[str, object] = {}
+    reason_codes: list[str] | None = None
+    created_at: datetime | None = None
+
+
+class DecisionContextSignalFeatureCoverageView(BaseModel):
+    """최근 decision context의 signal feature anchor 부착률 요약."""
+
+    recent_context_count: int
+    anchored_context_count: int
+    missing_context_count: int
+    coverage_rate: float
+    sampled_missing_context_ids: list[UUID] = []
 
 
 # ---------------------------------------------------------------------------

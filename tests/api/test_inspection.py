@@ -802,6 +802,90 @@ class TestTradeDecisions:
 
         app.dependency_overrides.clear()
 
+    def test_get_candidate_alignment_diagnostics(self) -> None:
+        """``GET /trade-decisions/candidate-alignment-diagnostics`` returns override analysis."""
+        mock_conn = AsyncMock()
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        mock_conn.fetchrow.return_value = {
+            "total_decision_count": 120,
+            "candidate_tracked_count": 90,
+            "override_applied_count": 25,
+            "matched_count": 65,
+        }
+        mock_conn.fetch.side_effect = [
+            [
+                {"alignment_status": "matched", "decision_count": 65},
+                {"alignment_status": "downgraded", "decision_count": 20},
+                {"alignment_status": "suppressed", "decision_count": 5},
+            ],
+            [
+                {"intent": "buy", "decision_count": 40},
+                {"intent": "sell", "decision_count": 30},
+                {"intent": "watch", "decision_count": 20},
+            ],
+            [
+                {"intent": "buy", "decision_count": 25},
+                {"intent": "sell", "decision_count": 15},
+                {"intent": "no_action", "decision_count": 50},
+            ],
+            [
+                {
+                    "trade_decision_id": uuid4(),
+                    "symbol": "000030",
+                    "market": "KRX",
+                    "source_type": "core",
+                    "primary_candidate": "SELL_CANDIDATE",
+                    "candidate_intent": "sell",
+                    "final_decision_type": "HOLD",
+                    "final_intent": "no_action",
+                    "alignment_status": "downgraded",
+                    "override_applied": True,
+                    "rationale_summary": "risk override",
+                    "created_at": now,
+                }
+            ],
+        ]
+
+        async def override():
+            yield mock_conn
+
+        app = create_app(auth_enabled=False)
+        app.dependency_overrides[get_db] = override
+
+        with TestClient(app) as client:
+            response = client.get(
+                "/trade-decisions/candidate-alignment-diagnostics?lookback_days=30&sample_limit=5"
+            )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["lookback_days"] == 30
+        assert data["sample_limit"] == 5
+        assert data["total_decision_count"] == 120
+        assert data["candidate_tracked_count"] == 90
+        assert data["candidate_missing_count"] == 30
+        assert data["override_applied_count"] == 25
+        assert data["matched_count"] == 65
+        assert data["candidate_coverage_rate"] == 90 / 120
+        assert data["match_rate"] == 65 / 90
+        assert data["alignment_status_items"][0]["alignment_status"] == "matched"
+        assert data["candidate_intent_items"][0]["intent"] == "buy"
+        assert data["final_intent_items"][2]["intent"] == "no_action"
+        assert data["recent_misaligned_items"][0]["primary_candidate"] == "SELL_CANDIDATE"
+        assert data["recent_misaligned_items"][0]["override_applied"] is True
+
+        summary_sql = mock_conn.fetchrow.await_args.args[0]
+        alignment_sql = mock_conn.fetch.await_args_list[0].args[0]
+        candidate_sql = mock_conn.fetch.await_args_list[1].args[0]
+        final_sql = mock_conn.fetch.await_args_list[2].args[0]
+        sample_sql = mock_conn.fetch.await_args_list[3].args[0]
+        assert "candidate_tracked_count" in summary_sql
+        assert "alignment_status" in alignment_sql
+        assert "candidate_intent" in candidate_sql
+        assert "final_intent" in final_sql
+        assert "<> 'matched'" in sample_sql
+
+        app.dependency_overrides.clear()
+
 
 class TestAuditLogs:
     """Audit log inspection endpoint."""
@@ -1145,6 +1229,7 @@ class TestInstruments:
         assert data["account_id"] == str(account_id)
         assert data["kis_env"] is None
         assert data["total_count"] == 2
+        assert data["core_cap"] == 12
         assert data["source_type_counts"] == {
             "held_position": 1,
             "event_overlay": 1,
@@ -1206,6 +1291,7 @@ class TestInstruments:
         data = response.json()
         assert data["kis_env"] == "real"
         assert data["total_count"] == 1
+        assert data["core_cap"] == 12
         assert data["source_type_counts"]["market_overlay"] == 1
         assert data["market_overlay_diagnostics"]["enabled"] is True
         assert data["market_overlay_diagnostics"]["skipped_reason"] is None
@@ -1214,6 +1300,37 @@ class TestInstruments:
         assert data["market_overlay_diagnostics"]["added_count"] == 1
         assert data["items"][0]["symbol"] == "001740"
         assert data["items"][0]["source_type"] == "market_overlay"
+
+    def test_get_trading_universe_preview_applies_core_cap(self) -> None:
+        """preview API는 core_cap query를 universe composition에 반영해야 한다."""
+        repos = build_in_memory_repositories()
+        account_id = uuid4()
+        for symbol in ("005930", "000660", "035420"):
+            asyncio.run(
+                repos.instruments.add(
+                    InstrumentEntity(
+                        instrument_id=uuid4(),
+                        symbol=symbol,
+                        market_code="KRX",
+                        asset_class="KR_STOCK",
+                        currency="KRW",
+                        name=f"Test-{symbol}",
+                        is_active=True,
+                    )
+                )
+            )
+
+        app = create_app(repos=repos, auth_enabled=False)
+        with TestClient(app) as client:
+            response = client.get(
+                f"/instruments/trading-universe/preview?account_id={account_id}&max_cap=3&core_cap=1"
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["core_cap"] == 1
+        assert data["total_count"] == 1
+        assert data["items"][0]["source_type"] == "core"
 
     def test_get_trading_universe_coverage_summary(self) -> None:
         """``GET /instruments/trading-universe/coverage-summary`` returns source coverage."""
@@ -1614,6 +1731,56 @@ class TestTradeDecisionExecutionStatus:
         assert len(body["items"]) == 1
         assert body["items"][0]["trade_decision_id"] == str(td_core.trade_decision_id)
         assert body["items"][0]["latest_stop_reason"] == "general_submit_disabled_core"
+
+    def test_trade_decisions_date_filter_applies_to_total_count(self) -> None:
+        """``GET /trade-decisions?date=...``는 KST 기준 날짜 필터를 total/items 모두에 적용한다."""
+        repos = build_in_memory_repositories()
+        app = create_app(repos=repos, auth_enabled=False)
+        decision_context_id = uuid4()
+        strategy_id = uuid4()
+        same_day = datetime(2026, 6, 18, 1, 0, tzinfo=timezone.utc)
+        next_day = datetime(2026, 6, 18, 16, 0, tzinfo=timezone.utc)
+
+        td_today = TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=decision_context_id,
+            decision_type=DecisionType.APPROVE,
+            side=OrderSide.BUY,
+            strategy_id=strategy_id,
+            symbol="TODAY",
+            market="NASDAQ",
+            entry_style=EntryStyle.LIMIT,
+            created_at=same_day,
+            decision_json={},
+            source_type="core",
+        )
+        td_next_day = TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=decision_context_id,
+            decision_type=DecisionType.APPROVE,
+            side=OrderSide.SELL,
+            strategy_id=strategy_id,
+            symbol="NEXT",
+            market="NASDAQ",
+            entry_style=EntryStyle.LIMIT,
+            created_at=next_day,
+            decision_json={},
+            source_type="core",
+        )
+
+        import asyncio
+        asyncio.run(repos.trade_decisions.add(td_today))
+        asyncio.run(repos.trade_decisions.add(td_next_day))
+
+        with TestClient(app) as client:
+            resp = client.get("/trade-decisions?date=2026-06-18")
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+
+        assert body["total"] == 1
+        assert len(body["items"]) == 1
+        assert body["items"][0]["trade_decision_id"] == str(td_today.trade_decision_id)
+        assert body["items"][0]["symbol"] == "TODAY"
 
     def test_trade_decision_detail_has_execution_fields(self, client: TestClient) -> None:
         """최신 필드(execution_status, latest_*, order_request_id)가 응답에 포함된다."""

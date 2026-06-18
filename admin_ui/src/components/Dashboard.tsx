@@ -80,7 +80,7 @@ function computeSummary(
 
     const cash = cashMap.get(acct.account_id);
     if (cash) {
-      totalAvailableCash += cash.available_cash ?? 0;
+      totalAvailableCash += cash.orderable_amount ?? cash.available_cash ?? 0;
       totalSettledCash += cash.settled_cash ?? 0;
     }
 
@@ -366,7 +366,7 @@ export default function Dashboard() {
                       {positions.length}
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-[#0f172a]">
-                      {cash ? formatKrw(cash.available_cash) : "—"}
+                      {cash ? formatKrw(cash.orderable_amount ?? cash.available_cash) : "—"}
                     </td>
                   </tr>
                 );

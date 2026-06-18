@@ -40,7 +40,7 @@ from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import AccountLookup, OrderQuery
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.services.order_sync_service import OrderSyncService
-from agent_trading.services.sizing_engine import SizingInputs, calculate_sizing
+from agent_trading.services.sizing_engine import SizingInputs, SizingResult, calculate_sizing
 from agent_trading.services.sell_guard import AvailableSellQtyResolver, SellAvailability
 from agent_trading.services.common_types import (
     AccountSnapshotFreshness,
@@ -57,6 +57,7 @@ from agent_trading.services.held_position_policy import (
 )
 from agent_trading.services.translation import (
     build_submit_order_request_from_decision,
+    calculate_max_order_value,
     decimal_or_none,
 )
 
@@ -87,6 +88,15 @@ _CIRCUIT_BREAKER_THRESHOLD = 3  # 연속 실패 횟수 → 서킷 오픈
 _CIRCUIT_BREAKER_COOLDOWN = 60  # 서킷 오픈 지속 시간(초)
 _QUOTE_CACHE_TTL = 180  # quote 캐시 TTL(초) — cycle-local cache: submit mode ~120초 커버
 _BUY_DUPLICATE_COOLDOWN_SECONDS = 15 * 60
+_LOW_LIQUIDITY_VOLUME_THRESHOLD = Decimal("3000")
+_LOW_LIQUIDITY_TURNOVER_THRESHOLD = Decimal("50000000")
+_SEVERE_LOW_LIQUIDITY_VOLUME_THRESHOLD = Decimal("500")
+_SEVERE_LOW_LIQUIDITY_TURNOVER_THRESHOLD = Decimal("10000000")
+_EXECUTION_INFEASIBLE_TRIGGER_REASONS = frozenset({
+    "eligibility_low_average_volume",
+    "eligibility_low_turnover",
+    "eligibility_participation_rate_blocked",
+})
 
 
 __all__: list[str] = [
@@ -127,6 +137,225 @@ class ExecutionService:
         self._quote_failures: dict[str, int] = {}  # symbol → 연속 실패 횟수
         self._quote_skip_until: dict[str, datetime] = {}  # symbol → 서킷 오픈 deadline
         self._quote_cache: dict[str, tuple[Quote, datetime]] = {}  # symbol → (quote, cached_at)
+
+    @staticmethod
+    def _resolve_zero_quantity_outcome(
+        intent: OrderIntent,
+        sizing_result: SizingResult,
+    ) -> tuple[str, str, str]:
+        """Classify zero-quantity sizing outcomes into canonical stop reasons."""
+        if sizing_result.skip_reason == "non_actionable_decision":
+            decision_type = (intent.ai_backend_inputs.decision_type or "").upper()
+            stop_reason = (
+                PipelineStopReason.DECISION_HOLD.value
+                if decision_type == "HOLD"
+                else PipelineStopReason.DECISION_WATCH.value
+            )
+            return ("non_trade", stop_reason, stop_reason)
+        return (
+            "stopped",
+            PipelineStopReason.SIZING_REJECTED.value,
+            sizing_result.skip_reason or "Sizing rejected order",
+        )
+
+    @staticmethod
+    def _build_execution_liquidity_metadata(
+        *,
+        action: str,
+        source_type: str,
+        reason: str,
+        price_source: str | None = None,
+        limit_price: Decimal | None = None,
+        quote: Quote | None = None,
+    ) -> dict[str, object]:
+        return {
+            "action": action,
+            "source_type": source_type,
+            "reason": reason,
+            "price_source": price_source,
+            "limit_price": (str(limit_price) if limit_price is not None else None),
+            "accumulated_volume": (
+                str(quote.accumulated_volume)
+                if quote is not None and quote.accumulated_volume is not None
+                else None
+            ),
+            "accumulated_turnover": (
+                str(quote.accumulated_turnover)
+                if quote is not None and quote.accumulated_turnover is not None
+                else None
+            ),
+        }
+
+    @staticmethod
+    def _resolve_limit_price_for_low_liquidity_buy(
+        quote: Quote | None,
+        reference_price: Decimal | None,
+    ) -> tuple[Decimal | None, str | None]:
+        if quote is not None and quote.ask is not None and quote.ask > 0:
+            return quote.ask, "quote.ask"
+        if reference_price is not None and reference_price > 0:
+            return reference_price, "reference_price"
+        if quote is not None and quote.last is not None and quote.last > 0:
+            return quote.last, "quote.last"
+        return None, None
+
+    def _classify_buy_execution_liquidity_policy(
+        self,
+        *,
+        intent: OrderIntent,
+        source_type: str,
+        quote: Quote | None,
+        reference_price: Decimal | None,
+        sizing_result: SizingResult,
+    ) -> tuple[str, str, dict[str, object]]:
+        """자동 BUY의 저유동성 실행 정책을 분류한다."""
+        if (
+            intent.request.side != OrderSide.BUY
+            or intent.request.order_type != OrderType.MARKET
+            or source_type == "manual"
+        ):
+            return ("allow", "not_applicable", {})
+
+        trigger = (
+            intent.context.deterministic_trigger
+            if intent.context is not None
+            else None
+        )
+        eligibility_reasons = tuple(
+            getattr(trigger, "eligibility_reasons", ()) or ()
+        )
+        trigger_blocked = any(
+            reason in _EXECUTION_INFEASIBLE_TRIGGER_REASONS
+            for reason in eligibility_reasons
+        )
+
+        accumulated_volume = quote.accumulated_volume if quote is not None else None
+        accumulated_turnover = quote.accumulated_turnover if quote is not None else None
+        severe_live_low_liquidity = (
+            accumulated_volume is not None
+            and accumulated_turnover is not None
+            and accumulated_volume > 0
+            and accumulated_turnover > 0
+            and accumulated_volume < _SEVERE_LOW_LIQUIDITY_VOLUME_THRESHOLD
+            and accumulated_turnover < _SEVERE_LOW_LIQUIDITY_TURNOVER_THRESHOLD
+        )
+        moderate_live_low_liquidity = (
+            accumulated_volume is not None
+            and accumulated_turnover is not None
+            and accumulated_volume > 0
+            and accumulated_turnover > 0
+            and (
+                accumulated_volume < _LOW_LIQUIDITY_VOLUME_THRESHOLD
+                or accumulated_turnover < _LOW_LIQUIDITY_TURNOVER_THRESHOLD
+            )
+        )
+        participation_capped = any(
+            code in {
+                "intraday_volume_participation_cap",
+                "intraday_turnover_participation_cap",
+                "average_daily_volume_participation_cap",
+            }
+            for code in sizing_result.applied_constraints
+        )
+
+        limit_price, price_source = self._resolve_limit_price_for_low_liquidity_buy(
+            quote,
+            reference_price,
+        )
+
+        if trigger_blocked or severe_live_low_liquidity:
+            reason = (
+                "trigger_execution_infeasible"
+                if trigger_blocked
+                else "severe_live_low_liquidity"
+            )
+            return (
+                "block",
+                reason,
+                self._build_execution_liquidity_metadata(
+                    action="block",
+                    source_type=source_type,
+                    reason=reason,
+                    price_source=price_source,
+                    limit_price=limit_price,
+                    quote=quote,
+                ),
+            )
+
+        if moderate_live_low_liquidity or participation_capped:
+            reason = (
+                "moderate_live_low_liquidity"
+                if moderate_live_low_liquidity
+                else "participation_cap_activated"
+            )
+            if limit_price is None:
+                return (
+                    "block",
+                    "missing_limit_price_for_low_liquidity",
+                    self._build_execution_liquidity_metadata(
+                        action="block",
+                        source_type=source_type,
+                        reason="missing_limit_price_for_low_liquidity",
+                        quote=quote,
+                    ),
+                )
+            return (
+                "force_limit",
+                reason,
+                self._build_execution_liquidity_metadata(
+                    action="force_limit",
+                    source_type=source_type,
+                    reason=reason,
+                    price_source=price_source,
+                    limit_price=limit_price,
+                    quote=quote,
+                ),
+            )
+
+        return ("allow", "no_low_liquidity_signal", {})
+
+    async def _sync_trade_decision_execution_sizing(
+        self,
+        *,
+        trade_decision_id: UUID | None,
+        request: SubmitOrderRequest,
+        original_request_quantity: Decimal,
+        effective_qty: Decimal,
+        sizing_result: SizingResult,
+    ) -> None:
+        """Sizing 결과를 trade_decision의 분석용 수량 필드에 반영한다."""
+        if trade_decision_id is None:
+            return
+
+        max_order_value = calculate_max_order_value(request.price, effective_qty)
+        payload = {
+            "requested_quantity_before_sizing": str(original_request_quantity),
+            "resolved_quantity": str(effective_qty),
+            "max_order_value": (
+                str(max_order_value) if max_order_value is not None else None
+            ),
+            "applied_constraints": list(sizing_result.applied_constraints),
+            "skip_reason": sizing_result.skip_reason,
+            "sizing_result_max_order_value": (
+                str(sizing_result.max_order_value)
+                if sizing_result.max_order_value is not None
+                else None
+            ),
+        }
+        try:
+            await self._repos.trade_decisions.sync_execution_sizing(
+                trade_decision_id,
+                quantity=effective_qty,
+                max_order_value=max_order_value,
+                target_notional=max_order_value,
+                execution_sizing_payload=payload,
+            )
+        except Exception:
+            logger.warning(
+                "trade_decision execution sizing sync failed: trade_decision_id=%s",
+                trade_decision_id,
+                exc_info=True,
+            )
 
     # ------------------------------------------------------------------
     # P2.1: _finalize_attempt — EA status update consolidation
@@ -530,6 +759,7 @@ class ExecutionService:
     @staticmethod
     def _build_sizing_inputs(
         intent: OrderIntent,
+        quote: Quote | None = None,
         reference_price: Decimal | None = None,
     ) -> SizingInputs:
         """Build ``SizingInputs`` from an ``OrderIntent``.
@@ -589,6 +819,20 @@ class ExecutionService:
             execution.get("max_order_value")
             or config.get("max_order_value")
         )
+        max_intraday_volume_participation_pct = decimal_or_none(
+            execution.get("max_intraday_volume_participation_pct")
+        )
+        max_intraday_turnover_participation_pct = decimal_or_none(
+            execution.get("max_intraday_turnover_participation_pct")
+        )
+        max_average_daily_volume_participation_pct = decimal_or_none(
+            execution.get("max_average_daily_volume_participation_pct")
+        )
+        average_daily_volume_20d = (
+            ctx.signal_feature_snapshot.average_volume_20d
+            if ctx.signal_feature_snapshot is not None
+            else None
+        )
 
         # ── Operational visibility logging ──────────────────────────────
         cash_buffer_source = (
@@ -631,6 +875,16 @@ class ExecutionService:
             requested_quantity=req.quantity,
             requested_price=req.price,
             reference_price=reference_price,
+            average_daily_volume_20d=average_daily_volume_20d,
+            accumulated_intraday_volume=(
+                quote.accumulated_volume if quote is not None else None
+            ),
+            accumulated_intraday_turnover=(
+                quote.accumulated_turnover if quote is not None else None
+            ),
+            max_intraday_volume_participation_pct=max_intraday_volume_participation_pct,
+            max_intraday_turnover_participation_pct=max_intraday_turnover_participation_pct,
+            max_average_daily_volume_participation_pct=max_average_daily_volume_participation_pct,
             sizing_hint=ai.sizing_hint,
             current_position_qty=pos_qty,
             current_position_avg_price=pos_avg_price,
@@ -791,6 +1045,7 @@ class ExecutionService:
 
         sizing_inputs = self._build_sizing_inputs(
             intent,
+            quote=quote if isinstance(quote, Quote) else None,
             reference_price=sizing_reference_price,
         )
         sizing_result = calculate_sizing(sizing_inputs)
@@ -805,9 +1060,8 @@ class ExecutionService:
             sizing_result.skip_reason or "none",
         )
 
-        # For SELL/REDUCE/EXIT: fallback to request quantity when sizing returns 0.
         effective_qty = sizing_result.quantity
-        if effective_qty <= 0 and intent.request.side == OrderSide.SELL:
+        if effective_qty <= 0 and intent.request.side == OrderSide.SELL and not _is_hp_sell:
             req_qty = intent.request.quantity
             if req_qty > 0:
                 effective_qty = req_qty
@@ -819,6 +1073,16 @@ class ExecutionService:
                 )
 
         if effective_qty <= 0:
+            await self._sync_trade_decision_execution_sizing(
+                trade_decision_id=trade_decision_id,
+                request=intent.request,
+                original_request_quantity=intent.request.quantity,
+                effective_qty=Decimal("0"),
+                sizing_result=sizing_result,
+            )
+            attempt_status, stop_reason, error_message = (
+                self._resolve_zero_quantity_outcome(intent, sizing_result)
+            )
             # held_position sell skip audit
             if (intent is not None and intent.request.side == OrderSide.SELL
                     and intent.ai_backend_inputs.decision_type in ("REDUCE", "EXIT")):
@@ -844,16 +1108,16 @@ class ExecutionService:
             )
             _add_phase(f"sizing/{_symbol}", "skipped")
             await self._finalize_attempt(
-                attempt_id, "stopped",
+                attempt_id, attempt_status,
                 stop_phase="sizing",
-                stop_reason=PipelineStopReason.SIZING_REJECTED.value,
+                stop_reason=stop_reason,
                 phase_trace=_phase_trace,
             )
             return SubmitResult.build(
                 order_intent=intent,
                 trade_decision_id=trade_decision_id,
-                error_message=sizing_result.skip_reason or "Sizing rejected order",
-                stop_reason=PipelineStopReason.SIZING_REJECTED.value,
+                error_message=error_message,
+                stop_reason=stop_reason,
                 phase_trace=tuple(_phase_trace) if _phase_trace else (),
                 is_skipped=True,
                 status="SKIPPED",
@@ -876,6 +1140,89 @@ class ExecutionService:
                 sizing_result.applied_constraints,
                 sizing_result.quantity,
             )
+
+        # ── Phase 1.6: low-liquidity MARKET BUY policy ──
+        _execution_liquidity_t0 = time_module.monotonic()
+        _add_phase(f"execution_liquidity/{_symbol}", "start")
+        liquidity_policy, liquidity_reason, liquidity_metadata = (
+            self._classify_buy_execution_liquidity_policy(
+                intent=intent,
+                source_type=intent_source_type,
+                quote=quote if isinstance(quote, Quote) else None,
+                reference_price=sizing_reference_price,
+                sizing_result=sizing_result,
+            )
+        )
+        if liquidity_policy == "block":
+            logger.info(
+                "Phase 1.6 BLOCKED low-liquidity BUY execution: symbol=%s "
+                "reason=%s metadata=%s trade_decision_id=%s",
+                intent.request.symbol,
+                liquidity_reason,
+                liquidity_metadata,
+                trade_decision_id,
+            )
+            await self._record_blocking_guardrail_evaluation(
+                rule_set_version="buy_execution_liquidity_v1",
+                blocking_rule_codes=[
+                    PipelineStopReason.LOW_LIQUIDITY_EXECUTION_BLOCKED.value
+                ],
+                rule_results=liquidity_metadata,
+                decision_context_id=intent.decision_context_id,
+                trade_decision_id=trade_decision_id,
+            )
+            _add_phase(f"execution_liquidity/{_symbol}", "skipped")
+            await self._finalize_attempt(
+                attempt_id,
+                "stopped",
+                stop_phase="execution_liquidity",
+                stop_reason=PipelineStopReason.LOW_LIQUIDITY_EXECUTION_BLOCKED.value,
+                phase_trace=_phase_trace,
+            )
+            return SubmitResult.build(
+                order_intent=intent,
+                trade_decision_id=trade_decision_id,
+                error_message=liquidity_reason,
+                stop_reason=PipelineStopReason.LOW_LIQUIDITY_EXECUTION_BLOCKED.value,
+                phase_trace=tuple(_phase_trace) if _phase_trace else (),
+                is_skipped=True,
+                status="SKIPPED",
+                error_phase="execution_liquidity",
+            )
+        if liquidity_policy == "force_limit":
+            limit_price = decimal_or_none(liquidity_metadata.get("limit_price"))
+            if limit_price is not None:
+                updated_metadata = dict(intent.request.metadata or {})
+                updated_metadata["execution_liquidity_policy"] = liquidity_metadata
+                updated_request = replace(
+                    intent.request,
+                    order_type=OrderType.LIMIT,
+                    price=limit_price,
+                    metadata=updated_metadata,
+                )
+                intent = replace(intent, request=updated_request)
+                logger.info(
+                    "Phase 1.6 FORCE LIMIT: symbol=%s reason=%s limit_price=%s source=%s",
+                    intent.request.symbol,
+                    liquidity_reason,
+                    limit_price,
+                    liquidity_metadata.get("price_source"),
+                )
+
+        _add_phase(f"execution_liquidity/{_symbol}", "ok")
+        logger.info(
+            "PHASE_TRACE symbol=%s phase=execution_liquidity_done elapsed_ms=%d status=ok",
+            _symbol,
+            int((time_module.monotonic() - _execution_liquidity_t0) * 1000),
+        )
+
+        await self._sync_trade_decision_execution_sizing(
+            trade_decision_id=trade_decision_id,
+            request=intent.request,
+            original_request_quantity=sizing_inputs.requested_quantity,
+            effective_qty=effective_qty,
+            sizing_result=sizing_result,
+        )
 
         _add_phase(f"sizing/{_symbol}", "ok")
         logger.info(

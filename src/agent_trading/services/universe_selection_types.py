@@ -105,6 +105,9 @@ class CompositionContext:
     max_cap : int
         Maximum number of non-held symbols in the final universe.
         Default: 30.
+    core_cap : int | None
+        Maximum number of ``core`` source symbols allowed inside the
+        non-held universe. ``None`` means no separate core-only limit.
     exclude_held_from_cap : bool
         If True, held-position symbols do not count toward ``max_cap``.
         Default: True.
@@ -122,6 +125,7 @@ class CompositionContext:
     account_id: UUID
     since: datetime
     max_cap: int = 30
+    core_cap: int | None = None
     exclude_held_from_cap: bool = True
     market_overlay_cap: int = 5
     pre_pool_size: int = 50

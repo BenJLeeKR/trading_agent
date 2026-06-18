@@ -253,6 +253,42 @@ async def test_add_minimal_fields(
     assert fetched.rationale_summary is None
 
 
+@pytest.mark.asyncio
+async def test_sync_execution_sizing_updates_quantity_fields(
+    seeded_postgres_data: RepositoryContainer,
+    seeded_decision_context: UUID,
+    seeded_strategy_id: UUID,
+) -> None:
+    repos = seeded_postgres_data
+    decision = _make_full_decision(
+        decision_context_id=seeded_decision_context,
+        strategy_id=seeded_strategy_id,
+    )
+    await repos.trade_decisions.add(decision)
+
+    updated = await repos.trade_decisions.sync_execution_sizing(
+        decision.trade_decision_id,
+        quantity=Decimal("37"),
+        max_order_value=Decimal("5550000"),
+        target_notional=Decimal("5550000"),
+        execution_sizing_payload={
+            "requested_quantity_before_sizing": "1",
+            "resolved_quantity": "37",
+            "applied_constraints": ["max_qty"],
+            "skip_reason": None,
+        },
+    )
+
+    assert updated is not None
+    fetched = await repos.trade_decisions.get(decision.trade_decision_id)
+    assert fetched is not None
+    assert fetched.quantity == Decimal("37")
+    assert fetched.target_quantity == Decimal("37")
+    assert fetched.max_order_value == Decimal("5550000")
+    assert fetched.target_notional == Decimal("5550000")
+    assert fetched.decision_json["execution_sizing"]["resolved_quantity"] == "37"
+
+
 # ============================================================================
 # Test 3: Verify decision column is nullable (post-migration assertion)
 # ============================================================================
@@ -748,5 +784,4 @@ async def test_list_all_paginated_with_context_filter(
     # Most recent first
     assert rows[0].entity.trade_decision_id == td_id_2
     assert rows[1].entity.trade_decision_id == td_id_1
-
 
