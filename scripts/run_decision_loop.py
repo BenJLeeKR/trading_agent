@@ -427,6 +427,7 @@ async def _read_trading_universe(
     market_overlay_cap: int | None = None,
     pre_pool_size: int | None = None,
     exclude_held_from_cap: bool | None = None,
+    disable_market_overlay_live: bool = False,
 ) -> tuple[UniverseSymbol, ...]:
     """Read the trading universe with fallback chain.
 
@@ -464,7 +465,7 @@ async def _read_trading_universe(
 
             # Create KIS quote client if available (P2 market overlay)
             kis_client: KISRestClient | None = None
-            if _HAS_KIS:
+            if _HAS_KIS and not disable_market_overlay_live:
                 try:
                     from agent_trading.config.settings import AppSettings
                     from agent_trading.brokers.rate_limit import build_kis_budget_manager
@@ -498,6 +499,11 @@ async def _read_trading_universe(
                         type(exc).__name__,
                         exc,
                     )
+            elif disable_market_overlay_live:
+                logger.info(
+                    "Trading universe compose: live market_overlay disabled "
+                    "(source=_read_trading_universe)."
+                )
 
             selector = UniverseSelectionService(
                 repos,

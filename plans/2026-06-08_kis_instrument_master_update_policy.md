@@ -25,6 +25,11 @@
 - 현재 운영 원본 CSV가 `is_kospi200`, `is_kosdaq150` 플래그를 제공하면
   정규화 단계에서 이를 각각 `KOSPI200`, `KOSDAQ150`으로 변환해
   `metadata_segment`, `metadata_universe_segment`, `metadata_index_memberships`에 반영한다.
+- KIS `FHPUP02140000` (`국내업종 구분별전체시세`)는
+  `KOSPI100`, `KOSPI200` 등 지수/업종 코드 카탈로그를 KIS 기준으로 확인하는
+  보조 경로로 사용할 수 있다.
+  다만 이 TR은 종목 단위 `구성종목 목록`을 반환하지 않으므로
+  `instrument_index_memberships`를 직접 생성하는 authoritative source로는 사용하지 않는다.
 - 현재 원본 CSV에는 `is_kospi100`, `is_kosdaq50` 플래그가 없으므로
   `KOSPI100`, `KOSDAQ50`은 별도 원천 데이터나 승인 리스트 없이 자동 생성하지 않는다.
   또한 현재 `kosdaq_master.csv`는 `is_kosdaq150=False`만 제공하므로,
@@ -109,6 +114,8 @@
 ## 남은 작업
 - `snapshot/event mapping과의 정합성 확보`
 - KIS raw 종목정보파일 직접 parser 및 다운로드/보관 경로
+- `FHPUP02140000` 기반 지수 코드 카탈로그를
+  `index_membership_seed` 운영 검증 자료로 연결하는 보조 절차
 - KOSPI/KOSDAQ master sync 운영 절차와 실행 이력 UI 연결
 - UniverseSelectionService의 membership read를
   `instrument_index_memberships` 우선, `metadata.index_memberships` fallback으로

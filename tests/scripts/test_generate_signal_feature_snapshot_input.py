@@ -33,6 +33,7 @@ from scripts.generate_signal_feature_snapshot_input import (
     _parse_args,
     _parse_end_date,
     _resolve_frozen_universe,
+    _load_retry_universe_from_input,
     _write_rows,
 )
 from scripts.run_decision_loop import UniverseSymbol
@@ -127,6 +128,59 @@ def test_write_rows_creates_json_file(tmp_path) -> None:
     assert payload["universe_metadata"]["symbols"][0]["symbol"] == "005930"
     assert payload["fetch_success_rows"][0]["market"] == "KRX"
     assert payload["fetch_error_rows"][0]["error_code"] == "timeout"
+
+
+def test_load_retry_universe_from_input_uses_fetch_error_rows(tmp_path) -> None:
+    path = tmp_path / "signal_input.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "signal_feature_input.v2",
+                "universe_metadata": {
+                    "universe_freeze_run_id": "freeze-1",
+                    "universe_freeze_reused": True,
+                    "freeze_purpose": "signal_feature_after_market",
+                    "symbols": [
+                        {
+                            "symbol": "005930",
+                            "market": "KRX",
+                            "source_type": "core",
+                            "inclusion_reason": "approved_core_universe",
+                        },
+                        {
+                            "symbol": "090150",
+                            "market": "KOSDAQ",
+                            "source_type": "discovery",
+                            "inclusion_reason": "approved_discovery_universe",
+                        },
+                    ],
+                },
+                "fetch_success_rows": [],
+                "fetch_error_rows": [
+                    {
+                        "symbol": "090150",
+                        "market": "KOSDAQ",
+                        "error_code": "timeout",
+                        "error_message": "request timeout",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    universe, freeze_run_id, freeze_reused, freeze_purpose = _load_retry_universe_from_input(
+        str(path)
+    )
+
+    assert len(universe) == 1
+    assert universe[0].symbol == "090150"
+    assert universe[0].market == "KOSDAQ"
+    assert universe[0].source_type == "discovery"
+    assert universe[0].inclusion_reason == "approved_discovery_universe"
+    assert freeze_run_id == "freeze-1"
+    assert freeze_reused is True
+    assert freeze_purpose == "signal_feature_after_market"
 
 
 def test_estimate_budget_retry_sleep_seconds_uses_refill_rate_maximum() -> None:
@@ -513,18 +567,19 @@ async def test_resolve_frozen_universe_materializes_new_run(monkeypatch) -> None
             )
         ),
     )
+    read_universe_mock = AsyncMock(
+        return_value=(
+            UniverseSymbol(
+                symbol="005930",
+                market="KRX",
+                source_type="core",
+                inclusion_reason="approved_core_universe",
+            ),
+        )
+    )
     monkeypatch.setattr(
         "scripts.generate_signal_feature_snapshot_input._read_trading_universe",
-        AsyncMock(
-            return_value=(
-                UniverseSymbol(
-                    symbol="005930",
-                    market="KRX",
-                    source_type="core",
-                    inclusion_reason="approved_core_universe",
-                ),
-            )
-        ),
+        read_universe_mock,
     )
 
     result = await _resolve_frozen_universe(
@@ -543,3 +598,7 @@ async def test_resolve_frozen_universe_materializes_new_run(monkeypatch) -> None
     assert added_runs[0].target_count == 1
     assert added_item_batches[0][0].instrument_id == instrument_id
     assert result.universe[0].symbol == "005930"
+    assert read_universe_mock.await_count == 1
+    assert read_universe_mock.await_args.kwargs["market_overlay_cap"] == 0
+    assert read_universe_mock.await_args.kwargs["pre_pool_size"] == 0
+    assert read_universe_mock.await_args.kwargs["disable_market_overlay_live"] is True

@@ -571,6 +571,15 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
     KIS 기본종목정보 CSV 외 별도 원천으로 보강한다.
     - 현재 원본 CSV는 `is_kospi200=True/False`, `is_kosdaq150=False`만 제공해
       `KOSPI200`만 직접 생성 가능하다.
+    - [x] KIS `FHPUP02140000` 연동 경로를 추가해
+      `KOSPI100`, `KOSPI200` 등 지수/업종 코드 카탈로그를
+      KIS 기준으로 조회/덤프할 수 있게 했다.
+      - 메서드:
+        `KISRestClient.get_index_category_quotes()`
+      - 보조 스크립트:
+        `scripts/export_kis_index_category_catalog.py`
+      - 단, 이 TR은 `구성종목 목록`이 아니라 `지수/업종 전체시세 목록`이므로
+        membership authoritative source로 직접 사용하지 않는다.
     - `KOSPI100`, `KOSDAQ50`, 실제 `KOSDAQ150` 구성종목은
       별도 지수 구성종목 원천 파일 또는 승인 리스트 확보가 필요하다.
     - [x] 운영 보조 경로로
@@ -1127,8 +1136,20 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
         신구 포맷을 모두 읽을 수 있게 backward-compatible 유지
     - [x] `generate_signal_feature_snapshot_input.py`에
       `rate limit`, `5xx`, `timeout`을 구분한 재시도 정책을 추가한다.
-    - [ ] 1차 본배치 후 실패 종목만 재시도하는
+    - [x] 1차 본배치 후 실패 종목만 재시도하는
       `tail-retry` 실행 경로를 추가한다.
+      - `generate_signal_feature_snapshot_input.py`에
+        `--retry-from-input` 경로를 추가해
+        기존 `signal_feature_input.v2`의 `fetch_error_rows`만 다시 조회하도록 반영
+      - `run_ops_scheduler.py`가
+        1차 `after_market_signal_feature_input` 완료 후
+        `fetch_error_count > 0`이면
+        `after_market_signal_feature_input_tail_retry` →
+        `after_market_signal_feature_batch_tail_retry`
+        순서로 동일 거래일 tail-retry를 자동 실행
+      - 운영 요약은 primary + tail-retry 누적 기준으로
+        `fetch_success_count`, `persist_success_count`, `final_missing_count`
+        집계를 보도록 보강
     - [x] `operations_day_runs.summary_json`에
       `target_count`, `fetch_success_count`, `fetch_error_count`,
       `persist_success_count`, `persist_error_count`,

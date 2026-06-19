@@ -104,6 +104,11 @@ services:
       # Share KIS dev token cache to avoid 1-per-minute oauth2 rate limit
       - ./.cache:/app/.cache
       - ./tmp:/app/tmp
+    cap_add:
+      - NET_ADMIN
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
     # Keep the container alive for interactive commands
     command: ["tail", "-f", "/dev/null"]
     restart: unless-stopped
@@ -173,6 +178,11 @@ services:
       - ./admin_ui/dist:/app/admin_ui/dist
       # Share KIS dev token cache to avoid 1-per-minute oauth2 rate limit
       - ./.cache:/app/.cache
+    cap_add:
+      - NET_ADMIN
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
     command:
       - sh
       - -c
@@ -270,6 +280,11 @@ services:
       - ./.cache:/app/.cache
       - ./data:/app/data
       - ./tmp:/app/tmp
+    cap_add:
+      - NET_ADMIN
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
     healthcheck:
       test:
         - "CMD-SHELL"
@@ -362,6 +377,11 @@ services:
       - ./scripts:/app/scripts
       - ./src:/app/src
       - ./.cache:/app/.cache
+    cap_add:
+      - NET_ADMIN
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
 
 volumes:
   pgdata:

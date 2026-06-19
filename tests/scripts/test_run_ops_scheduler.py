@@ -71,6 +71,7 @@ from scripts.run_ops_scheduler import (
     _session_phase_monitor,
     _should_rollover_to_next_run_date,
     _signal_feature_snapshot_command,
+    _signal_feature_snapshot_retry_input_path,
     _snapshot_command,
 )
 from agent_trading.brokers.koreainvestment.market_state_client import (
@@ -213,6 +214,12 @@ class TestCommandBuilders:
             "json",
         ]
 
+    def test_signal_feature_snapshot_retry_input_path(self) -> None:
+        assert (
+            _signal_feature_snapshot_retry_input_path("data/signal_feature_snapshot_input.json")
+            == "data/signal_feature_snapshot_input.tail_retry.json"
+        )
+
     def test_generate_signal_feature_snapshot_input_command_uses_python3(self) -> None:
         cmd = _generate_signal_feature_snapshot_input_command(
             output_path="data/signal_feature_snapshot_input.json",
@@ -225,6 +232,23 @@ class TestCommandBuilders:
             "data/signal_feature_snapshot_input.json",
             "--output-format",
             "json",
+        ]
+
+    def test_generate_signal_feature_snapshot_input_retry_command_uses_python3(self) -> None:
+        cmd = _generate_signal_feature_snapshot_input_command(
+            output_path="data/signal_feature_snapshot_input.tail_retry.json",
+            retry_from_input="data/signal_feature_snapshot_input.json",
+        )
+        assert cmd == [
+            "python3",
+            "-m",
+            "scripts.generate_signal_feature_snapshot_input",
+            "--output",
+            "data/signal_feature_snapshot_input.tail_retry.json",
+            "--output-format",
+            "json",
+            "--retry-from-input",
+            "data/signal_feature_snapshot_input.json",
         ]
 
 
@@ -777,6 +801,7 @@ class TestParseSignalFeatureInputSummary:
             "target_count": 14,
             "fetch_success_count": 12,
             "fetch_error_count": 2,
+            "retry_mode": False,
             "failed_symbols_sample": ["005930"],
         }
 
@@ -912,6 +937,95 @@ class TestAfterMarketSignalFeatureBatch:
         run_mock.assert_awaited_once()
         persist_mock.assert_awaited_once()
         assert state.signal_feature_batch_done is False
+
+    @pytest.mark.asyncio
+    async def test_runs_tail_retry_when_fetch_errors_exist(self) -> None:
+        state = SchedulerState(run_date=date(2026, 6, 16), after_hours_mode=True)
+        input_result = CommandResult(
+            name="after_market_signal_feature_input",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout=(
+                '{"output":"data/custom.json","universe_count":4,"generated_count":3,'
+                '"error_count":1,"retry_mode":false,'
+                '"errors":["090150:KOSDAQ:timeout:request timeout"]}\n'
+            ),
+        )
+        batch_result = CommandResult(
+            name="after_market_signal_feature_batch",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout='{"processed":3,"persisted":3,"skipped":0,"errors":[],"snapshots":[]}\n',
+        )
+        retry_input_result = CommandResult(
+            name="after_market_signal_feature_input_tail_retry",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout=(
+                '{"output":"data/custom.tail_retry.json","universe_count":1,"generated_count":1,'
+                '"error_count":0,"retry_mode":true,'
+                '"retry_source_input":"data/custom.json","errors":[]}\n'
+            ),
+        )
+        retry_batch_result = CommandResult(
+            name="after_market_signal_feature_batch_tail_retry",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout='{"processed":1,"persisted":1,"skipped":0,"errors":[],"snapshots":[]}\n',
+        )
+        with patch(
+            "scripts.run_ops_scheduler._run_and_record",
+            new=AsyncMock(
+                side_effect=[
+                    input_result,
+                    batch_result,
+                    retry_input_result,
+                    retry_batch_result,
+                ]
+            ),
+        ) as run_mock:
+            with patch(
+                "scripts.run_ops_scheduler._persist_operations_day_run",
+                new=AsyncMock(),
+            ) as persist_mock:
+                await _run_after_market_signal_feature_batch(
+                    state,
+                    timeout_seconds=60,
+                    env={},
+                    now=datetime(2026, 6, 16, 20, 10, 0, tzinfo=KST),
+                    signal_feature_input_path="data/custom.json",
+                    dsn="postgresql://test",
+                )
+
+        assert run_mock.await_count == 4
+        retry_input_argv = run_mock.await_args_list[2].args[2]
+        retry_batch_argv = run_mock.await_args_list[3].args[2]
+        assert retry_input_argv == [
+            "python3",
+            "-m",
+            "scripts.generate_signal_feature_snapshot_input",
+            "--output",
+            "data/custom.tail_retry.json",
+            "--output-format",
+            "json",
+            "--retry-from-input",
+            "data/custom.json",
+        ]
+        assert retry_batch_argv == [
+            "python3",
+            "-m",
+            "scripts.build_signal_feature_snapshots",
+            "--input",
+            "data/custom.tail_retry.json",
+            "--output",
+            "json",
+        ]
+        persist_mock.assert_awaited_once()
+        assert state.signal_feature_batch_done is True
 
 
 class TestInstrumentMasterSync:
@@ -1153,6 +1267,24 @@ class TestSchedulerRollover:
         )
 
         assert should_rollover is True
+
+    def test_rollover_blocks_even_after_midnight_when_batch_pending(self) -> None:
+        run_date = date(2026, 6, 16)
+        state = SchedulerState(
+            run_date=run_date,
+            after_hours_mode=True,
+            signal_feature_batch_done=False,
+        )
+
+        should_rollover = _should_rollover_to_next_run_date(
+            now=datetime(2026, 6, 17, 0, 5, 0, tzinfo=KST),
+            run_date=run_date,
+            end_at=_combine(run_date, time(16, 30)),
+            state=state,
+            signal_feature_batch_at=DEFAULT_SIGNAL_FEATURE_BATCH_TIME,
+        )
+
+        assert should_rollover is False
 
 
 class TestParsePostSubmitSyncSummary:
@@ -1866,6 +1998,7 @@ class TestPersistOperationsDayRun:
             "target_count": 14,
             "fetch_success_count": 0,
             "fetch_error_count": 1,
+            "retry_mode": False,
             "failed_symbols_sample": ["005930"],
         }
         assert (

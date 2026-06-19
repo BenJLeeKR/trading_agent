@@ -278,12 +278,12 @@ def _should_rollover_to_next_run_date(
     signal_feature_batch_at: dtime,
 ) -> bool:
     """Decide whether the scheduler may safely roll over to the next run date."""
-    if now.date() > run_date:
-        return True
     if now < end_at:
         return False
     if state.after_hours_mode and not state.signal_feature_batch_done:
         return False
+    if now.date() > run_date:
+        return True
     return True
 
 
@@ -607,8 +607,97 @@ def _parse_signal_feature_input_summary(result: CommandResult) -> dict[str, Any]
         universe_freeze_run_id = obj.get("universe_freeze_run_id")
         if universe_freeze_run_id:
             payload["universe_freeze_run_id"] = str(universe_freeze_run_id)
+        payload["retry_mode"] = bool(obj.get("retry_mode", False))
+        retry_source_input = obj.get("retry_source_input")
+        if retry_source_input:
+            payload["retry_source_input"] = str(retry_source_input)
         return payload
     return {}
+
+
+def _aggregate_signal_feature_input_metrics(
+    state: SchedulerState,
+) -> dict[str, Any] | None:
+    results = [
+        result
+        for result in state.command_results
+        if result.name in {
+            "after_market_signal_feature_input",
+            "after_market_signal_feature_input_tail_retry",
+        }
+    ]
+    parsed_metrics = []
+    for result in results:
+        metrics = _parse_signal_feature_input_summary(result)
+        if metrics:
+            parsed_metrics.append(metrics)
+    if not parsed_metrics:
+        return None
+
+    primary = next(
+        (item for item in parsed_metrics if not item.get("retry_mode")),
+        parsed_metrics[0],
+    )
+    last = parsed_metrics[-1]
+    fetch_success_total = sum(int(item.get("fetch_success_count", 0)) for item in parsed_metrics)
+    payload: dict[str, Any] = {
+        "universe_count": int(primary.get("universe_count", 0)),
+        "generated_count": fetch_success_total,
+        "error_count": int(last.get("fetch_error_count", 0)),
+        "target_count": int(primary.get("target_count", 0)),
+        "fetch_success_count": fetch_success_total,
+        "fetch_error_count": int(last.get("fetch_error_count", 0)),
+        "tail_retry_count": sum(1 for item in parsed_metrics if item.get("retry_mode")),
+        "failed_symbols_sample": list(last.get("failed_symbols_sample", [])),
+    }
+    if primary.get("output"):
+        payload["output"] = str(primary["output"])
+    if primary.get("universe_freeze_run_id"):
+        payload["universe_freeze_run_id"] = str(primary["universe_freeze_run_id"])
+    if last.get("retry_source_input"):
+        payload["retry_source_input"] = str(last["retry_source_input"])
+    return payload
+
+
+def _aggregate_signal_feature_batch_metrics(
+    state: SchedulerState,
+) -> dict[str, Any] | None:
+    results = [
+        result
+        for result in state.command_results
+        if result.name in {
+            "after_market_signal_feature_batch",
+            "after_market_signal_feature_batch_tail_retry",
+        }
+    ]
+    parsed_metrics = []
+    for result in results:
+        metrics = _parse_signal_feature_batch_summary(result)
+        if metrics:
+            parsed_metrics.append(metrics)
+    if not parsed_metrics:
+        return None
+
+    return {
+        "processed": sum(int(item.get("processed", 0)) for item in parsed_metrics),
+        "persisted": sum(int(item.get("persisted", 0)) for item in parsed_metrics),
+        "skipped": sum(int(item.get("skipped", 0)) for item in parsed_metrics),
+        "errors": sum(int(item.get("errors", 0)) for item in parsed_metrics),
+        "persist_error_count": sum(
+            int(item.get("persist_error_count", 0)) for item in parsed_metrics
+        ),
+        "persist_success_count": sum(
+            int(item.get("persist_success_count", 0)) for item in parsed_metrics
+        ),
+        "tail_retry_count": max(len(parsed_metrics) - 1, 0),
+        "failed_symbols_sample": list(
+            dict.fromkeys(
+                symbol
+                for item in parsed_metrics
+                for symbol in item.get("failed_symbols_sample", [])
+            )
+        )[:5],
+    }
 
 
 def _extract_command_failure_reason(result: CommandResult) -> str | None:
@@ -767,22 +856,14 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
     latest_recovery = _latest_command_result(state, {"eod_recovery_batch"})
     latest_signal_feature_batch = _latest_command_result(
         state,
-        {"after_market_signal_feature_batch"},
+        {"after_market_signal_feature_batch", "after_market_signal_feature_batch_tail_retry"},
     )
     latest_signal_feature_input = _latest_command_result(
         state,
-        {"after_market_signal_feature_input"},
+        {"after_market_signal_feature_input", "after_market_signal_feature_input_tail_retry"},
     )
-    signal_feature_batch_metrics = (
-        _parse_signal_feature_batch_summary(latest_signal_feature_batch)
-        if latest_signal_feature_batch
-        else None
-    )
-    signal_feature_input_metrics = (
-        _parse_signal_feature_input_summary(latest_signal_feature_input)
-        if latest_signal_feature_input
-        else None
-    )
+    signal_feature_batch_metrics = _aggregate_signal_feature_batch_metrics(state)
+    signal_feature_input_metrics = _aggregate_signal_feature_input_metrics(state)
     if signal_feature_batch_metrics is not None and signal_feature_input_metrics is not None:
         merged_signal_feature_batch_metrics = {
             **signal_feature_batch_metrics,
@@ -836,12 +917,12 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
         ),
         "signal_feature_batch": _command_family_stats(
             state,
-            names={"after_market_signal_feature_batch"},
+            names={"after_market_signal_feature_batch", "after_market_signal_feature_batch_tail_retry"},
             metrics_parser=_parse_signal_feature_batch_summary,
         ),
         "signal_feature_input": _command_family_stats(
             state,
-            names={"after_market_signal_feature_input"},
+            names={"after_market_signal_feature_input", "after_market_signal_feature_input_tail_retry"},
             metrics_parser=_parse_signal_feature_input_summary,
         ),
         "instrument_master_sync": _command_family_stats(
@@ -1346,6 +1427,14 @@ def _signal_feature_snapshot_command(
     ]
 
 
+def _signal_feature_snapshot_retry_input_path(input_path: str) -> str:
+    path = Path(input_path)
+    suffix = path.suffix or ".json"
+    if path.suffix:
+        return str(path.with_name(f"{path.stem}.tail_retry{path.suffix}"))
+    return f"{input_path}.tail_retry.json"
+
+
 def _instrument_master_sync_command(
     *,
     csv_path: str,
@@ -1388,8 +1477,9 @@ def _build_instrument_master_sync_csv_command(
 def _generate_signal_feature_snapshot_input_command(
     *,
     output_path: str,
+    retry_from_input: str | None = None,
 ) -> list[str]:
-    return [
+    argv = [
         PYTHON_BIN,
         "-m",
         "scripts.generate_signal_feature_snapshot_input",
@@ -1398,6 +1488,9 @@ def _generate_signal_feature_snapshot_input_command(
         "--output-format",
         "json",
     ]
+    if retry_from_input:
+        argv.extend(["--retry-from-input", retry_from_input])
+    return argv
 
 
 async def _run_and_record(
@@ -1772,6 +1865,48 @@ async def _run_after_market_signal_feature_batch(
         await _persist_operations_day_run(state, dsn)
         logger.warning("phase=after-market signal feature batch failed — will retry on next tick")
         return
+
+    input_metrics = _parse_signal_feature_input_summary(input_result)
+    fetch_error_count = int(input_metrics.get("fetch_error_count", 0)) if input_metrics else 0
+    if fetch_error_count > 0:
+        retry_input_path = _signal_feature_snapshot_retry_input_path(signal_feature_input_path)
+        retry_input_result = await _run_and_record(
+            state,
+            "after_market_signal_feature_input_tail_retry",
+            _generate_signal_feature_snapshot_input_command(
+                output_path=retry_input_path,
+                retry_from_input=signal_feature_input_path,
+            ),
+            timeout_seconds=timeout_seconds,
+            env=env,
+        )
+        if not retry_input_result.ok:
+            await _persist_operations_day_run(state, dsn)
+            logger.warning(
+                "phase=after-market signal feature tail-retry input failed — will retry on next tick"
+            )
+            return
+
+        retry_input_metrics = _parse_signal_feature_input_summary(retry_input_result)
+        retry_generated_count = (
+            int(retry_input_metrics.get("generated_count", 0))
+            if retry_input_metrics
+            else 0
+        )
+        if retry_generated_count > 0:
+            retry_batch_result = await _run_and_record(
+                state,
+                "after_market_signal_feature_batch_tail_retry",
+                _signal_feature_snapshot_command(input_path=retry_input_path),
+                timeout_seconds=timeout_seconds,
+                env=env,
+            )
+            if not retry_batch_result.ok:
+                await _persist_operations_day_run(state, dsn)
+                logger.warning(
+                    "phase=after-market signal feature tail-retry batch failed — will retry on next tick"
+                )
+                return
 
     state.signal_feature_batch_done = True
     await _persist_operations_day_run(state, dsn)

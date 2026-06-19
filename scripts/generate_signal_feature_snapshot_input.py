@@ -153,6 +153,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="universe freeze purpose 값",
     )
     parser.add_argument(
+        "--retry-from-input",
+        default=None,
+        help="기존 signal_feature_input.v2 JSON 경로. 지정 시 fetch_error_rows만 재시도",
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         default=DEFAULT_SIGNAL_FEATURE_BATCH_SIZE,
@@ -505,6 +510,78 @@ def _write_rows(
     )
 
 
+def _load_retry_universe_from_input(
+    path: str,
+) -> tuple[tuple[UniverseSymbol, ...], str | None, bool | None, str | None]:
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError("retry-from-input 은 signal_feature_input.v2 객체여야 합니다.")
+
+    universe_metadata = raw.get("universe_metadata")
+    if not isinstance(universe_metadata, dict):
+        raise ValueError("retry-from-input 에 universe_metadata 객체가 필요합니다.")
+
+    error_rows = raw.get("fetch_error_rows")
+    if not isinstance(error_rows, list):
+        raise ValueError("retry-from-input 에 fetch_error_rows 리스트가 필요합니다.")
+
+    symbol_metadata_map: dict[tuple[str, str], dict[str, Any]] = {}
+    raw_symbols = universe_metadata.get("symbols")
+    if isinstance(raw_symbols, list):
+        for item in raw_symbols:
+            if not isinstance(item, dict):
+                continue
+            symbol = str(item.get("symbol", "")).strip()
+            market = str(item.get("market", "")).strip().upper()
+            if not symbol or not market:
+                continue
+            symbol_metadata_map[(symbol, market)] = item
+
+    seen: set[tuple[str, str]] = set()
+    retry_universe: list[UniverseSymbol] = []
+    for item in error_rows:
+        if not isinstance(item, dict):
+            continue
+        symbol = str(item.get("symbol", "")).strip()
+        market = str(item.get("market", "")).strip().upper()
+        if not symbol or not market:
+            continue
+        key = (symbol, market)
+        if key in seen:
+            continue
+        seen.add(key)
+        metadata = symbol_metadata_map.get(key, {})
+        retry_universe.append(
+            UniverseSymbol(
+                symbol=symbol,
+                market=market,
+                source_type=str(metadata.get("source_type") or "tail_retry"),
+                inclusion_reason=str(
+                    metadata.get("inclusion_reason") or "signal_feature_tail_retry"
+                ),
+            )
+        )
+
+    return (
+        tuple(retry_universe),
+        (
+            str(universe_metadata.get("universe_freeze_run_id"))
+            if universe_metadata.get("universe_freeze_run_id")
+            else None
+        ),
+        (
+            bool(universe_metadata.get("universe_freeze_reused"))
+            if universe_metadata.get("universe_freeze_reused") is not None
+            else None
+        ),
+        (
+            str(universe_metadata.get("freeze_purpose"))
+            if universe_metadata.get("freeze_purpose")
+            else None
+        ),
+    )
+
+
 async def _resolve_frozen_universe(
     *,
     repos: Any,
@@ -538,11 +615,17 @@ async def _resolve_frozen_universe(
                 reused_existing=True,
             )
 
+    # 장후 feature 배치는 이미 장이 종료된 뒤 실행되므로,
+    # 여기서 live market_overlay를 다시 구성하면 quote/budget 대기로
+    # 입력 생성 전체가 timeout되기 쉽다.
+    # freeze materialization은 결정적이고 빠른 universe를 우선 확보하고,
+    # 이후 일봉 fetch에 예산을 집중한다.
     composed_universe = await _read_trading_universe(
         max_cap=universe_max_cap,
         core_cap=core_cap,
-        market_overlay_cap=market_overlay_cap,
-        pre_pool_size=pre_pool_size,
+        market_overlay_cap=0,
+        pre_pool_size=0,
+        disable_market_overlay_live=True,
     )
 
     freeze_run_id = uuid4()
@@ -612,17 +695,30 @@ async def _resolve_frozen_universe(
 
 async def _run(args: argparse.Namespace) -> int:
     end_date = _parse_end_date(args.end_date)
-    async with postgres_runtime(run_migrations=False) as runtime:
-        repos = runtime["repositories"]
-        freeze = await _resolve_frozen_universe(
-            repos=repos,
-            end_date=end_date,
-            freeze_purpose=args.freeze_purpose,
-            universe_max_cap=args.universe_max_cap,
-            core_cap=args.core_cap,
-            market_overlay_cap=args.market_overlay_cap,
-            pre_pool_size=args.pre_pool_size,
+    retry_source_input = str(args.retry_from_input).strip() if args.retry_from_input else None
+    if retry_source_input:
+        retry_universe, retry_freeze_run_id, retry_freeze_reused, retry_freeze_purpose = (
+            _load_retry_universe_from_input(retry_source_input)
         )
+        freeze = UniverseFreezeResolution(
+            universe_freeze_run_id=retry_freeze_run_id or f"retry:{end_date.isoformat()}",
+            universe=retry_universe,
+            reused_existing=bool(retry_freeze_reused),
+        )
+        freeze_purpose = retry_freeze_purpose or args.freeze_purpose
+    else:
+        async with postgres_runtime(run_migrations=False) as runtime:
+            repos = runtime["repositories"]
+            freeze = await _resolve_frozen_universe(
+                repos=repos,
+                end_date=end_date,
+                freeze_purpose=args.freeze_purpose,
+                universe_max_cap=args.universe_max_cap,
+                core_cap=args.core_cap,
+                market_overlay_cap=args.market_overlay_cap,
+                pre_pool_size=args.pre_pool_size,
+            )
+        freeze_purpose = args.freeze_purpose
     settings = AppSettings()
     client = _build_chart_client(settings)
     try:
@@ -654,7 +750,7 @@ async def _run(args: argparse.Namespace) -> int:
         universe=freeze.universe,
         universe_freeze_run_id=freeze.universe_freeze_run_id,
         universe_freeze_reused=freeze.reused_existing,
-        freeze_purpose=args.freeze_purpose,
+        freeze_purpose=freeze_purpose,
     )
     payload = {
         "output": args.output,
@@ -666,9 +762,11 @@ async def _run(args: argparse.Namespace) -> int:
         "pre_pool_size": args.pre_pool_size,
         "universe_freeze_run_id": freeze.universe_freeze_run_id,
         "universe_freeze_reused": freeze.reused_existing,
-        "freeze_purpose": args.freeze_purpose,
+        "freeze_purpose": freeze_purpose,
         "fetch_success_count": len(rows),
         "fetch_error_count": len(errors),
+        "retry_mode": bool(retry_source_input),
+        "retry_source_input": retry_source_input,
         "errors": all_errors,
     }
     if args.output_format == "json":
@@ -684,7 +782,8 @@ async def _run(args: argparse.Namespace) -> int:
         print(f"pre_pool_size: {args.pre_pool_size}")
         print(f"universe_freeze_run_id: {freeze.universe_freeze_run_id}")
         print(f"universe_freeze_reused: {freeze.reused_existing}")
-        print(f"freeze_purpose: {args.freeze_purpose}")
+        print(f"freeze_purpose: {freeze_purpose}")
+        print(f"retry_mode: {bool(retry_source_input)}")
         for error in all_errors:
             print(f"! {error}")
     return 0 if rows else 1

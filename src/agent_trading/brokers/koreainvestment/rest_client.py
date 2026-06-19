@@ -73,6 +73,7 @@ KIS_ENDPOINTS: Mapping[str, str] = {
     "inquire_daily_itemchartprice": "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",  # 국내주식기간별시세
     # --- Market Data ---
     "inquire_asking_price_exp_ccn": "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn", # 호가
+    "inquire_index_category_price": "/uapi/domestic-stock/v1/quotations/inquire-index-category-price",  # 국내업종 구분별전체시세
     "ranking_volume": "/uapi/domestic-stock/v1/quotations/volume-rank",  # 거래량/거래대금 순위
     "ranking_volume_power": "/uapi/domestic-stock/v1/ranking/volume-power",  # 체결강도 상위
     # --- Disclosure (live only) ---
@@ -95,6 +96,7 @@ KIS_TR_IDS: Mapping[str, tuple[str, str]] = {
     "inquire_price": ("FHKST01010100", "FHKST01010100"),    # 주식현재가 시세
     "inquire_daily_itemchartprice": ("FHKST03010100", "FHKST03010100"),    # 국내주식기간별시세
     "inquire_asking_price_exp_ccn": ("FHKST01010200", "FHKST01010200"), # 호가
+    "inquire_index_category_price": ("FHPUP02140000", None),
     "ranking_volume": ("FHPST01710000", None),
     "ranking_volume_power": ("FHPST01680000", None),
     # Disclosure (live only — 모의투자 미지원)
@@ -2241,6 +2243,47 @@ class KISRestClient:
             return []
 
         output = data.get("output", [])
+        if isinstance(output, dict):
+            return [output]
+        if isinstance(output, list):
+            return [row for row in output if isinstance(row, dict)]
+        return []
+
+    async def get_index_category_quotes(
+        self,
+        *,
+        index_code: str = "0001",
+        market_class_code: str = "K2",
+        belonging_class_code: str = "0",
+    ) -> list[dict[str, Any]]:
+        """국내업종 구분별전체시세를 조회한다.
+
+        이 API는 `KOSPI100`, `KOSPI200` 같은 업종/지수 코드 카탈로그를
+        KIS 기준으로 확인하는 보조 경로다.
+
+        주의:
+        - 종목 단위의 지수 편입 구성종목 목록을 반환하지 않는다.
+        - 실전 전용 API이므로 paper/비지원 환경에서는 빈 목록을 반환한다.
+        """
+        try:
+            data = await self._request(
+                "GET",
+                endpoint_key="inquire_index_category_price",
+                tr_id_key="inquire_index_category_price",
+                bucket=BucketType.MARKET_DATA,
+                params={
+                    "FID_COND_MRKT_DIV_CODE": "U",
+                    "FID_INPUT_ISCD": index_code,
+                    "FID_COND_SCR_DIV_CODE": "20214",
+                    "FID_MRKT_CLS_CODE": market_class_code,
+                    "FID_BLNG_CLS_CODE": belonging_class_code,
+                },
+            )
+        except BrokerError:
+            logger.debug("get_index_category_quotes: unavailable", exc_info=True)
+            return []
+
+        output = data.get("output2", [])
         if isinstance(output, dict):
             return [output]
         if isinstance(output, list):
