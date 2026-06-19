@@ -233,6 +233,41 @@ class TestKISSyncSnapshotProvider:
         assert pos.market_price == 52000  # type: ignore[comparison-overlap]
         assert pos.unrealized_pnl == 20000  # type: ignore[comparison-overlap]
 
+    async def test_position_mapping_uses_any_market_lookup_for_segment_row(self) -> None:
+        """KOSPI/KOSDAQ segment row만 있어도 canonical lookup으로 매핑된다."""
+        account_id = uuid4()
+        inst_id = uuid4()
+        client = FakeKISRestClient(
+            positions=[
+                {
+                    "pdno": "005930",
+                    "hldg_qty": "10",
+                    "pchs_avg_pric": "50000",
+                    "prpr": "52000",
+                    "evlu_pfls_amt": "20000",
+                }
+            ],
+            cash_balance={},
+        )
+        provider = KISSyncSnapshotProvider(client)
+
+        inst_repo = InMemoryInstrumentRepository()
+        inst = InstrumentEntity(
+            instrument_id=inst_id,
+            symbol="005930",
+            name="Samsung Electronics",
+            market_code="KOSPI",
+            asset_class="stock",
+            currency="KRW",
+            exchange_code="KRX",
+            market_segment="KOSPI",
+        )
+        await inst_repo.add(inst)
+
+        result = await provider.fetch_snapshot(account_id, inst_repo)
+        assert len(result.positions) == 1
+        assert result.positions[0].instrument_id == inst_id
+
     async def test_position_missing_pdno(self) -> None:
         """Position row without 'pdno' → skipped + error."""
         client = FakeKISRestClient(

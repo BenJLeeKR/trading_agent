@@ -149,9 +149,29 @@ _EVENT_FETCH_TYPES: tuple[str, ...] = (
 _DISCOVERY_SEGMENT_CODES: frozenset[str] = frozenset({
     "KOSPI100",
     "KOSPI_100",
+    "KOSPI200",
+    "KOSPI_200",
+    "KOSDAQ50",
+    "KOSDAQ_50",
     "KOSDAQ150",
     "KOSDAQ_150",
     "KOSPI_LARGE",
+    "KOSDAQ_GROWTH",
+})
+
+_CORE_INDEX_MEMBERSHIP_CODES: frozenset[str] = frozenset({
+    "KOSPI100",
+    "KOSPI_100",
+    "KOSPI200",
+    "KOSPI_200",
+    "KOSPI_LARGE",
+})
+
+_DISCOVERY_INDEX_MEMBERSHIP_CODES: frozenset[str] = frozenset({
+    "KOSDAQ50",
+    "KOSDAQ_50",
+    "KOSDAQ150",
+    "KOSDAQ_150",
     "KOSDAQ_GROWTH",
 })
 
@@ -349,14 +369,6 @@ def _is_discovery_seed_instrument_symbol(symbol: str) -> bool:
     return str(symbol or "").strip() in APPROVED_DISCOVERY_UNIVERSE_SYMBOLS
 
 
-def _is_core_seed_instrument(instrument: object) -> bool:
-    metadata = getattr(instrument, "metadata", {}) or {}
-    flagged = _metadata_flag(metadata, "core_universe")
-    if flagged is not None:
-        return flagged
-    return _is_core_seed_instrument_symbol(getattr(instrument, "symbol", ""))
-
-
 def _segment_value(metadata: dict[str, object]) -> str | None:
     for key in ("market_segment", "segment", "universe_segment"):
         raw = metadata.get(key)
@@ -368,18 +380,37 @@ def _segment_value(metadata: dict[str, object]) -> str | None:
     return None
 
 
-def _is_market_discovery_seed_instrument(instrument: object) -> bool:
+def _instrument_market_segment(instrument: object) -> str | None:
+    raw = getattr(instrument, "market_segment", None)
+    if raw is not None:
+        value = str(raw).strip().upper()
+        if value:
+            return value
     metadata = getattr(instrument, "metadata", {}) or {}
-    if _is_core_seed_instrument(instrument):
-        return True
-    if _is_discovery_seed_instrument_symbol(getattr(instrument, "symbol", "")):
-        return True
-    if _metadata_flag(metadata, "market_discovery_pool") is True:
-        return True
-    segment = _segment_value(metadata)
-    if segment is not None and segment in _DISCOVERY_SEGMENT_CODES:
-        return True
-    return False
+    raw = metadata.get("market_segment")
+    if raw is None:
+        return None
+    value = str(raw).strip().upper()
+    return value or None
+
+
+def _metadata_index_membership_values(instrument: object) -> frozenset[str]:
+    metadata = getattr(instrument, "metadata", {}) or {}
+    raw = metadata.get("index_memberships")
+    if raw is None:
+        return frozenset()
+    if isinstance(raw, str):
+        values = [raw]
+    elif isinstance(raw, Sequence):
+        values = list(raw)
+    else:
+        return frozenset()
+    normalized: set[str] = set()
+    for value in values:
+        item = str(value).strip().upper()
+        if item:
+            normalized.add(item)
+    return frozenset(normalized)
 
 
 def _calc_overlay_capture_rate(added_count: int, candidate_count: int) -> float | None:
@@ -562,6 +593,50 @@ class UniverseSelectionService:
         self._liquidity_filter = liquidity_filter or LiquidityFilter(repos)
         self._kis_client = kis_client
 
+    async def _index_membership_values(self, instrument: object) -> frozenset[str]:
+        instrument_id = getattr(instrument, "instrument_id", None)
+        if instrument_id is not None:
+            memberships = await self._repos.instrument_index_memberships.list_active_by_instrument(
+                instrument_id
+            )
+            if memberships:
+                return frozenset(
+                    str(item.membership_code).strip().upper()
+                    for item in memberships
+                    if str(item.membership_code).strip()
+                )
+        return _metadata_index_membership_values(instrument)
+
+    async def _is_core_seed_instrument(self, instrument: object) -> bool:
+        metadata = getattr(instrument, "metadata", {}) or {}
+        flagged = _metadata_flag(metadata, "core_universe")
+        if flagged is not None:
+            return flagged
+        memberships = await self._index_membership_values(instrument)
+        if memberships:
+            segment = _instrument_market_segment(instrument)
+            if segment == "KOSPI" and memberships & _CORE_INDEX_MEMBERSHIP_CODES:
+                return True
+        return _is_core_seed_instrument_symbol(getattr(instrument, "symbol", ""))
+
+    async def _is_market_discovery_seed_instrument(self, instrument: object) -> bool:
+        metadata = getattr(instrument, "metadata", {}) or {}
+        if await self._is_core_seed_instrument(instrument):
+            return True
+        if _is_discovery_seed_instrument_symbol(getattr(instrument, "symbol", "")):
+            return True
+        if _metadata_flag(metadata, "market_discovery_pool") is True:
+            return True
+        segment = _segment_value(metadata)
+        if segment is not None and segment in _DISCOVERY_SEGMENT_CODES:
+            return True
+        memberships = await self._index_membership_values(instrument)
+        if memberships & _DISCOVERY_INDEX_MEMBERSHIP_CODES:
+            segment = _instrument_market_segment(instrument)
+            if segment == "KOSDAQ":
+                return True
+        return False
+
     async def _list_active_kr_equity_instruments(self) -> list[object]:
         items_by_symbol: dict[str, object] = {}
         for market_code in ("KOSPI", "KOSDAQ", "KRX"):
@@ -631,7 +706,7 @@ class UniverseSelectionService:
         """Load only approved core-seed instruments as the Core Universe."""
         instruments = await self._list_active_kr_equity_instruments()
         for inst in instruments:
-            if not _is_core_seed_instrument(inst):
+            if not await self._is_core_seed_instrument(inst):
                 continue
             sym = inst.symbol
             if sym not in seen:
@@ -901,11 +976,10 @@ class UniverseSelectionService:
             seed_pool_symbols = ranking_seed_symbols
         else:
             core_symbols = await self._list_active_kr_equity_instruments()
-            seed_pool_symbols = [
-                inst.symbol
-                for inst in core_symbols
-                if _is_market_discovery_seed_instrument(inst)
-            ]
+            seed_pool_symbols: list[str] = []
+            for inst in core_symbols:
+                if await self._is_market_discovery_seed_instrument(inst):
+                    seed_pool_symbols.append(inst.symbol)
 
         symbol_market_map: dict[str, str] = {}
         for symbol in seed_pool_symbols:

@@ -19,6 +19,7 @@ from agent_trading.repositories.contracts import (
     FillEventRepository,
     FillSyncRunRepository,
     GuardrailEvaluationRepository,
+    InstrumentIndexMembershipRepository,
     InstrumentRepository,
     MarketSessionRepository,
     OrderRepository,
@@ -31,6 +32,8 @@ from agent_trading.repositories.contracts import (
     OrderSubmissionAttemptRepository,
     StrategyRepository,
     TradeDecisionRepository,
+    UniverseFreezeRunItemRepository,
+    UniverseFreezeRunRepository,
 )
 
 
@@ -61,6 +64,9 @@ class RepositoryContainer:
     guardrail_evaluations: GuardrailEvaluationRepository
     risk_limit_snapshots: RiskLimitSnapshotRepository
     signal_feature_snapshots: SignalFeatureSnapshotRepository
+    instrument_index_memberships: InstrumentIndexMembershipRepository
+    universe_freeze_runs: UniverseFreezeRunRepository
+    universe_freeze_run_items: UniverseFreezeRunItemRepository
     external_events: ExternalEventRepository
     market_session_repo: MarketSessionRepository
     order_submission_attempts: OrderSubmissionAttemptRepository

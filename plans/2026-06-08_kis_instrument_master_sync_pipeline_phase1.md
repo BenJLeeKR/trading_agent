@@ -19,6 +19,11 @@
     `metadata_market_segment`, `metadata_segment`, `metadata_universe_segment`로
     보존하며, 알려진 별칭은 `KOSPI100`, `KOSDAQ150`, `KOSPI_LARGE`,
     `KOSDAQ_GROWTH` 형태로 정규화한다.
+  - 원본 CSV의 `is_kospi200`, `is_kosdaq150` 플래그는
+    각각 `KOSPI200`, `KOSDAQ150` membership으로 승격해
+    `metadata_index_memberships`에도 함께 기록한다.
+  - 현재 원본 CSV에는 `KOSPI100`, `KOSDAQ50` 직접 플래그가 없으므로
+    해당 membership은 별도 소스 없이는 자동 생성하지 않는다.
 - 결과:
   - `(symbol, market_code)` 기준 upsert
   - 선택적으로 누락 active 종목 비활성화

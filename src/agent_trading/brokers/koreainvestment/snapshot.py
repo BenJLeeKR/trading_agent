@@ -216,11 +216,12 @@ class KISSyncSnapshotProvider:
                 errors.append("Position row missing 'pdno' — skipped")
                 continue
 
-            # Resolve instrument_id via symbol lookup
+            # Resolve instrument_id via canonical symbol lookup.
+            # Domestic instrument storage is converging on
+            # exchange_code='KRX' + market_segment='KOSPI|KOSDAQ', so
+            # get_by_symbol_any_market() is the safer read path during migration.
             try:
-                instrument = await instrument_repo.get_by_symbol(
-                    pdno, _DEFAULT_MARKET_CODE
-                )
+                instrument = await instrument_repo.get_by_symbol_any_market(pdno)
             except Exception as exc:
                 logger.warning("Instrument lookup failed for pdno=%s: %s", pdno, exc)
                 instrument = None

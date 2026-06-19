@@ -224,6 +224,44 @@ V1은 확률 모델이 아니라
   상대 활동성이 부족한 경우
 - `source_type == held_position`
 
+## 7.2-a signal_feature_snapshot 배치 운영 안정성 전제
+
+deterministic trigger의 입력 품질은
+`signal_feature_snapshot` 장후 배치의 안정성에 직접 의존한다.
+
+따라서 trigger 정교화와 별개로,
+다음 운영 안정화 항목을 선행 전제로 둔다.
+
+- `P0`
+  - [ ] 장후 `20:10 KST` 시점의 대상 universe를 먼저 freeze 하고,
+    fetch / persist / retry는 같은 대상 집합 기준으로 수행한다.
+  - [ ] 첫 구현 단계는
+    `universe_freeze_runs` / `universe_freeze_run_items`
+    PostgreSQL 스키마 확정부터 시작한다.
+  - [ ] `fetch stage`와 `persist stage`를 분리해,
+    외부 KIS API 실패와 DB 적재 실패를 분리 관측 가능하게 만든다.
+  - [ ] 실패 종목만 재수집하는 `tail-retry`를 추가해
+    전체 batch 재실행 없이 적재율을 끌어올린다.
+  - [ ] `summary_json`에
+    대상 수 / fetch 성공 / fetch 실패 / persist 성공 / persist 실패 /
+    최종 누락 수를 남겨 다음날 decision 품질 검증의 기준값으로 사용한다.
+- `P1`
+  - [ ] `signal_feature_batch_runs` / `signal_feature_batch_run_items`
+    형태의 실행 단위 기록 테이블 도입 여부를 확정한다.
+  - [ ] 동일 snapshot 시점 재실행 시
+    idempotent upsert 정책을 적용해
+    retry / replay / manual backfill을 안전하게 만든다.
+  - [ ] 장중 intraday relative activity 확장 시에도
+    같은 batch runtime을 재사용할 수 있게
+    공통 orchestration 계층으로 정리한다.
+
+현재까지의 선행 반영:
+
+- [x] `signal_feature_snapshot` turnover field 반영
+- [x] `ops-scheduler` signal feature 실행 경로의 import failure 해소
+- [x] 개별 row 실패가 전체 batch를 죽이지 않도록 savepoint 적용
+- [x] 대형 거래대금 수용을 위한 DB precision 완화
+
 ---
 
 ## 7.3 Exit Score

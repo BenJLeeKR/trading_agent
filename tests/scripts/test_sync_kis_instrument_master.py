@@ -113,24 +113,28 @@ def test_build_instrument_extracts_metadata() -> None:
         "symbol": "005930",
         "name": "삼성전자",
         "market_code": "KRX",
+        "market_segment": "KOSPI",
         "name_kr": "삼성전자",
         "isin_code": "KR7005930003",
-        "exchange_code": "KOSPI",
+        "exchange_code": "KRX",
         "metadata_market_segment": "KOSPI",
         "metadata_segment": "KOSPI100",
         "metadata_universe_segment": "KOSPI100",
+        "metadata_index_memberships": "KOSPI100|KOSPI200",
         "metadata_sector": "전자",
     }
     headers = {
         "symbol": "symbol",
         "name": "name",
         "market_code": "market_code",
+        "market_segment": "market_segment",
         "name_kr": "name_kr",
         "isin_code": "isin_code",
         "exchange_code": "exchange_code",
         "metadata_market_segment": "metadata_market_segment",
         "metadata_segment": "metadata_segment",
         "metadata_universe_segment": "metadata_universe_segment",
+        "metadata_index_memberships": "metadata_index_memberships",
         "metadata_sector": "metadata_sector",
     }
     instrument = _build_instrument(
@@ -142,12 +146,18 @@ def test_build_instrument_extracts_metadata() -> None:
         source_tag="kis_master_csv",
     )
     assert instrument.symbol == "005930"
+    assert instrument.market_code == "KRX"
     assert instrument.metadata["name_kr"] == "삼성전자"
     assert instrument.metadata["isin_code"] == "KR7005930003"
-    assert instrument.metadata["exchange_code"] == "KOSPI"
+    assert instrument.exchange_code == "KRX"
+    assert instrument.market_segment == "KOSPI"
+    assert instrument.metadata["exchange_code"] == "KRX"
     assert instrument.metadata["market_segment"] == "KOSPI"
+    assert instrument.metadata["source_market_code"] == "KRX"
+    assert instrument.metadata["canonical_storage_market_code"] == "KRX"
     assert instrument.metadata["segment"] == "KOSPI100"
     assert instrument.metadata["universe_segment"] == "KOSPI100"
+    assert instrument.metadata["index_memberships"] == ["KOSPI100", "KOSPI200"]
     assert instrument.metadata["sector"] == "전자"
 
 
@@ -155,9 +165,9 @@ def test_load_csv_preserves_segment_authoritative_fields(tmp_path) -> None:
     path = tmp_path / "master.csv"
     path.write_text(
         (
-            "symbol,name,market_code,exchange_code,metadata_market_segment,"
-            "metadata_segment,metadata_universe_segment\n"
-            "090150,테스트,KOSDAQ,KOSDAQ,KOSDAQ,KOSDAQ150,KOSDAQ150\n"
+            "symbol,name,market_code,market_segment,exchange_code,metadata_market_segment,"
+            "metadata_segment,metadata_universe_segment,metadata_index_memberships\n"
+            "090150,테스트,KOSDAQ,KOSDAQ,KRX,KOSDAQ,KOSDAQ150,KOSDAQ150,KOSDAQ150\n"
         ),
         encoding="utf-8",
     )
@@ -169,11 +179,16 @@ def test_load_csv_preserves_segment_authoritative_fields(tmp_path) -> None:
         source_tag="kis_master_csv",
     )
     assert len(items) == 1
-    assert items[0].market_code == "KOSDAQ"
-    assert items[0].metadata["exchange_code"] == "KOSDAQ"
+    assert items[0].market_code == "KRX"
+    assert items[0].exchange_code == "KRX"
+    assert items[0].market_segment == "KOSDAQ"
+    assert items[0].metadata["exchange_code"] == "KRX"
     assert items[0].metadata["market_segment"] == "KOSDAQ"
+    assert items[0].metadata["source_market_code"] == "KOSDAQ"
+    assert items[0].metadata["canonical_storage_market_code"] == "KRX"
     assert items[0].metadata["segment"] == "KOSDAQ150"
     assert items[0].metadata["universe_segment"] == "KOSDAQ150"
+    assert items[0].metadata["index_memberships"] == ["KOSDAQ150"]
 
 
 def test_build_instrument_normalizes_kosdaq_market_code() -> None:
@@ -199,7 +214,8 @@ def test_build_instrument_normalizes_kosdaq_market_code() -> None:
         default_currency="KRW",
         source_tag="kis_master_csv",
     )
-    assert instrument.market_code == "KOSDAQ"
+    assert instrument.market_code == "KRX"
+    assert instrument.market_segment == "KOSDAQ"
     assert instrument.asset_class == "kr_stock"
     assert instrument.currency == "KRW"
 
@@ -254,6 +270,8 @@ async def test_sync_instruments_deactivates_missing_rows() -> None:
         dry_run=False,
         deactivate_missing=True,
         deactivate_market_code="KRX",
+        membership_repo=repos.instrument_index_memberships,
+        membership_effective_from=datetime(2026, 6, 19).date(),
     )
     assert counters.inserted == 1
     assert counters.deactivated == 1
@@ -261,6 +279,110 @@ async def test_sync_instruments_deactivates_missing_rows() -> None:
     assert deactivated is not None
     assert deactivated.is_active is False
     assert deactivated.metadata["deactivated_by_sync"] is True
+    memberships = await repos.instrument_index_memberships.list_active_by_instrument(existing.instrument_id)
+    assert memberships == ()
+
+
+@pytest.mark.asyncio
+async def test_sync_instruments_updates_existing_krx_row_for_domestic_segment_input() -> None:
+    repos = build_in_memory_repositories()
+    existing = InstrumentEntity(
+        instrument_id=_make_instrument_id("090150", "KRX"),
+        symbol="090150",
+        market_code="KRX",
+        asset_class="kr_stock",
+        currency="KRW",
+        name="기존종목명",
+        tick_size=Decimal("100"),
+        lot_size=Decimal("1"),
+        is_active=True,
+        exchange_code="KRX",
+        market_segment="KOSDAQ",
+        metadata={"seed": True},
+    )
+    await repos.instruments.add(existing)
+    incoming = [
+        InstrumentEntity(
+            instrument_id=_make_instrument_id("090150", "KRX"),
+            symbol="090150",
+            market_code="KRX",
+            asset_class="kr_stock",
+            currency="KRW",
+            name="광진윈텍",
+            tick_size=Decimal("100"),
+            lot_size=Decimal("1"),
+            is_active=True,
+            exchange_code="KRX",
+            market_segment="KOSDAQ",
+            metadata={
+                "sync_source": "kis_master_file",
+                "source_market_code": "KOSDAQ",
+                "canonical_storage_market_code": "KRX",
+            },
+        )
+    ]
+
+    counters = await _sync_instruments(
+        repos.instruments,
+        incoming,
+        dry_run=False,
+        deactivate_missing=False,
+        deactivate_market_code=None,
+        membership_repo=repos.instrument_index_memberships,
+        membership_effective_from=datetime(2026, 6, 19).date(),
+    )
+
+    fetched = await repos.instruments.get_by_symbol("090150", "KRX")
+    memberships = await repos.instrument_index_memberships.list_active_by_instrument(existing.instrument_id)
+    assert counters.inserted == 0
+    assert counters.updated == 1
+    assert counters.skipped == 0
+    assert fetched is not None
+    assert fetched.name == "광진윈텍"
+    assert fetched.market_segment == "KOSDAQ"
+    assert fetched.metadata["source_market_code"] == "KOSDAQ"
+    assert [item.membership_code for item in memberships] == []
+
+
+@pytest.mark.asyncio
+async def test_sync_instruments_backfills_index_membership_table_even_on_skip() -> None:
+    repos = build_in_memory_repositories()
+    existing = InstrumentEntity(
+        instrument_id=_make_instrument_id("005930", "KRX"),
+        symbol="005930",
+        market_code="KRX",
+        asset_class="kr_stock",
+        currency="KRW",
+        name="삼성전자",
+        tick_size=Decimal("100"),
+        lot_size=Decimal("1"),
+        is_active=True,
+        exchange_code="KRX",
+        market_segment="KOSPI",
+        metadata={
+            "sync_source": "kis_master_file",
+            "source_tag": "kis_master_csv",
+            "source_market_code": "KOSPI",
+            "index_memberships": ["KOSPI200"],
+        },
+    )
+    await repos.instruments.add(existing)
+
+    counters = await _sync_instruments(
+        repos.instruments,
+        [existing],
+        dry_run=False,
+        deactivate_missing=False,
+        deactivate_market_code=None,
+        membership_repo=repos.instrument_index_memberships,
+        membership_effective_from=datetime(2026, 6, 19).date(),
+    )
+
+    memberships = await repos.instrument_index_memberships.list_active_by_instrument(existing.instrument_id)
+    assert counters.inserted == 0
+    assert counters.updated == 0
+    assert counters.skipped == 1
+    assert [item.membership_code for item in memberships] == ["KOSPI200"]
 
 
 def test_classify_detects_metadata_change() -> None:
@@ -289,3 +411,24 @@ def test_classify_detects_metadata_change() -> None:
         metadata={"source_tag": "new"},
     )
     assert _classify(existing, incoming) == "update"
+
+
+def test_load_csv_parses_index_memberships_pipe_delimited_field(tmp_path) -> None:
+    path = tmp_path / "memberships.csv"
+    path.write_text(
+        (
+            "symbol,name,market_code,market_segment,exchange_code,metadata_market_segment,"
+            "metadata_segment,metadata_universe_segment,metadata_index_memberships\n"
+            "005930,삼성전자,KOSPI,KOSPI,KRX,KOSPI,,,KOSPI100|KOSPI200\n"
+        ),
+        encoding="utf-8",
+    )
+    items = _load_csv(
+        str(path),
+        default_market_code="KRX",
+        default_asset_class="kr_stock",
+        default_currency="KRW",
+        source_tag="kis_master_csv",
+    )
+    assert len(items) == 1
+    assert items[0].metadata["index_memberships"] == ["KOSPI100", "KOSPI200"]

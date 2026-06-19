@@ -95,6 +95,14 @@ Event Bus / Workflow Log
 - 시계열 feature 생성
 - 종목별/전략별 feature snapshot 저장
 - 결정 시점 기준 point-in-time 정합성 보장
+- 장후 batch는 외부 market data fetch 실패와 DB persist 실패를
+  분리 관측/재실행 가능해야 한다.
+- feature snapshot batch는
+  `universe freeze -> fetch stage -> persist stage -> failed-symbol retry`
+  구조를 권장한다.
+- 동일 snapshot 시점 재실행은 idempotent 해야 하며,
+  일부 종목 실패가 전체 batch를 오염시키지 않도록
+  종목 단위 isolation(savepoint 또는 동등 구조)을 둔다.
 
 ### 4.6 Decision Orchestrator
 

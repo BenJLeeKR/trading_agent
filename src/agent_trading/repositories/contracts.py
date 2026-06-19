@@ -24,6 +24,7 @@ from agent_trading.domain.entities import (
     FillSyncRunEntity,
     GuardrailEvaluationEntity,
     InstrumentEntity,
+    InstrumentIndexMembershipEntity,
     MarketSessionEntity,
     OrderRequestEntity,
     OrderSubmissionAttemptEntity,
@@ -38,6 +39,8 @@ from agent_trading.domain.entities import (
     SnapshotSyncRunEntity,
     StrategyEntity,
     TradeDecisionEntity,
+    UniverseFreezeRunEntity,
+    UniverseFreezeRunItemEntity,
 )
 from agent_trading.domain.entities import ExecutionAttemptEntity
 from agent_trading.domain.enums import Environment, OrderStatus
@@ -997,6 +1000,63 @@ class SignalFeatureSnapshotRepository(Protocol):
         timeframe: str = "1d",
         limit: int = 20,
     ) -> Sequence[SignalFeatureSnapshotEntity]:
+        ...
+
+
+class UniverseFreezeRunRepository(Protocol):
+    """Store for frozen trading-universe run metadata."""
+
+    async def add(self, run: UniverseFreezeRunEntity) -> UniverseFreezeRunEntity:
+        ...
+
+    async def get(self, run_id: UUID) -> UniverseFreezeRunEntity | None:
+        ...
+
+    async def get_latest(
+        self,
+        business_date: date,
+        freeze_purpose: str,
+    ) -> UniverseFreezeRunEntity | None:
+        ...
+
+
+class InstrumentIndexMembershipRepository(Protocol):
+    """Authoritative time-series store for instrument index memberships."""
+
+    async def sync_current_memberships(
+        self,
+        instrument_id: UUID,
+        membership_codes: Sequence[str],
+        *,
+        effective_from: date,
+        source_tag: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> Sequence[InstrumentIndexMembershipEntity]:
+        ...
+
+    async def list_active_by_instrument(
+        self,
+        instrument_id: UUID,
+    ) -> Sequence[InstrumentIndexMembershipEntity]:
+        ...
+
+
+class UniverseFreezeRunItemRepository(Protocol):
+    """Store for item rows materialised under one freeze run."""
+
+    async def add(self, item: UniverseFreezeRunItemEntity) -> UniverseFreezeRunItemEntity:
+        ...
+
+    async def add_many(
+        self,
+        items: Sequence[UniverseFreezeRunItemEntity],
+    ) -> Sequence[UniverseFreezeRunItemEntity]:
+        ...
+
+    async def list_by_run(
+        self,
+        universe_freeze_run_id: UUID,
+    ) -> Sequence[UniverseFreezeRunItemEntity]:
         ...
 
 

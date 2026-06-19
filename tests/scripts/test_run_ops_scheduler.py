@@ -205,7 +205,8 @@ class TestCommandBuilders:
         )
         assert cmd == [
             "python3",
-            "scripts/build_signal_feature_snapshots.py",
+            "-m",
+            "scripts.build_signal_feature_snapshots",
             "--input",
             "data/signal_feature_snapshot_input.json",
             "--output",
@@ -218,7 +219,8 @@ class TestCommandBuilders:
         )
         assert cmd == [
             "python3",
-            "scripts/generate_signal_feature_snapshot_input.py",
+            "-m",
+            "scripts.generate_signal_feature_snapshot_input",
             "--output",
             "data/signal_feature_snapshot_input.json",
             "--output-format",
@@ -749,6 +751,9 @@ class TestParseSignalFeatureBatchSummary:
             "persisted": 3,
             "skipped": 0,
             "errors": 0,
+            "persist_error_count": 0,
+            "persist_success_count": 3,
+            "failed_symbols_sample": [],
         }
 
 
@@ -769,6 +774,10 @@ class TestParseSignalFeatureInputSummary:
             "universe_count": 14,
             "generated_count": 12,
             "error_count": 2,
+            "target_count": 14,
+            "fetch_success_count": 12,
+            "fetch_error_count": 2,
+            "failed_symbols_sample": ["005930"],
         }
 
 
@@ -854,7 +863,8 @@ class TestAfterMarketSignalFeatureBatch:
         second_argv = run_mock.await_args_list[1].args[2]
         assert first_argv == [
             "python3",
-            "scripts/generate_signal_feature_snapshot_input.py",
+            "-m",
+            "scripts.generate_signal_feature_snapshot_input",
             "--output",
             "data/custom.json",
             "--output-format",
@@ -862,7 +872,8 @@ class TestAfterMarketSignalFeatureBatch:
         ]
         assert second_argv == [
             "python3",
-            "scripts/build_signal_feature_snapshots.py",
+            "-m",
+            "scripts.build_signal_feature_snapshots",
             "--input",
             "data/custom.json",
             "--output",
@@ -1852,12 +1863,23 @@ class TestPersistOperationsDayRun:
             "universe_count": 14,
             "generated_count": 0,
             "error_count": 1,
+            "target_count": 14,
+            "fetch_success_count": 0,
+            "fetch_error_count": 1,
+            "failed_symbols_sample": ["005930"],
         }
         assert (
             summary_json["command_health"]["signal_feature_input"]["last_error"]
             == "005930:KRX:RuntimeError:no_data"
         )
         assert summary_json["signal_feature_batch"]["metrics"]["persisted"] == 2
+        assert summary_json["signal_feature_batch"]["metrics"]["target_count"] == 14
+        assert summary_json["signal_feature_batch"]["metrics"]["fetch_success_count"] == 0
+        assert summary_json["signal_feature_batch"]["metrics"]["fetch_error_count"] == 1
+        assert summary_json["signal_feature_batch"]["metrics"]["persist_success_count"] == 2
+        assert summary_json["signal_feature_batch"]["metrics"]["persist_error_count"] == 1
+        assert summary_json["signal_feature_batch"]["metrics"]["final_missing_count"] == 12
+        assert summary_json["signal_feature_batch"]["metrics"]["failed_symbols_sample"] == ["005930", "000660"]
         assert (
             summary_json["signal_feature_batch"]["last_error"]
             == "000660:KRX:instrument_not_found"

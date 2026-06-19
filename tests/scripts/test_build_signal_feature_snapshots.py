@@ -69,6 +69,65 @@ def test_load_rows_applies_defaults(tmp_path) -> None:
     assert rows[0].bars[0].timestamp == datetime(2026, 6, 16, tzinfo=timezone.utc)
 
 
+def test_load_rows_accepts_v2_object_payload(tmp_path) -> None:
+    path = tmp_path / "bars_v2.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "signal_feature_input.v2",
+                "universe_metadata": {
+                    "universe_freeze_run_id": "freeze-1",
+                    "universe_count": 1,
+                    "symbols": [
+                        {
+                            "symbol": "005930",
+                            "market": "KRX",
+                            "source_type": "core",
+                            "inclusion_reason": "approved_core_universe",
+                        }
+                    ],
+                },
+                "fetch_success_rows": [
+                    {
+                        "symbol": "005930",
+                        "market": "KRX",
+                        "bars": [
+                            {
+                                "timestamp": "2026-06-16T00:00:00+00:00",
+                                "open_price": 100,
+                                "high_price": 110,
+                                "low_price": 95,
+                                "close_price": 108,
+                                "volume": 1000,
+                            }
+                        ],
+                    }
+                ],
+                "fetch_error_rows": [
+                    {
+                        "symbol": "000001",
+                        "market": "KRX",
+                        "error_code": "timeout",
+                        "error_message": "request timeout",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rows = _load_rows(
+        str(path),
+        default_market="KRX",
+        default_timeframe="1d",
+        feature_set_version="signal_backbone_v1",
+    )
+
+    assert len(rows) == 1
+    assert rows[0].symbol == "005930"
+    assert rows[0].market == "KRX"
+
+
 def test_result_to_json_serializes_snapshot_payload() -> None:
     snapshot = SignalFeatureSnapshotEntity(
         signal_feature_snapshot_id=uuid4(),

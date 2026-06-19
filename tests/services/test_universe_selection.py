@@ -71,6 +71,7 @@ def _make_instrument(
     asset_class: str = "KR_STOCK",
     metadata: dict[str, object] | None = None,
 ) -> InstrumentEntity:
+    normalized_market_segment = "KOSDAQ" if market_code == "KOSDAQ" else "KOSPI"
     return InstrumentEntity(
         instrument_id=uuid4(),
         symbol=symbol,
@@ -80,6 +81,8 @@ def _make_instrument(
         asset_class=asset_class,
         currency="KRW",
         tick_size=tick_size,
+        exchange_code="KRX",
+        market_segment=normalized_market_segment,
         metadata={"core_universe": True} if metadata is None else metadata,
     )
 
@@ -371,6 +374,78 @@ class TestUniverseSelectionServiceCompose:
             item.symbol == "090150" and item.market == "KOSDAQ"
             for item in result
         )
+
+    @pytest.mark.asyncio
+    async def test_core_universe_prefers_index_membership_before_allowlist(self) -> None:
+        """KOSPI index_memberships가 있으면 allowlist 없이도 core seed로 승격된다."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(
+            _make_instrument(
+                "123456",
+                market_code="KOSPI",
+                metadata={
+                    "market_segment": "KOSPI",
+                    "index_memberships": ["KOSPI200"],
+                },
+            )
+        )
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+
+        assert any(
+            item.symbol == "123456" and item.source_type == SourceType.CORE
+            for item in result
+        )
+
+    @pytest.mark.asyncio
+    async def test_core_universe_prefers_membership_table_before_metadata_fallback(self) -> None:
+        repos = build_in_memory_repositories()
+        instrument = _make_instrument(
+            "123457",
+            market_code="KOSPI",
+            metadata={"market_segment": "KOSPI"},
+        )
+        await repos.instruments.add(instrument)
+        await repos.instrument_index_memberships.sync_current_memberships(
+            instrument.instrument_id,
+            ["KOSPI200"],
+            effective_from=NOW.date(),
+            source_tag="test",
+            metadata={"source": "test"},
+        )
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+
+        assert any(
+            item.symbol == "123457" and item.source_type == SourceType.CORE
+            for item in result
+        )
+
+    @pytest.mark.asyncio
+    async def test_explicit_core_false_overrides_index_membership(self) -> None:
+        """명시적 core_universe=False면 index_memberships가 있어도 core 승격하지 않는다."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(
+            _make_instrument(
+                "123456",
+                market_code="KOSPI",
+                metadata={
+                    "core_universe": False,
+                    "market_segment": "KOSPI",
+                    "index_memberships": ["KOSPI200"],
+                },
+            )
+        )
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+
+        assert all(item.symbol != "123456" for item in result)
 
     @pytest.mark.asyncio
     async def test_kosdaq_discovery_seed_is_not_promoted_to_core_by_default(self) -> None:
@@ -1255,6 +1330,92 @@ class TestMarketOverlay:
         assert "123456" in mock_kis.called_symbols
         assert diagnostics.seed_pool_source == "core_fallback"
         assert diagnostics.seed_pool_count == 2
+
+    @pytest.mark.asyncio
+    async def test_market_overlay_fallback_includes_kosdaq_index_membership_seed(self) -> None:
+        """KOSDAQ index_memberships가 있으면 discovery fallback seed에 포함된다."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(
+            _make_instrument(
+                "123456",
+                market_code="KOSDAQ",
+                metadata={
+                    "core_universe": False,
+                    "market_segment": "KOSDAQ",
+                    "index_memberships": ["KOSDAQ150"],
+                },
+            )
+        )
+
+        class _MockKIS:
+            def __init__(self) -> None:
+                self.called_symbols: list[str] = []
+
+            async def get_market_overlay_seed_symbols(self, *, limit: int = 60) -> list[str]:
+                return []
+
+            async def get_quotes_batch(
+                self, symbols: Sequence[str], **kwargs: object
+            ) -> dict[str, dict[str, object]]:
+                self.called_symbols = list(symbols)
+                return {}
+
+        mock_kis = _MockKIS()
+        svc = UniverseSelectionService(repos, kis_client=mock_kis)  # type: ignore[arg-type]
+        ctx = CompositionContext(
+            account_id=FALLBACK_ACCOUNT_ID,
+            since=NOW,
+            pre_pool_size=10,
+        )
+        _, diagnostics = await svc.compose_with_diagnostics(ctx)
+
+        assert "123456" in mock_kis.called_symbols
+        assert diagnostics.seed_pool_source == "core_fallback"
+
+    @pytest.mark.asyncio
+    async def test_market_overlay_fallback_prefers_membership_table_before_metadata_fallback(self) -> None:
+        repos = build_in_memory_repositories()
+        instrument = _make_instrument(
+            "123458",
+            market_code="KOSDAQ",
+            metadata={
+                "core_universe": False,
+                "market_segment": "KOSDAQ",
+            },
+        )
+        await repos.instruments.add(instrument)
+        await repos.instrument_index_memberships.sync_current_memberships(
+            instrument.instrument_id,
+            ["KOSDAQ150"],
+            effective_from=NOW.date(),
+            source_tag="test",
+            metadata={"source": "test"},
+        )
+
+        class _MockKIS:
+            def __init__(self) -> None:
+                self.called_symbols: list[str] = []
+
+            async def get_market_overlay_seed_symbols(self, *, limit: int = 60) -> list[str]:
+                return []
+
+            async def get_quotes_batch(
+                self, symbols: Sequence[str], **kwargs: object
+            ) -> dict[str, dict[str, object]]:
+                self.called_symbols = list(symbols)
+                return {}
+
+        mock_kis = _MockKIS()
+        svc = UniverseSelectionService(repos, kis_client=mock_kis)  # type: ignore[arg-type]
+        ctx = CompositionContext(
+            account_id=FALLBACK_ACCOUNT_ID,
+            since=NOW,
+            pre_pool_size=10,
+        )
+        _, diagnostics = await svc.compose_with_diagnostics(ctx)
+
+        assert "123458" in mock_kis.called_symbols
+        assert diagnostics.seed_pool_source == "core_fallback"
 
     @pytest.mark.asyncio
     async def test_market_overlay_fallback_includes_discovery_seed_allowlist(self) -> None:

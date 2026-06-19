@@ -20,6 +20,7 @@ from agent_trading.repositories.memory import (
     InMemoryFillEventRepository,
     InMemoryFillSyncRunRepository,
     InMemoryGuardrailEvaluationRepository,
+    InMemoryInstrumentIndexMembershipRepository,
     InMemoryInstrumentRepository,
     InMemoryMarketSessionRepository,
     InMemoryOrderRepository,
@@ -32,6 +33,8 @@ from agent_trading.repositories.memory import (
     InMemorySnapshotSyncRunRepository,
     InMemoryStrategyRepository,
     InMemoryTradeDecisionRepository,
+    InMemoryUniverseFreezeRunItemRepository,
+    InMemoryUniverseFreezeRunRepository,
     InMemoryUnitOfWork,
 )
 from agent_trading.domain.entities import SnapshotSyncRunEntity
@@ -100,6 +103,9 @@ def build_in_memory_repositories() -> RepositoryContainer:
         guardrail_evaluations=InMemoryGuardrailEvaluationRepository(),
         risk_limit_snapshots=InMemoryRiskLimitSnapshotRepository(),
         signal_feature_snapshots=InMemorySignalFeatureSnapshotRepository(),
+        instrument_index_memberships=InMemoryInstrumentIndexMembershipRepository(),
+        universe_freeze_runs=InMemoryUniverseFreezeRunRepository(),
+        universe_freeze_run_items=InMemoryUniverseFreezeRunItemRepository(),
         market_session_repo=InMemoryMarketSessionRepository(),
         order_submission_attempts=InMemoryOrderSubmissionAttemptRepository(),
     )

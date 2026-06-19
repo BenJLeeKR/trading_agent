@@ -44,6 +44,9 @@ from agent_trading.repositories.postgres.guardrail_evaluations import (
 from agent_trading.repositories.postgres.instruments import (
     PostgresInstrumentRepository,
 )
+from agent_trading.repositories.postgres.instrument_index_memberships import (
+    PostgresInstrumentIndexMembershipRepository,
+)
 from agent_trading.repositories.postgres.market_sessions import (
     PostgresMarketSessionRepository,
 )
@@ -74,6 +77,12 @@ from agent_trading.repositories.postgres.strategies import (
 )
 from agent_trading.repositories.postgres.trade_decisions import (
     PostgresTradeDecisionRepository,
+)
+from agent_trading.repositories.postgres.universe_freeze_run_items import (
+    PostgresUniverseFreezeRunItemRepository,
+)
+from agent_trading.repositories.postgres.universe_freeze_runs import (
+    PostgresUniverseFreezeRunRepository,
 )
 from agent_trading.repositories.postgres_uow import PostgresUnitOfWork
 
@@ -129,6 +138,9 @@ def build_postgres_repositories(
         guardrail_evaluations=PostgresGuardrailEvaluationRepository(tx),
         risk_limit_snapshots=PostgresRiskLimitSnapshotRepository(tx),
         signal_feature_snapshots=PostgresSignalFeatureSnapshotRepository(tx),
+        instrument_index_memberships=PostgresInstrumentIndexMembershipRepository(tx),
+        universe_freeze_runs=PostgresUniverseFreezeRunRepository(tx),
+        universe_freeze_run_items=PostgresUniverseFreezeRunItemRepository(tx),
         market_session_repo=PostgresMarketSessionRepository(tx),
         order_submission_attempts=PostgresOrderSubmissionAttemptRepository(tx),
     )

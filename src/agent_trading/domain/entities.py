@@ -109,6 +109,21 @@ class InstrumentEntity:
     tick_size: Decimal | None = None
     lot_size: Decimal | None = None
     is_active: bool = True
+    exchange_code: str | None = None
+    market_segment: str | None = None
+    metadata: dict[str, object] = field(default_factory=dict)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class InstrumentIndexMembershipEntity:
+    instrument_index_membership_id: UUID
+    instrument_id: UUID
+    membership_code: str
+    effective_from: date
+    effective_to: date | None = None
+    source_tag: str | None = None
     metadata: dict[str, object] = field(default_factory=dict)
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -551,6 +566,41 @@ class SignalFeatureSnapshotEntity:
     overall_score: Decimal | None = None
     component_scores_json: dict[str, object] = field(default_factory=dict)
     reason_codes: list[str] | None = None
+    created_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class UniverseFreezeRunEntity:
+    """특정 시점에 고정된 trading universe 집합의 실행 메타데이터."""
+
+    universe_freeze_run_id: UUID
+    business_date: date
+    freeze_purpose: str
+    freeze_sequence: int
+    frozen_at: datetime
+    selection_version: str
+    selection_params_json: dict[str, object] = field(default_factory=dict)
+    target_count: int = 0
+    status: str = "created"
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class UniverseFreezeRunItemEntity:
+    """하나의 freeze run에 포함된 종목 row."""
+
+    universe_freeze_run_item_id: UUID
+    universe_freeze_run_id: UUID
+    instrument_id: UUID
+    symbol: str
+    market_code: str
+    source_type: str
+    inclusion_reason: str
+    priority_score: Decimal | None = None
+    rank: int | None = None
+    cap_bucket: str | None = None
+    metadata_json: dict[str, object] = field(default_factory=dict)
     created_at: datetime | None = None
 
 

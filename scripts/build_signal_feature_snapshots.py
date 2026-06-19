@@ -75,11 +75,17 @@ def _load_rows(
     feature_set_version: str,
 ) -> list[RawSignalInputRow]:
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(raw, list):
-        raise ValueError("입력 JSON 최상위는 리스트여야 합니다.")
+    if isinstance(raw, dict):
+        raw_rows = raw.get("fetch_success_rows")
+        if not isinstance(raw_rows, list):
+            raise ValueError("입력 JSON 객체에는 fetch_success_rows 리스트가 필요합니다.")
+    elif isinstance(raw, list):
+        raw_rows = raw
+    else:
+        raise ValueError("입력 JSON 최상위는 리스트 또는 객체여야 합니다.")
 
     rows: list[RawSignalInputRow] = []
-    for item in raw:
+    for item in raw_rows:
         if not isinstance(item, dict):
             raise ValueError("각 입력 row는 객체여야 합니다.")
         symbol = str(item.get("symbol", "")).strip()

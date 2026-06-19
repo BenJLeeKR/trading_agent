@@ -5,7 +5,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from agent_trading.domain.entities import (
     AccountEntity,
@@ -25,6 +25,7 @@ from agent_trading.domain.entities import (
     FillSyncRunEntity,
     GuardrailEvaluationEntity,
     InstrumentEntity,
+    InstrumentIndexMembershipEntity,
     MarketSessionEntity,
     OrderRequestEntity,
     OrderSubmissionAttemptEntity,
@@ -39,6 +40,8 @@ from agent_trading.domain.entities import (
     SnapshotSyncRunEntity,
     StrategyEntity,
     TradeDecisionEntity,
+    UniverseFreezeRunEntity,
+    UniverseFreezeRunItemEntity,
 )
 from agent_trading.domain.enums import Environment, OrderStatus
 from agent_trading.repositories.contracts import (
@@ -234,10 +237,35 @@ class InMemoryInstrumentRepository:
         )
 
     async def get_by_symbol_any_market(self, symbol: str) -> InstrumentEntity | None:
-        return next(
-            (item for item in self._items.values() if item.symbol == symbol),
-            None,
+        matches = [item for item in self._items.values() if item.symbol == symbol]
+        if not matches:
+            return None
+        matches.sort(
+            key=lambda item: (
+                0
+                if item.exchange_code == "KRX" and item.market_code == "KRX"
+                else (
+                    1
+                    if item.exchange_code == "KRX" and item.is_active
+                    else (
+                        2
+                        if item.exchange_code == "KRX"
+                        else (3 if item.is_active else 4)
+                    )
+                ),
+                0 if item.market_segment in {"KOSPI", "KOSDAQ"} else 1,
+                -(
+                    item.updated_at.timestamp()
+                    if item.updated_at is not None
+                    else (
+                        item.created_at.timestamp()
+                        if item.created_at is not None
+                        else 0.0
+                    )
+                ),
+            ),
         )
+        return matches[0]
 
     async def upsert_by_symbol(self, instrument: InstrumentEntity) -> InstrumentEntity:
         existing = await self.get_by_symbol(instrument.symbol, instrument.market_code)
@@ -253,6 +281,8 @@ class InMemoryInstrumentRepository:
                 tick_size=instrument.tick_size,
                 lot_size=instrument.lot_size,
                 is_active=instrument.is_active,
+                exchange_code=instrument.exchange_code,
+                market_segment=instrument.market_segment,
                 metadata=instrument.metadata,
                 created_at=existing.created_at,
                 updated_at=datetime.datetime.now(datetime.timezone.utc),
@@ -1559,6 +1589,139 @@ class InMemorySignalFeatureSnapshotRepository:
         ]
         results.sort(key=lambda item: item.snapshot_at, reverse=True)
         return tuple(results[:limit])
+
+
+class InMemoryUniverseFreezeRunRepository:
+    """In-memory implementation of ``UniverseFreezeRunRepository``."""
+
+    def __init__(self) -> None:
+        self._items: dict[UUID, UniverseFreezeRunEntity] = {}
+
+    async def add(self, run: UniverseFreezeRunEntity) -> UniverseFreezeRunEntity:
+        self._items[run.universe_freeze_run_id] = run
+        return run
+
+    async def get(self, run_id: UUID) -> UniverseFreezeRunEntity | None:
+        return self._items.get(run_id)
+
+    async def get_latest(
+        self,
+        business_date: date,
+        freeze_purpose: str,
+    ) -> UniverseFreezeRunEntity | None:
+        results = [
+            item for item in self._items.values()
+            if item.business_date == business_date and item.freeze_purpose == freeze_purpose
+        ]
+        if not results:
+            return None
+        results.sort(
+            key=lambda item: (item.freeze_sequence, item.frozen_at),
+            reverse=True,
+        )
+        return results[0]
+
+
+class InMemoryInstrumentIndexMembershipRepository:
+    """In-memory implementation of ``InstrumentIndexMembershipRepository``."""
+
+    def __init__(self) -> None:
+        self._items: dict[UUID, InstrumentIndexMembershipEntity] = {}
+
+    async def sync_current_memberships(
+        self,
+        instrument_id: UUID,
+        membership_codes: Sequence[str],
+        *,
+        effective_from: date,
+        source_tag: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> Sequence[InstrumentIndexMembershipEntity]:
+        normalized_codes = {
+            str(code).strip().upper()
+            for code in membership_codes
+            if str(code).strip()
+        }
+        active_items = [
+            item
+            for item in self._items.values()
+            if item.instrument_id == instrument_id and item.effective_to is None
+        ]
+        for item in active_items:
+            if item.membership_code not in normalized_codes:
+                self._items[item.instrument_index_membership_id] = replace(
+                    item,
+                    effective_to=effective_from,
+                    updated_at=datetime.now(timezone.utc),
+                )
+        existing_active_codes = {
+            item.membership_code
+            for item in self._items.values()
+            if item.instrument_id == instrument_id and item.effective_to is None
+        }
+        now = datetime.now(timezone.utc)
+        for code in sorted(normalized_codes - existing_active_codes):
+            entity = InstrumentIndexMembershipEntity(
+                instrument_index_membership_id=uuid4(),
+                instrument_id=instrument_id,
+                membership_code=code,
+                effective_from=effective_from,
+                effective_to=None,
+                source_tag=source_tag,
+                metadata=dict(metadata or {}),
+                created_at=now,
+                updated_at=now,
+            )
+            self._items[entity.instrument_index_membership_id] = entity
+        return await self.list_active_by_instrument(instrument_id)
+
+    async def list_active_by_instrument(
+        self,
+        instrument_id: UUID,
+    ) -> Sequence[InstrumentIndexMembershipEntity]:
+        results = [
+            item
+            for item in self._items.values()
+            if item.instrument_id == instrument_id and item.effective_to is None
+        ]
+        results.sort(key=lambda item: item.membership_code)
+        return tuple(results)
+
+
+class InMemoryUniverseFreezeRunItemRepository:
+    """In-memory implementation of ``UniverseFreezeRunItemRepository``."""
+
+    def __init__(self) -> None:
+        self._items: dict[UUID, UniverseFreezeRunItemEntity] = {}
+
+    async def add(self, item: UniverseFreezeRunItemEntity) -> UniverseFreezeRunItemEntity:
+        self._items[item.universe_freeze_run_item_id] = item
+        return item
+
+    async def add_many(
+        self,
+        items: Sequence[UniverseFreezeRunItemEntity],
+    ) -> Sequence[UniverseFreezeRunItemEntity]:
+        for item in items:
+            self._items[item.universe_freeze_run_item_id] = item
+        return tuple(items)
+
+    async def list_by_run(
+        self,
+        universe_freeze_run_id: UUID,
+    ) -> Sequence[UniverseFreezeRunItemEntity]:
+        results = [
+            item for item in self._items.values()
+            if item.universe_freeze_run_id == universe_freeze_run_id
+        ]
+        results.sort(
+            key=lambda item: (
+                item.rank is None,
+                item.rank if item.rank is not None else 0,
+                item.symbol,
+            )
+        )
+        return tuple(results)
 
 
 class InMemoryExternalEventRepository:

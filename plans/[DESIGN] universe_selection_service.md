@@ -94,10 +94,10 @@ flowchart LR
 | 항목 | 값 |
 |------|-----|
 | **정의** | 전략이 항상 평가해야 하는 기준 종목 집합 |
-| **P1 데이터** | `trading.instruments` WHERE `market_code='KRX'` AND `is_active=true` AND 특정 조건 |
-| **조건** | KOSPI200 구성 종목 (향후 명시적 목록). P1에서는 전체 active KRX |
+| **P1 데이터** | `trading.instruments` + metadata / 후속 정식 컬럼 (`exchange_code`, `market_segment`, `index_memberships`) |
+| **조건** | `exchange_code='KRX'`, `market_segment='KOSPI'|'KOSDAQ'`, `index_memberships` 또는 explicit core flag |
 | **갱신 주기** | Slow Layer (매 cycle 5분) |
-| **출처** | `InstrumentRepository.list_active_by_market('KRX')` |
+| **출처** | `InstrumentRepository` + canonical instrument metadata |
 
 추가 설계 원칙:
 
@@ -105,6 +105,24 @@ flowchart LR
 - master에 없는 종목은 `unknown_instrument`로 제외하며 decision loop까지 올리지 않는다.
 - 따라서 KOSDAQ 종목 편입은 universe 예외 처리로 풀지 않고,
   먼저 KIS 종목정보파일 기반 sync로 `trading.instruments`를 채운 뒤 진행한다.
+- `KRX`는 제거 대상이 아니라 `exchange_code` 의미로 유지한다.
+- `KOSPI/KOSDAQ`는 `market_segment`로 분리해 사용한다.
+- `KOSPI100`, `KOSPI200`, `KOSDAQ50`, `KOSDAQ150`는
+  bool 컬럼 난립보다 `index_memberships` authoritative source로 관리한다.
+- instrument master sync는 국내주식 입력을 저장 시
+  `market_code='KRX'` canonical row로 수렴시키고,
+  `KOSPI/KOSDAQ`는 `market_segment` 및 metadata로만 유지한다.
+  따라서 Universe Selection은 `market_code`가 아니라
+  `exchange_code + market_segment + index_memberships`를 기준으로 해석해야 한다.
+- `index_memberships`는
+  `trading.instrument_index_memberships` 시계열 테이블에 authoritative source를 두고,
+  이행 기간에는 `metadata.index_memberships`를 read fallback으로 유지한다.
+- 현재 이행 상태:
+  - UniverseSelectionService는 core/discovery seed 판정 시
+    `instrument_index_memberships`를 먼저 조회한다.
+  - membership row가 없을 때만 `metadata.index_memberships` fallback을 사용한다.
+  - `sell_guard`, `snapshot sync` 등 다른 read path는
+    아직 canonical instrument lookup 중심이며, membership table 직접 참조는 후속 범위다.
 
 ### 3.2 Held Positions
 
@@ -155,7 +173,7 @@ Core Universe (base)
 ### 4.1 단계별 합성 절차
 
 ```
-Step 1: Core Universe 로드 (DB active KRX)
+Step 1: Core Universe 로드 (DB canonical instrument: exchange_code + market_segment + index_memberships)
 Step 2: Held Positions 로드 (account_id 기준)
 Step 3: Event-Driven Overlay 로드 (since=last_event_ingestion, severity=high)
 Step 4: Market-Driven Overlay 로드 (ranking API → top N)
@@ -848,7 +866,7 @@ flowchart TB
 
 | 정책 항목 | P1 구현 여부 | 비고 |
 |-----------|-------------|------|
-| Layer 1: Base Market Pool | ✅ Core Universe로 구현 | `list_active_by_market('KRX')` |
+| Layer 1: Base Market Pool | ✅ Core Universe로 구현 | 초기 구현은 `list_active_by_market('KRX')`, 후속은 canonical instrument model |
 | Layer 2: Operational Eligibility | ✅ Liquidity Filter (일부) | tick_size + micro-cap heuristic |
 | Layer 3: Strategy Relevance | ❌ P2 | 전략별 universe 분기 필요 |
 | Layer 4: Market-Driven Overlay | ⚠️ P1 stub | 실제 KIS 연동은 P2 |

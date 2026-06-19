@@ -46,7 +46,6 @@ _KIS_PRVS_RCDL_EXCC_AMT = "prvs_rcdl_excc_amt"  # 가수도정산금액 (D+2 예
 _KIS_EVL_PFLS_SMTL_AMT = "evlu_pfls_smtl_amt"  # 평가손익합계금액 (계좌 총괄)
 
 _SOURCE_OF_TRUTH = "broker"
-_DEFAULT_MARKET_CODE = "KRX"
 
 
 @dataclass(slots=True, frozen=True)
@@ -346,9 +345,12 @@ async def sync_kis_account_snapshots(
             result._add_error("Position row missing 'pdno' — skipped")
             continue
 
-        # Resolve instrument_id via symbol lookup
+        # Resolve instrument_id via canonical symbol lookup.
+        # Domestic instrument storage is now converging on
+        # exchange_code='KRX' + market_segment='KOSPI|KOSDAQ', so
+        # get_by_symbol_any_market() is the safer read path during migration.
         try:
-            instrument = await instrument_repo.get_by_symbol(pdno, _DEFAULT_MARKET_CODE)
+            instrument = await instrument_repo.get_by_symbol_any_market(pdno)
         except Exception as exc:
             logger.warning("Instrument lookup failed for pdno=%s: %s", pdno, exc)
             instrument = None

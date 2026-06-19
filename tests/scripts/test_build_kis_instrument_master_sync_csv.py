@@ -55,9 +55,11 @@ def test_build_normalized_row_from_simple_seed_shape() -> None:
     assert normalized["symbol"] == "005930"
     assert normalized["name"] == "삼성전자"
     assert normalized["market_code"] == "KOSPI"
-    assert normalized["exchange_code"] == "KOSPI"
+    assert normalized["market_segment"] == "KOSPI"
+    assert normalized["exchange_code"] == "KRX"
     assert normalized["metadata_market_segment"] == "KOSPI"
     assert normalized["metadata_segment"] == ""
+    assert normalized["metadata_index_memberships"] == ""
     assert normalized["source_file"] == "kospi.csv"
 
 
@@ -115,16 +117,18 @@ def test_load_rows_from_csv_supports_kis_style_headers(tmp_path) -> None:
             "symbol": "123456",
             "name": "테스트",
             "market_code": "KOSDAQ",
+            "market_segment": "KOSDAQ",
             "asset_class": "kr_stock",
             "currency": "KRW",
             "tick_size": "100",
             "lot_size": "1",
             "is_active": "TRUE",
             "name_kr": "테스트",
-            "exchange_code": "KOSDAQ",
+            "exchange_code": "KRX",
             "metadata_market_segment": "KOSDAQ",
             "metadata_segment": "KOSDAQ150",
             "metadata_universe_segment": "KOSDAQ150",
+            "metadata_index_memberships": "KOSDAQ150",
             "metadata_kospi_kosdaq_cls_name": "",
             "metadata_mrkt_trtm_cls_name": "",
             "source_file": "kis_like.csv",
@@ -159,10 +163,12 @@ def test_build_normalized_row_preserves_segment_and_market_labels() -> None:
     )
     assert normalized is not None
     assert normalized["market_code"] == "KOSPI"
-    assert normalized["exchange_code"] == "KOSPI"
+    assert normalized["market_segment"] == "KOSPI"
+    assert normalized["exchange_code"] == "KRX"
     assert normalized["metadata_market_segment"] == "KOSPI"
     assert normalized["metadata_segment"] == "KOSPI100"
     assert normalized["metadata_universe_segment"] == "KOSPI100"
+    assert normalized["metadata_index_memberships"] == "KOSPI100"
     assert normalized["metadata_kospi_kosdaq_cls_name"] == "거래소"
     assert normalized["metadata_mrkt_trtm_cls_name"] == "거래소"
 
@@ -213,3 +219,59 @@ def test_cli_archives_source_files(tmp_path) -> None:
     assert rc == 0
     assert (archive_dir / "2026-06-18" / "kospi.csv").exists()
     assert (archive_dir / "2026-06-18" / "kosdaq.csv").exists()
+
+
+def test_build_normalized_row_maps_kospi200_and_kosdaq150_flags() -> None:
+    kospi_row = {
+        "code": "005930",
+        "name": "삼성전자",
+        "market": "KOSPI",
+        "is_kospi200": "1",
+    }
+    kospi_headers = {
+        "code": "code",
+        "name": "name",
+        "market": "market",
+        "is_kospi200": "is_kospi200",
+    }
+    kospi_normalized = _build_normalized_row(
+        kospi_row,
+        kospi_headers,
+        source_file="kospi.csv",
+        default_market_code="KRX",
+        asset_class="kr_stock",
+        currency="KRW",
+        tick_size="100",
+        lot_size="1",
+    )
+    assert kospi_normalized is not None
+    assert kospi_normalized["metadata_segment"] == "KOSPI200"
+    assert kospi_normalized["metadata_universe_segment"] == "KOSPI200"
+    assert kospi_normalized["metadata_index_memberships"] == "KOSPI200"
+
+    kosdaq_row = {
+        "code": "090150",
+        "name": "광진윈텍",
+        "market": "KOSDAQ",
+        "is_kosdaq150": "TRUE",
+    }
+    kosdaq_headers = {
+        "code": "code",
+        "name": "name",
+        "market": "market",
+        "is_kosdaq150": "is_kosdaq150",
+    }
+    kosdaq_normalized = _build_normalized_row(
+        kosdaq_row,
+        kosdaq_headers,
+        source_file="kosdaq.csv",
+        default_market_code="KRX",
+        asset_class="kr_stock",
+        currency="KRW",
+        tick_size="100",
+        lot_size="1",
+    )
+    assert kosdaq_normalized is not None
+    assert kosdaq_normalized["metadata_segment"] == "KOSDAQ150"
+    assert kosdaq_normalized["metadata_universe_segment"] == "KOSDAQ150"
+    assert kosdaq_normalized["metadata_index_memberships"] == "KOSDAQ150"

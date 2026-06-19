@@ -561,11 +561,19 @@ def _parse_signal_feature_batch_summary(result: CommandResult) -> dict[str, Any]
         errors = obj.get("errors")
         if processed is None or persisted is None or skipped is None:
             continue
+        error_list = errors if isinstance(errors, list) else []
         return {
             "processed": int(processed),
             "persisted": int(persisted),
             "skipped": int(skipped),
-            "errors": len(errors) if isinstance(errors, list) else 0,
+            "errors": len(error_list),
+            "persist_error_count": len(error_list),
+            "persist_success_count": int(persisted),
+            "failed_symbols_sample": [
+                str(item).split(":", 2)[0]
+                for item in error_list[:5]
+                if isinstance(item, str) and item.strip()
+            ],
         }
     return {}
 
@@ -578,14 +586,27 @@ def _parse_signal_feature_input_summary(result: CommandResult) -> dict[str, Any]
         error_count = obj.get("error_count")
         if universe_count is None or generated_count is None or error_count is None:
             continue
+        errors = obj.get("errors")
+        error_list = errors if isinstance(errors, list) else []
         payload: dict[str, Any] = {
             "universe_count": int(universe_count),
             "generated_count": int(generated_count),
             "error_count": int(error_count),
+            "target_count": int(universe_count),
+            "fetch_success_count": int(generated_count),
+            "fetch_error_count": int(error_count),
+            "failed_symbols_sample": [
+                str(item).split(":", 2)[0]
+                for item in error_list[:5]
+                if isinstance(item, str) and item.strip()
+            ],
         }
         output = obj.get("output")
         if output:
             payload["output"] = str(output)
+        universe_freeze_run_id = obj.get("universe_freeze_run_id")
+        if universe_freeze_run_id:
+            payload["universe_freeze_run_id"] = str(universe_freeze_run_id)
         return payload
     return {}
 
@@ -752,6 +773,34 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
         state,
         {"after_market_signal_feature_input"},
     )
+    signal_feature_batch_metrics = (
+        _parse_signal_feature_batch_summary(latest_signal_feature_batch)
+        if latest_signal_feature_batch
+        else None
+    )
+    signal_feature_input_metrics = (
+        _parse_signal_feature_input_summary(latest_signal_feature_input)
+        if latest_signal_feature_input
+        else None
+    )
+    if signal_feature_batch_metrics is not None and signal_feature_input_metrics is not None:
+        merged_signal_feature_batch_metrics = {
+            **signal_feature_batch_metrics,
+            "target_count": int(signal_feature_input_metrics.get("target_count", 0)),
+            "fetch_success_count": int(signal_feature_input_metrics.get("fetch_success_count", 0)),
+            "fetch_error_count": int(signal_feature_input_metrics.get("fetch_error_count", 0)),
+            "final_missing_count": max(
+                int(signal_feature_input_metrics.get("target_count", 0))
+                - int(signal_feature_batch_metrics.get("persist_success_count", 0)),
+                0,
+            ),
+            "failed_symbols_sample": list(dict.fromkeys(
+                list(signal_feature_input_metrics.get("failed_symbols_sample", []))
+                + list(signal_feature_batch_metrics.get("failed_symbols_sample", []))
+            ))[:5],
+        }
+    else:
+        merged_signal_feature_batch_metrics = signal_feature_batch_metrics
     latest_decision_loop = _latest_command_result(
         state,
         {"decision_submit_gate", "decision_dry_run"},
@@ -834,19 +883,11 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
         "recovery_batch": _command_result_summary(latest_recovery),
         "signal_feature_batch": _command_result_summary(
             latest_signal_feature_batch,
-            metrics=(
-                _parse_signal_feature_batch_summary(latest_signal_feature_batch)
-                if latest_signal_feature_batch
-                else None
-            ),
+            metrics=merged_signal_feature_batch_metrics,
         ),
         "signal_feature_input": _command_result_summary(
             latest_signal_feature_input,
-            metrics=(
-                _parse_signal_feature_input_summary(latest_signal_feature_input)
-                if latest_signal_feature_input
-                else None
-            ),
+            metrics=signal_feature_input_metrics,
         ),
         "instrument_master_sync": _command_result_summary(
             _latest_command_result(state, {"instrument_master_sync"}),
@@ -1296,7 +1337,8 @@ def _signal_feature_snapshot_command(
 ) -> list[str]:
     return [
         PYTHON_BIN,
-        "scripts/build_signal_feature_snapshots.py",
+        "-m",
+        "scripts.build_signal_feature_snapshots",
         "--input",
         input_path,
         "--output",
@@ -1349,7 +1391,8 @@ def _generate_signal_feature_snapshot_input_command(
 ) -> list[str]:
     return [
         PYTHON_BIN,
-        "scripts/generate_signal_feature_snapshot_input.py",
+        "-m",
+        "scripts.generate_signal_feature_snapshot_input",
         "--output",
         output_path,
         "--output-format",

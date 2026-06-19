@@ -23,14 +23,20 @@ import sys
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, time, timezone
+from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from agent_trading.db.connection import create_pool, close_pool
 from agent_trading.db.transaction import TransactionManager
 from agent_trading.domain.entities import InstrumentEntity
-from agent_trading.repositories.contracts import InstrumentRepository
+from agent_trading.repositories.contracts import (
+    InstrumentIndexMembershipRepository,
+    InstrumentRepository,
+)
+from agent_trading.repositories.postgres.instrument_index_memberships import (
+    PostgresInstrumentIndexMembershipRepository,
+)
 from agent_trading.repositories.postgres.instruments import PostgresInstrumentRepository
 from agent_trading.services.market_session import SessionInfo, create_session_provider
 
@@ -113,7 +119,43 @@ def _extract_metadata(record: dict[str, str], headers: dict[str, str], *, source
         raw = record.get(original, "").strip()
         if raw:
             metadata[lowered.removeprefix("metadata_")] = raw
+    index_memberships: list[str] = []
+    raw_memberships = metadata.get("index_memberships")
+    if isinstance(raw_memberships, str):
+        for part in raw_memberships.split("|"):
+            for item in part.split(","):
+                value = str(item).strip().upper()
+                if value and value not in index_memberships:
+                    index_memberships.append(value)
+    elif isinstance(raw_memberships, Sequence):
+        for item in raw_memberships:
+            value = str(item).strip().upper()
+            if value and value not in index_memberships:
+                index_memberships.append(value)
+    for key in ("segment", "universe_segment"):
+        raw = metadata.get(key)
+        if raw is None:
+            continue
+        value = str(raw).strip().upper()
+        if value and value not in index_memberships:
+            index_memberships.append(value)
+    if index_memberships:
+        metadata["index_memberships"] = index_memberships
     return metadata
+
+
+def _canonicalize_storage_market(
+    market_code: str,
+    *,
+    asset_class: str,
+) -> tuple[str, str | None]:
+    normalized_market_code = market_code.upper()
+    normalized_asset_class = asset_class.lower()
+    if normalized_asset_class in {"kr_stock", "kr_etf", "kr_futures", "kr_options"}:
+        if normalized_market_code in {"KRX", "KOSPI", "KOSDAQ"}:
+            market_segment = "KOSDAQ" if normalized_market_code == "KOSDAQ" else "KOSPI"
+            return "KRX", market_segment
+    return normalized_market_code, None
 
 
 def _build_instrument(
@@ -133,6 +175,15 @@ def _build_instrument(
     asset_class = (
         record.get(headers.get("asset_class", ""), "").strip() or default_asset_class
     ).lower()
+    storage_market_code, canonical_market_segment = _canonicalize_storage_market(
+        market_code,
+        asset_class=asset_class,
+    )
+    market_segment = (
+        record.get(headers.get("market_segment", ""), "").strip()
+        or canonical_market_segment
+        or market_code
+    ).upper()
     currency = (
         record.get(headers.get("currency", ""), "").strip() or default_currency
     ).upper()
@@ -140,16 +191,20 @@ def _build_instrument(
     lot_size = _parse_decimal(record.get(headers.get("lot_size", "")), "1")
     is_active = _parse_bool(record.get(headers.get("is_active", "")), True)
     metadata = _extract_metadata(record, headers, source_tag=source_tag)
+    metadata.setdefault("source_market_code", market_code)
+    metadata.setdefault("canonical_storage_market_code", storage_market_code)
     return InstrumentEntity(
-        instrument_id=_make_instrument_id(symbol, market_code),
+        instrument_id=_make_instrument_id(symbol, storage_market_code),
         symbol=symbol,
-        market_code=market_code,
+        market_code=storage_market_code,
         asset_class=asset_class,
         currency=currency,
         name=name,
         tick_size=tick_size,
         lot_size=lot_size,
         is_active=is_active,
+        exchange_code="KRX" if storage_market_code == "KRX" else storage_market_code,
+        market_segment=market_segment,
         metadata=metadata,
     )
 
@@ -195,12 +250,32 @@ def _classify(existing: InstrumentEntity | None, incoming: InstrumentEntity) -> 
         "tick_size",
         "lot_size",
         "is_active",
+        "exchange_code",
+        "market_segment",
         "metadata",
     )
     for field in comparable:
         if getattr(existing, field) != getattr(incoming, field):
             return "update"
     return "skip"
+
+
+def _extract_index_memberships(metadata: dict[str, object] | None) -> list[str]:
+    raw = (metadata or {}).get("index_memberships")
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        values = [part for chunk in raw.split("|") for part in chunk.split(",")]
+    elif isinstance(raw, Sequence):
+        values = list(raw)
+    else:
+        return []
+    normalized: list[str] = []
+    for value in values:
+        item = str(value).strip().upper()
+        if item and item not in normalized:
+            normalized.append(item)
+    return normalized
 
 
 async def _sync_instruments(
@@ -210,25 +285,41 @@ async def _sync_instruments(
     dry_run: bool,
     deactivate_missing: bool,
     deactivate_market_code: str | None,
+    membership_repo: InstrumentIndexMembershipRepository | None = None,
+    membership_effective_from: date | None = None,
 ) -> SyncCounters:
     inserted = updated = skipped = deactivated = 0
     seen_by_market: dict[str, set[str]] = {}
+    effective_from = membership_effective_from or datetime.now(KST).date()
 
     for instrument in instruments:
         seen_by_market.setdefault(instrument.market_code, set()).add(instrument.symbol)
         existing = await repo.get_by_symbol(instrument.symbol, instrument.market_code)
         action = _classify(existing, instrument)
         logger.info("%s %s/%s %s", action.upper(), instrument.market_code, instrument.symbol, instrument.name)
+        persisted = existing
         if action == "insert":
             inserted += 1
             if not dry_run:
-                await repo.upsert_by_symbol(instrument)
+                persisted = await repo.upsert_by_symbol(instrument)
         elif action == "update":
             updated += 1
             if not dry_run:
-                await repo.upsert_by_symbol(instrument)
+                persisted = await repo.upsert_by_symbol(instrument)
         else:
             skipped += 1
+        if not dry_run and membership_repo is not None and persisted is not None:
+            await membership_repo.sync_current_memberships(
+                persisted.instrument_id,
+                _extract_index_memberships(instrument.metadata),
+                effective_from=effective_from,
+                source_tag=str(instrument.metadata.get("source_tag", "")) or None,
+                metadata={
+                    "sync_source": str(instrument.metadata.get("sync_source", "kis_master_file")),
+                    "source_market_code": instrument.metadata.get("source_market_code"),
+                    "market_segment": instrument.market_segment,
+                },
+            )
 
     if deactivate_missing and deactivate_market_code:
         seen_symbols = seen_by_market.get(deactivate_market_code, set())
@@ -259,11 +350,21 @@ async def _sync_instruments(
                     tick_size=existing.tick_size,
                     lot_size=existing.lot_size,
                     is_active=False,
+                    exchange_code=existing.exchange_code,
+                    market_segment=existing.market_segment,
                     metadata=merged_metadata,
                     created_at=existing.created_at,
                     updated_at=existing.updated_at,
                 )
             )
+            if membership_repo is not None:
+                await membership_repo.sync_current_memberships(
+                    existing.instrument_id,
+                    [],
+                    effective_from=effective_from,
+                    source_tag="kis_master_sync_deactivate",
+                    metadata={"sync_source": "kis_master_file", "deactivated": True},
+                )
 
     return SyncCounters(
         inserted=inserted,
@@ -389,12 +490,14 @@ async def _run(args: argparse.Namespace) -> int:
         await tx.__aenter__()
         try:
             repo: InstrumentRepository = PostgresInstrumentRepository(tx)
+            membership_repo: InstrumentIndexMembershipRepository = PostgresInstrumentIndexMembershipRepository(tx)
             counters = await _sync_instruments(
                 repo,
                 instruments,
                 dry_run=not args.apply,
                 deactivate_missing=args.deactivate_missing,
                 deactivate_market_code=args.deactivate_market_code,
+                membership_repo=membership_repo,
             )
             logger.info(
                 "Summary: inserted=%d updated=%d skipped=%d deactivated=%d",

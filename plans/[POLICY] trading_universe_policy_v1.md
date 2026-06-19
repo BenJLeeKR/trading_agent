@@ -42,6 +42,35 @@
   해당 종목의 master row를 `trading.instruments`에 적재해야 한다.
 - `decision loop`나 AI 계층에서 이 예외를 우회하지 않는다.
 
+국내주식 canonical model 원칙:
+
+- `market_code` 단일 값에
+  `거래소(exchange)`와 `시장세그먼트(segment)` 의미를 동시에 싣지 않는다.
+- 국내주식은 장기적으로 아래 역할 분리를 목표로 한다.
+  - `exchange_code = 'KRX'`
+  - `market_segment = 'KOSPI' | 'KOSDAQ'`
+  - `index_memberships = ['KOSPI100', 'KOSPI200', 'KOSDAQ50', 'KOSDAQ150', ...]`
+- `KRX`는 즉시 제거 대상이 아니다.
+  기존 `position/order/snapshot/replay` FK와 운영 데이터 정합성을 위해
+  이행 기간 동안 backward-compatible하게 유지한다.
+- Universe Selection과 execution 계층은
+  최종적으로 `market_code` legacy 해석보다
+  `exchange_code + market_segment + index_memberships`
+  기준을 우선 사용해야 한다.
+
+권장 저장 방식:
+
+- `exchange_code`, `market_segment`
+  - `trading.instruments` 정식 컬럼 권장
+- `index_memberships`
+  - 1차: `metadata.index_memberships` 배열 허용
+  - 2차: 시계열 관리가 필요해지면
+    `instrument_index_memberships` 별도 테이블로 승격
+  - 현재 KIS 원본 CSV에 `is_kospi200`, `is_kosdaq150`가 있으면
+    이를 각각 `KOSPI200`, `KOSDAQ150` membership으로 정규화해 적재한다.
+  - 현재 원본 CSV에 `KOSPI100`, `KOSDAQ50` 직접 플래그가 없으면
+    별도 승인 리스트나 외부 원천 없이 임의 추론해 적재하지 않는다.
+
 ### 2.2 Trading Universe
 
 `trading universe`는 특정 시점에 decision loop가 실제로 순회하는 종목 집합이다.
@@ -73,6 +102,89 @@ Universe 선정은 기본적으로 시스템 정책 책임이다.
 - 에이전트가 전체 시장을 임의로 훑어 오늘의 universe를 독자적으로 생성
 - 운영 정책 없이 LLM이 종목 선정부터 매매 판단까지 전부 수행
 
+### 3.1-a Trading Universe Freeze
+
+`trading universe`는 운영 배치나 판단 loop가 필요할 때마다
+매번 즉석 recomposition 하는 개념으로만 두지 않는다.
+
+운영 기준의 authoritative snapshot은
+별도 PostgreSQL 테이블에 `freeze` 형태로 남겨야 한다.
+
+핵심 원칙:
+
+- 동일 실행 목적 안에서는 같은 freeze 결과를 재사용한다.
+- 재시도, replay, reconciliation은 freeze 당시의 대상 집합을 바꾸지 않는다.
+- feature batch, decision loop, 운영 진단은
+  가능하면 같은 freeze run id를 참조해야 한다.
+- `왜 이 종목이 그날 대상이었는가`를
+  DB row 단위로 사후 설명 가능해야 한다.
+
+권장 저장 단위:
+
+- `trading.universe_freeze_runs`
+  - 한 번의 freeze 실행 메타데이터
+- `trading.universe_freeze_run_items`
+  - 해당 freeze에 포함된 종목 목록
+
+`universe_freeze_runs` 필수 컬럼 권장안:
+
+- `id`
+- `business_date`
+- `freeze_purpose`
+  - 예: `signal_feature_after_market`, `decision_loop_intraday`
+- `freeze_sequence`
+  - 같은 영업일/목적 내 재생성 순번
+- `frozen_at`
+- `selection_version`
+- `selection_params_json`
+- `target_count`
+- `status`
+  - 예: `created`, `materialized`, `consumed`, `failed`
+- `created_at`
+- `updated_at`
+
+`universe_freeze_run_items` 필수 컬럼 권장안:
+
+- `id`
+- `freeze_run_id`
+- `instrument_id`
+- `symbol`
+- `market_code`
+- `source_type`
+- `inclusion_reason`
+- `priority_score`
+- `rank`
+- `cap_bucket`
+  - 예: `core`, `market_overlay`, `held_position`, `reconciliation_overlay`
+- `metadata_json`
+- `created_at`
+
+unique / index 원칙:
+
+- `universe_freeze_runs`
+  - `(business_date, freeze_purpose, freeze_sequence)` unique
+- `universe_freeze_run_items`
+  - `(freeze_run_id, instrument_id)` unique
+- 조회 인덱스
+  - `(freeze_purpose, business_date desc)`
+  - `(freeze_run_id, rank asc)`
+  - `(symbol, business_date desc)` 또는 동등 조회 경로
+
+연결 원칙:
+
+- 장후 feature batch는
+  `signal_feature_batch_runs.universe_freeze_run_id` FK로 freeze를 참조한다.
+- 이후 decision loop에도 동일 개념을 확장할 수 있지만,
+  우선 장후 feature batch를 1차 authoritative consumer로 둔다.
+
+운영 원칙:
+
+- 동일 freeze run에 대해 fetch 실패가 발생해도
+  대상 universe 자체는 변경하지 않는다.
+- 실패 종목 재시도는 `freeze_run_id` 기준 subset 재실행으로 처리한다.
+- 수동 재실행도 기본은 기존 freeze 재사용이며,
+  대상 집합 변경이 필요할 때만 `freeze_sequence + 1` 새 run을 만든다.
+
 ### 3.2 설명 가능성
 
 각 종목이 universe에 포함된 이유는 운영자가 사후 설명 가능해야 한다.
@@ -96,13 +208,25 @@ Universe는 아래 5단계로 구성한다.
 
 v1 권장 기준:
 
-- `market_code = 'KRX'`
+- `exchange_code = 'KRX'` 또는 legacy `market_code='KRX'`
+- `market_segment IN ('KOSPI', 'KOSDAQ')`
 - `asset_class = 'kr_stock'`
 - `is_active = true`
 
 운영 초기 권장 모수:
 
 - `KOSPI100` 또는 이에 준하는 대형주 풀
+- KOSDAQ은 초기에는 `core`보다
+  `discovery / overlay / event` 계층에서 단계 편입
+
+core seed authoritative source 우선순위:
+
+1. `index_memberships` 기반
+   - 예: `KOSPI100`, `KOSPI200`, `KOSDAQ150`
+2. 명시적 metadata flag
+   - 예: `core_universe=true`
+3. 임시 코드 allowlist
+   - 후속 제거 대상
 
 시장 확장 원칙:
 

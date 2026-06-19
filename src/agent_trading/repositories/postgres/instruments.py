@@ -24,8 +24,8 @@ class PostgresInstrumentRepository:
             """
             INSERT INTO trading.instruments
                 (instrument_id, symbol, market_code, asset_class, currency,
-                 name, tick_size, lot_size, is_active, metadata)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+                 name, tick_size, lot_size, is_active, exchange_code, market_segment, metadata)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
             RETURNING *
             """,
             instrument.instrument_id,
@@ -37,6 +37,8 @@ class PostgresInstrumentRepository:
             instrument.tick_size,
             instrument.lot_size,
             instrument.is_active,
+            instrument.exchange_code,
+            instrument.market_segment,
             json.dumps(instrument.metadata) if instrument.metadata is not None else None,
         )
         return row_to_entity(row, InstrumentEntity)
@@ -58,7 +60,26 @@ class PostgresInstrumentRepository:
 
     async def get_by_symbol_any_market(self, symbol: str) -> InstrumentEntity | None:
         row = await self._tx.connection.fetchrow(
-            "SELECT * FROM trading.instruments WHERE symbol = $1 LIMIT 1",
+            """
+            SELECT *
+            FROM trading.instruments
+            WHERE symbol = $1
+            ORDER BY
+                CASE
+                    WHEN exchange_code = 'KRX' AND market_code = 'KRX' THEN 0
+                    WHEN exchange_code = 'KRX' AND is_active = true THEN 1
+                    WHEN exchange_code = 'KRX' THEN 2
+                    WHEN is_active = true THEN 3
+                    ELSE 4
+                END,
+                CASE
+                    WHEN market_segment IN ('KOSPI', 'KOSDAQ') THEN 0
+                    ELSE 1
+                END,
+                updated_at DESC NULLS LAST,
+                created_at DESC NULLS LAST
+            LIMIT 1
+            """,
             symbol,
         )
         return row_to_entity(row, InstrumentEntity) if row else None
@@ -68,8 +89,8 @@ class PostgresInstrumentRepository:
             """
             INSERT INTO trading.instruments
                 (instrument_id, symbol, market_code, asset_class, currency,
-                 name, tick_size, lot_size, is_active, metadata)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+                 name, tick_size, lot_size, is_active, exchange_code, market_segment, metadata)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
             ON CONFLICT (symbol, market_code) DO UPDATE
                 SET name = EXCLUDED.name,
                     asset_class = EXCLUDED.asset_class,
@@ -77,6 +98,8 @@ class PostgresInstrumentRepository:
                     tick_size = EXCLUDED.tick_size,
                     lot_size = EXCLUDED.lot_size,
                     is_active = EXCLUDED.is_active,
+                    exchange_code = EXCLUDED.exchange_code,
+                    market_segment = EXCLUDED.market_segment,
                     metadata = EXCLUDED.metadata,
                     updated_at = NOW()
             RETURNING *
@@ -90,6 +113,8 @@ class PostgresInstrumentRepository:
             instrument.tick_size,
             instrument.lot_size,
             instrument.is_active,
+            instrument.exchange_code,
+            instrument.market_segment,
             json.dumps(instrument.metadata) if instrument.metadata is not None else None,
         )
         return row_to_entity(row, InstrumentEntity)

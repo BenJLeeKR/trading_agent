@@ -491,21 +491,99 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 #### 9-d. instrument master의 KOSPI/KOSDAQ/segment authoritative source화 — `중`
 
 - 목표
+  - `KRX`는 `exchange_code` 역할로 유지하되,
+    `market_segment=KOSPI|KOSDAQ`와 `index_memberships`를 별도 기준 데이터로 승격한다.
   - `market_segment`, `segment`, `universe_segment`, 필요 시 `exchange_code`까지
     instrument master의 정식 기준 데이터로 고정한다.
 - 이유
   - 현재 일부 로직은 allowlist와 metadata fallback에 의존한다.
   - 장기적으로는 `KOSPI100`, `KOSDAQ150`, `KOSPI_LARGE`, `KOSDAQ_GROWTH`
     같은 segment 기준으로 탐색 풀과 core seed를 더 정교하게 분리해야 한다.
+  - `KRX`를 바로 제거하면 기존 `position/order/snapshot/replay` FK와
+    과거 운영 데이터 정합성이 깨질 수 있으므로,
+    삭제보다 `역할 분리`가 먼저다.
 - 현재 진행 상태
   - [x] `build_kis_instrument_master_sync_csv.py`가 normalized CSV에
     `exchange_code`, `metadata_market_segment`, `metadata_segment`,
-    `metadata_universe_segment`를 함께 기록하도록 확장했다.
-  - [x] source CSV의 `market_segment/segment/universe_segment` 별칭을
-    `KOSPI100`, `KOSDAQ150`, `KOSPI_LARGE`, `KOSDAQ_GROWTH` 형태로
-    정규화하는 경로를 추가했다.
+    `metadata_universe_segment`, `metadata_index_memberships`를 함께 기록하도록 확장했다.
+  - [x] source CSV의 `market_segment/segment/universe_segment` 별칭과
+    `is_kospi200` / `is_kosdaq150` 플래그를
+    `KOSPI100`, `KOSPI200`, `KOSDAQ150`, `KOSPI_LARGE`, `KOSDAQ_GROWTH` 형태의
+    membership metadata로 정규화하는 경로를 추가했다.
+  - [x] 현재 원본 CSV에는 `KOSPI100`, `KOSDAQ50` 직접 플래그가 없으므로
+    별도 원천 데이터 전까지는 자동 생성하지 않는 정책을 문서화했다.
   - [x] `sync_kis_instrument_master.py`가 위 필드들을 instrument metadata의
     authoritative source로 적재하는 테스트를 고정했다.
+  - [x] `trading.instruments`에 `exchange_code`, `market_segment`
+    정식 컬럼 추가 여부를 확정한다.
+  - [x] `index_memberships`는
+    `metadata 배열` fallback을 유지하되,
+    `instrument_index_memberships` 별도 테이블을 authoritative history로 승격한다.
+  - [x] universe / sell_guard / snapshot sync에서
+    `market_code` 대신 `exchange_code + market_segment`를 우선 참조하는
+    점진 이행 계획을 문서화한다.
+    - UniverseSelection은 `instrument_index_memberships` 우선 / metadata fallback으로 전환
+    - sell_guard, snapshot sync는 canonical instrument lookup 유지 상태에서 후속 전환
+  - [x] 과거 `market_code='KRX'` row와 신규 `market_segment='KOSPI|KOSDAQ'`
+    row를 중복 생성하지 않도록 canonical instrument 정책을 확정한다.
+
+#### 9-f. 국내주식 instrument canonical model 정규화 — `상`
+
+- 목표
+  - `trading.instruments`에서
+    `exchange_code`, `market_segment`, `index_memberships`의 역할을 분리해
+    국내주식 canonical model을 정립한다.
+- 원칙
+  - `KRX`는 삭제하지 않고 `exchange_code` 의미로 유지한다.
+  - `KOSPI`, `KOSDAQ`는 `market_segment`로 분리한다.
+  - `KOSPI100`, `KOSPI200`, `KOSDAQ50`, `KOSDAQ150`은
+    단일 bool 컬럼 난립 대신
+    `index_memberships` authoritative source로 관리한다.
+  - 기존 `position/order/snapshot` FK를 깨지 않는
+    backward-compatible migration 순서를 유지한다.
+- 권장 구현 순서
+  - [x] 1차: `instruments`에 `exchange_code`, `market_segment` nullable 정식 컬럼 추가
+  - [x] 1차: sync pipeline이 위 컬럼을 metadata가 아니라 정식 컬럼에도 적재
+  - [x] 1차: `index_memberships`는 `metadata.index_memberships` 배열로 우선 적재
+  - [x] 2차: UniverseSelectionService가
+    allowlist보다 `market_segment + index_memberships + metadata flag`를 우선 사용
+    - `core_universe` explicit flag를 최우선으로 유지
+    - 그 다음 `index_memberships`와 `market_segment`로
+      `KOSPI100/KOSPI200/KOSDAQ50/KOSDAQ150` seed를 판정
+    - 코드 allowlist는 fallback 경로로만 유지
+  - [x] 2차: `get_by_symbol_any_market()`류 조회는
+    `exchange_code='KRX'` + canonical precedence를 사용하도록 정리
+  - [x] 3차: `instrument_index_memberships` 시계열 테이블로 승격
+  - [x] 3차: 그 이후에만 `market_code='KRX'` legacy 경로 축소 여부를 재검토
+    - `sell_guard`는 이미 `get_by_symbol_any_market()` 기반 canonical lookup 사용
+    - `kis_snapshot_sync`도 `get_by_symbol_any_market()`로 전환
+    - 저장 canonical row는 `market_code='KRX'`를 유지하고,
+      read path에서만 `exchange_code + market_segment` 우선 해석을 적용
+  - [ ] 4차 리팩토링 검토:
+    `market_code='KRX'` canonical 저장 모델을 유지할지,
+    아니면 `market_code='KOSPI'|'KOSDAQ'` + `exchange_code='KRX'`로
+    더 직관적인 저장 모델로 재정의할지 결정한다.
+    - 운영 가독성 측면에서는 후자가 더 직관적이다.
+    - 다만 기존 FK, replay, snapshot, order history 치환 범위가 커서
+      별도 migration/reconciliation 계획이 필요하다.
+  - [ ] 4차 리팩토링 검토:
+    `KOSPI100`, `KOSDAQ50`, `KOSDAQ150` membership authoritative source를
+    KIS 기본종목정보 CSV 외 별도 원천으로 보강한다.
+    - 현재 원본 CSV는 `is_kospi200=True/False`, `is_kosdaq150=False`만 제공해
+      `KOSPI200`만 직접 생성 가능하다.
+    - `KOSPI100`, `KOSDAQ50`, 실제 `KOSDAQ150` 구성종목은
+      별도 지수 구성종목 원천 파일 또는 승인 리스트 확보가 필요하다.
+    - [x] 운영 보조 경로로
+      `index_membership_seed.csv` import 스크립트와 템플릿을 추가했다.
+      - 스크립트: `scripts/import_instrument_index_membership_seed.py`
+      - 템플릿: `data/instrument_master/source/index_membership_seed.example.csv`
+      - 기본 동작은 기존 active membership과 `merge`,
+        `--replace-listed-symbols` 지정 시 listed symbol만 authoritative overwrite
+- 우선순위 이유
+  - universe selection, sell guard, snapshot sync가
+    동일 symbol의 다중 market row에 흔들리지 않게 만드는 기반 작업이다.
+  - `최대 기대수익률`을 위해 KOSDAQ/segment 확장을 하더라도
+    먼저 canonical instrument model이 안정돼야 한다.
 
 #### 9-e. market overlay seed 품질의 장중 실측 및 보정 — `중`
 
@@ -619,8 +697,11 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   - `INCLUSION_REASON_CORE`를 `approved_core_universe`로 변경했다.
   - `market_overlay` pre-pool도 동일한 core seed 기준으로만 구성되도록 맞췄다.
 - 잔여 보완
-  - 현재는 `segment` 컬럼이 없어 allowlist 기반 운영 구현이다.
-  - 후속으로 instrument master에 `KOSPI/KOSDAQ/segment`를 정식 적재해
+  - 현재는 `segment`/`index_memberships` 정식 컬럼 또는 membership table이 없어
+    allowlist 기반 운영 구현이다.
+  - 후속으로 instrument master에
+    `exchange_code`, `market_segment`, `index_memberships`
+    authoritative source를 정식 적재해
     정책 테이블/DB authoritative source로 대체해야 한다.
 - 우선순위 이유
   - 현재 `000227` 같은 저유동성/우선주가 `core`로 들어오는 가장 근본 원인이다.
@@ -1002,6 +1083,81 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   - 자동 배치 정상 동작 여부는
     오늘 `20:10 KST` 이후 `operations_day_runs.summary_json`과
     `signal_feature_snapshots` 적재 건수로 재확인 필요
+- [ ] signal feature after-market 배치 운영 안정화 / 리팩토링 2차
+  - 배경
+    - 2026-06-18~2026-06-19 실측 기준
+      `signal_feature_snapshot` 장후 배치는
+      `input import 실패`, `schema drift`, `거래대금 overflow`,
+      `개별 row 실패가 batch 전체 transaction을 오염시키는 구조`
+      문제를 순차적으로 드러냈다.
+    - 현재는 hotfix와 수동 검증으로
+      `배치 전체 붕괴` 가능성은 낮아졌지만,
+      외부 KIS live 시세/일봉 API의 rate limit / 5xx 때문에
+      일부 종목 누락 가능성은 여전히 남아 있다.
+  - 권장 방향
+    - 단순 retry 증설보다
+      `universe freeze -> fetch stage -> persist stage -> failed-symbol tail-retry`
+      구조로 리팩토링해
+      운영 안정성, audit, replay, manual recovery를 함께 확보한다.
+  - `P0`
+    - [x] 장후 `20:10 KST` 시점의 대상 유니버스를 먼저 freeze 하고,
+      이후 재시도/재실행 중에도 같은 대상 집합을 유지하도록 만든다.
+      - `generate_signal_feature_snapshot_input.py`가
+        `universe_freeze_runs` / `universe_freeze_run_items`를 우선 조회해
+        기존 freeze가 있으면 재사용하고,
+        없으면 새 freeze를 materialize 하도록 반영
+    - [x] `universe freeze` PostgreSQL 스키마를 먼저 확정한다.
+      - [x] `trading.universe_freeze_runs` 테이블 설계
+      - [x] `trading.universe_freeze_run_items` 테이블 설계
+      - [ ] `signal_feature_batch_runs.universe_freeze_run_id` FK 연결 설계
+      - [x] `(business_date, freeze_purpose, freeze_sequence)` unique 정책 확정
+      - [x] `(freeze_run_id, instrument_id)` unique 정책 확정
+      - [x] `business_date`, `freeze_purpose`, `frozen_at`, `selection_version`,
+        `selection_params_json`, `target_count`, `status` 필수 컬럼 확정
+      - [x] item row의 `instrument_id`, `symbol`, `market_code`,
+        `source_type`, `inclusion_reason`, `priority_score`, `rank`,
+        `cap_bucket`, `metadata_json` 필수 컬럼 확정
+      - [x] replay / manual rerun 시
+        `same freeze run reuse`와 `new freeze run create` 기준 확정
+    - [x] `signal_feature_snapshot_input` 생성 경로를
+      `fetch 성공 row / fetch 실패 row / 대상 universe metadata`로 분리 기록한다.
+      - 입력 JSON을 `signal_feature_input.v2` 구조로 확장해
+        `universe_metadata`, `fetch_success_rows`, `fetch_error_rows`를 분리 저장
+      - `build_signal_feature_snapshots.py`는
+        신구 포맷을 모두 읽을 수 있게 backward-compatible 유지
+    - [x] `generate_signal_feature_snapshot_input.py`에
+      `rate limit`, `5xx`, `timeout`을 구분한 재시도 정책을 추가한다.
+    - [ ] 1차 본배치 후 실패 종목만 재시도하는
+      `tail-retry` 실행 경로를 추가한다.
+    - [x] `operations_day_runs.summary_json`에
+      `target_count`, `fetch_success_count`, `fetch_error_count`,
+      `persist_success_count`, `persist_error_count`,
+      `final_missing_count`, `failed_symbols_sample`
+      를 남기도록 확장한다.
+    - [ ] 장후 실행 후
+      `summary_json`과 `signal_feature_snapshots` 적재 건수를 대조하는
+      운영 검증 절차를 문서화한다.
+  - `P1`
+    - [ ] `signal_feature_batch_runs`
+      실행 단위 테이블 도입 여부를 확정한다.
+    - [ ] `signal_feature_batch_run_items`
+      종목 단위 상태 테이블 도입 여부를 확정한다.
+    - [ ] file 기반 중간 산출물과 DB run-state 중
+      어느 쪽을 authoritative source로 둘지 결정한다.
+      - freeze 이후의 authoritative source는
+        file이 아니라 `universe_freeze_run_items`를 기본값으로 둔다.
+    - [ ] 동일 `(instrument_id, timeframe, snapshot_at, feature_set_version)` 기준
+      idempotent re-run / upsert 정책을 확정한다.
+    - [ ] 장중 intraday relative activity 확장 시에도
+      같은 batch runtime을 재사용하도록
+      공통 orchestration 계층으로 정리한다.
+  - 선행 완료 항목
+    - [x] signal feature input / batch 실행 경로를
+      `python3 -m scripts....` 구조로 통일
+    - [x] `average_turnover_20d`, `turnover_surge_ratio` schema 반영
+    - [x] 대형 거래대금 수용을 위한 DB precision 완화
+    - [x] `signal_feature_snapshots.add()` savepoint 적용
+    - [x] 수동 실반영 기준 `processed=96`, `persisted=96`, `errors=[]` 검증
 - [x] decision context ↔ signal feature snapshot point-in-time anchor 1차 추가
   - `trading.decision_contexts.signal_feature_snapshot_id` nullable FK를 추가해
     실제 판단에 사용한 `signal_feature_snapshot` 식별자를 context에 고정

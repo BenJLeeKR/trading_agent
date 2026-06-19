@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
 
 from agent_trading.domain.entities import InstrumentEntity, SignalFeatureSnapshotEntity
+from agent_trading.repositories.postgres.signal_feature_snapshots import (
+    PostgresSignalFeatureSnapshotRepository,
+)
 from agent_trading.repositories.container import RepositoryContainer
 
 
@@ -130,3 +134,57 @@ async def test_get_latest_by_instrument_nonexistent(
         uuid4()
     )
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_add_uses_savepoint_isolation(monkeypatch: pytest.MonkeyPatch) -> None:
+    snapshot = SignalFeatureSnapshotEntity(
+        signal_feature_snapshot_id=uuid4(),
+        instrument_id=uuid4(),
+        timeframe="1d",
+        snapshot_at=datetime.now(timezone.utc),
+        feature_set_version="signal_backbone.v1",
+        bar_count=80,
+        average_turnover_20d=Decimal("12345678901234.12345678"),
+    )
+
+    class FakeSavepoint:
+        def __init__(self, calls: list[str]) -> None:
+            self._calls = calls
+
+        async def __aenter__(self) -> str:
+            self._calls.append("enter")
+            return "sp_1"
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            self._calls.append("exit")
+
+    class FakeConnection:
+        async def fetchrow(self, *_args, **_kwargs) -> dict[str, object]:
+            return {
+                "signal_feature_snapshot_id": snapshot.signal_feature_snapshot_id,
+                "instrument_id": snapshot.instrument_id,
+                "timeframe": snapshot.timeframe,
+                "snapshot_at": snapshot.snapshot_at,
+                "feature_set_version": snapshot.feature_set_version,
+                "bar_count": snapshot.bar_count,
+                "average_turnover_20d": snapshot.average_turnover_20d,
+                "created_at": snapshot.snapshot_at,
+            }
+
+    savepoint_calls: list[str] = []
+    tx = SimpleNamespace(
+        connection=FakeConnection(),
+        savepoint=lambda: FakeSavepoint(savepoint_calls),
+    )
+    repo = PostgresSignalFeatureSnapshotRepository(tx)
+
+    monkeypatch.setattr(
+        "agent_trading.repositories.postgres.signal_feature_snapshots.row_to_entity",
+        lambda row, _entity_cls: row,
+    )
+
+    saved = await repo.add(snapshot)
+
+    assert savepoint_calls == ["enter", "exit"]
+    assert saved["signal_feature_snapshot_id"] == snapshot.signal_feature_snapshot_id

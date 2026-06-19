@@ -10,17 +10,30 @@ import logging
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
+import sys
 from typing import Any, Sequence
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from agent_trading.brokers.rate_limit import BudgetExhaustedError
+from agent_trading.brokers.errors import BrokerError
 from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
 from agent_trading.config.settings import AppSettings
-from agent_trading.runtime.bootstrap import _build_kis_live_quote_client
+from agent_trading.domain.enums import BrokerErrorType
+from agent_trading.domain.entities import (
+    UniverseFreezeRunEntity,
+    UniverseFreezeRunItemEntity,
+)
+from agent_trading.runtime.bootstrap import _build_kis_live_quote_client, postgres_runtime
 from scripts.run_decision_loop import UniverseSymbol, _read_trading_universe
 
 logger = logging.getLogger(__name__)
 KST = ZoneInfo("Asia/Seoul")
+DEFAULT_SIGNAL_FEATURE_FREEZE_PURPOSE = "signal_feature_after_market"
+DEFAULT_SIGNAL_FEATURE_SELECTION_VERSION = "universe_selection.freeze.v1"
 DEFAULT_SIGNAL_FEATURE_UNIVERSE_MAX_CAP = 80
 DEFAULT_SIGNAL_FEATURE_CORE_CAP = 80
 DEFAULT_SIGNAL_FEATURE_MARKET_OVERLAY_CAP = 10
@@ -29,6 +42,8 @@ DEFAULT_SIGNAL_FEATURE_BATCH_SIZE = 15
 DEFAULT_SIGNAL_FEATURE_BATCH_PAUSE_SECONDS = 1.0
 DEFAULT_SIGNAL_FEATURE_BUDGET_RETRY_ATTEMPTS = 6
 DEFAULT_SIGNAL_FEATURE_BUDGET_RETRY_SLEEP_SECONDS = 1.0
+DEFAULT_SIGNAL_FEATURE_TRANSIENT_RETRY_ATTEMPTS = 3
+DEFAULT_SIGNAL_FEATURE_TRANSIENT_RETRY_SLEEP_SECONDS = 1.5
 _SUPPORTED_SIGNAL_FEATURE_MARKETS: frozenset[str] = frozenset({
     "KRX",
     "KOSPI",
@@ -54,6 +69,22 @@ class SignalFeatureInputRow:
     timeframe: str
     feature_set_version: str
     bars: tuple[SignalFeatureInputBar, ...]
+
+
+@dataclass(slots=True, frozen=True)
+class SignalFeatureFetchError:
+    symbol: str
+    market: str
+    error_code: str
+    error_message: str
+
+
+@dataclass(slots=True, frozen=True)
+class UniverseFreezeResolution:
+    universe_freeze_run_id: str
+    universe: tuple[UniverseSymbol, ...]
+    reused_existing: bool
+    errors: tuple[str, ...] = ()
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -117,6 +148,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="stdout 출력 형식",
     )
     parser.add_argument(
+        "--freeze-purpose",
+        default=DEFAULT_SIGNAL_FEATURE_FREEZE_PURPOSE,
+        help="universe freeze purpose 값",
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         default=DEFAULT_SIGNAL_FEATURE_BATCH_SIZE,
@@ -139,6 +175,18 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=float,
         default=DEFAULT_SIGNAL_FEATURE_BUDGET_RETRY_SLEEP_SECONDS,
         help="budget exhaustion 재시도 기본 대기 시간(초)",
+    )
+    parser.add_argument(
+        "--transient-retry-attempts",
+        type=int,
+        default=DEFAULT_SIGNAL_FEATURE_TRANSIENT_RETRY_ATTEMPTS,
+        help="timeout / 5xx / retryable broker 오류 재시도 횟수",
+    )
+    parser.add_argument(
+        "--transient-retry-sleep-seconds",
+        type=float,
+        default=DEFAULT_SIGNAL_FEATURE_TRANSIENT_RETRY_SLEEP_SECONDS,
+        help="transient broker 오류 재시도 기본 대기 시간(초)",
     )
     return parser.parse_args(list(argv) if argv is not None else None)
 
@@ -197,22 +245,33 @@ async def _build_rows(
     batch_pause_seconds: float = DEFAULT_SIGNAL_FEATURE_BATCH_PAUSE_SECONDS,
     budget_retry_attempts: int = DEFAULT_SIGNAL_FEATURE_BUDGET_RETRY_ATTEMPTS,
     budget_retry_sleep_seconds: float = DEFAULT_SIGNAL_FEATURE_BUDGET_RETRY_SLEEP_SECONDS,
-) -> tuple[list[SignalFeatureInputRow], list[str]]:
+    transient_retry_attempts: int = DEFAULT_SIGNAL_FEATURE_TRANSIENT_RETRY_ATTEMPTS,
+    transient_retry_sleep_seconds: float = DEFAULT_SIGNAL_FEATURE_TRANSIENT_RETRY_SLEEP_SECONDS,
+) -> tuple[list[SignalFeatureInputRow], list[SignalFeatureFetchError]]:
     start_date = end_date - timedelta(days=lookback_days)
     start_date_str = start_date.strftime("%Y%m%d")
     end_date_str = end_date.strftime("%Y%m%d")
 
     rows: list[SignalFeatureInputRow] = []
-    errors: list[str] = []
+    errors: list[SignalFeatureFetchError] = []
     normalized_batch_size = batch_size if batch_size > 0 else 0
     normalized_batch_pause_seconds = max(0.0, batch_pause_seconds)
     normalized_budget_retry_attempts = max(1, budget_retry_attempts)
     normalized_budget_retry_sleep_seconds = max(0.1, budget_retry_sleep_seconds)
+    normalized_transient_retry_attempts = max(1, transient_retry_attempts)
+    normalized_transient_retry_sleep_seconds = max(0.1, transient_retry_sleep_seconds)
 
     for index, item in enumerate(universe, start=1):
         normalized_market = str(item.market or "").strip().upper()
         if normalized_market not in _SUPPORTED_SIGNAL_FEATURE_MARKETS:
-            errors.append(f"{item.symbol}:{item.market}:unsupported_market")
+            errors.append(
+                SignalFeatureFetchError(
+                    symbol=item.symbol,
+                    market=str(item.market),
+                    error_code="unsupported_market",
+                    error_message="지원하지 않는 market 코드",
+                )
+            )
             continue
         try:
             raw_bars = await _fetch_daily_bars_with_budget_retry(
@@ -223,6 +282,8 @@ async def _build_rows(
                 end_date=end_date_str,
                 budget_retry_attempts=normalized_budget_retry_attempts,
                 budget_retry_sleep_seconds=normalized_budget_retry_sleep_seconds,
+                transient_retry_attempts=normalized_transient_retry_attempts,
+                transient_retry_sleep_seconds=normalized_transient_retry_sleep_seconds,
             )
             bars = tuple(
                 _normalize_bar(raw)
@@ -233,7 +294,14 @@ async def _build_rows(
                 if isinstance(raw, dict)
             )
             if len(bars) < 20:
-                errors.append(f"{item.symbol}:{item.market}:insufficient_bars={len(bars)}")
+                errors.append(
+                    SignalFeatureFetchError(
+                        symbol=item.symbol,
+                        market=normalized_market,
+                        error_code="insufficient_bars",
+                        error_message=f"insufficient_bars={len(bars)}",
+                    )
+                )
                 continue
             rows.append(
                 SignalFeatureInputRow(
@@ -245,7 +313,15 @@ async def _build_rows(
                 )
             )
         except Exception as exc:
-            errors.append(f"{item.symbol}:{item.market}:{type(exc).__name__}:{exc}")
+            error_code, error_message = _classify_signal_feature_fetch_error(exc)
+            errors.append(
+                SignalFeatureFetchError(
+                    symbol=item.symbol,
+                    market=normalized_market,
+                    error_code=error_code,
+                    error_message=error_message,
+                )
+            )
         if (
             normalized_batch_size > 0
             and normalized_batch_pause_seconds > 0
@@ -293,8 +369,11 @@ async def _fetch_daily_bars_with_budget_retry(
     end_date: str,
     budget_retry_attempts: int,
     budget_retry_sleep_seconds: float,
+    transient_retry_attempts: int,
+    transient_retry_sleep_seconds: float,
 ) -> list[dict[str, Any]]:
-    for attempt in range(1, budget_retry_attempts + 1):
+    max_attempts = max(budget_retry_attempts, transient_retry_attempts)
+    for attempt in range(1, max_attempts + 1):
         try:
             return await client.inquire_daily_itemchartprice(
                 symbol=symbol,
@@ -320,32 +399,236 @@ async def _fetch_daily_bars_with_budget_retry(
                 wait_seconds,
             )
             await asyncio.sleep(wait_seconds)
+        except Exception as exc:
+            retry_code, retry_message = _classify_retryable_signal_feature_fetch_exception(exc)
+            if retry_code is None or attempt >= transient_retry_attempts:
+                raise
+            wait_seconds = normalized_retry_sleep_seconds(
+                transient_retry_sleep_seconds,
+                attempt=attempt,
+            )
+            logger.info(
+                "signal feature 입력 생성 transient 재시도: symbol=%s code=%s attempt=%s/%s sleep=%.2fs msg=%s",
+                symbol,
+                retry_code,
+                attempt,
+                transient_retry_attempts,
+                wait_seconds,
+                retry_message,
+            )
+            await asyncio.sleep(wait_seconds)
     return []
 
 
-def _write_rows(path: str, rows: Sequence[SignalFeatureInputRow]) -> None:
+def normalized_retry_sleep_seconds(base_seconds: float, *, attempt: int) -> float:
+    normalized_base_seconds = max(0.1, base_seconds)
+    return normalized_base_seconds * float(attempt)
+
+
+def _classify_retryable_signal_feature_fetch_exception(
+    exc: Exception,
+) -> tuple[str | None, str]:
+    if isinstance(exc, asyncio.TimeoutError):
+        return "timeout", "asyncio timeout"
+    if isinstance(exc, BrokerError):
+        raw_message = str(exc.raw_message or exc)
+        if exc.error_type == BrokerErrorType.RATE_LIMIT:
+            return "rate_limit", raw_message
+        if exc.error_type == BrokerErrorType.TIMEOUT:
+            return "timeout", raw_message
+        if exc.error_type == BrokerErrorType.TEMPORARY_BROKER:
+            return "temporary_broker", raw_message
+        if exc.retryable and _looks_like_http_5xx(raw_message):
+            return "http_5xx", raw_message
+        if exc.retryable and exc.error_type == BrokerErrorType.API_ERROR:
+            return "retryable_api_error", raw_message
+    return None, str(exc)
+
+
+def _classify_signal_feature_fetch_error(exc: Exception) -> tuple[str, str]:
+    retry_code, retry_message = _classify_retryable_signal_feature_fetch_exception(exc)
+    if retry_code is not None:
+        return retry_code, retry_message
+    if isinstance(exc, BudgetExhaustedError):
+        return f"budget_exhausted_{exc.bucket}", str(exc)
+    return type(exc).__name__, str(exc)
+
+
+def _looks_like_http_5xx(message: str) -> bool:
+    normalized = str(message or "").lower()
+    return (
+        "http 500" in normalized
+        or "http 502" in normalized
+        or "http 503" in normalized
+        or "http 504" in normalized
+        or "non-json response (http 5" in normalized
+    )
+
+
+def _write_rows(
+    path: str,
+    rows: Sequence[SignalFeatureInputRow],
+    *,
+    fetch_errors: Sequence[SignalFeatureFetchError] | None = None,
+    universe: Sequence[UniverseSymbol] | None = None,
+    universe_freeze_run_id: str | None = None,
+    universe_freeze_reused: bool | None = None,
+    freeze_purpose: str | None = None,
+    generated_at: str | None = None,
+) -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": "signal_feature_input.v2",
+        "generated_at": generated_at or datetime.now(timezone.utc).isoformat(),
+        "universe_metadata": {
+            "universe_freeze_run_id": universe_freeze_run_id,
+            "universe_freeze_reused": universe_freeze_reused,
+            "freeze_purpose": freeze_purpose,
+            "universe_count": len(universe or ()),
+            "symbols": [
+                {
+                    "symbol": item.symbol,
+                    "market": item.market,
+                    "source_type": item.source_type,
+                    "inclusion_reason": item.inclusion_reason,
+                }
+                for item in (universe or ())
+            ],
+        },
+        "fetch_success_rows": [asdict(row) for row in rows],
+        "fetch_error_rows": [asdict(error) for error in (fetch_errors or ())],
+    }
     target.write_text(
-        json.dumps([asdict(row) for row in rows], ensure_ascii=False, indent=2),
+        json.dumps(payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
 
-async def _run(args: argparse.Namespace) -> int:
-    settings = AppSettings()
-    universe = await _read_trading_universe(
-        max_cap=args.universe_max_cap,
-        core_cap=args.core_cap,
-        market_overlay_cap=args.market_overlay_cap,
-        pre_pool_size=args.pre_pool_size,
+async def _resolve_frozen_universe(
+    *,
+    repos: Any,
+    end_date: date,
+    freeze_purpose: str,
+    universe_max_cap: int,
+    core_cap: int,
+    market_overlay_cap: int,
+    pre_pool_size: int,
+) -> UniverseFreezeResolution:
+    existing_run = await repos.universe_freeze_runs.get_latest(
+        end_date,
+        freeze_purpose,
     )
+    if existing_run is not None:
+        existing_items = await repos.universe_freeze_run_items.list_by_run(
+            existing_run.universe_freeze_run_id,
+        )
+        if existing_items:
+            return UniverseFreezeResolution(
+                universe_freeze_run_id=str(existing_run.universe_freeze_run_id),
+                universe=tuple(
+                    UniverseSymbol(
+                        symbol=item.symbol,
+                        market=item.market_code,
+                        source_type=item.source_type,
+                        inclusion_reason=item.inclusion_reason,
+                    )
+                    for item in existing_items
+                ),
+                reused_existing=True,
+            )
+
+    composed_universe = await _read_trading_universe(
+        max_cap=universe_max_cap,
+        core_cap=core_cap,
+        market_overlay_cap=market_overlay_cap,
+        pre_pool_size=pre_pool_size,
+    )
+
+    freeze_run_id = uuid4()
+    freeze_items: list[UniverseFreezeRunItemEntity] = []
+    errors: list[str] = []
+    for rank, item in enumerate(composed_universe, start=1):
+        instrument = await repos.instruments.get_by_symbol(
+            symbol=item.symbol,
+            market_code=item.market,
+        )
+        if instrument is None:
+            errors.append(f"{item.symbol}:{item.market}:instrument_not_found_for_freeze")
+            continue
+        freeze_items.append(
+            UniverseFreezeRunItemEntity(
+                universe_freeze_run_item_id=uuid4(),
+                universe_freeze_run_id=freeze_run_id,
+                instrument_id=instrument.instrument_id,
+                symbol=item.symbol,
+                market_code=item.market,
+                source_type=item.source_type,
+                inclusion_reason=item.inclusion_reason,
+                rank=rank,
+                cap_bucket=item.source_type,
+                metadata_json={},
+            )
+        )
+
+    if not freeze_items:
+        raise RuntimeError("universe_freeze_materialization_failed:no_items")
+
+    freeze_sequence = 1 if existing_run is None else existing_run.freeze_sequence + 1
+    freeze_run = UniverseFreezeRunEntity(
+        universe_freeze_run_id=freeze_run_id,
+        business_date=end_date,
+        freeze_purpose=freeze_purpose,
+        freeze_sequence=freeze_sequence,
+        frozen_at=datetime.now(timezone.utc),
+        selection_version=DEFAULT_SIGNAL_FEATURE_SELECTION_VERSION,
+        selection_params_json={
+            "universe_max_cap": universe_max_cap,
+            "core_cap": core_cap,
+            "market_overlay_cap": market_overlay_cap,
+            "pre_pool_size": pre_pool_size,
+        },
+        target_count=len(freeze_items),
+        status="materialized",
+    )
+    await repos.universe_freeze_runs.add(freeze_run)
+    await repos.universe_freeze_run_items.add_many(freeze_items)
+
+    return UniverseFreezeResolution(
+        universe_freeze_run_id=str(freeze_run_id),
+        universe=tuple(
+            UniverseSymbol(
+                symbol=item.symbol,
+                market=item.market_code,
+                source_type=item.source_type,
+                inclusion_reason=item.inclusion_reason,
+            )
+            for item in freeze_items
+        ),
+        reused_existing=False,
+        errors=tuple(errors),
+    )
+
+
+async def _run(args: argparse.Namespace) -> int:
     end_date = _parse_end_date(args.end_date)
+    async with postgres_runtime(run_migrations=False) as runtime:
+        repos = runtime["repositories"]
+        freeze = await _resolve_frozen_universe(
+            repos=repos,
+            end_date=end_date,
+            freeze_purpose=args.freeze_purpose,
+            universe_max_cap=args.universe_max_cap,
+            core_cap=args.core_cap,
+            market_overlay_cap=args.market_overlay_cap,
+            pre_pool_size=args.pre_pool_size,
+        )
+    settings = AppSettings()
     client = _build_chart_client(settings)
     try:
         rows, errors = await _build_rows(
             client,
-            universe=universe,
+            universe=freeze.universe,
             end_date=end_date,
             lookback_days=args.lookback_days,
             timeframe=args.timeframe,
@@ -354,33 +637,55 @@ async def _run(args: argparse.Namespace) -> int:
             batch_pause_seconds=args.batch_pause_seconds,
             budget_retry_attempts=args.budget_retry_attempts,
             budget_retry_sleep_seconds=args.budget_retry_sleep_seconds,
+            transient_retry_attempts=args.transient_retry_attempts,
+            transient_retry_sleep_seconds=args.transient_retry_sleep_seconds,
         )
     finally:
         await client.close()
 
-    _write_rows(args.output, rows)
+    all_errors = list(freeze.errors) + [
+        f"{error.symbol}:{error.market}:{error.error_code}:{error.error_message}"
+        for error in errors
+    ]
+    _write_rows(
+        args.output,
+        rows,
+        fetch_errors=errors,
+        universe=freeze.universe,
+        universe_freeze_run_id=freeze.universe_freeze_run_id,
+        universe_freeze_reused=freeze.reused_existing,
+        freeze_purpose=args.freeze_purpose,
+    )
     payload = {
         "output": args.output,
-        "universe_count": len(universe),
+        "universe_count": len(freeze.universe),
         "generated_count": len(rows),
-        "error_count": len(errors),
+        "error_count": len(all_errors),
         "universe_max_cap": args.universe_max_cap,
         "market_overlay_cap": args.market_overlay_cap,
         "pre_pool_size": args.pre_pool_size,
-        "errors": errors,
+        "universe_freeze_run_id": freeze.universe_freeze_run_id,
+        "universe_freeze_reused": freeze.reused_existing,
+        "freeze_purpose": args.freeze_purpose,
+        "fetch_success_count": len(rows),
+        "fetch_error_count": len(errors),
+        "errors": all_errors,
     }
     if args.output_format == "json":
         print(json.dumps(payload, ensure_ascii=False))
     else:
         print("=== Signal Feature Snapshot Input Generation ===")
         print(f"output: {args.output}")
-        print(f"universe_count: {len(universe)}")
+        print(f"universe_count: {len(freeze.universe)}")
         print(f"generated_count: {len(rows)}")
-        print(f"error_count: {len(errors)}")
+        print(f"error_count: {len(all_errors)}")
         print(f"universe_max_cap: {args.universe_max_cap}")
         print(f"market_overlay_cap: {args.market_overlay_cap}")
         print(f"pre_pool_size: {args.pre_pool_size}")
-        for error in errors:
+        print(f"universe_freeze_run_id: {freeze.universe_freeze_run_id}")
+        print(f"universe_freeze_reused: {freeze.reused_existing}")
+        print(f"freeze_purpose: {args.freeze_purpose}")
+        for error in all_errors:
             print(f"! {error}")
     return 0 if rows else 1
 

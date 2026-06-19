@@ -15,6 +15,7 @@ _OUTPUT_FIELDS = (
     "symbol",
     "name",
     "market_code",
+    "market_segment",
     "asset_class",
     "currency",
     "tick_size",
@@ -25,6 +26,7 @@ _OUTPUT_FIELDS = (
     "metadata_market_segment",
     "metadata_segment",
     "metadata_universe_segment",
+    "metadata_index_memberships",
     "metadata_kospi_kosdaq_cls_name",
     "metadata_mrkt_trtm_cls_name",
     "source_file",
@@ -62,6 +64,10 @@ _MARKET_SEGMENT_FIELDS = (
     "segment",
     "universe_segment",
 )
+_INDEX_MEMBERSHIP_FLAG_FIELDS: dict[str, str] = {
+    "is_kospi200": "KOSPI200",
+    "is_kosdaq150": "KOSDAQ150",
+}
 
 
 def _normalize_segment_value(raw: str) -> str:
@@ -85,6 +91,10 @@ def _normalize_header_map(fieldnames: Iterable[str]) -> dict[str, str]:
     return {name.strip().lower(): name for name in fieldnames}
 
 
+def _parse_bool(raw: str) -> bool:
+    return (raw or "").strip().upper() in {"TRUE", "1", "YES", "Y"}
+
+
 def _pick_value(row: dict[str, str], headers: dict[str, str], candidates: tuple[str, ...]) -> str:
     for candidate in candidates:
         original = headers.get(candidate)
@@ -94,6 +104,29 @@ def _pick_value(row: dict[str, str], headers: dict[str, str], candidates: tuple[
         if value:
             return value
     return ""
+
+
+def _append_unique(values: list[str], value: str) -> None:
+    normalized = _normalize_segment_value(value)
+    if normalized and normalized not in values:
+        values.append(normalized)
+
+
+def _collect_index_memberships(
+    row: dict[str, str],
+    headers: dict[str, str],
+    *,
+    normalized_segment: str,
+) -> list[str]:
+    memberships: list[str] = []
+    _append_unique(memberships, normalized_segment)
+    for field_name, membership_code in _INDEX_MEMBERSHIP_FLAG_FIELDS.items():
+        original = headers.get(field_name)
+        if original is None:
+            continue
+        if _parse_bool(row.get(original, "")):
+            _append_unique(memberships, membership_code)
+    return memberships
 
 
 def _normalize_market_code(raw: str, *, default_market_code: str) -> str:
@@ -110,6 +143,22 @@ def _normalize_market_code(raw: str, *, default_market_code: str) -> str:
         "KRX": "KRX",
     }
     return aliases.get(value, value)
+
+
+def _normalize_exchange_code(raw: str, *, market_code: str) -> str:
+    value = (raw or "").strip().upper()
+    if not value:
+        return "KRX" if market_code in {"KOSPI", "KOSDAQ", "KRX"} else market_code
+    aliases = {
+        "KRX": "KRX",
+        "KOSPI": "KRX",
+        "거래소": "KRX",
+        "STK": "KRX",
+        "KOSDAQ": "KRX",
+        "코스닥": "KRX",
+        "KSQ": "KRX",
+    }
+    return aliases.get(value, "KRX" if market_code in {"KOSPI", "KOSDAQ", "KRX"} else value)
 
 
 def _build_normalized_row(
@@ -133,17 +182,24 @@ def _build_normalized_row(
         default_market_code=default_market_code,
     )
     raw_exchange_code = _pick_value(row, headers, _EXCHANGE_FIELDS)
-    exchange_code = _normalize_market_code(
+    exchange_code = _normalize_exchange_code(
         raw_exchange_code,
-        default_market_code=market_code,
+        market_code=market_code,
     )
     segment = _normalize_segment_value(
         _pick_value(row, headers, _MARKET_SEGMENT_FIELDS)
     )
+    index_memberships = _collect_index_memberships(
+        row,
+        headers,
+        normalized_segment=segment,
+    )
+    fallback_segment = index_memberships[0] if index_memberships else ""
     return {
         "symbol": symbol,
         "name": name,
         "market_code": market_code,
+        "market_segment": market_code,
         "asset_class": asset_class,
         "currency": currency,
         "tick_size": tick_size,
@@ -152,8 +208,9 @@ def _build_normalized_row(
         "name_kr": name,
         "exchange_code": exchange_code,
         "metadata_market_segment": market_code,
-        "metadata_segment": segment,
-        "metadata_universe_segment": segment,
+        "metadata_segment": segment or fallback_segment,
+        "metadata_universe_segment": segment or fallback_segment,
+        "metadata_index_memberships": "|".join(index_memberships),
         "metadata_kospi_kosdaq_cls_name": _pick_value(row, headers, ("kospi_kosdaq_cls_name",)),
         "metadata_mrkt_trtm_cls_name": _pick_value(row, headers, ("mrkt_trtm_cls_name",)),
         "source_file": source_file,
