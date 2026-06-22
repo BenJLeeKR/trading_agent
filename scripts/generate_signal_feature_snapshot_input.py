@@ -22,13 +22,26 @@ from agent_trading.brokers.rate_limit import BudgetExhaustedError
 from agent_trading.brokers.errors import BrokerError
 from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
 from agent_trading.config.settings import AppSettings
+from agent_trading.db.connection import DatabaseConfig, close_pool, create_pool
+from agent_trading.db.transaction import transaction
 from agent_trading.domain.enums import BrokerErrorType
 from agent_trading.domain.entities import (
     UniverseFreezeRunEntity,
     UniverseFreezeRunItemEntity,
 )
-from agent_trading.runtime.bootstrap import _build_kis_live_quote_client, postgres_runtime
-from scripts.run_decision_loop import UniverseSymbol, _read_trading_universe
+from agent_trading.repositories.contracts import AccountLookup
+from agent_trading.repositories.postgres.bootstrap import build_postgres_repositories
+from agent_trading.runtime.bootstrap import _build_kis_live_quote_client
+from agent_trading.services.universe_selection import UniverseSelectionService
+from agent_trading.services.universe_selection_types import (
+    CompositionContext,
+    FALLBACK_ACCOUNT_ID,
+)
+from scripts.run_decision_loop import (
+    ACCOUNT_ALIAS,
+    DEFAULT_EVENT_LOOKBACK_HOURS,
+    UniverseSymbol,
+)
 
 logger = logging.getLogger(__name__)
 KST = ZoneInfo("Asia/Seoul")
@@ -618,14 +631,43 @@ async def _resolve_frozen_universe(
     # 장후 feature 배치는 이미 장이 종료된 뒤 실행되므로,
     # 여기서 live market_overlay를 다시 구성하면 quote/budget 대기로
     # 입력 생성 전체가 timeout되기 쉽다.
-    # freeze materialization은 결정적이고 빠른 universe를 우선 확보하고,
-    # 이후 일봉 fetch에 예산을 집중한다.
-    composed_universe = await _read_trading_universe(
+    # 또한 run_decision_loop._read_trading_universe()는 내부에서
+    # postgres_runtime()를 다시 열어 nested pool shutdown 지연을 유발할 수 있다.
+    # 따라서 현재 transaction에 연결된 repos만 사용해 universe를 직접 compose한다.
+    account_id = FALLBACK_ACCOUNT_ID
+    try:
+        account = await repos.accounts.find_one(
+            AccountLookup(account_alias=ACCOUNT_ALIAS)
+        )
+        if account is not None:
+            account_id = account.account_id
+    except Exception:
+        logger.warning(
+            "signal feature freeze account lookup failed — fallback account 사용"
+        )
+
+    selector = UniverseSelectionService(
+        repos,
+        kis_client=None,
+    )
+    composition_context = CompositionContext(
+        account_id=account_id,
+        since=datetime.now(timezone.utc) - timedelta(hours=DEFAULT_EVENT_LOOKBACK_HOURS),
         max_cap=universe_max_cap,
         core_cap=core_cap,
+        exclude_held_from_cap=True,
         market_overlay_cap=0,
         pre_pool_size=0,
-        disable_market_overlay_live=True,
+    )
+    selected = await selector.compose(composition_context)
+    composed_universe = tuple(
+        UniverseSymbol(
+            symbol=item.symbol,
+            market=item.market,
+            source_type=item.source_type.value,
+            inclusion_reason=item.inclusion_reason,
+        )
+        for item in selected
     )
 
     freeze_run_id = uuid4()
@@ -707,17 +749,27 @@ async def _run(args: argparse.Namespace) -> int:
         )
         freeze_purpose = retry_freeze_purpose or args.freeze_purpose
     else:
-        async with postgres_runtime(run_migrations=False) as runtime:
-            repos = runtime["repositories"]
-            freeze = await _resolve_frozen_universe(
-                repos=repos,
-                end_date=end_date,
-                freeze_purpose=args.freeze_purpose,
-                universe_max_cap=args.universe_max_cap,
-                core_cap=args.core_cap,
-                market_overlay_cap=args.market_overlay_cap,
-                pre_pool_size=args.pre_pool_size,
-            )
+        await create_pool(DatabaseConfig())
+        try:
+            async with transaction() as tx:
+                repos = build_postgres_repositories(tx)
+                freeze = await _resolve_frozen_universe(
+                    repos=repos,
+                    end_date=end_date,
+                    freeze_purpose=args.freeze_purpose,
+                    universe_max_cap=args.universe_max_cap,
+                    core_cap=args.core_cap,
+                    market_overlay_cap=args.market_overlay_cap,
+                    pre_pool_size=args.pre_pool_size,
+                )
+        finally:
+            try:
+                await asyncio.wait_for(close_pool(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "signal feature input DB pool close timeout — "
+                    "process exit에 정리를 위임합니다."
+                )
         freeze_purpose = args.freeze_purpose
     settings = AppSettings()
     client = _build_chart_client(settings)

@@ -359,6 +359,11 @@ class DecisionOrchestratorService:
         if decision_type not in {"APPROVE", "BUY", "SELL", "EXIT", "REDUCE"}:
             return None
 
+        if source_type == "held_position":
+            decision_side = (fdc_output.side or "").strip().upper()
+            if decision_type in {"REDUCE", "EXIT"} and decision_side == "SELL":
+                return None
+
         rationale = (
             f"[watch_candidate_guard] source_type={source_type} "
             f"deterministic_trigger=WATCH 이므로 FDC={decision_type}를 WATCH로 제한"

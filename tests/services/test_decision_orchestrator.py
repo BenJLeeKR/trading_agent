@@ -1521,6 +1521,117 @@ class TestWatchCandidateUpgradeGuard:
         assert "watch_candidate_guard" not in intent.ai_backend_inputs.reason_codes
 
     @pytest.mark.asyncio
+    async def test_held_position_watch_candidate_allows_reduce_sell(
+        self, sample_request: SubmitOrderRequest
+    ) -> None:
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        strategy_id = uuid4()
+        account_id = uuid4()
+        instrument_id = uuid4()
+
+        config_version = ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=uuid4(),
+            environment=Environment.PAPER,
+            version_tag="v1",
+            config_json={},
+            checksum="sum",
+            activated_at=now,
+        )
+        await repos.config_versions.add(config_version)
+
+        context = DecisionContextEntity(
+            decision_context_id=uuid4(),
+            account_id=account_id,
+            strategy_id=strategy_id,
+            config_version_id=config_version.config_version_id,
+            market_timestamp=now,
+            correlation_id="corr-held-watch-guard",
+            created_at=now,
+        )
+        await repos.decision_contexts.add(context)
+
+        await repos.position_snapshots.add(
+            PositionSnapshotEntity(
+                position_snapshot_id=uuid4(),
+                account_id=account_id,
+                instrument_id=instrument_id,
+                quantity=Decimal("10"),
+                average_price=Decimal("1000"),
+                market_price=Decimal("900"),
+                unrealized_pnl=Decimal("-1000"),
+                source_of_truth="test",
+                snapshot_at=now,
+            )
+        )
+
+        service = DecisionOrchestratorService(
+            repos=repos,
+            use_subprocess_isolation=False,
+        )
+        deterministic_trigger = DeterministicTriggerAssessment(
+            trigger_version="deterministic_trigger_v1",
+            primary_candidate="WATCH",
+            candidate_set=("WATCH",),
+            watch_candidate=True,
+            buy_candidate=False,
+            sell_candidate=False,
+            reduce_candidate=False,
+            candidate_confidence=0.61,
+            entry_score=0.25,
+            exit_score=0.64,
+            watch_score=0.61,
+            reason_codes=("trigger_held_position_watch",),
+            thresholds={
+                "watch_candidate_threshold": 0.45,
+                "reduce_candidate_threshold": 0.60,
+            },
+            metadata={"source_type": "held_position"},
+        )
+        service._derive_deterministic_context_components = AsyncMock(  # type: ignore[method-assign]
+            return_value=DeterministicDerivationBundle(
+                source_type="held_position",
+                deterministic_trigger=deterministic_trigger,
+            )
+        )
+        service._run_agents = AsyncMock(  # type: ignore[method-assign]
+            return_value=AgentExecutionBundle(
+                ai_inputs=AIDecisionInputs(
+                    decision_type="REDUCE",
+                    side="SELL",
+                    confidence=0.77,
+                    conviction=0.74,
+                    reason_codes=("fdc_reduce",),
+                ),
+                composer_output=FinalDecisionComposerOutput(
+                    decision_type="REDUCE",
+                    side="SELL",
+                    confidence=0.77,
+                    conviction=0.74,
+                    reason_codes=("fdc_reduce",),
+                    summary="한국어 요약",
+                ),
+            )
+        )
+
+        intent = await service.assemble(
+            sample_request,
+            decision_context_id=context.decision_context_id,
+        )
+
+        assert intent.ai_backend_inputs.decision_type == "REDUCE"
+        assert intent.ai_backend_inputs.side == "SELL"
+        assert "watch_candidate_guard" not in intent.ai_backend_inputs.reason_codes
+
+        persisted = await repos.trade_decisions.get_by_context(
+            context.decision_context_id
+        )
+        assert persisted is not None
+        assert persisted.decision_type == DecisionType.REDUCE
+        assert persisted.side == OrderSide.SELL
+
+    @pytest.mark.asyncio
     async def test_core_buy_eligibility_guard_blocks_no_action_to_approve_upgrade(
         self, sample_request: SubmitOrderRequest
     ) -> None:
