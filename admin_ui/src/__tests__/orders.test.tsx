@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, afterEach, vi, beforeEach } from "vitest";
@@ -15,6 +15,12 @@ afterEach(() => {
   vi.restoreAllMocks();
   clearStoredToken();
 });
+
+function setFixtureOrderDate() {
+  fireEvent.change(screen.getByLabelText("조회일"), {
+    target: { value: "2026-05-05" },
+  });
+}
 
 /* ───────────────────────────────────────────
  * Scenario 1: 초기 로딩 상태
@@ -47,6 +53,7 @@ describe("OrdersView with order data", () => {
     await waitFor(() => {
       expect(screen.getByText("주문")).toBeInTheDocument();
     });
+    setFixtureOrderDate();
 
     // Verify data is rendered
     expect(screen.getByText("AAPL")).toBeInTheDocument();
@@ -92,7 +99,11 @@ describe("OrdersView row click navigation", () => {
       </MemoryRouter>,
     );
 
-    // Wait for data to load
+    await waitFor(() => {
+      expect(screen.getByText("주문")).toBeInTheDocument();
+    });
+    setFixtureOrderDate();
+
     await waitFor(() => {
       expect(screen.getByText("AAPL")).toBeInTheDocument();
     });
@@ -123,6 +134,7 @@ describe("OrdersView filter by status", () => {
     await waitFor(() => {
       expect(screen.getByText("주문")).toBeInTheDocument();
     });
+    setFixtureOrderDate();
 
     // Initially both orders visible
     expect(screen.getByText("AAPL")).toBeInTheDocument();
@@ -155,6 +167,7 @@ describe("OrdersView filter by side", () => {
     await waitFor(() => {
       expect(screen.getByText("주문")).toBeInTheDocument();
     });
+    setFixtureOrderDate();
 
     // Initially both visible
     expect(screen.getByText("AAPL")).toBeInTheDocument();
@@ -187,6 +200,7 @@ describe("OrdersView search by symbol", () => {
     await waitFor(() => {
       expect(screen.getByText("주문")).toBeInTheDocument();
     });
+    setFixtureOrderDate();
 
     // Type "AAPL" in search
     const searchInput = screen.getByPlaceholderText("심볼 또는 주문 ID 검색...");
@@ -215,6 +229,7 @@ describe("OrdersView combined filter and search", () => {
     await waitFor(() => {
       expect(screen.getByText("주문")).toBeInTheDocument();
     });
+    setFixtureOrderDate();
 
     // Type "AAPL" in search
     const searchInput = screen.getByPlaceholderText("심볼 또는 주문 ID 검색...");
@@ -230,6 +245,42 @@ describe("OrdersView combined filter and search", () => {
     // Now select "제출 대기" (pending_submit) — AAPL is not pending_submit, should disappear
     await user.selectOptions(statusSelect, "pending_submit");
     expect(screen.queryByText("AAPL")).not.toBeInTheDocument();
+  });
+});
+
+describe("OrdersView filter by selected date", () => {
+  it("shows only orders matching the selected KST date", async () => {
+    mockFetchOnce([
+      {
+        ...mockOrders[0],
+        symbol: "TODAY1",
+        created_at: "2026-05-05T00:00:00Z",
+      },
+      {
+        ...mockOrders[1],
+        order_request_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0099",
+        client_order_id: "CO-DATE-99",
+        symbol: "OTHER1",
+        created_at: "2026-05-06T00:00:00Z",
+      },
+    ]);
+
+    render(
+      <MemoryRouter>
+        <OrdersView />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("주문")).toBeInTheDocument();
+    });
+
+    setFixtureOrderDate();
+
+    await waitFor(() => {
+      expect(screen.getByText("TODAY1")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("OTHER1")).not.toBeInTheDocument();
   });
 });
 
@@ -250,6 +301,7 @@ describe("OrdersView filter by canonical status", () => {
     await waitFor(() => {
       expect(screen.getByText("주문")).toBeInTheDocument();
     });
+    setFixtureOrderDate();
 
     // Both orders visible initially
     expect(screen.getByText("AAPL")).toBeInTheDocument();
@@ -280,6 +332,7 @@ describe("OrdersView pagination footer", () => {
     await waitFor(() => {
       expect(screen.getByText("주문")).toBeInTheDocument();
     });
+    setFixtureOrderDate();
 
     // Total item count should appear (mockOrders has 2 items)
     expect(screen.getByText("총 2건")).toBeInTheDocument();

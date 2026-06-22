@@ -18,6 +18,29 @@ function formatNumber(value: number | string | null | undefined) {
   return new Intl.NumberFormat("ko-KR").format(numeric);
 }
 
+function todayKst(): string {
+  const formatter = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return formatter.format(new Date());
+}
+
+function formatIsoToKstDate(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const formatter = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return formatter.format(parsed);
+}
+
 export default function OrdersView() {
   const { fieldMap } = useEnumMetadata();
   const [orders, setOrders] = useState<OrderSummary[]>([]);
@@ -26,6 +49,7 @@ export default function OrdersView() {
   const [searchText, setSearchText] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [sideFilter, setSideFilter] = useState("");
+  const [selectedDate, setSelectedDate] = useState(todayKst());
   const [selectedOrder, setSelectedOrder] = useState<OrderSummary | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -56,6 +80,12 @@ export default function OrdersView() {
 
   const filteredOrders = useMemo(() => {
     return orders.filter((o) => {
+      if (selectedDate) {
+        const orderDate = formatIsoToKstDate(o.created_at);
+        if (orderDate !== selectedDate) {
+          return false;
+        }
+      }
       if (searchText && !(o.symbol ?? "").toLowerCase().includes(searchText.toLowerCase()) && !o.order_request_id.toLowerCase().includes(searchText.toLowerCase())) {
         return false;
       }
@@ -63,7 +93,7 @@ export default function OrdersView() {
       if (sideFilter && o.side !== sideFilter) return false;
       return true;
     });
-  }, [orders, searchText, statusFilter, sideFilter]);
+  }, [orders, selectedDate, searchText, statusFilter, sideFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filteredOrders.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
@@ -164,10 +194,26 @@ export default function OrdersView() {
                   onChange: (v) => { setSideFilter(v); setCurrentPage(1); },
                 },
               ]}
+              rightSlot={(
+                <label className="flex items-center gap-2 text-sm text-[#475569]">
+                  <span>조회일</span>
+                  <input
+                    aria-label="조회일"
+                    type="date"
+                    value={selectedDate}
+                    onChange={(e) => {
+                      setSelectedDate(e.target.value || todayKst());
+                      setCurrentPage(1);
+                    }}
+                    className="rounded-lg border border-[#e2e8f0] bg-white px-3 py-2 text-sm text-[#0f172a] focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:border-transparent"
+                  />
+                </label>
+              )}
               onClearAll={() => {
                 setSearchText("");
                 setStatusFilter("");
                 setSideFilter("");
+                setSelectedDate(todayKst());
                 setCurrentPage(1);
               }}
             />

@@ -36,11 +36,12 @@ from decimal import Decimal
 from uuid import UUID
 
 from agent_trading.domain.entities import OrderRequestEntity
-from agent_trading.domain.enums import OrderSide, OrderStatus
+from agent_trading.domain.enums import OrderSide, OrderStatus, TimeInForce
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import OrderQuery
 
 logger = logging.getLogger(__name__)
+_KST = timezone(timedelta(hours=9))
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +196,22 @@ class AvailableSellQtyResolver:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _is_stale_day_order_residual(
+        self,
+        order: OrderRequestEntity,
+        *,
+        now: datetime,
+    ) -> bool:
+        """전일 ``DAY`` 주문의 잔량은 현재 거래일 sell guard에서 제외한다."""
+        if order.time_in_force != TimeInForce.DAY:
+            return False
+
+        order_time = order.submitted_at or order.created_at
+        if order_time is None:
+            return False
+
+        return order_time.astimezone(_KST).date() < now.astimezone(_KST).date()
+
     async def _get_current_position_qty(
         self,
         account_id: UUID,
@@ -263,6 +280,16 @@ class AvailableSellQtyResolver:
                 continue
             if order.side != OrderSide.SELL:
                 continue
+            if self._is_stale_day_order_residual(order, now=now):
+                logger.info(
+                    "Excluding stale DAY SELL residual from open_sell_qty: "
+                    "order_id=%s status=%s submitted_at=%s created_at=%s",
+                    order.order_request_id,
+                    order.status,
+                    order.submitted_at,
+                    order.created_at,
+                )
+                continue
 
             # Stale PENDING_SUBMIT 판정: 30분 이상 경과 + broker_native_order_id 없음
             if order.status == OrderStatus.PENDING_SUBMIT:
@@ -299,6 +326,7 @@ class AvailableSellQtyResolver:
         if instrument_id is None:
             return Decimal("0")
 
+        now = datetime.now(timezone.utc)
         orders = await self.repos.orders.list(
             OrderQuery(
                 account_id=account_id,
@@ -312,6 +340,15 @@ class AvailableSellQtyResolver:
             if order.instrument_id != instrument_id:
                 continue
             if order.side != OrderSide.SELL:
+                continue
+            if self._is_stale_day_order_residual(order, now=now):
+                logger.info(
+                    "Excluding stale DAY SELL residual from partial_remaining: "
+                    "order_id=%s submitted_at=%s created_at=%s",
+                    order.order_request_id,
+                    order.submitted_at,
+                    order.created_at,
+                )
                 continue
 
             # Get broker orders for this order request

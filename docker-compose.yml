@@ -94,6 +94,10 @@ services:
       OPENAI_BASE_URL: "${OPENAI_BASE_URL:-https://api.openai.com/v1}"
       OPENAI_MODEL_ID: "${OPENAI_MODEL_ID:-gpt-4o}"
       OPENAI_TIMEOUT_SECONDS: "${OPENAI_TIMEOUT_SECONDS:-30}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      GEMINI_BASE_URL: "${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai/}"
+      GEMINI_MODEL_ID: "${GEMINI_MODEL_ID:-gemini-3.5-flash}"
+      GEMINI_TIMEOUT_SECONDS: "${GEMINI_TIMEOUT_SECONDS:-30}"
       OPENDART_API_KEY: "${OPENDART_API_KEY:-}"
     volumes:
       - ./src:/app/src
@@ -170,6 +174,10 @@ services:
       OPENAI_BASE_URL: "${OPENAI_BASE_URL:-https://api.openai.com/v1}"
       OPENAI_MODEL_ID: "${OPENAI_MODEL_ID:-gpt-4o}"
       OPENAI_TIMEOUT_SECONDS: "${OPENAI_TIMEOUT_SECONDS:-30}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      GEMINI_BASE_URL: "${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai/}"
+      GEMINI_MODEL_ID: "${GEMINI_MODEL_ID:-gemini-3.5-flash}"
+      GEMINI_TIMEOUT_SECONDS: "${GEMINI_TIMEOUT_SECONDS:-30}"
       OPENDART_API_KEY: "${OPENDART_API_KEY:-}"
       INSPECTION_API_TOKEN: "${INSPECTION_API_TOKEN:-}"
     ports:
@@ -269,6 +277,10 @@ services:
       OPENAI_BASE_URL: "${OPENAI_BASE_URL:-https://api.openai.com/v1}"
       OPENAI_MODEL_ID: "${OPENAI_MODEL_ID:-gpt-4o}"
       OPENAI_TIMEOUT_SECONDS: "${OPENAI_TIMEOUT_SECONDS:-30}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      GEMINI_BASE_URL: "${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com/v1beta/openai/}"
+      GEMINI_MODEL_ID: "${GEMINI_MODEL_ID:-gemini-3.5-flash}"
+      GEMINI_TIMEOUT_SECONDS: "${GEMINI_TIMEOUT_SECONDS:-30}"
       OPENDART_API_KEY: "${OPENDART_API_KEY:-}"
       # Scheduler Specific
       SCHEDULER_AFTER_HOURS_WINDOW: "${SCHEDULER_AFTER_HOURS_WINDOW:-3600}"

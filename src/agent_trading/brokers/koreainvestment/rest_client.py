@@ -1875,6 +1875,32 @@ class KISRestClient:
                 return False
         return True
 
+    async def _wait_for_inquiry_budget(self, timeout: float = 2.5) -> bool:
+        """VTTC8908R 직전 inquiry/global budget이 짧게 회복될 시간을 준다.
+
+        고정 sleep만으로는 paper inquiry bucket(기본 0.5 token/sec) 회복을
+        충분히 흡수하지 못한다. 따라서 fallback_cash가 제공된 안전 경로에
+        한해 짧은 bounded wait를 허용해 불필요한 ``orderable_amount=0``
+        차단을 줄인다.
+        """
+        mgr = self.budget_manager
+        if mgr is None or self._has_budget_for_inquiry():
+            return True
+
+        deadline = time.monotonic() + max(0.1, timeout)
+        poll_interval = max(
+            0.05,
+            min(
+                0.5,
+                0.5 / max(mgr.inquiry.refill_rate, 0.01),
+            ),
+        )
+        while time.monotonic() < deadline:
+            if self._has_budget_for_inquiry():
+                return True
+            await asyncio.sleep(poll_interval)
+        return self._has_budget_for_inquiry()
+
     async def get_orderable_cash(
         self,
         account_ref: str = "",
@@ -1936,8 +1962,11 @@ class KISRestClient:
             ``"vttc8908r"``, ``"budget_precheck_fallback"``,
             ``"budget_exhausted"``, ``"api_failure"``, ``"missing_field"``.
         """
-        # ── P2: budget 사전 확인 ─────────────────────────────────────────
-        if fallback_cash is not None and not self._has_budget_for_inquiry():
+        # ── P2: budget 사전 확인 + bounded wait ─────────────────────────
+        if (
+            fallback_cash is not None
+            and not await self._wait_for_inquiry_budget()
+        ):
             logger.warning(
                 "[VTTC8908R] inquiry budget pre-check exhausted "
                 "— skipping orderable_cash fetch for account=%s",

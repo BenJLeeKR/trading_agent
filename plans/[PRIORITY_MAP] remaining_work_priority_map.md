@@ -1062,7 +1062,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   - 향후 `policy input schema versioning`, `attribution`, `prompt contract 고정`
     작업의 최소 구조 경계 확보
 - [x] after-market signal feature batch 자동화 1차 추가
-  - `ops-scheduler`가 Nextrade after-market 종료 시각인 `20:10 KST` 이후
+  - `ops-scheduler`가 장 마감 후 배치 시각인 `16:10 KST` 이후
     `signal feature input 생성 → snapshot batch 적재`를 순차 실행
   - `generate_signal_feature_snapshot_input.py`가
     trading universe 기준 KIS 일봉을 조회해
@@ -1090,7 +1090,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
     `generate_signal_feature_snapshot_input.py` 수동 실행 후
     `signal_feature_snapshots`에 47건 적재까지 완료
   - 자동 배치 정상 동작 여부는
-    오늘 `20:10 KST` 이후 `operations_day_runs.summary_json`과
+    오늘 `16:10 KST` 이후 `operations_day_runs.summary_json`과
     `signal_feature_snapshots` 적재 건수로 재확인 필요
 - [ ] signal feature after-market 배치 운영 안정화 / 리팩토링 2차
   - 배경
@@ -1109,7 +1109,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
       구조로 리팩토링해
       운영 안정성, audit, replay, manual recovery를 함께 확보한다.
   - `P0`
-    - [x] 장후 `20:10 KST` 시점의 대상 유니버스를 먼저 freeze 하고,
+    - [x] 장후 `16:10 KST` 시점의 대상 유니버스를 먼저 freeze 하고,
       이후 재시도/재실행 중에도 같은 대상 집합을 유지하도록 만든다.
       - `generate_signal_feature_snapshot_input.py`가
         `universe_freeze_runs` / `universe_freeze_run_items`를 우선 조회해

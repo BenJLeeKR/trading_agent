@@ -362,6 +362,7 @@ async def list_orders(
     account_id: str | None = Query(None),
     client_order_id: str | None = Query(None),
     status: str | None = Query(None),
+    target_date: date | None = Query(None, alias="date"),
     trade_decision_id: str | None = Query(None, description="Filter by trade decision UUID"),
     decision_context_id: str | None = Query(None, description="Filter by decision context UUID"),
     limit: int = Query(100, ge=1, le=10000),
@@ -380,10 +381,19 @@ async def list_orders(
                 status_code=422,
                 detail=f"Invalid order status: {status}",
             )
+    created_from: datetime | None = None
+    created_to: datetime | None = None
+    if target_date is not None:
+        kst_start = datetime.combine(target_date, datetime.min.time(), tzinfo=_KST)
+        kst_end = kst_start + timedelta(days=1) - timedelta(microseconds=1)
+        created_from = kst_start.astimezone(timezone.utc)
+        created_to = kst_end.astimezone(timezone.utc)
     query = OrderQuery(
         account_id=UUID(account_id) if account_id else None,
         client_order_id=client_order_id,
         status=parsed_status,
+        created_from=created_from,
+        created_to=created_to,
         trade_decision_id=UUID(trade_decision_id) if trade_decision_id else None,
         decision_context_id=UUID(decision_context_id) if decision_context_id else None,
         limit=limit,

@@ -1001,6 +1001,7 @@ async def _run_one_cycle(
         # ★ Per-symbol transaction 생성 (격리 보장)
         # 변경 전: postgres_runtime()이 하나의 transaction을 모든 symbol이 공유
         # 변경 후: 각 symbol이 독립적 transaction 사용
+        from agent_trading.config.settings import AppSettings
         from agent_trading.db.transaction import transaction as _db_transaction
         from agent_trading.repositories.postgres.bootstrap import build_postgres_repositories
         from agent_trading.services.decision_orchestrator import DecisionOrchestratorService
@@ -1009,7 +1010,15 @@ async def _run_one_cycle(
 
         async with _db_transaction() as tx:
             repos: RepositoryContainer = build_postgres_repositories(tx)
-            orchestrator = DecisionOrchestratorService(repos=repos)
+            settings = AppSettings()
+            orchestrator = DecisionOrchestratorService(
+                repos=repos,
+                llm_provider=settings.llm_provider,
+                provider_api_key=settings.provider_api_key or "",
+                provider_base_url=settings.provider_base_url or "",
+                provider_model_id=settings.provider_model_id or "",
+                provider_timeout_seconds=settings.provider_timeout_seconds or 120,
+            )
             reconciliation_service = ReconciliationService(repos=repos)
             order_manager = OrderManager(
                 repos=repos,

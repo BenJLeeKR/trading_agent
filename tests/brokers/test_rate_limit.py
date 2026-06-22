@@ -561,3 +561,54 @@ class TestConsumeOrRaiseGlobalRestRollback:
             f"Global REST not consumed on success: expected 4, "
             f"got {mgr.global_rest.remaining}"
         )
+
+
+class TestWaitUntilBucketAvailable:
+    @pytest.mark.asyncio
+    async def test_wait_until_bucket_available_succeeds_after_refill(self) -> None:
+        mgr = RateLimitBudgetManager(
+            inquiry_capacity=1,
+            inquiry_refill_rate=20.0,
+            order_capacity=100,
+            order_refill_rate=0.0,
+            market_data_capacity=100,
+            market_data_refill_rate=0.0,
+            reconciliation_capacity=100,
+            reconciliation_refill_rate=0.0,
+            auth_capacity=100,
+            auth_refill_rate=0.0,
+            global_rest_capacity=0,
+        )
+        mgr.inquiry.remaining = 0
+
+        await mgr.wait_until_bucket_available(
+            BucketType.INQUIRY,
+            timeout=0.2,
+        )
+
+        assert mgr.inquiry.remaining >= 1
+
+    @pytest.mark.asyncio
+    async def test_wait_until_bucket_available_times_out(self) -> None:
+        mgr = RateLimitBudgetManager(
+            inquiry_capacity=1,
+            inquiry_refill_rate=0.0,
+            order_capacity=100,
+            order_refill_rate=0.0,
+            market_data_capacity=100,
+            market_data_refill_rate=0.0,
+            reconciliation_capacity=100,
+            reconciliation_refill_rate=0.0,
+            auth_capacity=100,
+            auth_refill_rate=0.0,
+            global_rest_capacity=0,
+        )
+        mgr.inquiry.remaining = 0
+
+        with pytest.raises(BudgetExhaustedError) as exc_info:
+            await mgr.wait_until_bucket_available(
+                BucketType.INQUIRY,
+                timeout=0.05,
+            )
+
+        assert exc_info.value.bucket == BucketType.INQUIRY.value

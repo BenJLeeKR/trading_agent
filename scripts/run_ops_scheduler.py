@@ -93,7 +93,7 @@ DEFAULT_DECISION_INTERVAL_SECONDS = 300
 DEFAULT_POST_SUBMIT_INTERVAL_SECONDS = 30
 DEFAULT_FILL_SYNC_INTERVAL_SECONDS = 600
 DEFAULT_FILL_SYNC_AFTER_HOURS_INTERVAL_SECONDS = 1800
-DEFAULT_SIGNAL_FEATURE_BATCH_TIME = dtime(20, 10)
+DEFAULT_SIGNAL_FEATURE_BATCH_TIME = dtime(16, 10)
 DEFAULT_INSTRUMENT_MASTER_SYNC_TIME = dtime(7, 50)
 DEFAULT_INSTRUMENT_MASTER_SYNC_CSV_PATH = (
     "data/instrument_master/normalized/kis_kospi_kosdaq_master_normalized_for_sync.csv"
@@ -236,10 +236,12 @@ class SchedulerState:
     recovery_batch_done: bool = False
     # 장후 첫 1회 full snapshot(positions+cash) 완료 여부
     after_hours_full_snapshot_done: bool = False
-    # Nextrade after-market 종료 후 signal feature batch 1회 실행 여부
+    # 장 마감 후 16:10 KST signal feature batch 1회 실행 여부
     signal_feature_batch_done: bool = False
     # 장전 instrument master sync 1회 실행 여부
     instrument_master_sync_done: bool = False
+    # 장전 sync window를 놓친 사실을 1회만 기록하기 위한 플래그
+    instrument_master_sync_missed: bool = False
 
 
 def _derive_operations_day_status(state: SchedulerState) -> str:
@@ -946,6 +948,7 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
         "after_hours_full_snapshot_done": state.after_hours_full_snapshot_done,
         "signal_feature_batch_done": state.signal_feature_batch_done,
         "instrument_master_sync_done": state.instrument_master_sync_done,
+        "instrument_master_sync_missed": state.instrument_master_sync_missed,
         "scheduler_runtime": _build_scheduler_runtime_summary(),
         "command_health": {k: v for k, v in command_health.items() if v is not None},
         "token_cache_health": token_cache_health,
@@ -1712,6 +1715,45 @@ async def _run_instrument_master_sync(
     logger.info("phase=instrument-master-sync complete")
 
 
+async def _mark_instrument_master_sync_missed(
+    state: SchedulerState,
+    *,
+    now: datetime,
+    instrument_master_sync_at: datetime,
+    intraday_at: datetime,
+    dsn: str | None = None,
+) -> None:
+    """장전 instrument master sync window 누락을 1회만 기록한다."""
+    if state.instrument_master_sync_done or state.instrument_master_sync_missed:
+        return
+    if _latest_command_result(state, {"instrument_master_sync", "instrument_master_normalize"}) is not None:
+        return
+
+    state.instrument_master_sync_missed = True
+    state.command_results.append(
+        _build_skip_command_result(
+            name="instrument_master_sync",
+            argv=_instrument_master_sync_command(
+                csv_path=_resolve_repo_path(DEFAULT_INSTRUMENT_MASTER_SYNC_CSV_PATH),
+            ),
+            skipped_reason="missed_pre_market_window",
+            details={
+                "now_kst": now.isoformat(),
+                "scheduled_at_kst": instrument_master_sync_at.isoformat(),
+                "intraday_start_kst": intraday_at.isoformat(),
+            },
+        )
+    )
+    logger.warning(
+        "phase=instrument-master-sync missed — scheduler started after pre-market window "
+        "(now=%s scheduled=%s intraday_start=%s)",
+        now.isoformat(),
+        instrument_master_sync_at.isoformat(),
+        intraday_at.isoformat(),
+    )
+    await _persist_operations_day_run(state, dsn)
+
+
 async def _run_end_of_day(
     state: SchedulerState,
     *,
@@ -1828,7 +1870,7 @@ async def _run_after_market_signal_feature_batch(
     signal_feature_input_path: str = "data/signal_feature_snapshot_input.json",
     dsn: str | None = None,
 ) -> None:
-    """Run one signal feature snapshot batch after Nextrade after-market closes."""
+    """Run one signal feature snapshot batch at the configured post-close time."""
     if state.signal_feature_batch_done:
         return
     trigger_at = _combine(state.run_date, signal_feature_batch_at)
@@ -2895,6 +2937,17 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                             "Instrument master sync skipped by session gate for %s",
                             run_date.isoformat(),
                         )
+                elif (
+                    now >= intraday_at
+                    and not args.skip_pre_market
+                ):
+                    await _mark_instrument_master_sync_missed(
+                        state,
+                        now=now,
+                        instrument_master_sync_at=instrument_master_sync_at,
+                        intraday_at=intraday_at,
+                        dsn=dsn,
+                    )
 
                 if now >= pre_market_at and not state.pre_market_done and not args.skip_pre_market:
                     if await _session_gate(session_provider, run_date, state, "pre_market"):
@@ -3112,7 +3165,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--signal-feature-batch-time",
         type=_parse_hhmm,
         default=DEFAULT_SIGNAL_FEATURE_BATCH_TIME,
-        help="After-market signal feature batch trigger time in KST.",
+        help="Signal feature batch trigger time in KST.",
     )
     parser.add_argument(
         "--signal-feature-input-path",

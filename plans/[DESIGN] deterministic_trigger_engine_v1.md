@@ -233,7 +233,7 @@ deterministic trigger의 입력 품질은
 다음 운영 안정화 항목을 선행 전제로 둔다.
 
 - `P0`
-  - [ ] 장후 `20:10 KST` 시점의 대상 universe를 먼저 freeze 하고,
+  - [ ] 장후 `16:10 KST` 시점의 대상 universe를 먼저 freeze 하고,
     fetch / persist / retry는 같은 대상 집합 기준으로 수행한다.
   - [ ] 첫 구현 단계는
     `universe_freeze_runs` / `universe_freeze_run_items`

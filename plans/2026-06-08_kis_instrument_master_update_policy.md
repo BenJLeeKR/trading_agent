@@ -46,7 +46,7 @@
     `metadata.index_memberships`는 backward-compatible fallback으로 함께 유지한다.
 - `--apply` 실행 시 기본 정책:
   - 비거래일: 허용
-  - 거래일 장전 (`08:00` 이전 KST): 허용
+  - 거래일 장전 (`08:50` 이전 KST): 허용
   - 거래일 장후 (`15:30:30` 이후 KST): 허용
   - 거래일 장중: 차단
 - 예외:
@@ -67,8 +67,13 @@
   - 초기에는 `metadata.index_memberships` 배열 허용,
     후속으로 시계열 membership table 승격을 검토한다.
 - scheduler 반영
-  - `ops-scheduler`는 거래일 `07:50 KST`에 `instrument master sync`를 1회 시도한다.
-  - 실제 실행 순서는 `원본 CSV 정규화 -> instrument master sync`다.
+- `ops-scheduler`는 거래일 `07:50 KST`에 `instrument master sync`를 1회 시도한다.
+- 실제 실행 순서는 `원본 CSV 정규화 -> instrument master sync`다.
+- 장전 정시 실행(`07:50`)을 놓치더라도, scheduler가 `08:50 KST` 이전에 복구되면
+  같은 거래일 장전 catch-up sync를 재시도할 수 있어야 한다.
+- `08:50 KST` 이후에도 `instrument_master_sync_done=false`라면
+  `operations_day_runs.summary_json`에 `missed_pre_market_window`를 기록해
+  운영자가 즉시 누락을 식별할 수 있어야 한다.
   - 기본 CSV 경로는 `data/instrument_master/normalized/kis_kospi_kosdaq_master_normalized_for_sync.csv`다.
   - 기본 원본 CSV 경로는 `data/instrument_master/source/kospi_master.csv`, `data/instrument_master/source/kosdaq_master.csv`다.
   - 원본 CSV는 `data/instrument_master/archive/<YYYY-MM-DD>/` 아래로 자동 보관한다.

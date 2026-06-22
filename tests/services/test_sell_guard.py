@@ -1223,3 +1223,131 @@ async def test_sell_guard_stale_pending_submit_with_broker_native_id_included() 
     assert sa.is_blocked is True, (
         "Stale PENDING_SUBMIT with broker_native_order_id should block sell"
     )
+
+
+async def test_sell_guard_prior_day_submitted_sell_excluded() -> None:
+    """전일 DAY SUBMITTED SELL 잔량은 다음 거래일 sell guard에서 제외한다."""
+    repos = build_in_memory_repositories()
+    resolver = AvailableSellQtyResolver(repos=repos)
+
+    account_id = uuid4()
+    instrument = _make_instrument()
+    await repos.instruments.add(instrument)
+
+    old_time = datetime.now(timezone.utc) - timedelta(days=1, minutes=5)
+    order = _make_order(
+        account_id=account_id,
+        instrument_id=instrument.instrument_id,
+        side=OrderSide.SELL,
+        quantity="30",
+        status=OrderStatus.SUBMITTED,
+    )
+    order = OrderRequestEntity(
+        order_request_id=order.order_request_id,
+        account_id=order.account_id,
+        instrument_id=order.instrument_id,
+        client_order_id=order.client_order_id,
+        idempotency_key=order.idempotency_key,
+        correlation_id=order.correlation_id,
+        side=order.side,
+        order_type=order.order_type,
+        requested_quantity=order.requested_quantity,
+        status=order.status,
+        trade_decision_id=order.trade_decision_id,
+        decision_context_id=order.decision_context_id,
+        requested_price=order.requested_price,
+        time_in_force=TimeInForce.DAY,
+        status_reason_code=order.status_reason_code,
+        status_reason_message=order.status_reason_message,
+        submitted_at=old_time,
+        created_at=old_time,
+        updated_at=old_time,
+        version=order.version,
+        order_intent_id=order.order_intent_id,
+    )
+    await repos.orders.add(order)
+
+    snap = _make_position_snapshot(
+        account_id=account_id,
+        instrument_id=instrument.instrument_id,
+        quantity="50",
+    )
+    await repos.position_snapshots.add(snap)
+
+    sa = await resolver.resolve(
+        account_id=account_id,
+        symbol=instrument.symbol,
+        requested_qty=Decimal("20"),
+    )
+
+    assert sa.open_sell_qty == Decimal("0")
+    assert sa.available_sell_qty == Decimal("50")
+    assert sa.is_blocked is False
+
+
+async def test_sell_guard_prior_day_partial_remaining_excluded() -> None:
+    """전일 DAY PARTIALLY_FILLED 잔량은 다음 거래일 sell guard에서 제외한다."""
+    repos = build_in_memory_repositories()
+    resolver = AvailableSellQtyResolver(repos=repos)
+
+    account_id = uuid4()
+    instrument = _make_instrument()
+    await repos.instruments.add(instrument)
+
+    old_time = datetime.now(timezone.utc) - timedelta(days=1, minutes=5)
+    order = _make_order(
+        account_id=account_id,
+        instrument_id=instrument.instrument_id,
+        side=OrderSide.SELL,
+        quantity="40",
+        status=OrderStatus.PARTIALLY_FILLED,
+    )
+    order = OrderRequestEntity(
+        order_request_id=order.order_request_id,
+        account_id=order.account_id,
+        instrument_id=order.instrument_id,
+        client_order_id=order.client_order_id,
+        idempotency_key=order.idempotency_key,
+        correlation_id=order.correlation_id,
+        side=order.side,
+        order_type=order.order_type,
+        requested_quantity=order.requested_quantity,
+        status=order.status,
+        trade_decision_id=order.trade_decision_id,
+        decision_context_id=order.decision_context_id,
+        requested_price=order.requested_price,
+        time_in_force=TimeInForce.DAY,
+        status_reason_code=order.status_reason_code,
+        status_reason_message=order.status_reason_message,
+        submitted_at=old_time,
+        created_at=old_time,
+        updated_at=old_time,
+        version=order.version,
+        order_intent_id=order.order_intent_id,
+    )
+    await repos.orders.add(order)
+
+    bo = _make_broker_order(order_request_id=order.order_request_id)
+    await repos.broker_orders.add(bo)
+    fill = _make_fill_event(
+        broker_order_id=bo.broker_order_id,
+        fill_quantity="5",
+    )
+    await repos.fill_events.add(fill)
+
+    snap = _make_position_snapshot(
+        account_id=account_id,
+        instrument_id=instrument.instrument_id,
+        quantity="50",
+    )
+    await repos.position_snapshots.add(snap)
+
+    sa = await resolver.resolve(
+        account_id=account_id,
+        symbol=instrument.symbol,
+        requested_qty=Decimal("20"),
+    )
+
+    assert sa.partially_filled_remaining_qty == Decimal("0")
+    assert sa.available_sell_qty == Decimal("50")
+    assert sa.is_blocked is False

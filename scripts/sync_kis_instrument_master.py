@@ -48,7 +48,10 @@ logging.basicConfig(
 logger = logging.getLogger("sync_kis_instrument_master")
 
 KST = ZoneInfo("Asia/Seoul")
-PRE_MARKET_SYNC_CUTOFF = time(8, 0)
+# ops-scheduler catch-up window와 동일하게 08:50 KST까지 장전 apply를 허용한다.
+# 07:50 정시 실행을 기본으로 유지하되, 재기동/일시 장애 후 08:50 이전 복구 시에도
+# 같은 거래일 장전 instrument master sync를 완료할 수 있어야 한다.
+PRE_MARKET_SYNC_CUTOFF = time(8, 50)
 AFTER_HOURS_SYNC_START = time(15, 30, 30)
 
 

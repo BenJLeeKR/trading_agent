@@ -865,7 +865,7 @@ class TestOrderableCashSource:
     async def test_orderable_cash_result_marks_budget_precheck_fallback(
         self, client: KISRestClient
     ) -> None:
-        with patch.object(KISRestClient, "_has_budget_for_inquiry", return_value=False):
+        with patch.object(KISRestClient, "_wait_for_inquiry_budget", AsyncMock(return_value=False)):
             result = await client.get_orderable_cash_result(
                 fallback_cash=Decimal("123456"),
             )
@@ -874,11 +874,30 @@ class TestOrderableCashSource:
         assert result.source == "budget_precheck_fallback"
 
     @pytest.mark.asyncio
+    async def test_orderable_cash_result_waits_for_budget_before_fallback(
+        self, client: KISRestClient
+    ) -> None:
+        with (
+            patch.object(KISRestClient, "_wait_for_inquiry_budget", AsyncMock(return_value=True)),
+            patch.object(
+                KISRestClient,
+                "_request",
+                AsyncMock(return_value={"output": {"ord_psbl_cash": "700000"}}),
+            ),
+        ):
+            result = await client.get_orderable_cash_result(
+                fallback_cash=Decimal("123456"),
+            )
+
+        assert result.amount == Decimal("700000")
+        assert result.source == "vttc8908r"
+
+    @pytest.mark.asyncio
     async def test_orderable_cash_result_marks_vttc8908r_success(
         self, client: KISRestClient
     ) -> None:
         with (
-            patch.object(KISRestClient, "_has_budget_for_inquiry", return_value=True),
+            patch.object(KISRestClient, "_wait_for_inquiry_budget", AsyncMock(return_value=True)),
             patch.object(
                 KISRestClient,
                 "_request",

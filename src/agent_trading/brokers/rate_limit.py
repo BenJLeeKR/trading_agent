@@ -450,6 +450,52 @@ class RateLimitBudgetManager:
 
             await asyncio.sleep(poll_interval)
 
+    async def wait_until_bucket_available(
+        self,
+        bucket: BucketType,
+        tokens: int = 1,
+        timeout: float = 30.0,
+    ) -> None:
+        """Block until the given per-operation bucket has *tokens* available.
+
+        This helper is intentionally limited to **per-operation buckets**.
+        Callers that also need the global REST gate should wait for that
+        separately or use a combined policy at the call site.
+
+        Parameters
+        ----------
+        bucket:
+            Target per-operation bucket.
+        tokens:
+            Number of tokens required.
+        timeout:
+            Maximum seconds to wait before raising.
+
+        Raises
+        ------
+        BudgetExhaustedError
+            If the bucket does not recover within *timeout* seconds.
+        """
+        deadline = datetime.now(tz=timezone.utc) + timedelta(seconds=timeout)
+        target = self._bucket(bucket)
+        poll_interval = max(0.05, min(0.5, 0.5 / max(target.refill_rate, 0.01)))
+
+        while True:
+            target._refill()
+            if target.remaining >= tokens:
+                return
+
+            if datetime.now(tz=timezone.utc) >= deadline:
+                raise BudgetExhaustedError(
+                    bucket=bucket.value,
+                    message=(
+                        f"Bucket '{bucket.value}' still exhausted after {timeout}s timeout "
+                        f"(remaining={target.remaining}/{target.capacity})"
+                    ),
+                )
+
+            await asyncio.sleep(poll_interval)
+
     def reserve_reconciliation(self, tokens: int = 1) -> bool:
         """Reserve *tokens* from the reconciliation reserve.
 
