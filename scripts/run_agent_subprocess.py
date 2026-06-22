@@ -46,10 +46,13 @@ from agent_trading.services.ai_agents.base import (
 )
 from agent_trading.services.ai_agents.event_interpretation import (
     EventInterpretationAgent,
+    StubEventInterpretationAgent,
 )
 from agent_trading.services.ai_agents.ai_risk import AIRiskAgent
+from agent_trading.services.ai_agents.ai_risk import StubAIRiskAgent
 from agent_trading.services.ai_agents.final_decision_composer import (
     FinalDecisionComposerAgent,
+    StubFinalDecisionComposerAgent,
 )
 from agent_trading.services.ai_agents.schemas import (
     AIRiskOutput,
@@ -210,6 +213,48 @@ def _safe_datetime(value: object) -> datetime | None:
         except ValueError:
             return None
     return None
+
+
+def _build_agent_triplet(
+    *,
+    provider_client: AIProviderClient | None,
+    model_id: str | None,
+) -> tuple[
+    EventInterpretationAgent | StubEventInterpretationAgent,
+    AIRiskAgent | StubAIRiskAgent,
+    FinalDecisionComposerAgent | StubFinalDecisionComposerAgent,
+]:
+    """Provider 설정 유무에 따라 subprocess용 agent 3종을 생성한다.
+
+    Provider 설정이 비어 있으면 bootstrap/orchestrator와 동일하게
+    real agent + ``None`` provider 조합을 만들지 않고 즉시 stub으로 내린다.
+    이렇게 해야 EI가 ``NoneType.generate_structured``로 깨지지 않는다.
+    """
+    if provider_client is None:
+        logger.info(
+            "Provider client unavailable in agent subprocess — using stub agents"
+        )
+        _diag("Provider client unavailable — using stub agents")
+        return (
+            StubEventInterpretationAgent(),
+            StubAIRiskAgent(),
+            StubFinalDecisionComposerAgent(),
+        )
+
+    return (
+        EventInterpretationAgent(
+            provider_client=provider_client,
+            model_id=model_id,
+        ),
+        AIRiskAgent(
+            provider_client=provider_client,
+            model_id=model_id,
+        ),
+        FinalDecisionComposerAgent(
+            provider_client=provider_client,
+            model_id=model_id,
+        ),
+    )
 
 
 def _reconstruct_external_event(d: dict[str, Any] | None) -> ExternalEventEntity | None:
@@ -700,23 +745,13 @@ def _check_fdc_skip(
             reason_codes=("risk_rejected",),
         ))
 
-    # Condition 2: 유의미한 이벤트 없음 + 미보유 → 결정론적 HOLD
-    # ★ is_degraded가 True이면 skip하지 않음 (degraded 상태에서는 FDC가 필요)
-    no_material = (
-        hasattr(event_output, "aggregate_view")
-        and event_output.aggregate_view.no_material_events
-        and not event_output.is_degraded
-    )
-    if no_material and not has_position:
-        return (True, "no_material_events_no_position", FinalDecisionComposerOutput(
-            symbol=symbol,
-            decision_type="HOLD",
-            confidence=0.0,
-            summary=f"{symbol} — 유의미한 이벤트 없음. FDC 생략.",
-            reason_codes=("no_material_events", "no_position"),
-        ))
-
-    # Condition 3: 최근 이벤트 0건 + 미보유 → 결정론적 HOLD
+    # Condition 2: 최근 이벤트 0건 + 미보유 → 결정론적 HOLD
+    # 주의:
+    # - recent_events가 실제로 존재하는데 EI가 no_material_events=True로 판단한 경우는
+    #   deterministic skip으로 잘라내지 않는다.
+    # - 이런 케이스는 FDC까지 전달해 최종 HOLD/WATCH/BUY를 AI가 조합하도록 둔다.
+    # - "이벤트는 있었지만 중요하지 않다"는 것도 최종 판단의 일부이며,
+    #   앞단 short-circuit 사유로 덮어쓰면 운영 화면에서 AI 판단 내용이 사라진다.
     if not context.recent_events and not has_position:
         return (True, "no_events_no_position", FinalDecisionComposerOutput(
             symbol=symbol,
@@ -726,7 +761,7 @@ def _check_fdc_skip(
             reason_codes=("no_events", "no_position"),
         ))
 
-    # Condition 4: 주문 가능 잔고 부족 + 미보유 → 결정론적 WATCH
+    # Condition 3: 주문 가능 잔고 부족 + 미보유 → 결정론적 WATCH
     cash = context.cash_balance_snapshot
     if (
         cash is not None
@@ -865,13 +900,16 @@ async def main() -> None:
             "set" if inp.provider_base_url else "not set",
         )
         _diag("No provider client created")
+    ei_agent, ar_agent, fdc_agent = _build_agent_triplet(
+        provider_client=provider_client,
+        model_id=inp.provider_model_id,
+    )
 
     # ── 2. Run agents sequentially ─────────────────────────────────────
     try:
         # --- 2a. Event Interpretation Agent ---
         logger.info("Starting EventInterpretationAgent.run() ...")
         _diag("Starting EventInterpretationAgent.run() ...")
-        ei_agent = EventInterpretationAgent(provider_client=provider_client, model_id=inp.provider_model_id)
         request = _reconstruct_request(inp)
         input_event_count = len(request.context.recent_events)
         _diag(f"Context reconstructed: events={input_event_count}")
@@ -916,7 +954,6 @@ async def main() -> None:
         # --- 2b. AI Risk Agent ---
         logger.info("Starting AIRiskAgent.run() ...")
         _diag("Starting AIRiskAgent.run() ...")
-        ar_agent = AIRiskAgent(provider_client=provider_client, model_id=inp.provider_model_id)
         request_with_ei = _reconstruct_request(inp, event_output=event_output)
         try:
             risk_output = await asyncio.wait_for(
@@ -983,7 +1020,6 @@ async def main() -> None:
             # --- 2c. Final Decision Composer Agent ---
             logger.info("Starting FinalDecisionComposerAgent.run() ...")
             _diag("Starting FinalDecisionComposerAgent.run() ...")
-            fdc_agent = FinalDecisionComposerAgent(provider_client=provider_client, model_id=inp.provider_model_id)
             request_with_ei_ar = _reconstruct_request(
                 inp, event_output=event_output, risk_output=risk_output,
             )

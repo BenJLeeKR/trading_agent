@@ -36,9 +36,19 @@ from agent_trading.services.ai_agents.schemas import (
 from agent_trading.services.decision_orchestrator import AssembledContext
 from scripts.run_agent_subprocess import AgentSubprocessInput, _check_fdc_skip
 from scripts.run_agent_subprocess import (
+    _build_agent_triplet,
     _build_ar_timeout_fallback,
     _build_ei_timeout_fallback,
     _build_fdc_timeout_fallback,
+)
+from agent_trading.services.ai_agents.event_interpretation import (
+    EventInterpretationAgent,
+    StubEventInterpretationAgent,
+)
+from agent_trading.services.ai_agents.ai_risk import AIRiskAgent, StubAIRiskAgent
+from agent_trading.services.ai_agents.final_decision_composer import (
+    FinalDecisionComposerAgent,
+    StubFinalDecisionComposerAgent,
 )
 
 
@@ -234,6 +244,42 @@ def _make_request(
     )
 
 
+def test_build_agent_triplet_uses_stub_agents_when_provider_missing() -> None:
+    ei_agent, ar_agent, fdc_agent = _build_agent_triplet(
+        provider_client=None,
+        model_id="gemini-3.5-flash",
+    )
+
+    assert isinstance(ei_agent, StubEventInterpretationAgent)
+    assert isinstance(ar_agent, StubAIRiskAgent)
+    assert isinstance(fdc_agent, StubFinalDecisionComposerAgent)
+
+
+class _DummyProviderClient:
+    async def generate_structured(
+        self,
+        *,
+        model_id: str,
+        system_prompt: str,
+        user_prompt: str,
+        response_format: type,
+        temperature: float = 0.0,
+        seed: int | None = None,
+    ):
+        raise AssertionError("이 테스트에서는 실제 provider 호출이 발생하면 안 됩니다.")
+
+
+def test_build_agent_triplet_uses_real_agents_when_provider_exists() -> None:
+    ei_agent, ar_agent, fdc_agent = _build_agent_triplet(
+        provider_client=_DummyProviderClient(),
+        model_id="gemini-3.5-flash",
+    )
+
+    assert isinstance(ei_agent, EventInterpretationAgent)
+    assert isinstance(ar_agent, AIRiskAgent)
+    assert isinstance(fdc_agent, FinalDecisionComposerAgent)
+
+
 # =========================================================================
 # Test: Condition 1 — Risk "reject"
 # =========================================================================
@@ -334,7 +380,7 @@ class TestFdcSkipRiskReject:
 
 
 class TestFdcSkipNoMaterialEvents:
-    """no_material_events + 미보유 → 결정론적 HOLD."""
+    """no_material_events 단독으로는 FDC를 생략하지 않는다."""
 
     def test_no_material_no_position(
         self,
@@ -342,8 +388,8 @@ class TestFdcSkipNoMaterialEvents:
         no_material_event_output: EventInterpretationOutput,
         risk_allow_output: AIRiskOutput,
     ) -> None:
-        """no_material_events=True + 미보유 → skip."""
-        context = _make_empty_context()
+        """이벤트가 존재하면 no_material_events=True여도 FDC까지 전달."""
+        context = _make_context_with_events()
         request = AgentExecutionRequest(
             decision_context_id=None,
             correlation_id="test",
@@ -353,9 +399,8 @@ class TestFdcSkipNoMaterialEvents:
             sample_subprocess_input, request,
             no_material_event_output, risk_allow_output,
         )
-        assert skip is True
-        assert reason == "no_material_events_no_position"
-        assert output.decision_type == "HOLD"
+        assert skip is False
+        assert reason == ""
 
     def test_no_material_with_position(
         self,
@@ -376,6 +421,27 @@ class TestFdcSkipNoMaterialEvents:
         )
         assert skip is False
         assert reason == ""
+
+    def test_no_material_without_recent_events_still_skips_by_no_events_rule(
+        self,
+        sample_subprocess_input: AgentSubprocessInput,
+        no_material_event_output: EventInterpretationOutput,
+        risk_allow_output: AIRiskOutput,
+    ) -> None:
+        """recent_events가 비어 있으면 no_material 여부와 무관하게 no_events rule 적용."""
+        context = _make_empty_context()
+        request = AgentExecutionRequest(
+            decision_context_id=None,
+            correlation_id="test",
+            context=context,
+        )
+        skip, reason, output = _check_fdc_skip(
+            sample_subprocess_input, request,
+            no_material_event_output, risk_allow_output,
+        )
+        assert skip is True
+        assert reason == "no_events_no_position"
+        assert output.decision_type == "HOLD"
 
 
 # =========================================================================
@@ -700,14 +766,14 @@ class TestFdcSkipDegraded:
             "Should NOT skip FDC when is_degraded=True (provider_error)"
         )
 
-    def test_fdc_skip_normal_no_material_events_regression(
+    def test_fdc_skip_normal_no_material_events_with_recent_events_no_longer_skips(
         self,
         sample_subprocess_input: AgentSubprocessInput,
         no_material_event_output: EventInterpretationOutput,
         risk_allow_output: AIRiskOutput,
     ) -> None:
-        """정상 no_material_events(is_degraded=False) → 정상 FDC skip (regression)."""
-        context = _make_empty_context()
+        """recent_events가 있으면 정상 no_material_events라도 FDC를 생략하지 않는다."""
+        context = _make_context_with_events()
         request = AgentExecutionRequest(
             decision_context_id=None,
             correlation_id="test",
@@ -717,11 +783,11 @@ class TestFdcSkipDegraded:
             sample_subprocess_input, request,
             no_material_event_output, risk_allow_output,
         )
-        assert skip is True, (
-            "Should skip FDC when no_material_events=True and not degraded"
+        assert skip is False, (
+            "Should NOT skip FDC when recent_events exist even if no_material_events=True"
         )
-        assert reason == "no_material_events_no_position", (
-            f"Expected 'no_material_events_no_position', got: {reason}"
+        assert reason == "", (
+            f"Expected empty reason, got: {reason}"
         )
 
     def test_allow_with_position_and_no_events(

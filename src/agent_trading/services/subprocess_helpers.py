@@ -48,6 +48,7 @@ def serialize_agent_input(
     context: AIPolicyContextView,
     score: ScoreResult | None,
     positional_args: tuple[Any, ...] = (),
+    provider_runtime: dict[str, Any] | None = None,
 ) -> str:
     """Serialize agent input for subprocess execution.
 
@@ -56,7 +57,7 @@ def serialize_agent_input(
 
     Extracted from DecisionOrchestratorService._serialize_agent_input().
     """
-    provider_runtime = resolve_provider_runtime_config()
+    resolved_provider_runtime = provider_runtime or resolve_provider_runtime_config()
     payload = {
         # AgentSubprocessInput top-level fields (from request)
         "decision_context_id": str(request.decision_context_id) if request.decision_context_id else None,
@@ -69,11 +70,11 @@ def serialize_agent_input(
         "context": dataclass_to_dict(context),
 
         # Provider configuration (settings.py와 동일한 해석 규칙 사용)
-        "llm_provider": provider_runtime["llm_provider"],
-        "provider_api_key": provider_runtime["provider_api_key"],
-        "provider_base_url": provider_runtime["provider_base_url"],
-        "provider_model_id": provider_runtime["provider_model_id"],
-        "provider_timeout_seconds": provider_runtime["provider_timeout_seconds"],
+        "llm_provider": resolved_provider_runtime["llm_provider"],
+        "provider_api_key": resolved_provider_runtime["provider_api_key"],
+        "provider_base_url": resolved_provider_runtime["provider_base_url"],
+        "provider_model_id": resolved_provider_runtime["provider_model_id"],
+        "provider_timeout_seconds": resolved_provider_runtime["provider_timeout_seconds"],
 
         # Legacy top-level keys (consumed by _reconstruct_context)
         "score": dataclass_to_dict(score) if score is not None else None,

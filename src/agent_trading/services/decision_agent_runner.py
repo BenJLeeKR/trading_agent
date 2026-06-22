@@ -160,6 +160,11 @@ class DecisionAgentRunner:
         agent_run_recorder: AgentRunRecorder,
         score_calculator: ScoreCalculator | None = None,
         subprocess_timeout: int = 90,
+        llm_provider: str = "",
+        provider_api_key: str = "",
+        provider_base_url: str = "",
+        provider_model_id: str = "",
+        provider_timeout_seconds: int = 60,
     ) -> None:
         self._repos = repos
         self._ei_agent = event_interpretation_agent
@@ -168,6 +173,13 @@ class DecisionAgentRunner:
         self._recorder = agent_run_recorder
         self._score_calculator = score_calculator or StubScoreCalculator()
         self._subprocess_timeout = subprocess_timeout
+        self._provider_runtime = {
+            "llm_provider": llm_provider,
+            "provider_api_key": provider_api_key,
+            "provider_base_url": provider_base_url,
+            "provider_model_id": provider_model_id,
+            "provider_timeout_seconds": provider_timeout_seconds,
+        }
 
     # ------------------------------------------------------------------
     # AI Agent execution — in-process
@@ -587,6 +599,7 @@ class DecisionAgentRunner:
             request=request,
             context=assembled_context,
             score=None,
+            provider_runtime=self._provider_runtime,
         ).encode("utf-8")
 
         # ── 2. Combined timeout ─────────────────────────────────────────

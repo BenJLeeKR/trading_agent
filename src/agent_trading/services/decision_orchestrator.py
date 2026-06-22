@@ -257,6 +257,11 @@ class DecisionOrchestratorService:
             agent_run_recorder=self._agent_recorder,
             score_calculator=self._score_calculator,
             subprocess_timeout=90,
+            llm_provider=self._llm_provider,
+            provider_api_key=self._provider_api_key,
+            provider_base_url=self._provider_base_url,
+            provider_model_id=self._provider_model_id,
+            provider_timeout_seconds=self._provider_timeout_seconds,
         )
 
     def _check_held_position_sell_override(

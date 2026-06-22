@@ -163,6 +163,27 @@ def seeded_service_with_account() -> DecisionOrchestratorService:
     return DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
 
 
+def test_agent_runner_receives_provider_runtime_from_orchestrator() -> None:
+    repos = build_in_memory_repositories()
+    service = DecisionOrchestratorService(
+        repos=repos,
+        use_subprocess_isolation=False,
+        llm_provider="gemini",
+        provider_api_key="gemini-key",
+        provider_base_url="https://example.test/v1beta/openai/",
+        provider_model_id="gemini-3.5-flash",
+        provider_timeout_seconds=88,
+    )
+
+    assert service._agent_runner._provider_runtime == {
+        "llm_provider": "gemini",
+        "provider_api_key": "gemini-key",
+        "provider_base_url": "https://example.test/v1beta/openai/",
+        "provider_model_id": "gemini-3.5-flash",
+        "provider_timeout_seconds": 88,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Existing tests (must remain green)
 # ---------------------------------------------------------------------------
