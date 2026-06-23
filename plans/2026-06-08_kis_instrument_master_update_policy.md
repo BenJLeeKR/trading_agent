@@ -132,7 +132,8 @@
   신규 `trade_decisions`는 `instrument_id`를 함께 남기도록 정리했다.
   다만 과거 데이터 중 일부는 당시 instrument master 미등록 종목 때문에
   `instrument_id`가 비어 있을 수 있으며,
-  이는 master row 보강 후 별도 backfill로 마무리한다.
+  이는 canonical placeholder row 보강 + backfill로 우선 정리했다.
+  이후 placeholder는 실제 master row 확보 시 치환 대상으로 관리한다.
   다만 membership table 직접 참조는 아직 UniverseSelection 한정이며,
   sell_guard / snapshot sync는 symbol → canonical instrument lookup 계층을 유지한다.
 - UniverseSelectionService의 allowlist 우선 경로를

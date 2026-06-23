@@ -17,9 +17,11 @@ import asyncio
 import json
 import logging
 import uuid
+import csv
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 
 from agent_trading.db.connection import close_pool, create_pool
 from agent_trading.db.transaction import TransactionManager
@@ -50,6 +52,38 @@ class SeedCounters:
     skipped_existing: int = 0
 
 
+DEFAULT_INDEX_MEMBERSHIP_SEED_CSV = "data/instrument_master/source/index_membership_seed.csv"
+
+
+def _load_index_membership_seed(path: str) -> dict[str, list[str]]:
+    target = Path(path)
+    if not target.exists():
+        return {}
+    with target.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is None:
+            return {}
+        grouped: dict[str, list[str]] = {}
+        for raw in reader:
+            symbol = str(raw.get("symbol", "")).strip().upper()
+            membership_code = str(raw.get("membership_code", "")).strip().upper()
+            if not symbol or not membership_code:
+                continue
+            grouped.setdefault(symbol, [])
+            if membership_code not in grouped[symbol]:
+                grouped[symbol].append(membership_code)
+    return grouped
+
+
+def _infer_market_segment(seed_codes: list[str]) -> str | None:
+    normalized = {str(code).strip().upper() for code in seed_codes if str(code).strip()}
+    if any(code.startswith("KOSDAQ") for code in normalized):
+        return "KOSDAQ"
+    if any(code.startswith("KOSPI") for code in normalized):
+        return "KOSPI"
+    return None
+
+
 def _build_placeholder_instrument(
     gap: MappingGap,
     *,
@@ -57,7 +91,14 @@ def _build_placeholder_instrument(
     asset_class: str,
     currency: str,
     source_tag: str,
+    market_segment: str | None = None,
+    index_memberships: list[str] | None = None,
 ) -> InstrumentEntity:
+    normalized_memberships = [
+        str(item).strip().upper()
+        for item in (index_memberships or [])
+        if str(item).strip()
+    ]
     metadata = {
         "placeholder": True,
         "placeholder_source": "mapping_gap_auto_seed",
@@ -67,6 +108,8 @@ def _build_placeholder_instrument(
         "latest_observed_at": gap.latest_observed_at.isoformat(),
         "canonical_master_pending": True,
     }
+    if normalized_memberships:
+        metadata["index_memberships"] = normalized_memberships
     return InstrumentEntity(
         instrument_id=_make_instrument_id(gap.symbol, market_code),
         symbol=gap.symbol,
@@ -77,6 +120,8 @@ def _build_placeholder_instrument(
         tick_size=Decimal("1"),
         lot_size=Decimal("1"),
         is_active=False,
+        exchange_code="KRX" if market_code == "KRX" else market_code,
+        market_segment=market_segment,
         metadata=metadata,
     )
 
@@ -133,12 +178,29 @@ async def _query_mapping_gaps(
               AND i.instrument_id IS NULL
             GROUP BY substring(err.error_text FROM 'pdno=([0-9A-Z]+)')
         ),
+        recent_trade_decisions AS (
+            SELECT
+                td.symbol,
+                'trade_decisions'::text AS source_name,
+                COUNT(*)::int AS occurrence_count,
+                MAX(td.created_at) AS latest_observed_at
+            FROM trading.trade_decisions td
+            LEFT JOIN trading.instruments i ON i.symbol = td.symbol
+            WHERE td.symbol IS NOT NULL
+              AND td.symbol <> ''
+              AND td.created_at >= NOW() - ($1 * interval '1 day')
+              AND td.instrument_id IS NULL
+              AND i.instrument_id IS NULL
+            GROUP BY td.symbol
+        ),
         unioned AS (
             SELECT * FROM recent_external
             UNION ALL
             SELECT * FROM recent_fills
             UNION ALL
             SELECT * FROM recent_snapshot_errors
+            UNION ALL
+            SELECT * FROM recent_trade_decisions
         )
         SELECT
             symbol,
@@ -174,6 +236,7 @@ async def _seed_placeholders(
     asset_class: str,
     currency: str,
     source_tag: str,
+    membership_seed: dict[str, list[str]],
 ) -> SeedCounters:
     inserted = 0
     skipped_existing = 0
@@ -188,21 +251,25 @@ async def _seed_placeholders(
                 existing.name,
             )
             continue
+        seed_codes = membership_seed.get(gap.symbol, [])
         placeholder = _build_placeholder_instrument(
             gap,
             market_code=market_code,
             asset_class=asset_class,
             currency=currency,
             source_tag=source_tag,
+            market_segment=_infer_market_segment(seed_codes),
+            index_memberships=seed_codes,
         )
         inserted += 1
         logger.info(
-            "PLACEHOLDER %s/%s sources=%s count=%d latest=%s",
+            "PLACEHOLDER %s/%s sources=%s count=%d latest=%s memberships=%s",
             placeholder.market_code,
             placeholder.symbol,
             ",".join(gap.sources),
             gap.occurrence_count,
             gap.latest_observed_at.isoformat(),
+            ",".join(seed_codes) if seed_codes else "-",
         )
         if not dry_run:
             await repo.upsert_by_symbol(placeholder)
@@ -219,6 +286,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--default-asset-class", default="kr_stock")
     parser.add_argument("--default-currency", default="KRW")
     parser.add_argument("--source-tag", default="mapping_gap_placeholder")
+    parser.add_argument(
+        "--index-membership-seed-csv",
+        default=DEFAULT_INDEX_MEMBERSHIP_SEED_CSV,
+        help="시장 세그먼트 / index_memberships 추론용 seed CSV 경로",
+    )
     parser.add_argument(
         "--allow-intraday-apply",
         action="store_true",
@@ -247,6 +319,7 @@ async def _run(args: argparse.Namespace) -> int:
             gaps = await _query_mapping_gaps(tx, lookback_days=args.lookback_days)
             logger.info("Found %d unmapped symbols across runtime tables", len(gaps))
             repo: InstrumentRepository = PostgresInstrumentRepository(tx)
+            membership_seed = _load_index_membership_seed(args.index_membership_seed_csv)
             counters = await _seed_placeholders(
                 repo,
                 gaps,
@@ -255,6 +328,7 @@ async def _run(args: argparse.Namespace) -> int:
                 asset_class=args.default_asset_class,
                 currency=args.default_currency,
                 source_tag=args.source_tag,
+                membership_seed=membership_seed,
             )
             logger.info(
                 "Summary: inserted=%d skipped_existing=%d",

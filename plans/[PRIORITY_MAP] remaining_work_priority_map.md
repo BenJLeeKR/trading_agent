@@ -598,12 +598,23 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
       - 템플릿: `data/instrument_master/source/index_membership_seed.example.csv`
       - 기본 동작은 기존 active membership과 `merge`,
         `--replace-listed-symbols` 지정 시 listed symbol만 authoritative overwrite
-  - [ ] 4차 운영 정리:
-    `trade_decisions.instrument_id`가 아직 비어 있는 잔여 종목
-    (`000030`, `003410` 등)에 대해
-    instrument master 누락 원인을 정리하고,
-    master sync 또는 placeholder seed로 canonical row를 보강한 뒤
-    남은 backfill을 마무리한다.
+  - [x] 4차 운영 정리:
+    `trade_decisions.instrument_id`가 비어 있던 잔여 종목
+    (`000030`, `003410`, `TEST` 등)은
+    canonical placeholder row 보강 + backfill로 정리했다.
+    - `seed_placeholder_instruments_from_mapping_gaps.py`가
+      `trade_decisions.instrument_id IS NULL` 심볼도
+      mapping gap source로 인식하도록 확장했다.
+    - placeholder row는 `exchange_code`, `market_segment`,
+      `metadata.index_memberships`를 함께 가질 수 있도록 보강했다.
+    - 운영 DB 기준 `trade_decisions.instrument_id IS NULL`은 `0건`까지 정리됐다.
+  - [ ] 후속 운영 정리:
+    placeholder canonical row로 남아 있는 심볼을
+    실제 instrument master row로 언제/어떻게 치환할지
+    별도 정리한다.
+    - 특히 app 컨테이너에서 `data/` 원천 파일이 기본 마운트되지 않아
+      `index_membership_seed.csv`를 스크립트가 직접 읽지 못한 경로는
+      운영 편의성 차원에서 후속 보완이 필요하다.
 - 우선순위 이유
   - universe selection, sell guard, snapshot sync가
     동일 symbol의 다중 market row에 흔들리지 않게 만드는 기반 작업이다.
