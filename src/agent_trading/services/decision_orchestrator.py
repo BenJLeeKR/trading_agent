@@ -444,14 +444,33 @@ class DecisionOrchestratorService:
         request: SubmitOrderRequest,
         assembled_context: AssembledContext,
         agent_bundle: AgentExecutionBundle,
+        instrument: InstrumentEntity | None = None,
         fdc_run_id: UUID | None = None,
     ) -> TradeDecisionEntity | None:
         """Thin wrapper — delegates to build_trade_decision_entity() + repository add."""
+        resolved_instrument = instrument
+        if resolved_instrument is None:
+            try:
+                resolved_instrument = await self._repos.instruments.get_by_symbol(
+                    symbol=request.symbol,
+                    market_code=request.market,
+                )
+                if resolved_instrument is None:
+                    resolved_instrument = await self._repos.instruments.get_by_symbol_any_market(
+                        request.symbol
+                    )
+            except Exception:
+                resolved_instrument = None
         td_entity = build_trade_decision_entity(
             decision_context_id=decision_context_id,
             request=request,
             assembled_context=assembled_context,
             agent_bundle=agent_bundle,
+            instrument_id=(
+                resolved_instrument.instrument_id
+                if resolved_instrument is not None
+                else None
+            ),
             fdc_run_id=fdc_run_id,
         )
         if td_entity is not None:
@@ -634,8 +653,54 @@ class DecisionOrchestratorService:
             strategy_selection=assembled_context.strategy_selection,
             portfolio_allocation=assembled_context.portfolio_allocation,
             deterministic_trigger=assembled_context.deterministic_trigger,
+            instrument_market_segment=assembled_context.instrument_market_segment,
+            instrument_index_memberships=assembled_context.instrument_index_memberships,
             source_type=assembled_context.source_type,
         )
+
+    @staticmethod
+    def _extract_instrument_market_segment(
+        instrument: InstrumentEntity | None,
+        request: SubmitOrderRequest,
+    ) -> str | None:
+        if instrument is not None and instrument.market_segment:
+            value = str(instrument.market_segment).strip().upper()
+            if value:
+                return value
+        metadata = request.metadata if isinstance(request.metadata, dict) else {}
+        raw = metadata.get("market_segment")
+        if raw is None:
+            return None
+        value = str(raw).strip().upper()
+        return value or None
+
+    @staticmethod
+    def _extract_instrument_index_memberships(
+        instrument: InstrumentEntity | None,
+        request: SubmitOrderRequest,
+    ) -> tuple[str, ...]:
+        candidates: object | None = None
+        if instrument is not None and isinstance(instrument.metadata, dict):
+            candidates = instrument.metadata.get("index_memberships")
+        if candidates is None and isinstance(request.metadata, dict):
+            candidates = request.metadata.get("index_memberships")
+        if candidates is None:
+            return ()
+        if isinstance(candidates, str):
+            raw_values = [candidates]
+        elif isinstance(candidates, (list, tuple, set, frozenset)):
+            raw_values = list(candidates)
+        else:
+            return ()
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in raw_values:
+            item = str(value).strip().upper()
+            if not item or item in seen:
+                continue
+            seen.add(item)
+            normalized.append(item)
+        return tuple(normalized)
 
     def _build_short_circuit_agent_bundle(
         self,
@@ -865,6 +930,10 @@ class DecisionOrchestratorService:
                 symbol=request.symbol,
                 market_code=request.market,
             )
+            if instrument is None:
+                instrument = await self._repos.instruments.get_by_symbol_any_market(
+                    request.symbol
+                )
         except Exception:
             pass
 
@@ -964,6 +1033,14 @@ class DecisionOrchestratorService:
             strategy_selection=derivation.strategy_selection,
             portfolio_allocation=derivation.portfolio_allocation,
             deterministic_trigger=derivation.deterministic_trigger,
+            instrument_market_segment=self._extract_instrument_market_segment(
+                instrument,
+                request,
+            ),
+            instrument_index_memberships=self._extract_instrument_index_memberships(
+                instrument,
+                request,
+            ),
             source_type=derivation.source_type,
         )
 
@@ -984,6 +1061,14 @@ class DecisionOrchestratorService:
             strategy_selection=derivation.strategy_selection,
             portfolio_allocation=derivation.portfolio_allocation,
             deterministic_trigger=derivation.deterministic_trigger,
+            instrument_market_segment=self._extract_instrument_market_segment(
+                instrument,
+                request,
+            ),
+            instrument_index_memberships=self._extract_instrument_index_memberships(
+                instrument,
+                request,
+            ),
             source_type=derivation.source_type,
         )
 
@@ -1209,6 +1294,7 @@ class DecisionOrchestratorService:
             request=request,
             assembled_context=assembled_context,
             agent_bundle=agent_bundle,
+            instrument=instrument,
             fdc_run_id=_fdc_run_id,
         )
         if td_entity is not None:

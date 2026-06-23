@@ -87,6 +87,8 @@ class SelectedSymbol:
     market: str
     source_type: SourceType = SourceType.CORE
     inclusion_reason: str = INCLUSION_REASON_CORE
+    market_segment: str | None = None
+    index_memberships: tuple[str, ...] = ()
 
     @property
     def priority(self) -> int:

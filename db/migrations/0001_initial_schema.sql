@@ -112,6 +112,8 @@ CREATE TABLE IF NOT EXISTS trading.instruments (
     instrument_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     symbol VARCHAR(64) NOT NULL,
     market_code VARCHAR(32) NOT NULL,
+    exchange_code VARCHAR(32) NOT NULL,
+    market_segment VARCHAR(32) NOT NULL,
     asset_class VARCHAR(32) NOT NULL,
     currency CHAR(3) NOT NULL DEFAULT 'KRW',
     name VARCHAR(255) NOT NULL,

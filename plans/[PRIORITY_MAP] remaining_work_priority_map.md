@@ -559,6 +559,16 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
     - `kis_snapshot_sync`도 `get_by_symbol_any_market()`로 전환
     - 저장 canonical row는 `market_code='KRX'`를 유지하고,
       read path에서만 `exchange_code + market_segment` 우선 해석을 적용
+  - [x] 3차: `trade_decisions.instrument_id`도
+    canonical instrument row와 연결되도록 저장 경로를 보강
+    - `DecisionOrchestratorService`가 `symbol + market` 우선,
+      실패 시 `get_by_symbol_any_market()` fallback으로
+      canonical instrument를 조회한 뒤
+      `TradeDecisionEntity.instrument_id`를 채우도록 수정했다.
+    - 기존 누적 데이터는 backfill을 수행해
+      instrument master에 존재하는 건은 대부분 연결 완료했다.
+    - 남은 `instrument_id IS NULL` 건은
+      당시 `trading.instruments`에 row가 없던 종목(`000030`, `003410`, test symbol) 위주다.
   - [ ] 4차 리팩토링 검토:
     `market_code='KRX'` canonical 저장 모델을 유지할지,
     아니면 `market_code='KOSPI'|'KOSDAQ'` + `exchange_code='KRX'`로
@@ -588,6 +598,12 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
       - 템플릿: `data/instrument_master/source/index_membership_seed.example.csv`
       - 기본 동작은 기존 active membership과 `merge`,
         `--replace-listed-symbols` 지정 시 listed symbol만 authoritative overwrite
+  - [ ] 4차 운영 정리:
+    `trade_decisions.instrument_id`가 아직 비어 있는 잔여 종목
+    (`000030`, `003410` 등)에 대해
+    instrument master 누락 원인을 정리하고,
+    master sync 또는 placeholder seed로 canonical row를 보강한 뒤
+    남은 backfill을 마무리한다.
 - 우선순위 이유
   - universe selection, sell guard, snapshot sync가
     동일 symbol의 다중 market row에 흔들리지 않게 만드는 기반 작업이다.

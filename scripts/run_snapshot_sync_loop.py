@@ -41,7 +41,11 @@ import signal
 import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from agent_trading.brokers.snapshot_factory import build_snapshot_sync_components
 from agent_trading.config.settings import AppSettings
@@ -57,6 +61,7 @@ from agent_trading.services.snapshot_sync import (
     get_budget_fallback_counters,
     sync_all_accounts,
 )
+from scripts.run_orchestrator_once import _seed_if_empty
 
 # ── Logging ────────────────────────────────────────────────────────────────
 
@@ -216,6 +221,10 @@ async def _run_one_cycle(
         run_id = uuid4()
         async with transaction() as tx:
             repos = build_postgres_repositories(tx)
+
+            seeded = await _seed_if_empty(repos)
+            if seeded:
+                logger.info("Snapshot sync prerequisite seed completed.")
 
             # ── 3a. Insert "running" sync run FIRST ────────────────────
             # The FK constraint on snapshot_sync_run_id requires that the

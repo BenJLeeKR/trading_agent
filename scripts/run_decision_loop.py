@@ -282,6 +282,8 @@ class UniverseSymbol:
     market: str = MARKET
     source_type: str = "core"
     inclusion_reason: str = "approved_core_universe"
+    market_segment: str | None = None
+    index_memberships: tuple[str, ...] = ()
 
 # ── Signal handling ─────────────────────────────────────────────────────────
 
@@ -553,6 +555,8 @@ async def _read_trading_universe(
                         market=s.market,
                         source_type=s.source_type.value,
                         inclusion_reason=s.inclusion_reason,
+                        market_segment=s.market_segment,
+                        index_memberships=s.index_memberships,
                     )
                     for s in selected
                 )
@@ -977,6 +981,8 @@ async def _run_one_cycle(
     symbol: str = SYMBOL,
     market: str = MARKET,
     source_type: str = "core",
+    market_segment: str | None = None,
+    index_memberships: tuple[str, ...] = (),
     dry_run_reason: str | None = None,
     remaining_general_buy_budget: int | None = None,
     runtime: dict[str, object],              # ★ 공유 runtime (외부에서 주입)
@@ -1104,7 +1110,11 @@ async def _run_one_cycle(
                 order_type=order_type,
                 quantity=Decimal("1"),
                 price=price,
-                metadata={"source_type": source_type},
+                metadata={
+                    "source_type": source_type,
+                    "market_segment": market_segment,
+                    "index_memberships": list(index_memberships or ()),
+                },
             )
 
             # ── 3.5 Seeded news → degraded path with parallel T3 ─────────
@@ -1856,6 +1866,10 @@ async def _run_loop(
                                 symbol=item.symbol,
                                 market=item.market,
                                 source_type=item.source_type,
+                                market_segment=getattr(item, "market_segment", None),
+                                index_memberships=tuple(
+                                    getattr(item, "index_memberships", ()) or ()
+                                ),
                                 dry_run_reason=symbol_dry_run_reason,
                                 remaining_general_buy_budget=remaining_general_buy_budget,
                                 runtime=runtime,

@@ -150,6 +150,8 @@ class AssembledContext:
     strategy_selection: StrategySelectionAssessment | None = None
     portfolio_allocation: PortfolioAllocationAssessment | None = None
     deterministic_trigger: DeterministicTriggerAssessment | None = None
+    instrument_market_segment: str | None = None
+    instrument_index_memberships: tuple[str, ...] = ()
     # --- Axis 2: Source type for no-event policy differentiation ---
     source_type: str = "core"
     """Origin of this symbol: ``"core"`` | ``"held_position"`` | ``"event_overlay"`` | ``"market_overlay"``."""
@@ -174,6 +176,8 @@ class AIPolicyContextView:
     strategy_selection: StrategySelectionAssessment | None = None
     portfolio_allocation: PortfolioAllocationAssessment | None = None
     deterministic_trigger: DeterministicTriggerAssessment | None = None
+    instrument_market_segment: str | None = None
+    instrument_index_memberships: tuple[str, ...] = ()
     source_type: str = "core"
 
 

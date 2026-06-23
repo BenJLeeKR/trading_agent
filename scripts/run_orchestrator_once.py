@@ -178,17 +178,18 @@ def _seed_base_url() -> str:
 # Seed helpers
 # ---------------------------------------------------------------------------
 async def _seed_if_empty(repos: RepositoryContainer) -> bool:
-    """Idempotent seed: insert FK chain only when prerequisite rows exist.
+    """Idempotent seed: ensure prerequisite FK chain exists.
 
-    Checks each entity by PK (deterministic UUID) to avoid
-    ``UniqueViolationError`` on re-run (e.g. after manual backfill).
+    Partial rows may already exist in production-like environments
+    (for example ``clients``/``broker_accounts`` exist while ``accounts``
+    was deleted or never inserted).  Therefore this helper must check
+    and heal each entity independently instead of short-circuiting on
+    the first existing row.
 
-    Returns ``True`` if seeding was performed, ``False`` if already seeded.
+    Returns ``True`` if at least one row was inserted, ``False`` if the
+    full prerequisite chain already existed.
     """
-    existing = await repos.clients.get(CLIENT_ID)
-    if existing is not None:
-        logger.info("Seed already exists (client=%s) — skipping.", CLIENT_ID)
-        return False
+    inserted_any = False
 
     logger.info("Seeding prerequisite FK chain …")
 
@@ -206,6 +207,7 @@ async def _seed_if_empty(repos: RepositoryContainer) -> bool:
             broker_account_code=_seed_broker_code(),
         )
         await repos.broker_accounts.add(broker_account)
+        inserted_any = True
     else:
         logger.info("BrokerAccount %s already exists — skipping.", BROKER_ACCOUNT_ID)
 
@@ -220,6 +222,7 @@ async def _seed_if_empty(repos: RepositoryContainer) -> bool:
             base_currency="KRW",
         )
         await repos.clients.add(client)
+        inserted_any = True
     else:
         logger.info("Client %s already exists — skipping.", CLIENT_ID)
 
@@ -237,6 +240,7 @@ async def _seed_if_empty(repos: RepositoryContainer) -> bool:
             account_code="EPC001-PAPER-ENTRYPOINT",
         )
         await repos.accounts.add(account)
+        inserted_any = True
     else:
         logger.info("Account %s already exists — skipping.", ACCOUNT_ID)
 
@@ -252,6 +256,7 @@ async def _seed_if_empty(repos: RepositoryContainer) -> bool:
             status="active",
         )
         await repos.strategies.add(strategy)
+        inserted_any = True
     else:
         logger.info("Strategy %s already exists — skipping.", STRATEGY_ID)
 
@@ -278,18 +283,29 @@ async def _seed_if_empty(repos: RepositoryContainer) -> bool:
             activated_at=datetime.now(timezone.utc),
         )
         await repos.config_versions.add(config_version)
+        inserted_any = True
     else:
         logger.info("ConfigVersion %s already exists — skipping.", CONFIG_VERSION_ID)
 
-    logger.info(
-        "Seed complete: broker_account=%s client=%s account=%s strategy=%s config_version=%s",
-        BROKER_ACCOUNT_ID,
-        CLIENT_ID,
-        ACCOUNT_ID,
-        STRATEGY_ID,
-        CONFIG_VERSION_ID,
-    )
-    return True
+    if inserted_any:
+        logger.info(
+            "Seed complete: broker_account=%s client=%s account=%s strategy=%s config_version=%s",
+            BROKER_ACCOUNT_ID,
+            CLIENT_ID,
+            ACCOUNT_ID,
+            STRATEGY_ID,
+            CONFIG_VERSION_ID,
+        )
+    else:
+        logger.info(
+            "Seed already exists and is complete: broker_account=%s client=%s account=%s strategy=%s config_version=%s",
+            BROKER_ACCOUNT_ID,
+            CLIENT_ID,
+            ACCOUNT_ID,
+            STRATEGY_ID,
+            CONFIG_VERSION_ID,
+        )
+    return inserted_any
 
 
 def _serialize_result(result: SubmitResult) -> dict[str, object]:

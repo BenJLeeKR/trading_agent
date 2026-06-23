@@ -426,6 +426,31 @@ class TestUniverseSelectionServiceCompose:
         )
 
     @pytest.mark.asyncio
+    async def test_core_universe_selected_symbol_carries_market_profile(self) -> None:
+        repos = build_in_memory_repositories()
+        instrument = _make_instrument(
+            "123458",
+            market_code="KRX",
+            metadata={"market_segment": "KOSPI"},
+        )
+        await repos.instruments.add(instrument)
+        await repos.instrument_index_memberships.sync_current_memberships(
+            instrument.instrument_id,
+            ["KOSPI100", "KOSPI200"],
+            effective_from=NOW.date(),
+            source_tag="test",
+            metadata={"source": "test"},
+        )
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+
+        selected = next(item for item in result if item.symbol == "123458")
+        assert selected.market_segment == "KOSPI"
+        assert selected.index_memberships == ("KOSPI100", "KOSPI200")
+
+    @pytest.mark.asyncio
     async def test_explicit_core_false_overrides_index_membership(self) -> None:
         """명시적 core_universe=False면 index_memberships가 있어도 core 승격하지 않는다."""
         repos = build_in_memory_repositories()

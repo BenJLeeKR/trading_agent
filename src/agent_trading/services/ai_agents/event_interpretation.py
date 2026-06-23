@@ -813,6 +813,15 @@ class EventInterpretationAgent:
             lines.append(f"Symbol: {request.symbol}")
         if request.market:
             lines.append(f"Market: {request.market}")
+        if context.instrument_market_segment:
+            lines.append(
+                f"Market segment: {context.instrument_market_segment}"
+            )
+        if context.instrument_index_memberships:
+            lines.append(
+                "Index memberships: "
+                f"{', '.join(context.instrument_index_memberships)}"
+            )
 
         if score:
             score_line = f"Score: {score.score} (threshold: {score.threshold})"

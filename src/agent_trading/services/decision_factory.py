@@ -65,6 +65,7 @@ def build_trade_decision_entity(
     request: SubmitOrderRequest,
     assembled_context: AssembledContext,
     agent_bundle: AgentExecutionBundle,
+    instrument_id: UUID | None = None,
     fdc_run_id: UUID | None = None,
 ) -> TradeDecisionEntity | None:
     """순수 factory: TradeDecisionEntity 생성만 담당.
@@ -113,6 +114,7 @@ def build_trade_decision_entity(
         # --- Axis 2: Source type ---
         source_type=assembled_context.source_type,
         agent_run_id=fdc_run_id,
+        instrument_id=instrument_id,
         entry_price=decimal_or_none(request.price),
         quantity=decimal_or_none(request.quantity),
         max_order_value=calculate_max_order_value(
@@ -196,6 +198,12 @@ def build_trade_decision_entity(
                 if assembled_context.strategy_selection is not None
                 else None
             ),
+            "instrument_profile": {
+                "market_segment": assembled_context.instrument_market_segment,
+                "index_memberships": list(
+                    assembled_context.instrument_index_memberships
+                ),
+            },
             "portfolio_allocation": (
                 {
                     "target_weight_pct": (

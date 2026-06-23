@@ -394,6 +394,18 @@ def _instrument_market_segment(instrument: object) -> str | None:
     return value or None
 
 
+def _normalize_index_memberships(values: Sequence[str] | frozenset[str]) -> tuple[str, ...]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        item = str(value).strip().upper()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        normalized.append(item)
+    return tuple(normalized)
+
+
 def _metadata_index_membership_values(instrument: object) -> frozenset[str]:
     metadata = getattr(instrument, "metadata", {}) or {}
     raw = metadata.get("index_memberships")
@@ -637,13 +649,47 @@ class UniverseSelectionService:
                 return True
         return False
 
+    async def _build_selected_symbol(
+        self,
+        *,
+        symbol: str,
+        market: str,
+        source_type: SourceType,
+        inclusion_reason: str,
+        instrument: object | None = None,
+    ) -> SelectedSymbol:
+        resolved_instrument = instrument
+        if resolved_instrument is None:
+            resolved_instrument = await self._repos.instruments.get_by_symbol_any_market(symbol)
+        market_segment = (
+            _instrument_market_segment(resolved_instrument)
+            if resolved_instrument is not None
+            else None
+        )
+        memberships = (
+            await self._index_membership_values(resolved_instrument)
+            if resolved_instrument is not None
+            else frozenset()
+        )
+        return SelectedSymbol(
+            symbol=symbol,
+            market=market,
+            source_type=source_type,
+            inclusion_reason=inclusion_reason,
+            market_segment=market_segment,
+            index_memberships=_normalize_index_memberships(memberships),
+        )
+
     async def _list_active_kr_equity_instruments(self) -> list[object]:
         items_by_symbol: dict[str, object] = {}
-        for market_code in ("KOSPI", "KOSDAQ", "KRX"):
+        for market_code in ("KRX", "KOSPI", "KOSDAQ"):
             instruments = await self._repos.instruments.list_active_by_market(market_code)
             for instrument in instruments:
                 symbol = getattr(instrument, "symbol", "")
                 if not symbol or symbol in items_by_symbol:
+                    continue
+                segment = _instrument_market_segment(instrument)
+                if market_code == "KRX" and segment not in {"KOSPI", "KOSDAQ"}:
                     continue
                 items_by_symbol[symbol] = instrument
         return list(items_by_symbol.values())
@@ -710,11 +756,12 @@ class UniverseSelectionService:
                 continue
             sym = inst.symbol
             if sym not in seen:
-                seen[sym] = SelectedSymbol(
+                seen[sym] = await self._build_selected_symbol(
                     symbol=sym,
                     market=inst.market_code,
                     source_type=SourceType.CORE,
                     inclusion_reason=INCLUSION_REASON_CORE,
+                    instrument=inst,
                 )
 
     async def _add_held_positions(
@@ -741,11 +788,12 @@ class UniverseSelectionService:
                 sym = instrument.symbol
                 self._upsert_with_priority(
                     seen,
-                    SelectedSymbol(
+                    await self._build_selected_symbol(
                         symbol=sym,
                         market=instrument.market_code,
                         source_type=SourceType.HELD_POSITION,
                         inclusion_reason=INCLUSION_REASON_HELD,
+                        instrument=instrument,
                     ),
                 )
 
@@ -782,11 +830,12 @@ class UniverseSelectionService:
                 continue
             self._upsert_with_priority(
                 seen,
-                SelectedSymbol(
+                await self._build_selected_symbol(
                     symbol=instrument.symbol,
                     market=instrument.market_code,
                     source_type=SourceType.RECONCILIATION_OVERLAY,
                     inclusion_reason=f"{INCLUSION_REASON_RECONCILIATION}:{order.status.value}",
+                    instrument=instrument,
                 ),
             )
 
@@ -807,7 +856,7 @@ class UniverseSelectionService:
                     continue
                 self._upsert_with_priority(
                     seen,
-                    SelectedSymbol(
+                    await self._build_selected_symbol(
                         symbol=instrument.symbol,
                         market=instrument.market_code,
                         source_type=SourceType.RECONCILIATION_OVERLAY,
@@ -815,6 +864,7 @@ class UniverseSelectionService:
                             f"{INCLUSION_REASON_RECONCILIATION}:"
                             f"{link.mismatch_type or 'pending_run'}"
                         ),
+                        instrument=instrument,
                     ),
                 )
 
@@ -825,7 +875,7 @@ class UniverseSelectionService:
                 continue
             self._upsert_with_priority(
                 seen,
-                SelectedSymbol(
+                await self._build_selected_symbol(
                     symbol=normalized_symbol,
                     market="KRX",
                     source_type=SourceType.RECONCILIATION_OVERLAY,
@@ -869,7 +919,7 @@ class UniverseSelectionService:
 
             self._upsert_with_priority(
                 seen,
-                SelectedSymbol(
+                await self._build_selected_symbol(
                     symbol=sym,
                     market=getattr(event, "market", None) or "KRX",
                     source_type=SourceType.EVENT_OVERLAY,
@@ -898,7 +948,7 @@ class UniverseSelectionService:
                 continue
             self._upsert_with_priority(
                 seen,
-                SelectedSymbol(
+                await self._build_selected_symbol(
                     symbol=normalized_symbol,
                     market=normalized_market,
                     source_type=SourceType.MANUAL,
@@ -1114,7 +1164,7 @@ class UniverseSelectionService:
             reason = _categorize_market_reason(snapshot, score)
             self._upsert_with_priority(
                 seen,
-                SelectedSymbol(
+                await self._build_selected_symbol(
                     symbol=snapshot.symbol,
                     market=snapshot.market,
                     source_type=SourceType.MARKET_OVERLAY,

@@ -128,6 +128,11 @@
 - 현재는 UniverseSelectionService가 위 read-path 전환을 사용 중이며,
   sell_guard는 이미 canonical symbol lookup을 사용한다.
   snapshot sync도 `get_by_symbol_any_market()` 기반 canonical lookup으로 전환되었다.
+  trade decision 저장 경로도 canonical instrument lookup을 사용하도록 보강되어,
+  신규 `trade_decisions`는 `instrument_id`를 함께 남기도록 정리했다.
+  다만 과거 데이터 중 일부는 당시 instrument master 미등록 종목 때문에
+  `instrument_id`가 비어 있을 수 있으며,
+  이는 master row 보강 후 별도 backfill로 마무리한다.
   다만 membership table 직접 참조는 아직 UniverseSelection 한정이며,
   sell_guard / snapshot sync는 symbol → canonical instrument lookup 계층을 유지한다.
 - UniverseSelectionService의 allowlist 우선 경로를

@@ -2162,6 +2162,7 @@ class TestAssembleAndCreateOrderFullFlow:
         )
         assert persisted is not None
         assert created.trade_decision_id == persisted.trade_decision_id
+        assert persisted.instrument_id == instrument.instrument_id
 
         # ── Step 3: Audit log contains order.create ──
         audit_logs = await repos.audit_logs.list_by_correlation_id(

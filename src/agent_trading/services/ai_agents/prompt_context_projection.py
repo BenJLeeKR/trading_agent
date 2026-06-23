@@ -18,6 +18,11 @@ def append_shared_deterministic_context_sections(
         context=context,
         indent=indent,
     )
+    _append_instrument_profile(
+        lines,
+        context=context,
+        indent=indent,
+    )
     _append_market_regime(
         lines,
         context=context,
@@ -94,6 +99,27 @@ def _append_signal_feature_snapshot(
         lines.append(
             f"{indent}Signal reason codes: "
             f"{', '.join(signal_snapshot.reason_codes)}"
+        )
+
+
+def _append_instrument_profile(
+    lines: list[str],
+    *,
+    context: AssembledContext,
+    indent: str,
+) -> None:
+    market_segment = context.instrument_market_segment
+    index_memberships = context.instrument_index_memberships
+    if not market_segment and not index_memberships:
+        return
+
+    lines.append("")
+    lines.append("=== Instrument Profile ===")
+    if market_segment:
+        lines.append(f"{indent}Market segment: {market_segment}")
+    if index_memberships:
+        lines.append(
+            f"{indent}Index memberships: {', '.join(index_memberships)}"
         )
 
 
