@@ -117,6 +117,12 @@ flowchart LR
 - `index_memberships`는
   `trading.instrument_index_memberships` 시계열 테이블에 authoritative source를 두고,
   이행 기간에는 `metadata.index_memberships`를 read fallback으로 유지한다.
+- 중첩 membership은 정보 손실 방지를 위해 원본 그대로 유지한다.
+  예: `KOSPI100` 종목이 `KOSPI200` membership도 함께 갖는 것은 정상이다.
+- 다만 판단 계층에는 평면 membership 리스트를 그대로 넘기지 않고,
+  `primary_index_membership` 파생 규칙을 함께 둔다.
+  현재 기본 우선순위는
+  `KOSPI100 > KOSDAQ50 > KOSPI200 > KOSDAQ150 > 기타`다.
 - 현재 이행 상태:
   - UniverseSelectionService는 core/discovery seed 판정 시
     `instrument_index_memberships`를 먼저 조회한다.
@@ -849,7 +855,24 @@ flowchart TB
 → **Output**: `list[SelectedSymbol]` (symbol, market, source_type, inclusion_reason, priority)
 
 **Q4. Decision loop / scheduler 연결?**  
-→ `_read_trading_universe()` 내부에서 service 호출. Scheduler는 `TRADING_UNIVERSE_SYMBOLS` env var를 설정하지 않으므로, decision loop이 자동으로 service composition 사용. Scheduler 변경 불필요.
+→ 현재는 `_read_trading_universe()` 내부에서 service 호출. Scheduler는 `TRADING_UNIVERSE_SYMBOLS` env var를 설정하지 않으므로, decision loop이 자동으로 service composition 사용한다.
+
+후속 확장 설계:
+
+- 장중 `decision loop`도
+  `universe_freeze_runs` / `universe_freeze_run_items`를
+  읽는 authoritative consumer로 승격한다.
+- 권장 조회 우선순위:
+  1. `TRADING_UNIVERSE_SYMBOLS` env override
+  2. latest `decision_loop_intraday` freeze
+  3. `UniverseSelectionService.compose()` fallback
+- 권장 생성 타이밍:
+  scheduler의 장중 첫 cycle 직전 1회 materialize
+- 기대 효과:
+  - 장중 판단 경로와 장후 feature 경로의 universe anchor 일치
+  - 장애 재기동 후에도 같은 intraday universe 재사용 가능
+  - audit / replay / ops dashboard에서
+    `왜 오늘 이 종목을 판단했는가`를 freeze run id 기준으로 설명 가능
 
 **Q5. KIS API interface?**  
 → P1: stub (`_add_market_overlay()`는 no-op). P2: `KISRestClient`에 ranking API 메서드 추가 (`get_volume_ranking()`, `get_trade_strength_ranking()` 등). `KIS_ENDPOINTS`에 신규 endpoint 등록.

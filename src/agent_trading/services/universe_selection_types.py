@@ -89,6 +89,7 @@ class SelectedSymbol:
     inclusion_reason: str = INCLUSION_REASON_CORE
     market_segment: str | None = None
     index_memberships: tuple[str, ...] = ()
+    primary_index_membership: str | None = None
 
     @property
     def priority(self) -> int:

@@ -123,6 +123,12 @@ def build_trade_decision_entity(
         assembled_context=assembled_context,
         composer_output=composer_output,
     )
+    request_metadata = request.metadata if isinstance(request.metadata, dict) else {}
+    universe_anchor = (
+        dict(request_metadata.get("universe_anchor"))
+        if isinstance(request_metadata.get("universe_anchor"), dict)
+        else None
+    )
 
     decision = TradeDecisionEntity(
         trade_decision_id=uuid4(),
@@ -242,6 +248,7 @@ def build_trade_decision_entity(
                 "index_memberships": list(
                     assembled_context.instrument_index_memberships
                 ),
+                "primary_index_membership": assembled_context.primary_index_membership,
             },
             "portfolio_allocation": (
                 {
@@ -417,6 +424,7 @@ def build_trade_decision_entity(
             "holding_profile_policy": serialize_holding_profile_policy(
                 holding_profile_policy
             ),
+            "universe_anchor": universe_anchor,
             "execution_preferences": dataclass_to_dict(
                 composer_output.execution_preferences
             ),

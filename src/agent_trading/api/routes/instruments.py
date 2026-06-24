@@ -11,6 +11,8 @@ from agent_trading.api.schemas import (
     InstrumentDetail,
     InstrumentMappingConsistencySummaryResponse,
     InstrumentMappingGapItem,
+    TradingUniverseFreezeComparisonView,
+    TradingUniverseFreezeView,
     MarketOverlayFunnelItem,
     MarketOverlayFunnelResponse,
     MarketOverlayDiagnosticsView,
@@ -25,6 +27,7 @@ from agent_trading.services.universe_selection_types import CompositionContext
 
 router = APIRouter(tags=["instruments"])
 _KST = timezone(timedelta(hours=9))
+_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE = "decision_loop_intraday"
 
 
 def _parse_manual_symbols(raw: str | None) -> tuple[tuple[str, str], ...]:
@@ -51,6 +54,82 @@ def _parse_manual_symbols(raw: str | None) -> tuple[tuple[str, str], ...]:
             parsed.append(key)
             seen.add(key)
     return tuple(parsed)
+
+
+def _build_preview_items_from_selected(selected: list) -> list[TradingUniversePreviewItem]:
+    return [
+        TradingUniversePreviewItem(
+            symbol=item.symbol,
+            market=item.market,
+            source_type=item.source_type.value,
+            inclusion_reason=item.inclusion_reason,
+            priority=item.priority,
+        )
+        for item in selected
+    ]
+
+
+async def _build_active_intraday_freeze_view(
+    repos: RepositoryContainer,
+) -> TradingUniverseFreezeView | None:
+    business_date = datetime.now(timezone.utc).astimezone(_KST).date()
+    freeze_run = await repos.universe_freeze_runs.get_latest(
+        business_date,
+        _DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
+    )
+    if freeze_run is None:
+        return None
+    freeze_items = await repos.universe_freeze_run_items.list_by_run(
+        freeze_run.universe_freeze_run_id
+    )
+    if not freeze_items:
+        return None
+
+    source_type_counts = Counter(item.source_type for item in freeze_items)
+    inclusion_reason_counts = Counter(item.inclusion_reason for item in freeze_items)
+    items = [
+        TradingUniversePreviewItem(
+            symbol=item.symbol,
+            market=item.market_code,
+            source_type=item.source_type,
+            inclusion_reason=item.inclusion_reason,
+            priority=int(item.rank or 0),
+        )
+        for item in freeze_items
+    ]
+    return TradingUniverseFreezeView(
+        universe_freeze_run_id=freeze_run.universe_freeze_run_id,
+        freeze_purpose=freeze_run.freeze_purpose,
+        business_date=freeze_run.business_date,
+        frozen_at=freeze_run.frozen_at,
+        selection_version=freeze_run.selection_version,
+        target_count=freeze_run.target_count,
+        source_type_counts=dict(source_type_counts),
+        inclusion_reason_counts=dict(inclusion_reason_counts),
+        items=items,
+    )
+
+
+def _build_intraday_freeze_comparison(
+    live_items: list[TradingUniversePreviewItem],
+    freeze_view: TradingUniverseFreezeView | None,
+) -> TradingUniverseFreezeComparisonView | None:
+    if freeze_view is None:
+        return None
+
+    live_keys = {(item.symbol, item.market) for item in live_items}
+    freeze_keys = {(item.symbol, item.market) for item in freeze_view.items}
+    common = live_keys & freeze_keys
+    live_only = sorted(f"{symbol}:{market}" for symbol, market in live_keys - freeze_keys)
+    freeze_only = sorted(f"{symbol}:{market}" for symbol, market in freeze_keys - live_keys)
+    return TradingUniverseFreezeComparisonView(
+        exact_match=live_keys == freeze_keys,
+        live_total_count=len(live_keys),
+        freeze_total_count=len(freeze_keys),
+        common_symbol_count=len(common),
+        live_only_symbols=live_only,
+        freeze_only_symbols=freeze_only,
+    )
 
 
 @router.get(
@@ -220,16 +299,12 @@ async def get_trading_universe_preview(
 
     source_type_counts = Counter(item.source_type.value for item in selected)
     inclusion_reason_counts = Counter(item.inclusion_reason for item in selected)
-    items = [
-        TradingUniversePreviewItem(
-            symbol=item.symbol,
-            market=item.market,
-            source_type=item.source_type.value,
-            inclusion_reason=item.inclusion_reason,
-            priority=item.priority,
-        )
-        for item in selected
-    ]
+    items = _build_preview_items_from_selected(selected)
+    active_intraday_freeze = await _build_active_intraday_freeze_view(repos)
+    active_intraday_freeze_comparison = _build_intraday_freeze_comparison(
+        items,
+        active_intraday_freeze,
+    )
     return TradingUniversePreviewResponse(
         account_id=aid,
         lookback_hours=lookback_hours,
@@ -260,6 +335,8 @@ async def get_trading_universe_preview(
             overlay_capture_rate=market_overlay_diagnostics.overlay_capture_rate,
         ),
         items=items,
+        active_intraday_freeze=active_intraday_freeze,
+        active_intraday_freeze_comparison=active_intraday_freeze_comparison,
     )
 
 

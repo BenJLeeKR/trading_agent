@@ -1,101 +1,451 @@
-symbol,membership_code
-005930,KOSPI200
-000660,KOSPI200
-373220,KOSPI200
-207940,KOSPI200
-005380,KOSPI200
-000270,KOSPI200
-005490,KOSPI200
-006400,KOSPI200
-051910,KOSPI200
-035420,KOSPI200
-000810,KOSPI200
-068270,KOSPI200
-105560,KOSPI200
-055550,KOSPI200
-032830,KOSPI200
-012330,KOSPI200
-033780,KOSPI200
-003550,KOSPI200
-015760,KOSPI200
-000030,KOSPI200
-017670,KOSPI200
-010130,KOSPI200
-034730,KOSPI200
-090430,KOSPI200
-018260,KOSPI200
-011170,KOSPI200
-036570,KOSPI200
-009150,KOSPI200
-010950,KOSPI200
-004020,KOSPI200
-011070,KOSPI200
-034220,KOSPI200
-000100,KOSPI200
-028260,KOSPI200
-000720,KOSPI200
-047050,KOSPI200
-086790,KOSPI200
-011780,KOSPI200
-001040,KOSPI200
-035720,KOSPI200
-323410,KOSPI200
-377300,KOSPI200
-030200,KOSPI200
-024110,KOSPI200
-004990,KOSPI200
-010120,KOSPI200
-006260,KOSPI200
-138040,KOSPI200
-005940,KOSPI200
-071050,KOSPI200
-003490,KOSPI200
-012450,KOSPI200
-000880,KOSPI200
-009830,KOSPI200
-000150,KOSPI200
-034020,KOSPI200
-021240,KOSPI200
-032640,KOSPI200
-004170,KOSPI200
-007070,KOSPI200
-002380,KOSPI200
-042660,KOSPI200
-001450,KOSPI200
-005830,KOSPI200
-006800,KOSPI200
-000210,KOSPI200
-001800,KOSPI200
-097950,KOSPI200
-004370,KOSPI200
-005935,KOSPI200
-247540,KOSPI200
-272210,KOSPI200
-001440,KOSPI200
-010060,KOSPI200
-020150,KOSPI200
-352820,KOSPI200
-298020,KOSPI200
-298040,KOSPI200
-298050,KOSPI200
-004800,KOSPI200
-001740,KOSPI200
-006360,KOSPI200
-039130,KOSPI200
-023530,KOSPI200
-008770,KOSPI200
-003410,KOSPI200
-000990,KOSPI200
-011790,KOSPI200
-011210,KOSPI200
-012750,KOSPI200
-004000,KOSPI200
-001680,KOSPI200
-000670,KOSPI200
-001230,KOSPI200
-006650,KOSPI200
-005385,KOSPI200
-016360,KOSPI200
-003670,KOSPI200
-137310,KOSPI200
-361610,KOSPI200
+symbol,membership_code,source_name,source_ref,as_of_date,note
+000080,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+000100,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+000100,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+000120,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+000150,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+000150,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+000210,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+000240,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+000250,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+000270,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+000270,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+000660,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+000660,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+000670,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+000720,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+000720,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+000810,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+000810,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+000880,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+000990,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+0009K0,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+001040,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+001430,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+001440,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+001450,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+001680,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+001800,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+002030,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+002380,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+002790,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+002840,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+003030,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+003090,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+003230,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+003230,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+003240,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+003380,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+003490,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+003490,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+003550,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+003550,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+003670,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+003670,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+004000,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+004020,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+004020,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+004170,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+004370,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+004990,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+005290,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+005300,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+005380,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+005380,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+005420,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+005490,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+005490,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+005830,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+005830,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+005850,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+005930,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+005930,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+005940,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+005940,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+006040,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+006260,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+006280,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+006400,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+006400,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+006650,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+006730,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+006800,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+006800,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+007070,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+007310,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+007340,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+007390,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+007660,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+008730,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+008770,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+008930,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+009150,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+009150,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+009240,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+009420,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+009520,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+009540,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+009540,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+009830,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+009830,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+009970,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+010060,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+010120,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+010120,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+010130,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+010130,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+010140,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+010140,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+010950,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+010950,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+011070,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+011070,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+011170,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+011170,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+011200,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+011200,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+011210,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+011780,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+011790,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+011790,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+012330,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+012330,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+012450,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+012450,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+0126Z0,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+0126Z0,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+012750,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+014620,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+014680,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+014820,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+015750,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+015760,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+015760,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+016360,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+016360,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+017670,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+017670,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+017800,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+017960,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+018260,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+018260,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+018290,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+018880,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+021240,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+021240,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+022100,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+022100,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+023530,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+024110,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+024110,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+025320,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+025900,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+025980,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+026960,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+028050,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+028050,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+028260,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+028260,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+028300,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+028670,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+029780,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+029780,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+030000,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+030200,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+030200,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+030520,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+030530,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+031980,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+032190,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+032500,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+032640,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+032640,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+032820,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+032830,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+032830,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+033100,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+033500,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+033780,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+033780,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+034020,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+034020,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+034220,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+034220,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+034230,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+034730,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+034730,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+035250,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+035250,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+035420,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+035420,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+035720,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+035720,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+035760,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+035900,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+036460,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+036460,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+036540,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+036570,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+036570,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+036620,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+036810,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+036830,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+036930,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+038500,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+039030,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+039200,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+039490,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+039490,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+041190,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+041510,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+042000,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+042660,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+042660,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+042700,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+042700,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+043260,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+047040,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+047050,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+047050,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+047810,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+047810,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+048410,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+050890,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+051600,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+051900,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+051900,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+051910,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+051910,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+052400,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+052690,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+053800,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+055550,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+055550,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+056080,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+056190,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+058470,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+058610,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+060250,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+060280,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+060370,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+062040,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+064350,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+064350,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+064400,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+064760,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+065350,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+066570,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+066570,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+066970,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+067160,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+067310,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+068270,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+068270,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+068760,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+069080,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+069260,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+069620,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+069960,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+071050,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+071050,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+071320,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+071970,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+073240,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+074600,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+078340,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+078600,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+078930,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+078930,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+079550,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+079550,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+080220,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+081660,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+082270,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+082740,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+082920,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+083650,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+084370,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+085660,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+086280,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+086280,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+086520,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+086790,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+086790,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+087010,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+088350,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+089030,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+089970,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+090360,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+090430,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+090430,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+090710,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+093370,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+095340,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+095610,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+095660,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+096530,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+096770,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+096770,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+097950,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+098460,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+099320,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+100790,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+101490,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+101730,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+103140,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+105560,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+105560,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+108490,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+111770,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+112040,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+112610,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+120110,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+121600,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+122870,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+124500,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+125490,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+128940,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+128940,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+131290,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+131970,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+137310,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+137400,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+138040,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+138040,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+138930,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+139130,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+139480,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+140860,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+141080,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+145020,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+161390,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+161390,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+161580,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+161890,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+166090,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+171090,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+175330,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+178320,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+180640,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+180640,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+183300,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+185750,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+189300,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+192080,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+192820,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+194480,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+195940,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+196170,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+204270,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+204320,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+207940,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+207940,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+211050,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+213420,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+214150,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+214370,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+214430,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+214450,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+215200,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+218410,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+222080,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+222800,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+225570,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+226950,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+232140,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+237690,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+240810,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+241560,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+241560,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+241710,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+247540,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+251270,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+251270,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+251970,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+253450,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+253590,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+257720,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+259960,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+259960,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+263750,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+267250,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+267250,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+267260,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+267260,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+267270,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+268280,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+271560,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+271560,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+272210,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+272210,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+272290,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+277810,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+278280,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+278470,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+278470,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+280360,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+281740,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+282330,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+285130,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+290650,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+293490,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+295310,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+298020,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+298040,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+298040,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+298050,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+298380,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+300720,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+302440,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+302440,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+307950,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+307950,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+310210,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+316140,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+316140,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+319400,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+319660,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+323280,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+323410,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+323410,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+326030,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+326030,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+328130,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+329180,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+329180,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+347850,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+348210,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+348370,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+352480,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+352820,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+352820,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+357780,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+358570,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+361610,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+373220,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+373220,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+375500,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+376300,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+377300,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+377300,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+383220,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+388720,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+399720,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+402340,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+402340,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+403870,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+417200,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+420770,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+437730,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+443060,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+443060,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+445680,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+450080,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+450080,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+454910,KOSPI100,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+454910,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+456040,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+457190,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+466100,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+475830,KOSDAQ150,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천
+483650,KOSPI200,operator_uploaded_csv,local-upload-2026-06-24,2026-06-24,운영 업로드 원천

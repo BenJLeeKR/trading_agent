@@ -31,6 +31,8 @@ from agent_trading.domain.entities import (
     OrderRequestEntity,
     OrderSubmissionAttemptEntity,
     PositionSnapshotEntity,
+    UniverseFreezeRunEntity,
+    UniverseFreezeRunItemEntity,
 )
 from agent_trading.domain.enums import (
     DecisionType,
@@ -1285,7 +1287,7 @@ class TestInstruments:
             currency="KRW",
             name="SK Networks",
             is_active=True,
-            metadata={"market_discovery_pool": True},
+            metadata={"market_discovery_pool": True, "market_segment": "KOSPI"},
         )
         asyncio.run(repos.instruments.add(instrument))
 
@@ -1349,6 +1351,7 @@ class TestInstruments:
                         currency="KRW",
                         name=f"Test-{symbol}",
                         is_active=True,
+                        metadata={"market_segment": "KOSPI"},
                     )
                 )
             )
@@ -1364,6 +1367,142 @@ class TestInstruments:
         assert data["core_cap"] == 1
         assert data["total_count"] == 1
         assert data["items"][0]["source_type"] == "core"
+
+    def test_get_trading_universe_preview_includes_active_intraday_freeze(self) -> None:
+        """preview 응답은 live compose와 active intraday freeze를 함께 보여줘야 한다."""
+        repos = build_in_memory_repositories()
+        account_id = uuid4()
+        now = datetime.now(timezone.utc)
+
+        held_inst = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="005930",
+            market_code="KRX",
+            asset_class="KR_STOCK",
+            currency="KRW",
+            name="Samsung Electronics",
+            is_active=True,
+            metadata={"market_segment": "KOSPI"},
+        )
+        event_inst = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="000660",
+            market_code="KRX",
+            asset_class="KR_STOCK",
+            currency="KRW",
+            name="SK hynix",
+            is_active=True,
+            metadata={"market_segment": "KOSPI"},
+        )
+        freeze_only_inst = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="035420",
+            market_code="KRX",
+            asset_class="KR_STOCK",
+            currency="KRW",
+            name="NAVER",
+            is_active=True,
+            metadata={"market_segment": "KOSPI"},
+        )
+        for inst in (held_inst, event_inst, freeze_only_inst):
+            asyncio.run(repos.instruments.add(inst))
+        asyncio.run(
+            repos.position_snapshots.add(
+                PositionSnapshotEntity(
+                    position_snapshot_id=uuid4(),
+                    account_id=account_id,
+                    instrument_id=held_inst.instrument_id,
+                    quantity=Decimal("10"),
+                    average_price=Decimal("50000"),
+                    market_price=Decimal("51000"),
+                    unrealized_pnl=Decimal("10000"),
+                    source_of_truth="test",
+                    snapshot_at=now,
+                    created_at=now,
+                )
+            )
+        )
+        asyncio.run(
+            repos.external_events.add(
+                ExternalEventEntity(
+                    event_id=uuid4(),
+                    symbol="000660",
+                    market="KRX",
+                    source_name="opendart",
+                    event_type="disclosure",
+                    severity="high",
+                    headline="High importance disclosure",
+                    published_at=now,
+                    ingested_at=now,
+                    dedup_key_hash="evt-000660-freeze",
+                )
+            )
+        )
+        business_date = now.astimezone(timezone(timedelta(hours=9))).date()
+        freeze_run_id = uuid4()
+        asyncio.run(
+            repos.universe_freeze_runs.add(
+                UniverseFreezeRunEntity(
+                    universe_freeze_run_id=freeze_run_id,
+                    business_date=business_date,
+                    freeze_purpose="decision_loop_intraday",
+                    freeze_sequence=1,
+                    frozen_at=now,
+                    selection_version="decision_loop_intraday.freeze.v1",
+                    target_count=2,
+                    status="materialized",
+                )
+            )
+        )
+        asyncio.run(
+            repos.universe_freeze_run_items.add_many(
+                (
+                    UniverseFreezeRunItemEntity(
+                        universe_freeze_run_item_id=uuid4(),
+                        universe_freeze_run_id=freeze_run_id,
+                        instrument_id=held_inst.instrument_id,
+                        symbol="005930",
+                        market_code="KRX",
+                        source_type="held_position",
+                        inclusion_reason="held_position_mandatory",
+                        rank=1,
+                        cap_bucket="held_position",
+                    ),
+                    UniverseFreezeRunItemEntity(
+                        universe_freeze_run_item_id=uuid4(),
+                        universe_freeze_run_id=freeze_run_id,
+                        instrument_id=freeze_only_inst.instrument_id,
+                        symbol="035420",
+                        market_code="KRX",
+                        source_type="core",
+                        inclusion_reason="approved_core_universe",
+                        rank=2,
+                        cap_bucket="core",
+                    ),
+                )
+            )
+        )
+
+        app = create_app(repos=repos, auth_enabled=False)
+        with TestClient(app) as client:
+            response = client.get(
+                f"/instruments/trading-universe/preview?account_id={account_id}"
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["active_intraday_freeze"]["freeze_purpose"] == "decision_loop_intraday"
+        assert data["active_intraday_freeze"]["target_count"] == 2
+        assert data["active_intraday_freeze"]["source_type_counts"] == {
+            "held_position": 1,
+            "core": 1,
+        }
+        assert data["active_intraday_freeze_comparison"]["exact_match"] is False
+        assert data["active_intraday_freeze_comparison"]["common_symbol_count"] == 2
+        assert data["active_intraday_freeze_comparison"]["live_only_symbols"] == [
+            "000660:KRX"
+        ]
+        assert data["active_intraday_freeze_comparison"]["freeze_only_symbols"] == []
 
     def test_get_trading_universe_coverage_summary(self) -> None:
         """``GET /instruments/trading-universe/coverage-summary`` returns source coverage."""

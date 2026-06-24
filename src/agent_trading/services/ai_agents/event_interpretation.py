@@ -817,6 +817,11 @@ class EventInterpretationAgent:
             lines.append(
                 f"Market segment: {context.instrument_market_segment}"
             )
+        if context.primary_index_membership:
+            lines.append(
+                "Primary index membership: "
+                f"{context.primary_index_membership}"
+            )
         if context.instrument_index_memberships:
             lines.append(
                 "Index memberships: "

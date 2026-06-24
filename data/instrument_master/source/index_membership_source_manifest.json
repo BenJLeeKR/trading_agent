@@ -1,0 +1,22 @@
+{
+  "source_name": "operator_uploaded_csv",
+  "source_ref": "local-upload-2026-06-24",
+  "as_of_date": "2026-06-24",
+  "entries": [
+    {
+      "membership_code": "KOSPI100",
+      "csv_path": "kospi100_constituents.csv",
+      "note": "운영 업로드 원천"
+    },
+    {
+      "membership_code": "KOSPI200",
+      "csv_path": "kospi200_constituents.csv",
+      "note": "운영 업로드 원천"
+    },
+    {
+      "membership_code": "KOSDAQ150",
+      "csv_path": "kosdaq150_constituents.csv",
+      "note": "운영 업로드 원천"
+    }
+  ]
+}

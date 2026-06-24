@@ -1690,6 +1690,18 @@ class InMemoryInstrumentIndexMembershipRepository:
         results.sort(key=lambda item: item.membership_code)
         return tuple(results)
 
+    async def list_active_instrument_ids_by_membership_code(
+        self,
+        membership_code: str,
+    ) -> Sequence[UUID]:
+        normalized = str(membership_code).strip().upper()
+        instrument_ids = {
+            item.instrument_id
+            for item in self._items.values()
+            if item.effective_to is None and item.membership_code == normalized
+        }
+        return tuple(sorted(instrument_ids, key=str))
+
 
 class InMemorySymbolTradeStateRepository:
     """In-memory implementation of ``SymbolTradeStateRepository``."""

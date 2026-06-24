@@ -117,6 +117,11 @@ def _append_instrument_profile(
     lines.append("=== Instrument Profile ===")
     if market_segment:
         lines.append(f"{indent}Market segment: {market_segment}")
+    if context.primary_index_membership:
+        lines.append(
+            f"{indent}Primary index membership: "
+            f"{context.primary_index_membership}"
+        )
     if index_memberships:
         lines.append(
             f"{indent}Index memberships: {', '.join(index_memberships)}"

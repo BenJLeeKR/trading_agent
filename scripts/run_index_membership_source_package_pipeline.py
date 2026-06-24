@@ -54,6 +54,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="seed CSV에 나온 symbol은 authoritative overwrite로 import한다.",
     )
     parser.add_argument(
+        "--replace-membership-code-snapshot",
+        action="store_true",
+        help="seed CSV에 포함된 membership_code는 전체 스냅샷으로 간주해 stale active row도 종료한다.",
+    )
+    parser.add_argument(
         "--apply",
         action="store_true",
         help="최종 membership import를 실제 커밋한다. 미지정 시 검증 전용이다.",
@@ -140,6 +145,8 @@ def _build_steps(args: argparse.Namespace) -> list[PipelineStep]:
     ]
     if args.replace_listed_symbols:
         import_command.append("--replace-listed-symbols")
+    if args.replace_membership_code_snapshot:
+        import_command.append("--replace-membership-code-snapshot")
     if args.apply:
         import_command.append("--apply")
     steps.append(

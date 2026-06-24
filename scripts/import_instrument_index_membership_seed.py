@@ -58,6 +58,7 @@ class MembershipSeedSummary:
     resolved_symbol_count: int = 0
     skipped_symbol_count: int = 0
     updated_symbol_count: int = 0
+    deactivated_membership_symbol_count: int = 0
 
 
 def _parse_args() -> argparse.Namespace:
@@ -83,6 +84,14 @@ def _parse_args() -> argparse.Namespace:
         "--replace-listed-symbols",
         action="store_true",
         help="CSV에 나온 symbol은 파일 값을 authoritative set으로 간주해 기존 active membership을 교체한다.",
+    )
+    parser.add_argument(
+        "--replace-membership-code-snapshot",
+        action="store_true",
+        help=(
+            "CSV에 포함된 membership_code는 전체 스냅샷으로 간주해 "
+            "파일에 없는 기존 active symbol membership도 종료한다."
+        ),
     )
     parser.add_argument(
         "--apply",
@@ -192,10 +201,13 @@ async def _apply_seed(
     effective_from: date,
     source_tag: str,
     replace_listed_symbols: bool,
+    replace_membership_code_snapshot: bool,
 ) -> MembershipSeedSummary:
     resolved_symbol_count = 0
     skipped_symbol_count = 0
     updated_symbol_count = 0
+    deactivated_membership_symbol_count = 0
+    target_instrument_ids_by_code: dict[str, set[object]] = defaultdict(set)
 
     for symbol, seed_group in grouped_memberships.items():
         instrument = await instrument_repo.get_by_symbol_any_market(symbol)
@@ -204,6 +216,8 @@ async def _apply_seed(
             continue
         resolved_symbol_count += 1
         seed_codes = list(seed_group.membership_codes)
+        for code in seed_codes:
+            target_instrument_ids_by_code[code].add(instrument.instrument_id)
         if replace_listed_symbols:
             final_codes = list(seed_codes)
         else:
@@ -234,11 +248,42 @@ async def _apply_seed(
         )
         updated_symbol_count += 1
 
+    if replace_membership_code_snapshot:
+        for membership_code, target_instrument_ids in target_instrument_ids_by_code.items():
+            active_instrument_ids = await membership_repo.list_active_instrument_ids_by_membership_code(
+                membership_code
+            )
+            stale_instrument_ids = set(active_instrument_ids) - target_instrument_ids
+            for instrument_id in stale_instrument_ids:
+                existing = await membership_repo.list_active_by_instrument(instrument_id)
+                final_codes = [
+                    str(item.membership_code).strip().upper()
+                    for item in existing
+                    if str(item.membership_code).strip().upper() != membership_code
+                ]
+                await membership_repo.sync_current_memberships(
+                    instrument_id,
+                    final_codes,
+                    effective_from=effective_from,
+                    source_tag=source_tag,
+                    metadata={
+                        "sync_source": "index_membership_seed_file",
+                        "replace_listed_symbols": replace_listed_symbols,
+                        "replace_membership_code_snapshot": True,
+                        "source_name": None,
+                        "source_ref": None,
+                        "as_of_date": effective_from.isoformat(),
+                        "note": f"{membership_code} authoritative snapshot stale row 종료",
+                    },
+                )
+                deactivated_membership_symbol_count += 1
+
     return MembershipSeedSummary(
         target_symbol_count=len(grouped_memberships),
         resolved_symbol_count=resolved_symbol_count,
         skipped_symbol_count=skipped_symbol_count,
         updated_symbol_count=updated_symbol_count,
+        deactivated_membership_symbol_count=deactivated_membership_symbol_count,
     )
 
 
@@ -258,6 +303,7 @@ async def _run(args: argparse.Namespace) -> tuple[MembershipSeedSummary, list[Me
             effective_from=effective_from,
             source_tag=args.source_tag,
             replace_listed_symbols=args.replace_listed_symbols,
+            replace_membership_code_snapshot=args.replace_membership_code_snapshot,
         )
         if args.apply:
             await tx.commit()

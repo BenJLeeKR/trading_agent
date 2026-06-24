@@ -38,3 +38,27 @@ def test_serialize_agent_input_prefers_injected_provider_runtime() -> None:
     assert payload["provider_base_url"] == "https://example.test/v1beta/openai/"
     assert payload["provider_model_id"] == "gemini-3.5-flash"
     assert payload["provider_timeout_seconds"] == 77
+
+
+def test_serialize_agent_input_includes_primary_index_membership() -> None:
+    request = AgentExecutionRequest(
+        decision_context_id=uuid4(),
+        correlation_id="corr-2",
+        context=AIPolicyContextView(
+            instrument_market_segment="KOSPI",
+            instrument_index_memberships=("KOSPI100", "KOSPI200"),
+            primary_index_membership="KOSPI100",
+        ),
+        symbol="005930",
+        market="KRX",
+    )
+
+    payload = json.loads(
+        serialize_agent_input(
+            request=request,
+            context=request.context,
+            score=ScoreResult(),
+        )
+    )
+
+    assert payload["context"]["primary_index_membership"] == "KOSPI100"

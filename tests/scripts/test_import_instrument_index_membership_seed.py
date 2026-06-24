@@ -145,6 +145,7 @@ async def test_apply_seed_merges_with_existing_memberships() -> None:
         effective_from=date(2026, 6, 20),
         source_tag="index_membership_seed_csv",
         replace_listed_symbols=False,
+        replace_membership_code_snapshot=False,
     )
 
     memberships = await repos.instrument_index_memberships.list_active_by_instrument(
@@ -194,6 +195,7 @@ async def test_apply_seed_replaces_when_requested() -> None:
         effective_from=date(2026, 6, 20),
         source_tag="index_membership_seed_csv",
         replace_listed_symbols=True,
+        replace_membership_code_snapshot=False,
     )
 
     memberships = await repos.instrument_index_memberships.list_active_by_instrument(
@@ -214,8 +216,78 @@ async def test_apply_seed_skips_unknown_symbol() -> None:
         effective_from=date(2026, 6, 20),
         source_tag="index_membership_seed_csv",
         replace_listed_symbols=False,
+        replace_membership_code_snapshot=False,
     )
     assert summary.target_symbol_count == 1
     assert summary.resolved_symbol_count == 0
     assert summary.skipped_symbol_count == 1
     assert summary.updated_symbol_count == 0
+
+
+@pytest.mark.asyncio
+async def test_apply_seed_replaces_membership_code_snapshot() -> None:
+    repos = build_in_memory_repositories()
+    keep_instrument = InstrumentEntity(
+        instrument_id=uuid4(),
+        symbol="005930",
+        market_code="KRX",
+        asset_class="kr_stock",
+        currency="KRW",
+        name="삼성전자",
+        tick_size=Decimal("100"),
+        lot_size=Decimal("1"),
+        is_active=True,
+        exchange_code="KRX",
+        market_segment="KOSPI",
+    )
+    stale_instrument = InstrumentEntity(
+        instrument_id=uuid4(),
+        symbol="000660",
+        market_code="KRX",
+        asset_class="kr_stock",
+        currency="KRW",
+        name="SK하이닉스",
+        tick_size=Decimal("100"),
+        lot_size=Decimal("1"),
+        is_active=True,
+        exchange_code="KRX",
+        market_segment="KOSPI",
+    )
+    await repos.instruments.add(keep_instrument)
+    await repos.instruments.add(stale_instrument)
+    await repos.instrument_index_memberships.sync_current_memberships(
+        keep_instrument.instrument_id,
+        ["KOSPI200"],
+        effective_from=date(2026, 6, 19),
+        source_tag="legacy",
+        metadata={"sync_source": "legacy"},
+    )
+    await repos.instrument_index_memberships.sync_current_memberships(
+        stale_instrument.instrument_id,
+        ["KOSPI200"],
+        effective_from=date(2026, 6, 19),
+        source_tag="legacy",
+        metadata={"sync_source": "legacy"},
+    )
+
+    summary = await _apply_seed(
+        repos.instruments,
+        repos.instrument_index_memberships,
+        grouped_memberships={
+            "005930": MembershipSeedGroup(membership_codes=("KOSPI200",))
+        },
+        effective_from=date(2026, 6, 24),
+        source_tag="index_membership_seed_csv",
+        replace_listed_symbols=True,
+        replace_membership_code_snapshot=True,
+    )
+
+    keep_memberships = await repos.instrument_index_memberships.list_active_by_instrument(
+        keep_instrument.instrument_id
+    )
+    stale_memberships = await repos.instrument_index_memberships.list_active_by_instrument(
+        stale_instrument.instrument_id
+    )
+    assert [item.membership_code for item in keep_memberships] == ["KOSPI200"]
+    assert stale_memberships == ()
+    assert summary.deactivated_membership_symbol_count == 1

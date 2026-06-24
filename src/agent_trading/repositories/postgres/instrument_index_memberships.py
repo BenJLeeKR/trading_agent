@@ -107,3 +107,19 @@ class PostgresInstrumentIndexMembershipRepository:
             instrument_id,
         )
         return tuple(row_to_entity(row, InstrumentIndexMembershipEntity) for row in rows)
+
+    async def list_active_instrument_ids_by_membership_code(
+        self,
+        membership_code: str,
+    ) -> Sequence[UUID]:
+        rows = await self._tx.connection.fetch(
+            """
+            SELECT DISTINCT instrument_id
+            FROM trading.instrument_index_memberships
+            WHERE membership_code = $1
+              AND effective_to IS NULL
+            ORDER BY instrument_id
+            """,
+            str(membership_code).strip().upper(),
+        )
+        return tuple(UUID(str(row["instrument_id"])) for row in rows)

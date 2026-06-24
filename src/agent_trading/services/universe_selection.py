@@ -32,6 +32,10 @@ from agent_trading.services.core_universe_seed import (
     APPROVED_CORE_UNIVERSE_SYMBOLS,
     APPROVED_DISCOVERY_UNIVERSE_SYMBOLS,
 )
+from agent_trading.services.instrument_profile import (
+    derive_primary_index_membership,
+    normalize_index_memberships,
+)
 from agent_trading.services.universe_selection_types import (
     INCLUSION_REASON_CORE,
     INCLUSION_REASON_EVENT,
@@ -394,18 +398,6 @@ def _instrument_market_segment(instrument: object) -> str | None:
     return value or None
 
 
-def _normalize_index_memberships(values: Sequence[str] | frozenset[str]) -> tuple[str, ...]:
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        item = str(value).strip().upper()
-        if not item or item in seen:
-            continue
-        seen.add(item)
-        normalized.append(item)
-    return tuple(normalized)
-
-
 def _metadata_index_membership_values(instrument: object) -> frozenset[str]:
     metadata = getattr(instrument, "metadata", {}) or {}
     raw = metadata.get("index_memberships")
@@ -677,7 +669,8 @@ class UniverseSelectionService:
             source_type=source_type,
             inclusion_reason=inclusion_reason,
             market_segment=market_segment,
-            index_memberships=_normalize_index_memberships(memberships),
+            index_memberships=normalize_index_memberships(memberships),
+            primary_index_membership=derive_primary_index_membership(memberships),
         )
 
     async def _list_active_kr_equity_instruments(self) -> list[object]:

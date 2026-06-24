@@ -737,6 +737,31 @@ class TradingUniversePreviewItem(BaseModel):
     priority: int
 
 
+class TradingUniverseFreezeView(BaseModel):
+    """Active intraday freeze view for ops inspection."""
+
+    universe_freeze_run_id: UUID
+    freeze_purpose: str
+    business_date: date
+    frozen_at: datetime
+    selection_version: str | None = None
+    target_count: int
+    source_type_counts: dict[str, int]
+    inclusion_reason_counts: dict[str, int]
+    items: list[TradingUniversePreviewItem]
+
+
+class TradingUniverseFreezeComparisonView(BaseModel):
+    """Live compose vs active intraday freeze comparison summary."""
+
+    exact_match: bool
+    live_total_count: int
+    freeze_total_count: int
+    common_symbol_count: int
+    live_only_symbols: list[str]
+    freeze_only_symbols: list[str]
+
+
 class MarketOverlayDiagnosticsView(BaseModel):
     """Operational diagnostics for the market overlay branch."""
 
@@ -773,6 +798,8 @@ class TradingUniversePreviewResponse(BaseModel):
     inclusion_reason_counts: dict[str, int]
     market_overlay_diagnostics: MarketOverlayDiagnosticsView
     items: list[TradingUniversePreviewItem]
+    active_intraday_freeze: TradingUniverseFreezeView | None = None
+    active_intraday_freeze_comparison: TradingUniverseFreezeComparisonView | None = None
 
 
 class TradingUniverseCoverageItem(BaseModel):

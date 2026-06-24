@@ -70,6 +70,13 @@
     이를 각각 `KOSPI200`, `KOSDAQ150` membership으로 정규화해 적재한다.
   - 현재 원본 CSV에 `KOSPI100`, `KOSDAQ50` 직접 플래그가 없으면
     별도 승인 리스트나 외부 원천 없이 임의 추론해 적재하지 않는다.
+  - 중첩 membership은 제거하지 않고 원본 의미를 그대로 보존한다.
+    예: `KOSPI100` 종목은 `KOSPI200` membership도 함께 가질 수 있다.
+  - 다만 판단 계층에서는 평면 리스트를 그대로 해석하지 않고,
+    `primary_index_membership` 파생 규칙을 추가한다.
+    현재 우선순위는
+    `KOSPI100 > KOSDAQ50 > KOSPI200 > KOSDAQ150 > 기타`
+    로 본다.
 
 ### 2.2 Trading Universe
 
@@ -116,6 +123,11 @@ Universe 선정은 기본적으로 시스템 정책 책임이다.
 - 재시도, replay, reconciliation은 freeze 당시의 대상 집합을 바꾸지 않는다.
 - feature batch, decision loop, 운영 진단은
   가능하면 같은 freeze run id를 참조해야 한다.
+  - 현재 구현은 장후 `signal_feature` batch가 먼저 사용 중이다.
+  - 다음 확장 단계에서는 장중 `decision loop`도
+    `decision_loop_intraday` freeze를 우선 조회하도록 맞춰야 한다.
+    그렇지 않으면 장중 판단 대상과
+    장후 feature/audit 대상의 universe 기준이 분리된다.
 - `왜 이 종목이 그날 대상이었는가`를
   DB row 단위로 사후 설명 가능해야 한다.
 
@@ -178,6 +190,15 @@ unique / index 원칙:
 테이블이 위 연결을 사용해 장후 배치 실행 메타데이터와 종목별 처리 결과를 저장한다.
 - 이후 decision loop에도 동일 개념을 확장할 수 있지만,
   우선 장후 feature batch를 1차 authoritative consumer로 둔다.
+  다음 우선 확장 범위는 아래와 같다.
+  1. scheduler가 장중 첫 cycle 직전
+     `decision_loop_intraday` freeze를 1회 materialize
+  2. `run_decision_loop`는
+     env override 다음으로 latest intraday freeze를 조회
+  3. intraday freeze가 없을 때만 compose fallback
+  4. decision cycle summary / audit metadata에
+     `universe_freeze_run_id`, `freeze_purpose`, `freeze_reused`
+     를 남긴다.
 
 운영 원칙:
 

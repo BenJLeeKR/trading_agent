@@ -1043,6 +1043,12 @@ class InstrumentIndexMembershipRepository(Protocol):
     ) -> Sequence[InstrumentIndexMembershipEntity]:
         ...
 
+    async def list_active_instrument_ids_by_membership_code(
+        self,
+        membership_code: str,
+    ) -> Sequence[UUID]:
+        ...
+
 
 class SymbolTradeStateRepository(Protocol):
     """Authoritative current state cache for symbol-level trade hysteresis."""

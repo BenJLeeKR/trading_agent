@@ -43,6 +43,8 @@ from agent_trading.domain.entities import (
     SnapshotSyncRunEntity,
     StrategyEntity,
     TradeDecisionEntity,
+    UniverseFreezeRunEntity,
+    UniverseFreezeRunItemEntity,
 )
 from agent_trading.domain.enums import (
     AssetClass,
@@ -71,9 +73,11 @@ from agent_trading.services.submit_lane_gate import (
 # Module under test
 from scripts.run_decision_loop import (
     DEFAULT_TRADING_UNIVERSE_CORE_CAP,
+    DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
     ENV_TRADING_UNIVERSE_CORE_CAP,
     ENV_TRADING_UNIVERSE,
     KISRestClient,
+    UniverseAnchorMetadata,
     UniverseSymbol,
     _build_aggregate_summary,
     _collect_persisted_seeded_events,
@@ -620,6 +624,29 @@ class TestSerializeCycleResult:
         assert serialized["decision_type"] is None
         assert serialized["side"] is None
 
+    def test_includes_universe_anchor_fields(self) -> None:
+        """Universe freeze anchor가 cycle 결과에 포함된다."""
+        anchor = UniverseAnchorMetadata(
+            source="intraday_freeze",
+            universe_freeze_run_id=str(uuid4()),
+            freeze_purpose="decision_loop_intraday",
+            freeze_reused=True,
+            business_date="2026-06-24",
+        )
+        serialized = _serialize_cycle_result(
+            cycle=1,
+            result=None,
+            duration=0.5,
+            error="anchor-check",
+            universe_anchor=anchor,
+        )
+
+        assert serialized["universe_anchor_source"] == "intraday_freeze"
+        assert serialized["universe_freeze_run_id"] == anchor.universe_freeze_run_id
+        assert serialized["freeze_purpose"] == "decision_loop_intraday"
+        assert serialized["freeze_reused"] is True
+        assert serialized["universe_anchor"]["business_date"] == "2026-06-24"
+
     def test_includes_ai_call_path(self) -> None:
         """AI skip 계측이 결과 직렬화에 포함된다."""
         ctx_id = uuid4()
@@ -830,6 +857,27 @@ class TestBuildAggregateSummary:
             },
         }
 
+    def test_includes_universe_anchor_metrics(self) -> None:
+        """Aggregate summary가 universe anchor 메타데이터를 포함한다."""
+        anchor = UniverseAnchorMetadata(
+            source="intraday_freeze",
+            universe_freeze_run_id=str(uuid4()),
+            freeze_purpose="decision_loop_intraday",
+            freeze_reused=True,
+            business_date="2026-06-24",
+        )
+        summary = _build_aggregate_summary(
+            [{"status": "SUBMITTED"}],
+            total_duration=1.0,
+            universe_anchor=anchor,
+        )
+
+        assert summary["metrics"]["universe_anchor_source"] == "intraday_freeze"
+        assert summary["metrics"]["universe_freeze_run_id"] == anchor.universe_freeze_run_id
+        assert summary["metrics"]["freeze_purpose"] == "decision_loop_intraday"
+        assert summary["metrics"]["freeze_reused"] is True
+        assert summary["metrics"]["universe_anchor"]["business_date"] == "2026-06-24"
+
 
 class TestSerializePrecheck:
     """``_serialize_precheck()`` — health summary 직렬화."""
@@ -1034,6 +1082,7 @@ class TestRunOneCycle:
         async with _mock_runtime_for_one_cycle() as runtime:
             live_pipeline = AsyncMock(return_value=None)
             with (
+                patch.dict("os.environ", {"SEEDED_NEWS_ENABLED": "1"}),
                 patch(
                     "scripts.run_decision_loop._collect_persisted_seeded_events",
                     new=AsyncMock(return_value=[]),
@@ -2406,7 +2455,15 @@ class TestGeneralSubmitLane:
         try:
             with (
                 patch("scripts.run_decision_loop._install_signal_handlers", return_value=None),
-                patch("scripts.run_decision_loop._read_trading_universe", AsyncMock(return_value=universe)),
+                patch(
+                    "scripts.run_decision_loop._load_trading_universe_with_anchor",
+                    AsyncMock(
+                        return_value=(
+                            universe,
+                            UniverseAnchorMetadata(source="test"),
+                        )
+                    ),
+                ),
                 patch("scripts.run_decision_loop.postgres_runtime", new=_mock_runtime),
                 patch("scripts.run_decision_loop._seed_if_empty", AsyncMock(return_value=False)),
                 patch("scripts.run_decision_loop._run_precheck", AsyncMock(return_value=None)),
@@ -2490,7 +2547,15 @@ class TestGeneralSubmitLane:
         try:
             with (
                 patch("scripts.run_decision_loop._install_signal_handlers", return_value=None),
-                patch("scripts.run_decision_loop._read_trading_universe", AsyncMock(return_value=universe)),
+                patch(
+                    "scripts.run_decision_loop._load_trading_universe_with_anchor",
+                    AsyncMock(
+                        return_value=(
+                            universe,
+                            UniverseAnchorMetadata(source="test"),
+                        )
+                    ),
+                ),
                 patch("scripts.run_decision_loop.postgres_runtime", new=_mock_runtime),
                 patch("scripts.run_decision_loop._seed_if_empty", AsyncMock(return_value=False)),
                 patch("scripts.run_decision_loop._run_precheck", AsyncMock(return_value=None)),
@@ -2564,7 +2629,15 @@ class TestGeneralSubmitLane:
         try:
             with (
                 patch("scripts.run_decision_loop._install_signal_handlers", return_value=None),
-                patch("scripts.run_decision_loop._read_trading_universe", AsyncMock(return_value=universe)),
+                patch(
+                    "scripts.run_decision_loop._load_trading_universe_with_anchor",
+                    AsyncMock(
+                        return_value=(
+                            universe,
+                            UniverseAnchorMetadata(source="test"),
+                        )
+                    ),
+                ),
                 patch("scripts.run_decision_loop.postgres_runtime", new=_mock_runtime),
                 patch("scripts.run_decision_loop._seed_if_empty", AsyncMock(return_value=False)),
                 patch("scripts.run_decision_loop._run_precheck", AsyncMock(return_value=None)),
@@ -2662,6 +2735,72 @@ class TestTradingUniverse:
         )
 
     @pytest.mark.asyncio
+    async def test_read_trading_universe_prefers_latest_intraday_freeze(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """intraday freeze가 있으면 compose보다 먼저 사용해야 한다."""
+        monkeypatch.delenv(ENV_TRADING_UNIVERSE, raising=False)
+
+        repos = build_in_memory_repositories()
+        freeze_run_id = uuid4()
+        instrument_id = uuid4()
+        await repos.universe_freeze_runs.add(
+            UniverseFreezeRunEntity(
+                universe_freeze_run_id=freeze_run_id,
+                business_date=datetime.now(timezone.utc).date(),
+                freeze_purpose=DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
+                freeze_sequence=1,
+                frozen_at=datetime.now(timezone.utc),
+                selection_version="universe_selection.freeze.v1",
+                target_count=1,
+                status="materialized",
+            )
+        )
+        await repos.universe_freeze_run_items.add_many(
+            (
+                UniverseFreezeRunItemEntity(
+                    universe_freeze_run_item_id=uuid4(),
+                    universe_freeze_run_id=freeze_run_id,
+                    instrument_id=instrument_id,
+                    symbol="123456",
+                    market_code="KRX",
+                    source_type="core",
+                    inclusion_reason="approved_core_universe",
+                    rank=1,
+                    cap_bucket="core",
+                ),
+            )
+        )
+
+        @asynccontextmanager
+        async def _mock_postgres_runtime(
+            run_migrations: bool = False,
+        ) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": repos}
+
+        with (
+            patch(
+                "scripts.run_decision_loop.postgres_runtime",
+                new=_mock_postgres_runtime,
+            ),
+            patch("scripts.run_decision_loop._HAS_KIS", False),
+            patch(
+                "scripts.run_decision_loop._current_business_date_kst",
+                return_value=datetime.now(timezone.utc).date(),
+            ),
+        ):
+            result = await _read_trading_universe()
+
+        assert result == (
+            UniverseSymbol(
+                "123456",
+                "KRX",
+                source_type="core",
+                inclusion_reason="approved_core_universe",
+            ),
+        )
+
+    @pytest.mark.asyncio
     async def test_universe_selection_service_fallback(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -2681,6 +2820,7 @@ class TestTradingUniverse:
                 asset_class="KR_STOCK",
                 currency="KRW",
                 tick_size=Decimal("50"),
+                metadata={"core_universe": True, "market_segment": "KOSPI"},
             )
         )
         await repos.instruments.add(
@@ -2693,6 +2833,7 @@ class TestTradingUniverse:
                 asset_class="KR_STOCK",
                 currency="KRW",
                 tick_size=Decimal("50"),
+                metadata={"core_universe": True, "market_segment": "KOSPI"},
             )
         )
 
@@ -2885,6 +3026,7 @@ class TestTradingUniverse:
                     asset_class="KR_STOCK",
                     currency="KRW",
                     tick_size=Decimal("50"),
+                    metadata={"core_universe": True, "market_segment": "KOSPI"},
                 )
             )
 
@@ -2932,6 +3074,7 @@ class TestTradingUniverse:
                 asset_class="KR_STOCK",
                 currency="KRW",
                 tick_size=Decimal("50"),
+                metadata={"core_universe": True, "market_segment": "KOSPI"},
             )
         )
 

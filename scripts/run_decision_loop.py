@@ -50,11 +50,12 @@ import signal
 import sys
 import time
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, NoReturn
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 # Lazy import for python-dotenv (optional, for local dev)
 try:
     from dotenv import load_dotenv
@@ -257,6 +258,8 @@ ENV_INTERVAL = "PAPER_DECISION_LOOP_INTERVAL_SECONDS"
 ENV_TRADING_UNIVERSE = "TRADING_UNIVERSE_SYMBOLS"
 ENV_MANUAL_WATCHLIST = "TRADING_UNIVERSE_MANUAL_SYMBOLS"
 ENV_TRADING_UNIVERSE_CORE_CAP = "TRADING_UNIVERSE_CORE_CAP"
+DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE = "decision_loop_intraday"
+KST = ZoneInfo("Asia/Seoul")
 
 
 @dataclass(slots=True, frozen=True)
@@ -284,6 +287,81 @@ class UniverseSymbol:
     inclusion_reason: str = "approved_core_universe"
     market_segment: str | None = None
     index_memberships: tuple[str, ...] = ()
+
+
+@dataclass(slots=True, frozen=True)
+class UniverseAnchorMetadata:
+    """Decision loop universe anchor metadata for audit/replay."""
+
+    source: str
+    universe_freeze_run_id: str | None = None
+    freeze_purpose: str | None = None
+    freeze_reused: bool = False
+    business_date: str | None = None
+
+
+def _current_business_date_kst() -> datetime.date:
+    """현재 영업일 기준 날짜를 KST 기준으로 계산한다."""
+    return datetime.now(timezone.utc).astimezone(KST).date()
+
+
+async def _read_intraday_frozen_universe(
+    repos: RepositoryContainer,
+    *,
+    freeze_purpose: str = DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
+) -> tuple[UniverseSymbol, ...]:
+    """최신 intraday universe freeze를 읽는다."""
+    universe, _ = await _load_intraday_frozen_universe_with_anchor(
+        repos,
+        freeze_purpose=freeze_purpose,
+    )
+    return universe
+
+
+async def _load_intraday_frozen_universe_with_anchor(
+    repos: RepositoryContainer,
+    *,
+    freeze_purpose: str = DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
+) -> tuple[tuple[UniverseSymbol, ...], UniverseAnchorMetadata | None]:
+    """최신 intraday universe freeze와 audit anchor를 함께 읽는다."""
+    latest_run = await repos.universe_freeze_runs.get_latest(
+        _current_business_date_kst(),
+        freeze_purpose,
+    )
+    if latest_run is None:
+        return (), None
+    items = await repos.universe_freeze_run_items.list_by_run(
+        latest_run.universe_freeze_run_id
+    )
+    if not items:
+        return (), None
+    universe = tuple(
+        UniverseSymbol(
+            symbol=item.symbol,
+            market=item.market_code,
+            source_type=item.source_type,
+            inclusion_reason=item.inclusion_reason,
+        )
+        for item in items
+    )
+    logger.info(
+        "Trading universe from intraday freeze: %d symbols loaded "
+        "(freeze_run_id=%s, freeze_purpose=%s, business_date=%s).",
+        len(universe),
+        latest_run.universe_freeze_run_id,
+        latest_run.freeze_purpose,
+        latest_run.business_date.isoformat(),
+    )
+    return (
+        universe,
+        UniverseAnchorMetadata(
+            source="intraday_freeze",
+            universe_freeze_run_id=str(latest_run.universe_freeze_run_id),
+            freeze_purpose=latest_run.freeze_purpose,
+            freeze_reused=True,
+            business_date=latest_run.business_date.isoformat(),
+        ),
+    )
 
 # ── Signal handling ─────────────────────────────────────────────────────────
 
@@ -436,21 +514,46 @@ async def _read_trading_universe(
     Priority
     --------
     1. ``TRADING_UNIVERSE_SYMBOLS`` env var (explicit override).
-    2. ``UniverseSelectionService.compose()`` — 4-source composition with
+    2. latest intraday universe freeze (`decision_loop_intraday`).
+    3. ``UniverseSelectionService.compose()`` — 4-source composition with
        Liquidity Filter, priority sort, and daily cap.
-    3. Hardcoded fallback: ``UniverseSymbol(symbol=SYMBOL, market=MARKET)`` (005930/KRX).
+    4. Hardcoded fallback: ``UniverseSymbol(symbol=SYMBOL, market=MARKET)`` (005930/KRX).
 
     The env var takes precedence so that operators can override the universe
     without modifying the database.  When the env var is not set, the
     ``UniverseSelectionService`` is used.  If the service is unavailable or
     returns no symbols, the single-symbol 005930 fallback is used.
     """
+    universe, _ = await _load_trading_universe_with_anchor(
+        max_cap=max_cap,
+        core_cap=core_cap,
+        market_overlay_cap=market_overlay_cap,
+        pre_pool_size=pre_pool_size,
+        exclude_held_from_cap=exclude_held_from_cap,
+        disable_market_overlay_live=disable_market_overlay_live,
+    )
+    return universe
+
+
+async def _load_trading_universe_with_anchor(
+    *,
+    max_cap: int | None = None,
+    core_cap: int | None = None,
+    market_overlay_cap: int | None = None,
+    pre_pool_size: int | None = None,
+    exclude_held_from_cap: bool | None = None,
+    disable_market_overlay_live: bool = False,
+) -> tuple[tuple[UniverseSymbol, ...], UniverseAnchorMetadata]:
+    """Read trading universe plus audit anchor metadata."""
     # Priority 1: explicit env var override
     raw = os.getenv(ENV_TRADING_UNIVERSE)
     if raw is not None and raw.strip():
-        return _parse_universe_symbols(raw)
+        return (
+            _parse_universe_symbols(raw),
+            UniverseAnchorMetadata(source="env_override"),
+        )
 
-    # Priority 2: UniverseSelectionService (4-source composition)
+    # Priority 2: latest intraday freeze, then live compose
     try:
         resolved_core_cap = (
             core_cap
@@ -464,6 +567,15 @@ async def _read_trading_universe(
         )
         async with postgres_runtime(run_migrations=False) as runtime:
             repos: RepositoryContainer = runtime["repositories"]
+
+            frozen_universe, frozen_anchor = await _load_intraday_frozen_universe_with_anchor(
+                repos
+            )
+            if frozen_universe:
+                return frozen_universe, (
+                    frozen_anchor
+                    or UniverseAnchorMetadata(source="intraday_freeze")
+                )
 
             # Create KIS quote client if available (P2 market overlay)
             kis_client: KISRestClient | None = None
@@ -573,7 +685,12 @@ async def _read_trading_universe(
                     ctx.core_cap,
                     source_counts,
                 )
-                return universe
+                return universe, UniverseAnchorMetadata(
+                    source="live_compose",
+                    freeze_purpose=DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
+                    freeze_reused=False,
+                    business_date=_current_business_date_kst().isoformat(),
+                )
 
             logger.info(
                 "UniverseSelectionService returned 0 symbols — "
@@ -591,8 +708,11 @@ async def _read_trading_universe(
             MARKET,
         )
 
-    # Priority 3: hardcoded fallback (single smoke symbol)
-    return (UniverseSymbol(symbol=SYMBOL, market=MARKET),)
+    # Priority 4: hardcoded fallback (single smoke symbol)
+    return (
+        (UniverseSymbol(symbol=SYMBOL, market=MARKET),),
+        UniverseAnchorMetadata(source="hardcoded_fallback"),
+    )
 
 
 # ── Pre-check: snapshot sync health ────────────────────────────────────────
@@ -673,6 +793,7 @@ def _serialize_cycle_result(
     ei_output: dict[str, object] | None = None,
     source_type: str = "core",
     dry_run_reason: str | None = None,
+    universe_anchor: UniverseAnchorMetadata | None = None,
 ) -> dict[str, object]:
     """Serialize a single decision cycle result.
 
@@ -724,6 +845,12 @@ def _serialize_cycle_result(
 
     if precheck is not None:
         data["precheck"] = precheck
+    if universe_anchor is not None:
+        data["universe_anchor_source"] = universe_anchor.source
+        data["universe_freeze_run_id"] = universe_anchor.universe_freeze_run_id
+        data["freeze_purpose"] = universe_anchor.freeze_purpose
+        data["freeze_reused"] = universe_anchor.freeze_reused
+        data["universe_anchor"] = asdict(universe_anchor)
 
     if error:
         data["status"] = "ERROR"
@@ -882,6 +1009,7 @@ def _build_aggregate_summary(
     total_duration: float,
     *,
     universe: tuple[UniverseSymbol, ...] = (),
+    universe_anchor: UniverseAnchorMetadata | None = None,
 ) -> dict[str, object]:
     """Build an aggregate summary from all cycle results."""
     total = len(results)
@@ -910,6 +1038,37 @@ def _build_aggregate_summary(
                 if code:
                     skip_reason_counts[str(code)] += 1
 
+    metrics: dict[str, object] = {
+        "universe_symbol_count": len(universe),
+        "processed_symbol_count": total,
+        "held_position_count": source_counts.get("held_position", 0),
+        "held_position_processed_count": processed_source_counts.get("held_position", 0),
+        "universe_source_counts": dict(source_counts),
+        "processed_source_counts": dict(processed_source_counts),
+        "ai_call_path": {
+            "tracked_count": len(ai_call_path_entries),
+            "ei_skipped_count": sum(
+                1 for payload in ai_call_path_entries
+                if bool(payload.get("ei_skipped"))
+            ),
+            "ar_skipped_count": sum(
+                1 for payload in ai_call_path_entries
+                if bool(payload.get("ar_skipped"))
+            ),
+            "fdc_skipped_count": sum(
+                1 for payload in ai_call_path_entries
+                if bool(payload.get("fdc_skipped"))
+            ),
+            "skip_reason_counts": dict(skip_reason_counts),
+        },
+    }
+    if universe_anchor is not None:
+        metrics["universe_anchor_source"] = universe_anchor.source
+        metrics["universe_freeze_run_id"] = universe_anchor.universe_freeze_run_id
+        metrics["freeze_purpose"] = universe_anchor.freeze_purpose
+        metrics["freeze_reused"] = universe_anchor.freeze_reused
+        metrics["universe_anchor"] = asdict(universe_anchor)
+
     return {
         "mode": "summary",
         "total_cycles": total,
@@ -918,30 +1077,7 @@ def _build_aggregate_summary(
         "error": errors,
         "success_rate": round(success / total * 100, 1) if total > 0 else 0,
         "total_duration_seconds": round(total_duration, 3),
-        "metrics": {
-            "universe_symbol_count": len(universe),
-            "processed_symbol_count": total,
-            "held_position_count": source_counts.get("held_position", 0),
-            "held_position_processed_count": processed_source_counts.get("held_position", 0),
-            "universe_source_counts": dict(source_counts),
-            "processed_source_counts": dict(processed_source_counts),
-            "ai_call_path": {
-                "tracked_count": len(ai_call_path_entries),
-                "ei_skipped_count": sum(
-                    1 for payload in ai_call_path_entries
-                    if bool(payload.get("ei_skipped"))
-                ),
-                "ar_skipped_count": sum(
-                    1 for payload in ai_call_path_entries
-                    if bool(payload.get("ar_skipped"))
-                ),
-                "fdc_skipped_count": sum(
-                    1 for payload in ai_call_path_entries
-                    if bool(payload.get("fdc_skipped"))
-                ),
-                "skip_reason_counts": dict(skip_reason_counts),
-            },
-        },
+        "metrics": metrics,
     }
 
 
@@ -987,6 +1123,7 @@ async def _run_one_cycle(
     remaining_general_buy_budget: int | None = None,
     runtime: dict[str, object],              # ★ 공유 runtime (외부에서 주입)
     cycle_precheck: dict[str, object] | None = None,  # ★ cycle precheck (외부에서 주입)
+    universe_anchor: UniverseAnchorMetadata | None = None,
 ) -> dict[str, object]:
     """Execute a single decision cycle with shared runtime.
 
@@ -1085,6 +1222,7 @@ async def _run_one_cycle(
                     dry_run=dry_run,
                     source_type=source_type,
                     dry_run_reason=dry_run_reason,
+                    universe_anchor=universe_anchor,
                 )
                 serialized["skip_reason"] = pre_ai_skip_reason
                 serialized["skip_details"] = pre_ai_skip_details
@@ -1114,6 +1252,11 @@ async def _run_one_cycle(
                     "source_type": source_type,
                     "market_segment": market_segment,
                     "index_memberships": list(index_memberships or ()),
+                    "universe_anchor": (
+                        asdict(universe_anchor)
+                        if universe_anchor is not None
+                        else None
+                    ),
                 },
             )
 
@@ -1323,6 +1466,7 @@ async def _run_one_cycle(
                 ei_output=ei_output,
                 source_type=source_type,
                 dry_run_reason=dry_run_reason,
+                universe_anchor=universe_anchor,
             )
 
     except asyncio.TimeoutError:
@@ -1360,6 +1504,7 @@ async def _run_one_cycle(
             dry_run=dry_run,
             error=str(exc),
             source_type=source_type,
+            universe_anchor=universe_anchor,
         )
 
 
@@ -1771,11 +1916,18 @@ async def _run_loop(
         output,
     )
     logger.info("Set %s to change interval (default=%d).", ENV_INTERVAL, DEFAULT_INTERVAL_SECONDS)
-    universe = await _read_trading_universe()
+    universe, universe_anchor = await _load_trading_universe_with_anchor()
     logger.info(
         "Trading universe (%d): %s",
         len(universe),
         ", ".join(f"{item.symbol}:{item.market}" for item in universe),
+    )
+    logger.info(
+        "Trading universe anchor: source=%s freeze_run_id=%s freeze_purpose=%s freeze_reused=%s",
+        universe_anchor.source,
+        universe_anchor.universe_freeze_run_id,
+        universe_anchor.freeze_purpose,
+        universe_anchor.freeze_reused,
     )
     logger.info("Set %s to change universe (comma-separated symbols).", ENV_TRADING_UNIVERSE)
 
@@ -1874,6 +2026,7 @@ async def _run_loop(
                                 remaining_general_buy_budget=remaining_general_buy_budget,
                                 runtime=runtime,
                                 cycle_precheck=cycle_precheck,
+                                universe_anchor=universe_anchor,
                             )
                         except Exception as exc:
                             logger.exception(
@@ -2053,6 +2206,7 @@ async def _run_loop(
         results,
         total_duration,
         universe=universe,
+        universe_anchor=universe_anchor,
     )
 
     if output == "json":

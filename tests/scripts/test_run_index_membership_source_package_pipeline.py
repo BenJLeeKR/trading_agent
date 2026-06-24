@@ -9,6 +9,7 @@ def test_parse_args_defaults() -> None:
     assert args.seed_csv == "data/instrument_master/source/index_membership_seed.csv"
     assert args.catalog == "logs/kis_index_category_catalog.json"
     assert args.apply is False
+    assert args.replace_membership_code_snapshot is False
     assert args.skip_catalog_validation is False
     assert args.allow_placeholder is False
 
@@ -33,6 +34,7 @@ def test_build_steps_respects_runtime_options() -> None:
         [
             "--apply",
             "--replace-listed-symbols",
+            "--replace-membership-code-snapshot",
             "--skip-catalog-validation",
             "--allow-placeholder",
         ]
@@ -45,4 +47,5 @@ def test_build_steps_respects_runtime_options() -> None:
     ]
     assert "--fail-on-placeholder" not in steps[1].command
     assert "--replace-listed-symbols" in steps[2].command
+    assert "--replace-membership-code-snapshot" in steps[2].command
     assert "--apply" in steps[2].command

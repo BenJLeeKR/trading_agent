@@ -24,6 +24,14 @@
     `metadata_index_memberships`에도 함께 기록한다.
   - 현재 원본 CSV에는 `KOSPI100`, `KOSDAQ50` 직접 플래그가 없으므로
     해당 membership은 별도 소스 없이는 자동 생성하지 않는다.
+  - 2026-06-24부터는 운영 업로드 source package
+    (`kospi100_constituents.csv`, `kospi200_constituents.csv`,
+    `kosdaq150_constituents.csv`)를
+    `index_membership_source_manifest.json`로 묶어
+    `scripts/run_index_membership_source_package_pipeline.py`
+    경로로 반영한다.
+    이때 `--replace-membership-code-snapshot`를 사용해
+    membership code 단위 stale active row도 함께 종료한다.
 - 결과:
   - `(symbol, market_code)` 기준 upsert
   - 선택적으로 누락 active 종목 비활성화

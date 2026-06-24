@@ -58,6 +58,21 @@
     - source package의 공통 provenance
       (`source_name`, `source_ref`, `as_of_date`)는 manifest에서 고정한다.
     - membership별 note는 entry 단위로 남긴다.
+    - source package를 실제 반영할 때는
+      `scripts/run_index_membership_source_package_pipeline.py`
+      또는
+      `scripts/import_instrument_index_membership_seed.py`
+      에 `--replace-membership-code-snapshot`를 함께 사용해
+      seed에 빠진 stale active membership row도 종료한다.
+      `--replace-listed-symbols`만 사용하면
+      seed에 등장하지 않은 기존 active symbol이 남아
+      authoritative snapshot 정합성이 깨질 수 있다.
+    - 2026-06-24 운영 반영 기준:
+      `kospi100_constituents.csv`, `kospi200_constituents.csv`,
+      `kosdaq150_constituents.csv`를 source package로 반영해
+      active membership을
+      `KOSPI100=100`, `KOSPI200=200`, `KOSDAQ150=150`
+      으로 정합화했다.
   이후 Universe Selection은 이 값을 allowlist 보조가 아니라
   segment authoritative source로 사용할 수 있어야 한다.
   - `index_memberships`는
@@ -127,9 +142,12 @@
     - index membership 변경 이력은
       `instrument_index_memberships.effective_from/effective_to`로 시계열 관리한다.
 - 후속 리팩토링 검토:
-    - 운영 가독성 측면에서
-      `market_code='KOSPI'|'KOSDAQ'`, `exchange_code='KRX'` 모델이 더 직관적인지
-      별도 migration 항목으로 재검토한다.
+    - `market_code='KOSPI'|'KOSDAQ'`, `exchange_code='KRX'` 모델은
+      가독성 측면에서 직관적일 수 있으나,
+      현재 단계에서는 `market_code='KRX'` canonical 저장 모델을 유지한다.
+      판단 근거는
+      [`plans/[DESIGN] instrument_market_code_canonical_model_decision.md`](./[DESIGN]%20instrument_market_code_canonical_model_decision.md)
+      에 정리했다.
     - `KOSPI100`, `KOSDAQ50`, 실제 `KOSDAQ150`은
       KIS 기본종목정보 CSV 외 별도 지수 구성종목 원천으로 보강한다.
 

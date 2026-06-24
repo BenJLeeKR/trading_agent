@@ -6,16 +6,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
-from zoneinfo import ZoneInfo
-
+from uuid import uuid4
 import pytest
 
 logger = logging.getLogger(__name__)
 
 from scripts.run_ops_scheduler import (
     CommandResult,
+    DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
     DEFAULT_INSTRUMENT_MASTER_ARCHIVE_DIR,
     DEFAULT_MAX_GENERAL_BUY_SUBMIT_PER_DAY,
     DEFAULT_INSTRUMENT_MASTER_SOURCE_CSV_PATHS,
@@ -39,6 +40,7 @@ from scripts.run_ops_scheduler import (
     _extract_command_failure_reason,
     _build_skip_command_result,
     _command_result_summary,
+    _ensure_decision_loop_intraday_freeze,
     _extract_json_objects,
     _generate_signal_feature_snapshot_input_command,
     _get_db_held_position_sell_count,
@@ -74,6 +76,12 @@ from scripts.run_ops_scheduler import (
     _signal_feature_snapshot_retry_input_path,
     _snapshot_command,
 )
+from agent_trading.domain.entities import (
+    InstrumentEntity,
+    UniverseFreezeRunEntity,
+    UniverseFreezeRunItemEntity,
+)
+from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.brokers.koreainvestment.market_state_client import (
     MarketPhaseCode,
     MarketState,
@@ -2124,6 +2132,10 @@ class TestIntradayDecisionLoopPersistence:
             persisted_snapshots.append([r.name for r in state.command_results])
 
         with (
+            patch(
+                "scripts.run_ops_scheduler._ensure_decision_loop_intraday_freeze",
+                new=AsyncMock(),
+            ),
             patch("scripts.run_ops_scheduler._get_db_submit_count", new=AsyncMock(return_value=0)),
             patch("scripts.run_ops_scheduler._get_db_held_position_sell_count", new=AsyncMock(return_value=0)),
             patch("scripts.run_ops_scheduler._run_and_record", new=fake_run_and_record),
@@ -2146,6 +2158,108 @@ class TestIntradayDecisionLoopPersistence:
             "post_submit_sync",
             "fill_sync",
         ]
+
+
+class TestDecisionLoopIntradayFreeze:
+    """장중 decision loop intraday freeze materialization/reuse."""
+
+    @pytest.mark.asyncio
+    async def test_reuses_existing_intraday_freeze(self) -> None:
+        repos = build_in_memory_repositories()
+        run_id = uuid4()
+        instrument_id = uuid4()
+        state = SchedulerState(run_date=date(2026, 6, 24))
+        await repos.universe_freeze_runs.add(
+            UniverseFreezeRunEntity(
+                universe_freeze_run_id=run_id,
+                business_date=state.run_date,
+                freeze_purpose=DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
+                freeze_sequence=1,
+                frozen_at=datetime.now(timezone.utc),
+                selection_version="decision_loop_intraday.freeze.v1",
+                target_count=1,
+                status="materialized",
+            )
+        )
+        await repos.universe_freeze_run_items.add_many(
+            (
+                UniverseFreezeRunItemEntity(
+                    universe_freeze_run_item_id=uuid4(),
+                    universe_freeze_run_id=run_id,
+                    instrument_id=instrument_id,
+                    symbol="005930",
+                    market_code="KRX",
+                    source_type="core",
+                    inclusion_reason="approved_core_universe",
+                    rank=1,
+                    cap_bucket="core",
+                ),
+            )
+        )
+
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _mock_postgres_runtime(run_migrations: bool = False):
+            yield {"repositories": repos}
+
+        with patch("scripts.run_ops_scheduler.postgres_runtime", new=_mock_postgres_runtime):
+            await _ensure_decision_loop_intraday_freeze(state)
+
+        assert state.intraday_universe_freeze_done is True
+
+    @pytest.mark.asyncio
+    async def test_materializes_intraday_freeze_when_missing(self) -> None:
+        repos = build_in_memory_repositories()
+        state = SchedulerState(run_date=date(2026, 6, 24))
+        instrument_id = uuid4()
+        await repos.instruments.add(
+            InstrumentEntity(
+                instrument_id=instrument_id,
+                symbol="005930",
+                market_code="KRX",
+                asset_class="KR_STOCK",
+                currency="KRW",
+                name="삼성전자",
+                is_active=True,
+                tick_size=Decimal("50"),
+                metadata={"core_universe": True, "market_segment": "KOSPI"},
+            )
+        )
+
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _mock_postgres_runtime(run_migrations: bool = False):
+            yield {"repositories": repos}
+
+        async def _fake_read_trading_universe():
+            return (
+                MagicMock(
+                    symbol="005930",
+                    market="KRX",
+                    source_type="core",
+                    inclusion_reason="approved_core_universe",
+                ),
+            )
+
+        with (
+            patch("scripts.run_ops_scheduler.postgres_runtime", new=_mock_postgres_runtime),
+            patch("scripts.run_decision_loop._read_trading_universe", new=_fake_read_trading_universe),
+        ):
+            await _ensure_decision_loop_intraday_freeze(state)
+
+        latest = await repos.universe_freeze_runs.get_latest(
+            state.run_date,
+            DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
+        )
+        assert latest is not None
+        items = await repos.universe_freeze_run_items.list_by_run(
+            latest.universe_freeze_run_id
+        )
+        assert len(items) == 1
+        assert items[0].symbol == "005930"
+        assert state.intraday_universe_freeze_done is True
 
     @pytest.mark.asyncio
     async def test_intraday_decision_command_uses_remaining_buy_budget(self) -> None:

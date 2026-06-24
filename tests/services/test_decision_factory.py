@@ -35,6 +35,31 @@ def _make_request() -> SubmitOrderRequest:
     )
 
 
+def _make_request_with_universe_anchor() -> SubmitOrderRequest:
+    return SubmitOrderRequest(
+        account_ref="test_account",
+        client_order_id="test-001",
+        correlation_id="corr-001",
+        strategy_id=str(uuid4()),
+        symbol="005930",
+        market="KRX",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=Decimal("10"),
+        price=Decimal("50000"),
+        time_in_force=TimeInForce.DAY,
+        metadata={
+            "universe_anchor": {
+                "source": "intraday_freeze",
+                "universe_freeze_run_id": str(uuid4()),
+                "freeze_purpose": "decision_loop_intraday",
+                "freeze_reused": True,
+                "business_date": "2026-06-24",
+            }
+        },
+    )
+
+
 def _make_context(trigger: DeterministicTriggerAssessment) -> AssembledContext:
     return AssembledContext(
         decision_context=DecisionContextEntity(
@@ -124,6 +149,41 @@ def test_build_trade_decision_entity_sets_instrument_id_when_provided() -> None:
 
     assert entity is not None
     assert entity.instrument_id == instrument_id
+
+
+def test_build_trade_decision_entity_stores_universe_anchor() -> None:
+    trigger = DeterministicTriggerAssessment(
+        trigger_version="deterministic_trigger_v1",
+        primary_candidate="BUY_CANDIDATE",
+        candidate_set=("BUY_CANDIDATE",),
+        watch_candidate=False,
+        buy_candidate=True,
+        sell_candidate=False,
+        reduce_candidate=False,
+        candidate_confidence=0.82,
+        entry_score=0.82,
+        exit_score=0.14,
+        watch_score=0.2,
+        reason_codes=("trigger_buy_candidate",),
+        thresholds={"buy_candidate_threshold": 0.65},
+        metadata={},
+    )
+    request = _make_request_with_universe_anchor()
+    entity = build_trade_decision_entity(
+        decision_context_id=uuid4(),
+        request=request,
+        assembled_context=_make_context(trigger),
+        agent_bundle=AgentExecutionBundle(
+            composer_output=FinalDecisionComposerOutput(
+                decision_type="BUY",
+                side="BUY",
+                confidence=0.9,
+            ),
+        ),
+    )
+
+    assert entity is not None
+    assert entity.decision_json["universe_anchor"] == request.metadata["universe_anchor"]
 
 
 def test_build_trade_decision_entity_stores_candidate_vs_final_downgraded() -> None:

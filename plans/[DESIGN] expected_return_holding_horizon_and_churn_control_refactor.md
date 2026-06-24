@@ -605,8 +605,8 @@ orchestrator는 조립자로 남기는 편이 맞다.
 
 ## 14. 우선 구현 체크리스트
 
-- [ ] `reconciliation_overlay`의 flat 상태 신규 `BUY approve`를 deterministic layer에서 전면 차단
-- [ ] `source_type`별 `action_envelope` helper 추가
+- [x] `reconciliation_overlay`의 flat 상태 신규 `BUY approve`를 deterministic layer에서 전면 차단
+- [x] `source_type`별 `action_envelope` helper 추가
 - [x] actionable decision에 `expected_return_bps`, `net_expected_value_bps`, `final_trade_score` 비어 있으면 submit 금지
 - [x] `edge_after_cost_bps` 계산 필드 추가
 - [x] `same-symbol reentry cooldown` 1차 추가

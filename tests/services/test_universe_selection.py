@@ -449,6 +449,7 @@ class TestUniverseSelectionServiceCompose:
         selected = next(item for item in result if item.symbol == "123458")
         assert selected.market_segment == "KOSPI"
         assert selected.index_memberships == ("KOSPI100", "KOSPI200")
+        assert selected.primary_index_membership == "KOSPI100"
 
     @pytest.mark.asyncio
     async def test_explicit_core_false_overrides_index_membership(self) -> None:

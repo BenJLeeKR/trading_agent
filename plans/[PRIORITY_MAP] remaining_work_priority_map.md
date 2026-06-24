@@ -569,14 +569,24 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
       instrument master에 존재하는 건은 대부분 연결 완료했다.
     - 남은 `instrument_id IS NULL` 건은
       당시 `trading.instruments`에 row가 없던 종목(`000030`, `003410`, test symbol) 위주다.
-  - [ ] 4차 리팩토링 검토:
+  - [x] 4차 리팩토링 검토:
     `market_code='KRX'` canonical 저장 모델을 유지할지,
     아니면 `market_code='KOSPI'|'KOSDAQ'` + `exchange_code='KRX'`로
     더 직관적인 저장 모델로 재정의할지 결정한다.
-    - 운영 가독성 측면에서는 후자가 더 직관적이다.
-    - 다만 기존 FK, replay, snapshot, order history 치환 범위가 커서
-      별도 migration/reconciliation 계획이 필요하다.
-  - [ ] 4차 리팩토링 검토:
+    - 결론:
+      현재 단계에서는 `market_code='KRX'` canonical 저장 모델을 유지한다.
+    - 이유:
+      `market_segment`와 `instrument_index_memberships`가
+      이미 `KOSPI/KOSDAQ/지수편입` 의미를 분리하고 있고,
+      반대로 저장 모델 전환은
+      FK, replay, snapshot, order history, 테스트 fixture 수정 범위가 크다.
+    - 근거 문서:
+      [`plans/[DESIGN] instrument_market_code_canonical_model_decision.md`](./[DESIGN]%20instrument_market_code_canonical_model_decision.md)
+    - 재검토는
+      authoritative membership source 안정화와
+      read path 전환이 충분히 끝난 뒤
+      별도 migration/reconciliation 계획이 있을 때만 수행한다.
+  - [x] 4차 리팩토링 검토:
     `KOSPI100`, `KOSDAQ50`, `KOSDAQ150` membership authoritative source를
     KIS 기본종목정보 CSV 외 별도 원천으로 보강한다.
     - 현재 원본 CSV는 `is_kospi200=True/False`, `is_kosdaq150=False`만 제공해
@@ -602,8 +612,28 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
         seed 파일 provenance와 코드 오기입을
         운영자가 장전/장후에 빠르게 검증하기 위한
         보조 안전장치다.
-    - `KOSPI100`, `KOSDAQ50`, 실제 `KOSDAQ150` 구성종목은
+    - `KOSPI100`, 실제 `KOSDAQ150` 구성종목은
       별도 지수 구성종목 원천 파일 또는 승인 리스트 확보가 필요하다.
+    - 2026-06-24 운영 업로드 원천
+      (`kospi100_constituents.csv`, `kospi200_constituents.csv`,
+      `kosdaq150_constituents.csv`)을
+      `index_membership_source_manifest.json`로 묶어
+      실제 authoritative source package 반영을 완료했다.
+    - 반영 경로는
+      `scripts/run_index_membership_source_package_pipeline.py`
+      + `--replace-membership-code-snapshot` 플래그를 사용해
+      membership code 단위 stale active row까지 함께 종료한다.
+    - 실측 결과 현재 active membership은
+      `KOSPI100=100`, `KOSPI200=200`, `KOSDAQ150=150`이다.
+    - `KOSDAQ50`은 현재 운영 원천 파일이 없으므로
+      지원 코드만 유지하고 실제 active set은 비워둔다.
+    - [x] 중첩 membership 해석 규칙을 추가했다.
+      - 원본 membership 집합은 삭제하지 않고 유지한다.
+      - 대신 Universe/Decision/AI 프롬프트에서 공통으로
+        `primary_index_membership`을 파생해 사용한다.
+      - 현재 우선순위는
+        `KOSPI100 > KOSDAQ50 > KOSPI200 > KOSDAQ150 > 기타`
+        순이다.
     - [x] 외부 authoritative source package 수용 경로를 추가했다.
       - `scripts/build_index_membership_seed_from_source_package.py`
       - `data/instrument_master/source/index_membership_source_manifest.example.json`
@@ -1445,7 +1475,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
       `persist_success_count`, `persist_error_count`,
       `final_missing_count`, `failed_symbols_sample`
       를 남기도록 확장한다.
-    - [x] 장후 실행 후
+  - [x] 장후 실행 후
       `summary_json`과 `signal_feature_snapshots` 적재 건수를 대조하는
       운영 검증 절차를 문서화한다.
       - [`plans/[RUNBOOK] signal_feature_after_market_batch_validation.md`](./%5BRUNBOOK%5D%20signal_feature_after_market_batch_validation.md)
@@ -1455,6 +1485,95 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
         `signal_feature_batch_run_items` →
         `signal_feature_snapshots`
         순서의 운영 판정 절차를 정리했다.
+  - `P0-추가`
+    - [x] decision loop도 `feature freeze`와 별개로 실시간 compose만 하지 않고,
+      `intraday universe freeze`를 우선 anchor로 읽도록 확장한다.
+      - 배경:
+        현재는 `signal_feature` 장후 배치만
+        `universe_freeze_runs` / `universe_freeze_run_items`를 사용하고,
+        장중 `run_decision_loop`는 매 cycle마다
+        `UniverseSelectionService.compose()`를 다시 호출한다.
+        이 구조는 feature/audit/replay 경로와
+        실제 장중 판단 경로의 universe 기준이 분리되는 문제가 있다.
+      - 목표:
+        `decision loop`, `feature batch`, `운영 진단`이
+        가능한 한 동일한 universe anchor 개념을 공유하게 만든다.
+      - [x] 1차:
+        `decision loop intraday freeze` 목적값과 생성 시점을 확정한다.
+        - 권장 `freeze_purpose`:
+          `decision_loop_intraday`
+        - 확정 생성 시점:
+          scheduler가 장중 due 상태의 첫 `decision` task를 실행하기 직전
+          1회 materialize / reuse
+        - 같은 거래일/같은 목적 내에서는
+          기존 freeze run 재사용을 기본값으로 한다.
+      - [x] 1차:
+        `run_decision_loop.py`에
+        `latest freeze run 우선 -> compose fallback` read path를 추가한다.
+        - `TRADING_UNIVERSE_SYMBOLS` env override는 여전히 최우선 유지
+        - 그 다음 `universe_freeze_run_items(decision_loop_intraday)` 조회
+        - 마지막 fallback만 `UniverseSelectionService.compose()`
+      - [x] 1차:
+        freeze 미존재 시 새 freeze를 materialize 할지,
+        아니면 compose 결과를 1회성으로만 사용할지 정책을 고정한다.
+        - 확정:
+          freeze가 없으면 먼저 materialize 한 뒤
+          그 결과를 decision loop가 읽는다.
+        - 구현:
+          `ops-scheduler`가 `decision_submit_gate` 직전에
+          기존 freeze reuse를 먼저 시도하고,
+          없으면 `UniverseSelectionService.compose()` 결과를
+          `universe_freeze_runs` / `universe_freeze_run_items`에 저장한 뒤
+          같은 거래일 anchor로 사용한다.
+      - [x] 1차:
+        decision cycle 요약과 audit 메타데이터에
+        `universe_freeze_run_id`, `freeze_purpose`, `freeze_reused`
+        를 남긴다.
+        - 최소 범위:
+          decision loop summary JSON
+        - 추가 반영:
+          per-symbol cycle JSON에도 같은 anchor를 남긴다.
+        - 권장 확장:
+          `decision_context` 또는 `trade_decisions.decision_json`
+          에도 anchor 기록
+        - 구현:
+          `run_decision_loop.py`가
+          `universe_anchor_source`, `universe_freeze_run_id`,
+          `freeze_purpose`, `freeze_reused`를
+          cycle result / aggregate summary metrics에 기록하고,
+          `SubmitOrderRequest.metadata["universe_anchor"]`를 통해
+          `trade_decisions.decision_json.universe_anchor`까지 전파한다.
+      - [x] 2차:
+        preview/ops API가
+        현재 live compose 결과와
+        현재 active intraday freeze 결과를 구분해서 보여주도록 확장한다.
+        - 구현:
+          `GET /instruments/trading-universe/preview` 응답에
+          `active_intraday_freeze`,
+          `active_intraday_freeze_comparison`를 추가해
+          live compose 결과와 같은 거래일의
+          `decision_loop_intraday` freeze 결과를 한 번에 비교할 수 있게 한다.
+      - [x] 2차:
+        재시작/장애 복구 시
+        기존 intraday freeze 재사용,
+        수동 새 freeze 생성,
+        stale freeze 감지 기준을 runbook에 정리한다.
+        - 구현:
+          [`plans/[RUNBOOK] decision_loop_intraday_freeze_operations.md`](./%5BRUNBOOK%5D%20decision_loop_intraday_freeze_operations.md)
+          문서에
+          상태 확인 API,
+          재기동 후 reuse 절차,
+          수동 `ensure`,
+          수동 `force-new`,
+          hard stale / soft drift 판정 기준을 고정했다.
+      - 구현 범위 고정:
+        이번 후속 작업은
+        `universe schema 추가`가 아니라
+        기존 `universe_freeze_runs` / `universe_freeze_run_items`
+        재사용을 전제로 한다.
+        신규 핵심 범위는
+        `decision loop read path`, `scheduler freeze materialization`,
+        `audit anchor propagation`, `ops visibility` 4가지다.
   - `P1`
     - [x] `signal_feature_batch_runs`
       실행 단위 테이블 도입 여부를 확정하고 구현했다.

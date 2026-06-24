@@ -80,6 +80,10 @@ from agent_trading.services.deterministic_trigger_engine import (
 from agent_trading.services.execution_service import (
     ExecutionService,
 )
+from agent_trading.services.instrument_profile import (
+    derive_primary_index_membership,
+    normalize_index_memberships,
+)
 from agent_trading.services.holding_profile_policy import (
     derive_holding_profile_policy,
     parse_datetime_or_none,
@@ -1043,6 +1047,7 @@ class DecisionOrchestratorService:
             deterministic_trigger=assembled_context.deterministic_trigger,
             instrument_market_segment=assembled_context.instrument_market_segment,
             instrument_index_memberships=assembled_context.instrument_index_memberships,
+            primary_index_membership=assembled_context.primary_index_membership,
             source_type=assembled_context.source_type,
         )
 
@@ -1080,15 +1085,7 @@ class DecisionOrchestratorService:
             raw_values = list(candidates)
         else:
             return ()
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for value in raw_values:
-            item = str(value).strip().upper()
-            if not item or item in seen:
-                continue
-            seen.add(item)
-            normalized.append(item)
-        return tuple(normalized)
+        return normalize_index_memberships(raw_values)
 
     def _build_short_circuit_agent_bundle(
         self,
@@ -1456,6 +1453,17 @@ class DecisionOrchestratorService:
             decision_context,
             cash_balance_snapshot,
         )
+        instrument_market_segment = self._extract_instrument_market_segment(
+            instrument,
+            request,
+        )
+        instrument_index_memberships = self._extract_instrument_index_memberships(
+            instrument,
+            request,
+        )
+        primary_index_membership = derive_primary_index_membership(
+            instrument_index_memberships
+        )
 
         # --- Assemble context (without score yet) ---
         assembled_context = AssembledContext(
@@ -1470,14 +1478,9 @@ class DecisionOrchestratorService:
             strategy_selection=derivation.strategy_selection,
             portfolio_allocation=derivation.portfolio_allocation,
             deterministic_trigger=derivation.deterministic_trigger,
-            instrument_market_segment=self._extract_instrument_market_segment(
-                instrument,
-                request,
-            ),
-            instrument_index_memberships=self._extract_instrument_index_memberships(
-                instrument,
-                request,
-            ),
+            instrument_market_segment=instrument_market_segment,
+            instrument_index_memberships=instrument_index_memberships,
+            primary_index_membership=primary_index_membership,
             source_type=derivation.source_type,
         )
 
@@ -1498,14 +1501,9 @@ class DecisionOrchestratorService:
             strategy_selection=derivation.strategy_selection,
             portfolio_allocation=derivation.portfolio_allocation,
             deterministic_trigger=derivation.deterministic_trigger,
-            instrument_market_segment=self._extract_instrument_market_segment(
-                instrument,
-                request,
-            ),
-            instrument_index_memberships=self._extract_instrument_index_memberships(
-                instrument,
-                request,
-            ),
+            instrument_market_segment=instrument_market_segment,
+            instrument_index_memberships=instrument_index_memberships,
+            primary_index_membership=primary_index_membership,
             source_type=derivation.source_type,
         )
 

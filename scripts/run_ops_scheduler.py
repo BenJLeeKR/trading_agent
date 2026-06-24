@@ -46,9 +46,10 @@ import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date, datetime, time as dtime, timedelta
+from datetime import date, datetime, time as dtime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 # Session gate — P1 market session hardening (076 API + fallback)
@@ -76,6 +77,11 @@ from agent_trading.brokers.koreainvestment.token_cache import (
     build_rest_access_token_cache_config,
 )
 from agent_trading.config.settings import AppSettings
+from agent_trading.domain.entities import (
+    UniverseFreezeRunEntity,
+    UniverseFreezeRunItemEntity,
+)
+from agent_trading.runtime.bootstrap import postgres_runtime
 from agent_trading.services.held_position_policy import (
     is_held_position_sell_path,
 )
@@ -101,6 +107,7 @@ DEFAULT_POST_SUBMIT_INTERVAL_SECONDS = 30
 DEFAULT_FILL_SYNC_INTERVAL_SECONDS = 600
 DEFAULT_FILL_SYNC_AFTER_HOURS_INTERVAL_SECONDS = 1800
 DEFAULT_SIGNAL_FEATURE_BATCH_TIME = dtime(20, 10)
+DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE = "decision_loop_intraday"
 DEFAULT_INSTRUMENT_MASTER_SYNC_TIME = dtime(4, 50)
 DEFAULT_INSTRUMENT_MASTER_SYNC_CSV_PATH = (
     "data/instrument_master/normalized/kis_kospi_kosdaq_master_normalized_for_sync.csv"
@@ -245,6 +252,8 @@ class SchedulerState:
     after_hours_full_snapshot_done: bool = False
     # 장 마감 후 20:10 KST signal feature batch 1회 실행 여부
     signal_feature_batch_done: bool = False
+    # 장중 decision loop intraday universe freeze 완료 여부
+    intraday_universe_freeze_done: bool = False
     # 장전 04:50 KST instrument master sync 1회 실행 여부
     instrument_master_sync_done: bool = False
     # 장전 sync window를 놓친 사실을 1회만 기록하기 위한 플래그
@@ -954,6 +963,7 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
         "session_reason": state.session_info.reason if state.session_info else None,
         "after_hours_full_snapshot_done": state.after_hours_full_snapshot_done,
         "signal_feature_batch_done": state.signal_feature_batch_done,
+        "intraday_universe_freeze_done": state.intraday_universe_freeze_done,
         "instrument_master_sync_done": state.instrument_master_sync_done,
         "instrument_master_sync_missed": state.instrument_master_sync_missed,
         "scheduler_runtime": _build_scheduler_runtime_summary(),
@@ -1017,6 +1027,8 @@ def _build_scheduler_runtime_summary() -> dict[str, Any]:
         ),
         "signal_feature_batch_supported": True,
         "signal_feature_batch_time": DEFAULT_SIGNAL_FEATURE_BATCH_TIME.strftime("%H:%M"),
+        "decision_loop_intraday_freeze_supported": True,
+        "decision_loop_intraday_freeze_purpose": DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
         "script_mtime_epoch": script_path.stat().st_mtime,
     }
 
@@ -2002,6 +2014,138 @@ async def _run_signal_feature_batch_runtime(
     logger.info("phase=%s signal feature batch complete", phase_label)
 
 
+async def _ensure_decision_loop_intraday_freeze(
+    state: SchedulerState,
+    *,
+    dsn: str | None = None,
+) -> None:
+    """Ensure today's intraday decision-loop universe freeze exists."""
+    if state.intraday_universe_freeze_done:
+        return
+
+    async with postgres_runtime(run_migrations=False) as runtime:
+        repos = runtime["repositories"]
+        existing_run = await repos.universe_freeze_runs.get_latest(
+            state.run_date,
+            DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
+        )
+        if existing_run is not None:
+            existing_items = await repos.universe_freeze_run_items.list_by_run(
+                existing_run.universe_freeze_run_id
+            )
+            if existing_items:
+                state.intraday_universe_freeze_done = True
+                await _persist_operations_day_run(state, dsn)
+                logger.info(
+                    "decision loop intraday freeze reused "
+                    "(freeze_run_id=%s, target_count=%d, run_date=%s)",
+                    existing_run.universe_freeze_run_id,
+                    len(existing_items),
+                    state.run_date.isoformat(),
+                )
+                return
+
+    from scripts.run_decision_loop import _read_trading_universe
+
+    universe = await _read_trading_universe()
+    if not universe:
+        logger.warning(
+            "decision loop intraday freeze skipped: composed universe empty "
+            "(run_date=%s)",
+            state.run_date.isoformat(),
+        )
+        return
+
+    async with postgres_runtime(run_migrations=False) as runtime:
+        repos = runtime["repositories"]
+        existing_run = await repos.universe_freeze_runs.get_latest(
+            state.run_date,
+            DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
+        )
+        if existing_run is not None:
+            existing_items = await repos.universe_freeze_run_items.list_by_run(
+                existing_run.universe_freeze_run_id
+            )
+            if existing_items:
+                state.intraday_universe_freeze_done = True
+                await _persist_operations_day_run(state, dsn)
+                logger.info(
+                    "decision loop intraday freeze reused after compose "
+                    "(freeze_run_id=%s, target_count=%d, run_date=%s)",
+                    existing_run.universe_freeze_run_id,
+                    len(existing_items),
+                    state.run_date.isoformat(),
+                )
+                return
+
+        freeze_run_id = uuid4()
+        freeze_items: list[UniverseFreezeRunItemEntity] = []
+        errors: list[str] = []
+        for rank, item in enumerate(universe, start=1):
+            instrument = await repos.instruments.get_by_symbol(
+                symbol=item.symbol,
+                market_code=item.market,
+            )
+            if instrument is None:
+                instrument = await repos.instruments.get_by_symbol_any_market(
+                    item.symbol
+                )
+            if instrument is None:
+                errors.append(f"{item.symbol}:{item.market}:instrument_not_found_for_freeze")
+                continue
+            freeze_items.append(
+                UniverseFreezeRunItemEntity(
+                    universe_freeze_run_item_id=uuid4(),
+                    universe_freeze_run_id=freeze_run_id,
+                    instrument_id=instrument.instrument_id,
+                    symbol=item.symbol,
+                    market_code=item.market,
+                    source_type=item.source_type,
+                    inclusion_reason=item.inclusion_reason,
+                    rank=rank,
+                    cap_bucket=item.source_type,
+                    metadata_json={},
+                )
+            )
+
+        if not freeze_items:
+            logger.warning(
+                "decision loop intraday freeze materialization failed: no_items "
+                "(run_date=%s, errors=%s)",
+                state.run_date.isoformat(),
+                errors[:5],
+            )
+            return
+
+        freeze_run = UniverseFreezeRunEntity(
+            universe_freeze_run_id=freeze_run_id,
+            business_date=state.run_date,
+            freeze_purpose=DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
+            freeze_sequence=1 if existing_run is None else existing_run.freeze_sequence + 1,
+            frozen_at=datetime.now(timezone.utc),
+            selection_version="decision_loop_intraday.freeze.v1",
+            selection_params_json={
+                "source": "ops_scheduler",
+                "target_count": len(universe),
+            },
+            target_count=len(freeze_items),
+            status="materialized",
+        )
+        await repos.universe_freeze_runs.add(freeze_run)
+        await repos.universe_freeze_run_items.add_many(freeze_items)
+
+    state.intraday_universe_freeze_done = True
+    await _persist_operations_day_run(state, dsn)
+    logger.info(
+        "decision loop intraday freeze materialized "
+        "(freeze_run_id=%s, target_count=%d, skipped=%d, run_date=%s)",
+        freeze_run_id,
+        len(freeze_items),
+        len(errors),
+        state.run_date.isoformat(),
+    )
+
+
 async def _run_intraday_due_tasks(
     state: SchedulerState,
     tasks: dict[str, ScheduledTask],
@@ -2031,6 +2175,8 @@ async def _run_intraday_due_tasks(
         tasks["event"].mark_ran(completed_at)
 
     if tasks["decision"].due:
+        await _ensure_decision_loop_intraday_freeze(state, dsn=dsn)
+
         # DB-based submit budget check (survives process crash/restart)
         db_submit_count = await _get_db_submit_count(state.run_date)
         effective_submit_count = max(state.submit_count, db_submit_count)

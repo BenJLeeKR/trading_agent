@@ -23,6 +23,10 @@
 [운영 스케줄러 시작]
         |
         v
+[장전 기준 데이터 준비]
+        └─ instrument master / index membership 동기화
+        |
+        v
 [장 상태 확인]
         |
         +--> [스냅샷 동기화]
@@ -32,20 +36,26 @@
         |         └─ 공시/뉴스/이벤트 입력
         |
         +--> [의사결정 루프]
-        |         └─ AI 판단 → 수량 산정 → 주문 생성 → KIS 제출
+        |         └─ intraday universe freeze를 anchor로
+        |            AI 판단 → 수량 산정 → 주문 생성 → KIS 제출
         |
         +--> [제출 후 동기화]
                   └─ KIS에 다시 물어봐서
                      제출/체결/부분체결/거절 상태를 내부 DB와 맞춤
+        |
+        +--> [장후 feature batch]
+                  └─ signal_feature_snapshot 생성 및 다음 거래일 판단 재료 고정
 ```
 
 이 구조를 더 쉽게 비유하면:
 
 - **운영 스케줄러** = 전체 공정을 관리하는 “현장 반장”
 - **스냅샷 동기화** = 현재 잔고/보유종목/주문가능금액 확인
+- **장중 universe freeze** = 오늘 장중에 판단할 종목 집합을 먼저 고정
 - **의사결정 루프** = “지금 사야 하나 / 팔아야 하나” 판단 + 주문서 작성
 - **KIS 제출** = 실제 증권사에 주문 전송
 - **제출 후 동기화** = 주문이 진짜 접수됐는지, 체결됐는지 다시 확인
+- **장후 feature batch** = 종가 기준 feature를 계산해 다음 판단 재료 저장
 
 ---
 
@@ -70,6 +80,9 @@
 - 이 값은 `docker-compose.yml`에서 `ops-scheduler`의
   `--max-general-buy-submit-per-day` 인자로 전달된다.
 - `MAX_GENERAL_BUY_SUBMIT_PER_DAY`라는 이름은 현재 읽지 않는다.
+- 장전 `instrument master sync` 기준 시각은 `04:50 KST`다.
+- 장후 `signal_feature_snapshot` 배치 기준 시각은 `20:10 KST`다.
+- 장후 feature row의 `snapshot_at` anchor는 해당 거래일 `20:00 KST`다.
 
 ### 2-2. 스케줄러가 실제로 호출하는 하위 작업
 
@@ -85,6 +98,12 @@
   - `scripts/run_post_submit_sync_loop.py` 호출
 - `_fill_sync_command()`
   - `scripts/run_fill_sync_loop.py` 호출
+
+추가로 스케줄러는 직접 보이지 않는 준비 단계도 관리한다.
+
+- 장전 `instrument master` 정규화/동기화
+- 장중 첫 `decision` 직전 `decision_loop_intraday` universe freeze 보장
+- 장후 `signal_feature_after_market` freeze + feature snapshot 적재
 
 즉 스케줄러는 **직접 판단하거나 직접 주문하지 않고**, 필요한 전용 프로세스를 호출해 전체 순서를 관리한다.
 
@@ -139,6 +158,29 @@
 
 ---
 
+## 3-3. 장전 instrument master / index membership 준비
+
+실행 기준:
+
+- `ops-scheduler`가 거래일 `04:50 KST`에 장전 1회 실행
+- 관련 파일:
+  - [scripts/run_ops_scheduler.py](/workspace/agent_trading/scripts/run_ops_scheduler.py)
+  - [scripts/sync_kis_instrument_master.py](/workspace/agent_trading/scripts/sync_kis_instrument_master.py)
+  - [scripts/import_instrument_index_membership_seed.py](/workspace/agent_trading/scripts/import_instrument_index_membership_seed.py)
+
+역할:
+
+- `instruments`를 오늘 판단에 사용할 기준 종목 마스터로 맞춘다.
+- `instrument_index_memberships`를 통해 `KOSPI100`, `KOSPI200`, `KOSDAQ150` 같은 편입 정보를 보강한다.
+- Universe Selection은 이 기준 데이터에 없는 종목을 `unknown_instrument`로 제외한다.
+
+업무 관점 설명:
+
+- 장전 종목 마스터가 틀리면 장중 의사결정 이전에 universe 단계에서 종목이 빠질 수 있다.
+- 따라서 “왜 어떤 종목이 오늘 판단 대상이 아니었는가”는 AI보다 먼저 `instrument master` 정합성을 봐야 한다.
+
+---
+
 ## 4. 실제 ‘의사결정’이 시작되는 지점
 
 ## 4-1. 의사결정 루프 시작점
@@ -153,6 +195,43 @@
 업무 관점 설명:
 
 - 이 단계는 “한 종목씩 검토해서, 실제 주문 후보가 되는지 판단하는 단계”다.
+
+---
+
+## 4-1-a. 의사결정 루프가 읽는 authoritative universe
+
+현재 구현 기준으로 장중 `decision loop`는 live compose만 바로 쓰지 않는다.
+
+우선순위:
+
+1. `TRADING_UNIVERSE_SYMBOLS` 강제 override
+2. 당일 최신 `decision_loop_intraday` freeze
+3. `UniverseSelectionService.compose()`
+4. 하드코딩 fallback
+
+관련 파일:
+
+- [scripts/run_decision_loop.py](/workspace/agent_trading/scripts/run_decision_loop.py)
+- [scripts/run_ops_scheduler.py](/workspace/agent_trading/scripts/run_ops_scheduler.py)
+- [src/agent_trading/services/universe_selection.py](/workspace/agent_trading/src/agent_trading/services/universe_selection.py)
+
+핵심 의미:
+
+- 정상 장중에는 `decision loop`가 당일 intraday freeze를 우선 anchor로 읽는다.
+- `ops-scheduler`는 장중 첫 `decision` 직전에 이 freeze가 없으면 새로 만들고, 있으면 재사용한다.
+- 따라서 재기동 이후에도 같은 거래일에는 같은 freeze를 계속 재사용하는 것이 기본 동작이다.
+
+운영 확인 경로:
+
+- `GET /market-sessions/operations-day/latest`
+- `GET /instruments/trading-universe/preview?account_id=<ACCOUNT_ID>`
+
+이 두 경로는 각각
+
+- 스케줄러가 오늘 intraday freeze를 완료했는지
+- live compose와 active freeze가 어떻게 다른지
+
+를 보여준다.
 
 ---
 
@@ -206,14 +285,16 @@
 ```text
 1) 사전 차단(pre-AI gate)
 2) 의사결정 요청 객체 생성
-3) T3 뉴스/공시 보조 데이터 점검
-4) AI 의사결정 호출
-5) 수량 산정
-6) 매도 가드 / 중복 매수 가드 / stale snapshot 가드
-7) 주문 요청 생성
-8) 주문 생성(DRAFT -> VALIDATED -> PENDING_SUBMIT)
-9) KIS 제출
-10) 제출 후 즉시 1차 재조회(sync)
+3) 최신 signal feature snapshot / deterministic trigger 로드
+4) T3 뉴스/공시 보조 데이터 점검
+5) AI 의사결정 호출
+6) expected value gate 포함 최종 실행 가능성 점검
+7) 수량 산정
+8) 매도 가드 / 중복 매수 가드 / stale snapshot 가드
+9) 주문 요청 생성
+10) 주문 생성(DRAFT -> VALIDATED -> PENDING_SUBMIT)
+11) KIS 제출
+12) 제출 후 즉시 1차 재조회(sync)
 ```
 
 ---
@@ -231,6 +312,8 @@
 
 1. `assemble()`
    - AI 에이전트들(EI, AR, FDC)을 돌린다.
+   - 최신 `signal_feature_snapshot`을 불러와 `decision_context`에 anchor로 붙인다.
+   - `deterministic_trigger`와 `expected_value_gate`를 계산한다.
    - `TradeDecision`를 저장한다.
    - `OrderIntent`를 만든다.
 2. 그 결과를 실행 파이프라인으로 넘긴다.
@@ -239,6 +322,7 @@
 
 - `assemble()` = “AI가 읽고 판단해서 내부 판단서 작성”
 - `OrderIntent` = “아직 증권사에 보내기 전, 내부 주문 의도서”
+- 이때 판단서는 이벤트만이 아니라 `signal_feature_snapshot`, `deterministic_trigger`, `universe_anchor`까지 함께 남긴다.
 
 ---
 
@@ -256,10 +340,20 @@
 
 - [src/agent_trading/services/decision_orchestrator.py](/workspace/agent_trading/src/agent_trading/services/decision_orchestrator.py)
   - `_run_decision_pipeline()`
+  - `_derive_deterministic_context_components()`
+  - `_attach_signal_feature_snapshot_to_context()`
 - [src/agent_trading/services/ai_agents/](/workspace/agent_trading/src/agent_trading/services/ai_agents)
   - EI: 이벤트 해석
   - AR: 리스크 판단
   - FDC: 최종 의사결정
+
+AI에 전달되기 전에 이미 준비되는 입력:
+
+- 최신 `signal_feature_snapshot`
+- `deterministic_trigger`
+- `expected_value_gate`
+- 종목의 `market_segment`, `index_memberships`
+- `source_type`
 
 이 단계 결과:
 
@@ -267,6 +361,12 @@
 - `REDUCE` / `EXIT` / `SELL`
 - `HOLD`
 - `WATCH`
+
+중요:
+
+- 현재 시스템은 “AI가 전부 처음부터 계산”하는 구조가 아니다.
+- 가격/거래대금/이동평균/활동도 같은 반복 계산은 장후 feature batch와 deterministic backend가 먼저 만들고,
+  AI는 그 위에서 해석과 최종 판단을 수행한다.
 
 ---
 
@@ -295,6 +395,15 @@ Phase 4c   스냅샷 stale guard
 Phase 5    브로커(KIS) 제출
 Phase 5.5  제출 직후 post-submit sync
 ```
+
+여기에 더해 현재는 AI 앞뒤로 아래 두 층이 함께 작동한다.
+
+- `deterministic_trigger`
+  - BUY 후보인지, WATCH만 허용할지, SELL/REDUCE 쪽인지 먼저 분류
+- `expected_value_gate`
+  - 기대수익 대비 비용/하방/신뢰도를 합쳐 실제 집행 가치가 있는지 최종 차단
+
+즉 AI는 독립 실행자가 아니라, deterministic backend가 만들어 둔 실행 가능한 좁은 공간 안에서 판단한다.
 
 ---
 
@@ -538,6 +647,25 @@ KIS에 성공 제출된 직후, 가능하면 즉시:
 
 ---
 
+## 10-1. unknown state와 rate limit을 다루는 원칙
+
+운영 원칙:
+
+- rate limit은 성능 이슈가 아니라 주문 안전성 제약으로 다룬다.
+- KIS 응답이 애매하면 신규 주문 확대보다 상태 확인과 reconciliation이 우선이다.
+
+실무 해석:
+
+- `RECONCILE_REQUIRED`
+- `truth_probe` 경고
+- `rate_limit`, `api_error`, `ambiguous state`
+
+같은 신호가 보이면 “더 빨리 다시 주문”보다 “현재 주문이 실제로 어떻게 됐는지 먼저 맞춘다”가 기본 원칙이다.
+
+이 원칙은 `OrderManager`, `OrderSyncService`, `BrokerAdapter` 경계에서 유지된다.
+
+---
+
 ## 11. 제출 후 별도 루프가 계속 상태를 다시 맞춤
 
 ## 11-1. post-submit sync 전용 프로세스
@@ -608,6 +736,34 @@ KIS에 성공 제출된 직후, 가능하면 즉시:
 
 ---
 
+## 12-1. 장후 feature freeze는 어디에 쓰이나
+
+장후 `20:10 KST` 배치는 단순 보고용이 아니다.
+
+관련 파일:
+
+- [scripts/run_ops_scheduler.py](/workspace/agent_trading/scripts/run_ops_scheduler.py)
+- [scripts/generate_signal_feature_snapshot_input.py](/workspace/agent_trading/scripts/generate_signal_feature_snapshot_input.py)
+- [scripts/build_signal_feature_snapshots.py](/workspace/agent_trading/scripts/build_signal_feature_snapshots.py)
+- [src/agent_trading/services/signal_feature_pipeline.py](/workspace/agent_trading/src/agent_trading/services/signal_feature_pipeline.py)
+
+역할:
+
+1. 장후 universe를 `signal_feature_after_market` purpose로 freeze 한다.
+2. 그 freeze 대상 종목에 대해 시세/일봉 기반 입력을 수집한다.
+3. 계산된 `signal_feature_snapshots`를 DB에 저장한다.
+4. 다음 장중 `DecisionOrchestratorService`가 종목별 최신 snapshot을 읽어
+   `deterministic_trigger`, `market_regime`, `expected_value_gate` 계산의 입력으로 사용한다.
+
+정리하면:
+
+- 장중 intraday freeze = “오늘 어떤 종목을 볼지”를 고정하는 anchor
+- 장후 feature freeze = “내일 어떤 feature를 읽을지”를 고정하는 anchor
+
+둘은 목적이 다르며, 서로 대체 관계가 아니다.
+
+---
+
 ## 13. 체결되면 왜 다시 스냅샷을 갱신하나
 
 체결이 발생하면:
@@ -638,10 +794,13 @@ KIS에 성공 제출된 직후, 가능하면 즉시:
 scripts/run_ops_scheduler.py
   main()
     -> _run_pre_market() / intraday loop / _run_end_of_day()
+    -> instrument master sync (04:50 KST)
+    -> _ensure_decision_loop_intraday_freeze()
     -> _snapshot_command()
     -> _event_command()
     -> _decision_command()
     -> _post_submit_command()
+    -> after_market_signal_feature batch (20:10 KST)
 ```
 
 ## 14-2. 의사결정 ~ 제출 기준
@@ -649,11 +808,16 @@ scripts/run_ops_scheduler.py
 ```text
 scripts/run_decision_loop.py
   main()
+    -> _load_trading_universe_with_anchor()
     -> _run_loop()
       -> _process_one()
         -> _run_one_cycle()
           -> _evaluate_pre_ai_skip_reason()
           -> DecisionOrchestratorService.assemble_and_submit()
+             -> _derive_deterministic_context_components()
+                -> signal_feature_snapshots.get_latest_by_instrument()
+                -> assess_deterministic_triggers()
+                -> evaluate_expected_value_gate()
              -> _run_decision_pipeline()
              -> ExecutionService.run_execution_pipeline()
                 -> calculate_sizing()
@@ -689,11 +853,13 @@ scripts/run_post_submit_sync_loop.py
 
 확인할 곳:
 
-1. `run_decision_loop.py` pre-AI gate에서 스킵됐는가
-2. AI 결과가 `HOLD/WATCH`였는가
-3. sizing에서 0주가 나왔는가
-4. stale snapshot guard에 막혔는가
-5. scheduler gate에 막혔는가
+1. `decision_loop_intraday` freeze에 그 종목이 들어 있었는가
+2. `run_decision_loop.py` pre-AI gate에서 스킵됐는가
+3. AI 결과가 `HOLD/WATCH`였는가
+4. `deterministic_trigger` 또는 `expected_value_gate`에서 차단됐는가
+5. sizing에서 0주가 나왔는가
+6. stale snapshot guard에 막혔는가
+7. scheduler gate에 막혔는가
 
 ### 15-2. 주문은 생성됐는데 KIS에 안 간 경우
 
@@ -712,6 +878,17 @@ scripts/run_post_submit_sync_loop.py
 3. `fill_history`
 4. `order_sync_service.sync_order_post_submit()`
 5. `truth_probe_fill_snapshot_incomplete` 같은 보류성 reason
+6. KIS rate limit 또는 ambiguous state가 있었는가
+
+### 15-4. 오늘 대상 종목 자체가 이상한 경우
+
+확인할 곳:
+
+1. 장전 `instrument master sync`가 정상 완료됐는가
+2. `instrument_index_memberships`가 기대대로 적재됐는가
+3. `GET /instruments/trading-universe/preview`에서
+   live compose와 active intraday freeze가 어떻게 다른가
+4. `trade_decisions.decision_json.universe_anchor`가 어떤 freeze를 가리키는가
 
 ---
 
@@ -732,6 +909,10 @@ scripts/run_post_submit_sync_loop.py
 5. **제출 후 동기화(post-submit sync)는 주문 라이프사이클의 일부다.**
    - 제출에서 끝이 아니라, 체결까지 상태를 맞춰야 진짜 완료다.
 
+6. **장중 판단 대상과 장후 feature는 각각 별도 freeze로 고정된다.**
+   - intraday freeze는 오늘 판단 대상을,
+     signal feature freeze는 다음 판단 재료를 고정한다.
+
 ---
 
 ## 17. 관련 핵심 파일 빠른 참조표
@@ -739,10 +920,14 @@ scripts/run_post_submit_sync_loop.py
 | 구분 | 파일 | 핵심 함수 | 역할 |
 |------|------|-----------|------|
 | 운영 스케줄러 | `scripts/run_ops_scheduler.py` | `main()`, `_decision_command()` | 장중 전체 작업 순서 관리 |
+| 장전 종목 마스터 | `scripts/sync_kis_instrument_master.py` | `main()` | `instrument master` 최신화 |
+| 장중 universe anchor | `scripts/run_ops_scheduler.py` | `_ensure_decision_loop_intraday_freeze()` | 장중 authoritative universe freeze 보장 |
 | 스냅샷 동기화 | `scripts/run_snapshot_sync_loop.py` | `main()` | 계좌/포지션/현금 최신화 |
 | 의사결정 루프 | `scripts/run_decision_loop.py` | `_run_loop()`, `_run_one_cycle()` | 종목별 AI 판단 진입 |
 | 사전 토큰 절감 | `scripts/run_decision_loop.py` | `_evaluate_pre_ai_skip_reason()` | AI 호출 전 불필요 대상 차단 |
 | AI 오케스트레이션 | `src/agent_trading/services/decision_orchestrator.py` | `assemble_and_submit()` | AI 판단 + 실행 파이프라인 연결 |
+| 장후 feature 입력 생성 | `scripts/generate_signal_feature_snapshot_input.py` | `main()` | 장후 feature 원천 입력 수집 |
+| 장후 feature 적재 | `scripts/build_signal_feature_snapshots.py` | `main()` | `signal_feature_snapshots` 저장 |
 | 실행 파이프라인 | `src/agent_trading/services/execution_service.py` | `run_execution_pipeline()` | sizing, guard, 주문 생성, 제출 |
 | 주문 번역 | `src/agent_trading/services/translation.py` | `build_submit_order_request_from_decision()` | HOLD/WATCH는 주문 미생성 |
 | 주문 상태 관리 | `src/agent_trading/services/order_manager.py` | `create_order()`, `transition_to()`, `submit_order_to_broker()` | 내부 주문 생성과 상태 전이 |
@@ -756,4 +941,4 @@ scripts/run_post_submit_sync_loop.py
 
 ## 18. 문서 한 줄 요약
 
-**운영 스케줄러가 시작되면, 먼저 계좌 상태를 맞추고, 그 다음 AI가 판단하고, 규칙형 가드가 이를 걸러낸 뒤, 통과한 주문만 KIS에 제출되며, 제출 뒤에도 별도 동기화가 계속 상태를 체결 기준으로 맞춰 간다.**
+**운영 스케줄러는 장전 `instrument master`, 장중 `intraday universe freeze`, 장후 `signal_feature_snapshot`을 각각 고정한 뒤, 그 위에서 AI 판단과 규칙형 가드를 결합해 주문을 제출하고, 제출 이후에는 reconciliation과 체결 동기화로 실제 상태를 끝까지 맞춰 간다.**
