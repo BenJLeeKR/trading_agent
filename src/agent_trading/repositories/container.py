@@ -28,6 +28,8 @@ from agent_trading.repositories.contracts import (
     ReconciliationRepository,
     RiskLimitSnapshotRepository,
     SignalFeatureSnapshotRepository,
+    SignalFeatureBatchRunRepository,
+    SignalFeatureBatchRunItemRepository,
     SnapshotSyncRunRepository,
     OrderSubmissionAttemptRepository,
     StrategyRepository,
@@ -64,6 +66,8 @@ class RepositoryContainer:
     guardrail_evaluations: GuardrailEvaluationRepository
     risk_limit_snapshots: RiskLimitSnapshotRepository
     signal_feature_snapshots: SignalFeatureSnapshotRepository
+    signal_feature_batch_runs: SignalFeatureBatchRunRepository
+    signal_feature_batch_run_items: SignalFeatureBatchRunItemRepository
     instrument_index_memberships: InstrumentIndexMembershipRepository
     universe_freeze_runs: UniverseFreezeRunRepository
     universe_freeze_run_items: UniverseFreezeRunItemRepository

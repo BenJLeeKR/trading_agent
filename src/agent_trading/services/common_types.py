@@ -111,6 +111,16 @@ class AIDecisionInputs:
     ar_skipped: bool = False
     fdc_skipped: bool = False
     skip_reason_codes: tuple[str, ...] = ()
+    expected_return_bps: Decimal | None = None
+    expected_downside_bps: Decimal | None = None
+    net_expected_value_bps: Decimal | None = None
+    final_trade_score: Decimal | None = None
+    minimum_required_edge_bps: Decimal | None = None
+    edge_after_cost_bps: Decimal | None = None
+    estimated_round_trip_cost_bps: Decimal | None = None
+    slippage_buffer_bps: Decimal | None = None
+    expected_value_gate_passed: bool = False
+    expected_value_gate_reason_codes: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------

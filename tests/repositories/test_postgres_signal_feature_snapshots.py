@@ -188,3 +188,60 @@ async def test_add_uses_savepoint_isolation(monkeypatch: pytest.MonkeyPatch) -> 
 
     assert savepoint_calls == ["enter", "exit"]
     assert saved["signal_feature_snapshot_id"] == snapshot.signal_feature_snapshot_id
+
+
+@pytest.mark.asyncio
+async def test_add_uses_natural_key_upsert_sql(monkeypatch: pytest.MonkeyPatch) -> None:
+    snapshot = SignalFeatureSnapshotEntity(
+        signal_feature_snapshot_id=uuid4(),
+        instrument_id=uuid4(),
+        timeframe="1d",
+        snapshot_at=datetime.now(timezone.utc),
+        feature_set_version="signal_backbone_v1",
+        bar_count=80,
+        overall_score=Decimal("0.10000000"),
+    )
+    existing_snapshot_id = uuid4()
+
+    class FakeSavepoint:
+        async def __aenter__(self) -> str:
+            return "sp_1"
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class FakeConnection:
+        def __init__(self) -> None:
+            self.query: str | None = None
+
+        async def fetchrow(self, query: str, *_args, **_kwargs) -> dict[str, object]:
+            self.query = query
+            return {
+                "signal_feature_snapshot_id": existing_snapshot_id,
+                "instrument_id": snapshot.instrument_id,
+                "timeframe": snapshot.timeframe,
+                "snapshot_at": snapshot.snapshot_at,
+                "feature_set_version": snapshot.feature_set_version,
+                "bar_count": snapshot.bar_count,
+                "overall_score": snapshot.overall_score,
+                "component_scores_json": {},
+                "created_at": snapshot.snapshot_at,
+            }
+
+    connection = FakeConnection()
+    tx = SimpleNamespace(
+        connection=connection,
+        savepoint=lambda: FakeSavepoint(),
+    )
+    repo = PostgresSignalFeatureSnapshotRepository(tx)
+
+    monkeypatch.setattr(
+        "agent_trading.repositories.postgres.signal_feature_snapshots.row_to_entity",
+        lambda row, _entity_cls: row,
+    )
+
+    saved = await repo.add(snapshot)
+
+    assert connection.query is not None
+    assert "ON CONFLICT (instrument_id, timeframe, snapshot_at, feature_set_version)" in connection.query
+    assert saved["signal_feature_snapshot_id"] == existing_snapshot_id

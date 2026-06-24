@@ -36,6 +36,8 @@ from agent_trading.domain.entities import (
     ReconciliationRunEntity,
     RiskLimitSnapshotEntity,
     SignalFeatureSnapshotEntity,
+    SignalFeatureBatchRunEntity,
+    SignalFeatureBatchRunItemEntity,
     SessionEventEntity,
     SnapshotSyncRunEntity,
     StrategyEntity,
@@ -1722,6 +1724,42 @@ class InMemoryUniverseFreezeRunItemRepository:
             )
         )
         return tuple(results)
+
+
+class InMemorySignalFeatureBatchRunRepository:
+    """In-memory implementation of ``SignalFeatureBatchRunRepository``."""
+
+    def __init__(self) -> None:
+        self._items: dict[UUID, SignalFeatureBatchRunEntity] = {}
+
+    async def add(self, run: SignalFeatureBatchRunEntity) -> SignalFeatureBatchRunEntity:
+        self._items[run.signal_feature_batch_run_id] = run
+        return run
+
+    async def get(self, run_id: UUID) -> SignalFeatureBatchRunEntity | None:
+        return self._items.get(run_id)
+
+
+class InMemorySignalFeatureBatchRunItemRepository:
+    """In-memory implementation of ``SignalFeatureBatchRunItemRepository``."""
+
+    def __init__(self) -> None:
+        self._items: dict[UUID, SignalFeatureBatchRunItemEntity] = {}
+
+    async def add(
+        self,
+        item: SignalFeatureBatchRunItemEntity,
+    ) -> SignalFeatureBatchRunItemEntity:
+        self._items[item.signal_feature_batch_run_item_id] = item
+        return item
+
+    async def add_many(
+        self,
+        items: Sequence[SignalFeatureBatchRunItemEntity],
+    ) -> Sequence[SignalFeatureBatchRunItemEntity]:
+        for item in items:
+            self._items[item.signal_feature_batch_run_item_id] = item
+        return tuple(items)
 
 
 class InMemoryExternalEventRepository:

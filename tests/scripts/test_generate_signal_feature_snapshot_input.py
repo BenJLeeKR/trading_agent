@@ -51,6 +51,7 @@ def test_parse_args_defaults() -> None:
     assert args.pre_pool_size == DEFAULT_SIGNAL_FEATURE_PRE_POOL_SIZE
     assert args.output_format == "text"
     assert args.freeze_purpose == DEFAULT_SIGNAL_FEATURE_FREEZE_PURPOSE
+    assert args.trigger_type == "after_market_scheduler"
     assert args.batch_size == DEFAULT_SIGNAL_FEATURE_BATCH_SIZE
     assert args.batch_pause_seconds == DEFAULT_SIGNAL_FEATURE_BATCH_PAUSE_SECONDS
     assert args.budget_retry_attempts == DEFAULT_SIGNAL_FEATURE_BUDGET_RETRY_ATTEMPTS
@@ -125,6 +126,7 @@ def test_write_rows_creates_json_file(tmp_path) -> None:
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["schema_version"] == "signal_feature_input.v2"
     assert payload["universe_metadata"]["universe_freeze_run_id"] == "freeze-1"
+    assert payload["universe_metadata"]["trigger_type"] is None
     assert payload["universe_metadata"]["symbols"][0]["symbol"] == "005930"
     assert payload["fetch_success_rows"][0]["market"] == "KRX"
     assert payload["fetch_error_rows"][0]["error_code"] == "timeout"
@@ -140,6 +142,7 @@ def test_load_retry_universe_from_input_uses_fetch_error_rows(tmp_path) -> None:
                     "universe_freeze_run_id": "freeze-1",
                     "universe_freeze_reused": True,
                     "freeze_purpose": "signal_feature_after_market",
+                    "trigger_type": "after_market_scheduler",
                     "symbols": [
                         {
                             "symbol": "005930",
@@ -169,9 +172,13 @@ def test_load_retry_universe_from_input_uses_fetch_error_rows(tmp_path) -> None:
         encoding="utf-8",
     )
 
-    universe, freeze_run_id, freeze_reused, freeze_purpose = _load_retry_universe_from_input(
-        str(path)
-    )
+    (
+        universe,
+        freeze_run_id,
+        freeze_reused,
+        freeze_purpose,
+        trigger_type,
+    ) = _load_retry_universe_from_input(str(path))
 
     assert len(universe) == 1
     assert universe[0].symbol == "090150"
@@ -181,6 +188,7 @@ def test_load_retry_universe_from_input_uses_fetch_error_rows(tmp_path) -> None:
     assert freeze_run_id == "freeze-1"
     assert freeze_reused is True
     assert freeze_purpose == "signal_feature_after_market"
+    assert trigger_type == "after_market_scheduler"
 
 
 def test_estimate_budget_retry_sleep_seconds_uses_refill_rate_maximum() -> None:
@@ -524,11 +532,12 @@ async def test_resolve_frozen_universe_reuses_existing_run(monkeypatch) -> None:
             add_many=AsyncMock(),
         ),
         instruments=SimpleNamespace(get_by_symbol=AsyncMock()),
+        accounts=SimpleNamespace(find_one=AsyncMock(return_value=None)),
     )
-
+    compose_mock = AsyncMock(side_effect=AssertionError("should not compose again"))
     monkeypatch.setattr(
-        "scripts.generate_signal_feature_snapshot_input._read_trading_universe",
-        AsyncMock(side_effect=AssertionError("should not compose again")),
+        "scripts.generate_signal_feature_snapshot_input.UniverseSelectionService",
+        lambda *args, **kwargs: SimpleNamespace(compose=compose_mock),
     )
 
     result = await _resolve_frozen_universe(
@@ -545,6 +554,7 @@ async def test_resolve_frozen_universe_reuses_existing_run(monkeypatch) -> None:
     assert result.universe_freeze_run_id == str(run_id)
     assert len(result.universe) == 1
     assert result.universe[0].symbol == "005930"
+    assert compose_mock.await_count == 0
 
 
 @pytest.mark.asyncio
@@ -566,20 +576,21 @@ async def test_resolve_frozen_universe_materializes_new_run(monkeypatch) -> None
                 return_value=SimpleNamespace(instrument_id=instrument_id)
             )
         ),
+        accounts=SimpleNamespace(find_one=AsyncMock(return_value=None)),
     )
-    read_universe_mock = AsyncMock(
+    compose_mock = AsyncMock(
         return_value=(
-            UniverseSymbol(
+            SimpleNamespace(
                 symbol="005930",
                 market="KRX",
-                source_type="core",
+                source_type=SimpleNamespace(value="core"),
                 inclusion_reason="approved_core_universe",
             ),
         )
     )
     monkeypatch.setattr(
-        "scripts.generate_signal_feature_snapshot_input._read_trading_universe",
-        read_universe_mock,
+        "scripts.generate_signal_feature_snapshot_input.UniverseSelectionService",
+        lambda *args, **kwargs: SimpleNamespace(compose=compose_mock),
     )
 
     result = await _resolve_frozen_universe(
@@ -598,7 +609,4 @@ async def test_resolve_frozen_universe_materializes_new_run(monkeypatch) -> None
     assert added_runs[0].target_count == 1
     assert added_item_batches[0][0].instrument_id == instrument_id
     assert result.universe[0].symbol == "005930"
-    assert read_universe_mock.await_count == 1
-    assert read_universe_mock.await_args.kwargs["market_overlay_cap"] == 0
-    assert read_universe_mock.await_args.kwargs["pre_pool_size"] == 0
-    assert read_universe_mock.await_args.kwargs["disable_market_overlay_live"] is True
+    assert compose_mock.await_count == 1

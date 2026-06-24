@@ -82,6 +82,10 @@
     필요 시 운영자가 수동으로 import 하며,
     기본 동작은 기존 membership과 `merge`다.
     명시적 `replace`가 필요한 경우에만 listed symbol 기준 authoritative overwrite를 사용한다.
+  - 운영 수동 실행 경로인 `app` 컨테이너도
+    `./data:/app/data`를 기본 마운트해
+    `index_membership_seed.csv`, normalized CSV, 원본 CSV를
+    컨테이너 내부 스크립트가 동일 경로로 직접 읽을 수 있어야 한다.
 
 ## 구현 포인트
 - `create_session_provider()`를 사용해 거래일 여부를 먼저 판정한다.
@@ -134,6 +138,8 @@
   `instrument_id`가 비어 있을 수 있으며,
   이는 canonical placeholder row 보강 + backfill로 우선 정리했다.
   이후 placeholder는 실제 master row 확보 시 치환 대상으로 관리한다.
+  수동 배치 경로의 파일 가시성 문제는
+  `app` 컨테이너 `./data:/app/data` 마운트 추가로 해소했다.
   다만 membership table 직접 참조는 아직 UniverseSelection 한정이며,
   sell_guard / snapshot sync는 symbol → canonical instrument lookup 계층을 유지한다.
 - UniverseSelectionService의 allowlist 우선 경로를

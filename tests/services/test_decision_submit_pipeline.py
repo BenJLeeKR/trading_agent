@@ -115,7 +115,18 @@ def _make_intent(
     """Build an ``OrderIntent`` with controlled ``AIDecisionInputs``."""
     if request is None:
         request = _make_request(quantity=quantity) if quantity is not None else _make_request()
-    ai_inputs = AIDecisionInputs(decision_type=decision_type)
+    ai_inputs = AIDecisionInputs(
+        decision_type=decision_type,
+        expected_return_bps=Decimal("50.00"),
+        expected_downside_bps=Decimal("15.00"),
+        net_expected_value_bps=Decimal("35.00"),
+        final_trade_score=Decimal("0.75"),
+        minimum_required_edge_bps=Decimal("10.00"),
+        edge_after_cost_bps=Decimal("18.00"),
+        estimated_round_trip_cost_bps=Decimal("9.00"),
+        slippage_buffer_bps=Decimal("8.00"),
+        expected_value_gate_passed=True,
+    )
     # sentinel-based: when caller omits the arg we auto-generate a UUID;
     # when caller explicitly passes None it stays None.
     if decision_context_id is _SENTINEL:
@@ -168,6 +179,24 @@ class TestBuildSubmitOrderRequest:
 
     def test_buy_returns_request(self) -> None:
         intent = _make_intent()
+        intent = intent.__class__(
+            decision_context_id=intent.decision_context_id,
+            order_intent_id=intent.order_intent_id,
+            request=intent.request,
+            context=intent.context,
+            ai_backend_inputs=AIDecisionInputs(
+                decision_type="BUY",
+                expected_return_bps=Decimal("70.00"),
+                expected_downside_bps=Decimal("20.00"),
+                net_expected_value_bps=Decimal("50.00"),
+                final_trade_score=Decimal("0.80"),
+                minimum_required_edge_bps=Decimal("10.00"),
+                edge_after_cost_bps=Decimal("30.00"),
+                estimated_round_trip_cost_bps=Decimal("10.00"),
+                slippage_buffer_bps=Decimal("10.00"),
+                expected_value_gate_passed=True,
+            ),
+        )
         # Also override side on the request
         result = build_submit_order_request_from_decision(intent)
         assert result is not None
@@ -175,8 +204,40 @@ class TestBuildSubmitOrderRequest:
 
     def test_sell_returns_request(self) -> None:
         intent = _make_intent(decision_type="SELL")
+        intent = intent.__class__(
+            decision_context_id=intent.decision_context_id,
+            order_intent_id=intent.order_intent_id,
+            request=intent.request,
+            context=intent.context,
+            ai_backend_inputs=AIDecisionInputs(
+                decision_type="SELL",
+                expected_return_bps=Decimal("45.00"),
+                expected_downside_bps=Decimal("10.00"),
+                net_expected_value_bps=Decimal("35.00"),
+                final_trade_score=Decimal("0.72"),
+                minimum_required_edge_bps=Decimal("5.00"),
+                edge_after_cost_bps=Decimal("20.00"),
+                estimated_round_trip_cost_bps=Decimal("7.00"),
+                slippage_buffer_bps=Decimal("8.00"),
+                expected_value_gate_passed=True,
+            ),
+        )
         result = build_submit_order_request_from_decision(intent)
         assert result is not None
+
+    def test_actionable_missing_expected_value_anchor_returns_none(self) -> None:
+        intent = OrderIntent(
+            decision_context_id=uuid4(),
+            order_intent_id=uuid4(),
+            request=_make_request(),
+            context=AssembledContext(),
+            ai_backend_inputs=AIDecisionInputs(
+                decision_type="BUY",
+                expected_value_gate_passed=False,
+            ),
+        )
+        result = build_submit_order_request_from_decision(intent)
+        assert result is None
 
     def test_held_position_buy_returns_none(self) -> None:
         request = _make_request(
@@ -409,12 +470,13 @@ class TestAssembleAndSubmit:
         return DecisionOrchestratorService(
             repos=repos,
             final_decision_agent=self._ApproveFDCAgent(),
+            use_subprocess_isolation=False,
         )
 
     @pytest.fixture
     def hold_service(self, repos: Any) -> DecisionOrchestratorService:
         """Service with default FDC agent (returns HOLD)."""
-        return DecisionOrchestratorService(repos=repos)
+        return DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
 
     @pytest.fixture
     def sample_request(self) -> SubmitOrderRequest:
@@ -795,6 +857,7 @@ class TestAssembleAndSubmit:
         service = DecisionOrchestratorService(
             repos=repos,
             final_decision_agent=self._ApproveFDCAgent(),
+            use_subprocess_isolation=False,
         )
         with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):
             result = await service.assemble_and_submit(
@@ -852,6 +915,7 @@ class TestAssembleAndSubmit:
         service = DecisionOrchestratorService(
             repos=repos,
             final_decision_agent=self._ApproveFDCAgent(),
+            use_subprocess_isolation=False,
         )
         with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):
             result = await service.assemble_and_submit(
@@ -919,7 +983,7 @@ class TestEventQueryWindow:
     async def test_assemble_uses_72h_window(self) -> None:
         """``assemble()`` calls ``list_by_symbol()`` with ``since=now-72h``."""
         repos = build_in_memory_repositories()
-        svc = DecisionOrchestratorService(repos=repos)
+        svc = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
 
         # Seed an event with published_at = 48h ago (within 72h window)
         now = datetime.now(timezone.utc)
@@ -976,7 +1040,7 @@ class TestEventQueryWindow:
         include_seeded_news=True를 전달하는지 검증.
         """
         repos = build_in_memory_repositories()
-        svc = DecisionOrchestratorService(repos=repos)
+        svc = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
         now = datetime.now(timezone.utc)
 
         # Seed a listed event (Y| prefix)
@@ -1030,7 +1094,7 @@ class TestP1AandP1BIntegration:
     async def test_48h_event_has_provenance_tags_in_prompt(self) -> None:
         """시나리오 1: 48h event가 provenance tag와 함께 prompt에 표시됨."""
         repos = build_in_memory_repositories()
-        svc = DecisionOrchestratorService(repos=repos)
+        svc = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
         now = datetime.now(timezone.utc)
 
         # 48h event (모든 provenance 필드 존재)
@@ -1097,7 +1161,7 @@ class TestP1AandP1BIntegration:
     async def test_fresh_ingestion_no_stale_despite_old_published(self) -> None:
         """시나리오 2: ingested_at fresh, published_at old → ⚠️STALE 없음."""
         repos = build_in_memory_repositories()
-        svc = DecisionOrchestratorService(repos=repos)
+        svc = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
         now = datetime.now(timezone.utc)
 
         event = ExternalEventEntity(
@@ -1139,7 +1203,7 @@ class TestP1AandP1BIntegration:
     async def test_default_severity_direction_omitted(self) -> None:
         """시나리오 3: severity=medium, direction=neutral → tag 생략."""
         repos = build_in_memory_repositories()
-        svc = DecisionOrchestratorService(repos=repos)
+        svc = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
         now = datetime.now(timezone.utc)
 
         event = ExternalEventEntity(
@@ -1176,7 +1240,7 @@ class TestP1AandP1BIntegration:
     async def test_no_issuer_code_tag_omitted(self) -> None:
         """시나리오 4: issuer_code=None → [issuer:...] tag 없음."""
         repos = build_in_memory_repositories()
-        svc = DecisionOrchestratorService(repos=repos)
+        svc = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
         now = datetime.now(timezone.utc)
 
         event = ExternalEventEntity(
@@ -1209,7 +1273,7 @@ class TestP1AandP1BIntegration:
     async def test_20_event_cap_in_prompt(self) -> None:
         """시나리오 5: 25개 event → prompt에는 20개만 표시."""
         repos = build_in_memory_repositories()
-        svc = DecisionOrchestratorService(repos=repos)
+        svc = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
         now = datetime.now(timezone.utc)
 
         # 25개 event seed (모두 72h window 내)
@@ -1269,7 +1333,7 @@ class TestImportanceSort:
     async def test_importance_sort_order(self) -> None:
         """Events are sorted H > M > L by importance."""
         repos = build_in_memory_repositories()
-        svc = DecisionOrchestratorService(repos=repos)
+        svc = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
         now = datetime.now(timezone.utc)
 
         # Create events with different importance levels
@@ -1340,7 +1404,7 @@ class TestImportanceSort:
     async def test_same_importance_recency_sort(self) -> None:
         """Events with same importance are sorted by published_at DESC."""
         repos = build_in_memory_repositories()
-        svc = DecisionOrchestratorService(repos=repos)
+        svc = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
         now = datetime.now(timezone.utc)
 
         old_event = ExternalEventEntity(
@@ -1393,7 +1457,7 @@ class TestImportanceSort:
     async def test_missing_metadata_fallback_to_low(self) -> None:
         """Events without metadata.importance are treated as low."""
         repos = build_in_memory_repositories()
-        svc = DecisionOrchestratorService(repos=repos)
+        svc = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
         now = datetime.now(timezone.utc)
 
         high_event = ExternalEventEntity(
@@ -1525,6 +1589,7 @@ class TestPhase5BrokerSubmitFailureLogging:
             final_decision_agent=AsyncMock(),
             score_calculator=AsyncMock(),
             stale_threshold_seconds=900,
+            use_subprocess_isolation=False,
         )
         return svc
 
@@ -1554,6 +1619,15 @@ class TestPhase5BrokerSubmitFailureLogging:
                 decision_type="BUY",
                 confidence=0.8,
                 conviction=0.7,
+                expected_return_bps=Decimal("50.00"),
+                expected_downside_bps=Decimal("15.00"),
+                net_expected_value_bps=Decimal("35.00"),
+                final_trade_score=Decimal("0.75"),
+                minimum_required_edge_bps=Decimal("10.00"),
+                edge_after_cost_bps=Decimal("18.00"),
+                estimated_round_trip_cost_bps=Decimal("9.00"),
+                slippage_buffer_bps=Decimal("8.00"),
+                expected_value_gate_passed=True,
             ),
         )
         trade_decision_id = uuid4()
@@ -2429,11 +2503,12 @@ class TestPhaseTrace:
         return DecisionOrchestratorService(
             repos=repos,
             final_decision_agent=self._ApproveFDCAgent(),
+            use_subprocess_isolation=False,
         )
 
     @pytest.fixture
     def hold_service(self, repos: Any) -> DecisionOrchestratorService:
-        return DecisionOrchestratorService(repos=repos)
+        return DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
 
     @pytest.fixture
     def sample_request(self) -> SubmitOrderRequest:
@@ -2584,6 +2659,7 @@ class TestPhaseTrace:
         service = DecisionOrchestratorService(
             repos=repos,
             final_decision_agent=_ReduceFDCAgent(),
+            use_subprocess_isolation=False,
         )
         request = _make_request(
             side=OrderSide.SELL,
@@ -2729,6 +2805,7 @@ class TestQuoteCircuitBreaker:
         return DecisionOrchestratorService(
             repos=repos,
             final_decision_agent=self._ApproveFDCAgent(),
+            use_subprocess_isolation=False,
         )
 
     @pytest.fixture
@@ -2815,6 +2892,7 @@ class TestQuoteCircuitBreaker:
             repos=repos,
             final_decision_agent=self._ReduceSellFDCAgent(),
             stale_threshold_seconds=300,
+            use_subprocess_isolation=False,
         )
         request = _make_request(
             side=OrderSide.SELL,
@@ -2851,6 +2929,7 @@ class TestQuoteCircuitBreaker:
             repos=repos,
             final_decision_agent=self._ReduceSellFDCAgent(),
             stale_threshold_seconds=300,
+            use_subprocess_isolation=False,
         )
         request = _make_request(
             side=OrderSide.SELL,
@@ -2930,6 +3009,7 @@ class TestQuoteCircuitBreaker:
             quantity=Decimal("1"),
             price_band_lower=Decimal("49000"),
             price_band_upper=Decimal("51000"),
+            metadata={"source_type": "market_overlay"},
         )
         submitted_requests: list[SubmitOrderRequest] = []
 
@@ -2949,6 +3029,7 @@ class TestQuoteCircuitBreaker:
         service = DecisionOrchestratorService(
             repos=repos,
             final_decision_agent=self._ApproveFDCAgent(),
+            use_subprocess_isolation=False,
         )
 
         with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):
@@ -2989,6 +3070,7 @@ class TestQuoteCircuitBreaker:
         service = DecisionOrchestratorService(
             repos=repos,
             final_decision_agent=self._ApproveFDCAgent(),
+            use_subprocess_isolation=False,
         )
 
         with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):

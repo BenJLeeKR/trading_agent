@@ -59,6 +59,9 @@ async def test_compute_snapshot_builds_signal_feature_entity() -> None:
     assert snapshot.bar_count == 80
     assert snapshot.overall_score is not None
     assert snapshot.component_scores_json
+    snapshot_at_kst = snapshot.snapshot_at.astimezone(timezone(timedelta(hours=9)))
+    assert snapshot_at_kst.hour == 20
+    assert snapshot_at_kst.minute == 0
 
 
 async def test_compute_and_persist_saves_latest_snapshot() -> None:

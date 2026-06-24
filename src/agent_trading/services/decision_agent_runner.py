@@ -54,6 +54,9 @@ from agent_trading.services.subprocess_helpers import (
     deserialize_agent_output,
     serialize_agent_input,
 )
+from agent_trading.services.expected_value_gate import (
+    evaluate_expected_value_gate,
+)
 from agent_trading.services.translation import (
     calculate_max_order_value,
     is_missing_agent_symbol,
@@ -555,6 +558,26 @@ class DecisionAgentRunner:
             fdc_skipped=fdc_skipped,
             skip_reason_codes=tuple(skip_reason_codes),
         )
+        expected_value = evaluate_expected_value_gate(
+            decision_type=ai_inputs.decision_type,
+            confidence=ai_inputs.confidence,
+            conviction=ai_inputs.conviction,
+            risk_score=ai_inputs.risk_score,
+            context=assembled_context,
+        )
+        ai_inputs = replace(
+            ai_inputs,
+            expected_return_bps=expected_value.expected_return_bps,
+            expected_downside_bps=expected_value.expected_downside_bps,
+            net_expected_value_bps=expected_value.net_expected_value_bps,
+            final_trade_score=expected_value.final_trade_score,
+            minimum_required_edge_bps=expected_value.minimum_required_edge_bps,
+            edge_after_cost_bps=expected_value.edge_after_cost_bps,
+            estimated_round_trip_cost_bps=expected_value.estimated_round_trip_cost_bps,
+            slippage_buffer_bps=expected_value.slippage_buffer_bps,
+            expected_value_gate_passed=expected_value.expected_value_gate_passed,
+            expected_value_gate_reason_codes=expected_value.reason_codes,
+        )
 
         return AgentExecutionBundle(
             ai_inputs=ai_inputs,
@@ -679,9 +702,15 @@ class DecisionAgentRunner:
                     result.get("error", "unknown error"),
                     request.decision_context_id,
                 )
-                return build_fallback_bundle()
+                return self._apply_expected_value_anchor(
+                    build_fallback_bundle(),
+                    assembled_context=assembled_context,
+                )
 
-            return deserialize_agent_output(stdout)
+            return self._apply_expected_value_anchor(
+                deserialize_agent_output(stdout),
+                assembled_context=assembled_context,
+            )
 
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
             logger.error(
@@ -692,4 +721,37 @@ class DecisionAgentRunner:
                 request.decision_context_id,
                 stdout[:500] if stdout else "(empty)",
             )
-            return build_fallback_bundle()
+            return self._apply_expected_value_anchor(
+                build_fallback_bundle(),
+                assembled_context=assembled_context,
+            )
+
+    def _apply_expected_value_anchor(
+        self,
+        bundle: AgentExecutionBundle,
+        *,
+        assembled_context: AIPolicyContextView,
+    ) -> AgentExecutionBundle:
+        expected_value = evaluate_expected_value_gate(
+            decision_type=bundle.ai_inputs.decision_type,
+            confidence=bundle.ai_inputs.confidence,
+            conviction=bundle.ai_inputs.conviction,
+            risk_score=bundle.ai_inputs.risk_score,
+            context=assembled_context,
+        )
+        return replace(
+            bundle,
+            ai_inputs=replace(
+                bundle.ai_inputs,
+                expected_return_bps=expected_value.expected_return_bps,
+                expected_downside_bps=expected_value.expected_downside_bps,
+                net_expected_value_bps=expected_value.net_expected_value_bps,
+                final_trade_score=expected_value.final_trade_score,
+                minimum_required_edge_bps=expected_value.minimum_required_edge_bps,
+                edge_after_cost_bps=expected_value.edge_after_cost_bps,
+                estimated_round_trip_cost_bps=expected_value.estimated_round_trip_cost_bps,
+                slippage_buffer_bps=expected_value.slippage_buffer_bps,
+                expected_value_gate_passed=expected_value.expected_value_gate_passed,
+                expected_value_gate_reason_codes=expected_value.reason_codes,
+            ),
+        )

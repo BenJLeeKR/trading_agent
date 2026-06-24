@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 
 from agent_trading.services.signal_backbone import (
     PriceBar,
+    build_signal_feature_entity,
     build_signal_snapshot,
 )
 
@@ -108,3 +110,22 @@ def test_requires_minimum_bar_count() -> None:
 
     with pytest.raises(ValueError, match="최소 20개 일봉"):
         build_signal_snapshot("005930", bars)
+
+
+def test_build_signal_feature_entity_anchors_snapshot_at_to_2000_kst() -> None:
+    bars = _make_bars()
+    features, score_card = build_signal_snapshot("005930", bars)
+
+    snapshot = build_signal_feature_entity(
+        instrument_id=uuid4(),
+        features=features,
+        score_card=score_card,
+    )
+
+    snapshot_at_kst = snapshot.snapshot_at.astimezone(timezone(timedelta(hours=9)))
+    assert snapshot_at_kst.hour == 20
+    assert snapshot_at_kst.minute == 0
+    assert snapshot_at_kst.second == 0
+    assert snapshot_at_kst.date() == features.as_of.astimezone(
+        timezone(timedelta(hours=9))
+    ).date()

@@ -612,9 +612,11 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
     placeholder canonical row로 남아 있는 심볼을
     실제 instrument master row로 언제/어떻게 치환할지
     별도 정리한다.
-    - 특히 app 컨테이너에서 `data/` 원천 파일이 기본 마운트되지 않아
-      `index_membership_seed.csv`를 스크립트가 직접 읽지 못한 경로는
-      운영 편의성 차원에서 후속 보완이 필요하다.
+    - [x] app 컨테이너에도 `./data:/app/data` 마운트를 추가해
+      `index_membership_seed.csv` 같은 원천 파일을
+      수동 배치/운영 스크립트가 컨테이너 내부에서 직접 읽을 수 있게 보완했다.
+    - 남은 과제는 `placeholder` row 자체를
+      실제 instrument master row로 치환하는 reconciliation 정책 확정이다.
 - 우선순위 이유
   - universe selection, sell guard, snapshot sync가
     동일 symbol의 다중 market row에 흔들리지 않게 만드는 기반 작업이다.
@@ -1034,6 +1036,82 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
     현재 단계에서 곧바로 주문 universe까지 넓히면 체결 리스크와 운영 복잡도가 더 빨리 커진다.
   - 따라서 `feature 기반 ranking backbone` 정교화 이후의 차상위 과제로 두는 것이 합리적이다.
 
+#### 11-c. 기대수익률 중심 보유기간 / Churn 제어 리팩토링 — `진행중`
+
+- 배경
+  - 장중 실측 기준 일부 종목에서
+    `BUY -> REDUCE/SELL -> BUY -> REDUCE/SELL`이
+    짧은 간격으로 반복되는 churn 패턴이 확인됐다.
+  - 특히 `reconciliation_overlay`와 `held_position`이
+    동일 종목에서 번갈아 진입/축소를 정당화하는 구조는
+    `최고 기대수익률`보다 거래비용과 노이즈를 키울 가능성이 높다.
+- 설계 기준 문서
+  - [`plans/[DESIGN] expected_return_holding_horizon_and_churn_control_refactor.md`](./%5BDESIGN%5D%20expected_return_holding_horizon_and_churn_control_refactor.md)
+- 핵심 방향
+  - `source_type`를 단순 label이 아니라
+    `허용 action envelope`로 승격한다.
+  - `reconciliation_overlay`는
+    flat 상태 신규 BUY source가 아니라
+    상태 관리/관찰 source로 제한한다.
+  - actionable decision은
+    `expected_return_bps`, `net_expected_value_bps`,
+    `final_trade_score`, `minimum_required_edge_bps`
+    를 갖는 `expected value anchor`를 필수로 한다.
+  - 동일 종목의 `SELL/REDUCE -> BUY`,
+    `BUY -> REDUCE/SELL`에는
+    `cooldown + feature/event 변화 + edge 개선`을 함께 요구하는
+    hysteresis를 도입한다.
+  - `1주 시장가 probe`가 churn을 만드는 조합은
+    submit 전 hard guard로 차단한다.
+- 세부 작업 상태
+  - [x] `reconciliation_overlay` flat 신규 BUY 전면 차단
+  - [x] `services.source_policy` action envelope helper 추가
+  - [x] actionable decision의 expected value 필수 anchor 강제
+    - `services.expected_value_gate`를 추가해
+      actionable decision에 대한
+      `expected_return_bps`, `expected_downside_bps`,
+      `net_expected_value_bps`, `final_trade_score`,
+      `minimum_required_edge_bps` 1차 anchor를 공통 계산하도록 정리했다.
+    - `AIDecisionInputs`에 expected value 필드와
+      `expected_value_gate_passed`, `expected_value_gate_reason_codes`
+      계약을 추가했다.
+    - `decision_factory`가 위 필드를
+      `trade_decisions` row와 `decision_json.expected_value_gate`
+      에 함께 저장하도록 반영했다.
+    - `build_submit_order_request_from_decision()`는
+      actionable decision이라도 expected value anchor가 비어 있거나
+      gate가 false이면 submit request를 만들지 않도록 강제했다.
+  - [x] `edge_after_cost_bps` 계산/저장 경로 추가
+    - `services.expected_value_gate`가
+      `estimated_round_trip_cost_bps`,
+      `slippage_buffer_bps`,
+      `edge_after_cost_bps`
+      를 1차 deterministic 규칙으로 계산하고,
+      `edge_after_cost_bps < minimum_required_edge_bps`
+      인 actionable decision은 gate를 false로 내리도록 연결했다.
+    - `AIDecisionInputs`와 pre-AI short-circuit / subprocess fallback 경로에도
+      위 세 필드를 함께 주입해,
+      AI 경로와 deterministic fallback 경로의 contract를 맞췄다.
+    - `decision_json.expected_value_gate`에
+      after-cost edge와 비용 추정 필드를 저장하고,
+      submit translation은 해당 필드가 비어 있으면
+      actionable request를 생성하지 않도록 강화했다.
+  - [ ] same-symbol reentry cooldown 1차 추가
+  - [ ] BUY 직후 SELL/REDUCE cooldown 1차 추가
+  - [ ] `signal_feature_snapshot_id` 불변 상태 reverse trade 차단
+  - [ ] `quantity=1` 신규 BUY probe churn guard 추가
+  - [ ] `symbol_trade_states` 테이블 설계/도입
+  - [ ] `holding_profile`, `minimum_hold_until`,
+    `reentry_cooldown_until` 저장 경로 추가
+  - [ ] AI override 허용 범위를
+    `eligibility + expected value + symbol state` 통과 시로 축소
+- 우선순위 이유
+  - 현재의 짧은 보유기간은
+    의도된 단기 전략 결과라기보다
+    `심볼 상태 기억 부재`와 `충돌하는 source`의 결과일 가능성이 높다.
+  - 이 항목은 단순 threshold 조정보다
+    기대수익률 개선에 직접적인 리팩토링 축이다.
+
 ### 세부 작업 상태
 - [x] 순수 helper 기반 deterministic signal backbone 1차 추가
   - `services.signal_backbone`에 `PriceBar` / `TechnicalFeatureSnapshot` / `SignalScoreCard` 추가
@@ -1089,7 +1167,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   - 향후 `policy input schema versioning`, `attribution`, `prompt contract 고정`
     작업의 최소 구조 경계 확보
 - [x] after-market signal feature batch 자동화 1차 추가
-  - `ops-scheduler`가 장 마감 후 배치 시각인 `16:10 KST` 이후
+  - `ops-scheduler`가 장 마감 후 배치 시각인 `20:10 KST` 이후
     `signal feature input 생성 → snapshot batch 적재`를 순차 실행
   - `generate_signal_feature_snapshot_input.py`가
     trading universe 기준 KIS 일봉을 조회해
@@ -1117,9 +1195,9 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
     `generate_signal_feature_snapshot_input.py` 수동 실행 후
     `signal_feature_snapshots`에 47건 적재까지 완료
   - 자동 배치 정상 동작 여부는
-    오늘 `16:10 KST` 이후 `operations_day_runs.summary_json`과
+    오늘 `20:10 KST` 이후 `operations_day_runs.summary_json`과
     `signal_feature_snapshots` 적재 건수로 재확인 필요
-- [ ] signal feature after-market 배치 운영 안정화 / 리팩토링 2차
+- [x] signal feature after-market 배치 운영 안정화 / 리팩토링 2차
   - 배경
     - 2026-06-18~2026-06-19 실측 기준
       `signal_feature_snapshot` 장후 배치는
@@ -1136,7 +1214,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
       구조로 리팩토링해
       운영 안정성, audit, replay, manual recovery를 함께 확보한다.
   - `P0`
-    - [x] 장후 `16:10 KST` 시점의 대상 유니버스를 먼저 freeze 하고,
+    - [x] 장후 `20:10 KST` 배치의 대상 유니버스를 먼저 freeze 하고,
       이후 재시도/재실행 중에도 같은 대상 집합을 유지하도록 만든다.
       - `generate_signal_feature_snapshot_input.py`가
         `universe_freeze_runs` / `universe_freeze_run_items`를 우선 조회해
@@ -1145,7 +1223,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
     - [x] `universe freeze` PostgreSQL 스키마를 먼저 확정한다.
       - [x] `trading.universe_freeze_runs` 테이블 설계
       - [x] `trading.universe_freeze_run_items` 테이블 설계
-      - [ ] `signal_feature_batch_runs.universe_freeze_run_id` FK 연결 설계
+      - [x] `signal_feature_batch_runs.universe_freeze_run_id` FK 연결 설계 및 구현
       - [x] `(business_date, freeze_purpose, freeze_sequence)` unique 정책 확정
       - [x] `(freeze_run_id, instrument_id)` unique 정책 확정
       - [x] `business_date`, `freeze_purpose`, `frozen_at`, `selection_version`,
@@ -1182,23 +1260,67 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
       `persist_success_count`, `persist_error_count`,
       `final_missing_count`, `failed_symbols_sample`
       를 남기도록 확장한다.
-    - [ ] 장후 실행 후
+    - [x] 장후 실행 후
       `summary_json`과 `signal_feature_snapshots` 적재 건수를 대조하는
       운영 검증 절차를 문서화한다.
+      - [`plans/[RUNBOOK] signal_feature_after_market_batch_validation.md`](./%5BRUNBOOK%5D%20signal_feature_after_market_batch_validation.md)
+        문서에
+        `operations_day_runs.summary_json` →
+        `signal_feature_batch_runs` →
+        `signal_feature_batch_run_items` →
+        `signal_feature_snapshots`
+        순서의 운영 판정 절차를 정리했다.
   - `P1`
-    - [ ] `signal_feature_batch_runs`
-      실행 단위 테이블 도입 여부를 확정한다.
-    - [ ] `signal_feature_batch_run_items`
-      종목 단위 상태 테이블 도입 여부를 확정한다.
-    - [ ] file 기반 중간 산출물과 DB run-state 중
+    - [x] `signal_feature_batch_runs`
+      실행 단위 테이블 도입 여부를 확정하고 구현했다.
+      - 실행 메타데이터:
+        `business_date`, `universe_freeze_run_id`, `trigger_type`,
+        `timeframe`, `feature_set_version`, `input_uri`,
+        `target_count`, `fetch_success_count`, `fetch_error_count`,
+        `persist_success_count`, `persist_error_count`,
+        `skipped_count`, `final_missing_count`, `status`, `summary_json`
+    - [x] `signal_feature_batch_run_items`
+      종목 단위 상태 테이블 도입 여부를 확정하고 구현했다.
+      - 종목별 상태:
+        `persisted`, `computed`, `error`, `fetch_error`,
+        `skipped_instrument_not_found`
+      - `signal_feature_snapshot_id`, `snapshot_at`, `error_code`,
+        `error_message`, `metadata_json`를 함께 저장
+    - [x] file 기반 중간 산출물과 DB run-state 중
       어느 쪽을 authoritative source로 둘지 결정한다.
-      - freeze 이후의 authoritative source는
+      - [x] freeze 이후의 authoritative source는
         file이 아니라 `universe_freeze_run_items`를 기본값으로 둔다.
-    - [ ] 동일 `(instrument_id, timeframe, snapshot_at, feature_set_version)` 기준
-      idempotent re-run / upsert 정책을 확정한다.
-    - [ ] 장중 intraday relative activity 확장 시에도
+      - [x] 실행 메타데이터 authoritative source는
+        `signal_feature_batch_runs` /
+        `signal_feature_batch_run_items`로 고정한다.
+      - [x] 최종 feature payload authoritative source는
+        `signal_feature_snapshots`로 고정한다.
+      - [x] JSON 입력 파일은
+        transport / tail-retry / 수동 재실행 artifact로만 취급하고
+        audit 기준 source로 사용하지 않도록 정책 문서와 runbook에 반영했다.
+    - [x] 동일 `(instrument_id, timeframe, snapshot_at, feature_set_version)` 기준
+      idempotent re-run / upsert 정책을 확정하고 구현했다.
+      - `signal_feature_snapshots`에 natural key unique index를 추가했다.
+      - 재실행 시 duplicate insert 대신 동일 natural key row를 update 하도록
+        repository `add()`를 upsert로 전환했다.
+      - 기존 `signal_feature_snapshot_id`는 유지되고,
+        feature payload만 최신 계산값으로 갱신된다.
+    - [x] 장중 intraday relative activity 확장 시에도
       같은 batch runtime을 재사용하도록
       공통 orchestration 계층으로 정리한다.
+      - `services.signal_feature_batch_runtime`에
+        `SignalFeatureBatchRuntimeSpec`와
+        tail-retry 판정 helper를 추가해
+        `input -> batch -> tail-retry input -> tail-retry batch`
+        흐름을 재사용 가능한 runtime spec으로 추출했다.
+      - `run_ops_scheduler.py`는
+        장후 전용 하드코딩 대신
+        `_run_signal_feature_batch_runtime(...)` 공통 실행 경로를 사용하도록 정리했다.
+      - `generate_signal_feature_snapshot_input.py`,
+        `build_signal_feature_snapshots.py`는
+        `freeze_purpose`, `trigger_type`를 명시적으로 주고받아
+        향후 intraday relative activity 배치도
+        같은 저장 경로와 run-state를 재사용할 수 있게 맞췄다.
   - 선행 완료 항목
     - [x] signal feature input / batch 실행 경로를
       `python3 -m scripts....` 구조로 통일

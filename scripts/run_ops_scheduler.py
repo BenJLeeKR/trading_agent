@@ -79,6 +79,13 @@ from agent_trading.config.settings import AppSettings
 from agent_trading.services.held_position_policy import (
     is_held_position_sell_path,
 )
+from agent_trading.services.signal_feature_batch_runtime import (
+    DEFAULT_SIGNAL_FEATURE_AFTER_MARKET_FREEZE_PURPOSE,
+    DEFAULT_SIGNAL_FEATURE_AFTER_MARKET_TRIGGER_TYPE,
+    SignalFeatureBatchRuntimeSpec,
+    should_run_signal_feature_retry_batch,
+    should_run_signal_feature_tail_retry,
+)
 
 try:
     from dotenv import load_dotenv
@@ -93,8 +100,8 @@ DEFAULT_DECISION_INTERVAL_SECONDS = 300
 DEFAULT_POST_SUBMIT_INTERVAL_SECONDS = 30
 DEFAULT_FILL_SYNC_INTERVAL_SECONDS = 600
 DEFAULT_FILL_SYNC_AFTER_HOURS_INTERVAL_SECONDS = 1800
-DEFAULT_SIGNAL_FEATURE_BATCH_TIME = dtime(16, 10)
-DEFAULT_INSTRUMENT_MASTER_SYNC_TIME = dtime(7, 50)
+DEFAULT_SIGNAL_FEATURE_BATCH_TIME = dtime(20, 10)
+DEFAULT_INSTRUMENT_MASTER_SYNC_TIME = dtime(4, 50)
 DEFAULT_INSTRUMENT_MASTER_SYNC_CSV_PATH = (
     "data/instrument_master/normalized/kis_kospi_kosdaq_master_normalized_for_sync.csv"
 )
@@ -236,9 +243,9 @@ class SchedulerState:
     recovery_batch_done: bool = False
     # 장후 첫 1회 full snapshot(positions+cash) 완료 여부
     after_hours_full_snapshot_done: bool = False
-    # 장 마감 후 16:10 KST signal feature batch 1회 실행 여부
+    # 장 마감 후 20:10 KST signal feature batch 1회 실행 여부
     signal_feature_batch_done: bool = False
-    # 장전 instrument master sync 1회 실행 여부
+    # 장전 04:50 KST instrument master sync 1회 실행 여부
     instrument_master_sync_done: bool = False
     # 장전 sync window를 놓친 사실을 1회만 기록하기 위한 플래그
     instrument_master_sync_missed: bool = False
@@ -1419,23 +1426,23 @@ def _signal_feature_snapshot_command(
     *,
     input_path: str,
 ) -> list[str]:
-    return [
-        PYTHON_BIN,
-        "-m",
-        "scripts.build_signal_feature_snapshots",
-        "--input",
-        input_path,
-        "--output",
-        "json",
-    ]
+    spec = SignalFeatureBatchRuntimeSpec(
+        command_name_prefix="after_market_signal_feature",
+        input_path=input_path,
+        freeze_purpose=DEFAULT_SIGNAL_FEATURE_AFTER_MARKET_FREEZE_PURPOSE,
+        trigger_type=DEFAULT_SIGNAL_FEATURE_AFTER_MARKET_TRIGGER_TYPE,
+    )
+    return spec.build_batch_command(python_bin=PYTHON_BIN, input_path=input_path)
 
 
 def _signal_feature_snapshot_retry_input_path(input_path: str) -> str:
-    path = Path(input_path)
-    suffix = path.suffix or ".json"
-    if path.suffix:
-        return str(path.with_name(f"{path.stem}.tail_retry{path.suffix}"))
-    return f"{input_path}.tail_retry.json"
+    spec = SignalFeatureBatchRuntimeSpec(
+        command_name_prefix="after_market_signal_feature",
+        input_path=input_path,
+        freeze_purpose=DEFAULT_SIGNAL_FEATURE_AFTER_MARKET_FREEZE_PURPOSE,
+        trigger_type=DEFAULT_SIGNAL_FEATURE_AFTER_MARKET_TRIGGER_TYPE,
+    )
+    return spec.retry_input_path
 
 
 def _instrument_master_sync_command(
@@ -1482,18 +1489,17 @@ def _generate_signal_feature_snapshot_input_command(
     output_path: str,
     retry_from_input: str | None = None,
 ) -> list[str]:
-    argv = [
-        PYTHON_BIN,
-        "-m",
-        "scripts.generate_signal_feature_snapshot_input",
-        "--output",
-        output_path,
-        "--output-format",
-        "json",
-    ]
-    if retry_from_input:
-        argv.extend(["--retry-from-input", retry_from_input])
-    return argv
+    spec = SignalFeatureBatchRuntimeSpec(
+        command_name_prefix="after_market_signal_feature",
+        input_path=output_path,
+        freeze_purpose=DEFAULT_SIGNAL_FEATURE_AFTER_MARKET_FREEZE_PURPOSE,
+        trigger_type=DEFAULT_SIGNAL_FEATURE_AFTER_MARKET_TRIGGER_TYPE,
+    )
+    return spec.build_input_command(
+        python_bin=PYTHON_BIN,
+        output_path=output_path,
+        retry_from_input=retry_from_input,
+    )
 
 
 async def _run_and_record(
@@ -1876,48 +1882,89 @@ async def _run_after_market_signal_feature_batch(
     trigger_at = _combine(state.run_date, signal_feature_batch_at)
     if now < trigger_at:
         return
+    await _run_signal_feature_batch_runtime(
+        state,
+        timeout_seconds=timeout_seconds,
+        env=env,
+        dsn=dsn,
+        runtime_spec=SignalFeatureBatchRuntimeSpec(
+            command_name_prefix="after_market_signal_feature",
+            input_path=signal_feature_input_path,
+            freeze_purpose=DEFAULT_SIGNAL_FEATURE_AFTER_MARKET_FREEZE_PURPOSE,
+            trigger_type=DEFAULT_SIGNAL_FEATURE_AFTER_MARKET_TRIGGER_TYPE,
+        ),
+        completion_flag_attr="signal_feature_batch_done",
+        phase_label="after-market",
+        log_input_path=signal_feature_input_path,
+        now=now,
+    )
 
+
+async def _run_signal_feature_batch_runtime(
+    state: SchedulerState,
+    *,
+    timeout_seconds: int,
+    env: dict[str, str],
+    dsn: str | None,
+    runtime_spec: SignalFeatureBatchRuntimeSpec,
+    completion_flag_attr: str,
+    phase_label: str,
+    log_input_path: str,
+    now: datetime,
+) -> None:
     logger.info(
-        "phase=after-market signal feature batch start at %s (input=%s)",
+        "phase=%s signal feature batch start at %s (input=%s trigger_type=%s freeze_purpose=%s)",
+        phase_label,
         now.isoformat(),
-        signal_feature_input_path,
+        log_input_path,
+        runtime_spec.trigger_type,
+        runtime_spec.freeze_purpose,
     )
     input_result = await _run_and_record(
         state,
-        "after_market_signal_feature_input",
-        _generate_signal_feature_snapshot_input_command(
-            output_path=signal_feature_input_path,
+        runtime_spec.primary_input_name,
+        runtime_spec.build_input_command(
+            python_bin=PYTHON_BIN,
+            output_path=runtime_spec.input_path,
         ),
         timeout_seconds=timeout_seconds,
         env=env,
     )
     if not input_result.ok:
         await _persist_operations_day_run(state, dsn)
-        logger.warning("phase=after-market signal feature input failed — will retry on next tick")
+        logger.warning(
+            "phase=%s signal feature input failed — will retry on next tick",
+            phase_label,
+        )
         return
 
     batch_result = await _run_and_record(
         state,
-        "after_market_signal_feature_batch",
-        _signal_feature_snapshot_command(input_path=signal_feature_input_path),
+        runtime_spec.primary_batch_name,
+        runtime_spec.build_batch_command(
+            python_bin=PYTHON_BIN,
+            input_path=runtime_spec.input_path,
+        ),
         timeout_seconds=timeout_seconds,
         env=env,
     )
     if not batch_result.ok:
         await _persist_operations_day_run(state, dsn)
-        logger.warning("phase=after-market signal feature batch failed — will retry on next tick")
+        logger.warning(
+            "phase=%s signal feature batch failed — will retry on next tick",
+            phase_label,
+        )
         return
 
     input_metrics = _parse_signal_feature_input_summary(input_result)
-    fetch_error_count = int(input_metrics.get("fetch_error_count", 0)) if input_metrics else 0
-    if fetch_error_count > 0:
-        retry_input_path = _signal_feature_snapshot_retry_input_path(signal_feature_input_path)
+    if should_run_signal_feature_tail_retry(input_metrics):
         retry_input_result = await _run_and_record(
             state,
-            "after_market_signal_feature_input_tail_retry",
-            _generate_signal_feature_snapshot_input_command(
-                output_path=retry_input_path,
-                retry_from_input=signal_feature_input_path,
+            runtime_spec.retry_input_name,
+            runtime_spec.build_input_command(
+                python_bin=PYTHON_BIN,
+                output_path=runtime_spec.retry_input_path,
+                retry_from_input=runtime_spec.input_path,
             ),
             timeout_seconds=timeout_seconds,
             env=env,
@@ -1925,34 +1972,34 @@ async def _run_after_market_signal_feature_batch(
         if not retry_input_result.ok:
             await _persist_operations_day_run(state, dsn)
             logger.warning(
-                "phase=after-market signal feature tail-retry input failed — will retry on next tick"
+                "phase=%s signal feature tail-retry input failed — will retry on next tick",
+                phase_label,
             )
             return
 
         retry_input_metrics = _parse_signal_feature_input_summary(retry_input_result)
-        retry_generated_count = (
-            int(retry_input_metrics.get("generated_count", 0))
-            if retry_input_metrics
-            else 0
-        )
-        if retry_generated_count > 0:
+        if should_run_signal_feature_retry_batch(retry_input_metrics):
             retry_batch_result = await _run_and_record(
                 state,
-                "after_market_signal_feature_batch_tail_retry",
-                _signal_feature_snapshot_command(input_path=retry_input_path),
+                runtime_spec.retry_batch_name,
+                runtime_spec.build_batch_command(
+                    python_bin=PYTHON_BIN,
+                    input_path=runtime_spec.retry_input_path,
+                ),
                 timeout_seconds=timeout_seconds,
                 env=env,
             )
             if not retry_batch_result.ok:
                 await _persist_operations_day_run(state, dsn)
                 logger.warning(
-                    "phase=after-market signal feature tail-retry batch failed — will retry on next tick"
+                    "phase=%s signal feature tail-retry batch failed — will retry on next tick",
+                    phase_label,
                 )
                 return
 
-    state.signal_feature_batch_done = True
+    setattr(state, completion_flag_attr, True)
     await _persist_operations_day_run(state, dsn)
-    logger.info("phase=after-market signal feature batch complete")
+    logger.info("phase=%s signal feature batch complete", phase_label)
 
 
 async def _run_intraday_due_tasks(

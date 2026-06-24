@@ -234,3 +234,60 @@ def test_build_trade_decision_entity_stores_ai_call_path_skip_metadata() -> None
         "skip_ei_no_recent_events",
         "skip_fdc_high_risk",
     ]
+
+
+def test_build_trade_decision_entity_stores_expected_value_gate_fields() -> None:
+    trigger = DeterministicTriggerAssessment(
+        trigger_version="deterministic_trigger_v1",
+        primary_candidate="BUY_CANDIDATE",
+        candidate_set=("BUY_CANDIDATE",),
+        watch_candidate=False,
+        buy_candidate=True,
+        sell_candidate=False,
+        reduce_candidate=False,
+        candidate_confidence=0.82,
+        entry_score=0.82,
+        exit_score=0.14,
+        watch_score=0.2,
+    )
+    entity = build_trade_decision_entity(
+        decision_context_id=uuid4(),
+        request=_make_request(),
+        assembled_context=_make_context(trigger),
+        agent_bundle=AgentExecutionBundle(
+            ai_inputs=AIDecisionInputs(
+                decision_type="BUY",
+                expected_return_bps=Decimal("80.00"),
+                expected_downside_bps=Decimal("20.00"),
+                net_expected_value_bps=Decimal("60.00"),
+                final_trade_score=Decimal("0.85"),
+                minimum_required_edge_bps=Decimal("10.00"),
+                edge_after_cost_bps=Decimal("39.00"),
+                estimated_round_trip_cost_bps=Decimal("11.00"),
+                slippage_buffer_bps=Decimal("10.00"),
+                expected_value_gate_passed=True,
+                expected_value_gate_reason_codes=(
+                    "expected_value_anchor_present",
+                    "expected_value_edge_meets_minimum_required",
+                ),
+            ),
+            composer_output=FinalDecisionComposerOutput(
+                decision_type="BUY",
+                side="BUY",
+                confidence=0.9,
+            ),
+        ),
+    )
+
+    assert entity is not None
+    assert entity.expected_return_bps == Decimal("80.00")
+    assert entity.net_expected_value_bps == Decimal("60.00")
+    assert entity.final_trade_score == Decimal("0.85")
+    assert entity.minimum_required_edge_bps == Decimal("10.00")
+    assert entity.decision_json["expected_value_gate"]["passed"] is True
+    assert entity.decision_json["expected_value_gate"]["edge_after_cost_bps"] == "39.00"
+    assert (
+        entity.decision_json["expected_value_gate"]["estimated_round_trip_cost_bps"]
+        == "11.00"
+    )
+    assert entity.decision_json["expected_value_gate"]["slippage_buffer_bps"] == "10.00"

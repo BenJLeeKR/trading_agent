@@ -35,6 +35,8 @@ from agent_trading.domain.entities import (
     ReconciliationRunEntity,
     RiskLimitSnapshotEntity,
     SignalFeatureSnapshotEntity,
+    SignalFeatureBatchRunEntity,
+    SignalFeatureBatchRunItemEntity,
     SessionEventEntity,
     SnapshotSyncRunEntity,
     StrategyEntity,
@@ -1057,6 +1059,32 @@ class UniverseFreezeRunItemRepository(Protocol):
         self,
         universe_freeze_run_id: UUID,
     ) -> Sequence[UniverseFreezeRunItemEntity]:
+        ...
+
+
+class SignalFeatureBatchRunRepository(Protocol):
+    """signal feature 배치 실행 메타데이터 저장소."""
+
+    async def add(self, run: SignalFeatureBatchRunEntity) -> SignalFeatureBatchRunEntity:
+        ...
+
+    async def get(self, run_id: UUID) -> SignalFeatureBatchRunEntity | None:
+        ...
+
+
+class SignalFeatureBatchRunItemRepository(Protocol):
+    """signal feature 배치 종목별 상태 저장소."""
+
+    async def add(
+        self,
+        item: SignalFeatureBatchRunItemEntity,
+    ) -> SignalFeatureBatchRunItemEntity:
+        ...
+
+    async def add_many(
+        self,
+        items: Sequence[SignalFeatureBatchRunItemEntity],
+    ) -> Sequence[SignalFeatureBatchRunItemEntity]:
         ...
 
 

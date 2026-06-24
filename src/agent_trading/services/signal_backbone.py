@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, time
 from math import sqrt
 from statistics import mean, pstdev
 from decimal import Decimal
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 from agent_trading.domain.entities import SignalFeatureSnapshotEntity
+
+KST = ZoneInfo("Asia/Seoul")
 
 
 @dataclass(slots=True, frozen=True)
@@ -79,11 +82,12 @@ def build_signal_feature_entity(
     feature_set_version: str = "signal_backbone_v1",
 ) -> SignalFeatureSnapshotEntity:
     """계산된 feature/score를 저장용 엔티티로 변환한다."""
+    snapshot_at = _to_after_market_snapshot_at(features.as_of)
     return SignalFeatureSnapshotEntity(
         signal_feature_snapshot_id=uuid4(),
         instrument_id=instrument_id,
         timeframe=timeframe,
-        snapshot_at=features.as_of,
+        snapshot_at=snapshot_at,
         feature_set_version=feature_set_version,
         bar_count=features.bar_count,
         sma_5=_decimal_or_none(features.sma_5),
@@ -107,6 +111,16 @@ def build_signal_feature_entity(
             key: float(value) for key, value in score_card.component_scores.items()
         },
         reason_codes=list(score_card.reason_codes) or None,
+    )
+
+
+def _to_after_market_snapshot_at(as_of: datetime) -> datetime:
+    """일봉 기준 영업일을 장후 feature snapshot anchor 시각으로 정규화한다."""
+    as_of_kst = as_of.astimezone(KST)
+    return datetime.combine(
+        as_of_kst.date(),
+        time(20, 0),
+        tzinfo=KST,
     )
 
 

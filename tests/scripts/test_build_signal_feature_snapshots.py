@@ -29,6 +29,7 @@ def test_parse_args_defaults() -> None:
     assert args.feature_set_version == "signal_backbone_v1"
     assert args.dry_run is False
     assert args.output == "text"
+    assert args.trigger_type == "after_market_scheduler"
 
 
 def test_load_rows_applies_defaults(tmp_path) -> None:
@@ -61,12 +62,12 @@ def test_load_rows_applies_defaults(tmp_path) -> None:
         feature_set_version="signal_backbone_v1",
     )
 
-    assert len(rows) == 1
-    assert rows[0].symbol == "005930"
-    assert rows[0].market == "KRX"
-    assert rows[0].timeframe == "1d"
-    assert rows[0].feature_set_version == "signal_backbone_v1"
-    assert rows[0].bars[0].timestamp == datetime(2026, 6, 16, tzinfo=timezone.utc)
+    assert len(rows.rows) == 1
+    assert rows.rows[0].symbol == "005930"
+    assert rows.rows[0].market == "KRX"
+    assert rows.rows[0].timeframe == "1d"
+    assert rows.rows[0].feature_set_version == "signal_backbone_v1"
+    assert rows.rows[0].bars[0].timestamp == datetime(2026, 6, 16, tzinfo=timezone.utc)
 
 
 def test_load_rows_accepts_v2_object_payload(tmp_path) -> None:
@@ -77,6 +78,7 @@ def test_load_rows_accepts_v2_object_payload(tmp_path) -> None:
                 "schema_version": "signal_feature_input.v2",
                 "universe_metadata": {
                     "universe_freeze_run_id": "freeze-1",
+                    "trigger_type": "after_market_scheduler",
                     "universe_count": 1,
                     "symbols": [
                         {
@@ -123,9 +125,11 @@ def test_load_rows_accepts_v2_object_payload(tmp_path) -> None:
         feature_set_version="signal_backbone_v1",
     )
 
-    assert len(rows) == 1
-    assert rows[0].symbol == "005930"
-    assert rows[0].market == "KRX"
+    assert len(rows.rows) == 1
+    assert rows.rows[0].symbol == "005930"
+    assert rows.rows[0].market == "KRX"
+    assert rows.universe_metadata["universe_freeze_run_id"] == "freeze-1"
+    assert len(rows.fetch_error_rows) == 1
 
 
 def test_result_to_json_serializes_snapshot_payload() -> None:
@@ -193,14 +197,30 @@ async def test_run_uses_runtime_repositories_without_db_pool(tmp_path) -> None:
     repos = SimpleNamespace(
         instruments=SimpleNamespace(
             get_by_symbol=AsyncMock(return_value=instrument),
-        )
+        ),
+        signal_feature_batch_runs=SimpleNamespace(add=AsyncMock()),
+        signal_feature_batch_run_items=SimpleNamespace(add_many=AsyncMock()),
+    )
+    repos.signal_feature_batch_runs.add = AsyncMock(
+        side_effect=lambda run: run
     )
     batch_result = SignalFeatureBatchResult(
         processed=1,
         persisted=1,
         skipped=0,
         errors=(),
-        snapshots=(),
+        snapshots=(
+            SignalFeatureSnapshotEntity(
+                signal_feature_snapshot_id=uuid4(),
+                instrument_id=instrument.instrument_id,
+                timeframe="1d",
+                snapshot_at=datetime(2026, 6, 16, tzinfo=timezone.utc),
+                feature_set_version="signal_backbone_v1",
+                bar_count=80,
+                overall_score=Decimal("0.42"),
+                component_scores_json={"slow_momentum": 0.5},
+            ),
+        ),
     )
     service = AsyncMock()
     service.compute_many = AsyncMock(return_value=batch_result)
@@ -225,3 +245,7 @@ async def test_run_uses_runtime_repositories_without_db_pool(tmp_path) -> None:
         market_code="KRX",
     )
     service.compute_many.assert_awaited_once()
+    repos.signal_feature_batch_runs.add.assert_awaited_once()
+    repos.signal_feature_batch_run_items.add_many.assert_awaited_once()
+    saved_run = repos.signal_feature_batch_runs.add.await_args.args[0]
+    assert saved_run.trigger_type == "after_market_scheduler"

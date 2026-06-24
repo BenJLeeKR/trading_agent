@@ -195,6 +195,67 @@ class TestRaiseOnErrorRateLimit:
         assert exc_info.value.retry_after_seconds == 1.0
 
 
+class TestGetOrderStatus:
+    """``get_order_status()``는 체결조회 범위를 최소화하고 rate limit을 완화해야 한다."""
+
+    @pytest.mark.asyncio
+    async def test_get_order_status_passes_broker_order_id_to_inquire_daily_ccld(
+        self, client: KISRestClient
+    ) -> None:
+        with patch.object(
+            KISRestClient,
+            "inquire_daily_ccld",
+            AsyncMock(return_value=[]),
+        ) as mock_inquire:
+            result = await client.get_order_status(
+                "test-account",
+                client_order_id="ut-order-status-001",
+                broker_order_id="0000012345",
+            )
+
+        mock_inquire.assert_awaited_once()
+        call_kwargs = mock_inquire.await_args.kwargs
+        assert call_kwargs["broker_order_id"] == "0000012345"
+        assert call_kwargs["after_hours"] is False
+        assert result.status == OrderStatus.RECONCILE_REQUIRED
+
+    @pytest.mark.asyncio
+    async def test_get_order_status_retries_once_on_rate_limit(
+        self, client: KISRestClient
+    ) -> None:
+        rate_limit_error = BrokerError(
+            broker_name=BrokerName.KOREA_INVESTMENT,
+            error_type=BrokerErrorType.RATE_LIMIT,
+            retryable=True,
+            raw_code="EGW00201",
+            raw_message="KIS inquire_daily_ccld: rate limit",
+            retry_after_seconds=0.01,
+        )
+        success_rows = [
+            {
+                "ODNO": "0000012345",
+                "ORD_QTY": "10",
+                "CCLD_QTY": "0",
+                "CNCL_YN": "N",
+                "RVSE_YN": "N",
+            }
+        ]
+
+        with patch.object(
+            KISRestClient,
+            "inquire_daily_ccld",
+            AsyncMock(side_effect=[rate_limit_error, success_rows]),
+        ) as mock_inquire:
+            result = await client.get_order_status(
+                "test-account",
+                client_order_id="ut-order-status-002",
+                broker_order_id="0000012345",
+            )
+
+        assert mock_inquire.await_count == 2
+        assert result.broker_order_id == "0000012345"
+
+
 # ── Test 3: Request body structure ────────────────────────────────────────
 
 

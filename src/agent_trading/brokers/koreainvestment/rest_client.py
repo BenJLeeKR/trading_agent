@@ -1450,11 +1450,43 @@ class KISRestClient:
         # Fetch all records with pagination (7일 범위 조회 — 5/18 주문 미조회 문제 해결)
         _kst = timezone(timedelta(hours=9))
         _strt_dt = (datetime.now(_kst) - timedelta(days=7)).strftime("%Y%m%d")
-        output = await self.inquire_daily_ccld(
-            strt_dt=_strt_dt,
-            end_dt=None,
-            after_hours=False,
-        )
+        max_retries = 2
+        backoff_base = 1.0
+        output: list[dict[str, Any]] | None = None
+        last_exc: Exception | None = None
+
+        for attempt in range(max_retries):
+            try:
+                output = await self.inquire_daily_ccld(
+                    broker_order_id=broker_order_id,
+                    strt_dt=_strt_dt,
+                    end_dt=None,
+                    after_hours=False,
+                )
+                break
+            except BrokerError as exc:
+                last_exc = exc
+                is_rate_limit = (
+                    exc.error_type == BrokerErrorType.RATE_LIMIT
+                    or "EGW00201" in str(exc)
+                )
+                if not is_rate_limit or attempt >= max_retries - 1:
+                    raise
+                wait = exc.retry_after_seconds or (backoff_base * (2 ** attempt))
+                logger.warning(
+                    "get_order_status(): inquire_daily_ccld rate limit for broker_order_id=%s, "
+                    "retry %d/%d in %.1fs",
+                    broker_order_id,
+                    attempt + 1,
+                    max_retries,
+                    wait,
+                )
+                await asyncio.sleep(wait)
+
+        if output is None:
+            if last_exc is not None:
+                raise last_exc
+            raise RuntimeError("get_order_status(): inquire_daily_ccld returned no output")
 
         # ── Instrumentation ──
         if logger.isEnabledFor(logging.DEBUG):

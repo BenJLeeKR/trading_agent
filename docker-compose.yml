@@ -107,6 +107,7 @@ services:
       - ./pyproject.toml:/app/pyproject.toml
       # Share KIS dev token cache to avoid 1-per-minute oauth2 rate limit
       - ./.cache:/app/.cache
+      - ./data:/app/data
       - ./tmp:/app/tmp
     cap_add:
       - NET_ADMIN

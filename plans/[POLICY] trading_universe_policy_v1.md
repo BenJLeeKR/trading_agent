@@ -173,7 +173,9 @@ unique / index 원칙:
 연결 원칙:
 
 - 장후 feature batch는
-  `signal_feature_batch_runs.universe_freeze_run_id` FK로 freeze를 참조한다.
+`signal_feature_batch_runs.universe_freeze_run_id` FK로 freeze를 참조한다.
+현재 구현에서는 `signal_feature_batch_runs` / `signal_feature_batch_run_items`
+테이블이 위 연결을 사용해 장후 배치 실행 메타데이터와 종목별 처리 결과를 저장한다.
 - 이후 decision loop에도 동일 개념을 확장할 수 있지만,
   우선 장후 feature batch를 1차 authoritative consumer로 둔다.
 
@@ -184,6 +186,53 @@ unique / index 원칙:
 - 실패 종목 재시도는 `freeze_run_id` 기준 subset 재실행으로 처리한다.
 - 수동 재실행도 기본은 기존 freeze 재사용이며,
   대상 집합 변경이 필요할 때만 `freeze_sequence + 1` 새 run을 만든다.
+- `signal_feature_snapshots`는
+  `(instrument_id, timeframe, snapshot_at, feature_set_version)` natural key 기준으로
+  idempotent upsert를 수행한다.
+  동일 장후 배치를 다시 실행해도 snapshot row는 중복 생성되지 않고
+  기존 row payload만 최신 계산값으로 갱신한다.
+
+### 3.1-b Signal Feature Batch Authoritative Source
+
+장후 `signal feature` 배치는
+`freeze -> fetch -> persist -> tail-retry`의 각 단계마다
+파일과 DB를 모두 남길 수 있지만,
+운영상 authoritative source는 아래처럼 고정한다.
+
+1. 대상 universe authoritative source
+   - `trading.universe_freeze_runs`
+   - `trading.universe_freeze_run_items`
+2. 배치 실행 메타데이터 authoritative source
+   - `trading.signal_feature_batch_runs`
+   - `trading.signal_feature_batch_run_items`
+3. 최종 feature row authoritative source
+   - `trading.signal_feature_snapshots`
+4. JSON 중간 산출물
+   - authoritative source가 아니라
+     배치 간 전달, tail-retry, 수동 재실행, 장애 분석용 artifact다.
+
+운영 해석 원칙:
+
+- 오늘 어떤 종목을 대상으로 삼았는지는
+  입력 JSON이 아니라 `universe_freeze_run_items`를 기준으로 판단한다.
+- 장후 배치가 몇 건을 성공/실패했고
+  어떤 종목이 누락됐는지는
+  `signal_feature_batch_runs`와
+  `signal_feature_batch_run_items`를 기준으로 판단한다.
+- 최종적으로 판단 계층이 참조해야 할 feature snapshot은
+  파일이 아니라 `signal_feature_snapshots` row다.
+- 입력 JSON이 유실돼도
+  DB의 freeze/run-state/snapshot이 남아 있으면
+  audit, 설명, 사후 검증은 계속 가능해야 한다.
+
+재실행 원칙:
+
+- 기본 재실행은 기존 `freeze_run_id`를 재사용한다.
+- 파일 기반 `--retry-from-input` 경로는 허용하되,
+  이 경로도 authoritative run-state를 대체하지 않는다.
+- 장기적으로는 file artifact 없이도
+  `freeze_run_id + batch_run_id`만으로
+  subset 재실행이 가능하도록 orchestration 계층을 수렴시킨다.
 
 ### 3.2 설명 가능성
 

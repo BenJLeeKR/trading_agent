@@ -85,6 +85,15 @@ def _make_intent(
         ai_backend_inputs=AIDecisionInputs(
             decision_type=decision_type,
             side=side,
+            expected_return_bps=Decimal("50.00"),
+            expected_downside_bps=Decimal("15.00"),
+            net_expected_value_bps=Decimal("35.00"),
+            final_trade_score=Decimal("0.75"),
+            minimum_required_edge_bps=Decimal("5.00"),
+            edge_after_cost_bps=Decimal("20.00"),
+            estimated_round_trip_cost_bps=Decimal("7.00"),
+            slippage_buffer_bps=Decimal("8.00"),
+            expected_value_gate_passed=True,
         ),
     )
 
@@ -168,6 +177,15 @@ class TestBuildSubmitOrderRequestSide:
             ai_backend_inputs=AIDecisionInputs(
                 decision_type="APPROVE",
                 side="buy",
+                expected_return_bps=Decimal("50.00"),
+                expected_downside_bps=Decimal("15.00"),
+                net_expected_value_bps=Decimal("35.00"),
+                final_trade_score=Decimal("0.75"),
+                minimum_required_edge_bps=Decimal("10.00"),
+                edge_after_cost_bps=Decimal("18.00"),
+                estimated_round_trip_cost_bps=Decimal("9.00"),
+                slippage_buffer_bps=Decimal("8.00"),
+                expected_value_gate_passed=True,
             ),
         )
         assert build_submit_order_request_from_decision(intent) is None
@@ -186,6 +204,15 @@ class TestBuildSubmitOrderRequestSide:
             ai_backend_inputs=AIDecisionInputs(
                 decision_type="REDUCE",
                 side="sell",
+                expected_return_bps=Decimal("30.00"),
+                expected_downside_bps=Decimal("10.00"),
+                net_expected_value_bps=Decimal("20.00"),
+                final_trade_score=Decimal("0.62"),
+                minimum_required_edge_bps=Decimal("5.00"),
+                edge_after_cost_bps=Decimal("9.00"),
+                estimated_round_trip_cost_bps=Decimal("5.00"),
+                slippage_buffer_bps=Decimal("6.00"),
+                expected_value_gate_passed=True,
             ),
         )
         result = build_submit_order_request_from_decision(intent)

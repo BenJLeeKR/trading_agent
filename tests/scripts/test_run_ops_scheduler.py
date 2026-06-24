@@ -212,6 +212,8 @@ class TestCommandBuilders:
             "data/signal_feature_snapshot_input.json",
             "--output",
             "json",
+            "--trigger-type",
+            "after_market_scheduler",
         ]
 
     def test_signal_feature_snapshot_retry_input_path(self) -> None:
@@ -232,6 +234,10 @@ class TestCommandBuilders:
             "data/signal_feature_snapshot_input.json",
             "--output-format",
             "json",
+            "--freeze-purpose",
+            "signal_feature_after_market",
+            "--trigger-type",
+            "after_market_scheduler",
         ]
 
     def test_generate_signal_feature_snapshot_input_retry_command_uses_python3(self) -> None:
@@ -247,6 +253,10 @@ class TestCommandBuilders:
             "data/signal_feature_snapshot_input.tail_retry.json",
             "--output-format",
             "json",
+            "--freeze-purpose",
+            "signal_feature_after_market",
+            "--trigger-type",
+            "after_market_scheduler",
             "--retry-from-input",
             "data/signal_feature_snapshot_input.json",
         ]
@@ -894,6 +904,10 @@ class TestAfterMarketSignalFeatureBatch:
             "data/custom.json",
             "--output-format",
             "json",
+            "--freeze-purpose",
+            "signal_feature_after_market",
+            "--trigger-type",
+            "after_market_scheduler",
         ]
         assert second_argv == [
             "python3",
@@ -903,6 +917,8 @@ class TestAfterMarketSignalFeatureBatch:
             "data/custom.json",
             "--output",
             "json",
+            "--trigger-type",
+            "after_market_scheduler",
         ]
         persist_mock.assert_awaited_once()
         assert state.signal_feature_batch_done is True
@@ -1012,6 +1028,10 @@ class TestAfterMarketSignalFeatureBatch:
             "data/custom.tail_retry.json",
             "--output-format",
             "json",
+            "--freeze-purpose",
+            "signal_feature_after_market",
+            "--trigger-type",
+            "after_market_scheduler",
             "--retry-from-input",
             "data/custom.json",
         ]
@@ -1023,6 +1043,8 @@ class TestAfterMarketSignalFeatureBatch:
             "data/custom.tail_retry.json",
             "--output",
             "json",
+            "--trigger-type",
+            "after_market_scheduler",
         ]
         persist_mock.assert_awaited_once()
         assert state.signal_feature_batch_done is True
@@ -1921,7 +1943,7 @@ class TestPersistOperationsDayRun:
         assert summary_json["command_health"]["decision_loop"]["last_ok"] is True
         assert summary_json["command_health"]["recovery_batch"]["timed_out_count"] == 1
         assert summary_json["scheduler_runtime"]["instrument_master_sync_supported"] is True
-        assert summary_json["scheduler_runtime"]["instrument_master_sync_time"] == "07:50"
+        assert summary_json["scheduler_runtime"]["instrument_master_sync_time"] == "04:50"
         assert (
             summary_json["scheduler_runtime"]["instrument_master_sync_csv_path"]
             == "data/instrument_master/normalized/kis_kospi_kosdaq_master_normalized_for_sync.csv"
@@ -2579,6 +2601,12 @@ class TestIdleLifecycle:
                 return_value=FallbackSessionProvider(),
             ),
             patch("scripts.run_ops_scheduler._log_startup_info"),
+            patch("scripts.run_ops_scheduler._run_instrument_master_sync", new=AsyncMock()),
+            patch("scripts.run_ops_scheduler._mark_instrument_master_sync_missed", new=AsyncMock()),
+            patch("scripts.run_ops_scheduler._run_pre_market", new=AsyncMock()),
+            patch("scripts.run_ops_scheduler._run_intraday_due_tasks", new=AsyncMock()),
+            patch("scripts.run_ops_scheduler._run_end_of_day", new=AsyncMock()),
+            patch("scripts.run_ops_scheduler._run_after_market_signal_feature_batch", new=AsyncMock()),
             patch("scripts.run_ops_scheduler._persist_session_state", new=mock_persist),
             patch("scripts.run_ops_scheduler._log_summary", new=mock_log_summary),
         ):

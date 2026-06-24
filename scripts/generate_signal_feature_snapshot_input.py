@@ -32,6 +32,10 @@ from agent_trading.domain.entities import (
 from agent_trading.repositories.contracts import AccountLookup
 from agent_trading.repositories.postgres.bootstrap import build_postgres_repositories
 from agent_trading.runtime.bootstrap import _build_kis_live_quote_client
+from agent_trading.services.signal_feature_batch_runtime import (
+    DEFAULT_SIGNAL_FEATURE_AFTER_MARKET_FREEZE_PURPOSE,
+    DEFAULT_SIGNAL_FEATURE_AFTER_MARKET_TRIGGER_TYPE,
+)
 from agent_trading.services.universe_selection import UniverseSelectionService
 from agent_trading.services.universe_selection_types import (
     CompositionContext,
@@ -45,7 +49,12 @@ from scripts.run_decision_loop import (
 
 logger = logging.getLogger(__name__)
 KST = ZoneInfo("Asia/Seoul")
-DEFAULT_SIGNAL_FEATURE_FREEZE_PURPOSE = "signal_feature_after_market"
+DEFAULT_SIGNAL_FEATURE_FREEZE_PURPOSE = (
+    DEFAULT_SIGNAL_FEATURE_AFTER_MARKET_FREEZE_PURPOSE
+)
+DEFAULT_SIGNAL_FEATURE_TRIGGER_TYPE = (
+    DEFAULT_SIGNAL_FEATURE_AFTER_MARKET_TRIGGER_TYPE
+)
 DEFAULT_SIGNAL_FEATURE_SELECTION_VERSION = "universe_selection.freeze.v1"
 DEFAULT_SIGNAL_FEATURE_UNIVERSE_MAX_CAP = 80
 DEFAULT_SIGNAL_FEATURE_CORE_CAP = 80
@@ -164,6 +173,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--freeze-purpose",
         default=DEFAULT_SIGNAL_FEATURE_FREEZE_PURPOSE,
         help="universe freeze purpose 값",
+    )
+    parser.add_argument(
+        "--trigger-type",
+        default=DEFAULT_SIGNAL_FEATURE_TRIGGER_TYPE,
+        help="batch run trigger_type 값",
     )
     parser.add_argument(
         "--retry-from-input",
@@ -492,6 +506,7 @@ def _write_rows(
     universe_freeze_run_id: str | None = None,
     universe_freeze_reused: bool | None = None,
     freeze_purpose: str | None = None,
+    trigger_type: str | None = None,
     generated_at: str | None = None,
 ) -> None:
     target = Path(path)
@@ -503,6 +518,7 @@ def _write_rows(
             "universe_freeze_run_id": universe_freeze_run_id,
             "universe_freeze_reused": universe_freeze_reused,
             "freeze_purpose": freeze_purpose,
+            "trigger_type": trigger_type,
             "universe_count": len(universe or ()),
             "symbols": [
                 {
@@ -525,7 +541,13 @@ def _write_rows(
 
 def _load_retry_universe_from_input(
     path: str,
-) -> tuple[tuple[UniverseSymbol, ...], str | None, bool | None, str | None]:
+) -> tuple[
+    tuple[UniverseSymbol, ...],
+    str | None,
+    bool | None,
+    str | None,
+    str | None,
+]:
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError("retry-from-input 은 signal_feature_input.v2 객체여야 합니다.")
@@ -590,6 +612,11 @@ def _load_retry_universe_from_input(
         (
             str(universe_metadata.get("freeze_purpose"))
             if universe_metadata.get("freeze_purpose")
+            else None
+        ),
+        (
+            str(universe_metadata.get("trigger_type"))
+            if universe_metadata.get("trigger_type")
             else None
         ),
     )
@@ -739,15 +766,20 @@ async def _run(args: argparse.Namespace) -> int:
     end_date = _parse_end_date(args.end_date)
     retry_source_input = str(args.retry_from_input).strip() if args.retry_from_input else None
     if retry_source_input:
-        retry_universe, retry_freeze_run_id, retry_freeze_reused, retry_freeze_purpose = (
-            _load_retry_universe_from_input(retry_source_input)
-        )
+        (
+            retry_universe,
+            retry_freeze_run_id,
+            retry_freeze_reused,
+            retry_freeze_purpose,
+            retry_trigger_type,
+        ) = _load_retry_universe_from_input(retry_source_input)
         freeze = UniverseFreezeResolution(
             universe_freeze_run_id=retry_freeze_run_id or f"retry:{end_date.isoformat()}",
             universe=retry_universe,
             reused_existing=bool(retry_freeze_reused),
         )
         freeze_purpose = retry_freeze_purpose or args.freeze_purpose
+        trigger_type = retry_trigger_type or args.trigger_type
     else:
         await create_pool(DatabaseConfig())
         try:
@@ -771,6 +803,7 @@ async def _run(args: argparse.Namespace) -> int:
                     "process exit에 정리를 위임합니다."
                 )
         freeze_purpose = args.freeze_purpose
+        trigger_type = args.trigger_type
     settings = AppSettings()
     client = _build_chart_client(settings)
     try:
@@ -803,6 +836,7 @@ async def _run(args: argparse.Namespace) -> int:
         universe_freeze_run_id=freeze.universe_freeze_run_id,
         universe_freeze_reused=freeze.reused_existing,
         freeze_purpose=freeze_purpose,
+        trigger_type=trigger_type,
     )
     payload = {
         "output": args.output,
@@ -815,6 +849,7 @@ async def _run(args: argparse.Namespace) -> int:
         "universe_freeze_run_id": freeze.universe_freeze_run_id,
         "universe_freeze_reused": freeze.reused_existing,
         "freeze_purpose": freeze_purpose,
+        "trigger_type": trigger_type,
         "fetch_success_count": len(rows),
         "fetch_error_count": len(errors),
         "retry_mode": bool(retry_source_input),
@@ -835,6 +870,7 @@ async def _run(args: argparse.Namespace) -> int:
         print(f"universe_freeze_run_id: {freeze.universe_freeze_run_id}")
         print(f"universe_freeze_reused: {freeze.reused_existing}")
         print(f"freeze_purpose: {freeze_purpose}")
+        print(f"trigger_type: {trigger_type}")
         print(f"retry_mode: {bool(retry_source_input)}")
         for error in all_errors:
             print(f"! {error}")

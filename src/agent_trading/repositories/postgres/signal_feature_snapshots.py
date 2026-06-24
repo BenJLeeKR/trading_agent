@@ -43,6 +43,28 @@ class PostgresSignalFeatureSnapshotRepository:
                         $19, $20,
                         $21, $22, $23,
                         $24::jsonb, $25)
+                ON CONFLICT (instrument_id, timeframe, snapshot_at, feature_set_version)
+                DO UPDATE SET
+                    bar_count = EXCLUDED.bar_count,
+                    sma_5 = EXCLUDED.sma_5,
+                    sma_20 = EXCLUDED.sma_20,
+                    sma_60 = EXCLUDED.sma_60,
+                    price_vs_sma_20_pct = EXCLUDED.price_vs_sma_20_pct,
+                    price_vs_sma_60_pct = EXCLUDED.price_vs_sma_60_pct,
+                    return_1m_pct = EXCLUDED.return_1m_pct,
+                    return_3m_pct = EXCLUDED.return_3m_pct,
+                    volatility_20d_pct = EXCLUDED.volatility_20d_pct,
+                    atr_14_pct = EXCLUDED.atr_14_pct,
+                    rsi_14 = EXCLUDED.rsi_14,
+                    average_volume_20d = EXCLUDED.average_volume_20d,
+                    average_turnover_20d = EXCLUDED.average_turnover_20d,
+                    volume_surge_ratio = EXCLUDED.volume_surge_ratio,
+                    turnover_surge_ratio = EXCLUDED.turnover_surge_ratio,
+                    fast_score = EXCLUDED.fast_score,
+                    slow_score = EXCLUDED.slow_score,
+                    overall_score = EXCLUDED.overall_score,
+                    component_scores_json = EXCLUDED.component_scores_json,
+                    reason_codes = EXCLUDED.reason_codes
                 RETURNING *
                 """,
                 snapshot.signal_feature_snapshot_id,

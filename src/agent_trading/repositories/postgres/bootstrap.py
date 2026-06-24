@@ -72,6 +72,12 @@ from agent_trading.repositories.postgres.snapshot_sync_runs import (
 from agent_trading.repositories.postgres.signal_feature_snapshots import (
     PostgresSignalFeatureSnapshotRepository,
 )
+from agent_trading.repositories.postgres.signal_feature_batch_runs import (
+    PostgresSignalFeatureBatchRunRepository,
+)
+from agent_trading.repositories.postgres.signal_feature_batch_run_items import (
+    PostgresSignalFeatureBatchRunItemRepository,
+)
 from agent_trading.repositories.postgres.strategies import (
     PostgresStrategyRepository,
 )
@@ -138,6 +144,8 @@ def build_postgres_repositories(
         guardrail_evaluations=PostgresGuardrailEvaluationRepository(tx),
         risk_limit_snapshots=PostgresRiskLimitSnapshotRepository(tx),
         signal_feature_snapshots=PostgresSignalFeatureSnapshotRepository(tx),
+        signal_feature_batch_runs=PostgresSignalFeatureBatchRunRepository(tx),
+        signal_feature_batch_run_items=PostgresSignalFeatureBatchRunItemRepository(tx),
         instrument_index_memberships=PostgresInstrumentIndexMembershipRepository(tx),
         universe_freeze_runs=PostgresUniverseFreezeRunRepository(tx),
         universe_freeze_run_items=PostgresUniverseFreezeRunItemRepository(tx),

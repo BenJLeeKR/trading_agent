@@ -30,8 +30,13 @@
   - `external_events`
   - `broker_fill_snapshots`
   - `snapshot_sync_runs.summary_json.errors` 중 `Instrument not found for pdno=...`
+- 추가로 최근 `trade_decisions.instrument_id IS NULL` 누적 종목도
+  canonical placeholder seed 대상에 포함해
+  의사결정 저장 경로의 FK 단절을 후행 정리할 수 있어야 한다.
 - 이미 어떤 market에서든 instrument row가 존재하면 skip
 - 없는 symbol만 inactive placeholder를 upsert
+- `index_membership_seed.csv`가 존재하면
+  `exchange_code`, `market_segment`, `metadata.index_memberships`까지 함께 보강한다.
 
 ## 예시
 ```bash

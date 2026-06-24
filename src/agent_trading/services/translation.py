@@ -82,6 +82,9 @@ def build_submit_order_request_from_decision(
     if decision_type == "WATCH":
         return None
 
+    if not _has_required_expected_value_anchor(intent.ai_backend_inputs):
+        return None
+
     source_type = "core"
     metadata = intent.request.metadata
     if isinstance(metadata, dict):
@@ -132,6 +135,25 @@ def build_submit_order_request_from_decision(
         client_timestamp=intent.request.client_timestamp,
         metadata=intent.request.metadata,
     )
+
+
+def _has_required_expected_value_anchor(ai_inputs: AIDecisionInputs) -> bool:
+    decision_type = (ai_inputs.decision_type or "").strip().upper()
+    if decision_type not in {"APPROVE", "BUY", "SELL", "EXIT", "REDUCE"}:
+        return True
+    if not ai_inputs.expected_value_gate_passed:
+        return False
+    required_values = (
+        ai_inputs.expected_return_bps,
+        ai_inputs.expected_downside_bps,
+        ai_inputs.net_expected_value_bps,
+        ai_inputs.final_trade_score,
+        ai_inputs.minimum_required_edge_bps,
+        ai_inputs.edge_after_cost_bps,
+        ai_inputs.estimated_round_trip_cost_bps,
+        ai_inputs.slippage_buffer_bps,
+    )
+    return all(value is not None for value in required_values)
 
 
 import decimal

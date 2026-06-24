@@ -79,8 +79,12 @@ from agent_trading.services.deterministic_trigger_engine import (
 from agent_trading.services.execution_service import (
     ExecutionService,
 )
+from agent_trading.services.expected_value_gate import (
+    evaluate_expected_value_gate,
+)
 from agent_trading.services.market_regime import classify_market_regime
 from agent_trading.services.portfolio_allocation import assess_portfolio_allocation
+from agent_trading.services.source_policy import evaluate_action_envelope
 from agent_trading.services.sizing_engine import (
     SizingInputs,
     calculate_sizing,
@@ -426,6 +430,52 @@ class DecisionOrchestratorService:
         )
         return (downgrade_decision, rationale)
 
+    def _check_source_policy_upgrade_guard(
+        self,
+        *,
+        source_type: str,
+        deterministic_trigger: Any | None,
+        fdc_output: FinalDecisionComposerOutput | None,
+        position_snapshot: PositionSnapshotEntity | None = None,
+    ) -> tuple[str, str, tuple[str, ...]] | None:
+        """source_type 정책상 금지된 신규 BUY 승격을 제한한다."""
+        if fdc_output is None:
+            return None
+
+        has_position = (
+            position_snapshot is not None
+            and position_snapshot.quantity is not None
+            and position_snapshot.quantity > 0
+        )
+        envelope = evaluate_action_envelope(
+            source_type=source_type,
+            has_position=has_position,
+        )
+        if envelope.allow_new_buy:
+            return None
+
+        decision_type = (fdc_output.decision_type or "").strip().upper()
+        if decision_type not in {"APPROVE", "BUY"}:
+            return None
+
+        downgrade_decision = "HOLD"
+        if (
+            deterministic_trigger is not None
+            and bool(getattr(deterministic_trigger, "watch_candidate", False))
+        ):
+            downgrade_decision = "WATCH"
+
+        rationale = (
+            f"[source_policy_guard] source_type={source_type} "
+            f"reason_codes={','.join(envelope.reason_codes)} "
+            f"이므로 FDC={decision_type} 진입 승격을 {downgrade_decision}로 제한"
+        )
+        return (
+            downgrade_decision,
+            rationale,
+            ("source_policy_guard",) + envelope.reason_codes,
+        )
+
     async def _ensure_or_create_decision_context(
         self,
         request: SubmitOrderRequest,
@@ -753,6 +803,26 @@ class DecisionOrchestratorService:
             fdc_skipped=True,
             skip_reason_codes=reason_codes,
         )
+        expected_value = evaluate_expected_value_gate(
+            decision_type=ai_inputs.decision_type,
+            confidence=ai_inputs.confidence,
+            conviction=ai_inputs.conviction,
+            risk_score=ai_inputs.risk_score,
+            context=AssembledContext(source_type="core"),
+        )
+        ai_inputs = replace(
+            ai_inputs,
+            expected_return_bps=expected_value.expected_return_bps,
+            expected_downside_bps=expected_value.expected_downside_bps,
+            net_expected_value_bps=expected_value.net_expected_value_bps,
+            final_trade_score=expected_value.final_trade_score,
+            minimum_required_edge_bps=expected_value.minimum_required_edge_bps,
+            edge_after_cost_bps=expected_value.edge_after_cost_bps,
+            estimated_round_trip_cost_bps=expected_value.estimated_round_trip_cost_bps,
+            slippage_buffer_bps=expected_value.slippage_buffer_bps,
+            expected_value_gate_passed=expected_value.expected_value_gate_passed,
+            expected_value_gate_reason_codes=expected_value.reason_codes,
+        )
         return AgentExecutionBundle(
             ai_inputs=ai_inputs,
             event_output=event_output,
@@ -767,8 +837,6 @@ class DecisionOrchestratorService:
     ) -> AgentExecutionBundle | None:
         """AI 호출 전 deterministic context만으로 종료 가능한 경우를 판정한다."""
         source_type = (assembled_context.source_type or "core").strip().lower()
-        if source_type not in _PRE_AI_SHORT_CIRCUIT_SOURCE_TYPES:
-            return None
 
         position_snapshot = assembled_context.position_snapshot
         has_position = (
@@ -776,11 +844,42 @@ class DecisionOrchestratorService:
             and position_snapshot.quantity is not None
             and position_snapshot.quantity > 0
         )
-        if has_position:
-            return None
 
         deterministic_trigger = assembled_context.deterministic_trigger
         if deterministic_trigger is None:
+            return None
+
+        envelope = evaluate_action_envelope(
+            source_type=source_type,
+            has_position=has_position,
+        )
+        if (
+            source_type == "reconciliation_overlay"
+            and not has_position
+            and not envelope.allow_new_buy
+        ):
+            decision_type = (
+                "WATCH" if bool(deterministic_trigger.watch_candidate) else "HOLD"
+            )
+            rationale = (
+                "[pre_ai_short_circuit] source policy상 신규 진입 금지. "
+                f"source_type={source_type} "
+                f"reason_codes={','.join(envelope.reason_codes)} "
+                f"이므로 AI 호출 없이 {decision_type}로 종료"
+            )
+            reason_codes = (
+                "pre_ai_short_circuit",
+                "source_policy_buy_blocked",
+            ) + envelope.reason_codes
+            return self._build_short_circuit_agent_bundle(
+                decision_type=decision_type,
+                rationale=rationale,
+                reason_codes=reason_codes,
+            )
+
+        if source_type not in _PRE_AI_SHORT_CIRCUIT_SOURCE_TYPES:
+            return None
+        if has_position:
             return None
 
         eligibility_reasons = tuple(
@@ -1206,6 +1305,50 @@ class DecisionOrchestratorService:
                 "decision_type=%s side=%s rationale=%s",
                 request.symbol, source_type, override_dt, override_side,
                 override_rationale,
+            )
+
+        source_policy_guard = self._check_source_policy_upgrade_guard(
+            source_type=derivation.source_type,
+            deterministic_trigger=derivation.deterministic_trigger,
+            fdc_output=agent_bundle.composer_output,
+            position_snapshot=position_snapshot,
+        )
+        if source_policy_guard is not None:
+            guarded_dt, guard_rationale, guard_reason_codes = source_policy_guard
+            object.__setattr__(agent_bundle.ai_inputs, "decision_type", guarded_dt)
+            object.__setattr__(agent_bundle.ai_inputs, "side", "")
+            existing_reason_codes = tuple(agent_bundle.ai_inputs.reason_codes or ())
+            merged_reason_codes = tuple(
+                dict.fromkeys(existing_reason_codes + guard_reason_codes)
+            )
+            object.__setattr__(
+                agent_bundle.ai_inputs,
+                "reason_codes",
+                merged_reason_codes,
+            )
+            if agent_bundle.composer_output is not None:
+                object.__setattr__(agent_bundle.composer_output, "decision_type", guarded_dt)
+                object.__setattr__(agent_bundle.composer_output, "side", "")
+                composer_reason_codes = tuple(agent_bundle.composer_output.reason_codes or ())
+                merged_composer_reason_codes = tuple(
+                    dict.fromkeys(composer_reason_codes + guard_reason_codes)
+                )
+                object.__setattr__(
+                    agent_bundle.composer_output,
+                    "reason_codes",
+                    merged_composer_reason_codes,
+                )
+                fdc_summary = agent_bundle.composer_output.summary
+                object.__setattr__(
+                    agent_bundle.composer_output,
+                    "summary",
+                    (fdc_summary + f" | {guard_rationale}") if fdc_summary else guard_rationale,
+                )
+            logger.info(
+                "Source policy upgrade guard: symbol=%s source_type=%s rationale=%s",
+                request.symbol,
+                derivation.source_type,
+                guard_rationale,
             )
 
         watch_guard = self._check_watch_candidate_upgrade_guard(

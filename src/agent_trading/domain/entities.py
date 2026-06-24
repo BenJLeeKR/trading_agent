@@ -605,6 +605,54 @@ class UniverseFreezeRunItemEntity:
 
 
 @dataclass(slots=True, frozen=True)
+class SignalFeatureBatchRunEntity:
+    """signal feature 배치 1회 실행 메타데이터."""
+
+    signal_feature_batch_run_id: UUID
+    business_date: date
+    universe_freeze_run_id: UUID | None = None
+    trigger_type: str = "scheduler"
+    timeframe: str = "1d"
+    feature_set_version: str = "signal_backbone_v1"
+    input_uri: str | None = None
+    dry_run: bool = False
+    target_count: int = 0
+    fetch_success_count: int = 0
+    fetch_error_count: int = 0
+    persist_success_count: int = 0
+    persist_error_count: int = 0
+    skipped_count: int = 0
+    final_missing_count: int = 0
+    status: str = "running"
+    summary_json: dict[str, object] = field(default_factory=dict)
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class SignalFeatureBatchRunItemEntity:
+    """signal feature 배치 내 종목별 처리 상태."""
+
+    signal_feature_batch_run_item_id: UUID
+    signal_feature_batch_run_id: UUID
+    instrument_id: UUID | None
+    symbol: str
+    market_code: str
+    timeframe: str
+    feature_set_version: str
+    status: str
+    signal_feature_snapshot_id: UUID | None = None
+    snapshot_at: datetime | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    metadata_json: dict[str, object] = field(default_factory=dict)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class MarketSessionEntity:
     """장운영 세션 상태 엔티티 — run_date 기준 1행, P2 scheduler가 주기적으로 upsert.
 

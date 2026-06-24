@@ -121,8 +121,21 @@ def build_trade_decision_entity(
             request.price,
             request.quantity,
         ),
+        expected_return_bps=ai_inputs.expected_return_bps,
+        expected_downside_bps=ai_inputs.expected_downside_bps,
+        net_expected_value_bps=ai_inputs.net_expected_value_bps,
+        final_trade_score=ai_inputs.final_trade_score,
+        minimum_required_edge_bps=ai_inputs.minimum_required_edge_bps,
         confidence=Decimal(str(composer_output.confidence)),
         risk_check_passed=ai_inputs.risk_opinion in {"allow", "reduce"},
+        failed_rule_codes=(
+            list(ai_inputs.expected_value_gate_reason_codes)
+            if (
+                not ai_inputs.expected_value_gate_passed
+                and ai_inputs.expected_value_gate_reason_codes
+            )
+            else None
+        ),
         regime_label=(
             assembled_context.market_regime.regime_label
             if assembled_context.market_regime is not None
@@ -331,6 +344,50 @@ def build_trade_decision_entity(
                 else None
             ),
             "candidate_vs_final": candidate_vs_final,
+            "expected_value_gate": {
+                "passed": ai_inputs.expected_value_gate_passed,
+                "reason_codes": list(ai_inputs.expected_value_gate_reason_codes),
+                "expected_return_bps": (
+                    str(ai_inputs.expected_return_bps)
+                    if ai_inputs.expected_return_bps is not None
+                    else None
+                ),
+                "expected_downside_bps": (
+                    str(ai_inputs.expected_downside_bps)
+                    if ai_inputs.expected_downside_bps is not None
+                    else None
+                ),
+                "net_expected_value_bps": (
+                    str(ai_inputs.net_expected_value_bps)
+                    if ai_inputs.net_expected_value_bps is not None
+                    else None
+                ),
+                "final_trade_score": (
+                    str(ai_inputs.final_trade_score)
+                    if ai_inputs.final_trade_score is not None
+                    else None
+                ),
+                "minimum_required_edge_bps": (
+                    str(ai_inputs.minimum_required_edge_bps)
+                    if ai_inputs.minimum_required_edge_bps is not None
+                    else None
+                ),
+                "edge_after_cost_bps": (
+                    str(ai_inputs.edge_after_cost_bps)
+                    if ai_inputs.edge_after_cost_bps is not None
+                    else None
+                ),
+                "estimated_round_trip_cost_bps": (
+                    str(ai_inputs.estimated_round_trip_cost_bps)
+                    if ai_inputs.estimated_round_trip_cost_bps is not None
+                    else None
+                ),
+                "slippage_buffer_bps": (
+                    str(ai_inputs.slippage_buffer_bps)
+                    if ai_inputs.slippage_buffer_bps is not None
+                    else None
+                ),
+            },
             "execution_preferences": dataclass_to_dict(
                 composer_output.execution_preferences
             ),

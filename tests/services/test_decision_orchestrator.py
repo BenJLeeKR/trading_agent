@@ -1723,6 +1723,106 @@ class TestWatchCandidateUpgradeGuard:
         assert "eligibility_low_turnover" in intent.ai_backend_inputs.reason_codes
 
     @pytest.mark.asyncio
+    async def test_reconciliation_overlay_flat_buy_short_circuits_before_ai(
+        self, sample_request: SubmitOrderRequest
+    ) -> None:
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        strategy_id = uuid4()
+
+        config_version = ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=uuid4(),
+            environment=Environment.PAPER,
+            version_tag="v1",
+            config_json={},
+            checksum="sum",
+            activated_at=now,
+        )
+        await repos.config_versions.add(config_version)
+
+        context = DecisionContextEntity(
+            decision_context_id=uuid4(),
+            account_id=uuid4(),
+            strategy_id=strategy_id,
+            config_version_id=config_version.config_version_id,
+            market_timestamp=now,
+            correlation_id="corr-reconciliation-overlay-flat-buy",
+            created_at=now,
+        )
+        await repos.decision_contexts.add(context)
+
+        service = DecisionOrchestratorService(
+            repos=repos,
+            use_subprocess_isolation=False,
+        )
+        deterministic_trigger = DeterministicTriggerAssessment(
+            trigger_version="deterministic_trigger_v1",
+            primary_candidate="WATCH",
+            candidate_set=("WATCH",),
+            watch_candidate=True,
+            buy_candidate=False,
+            sell_candidate=False,
+            reduce_candidate=False,
+            candidate_confidence=0.55,
+            entry_score=0.40,
+            exit_score=0.10,
+            watch_score=0.52,
+            eligibility_passed=False,
+            eligibility_reasons=("trigger_no_action",),
+            reason_codes=("source_reconciliation_overlay",),
+            thresholds={
+                "buy_candidate_threshold": 0.65,
+                "watch_candidate_threshold": 0.45,
+            },
+            metadata={"source_type": "reconciliation_overlay"},
+        )
+        service._derive_deterministic_context_components = AsyncMock(  # type: ignore[method-assign]
+            return_value=DeterministicDerivationBundle(
+                source_type="reconciliation_overlay",
+                deterministic_trigger=deterministic_trigger,
+            )
+        )
+        service._run_agents = AsyncMock(  # type: ignore[method-assign]
+            return_value=AgentExecutionBundle(
+                ai_inputs=AIDecisionInputs(
+                    decision_type="APPROVE",
+                    side="BUY",
+                    confidence=0.82,
+                    conviction=0.76,
+                    reason_codes=("fdc_entry",),
+                ),
+                composer_output=FinalDecisionComposerOutput(
+                    decision_type="APPROVE",
+                    side="BUY",
+                    confidence=0.82,
+                    conviction=0.76,
+                    reason_codes=("fdc_entry",),
+                    summary="한국어 요약",
+                ),
+            )
+        )
+        request = dataclasses.replace(
+            sample_request,
+            metadata={"source_type": "reconciliation_overlay"},
+        )
+
+        intent = await service.assemble(
+            request,
+            decision_context_id=context.decision_context_id,
+        )
+
+        assert intent.ai_backend_inputs.decision_type == "WATCH"
+        assert intent.ai_backend_inputs.side == ""
+        assert "pre_ai_short_circuit" in intent.ai_backend_inputs.reason_codes
+        assert "source_policy_buy_blocked" in intent.ai_backend_inputs.reason_codes
+        assert (
+            "policy_reconciliation_overlay_flat_buy_blocked"
+            in intent.ai_backend_inputs.reason_codes
+        )
+        service._run_agents.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_core_pre_agent_short_circuit_on_execution_ineligible_buy(
         self, sample_request: SubmitOrderRequest
     ) -> None:
