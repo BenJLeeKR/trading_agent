@@ -39,6 +39,25 @@
   또는 동일 포맷의 seed 파일을 별도 import 경로로 허용한다.
   예시 템플릿은
   `data/instrument_master/source/index_membership_seed.example.csv`를 사용한다.
+  이 seed CSV는 단순 참고 파일이 아니라
+  `authoritative import contract`로 취급한다.
+  - 허용 `membership_code`:
+    `KOSPI100`, `KOSPI200`, `KOSDAQ50`, `KOSDAQ150`
+  - 선택 provenance 컬럼:
+    `source_name`, `source_ref`, `as_of_date`, `note`
+  - 같은 symbol에 대해 provenance 값이 다르면 import를 실패시킨다.
+  - 지원하지 않는 membership code도 skip이 아니라 즉시 실패시킨다.
+  - 외부 authoritative source file을 받을 경우에는
+    단일 seed CSV를 직접 손편집하지 않고,
+    `index_membership_source_manifest.json`
+    + membership별 `symbol` CSV 묶음으로 source package를 만든 뒤
+    `scripts/build_index_membership_seed_from_source_package.py`로
+    seed CSV를 정규화 생성한다.
+    - 예시:
+      `data/instrument_master/source/index_membership_source_manifest.example.json`
+    - source package의 공통 provenance
+      (`source_name`, `source_ref`, `as_of_date`)는 manifest에서 고정한다.
+    - membership별 note는 entry 단위로 남긴다.
   이후 Universe Selection은 이 값을 allowlist 보조가 아니라
   segment authoritative source로 사용할 수 있어야 한다.
   - `index_memberships`는
@@ -125,6 +144,35 @@
 - KIS raw 종목정보파일 직접 parser 및 다운로드/보관 경로
 - `FHPUP02140000` 기반 지수 코드 카탈로그를
   `index_membership_seed` 운영 검증 자료로 연결하는 보조 절차
+  - [x] `index_membership_seed.csv` import contract 강화
+    - 허용 membership code 검증
+    - symbol 단위 provenance 일관성 검증
+    - `source_name/source_ref/as_of_date/note` metadata 저장
+  - [x] KIS 카탈로그 검증 스크립트 추가
+    - `scripts/export_kis_index_category_catalog.py`로
+      `FHPUP02140000` dump를 생성하고,
+      `scripts/validate_kis_index_membership_catalog.py`로
+      seed CSV의 membership code가
+      카탈로그 내 alias(`코스피 100`, `코스닥150` 등)와
+      매칭되는지 자동 점검할 수 있게 했다.
+    - 이 절차는 구성종목 authoritative source를 만드는 용도가 아니라,
+      운영자가 seed 파일 provenance를 검증하는 보조 안전장치다.
+  - [x] 외부 authoritative source package -> seed CSV 정규화 경로 추가
+    - `scripts/build_index_membership_seed_from_source_package.py`
+    - `data/instrument_master/source/index_membership_source_manifest.example.json`
+    - 외부 원천이 들어오면
+      `source package build -> catalog validation -> membership seed import`
+      순서로 운영 절차를 고정한다.
+  - [x] import 전 instrument master 해상도 검증 경로 추가
+    - `scripts/validate_index_membership_seed_resolution.py`
+    - seed CSV의 symbol이
+      현재 `trading.instruments`에 해상되는지,
+      placeholder에만 연결되는지 사전 점검한다.
+  - [x] 운영 runbook 추가
+    - `plans/[RUNBOOK] index_membership_source_package_apply.md`
+    - 실제 외부 원천 파일 반영 시
+      `source package build -> catalog validation -> resolution validation -> import`
+      순서를 문서로 고정했다.
 - KOSPI/KOSDAQ master sync 운영 절차와 실행 이력 UI 연결
 - UniverseSelectionService의 membership read를
   `instrument_index_memberships` 우선, `metadata.index_memberships` fallback으로
@@ -137,7 +185,12 @@
   다만 과거 데이터 중 일부는 당시 instrument master 미등록 종목 때문에
   `instrument_id`가 비어 있을 수 있으며,
   이는 canonical placeholder row 보강 + backfill로 우선 정리했다.
-  이후 placeholder는 실제 master row 확보 시 치환 대상으로 관리한다.
+  이후 placeholder는 실제 master row 확보 시
+  `sync_kis_instrument_master.py`가 동일 `symbol + market_code='KRX'`
+  row를 authoritative master 데이터로 승격하는 방식으로 치환한다.
+  이 경로는 `instrument_id`를 유지하므로
+  기존 FK 참조를 깨지 않고
+  placeholder metadata와 membership 정보만 authoritative 값으로 교체한다.
   수동 배치 경로의 파일 가시성 문제는
   `app` 컨테이너 `./data:/app/data` 마운트 추가로 해소했다.
   다만 membership table 직접 참조는 아직 UniverseSelection 한정이며,

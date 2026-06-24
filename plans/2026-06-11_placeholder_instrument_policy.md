@@ -38,6 +38,21 @@
 - `index_membership_seed.csv`가 존재하면
   `exchange_code`, `market_segment`, `metadata.index_memberships`까지 함께 보강한다.
 
+## placeholder 치환 정책
+- placeholder canonical row는 별도 삭제/재생성 대상이 아니라,
+  이후 `sync_kis_instrument_master.py`가 같은
+  `symbol + market_code='KRX'` row를 authoritative master 데이터로
+  **승격(promote)** 하는 방식으로 치환한다.
+- 이때 `instrument_id`는 유지되어
+  기존 `trade_decisions`, `signal_feature_snapshots`,
+  `order_requests` 등 FK 참조를 깨지 않는다.
+- 승격 시 기존 placeholder metadata
+  (`placeholder`, `placeholder_source`, `canonical_master_pending`)는
+  KIS master metadata로 교체된다.
+- `metadata.index_memberships`와
+  `instrument_index_memberships` active row도
+  같은 sync cycle에서 함께 authoritative 값으로 동기화한다.
+
 ## 예시
 ```bash
 python3 scripts/seed_placeholder_instruments_from_mapping_gaps.py

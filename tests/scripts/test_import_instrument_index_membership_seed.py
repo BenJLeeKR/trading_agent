@@ -10,6 +10,7 @@ import pytest
 from agent_trading.domain.entities import InstrumentEntity
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from scripts.import_instrument_index_membership_seed import (
+    MembershipSeedGroup,
     MembershipSeedRow,
     _apply_seed,
     _load_seed_rows,
@@ -52,9 +53,56 @@ def test_load_seed_rows_groups_and_dedupes(tmp_path: Path) -> None:
         MembershipSeedRow(symbol="090150", membership_code="KOSDAQ50"),
     ]
     assert grouped == {
-        "005930": ["KOSPI100", "KOSPI200"],
-        "090150": ["KOSDAQ50"],
+        "005930": MembershipSeedGroup(membership_codes=("KOSPI100", "KOSPI200")),
+        "090150": MembershipSeedGroup(membership_codes=("KOSDAQ50",)),
     }
+
+
+def test_load_seed_rows_preserves_source_metadata(tmp_path: Path) -> None:
+    path = tmp_path / "seed.csv"
+    path.write_text(
+        (
+            "symbol,membership_code,source_name,source_ref,as_of_date,note\n"
+            "005930,KOSPI100,krx_manual,ops-sheet-1,2026-06-24,검증완료\n"
+            "005930,KOSPI200,krx_manual,ops-sheet-1,2026-06-24,검증완료\n"
+        ),
+        encoding="utf-8",
+    )
+    rows, grouped = _load_seed_rows(str(path))
+    assert rows[0].source_name == "krx_manual"
+    assert rows[0].source_ref == "ops-sheet-1"
+    assert rows[0].as_of_date == date(2026, 6, 24)
+    assert grouped["005930"] == MembershipSeedGroup(
+        membership_codes=("KOSPI100", "KOSPI200"),
+        source_name="krx_manual",
+        source_ref="ops-sheet-1",
+        as_of_date=date(2026, 6, 24),
+        note="검증완료",
+    )
+
+
+def test_load_seed_rows_rejects_unsupported_membership_code(tmp_path: Path) -> None:
+    path = tmp_path / "bad.csv"
+    path.write_text(
+        "symbol,membership_code\n005930,KOSPI50\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="지원하지 않는 membership_code"):
+        _load_seed_rows(str(path))
+
+
+def test_load_seed_rows_rejects_inconsistent_source_metadata(tmp_path: Path) -> None:
+    path = tmp_path / "bad.csv"
+    path.write_text(
+        (
+            "symbol,membership_code,source_name\n"
+            "005930,KOSPI100,krx_manual\n"
+            "005930,KOSPI200,other_source\n"
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="source metadata가 일관되지 않습니다"):
+        _load_seed_rows(str(path))
 
 
 @pytest.mark.asyncio
@@ -85,7 +133,15 @@ async def test_apply_seed_merges_with_existing_memberships() -> None:
     summary = await _apply_seed(
         repos.instruments,
         repos.instrument_index_memberships,
-        grouped_memberships={"005930": ["KOSPI100"]},
+        grouped_memberships={
+            "005930": MembershipSeedGroup(
+                membership_codes=("KOSPI100",),
+                source_name="krx_manual",
+                source_ref="ops-sheet-1",
+                as_of_date=date(2026, 6, 24),
+                note="검증완료",
+            )
+        },
         effective_from=date(2026, 6, 20),
         source_tag="index_membership_seed_csv",
         replace_listed_symbols=False,
@@ -98,6 +154,10 @@ async def test_apply_seed_merges_with_existing_memberships() -> None:
     assert summary.resolved_symbol_count == 1
     assert summary.skipped_symbol_count == 0
     assert [item.membership_code for item in memberships] == ["KOSPI100", "KOSPI200"]
+    assert memberships[0].metadata["source_name"] == "krx_manual"
+    assert memberships[0].metadata["source_ref"] == "ops-sheet-1"
+    assert memberships[0].metadata["as_of_date"] == "2026-06-24"
+    assert memberships[0].metadata["note"] == "검증완료"
 
 
 @pytest.mark.asyncio
@@ -128,7 +188,9 @@ async def test_apply_seed_replaces_when_requested() -> None:
     await _apply_seed(
         repos.instruments,
         repos.instrument_index_memberships,
-        grouped_memberships={"090150": ["KOSDAQ50"]},
+        grouped_memberships={
+            "090150": MembershipSeedGroup(membership_codes=("KOSDAQ50",))
+        },
         effective_from=date(2026, 6, 20),
         source_tag="index_membership_seed_csv",
         replace_listed_symbols=True,
@@ -146,7 +208,9 @@ async def test_apply_seed_skips_unknown_symbol() -> None:
     summary = await _apply_seed(
         repos.instruments,
         repos.instrument_index_memberships,
-        grouped_memberships={"999999": ["KOSDAQ150"]},
+        grouped_memberships={
+            "999999": MembershipSeedGroup(membership_codes=("KOSDAQ150",))
+        },
         effective_from=date(2026, 6, 20),
         source_tag="index_membership_seed_csv",
         replace_listed_symbols=False,

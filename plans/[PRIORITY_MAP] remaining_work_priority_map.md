@@ -590,14 +590,50 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
         `scripts/export_kis_index_category_catalog.py`
       - 단, 이 TR은 `구성종목 목록`이 아니라 `지수/업종 전체시세 목록`이므로
         membership authoritative source로 직접 사용하지 않는다.
+    - [x] `FHPUP02140000` dump를
+      `index_membership_seed` 운영 검증 자료로 연결하는
+      보조 절차를 추가했다.
+      - `scripts/validate_kis_index_membership_catalog.py`가
+        export 결과(`json/csv`)를 읽어
+        seed CSV의 membership code가
+        `코스피 100`, `코스피 200`, `코스닥 50`, `코스닥150`
+        alias와 매칭되는지 자동 점검한다.
+      - 이 절차는 구성종목 authoritative source를 생성하는 것이 아니라,
+        seed 파일 provenance와 코드 오기입을
+        운영자가 장전/장후에 빠르게 검증하기 위한
+        보조 안전장치다.
     - `KOSPI100`, `KOSDAQ50`, 실제 `KOSDAQ150` 구성종목은
       별도 지수 구성종목 원천 파일 또는 승인 리스트 확보가 필요하다.
+    - [x] 외부 authoritative source package 수용 경로를 추가했다.
+      - `scripts/build_index_membership_seed_from_source_package.py`
+      - `data/instrument_master/source/index_membership_source_manifest.example.json`
+      - 외부 원천은 membership별 `symbol` CSV 묶음 + manifest로 받고,
+        이를 seed CSV로 정규화한 뒤
+        기존 import/validation 절차로 연결하도록 운영 경로를 고정했다.
+    - [x] import 전 instrument master 해상도 검증과 runbook을 추가했다.
+      - `scripts/validate_index_membership_seed_resolution.py`
+      - `plans/[RUNBOOK] index_membership_source_package_apply.md`
+      - 실제 반영 순서를
+        `source package build -> catalog validation -> resolution validation -> import`
+        로 고정하고,
+        unresolved symbol / placeholder symbol을
+        import 전에 차단할 수 있게 했다.
     - [x] 운영 보조 경로로
       `index_membership_seed.csv` import 스크립트와 템플릿을 추가했다.
       - 스크립트: `scripts/import_instrument_index_membership_seed.py`
       - 템플릿: `data/instrument_master/source/index_membership_seed.example.csv`
       - 기본 동작은 기존 active membership과 `merge`,
         `--replace-listed-symbols` 지정 시 listed symbol만 authoritative overwrite
+      - import contract를 강화해
+        허용 membership code를
+        `KOSPI100`, `KOSPI200`, `KOSDAQ50`, `KOSDAQ150`
+        로 고정하고,
+        `source_name`, `source_ref`, `as_of_date`, `note`
+        provenance 컬럼을 함께 저장하도록 보강했다.
+      - 같은 symbol에 대해 provenance가 다르거나
+        지원하지 않는 membership code가 들어오면
+        import를 즉시 실패시켜
+        잘못된 운영 seed 파일이 조용히 적재되지 않게 했다.
   - [x] 4차 운영 정리:
     `trade_decisions.instrument_id`가 비어 있던 잔여 종목
     (`000030`, `003410`, `TEST` 등)은
@@ -608,15 +644,28 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
     - placeholder row는 `exchange_code`, `market_segment`,
       `metadata.index_memberships`를 함께 가질 수 있도록 보강했다.
     - 운영 DB 기준 `trade_decisions.instrument_id IS NULL`은 `0건`까지 정리됐다.
-  - [ ] 후속 운영 정리:
+  - [x] 후속 운영 정리:
     placeholder canonical row로 남아 있는 심볼을
     실제 instrument master row로 언제/어떻게 치환할지
     별도 정리한다.
     - [x] app 컨테이너에도 `./data:/app/data` 마운트를 추가해
       `index_membership_seed.csv` 같은 원천 파일을
       수동 배치/운영 스크립트가 컨테이너 내부에서 직접 읽을 수 있게 보완했다.
-    - 남은 과제는 `placeholder` row 자체를
-      실제 instrument master row로 치환하는 reconciliation 정책 확정이다.
+    - `sync_kis_instrument_master.py`가
+      동일 `symbol + market_code='KRX'` canonical row를
+      authoritative KIS master 데이터로 **승격(promote)** 하도록
+      정책을 확정했다.
+    - 이 승격 경로는 `instrument_id`를 유지하므로
+      기존 `trade_decisions`, `signal_feature_snapshots`,
+      `order_requests` 등 FK 참조를 깨지 않는다.
+    - placeholder metadata
+      (`placeholder`, `placeholder_source`, `canonical_master_pending`)는
+      authoritative master metadata로 교체되고,
+      같은 sync cycle에서
+      `instrument_index_memberships` active row도 함께 동기화된다.
+    - 관련 테스트로
+      placeholder row가 실제 master row로 승격되며
+      membership table까지 함께 갱신되는 케이스를 고정했다.
 - 우선순위 이유
   - universe selection, sell guard, snapshot sync가
     동일 symbol의 다중 market row에 흔들리지 않게 만드는 기반 작업이다.
@@ -1096,15 +1145,145 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
       after-cost edge와 비용 추정 필드를 저장하고,
       submit translation은 해당 필드가 비어 있으면
       actionable request를 생성하지 않도록 강화했다.
-  - [ ] same-symbol reentry cooldown 1차 추가
-  - [ ] BUY 직후 SELL/REDUCE cooldown 1차 추가
-  - [ ] `signal_feature_snapshot_id` 불변 상태 reverse trade 차단
-  - [ ] `quantity=1` 신규 BUY probe churn guard 추가
-  - [ ] `symbol_trade_states` 테이블 설계/도입
-  - [ ] `holding_profile`, `minimum_hold_until`,
+  - [x] same-symbol reentry cooldown 1차 추가
+    - `pre_ai_gate`에
+      `same_symbol_reentry_cooldown`을 추가해,
+      `core/event_overlay/market_overlay`의
+      no-position 신규 BUY 후보가
+      최근 `SELL/REDUCE/EXIT` 주문 직후에는
+      AI 호출 전 deterministic하게 차단되도록 반영했다.
+    - 최근 sell order 수,
+      직전 held-position sell decision type/시각,
+      직전 anchored position quantity,
+      직전 `signal_feature_snapshot_id`
+      를 details로 함께 남겨
+      이후 `signal_feature_snapshot_id` 변화 기반 hysteresis 확장에
+      바로 이어질 수 있게 했다.
+  - [x] BUY 직후 SELL/REDUCE cooldown 1차 추가
+    - `services.pre_ai_gate.evaluate_held_position_skip_reason()`에
+      최근 same-symbol BUY order + 최근 same-symbol BUY/APPROVE 판단 +
+      보유수량 감소 없음 조건을 추가해,
+      조기 `held_position` 위험축소 SELL 경로를
+      `held_position_recent_buy_sell_cooldown`으로 pre-AI skip 하도록 반영했다.
+    - 최근 buy order 수,
+      직전 buy decision type/시각,
+      직전 anchored position quantity,
+      직전 `signal_feature_snapshot_id`
+      를 details에 함께 남겨,
+      다음 단계의 `signal_feature_snapshot_id` 불변 reverse-trade 차단과
+      자연스럽게 이어지도록 정리했다.
+  - [x] `signal_feature_snapshot_id` 불변 상태 reverse trade 차단
+    - `services.pre_ai_gate`가 현재 종목의 최신
+      `signal_feature_snapshot_id`를 조회해,
+      직전 BUY/SELL 판단에 앵커된
+      `signal_feature_snapshot_id`와 동일하면
+      일반 cooldown 대신
+      `reverse_trade_same_signal_feature_snapshot`
+      reason code로 pre-AI 차단하도록 반영했다.
+    - `BUY -> SELL/REDUCE`와
+      `SELL/REDUCE -> BUY`
+      두 방향 모두에 대해
+      `current_signal_feature_snapshot_id`,
+      직전 anchor id,
+      unchanged 여부를 details에 남겨
+      이후 `event novelty` / `edge_after_cost_bps` 개선 조건 추가 시
+      그대로 재사용할 수 있게 정리했다.
+  - [x] `quantity=1` 신규 BUY probe churn guard 추가
+    - `services.execution_service`에
+      `execution_probe_churn_guard_v1`를 추가해,
+      최종 submit 직전
+      `quantity=1` 신규 BUY를
+      일반 규칙이 아니라 예외 규칙으로만 허용하도록 반영했다.
+    - `reconciliation_overlay + BUY + quantity=1`은
+      `overlay_single_share_buy_blocked`,
+      최근 same-symbol SELL 직후 1주 BUY는
+      `reverse_trade_single_share_blocked`,
+      저가치/고변동 risk-off 1주 BUY는
+      `probe_churn_single_share_blocked`
+      으로 guardrail audit까지 남기도록 정리했다.
+    - `core/event_overlay`의
+      `edge_after_cost_bps >= 35`
+      는 1차 high-edge 예외 규칙으로 허용해
+      핵심 기대수익률 기회까지 같이 막지 않도록 했다.
+  - [x] `symbol_trade_states` 테이블 설계/도입
+    - 신규 migration
+      `db/migrations/0044_add_symbol_trade_states.sql`
+      를 추가해,
+      `account_id + instrument_id` 기준
+      심볼 단위 authoritative 상태 캐시 테이블을 도입했다.
+    - 저장 컬럼은
+      `state`, `holding_profile`, `position_quantity`,
+      `last_entry/exit/reduce_at`,
+      `minimum_hold_until`,
+      `reentry_cooldown_until`,
+      `sell_cooldown_until`,
+      `last_signal_feature_snapshot_id`,
+      `last_decision_context_id`,
+      `last_reason_codes`,
+      `thesis_state_hash`,
+      `metadata_json`
+      까지 포함해
+      다음 단계의 holding-profile 저장 경로를 바로 연결할 수 있게 준비했다.
+    - repository 계층에도
+      `SymbolTradeStateEntity`,
+      `SymbolTradeStateRepository`,
+      in-memory / postgres 구현,
+      repository container wiring을 반영했다.
+  - [x] `holding_profile`, `minimum_hold_until`,
     `reentry_cooldown_until` 저장 경로 추가
-  - [ ] AI override 허용 범위를
+    - 신규 helper
+      `services/holding_profile_policy.py`
+      를 추가해
+      `source_type + decision_type + time_horizon`
+      기준으로
+      `event_probe / event_swing / core_swing / position_trade / risk_reduction_only`
+      프로필과
+      `minimum_hold_until`,
+      `sell_cooldown_until`,
+      `reentry_cooldown_until`,
+      `thesis_state_hash`
+      를 결정론적으로 계산하도록 반영했다.
+    - `build_trade_decision_entity()`가
+      `decision_json.holding_profile_policy`
+      에 해당 정책을 저장하도록 보강해
+      replay / audit 시
+      당시 보유기간 의도와 cooldown anchor를 같이 추적할 수 있게 했다.
+    - `DecisionOrchestratorService._ensure_trade_decision()` 이후
+      `symbol_trade_states`
+      에
+      `holding_profile`,
+      `minimum_hold_until`,
+      `reentry_cooldown_until`,
+      `sell_cooldown_until`
+      및 `entry_pending / reduce_pending / exit_pending`
+      상태를 저장하도록 연결했다.
+    - `assemble()`가
+      `SubmitOrderRequest.metadata.holding_profile_policy`
+      를 함께 실어 보내고,
+      `ExecutionService`는 주문 생성 후
+      `last_entry_order_request_id / last_exit_order_request_id`
+      까지 `symbol_trade_states`에 연결하도록 반영했다.
+  - [x] AI override 허용 범위를
     `eligibility + expected value + symbol state` 통과 시로 축소
+    - `DecisionOrchestratorService._check_ai_buy_override_gate()`를 추가해
+      deterministic trigger가 `buy_candidate=False`인 상황에서
+      AI가 `APPROVE/BUY`로 승격하려면
+      `eligibility_passed=True`,
+      `expected_value_gate_passed=True`,
+      `source_type` action envelope 허용,
+      `symbol_trade_states`의 pending state 부재,
+      `reentry_cooldown_until` 만료
+      조건을 모두 통과하도록 강제했다.
+    - 실행 infeasible 성격의 eligibility reason
+      (`eligibility_low_average_volume`,
+      `eligibility_low_turnover`,
+      `eligibility_participation_rate_blocked`)
+      이 남아 있으면
+      AI override를 `WATCH/HOLD`로 강등하도록 연결했다.
+    - 관련 테스트로
+      `market_overlay`의 정상 override 허용 케이스와
+      `symbol_trade_state reentry cooldown` 차단 케이스를 추가해
+      override가 기대수익률 anchor와 상태기계 제약을 동시에 따르도록 고정했다.
 - 우선순위 이유
   - 현재의 짧은 보유기간은
     의도된 단기 전략 결과라기보다

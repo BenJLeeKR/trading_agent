@@ -33,6 +33,7 @@ from agent_trading.repositories.contracts import (
     SnapshotSyncRunRepository,
     OrderSubmissionAttemptRepository,
     StrategyRepository,
+    SymbolTradeStateRepository,
     TradeDecisionRepository,
     UniverseFreezeRunItemRepository,
     UniverseFreezeRunRepository,
@@ -69,6 +70,7 @@ class RepositoryContainer:
     signal_feature_batch_runs: SignalFeatureBatchRunRepository
     signal_feature_batch_run_items: SignalFeatureBatchRunItemRepository
     instrument_index_memberships: InstrumentIndexMembershipRepository
+    symbol_trade_states: SymbolTradeStateRepository
     universe_freeze_runs: UniverseFreezeRunRepository
     universe_freeze_run_items: UniverseFreezeRunItemRepository
     external_events: ExternalEventRepository

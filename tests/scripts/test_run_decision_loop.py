@@ -39,6 +39,7 @@ from agent_trading.domain.entities import (
     InstrumentEntity,
     OrderRequestEntity,
     PositionSnapshotEntity,
+    SignalFeatureSnapshotEntity,
     SnapshotSyncRunEntity,
     StrategyEntity,
     TradeDecisionEntity,
@@ -1441,6 +1442,564 @@ class TestRunOneCycle:
         assert reason is None
         assert details["latest_held_sell_position_qty"] == "10"
         assert details["sell_cooldown_position_unchanged_or_reduced"] == "false"
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_skip_when_held_position_recent_buy_sell_cooldown_active(self) -> None:
+        """최근 BUY/APPROVE 직후 보유수량이 유지되면 held_position SELL AI를 skip한다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            now_utc = datetime(2026, 6, 8, 4, 0, 0, tzinfo=timezone.utc)  # 13:00 KST
+            current_snapshots = await repos.position_snapshots.list_latest_by_account(ACCOUNT_ID)
+            assert current_snapshots
+            current_snapshot = current_snapshots[0]
+            repos.position_snapshots._items[current_snapshot.position_snapshot_id] = (  # type: ignore[attr-defined]
+                PositionSnapshotEntity(
+                    position_snapshot_id=current_snapshot.position_snapshot_id,
+                    account_id=current_snapshot.account_id,
+                    instrument_id=current_snapshot.instrument_id,
+                    quantity=Decimal("10"),
+                    average_price=current_snapshot.average_price,
+                    market_price=current_snapshot.market_price,
+                    unrealized_pnl=current_snapshot.unrealized_pnl,
+                    source_of_truth=current_snapshot.source_of_truth,
+                    snapshot_at=current_snapshot.snapshot_at,
+                    created_at=current_snapshot.created_at,
+                )
+            )
+            anchor_snapshot = PositionSnapshotEntity(
+                position_snapshot_id=uuid4(),
+                account_id=current_snapshot.account_id,
+                instrument_id=current_snapshot.instrument_id,
+                quantity=Decimal("10"),
+                average_price=current_snapshot.average_price,
+                market_price=current_snapshot.market_price,
+                unrealized_pnl=current_snapshot.unrealized_pnl,
+                source_of_truth="test",
+                snapshot_at=now_utc - timedelta(minutes=6),
+                created_at=now_utc - timedelta(minutes=6),
+            )
+            await repos.position_snapshots.add(anchor_snapshot)
+            decision_context = DecisionContextEntity(
+                decision_context_id=uuid4(),
+                account_id=ACCOUNT_ID,
+                strategy_id=STRATEGY_ID,
+                config_version_id=CONFIG_VERSION_ID,
+                market_timestamp=now_utc - timedelta(minutes=5),
+                correlation_id="held-buy-sell-cooldown",
+                position_snapshot_id=anchor_snapshot.position_snapshot_id,
+                created_at=now_utc - timedelta(minutes=5),
+            )
+            await repos.decision_contexts.add(decision_context)
+            await repos.trade_decisions.add(
+                _make_trade_decision(
+                    source_type="core",
+                    decision_type=DecisionType.BUY,
+                    side=OrderSide.BUY,
+                    created_at=now_utc - timedelta(minutes=5),
+                    decision_context_id=decision_context.decision_context_id,
+                )
+            )
+            await repos.orders.add(
+                OrderRequestEntity(
+                    order_request_id=uuid4(),
+                    account_id=ACCOUNT_ID,
+                    instrument_id=current_snapshot.instrument_id,
+                    client_order_id="held-buy-1",
+                    idempotency_key="held-buy-1",
+                    correlation_id="held-buy-1",
+                    side=OrderSide.BUY,
+                    order_type=OrderType.MARKET,
+                    requested_quantity=Decimal("10"),
+                    status=OrderStatus.SUBMITTED,
+                    created_at=now_utc - timedelta(minutes=4),
+                    submitted_at=now_utc - timedelta(minutes=4),
+                )
+            )
+
+            reason, details = await _evaluate_pre_ai_skip_reason(
+                repos,
+                account_alias="Entrypoint Paper",
+                symbol=SYMBOL,
+                market=MARKET,
+                source_type="held_position",
+                now_utc=now_utc,
+            )
+
+        assert reason == "held_position_recent_buy_sell_cooldown"
+        assert details["recent_buy_order_count"] == "1"
+        assert details["latest_buy_decision_type"] == "buy"
+        assert details["latest_buy_position_qty"] == "10"
+        assert details["buy_cooldown_position_unchanged_or_increased"] == "true"
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_skip_when_reverse_trade_uses_same_signal_feature_snapshot_after_buy(self) -> None:
+        """최근 BUY 직후 현재 최신 signal feature가 같으면 reverse trade를 별도 reason으로 차단한다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            now_utc = datetime(2026, 6, 8, 4, 0, 0, tzinfo=timezone.utc)
+            current_snapshots = await repos.position_snapshots.list_latest_by_account(ACCOUNT_ID)
+            assert current_snapshots
+            current_snapshot = current_snapshots[0]
+            signal_snapshot = SignalFeatureSnapshotEntity(
+                signal_feature_snapshot_id=uuid4(),
+                instrument_id=current_snapshot.instrument_id,
+                timeframe="1d",
+                snapshot_at=now_utc - timedelta(minutes=1),
+                feature_set_version="signal_backbone_v1",
+                bar_count=60,
+            )
+            await repos.signal_feature_snapshots.add(signal_snapshot)
+            anchor_snapshot = PositionSnapshotEntity(
+                position_snapshot_id=uuid4(),
+                account_id=current_snapshot.account_id,
+                instrument_id=current_snapshot.instrument_id,
+                quantity=Decimal("10"),
+                average_price=current_snapshot.average_price,
+                market_price=current_snapshot.market_price,
+                unrealized_pnl=current_snapshot.unrealized_pnl,
+                source_of_truth="test",
+                snapshot_at=now_utc - timedelta(minutes=6),
+                created_at=now_utc - timedelta(minutes=6),
+            )
+            await repos.position_snapshots.add(anchor_snapshot)
+            decision_context = DecisionContextEntity(
+                decision_context_id=uuid4(),
+                account_id=ACCOUNT_ID,
+                strategy_id=STRATEGY_ID,
+                config_version_id=CONFIG_VERSION_ID,
+                market_timestamp=now_utc - timedelta(minutes=5),
+                correlation_id="reverse-trade-same-snapshot-buy",
+                position_snapshot_id=anchor_snapshot.position_snapshot_id,
+                signal_feature_snapshot_id=signal_snapshot.signal_feature_snapshot_id,
+                created_at=now_utc - timedelta(minutes=5),
+            )
+            await repos.decision_contexts.add(decision_context)
+            await repos.trade_decisions.add(
+                _make_trade_decision(
+                    source_type="core",
+                    decision_type=DecisionType.BUY,
+                    side=OrderSide.BUY,
+                    created_at=now_utc - timedelta(minutes=5),
+                    decision_context_id=decision_context.decision_context_id,
+                )
+            )
+            await repos.orders.add(
+                OrderRequestEntity(
+                    order_request_id=uuid4(),
+                    account_id=ACCOUNT_ID,
+                    instrument_id=current_snapshot.instrument_id,
+                    client_order_id="held-buy-snapshot-1",
+                    idempotency_key="held-buy-snapshot-1",
+                    correlation_id="held-buy-snapshot-1",
+                    side=OrderSide.BUY,
+                    order_type=OrderType.MARKET,
+                    requested_quantity=Decimal("10"),
+                    status=OrderStatus.SUBMITTED,
+                    created_at=now_utc - timedelta(minutes=4),
+                    submitted_at=now_utc - timedelta(minutes=4),
+                )
+            )
+
+            reason, details = await _evaluate_pre_ai_skip_reason(
+                repos,
+                account_alias="Entrypoint Paper",
+                symbol=SYMBOL,
+                market=MARKET,
+                source_type="held_position",
+                now_utc=now_utc,
+            )
+
+        assert reason == "reverse_trade_same_signal_feature_snapshot"
+        assert details["current_signal_feature_snapshot_id"] == str(
+            signal_snapshot.signal_feature_snapshot_id
+        )
+        assert details["latest_buy_signal_feature_snapshot_id"] == str(
+            signal_snapshot.signal_feature_snapshot_id
+        )
+        assert details["buy_signal_feature_snapshot_unchanged"] == "true"
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_skip_not_triggered_when_position_reduced_after_recent_buy(self) -> None:
+        """최근 BUY 직후라도 보유수량이 줄어 있으면 held_position SELL suppression하지 않는다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            now_utc = datetime(2026, 6, 8, 4, 0, 0, tzinfo=timezone.utc)  # 13:00 KST
+            current_snapshots = await repos.position_snapshots.list_latest_by_account(ACCOUNT_ID)
+            assert current_snapshots
+            current_snapshot = current_snapshots[0]
+            repos.position_snapshots._items[current_snapshot.position_snapshot_id] = (  # type: ignore[attr-defined]
+                PositionSnapshotEntity(
+                    position_snapshot_id=current_snapshot.position_snapshot_id,
+                    account_id=current_snapshot.account_id,
+                    instrument_id=current_snapshot.instrument_id,
+                    quantity=Decimal("8"),
+                    average_price=current_snapshot.average_price,
+                    market_price=current_snapshot.market_price,
+                    unrealized_pnl=current_snapshot.unrealized_pnl,
+                    source_of_truth=current_snapshot.source_of_truth,
+                    snapshot_at=current_snapshot.snapshot_at,
+                    created_at=current_snapshot.created_at,
+                )
+            )
+            anchor_snapshot = PositionSnapshotEntity(
+                position_snapshot_id=uuid4(),
+                account_id=current_snapshot.account_id,
+                instrument_id=current_snapshot.instrument_id,
+                quantity=Decimal("10"),
+                average_price=current_snapshot.average_price,
+                market_price=current_snapshot.market_price,
+                unrealized_pnl=current_snapshot.unrealized_pnl,
+                source_of_truth="test",
+                snapshot_at=now_utc - timedelta(minutes=6),
+                created_at=now_utc - timedelta(minutes=6),
+            )
+            await repos.position_snapshots.add(anchor_snapshot)
+            decision_context = DecisionContextEntity(
+                decision_context_id=uuid4(),
+                account_id=ACCOUNT_ID,
+                strategy_id=STRATEGY_ID,
+                config_version_id=CONFIG_VERSION_ID,
+                market_timestamp=now_utc - timedelta(minutes=5),
+                correlation_id="held-buy-sell-cooldown-reduced",
+                position_snapshot_id=anchor_snapshot.position_snapshot_id,
+                created_at=now_utc - timedelta(minutes=5),
+            )
+            await repos.decision_contexts.add(decision_context)
+            await repos.trade_decisions.add(
+                _make_trade_decision(
+                    source_type="core",
+                    decision_type=DecisionType.APPROVE,
+                    side=OrderSide.BUY,
+                    created_at=now_utc - timedelta(minutes=5),
+                    decision_context_id=decision_context.decision_context_id,
+                )
+            )
+            await repos.orders.add(
+                OrderRequestEntity(
+                    order_request_id=uuid4(),
+                    account_id=ACCOUNT_ID,
+                    instrument_id=current_snapshot.instrument_id,
+                    client_order_id="held-buy-2",
+                    idempotency_key="held-buy-2",
+                    correlation_id="held-buy-2",
+                    side=OrderSide.BUY,
+                    order_type=OrderType.MARKET,
+                    requested_quantity=Decimal("10"),
+                    status=OrderStatus.SUBMITTED,
+                    created_at=now_utc - timedelta(minutes=4),
+                    submitted_at=now_utc - timedelta(minutes=4),
+                )
+            )
+
+            reason, details = await _evaluate_pre_ai_skip_reason(
+                repos,
+                account_alias="Entrypoint Paper",
+                symbol=SYMBOL,
+                market=MARKET,
+                source_type="held_position",
+                now_utc=now_utc,
+            )
+
+        assert reason is None
+        assert details["latest_buy_position_qty"] == "10"
+        assert details["buy_cooldown_position_unchanged_or_increased"] == "false"
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_skip_when_same_symbol_reentry_cooldown_active(self) -> None:
+        """최근 SELL/REDUCE 직후에는 no-position core BUY를 AI 전에 skip한다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            now_utc = datetime(2026, 6, 8, 4, 0, 0, tzinfo=timezone.utc)
+            current_snapshots = await repos.position_snapshots.list_latest_by_account(ACCOUNT_ID)
+            assert current_snapshots
+            current_snapshot = current_snapshots[0]
+            repos.position_snapshots._items[current_snapshot.position_snapshot_id] = (  # type: ignore[attr-defined]
+                PositionSnapshotEntity(
+                    position_snapshot_id=current_snapshot.position_snapshot_id,
+                    account_id=current_snapshot.account_id,
+                    instrument_id=current_snapshot.instrument_id,
+                    quantity=Decimal("0"),
+                    average_price=current_snapshot.average_price,
+                    market_price=current_snapshot.market_price,
+                    unrealized_pnl=current_snapshot.unrealized_pnl,
+                    source_of_truth=current_snapshot.source_of_truth,
+                    snapshot_at=current_snapshot.snapshot_at,
+                    created_at=current_snapshot.created_at,
+                )
+            )
+
+            anchor_snapshot = PositionSnapshotEntity(
+                position_snapshot_id=uuid4(),
+                account_id=current_snapshot.account_id,
+                instrument_id=current_snapshot.instrument_id,
+                quantity=Decimal("8"),
+                average_price=current_snapshot.average_price,
+                market_price=current_snapshot.market_price,
+                unrealized_pnl=current_snapshot.unrealized_pnl,
+                source_of_truth="test",
+                snapshot_at=now_utc - timedelta(minutes=6),
+                created_at=now_utc - timedelta(minutes=6),
+            )
+            await repos.position_snapshots.add(anchor_snapshot)
+            decision_context = DecisionContextEntity(
+                decision_context_id=uuid4(),
+                account_id=ACCOUNT_ID,
+                strategy_id=STRATEGY_ID,
+                config_version_id=CONFIG_VERSION_ID,
+                market_timestamp=now_utc - timedelta(minutes=5),
+                correlation_id="same-symbol-reentry-cooldown",
+                position_snapshot_id=anchor_snapshot.position_snapshot_id,
+                created_at=now_utc - timedelta(minutes=5),
+            )
+            await repos.decision_contexts.add(decision_context)
+            await repos.trade_decisions.add(
+                _make_trade_decision(
+                    decision_type=DecisionType.EXIT,
+                    side=OrderSide.SELL,
+                    created_at=now_utc - timedelta(minutes=5),
+                    decision_context_id=decision_context.decision_context_id,
+                )
+            )
+            await repos.orders.add(
+                OrderRequestEntity(
+                    order_request_id=uuid4(),
+                    account_id=ACCOUNT_ID,
+                    instrument_id=current_snapshot.instrument_id,
+                    client_order_id="reentry-sell-1",
+                    idempotency_key="reentry-sell-1",
+                    correlation_id="reentry-sell-1",
+                    side=OrderSide.SELL,
+                    order_type=OrderType.MARKET,
+                    requested_quantity=Decimal("8"),
+                    status=OrderStatus.FILLED,
+                    created_at=now_utc - timedelta(minutes=4),
+                    submitted_at=now_utc - timedelta(minutes=4),
+                )
+            )
+
+            reason, details = await _evaluate_pre_ai_skip_reason(
+                repos,
+                account_alias="Entrypoint Paper",
+                symbol=SYMBOL,
+                market=MARKET,
+                source_type="core",
+                now_utc=now_utc,
+            )
+
+        assert reason == "same_symbol_reentry_cooldown"
+        assert details["held_quantity"] == "0"
+        assert details["reentry_recent_sell_order_count"] == "1"
+        assert details["reentry_latest_sell_decision_type"] == "exit"
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_skip_when_reentry_uses_same_signal_feature_snapshot(self) -> None:
+        """최근 SELL 뒤 현재 최신 signal feature가 같으면 재진입을 별도 reason으로 차단한다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            now_utc = datetime(2026, 6, 8, 4, 0, 0, tzinfo=timezone.utc)
+            current_snapshots = await repos.position_snapshots.list_latest_by_account(ACCOUNT_ID)
+            assert current_snapshots
+            current_snapshot = current_snapshots[0]
+            repos.position_snapshots._items[current_snapshot.position_snapshot_id] = (  # type: ignore[attr-defined]
+                PositionSnapshotEntity(
+                    position_snapshot_id=current_snapshot.position_snapshot_id,
+                    account_id=current_snapshot.account_id,
+                    instrument_id=current_snapshot.instrument_id,
+                    quantity=Decimal("0"),
+                    average_price=current_snapshot.average_price,
+                    market_price=current_snapshot.market_price,
+                    unrealized_pnl=current_snapshot.unrealized_pnl,
+                    source_of_truth=current_snapshot.source_of_truth,
+                    snapshot_at=current_snapshot.snapshot_at,
+                    created_at=current_snapshot.created_at,
+                )
+            )
+            signal_snapshot = SignalFeatureSnapshotEntity(
+                signal_feature_snapshot_id=uuid4(),
+                instrument_id=current_snapshot.instrument_id,
+                timeframe="1d",
+                snapshot_at=now_utc - timedelta(minutes=1),
+                feature_set_version="signal_backbone_v1",
+                bar_count=60,
+            )
+            await repos.signal_feature_snapshots.add(signal_snapshot)
+            anchor_snapshot = PositionSnapshotEntity(
+                position_snapshot_id=uuid4(),
+                account_id=current_snapshot.account_id,
+                instrument_id=current_snapshot.instrument_id,
+                quantity=Decimal("8"),
+                average_price=current_snapshot.average_price,
+                market_price=current_snapshot.market_price,
+                unrealized_pnl=current_snapshot.unrealized_pnl,
+                source_of_truth="test",
+                snapshot_at=now_utc - timedelta(minutes=6),
+                created_at=now_utc - timedelta(minutes=6),
+            )
+            await repos.position_snapshots.add(anchor_snapshot)
+            decision_context = DecisionContextEntity(
+                decision_context_id=uuid4(),
+                account_id=ACCOUNT_ID,
+                strategy_id=STRATEGY_ID,
+                config_version_id=CONFIG_VERSION_ID,
+                market_timestamp=now_utc - timedelta(minutes=5),
+                correlation_id="reverse-trade-same-snapshot-sell",
+                position_snapshot_id=anchor_snapshot.position_snapshot_id,
+                signal_feature_snapshot_id=signal_snapshot.signal_feature_snapshot_id,
+                created_at=now_utc - timedelta(minutes=5),
+            )
+            await repos.decision_contexts.add(decision_context)
+            await repos.trade_decisions.add(
+                _make_trade_decision(
+                    decision_type=DecisionType.EXIT,
+                    side=OrderSide.SELL,
+                    created_at=now_utc - timedelta(minutes=5),
+                    decision_context_id=decision_context.decision_context_id,
+                )
+            )
+            await repos.orders.add(
+                OrderRequestEntity(
+                    order_request_id=uuid4(),
+                    account_id=ACCOUNT_ID,
+                    instrument_id=current_snapshot.instrument_id,
+                    client_order_id="reentry-sell-snapshot-1",
+                    idempotency_key="reentry-sell-snapshot-1",
+                    correlation_id="reentry-sell-snapshot-1",
+                    side=OrderSide.SELL,
+                    order_type=OrderType.MARKET,
+                    requested_quantity=Decimal("8"),
+                    status=OrderStatus.FILLED,
+                    created_at=now_utc - timedelta(minutes=4),
+                    submitted_at=now_utc - timedelta(minutes=4),
+                )
+            )
+
+            reason, details = await _evaluate_pre_ai_skip_reason(
+                repos,
+                account_alias="Entrypoint Paper",
+                symbol=SYMBOL,
+                market=MARKET,
+                source_type="core",
+                now_utc=now_utc,
+            )
+
+        assert reason == "reverse_trade_same_signal_feature_snapshot"
+        assert details["current_signal_feature_snapshot_id"] == str(
+            signal_snapshot.signal_feature_snapshot_id
+        )
+        assert details["reentry_latest_sell_signal_feature_snapshot_id"] == str(
+            signal_snapshot.signal_feature_snapshot_id
+        )
+        assert details["reentry_signal_feature_snapshot_unchanged"] == "true"
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_same_symbol_reentry_cooldown_skips_core_cycle(self) -> None:
+        """최근 SELL 직후 동일 종목 core cycle은 pre-AI gate에서 SKIPPED 처리된다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            with patch(
+                "scripts.run_decision_loop._evaluate_pre_ai_skip_reason",
+                new=AsyncMock(
+                    return_value=(
+                        "same_symbol_reentry_cooldown",
+                        {
+                            "held_quantity": "0",
+                            "reentry_recent_sell_order_count": "1",
+                            "reentry_latest_sell_decision_type": "reduce",
+                        },
+                    )
+                ),
+            ):
+                result = await _run_one_cycle(
+                    cycle=1,
+                    submit=True,
+                    dry_run=False,
+                    output="text",
+                    symbol=SYMBOL,
+                    source_type="core",
+                    runtime=runtime,
+                )
+
+        assert result["status"] == "SKIPPED"
+        assert result["error_phase"] == "pre_ai_gate"
+        assert result["error_message"] == "same_symbol_reentry_cooldown"
+        assert result["stop_reason"] == "same_symbol_reentry_cooldown"
+        assert result["skip_reason"] == "same_symbol_reentry_cooldown"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert len(evaluations) == 1
+        assert evaluations[0].blocking_rule_codes == ["same_symbol_reentry_cooldown"]
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_recent_buy_sell_cooldown_skips_held_position_cycle(self) -> None:
+        """최근 BUY 직후 held_position cycle은 pre-AI gate에서 SKIPPED 처리된다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            with patch(
+                "scripts.run_decision_loop._evaluate_pre_ai_skip_reason",
+                new=AsyncMock(
+                    return_value=(
+                        "held_position_recent_buy_sell_cooldown",
+                        {
+                            "held_quantity": "10",
+                            "recent_buy_order_count": "1",
+                            "latest_buy_decision_type": "buy",
+                        },
+                    )
+                ),
+            ):
+                result = await _run_one_cycle(
+                    cycle=1,
+                    submit=True,
+                    dry_run=False,
+                    output="text",
+                    symbol=SYMBOL,
+                    source_type="held_position",
+                    runtime=runtime,
+                )
+
+        assert result["status"] == "SKIPPED"
+        assert result["error_phase"] == "pre_ai_gate"
+        assert result["error_message"] == "held_position_recent_buy_sell_cooldown"
+        assert result["stop_reason"] == "held_position_recent_buy_sell_cooldown"
+        assert result["skip_reason"] == "held_position_recent_buy_sell_cooldown"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert len(evaluations) == 1
+        assert evaluations[0].blocking_rule_codes == ["held_position_recent_buy_sell_cooldown"]
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_reverse_trade_same_snapshot_skips_cycle(self) -> None:
+        """signal_feature_snapshot_id 불변 reverse trade는 pre-AI gate에서 SKIPPED 처리된다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            with patch(
+                "scripts.run_decision_loop._evaluate_pre_ai_skip_reason",
+                new=AsyncMock(
+                    return_value=(
+                        "reverse_trade_same_signal_feature_snapshot",
+                        {
+                            "current_signal_feature_snapshot_id": "same-snapshot",
+                            "reentry_signal_feature_snapshot_unchanged": "true",
+                        },
+                    )
+                ),
+            ):
+                result = await _run_one_cycle(
+                    cycle=1,
+                    submit=True,
+                    dry_run=False,
+                    output="text",
+                    symbol=SYMBOL,
+                    source_type="core",
+                    runtime=runtime,
+                )
+
+        assert result["status"] == "SKIPPED"
+        assert result["error_phase"] == "pre_ai_gate"
+        assert result["error_message"] == "reverse_trade_same_signal_feature_snapshot"
+        assert result["stop_reason"] == "reverse_trade_same_signal_feature_snapshot"
+        assert result["skip_reason"] == "reverse_trade_same_signal_feature_snapshot"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert len(evaluations) == 1
+        assert evaluations[0].blocking_rule_codes == ["reverse_trade_same_signal_feature_snapshot"]
 
     @pytest.mark.asyncio
     async def test_pre_ai_skip_when_general_buy_budget_exhausted_and_no_position(self) -> None:

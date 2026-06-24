@@ -28,6 +28,7 @@ from agent_trading.brokers.base import BrokerAdapter
 from agent_trading.domain.entities import (
     ExecutionAttemptEntity,
     GuardrailEvaluationEntity,
+    SymbolTradeStateEntity,
 )
 from agent_trading.domain.enums import (
     OrderSide,
@@ -54,6 +55,9 @@ from agent_trading.services.guardrail_audit import (
 )
 from agent_trading.services.held_position_policy import (
     is_held_position_sell_path,
+)
+from agent_trading.services.holding_profile_policy import (
+    parse_datetime_or_none,
 )
 from agent_trading.services.translation import (
     build_submit_order_request_from_decision,
@@ -88,6 +92,9 @@ _CIRCUIT_BREAKER_THRESHOLD = 3  # 연속 실패 횟수 → 서킷 오픈
 _CIRCUIT_BREAKER_COOLDOWN = 60  # 서킷 오픈 지속 시간(초)
 _QUOTE_CACHE_TTL = 180  # quote 캐시 TTL(초) — cycle-local cache: submit mode ~120초 커버
 _BUY_DUPLICATE_COOLDOWN_SECONDS = 15 * 60
+_SINGLE_SHARE_PROBE_MIN_ORDER_VALUE = Decimal("500000")
+_SINGLE_SHARE_PROBE_HIGH_EDGE_BPS = Decimal("35")
+_SINGLE_SHARE_PROBE_REVERSE_COOLDOWN = timedelta(minutes=20)
 _LOW_LIQUIDITY_VOLUME_THRESHOLD = Decimal("3000")
 _LOW_LIQUIDITY_TURNOVER_THRESHOLD = Decimal("50000000")
 _SEVERE_LOW_LIQUIDITY_VOLUME_THRESHOLD = Decimal("500")
@@ -97,6 +104,16 @@ _EXECUTION_INFEASIBLE_TRIGGER_REASONS = frozenset({
     "eligibility_low_turnover",
     "eligibility_participation_rate_blocked",
 })
+_SINGLE_SHARE_REVERSE_SELL_STATUSES = {
+    OrderStatus.DRAFT,
+    OrderStatus.VALIDATED,
+    OrderStatus.PENDING_SUBMIT,
+    OrderStatus.SUBMITTED,
+    OrderStatus.ACKNOWLEDGED,
+    OrderStatus.PARTIALLY_FILLED,
+    OrderStatus.FILLED,
+    OrderStatus.RECONCILE_REQUIRED,
+}
 
 
 __all__: list[str] = [
@@ -313,6 +330,266 @@ class ExecutionService:
             )
 
         return ("allow", "no_low_liquidity_signal", {})
+
+    async def _classify_single_share_probe_churn_policy(
+        self,
+        *,
+        intent: OrderIntent,
+        source_type: str,
+        reference_price: Decimal | None,
+    ) -> tuple[str, str, dict[str, object]]:
+        """신규 1주 BUY churn 조합을 submit 직전에 차단한다."""
+        if intent.request.side != OrderSide.BUY:
+            return ("allow", "not_buy", {})
+        if intent.request.quantity != Decimal("1"):
+            return ("allow", "qty_not_single_share", {})
+        if source_type == "manual":
+            return ("allow", "manual_bypass", {})
+
+        current_position_qty = (
+            intent.context.position_snapshot.quantity
+            if intent.context is not None
+            and intent.context.position_snapshot is not None
+            else None
+        )
+        if current_position_qty is not None and current_position_qty > 0:
+            return ("allow", "existing_position_not_probe", {})
+
+        effective_price = (
+            intent.request.price
+            or reference_price
+            or intent.request.price_band_upper
+            or intent.request.price_band_lower
+        )
+        estimated_order_value = (
+            effective_price * intent.request.quantity
+            if effective_price is not None and effective_price > 0
+            else None
+        )
+        edge_after_cost_bps = intent.ai_backend_inputs.edge_after_cost_bps
+        high_edge_exception = (
+            source_type in {"core", "event_overlay"}
+            and edge_after_cost_bps is not None
+            and edge_after_cost_bps >= _SINGLE_SHARE_PROBE_HIGH_EDGE_BPS
+        )
+        signal_snapshot = (
+            intent.context.signal_feature_snapshot
+            if intent.context is not None
+            else None
+        )
+        atr_14_pct = (
+            signal_snapshot.atr_14_pct
+            if signal_snapshot is not None
+            else None
+        )
+        volatility_20d_pct = (
+            signal_snapshot.volatility_20d_pct
+            if signal_snapshot is not None
+            else None
+        )
+        high_volatility = (
+            (atr_14_pct is not None and atr_14_pct >= Decimal("3"))
+            or (
+                volatility_20d_pct is not None
+                and volatility_20d_pct >= Decimal("4")
+            )
+        )
+        risk_off = (
+            intent.ai_backend_inputs.risk_opinion != "allow"
+            or intent.ai_backend_inputs.risk_score >= 0.6
+        )
+        metadata: dict[str, object] = {
+            "source_type": source_type,
+            "quantity": str(intent.request.quantity),
+            "estimated_order_value": (
+                str(estimated_order_value) if estimated_order_value is not None else None
+            ),
+            "min_probe_order_value": str(_SINGLE_SHARE_PROBE_MIN_ORDER_VALUE),
+            "edge_after_cost_bps": (
+                str(edge_after_cost_bps) if edge_after_cost_bps is not None else None
+            ),
+            "high_edge_exception": high_edge_exception,
+            "high_volatility": high_volatility,
+            "risk_off": risk_off,
+            "order_type": intent.request.order_type.value,
+        }
+
+        if source_type == "reconciliation_overlay":
+            metadata["reason"] = "overlay_single_share_buy_blocked"
+            return (
+                "block",
+                PipelineStopReason.OVERLAY_SINGLE_SHARE_BUY_BLOCKED.value,
+                metadata,
+            )
+
+        account_id: UUID | None = (
+            intent.context.decision_context.account_id
+            if intent.context is not None
+            and intent.context.decision_context is not None
+            else None
+        )
+        if account_id is None:
+            account = await self._repos.accounts.find_one(
+                AccountLookup(account_alias=intent.request.account_ref)
+            )
+            account_id = account.account_id if account is not None else None
+        if account_id is not None:
+            recent_orders = await self._repos.orders.list(
+                OrderQuery(
+                    account_id=account_id,
+                    created_from=datetime.now(timezone.utc) - _SINGLE_SHARE_PROBE_REVERSE_COOLDOWN,
+                    created_to=datetime.now(timezone.utc),
+                    limit=50,
+                )
+            )
+            instrument_id = (
+                intent.context.position_snapshot.instrument_id
+                if intent.context is not None and intent.context.position_snapshot is not None
+                else None
+            )
+            if instrument_id is not None:
+                recent_orders = [
+                    order
+                    for order in recent_orders
+                    if order.instrument_id == instrument_id
+                ]
+            recent_sell_orders = [
+                order
+                for order in recent_orders
+                if order.side == OrderSide.SELL
+                and order.status in _SINGLE_SHARE_REVERSE_SELL_STATUSES
+            ]
+            metadata["recent_sell_order_count"] = len(recent_sell_orders)
+            if recent_sell_orders:
+                metadata["reason"] = "reverse_trade_single_share_blocked"
+                return (
+                    "block",
+                    PipelineStopReason.REVERSE_TRADE_SINGLE_SHARE_BLOCKED.value,
+                    metadata,
+                )
+
+        if (
+            intent.request.order_type == OrderType.MARKET
+            and high_volatility
+            and risk_off
+        ):
+            metadata["reason"] = "probe_churn_single_share_blocked"
+            return (
+                "block",
+                PipelineStopReason.PROBE_CHURN_SINGLE_SHARE_BLOCKED.value,
+                metadata,
+            )
+
+        if (
+            estimated_order_value is not None
+            and estimated_order_value < _SINGLE_SHARE_PROBE_MIN_ORDER_VALUE
+            and not high_edge_exception
+        ):
+            metadata["reason"] = "probe_churn_single_share_blocked"
+            return (
+                "block",
+                PipelineStopReason.PROBE_CHURN_SINGLE_SHARE_BLOCKED.value,
+                metadata,
+            )
+
+        metadata["reason"] = "allow"
+        return ("allow", "allow", metadata)
+
+    async def _sync_symbol_trade_state_order_link(
+        self,
+        *,
+        intent: OrderIntent,
+        order_request_id: UUID,
+        trade_decision_id: UUID | None,
+    ) -> None:
+        decision_context = (
+            intent.context.decision_context
+            if intent.context is not None
+            else None
+        )
+        if decision_context is None:
+            return
+
+        instrument = await self._repos.instruments.get_by_symbol(
+            symbol=intent.request.symbol,
+            market_code=intent.request.market,
+        )
+        if instrument is None:
+            instrument = await self._repos.instruments.get_by_symbol_any_market(
+                intent.request.symbol
+            )
+        if instrument is None:
+            return
+
+        current_state = await self._repos.symbol_trade_states.get_by_account_and_instrument(
+            decision_context.account_id,
+            instrument.instrument_id,
+        )
+        if current_state is None:
+            return
+
+        metadata = dict(current_state.metadata_json)
+        policy_payload = metadata.get("holding_profile_policy")
+        policy_metadata = (
+            dict(policy_payload)
+            if isinstance(policy_payload, dict)
+            else {}
+        )
+        metadata["last_order_request_id"] = str(order_request_id)
+        if trade_decision_id is not None:
+            metadata["last_trade_decision_id"] = str(trade_decision_id)
+
+        decision_type = (intent.ai_backend_inputs.decision_type or "").strip().upper()
+        state_value = current_state.state
+        if intent.request.side == OrderSide.BUY:
+            state_value = "entry_pending"
+        elif intent.request.side == OrderSide.SELL and decision_type == "REDUCE":
+            state_value = "reduce_pending"
+        elif intent.request.side == OrderSide.SELL and decision_type in {"SELL", "EXIT"}:
+            state_value = "exit_pending"
+
+        await self._repos.symbol_trade_states.upsert(
+            SymbolTradeStateEntity(
+                symbol_trade_state_id=current_state.symbol_trade_state_id,
+                account_id=current_state.account_id,
+                instrument_id=current_state.instrument_id,
+                symbol=current_state.symbol,
+                market=current_state.market,
+                state=state_value,
+                holding_profile=current_state.holding_profile,
+                position_quantity=current_state.position_quantity,
+                last_entry_order_request_id=(
+                    order_request_id
+                    if intent.request.side == OrderSide.BUY
+                    else current_state.last_entry_order_request_id
+                ),
+                last_exit_order_request_id=(
+                    order_request_id
+                    if intent.request.side == OrderSide.SELL
+                    else current_state.last_exit_order_request_id
+                ),
+                last_entry_source_type=current_state.last_entry_source_type,
+                last_entry_at=current_state.last_entry_at,
+                last_reduce_at=current_state.last_reduce_at,
+                last_exit_at=current_state.last_exit_at,
+                minimum_hold_until=parse_datetime_or_none(
+                    policy_metadata.get("minimum_hold_until")
+                ) or current_state.minimum_hold_until,
+                reentry_cooldown_until=parse_datetime_or_none(
+                    policy_metadata.get("reentry_cooldown_until")
+                ) or current_state.reentry_cooldown_until,
+                sell_cooldown_until=parse_datetime_or_none(
+                    policy_metadata.get("sell_cooldown_until")
+                ) or current_state.sell_cooldown_until,
+                last_signal_feature_snapshot_id=current_state.last_signal_feature_snapshot_id,
+                last_decision_context_id=decision_context.decision_context_id,
+                last_reason_codes=list(intent.ai_backend_inputs.reason_codes),
+                thesis_state_hash=current_state.thesis_state_hash,
+                metadata_json=metadata,
+                created_at=current_state.created_at,
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
 
     async def _sync_trade_decision_execution_sizing(
         self,
@@ -1398,6 +1675,49 @@ class ExecutionService:
                 status="SKIPPED",
             )
 
+        # ── Phase 2.4: single-share BUY probe churn guard ───────────────
+        if intent.request.side == OrderSide.BUY:
+            probe_policy, probe_reason, probe_metadata = (
+                await self._classify_single_share_probe_churn_policy(
+                    intent=intent,
+                    source_type=intent_source_type,
+                    reference_price=sizing_reference_price,
+                )
+            )
+            if probe_policy == "block":
+                logger.info(
+                    "Phase 2.4 BLOCKED single-share BUY probe churn: symbol=%s "
+                    "reason=%s metadata=%s trade_decision_id=%s",
+                    intent.request.symbol,
+                    probe_reason,
+                    probe_metadata,
+                    trade_decision_id,
+                )
+                await self._record_blocking_guardrail_evaluation(
+                    rule_set_version="execution_probe_churn_guard_v1",
+                    blocking_rule_codes=[probe_reason],
+                    rule_results=probe_metadata,
+                    decision_context_id=intent.decision_context_id,
+                    trade_decision_id=trade_decision_id,
+                )
+                _add_phase(f"probe_churn_guard/{_symbol}", "skipped")
+                await self._finalize_attempt(
+                    attempt_id, "stopped",
+                    stop_phase="probe_churn_guard",
+                    stop_reason=probe_reason,
+                    phase_trace=_phase_trace,
+                )
+                return SubmitResult.build(
+                    order_intent=intent,
+                    trade_decision_id=trade_decision_id,
+                    error_message=probe_reason,
+                    stop_reason=probe_reason,
+                    phase_trace=tuple(_phase_trace) if _phase_trace else (),
+                    is_skipped=True,
+                    status="SKIPPED",
+                    error_phase="probe_churn_guard",
+                )
+
         _add_phase(f"translation/{_symbol}", "ok")
 
         # ── Phase 2.5: BUY duplicate re-entry guard ─────────────────────
@@ -1556,6 +1876,19 @@ class ExecutionService:
                 phase_trace=tuple(_phase_trace) if _phase_trace else (),
                 status="ERROR",
                 error_phase="transition",
+            )
+        try:
+            await self._sync_symbol_trade_state_order_link(
+                intent=intent,
+                order_request_id=validated_order.order_request_id,
+                trade_decision_id=trade_decision_id,
+            )
+        except Exception:
+            logger.warning(
+                "symbol trade state order link sync failed: order_id=%s trade_decision_id=%s",
+                validated_order.order_request_id,
+                trade_decision_id,
+                exc_info=True,
             )
 
         _order_create_elapsed = time_module.monotonic() - _order_create_t0

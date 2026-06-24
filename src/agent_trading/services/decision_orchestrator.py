@@ -26,6 +26,7 @@ from agent_trading.domain.entities import (
     PositionSnapshotEntity,
     RiskLimitSnapshotEntity,
     SignalFeatureSnapshotEntity,
+    SymbolTradeStateEntity,
     TradeDecisionEntity,
 )
 from agent_trading.domain.enums import DecisionType, EntryStyle, OrderSide, OrderStatus, OrderType
@@ -79,6 +80,11 @@ from agent_trading.services.deterministic_trigger_engine import (
 from agent_trading.services.execution_service import (
     ExecutionService,
 )
+from agent_trading.services.holding_profile_policy import (
+    derive_holding_profile_policy,
+    parse_datetime_or_none,
+    serialize_holding_profile_policy,
+)
 from agent_trading.services.expected_value_gate import (
     evaluate_expected_value_gate,
 )
@@ -116,6 +122,13 @@ _PRE_AI_ELIGIBILITY_BLOCK_REASONS = frozenset(
         "eligibility_low_turnover",
         "eligibility_allocation_blocked",
         "eligibility_risk_off_block",
+        "eligibility_participation_rate_blocked",
+    }
+)
+_AI_OVERRIDE_EXECUTION_INFEASIBLE_REASONS = frozenset(
+    {
+        "eligibility_low_average_volume",
+        "eligibility_low_turnover",
         "eligibility_participation_rate_blocked",
     }
 )
@@ -476,6 +489,140 @@ class DecisionOrchestratorService:
             ("source_policy_guard",) + envelope.reason_codes,
         )
 
+    async def _check_ai_buy_override_gate(
+        self,
+        *,
+        source_type: str,
+        deterministic_trigger: Any | None,
+        fdc_output: FinalDecisionComposerOutput | None,
+        ai_inputs: AIDecisionInputs,
+        position_snapshot: PositionSnapshotEntity | None,
+        decision_context: DecisionContextEntity | None,
+        instrument: InstrumentEntity | None,
+    ) -> tuple[str, str, tuple[str, ...]] | None:
+        """BUY/APPROVE override는 eligibility + EV + state 통과 시에만 허용한다."""
+        if fdc_output is None or deterministic_trigger is None:
+            return None
+
+        decision_type = (fdc_output.decision_type or "").strip().upper()
+        if decision_type not in {"APPROVE", "BUY"}:
+            return None
+
+        has_position = (
+            position_snapshot is not None
+            and position_snapshot.quantity is not None
+            and position_snapshot.quantity > 0
+        )
+        if has_position:
+            return None
+
+        if bool(getattr(deterministic_trigger, "buy_candidate", False)):
+            return None
+
+        downgrade_decision = (
+            "WATCH"
+            if bool(getattr(deterministic_trigger, "watch_candidate", False))
+            else "HOLD"
+        )
+        normalized_source_type = (source_type or "core").strip().lower()
+        envelope = evaluate_action_envelope(
+            source_type=normalized_source_type,
+            has_position=False,
+        )
+        if not envelope.allow_new_buy:
+            rationale = (
+                f"[ai_override_gate] source_type={normalized_source_type} "
+                f"action_envelope blocked FDC={decision_type} -> {downgrade_decision}"
+            )
+            return (
+                downgrade_decision,
+                rationale,
+                ("ai_override_gate", "ai_override_source_policy_blocked"),
+            )
+
+        eligibility_passed = bool(
+            getattr(deterministic_trigger, "eligibility_passed", False)
+        )
+        eligibility_reasons = tuple(
+            getattr(deterministic_trigger, "eligibility_reasons", ()) or ()
+        )
+        if not eligibility_passed:
+            rationale = (
+                f"[ai_override_gate] source_type={normalized_source_type} "
+                f"eligibility_passed=false reasons={','.join(eligibility_reasons)} "
+                f"FDC={decision_type} -> {downgrade_decision}"
+            )
+            return (
+                downgrade_decision,
+                rationale,
+                ("ai_override_gate", "ai_override_eligibility_blocked"),
+            )
+        if any(
+            reason in _AI_OVERRIDE_EXECUTION_INFEASIBLE_REASONS
+            for reason in eligibility_reasons
+        ):
+            rationale = (
+                f"[ai_override_gate] source_type={normalized_source_type} "
+                f"execution_infeasible reasons={','.join(eligibility_reasons)} "
+                f"FDC={decision_type} -> {downgrade_decision}"
+            )
+            return (
+                downgrade_decision,
+                rationale,
+                ("ai_override_gate", "ai_override_execution_infeasible"),
+            )
+
+        if not ai_inputs.expected_value_gate_passed:
+            rationale = (
+                f"[ai_override_gate] source_type={normalized_source_type} "
+                f"expected_value_gate_passed=false FDC={decision_type} -> {downgrade_decision}"
+            )
+            return (
+                downgrade_decision,
+                rationale,
+                ("ai_override_gate", "ai_override_expected_value_blocked"),
+            )
+
+        if (
+            decision_context is None
+            or instrument is None
+        ):
+            return None
+
+        symbol_state = await self._repos.symbol_trade_states.get_by_account_and_instrument(
+            decision_context.account_id,
+            instrument.instrument_id,
+        )
+        if symbol_state is None:
+            return None
+
+        now_utc = datetime.now(timezone.utc)
+        if symbol_state.state in {"entry_pending", "reduce_pending", "exit_pending"}:
+            rationale = (
+                f"[ai_override_gate] symbol_state={symbol_state.state} "
+                f"pending conflict FDC={decision_type} -> {downgrade_decision}"
+            )
+            return (
+                downgrade_decision,
+                rationale,
+                ("ai_override_gate", "ai_override_state_pending_conflict"),
+            )
+        if (
+            symbol_state.reentry_cooldown_until is not None
+            and symbol_state.reentry_cooldown_until > now_utc
+        ):
+            rationale = (
+                f"[ai_override_gate] reentry_cooldown_until="
+                f"{symbol_state.reentry_cooldown_until.isoformat()} "
+                f"FDC={decision_type} -> {downgrade_decision}"
+            )
+            return (
+                downgrade_decision,
+                rationale,
+                ("ai_override_gate", "ai_override_reverse_cooldown_blocked"),
+            )
+        return None
+
     async def _ensure_or_create_decision_context(
         self,
         request: SubmitOrderRequest,
@@ -525,7 +672,198 @@ class DecisionOrchestratorService:
         )
         if td_entity is not None:
             td_entity = await self._repos.trade_decisions.add(td_entity)
+            await self._persist_symbol_trade_state_from_decision(
+                trade_decision=td_entity,
+                assembled_context=assembled_context,
+                instrument=resolved_instrument,
+                composer_output=agent_bundle.composer_output,
+            )
         return td_entity
+
+    async def _persist_symbol_trade_state_from_decision(
+        self,
+        *,
+        trade_decision: TradeDecisionEntity,
+        assembled_context: AssembledContext,
+        instrument: InstrumentEntity | None,
+        composer_output: FinalDecisionComposerOutput | None,
+    ) -> None:
+        decision_context = assembled_context.decision_context
+        if decision_context is None or instrument is None:
+            return
+
+        now = trade_decision.created_at
+        current_state = await self._repos.symbol_trade_states.get_by_account_and_instrument(
+            decision_context.account_id,
+            instrument.instrument_id,
+        )
+        policy_payload = trade_decision.decision_json.get("holding_profile_policy")
+        serialized_policy_payload: dict[str, object] | None = None
+        if isinstance(policy_payload, dict):
+            serialized_policy_payload = dict(policy_payload)
+            holding_profile = policy_payload.get("holding_profile")
+            minimum_hold_until = parse_datetime_or_none(
+                policy_payload.get("minimum_hold_until")
+            )
+            reentry_cooldown_until = parse_datetime_or_none(
+                policy_payload.get("reentry_cooldown_until")
+            )
+            sell_cooldown_until = parse_datetime_or_none(
+                policy_payload.get("sell_cooldown_until")
+            )
+            thesis_state_hash = policy_payload.get("thesis_state_hash")
+            policy_metadata = (
+                dict(policy_payload.get("metadata"))
+                if isinstance(policy_payload.get("metadata"), dict)
+                else {}
+            )
+        else:
+            fallback_policy = derive_holding_profile_policy(
+                source_type=assembled_context.source_type,
+                decision_type=(
+                    composer_output.decision_type
+                    if composer_output is not None
+                    else trade_decision.decision_type.value
+                ),
+                side=(
+                    composer_output.side
+                    if composer_output is not None and composer_output.side
+                    else trade_decision.side
+                ),
+                time_horizon=(
+                    composer_output.time_horizon
+                    if composer_output is not None
+                    else None
+                ),
+                quantity=trade_decision.quantity,
+                max_order_value=trade_decision.max_order_value,
+                signal_feature_snapshot_id=(
+                    str(assembled_context.signal_feature_snapshot.signal_feature_snapshot_id)
+                    if assembled_context.signal_feature_snapshot is not None
+                    else (
+                        str(decision_context.signal_feature_snapshot_id)
+                        if decision_context.signal_feature_snapshot_id is not None
+                        else None
+                    )
+                ),
+                reason_codes=trade_decision.reason_codes,
+                now_utc=now,
+            )
+            serialized_policy = serialize_holding_profile_policy(fallback_policy)
+            serialized_policy_payload = dict(serialized_policy)
+            holding_profile = serialized_policy.get("holding_profile")
+            minimum_hold_until = parse_datetime_or_none(
+                serialized_policy.get("minimum_hold_until")
+            )
+            reentry_cooldown_until = parse_datetime_or_none(
+                serialized_policy.get("reentry_cooldown_until")
+            )
+            sell_cooldown_until = parse_datetime_or_none(
+                serialized_policy.get("sell_cooldown_until")
+            )
+            thesis_state_hash = serialized_policy.get("thesis_state_hash")
+            policy_metadata = (
+                dict(serialized_policy.get("metadata"))
+                if isinstance(serialized_policy.get("metadata"), dict)
+                else {}
+            )
+
+        state_value = current_state.state if current_state is not None else "flat"
+        last_entry_at = current_state.last_entry_at if current_state is not None else None
+        last_reduce_at = current_state.last_reduce_at if current_state is not None else None
+        last_exit_at = current_state.last_exit_at if current_state is not None else None
+        if trade_decision.side == OrderSide.BUY and trade_decision.decision_type in {
+            DecisionType.APPROVE,
+            DecisionType.BUY,
+        }:
+            state_value = "entry_pending"
+            last_entry_at = now
+        elif trade_decision.side == OrderSide.SELL and trade_decision.decision_type == DecisionType.REDUCE:
+            state_value = "reduce_pending"
+            last_reduce_at = now
+        elif trade_decision.side == OrderSide.SELL and trade_decision.decision_type in {
+            DecisionType.SELL,
+            DecisionType.EXIT,
+        }:
+            state_value = "exit_pending"
+            last_exit_at = now
+
+        merged_metadata = dict(current_state.metadata_json) if current_state is not None else {}
+        merged_metadata["holding_profile_policy"] = (
+            serialized_policy_payload
+            if serialized_policy_payload is not None
+            else policy_metadata
+        )
+        merged_metadata["last_trade_decision_id"] = str(trade_decision.trade_decision_id)
+
+        await self._repos.symbol_trade_states.upsert(
+            SymbolTradeStateEntity(
+                symbol_trade_state_id=(
+                    current_state.symbol_trade_state_id
+                    if current_state is not None
+                    else uuid4()
+                ),
+                account_id=decision_context.account_id,
+                instrument_id=instrument.instrument_id,
+                symbol=trade_decision.symbol,
+                market=trade_decision.market,
+                state=state_value,
+                holding_profile=(
+                    str(holding_profile)
+                    if holding_profile is not None
+                    else (
+                        current_state.holding_profile
+                        if current_state is not None
+                        else None
+                    )
+                ),
+                position_quantity=(
+                    assembled_context.position_snapshot.quantity
+                    if assembled_context.position_snapshot is not None
+                    else (
+                        current_state.position_quantity
+                        if current_state is not None
+                        else Decimal("0")
+                    )
+                ),
+                last_entry_order_request_id=(
+                    current_state.last_entry_order_request_id
+                    if current_state is not None
+                    else None
+                ),
+                last_exit_order_request_id=(
+                    current_state.last_exit_order_request_id
+                    if current_state is not None
+                    else None
+                ),
+                last_entry_source_type=trade_decision.source_type,
+                last_entry_at=last_entry_at,
+                last_reduce_at=last_reduce_at,
+                last_exit_at=last_exit_at,
+                minimum_hold_until=minimum_hold_until,
+                reentry_cooldown_until=reentry_cooldown_until,
+                sell_cooldown_until=sell_cooldown_until,
+                last_signal_feature_snapshot_id=decision_context.signal_feature_snapshot_id,
+                last_decision_context_id=trade_decision.decision_context_id,
+                last_reason_codes=list(trade_decision.reason_codes or ()),
+                thesis_state_hash=(
+                    str(thesis_state_hash)
+                    if thesis_state_hash is not None
+                    else (
+                        current_state.thesis_state_hash
+                        if current_state is not None
+                        else None
+                    )
+                ),
+                metadata_json=merged_metadata,
+                created_at=(
+                    current_state.created_at
+                    if current_state is not None
+                    else now
+                ),
+                updated_at=now,
+            )
+        )
 
     # ------------------------------------------------------------------
     # Sizing input builder — public delegation to ExecutionService boundary
@@ -1431,6 +1769,53 @@ class DecisionOrchestratorService:
                 guard_rationale,
             )
 
+        ai_override_gate = await self._check_ai_buy_override_gate(
+            source_type=derivation.source_type,
+            deterministic_trigger=derivation.deterministic_trigger,
+            fdc_output=agent_bundle.composer_output,
+            ai_inputs=agent_bundle.ai_inputs,
+            position_snapshot=position_snapshot,
+            decision_context=decision_context,
+            instrument=instrument,
+        )
+        if ai_override_gate is not None:
+            guarded_dt, guard_rationale, guard_reason_codes = ai_override_gate
+            object.__setattr__(agent_bundle.ai_inputs, "decision_type", guarded_dt)
+            object.__setattr__(agent_bundle.ai_inputs, "side", "")
+            existing_reason_codes = tuple(agent_bundle.ai_inputs.reason_codes or ())
+            merged_reason_codes = tuple(
+                dict.fromkeys(existing_reason_codes + guard_reason_codes)
+            )
+            object.__setattr__(
+                agent_bundle.ai_inputs,
+                "reason_codes",
+                merged_reason_codes,
+            )
+            if agent_bundle.composer_output is not None:
+                object.__setattr__(agent_bundle.composer_output, "decision_type", guarded_dt)
+                object.__setattr__(agent_bundle.composer_output, "side", "")
+                composer_reason_codes = tuple(agent_bundle.composer_output.reason_codes or ())
+                merged_composer_reason_codes = tuple(
+                    dict.fromkeys(composer_reason_codes + guard_reason_codes)
+                )
+                object.__setattr__(
+                    agent_bundle.composer_output,
+                    "reason_codes",
+                    merged_composer_reason_codes,
+                )
+                fdc_summary = agent_bundle.composer_output.summary
+                object.__setattr__(
+                    agent_bundle.composer_output,
+                    "summary",
+                    (fdc_summary + f" | {guard_rationale}") if fdc_summary else guard_rationale,
+                )
+            logger.info(
+                "AI override gate blocked: symbol=%s source_type=%s rationale=%s",
+                request.symbol,
+                derivation.source_type,
+                guard_rationale,
+            )
+
         # --- Persist or reuse trade decision when a concrete context exists ---
         td_entity = await self._ensure_trade_decision(
             decision_context_id=resolved_context_id,
@@ -1484,6 +1869,39 @@ class DecisionOrchestratorService:
         fdc_side = agent_bundle.ai_inputs.side if agent_bundle else ""
         if agent_bundle.ai_inputs.decision_type in ("REDUCE", "EXIT") and fdc_side.lower() == OrderSide.SELL.value:
             assembled_request = replace(assembled_request, side=OrderSide.SELL)
+
+        assembled_metadata = dict(assembled_request.metadata or {})
+        signal_feature_snapshot_id = (
+            str(assembled_context.signal_feature_snapshot.signal_feature_snapshot_id)
+            if assembled_context.signal_feature_snapshot is not None
+            else (
+                str(assembled_context.decision_context.signal_feature_snapshot_id)
+                if assembled_context.decision_context is not None
+                and assembled_context.decision_context.signal_feature_snapshot_id is not None
+                else None
+            )
+        )
+        holding_profile_policy = derive_holding_profile_policy(
+            source_type=assembled_context.source_type,
+            decision_type=agent_bundle.ai_inputs.decision_type,
+            side=agent_bundle.ai_inputs.side or assembled_request.side,
+            time_horizon=(
+                agent_bundle.composer_output.time_horizon
+                if agent_bundle.composer_output is not None
+                else None
+            ),
+            quantity=assembled_request.quantity,
+            max_order_value=calculate_max_order_value(
+                assembled_request.price,
+                assembled_request.quantity,
+            ),
+            signal_feature_snapshot_id=signal_feature_snapshot_id,
+            reason_codes=agent_bundle.ai_inputs.reason_codes,
+        )
+        assembled_metadata["holding_profile_policy"] = serialize_holding_profile_policy(
+            holding_profile_policy
+        )
+        assembled_request = replace(assembled_request, metadata=assembled_metadata)
 
         return OrderIntent(
             decision_context_id=resolved_context_id,

@@ -41,6 +41,7 @@ from agent_trading.domain.entities import (
     SessionEventEntity,
     SnapshotSyncRunEntity,
     StrategyEntity,
+    SymbolTradeStateEntity,
     TradeDecisionEntity,
     UniverseFreezeRunEntity,
     UniverseFreezeRunItemEntity,
@@ -1688,6 +1689,27 @@ class InMemoryInstrumentIndexMembershipRepository:
         ]
         results.sort(key=lambda item: item.membership_code)
         return tuple(results)
+
+
+class InMemorySymbolTradeStateRepository:
+    """In-memory implementation of ``SymbolTradeStateRepository``."""
+
+    def __init__(self) -> None:
+        self._items: dict[tuple[UUID, UUID], SymbolTradeStateEntity] = {}
+
+    async def upsert(
+        self,
+        state: SymbolTradeStateEntity,
+    ) -> SymbolTradeStateEntity:
+        self._items[(state.account_id, state.instrument_id)] = state
+        return state
+
+    async def get_by_account_and_instrument(
+        self,
+        account_id: UUID,
+        instrument_id: UUID,
+    ) -> SymbolTradeStateEntity | None:
+        return self._items.get((account_id, instrument_id))
 
 
 class InMemoryUniverseFreezeRunItemRepository:

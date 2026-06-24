@@ -609,13 +609,13 @@ orchestrator는 조립자로 남기는 편이 맞다.
 - [ ] `source_type`별 `action_envelope` helper 추가
 - [x] actionable decision에 `expected_return_bps`, `net_expected_value_bps`, `final_trade_score` 비어 있으면 submit 금지
 - [x] `edge_after_cost_bps` 계산 필드 추가
-- [ ] `same-symbol reentry cooldown` 1차 추가
-- [ ] `BUY 직후 SELL/REDUCE cooldown` 1차 추가
-- [ ] `signal_feature_snapshot_id` 변경 없는 reverse trade 차단
-- [ ] `quantity=1` 신규 BUY의 `probe churn guard` 추가
-- [ ] `symbol_trade_states` 테이블 설계 및 migration 추가
-- [ ] `holding_profile`, `minimum_hold_until`, `reentry_cooldown_until` 저장 경로 추가
-- [ ] AI override 허용 범위를 `eligibility + expected value + state` 통과 시로 축소
+- [x] `same-symbol reentry cooldown` 1차 추가
+- [x] `BUY 직후 SELL/REDUCE cooldown` 1차 추가
+- [x] `signal_feature_snapshot_id` 변경 없는 reverse trade 차단
+- [x] `quantity=1` 신규 BUY의 `probe churn guard` 추가
+- [x] `symbol_trade_states` 테이블 설계 및 migration 추가
+- [x] `holding_profile`, `minimum_hold_until`, `reentry_cooldown_until` 저장 경로 추가
+- [x] AI override 허용 범위를 `eligibility + expected value + state` 통과 시로 축소
 
 ---
 

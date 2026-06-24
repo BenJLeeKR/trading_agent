@@ -1,0 +1,27 @@
+{
+  "source_name": "krx_manual",
+  "source_ref": "ops-sheet-2026w26",
+  "as_of_date": "2026-06-24",
+  "entries": [
+    {
+      "membership_code": "KOSPI100",
+      "csv_path": "external/kospi100_constituents.csv",
+      "note": "검증완료"
+    },
+    {
+      "membership_code": "KOSPI200",
+      "csv_path": "external/kospi200_constituents.csv",
+      "note": "검증완료"
+    },
+    {
+      "membership_code": "KOSDAQ50",
+      "csv_path": "external/kosdaq50_constituents.csv",
+      "note": "검증완료"
+    },
+    {
+      "membership_code": "KOSDAQ150",
+      "csv_path": "external/kosdaq150_constituents.csv",
+      "note": "검증완료"
+    }
+  ]
+}

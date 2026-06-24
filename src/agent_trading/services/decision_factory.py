@@ -41,6 +41,10 @@ from agent_trading.services.common_types import (
     dataclass_to_dict,  # noqa: F401  (moved from decision_orchestrator in Phase 4 Subtask 3/5)
 )
 from agent_trading.services.common_types import AgentExecutionBundle
+from agent_trading.services.holding_profile_policy import (
+    derive_holding_profile_policy,
+    serialize_holding_profile_policy,
+)
 from agent_trading.services.translation import (
     calculate_max_order_value,
     decimal_or_none,
@@ -91,12 +95,34 @@ def build_trade_decision_entity(
         return None
 
     ai_inputs = agent_bundle.ai_inputs
+    now = datetime.now(timezone.utc)
+    signal_feature_snapshot_id = (
+        str(assembled_context.signal_feature_snapshot.signal_feature_snapshot_id)
+        if assembled_context.signal_feature_snapshot is not None
+        else (
+            str(decision_context.signal_feature_snapshot_id)
+            if decision_context.signal_feature_snapshot_id is not None
+            else None
+        )
+    )
+    holding_profile_policy = derive_holding_profile_policy(
+        source_type=assembled_context.source_type,
+        decision_type=composer_output.decision_type,
+        side=composer_output.side or request.side,
+        time_horizon=composer_output.time_horizon,
+        quantity=decimal_or_none(request.quantity),
+        max_order_value=calculate_max_order_value(
+            request.price,
+            request.quantity,
+        ),
+        signal_feature_snapshot_id=signal_feature_snapshot_id,
+        reason_codes=composer_output.reason_codes,
+        now_utc=now,
+    )
     candidate_vs_final = _build_candidate_vs_final_summary(
         assembled_context=assembled_context,
         composer_output=composer_output,
     )
-
-    now = datetime.now(timezone.utc)
 
     decision = TradeDecisionEntity(
         trade_decision_id=uuid4(),
@@ -388,6 +414,9 @@ def build_trade_decision_entity(
                     else None
                 ),
             },
+            "holding_profile_policy": serialize_holding_profile_policy(
+                holding_profile_policy
+            ),
             "execution_preferences": dataclass_to_dict(
                 composer_output.execution_preferences
             ),

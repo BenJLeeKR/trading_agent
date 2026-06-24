@@ -23,12 +23,33 @@ from agent_trading.repositories.postgres.instruments import PostgresInstrumentRe
 
 DEFAULT_SEED_CSV_PATH = "data/instrument_master/source/index_membership_seed.csv"
 DEFAULT_SOURCE_TAG = "index_membership_seed_csv"
+SUPPORTED_MEMBERSHIP_CODES = frozenset(
+    {
+        "KOSPI100",
+        "KOSPI200",
+        "KOSDAQ50",
+        "KOSDAQ150",
+    }
+)
 
 
 @dataclass(slots=True, frozen=True)
 class MembershipSeedRow:
     symbol: str
     membership_code: str
+    source_name: str | None = None
+    source_ref: str | None = None
+    as_of_date: date | None = None
+    note: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class MembershipSeedGroup:
+    membership_codes: tuple[str, ...]
+    source_name: str | None = None
+    source_ref: str | None = None
+    as_of_date: date | None = None
+    note: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -83,7 +104,19 @@ def _parse_effective_from(raw: str | None) -> date:
     return date.fromisoformat(raw.strip())
 
 
-def _load_seed_rows(path: str) -> tuple[list[MembershipSeedRow], dict[str, list[str]]]:
+def _normalize_optional_text(raw: object) -> str | None:
+    value = str(raw or "").strip()
+    return value or None
+
+
+def _parse_optional_as_of_date(raw: object) -> date | None:
+    value = _normalize_optional_text(raw)
+    if value is None:
+        return None
+    return date.fromisoformat(value)
+
+
+def _load_seed_rows(path: str) -> tuple[list[MembershipSeedRow], dict[str, MembershipSeedGroup]]:
     target = Path(path)
     if not target.exists():
         raise FileNotFoundError(f"membership seed CSV가 없습니다: {path}")
@@ -99,24 +132,63 @@ def _load_seed_rows(path: str) -> tuple[list[MembershipSeedRow], dict[str, list[
             raise ValueError(f"필수 컬럼이 없습니다: {missing_columns}")
 
         rows: list[MembershipSeedRow] = []
-        grouped: dict[str, list[str]] = defaultdict(list)
+        grouped_codes: dict[str, list[str]] = defaultdict(list)
+        grouped_metadata: dict[str, tuple[str | None, str | None, date | None, str | None]] = {}
         for raw in reader:
             symbol = str(raw.get("symbol", "")).strip().upper()
             membership_code = str(raw.get("membership_code", "")).strip().upper()
             if not symbol or not membership_code:
                 continue
-            row = MembershipSeedRow(symbol=symbol, membership_code=membership_code)
+            if membership_code not in SUPPORTED_MEMBERSHIP_CODES:
+                raise ValueError(
+                    "지원하지 않는 membership_code가 있습니다: "
+                    f"symbol={symbol} membership_code={membership_code}"
+                )
+            source_name = _normalize_optional_text(raw.get("source_name"))
+            source_ref = _normalize_optional_text(raw.get("source_ref"))
+            as_of_date = _parse_optional_as_of_date(raw.get("as_of_date"))
+            note = _normalize_optional_text(raw.get("note"))
+            row = MembershipSeedRow(
+                symbol=symbol,
+                membership_code=membership_code,
+                source_name=source_name,
+                source_ref=source_ref,
+                as_of_date=as_of_date,
+                note=note,
+            )
             rows.append(row)
-            if membership_code not in grouped[symbol]:
-                grouped[symbol].append(membership_code)
-    return rows, dict(grouped)
+            if membership_code not in grouped_codes[symbol]:
+                grouped_codes[symbol].append(membership_code)
+            row_metadata = (source_name, source_ref, as_of_date, note)
+            existing_metadata = grouped_metadata.get(symbol)
+            if existing_metadata is None:
+                grouped_metadata[symbol] = row_metadata
+            elif existing_metadata != row_metadata:
+                raise ValueError(
+                    "같은 symbol에 대해 source metadata가 일관되지 않습니다: "
+                    f"symbol={symbol}"
+                )
+    grouped: dict[str, MembershipSeedGroup] = {}
+    for symbol, membership_codes in grouped_codes.items():
+        source_name, source_ref, as_of_date, note = grouped_metadata.get(
+            symbol,
+            (None, None, None, None),
+        )
+        grouped[symbol] = MembershipSeedGroup(
+            membership_codes=tuple(membership_codes),
+            source_name=source_name,
+            source_ref=source_ref,
+            as_of_date=as_of_date,
+            note=note,
+        )
+    return rows, grouped
 
 
 async def _apply_seed(
     instrument_repo,
     membership_repo,
     *,
-    grouped_memberships: dict[str, list[str]],
+    grouped_memberships: dict[str, MembershipSeedGroup],
     effective_from: date,
     source_tag: str,
     replace_listed_symbols: bool,
@@ -125,12 +197,13 @@ async def _apply_seed(
     skipped_symbol_count = 0
     updated_symbol_count = 0
 
-    for symbol, seed_codes in grouped_memberships.items():
+    for symbol, seed_group in grouped_memberships.items():
         instrument = await instrument_repo.get_by_symbol_any_market(symbol)
         if instrument is None:
             skipped_symbol_count += 1
             continue
         resolved_symbol_count += 1
+        seed_codes = list(seed_group.membership_codes)
         if replace_listed_symbols:
             final_codes = list(seed_codes)
         else:
@@ -149,6 +222,14 @@ async def _apply_seed(
             metadata={
                 "sync_source": "index_membership_seed_file",
                 "replace_listed_symbols": replace_listed_symbols,
+                "source_name": seed_group.source_name,
+                "source_ref": seed_group.source_ref,
+                "as_of_date": (
+                    seed_group.as_of_date.isoformat()
+                    if seed_group.as_of_date is not None
+                    else None
+                ),
+                "note": seed_group.note,
             },
         )
         updated_symbol_count += 1

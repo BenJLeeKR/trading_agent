@@ -291,3 +291,51 @@ def test_build_trade_decision_entity_stores_expected_value_gate_fields() -> None
         == "11.00"
     )
     assert entity.decision_json["expected_value_gate"]["slippage_buffer_bps"] == "10.00"
+
+
+def test_build_trade_decision_entity_stores_holding_profile_policy() -> None:
+    trigger = DeterministicTriggerAssessment(
+        trigger_version="deterministic_trigger_v1",
+        primary_candidate="BUY_CANDIDATE",
+        candidate_set=("BUY_CANDIDATE",),
+        watch_candidate=False,
+        buy_candidate=True,
+        sell_candidate=False,
+        reduce_candidate=False,
+        candidate_confidence=0.82,
+        entry_score=0.82,
+        exit_score=0.14,
+        watch_score=0.2,
+    )
+    assembled = _make_context(trigger)
+    entity = build_trade_decision_entity(
+        decision_context_id=uuid4(),
+        request=_make_request(),
+        assembled_context=assembled,
+        agent_bundle=AgentExecutionBundle(
+            ai_inputs=AIDecisionInputs(
+                decision_type="BUY",
+                expected_return_bps=Decimal("70.00"),
+                expected_downside_bps=Decimal("20.00"),
+                net_expected_value_bps=Decimal("50.00"),
+                final_trade_score=Decimal("0.80"),
+                minimum_required_edge_bps=Decimal("10.00"),
+                edge_after_cost_bps=Decimal("30.00"),
+                estimated_round_trip_cost_bps=Decimal("10.00"),
+                slippage_buffer_bps=Decimal("10.00"),
+                expected_value_gate_passed=True,
+            ),
+            composer_output=FinalDecisionComposerOutput(
+                decision_type="BUY",
+                side="BUY",
+                confidence=0.9,
+                time_horizon="swing",
+            ),
+        ),
+    )
+
+    assert entity is not None
+    holding_profile_policy = entity.decision_json["holding_profile_policy"]
+    assert holding_profile_policy["holding_profile"] == "core_swing"
+    assert holding_profile_policy["minimum_hold_until"] is not None
+    assert holding_profile_policy["metadata"]["source_type"] == "core"

@@ -40,6 +40,7 @@ from agent_trading.domain.entities import (
     SessionEventEntity,
     SnapshotSyncRunEntity,
     StrategyEntity,
+    SymbolTradeStateEntity,
     TradeDecisionEntity,
     UniverseFreezeRunEntity,
     UniverseFreezeRunItemEntity,
@@ -1040,6 +1041,23 @@ class InstrumentIndexMembershipRepository(Protocol):
         self,
         instrument_id: UUID,
     ) -> Sequence[InstrumentIndexMembershipEntity]:
+        ...
+
+
+class SymbolTradeStateRepository(Protocol):
+    """Authoritative current state cache for symbol-level trade hysteresis."""
+
+    async def upsert(
+        self,
+        state: SymbolTradeStateEntity,
+    ) -> SymbolTradeStateEntity:
+        ...
+
+    async def get_by_account_and_instrument(
+        self,
+        account_id: UUID,
+        instrument_id: UUID,
+    ) -> SymbolTradeStateEntity | None:
         ...
 
 

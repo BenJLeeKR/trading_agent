@@ -130,6 +130,34 @@ class InstrumentIndexMembershipEntity:
 
 
 @dataclass(slots=True, frozen=True)
+class SymbolTradeStateEntity:
+    symbol_trade_state_id: UUID
+    account_id: UUID
+    instrument_id: UUID
+    symbol: str
+    market: str
+    state: str
+    holding_profile: str | None = None
+    position_quantity: Decimal = Decimal("0")
+    last_entry_order_request_id: UUID | None = None
+    last_exit_order_request_id: UUID | None = None
+    last_entry_source_type: str | None = None
+    last_entry_at: datetime | None = None
+    last_reduce_at: datetime | None = None
+    last_exit_at: datetime | None = None
+    minimum_hold_until: datetime | None = None
+    reentry_cooldown_until: datetime | None = None
+    sell_cooldown_until: datetime | None = None
+    last_signal_feature_snapshot_id: UUID | None = None
+    last_decision_context_id: UUID | None = None
+    last_reason_codes: list[str] = field(default_factory=list)
+    thesis_state_hash: str | None = None
+    metadata_json: dict[str, object] = field(default_factory=dict)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class PositionSnapshotEntity:
     position_snapshot_id: UUID
     account_id: UUID

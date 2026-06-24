@@ -29,11 +29,13 @@ from agent_trading.domain.entities import (
     AccountEntity,
     CashBalanceSnapshotEntity,
     ConfigVersionEntity,
+    DecisionContextEntity,
     ExternalEventEntity,
     InstrumentEntity,
     OrderRequestEntity,
     PositionSnapshotEntity,
     RiskLimitSnapshotEntity,
+    SymbolTradeStateEntity,
     TradeDecisionEntity,
 )
 from agent_trading.domain.enums import (
@@ -64,6 +66,7 @@ from agent_trading.services.translation import (
 )
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
+from agent_trading.services.sizing_engine import SizingResult
 
 from agent_trading.services.ai_agents.base import AgentExecutionRequest
 from agent_trading.services.ai_agents.event_interpretation import EventInterpretationAgent
@@ -256,6 +259,91 @@ class TestBuildSubmitOrderRequest:
         result = build_submit_order_request_from_decision(intent)
         assert result is not None
         assert result.side == OrderSide.SELL
+
+
+@pytest.mark.asyncio
+async def test_execution_service_syncs_symbol_trade_state_order_link() -> None:
+    repos = build_in_memory_repositories()
+    service = DecisionOrchestratorService(repos=repos, use_subprocess_isolation=False)
+    execution_service = service._execution_service
+    account_id = uuid4()
+    instrument = InstrumentEntity(
+        instrument_id=uuid4(),
+        symbol="005930",
+        market_code="KRX",
+        exchange_code="KRX",
+        market_segment="KOSPI",
+        asset_class="kr_stock",
+        currency="KRW",
+        name="테스트종목",
+        is_active=True,
+    )
+    await repos.instruments.add(instrument)
+    decision_context = DecisionContextEntity(
+        decision_context_id=uuid4(),
+        account_id=account_id,
+        strategy_id=uuid4(),
+        config_version_id=uuid4(),
+        market_timestamp=datetime.now(timezone.utc),
+        correlation_id="corr-state-link",
+    )
+    await repos.decision_contexts.add(decision_context)
+    state = SymbolTradeStateEntity(
+        symbol_trade_state_id=uuid4(),
+        account_id=account_id,
+        instrument_id=instrument.instrument_id,
+        symbol=instrument.symbol,
+        market=instrument.market_code,
+        state="entry_pending",
+        holding_profile="core_swing",
+        metadata_json={
+            "holding_profile_policy": {
+                "minimum_hold_until": datetime.now(timezone.utc).isoformat(),
+            }
+        },
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    await repos.symbol_trade_states.upsert(state)
+    intent = OrderIntent(
+        decision_context_id=decision_context.decision_context_id,
+        order_intent_id=uuid4(),
+        request=_make_request(),
+        context=AssembledContext(
+            decision_context=decision_context,
+            source_type="core",
+        ),
+        ai_backend_inputs=AIDecisionInputs(
+            decision_type="BUY",
+            side="BUY",
+            reason_codes=("core_entry",),
+            expected_return_bps=Decimal("70.00"),
+            expected_downside_bps=Decimal("20.00"),
+            net_expected_value_bps=Decimal("50.00"),
+            final_trade_score=Decimal("0.80"),
+            minimum_required_edge_bps=Decimal("10.00"),
+            edge_after_cost_bps=Decimal("30.00"),
+            estimated_round_trip_cost_bps=Decimal("10.00"),
+            slippage_buffer_bps=Decimal("10.00"),
+            expected_value_gate_passed=True,
+        ),
+    )
+
+    order_request_id = uuid4()
+    await execution_service._sync_symbol_trade_state_order_link(
+        intent=intent,
+        order_request_id=order_request_id,
+        trade_decision_id=uuid4(),
+    )
+
+    updated = await repos.symbol_trade_states.get_by_account_and_instrument(
+        account_id,
+        instrument.instrument_id,
+    )
+    assert updated is not None
+    assert updated.last_entry_order_request_id == order_request_id
+    assert updated.state == "entry_pending"
+    assert updated.last_reason_codes == ["core_entry"]
 
     def test_exit_returns_request(self) -> None:
         intent = _make_intent(decision_type="EXIT")
@@ -2630,6 +2718,298 @@ class TestPhaseTrace:
         assert len(evaluations) == 1
         assert evaluations[0].rule_set_version == "buy_duplicate_guard_v1"
         assert evaluations[0].blocking_rule_codes == ["recent_active_buy_order"]
+
+    @pytest.mark.asyncio
+    async def test_single_share_probe_churn_guard_blocks_low_value_buy(
+        self,
+        service: DecisionOrchestratorService,
+        order_manager: OrderManager,
+        repos: Any,
+    ) -> None:
+        request = _make_request(
+            quantity=Decimal("1"),
+            price=Decimal("100000"),
+            metadata={"source_type": "core"},
+        )
+        broker_stub = object()
+
+        async def _mock_submit(*args: Any, **kwargs: Any) -> OrderRequestEntity:
+            raise AssertionError("Broker should not be called for low-value single-share BUY")
+
+        with (
+            patch.object(
+                service._execution_service,  # type: ignore[attr-defined]
+                "_classify_single_share_probe_churn_policy",
+                AsyncMock(
+                    return_value=(
+                        "block",
+                        "probe_churn_single_share_blocked",
+                        {"reason": "probe_churn_single_share_blocked"},
+                    )
+                ),
+            ),
+            patch.object(OrderManager, "submit_order_to_broker", _mock_submit),
+        ):
+            result = await service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=broker_stub,
+            )
+
+        assert result.status == "SKIPPED"
+        assert result.error_phase == "probe_churn_guard"
+        assert result.stop_reason == "probe_churn_single_share_blocked"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert len(evaluations) == 1
+        assert evaluations[0].rule_set_version == "execution_probe_churn_guard_v1"
+        assert evaluations[0].blocking_rule_codes == ["probe_churn_single_share_blocked"]
+
+    @pytest.mark.asyncio
+    async def test_single_share_probe_churn_guard_blocks_reconciliation_overlay_buy(
+        self,
+        service: DecisionOrchestratorService,
+        order_manager: OrderManager,
+        repos: Any,
+    ) -> None:
+        request = _make_request(
+            quantity=Decimal("1"),
+            price=Decimal("600000"),
+            metadata={"source_type": "reconciliation_overlay"},
+        )
+        broker_stub = object()
+
+        async def _mock_submit(*args: Any, **kwargs: Any) -> OrderRequestEntity:
+            raise AssertionError("Broker should not be called for reconciliation overlay single-share BUY")
+
+        with (
+            patch.object(
+                service._execution_service,  # type: ignore[attr-defined]
+                "_classify_single_share_probe_churn_policy",
+                AsyncMock(
+                    return_value=(
+                        "block",
+                        "overlay_single_share_buy_blocked",
+                        {"reason": "overlay_single_share_buy_blocked"},
+                    )
+                ),
+            ),
+            patch.object(OrderManager, "submit_order_to_broker", _mock_submit),
+        ):
+            result = await service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=broker_stub,
+            )
+
+        assert result.status == "SKIPPED"
+        assert result.error_phase == "probe_churn_guard"
+        assert result.stop_reason == "overlay_single_share_buy_blocked"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert len(evaluations) == 1
+        assert evaluations[0].rule_set_version == "execution_probe_churn_guard_v1"
+        assert evaluations[0].blocking_rule_codes == ["overlay_single_share_buy_blocked"]
+
+    @pytest.mark.asyncio
+    async def test_single_share_probe_churn_guard_blocks_reverse_trade_buy(
+        self,
+        service: DecisionOrchestratorService,
+        order_manager: OrderManager,
+        repos: Any,
+    ) -> None:
+        request = _make_request(
+            quantity=Decimal("1"),
+            price=Decimal("600000"),
+            metadata={"source_type": "core"},
+        )
+        broker_stub = object()
+
+        async def _mock_submit(*args: Any, **kwargs: Any) -> OrderRequestEntity:
+            raise AssertionError("Broker should not be called for reverse single-share BUY")
+
+        with (
+            patch.object(
+                service._execution_service,  # type: ignore[attr-defined]
+                "_classify_single_share_probe_churn_policy",
+                AsyncMock(
+                    return_value=(
+                        "block",
+                        "reverse_trade_single_share_blocked",
+                        {"reason": "reverse_trade_single_share_blocked"},
+                    )
+                ),
+            ),
+            patch.object(OrderManager, "submit_order_to_broker", _mock_submit),
+        ):
+            result = await service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=broker_stub,
+            )
+
+        assert result.status == "SKIPPED"
+        assert result.error_phase == "probe_churn_guard"
+        assert result.stop_reason == "reverse_trade_single_share_blocked"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert len(evaluations) == 1
+        assert evaluations[0].rule_set_version == "execution_probe_churn_guard_v1"
+        assert evaluations[0].blocking_rule_codes == ["reverse_trade_single_share_blocked"]
+
+    @pytest.mark.asyncio
+    async def test_single_share_probe_policy_blocks_low_value_buy_logic(
+        self,
+        service: DecisionOrchestratorService,
+        repos: Any,
+    ) -> None:
+        account = next(iter(repos.accounts._items.values()))  # type: ignore[attr-defined]
+        instrument = next(iter(repos.instruments._items.values()))  # type: ignore[attr-defined]
+        position_snapshot = next(iter(repos.position_snapshots._items.values()))  # type: ignore[attr-defined]
+        intent = OrderIntent(
+            decision_context_id=uuid4(),
+            order_intent_id=uuid4(),
+            request=_make_request(
+                quantity=Decimal("1"),
+                price=Decimal("100000"),
+                metadata={"source_type": "core"},
+            ),
+            context=AssembledContext(
+                decision_context=DecisionContextEntity(
+                    decision_context_id=uuid4(),
+                    account_id=account.account_id,
+                    strategy_id=uuid4(),
+                    config_version_id=uuid4(),
+                    market_timestamp=datetime.now(timezone.utc),
+                    correlation_id="probe-logic-low-value",
+                ),
+                position_snapshot=replace(position_snapshot, quantity=Decimal("0")),
+                source_type="core",
+            ),
+            ai_backend_inputs=AIDecisionInputs(
+                decision_type="BUY",
+                edge_after_cost_bps=Decimal("20"),
+                expected_value_gate_passed=True,
+            ),
+        )
+
+        policy, reason, metadata = await service._execution_service._classify_single_share_probe_churn_policy(  # type: ignore[attr-defined]
+            intent=intent,
+            source_type="core",
+            reference_price=Decimal("100000"),
+        )
+
+        assert policy == "block"
+        assert reason == "probe_churn_single_share_blocked"
+        assert metadata["estimated_order_value"] == "100000"
+
+    @pytest.mark.asyncio
+    async def test_single_share_probe_policy_blocks_overlay_buy_logic(
+        self,
+        service: DecisionOrchestratorService,
+        repos: Any,
+    ) -> None:
+        account = next(iter(repos.accounts._items.values()))  # type: ignore[attr-defined]
+        position_snapshot = next(iter(repos.position_snapshots._items.values()))  # type: ignore[attr-defined]
+        intent = OrderIntent(
+            decision_context_id=uuid4(),
+            order_intent_id=uuid4(),
+            request=_make_request(
+                quantity=Decimal("1"),
+                price=Decimal("600000"),
+                metadata={"source_type": "reconciliation_overlay"},
+            ),
+            context=AssembledContext(
+                decision_context=DecisionContextEntity(
+                    decision_context_id=uuid4(),
+                    account_id=account.account_id,
+                    strategy_id=uuid4(),
+                    config_version_id=uuid4(),
+                    market_timestamp=datetime.now(timezone.utc),
+                    correlation_id="probe-logic-overlay",
+                ),
+                position_snapshot=replace(position_snapshot, quantity=Decimal("0")),
+                source_type="reconciliation_overlay",
+            ),
+            ai_backend_inputs=AIDecisionInputs(
+                decision_type="BUY",
+                edge_after_cost_bps=Decimal("40"),
+                expected_value_gate_passed=True,
+            ),
+        )
+
+        policy, reason, metadata = await service._execution_service._classify_single_share_probe_churn_policy(  # type: ignore[attr-defined]
+            intent=intent,
+            source_type="reconciliation_overlay",
+            reference_price=Decimal("600000"),
+        )
+
+        assert policy == "block"
+        assert reason == "overlay_single_share_buy_blocked"
+        assert metadata["source_type"] == "reconciliation_overlay"
+
+    @pytest.mark.asyncio
+    async def test_single_share_probe_policy_blocks_reverse_trade_logic(
+        self,
+        service: DecisionOrchestratorService,
+        repos: Any,
+    ) -> None:
+        account = next(iter(repos.accounts._items.values()))  # type: ignore[attr-defined]
+        instrument = next(iter(repos.instruments._items.values()))  # type: ignore[attr-defined]
+        position_snapshot = next(iter(repos.position_snapshots._items.values()))  # type: ignore[attr-defined]
+        await repos.orders.add(
+            OrderRequestEntity(
+                order_request_id=uuid4(),
+                account_id=account.account_id,
+                instrument_id=instrument.instrument_id,
+                client_order_id="recent-sell-logic-1",
+                idempotency_key="recent-sell-logic-1",
+                correlation_id="recent-sell-logic-1",
+                side=OrderSide.SELL,
+                order_type=OrderType.MARKET,
+                requested_quantity=Decimal("5"),
+                status=OrderStatus.SUBMITTED,
+                created_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+                submitted_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+            )
+        )
+        intent = OrderIntent(
+            decision_context_id=uuid4(),
+            order_intent_id=uuid4(),
+            request=_make_request(
+                quantity=Decimal("1"),
+                price=Decimal("600000"),
+                metadata={"source_type": "core"},
+            ),
+            context=AssembledContext(
+                decision_context=DecisionContextEntity(
+                    decision_context_id=uuid4(),
+                    account_id=account.account_id,
+                    strategy_id=uuid4(),
+                    config_version_id=uuid4(),
+                    market_timestamp=datetime.now(timezone.utc),
+                    correlation_id="probe-logic-reverse",
+                ),
+                position_snapshot=replace(
+                    position_snapshot,
+                    instrument_id=instrument.instrument_id,
+                    quantity=Decimal("0"),
+                ),
+                source_type="core",
+            ),
+            ai_backend_inputs=AIDecisionInputs(
+                decision_type="BUY",
+                edge_after_cost_bps=Decimal("40"),
+                expected_value_gate_passed=True,
+            ),
+        )
+
+        policy, reason, metadata = await service._execution_service._classify_single_share_probe_churn_policy(  # type: ignore[attr-defined]
+            intent=intent,
+            source_type="core",
+            reference_price=Decimal("600000"),
+        )
+
+        assert policy == "block"
+        assert reason == "reverse_trade_single_share_blocked"
+        assert metadata["recent_sell_order_count"] == 1
 
     @pytest.mark.asyncio
     async def test_sell_guard_records_guardrail_evaluation(

@@ -246,6 +246,10 @@ def _load_csv(
 def _classify(existing: InstrumentEntity | None, incoming: InstrumentEntity) -> str:
     if existing is None:
         return "insert"
+    existing_is_placeholder = bool((existing.metadata or {}).get("placeholder"))
+    incoming_is_placeholder = bool((incoming.metadata or {}).get("placeholder"))
+    if existing_is_placeholder and not incoming_is_placeholder:
+        return "promote"
     comparable = (
         "name",
         "asset_class",
@@ -305,7 +309,7 @@ async def _sync_instruments(
             inserted += 1
             if not dry_run:
                 persisted = await repo.upsert_by_symbol(instrument)
-        elif action == "update":
+        elif action in {"update", "promote"}:
             updated += 1
             if not dry_run:
                 persisted = await repo.upsert_by_symbol(instrument)

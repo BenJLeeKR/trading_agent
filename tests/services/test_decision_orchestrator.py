@@ -20,6 +20,7 @@ from agent_trading.domain.entities import (
     PositionSnapshotEntity,
     RiskLimitSnapshotEntity,
     SignalFeatureSnapshotEntity,
+    SymbolTradeStateEntity,
     TradeDecisionEntity,
 )
 from agent_trading.domain.enums import (
@@ -238,6 +239,151 @@ async def test_assemble_without_optional_fields(service, sample_request):
     # Original fields preserved
     assert intent.request.client_order_id == sample_request.client_order_id
     assert intent.request.symbol == sample_request.symbol
+
+
+@pytest.mark.asyncio
+async def test_assemble_attaches_holding_profile_policy_to_request_metadata(
+    service: DecisionOrchestratorService,
+    sample_request: SubmitOrderRequest,
+) -> None:
+    instrument = InstrumentEntity(
+        instrument_id=uuid4(),
+        symbol=sample_request.symbol,
+        market_code=sample_request.market,
+        exchange_code="KRX",
+        market_segment="KOSPI",
+        asset_class="kr_stock",
+        currency="KRW",
+        name="테스트종목",
+        is_active=True,
+    )
+    await service._repos.instruments.add(instrument)
+    context = DecisionContextEntity(
+        decision_context_id=uuid4(),
+        account_id=uuid4(),
+        strategy_id=uuid4(),
+        config_version_id=uuid4(),
+        market_timestamp=datetime.now(timezone.utc),
+        correlation_id="corr-holding-policy",
+    )
+    await service._repos.decision_contexts.add(context)
+    object.__setattr__(
+        service,
+        "_run_agents",
+        AsyncMock(
+        return_value=AgentExecutionBundle(
+            ai_inputs=AIDecisionInputs(
+                decision_type="BUY",
+                side="BUY",
+                expected_return_bps=Decimal("70.00"),
+                expected_downside_bps=Decimal("20.00"),
+                net_expected_value_bps=Decimal("50.00"),
+                final_trade_score=Decimal("0.80"),
+                minimum_required_edge_bps=Decimal("10.00"),
+                edge_after_cost_bps=Decimal("30.00"),
+                estimated_round_trip_cost_bps=Decimal("10.00"),
+                slippage_buffer_bps=Decimal("10.00"),
+                expected_value_gate_passed=True,
+            ),
+            composer_output=FinalDecisionComposerOutput(
+                decision_type="BUY",
+                side="BUY",
+                confidence=0.9,
+                time_horizon="swing",
+            ),
+        )
+    )
+    )
+
+    intent = await service.assemble(
+        sample_request,
+        decision_context_id=context.decision_context_id,
+    )
+
+    holding_profile_policy = intent.request.metadata.get("holding_profile_policy")
+    assert isinstance(holding_profile_policy, dict)
+    assert holding_profile_policy["holding_profile"] == "core_swing"
+    assert holding_profile_policy["minimum_hold_until"] is not None
+
+
+@pytest.mark.asyncio
+async def test_ensure_trade_decision_persists_symbol_trade_state(
+    service: DecisionOrchestratorService,
+) -> None:
+    account_id = uuid4()
+    instrument = InstrumentEntity(
+        instrument_id=uuid4(),
+        symbol="005930",
+        market_code="KRX",
+        exchange_code="KRX",
+        market_segment="KOSPI",
+        asset_class="kr_stock",
+        currency="KRW",
+        name="테스트종목",
+        is_active=True,
+    )
+    await service._repos.instruments.add(instrument)
+    assembled_context = AssembledContext(
+        decision_context=DecisionContextEntity(
+            decision_context_id=uuid4(),
+            account_id=account_id,
+            strategy_id=uuid4(),
+            config_version_id=uuid4(),
+            market_timestamp=datetime.now(timezone.utc),
+            correlation_id="corr-state-persist",
+        ),
+        source_type="core",
+    )
+    request = SubmitOrderRequest(
+        account_ref="test_account",
+        client_order_id="cid-state",
+        correlation_id="corr-state",
+        strategy_id=str(uuid4()),
+        symbol="005930",
+        market="KRX",
+        side=OrderSide.BUY,
+        order_type=OrderType.LIMIT,
+        quantity=Decimal("10"),
+        price=Decimal("50000"),
+        time_in_force=TimeInForce.DAY,
+    )
+    td_entity = await service._ensure_trade_decision(
+        decision_context_id=assembled_context.decision_context.decision_context_id,
+        request=request,
+        assembled_context=assembled_context,
+        agent_bundle=AgentExecutionBundle(
+            ai_inputs=AIDecisionInputs(
+                decision_type="BUY",
+                side="BUY",
+                expected_return_bps=Decimal("70.00"),
+                expected_downside_bps=Decimal("20.00"),
+                net_expected_value_bps=Decimal("50.00"),
+                final_trade_score=Decimal("0.80"),
+                minimum_required_edge_bps=Decimal("10.00"),
+                edge_after_cost_bps=Decimal("30.00"),
+                estimated_round_trip_cost_bps=Decimal("10.00"),
+                slippage_buffer_bps=Decimal("10.00"),
+                expected_value_gate_passed=True,
+            ),
+            composer_output=FinalDecisionComposerOutput(
+                decision_type="BUY",
+                side="BUY",
+                confidence=0.9,
+                time_horizon="swing",
+            ),
+        ),
+        instrument=instrument,
+    )
+
+    assert td_entity is not None
+    symbol_state = await service._repos.symbol_trade_states.get_by_account_and_instrument(
+        account_id,
+        instrument.instrument_id,
+    )
+    assert isinstance(symbol_state, SymbolTradeStateEntity)
+    assert symbol_state.state == "entry_pending"
+    assert symbol_state.holding_profile == "core_swing"
+    assert symbol_state.minimum_hold_until is not None
 
 
 @pytest.mark.asyncio
@@ -1450,6 +1596,18 @@ class TestWatchCandidateUpgradeGuard:
     ) -> None:
         repos = build_in_memory_repositories()
         now = datetime.now(timezone.utc)
+        instrument = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol=sample_request.symbol,
+            market_code=sample_request.market,
+            exchange_code="KRX",
+            market_segment="KOSPI",
+            asset_class="kr_stock",
+            currency="KRW",
+            name="테스트종목",
+            is_active=True,
+        )
+        await repos.instruments.add(instrument)
 
         context = DecisionContextEntity(
             decision_context_id=uuid4(),
@@ -1478,6 +1636,7 @@ class TestWatchCandidateUpgradeGuard:
             entry_score=0.57,
             exit_score=0.19,
             watch_score=0.57,
+            eligibility_passed=True,
             reason_codes=("trigger_watch_candidate",),
             thresholds={
                 "buy_candidate_threshold": 0.65,
@@ -1498,6 +1657,15 @@ class TestWatchCandidateUpgradeGuard:
                     side="BUY",
                     confidence=0.74,
                     conviction=0.70,
+                    expected_return_bps=Decimal("70.00"),
+                    expected_downside_bps=Decimal("20.00"),
+                    net_expected_value_bps=Decimal("50.00"),
+                    final_trade_score=Decimal("0.80"),
+                    minimum_required_edge_bps=Decimal("10.00"),
+                    edge_after_cost_bps=Decimal("30.00"),
+                    estimated_round_trip_cost_bps=Decimal("10.00"),
+                    slippage_buffer_bps=Decimal("10.00"),
+                    expected_value_gate_passed=True,
                     reason_codes=("fdc_overlay_entry",),
                 ),
                 composer_output=FinalDecisionComposerOutput(
@@ -1519,6 +1687,120 @@ class TestWatchCandidateUpgradeGuard:
         assert intent.ai_backend_inputs.decision_type == "APPROVE"
         assert intent.ai_backend_inputs.side == "BUY"
         assert "watch_candidate_guard" not in intent.ai_backend_inputs.reason_codes
+        assert "ai_override_gate" not in intent.ai_backend_inputs.reason_codes
+
+    @pytest.mark.asyncio
+    async def test_market_overlay_buy_override_blocked_by_symbol_state_reentry_cooldown(
+        self, sample_request: SubmitOrderRequest
+    ) -> None:
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        account_id = uuid4()
+        instrument = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol=sample_request.symbol,
+            market_code=sample_request.market,
+            exchange_code="KRX",
+            market_segment="KOSPI",
+            asset_class="kr_stock",
+            currency="KRW",
+            name="테스트종목",
+            is_active=True,
+        )
+        await repos.instruments.add(instrument)
+
+        context = DecisionContextEntity(
+            decision_context_id=uuid4(),
+            account_id=account_id,
+            strategy_id=uuid4(),
+            config_version_id=uuid4(),
+            market_timestamp=now,
+            correlation_id="corr-market-overlay-cooldown",
+            created_at=now,
+        )
+        await repos.decision_contexts.add(context)
+        await repos.symbol_trade_states.upsert(
+            SymbolTradeStateEntity(
+                symbol_trade_state_id=uuid4(),
+                account_id=account_id,
+                instrument_id=instrument.instrument_id,
+                symbol=instrument.symbol,
+                market=instrument.market_code,
+                state="flat_cooldown",
+                holding_profile="event_probe",
+                reentry_cooldown_until=now + timedelta(minutes=15),
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+        service = DecisionOrchestratorService(
+            repos=repos,
+            use_subprocess_isolation=False,
+        )
+        deterministic_trigger = DeterministicTriggerAssessment(
+            trigger_version="deterministic_trigger_v1",
+            primary_candidate="WATCH",
+            candidate_set=("WATCH",),
+            watch_candidate=True,
+            buy_candidate=False,
+            sell_candidate=False,
+            reduce_candidate=False,
+            candidate_confidence=0.57,
+            entry_score=0.57,
+            exit_score=0.19,
+            watch_score=0.57,
+            eligibility_passed=True,
+            reason_codes=("trigger_watch_candidate",),
+            thresholds={
+                "buy_candidate_threshold": 0.65,
+                "watch_candidate_threshold": 0.45,
+            },
+            metadata={"source_type": "market_overlay"},
+        )
+        service._derive_deterministic_context_components = AsyncMock(  # type: ignore[method-assign]
+            return_value=DeterministicDerivationBundle(
+                source_type="market_overlay",
+                deterministic_trigger=deterministic_trigger,
+            )
+        )
+        service._run_agents = AsyncMock(  # type: ignore[method-assign]
+            return_value=AgentExecutionBundle(
+                ai_inputs=AIDecisionInputs(
+                    decision_type="APPROVE",
+                    side="BUY",
+                    confidence=0.74,
+                    conviction=0.70,
+                    expected_return_bps=Decimal("70.00"),
+                    expected_downside_bps=Decimal("20.00"),
+                    net_expected_value_bps=Decimal("50.00"),
+                    final_trade_score=Decimal("0.80"),
+                    minimum_required_edge_bps=Decimal("10.00"),
+                    edge_after_cost_bps=Decimal("30.00"),
+                    estimated_round_trip_cost_bps=Decimal("10.00"),
+                    slippage_buffer_bps=Decimal("10.00"),
+                    expected_value_gate_passed=True,
+                    reason_codes=("fdc_overlay_entry",),
+                ),
+                composer_output=FinalDecisionComposerOutput(
+                    decision_type="APPROVE",
+                    side="BUY",
+                    confidence=0.74,
+                    conviction=0.70,
+                    reason_codes=("fdc_overlay_entry",),
+                    summary="한국어 요약",
+                ),
+            )
+        )
+
+        intent = await service.assemble(
+            sample_request,
+            decision_context_id=context.decision_context_id,
+        )
+
+        assert intent.ai_backend_inputs.decision_type == "WATCH"
+        assert "ai_override_gate" in intent.ai_backend_inputs.reason_codes
+        assert "ai_override_reverse_cooldown_blocked" in intent.ai_backend_inputs.reason_codes
 
     @pytest.mark.asyncio
     async def test_held_position_watch_candidate_allows_reduce_sell(

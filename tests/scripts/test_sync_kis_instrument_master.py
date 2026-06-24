@@ -345,6 +345,80 @@ async def test_sync_instruments_updates_existing_krx_row_for_domestic_segment_in
 
 
 @pytest.mark.asyncio
+async def test_sync_instruments_promotes_placeholder_row_to_master_row() -> None:
+    repos = build_in_memory_repositories()
+    placeholder = InstrumentEntity(
+        instrument_id=_make_instrument_id("005930", "KRX"),
+        symbol="005930",
+        market_code="KRX",
+        asset_class="kr_stock",
+        currency="KRW",
+        name="[PLACEHOLDER] 005930",
+        tick_size=Decimal("1"),
+        lot_size=Decimal("1"),
+        is_active=False,
+        exchange_code="KRX",
+        market_segment="KOSPI",
+        metadata={
+            "placeholder": True,
+            "placeholder_source": "mapping_gap_auto_seed",
+            "canonical_master_pending": True,
+        },
+    )
+    await repos.instruments.add(placeholder)
+
+    incoming = [
+        InstrumentEntity(
+            instrument_id=_make_instrument_id("005930", "KRX"),
+            symbol="005930",
+            market_code="KRX",
+            asset_class="kr_stock",
+            currency="KRW",
+            name="삼성전자",
+            tick_size=Decimal("100"),
+            lot_size=Decimal("1"),
+            is_active=True,
+            exchange_code="KRX",
+            market_segment="KOSPI",
+            metadata={
+                "sync_source": "kis_master_file",
+                "source_tag": "kis_master_csv",
+                "source_market_code": "KOSPI",
+                "canonical_storage_market_code": "KRX",
+                "index_memberships": ["KOSPI100", "KOSPI200"],
+            },
+        )
+    ]
+
+    counters = await _sync_instruments(
+        repos.instruments,
+        incoming,
+        dry_run=False,
+        deactivate_missing=False,
+        deactivate_market_code=None,
+        membership_repo=repos.instrument_index_memberships,
+        membership_effective_from=datetime(2026, 6, 24).date(),
+    )
+
+    promoted = await repos.instruments.get_by_symbol("005930", "KRX")
+    memberships = await repos.instrument_index_memberships.list_active_by_instrument(
+        placeholder.instrument_id
+    )
+    assert counters.inserted == 0
+    assert counters.updated == 1
+    assert counters.skipped == 0
+    assert promoted is not None
+    assert promoted.instrument_id == placeholder.instrument_id
+    assert promoted.name == "삼성전자"
+    assert promoted.is_active is True
+    assert promoted.tick_size == Decimal("100")
+    assert "placeholder" not in promoted.metadata
+    assert "canonical_master_pending" not in promoted.metadata
+    assert promoted.metadata["sync_source"] == "kis_master_file"
+    assert [item.membership_code for item in memberships] == ["KOSPI100", "KOSPI200"]
+
+
+@pytest.mark.asyncio
 async def test_sync_instruments_backfills_index_membership_table_even_on_skip() -> None:
     repos = build_in_memory_repositories()
     existing = InstrumentEntity(
@@ -411,6 +485,48 @@ def test_classify_detects_metadata_change() -> None:
         metadata={"source_tag": "new"},
     )
     assert _classify(existing, incoming) == "update"
+
+
+def test_classify_detects_placeholder_promotion() -> None:
+    existing = InstrumentEntity(
+        instrument_id=_make_instrument_id("005930", "KRX"),
+        symbol="005930",
+        market_code="KRX",
+        asset_class="kr_stock",
+        currency="KRW",
+        name="[PLACEHOLDER] 005930",
+        tick_size=Decimal("1"),
+        lot_size=Decimal("1"),
+        is_active=False,
+        exchange_code="KRX",
+        market_segment="KOSPI",
+        metadata={
+            "placeholder": True,
+            "placeholder_source": "mapping_gap_auto_seed",
+            "canonical_master_pending": True,
+        },
+    )
+    incoming = InstrumentEntity(
+        instrument_id=_make_instrument_id("005930", "KRX"),
+        symbol="005930",
+        market_code="KRX",
+        asset_class="kr_stock",
+        currency="KRW",
+        name="삼성전자",
+        tick_size=Decimal("100"),
+        lot_size=Decimal("1"),
+        is_active=True,
+        exchange_code="KRX",
+        market_segment="KOSPI",
+        metadata={
+            "sync_source": "kis_master_file",
+            "source_tag": "kis_master_csv",
+            "source_market_code": "KOSPI",
+            "canonical_storage_market_code": "KRX",
+            "index_memberships": ["KOSPI100", "KOSPI200"],
+        },
+    )
+    assert _classify(existing, incoming) == "promote"
 
 
 def test_load_csv_parses_index_memberships_pipe_delimited_field(tmp_path) -> None:

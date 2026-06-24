@@ -1,5 +1,5 @@
-symbol,membership_code
-005930,KOSPI100
-005930,KOSPI200
-090150,KOSDAQ50
-247540,KOSDAQ150
+symbol,membership_code,source_name,source_ref,as_of_date,note
+005930,KOSPI100,krx_manual,ops-sheet-2026w26,2026-06-24,검증완료
+005930,KOSPI200,krx_manual,ops-sheet-2026w26,2026-06-24,검증완료
+090150,KOSDAQ50,krx_manual,ops-sheet-2026w26,2026-06-24,검증완료
+247540,KOSDAQ150,krx_manual,ops-sheet-2026w26,2026-06-24,검증완료
