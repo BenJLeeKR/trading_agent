@@ -24,7 +24,7 @@ class PipelineResult:
     command: tuple[str, ...]
 
 
-def _parse_args() -> argparse.Namespace:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="외부 index membership source package를 검증/반영한다.",
     )
@@ -74,7 +74,7 @@ def _parse_args() -> argparse.Namespace:
         default="text",
         help="실행 결과 출력 형식",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def _build_steps(args: argparse.Namespace) -> list[PipelineStep]:

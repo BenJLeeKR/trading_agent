@@ -78,7 +78,7 @@
 - KIS 종목정보파일 다운로드/보관 경로 확정
 - 주기 배치(새벽/장후) 연결
 - `instrument master 갱신 정책` 정식화
-  - [`plans/2026-06-08_kis_instrument_master_update_policy.md`](./2026-06-08_kis_instrument_master_update_policy.md)
+  - [`plans/[POLICY] kis_instrument_master_update_policy.md`](./[POLICY]%20kis_instrument_master_update_policy.md)
 - snapshot/event mapping과의 정합성 검증 확대
 - KOSDAQ master sync 후 universe / signal feature / decision loop 경로 실측
   - 2026-06-19 기준 테스트 고정 완료:

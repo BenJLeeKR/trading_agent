@@ -173,6 +173,10 @@
     - 실제 외부 원천 파일 반영 시
       `source package build -> catalog validation -> resolution validation -> import`
       순서를 문서로 고정했다.
+  - [x] 통합 파이프라인 실행기 추가
+    - `scripts/run_index_membership_source_package_pipeline.py`
+    - 위 4단계를 하나의 명령으로 순차 실행하고,
+      중간 단계 실패 시 즉시 중단하도록 했다.
 - KOSPI/KOSDAQ master sync 운영 절차와 실행 이력 UI 연결
 - UniverseSelectionService의 membership read를
   `instrument_index_memberships` 우선, `metadata.index_memberships` fallback으로

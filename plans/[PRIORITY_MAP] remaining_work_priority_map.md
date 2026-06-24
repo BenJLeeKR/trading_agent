@@ -388,7 +388,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - [x] 정규화된 KIS master CSV 기반 기본종목정보 수집 파이프라인 1차 완료
   - [`plans/2026-06-08_kis_instrument_master_sync_pipeline_phase1.md`](./2026-06-08_kis_instrument_master_sync_pipeline_phase1.md)
 - [x] instrument master 갱신 정책
-  - [`plans/2026-06-08_kis_instrument_master_update_policy.md`](./2026-06-08_kis_instrument_master_update_policy.md)
+  - [`plans/[POLICY] kis_instrument_master_update_policy.md`](./[POLICY]%20kis_instrument_master_update_policy.md)
   - KOSDAQ 종목은 `instrument master`에 적재되기 전에는
     Universe Selection에서 `unknown_instrument`로 제외되므로,
     시장 확장 전제 조건을 문서/코드에 명시했다.
@@ -618,6 +618,12 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
         로 고정하고,
         unresolved symbol / placeholder symbol을
         import 전에 차단할 수 있게 했다.
+    - [x] 통합 파이프라인 실행기를 추가했다.
+      - `scripts/run_index_membership_source_package_pipeline.py`
+      - 외부 원천 반영 시
+        `source package build -> catalog validation -> resolution validation -> import`
+        4단계를 하나의 명령으로 순차 실행하고,
+        어느 단계에서 실패했는지 바로 식별할 수 있게 했다.
     - [x] 운영 보조 경로로
       `index_membership_seed.csv` import 스크립트와 템플릿을 추가했다.
       - 스크립트: `scripts/import_instrument_index_membership_seed.py`

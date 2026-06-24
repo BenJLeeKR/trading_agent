@@ -19,6 +19,31 @@
 
 ## 절차
 
+### 0. 통합 파이프라인 실행기 사용 가능
+
+```bash
+python3 scripts/run_index_membership_source_package_pipeline.py \
+  --manifest data/instrument_master/source/index_membership_source_manifest.json \
+  --seed-csv data/instrument_master/source/index_membership_seed.csv \
+  --catalog logs/kis_index_category_catalog.json \
+  --replace-listed-symbols
+```
+
+실반영 시:
+
+```bash
+python3 scripts/run_index_membership_source_package_pipeline.py \
+  --manifest data/instrument_master/source/index_membership_source_manifest.json \
+  --seed-csv data/instrument_master/source/index_membership_seed.csv \
+  --catalog logs/kis_index_category_catalog.json \
+  --replace-listed-symbols \
+  --apply
+```
+
+의미:
+- 위 실행기는 아래 1~4단계를 같은 순서로 호출한다.
+- 중간 단계 하나라도 실패하면 즉시 중단한다.
+
 ### 1. source package -> seed CSV 생성
 
 ```bash
