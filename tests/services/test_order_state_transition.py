@@ -153,6 +153,15 @@ class TestAllowedTransitions:
         assert result.status == OrderStatus.CANCEL_PENDING
 
     @pytest.mark.asyncio
+    async def test_partially_filled_to_expired(
+        self, order_manager: OrderManager, in_memory_repos: RepositoryContainer
+    ) -> None:
+        order = _make_order(OrderStatus.PARTIALLY_FILLED)
+        await in_memory_repos.orders.add(order)
+        result = await order_manager.transition_to(order, OrderStatus.EXPIRED)
+        assert result.status == OrderStatus.EXPIRED
+
+    @pytest.mark.asyncio
     async def test_cancel_pending_to_cancelled(
         self, order_manager: OrderManager, in_memory_repos: RepositoryContainer
     ) -> None:

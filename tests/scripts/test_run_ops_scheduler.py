@@ -2168,11 +2168,12 @@ class TestDecisionLoopIntradayFreeze:
         repos = build_in_memory_repositories()
         run_id = uuid4()
         instrument_id = uuid4()
-        state = SchedulerState(run_date=date(2026, 6, 24))
+        run_date = date(2026, 6, 24)
+        state = SchedulerState(run_date=run_date)
         await repos.universe_freeze_runs.add(
             UniverseFreezeRunEntity(
                 universe_freeze_run_id=run_id,
-                business_date=state.run_date,
+                business_date=run_date,
                 freeze_purpose=DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
                 freeze_sequence=1,
                 frozen_at=datetime.now(timezone.utc),
@@ -2203,7 +2204,18 @@ class TestDecisionLoopIntradayFreeze:
         async def _mock_postgres_runtime(run_migrations: bool = False):
             yield {"repositories": repos}
 
-        with patch("scripts.run_ops_scheduler.postgres_runtime", new=_mock_postgres_runtime):
+        class _FrozenDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                base = datetime(2026, 6, 24, 8, 50, 0, tzinfo=KST)
+                if tz is None:
+                    return base.replace(tzinfo=None)
+                return base.astimezone(tz)
+
+        with (
+            patch("scripts.run_ops_scheduler.postgres_runtime", new=_mock_postgres_runtime),
+            patch("scripts.run_ops_scheduler.datetime", _FrozenDateTime),
+        ):
             await _ensure_decision_loop_intraday_freeze(state)
 
         assert state.intraday_universe_freeze_done is True
@@ -2211,7 +2223,8 @@ class TestDecisionLoopIntradayFreeze:
     @pytest.mark.asyncio
     async def test_materializes_intraday_freeze_when_missing(self) -> None:
         repos = build_in_memory_repositories()
-        state = SchedulerState(run_date=date(2026, 6, 24))
+        run_date = date(2026, 6, 24)
+        state = SchedulerState(run_date=run_date)
         instrument_id = uuid4()
         await repos.instruments.add(
             InstrumentEntity(
@@ -2233,24 +2246,45 @@ class TestDecisionLoopIntradayFreeze:
         async def _mock_postgres_runtime(run_migrations: bool = False):
             yield {"repositories": repos}
 
-        async def _fake_read_trading_universe():
+        async def _fake_load_trading_universe_with_anchor():
             return (
+                (
+                    MagicMock(
+                        symbol="005930",
+                        market="KRX",
+                        source_type="core",
+                        inclusion_reason="approved_core_universe",
+                    ),
+                ),
                 MagicMock(
-                    symbol="005930",
-                    market="KRX",
-                    source_type="core",
-                    inclusion_reason="approved_core_universe",
+                    source="live_compose",
+                    universe_freeze_run_id=None,
+                    freeze_purpose=DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
+                    freeze_reused=False,
+                    business_date="2026-06-24",
                 ),
             )
 
+        class _FrozenDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                base = datetime(2026, 6, 24, 8, 50, 0, tzinfo=KST)
+                if tz is None:
+                    return base.replace(tzinfo=None)
+                return base.astimezone(tz)
+
         with (
             patch("scripts.run_ops_scheduler.postgres_runtime", new=_mock_postgres_runtime),
-            patch("scripts.run_decision_loop._read_trading_universe", new=_fake_read_trading_universe),
+            patch(
+                "scripts.run_decision_loop._load_trading_universe_with_anchor",
+                new=_fake_load_trading_universe_with_anchor,
+            ),
+            patch("scripts.run_ops_scheduler.datetime", _FrozenDateTime),
         ):
             await _ensure_decision_loop_intraday_freeze(state)
 
         latest = await repos.universe_freeze_runs.get_latest(
-            state.run_date,
+            run_date,
             DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
         )
         assert latest is not None
@@ -2259,7 +2293,78 @@ class TestDecisionLoopIntradayFreeze:
         )
         assert len(items) == 1
         assert items[0].symbol == "005930"
+        assert latest.selection_params_json["resolved_run_date"] == run_date.isoformat()
+        assert latest.selection_params_json["universe_anchor"]["source"] == "live_compose"
         assert state.intraday_universe_freeze_done is True
+
+    @pytest.mark.asyncio
+    async def test_intraday_freeze_uses_current_kst_date_when_state_run_date_is_stale(self) -> None:
+        repos = build_in_memory_repositories()
+        state = SchedulerState(run_date=date(2026, 6, 5))
+        instrument_id = uuid4()
+        await repos.instruments.add(
+            InstrumentEntity(
+                instrument_id=instrument_id,
+                symbol="005930",
+                market_code="KRX",
+                asset_class="KR_STOCK",
+                currency="KRW",
+                name="삼성전자",
+                is_active=True,
+                tick_size=Decimal("50"),
+                metadata={"core_universe": True, "market_segment": "KOSPI"},
+            )
+        )
+
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _mock_postgres_runtime(run_migrations: bool = False):
+            yield {"repositories": repos}
+
+        async def _fake_load_trading_universe_with_anchor():
+            return (
+                (
+                    MagicMock(
+                        symbol="005930",
+                        market="KRX",
+                        source_type="core",
+                        inclusion_reason="approved_core_universe",
+                    ),
+                ),
+                MagicMock(
+                    source="live_compose",
+                    universe_freeze_run_id=None,
+                    freeze_purpose=DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
+                    freeze_reused=False,
+                    business_date="2026-06-25",
+                ),
+            )
+
+        class _FrozenDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                base = datetime(2026, 6, 25, 8, 50, 0, tzinfo=KST)
+                if tz is None:
+                    return base.replace(tzinfo=None)
+                return base.astimezone(tz)
+
+        with (
+            patch("scripts.run_ops_scheduler.postgres_runtime", new=_mock_postgres_runtime),
+            patch(
+                "scripts.run_decision_loop._load_trading_universe_with_anchor",
+                new=_fake_load_trading_universe_with_anchor,
+            ),
+            patch("scripts.run_ops_scheduler.datetime", _FrozenDateTime),
+        ):
+            await _ensure_decision_loop_intraday_freeze(state)
+
+        latest = await repos.universe_freeze_runs.get_latest(
+            date(2026, 6, 25),
+            DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
+        )
+        assert latest is not None
+        assert latest.business_date == date(2026, 6, 25)
 
     @pytest.mark.asyncio
     async def test_intraday_decision_command_uses_remaining_buy_budget(self) -> None:

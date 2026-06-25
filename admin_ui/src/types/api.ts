@@ -265,6 +265,27 @@ export interface TradingUniversePreviewItem {
   priority: number;
 }
 
+export interface TradingUniverseFreezeView {
+  universe_freeze_run_id: string;
+  freeze_purpose: string;
+  business_date: string;
+  frozen_at: string;
+  selection_version: string | null;
+  target_count: number;
+  source_type_counts: Record<string, number>;
+  inclusion_reason_counts: Record<string, number>;
+  items: TradingUniversePreviewItem[];
+}
+
+export interface TradingUniverseFreezeComparisonView {
+  exact_match: boolean;
+  live_total_count: number;
+  freeze_total_count: number;
+  common_symbol_count: number;
+  live_only_symbols: string[];
+  freeze_only_symbols: string[];
+}
+
 export interface TradingUniversePreviewResponse {
   account_id: string;
   lookback_hours: number;
@@ -278,6 +299,8 @@ export interface TradingUniversePreviewResponse {
   inclusion_reason_counts: Record<string, number>;
   market_overlay_diagnostics: MarketOverlayDiagnosticsView;
   items: TradingUniversePreviewItem[];
+  active_intraday_freeze: TradingUniverseFreezeView | null;
+  active_intraday_freeze_comparison: TradingUniverseFreezeComparisonView | null;
 }
 
 export interface TradingUniverseCoverageItem {

@@ -287,6 +287,25 @@ def _combine(run_date: date, clock: dtime) -> datetime:
     return datetime.combine(run_date, clock, tzinfo=KST)
 
 
+def _resolve_intraday_freeze_run_date(run_date: date) -> date:
+    """Resolve the business date used for intraday freeze materialization.
+
+    운영 스케줄러의 intraday freeze는 현재 KST 영업일과 동일한 날짜에
+    앵커되어야 한다. stale state나 잘못된 재기동으로 ``run_date``가
+    과거값인 경우, 현재 KST 날짜로 보정하여 잘못된 business_date 적재를 방지한다.
+    """
+    now_kst = datetime.now(KST).date()
+    if run_date != now_kst:
+        logger.warning(
+            "decision loop intraday freeze run_date mismatch: state_run_date=%s now_kst=%s "
+            "— using current KST date for freeze materialization",
+            run_date.isoformat(),
+            now_kst.isoformat(),
+        )
+        return now_kst
+    return run_date
+
+
 def _should_rollover_to_next_run_date(
     *,
     now: datetime,
@@ -2023,10 +2042,12 @@ async def _ensure_decision_loop_intraday_freeze(
     if state.intraday_universe_freeze_done:
         return
 
+    freeze_run_date = _resolve_intraday_freeze_run_date(state.run_date)
+
     async with postgres_runtime(run_migrations=False) as runtime:
         repos = runtime["repositories"]
         existing_run = await repos.universe_freeze_runs.get_latest(
-            state.run_date,
+            freeze_run_date,
             DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
         )
         if existing_run is not None:
@@ -2041,25 +2062,25 @@ async def _ensure_decision_loop_intraday_freeze(
                     "(freeze_run_id=%s, target_count=%d, run_date=%s)",
                     existing_run.universe_freeze_run_id,
                     len(existing_items),
-                    state.run_date.isoformat(),
+                    freeze_run_date.isoformat(),
                 )
                 return
 
-    from scripts.run_decision_loop import _read_trading_universe
+    from scripts.run_decision_loop import _load_trading_universe_with_anchor
 
-    universe = await _read_trading_universe()
+    universe, universe_anchor = await _load_trading_universe_with_anchor()
     if not universe:
         logger.warning(
             "decision loop intraday freeze skipped: composed universe empty "
             "(run_date=%s)",
-            state.run_date.isoformat(),
+            freeze_run_date.isoformat(),
         )
         return
 
     async with postgres_runtime(run_migrations=False) as runtime:
         repos = runtime["repositories"]
         existing_run = await repos.universe_freeze_runs.get_latest(
-            state.run_date,
+            freeze_run_date,
             DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
         )
         if existing_run is not None:
@@ -2074,7 +2095,7 @@ async def _ensure_decision_loop_intraday_freeze(
                     "(freeze_run_id=%s, target_count=%d, run_date=%s)",
                     existing_run.universe_freeze_run_id,
                     len(existing_items),
-                    state.run_date.isoformat(),
+                    freeze_run_date.isoformat(),
                 )
                 return
 
@@ -2112,14 +2133,20 @@ async def _ensure_decision_loop_intraday_freeze(
             logger.warning(
                 "decision loop intraday freeze materialization failed: no_items "
                 "(run_date=%s, errors=%s)",
-                state.run_date.isoformat(),
+                freeze_run_date.isoformat(),
                 errors[:5],
             )
             return
 
+        source_type_counts: dict[str, int] = {}
+        for item in universe:
+            source_type_counts[item.source_type] = (
+                source_type_counts.get(item.source_type, 0) + 1
+            )
+
         freeze_run = UniverseFreezeRunEntity(
             universe_freeze_run_id=freeze_run_id,
-            business_date=state.run_date,
+            business_date=freeze_run_date,
             freeze_purpose=DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
             freeze_sequence=1 if existing_run is None else existing_run.freeze_sequence + 1,
             frozen_at=datetime.now(timezone.utc),
@@ -2127,6 +2154,15 @@ async def _ensure_decision_loop_intraday_freeze(
             selection_params_json={
                 "source": "ops_scheduler",
                 "target_count": len(universe),
+                "resolved_run_date": freeze_run_date.isoformat(),
+                "universe_anchor": {
+                    "source": universe_anchor.source,
+                    "universe_freeze_run_id": universe_anchor.universe_freeze_run_id,
+                    "freeze_purpose": universe_anchor.freeze_purpose,
+                    "freeze_reused": universe_anchor.freeze_reused,
+                    "business_date": universe_anchor.business_date,
+                },
+                "source_type_counts": source_type_counts,
             },
             target_count=len(freeze_items),
             status="materialized",
@@ -2138,11 +2174,12 @@ async def _ensure_decision_loop_intraday_freeze(
     await _persist_operations_day_run(state, dsn)
     logger.info(
         "decision loop intraday freeze materialized "
-        "(freeze_run_id=%s, target_count=%d, skipped=%d, run_date=%s)",
+        "(freeze_run_id=%s, target_count=%d, skipped=%d, run_date=%s, anchor_source=%s)",
         freeze_run_id,
         len(freeze_items),
         len(errors),
-        state.run_date.isoformat(),
+        freeze_run_date.isoformat(),
+        universe_anchor.source,
     )
 
 

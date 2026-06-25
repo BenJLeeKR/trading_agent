@@ -22,7 +22,7 @@ from agent_trading.domain.entities import (
     InstrumentEntity,
     OrderRequestEntity,
 )
-from agent_trading.domain.enums import OrderSide, OrderStatus, OrderType
+from agent_trading.domain.enums import OrderSide, OrderStatus, OrderType, TimeInForce
 from agent_trading.domain.models import FillEvent, OrderStatusResult
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import OrderQuery
@@ -792,6 +792,52 @@ class OrderSyncService:
                         last_synced_at=now,
                     )
 
+        # 거래소 규칙상 DAY 주문의 미체결 잔량은 다음 거래일로 이월되지 않는다.
+        # 따라서 전일 PARTIALLY_FILLED SELL이 after-hours에도 active로 남아 있으면
+        # stale residual로 보고 terminal 처리한다.
+        if (
+            is_after_hours
+            and self._is_prior_day_day_partial_sell_residual(
+                order=order,
+                broker_status=broker_status,
+            )
+        ):
+            updated_order = await self._try_transition(
+                order,
+                OrderStatus.EXPIRED,
+                reason_code="after_hours_day_partial_sell_residual_expired",
+                reason_message=(
+                    "After-hours cleanup: prior-day DAY partially filled SELL "
+                    "residual expired at market close"
+                ),
+            )
+            if updated_order.status != order.status:
+                await self.repos.broker_orders.update(
+                    broker_order_id,
+                    broker_status="expired",
+                    updated_at=now,
+                )
+                await self._update_last_synced_at(broker_order_id, now)
+                logger.warning(
+                    "[PRIOR_DAY_DAY_PARTIAL_EXPIRE] order_request_id=%s broker_order_id=%s "
+                    "submitted_at=%s status=%s → EXPIRED",
+                    order.order_request_id,
+                    broker_order_id,
+                    order.submitted_at or order.created_at,
+                    order.status.value,
+                )
+                return SyncOrderResult(
+                    broker_order_id=broker_order_id,
+                    previous_status=previous_status,
+                    current_status=updated_order.status,
+                    status_changed=True,
+                    fills_synced=fills_synced,
+                    fills_skipped=fills_skipped,
+                    terminal=True,
+                    snapshot_triggered=False,
+                    last_synced_at=now,
+                )
+
         # ── 7. Update last_synced_at ──
         await self._update_last_synced_at(broker_order_id, now)
 
@@ -889,6 +935,30 @@ class OrderSyncService:
         ):
             return _GRACE_PERIOD_AFTER_HOURS_EXPIRED_MARKET_SECONDS
         return _GRACE_PERIOD_AFTER_HOURS_EXPIRED_SECONDS
+
+    @staticmethod
+    def _is_prior_day_day_partial_sell_residual(
+        *,
+        order: OrderRequestEntity,
+        broker_status: OrderStatus,
+    ) -> bool:
+        if order.side != OrderSide.SELL:
+            return False
+        if order.status != OrderStatus.PARTIALLY_FILLED:
+            return False
+        if broker_status != OrderStatus.PARTIALLY_FILLED:
+            return False
+        if order.time_in_force != TimeInForce.DAY:
+            return False
+
+        order_time = order.submitted_at or order.created_at
+        if order_time is None:
+            return False
+
+        kst = ZoneInfo("Asia/Seoul")
+        now_kst = datetime.now(timezone.utc).astimezone(kst)
+        order_kst_date = order_time.astimezone(kst).date()
+        return order_kst_date < now_kst.date()
 
     async def _try_transition(
         self,

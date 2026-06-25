@@ -15,6 +15,48 @@ from agent_trading.repositories.container import RepositoryContainer
 router = APIRouter(tags=["positions"])
 
 
+async def _build_cash_balance_view(
+    repos: RepositoryContainer,
+    account_id: UUID,
+    snapshot,
+) -> CashBalanceSnapshotView | None:
+    """Build cash balance view with a recent non-null orderable fallback."""
+    if snapshot is None:
+        return None
+
+    effective_snapshot = snapshot
+    if snapshot.orderable_amount is None:
+        recent_cash_snapshots = await repos.cash_balance_snapshots.list_by_account(account_id)
+        fallback_orderable_amount = next(
+            (
+                item.orderable_amount
+                for item in recent_cash_snapshots
+                if item.orderable_amount is not None
+            ),
+            None,
+        )
+        if fallback_orderable_amount is not None:
+            effective_snapshot = type(snapshot)(
+                cash_balance_snapshot_id=snapshot.cash_balance_snapshot_id,
+                account_id=snapshot.account_id,
+                currency=snapshot.currency,
+                available_cash=snapshot.available_cash,
+                settled_cash=snapshot.settled_cash,
+                unsettled_cash=snapshot.unsettled_cash,
+                source_of_truth=snapshot.source_of_truth,
+                snapshot_at=snapshot.snapshot_at,
+                total_asset=snapshot.total_asset,
+                settlement_amount=snapshot.settlement_amount,
+                total_unrealized_pnl=snapshot.total_unrealized_pnl,
+                orderable_amount=fallback_orderable_amount,
+                created_at=snapshot.created_at,
+                fetch_status=snapshot.fetch_status,
+                snapshot_sync_run_id=snapshot.snapshot_sync_run_id,
+            )
+
+    return CashBalanceSnapshotView.model_validate(effective_snapshot)
+
+
 @router.get("/positions", response_model=list[PositionSnapshotView])
 async def list_positions(
     account_id: str = Query(..., description="Account UUID"),
@@ -69,6 +111,4 @@ async def get_cash_balance(
         raise HTTPException(status_code=400, detail="Invalid account_id UUID")
 
     snapshot = await repos.cash_balance_snapshots.get_latest_by_account(aid)
-    if snapshot is None:
-        return None
-    return CashBalanceSnapshotView.model_validate(snapshot)
+    return await _build_cash_balance_view(repos, aid, snapshot)

@@ -91,6 +91,7 @@ _ALLOWED_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
         OrderStatus.FILLED,
         OrderStatus.CANCEL_PENDING,
         OrderStatus.RECONCILE_REQUIRED,
+        OrderStatus.EXPIRED,
     },
     OrderStatus.CANCEL_PENDING: {
         OrderStatus.CANCELLED,

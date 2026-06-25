@@ -15,8 +15,7 @@ import {
   getClients,
   getAccounts,
   getOrders,
-  getPositions,
-  getCashBalance,
+  getAccountSnapshots,
   getReconciliationSummary,
   getSnapshotSyncRuns,
   getLatestMarketSession,
@@ -111,6 +110,16 @@ interface MarketOverlayRecentRow {
   orderStatus: string;
 }
 
+interface UniverseFreezeRow {
+  id: string;
+  symbol: string;
+  market: string;
+  sourceType: string;
+  inclusionReason: string;
+  priority: number;
+  buyExecutionStatus: string;
+}
+
 interface DashboardData {
   clients: ClientDetail[];
   health: HealthResponse | null;
@@ -118,6 +127,7 @@ interface DashboardData {
   reconSummary: ReconciliationSummary | null;
   reconRuns: ReconciliationRunSummary[];
   orders: OrderSummary[];
+  todayOrders: OrderSummary[];
   accounts: AccountSummary[];
   positionsMap: Map<string, PositionSnapshotView[]>;
   cashMap: Map<string, CashBalanceSnapshotView | null>;
@@ -377,6 +387,10 @@ export default function OperationsDashboardView() {
       addError("GET /orders", e);
       return [];
     });
+    const todayOrdersPromise = getOrders(undefined, undefined, getKstTodayString()).catch((e) => {
+      addError("GET /orders?date=today", e);
+      return [];
+    });
     const todayOrderSummaryPromise = getOrderDailySummary().catch((e) => {
       addError("GET /orders/daily-summary", e);
       return null;
@@ -404,11 +418,12 @@ export default function OperationsDashboardView() {
       return null;
     });
 
-    const [health, readyz, reconSummary, orders, todayOrderSummary, buyBlockSummaryData, clients, sessionData, operationsDayData, eventsResp] = await Promise.all([
+    const [health, readyz, reconSummary, orders, todayOrders, todayOrderSummary, buyBlockSummaryData, clients, sessionData, operationsDayData, eventsResp] = await Promise.all([
       healthPromise,
       readyzPromise,
       reconSummaryPromise,
       ordersPromise,
+      todayOrdersPromise,
       todayOrderSummaryPromise,
       buyBlockSummaryPromise,
       clientsPromise,
@@ -432,32 +447,28 @@ export default function OperationsDashboardView() {
       }
     }
 
-    // ── Positions per account ──
+    // ── Account snapshots per account ──
     const positionsMap = new Map<string, PositionSnapshotView[]>();
-    if (accounts.length > 0) {
-      const posResults = await Promise.allSettled(
-        accounts.map((a) => getPositions(a.account_id).then((p) => ({ accountId: a.account_id, positions: p })))
-      );
-      posResults.forEach((r) => {
-        if (r.status === "fulfilled") {
-          positionsMap.set(r.value.accountId, r.value.positions);
-        } else {
-          addError("GET /positions", "일부 계좌 포지션 조회 실패");
-        }
-      });
-    }
-
-    // ── Cash per account ──
     const cashMap = new Map<string, CashBalanceSnapshotView | null>();
     if (accounts.length > 0) {
-      const cashResults = await Promise.allSettled(
-        accounts.map((a) => getCashBalance(a.account_id).then((c) => ({ accountId: a.account_id, cash: c })))
+      const accountSnapshotResults = await Promise.allSettled(
+        accounts.map((a) =>
+          getAccountSnapshots(a.account_id).then((snapshot) => ({
+            accountId: a.account_id,
+            positions: snapshot.positions,
+            cash: snapshot.cash_balance,
+          }))
+        )
       );
-      cashResults.forEach((r) => {
+      accountSnapshotResults.forEach((r) => {
         if (r.status === "fulfilled") {
+          positionsMap.set(r.value.accountId, r.value.positions);
           cashMap.set(r.value.accountId, r.value.cash);
         } else {
-          addError("GET /cash-balance", "일부 계좌 현금 조회 실패");
+          addError(
+            "GET /account-snapshots/latest",
+            "일부 계좌 스냅샷 조회 실패",
+          );
         }
       });
     }
@@ -537,6 +548,7 @@ export default function OperationsDashboardView() {
       reconSummary: reconSummary as ReconciliationSummary | null,
       reconRuns,
       orders,
+      todayOrders,
       accounts,
       positionsMap,
       cashMap,
@@ -973,12 +985,65 @@ export default function OperationsDashboardView() {
   const alertStatusVariant: "error" | "warning" | "healthy" =
     d.urgentCount > 0 ? "error" : d.cautionCount > 0 ? "warning" : "healthy";
 
-  const marketOverlayCoverageItem = data.tradingUniverseCoverage?.items.find(
-    (item) => item.source_type === "market_overlay"
-  ) ?? null;
-  const marketOverlayPreviewCount =
-    data.tradingUniversePreview?.source_type_counts?.market_overlay ?? 0;
+  const activeIntradayFreeze = data.tradingUniversePreview?.active_intraday_freeze ?? null;
+  const activeIntradayFreezeComparison =
+    data.tradingUniversePreview?.active_intraday_freeze_comparison ?? null;
+  const freezeItems = activeIntradayFreeze?.items ?? [];
+  const freezeMarketOverlayCount = activeIntradayFreeze?.source_type_counts?.market_overlay ?? 0;
   const marketOverlayDiagnostics = data.tradingUniversePreview?.market_overlay_diagnostics ?? null;
+  const todayBuyOrders = data.todayOrders.filter((order) => order.side === "buy");
+  const latestTodayBuyOrderBySymbol = new Map<string, OrderSummary>();
+  todayBuyOrders.forEach((order) => {
+    const symbol = order.symbol ?? "";
+    if (!symbol) return;
+    const existing = latestTodayBuyOrderBySymbol.get(symbol);
+    const orderTime = new Date(order.created_at ?? 0).getTime();
+    const existingTime = new Date(existing?.created_at ?? 0).getTime();
+    if (!existing || orderTime >= existingTime) {
+      latestTodayBuyOrderBySymbol.set(symbol, order);
+    }
+  });
+  const freezeBuyOrderCount = freezeItems.reduce((count, item) => {
+    return latestTodayBuyOrderBySymbol.has(item.symbol) ? count + 1 : count;
+  }, 0);
+  const freezeRows: UniverseFreezeRow[] = freezeItems.map((item) => {
+    const linkedBuyOrder = latestTodayBuyOrderBySymbol.get(item.symbol);
+    let buyExecutionStatus = "미실행";
+    if (linkedBuyOrder) {
+      switch ((linkedBuyOrder.status ?? "").toLowerCase()) {
+        case "filled":
+          buyExecutionStatus = "체결";
+          break;
+        case "partially_filled":
+          buyExecutionStatus = "부분체결";
+          break;
+        case "submitted":
+        case "acknowledged":
+        case "pending_submit":
+        case "validated":
+        case "draft":
+          buyExecutionStatus = "실행";
+          break;
+        case "reconcile_required":
+          buyExecutionStatus = "조정필요";
+          break;
+        case "rejected":
+          buyExecutionStatus = "거부";
+          break;
+        default:
+          buyExecutionStatus = linkedBuyOrder.status || "실행";
+      }
+    }
+    return {
+      id: `${item.symbol}:${item.market}:${item.priority}`,
+      symbol: item.symbol,
+      market: item.market,
+      sourceType: item.source_type,
+      inclusionReason: item.inclusion_reason,
+      priority: item.priority,
+      buyExecutionStatus,
+    };
+  });
 
   return (
     <div className="p-6 space-y-6">
@@ -1352,47 +1417,79 @@ export default function OperationsDashboardView() {
               </span>
             </div>
             <Panel
-              title="실운영 편입 현황"
-              subtitle="preview + coverage-summary + market-overlay-funnel"
+              title="오늘 유니버스 freeze 기준"
+              subtitle="active intraday freeze + today orders + market-overlay-funnel"
             >
               <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-5">
                 <div className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
-                  <p className="text-xs text-[#64748b]">Preview 편입</p>
-                  <p className="mt-1 text-lg font-semibold text-[#0f172a]">{marketOverlayPreviewCount}건</p>
+                  <p className="text-xs text-[#64748b]">오늘 freeze 편입</p>
+                  <p className="mt-1 text-lg font-semibold text-[#0f172a]">
+                    {activeIntradayFreeze?.target_count ?? 0}건
+                  </p>
+                  <p className="text-xs text-[#94a3b8]">
+                    frozen {activeIntradayFreeze?.frozen_at ? formatKstDateTime(activeIntradayFreeze.frozen_at) : "—"}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
+                  <p className="text-xs text-[#64748b]">freeze 내 market_overlay</p>
+                  <p className="mt-1 text-lg font-semibold text-[#0f172a]">
+                    {freezeMarketOverlayCount}건
+                  </p>
                   <p className="text-xs text-[#94a3b8]">
                     quotes {marketOverlayDiagnostics?.quotes_received_count ?? 0} / {marketOverlayDiagnostics?.quotes_requested_count ?? 0}
                   </p>
                 </div>
                 <div className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
-                  <p className="text-xs text-[#64748b]">최근 판단</p>
+                  <p className="text-xs text-[#64748b]">오늘 매수 주문 전환</p>
                   <p className="mt-1 text-lg font-semibold text-[#0f172a]">
-                    {data.marketOverlayFunnel?.decision_count ?? 0}건
+                    {freezeBuyOrderCount}건
                   </p>
                   <p className="text-xs text-[#94a3b8]">
-                    최근 {data.marketOverlayFunnel?.lookback_days ?? 14}일
+                    today buy orders {todayBuyOrders.length}건 중 freeze 종목 기준
                   </p>
                 </div>
                 <div className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
-                  <p className="text-xs text-[#64748b]">주문 전환</p>
+                  <p className="text-xs text-[#64748b]">freeze / live 비교</p>
                   <p className="mt-1 text-lg font-semibold text-[#0f172a]">
-                    {data.marketOverlayFunnel?.order_count ?? 0}건
+                    {activeIntradayFreezeComparison?.exact_match ? "일치" : "차이있음"}
                   </p>
                   <p className="text-xs text-[#94a3b8]">
-                    전환율 {((data.marketOverlayFunnel?.order_conversion_rate ?? 0) * 100).toFixed(1)}%
-                  </p>
-                </div>
-                <div className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
-                  <p className="text-xs text-[#64748b]">Coverage 상태</p>
-                  <p className="mt-1 text-lg font-semibold text-[#0f172a]">
-                    {data.tradingUniverseCoverage?.market_overlay_active ? "활성" : "비활성"}
-                  </p>
-                  <p className="text-xs text-[#94a3b8]">
-                    source decision {marketOverlayCoverageItem?.decision_count ?? 0} / order {marketOverlayCoverageItem?.order_count ?? 0}
+                    공통 {activeIntradayFreezeComparison?.common_symbol_count ?? 0} / freeze {activeIntradayFreezeComparison?.freeze_total_count ?? 0}
                   </p>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 mb-5">
+                <div className="rounded-lg border border-[#e2e8f0] p-4">
+                  <h3 className="text-sm font-semibold text-[#0f172a]">freeze 기준 요약</h3>
+                  <div className="mt-3 space-y-2 text-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[#64748b]">freeze purpose</span>
+                      <span className="font-mono text-xs text-[#0f172a]">
+                        {activeIntradayFreeze?.freeze_purpose ?? "—"}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[#64748b]">business date</span>
+                      <span className="text-[#0f172a]">{activeIntradayFreeze?.business_date ?? "—"}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[#64748b]">selection version</span>
+                      <span className="font-mono text-xs text-[#0f172a]">
+                        {activeIntradayFreeze?.selection_version ?? "—"}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[#64748b]">source 분포</span>
+                      <span className="text-[#0f172a]">
+                        {Object.entries(activeIntradayFreeze?.source_type_counts ?? {})
+                          .map(([key, value]) => `${key} ${value}`)
+                          .join(" · ") || "—"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="rounded-lg border border-[#e2e8f0] p-4">
                   <h3 className="text-sm font-semibold text-[#0f172a]">Overlay 진단</h3>
                   <div className="mt-3 space-y-2 text-sm">
@@ -1422,7 +1519,7 @@ export default function OperationsDashboardView() {
                 </div>
 
                 <div className="rounded-lg border border-[#e2e8f0] p-4">
-                  <h3 className="text-sm font-semibold text-[#0f172a]">판단 / 주문 분포</h3>
+                  <h3 className="text-sm font-semibold text-[#0f172a]">최근 market_overlay 분포</h3>
                   <div className="mt-3 space-y-2 text-sm">
                     <div>
                       <p className="text-xs text-[#64748b] mb-1">Decision Type</p>
@@ -1444,6 +1541,22 @@ export default function OperationsDashboardView() {
                 </div>
               </div>
 
+              <DataTable
+                columns={[
+                  { key: "priority", header: "우선순위", width: "80px", align: "center" },
+                  { key: "symbol", header: "종목", width: "90px" },
+                  { key: "market", header: "시장", width: "90px", align: "center" },
+                  { key: "sourceType", header: "source", width: "120px", align: "center" },
+                  { key: "inclusionReason", header: "선정 사유" },
+                  { key: "buyExecutionStatus", header: "오늘 매수주문", width: "110px", align: "center" },
+                ]}
+                data={freezeRows}
+                idKey="id"
+                compact
+                emptyMessage="오늘 intraday freeze 유니버스가 없습니다."
+              />
+
+              <div className="mt-5" />
               <DataTable
                 columns={[
                   { key: "createdAt", header: "판단시각", width: "150px", render: (row: MarketOverlayRecentRow) => formatKstDateTime(row.createdAt) },

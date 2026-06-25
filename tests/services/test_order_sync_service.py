@@ -270,6 +270,55 @@ class TestSyncPartiallyFilled:
         assert result.terminal is False
         assert broker.get_fills_call_count >= 1
 
+    async def test_prior_day_day_partial_sell_residual_expires_after_hours(
+        self,
+        sync_service: OrderSyncService,
+        repos: RepositoryContainer,
+    ) -> None:
+        old_time = datetime.now(timezone.utc) - timedelta(days=1, minutes=5)
+        order = _make_order(
+            repos,
+            status=OrderStatus.PARTIALLY_FILLED,
+            client_order_id="PRIOR-DAY-PARTIAL-SELL-001",
+        )
+        order = replace(
+            order,
+            side=OrderSide.SELL,
+            time_in_force=TimeInForce.DAY,
+            submitted_at=old_time,
+            created_at=old_time,
+            updated_at=old_time,
+        )
+        repos.orders._items[order.order_request_id] = order  # type: ignore[attr-defined]
+
+        broker_order = _make_broker_order(
+            repos,
+            order,
+            broker_native_order_id="BRK-PRIOR-DAY-PARTIAL-SELL-001",
+            broker_status="partially_filled",
+            created_at=old_time,
+        )
+        broker = _StubBroker(status=OrderStatus.PARTIALLY_FILLED)
+
+        result = await sync_service.sync_order_post_submit(
+            account_ref="test-account",
+            broker=broker,  # type: ignore[arg-type]
+            broker_order_id=broker_order.broker_order_id,
+            after_hours=True,
+        )
+
+        updated = await repos.orders.get(order.order_request_id)
+        assert updated is not None
+        assert updated.status == OrderStatus.EXPIRED
+        assert updated.status_reason_code == "after_hours_day_partial_sell_residual_expired"
+        assert result.current_status == OrderStatus.EXPIRED
+        assert result.status_changed is True
+        assert result.terminal is True
+
+        updated_bo = await repos.broker_orders.get(broker_order.broker_order_id)
+        assert updated_bo is not None
+        assert updated_bo.broker_status == "expired"
+
 
 # ═════════════════════════════════════════════════════════════════════
 # Test: PARTIALLY_FILLED → FILLED + terminal

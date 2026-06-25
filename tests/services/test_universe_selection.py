@@ -639,7 +639,7 @@ class TestUniverseSelectionServiceCompose:
         )
         await repos.instruments.add(inst)
         await repos.orders.add(
-            _make_order(inst.instrument_id, status=OrderStatus.PENDING_SUBMIT)
+            _make_order(inst.instrument_id, status=OrderStatus.SUBMITTED)
         )
 
         svc = UniverseSelectionService(repos)
@@ -650,8 +650,29 @@ class TestUniverseSelectionServiceCompose:
         assert len(selected) == 1
         assert selected[0].source_type == SourceType.RECONCILIATION_OVERLAY
         assert selected[0].inclusion_reason == (
-            f"{INCLUSION_REASON_RECONCILIATION}:{OrderStatus.PENDING_SUBMIT.value}"
+            f"{INCLUSION_REASON_RECONCILIATION}:{OrderStatus.SUBMITTED.value}"
         )
+
+    @pytest.mark.asyncio
+    async def test_validated_order_not_included_as_reconciliation_overlay(self) -> None:
+        """broker submit 이전 VALIDATED 주문은 reconciliation overlay 대상이 아니다."""
+        repos = build_in_memory_repositories()
+        inst = _make_instrument(
+            "277777",
+            tick_size=Decimal("50"),
+            metadata={"core_universe": False},
+        )
+        await repos.instruments.add(inst)
+        await repos.orders.add(
+            _make_order(inst.instrument_id, status=OrderStatus.VALIDATED)
+        )
+
+        svc = UniverseSelectionService(repos)
+        ctx = CompositionContext(account_id=ACCOUNT_ID, since=NOW)
+        result = await svc.compose(ctx)
+
+        selected = [s for s in result if s.symbol == "277777"]
+        assert selected == []
 
     @pytest.mark.asyncio
     async def test_reconciliation_run_link_symbol_force_included(self) -> None:
@@ -931,8 +952,8 @@ class TestUniverseSelectionServiceCompose:
 
         assert sum(
             1 for item in result if item.source_type == SourceType.RECONCILIATION_OVERLAY
-        ) == 2
-        assert all(item.symbol != "005930" for item in result)
+        ) == 1
+        assert any(item.symbol == "005930" for item in result)
 
     @pytest.mark.asyncio
     async def test_empty_universe_returns_empty_list(self) -> None:

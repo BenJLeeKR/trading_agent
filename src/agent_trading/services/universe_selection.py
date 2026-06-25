@@ -22,10 +22,12 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Sequence
+from zoneinfo import ZoneInfo
 
-from agent_trading.domain.enums import OrderStatus
+from agent_trading.domain.enums import OrderSide, OrderStatus, TimeInForce
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import OrderQuery
 from agent_trading.services.core_universe_seed import (
@@ -58,6 +60,7 @@ if TYPE_CHECKING:
     from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
 
 logger = logging.getLogger(__name__)
+_KST = ZoneInfo("Asia/Seoul")
 
 _STANDARD_KRX_SYMBOL_PATTERN = re.compile(r"^\d{6}$")
 _SUPPORTED_KR_EQUITY_MARKETS: frozenset[str] = frozenset({
@@ -66,9 +69,6 @@ _SUPPORTED_KR_EQUITY_MARKETS: frozenset[str] = frozenset({
     "KOSDAQ",
 })
 _ACTIVE_ORDER_STATUSES: tuple[OrderStatus, ...] = (
-    OrderStatus.DRAFT,
-    OrderStatus.VALIDATED,
-    OrderStatus.PENDING_SUBMIT,
     OrderStatus.SUBMITTED,
     OrderStatus.ACKNOWLEDGED,
     OrderStatus.PARTIALLY_FILLED,
@@ -810,6 +810,10 @@ class UniverseSelectionService:
                 )
             return instrument_cache[order_instrument_id]
 
+        position_qty_by_instrument = await self._build_latest_position_qty_map(
+            ctx.account_id
+        )
+
         open_orders = await self._repos.orders.list(
             OrderQuery(
                 account_id=ctx.account_id,
@@ -818,6 +822,14 @@ class UniverseSelectionService:
             )
         )
         for order in open_orders:
+            if self._should_skip_reconciliation_overlay_order(
+                order,
+                current_position_qty=position_qty_by_instrument.get(
+                    order.instrument_id,
+                    Decimal("0"),
+                ),
+            ):
+                continue
             instrument = await _resolve_instrument(order.instrument_id)
             if instrument is None:
                 continue
@@ -875,6 +887,55 @@ class UniverseSelectionService:
                     inclusion_reason=f"{INCLUSION_REASON_RECONCILIATION}:blocking_lock",
                 ),
             )
+
+    async def _build_latest_position_qty_map(
+        self,
+        account_id: object,
+    ) -> dict[object, Decimal]:
+        latest_positions = await self._repos.position_snapshots.list_latest_by_account(
+            account_id
+        )
+        return {
+            position.instrument_id: position.quantity
+            for position in latest_positions
+            if position.quantity is not None
+        }
+
+    def _should_skip_reconciliation_overlay_order(
+        self,
+        order: object,
+        *,
+        current_position_qty: Decimal,
+    ) -> bool:
+        """전일 DAY SELL 잔량이 실질적으로 종료된 경우 overlay에서 제외한다."""
+        if getattr(order, "side", None) != OrderSide.SELL:
+            return False
+        if getattr(order, "status", None) != OrderStatus.PARTIALLY_FILLED:
+            return False
+        if getattr(order, "time_in_force", None) != TimeInForce.DAY:
+            return False
+
+        order_time = getattr(order, "submitted_at", None) or getattr(order, "created_at", None)
+        if order_time is None:
+            return False
+
+        now_kst = datetime.now(timezone.utc).astimezone(_KST)
+        order_kst_date = order_time.astimezone(_KST).date()
+        if order_kst_date >= now_kst.date():
+            return False
+
+        if current_position_qty > 0:
+            return False
+
+        logger.info(
+            "Skipping stale reconciliation overlay residual: order_id=%s status=%s "
+            "submitted_at=%s current_position_qty=%s",
+            getattr(order, "order_request_id", None),
+            getattr(order, "status", None),
+            order_time,
+            current_position_qty,
+        )
+        return True
 
     async def _add_event_overlay(
         self,
