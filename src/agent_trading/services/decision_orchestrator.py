@@ -126,6 +126,11 @@ _PRE_AI_ELIGIBILITY_BLOCK_REASONS = frozenset(
         "eligibility_low_turnover",
         "eligibility_allocation_blocked",
         "eligibility_risk_off_block",
+        "eligibility_core_risk_off_guard_blocked",
+        "eligibility_core_risk_off_ranking_blocked",
+        "eligibility_core_risk_off_signal_blocked",
+        "eligibility_core_risk_off_activity_blocked",
+        "eligibility_core_risk_off_strategy_blocked",
         "eligibility_participation_rate_blocked",
     }
 )
@@ -1225,16 +1230,29 @@ class DecisionOrchestratorService:
             for reason in eligibility_reasons
             if reason in _PRE_AI_ELIGIBILITY_BLOCK_REASONS
         )
+        risk_off_exception_eligible = bool(
+            getattr(deterministic_trigger, "risk_off_exception_eligible", False)
+        )
         if blocking_reasons:
+            residual_blocking_reasons = tuple(
+                reason
+                for reason in blocking_reasons
+                if not (
+                    reason == "eligibility_risk_off_block"
+                    and risk_off_exception_eligible
+                )
+            )
+            if not residual_blocking_reasons:
+                return None
             decision_type = (
                 "WATCH" if bool(deterministic_trigger.watch_candidate) else "HOLD"
             )
             rationale = (
                 "[pre_ai_short_circuit] core 신규 진입 비적격 종목. "
-                f"eligibility_reasons={','.join(blocking_reasons)} "
+                f"eligibility_reasons={','.join(residual_blocking_reasons)} "
                 f"이므로 AI 호출 없이 {decision_type}로 종료"
             )
-            reason_codes = ("pre_ai_short_circuit",) + blocking_reasons
+            reason_codes = ("pre_ai_short_circuit",) + residual_blocking_reasons
             return self._build_short_circuit_agent_bundle(
                 decision_type=decision_type,
                 rationale=rationale,

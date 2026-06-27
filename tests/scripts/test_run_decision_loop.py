@@ -65,6 +65,9 @@ from agent_trading.services.decision_orchestrator import (
     OrderIntent,
     SubmitResult,
 )
+from agent_trading.services.deterministic_trigger_engine import (
+    DeterministicTriggerAssessment,
+)
 from agent_trading.services.submit_lane_gate import (
     HELD_POSITION_SELL_MAX_PER_CYCLE,
     evaluate_symbol_submit_lane,
@@ -280,6 +283,19 @@ def _make_stub_intent(
         ),
         context=AssembledContext(
             config_version=None,
+            deterministic_trigger=DeterministicTriggerAssessment(
+                trigger_version="deterministic_trigger_v1",
+                primary_candidate="BUY_CANDIDATE",
+                candidate_set=("BUY_CANDIDATE",),
+                watch_candidate=False,
+                buy_candidate=True,
+                sell_candidate=False,
+                reduce_candidate=False,
+                candidate_confidence=0.8,
+                entry_score=0.8,
+                exit_score=0.2,
+                watch_score=0.3,
+            ),
         ),
     )
 
@@ -680,6 +696,31 @@ class TestSerializeCycleResult:
                 "skip_fdc_high_risk",
             ],
         }
+        assert serialized["risk_off_exception_eligible"] is False
+
+    def test_includes_risk_off_exception_flag(self) -> None:
+        ctx_id = uuid4()
+        intent = _make_stub_intent(decision_context_id=ctx_id)
+        trigger = dataclasses.replace(
+            intent.context.deterministic_trigger,
+            risk_off_exception_eligible=True,
+        )
+        intent = dataclasses.replace(
+            intent,
+            context=dataclasses.replace(
+                intent.context,
+                deterministic_trigger=trigger,
+            ),
+        )
+        result = SubmitResult(
+            status="DRY_RUN",
+            order_intent=intent,
+            decision_context_id=ctx_id,
+        )
+
+        serialized = _serialize_cycle_result(cycle=1, result=result, duration=1.0)
+
+        assert serialized["risk_off_exception_eligible"] is True
 
 
 class TestSerializeCycleResultSourceType:
@@ -855,6 +896,48 @@ class TestBuildAggregateSummary:
                 "skip_ei_no_recent_events": 1,
                 "skip_fdc_high_risk": 1,
             },
+        }
+
+    def test_includes_risk_off_exception_metrics(self) -> None:
+        results = [
+            {
+                "status": "SUBMITTED",
+                "risk_off_exception_eligible": True,
+                "ai_call_path": {
+                    "ei_skipped": False,
+                    "ar_skipped": False,
+                    "fdc_skipped": False,
+                    "skip_reason_codes": [],
+                },
+            },
+            {
+                "status": "SKIPPED",
+                "risk_off_exception_eligible": True,
+                "ai_call_path": {
+                    "ei_skipped": True,
+                    "ar_skipped": True,
+                    "fdc_skipped": True,
+                    "skip_reason_codes": ["pre_ai_short_circuit"],
+                },
+            },
+            {
+                "status": "DRY_RUN",
+                "risk_off_exception_eligible": False,
+                "ai_call_path": {
+                    "ei_skipped": False,
+                    "ar_skipped": False,
+                    "fdc_skipped": False,
+                    "skip_reason_codes": [],
+                },
+            },
+        ]
+
+        summary = _build_aggregate_summary(results, total_duration=5.0)
+
+        assert summary["metrics"]["risk_off_exception_path"] == {
+            "risk_off_exception_eligible_count": 2,
+            "risk_off_exception_ai_pass_count": 1,
+            "risk_off_exception_submit_count": 1,
         }
 
     def test_includes_universe_anchor_metrics(self) -> None:

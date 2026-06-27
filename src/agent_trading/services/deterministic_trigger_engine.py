@@ -30,6 +30,7 @@ class DeterministicTriggerAssessment:
     ranking_percentile: float | None = None
     ranking_bucket: str | None = None
     candidate_mode: str = "absolute_threshold_v1"
+    risk_off_exception_eligible: bool = False
     reason_codes: tuple[str, ...] = ()
     thresholds: dict[str, float] = field(default_factory=dict)
     metadata: dict[str, object] = field(default_factory=dict)
@@ -112,6 +113,9 @@ def assess_deterministic_triggers(
     reduce_candidate = False
     watch_candidate = False
     candidate_set: list[str] = []
+    risk_off_exception_eligible = False
+    core_risk_off_guard_active = False
+    core_risk_off_guard_reasons: tuple[str, ...] = ()
 
     allocation_budget_ok = (
         portfolio_allocation is None
@@ -137,6 +141,29 @@ def assess_deterministic_triggers(
             has_position=has_position,
         )
     else:
+        core_risk_off_guard_active = _is_core_risk_off_regime(
+            source_type=normalized_source_type,
+            market_regime=market_regime,
+        )
+        ranking_score = _build_buy_ranking_score(
+            entry_score=entry_score,
+            coverage_score=coverage_score,
+            signal_feature_snapshot=signal_feature_snapshot,
+            market_regime=market_regime,
+            portfolio_allocation=portfolio_allocation,
+            strategy_selection=strategy_selection,
+        )
+        if core_risk_off_guard_active:
+            (
+                risk_off_exception_eligible,
+                core_risk_off_guard_reasons,
+            ) = _assess_core_risk_off_buy_guard(
+                signal_feature_snapshot=signal_feature_snapshot,
+                overall=overall,
+                slow=slow,
+                ranking_score=ranking_score,
+                strategy_selection=strategy_selection,
+            )
         eligibility_passed, eligibility_reasons = _assess_buy_eligibility(
             source_type=normalized_source_type,
             coverage_score=coverage_score,
@@ -146,14 +173,9 @@ def assess_deterministic_triggers(
             slow=slow,
             signal_feature_snapshot=signal_feature_snapshot,
             portfolio_allocation=portfolio_allocation,
-        )
-        ranking_score = _build_buy_ranking_score(
-            entry_score=entry_score,
-            coverage_score=coverage_score,
-            signal_feature_snapshot=signal_feature_snapshot,
-            market_regime=market_regime,
-            portfolio_allocation=portfolio_allocation,
-            strategy_selection=strategy_selection,
+            ranking_score=ranking_score,
+            risk_off_exception_eligible=risk_off_exception_eligible,
+            core_risk_off_guard_reasons=core_risk_off_guard_reasons,
         )
 
     if normalized_source_type == "held_position":
@@ -245,6 +267,17 @@ def assess_deterministic_triggers(
         "eligibility_path": (
             "exit" if normalized_source_type == "held_position" else "buy"
         ),
+        "risk_off_exception_eligible": (
+            risk_off_exception_eligible if normalized_source_type != "held_position" else False
+        ),
+        "core_risk_off_guard_active": (
+            core_risk_off_guard_active if normalized_source_type != "held_position" else False
+        ),
+        "core_risk_off_guard_reasons": (
+            list(core_risk_off_guard_reasons)
+            if normalized_source_type != "held_position"
+            else []
+        ),
     }
     return DeterministicTriggerAssessment(
         trigger_version="deterministic_trigger_v1",
@@ -263,6 +296,9 @@ def assess_deterministic_triggers(
         coverage_score=round(coverage_score, 4),
         ranking_score=round(ranking_score, 4),
         candidate_mode="relative_surge_v1_instrumented",
+        risk_off_exception_eligible=(
+            risk_off_exception_eligible if normalized_source_type != "held_position" else False
+        ),
         reason_codes=tuple(dict.fromkeys(reason_codes)),
         thresholds=thresholds,
         metadata=metadata,
@@ -299,6 +335,9 @@ def _assess_buy_eligibility(
     slow: float | None,
     signal_feature_snapshot: SignalFeatureSnapshotEntity | None,
     portfolio_allocation: PortfolioAllocationAssessment | None,
+    ranking_score: float | None,
+    risk_off_exception_eligible: bool = False,
+    core_risk_off_guard_reasons: tuple[str, ...] = (),
 ) -> tuple[bool, tuple[str, ...]]:
     reasons: list[str] = []
     if source_type in {"held_position", "reconciliation_overlay"}:
@@ -321,8 +360,20 @@ def _assess_buy_eligibility(
         and market_regime.risk_tone == "risk_off"
         and market_regime.regime_label == "bearish_trend"
     ):
-        reasons.append("eligibility_risk_off_block")
-        return False, tuple(reasons)
+        if source_type == "core":
+            if risk_off_exception_eligible:
+                reasons.extend(core_risk_off_guard_reasons)
+                reasons.append("eligibility_risk_off_exception_pass")
+            else:
+                reasons.extend(
+                    core_risk_off_guard_reasons or ("eligibility_core_risk_off_guard_blocked",)
+                )
+                return False, tuple(dict.fromkeys(reasons))
+        elif risk_off_exception_eligible:
+            reasons.append("eligibility_risk_off_exception_pass")
+        else:
+            reasons.append("eligibility_risk_off_block")
+            return False, tuple(reasons)
     reasons.append("eligibility_regime_pass")
 
     if overall is not None and overall < -0.10:
@@ -411,6 +462,65 @@ def _assess_buy_eligibility(
             return False, tuple(reasons)
 
     reasons.append("eligibility_execution_feasibility_pass")
+    return True, tuple(reasons)
+
+
+def _is_core_risk_off_regime(
+    *,
+    source_type: str,
+    market_regime: MarketRegimeAssessment | None,
+) -> bool:
+    if source_type != "core":
+        return False
+    if market_regime is None:
+        return False
+    return (
+        market_regime.risk_tone == "risk_off"
+        and market_regime.regime_label == "bearish_trend"
+    )
+
+
+def _assess_core_risk_off_buy_guard(
+    *,
+    signal_feature_snapshot: SignalFeatureSnapshotEntity | None,
+    overall: float | None,
+    slow: float | None,
+    ranking_score: float | None,
+    strategy_selection: StrategySelectionAssessment | None,
+) -> tuple[bool, tuple[str, ...]]:
+    reasons: list[str] = []
+    if ranking_score is None or ranking_score < 0.48:
+        reasons.append("eligibility_core_risk_off_ranking_blocked")
+        return False, tuple(reasons)
+    reasons.append("eligibility_core_risk_off_ranking_pass")
+    if overall is None or overall < 0.0:
+        reasons.append("eligibility_core_risk_off_signal_blocked")
+        return False, tuple(reasons)
+    if slow is None or slow < -0.05:
+        reasons.append("eligibility_core_risk_off_signal_blocked")
+        return False, tuple(reasons)
+    reasons.append("eligibility_core_risk_off_signal_pass")
+    if signal_feature_snapshot is None:
+        reasons.append("eligibility_core_risk_off_activity_blocked")
+        return False, tuple(reasons)
+    volume_surge_ratio = _float_or_none(signal_feature_snapshot.volume_surge_ratio)
+    turnover_surge_ratio = _float_or_none(signal_feature_snapshot.turnover_surge_ratio)
+    if max(volume_surge_ratio or 0.0, turnover_surge_ratio or 0.0) < 1.20:
+        reasons.append("eligibility_core_risk_off_activity_blocked")
+        return False, tuple(reasons)
+    reasons.append("eligibility_core_risk_off_activity_pass")
+    preferred_strategy = (
+        strategy_selection.preferred_strategy if strategy_selection is not None else ""
+    )
+    if preferred_strategy not in {
+        "defensive_low_volatility_rotation",
+        "mean_reversion_bounce",
+        "event_continuation",
+    }:
+        reasons.append("eligibility_core_risk_off_strategy_blocked")
+        return False, tuple(reasons)
+    reasons.append("eligibility_core_risk_off_strategy_pass")
+    reasons.append("eligibility_core_risk_off_guard_pass")
     return True, tuple(reasons)
 
 

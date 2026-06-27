@@ -1150,6 +1150,14 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
     submit 전 hard guard로 차단한다.
 - 세부 작업 상태
   - [x] `reconciliation_overlay` flat 신규 BUY 전면 차단
+  - [x] pre-submit 잔존 주문이 `reconciliation_overlay`로 오인 편입되는 경로 차단
+    - `DRAFT`, `VALIDATED`, `PENDING_SUBMIT` 상태는
+      장중 active overlay source에서 제외했다.
+    - prior-day `DAY + PARTIALLY_FILLED + SELL` 잔존은
+      현재 보유 수량이 0이면
+      universe compose 단계에서 stale residual로 건너뛴다.
+    - after-hours post-submit sync에서
+      위 residual 주문을 `expired`로 terminalize 하는 경로를 추가했다.
   - [x] `services.source_policy` action envelope helper 추가
   - [x] actionable decision의 expected value 필수 anchor 강제
     - `services.expected_value_gate`를 추가해
@@ -1558,14 +1566,28 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
         기존 intraday freeze 재사용,
         수동 새 freeze 생성,
         stale freeze 감지 기준을 runbook에 정리한다.
-        - 구현:
-          [`plans/[RUNBOOK] decision_loop_intraday_freeze_operations.md`](./%5BRUNBOOK%5D%20decision_loop_intraday_freeze_operations.md)
+      - 구현:
+        [`plans/[RUNBOOK] decision_loop_intraday_freeze_operations.md`](./%5BRUNBOOK%5D%20decision_loop_intraday_freeze_operations.md)
           문서에
           상태 확인 API,
           재기동 후 reuse 절차,
           수동 `ensure`,
           수동 `force-new`,
           hard stale / soft drift 판정 기준을 고정했다.
+      - [x] 운영 버그 수정:
+        재기동 후 stale `run_date`를 들고 있는 scheduler가
+        잘못된 거래일 freeze를 재사용/생성하지 않도록
+        intraday freeze materialize 시점에
+        현재 `KST` 날짜로 run date를 재결정하게 수정했다.
+      - [x] 실운영 검증:
+        2026-06-25 장중 기준
+        `decision_loop_intraday` freeze를 수동 materialize 한 뒤
+        `ops-scheduler` 로그와
+        `operations_day_runs.summary_json.decision_loop.metrics`
+        에서
+        `universe_anchor_source='intraday_freeze'`,
+        `freeze_reused=true`,
+        `universe_freeze_run_id` 반영까지 확인했다.
       - 구현 범위 고정:
         이번 후속 작업은
         `universe schema 추가`가 아니라
@@ -1757,6 +1779,145 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
     - [`plans/[ADVICE] ai_token_optimization.md`](./%5BADVICE%5D%20ai_token_optimization.md)
     - [`plans/2026-06-05_pre_ai_decision_skip_gate.md`](./2026-06-05_pre_ai_decision_skip_gate.md)
     - [`plans/[ANALYSIS] expected_return_architecture_refactor_analysis.md`](./%5BANALYSIS%5D%20expected_return_architecture_refactor_analysis.md)
+- [x] `core 신규 진입 비적격` risk-off 차단 완화 1차 보정
+  - 실측 배경
+    - `2026-06-24` decision:
+      총 `2529`건 중 `eligibility_risk_off_block` `838`건,
+      `source_policy_buy_blocked` `1203`건
+    - `2026-06-25` decision:
+      총 `1759`건 중 `eligibility_risk_off_block` `726`건,
+      `source_policy_buy_blocked` `614`건
+    - `2026-06-24` 실제 주문:
+      `BUY 1건`, `SELL 7건`
+      - 유일한 BUY는 `core`가 아니라 `event_overlay` 경로였음
+    - `2026-06-25` 실제 주문:
+      `order_requests=0`
+    - 결론:
+      현재 `core` 신규 진입 차단은
+      “버그성 오차”보다 “정책 과도”에 가까우며,
+      특히 `risk_off + bearish_trend`일 때
+      core BUY가 AI 이전 단계에서 과도하게 잘리는 상태다.
+  - 현재 코드 진단
+    - `DecisionOrchestratorService`는
+      `pre_ai_short_circuit + eligibility_risk_off_block`이면
+      AI 호출 없이 `HOLD/WATCH`로 종료한다.
+    - `DeterministicTriggerEngine`의 BUY eligibility는
+      `market_regime.risk_tone == risk_off`
+      그리고 `regime_label == bearish_trend`이면
+      즉시 탈락시킨다.
+    - 이 규칙은
+      `range_bound`나 `bullish_trend + high_volatility`가 아니라
+      `bearish_trend + risk_off`에만 적용되지만,
+      실제 장중에서는 이 조합 비중이 높아
+      core BUY path가 사실상 마비될 수 있다.
+  - 수정 원칙
+    - 전면 해제는 하지 않는다.
+      `risk_off` 구간의 execution risk와 churn 증가는
+      여전히 deterministic하게 억제해야 한다.
+    - 다만 `core`의 기대수익률 상단 후보까지
+      AI 이전 단계에서 일괄 차단하는 것은
+      핵심 목표인 `최고 기대수익률`에 부합하지 않는다.
+    - 따라서 `blanket block`을
+      `ranked exception + WATCH 우선` 구조로 바꾼다.
+  - 권장 수정안
+    - [x] `P1`:
+      `eligibility_risk_off_block`을
+      “전면 BUY 탈락”에서
+      “일반 core BUY 탈락 + 예외 후보만 AI 통과”로 변경
+      - 기본값:
+        기존처럼 `HOLD/WATCH` short-circuit 유지
+      - 예외 허용 조건:
+        아래를 모두 만족하는 상위 core 후보만
+        AI 호출 경로로 통과
+        - `source_type == core`
+        - `watch_candidate == true` 또는 `entry_score >= buy_threshold * 0.85`
+        - `ranking_score >= 0.55` 또는 `ranking_percentile <= 0.15`
+        - `overall_score >= 0`
+        - `slow_score >= -0.05`
+        - `volume_surge_ratio >= 1.2` 또는
+          `turnover_surge_ratio >= 1.2`
+        - `recommended_max_order_value > 0`
+        - `eligibility_low_average_volume`,
+          `eligibility_low_turnover`,
+          `eligibility_participation_rate_blocked`
+          는 없어야 함
+    - [x] `P1`:
+      `risk_off + bearish_trend`에서도
+      예외 통과 후보는
+      즉시 `BUY_CANDIDATE`가 아니라
+      `WATCH/AI reassessment` 우선으로 제한
+      - FDC가 최종 `APPROVE`로 올리더라도
+        `minimum_required_edge_bps`를 평시보다 높게 적용
+      - 권장:
+        `minimum_required_edge_bps`
+        `+5 ~ +10bps` 가산
+    - [x] `P1`:
+      `event_overlay`는
+      `core risk_off exception` 경로에 태우지 않고
+      기존 regime gate 경로를 유지
+      - 실측상 `2026-06-24` 실제 BUY `1건`은
+        `event_overlay`에서 발생했으므로
+        `core` 완화와 `event` 완화는 분리해야 한다.
+      - 회귀 방지:
+        `tests/services/test_deterministic_trigger_engine.py`에
+        `event_overlay`가 `risk_off_exception_eligible`로
+        승격되지 않는 테스트를 추가했다.
+    - [x] `P2`:
+      `market_regime`의 `risk_off` 판정과
+      `core BUY eligibility`를 완전히 동일시하지 않도록 분리
+      - `risk_tone`은 portfolio de-risk 용도로 유지
+      - BUY eligibility는
+        `regime + ranking + feature + execution feasibility`
+        조합으로 별도 판정
+      - 구현 반영:
+        `core + bearish_trend + risk_off`에서는
+        기존 blanket block 대신
+        `core_risk_off_guard`를 적용한다.
+      - 현재 guard 기준:
+        `ranking_score >= 0.48`
+        + `overall >= 0`
+        + `slow >= -0.05`
+        + `max(volume_surge_ratio, turnover_surge_ratio) >= 1.20`
+        + 허용 전략
+        (`defensive_low_volatility_rotation`,
+        `mean_reversion_bounce`,
+        `event_continuation`)
+      - guard 실패 시에는
+        `eligibility_core_risk_off_*_blocked`
+        세부 사유를 남기고
+        pre-AI short-circuit 대상에 포함한다.
+      - 회귀 방지:
+        `tests/services/test_deterministic_trigger_engine.py`,
+        `tests/services/test_decision_orchestrator.py`,
+        `tests/services/test_expected_value_gate.py`
+        기준으로 검증한다.
+  - 기대 효과
+    - `core` 신규 진입 후보가
+      전부 AI 이전 단계에서 사라지는 현상 완화
+    - `risk_off` 구간에서도
+      상위 극소수 후보는 재평가 가능
+    - `event_overlay`와 `held_position`의 기존 운영 안정성은 유지
+    - 무차별 BUY 재개가 아니라
+      `top-ranked exception`만 허용하므로
+      churn 및 저유동성 오진입 리스크를 제한 가능
+  - 구현 순서
+    - [x] `DeterministicTriggerResult`에
+      `risk_off_exception_eligible` 필드 추가
+    - [x] `deterministic_trigger_engine.py`에서
+      위 예외 판정 helper 추가
+    - [x] `decision_orchestrator.py`의
+      `pre_ai_short_circuit` 분기에서
+      `eligibility_risk_off_block`이어도
+      `risk_off_exception_eligible=true`면
+      AI 호출 경로로 통과
+    - [x] `expected_value_gate`에서
+      `risk_off_exception_path`에 대한
+      추가 edge 요구치 적용
+    - [x] 운영 계측:
+      `risk_off_exception_eligible_count`,
+      `risk_off_exception_ai_pass_count`,
+      `risk_off_exception_submit_count`
+      집계 추가
 - [x] 초저유동성 `core` BUY 실행 구멍 보완
   - 기대수익률 관점에서 부합하는 범위만 우선 반영:
     - [x] `core` BUY eligibility에도 저유동성 / execution feasibility gate 1차 추가

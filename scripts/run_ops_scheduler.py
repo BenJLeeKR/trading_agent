@@ -2066,7 +2066,12 @@ async def _ensure_decision_loop_intraday_freeze(
                 )
                 return
 
-    from scripts.run_decision_loop import _load_trading_universe_with_anchor
+    try:
+        from scripts.run_decision_loop import _load_trading_universe_with_anchor
+    except ModuleNotFoundError:
+        # ops-scheduler 컨테이너는 PYTHONPATH에 /app/scripts 만 포함될 수 있어
+        # 패키지 import(`scripts.run_decision_loop`)가 깨질 수 있다.
+        from run_decision_loop import _load_trading_universe_with_anchor
 
     universe, universe_anchor = await _load_trading_universe_with_anchor()
     if not universe:

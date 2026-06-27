@@ -95,6 +95,9 @@ def evaluate_expected_value_gate(
         / 3.0
     )
     minimum_required_edge_bps = Decimal("10.00") if is_entry else Decimal("5.00")
+    risk_off_exception_path = _is_risk_off_exception_path(deterministic_trigger)
+    if is_entry and risk_off_exception_path:
+        minimum_required_edge_bps += Decimal("7.50")
     estimated_round_trip_cost_bps = _estimate_round_trip_cost_bps(
         signal_snapshot=signal_snapshot,
         deterministic_trigger=deterministic_trigger,
@@ -122,6 +125,8 @@ def evaluate_expected_value_gate(
         reason_codes.append("expected_value_edge_meets_minimum_required")
     else:
         reason_codes.append("expected_value_edge_below_minimum_required")
+    if risk_off_exception_path:
+        reason_codes.append("expected_value_risk_off_exception_path")
 
     return ExpectedValueAssessment(
         expected_return_bps=expected_return_bps,
@@ -215,6 +220,17 @@ def _estimate_round_trip_cost_bps(
     if ranking_percentile is not None and float(ranking_percentile) < 0.35:
         total_bps += 2.0
     return _decimal_from_float(total_bps)
+
+
+def _is_risk_off_exception_path(deterministic_trigger: object | None) -> bool:
+    if deterministic_trigger is None:
+        return False
+    if bool(getattr(deterministic_trigger, "risk_off_exception_eligible", False)):
+        return True
+    metadata = getattr(deterministic_trigger, "metadata", None)
+    if isinstance(metadata, dict):
+        return bool(metadata.get("risk_off_exception_eligible"))
+    return False
 
 
 def _estimate_slippage_buffer_bps(

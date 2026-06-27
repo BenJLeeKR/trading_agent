@@ -109,15 +109,26 @@ except ImportError:
     _HAS_KIS = False
 
 # ── Seed constants (reused from run_orchestrator_once.py) ───────────────────
-from scripts.run_orchestrator_once import (
-    ACCOUNT_ALIAS,
-    CLIENT_ID,
-    STRATEGY_ID,
-    SYMBOL,
-    MARKET,
-    _resolve_smoke_price,
-    _seed_if_empty,
-)
+try:
+    from scripts.run_orchestrator_once import (
+        ACCOUNT_ALIAS,
+        CLIENT_ID,
+        STRATEGY_ID,
+        SYMBOL,
+        MARKET,
+        _resolve_smoke_price,
+        _seed_if_empty,
+    )
+except ModuleNotFoundError:
+    from run_orchestrator_once import (
+        ACCOUNT_ALIAS,
+        CLIENT_ID,
+        STRATEGY_ID,
+        SYMBOL,
+        MARKET,
+        _resolve_smoke_price,
+        _seed_if_empty,
+    )
 
 # ── Price resolution ──────────────────────────────────────────────────────────
 
@@ -830,12 +841,19 @@ def _serialize_cycle_result(
     if result is not None and result.order_intent is not None:
         decision_type = result.order_intent.ai_backend_inputs.decision_type
         side = result.order_intent.ai_backend_inputs.side
+        deterministic_trigger = result.order_intent.context.deterministic_trigger
+        data_risk_off_exception_eligible = bool(
+            getattr(deterministic_trigger, "risk_off_exception_eligible", False)
+        )
+    else:
+        data_risk_off_exception_eligible = False
 
     data: dict[str, object] = {
         "cycle": cycle,
         "symbol": symbol,
         "market": market,
         "source_type": source_type,
+        "risk_off_exception_eligible": data_risk_off_exception_eligible,
         "decision_type": decision_type,
         "side": side,
         "started_at": started_at,
@@ -1037,6 +1055,23 @@ def _build_aggregate_summary(
             for code in raw_codes:
                 if code:
                     skip_reason_counts[str(code)] += 1
+    risk_off_exception_entries = [
+        r for r in results if bool(r.get("risk_off_exception_eligible"))
+    ]
+    risk_off_exception_ai_pass_count = 0
+    risk_off_exception_submit_count = 0
+    for row in risk_off_exception_entries:
+        payload = row.get("ai_call_path")
+        if isinstance(payload, dict):
+            all_skipped = (
+                bool(payload.get("ei_skipped"))
+                and bool(payload.get("ar_skipped"))
+                and bool(payload.get("fdc_skipped"))
+            )
+            if not all_skipped:
+                risk_off_exception_ai_pass_count += 1
+        if str(row.get("status")) == "SUBMITTED":
+            risk_off_exception_submit_count += 1
 
     metrics: dict[str, object] = {
         "universe_symbol_count": len(universe),
@@ -1045,6 +1080,11 @@ def _build_aggregate_summary(
         "held_position_processed_count": processed_source_counts.get("held_position", 0),
         "universe_source_counts": dict(source_counts),
         "processed_source_counts": dict(processed_source_counts),
+        "risk_off_exception_path": {
+            "risk_off_exception_eligible_count": len(risk_off_exception_entries),
+            "risk_off_exception_ai_pass_count": risk_off_exception_ai_pass_count,
+            "risk_off_exception_submit_count": risk_off_exception_submit_count,
+        },
         "ai_call_path": {
             "tracked_count": len(ai_call_path_entries),
             "ei_skipped_count": sum(

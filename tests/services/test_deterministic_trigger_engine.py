@@ -315,3 +315,102 @@ def test_trigger_engine_blocks_buy_path_for_reconciliation_overlay() -> None:
     assert result.eligibility_passed is False
     assert result.buy_candidate is False
     assert "eligibility_source_type_blocked" in result.eligibility_reasons
+
+
+def test_trigger_engine_marks_risk_off_exception_eligible_for_strong_core_setup() -> None:
+    result = assess_deterministic_triggers(
+        source_type="core",
+        signal_feature_snapshot=_make_signal(
+            overall="0.28",
+            fast="0.58",
+            slow="0.02",
+            average_volume_20d="250000",
+            average_turnover_20d="12000000000",
+            volume_surge_ratio="1.45",
+            turnover_surge_ratio="1.60",
+        ),
+        market_regime=_make_regime(
+            regime_label="bearish_trend",
+            risk_tone="risk_off",
+        ),
+        strategy_selection=_make_strategy(
+            preferred_strategy="defensive_low_volatility_rotation"
+        ),
+        portfolio_allocation=_make_portfolio(
+            max_new_capital_pct=2.5,
+            current_weight_pct=0.0,
+        ),
+        position_snapshot=None,
+    )
+
+    assert result is not None
+    assert result.risk_off_exception_eligible is True
+    assert result.eligibility_passed is True
+    assert "eligibility_core_risk_off_guard_pass" in result.eligibility_reasons
+    assert "eligibility_risk_off_exception_pass" in result.eligibility_reasons
+    assert "eligibility_risk_off_block" not in result.eligibility_reasons
+
+
+def test_trigger_engine_keeps_risk_off_block_for_weak_core_setup() -> None:
+    result = assess_deterministic_triggers(
+        source_type="core",
+        signal_feature_snapshot=_make_signal(
+            overall="-0.02",
+            fast="0.20",
+            slow="-0.08",
+            average_volume_20d="250000",
+            average_turnover_20d="12000000000",
+            volume_surge_ratio="1.05",
+            turnover_surge_ratio="1.08",
+        ),
+        market_regime=_make_regime(
+            regime_label="bearish_trend",
+            risk_tone="risk_off",
+        ),
+        strategy_selection=_make_strategy(
+            preferred_strategy="defensive_low_volatility_rotation"
+        ),
+        portfolio_allocation=_make_portfolio(
+            max_new_capital_pct=2.5,
+            current_weight_pct=0.0,
+        ),
+        position_snapshot=None,
+    )
+
+    assert result is not None
+    assert result.risk_off_exception_eligible is False
+    assert result.eligibility_passed is False
+    assert "eligibility_core_risk_off_ranking_blocked" in result.eligibility_reasons
+
+
+def test_trigger_engine_keeps_event_overlay_on_regime_pass_path_under_risk_off() -> None:
+    result = assess_deterministic_triggers(
+        source_type="event_overlay",
+        signal_feature_snapshot=_make_signal(
+            overall="0.24",
+            fast="0.55",
+            slow="0.01",
+            average_volume_20d="180000",
+            average_turnover_20d="8000000000",
+            volume_surge_ratio="1.35",
+            turnover_surge_ratio="1.42",
+        ),
+        market_regime=_make_regime(
+            regime_label="bearish_trend",
+            risk_tone="risk_off",
+        ),
+        strategy_selection=_make_strategy(
+            preferred_strategy="event_continuation"
+        ),
+        portfolio_allocation=_make_portfolio(
+            max_new_capital_pct=2.5,
+            current_weight_pct=0.0,
+        ),
+        position_snapshot=None,
+    )
+
+    assert result is not None
+    assert result.risk_off_exception_eligible is False
+    assert result.eligibility_passed is False
+    assert "eligibility_risk_off_block" in result.eligibility_reasons
+    assert "eligibility_risk_off_exception_pass" not in result.eligibility_reasons

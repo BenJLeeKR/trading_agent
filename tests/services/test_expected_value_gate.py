@@ -101,3 +101,36 @@ def test_expected_value_gate_blocks_when_after_cost_edge_is_too_low() -> None:
     assert result.edge_after_cost_bps is not None
     assert result.minimum_required_edge_bps == Decimal("10.00")
     assert "expected_value_edge_below_minimum_required" in result.reason_codes
+
+
+def test_expected_value_gate_raises_entry_edge_for_risk_off_exception_path() -> None:
+    ctx = _make_context()
+    ctx = AssembledContext(
+        signal_feature_snapshot=ctx.signal_feature_snapshot,
+        deterministic_trigger=DeterministicTriggerAssessment(
+            trigger_version="deterministic_trigger_v1",
+            primary_candidate="BUY_CANDIDATE",
+            candidate_set=("BUY_CANDIDATE",),
+            watch_candidate=False,
+            buy_candidate=True,
+            sell_candidate=False,
+            reduce_candidate=False,
+            candidate_confidence=0.82,
+            entry_score=0.76,
+            exit_score=0.21,
+            watch_score=0.33,
+            risk_off_exception_eligible=True,
+            metadata={"risk_off_exception_eligible": True},
+        ),
+    )
+
+    result = evaluate_expected_value_gate(
+        decision_type="BUY",
+        confidence=0.9,
+        conviction=0.8,
+        risk_score=0.3,
+        context=ctx,
+    )
+
+    assert result.minimum_required_edge_bps == Decimal("17.50")
+    assert "expected_value_risk_off_exception_path" in result.reason_codes

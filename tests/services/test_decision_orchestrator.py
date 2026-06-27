@@ -2261,6 +2261,99 @@ class TestWatchCandidateUpgradeGuard:
         service._run_agents.assert_not_awaited()  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
+    async def test_core_risk_off_exception_candidate_bypasses_pre_ai_short_circuit(
+        self, sample_request: SubmitOrderRequest
+    ) -> None:
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+        strategy_id = uuid4()
+
+        config_version = ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=uuid4(),
+            environment=Environment.PAPER,
+            version_tag="v1",
+            config_json={},
+            checksum="sum",
+            activated_at=now,
+        )
+        await repos.config_versions.add(config_version)
+
+        context = DecisionContextEntity(
+            decision_context_id=uuid4(),
+            account_id=uuid4(),
+            strategy_id=strategy_id,
+            config_version_id=config_version.config_version_id,
+            market_timestamp=now,
+            correlation_id="corr-risk-off-exception",
+            created_at=now,
+        )
+        await repos.decision_contexts.add(context)
+
+        service = DecisionOrchestratorService(
+            repos=repos,
+            use_subprocess_isolation=False,
+        )
+        deterministic_trigger = DeterministicTriggerAssessment(
+            trigger_version="deterministic_trigger_v1",
+            primary_candidate="WATCH",
+            candidate_set=("WATCH",),
+            watch_candidate=True,
+            buy_candidate=False,
+            sell_candidate=False,
+            reduce_candidate=False,
+            candidate_confidence=0.62,
+            entry_score=0.56,
+            exit_score=0.10,
+            watch_score=0.57,
+            eligibility_passed=False,
+            eligibility_reasons=("eligibility_risk_off_block",),
+            risk_off_exception_eligible=True,
+            reason_codes=("trigger_watch_candidate",),
+            thresholds={
+                "buy_candidate_threshold": 0.65,
+                "watch_candidate_threshold": 0.45,
+            },
+            metadata={
+                "source_type": "core",
+                "risk_off_exception_eligible": True,
+            },
+        )
+        service._derive_deterministic_context_components = AsyncMock(  # type: ignore[method-assign]
+            return_value=DeterministicDerivationBundle(
+                source_type="core",
+                deterministic_trigger=deterministic_trigger,
+            )
+        )
+        service._run_agents = AsyncMock(  # type: ignore[method-assign]
+            return_value=AgentExecutionBundle(
+                ai_inputs=AIDecisionInputs(
+                    decision_type="WATCH",
+                    side="",
+                    confidence=0.71,
+                    conviction=0.66,
+                    reason_codes=("fdc_watch",),
+                ),
+                composer_output=FinalDecisionComposerOutput(
+                    decision_type="WATCH",
+                    side="",
+                    confidence=0.71,
+                    conviction=0.66,
+                    reason_codes=("fdc_watch",),
+                    summary="한국어 요약",
+                ),
+            )
+        )
+
+        intent = await service.assemble(
+            sample_request,
+            decision_context_id=context.decision_context_id,
+        )
+
+        assert "pre_ai_short_circuit" not in intent.ai_backend_inputs.reason_codes
+        service._run_agents.assert_awaited()  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
     async def test_core_no_recent_events_skips_ei_but_runs_ar_fdc(
         self, sample_request: SubmitOrderRequest
     ) -> None:
