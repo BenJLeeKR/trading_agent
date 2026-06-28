@@ -2092,41 +2092,6 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `8d`, `10`, `11`, `12`, `13`
 - `plan_docs/agents/01_agent_inventory_and_status.md`
 
----
-
-## P3 — 개발 완료 후 문서화 과제
-
-### 15. 운영/업무자용 주문 흐름 문서 패키지 — `보류`
-
-### 목표
-- 핵심 백엔드/운영 안정화 개발이 모두 끝난 뒤, 비개발 업무자도 바로 읽을 수 있는 운영 문서 세트를 만든다.
-
-### 작성 대상
-- [ ] **매수 경로만 따로 분리한 요약본**
-- [ ] **매도/체결/재조회 경로만 따로 분리한 운영 매뉴얼**
-- [ ] **장애 대응 체크리스트 버전**
-
-### 선행 조건
-- 현재 남아 있는 핵심 개발 과제가 모두 마무리될 것
-- 주문 생성 / 제출 / 체결 / 재조회 / recovery 정책이 더 이상 크게 바뀌지 않을 것
-
-### 근거 문서
-- [`plans/[GUIDE] end_to_end_order_flow_guide.md`](./[GUIDE]%20end_to_end_order_flow_guide.md)
-- [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `13a`
-
-### 보류 이유
-- 지금 작성하면 이후 개발 변경으로 문서가 빠르게 낡을 가능성이 높다.
-- 따라서 **모든 주요 개발 종료 후 최종 운영 매뉴얼 패키지로 작성**하는 것이 맞다.
-
-### 우선순위 이유
-- 이번 임시공휴일처럼 시장 캘린더 변동이 있을 때 운영 판단을 더 신뢰성 있게 할 수 있다.
-
-### 세부 작업 상태
-- [x] 조기종료/특수세션 reason 근거를 `reason_metadata`로 더 구조적으로 저장 완료
-  - [`plans/2026-06-08_market_sessions_reason_metadata_structuring.md`](./2026-06-08_market_sessions_reason_metadata_structuring.md)
-- [x] 비거래일 readiness / next-trading-day readiness와 session history를 더 직접 연결 완료
-  - [`plans/2026-06-04_market_sessions_history_readiness_link.md`](./2026-06-04_market_sessions_history_readiness_link.md)
-
 ### 16. 멀티 사용자 공용 Plane / 개인 Credential Plane 분리 리팩토링 — `보류`
 
 ### 목표
@@ -2174,6 +2139,41 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   execution truth, scheduler, decision runtime 안정화보다
   런타임 주입 구조 변경이 먼저 커져 운영 리스크가 커진다.
 - 따라서 이 항목은 **모든 중요 개발 완료 후 P3 리팩토링 과제**로 유지하는 것이 맞다.
+
+---
+
+## P3 — 개발 완료 후 문서화 과제
+
+### 17. 운영/업무자용 주문 흐름 문서 패키지 — `보류`
+
+### 목표
+- 핵심 백엔드/운영 안정화 개발이 모두 끝난 뒤, 비개발 업무자도 바로 읽을 수 있는 운영 문서 세트를 만든다.
+
+### 작성 대상
+- [ ] **매수 경로만 따로 분리한 요약본**
+- [ ] **매도/체결/재조회 경로만 따로 분리한 운영 매뉴얼**
+- [ ] **장애 대응 체크리스트 버전**
+
+### 선행 조건
+- 현재 남아 있는 핵심 개발 과제가 모두 마무리될 것
+- 주문 생성 / 제출 / 체결 / 재조회 / recovery 정책이 더 이상 크게 바뀌지 않을 것
+
+### 근거 문서
+- [`plans/[GUIDE] end_to_end_order_flow_guide.md`](./[GUIDE]%20end_to_end_order_flow_guide.md)
+- [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `13a`
+
+### 보류 이유
+- 지금 작성하면 이후 개발 변경으로 문서가 빠르게 낡을 가능성이 높다.
+- 따라서 **모든 주요 개발 종료 후 최종 운영 매뉴얼 패키지로 작성**하는 것이 맞다.
+
+### 우선순위 이유
+- 이번 임시공휴일처럼 시장 캘린더 변동이 있을 때 운영 판단을 더 신뢰성 있게 할 수 있다.
+
+### 세부 작업 상태
+- [x] 조기종료/특수세션 reason 근거를 `reason_metadata`로 더 구조적으로 저장 완료
+  - [`plans/2026-06-08_market_sessions_reason_metadata_structuring.md`](./2026-06-08_market_sessions_reason_metadata_structuring.md)
+- [x] 비거래일 readiness / next-trading-day readiness와 session history를 더 직접 연결 완료
+  - [`plans/2026-06-04_market_sessions_history_readiness_link.md`](./2026-06-04_market_sessions_history_readiness_link.md)
 
 ---
 
