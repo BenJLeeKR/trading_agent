@@ -2092,6 +2092,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `8d`, `10`, `11`, `12`, `13`
 - `plan_docs/agents/01_agent_inventory_and_status.md`
 
+
 ### 16. 멀티 사용자 공용 Plane / 개인 Credential Plane 분리 리팩토링 — `보류`
 
 ### 목표
