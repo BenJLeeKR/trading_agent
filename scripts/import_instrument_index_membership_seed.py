@@ -233,6 +233,7 @@ async def _apply_seed(
             final_codes,
             effective_from=effective_from,
             source_tag=source_tag,
+            refresh_existing_metadata=True,
             metadata={
                 "sync_source": "index_membership_seed_file",
                 "replace_listed_symbols": replace_listed_symbols,
@@ -266,6 +267,7 @@ async def _apply_seed(
                     final_codes,
                     effective_from=effective_from,
                     source_tag=source_tag,
+                    refresh_existing_metadata=True,
                     metadata={
                         "sync_source": "index_membership_seed_file",
                         "replace_listed_symbols": replace_listed_symbols,

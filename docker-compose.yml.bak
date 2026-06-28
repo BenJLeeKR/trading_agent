@@ -5,6 +5,7 @@
 # No Redis, observability, or CI/CD infrastructure.
 #
 # Services:
+#   db   — PostgreSQL 16 (data persisted in pgdata volume)
 #   app  — Dev shell container (pytest, migration, manual scripts)
 #   api  — FastAPI inspection API server (Postgres mode, port 8000)
 #
@@ -15,18 +16,35 @@
 #   docker compose down             # Stop all services
 # =============================================================================
 
-version: '3.8'
-
 services:
+  # ---- PostgreSQL 16 -------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    environment:
+      TZ: "Asia/Seoul"
+      POSTGRES_DB: "${DATABASE_NAME:-trading}"
+      POSTGRES_USER: "${DATABASE_USER:-trading}"
+      POSTGRES_PASSWORD: "${DATABASE_PASSWORD:-trading}"
+    ports:
+      - "${DATABASE_PORT:-5432}:5432"
+    volumes:
+      - /workspace/postgresql:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-trading}"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   # ---- Python Application (Development Shell) -----------------------------
   app:
     build: .
-#    depends_on:
-#      db:
-#        condition: service_healthy
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
       TZ: "Asia/Seoul"
-      DATABASE_HOST: trading_db
+      DATABASE_HOST: db
       DATABASE_PORT: "5432"
       DATABASE_NAME: "${DATABASE_NAME:-trading}"
       DATABASE_USER: "${DATABASE_USER:-trading}"
@@ -99,8 +117,6 @@ services:
     # Keep the container alive for interactive commands
     command: ["tail", "-f", "/dev/null"]
     restart: unless-stopped
-    networks:
-      - shared_net  # 추가됨
 
   # ---- FastAPI Inspection API ----------------------------------------------
   # Runs the read-only inspection API in Postgres-backed mode.
@@ -108,12 +124,12 @@ services:
   # API_RUNTIME_MODE from the environment.
   api:
     build: .
-#    depends_on:
-#      db:
-#        condition: service_healthy
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
       TZ: "Asia/Seoul"
-      DATABASE_HOST: trading_db
+      DATABASE_HOST: db
       DATABASE_PORT: "5432"
       DATABASE_NAME: "${DATABASE_NAME:-trading}"
       DATABASE_USER: "${DATABASE_USER:-trading}"
@@ -191,8 +207,6 @@ services:
       retries: 3
       start_period: 10s
     restart: unless-stopped
-    networks:
-      - shared_net  # 추가됨
 
   # ---- Operations Scheduler --------------------------------------------------
   # Primary orchestration service for the trading day.
@@ -210,18 +224,18 @@ services:
       - "--max-general-buy-submit-per-day"
       - "${SCHEDULER_MAX_GENERAL_BUY_SUBMIT_PER_DAY:-6}"
     restart: unless-stopped
-#    depends_on:
-#      db:
-#        condition: service_healthy
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
       TZ: "Asia/Seoul"
       PYTHONPATH: "/app/src:/app/scripts"
       # DB — DATABASE_URL is used by scheduler for asyncpg direct connections
-      DATABASE_URL: "postgresql://${DATABASE_USER:-trading}:${DATABASE_PASSWORD:-trading}@trading_db:5432/${DATABASE_NAME:-trading}"
+      DATABASE_URL: "postgresql://${DATABASE_USER:-trading}:${DATABASE_PASSWORD:-trading}@db:5432/${DATABASE_NAME:-trading}"
       DB_POOL_MIN: "${DB_POOL_MIN:-2}"
       DB_POOL_MAX: "${DB_POOL_MAX:-10}"
       # DB legacy names (fallback for _build_dsn)
-      DATABASE_HOST: "trading_db"
+      DATABASE_HOST: "db"
       DATABASE_PORT: "5432"
       DATABASE_NAME: "${DATABASE_NAME:-trading}"
       DATABASE_USER: "${DATABASE_USER:-trading}"
@@ -317,7 +331,7 @@ services:
       retries: 3
       start_period: 30s
     networks:
-      - shared_net  # 추가됨
+      - default
 
   # ---- Reconciliation Worker --------------------------------------------------
   # Long-lived worker that consumes reconciliation runs created by Phase 18/19.
@@ -331,15 +345,15 @@ services:
     container_name: agent_trading-reconciliation-worker
     command: ["python3", "/app/scripts/run_reconciliation_worker.py"]
     restart: unless-stopped
-#    depends_on:
-#      db:
-#        condition: service_healthy
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
       TZ: "Asia/Seoul"
       PYTHONPATH: "/app/src:/app/scripts"
       # DB — DATABASE_URL is used by worker for asyncpg direct connections
-      DATABASE_URL: "postgresql://${DATABASE_USER:-trading}:${DATABASE_PASSWORD:-trading}@trading_db:5432/${DATABASE_NAME:-trading}"
-      DATABASE_HOST: "trading_db"
+      DATABASE_URL: "postgresql://${DATABASE_USER:-trading}:${DATABASE_PASSWORD:-trading}@db:5432/${DATABASE_NAME:-trading}"
+      DATABASE_HOST: "db"
       DATABASE_PORT: "5432"
       DATABASE_NAME: "${DATABASE_NAME:-trading}"
       DATABASE_USER: "${DATABASE_USER:-trading}"
@@ -381,11 +395,6 @@ services:
     security_opt:
       - seccomp:unconfined
       - apparmor:unconfined
-    networks:
-      - shared_net  # 추가됨
 
-# 파일 최하단에 네트워크 추가
-networks:
-  shared_net:
-    external: true
-    name: trading_shared_net
+volumes:
+  pgdata:

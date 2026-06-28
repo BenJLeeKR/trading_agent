@@ -67,6 +67,32 @@ Event Bus / Workflow Log
 - 실전/모의 환경 분리
 - 전략/리스크/브로커 파라미터 조회
 - 롤백 가능한 설정 배포
+- 공용 정책 계층과 개인 credential 계층 분리
+
+### 4.1.1 공용 Plane / 개인 Plane 분리 원칙
+
+향후 P3 멀티 사용자 리팩토링에서는 아래 경계를 유지한다.
+
+- 공용 Plane
+  - instrument master
+  - market session / 휴장일 / 장상태 수집
+  - universe selection 정책
+  - feature 계산식
+  - deterministic trigger / eligibility / ranking 엔진
+  - broker adapter 구현체
+  - audit / replay / reconciliation 프레임워크
+- 개인 Plane
+  - KIS 계좌 credential
+  - AI provider credential
+  - NAVER 등 외부 API credential
+  - 주문 가능 계좌 매핑
+  - 사용자별 리스크 / execution override
+
+원칙:
+
+- 공용 Plane은 코드와 정책을 공유하되, 결과 데이터 소유권은 `client_id`, `account_id`로 분리한다.
+- 개인 Plane에서 관리되는 비밀값은 Control Plane의 secret resolver를 통해서만 Trading Plane으로 주입한다.
+- Trading Plane은 전역 `.env` 기반 단일 runtime 설정을 authoritative source로 사용하지 않는다.
 
 ### 4.2 Session Controller
 

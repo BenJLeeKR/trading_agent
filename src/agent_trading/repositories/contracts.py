@@ -1034,6 +1034,7 @@ class InstrumentIndexMembershipRepository(Protocol):
         effective_from: date,
         source_tag: str | None = None,
         metadata: dict[str, object] | None = None,
+        refresh_existing_metadata: bool = False,
     ) -> Sequence[InstrumentIndexMembershipEntity]:
         ...
 

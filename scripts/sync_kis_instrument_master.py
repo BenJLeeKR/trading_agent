@@ -285,6 +285,17 @@ def _extract_index_memberships(metadata: dict[str, object] | None) -> list[str]:
     return normalized
 
 
+def _has_explicit_index_membership_payload(metadata: dict[str, object] | None) -> bool:
+    raw = (metadata or {}).get("index_memberships")
+    if raw is None:
+        return False
+    if isinstance(raw, str):
+        return bool(raw.strip())
+    if isinstance(raw, Sequence):
+        return any(str(item).strip() for item in raw)
+    return False
+
+
 async def _sync_instruments(
     repo: InstrumentRepository,
     instruments: Sequence[InstrumentEntity],
@@ -294,6 +305,7 @@ async def _sync_instruments(
     deactivate_market_code: str | None,
     membership_repo: InstrumentIndexMembershipRepository | None = None,
     membership_effective_from: date | None = None,
+    sync_index_memberships: bool = False,
 ) -> SyncCounters:
     inserted = updated = skipped = deactivated = 0
     seen_by_market: dict[str, set[str]] = {}
@@ -315,7 +327,13 @@ async def _sync_instruments(
                 persisted = await repo.upsert_by_symbol(instrument)
         else:
             skipped += 1
-        if not dry_run and membership_repo is not None and persisted is not None:
+        if (
+            not dry_run
+            and membership_repo is not None
+            and persisted is not None
+            and sync_index_memberships
+            and _has_explicit_index_membership_payload(instrument.metadata)
+        ):
             await membership_repo.sync_current_memberships(
                 persisted.instrument_id,
                 _extract_index_memberships(instrument.metadata),
@@ -364,7 +382,7 @@ async def _sync_instruments(
                     updated_at=existing.updated_at,
                 )
             )
-            if membership_repo is not None:
+            if membership_repo is not None and sync_index_memberships:
                 await membership_repo.sync_current_memberships(
                     existing.instrument_id,
                     [],
@@ -505,6 +523,7 @@ async def _run(args: argparse.Namespace) -> int:
                 deactivate_missing=args.deactivate_missing,
                 deactivate_market_code=args.deactivate_market_code,
                 membership_repo=membership_repo,
+                sync_index_memberships=args.sync_index_memberships,
             )
             logger.info(
                 "Summary: inserted=%d updated=%d skipped=%d deactivated=%d",
@@ -556,6 +575,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--allow-intraday-apply",
         action="store_true",
         help="Override the default policy that blocks --apply during trading-day intraday hours.",
+    )
+    parser.add_argument(
+        "--sync-index-memberships",
+        action="store_true",
+        help=(
+            "metadata_index_memberships를 authoritative source로 간주해 "
+            "instrument_index_memberships까지 동기화한다. "
+            "기본값은 비활성이다."
+        ),
     )
     parser.add_argument(
         "--ignore-update-policy",

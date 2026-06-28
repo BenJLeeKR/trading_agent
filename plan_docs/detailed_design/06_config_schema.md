@@ -182,6 +182,66 @@ secrets:
   broker_credential_ref: secret://trading/kis/paper/main
 ```
 
+## 6.1 공용 설정 계층과 개인 비밀 계층 분리 원칙
+
+향후 멀티 사용자 운영으로 확장할 때도,
+모든 설정을 사용자별로 복제하지 않고 아래처럼 계층을 분리하는 것을 기본 원칙으로 한다.
+
+### 개인별로 반드시 분리할 항목
+
+- KIS App Key / App Secret / 계좌번호 / 상품코드
+- AI provider API key, provider별 개인 모델 override
+- NAVER / DART 등 외부 유료 API credential
+- 사용자별 주문 가능 계좌 매핑
+- 사용자별 live/paper 활성화 상태
+- 사용자별 리스크 한도 override
+
+위 항목은 공용 config 본문에 직접 저장하지 않고
+반드시 `secret reference + account/client mapping`으로만 주입한다.
+
+### 공용으로 재사용 가능한 항목
+
+- instrument master
+- universe freeze, feature freeze 산출 로직
+- deterministic trigger / eligibility / ranking 규칙
+- 시장 세션 정보, 휴장일 정보, 장 상태 정보
+- feature 계산식과 backend math engine
+- broker adapter 코드와 오류 정규화 규칙
+- audit / replay / reconciliation 프레임워크
+- 운영 대시보드의 공통 집계 로직
+
+단, 위 항목도 **산출 로직**은 공용이어도
+실행 결과 row는 `client_id`, `account_id`, `config_version_id` 등
+소유 경계가 분리되어야 한다.
+
+### 권장 계층 구조
+
+```yaml
+shared_policy:
+  universe_policy_ref: policy/universe/v1
+  trigger_policy_ref: policy/trigger/v1
+  feature_set_version: feature/v1
+  broker_adapter_profile: koreainvestment/v1
+
+client_overrides:
+  risk_profile_ref: risk/client_alpha/v3
+  execution_profile_ref: execution/client_alpha/v2
+  ai_profile_ref: ai/client_alpha/v5
+
+secrets:
+  broker_credential_ref: secret://trading/client_alpha/kis/live/main
+  ai_provider_credential_ref: secret://trading/client_alpha/llm/primary
+  naver_credential_ref: secret://trading/client_alpha/naver/news
+```
+
+### 후속 리팩토링 원칙
+
+- `AppSettings()` 전역 env 해석은 운영 단일 인스턴스 bootstrap까지만 허용한다.
+- 멀티 사용자 실행 경로에서는 `client runtime config + secret resolver`가
+  broker / AI / news adapter를 동적으로 조립해야 한다.
+- 동일한 공용 policy를 여러 사용자가 공유하더라도,
+  주문 실행과 브로커 rate limit budget은 계좌 단위로 분리한다.
+
 ## 7. Pydantic 예시 스키마
 
 ```python

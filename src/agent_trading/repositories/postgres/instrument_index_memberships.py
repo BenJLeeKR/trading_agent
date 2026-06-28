@@ -26,6 +26,7 @@ class PostgresInstrumentIndexMembershipRepository:
         effective_from: date,
         source_tag: str | None = None,
         metadata: dict[str, object] | None = None,
+        refresh_existing_metadata: bool = False,
     ) -> Sequence[InstrumentIndexMembershipEntity]:
         normalized_codes = sorted(
             {
@@ -67,6 +68,23 @@ class PostgresInstrumentIndexMembershipRepository:
 
         shared_metadata = json.dumps(metadata or {})
         now = datetime.now(timezone.utc)
+        if refresh_existing_metadata and normalized_codes:
+            await self._tx.connection.execute(
+                """
+                UPDATE trading.instrument_index_memberships
+                   SET source_tag = $3,
+                       metadata = $4::jsonb,
+                       updated_at = $5
+                 WHERE instrument_id = $1
+                   AND membership_code = ANY($2::text[])
+                   AND effective_to IS NULL
+                """,
+                instrument_id,
+                list(normalized_codes),
+                source_tag,
+                shared_metadata,
+                now,
+            )
         for code in normalized_codes:
             if code in active_by_code:
                 continue

@@ -1639,6 +1639,7 @@ class InMemoryInstrumentIndexMembershipRepository:
         effective_from: date,
         source_tag: str | None = None,
         metadata: dict[str, object] | None = None,
+        refresh_existing_metadata: bool = False,
     ) -> Sequence[InstrumentIndexMembershipEntity]:
         normalized_codes = {
             str(code).strip().upper()
@@ -1655,6 +1656,13 @@ class InMemoryInstrumentIndexMembershipRepository:
                 self._items[item.instrument_index_membership_id] = replace(
                     item,
                     effective_to=effective_from,
+                    updated_at=datetime.now(timezone.utc),
+                )
+            elif refresh_existing_metadata:
+                self._items[item.instrument_index_membership_id] = replace(
+                    item,
+                    source_tag=source_tag,
+                    metadata=dict(metadata or {}),
                     updated_at=datetime.now(timezone.utc),
                 )
         existing_active_codes = {
