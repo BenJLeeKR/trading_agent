@@ -579,6 +579,18 @@ class RiskLimitSnapshotEntity:
     daily_unrealized_pnl: Decimal | None = None
     daily_loss_used_pct: Decimal | None = None
     max_daily_loss_limit_pct: Decimal | None = None
+    var_confidence_level: Decimal | None = None
+    var_horizon_days: int | None = None
+    var_lookback_days: int | None = None
+    portfolio_var_1d: Decimal | None = None
+    portfolio_var_1d_adjusted: Decimal | None = None
+    largest_var_symbol: str | None = None
+    largest_var_contribution_pct: Decimal | None = None
+    concentration_penalty_pct: Decimal | None = None
+    var_status: str | None = None
+    var_reason_codes: list[str] | None = None
+    symbol_var_json: dict[str, object] = field(default_factory=dict)
+    symbol_marginal_contribution_json: dict[str, object] = field(default_factory=dict)
     symbol_exposure_json: dict[str, object] = field(default_factory=dict)
     sector_exposure_json: dict[str, object] = field(default_factory=dict)
     open_order_exposure_json: dict[str, object] = field(default_factory=dict)

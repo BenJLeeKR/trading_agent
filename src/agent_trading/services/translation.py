@@ -20,7 +20,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN
 
-from agent_trading.domain.enums import DecisionType, OrderSide, EntryStyle
+from agent_trading.domain.enums import DecisionType, EntryStyle, OrderSide, OrderType
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.services.common_types import (
     AIDecisionInputs,
@@ -112,6 +112,11 @@ def build_submit_order_request_from_decision(
         return None
 
     # ── Build the SubmitOrderRequest from intent.request ──
+    resolved_order_type = intent.request.order_type
+    resolved_price = intent.request.price
+    if resolved_price is None and resolved_order_type == OrderType.LIMIT:
+        resolved_order_type = OrderType.MARKET
+
     return SubmitOrderRequest(
         account_ref=intent.request.account_ref,
         client_order_id=resolved_client_order_id,
@@ -120,10 +125,10 @@ def build_submit_order_request_from_decision(
         symbol=intent.request.symbol,
         market=intent.request.market,
         side=intent.request.side,
-        order_type=intent.request.order_type,
+        order_type=resolved_order_type,
         quantity=intent.request.quantity,
         time_in_force=intent.request.time_in_force,
-        price=intent.request.price,
+        price=resolved_price,
         idempotency_key=intent.request.idempotency_key,
         decision_id=intent.request.decision_id,
         decision_context_id=intent.request.decision_context_id,

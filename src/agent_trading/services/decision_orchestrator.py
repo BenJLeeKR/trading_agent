@@ -560,6 +560,19 @@ class DecisionOrchestratorService:
         eligibility_reasons = tuple(
             getattr(deterministic_trigger, "eligibility_reasons", ()) or ()
         )
+        if (
+            not eligibility_passed
+            and decision_context is not None
+            and decision_context.signal_feature_snapshot_id is None
+            and eligibility_reasons
+            and set(eligibility_reasons).issubset(
+                {
+                    "eligibility_source_type_allowed",
+                    "eligibility_low_feature_coverage",
+                }
+            )
+        ):
+            return None
         if not eligibility_passed:
             rationale = (
                 f"[ai_override_gate] source_type={normalized_source_type} "

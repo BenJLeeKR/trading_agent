@@ -894,6 +894,21 @@ class TestAIRiskAgent:
             daily_loss_used_pct=Decimal("15.0"),
             max_daily_loss_limit_pct=Decimal("20.0"),
             gross_exposure_pct=Decimal("45.0"),
+            var_confidence_level=Decimal("0.95"),
+            var_horizon_days=1,
+            var_lookback_days=20,
+            portfolio_var_1d=Decimal("1250000.00"),
+            portfolio_var_1d_adjusted=Decimal("1500000.00"),
+            largest_var_symbol="005930",
+            largest_var_contribution_pct=Decimal("55.25"),
+            concentration_penalty_pct=Decimal("20.00"),
+            var_status="ready",
+            var_reason_codes=["phase1_ready"],
+            symbol_marginal_contribution_json={
+                "005930": 55.25,
+                "000660": 21.50,
+                "035420": 12.75,
+            },
         )
 
         context = AssembledContext(
@@ -928,6 +943,19 @@ class TestAIRiskAgent:
         assert "Drawdown state: normal" in user_prompt
         assert "Daily loss: 15.0% / 20.0% limit" in user_prompt
         assert "Gross exposure: 45.0%" in user_prompt
+        assert "Deterministic VaR Fact" in user_prompt
+        assert "VaR status: ready" in user_prompt
+        assert "Confidence level: 0.95" in user_prompt
+        assert "Horizon days: 1" in user_prompt
+        assert "Lookback days: 20" in user_prompt
+        assert "Portfolio VaR 1D: 1250000.00" in user_prompt
+        assert "Portfolio VaR 1D adjusted: 1500000.00" in user_prompt
+        assert "Largest VaR symbol: 005930" in user_prompt
+        assert "Largest VaR contribution: 55.25%" in user_prompt
+        assert "Concentration penalty: 20.00%" in user_prompt
+        assert "VaR reason codes: phase1_ready" in user_prompt
+        assert "Top VaR contributors: 005930=55.25%, 000660=21.50%, 035420=12.75%" in user_prompt
+        assert "do not recalculate it in AI" in user_prompt
 
     @pytest.mark.asyncio
     async def test_run_without_position_cash_risk(
@@ -1346,6 +1374,54 @@ class TestAIRiskAgent:
         assert "Current position value: N/A" in prompt
         assert "Concentration: N/A" in prompt
         assert "Over-concentrated: No" in prompt
+
+    def test_ar_prompt_contains_var_fact_from_risk_limit_snapshot(self) -> None:
+        """AI Risk prompt exposes deterministic VaR fact as read-only context."""
+        from datetime import datetime, timezone
+        from decimal import Decimal
+        from unittest.mock import AsyncMock
+        from uuid import uuid4
+
+        from agent_trading.domain.entities import RiskLimitSnapshotEntity
+
+        now = datetime.now(timezone.utc)
+        context = AssembledContext(
+            risk_limit_snapshot=RiskLimitSnapshotEntity(
+                risk_limit_snapshot_id=uuid4(),
+                account_id=uuid4(),
+                snapshot_at=now,
+                nav=Decimal("100000000"),
+                kill_switch_active=False,
+                var_confidence_level=Decimal("0.95"),
+                var_horizon_days=1,
+                var_lookback_days=20,
+                portfolio_var_1d=Decimal("2100000.00"),
+                portfolio_var_1d_adjusted=Decimal("2520000.00"),
+                largest_var_symbol="005930",
+                largest_var_contribution_pct=Decimal("41.25"),
+                concentration_penalty_pct=Decimal("20.00"),
+                var_status="ready",
+                var_reason_codes=["phase1_ready"],
+                symbol_marginal_contribution_json={
+                    "005930": 41.25,
+                    "000660": 22.10,
+                },
+            )
+        )
+        request = AgentExecutionRequest(
+            decision_context_id=uuid4(),
+            correlation_id="test-ar-var-fact",
+            context=context,
+        )
+        agent = AIRiskAgent(provider_client=AsyncMock())
+
+        prompt = agent._build_user_prompt(request)
+
+        assert "Deterministic VaR Fact" in prompt
+        assert "VaR status: ready" in prompt
+        assert "Portfolio VaR 1D adjusted: 2520000.00" in prompt
+        assert "Largest VaR symbol: 005930" in prompt
+        assert "Top VaR contributors: 005930=41.25%, 000660=22.10%" in prompt
 
     # ------------------------------------------------------------------
     # Layer 2: Post-processing Guard tests

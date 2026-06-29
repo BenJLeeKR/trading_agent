@@ -39,15 +39,31 @@ async def test_add_and_get_latest_by_account(
         daily_unrealized_pnl=Decimal("500000"),
         daily_loss_used_pct=Decimal("10.0000"),
         max_daily_loss_limit_pct=Decimal("20.0000"),
+        var_confidence_level=Decimal("0.950000"),
+        var_horizon_days=1,
+        var_lookback_days=20,
+        portfolio_var_1d=Decimal("2150000.12500000"),
+        portfolio_var_1d_adjusted=Decimal("2580000.15000000"),
+        largest_var_symbol="005930",
+        largest_var_contribution_pct=Decimal("41.2500"),
+        concentration_penalty_pct=Decimal("20.0000"),
+        var_status="ready",
+        var_reason_codes=["phase1_ready"],
+        symbol_var_json={"005930": 2150000.125},
+        symbol_marginal_contribution_json={"005930": 41.25},
         kill_switch_active=False,
     )
     saved = await seeded_postgres_data.risk_limit_snapshots.add(snapshot)
     assert saved.risk_limit_snapshot_id == snapshot.risk_limit_snapshot_id
     assert saved.nav == Decimal("100000000")
+    assert saved.portfolio_var_1d_adjusted == Decimal("2580000.15000000")
+    assert saved.var_status == "ready"
+    assert saved.symbol_var_json == {"005930": 2150000.125}
 
     latest = await seeded_postgres_data.risk_limit_snapshots.get_latest_by_account(account_id)
     assert latest is not None
     assert latest.nav == Decimal("100000000")
+    assert latest.largest_var_symbol == "005930"
 
 
 @pytest.mark.asyncio
@@ -138,3 +154,39 @@ async def test_kill_switch_active_flag(
         "daily_loss_limit_exceeded",
         "max_drawdown_exceeded",
     ]
+
+
+@pytest.mark.asyncio
+async def test_var_fields_roundtrip_with_sparse_snapshot(
+    seeded_postgres_data: RepositoryContainer,
+    seeded_account: UUID,
+) -> None:
+    account_id = seeded_account
+    now = datetime.now(timezone.utc)
+
+    snapshot = RiskLimitSnapshotEntity(
+        risk_limit_snapshot_id=uuid4(),
+        account_id=account_id,
+        snapshot_at=now,
+        nav=Decimal("75000000"),
+        cash_available=Decimal("22000000"),
+        var_confidence_level=Decimal("0.950000"),
+        var_horizon_days=1,
+        var_lookback_days=20,
+        portfolio_var_1d=None,
+        portfolio_var_1d_adjusted=None,
+        largest_var_symbol=None,
+        largest_var_contribution_pct=None,
+        concentration_penalty_pct=None,
+        var_status="insufficient_data",
+        var_reason_codes=["insufficient_history"],
+        symbol_var_json={},
+        symbol_marginal_contribution_json={},
+    )
+    await seeded_postgres_data.risk_limit_snapshots.add(snapshot)
+
+    latest = await seeded_postgres_data.risk_limit_snapshots.get_latest_by_account(account_id)
+    assert latest is not None
+    assert latest.var_status == "insufficient_data"
+    assert latest.var_reason_codes == ["insufficient_history"]
+    assert latest.symbol_marginal_contribution_json == {}

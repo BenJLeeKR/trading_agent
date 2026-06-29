@@ -35,7 +35,7 @@ from agent_trading.domain.enums import (
     OrderType,
     PipelineStopReason,
 )
-from agent_trading.domain.models import Quote, SubmitOrderRequest
+from agent_trading.domain.models import BrokerCapability, Quote, SubmitOrderRequest
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import AccountLookup, OrderQuery
 from agent_trading.services.order_manager import OrderManager
@@ -1095,6 +1095,212 @@ class ExecutionService:
             },
         )
 
+    def _evaluate_var_threshold_validation_result(
+        self,
+        *,
+        intent: OrderIntent,
+        source_type: str,
+    ) -> ValidationResult:
+        account_id = (
+            intent.context.decision_context.account_id
+            if intent.context is not None
+            and intent.context.decision_context is not None
+            else None
+        )
+        risk_limit_snapshot = (
+            intent.context.risk_limit_snapshot
+            if intent.context is not None
+            else None
+        )
+        config = (
+            intent.context.config_version.config_json
+            if intent.context is not None
+            and intent.context.config_version is not None
+            and isinstance(intent.context.config_version.config_json, dict)
+            else {}
+        )
+        risk_config = config.get("risk", {}) if isinstance(config, dict) else {}
+        max_portfolio_var_pct = decimal_or_none(
+            risk_config.get("max_portfolio_var_pct")
+        )
+        max_symbol_var_contribution_pct = decimal_or_none(
+            risk_config.get("max_symbol_var_contribution_pct")
+        )
+        portfolio_var_pct: Decimal | None = None
+        if (
+            risk_limit_snapshot is not None
+            and risk_limit_snapshot.nav is not None
+            and risk_limit_snapshot.nav > 0
+            and risk_limit_snapshot.portfolio_var_1d_adjusted is not None
+        ):
+            portfolio_var_pct = (
+                risk_limit_snapshot.portfolio_var_1d_adjusted
+                / risk_limit_snapshot.nav
+                * Decimal("100")
+            )
+
+        context = build_validation_context(
+            account_id=account_id,
+            symbol=intent.request.symbol,
+            market=intent.request.market,
+            side=intent.request.side.value,
+            source_type=source_type,
+            metadata={"phase": "risk_validator_var"},
+        )
+
+        def _var_availability_rule(_context: object) -> RuleOutcome:
+            if intent.request.side != OrderSide.BUY:
+                return RuleOutcome(
+                    code="risk_var_threshold_not_applicable",
+                    passed=True,
+                    details={"side": intent.request.side.value},
+                )
+            if (
+                max_portfolio_var_pct is None
+                and max_symbol_var_contribution_pct is None
+            ):
+                return RuleOutcome(
+                    code="risk_var_threshold_not_configured",
+                    passed=True,
+                )
+            if risk_limit_snapshot is None:
+                return RuleOutcome(
+                    code="risk_var_snapshot_missing",
+                    passed=True,
+                    warning=True,
+                )
+            if risk_limit_snapshot.var_status != "ready":
+                return RuleOutcome(
+                    code="risk_var_unavailable",
+                    passed=True,
+                    warning=True,
+                    details={
+                        "var_status": risk_limit_snapshot.var_status,
+                        "var_reason_codes": list(
+                            risk_limit_snapshot.var_reason_codes or ()
+                        ),
+                    },
+                )
+            return RuleOutcome(
+                code="risk_var_available",
+                passed=True,
+            )
+
+        def _portfolio_var_rule(_context: object) -> RuleOutcome:
+            if (
+                intent.request.side != OrderSide.BUY
+                or max_portfolio_var_pct is None
+                or risk_limit_snapshot is None
+                or risk_limit_snapshot.var_status != "ready"
+                or portfolio_var_pct is None
+            ):
+                return RuleOutcome(
+                    code="risk_portfolio_var_limit_not_triggered",
+                    passed=True,
+                )
+            return RuleOutcome(
+                code="portfolio_var_limit_exceeded",
+                passed=portfolio_var_pct < max_portfolio_var_pct,
+                details={
+                    "portfolio_var_pct": str(portfolio_var_pct),
+                    "max_portfolio_var_pct": str(max_portfolio_var_pct),
+                    "portfolio_var_1d_adjusted": (
+                        str(risk_limit_snapshot.portfolio_var_1d_adjusted)
+                        if risk_limit_snapshot.portfolio_var_1d_adjusted is not None
+                        else None
+                    ),
+                    "nav": (
+                        str(risk_limit_snapshot.nav)
+                        if risk_limit_snapshot.nav is not None
+                        else None
+                    ),
+                },
+            )
+
+        def _symbol_var_contribution_rule(_context: object) -> RuleOutcome:
+            contribution_pct = (
+                risk_limit_snapshot.largest_var_contribution_pct
+                if risk_limit_snapshot is not None
+                else None
+            )
+            if (
+                intent.request.side != OrderSide.BUY
+                or max_symbol_var_contribution_pct is None
+                or risk_limit_snapshot is None
+                or risk_limit_snapshot.var_status != "ready"
+                or contribution_pct is None
+            ):
+                return RuleOutcome(
+                    code="risk_symbol_var_limit_not_triggered",
+                    passed=True,
+                )
+            return RuleOutcome(
+                code="symbol_var_contribution_limit_exceeded",
+                passed=contribution_pct < max_symbol_var_contribution_pct,
+                details={
+                    "largest_var_symbol": risk_limit_snapshot.largest_var_symbol,
+                    "largest_var_contribution_pct": str(contribution_pct),
+                    "max_symbol_var_contribution_pct": str(
+                        max_symbol_var_contribution_pct
+                    ),
+                },
+            )
+
+        return self._build_risk_validator_result(
+            rule_set_version="risk_validator_v1",
+            context=context,
+            rules=(
+                ValidationRule(
+                    name="var_availability",
+                    evaluator=_var_availability_rule,
+                ),
+                ValidationRule(
+                    name="portfolio_var_limit",
+                    evaluator=_portfolio_var_rule,
+                ),
+                ValidationRule(
+                    name="symbol_var_contribution_limit",
+                    evaluator=_symbol_var_contribution_rule,
+                ),
+            ),
+            rule_results={
+                "account_id": str(account_id) if account_id is not None else None,
+                "symbol": intent.request.symbol,
+                "market": intent.request.market,
+                "side": intent.request.side.value,
+                "source_type": source_type,
+                "var_status": (
+                    risk_limit_snapshot.var_status
+                    if risk_limit_snapshot is not None
+                    else None
+                ),
+                "portfolio_var_pct": (
+                    str(portfolio_var_pct) if portfolio_var_pct is not None else None
+                ),
+                "max_portfolio_var_pct": (
+                    str(max_portfolio_var_pct)
+                    if max_portfolio_var_pct is not None
+                    else None
+                ),
+                "largest_var_symbol": (
+                    risk_limit_snapshot.largest_var_symbol
+                    if risk_limit_snapshot is not None
+                    else None
+                ),
+                "largest_var_contribution_pct": (
+                    str(risk_limit_snapshot.largest_var_contribution_pct)
+                    if risk_limit_snapshot is not None
+                    and risk_limit_snapshot.largest_var_contribution_pct is not None
+                    else None
+                ),
+                "max_symbol_var_contribution_pct": (
+                    str(max_symbol_var_contribution_pct)
+                    if max_symbol_var_contribution_pct is not None
+                    else None
+                ),
+            },
+        )
+
     def _evaluate_broker_submit_outcome_validation_result(
         self,
         *,
@@ -1115,6 +1321,37 @@ class ExecutionService:
             metadata={
                 "decision_type": decision_type,
                 "order_status": order_status,
+            },
+        )
+
+        def _broker_submit_outcome_rule(_context: object) -> RuleOutcome:
+            return RuleOutcome(
+                code=stop_reason,
+                passed=False,
+                details={
+                    "decision_type": decision_type,
+                    "order_status": order_status,
+                    "status_reason_code": status_reason_code,
+                },
+            )
+
+        return self._build_execution_validator_result(
+            rule_set_version="broker_submit_outcome_v1",
+            context=context,
+            rules=(
+                ValidationRule(
+                    name="broker_submit_outcome",
+                    evaluator=_broker_submit_outcome_rule,
+                ),
+            ),
+            rule_results={
+                "account_id": str(account_id) if account_id is not None else None,
+                "symbol": symbol,
+                "market": market,
+                "source_type": source_type,
+                "decision_type": decision_type,
+                "order_status": order_status,
+                "status_reason_code": status_reason_code,
             },
         )
 
@@ -1208,37 +1445,6 @@ class ExecutionService:
                 blocked_reason_codes=blocked_reason_codes,
                 supported_order_types=supported_order_types,
             ),
-        )
-
-        def _broker_submit_outcome_rule(_context: object) -> RuleOutcome:
-            return RuleOutcome(
-                code=stop_reason,
-                passed=False,
-                details={
-                    "decision_type": decision_type,
-                    "order_status": order_status,
-                    "status_reason_code": status_reason_code,
-                },
-            )
-
-        return self._build_execution_validator_result(
-            rule_set_version="broker_submit_outcome_v1",
-            context=context,
-            rules=(
-                ValidationRule(
-                    name="broker_submit_outcome",
-                    evaluator=_broker_submit_outcome_rule,
-                ),
-            ),
-            rule_results={
-                "account_id": str(account_id) if account_id is not None else None,
-                "symbol": symbol,
-                "market": market,
-                "source_type": source_type,
-                "decision_type": decision_type,
-                "order_status": order_status,
-                "status_reason_code": status_reason_code,
-            },
         )
 
     # ------------------------------------------------------------------
@@ -2211,11 +2417,14 @@ class ExecutionService:
         supported_order_types: tuple[str, ...] = ()
         broker_get_capabilities = getattr(broker, "get_capabilities", None)
         if callable(broker_get_capabilities):
-            broker_capabilities = await broker_get_capabilities()
-            supported_order_types = tuple(
-                order_type.value
-                for order_type in broker_capabilities.supported_order_types
-            )
+            broker_capabilities = broker_get_capabilities()
+            if asyncio.iscoroutine(broker_capabilities):
+                broker_capabilities = await broker_capabilities
+            if isinstance(broker_capabilities, BrokerCapability):
+                supported_order_types = tuple(
+                    order_type.value
+                    for order_type in broker_capabilities.supported_order_types
+                )
 
         compliance_validation = await self._evaluate_submit_time_compliance_validation_result(
             intent=intent,
@@ -2253,6 +2462,42 @@ class ExecutionService:
                 is_skipped=True,
                 status="SKIPPED",
                 error_phase="compliance_validator",
+            )
+
+        var_validation = self._evaluate_var_threshold_validation_result(
+            intent=intent,
+            source_type=intent_source_type,
+        )
+        if var_validation.is_blocking:
+            logger.info(
+                "Phase 2.2 BLOCKED VaR threshold: symbol=%s "
+                "blocking=%s trade_decision_id=%s",
+                intent.request.symbol,
+                list(var_validation.blocking_rule_codes),
+                trade_decision_id,
+            )
+            await self._record_validation_result(
+                validation_result=var_validation,
+                decision_context_id=intent.decision_context_id,
+                trade_decision_id=trade_decision_id,
+            )
+            _add_phase(f"risk_validator/{_symbol}", "skipped")
+            await self._finalize_attempt(
+                attempt_id,
+                "stopped",
+                stop_phase="risk_validator",
+                stop_reason=var_validation.stop_reason or "risk_validator_blocked",
+                phase_trace=_phase_trace,
+            )
+            return SubmitResult.build(
+                order_intent=intent,
+                trade_decision_id=trade_decision_id,
+                error_message=var_validation.stop_reason or "risk_validator_blocked",
+                stop_reason=var_validation.stop_reason or "risk_validator_blocked",
+                phase_trace=tuple(_phase_trace) if _phase_trace else (),
+                is_skipped=True,
+                status="SKIPPED",
+                error_phase="risk_validator",
             )
 
         # ── Phase 2.5: BUY duplicate re-entry guard ─────────────────────

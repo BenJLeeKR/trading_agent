@@ -618,6 +618,75 @@ class AIRiskAgent:
                 lines.append(f"  Gross exposure: {rl.gross_exposure_pct}%")
             if rl.net_exposure_pct is not None:
                 lines.append(f"  Net exposure: {rl.net_exposure_pct}%")
+            if rl.var_status is not None:
+                lines.append("")
+                lines.append("  【Deterministic VaR Fact】")
+                lines.append(f"  VaR status: {rl.var_status}")
+                if rl.var_confidence_level is not None:
+                    lines.append(
+                        "  Confidence level: "
+                        f"{rl.var_confidence_level}"
+                    )
+                if rl.var_horizon_days is not None:
+                    lines.append(
+                        "  Horizon days: "
+                        f"{rl.var_horizon_days}"
+                    )
+                if rl.var_lookback_days is not None:
+                    lines.append(
+                        "  Lookback days: "
+                        f"{rl.var_lookback_days}"
+                    )
+                if rl.portfolio_var_1d is not None:
+                    lines.append(
+                        "  Portfolio VaR 1D: "
+                        f"{rl.portfolio_var_1d}"
+                    )
+                if rl.portfolio_var_1d_adjusted is not None:
+                    lines.append(
+                        "  Portfolio VaR 1D adjusted: "
+                        f"{rl.portfolio_var_1d_adjusted}"
+                    )
+                if rl.largest_var_symbol is not None:
+                    lines.append(
+                        "  Largest VaR symbol: "
+                        f"{rl.largest_var_symbol}"
+                    )
+                if rl.largest_var_contribution_pct is not None:
+                    lines.append(
+                        "  Largest VaR contribution: "
+                        f"{rl.largest_var_contribution_pct}%"
+                    )
+                if rl.concentration_penalty_pct is not None:
+                    lines.append(
+                        "  Concentration penalty: "
+                        f"{rl.concentration_penalty_pct}%"
+                    )
+                if rl.var_reason_codes:
+                    lines.append(
+                        "  VaR reason codes: "
+                        f"{', '.join(rl.var_reason_codes)}"
+                    )
+                if rl.symbol_marginal_contribution_json:
+                    ranked_contributors = sorted(
+                        (
+                            (str(symbol), float(value))
+                            for symbol, value in rl.symbol_marginal_contribution_json.items()
+                        ),
+                        key=lambda item: item[1],
+                        reverse=True,
+                    )
+                    top_contributors = ", ".join(
+                        f"{symbol}={value:.2f}%"
+                        for symbol, value in ranked_contributors[:3]
+                    )
+                    lines.append(
+                        "  Top VaR contributors: "
+                        f"{top_contributors}"
+                    )
+                lines.append(
+                    "  VaR is an authoritative backend fact. Read it as a risk anchor; do not recalculate it in AI."
+                )
         # ==================================================
 
         lines.append(f"Recent events ({len(events)}):")

@@ -56,6 +56,7 @@ class FakeKISRestClient:
         fail_cash: bool = False,
         orderable_cash: Decimal | None = None,
         fail_orderable_cash: bool = False,
+        daily_bars_by_symbol: dict[str, list[dict[str, Any]]] | None = None,
         account_number: str = "test_account",
     ) -> None:
         self._positions = positions or []
@@ -64,6 +65,7 @@ class FakeKISRestClient:
         self._fail_cash = fail_cash
         self._orderable_cash = orderable_cash
         self._fail_orderable_cash = fail_orderable_cash
+        self._daily_bars_by_symbol = daily_bars_by_symbol or {}
         self.account_number = account_number
         self.closed = False
 
@@ -135,6 +137,18 @@ class FakeKISRestClient:
                 source="budget_precheck_fallback",
             )
         return OrderableCashResult(amount=amount, source="missing_field")
+
+    async def inquire_daily_itemchartprice(
+        self,
+        *,
+        symbol: str,
+        market_code: str = "KRX",
+        start_date: str,
+        end_date: str,
+        period_div_code: str = "D",
+        adjusted_price: bool = True,
+    ) -> list[dict[str, Any]]:
+        return list(self._daily_bars_by_symbol.get(symbol, []))
 
     async def close(self) -> None:
         self.closed = True
@@ -495,6 +509,55 @@ class TestKISSyncSnapshotProvider:
         assert len(result.positions) == 0
         # cash+positions 통합 에러 메시지 (통합 호출이므로)
         assert any("cash+positions" in err.lower() for err in result.errors)
+
+    async def test_risk_limit_snapshot_enriched_with_var_fields(self) -> None:
+        account_id = uuid4()
+        inst_id = uuid4()
+        client = FakeKISRestClient(
+            positions=[
+                {
+                    "pdno": "005930",
+                    "hldg_qty": "10",
+                    "pchs_avg_pric": "50000",
+                    "prpr": "52000",
+                    "evlu_amt": "520000",
+                }
+            ],
+            cash_balance={
+                "dnca_tot_amt": "1000000",
+                "nxdy_excc_amt": "1000000",
+                "tot_evlu_amt": "5000000",
+            },
+            orderable_cash=Decimal("900000"),
+            daily_bars_by_symbol={
+                "005930": [
+                    {"stck_bsop_date": f"202606{idx:02d}", "stck_clpr": str(100 + idx)}
+                    for idx in range(1, 22)
+                ]
+            },
+        )
+        provider = KISSyncSnapshotProvider(client)
+        inst_repo = InMemoryInstrumentRepository()
+        await inst_repo.add(
+            InstrumentEntity(
+                instrument_id=inst_id,
+                symbol="005930",
+                name="Samsung Electronics",
+                market_code="KRX",
+                asset_class="stock",
+                currency="KRW",
+            )
+        )
+
+        result = await provider.fetch_snapshot(account_id, inst_repo)
+
+        assert result.risk_limit_snapshot is not None
+        assert result.risk_limit_snapshot.var_status == "ready"
+        assert result.risk_limit_snapshot.portfolio_var_1d is not None
+        assert result.risk_limit_snapshot.portfolio_var_1d_adjusted is not None
+        assert result.risk_limit_snapshot.symbol_var_json["005930"] > 0
+        assert result.risk_limit_snapshot.var_reason_codes is not None
+        assert "phase1_ready" in result.risk_limit_snapshot.var_reason_codes
 
 
 class TestFetchSnapshot:

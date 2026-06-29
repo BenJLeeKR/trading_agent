@@ -57,6 +57,8 @@ class TestRiskLimitSnapshots:
         assert len(data) >= 1
         assert data[0]["nav"] is not None
         assert data[0]["kill_switch_active"] is False
+        assert data[0]["var_status"] == "ready"
+        assert data[0]["portfolio_var_1d_adjusted"] == 165000.0
 
     def test_list_risk_limit_snapshots_requires_account(
         self, client: TestClient,
@@ -78,6 +80,8 @@ class TestRiskLimitSnapshots:
         data = response.json()
         assert data["account_id"] == acct_id
         assert data["nav"] is not None
+        assert data["largest_var_symbol"] == "005930"
+        assert data["var_reason_codes"] == ["phase1_ready"]
 
     def test_get_latest_risk_limit_snapshot_not_found(
         self, client: TestClient,

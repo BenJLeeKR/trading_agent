@@ -59,6 +59,38 @@ def _to_view(snapshot: object) -> RiskLimitSnapshotView:
             if snapshot.max_daily_loss_limit_pct is not None
             else None
         ),
+        var_confidence_level=(
+            float(snapshot.var_confidence_level)
+            if snapshot.var_confidence_level is not None
+            else None
+        ),
+        var_horizon_days=snapshot.var_horizon_days,
+        var_lookback_days=snapshot.var_lookback_days,
+        portfolio_var_1d=(
+            float(snapshot.portfolio_var_1d)
+            if snapshot.portfolio_var_1d is not None
+            else None
+        ),
+        portfolio_var_1d_adjusted=(
+            float(snapshot.portfolio_var_1d_adjusted)
+            if snapshot.portfolio_var_1d_adjusted is not None
+            else None
+        ),
+        largest_var_symbol=snapshot.largest_var_symbol,
+        largest_var_contribution_pct=(
+            float(snapshot.largest_var_contribution_pct)
+            if snapshot.largest_var_contribution_pct is not None
+            else None
+        ),
+        concentration_penalty_pct=(
+            float(snapshot.concentration_penalty_pct)
+            if snapshot.concentration_penalty_pct is not None
+            else None
+        ),
+        var_status=snapshot.var_status,
+        var_reason_codes=snapshot.var_reason_codes,
+        symbol_var_json=snapshot.symbol_var_json,
+        symbol_marginal_contribution_json=snapshot.symbol_marginal_contribution_json,
         symbol_exposure_json=snapshot.symbol_exposure_json,
         sector_exposure_json=snapshot.sector_exposure_json,
         open_order_exposure_json=snapshot.open_order_exposure_json,

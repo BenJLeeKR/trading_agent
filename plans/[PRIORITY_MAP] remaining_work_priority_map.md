@@ -1140,6 +1140,25 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   - validator는 VaR threshold를 authoritative하게 집행한다.
 - Phase 1 설계 문서
   - [`plans/[PLAN] deterministic_var_engine_phase1.md`](./[PLAN]%20deterministic_var_engine_phase1.md)
+- 체크리스트
+  - [x] `risk_limit_snapshot` Phase 1 VaR 필드 확장
+    - migration / entity / repository / API view 반영
+    - `var_confidence_level`
+    - `var_horizon_days`
+    - `var_lookback_days`
+    - `portfolio_var_1d`
+    - `portfolio_var_1d_adjusted`
+    - `largest_var_symbol`
+    - `largest_var_contribution_pct`
+    - `concentration_penalty_pct`
+    - `var_status`
+    - `var_reason_codes`
+    - `symbol_var_json`
+    - `symbol_marginal_contribution_json`
+  - [x] `deterministic_var_engine.py` 구현
+  - [x] 장전 snapshot/risk batch에 VaR 계산 연결
+  - [x] `AI Risk Agent` read-only projection 연결
+  - [x] `risk_validator_v1` VaR threshold 집행 연결
 - 이유
   - `최대 기대수익률`을 추구하더라도
     tail risk와 concentration risk를 숫자로 닫는 기반이 먼저 필요하다.

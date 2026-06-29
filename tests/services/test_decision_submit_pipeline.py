@@ -1003,6 +1003,212 @@ class TestAssembleAndSubmit:
         )
 
     @pytest.mark.asyncio
+    async def test_var_threshold_blocks_buy_before_create_order(
+        self,
+        service: DecisionOrchestratorService,
+        order_manager: OrderManager,
+        repos: Any,
+    ) -> None:
+        request = _make_request(
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            price=Decimal("50000"),
+            metadata={"source_type": "core"},
+        )
+        config_version = ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=uuid4(),
+            environment=Environment.PAPER,
+            version_tag="var-threshold",
+            config_json={
+                "risk": {
+                    "max_portfolio_var_pct": 10.0,
+                    "max_symbol_var_contribution_pct": 80.0,
+                }
+            },
+            checksum="var-threshold",
+            activated_at=datetime.now(timezone.utc),
+        )
+        risk_limit_snapshot = RiskLimitSnapshotEntity(
+            risk_limit_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            nav=Decimal("10000000"),
+            cash_available=Decimal("1000000"),
+            portfolio_var_1d=Decimal("1200000"),
+            portfolio_var_1d_adjusted=Decimal("1500000"),
+            largest_var_symbol="005930",
+            largest_var_contribution_pct=Decimal("55.25"),
+            concentration_penalty_pct=Decimal("20.00"),
+            var_status="ready",
+            var_reason_codes=["phase1_ready"],
+            snapshot_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+        )
+        intent = _make_intent(
+            decision_type="APPROVE",
+            request=request,
+        )
+        intent = replace(
+            intent,
+            context=replace(
+                intent.context,
+                source_type="core",
+                config_version=config_version,
+                risk_limit_snapshot=risk_limit_snapshot,
+            ),
+        )
+
+        class _BrokerStub:
+            async def get_capabilities(self) -> Any:
+                from agent_trading.domain.enums import AssetClass, BrokerName, TimeInForce
+                from agent_trading.domain.models import BrokerCapability
+
+                return BrokerCapability(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
+                    supports_paper_trading=True,
+                    supports_live_trading=True,
+                    supports_websocket=True,
+                    supported_asset_classes=(AssetClass.KR_STOCK,),
+                    supported_order_types=(OrderType.MARKET, OrderType.LIMIT),
+                    supported_time_in_force=(TimeInForce.DAY,),
+                )
+
+        async def _mock_run_decision_pipeline(
+            *args: Any,
+            **kwargs: Any,
+        ) -> tuple[OrderIntent, UUID, None]:
+            return intent, uuid4(), None
+
+        with (
+            patch.object(service, "_run_decision_pipeline", side_effect=_mock_run_decision_pipeline),
+            patch.object(
+                OrderManager,
+                "create_order",
+                new=AsyncMock(side_effect=AssertionError("create_order should not be called")),
+            ),
+        ):
+            result = await service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=_BrokerStub(),
+            )
+
+        assert result.status == "SKIPPED"
+        assert result.stop_reason == "portfolio_var_limit_exceeded"
+        assert result.error_phase == "risk_validator"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert len(evaluations) == 1
+        assert evaluations[0].rule_set_version == "risk_validator_v1"
+        assert evaluations[0].blocking_rule_codes == ["portfolio_var_limit_exceeded"]
+        assert evaluations[0].rule_results["validator_bundle"] == "risk_validator_v1"
+        assert (
+            evaluations[0].rule_results["rule_outcomes"]["portfolio_var_limit"]["passed"]
+            is False
+        )
+
+    @pytest.mark.asyncio
+    async def test_var_threshold_does_not_block_sell_risk_reduction_path(
+        self,
+        service: DecisionOrchestratorService,
+        order_manager: OrderManager,
+        repos: Any,
+    ) -> None:
+        request = _make_request(
+            side=OrderSide.SELL,
+            order_type=OrderType.LIMIT,
+            quantity=Decimal("5"),
+            price=Decimal("50000"),
+            metadata={"source_type": "held_position"},
+        )
+        config_version = ConfigVersionEntity(
+            config_version_id=uuid4(),
+            client_id=uuid4(),
+            environment=Environment.PAPER,
+            version_tag="var-threshold-sell",
+            config_json={
+                "risk": {
+                    "max_portfolio_var_pct": 1.0,
+                    "max_symbol_var_contribution_pct": 1.0,
+                }
+            },
+            checksum="var-threshold-sell",
+            activated_at=datetime.now(timezone.utc),
+        )
+        risk_limit_snapshot = RiskLimitSnapshotEntity(
+            risk_limit_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            nav=Decimal("10000000"),
+            cash_available=Decimal("1000000"),
+            portfolio_var_1d=Decimal("1200000"),
+            portfolio_var_1d_adjusted=Decimal("1500000"),
+            largest_var_symbol="005930",
+            largest_var_contribution_pct=Decimal("55.25"),
+            concentration_penalty_pct=Decimal("20.00"),
+            var_status="ready",
+            var_reason_codes=["phase1_ready"],
+            snapshot_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+        )
+        intent = _make_intent(
+            decision_type="SELL",
+            request=request,
+        )
+        intent = replace(
+            intent,
+            context=replace(
+                intent.context,
+                source_type="held_position",
+                config_version=config_version,
+                risk_limit_snapshot=risk_limit_snapshot,
+            ),
+        )
+        submitted_entity = _make_order_entity(
+            status=OrderStatus.SUBMITTED,
+            request=request,
+        )
+
+        class _BrokerStub:
+            async def get_capabilities(self) -> Any:
+                from agent_trading.domain.enums import AssetClass, BrokerName, TimeInForce
+                from agent_trading.domain.models import BrokerCapability
+
+                return BrokerCapability(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
+                    supports_paper_trading=True,
+                    supports_live_trading=True,
+                    supports_websocket=True,
+                    supported_asset_classes=(AssetClass.KR_STOCK,),
+                    supported_order_types=(OrderType.MARKET, OrderType.LIMIT),
+                    supported_time_in_force=(TimeInForce.DAY,),
+                )
+
+        async def _mock_run_decision_pipeline(
+            *args: Any,
+            **kwargs: Any,
+        ) -> tuple[OrderIntent, UUID, None]:
+            return intent, uuid4(), None
+
+        async def _mock_submit(
+            *args: Any,
+            **kwargs: Any,
+        ) -> OrderRequestEntity:
+            return submitted_entity
+
+        with (
+            patch.object(service, "_run_decision_pipeline", side_effect=_mock_run_decision_pipeline),
+            patch.object(OrderManager, "submit_order_to_broker", _mock_submit),
+        ):
+            result = await service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=_BrokerStub(),
+            )
+
+        assert result.status == "SUBMITTED"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert evaluations == []
+
+    @pytest.mark.asyncio
     async def test_submit_time_compliance_blocks_status_snapshot_halt_before_create_order(
         self,
         service: DecisionOrchestratorService,

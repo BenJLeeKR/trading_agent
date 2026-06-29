@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4, uuid7
@@ -25,6 +25,11 @@ from agent_trading.domain.entities import (
     RiskLimitSnapshotEntity,
 )
 from agent_trading.repositories.contracts import InstrumentRepository
+from agent_trading.services.deterministic_var_engine import (
+    DeterministicVarPositionInput,
+    apply_var_assessment_to_risk_limit_snapshot,
+    calculate_deterministic_var,
+)
 from agent_trading.services.snapshot_sync import (
     FetchedSnapshot,
     SnapshotFetchProvider,
@@ -54,6 +59,12 @@ _KIS_ORD_PSBL_AMT = "ord_psbl_amt"  # 주문가능금액
 
 _SOURCE_OF_TRUTH = "broker"
 _DEFAULT_MARKET_CODE = "KRX"
+_DEFAULT_VAR_MAX_SINGLE_POSITION_PCT = Decimal("10")
+_VAR_LOOKBACK_CALENDAR_DAYS = 45
+_VAR_BUDGET_RETRY_ATTEMPTS = 2
+_VAR_BUDGET_RETRY_SLEEP_SECONDS = 1.0
+_VAR_TRANSIENT_RETRY_ATTEMPTS = 2
+_VAR_TRANSIENT_RETRY_SLEEP_SECONDS = 1.0
 
 
 class KISSyncSnapshotProvider:
@@ -382,6 +393,12 @@ class KISSyncSnapshotProvider:
                 nav=cash_balance.total_asset,
                 snapshot_at=cash_balance.snapshot_at,
             )
+            risk_limit = await self._enrich_risk_limit_snapshot(
+                risk_limit=risk_limit,
+                positions=positions,
+                raw_positions=raw_positions,
+                errors=errors,
+            )
 
         # fetch_success: cash나 positions 중 하나라도 확보되었으면 성공
         fetch_success = cash_balance is not None or len(positions) > 0
@@ -393,3 +410,150 @@ class KISSyncSnapshotProvider:
             errors=errors,
             fetch_success=fetch_success,
         )
+
+    async def _enrich_risk_limit_snapshot(
+        self,
+        *,
+        risk_limit: RiskLimitSnapshotEntity,
+        positions: Sequence[PositionSnapshotEntity],
+        raw_positions: Sequence[Any],
+        errors: list[str],
+    ) -> RiskLimitSnapshotEntity:
+        var_inputs = await self._build_var_inputs(
+            positions=positions,
+            raw_positions=raw_positions,
+            errors=errors,
+        )
+        assessment = calculate_deterministic_var(
+            nav=risk_limit.nav,
+            positions=var_inputs,
+            max_single_position_pct=_DEFAULT_VAR_MAX_SINGLE_POSITION_PCT,
+        )
+        return apply_var_assessment_to_risk_limit_snapshot(risk_limit, assessment)
+
+    async def _build_var_inputs(
+        self,
+        *,
+        positions: Sequence[PositionSnapshotEntity],
+        raw_positions: Sequence[Any],
+        errors: list[str],
+    ) -> tuple[DeterministicVarPositionInput, ...]:
+        if not positions or not raw_positions:
+            return ()
+
+        raw_by_symbol: dict[str, dict[str, Any]] = {}
+        for raw in raw_positions:
+            if not isinstance(raw, dict):
+                continue
+            symbol = str(raw.get(_KIS_PDNO, "")).strip()
+            if symbol:
+                raw_by_symbol[symbol] = raw
+
+        end_date = date.today()
+        start_date = end_date - timedelta(days=_VAR_LOOKBACK_CALENDAR_DAYS)
+        var_inputs: list[DeterministicVarPositionInput] = []
+
+        for position in positions:
+            symbol = await self._resolve_symbol_for_position(position, raw_by_symbol)
+            if not symbol:
+                errors.append(
+                    f"VaR enrichment skipped: symbol resolution missing for instrument_id={position.instrument_id}"
+                )
+                continue
+
+            try:
+                raw_bars = await self._fetch_var_daily_bars(
+                    symbol=symbol,
+                    start_date=start_date.strftime("%Y%m%d"),
+                    end_date=end_date.strftime("%Y%m%d"),
+                )
+            except Exception as exc:
+                logger.warning("VaR daily bars fetch failed for symbol=%s: %s", symbol, exc)
+                errors.append(f"VaR daily bars fetch failed for symbol={symbol}: {exc}")
+                continue
+
+            close_prices = tuple(
+                safe_decimal(raw.get("stck_clpr"))
+                for raw in sorted(
+                    raw_bars,
+                    key=lambda item: str(item.get("stck_bsop_date", "")) if isinstance(item, dict) else "",
+                )
+                if isinstance(raw, dict)
+                and safe_decimal(raw.get("stck_clpr")) > 0
+            )
+            if not close_prices:
+                errors.append(f"VaR daily bars missing for symbol={symbol}")
+                continue
+
+            raw_position = raw_by_symbol.get(symbol, {})
+            held_market_value = safe_optional_decimal(raw_position.get(_KIS_EVL_AMT))
+            if held_market_value is None or held_market_value <= 0:
+                market_price = position.market_price or position.average_price
+                held_market_value = (
+                    (market_price or Decimal("0")) * position.quantity
+                )
+            var_inputs.append(
+                DeterministicVarPositionInput(
+                    symbol=symbol,
+                    close_prices=close_prices,
+                    held_market_value=held_market_value,
+                    reference_price=position.market_price or position.average_price,
+                )
+            )
+        return tuple(var_inputs)
+
+    async def _resolve_symbol_for_position(
+        self,
+        position: PositionSnapshotEntity,
+        raw_by_symbol: dict[str, dict[str, Any]],
+    ) -> str | None:
+        for symbol, raw in raw_by_symbol.items():
+            raw_qty = safe_decimal(raw.get(_KIS_HLDG_QTY, "0"))
+            raw_avg = safe_decimal(raw.get(_KIS_PCHS_AVG_PRIC, "0"))
+            if (
+                raw_qty == position.quantity
+                and raw_avg == position.average_price
+            ):
+                return symbol
+        return next(iter(raw_by_symbol), None)
+
+    async def _fetch_var_daily_bars(
+        self,
+        *,
+        symbol: str,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict[str, Any]]:
+        max_attempts = max(_VAR_BUDGET_RETRY_ATTEMPTS, _VAR_TRANSIENT_RETRY_ATTEMPTS)
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return await self._rest.inquire_daily_itemchartprice(
+                    symbol=symbol,
+                    market_code=_DEFAULT_MARKET_CODE,
+                    start_date=start_date,
+                    end_date=end_date,
+                    period_div_code="D",
+                    adjusted_price=True,
+                )
+            except BudgetExhaustedError as exc:
+                if attempt >= _VAR_BUDGET_RETRY_ATTEMPTS:
+                    raise
+                logger.info(
+                    "VaR daily bars budget retry: symbol=%s bucket=%s attempt=%s/%s",
+                    symbol,
+                    exc.bucket,
+                    attempt,
+                    _VAR_BUDGET_RETRY_ATTEMPTS,
+                )
+                await asyncio.sleep(_VAR_BUDGET_RETRY_SLEEP_SECONDS * float(attempt))
+            except Exception:
+                if attempt >= _VAR_TRANSIENT_RETRY_ATTEMPTS:
+                    raise
+                logger.info(
+                    "VaR daily bars transient retry: symbol=%s attempt=%s/%s",
+                    symbol,
+                    attempt,
+                    _VAR_TRANSIENT_RETRY_ATTEMPTS,
+                )
+                await asyncio.sleep(_VAR_TRANSIENT_RETRY_SLEEP_SECONDS * float(attempt))
+        return []
