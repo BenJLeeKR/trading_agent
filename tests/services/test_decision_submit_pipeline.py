@@ -32,6 +32,7 @@ from agent_trading.domain.entities import (
     DecisionContextEntity,
     ExternalEventEntity,
     InstrumentEntity,
+    InstrumentStatusSnapshotEntity,
     OrderRequestEntity,
     PositionSnapshotEntity,
     RiskLimitSnapshotEntity,
@@ -599,7 +600,22 @@ class TestAssembleAndSubmit:
         ) -> OrderRequestEntity:
             return submitted_entity
 
-        broker_stub = object()
+        class _BrokerStub:
+            async def get_capabilities(self) -> Any:
+                from agent_trading.domain.enums import AssetClass, BrokerName, TimeInForce
+                from agent_trading.domain.models import BrokerCapability
+
+                return BrokerCapability(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
+                    supports_paper_trading=True,
+                    supports_live_trading=True,
+                    supports_websocket=True,
+                    supported_asset_classes=(AssetClass.KR_STOCK,),
+                    supported_order_types=(OrderType.MARKET, OrderType.LIMIT),
+                    supported_time_in_force=(TimeInForce.DAY,),
+                )
+
+        broker_stub = _BrokerStub()
         with patch.object(OrderManager, "submit_order_to_broker", _mock_submit):
             result = await service.assemble_and_submit(
                 sample_request,
@@ -803,6 +819,11 @@ class TestAssembleAndSubmit:
         assert len(evaluations) == 1
         assert evaluations[0].rule_set_version == "buy_execution_liquidity_v1"
         assert evaluations[0].blocking_rule_codes == ["low_liquidity_execution_blocked"]
+        assert evaluations[0].rule_results["validator_bundle"] == "risk_validator_v1"
+        assert (
+            evaluations[0].rule_results["rule_outcomes"]["buy_execution_liquidity"]["passed"]
+            is False
+        )
 
     @pytest.mark.asyncio
     async def test_rejected_records_broker_submit_outcome_guardrail(
@@ -834,6 +855,235 @@ class TestAssembleAndSubmit:
         assert len(evaluations) == 1
         assert evaluations[0].rule_set_version == "broker_submit_outcome_v1"
         assert evaluations[0].blocking_rule_codes == ["order_rejected"]
+        assert evaluations[0].rule_results["validator_bundle"] == "execution_validator_v1"
+        assert (
+            evaluations[0].rule_results["rule_outcomes"]["broker_submit_outcome"]["passed"]
+            is False
+        )
+
+    @pytest.mark.asyncio
+    async def test_submit_time_compliance_blocks_reconciliation_overlay_flat_buy(
+        self,
+        service: DecisionOrchestratorService,
+        order_manager: OrderManager,
+        repos: Any,
+    ) -> None:
+        request = _make_request(
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            price=Decimal("50000"),
+            metadata={"source_type": "reconciliation_overlay"},
+        )
+        intent = _make_intent(
+            decision_type="APPROVE",
+            request=request,
+        )
+        intent = replace(
+            intent,
+            context=replace(intent.context, source_type="reconciliation_overlay"),
+        )
+        broker_stub = object()
+
+        async def _mock_run_decision_pipeline(
+            *args: Any,
+            **kwargs: Any,
+        ) -> tuple[OrderIntent, UUID, None]:
+            return intent, uuid4(), None
+
+        with (
+            patch.object(service, "_run_decision_pipeline", side_effect=_mock_run_decision_pipeline),
+            patch.object(
+                OrderManager,
+                "create_order",
+                new=AsyncMock(side_effect=AssertionError("create_order should not be called")),
+            ),
+        ):
+            result = await service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=broker_stub,
+            )
+
+        assert result.status == "SKIPPED"
+        assert result.error_phase == "compliance_validator"
+        assert result.stop_reason == "source_policy_buy_blocked"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert len(evaluations) == 1
+        assert evaluations[0].rule_set_version == "compliance_validator_v1"
+        assert evaluations[0].rule_results["validator_bundle"] == "compliance_validator_v1"
+        assert (
+            evaluations[0].rule_results["rule_outcomes"]["reconciliation_overlay_flat_buy_blocked"]["passed"]
+            is False
+        )
+
+    @pytest.mark.asyncio
+    async def test_submit_time_compliance_blocks_restricted_symbol_before_create_order(
+        self,
+        service: DecisionOrchestratorService,
+        order_manager: OrderManager,
+        repos: Any,
+    ) -> None:
+        request = _make_request(
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            price=Decimal("50000"),
+            metadata={"source_type": "core"},
+        )
+        risk_limit_snapshot = RiskLimitSnapshotEntity(
+            risk_limit_snapshot_id=uuid4(),
+            account_id=uuid4(),
+            nav=Decimal("10000000"),
+            cash_available=Decimal("1000000"),
+            gross_exposure_pct=Decimal("0"),
+            net_exposure_pct=Decimal("0"),
+            daily_realized_pnl=Decimal("0"),
+            drawdown_state="normal",
+            kill_switch_active=False,
+            blocked_reason_codes=["operator_blocked_symbol"],
+            snapshot_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+        )
+        intent = _make_intent(
+            decision_type="APPROVE",
+            request=request,
+        )
+        intent = replace(
+            intent,
+            context=replace(
+                intent.context,
+                source_type="core",
+                risk_limit_snapshot=risk_limit_snapshot,
+            ),
+        )
+
+        class _BrokerStub:
+            async def get_capabilities(self) -> Any:
+                from agent_trading.domain.enums import AssetClass, BrokerName, TimeInForce
+                from agent_trading.domain.models import BrokerCapability
+
+                return BrokerCapability(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
+                    supports_paper_trading=True,
+                    supports_live_trading=True,
+                    supports_websocket=True,
+                    supported_asset_classes=(AssetClass.KR_STOCK,),
+                    supported_order_types=(OrderType.MARKET, OrderType.LIMIT),
+                    supported_time_in_force=(TimeInForce.DAY,),
+                )
+
+        async def _mock_run_decision_pipeline(
+            *args: Any,
+            **kwargs: Any,
+        ) -> tuple[OrderIntent, UUID, None]:
+            return intent, uuid4(), None
+
+        with (
+            patch.object(service, "_run_decision_pipeline", side_effect=_mock_run_decision_pipeline),
+            patch.object(
+                OrderManager,
+                "create_order",
+                new=AsyncMock(side_effect=AssertionError("create_order should not be called")),
+            ),
+        ):
+            result = await service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=_BrokerStub(),
+            )
+
+        assert result.status == "SKIPPED"
+        assert result.error_phase == "compliance_validator"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert len(evaluations) == 1
+        assert evaluations[0].rule_set_version == "compliance_validator_v1"
+        assert evaluations[0].rule_results["validator_bundle"] == "compliance_validator_v1"
+        assert (
+            evaluations[0].rule_results["rule_outcomes"]["restricted_symbol"]["passed"]
+            is False
+        )
+
+    @pytest.mark.asyncio
+    async def test_submit_time_compliance_blocks_status_snapshot_halt_before_create_order(
+        self,
+        service: DecisionOrchestratorService,
+        order_manager: OrderManager,
+        repos: Any,
+    ) -> None:
+        request = _make_request(
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            price=Decimal("50000"),
+            metadata={"source_type": "core"},
+        )
+        instrument = await repos.instruments.get_by_symbol_any_market(request.symbol)
+        assert instrument is not None
+        await repos.instrument_status_snapshots.add(
+            InstrumentStatusSnapshotEntity(
+                instrument_status_snapshot_id=uuid4(),
+                instrument_id=instrument.instrument_id,
+                snapshot_at=datetime.now(timezone.utc),
+                source_type="kis_stock_basic_info",
+                status_scope="instrument",
+                tr_stop_yn="Y",
+                status_reason_codes=["trading_halt"],
+                raw_payload_json={"tr_stop_yn": "Y"},
+            )
+        )
+        intent = _make_intent(
+            decision_type="APPROVE",
+            request=request,
+        )
+        intent = replace(
+            intent,
+            context=replace(
+                intent.context,
+                source_type="core",
+            ),
+        )
+
+        class _BrokerStub:
+            async def get_capabilities(self) -> Any:
+                from agent_trading.domain.enums import AssetClass, BrokerName, TimeInForce
+                from agent_trading.domain.models import BrokerCapability
+
+                return BrokerCapability(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
+                    supports_paper_trading=True,
+                    supports_live_trading=True,
+                    supports_websocket=True,
+                    supported_asset_classes=(AssetClass.KR_STOCK,),
+                    supported_order_types=(OrderType.MARKET, OrderType.LIMIT),
+                    supported_time_in_force=(TimeInForce.DAY,),
+                )
+
+        async def _mock_run_decision_pipeline(
+            *args: Any,
+            **kwargs: Any,
+        ) -> tuple[OrderIntent, UUID, None]:
+            return intent, uuid4(), None
+
+        with (
+            patch.object(service, "_run_decision_pipeline", side_effect=_mock_run_decision_pipeline),
+            patch.object(
+                OrderManager,
+                "create_order",
+                new=AsyncMock(side_effect=AssertionError("create_order should not be called")),
+            ),
+        ):
+            result = await service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=_BrokerStub(),
+            )
+
+        assert result.status == "SKIPPED"
+        assert result.error_phase == "compliance_validator"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert len(evaluations) == 1
+        assert (
+            evaluations[0].rule_results["rule_outcomes"]["instrument_status"]["passed"]
+            is False
+        )
 
     # ── HOLD decision -> SKIPPED ──
 
@@ -2718,6 +2968,11 @@ class TestPhaseTrace:
         assert len(evaluations) == 1
         assert evaluations[0].rule_set_version == "buy_duplicate_guard_v1"
         assert evaluations[0].blocking_rule_codes == ["recent_active_buy_order"]
+        assert evaluations[0].rule_results["validator_bundle"] == "execution_validator_v1"
+        assert (
+            evaluations[0].rule_results["rule_outcomes"]["buy_duplicate_guard"]["passed"]
+            is False
+        )
 
     @pytest.mark.asyncio
     async def test_single_share_probe_churn_guard_blocks_low_value_buy(
@@ -2763,6 +3018,11 @@ class TestPhaseTrace:
         assert len(evaluations) == 1
         assert evaluations[0].rule_set_version == "execution_probe_churn_guard_v1"
         assert evaluations[0].blocking_rule_codes == ["probe_churn_single_share_blocked"]
+        assert evaluations[0].rule_results["validator_bundle"] == "execution_validator_v1"
+        assert (
+            evaluations[0].rule_results["rule_outcomes"]["probe_churn_guard"]["passed"]
+            is False
+        )
 
     @pytest.mark.asyncio
     async def test_single_share_probe_churn_guard_blocks_reconciliation_overlay_buy(
@@ -2808,6 +3068,11 @@ class TestPhaseTrace:
         assert len(evaluations) == 1
         assert evaluations[0].rule_set_version == "execution_probe_churn_guard_v1"
         assert evaluations[0].blocking_rule_codes == ["overlay_single_share_buy_blocked"]
+        assert evaluations[0].rule_results["validator_bundle"] == "execution_validator_v1"
+        assert (
+            evaluations[0].rule_results["rule_outcomes"]["probe_churn_guard"]["passed"]
+            is False
+        )
 
     @pytest.mark.asyncio
     async def test_single_share_probe_churn_guard_blocks_reverse_trade_buy(
@@ -2853,6 +3118,11 @@ class TestPhaseTrace:
         assert len(evaluations) == 1
         assert evaluations[0].rule_set_version == "execution_probe_churn_guard_v1"
         assert evaluations[0].blocking_rule_codes == ["reverse_trade_single_share_blocked"]
+        assert evaluations[0].rule_results["validator_bundle"] == "execution_validator_v1"
+        assert (
+            evaluations[0].rule_results["rule_outcomes"]["probe_churn_guard"]["passed"]
+            is False
+        )
 
     @pytest.mark.asyncio
     async def test_single_share_probe_policy_blocks_low_value_buy_logic(
@@ -3068,6 +3338,11 @@ class TestPhaseTrace:
         assert len(evaluations) == 1
         assert evaluations[0].rule_set_version == "sell_guard_v1"
         assert evaluations[0].blocking_rule_codes == ["sell_guard_blocked"]
+        assert evaluations[0].rule_results["validator_bundle"] == "execution_validator_v1"
+        assert (
+            evaluations[0].rule_results["rule_outcomes"]["sell_guard"]["passed"]
+            is False
+        )
 
 
 

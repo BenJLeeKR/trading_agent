@@ -81,7 +81,7 @@ from agent_trading.runtime.bootstrap import (
 )
 from agent_trading.services.common_types import SubmitResult
 from agent_trading.services.guardrail_audit import (
-    persist_blocking_guardrail_evaluation,
+    persist_validation_result,
 )
 from agent_trading.services.held_position_policy import (
     is_held_position_sell_path,
@@ -89,6 +89,7 @@ from agent_trading.services.held_position_policy import (
 from agent_trading.services.pre_ai_gate import (
     DEFAULT_PRE_AI_BUY_MIN_ORDERABLE_AMOUNT,
     evaluate_pre_ai_skip_reason,
+    evaluate_pre_ai_validation_result,
 )
 from agent_trading.services.submit_lane_gate import (
     evaluate_symbol_submit_lane,
@@ -98,6 +99,10 @@ from agent_trading.services.universe_selection import UniverseSelectionService
 from agent_trading.services.universe_selection_types import (
     CompositionContext,
     FALLBACK_ACCOUNT_ID,
+)
+from agent_trading.services.validators import (
+    ValidationResult,
+    build_validation_context,
 )
 
 # Lazy import for KISRestClient (only when KIS credentials are configured)
@@ -154,6 +159,31 @@ async def _evaluate_pre_ai_skip_reason(
 ) -> tuple[str | None, dict[str, str | None]]:
     """Compatibility wrapper around shared deterministic pre-AI gate logic."""
     return await evaluate_pre_ai_skip_reason(
+        repos,
+        account_alias=account_alias,
+        symbol=symbol,
+        market=market,
+        source_type=source_type,
+        remaining_general_buy_budget=remaining_general_buy_budget,
+        db_conn=db_conn,
+        now_utc=now_utc,
+        min_orderable_amount=PRE_AI_BUY_MIN_ORDERABLE_AMOUNT,
+    )
+
+
+async def _evaluate_pre_ai_validation_result(
+    repos: RepositoryContainer,
+    *,
+    account_alias: str,
+    symbol: str,
+    market: str,
+    source_type: str,
+    remaining_general_buy_budget: int | None = None,
+    db_conn: Any | None = None,
+    now_utc: datetime | None = None,
+) -> tuple[ValidationResult | None, dict[str, str | None]]:
+    """Shared deterministic pre-AI validator wrapper."""
+    return await evaluate_pre_ai_validation_result(
         repos,
         account_alias=account_alias,
         symbol=symbol,
@@ -946,8 +976,7 @@ async def _record_pre_ai_guardrail_evaluation(
     symbol: str,
     market: str,
     source_type: str,
-    stop_reason: str,
-    details: dict[str, str | None],
+    validation_result: ValidationResult,
 ) -> None:
     """Persist a deterministic pre-AI gate block as a guardrail evaluation."""
     account_id = None
@@ -963,19 +992,22 @@ async def _record_pre_ai_guardrail_evaluation(
             exc_info=True,
         )
 
-    await persist_blocking_guardrail_evaluation(
+    await persist_validation_result(
         repos,
-        rule_set_version="pre_ai_gate_v1",
-        blocking_rule_codes=[stop_reason],
-        rule_results={
-            "account_alias": account_alias,
-            "account_id": str(account_id) if account_id is not None else None,
-            "symbol": symbol,
-            "market": market,
-            "source_type": source_type,
-            "stop_reason": stop_reason,
-            "details": details,
-        },
+        validation_context=build_validation_context(
+            account_id=account_id,
+            symbol=symbol,
+            market=market,
+            source_type=source_type,
+            metadata={"account_alias": account_alias, "gate_phase": "pre_ai_gate"},
+        ),
+        validation_result=ValidationResult.blocked(
+            rule_set_version=validation_result.rule_set_version,
+            blocking_rule_codes=list(validation_result.blocking_rule_codes),
+            rule_results=dict(validation_result.rule_results),
+            stop_reason=validation_result.stop_reason,
+            message=validation_result.message,
+        ),
     )
 
 
@@ -986,7 +1018,7 @@ async def _record_scheduler_guardrail_evaluation(
     symbol: str,
     market: str,
     source_type: str,
-    stop_reason: str,
+    validation_result: ValidationResult,
     trade_decision_id: object | None,
     decision_context_id: object | None,
 ) -> None:
@@ -1004,21 +1036,27 @@ async def _record_scheduler_guardrail_evaluation(
             exc_info=True,
         )
 
-    await persist_blocking_guardrail_evaluation(
+    await persist_validation_result(
         repos,
-        rule_set_version="scheduler_gate_v1",
-        blocking_rule_codes=[stop_reason],
-        rule_results={
-            "account_alias": account_alias,
-            "account_id": str(account_id) if account_id is not None else None,
-            "symbol": symbol,
-            "market": market,
-            "source_type": source_type,
-            "stop_reason": stop_reason,
-            "gate_phase": "scheduler_gate",
-        },
-        decision_context_id=decision_context_id,
-        trade_decision_id=trade_decision_id,
+        validation_context=build_validation_context(
+            decision_context_id=decision_context_id,
+            trade_decision_id=trade_decision_id,
+            account_id=account_id,
+            symbol=symbol,
+            market=market,
+            source_type=source_type,
+            metadata={
+                "account_alias": account_alias,
+                "gate_phase": "scheduler_gate",
+            },
+        ),
+        validation_result=ValidationResult.blocked(
+            rule_set_version=validation_result.rule_set_version,
+            blocking_rule_codes=list(validation_result.blocking_rule_codes),
+            rule_results=dict(validation_result.rule_results),
+            stop_reason=validation_result.stop_reason,
+            message=validation_result.message,
+        ),
     )
 
 
@@ -1208,7 +1246,7 @@ async def _run_one_cycle(
                 reconciliation_service=reconciliation_service,
             )
 
-            pre_ai_skip_reason, pre_ai_skip_details = await _evaluate_pre_ai_skip_reason(
+            pre_ai_validation_result, pre_ai_skip_details = await _evaluate_pre_ai_validation_result(
                 repos,
                 account_alias=ACCOUNT_ALIAS,
                 symbol=symbol,
@@ -1216,6 +1254,11 @@ async def _run_one_cycle(
                 source_type=source_type,
                 remaining_general_buy_budget=remaining_general_buy_budget,
                 db_conn=tx.connection,
+            )
+            pre_ai_skip_reason = (
+                pre_ai_validation_result.stop_reason
+                if pre_ai_validation_result is not None
+                else None
             )
             if pre_ai_skip_reason is not None:
                 try:
@@ -1225,8 +1268,14 @@ async def _run_one_cycle(
                         symbol=symbol,
                         market=market,
                         source_type=source_type,
-                        stop_reason=pre_ai_skip_reason,
-                        details=pre_ai_skip_details,
+                        validation_result=pre_ai_validation_result
+                        if pre_ai_validation_result is not None
+                        else ValidationResult.blocked(
+                            rule_set_version="pre_ai_gate_v1",
+                            blocking_rule_codes=[pre_ai_skip_reason],
+                            rule_results={"details": pre_ai_skip_details},
+                            stop_reason=pre_ai_skip_reason,
+                        ),
                     )
                 except Exception:
                     logger.warning(
@@ -1417,7 +1466,12 @@ async def _run_one_cycle(
                             symbol=symbol,
                             market=market,
                             source_type=source_type,
-                            stop_reason=dry_run_reason,
+                            validation_result=ValidationResult.blocked(
+                                rule_set_version="scheduler_gate_v1",
+                                blocking_rule_codes=[dry_run_reason],
+                                rule_results={"gate_phase": "scheduler_gate"},
+                                stop_reason=dry_run_reason,
+                            ),
                             trade_decision_id=intent.trade_decision_id,
                             decision_context_id=intent.decision_context_id,
                         )

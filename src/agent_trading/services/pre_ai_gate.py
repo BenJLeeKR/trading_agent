@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from agent_trading.domain.enums import OrderSide, OrderStatus, PipelineStopReason
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import AccountLookup, OrderQuery
+from agent_trading.services.validators import ValidationResult
 
 logger = logging.getLogger(__name__)
 
@@ -187,8 +188,56 @@ async def evaluate_pre_ai_skip_reason(
     now_utc: datetime | None = None,
     min_orderable_amount: Decimal = DEFAULT_PRE_AI_BUY_MIN_ORDERABLE_AMOUNT,
 ) -> tuple[str | None, dict[str, str | None]]:
-    """Return a deterministic pre-AI skip reason to save LLM tokens."""
+    """기존 호환용 pre-AI skip reason 반환 API."""
+    validation_result, details = await evaluate_pre_ai_validation_result(
+        repos,
+        account_alias=account_alias,
+        symbol=symbol,
+        market=market,
+        source_type=source_type,
+        remaining_general_buy_budget=remaining_general_buy_budget,
+        db_conn=db_conn,
+        now_utc=now_utc,
+        min_orderable_amount=min_orderable_amount,
+    )
+    if validation_result is None:
+        return None, details
+    return validation_result.stop_reason, details
+
+
+async def evaluate_pre_ai_validation_result(
+    repos: RepositoryContainer,
+    *,
+    account_alias: str,
+    symbol: str,
+    market: str,
+    source_type: str,
+    remaining_general_buy_budget: int | None = None,
+    db_conn: Any | None = None,
+    now_utc: datetime | None = None,
+    min_orderable_amount: Decimal = DEFAULT_PRE_AI_BUY_MIN_ORDERABLE_AMOUNT,
+) -> tuple[ValidationResult | None, dict[str, str | None]]:
+    """Return a deterministic pre-AI validation result to save LLM tokens."""
     details: dict[str, str | None] = {}
+
+    def _blocked(stop_reason: str) -> tuple[ValidationResult, dict[str, str | None]]:
+        return (
+            ValidationResult.blocked(
+                rule_set_version="pre_ai_gate_v1",
+                blocking_rule_codes=[stop_reason],
+                rule_results={
+                    "account_alias": account_alias,
+                    "symbol": symbol,
+                    "market": market,
+                    "source_type": source_type,
+                    "stop_reason": stop_reason,
+                    "details": dict(details),
+                },
+                stop_reason=stop_reason,
+            ),
+            details,
+        )
+
     try:
         account = await repos.accounts.find_one(
             AccountLookup(account_alias=account_alias)
@@ -227,11 +276,11 @@ async def evaluate_pre_ai_skip_reason(
             )
         except Exception:
             logger.exception(
-                "Pre-AI gate position lookup failed: account_id=%s symbol=%s source_type=%s",
-                account.account_id,
-                symbol,
-                source_type,
-            )
+            "Pre-AI gate position lookup failed: account_id=%s symbol=%s source_type=%s",
+            account.account_id,
+            symbol,
+            source_type,
+        )
             return None, details
 
         for snapshot in snapshots:
@@ -243,7 +292,7 @@ async def evaluate_pre_ai_skip_reason(
 
     if source_type == "held_position":
         if matched_qty is None or matched_qty <= 0:
-            return PipelineStopReason.NO_HELD_POSITION.value, details
+            return _blocked(PipelineStopReason.NO_HELD_POSITION.value)
         held_skip_reason = await evaluate_held_position_skip_reason(
             repos,
             account_id=account.account_id,
@@ -255,7 +304,9 @@ async def evaluate_pre_ai_skip_reason(
         )
         if held_skip_reason is not None:
             details.update(held_skip_reason[1])
-            return held_skip_reason[0], details
+            if held_skip_reason[0] is None:
+                return None, details
+            return _blocked(held_skip_reason[0])
         return None, details
 
     has_held_position = matched_qty is not None and matched_qty > 0
@@ -263,7 +314,7 @@ async def evaluate_pre_ai_skip_reason(
     if remaining_general_buy_budget is not None:
         details["remaining_general_buy_budget"] = str(remaining_general_buy_budget)
         if remaining_general_buy_budget <= 0 and not has_held_position:
-            return PipelineStopReason.GENERAL_BUY_BUDGET_EXHAUSTED.value, details
+            return _blocked(PipelineStopReason.GENERAL_BUY_BUDGET_EXHAUSTED.value)
 
     # Cash-based pre-AI gates are only safe for true 신규 진입 후보.
     # If the account already holds the symbol, the later AI path may
@@ -283,7 +334,7 @@ async def evaluate_pre_ai_skip_reason(
     )
     if reentry_skip_reason is not None and reentry_skip_reason[0] is not None:
         details.update(reentry_skip_reason[1])
-        return reentry_skip_reason[0], details
+        return _blocked(reentry_skip_reason[0])
 
     try:
         cash_snapshot = await repos.cash_balance_snapshots.get_latest_by_account(
@@ -311,9 +362,9 @@ async def evaluate_pre_ai_skip_reason(
     details["threshold"] = str(min_orderable_amount)
 
     if orderable_amount < 0:
-        return PipelineStopReason.NEGATIVE_ORDERABLE_AMOUNT.value, details
+        return _blocked(PipelineStopReason.NEGATIVE_ORDERABLE_AMOUNT.value)
     if orderable_amount <= min_orderable_amount:
-        return PipelineStopReason.LOW_ORDERABLE_AMOUNT.value, details
+        return _blocked(PipelineStopReason.LOW_ORDERABLE_AMOUNT.value)
     return None, details
 
 

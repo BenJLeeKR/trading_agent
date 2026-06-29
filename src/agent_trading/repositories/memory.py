@@ -26,6 +26,7 @@ from agent_trading.domain.entities import (
     GuardrailEvaluationEntity,
     InstrumentEntity,
     InstrumentIndexMembershipEntity,
+    InstrumentStatusSnapshotEntity,
     MarketSessionEntity,
     OrderRequestEntity,
     OrderSubmissionAttemptEntity,
@@ -1709,6 +1710,85 @@ class InMemoryInstrumentIndexMembershipRepository:
             if item.effective_to is None and item.membership_code == normalized
         }
         return tuple(sorted(instrument_ids, key=str))
+
+
+class InMemoryInstrumentStatusSnapshotRepository:
+    """In-memory implementation of ``InstrumentStatusSnapshotRepository``."""
+
+    def __init__(self) -> None:
+        self._items: dict[UUID, InstrumentStatusSnapshotEntity] = {}
+
+    async def add(
+        self,
+        snapshot: InstrumentStatusSnapshotEntity,
+    ) -> InstrumentStatusSnapshotEntity:
+        for existing_id, existing in tuple(self._items.items()):
+            if (
+                existing.instrument_id == snapshot.instrument_id
+                and existing.snapshot_at == snapshot.snapshot_at
+                and existing.source_type == snapshot.source_type
+                and existing.status_scope == snapshot.status_scope
+            ):
+                self._items[existing_id] = snapshot
+                return snapshot
+        self._items[snapshot.instrument_status_snapshot_id] = snapshot
+        return snapshot
+
+    async def get_latest_by_instrument(
+        self,
+        instrument_id: UUID,
+    ) -> InstrumentStatusSnapshotEntity | None:
+        candidates = [
+            item
+            for item in self._items.values()
+            if item.instrument_id == instrument_id
+        ]
+        if not candidates:
+            return None
+        candidates.sort(
+            key=lambda item: (
+                item.snapshot_at,
+                item.created_at or datetime.min.replace(tzinfo=timezone.utc),
+            ),
+            reverse=True,
+        )
+        return candidates[0]
+
+    async def get_latest_by_instrument_before(
+        self,
+        instrument_id: UUID,
+        as_of: datetime,
+    ) -> InstrumentStatusSnapshotEntity | None:
+        candidates = [
+            item
+            for item in self._items.values()
+            if item.instrument_id == instrument_id and item.snapshot_at <= as_of
+        ]
+        if not candidates:
+            return None
+        candidates.sort(
+            key=lambda item: (
+                item.snapshot_at,
+                item.created_at or datetime.min.replace(tzinfo=timezone.utc),
+            ),
+            reverse=True,
+        )
+        return candidates[0]
+
+    async def list_latest_by_instrument_ids(
+        self,
+        instrument_ids: Sequence[UUID],
+    ) -> Sequence[InstrumentStatusSnapshotEntity]:
+        latest_items: list[InstrumentStatusSnapshotEntity] = []
+        for instrument_id in instrument_ids:
+            latest = await self.get_latest_by_instrument(instrument_id)
+            if latest is not None:
+                latest_items.append(latest)
+        latest_items.sort(
+            key=lambda item: (item.instrument_id.hex, item.snapshot_at),
+            reverse=False,
+        )
+        return tuple(latest_items)
 
 
 class InMemorySymbolTradeStateRepository:

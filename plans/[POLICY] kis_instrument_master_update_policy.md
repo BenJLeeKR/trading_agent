@@ -22,6 +22,15 @@
     `market overlay fallback seed` 또는 event overlay 경로에서만 먼저 관측한다.
 - `exchange_code`, `market_segment`, `segment`, `universe_segment`는
   source CSV에서 normalized CSV를 거쳐 instrument metadata에 보존한다.
+- `CTPF1002R` (`주식기본조회`)는
+  `tr_stop_yn`, `admn_item_yn`, `mket_id_cd`, `scty_grp_id_cd`,
+  `nxt_tr_stop_yn` 같은 상태성 / 규정성 fact를 제공하므로
+  후속 `instrument status snapshot` 계층의 1차 source로 사용할 수 있다.
+  다만 이 TR은 종목별 REST 조회이므로
+  장전 `instrument master sync`의 authoritative source로 직접 대체하지 않는다.
+  즉 역할은 아래처럼 분리한다.
+  - `instrument master`: CSV 기반 canonical source
+  - `instrument status snapshot`: `CTPF1002R` / `inquire-price` 기반 상태 fact
 - 현재 운영 원본 CSV가 `is_kospi200`, `is_kosdaq150` 플래그를 제공하면
   정규화 단계에서 이를 각각 `KOSPI200`, `KOSDAQ150`으로 변환해
   `metadata_segment`, `metadata_universe_segment`, `metadata_index_memberships`에 반영한다.
@@ -103,6 +112,9 @@
 - scheduler 반영
 - `ops-scheduler`는 거래일 `07:50 KST`에 `instrument master sync`를 1회 시도한다.
 - 실제 실행 순서는 `원본 CSV 정규화 -> instrument master sync`다.
+- 후속 상태 배치 도입 시에는
+  `instrument master sync -> instrument status snapshot -> intraday freeze`
+  순서를 기본으로 한다.
 - 장전 정시 실행(`07:50`)을 놓치더라도, scheduler가 `08:50 KST` 이전에 복구되면
   같은 거래일 장전 catch-up sync를 재시도할 수 있어야 한다.
 - `08:50 KST` 이후에도 `instrument_master_sync_done=false`라면
@@ -127,6 +139,9 @@
 - 거래일 장중 차단 메시지에 현재 시각과 허용 window를 함께 남겨 operator가 바로 이해할 수 있게 했다.
 - Universe Selection은 `unknown_instrument`를 hard exclude로 취급한다.
   따라서 KOSDAQ 확장은 universe 예외 규칙이 아니라 instrument master 적재 품질 문제로 관리한다.
+- `관리종목` / `거래정지` / `투자유의` 같은 종목 상태는
+  `instrument master` 정규 컬럼에 직접 적재하지 않고,
+  후속 `instrument_status_snapshots`에서 관리하는 것이 기본 원칙이다.
 - sync pipeline은 같은 `symbol`에 대해
   `exchange_code='KRX'`, `market_segment='KOSPI|KOSDAQ'`,
   `index_memberships`를 일관되게 적재해야 하며,
@@ -159,6 +174,12 @@
 
 ## 남은 작업
 - `snapshot/event mapping과의 정합성 확보`
+- `CTPF1002R` 기반 `instrument_status_snapshots` 추가
+  - 대상 설계:
+    [`plans/[PLAN] instrument_status_snapshot_phase1.md`](./[PLAN]%20instrument_status_snapshot_phase1.md)
+  - 목표:
+    universe exclusion / submit compliance가
+    동일한 종목 상태 fact를 읽도록 연결
 - KIS raw 종목정보파일 직접 parser 및 다운로드/보관 경로
 - `FHPUP02140000` 기반 지수 코드 카탈로그를
   `index_membership_seed` 운영 검증 자료로 연결하는 보조 절차

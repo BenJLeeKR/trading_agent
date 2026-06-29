@@ -25,6 +25,7 @@ from agent_trading.domain.entities import (
     GuardrailEvaluationEntity,
     InstrumentEntity,
     InstrumentIndexMembershipEntity,
+    InstrumentStatusSnapshotEntity,
     MarketSessionEntity,
     OrderRequestEntity,
     OrderSubmissionAttemptEntity,
@@ -1048,6 +1049,35 @@ class InstrumentIndexMembershipRepository(Protocol):
         self,
         membership_code: str,
     ) -> Sequence[UUID]:
+        ...
+
+
+class InstrumentStatusSnapshotRepository(Protocol):
+    """종목 상태 snapshot authoritative 저장소."""
+
+    async def add(
+        self,
+        snapshot: InstrumentStatusSnapshotEntity,
+    ) -> InstrumentStatusSnapshotEntity:
+        ...
+
+    async def get_latest_by_instrument(
+        self,
+        instrument_id: UUID,
+    ) -> InstrumentStatusSnapshotEntity | None:
+        ...
+
+    async def get_latest_by_instrument_before(
+        self,
+        instrument_id: UUID,
+        as_of: datetime,
+    ) -> InstrumentStatusSnapshotEntity | None:
+        ...
+
+    async def list_latest_by_instrument_ids(
+        self,
+        instrument_ids: Sequence[UUID],
+    ) -> Sequence[InstrumentStatusSnapshotEntity]:
         ...
 
 

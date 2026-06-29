@@ -317,6 +317,34 @@ def _check_iscd_stat_cls_code(status_code: str | None) -> LiquidityFilterResult:
     return LiquidityFilterResult(True)
 
 
+def _check_status_snapshot(
+    snapshot: object | None,
+) -> LiquidityFilterResult:
+    """Authoritative instrument status snapshot 기반 종목 상태 필터."""
+    if snapshot is None:
+        return LiquidityFilterResult(True)
+
+    tr_stop_yn = str(getattr(snapshot, "tr_stop_yn", "") or "").strip().upper()
+    if tr_stop_yn == "Y":
+        return LiquidityFilterResult(False, "status_snapshot_trading_halt")
+
+    admn_item_yn = str(getattr(snapshot, "admn_item_yn", "") or "").strip().upper()
+    if admn_item_yn == "Y":
+        return LiquidityFilterResult(False, "status_snapshot_administrative_issue")
+
+    nxt_tr_stop_yn = str(getattr(snapshot, "nxt_tr_stop_yn", "") or "").strip().upper()
+    if nxt_tr_stop_yn == "Y":
+        return LiquidityFilterResult(False, "status_snapshot_next_session_halt")
+
+    temp_stop_yn = str(getattr(snapshot, "temp_stop_yn", "") or "").strip().upper()
+    if temp_stop_yn == "Y":
+        return LiquidityFilterResult(False, "status_snapshot_temporary_halt")
+
+    return _check_iscd_stat_cls_code(
+        getattr(snapshot, "iscd_stat_cls_code", None)
+    )
+
+
 def _check_acc_trade_amount(
     acc_trade_amount: Decimal | None,
     *,
@@ -495,6 +523,19 @@ class LiquidityFilter:
             return None
         return fallback
 
+    async def _resolve_status_snapshot(
+        self,
+        instrument: object | None,
+    ) -> object | None:
+        if instrument is None:
+            return None
+        instrument_id = getattr(instrument, "instrument_id", None)
+        if instrument_id is None:
+            return None
+        return await self._repos.instrument_status_snapshots.get_latest_by_instrument(
+            instrument_id
+        )
+
     async def check(self, symbol: str, market: str) -> LiquidityFilterResult:
         """Run all deterministic liquidity checks for a single symbol.
 
@@ -540,9 +581,11 @@ class LiquidityFilter:
         ):
             return LiquidityFilterResult(False, "tick_size_too_large")
 
-        # P2 F4 and F5 are applied in _add_market_overlay() only,
-        # not in the base LiquidityFilter.check(), because they require
-        # KIS inquire-price response data.
+        status_snapshot = await self._resolve_status_snapshot(instrument)
+        status_result = _check_status_snapshot(status_snapshot)
+        if not status_result.passed:
+            return status_result
+
         return LiquidityFilterResult(True)
 
     async def check_market_snapshot(
@@ -554,8 +597,11 @@ class LiquidityFilter:
         These checks require KIS ``inquire-price`` response data and are
         applied only to market-driven overlay candidates.
         """
-        # F4: iscd_stat_cls_code (guarded/soft path)
-        f4 = _check_iscd_stat_cls_code(snapshot.iscd_stat_cls_code)
+        instrument = await self._resolve_instrument(snapshot.symbol, snapshot.market)
+        status_snapshot = await self._resolve_status_snapshot(instrument)
+        f4 = _check_status_snapshot(status_snapshot)
+        if f4.passed and status_snapshot is None:
+            f4 = _check_iscd_stat_cls_code(snapshot.iscd_stat_cls_code)
         if not f4.passed:
             return f4
 

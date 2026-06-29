@@ -109,6 +109,7 @@ DEFAULT_FILL_SYNC_AFTER_HOURS_INTERVAL_SECONDS = 1800
 DEFAULT_SIGNAL_FEATURE_BATCH_TIME = dtime(20, 10)
 DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE = "decision_loop_intraday"
 DEFAULT_INSTRUMENT_MASTER_SYNC_TIME = dtime(4, 50)
+DEFAULT_INSTRUMENT_STATUS_SNAPSHOT_TIME = dtime(5, 5)
 DEFAULT_INSTRUMENT_MASTER_SYNC_CSV_PATH = (
     "data/instrument_master/normalized/kis_kospi_kosdaq_master_normalized_for_sync.csv"
 )
@@ -117,6 +118,10 @@ DEFAULT_INSTRUMENT_MASTER_SOURCE_CSV_PATHS = (
     "data/instrument_master/source/kosdaq_master.csv",
 )
 DEFAULT_INSTRUMENT_MASTER_ARCHIVE_DIR = "data/instrument_master/archive"
+DEFAULT_INSTRUMENT_STATUS_SNAPSHOT_FREEZE_PURPOSES = (
+    DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
+    DEFAULT_SIGNAL_FEATURE_AFTER_MARKET_FREEZE_PURPOSE,
+)
 DEFAULT_DECISION_SUBMIT_TIMEOUT_SECONDS = 420
 # Phase 4: subprocess isolation provides SIGKILL-guaranteed timeout,
 # so the scheduler-level timeout can be reduced from 240s to 120s.
@@ -258,6 +263,10 @@ class SchedulerState:
     instrument_master_sync_done: bool = False
     # 장전 sync window를 놓친 사실을 1회만 기록하기 위한 플래그
     instrument_master_sync_missed: bool = False
+    # 장전 05:05 KST instrument status snapshot 1회 실행 여부
+    instrument_status_snapshot_done: bool = False
+    # 장전 status snapshot window 누락 기록 플래그
+    instrument_status_snapshot_missed: bool = False
 
 
 def _derive_operations_day_status(state: SchedulerState) -> str:
@@ -652,6 +661,39 @@ def _parse_signal_feature_input_summary(result: CommandResult) -> dict[str, Any]
     return {}
 
 
+def _parse_instrument_status_snapshot_summary(result: CommandResult) -> dict[str, Any]:
+    """Parse instrument status snapshot batch summary from JSON/stdout."""
+    for obj in reversed(_extract_json_objects(result.stdout)):
+        target_count = obj.get("target_count")
+        persisted_count = obj.get("persisted_count")
+        skipped_count = obj.get("skipped_count")
+        error_count = obj.get("error_count")
+        if (
+            target_count is None
+            or persisted_count is None
+            or skipped_count is None
+            or error_count is None
+        ):
+            continue
+        rows = obj.get("rows")
+        row_list = rows if isinstance(rows, list) else []
+        failed_symbols_sample = [
+            str(item.get("symbol"))
+            for item in row_list[:20]
+            if isinstance(item, dict)
+            and str(item.get("status", "")).strip() in {"broker_error", "error"}
+            and str(item.get("symbol", "")).strip()
+        ][:5]
+        return {
+            "target_count": int(target_count),
+            "persisted_count": int(persisted_count),
+            "skipped_count": int(skipped_count),
+            "error_count": int(error_count),
+            "failed_symbols_sample": failed_symbols_sample,
+        }
+    return {}
+
+
 def _aggregate_signal_feature_input_metrics(
     state: SchedulerState,
 ) -> dict[str, Any] | None:
@@ -970,6 +1012,11 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
             state,
             names={"instrument_master_normalize"},
         ),
+        "instrument_status_snapshot": _command_family_stats(
+            state,
+            names={"instrument_status_snapshot"},
+            metrics_parser=_parse_instrument_status_snapshot_summary,
+        ),
     }
     token_cache_health = _build_token_cache_health_summary()
 
@@ -985,6 +1032,8 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
         "intraday_universe_freeze_done": state.intraday_universe_freeze_done,
         "instrument_master_sync_done": state.instrument_master_sync_done,
         "instrument_master_sync_missed": state.instrument_master_sync_missed,
+        "instrument_status_snapshot_done": state.instrument_status_snapshot_done,
+        "instrument_status_snapshot_missed": state.instrument_status_snapshot_missed,
         "scheduler_runtime": _build_scheduler_runtime_summary(),
         "command_health": {k: v for k, v in command_health.items() if v is not None},
         "token_cache_health": token_cache_health,
@@ -1015,6 +1064,14 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
         "instrument_master_normalize": _command_result_summary(
             _latest_command_result(state, {"instrument_master_normalize"}),
         ),
+        "instrument_status_snapshot": _command_result_summary(
+            _latest_command_result(state, {"instrument_status_snapshot"}),
+            metrics=_parse_instrument_status_snapshot_summary(
+                _latest_command_result(state, {"instrument_status_snapshot"})
+            )
+            if _latest_command_result(state, {"instrument_status_snapshot"})
+            else None,
+        ),
     }
 
 
@@ -1030,6 +1087,11 @@ def _build_scheduler_runtime_summary() -> dict[str, Any]:
         "python_bin": sys.executable,
         "instrument_master_sync_supported": True,
         "instrument_master_sync_time": DEFAULT_INSTRUMENT_MASTER_SYNC_TIME.strftime("%H:%M"),
+        "instrument_status_snapshot_supported": True,
+        "instrument_status_snapshot_time": DEFAULT_INSTRUMENT_STATUS_SNAPSHOT_TIME.strftime("%H:%M"),
+        "instrument_status_snapshot_freeze_purposes": list(
+            DEFAULT_INSTRUMENT_STATUS_SNAPSHOT_FREEZE_PURPOSES
+        ),
         "instrument_master_sync_csv_path": DEFAULT_INSTRUMENT_MASTER_SYNC_CSV_PATH,
         "instrument_master_sync_csv_path_resolved": _resolve_repo_path(
             DEFAULT_INSTRUMENT_MASTER_SYNC_CSV_PATH
@@ -1489,6 +1551,21 @@ def _instrument_master_sync_command(
     ]
 
 
+def _instrument_status_snapshot_command(
+    *,
+    freeze_purposes: Sequence[str],
+) -> list[str]:
+    argv = [
+        PYTHON_BIN,
+        str((_repo_root() / "scripts/build_instrument_status_snapshots.py").resolve()),
+        "--output",
+        "json",
+    ]
+    for purpose in freeze_purposes:
+        argv.extend(["--freeze-purpose", str(purpose)])
+    return argv
+
+
 def _build_instrument_master_sync_csv_command(
     *,
     input_paths: list[str],
@@ -1786,6 +1863,78 @@ async def _mark_instrument_master_sync_missed(
         "(now=%s scheduled=%s intraday_start=%s)",
         now.isoformat(),
         instrument_master_sync_at.isoformat(),
+        intraday_at.isoformat(),
+    )
+    await _persist_operations_day_run(state, dsn)
+
+
+async def _run_instrument_status_snapshot(
+    state: SchedulerState,
+    *,
+    timeout_seconds: int,
+    env: dict[str, str],
+    freeze_purposes: Sequence[str],
+    dsn: str | None = None,
+) -> None:
+    """Run one-time pre-market instrument status snapshot batch."""
+    logger.info(
+        "phase=instrument-status-snapshot start freeze_purposes=%s",
+        ",".join(str(item) for item in freeze_purposes),
+    )
+    result = await _run_and_record(
+        state,
+        "instrument_status_snapshot",
+        _instrument_status_snapshot_command(
+            freeze_purposes=freeze_purposes,
+        ),
+        timeout_seconds=timeout_seconds,
+        env=env,
+    )
+    if not result.ok:
+        await _persist_operations_day_run(state, dsn)
+        logger.warning(
+            "phase=instrument-status-snapshot failed — will retry on next tick"
+        )
+        return
+    state.instrument_status_snapshot_done = True
+    await _persist_operations_day_run(state, dsn)
+    logger.info("phase=instrument-status-snapshot complete")
+
+
+async def _mark_instrument_status_snapshot_missed(
+    state: SchedulerState,
+    *,
+    now: datetime,
+    instrument_status_snapshot_at: datetime,
+    intraday_at: datetime,
+    dsn: str | None = None,
+) -> None:
+    """장전 instrument status snapshot window 누락을 1회만 기록한다."""
+    if state.instrument_status_snapshot_done or state.instrument_status_snapshot_missed:
+        return
+    if _latest_command_result(state, {"instrument_status_snapshot"}) is not None:
+        return
+
+    state.instrument_status_snapshot_missed = True
+    state.command_results.append(
+        _build_skip_command_result(
+            name="instrument_status_snapshot",
+            argv=_instrument_status_snapshot_command(
+                freeze_purposes=DEFAULT_INSTRUMENT_STATUS_SNAPSHOT_FREEZE_PURPOSES,
+            ),
+            skipped_reason="missed_pre_market_window",
+            details={
+                "now_kst": now.isoformat(),
+                "scheduled_at_kst": instrument_status_snapshot_at.isoformat(),
+                "intraday_start_kst": intraday_at.isoformat(),
+            },
+        )
+    )
+    logger.warning(
+        "phase=instrument-status-snapshot missed — scheduler started after pre-market window "
+        "(now=%s scheduled=%s intraday_start=%s)",
+        now.isoformat(),
+        instrument_status_snapshot_at.isoformat(),
         intraday_at.isoformat(),
     )
     await _persist_operations_day_run(state, dsn)
@@ -2834,6 +2983,10 @@ async def _log_startup_info(env: dict[str, str], state: SchedulerState, pool_ok:
     logger.info("  After-hours window:  %ss", env.get("SCHEDULER_AFTER_HOURS_WINDOW", "3600"))
     logger.info("  Signal batch time:   %s", DEFAULT_SIGNAL_FEATURE_BATCH_TIME.strftime("%H:%M"))
     logger.info(
+        "  Status batch time:   %s",
+        DEFAULT_INSTRUMENT_STATUS_SNAPSHOT_TIME.strftime("%H:%M"),
+    )
+    logger.info(
         "  Signal batch input:  %s",
         env.get("SCHEDULER_SIGNAL_FEATURE_INPUT_PATH", "data/signal_feature_snapshot_input.json"),
     )
@@ -2869,6 +3022,10 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
 
     pre_market_at = _combine(run_date, args.pre_market_start)
     instrument_master_sync_at = _combine(run_date, args.instrument_master_sync_time)
+    instrument_status_snapshot_at = _combine(
+        run_date,
+        args.instrument_status_snapshot_time,
+    )
     intraday_at = _combine(run_date, args.intraday_start)
     market_close_at = _combine(run_date, args.market_close)
     end_at = _combine(run_date, args.end_of_day_end)
@@ -2952,7 +3109,8 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
     async def _run_with_lock() -> int:
         """Inner scheduler logic with lock context."""
         nonlocal phase_monitor_task, run_date, state, pre_market_at
-        nonlocal instrument_master_sync_at, intraday_at, market_close_at, end_at
+        nonlocal instrument_master_sync_at, instrument_status_snapshot_at
+        nonlocal intraday_at, market_close_at, end_at
 
         # P3: Heartbeat task
         heartbeat_task: asyncio.Task[None] | None = None
@@ -2994,6 +3152,18 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                                 csv_path=args.instrument_master_sync_csv_path,
                                 archive_dir=args.instrument_master_archive_dir,
                                 run_date=run_date,
+                                dsn=dsn,
+                            )
+                        if (
+                            now >= instrument_status_snapshot_at
+                            and state.instrument_master_sync_done
+                            and not state.instrument_status_snapshot_done
+                        ):
+                            await _run_instrument_status_snapshot(
+                                state,
+                                timeout_seconds=args.task_timeout,
+                                env=env,
+                                freeze_purposes=args.instrument_status_snapshot_freeze_purpose,
                                 dsn=dsn,
                             )
                         await _run_pre_market(
@@ -3088,6 +3258,10 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                         run_date,
                         args.instrument_master_sync_time,
                     )
+                    instrument_status_snapshot_at = _combine(
+                        run_date,
+                        args.instrument_status_snapshot_time,
+                    )
                     intraday_at = _combine(run_date, args.intraday_start)
                     market_close_at = _combine(run_date, args.market_close)
                     end_at = _combine(run_date, args.end_of_day_end)
@@ -3134,6 +3308,10 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                         run_date,
                         args.instrument_master_sync_time,
                     )
+                    instrument_status_snapshot_at = _combine(
+                        run_date,
+                        args.instrument_status_snapshot_time,
+                    )
                     intraday_at = _combine(run_date, args.intraday_start)
                     market_close_at = _combine(run_date, args.market_close)
                     end_at = _combine(run_date, args.end_of_day_end)
@@ -3172,14 +3350,39 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                             "Instrument master sync skipped by session gate for %s",
                             run_date.isoformat(),
                         )
-                elif (
-                    now >= intraday_at
-                    and not args.skip_pre_market
-                ):
+                elif now >= intraday_at and not args.skip_pre_market:
                     await _mark_instrument_master_sync_missed(
                         state,
                         now=now,
                         instrument_master_sync_at=instrument_master_sync_at,
+                        intraday_at=intraday_at,
+                        dsn=dsn,
+                    )
+
+                if (
+                    instrument_status_snapshot_at <= now < intraday_at
+                    and state.instrument_master_sync_done
+                    and not state.instrument_status_snapshot_done
+                    and not args.skip_pre_market
+                ):
+                    if await _session_gate(session_provider, run_date, state, "pre_market"):
+                        await _run_instrument_status_snapshot(
+                            state,
+                            timeout_seconds=args.task_timeout,
+                            env=env,
+                            freeze_purposes=args.instrument_status_snapshot_freeze_purpose,
+                            dsn=dsn,
+                        )
+                    else:
+                        logger.info(
+                            "Instrument status snapshot skipped by session gate for %s",
+                            run_date.isoformat(),
+                        )
+                elif now >= intraday_at and not args.skip_pre_market:
+                    await _mark_instrument_status_snapshot_missed(
+                        state,
+                        now=now,
+                        instrument_status_snapshot_at=instrument_status_snapshot_at,
                         intraday_at=intraday_at,
                         dsn=dsn,
                     )
@@ -3395,6 +3598,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--instrument-master-archive-dir",
         default=DEFAULT_INSTRUMENT_MASTER_ARCHIVE_DIR,
         help="원본 instrument master CSV 보관 디렉터리.",
+    )
+    parser.add_argument(
+        "--instrument-status-snapshot-time",
+        type=_parse_hhmm,
+        default=DEFAULT_INSTRUMENT_STATUS_SNAPSHOT_TIME,
+        help="Pre-market instrument status snapshot trigger time in KST.",
+    )
+    parser.add_argument(
+        "--instrument-status-snapshot-freeze-purpose",
+        action="append",
+        default=list(DEFAULT_INSTRUMENT_STATUS_SNAPSHOT_FREEZE_PURPOSES),
+        help="Instrument status snapshot 대상 freeze purpose. 여러 번 지정 가능.",
     )
     parser.add_argument(
         "--signal-feature-batch-time",

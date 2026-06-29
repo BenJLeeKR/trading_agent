@@ -80,6 +80,10 @@ from agent_trading.services.deterministic_trigger_engine import (
 from agent_trading.services.execution_service import (
     ExecutionService,
 )
+from agent_trading.services.compliance_validator import (
+    ComplianceValidationInput,
+    evaluate_compliance_rules,
+)
 from agent_trading.services.instrument_profile import (
     derive_primary_index_membership,
     normalize_index_memberships,
@@ -116,6 +120,7 @@ from agent_trading.services.translation import (
     resolve_order_side,
 )
 from agent_trading.services.decision_agent_runner import DecisionAgentRunner
+from agent_trading.services.validators import ValidationContext, ValidationResult
 
 logger = logging.getLogger(__name__)
 
@@ -1098,6 +1103,7 @@ class DecisionOrchestratorService:
         decision_type: str,
         rationale: str,
         reason_codes: tuple[str, ...],
+        validation_result: ValidationResult,
     ) -> AgentExecutionBundle:
         """AI 호출 없이 deterministic policy stage에서 종료할 bundle 생성."""
         event_output = EventInterpretationOutput()
@@ -1162,12 +1168,76 @@ class DecisionOrchestratorService:
             slippage_buffer_bps=expected_value.slippage_buffer_bps,
             expected_value_gate_passed=expected_value.expected_value_gate_passed,
             expected_value_gate_reason_codes=expected_value.reason_codes,
+            validator_rule_set_version=validation_result.rule_set_version,
+            validator_stop_reason=validation_result.stop_reason,
+            validator_blocking_rule_codes=validation_result.blocking_rule_codes,
         )
         return AgentExecutionBundle(
             ai_inputs=ai_inputs,
             event_output=event_output,
             risk_output=risk_output,
             composer_output=composer_output,
+        )
+
+    def _build_decision_policy_validation_result(
+        self,
+        *,
+        blocking_rule_codes: tuple[str, ...],
+        rule_results: dict[str, object] | None = None,
+    ) -> ValidationResult:
+        """decision_orchestrator의 deterministic 차단 결과를 공통 계약으로 표현한다."""
+        return ValidationResult.blocked(
+            rule_set_version="decision_policy_validator_v1",
+            blocking_rule_codes=blocking_rule_codes,
+            rule_results=rule_results or {},
+            stop_reason=blocking_rule_codes[0] if blocking_rule_codes else None,
+        )
+
+    def _build_compliance_validation_result(
+        self,
+        *,
+        source_type: str,
+        has_position: bool,
+        intent_action: str = "new_buy",
+        context_metadata: dict[str, object] | None = None,
+    ) -> ValidationResult:
+        return evaluate_compliance_rules(
+            context=ValidationContext(
+                source_type=source_type,
+                metadata=dict(context_metadata or {}),
+            ),
+            validation_input=ComplianceValidationInput(
+                source_type=source_type,
+                has_position=has_position,
+                intent_action=intent_action,
+            ),
+        )
+
+    def _apply_validation_result_to_ai_inputs(
+        self,
+        ai_inputs: AIDecisionInputs,
+        *,
+        validation_result: ValidationResult,
+    ) -> None:
+        """최종 AI 입력 계약에 validator 메타데이터를 누적한다."""
+        existing_codes = tuple(ai_inputs.validator_blocking_rule_codes or ())
+        merged_codes = tuple(
+            dict.fromkeys(existing_codes + tuple(validation_result.blocking_rule_codes))
+        )
+        object.__setattr__(
+            ai_inputs,
+            "validator_rule_set_version",
+            validation_result.rule_set_version,
+        )
+        object.__setattr__(
+            ai_inputs,
+            "validator_stop_reason",
+            validation_result.stop_reason,
+        )
+        object.__setattr__(
+            ai_inputs,
+            "validator_blocking_rule_codes",
+            merged_codes,
         )
 
     def _evaluate_pre_agent_short_circuit(
@@ -1211,10 +1281,20 @@ class DecisionOrchestratorService:
                 "pre_ai_short_circuit",
                 "source_policy_buy_blocked",
             ) + envelope.reason_codes
+            compliance_result = self._build_compliance_validation_result(
+                source_type=source_type,
+                has_position=has_position,
+                intent_action="new_buy",
+                context_metadata={
+                    "decision_type": decision_type,
+                    "pre_ai_short_circuit": True,
+                },
+            )
             return self._build_short_circuit_agent_bundle(
                 decision_type=decision_type,
                 rationale=rationale,
                 reason_codes=reason_codes,
+                validation_result=compliance_result,
             )
 
         if source_type not in _PRE_AI_SHORT_CIRCUIT_SOURCE_TYPES:
@@ -1253,10 +1333,19 @@ class DecisionOrchestratorService:
                 f"이므로 AI 호출 없이 {decision_type}로 종료"
             )
             reason_codes = ("pre_ai_short_circuit",) + residual_blocking_reasons
+            validation_result = self._build_decision_policy_validation_result(
+                blocking_rule_codes=reason_codes,
+                rule_results={
+                    "source_type": source_type,
+                    "decision_type": decision_type,
+                    "eligibility_reasons": residual_blocking_reasons,
+                },
+            )
             return self._build_short_circuit_agent_bundle(
                 decision_type=decision_type,
                 rationale=rationale,
                 reason_codes=reason_codes,
+                validation_result=validation_result,
             )
 
         primary_candidate = (
@@ -1267,6 +1356,17 @@ class DecisionOrchestratorService:
                 "[pre_ai_short_circuit] deterministic_trigger=NO_ACTION 이고 "
                 "recent_events=0 이므로 AI 호출 없이 HOLD로 종료"
             )
+            validation_result = self._build_decision_policy_validation_result(
+                blocking_rule_codes=(
+                    "pre_ai_short_circuit",
+                    "pre_ai_no_action_no_event",
+                ),
+                rule_results={
+                    "source_type": source_type,
+                    "decision_type": "HOLD",
+                    "recent_event_count": 0,
+                },
+            )
             return self._build_short_circuit_agent_bundle(
                 decision_type="HOLD",
                 rationale=rationale,
@@ -1274,6 +1374,7 @@ class DecisionOrchestratorService:
                     "pre_ai_short_circuit",
                     "pre_ai_no_action_no_event",
                 ),
+                validation_result=validation_result,
             )
 
         return None
@@ -1669,8 +1770,33 @@ class DecisionOrchestratorService:
         )
         if source_policy_guard is not None:
             guarded_dt, guard_rationale, guard_reason_codes = source_policy_guard
+            validation_result = (
+                self._build_compliance_validation_result(
+                    source_type=derivation.source_type,
+                    has_position=(
+                        position_snapshot is not None
+                        and position_snapshot.quantity is not None
+                        and position_snapshot.quantity > 0
+                    ),
+                    intent_action="new_buy",
+                    context_metadata={"guarded_decision_type": guarded_dt},
+                )
+                if "source_policy_guard" in guard_reason_codes
+                or any(code.startswith("policy_") for code in guard_reason_codes)
+                else self._build_decision_policy_validation_result(
+                    blocking_rule_codes=guard_reason_codes,
+                    rule_results={
+                        "source_type": derivation.source_type,
+                        "guarded_decision_type": guarded_dt,
+                    },
+                )
+            )
             object.__setattr__(agent_bundle.ai_inputs, "decision_type", guarded_dt)
             object.__setattr__(agent_bundle.ai_inputs, "side", "")
+            self._apply_validation_result_to_ai_inputs(
+                agent_bundle.ai_inputs,
+                validation_result=validation_result,
+            )
             existing_reason_codes = tuple(agent_bundle.ai_inputs.reason_codes or ())
             merged_reason_codes = tuple(
                 dict.fromkeys(existing_reason_codes + guard_reason_codes)
@@ -1713,8 +1839,19 @@ class DecisionOrchestratorService:
         )
         if watch_guard is not None:
             guarded_dt, guard_rationale = watch_guard
+            validation_result = self._build_decision_policy_validation_result(
+                blocking_rule_codes=("watch_candidate_guard",),
+                rule_results={
+                    "source_type": derivation.source_type,
+                    "guarded_decision_type": guarded_dt,
+                },
+            )
             object.__setattr__(agent_bundle.ai_inputs, "decision_type", guarded_dt)
             object.__setattr__(agent_bundle.ai_inputs, "side", "")
+            self._apply_validation_result_to_ai_inputs(
+                agent_bundle.ai_inputs,
+                validation_result=validation_result,
+            )
             existing_reason_codes = tuple(agent_bundle.ai_inputs.reason_codes or ())
             if "watch_candidate_guard" not in existing_reason_codes:
                 object.__setattr__(
@@ -1753,8 +1890,19 @@ class DecisionOrchestratorService:
         )
         if buy_eligibility_guard is not None:
             guarded_dt, guard_rationale = buy_eligibility_guard
+            validation_result = self._build_decision_policy_validation_result(
+                blocking_rule_codes=("buy_eligibility_guard",),
+                rule_results={
+                    "source_type": derivation.source_type,
+                    "guarded_decision_type": guarded_dt,
+                },
+            )
             object.__setattr__(agent_bundle.ai_inputs, "decision_type", guarded_dt)
             object.__setattr__(agent_bundle.ai_inputs, "side", "")
+            self._apply_validation_result_to_ai_inputs(
+                agent_bundle.ai_inputs,
+                validation_result=validation_result,
+            )
             existing_reason_codes = tuple(agent_bundle.ai_inputs.reason_codes or ())
             if "buy_eligibility_guard" not in existing_reason_codes:
                 object.__setattr__(
@@ -1796,8 +1944,19 @@ class DecisionOrchestratorService:
         )
         if ai_override_gate is not None:
             guarded_dt, guard_rationale, guard_reason_codes = ai_override_gate
+            validation_result = self._build_decision_policy_validation_result(
+                blocking_rule_codes=guard_reason_codes,
+                rule_results={
+                    "source_type": derivation.source_type,
+                    "guarded_decision_type": guarded_dt,
+                },
+            )
             object.__setattr__(agent_bundle.ai_inputs, "decision_type", guarded_dt)
             object.__setattr__(agent_bundle.ai_inputs, "side", "")
+            self._apply_validation_result_to_ai_inputs(
+                agent_bundle.ai_inputs,
+                validation_result=validation_result,
+            )
             existing_reason_codes = tuple(agent_bundle.ai_inputs.reason_codes or ())
             merged_reason_codes = tuple(
                 dict.fromkeys(existing_reason_codes + guard_reason_codes)

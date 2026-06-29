@@ -47,6 +47,9 @@ from agent_trading.repositories.postgres.instruments import (
 from agent_trading.repositories.postgres.instrument_index_memberships import (
     PostgresInstrumentIndexMembershipRepository,
 )
+from agent_trading.repositories.postgres.instrument_status_snapshots import (
+    PostgresInstrumentStatusSnapshotRepository,
+)
 from agent_trading.repositories.postgres.market_sessions import (
     PostgresMarketSessionRepository,
 )
@@ -150,6 +153,7 @@ def build_postgres_repositories(
         signal_feature_batch_runs=PostgresSignalFeatureBatchRunRepository(tx),
         signal_feature_batch_run_items=PostgresSignalFeatureBatchRunItemRepository(tx),
         instrument_index_memberships=PostgresInstrumentIndexMembershipRepository(tx),
+        instrument_status_snapshots=PostgresInstrumentStatusSnapshotRepository(tx),
         symbol_trade_states=PostgresSymbolTradeStateRepository(tx),
         universe_freeze_runs=PostgresUniverseFreezeRunRepository(tx),
         universe_freeze_run_items=PostgresUniverseFreezeRunItemRepository(tx),

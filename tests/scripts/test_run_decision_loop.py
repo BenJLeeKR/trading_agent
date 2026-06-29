@@ -85,6 +85,7 @@ from scripts.run_decision_loop import (
     _build_aggregate_summary,
     _collect_persisted_seeded_events,
     _evaluate_pre_ai_skip_reason,
+    _evaluate_pre_ai_validation_result,
     _is_t3_fresh_for_symbol,
     _parse_args,
     _parse_universe_symbols,
@@ -1351,6 +1352,36 @@ class TestRunOneCycle:
         assert details["latest_held_decision_type"] == "hold"
 
     @pytest.mark.asyncio
+    async def test_pre_ai_validation_result_uses_common_contract(self) -> None:
+        """pre_ai_gate는 공통 ValidationResult 계약으로도 같은 차단 사유를 준다."""
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            now_utc = datetime(2026, 6, 8, 4, 0, 0, tzinfo=timezone.utc)
+            await repos.trade_decisions.add(
+                _make_trade_decision(
+                    decision_type=DecisionType.HOLD,
+                    created_at=now_utc - timedelta(minutes=5),
+                )
+            )
+
+            validation_result, details = await _evaluate_pre_ai_validation_result(
+                repos,
+                account_alias="Entrypoint Paper",
+                symbol=SYMBOL,
+                market=MARKET,
+                source_type="held_position",
+                now_utc=now_utc,
+            )
+
+        assert validation_result is not None
+        assert validation_result.rule_set_version == "pre_ai_gate_v1"
+        assert validation_result.stop_reason == "held_position_recent_hold_no_change"
+        assert validation_result.blocking_rule_codes == (
+            "held_position_recent_hold_no_change",
+        )
+        assert details["latest_held_decision_type"] == "hold"
+
+    @pytest.mark.asyncio
     async def test_pre_ai_skip_not_triggered_for_held_position_after_cutoff(self) -> None:
         """장 마감 임박 이후에는 held_position stable-hold skip을 끈다."""
         async with _mock_runtime_for_one_cycle() as runtime:
@@ -2413,6 +2444,9 @@ class TestHeldPositionSellBudget:
         assert decision.submit is False
         assert decision.dry_run is True
         assert decision.dry_run_reason == "submit_budget_consumed_core"
+        assert decision.validation_result is not None
+        assert decision.validation_result.rule_set_version == "submit_lane_gate_v1"
+        assert decision.validation_result.stop_reason == "submit_budget_consumed_core"
 
     def test_core_symbol_blocked_when_general_submit_disabled(self) -> None:
         """일반 budget 소진 후에는 core submit이 명시적으로 금지되어야 함."""

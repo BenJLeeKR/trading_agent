@@ -961,14 +961,43 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   - 현재는 `core_cap`만 있고 나머지는 상대적으로 느슨하다.
   - source별 목표 역할을 유지하려면 cap도 source-aware 해야 한다.
 
+#### 10-g. Instrument Status Snapshot 계층 도입 — `대기`
+
+- 목표
+  - `관리종목`, `거래정지`, `투자유의` 같은 종목 상태 fact를
+    `instrument master`와 분리된 별도 snapshot 계층으로 정리한다.
+- 핵심 판단
+  - 오전 `instrument master sync`는 계속 CSV 기반 canonical source로 유지한다.
+  - KIS `CTPF1002R`는 `trading.instruments` 대체 source가 아니라
+    별도 `instrument_status_snapshots` fact source로 붙이는 것이 맞다.
+  - universe exclusion과 submit 직전 compliance가
+    같은 status fact를 읽도록 공통화해야 한다.
+- 설계 문서
+  - [`plans/[PLAN] instrument_status_snapshot_phase1.md`](./[PLAN]%20instrument_status_snapshot_phase1.md)
+- 다음 구현 체크리스트
+  - [x] `trading.instrument_status_snapshots` DDL / entity / repository 추가
+  - [x] `rest_client.py`에 `CTPF1002R` (`search-stock-info`) client method 추가
+  - [x] 장전 status snapshot batch script 추가
+  - [x] `ops-scheduler`에 `instrument_master_sync` 후속 phase로 연결
+  - [x] `UniverseSelectionService` 공통 eligibility가 status snapshot 우선 조회로 읽도록 전환
+  - [x] `compliance_validator_v1`가 `blocked_reason_codes` fallback 대신
+        status snapshot 기반 `관리종목/거래정지` hard block을 읽도록 확장
+- 우선순위 이유
+  - 현재 `restricted symbol` 차단은 프레임만 있고,
+    실제 `관리종목` / `거래정지` authoritative 입력은 비어 있는 경우가 많다.
+  - `10-b 공통 eligibility`의 잔여 보완과
+    `11-c compliance validator`의 실전성 보강을
+    동시에 닫는 연결 작업이다.
+
 ### 권장 구현 순서
 
 1. `10-a` core universe 재정의
 2. `10-b` 공통 eligibility filter 강화
-3. `10-c` 정합성/미체결 강제 포함 계층 추가
-4. `10-e` market overlay sourcing 재정의
-5. `10-d` event overlay 확장
-6. `10-f` source별 reserve/cap 정교화
+3. `10-g` instrument status snapshot 계층 도입
+4. `10-c` 정합성/미체결 강제 포함 계층 추가
+5. `10-e` market overlay sourcing 재정의
+6. `10-d` event overlay 확장
+7. `10-f` source별 reserve/cap 정교화
 
 ### 구현 메모
 
@@ -976,8 +1005,211 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   - core를 좁히는 기준 자체가 eligibility 정책과 맞물리기 때문이다.
 - `10-c`는 execution/reconciliation 경계와 직접 연결되므로
   universe selection 단독 작업이 아니라 order/reconciliation 문맥과 같이 검증해야 한다.
+- `10-g`는 `instrument master`와 `status snapshot`의 역할을 분리하는 작업이다.
+  - master는 CSV 기반 canonical source 유지
+  - status는 `CTPF1002R` / 시세 응답 기반 fact snapshot으로 분리
+  - 구현 순서는 `DB -> batch -> universe -> compliance`가 맞다.
 - `10-e`는 KIS rate limit / market data budget 제약과 함께 설계해야 하며,
   paper 환경에서는 pacing/seed pool 축소/캐시 전략을 반드시 동반해야 한다.
+
+### 11. Deterministic Risk / Compliance / Guardrail 계층 정리 — `진행중`
+
+### 핵심 판단
+
+- `AI Risk Agent`는 계속 **리스크 해석기**로 유지한다.
+- `VaR`, exposure hard limit, daily loss hard limit는
+  **전용 deterministic risk engine**이 계산/집행해야 한다.
+- `AI Compliance Agent`는 **정책/규정 해석기**로 두되,
+  최종 금지 집행은 deterministic validator가 맡아야 한다.
+- 현재 여러 곳에 흩어진 hard stop 로직은
+  장기적으로 **통합 Validator 계층**으로 일원화하는 것이 맞다.
+
+### 현재 상태
+
+- `risk_limit_snapshot`, `kill_switch_active`, `blocked_reason_codes`,
+  `guardrail_evaluations` 저장 경로는 이미 존재한다.
+- stale snapshot, duplicate buy/sell, low-liquidity, reconciliation lock 등
+  실전 차단 로직도 이미 일부 구현돼 있다.
+- 그러나 아래 3개는 아직 비어 있거나 분산 상태다.
+  - 전용 deterministic VaR 엔진
+  - 전용 AI Compliance Agent
+  - Guardrail / Compliance Validator 일원화
+
+### 권장 구현 순서
+
+#### 11-a. Guardrail / Validator 일원화 — `완료`
+
+- 목표
+  - 현재 `decision_orchestrator`, `execution_service`, 기타 후단에 분산된 차단 로직을
+    공통 validator 체계로 정리한다.
+- 권장 방향
+  - `ValidationContext`
+  - `ValidationRule`
+  - `ValidationResult`
+  - `rule_set_version`
+  - `blocking_rule_codes`
+  - `rule_results`
+  중심의 공통 계약을 만든다.
+  - 규칙 묶음은
+    `risk_validator`, `compliance_validator`, `execution_validator`
+    식으로 분리한다.
+- 이유
+  - 이 정리가 먼저 없으면 VaR와 AI Compliance를 붙일 때
+    새 fact와 새 의견이 또 다른 분산 차단 경로를 만들 가능성이 높다.
+- 현재 진행 상태
+  - [x] 공통 계약 1차 추가
+    - `services.validators`
+    - `ValidationContext`
+    - `ValidationResult`
+  - [x] `guardrail_audit`가
+    legacy blocking guardrail helper를 유지한 채
+    공통 validation result 저장 경로를 사용하도록 정리
+  - [x] `execution_service`의 blocking guardrail 기록 경로가
+    공통 validation contract를 사용하도록 연결
+  - [x] 공통 contract와 legacy 호환 경로에 대한 서비스 테스트 추가
+    - `tests/services/test_validators.py`
+  - [x] `ValidationRule` / `RuleOutcome` / rule bundle 실행기 1차 추가
+    - `run_validation_rules()`
+  - [x] `submit_lane_gate`를 공통 validator bundle 기반으로 전환
+    - `submit_lane_gate_v1`
+    - scheduler submit lane 결과에 `validation_result` 부착
+  - [x] scheduler gate guardrail 기록 경로를
+    공통 `ValidationResult` 저장 흐름으로 정리
+  - [x] `pre_ai_gate`를 공통 validation result 기반으로 승격
+    - 기존 `(stop_reason, details)` 호환 API 유지
+    - 내부 authoritative 결과는 `pre_ai_gate_v1 ValidationResult`로 생성
+  - [x] pre-AI guardrail 기록 경로를
+    공통 `ValidationResult` 저장 흐름으로 정리
+  - [x] `decision_orchestrator` deterministic policy 경로에
+    공통 validator 메타데이터 부착
+    - `pre_ai_short_circuit`
+    - `watch_candidate_guard`
+    - `buy_eligibility_guard`
+    - `source_policy_guard`
+    - `ai_override_gate`
+    - `OrderIntent.ai_backend_inputs`에
+      `decision_policy_validator_v1` 메타데이터 누적
+  - [x] 공통 `ValidationContext` 조립 helper 추가 및 적용
+    - `build_validation_context()`
+    - `guardrail_audit`
+    - `run_decision_loop`
+    - `execution_service`
+  - [x] `execution_service` 주요 차단 경로에
+    `risk_validator_v1` / `execution_validator_v1` bundle 메타데이터 명시
+    - `buy_execution_liquidity_v1` → `risk_validator_v1`
+    - `stale_snapshot_guard_v1` → `risk_validator_v1`
+    - `sell_guard_v1` / `buy_duplicate_guard_v1`
+      / `execution_probe_churn_guard_v1`
+      / `broker_submit_outcome_v1`
+      → `execution_validator_v1`
+  - [x] `execution_service`의 일부 차단 경로를
+    실제 `ValidationRule` 실행 bundle로 승격
+    - `sell_guard_v1`
+    - `buy_duplicate_guard_v1`
+    - guardrail row에 `rule_outcomes` 저장
+  - [x] `execution_service`의 추가 차단 경로를
+    실제 `ValidationRule` 실행 bundle로 승격
+    - `buy_execution_liquidity_v1`
+    - `execution_probe_churn_guard_v1`
+    - `stale_snapshot_guard_v1`
+    - guardrail row에 `rule_outcomes` 저장
+  - [x] `broker_submit_outcome_v1`도
+    실제 `ValidationRule` 실행 bundle로 승격
+    - guardrail row에 `rule_outcomes` 저장
+  - [x] `execution_service` 내부 legacy guardrail 기록 wrapper 제거
+    - execution 계층은 공통 `ValidationResult` 저장 흐름만 사용
+- 잔여 보완
+  - validator bundle 명칭은 도입됐지만
+    `compliance_validator_v1`은 아직 미구현이다.
+  - `risk_validator_v1` / `execution_validator_v1`은
+    1차 적용이 끝났으므로,
+    다음 단계부터는 `11-c`에서 compliance 축을 닫아야 한다.
+
+#### 11-b. 전용 deterministic VaR 엔진 — `상`
+
+- 목표
+  - 현재 exposure 중심의 `risk_limit_snapshot`을
+    실제 risk analytics fact 저장 계층으로 끌어올린다.
+- v1 권장 범위
+  - 계좌 총 VaR
+  - 종목별 marginal risk contribution
+  - concentration penalty
+  - open order exposure 반영
+- 연결 원칙
+  - `AI Risk Agent`는 VaR를 직접 계산하지 않고 읽기만 한다.
+  - validator는 VaR threshold를 authoritative하게 집행한다.
+- Phase 1 설계 문서
+  - [`plans/[PLAN] deterministic_var_engine_phase1.md`](./[PLAN]%20deterministic_var_engine_phase1.md)
+- 이유
+  - `최대 기대수익률`을 추구하더라도
+    tail risk와 concentration risk를 숫자로 닫는 기반이 먼저 필요하다.
+
+#### 11-c. deterministic compliance validator 명시화 — `완료`
+
+- 목표
+  - AI가 없어도 반드시 차단해야 하는 compliance hard rule을
+    문서와 코드에서 명확히 분리한다.
+- v1 hard rule 예시
+  - 금지 시장 / 금지 자산
+  - 브로커 capability 미지원
+  - 계좌 권한 불일치
+  - 시장 세션상 주문 불가
+  - 필수 필드 누락
+  - restricted / blocked symbol
+- 이유
+  - 현재 일부는 구현돼 있으나,
+    어디까지가 compliance hard rule인지 구조적으로 흐린 상태다.
+- 현재 진행 준비 상태
+  - [x] 선행 조건인 `11-a Guardrail / Validator 일원화` 완료
+  - [x] Phase 1 설계 문서 추가
+    - [`plans/[PLAN] deterministic_compliance_validator_phase1.md`](./[PLAN]%20deterministic_compliance_validator_phase1.md)
+- 다음 구현 체크리스트
+  - [x] `services/compliance_validator.py` 추가
+  - [x] `compliance_validator_v1` rule set 초안 구현
+  - [x] `source_policy_buy_blocked` / `policy_reconciliation_overlay_flat_buy_blocked`
+        를 compliance bundle로 분리
+  - [x] `execution_service` submit 직전 compliance hard rule 호출 지점 추가
+  - [x] restricted symbol / invalid order shape / broker capability rule 1차 연결
+  - [x] guardrail row에 `validator_bundle=compliance_validator_v1` 검증 추가
+- 완료 메모
+  - `decision_orchestrator`의 source policy 단락 경로와
+    `execution_service`의 submit 직전 경로가
+    동일한 `compliance_validator_v1` contract를 공유하도록 정리했다.
+  - restricted symbol / invalid order shape / broker capability 차단은
+    guardrail row의 `rule_outcomes`까지 포함해 테스트로 고정했다.
+
+#### 11-d. AI Compliance Agent — `중`
+
+- 목표
+  - deterministic validator가 닫지 못하는
+    애매한 정책/규정/이벤트 맥락을 해석하는 AI 계층을 추가한다.
+- 역할
+  - `compliance_opinion`
+  - `policy_flags`
+  - `reason_codes`
+  - `summary`
+  - `opposing_evidence`
+  형태의 structured output 생성
+- 제약
+  - 최종 금지/허용 authoritative 집행은 맡지 않는다.
+  - hard validator보다 앞설 수 없다.
+- 이유
+  - 설명력과 정책 해석 품질은 높일 수 있지만,
+    deterministic 경계가 닫히기 전에는 우선순위가 더 높지 않다.
+
+### 권장 roadmap 배치
+
+1. `11-a` Guardrail / Validator 일원화
+2. `11-c` deterministic compliance validator 명시화
+3. `11-b` deterministic VaR 엔진
+4. `11-d` AI Compliance Agent
+
+### 근거 문서
+
+- `plan_docs/agents/03_risk_role_boundaries.md`
+- `plan_docs/agents/01_agent_inventory_and_status.md`
+- `plan_docs/detailed_design/01_system_architecture.md`
+- `plans/[ANALYSIS] var_compliance_guardrail_implementation_path.md`
 
 ---
 
@@ -1976,6 +2208,8 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - `plan_docs/agents/02_agent_target_shapes.md`
 - `plan_docs/agents/03_risk_role_boundaries.md`
 
+---
+
 ### 14. Data Quality / Hard Guardrail 일원화 — `완료`
 
 ### 핵심
@@ -2092,6 +2326,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `8d`, `10`, `11`, `12`, `13`
 - `plan_docs/agents/01_agent_inventory_and_status.md`
 
+---
 
 ### 16. 멀티 사용자 공용 Plane / 개인 Credential Plane 분리 리팩토링 — `보류`
 

@@ -173,11 +173,21 @@
 - `instruments`를 오늘 판단에 사용할 기준 종목 마스터로 맞춘다.
 - `instrument_index_memberships`를 통해 `KOSPI100`, `KOSPI200`, `KOSDAQ150` 같은 편입 정보를 보강한다.
 - Universe Selection은 이 기준 데이터에 없는 종목을 `unknown_instrument`로 제외한다.
+- 이 단계는 `관리종목`, `거래정지`, `투자유의` 같은
+  종목 상태성 fact를 저장하는 단계와는 다르다.
+  그런 상태값은 후속 `instrument_status_snapshot` 계층에서 다루는 것이 맞다.
 
 업무 관점 설명:
 
 - 장전 종목 마스터가 틀리면 장중 의사결정 이전에 universe 단계에서 종목이 빠질 수 있다.
 - 따라서 “왜 어떤 종목이 오늘 판단 대상이 아니었는가”는 AI보다 먼저 `instrument master` 정합성을 봐야 한다.
+- 반대로 “왜 어떤 종목이 관리종목/거래정지로 막혔는가”는
+  `instrument master`가 아니라
+  후속 `instrument status snapshot` 또는 live 상태 조회를 봐야 한다.
+
+후속 설계:
+
+- [`plans/[PLAN] instrument_status_snapshot_phase1.md`](./[PLAN]%20instrument_status_snapshot_phase1.md)
 
 ---
 
@@ -885,10 +895,11 @@ scripts/run_post_submit_sync_loop.py
 확인할 곳:
 
 1. 장전 `instrument master sync`가 정상 완료됐는가
-2. `instrument_index_memberships`가 기대대로 적재됐는가
-3. `GET /instruments/trading-universe/preview`에서
+2. 후속 `instrument status snapshot` 배치가 정상 완료됐는가
+3. `instrument_index_memberships`가 기대대로 적재됐는가
+4. `GET /instruments/trading-universe/preview`에서
    live compose와 active intraday freeze가 어떻게 다른가
-4. `trade_decisions.decision_json.universe_anchor`가 어떤 freeze를 가리키는가
+5. `trade_decisions.decision_json.universe_anchor`가 어떤 freeze를 가리키는가
 
 ---
 

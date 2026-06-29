@@ -121,6 +121,9 @@ class AIDecisionInputs:
     slippage_buffer_bps: Decimal | None = None
     expected_value_gate_passed: bool = False
     expected_value_gate_reason_codes: tuple[str, ...] = ()
+    validator_rule_set_version: str | None = None
+    validator_stop_reason: str | None = None
+    validator_blocking_rule_codes: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------

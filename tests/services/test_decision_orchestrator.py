@@ -1574,6 +1574,14 @@ class TestWatchCandidateUpgradeGuard:
         assert intent.ai_backend_inputs.decision_type == "WATCH"
         assert intent.ai_backend_inputs.side == ""
         assert "watch_candidate_guard" in intent.ai_backend_inputs.reason_codes
+        assert (
+            intent.ai_backend_inputs.validator_rule_set_version
+            == "decision_policy_validator_v1"
+        )
+        assert intent.ai_backend_inputs.validator_stop_reason == "watch_candidate_guard"
+        assert "watch_candidate_guard" in (
+            intent.ai_backend_inputs.validator_blocking_rule_codes
+        )
 
         persisted = await repos.trade_decisions.get_by_context(
             context.decision_context_id
@@ -1801,6 +1809,14 @@ class TestWatchCandidateUpgradeGuard:
         assert intent.ai_backend_inputs.decision_type == "WATCH"
         assert "ai_override_gate" in intent.ai_backend_inputs.reason_codes
         assert "ai_override_reverse_cooldown_blocked" in intent.ai_backend_inputs.reason_codes
+        assert (
+            intent.ai_backend_inputs.validator_rule_set_version
+            == "decision_policy_validator_v1"
+        )
+        assert intent.ai_backend_inputs.validator_stop_reason == "ai_override_gate"
+        assert "ai_override_reverse_cooldown_blocked" in (
+            intent.ai_backend_inputs.validator_blocking_rule_codes
+        )
 
     @pytest.mark.asyncio
     async def test_held_position_watch_candidate_allows_reduce_sell(
@@ -2003,6 +2019,14 @@ class TestWatchCandidateUpgradeGuard:
         assert intent.ai_backend_inputs.side == ""
         assert "pre_ai_short_circuit" in intent.ai_backend_inputs.reason_codes
         assert "eligibility_low_turnover" in intent.ai_backend_inputs.reason_codes
+        assert (
+            intent.ai_backend_inputs.validator_rule_set_version
+            == "decision_policy_validator_v1"
+        )
+        assert intent.ai_backend_inputs.validator_stop_reason == "pre_ai_short_circuit"
+        assert "eligibility_low_turnover" in (
+            intent.ai_backend_inputs.validator_blocking_rule_codes
+        )
 
     @pytest.mark.asyncio
     async def test_reconciliation_overlay_flat_buy_short_circuits_before_ai(
@@ -2101,6 +2125,14 @@ class TestWatchCandidateUpgradeGuard:
         assert (
             "policy_reconciliation_overlay_flat_buy_blocked"
             in intent.ai_backend_inputs.reason_codes
+        )
+        assert (
+            intent.ai_backend_inputs.validator_rule_set_version
+            == "compliance_validator_v1"
+        )
+        assert intent.ai_backend_inputs.validator_stop_reason == "source_policy_buy_blocked"
+        assert "policy_reconciliation_overlay_flat_buy_blocked" in (
+            intent.ai_backend_inputs.validator_blocking_rule_codes
         )
         service._run_agents.assert_not_awaited()
 

@@ -24,6 +24,7 @@ import pytest
 from agent_trading.domain.entities import (
     ExternalEventEntity,
     InstrumentEntity,
+    InstrumentStatusSnapshotEntity,
     OrderRequestEntity,
     PositionSnapshotEntity,
     ReconciliationRunEntity,
@@ -328,6 +329,28 @@ class TestLiquidityFilter:
         result = await lf.check("005930", "KRX")
         assert result.passed is False
         assert result.fail_reason == "metadata_excluded"
+
+    @pytest.mark.asyncio
+    async def test_status_snapshot_halt_rejected(self) -> None:
+        """status snapshot이 거래정지를 가리키면 공통 eligibility에서 제외."""
+        repos = build_in_memory_repositories()
+        inst = _make_instrument("005930", tick_size=Decimal("50"))
+        await repos.instruments.add(inst)
+        await repos.instrument_status_snapshots.add(
+            InstrumentStatusSnapshotEntity(
+                instrument_status_snapshot_id=uuid4(),
+                instrument_id=inst.instrument_id,
+                snapshot_at=NOW,
+                source_type="kis_stock_basic_info",
+                status_scope="instrument",
+                tr_stop_yn="Y",
+                raw_payload_json={"tr_stop_yn": "Y"},
+            )
+        )
+        lf = LiquidityFilter(repos)
+        result = await lf.check("005930", "KRX")
+        assert result.passed is False
+        assert result.fail_reason == "status_snapshot_trading_halt"
 
 
 # ---------------------------------------------------------------------------
@@ -1798,6 +1821,24 @@ class TestLiquidityFilterP2:
         result = _check_iscd_stat_cls_code("99")
         assert result.passed is True
 
+    def test_status_snapshot_administrative_issue_rejected(self) -> None:
+        """status snapshot authoritative fact는 관리종목 차단을 우선한다."""
+        from agent_trading.services.universe_selection import _check_status_snapshot
+
+        snapshot = InstrumentStatusSnapshotEntity(
+            instrument_status_snapshot_id=uuid4(),
+            instrument_id=uuid4(),
+            snapshot_at=NOW,
+            source_type="kis_stock_basic_info",
+            status_scope="instrument",
+            admn_item_yn="Y",
+            raw_payload_json={"admn_item_yn": "Y"},
+        )
+
+        result = _check_status_snapshot(snapshot)
+        assert result.passed is False
+        assert result.fail_reason == "status_snapshot_administrative_issue"
+
     def test_f5_none_passes(self) -> None:
         """acml_tr_pbmn이 None이면 PASS."""
         from agent_trading.services.universe_selection import _check_acc_trade_amount
@@ -1825,6 +1866,69 @@ class TestLiquidityFilterP2:
             threshold=Decimal("1000000000"),
         )
         assert result.passed is True
+
+    @pytest.mark.asyncio
+    async def test_market_snapshot_uses_status_snapshot_before_quote_status_code(self) -> None:
+        """market overlay는 quote보다 status snapshot authoritative fact를 우선한다."""
+        repos = build_in_memory_repositories()
+        inst = _make_instrument("005930", tick_size=Decimal("50"))
+        await repos.instruments.add(inst)
+        await repos.instrument_status_snapshots.add(
+            InstrumentStatusSnapshotEntity(
+                instrument_status_snapshot_id=uuid4(),
+                instrument_id=inst.instrument_id,
+                snapshot_at=NOW,
+                source_type="kis_stock_basic_info",
+                status_scope="instrument",
+                admn_item_yn="Y",
+                raw_payload_json={"admn_item_yn": "Y"},
+            )
+        )
+        lf = LiquidityFilter(repos)
+
+        result = await lf.check_market_snapshot(
+            MarketDataSnapshot(
+                symbol="005930",
+                market="KRX",
+                current_price=Decimal("65000"),
+                change_rate=Decimal("2.0"),
+                acc_trade_amount=Decimal("2000000000"),
+                high_price=Decimal("66000"),
+                low_price=Decimal("64000"),
+                open_price=Decimal("64500"),
+                iscd_stat_cls_code="",
+                raw={},
+            )
+        )
+
+        assert result.passed is False
+        assert result.fail_reason == "status_snapshot_administrative_issue"
+
+    @pytest.mark.asyncio
+    async def test_market_snapshot_falls_back_to_quote_status_code_when_snapshot_missing(self) -> None:
+        """status snapshot이 없으면 기존 inquire-price status code로 fallback 한다."""
+        repos = build_in_memory_repositories()
+        inst = _make_instrument("005930", tick_size=Decimal("50"))
+        await repos.instruments.add(inst)
+        lf = LiquidityFilter(repos)
+
+        result = await lf.check_market_snapshot(
+            MarketDataSnapshot(
+                symbol="005930",
+                market="KRX",
+                current_price=Decimal("65000"),
+                change_rate=Decimal("2.0"),
+                acc_trade_amount=Decimal("2000000000"),
+                high_price=Decimal("66000"),
+                low_price=Decimal("64000"),
+                open_price=Decimal("64500"),
+                iscd_stat_cls_code="05",
+                raw={},
+            )
+        )
+
+        assert result.passed is False
+        assert result.fail_reason == "suspended_status:05"
 
 
 # ---------------------------------------------------------------------------

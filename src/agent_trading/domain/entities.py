@@ -130,6 +130,29 @@ class InstrumentIndexMembershipEntity:
 
 
 @dataclass(slots=True, frozen=True)
+class InstrumentStatusSnapshotEntity:
+    """종목 상태 snapshot fact."""
+
+    instrument_status_snapshot_id: UUID
+    instrument_id: UUID
+    snapshot_at: datetime
+    source_type: str
+    status_scope: str
+    tr_stop_yn: str | None = None
+    admn_item_yn: str | None = None
+    nxt_tr_stop_yn: str | None = None
+    temp_stop_yn: str | None = None
+    iscd_stat_cls_code: str | None = None
+    mket_id_cd: str | None = None
+    scty_grp_id_cd: str | None = None
+    excg_dvsn_cd: str | None = None
+    prdt_type_cd: str | None = None
+    status_reason_codes: list[str] = field(default_factory=list)
+    raw_payload_json: dict[str, object] = field(default_factory=dict)
+    created_at: datetime | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class SymbolTradeStateEntity:
     symbol_trade_state_id: UUID
     account_id: UUID

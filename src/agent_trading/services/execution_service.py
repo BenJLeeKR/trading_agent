@@ -27,7 +27,6 @@ from uuid import UUID, uuid4
 from agent_trading.brokers.base import BrokerAdapter
 from agent_trading.domain.entities import (
     ExecutionAttemptEntity,
-    GuardrailEvaluationEntity,
     SymbolTradeStateEntity,
 )
 from agent_trading.domain.enums import (
@@ -50,8 +49,12 @@ from agent_trading.services.common_types import (
     SubmitResult,
     phase_trace_to_dicts,
 )
+from agent_trading.services.compliance_validator import (
+    ComplianceValidationInput,
+    evaluate_compliance_rules,
+)
 from agent_trading.services.guardrail_audit import (
-    persist_blocking_guardrail_evaluation,
+    persist_validation_result,
 )
 from agent_trading.services.held_position_policy import (
     is_held_position_sell_path,
@@ -63,6 +66,13 @@ from agent_trading.services.translation import (
     build_submit_order_request_from_decision,
     calculate_max_order_value,
     decimal_or_none,
+)
+from agent_trading.services.validators import (
+    RuleOutcome,
+    ValidationRule,
+    ValidationResult,
+    build_validation_context,
+    run_validation_rules,
 )
 
 if TYPE_CHECKING:
@@ -752,25 +762,483 @@ class ExecutionService:
             side=side.value,
         )
 
-    async def _record_blocking_guardrail_evaluation(
+    async def _record_validation_result(
         self,
         *,
-        rule_set_version: str,
-        blocking_rule_codes: list[str],
-        rule_results: dict[str, object],
+        validation_result: ValidationResult,
         decision_context_id: UUID | None,
         trade_decision_id: UUID | None,
         order_request_id: UUID | None = None,
     ) -> None:
-        """Persist a blocking guardrail evaluation without interrupting flow."""
-        await persist_blocking_guardrail_evaluation(
+        await persist_validation_result(
             self._repos,
+            validation_context=build_validation_context(
+                decision_context_id=decision_context_id,
+                trade_decision_id=trade_decision_id,
+                order_request_id=order_request_id,
+                rule_results=validation_result.rule_results,
+            ),
+            validation_result=validation_result,
+        )
+
+    @staticmethod
+    def _with_validator_bundle(
+        rule_results: dict[str, object],
+        *,
+        validator_bundle: str,
+    ) -> dict[str, object]:
+        enriched = dict(rule_results)
+        enriched.setdefault("validator_bundle", validator_bundle)
+        return enriched
+
+    def _build_execution_validator_result(
+        self,
+        *,
+        rule_set_version: str,
+        context: object,
+        rules: tuple[ValidationRule, ...],
+        rule_results: dict[str, object],
+    ) -> ValidationResult:
+        bundle_result = run_validation_rules(
             rule_set_version=rule_set_version,
-            blocking_rule_codes=blocking_rule_codes,
-            rule_results=rule_results,
-            decision_context_id=decision_context_id,
-            trade_decision_id=trade_decision_id,
-            order_request_id=order_request_id,
+            context=context,
+            rules=rules,
+        )
+        if not bundle_result.is_blocking:
+            return ValidationResult.allowed(
+                rule_set_version=rule_set_version,
+                rule_results=self._with_validator_bundle(
+                    {
+                        **rule_results,
+                        **bundle_result.rule_results,
+                    },
+                    validator_bundle="execution_validator_v1",
+                ),
+                warning_rule_codes=bundle_result.warning_rule_codes,
+                message=bundle_result.message,
+            )
+        return ValidationResult.blocked(
+            rule_set_version=rule_set_version,
+            blocking_rule_codes=list(bundle_result.blocking_rule_codes),
+            rule_results=self._with_validator_bundle(
+                {
+                    **rule_results,
+                    **bundle_result.rule_results,
+                },
+                validator_bundle="execution_validator_v1",
+            ),
+            stop_reason=bundle_result.stop_reason,
+            message=bundle_result.message,
+        )
+
+    def _build_risk_validator_result(
+        self,
+        *,
+        rule_set_version: str,
+        context: object,
+        rules: tuple[ValidationRule, ...],
+        rule_results: dict[str, object],
+    ) -> ValidationResult:
+        bundle_result = run_validation_rules(
+            rule_set_version=rule_set_version,
+            context=context,
+            rules=rules,
+        )
+        if not bundle_result.is_blocking:
+            return ValidationResult.allowed(
+                rule_set_version=rule_set_version,
+                rule_results=self._with_validator_bundle(
+                    {
+                        **rule_results,
+                        **bundle_result.rule_results,
+                    },
+                    validator_bundle="risk_validator_v1",
+                ),
+                warning_rule_codes=bundle_result.warning_rule_codes,
+                message=bundle_result.message,
+            )
+        return ValidationResult.blocked(
+            rule_set_version=rule_set_version,
+            blocking_rule_codes=list(bundle_result.blocking_rule_codes),
+            rule_results=self._with_validator_bundle(
+                {
+                    **rule_results,
+                    **bundle_result.rule_results,
+                },
+                validator_bundle="risk_validator_v1",
+            ),
+            stop_reason=bundle_result.stop_reason,
+            message=bundle_result.message,
+        )
+
+    def _evaluate_sell_guard_validation_result(
+        self,
+        *,
+        account_id: UUID,
+        symbol: str,
+        requested_qty: Decimal,
+        sell_availability: SellAvailability,
+    ) -> ValidationResult:
+        context = build_validation_context(
+            account_id=account_id,
+            symbol=symbol,
+            side=OrderSide.SELL.value,
+            metadata={
+                "requested_qty": str(requested_qty),
+                "available_sell_qty": str(sell_availability.available_sell_qty),
+            },
+        )
+
+        def _sell_guard_rule(_context: object) -> RuleOutcome:
+            return RuleOutcome(
+                code=PipelineStopReason.SELL_GUARD_BLOCKED.value,
+                passed=not sell_availability.is_blocked,
+                details={
+                    "blocking_reason": sell_availability.blocking_reason,
+                    "requested_qty": str(requested_qty),
+                    "available_sell_qty": str(
+                        sell_availability.available_sell_qty
+                    ),
+                },
+            )
+
+        return self._build_execution_validator_result(
+            rule_set_version="sell_guard_v1",
+            context=context,
+            rules=(ValidationRule(name="sell_guard", evaluator=_sell_guard_rule),),
+            rule_results={
+                "account_id": str(account_id),
+                "symbol": symbol,
+                "side": OrderSide.SELL.value,
+                "requested_qty": str(requested_qty),
+                "available_sell_qty": str(sell_availability.available_sell_qty),
+                "blocking_reason": sell_availability.blocking_reason,
+            },
+        )
+
+    def _evaluate_buy_duplicate_validation_result(
+        self,
+        *,
+        account_id: UUID,
+        symbol: str,
+        market: str,
+        existing_order_id: str | None,
+    ) -> ValidationResult:
+        context = build_validation_context(
+            account_id=account_id,
+            symbol=symbol,
+            market=market,
+            side=OrderSide.BUY.value,
+            metadata={"cooldown_seconds": _BUY_DUPLICATE_COOLDOWN_SECONDS},
+        )
+
+        def _buy_duplicate_rule(_context: object) -> RuleOutcome:
+            return RuleOutcome(
+                code=PipelineStopReason.RECENT_ACTIVE_BUY_ORDER.value,
+                passed=existing_order_id is None,
+                details={
+                    "existing_order_id": existing_order_id,
+                    "cooldown_seconds": _BUY_DUPLICATE_COOLDOWN_SECONDS,
+                },
+            )
+
+        return self._build_execution_validator_result(
+            rule_set_version="buy_duplicate_guard_v1",
+            context=context,
+            rules=(
+                ValidationRule(
+                    name="buy_duplicate_guard",
+                    evaluator=_buy_duplicate_rule,
+                ),
+            ),
+            rule_results={
+                "account_id": str(account_id),
+                "symbol": symbol,
+                "market": market,
+                "side": OrderSide.BUY.value,
+                "existing_order_id": existing_order_id,
+                "cooldown_seconds": _BUY_DUPLICATE_COOLDOWN_SECONDS,
+            },
+        )
+
+    def _evaluate_probe_churn_validation_result(
+        self,
+        *,
+        account_id: UUID | None,
+        symbol: str,
+        market: str,
+        probe_reason: str,
+        probe_metadata: dict[str, object],
+        source_type: str,
+    ) -> ValidationResult:
+        context = build_validation_context(
+            account_id=account_id,
+            symbol=symbol,
+            market=market,
+            side=OrderSide.BUY.value,
+            source_type=source_type,
+            metadata={"probe_reason": probe_reason},
+        )
+
+        def _probe_rule(_context: object) -> RuleOutcome:
+            return RuleOutcome(
+                code=probe_reason,
+                passed=False,
+                details=dict(probe_metadata),
+            )
+
+        return self._build_execution_validator_result(
+            rule_set_version="execution_probe_churn_guard_v1",
+            context=context,
+            rules=(
+                ValidationRule(
+                    name="probe_churn_guard",
+                    evaluator=_probe_rule,
+                ),
+            ),
+            rule_results={
+                "account_id": str(account_id) if account_id is not None else None,
+                "symbol": symbol,
+                "market": market,
+                "side": OrderSide.BUY.value,
+                "source_type": source_type,
+                **probe_metadata,
+            },
+        )
+
+    def _evaluate_buy_execution_liquidity_validation_result(
+        self,
+        *,
+        account_id: UUID | None,
+        symbol: str,
+        market: str,
+        source_type: str,
+        liquidity_reason: str,
+        liquidity_metadata: dict[str, object],
+    ) -> ValidationResult:
+        context = build_validation_context(
+            account_id=account_id,
+            symbol=symbol,
+            market=market,
+            side=OrderSide.BUY.value,
+            source_type=source_type,
+            metadata={"liquidity_reason": liquidity_reason},
+        )
+
+        def _liquidity_rule(_context: object) -> RuleOutcome:
+            return RuleOutcome(
+                code=PipelineStopReason.LOW_LIQUIDITY_EXECUTION_BLOCKED.value,
+                passed=False,
+                details=dict(liquidity_metadata),
+                message=liquidity_reason,
+            )
+
+        return self._build_risk_validator_result(
+            rule_set_version="buy_execution_liquidity_v1",
+            context=context,
+            rules=(
+                ValidationRule(
+                    name="buy_execution_liquidity",
+                    evaluator=_liquidity_rule,
+                ),
+            ),
+            rule_results={
+                "account_id": str(account_id) if account_id is not None else None,
+                "symbol": symbol,
+                "market": market,
+                "side": OrderSide.BUY.value,
+                "source_type": source_type,
+                **liquidity_metadata,
+            },
+        )
+
+    def _evaluate_stale_snapshot_validation_result(
+        self,
+        *,
+        account_id: UUID | None,
+        symbol: str,
+        market: str,
+        source_type: str,
+        stale_code: str,
+        stale_metadata: dict[str, object],
+    ) -> ValidationResult:
+        context = build_validation_context(
+            account_id=account_id,
+            symbol=symbol,
+            market=market,
+            source_type=source_type,
+            metadata={"stale_code": stale_code},
+        )
+
+        def _stale_rule(_context: object) -> RuleOutcome:
+            return RuleOutcome(
+                code=stale_code,
+                passed=False,
+                details=dict(stale_metadata),
+            )
+
+        return self._build_risk_validator_result(
+            rule_set_version="stale_snapshot_guard_v1",
+            context=context,
+            rules=(
+                ValidationRule(
+                    name="stale_snapshot_guard",
+                    evaluator=_stale_rule,
+                ),
+            ),
+            rule_results={
+                "account_id": str(account_id) if account_id is not None else None,
+                "symbol": symbol,
+                "market": market,
+                "source_type": source_type,
+                **stale_metadata,
+            },
+        )
+
+    def _evaluate_broker_submit_outcome_validation_result(
+        self,
+        *,
+        account_id: UUID | None,
+        symbol: str,
+        market: str,
+        source_type: str | None,
+        decision_type: str,
+        order_status: str,
+        status_reason_code: str | None,
+        stop_reason: str,
+    ) -> ValidationResult:
+        context = build_validation_context(
+            account_id=account_id,
+            symbol=symbol,
+            market=market,
+            source_type=source_type,
+            metadata={
+                "decision_type": decision_type,
+                "order_status": order_status,
+            },
+        )
+
+    async def _evaluate_submit_time_compliance_validation_result(
+        self,
+        *,
+        intent: OrderIntent,
+        submit_request: SubmitOrderRequest,
+        source_type: str,
+        supported_order_types: tuple[str, ...] = (),
+    ) -> ValidationResult:
+        position_snapshot = intent.context.position_snapshot if intent.context is not None else None
+        has_position = (
+            position_snapshot is not None
+            and position_snapshot.quantity is not None
+            and position_snapshot.quantity > 0
+        )
+        intent_action = (
+            "new_buy"
+            if submit_request.side == OrderSide.BUY and not has_position
+            else "other"
+        )
+        blocked_reason_codes = ()
+        if intent.context is not None and intent.context.risk_limit_snapshot is not None:
+            blocked_reason_codes = tuple(
+                intent.context.risk_limit_snapshot.blocked_reason_codes or ()
+            )
+        instrument = await self._repos.instruments.get_by_symbol(
+            submit_request.symbol,
+            submit_request.market,
+        )
+        if instrument is None:
+            instrument = await self._repos.instruments.get_by_symbol_any_market(
+                submit_request.symbol
+            )
+        status_snapshot = None
+        if instrument is not None:
+            status_snapshot = await self._repos.instrument_status_snapshots.get_latest_by_instrument(
+                instrument.instrument_id
+            )
+        return evaluate_compliance_rules(
+            context=build_validation_context(
+                decision_context_id=intent.decision_context_id,
+                symbol=submit_request.symbol,
+                market=submit_request.market,
+                side=submit_request.side.value,
+                source_type=source_type,
+                metadata={"phase": "submit_time_compliance"},
+            ),
+            validation_input=ComplianceValidationInput(
+                source_type=source_type,
+                has_position=has_position,
+                intent_action=intent_action,
+                account_ref=submit_request.account_ref,
+                symbol=submit_request.symbol,
+                market=submit_request.market,
+                strategy_id=submit_request.strategy_id,
+                client_order_id=submit_request.client_order_id,
+                side=submit_request.side.value,
+                order_type=submit_request.order_type.value,
+                quantity=str(submit_request.quantity),
+                price=str(submit_request.price) if submit_request.price is not None else None,
+                tr_stop_yn=(
+                    status_snapshot.tr_stop_yn if status_snapshot is not None else None
+                ),
+                admn_item_yn=(
+                    status_snapshot.admn_item_yn if status_snapshot is not None else None
+                ),
+                nxt_tr_stop_yn=(
+                    status_snapshot.nxt_tr_stop_yn if status_snapshot is not None else None
+                ),
+                temp_stop_yn=(
+                    status_snapshot.temp_stop_yn if status_snapshot is not None else None
+                ),
+                iscd_stat_cls_code=(
+                    status_snapshot.iscd_stat_cls_code
+                    if status_snapshot is not None
+                    else None
+                ),
+                status_reason_codes=tuple(
+                    status_snapshot.status_reason_codes or ()
+                )
+                if status_snapshot is not None
+                else (),
+                status_snapshot_at=(
+                    status_snapshot.snapshot_at if status_snapshot is not None else None
+                ),
+                status_source_type=(
+                    status_snapshot.source_type if status_snapshot is not None else None
+                ),
+                blocked_reason_codes=blocked_reason_codes,
+                supported_order_types=supported_order_types,
+            ),
+        )
+
+        def _broker_submit_outcome_rule(_context: object) -> RuleOutcome:
+            return RuleOutcome(
+                code=stop_reason,
+                passed=False,
+                details={
+                    "decision_type": decision_type,
+                    "order_status": order_status,
+                    "status_reason_code": status_reason_code,
+                },
+            )
+
+        return self._build_execution_validator_result(
+            rule_set_version="broker_submit_outcome_v1",
+            context=context,
+            rules=(
+                ValidationRule(
+                    name="broker_submit_outcome",
+                    evaluator=_broker_submit_outcome_rule,
+                ),
+            ),
+            rule_results={
+                "account_id": str(account_id) if account_id is not None else None,
+                "symbol": symbol,
+                "market": market,
+                "source_type": source_type,
+                "decision_type": decision_type,
+                "order_status": order_status,
+                "status_reason_code": status_reason_code,
+            },
         )
 
     # ------------------------------------------------------------------
@@ -1432,6 +1900,19 @@ class ExecutionService:
             )
         )
         if liquidity_policy == "block":
+            liquidity_validation = self._evaluate_buy_execution_liquidity_validation_result(
+                account_id=(
+                    intent.context.decision_context.account_id
+                    if intent.context is not None
+                    and intent.context.decision_context is not None
+                    else None
+                ),
+                symbol=intent.request.symbol,
+                market=intent.request.market,
+                source_type=intent_source_type,
+                liquidity_reason=liquidity_reason,
+                liquidity_metadata=liquidity_metadata,
+            )
             logger.info(
                 "Phase 1.6 BLOCKED low-liquidity BUY execution: symbol=%s "
                 "reason=%s metadata=%s trade_decision_id=%s",
@@ -1440,12 +1921,8 @@ class ExecutionService:
                 liquidity_metadata,
                 trade_decision_id,
             )
-            await self._record_blocking_guardrail_evaluation(
-                rule_set_version="buy_execution_liquidity_v1",
-                blocking_rule_codes=[
-                    PipelineStopReason.LOW_LIQUIDITY_EXECUTION_BLOCKED.value
-                ],
-                rule_results=liquidity_metadata,
+            await self._record_validation_result(
+                validation_result=liquidity_validation,
                 decision_context_id=intent.decision_context_id,
                 trade_decision_id=trade_decision_id,
             )
@@ -1532,6 +2009,14 @@ class ExecutionService:
                         )
                     )
                     if sell_availability.is_blocked:
+                        sell_guard_validation = (
+                            self._evaluate_sell_guard_validation_result(
+                                account_id=account_id,
+                                symbol=intent.request.symbol,
+                                requested_qty=effective_qty,
+                                sell_availability=sell_availability,
+                            )
+                        )
                         # held_position sell skip audit
                         if is_held_position_sell_path(
                             source_type=intent_source_type,
@@ -1555,16 +2040,8 @@ class ExecutionService:
                             sell_availability.blocking_reason,
                             trade_decision_id,
                         )
-                        await self._record_blocking_guardrail_evaluation(
-                            rule_set_version="sell_guard_v1",
-                            blocking_rule_codes=[PipelineStopReason.SELL_GUARD_BLOCKED.value],
-                            rule_results={
-                                "account_id": str(account_id),
-                                "symbol": intent.request.symbol,
-                                "requested_qty": str(effective_qty),
-                                "available_sell_qty": str(sell_availability.available_sell_qty),
-                                "blocking_reason": sell_availability.blocking_reason,
-                            },
+                        await self._record_validation_result(
+                            validation_result=sell_guard_validation,
                             decision_context_id=intent.decision_context_id,
                             trade_decision_id=trade_decision_id,
                         )
@@ -1685,6 +2162,19 @@ class ExecutionService:
                 )
             )
             if probe_policy == "block":
+                probe_validation = self._evaluate_probe_churn_validation_result(
+                    account_id=(
+                        intent.context.decision_context.account_id
+                        if intent.context is not None
+                        and intent.context.decision_context is not None
+                        else None
+                    ),
+                    symbol=intent.request.symbol,
+                    market=intent.request.market,
+                    probe_reason=probe_reason,
+                    probe_metadata=probe_metadata,
+                    source_type=intent_source_type,
+                )
                 logger.info(
                     "Phase 2.4 BLOCKED single-share BUY probe churn: symbol=%s "
                     "reason=%s metadata=%s trade_decision_id=%s",
@@ -1693,10 +2183,8 @@ class ExecutionService:
                     probe_metadata,
                     trade_decision_id,
                 )
-                await self._record_blocking_guardrail_evaluation(
-                    rule_set_version="execution_probe_churn_guard_v1",
-                    blocking_rule_codes=[probe_reason],
-                    rule_results=probe_metadata,
+                await self._record_validation_result(
+                    validation_result=probe_validation,
                     decision_context_id=intent.decision_context_id,
                     trade_decision_id=trade_decision_id,
                 )
@@ -1719,6 +2207,53 @@ class ExecutionService:
                 )
 
         _add_phase(f"translation/{_symbol}", "ok")
+
+        supported_order_types: tuple[str, ...] = ()
+        broker_get_capabilities = getattr(broker, "get_capabilities", None)
+        if callable(broker_get_capabilities):
+            broker_capabilities = await broker_get_capabilities()
+            supported_order_types = tuple(
+                order_type.value
+                for order_type in broker_capabilities.supported_order_types
+            )
+
+        compliance_validation = await self._evaluate_submit_time_compliance_validation_result(
+            intent=intent,
+            submit_request=submit_request,
+            source_type=intent_source_type,
+            supported_order_types=supported_order_types,
+        )
+        if compliance_validation.is_blocking:
+            logger.info(
+                "Phase 2.1 BLOCKED submit-time compliance: symbol=%s "
+                "blocking=%s trade_decision_id=%s",
+                intent.request.symbol,
+                list(compliance_validation.blocking_rule_codes),
+                trade_decision_id,
+            )
+            await self._record_validation_result(
+                validation_result=compliance_validation,
+                decision_context_id=intent.decision_context_id,
+                trade_decision_id=trade_decision_id,
+            )
+            _add_phase(f"compliance_validator/{_symbol}", "skipped")
+            await self._finalize_attempt(
+                attempt_id,
+                "stopped",
+                stop_phase="compliance_validator",
+                stop_reason=compliance_validation.stop_reason or "compliance_blocked",
+                phase_trace=_phase_trace,
+            )
+            return SubmitResult.build(
+                order_intent=intent,
+                trade_decision_id=trade_decision_id,
+                error_message=compliance_validation.stop_reason or "compliance_blocked",
+                stop_reason=compliance_validation.stop_reason or "compliance_blocked",
+                phase_trace=tuple(_phase_trace) if _phase_trace else (),
+                is_skipped=True,
+                status="SKIPPED",
+                error_phase="compliance_validator",
+            )
 
         # ── Phase 2.5: BUY duplicate re-entry guard ─────────────────────
         if intent.request.side == OrderSide.BUY:
@@ -1760,6 +2295,14 @@ class ExecutionService:
                         created_after=created_after,
                     )
                     if has_duplicate:
+                        buy_duplicate_validation = (
+                            self._evaluate_buy_duplicate_validation_result(
+                                account_id=buy_guard_account_id,
+                                symbol=intent.request.symbol,
+                                market=intent.request.market,
+                                existing_order_id=existing_order_id,
+                            )
+                        )
                         logger.warning(
                             "Phase 2.5 BUY duplicate guard blocked: symbol=%s "
                             "account_id=%s existing_order_id=%s cooldown_seconds=%s "
@@ -1770,16 +2313,8 @@ class ExecutionService:
                             _BUY_DUPLICATE_COOLDOWN_SECONDS,
                             trade_decision_id,
                         )
-                        await self._record_blocking_guardrail_evaluation(
-                            rule_set_version="buy_duplicate_guard_v1",
-                            blocking_rule_codes=[PipelineStopReason.RECENT_ACTIVE_BUY_ORDER.value],
-                            rule_results={
-                                "account_id": str(buy_guard_account_id),
-                                "symbol": intent.request.symbol,
-                                "market": intent.request.market,
-                                "existing_order_id": existing_order_id,
-                                "cooldown_seconds": _BUY_DUPLICATE_COOLDOWN_SECONDS,
-                            },
+                        await self._record_validation_result(
+                            validation_result=buy_duplicate_validation,
                             decision_context_id=intent.decision_context_id,
                             trade_decision_id=trade_decision_id,
                         )
@@ -1948,15 +2483,15 @@ class ExecutionService:
                         self._stale_threshold_seconds,
                         trade_decision_id,
                     )
-                    await self._record_blocking_guardrail_evaluation(
-                        rule_set_version="stale_snapshot_guard_v1",
-                        blocking_rule_codes=[
-                            PipelineStopReason.STALE_SNAPSHOT_ACCOUNT.value
-                        ],
-                        rule_results={
+                    stale_validation = self._evaluate_stale_snapshot_validation_result(
+                        account_id=account_id,
+                        symbol=intent.request.symbol,
+                        market=intent.request.market,
+                        source_type=intent_source_type,
+                        stale_code=PipelineStopReason.STALE_SNAPSHOT_ACCOUNT.value,
+                        stale_metadata={
                             "is_stale": True,
                             "stale_level": "account",
-                            "account_id": str(account_id),
                             "latest_cash_snapshot_at": (
                                 str(freshness.latest_cash_snapshot_at)
                                 if freshness.latest_cash_snapshot_at
@@ -1971,6 +2506,9 @@ class ExecutionService:
                             "is_position_stale": freshness.is_position_stale,
                             "stale_threshold_seconds": self._stale_threshold_seconds,
                         },
+                    )
+                    await self._record_validation_result(
+                        validation_result=stale_validation,
                         decision_context_id=intent.decision_context_id,
                         trade_decision_id=trade_decision_id,
                         order_request_id=validated_order.order_request_id,
@@ -2031,10 +2569,18 @@ class ExecutionService:
                         self._stale_threshold_seconds,
                         trade_decision_id,
                     )
-                    await self._record_blocking_guardrail_evaluation(
-                        rule_set_version="stale_snapshot_guard_v1",
-                        blocking_rule_codes=[PipelineStopReason.STALE_SNAPSHOT_RUN.value],
-                        rule_results={
+                    stale_validation = self._evaluate_stale_snapshot_validation_result(
+                        account_id=(
+                            intent.context.decision_context.account_id
+                            if intent.context is not None
+                            and intent.context.decision_context is not None
+                            else None
+                        ),
+                        symbol=intent.request.symbol,
+                        market=intent.request.market,
+                        source_type=intent_source_type,
+                        stale_code=PipelineStopReason.STALE_SNAPSHOT_RUN.value,
+                        stale_metadata={
                             "is_stale": True,
                             "stale_level": "run",
                             "last_successful_run_at": (
@@ -2045,6 +2591,9 @@ class ExecutionService:
                             "stale_threshold_seconds": self._stale_threshold_seconds,
                             "last_run_status": health.last_status,
                         },
+                    )
+                    await self._record_validation_result(
+                        validation_result=stale_validation,
                         decision_context_id=intent.decision_context_id,
                         trade_decision_id=trade_decision_id,
                         order_request_id=validated_order.order_request_id,
@@ -2276,26 +2825,24 @@ class ExecutionService:
         )
 
         if result_status in ("RECONCILE_REQUIRED", "REJECTED") and result_stop_reason is not None:
-            await self._record_blocking_guardrail_evaluation(
-                rule_set_version="broker_submit_outcome_v1",
-                blocking_rule_codes=[result_stop_reason],
-                rule_results={
-                    "account_id": (
-                        str(account_id)
-                        if account_id is not None
-                        else None
-                    ),
-                    "symbol": submit_request.symbol,
-                    "market": submit_request.market,
-                    "source_type": (
+            broker_submit_validation = (
+                self._evaluate_broker_submit_outcome_validation_result(
+                    account_id=account_id,
+                    symbol=submit_request.symbol,
+                    market=submit_request.market,
+                    source_type=(
                         intent.context.source_type
                         if intent.context is not None
                         else None
                     ),
-                    "decision_type": _decision_type,
-                    "order_status": final_status.value,
-                    "status_reason_code": submitted_order.status_reason_code,
-                },
+                    decision_type=_decision_type,
+                    order_status=final_status.value,
+                    status_reason_code=submitted_order.status_reason_code,
+                    stop_reason=result_stop_reason,
+                )
+            )
+            await self._record_validation_result(
+                validation_result=broker_submit_validation,
                 decision_context_id=intent.decision_context_id,
                 trade_decision_id=trade_decision_id,
                 order_request_id=submitted_order.order_request_id,

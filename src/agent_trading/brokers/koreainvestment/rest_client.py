@@ -71,6 +71,7 @@ KIS_ENDPOINTS: Mapping[str, str] = {
     "inquire_psbl_rvsecncl": "/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl", # 정정취소가능주문조회
     "inquire_price": "/uapi/domestic-stock/v1/quotations/inquire-price",            # 주식현재가 시세
     "inquire_daily_itemchartprice": "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",  # 국내주식기간별시세
+    "search_stock_info": "/uapi/domestic-stock/v1/quotations/search-stock-info",  # 주식기본조회
     # --- Market Data ---
     "inquire_asking_price_exp_ccn": "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn", # 호가
     "inquire_index_category_price": "/uapi/domestic-stock/v1/quotations/inquire-index-category-price",  # 국내업종 구분별전체시세
@@ -95,6 +96,7 @@ KIS_TR_IDS: Mapping[str, tuple[str, str]] = {
     "inquire_psbl_sell": ("TTTC8408R", None),               # 매도가능수량조회 (모의 미지원)
     "inquire_price": ("FHKST01010100", "FHKST01010100"),    # 주식현재가 시세
     "inquire_daily_itemchartprice": ("FHKST03010100", "FHKST03010100"),    # 국내주식기간별시세
+    "search_stock_info": ("CTPF1002R", None),               # 주식기본조회 (모의 미지원)
     "inquire_asking_price_exp_ccn": ("FHKST01010200", "FHKST01010200"), # 호가
     "inquire_index_category_price": ("FHPUP02140000", None),
     "ranking_volume": ("FHPST01710000", None),
@@ -2350,6 +2352,37 @@ class KISRestClient:
         if isinstance(output, list):
             return [row for row in output if isinstance(row, dict)]
         return []
+
+    async def get_stock_basic_info(
+        self,
+        symbol: str,
+        *,
+        product_type_code: str = "300",
+    ) -> dict[str, Any]:
+        """주식기본조회(`CTPF1002R`) raw output을 반환한다.
+
+        실전 전용 API이므로 paper/비지원 환경에서는 빈 dict를 반환한다.
+        """
+        try:
+            self._get_tr_id("search_stock_info")
+            data = await self._request(
+                "GET",
+                endpoint_key="search_stock_info",
+                tr_id_key="search_stock_info",
+                bucket=BucketType.MARKET_DATA,
+                params={
+                    "PRDT_TYPE_CD": product_type_code,
+                    "PDNO": symbol,
+                },
+            )
+        except BrokerError:
+            logger.debug("get_stock_basic_info: unavailable", exc_info=True)
+            return {}
+
+        output = data.get("output", {})
+        if isinstance(output, list):
+            output = output[0] if output else {}
+        return output if isinstance(output, dict) else {}
 
     async def get_market_overlay_seed_symbols(self, *, limit: int = 60) -> list[str]:
         """시장 발굴 overlay용 seed symbol 목록을 생성한다.
