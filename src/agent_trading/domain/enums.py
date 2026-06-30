@@ -113,6 +113,8 @@ class PipelineStopReason(str, Enum):
     HELD_POSITION_RECENT_RISK_SELL_COOLDOWN = "held_position_recent_risk_sell_cooldown"
     SAME_SYMBOL_REENTRY_COOLDOWN = "same_symbol_reentry_cooldown"
     REVERSE_TRADE_SAME_SIGNAL_FEATURE_SNAPSHOT = "reverse_trade_same_signal_feature_snapshot"
+    HOLDING_PROFILE_EARLIEST_REDUCE_GUARD = "holding_profile_earliest_reduce_guard"
+    HOLDING_PROFILE_EARLIEST_REENTRY_GUARD = "holding_profile_earliest_reentry_guard"
     CLI_DRY_RUN = "cli_dry_run"
     HELD_POSITION_SELL_CYCLE_CAP = "held_position_sell_cycle_cap"
     HELD_POSITION_SELL_SYMBOL_DUPLICATE = "held_position_sell_symbol_duplicate"

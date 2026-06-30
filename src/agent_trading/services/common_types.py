@@ -28,6 +28,7 @@ from agent_trading.domain.entities import (
 )
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.services.ai_agents.schemas import (
+    AIComplianceOutput,
     AIRiskOutput,
     EventInterpretationOutput,
     ExecutionPreferences,
@@ -94,6 +95,14 @@ class AIDecisionInputs:
     size_adjustment_factor: float = 0.0
     risk_reason_codes: tuple[str, ...] = ()
     risk_flags: tuple[str, ...] = ()
+
+    # ── AI Compliance-derived ────────────────────────────────────────
+    compliance_opinion: str = "allow"
+    compliance_score: float = 0.0
+    compliance_confidence: float = 0.0
+    compliance_reason_codes: tuple[str, ...] = ()
+    compliance_policy_flags: tuple[str, ...] = ()
+    compliance_check_passed: bool = True
 
     # ── EI-derived ───────────────────────────────────────────────────
     event_bias: str = "neutral"
@@ -355,6 +364,7 @@ class AgentExecutionBundle:
         default_factory=EventInterpretationOutput
     )
     risk_output: AIRiskOutput = field(default_factory=AIRiskOutput)
+    compliance_output: AIComplianceOutput = field(default_factory=AIComplianceOutput)
     composer_output: FinalDecisionComposerOutput = field(
         default_factory=FinalDecisionComposerOutput
     )

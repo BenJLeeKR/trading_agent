@@ -107,3 +107,18 @@ class PostgresSymbolTradeStateRepository:
             instrument_id,
         )
         return row_to_entity(row, SymbolTradeStateEntity) if row else None
+
+    async def list_by_account(
+        self,
+        account_id: UUID,
+    ) -> tuple[SymbolTradeStateEntity, ...]:
+        rows = await self._tx.connection.fetch(
+            """
+            SELECT *
+            FROM trading.symbol_trade_states
+            WHERE account_id = $1
+            ORDER BY updated_at DESC, symbol ASC
+            """,
+            account_id,
+        )
+        return tuple(row_to_entity(row, SymbolTradeStateEntity) for row in rows)

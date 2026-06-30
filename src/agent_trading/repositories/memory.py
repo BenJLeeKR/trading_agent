@@ -1811,6 +1811,16 @@ class InMemorySymbolTradeStateRepository:
     ) -> SymbolTradeStateEntity | None:
         return self._items.get((account_id, instrument_id))
 
+    async def list_by_account(
+        self,
+        account_id: UUID,
+    ) -> Sequence[SymbolTradeStateEntity]:
+        return tuple(
+            item
+            for (item_account_id, _), item in self._items.items()
+            if item_account_id == account_id
+        )
+
 
 class InMemoryUniverseFreezeRunItemRepository:
     """In-memory implementation of ``UniverseFreezeRunItemRepository``."""

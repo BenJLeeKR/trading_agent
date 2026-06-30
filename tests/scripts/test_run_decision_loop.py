@@ -42,6 +42,7 @@ from agent_trading.domain.entities import (
     SignalFeatureSnapshotEntity,
     SnapshotSyncRunEntity,
     StrategyEntity,
+    SymbolTradeStateEntity,
     TradeDecisionEntity,
     UniverseFreezeRunEntity,
     UniverseFreezeRunItemEntity,
@@ -1695,6 +1696,50 @@ class TestRunOneCycle:
         assert details["buy_cooldown_position_unchanged_or_increased"] == "true"
 
     @pytest.mark.asyncio
+    async def test_pre_ai_skip_when_holding_profile_earliest_reduce_window_active(self) -> None:
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            now_utc = datetime(2026, 6, 8, 4, 0, 0, tzinfo=timezone.utc)
+            current_snapshots = await repos.position_snapshots.list_latest_by_account(ACCOUNT_ID)
+            assert current_snapshots
+            current_snapshot = current_snapshots[0]
+            await repos.symbol_trade_states.upsert(
+                SymbolTradeStateEntity(
+                    symbol_trade_state_id=uuid4(),
+                    account_id=ACCOUNT_ID,
+                    instrument_id=current_snapshot.instrument_id,
+                    symbol=SYMBOL,
+                    market=MARKET,
+                    state="held_active",
+                    holding_profile="core_swing",
+                    position_quantity=Decimal("10"),
+                    minimum_hold_until=now_utc + timedelta(minutes=30),
+                    metadata_json={
+                        "holding_profile_policy": {
+                            "holding_profile": "core_swing",
+                            "earliest_reduce_at": (
+                                now_utc + timedelta(minutes=30)
+                            ).isoformat(),
+                        }
+                    },
+                    created_at=now_utc,
+                    updated_at=now_utc,
+                )
+            )
+
+            reason, details = await _evaluate_pre_ai_skip_reason(
+                repos,
+                account_alias="Entrypoint Paper",
+                symbol=SYMBOL,
+                market=MARKET,
+                source_type="held_position",
+                now_utc=now_utc,
+            )
+
+        assert reason == "holding_profile_earliest_reduce_guard"
+        assert details["holding_profile_reduce_window_active"] == "true"
+
+    @pytest.mark.asyncio
     async def test_pre_ai_skip_when_reverse_trade_uses_same_signal_feature_snapshot_after_buy(self) -> None:
         """최근 BUY 직후 현재 최신 signal feature가 같으면 reverse trade를 별도 reason으로 차단한다."""
         async with _mock_runtime_for_one_cycle() as runtime:
@@ -2053,6 +2098,64 @@ class TestRunOneCycle:
             signal_snapshot.signal_feature_snapshot_id
         )
         assert details["reentry_signal_feature_snapshot_unchanged"] == "true"
+
+    @pytest.mark.asyncio
+    async def test_pre_ai_skip_when_holding_profile_earliest_reentry_window_active(self) -> None:
+        async with _mock_runtime_for_one_cycle() as runtime:
+            repos = runtime["repositories"]
+            now_utc = datetime(2026, 6, 8, 4, 0, 0, tzinfo=timezone.utc)
+            current_snapshots = await repos.position_snapshots.list_latest_by_account(ACCOUNT_ID)
+            assert current_snapshots
+            current_snapshot = current_snapshots[0]
+            repos.position_snapshots._items[current_snapshot.position_snapshot_id] = (  # type: ignore[attr-defined]
+                PositionSnapshotEntity(
+                    position_snapshot_id=current_snapshot.position_snapshot_id,
+                    account_id=current_snapshot.account_id,
+                    instrument_id=current_snapshot.instrument_id,
+                    quantity=Decimal("0"),
+                    average_price=current_snapshot.average_price,
+                    market_price=current_snapshot.market_price,
+                    unrealized_pnl=current_snapshot.unrealized_pnl,
+                    source_of_truth=current_snapshot.source_of_truth,
+                    snapshot_at=current_snapshot.snapshot_at,
+                    created_at=current_snapshot.created_at,
+                )
+            )
+            await repos.symbol_trade_states.upsert(
+                SymbolTradeStateEntity(
+                    symbol_trade_state_id=uuid4(),
+                    account_id=ACCOUNT_ID,
+                    instrument_id=current_snapshot.instrument_id,
+                    symbol=SYMBOL,
+                    market=MARKET,
+                    state="flat_cooldown",
+                    holding_profile="risk_reduction_only",
+                    position_quantity=Decimal("0"),
+                    reentry_cooldown_until=now_utc + timedelta(minutes=20),
+                    metadata_json={
+                        "holding_profile_policy": {
+                            "holding_profile": "risk_reduction_only",
+                            "earliest_reentry_at": (
+                                now_utc + timedelta(minutes=20)
+                            ).isoformat(),
+                        }
+                    },
+                    created_at=now_utc,
+                    updated_at=now_utc,
+                )
+            )
+
+            reason, details = await _evaluate_pre_ai_skip_reason(
+                repos,
+                account_alias="Entrypoint Paper",
+                symbol=SYMBOL,
+                market=MARKET,
+                source_type="core",
+                now_utc=now_utc,
+            )
+
+        assert reason == "holding_profile_earliest_reentry_guard"
+        assert details["holding_profile_reentry_window_active"] == "true"
 
     @pytest.mark.asyncio
     async def test_pre_ai_same_symbol_reentry_cooldown_skips_core_cycle(self) -> None:

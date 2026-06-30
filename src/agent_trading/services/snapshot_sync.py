@@ -31,13 +31,18 @@ from agent_trading.repositories.contracts import (
     BrokerAccountRepository,
     CashBalanceSnapshotRepository,
     InstrumentRepository,
+    OrderRepository,
     PositionSnapshotRepository,
     RiskLimitSnapshotRepository,
+    SymbolTradeStateRepository,
 )
 from agent_trading.services.kis_snapshot_sync import (
     BatchSyncResult,
     SyncResult,
     build_sync_run_entity,
+)
+from agent_trading.services.symbol_trade_state_machine import (
+    reconcile_account_symbol_trade_states,
 )
 
 logger = logging.getLogger(__name__)
@@ -187,6 +192,8 @@ async def sync_account_snapshots(
     risk_limit_snapshot_repo: RiskLimitSnapshotRepository,
     account_id: UUID,
     *,
+    symbol_trade_state_repo: SymbolTradeStateRepository | None = None,
+    order_repo: OrderRepository | None = None,
     after_hours: bool = False,
     fetch_positions: bool = True,
     allow_after_hours_positions: bool = False,
@@ -358,6 +365,32 @@ async def sync_account_snapshots(
     for err in fetched.errors:
         result._add_error(err)
 
+    if (
+        fetch_positions
+        and symbol_trade_state_repo is not None
+        and order_repo is not None
+    ):
+        try:
+            updated_count = await reconcile_account_symbol_trade_states(
+                symbol_trade_state_repo=symbol_trade_state_repo,
+                position_snapshot_repo=position_snapshot_repo,
+                order_repo=order_repo,
+                account_id=account_id,
+                now_utc=datetime.now(tz=timezone.utc),
+            )
+            if updated_count > 0:
+                logger.info(
+                    "Authoritative symbol state reconciliation complete: account=%s updated=%d",
+                    account_id,
+                    updated_count,
+                )
+        except Exception:
+            logger.exception(
+                "Authoritative symbol state reconciliation failed: account=%s",
+                account_id,
+            )
+            result._add_error("symbol_trade_state_reconciliation_failed")
+
     return result
 
 
@@ -369,6 +402,8 @@ async def sync_accounts_by_ids(
     risk_limit_snapshot_repo: RiskLimitSnapshotRepository,
     account_ids: Sequence[UUID],
     *,
+    symbol_trade_state_repo: SymbolTradeStateRepository | None = None,
+    order_repo: OrderRepository | None = None,
     after_hours: bool = False,
     fetch_positions: bool = True,
     snapshot_sync_run_id: UUID | None = None,
@@ -417,6 +452,8 @@ async def sync_accounts_by_ids(
                 cash_balance_snapshot_repo=cash_balance_snapshot_repo,
                 risk_limit_snapshot_repo=risk_limit_snapshot_repo,
                 account_id=account_id,
+                symbol_trade_state_repo=symbol_trade_state_repo,
+                order_repo=order_repo,
                 after_hours=after_hours,
                 fetch_positions=fetch_positions,
                 snapshot_sync_run_id=snapshot_sync_run_id,
@@ -470,6 +507,8 @@ async def sync_all_accounts(
     broker_account_repo: BrokerAccountRepository,
     account_repo: AccountRepository,
     *,
+    symbol_trade_state_repo: SymbolTradeStateRepository | None = None,
+    order_repo: OrderRepository | None = None,
     broker_name: str = "koreainvestment",
     account_number: str | None = None,
     env: Environment | None = None,
@@ -591,6 +630,8 @@ async def sync_all_accounts(
                 cash_balance_snapshot_repo=cash_balance_snapshot_repo,
                 risk_limit_snapshot_repo=risk_limit_snapshot_repo,
                 account_id=account.account_id,
+                symbol_trade_state_repo=symbol_trade_state_repo,
+                order_repo=order_repo,
                 after_hours=after_hours,
                 fetch_positions=fetch_positions,
                 allow_after_hours_positions=allow_after_hours_positions,

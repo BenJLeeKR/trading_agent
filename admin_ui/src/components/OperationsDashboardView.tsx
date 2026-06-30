@@ -28,6 +28,7 @@ import {
   getTradingUniverseCoverageSummary,
   getMarketOverlayFunnel,
   getTradingUniversePreview,
+  getTradeDecisions,
 } from "../api/client";
 import type {
   BuyBlockSummary,
@@ -50,6 +51,8 @@ import type {
   RecentFailureItem,
   FailureSummary,
   OrderDailySummary,
+  PaginatedTradeDecisionsResponse,
+  TradeDecisionDetail,
   TradingUniverseCoverageSummaryResponse,
   TradingUniversePreviewResponse,
 } from "../types/api";
@@ -118,6 +121,9 @@ interface UniverseFreezeRow {
   inclusionReason: string;
   priority: number;
   buyExecutionStatus: string;
+  latestDecision: string;
+  holdingProfile: string;
+  guardrailReason: string;
 }
 
 interface DashboardData {
@@ -140,6 +146,45 @@ interface DashboardData {
   marketOverlayFunnel: MarketOverlayFunnelResponse | null;
   tradingUniversePreview: TradingUniversePreviewResponse | null;
   tradingUniversePreviewAccountLabel: string | null;
+  todayTradeDecisions: TradeDecisionDetail[];
+}
+
+function formatDecisionTypeLabel(value: string | null | undefined): string {
+  const normalized = (value ?? "").toLowerCase();
+  const labels: Record<string, string> = {
+    approve: "APPROVE",
+    buy: "BUY",
+    sell: "SELL",
+    reduce: "REDUCE",
+    exit: "EXIT",
+    hold: "HOLD",
+    watch: "WATCH",
+    reject: "REJECT",
+  };
+  return labels[normalized] ?? (value ? value.toUpperCase() : "—");
+}
+
+function formatStopReasonLabel(value: string | null | undefined): string {
+  const normalized = (value ?? "").toLowerCase();
+  const labels: Record<string, string> = {
+    reverse_trade_same_signal_feature_snapshot: "동일 snapshot reverse 차단",
+    reverse_trade_single_share_blocked: "1주 reverse 차단",
+    same_symbol_reentry_cooldown: "동일종목 재진입 cooldown",
+    held_position_recent_buy_sell_cooldown: "최근 BUY 후 조기 SELL 차단",
+    held_position_recent_risk_sell_cooldown: "최근 위험매도 cooldown",
+    probe_churn_single_share_blocked: "1주 probe churn 차단",
+    overlay_single_share_buy_blocked: "overlay 1주 BUY 차단",
+    holding_profile_earliest_reduce_guard: "보유프로필 reduce 시각 전",
+    holding_profile_earliest_reentry_guard: "보유프로필 re-entry 시각 전",
+    general_submit_disabled_core: "core 제출 비활성",
+    general_submit_disabled_market_overlay: "overlay 제출 비활성",
+    submit_budget_consumed_core: "core 예산 소진",
+    submit_budget_consumed_market_overlay: "overlay 예산 소진",
+    sizing_rejected: "sizing 차단",
+    decision_watch: "watch 결정",
+    decision_hold: "hold 결정",
+  };
+  return labels[normalized] ?? (value || "—");
 }
 
 /* ── Helpers ── */
@@ -399,6 +444,12 @@ export default function OperationsDashboardView() {
       addError("GET /orders/buy-block-summary", e);
       return null;
     });
+    const todayTradeDecisionsPromise = getTradeDecisions(undefined, 500, 0, {
+      date: getKstTodayString(),
+    }).catch((e) => {
+      addError("GET /trade-decisions?date=today", e);
+      return null;
+    });
     const clientsPromise = getClients().catch((e) => {
       addError("GET /clients", e);
       return [] as ClientDetail[];
@@ -418,7 +469,7 @@ export default function OperationsDashboardView() {
       return null;
     });
 
-    const [health, readyz, reconSummary, orders, todayOrders, todayOrderSummary, buyBlockSummaryData, clients, sessionData, operationsDayData, eventsResp] = await Promise.all([
+    const [health, readyz, reconSummary, orders, todayOrders, todayOrderSummary, buyBlockSummaryData, todayTradeDecisionsResp, clients, sessionData, operationsDayData, eventsResp] = await Promise.all([
       healthPromise,
       readyzPromise,
       reconSummaryPromise,
@@ -426,6 +477,7 @@ export default function OperationsDashboardView() {
       todayOrdersPromise,
       todayOrderSummaryPromise,
       buyBlockSummaryPromise,
+      todayTradeDecisionsPromise,
       clientsPromise,
       sessionPromise,
       operationsDayPromise,
@@ -557,6 +609,7 @@ export default function OperationsDashboardView() {
       operationsDayData: operationsDayData as OperationsDayStatusResponse | null,
       sessionEvents,
       todayOrderSummary: todayOrderSummary as OrderDailySummary | null,
+      todayTradeDecisions: (todayTradeDecisionsResp as PaginatedTradeDecisionsResponse | null)?.items ?? [],
       tradingUniverseCoverage,
       marketOverlayFunnel,
       tradingUniversePreview,
@@ -991,6 +1044,17 @@ export default function OperationsDashboardView() {
   const freezeItems = activeIntradayFreeze?.items ?? [];
   const freezeMarketOverlayCount = activeIntradayFreeze?.source_type_counts?.market_overlay ?? 0;
   const marketOverlayDiagnostics = data.tradingUniversePreview?.market_overlay_diagnostics ?? null;
+  const latestTodayDecisionBySymbol = new Map<string, TradeDecisionDetail>();
+  data.todayTradeDecisions.forEach((decision) => {
+    const symbol = decision.symbol ?? "";
+    if (!symbol) return;
+    const existing = latestTodayDecisionBySymbol.get(symbol);
+    const decisionTime = new Date(decision.created_at ?? 0).getTime();
+    const existingTime = new Date(existing?.created_at ?? 0).getTime();
+    if (!existing || decisionTime >= existingTime) {
+      latestTodayDecisionBySymbol.set(symbol, decision);
+    }
+  });
   const todayBuyOrders = data.todayOrders.filter((order) => order.side === "buy");
   const latestTodayBuyOrderBySymbol = new Map<string, OrderSummary>();
   todayBuyOrders.forEach((order) => {
@@ -1008,6 +1072,25 @@ export default function OperationsDashboardView() {
   }, 0);
   const freezeRows: UniverseFreezeRow[] = freezeItems.map((item) => {
     const linkedBuyOrder = latestTodayBuyOrderBySymbol.get(item.symbol);
+    const linkedDecision = latestTodayDecisionBySymbol.get(item.symbol);
+    const decisionInspection =
+      linkedDecision?.decision_inspection as Record<string, unknown> | null | undefined;
+    const holdingProfilePayload =
+      decisionInspection && typeof decisionInspection === "object"
+        ? (decisionInspection["holding_profile"] as Record<string, unknown> | null | undefined)
+        : null;
+    const guardrailAttribution =
+      decisionInspection && typeof decisionInspection === "object"
+        ? (decisionInspection["guardrail_attribution"] as Record<string, unknown> | null | undefined)
+        : null;
+    const holdingProfile =
+      typeof holdingProfilePayload?.["holding_profile"] === "string"
+        ? String(holdingProfilePayload["holding_profile"])
+        : "—";
+    const guardrailReasonRaw =
+      typeof guardrailAttribution?.["latest_stop_reason"] === "string"
+        ? String(guardrailAttribution["latest_stop_reason"])
+        : linkedDecision?.latest_stop_reason ?? null;
     let buyExecutionStatus = "미실행";
     if (linkedBuyOrder) {
       switch ((linkedBuyOrder.status ?? "").toLowerCase()) {
@@ -1042,6 +1125,13 @@ export default function OperationsDashboardView() {
       inclusionReason: item.inclusion_reason,
       priority: item.priority,
       buyExecutionStatus,
+      latestDecision: linkedDecision
+        ? `${formatDecisionTypeLabel(linkedDecision.decision_type)} / ${
+            linkedDecision.execution_status ?? "—"
+          }`
+        : "—",
+      holdingProfile,
+      guardrailReason: formatStopReasonLabel(guardrailReasonRaw),
     };
   });
 
@@ -1548,6 +1638,9 @@ export default function OperationsDashboardView() {
                   { key: "market", header: "시장", width: "90px", align: "center" },
                   { key: "sourceType", header: "source", width: "120px", align: "center" },
                   { key: "inclusionReason", header: "선정 사유" },
+                  { key: "latestDecision", header: "최근 판단", width: "150px", align: "center" },
+                  { key: "holdingProfile", header: "프로필", width: "130px", align: "center" },
+                  { key: "guardrailReason", header: "차단/가드레일" },
                   { key: "buyExecutionStatus", header: "오늘 매수주문", width: "110px", align: "center" },
                 ]}
                 data={freezeRows}

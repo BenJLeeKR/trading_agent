@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 from agent_trading.domain.enums import OrderSide, OrderType
 from agent_trading.services.source_policy import evaluate_action_envelope
@@ -41,6 +41,9 @@ class ComplianceValidationInput:
     allow_unknown_status_for_sell: bool = True
     blocked_reason_codes: tuple[str, ...] = ()
     supported_order_types: tuple[str, ...] = ()
+    holding_profile: str | None = None
+    earliest_reduce_at: datetime | None = None
+    earliest_reentry_at: datetime | None = None
 
 
 _STATUS_BLOCK_CODES: frozenset[str] = frozenset({"01", "02", "03", "04", "05"})
@@ -275,6 +278,44 @@ def evaluate_compliance_rules(
             passed=True,
         )
 
+    def _holding_profile_window_rule(_context: ValidationContext) -> RuleOutcome:
+        side = (validation_input.side or "").strip().lower()
+        now_utc = datetime.now(timezone.utc)
+        if (
+            side == OrderSide.SELL.value
+            and validation_input.has_position
+            and validation_input.earliest_reduce_at is not None
+            and validation_input.earliest_reduce_at > now_utc
+        ):
+            return RuleOutcome(
+                code="compliance_holding_profile_window_blocked",
+                passed=False,
+                details={
+                    "reason": "earliest_reduce_at_active",
+                    "holding_profile": validation_input.holding_profile,
+                    "earliest_reduce_at": validation_input.earliest_reduce_at.isoformat(),
+                },
+            )
+        if (
+            side == OrderSide.BUY.value
+            and validation_input.intent_action == "new_buy"
+            and validation_input.earliest_reentry_at is not None
+            and validation_input.earliest_reentry_at > now_utc
+        ):
+            return RuleOutcome(
+                code="compliance_holding_profile_window_blocked",
+                passed=False,
+                details={
+                    "reason": "earliest_reentry_at_active",
+                    "holding_profile": validation_input.holding_profile,
+                    "earliest_reentry_at": validation_input.earliest_reentry_at.isoformat(),
+                },
+            )
+        return RuleOutcome(
+            code="compliance_holding_profile_window_allowed",
+            passed=True,
+        )
+
     def _restricted_symbol_rule(_context: ValidationContext) -> RuleOutcome:
         if validation_input.blocked_reason_codes:
             return RuleOutcome(
@@ -329,6 +370,10 @@ def evaluate_compliance_rules(
             ValidationRule(
                 name="order_shape",
                 evaluator=_order_shape_rule,
+            ),
+            ValidationRule(
+                name="holding_profile_window",
+                evaluator=_holding_profile_window_rule,
             ),
             ValidationRule(
                 name="instrument_status",

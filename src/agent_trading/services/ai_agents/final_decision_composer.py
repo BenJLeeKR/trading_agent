@@ -276,6 +276,8 @@ class FinalDecisionComposerAgent:
         * AI Risk output (risk opinion, risk score, size adjustment factor,
           reason codes, opposing evidence) — only when ``ai_risk_output``
           is provided.
+        * AI Compliance output (compliance opinion, policy flags, reason codes,
+          opposing evidence) — only when ``ai_compliance_output`` is provided.
         * Recent external events.
 
         When either agent output is ``None``, the corresponding section is
@@ -375,6 +377,22 @@ class FinalDecisionComposerAgent:
             if ar_output.opposing_evidence:
                 lines.append("Opposing evidence:")
                 for oe in ar_output.opposing_evidence:
+                    lines.append(f"  - {oe}")
+
+        ac_output = request.ai_compliance_output
+        if ac_output is not None:
+            lines.append("")
+            lines.append("=== AI Compliance Output ===")
+            lines.append(f"Compliance opinion: {ac_output.compliance_opinion}")
+            lines.append(f"Compliance score: {ac_output.compliance_score}")
+            lines.append(f"Confidence: {ac_output.confidence}")
+            if ac_output.policy_flags:
+                lines.append(f"Policy flags: {', '.join(ac_output.policy_flags)}")
+            if ac_output.reason_codes:
+                lines.append(f"Reason codes: {', '.join(ac_output.reason_codes)}")
+            if ac_output.opposing_evidence:
+                lines.append("Opposing evidence:")
+                for oe in ac_output.opposing_evidence:
                     lines.append(f"  - {oe}")
 
 

@@ -665,6 +665,77 @@ class TestTradeDecisions:
         assert "confidence" in td["decision_json"]
         assert "conviction" in td["decision_json"]
 
+    def test_list_trade_decisions_includes_compliance_inspection(self, client: TestClient) -> None:
+        """합본 compliance inspection view가 응답에 포함되어야 한다."""
+        resp = client.get("/trade-decisions")
+        assert resp.status_code == 200
+        body = resp.json()
+        items = body["items"]
+        assert len(items) >= 1
+        td = items[0]
+        inspection = td.get("compliance_inspection")
+        assert inspection is not None
+        assert inspection["agreement_status"] == "aligned"
+        assert inspection["ai_projection"]["opinion"] == "allow"
+        assert inspection["ai_projection"]["check_passed"] is True
+        assert inspection["ai_agent_run"]["agent_type"] == "ai_compliance"
+        assert inspection["deterministic_validator"]["rule_set_version"] == "compliance_validator_v1"
+        assert inspection["deterministic_validator"]["overall_passed"] is True
+
+    async def test_list_trade_decisions_includes_decision_inspection_summary(
+        self,
+        client: TestClient,
+        seeded_repos: RepositoryContainer,
+        decision_context_id: UUID,
+        strategy_id: UUID,
+    ) -> None:
+        td = TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=decision_context_id,
+            decision_type=DecisionType.REDUCE,
+            side=OrderSide.SELL,
+            strategy_id=strategy_id,
+            symbol="005930",
+            market="KRX",
+            entry_style=EntryStyle.LIMIT,
+            created_at=datetime.now(timezone.utc),
+            decision_json={
+                "holding_profile_policy": {
+                    "holding_profile": "core_swing",
+                    "minimum_hold_until": "2026-06-30T01:00:00+00:00",
+                    "earliest_reduce_at": "2026-06-30T01:10:00+00:00",
+                    "earliest_reentry_at": "2026-06-30T02:00:00+00:00",
+                    "metadata": {
+                        "source_type": "core",
+                        "time_horizon": "swing",
+                    },
+                },
+                "expected_value_anchor": {
+                    "anchor_required": True,
+                    "anchor_passed": True,
+                    "current_edge_after_cost_bps": "18.00",
+                    "last_exit_edge_after_cost_bps": "12.00",
+                    "edge_vs_last_exit_delta_bps": "6.00",
+                    "reentry_edge_improved_vs_last_exit": True,
+                },
+            },
+        )
+        await seeded_repos.trade_decisions.add(td)
+
+        resp = client.get("/trade-decisions")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        item = next(
+            row for row in body["items"]
+            if row["trade_decision_id"] == str(td.trade_decision_id)
+        )
+        inspection = item["decision_inspection"]
+        assert inspection is not None
+        assert inspection["holding_profile"]["holding_profile"] == "core_swing"
+        assert inspection["expected_value_anchor"]["anchor_passed"] is True
+        assert inspection["reverse_trade"]["blocked"] is False
+        assert inspection["probe_churn"]["blocked"] is False
+
     async def test_list_trade_decisions_accepts_plain_string_enum_fields(
         self,
         client: TestClient,

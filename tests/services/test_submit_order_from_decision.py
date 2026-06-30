@@ -219,6 +219,39 @@ class TestBuildSubmitOrderRequestSide:
         assert result is not None
         assert result.side == OrderSide.SELL
 
+    def test_reduce_sell_with_failed_expected_value_anchor_returns_none(self) -> None:
+        """REDUCE/SELL은 expected_value_anchor 실패 시 submit 차단되어야 함."""
+        intent = OrderIntent(
+            decision_context_id=uuid4(),
+            order_intent_id=uuid4(),
+            request=_make_submit_request(
+                side=OrderSide.SELL,
+                metadata={
+                    "source_type": "held_position",
+                    "expected_value_anchor": {
+                        "anchor_required": True,
+                        "anchor_passed": False,
+                        "decision_type": "REDUCE",
+                    },
+                },
+            ),
+            context=AssembledContext(),
+            ai_backend_inputs=AIDecisionInputs(
+                decision_type="REDUCE",
+                side="sell",
+                expected_return_bps=Decimal("30.00"),
+                expected_downside_bps=Decimal("10.00"),
+                net_expected_value_bps=Decimal("20.00"),
+                final_trade_score=Decimal("0.62"),
+                minimum_required_edge_bps=Decimal("5.00"),
+                edge_after_cost_bps=Decimal("9.00"),
+                estimated_round_trip_cost_bps=Decimal("5.00"),
+                slippage_buffer_bps=Decimal("6.00"),
+                expected_value_gate_passed=True,
+            ),
+        )
+        assert build_submit_order_request_from_decision(intent) is None
+
     def test_reduce_empty_side_fallback(self) -> None:
         """REDUCE + side="" (empty) → original side preserved (BUY)."""
         intent = _make_intent(

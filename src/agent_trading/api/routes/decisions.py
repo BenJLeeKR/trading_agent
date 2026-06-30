@@ -25,6 +25,7 @@ from agent_trading.api.schemas import (
     WatchDiagnosticsSampleItem,
     WatchDiagnosticsSourceTypeItem,
 )
+from agent_trading.domain.entities import AgentRunEntity, GuardrailEvaluationEntity
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.contracts import TradeDecisionRow
 from agent_trading.repositories.filters import OrderQuery
@@ -65,7 +66,251 @@ def _coerce_phase_trace(
     return None
 
 
-def _to_detail(row: TradeDecisionRow, instrument_name: str | None = None) -> TradeDecisionDetail:
+def _extract_ai_compliance_projection(
+    decision_json: dict[str, object] | None,
+) -> dict[str, object] | None:
+    if not isinstance(decision_json, dict):
+        return None
+    payload = {
+        "opinion": decision_json.get("compliance_opinion"),
+        "score": decision_json.get("compliance_score"),
+        "confidence": decision_json.get("compliance_confidence"),
+        "reason_codes": decision_json.get("compliance_reason_codes"),
+        "policy_flags": decision_json.get("compliance_policy_flags"),
+        "check_passed": decision_json.get("compliance_check_passed"),
+    }
+    return payload if any(value is not None for value in payload.values()) else None
+
+
+def _select_latest_ai_compliance_run(
+    runs: list[AgentRunEntity],
+) -> AgentRunEntity | None:
+    candidates = [run for run in runs if (run.agent_type or "").strip().lower() == "ai_compliance"]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda run: run.started_at)
+
+
+def _select_latest_compliance_guardrail(
+    evaluations: list[GuardrailEvaluationEntity],
+) -> GuardrailEvaluationEntity | None:
+    candidates = [
+        evaluation
+        for evaluation in evaluations
+        if (
+            (evaluation.rule_set_version or "").strip().lower() == "compliance_validator_v1"
+            or str(evaluation.rule_results.get("validator_bundle") or "").strip().lower()
+            == "compliance_validator_v1"
+        )
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda evaluation: evaluation.evaluated_at)
+
+
+def _build_compliance_inspection(
+    decision_json: dict[str, object] | None,
+    ai_compliance_run: AgentRunEntity | None,
+    compliance_evaluation: GuardrailEvaluationEntity | None,
+) -> dict[str, object] | None:
+    ai_projection = _extract_ai_compliance_projection(decision_json)
+    ai_check_passed = None
+    if ai_projection is not None:
+        raw_ai_check_passed = ai_projection.get("check_passed")
+        if isinstance(raw_ai_check_passed, bool):
+            ai_check_passed = raw_ai_check_passed
+
+    deterministic_check_passed = (
+        compliance_evaluation.overall_passed if compliance_evaluation is not None else None
+    )
+
+    stored_alignment = None
+    if compliance_evaluation is not None:
+        candidate_alignment = compliance_evaluation.rule_results.get("ai_compliance_alignment")
+        if isinstance(candidate_alignment, dict):
+            stored_alignment = candidate_alignment
+
+    agreement_status = "unavailable"
+    if isinstance(stored_alignment, dict):
+        agreement_status = str(stored_alignment.get("agreement_status") or "unavailable")
+    elif ai_check_passed is not None and deterministic_check_passed is not None:
+        agreement_status = "aligned" if ai_check_passed == deterministic_check_passed else "conflict"
+    elif ai_check_passed is not None:
+        agreement_status = "ai_only"
+    elif deterministic_check_passed is not None:
+        agreement_status = "deterministic_only"
+
+    ai_agent_run_payload: dict[str, object] | None = None
+    if ai_compliance_run is not None:
+        ai_agent_run_payload = {
+            "agent_run_id": str(ai_compliance_run.agent_run_id),
+            "agent_type": ai_compliance_run.agent_type,
+            "status": ai_compliance_run.status,
+            "started_at": ai_compliance_run.started_at.isoformat(),
+            "completed_at": (
+                ai_compliance_run.completed_at.isoformat()
+                if ai_compliance_run.completed_at is not None
+                else None
+            ),
+            "structured_output_json": ai_compliance_run.structured_output_json,
+        }
+
+    deterministic_payload: dict[str, object] | None = None
+    if compliance_evaluation is not None:
+        deterministic_payload = {
+            "guardrail_evaluation_id": str(compliance_evaluation.guardrail_evaluation_id),
+            "rule_set_version": compliance_evaluation.rule_set_version,
+            "validator_bundle": compliance_evaluation.rule_results.get("validator_bundle"),
+            "overall_passed": compliance_evaluation.overall_passed,
+            "evaluated_at": compliance_evaluation.evaluated_at.isoformat(),
+            "blocking_rule_codes": compliance_evaluation.blocking_rule_codes,
+            "warning_rule_codes": compliance_evaluation.warning_rule_codes,
+            "ai_compliance_alignment": stored_alignment,
+            "rule_results": compliance_evaluation.rule_results,
+        }
+
+    if ai_projection is None and ai_agent_run_payload is None and deterministic_payload is None:
+        return None
+
+    return {
+        "agreement_status": agreement_status,
+        "ai_projection": ai_projection,
+        "ai_agent_run": ai_agent_run_payload,
+        "deterministic_validator": deterministic_payload,
+    }
+
+
+_REVERSE_TRADE_STOP_REASONS = {
+    "reverse_trade_same_signal_feature_snapshot",
+    "reverse_trade_single_share_blocked",
+    "same_symbol_reentry_cooldown",
+    "held_position_recent_buy_sell_cooldown",
+    "held_position_recent_risk_sell_cooldown",
+}
+
+_PROBE_CHURN_STOP_REASONS = {
+    "probe_churn_single_share_blocked",
+    "overlay_single_share_buy_blocked",
+}
+
+_HOLDING_PROFILE_STOP_REASONS = {
+    "holding_profile_earliest_reduce_guard",
+    "holding_profile_earliest_reentry_guard",
+}
+
+
+def _build_decision_inspection(
+    decision_json: dict[str, object] | None,
+    *,
+    latest_stop_reason: str | None,
+    latest_stop_phase: str | None,
+    execution_status: str | None,
+) -> dict[str, object] | None:
+    if not isinstance(decision_json, dict):
+        decision_json = {}
+
+    holding_profile_policy = (
+        dict(decision_json.get("holding_profile_policy"))
+        if isinstance(decision_json.get("holding_profile_policy"), dict)
+        else None
+    )
+    expected_value_anchor = (
+        dict(decision_json.get("expected_value_anchor"))
+        if isinstance(decision_json.get("expected_value_anchor"), dict)
+        else None
+    )
+
+    normalized_stop_reason = str(latest_stop_reason or "").strip().lower() or None
+    normalized_stop_phase = str(latest_stop_phase or "").strip() or None
+
+    holding_profile_payload: dict[str, object] | None = None
+    if holding_profile_policy is not None:
+        metadata = (
+            dict(holding_profile_policy.get("metadata"))
+            if isinstance(holding_profile_policy.get("metadata"), dict)
+            else {}
+        )
+        holding_profile_payload = {
+            "holding_profile": holding_profile_policy.get("holding_profile"),
+            "minimum_hold_until": holding_profile_policy.get("minimum_hold_until"),
+            "earliest_reduce_at": holding_profile_policy.get("earliest_reduce_at"),
+            "earliest_reentry_at": holding_profile_policy.get("earliest_reentry_at"),
+            "sell_cooldown_until": holding_profile_policy.get("sell_cooldown_until"),
+            "reentry_cooldown_until": holding_profile_policy.get("reentry_cooldown_until"),
+            "blocked": normalized_stop_reason in _HOLDING_PROFILE_STOP_REASONS,
+            "blocking_reason_code": (
+                normalized_stop_reason
+                if normalized_stop_reason in _HOLDING_PROFILE_STOP_REASONS
+                else None
+            ),
+            "source_type": metadata.get("source_type"),
+            "time_horizon": metadata.get("time_horizon"),
+        }
+
+    reverse_trade_payload = {
+        "blocked": normalized_stop_reason in _REVERSE_TRADE_STOP_REASONS,
+        "blocking_reason_code": (
+            normalized_stop_reason
+            if normalized_stop_reason in _REVERSE_TRADE_STOP_REASONS
+            else None
+        ),
+        "stop_phase": normalized_stop_phase,
+        "same_signal_feature_snapshot": (
+            normalized_stop_reason == "reverse_trade_same_signal_feature_snapshot"
+        ),
+        "reentry_edge_improved_vs_last_exit": (
+            expected_value_anchor.get("reentry_edge_improved_vs_last_exit")
+            if expected_value_anchor is not None
+            else None
+        ),
+        "edge_vs_last_exit_delta_bps": (
+            expected_value_anchor.get("edge_vs_last_exit_delta_bps")
+            if expected_value_anchor is not None
+            else None
+        ),
+    }
+
+    probe_churn_payload = {
+        "blocked": normalized_stop_reason in _PROBE_CHURN_STOP_REASONS,
+        "blocking_reason_code": (
+            normalized_stop_reason
+            if normalized_stop_reason in _PROBE_CHURN_STOP_REASONS
+            else None
+        ),
+        "stop_phase": normalized_stop_phase,
+        "single_share_probe": (
+            normalized_stop_reason in _PROBE_CHURN_STOP_REASONS
+            or normalized_stop_reason == "reverse_trade_single_share_blocked"
+        ),
+    }
+
+    guardrail_attribution = {
+        "execution_status": execution_status,
+        "latest_stop_reason": normalized_stop_reason,
+        "latest_stop_phase": normalized_stop_phase,
+    }
+
+    if (
+        holding_profile_payload is None
+        and expected_value_anchor is None
+        and guardrail_attribution["latest_stop_reason"] is None
+    ):
+        return None
+
+    return {
+        "holding_profile": holding_profile_payload,
+        "expected_value_anchor": expected_value_anchor,
+        "reverse_trade": reverse_trade_payload,
+        "probe_churn": probe_churn_payload,
+        "guardrail_attribution": guardrail_attribution,
+    }
+
+
+def _to_detail(
+    row: TradeDecisionRow,
+    instrument_name: str | None = None,
+    compliance_inspection: dict[str, object] | None = None,
+) -> TradeDecisionDetail:
     """Convert ``TradeDecisionRow`` to API schema.
 
     ``TradeDecisionRow`` contains the domain entity plus optional
@@ -75,7 +320,7 @@ def _to_detail(row: TradeDecisionRow, instrument_name: str | None = None) -> Tra
     N+1 문제를 방지한다.
     """
     d = row.entity
-    return TradeDecisionDetail(
+    detail = TradeDecisionDetail(
         trade_decision_id=str(d.trade_decision_id),
         decision_context_id=str(d.decision_context_id),
         decision_type=_safe_enum_str(d.decision_type),
@@ -106,6 +351,14 @@ def _to_detail(row: TradeDecisionRow, instrument_name: str | None = None) -> Tra
         latest_completed_at=row.latest_completed_at,
         latest_phase_count=row.latest_phase_count,
     )
+    detail.decision_inspection = _build_decision_inspection(
+        d.decision_json,
+        latest_stop_reason=detail.latest_stop_reason,
+        latest_stop_phase=detail.latest_stop_phase,
+        execution_status=detail.execution_status,
+    )
+    detail.compliance_inspection = compliance_inspection
+    return detail
 
 
 async def _resolve_signal_feature_snapshot_ids(
@@ -129,6 +382,31 @@ async def _resolve_signal_feature_snapshot_ids(
             if decision_context is not None
             and decision_context.signal_feature_snapshot_id is not None
             else None
+        )
+    return resolved
+
+
+async def _resolve_compliance_inspection_views(
+    repos: RepositoryContainer,
+    rows: list[TradeDecisionRow],
+) -> dict[str, dict[str, object] | None]:
+    resolved: dict[str, dict[str, object] | None] = {}
+    seen_context_ids: set[UUID] = set()
+    for row in rows:
+        context_id = row.entity.decision_context_id
+        if context_id in seen_context_ids:
+            continue
+        seen_context_ids.add(context_id)
+        agent_runs = list(await repos.agent_runs.list_by_decision_context(context_id))
+        guardrail_evaluations = list(
+            await repos.guardrail_evaluations.get_by_decision_context(context_id)
+        )
+        ai_compliance_run = _select_latest_ai_compliance_run(agent_runs)
+        compliance_evaluation = _select_latest_compliance_guardrail(guardrail_evaluations)
+        resolved[str(context_id)] = _build_compliance_inspection(
+            row.entity.decision_json,
+            ai_compliance_run,
+            compliance_evaluation,
         )
     return resolved
 
@@ -640,6 +918,7 @@ async def list_trade_decisions(
         )
 
     signal_feature_snapshot_ids = await _resolve_signal_feature_snapshot_ids(repos, rows)
+    compliance_inspection_views = await _resolve_compliance_inspection_views(repos, rows)
 
     # SQL LEFT JOIN으로 instrument_name이 이미 TradeDecisionRow.instrument_name에
     # resolve되어 있음
@@ -664,6 +943,9 @@ async def list_trade_decisions(
                     ),
                 ),
                 instrument_name=row.instrument_name,
+                compliance_inspection=compliance_inspection_views.get(
+                    str(row.entity.decision_context_id)
+                ),
             )
         )
 

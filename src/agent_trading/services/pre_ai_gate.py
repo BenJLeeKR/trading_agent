@@ -9,6 +9,10 @@ from zoneinfo import ZoneInfo
 from agent_trading.domain.enums import OrderSide, OrderStatus, PipelineStopReason
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import AccountLookup, OrderQuery
+from agent_trading.services.holding_profile_policy import resolve_policy_timestamp
+from agent_trading.services.reverse_trade_hysteresis import (
+    evaluate_recent_reverse_trade,
+)
 from agent_trading.services.validators import ValidationResult
 
 logger = logging.getLogger(__name__)
@@ -79,7 +83,7 @@ async def _get_latest_recent_held_decision(
     db_conn: Any | None,
     side: str,
     source_type: str | None = "held_position",
-) -> tuple[str | None, datetime | None, Decimal | None, str | None]:
+) -> tuple[str | None, datetime | None, Decimal | None, str | None, Decimal | None]:
     """최근 판단 1건과 앵커된 포지션/feature를 함께 조회한다."""
     if db_conn is not None:
         if source_type is None:
@@ -89,7 +93,9 @@ async def _get_latest_recent_held_decision(
                     td.decision_type,
                     td.created_at,
                     ps.quantity AS anchored_position_qty,
-                    dc.signal_feature_snapshot_id
+                    dc.signal_feature_snapshot_id,
+                    td.decision_json -> 'expected_value_gate' ->> 'edge_after_cost_bps'
+                      AS anchored_edge_after_cost_bps
                 FROM trading.trade_decisions td
                 LEFT JOIN trading.decision_contexts dc
                   ON dc.decision_context_id = td.decision_context_id
@@ -112,7 +118,9 @@ async def _get_latest_recent_held_decision(
                     td.decision_type,
                     td.created_at,
                     ps.quantity AS anchored_position_qty,
-                    dc.signal_feature_snapshot_id
+                    dc.signal_feature_snapshot_id,
+                    td.decision_json -> 'expected_value_gate' ->> 'edge_after_cost_bps'
+                      AS anchored_edge_after_cost_bps
                 FROM trading.trade_decisions td
                 LEFT JOIN trading.decision_contexts dc
                   ON dc.decision_context_id = td.decision_context_id
@@ -131,13 +139,16 @@ async def _get_latest_recent_held_decision(
                 cutoff,
             )
         if row is None:
-            return None, None, None, None
+            return None, None, None, None, None
         return (
             _normalize_enum_value(row["decision_type"]),
             row["created_at"],
             row["anchored_position_qty"],
             str(row["signal_feature_snapshot_id"])
             if row["signal_feature_snapshot_id"] is not None
+            else None,
+            Decimal(str(row["anchored_edge_after_cost_bps"]))
+            if row["anchored_edge_after_cost_bps"] not in (None, "")
             else None,
         )
 
@@ -151,11 +162,12 @@ async def _get_latest_recent_held_decision(
         and decision.created_at >= cutoff
     ]
     if not filtered:
-        return None, None, None, None
+        return None, None, None, None, None
 
     latest = max(filtered, key=lambda item: item.created_at)
     anchored_position_qty: Decimal | None = None
     anchored_signal_feature_snapshot_id: str | None = None
+    anchored_edge_after_cost_bps: Decimal | None = None
     if latest.decision_context_id is not None:
         context = await repos.decision_contexts.get(latest.decision_context_id)
         if context is not None:
@@ -167,12 +179,21 @@ async def _get_latest_recent_held_decision(
                 anchored_signal_feature_snapshot_id = str(
                     context.signal_feature_snapshot_id
                 )
+    expected_value_gate = latest.decision_json.get("expected_value_gate")
+    if isinstance(expected_value_gate, dict):
+        edge_value = expected_value_gate.get("edge_after_cost_bps")
+        if edge_value not in (None, ""):
+            try:
+                anchored_edge_after_cost_bps = Decimal(str(edge_value))
+            except Exception:
+                anchored_edge_after_cost_bps = None
 
     return (
         _normalize_enum_value(latest.decision_type),
         latest.created_at,
         anchored_position_qty,
         anchored_signal_feature_snapshot_id,
+        anchored_edge_after_cost_bps,
     )
 
 
@@ -269,6 +290,7 @@ async def evaluate_pre_ai_validation_result(
         return None, details
 
     matched_qty: Decimal | None = None
+    symbol_state = None
     if instrument is not None:
         try:
             snapshots = await repos.position_snapshots.list_latest_by_account(
@@ -287,12 +309,53 @@ async def evaluate_pre_ai_validation_result(
             if snapshot.instrument_id == instrument.instrument_id:
                 matched_qty = snapshot.quantity
                 break
+        symbol_state = await repos.symbol_trade_states.get_by_account_and_instrument(
+            account.account_id,
+            instrument.instrument_id,
+        )
 
     details["held_quantity"] = str(matched_qty) if matched_qty is not None else None
+    policy_payload = (
+        dict(symbol_state.metadata_json.get("holding_profile_policy"))
+        if symbol_state is not None
+        and isinstance(symbol_state.metadata_json.get("holding_profile_policy"), dict)
+        else {}
+    )
+    current_utc = now_utc or datetime.now(timezone.utc)
+    authoritative_earliest_reduce_at = resolve_policy_timestamp(
+        policy_payload,
+        key="earliest_reduce_at",
+        fallback_key="minimum_hold_until",
+    ) or (symbol_state.minimum_hold_until if symbol_state is not None else None)
+    authoritative_earliest_reentry_at = resolve_policy_timestamp(
+        policy_payload,
+        key="earliest_reentry_at",
+        fallback_key="reentry_cooldown_until",
+    ) or (symbol_state.reentry_cooldown_until if symbol_state is not None else None)
+    details["authoritative_holding_profile"] = (
+        symbol_state.holding_profile if symbol_state is not None else None
+    )
+    details["authoritative_earliest_reduce_at"] = (
+        authoritative_earliest_reduce_at.isoformat(timespec="seconds")
+        if authoritative_earliest_reduce_at is not None
+        else None
+    )
+    details["authoritative_earliest_reentry_at"] = (
+        authoritative_earliest_reentry_at.isoformat(timespec="seconds")
+        if authoritative_earliest_reentry_at is not None
+        else None
+    )
 
     if source_type == "held_position":
         if matched_qty is None or matched_qty <= 0:
             return _blocked(PipelineStopReason.NO_HELD_POSITION.value)
+        if (
+            authoritative_earliest_reduce_at is not None
+            and authoritative_earliest_reduce_at > current_utc
+        ):
+            details["holding_profile_reduce_window_active"] = "true"
+            return _blocked(PipelineStopReason.HOLDING_PROFILE_EARLIEST_REDUCE_GUARD.value)
+        details["holding_profile_reduce_window_active"] = "false"
         held_skip_reason = await evaluate_held_position_skip_reason(
             repos,
             account_id=account.account_id,
@@ -321,7 +384,16 @@ async def evaluate_pre_ai_validation_result(
     # legitimately decide HOLD/REDUCE/EXIT, so do not suppress that path
     # solely because orderable cash is low or negative.
     if has_held_position:
+        details["holding_profile_reentry_window_active"] = "false"
         return None, details
+
+    if (
+        authoritative_earliest_reentry_at is not None
+        and authoritative_earliest_reentry_at > current_utc
+    ):
+        details["holding_profile_reentry_window_active"] = "true"
+        return _blocked(PipelineStopReason.HOLDING_PROFILE_EARLIEST_REENTRY_GUARD.value)
+    details["holding_profile_reentry_window_active"] = "false"
 
     reentry_skip_reason = await evaluate_same_symbol_reentry_skip_reason(
         repos,
@@ -466,7 +538,7 @@ async def evaluate_held_position_skip_reason(
         details["latest_sell_order_at"] = None
 
     cutoff = current_utc - HELD_POSITION_SKIP_HOLD_TTL
-    latest_decision_type, latest_decision_created_at, _, _ = (
+    latest_decision_type, latest_decision_created_at, _, _, _ = (
         await _get_latest_recent_held_decision(
             repos,
             symbol=symbol,
@@ -486,6 +558,7 @@ async def evaluate_held_position_skip_reason(
         latest_buy_decision_created_at,
         anchored_buy_position_qty,
         latest_buy_signal_feature_snapshot_id,
+        latest_buy_edge_after_cost_bps,
     ) = await _get_latest_recent_held_decision(
         repos,
         symbol=symbol,
@@ -506,31 +579,34 @@ async def evaluate_held_position_skip_reason(
     details["latest_buy_signal_feature_snapshot_id"] = (
         latest_buy_signal_feature_snapshot_id
     )
-    buy_signal_feature_snapshot_unchanged = (
-        current_signal_feature_snapshot_id is not None
-        and latest_buy_signal_feature_snapshot_id is not None
-        and current_signal_feature_snapshot_id == latest_buy_signal_feature_snapshot_id
+    details["latest_buy_edge_after_cost_bps"] = (
+        str(latest_buy_edge_after_cost_bps)
+        if latest_buy_edge_after_cost_bps is not None
+        else None
     )
-    details["buy_signal_feature_snapshot_unchanged"] = (
-        "true" if buy_signal_feature_snapshot_unchanged else "false"
+    buy_reverse_trade = evaluate_recent_reverse_trade(
+        current_signal_feature_snapshot_id=current_signal_feature_snapshot_id,
+        last_signal_feature_snapshot_id=latest_buy_signal_feature_snapshot_id,
+        recent_opposite_order_count=len(recent_buy_orders),
+        latest_decision_type=latest_buy_decision_type,
+        eligible_decision_types={"approve", "buy"},
+        cooldown_stop_reason=PipelineStopReason.HELD_POSITION_RECENT_BUY_SELL_COOLDOWN.value,
+        details=details,
+        snapshot_unchanged_detail_key="buy_signal_feature_snapshot_unchanged",
+        activity_flag_detail_key="buy_cooldown_position_unchanged_or_increased",
+        require_matching_decision_type=True,
     )
     if (
         recent_buy_orders
-        and latest_buy_decision_type in {"approve", "buy"}
         and anchored_buy_position_qty is not None
         and matched_qty >= anchored_buy_position_qty
     ):
-        if buy_signal_feature_snapshot_unchanged:
-            return (
-                PipelineStopReason.REVERSE_TRADE_SAME_SIGNAL_FEATURE_SNAPSHOT.value,
-                details,
-            )
-        details["buy_cooldown_position_unchanged_or_increased"] = "true"
-        return (
-            PipelineStopReason.HELD_POSITION_RECENT_BUY_SELL_COOLDOWN.value,
-            details,
-        )
-    details["buy_cooldown_position_unchanged_or_increased"] = "false"
+        details.update(buy_reverse_trade.details)
+        if buy_reverse_trade.blocked and buy_reverse_trade.stop_reason is not None:
+            return buy_reverse_trade.stop_reason, details
+    else:
+        details["buy_cooldown_position_unchanged_or_increased"] = "false"
+        details.setdefault("buy_signal_feature_snapshot_unchanged", "false")
     if latest_decision_type == "hold" and not recent_orders:
         return PipelineStopReason.HELD_POSITION_RECENT_HOLD_NO_CHANGE.value, details
 
@@ -539,6 +615,7 @@ async def evaluate_held_position_skip_reason(
         latest_sell_decision_created_at,
         anchored_position_qty,
         latest_sell_signal_feature_snapshot_id,
+        latest_sell_edge_after_cost_bps,
     ) = await _get_latest_recent_held_decision(
         repos,
         symbol=symbol,
@@ -558,32 +635,34 @@ async def evaluate_held_position_skip_reason(
     details["latest_held_sell_signal_feature_snapshot_id"] = (
         latest_sell_signal_feature_snapshot_id
     )
-    sell_signal_feature_snapshot_unchanged = (
-        current_signal_feature_snapshot_id is not None
-        and latest_sell_signal_feature_snapshot_id is not None
-        and current_signal_feature_snapshot_id == latest_sell_signal_feature_snapshot_id
+    details["latest_held_sell_edge_after_cost_bps"] = (
+        str(latest_sell_edge_after_cost_bps)
+        if latest_sell_edge_after_cost_bps is not None
+        else None
     )
-    details["sell_signal_feature_snapshot_unchanged"] = (
-        "true" if sell_signal_feature_snapshot_unchanged else "false"
+    sell_reverse_trade = evaluate_recent_reverse_trade(
+        current_signal_feature_snapshot_id=current_signal_feature_snapshot_id,
+        last_signal_feature_snapshot_id=latest_sell_signal_feature_snapshot_id,
+        recent_opposite_order_count=len(recent_sell_orders),
+        latest_decision_type=latest_sell_decision_type,
+        eligible_decision_types={"reduce", "exit", "sell"},
+        cooldown_stop_reason=PipelineStopReason.HELD_POSITION_RECENT_RISK_SELL_COOLDOWN.value,
+        details=details,
+        snapshot_unchanged_detail_key="sell_signal_feature_snapshot_unchanged",
+        activity_flag_detail_key="sell_cooldown_position_unchanged_or_reduced",
+        require_matching_decision_type=True,
     )
     if (
         recent_sell_orders
-        and latest_sell_decision_type in {"reduce", "exit", "sell"}
         and anchored_position_qty is not None
         and matched_qty <= anchored_position_qty
     ):
-        if sell_signal_feature_snapshot_unchanged:
-            return (
-                PipelineStopReason.REVERSE_TRADE_SAME_SIGNAL_FEATURE_SNAPSHOT.value,
-                details,
-            )
-        details["sell_cooldown_position_unchanged_or_reduced"] = "true"
-        return (
-            PipelineStopReason.HELD_POSITION_RECENT_RISK_SELL_COOLDOWN.value,
-            details,
-        )
-
-    details["sell_cooldown_position_unchanged_or_reduced"] = "false"
+        details.update(sell_reverse_trade.details)
+        if sell_reverse_trade.blocked and sell_reverse_trade.stop_reason is not None:
+            return sell_reverse_trade.stop_reason, details
+    else:
+        details["sell_cooldown_position_unchanged_or_reduced"] = "false"
+        details.setdefault("sell_signal_feature_snapshot_unchanged", "false")
     return None, details
 
 
@@ -641,6 +720,7 @@ async def evaluate_same_symbol_reentry_skip_reason(
         latest_sell_decision_created_at,
         anchored_position_qty,
         latest_sell_signal_feature_snapshot_id,
+        latest_sell_edge_after_cost_bps,
     ) = await _get_latest_recent_held_decision(
         repos,
         symbol=symbol,
@@ -660,26 +740,39 @@ async def evaluate_same_symbol_reentry_skip_reason(
     details["reentry_latest_sell_signal_feature_snapshot_id"] = (
         latest_sell_signal_feature_snapshot_id
     )
-    reentry_signal_feature_snapshot_unchanged = (
-        current_signal_feature_snapshot_id is not None
-        and latest_sell_signal_feature_snapshot_id is not None
-        and current_signal_feature_snapshot_id == latest_sell_signal_feature_snapshot_id
+    details["reentry_latest_sell_edge_after_cost_bps"] = (
+        str(latest_sell_edge_after_cost_bps)
+        if latest_sell_edge_after_cost_bps is not None
+        else None
     )
-    details["reentry_signal_feature_snapshot_unchanged"] = (
-        "true" if reentry_signal_feature_snapshot_unchanged else "false"
+    recent_reentry_events = await repos.external_events.list_by_symbol(
+        symbol,
+        cutoff,
+        include_seeded_news=True,
     )
-
-    if (
-        recent_sell_orders
-        and latest_sell_decision_type in {"reduce", "exit", "sell"}
-    ):
-        if reentry_signal_feature_snapshot_unchanged:
-            return (
-                PipelineStopReason.REVERSE_TRADE_SAME_SIGNAL_FEATURE_SNAPSHOT.value,
-                details,
-            )
+    reentry_event_novelty_passed = any(
+        bool(event.metadata.get("supports_entry"))
+        and str(event.metadata.get("novelty") or event.severity or "").strip().lower()
+        in {"high", "medium", "surprising", "fresh"}
+        for event in recent_reentry_events
+    )
+    reentry_reverse_trade = evaluate_recent_reverse_trade(
+        current_signal_feature_snapshot_id=current_signal_feature_snapshot_id,
+        last_signal_feature_snapshot_id=latest_sell_signal_feature_snapshot_id,
+        recent_opposite_order_count=len(recent_sell_orders),
+        latest_decision_type=latest_sell_decision_type,
+        eligible_decision_types={"reduce", "exit", "sell"},
+        cooldown_stop_reason=PipelineStopReason.SAME_SYMBOL_REENTRY_COOLDOWN.value,
+        details=details,
+        snapshot_unchanged_detail_key="reentry_signal_feature_snapshot_unchanged",
+        require_matching_decision_type=True,
+        event_novelty_passed=reentry_event_novelty_passed,
+        event_novelty_label="present" if reentry_event_novelty_passed else "none",
+    )
+    details.update(reentry_reverse_trade.details)
+    if reentry_reverse_trade.blocked and reentry_reverse_trade.stop_reason is not None:
         return (
-            PipelineStopReason.SAME_SYMBOL_REENTRY_COOLDOWN.value,
+            reentry_reverse_trade.stop_reason,
             details,
         )
     return None, details

@@ -27,6 +27,10 @@ def test_event_overlay_short_horizon_maps_to_event_probe() -> None:
     assert policy.minimum_hold_until == datetime(
         2026, 6, 24, 0, 15, tzinfo=timezone.utc
     )
+    assert policy.earliest_reduce_at == datetime(
+        2026, 6, 24, 0, 15, tzinfo=timezone.utc
+    )
+    assert policy.earliest_reentry_at is None
     assert policy.reentry_cooldown_until is None
     assert policy.sell_cooldown_until == datetime(
         2026, 6, 24, 0, 10, tzinfo=timezone.utc
@@ -50,6 +54,10 @@ def test_sell_path_maps_to_risk_reduction_only_with_reentry_cooldown() -> None:
 
     assert policy.holding_profile == "risk_reduction_only"
     assert policy.minimum_hold_until is None
+    assert policy.earliest_reduce_at is None
+    assert policy.earliest_reentry_at == datetime(
+        2026, 6, 24, 1, 20, tzinfo=timezone.utc
+    )
     assert policy.reentry_cooldown_until == datetime(
         2026, 6, 24, 1, 20, tzinfo=timezone.utc
     )

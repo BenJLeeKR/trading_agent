@@ -61,6 +61,7 @@ from agent_trading.services.common_types import (
 from agent_trading.services.decision_orchestrator import (
     DecisionOrchestratorService,
 )
+from agent_trading.services.execution_service import ExecutionService
 from agent_trading.services.translation import (
     build_submit_order_request_from_decision,
     normalize_decision_type,
@@ -68,6 +69,7 @@ from agent_trading.services.translation import (
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.services.sizing_engine import SizingResult
+from agent_trading.services.validators import ValidationResult
 
 from agent_trading.services.ai_agents.base import AgentExecutionRequest
 from agent_trading.services.ai_agents.event_interpretation import EventInterpretationAgent
@@ -1003,6 +1005,148 @@ class TestAssembleAndSubmit:
         )
 
     @pytest.mark.asyncio
+    async def test_enrich_compliance_validation_with_ai_alignment_marks_conflict(
+        self,
+    ) -> None:
+        repos = build_in_memory_repositories()
+        execution_service = ExecutionService(repos)
+        trade_decision = TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=uuid4(),
+            decision_type=DecisionType.APPROVE,
+            side=OrderSide.BUY,
+            strategy_id=uuid4(),
+            symbol="005930",
+            market="KRX",
+            entry_style=EntryStyle.LIMIT,
+            created_at=datetime.now(timezone.utc),
+            decision_json={
+                "compliance_opinion": "block",
+                "compliance_score": 0.88,
+                "compliance_confidence": 0.93,
+                "compliance_reason_codes": ["policy_ambiguous"],
+                "compliance_policy_flags": ["manual_review"],
+                "compliance_check_passed": False,
+            },
+        )
+        await repos.trade_decisions.add(trade_decision)
+
+        validation_result = ValidationResult.allowed(
+            rule_set_version="compliance_validator_v1",
+            rule_results={"validator_bundle": "compliance_validator_v1"},
+        )
+
+        enriched = await execution_service._enrich_compliance_validation_with_ai_alignment(
+            trade_decision_id=trade_decision.trade_decision_id,
+            validation_result=validation_result,
+        )
+
+        alignment = enriched.rule_results["ai_compliance_alignment"]
+        assert alignment["agreement_status"] == "conflict"
+        assert alignment["mismatch_reason"] == "ai_block_but_deterministic_allowed"
+        assert alignment["ai_check_passed"] is False
+        assert alignment["deterministic_check_passed"] is True
+
+    @pytest.mark.asyncio
+    async def test_submit_time_compliance_conflict_persists_allowed_guardrail_row(
+        self,
+        service: DecisionOrchestratorService,
+        order_manager: OrderManager,
+        repos: Any,
+    ) -> None:
+        request = _make_request(
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            price=Decimal("50000"),
+            metadata={"source_type": "core"},
+        )
+        trade_decision = TradeDecisionEntity(
+            trade_decision_id=uuid4(),
+            decision_context_id=uuid4(),
+            decision_type=DecisionType.APPROVE,
+            side=OrderSide.BUY,
+            strategy_id=uuid4(),
+            symbol=request.symbol,
+            market=request.market,
+            entry_style=EntryStyle.LIMIT,
+            created_at=datetime.now(timezone.utc),
+            decision_json={
+                "compliance_opinion": "block",
+                "compliance_score": 0.81,
+                "compliance_confidence": 0.9,
+                "compliance_reason_codes": ["policy_ambiguous"],
+                "compliance_policy_flags": ["manual_review"],
+                "compliance_check_passed": False,
+            },
+        )
+        await repos.trade_decisions.add(trade_decision)
+
+        intent = _make_intent(
+            decision_type="APPROVE",
+            request=request,
+            decision_context_id=trade_decision.decision_context_id,
+        )
+        intent = replace(
+            intent,
+            trade_decision_id=trade_decision.trade_decision_id,
+            context=replace(intent.context, source_type="core"),
+        )
+
+        submitted_entity = _make_order_entity(
+            status=OrderStatus.SUBMITTED,
+            request=request,
+        )
+
+        class _BrokerStub:
+            async def get_capabilities(self) -> Any:
+                from agent_trading.domain.enums import AssetClass, BrokerName, TimeInForce
+                from agent_trading.domain.models import BrokerCapability
+
+                return BrokerCapability(
+                    broker_name=BrokerName.KOREA_INVESTMENT,
+                    supports_paper_trading=True,
+                    supports_live_trading=True,
+                    supports_websocket=True,
+                    supported_asset_classes=(AssetClass.KR_STOCK,),
+                    supported_order_types=(OrderType.MARKET, OrderType.LIMIT),
+                    supported_time_in_force=(TimeInForce.DAY,),
+                )
+
+        async def _mock_run_decision_pipeline(
+            *args: Any,
+            **kwargs: Any,
+        ) -> tuple[OrderIntent, UUID, None]:
+            return intent, trade_decision.trade_decision_id, None
+
+        async def _mock_submit(
+            *args: Any,
+            **kwargs: Any,
+        ) -> OrderRequestEntity:
+            return submitted_entity
+
+        with (
+            patch.object(service, "_run_decision_pipeline", side_effect=_mock_run_decision_pipeline),
+            patch.object(OrderManager, "submit_order_to_broker", _mock_submit),
+        ):
+            result = await service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=_BrokerStub(),
+            )
+
+        assert result.status == "SUBMITTED"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        compliance_rows = [
+            row for row in evaluations if row.rule_set_version == "compliance_validator_v1"
+        ]
+        assert len(compliance_rows) == 1
+        assert compliance_rows[0].overall_passed is True
+        alignment = compliance_rows[0].rule_results["ai_compliance_alignment"]
+        assert alignment["agreement_status"] == "conflict"
+        assert alignment["mismatch_reason"] == "ai_block_but_deterministic_allowed"
+        assert alignment["deterministic_check_passed"] is True
+
+    @pytest.mark.asyncio
     async def test_var_threshold_blocks_buy_before_create_order(
         self,
         service: DecisionOrchestratorService,
@@ -1288,6 +1432,115 @@ class TestAssembleAndSubmit:
         assert len(evaluations) == 1
         assert (
             evaluations[0].rule_results["rule_outcomes"]["instrument_status"]["passed"]
+            is False
+        )
+
+    @pytest.mark.asyncio
+    async def test_submit_time_compliance_blocks_early_reduce_by_holding_profile_window(
+        self,
+        service: DecisionOrchestratorService,
+        order_manager: OrderManager,
+        repos: Any,
+    ) -> None:
+        request = _make_request(
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            metadata={"source_type": "held_position"},
+        )
+        instrument = await repos.instruments.get_by_symbol_any_market(request.symbol)
+        assert instrument is not None
+        intent = _make_intent(
+            decision_type="REDUCE",
+            request=request,
+        )
+        account = next(iter(repos.accounts._items.values()))  # type: ignore[attr-defined]
+        config_version = next(iter(repos.config_versions._items.values()))  # type: ignore[attr-defined]
+        decision_context = DecisionContextEntity(
+            decision_context_id=intent.decision_context_id,
+            account_id=account.account_id,
+            strategy_id=uuid4(),
+            config_version_id=config_version.config_version_id,
+            market_timestamp=datetime.now(timezone.utc),
+            correlation_id="corr-holding-profile-window",
+            created_at=datetime.now(timezone.utc),
+        )
+        await repos.decision_contexts.add(decision_context)
+        position_snapshot = PositionSnapshotEntity(
+            position_snapshot_id=uuid4(),
+            account_id=account.account_id,
+            instrument_id=instrument.instrument_id,
+            quantity=Decimal("10"),
+            average_price=Decimal("50000"),
+            market_price=Decimal("50000"),
+            unrealized_pnl=Decimal("0"),
+            source_of_truth="test",
+            snapshot_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+        )
+        await repos.position_snapshots.add(position_snapshot)
+        intent = replace(
+            intent,
+            context=replace(
+                intent.context,
+                decision_context=decision_context,
+                position_snapshot=position_snapshot,
+                source_type="held_position",
+            ),
+        )
+        assert intent.context is not None
+        assert intent.context.decision_context is not None
+        account_id = intent.context.decision_context.account_id
+        await repos.symbol_trade_states.upsert(
+            SymbolTradeStateEntity(
+                symbol_trade_state_id=uuid4(),
+                account_id=account_id,
+                instrument_id=instrument.instrument_id,
+                symbol=instrument.symbol,
+                market=instrument.market_code,
+                state="held_active",
+                holding_profile="core_swing",
+                position_quantity=Decimal("10"),
+                minimum_hold_until=datetime.now(timezone.utc) + timedelta(minutes=40),
+                metadata_json={
+                    "holding_profile_policy": {
+                        "holding_profile": "core_swing",
+                        "earliest_reduce_at": (
+                            datetime.now(timezone.utc) + timedelta(minutes=40)
+                        ).isoformat(),
+                    }
+                },
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+        broker_stub = object()
+
+        async def _mock_run_decision_pipeline(
+            *args: Any,
+            **kwargs: Any,
+        ) -> tuple[OrderIntent, UUID, None]:
+            return intent, uuid4(), None
+
+        with (
+            patch.object(service, "_run_decision_pipeline", side_effect=_mock_run_decision_pipeline),
+            patch.object(
+                OrderManager,
+                "create_order",
+                new=AsyncMock(side_effect=AssertionError("create_order should not be called")),
+            ),
+        ):
+            result = await service.assemble_and_submit(
+                request,
+                order_manager=order_manager,
+                broker=broker_stub,
+            )
+
+        assert result.status == "SKIPPED"
+        assert result.error_phase == "compliance_validator"
+        evaluations = list(repos.guardrail_evaluations._items.values())  # type: ignore[attr-defined]
+        assert len(evaluations) == 1
+        assert (
+            evaluations[0].rule_results["rule_outcomes"]["holding_profile_window"]["passed"]
             is False
         )
 

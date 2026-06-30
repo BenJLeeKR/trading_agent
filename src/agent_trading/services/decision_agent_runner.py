@@ -1,4 +1,4 @@
-"""Runs the three v1 Provider AI Agents (EI → AR → FDC) in sequence.
+"""Runs the v1 Provider AI Agents (EI → AR → AC → FDC) in sequence.
 
 Extracted from DecisionOrchestratorService (Phase 5 refactoring).
 Supports both in-process execution and subprocess-based execution
@@ -33,6 +33,7 @@ from agent_trading.services.ai_agents.base import (
 )
 from agent_trading.services.ai_agents.recorder import AgentRunRecorder
 from agent_trading.services.ai_agents.schemas import (
+    AIComplianceOutput,
     AIRiskOutput,
     EventInterpretationOutput,
     FinalDecisionComposerOutput,
@@ -159,6 +160,7 @@ class DecisionAgentRunner:
         repos: RepositoryContainer,
         event_interpretation_agent: ProviderAIAgent,
         ai_risk_agent: ProviderAIAgent,
+        ai_compliance_agent: ProviderAIAgent,
         final_decision_composer_agent: ProviderAIAgent,
         agent_run_recorder: AgentRunRecorder,
         score_calculator: ScoreCalculator | None = None,
@@ -172,6 +174,7 @@ class DecisionAgentRunner:
         self._repos = repos
         self._ei_agent = event_interpretation_agent
         self._ar_agent = ai_risk_agent
+        self._ac_agent = ai_compliance_agent
         self._fdc_agent = final_decision_composer_agent
         self._recorder = agent_run_recorder
         self._score_calculator = score_calculator or StubScoreCalculator()
@@ -199,7 +202,8 @@ class DecisionAgentRunner:
         ---------------
         1. Event Interpretation Agent
         2. AI Risk Agent
-        3. Final Decision Composer
+        3. AI Compliance Agent
+        4. Final Decision Composer
 
         Each agent receives an ``AgentExecutionRequest`` built from the
         assembled context.  Individual outputs are kept as local variables
@@ -420,10 +424,8 @@ class DecisionAgentRunner:
             structured_output=dataclass_to_dict(risk_output),
         )
 
-        # --- Build a new request with both EI and AR output for FDC ---
-        # AgentExecutionRequest is frozen, so we must create a new instance.
-        # When AR fails, risk_output is an empty AIRiskOutput(), so FDC always
-        # receives a structured value (never None).
+        # --- 3. AI Compliance Agent ---
+        compliance_output: AIComplianceOutput
         request_with_ei_and_ar = AgentExecutionRequest(
             decision_context_id=request.decision_context_id,
             correlation_id=request.correlation_id,
@@ -436,8 +438,64 @@ class DecisionAgentRunner:
             prompt_id=request.prompt_id,
             source_type=request.source_type,
         )
+        _t1b = time_module.monotonic()
+        try:
+            compliance_output = await asyncio.wait_for(
+                self._ac_agent.run(request_with_ei_and_ar),
+                timeout=_PER_AGENT_TIMEOUT,
+            )
+            logger.info(
+                "AC agent completed in %.2fs — decision_context_id=%s",
+                time_module.monotonic() - _t1b,
+                decision_context_id,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "AI Compliance Agent timed out after %ds (actual %.2fs) — "
+                "using default output (safe fallback). decision_context_id=%s",
+                _PER_AGENT_TIMEOUT,
+                time_module.monotonic() - _t1b,
+                decision_context_id,
+            )
+            compliance_output = AIComplianceOutput()
+        except Exception:
+            logger.warning(
+                "AI Compliance Agent failed after %.2fs — using default output "
+                "(safe fallback). decision_context_id=%s",
+                time_module.monotonic() - _t1b,
+                decision_context_id,
+                exc_info=True,
+            )
+            compliance_output = AIComplianceOutput()
 
-        # --- 3. Final Decision Composer Agent ---
+        if is_missing_agent_symbol(compliance_output.symbol) and symbol:
+            compliance_output = replace(compliance_output, symbol=symbol)
+
+        await self._recorder.record(
+            decision_context_id=decision_context_id,
+            agent_type=self._ac_agent.agent_name,
+            structured_output=dataclass_to_dict(compliance_output),
+        )
+
+        # --- Build a new request with EI, AR, and AC output for FDC ---
+        # AgentExecutionRequest is frozen, so we must create a new instance.
+        # When AR/AC fail, fallback outputs keep FDC input structured.
+        # receives a structured value (never None).
+        request_with_ei_and_ar_ac = AgentExecutionRequest(
+            decision_context_id=request.decision_context_id,
+            correlation_id=request.correlation_id,
+            context=request.context,
+            symbol=request.symbol,
+            market=request.market,
+            event_interpretation_output=event_output,
+            ai_risk_output=risk_output,
+            ai_compliance_output=compliance_output,
+            model_id=request.model_id,
+            prompt_id=request.prompt_id,
+            source_type=request.source_type,
+        )
+
+        # --- 4. Final Decision Composer Agent ---
         composer_output: FinalDecisionComposerOutput
         if _should_skip_final_decision_composer(assembled_context, risk_output):
             composer_output = _build_short_circuit_fdc_output(
@@ -458,7 +516,7 @@ class DecisionAgentRunner:
             _t2 = time_module.monotonic()
             try:
                 composer_output = await asyncio.wait_for(
-                    self._fdc_agent.run(request_with_ei_and_ar),
+                    self._fdc_agent.run(request_with_ei_and_ar_ac),
                     timeout=_PER_AGENT_TIMEOUT,
                 )
                 logger.info(
@@ -496,10 +554,11 @@ class DecisionAgentRunner:
 
         logger.info(
             "AI agents executed: decision_context_id=%s "
-            "event=%s risk=%s composer=%s",
+            "event=%s risk=%s compliance=%s composer=%s",
             decision_context_id,
             event_output.agent_name,
             risk_output.risk_opinion,
+            compliance_output.compliance_opinion,
             composer_output.decision_type,
         )
 
@@ -534,6 +593,15 @@ class DecisionAgentRunner:
             size_adjustment_factor=risk_output.size_adjustment_factor,
             risk_reason_codes=risk_output.reason_codes,
             risk_flags=risk_output.risk_flags,
+            # AC-derived
+            compliance_opinion=compliance_output.compliance_opinion,
+            compliance_score=compliance_output.compliance_score,
+            compliance_confidence=compliance_output.confidence,
+            compliance_reason_codes=compliance_output.reason_codes,
+            compliance_policy_flags=compliance_output.policy_flags,
+            compliance_check_passed=(
+                compliance_output.compliance_opinion in {"allow", "warn"}
+            ),
             # EI-derived
             event_bias=event_output.aggregate_view.overall_bias,
             event_conflict=event_output.aggregate_view.event_conflict,
@@ -546,11 +614,13 @@ class DecisionAgentRunner:
             source_agent_names=(
                 event_output.agent_name,
                 risk_output.agent_name,
+                compliance_output.agent_name,
                 composer_output.agent_name,
             ),
             schema_versions=(
                 ("event_interpretation", event_output.schema_version),
                 ("ai_risk", risk_output.schema_version),
+                ("ai_compliance", compliance_output.schema_version),
                 ("final_decision_composer", composer_output.schema_version),
             ),
             ei_skipped=ei_skipped,
@@ -583,6 +653,7 @@ class DecisionAgentRunner:
             ai_inputs=ai_inputs,
             event_output=event_output,
             risk_output=risk_output,
+            compliance_output=compliance_output,
             composer_output=composer_output,
         )
 

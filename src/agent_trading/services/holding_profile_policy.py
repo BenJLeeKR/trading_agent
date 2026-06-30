@@ -23,6 +23,8 @@ _DEFAULT_REENTRY_COOLDOWN = timedelta(minutes=20)
 class HoldingProfilePolicy:
     holding_profile: str | None
     minimum_hold_until: datetime | None
+    earliest_reduce_at: datetime | None
+    earliest_reentry_at: datetime | None
     reentry_cooldown_until: datetime | None
     sell_cooldown_until: datetime | None
     thesis_state_hash: str | None
@@ -65,6 +67,8 @@ def derive_holding_profile_policy(
         return HoldingProfilePolicy(
             holding_profile="risk_reduction_only",
             minimum_hold_until=None,
+            earliest_reduce_at=None,
+            earliest_reentry_at=now + _DEFAULT_REENTRY_COOLDOWN,
             reentry_cooldown_until=now + _DEFAULT_REENTRY_COOLDOWN,
             sell_cooldown_until=None,
             thesis_state_hash=_build_thesis_state_hash(
@@ -109,6 +113,8 @@ def derive_holding_profile_policy(
     return HoldingProfilePolicy(
         holding_profile=holding_profile,
         minimum_hold_until=now + minimum_hold_delta,
+        earliest_reduce_at=now + minimum_hold_delta,
+        earliest_reentry_at=None,
         reentry_cooldown_until=None,
         sell_cooldown_until=now + sell_cooldown_delta,
         thesis_state_hash=_build_thesis_state_hash(
@@ -130,6 +136,16 @@ def serialize_holding_profile_policy(
         "minimum_hold_until": (
             policy.minimum_hold_until.isoformat()
             if policy.minimum_hold_until is not None
+            else None
+        ),
+        "earliest_reduce_at": (
+            policy.earliest_reduce_at.isoformat()
+            if policy.earliest_reduce_at is not None
+            else None
+        ),
+        "earliest_reentry_at": (
+            policy.earliest_reentry_at.isoformat()
+            if policy.earliest_reentry_at is not None
             else None
         ),
         "reentry_cooldown_until": (
@@ -158,6 +174,22 @@ def parse_datetime_or_none(value: object | None) -> datetime | None:
         return datetime.fromisoformat(value)
     except ValueError:
         return None
+
+
+def resolve_policy_timestamp(
+    policy_payload: dict[str, object] | None,
+    *,
+    key: str,
+    fallback_key: str | None = None,
+) -> datetime | None:
+    if not isinstance(policy_payload, dict):
+        return None
+    resolved = parse_datetime_or_none(policy_payload.get(key))
+    if resolved is not None:
+        return resolved
+    if fallback_key is None:
+        return None
+    return parse_datetime_or_none(policy_payload.get(fallback_key))
 
 
 def _normalize_side(side: str | OrderSide | None) -> str:

@@ -508,6 +508,15 @@ class TradeDecisionDetail(BaseModel):
     """Point-in-time anchor of the signal feature snapshot used by this decision."""
     decision_json: dict[str, object] | None = None
     """Raw decision payload from EI/AR agents (``event_bias``, ``risk_opinion``, etc.)."""
+    decision_inspection: dict[str, object] | None = None
+    """운영용 요약 inspection view.
+
+    `holding_profile`, `expected_value_anchor`,
+    `reverse_trade`, `probe_churn`, `guardrail_attribution`
+    를 읽기 쉬운 구조로 정규화한 payload.
+    """
+    compliance_inspection: dict[str, object] | None = None
+    """AI Compliance projection과 deterministic compliance validator 결과를 합본한 inspection view."""
 
     # ── Pipeline stop / order exposure (Phase 1) ──
     order_request_id: str | None = None
@@ -990,6 +999,54 @@ class TriggerPerformanceAttributionResponse(BaseModel):
     decision_to_fill_rate: float
     alignment_items: list[TriggerAttributionBucketItem]
     candidate_intent_items: list[TriggerAttributionBucketItem]
+
+
+class HoldingProfileAttributionItem(BaseModel):
+    """holding_profile별 decision/order/fill 및 close-out proxy 집계."""
+
+    holding_profile: str
+    decision_count: int
+    actionable_decision_count: int
+    ordered_decision_count: int
+    filled_decision_count: int
+    avg_edge_after_cost_bps: float | None = None
+    closed_trade_count: int
+    avg_holding_minutes: float | None = None
+    avg_realized_return_pct: float | None = None
+
+
+class GuardrailAttributionItem(BaseModel):
+    """reverse trade / probe churn / holding profile guard 차단 분포."""
+
+    guardrail_family: str
+    reason_code: str
+    decision_count: int
+
+
+class EdgeOutcomeAttributionItem(BaseModel):
+    """edge_after_cost_bps bucket별 후행 보유기간/성과 proxy 집계."""
+
+    edge_bucket: str
+    closed_trade_count: int
+    avg_holding_minutes: float | None = None
+    avg_realized_return_pct: float | None = None
+
+
+class HoldingProfilePerformanceAttributionResponse(BaseModel):
+    """`GET /performance-holding-profile-attribution` 응답."""
+
+    account_id: str
+    lookback_days: int
+    churn_window_hours: int
+    total_decision_count: int
+    reverse_trade_blocked_count: int
+    probe_churn_blocked_count: int
+    holding_profile_guard_blocked_count: int
+    realized_opposite_fill_churn_count: int
+    realized_opposite_fill_non_churn_count: int
+    holding_profile_items: list[HoldingProfileAttributionItem]
+    guardrail_items: list[GuardrailAttributionItem]
+    edge_outcome_items: list[EdgeOutcomeAttributionItem]
 
 
 class PositionSnapshotView(BaseModel):

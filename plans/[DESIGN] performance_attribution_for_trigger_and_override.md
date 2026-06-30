@@ -195,6 +195,25 @@ V1 정의:
 가능하면 `trade_decisions.created_at`에 가장 가까운
 동일 일자 snapshot / 종가 기준으로 고정한다.
 
+현행 구현에서는 위 범위를
+`holding_profile / reverse_trade / probe_churn`
+운영 리포트 관점으로 먼저 구체화했다.
+
+- `GET /performance-holding-profile-attribution`
+  - `holding_profile`별
+    decision / order / fill 전환
+  - 평균 `edge_after_cost_bps`
+  - buy fill 이후 첫 sell fill을 close-out proxy로 본
+    평균 보유시간 / 평균 수익률
+  - `reverse_trade` / `probe_churn` /
+    `holding_profile_guard` 차단 분포
+  - 계좌 기준 `opposite fill churn` 빈도
+
+즉, 완전한 realized pnl attribution 이전에
+현재 데이터 모델에서 deterministic하게 계산 가능한
+`closed-trade proxy attribution`
+을 먼저 확보한 상태다.
+
 ## 4.2 제외 범위
 
 이번 단계에서 제외한다.
@@ -236,6 +255,33 @@ bucket별 항목 예시:
 - `median_return_pct`
 - `positive_rate`
 - `negative_rate`
+
+추가로 현재 운영 리포트용으로는
+다음 endpoint가 먼저 구현되었다.
+
+## 5.1a `GET /performance-holding-profile-attribution`
+
+목적:
+
+- `holding_profile`별 기대수익률 anchor와
+  실제 close-out proxy 결과를 함께 본다.
+- reverse/probe/holding-profile guard가
+  churn을 얼마나 차단했는지 같은 창에서 확인한다.
+
+핵심 응답:
+
+- `holding_profile_items`
+- `guardrail_items`
+- `edge_outcome_items`
+- `realized_opposite_fill_churn_count`
+
+주의:
+
+- 여기서의 보유기간/수익률은
+  `buy fill -> 이후 첫 sell fill`
+  기준의 deterministic proxy다.
+- partial fill / multi-entry / scale-out을 완전히 귀속한
+  realized pnl attribution은 아직 아니다.
 
 ## 5.2 추후 `GET /performance-trigger-realized-attribution`
 

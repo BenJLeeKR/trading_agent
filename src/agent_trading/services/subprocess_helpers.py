@@ -21,6 +21,7 @@ from agent_trading.repositories.contracts import AccountLookup
 from agent_trading.services.ai_agents.base import AgentExecutionRequest
 from agent_trading.services.ai_agents.event_interpretation import _finalize_ei_output
 from agent_trading.services.ai_agents.schemas import (
+    AIComplianceOutput,
     AIRiskOutput,
     EventInterpretationOutput,
     FinalDecisionComposerOutput,
@@ -99,8 +100,8 @@ def deserialize_agent_output(
     ----------
     raw_json
         Raw JSON string from subprocess stdout.
-        Expected keys: ``ei_output``, ``ar_output``, ``fdc_output``,
-        ``score``, ``ei_run_id``, ``ar_run_id``, ``fdc_run_id``,
+        Expected keys: ``ei_output``, ``ar_output``, ``ac_output``, ``fdc_output``,
+        ``score``, ``ei_run_id``, ``ar_run_id``, ``ac_run_id``, ``fdc_run_id``,
         ``ei_error_metadata``.
 
     Returns
@@ -122,6 +123,10 @@ def deserialize_agent_output(
     ar_output = dict_to_dataclass(
         data.get("risk_output") or data.get("ar_output", {}),
         AIRiskOutput,
+    )  # type: ignore[arg-type]
+    ac_output = dict_to_dataclass(
+        data.get("compliance_output") or data.get("ac_output", {}),
+        AIComplianceOutput,
     )  # type: ignore[arg-type]
     fdc_output = dict_to_dataclass(
         data.get("composer_output") or data.get("fdc_output", {}),
@@ -156,6 +161,12 @@ def deserialize_agent_output(
         size_adjustment_factor=ar_output.size_adjustment_factor,
         risk_reason_codes=ar_output.reason_codes,
         risk_flags=ar_output.risk_flags,
+        compliance_opinion=ac_output.compliance_opinion,
+        compliance_score=ac_output.compliance_score,
+        compliance_confidence=ac_output.confidence,
+        compliance_reason_codes=ac_output.reason_codes,
+        compliance_policy_flags=ac_output.policy_flags,
+        compliance_check_passed=ac_output.compliance_opinion in {"allow", "warn"},
         # EI-derived
         event_bias=ei_output.aggregate_view.overall_bias,
         event_conflict=ei_output.aggregate_view.event_conflict,
@@ -168,11 +179,13 @@ def deserialize_agent_output(
         source_agent_names=(
             ei_output.agent_name,
             ar_output.agent_name,
+            ac_output.agent_name,
             fdc_output.agent_name,
         ),
         schema_versions=(
             ("event_interpretation", ei_output.schema_version),
             ("ai_risk", ar_output.schema_version),
+            ("ai_compliance", ac_output.schema_version),
             ("final_decision_composer", fdc_output.schema_version),
         ),
     )
@@ -190,6 +203,7 @@ def deserialize_agent_output(
         ai_inputs=ai_inputs,
         event_output=ei_output,
         risk_output=ar_output,
+        compliance_output=ac_output,
         composer_output=fdc_output,
         ei_error_metadata=ei_error_metadata,
     )
@@ -203,6 +217,7 @@ def deserialize_agent_output(
 def build_fallback_bundle(
     ei_output: EventInterpretationOutput | None = None,
     ar_output: AIRiskOutput | None = None,
+    ac_output: AIComplianceOutput | None = None,
     fdc_output: FinalDecisionComposerOutput | None = None,
     score: ScoreResult | None = None,
     ei_run_id: str | None = None,
@@ -253,6 +268,7 @@ def build_fallback_bundle(
     # Use provided outputs or fall back to defaults
     resolved_ei = ei_output if ei_output is not None else EventInterpretationOutput()
     resolved_ar = ar_output if ar_output is not None else AIRiskOutput()
+    resolved_ac = ac_output if ac_output is not None else AIComplianceOutput()
     resolved_fdc = fdc_output if fdc_output is not None else FinalDecisionComposerOutput()
 
     # ★ fallback bundle: _finalize_ei_output()로 interpreted_event_count,
@@ -277,6 +293,12 @@ def build_fallback_bundle(
         size_adjustment_factor=resolved_ar.size_adjustment_factor,
         risk_reason_codes=resolved_ar.reason_codes,
         risk_flags=resolved_ar.risk_flags,
+        compliance_opinion=resolved_ac.compliance_opinion,
+        compliance_score=resolved_ac.compliance_score,
+        compliance_confidence=resolved_ac.confidence,
+        compliance_reason_codes=resolved_ac.reason_codes,
+        compliance_policy_flags=resolved_ac.policy_flags,
+        compliance_check_passed=resolved_ac.compliance_opinion in {"allow", "warn"},
         # EI-derived
         event_bias=resolved_ei.aggregate_view.overall_bias,
         event_conflict=resolved_ei.aggregate_view.event_conflict,
@@ -289,11 +311,13 @@ def build_fallback_bundle(
         source_agent_names=(
             resolved_ei.agent_name,
             resolved_ar.agent_name,
+            resolved_ac.agent_name,
             resolved_fdc.agent_name,
         ),
         schema_versions=(
             ("event_interpretation", resolved_ei.schema_version),
             ("ai_risk", resolved_ar.schema_version),
+            ("ai_compliance", resolved_ac.schema_version),
             ("final_decision_composer", resolved_fdc.schema_version),
         ),
     )
@@ -302,6 +326,7 @@ def build_fallback_bundle(
         ai_inputs=ai_inputs,
         event_output=resolved_ei,
         risk_output=resolved_ar,
+        compliance_output=resolved_ac,
         composer_output=resolved_fdc,
         ei_error_metadata=ei_error_metadata,
     )

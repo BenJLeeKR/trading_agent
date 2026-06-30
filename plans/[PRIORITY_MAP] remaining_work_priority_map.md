@@ -1215,6 +1215,15 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - 이유
   - 설명력과 정책 해석 품질은 높일 수 있지만,
     deterministic 경계가 닫히기 전에는 우선순위가 더 높지 않다.
+- 체크리스트
+  - [x] `AIComplianceOutput` schema 및 `Stub/Real AIComplianceAgent` 구현
+  - [x] `DecisionAgentRunner`를 `EI -> AR -> AC -> FDC` 4-agent chain으로 확장
+  - [x] `FDC` prompt에 `AI Compliance` read-only section 투영
+  - [x] `trade_decision.decision_json` / `compliance_check_passed` projection 연결
+  - [x] `execution_service` submit 직전 `compliance_validator_v1` 결과와 `AI Compliance` 의견의 합본 inspection view 정리
+  - [x] `AI Compliance` 의견과 deterministic validator 결과의 불일치 계측 추가
+  - [x] `AI Compliance` prompt / runtime smoke / 실운영 로그 기준선 문서화
+    - [`plans/[RUNBOOK] ai_compliance_runtime_baseline.md`](./[RUNBOOK]%20ai_compliance_runtime_baseline.md)
 
 ### 권장 roadmap 배치
 
@@ -1337,7 +1346,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
     현재 단계에서 곧바로 주문 universe까지 넓히면 체결 리스크와 운영 복잡도가 더 빨리 커진다.
   - 따라서 `feature 기반 ranking backbone` 정교화 이후의 차상위 과제로 두는 것이 합리적이다.
 
-#### 11-c. 기대수익률 중심 보유기간 / Churn 제어 리팩토링 — `진행중`
+#### 11-c. 기대수익률 중심 보유기간 / Churn 제어 리팩토링 — `완료`
 
 - 배경
   - 장중 실측 기준 일부 종목에서
@@ -1544,6 +1553,144 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
       `market_overlay`의 정상 override 허용 케이스와
       `symbol_trade_state reentry cooldown` 차단 케이스를 추가해
       override가 기대수익률 anchor와 상태기계 제약을 동시에 따르도록 고정했다.
+- 남은 후속 범위
+  - [x] `holding_profile`별 `earliest_reduce_at` / `earliest_reentry_at`를
+        `symbol_trade_states`와 `decision_json.holding_profile_policy`에 함께 저장하고,
+        실제 pre-AI / pre-submit 차단 규칙에서 authoritative하게 사용
+    - `holding_profile_policy`에
+      `earliest_reduce_at`, `earliest_reentry_at`를 명시적으로 추가했고,
+      `pre_ai_gate`에서
+      `holding_profile_earliest_reduce_guard`,
+      `holding_profile_earliest_reentry_guard`
+      로 먼저 차단한다.
+    - submit 직전 `compliance_validator`에도
+      같은 시각창 차단을 연결해
+      조기 `SELL/REDUCE`와 조기 재진입 `BUY`를
+      hard guardrail로 막도록 수렴했다.
+  - [x] `SELL/REDUCE -> BUY` 재진입 조건을
+        단순 cooldown이 아니라
+        `signal_feature_snapshot_id 변화 + event novelty + edge_after_cost_bps 개선`
+        3축 hysteresis로 승격
+    - `pre_ai_gate`에서
+      same-snapshot은 즉시 차단하되,
+      신규 진입 이벤트 novelty가 있으면
+      단순 reentry cooldown만으로는 막지 않고
+      AI 단계까지 통과시킬 수 있게 완화했다.
+    - `DecisionOrchestratorService`의
+      `ai_override_gate`는
+      `signal_feature_snapshot_id 변화`,
+      `event novelty`,
+      `edge_after_cost_bps`의
+      세 축을 모두 통과해야만
+      `WATCH -> BUY/APPROVE` 재진입 승격을 허용하도록 바꿨다.
+    - 직전 `SELL/REDUCE`의
+      `edge_after_cost_bps`를
+      `symbol_trade_states.metadata_json`와
+      `holding_profile_policy`에 같이 저장해
+      이후 재진입 시 기대값 개선폭을 비교할 수 있게 했다.
+  - [x] `BUY -> SELL/REDUCE` 축소 조건을
+        `risk_off` 단독 허용이 아니라
+        `thesis invalidation / edge collapse / downside shock / holding_profile breach`
+        기반의 비대칭 문턱으로 재정의
+    - `held_position`의 조기 `REDUCE/EXIT`는
+      `earliest_reduce_at` 창이 살아있는 동안
+      `edge collapse`,
+      `downside shock`,
+      `thesis invalidation`,
+      `holding_profile breach`
+      중 하나가 없으면 `WATCH`로 강등하도록
+      `DecisionOrchestratorService`에
+      `held_position_exit_hysteresis_gate`를 추가했다.
+    - `symbol_trade_states.metadata_json`의
+      직전 entry `edge_after_cost_bps`와
+      최근 이벤트/리스크 신호를 같이 평가해
+      단순 `risk_off` 또는 약한 노이즈만으로
+      진입 직후 뒤집지 못하도록 정리했다.
+  - [x] `symbol_trade_states.state`를
+        `FLAT -> ENTRY_PENDING -> HELD_ACTIVE -> REDUCE_PENDING -> FLAT_COOLDOWN`
+        상태기계로 승격하고,
+        주문/체결/리컨실 결과를 기준으로 authoritative transition 정리
+    - `services.symbol_trade_state_machine`를 추가해
+      최신 보유수량 snapshot과 최신 주문 상태를 함께 읽어
+      `held_active / reduce_pending / exit_pending / flat_cooldown / flat`
+      으로 수렴시키는 deterministic 전이 규칙을 분리했다.
+    - `snapshot_sync` 직후
+      `symbol_trade_states` authoritative reconciliation을 실행해,
+      의사결정/submit 시점에 남겨진 pending state가
+      실제 포지션/주문 결과와 어긋난 채 장시간 잔존하지 않도록 정리했다.
+    - 스크립트 경로(`sync_snapshots`, `run_snapshot_sync_loop`,
+      `run_post_submit_sync_loop`)에도 같은 전이 경로를 연결해
+      실운영 batch와 수동 sync가 동일한 상태기계를 타도록 맞췄다.
+  - [x] `reverse_trade_hysteresis` 전용 service를 추가해
+        orchestrator / pre_ai_gate / execution_service에 흩어진
+        same-symbol reverse 판단을 하나의 deterministic contract로 수렴
+    - `services.reverse_trade_hysteresis`를 추가해
+      `signal_feature_snapshot_id 불변 차단`,
+      `reentry cooldown`,
+      `single-share reverse probe 차단`
+      판단을 공통 계약으로 모았다.
+  - [x] `expected value anchor`를
+        신규 BUY뿐 아니라
+        `REDUCE / EXIT`에도 강제하고,
+        직전 exit 시점 대비 `edge_after_cost_bps` 개선 여부까지 비교 저장
+    - `assemble()`가
+      `SubmitOrderRequest.metadata.expected_value_anchor`
+      에 현재/직전 entry·reduce·exit edge와 delta를 함께 싣고,
+      `decision_factory`와 `symbol_trade_states.metadata_json`
+      에 같은 anchor를 저장하도록 연결했다.
+    - `build_submit_order_request_from_decision()`는
+      `SELL / EXIT / REDUCE` actionable path에서
+      `expected_value_anchor.anchor_passed=false`이면
+      submit request를 만들지 않도록 강화했다.
+    - 테스트로
+      `held_position REDUCE submit 차단`,
+      `decision_json expected_value_anchor 저장`,
+      `reentry edge improvement delta 보존`
+      을 고정했다.
+  - [x] `holding_profile` / `reverse trade` / `probe churn` 결과를
+        inspection API와 운영 대시보드에서 바로 볼 수 있게
+        drill-down / attribution 노출 추가
+    - `GET /trade-decisions` 응답에
+      `decision_inspection` payload를 추가해
+      `holding_profile`,
+      `expected_value_anchor`,
+      `reverse_trade`,
+      `probe_churn`,
+      `guardrail_attribution`
+      을 운영용 요약으로 바로 노출한다.
+    - 운영 대시보드의
+      `Universe Selection / Market Overlay`
+      freeze 표는
+      오늘자 `trade-decisions`를 함께 조회해
+      종목별 `최근 판단`,
+      `holding profile`,
+      `차단/가드레일 사유`
+      를 같이 보이도록 확장했다.
+    - 백엔드 inspection 테스트와
+      프런트 production build까지 통과시켜
+      응답 계약과 UI 연결을 검증했다.
+  - [x] `holding_profile`별 성과,
+        reverse-trade 차단 전후 churn 빈도,
+        `edge_after_cost_bps` 대비 실제 보유기간/성과를 비교하는
+        attribution 리포트 추가
+    - `GET /performance-holding-profile-attribution`를 추가해
+      `holding_profile`별
+      decision / order / fill 전환,
+      평균 `edge_after_cost_bps`,
+      close-out 기준 평균 보유시간과 평균 수익률 proxy를 집계한다.
+    - 같은 리포트에서
+      `reverse_trade`,
+      `probe_churn`,
+      `holding_profile_guard`
+      차단 빈도와
+      계좌 기준 `opposite fill` churn 빈도를 함께 비교한다.
+    - `edge_after_cost_bps`는
+      `lt_0 / 0_10 / 10_20 / 20_35 / ge_35`
+      bucket으로 나눠
+      실제 close-out 보유시간/수익률 proxy와 비교 가능하게 만들었다.
+    - API 계약 테스트와
+      컨테이너 기준 `py_compile`
+      검증까지 통과시켰다.
 - 우선순위 이유
   - 현재의 짧은 보유기간은
     의도된 단기 전략 결과라기보다

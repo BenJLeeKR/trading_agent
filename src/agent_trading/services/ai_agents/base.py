@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from agent_trading.services.common_types import AIPolicyContextView
     from agent_trading.services.ai_agents.schemas import EventInterpretationOutput
     from agent_trading.services.ai_agents.schemas import AIRiskOutput
+    from agent_trading.services.ai_agents.schemas import AIComplianceOutput
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +71,7 @@ class AgentExecutionRequest:
     market: str | None = None
     event_interpretation_output: EventInterpretationOutput | None = None
     ai_risk_output: AIRiskOutput | None = None
+    ai_compliance_output: AIComplianceOutput | None = None
     model_id: str | None = None
     prompt_id: str | None = None
     # --- Axis 2: Source type for no-event policy differentiation ---

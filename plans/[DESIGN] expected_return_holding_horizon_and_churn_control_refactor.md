@@ -619,6 +619,278 @@ orchestrator는 조립자로 남기는 편이 맞다.
 
 ---
 
+## 14-A. 현재 기준 남은 후속 범위
+
+현재까지는 `Phase 1`과 `Phase 2`의 1차 골격이 대부분 닫혔다.
+하지만 아래 항목들은 아직 남아 있으며,
+`11-c`를 `완료`로 보려면 이 범위를 추가로 닫아야 한다.
+
+### 1. holding_profile 정책의 authoritative 집행
+
+아직 `holding_profile`은 저장과 일부 cooldown 계산 중심이다.
+다음이 추가로 필요하다.
+
+- `earliest_reduce_at`
+- `earliest_reentry_at`
+- `holding_profile breach`
+
+즉,
+`decision_json.holding_profile_policy`와
+`symbol_trade_states`에 기록된 값이
+설명용 메타데이터가 아니라
+실제 pre-AI / pre-submit 차단 규칙으로 동작해야 한다.
+
+현재 기준 1차 authoritative 집행은 완료했다.
+
+- `holding_profile_policy`에
+  `earliest_reduce_at`, `earliest_reentry_at` 추가
+- `decision_json.holding_profile_policy` 직렬화 반영
+- `symbol_trade_states.metadata_json.holding_profile_policy`를
+  authoritative source로 사용
+- `pre_ai_gate`에서
+  `holding_profile_earliest_reduce_guard`,
+  `holding_profile_earliest_reentry_guard`
+  차단 반영
+- submit 직전 `compliance_validator`에서도
+  같은 시간창 차단을 재검증하도록 연결
+
+즉, 이제
+`minimum_hold_until` / `reentry_cooldown_until`은
+설명용 보조값이 아니라,
+`earliest_*` 명시 필드와 함께
+실차단 규칙으로 승격되었다.
+
+### 2. reverse trade hysteresis의 2차 승격
+
+현재는 다음이 1차 구현 상태다.
+
+- 시간 기반 cooldown
+- `signal_feature_snapshot_id` 불변 차단
+
+하지만 최종 구조로는 부족하다.
+추가로 아래 3축을 동시에 봐야 한다.
+
+- `signal_feature_snapshot_id` 변화
+- `event novelty` 또는 신규 강한 이벤트
+- `edge_after_cost_bps` 개선
+
+즉, `SELL/REDUCE -> BUY` 재진입은
+단순 시간 경과가 아니라
+정보 변화와 기대값 개선이 같이 확인되어야 한다.
+
+현재 기준 2차 승격의 1차 구현은 완료했다.
+
+- `pre_ai_gate`
+  - same-snapshot 재진입은 즉시 차단
+  - 다만 최근 신규 진입 이벤트 novelty가 있으면
+    단순 cooldown만으로는 막지 않고
+    AI 단계까지 진행 허용
+- `DecisionOrchestratorService.ai_override_gate`
+  - `signal_feature_snapshot_id 변화`
+  - `event novelty`
+  - `edge_after_cost_bps` 개선
+  세 축을 모두 통과해야
+  `WATCH/HOLD`에서 `BUY/APPROVE`로 재진입 승격 허용
+- `symbol_trade_states.metadata_json`
+  - 직전 `SELL/REDUCE/EXIT` 시점의
+    `edge_after_cost_bps` 저장
+  - 이후 재진입 시
+    `current_edge_after_cost_bps`와 비교 가능하게 정리
+
+아직 남은 것은
+이 3축 판정을 inspection / attribution에 직접 노출하고,
+실측 리포트로 churn 감소와 기대수익률 개선을 확인하는 단계다.
+
+### 3. 비대칭 exit hysteresis 강화
+
+현재는 조기 SELL/REDUCE 차단의 1차 cooldown은 들어갔지만,
+축소/청산 문턱 자체가 완전히 비대칭으로 재정의되진 않았다.
+
+최종적으로는 아래 중 하나가 필요해야 한다.
+
+- `thesis invalidation`
+- `edge collapse`
+- `unexpected downside shock`
+- `holding_profile risk breach`
+
+즉,
+단순 `risk_off` 또는 약한 노이즈만으로
+진입 직후 바로 뒤집는 구조를 더 줄여야 한다.
+
+현재 기준 1차 비대칭 exit hysteresis 구현은 완료했다.
+
+- 적용 범위:
+  - `held_position`
+  - `earliest_reduce_at` 창이 아직 살아있는 조기 `REDUCE / EXIT`
+- 허용 조건:
+  - `edge collapse`
+  - `unexpected downside shock`
+  - `thesis invalidation`
+  - `holding_profile breach`
+- 구현 위치:
+  - `services.reverse_trade_hysteresis.evaluate_symbol_state_sell_hysteresis()`
+  - `DecisionOrchestratorService._check_held_position_exit_hysteresis_gate()`
+
+즉, 이제 조기 축소/청산은
+`risk_off` 단독이나 약한 잡음으로는 열리지 않고,
+위의 강한 exit 근거 중 하나가 있어야만 통과한다.
+
+아직 남은 것은
+이 판단 결과를 inspection / attribution에 노출하고,
+exit 시점의 expected value anchor를 더 직접 비교하는 단계다.
+
+### 4. symbol_trade_states 상태기계 완성
+
+현재 테이블/저장 경로는 들어갔지만,
+상태기계 전이가 완결된 것은 아니다.
+
+목표 상태는 아래와 같다.
+
+```text
+FLAT
+ -> ENTRY_PENDING
+ -> HELD_ACTIVE
+ -> REDUCE_PENDING
+ -> FLAT_COOLDOWN
+```
+
+추가로 아래를 authoritative하게 연결해야 한다.
+
+- 주문 생성
+- 주문 체결
+- 부분 체결
+- cancel / expire
+- reconciliation 결과
+
+즉, `symbol_trade_states`는
+단순 최신 메타 캐시가 아니라
+심볼 단위 행동 제약의 authoritative 상태여야 한다.
+
+### 5. 전용 reverse_trade_hysteresis service 분리
+
+현재 reverse 판단은
+`pre_ai_gate`, `execution_service`, `DecisionOrchestratorService`에
+나뉘어 있다.
+
+다음 단계에서는 전용 service로 수렴해야 한다.
+
+- `services.reverse_trade_hysteresis`
+
+이 service는 최소한 아래 입력을 받아야 한다.
+
+- current source type
+- current signal feature anchor
+- last action / last state
+- cooldown window
+- event novelty
+- expected value delta
+
+현재 기준 1차 구현은 완료했다.
+
+- `services.reverse_trade_hysteresis` 추가
+- `pre_ai_gate`의
+  `held_position_recent_buy_sell_cooldown`,
+  `held_position_recent_risk_sell_cooldown`,
+  `same_symbol_reentry_cooldown`,
+  `reverse_trade_same_signal_feature_snapshot`
+  판단 수렴
+- `DecisionOrchestratorService`의
+  `ai_override_reverse_cooldown_blocked`
+  경로를 같은 contract로 연결
+- `ExecutionService`의
+  `reverse_trade_single_share_blocked`
+  경로도 같은 contract로 연결
+
+다만 이것은 `contract 수렴` 단계다.
+`event novelty + edge_after_cost_bps 개선`을 포함한
+3축 hysteresis 승격은
+여전히 별도 후속 범위로 남아 있다.
+
+### 6. expected value anchor의 exit 경로 확장
+
+현재는 신규 BUY 쪽 anchor 강제가 더 강하다.
+다음 단계에서는 `REDUCE / EXIT`에도
+`after-cost expected value` 논리가 더 직접 연결되어야 한다.
+
+예를 들면 다음을 비교해야 한다.
+
+- 직전 entry 시점 edge
+- 직전 exit / reduce 시점 edge
+- 현재 edge_after_cost_bps
+
+즉, 청산도 단순 위험감소가 아니라
+기대값 악화의 수치적 근거를 가져야 한다.
+
+구현 기준으로는 다음이 반영되었다.
+
+- `SubmitOrderRequest.metadata.expected_value_anchor`에
+  현재 edge,
+  직전 entry / reduce / exit edge,
+  각 delta를 함께 저장
+- `decision_factory`가 동일 payload를
+  `decision_json.expected_value_anchor`에 보존
+- `symbol_trade_states.metadata_json`에도
+  최신 anchor와 직전 exit/reduce edge를 함께 축적
+- submit translation은
+  `SELL / EXIT / REDUCE` 경로에서
+  `expected_value_anchor.anchor_passed=false`이면
+  실제 주문 request를 만들지 않음
+
+### 7. inspection / attribution / 운영 관측 확장
+
+현재는 차단 자체는 많이 남기지만,
+운영자가 `왜 churn이 줄었는지 / 왜 다시 진입을 막았는지`를
+한 번에 보기 어렵다.
+
+추가로 필요한 관측 항목:
+
+- `holding_profile`
+- `reverse_trade_hysteresis` 판단 결과
+- `probe churn guard` 차단 결과
+- `edge_after_cost_bps` 비교값
+- `last_signal_feature_snapshot_id` 대비 변화 여부
+
+이 정보는
+inspection API / 운영 대시보드 / attribution 리포트에서
+직접 노출되어야 한다.
+
+현행 구현 기준으로는 다음이 반영되었다.
+
+- `GET /trade-decisions`에
+  `decision_inspection` view를 추가해
+  `holding_profile`,
+  `expected_value_anchor`,
+  `reverse_trade`,
+  `probe_churn`,
+  `guardrail_attribution`
+  을 한 payload에서 바로 읽을 수 있게 했다.
+- 운영 대시보드의
+  `Universe Selection / Market Overlay`
+  freeze 표는
+  오늘자 `trade-decisions`를 함께 조회해
+  종목별 `최근 판단`,
+  `holding profile`,
+  `차단/가드레일 사유`
+  를 나란히 보여주도록 확장했다.
+
+### 8. 성과 검증 리포트
+
+`11-c`가 완료되었다고 판단하려면
+단지 guard를 추가하는 것만으로는 부족하다.
+실제로 아래가 줄거나 개선됐는지 비교가 필요하다.
+
+- same-symbol reverse trade 횟수
+- `BUY -> SELL/REDUCE -> BUY` churn 빈도
+- `quantity=1` probe 발생 빈도
+- holding profile별 평균 보유기간
+- holding profile별 기대값 대비 실현성과
+
+즉, 최종 완료 기준에는
+`churn 차단이 실제 성과 개선으로 이어졌는지`를 보는
+attribution 단계가 포함되어야 한다.
+
+---
+
 ## 15. 결론
 
 현재 문제의 본질은

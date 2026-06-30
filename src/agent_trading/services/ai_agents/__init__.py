@@ -8,7 +8,7 @@ base.py
     ``AgentExecutionRequest``, ``ProviderAIAgent`` protocol,
     ``AIProviderClient`` protocol, ``RawProviderResponse``.
 schemas.py
-    Structured output dataclasses for the three v1 agents.
+    Structured output dataclasses for the v1 agents.
 recorder.py
     ``AgentRunRecorder`` — in-memory stub for recording agent runs.
 provider_client.py
@@ -17,6 +17,8 @@ event_interpretation.py
     ``StubEventInterpretationAgent`` and ``EventInterpretationAgent`` (real).
 ai_risk.py
     ``StubAIRiskAgent``.
+ai_compliance.py
+    ``StubAIComplianceAgent`` and ``AIComplianceAgent`` (real).
 final_decision_composer.py
     ``StubFinalDecisionComposerAgent`` and ``FinalDecisionComposerAgent`` (real).
 """
@@ -29,6 +31,7 @@ from agent_trading.services.ai_agents.base import (
 )
 from agent_trading.services.ai_agents.schemas import (
     AIRiskOutput,
+    AIComplianceOutput,
     EventInterpretationOutput,
     FinalDecisionComposerOutput,
 )
@@ -41,6 +44,10 @@ from agent_trading.services.ai_agents.event_interpretation import (
     StubEventInterpretationAgent,
 )
 from agent_trading.services.ai_agents.ai_risk import AIRiskAgent, StubAIRiskAgent
+from agent_trading.services.ai_agents.ai_compliance import (
+    AIComplianceAgent,
+    StubAIComplianceAgent,
+)
 from agent_trading.services.ai_agents.final_decision_composer import (
     FinalDecisionComposerAgent,
     StubFinalDecisionComposerAgent,
@@ -53,6 +60,7 @@ __all__ = [
     "RawProviderResponse",
     "EventInterpretationOutput",
     "AIRiskOutput",
+    "AIComplianceOutput",
     "FinalDecisionComposerOutput",
     "AgentRunRecorder",
     "OpenAICompatibleClient",
@@ -60,6 +68,8 @@ __all__ = [
     "StubEventInterpretationAgent",
     "AIRiskAgent",
     "StubAIRiskAgent",
+    "AIComplianceAgent",
+    "StubAIComplianceAgent",
     "FinalDecisionComposerAgent",
     "StubFinalDecisionComposerAgent",
 ]

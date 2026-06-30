@@ -364,6 +364,7 @@ export interface TradeDecisionDetail {
   rationale_summary: string | null;
   source_type: string | null;
   decision_json?: Record<string, unknown>;
+  decision_inspection?: Record<string, unknown> | null;
   // ── Pipeline stop / order exposure ──
   order_request_id: string | null;
   order_status: string | null;

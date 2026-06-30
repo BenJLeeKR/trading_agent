@@ -7,7 +7,7 @@ import time as time_module
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -33,6 +33,10 @@ from agent_trading.domain.enums import DecisionType, EntryStyle, OrderSide, Orde
 from agent_trading.domain.models import Quote, SubmitOrderRequest
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.services.order_sync_service import OrderSyncService
+from agent_trading.services.reverse_trade_hysteresis import (
+    evaluate_symbol_state_sell_hysteresis,
+    evaluate_symbol_state_buy_hysteresis,
+)
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import AccountLookup
 from agent_trading.services.ai_agents.base import (
@@ -43,6 +47,7 @@ from agent_trading.services.ai_agents.event_interpretation import (
     StubEventInterpretationAgent,
 )
 from agent_trading.services.ai_agents.ai_risk import StubAIRiskAgent
+from agent_trading.services.ai_agents.ai_compliance import StubAIComplianceAgent
 from agent_trading.services.ai_agents.final_decision_composer import (
     StubFinalDecisionComposerAgent,
 )
@@ -51,6 +56,7 @@ from agent_trading.services.ai_agents.korean_normalizer import (
 )
 from agent_trading.services.ai_agents.recorder import AgentRunRecorder
 from agent_trading.services.ai_agents.schemas import (
+    AIComplianceOutput,
     AIRiskOutput,
     EventInterpretationOutput,
     FinalDecisionComposerOutput,
@@ -232,6 +238,7 @@ class DecisionOrchestratorService:
         score_calculator: ScoreCalculator | None = None,
         event_interpretation_agent: ProviderAIAgent | None = None,
         ai_risk_agent: ProviderAIAgent | None = None,
+        ai_compliance_agent: ProviderAIAgent | None = None,
         final_decision_agent: ProviderAIAgent | None = None,
         agent_recorder: AgentRunRecorder | None = None,
         # --- Phase 5.5: post-submit sync ---
@@ -254,6 +261,7 @@ class DecisionOrchestratorService:
             event_interpretation_agent or StubEventInterpretationAgent()
         )
         self._ai_risk_agent = ai_risk_agent or StubAIRiskAgent()
+        self._ai_compliance_agent = ai_compliance_agent or StubAIComplianceAgent()
         self._final_decision_agent = final_decision_agent or StubFinalDecisionComposerAgent()
         self._agent_recorder = agent_recorder or AgentRunRecorder(repo=self._repos.agent_runs)
         # --- Phase 5.5 ---
@@ -284,6 +292,7 @@ class DecisionOrchestratorService:
             repos=self._repos,
             event_interpretation_agent=self._event_interpretation_agent,
             ai_risk_agent=self._ai_risk_agent,
+            ai_compliance_agent=self._ai_compliance_agent,
             final_decision_composer_agent=self._final_decision_agent,
             agent_run_recorder=self._agent_recorder,
             score_calculator=self._score_calculator,
@@ -623,32 +632,125 @@ class DecisionOrchestratorService:
         if symbol_state is None:
             return None
 
-        now_utc = datetime.now(timezone.utc)
-        if symbol_state.state in {"entry_pending", "reduce_pending", "exit_pending"}:
-            rationale = (
-                f"[ai_override_gate] symbol_state={symbol_state.state} "
-                f"pending conflict FDC={decision_type} -> {downgrade_decision}"
-            )
+        recent_events = await self._repos.external_events.list_by_symbol(
+            instrument.symbol,
+            datetime.now(timezone.utc) - timedelta(hours=24),
+            include_seeded_news=True,
+        )
+
+        hysteresis_decision = evaluate_symbol_state_buy_hysteresis(
+            symbol_state=symbol_state,
+            current_signal_feature_snapshot_id=(
+                str(decision_context.signal_feature_snapshot_id)
+                if decision_context.signal_feature_snapshot_id is not None
+                else None
+            ),
+            now_utc=datetime.now(timezone.utc),
+            current_edge_after_cost_bps=ai_inputs.edge_after_cost_bps,
+            recent_events=recent_events,
+        )
+        if hysteresis_decision.blocked:
+            detail_code = hysteresis_decision.detail_code or "ai_override_gate"
+            if detail_code == "ai_override_state_pending_conflict":
+                rationale = (
+                    f"[ai_override_gate] symbol_state={symbol_state.state} "
+                    f"pending conflict FDC={decision_type} -> {downgrade_decision}"
+                )
+            elif detail_code == "ai_override_reverse_same_signal_feature_blocked":
+                rationale = (
+                    f"[ai_override_gate] same_signal_feature_snapshot_id="
+                    f"{hysteresis_decision.details.get('current_signal_feature_snapshot_id')} "
+                    f"reentry cooldown active FDC={decision_type} -> {downgrade_decision}"
+                )
+            elif detail_code == "ai_override_reverse_feature_change_blocked":
+                rationale = (
+                    f"[ai_override_gate] signal_feature_snapshot change missing "
+                    f"current={hysteresis_decision.details.get('current_signal_feature_snapshot_id')} "
+                    f"last={hysteresis_decision.details.get('last_signal_feature_snapshot_id')} "
+                    f"FDC={decision_type} -> {downgrade_decision}"
+                )
+            elif detail_code == "ai_override_reverse_event_novelty_blocked":
+                rationale = (
+                    f"[ai_override_gate] event novelty insufficient "
+                    f"reentry_novelty={hysteresis_decision.details.get('reentry_event_novelty')} "
+                    f"FDC={decision_type} -> {downgrade_decision}"
+                )
+            elif detail_code == "ai_override_reverse_edge_regression_blocked":
+                rationale = (
+                    f"[ai_override_gate] edge_after_cost regression "
+                    f"current={hysteresis_decision.details.get('current_edge_after_cost_bps')} "
+                    f"last_exit={hysteresis_decision.details.get('last_exit_edge_after_cost_bps')} "
+                    f"FDC={decision_type} -> {downgrade_decision}"
+                )
+            else:
+                rationale = (
+                    f"[ai_override_gate] earliest_reentry_at="
+                    f"{hysteresis_decision.details.get('earliest_reentry_at')} "
+                    f"FDC={decision_type} -> {downgrade_decision}"
+                )
             return (
                 downgrade_decision,
                 rationale,
-                ("ai_override_gate", "ai_override_state_pending_conflict"),
-            )
-        if (
-            symbol_state.reentry_cooldown_until is not None
-            and symbol_state.reentry_cooldown_until > now_utc
-        ):
-            rationale = (
-                f"[ai_override_gate] reentry_cooldown_until="
-                f"{symbol_state.reentry_cooldown_until.isoformat()} "
-                f"FDC={decision_type} -> {downgrade_decision}"
-            )
-            return (
-                downgrade_decision,
-                rationale,
-                ("ai_override_gate", "ai_override_reverse_cooldown_blocked"),
+                ("ai_override_gate", detail_code),
             )
         return None
+
+    async def _check_held_position_exit_hysteresis_gate(
+        self,
+        *,
+        source_type: str,
+        fdc_output: FinalDecisionComposerOutput | None,
+        ai_inputs: AIDecisionInputs,
+        risk_output: AIRiskOutput | None,
+        decision_context: DecisionContextEntity | None,
+        instrument: InstrumentEntity | None,
+        position_snapshot: PositionSnapshotEntity | None,
+    ) -> tuple[str, str, tuple[str, ...]] | None:
+        if source_type != "held_position" or fdc_output is None:
+            return None
+        decision_type = (fdc_output.decision_type or "").strip().upper()
+        decision_side = (fdc_output.side or "").strip().upper()
+        has_position = (
+            position_snapshot is not None
+            and position_snapshot.quantity is not None
+            and position_snapshot.quantity > 0
+        )
+        if not has_position:
+            return None
+        if decision_type not in {"REDUCE", "EXIT", "SELL"} or decision_side != "SELL":
+            return None
+        if decision_context is None or instrument is None:
+            return None
+
+        symbol_state = await self._repos.symbol_trade_states.get_by_account_and_instrument(
+            decision_context.account_id,
+            instrument.instrument_id,
+        )
+        if symbol_state is None:
+            return None
+        recent_events = await self._repos.external_events.list_by_symbol(
+            instrument.symbol,
+            datetime.now(timezone.utc) - timedelta(hours=24),
+            include_seeded_news=True,
+        )
+        hysteresis = evaluate_symbol_state_sell_hysteresis(
+            symbol_state=symbol_state,
+            current_edge_after_cost_bps=ai_inputs.edge_after_cost_bps,
+            risk_output=risk_output,
+            recent_events=recent_events,
+            now_utc=datetime.now(timezone.utc),
+        )
+        if not hysteresis.blocked:
+            return None
+        rationale = (
+            f"[held_position_exit_hysteresis] early reduce blocked "
+            f"edge_collapse={hysteresis.details.get('exit_edge_collapse_passed')} "
+            f"downside_shock={hysteresis.details.get('exit_downside_shock_passed')} "
+            f"thesis_invalidation={hysteresis.details.get('exit_thesis_invalidation_passed')} "
+            f"holding_profile_breach={hysteresis.details.get('exit_holding_profile_breach_passed')} "
+            f"FDC={decision_type} -> WATCH"
+        )
+        return ("WATCH", rationale, ("held_position_exit_hysteresis_blocked",))
 
     async def _ensure_or_create_decision_context(
         self,
@@ -821,7 +923,42 @@ class DecisionOrchestratorService:
             if serialized_policy_payload is not None
             else policy_metadata
         )
+        expected_value_anchor_payload = (
+            dict(trade_decision.decision_json.get("expected_value_anchor"))
+            if isinstance(trade_decision.decision_json.get("expected_value_anchor"), dict)
+            else None
+        )
+        if expected_value_anchor_payload is not None:
+            merged_metadata["expected_value_anchor"] = expected_value_anchor_payload
         merged_metadata["last_trade_decision_id"] = str(trade_decision.trade_decision_id)
+        current_edge_after_cost_bps = (
+            trade_decision.decision_json.get("expected_value_gate", {}).get("edge_after_cost_bps")
+            if isinstance(trade_decision.decision_json.get("expected_value_gate"), dict)
+            else None
+        )
+        if trade_decision.side == OrderSide.BUY and trade_decision.decision_type in {
+            DecisionType.APPROVE,
+            DecisionType.BUY,
+        }:
+            merged_metadata["last_entry_edge_after_cost_bps"] = current_edge_after_cost_bps
+            if isinstance(merged_metadata.get("holding_profile_policy"), dict):
+                merged_metadata["holding_profile_policy"]["last_entry_edge_after_cost_bps"] = current_edge_after_cost_bps
+        elif trade_decision.side == OrderSide.SELL and trade_decision.decision_type == DecisionType.REDUCE:
+            merged_metadata["last_reduce_edge_after_cost_bps"] = current_edge_after_cost_bps
+            if isinstance(merged_metadata.get("holding_profile_policy"), dict):
+                merged_metadata["holding_profile_policy"]["last_reduce_edge_after_cost_bps"] = current_edge_after_cost_bps
+        elif trade_decision.side == OrderSide.SELL and trade_decision.decision_type in {
+            DecisionType.SELL,
+            DecisionType.EXIT,
+        }:
+            merged_metadata["last_exit_edge_after_cost_bps"] = current_edge_after_cost_bps
+            if isinstance(merged_metadata.get("holding_profile_policy"), dict):
+                merged_metadata["holding_profile_policy"]["last_exit_edge_after_cost_bps"] = current_edge_after_cost_bps
+        if expected_value_anchor_payload is not None:
+            if isinstance(merged_metadata.get("holding_profile_policy"), dict):
+                merged_metadata["holding_profile_policy"]["expected_value_anchor"] = (
+                    expected_value_anchor_payload
+                )
 
         await self._repos.symbol_trade_states.upsert(
             SymbolTradeStateEntity(
@@ -1205,6 +1342,99 @@ class DecisionOrchestratorService:
             rule_results=rule_results or {},
             stop_reason=blocking_rule_codes[0] if blocking_rule_codes else None,
         )
+
+    def _build_expected_value_anchor_metadata(
+        self,
+        *,
+        ai_inputs: AIDecisionInputs,
+        source_type: str,
+        decision_type: str,
+        symbol_state: SymbolTradeStateEntity | None,
+    ) -> dict[str, object]:
+        def _to_decimal(value: object | None) -> Decimal | None:
+            if value in (None, ""):
+                return None
+            if isinstance(value, Decimal):
+                return value
+            try:
+                return Decimal(str(value))
+            except (InvalidOperation, TypeError, ValueError):
+                return None
+
+        def _to_str(value: Decimal | None) -> str | None:
+            return str(value) if value is not None else None
+
+        current_edge = ai_inputs.edge_after_cost_bps
+        state_meta = dict(symbol_state.metadata_json) if symbol_state is not None else {}
+        policy_meta = (
+            dict(state_meta.get("holding_profile_policy"))
+            if isinstance(state_meta.get("holding_profile_policy"), dict)
+            else {}
+        )
+        last_entry_edge = _to_decimal(
+            policy_meta.get("last_entry_edge_after_cost_bps")
+            or state_meta.get("last_entry_edge_after_cost_bps")
+        )
+        last_reduce_edge = _to_decimal(
+            policy_meta.get("last_reduce_edge_after_cost_bps")
+            or state_meta.get("last_reduce_edge_after_cost_bps")
+        )
+        last_exit_edge = _to_decimal(
+            policy_meta.get("last_exit_edge_after_cost_bps")
+            or state_meta.get("last_exit_edge_after_cost_bps")
+        )
+        delta_vs_last_entry = (
+            current_edge - last_entry_edge
+            if current_edge is not None and last_entry_edge is not None
+            else None
+        )
+        delta_vs_last_reduce = (
+            current_edge - last_reduce_edge
+            if current_edge is not None and last_reduce_edge is not None
+            else None
+        )
+        delta_vs_last_exit = (
+            current_edge - last_exit_edge
+            if current_edge is not None and last_exit_edge is not None
+            else None
+        )
+        normalized_decision_type = (decision_type or "").strip().upper()
+        anchor_required = normalized_decision_type in {
+            "APPROVE",
+            "BUY",
+            "SELL",
+            "EXIT",
+            "REDUCE",
+        }
+        anchor_passed = (
+            anchor_required
+            and ai_inputs.expected_value_gate_passed
+            and current_edge is not None
+            and ai_inputs.expected_return_bps is not None
+            and ai_inputs.expected_downside_bps is not None
+            and ai_inputs.net_expected_value_bps is not None
+            and ai_inputs.final_trade_score is not None
+        )
+        return {
+            "decision_type": normalized_decision_type,
+            "source_type": source_type,
+            "anchor_required": anchor_required,
+            "anchor_passed": anchor_passed,
+            "expected_value_gate_passed": ai_inputs.expected_value_gate_passed,
+            "current_edge_after_cost_bps": _to_str(current_edge),
+            "last_entry_edge_after_cost_bps": _to_str(last_entry_edge),
+            "last_reduce_edge_after_cost_bps": _to_str(last_reduce_edge),
+            "last_exit_edge_after_cost_bps": _to_str(last_exit_edge),
+            "edge_vs_last_entry_delta_bps": _to_str(delta_vs_last_entry),
+            "edge_vs_last_reduce_delta_bps": _to_str(delta_vs_last_reduce),
+            "edge_vs_last_exit_delta_bps": _to_str(delta_vs_last_exit),
+            "reentry_edge_improved_vs_last_exit": (
+                delta_vs_last_exit is not None and delta_vs_last_exit > 0
+            ),
+            "exit_edge_deteriorated_vs_last_entry": (
+                delta_vs_last_entry is not None and delta_vs_last_entry < 0
+            ),
+        }
 
     def _build_compliance_validation_result(
         self,
@@ -1895,6 +2125,64 @@ class DecisionOrchestratorService:
                 guard_rationale,
             )
 
+        held_position_exit_gate = await self._check_held_position_exit_hysteresis_gate(
+            source_type=derivation.source_type,
+            fdc_output=agent_bundle.composer_output,
+            ai_inputs=agent_bundle.ai_inputs,
+            risk_output=agent_bundle.risk_output,
+            decision_context=decision_context,
+            instrument=instrument,
+            position_snapshot=position_snapshot,
+        )
+        if held_position_exit_gate is not None:
+            guarded_dt, guard_rationale, guard_reason_codes = held_position_exit_gate
+            validation_result = self._build_decision_policy_validation_result(
+                blocking_rule_codes=guard_reason_codes,
+                rule_results={
+                    "source_type": derivation.source_type,
+                    "guarded_decision_type": guarded_dt,
+                },
+            )
+            object.__setattr__(agent_bundle.ai_inputs, "decision_type", guarded_dt)
+            object.__setattr__(agent_bundle.ai_inputs, "side", "")
+            self._apply_validation_result_to_ai_inputs(
+                agent_bundle.ai_inputs,
+                validation_result=validation_result,
+            )
+            existing_reason_codes = tuple(agent_bundle.ai_inputs.reason_codes or ())
+            merged_reason_codes = tuple(
+                dict.fromkeys(existing_reason_codes + guard_reason_codes)
+            )
+            object.__setattr__(
+                agent_bundle.ai_inputs,
+                "reason_codes",
+                merged_reason_codes,
+            )
+            if agent_bundle.composer_output is not None:
+                object.__setattr__(agent_bundle.composer_output, "decision_type", guarded_dt)
+                object.__setattr__(agent_bundle.composer_output, "side", "")
+                composer_reason_codes = tuple(agent_bundle.composer_output.reason_codes or ())
+                merged_composer_reason_codes = tuple(
+                    dict.fromkeys(composer_reason_codes + guard_reason_codes)
+                )
+                object.__setattr__(
+                    agent_bundle.composer_output,
+                    "reason_codes",
+                    merged_composer_reason_codes,
+                )
+                fdc_summary = agent_bundle.composer_output.summary
+                object.__setattr__(
+                    agent_bundle.composer_output,
+                    "summary",
+                    (fdc_summary + f" | {guard_rationale}") if fdc_summary else guard_rationale,
+                )
+            logger.info(
+                "Held position exit hysteresis gate: symbol=%s source_type=%s rationale=%s",
+                request.symbol,
+                derivation.source_type,
+                guard_rationale,
+            )
+
         buy_eligibility_guard = self._check_buy_eligibility_upgrade_guard(
             source_type=derivation.source_type,
             deterministic_trigger=derivation.deterministic_trigger,
@@ -2069,6 +2357,15 @@ class DecisionOrchestratorService:
                 else None
             )
         )
+        current_symbol_state = None
+        if (
+            assembled_context.decision_context is not None
+            and instrument is not None
+        ):
+            current_symbol_state = await self._repos.symbol_trade_states.get_by_account_and_instrument(
+                assembled_context.decision_context.account_id,
+                instrument.instrument_id,
+            )
         holding_profile_policy = derive_holding_profile_policy(
             source_type=assembled_context.source_type,
             decision_type=agent_bundle.ai_inputs.decision_type,
@@ -2088,6 +2385,12 @@ class DecisionOrchestratorService:
         )
         assembled_metadata["holding_profile_policy"] = serialize_holding_profile_policy(
             holding_profile_policy
+        )
+        assembled_metadata["expected_value_anchor"] = self._build_expected_value_anchor_metadata(
+            ai_inputs=agent_bundle.ai_inputs,
+            source_type=assembled_context.source_type,
+            decision_type=agent_bundle.ai_inputs.decision_type,
+            symbol_state=current_symbol_state,
         )
         assembled_request = replace(assembled_request, metadata=assembled_metadata)
 

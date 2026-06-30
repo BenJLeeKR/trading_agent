@@ -21,7 +21,11 @@ from agent_trading.api.schemas import (
     BenchmarkComparisonView,
     BenchmarkHistoryResponse,
     DailyPerformancePointView,
+    EdgeOutcomeAttributionItem,
     GateEvaluationView,
+    GuardrailAttributionItem,
+    HoldingProfileAttributionItem,
+    HoldingProfilePerformanceAttributionResponse,
     PerformanceHistoryResponse,
     PerformanceMetricsView,
     RelativeBenchmarkPointView,
@@ -71,6 +75,10 @@ def _build_trigger_bucket_items(rows: list[object]) -> list[TriggerAttributionBu
             )
         )
     return items
+
+
+def _float_or_none(value: object) -> float | None:
+    return float(value) if value is not None else None
 
 
 @router.get(
@@ -269,6 +277,373 @@ async def get_performance_trigger_attribution(
         ),
         alignment_items=_build_trigger_bucket_items(alignment_rows),
         candidate_intent_items=_build_trigger_bucket_items(candidate_rows),
+    )
+
+
+@router.get(
+    "/performance-holding-profile-attribution",
+    response_model=HoldingProfilePerformanceAttributionResponse,
+)
+async def get_performance_holding_profile_attribution(
+    account_id: str = Query(..., description="Account UUID"),
+    lookback_days: int = Query(14, ge=1, le=90),
+    churn_window_hours: int = Query(24, ge=1, le=168),
+    db=Depends(get_db),
+) -> HoldingProfilePerformanceAttributionResponse:
+    """holding_profile / reverse-trade / probe churn 관점의 deterministic attribution 리포트."""
+    try:
+        aid = UUID(account_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid account_id UUID")
+
+    since_sql = "NOW() - ($2::int * INTERVAL '1 day')"
+    edge_expr = (
+        "NULLIF(td.decision_json#>>'{expected_value_gate,edge_after_cost_bps}', '')::numeric"
+    )
+    actionable_expr = (
+        "LOWER(COALESCE(td.decision_type::text, '')) IN ('approve', 'buy', 'sell', 'exit', 'reduce')"
+    )
+    filled_expr = (
+        "LOWER(CAST(COALESCE(o.status, 'unknown') AS text)) IN ('filled', 'partially_filled')"
+    )
+    latest_attempt_join = """
+        LEFT JOIN LATERAL (
+            SELECT
+                ea.stop_reason,
+                ea.stop_phase
+            FROM trading.execution_attempts ea
+            WHERE ea.trade_decision_id = td.trade_decision_id
+            ORDER BY COALESCE(ea.completed_at, ea.started_at, ea.created_at) DESC,
+                     ea.execution_attempt_id DESC
+            LIMIT 1
+        ) latest_attempt ON TRUE
+    """
+    reverse_guard_filter = """
+        LOWER(COALESCE(latest_attempt.stop_reason, '')) IN (
+            'reverse_trade_same_signal_feature_snapshot',
+            'reverse_trade_single_share_blocked',
+            'same_symbol_reentry_cooldown',
+            'held_position_recent_buy_sell_cooldown',
+            'held_position_recent_risk_sell_cooldown'
+        )
+    """
+    probe_guard_filter = """
+        LOWER(COALESCE(latest_attempt.stop_reason, '')) IN (
+            'probe_churn_single_share_blocked',
+            'overlay_single_share_buy_blocked'
+        )
+    """
+    holding_guard_filter = """
+        LOWER(COALESCE(latest_attempt.stop_reason, '')) IN (
+            'holding_profile_earliest_reduce_guard',
+            'holding_profile_earliest_reentry_guard'
+        )
+    """
+
+    summary_row = await db.fetchrow(
+        f"""
+        SELECT
+            COUNT(*)::int AS total_decision_count,
+            COUNT(*) FILTER (WHERE {reverse_guard_filter})::int AS reverse_trade_blocked_count,
+            COUNT(*) FILTER (WHERE {probe_guard_filter})::int AS probe_churn_blocked_count,
+            COUNT(*) FILTER (WHERE {holding_guard_filter})::int AS holding_profile_guard_blocked_count
+        FROM trading.trade_decisions td
+        JOIN trading.decision_contexts dc
+          ON dc.decision_context_id = td.decision_context_id
+        LEFT JOIN trading.order_requests o
+          ON o.trade_decision_id = td.trade_decision_id
+        {latest_attempt_join}
+        WHERE dc.account_id = $1
+          AND td.created_at >= {since_sql}
+        """,
+        aid,
+        lookback_days,
+    )
+
+    holding_profile_rows = await db.fetch(
+        f"""
+        WITH decision_rows AS (
+            SELECT
+                COALESCE(
+                    NULLIF(td.decision_json#>>'{{holding_profile_policy,holding_profile}}', ''),
+                    'unknown'
+                ) AS holding_profile,
+                td.trade_decision_id,
+                td.decision_type,
+                {edge_expr} AS edge_after_cost_bps,
+                o.order_request_id,
+                o.status
+            FROM trading.trade_decisions td
+            JOIN trading.decision_contexts dc
+              ON dc.decision_context_id = td.decision_context_id
+            LEFT JOIN trading.order_requests o
+              ON o.trade_decision_id = td.trade_decision_id
+            WHERE dc.account_id = $1
+              AND td.created_at >= {since_sql}
+        ),
+        closed_trade_rows AS (
+            WITH filled_entries AS (
+                SELECT
+                    COALESCE(
+                        NULLIF(td.decision_json#>>'{{holding_profile_policy,holding_profile}}', ''),
+                        'unknown'
+                    ) AS holding_profile,
+                    {edge_expr} AS edge_after_cost_bps,
+                    td.symbol,
+                    COALESCE(o.avg_fill_price, o.requested_price) AS entry_price,
+                    COALESCE(o.updated_at, o.created_at) AS entry_filled_at
+                FROM trading.order_requests o
+                JOIN trading.trade_decisions td
+                  ON td.trade_decision_id = o.trade_decision_id
+                JOIN trading.decision_contexts dc
+                  ON dc.decision_context_id = td.decision_context_id
+                WHERE dc.account_id = $1
+                  AND td.created_at >= {since_sql}
+                  AND LOWER(CAST(COALESCE(o.side, 'unknown') AS text)) = 'buy'
+                  AND {filled_expr}
+                  AND COALESCE(o.avg_fill_price, o.requested_price) IS NOT NULL
+            )
+            SELECT
+                entry.holding_profile,
+                COUNT(*)::int AS closed_trade_count,
+                AVG(EXTRACT(EPOCH FROM (exit_trade.exit_filled_at - entry.entry_filled_at)) / 60.0)::float
+                    AS avg_holding_minutes,
+                AVG(
+                    ((exit_trade.exit_price - entry.entry_price) / NULLIF(entry.entry_price, 0)) * 100.0
+                )::float AS avg_realized_return_pct
+            FROM filled_entries entry
+            JOIN LATERAL (
+                SELECT
+                    COALESCE(o2.avg_fill_price, o2.requested_price) AS exit_price,
+                    COALESCE(o2.updated_at, o2.created_at) AS exit_filled_at
+                FROM trading.order_requests o2
+                JOIN trading.trade_decisions td2
+                  ON td2.trade_decision_id = o2.trade_decision_id
+                JOIN trading.decision_contexts dc2
+                  ON dc2.decision_context_id = td2.decision_context_id
+                WHERE dc2.account_id = $1
+                  AND td2.symbol = entry.symbol
+                  AND LOWER(CAST(COALESCE(o2.side, 'unknown') AS text)) = 'sell'
+                  AND {filled_expr.replace("o.", "o2.")}
+                  AND COALESCE(o2.avg_fill_price, o2.requested_price) IS NOT NULL
+                  AND COALESCE(o2.updated_at, o2.created_at) > entry.entry_filled_at
+                ORDER BY COALESCE(o2.updated_at, o2.created_at) ASC, o2.order_request_id ASC
+                LIMIT 1
+            ) exit_trade ON TRUE
+            GROUP BY entry.holding_profile
+        )
+        SELECT
+            dr.holding_profile,
+            COUNT(*)::int AS decision_count,
+            COUNT(*) FILTER (
+                WHERE LOWER(COALESCE(dr.decision_type::text, '')) IN ('approve', 'buy', 'sell', 'exit', 'reduce')
+            )::int AS actionable_decision_count,
+            COUNT(*) FILTER (
+                WHERE dr.order_request_id IS NOT NULL
+            )::int AS ordered_decision_count,
+            COUNT(*) FILTER (
+                WHERE LOWER(CAST(COALESCE(dr.status, 'unknown') AS text)) IN ('filled', 'partially_filled')
+            )::int AS filled_decision_count,
+            AVG(dr.edge_after_cost_bps)::float AS avg_edge_after_cost_bps,
+            COALESCE(ct.closed_trade_count, 0)::int AS closed_trade_count,
+            ct.avg_holding_minutes,
+            ct.avg_realized_return_pct
+        FROM decision_rows dr
+        LEFT JOIN closed_trade_rows ct
+          ON ct.holding_profile = dr.holding_profile
+        GROUP BY
+            dr.holding_profile,
+            ct.closed_trade_count,
+            ct.avg_holding_minutes,
+            ct.avg_realized_return_pct
+        ORDER BY decision_count DESC, dr.holding_profile ASC
+        """,
+        aid,
+        lookback_days,
+    )
+
+    guardrail_rows = await db.fetch(
+        f"""
+        SELECT
+            CASE
+                WHEN {reverse_guard_filter} THEN 'reverse_trade'
+                WHEN {probe_guard_filter} THEN 'probe_churn'
+                WHEN {holding_guard_filter} THEN 'holding_profile_guard'
+                ELSE 'other'
+            END AS guardrail_family,
+            LOWER(COALESCE(latest_attempt.stop_reason, 'unknown')) AS reason_code,
+            COUNT(*)::int AS decision_count
+        FROM trading.trade_decisions td
+        JOIN trading.decision_contexts dc
+          ON dc.decision_context_id = td.decision_context_id
+        {latest_attempt_join}
+        WHERE dc.account_id = $1
+          AND td.created_at >= {since_sql}
+          AND (
+            {reverse_guard_filter}
+            OR {probe_guard_filter}
+            OR {holding_guard_filter}
+          )
+        GROUP BY guardrail_family, LOWER(COALESCE(latest_attempt.stop_reason, 'unknown'))
+        ORDER BY decision_count DESC, guardrail_family ASC, reason_code ASC
+        """,
+        aid,
+        lookback_days,
+    )
+
+    churn_row = await db.fetchrow(
+        f"""
+        WITH filled_orders AS (
+            SELECT
+                td.symbol,
+                LOWER(CAST(COALESCE(o.side, 'unknown') AS text)) AS side,
+                COALESCE(o.updated_at, o.created_at) AS filled_at
+            FROM trading.order_requests o
+            JOIN trading.trade_decisions td
+              ON td.trade_decision_id = o.trade_decision_id
+            JOIN trading.decision_contexts dc
+              ON dc.decision_context_id = td.decision_context_id
+            WHERE dc.account_id = $1
+              AND td.created_at >= {since_sql}
+              AND {filled_expr}
+        ),
+        sequenced AS (
+            SELECT
+                symbol,
+                side,
+                filled_at,
+                LEAD(side) OVER (PARTITION BY symbol ORDER BY filled_at ASC) AS next_side,
+                LEAD(filled_at) OVER (PARTITION BY symbol ORDER BY filled_at ASC) AS next_filled_at
+            FROM filled_orders
+        )
+        SELECT
+            COUNT(*) FILTER (
+                WHERE next_side IS NOT NULL
+                  AND next_side <> side
+                  AND next_filled_at <= filled_at + ($3::int * INTERVAL '1 hour')
+            )::int AS realized_opposite_fill_churn_count,
+            COUNT(*) FILTER (
+                WHERE next_side IS NOT NULL
+                  AND next_side <> side
+                  AND next_filled_at > filled_at + ($3::int * INTERVAL '1 hour')
+            )::int AS realized_opposite_fill_non_churn_count
+        FROM sequenced
+        """,
+        aid,
+        lookback_days,
+        churn_window_hours,
+    )
+
+    edge_rows = await db.fetch(
+        f"""
+        WITH filled_entries AS (
+            SELECT
+                CASE
+                    WHEN {edge_expr} IS NULL THEN 'unknown'
+                    WHEN {edge_expr} < 0 THEN 'lt_0'
+                    WHEN {edge_expr} < 10 THEN '0_10'
+                    WHEN {edge_expr} < 20 THEN '10_20'
+                    WHEN {edge_expr} < 35 THEN '20_35'
+                    ELSE 'ge_35'
+                END AS edge_bucket,
+                td.symbol,
+                {edge_expr} AS edge_after_cost_bps,
+                COALESCE(o.avg_fill_price, o.requested_price) AS entry_price,
+                COALESCE(o.updated_at, o.created_at) AS entry_filled_at
+            FROM trading.order_requests o
+            JOIN trading.trade_decisions td
+              ON td.trade_decision_id = o.trade_decision_id
+            JOIN trading.decision_contexts dc
+              ON dc.decision_context_id = td.decision_context_id
+            WHERE dc.account_id = $1
+              AND td.created_at >= {since_sql}
+              AND LOWER(CAST(COALESCE(o.side, 'unknown') AS text)) = 'buy'
+              AND {filled_expr}
+              AND COALESCE(o.avg_fill_price, o.requested_price) IS NOT NULL
+        )
+        SELECT
+            entry.edge_bucket,
+            COUNT(*)::int AS closed_trade_count,
+            AVG(EXTRACT(EPOCH FROM (exit_trade.exit_filled_at - entry.entry_filled_at)) / 60.0)::float
+                AS avg_holding_minutes,
+            AVG(
+                ((exit_trade.exit_price - entry.entry_price) / NULLIF(entry.entry_price, 0)) * 100.0
+            )::float AS avg_realized_return_pct
+        FROM filled_entries entry
+        JOIN LATERAL (
+            SELECT
+                COALESCE(o2.avg_fill_price, o2.requested_price) AS exit_price,
+                COALESCE(o2.updated_at, o2.created_at) AS exit_filled_at
+            FROM trading.order_requests o2
+            JOIN trading.trade_decisions td2
+              ON td2.trade_decision_id = o2.trade_decision_id
+            JOIN trading.decision_contexts dc2
+              ON dc2.decision_context_id = td2.decision_context_id
+            WHERE dc2.account_id = $1
+              AND td2.symbol = entry.symbol
+              AND LOWER(CAST(COALESCE(o2.side, 'unknown') AS text)) = 'sell'
+              AND {filled_expr.replace("o.", "o2.")}
+              AND COALESCE(o2.avg_fill_price, o2.requested_price) IS NOT NULL
+              AND COALESCE(o2.updated_at, o2.created_at) > entry.entry_filled_at
+            ORDER BY COALESCE(o2.updated_at, o2.created_at) ASC, o2.order_request_id ASC
+            LIMIT 1
+        ) exit_trade ON TRUE
+        GROUP BY entry.edge_bucket
+        ORDER BY
+            CASE entry.edge_bucket
+                WHEN 'unknown' THEN 0
+                WHEN 'lt_0' THEN 1
+                WHEN '0_10' THEN 2
+                WHEN '10_20' THEN 3
+                WHEN '20_35' THEN 4
+                ELSE 5
+            END
+        """,
+        aid,
+        lookback_days,
+    )
+
+    return HoldingProfilePerformanceAttributionResponse(
+        account_id=account_id,
+        lookback_days=lookback_days,
+        churn_window_hours=churn_window_hours,
+        total_decision_count=int((summary_row or {}).get("total_decision_count") or 0),
+        reverse_trade_blocked_count=int((summary_row or {}).get("reverse_trade_blocked_count") or 0),
+        probe_churn_blocked_count=int((summary_row or {}).get("probe_churn_blocked_count") or 0),
+        holding_profile_guard_blocked_count=int((summary_row or {}).get("holding_profile_guard_blocked_count") or 0),
+        realized_opposite_fill_churn_count=int((churn_row or {}).get("realized_opposite_fill_churn_count") or 0),
+        realized_opposite_fill_non_churn_count=int((churn_row or {}).get("realized_opposite_fill_non_churn_count") or 0),
+        holding_profile_items=[
+            HoldingProfileAttributionItem(
+                holding_profile=str(row["holding_profile"]),
+                decision_count=int(row["decision_count"] or 0),
+                actionable_decision_count=int(row["actionable_decision_count"] or 0),
+                ordered_decision_count=int(row["ordered_decision_count"] or 0),
+                filled_decision_count=int(row["filled_decision_count"] or 0),
+                avg_edge_after_cost_bps=_float_or_none(row["avg_edge_after_cost_bps"]),
+                closed_trade_count=int(row["closed_trade_count"] or 0),
+                avg_holding_minutes=_float_or_none(row["avg_holding_minutes"]),
+                avg_realized_return_pct=_float_or_none(row["avg_realized_return_pct"]),
+            )
+            for row in holding_profile_rows
+        ],
+        guardrail_items=[
+            GuardrailAttributionItem(
+                guardrail_family=str(row["guardrail_family"]),
+                reason_code=str(row["reason_code"]),
+                decision_count=int(row["decision_count"] or 0),
+            )
+            for row in guardrail_rows
+        ],
+        edge_outcome_items=[
+            EdgeOutcomeAttributionItem(
+                edge_bucket=str(row["edge_bucket"]),
+                closed_trade_count=int(row["closed_trade_count"] or 0),
+                avg_holding_minutes=_float_or_none(row["avg_holding_minutes"]),
+                avg_realized_return_pct=_float_or_none(row["avg_realized_return_pct"]),
+            )
+            for row in edge_rows
+        ],
     )
 
 

@@ -12,8 +12,8 @@ changes at runtime.  The initial version is ``"v1"``.
 
 Alignment
 ---------
-The three output dataclasses (``EventInterpretationOutput``,
-``AIRiskOutput``, ``FinalDecisionComposerOutput``) are aligned with the
+The output dataclasses (``EventInterpretationOutput``,
+``AIRiskOutput``, ``AIComplianceOutput``, ``FinalDecisionComposerOutput``) are aligned with the
 JSON schema in the design document.  Nested dataclasses are used for
 structured sub-objects (e.g. ``InterpretedEvent``, ``AggregateEventView``,
 ``ExecutionPreferences``).
@@ -446,7 +446,34 @@ class AIRiskOutput:
 
 
 # ============================================================================
-# Agent 3. Final Decision Composer
+# Agent 3. AI Compliance Agent
+# ============================================================================
+
+
+@dataclass(slots=True, frozen=True)
+class AIComplianceOutput:
+    """Structured output of the AI Compliance Agent.
+
+    Hard validator가 이미 차단한 절대 금지 조건을 다시 집행하지 않고,
+    정책/규정/이벤트 맥락의 애매한 해석만 보강한다.
+    """
+
+    schema_version: str = "v1"
+    agent_name: str = "ai_compliance"
+    decision_context_id: str | None = None
+    symbol: str = ""
+    proposed_side: str = ""
+    compliance_opinion: str = "allow"
+    compliance_score: float = 0.0
+    confidence: float = 0.0
+    policy_flags: tuple[str, ...] = ()
+    reason_codes: tuple[str, ...] = ()
+    opposing_evidence: tuple[str, ...] = ()
+    summary: str = ""
+
+
+# ============================================================================
+# Agent 4. Final Decision Composer
 # ============================================================================
 
 

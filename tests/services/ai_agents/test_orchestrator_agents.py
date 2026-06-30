@@ -23,6 +23,7 @@ from agent_trading.domain.entities import (
 from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.services.ai_agents.ai_risk import AIRiskAgent
+from agent_trading.services.ai_agents.ai_compliance import AIComplianceAgent
 from agent_trading.services.ai_agents.final_decision_composer import (
     FinalDecisionComposerAgent,
 )
@@ -37,6 +38,7 @@ from agent_trading.services.ai_agents.event_interpretation import (
 )
 from agent_trading.services.ai_agents.recorder import AgentRunRecorder
 from agent_trading.services.ai_agents.schemas import (
+    AIComplianceOutput,
     AIRiskOutput,
     EventInterpretationOutput,
     FinalDecisionComposerOutput,
@@ -173,6 +175,37 @@ def mock_fdc_provider() -> AIProviderClient:
     return fdc_mock
 
 
+@pytest.fixture
+def mock_ac_provider() -> AIProviderClient:
+    """Return an ``AIProviderClient`` that returns a valid AC response."""
+    import json
+    from dataclasses import asdict
+
+    output = AIComplianceOutput(
+        symbol="AAPL",
+        agent_name="ai_compliance",
+        schema_version="v1",
+        decision_context_id=None,
+        compliance_opinion="warn",
+        compliance_score=0.35,
+        confidence=0.78,
+        policy_flags=("policy_watch",),
+        reason_codes=("source_policy_ambiguous",),
+        opposing_evidence=(),
+        summary="정책 해석상 주의가 필요합니다.",
+    )
+
+    async def _generate(**kwargs: object) -> RawProviderResponse:
+        return RawProviderResponse(
+            raw_content=json.dumps(asdict(output)),
+            parsed=output,
+        )
+
+    ac_mock = MagicMock(spec=AIProviderClient)
+    ac_mock.generate_structured = AsyncMock(side_effect=_generate)
+    return ac_mock
+
+
 # ---------------------------------------------------------------------------
 # Agent injection and execution
 # ---------------------------------------------------------------------------
@@ -189,13 +222,14 @@ class TestAgentInjection:
         intent = await service.assemble(sample_request)
         assert isinstance(intent, OrderIntent)
 
-        # Recorder should have 3 runs (one per agent)
+        # Recorder should have 4 runs (one per agent)
         runs = await service._agent_recorder.list_all()
-        assert len(runs) == 3
+        assert len(runs) == 4
         agent_types = {r.agent_type for r in runs}
         assert agent_types == {
             "event_interpretation",
             "ai_risk",
+            "ai_compliance",
             "final_decision_composer",
         }
 
@@ -213,6 +247,10 @@ class TestAgentInjection:
         mock_ar.agent_name = "ai_risk"
         mock_ar.run = AsyncMock(return_value=AIRiskOutput())
 
+        mock_ac = MagicMock(spec=ProviderAIAgent)
+        mock_ac.agent_name = "ai_compliance"
+        mock_ac.run = AsyncMock(return_value=AIComplianceOutput())
+
         mock_fdc = MagicMock(spec=ProviderAIAgent)
         mock_fdc.agent_name = "final_decision_composer"
         mock_fdc.run = AsyncMock(return_value=FinalDecisionComposerOutput())
@@ -223,6 +261,7 @@ class TestAgentInjection:
             repos,
             event_interpretation_agent=mock_ei,
             ai_risk_agent=mock_ar,
+            ai_compliance_agent=mock_ac,
             final_decision_agent=mock_fdc,
             agent_recorder=recorder,
             use_subprocess_isolation=False,
@@ -234,16 +273,17 @@ class TestAgentInjection:
         # Each mock agent should have been called once
         assert mock_ei.run.call_count == 1
         assert mock_ar.run.call_count == 1
+        assert mock_ac.run.call_count == 1
         assert mock_fdc.run.call_count == 1
 
-        # Recorder should have 3 runs
-        assert len(await recorder.list_all()) == 3
+        # Recorder should have 4 runs
+        assert len(await recorder.list_all()) == 4
 
     @pytest.mark.asyncio
     async def test_agents_called_in_correct_order(
         self, repos: RepositoryContainer, sample_request: SubmitOrderRequest
     ) -> None:
-        """Agents are called in order: EI → AR → FDC."""
+        """Agents are called in order: EI → AR → AC → FDC."""
         call_order: list[str] = []
 
         class TrackingEI:
@@ -260,6 +300,13 @@ class TestAgentInjection:
                 call_order.append("ai_risk")
                 return AIRiskOutput()
 
+        class TrackingAC:
+            agent_name = "ai_compliance"
+            schema_version = "v1"
+            async def run(self, request: AgentExecutionRequest) -> AIComplianceOutput:
+                call_order.append("ai_compliance")
+                return AIComplianceOutput()
+
         class TrackingFDC:
             agent_name = "final_decision_composer"
             schema_version = "v1"
@@ -271,6 +318,7 @@ class TestAgentInjection:
             repos,
             event_interpretation_agent=TrackingEI(),
             ai_risk_agent=TrackingAR(),
+            ai_compliance_agent=TrackingAC(),
             final_decision_agent=TrackingFDC(),
             use_subprocess_isolation=False,
         )
@@ -279,6 +327,7 @@ class TestAgentInjection:
         assert call_order == [
             "event_interpretation",
             "ai_risk",
+            "ai_compliance",
             "final_decision_composer",
         ]
 
@@ -313,9 +362,9 @@ class TestAgentSafeFallback:
         intent = await orchestrator.assemble(sample_request)
         assert isinstance(intent, OrderIntent)
 
-        # Recorder should still have 3 runs (failing agent recorded with default output)
+        # Recorder should still have 4 runs (failing agent recorded with default output)
         runs = await orchestrator._agent_recorder.list_all()
-        assert len(runs) == 3
+        assert len(runs) == 4
 
     @pytest.mark.asyncio
     async def test_all_agents_fail_assemble_still_succeeds(
@@ -334,6 +383,7 @@ class TestAgentSafeFallback:
             repos,
             event_interpretation_agent=FailingAgent(),  # type: ignore[arg-type]
             ai_risk_agent=FailingAgent(),  # type: ignore[arg-type]
+            ai_compliance_agent=FailingAgent(),  # type: ignore[arg-type]
             final_decision_agent=FailingAgent(),  # type: ignore[arg-type]
             use_subprocess_isolation=False,
         )
@@ -357,6 +407,7 @@ class TestAgentSafeFallback:
             repos,
             event_interpretation_agent=FailingAgent(),  # type: ignore[arg-type]
             ai_risk_agent=FailingAgent(),  # type: ignore[arg-type]
+            ai_compliance_agent=FailingAgent(),  # type: ignore[arg-type]
             final_decision_agent=FailingAgent(),  # type: ignore[arg-type]
             use_subprocess_isolation=False,
         )
@@ -379,6 +430,10 @@ class TestAgentSafeFallback:
         assert ai.size_adjustment_factor == 0.0    # from default AIRiskOutput
         assert ai.risk_reason_codes == ()
         assert ai.risk_flags == ()
+        assert ai.compliance_opinion == "allow"
+        assert ai.compliance_score == 0.0
+        assert ai.compliance_reason_codes == ()
+        assert ai.compliance_policy_flags == ()
         assert ai.event_bias == "neutral"
         assert ai.event_conflict is False
         assert ai.event_reason_codes == ()
@@ -386,11 +441,13 @@ class TestAgentSafeFallback:
         # Metadata is always populated from fallback output dataclass defaults
         assert "event_interpretation" in ai.source_agent_names
         assert "ai_risk" in ai.source_agent_names
+        assert "ai_compliance" in ai.source_agent_names
         assert "final_decision_composer" in ai.source_agent_names
         assert isinstance(ai.schema_versions, tuple)
         sv = dict(ai.schema_versions)
         assert sv["event_interpretation"] == "v1"
         assert sv["ai_risk"] == "v1"
+        assert sv["ai_compliance"] == "v1"
         assert sv["final_decision_composer"] == "v1"
 
     @pytest.mark.asyncio
@@ -422,9 +479,9 @@ class TestAgentSafeFallback:
         intent = await orchestrator.assemble(sample_request)
         assert isinstance(intent, OrderIntent)
 
-        # Recorder should still have 3 runs (hanging agent recorded with default output)
+        # Recorder should still have 4 runs (hanging agent recorded with default output)
         runs = await orchestrator._agent_recorder.list_all()
-        assert len(runs) == 3
+        assert len(runs) == 4
 
         # EI output should be fallback defaults
         ai = intent.ai_backend_inputs
@@ -513,16 +570,19 @@ class TestRealAgentsIntegration:
         sample_request: SubmitOrderRequest,
         mock_ei_provider: AIProviderClient,
         mock_ar_provider: AIProviderClient,
+        mock_ac_provider: AIProviderClient,
     ) -> None:
-        """Real EI + real AR + stub FDC: assemble() succeeds, recorder has 3 runs."""
+        """Real EI + real AR + real AC + stub FDC: assemble() succeeds, recorder has 4 runs."""
         ei_agent = EventInterpretationAgent(provider_client=mock_ei_provider)
         ar_agent = AIRiskAgent(provider_client=mock_ar_provider)
+        ac_agent = AIComplianceAgent(provider_client=mock_ac_provider)
         recorder = AgentRunRecorder()
 
         orchestrator = DecisionOrchestratorService(
             repos,
             event_interpretation_agent=ei_agent,
             ai_risk_agent=ar_agent,
+            ai_compliance_agent=ac_agent,
             agent_recorder=recorder,
             use_subprocess_isolation=False,
         )
@@ -530,15 +590,16 @@ class TestRealAgentsIntegration:
         intent = await orchestrator.assemble(sample_request)
         assert isinstance(intent, OrderIntent)
 
-        # Recorder should have 3 runs
+        # Recorder should have 4 runs
         runs = await recorder.list_all()
-        assert len(runs) == 3
+        assert len(runs) == 4
 
-        # Agent types should include real EI and real AR
+        # Agent types should include real EI, AR, AC
         agent_types = {r.agent_type for r in runs}
         assert agent_types == {
             "event_interpretation",
             "ai_risk",
+            "ai_compliance",
             "final_decision_composer",
         }
 
@@ -558,6 +619,11 @@ class TestRealAgentsIntegration:
         assert ar_run.structured_output_json.get("risk_score") == 0.65
         assert ar_run.structured_output_json.get("agent_name") == "ai_risk"
 
+        ac_run = next(r for r in runs if r.agent_type == "ai_compliance")
+        assert ac_run.structured_output_json is not None
+        assert ac_run.structured_output_json.get("compliance_opinion") == "warn"
+        assert ac_run.structured_output_json.get("agent_name") == "ai_compliance"
+
         # FDC run should be stub (default values)
         fdc_run = next(r for r in runs if r.agent_type == "final_decision_composer")
         assert fdc_run.structured_output_json is not None
@@ -570,17 +636,20 @@ class TestRealAgentsIntegration:
         sample_request: SubmitOrderRequest,
         mock_ei_provider: AIProviderClient,
         mock_ar_provider: AIProviderClient,
+        mock_ac_provider: AIProviderClient,
     ) -> None:
         """Decision context ID is recorded in both real agent runs."""
         ctx_id = uuid4()
         ei_agent = EventInterpretationAgent(provider_client=mock_ei_provider)
         ar_agent = AIRiskAgent(provider_client=mock_ar_provider)
+        ac_agent = AIComplianceAgent(provider_client=mock_ac_provider)
         recorder = AgentRunRecorder()
 
         orchestrator = DecisionOrchestratorService(
             repos,
             event_interpretation_agent=ei_agent,
             ai_risk_agent=ar_agent,
+            ai_compliance_agent=ac_agent,
             agent_recorder=recorder,
             use_subprocess_isolation=False,
         )
@@ -654,11 +723,13 @@ class TestRealAgentsIntegration:
         sample_request: SubmitOrderRequest,
         mock_ei_provider: AIProviderClient,
         mock_ar_provider: AIProviderClient,
+        mock_ac_provider: AIProviderClient,
         mock_fdc_provider: AIProviderClient,
     ) -> None:
-        """Real EI + real AR + real FDC: assemble() succeeds, recorder has 3 runs, FDC output verified."""
+        """Real EI + real AR + real AC + real FDC: assemble() succeeds, recorder has 4 runs, FDC output verified."""
         ei_agent = EventInterpretationAgent(provider_client=mock_ei_provider)
         ar_agent = AIRiskAgent(provider_client=mock_ar_provider)
+        ac_agent = AIComplianceAgent(provider_client=mock_ac_provider)
         fdc_agent = FinalDecisionComposerAgent(provider_client=mock_fdc_provider)
         recorder = AgentRunRecorder()
 
@@ -666,6 +737,7 @@ class TestRealAgentsIntegration:
             repos,
             event_interpretation_agent=ei_agent,
             ai_risk_agent=ar_agent,
+            ai_compliance_agent=ac_agent,
             final_decision_agent=fdc_agent,
             agent_recorder=recorder,
             use_subprocess_isolation=False,
@@ -674,15 +746,16 @@ class TestRealAgentsIntegration:
         intent = await orchestrator.assemble(sample_request)
         assert isinstance(intent, OrderIntent)
 
-        # Recorder should have 3 runs
+        # Recorder should have 4 runs
         runs = await recorder.list_all()
-        assert len(runs) == 3
+        assert len(runs) == 4
 
-        # Agent types should include all three real agents
+        # Agent types should include all four real agents
         agent_types = {r.agent_type for r in runs}
         assert agent_types == {
             "event_interpretation",
             "ai_risk",
+            "ai_compliance",
             "final_decision_composer",
         }
 
@@ -702,6 +775,11 @@ class TestRealAgentsIntegration:
         assert ar_run.structured_output_json.get("risk_score") == 0.65
         assert ar_run.structured_output_json.get("agent_name") == "ai_risk"
 
+        ac_run = next(r for r in runs if r.agent_type == "ai_compliance")
+        assert ac_run.structured_output_json is not None
+        assert ac_run.structured_output_json.get("compliance_opinion") == "warn"
+        assert ac_run.structured_output_json.get("agent_name") == "ai_compliance"
+
         # FDC run should have structured_output_json from mock provider
         fdc_run = next(r for r in runs if r.agent_type == "final_decision_composer")
         assert fdc_run.structured_output_json is not None
@@ -717,10 +795,12 @@ class TestRealAgentsIntegration:
         sample_request: SubmitOrderRequest,
         mock_ei_provider: AIProviderClient,
         mock_ar_provider: AIProviderClient,
+        mock_ac_provider: AIProviderClient,
     ) -> None:
-        """Both EI and AR outputs are passed through to the FDC agent via request_with_ei_and_ar."""
+        """EI, AR, AC outputs are passed through to the FDC agent."""
         ei_agent = EventInterpretationAgent(provider_client=mock_ei_provider)
         ar_agent = AIRiskAgent(provider_client=mock_ar_provider)
+        ac_agent = AIComplianceAgent(provider_client=mock_ac_provider)
 
         # Tracking FDC agent that captures the request
         class TrackingFDCAgent:
@@ -745,6 +825,7 @@ class TestRealAgentsIntegration:
             repos,
             event_interpretation_agent=ei_agent,
             ai_risk_agent=ar_agent,
+            ai_compliance_agent=ac_agent,
             final_decision_agent=fdc_agent,  # type: ignore[arg-type]
             agent_recorder=recorder,
             use_subprocess_isolation=False,
@@ -769,9 +850,15 @@ class TestRealAgentsIntegration:
         assert ar_output.risk_opinion == "reduce"
         assert ar_output.risk_score == 0.65
 
-        # Both outputs received in a single request (the 3-stage request chain)
+        ac_output = fdc_agent.last_request.ai_compliance_output
+        assert ac_output is not None
+        assert isinstance(ac_output, AIComplianceOutput)
+        assert ac_output.compliance_opinion == "warn"
+
+        # All outputs received in a single request
         assert fdc_agent.last_request.event_interpretation_output is not None
         assert fdc_agent.last_request.ai_risk_output is not None
+        assert fdc_agent.last_request.ai_compliance_output is not None
 
     @pytest.mark.asyncio
     async def test_real_ei_real_ar_real_fdc_ai_backend_inputs(
@@ -780,11 +867,13 @@ class TestRealAgentsIntegration:
         sample_request: SubmitOrderRequest,
         mock_ei_provider: AIProviderClient,
         mock_ar_provider: AIProviderClient,
+        mock_ac_provider: AIProviderClient,
         mock_fdc_provider: AIProviderClient,
     ) -> None:
-        """Real EI + real AR + real FDC → ai_backend_inputs contains expected values."""
+        """Real EI + real AR + real AC + real FDC → ai_backend_inputs contains expected values."""
         ei_agent = EventInterpretationAgent(provider_client=mock_ei_provider)
         ar_agent = AIRiskAgent(provider_client=mock_ar_provider)
+        ac_agent = AIComplianceAgent(provider_client=mock_ac_provider)
         fdc_agent = FinalDecisionComposerAgent(provider_client=mock_fdc_provider)
         recorder = AgentRunRecorder()
 
@@ -792,6 +881,7 @@ class TestRealAgentsIntegration:
             repos,
             event_interpretation_agent=ei_agent,
             ai_risk_agent=ar_agent,
+            ai_compliance_agent=ac_agent,
             final_decision_agent=fdc_agent,
             agent_recorder=recorder,
             use_subprocess_isolation=False,
@@ -817,6 +907,11 @@ class TestRealAgentsIntegration:
         assert ai.size_adjustment_factor == 0.5
         assert "high_correlation" in ai.risk_reason_codes
         assert "concentration" in ai.risk_flags
+        assert ai.compliance_opinion == "warn"
+        assert ai.compliance_score == 0.35
+        assert ai.compliance_confidence == 0.78
+        assert "source_policy_ambiguous" in ai.compliance_reason_codes
+        assert "policy_watch" in ai.compliance_policy_flags
 
         # EI-derived fields
         assert ai.event_bias == "neutral"          # AggregateEventView default
@@ -825,11 +920,13 @@ class TestRealAgentsIntegration:
         # Metadata
         assert "event_interpretation" in ai.source_agent_names
         assert "ai_risk" in ai.source_agent_names
+        assert "ai_compliance" in ai.source_agent_names
         assert "final_decision_composer" in ai.source_agent_names
         assert isinstance(ai.schema_versions, tuple)
         sv = dict(ai.schema_versions)
         assert sv["event_interpretation"] == "v1"
         assert sv["ai_risk"] == "v1"
+        assert sv["ai_compliance"] == "v1"
         assert sv["final_decision_composer"] == "v1"
 
         # Separated reason_codes: AIDecisionInputs has FDC-derived, OrderIntent has deterministic
@@ -892,8 +989,8 @@ class TestExistingBehaviourPreserved:
             decision_context_id=ctx_id,
         )
         assert intent.decision_context_id == ctx_id
-        # Recorder should have 3 runs
-        assert len(await service._agent_recorder.list_all()) == 3
+        # Recorder should have 4 runs
+        assert len(await service._agent_recorder.list_all()) == 4
 
     @pytest.mark.asyncio
     async def test_recorder_accessible_after_assemble(
@@ -902,7 +999,7 @@ class TestExistingBehaviourPreserved:
         """Recorder is accessible and contains runs after assemble()."""
         await service.assemble(sample_request)
         runs = await service._agent_recorder.list_all()
-        assert len(runs) == 3
+        assert len(runs) == 4
         # Each run should have structured_output_json
         for run in runs:
             assert run.structured_output_json is not None

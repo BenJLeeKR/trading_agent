@@ -60,6 +60,33 @@ def _make_request_with_universe_anchor() -> SubmitOrderRequest:
     )
 
 
+def _make_request_with_expected_value_anchor() -> SubmitOrderRequest:
+    return SubmitOrderRequest(
+        account_ref="test_account",
+        client_order_id="test-001",
+        correlation_id="corr-001",
+        strategy_id=str(uuid4()),
+        symbol="005930",
+        market="KRX",
+        side=OrderSide.SELL,
+        order_type=OrderType.LIMIT,
+        quantity=Decimal("10"),
+        price=Decimal("50000"),
+        time_in_force=TimeInForce.DAY,
+        metadata={
+            "expected_value_anchor": {
+                "decision_type": "REDUCE",
+                "anchor_required": True,
+                "anchor_passed": True,
+                "current_edge_after_cost_bps": "18.00",
+                "last_exit_edge_after_cost_bps": "12.00",
+                "edge_vs_last_exit_delta_bps": "6.00",
+                "reentry_edge_improved_vs_last_exit": True,
+            }
+        },
+    )
+
+
 def _make_context(trigger: DeterministicTriggerAssessment) -> AssembledContext:
     return AssembledContext(
         decision_context=DecisionContextEntity(
@@ -399,3 +426,50 @@ def test_build_trade_decision_entity_stores_holding_profile_policy() -> None:
     assert holding_profile_policy["holding_profile"] == "core_swing"
     assert holding_profile_policy["minimum_hold_until"] is not None
     assert holding_profile_policy["metadata"]["source_type"] == "core"
+
+
+def test_build_trade_decision_entity_stores_expected_value_anchor_metadata() -> None:
+    trigger = DeterministicTriggerAssessment(
+        trigger_version="deterministic_trigger_v1",
+        primary_candidate="REDUCE_CANDIDATE",
+        candidate_set=("REDUCE_CANDIDATE",),
+        watch_candidate=False,
+        buy_candidate=False,
+        sell_candidate=False,
+        reduce_candidate=True,
+        candidate_confidence=0.72,
+        entry_score=0.21,
+        exit_score=0.72,
+        watch_score=0.18,
+    )
+    entity = build_trade_decision_entity(
+        decision_context_id=uuid4(),
+        request=_make_request_with_expected_value_anchor(),
+        assembled_context=_make_context(trigger),
+        agent_bundle=AgentExecutionBundle(
+            ai_inputs=AIDecisionInputs(
+                decision_type="REDUCE",
+                expected_return_bps=Decimal("35.00"),
+                expected_downside_bps=Decimal("15.00"),
+                net_expected_value_bps=Decimal("20.00"),
+                final_trade_score=Decimal("0.68"),
+                minimum_required_edge_bps=Decimal("5.00"),
+                edge_after_cost_bps=Decimal("18.00"),
+                estimated_round_trip_cost_bps=Decimal("7.00"),
+                slippage_buffer_bps=Decimal("8.00"),
+                expected_value_gate_passed=True,
+            ),
+            composer_output=FinalDecisionComposerOutput(
+                decision_type="REDUCE",
+                side="SELL",
+                confidence=0.8,
+            ),
+        ),
+    )
+
+    assert entity is not None
+    assert entity.decision_json["expected_value_anchor"]["anchor_passed"] is True
+    assert (
+        entity.decision_json["expected_value_anchor"]["edge_vs_last_exit_delta_bps"]
+        == "6.00"
+    )

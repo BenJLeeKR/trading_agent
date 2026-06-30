@@ -40,6 +40,9 @@ from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import AccountLookup, OrderQuery
 from agent_trading.services.order_manager import OrderManager
 from agent_trading.services.order_sync_service import OrderSyncService
+from agent_trading.services.reverse_trade_hysteresis import (
+    evaluate_recent_reverse_trade,
+)
 from agent_trading.services.sizing_engine import SizingInputs, SizingResult, calculate_sizing
 from agent_trading.services.sell_guard import AvailableSellQtyResolver, SellAvailability
 from agent_trading.services.common_types import (
@@ -61,6 +64,7 @@ from agent_trading.services.held_position_policy import (
 )
 from agent_trading.services.holding_profile_policy import (
     parse_datetime_or_none,
+    resolve_policy_timestamp,
 )
 from agent_trading.services.translation import (
     build_submit_order_request_from_decision,
@@ -124,6 +128,22 @@ _SINGLE_SHARE_REVERSE_SELL_STATUSES = {
     OrderStatus.FILLED,
     OrderStatus.RECONCILE_REQUIRED,
 }
+
+
+def _extract_ai_compliance_projection(
+    decision_json: dict[str, object] | None,
+) -> dict[str, object] | None:
+    if not isinstance(decision_json, dict):
+        return None
+    payload = {
+        "opinion": decision_json.get("compliance_opinion"),
+        "score": decision_json.get("compliance_score"),
+        "confidence": decision_json.get("compliance_confidence"),
+        "reason_codes": decision_json.get("compliance_reason_codes"),
+        "policy_flags": decision_json.get("compliance_policy_flags"),
+        "check_passed": decision_json.get("compliance_check_passed"),
+    }
+    return payload if any(value is not None for value in payload.values()) else None
 
 
 __all__: list[str] = [
@@ -470,7 +490,19 @@ class ExecutionService:
                 and order.status in _SINGLE_SHARE_REVERSE_SELL_STATUSES
             ]
             metadata["recent_sell_order_count"] = len(recent_sell_orders)
-            if recent_sell_orders:
+            reverse_trade_decision = evaluate_recent_reverse_trade(
+                current_signal_feature_snapshot_id=None,
+                last_signal_feature_snapshot_id=None,
+                recent_opposite_order_count=len(recent_sell_orders),
+                latest_decision_type=None,
+                eligible_decision_types=None,
+                cooldown_stop_reason=PipelineStopReason.REVERSE_TRADE_SINGLE_SHARE_BLOCKED.value,
+                details={
+                    "recent_sell_order_count": str(len(recent_sell_orders)),
+                },
+                require_matching_decision_type=False,
+            )
+            if reverse_trade_decision.blocked:
                 metadata["reason"] = "reverse_trade_single_share_blocked"
                 return (
                     "block",
@@ -780,6 +812,74 @@ class ExecutionService:
             ),
             validation_result=validation_result,
         )
+
+    async def _enrich_compliance_validation_with_ai_alignment(
+        self,
+        *,
+        trade_decision_id: UUID | None,
+        validation_result: ValidationResult,
+    ) -> ValidationResult:
+        """AI Compliance projection과 submit-time deterministic validator 결과를 계측한다."""
+        if trade_decision_id is None:
+            return validation_result
+
+        trade_decision = await self._repos.trade_decisions.get(trade_decision_id)
+        if trade_decision is None:
+            return validation_result
+
+        ai_projection = _extract_ai_compliance_projection(trade_decision.decision_json)
+        if ai_projection is None:
+            return validation_result
+
+        ai_check_passed_raw = ai_projection.get("check_passed")
+        if not isinstance(ai_check_passed_raw, bool):
+            return validation_result
+
+        deterministic_check_passed = validation_result.overall_passed
+        agreement_status = (
+            "aligned"
+            if ai_check_passed_raw == deterministic_check_passed
+            else "conflict"
+        )
+        mismatch_reason: str | None = None
+        if agreement_status == "conflict":
+            mismatch_reason = (
+                "ai_allow_but_deterministic_blocked"
+                if ai_check_passed_raw
+                else "ai_block_but_deterministic_allowed"
+            )
+
+        alignment_payload = {
+            "telemetry_version": "v1",
+            "agreement_status": agreement_status,
+            "mismatch_reason": mismatch_reason,
+            "ai_check_passed": ai_check_passed_raw,
+            "ai_opinion": ai_projection.get("opinion"),
+            "ai_score": ai_projection.get("score"),
+            "ai_confidence": ai_projection.get("confidence"),
+            "ai_reason_codes": ai_projection.get("reason_codes"),
+            "ai_policy_flags": ai_projection.get("policy_flags"),
+            "deterministic_check_passed": deterministic_check_passed,
+            "deterministic_blocking_rule_codes": list(validation_result.blocking_rule_codes),
+            "deterministic_warning_rule_codes": list(validation_result.warning_rule_codes),
+            "deterministic_stop_reason": validation_result.stop_reason,
+            "validator_bundle": validation_result.rule_results.get("validator_bundle"),
+            "evaluated_at": validation_result.evaluated_at.isoformat(),
+        }
+        updated_rule_results = dict(validation_result.rule_results)
+        updated_rule_results["ai_compliance_alignment"] = alignment_payload
+        return replace(validation_result, rule_results=updated_rule_results)
+
+    @staticmethod
+    def _should_persist_compliance_validation_telemetry(
+        validation_result: ValidationResult,
+    ) -> bool:
+        if validation_result.is_blocking:
+            return True
+        alignment_payload = validation_result.rule_results.get("ai_compliance_alignment")
+        if not isinstance(alignment_payload, dict):
+            return False
+        return str(alignment_payload.get("agreement_status") or "").strip().lower() == "conflict"
 
     @staticmethod
     def _with_validator_bundle(
@@ -1363,6 +1463,9 @@ class ExecutionService:
         source_type: str,
         supported_order_types: tuple[str, ...] = (),
     ) -> ValidationResult:
+        decision_context = (
+            intent.context.decision_context if intent.context is not None else None
+        )
         position_snapshot = intent.context.position_snapshot if intent.context is not None else None
         has_position = (
             position_snapshot is not None
@@ -1388,10 +1491,24 @@ class ExecutionService:
                 submit_request.symbol
             )
         status_snapshot = None
+        symbol_state = None
+        symbol_policy_payload: dict[str, object] = {}
         if instrument is not None:
             status_snapshot = await self._repos.instrument_status_snapshots.get_latest_by_instrument(
                 instrument.instrument_id
             )
+            if decision_context is not None:
+                symbol_state = await self._repos.symbol_trade_states.get_by_account_and_instrument(
+                    decision_context.account_id,
+                    instrument.instrument_id,
+                )
+            if (
+                symbol_state is not None
+                and isinstance(symbol_state.metadata_json.get("holding_profile_policy"), dict)
+            ):
+                symbol_policy_payload = dict(
+                    symbol_state.metadata_json.get("holding_profile_policy")
+                )
         return evaluate_compliance_rules(
             context=build_validation_context(
                 decision_context_id=intent.decision_context_id,
@@ -1444,6 +1561,29 @@ class ExecutionService:
                 ),
                 blocked_reason_codes=blocked_reason_codes,
                 supported_order_types=supported_order_types,
+                holding_profile=(
+                    symbol_state.holding_profile if symbol_state is not None else None
+                ),
+                earliest_reduce_at=(
+                    resolve_policy_timestamp(
+                        symbol_policy_payload,
+                        key="earliest_reduce_at",
+                        fallback_key="minimum_hold_until",
+                    )
+                    if symbol_policy_payload
+                    else None
+                )
+                or (symbol_state.minimum_hold_until if symbol_state is not None else None),
+                earliest_reentry_at=(
+                    resolve_policy_timestamp(
+                        symbol_policy_payload,
+                        key="earliest_reentry_at",
+                        fallback_key="reentry_cooldown_until",
+                    )
+                    if symbol_policy_payload
+                    else None
+                )
+                or (symbol_state.reentry_cooldown_until if symbol_state is not None else None),
             ),
         )
 
@@ -2432,6 +2572,29 @@ class ExecutionService:
             source_type=intent_source_type,
             supported_order_types=supported_order_types,
         )
+        compliance_validation = await self._enrich_compliance_validation_with_ai_alignment(
+            trade_decision_id=trade_decision_id,
+            validation_result=compliance_validation,
+        )
+        alignment_payload = compliance_validation.rule_results.get("ai_compliance_alignment")
+        if isinstance(alignment_payload, dict) and str(
+            alignment_payload.get("agreement_status") or ""
+        ).strip().lower() == "conflict":
+            logger.warning(
+                "AI compliance mismatch detected: symbol=%s trade_decision_id=%s "
+                "reason=%s ai_check_passed=%s deterministic_check_passed=%s",
+                intent.request.symbol,
+                trade_decision_id,
+                alignment_payload.get("mismatch_reason"),
+                alignment_payload.get("ai_check_passed"),
+                alignment_payload.get("deterministic_check_passed"),
+            )
+        if self._should_persist_compliance_validation_telemetry(compliance_validation):
+            await self._record_validation_result(
+                validation_result=compliance_validation,
+                decision_context_id=intent.decision_context_id,
+                trade_decision_id=trade_decision_id,
+            )
         if compliance_validation.is_blocking:
             logger.info(
                 "Phase 2.1 BLOCKED submit-time compliance: symbol=%s "
@@ -2439,11 +2602,6 @@ class ExecutionService:
                 intent.request.symbol,
                 list(compliance_validation.blocking_rule_codes),
                 trade_decision_id,
-            )
-            await self._record_validation_result(
-                validation_result=compliance_validation,
-                decision_context_id=intent.decision_context_id,
-                trade_decision_id=trade_decision_id,
             )
             _add_phase(f"compliance_validator/{_symbol}", "skipped")
             await self._finalize_attempt(

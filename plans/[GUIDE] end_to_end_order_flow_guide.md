@@ -2,954 +2,713 @@
 
 ## 문서 목적
 
-이 문서는 **운영 스케줄러가 시작된 뒤, AI 의사결정이 어떻게 주문으로 이어지고, KIS에 제출된 뒤 어떤 후속 정리 과정을 거치는지**를 한 번에 이해할 수 있도록 만든 안내서다.
+이 문서는 현재 코드 기준으로 아래를 한 번에 설명하기 위한 운영 가이드다.
 
-대상 독자:
+1. 오늘 어떤 종목이 판단 대상으로 선정되는가
+2. 선정된 종목이 어떤 정량 기준을 통과해야 `매수/매도` 판단 후보가 되는가
+3. AI 판단과 deterministic 계산이 어떤 순서로 결합되는가
+4. 주문이 실제로 어떤 가드레일을 통과한 뒤 KIS로 제출되는가
+5. 제출 이후 체결/미체결/정합성 상태를 어떻게 다시 맞추는가
 
-- 개발자가 아닌 운영 담당자
-- 주문이 왜 나갔는지 / 왜 안 나갔는지 흐름을 파악해야 하는 업무 담당자
-- 장애가 났을 때 “어느 단계에서 멈췄는지”를 빠르게 알고 싶은 사람
-
-주의:
-
-- 여기서 말하는 “재문 제출”은 보통 현업에서 말하는 **주문 제출 이후 상태 재확인(재조회·재수렴)** 까지를 포함해서 설명한다.
-- 즉, “AI가 판단했다 → 주문 생성 → KIS 제출 → 제출 후 체결/거절 상태를 다시 맞춰 나감”까지의 전체 흐름이다.
+이 문서는 “정책 문서의 이상적인 목표”가 아니라, **현재 구현되어 운영 경로에 실제 반영된 내용**을 기준으로 쓴다.
 
 ---
 
-## 1. 한눈에 보는 전체 구조
+## 1. 한눈에 보는 전체 흐름
 
 ```text
-[운영 스케줄러 시작]
+[ops-scheduler 시작]
         |
         v
-[장전 기준 데이터 준비]
-        └─ instrument master / index membership 동기화
+[04:50 KST instrument master / membership 동기화]
         |
         v
-[장 상태 확인]
+[snapshot sync]
+  - 현금 / 주문가능금액 / 포지션 / risk_limit_snapshot
+  - symbol_trade_states authoritative 재수렴
         |
-        +--> [스냅샷 동기화]
-        |         └─ 계좌/현금/포지션 최신화
+        v
+[event ingestion]
+  - 공시 / 뉴스 / seeded event 적재
         |
-        +--> [이벤트 수집]
-        |         └─ 공시/뉴스/이벤트 입력
+        v
+[intraday universe freeze 보장]
+  - decision_loop_intraday freeze 우선
         |
-        +--> [의사결정 루프]
-        |         └─ intraday universe freeze를 anchor로
-        |            AI 판단 → 수량 산정 → 주문 생성 → KIS 제출
+        v
+[decision loop]
+  - 종목별 pre-AI gate
+  - signal_feature_snapshot attach
+  - deterministic_trigger 계산
+  - market_regime / strategy_selection / portfolio_allocation 계산
+  - EI -> AR -> AI Compliance -> FDC
+  - expected_value_gate
+  - submit translation
         |
-        +--> [제출 후 동기화]
-                  └─ KIS에 다시 물어봐서
-                     제출/체결/부분체결/거절 상태를 내부 DB와 맞춤
+        v
+[execution_service]
+  - sizing
+  - compliance_validator_v1
+  - VaR / liquidity / probe churn / reverse trade / sell guard
+  - OrderManager -> BrokerAdapter -> KIS submit
         |
-        +--> [장후 feature batch]
-                  └─ signal_feature_snapshot 생성 및 다음 거래일 판단 재료 고정
+        v
+[post-submit sync / fill sync / reconciliation]
+  - 제출 진실 확인
+  - 체결 / 부분체결 / 미체결 / reconcile_required 수렴
+  - snapshot refresh
+        |
+        v
+[20:10 KST signal_feature_after_market batch]
+  - snapshot_at = 해당 거래일 20:00 KST
+  - 다음 거래일용 signal_feature_snapshots 고정
 ```
 
-이 구조를 더 쉽게 비유하면:
-
-- **운영 스케줄러** = 전체 공정을 관리하는 “현장 반장”
-- **스냅샷 동기화** = 현재 잔고/보유종목/주문가능금액 확인
-- **장중 universe freeze** = 오늘 장중에 판단할 종목 집합을 먼저 고정
-- **의사결정 루프** = “지금 사야 하나 / 팔아야 하나” 판단 + 주문서 작성
-- **KIS 제출** = 실제 증권사에 주문 전송
-- **제출 후 동기화** = 주문이 진짜 접수됐는지, 체결됐는지 다시 확인
-- **장후 feature batch** = 종가 기준 feature를 계산해 다음 판단 재료 저장
-
 ---
 
-## 2. 가장 먼저 시작되는 곳
+## 2. 스케줄러와 기준 시각
 
-### 2-1. 운영 스케줄러 진입점
-
-실제 시작 파일:
+실행 진입점:
 
 - [scripts/run_ops_scheduler.py](/workspace/agent_trading/scripts/run_ops_scheduler.py)
-- 진입 함수: `main()`
+
+현재 중요한 기준 시각:
+
+- `04:50 KST`
+  - `instrument master`
+  - `instrument_index_memberships`
+  - 장전 기준 종목 마스터 준비
+- 장중 첫 `decision` 직전
+  - `decision_loop_intraday` freeze 보장
+- `20:10 KST`
+  - `signal_feature_after_market` 배치 실행
+- `snapshot_at`
+  - 장후 feature row는 해당 거래일 `20:00 KST`로 고정
+
+핵심 원칙:
+
+- 장중 판단은 live compose를 매번 즉석 계산하기보다 **intraday freeze**를 authoritative source로 우선 사용한다.
+- 장후 feature는 장중과 분리된 배치 결과를 DB에 저장하고, 다음 판단 입력으로 재사용한다.
+
+---
+
+## 3. 장전 준비 계층
+
+### 3-1. Instrument Master
+
+관련 파일:
+
+- [scripts/sync_kis_instrument_master.py](/workspace/agent_trading/scripts/sync_kis_instrument_master.py)
+- [scripts/import_instrument_index_membership_seed.py](/workspace/agent_trading/scripts/import_instrument_index_membership_seed.py)
 
 역할:
 
-- 장 시작 전/장중/장마감/장후를 구분한다.
-- 필요한 보조 프로세스를 정해진 순서로 호출한다.
-- 하루 동안 몇 번 돌았는지, 어떤 단계가 성공/실패했는지를 `operations_day_runs`에 기록한다.
+- `trading.instruments`를 오늘 판단 가능한 종목 기준 데이터로 맞춘다.
+- `instrument_index_memberships`를 통해 `KOSPI100`, `KOSPI200`, `KOSDAQ150` membership을 보강한다.
 
-운영 설정 메모:
+중요 원칙:
 
-- 일반 BUY lane 하루 상한은 `.env`의 `SCHEDULER_MAX_GENERAL_BUY_SUBMIT_PER_DAY`로 조정한다.
-- 이 값은 `docker-compose.yml`에서 `ops-scheduler`의
-  `--max-general-buy-submit-per-day` 인자로 전달된다.
-- `MAX_GENERAL_BUY_SUBMIT_PER_DAY`라는 이름은 현재 읽지 않는다.
-- 장전 `instrument master sync` 기준 시각은 `04:50 KST`다.
-- 장후 `signal_feature_snapshot` 배치 기준 시각은 `20:10 KST`다.
-- 장후 feature row의 `snapshot_at` anchor는 해당 거래일 `20:00 KST`다.
+- `instrument master`에 없는 종목은 universe 단계에서 제외된다.
+- AI가 이 누락을 우회하지 않는다.
+- `market_code` legacy 값이 남아 있어도, 실질 정책은 `exchange_code`, `market_segment`, `index_memberships`를 점진적으로 우선 사용한다.
 
-### 2-2. 스케줄러가 실제로 호출하는 하위 작업
+### 3-2. Instrument Status Snapshot
 
-[scripts/run_ops_scheduler.py](/workspace/agent_trading/scripts/run_ops_scheduler.py) 안의 대표 함수:
+관련 설계:
 
-- `_snapshot_command()`
-  - `scripts/run_snapshot_sync_loop.py` 호출
-- `_event_command()`
-  - `scripts/run_event_ingestion_loop.py` 호출
-- `_decision_command()`
-  - `scripts/run_decision_loop.py` 호출
-- `_post_submit_command()`
-  - `scripts/run_post_submit_sync_loop.py` 호출
-- `_fill_sync_command()`
-  - `scripts/run_fill_sync_loop.py` 호출
-
-추가로 스케줄러는 직접 보이지 않는 준비 단계도 관리한다.
-
-- 장전 `instrument master` 정규화/동기화
-- 장중 첫 `decision` 직전 `decision_loop_intraday` universe freeze 보장
-- 장후 `signal_feature_after_market` freeze + feature snapshot 적재
-
-즉 스케줄러는 **직접 판단하거나 직접 주문하지 않고**, 필요한 전용 프로세스를 호출해 전체 순서를 관리한다.
-
----
-
-## 3. 주문 전에 반드시 하는 준비 작업
-
-## 3-1. 계좌/현금/포지션 스냅샷 동기화
-
-실행 파일:
-
-- [scripts/run_snapshot_sync_loop.py](/workspace/agent_trading/scripts/run_snapshot_sync_loop.py)
-
-핵심 역할:
-
-- 계좌의 현금
-- 주문가능금액
-- 보유 종목
-- 리스크 한도
-
-를 최신 상태로 맞춘다.
-
-왜 중요하나:
-
-- 현금이 부족한데 매수 주문을 내면 안 된다.
-- 보유 종목이 없는데 매도 판단을 계속 AI에게 물어보는 것도 낭비다.
-- 최신 스냅샷이 없으면 주문을 막는 guard가 작동한다.
-
-관련 핵심 파일/함수:
-
-- [src/agent_trading/services/snapshot_sync.py](/workspace/agent_trading/src/agent_trading/services/snapshot_sync.py)
-  - `sync_account_snapshots()`
-- [src/agent_trading/brokers/koreainvestment/snapshot.py](/workspace/agent_trading/src/agent_trading/brokers/koreainvestment/snapshot.py)
-  - KIS에서 계좌/현금/주문가능금액/포지션을 받아 내부 스냅샷으로 변환
-
----
-
-## 3-2. 이벤트 수집
-
-실행 파일:
-
-- [scripts/run_event_ingestion_loop.py](/workspace/agent_trading/scripts/run_event_ingestion_loop.py)
+- [plans/[PLAN] instrument_status_snapshot_phase1.md](/workspace/agent_trading/plans/%5BPLAN%5D%20instrument_status_snapshot_phase1.md)
 
 역할:
 
-- 공시, 뉴스, 외부 이벤트 등 의사결정에 참고할 재료를 모은다.
+- 거래정지, 관리종목, 임시정지 같은 종목 상태성 fact를 별도로 저장한다.
+- universe와 submit-time compliance가 이 정보를 읽어 차단한다.
 
-업무 관점 설명:
+즉:
 
-- 이 단계는 “AI가 시장 상황을 읽을 수 있게 재료를 공급하는 단계”다.
-- 단, 이벤트가 없어도 모든 종목이 주문되는 것은 아니다.
+- “종목이 존재하는가”는 `instrument master`
+- “오늘 거래 가능한 상태인가”는 `instrument_status_snapshot`
 
----
-
-## 3-3. 장전 instrument master / index membership 준비
-
-실행 기준:
-
-- `ops-scheduler`가 거래일 `04:50 KST`에 장전 1회 실행
-- 관련 파일:
-  - [scripts/run_ops_scheduler.py](/workspace/agent_trading/scripts/run_ops_scheduler.py)
-  - [scripts/sync_kis_instrument_master.py](/workspace/agent_trading/scripts/sync_kis_instrument_master.py)
-  - [scripts/import_instrument_index_membership_seed.py](/workspace/agent_trading/scripts/import_instrument_index_membership_seed.py)
-
-역할:
-
-- `instruments`를 오늘 판단에 사용할 기준 종목 마스터로 맞춘다.
-- `instrument_index_memberships`를 통해 `KOSPI100`, `KOSPI200`, `KOSDAQ150` 같은 편입 정보를 보강한다.
-- Universe Selection은 이 기준 데이터에 없는 종목을 `unknown_instrument`로 제외한다.
-- 이 단계는 `관리종목`, `거래정지`, `투자유의` 같은
-  종목 상태성 fact를 저장하는 단계와는 다르다.
-  그런 상태값은 후속 `instrument_status_snapshot` 계층에서 다루는 것이 맞다.
-
-업무 관점 설명:
-
-- 장전 종목 마스터가 틀리면 장중 의사결정 이전에 universe 단계에서 종목이 빠질 수 있다.
-- 따라서 “왜 어떤 종목이 오늘 판단 대상이 아니었는가”는 AI보다 먼저 `instrument master` 정합성을 봐야 한다.
-- 반대로 “왜 어떤 종목이 관리종목/거래정지로 막혔는가”는
-  `instrument master`가 아니라
-  후속 `instrument status snapshot` 또는 live 상태 조회를 봐야 한다.
-
-후속 설계:
-
-- [`plans/[PLAN] instrument_status_snapshot_phase1.md`](./[PLAN]%20instrument_status_snapshot_phase1.md)
+으로 분리된다.
 
 ---
 
-## 4. 실제 ‘의사결정’이 시작되는 지점
+## 4. Universe 선정 기준
 
-## 4-1. 의사결정 루프 시작점
+관련 코드:
 
-실행 파일:
+- [src/agent_trading/services/universe_selection.py](/workspace/agent_trading/src/agent_trading/services/universe_selection.py)
+- [src/agent_trading/services/universe_selection_types.py](/workspace/agent_trading/src/agent_trading/services/universe_selection_types.py)
+- [plans/[POLICY] trading_universe_policy_v1.md](/workspace/agent_trading/plans/%5BPOLICY%5D%20trading_universe_policy_v1.md)
 
-- [scripts/run_decision_loop.py](/workspace/agent_trading/scripts/run_decision_loop.py)
-- 진입 함수: `main()`
-- 실제 루프 함수: `_run_loop()`
-- 종목별 처리 함수: `_run_one_cycle()`
+### 4-1. Universe 구성 순서
 
-업무 관점 설명:
+`UniverseSelectionService.compose_with_diagnostics()`는 아래 순서로 universe를 만든다.
 
-- 이 단계는 “한 종목씩 검토해서, 실제 주문 후보가 되는지 판단하는 단계”다.
+1. `core`
+2. `held_position`
+3. `reconciliation_overlay`
+4. `event_overlay`
+5. `manual`
+6. `market_overlay`
+7. exclusion
+8. priority sort
+9. daily cap
+
+### 4-2. source_type 우선순위
+
+같은 종목이 여러 source에 동시에 걸리면 아래 우선순위를 따른다.
+
+1. `held_position`
+2. `reconciliation_overlay`
+3. `event_overlay`
+4. `market_overlay`
+5. `manual`
+6. `core`
+
+의미:
+
+- 보유 종목과 정합성 추적 대상은 알파보다 안전성이 우선이다.
+- 같은 종목이 `core`이면서 `event_overlay`면 `event_overlay`로 승격된다.
+
+### 4-3. Core Universe
+
+현재 `core`는 아래 중 하나를 만족하는 종목을 seed로 쓴다.
+
+- 승인된 core seed symbol
+- `index_memberships` 또는 metadata 기준 core seed 판정
+- 대형주 core universe flag
+
+정책상 의미:
+
+- 장기적으로 `KOSPI100` 중심 core를 유지
+- `KOSDAQ`은 초기에는 core보다 `discovery / overlay / event` 계층에서 편입
+
+### 4-4. Held Position
+
+보유 수량 `> 0`인 종목은 무조건 편입된다.
+
+특징:
+
+- daily cap에서 제외 가능
+- 이후 `sell/reduce` 판단 대상이 된다
+- universe에서 빠져도 안 되는 mandatory 대상이다
+
+### 4-5. Reconciliation Overlay
+
+대상:
+
+- `submitted`
+- `acknowledged`
+- `partially_filled`
+- `cancel_pending`
+- `reconcile_required`
+
+또는 reconciliation pending run / blocking lock에 연결된 종목
+
+의미:
+
+- `unknown order state`에서는 신규 진입보다 상태 확인이 우선이다.
+- 이 계층은 알파 탐색이 아니라 **주문 안전성**을 위한 강제 편입이다.
+
+### 4-6. Event Overlay
+
+최근 external event 중 의미 있는 이벤트만 편입한다.
+
+핵심 기준:
+
+- 이벤트 타입이 정책 whitelist에 있어야 한다
+- `severity` 또는 `importance`가 정책상 요구 수준 이상이어야 한다
+
+대표 예:
+
+- `earnings`
+- `disclosure_material`
+- `capital_change`
+- `governance`
+- `macro_release`
+- `sector_policy`
+- `news_breaking`
+
+### 4-7. Market Overlay
+
+현재 구현 특징:
+
+- `live` 환경에서만 실질 작동
+- `paper`에서는 KIS mock quote 불안정성 때문에 skip
+- `pre_pool_size = 50`
+- `market_overlay_cap = 5`
+
+구성 절차:
+
+1. 가능하면 KIS ranking seed 사용
+2. 없으면 discovery seed / core fallback 사용
+3. `get_quotes_batch()`로 시세 조회
+4. `F4/F5` 유동성 필터 적용
+5. composite score 계산
+6. 상위 `5`개 편입
+
+market overlay 점수는 아래 3축 평균이다.
+
+1. `acml_tr_pbmn`
+   - 절대 누적 거래대금
+   - `1조`를 `1.0`으로 정규화
+2. `prdy_ctrt`
+   - 등락률
+   - `-5% ~ +10%`를 `0.0 ~ 1.0`으로 정규화
+3. `stck_prpr / stck_hgpr`
+   - 당일 고가 근접도
+   - `80% 이하 = 0점`
+   - `80% ~ 100%`를 `0.0 ~ 1.0`으로 정규화
+
+### 4-8. Universe 유동성 필터
+
+모든 일반 후보는 universe 단계에서 아래를 먼저 통과해야 한다.
+
+대표 차단 사유:
+
+- `unknown_instrument`
+- `inactive_instrument`
+- `unsupported_asset_class`
+- `metadata_excluded`
+- `broker_unsupported`
+- `incomplete_instrument`
+- `non_standard_symbol`
+- `preferred_share_class`
+- `tick_size_too_large`
+- `status_snapshot_trading_halt`
+- `status_snapshot_administrative_issue`
+- `status_snapshot_next_session_halt`
+- `status_snapshot_temporary_halt`
+
+market overlay에는 추가로 아래가 붙는다.
+
+- `acml_tr_pbmn < 1,000,000,000`
+  - 당일 누적 거래대금 `10억 미만` 제외
+
+### 4-9. Daily Cap
+
+기본 cap:
+
+- `max_cap = 30`
+- held position은 cap에서 제외 가능
+- `reconciliation_overlay`는 reserve 정책에 따라 cap 외로 취급 가능
+
+의미:
+
+- “오늘 판단할 종목 수”를 무한정 늘리지 않는다.
+- 호출 예산, 판단 지연, 운영 복잡도를 통제한다.
 
 ---
 
-## 4-1-a. 의사결정 루프가 읽는 authoritative universe
-
-현재 구현 기준으로 장중 `decision loop`는 live compose만 바로 쓰지 않는다.
-
-우선순위:
-
-1. `TRADING_UNIVERSE_SYMBOLS` 강제 override
-2. 당일 최신 `decision_loop_intraday` freeze
-3. `UniverseSelectionService.compose()`
-4. 하드코딩 fallback
+## 5. Decision Loop가 읽는 입력
 
 관련 파일:
 
 - [scripts/run_decision_loop.py](/workspace/agent_trading/scripts/run_decision_loop.py)
-- [scripts/run_ops_scheduler.py](/workspace/agent_trading/scripts/run_ops_scheduler.py)
-- [src/agent_trading/services/universe_selection.py](/workspace/agent_trading/src/agent_trading/services/universe_selection.py)
+- [src/agent_trading/services/decision_orchestrator.py](/workspace/agent_trading/src/agent_trading/services/decision_orchestrator.py)
+
+종목별 판단 전에 붙는 입력:
+
+1. 최신 `position_snapshot`
+2. 최신 `cash_balance_snapshot`
+3. 최신 `risk_limit_snapshot`
+4. 최신 `signal_feature_snapshot`
+5. `market_regime`
+6. `strategy_selection`
+7. `portfolio_allocation`
+8. 최근 external event
+9. `symbol_trade_state`
+10. `instrument_status_snapshot`
+
+---
+
+## 6. Pre-AI 차단
+
+AI 호출 전에 deterministic하게 먼저 막는 이유는 두 가지다.
+
+1. 토큰 낭비 방지
+2. 실행 불가능한 판단을 AI가 억지로 내리지 못하게 차단
+
+대표 차단 축:
+
+- stale snapshot
+- held position 없음
+- reentry cooldown
+- same signal feature snapshot reverse trade
+- holding_profile earliest reduce / reentry guard
+- 일반 BUY budget 소진
+- orderable amount 부족
+- source policy상 신규 진입 금지
+
+즉 AI는 “실행 가능한 후보”에 대해서만 의미 있게 쓰인다.
+
+---
+
+## 7. Signal Feature와 deterministic trigger
+
+관련 파일:
+
+- [src/agent_trading/services/signal_backbone.py](/workspace/agent_trading/src/agent_trading/services/signal_backbone.py)
+- [src/agent_trading/services/deterministic_trigger_engine.py](/workspace/agent_trading/src/agent_trading/services/deterministic_trigger_engine.py)
+
+### 7-1. signal_feature_snapshot 핵심 항목
+
+현재 판단 backbone에 직접 연결되는 대표 feature:
+
+- `overall_score`
+- `fast_score`
+- `slow_score`
+- `average_volume_20d`
+- `average_turnover_20d`
+- `volume_surge_ratio`
+- `turnover_surge_ratio`
+- `atr_14_pct`
+- `sma_5`, `sma_20`, `sma_60`
+
+### 7-2. trigger 임계값
+
+현재 고정 임계값:
+
+- `BUY_CANDIDATE`
+  - `entry_score >= 0.65`
+- `WATCH`
+  - `watch_score >= 0.45`
+- `REDUCE_CANDIDATE`
+  - `exit_score >= 0.60`
+- `SELL_CANDIDATE`
+  - `exit_score >= 0.75`
+
+### 7-3. 매수 entry_score 계산식
+
+`entry_score`는 대략 아래 가중치 합이다.
+
+- `overall_score` 정규화값 `45%`
+- `fast_score` 정규화값 `20%`
+- `slow_score` 정규화값 `15%`
+- bullish regime bonus
+- `risk_on` bonus / `risk_off` penalty
+- allocation budget bonus
+- strategy alignment bonus
+- `market_overlay` source bonus
+- 상대 거래량/거래대금 급증 bonus
+
+핵심 해석:
+
+- 단순히 AI가 좋다고 말하는 것으로는 부족하다.
+- 정량 backbone이 먼저 `entry_score`를 만들어야 한다.
+
+### 7-4. 매수 eligibility 조건
+
+`BUY_CANDIDATE`가 되려면 점수만 높아서는 안 되고 아래를 모두 통과해야 한다.
+
+1. `source_type` 허용
+   - `held_position`, `reconciliation_overlay`는 신규 BUY 차단
+2. `coverage_score >= 0.50`
+3. allocation budget 가능
+4. 위험장 차단
+   - `bearish_trend + risk_off`에서는 일반적으로 BUY 차단
+   - 다만 core 일부는 예외 경로 허용 가능
+5. signal floor
+   - `overall_score < -0.10` 차단
+   - `slow_score < -0.15` 차단
+6. `average_volume_20d >= 3000`
+7. 추정 `average_turnover_20d >= 50,000,000`
+8. 상대 활동성
+   - `max(volume_surge_ratio, turnover_surge_ratio) >= 1.10`
+9. 참여율 제한
+   - `recommended_max_order_value / average_turnover_20d <= 5%`
+   - 추정 주문수량 / 평균거래량 `<= 3%`
+
+즉 현재 매수는 **점수 + 실행 가능성**을 동시에 만족해야 한다.
+
+### 7-5. risk_off core 예외 경로
+
+`core` 종목이 `bearish_trend + risk_off`에서도 매수되려면 추가로 아래를 만족해야 한다.
+
+- `ranking_score >= 0.48`
+- `overall_score >= 0.0`
+- `slow_score >= -0.05`
+- `max(volume_surge_ratio, turnover_surge_ratio) >= 1.20`
+- 선호 전략이 아래 중 하나
+  - `defensive_low_volatility_rotation`
+  - `mean_reversion_bounce`
+  - `event_continuation`
+
+### 7-6. 보유 종목 매도/축소 eligibility
+
+`held_position` 경로는 아래를 본다.
+
+- 실제 보유수량 존재
+- `coverage_score >= 0.35`
+- `exit_score > 0.30`
+
+그 위에서:
+
+- `exit_score >= 0.60`이면 `REDUCE_CANDIDATE`
+- `exit_score >= 0.75`이면 `SELL/EXIT_CANDIDATE`
+
+---
+
+## 8. Expected Value Gate
+
+관련 파일:
+
+- [src/agent_trading/services/expected_value_gate.py](/workspace/agent_trading/src/agent_trading/services/expected_value_gate.py)
+
+이 계층은 “점수상 좋아 보여도 비용 차감 후 기대값이 남는가”를 본다.
+
+### 8-1. 적용 대상
+
+아래 decision type에만 강제 적용된다.
+
+- `APPROVE`
+- `BUY`
+- `SELL`
+- `EXIT`
+- `REDUCE`
+
+`WATCH`, `HOLD`에는 기대값 게이트를 강제하지 않는다.
+
+### 8-2. 핵심 계산
+
+- `expected_return_bps`
+  - 주로 trigger score anchor 기반
+- `expected_downside_bps`
+  - `risk_score * 40 + ATR penalty`
+- `net_expected_value_bps`
+  - `expected_return_bps - expected_downside_bps`
+- `edge_after_cost_bps`
+  - `net_expected_value_bps - round_trip_cost - slippage_buffer`
+
+### 8-3. 최소 기준
+
+- 신규 진입(`BUY`, `APPROVE`)
+  - `minimum_required_edge_bps = 10.00`
+- 축소/청산(`SELL`, `EXIT`, `REDUCE`)
+  - `minimum_required_edge_bps = 5.00`
+- `risk_off` 예외 진입 경로
+  - 신규 진입 최소 기준에 `+7.50 bps`
+
+즉:
+
+- 매수는 비용 차감 후 최소 `10bps`
+- 매도/축소는 비용 차감 후 최소 `5bps`
+
+를 넘지 못하면 submit 단계로 가지 못한다.
+
+---
+
+## 9. AI 4단 체인
+
+현재 AI 체인은 아래 순서다.
+
+1. `Event Interpretation`
+2. `AI Risk`
+3. `AI Compliance`
+4. `Final Decision Composer`
+
+중요 원칙:
+
+- AI는 계산기가 아니다.
+- 계산과 차단의 authoritative source는 deterministic backend다.
+- `AI Compliance`도 설명 보조 계층이지 최종 집행 계층이 아니다.
+
+AI가 `BUY`를 말해도 아래 중 하나면 실제 주문으로 번역되지 않는다.
+
+- deterministic trigger 미통과
+- expected value gate 실패
+- source policy 위반
+- symbol state / cooldown 위반
+- compliance hard rule 위반
+- sizing 결과 0
+
+---
+
+## 10. Submit 직전 hard guardrail
+
+관련 파일:
+
+- [src/agent_trading/services/execution_service.py](/workspace/agent_trading/src/agent_trading/services/execution_service.py)
+- [src/agent_trading/services/compliance_validator.py](/workspace/agent_trading/src/agent_trading/services/compliance_validator.py)
+
+대표 차단 축:
+
+1. `compliance_validator_v1`
+   - 필수 필드 누락
+   - invalid order shape
+   - source policy 위반
+   - reconciliation overlay flat BUY 차단
+   - instrument status 차단
+2. `VaR`
+   - `risk_limit_snapshot.var_status == ready` 전제
+3. low liquidity execution block
+4. single-share probe churn block
+5. reverse trade hysteresis
+6. holding_profile earliest reduce / reentry guard
+7. sell guard
+
+### 10-1. compliance validator가 보는 종목 상태
+
+차단 예:
+
+- `tr_stop_yn = Y`
+- `admn_item_yn = Y`
+- `nxt_tr_stop_yn = Y`
+- `temp_stop_yn = Y`
+- `iscd_stat_cls_code in {01, 02, 03, 04, 05}`
+
+단, 보유종목 `SELL`은 일부 unknown status에 대해 예외 허용 경로가 있다.
+
+### 10-2. source_type별 신규 진입 정책
+
+- `held_position`
+  - 신규 BUY 금지
+- `reconciliation_overlay`
+  - 무포지션 flat 신규 BUY 금지
+
+즉 `reconciliation_overlay`는 알파 진입 source가 아니라 상태 정리 source다.
+
+---
+
+## 11. Symbol State와 churn 제어
+
+관련 파일:
+
+- [src/agent_trading/services/holding_profile_policy.py](/workspace/agent_trading/src/agent_trading/services/holding_profile_policy.py)
+- [src/agent_trading/services/reverse_trade_hysteresis.py](/workspace/agent_trading/src/agent_trading/services/reverse_trade_hysteresis.py)
+- [src/agent_trading/services/symbol_trade_state_machine.py](/workspace/agent_trading/src/agent_trading/services/symbol_trade_state_machine.py)
+
+현재 주문 churn을 막기 위해 심볼 단위 상태를 저장한다.
+
+핵심 상태:
+
+- `flat`
+- `entry_pending`
+- `held_active`
+- `reduce_pending`
+- `exit_pending`
+- `flat_cooldown`
+
+저장 정보:
+
+- `holding_profile`
+- `minimum_hold_until`
+- `earliest_reduce_at`
+- `earliest_reentry_at`
+- `sell_cooldown_until`
+- `reentry_cooldown_until`
+- `last_signal_feature_snapshot_id`
+- 직전 `edge_after_cost_bps`
 
 핵심 의미:
 
-- 정상 장중에는 `decision loop`가 당일 intraday freeze를 우선 anchor로 읽는다.
-- `ops-scheduler`는 장중 첫 `decision` 직전에 이 freeze가 없으면 새로 만들고, 있으면 재사용한다.
-- 따라서 재기동 이후에도 같은 거래일에는 같은 freeze를 계속 재사용하는 것이 기본 동작이다.
-
-운영 확인 경로:
-
-- `GET /market-sessions/operations-day/latest`
-- `GET /instruments/trading-universe/preview?account_id=<ACCOUNT_ID>`
-
-이 두 경로는 각각
-
-- 스케줄러가 오늘 intraday freeze를 완료했는지
-- live compose와 active freeze가 어떻게 다른지
-
-를 보여준다.
+- 방금 산 종목을 같은 thesis에서 곧바로 다시 팔지 못하게 한다.
+- 방금 판 종목을 같은 signal snapshot에서 다시 곧바로 사지 못하게 한다.
 
 ---
 
-## 4-2. 의사결정 전에 먼저 거르는 단계 (토큰 절감용 사전 차단)
+## 12. 주문 제출과 제출 후 수렴
 
-현재는 AI 호출 전에 다음을 먼저 본다.
+### 12-1. 주문 제출
 
-구현 파일:
+경로:
 
-- [scripts/run_decision_loop.py](/workspace/agent_trading/scripts/run_decision_loop.py)
-- 함수: `_evaluate_pre_ai_skip_reason()`
+- `DecisionOrchestratorService.assemble_and_submit()`
+- `ExecutionService`
+- `OrderManager`
+- `BrokerAdapter`
+- KIS REST submit
 
-적용 로직:
-
-### A. 매도 판단 후보(`held_position` 경로)
-
-- 해당 종목을 실제로 들고 있지 않으면
-- AI에게 물어보지 않고 바로 `SKIPPED`
-
-즉:
-
-```text
-보유 포지션 없음
--> "이 종목 팔까?"를 AI에 묻지 않음
--> 토큰 절감
-```
-
-### B. 매수 판단 후보(`core`, `market_overlay` 등)
-
-- `orderable_amount < 0`
-- 또는 `orderable_amount <= 500,000원`
-- 또는 `remaining_general_buy_budget <= 0` 이면서 해당 종목의 실제 보유수량도 없음
-
-이면 AI 호출 전 바로 `SKIPPED`
-
-즉:
-
-```text
-주문가능금액이 사실상 부족함
-또는 오늘 일반 BUY lane 예산이 이미 소진됨
--> "이 종목 살까?"를 AI에 묻지 않음
--> 어차피 주문이 안 될 가능성이 높으므로 미리 차단
-```
-
----
-
-## 4-3. 종목별 처리 흐름
-
-`run_decision_loop.py`의 `_run_one_cycle()` 안에서 종목 1개는 대략 아래 순서로 처리된다.
-
-```text
-1) 사전 차단(pre-AI gate)
-2) 의사결정 요청 객체 생성
-3) 최신 signal feature snapshot / deterministic trigger 로드
-4) T3 뉴스/공시 보조 데이터 점검
-5) AI 의사결정 호출
-6) expected value gate 포함 최종 실행 가능성 점검
-7) 수량 산정
-8) 매도 가드 / 중복 매수 가드 / stale snapshot 가드
-9) 주문 요청 생성
-10) 주문 생성(DRAFT -> VALIDATED -> PENDING_SUBMIT)
-11) KIS 제출
-12) 제출 후 즉시 1차 재조회(sync)
-```
-
----
-
-## 5. AI가 실제로 판단하는 구간
-
-## 5-1. 메인 진입점
-
-핵심 파일:
-
-- [src/agent_trading/services/decision_orchestrator.py](/workspace/agent_trading/src/agent_trading/services/decision_orchestrator.py)
-- 핵심 함수: `DecisionOrchestratorService.assemble_and_submit()`
-
-이 함수가 하는 일:
-
-1. `assemble()`
-   - AI 에이전트들(EI, AR, FDC)을 돌린다.
-   - 최신 `signal_feature_snapshot`을 불러와 `decision_context`에 anchor로 붙인다.
-   - `deterministic_trigger`와 `expected_value_gate`를 계산한다.
-   - `TradeDecision`를 저장한다.
-   - `OrderIntent`를 만든다.
-2. 그 결과를 실행 파이프라인으로 넘긴다.
-
-### 업무 용어로 풀어쓰기
-
-- `assemble()` = “AI가 읽고 판단해서 내부 판단서 작성”
-- `OrderIntent` = “아직 증권사에 보내기 전, 내부 주문 의도서”
-- 이때 판단서는 이벤트만이 아니라 `signal_feature_snapshot`, `deterministic_trigger`, `universe_anchor`까지 함께 남긴다.
-
----
-
-## 5-2. AI 내부 판단 흐름
-
-업무적으로 이해하면 AI는 대략 이런 질문을 순서대로 받는다.
-
-```text
-이벤트/뉴스를 보면 좋은가?
--> 리스크는 큰가?
--> 최종적으로 BUY / SELL / HOLD / WATCH 중 무엇인가?
-```
-
-관련 구조:
-
-- [src/agent_trading/services/decision_orchestrator.py](/workspace/agent_trading/src/agent_trading/services/decision_orchestrator.py)
-  - `_run_decision_pipeline()`
-  - `_derive_deterministic_context_components()`
-  - `_attach_signal_feature_snapshot_to_context()`
-- [src/agent_trading/services/ai_agents/](/workspace/agent_trading/src/agent_trading/services/ai_agents)
-  - EI: 이벤트 해석
-  - AR: 리스크 판단
-  - FDC: 최종 의사결정
-
-AI에 전달되기 전에 이미 준비되는 입력:
-
-- 최신 `signal_feature_snapshot`
-- `deterministic_trigger`
-- `expected_value_gate`
-- 종목의 `market_segment`, `index_memberships`
-- `source_type`
-
-이 단계 결과:
-
-- `APPROVE` / `BUY`
-- `REDUCE` / `EXIT` / `SELL`
-- `HOLD`
-- `WATCH`
-
-중요:
-
-- 현재 시스템은 “AI가 전부 처음부터 계산”하는 구조가 아니다.
-- 가격/거래대금/이동평균/활동도 같은 반복 계산은 장후 feature batch와 deterministic backend가 먼저 만들고,
-  AI는 그 위에서 해석과 최종 판단을 수행한다.
-
----
-
-## 6. AI 판단이 바로 주문이 되지 않는 이유
-
-AI가 “좋아 보인다”고 말해도, 바로 KIS로 보내지지 않는다.
-
-중간에 여러 **결정론적(규칙형) 안전장치**가 있다.
-
-주요 파일:
-
-- [src/agent_trading/services/execution_service.py](/workspace/agent_trading/src/agent_trading/services/execution_service.py)
-- 핵심 함수: `run_execution_pipeline()`
-
-이 함수는 아래 순서로 움직인다.
-
-```text
-Phase 1.5  수량 산정(sizing)
-Phase 1.5+ 매도 가능 수량 확인(sell guard)
-Phase 2    HOLD/WATCH 여부 확인 + 주문 번역
-Phase 2.5  최근 중복 매수 차단
-Phase 3    주문 생성
-Phase 4a   VALIDATED 전이
-Phase 4b   PENDING_SUBMIT 전이
-Phase 4c   스냅샷 stale guard
-Phase 5    브로커(KIS) 제출
-Phase 5.5  제출 직후 post-submit sync
-```
-
-여기에 더해 현재는 AI 앞뒤로 아래 두 층이 함께 작동한다.
-
-- `deterministic_trigger`
-  - BUY 후보인지, WATCH만 허용할지, SELL/REDUCE 쪽인지 먼저 분류
-- `expected_value_gate`
-  - 기대수익 대비 비용/하방/신뢰도를 합쳐 실제 집행 가치가 있는지 최종 차단
-
-즉 AI는 독립 실행자가 아니라, deterministic backend가 만들어 둔 실행 가능한 좁은 공간 안에서 판단한다.
-
----
-
-## 6-1. 수량 산정(sizing)
-
-파일:
-
-- [src/agent_trading/services/execution_service.py](/workspace/agent_trading/src/agent_trading/services/execution_service.py)
-  - `_build_sizing_inputs()`
-- [src/agent_trading/services/sizing_engine.py](/workspace/agent_trading/src/agent_trading/services/sizing_engine.py)
-  - `calculate_sizing()`
-
-쉽게 말하면:
-
-- “몇 주 살지/팔지”를 계산하는 단계
-- 주문가능금액, 기존 보유수량, 포지션 집중도, 최소 진입금액 등을 반영한다
-
-주요 차단 예:
-
-- `orderable_amount_zero`
-- `position_concentration`
-- `min_entry_threshold`
-- `below_min_qty`
-
-업무 관점:
-
-- AI가 “매수”라고 해도, 계좌 사정상 0주가 나오면 실제 주문은 안 나간다.
-
----
-
-## 6-2. HOLD / WATCH는 주문으로 번역되지 않음
-
-파일:
-
-- [src/agent_trading/services/translation.py](/workspace/agent_trading/src/agent_trading/services/translation.py)
-- 함수: `build_submit_order_request_from_decision()`
-
-중요 규칙:
-
-- `WATCH` → 주문 생성 안 함
-- `HOLD` → 주문 생성 안 함
-- `held_position + BUY` → 주문 생성 안 함
-
-즉:
-
-```text
-AI가 "관찰만 하자(WATCH)"
--> 기록은 남김
--> 증권사에는 안 보냄
-```
-
----
-
-## 6-3. 중복 매수 차단
-
-파일:
-
-- [src/agent_trading/services/execution_service.py](/workspace/agent_trading/src/agent_trading/services/execution_service.py)
-
-역할:
-
-- 방금 같은 종목에 BUY 주문을 냈다면
-- 일정 시간 안에는 다시 같은 방향 주문을 내지 않도록 막는다.
-
-업무 관점:
-
-- “같은 종목을 너무 짧은 시간 안에 연속 매수하는 실수”를 막는 장치
-
----
-
-## 6-4. 스냅샷 stale guard
-
-파일:
-
-- [src/agent_trading/services/execution_service.py](/workspace/agent_trading/src/agent_trading/services/execution_service.py)
-
-역할:
-
-- 포지션/현금 스냅샷이 너무 오래됐으면 주문을 막는다.
-
-업무 관점:
-
-- 오래된 계좌 정보로 주문하면 위험하므로
-- “정보가 신선하지 않다”고 판단되면 제출 전 차단한다.
-
-예외:
-
-- `held_position` 위험축소 SELL은 stale이어도 일부 우회 가능
-
----
-
-## 7. 내부 주문 생성 단계
-
-AI가 통과하고 규칙형 가드도 통과하면, 이제 내부 주문이 만들어진다.
-
-파일:
-
-- [src/agent_trading/services/order_manager.py](/workspace/agent_trading/src/agent_trading/services/order_manager.py)
-
-관련 함수:
-
-- `create_order()`
-- `transition_to()`
-
-상태 흐름:
-
-```text
-DRAFT
-  -> VALIDATED
-  -> PENDING_SUBMIT
-```
-
-쉽게 설명하면:
-
-- `DRAFT` = 초안 주문
-- `VALIDATED` = 형식 검사 완료
-- `PENDING_SUBMIT` = 이제 증권사에 보내도 되는 상태
-
----
-
-## 8. KIS에 실제로 주문 보내는 단계
-
-## 8-1. 내부 주문 제출 orchestrator
-
-파일:
-
-- [src/agent_trading/services/order_manager.py](/workspace/agent_trading/src/agent_trading/services/order_manager.py)
-- 함수: `submit_order_to_broker()`
-
-이 함수가 하는 일:
-
-1. 현재 reconciliation lock이 있는지 확인
-2. broker adapter에 실제 제출 요청
-3. 결과에 따라 상태 전이
-   - `SUBMITTED`
-   - `RECONCILE_REQUIRED`
-   - `REJECTED`
-
-업무 관점:
-
-- “내부 주문을 증권사에 넘기고, 증권사 반응에 맞춰 내부 상태를 바꾸는 단계”
-
----
-
-## 8-2. KIS adapter
-
-파일:
-
-- [src/agent_trading/brokers/koreainvestment/adapter.py](/workspace/agent_trading/src/agent_trading/brokers/koreainvestment/adapter.py)
-- 함수: `submit_order()`
-
-adapter 역할:
-
-- 내부 주문 형식과 KIS API 형식의 차이를 맞춰주는 번역기
-- 예산 소진(`BUDGET_EXHAUSTED`) 같은 시스템 사유도 여기서 표준화한다.
-
-주요 처리:
-
-- 요청 사전검사
-- `BudgetExhaustedError` 처리
-- held-position SELL reserve lane 재시도
-- KIS REST client 호출
-
----
-
-## 8-3. KIS REST 실제 호출
-
-파일:
-
-- [src/agent_trading/brokers/koreainvestment/rest_client.py](/workspace/agent_trading/src/agent_trading/brokers/koreainvestment/rest_client.py)
-- 함수: `submit_order()`
-
-실제 KIS body 구성 예:
-
-```text
-CANO             계좌번호
-ACNT_PRDT_CD     계좌상품코드
-PDNO             종목코드
-ORD_DVSN         주문구분
-ORD_QTY          주문수량
-ORD_UNPR         주문가격
-```
-
-업무 관점:
-
-- 이 단계가 “정말로 증권사에 전송되는 단계”다.
-- 여기서 KIS가 `ODNO(주문번호)`를 주면 내부적으로는 “제출 성공”으로 본다.
-
----
-
-## 9. KIS 제출 결과에 따른 내부 상태
-
-정상 제출:
-
-```text
-PENDING_SUBMIT -> SUBMITTED
-```
-
-애매한 제출:
-
-```text
-PENDING_SUBMIT -> RECONCILE_REQUIRED
-```
-
-명시적 거절:
-
-```text
-PENDING_SUBMIT -> REJECTED
-```
+### 12-2. 제출 후 확인
 
 관련 파일:
-
-- [src/agent_trading/services/order_manager.py](/workspace/agent_trading/src/agent_trading/services/order_manager.py)
-- 함수: `submit_order_to_broker()`
-
----
-
-## 10. 제출 직후 1차 재확인(즉시 후속 정리)
-
-파일:
-
-- [src/agent_trading/services/execution_service.py](/workspace/agent_trading/src/agent_trading/services/execution_service.py)
-
-KIS에 성공 제출된 직후, 가능하면 즉시:
-
-- broker order 조회
-- 체결 여부 확인
-- 상태 반영
-
-을 한 번 더 시도한다.
-
-코드상 위치:
-
-- `run_execution_pipeline()` 안의 `Phase 5.5`
-- 여기서 `self._sync_service.sync_order_post_submit(...)` 호출
-
-업무 관점:
-
-- “보냈다”로 끝나는 것이 아니라,
-- “정말 접수됐는지 / 벌써 체결됐는지”를 바로 1차 확인하는 단계
-
----
-
-## 10-1. unknown state와 rate limit을 다루는 원칙
-
-운영 원칙:
-
-- rate limit은 성능 이슈가 아니라 주문 안전성 제약으로 다룬다.
-- KIS 응답이 애매하면 신규 주문 확대보다 상태 확인과 reconciliation이 우선이다.
-
-실무 해석:
-
-- `RECONCILE_REQUIRED`
-- `truth_probe` 경고
-- `rate_limit`, `api_error`, `ambiguous state`
-
-같은 신호가 보이면 “더 빨리 다시 주문”보다 “현재 주문이 실제로 어떻게 됐는지 먼저 맞춘다”가 기본 원칙이다.
-
-이 원칙은 `OrderManager`, `OrderSyncService`, `BrokerAdapter` 경계에서 유지된다.
-
----
-
-## 11. 제출 후 별도 루프가 계속 상태를 다시 맞춤
-
-## 11-1. post-submit sync 전용 프로세스
-
-실행 파일:
 
 - [scripts/run_post_submit_sync_loop.py](/workspace/agent_trading/scripts/run_post_submit_sync_loop.py)
-- 진입 함수: `main()`
+- [src/agent_trading/services/order_sync_service.py](/workspace/agent_trading/src/agent_trading/services/order_sync_service.py)
 
 역할:
 
-- 이미 제출된 주문을 주기적으로 다시 조회한다.
-- KIS에서 상태가 바뀌었으면 내부 DB 상태도 그에 맞게 바꾼다.
+- 주문이 실제 제출되었는지
+- 체결/부분체결/취소/거절인지
+- `reconcile_required`인지
 
-즉:
+를 다시 맞춘다.
 
-```text
-이미 낸 주문을 계속 추적하는 별도 담당 프로세스
-```
+### 12-3. fill sync
 
----
+추가 truth source:
 
-## 11-2. 핵심 함수: sync_order_post_submit
+- `fill snapshots`
+- `broker fill`
+- `position delta`
 
-파일:
+우선순위는 체결 truth를 더 직접적으로 아는 쪽이 우선이다.
 
-- [src/agent_trading/services/order_sync_service.py](/workspace/agent_trading/src/agent_trading/services/order_sync_service.py)
-- 함수: `sync_order_post_submit()`
+### 12-4. snapshot refresh
 
-이 함수의 핵심 순서:
+fill 확인 이후:
 
-1. `BrokerOrderEntity` 조회
-2. `OrderRequestEntity` 조회
-3. `broker.get_order_status()` 호출
-4. 내부 상태로 매핑
-5. 필요 시 `OrderManager.transition_to()` 호출
-6. `broker.get_fills()` 호출
-7. fill event 저장
-8. terminal fill이면 snapshot refresh callback 호출
+- position
+- cash
+- orderable_amount
+- risk_limit_snapshot
 
-업무 관점:
+을 다시 최신화한다.
 
-- 제출 후에 체결, 부분체결, 거절, 만료 여부를 계속 맞춰 나가는 “후속 정리 담당자”
+그리고 `symbol_trade_states`도 실제 포지션/주문 상태 기준으로 authoritative하게 재수렴시킨다.
 
 ---
 
-## 12. 체결 확인 근거는 무엇을 쓰나
-
-현재는 체결 판단에 여러 근거를 쓴다.
-
-대표 근거:
-
-1. KIS 직접 주문 상태 조회
-2. KIS 체결내역(`VTTC0081R`) 스냅샷
-3. fill event
-4. 포지션 변화량(position delta)
+## 13. 장후 feature batch
 
 관련 파일:
 
-- [src/agent_trading/services/order_sync_service.py](/workspace/agent_trading/src/agent_trading/services/order_sync_service.py)
-- [scripts/run_fill_sync_loop.py](/workspace/agent_trading/scripts/run_fill_sync_loop.py)
-- [src/agent_trading/api/routes/fill_history.py](/workspace/agent_trading/src/agent_trading/api/routes/fill_history.py)
-
-업무 관점:
-
-- “체결됐다”를 한 가지 증거만으로 보지 않고,
-- 가능한 경우 직접적인 체결 근거를 우선 사용한다.
-
----
-
-## 12-1. 장후 feature freeze는 어디에 쓰이나
-
-장후 `20:10 KST` 배치는 단순 보고용이 아니다.
-
-관련 파일:
-
-- [scripts/run_ops_scheduler.py](/workspace/agent_trading/scripts/run_ops_scheduler.py)
 - [scripts/generate_signal_feature_snapshot_input.py](/workspace/agent_trading/scripts/generate_signal_feature_snapshot_input.py)
 - [scripts/build_signal_feature_snapshots.py](/workspace/agent_trading/scripts/build_signal_feature_snapshots.py)
-- [src/agent_trading/services/signal_feature_pipeline.py](/workspace/agent_trading/src/agent_trading/services/signal_feature_pipeline.py)
 
 역할:
 
-1. 장후 universe를 `signal_feature_after_market` purpose로 freeze 한다.
-2. 그 freeze 대상 종목에 대해 시세/일봉 기반 입력을 수집한다.
-3. 계산된 `signal_feature_snapshots`를 DB에 저장한다.
-4. 다음 장중 `DecisionOrchestratorService`가 종목별 최신 snapshot을 읽어
-   `deterministic_trigger`, `market_regime`, `expected_value_gate` 계산의 입력으로 사용한다.
+1. 장후 universe freeze를 읽는다.
+2. 시세/이벤트/기초 입력을 수집한다.
+3. `signal_feature_snapshots`를 DB에 저장한다.
+4. 다음 거래일 decision loop와 AI 판단의 공통 입력으로 재사용한다.
 
-정리하면:
-
-- 장중 intraday freeze = “오늘 어떤 종목을 볼지”를 고정하는 anchor
-- 장후 feature freeze = “내일 어떤 feature를 읽을지”를 고정하는 anchor
-
-둘은 목적이 다르며, 서로 대체 관계가 아니다.
+즉 장중 AI가 원시 시세를 길게 계산하는 구조가 아니라,
+장후/장전 배치가 계산한 구조화 feature를 읽는 구조다.
 
 ---
 
-## 13. 체결되면 왜 다시 스냅샷을 갱신하나
+## 14. 운영자가 “왜 주문이 안 나갔는가”를 볼 때 확인 순서
 
-체결이 발생하면:
+1. 오늘 종목이 `intraday universe freeze`에 있었는가
+2. `source_type`이 무엇인가
+3. universe 단계에서 liquidity/status로 탈락했는가
+4. `deterministic_trigger`
+   - `entry_score`, `exit_score`
+   - `eligibility_passed`
+   - `eligibility_reasons`
+5. `expected_value_gate`
+   - `edge_after_cost_bps`
+   - `minimum_required_edge_bps`
+6. `holding_profile_policy`
+   - cooldown / earliest_reduce / earliest_reentry
+7. `compliance_validator_v1`
+8. `sizing_result`
+9. `submit_result.stop_reason`
+10. 제출 후에는 `order sync / fill sync / reconciliation`
 
-- 현금이 줄거나 늘고
-- 보유 수량이 바뀌고
-- 주문가능금액이 변한다
+실무적으로는 아래 순서가 가장 빠르다.
 
-그래서 제출 후 동기화 과정에서:
-
-- [scripts/run_post_submit_sync_loop.py](/workspace/agent_trading/scripts/run_post_submit_sync_loop.py)
-- `_build_refresh_callback()`
-
-를 통해 snapshot refresh를 다시 호출한다.
-
-업무 관점:
-
-- 주문 체결 직후 계좌 상태를 가능한 빨리 최신으로 맞춰
-- 다음 주문 판단이 오래된 금액으로 이뤄지지 않게 한다.
-
----
-
-## 14. 전체 호출 경로를 코드 기준으로 다시 요약
-
-## 14-1. 운영 스케줄러 기준
-
-```text
-scripts/run_ops_scheduler.py
-  main()
-    -> _run_pre_market() / intraday loop / _run_end_of_day()
-    -> instrument master sync (04:50 KST)
-    -> _ensure_decision_loop_intraday_freeze()
-    -> _snapshot_command()
-    -> _event_command()
-    -> _decision_command()
-    -> _post_submit_command()
-    -> after_market_signal_feature batch (20:10 KST)
-```
-
-## 14-2. 의사결정 ~ 제출 기준
-
-```text
-scripts/run_decision_loop.py
-  main()
-    -> _load_trading_universe_with_anchor()
-    -> _run_loop()
-      -> _process_one()
-        -> _run_one_cycle()
-          -> _evaluate_pre_ai_skip_reason()
-          -> DecisionOrchestratorService.assemble_and_submit()
-             -> _derive_deterministic_context_components()
-                -> signal_feature_snapshots.get_latest_by_instrument()
-                -> assess_deterministic_triggers()
-                -> evaluate_expected_value_gate()
-             -> _run_decision_pipeline()
-             -> ExecutionService.run_execution_pipeline()
-                -> calculate_sizing()
-                -> build_submit_order_request_from_decision()
-                -> OrderManager.create_order()
-                -> OrderManager.transition_to(VALIDATED)
-                -> OrderManager.transition_to(PENDING_SUBMIT)
-                -> OrderManager.submit_order_to_broker()
-                   -> KISAdapter.submit_order()
-                      -> KISRestClient.submit_order()
-                -> OrderSyncService.sync_order_post_submit()   (즉시 1차)
-```
-
-## 14-3. 제출 후 별도 수렴 기준
-
-```text
-scripts/run_post_submit_sync_loop.py
-  main()
-    -> _run_loop()
-      -> PostSubmitSyncRunner
-        -> OrderSyncService.sync_order_post_submit()
-           -> broker.get_order_status()
-           -> broker.get_fills()
-           -> OrderManager.transition_to()
-           -> snapshot_refresh_cb()
-```
+- `trade_decisions.decision_json`
+- `decision_inspection`
+- `guardrail_evaluations`
+- `risk_limit_snapshots`
+- `order_requests`
+- `broker_orders`
+- `fill snapshots`
 
 ---
 
-## 15. 업무자가 보면 좋은 핵심 체크 포인트
+## 15. 현재 구조를 한 문장으로 요약
 
-### 15-1. 주문이 아예 안 나간 경우
-
-확인할 곳:
-
-1. `decision_loop_intraday` freeze에 그 종목이 들어 있었는가
-2. `run_decision_loop.py` pre-AI gate에서 스킵됐는가
-3. AI 결과가 `HOLD/WATCH`였는가
-4. `deterministic_trigger` 또는 `expected_value_gate`에서 차단됐는가
-5. sizing에서 0주가 나왔는가
-6. stale snapshot guard에 막혔는가
-7. scheduler gate에 막혔는가
-
-### 15-2. 주문은 생성됐는데 KIS에 안 간 경우
-
-확인할 곳:
-
-1. `DRAFT -> VALIDATED -> PENDING_SUBMIT`까지 갔는가
-2. `OrderManager.submit_order_to_broker()`에서 예산/락/오류가 났는가
-3. `BUDGET_EXHAUSTED`, `BLOCKED`, `RECONCILE_REQUIRED`였는가
-
-### 15-3. KIS에는 간 것 같은데 체결이 이상한 경우
-
-확인할 곳:
-
-1. `order_submission_attempts`
-2. `broker_orders`
-3. `fill_history`
-4. `order_sync_service.sync_order_post_submit()`
-5. `truth_probe_fill_snapshot_incomplete` 같은 보류성 reason
-6. KIS rate limit 또는 ambiguous state가 있었는가
-
-### 15-4. 오늘 대상 종목 자체가 이상한 경우
-
-확인할 곳:
-
-1. 장전 `instrument master sync`가 정상 완료됐는가
-2. 후속 `instrument status snapshot` 배치가 정상 완료됐는가
-3. `instrument_index_memberships`가 기대대로 적재됐는가
-4. `GET /instruments/trading-universe/preview`에서
-   live compose와 active intraday freeze가 어떻게 다른가
-5. `trade_decisions.decision_json.universe_anchor`가 어떤 freeze를 가리키는가
-
----
-
-## 16. 실무적으로 기억해야 할 가장 중요한 포인트 5개
-
-1. **AI가 좋다고 해도 바로 주문되지 않는다.**
-   - 수량, 현금, stale snapshot, 중복 guard를 다 통과해야 한다.
-
-2. **운영 스케줄러가 직접 주문하는 것이 아니다.**
-   - 스케줄러는 각 전용 프로세스를 호출하는 관리자다.
-
-3. **KIS 제출 성공과 체결 성공은 다르다.**
-   - 제출 후에도 별도 재조회와 수렴 과정이 이어진다.
-
-4. **주문가능금액/보유포지션 스냅샷은 주문 품질에 직접 영향을 준다.**
-   - 오래되거나 잘못되면 주문이 과도하거나 보수적으로 막힐 수 있다.
-
-5. **제출 후 동기화(post-submit sync)는 주문 라이프사이클의 일부다.**
-   - 제출에서 끝이 아니라, 체결까지 상태를 맞춰야 진짜 완료다.
-
-6. **장중 판단 대상과 장후 feature는 각각 별도 freeze로 고정된다.**
-   - intraday freeze는 오늘 판단 대상을,
-     signal feature freeze는 다음 판단 재료를 고정한다.
-
----
-
-## 17. 관련 핵심 파일 빠른 참조표
-
-| 구분 | 파일 | 핵심 함수 | 역할 |
-|------|------|-----------|------|
-| 운영 스케줄러 | `scripts/run_ops_scheduler.py` | `main()`, `_decision_command()` | 장중 전체 작업 순서 관리 |
-| 장전 종목 마스터 | `scripts/sync_kis_instrument_master.py` | `main()` | `instrument master` 최신화 |
-| 장중 universe anchor | `scripts/run_ops_scheduler.py` | `_ensure_decision_loop_intraday_freeze()` | 장중 authoritative universe freeze 보장 |
-| 스냅샷 동기화 | `scripts/run_snapshot_sync_loop.py` | `main()` | 계좌/포지션/현금 최신화 |
-| 의사결정 루프 | `scripts/run_decision_loop.py` | `_run_loop()`, `_run_one_cycle()` | 종목별 AI 판단 진입 |
-| 사전 토큰 절감 | `scripts/run_decision_loop.py` | `_evaluate_pre_ai_skip_reason()` | AI 호출 전 불필요 대상 차단 |
-| AI 오케스트레이션 | `src/agent_trading/services/decision_orchestrator.py` | `assemble_and_submit()` | AI 판단 + 실행 파이프라인 연결 |
-| 장후 feature 입력 생성 | `scripts/generate_signal_feature_snapshot_input.py` | `main()` | 장후 feature 원천 입력 수집 |
-| 장후 feature 적재 | `scripts/build_signal_feature_snapshots.py` | `main()` | `signal_feature_snapshots` 저장 |
-| 실행 파이프라인 | `src/agent_trading/services/execution_service.py` | `run_execution_pipeline()` | sizing, guard, 주문 생성, 제출 |
-| 주문 번역 | `src/agent_trading/services/translation.py` | `build_submit_order_request_from_decision()` | HOLD/WATCH는 주문 미생성 |
-| 주문 상태 관리 | `src/agent_trading/services/order_manager.py` | `create_order()`, `transition_to()`, `submit_order_to_broker()` | 내부 주문 생성과 상태 전이 |
-| KIS adapter | `src/agent_trading/brokers/koreainvestment/adapter.py` | `submit_order()` | 내부 요청을 KIS 호출로 연결 |
-| KIS REST | `src/agent_trading/brokers/koreainvestment/rest_client.py` | `submit_order()` | 실제 HTTP 요청 전송 |
-| 제출 후 동기화 루프 | `scripts/run_post_submit_sync_loop.py` | `main()` | 제출 후 주기적 재조회 |
-| 주문 수렴 서비스 | `src/agent_trading/services/order_sync_service.py` | `sync_order_post_submit()` | 체결/부분체결/거절/만료 수렴 |
-| 체결내역 동기화 | `scripts/run_fill_sync_loop.py` | `main()` | VTTC0081R 기반 체결내역 수집 |
-
----
-
-## 18. 문서 한 줄 요약
-
-**운영 스케줄러는 장전 `instrument master`, 장중 `intraday universe freeze`, 장후 `signal_feature_snapshot`을 각각 고정한 뒤, 그 위에서 AI 판단과 규칙형 가드를 결합해 주문을 제출하고, 제출 이후에는 reconciliation과 체결 동기화로 실제 상태를 끝까지 맞춰 간다.**
+현재 시스템은 **장전 종목 마스터와 장후 feature를 먼저 고정하고, 장중에는 freeze된 universe 안에서 deterministic trigger와 expected value gate로 후보를 좁힌 뒤, AI는 그 위의 해석 계층으로만 사용하고, 마지막 집행은 compliance·VaR·유동성·상태기계 guardrail이 authoritative하게 차단/허용하는 구조**다.

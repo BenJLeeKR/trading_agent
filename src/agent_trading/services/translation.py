@@ -82,7 +82,10 @@ def build_submit_order_request_from_decision(
     if decision_type == "WATCH":
         return None
 
-    if not _has_required_expected_value_anchor(intent.ai_backend_inputs):
+    if not _has_required_expected_value_anchor(
+        intent.ai_backend_inputs,
+        request_metadata=intent.request.metadata,
+    ):
         return None
 
     source_type = "core"
@@ -142,7 +145,11 @@ def build_submit_order_request_from_decision(
     )
 
 
-def _has_required_expected_value_anchor(ai_inputs: AIDecisionInputs) -> bool:
+def _has_required_expected_value_anchor(
+    ai_inputs: AIDecisionInputs,
+    *,
+    request_metadata: dict[str, object] | None = None,
+) -> bool:
     decision_type = (ai_inputs.decision_type or "").strip().upper()
     if decision_type not in {"APPROVE", "BUY", "SELL", "EXIT", "REDUCE"}:
         return True
@@ -158,7 +165,17 @@ def _has_required_expected_value_anchor(ai_inputs: AIDecisionInputs) -> bool:
         ai_inputs.estimated_round_trip_cost_bps,
         ai_inputs.slippage_buffer_bps,
     )
-    return all(value is not None for value in required_values)
+    if not all(value is not None for value in required_values):
+        return False
+    if decision_type in {"SELL", "EXIT", "REDUCE"}:
+        anchor_payload = (
+            request_metadata.get("expected_value_anchor")
+            if isinstance(request_metadata, dict)
+            else None
+        )
+        if isinstance(anchor_payload, dict):
+            return bool(anchor_payload.get("anchor_passed"))
+    return True
 
 
 import decimal

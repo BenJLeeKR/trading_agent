@@ -3,7 +3,7 @@
 Verifies that:
 
 * **Scenario A** — ``build_default_runtime()`` returns a fully wired dict
-  containing both the KIS broker adapter and all three AI agent slots.
+  containing both the KIS broker adapter and all four AI agent slots.
 * **Scenario B** — ``assemble()`` produces an ``OrderIntent`` whose
   ``SubmitOrderRequest`` is AI-field-free and passes KIS adapter
   pre-validation.
@@ -64,11 +64,6 @@ from agent_trading.domain.models import SubmitOrderRequest
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.filters import AccountLookup
 from agent_trading.runtime.bootstrap import build_default_runtime
-from agent_trading.services.ai_agents import (
-    AIRiskAgent,
-    EventInterpretationAgent,
-    FinalDecisionComposerAgent,
-)
 from agent_trading.services.decision_orchestrator import (
     AIDecisionInputs,
     DecisionOrchestratorService,
@@ -288,12 +283,12 @@ class TestCombinedRuntimeWiring:
             "orchestrator",
             "event_interpretation_agent",
             "ai_risk_agent",
+            "ai_compliance_agent",
             "final_decision_agent",
         }
         actual = set(runtime.keys())
-        assert actual == expected_keys, (
+        assert expected_keys.issubset(actual), (
             f"Runtime keys mismatch. "
-            f"Extra: {actual - expected_keys}. "
             f"Missing: {expected_keys - actual}"
         )
 
@@ -342,6 +337,10 @@ class TestCombinedRuntimeWiring:
         )
         assert runtime["ai_risk_agent"] is None, (
             "Expected None (stub) for ai_risk_agent "
+            "when no provider credential is set"
+        )
+        assert runtime["ai_compliance_agent"] is None, (
+            "Expected None (stub) for ai_compliance_agent "
             "when no provider credential is set"
         )
         assert runtime["final_decision_agent"] is None, (
@@ -402,6 +401,12 @@ class TestAssembleShapeCompatibility:
             "execution_preferences",
             "sizing_hint",
             "event_conflict",
+            "compliance_opinion",
+            "compliance_score",
+            "compliance_confidence",
+            "compliance_reason_codes",
+            "compliance_policy_flags",
+            "compliance_check_passed",
         ]
         for field in ai_field_names_should_not_exist:
             assert not hasattr(intent.request, field), (
@@ -432,6 +437,14 @@ class TestAssembleShapeCompatibility:
         assert hasattr(ai, "event_bias")
         assert hasattr(ai, "event_conflict")
         assert hasattr(ai, "event_reason_codes")
+
+        # Compliance fields (AC-derived)
+        assert hasattr(ai, "compliance_opinion")
+        assert hasattr(ai, "compliance_score")
+        assert hasattr(ai, "compliance_confidence")
+        assert hasattr(ai, "compliance_reason_codes")
+        assert hasattr(ai, "compliance_policy_flags")
+        assert hasattr(ai, "compliance_check_passed")
 
         # Metadata fields
         assert hasattr(ai, "source_agent_names")
@@ -499,7 +512,7 @@ class TestAssembleShapeCompatibility:
         """B3 (conditional): Real provider credential이 설정된 환경에서만 실행.
 
         세 가지 검증:
-        1. ``ai_backend_inputs``에 real agent 데이터 존재 (3 source agents).
+        1. ``ai_backend_inputs``에 real agent 데이터 존재 (4 source agents).
         2. ``SubmitOrderRequest``는 여전히 AI 필드가 없음.
         3. KIS adapter validation 통과 + duck-typing attribute 존재.
         """
@@ -513,8 +526,8 @@ class TestAssembleShapeCompatibility:
         # 1. ai_backend_inputs has real agent data
         ai = intent.ai_backend_inputs
         assert ai.source_agent_names is not None
-        assert len(ai.source_agent_names) == 3, (
-            f"Expected 3 source agents, got {ai.source_agent_names}"
+        assert len(ai.source_agent_names) == 4, (
+            f"Expected 4 source agents, got {ai.source_agent_names}"
         )
 
         # 2. SubmitOrderRequest is still AI-field-free

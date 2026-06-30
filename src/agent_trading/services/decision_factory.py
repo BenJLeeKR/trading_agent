@@ -160,6 +160,7 @@ def build_trade_decision_entity(
         minimum_required_edge_bps=ai_inputs.minimum_required_edge_bps,
         confidence=Decimal(str(composer_output.confidence)),
         risk_check_passed=ai_inputs.risk_opinion in {"allow", "reduce"},
+        compliance_check_passed=ai_inputs.compliance_check_passed,
         failed_rule_codes=(
             list(ai_inputs.expected_value_gate_reason_codes)
             if (
@@ -206,6 +207,11 @@ def build_trade_decision_entity(
             "detected_event_count": ai_inputs.detected_event_count,
             "interpreted_event_count": ai_inputs.interpreted_event_count,
             "risk_reason_codes": list(ai_inputs.risk_reason_codes),
+            "compliance_opinion": ai_inputs.compliance_opinion,
+            "compliance_score": ai_inputs.compliance_score,
+            "compliance_confidence": ai_inputs.compliance_confidence,
+            "compliance_reason_codes": list(ai_inputs.compliance_reason_codes),
+            "compliance_policy_flags": list(ai_inputs.compliance_policy_flags),
             "reason_codes": list(ai_inputs.reason_codes),
             "opposing_evidence": list(ai_inputs.opposing_evidence),
             "confidence": ai_inputs.confidence,
@@ -421,6 +427,12 @@ def build_trade_decision_entity(
                     else None
                 ),
             },
+            "expected_value_anchor": (
+                dict(request.metadata.get("expected_value_anchor"))
+                if isinstance(request.metadata, dict)
+                and isinstance(request.metadata.get("expected_value_anchor"), dict)
+                else None
+            ),
             "holding_profile_policy": serialize_holding_profile_policy(
                 holding_profile_policy
             ),

@@ -23,6 +23,7 @@ import pytest
 
 from agent_trading.services.ai_agents.base import AgentExecutionRequest
 from agent_trading.services.ai_agents.schemas import (
+    AIComplianceOutput,
     AIRiskOutput,
     EventInterpretationOutput,
     FinalDecisionComposerOutput,
@@ -85,6 +86,19 @@ def sample_composer_output() -> FinalDecisionComposerOutput:
         decision_type="HOLD",
         confidence=0.7,
         conviction=0.6,
+    )
+
+
+@pytest.fixture
+def sample_compliance_output() -> AIComplianceOutput:
+    """Create a sample AIComplianceOutput."""
+    return AIComplianceOutput(
+        agent_name="ai_compliance",
+        schema_version="v1",
+        compliance_opinion="warn",
+        compliance_score=0.25,
+        confidence=0.8,
+        policy_flags=("policy_watch",),
     )
 
 
@@ -252,6 +266,7 @@ class TestDeserializeAgentOutput:
         self,
         sample_event_output: EventInterpretationOutput,
         sample_risk_output: AIRiskOutput,
+        sample_compliance_output: AIComplianceOutput,
         sample_composer_output: FinalDecisionComposerOutput,
     ) -> None:
         """Full agent output round-trips correctly."""
@@ -260,6 +275,7 @@ class TestDeserializeAgentOutput:
             "success": True,
             "ei_output": dataclass_to_dict(sample_event_output),
             "ar_output": dataclass_to_dict(sample_risk_output),
+            "ac_output": dataclass_to_dict(sample_compliance_output),
             "fdc_output": dataclass_to_dict(sample_composer_output),
             "score": None,
         }
@@ -267,36 +283,42 @@ class TestDeserializeAgentOutput:
         assert isinstance(bundle, AgentExecutionBundle)
         assert bundle.event_output.symbol == "005930"
         assert bundle.risk_output.risk_opinion == "allow"
+        assert bundle.compliance_output.compliance_opinion == "warn"
         assert bundle.composer_output.decision_type == "HOLD"
 
     def test_deserialize_with_decision_context_id(
         self,
         sample_event_output: EventInterpretationOutput,
         sample_risk_output: AIRiskOutput,
+        sample_compliance_output: AIComplianceOutput,
         sample_composer_output: FinalDecisionComposerOutput,
     ) -> None:
         """decision_context_id is preserved through round-trip."""
         ctx_id = uuid4()
         ei = replace(sample_event_output, decision_context_id=str(ctx_id))
         ar = replace(sample_risk_output, decision_context_id=str(ctx_id))
+        ac = replace(sample_compliance_output, decision_context_id=str(ctx_id))
         fdc = replace(sample_composer_output, decision_context_id=str(ctx_id))
 
         serialized_dict: dict[str, Any] = {
             "success": True,
             "ei_output": dataclass_to_dict(ei),
             "ar_output": dataclass_to_dict(ar),
+            "ac_output": dataclass_to_dict(ac),
             "fdc_output": dataclass_to_dict(fdc),
             "score": None,
         }
         bundle = deserialize_agent_output(json.dumps(serialized_dict))
         assert bundle.event_output.decision_context_id == str(ctx_id)
         assert bundle.risk_output.decision_context_id == str(ctx_id)
+        assert bundle.compliance_output.decision_context_id == str(ctx_id)
         assert bundle.composer_output.decision_context_id == str(ctx_id)
 
     def test_deserialize_with_ai_inputs_metadata(
         self,
         sample_event_output: EventInterpretationOutput,
         sample_risk_output: AIRiskOutput,
+        sample_compliance_output: AIComplianceOutput,
         sample_composer_output: FinalDecisionComposerOutput,
     ) -> None:
         """AIDecisionInputs metadata is populated from agent outputs."""
@@ -304,12 +326,14 @@ class TestDeserializeAgentOutput:
             "success": True,
             "ei_output": dataclass_to_dict(sample_event_output),
             "ar_output": dataclass_to_dict(sample_risk_output),
+            "ac_output": dataclass_to_dict(sample_compliance_output),
             "fdc_output": dataclass_to_dict(sample_composer_output),
             "score": None,
         }
         bundle = deserialize_agent_output(json.dumps(serialized_dict))
         assert "event_interpretation" in bundle.ai_inputs.source_agent_names
         assert "ai_risk" in bundle.ai_inputs.source_agent_names
+        assert "ai_compliance" in bundle.ai_inputs.source_agent_names
         assert "final_decision_composer" in bundle.ai_inputs.source_agent_names
 
 
@@ -327,6 +351,7 @@ class TestBuildFallbackBundle:
         assert isinstance(bundle, AgentExecutionBundle)
         assert isinstance(bundle.event_output, EventInterpretationOutput)
         assert isinstance(bundle.risk_output, AIRiskOutput)
+        assert isinstance(bundle.compliance_output, AIComplianceOutput)
         assert isinstance(bundle.composer_output, FinalDecisionComposerOutput)
         assert isinstance(bundle.ai_inputs, AIDecisionInputs)
 

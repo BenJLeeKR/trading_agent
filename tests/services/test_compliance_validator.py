@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from agent_trading.services.compliance_validator import (
     ComplianceValidationInput,
@@ -145,3 +145,54 @@ def test_status_snapshot_sell_override_keeps_position_reduction_open() -> None:
     )
 
     assert result.is_blocking is False
+
+
+def test_holding_profile_window_blocks_early_reduce_sell() -> None:
+    now = datetime.now(timezone.utc)
+    result = evaluate_compliance_rules(
+        context=ValidationContext(source_type="held_position"),
+        validation_input=ComplianceValidationInput(
+            source_type="held_position",
+            has_position=True,
+            intent_action="other",
+            account_ref="paper",
+            symbol="005930",
+            market="KRX",
+            strategy_id="strat-1",
+            client_order_id="cid-1",
+            side="sell",
+            order_type="market",
+            quantity="10",
+            holding_profile="core_swing",
+            earliest_reduce_at=now + timedelta(minutes=30),
+        ),
+    )
+
+    assert result.is_blocking is True
+    assert "compliance_holding_profile_window_blocked" in result.blocking_rule_codes
+
+
+def test_holding_profile_window_blocks_early_reentry_buy() -> None:
+    now = datetime.now(timezone.utc)
+    result = evaluate_compliance_rules(
+        context=ValidationContext(source_type="core"),
+        validation_input=ComplianceValidationInput(
+            source_type="core",
+            has_position=False,
+            intent_action="new_buy",
+            account_ref="paper",
+            symbol="005930",
+            market="KRX",
+            strategy_id="strat-1",
+            client_order_id="cid-1",
+            side="buy",
+            order_type="limit",
+            quantity="1",
+            price="50000",
+            holding_profile="risk_reduction_only",
+            earliest_reentry_at=now + timedelta(minutes=20),
+        ),
+    )
+
+    assert result.is_blocking is True
+    assert "compliance_holding_profile_window_blocked" in result.blocking_rule_codes

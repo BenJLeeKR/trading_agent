@@ -1097,6 +1097,12 @@ class SymbolTradeStateRepository(Protocol):
     ) -> SymbolTradeStateEntity | None:
         ...
 
+    async def list_by_account(
+        self,
+        account_id: UUID,
+    ) -> Sequence[SymbolTradeStateEntity]:
+        ...
+
 
 class UniverseFreezeRunItemRepository(Protocol):
     """Store for item rows materialised under one freeze run."""

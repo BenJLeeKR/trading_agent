@@ -20,6 +20,7 @@ from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.repositories.contracts import ExternalEventRepository
 from agent_trading.repositories.postgres.bootstrap import build_postgres_repositories
 from agent_trading.services.ai_agents import (
+    AIComplianceAgent,
     AIRiskAgent,
     EventInterpretationAgent,
     FinalDecisionComposerAgent,
@@ -352,6 +353,38 @@ def _build_ai_risk_agent(settings: AppSettings) -> AIRiskAgent | None:
     )
 
 
+def _build_ai_compliance_agent(settings: AppSettings) -> AIComplianceAgent | None:
+    """Build a real ``AIComplianceAgent`` if provider settings are complete."""
+    if not settings.provider_api_key:
+        logger.info(
+            "Provider API key not configured — "
+            "using stub AIComplianceAgent"
+        )
+        return None
+    if not settings.provider_base_url:
+        logger.warning(
+            "provider_base_url is empty — "
+            "using stub AIComplianceAgent"
+        )
+        return None
+    if not settings.provider_model_id:
+        logger.warning(
+            "provider_model_id is empty — "
+            "using stub AIComplianceAgent"
+        )
+        return None
+
+    client = OpenAICompatibleClient(
+        api_key=settings.provider_api_key,
+        base_url=settings.provider_base_url,
+        timeout_seconds=settings.provider_timeout_seconds,
+    )
+    return AIComplianceAgent(
+        provider_client=client,
+        model_id=settings.provider_model_id,
+    )
+
+
 def _build_final_decision_agent(
     settings: AppSettings,
 ) -> FinalDecisionComposerAgent | None:
@@ -449,6 +482,7 @@ def _build_orchestrator(
     settings: AppSettings,
     event_interpretation_agent: EventInterpretationAgent | None = None,
     ai_risk_agent: AIRiskAgent | None = None,
+    ai_compliance_agent: AIComplianceAgent | None = None,
     final_decision_agent: FinalDecisionComposerAgent | None = None,
 ) -> DecisionOrchestratorService:
     """Build a ``DecisionOrchestratorService`` with provider agent injection.
@@ -474,12 +508,15 @@ def _build_orchestrator(
         event_interpretation_agent = _build_provider_agent(settings)
     if ai_risk_agent is None:
         ai_risk_agent = _build_ai_risk_agent(settings)
+    if ai_compliance_agent is None:
+        ai_compliance_agent = _build_ai_compliance_agent(settings)
     if final_decision_agent is None:
         final_decision_agent = _build_final_decision_agent(settings)
     return DecisionOrchestratorService(
         repos=repos,
         event_interpretation_agent=event_interpretation_agent,
         ai_risk_agent=ai_risk_agent,
+        ai_compliance_agent=ai_compliance_agent,
         final_decision_agent=final_decision_agent,
         agent_recorder=AgentRunRecorder(repo=repos.agent_runs),
         # Provider configuration for subprocess agent creation
@@ -515,11 +552,13 @@ def build_default_runtime() -> dict[str, object]:
     polling_workers = _build_polling_workers(repositories, settings)
     event_interpretation_agent = _build_provider_agent(settings)
     ai_risk_agent = _build_ai_risk_agent(settings)
+    ai_compliance_agent = _build_ai_compliance_agent(settings)
     final_decision_agent = _build_final_decision_agent(settings)
     orchestrator = _build_orchestrator(
         repositories, settings,
         event_interpretation_agent=event_interpretation_agent,
         ai_risk_agent=ai_risk_agent,
+        ai_compliance_agent=ai_compliance_agent,
         final_decision_agent=final_decision_agent,
     )
     order_manager = _build_order_manager(repositories)
@@ -542,6 +581,7 @@ def build_default_runtime() -> dict[str, object]:
         "order_manager": order_manager,
         "event_interpretation_agent": event_interpretation_agent,
         "ai_risk_agent": ai_risk_agent,
+        "ai_compliance_agent": ai_compliance_agent,
         "final_decision_agent": final_decision_agent,
         "disclosure_seed_service": disclosure_seed_service,
         "disclosure_client": disclosure_client,
@@ -600,11 +640,13 @@ async def build_postgres_runtime(
     polling_workers = _build_polling_workers(repositories, settings)
     event_interpretation_agent = _build_provider_agent(settings)
     ai_risk_agent = _build_ai_risk_agent(settings)
+    ai_compliance_agent = _build_ai_compliance_agent(settings)
     final_decision_agent = _build_final_decision_agent(settings)
     orchestrator = _build_orchestrator(
         repositories, settings,
         event_interpretation_agent=event_interpretation_agent,
         ai_risk_agent=ai_risk_agent,
+        ai_compliance_agent=ai_compliance_agent,
         final_decision_agent=final_decision_agent,
     )
     order_manager = _build_order_manager(repositories)
@@ -628,6 +670,7 @@ async def build_postgres_runtime(
         "order_manager": order_manager,
         "event_interpretation_agent": event_interpretation_agent,
         "ai_risk_agent": ai_risk_agent,
+        "ai_compliance_agent": ai_compliance_agent,
         "final_decision_agent": final_decision_agent,
         "disclosure_seed_service": disclosure_seed_service,
         "disclosure_client": disclosure_client,
@@ -643,7 +686,7 @@ async def shutdown_postgres_runtime(runtime: dict[str, Any]) -> None:
     Any open database transaction must be closed by the caller before
     calling this function.
     """
-    for key in ("event_interpretation_agent", "ai_risk_agent", "final_decision_agent"):
+    for key in ("event_interpretation_agent", "ai_risk_agent", "ai_compliance_agent", "final_decision_agent"):
         agent = runtime.get(key)
         await _close_provider_agent(agent)
 
@@ -703,11 +746,13 @@ async def postgres_runtime(
         polling_workers = _build_polling_workers(repositories, settings)
         event_interpretation_agent = _build_provider_agent(settings)
         ai_risk_agent = _build_ai_risk_agent(settings)
+        ai_compliance_agent = _build_ai_compliance_agent(settings)
         final_decision_agent = _build_final_decision_agent(settings)
         orchestrator = _build_orchestrator(
             repositories, settings,
             event_interpretation_agent=event_interpretation_agent,
             ai_risk_agent=ai_risk_agent,
+            ai_compliance_agent=ai_compliance_agent,
             final_decision_agent=final_decision_agent,
         )
         order_manager = _build_order_manager(repositories)
@@ -730,6 +775,7 @@ async def postgres_runtime(
             "order_manager": order_manager,
             "event_interpretation_agent": event_interpretation_agent,
             "ai_risk_agent": ai_risk_agent,
+            "ai_compliance_agent": ai_compliance_agent,
             "final_decision_agent": final_decision_agent,
             "disclosure_seed_service": disclosure_seed_service,
             "disclosure_client": disclosure_client,

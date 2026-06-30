@@ -192,6 +192,12 @@ async def seeded_repos(
             "risk_opinion": "Low risk — strong fundamentals",
             "risk_flags": [],
             "risk_score": 25.0,
+            "compliance_opinion": "allow",
+            "compliance_score": 0.2,
+            "compliance_confidence": 0.91,
+            "compliance_reason_codes": ["order_shape_valid", "source_policy_valid"],
+            "compliance_policy_flags": [],
+            "compliance_check_passed": True,
             "execution_preferences": {},
             "sizing_hint": {},
         },
@@ -339,6 +345,27 @@ async def seeded_repos(
             created_at=datetime.now(timezone.utc),
         )
     )
+    await repos.guardrail_evaluations.add(
+        GuardrailEvaluationEntity(
+            guardrail_evaluation_id=uuid4(),
+            decision_context_id=decision_context_id,
+            trade_decision_id=trade_decision_id,
+            rule_set_version="compliance_validator_v1",
+            overall_passed=True,
+            evaluated_at=datetime.now(timezone.utc),
+            rule_results={
+                "validator_bundle": "compliance_validator_v1",
+                "source_type": "core",
+                "rule_outcomes": [
+                    {"code": "compliance_required_fields_ok", "passed": True},
+                    {"code": "compliance_order_shape_ok", "passed": True},
+                ],
+            },
+            blocking_rule_codes=[],
+            warning_rule_codes=[],
+            created_at=datetime.now(timezone.utc),
+        )
+    )
 
     # Seed: risk limit snapshot
     await repos.risk_limit_snapshots.add(
@@ -393,12 +420,13 @@ async def seeded_repos(
         )
     )
 
-    # Seed: agent runs (3 runs for the decision context)
+    # Seed: agent runs (4 runs for the decision context)
     # Use distinct started_at values so ordering tests can verify DESC contract.
     now = datetime.now(timezone.utc)
     agent_run_seeds = [
-        ("event_interpretation", now - timedelta(seconds=2)),
-        ("ai_risk", now - timedelta(seconds=1)),
+        ("event_interpretation", now - timedelta(seconds=3)),
+        ("ai_risk", now - timedelta(seconds=2)),
+        ("ai_compliance", now - timedelta(seconds=1)),
         ("final_decision_composer", now),
     ]
     for agent_type, started_at in agent_run_seeds:
@@ -408,6 +436,19 @@ async def seeded_repos(
                 decision_context_id=decision_context_id,
                 agent_type=agent_type,
                 started_at=started_at,
+                structured_output_json=(
+                    {
+                        "agent_name": "ai_compliance",
+                        "opinion": "allow",
+                        "score": 0.2,
+                        "confidence": 0.91,
+                        "reason_codes": ["order_shape_valid", "source_policy_valid"],
+                        "policy_flags": [],
+                        "check_passed": True,
+                    }
+                    if agent_type == "ai_compliance"
+                    else None
+                ),
                 status="completed",
                 completed_at=started_at,
                 created_at=started_at,
