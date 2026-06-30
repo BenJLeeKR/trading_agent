@@ -160,6 +160,8 @@ def _build_refresh_callback(
                 position_snapshot_repo=repos.position_snapshots,
                 cash_balance_snapshot_repo=repos.cash_balance_snapshots,
                 risk_limit_snapshot_repo=repos.risk_limit_snapshots,
+                symbol_trade_state_repo=repos.symbol_trade_states,
+                order_repo=repos.orders,
                 account_id=account_id,
                 # Fill-confirmed refreshes must converge positions as well as
                 # cash/risk-limit, even during after-hours recovery runs.

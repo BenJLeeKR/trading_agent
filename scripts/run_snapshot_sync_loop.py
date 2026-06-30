@@ -274,6 +274,8 @@ async def _run_one_cycle(
                 risk_limit_snapshot_repo=repos.risk_limit_snapshots,
                 broker_account_repo=repos.broker_accounts,
                 account_repo=repos.accounts,
+                symbol_trade_state_repo=repos.symbol_trade_states,
+                order_repo=repos.orders,
                 broker_name=broker,
                 account_number=settings.kis_account_number,
                 after_hours=after_hours,

@@ -210,6 +210,8 @@ async def _run_single(
         position_snapshot_repo=repos["position_snapshots"],
         cash_balance_snapshot_repo=repos["cash_balance_snapshots"],
         risk_limit_snapshot_repo=repos["risk_limit_snapshots"],
+        symbol_trade_state_repo=repos["symbol_trade_states"],
+        order_repo=repos["orders"],
         account_id=account_id,
     )
 
@@ -254,6 +256,8 @@ async def _run_single_by_ref(
         position_snapshot_repo=repos["position_snapshots"],
         cash_balance_snapshot_repo=repos["cash_balance_snapshots"],
         risk_limit_snapshot_repo=repos["risk_limit_snapshots"],
+        symbol_trade_state_repo=repos["symbol_trade_states"],
+        order_repo=repos["orders"],
         account_id=account.account_id,
     )
 
@@ -277,6 +281,8 @@ async def _run_multi(
         position_snapshot_repo=repos["position_snapshots"],
         cash_balance_snapshot_repo=repos["cash_balance_snapshots"],
         risk_limit_snapshot_repo=repos["risk_limit_snapshots"],
+        symbol_trade_state_repo=repos["symbol_trade_states"],
+        order_repo=repos["orders"],
         account_ids=account_ids,
     )
 
@@ -303,6 +309,8 @@ async def _run_all(
         risk_limit_snapshot_repo=repos["risk_limit_snapshots"],
         broker_account_repo=repos["broker_accounts"],
         account_repo=repos["accounts"],
+        symbol_trade_state_repo=repos["symbol_trade_states"],
+        order_repo=repos["orders"],
         broker_name=broker,
         account_number=settings.kis_account_number,
         env=env,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Subprocess entry point for running 3 agents (EI/AR/FDC) with isolation.
+"""Subprocess entry point for running agents (EI/AR/AC/FDC) with isolation.
 
 stdin: JSON-serialized AgentSubprocessInput
 stdout: JSON-serialized AgentSubprocessOutput (or error)
@@ -50,11 +50,16 @@ from agent_trading.services.ai_agents.event_interpretation import (
 )
 from agent_trading.services.ai_agents.ai_risk import AIRiskAgent
 from agent_trading.services.ai_agents.ai_risk import StubAIRiskAgent
+from agent_trading.services.ai_agents.ai_compliance import (
+    AIComplianceAgent,
+    StubAIComplianceAgent,
+)
 from agent_trading.services.ai_agents.final_decision_composer import (
     FinalDecisionComposerAgent,
     StubFinalDecisionComposerAgent,
 )
 from agent_trading.services.ai_agents.schemas import (
+    AIComplianceOutput,
     AIRiskOutput,
     EventInterpretationOutput,
     FinalDecisionComposerOutput,
@@ -142,6 +147,7 @@ class AgentSubprocessInput:
     # Agent output overrides (from previous runs in same cycle)
     event_interpretation_output: dict[str, Any] | None = None
     ai_risk_output: dict[str, Any] | None = None
+    ai_compliance_output: dict[str, Any] | None = None
 
     # Provider configuration hints
     model_id: str | None = None
@@ -163,13 +169,14 @@ class AgentSubprocessInput:
 class AgentSubprocessOutput:
     """Output payload serialized back to the parent orchestrator.
 
-    Contains the structured outputs of all 3 agents, or error details
+    Contains the structured outputs of all agents, or error details
     if the subprocess failed before completing all agents.
     """
 
     success: bool
     event_output: dict[str, Any] = field(default_factory=dict)
     risk_output: dict[str, Any] = field(default_factory=dict)
+    compliance_output: dict[str, Any] = field(default_factory=dict)
     composer_output: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     duration_seconds: float = 0.0
@@ -222,6 +229,7 @@ def _build_agent_triplet(
 ) -> tuple[
     EventInterpretationAgent | StubEventInterpretationAgent,
     AIRiskAgent | StubAIRiskAgent,
+    AIComplianceAgent | StubAIComplianceAgent,
     FinalDecisionComposerAgent | StubFinalDecisionComposerAgent,
 ]:
     """Provider 설정 유무에 따라 subprocess용 agent 3종을 생성한다.
@@ -238,6 +246,7 @@ def _build_agent_triplet(
         return (
             StubEventInterpretationAgent(),
             StubAIRiskAgent(),
+            StubAIComplianceAgent(),
             StubFinalDecisionComposerAgent(),
         )
 
@@ -247,6 +256,10 @@ def _build_agent_triplet(
             model_id=model_id,
         ),
         AIRiskAgent(
+            provider_client=provider_client,
+            model_id=model_id,
+        ),
+        AIComplianceAgent(
             provider_client=provider_client,
             model_id=model_id,
         ),
@@ -675,6 +688,7 @@ def _reconstruct_request(
     *,
     event_output: EventInterpretationOutput | None = None,
     risk_output: AIRiskOutput | None = None,
+    compliance_output: AIComplianceOutput | None = None,
 ) -> AgentExecutionRequest:
     """Reconstruct an ``AgentExecutionRequest`` from subprocess input."""
     context = _reconstruct_context(inp.context)
@@ -686,6 +700,7 @@ def _reconstruct_request(
         market=inp.market,
         event_interpretation_output=event_output,
         ai_risk_output=risk_output,
+        ai_compliance_output=compliance_output,
         model_id=inp.model_id,
         prompt_id=inp.prompt_id,
         source_type=inp.source_type,
@@ -900,7 +915,7 @@ async def main() -> None:
             "set" if inp.provider_base_url else "not set",
         )
         _diag("No provider client created")
-    ei_agent, ar_agent, fdc_agent = _build_agent_triplet(
+    ei_agent, ar_agent, ac_agent, fdc_agent = _build_agent_triplet(
         provider_client=provider_client,
         model_id=inp.provider_model_id,
     )
@@ -983,7 +998,44 @@ async def main() -> None:
             from dataclasses import replace
             risk_output = replace(risk_output, symbol=inp.symbol)
 
-        # --- 2c. FDC Skip Check (결정론적 비행동 조건이면 FDC 생략) ---
+        # --- 2c. AI Compliance Agent ---
+        logger.info("Starting AIComplianceAgent.run() ...")
+        _diag("Starting AIComplianceAgent.run() ...")
+        request_with_ei_ar = _reconstruct_request(
+            inp, event_output=event_output, risk_output=risk_output,
+        )
+        try:
+            compliance_output = await asyncio.wait_for(
+                ac_agent.run(request_with_ei_ar),
+                timeout=_PER_AGENT_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "AIComplianceAgent timed out after %ss — using fallback output. symbol=%s decision_context_id=%s",
+                _PER_AGENT_TIMEOUT,
+                inp.symbol,
+                inp.decision_context_id,
+            )
+            compliance_output = AIComplianceOutput(
+                decision_context_id=inp.decision_context_id,
+                symbol=inp.symbol or event_output.symbol or "",
+            )
+        _diag(
+            f"AIComplianceAgent completed: symbol={compliance_output.symbol} "
+            f"compliance_opinion={compliance_output.compliance_opinion}"
+        )
+        logger.info(
+            "AIComplianceAgent completed: summary_len=%s symbol=%s compliance_opinion=%s",
+            len(compliance_output.summary) if compliance_output.summary else 0,
+            compliance_output.symbol,
+            compliance_output.compliance_opinion,
+        )
+
+        if is_missing_agent_symbol(compliance_output.symbol) and inp.symbol:
+            from dataclasses import replace
+            compliance_output = replace(compliance_output, symbol=inp.symbol)
+
+        # --- 2d. FDC Skip Check (결정론적 비행동 조건이면 FDC 생략) ---
         skip_fdc, skip_reason, skip_output = _check_fdc_skip(
             inp=inp,
             request=request_with_ei,
@@ -1017,15 +1069,18 @@ async def main() -> None:
                 composer_output.decision_type,
             )
         else:
-            # --- 2c. Final Decision Composer Agent ---
+            # --- 2d. Final Decision Composer Agent ---
             logger.info("Starting FinalDecisionComposerAgent.run() ...")
             _diag("Starting FinalDecisionComposerAgent.run() ...")
-            request_with_ei_ar = _reconstruct_request(
-                inp, event_output=event_output, risk_output=risk_output,
+            request_with_ei_ar_ac = _reconstruct_request(
+                inp,
+                event_output=event_output,
+                risk_output=risk_output,
+                compliance_output=compliance_output,
             )
             try:
                 composer_output = await asyncio.wait_for(
-                    fdc_agent.run(request_with_ei_ar),
+                    fdc_agent.run(request_with_ei_ar_ac),
                     timeout=_PER_AGENT_TIMEOUT,
                 )
             except asyncio.TimeoutError:
@@ -1036,7 +1091,7 @@ async def main() -> None:
                     inp.decision_context_id,
                 )
                 composer_output = _build_fdc_timeout_fallback(
-                    request_with_ei_ar,
+                    request_with_ei_ar_ac,
                     symbol=inp.symbol or event_output.symbol or "",
                 )
             _diag(f"FinalDecisionComposerAgent completed: symbol={composer_output.symbol} decision_type={composer_output.decision_type}")
@@ -1068,6 +1123,7 @@ async def main() -> None:
             success=True,
             event_output=dataclass_to_dict(event_output),
             risk_output=dataclass_to_dict(risk_output),
+            compliance_output=dataclass_to_dict(compliance_output),
             composer_output=dataclass_to_dict(composer_output),
             duration_seconds=duration,
             ei_error_metadata=ei_error_metadata,
