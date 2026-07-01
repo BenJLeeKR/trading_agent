@@ -7,6 +7,19 @@ from agent_trading.services.market_regime import MarketRegimeAssessment
 from agent_trading.services.portfolio_allocation import PortfolioAllocationAssessment
 from agent_trading.services.strategy_selection import StrategySelectionAssessment
 
+_CORE_RISK_OFF_RANKING_MODE = "hard_block_v1"
+_CORE_RISK_OFF_SHADOW_MODE = "shadow_penalty_v1"
+_CORE_RISK_OFF_RANKING_MIN_SCORE = 0.48
+_CORE_RISK_OFF_SHADOW_MIN_SCORE = 0.40
+_CORE_RISK_OFF_SHADOW_PENALTY = 0.08
+_CORE_RISK_OFF_SHADOW_TOP_K_CAP = 2
+_EVENT_OVERLAY_MODE = "no_bonus_v1"
+_EVENT_OVERLAY_SHADOW_MODE = "shadow_event_lane_v1"
+_EVENT_OVERLAY_SHADOW_BONUS = 0.06
+_EVENT_OVERLAY_SHADOW_MIN_SCORE = 0.56
+_EVENT_OVERLAY_SHADOW_ENTRY_MIN_SCORE = 0.54
+_EVENT_OVERLAY_SHADOW_TOP_K_CAP = 2
+
 
 @dataclass(slots=True, frozen=True)
 class DeterministicTriggerAssessment:
@@ -60,6 +73,14 @@ def assess_deterministic_triggers(
         "watch_candidate_threshold": 0.45,
         "reduce_candidate_threshold": 0.60,
         "sell_candidate_threshold": 0.75,
+        "core_risk_off_ranking_min_score": _CORE_RISK_OFF_RANKING_MIN_SCORE,
+        "core_risk_off_shadow_min_score": _CORE_RISK_OFF_SHADOW_MIN_SCORE,
+        "core_risk_off_shadow_penalty": _CORE_RISK_OFF_SHADOW_PENALTY,
+        "core_risk_off_shadow_top_k_cap": float(_CORE_RISK_OFF_SHADOW_TOP_K_CAP),
+        "event_overlay_shadow_bonus": _EVENT_OVERLAY_SHADOW_BONUS,
+        "event_overlay_shadow_min_score": _EVENT_OVERLAY_SHADOW_MIN_SCORE,
+        "event_overlay_shadow_entry_min_score": _EVENT_OVERLAY_SHADOW_ENTRY_MIN_SCORE,
+        "event_overlay_shadow_top_k_cap": float(_EVENT_OVERLAY_SHADOW_TOP_K_CAP),
     }
     reason_codes: list[str] = [f"trigger_source_{normalized_source_type}"]
 
@@ -278,6 +299,25 @@ def assess_deterministic_triggers(
             if normalized_source_type != "held_position"
             else []
         ),
+        "core_risk_off_experiment": _build_core_risk_off_shadow_experiment_metadata(
+            source_type=normalized_source_type,
+            core_risk_off_guard_active=core_risk_off_guard_active,
+            ranking_score=ranking_score,
+            signal_feature_snapshot=signal_feature_snapshot,
+            overall=overall,
+            slow=slow,
+            strategy_selection=strategy_selection,
+        ),
+        "event_overlay_experiment": _build_event_overlay_shadow_experiment_metadata(
+            source_type=normalized_source_type,
+            eligibility_passed=eligibility_passed,
+            entry_score=entry_score,
+            ranking_score=ranking_score,
+            signal_feature_snapshot=signal_feature_snapshot,
+            overall=overall,
+            slow=slow,
+            strategy_selection=strategy_selection,
+        ),
     }
     return DeterministicTriggerAssessment(
         trigger_version="deterministic_trigger_v1",
@@ -489,7 +529,7 @@ def _assess_core_risk_off_buy_guard(
     strategy_selection: StrategySelectionAssessment | None,
 ) -> tuple[bool, tuple[str, ...]]:
     reasons: list[str] = []
-    if ranking_score is None or ranking_score < 0.48:
+    if ranking_score is None or ranking_score < _CORE_RISK_OFF_RANKING_MIN_SCORE:
         reasons.append("eligibility_core_risk_off_ranking_blocked")
         return False, tuple(reasons)
     reasons.append("eligibility_core_risk_off_ranking_pass")
@@ -522,6 +562,155 @@ def _assess_core_risk_off_buy_guard(
     reasons.append("eligibility_core_risk_off_strategy_pass")
     reasons.append("eligibility_core_risk_off_guard_pass")
     return True, tuple(reasons)
+
+
+def _build_core_risk_off_shadow_experiment_metadata(
+    *,
+    source_type: str,
+    core_risk_off_guard_active: bool,
+    ranking_score: float | None,
+    signal_feature_snapshot: SignalFeatureSnapshotEntity | None,
+    overall: float | None,
+    slow: float | None,
+    strategy_selection: StrategySelectionAssessment | None,
+) -> dict[str, object]:
+    if source_type != "core":
+        return {
+            "mode": _CORE_RISK_OFF_RANKING_MODE,
+            "shadow_mode": _CORE_RISK_OFF_SHADOW_MODE,
+            "active": False,
+        }
+
+    adjusted_ranking_score = None
+    if ranking_score is not None:
+        adjusted_ranking_score = ranking_score - _CORE_RISK_OFF_SHADOW_PENALTY
+
+    volume_surge_ratio = _float_or_none(
+        signal_feature_snapshot.volume_surge_ratio
+        if signal_feature_snapshot is not None
+        else None
+    )
+    turnover_surge_ratio = _float_or_none(
+        signal_feature_snapshot.turnover_surge_ratio
+        if signal_feature_snapshot is not None
+        else None
+    )
+    shadow_signal_pass = (
+        overall is not None
+        and overall >= 0.0
+        and slow is not None
+        and slow >= -0.05
+    )
+    shadow_activity_pass = max(
+        volume_surge_ratio or 0.0,
+        turnover_surge_ratio or 0.0,
+    ) >= 1.20
+    preferred_strategy = (
+        strategy_selection.preferred_strategy if strategy_selection is not None else ""
+    )
+    shadow_strategy_pass = preferred_strategy in {
+        "defensive_low_volatility_rotation",
+        "mean_reversion_bounce",
+        "event_continuation",
+    }
+    shadow_would_pass = (
+        core_risk_off_guard_active
+        and adjusted_ranking_score is not None
+        and adjusted_ranking_score >= _CORE_RISK_OFF_SHADOW_MIN_SCORE
+        and shadow_signal_pass
+        and shadow_activity_pass
+        and shadow_strategy_pass
+    )
+    return {
+        "mode": _CORE_RISK_OFF_RANKING_MODE,
+        "shadow_mode": _CORE_RISK_OFF_SHADOW_MODE,
+        "active": core_risk_off_guard_active,
+        "ranking_min_score": _CORE_RISK_OFF_RANKING_MIN_SCORE,
+        "shadow_min_score": _CORE_RISK_OFF_SHADOW_MIN_SCORE,
+        "shadow_penalty": _CORE_RISK_OFF_SHADOW_PENALTY,
+        "shadow_top_k_cap": _CORE_RISK_OFF_SHADOW_TOP_K_CAP,
+        "raw_ranking_score": ranking_score,
+        "adjusted_ranking_score": adjusted_ranking_score,
+        "shadow_signal_pass": shadow_signal_pass,
+        "shadow_activity_pass": shadow_activity_pass,
+        "shadow_strategy_pass": shadow_strategy_pass,
+        "shadow_would_pass": shadow_would_pass,
+        "apply_ready": False,
+    }
+
+
+def _build_event_overlay_shadow_experiment_metadata(
+    *,
+    source_type: str,
+    eligibility_passed: bool,
+    entry_score: float,
+    ranking_score: float | None,
+    signal_feature_snapshot: SignalFeatureSnapshotEntity | None,
+    overall: float | None,
+    slow: float | None,
+    strategy_selection: StrategySelectionAssessment | None,
+) -> dict[str, object]:
+    if source_type != "event_overlay":
+        return {
+            "mode": _EVENT_OVERLAY_MODE,
+            "shadow_mode": _EVENT_OVERLAY_SHADOW_MODE,
+            "active": False,
+        }
+
+    adjusted_ranking_score = None
+    if ranking_score is not None:
+        adjusted_ranking_score = _clamp(ranking_score + _EVENT_OVERLAY_SHADOW_BONUS)
+
+    volume_surge_ratio = _float_or_none(
+        signal_feature_snapshot.volume_surge_ratio
+        if signal_feature_snapshot is not None
+        else None
+    )
+    turnover_surge_ratio = _float_or_none(
+        signal_feature_snapshot.turnover_surge_ratio
+        if signal_feature_snapshot is not None
+        else None
+    )
+    shadow_signal_pass = (
+        entry_score >= _EVENT_OVERLAY_SHADOW_ENTRY_MIN_SCORE
+        and overall is not None
+        and overall >= 0.0
+        and slow is not None
+        and slow >= -0.05
+    )
+    shadow_activity_pass = max(
+        volume_surge_ratio or 0.0,
+        turnover_surge_ratio or 0.0,
+    ) >= 1.15
+    preferred_strategy = (
+        strategy_selection.preferred_strategy if strategy_selection is not None else ""
+    )
+    shadow_strategy_pass = preferred_strategy == "event_continuation"
+    shadow_would_pass = (
+        eligibility_passed
+        and adjusted_ranking_score is not None
+        and adjusted_ranking_score >= _EVENT_OVERLAY_SHADOW_MIN_SCORE
+        and shadow_signal_pass
+        and shadow_activity_pass
+        and shadow_strategy_pass
+    )
+    return {
+        "mode": _EVENT_OVERLAY_MODE,
+        "shadow_mode": _EVENT_OVERLAY_SHADOW_MODE,
+        "active": True,
+        "base_eligibility_passed": eligibility_passed,
+        "shadow_bonus": _EVENT_OVERLAY_SHADOW_BONUS,
+        "shadow_min_score": _EVENT_OVERLAY_SHADOW_MIN_SCORE,
+        "shadow_entry_min_score": _EVENT_OVERLAY_SHADOW_ENTRY_MIN_SCORE,
+        "shadow_top_k_cap": _EVENT_OVERLAY_SHADOW_TOP_K_CAP,
+        "raw_ranking_score": ranking_score,
+        "adjusted_ranking_score": adjusted_ranking_score,
+        "shadow_signal_pass": shadow_signal_pass,
+        "shadow_activity_pass": shadow_activity_pass,
+        "shadow_strategy_pass": shadow_strategy_pass,
+        "shadow_would_pass": shadow_would_pass,
+        "apply_ready": False,
+    }
 
 
 def _estimate_liquidity_reference_price(

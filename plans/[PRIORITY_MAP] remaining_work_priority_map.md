@@ -1197,7 +1197,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   - restricted symbol / invalid order shape / broker capability 차단은
     guardrail row의 `rule_outcomes`까지 포함해 테스트로 고정했다.
 
-#### 11-d. AI Compliance Agent — `중`
+#### 11-d. AI Compliance Agent — `완료`
 
 - 목표
   - deterministic validator가 닫지 못하는
@@ -1224,6 +1224,15 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   - [x] `AI Compliance` 의견과 deterministic validator 결과의 불일치 계측 추가
   - [x] `AI Compliance` prompt / runtime smoke / 실운영 로그 기준선 문서화
     - [`plans/[RUNBOOK] ai_compliance_runtime_baseline.md`](./[RUNBOOK]%20ai_compliance_runtime_baseline.md)
+- 완료 메모
+  - `docker compose exec -T app python3 -B -m pytest -q tests/services/ai_agents/test_ai_compliance_prompt.py`
+    기준 프롬프트 계약 테스트 `2 passed`
+  - `docker compose exec -T app python3 -B -m pytest -q tests/api/test_inspection.py tests/services/test_decision_submit_pipeline.py -k 'compliance_inspection or ai_compliance_alignment or compliance_validator_v1'`
+    기준 inspection / submit-time validator 회귀 `1 passed`
+  - `2026-07-01` 기준 `KIS_LIVE_INFO_APP_KEY` 수정 후
+    `.cache/kis_live_oauth_token.json`,
+    `.cache/kis_disclosure_token.json` 재생성 및
+    `KisHolidayProvider` / live disclosure 인증 복구를 실운영 로그로 확인했다.
 
 ### 권장 roadmap 배치
 
@@ -1241,7 +1250,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 
 ---
 
-### 11. Signal Agent 분해 — `진행중`
+### 12. Signal Agent 분해 — `진행중`
 
 ### 핵심
 - 기술/수급/모멘텀/변동성 점수의 deterministic backbone 구축
@@ -1275,7 +1284,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 
 ### 추가 우선 반영 항목
 
-#### 11-a. 상대 거래량/거래대금 급증률 feature의 deterministic 승격 — `완료`
+#### 12-a. 상대 거래량/거래대금 급증률 feature의 deterministic 승격 — `완료`
 
 - 배경
   - 절대 거래대금 상위만으로는 이미 큰 종목 위주로 후보가 고정되기 쉽고,
@@ -1317,7 +1326,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   - 현재 진행 중인 `Signal Agent 분해` 및 `feature 기반 deterministic trigger` 강화와
     정확히 같은 방향의 작업이다.
 
-#### 11-b. Market Discovery Pool의 조건부 확장 준비 — `완료`
+#### 12-b. Market Discovery Pool의 조건부 확장 준비 — `완료`
 
 - 배경
   - 정책 문서상 `market-driven overlay`는 core 밖의 하이알파 후보 탐지가 목적이며,
@@ -1346,7 +1355,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
     현재 단계에서 곧바로 주문 universe까지 넓히면 체결 리스크와 운영 복잡도가 더 빨리 커진다.
   - 따라서 `feature 기반 ranking backbone` 정교화 이후의 차상위 과제로 두는 것이 합리적이다.
 
-#### 11-c. 기대수익률 중심 보유기간 / Churn 제어 리팩토링 — `완료`
+#### 12-c. 기대수익률 중심 보유기간 / Churn 제어 리팩토링 — `완료`
 
 - 배경
   - 장중 실측 기준 일부 종목에서
@@ -1697,6 +1706,134 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
     `심볼 상태 기억 부재`와 `충돌하는 source`의 결과일 가능성이 높다.
   - 이 항목은 단순 threshold 조정보다
     기대수익률 개선에 직접적인 리팩토링 축이다.
+
+#### 12-d. Signal / Trigger 임계값 실증 검증 기반 재설계 — `완료`
+
+- 배경
+  - 2026-06-23 ~ 2026-07-01 실제 decision 데이터와
+    KIS 일봉 후행 수익률을 결합해
+    현재 `signal_feature` / `deterministic_trigger` 임계값을 검증했다.
+  - 중복 cycle 왜곡을 줄이기 위해
+    `symbol + trade_date`별 첫 decision만 평가했고,
+    후행 수익률 계산이 가능한 2026-06-23 ~ 2026-06-30 표본을 사용했다.
+  - 표본은 57개 symbol, 186개 symbol-day다.
+- 실증 요약
+  - `BUY_CANDIDATE`와 `entry_score >= 0.65`는 0건이었다.
+  - `entry_score`와 T+3 수익률 상관은 약 `-0.21`로,
+    현재 entry score가 후행 기대수익률을 충분히 설명하지 못했다.
+  - `0.55 <= entry_score < 0.65` 구간은
+    T+3 평균 수익률이 약 `-3.56%`로 나빠,
+    `buy threshold`를 단순 하향하는 것은 적절하지 않다.
+  - `eligibility_low_relative_activity` 차단군은
+    T+3 평균 약 `-2.85%`로 현재 필터 유지가 타당하다.
+  - `eligibility_source_type_blocked` 차단군은
+    T+3 평균 약 `-4.36%`로 현재 차단 유지가 타당하다.
+  - `eligibility_core_risk_off_ranking_blocked` 차단군은
+    T+3 평균 약 `+3.16%`, hit rate 약 `72.7%`로
+    과도 차단 가능성이 높다.
+  - `event_overlay`는
+    T+1 평균 약 `+3.40%`, T+3 평균 약 `+2.38%`,
+    hit rate 약 `73.7%`로
+    후보 전환 비중을 높일 근거가 있다.
+- 설계 반영 원칙
+  - `buy_candidate_threshold=0.65`는 즉시 낮추지 않는다.
+  - `watch_candidate_threshold=0.45`는 상향 또는 top-k 후보화로 재설계한다.
+  - `eligibility_core_risk_off_ranking_blocked`는 hard block보다
+    penalty + 제한적 top-k 방식으로 완화 실험한다.
+  - `event_overlay`는 별도 source bonus 또는 event top-k lane을 둔다.
+- 다음 구현 체크리스트
+  - [x] trigger proxy attribution용 repeatable script 또는 API 추가
+    - `symbol + trade_date` 첫 decision 기준
+    - T+1 / T+3 / T+5 후행 수익률
+    - MFE / MAE
+    - candidate / source_type / eligibility reason별 집계
+    - [`scripts/analyze_trigger_proxy_attribution.py`](../scripts/analyze_trigger_proxy_attribution.py)
+  - [x] `watch_candidate_threshold=0.45`의 단순 threshold 방식을
+        `WATCH top-k + minimum floor`로 대체하는 설계 확정
+    - 확정 규칙
+      - `top_k_buy = 3`
+      - `buy_min_ranking_score = 0.55`
+      - `top_k_watch = 8`
+      - `watch_min_ranking_score = 0.50`
+      - `watch_min_entry_score = 0.52`
+      - `watch_min_percentile = 0.60`
+    - 구현 책임
+      - 단일 종목 score 계산은 `deterministic_trigger_engine`
+      - batch top-k projection은 orchestrator 상위 helper
+    - 기준 문서
+      - [`plans/[DESIGN] deterministic_trigger_eligibility_and_ranking_v1.md`](./%5BDESIGN%5D%20deterministic_trigger_eligibility_and_ranking_v1.md)
+  - [x] `eligibility_core_risk_off_ranking_blocked`를
+        hard block에서 penalty 방식으로 바꾸는 실험 플래그 설계
+    - authoritative mode
+      - `hard_block_v1` 유지
+    - shadow mode
+      - `shadow_penalty_v1`
+      - `adjusted_ranking_score = ranking_score - 0.08`
+      - `shadow_min_score = 0.40`
+      - `shadow_top_k_cap = 2`
+    - metadata
+      - `core_risk_off_experiment`
+      - `shadow_would_pass`
+      - `adjusted_ranking_score`
+      - `shadow_signal_pass`
+      - `shadow_activity_pass`
+      - `shadow_strategy_pass`
+    - 현재 반영 범위
+      - `deterministic_trigger_engine.metadata`에 shadow experiment payload 추가
+      - authoritative eligibility 동작은 변경하지 않음
+    - 기준 문서
+      - [`plans/[DESIGN] deterministic_trigger_eligibility_and_ranking_v1.md`](./%5BDESIGN%5D%20deterministic_trigger_eligibility_and_ranking_v1.md)
+      - [`tests/services/test_deterministic_trigger_engine.py`](../tests/services/test_deterministic_trigger_engine.py)
+  - [x] `event_overlay` source bonus 또는 별도 `event_top_k` 후보 lane 설계
+    - authoritative mode
+      - `no_bonus_v1` 유지
+    - shadow mode
+      - `shadow_event_lane_v1`
+      - `adjusted_ranking_score = ranking_score + 0.06`
+      - `shadow_min_score = 0.56`
+      - `shadow_entry_min_score = 0.54`
+      - `shadow_top_k_cap = 2`
+    - metadata
+      - `event_overlay_experiment`
+      - `base_eligibility_passed`
+      - `adjusted_ranking_score`
+      - `shadow_signal_pass`
+      - `shadow_activity_pass`
+      - `shadow_strategy_pass`
+      - `shadow_would_pass`
+    - 현재 반영 범위
+      - `deterministic_trigger_engine.metadata`에 shadow event lane payload 추가
+      - `risk_off` regime gate와 authoritative BUY eligibility 동작은 변경하지 않음
+    - 기준 문서
+      - [`plans/[DESIGN] deterministic_trigger_eligibility_and_ranking_v1.md`](./%5BDESIGN%5D%20deterministic_trigger_eligibility_and_ranking_v1.md)
+      - [`tests/services/test_deterministic_trigger_engine.py`](../tests/services/test_deterministic_trigger_engine.py)
+  - [x] 위 3개 변경안을 shadow mode로 먼저 돌려
+        실제 BUY 후보 증가와 후행 proxy 개선 여부를 비교
+    - [`scripts/analyze_trigger_proxy_attribution.py`](../scripts/analyze_trigger_proxy_attribution.py)에
+      아래 shadow 비교 섹션을 추가했다.
+      - `watch_projection_items`
+      - `core_risk_off_shadow_items`
+      - `event_overlay_shadow_items`
+    - `WATCH top-k + minimum floor`는
+      일자별 `ranking_score` 재정렬로
+      `legacy_watch_only / legacy_and_shadow_watch / shadow_watch_only / neither_watch`
+      bucket을 재구성한다.
+    - `core_risk_off_experiment`, `event_overlay_experiment`는
+      `shadow_would_pass / shadow_blocked / inactive` bucket으로
+      후행 수익률 proxy를 비교한다.
+    - 기준 문서
+      - [`plans/[DESIGN] performance_attribution_for_trigger_and_override.md`](./%5BDESIGN%5D%20performance_attribution_for_trigger_and_override.md)
+      - [`tests/services/test_trigger_proxy_attribution.py`](../tests/services/test_trigger_proxy_attribution.py)
+    - 운영 반영
+      - `ops-scheduler`가 장후 `signal_feature_batch` 완료 직후
+        `after_market_trigger_proxy_attribution` 배치를 자동 실행한다.
+      - 결과는
+        `logs/trigger_proxy_attribution_YYYY-MM-DD.json`과
+        `operations_day_runs.summary_json.trigger_proxy_attribution`에 남긴다.
+- 근거 문서
+  - [`plans/[DESIGN] deterministic_trigger_eligibility_and_ranking_v1.md`](./%5BDESIGN%5D%20deterministic_trigger_eligibility_and_ranking_v1.md)
+  - [`plans/[DESIGN] performance_attribution_for_trigger_and_override.md`](./%5BDESIGN%5D%20performance_attribution_for_trigger_and_override.md)
+  - [`tests/services/test_trigger_proxy_attribution.py`](../tests/services/test_trigger_proxy_attribution.py)
 
 ### 세부 작업 상태
 - [x] 순수 helper 기반 deterministic signal backbone 1차 추가
@@ -2322,7 +2459,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 
 ---
 
-### 12. Market Regime / Strategy Selection / Portfolio Agent 분해 — `완료`
+### 13. Market Regime / Strategy Selection / Portfolio Agent 분해 — `완료`
 
 ### 핵심
 - 시장 국면, 전략 선택, 포트폴리오 배분 책임을 명시적 계층으로 분리
@@ -2362,7 +2499,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 
 ---
 
-### 13. AI Compliance / Model Monitor 분해 — `미완료`
+### 14. AI Compliance / Model Monitor 분해 — `미완료`
 
 ### 핵심
 - ambiguous policy risk와 deterministic hard validation 분리
@@ -2376,7 +2513,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 
 ---
 
-### 14. Data Quality / Hard Guardrail 일원화 — `완료`
+### 15. Data Quality / Hard Guardrail 일원화 — `완료`
 
 ### 핵심
 - stale snapshot, blocked reason, kill switch, risk check, submit/reconcile 차단 규칙을
@@ -2470,7 +2607,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 
 ## P3 — 후순위 또는 보류할 작업
 
-### 15. Admin UI 추가 고도화 — `보류`
+### 16. Admin UI 추가 고도화 — `보류`
 
 현재 상태:
 - 최근 BUY 차단, 체결내역, 드릴다운 관련 UI 보강이 많이 들어갔다.
@@ -2494,7 +2631,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 
 ---
 
-### 16. 멀티 사용자 공용 Plane / 개인 Credential Plane 분리 리팩토링 — `보류`
+### 17. 멀티 사용자 공용 Plane / 개인 Credential Plane 분리 리팩토링 — `보류`
 
 ### 목표
 - 사용자별 KIS / AI / NAVER credential은 분리하되,
@@ -2546,7 +2683,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 
 ## P3 — 개발 완료 후 문서화 과제
 
-### 17. 운영/업무자용 주문 흐름 문서 패키지 — `보류`
+### 18. 운영/업무자용 주문 흐름 문서 패키지 — `보류`
 
 ### 목표
 - 핵심 백엔드/운영 안정화 개발이 모두 끝난 뒤, 비개발 업무자도 바로 읽을 수 있는 운영 문서 세트를 만든다.

@@ -256,3 +256,24 @@ docker compose exec app python3 -B -m pytest -q \
 - `11-d` 완료 판정
 - `13. AI Compliance / Model Monitor 분해`
 - 향후 provider 교체 시 `AI Compliance` runtime 검증
+
+---
+
+## 최근 검증 메모
+
+### 2026-07-01
+
+- `KIS_LIVE_INFO_APP_KEY` / `KIS_LIVE_INFO_APP_SECRET` 반영값을 재검증했다.
+- live-info OAuth 직접 호출 결과 `200 OK`를 확인했다.
+- 아래 캐시 파일 재생성을 확인했다.
+  - `.cache/kis_live_oauth_token.json`
+  - `.cache/kis_disclosure_token.json`
+- `ops-scheduler` 로그에서 아래 기준선을 확인했다.
+  - `live_holiday_oauth token cache: hit`
+  - `KisHolidayProvider: session_info ... source=kis_holiday_api`
+  - `EGW00103`
+  - `유효하지 않은 AppKey입니다.`
+    가 더 이상 발생하지 않음
+
+이는 `AI Compliance`가 참조하는 live disclosure / session 보조 경로가
+현재 기준 정상 복구되었음을 뜻한다.

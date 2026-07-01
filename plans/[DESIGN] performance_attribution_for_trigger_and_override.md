@@ -161,6 +161,95 @@ V1 정의:
 - 이는 `order execution performance`가 아니라
   `decision quality proxy`다
 
+### 3.3a 2026-06-23 ~ 2026-07-01 임계값 실증 검증 메모
+
+2026-07-01에 현재 `signal_feature`와 `deterministic_trigger`
+임계값이 `최고 기대수익률` 목표에 부합하는지 1차 실증 검증을 수행했다.
+
+검증 방식:
+
+- `trade_decisions`에서 2026-06-23 이후 decision을 조회
+- 중복 cycle 영향을 줄이기 위해
+  `symbol + trade_date`별 첫 decision만 사용
+- 후행 성과를 계산할 수 있는 2026-06-23 ~ 2026-06-30 decision을 평가 표본으로 사용
+- KIS 일봉으로 T+1 / T+3 종가 수익률과 T+3 MFE / MAE를 계산
+- 표본:
+  - 57개 symbol
+  - 186개 symbol-day
+
+주요 결과:
+
+- `BUY_CANDIDATE`와 `entry_score >= 0.65`는 0건이었다.
+- `entry_score`와 T+3 수익률의 상관은 약 `-0.21`이었다.
+- `0.55 <= entry_score < 0.65` 구간은
+  T+3 평균 수익률이 약 `-3.56%`였다.
+- 따라서 `buy_candidate_threshold`를 단순 하향하는 것은
+  현재 표본 기준으로 기대수익률 개선 근거가 약하다.
+- `WATCH` 최종 decision은 T+3 평균 약 `+0.88%`였지만,
+  raw deterministic `PRIMARY_WATCH` bucket은 T+3 평균 약 `-0.71%`였다.
+  이는 `WATCH` 후보를 넓은 완충 bucket으로 쓰면
+  후보 품질이 떨어질 수 있음을 뜻한다.
+- `eligibility_core_risk_off_ranking_blocked` bucket은
+  T+3 평균 약 `+3.16%`, hit rate 약 `72.7%`로
+  과도 차단 가능성이 있다.
+- `event_overlay` bucket은
+  T+1 평균 약 `+3.40%`, T+3 평균 약 `+2.38%`,
+  hit rate 약 `73.7%`로
+  우선순위와 후보 전환 비중을 높일 근거가 있다.
+
+이 결과의 설계 반영:
+
+1. `buy_candidate_threshold`는 바로 낮추지 않는다.
+2. `watch_candidate_threshold=0.45`는
+   상향 또는 top-k projection 방식으로 재설계한다.
+3. `eligibility_core_risk_off_ranking_blocked`는
+   hard block 대신 penalty + 제한적 top-k 방식의 shadow 실험 대상으로 둔다.
+4. `event_overlay`는 source bonus 또는 별도 event top-k lane으로 평가한다.
+
+주의:
+
+- 이번 검증은 realized PnL attribution이 아니라
+  post-decision return proxy다.
+- KIS 일봉을 직접 조회해 계산했으므로,
+  운영 반복 검증용으로는 별도 price history cache 또는
+  `performance-trigger-proxy-attribution` 구현이 필요하다.
+
+현재는 반복 검증용 1차 경로로
+[`scripts/analyze_trigger_proxy_attribution.py`](../scripts/analyze_trigger_proxy_attribution.py)
+를 추가했다.
+
+- `symbol + trade_date`별 첫 decision 기준 추출
+- KIS 일봉으로 T+1 / T+3 / T+5 후행 수익률 계산
+- T+3 / T+5 기준 MFE / MAE 계산
+- `primary_candidate`, `source_type`, `eligibility_reason`별 집계 출력
+
+즉, `12-d`의 첫 체크리스트인
+`repeatable script 또는 API`는 현재 스크립트 경로로 닫혔고,
+후속으로 API 승격이 필요하면 같은 계산 계약을 재사용하면 된다.
+
+추가로 스크립트는 아래 shadow 비교 섹션도 함께 출력한다.
+
+- `watch_projection_items`
+  - `legacy_watch_only`
+  - `legacy_and_shadow_watch`
+  - `shadow_watch_only`
+  - `neither_watch`
+- `core_risk_off_shadow_items`
+  - `shadow_would_pass`
+  - `shadow_blocked`
+  - `inactive`
+- `event_overlay_shadow_items`
+  - `shadow_would_pass`
+  - `shadow_blocked`
+  - `inactive`
+
+이로써 `12-d`에서 정의한
+`WATCH top-k + minimum floor`,
+`core risk-off shadow penalty`,
+`event_overlay shadow lane`
+세 변경안을 동일 기간 / 동일 표본에서
+후행 수익률 proxy 기준으로 동시에 비교할 수 있다.
+
 ## 3.4 Stage D — Realized PnL Attribution
 
 질문:

@@ -107,6 +107,7 @@ DEFAULT_POST_SUBMIT_INTERVAL_SECONDS = 30
 DEFAULT_FILL_SYNC_INTERVAL_SECONDS = 600
 DEFAULT_FILL_SYNC_AFTER_HOURS_INTERVAL_SECONDS = 1800
 DEFAULT_SIGNAL_FEATURE_BATCH_TIME = dtime(20, 10)
+DEFAULT_TRIGGER_PROXY_ATTRIBUTION_LOOKBACK_DAYS = 14
 DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE = "decision_loop_intraday"
 DEFAULT_INSTRUMENT_MASTER_SYNC_TIME = dtime(4, 50)
 DEFAULT_INSTRUMENT_STATUS_SNAPSHOT_TIME = dtime(5, 5)
@@ -257,6 +258,8 @@ class SchedulerState:
     after_hours_full_snapshot_done: bool = False
     # 장 마감 후 20:10 KST signal feature batch 1회 실행 여부
     signal_feature_batch_done: bool = False
+    # 장후 trigger proxy attribution 분석 배치 완료 여부
+    trigger_proxy_attribution_done: bool = False
     # 장중 decision loop intraday universe freeze 완료 여부
     intraday_universe_freeze_done: bool = False
     # 장전 04:50 KST instrument master sync 1회 실행 여부
@@ -327,6 +330,8 @@ def _should_rollover_to_next_run_date(
     if now < end_at:
         return False
     if state.after_hours_mode and not state.signal_feature_batch_done:
+        return False
+    if state.after_hours_mode and not state.trigger_proxy_attribution_done:
         return False
     if now.date() > run_date:
         return True
@@ -661,6 +666,68 @@ def _parse_signal_feature_input_summary(result: CommandResult) -> dict[str, Any]
     return {}
 
 
+def _parse_trigger_proxy_attribution_summary(result: CommandResult) -> dict[str, Any]:
+    """Parse trigger proxy attribution batch summary from JSON/stdout."""
+    for obj in reversed(_extract_json_objects(result.stdout)):
+        if bool(obj.get("skipped")):
+            payload: dict[str, Any] = {
+                "skipped": True,
+                "skipped_reason": str(obj.get("skipped_reason") or "unknown"),
+            }
+            if obj.get("start_date"):
+                payload["start_date"] = str(obj["start_date"])
+            if obj.get("end_date"):
+                payload["end_date"] = str(obj["end_date"])
+            return payload
+        sample_count = obj.get("sample_count")
+        if sample_count is None:
+            continue
+        watch_projection_items = (
+            obj.get("watch_projection_items")
+            if isinstance(obj.get("watch_projection_items"), list)
+            else []
+        )
+        core_shadow_items = (
+            obj.get("core_risk_off_shadow_items")
+            if isinstance(obj.get("core_risk_off_shadow_items"), list)
+            else []
+        )
+        event_shadow_items = (
+            obj.get("event_overlay_shadow_items")
+            if isinstance(obj.get("event_overlay_shadow_items"), list)
+            else []
+        )
+        return {
+            "sample_count": int(sample_count),
+            "account_id": str(obj.get("account_id")) if obj.get("account_id") else None,
+            "account_label": (
+                str(obj.get("account_label")) if obj.get("account_label") else None
+            ),
+            "start_date": str(obj.get("start_date")) if obj.get("start_date") else None,
+            "end_date": str(obj.get("end_date")) if obj.get("end_date") else None,
+            "watch_projection_bucket_count": len(watch_projection_items),
+            "core_risk_off_shadow_bucket_count": len(core_shadow_items),
+            "event_overlay_shadow_bucket_count": len(event_shadow_items),
+            "watch_projection_shadow_watch_only": _find_bucket_sample_count(
+                watch_projection_items,
+                "shadow_watch_only",
+            ),
+            "watch_projection_legacy_only": _find_bucket_sample_count(
+                watch_projection_items,
+                "legacy_watch_only",
+            ),
+            "core_risk_off_shadow_would_pass": _find_bucket_sample_count(
+                core_shadow_items,
+                "shadow_would_pass",
+            ),
+            "event_overlay_shadow_would_pass": _find_bucket_sample_count(
+                event_shadow_items,
+                "shadow_would_pass",
+            ),
+        }
+    return {}
+
+
 def _parse_instrument_status_snapshot_summary(result: CommandResult) -> dict[str, Any]:
     """Parse instrument status snapshot batch summary from JSON/stdout."""
     for obj in reversed(_extract_json_objects(result.stdout)):
@@ -777,6 +844,19 @@ def _aggregate_signal_feature_batch_metrics(
             )
         )[:5],
     }
+
+
+def _find_bucket_sample_count(items: list[Any], bucket: str) -> int:
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("bucket") or "") != bucket:
+            continue
+        try:
+            return int(item.get("sample_count", 0))
+        except (TypeError, ValueError):
+            return 0
+    return 0
 
 
 def _extract_command_failure_reason(result: CommandResult) -> str | None:
@@ -941,6 +1021,10 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
         state,
         {"after_market_signal_feature_input", "after_market_signal_feature_input_tail_retry"},
     )
+    latest_trigger_proxy_attribution = _latest_command_result(
+        state,
+        {"after_market_trigger_proxy_attribution"},
+    )
     signal_feature_batch_metrics = _aggregate_signal_feature_batch_metrics(state)
     signal_feature_input_metrics = _aggregate_signal_feature_input_metrics(state)
     if signal_feature_batch_metrics is not None and signal_feature_input_metrics is not None:
@@ -1004,6 +1088,11 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
             names={"after_market_signal_feature_input", "after_market_signal_feature_input_tail_retry"},
             metrics_parser=_parse_signal_feature_input_summary,
         ),
+        "trigger_proxy_attribution": _command_family_stats(
+            state,
+            names={"after_market_trigger_proxy_attribution"},
+            metrics_parser=_parse_trigger_proxy_attribution_summary,
+        ),
         "instrument_master_sync": _command_family_stats(
             state,
             names={"instrument_master_sync"},
@@ -1029,6 +1118,7 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
         "session_reason": state.session_info.reason if state.session_info else None,
         "after_hours_full_snapshot_done": state.after_hours_full_snapshot_done,
         "signal_feature_batch_done": state.signal_feature_batch_done,
+        "trigger_proxy_attribution_done": state.trigger_proxy_attribution_done,
         "intraday_universe_freeze_done": state.intraday_universe_freeze_done,
         "instrument_master_sync_done": state.instrument_master_sync_done,
         "instrument_master_sync_missed": state.instrument_master_sync_missed,
@@ -1057,6 +1147,14 @@ def _build_operations_day_summary_json(state: SchedulerState) -> dict[str, Any]:
         "signal_feature_input": _command_result_summary(
             latest_signal_feature_input,
             metrics=signal_feature_input_metrics,
+        ),
+        "trigger_proxy_attribution": _command_result_summary(
+            latest_trigger_proxy_attribution,
+            metrics=(
+                _parse_trigger_proxy_attribution_summary(latest_trigger_proxy_attribution)
+                if latest_trigger_proxy_attribution
+                else None
+            ),
         ),
         "instrument_master_sync": _command_result_summary(
             _latest_command_result(state, {"instrument_master_sync"}),
@@ -1108,6 +1206,9 @@ def _build_scheduler_runtime_summary() -> dict[str, Any]:
         ),
         "signal_feature_batch_supported": True,
         "signal_feature_batch_time": DEFAULT_SIGNAL_FEATURE_BATCH_TIME.strftime("%H:%M"),
+        "trigger_proxy_attribution_supported": True,
+        "trigger_proxy_attribution_mode": "after_signal_feature_batch",
+        "trigger_proxy_attribution_lookback_days": DEFAULT_TRIGGER_PROXY_ATTRIBUTION_LOOKBACK_DAYS,
         "decision_loop_intraday_freeze_supported": True,
         "decision_loop_intraday_freeze_purpose": DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
         "script_mtime_epoch": script_path.stat().st_mtime,
@@ -1608,6 +1709,27 @@ def _generate_signal_feature_snapshot_input_command(
         output_path=output_path,
         retry_from_input=retry_from_input,
     )
+
+
+def _trigger_proxy_attribution_command(
+    *,
+    run_date: date,
+    lookback_days: int,
+    output_path: str,
+) -> list[str]:
+    start_date = run_date - timedelta(days=max(lookback_days - 1, 0))
+    return [
+        PYTHON_BIN,
+        str((_repo_root() / "scripts/analyze_trigger_proxy_attribution.py").resolve()),
+        "--start-date",
+        start_date.isoformat(),
+        "--end-date",
+        run_date.isoformat(),
+        "--output",
+        "json",
+        "--write-json",
+        output_path,
+    ]
 
 
 async def _run_and_record(
@@ -2180,6 +2302,49 @@ async def _run_signal_feature_batch_runtime(
     setattr(state, completion_flag_attr, True)
     await _persist_operations_day_run(state, dsn)
     logger.info("phase=%s signal feature batch complete", phase_label)
+
+
+async def _run_after_market_trigger_proxy_attribution(
+    state: SchedulerState,
+    *,
+    timeout_seconds: int,
+    env: dict[str, str],
+    dsn: str | None,
+) -> None:
+    if state.trigger_proxy_attribution_done:
+        return
+    if not state.signal_feature_batch_done:
+        return
+
+    output_path = (
+        _repo_root() / "logs" / f"trigger_proxy_attribution_{state.run_date.isoformat()}.json"
+    )
+    logger.info(
+        "phase=after-market trigger proxy attribution start run_date=%s output=%s",
+        state.run_date.isoformat(),
+        output_path,
+    )
+    result = await _run_and_record(
+        state,
+        "after_market_trigger_proxy_attribution",
+        _trigger_proxy_attribution_command(
+            run_date=state.run_date,
+            lookback_days=DEFAULT_TRIGGER_PROXY_ATTRIBUTION_LOOKBACK_DAYS,
+            output_path=str(output_path),
+        ),
+        timeout_seconds=timeout_seconds,
+        env=env,
+    )
+    if not result.ok:
+        await _persist_operations_day_run(state, dsn)
+        logger.warning(
+            "phase=after-market trigger proxy attribution failed — will retry on next tick",
+        )
+        return
+
+    state.trigger_proxy_attribution_done = True
+    await _persist_operations_day_run(state, dsn)
+    logger.info("phase=after-market trigger proxy attribution complete")
 
 
 async def _ensure_decision_loop_intraday_freeze(
@@ -3505,6 +3670,12 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                         now=now,
                         signal_feature_batch_at=args.signal_feature_batch_time,
                         signal_feature_input_path=args.signal_feature_input_path,
+                        dsn=dsn,
+                    )
+                    await _run_after_market_trigger_proxy_attribution(
+                        state,
+                        timeout_seconds=args.task_timeout,
+                        env=env,
                         dsn=dsn,
                     )
 

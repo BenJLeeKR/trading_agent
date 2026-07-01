@@ -192,6 +192,27 @@ V1은 확률 모델이 아니라
 
 이 점수는 0~1 범위 정규화가 바람직하다.
 
+### 7.1a 임계값 운용 원칙 보강
+
+2026-06-23 ~ 2026-07-01 실제 decision과 KIS 일봉 후행수익률을
+붙여 검증한 결과,
+현재 문제는 `buy_candidate_threshold=0.65`가 단순히 높다는 것보다
+score / eligibility / source policy 정렬성이 아직 충분하지 않다는 쪽에 가깝다.
+
+따라서 V1 임계값 운용은 아래 원칙을 따른다.
+
+1. `buy_candidate_threshold`는 실증 없이 즉시 하향하지 않는다.
+2. `WATCH`는 `0.45` 같은 넓은 절대 임계값만으로 생성하지 않고,
+   `top-k + minimum floor + follow-up value`를 함께 본다.
+3. `risk_off` 국면의 `core` 차단은 hard block으로만 두지 않고,
+   ranking penalty와 제한적 후보화 실험을 병행한다.
+4. `event_overlay`는 최근 실측에서 후행 proxy가 좋았으므로
+   source bonus 또는 별도 event 후보 lane을 둔다.
+
+즉, V1의 다음 개선은
+`BUY를 늘리기 위한 threshold 완화`가 아니라
+`후행 기대값이 높은 bucket을 더 잘 살리는 후보화 재정렬`이다.
+
 ---
 
 ## 7.2 Entry Score

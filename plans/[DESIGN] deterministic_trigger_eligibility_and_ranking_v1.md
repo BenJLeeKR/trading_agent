@@ -68,6 +68,72 @@ limited capital을 우선 배분하는 것**이다.
 
 - [`src/agent_trading/services/deterministic_trigger_engine.py`](../src/agent_trading/services/deterministic_trigger_engine.py)
 
+### 3.0 2026-06-23 ~ 2026-07-01 실증 검증 반영
+
+2026-06-23부터 2026-07-01 장중까지의 실제 `trade_decisions`와
+KIS 일봉 후행 수익률을 붙여 검증한 결과,
+현재 임계값 문제는 단순히 `BUY threshold`가 높다는 식으로
+해석하면 안 된다.
+
+검증 방식:
+
+- 중복 cycle 왜곡을 줄이기 위해 `symbol + trade_date`별 첫 decision만 사용
+- 후행 수익률 계산이 가능한 2026-06-23 ~ 2026-06-30 구간을 평가 표본으로 사용
+- 표본: 57개 symbol, 186개 symbol-day
+- proxy 지표:
+  - T+1 종가 수익률
+  - T+3 종가 수익률
+  - T+3 MFE / MAE
+
+핵심 관측:
+
+- `BUY_CANDIDATE`는 0건이었다.
+- `entry_score >= 0.65`도 0건이었다.
+- `entry_score`와 T+3 수익률의 상관은 약 `-0.21`로,
+  현재 score가 후행 기대수익률을 선형적으로 잘 설명한다고 보기 어렵다.
+- `0.55 <= entry_score < 0.65` 구간은
+  T+3 평균 수익률이 약 `-3.56%`로 나빠,
+  `buy_candidate_threshold`를 단순히 0.55 부근으로 낮추는 것은
+  기대수익률 극대화 기준에 부합하지 않는다.
+- `primary_candidate=NO_ACTION` 중에서도
+  T+3 MFE가 5% 이상인 missed opportunity가 반복적으로 발견됐다.
+  이 문제는 threshold 숫자보다
+  risk-off / source / event overlay 처리 방식과 더 관련이 컸다.
+
+필터별 관측:
+
+- `eligibility_low_relative_activity`
+  - 26건
+  - T+3 평균 약 `-2.85%`
+  - hit rate 약 `26.9%`
+  - 현재 기준에서는 유지가 타당하다.
+- `eligibility_source_type_blocked`
+  - 45건
+  - T+3 평균 약 `-4.36%`
+  - hit rate 약 `13.3%`
+  - 현재 차단 정책은 기대수익률 관점에서 유지가 타당하다.
+- `eligibility_core_risk_off_ranking_blocked`
+  - 22건
+  - T+3 평균 약 `+3.16%`
+  - hit rate 약 `72.7%`
+  - 과도 차단 가능성이 높으므로 우선 완화 실험 대상이다.
+- `event_overlay`
+  - 19건
+  - T+1 평균 약 `+3.40%`
+  - T+3 평균 약 `+2.38%`
+  - hit rate 약 `73.7%`
+  - 후보 전환 비중과 ranking 우선순위를 높일 근거가 있다.
+
+설계 결론:
+
+1. `buy_candidate_threshold=0.65`는 바로 낮추지 않는다.
+2. `watch_candidate_threshold=0.45`는 넓은 관찰 bucket을 만드는 경향이 있어
+   상향 또는 top-k projection 방식으로 재설계한다.
+3. `eligibility_core_risk_off_ranking_blocked`는 hard block보다
+   penalty + top-k 제한 방식으로 완화 실험한다.
+4. `event_overlay`는 `core`보다 기대수익률 proxy가 좋았으므로
+   source bonus 또는 별도 event top-k lane을 둔다.
+
 ### 3.1 threshold가 너무 직접적이다
 
 현재는 아래와 같이
@@ -121,6 +187,29 @@ candidate 생성이 거의 threshold 비교에 의해 바로 결정된다.
   budget보다 많은 종목이 동시에 BUY threshold를 넘을 수 있다.
 - 자본 배분은 본질적으로 상대 비교인데,
   candidate 생성이 이를 반영하지 못한다.
+
+### 3.5 `eligibility_core_risk_off_ranking_blocked`는 바로 해제하면 안 된다
+
+실증 검증에서
+`eligibility_core_risk_off_ranking_blocked` bucket의
+T+3 평균 수익률과 hit rate가 좋았지만,
+이를 곧바로 hard block 해제로 연결하면 안 된다.
+
+이유:
+
+- 현재 차단 사유는 단순 ranking 하나만이 아니라
+  risk-off regime 하에서의 보수적 진입 억제 장치다.
+- 무차별 해제 시
+  `risk_off` 구간에서 BUY 후보가 과도하게 증가할 수 있다.
+- 따라서 1차는 `hard block -> full allow`가 아니라
+  `hard block 유지 + shadow penalty 비교`가 맞다.
+
+확정 원칙:
+
+1. authoritative path는 당분간 `hard_block_v1` 유지
+2. 실험 경로는 `shadow_penalty_v1` metadata로만 먼저 기록
+3. shadow 결과가 반복적으로 유의미하면
+   이후 `apply_penalty_v1`로 승격 검토
 
 ---
 
@@ -530,6 +619,84 @@ WATCH는 다음 경우에만 부여한다.
 `top-k 바로 아래 후보군`
 으로 재정의하는 것이 맞다.
 
+### 8.2a 확정안: WATCH top-k + minimum floor
+
+`12-d` 기준으로
+`watch_candidate_threshold=0.45`의 절대 threshold 방식은
+아래 batch projection 규칙으로 대체하는 설계를 확정한다.
+
+핵심 원칙:
+
+1. WATCH는 `애매한 종목 전체`를 담는 bucket이 아니다.
+2. WATCH는 `BUY top-k 바로 아래의 추적 가치가 있는 후보군`만 담는다.
+3. 따라서 WATCH는 `eligibility + ranking + minimum floor`를 동시에 만족해야 한다.
+
+확정 규칙:
+
+- BUY projection 전제
+  - `eligibility_passed == True`
+  - `ranking_score >= 0.55`
+  - `ranking 상위 top_k_buy = 3`
+- WATCH projection 전제
+  - `eligibility_passed == True`
+  - `buy_candidate == False`
+  - `ranking_score >= 0.50`
+  - `entry_score >= 0.52`
+  - `ranking_percentile >= 0.60`
+  - `WATCH top_k_watch = 8` 이내
+
+즉, WATCH는 아래 집합이다.
+
+```text
+eligible
+  AND not in BUY top-k
+  AND ranking_score >= 0.50
+  AND entry_score >= 0.52
+  AND ranking_percentile >= 0.60
+  AND watch_rank <= 8
+```
+
+추가 규칙:
+
+- `eligibility_reasons`에 아래가 있으면 WATCH도 부여하지 않는다.
+  - `eligibility_source_type_blocked`
+  - `eligibility_low_feature_coverage`
+  - `eligibility_allocation_blocked`
+  - `eligibility_low_relative_activity`
+  - `eligibility_low_turnover`
+  - `eligibility_participation_rate_blocked`
+- `held_position` 계열 WATCH는 본 규칙과 분리한다.
+  - `held_position`은 exit monitoring 목적이므로
+    BUY 인접 후보 WATCH와 같은 bucket으로 합치지 않는다.
+
+해석:
+
+- `ranking_score >= 0.50`는
+  BUY floor(`0.55`)보다 약간 낮은 최소 질 기준이다.
+- `entry_score >= 0.52`는
+  기존 `0.45` threshold 대비 완충 구간을 대폭 줄여
+  관찰 가치가 약한 종목을 WATCH에서 제거한다.
+- `ranking_percentile >= 0.60`와 `top_k_watch = 8`를 같이 두는 이유는
+  절대 score만 높고 상대 순위가 밀리는 종목,
+  혹은 상대 순위만 간신히 상위권인 저품질 종목을 동시에 줄이기 위해서다.
+
+권장 metadata 저장:
+
+- `decision_json.deterministic_trigger.watch_projection_version = "watch_topk_floor_v1"`
+- `decision_json.deterministic_trigger.watch_projection_inputs`
+  - `top_k_buy`
+  - `top_k_watch`
+  - `buy_min_ranking_score`
+  - `watch_min_ranking_score`
+  - `watch_min_entry_score`
+  - `watch_min_percentile`
+  - `buy_rank`
+  - `watch_rank`
+
+이 metadata가 있어야
+후속 shadow mode에서
+`old absolute WATCH`와 `new top-k WATCH`를 정확히 비교할 수 있다.
+
 ### 8.3 NO_ACTION
 
 다음은 WATCH가 아니라 `NO_ACTION`이 맞다.
@@ -541,6 +708,151 @@ WATCH는 다음 경우에만 부여한다.
 - source_type 부적격
 
 이렇게 해야 WATCH가 과다해지지 않는다.
+
+### 8.4 core risk-off ranking 완화 실험 플래그 확정안
+
+`12-d`의 다음 단계로
+`eligibility_core_risk_off_ranking_blocked`는 아래 실험 플래그 계약으로 고정한다.
+
+mode:
+
+- `hard_block_v1`
+  - 현재 authoritative 동작
+- `shadow_penalty_v1`
+  - 현재 authoritative 결과는 유지
+  - 단, metadata에
+    `penalty 적용 시 would_pass 여부`를 함께 기록
+- `apply_penalty_v1`
+  - 후속 단계에서만 사용
+  - 실제 eligibility / ranking projection에 penalty 경로를 반영
+
+shadow penalty 규칙:
+
+- 적용 대상
+  - `source_type == core`
+  - `market_regime.risk_tone == risk_off`
+  - `market_regime.regime_label == bearish_trend`
+- 기존 hard block 기준
+  - `ranking_score < 0.48`
+- shadow penalty 계산
+  - `adjusted_ranking_score = ranking_score - 0.08`
+  - `shadow_min_score = 0.40`
+  - `shadow_top_k_cap = 2`
+- shadow pass 전제
+  - `adjusted_ranking_score >= 0.40`
+  - `overall >= 0.0`
+  - `slow >= -0.05`
+  - `max(volume_surge_ratio, turnover_surge_ratio) >= 1.20`
+  - `preferred_strategy in {defensive_low_volatility_rotation, mean_reversion_bounce, event_continuation}`
+
+즉,
+ranking hard block을 완전히 없애는 것이 아니라
+`risk-off core` 구간에서 극소수 후보만
+penalty를 먹인 상태로 비교 평가하는 구조다.
+
+권장 metadata:
+
+- `decision_json.deterministic_trigger.core_risk_off_experiment`
+  - `mode = hard_block_v1`
+  - `shadow_mode = shadow_penalty_v1`
+  - `active`
+  - `ranking_min_score = 0.48`
+  - `shadow_min_score = 0.40`
+  - `shadow_penalty = 0.08`
+  - `shadow_top_k_cap = 2`
+  - `raw_ranking_score`
+  - `adjusted_ranking_score`
+  - `shadow_signal_pass`
+  - `shadow_activity_pass`
+  - `shadow_strategy_pass`
+  - `shadow_would_pass`
+  - `apply_ready = false`
+
+평가 기준:
+
+- `shadow_would_pass == true` 표본의
+  T+1 / T+3 / T+5 후행 수익률
+- BUY 후보 증가량
+- `risk_off` 구간 churn 증가 여부
+- 기존 `event_overlay` / `core` 후보와의 우선순위 충돌 정도
+
+### 8.5 event_overlay source bonus / event top-k lane 확정안
+
+`event_overlay`는 실측상
+`core`보다 후행 기대수익률 proxy가 좋았으므로
+즉시 threshold를 낮추기보다
+`shadow event lane`을 먼저 붙여 비교한다.
+
+mode:
+
+- `no_bonus_v1`
+  - 현재 authoritative 동작
+- `shadow_event_lane_v1`
+  - authoritative BUY eligibility / candidate는 유지
+  - metadata에
+    `event lane 적용 시 would_pass 여부`를 함께 기록
+- `apply_event_lane_v1`
+  - 후속 단계에서만 사용
+  - 실제 batch projection에서
+    `event_top_k` 후보 lane을 활성화
+
+shadow 규칙:
+
+- 적용 대상
+  - `source_type == event_overlay`
+- authoritative 유지 원칙
+  - `risk_off` regime gate를 우회하지 않는다.
+  - `eligibility_passed == false`면
+    shadow 결과도 `would_pass = false`
+- shadow bonus 계산
+  - `adjusted_ranking_score = ranking_score + 0.06`
+  - `shadow_min_score = 0.56`
+  - `shadow_entry_min_score = 0.54`
+  - `shadow_top_k_cap = 2`
+- shadow pass 전제
+  - `eligibility_passed == true`
+  - `adjusted_ranking_score >= 0.56`
+  - `entry_score >= 0.54`
+  - `overall >= 0.0`
+  - `slow >= -0.05`
+  - `max(volume_surge_ratio, turnover_surge_ratio) >= 1.15`
+  - `preferred_strategy == event_continuation`
+
+즉,
+`event_overlay` 전체를 무차별 우대하는 것이 아니라
+이미 기본 eligibility를 통과한 event 후보 중
+상위 극소수만 별도 lane으로 비교하는 구조다.
+
+권장 metadata:
+
+- `decision_json.deterministic_trigger.event_overlay_experiment`
+  - `mode = no_bonus_v1`
+  - `shadow_mode = shadow_event_lane_v1`
+  - `active`
+  - `base_eligibility_passed`
+  - `shadow_bonus = 0.06`
+  - `shadow_min_score = 0.56`
+  - `shadow_entry_min_score = 0.54`
+  - `shadow_top_k_cap = 2`
+  - `raw_ranking_score`
+  - `adjusted_ranking_score`
+  - `shadow_signal_pass`
+  - `shadow_activity_pass`
+  - `shadow_strategy_pass`
+  - `shadow_would_pass`
+  - `apply_ready = false`
+
+평가 기준:
+
+- `event_overlay` 표본 중
+  `shadow_would_pass == true` 후보의
+  T+1 / T+3 / T+5 후행 수익률
+- 동일 기간 `core` 대비 후보 전환 증가량
+- `risk_off` blocked event 표본이
+  여전히 `would_pass = false`로 남는지 여부
+- 차후 batch projection에서
+  `event_top_k = 2` lane 적용 시
+  BUY churn 증가 없이 hit rate가 유지되는지 여부
 
 ---
 
@@ -635,6 +947,19 @@ batch 문맥이 필요하다.
 - **V1.1은 옵션 A**
 - 즉, 단일 종목 engine은 `eligibility + ranking_score`까지만 계산
 - batch top-k projection은 `DecisionOrchestrator` 상위 또는 별도 batch helper에서 수행
+
+추가 확정:
+
+- `src/agent_trading/services/deterministic_trigger_engine.py`
+  는 계속 단일 종목 평가기 역할을 유지한다.
+- `WATCH top-k + minimum floor` projection은
+  `DecisionOrchestrator` 상위 batch helper 또는
+  별도 `deterministic_trigger_projection` helper에서 수행한다.
+- 이유:
+  - 현재 engine 입력 계약은 단일 symbol 기준이다.
+  - top-k는 universe batch 문맥이 필요하다.
+  - 이 책임을 engine 내부로 밀어 넣으면
+    orchestrator 호출 경계와 테스트 비용이 크게 커진다.
 
 ### 10.3 WATCH guard와의 관계
 

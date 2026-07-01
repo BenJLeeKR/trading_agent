@@ -381,6 +381,13 @@ def test_trigger_engine_keeps_risk_off_block_for_weak_core_setup() -> None:
     assert result.risk_off_exception_eligible is False
     assert result.eligibility_passed is False
     assert "eligibility_core_risk_off_ranking_blocked" in result.eligibility_reasons
+    experiment = result.metadata["core_risk_off_experiment"]
+    assert experiment["mode"] == "hard_block_v1"
+    assert experiment["shadow_mode"] == "shadow_penalty_v1"
+    assert experiment["active"] is True
+    assert experiment["shadow_top_k_cap"] == 2
+    assert experiment["apply_ready"] is False
+    assert experiment["shadow_would_pass"] is False
 
 
 def test_trigger_engine_keeps_event_overlay_on_regime_pass_path_under_risk_off() -> None:
@@ -414,3 +421,52 @@ def test_trigger_engine_keeps_event_overlay_on_regime_pass_path_under_risk_off()
     assert result.eligibility_passed is False
     assert "eligibility_risk_off_block" in result.eligibility_reasons
     assert "eligibility_risk_off_exception_pass" not in result.eligibility_reasons
+    experiment = result.metadata["event_overlay_experiment"]
+    assert experiment["mode"] == "no_bonus_v1"
+    assert experiment["shadow_mode"] == "shadow_event_lane_v1"
+    assert experiment["active"] is True
+    assert experiment["base_eligibility_passed"] is False
+    assert experiment["shadow_would_pass"] is False
+    assert experiment["apply_ready"] is False
+
+
+def test_trigger_engine_instruments_event_overlay_shadow_lane_metadata() -> None:
+    result = assess_deterministic_triggers(
+        source_type="event_overlay",
+        signal_feature_snapshot=_make_signal(
+            overall="0.30",
+            fast="0.58",
+            slow="0.08",
+            average_volume_20d="220000",
+            average_turnover_20d="9500000000",
+            volume_surge_ratio="1.42",
+            turnover_surge_ratio="1.55",
+        ),
+        market_regime=_make_regime(
+            regime_label="event_driven_unstable",
+            risk_tone="neutral",
+        ),
+        strategy_selection=_make_strategy(
+            preferred_strategy="event_continuation"
+        ),
+        portfolio_allocation=_make_portfolio(
+            max_new_capital_pct=2.5,
+            current_weight_pct=0.0,
+        ),
+        position_snapshot=None,
+    )
+
+    assert result is not None
+    assert result.eligibility_passed is True
+    experiment = result.metadata["event_overlay_experiment"]
+    assert experiment["mode"] == "no_bonus_v1"
+    assert experiment["shadow_mode"] == "shadow_event_lane_v1"
+    assert experiment["active"] is True
+    assert experiment["base_eligibility_passed"] is True
+    assert experiment["shadow_top_k_cap"] == 2
+    assert experiment["adjusted_ranking_score"] is not None
+    assert experiment["shadow_signal_pass"] is True
+    assert experiment["shadow_activity_pass"] is True
+    assert experiment["shadow_strategy_pass"] is True
+    assert experiment["shadow_would_pass"] is True
+    assert experiment["apply_ready"] is False
