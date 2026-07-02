@@ -92,6 +92,9 @@ from agent_trading.services.signal_feature_batch_runtime import (
     should_run_signal_feature_retry_batch,
     should_run_signal_feature_tail_retry,
 )
+from agent_trading.services.universe_freeze_dedupe import (
+    dedupe_universe_freeze_run_items,
+)
 
 try:
     from dotenv import load_dotenv
@@ -329,6 +332,12 @@ def _should_rollover_to_next_run_date(
     """Decide whether the scheduler may safely roll over to the next run date."""
     if now < end_at:
         return False
+    if now.date() == run_date:
+        signal_feature_trigger_at = _combine(run_date, signal_feature_batch_at)
+        if not state.end_of_day_done:
+            return False
+        if now < signal_feature_trigger_at:
+            return False
     if state.after_hours_mode and not state.signal_feature_batch_done:
         return False
     if state.after_hours_mode and not state.trigger_proxy_attribution_done:
@@ -2448,6 +2457,10 @@ async def _ensure_decision_loop_intraday_freeze(
                 )
             )
 
+        freeze_items, skipped_duplicates = dedupe_universe_freeze_run_items(
+            freeze_items
+        )
+
         if not freeze_items:
             logger.warning(
                 "decision loop intraday freeze materialization failed: no_items "
@@ -2496,7 +2509,7 @@ async def _ensure_decision_loop_intraday_freeze(
         "(freeze_run_id=%s, target_count=%d, skipped=%d, run_date=%s, anchor_source=%s)",
         freeze_run_id,
         len(freeze_items),
-        len(errors),
+        len(errors) + skipped_duplicates,
         freeze_run_date.isoformat(),
         universe_anchor.source,
     )

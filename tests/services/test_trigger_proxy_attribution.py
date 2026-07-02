@@ -4,6 +4,7 @@ import pytest
 
 from agent_trading.services.trigger_proxy_attribution import (
     DailyPriceBar,
+    build_core_risk_off_topk_projection_rows,
     build_shadow_experiment_rows,
     build_trigger_proxy_aggregate_items,
     build_watch_projection_shadow_rows,
@@ -218,3 +219,48 @@ def test_build_shadow_experiment_rows_buckets_active_and_inactive() -> None:
     assert by_symbol["AAA"]["core_risk_off_shadow_bucket"] == "shadow_would_pass"
     assert by_symbol["BBB"]["core_risk_off_shadow_bucket"] == "shadow_blocked"
     assert by_symbol["CCC"]["core_risk_off_shadow_bucket"] == "inactive"
+
+
+def test_build_core_risk_off_topk_projection_rows_buckets_selected_candidate_inactive() -> None:
+    rows = [
+        {
+            "symbol": "AAA",
+            "core_risk_off_experiment": {
+                "active": True,
+                "shadow_topk_candidate": True,
+                "shadow_topk_selected": True,
+            },
+        },
+        {
+            "symbol": "BBB",
+            "core_risk_off_experiment": {
+                "active": True,
+                "shadow_topk_candidate": True,
+                "shadow_topk_selected": False,
+            },
+        },
+        {
+            "symbol": "CCC",
+            "core_risk_off_experiment": {
+                "active": True,
+                "shadow_topk_candidate": False,
+                "shadow_topk_selected": False,
+            },
+        },
+        {
+            "symbol": "DDD",
+            "core_risk_off_experiment": {
+                "active": False,
+                "shadow_topk_candidate": False,
+                "shadow_topk_selected": False,
+            },
+        },
+    ]
+
+    result = build_core_risk_off_topk_projection_rows(rows)
+    by_symbol = {row["symbol"]: row for row in result}
+
+    assert by_symbol["AAA"]["core_risk_off_topk_bucket"] == "shadow_topk_selected"
+    assert by_symbol["BBB"]["core_risk_off_topk_bucket"] == "shadow_topk_candidate_only"
+    assert by_symbol["CCC"]["core_risk_off_topk_bucket"] == "shadow_not_candidate"
+    assert by_symbol["DDD"]["core_risk_off_topk_bucket"] == "inactive"

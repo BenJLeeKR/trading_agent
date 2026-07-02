@@ -54,7 +54,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, NoReturn
-from uuid import uuid4
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 # Lazy import for python-dotenv (optional, for local dev)
 try:
@@ -80,6 +80,12 @@ from agent_trading.runtime.bootstrap import (
     postgres_runtime,
 )
 from agent_trading.services.common_types import SubmitResult
+from agent_trading.services.core_risk_off_topk_projection import (
+    project_core_risk_off_topk_exceptions,
+)
+from agent_trading.services.deterministic_trigger_engine import (
+    DeterministicTriggerAssessment,
+)
 from agent_trading.services.guardrail_audit import (
     persist_validation_result,
 )
@@ -95,6 +101,9 @@ from agent_trading.services.submit_lane_gate import (
     evaluate_symbol_submit_lane,
 )
 from agent_trading.services.sizing_engine import calculate_sizing
+from agent_trading.services.universe_freeze_dedupe import (
+    dedupe_universe_symbols_by_symbol_market,
+)
 from agent_trading.services.universe_selection import UniverseSelectionService
 from agent_trading.services.universe_selection_types import (
     CompositionContext,
@@ -301,6 +310,9 @@ ENV_MANUAL_WATCHLIST = "TRADING_UNIVERSE_MANUAL_SYMBOLS"
 ENV_TRADING_UNIVERSE_CORE_CAP = "TRADING_UNIVERSE_CORE_CAP"
 DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE = "decision_loop_intraday"
 KST = ZoneInfo("Asia/Seoul")
+_APPLY_CORE_RISK_OFF_TOPK = (
+    os.environ.get("DETERMINISTIC_TRIGGER_APPLY_CORE_RISK_OFF_TOPK", "0") == "1"
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -385,16 +397,28 @@ async def _load_intraday_frozen_universe_with_anchor(
         )
         for item in items
     )
+    deduped_universe, skipped_duplicates = dedupe_universe_symbols_by_symbol_market(
+        universe
+    )
+    if skipped_duplicates > 0:
+        logger.warning(
+            "Trading universe freeze duplicate rows skipped: count=%d "
+            "(freeze_run_id=%s, freeze_purpose=%s, business_date=%s)",
+            skipped_duplicates,
+            latest_run.universe_freeze_run_id,
+            latest_run.freeze_purpose,
+            latest_run.business_date.isoformat(),
+        )
     logger.info(
         "Trading universe from intraday freeze: %d symbols loaded "
         "(freeze_run_id=%s, freeze_purpose=%s, business_date=%s).",
-        len(universe),
+        len(deduped_universe),
         latest_run.universe_freeze_run_id,
         latest_run.freeze_purpose,
         latest_run.business_date.isoformat(),
     )
     return (
-        universe,
+        deduped_universe,
         UniverseAnchorMetadata(
             source="intraday_freeze",
             universe_freeze_run_id=str(latest_run.universe_freeze_run_id),
@@ -969,6 +993,272 @@ def _serialize_cycle_result(
     return data
 
 
+def _build_trigger_assessment_from_payload(
+    payload: dict[str, object] | None,
+) -> DeterministicTriggerAssessment | None:
+    if not isinstance(payload, dict):
+        return None
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    candidate_set = payload.get("candidate_set")
+    if isinstance(candidate_set, (list, tuple)):
+        normalized_candidate_set = tuple(str(item) for item in candidate_set)
+    else:
+        normalized_candidate_set = ()
+    eligibility_reasons = payload.get("eligibility_reasons")
+    if isinstance(eligibility_reasons, (list, tuple)):
+        normalized_eligibility_reasons = tuple(str(item) for item in eligibility_reasons)
+    else:
+        normalized_eligibility_reasons = ()
+    reason_codes = payload.get("reason_codes")
+    if isinstance(reason_codes, (list, tuple)):
+        normalized_reason_codes = tuple(str(item) for item in reason_codes)
+    else:
+        normalized_reason_codes = ()
+    thresholds = payload.get("thresholds")
+    if not isinstance(thresholds, dict):
+        thresholds = {}
+    try:
+        return DeterministicTriggerAssessment(
+            trigger_version=str(payload.get("trigger_version") or "deterministic_trigger_v1"),
+            primary_candidate=str(payload.get("primary_candidate") or "NO_ACTION"),
+            candidate_set=normalized_candidate_set,
+            watch_candidate=bool(payload.get("watch_candidate")),
+            buy_candidate=bool(payload.get("buy_candidate")),
+            sell_candidate=bool(payload.get("sell_candidate")),
+            reduce_candidate=bool(payload.get("reduce_candidate")),
+            candidate_confidence=float(payload.get("candidate_confidence") or 0.0),
+            entry_score=(
+                float(payload["entry_score"])
+                if payload.get("entry_score") is not None
+                else None
+            ),
+            exit_score=(
+                float(payload["exit_score"])
+                if payload.get("exit_score") is not None
+                else None
+            ),
+            watch_score=(
+                float(payload["watch_score"])
+                if payload.get("watch_score") is not None
+                else None
+            ),
+            eligibility_passed=bool(payload.get("eligibility_passed")),
+            eligibility_reasons=normalized_eligibility_reasons,
+            coverage_score=(
+                float(payload["coverage_score"])
+                if payload.get("coverage_score") is not None
+                else None
+            ),
+            ranking_score=(
+                float(payload["ranking_score"])
+                if payload.get("ranking_score") is not None
+                else None
+            ),
+            ranking_percentile=(
+                float(payload["ranking_percentile"])
+                if payload.get("ranking_percentile") is not None
+                else None
+            ),
+            ranking_bucket=(
+                str(payload["ranking_bucket"])
+                if payload.get("ranking_bucket") is not None
+                else None
+            ),
+            candidate_mode=str(payload.get("candidate_mode") or "absolute_threshold_v1"),
+            risk_off_exception_eligible=bool(payload.get("risk_off_exception_eligible")),
+            reason_codes=normalized_reason_codes,
+            thresholds=dict(thresholds),
+            metadata=dict(metadata),
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+async def _apply_core_risk_off_shadow_projection_for_cycle(
+    cycle_results: list[dict[str, object]],
+) -> None:
+    trade_decision_ids: list[UUID] = []
+    result_by_trade_decision_id: dict[str, dict[str, object]] = {}
+    for result in cycle_results:
+        raw_id = result.get("trade_decision_id")
+        if raw_id is None:
+            continue
+        try:
+            parsed = UUID(str(raw_id))
+        except ValueError:
+            continue
+        trade_decision_ids.append(parsed)
+        result_by_trade_decision_id[str(parsed)] = result
+
+    if not trade_decision_ids:
+        return
+
+    from agent_trading.db.transaction import transaction as _db_transaction
+
+    async with _db_transaction() as tx:
+        rows = await tx.connection.fetch(
+            """
+            SELECT trade_decision_id, symbol, decision_json
+            FROM trading.trade_decisions
+            WHERE trade_decision_id = ANY($1::uuid[])
+            """,
+            trade_decision_ids,
+        )
+        assessments_by_symbol: dict[str, DeterministicTriggerAssessment] = {}
+        trade_decision_id_by_symbol: dict[str, UUID] = {}
+        for row in rows:
+            decision_json = row["decision_json"]
+            if not isinstance(decision_json, dict):
+                continue
+            trigger_payload = decision_json.get("deterministic_trigger")
+            assessment = _build_trigger_assessment_from_payload(trigger_payload)
+            if assessment is None:
+                continue
+            assessments_by_symbol[str(row["symbol"])] = assessment
+            trade_decision_id_by_symbol[str(row["symbol"])] = row["trade_decision_id"]
+
+        if not assessments_by_symbol:
+            await tx.commit()
+            return
+
+        projected = project_core_risk_off_topk_exceptions(assessments_by_symbol)
+        selected_count = 0
+        candidate_count = 0
+        for symbol, assessment in projected.items():
+            experiment = dict((assessment.metadata or {}).get("core_risk_off_experiment") or {})
+            if not experiment:
+                continue
+            if bool(experiment.get("shadow_topk_candidate")):
+                candidate_count += 1
+            if bool(experiment.get("shadow_topk_selected")):
+                selected_count += 1
+            trade_decision_id = trade_decision_id_by_symbol.get(symbol)
+            if trade_decision_id is None:
+                continue
+            await tx.connection.execute(
+                """
+                UPDATE trading.trade_decisions
+                SET decision_json = jsonb_set(
+                    COALESCE(decision_json, '{}'::jsonb),
+                    '{deterministic_trigger,metadata,core_risk_off_experiment}',
+                    $2::jsonb,
+                    true
+                )
+                WHERE trade_decision_id = $1
+                """,
+                trade_decision_id,
+                json.dumps(experiment),
+            )
+            serialized = result_by_trade_decision_id.get(str(trade_decision_id))
+            if serialized is not None:
+                serialized["core_risk_off_shadow_topk_candidate"] = bool(
+                    experiment.get("shadow_topk_candidate")
+                )
+                serialized["core_risk_off_shadow_topk_selected"] = bool(
+                    experiment.get("shadow_topk_selected")
+                )
+                serialized["core_risk_off_shadow_rank"] = experiment.get("shadow_rank")
+                serialized["core_risk_off_shadow_group_size"] = experiment.get(
+                    "shadow_group_size"
+                )
+        await tx.commit()
+
+    logger.info(
+        "Cycle shadow projection applied: trade_decisions=%d candidates=%d selected=%d",
+        len(trade_decision_ids),
+        candidate_count,
+        selected_count,
+    )
+
+
+async def _build_core_risk_off_apply_overrides_for_cycle(
+    *,
+    universe: tuple[UniverseSymbol, ...],
+) -> dict[str, dict[str, object]]:
+    """Same-cycle top-k 예외 승격 대상을 미리 계산한다."""
+    if not _APPLY_CORE_RISK_OFF_TOPK:
+        return {}
+
+    from agent_trading.config.settings import AppSettings
+    from agent_trading.db.transaction import transaction as _db_transaction
+    from agent_trading.repositories.postgres.bootstrap import build_postgres_repositories
+    from agent_trading.services.decision_orchestrator import DecisionOrchestratorService
+
+    overrides: dict[str, dict[str, object]] = {}
+    assessments_by_symbol: dict[str, DeterministicTriggerAssessment] = {}
+
+    async with _db_transaction() as tx:
+        repos = build_postgres_repositories(tx)
+        settings = AppSettings()
+        orchestrator = DecisionOrchestratorService(
+            repos=repos,
+            llm_provider=settings.llm_provider,
+            provider_api_key=settings.provider_api_key or "",
+            provider_base_url=settings.provider_base_url or "",
+            provider_model_id=settings.provider_model_id or "",
+            provider_timeout_seconds=settings.provider_timeout_seconds or 120,
+        )
+        for item in universe:
+            if item.source_type != "core":
+                continue
+            order_type, price = _resolve_order_type_and_price(
+                side="buy",
+                decision_type=None,
+                default_price=None,
+            )
+            request = SubmitOrderRequest(
+                account_ref=ACCOUNT_ALIAS,
+                client_order_id=f"prepass-{item.symbol}",
+                correlation_id=f"prepass-{item.symbol}",
+                strategy_id=str(STRATEGY_ID),
+                symbol=item.symbol,
+                market=item.market,
+                side=OrderSide.BUY,
+                order_type=order_type,
+                quantity=Decimal("1"),
+                price=price,
+                metadata={
+                    "source_type": item.source_type,
+                    "market_segment": item.market_segment,
+                    "index_memberships": list(item.index_memberships or ()),
+                },
+            )
+            derivation = await orchestrator.derive_deterministic_trigger_for_request(
+                request
+            )
+            if derivation.deterministic_trigger is None:
+                continue
+            assessments_by_symbol[item.symbol] = derivation.deterministic_trigger
+        await tx.commit()
+
+    if not assessments_by_symbol:
+        return {}
+
+    projected = project_core_risk_off_topk_exceptions(assessments_by_symbol)
+    for symbol, assessment in projected.items():
+        experiment = dict((assessment.metadata or {}).get("core_risk_off_experiment") or {})
+        if not bool(experiment.get("shadow_topk_selected")):
+            continue
+        overrides[symbol] = {
+            "core_risk_off_topk_v1": {
+                "selected": True,
+                "path": "core_risk_off_topk_v1",
+                "shadow_rank": experiment.get("shadow_rank"),
+                "shadow_group_size": experiment.get("shadow_group_size"),
+            }
+        }
+
+    if overrides:
+        logger.info(
+            "Cycle authoritative core risk-off prepass selected=%d symbols=%s",
+            len(overrides),
+            ",".join(sorted(overrides)),
+        )
+    return overrides
+
+
 async def _record_pre_ai_guardrail_evaluation(
     repos: RepositoryContainer,
     *,
@@ -1202,6 +1492,7 @@ async def _run_one_cycle(
     runtime: dict[str, object],              # ★ 공유 runtime (외부에서 주입)
     cycle_precheck: dict[str, object] | None = None,  # ★ cycle precheck (외부에서 주입)
     universe_anchor: UniverseAnchorMetadata | None = None,
+    deterministic_trigger_override: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Execute a single decision cycle with shared runtime.
 
@@ -1341,6 +1632,11 @@ async def _run_one_cycle(
                     "source_type": source_type,
                     "market_segment": market_segment,
                     "index_memberships": list(index_memberships or ()),
+                    "deterministic_trigger_override": (
+                        dict(deterministic_trigger_override)
+                        if isinstance(deterministic_trigger_override, dict)
+                        else None
+                    ),
                     "universe_anchor": (
                         asdict(universe_anchor)
                         if universe_anchor is not None
@@ -2078,6 +2374,19 @@ async def _run_loop(
             # while reducing total wall-clock time from ~190s to ~40s for 35 symbols.
             _SEMAPHORE_MAX = 5
             sem = asyncio.Semaphore(_SEMAPHORE_MAX)
+            cycle_deterministic_trigger_overrides: dict[str, dict[str, object]] = {}
+            try:
+                cycle_deterministic_trigger_overrides = (
+                    await _build_core_risk_off_apply_overrides_for_cycle(
+                        universe=universe,
+                    )
+                )
+            except Exception:
+                logger.warning(
+                    "Cycle %d: failed to build authoritative core risk-off overrides",
+                    cycle_count,
+                    exc_info=True,
+                )
             submit_budget_consumed_count = 0
             general_submit_inflight_count = 0
             # held_position REDUCE/EXIT sell은 위험 축소 목적이므로
@@ -2121,6 +2430,9 @@ async def _run_loop(
                                 runtime=runtime,
                                 cycle_precheck=cycle_precheck,
                                 universe_anchor=universe_anchor,
+                                deterministic_trigger_override=(
+                                    cycle_deterministic_trigger_overrides.get(item.symbol)
+                                ),
                             )
                         except Exception as exc:
                             logger.exception(
@@ -2251,6 +2563,14 @@ async def _run_loop(
             # Process ALL symbols concurrently with semaphore cap
             coros = [_process_one(item) for item in universe]
             cycle_results: list[dict[str, object]] = await asyncio.gather(*coros)
+            try:
+                await _apply_core_risk_off_shadow_projection_for_cycle(cycle_results)
+            except Exception:
+                logger.warning(
+                    "Cycle %d: failed to apply core risk-off shadow projection",
+                    cycle_count,
+                    exc_info=True,
+                )
             results.extend(cycle_results)
 
             # ── Drain T3 background tasks ────────────────────────────────────

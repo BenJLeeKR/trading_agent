@@ -1244,6 +1244,25 @@ class TestInstrumentMasterSync:
 
 
 class TestSchedulerRollover:
+    def test_rollover_blocks_same_day_until_end_of_day_completes(self) -> None:
+        run_date = date(2026, 7, 1)
+        state = SchedulerState(
+            run_date=run_date,
+            end_of_day_done=False,
+            after_hours_mode=False,
+            signal_feature_batch_done=False,
+        )
+
+        should_rollover = _should_rollover_to_next_run_date(
+            now=datetime(2026, 7, 1, 17, 33, 0, tzinfo=KST),
+            run_date=run_date,
+            end_at=_combine(run_date, time(16, 30)),
+            state=state,
+            signal_feature_batch_at=DEFAULT_SIGNAL_FEATURE_BATCH_TIME,
+        )
+
+        assert should_rollover is False
+
     def test_rollover_blocks_before_after_market_batch_time_when_pending(self) -> None:
         run_date = date(2026, 6, 16)
         state = SchedulerState(
@@ -1284,8 +1303,10 @@ class TestSchedulerRollover:
         run_date = date(2026, 6, 16)
         state = SchedulerState(
             run_date=run_date,
+            end_of_day_done=True,
             after_hours_mode=True,
             signal_feature_batch_done=True,
+            trigger_proxy_attribution_done=True,
         )
 
         should_rollover = _should_rollover_to_next_run_date(
@@ -2296,6 +2317,108 @@ class TestDecisionLoopIntradayFreeze:
         assert latest.selection_params_json["resolved_run_date"] == run_date.isoformat()
         assert latest.selection_params_json["universe_anchor"]["source"] == "live_compose"
         assert state.intraday_universe_freeze_done is True
+
+    @pytest.mark.asyncio
+    async def test_materializes_intraday_freeze_with_duplicate_symbols_deduped(self) -> None:
+        repos = build_in_memory_repositories()
+        run_date = date(2026, 6, 24)
+        state = SchedulerState(run_date=run_date)
+        first_instrument_id = uuid4()
+        second_instrument_id = uuid4()
+        await repos.instruments.add(
+            InstrumentEntity(
+                instrument_id=first_instrument_id,
+                symbol="005930",
+                market_code="KRX",
+                asset_class="KR_STOCK",
+                currency="KRW",
+                name="삼성전자",
+                is_active=True,
+                tick_size=Decimal("50"),
+                metadata={"core_universe": True, "market_segment": "KOSPI"},
+            )
+        )
+        await repos.instruments.add(
+            InstrumentEntity(
+                instrument_id=second_instrument_id,
+                symbol="000660",
+                market_code="KRX",
+                asset_class="KR_STOCK",
+                currency="KRW",
+                name="하이닉스",
+                is_active=True,
+                tick_size=Decimal("50"),
+                metadata={"core_universe": True, "market_segment": "KOSPI"},
+            )
+        )
+
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _mock_postgres_runtime(run_migrations: bool = False):
+            yield {"repositories": repos}
+
+        async def _fake_load_trading_universe_with_anchor():
+            return (
+                (
+                    MagicMock(
+                        symbol="005930",
+                        market="KRX",
+                        source_type="core",
+                        inclusion_reason="approved_core_universe",
+                    ),
+                    MagicMock(
+                        symbol="005930",
+                        market="KRX",
+                        source_type="market_overlay",
+                        inclusion_reason="event_overlay",
+                    ),
+                    MagicMock(
+                        symbol="000660",
+                        market="KRX",
+                        source_type="core",
+                        inclusion_reason="approved_core_universe",
+                    ),
+                ),
+                MagicMock(
+                    source="live_compose",
+                    universe_freeze_run_id=None,
+                    freeze_purpose=DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
+                    freeze_reused=False,
+                    business_date="2026-06-24",
+                ),
+            )
+
+        class _FrozenDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                base = datetime(2026, 6, 24, 8, 50, 0, tzinfo=KST)
+                if tz is None:
+                    return base.replace(tzinfo=None)
+                return base.astimezone(tz)
+
+        with (
+            patch("scripts.run_ops_scheduler.postgres_runtime", new=_mock_postgres_runtime),
+            patch(
+                "scripts.run_decision_loop._load_trading_universe_with_anchor",
+                new=_fake_load_trading_universe_with_anchor,
+            ),
+            patch("scripts.run_ops_scheduler.datetime", _FrozenDateTime),
+        ):
+            await _ensure_decision_loop_intraday_freeze(state)
+
+        latest = await repos.universe_freeze_runs.get_latest(
+            run_date,
+            DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
+        )
+        assert latest is not None
+        items = await repos.universe_freeze_run_items.list_by_run(
+            latest.universe_freeze_run_id
+        )
+        assert [(item.symbol, item.rank) for item in items] == [
+            ("005930", 1),
+            ("000660", 2),
+        ]
 
     @pytest.mark.asyncio
     async def test_intraday_freeze_uses_current_kst_date_when_state_run_date_is_stale(self) -> None:

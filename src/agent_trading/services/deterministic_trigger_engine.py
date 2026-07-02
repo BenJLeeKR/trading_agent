@@ -8,11 +8,12 @@ from agent_trading.services.portfolio_allocation import PortfolioAllocationAsses
 from agent_trading.services.strategy_selection import StrategySelectionAssessment
 
 _CORE_RISK_OFF_RANKING_MODE = "hard_block_v1"
-_CORE_RISK_OFF_SHADOW_MODE = "shadow_penalty_v1"
+_CORE_RISK_OFF_SHADOW_MODE = "shadow_topk_exception_v2"
 _CORE_RISK_OFF_RANKING_MIN_SCORE = 0.48
-_CORE_RISK_OFF_SHADOW_MIN_SCORE = 0.40
-_CORE_RISK_OFF_SHADOW_PENALTY = 0.08
+_CORE_RISK_OFF_SHADOW_MIN_SCORE = 0.22
 _CORE_RISK_OFF_SHADOW_TOP_K_CAP = 2
+_CORE_RISK_OFF_SHADOW_ACTIVITY_MIN = 1.10
+_CORE_RISK_OFF_SHADOW_ENTRY_OBSERVE_MIN = 0.05
 _EVENT_OVERLAY_MODE = "no_bonus_v1"
 _EVENT_OVERLAY_SHADOW_MODE = "shadow_event_lane_v1"
 _EVENT_OVERLAY_SHADOW_BONUS = 0.06
@@ -57,6 +58,7 @@ def assess_deterministic_triggers(
     strategy_selection: StrategySelectionAssessment | None,
     portfolio_allocation: PortfolioAllocationAssessment | None,
     position_snapshot: PositionSnapshotEntity | None,
+    deterministic_trigger_override: dict[str, object] | None = None,
 ) -> DeterministicTriggerAssessment | None:
     """기존 deterministic 파생값을 이용해 후보를 생성한다."""
     if (
@@ -68,6 +70,9 @@ def assess_deterministic_triggers(
         return None
 
     normalized_source_type = (source_type or "core").strip().lower()
+    core_risk_off_topk_override = _normalize_core_risk_off_topk_override(
+        deterministic_trigger_override
+    )
     thresholds = {
         "buy_candidate_threshold": 0.65,
         "watch_candidate_threshold": 0.45,
@@ -75,8 +80,8 @@ def assess_deterministic_triggers(
         "sell_candidate_threshold": 0.75,
         "core_risk_off_ranking_min_score": _CORE_RISK_OFF_RANKING_MIN_SCORE,
         "core_risk_off_shadow_min_score": _CORE_RISK_OFF_SHADOW_MIN_SCORE,
-        "core_risk_off_shadow_penalty": _CORE_RISK_OFF_SHADOW_PENALTY,
         "core_risk_off_shadow_top_k_cap": float(_CORE_RISK_OFF_SHADOW_TOP_K_CAP),
+        "core_risk_off_shadow_activity_min": _CORE_RISK_OFF_SHADOW_ACTIVITY_MIN,
         "event_overlay_shadow_bonus": _EVENT_OVERLAY_SHADOW_BONUS,
         "event_overlay_shadow_min_score": _EVENT_OVERLAY_SHADOW_MIN_SCORE,
         "event_overlay_shadow_entry_min_score": _EVENT_OVERLAY_SHADOW_ENTRY_MIN_SCORE,
@@ -184,6 +189,9 @@ def assess_deterministic_triggers(
                 slow=slow,
                 ranking_score=ranking_score,
                 strategy_selection=strategy_selection,
+                apply_topk_override_selected=bool(
+                    core_risk_off_topk_override.get("selected")
+                ),
             )
         eligibility_passed, eligibility_reasons = _assess_buy_eligibility(
             source_type=normalized_source_type,
@@ -302,11 +310,14 @@ def assess_deterministic_triggers(
         "core_risk_off_experiment": _build_core_risk_off_shadow_experiment_metadata(
             source_type=normalized_source_type,
             core_risk_off_guard_active=core_risk_off_guard_active,
+            entry_score=entry_score,
             ranking_score=ranking_score,
             signal_feature_snapshot=signal_feature_snapshot,
             overall=overall,
             slow=slow,
             strategy_selection=strategy_selection,
+            apply_override=core_risk_off_topk_override,
+            risk_off_exception_eligible=risk_off_exception_eligible,
         ),
         "event_overlay_experiment": _build_event_overlay_shadow_experiment_metadata(
             source_type=normalized_source_type,
@@ -527,12 +538,22 @@ def _assess_core_risk_off_buy_guard(
     slow: float | None,
     ranking_score: float | None,
     strategy_selection: StrategySelectionAssessment | None,
+    apply_topk_override_selected: bool = False,
 ) -> tuple[bool, tuple[str, ...]]:
     reasons: list[str] = []
+    required_activity_min = (
+        _CORE_RISK_OFF_SHADOW_ACTIVITY_MIN
+        if apply_topk_override_selected
+        else 1.20
+    )
     if ranking_score is None or ranking_score < _CORE_RISK_OFF_RANKING_MIN_SCORE:
-        reasons.append("eligibility_core_risk_off_ranking_blocked")
-        return False, tuple(reasons)
-    reasons.append("eligibility_core_risk_off_ranking_pass")
+        if not apply_topk_override_selected:
+            reasons.append("eligibility_core_risk_off_ranking_blocked")
+            return False, tuple(reasons)
+        reasons.append("eligibility_core_risk_off_topk_override_pass")
+        reasons.append("eligibility_core_risk_off_shadow_rank_promoted")
+    else:
+        reasons.append("eligibility_core_risk_off_ranking_pass")
     if overall is None or overall < 0.0:
         reasons.append("eligibility_core_risk_off_signal_blocked")
         return False, tuple(reasons)
@@ -545,7 +566,7 @@ def _assess_core_risk_off_buy_guard(
         return False, tuple(reasons)
     volume_surge_ratio = _float_or_none(signal_feature_snapshot.volume_surge_ratio)
     turnover_surge_ratio = _float_or_none(signal_feature_snapshot.turnover_surge_ratio)
-    if max(volume_surge_ratio or 0.0, turnover_surge_ratio or 0.0) < 1.20:
+    if max(volume_surge_ratio or 0.0, turnover_surge_ratio or 0.0) < required_activity_min:
         reasons.append("eligibility_core_risk_off_activity_blocked")
         return False, tuple(reasons)
     reasons.append("eligibility_core_risk_off_activity_pass")
@@ -564,15 +585,54 @@ def _assess_core_risk_off_buy_guard(
     return True, tuple(reasons)
 
 
+def _normalize_core_risk_off_topk_override(
+    deterministic_trigger_override: dict[str, object] | None,
+) -> dict[str, object]:
+    if not isinstance(deterministic_trigger_override, dict):
+        return {}
+    raw = deterministic_trigger_override.get("core_risk_off_topk_v1")
+    if not isinstance(raw, dict):
+        return {}
+    return dict(raw)
+
+
+def _build_core_risk_off_apply_metadata(
+    apply_override: dict[str, object],
+    *,
+    risk_off_exception_eligible: bool,
+) -> dict[str, object]:
+    selected = bool(apply_override.get("selected"))
+    path = str(apply_override.get("path") or "core_risk_off_topk_v1")
+    shadow_rank = apply_override.get("shadow_rank")
+    shadow_group_size = apply_override.get("shadow_group_size")
+    return {
+        "apply_enabled": bool(apply_override),
+        "apply_selected": selected,
+        "apply_path": path if selected else None,
+        "apply_ready": selected and risk_off_exception_eligible,
+        "risk_off_exception_eligible": selected and risk_off_exception_eligible,
+        "risk_off_exception_path": (
+            path if selected and risk_off_exception_eligible else None
+        ),
+        "risk_off_exception_shadow_rank": shadow_rank if selected else None,
+        "risk_off_exception_shadow_group_size": (
+            shadow_group_size if selected else None
+        ),
+    }
+
+
 def _build_core_risk_off_shadow_experiment_metadata(
     *,
     source_type: str,
     core_risk_off_guard_active: bool,
+    entry_score: float,
     ranking_score: float | None,
     signal_feature_snapshot: SignalFeatureSnapshotEntity | None,
     overall: float | None,
     slow: float | None,
     strategy_selection: StrategySelectionAssessment | None,
+    apply_override: dict[str, object] | None = None,
+    risk_off_exception_eligible: bool = False,
 ) -> dict[str, object]:
     if source_type != "core":
         return {
@@ -580,10 +640,6 @@ def _build_core_risk_off_shadow_experiment_metadata(
             "shadow_mode": _CORE_RISK_OFF_SHADOW_MODE,
             "active": False,
         }
-
-    adjusted_ranking_score = None
-    if ranking_score is not None:
-        adjusted_ranking_score = ranking_score - _CORE_RISK_OFF_SHADOW_PENALTY
 
     volume_surge_ratio = _float_or_none(
         signal_feature_snapshot.volume_surge_ratio
@@ -595,16 +651,14 @@ def _build_core_risk_off_shadow_experiment_metadata(
         if signal_feature_snapshot is not None
         else None
     )
-    shadow_signal_pass = (
-        overall is not None
-        and overall >= 0.0
-        and slow is not None
-        and slow >= -0.05
-    )
+    shadow_overall_pass = overall is not None and overall >= 0.0
+    shadow_slow_pass = slow is not None and slow >= -0.05
+    shadow_signal_pass = shadow_overall_pass and shadow_slow_pass
+    shadow_entry_observe_pass = entry_score >= _CORE_RISK_OFF_SHADOW_ENTRY_OBSERVE_MIN
     shadow_activity_pass = max(
         volume_surge_ratio or 0.0,
         turnover_surge_ratio or 0.0,
-    ) >= 1.20
+    ) >= _CORE_RISK_OFF_SHADOW_ACTIVITY_MIN
     preferred_strategy = (
         strategy_selection.preferred_strategy if strategy_selection is not None else ""
     )
@@ -613,30 +667,77 @@ def _build_core_risk_off_shadow_experiment_metadata(
         "mean_reversion_bounce",
         "event_continuation",
     }
-    shadow_would_pass = (
+    shadow_topk_candidate = (
         core_risk_off_guard_active
-        and adjusted_ranking_score is not None
-        and adjusted_ranking_score >= _CORE_RISK_OFF_SHADOW_MIN_SCORE
+        and ranking_score is not None
+        and ranking_score >= _CORE_RISK_OFF_SHADOW_MIN_SCORE
         and shadow_signal_pass
         and shadow_activity_pass
         and shadow_strategy_pass
     )
-    return {
+    shadow_reason_codes: list[str] = []
+    shadow_signal_fail_reasons: list[str] = []
+    if shadow_topk_candidate:
+        shadow_reason_codes.append("shadow_core_risk_off_topk_candidate")
+    if not shadow_signal_pass:
+        shadow_reason_codes.append("shadow_core_risk_off_signal_blocked")
+        if not shadow_overall_pass:
+            shadow_signal_fail_reasons.append(
+                "shadow_core_risk_off_overall_floor_blocked"
+            )
+        if not shadow_slow_pass:
+            shadow_signal_fail_reasons.append(
+                "shadow_core_risk_off_slow_floor_blocked"
+            )
+    if not shadow_activity_pass:
+        shadow_reason_codes.append("shadow_core_risk_off_activity_blocked")
+    if not shadow_strategy_pass:
+        shadow_reason_codes.append("shadow_core_risk_off_strategy_blocked")
+    if ranking_score is None or ranking_score < _CORE_RISK_OFF_SHADOW_MIN_SCORE:
+        shadow_reason_codes.append("shadow_core_risk_off_ranking_floor_blocked")
+    metadata = {
         "mode": _CORE_RISK_OFF_RANKING_MODE,
         "shadow_mode": _CORE_RISK_OFF_SHADOW_MODE,
         "active": core_risk_off_guard_active,
         "ranking_min_score": _CORE_RISK_OFF_RANKING_MIN_SCORE,
         "shadow_min_score": _CORE_RISK_OFF_SHADOW_MIN_SCORE,
-        "shadow_penalty": _CORE_RISK_OFF_SHADOW_PENALTY,
+        "shadow_activity_min": _CORE_RISK_OFF_SHADOW_ACTIVITY_MIN,
+        "shadow_entry_observe_min": _CORE_RISK_OFF_SHADOW_ENTRY_OBSERVE_MIN,
         "shadow_top_k_cap": _CORE_RISK_OFF_SHADOW_TOP_K_CAP,
         "raw_ranking_score": ranking_score,
-        "adjusted_ranking_score": adjusted_ranking_score,
+        "shadow_rank_candidate_score": (
+            round(ranking_score, 4) if ranking_score is not None else None
+        ),
+        "shadow_overall_score": overall,
+        "shadow_slow_score": slow,
+        "shadow_entry_score": entry_score,
+        "shadow_overall_pass": shadow_overall_pass,
+        "shadow_slow_pass": shadow_slow_pass,
         "shadow_signal_pass": shadow_signal_pass,
+        "shadow_entry_observe_pass": shadow_entry_observe_pass,
+        "shadow_signal_fail_reasons": tuple(shadow_signal_fail_reasons),
         "shadow_activity_pass": shadow_activity_pass,
         "shadow_strategy_pass": shadow_strategy_pass,
-        "shadow_would_pass": shadow_would_pass,
+        "shadow_topk_candidate": shadow_topk_candidate,
+        "shadow_reason_codes": tuple(shadow_reason_codes),
+        "shadow_group_size": None,
+        "shadow_rank": None,
+        "shadow_topk_selected": False,
+        "shadow_would_pass": False,
         "apply_ready": False,
     }
+    metadata.update(
+        _build_core_risk_off_apply_metadata(
+            dict(apply_override or {}),
+            risk_off_exception_eligible=risk_off_exception_eligible,
+        )
+    )
+    if metadata["apply_selected"]:
+        metadata["shadow_group_size"] = metadata["risk_off_exception_shadow_group_size"]
+        metadata["shadow_rank"] = metadata["risk_off_exception_shadow_rank"]
+        metadata["shadow_topk_selected"] = True
+        metadata["shadow_would_pass"] = bool(risk_off_exception_eligible)
+    return metadata
 
 
 def _build_event_overlay_shadow_experiment_metadata(

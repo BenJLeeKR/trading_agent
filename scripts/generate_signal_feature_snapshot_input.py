@@ -36,6 +36,9 @@ from agent_trading.services.signal_feature_batch_runtime import (
     DEFAULT_SIGNAL_FEATURE_AFTER_MARKET_FREEZE_PURPOSE,
     DEFAULT_SIGNAL_FEATURE_AFTER_MARKET_TRIGGER_TYPE,
 )
+from agent_trading.services.universe_freeze_dedupe import (
+    dedupe_universe_freeze_run_items,
+)
 from agent_trading.services.universe_selection import UniverseSelectionService
 from agent_trading.services.universe_selection_types import (
     CompositionContext,
@@ -723,6 +726,8 @@ async def _resolve_frozen_universe(
             )
         )
 
+    freeze_items, skipped_duplicates = dedupe_universe_freeze_run_items(freeze_items)
+
     if not freeze_items:
         raise RuntimeError("universe_freeze_materialization_failed:no_items")
 
@@ -745,6 +750,15 @@ async def _resolve_frozen_universe(
     )
     await repos.universe_freeze_runs.add(freeze_run)
     await repos.universe_freeze_run_items.add_many(freeze_items)
+
+    if skipped_duplicates > 0:
+        logger.warning(
+            "signal feature freeze duplicate rows skipped: count=%d "
+            "(freeze_purpose=%s, business_date=%s)",
+            skipped_duplicates,
+            freeze_purpose,
+            end_date.isoformat(),
+        )
 
     return UniverseFreezeResolution(
         universe_freeze_run_id=str(freeze_run_id),

@@ -21,6 +21,7 @@ from agent_trading.db.connection import connection
 from agent_trading.runtime.bootstrap import postgres_runtime
 from agent_trading.services.trigger_proxy_attribution import (
     DailyPriceBar,
+    build_core_risk_off_topk_projection_rows,
     build_shadow_experiment_rows,
     build_trigger_proxy_aggregate_items,
     build_watch_projection_shadow_rows,
@@ -368,6 +369,7 @@ async def _run(args: argparse.Namespace) -> int:
         experiment_key="core_risk_off_experiment",
         bucket_key="core_risk_off_shadow_bucket",
     )
+    core_risk_off_topk_rows = build_core_risk_off_topk_projection_rows(enriched_rows)
     event_overlay_shadow_rows = build_shadow_experiment_rows(
         enriched_rows,
         experiment_key="event_overlay_experiment",
@@ -414,6 +416,13 @@ async def _run(args: argparse.Namespace) -> int:
                 bucket_key="core_risk_off_shadow_bucket",
             )
         ],
+        "core_risk_off_topk_items": [
+            asdict(item)
+            for item in build_trigger_proxy_aggregate_items(
+                core_risk_off_topk_rows,
+                bucket_key="core_risk_off_topk_bucket",
+            )
+        ],
         "event_overlay_shadow_items": [
             asdict(item)
             for item in build_trigger_proxy_aggregate_items(
@@ -441,6 +450,7 @@ async def _run(args: argparse.Namespace) -> int:
             f"eligibility_buckets={len(payload['eligibility_reason_items'])} "
             f"watch_projection_buckets={len(payload['watch_projection_items'])} "
             f"core_risk_off_shadow_buckets={len(payload['core_risk_off_shadow_items'])} "
+            f"core_risk_off_topk_buckets={len(payload['core_risk_off_topk_items'])} "
             f"event_overlay_shadow_buckets={len(payload['event_overlay_shadow_items'])}"
         )
         for item in payload["candidate_items"][:10]:

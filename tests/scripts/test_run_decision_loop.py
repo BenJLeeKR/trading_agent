@@ -3021,6 +3021,82 @@ class TestTradingUniverse:
         )
 
     @pytest.mark.asyncio
+    async def test_read_trading_universe_dedupes_duplicate_freeze_rows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv(ENV_TRADING_UNIVERSE, raising=False)
+
+        repos = build_in_memory_repositories()
+        freeze_run_id = uuid4()
+        instrument_id = uuid4()
+        await repos.universe_freeze_runs.add(
+            UniverseFreezeRunEntity(
+                universe_freeze_run_id=freeze_run_id,
+                business_date=datetime.now(timezone.utc).date(),
+                freeze_purpose=DEFAULT_DECISION_LOOP_INTRADAY_FREEZE_PURPOSE,
+                freeze_sequence=1,
+                frozen_at=datetime.now(timezone.utc),
+                selection_version="universe_selection.freeze.v1",
+                target_count=2,
+                status="materialized",
+            )
+        )
+        await repos.universe_freeze_run_items.add_many(
+            (
+                UniverseFreezeRunItemEntity(
+                    universe_freeze_run_item_id=uuid4(),
+                    universe_freeze_run_id=freeze_run_id,
+                    instrument_id=instrument_id,
+                    symbol="123456",
+                    market_code="KRX",
+                    source_type="core",
+                    inclusion_reason="approved_core_universe",
+                    rank=1,
+                    cap_bucket="core",
+                ),
+                UniverseFreezeRunItemEntity(
+                    universe_freeze_run_item_id=uuid4(),
+                    universe_freeze_run_id=freeze_run_id,
+                    instrument_id=uuid4(),
+                    symbol="123456",
+                    market_code="KRX",
+                    source_type="market_overlay",
+                    inclusion_reason="event_overlay",
+                    rank=2,
+                    cap_bucket="market_overlay",
+                ),
+            )
+        )
+
+        @asynccontextmanager
+        async def _mock_postgres_runtime(
+            run_migrations: bool = False,
+        ) -> AsyncIterator[dict[str, Any]]:
+            yield {"repositories": repos}
+
+        with (
+            patch(
+                "scripts.run_decision_loop.postgres_runtime",
+                new=_mock_postgres_runtime,
+            ),
+            patch("scripts.run_decision_loop._HAS_KIS", False),
+            patch(
+                "scripts.run_decision_loop._current_business_date_kst",
+                return_value=datetime.now(timezone.utc).date(),
+            ),
+        ):
+            result = await _read_trading_universe()
+
+        assert result == (
+            UniverseSymbol(
+                "123456",
+                "KRX",
+                source_type="core",
+                inclusion_reason="approved_core_universe",
+            ),
+        )
+
+    @pytest.mark.asyncio
     async def test_universe_selection_service_fallback(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

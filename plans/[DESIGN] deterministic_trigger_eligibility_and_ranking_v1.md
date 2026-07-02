@@ -211,6 +211,247 @@ T+3 평균 수익률과 hit rate가 좋았지만,
 3. shadow 결과가 반복적으로 유의미하면
    이후 `apply_penalty_v1`로 승격 검토
 
+### 3.6 2026-06-01 ~ 2026-07-01 실측 기준 `core_risk_off_ranking_blocked` 구체 완화안
+
+2026-06-01부터 2026-07-01까지
+`symbol + trade_date` 첫 decision 기준으로
+후행 수익률 proxy를 재실측한 결과는 아래와 같았다.
+
+- 전체 표본: `1034 symbol-day`
+- `eligibility_risk_off_block`
+  - `93건`
+  - `T+3 평균 약 -2.67%`
+  - `T+5 평균 약 -3.04%`
+  - `hit rate 약 32.5%`
+- `eligibility_core_risk_off_ranking_blocked`
+  - `28건`
+  - 전부 `core`
+  - `T+3 평균 약 +8.29%`
+  - `hit rate 100%`
+  - `T+3 MFE 약 +10.61%`
+  - `T+3 MAE 약 -1.33%`
+- `eligibility_low_relative_activity`
+  - `49건`
+  - `T+3 평균 약 -5.41%`
+  - `T+5 평균 약 -8.17%`
+  - `hit rate 약 18.9%`
+
+이 결과는 아래를 의미한다.
+
+1. `risk_off_block` 전체를 풀면 안 된다.
+2. `low_relative_activity`는 계속 hard block으로 유지해야 한다.
+3. 실제 완화 우선순위는
+   `core_risk_off_ranking_blocked` 하나에 집중하는 것이 맞다.
+
+즉,
+기존 `shadow_penalty_v1`처럼
+절대 score를 조금 깎거나 더하는 방식만으로는 부족하다.
+현재 표본에서 `core_risk_off_ranking_blocked`의 평균 `ranking_score`는
+대략 `0.24` 수준이므로,
+기존 `0.48 -> penalty -> 0.40` 구조는
+실측 bucket을 거의 살리지 못한다.
+
+따라서 다음 실험은
+`penalty-only`가 아니라
+**`cycle-level top-k allow` 중심**이어야 한다.
+
+### 3.7 채택안: `shadow_topk_exception_v2`
+
+`core_risk_off_ranking_blocked` 완화 실험의 채택안은
+아래처럼 정의한다.
+
+#### 3.7.1 authoritative path
+
+- mode: `hard_block_v1`
+- 현재 BUY eligibility 동작은 그대로 유지
+- 장중 실주문 경로는 바로 바꾸지 않음
+
+#### 3.7.2 shadow path
+
+- mode: `shadow_topk_exception_v2`
+- 목적:
+  `risk_off` 장세에서
+  절대 ranking threshold에 막힌 `core` 종목 중
+  실제 반등 품질이 좋았던 상위 후보만
+  제한적으로 예외 통과시키는 실험 경로
+
+#### 3.7.3 shadow candidate 전제조건
+
+아래를 모두 만족해야 `shadow_topk_candidate=true`로 기록한다.
+
+1. `source_type == "core"`
+2. `market_regime.risk_tone == "risk_off"`
+3. `market_regime.regime_label == "bearish_trend"`
+4. 현재 authoritative guard에서는
+   `eligibility_core_risk_off_ranking_blocked`로 막힌 상태
+5. `overall >= 0.0`
+6. `slow >= -0.05`
+7. `preferred_strategy in {`
+   `defensive_low_volatility_rotation,`
+   `mean_reversion_bounce,`
+   `event_continuation`
+   `}`
+8. `max(volume_surge_ratio, turnover_surge_ratio) >= 1.10`
+   - 이유:
+     `low_relative_activity`는
+     실측 기준으로 유지가 타당하므로
+     이 hard block과 충돌하는 후보는
+     shadow 예외 대상에서 제외한다.
+9. `ranking_score >= 0.22`
+   - 이유:
+     2026-06-01 ~ 2026-07-01 실측 bucket 평균이
+     약 `0.24`였고,
+     `0.22` 미만까지 허용하면
+     score 품질 하한선이 거의 사라진다.
+
+#### 3.7.4 cycle-level top-k allow 규칙
+
+`shadow_topk_candidate=true`인 종목만 모아서
+같은 cycle 내에서 아래 정렬로 재순위화한다.
+
+정렬 우선순위:
+
+1. `ranking_score DESC`
+2. `entry_score DESC`
+3. `symbol ASC`
+
+선정 규칙:
+
+- `shadow_topk_cap = 2`
+- `shadow_topk_selected = rank <= 2`
+- `shadow_group_size`와 `shadow_rank`를 metadata에 기록
+
+즉,
+이 완화안은
+`risk_off core 전부 허용`이 아니라
+**매 cycle 최대 2개만 제한적으로 예외 통과시키는 구조**다.
+
+#### 3.7.5 penalty-only를 채택하지 않는 이유
+
+이번 실측에서는
+`core_risk_off_ranking_blocked` bucket 자체의 평균 `ranking_score`가 낮았다.
+따라서 아래 방식은 부적절하다.
+
+- `ranking_score - penalty` 후 낮은 floor 비교
+- `ranking_score + small bonus`만으로 BUY 예외 부여
+
+이 방식은
+score 절대값 calibration 문제를 그대로 두고
+상수값 튜닝에 지나치게 의존한다.
+
+반면 `top-k allow`는
+절대 점수 대신
+동일 cycle 내 상대 우선순위를 사용하므로
+이번 실측 결과와 더 잘 정렬된다.
+
+### 3.8 코드 기준 수정안
+
+#### 3.8.1 `deterministic_trigger_engine.py`
+
+파일:
+- [`src/agent_trading/services/deterministic_trigger_engine.py`](../src/agent_trading/services/deterministic_trigger_engine.py)
+
+수정 방향:
+
+1. 기존 상수 교체
+   - `_CORE_RISK_OFF_SHADOW_MODE = "shadow_topk_exception_v2"`
+   - `_CORE_RISK_OFF_SHADOW_MIN_SCORE = 0.22`
+   - `_CORE_RISK_OFF_SHADOW_TOP_K_CAP = 2`
+   - `_CORE_RISK_OFF_SHADOW_ACTIVITY_MIN = 1.10`
+2. `shadow_penalty` 중심 metadata를
+   `shadow_topk_candidate` 중심 metadata로 변경
+3. `_build_core_risk_off_shadow_experiment_metadata()`에서
+   아래 필드를 추가
+   - `shadow_topk_candidate`
+   - `shadow_rank_candidate_score`
+   - `shadow_rank_candidate_reason_codes`
+   - `shadow_activity_min`
+   - `shadow_group_size`
+   - `shadow_rank`
+   - `shadow_topk_selected`
+4. authoritative eligibility는 그대로 두고
+   `apply_ready=false` 유지
+
+중요:
+
+- 여기서는 아직 `risk_off_exception_eligible`를
+  바로 `True`로 바꾸지 않는다.
+- 1차는 metadata와 batch projection만 추가한다.
+
+#### 3.8.2 새 batch helper 추가
+
+신규 파일 권장:
+- `src/agent_trading/services/core_risk_off_topk_projection.py`
+
+권장 함수:
+
+```python
+def project_core_risk_off_topk_exceptions(
+    assessments: Sequence[DeterministicTriggerAssessment],
+) -> dict[str, CoreRiskOffTopKProjection]
+```
+
+역할:
+
+- cycle 내 `core_risk_off_experiment.shadow_topk_candidate=true` 후보만 수집
+- `ranking_score / entry_score / symbol` 기준 정렬
+- 상위 `2개`만 `shadow_topk_selected=true`로 표시
+- 결과를 `trade_decision_id` 또는 `symbol` key로 반환
+
+이 helper는
+단일 종목 함수가 아니라
+**cycle 전체 종목을 본 뒤에만 계산 가능**하므로
+`deterministic_trigger_engine` 안이 아니라
+별도 batch helper로 분리하는 것이 맞다.
+
+#### 3.8.3 `run_decision_loop.py` 또는 상위 orchestrator 반영
+
+반영 위치:
+- cycle 내 여러 symbol의 deterministic trigger 결과를 모두 모은 뒤
+- AI/FDC 단계 직전
+
+필요 동작:
+
+1. per-symbol `DeterministicTriggerAssessment` 계산
+2. `project_core_risk_off_topk_exceptions(...)` 호출
+3. projection 결과를 각 symbol metadata에 merge
+4. shadow-only 단계에서는
+   eligibility / BUY candidate는 바꾸지 않음
+5. 후속 `apply_core_risk_off_topk_v1` feature flag가 켜질 때만
+   `shadow_topk_selected=true` 후보에 한해
+   `risk_off_exception_eligible=true`로 승격
+
+#### 3.8.4 테스트 수정 범위
+
+수정/추가 대상:
+
+- [`tests/services/test_deterministic_trigger_engine.py`](../tests/services/test_deterministic_trigger_engine.py)
+  - `shadow_penalty_v1` 기대값을 `shadow_topk_exception_v2`로 변경
+  - `shadow_topk_candidate` 생성 조건 검증
+  - `low_relative_activity` 동시 차단 시 예외 제외 검증
+- 신규 권장:
+  `tests/services/test_core_risk_off_topk_projection.py`
+  - 상위 2개만 선택되는지 검증
+  - tie-break가 `entry_score`, `symbol` 순으로 안정적인지 검증
+- 필요 시:
+  [`tests/scripts/test_run_decision_loop.py`](../tests/scripts/test_run_decision_loop.py)
+  - cycle projection 결과가 metadata에 반영되는지 검증
+
+### 3.9 적용 단계
+
+1. **Phase A**
+   `shadow_topk_exception_v2` metadata + batch projection만 추가
+2. **Phase B**
+   장후 proxy attribution으로
+   `shadow_topk_selected` bucket 성과 비교
+3. **Phase C**
+   성과가 유지되면
+   feature flag 하에
+   `apply_core_risk_off_topk_v1` 활성화
+4. **Phase D**
+   장중 실주문과 EV gate 결과까지 확인 후
+   authoritative 승격 여부 결정
+
 ---
 
 ## 4. 제안 구조

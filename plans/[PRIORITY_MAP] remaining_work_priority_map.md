@@ -1784,6 +1784,118 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
     - 기준 문서
       - [`plans/[DESIGN] deterministic_trigger_eligibility_and_ranking_v1.md`](./%5BDESIGN%5D%20deterministic_trigger_eligibility_and_ranking_v1.md)
       - [`tests/services/test_deterministic_trigger_engine.py`](../tests/services/test_deterministic_trigger_engine.py)
+    - 2026-07-01 실측 보정
+      - `2026-06-01 ~ 2026-07-01` `symbol + trade_date` 첫 decision 기준
+        `core_risk_off_ranking_blocked`는
+        `T+3 평균 약 +8.29%`, `hit rate 100%`로
+        완화 우선순위가 높다고 재확인되었다.
+      - 반면 `risk_off_block` 전체와 `low_relative_activity`는
+        유지가 타당했다.
+      - 따라서 다음 구현은
+        `shadow_penalty_v1` 유지가 아니라
+        `shadow_topk_exception_v2`로 전환하는 것이 기준안이다.
+      - 상세 설계:
+        [`plans/[PLAN] core_risk_off_ranking_relaxation_phase1.md`](./%5BPLAN%5D%20core_risk_off_ranking_relaxation_phase1.md)
+  - [x] `core_risk_off_ranking_blocked` 완화 실험을
+        `shadow_topk_exception_v2`로 재정의
+    - `penalty-only` 대신
+      `cycle-level top-k allow` 구조 채택
+    - 전제조건
+      - `core`
+      - `risk_off + bearish_trend`
+      - `overall >= 0.0`
+      - `slow >= -0.05`
+      - 허용 strategy
+      - `max(volume_surge_ratio, turnover_surge_ratio) >= 1.10`
+      - `ranking_score >= 0.22`
+    - 상위 helper가 같은 cycle 내
+      `top 2`만 `shadow_topk_selected=true`로 표시
+    - 1차는 metadata/shadow만 반영
+    - 기준 문서
+      - [`plans/[PLAN] core_risk_off_ranking_relaxation_phase1.md`](./%5BPLAN%5D%20core_risk_off_ranking_relaxation_phase1.md)
+  - [x] `core_risk_off_topk_projection` batch helper 추가
+    - 신규 권장 파일:
+      `src/agent_trading/services/core_risk_off_topk_projection.py`
+    - 정렬:
+      `ranking_score DESC -> entry_score DESC -> symbol ASC`
+    - output:
+      `shadow_group_size`, `shadow_rank`, `shadow_topk_selected`
+  - [x] cycle integration
+    - `run_decision_loop.py` 또는 상위 orchestrator에서
+      per-symbol deterministic trigger 계산 후
+      batch projector 적용
+    - 현재 반영:
+      cycle 종료 후 `trade_decisions.decision_json`의
+      `deterministic_trigger.metadata.core_risk_off_experiment`에
+      `shadow_group_size`, `shadow_rank`, `shadow_topk_selected`를
+      patch하는 shadow-only 후처리 경로 추가
+    - shadow 단계에서는
+      BUY eligibility를 바로 바꾸지 않음
+  - [x] `shadow_topk_selected` attribution bucket 집계 추가
+    - [`scripts/analyze_trigger_proxy_attribution.py`](../scripts/analyze_trigger_proxy_attribution.py)
+      출력 payload에 `core_risk_off_topk_items` 추가
+    - bucket:
+      `shadow_topk_selected / shadow_topk_candidate_only / shadow_not_candidate / inactive`
+    - 기준 테스트:
+      [`tests/services/test_trigger_proxy_attribution.py`](../tests/services/test_trigger_proxy_attribution.py)
+  - [x] apply flag 단계 설계
+    - `apply_core_risk_off_topk_v1`
+    - `shadow_topk_selected=true` 후보만
+      제한적으로 `risk_off_exception_eligible=true` 승격 검토
+    - 기본값:
+      disabled
+    - 유지 원칙:
+      `low_relative_activity`, `participation_rate`, `buy_threshold`는
+      그대로 유지
+    - 구현 위치 기준:
+      cycle 종료 후 DB patch가 아니라
+      deterministic prepass 경로에서 authoritative 적용
+    - 상세 설계:
+      [`plans/[PLAN] core_risk_off_ranking_relaxation_phase1.md`](./%5BPLAN%5D%20core_risk_off_ranking_relaxation_phase1.md)
+  - [x] `apply_core_risk_off_topk_v1` authoritative deterministic prepass 구현
+    - `run_decision_loop.py`가 cycle 시작 시
+      `core` symbol의 baseline deterministic trigger를 미리 계산
+    - `project_core_risk_off_topk_exceptions(...)` 결과에서
+      `shadow_topk_selected=true` symbol만
+      same-cycle override 대상으로 선정
+    - `SubmitOrderRequest.metadata.deterministic_trigger_override`를 통해
+      `DecisionOrchestratorService.assemble()`에 주입
+    - orchestrator는 override를 읽어
+      deterministic trigger를 authoritative 재평가
+    - 단, 완화 범위는 `core_risk_off_ranking_blocked`에 한정하며
+      `low_average_volume / low_turnover / low_relative_activity / participation_rate`
+      hard block은 그대로 유지
+  - [ ] `overall/slow floor` shadow 완화안 설계 고정
+    - 기준 문서:
+      [`plans/[PLAN] core_risk_off_ranking_relaxation_phase1.md`](./%5BPLAN%5D%20core_risk_off_ranking_relaxation_phase1.md)
+    - 목적:
+      `top-k cap`이 아니라
+      `shadow_signal_pass` 병목인
+      `overall/slow floor`를
+      bucket 단위로 실측 가능하게 분해
+    - shadow bucket
+      - `mild_relax`
+        - `overall >= -0.10`
+        - `slow >= -0.15`
+      - `moderate_relax`
+        - `overall >= -0.25`
+        - `slow >= -0.25`
+        - `entry_score >= 0.12`
+        - `ranking_score >= 0.26`
+      - `deep_negative`
+        - 상기 미충족 구간
+    - metadata 확장안
+      - `shadow_floor_bucket`
+      - `shadow_floor_relax_pass`
+      - `shadow_floor_relax_reason_codes`
+      - `shadow_floor_relax_entry_min`
+      - `shadow_floor_relax_ranking_min`
+    - 유지 원칙
+      - authoritative `risk_off_exception_eligible` 경로는
+        즉시 변경하지 않음
+      - bucket A/B 분류만 먼저 저장
+      - 후행 수익률 proxy와 churn 확인 후
+        다음 단계 apply 검토
   - [x] `event_overlay` source bonus 또는 별도 `event_top_k` 후보 lane 설계
     - authoritative mode
       - `no_bonus_v1` 유지

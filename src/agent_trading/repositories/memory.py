@@ -1827,18 +1827,36 @@ class InMemoryUniverseFreezeRunItemRepository:
 
     def __init__(self) -> None:
         self._items: dict[UUID, UniverseFreezeRunItemEntity] = {}
+        self._by_run_instrument: dict[tuple[UUID, UUID], UUID] = {}
+        self._by_run_symbol_market: dict[tuple[UUID, str, str], UUID] = {}
 
     async def add(self, item: UniverseFreezeRunItemEntity) -> UniverseFreezeRunItemEntity:
+        run_instrument_key = (item.universe_freeze_run_id, item.instrument_id)
+        run_symbol_market_key = (
+            item.universe_freeze_run_id,
+            item.symbol.strip().upper(),
+            item.market_code.strip().upper(),
+        )
+        existing_id = self._by_run_instrument.get(run_instrument_key)
+        if existing_id is None:
+            existing_id = self._by_run_symbol_market.get(run_symbol_market_key)
+        if existing_id is not None:
+            return self._items[existing_id]
         self._items[item.universe_freeze_run_item_id] = item
+        self._by_run_instrument[run_instrument_key] = item.universe_freeze_run_item_id
+        self._by_run_symbol_market[run_symbol_market_key] = (
+            item.universe_freeze_run_item_id
+        )
         return item
 
     async def add_many(
         self,
         items: Sequence[UniverseFreezeRunItemEntity],
     ) -> Sequence[UniverseFreezeRunItemEntity]:
+        saved: list[UniverseFreezeRunItemEntity] = []
         for item in items:
-            self._items[item.universe_freeze_run_item_id] = item
-        return tuple(items)
+            saved.append(await self.add(item))
+        return tuple(saved)
 
     async def list_by_run(
         self,

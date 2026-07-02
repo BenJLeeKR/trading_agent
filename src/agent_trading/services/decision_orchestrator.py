@@ -1073,6 +1073,7 @@ class DecisionOrchestratorService:
         position_snapshot: PositionSnapshotEntity | None,
         cash_balance_snapshot: CashBalanceSnapshotEntity | None,
         risk_limit_snapshot: RiskLimitSnapshotEntity | None,
+        deterministic_trigger_override: dict[str, object] | None = None,
     ) -> DeterministicDerivationBundle:
         """assemble()의 deterministic 파생 계산 단계를 별도 helper로 분리한다."""
         signal_feature_snapshot: SignalFeatureSnapshotEntity | None = None
@@ -1118,6 +1119,7 @@ class DecisionOrchestratorService:
             strategy_selection=strategy_selection,
             portfolio_allocation=portfolio_allocation,
             position_snapshot=position_snapshot,
+            deterministic_trigger_override=deterministic_trigger_override,
         )
         return DeterministicDerivationBundle(
             source_type=source_type,
@@ -1127,6 +1129,16 @@ class DecisionOrchestratorService:
             portfolio_allocation=portfolio_allocation,
             deterministic_trigger=deterministic_trigger,
         )
+
+    @staticmethod
+    def _extract_deterministic_trigger_override(
+        request: SubmitOrderRequest,
+    ) -> dict[str, object] | None:
+        metadata = request.metadata if isinstance(request.metadata, dict) else {}
+        raw = metadata.get("deterministic_trigger_override")
+        if not isinstance(raw, dict):
+            return None
+        return dict(raw)
 
     async def _attach_signal_feature_snapshot_to_context(
         self,
@@ -1187,6 +1199,83 @@ class DecisionOrchestratorService:
             return updated or decision_context
         except Exception:
             return decision_context
+
+    async def derive_deterministic_trigger_for_request(
+        self,
+        request: SubmitOrderRequest,
+    ) -> DeterministicDerivationBundle:
+        """DecisionContext 생성 없이 cycle prepass용 deterministic 계산만 수행한다."""
+        account: AccountEntity | None = None
+        config_version: ConfigVersionEntity | None = None
+        instrument: InstrumentEntity | None = None
+        position_snapshot: PositionSnapshotEntity | None = None
+        cash_balance_snapshot: CashBalanceSnapshotEntity | None = None
+        risk_limit_snapshot: RiskLimitSnapshotEntity | None = None
+
+        try:
+            account = await self._repos.accounts.find_one(
+                AccountLookup(account_alias=request.account_ref)
+            )
+        except Exception:
+            account = None
+
+        if account is not None:
+            try:
+                config_version = await self._repos.config_versions.get_active(
+                    client_id=account.client_id,
+                    environment=account.environment,
+                )
+            except Exception:
+                config_version = None
+
+        try:
+            instrument = await self._repos.instruments.get_by_symbol(
+                symbol=request.symbol,
+                market_code=request.market,
+            )
+            if instrument is None:
+                instrument = await self._repos.instruments.get_by_symbol_any_market(
+                    request.symbol
+                )
+        except Exception:
+            instrument = None
+
+        if account is not None:
+            if instrument is not None:
+                try:
+                    snapshots = await self._repos.position_snapshots.list_latest_by_account(
+                        account.account_id
+                    )
+                    for snapshot in snapshots:
+                        if snapshot.instrument_id == instrument.instrument_id:
+                            position_snapshot = snapshot
+                            break
+                except Exception:
+                    position_snapshot = None
+            try:
+                cash_balance_snapshot = await self._select_usable_cash_snapshot(
+                    account.account_id
+                )
+            except Exception:
+                cash_balance_snapshot = None
+            try:
+                risk_limit_snapshot = await self._repos.risk_limit_snapshots.get_latest_by_account(
+                    account.account_id
+                )
+            except Exception:
+                risk_limit_snapshot = None
+
+        return await self._derive_deterministic_context_components(
+            request=request,
+            config_version=config_version,
+            instrument=instrument,
+            position_snapshot=position_snapshot,
+            cash_balance_snapshot=cash_balance_snapshot,
+            risk_limit_snapshot=risk_limit_snapshot,
+            deterministic_trigger_override=self._extract_deterministic_trigger_override(
+                request
+            ),
+        )
 
     def _build_ai_policy_context_view(
         self,
@@ -1806,6 +1895,9 @@ class DecisionOrchestratorService:
             position_snapshot=position_snapshot,
             cash_balance_snapshot=cash_balance_snapshot,
             risk_limit_snapshot=risk_limit_snapshot,
+            deterministic_trigger_override=self._extract_deterministic_trigger_override(
+                request
+            ),
         )
         decision_context = await self._attach_signal_feature_snapshot_to_context(
             decision_context,

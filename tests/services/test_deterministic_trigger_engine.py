@@ -383,11 +383,150 @@ def test_trigger_engine_keeps_risk_off_block_for_weak_core_setup() -> None:
     assert "eligibility_core_risk_off_ranking_blocked" in result.eligibility_reasons
     experiment = result.metadata["core_risk_off_experiment"]
     assert experiment["mode"] == "hard_block_v1"
-    assert experiment["shadow_mode"] == "shadow_penalty_v1"
+    assert experiment["shadow_mode"] == "shadow_topk_exception_v2"
     assert experiment["active"] is True
     assert experiment["shadow_top_k_cap"] == 2
+    assert experiment["shadow_overall_pass"] is False
+    assert experiment["shadow_slow_pass"] is False
+    assert experiment["shadow_signal_fail_reasons"] == (
+        "shadow_core_risk_off_overall_floor_blocked",
+        "shadow_core_risk_off_slow_floor_blocked",
+    )
+    assert experiment["shadow_entry_observe_pass"] is True
+    assert experiment["shadow_topk_candidate"] is False
+    assert experiment["shadow_group_size"] is None
+    assert experiment["shadow_rank"] is None
+    assert experiment["shadow_topk_selected"] is False
     assert experiment["apply_ready"] is False
     assert experiment["shadow_would_pass"] is False
+
+
+def test_trigger_engine_marks_core_risk_off_shadow_topk_candidate() -> None:
+    result = assess_deterministic_triggers(
+        source_type="core",
+        signal_feature_snapshot=_make_signal(
+            overall="0.12",
+            fast="0.22",
+            slow="0.01",
+            average_volume_20d="250000",
+            average_turnover_20d="12000000000",
+            volume_surge_ratio="1.14",
+            turnover_surge_ratio="1.18",
+        ),
+        market_regime=_make_regime(
+            regime_label="bearish_trend",
+            risk_tone="risk_off",
+        ),
+        strategy_selection=_make_strategy(
+            preferred_strategy="defensive_low_volatility_rotation"
+        ),
+        portfolio_allocation=_make_portfolio(
+            max_new_capital_pct=2.5,
+            current_weight_pct=0.0,
+        ),
+        position_snapshot=None,
+    )
+
+    assert result is not None
+    assert result.eligibility_passed is False
+    assert "eligibility_core_risk_off_ranking_blocked" in result.eligibility_reasons
+    experiment = result.metadata["core_risk_off_experiment"]
+    assert experiment["shadow_mode"] == "shadow_topk_exception_v2"
+    assert experiment["shadow_overall_pass"] is True
+    assert experiment["shadow_slow_pass"] is True
+    assert experiment["shadow_signal_fail_reasons"] == ()
+    assert round(experiment["shadow_entry_score"], 4) == result.entry_score
+    assert experiment["shadow_entry_observe_pass"] is True
+    assert experiment["shadow_topk_candidate"] is True
+    assert experiment["shadow_rank_candidate_score"] == round(result.ranking_score or 0.0, 4)
+    assert experiment["shadow_activity_min"] == 1.10
+    assert experiment["shadow_entry_observe_min"] == 0.05
+    assert experiment["shadow_would_pass"] is False
+
+
+def test_trigger_engine_applies_core_risk_off_topk_override_for_selected_candidate() -> None:
+    result = assess_deterministic_triggers(
+        source_type="core",
+        signal_feature_snapshot=_make_signal(
+            overall="0.12",
+            fast="0.22",
+            slow="0.01",
+            average_volume_20d="250000",
+            average_turnover_20d="12000000000",
+            volume_surge_ratio="1.14",
+            turnover_surge_ratio="1.18",
+        ),
+        market_regime=_make_regime(
+            regime_label="bearish_trend",
+            risk_tone="risk_off",
+        ),
+        strategy_selection=_make_strategy(
+            preferred_strategy="defensive_low_volatility_rotation"
+        ),
+        portfolio_allocation=_make_portfolio(
+            max_new_capital_pct=2.5,
+            current_weight_pct=0.0,
+        ),
+        position_snapshot=None,
+        deterministic_trigger_override={
+            "core_risk_off_topk_v1": {
+                "selected": True,
+                "path": "core_risk_off_topk_v1",
+                "shadow_rank": 1,
+                "shadow_group_size": 2,
+            }
+        },
+    )
+
+    assert result is not None
+    assert result.eligibility_passed is True
+    assert result.risk_off_exception_eligible is True
+    assert "eligibility_core_risk_off_topk_override_pass" in result.eligibility_reasons
+    assert "eligibility_core_risk_off_ranking_blocked" not in result.eligibility_reasons
+    experiment = result.metadata["core_risk_off_experiment"]
+    assert experiment["apply_selected"] is True
+    assert experiment["apply_ready"] is True
+    assert experiment["risk_off_exception_path"] == "core_risk_off_topk_v1"
+    assert experiment["shadow_rank"] == 1
+    assert experiment["shadow_group_size"] == 2
+
+
+def test_trigger_engine_topk_override_does_not_bypass_low_relative_activity() -> None:
+    result = assess_deterministic_triggers(
+        source_type="core",
+        signal_feature_snapshot=_make_signal(
+            overall="0.12",
+            fast="0.22",
+            slow="0.01",
+            average_volume_20d="250000",
+            average_turnover_20d="12000000000",
+            volume_surge_ratio="1.05",
+            turnover_surge_ratio="1.06",
+        ),
+        market_regime=_make_regime(
+            regime_label="bearish_trend",
+            risk_tone="risk_off",
+        ),
+        strategy_selection=_make_strategy(
+            preferred_strategy="defensive_low_volatility_rotation"
+        ),
+        portfolio_allocation=_make_portfolio(
+            max_new_capital_pct=2.5,
+            current_weight_pct=0.0,
+        ),
+        position_snapshot=None,
+        deterministic_trigger_override={
+            "core_risk_off_topk_v1": {
+                "selected": True,
+                "path": "core_risk_off_topk_v1",
+            }
+        },
+    )
+
+    assert result is not None
+    assert result.risk_off_exception_eligible is False
+    assert result.eligibility_passed is False
+    assert "eligibility_core_risk_off_activity_blocked" in result.eligibility_reasons
 
 
 def test_trigger_engine_keeps_event_overlay_on_regime_pass_path_under_risk_off() -> None:

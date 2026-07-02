@@ -249,6 +249,33 @@ def build_shadow_experiment_rows(
     return annotated
 
 
+def build_core_risk_off_topk_projection_rows(
+    rows: Iterable[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    annotated: list[dict[str, object]] = []
+    for row in rows:
+        experiment = row.get("core_risk_off_experiment")
+        payload = experiment if isinstance(experiment, Mapping) else {}
+        active = bool(payload.get("active"))
+        candidate = bool(payload.get("shadow_topk_candidate"))
+        selected = bool(payload.get("shadow_topk_selected"))
+        if not active:
+            bucket = "inactive"
+        elif selected:
+            bucket = "shadow_topk_selected"
+        elif candidate:
+            bucket = "shadow_topk_candidate_only"
+        else:
+            bucket = "shadow_not_candidate"
+        annotated.append(
+            {
+                **row,
+                "core_risk_off_topk_bucket": bucket,
+            }
+        )
+    return annotated
+
+
 def _is_shadow_watch_eligible(row: Mapping[str, object]) -> bool:
     if not bool(row.get("eligibility_passed")):
         return False
