@@ -392,6 +392,11 @@ def test_trigger_engine_keeps_risk_off_block_for_weak_core_setup() -> None:
         "shadow_core_risk_off_overall_floor_blocked",
         "shadow_core_risk_off_slow_floor_blocked",
     )
+    assert experiment["shadow_floor_bucket"] == "mild_relax"
+    assert experiment["shadow_floor_relax_pass"] is True
+    assert experiment["shadow_floor_relax_reason_codes"] == (
+        "shadow_core_risk_off_floor_mild_relax_pass",
+    )
     assert experiment["shadow_entry_observe_pass"] is True
     assert experiment["shadow_topk_candidate"] is False
     assert experiment["shadow_group_size"] is None
@@ -435,6 +440,8 @@ def test_trigger_engine_marks_core_risk_off_shadow_topk_candidate() -> None:
     assert experiment["shadow_overall_pass"] is True
     assert experiment["shadow_slow_pass"] is True
     assert experiment["shadow_signal_fail_reasons"] == ()
+    assert experiment["shadow_floor_bucket"] == "strict_pass"
+    assert experiment["shadow_floor_relax_pass"] is True
     assert round(experiment["shadow_entry_score"], 4) == result.entry_score
     assert experiment["shadow_entry_observe_pass"] is True
     assert experiment["shadow_topk_candidate"] is True
@@ -442,6 +449,44 @@ def test_trigger_engine_marks_core_risk_off_shadow_topk_candidate() -> None:
     assert experiment["shadow_activity_min"] == 1.10
     assert experiment["shadow_entry_observe_min"] == 0.05
     assert experiment["shadow_would_pass"] is False
+
+
+def test_trigger_engine_marks_core_risk_off_shadow_floor_moderate_relax() -> None:
+    result = assess_deterministic_triggers(
+        source_type="core",
+        signal_feature_snapshot=_make_signal(
+            overall="-0.22",
+            fast="0.10",
+            slow="-0.20",
+            average_volume_20d="250000",
+            average_turnover_20d="12000000000",
+            volume_surge_ratio="1.14",
+            turnover_surge_ratio="1.18",
+        ),
+        market_regime=_make_regime(
+            regime_label="bearish_trend",
+            risk_tone="risk_off",
+        ),
+        strategy_selection=_make_strategy(
+            preferred_strategy="defensive_low_volatility_rotation"
+        ),
+        portfolio_allocation=_make_portfolio(
+            max_new_capital_pct=2.5,
+            current_weight_pct=0.0,
+        ),
+        position_snapshot=None,
+    )
+
+    assert result is not None
+    experiment = result.metadata["core_risk_off_experiment"]
+    assert experiment["active"] is True
+    assert experiment["shadow_floor_bucket"] == "moderate_relax"
+    assert experiment["shadow_floor_relax_pass"] is True
+    assert experiment["shadow_floor_relax_reason_codes"] == (
+        "shadow_core_risk_off_floor_moderate_relax_pass",
+    )
+    assert experiment["shadow_floor_relax_entry_min"] == 0.12
+    assert experiment["shadow_floor_relax_ranking_min"] == 0.26
 
 
 def test_trigger_engine_applies_core_risk_off_topk_override_for_selected_candidate() -> None:

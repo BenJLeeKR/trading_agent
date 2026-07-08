@@ -1,0 +1,5 @@
+time="2026-07-02T23:59:13Z" level=warning msg="/workspace/agent_trading/docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion"
+  File "/app/scripts/analyze_trigger_proxy_attribution.py", line 367
+    eligibility_rows = explode_eligibility_reason_rows(enriched_rows)
+    ^^^^^^^^^^^^^^^^
+SyntaxError: expected 'except' or 'finally' block

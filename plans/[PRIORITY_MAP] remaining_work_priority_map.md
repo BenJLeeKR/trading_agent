@@ -1865,7 +1865,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
     - 단, 완화 범위는 `core_risk_off_ranking_blocked`에 한정하며
       `low_average_volume / low_turnover / low_relative_activity / participation_rate`
       hard block은 그대로 유지
-  - [ ] `overall/slow floor` shadow 완화안 설계 고정
+  - [x] `overall/slow floor` shadow 완화안 설계 고정
     - 기준 문서:
       [`plans/[PLAN] core_risk_off_ranking_relaxation_phase1.md`](./%5BPLAN%5D%20core_risk_off_ranking_relaxation_phase1.md)
     - 목적:
@@ -1896,6 +1896,15 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
       - bucket A/B 분류만 먼저 저장
       - 후행 수익률 proxy와 churn 확인 후
         다음 단계 apply 검토
+    - 현재 반영:
+      - `deterministic_trigger.metadata.core_risk_off_experiment`에
+        `shadow_floor_bucket`,
+        `shadow_floor_relax_pass`,
+        `shadow_floor_relax_reason_codes`,
+        `shadow_floor_relax_entry_min`,
+        `shadow_floor_relax_ranking_min` 저장
+      - 장후 `analyze_trigger_proxy_attribution.py` 결과에
+        `core_risk_off_floor_items` bucket 집계 추가
   - [x] `event_overlay` source bonus 또는 별도 `event_top_k` 후보 lane 설계
     - authoritative mode
       - `no_bonus_v1` 유지

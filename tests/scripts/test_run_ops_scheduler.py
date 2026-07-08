@@ -63,6 +63,7 @@ from scripts.run_ops_scheduler import (
     _parse_signal_feature_batch_summary,
     _parse_signal_feature_input_summary,
     _parse_snapshot_sync_summary,
+    _parse_trigger_proxy_attribution_summary,
     _persist_operations_day_run,
     _persist_session_state,
     _post_submit_command,
@@ -822,6 +823,122 @@ class TestParseSignalFeatureInputSummary:
             "retry_mode": False,
             "failed_symbols_sample": ["005930"],
         }
+
+
+class TestParseTriggerProxyAttributionSummary:
+    def test_parses_core_risk_off_floor_report_metrics(self) -> None:
+        result = CommandResult(
+            name="after_market_trigger_proxy_attribution",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout=json.dumps(
+                {
+                    "sample_count": 27,
+                    "watch_projection_items": [],
+                    "core_risk_off_shadow_items": [],
+                    "event_overlay_shadow_items": [],
+                    "core_risk_off_floor_report": {
+                        "active_sample_count": 7,
+                        "proxy_availability": {
+                            "t1_ready_count": 7,
+                            "t3_ready_count": 0,
+                            "t5_ready_count": 0,
+                        },
+                        "items": [
+                            {"bucket": "strict_pass", "sample_count": 0},
+                            {"bucket": "mild_relax", "sample_count": 1},
+                            {"bucket": "moderate_relax", "sample_count": 2},
+                            {"bucket": "deep_negative", "sample_count": 4},
+                            {"bucket": "inactive", "sample_count": 20},
+                        ],
+                    },
+                },
+                ensure_ascii=False,
+            ),
+        )
+
+        assert _parse_trigger_proxy_attribution_summary(result) == {
+            "sample_count": 27,
+            "account_id": None,
+            "account_label": None,
+            "start_date": None,
+            "end_date": None,
+            "output_path": None,
+            "watch_projection_bucket_count": 0,
+            "core_risk_off_shadow_bucket_count": 0,
+            "event_overlay_shadow_bucket_count": 0,
+            "watch_projection_shadow_watch_only": 0,
+            "watch_projection_legacy_only": 0,
+            "core_risk_off_shadow_would_pass": 0,
+            "core_risk_off_floor_active_sample_count": 7,
+            "core_risk_off_floor_strict_pass_count": 0,
+            "core_risk_off_floor_mild_relax_count": 1,
+            "core_risk_off_floor_moderate_relax_count": 2,
+            "core_risk_off_floor_deep_negative_count": 4,
+            "core_risk_off_floor_t1_ready_count": 7,
+            "core_risk_off_floor_t3_ready_count": 0,
+            "core_risk_off_floor_t5_ready_count": 0,
+            "event_overlay_shadow_would_pass": 0,
+        }
+
+    def test_falls_back_to_write_json_file_when_stdout_has_no_json(self, tmp_path) -> None:
+        output_path = tmp_path / "trigger_proxy.json"
+        output_path.write_text(
+            json.dumps(
+                {
+                    "sample_count": 11,
+                    "watch_projection_items": [],
+                    "core_risk_off_shadow_items": [],
+                    "event_overlay_shadow_items": [],
+                    "core_risk_off_floor_report": {
+                        "active_sample_count": 3,
+                        "proxy_availability": {
+                            "t1_ready_count": 3,
+                            "t3_ready_count": 1,
+                            "t5_ready_count": 0,
+                        },
+                        "items": [
+                            {"bucket": "strict_pass", "sample_count": 1},
+                            {"bucket": "mild_relax", "sample_count": 1},
+                            {"bucket": "moderate_relax", "sample_count": 0},
+                            {"bucket": "deep_negative", "sample_count": 1},
+                            {"bucket": "inactive", "sample_count": 8},
+                        ],
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        result = CommandResult(
+            name="after_market_trigger_proxy_attribution",
+            argv=[
+                "python3",
+                "scripts/analyze_trigger_proxy_attribution.py",
+                "--start-date",
+                "2026-07-03",
+                "--end-date",
+                "2026-07-03",
+                "--output",
+                "json",
+                "--write-json",
+                str(output_path),
+            ],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout="",
+        )
+
+        metrics = _parse_trigger_proxy_attribution_summary(result)
+
+        assert metrics["sample_count"] == 11
+        assert metrics["output_path"] == str(output_path)
+        assert metrics["core_risk_off_floor_active_sample_count"] == 3
+        assert metrics["core_risk_off_floor_strict_pass_count"] == 1
+        assert metrics["core_risk_off_floor_mild_relax_count"] == 1
+        assert metrics["core_risk_off_floor_deep_negative_count"] == 1
+        assert metrics["core_risk_off_floor_t3_ready_count"] == 1
 
 
 class TestExtractCommandFailureReason:

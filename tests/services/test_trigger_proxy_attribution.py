@@ -4,6 +4,8 @@ import pytest
 
 from agent_trading.services.trigger_proxy_attribution import (
     DailyPriceBar,
+    build_core_risk_off_floor_bucket_rows,
+    build_core_risk_off_floor_report,
     build_core_risk_off_topk_projection_rows,
     build_shadow_experiment_rows,
     build_trigger_proxy_aggregate_items,
@@ -264,3 +266,89 @@ def test_build_core_risk_off_topk_projection_rows_buckets_selected_candidate_ina
     assert by_symbol["BBB"]["core_risk_off_topk_bucket"] == "shadow_topk_candidate_only"
     assert by_symbol["CCC"]["core_risk_off_topk_bucket"] == "shadow_not_candidate"
     assert by_symbol["DDD"]["core_risk_off_topk_bucket"] == "inactive"
+
+
+def test_build_core_risk_off_floor_bucket_rows_marks_bucket_and_inactive() -> None:
+    rows = [
+        {
+            "symbol": "AAA",
+            "core_risk_off_experiment": {
+                "active": True,
+                "shadow_floor_bucket": "strict_pass",
+            },
+        },
+        {
+            "symbol": "BBB",
+            "core_risk_off_experiment": {
+                "active": True,
+                "shadow_floor_bucket": "mild_relax",
+            },
+        },
+        {
+            "symbol": "CCC",
+            "core_risk_off_experiment": {
+                "active": True,
+                "shadow_floor_bucket": "deep_negative",
+            },
+        },
+        {
+            "symbol": "DDD",
+            "core_risk_off_experiment": {
+                "active": False,
+            },
+        },
+    ]
+
+    result = build_core_risk_off_floor_bucket_rows(rows)
+    by_symbol = {row["symbol"]: row for row in result}
+
+    assert by_symbol["AAA"]["core_risk_off_floor_bucket"] == "strict_pass"
+    assert by_symbol["BBB"]["core_risk_off_floor_bucket"] == "mild_relax"
+    assert by_symbol["CCC"]["core_risk_off_floor_bucket"] == "deep_negative"
+    assert by_symbol["DDD"]["core_risk_off_floor_bucket"] == "inactive"
+
+
+def test_build_core_risk_off_floor_report_includes_bucket_counts_and_proxy_readiness() -> None:
+    rows = [
+        {
+            "symbol": "AAA",
+            "core_risk_off_experiment": {
+                "active": True,
+                "shadow_floor_bucket": "mild_relax",
+            },
+            "t1_return_pct": 1.2,
+            "t3_return_pct": None,
+            "t5_return_pct": None,
+        },
+        {
+            "symbol": "BBB",
+            "core_risk_off_experiment": {
+                "active": True,
+                "shadow_floor_bucket": "deep_negative",
+            },
+            "t1_return_pct": -0.5,
+            "t3_return_pct": 2.0,
+            "t5_return_pct": None,
+        },
+        {
+            "symbol": "CCC",
+            "core_risk_off_experiment": {
+                "active": False,
+            },
+            "t1_return_pct": None,
+            "t3_return_pct": None,
+            "t5_return_pct": None,
+        },
+    ]
+
+    report = build_core_risk_off_floor_report(rows)
+    items = {item["bucket"]: item for item in report["items"]}
+
+    assert report["active_sample_count"] == 2
+    assert report["non_inactive_bucket_count"] == 2
+    assert report["proxy_availability"]["t1_ready_count"] == 2
+    assert report["proxy_availability"]["t3_ready_count"] == 1
+    assert report["proxy_availability"]["t5_ready_count"] == 0
+    assert items["mild_relax"]["sample_count"] == 1
+    assert items["deep_negative"]["sample_count"] == 1
+    assert items["inactive"]["sample_count"] == 1

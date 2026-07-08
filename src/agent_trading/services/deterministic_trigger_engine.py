@@ -621,6 +621,50 @@ def _build_core_risk_off_apply_metadata(
     }
 
 
+def _classify_core_risk_off_shadow_floor_bucket(
+    *,
+    overall: float | None,
+    slow: float | None,
+    entry_score: float,
+    ranking_score: float | None,
+    shadow_activity_pass: bool,
+    shadow_strategy_pass: bool,
+) -> tuple[str, bool, tuple[str, ...]]:
+    if overall is not None and overall >= 0.0 and slow is not None and slow >= -0.05:
+        return (
+            "strict_pass",
+            True,
+            ("shadow_core_risk_off_floor_strict_pass",),
+        )
+    if overall is not None and overall >= -0.10 and slow is not None and slow >= -0.15:
+        return (
+            "mild_relax",
+            True,
+            ("shadow_core_risk_off_floor_mild_relax_pass",),
+        )
+    if (
+        overall is not None
+        and overall >= -0.25
+        and slow is not None
+        and slow >= -0.25
+        and entry_score >= 0.12
+        and ranking_score is not None
+        and ranking_score >= 0.26
+        and shadow_activity_pass
+        and shadow_strategy_pass
+    ):
+        return (
+            "moderate_relax",
+            True,
+            ("shadow_core_risk_off_floor_moderate_relax_pass",),
+        )
+    return (
+        "deep_negative",
+        False,
+        ("shadow_core_risk_off_floor_deep_negative",),
+    )
+
+
 def _build_core_risk_off_shadow_experiment_metadata(
     *,
     source_type: str,
@@ -667,6 +711,18 @@ def _build_core_risk_off_shadow_experiment_metadata(
         "mean_reversion_bounce",
         "event_continuation",
     }
+    (
+        shadow_floor_bucket,
+        shadow_floor_relax_pass,
+        shadow_floor_relax_reason_codes,
+    ) = _classify_core_risk_off_shadow_floor_bucket(
+        overall=overall,
+        slow=slow,
+        entry_score=entry_score,
+        ranking_score=ranking_score,
+        shadow_activity_pass=shadow_activity_pass,
+        shadow_strategy_pass=shadow_strategy_pass,
+    )
     shadow_topk_candidate = (
         core_risk_off_guard_active
         and ranking_score is not None
@@ -718,6 +774,11 @@ def _build_core_risk_off_shadow_experiment_metadata(
         "shadow_signal_fail_reasons": tuple(shadow_signal_fail_reasons),
         "shadow_activity_pass": shadow_activity_pass,
         "shadow_strategy_pass": shadow_strategy_pass,
+        "shadow_floor_bucket": shadow_floor_bucket,
+        "shadow_floor_relax_pass": shadow_floor_relax_pass,
+        "shadow_floor_relax_reason_codes": tuple(shadow_floor_relax_reason_codes),
+        "shadow_floor_relax_entry_min": 0.12,
+        "shadow_floor_relax_ranking_min": 0.26,
         "shadow_topk_candidate": shadow_topk_candidate,
         "shadow_reason_codes": tuple(shadow_reason_codes),
         "shadow_group_size": None,

@@ -41,6 +41,13 @@ WATCH_MIN_RANKING_SCORE = 0.50
 WATCH_MIN_ENTRY_SCORE = 0.52
 WATCH_MIN_PERCENTILE = 0.60
 BUY_MIN_RANKING_SCORE = 0.55
+CORE_RISK_OFF_FLOOR_REPORT_BUCKETS: tuple[str, ...] = (
+    "strict_pass",
+    "mild_relax",
+    "moderate_relax",
+    "deep_negative",
+    "inactive",
+)
 
 
 def calculate_trigger_proxy_metrics(
@@ -274,6 +281,80 @@ def build_core_risk_off_topk_projection_rows(
             }
         )
     return annotated
+
+
+def build_core_risk_off_floor_bucket_rows(
+    rows: Iterable[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    annotated: list[dict[str, object]] = []
+    for row in rows:
+        experiment = row.get("core_risk_off_experiment")
+        payload = experiment if isinstance(experiment, Mapping) else {}
+        active = bool(payload.get("active"))
+        if not active:
+            bucket = "inactive"
+        else:
+            bucket = str(payload.get("shadow_floor_bucket") or "unknown").strip() or "unknown"
+        annotated.append(
+            {
+                **row,
+                "core_risk_off_floor_bucket": bucket,
+            }
+        )
+    return annotated
+
+
+def build_core_risk_off_floor_report(
+    rows: Iterable[Mapping[str, object]],
+) -> dict[str, object]:
+    annotated = build_core_risk_off_floor_bucket_rows(rows)
+    aggregate_items = build_trigger_proxy_aggregate_items(
+        annotated,
+        bucket_key="core_risk_off_floor_bucket",
+    )
+    by_bucket = {str(item.bucket): item for item in aggregate_items}
+    report_items: list[dict[str, object]] = []
+    for bucket in CORE_RISK_OFF_FLOOR_REPORT_BUCKETS:
+        item = by_bucket.get(bucket)
+        report_items.append(
+            {
+                "bucket": bucket,
+                "sample_count": int(item.sample_count) if item is not None else 0,
+                "t1_return_pct_avg": item.t1_return_pct_avg if item is not None else None,
+                "t3_return_pct_avg": item.t3_return_pct_avg if item is not None else None,
+                "t5_return_pct_avg": item.t5_return_pct_avg if item is not None else None,
+                "positive_t3_hit_rate": (
+                    item.positive_t3_hit_rate if item is not None else None
+                ),
+            }
+        )
+
+    active_rows = [
+        row
+        for row in annotated
+        if str(row.get("core_risk_off_floor_bucket") or "") != "inactive"
+    ]
+    return {
+        "bucket_order": list(CORE_RISK_OFF_FLOOR_REPORT_BUCKETS),
+        "items": report_items,
+        "active_sample_count": len(active_rows),
+        "non_inactive_bucket_count": sum(
+            1
+            for item in report_items
+            if item["bucket"] != "inactive" and int(item["sample_count"]) > 0
+        ),
+        "proxy_availability": {
+            "t1_ready_count": sum(
+                1 for row in active_rows if _coerce_float(row.get("t1_return_pct")) is not None
+            ),
+            "t3_ready_count": sum(
+                1 for row in active_rows if _coerce_float(row.get("t3_return_pct")) is not None
+            ),
+            "t5_ready_count": sum(
+                1 for row in active_rows if _coerce_float(row.get("t5_return_pct")) is not None
+            ),
+        },
+    }
 
 
 def _is_shadow_watch_eligible(row: Mapping[str, object]) -> bool:

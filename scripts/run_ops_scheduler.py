@@ -41,6 +41,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import signal
 import sys
 import time
@@ -677,7 +678,24 @@ def _parse_signal_feature_input_summary(result: CommandResult) -> dict[str, Any]
 
 def _parse_trigger_proxy_attribution_summary(result: CommandResult) -> dict[str, Any]:
     """Parse trigger proxy attribution batch summary from JSON/stdout."""
-    for obj in reversed(_extract_json_objects(result.stdout)):
+    json_objects = list(_extract_json_objects(result.stdout))
+    if not json_objects:
+        try:
+            argv = list(result.argv)
+            if "--write-json" in argv:
+                idx = argv.index("--write-json")
+                path = argv[idx + 1] if idx + 1 < len(argv) else ""
+                if path:
+                    candidate = Path(str(path))
+                    if candidate.exists():
+                        raw = json.loads(candidate.read_text(encoding="utf-8"))
+                        if isinstance(raw, dict):
+                            json_objects = [raw]
+        except Exception:
+            logger.exception(
+                "trigger_proxy_attribution summary fallback read failed"
+            )
+    for obj in reversed(json_objects):
         if bool(obj.get("skipped")):
             payload: dict[str, Any] = {
                 "skipped": True,
@@ -706,6 +724,21 @@ def _parse_trigger_proxy_attribution_summary(result: CommandResult) -> dict[str,
             if isinstance(obj.get("event_overlay_shadow_items"), list)
             else []
         )
+        core_floor_report = (
+            obj.get("core_risk_off_floor_report")
+            if isinstance(obj.get("core_risk_off_floor_report"), dict)
+            else {}
+        )
+        core_floor_proxy = (
+            core_floor_report.get("proxy_availability")
+            if isinstance(core_floor_report.get("proxy_availability"), dict)
+            else {}
+        )
+        core_floor_items = (
+            core_floor_report.get("items")
+            if isinstance(core_floor_report.get("items"), list)
+            else []
+        )
         return {
             "sample_count": int(sample_count),
             "account_id": str(obj.get("account_id")) if obj.get("account_id") else None,
@@ -714,6 +747,12 @@ def _parse_trigger_proxy_attribution_summary(result: CommandResult) -> dict[str,
             ),
             "start_date": str(obj.get("start_date")) if obj.get("start_date") else None,
             "end_date": str(obj.get("end_date")) if obj.get("end_date") else None,
+            "output_path": (
+                str(result.argv[result.argv.index("--write-json") + 1])
+                if "--write-json" in result.argv
+                and result.argv.index("--write-json") + 1 < len(result.argv)
+                else None
+            ),
             "watch_projection_bucket_count": len(watch_projection_items),
             "core_risk_off_shadow_bucket_count": len(core_shadow_items),
             "event_overlay_shadow_bucket_count": len(event_shadow_items),
@@ -728,6 +767,34 @@ def _parse_trigger_proxy_attribution_summary(result: CommandResult) -> dict[str,
             "core_risk_off_shadow_would_pass": _find_bucket_sample_count(
                 core_shadow_items,
                 "shadow_would_pass",
+            ),
+            "core_risk_off_floor_active_sample_count": int(
+                core_floor_report.get("active_sample_count", 0) or 0
+            ),
+            "core_risk_off_floor_strict_pass_count": _find_bucket_sample_count(
+                core_floor_items,
+                "strict_pass",
+            ),
+            "core_risk_off_floor_mild_relax_count": _find_bucket_sample_count(
+                core_floor_items,
+                "mild_relax",
+            ),
+            "core_risk_off_floor_moderate_relax_count": _find_bucket_sample_count(
+                core_floor_items,
+                "moderate_relax",
+            ),
+            "core_risk_off_floor_deep_negative_count": _find_bucket_sample_count(
+                core_floor_items,
+                "deep_negative",
+            ),
+            "core_risk_off_floor_t1_ready_count": int(
+                core_floor_proxy.get("t1_ready_count", 0) or 0
+            ),
+            "core_risk_off_floor_t3_ready_count": int(
+                core_floor_proxy.get("t3_ready_count", 0) or 0
+            ),
+            "core_risk_off_floor_t5_ready_count": int(
+                core_floor_proxy.get("t5_ready_count", 0) or 0
             ),
             "event_overlay_shadow_would_pass": _find_bucket_sample_count(
                 event_shadow_items,
@@ -1434,10 +1501,16 @@ async def _run_command(
 ) -> CommandResult:
     """Run a subprocess command without using a shell."""
     start = time.monotonic()
-    logger.info("task=%s start argv=%s", name, " ".join(argv))
+    resolved_argv = list(argv)
+    if resolved_argv:
+        executable = resolved_argv[0]
+        if os.path.sep not in executable:
+            resolved_executable = shutil.which(executable) or sys.executable
+            resolved_argv[0] = resolved_executable
+    logger.info("task=%s start argv=%s", name, " ".join(resolved_argv))
 
     proc = await asyncio.create_subprocess_exec(
-        *argv,
+        *resolved_argv,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env=env,
@@ -1514,7 +1587,7 @@ async def _run_command(
     duration = time.monotonic() - start
     result = CommandResult(
         name=name,
-        argv=argv,
+        argv=resolved_argv,
         returncode=proc.returncode if proc.returncode is not None else -1,
         duration_seconds=round(duration, 3),
         stdout=stdout_b.decode(errors="replace"),

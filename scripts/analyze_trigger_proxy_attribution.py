@@ -17,9 +17,11 @@ from uuid import UUID
 from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
 from agent_trading.brokers.koreainvestment.token_cache import CachePurpose
 from agent_trading.config.settings import AppSettings, KIS_DEFAULT_REST_URLS
-from agent_trading.db.connection import connection
+from agent_trading.db.connection import close_pool, connection, create_pool
 from agent_trading.runtime.bootstrap import postgres_runtime
 from agent_trading.services.trigger_proxy_attribution import (
+    build_core_risk_off_floor_bucket_rows,
+    build_core_risk_off_floor_report,
     DailyPriceBar,
     build_core_risk_off_topk_projection_rows,
     build_shadow_experiment_rows,
@@ -295,179 +297,195 @@ def _select_forward_window(
 
 
 async def _run(args: argparse.Namespace) -> int:
-    account_id, account_label = await _resolve_target_account(args.account_id)
-    start_date = date.fromisoformat(str(args.start_date))
-    end_date = date.fromisoformat(str(args.end_date))
+    await create_pool()
+    try:
+        account_id, account_label = await _resolve_target_account(args.account_id)
+        start_date = date.fromisoformat(str(args.start_date))
+        end_date = date.fromisoformat(str(args.end_date))
 
-    if account_id is None:
+        if account_id is None:
+            payload = {
+                "skipped": True,
+                "skipped_reason": "no_active_account",
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+            }
+            if args.write_json:
+                path = Path(str(args.write_json))
+                path.write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+            if args.output == "json":
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            else:
+                print("skipped_reason=no_active_account")
+            return 0
+
+        async with postgres_runtime(run_migrations=False) as runtime:
+            settings: AppSettings = runtime["settings"]
+            decisions = await _load_first_symbol_day_decisions(
+                account_id,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            client = _build_market_data_client(settings)
+            try:
+                symbols = sorted({str(row["symbol"]) for row in decisions})
+                series_by_symbol: dict[str, list[DailyPriceBar]] = {}
+                fetch_end_date = end_date + timedelta(days=14)
+                for idx, symbol in enumerate(symbols):
+                    if idx > 0 and args.sleep_seconds > 0:
+                        await asyncio.sleep(float(args.sleep_seconds))
+                    series_by_symbol[symbol] = await _fetch_symbol_bars(
+                        client,
+                        symbol=symbol,
+                        start_date=start_date,
+                        end_date=fetch_end_date,
+                    )
+
+                enriched_rows: list[dict[str, object]] = []
+                for row in decisions:
+                    bars = _select_forward_window(
+                        series_by_symbol.get(str(row["symbol"]), []),
+                        trade_date=str(row["trade_date"]),
+                    )
+                    metrics = calculate_trigger_proxy_metrics(bars)
+                    enriched_rows.append(
+                        {
+                            **row,
+                            "t1_return_pct": metrics.forward_return_pct_by_horizon.get(1),
+                            "t3_return_pct": metrics.forward_return_pct_by_horizon.get(3),
+                            "t5_return_pct": metrics.forward_return_pct_by_horizon.get(5),
+                            "t3_mfe_pct": metrics.mfe_pct_by_horizon.get(3),
+                            "t3_mae_pct": metrics.mae_pct_by_horizon.get(3),
+                            "t5_mfe_pct": metrics.mfe_pct_by_horizon.get(5),
+                            "t5_mae_pct": metrics.mae_pct_by_horizon.get(5),
+                        }
+                    )
+            finally:
+                await client.close()
+
+        eligibility_rows = explode_eligibility_reason_rows(enriched_rows)
+        watch_projection_rows = build_watch_projection_shadow_rows(enriched_rows)
+        core_risk_off_shadow_rows = build_shadow_experiment_rows(
+            enriched_rows,
+            experiment_key="core_risk_off_experiment",
+            bucket_key="core_risk_off_shadow_bucket",
+        )
+        core_risk_off_floor_rows = build_core_risk_off_floor_bucket_rows(enriched_rows)
+        core_risk_off_topk_rows = build_core_risk_off_topk_projection_rows(enriched_rows)
+        event_overlay_shadow_rows = build_shadow_experiment_rows(
+            enriched_rows,
+            experiment_key="event_overlay_experiment",
+            bucket_key="event_overlay_shadow_bucket",
+        )
         payload = {
-            "skipped": True,
-            "skipped_reason": "no_active_account",
+            "account_id": str(account_id),
+            "account_label": account_label,
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
+            "sample_count": len(enriched_rows),
+            "candidate_items": [
+                asdict(item)
+                for item in build_trigger_proxy_aggregate_items(
+                    enriched_rows,
+                    bucket_key="primary_candidate",
+                )
+            ],
+            "source_type_items": [
+                asdict(item)
+                for item in build_trigger_proxy_aggregate_items(
+                    enriched_rows,
+                    bucket_key="source_type",
+                )
+            ],
+            "eligibility_reason_items": [
+                asdict(item)
+                for item in build_trigger_proxy_aggregate_items(
+                    eligibility_rows,
+                    bucket_key="eligibility_reason",
+                )
+            ],
+            "watch_projection_items": [
+                asdict(item)
+                for item in build_trigger_proxy_aggregate_items(
+                    watch_projection_rows,
+                    bucket_key="watch_projection_bucket",
+                )
+            ],
+            "core_risk_off_shadow_items": [
+                asdict(item)
+                for item in build_trigger_proxy_aggregate_items(
+                    core_risk_off_shadow_rows,
+                    bucket_key="core_risk_off_shadow_bucket",
+                )
+            ],
+            "core_risk_off_floor_items": [
+                asdict(item)
+                for item in build_trigger_proxy_aggregate_items(
+                    core_risk_off_floor_rows,
+                    bucket_key="core_risk_off_floor_bucket",
+                )
+            ],
+            "core_risk_off_floor_report": build_core_risk_off_floor_report(
+                enriched_rows
+            ),
+            "core_risk_off_topk_items": [
+                asdict(item)
+                for item in build_trigger_proxy_aggregate_items(
+                    core_risk_off_topk_rows,
+                    bucket_key="core_risk_off_topk_bucket",
+                )
+            ],
+            "event_overlay_shadow_items": [
+                asdict(item)
+                for item in build_trigger_proxy_aggregate_items(
+                    event_overlay_shadow_rows,
+                    bucket_key="event_overlay_shadow_bucket",
+                )
+            ],
+            "samples": enriched_rows[: max(0, int(args.sample_limit))],
         }
+
         if args.write_json:
             path = Path(str(args.write_json))
             path.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+
         if args.output == "json":
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         else:
-            print("skipped_reason=no_active_account")
+            print(
+                f"sample_count={payload['sample_count']} "
+                f"candidate_buckets={len(payload['candidate_items'])} "
+                f"source_types={len(payload['source_type_items'])} "
+                f"eligibility_buckets={len(payload['eligibility_reason_items'])} "
+                f"watch_projection_buckets={len(payload['watch_projection_items'])} "
+                f"core_risk_off_shadow_buckets={len(payload['core_risk_off_shadow_items'])} "
+                f"core_risk_off_floor_buckets={len(payload['core_risk_off_floor_items'])} "
+                f"core_risk_off_topk_buckets={len(payload['core_risk_off_topk_items'])} "
+                f"event_overlay_shadow_buckets={len(payload['event_overlay_shadow_items'])}"
+            )
+            for item in payload["candidate_items"][:10]:
+                print(
+                    "candidate="
+                    f"{item['bucket']} count={item['sample_count']} "
+                    f"t3_avg={item['t3_return_pct_avg']} "
+                    f"hit_rate={item['positive_t3_hit_rate']}"
+                )
+            for item in payload["watch_projection_items"][:10]:
+                print(
+                    "watch_projection="
+                    f"{item['bucket']} count={item['sample_count']} "
+                    f"t3_avg={item['t3_return_pct_avg']} "
+                    f"hit_rate={item['positive_t3_hit_rate']}"
+                )
         return 0
-
-    async with postgres_runtime(run_migrations=False) as runtime:
-        settings: AppSettings = runtime["settings"]
-        decisions = await _load_first_symbol_day_decisions(
-            account_id,
-            start_date=start_date,
-            end_date=end_date,
-        )
-        client = _build_market_data_client(settings)
-        try:
-            symbols = sorted({str(row["symbol"]) for row in decisions})
-            series_by_symbol: dict[str, list[DailyPriceBar]] = {}
-            fetch_end_date = end_date + timedelta(days=14)
-            for idx, symbol in enumerate(symbols):
-                if idx > 0 and args.sleep_seconds > 0:
-                    await asyncio.sleep(float(args.sleep_seconds))
-                series_by_symbol[symbol] = await _fetch_symbol_bars(
-                    client,
-                    symbol=symbol,
-                    start_date=start_date,
-                    end_date=fetch_end_date,
-                )
-
-            enriched_rows: list[dict[str, object]] = []
-            for row in decisions:
-                bars = _select_forward_window(
-                    series_by_symbol.get(str(row["symbol"]), []),
-                    trade_date=str(row["trade_date"]),
-                )
-                metrics = calculate_trigger_proxy_metrics(bars)
-                enriched_rows.append(
-                    {
-                        **row,
-                        "t1_return_pct": metrics.forward_return_pct_by_horizon.get(1),
-                        "t3_return_pct": metrics.forward_return_pct_by_horizon.get(3),
-                        "t5_return_pct": metrics.forward_return_pct_by_horizon.get(5),
-                        "t3_mfe_pct": metrics.mfe_pct_by_horizon.get(3),
-                        "t3_mae_pct": metrics.mae_pct_by_horizon.get(3),
-                        "t5_mfe_pct": metrics.mfe_pct_by_horizon.get(5),
-                        "t5_mae_pct": metrics.mae_pct_by_horizon.get(5),
-                    }
-                )
-        finally:
-            await client.close()
-
-    eligibility_rows = explode_eligibility_reason_rows(enriched_rows)
-    watch_projection_rows = build_watch_projection_shadow_rows(enriched_rows)
-    core_risk_off_shadow_rows = build_shadow_experiment_rows(
-        enriched_rows,
-        experiment_key="core_risk_off_experiment",
-        bucket_key="core_risk_off_shadow_bucket",
-    )
-    core_risk_off_topk_rows = build_core_risk_off_topk_projection_rows(enriched_rows)
-    event_overlay_shadow_rows = build_shadow_experiment_rows(
-        enriched_rows,
-        experiment_key="event_overlay_experiment",
-        bucket_key="event_overlay_shadow_bucket",
-    )
-    payload = {
-        "account_id": str(account_id),
-        "account_label": account_label,
-        "start_date": start_date.isoformat(),
-        "end_date": end_date.isoformat(),
-        "sample_count": len(enriched_rows),
-        "candidate_items": [
-            asdict(item)
-            for item in build_trigger_proxy_aggregate_items(
-                enriched_rows,
-                bucket_key="primary_candidate",
-            )
-        ],
-        "source_type_items": [
-            asdict(item)
-            for item in build_trigger_proxy_aggregate_items(
-                enriched_rows,
-                bucket_key="source_type",
-            )
-        ],
-        "eligibility_reason_items": [
-            asdict(item)
-            for item in build_trigger_proxy_aggregate_items(
-                eligibility_rows,
-                bucket_key="eligibility_reason",
-            )
-        ],
-        "watch_projection_items": [
-            asdict(item)
-            for item in build_trigger_proxy_aggregate_items(
-                watch_projection_rows,
-                bucket_key="watch_projection_bucket",
-            )
-        ],
-        "core_risk_off_shadow_items": [
-            asdict(item)
-            for item in build_trigger_proxy_aggregate_items(
-                core_risk_off_shadow_rows,
-                bucket_key="core_risk_off_shadow_bucket",
-            )
-        ],
-        "core_risk_off_topk_items": [
-            asdict(item)
-            for item in build_trigger_proxy_aggregate_items(
-                core_risk_off_topk_rows,
-                bucket_key="core_risk_off_topk_bucket",
-            )
-        ],
-        "event_overlay_shadow_items": [
-            asdict(item)
-            for item in build_trigger_proxy_aggregate_items(
-                event_overlay_shadow_rows,
-                bucket_key="event_overlay_shadow_bucket",
-            )
-        ],
-        "samples": enriched_rows[: max(0, int(args.sample_limit))],
-    }
-
-    if args.write_json:
-        path = Path(str(args.write_json))
-        path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-
-    if args.output == "json":
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-    else:
-        print(
-            f"sample_count={payload['sample_count']} "
-            f"candidate_buckets={len(payload['candidate_items'])} "
-            f"source_types={len(payload['source_type_items'])} "
-            f"eligibility_buckets={len(payload['eligibility_reason_items'])} "
-            f"watch_projection_buckets={len(payload['watch_projection_items'])} "
-            f"core_risk_off_shadow_buckets={len(payload['core_risk_off_shadow_items'])} "
-            f"core_risk_off_topk_buckets={len(payload['core_risk_off_topk_items'])} "
-            f"event_overlay_shadow_buckets={len(payload['event_overlay_shadow_items'])}"
-        )
-        for item in payload["candidate_items"][:10]:
-            print(
-                "candidate="
-                f"{item['bucket']} count={item['sample_count']} "
-                f"t3_avg={item['t3_return_pct_avg']} "
-                f"hit_rate={item['positive_t3_hit_rate']}"
-            )
-        for item in payload["watch_projection_items"][:10]:
-            print(
-                "watch_projection="
-                f"{item['bucket']} count={item['sample_count']} "
-                f"t3_avg={item['t3_return_pct_avg']} "
-                f"hit_rate={item['positive_t3_hit_rate']}"
-            )
-    return 0
+    finally:
+        await close_pool()
 
 
 def main(argv: Sequence[str] | None = None) -> int:

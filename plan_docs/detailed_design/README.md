@@ -56,6 +56,11 @@
    - order/inquiry/reconciliation 예산 분리
    - websocket capacity, cache TTL, throttling/backoff/circuit
 
+11. `11_kis_realtime_quote_operations_screen.md`
+   - Admin UI "기본 운영" 실시간 현재가 조회 화면 설계
+   - 전용 계좌/appkey 분리, approval key/세션/구독 한도 정책
+   - API contract, UI 구성, polling → relay 단계 전환 계획
+
 ## 설계 원칙
 
 - 실전/모의 환경은 논리적으로만이 아니라 설정, 자격증명, 계좌, 라우팅 수준에서 분리한다.
