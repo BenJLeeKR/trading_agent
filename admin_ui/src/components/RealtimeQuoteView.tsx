@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   getRealtimeQuoteBootstrap,
@@ -17,10 +17,13 @@ import { ErrorBanner } from "./common/ErrorBanner";
 import { WarningBanner } from "./common/WarningBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import { DetailField } from "./common/DetailField";
+import { QuoteLadder } from "./common/QuoteLadder";
 import { formatKstTime } from "@/lib/utils";
-import { Wifi, WifiOff, Search, X, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { Wifi, WifiOff, RefreshCcw, Search, X, TrendingUp, TrendingDown, Minus } from "lucide-react";
 
 const POLL_INTERVAL_MS = 3000;
+const STALE_THRESHOLD_MS = 10_000;
+const SYMBOL_PATTERN = /^\d{6}$/;
 
 /* ── helpers ── */
 
@@ -47,55 +50,68 @@ function capacityColor(ratio: number): string {
   return "bg-emerald-500";
 }
 
+function connectionLabel(state: string | undefined): string {
+  if (state === "connected") return "연결됨";
+  if (state === "reconnecting") return "재연결 중";
+  return "연결 끊김";
+}
+
 /* ── main component ── */
 
 export default function RealtimeQuoteView() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const initialSymbolRef = useRef(searchParams.get("symbol"));
 
   const [connection, setConnection] = useState<RealtimeQuoteConnectionInfo | null>(null);
   const [subscriptions, setSubscriptions] = useState<RealtimeQuoteSubscriptionView[]>([]);
-  const [quotes, setQuotes] = useState<Record<string, RealtimeQuoteSnapshotView>>({});
-  const [selectedSymbol, setSelectedSymbol] = useState<string | null>(
-    searchParams.get("symbol")
-  );
+  const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
+  const [quote, setQuote] = useState<RealtimeQuoteSnapshotView | null>(null);
+
   const [symbolInput, setSymbolInput] = useState("");
+  const [inputError, setInputError] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
 
-  /* ── initial bootstrap ── */
+  /* ── initial bootstrap (+ ?symbol= deep-link auto-subscribe/select) ── */
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      setError(null);
+      setBootstrapError(null);
       try {
-        const initialSymbol = searchParams.get("symbol");
+        const initialSymbol = initialSymbolRef.current;
         let data = await getRealtimeQuoteBootstrap();
 
-        // Deep-link support: if a ?symbol= was provided and isn't already
-        // subscribed, auto-subscribe it (see [DESIGN]_kis_realtime_quote_screen_ui_layout.md §3.1).
         if (
           initialSymbol &&
-          !data.subscriptions.some((s) => s.symbol === initialSymbol.toUpperCase())
+          SYMBOL_PATTERN.test(initialSymbol) &&
+          !data.subscriptions.some((s) => s.symbol === initialSymbol)
         ) {
           try {
             data = await subscribeRealtimeQuote([initialSymbol]);
           } catch {
-            // Fall back to whatever bootstrap already returned.
+            // Deep-link subscribe failed (e.g. capacity) — fall back to
+            // whatever bootstrap already returned.
           }
         }
 
         if (cancelled) return;
         setConnection(data.connection);
         setSubscriptions(data.subscriptions);
-        if (!selectedSymbol && data.subscriptions.length > 0) {
-          setSelectedSymbol(data.subscriptions[0].symbol);
-        }
+
+        const preferred =
+          initialSymbol && data.subscriptions.some((s) => s.symbol === initialSymbol)
+            ? initialSymbol
+            : (data.subscriptions[0]?.symbol ?? null);
+        setSelectedSymbol(preferred);
       } catch (err: unknown) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "초기 데이터를 불러오지 못했습니다");
+          setBootstrapError(
+            err instanceof Error ? err.message : "초기 데이터를 불러오지 못했습니다"
+          );
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -104,34 +120,51 @@ export default function RealtimeQuoteView() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ── keep ?symbol= URL param in sync with the selected symbol ── */
+  /* ── keep ?symbol= URL param in sync with the selected symbol ──
+   * Uses the functional updater so any *other* query params are preserved —
+   * only `symbol` is set/removed here. When there's no selected symbol
+   * (e.g. after unsubscribing the last one), `symbol` is deleted from the
+   * URL entirely rather than left dangling with a stale value. */
   useEffect(() => {
-    if (selectedSymbol) {
-      setSearchParams({ symbol: selectedSymbol }, { replace: true });
-    }
+    // Skip while the initial bootstrap fetch is in flight — selectedSymbol
+    // is still its initial `null` at that point, and syncing now would
+    // briefly strip a `?symbol=` deep-link before bootstrap resolves it.
+    if (loading) return;
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (selectedSymbol) {
+          next.set("symbol", selectedSymbol);
+        } else {
+          next.delete("symbol");
+        }
+        return next;
+      },
+      { replace: true }
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSymbol]);
+  }, [selectedSymbol, loading]);
 
-  /* ── polling snapshot for subscribed symbols ── */
+  /* ── polling snapshot for the selected symbol only (single-symbol focus) ── */
   const fetchSnapshot = useCallback(async () => {
-    if (subscriptions.length === 0) {
-      setQuotes({});
+    if (!selectedSymbol) {
+      setQuote(null);
       return;
     }
     try {
-      const symbols = subscriptions.map((s) => s.symbol);
-      const data = await getRealtimeQuoteSnapshot(symbols);
-      setQuotes(data.quotes);
-      setError(null);
+      const data = await getRealtimeQuoteSnapshot([selectedSymbol]);
+      setQuote(data.quotes[selectedSymbol] ?? null);
+      setSnapshotError(null);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "시세를 불러오지 못했습니다");
+      // Keep the last known quote on screen — degrade, don't blank the view.
+      setSnapshotError(err instanceof Error ? err.message : "시세를 불러오지 못했습니다");
     }
-  }, [subscriptions]);
+  }, [selectedSymbol]);
 
   useEffect(() => {
+    setQuote(null);
     fetchSnapshot();
     const interval = setInterval(fetchSnapshot, POLL_INTERVAL_MS);
     return () => clearInterval(interval);
@@ -139,9 +172,21 @@ export default function RealtimeQuoteView() {
 
   /* ── actions ── */
   const handleSubscribe = async () => {
-    const symbol = symbolInput.trim().toUpperCase();
-    if (!symbol) return;
+    const symbol = symbolInput.trim();
+    if (!SYMBOL_PATTERN.test(symbol)) {
+      setInputError("종목코드는 6자리 숫자로 입력하세요 (예: 005930)");
+      return;
+    }
+    setInputError(null);
     setActionError(null);
+
+    // Already subscribed — just switch the main view, no need to call the API again.
+    if (subscriptions.some((s) => s.symbol === symbol)) {
+      setSelectedSymbol(symbol);
+      setSymbolInput("");
+      return;
+    }
+
     try {
       const data = await subscribeRealtimeQuote([symbol]);
       setConnection(data.connection);
@@ -149,9 +194,7 @@ export default function RealtimeQuoteView() {
       setSelectedSymbol(symbol);
       setSymbolInput("");
     } catch (err: unknown) {
-      setActionError(
-        err instanceof Error ? err.message : "종목을 구독하지 못했습니다"
-      );
+      setActionError(err instanceof Error ? err.message : "종목을 구독하지 못했습니다");
     }
   };
 
@@ -165,9 +208,7 @@ export default function RealtimeQuoteView() {
         setSelectedSymbol(data.subscriptions[0]?.symbol ?? null);
       }
     } catch (err: unknown) {
-      setActionError(
-        err instanceof Error ? err.message : "구독을 해제하지 못했습니다"
-      );
+      setActionError(err instanceof Error ? err.message : "구독을 해제하지 못했습니다");
     }
   };
 
@@ -182,24 +223,42 @@ export default function RealtimeQuoteView() {
   }
 
   /* ── render: hard error (bootstrap failed entirely) ── */
-  if (error && subscriptions.length === 0 && !connection) {
+  if (bootstrapError && !connection) {
     return (
       <div className="p-6 space-y-4">
         <h1 className="text-xl font-semibold text-[#0f172a]">실시간 현재가</h1>
-        <ErrorBanner message={error} onDismiss={() => setError(null)} />
+        <ErrorBanner message={bootstrapError} onDismiss={() => setBootstrapError(null)} />
       </div>
     );
   }
 
-  const selectedQuote = selectedSymbol ? quotes[selectedSymbol] : undefined;
+  // `activeSubscription` is best-effort metadata (name/market) looked up from
+  // the subscriptions list — it must NOT gate whether the detail frame
+  // renders. The frame's only precondition is "a symbol is selected"
+  // (`selectedSymbol`). Gating on `activeSubscription` conflated two
+  // different things: "no symbol selected" (real empty state) vs. "selected,
+  // but the subscriptions list hasn't caught up yet / snapshot has no data
+  // yet" (should still show the frame with a waiting state) — the latter
+  // was incorrectly hiding the whole panel.
+  const activeSubscription = selectedSymbol
+    ? (subscriptions.find((s) => s.symbol === selectedSymbol) ?? null)
+    : null;
+  const displaySymbol = selectedSymbol ?? "";
+  const displayName = activeSubscription?.name ?? quote?.name ?? displaySymbol;
+  const displayMarket = activeSubscription?.market ?? quote?.market ?? "—";
   const capacityRatio =
     connection && connection.max_registrations > 0
       ? connection.registered_count / connection.max_registrations
       : 0;
+  const atCapacity = connection ? subscriptions.length >= connection.symbol_capacity : false;
+  const isStale =
+    !!quote && Date.now() - new Date(quote.updated_at).getTime() > STALE_THRESHOLD_MS;
+  const degraded =
+    !!snapshotError || (connection ? connection.connection_state !== "connected" : false);
 
   return (
     <div className="p-6 space-y-4">
-      {/* Header: title + environment badge */}
+      {/* 헤더: 타이틀 + 환경 배지 */}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-[#0f172a]">실시간 현재가</h1>
         <StatusBadge variant={connection?.environment === "mock" ? "warning" : "success"}>
@@ -207,17 +266,19 @@ export default function RealtimeQuoteView() {
         </StatusBadge>
       </div>
 
-      {/* A. Connection status / capacity */}
+      {/* A. 연결 상태 / 구독 한도 */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="bg-white rounded-lg border border-[#e2e8f0] p-3">
           <div className="flex items-center gap-2">
             {connection?.connection_state === "connected" ? (
               <Wifi className="h-4 w-4 text-[#22c55e]" />
+            ) : connection?.connection_state === "reconnecting" ? (
+              <RefreshCcw className="h-4 w-4 text-[#f59e0b] animate-spin" />
             ) : (
               <WifiOff className="h-4 w-4 text-[#ef4444]" />
             )}
             <span className="text-sm font-medium text-[#0f172a]">
-              {connection?.connection_state === "connected" ? "연결됨" : "연결 끊김"}
+              {connectionLabel(connection?.connection_state)}
             </span>
             <span className="text-xs text-[#94a3b8]">
               데이터 출처: {connection?.data_source ?? "—"}
@@ -241,6 +302,7 @@ export default function RealtimeQuoteView() {
         </div>
       </div>
 
+      {/* F. 오류/재연결 상태 */}
       {actionError && (
         <WarningBanner
           variant="warning"
@@ -249,26 +311,34 @@ export default function RealtimeQuoteView() {
           onDismiss={() => setActionError(null)}
         />
       )}
-
-      {error && (subscriptions.length > 0 || connection) && (
+      {degraded && (
         <WarningBanner
-          variant="error"
-          title="시세 갱신 중 오류가 발생했습니다"
-          message={error}
-          onDismiss={() => setError(null)}
+          variant={connection?.connection_state === "disconnected" ? "error" : "warning"}
+          title={
+            connection?.connection_state === "reconnecting"
+              ? "WebSocket 재연결 시도 중"
+              : connection?.connection_state === "disconnected"
+                ? "WebSocket 연결이 끊겼습니다"
+                : "시세 갱신 중 오류가 발생했습니다"
+          }
+          message="화면에 표시된 값은 마지막 수신값(stale)일 수 있습니다."
         />
       )}
 
-      {/* B. 종목 입력 */}
-      <Panel title="종목 구독">
+      {/* B. 종목 전환 바 */}
+      <Panel title="종목 전환">
         <div className="flex items-center gap-2">
           <div className="relative flex-1 max-w-xs">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#94a3b8]" />
             <input
               type="text"
-              placeholder="종목코드 입력 (예: 005930)"
+              inputMode="numeric"
+              placeholder="종목코드 6자리 (예: 005930)"
               value={symbolInput}
-              onChange={(e) => setSymbolInput(e.target.value)}
+              onChange={(e) => {
+                setSymbolInput(e.target.value);
+                if (inputError) setInputError(null);
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") handleSubscribe();
               }}
@@ -277,24 +347,44 @@ export default function RealtimeQuoteView() {
           </div>
           <button
             onClick={handleSubscribe}
-            className="px-4 py-2 text-sm font-medium text-white bg-[#3b82f6] rounded-lg hover:bg-[#2563eb] transition-colors"
+            disabled={atCapacity && !subscriptions.some((s) => s.symbol === symbolInput.trim())}
+            className="px-4 py-2 text-sm font-medium text-white bg-[#3b82f6] rounded-lg hover:bg-[#2563eb] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title={atCapacity ? "구독 한도(등록 건수)에 도달했습니다" : undefined}
           >
             구독 추가
           </button>
         </div>
+        {inputError && <p className="text-xs text-[#dc2626] mt-1.5">{inputError}</p>}
+        {atCapacity && !inputError && (
+          <p className="text-xs text-[#f59e0b] mt-1.5">
+            구독 한도(등록 건수)에 도달했습니다 — 기존 종목을 해제한 뒤 다시 시도하세요.
+          </p>
+        )}
 
-        {/* C. 구독 목록 */}
         <div className="flex flex-wrap gap-2 mt-4">
           {subscriptions.length === 0 && (
             <p className="text-sm text-[#94a3b8]">
-              구독 중인 종목이 없습니다. 종목코드를 입력해 추가하세요.
+              구독 중인 종목이 없습니다. 종목코드를 입력해 조회를 시작하세요.
             </p>
           )}
           {subscriptions.map((s) => (
-            <button
+            // A native <button> can't legally contain another <button> (the
+            // unsubscribe control below) — browsers silently reparent nested
+            // buttons, which can break the click handler. Using a
+            // div[role=button] here (with keyboard support) keeps the inner
+            // unsubscribe control a real, focusable <button>.
+            <div
               key={s.symbol}
+              role="button"
+              tabIndex={0}
               onClick={() => setSelectedSymbol(s.symbol)}
-              className={`flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-full text-sm border transition-colors ${
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setSelectedSymbol(s.symbol);
+                }
+              }}
+              className={`flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-full text-sm border transition-colors cursor-pointer ${
                 selectedSymbol === s.symbol
                   ? "bg-[#eff6ff] border-[#3b82f6] text-[#1d4ed8]"
                   : "bg-white border-[#e2e8f0] text-[#0f172a] hover:bg-[#f8fafc]"
@@ -302,8 +392,8 @@ export default function RealtimeQuoteView() {
             >
               <span className="font-medium">{s.name}</span>
               <span className="text-xs text-[#94a3b8] font-mono">{s.symbol}</span>
-              <span
-                role="button"
+              <button
+                type="button"
                 aria-label={`${s.symbol} 구독 해제`}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -312,111 +402,124 @@ export default function RealtimeQuoteView() {
                 className="ml-1 text-[#94a3b8] hover:text-[#ef4444]"
               >
                 <X className="h-3.5 w-3.5" />
-              </span>
-            </button>
+              </button>
+            </div>
           ))}
         </div>
       </Panel>
 
-      {/* D. 현재가 표시 (subscribed symbols) */}
-      <Panel title="현재가" noPadding>
-        {subscriptions.length === 0 ? (
+      {/* 종목 없음 상태 — selectedSymbol이 없을 때만 (실제로 선택된 종목이 없는 경우) */}
+      {!selectedSymbol && (
+        <Panel>
           <div className="p-8 text-center text-sm text-[#94a3b8]">
-            구독 중인 종목이 없습니다.
+            조회할 종목을 선택하거나 종목코드를 입력하세요.
           </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#e2e8f0] bg-[#f8fafc]">
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-[#64748b] uppercase">종목</th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold text-[#64748b] uppercase">현재가</th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold text-[#64748b] uppercase">전일대비</th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold text-[#64748b] uppercase">등락률</th>
-                  <th className="px-4 py-3 text-right text-xs font-semibold text-[#64748b] uppercase">체결시각</th>
-                  <th className="px-4 py-3 text-center text-xs font-semibold text-[#64748b] uppercase">상태</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#e2e8f0]">
-                {subscriptions.map((s) => {
-                  const q = quotes[s.symbol];
-                  return (
-                    <tr
-                      key={s.symbol}
-                      onClick={() => setSelectedSymbol(s.symbol)}
-                      className={`cursor-pointer hover:bg-[#f8fafc] transition-colors ${
-                        selectedSymbol === s.symbol ? "bg-[#eff6ff]" : ""
-                      }`}
-                    >
-                      <td className="px-4 py-3">
-                        <span className="font-medium text-[#0f172a]">{s.name}</span>{" "}
-                        <span className="text-xs text-[#94a3b8] font-mono">{s.symbol}</span>
-                      </td>
-                      <td className={`px-4 py-3 text-right font-mono ${q ? changeColor(q.change_sign) : ""}`}>
-                        {q ? formatNumber(q.last_price) : "—"}
-                      </td>
-                      <td className={`px-4 py-3 text-right font-mono ${q ? changeColor(q.change_sign) : ""}`}>
-                        <span className="inline-flex items-center gap-1 justify-end">
-                          {q && <ChangeIcon sign={q.change_sign} />}
-                          {q ? formatNumber(q.change) : "—"}
-                        </span>
-                      </td>
-                      <td className={`px-4 py-3 text-right font-mono ${q ? changeColor(q.change_sign) : ""}`}>
-                        {q ? `${q.change_rate.toFixed(2)}%` : "—"}
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono text-[#64748b]">
-                        {q?.trade_time ?? "—"}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        {q ? (
-                          <StatusBadge variant="success">수신중</StatusBadge>
-                        ) : (
-                          <StatusBadge variant="neutral">대기</StatusBadge>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Panel>
-
-      {/* E. 선택 종목 상세 */}
-      {selectedQuote && (
-        <Panel title={`${selectedQuote.name} (${selectedQuote.symbol}) 상세`}>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8">
-            <div>
-              <DetailField label="시장" value={selectedQuote.market} />
-              <DetailField label="시가" value={formatNumber(selectedQuote.open_price)} mono />
-              <DetailField label="고가" value={formatNumber(selectedQuote.high_price)} mono />
-              <DetailField label="저가" value={formatNumber(selectedQuote.low_price)} mono />
-              <DetailField label="상한가" value={formatNumber(selectedQuote.upper_limit)} mono />
-              <DetailField label="하한가" value={formatNumber(selectedQuote.lower_limit)} mono />
-              <DetailField label="기준가" value={formatNumber(selectedQuote.prev_close)} mono />
-            </div>
-            <div>
-              <DetailField label="누적거래량" value={formatNumber(selectedQuote.accumulated_volume)} mono />
-              <DetailField label="누적거래대금" value={formatNumber(selectedQuote.accumulated_value)} mono />
-              <DetailField label="PER" value={selectedQuote.per?.toFixed(2) ?? "—"} mono />
-              <DetailField label="PBR" value={selectedQuote.pbr?.toFixed(2) ?? "—"} mono />
-              <DetailField label="EPS" value={formatNumber(selectedQuote.eps)} mono />
-              <DetailField label="BPS" value={formatNumber(selectedQuote.bps)} mono />
-              <DetailField
-                label="매도1 / 매수1"
-                value={`${formatNumber(selectedQuote.ask_levels[0]?.price)} / ${formatNumber(
-                  selectedQuote.bid_levels[0]?.price
-                )}`}
-                mono
-              />
-            </div>
-          </div>
-          <p className="text-xs text-[#94a3b8] mt-3">
-            데이터 출처: {selectedQuote.data_source} · 마지막 수신:{" "}
-            {formatKstTime(selectedQuote.updated_at)}
-          </p>
         </Panel>
+      )}
+
+      {selectedSymbol && (
+        <>
+          {/* C. 종목 헤더 + 현재가 바 */}
+          <Panel>
+            <div className="flex items-center gap-3 mb-3">
+              <StatusBadge variant="info">{displayMarket}</StatusBadge>
+              <span className="text-base font-semibold text-[#0f172a]">{displayName}</span>
+              <span className="text-xs text-[#94a3b8] font-mono">{displaySymbol}</span>
+            </div>
+            {/* quote가 없어도 동일한 레이아웃을 유지하고 값만 "—"로 표시 */}
+            <div className="flex items-baseline gap-4 flex-wrap">
+              <span
+                className={`text-2xl font-bold font-mono ${quote ? changeColor(quote.change_sign) : "text-[#94a3b8]"}`}
+              >
+                {quote ? formatNumber(quote.last_price) : "—"}
+              </span>
+              <span
+                className={`inline-flex items-center gap-1 font-mono ${quote ? changeColor(quote.change_sign) : "text-[#94a3b8]"}`}
+              >
+                {quote && <ChangeIcon sign={quote.change_sign} />}
+                {quote ? `${formatNumber(quote.change)} (${quote.change_rate.toFixed(2)}%)` : "—"}
+              </span>
+              <span className="text-sm text-[#94a3b8]">
+                전일종가 {quote ? formatNumber(quote.prev_close) : "—"}
+              </span>
+            </div>
+          </Panel>
+
+          {/* D. 10단계 호가창 + E. 상세정보 패널 — quote 유무와 무관하게 그리드 구조는 항상 렌더 */}
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
+            <Panel
+              title="호가"
+              headerRight={
+                !quote && <span className="text-xs text-[#94a3b8]">수신 대기 중</span>
+              }
+              noPadding
+              bodyClassName="p-3"
+            >
+              <QuoteLadder
+                hasData={!!quote}
+                askLevels={quote?.ask_levels ?? []}
+                bidLevels={quote?.bid_levels ?? []}
+                prevClose={quote?.prev_close ?? 0}
+                totalAskQuantity={quote?.total_ask_quantity ?? 0}
+                totalBidQuantity={quote?.total_bid_quantity ?? 0}
+              />
+            </Panel>
+
+            <Panel
+              title="종목 상세정보"
+              headerRight={
+                !quote && <span className="text-xs text-[#94a3b8]">수신 대기 중</span>
+              }
+            >
+              {/* VI발동기준가/시간외 잔량은 UI 레이아웃 설계(§6-E)에 명시돼 있지만
+                  RealtimeQuoteSnapshotView API contract에 아직 없어 의도적으로 생략함.
+                  백엔드 스키마가 확장되면 여기에 필드를 추가한다. */}
+              <div>
+                <DetailField label="시간구분" value={quote?.hour_class ?? "—"} />
+                <DetailField
+                  label="거래정지 여부"
+                  value={quote ? (quote.trading_halted ? "정지" : "정상거래") : "—"}
+                />
+                <DetailField label="상한가" value={formatNumber(quote?.upper_limit)} mono />
+                <DetailField label="고가" value={formatNumber(quote?.high_price)} mono />
+                <DetailField label="시가" value={formatNumber(quote?.open_price)} mono />
+                <DetailField label="저가" value={formatNumber(quote?.low_price)} mono />
+                <DetailField label="하한가" value={formatNumber(quote?.lower_limit)} mono />
+                <DetailField label="기준가" value={formatNumber(quote?.prev_close)} mono />
+                <DetailField
+                  label="누적거래량"
+                  value={formatNumber(quote?.accumulated_volume)}
+                  mono
+                />
+                <DetailField
+                  label="누적거래대금"
+                  value={formatNumber(quote?.accumulated_value)}
+                  mono
+                />
+                <DetailField label="PER" value={quote?.per?.toFixed(2) ?? "—"} mono />
+                <DetailField label="PBR" value={quote?.pbr?.toFixed(2) ?? "—"} mono />
+                <DetailField label="EPS" value={formatNumber(quote?.eps)} mono />
+                <DetailField label="BPS" value={formatNumber(quote?.bps)} mono />
+              </div>
+            </Panel>
+          </div>
+
+          {/* G. 수신 상태 / 데이터 출처 */}
+          <div className="flex items-center gap-3 text-xs text-[#94a3b8]">
+            {quote && (
+              <>
+                <span className={isStale ? "text-[#f59e0b] font-medium" : undefined}>
+                  마지막 수신: {formatKstTime(quote.updated_at)}
+                  {isStale ? " (지연됨)" : ""}
+                </span>
+                <span>·</span>
+                <span>체결시각: {quote.trade_time || "—"}</span>
+                <span>·</span>
+                <span>데이터 출처: {quote.data_source}</span>
+              </>
+            )}
+          </div>
+        </>
       )}
     </div>
   );

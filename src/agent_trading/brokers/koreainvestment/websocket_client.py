@@ -174,6 +174,16 @@ class KISWebSocketClient:
 
         logger.info("KIS WebSocket disconnected")
 
+    @property
+    def is_connected(self) -> bool:
+        """Whether the WebSocket transport is currently connected."""
+        return self._connected
+
+    @property
+    def is_reconnecting(self) -> bool:
+        """Whether a reconnect attempt is in progress after an unexpected drop."""
+        return (not self._connected) and self._should_reconnect
+
     async def __aenter__(self) -> KISWebSocketClient:
         await self.connect()
         return self

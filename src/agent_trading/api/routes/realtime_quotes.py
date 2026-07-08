@@ -1,16 +1,21 @@
-"""``/realtime-quotes/*`` — KIS 실시간 현재가 조회 화면 API (Phase 1: mock-backed).
+"""``/realtime-quotes/*`` — KIS 실시간 현재가 조회 화면 API.
 
 Read-only from the trading system's perspective: these endpoints never touch
 ``OrderManager``, ``BrokerAdapter`` (trading account), or the decision
 pipeline. They only manage subscriptions against a ``RealtimeQuoteSource``
 (``app.state.realtime_quote_source``) and return the latest quote snapshot.
 
-Phase 1 wires an ``InMemoryMockQuoteSource`` — no KIS WebSocket connection.
-Phase 2 will swap in a KIS-backed implementation of the same
-``RealtimeQuoteSource`` protocol; these routes will not need to change.
+``app.state.realtime_quote_source`` is either an ``InMemoryMockQuoteSource``
+(no ``KIS_REALTIME_QUOTE_APP_KEY``/``_APP_SECRET`` configured — the default)
+or a ``KisRealtimeQuoteSource`` (Step 3, a completely separate KIS Live
+account/appkey from the trading account and ``KIS_LIVE_INFO_*``, connected
+only inside the ``api`` process — see ``kis_realtime_quote_source.py`` and
+``api/app.py`` lifespan wiring). Both implement the same
+``RealtimeQuoteSource`` protocol, so **this route module needs no changes**
+regardless of which one is active.
 
 See ``plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md``
-and ``plans/[DESIGN]_kis_realtime_quote_operations_screen_plan.md`` (Step 1/2).
+and ``plans/[DESIGN]_kis_realtime_quote_operations_screen_plan.md`` (Step 1-3).
 """
 
 from __future__ import annotations
@@ -127,7 +132,12 @@ async def add_subscriptions(
     body: RealtimeQuoteSubscribeRequest,
     source: RealtimeQuoteSource = Depends(get_realtime_quote_source),
 ) -> RealtimeQuoteSubscriptionsResponse:
-    """Add (reference-count) subscriptions for one or more symbols."""
+    """Idempotently add subscriptions for one or more symbols.
+
+    Re-subscribing to an already-subscribed symbol is a no-op (Phase 1
+    single-screen semantics — see ``realtime_quote_source.py`` module
+    docstring). It does not accumulate a reference count.
+    """
     for symbol in body.symbols:
         try:
             await source.subscribe(symbol)
@@ -143,7 +153,11 @@ async def remove_subscriptions(
     body: RealtimeQuoteUnsubscribeRequest,
     source: RealtimeQuoteSource = Depends(get_realtime_quote_source),
 ) -> RealtimeQuoteSubscriptionsResponse:
-    """Remove (reference-count) subscriptions for one or more symbols."""
+    """Remove subscriptions for one or more symbols.
+
+    A single call per symbol fully unsubscribes it — there is no reference
+    count to decrement.
+    """
     for symbol in body.symbols:
         await source.unsubscribe(symbol)
     return _subscriptions_response(source)

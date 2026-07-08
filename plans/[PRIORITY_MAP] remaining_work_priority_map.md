@@ -1951,6 +1951,122 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
       - 결과는
         `logs/trigger_proxy_attribution_YYYY-MM-DD.json`과
         `operations_day_runs.summary_json.trigger_proxy_attribution`에 남긴다.
+  - [x] `core_risk_off_floor_diagnostics` 추가
+    - 목적
+      - `mild_relax / moderate_relax` 표본이 왜 0인지
+        score 분포와 gate별 탈락 사유를 실측한다.
+    - 출력 추가 대상
+      - [`scripts/analyze_trigger_proxy_attribution.py`](../scripts/analyze_trigger_proxy_attribution.py)
+      - `core_risk_off_floor_diagnostics`
+      - `overall_band_items`
+      - `slow_band_items`
+      - `moderate_gate_items`
+      - `blocking_reason_items`
+      - `bucket_path_items`
+      - `samples`
+    - row 단위 파생 필드
+      - `shadow_overall_score`
+      - `shadow_slow_score`
+      - `shadow_entry_score`
+      - `shadow_ranking_score`
+      - `shadow_activity_pass`
+      - `shadow_strategy_pass`
+      - `overall_band`
+      - `slow_band`
+      - `moderate_gate_bucket`
+      - `blocking_reason`
+      - `bucket_path`
+    - 코드 수정 기준
+      - [`src/agent_trading/services/trigger_proxy_attribution.py`](../src/agent_trading/services/trigger_proxy_attribution.py)에
+        diagnostic row / report helper 추가
+      - [`scripts/analyze_trigger_proxy_attribution.py`](../scripts/analyze_trigger_proxy_attribution.py)에
+        payload 적재 추가
+      - [`tests/services/test_trigger_proxy_attribution.py`](../tests/services/test_trigger_proxy_attribution.py)에
+        band / gate / blocking reason 경계 테스트 추가
+      - [`tests/scripts/test_run_ops_scheduler.py`](../tests/scripts/test_run_ops_scheduler.py)에
+        핵심 diagnostic count parser 보강
+    - 현재 실측 결과
+      - `2026-07-06`: `active_sample_count=21`, active 전부 `signal_window_miss`
+      - `2026-07-07`: `active_sample_count=28`, active 전부 `signal_window_miss`
+      - `blocking_reason` 주원인:
+        `overall_below_mild_floor`
+      - 결론:
+        `entry / ranking / activity / strategy`보다
+        `overall / slow` floor가 선행 병목
+    - 판단 기준
+      - `overall_band=mild_window` 표본은 있는데
+        `mild_relax=0`이면 slow floor 또는 row 저장 누락 문제
+      - `moderate_window` 표본은 있는데
+        `moderate_gate_bucket`이
+        `entry_below_0_12 / ranking_below_0_26 / activity_blocked / strategy_blocked`
+        중 어디에 몰리는지로 다음 완화 순서를 결정
+  - [x] `overall / slow floor shadow 완화안` v2 계측 추가
+    - 목적
+      - 현재 병목인 `overall_below_mild_floor`를
+        소폭 완화했을 때
+        `mild_relax / moderate_relax` 표본이 실제로 생기는지 관측
+    - 적용 범위
+      - authoritative 규칙은 유지
+      - shadow diagnostics 전용 v2 bucket 추가
+    - 기준안
+      - `mild_relax_v2`
+        - `overall >= -0.15`
+        - `slow >= -0.15`
+      - `moderate_relax_v2`
+        - `overall >= -0.20`
+        - `slow >= -0.25`
+        - `entry_score >= 0.12`
+        - `ranking_score >= 0.26`
+        - `activity_pass = true`
+        - `strategy_pass = true`
+    - 보류 원칙
+      - `slow` floor 동시 완화 금지
+      - `entry / ranking / activity / strategy` 완화 선행 금지
+    - 구현 기준
+      - [`src/agent_trading/services/deterministic_trigger_engine.py`](../src/agent_trading/services/deterministic_trigger_engine.py)
+        metadata에 `shadow_floor_relax_v2_*` 추가
+      - [`scripts/analyze_trigger_proxy_attribution.py`](../scripts/analyze_trigger_proxy_attribution.py)
+        v1 / v2 비교 섹션 추가
+      - 실측 결과
+        - `2026-07-06`: `v2` active `21건`, `mild_relax=0`, `moderate_relax=0`
+        - `2026-07-07`: `v2` active `28건`, `mild_relax=0`, `moderate_relax=0`
+        - historical row backfill을 적용해도
+          `overall_below_mild_floor` 및 `overall_missing`이 주 병목으로 유지
+  - [x] `overall floor shadow 완화안` v3 구현 및 장후 배치 반영
+    - 목적
+      - `slow`는 유지한 채 `overall`만 한 단계 더 완화했을 때
+        `mild_relax / moderate_relax` 표본이 실제로 생기는지 추가 관측
+    - 적용 범위
+      - authoritative 규칙은 유지
+      - shadow diagnostics 전용 v3 bucket 추가
+    - 기준안
+      - `mild_relax_v3`
+        - `overall >= -0.20`
+        - `slow >= -0.15`
+      - `moderate_relax_v3`
+        - `overall >= -0.25`
+        - `slow >= -0.25`
+        - `entry_score >= 0.12`
+        - `ranking_score >= 0.26`
+        - `activity_pass = true`
+        - `strategy_pass = true`
+    - 구현 기준
+      - [`src/agent_trading/services/deterministic_trigger_engine.py`](../src/agent_trading/services/deterministic_trigger_engine.py)
+        metadata에 `shadow_floor_relax_v3_*` 추가
+      - [`src/agent_trading/services/trigger_proxy_attribution.py`](../src/agent_trading/services/trigger_proxy_attribution.py)
+        `v3` bucket / diagnostics / backfill helper 추가
+      - [`scripts/analyze_trigger_proxy_attribution.py`](../scripts/analyze_trigger_proxy_attribution.py)
+        `v3` report / diagnostics payload 추가
+    - 실측 결과
+      - `2026-07-06`: `v3` active `21건`, `mild_relax=0`, `moderate_relax=0`
+      - `2026-07-07`: `v3` active `28건`, `mild_relax=0`, `moderate_relax=0`
+      - 활성 row 다수는 `overall_missing` 또는 `overall <= -0.25`에 머물러
+        `v3` 완화만으로는 아직 표본 확장이 발생하지 않음
+    - 다음 판단 기준
+      - `2026-07-08` 이후 장후 데이터에서 `shadow_floor_relax_v3_bucket`이
+        실제로 채워지는지 먼저 확인
+      - 계속 `0건`이면 다음 병목은 floor 값 자체보다
+        `feature snapshot missing` 또는 upstream score 생성 품질로 간주
 - 근거 문서
   - [`plans/[DESIGN] deterministic_trigger_eligibility_and_ranking_v1.md`](./%5BDESIGN%5D%20deterministic_trigger_eligibility_and_ranking_v1.md)
   - [`plans/[DESIGN] performance_attribution_for_trigger_and_override.md`](./%5BDESIGN%5D%20performance_attribution_for_trigger_and_override.md)
@@ -2840,7 +2956,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 
 ## P1/P2 후보 (신규) — 운영 가시성 강화
 
-### 19. KIS WebSocket 기반 실시간 현재가 조회 운영 화면 — `미완료`
+### 19. KIS WebSocket 기반 실시간 현재가 조회 운영 화면 — `진행중`
 
 ### 목표
 - Admin UI "기본 운영" 메뉴 아래 신규 read-only 화면을 추가해, 운영자가 선택한 종목의
@@ -2862,11 +2978,33 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   순수하게 다른 P0/P2 작업과의 우선순위 경합 문제로 남는다.
 
 ### 현재 상태
-- 설계 문서만 존재하며 구현은 착수 전이다.
 - 사전 조사(계좌/세션/rate-limit 스코프 분석, TR ID 선택, fan-out 아키텍처 검토)를
   거쳐 상세 설계 문서로 정리되었다.
 - 이 항목은 [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `37`과
   1:1로 대응한다.
+- **2026-07-08 기준 Phase 1~3 구현 완료** — 설계 문서의 단계 구분
+  (`11_kis_realtime_quote_operations_screen.md` §8) 기준으로 보면, 현재 상태는
+  "문서/API contract/UI mock(Phase 1) → 전용 KIS WebSocket-backed quote source 및
+  REST fallback(Phase 2) → Admin UI polling 화면/딥링크/프레임 유지 UX(Phase 3)"
+  까지 반영된 상태다.
+  - Backend: 전용 `KisRealtimeQuoteSource` + 별도 계좌/앱키 전용
+    `build_realtime_quote_source()` 경로 + startup failure cleanup 보정 완료 —
+    [`kis_realtime_quote_source.py`](../src/agent_trading/services/kis_realtime_quote_source.py),
+    [`bootstrap.py`](../src/agent_trading/runtime/bootstrap.py)
+  - API: `GET /realtime-quotes/bootstrap`, `POST/DELETE/GET .../subscriptions`,
+    `GET .../snapshot` 실연동 완료 — [`routes/realtime_quotes.py`](../src/agent_trading/api/routes/realtime_quotes.py)
+  - Admin UI: `/operations/realtime-quotes` polling 화면, `?symbol=` 딥링크,
+    단일 종목 상세 뷰, 10호가 프레임 유지 UX, Orders/FillHistory 진입 딥링크 완료 —
+    [`RealtimeQuoteView.tsx`](../admin_ui/src/components/RealtimeQuoteView.tsx)
+  - Codex 검수 후 보정 반영:
+    ① backend 구독 semantics를 ref-count에서 **idempotent set**으로 정리,
+    ② symbol 검증을 6자리 숫자로 제한,
+    ③ startup failure cleanup 보정,
+    ④ UI `?symbol=` 동기화/프레임 유지/기존 화면 딥링크 연결 보정.
+- **남은 작업**: 설계 문서상 **Phase 4**만 남았다 — FastAPI WebSocket/SSE relay
+  검토 및 전환(브라우저까지의 push 전달, fan-out broadcaster, backpressure,
+  인증 처리). 현재 화면은 KIS → backend는 실시간 WebSocket이지만,
+  backend → browser는 polling 방식으로 동작한다.
 
 ### 기존 항목과의 구분
 - **`plans/[BACKLOG] backlog.md` 항목 `#19`("WebSocket 기반 실시간 order event 수신")와는

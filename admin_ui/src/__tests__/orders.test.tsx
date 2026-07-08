@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { describe, expect, it, afterEach, vi, beforeEach } from "vitest";
 import OrdersView from "../components/OrdersView";
 import { setStoredToken, clearStoredToken } from "../api/client";
@@ -20,6 +20,12 @@ function setFixtureOrderDate() {
   fireEvent.change(screen.getByLabelText("조회일"), {
     target: { value: "2026-05-05" },
   });
+}
+
+/** Renders the current URL's path+search so tests can assert on navigation. */
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location-probe">{location.pathname + location.search}</div>;
 }
 
 /* ───────────────────────────────────────────
@@ -339,5 +345,41 @@ describe("OrdersView pagination footer", () => {
     // Page navigation should appear
     expect(screen.getByRole("button", { name: "Previous page" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Next page" })).toBeInTheDocument();
+  });
+});
+
+/* ───────────────────────────────────────────
+ * Scenario 11: 종목 클릭 → 실시간 현재가 딥링크
+ * ─────────────────────────────────────────── */
+describe("OrdersView symbol deep link", () => {
+  it("navigates to the realtime quote screen with ?symbol= when a symbol is clicked", async () => {
+    mockFetchOnce(mockOrders);
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter>
+        <OrdersView />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("주문")).toBeInTheDocument();
+    });
+    setFixtureOrderDate();
+
+    await waitFor(() => {
+      expect(screen.getByText("AAPL")).toBeInTheDocument();
+    });
+
+    // Symbol text is still rendered as before — clicking it navigates away
+    // without opening the order detail panel (row-click behavior).
+    await user.click(screen.getByText("AAPL"));
+
+    expect(screen.getByTestId("location-probe").textContent).toBe(
+      "/operations/realtime-quotes?symbol=AAPL",
+    );
+    // Row-level selection (order detail panel) must not also trigger.
+    expect(screen.queryByText("클라이언트 주문 ID")).not.toBeInTheDocument();
   });
 });

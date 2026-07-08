@@ -33,19 +33,36 @@ class TestSubscribe:
         assert source.list_subscriptions() == ["005930"]
         assert source.registered_count() == 2
 
-    async def test_subscribe_is_ref_counted(self, source: InMemoryMockQuoteSource) -> None:
+    async def test_subscribe_is_idempotent(self, source: InMemoryMockQuoteSource) -> None:
+        """Re-subscribing to the same symbol is a no-op — no ref count accumulation."""
+        await source.subscribe("005930")
         await source.subscribe("005930")
         await source.subscribe("005930")
         assert source.list_subscriptions() == ["005930"]
-        assert source.registered_count() == 2  # still 1 symbol = 2 registrations
+        assert source.registered_count() == 2  # 1 symbol = 2 registrations, not 6
 
-    async def test_subscribe_normalizes_case(self, source: InMemoryMockQuoteSource) -> None:
-        await source.subscribe("q00001")
-        assert source.list_subscriptions() == ["Q00001"]
+    async def test_subscribe_strips_whitespace(self, source: InMemoryMockQuoteSource) -> None:
+        await source.subscribe(" 005930 ")
+        assert source.list_subscriptions() == ["005930"]
+
+    async def test_subscribe_rejects_etn_prefix(self, source: InMemoryMockQuoteSource) -> None:
+        """ETN codes (``Q`` prefix) are out of scope for this 국내주식 screen."""
+        with pytest.raises(InvalidSymbolError):
+            await source.subscribe("Q00001")
 
     async def test_subscribe_invalid_symbol_raises(self, source: InMemoryMockQuoteSource) -> None:
         with pytest.raises(InvalidSymbolError):
             await source.subscribe("ABC")
+
+    async def test_subscribe_rejects_mixed_alnum(self, source: InMemoryMockQuoteSource) -> None:
+        with pytest.raises(InvalidSymbolError):
+            await source.subscribe("00593A")
+
+    async def test_subscribe_rejects_wrong_length(self, source: InMemoryMockQuoteSource) -> None:
+        with pytest.raises(InvalidSymbolError):
+            await source.subscribe("12345")
+        with pytest.raises(InvalidSymbolError):
+            await source.subscribe("1234567")
 
     async def test_subscribe_beyond_capacity_raises(self, source: InMemoryMockQuoteSource) -> None:
         for i in range(20):
@@ -56,13 +73,21 @@ class TestSubscribe:
 
 
 class TestUnsubscribe:
-    async def test_unsubscribe_removes_after_last_ref(
+    async def test_unsubscribe_removes_immediately(
         self, source: InMemoryMockQuoteSource
     ) -> None:
-        await source.subscribe("005930")
+        """A single unsubscribe() call fully removes the symbol — no ref count."""
         await source.subscribe("005930")
         await source.unsubscribe("005930")
-        assert source.list_subscriptions() == ["005930"]  # one ref remains
+        assert source.list_subscriptions() == []
+        assert source.registered_count() == 0
+
+    async def test_unsubscribe_after_duplicate_subscribe_removes_immediately(
+        self, source: InMemoryMockQuoteSource
+    ) -> None:
+        """Duplicate subscribe() calls must not require multiple unsubscribe() calls."""
+        await source.subscribe("005930")
+        await source.subscribe("005930")
         await source.unsubscribe("005930")
         assert source.list_subscriptions() == []
 

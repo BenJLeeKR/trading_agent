@@ -49,12 +49,12 @@ const navSections: NavSection[] = [
   {
     title: "기본 운영",
     items: [
-      { icon: FileText, label: "주문", to: "/orders" },
+      { icon: LineChart, label: "현재가", to: "/operations/realtime-quotes" },
+      { icon: FileText, label: "주문내역", to: "/orders" },
       { icon: ListOrdered, label: "체결내역", to: "/fills" },
       { icon: Wallet, label: "계좌", to: "/accounts" },
       { icon: Brain, label: "의사결정", to: "/decisions" },
       { icon: Zap, label: "에이전트 실행", to: "/agent-runs" },
-      { icon: LineChart, label: "실시간 현재가", to: "/operations/realtime-quotes" },
     ],
   },
   {

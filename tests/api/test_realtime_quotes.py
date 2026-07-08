@@ -46,14 +46,25 @@ class TestSubscribe:
         assert data["subscriptions"][0]["market"] == "KOSPI"
         assert data["connection"]["registered_count"] == 2  # 체결가 + 호가
 
-    def test_subscribe_lowercase_symbol_is_normalized(self, client: TestClient) -> None:
+    def test_subscribe_duplicate_is_idempotent(self, client: TestClient) -> None:
+        """Re-subscribing to the same symbol must not accumulate a ref count."""
         resp = client.post("/realtime-quotes/subscriptions", json={"symbols": ["005930"]})
         assert resp.status_code == 201
-        # Re-subscribing (ref count) does not add a duplicate entry.
         resp2 = client.post("/realtime-quotes/subscriptions", json={"symbols": ["005930"]})
         assert resp2.status_code == 201
         assert len(resp2.json()["subscriptions"]) == 1
         assert resp2.json()["connection"]["registered_count"] == 2
+
+        # A single unsubscribe must fully remove it, regardless of the
+        # duplicate subscribe above — no dangling backend subscription.
+        resp3 = client.request(
+            "DELETE",
+            "/realtime-quotes/subscriptions",
+            json={"symbols": ["005930"]},
+        )
+        assert resp3.status_code == 200
+        assert resp3.json()["subscriptions"] == []
+        assert resp3.json()["connection"]["registered_count"] == 0
 
     def test_subscribe_multiple_symbols(self, client: TestClient) -> None:
         resp = client.post(
@@ -67,6 +78,15 @@ class TestSubscribe:
 
     def test_subscribe_invalid_symbol_returns_422(self, client: TestClient) -> None:
         resp = client.post("/realtime-quotes/subscriptions", json={"symbols": ["ABC"]})
+        assert resp.status_code == 422, resp.text
+
+    def test_subscribe_etn_prefix_returns_422(self, client: TestClient) -> None:
+        """ETN codes (``Q`` prefix) are out of scope for this 국내주식 screen."""
+        resp = client.post("/realtime-quotes/subscriptions", json={"symbols": ["Q00001"]})
+        assert resp.status_code == 422, resp.text
+
+    def test_subscribe_wrong_length_returns_422(self, client: TestClient) -> None:
+        resp = client.post("/realtime-quotes/subscriptions", json={"symbols": ["12345"]})
         assert resp.status_code == 422, resp.text
 
     def test_subscribe_empty_list_returns_422(self, client: TestClient) -> None:

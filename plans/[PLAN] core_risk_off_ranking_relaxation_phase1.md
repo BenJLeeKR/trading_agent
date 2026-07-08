@@ -615,6 +615,161 @@ authoritative 경계는 그대로 유지한다.
 5. 실제 후행 수익률 proxy가
    기존 `core_risk_off_ranking_blocked` 평균보다 나아지는지
 
+### 9.8.1 2026-07-06 ~ 2026-07-07 실측 반영
+
+장후 재집계 기준:
+
+1. `2026-07-06`
+   - `active_sample_count = 21`
+   - `mild_relax = 0`
+   - `moderate_relax = 0`
+   - `deep_negative = 7`
+   - `unknown = 14`
+2. `2026-07-07`
+   - `active_sample_count = 28`
+   - `mild_relax = 0`
+   - `moderate_relax = 0`
+   - `deep_negative = 14`
+   - `unknown = 14`
+
+핵심 진단:
+
+1. `moderate_gate_bucket`는 active row 전부가
+   `signal_window_miss`에 머물렀다.
+2. 즉,
+   - `entry_below_0_12`
+   - `ranking_below_0_26`
+   - `activity_blocked`
+   - `strategy_blocked`
+   는 현재 병목이 아니다.
+3. `blocking_reason`은 대부분
+   `overall_below_mild_floor`였고,
+   일부 과거 row는 `overall_missing`이었다.
+
+결론:
+
+- 현재 단계에서 `moderate_relax` 진입률을 높이기 위해
+  `ranking_score`나 `shadow_activity_pass`를 먼저 완화하는 것은
+  순서가 아니다.
+- 우선순위는
+  `overall / slow` shadow floor 관측 완화다.
+
+### 9.8.2 다음 shadow 완화안
+
+authoritative 경계는 유지하고,
+다음 실험은 shadow 진단층에서만 적용한다.
+
+#### 안 A. mild shadow floor 관측 완화
+
+목적:
+
+- 현재 `overall_below_mild_floor`에 몰리는 active row를
+  `mild_relax` 또는 `moderate_relax` 관측군으로
+  조금 더 이동시켜 표본을 만든다.
+
+변경안:
+
+1. `mild_relax` shadow 관측 경계
+   - 기존:
+     - `overall >= -0.10`
+     - `slow >= -0.15`
+   - shadow 후보안:
+     - `overall >= -0.15`
+     - `slow >= -0.15`
+
+2. `moderate_relax` shadow 관측 경계
+   - 기존:
+     - `overall >= -0.25`
+     - `slow >= -0.25`
+     - `entry_score >= 0.12`
+     - `ranking_score >= 0.26`
+     - `activity_pass`
+     - `strategy_pass`
+   - 유지:
+     - `slow >= -0.25`
+     - `entry_score >= 0.12`
+     - `ranking_score >= 0.26`
+     - `activity_pass`
+     - `strategy_pass`
+   - shadow 후보안:
+     - `overall >= -0.20`
+
+의도:
+
+- `slow`는 그대로 두고
+  `overall`만 소폭 완화해
+  과도한 negative drift row 유입을 최소화한다.
+
+#### 안 B. dual report 방식
+
+실험 리스크를 줄이기 위해
+기존 floor report를 바꾸지 않고
+동시에 `shadow_floor_relax_v2`를 추가 관측한다.
+
+추가 metadata 기준:
+
+1. `shadow_floor_relax_v2_bucket`
+2. `shadow_floor_relax_v2_reason_codes`
+3. `shadow_floor_relax_v2_overall_min`
+4. `shadow_floor_relax_v2_slow_min`
+
+이 방식이면:
+
+- 기존 `shadow_floor_bucket` historical continuity 유지
+- 새 완화안의 표본 수와 후행 proxy를 분리 관측 가능
+
+#### 안 C. `overall floor` 추가 완화 `v3`
+
+`v2`를 historical backfill까지 포함해 재집계한 결과,
+`2026-07-06`, `2026-07-07` active row에서
+`mild_relax / moderate_relax`가 여전히 `0건`이었다.
+
+즉, 당시 표본은
+
+1. `overall_missing`
+2. `overall <= -0.25`
+
+중 하나에 몰려 있었고,
+`v2`의 `overall >= -0.15` / `>= -0.20`만으로는
+표본이 늘지 않았다.
+
+따라서 다음 shadow 관측은
+`slow`는 그대로 두고
+`overall`만 한 단계 더 완화한 `v3`를 병렬 기록한다.
+
+추가 metadata:
+
+1. `shadow_floor_relax_v3_bucket`
+2. `shadow_floor_relax_v3_reason_codes`
+3. `shadow_floor_relax_v3_mild_overall_min`
+4. `shadow_floor_relax_v3_mild_slow_min`
+5. `shadow_floor_relax_v3_moderate_overall_min`
+6. `shadow_floor_relax_v3_moderate_slow_min`
+
+기준:
+
+- `mild_relax_v3`
+  - `overall >= -0.20`
+  - `slow >= -0.15`
+- `moderate_relax_v3`
+  - `overall >= -0.25`
+  - `slow >= -0.25`
+  - `entry_score >= 0.12`
+  - `ranking_score >= 0.26`
+  - `activity_pass = true`
+  - `strategy_pass = true`
+
+#### 비채택안
+
+이번 단계에서 아래는 채택하지 않는다.
+
+1. `slow` floor 동시 완화
+   - 현재 병목이 `overall` 쪽인지 먼저 분리해야 한다.
+2. `entry_score / ranking_score` 완화 선행
+   - 아직 그 gate까지 도달한 표본이 없다.
+3. `activity_pass` 완화 선행
+   - 현재 실측에서는 activity gate가 1차 병목이 아니다.
+
 ### 9.9 승격 기준
 
 authoritative 적용 후보는
@@ -631,6 +786,13 @@ authoritative 적용 후보는
 bucket B는
 bucket A가 충분히 검증된 뒤에만
 검토한다.
+
+`v3`는 authoritative 승격안이 아니라
+순수 shadow 계측안이다.
+따라서 `v3`에서 표본이 생기더라도
+바로 주문 규칙에 반영하지 않고,
+최소 1거래일 이상 추가 관측 후
+후행 proxy와 churn 부작용을 비교한다.
 
 ## 8. 비채택안
 

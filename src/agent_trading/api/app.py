@@ -11,6 +11,7 @@ Usage::
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import AsyncIterator
@@ -29,6 +30,8 @@ except ImportError:
 
 from agent_trading.api.security import configure_security, require_viewer
 
+logger = logging.getLogger(__name__)
+
 _VALID_ROLES = frozenset({"viewer", "admin"})
 
 
@@ -40,6 +43,7 @@ def create_app(
     auth_token: str | None = None,
     auth_role: str = "viewer",
     broker_adapter: object | None = None,
+    realtime_quote_source: object | None = None,
 ) -> FastAPI:
     """Create a configured FastAPI application.
 
@@ -60,6 +64,16 @@ def create_app(
     auth_role:
         Role assigned to authenticated principals (``"viewer"`` or ``"admin"``).
         Defaults to ``"viewer"``.
+    realtime_quote_source:
+        An **unconnected** ``KisRealtimeQuoteSource`` instance for the
+        "실시간 현재가" screen (see
+        ``runtime.bootstrap.build_realtime_quote_source()``), or ``None``.
+        When ``None`` (default — used by every existing caller/test), the
+        screen runs on ``InMemoryMockQuoteSource`` — no KIS credentials, no
+        network calls. When a ``KisRealtimeQuoteSource`` is passed, the
+        ``lifespan`` attempts ``await realtime_quote_source.connect()`` at
+        startup; if that fails (bad credentials, network down), it logs and
+        falls back to the mock source rather than failing app startup.
 
     Returns
     -------
@@ -104,36 +118,67 @@ def create_app(
         # Store broker adapter for /broker-capacity inspection endpoint
         _app.state.broker_adapter = broker_adapter
 
-        # Realtime quote source for /realtime-quotes/* (Phase 1: in-memory
-        # mock, no KIS WebSocket connection — see realtime_quote_source.py).
-        # A fresh instance per app avoids state bleeding across tests/processes.
+        # Realtime quote source for /realtime-quotes/* — see
+        # realtime_quote_source.py / kis_realtime_quote_source.py.
+        #
+        # - realtime_quote_source is None (default, every existing caller)
+        #   → InMemoryMockQuoteSource. No KIS credentials, no network calls.
+        # - realtime_quote_source is a KisRealtimeQuoteSource (only when
+        #   runtime.bootstrap.build_realtime_quote_source() found
+        #   KIS_REALTIME_QUOTE_APP_KEY/_APP_SECRET configured, via
+        #   create_app_from_env()) → attempt to connect; on any failure,
+        #   fall back to mock so a bad/unreachable realtime-quote credential
+        #   never prevents the whole API from starting.
+        #
+        # A fresh mock instance per app avoids state bleeding across
+        # tests/processes.
         from agent_trading.services.realtime_quote_source import InMemoryMockQuoteSource
 
-        _app.state.realtime_quote_source = InMemoryMockQuoteSource()
-
-        if repos is not None:
-            # Explicit repos injected — caller has full control.
-            _app.state.repos = repos
-            _app.state.runtime_mode = runtime_mode
-            yield
-            return
-
-        if runtime_mode == "postgres":
-            from agent_trading.db.connection import DatabaseConfig, close_pool, create_pool
-
-            db_config = DatabaseConfig()
-            await create_pool(db_config)
-            _app.state._db_config = db_config
-            _app.state.runtime_mode = "postgres"
-            try:
-                yield
-            finally:
-                await close_pool()
+        if realtime_quote_source is None:
+            _app.state.realtime_quote_source = InMemoryMockQuoteSource()
+            logger.info("realtime_quote_source=mock (no KIS credentials configured)")
         else:
-            # Default in-memory
-            _app.state.repos = build_in_memory_repositories()
-            _app.state.runtime_mode = "in_memory"
-            yield
+            try:
+                await realtime_quote_source.connect()
+                _app.state.realtime_quote_source = realtime_quote_source
+                logger.info("realtime_quote_source=kis_live (connected)")
+            except Exception:
+                logger.exception(
+                    "Failed to connect KIS realtime-quote source at startup — "
+                    "falling back to mock. /realtime-quotes/* will serve mock data."
+                )
+                _app.state.realtime_quote_source = InMemoryMockQuoteSource()
+
+        try:
+            if repos is not None:
+                # Explicit repos injected — caller has full control.
+                _app.state.repos = repos
+                _app.state.runtime_mode = runtime_mode
+                yield
+                return
+
+            if runtime_mode == "postgres":
+                from agent_trading.db.connection import DatabaseConfig, close_pool, create_pool
+
+                db_config = DatabaseConfig()
+                await create_pool(db_config)
+                _app.state._db_config = db_config
+                _app.state.runtime_mode = "postgres"
+                try:
+                    yield
+                finally:
+                    await close_pool()
+            else:
+                # Default in-memory
+                _app.state.repos = build_in_memory_repositories()
+                _app.state.runtime_mode = "in_memory"
+                yield
+        finally:
+            # Only the live KIS-backed source needs an explicit disconnect —
+            # the mock source holds no network resources.
+            active_source = _app.state.realtime_quote_source
+            if active_source is realtime_quote_source and hasattr(active_source, "aclose"):
+                await active_source.aclose()
 
     app = FastAPI(
         title="Agent Trading Inspection API",
@@ -353,29 +398,50 @@ def create_app_from_env() -> FastAPI:
     subscription snapshots.  If KIS credentials are missing or the adapter
     cannot be constructed, a warning is logged and the API server continues
     without a broker adapter (``/broker-capacity`` returns 503).
+
+    Realtime quote source
+    ----------------------
+    Independent of ``API_RUNTIME_MODE`` (unlike the broker adapter above),
+    this factory attempts to build a KIS-backed realtime-quote source for
+    the "실시간 현재가" screen whenever ``KIS_REALTIME_QUOTE_APP_KEY``/
+    ``_APP_SECRET`` are set — a **completely separate** credential from the
+    trading account and ``KIS_LIVE_INFO_*``. When unset (the default), the
+    screen runs on the in-memory mock source; no KIS credentials are
+    required for the rest of the API to function.
     """
     import os
 
     from agent_trading.config.settings import AppSettings
-    from agent_trading.runtime.bootstrap import build_api_broker_adapter
+    from agent_trading.runtime.bootstrap import (
+        build_api_broker_adapter,
+        build_realtime_quote_source,
+    )
 
     mode = os.getenv("API_RUNTIME_MODE", "in_memory")
     token = os.getenv("INSPECTION_API_TOKEN")
     role = os.getenv("INSPECTION_API_ROLE", "viewer")
+
+    settings = AppSettings()
 
     # Build broker adapter in Postgres mode only.
     # In-memory mode is for development/testing where KIS credentials may not
     # be available — skip adapter construction entirely.
     broker_adapter: object | None = None
     if mode == "postgres":
-        settings = AppSettings()
         broker_adapter = build_api_broker_adapter(settings)
+
+    # Realtime-quote source is orthogonal to runtime_mode — build it whenever
+    # its dedicated credentials are configured, regardless of in_memory vs
+    # postgres. Returns None (→ mock fallback in create_app's lifespan) when
+    # KIS_REALTIME_QUOTE_APP_KEY/_APP_SECRET are unset.
+    realtime_quote_source = build_realtime_quote_source(settings)
 
     return create_app(
         runtime_mode=mode,
         auth_token=token,
         auth_role=role,
         broker_adapter=broker_adapter,
+        realtime_quote_source=realtime_quote_source,
     )
 
 

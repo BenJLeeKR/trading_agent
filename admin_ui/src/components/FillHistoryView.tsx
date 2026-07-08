@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import type { Column } from "./common/DataTable";
 import { DataTable } from "./common/DataTable";
 import { LoadingSpinner } from "./common/LoadingSpinner";
@@ -42,6 +43,7 @@ function statusVariant(status: string | null): "success" | "warning" | "error" |
 }
 
 export default function FillHistoryView() {
+  const navigate = useNavigate();
   const [targetDate, setTargetDate] = useState(todayKst());
   const [rows, setRows] = useState<FillHistoryItem[]>([]);
   const [runSummary, setRunSummary] = useState<FillSyncRunHealthSummary | null>(null);
@@ -81,7 +83,23 @@ export default function FillHistoryView() {
   const latestRun = latestRuns[0] ?? null;
   const columns: Column<FillHistoryItem>[] = [
     { key: "account_alias", header: "계좌", render: (row) => row.account_alias ?? row.account_code ?? row.account_id },
-    { key: "symbol", header: "종목", render: (row) => row.symbol },
+    {
+      key: "symbol",
+      header: "종목",
+      render: (row) => (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            navigate(`/operations/realtime-quotes?symbol=${encodeURIComponent(row.symbol)}`);
+          }}
+          title="실시간 현재가 보기"
+          className="text-sm font-medium text-[#3b82f6] hover:text-[#2563eb] hover:underline transition-colors"
+        >
+          {row.symbol}
+        </button>
+      ),
+    },
     {
       key: "instrument_name",
       header: "종목명",

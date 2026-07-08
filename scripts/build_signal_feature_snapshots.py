@@ -254,6 +254,7 @@ async def _run(args: argparse.Namespace) -> int:
             batch_run_id=saved_batch_run.signal_feature_batch_run_id,
             loaded=loaded,
             result=result,
+            persist_snapshots=not args.dry_run,
             skipped_items=skipped_items,
             raw_row_by_symbol=raw_row_by_symbol,
             instrument_by_key=instrument_by_key,
@@ -293,6 +294,7 @@ def _build_batch_run_entity(
         or trigger_type
         or ("manual" if dry_run else "scheduler")
     )
+    quality_summary = _build_snapshot_quality_summary(result.snapshots)
     return SignalFeatureBatchRunEntity(
         signal_feature_batch_run_id=uuid4(),
         business_date=_resolve_business_date(loaded),
@@ -333,6 +335,7 @@ def _build_batch_run_entity(
                 for item in fetch_error_rows[:20]
                 if item.get("symbol")
             ],
+            "snapshot_quality": quality_summary,
         },
         started_at=started_at,
         completed_at=datetime.now(timezone.utc),
@@ -344,6 +347,7 @@ def _build_batch_run_items(
     batch_run_id: UUID,
     loaded: LoadedSignalInput,
     result: SignalFeatureBatchResult,
+    persist_snapshots: bool,
     skipped_items: Sequence[SignalFeatureBatchRunItemEntity],
     raw_row_by_symbol: dict[tuple[str, str, str], RawSignalInputRow],
     instrument_by_key: dict[tuple[str, str, str], InstrumentEntity],
@@ -366,6 +370,7 @@ def _build_batch_run_items(
             else None
         )
         if snapshot is not None:
+            diagnostics = _snapshot_diagnostics(snapshot)
             items.append(
                 SignalFeatureBatchRunItemEntity(
                     signal_feature_batch_run_item_id=uuid4(),
@@ -376,9 +381,13 @@ def _build_batch_run_items(
                     timeframe=raw_row.timeframe,
                     feature_set_version=raw_row.feature_set_version,
                     status="persisted" if result.persisted > 0 else "computed",
-                    signal_feature_snapshot_id=snapshot.signal_feature_snapshot_id,
-                    snapshot_at=snapshot.snapshot_at,
-                    metadata_json={},
+                    signal_feature_snapshot_id=(
+                        snapshot.signal_feature_snapshot_id
+                        if persist_snapshots
+                        else None
+                    ),
+                    snapshot_at=snapshot.snapshot_at if persist_snapshots else None,
+                    metadata_json=diagnostics,
                 )
             )
     for skipped_item in skipped_items:
@@ -522,6 +531,92 @@ def _parse_batch_error(error: str) -> tuple[str, str, str, str, str]:
     if len(parts) == 2:
         return parts[0], "KRX", "1d", "compute_error", parts[1]
     return error, "KRX", "1d", "compute_error", error
+
+
+def _snapshot_diagnostics(snapshot: Any) -> dict[str, object]:
+    component_scores_json = (
+        dict(snapshot.component_scores_json)
+        if isinstance(snapshot.component_scores_json, dict)
+        else {}
+    )
+    diagnostics = component_scores_json.get("diagnostics")
+    normalized_diagnostics = (
+        dict(diagnostics)
+        if isinstance(diagnostics, dict)
+        else {}
+    )
+    return {
+        "overall_score": (
+            float(snapshot.overall_score) if snapshot.overall_score is not None else None
+        ),
+        "fast_score": float(snapshot.fast_score) if snapshot.fast_score is not None else None,
+        "slow_score": float(snapshot.slow_score) if snapshot.slow_score is not None else None,
+        "bar_count": snapshot.bar_count,
+        "overall_bucket": normalized_diagnostics.get("overall_bucket"),
+        "fast_bucket": normalized_diagnostics.get("fast_bucket"),
+        "slow_bucket": normalized_diagnostics.get("slow_bucket"),
+        "missing_feature_flags": list(
+            normalized_diagnostics.get("missing_feature_flags", [])
+        ),
+        "input_quality_flags": list(
+            normalized_diagnostics.get("input_quality_flags", [])
+        ),
+        "reason_code_count": normalized_diagnostics.get("reason_code_count"),
+    }
+
+
+def _build_snapshot_quality_summary(
+    snapshots: Sequence[Any],
+) -> dict[str, object]:
+    overall_bucket_counts: dict[str, int] = {}
+    missing_feature_flag_counts: dict[str, int] = {}
+    input_quality_flag_counts: dict[str, int] = {}
+    reason_code_counts: dict[str, int] = {}
+    overall_missing_count = 0
+    short_history_count = 0
+    turnover_feature_missing_count = 0
+
+    for snapshot in snapshots:
+        diagnostics = _snapshot_diagnostics(snapshot)
+        overall_bucket = str(diagnostics.get("overall_bucket") or "unknown")
+        overall_bucket_counts[overall_bucket] = overall_bucket_counts.get(overall_bucket, 0) + 1
+        if diagnostics.get("overall_score") is None:
+            overall_missing_count += 1
+        if int(diagnostics.get("bar_count") or 0) < 60:
+            short_history_count += 1
+        missing_feature_flags = [
+            str(flag) for flag in diagnostics.get("missing_feature_flags", []) if str(flag)
+        ]
+        input_quality_flags = [
+            str(flag) for flag in diagnostics.get("input_quality_flags", []) if str(flag)
+        ]
+        for flag in missing_feature_flags:
+            missing_feature_flag_counts[flag] = missing_feature_flag_counts.get(flag, 0) + 1
+        for flag in input_quality_flags:
+            input_quality_flag_counts[flag] = input_quality_flag_counts.get(flag, 0) + 1
+        if (
+            "missing_average_turnover_20d" in missing_feature_flags
+            or "missing_turnover_surge_ratio" in missing_feature_flags
+        ):
+            turnover_feature_missing_count += 1
+        for reason_code in getattr(snapshot, "reason_codes", []) or []:
+            code = str(reason_code)
+            if not code:
+                continue
+            reason_code_counts[code] = reason_code_counts.get(code, 0) + 1
+
+    deep_negative_count = int(overall_bucket_counts.get("deep_negative", 0))
+    return {
+        "snapshot_count": len(snapshots),
+        "overall_missing_count": overall_missing_count,
+        "deep_negative_count": deep_negative_count,
+        "short_history_count": short_history_count,
+        "turnover_feature_missing_count": turnover_feature_missing_count,
+        "overall_bucket_counts": overall_bucket_counts,
+        "missing_feature_flag_counts": missing_feature_flag_counts,
+        "input_quality_flag_counts": input_quality_flag_counts,
+        "reason_code_counts": reason_code_counts,
+    }
 
 
 def _print_result(

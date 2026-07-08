@@ -336,6 +336,62 @@ def _resolve_kis_disclosure_token_cache_enabled() -> bool:
 
 
 # ---------------------------------------------------------------------------
+# KIS realtime-quote screen (신규 전용 계좌/앱키 — 트레이딩 계좌·KIS_LIVE_INFO_*와 완전 분리)
+# ---------------------------------------------------------------------------
+#
+# "실시간 현재가 조회" Admin UI 화면(plan_docs/detailed_design/
+# 11_kis_realtime_quote_operations_screen.md) 전용 자격증명이다. 이 계좌는
+# 오직 국내주식 실시간 체결가(H0STCNT0)/호가(H0STASP0) 구독에만 쓰이며,
+# 기존 트레이딩 계좌(KIS_APP_KEY/KIS_API_KEY)나 공시 전용 계좌
+# (KIS_LIVE_INFO_*)의 세션/budget과 절대 공유하지 않는다.
+
+
+def _resolve_kis_realtime_quote_app_key() -> str:
+    """Resolve the realtime-quote screen's dedicated appkey from
+    ``KIS_REALTIME_QUOTE_APP_KEY``. Empty string when unset (mock fallback)."""
+    return os.getenv("KIS_REALTIME_QUOTE_APP_KEY", "")
+
+
+def _resolve_kis_realtime_quote_app_secret() -> str:
+    """Resolve the realtime-quote screen's dedicated appsecret from
+    ``KIS_REALTIME_QUOTE_APP_SECRET``. Empty string when unset (mock fallback)."""
+    return os.getenv("KIS_REALTIME_QUOTE_APP_SECRET", "")
+
+
+def _resolve_kis_realtime_quote_base_url() -> str:
+    """Resolve the realtime-quote screen's REST base URL.
+
+    Default matches KIS 실전 도메인 (``029_주식현재가_시세.md``,
+    ``002_실시간_(웹소켓)_접속키_발급.md``). This screen is Live-only — no
+    모의투자 fallback URL is provided.
+    """
+    return os.getenv("KIS_REALTIME_QUOTE_BASE_URL", "https://openapi.koreainvestment.com:9443")
+
+
+def _resolve_kis_realtime_quote_ws_url() -> str:
+    """Resolve the realtime-quote screen's WebSocket URL.
+
+    Default matches KIS 실전 도메인 for KRX 체결가/호가
+    (``172_국내주식_실시간체결가_(KRX).md``, ``178_국내주식_실시간호가_(KRX).md``).
+    """
+    return os.getenv("KIS_REALTIME_QUOTE_WS_URL", "ws://ops.koreainvestment.com:21000")
+
+
+def _resolve_kis_realtime_quote_approval_cache_path() -> str:
+    """Resolve the realtime-quote screen's approval-key file cache path.
+
+    Deliberately distinct from the trading account's
+    ``.cache/kis_rest_approval_key.json`` and the disclosure account's
+    ``.cache/kis_disclosure_token.json`` — separate file *and* separate
+    credential fingerprint together guarantee no cross-account cache bleed.
+    """
+    return os.getenv(
+        "KIS_REALTIME_QUOTE_APPROVAL_CACHE_PATH",
+        ".cache/kis_realtime_quote_approval_key.json",
+    )
+
+
+# ---------------------------------------------------------------------------
 # NAVER Search API settings (news search)
 # ---------------------------------------------------------------------------
 
@@ -474,6 +530,24 @@ class AppSettings:
 
     kis_disclosure_token_cache_enabled: bool = field(default_factory=_resolve_kis_disclosure_token_cache_enabled)
     """Disclosure token cache 사용 여부. False면 매번 재인증."""
+
+    # ---- KIS realtime-quote screen (신규 전용 계좌/앱키, 트레이딩/공시 계좌와 분리) ----
+    kis_realtime_quote_app_key: str = field(default_factory=_resolve_kis_realtime_quote_app_key)
+    """실시간 현재가 조회 화면 전용 appkey. 빈 문자열이면 mock source로 동작."""
+
+    kis_realtime_quote_app_secret: str = field(default_factory=_resolve_kis_realtime_quote_app_secret)
+    """실시간 현재가 조회 화면 전용 appsecret. 빈 문자열이면 mock source로 동작."""
+
+    kis_realtime_quote_base_url: str = field(default_factory=_resolve_kis_realtime_quote_base_url)
+    """실시간 현재가 조회 화면 전용 REST base URL (Live 전용)."""
+
+    kis_realtime_quote_ws_url: str = field(default_factory=_resolve_kis_realtime_quote_ws_url)
+    """실시간 현재가 조회 화면 전용 WebSocket URL (Live 전용)."""
+
+    kis_realtime_quote_approval_cache_path: str = field(
+        default_factory=_resolve_kis_realtime_quote_approval_cache_path,
+    )
+    """실시간 현재가 조회 화면 전용 approval key 파일 캐시 경로 (트레이딩/공시 계좌와 분리)."""
 
     # ---- KIS snapshot sync stale threshold -----------------------------------
     kis_snapshot_stale_threshold_seconds: int = field(

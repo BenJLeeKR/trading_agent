@@ -14,6 +14,14 @@ _CORE_RISK_OFF_SHADOW_MIN_SCORE = 0.22
 _CORE_RISK_OFF_SHADOW_TOP_K_CAP = 2
 _CORE_RISK_OFF_SHADOW_ACTIVITY_MIN = 1.10
 _CORE_RISK_OFF_SHADOW_ENTRY_OBSERVE_MIN = 0.05
+_CORE_RISK_OFF_SHADOW_V2_MILD_OVERALL_MIN = -0.15
+_CORE_RISK_OFF_SHADOW_V2_MILD_SLOW_MIN = -0.15
+_CORE_RISK_OFF_SHADOW_V2_MODERATE_OVERALL_MIN = -0.20
+_CORE_RISK_OFF_SHADOW_V2_MODERATE_SLOW_MIN = -0.25
+_CORE_RISK_OFF_SHADOW_V3_MILD_OVERALL_MIN = -0.20
+_CORE_RISK_OFF_SHADOW_V3_MILD_SLOW_MIN = -0.15
+_CORE_RISK_OFF_SHADOW_V3_MODERATE_OVERALL_MIN = -0.25
+_CORE_RISK_OFF_SHADOW_V3_MODERATE_SLOW_MIN = -0.25
 _EVENT_OVERLAY_MODE = "no_bonus_v1"
 _EVENT_OVERLAY_SHADOW_MODE = "shadow_event_lane_v1"
 _EVENT_OVERLAY_SHADOW_BONUS = 0.06
@@ -629,24 +637,29 @@ def _classify_core_risk_off_shadow_floor_bucket(
     ranking_score: float | None,
     shadow_activity_pass: bool,
     shadow_strategy_pass: bool,
+    mild_overall_min: float = -0.10,
+    mild_slow_min: float = -0.15,
+    moderate_overall_min: float = -0.25,
+    moderate_slow_min: float = -0.25,
+    reason_prefix: str = "shadow_core_risk_off_floor",
 ) -> tuple[str, bool, tuple[str, ...]]:
     if overall is not None and overall >= 0.0 and slow is not None and slow >= -0.05:
         return (
             "strict_pass",
             True,
-            ("shadow_core_risk_off_floor_strict_pass",),
+            (f"{reason_prefix}_strict_pass",),
         )
-    if overall is not None and overall >= -0.10 and slow is not None and slow >= -0.15:
+    if overall is not None and overall >= mild_overall_min and slow is not None and slow >= mild_slow_min:
         return (
             "mild_relax",
             True,
-            ("shadow_core_risk_off_floor_mild_relax_pass",),
+            (f"{reason_prefix}_mild_relax_pass",),
         )
     if (
         overall is not None
-        and overall >= -0.25
+        and overall >= moderate_overall_min
         and slow is not None
-        and slow >= -0.25
+        and slow >= moderate_slow_min
         and entry_score >= 0.12
         and ranking_score is not None
         and ranking_score >= 0.26
@@ -656,12 +669,12 @@ def _classify_core_risk_off_shadow_floor_bucket(
         return (
             "moderate_relax",
             True,
-            ("shadow_core_risk_off_floor_moderate_relax_pass",),
+            (f"{reason_prefix}_moderate_relax_pass",),
         )
     return (
         "deep_negative",
         False,
-        ("shadow_core_risk_off_floor_deep_negative",),
+        (f"{reason_prefix}_deep_negative",),
     )
 
 
@@ -723,6 +736,40 @@ def _build_core_risk_off_shadow_experiment_metadata(
         shadow_activity_pass=shadow_activity_pass,
         shadow_strategy_pass=shadow_strategy_pass,
     )
+    (
+        shadow_floor_relax_v2_bucket,
+        shadow_floor_relax_v2_pass,
+        shadow_floor_relax_v2_reason_codes,
+    ) = _classify_core_risk_off_shadow_floor_bucket(
+        overall=overall,
+        slow=slow,
+        entry_score=entry_score,
+        ranking_score=ranking_score,
+        shadow_activity_pass=shadow_activity_pass,
+        shadow_strategy_pass=shadow_strategy_pass,
+        mild_overall_min=_CORE_RISK_OFF_SHADOW_V2_MILD_OVERALL_MIN,
+        mild_slow_min=_CORE_RISK_OFF_SHADOW_V2_MILD_SLOW_MIN,
+        moderate_overall_min=_CORE_RISK_OFF_SHADOW_V2_MODERATE_OVERALL_MIN,
+        moderate_slow_min=_CORE_RISK_OFF_SHADOW_V2_MODERATE_SLOW_MIN,
+        reason_prefix="shadow_core_risk_off_floor_v2",
+    )
+    (
+        shadow_floor_relax_v3_bucket,
+        shadow_floor_relax_v3_pass,
+        shadow_floor_relax_v3_reason_codes,
+    ) = _classify_core_risk_off_shadow_floor_bucket(
+        overall=overall,
+        slow=slow,
+        entry_score=entry_score,
+        ranking_score=ranking_score,
+        shadow_activity_pass=shadow_activity_pass,
+        shadow_strategy_pass=shadow_strategy_pass,
+        mild_overall_min=_CORE_RISK_OFF_SHADOW_V3_MILD_OVERALL_MIN,
+        mild_slow_min=_CORE_RISK_OFF_SHADOW_V3_MILD_SLOW_MIN,
+        moderate_overall_min=_CORE_RISK_OFF_SHADOW_V3_MODERATE_OVERALL_MIN,
+        moderate_slow_min=_CORE_RISK_OFF_SHADOW_V3_MODERATE_SLOW_MIN,
+        reason_prefix="shadow_core_risk_off_floor_v3",
+    )
     shadow_topk_candidate = (
         core_risk_off_guard_active
         and ranking_score is not None
@@ -779,6 +826,24 @@ def _build_core_risk_off_shadow_experiment_metadata(
         "shadow_floor_relax_reason_codes": tuple(shadow_floor_relax_reason_codes),
         "shadow_floor_relax_entry_min": 0.12,
         "shadow_floor_relax_ranking_min": 0.26,
+        "shadow_floor_relax_v2_bucket": shadow_floor_relax_v2_bucket,
+        "shadow_floor_relax_v2_pass": shadow_floor_relax_v2_pass,
+        "shadow_floor_relax_v2_reason_codes": tuple(shadow_floor_relax_v2_reason_codes),
+        "shadow_floor_relax_v2_mild_overall_min": _CORE_RISK_OFF_SHADOW_V2_MILD_OVERALL_MIN,
+        "shadow_floor_relax_v2_mild_slow_min": _CORE_RISK_OFF_SHADOW_V2_MILD_SLOW_MIN,
+        "shadow_floor_relax_v2_moderate_overall_min": (
+            _CORE_RISK_OFF_SHADOW_V2_MODERATE_OVERALL_MIN
+        ),
+        "shadow_floor_relax_v2_moderate_slow_min": _CORE_RISK_OFF_SHADOW_V2_MODERATE_SLOW_MIN,
+        "shadow_floor_relax_v3_bucket": shadow_floor_relax_v3_bucket,
+        "shadow_floor_relax_v3_pass": shadow_floor_relax_v3_pass,
+        "shadow_floor_relax_v3_reason_codes": tuple(shadow_floor_relax_v3_reason_codes),
+        "shadow_floor_relax_v3_mild_overall_min": _CORE_RISK_OFF_SHADOW_V3_MILD_OVERALL_MIN,
+        "shadow_floor_relax_v3_mild_slow_min": _CORE_RISK_OFF_SHADOW_V3_MILD_SLOW_MIN,
+        "shadow_floor_relax_v3_moderate_overall_min": (
+            _CORE_RISK_OFF_SHADOW_V3_MODERATE_OVERALL_MIN
+        ),
+        "shadow_floor_relax_v3_moderate_slow_min": _CORE_RISK_OFF_SHADOW_V3_MODERATE_SLOW_MIN,
         "shadow_topk_candidate": shadow_topk_candidate,
         "shadow_reason_codes": tuple(shadow_reason_codes),
         "shadow_group_size": None,

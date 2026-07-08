@@ -107,11 +107,81 @@ def build_signal_feature_entity(
         fast_score=_decimal_or_none(score_card.fast_score),
         slow_score=_decimal_or_none(score_card.slow_score),
         overall_score=_decimal_or_none(score_card.overall_score),
-        component_scores_json={
-            key: float(value) for key, value in score_card.component_scores.items()
-        },
+        component_scores_json=_build_component_scores_payload(
+            features=features,
+            score_card=score_card,
+        ),
         reason_codes=list(score_card.reason_codes) or None,
     )
+
+
+def _build_component_scores_payload(
+    *,
+    features: TechnicalFeatureSnapshot,
+    score_card: SignalScoreCard,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        key: float(value) for key, value in score_card.component_scores.items()
+    }
+    payload["diagnostics"] = _build_score_diagnostics(
+        features=features,
+        score_card=score_card,
+    )
+    return payload
+
+
+def _build_score_diagnostics(
+    *,
+    features: TechnicalFeatureSnapshot,
+    score_card: SignalScoreCard,
+) -> dict[str, object]:
+    missing_feature_flags: list[str] = []
+    input_quality_flags: list[str] = []
+
+    if features.bar_count < 60:
+        input_quality_flags.append("short_history_lt_60")
+    if features.sma_60 is None:
+        missing_feature_flags.append("missing_sma_60")
+    if features.price_vs_sma_60_pct is None:
+        missing_feature_flags.append("missing_price_vs_sma_60_pct")
+    if features.return_3m_pct is None:
+        missing_feature_flags.append("missing_return_3m_pct")
+    if features.average_turnover_20d is None:
+        missing_feature_flags.append("missing_average_turnover_20d")
+        input_quality_flags.append("turnover_history_missing")
+    if features.turnover_surge_ratio is None:
+        missing_feature_flags.append("missing_turnover_surge_ratio")
+        input_quality_flags.append("turnover_surge_unavailable")
+    if features.volume_surge_ratio is None:
+        missing_feature_flags.append("missing_volume_surge_ratio")
+    if features.rsi_14 is None:
+        missing_feature_flags.append("missing_rsi_14")
+    if features.volatility_20d_pct is None:
+        missing_feature_flags.append("missing_volatility_20d_pct")
+    if features.atr_14_pct is None:
+        missing_feature_flags.append("missing_atr_14_pct")
+
+    return {
+        "bar_count": features.bar_count,
+        "overall_bucket": _classify_score_bucket(score_card.overall_score),
+        "fast_bucket": _classify_score_bucket(score_card.fast_score),
+        "slow_bucket": _classify_score_bucket(score_card.slow_score),
+        "missing_feature_flags": missing_feature_flags,
+        "input_quality_flags": input_quality_flags,
+        "reason_code_count": len(score_card.reason_codes),
+    }
+
+
+def _classify_score_bucket(score: float | None) -> str:
+    if score is None:
+        return "missing"
+    if score >= 0.0:
+        return "non_negative"
+    if score >= -0.10:
+        return "mild_negative"
+    if score >= -0.25:
+        return "moderate_negative"
+    return "deep_negative"
 
 
 def _to_after_market_snapshot_at(as_of: datetime) -> datetime:

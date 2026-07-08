@@ -250,6 +250,351 @@ V1 정의:
 세 변경안을 동일 기간 / 동일 표본에서
 후행 수익률 proxy 기준으로 동시에 비교할 수 있다.
 
+### 3.3.1 `core_risk_off_floor_diagnostics` 추가 설계
+
+배경:
+
+- `core_risk_off_floor_items`만으로는
+  `mild_relax / moderate_relax` 표본이 왜 0인지 알 수 없다.
+- 실제 bucket은
+  [`src/agent_trading/services/deterministic_trigger_engine.py`](../src/agent_trading/services/deterministic_trigger_engine.py)의
+  `_classify_core_risk_off_shadow_floor_bucket(...)`에서
+  `overall / slow / entry_score / ranking_score / activity / strategy`
+  6개 축으로 결정된다.
+- 따라서 장후 attribution에는
+  bucket 결과뿐 아니라
+  bucket 진입 직전의 탈락 분해 정보가 함께 있어야 한다.
+
+목표:
+
+1. `mild_relax / moderate_relax / deep_negative`의 표본 수 비교
+2. `mild_relax / moderate_relax` 미진입 원인의 분해
+3. 각 탈락군의 후행 수익률 proxy 비교
+4. 이후 authoritative 완화 여부 판단 근거 확보
+
+#### 출력 JSON 계약
+
+[`scripts/analyze_trigger_proxy_attribution.py`](../scripts/analyze_trigger_proxy_attribution.py)
+payload에 아래 섹션을 추가한다.
+
+1. `core_risk_off_floor_diagnostics`
+   - `sample_count`
+   - `active_sample_count`
+   - `bucket_counts`
+   - `overall_band_items`
+   - `slow_band_items`
+   - `moderate_gate_items`
+   - `blocking_reason_items`
+   - `bucket_path_items`
+   - `samples`
+
+2. `core_risk_off_floor_diagnostics.samples`
+   - 목적:
+     운영자가 개별 symbol-day 레코드의 진입/탈락 경로를
+     직접 검토할 수 있게 한다.
+   - 필드:
+     - `trade_date`
+     - `symbol`
+     - `source_type`
+     - `core_risk_off_active`
+     - `shadow_floor_bucket`
+     - `shadow_overall_score`
+     - `shadow_slow_score`
+     - `shadow_entry_score`
+     - `shadow_ranking_score`
+     - `shadow_overall_pass`
+     - `shadow_slow_pass`
+     - `shadow_signal_pass`
+     - `shadow_activity_pass`
+     - `shadow_strategy_pass`
+     - `shadow_entry_observe_pass`
+     - `shadow_topk_candidate`
+     - `shadow_topk_selected`
+     - `overall_band`
+     - `slow_band`
+     - `moderate_gate_bucket`
+     - `blocking_reason`
+     - `t1_return_pct`
+     - `t3_return_pct`
+     - `t5_return_pct`
+
+#### 진단용 파생 분류 정의
+
+1. `overall_band`
+   - `strict_non_negative`
+     - `overall >= 0.0`
+   - `mild_window`
+     - `-0.10 <= overall < 0.0`
+   - `moderate_window`
+     - `-0.25 <= overall < -0.10`
+   - `deep_negative`
+     - `overall < -0.25`
+   - `missing`
+     - `overall is None`
+
+2. `slow_band`
+   - `strict_non_negative`
+     - `slow >= -0.05`
+   - `mild_window`
+     - `-0.15 <= slow < -0.05`
+   - `moderate_window`
+     - `-0.25 <= slow < -0.15`
+   - `deep_negative`
+     - `slow < -0.25`
+   - `missing`
+     - `slow is None`
+
+3. `moderate_gate_bucket`
+   - `moderate_ready`
+     - moderate relax 추가 gate까지 모두 통과
+   - `entry_below_0_12`
+   - `ranking_below_0_26`
+   - `activity_blocked`
+   - `strategy_blocked`
+   - `signal_window_miss`
+   - `inactive`
+
+4. `blocking_reason`
+   - active row에 대해
+     floor bucket이 왜 해당 위치에 머물렀는지
+     우선순위 1개 reason으로 축약한다.
+   - 우선순위:
+     1. `inactive`
+     2. `overall_missing`
+     3. `slow_missing`
+     4. `overall_below_mild_floor`
+     5. `slow_below_mild_floor`
+     6. `entry_below_0_12`
+     7. `ranking_below_0_26`
+     8. `activity_blocked`
+     9. `strategy_blocked`
+     10. `mild_relax_pass`
+     11. `moderate_relax_pass`
+     12. `strict_pass`
+
+#### 집계 항목 정의
+
+1. `bucket_counts`
+   - `strict_pass / mild_relax / moderate_relax / deep_negative / unknown / inactive`
+
+2. `overall_band_items`
+   - `overall_band` 기준 aggregate
+   - 각 bucket별
+     `sample_count`, `t1/t3/t5`, `positive_t3_hit_rate`
+
+3. `slow_band_items`
+   - `slow_band` 기준 aggregate
+
+4. `moderate_gate_items`
+   - `moderate_gate_bucket` 기준 aggregate
+   - `moderate_relax` 표본이 없는 원인이
+     `entry / ranking / activity / strategy` 중 무엇인지 확인
+
+5. `blocking_reason_items`
+   - `blocking_reason` 기준 aggregate
+   - 완화 우선순위를 직접 정하는 핵심 지표
+
+6. `bucket_path_items`
+   - `overall_band + slow_band + moderate_gate_bucket`를
+     결합한 문자열 bucket
+   - 예:
+     - `mild_window|mild_window|signal_window_miss`
+     - `moderate_window|moderate_window|activity_blocked`
+     - `strict_non_negative|strict_non_negative|moderate_ready`
+
+#### 코드 수정안
+
+대상 파일:
+
+1. [`scripts/analyze_trigger_proxy_attribution.py`](../scripts/analyze_trigger_proxy_attribution.py)
+2. [`src/agent_trading/services/trigger_proxy_attribution.py`](../src/agent_trading/services/trigger_proxy_attribution.py)
+3. [`tests/services/test_trigger_proxy_attribution.py`](../tests/services/test_trigger_proxy_attribution.py)
+4. [`tests/scripts/test_run_ops_scheduler.py`](../tests/scripts/test_run_ops_scheduler.py)
+
+1. `scripts/analyze_trigger_proxy_attribution.py`
+   - `_load_first_symbol_day_decisions()`에서
+     `core_risk_off_experiment` payload를 이미 읽고 있으므로,
+     추가 DB schema 변경은 필요 없다.
+   - `_run(...)` 내부에서
+     `enriched_rows` 생성 후 아래 helper 호출을 추가한다.
+     - `core_risk_off_floor_diagnostic_rows = build_core_risk_off_floor_diagnostic_rows(enriched_rows)`
+     - `core_risk_off_floor_diagnostics = build_core_risk_off_floor_diagnostics_report(enriched_rows)`
+   - payload에 아래 키를 추가한다.
+     - `core_risk_off_floor_diagnostics`
+     - `core_risk_off_floor_diagnostic_items`
+       필요 시 `samples` 외 row 단위 전체 aggregate bucket용 보조 출력
+
+2. `trigger_proxy_attribution.py`
+   - helper 추가:
+     - `_classify_overall_band(row)`
+     - `_classify_slow_band(row)`
+     - `_classify_core_risk_off_moderate_gate(row)`
+     - `_classify_core_risk_off_blocking_reason(row)`
+     - `build_core_risk_off_floor_diagnostic_rows(rows)`
+     - `build_core_risk_off_floor_diagnostics_report(rows)`
+   - `build_core_risk_off_floor_diagnostic_rows(rows)`는
+     각 row에 아래 파생 필드를 붙인다.
+     - `core_risk_off_active`
+     - `shadow_floor_bucket`
+     - `shadow_overall_score`
+     - `shadow_slow_score`
+     - `shadow_entry_score`
+     - `shadow_ranking_score`
+     - `shadow_overall_pass`
+     - `shadow_slow_pass`
+     - `shadow_signal_pass`
+     - `shadow_activity_pass`
+     - `shadow_strategy_pass`
+     - `shadow_entry_observe_pass`
+     - `shadow_topk_candidate`
+     - `shadow_topk_selected`
+     - `overall_band`
+     - `slow_band`
+     - `moderate_gate_bucket`
+     - `blocking_reason`
+     - `bucket_path`
+   - `build_core_risk_off_floor_diagnostics_report(rows)`는
+     위 파생 row를 기반으로
+     `build_trigger_proxy_aggregate_items(...)`를 재사용해
+     각 diagnostic bucket을 집계한다.
+
+3. `tests/services/test_trigger_proxy_attribution.py`
+   - 추가 테스트:
+     - `overall_band` 분류 경계
+     - `slow_band` 분류 경계
+     - `moderate_gate_bucket` 분류 우선순위
+     - `blocking_reason` 우선순위
+     - diagnostics report가
+       `mild_relax / moderate_relax / deep_negative` 외
+       `entry_below_0_12`, `activity_blocked` 같은
+       하위 원인 bucket을 제대로 집계하는지
+
+4. `tests/scripts/test_run_ops_scheduler.py`
+   - 현재 scheduler summary는
+     `core_risk_off_floor_report`까지만 읽는다.
+   - 장후 운영 요약에 바로 노출할 최소 metric만 추가한다.
+     - `core_risk_off_floor_unknown_count`
+     - `core_risk_off_floor_moderate_gate_activity_blocked_count`
+     - `core_risk_off_floor_moderate_gate_ranking_below_0_26_count`
+   - 단, 이 단계에서는 full diagnostics를
+     `logs/trigger_proxy_attribution_YYYY-MM-DD.json`에서 읽고,
+     scheduler summary에는 핵심 count만 올린다.
+
+#### 운영 해석 기준
+
+1. `mild_relax=0`, `moderate_relax=0`이면서
+   `overall_band=mild_window`가 충분하면
+   - slow floor 또는 moderate gate가 병목이다.
+
+2. `moderate_window` 표본이 충분한데
+   `moderate_gate_bucket=ranking_below_0_26`이 많으면
+   - ranking floor 완화 검토 대상이다.
+
+3. `activity_blocked`가 대부분이면
+   - floor 완화보다
+     `low_relative_activity` 또는
+     `shadow_activity_min` 재검토가 먼저다.
+
+4. `strategy_blocked`가 대부분이면
+   - strategy selection과
+     core risk-off admissible strategy 집합 불일치 문제다.
+
+즉, `core_risk_off_floor_diagnostics`는
+단순 관측 추가가 아니라
+다음 authoritative 완화의 순서를 정하기 위한
+진단 계층이다.
+
+#### 2026-07-06 ~ 2026-07-07 실측 해석
+
+재집계 결과:
+
+1. `2026-07-06`
+   - `active_sample_count = 21`
+   - `moderate_gate_items.signal_window_miss = 21`
+   - `blocking_reason_items.overall_below_mild_floor = 14`
+   - `blocking_reason_items.overall_missing = 7`
+2. `2026-07-07`
+   - `active_sample_count = 28`
+   - `moderate_gate_items.signal_window_miss = 28`
+   - `blocking_reason_items.overall_below_mild_floor = 21`
+   - `blocking_reason_items.overall_missing = 7`
+
+판단:
+
+1. 현재 `mild_relax / moderate_relax = 0`의 주원인은
+   `entry_score`, `ranking_score`, `activity`, `strategy`가 아니다.
+2. active row가 전부
+   `overall / slow` floor 이전 단계에서 멈춘다.
+3. 따라서 다음 실험 우선순위는
+   `moderate gate` 완화가 아니라
+   `overall shadow floor` 완화다.
+
+#### 다음 단계 설계안
+
+1. authoritative 규칙은 유지한다.
+   - `overall >= 0.0`
+   - `slow >= -0.05`
+   - `risk_off_exception_eligible` 계산 경로도 즉시 변경하지 않는다.
+
+2. shadow 진단 전용 완화안은
+   `overall`만 소폭 완화한다.
+   - `mild_relax_v2`
+     - `overall >= -0.15`
+     - `slow >= -0.15`
+   - `moderate_relax_v2`
+     - `overall >= -0.20`
+     - `slow >= -0.25`
+     - `entry_score >= 0.12`
+     - `ranking_score >= 0.26`
+     - `activity_pass = true`
+     - `strategy_pass = true`
+
+3. `slow` 완화는 보류한다.
+   - 현재 실측으로는 `overall` 병목이 더 크다.
+   - `slow`까지 함께 풀면 원인 분리가 깨진다.
+
+4. `entry / ranking / activity / strategy` 완화는 보류한다.
+   - 아직 그 gate까지 내려가는 active 표본이 충분히 없다.
+
+즉, 다음 실험은
+`shadow floor v2`를 추가 관측해
+`overall`만 완화했을 때
+`mild_relax / moderate_relax` 표본이 실제로 생기는지부터
+확인하는 순서가 된다.
+
+추가로 `2026-07-08` 기준,
+`v2` historical backfill 재집계 결과에서도
+`2026-07-06`, `2026-07-07` active row는
+여전히 `mild_relax=0`, `moderate_relax=0`이었다.
+
+따라서 현행 설계는
+`v2`를 authoritative로 승격하는 것이 아니라,
+다음 shadow 실험으로 `v3`를 병렬 추가한다.
+
+- `mild_relax_v3`
+  - `overall >= -0.20`
+  - `slow >= -0.15`
+- `moderate_relax_v3`
+  - `overall >= -0.25`
+  - `slow >= -0.25`
+  - `entry_score >= 0.12`
+  - `ranking_score >= 0.26`
+  - `activity_pass = true`
+  - `strategy_pass = true`
+
+핵심 해석:
+
+1. `v3`도 과거 `2026-07-06`, `2026-07-07` 구간에서는
+   표본 확장을 만들지 못했다.
+2. 이는 floor 숫자 자체보다
+   `overall_missing` 및 `deep_negative` 분포가
+   더 큰 병목임을 뜻한다.
+3. 따라서 다음 검증 포인트는
+   `v3` 자체 승격 여부보다
+   장후 신규 데이터에서 `shadow_floor_relax_v3_bucket`이
+   실제로 채워지는지와,
+   upstream feature/score 생성 품질을 함께 보는 것이다.
+
 ## 3.4 Stage D — Realized PnL Attribution
 
 질문:

@@ -150,6 +150,15 @@ services:
       # P2: Live-info token cache (WebSocket approval key persistence)
       KIS_LIVE_TOKEN_CACHE_ENABLED: "${KIS_LIVE_TOKEN_CACHE_ENABLED:-true}"
       KIS_LIVE_TOKEN_CACHE_PATH: "${KIS_LIVE_TOKEN_CACHE_PATH:-.cache/kis_live_token.json}"
+      # Realtime-quote screen client (Admin UI "실시간 현재가") — completely separate
+      # Live account/appkey from the trading account and KIS_LIVE_INFO_*.
+      # This connection lives ONLY in the `api` process — never add these to
+      # ops-scheduler. Empty appkey/appsecret → mock (in-memory) source.
+      KIS_REALTIME_QUOTE_APP_KEY: "${KIS_REALTIME_QUOTE_APP_KEY:-}"
+      KIS_REALTIME_QUOTE_APP_SECRET: "${KIS_REALTIME_QUOTE_APP_SECRET:-}"
+      KIS_REALTIME_QUOTE_BASE_URL: "${KIS_REALTIME_QUOTE_BASE_URL:-https://openapi.koreainvestment.com:9443}"
+      KIS_REALTIME_QUOTE_WS_URL: "${KIS_REALTIME_QUOTE_WS_URL:-ws://ops.koreainvestment.com:21000}"
+      KIS_REALTIME_QUOTE_APPROVAL_CACHE_PATH: "${KIS_REALTIME_QUOTE_APPROVAL_CACHE_PATH:-.cache/kis_realtime_quote_approval_key.json}"
       LLM_PROVIDER: "${LLM_PROVIDER:-deepseek}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
       DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"

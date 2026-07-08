@@ -106,7 +106,21 @@ export default function OrdersView() {
       <code className="text-xs">{r.order_request_id.slice(0, 8)}…</code>
     )},
     { key: "symbol", header: "종목", width: "80px", render: (r: OrderSummary) => (
-      <span className="text-sm font-medium text-[#0f172a]">{r.symbol ?? "—"}</span>
+      r.symbol ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            navigate(`/operations/realtime-quotes?symbol=${encodeURIComponent(r.symbol as string)}`);
+          }}
+          title="실시간 현재가 보기"
+          className="text-sm font-medium text-[#3b82f6] hover:text-[#2563eb] hover:underline transition-colors"
+        >
+          {r.symbol}
+        </button>
+      ) : (
+        <span className="text-sm font-medium text-[#0f172a]">—</span>
+      )
     )},
     { key: "instrument_name", header: "종목명", width: "180px", render: (r: OrderSummary) => (
       <span className="block max-w-[180px] truncate text-sm text-[#334155]" title={r.instrument_name ?? undefined}>{r.instrument_name || "—"}</span>

@@ -129,3 +129,26 @@ def test_build_signal_feature_entity_anchors_snapshot_at_to_2000_kst() -> None:
     assert snapshot_at_kst.date() == features.as_of.astimezone(
         timezone(timedelta(hours=9))
     ).date()
+
+
+def test_build_signal_feature_entity_includes_score_diagnostics() -> None:
+    bars = _make_bars(count=40, last_volume=2200.0)
+    features, score_card = build_signal_snapshot("005930", bars)
+
+    snapshot = build_signal_feature_entity(
+        instrument_id=uuid4(),
+        features=features,
+        score_card=score_card,
+    )
+
+    diagnostics = snapshot.component_scores_json["diagnostics"]
+    assert diagnostics["bar_count"] == 40
+    assert diagnostics["overall_bucket"] in {
+        "non_negative",
+        "mild_negative",
+        "moderate_negative",
+        "deep_negative",
+    }
+    assert "short_history_lt_60" in diagnostics["input_quality_flags"]
+    assert "missing_sma_60" in diagnostics["missing_feature_flags"]
+    assert "missing_return_3m_pct" in diagnostics["missing_feature_flags"]

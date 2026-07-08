@@ -16,6 +16,24 @@ WebSocket limit is counted per *registration*, not per symbol. Subscribing to
 both 체결가(price) and 호가(orderbook) for one symbol consumes 2 registrations,
 so the realistic symbol capacity is ``max_registrations // registrations_per_symbol``
 (41 // 2 = 20), not 41.
+
+Subscription model (Phase 1, single-screen semantics)
+------------------------------------------------------
+``subscribe()``/``unsubscribe()`` are a plain **idempotent set membership**
+toggle, not a reference count: subscribing to an already-subscribed symbol is
+a no-op, and a single ``unsubscribe()`` call fully removes it. This matches
+what the Admin UI actually shows (each symbol appears as exactly one chip,
+never a counter), so "구독 해제" always means "gone" from a single operator's
+point of view.
+
+This is *not* the same model this screen will eventually need once multiple
+browser sessions can each independently view overlapping symbol sets (Step 3+,
+after real KIS WebSocket fan-out is introduced) — at that point a per-viewer
+reference count (or an explicit multi-consumer session registry) will be
+required so one viewer closing a symbol doesn't drop it out from under another
+viewer still watching it. That redesign is deliberately deferred; Phase 1 has
+exactly one implicit "viewer" (the mock source itself), so idempotent
+set semantics are simpler and correct for now.
 """
 
 from __future__ import annotations
@@ -149,19 +167,27 @@ class RealtimeQuoteSource(Protocol):
         ...
 
     async def subscribe(self, symbol: str) -> None:
-        """Add a reference to ``symbol``'s subscription.
+        """Idempotently add ``symbol`` to the subscription set.
+
+        Subscribing to an already-subscribed symbol is a no-op (Phase 1
+        single-screen semantics — see module docstring). It does **not**
+        increment a reference count.
 
         Raises
         ------
         InvalidSymbolError
-            If ``symbol`` fails basic format validation.
+            If ``symbol`` fails 국내주식 6-digit format validation.
         SubscriptionLimitExceededError
             If adding a *new* symbol would exceed ``max_registrations``.
         """
         ...
 
     async def unsubscribe(self, symbol: str) -> None:
-        """Remove one reference to ``symbol``'s subscription (ref-counted)."""
+        """Remove ``symbol`` from the subscription set entirely.
+
+        A single call fully unsubscribes ``symbol`` — there is no reference
+        count to decrement (Phase 1 single-screen semantics).
+        """
         ...
 
     def get_snapshots(self, symbols: Sequence[str]) -> dict[str, QuoteSnapshot]:
@@ -187,12 +213,36 @@ _MOCK_INSTRUMENTS: dict[str, InstrumentInfo] = {
 }
 
 
+def default_instrument_info(symbol: str) -> InstrumentInfo:
+    """Best-effort name/market lookup shared by mock and KIS-backed sources.
+
+    Only a handful of demo symbols are seeded; any other symbol falls back to
+    a generic placeholder name and ``market="UNKNOWN"``. A proper
+    instrument-master-backed lookup (real KOSPI/KOSDAQ classification + name)
+    is a known Step 4+ improvement — see
+    ``[DESIGN]_kis_realtime_quote_operations_screen_plan.md`` Step 3 report.
+    """
+    normalized = symbol.strip()
+    known = _MOCK_INSTRUMENTS.get(normalized)
+    if known is not None:
+        return known
+    return InstrumentInfo(normalized, f"종목{normalized}", "UNKNOWN")
+
+
 def _validate_symbol(symbol: str) -> str:
-    """Normalize + validate a symbol code. Raises ``InvalidSymbolError`` on failure."""
-    normalized = symbol.strip().upper()
-    if len(normalized) != _SYMBOL_RE_LEN or not normalized.isalnum():
+    """Normalize + validate a 국내주식 symbol code.
+
+    Only exactly 6 digits are accepted (e.g. ``"005930"``). This screen is
+    KIS 국내주식 실시간 현재가 조회 only — no ETN (``Q`` prefix), no
+    alphabetic/mixed codes, no other market's symbol formats.
+
+    Raises ``InvalidSymbolError`` on failure.
+    """
+    normalized = symbol.strip()
+    if len(normalized) != _SYMBOL_RE_LEN or not normalized.isdigit():
         raise InvalidSymbolError(
-            f"Invalid symbol code: {symbol!r} (expected 6 alphanumeric characters)"
+            f"Invalid symbol code: {symbol!r} (expected exactly 6 digits, "
+            "국내주식 종목코드 only)"
         )
     return normalized
 
@@ -219,9 +269,13 @@ class InMemoryMockQuoteSource:
 
     Generates deterministic, smoothly-oscillating quotes per symbol so the
     Admin UI has something meaningful to poll while Phase 2's real KIS
-    WebSocket integration is built. Ref-counts subscriptions so multiple
-    browser sessions viewing the same symbol only consume one KIS-equivalent
-    registration slot (mirrors the real design's multi-viewer sharing rule).
+    WebSocket integration is built.
+
+    Subscriptions are a plain idempotent set (see module docstring
+    "Subscription model") — not a reference count. This matches the Admin
+    UI's single-chip-per-symbol display and means one ``unsubscribe()`` call
+    always fully removes a symbol. A per-viewer reference count / multi-consumer
+    session registry is deferred to the Step 3+ KIS WebSocket fan-out redesign.
     """
 
     def __init__(
@@ -232,7 +286,7 @@ class InMemoryMockQuoteSource:
     ) -> None:
         self._max_registrations = max_registrations
         self._registrations_per_symbol = registrations_per_symbol
-        self._ref_counts: dict[str, int] = {}
+        self._subscriptions: set[str] = set()
         self._tick = 0
 
     @property
@@ -252,25 +306,20 @@ class InMemoryMockQuoteSource:
         return ConnectionState.CONNECTED
 
     def registered_count(self) -> int:
-        return len(self._ref_counts) * self._registrations_per_symbol
+        return len(self._subscriptions) * self._registrations_per_symbol
 
     def list_subscriptions(self) -> list[str]:
-        return sorted(self._ref_counts.keys())
+        return sorted(self._subscriptions)
 
     def instrument_info(self, symbol: str) -> InstrumentInfo:
-        normalized = symbol.strip().upper()
-        known = _MOCK_INSTRUMENTS.get(normalized)
-        if known is not None:
-            return known
-        return InstrumentInfo(normalized, f"종목{normalized}", "UNKNOWN")
+        return default_instrument_info(symbol)
 
     async def subscribe(self, symbol: str) -> None:
         normalized = _validate_symbol(symbol)
-        if normalized in self._ref_counts:
-            self._ref_counts[normalized] += 1
-            return
+        if normalized in self._subscriptions:
+            return  # idempotent — already subscribed, no-op
 
-        prospective_count = (len(self._ref_counts) + 1) * self._registrations_per_symbol
+        prospective_count = (len(self._subscriptions) + 1) * self._registrations_per_symbol
         if prospective_count > self._max_registrations:
             symbol_capacity = self._max_registrations // self._registrations_per_symbol
             raise SubscriptionLimitExceededError(
@@ -278,22 +327,18 @@ class InMemoryMockQuoteSource:
                 f"({self._max_registrations} registrations = {symbol_capacity} symbols "
                 f"at {self._registrations_per_symbol} registrations/symbol)."
             )
-        self._ref_counts[normalized] = 1
+        self._subscriptions.add(normalized)
 
     async def unsubscribe(self, symbol: str) -> None:
-        normalized = symbol.strip().upper()
-        if normalized not in self._ref_counts:
-            return
-        self._ref_counts[normalized] -= 1
-        if self._ref_counts[normalized] <= 0:
-            del self._ref_counts[normalized]
+        normalized = symbol.strip()
+        self._subscriptions.discard(normalized)
 
     def get_snapshots(self, symbols: Sequence[str]) -> dict[str, QuoteSnapshot]:
         self._tick += 1
         out: dict[str, QuoteSnapshot] = {}
         for raw_symbol in symbols:
-            normalized = raw_symbol.strip().upper()
-            if normalized not in self._ref_counts:
+            normalized = raw_symbol.strip()
+            if normalized not in self._subscriptions:
                 continue
             out[normalized] = self._generate_snapshot(normalized, self._tick)
         return out

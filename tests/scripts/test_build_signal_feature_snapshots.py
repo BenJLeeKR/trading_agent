@@ -143,7 +143,18 @@ def test_result_to_json_serializes_snapshot_payload() -> None:
         overall_score=Decimal("0.42"),
         average_turnover_20d=Decimal("120000000.50"),
         turnover_surge_ratio=Decimal("1.88"),
-        component_scores_json={"slow_momentum": 0.5},
+        component_scores_json={
+            "slow_momentum": 0.5,
+            "diagnostics": {
+                "bar_count": 80,
+                "overall_bucket": "non_negative",
+                "fast_bucket": "non_negative",
+                "slow_bucket": "non_negative",
+                "missing_feature_flags": [],
+                "input_quality_flags": [],
+                "reason_code_count": 1,
+            },
+        },
     )
 
     payload = json.loads(
@@ -164,6 +175,9 @@ def test_result_to_json_serializes_snapshot_payload() -> None:
     assert payload["snapshots"][0]["overall_score"] == "0.42"
     assert payload["snapshots"][0]["average_turnover_20d"] == "120000000.50"
     assert payload["snapshots"][0]["turnover_surge_ratio"] == "1.88"
+    assert payload["snapshots"][0]["component_scores_json"]["diagnostics"]["overall_bucket"] == (
+        "non_negative"
+    )
 
 
 @pytest.mark.asyncio
@@ -218,7 +232,21 @@ async def test_run_uses_runtime_repositories_without_db_pool(tmp_path) -> None:
                 feature_set_version="signal_backbone_v1",
                 bar_count=80,
                 overall_score=Decimal("0.42"),
-                component_scores_json={"slow_momentum": 0.5},
+                fast_score=Decimal("0.33"),
+                slow_score=Decimal("0.48"),
+                component_scores_json={
+                    "slow_momentum": 0.5,
+                    "diagnostics": {
+                        "bar_count": 80,
+                        "overall_bucket": "non_negative",
+                        "fast_bucket": "non_negative",
+                        "slow_bucket": "non_negative",
+                        "missing_feature_flags": [],
+                        "input_quality_flags": [],
+                        "reason_code_count": 1,
+                    },
+                },
+                reason_codes=["momentum_3m_strong"],
             ),
         ),
     )
@@ -249,3 +277,106 @@ async def test_run_uses_runtime_repositories_without_db_pool(tmp_path) -> None:
     repos.signal_feature_batch_run_items.add_many.assert_awaited_once()
     saved_run = repos.signal_feature_batch_runs.add.await_args.args[0]
     assert saved_run.trigger_type == "after_market_scheduler"
+    quality_summary = saved_run.summary_json["snapshot_quality"]
+    assert quality_summary["snapshot_count"] == 1
+    assert quality_summary["overall_missing_count"] == 0
+    assert quality_summary["overall_bucket_counts"]["non_negative"] == 1
+    saved_items = repos.signal_feature_batch_run_items.add_many.await_args.args[0]
+    assert len(saved_items) == 1
+    assert saved_items[0].metadata_json["overall_bucket"] == "non_negative"
+    assert saved_items[0].metadata_json["bar_count"] == 80
+
+
+@pytest.mark.asyncio
+async def test_run_dry_run_does_not_store_unpersisted_snapshot_fk(tmp_path) -> None:
+    path = tmp_path / "bars.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "symbol": "005930",
+                    "market": "KRX",
+                    "timeframe": "1d",
+                    "feature_set_version": "signal_backbone_v1",
+                    "bars": [
+                        {
+                            "timestamp": "2026-06-16T00:00:00+00:00",
+                            "open_price": 100,
+                            "high_price": 110,
+                            "low_price": 95,
+                            "close_price": 108,
+                            "volume": 1000,
+                        }
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    instrument = SimpleNamespace(instrument_id=uuid4(), symbol="005930")
+    repos = SimpleNamespace(
+        instruments=SimpleNamespace(
+            get_by_symbol=AsyncMock(return_value=instrument),
+        ),
+        signal_feature_batch_runs=SimpleNamespace(add=AsyncMock()),
+        signal_feature_batch_run_items=SimpleNamespace(add_many=AsyncMock()),
+    )
+    repos.signal_feature_batch_runs.add = AsyncMock(side_effect=lambda run: run)
+    batch_result = SignalFeatureBatchResult(
+        processed=1,
+        persisted=0,
+        skipped=1,
+        errors=(),
+        snapshots=(
+            SignalFeatureSnapshotEntity(
+                signal_feature_snapshot_id=uuid4(),
+                instrument_id=instrument.instrument_id,
+                timeframe="1d",
+                snapshot_at=datetime(2026, 6, 16, tzinfo=timezone.utc),
+                feature_set_version="signal_backbone_v1",
+                bar_count=80,
+                overall_score=Decimal("0.42"),
+                fast_score=Decimal("0.33"),
+                slow_score=Decimal("0.48"),
+                component_scores_json={
+                    "slow_momentum": 0.5,
+                    "diagnostics": {
+                        "bar_count": 80,
+                        "overall_bucket": "non_negative",
+                        "fast_bucket": "non_negative",
+                        "slow_bucket": "non_negative",
+                        "missing_feature_flags": [],
+                        "input_quality_flags": [],
+                        "reason_code_count": 1,
+                    },
+                },
+                reason_codes=["momentum_3m_strong"],
+            ),
+        ),
+    )
+    service = AsyncMock()
+    service.compute_many = AsyncMock(return_value=batch_result)
+
+    @asynccontextmanager
+    async def _mock_postgres_runtime(*args, **kwargs):
+        yield {"repositories": repos}
+
+    with patch(
+        "scripts.build_signal_feature_snapshots.postgres_runtime",
+        _mock_postgres_runtime,
+    ):
+        with patch(
+            "scripts.build_signal_feature_snapshots.SignalFeaturePipelineService",
+            return_value=service,
+        ):
+            rc = await _run(
+                _parse_args(["--input", str(path), "--dry-run", "--output", "json"])
+            )
+
+    assert rc == 0
+    saved_items = repos.signal_feature_batch_run_items.add_many.await_args.args[0]
+    assert len(saved_items) == 1
+    assert saved_items[0].status == "computed"
+    assert saved_items[0].signal_feature_snapshot_id is None
+    assert saved_items[0].snapshot_at is None

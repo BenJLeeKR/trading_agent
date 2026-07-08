@@ -39,7 +39,8 @@ describe("Layout navigation", () => {
     expect(screen.getByText("운영 경고")).toBeInTheDocument();
     expect(screen.getByText("주문 추적")).toBeInTheDocument();
     expect(screen.getByText("정합성 점검")).toBeInTheDocument();
-    expect(screen.getByText("주문")).toBeInTheDocument();
+    expect(screen.getByText("현재가")).toBeInTheDocument();
+    expect(screen.getByText("주문내역")).toBeInTheDocument();
     expect(screen.getByText("계좌")).toBeInTheDocument();
     expect(screen.getByText("의사결정")).toBeInTheDocument();
     expect(screen.getByText("에이전트 실행")).toBeInTheDocument();

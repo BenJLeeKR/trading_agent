@@ -20,8 +20,18 @@ from agent_trading.config.settings import AppSettings, KIS_DEFAULT_REST_URLS
 from agent_trading.db.connection import close_pool, connection, create_pool
 from agent_trading.runtime.bootstrap import postgres_runtime
 from agent_trading.services.trigger_proxy_attribution import (
+    build_core_risk_off_floor_diagnostic_rows,
+    build_core_risk_off_floor_diagnostics_report,
     build_core_risk_off_floor_bucket_rows,
     build_core_risk_off_floor_report,
+    build_core_risk_off_floor_v2_bucket_rows,
+    build_core_risk_off_floor_v2_diagnostic_rows,
+    build_core_risk_off_floor_v2_diagnostics_report,
+    build_core_risk_off_floor_v2_report,
+    build_core_risk_off_floor_v3_bucket_rows,
+    build_core_risk_off_floor_v3_diagnostic_rows,
+    build_core_risk_off_floor_v3_diagnostics_report,
+    build_core_risk_off_floor_v3_report,
     DailyPriceBar,
     build_core_risk_off_topk_projection_rows,
     build_shadow_experiment_rows,
@@ -64,6 +74,40 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="symbol별 KIS 일봉 조회 간 sleep",
     )
     return parser.parse_args(list(argv) if argv is not None else None)
+
+
+def _coerce_json_mapping(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return {}
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(parsed, dict):
+            return dict(parsed)
+    return {}
+
+
+def _coerce_json_list(value: object) -> list[object]:
+    if isinstance(value, list):
+        return list(value)
+    if isinstance(value, tuple):
+        return list(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return []
+        if isinstance(parsed, list):
+            return list(parsed)
+    return []
 
 
 async def _resolve_target_account(
@@ -175,16 +219,9 @@ async def _load_first_symbol_day_decisions(
         rows = await conn.fetch(sql, account_id, start_date, end_date)
     decisions: list[dict[str, object]] = []
     for row in rows:
-        raw_reasons = row["eligibility_reasons_json"]
-        reasons = list(raw_reasons) if isinstance(raw_reasons, list) else []
-        raw_core_experiment = row["core_risk_off_experiment_json"]
-        core_experiment = (
-            dict(raw_core_experiment) if isinstance(raw_core_experiment, dict) else {}
-        )
-        raw_event_experiment = row["event_overlay_experiment_json"]
-        event_experiment = (
-            dict(raw_event_experiment) if isinstance(raw_event_experiment, dict) else {}
-        )
+        reasons = _coerce_json_list(row["eligibility_reasons_json"])
+        core_experiment = _coerce_json_mapping(row["core_risk_off_experiment_json"])
+        event_experiment = _coerce_json_mapping(row["event_overlay_experiment_json"])
         decisions.append(
             {
                 "trade_decision_id": str(row["trade_decision_id"]),
@@ -374,6 +411,17 @@ async def _run(args: argparse.Namespace) -> int:
             bucket_key="core_risk_off_shadow_bucket",
         )
         core_risk_off_floor_rows = build_core_risk_off_floor_bucket_rows(enriched_rows)
+        core_risk_off_floor_diagnostic_rows = build_core_risk_off_floor_diagnostic_rows(
+            enriched_rows
+        )
+        core_risk_off_floor_v2_rows = build_core_risk_off_floor_v2_bucket_rows(enriched_rows)
+        core_risk_off_floor_v2_diagnostic_rows = (
+            build_core_risk_off_floor_v2_diagnostic_rows(enriched_rows)
+        )
+        core_risk_off_floor_v3_rows = build_core_risk_off_floor_v3_bucket_rows(enriched_rows)
+        core_risk_off_floor_v3_diagnostic_rows = (
+            build_core_risk_off_floor_v3_diagnostic_rows(enriched_rows)
+        )
         core_risk_off_topk_rows = build_core_risk_off_topk_projection_rows(enriched_rows)
         event_overlay_shadow_rows = build_shadow_experiment_rows(
             enriched_rows,
@@ -431,6 +479,63 @@ async def _run(args: argparse.Namespace) -> int:
             "core_risk_off_floor_report": build_core_risk_off_floor_report(
                 enriched_rows
             ),
+            "core_risk_off_floor_diagnostics": build_core_risk_off_floor_diagnostics_report(
+                enriched_rows,
+                sample_limit=max(0, int(args.sample_limit)),
+            ),
+            "core_risk_off_floor_diagnostic_items": [
+                asdict(item)
+                for item in build_trigger_proxy_aggregate_items(
+                    core_risk_off_floor_diagnostic_rows,
+                    bucket_key="blocking_reason",
+                )
+            ],
+            "core_risk_off_floor_v2_items": [
+                asdict(item)
+                for item in build_trigger_proxy_aggregate_items(
+                    core_risk_off_floor_v2_rows,
+                    bucket_key="core_risk_off_floor_v2_bucket",
+                )
+            ],
+            "core_risk_off_floor_v2_report": build_core_risk_off_floor_v2_report(
+                enriched_rows
+            ),
+            "core_risk_off_floor_v2_diagnostics": (
+                build_core_risk_off_floor_v2_diagnostics_report(
+                    enriched_rows,
+                    sample_limit=max(0, int(args.sample_limit)),
+                )
+            ),
+            "core_risk_off_floor_v2_diagnostic_items": [
+                asdict(item)
+                for item in build_trigger_proxy_aggregate_items(
+                    core_risk_off_floor_v2_diagnostic_rows,
+                    bucket_key="blocking_reason",
+                )
+            ],
+            "core_risk_off_floor_v3_items": [
+                asdict(item)
+                for item in build_trigger_proxy_aggregate_items(
+                    core_risk_off_floor_v3_rows,
+                    bucket_key="core_risk_off_floor_v3_bucket",
+                )
+            ],
+            "core_risk_off_floor_v3_report": build_core_risk_off_floor_v3_report(
+                enriched_rows
+            ),
+            "core_risk_off_floor_v3_diagnostics": (
+                build_core_risk_off_floor_v3_diagnostics_report(
+                    enriched_rows,
+                    sample_limit=max(0, int(args.sample_limit)),
+                )
+            ),
+            "core_risk_off_floor_v3_diagnostic_items": [
+                asdict(item)
+                for item in build_trigger_proxy_aggregate_items(
+                    core_risk_off_floor_v3_diagnostic_rows,
+                    bucket_key="blocking_reason",
+                )
+            ],
             "core_risk_off_topk_items": [
                 asdict(item)
                 for item in build_trigger_proxy_aggregate_items(

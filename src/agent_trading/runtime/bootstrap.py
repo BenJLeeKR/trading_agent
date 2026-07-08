@@ -76,6 +76,73 @@ def _build_kis_live_quote_client(settings: AppSettings) -> KISRestClient | None:
     )
 
 
+def build_realtime_quote_source(
+    settings: AppSettings,
+) -> "KisRealtimeQuoteSource | None":
+    """Build an (unconnected) KIS-backed realtime-quote source, or ``None``.
+
+    This is for the Admin UI "실시간 현재가" screen only
+    (``plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md``).
+    It is **completely separate** from ``_build_kis_adapter()`` (trading
+    account) and ``_build_kis_live_quote_client()`` (``KIS_LIVE_INFO_*``
+    disclosure account):
+
+    - Own credentials: ``KIS_REALTIME_QUOTE_APP_KEY`` / ``_APP_SECRET``
+    - Own REST base URL / WebSocket URL
+    - Own ``RateLimitBudgetManager`` instance (no shared budget file)
+    - Own approval-key file cache path (``KIS_REALTIME_QUOTE_APPROVAL_CACHE_PATH``)
+    - ``account_number``/``account_product_code`` are intentionally empty —
+      this client only ever calls read-only market-data endpoints
+      (``oauth2/Approval``, ``inquire-price``), never order/balance endpoints.
+
+    Returns ``None`` when ``KIS_REALTIME_QUOTE_APP_KEY``/``_APP_SECRET`` are
+    not configured — the caller (``api/app.py`` lifespan) falls back to
+    ``InMemoryMockQuoteSource`` in that case. This function only constructs
+    objects (no network I/O); the caller must ``await source.connect()``
+    inside an async context before use.
+    """
+    if not settings.kis_realtime_quote_app_key or not settings.kis_realtime_quote_app_secret:
+        logger.info(
+            "Realtime-quote source: mock (KIS_REALTIME_QUOTE_APP_KEY/_APP_SECRET not configured)."
+        )
+        return None
+
+    from agent_trading.services.kis_realtime_quote_source import KisRealtimeQuoteSource
+
+    # Independent budget manager — never shared with the trading account's
+    # or the disclosure account's RateLimitBudgetManager instances.
+    budget_manager = build_kis_budget_manager(
+        kis_env="live",
+        real_rest_rps=settings.kis_real_rest_rps,
+        paper_rest_rps=settings.kis_paper_rest_rps,
+    )
+
+    rest_client = KISRestClient(
+        env="live",
+        api_key=settings.kis_realtime_quote_app_key,
+        api_secret=settings.kis_realtime_quote_app_secret,
+        account_number="",
+        account_product_code="",
+        base_url=settings.kis_realtime_quote_base_url,
+        budget_manager=budget_manager,
+        dev_token_cache_enabled=False,  # this client never calls authenticate()
+        approval_cache_enabled=True,
+        approval_cache_path=settings.kis_realtime_quote_approval_cache_path,
+    )
+
+    try:
+        return KisRealtimeQuoteSource(
+            rest_client=rest_client,
+            ws_url=settings.kis_realtime_quote_ws_url,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to construct KisRealtimeQuoteSource — realtime-quote "
+            "screen will fall back to mock."
+        )
+        return None
+
+
 def _build_kis_adapter(settings: AppSettings) -> KoreaInvestmentAdapter:
     """Build a KoreaInvestmentAdapter with a configured KISRestClient.
 
