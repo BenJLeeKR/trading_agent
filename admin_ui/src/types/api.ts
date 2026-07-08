@@ -450,6 +450,79 @@ export interface BrokerCapacityResponse {
 }
 
 /* ───────────────────────────────────────────
+ * Realtime Quote screen types (Phase 1: mock-backed)
+ * ─────────────────────────────────────────── */
+
+export interface RealtimeQuoteLevel {
+  price: number;
+  quantity: number;
+}
+
+export interface RealtimeQuoteConnectionInfo {
+  connection_state: "connected" | "reconnecting" | "disconnected";
+  environment: string;
+  data_source: string;
+  registered_count: number;
+  max_registrations: number;
+  registrations_per_symbol: number;
+  symbol_capacity: number;
+}
+
+export interface RealtimeQuoteSubscriptionView {
+  symbol: string;
+  market: string;
+  name: string;
+}
+
+export interface RealtimeQuoteBootstrapResponse {
+  connection: RealtimeQuoteConnectionInfo;
+  subscriptions: RealtimeQuoteSubscriptionView[];
+  generated_at: string;
+}
+
+export interface RealtimeQuoteSubscriptionsResponse {
+  connection: RealtimeQuoteConnectionInfo;
+  subscriptions: RealtimeQuoteSubscriptionView[];
+  generated_at: string;
+}
+
+export interface RealtimeQuoteSnapshotView {
+  symbol: string;
+  market: string;
+  name: string;
+  last_price: number;
+  prev_close: number;
+  change: number;
+  change_rate: number;
+  change_sign: "up" | "down" | "flat";
+  open_price: number;
+  high_price: number;
+  low_price: number;
+  upper_limit: number;
+  lower_limit: number;
+  accumulated_volume: number;
+  accumulated_value: number;
+  per: number | null;
+  pbr: number | null;
+  eps: number | null;
+  bps: number | null;
+  ask_levels: RealtimeQuoteLevel[];
+  bid_levels: RealtimeQuoteLevel[];
+  total_ask_quantity: number;
+  total_bid_quantity: number;
+  trade_time: string;
+  hour_class: string;
+  trading_halted: boolean;
+  data_source: string;
+  updated_at: string;
+}
+
+export interface RealtimeQuoteSnapshotResponse {
+  quotes: Record<string, RealtimeQuoteSnapshotView>;
+  generated_at: string;
+}
+
+/* ───────────────────────────────────────────
  * Enum Metadata types
  * ─────────────────────────────────────────── */
 

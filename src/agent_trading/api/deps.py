@@ -13,6 +13,7 @@ from fastapi import Depends, HTTPException, Request
 from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.services.order_manager import OrderManager
+from agent_trading.services.realtime_quote_source import RealtimeQuoteSource
 
 
 async def get_repos(request: Request) -> AsyncIterator[RepositoryContainer]:
@@ -120,3 +121,20 @@ def get_kis_client(request: Request) -> KISRestClient | None:
     if broker_adapter is None:
         return None
     return getattr(broker_adapter, "rest_client", None)
+
+
+def get_realtime_quote_source(request: Request) -> RealtimeQuoteSource:
+    """Return the app-wide ``RealtimeQuoteSource`` singleton.
+
+    Phase 1: ``app.state.realtime_quote_source`` is an ``InMemoryMockQuoteSource``
+    (set in ``create_app``'s ``lifespan``) — no KIS WebSocket connection.
+    Phase 2 will replace it with a KIS-backed implementation of the same
+    ``RealtimeQuoteSource`` protocol without changing this function or the
+    routes that depend on it.
+    """
+    source: RealtimeQuoteSource | None = getattr(
+        request.app.state, "realtime_quote_source", None
+    )
+    if source is None:
+        raise HTTPException(status_code=503, detail="Realtime quote source not configured")
+    return source

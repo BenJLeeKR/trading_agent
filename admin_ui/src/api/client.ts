@@ -382,6 +382,52 @@ export async function getBrokerCapacity(): Promise<import("../types/api").Broker
   return request<import("../types/api").BrokerCapacityResponse>("/broker-capacity");
 }
 
+/* ───────────────────────────────────────────
+ * Realtime Quote screen (Phase 1: mock-backed)
+ * ─────────────────────────────────────────── */
+
+export async function getRealtimeQuoteBootstrap(): Promise<
+  import("../types/api").RealtimeQuoteBootstrapResponse
+> {
+  return request<import("../types/api").RealtimeQuoteBootstrapResponse>(
+    "/realtime-quotes/bootstrap"
+  );
+}
+
+export async function subscribeRealtimeQuote(
+  symbols: string[]
+): Promise<import("../types/api").RealtimeQuoteSubscriptionsResponse> {
+  return request<import("../types/api").RealtimeQuoteSubscriptionsResponse>(
+    "/realtime-quotes/subscriptions",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbols }),
+    }
+  );
+}
+
+export async function unsubscribeRealtimeQuote(
+  symbols: string[]
+): Promise<import("../types/api").RealtimeQuoteSubscriptionsResponse> {
+  return request<import("../types/api").RealtimeQuoteSubscriptionsResponse>(
+    "/realtime-quotes/subscriptions",
+    {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbols }),
+    }
+  );
+}
+
+export async function getRealtimeQuoteSnapshot(
+  symbols: string[]
+): Promise<import("../types/api").RealtimeQuoteSnapshotResponse> {
+  return request<import("../types/api").RealtimeQuoteSnapshotResponse>(
+    `/realtime-quotes/snapshot?symbols=${encodeURIComponent(symbols.join(","))}`
+  );
+}
+
 export async function getEnumMetadata(): Promise<import("../types/api").EnumMetadataListResponse> {
   return request<import("../types/api").EnumMetadataListResponse>("/metadata/enums");
 }

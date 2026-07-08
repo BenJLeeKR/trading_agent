@@ -1979,6 +1979,113 @@ class FailureSummaryResponse(BaseModel):
     ``None`` when there are zero total submissions today."""
 
 
+class RealtimeQuoteLevel(BaseModel):
+    """One price/quantity rung of the orderbook ladder."""
+
+    price: float
+    quantity: int
+
+
+class RealtimeQuoteConnectionInfo(BaseModel):
+    """Connection + capacity status for the realtime quote source.
+
+    Phase 1: ``environment="mock"``, ``data_source="mock"`` — no KIS
+    WebSocket connection exists yet. Phase 2 will populate these from the
+    real KIS-backed source without changing this schema.
+    """
+
+    connection_state: str
+    environment: str
+    data_source: str
+    registered_count: int
+    max_registrations: int
+    registrations_per_symbol: int
+    symbol_capacity: int
+    """``max_registrations // registrations_per_symbol`` — the realistic
+    number of symbols that can be subscribed at once (KIS counts 체결가+호가
+    as 2 registrations per symbol)."""
+
+
+class RealtimeQuoteSubscriptionView(BaseModel):
+    """A single subscribed symbol's identity (no price data)."""
+
+    symbol: str
+    market: str
+    name: str
+
+
+class RealtimeQuoteBootstrapResponse(BaseModel):
+    """``GET /realtime-quotes/bootstrap`` — initial screen load payload."""
+
+    connection: RealtimeQuoteConnectionInfo
+    subscriptions: list[RealtimeQuoteSubscriptionView]
+    generated_at: datetime
+
+
+class RealtimeQuoteSubscribeRequest(BaseModel):
+    """``POST /realtime-quotes/subscriptions`` request body."""
+
+    symbols: list[str] = Field(min_length=1, max_length=20)
+
+
+class RealtimeQuoteUnsubscribeRequest(BaseModel):
+    """``DELETE /realtime-quotes/subscriptions`` request body."""
+
+    symbols: list[str] = Field(min_length=1, max_length=20)
+
+
+class RealtimeQuoteSubscriptionsResponse(BaseModel):
+    """Response shared by subscribe/unsubscribe/list-subscriptions endpoints."""
+
+    connection: RealtimeQuoteConnectionInfo
+    subscriptions: list[RealtimeQuoteSubscriptionView]
+    generated_at: datetime
+
+
+class RealtimeQuoteSnapshotView(BaseModel):
+    """``GET /realtime-quotes/snapshot`` — one symbol's latest quote."""
+
+    symbol: str
+    market: str
+    name: str
+    last_price: float
+    prev_close: float
+    change: float
+    change_rate: float
+    change_sign: str
+    open_price: float
+    high_price: float
+    low_price: float
+    upper_limit: float
+    lower_limit: float
+    accumulated_volume: int
+    accumulated_value: int
+    per: float | None = None
+    pbr: float | None = None
+    eps: float | None = None
+    bps: float | None = None
+    ask_levels: list[RealtimeQuoteLevel]
+    bid_levels: list[RealtimeQuoteLevel]
+    total_ask_quantity: int
+    total_bid_quantity: int
+    trade_time: str
+    hour_class: str
+    trading_halted: bool
+    data_source: str
+    updated_at: datetime
+
+
+class RealtimeQuoteSnapshotResponse(BaseModel):
+    """Response for ``GET /realtime-quotes/snapshot``.
+
+    ``quotes`` omits any requested symbol that is not currently subscribed
+    (not an error — mirrors cache-miss behaviour of the real source).
+    """
+
+    quotes: dict[str, RealtimeQuoteSnapshotView]
+    generated_at: datetime
+
+
 # Rebuild models to resolve forward references under ``from __future__ import annotations``.
 # The ``_types_namespace`` provides the necessary type mappings that are otherwise
 # evaluated lazily as strings under PEP 563.

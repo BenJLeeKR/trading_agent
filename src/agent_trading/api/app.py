@@ -104,6 +104,13 @@ def create_app(
         # Store broker adapter for /broker-capacity inspection endpoint
         _app.state.broker_adapter = broker_adapter
 
+        # Realtime quote source for /realtime-quotes/* (Phase 1: in-memory
+        # mock, no KIS WebSocket connection — see realtime_quote_source.py).
+        # A fresh instance per app avoids state bleeding across tests/processes.
+        from agent_trading.services.realtime_quote_source import InMemoryMockQuoteSource
+
+        _app.state.realtime_quote_source = InMemoryMockQuoteSource()
+
         if repos is not None:
             # Explicit repos injected — caller has full control.
             _app.state.repos = repos
@@ -271,6 +278,13 @@ def create_app(
     )
 
     protected_routers.append(account_snapshots_router)
+
+    # Phase 7 — Realtime Quote screen (Phase 1: mock-backed, no KIS WS connection)
+    from agent_trading.api.routes.realtime_quotes import (
+        router as realtime_quotes_router,
+    )
+
+    protected_routers.append(realtime_quotes_router)
 
     if auth_enabled:
         for router in protected_routers:

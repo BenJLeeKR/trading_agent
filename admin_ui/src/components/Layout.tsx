@@ -17,6 +17,7 @@ import {
   AlertCircle,
   Search,
   ListOrdered,
+  LineChart,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -53,6 +54,7 @@ const navSections: NavSection[] = [
       { icon: Wallet, label: "계좌", to: "/accounts" },
       { icon: Brain, label: "의사결정", to: "/decisions" },
       { icon: Zap, label: "에이전트 실행", to: "/agent-runs" },
+      { icon: LineChart, label: "실시간 현재가", to: "/operations/realtime-quotes" },
     ],
   },
   {

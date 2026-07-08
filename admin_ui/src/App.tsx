@@ -15,6 +15,7 @@ import OperationsDashboardView from "./components/OperationsDashboardView";
 import OperationsAlertsView from "./components/OperationsAlertsView";
 import OrderTrackingView from "./components/OrderTrackingView";
 import FillHistoryView from "./components/FillHistoryView";
+import RealtimeQuoteView from "./components/RealtimeQuoteView";
 
 /** Redirect to "/" if already authenticated (reverse of ProtectedRoute). */
 function PublicRoute({ children }: { children: React.ReactNode }) {
@@ -61,6 +62,7 @@ export default function App() {
             <Route path="operations" element={<OperationsDashboardView />} />
             <Route path="operations/alerts" element={<OperationsAlertsView />} />
             <Route path="operations/orders" element={<OrderTrackingView />} />
+            <Route path="operations/realtime-quotes" element={<RealtimeQuoteView />} />
           </Route>
         </Routes>
       </AuthProvider>
