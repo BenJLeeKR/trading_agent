@@ -64,7 +64,7 @@
 | 4 | `.env` 변수명 확정 | ✅ 완료 — `KIS_REALTIME_QUOTE_APP_KEY`/`APP_SECRET`/`BASE_URL`/`WS_URL` |
 | 5 | 신규 계좌의 상한가/하한가/기준가/PER/PBR/EPS/BPS 보강 경로 확정 | ✅ **완료** — REST 현재가 조회(`029_주식현재가_시세.md`, TR `FHKST01010100`)로 확정. 기존 `KISRestClient.get_quote()`가 이미 이 필드들을 raw output으로 반환하므로 **신규 백엔드 코드 불필요**(Step 0 참고) |
 | 6 | `OrdersView`/`FillHistoryView` 종목 클릭 딥링크 연동 범위 확정 | ✅ 완료 — UI 레이아웃 설계 §3.1에서 Phase 3 범위로 명시 |
-| 7 | KIS 공식 문서 재확인(TR ID, message format, 구독 제한) | ❌ **의도적으로 미확정 상태 유지** — 구현 직전(각 PR 착수 직전) 재확인 항목으로 남긴다(아래 각 단계의 "구현 직전 재확인" 참고) |
+| 7 | KIS 공식 문서 재확인(TR ID, message format, 구독 제한) | 🔄 **부분 완료** — 2026-07-08 사용자가 KIS 공식 웹페이지/문서로 재확인: `H0STCNT0`/`H0STASP0` 필드 스펙 일치, 41건 구독 한도 세부 규칙(계좌 합산, 체결가+호가 2건 계산), REST 현재가 조회(`FHKST01010100`) 응답 필드 일치 — 모두 확인 완료. **남은 항목은 approval key 발급(`/oauth2/Approval`) 요청/응답 필드뿐**이며, 이는 Step 3 구현 직전 최종 재확인으로 남긴다 |
 
 ## 4. 현재 재사용 가능한 코드/문서
 
@@ -128,7 +128,10 @@
      (기존 `adapter.py`/`bootstrap.py`의 `KoreaInvestmentAdapter` 생성 경로와는
      **별도의 새 함수**로 분리 — 기존 함수 시그니처/동작 변경 금지).
   3. 종목별 참조 카운트 기반 구독/해제 관리자(가칭 `QuoteSubscriptionManager`) 구현
-     — `SubscriptionBudget(max_subscriptions=41)` 사용.
+     — `SubscriptionBudget(max_subscriptions=41)` 사용. **종목 1개를 구독할 때마다
+     체결가(`H0STCNT0`)+호가(`H0STASP0`) 2건을 원자적으로 등록/해제**하도록 구현
+     (아래 "2026-07-08 재확인 결과" 참고 — 잔여 budget이 2건 미만이면 신규 종목
+     추가를 거부).
   4. FastAPI `lifespan`에 이 매니저를 `app.state`로 등록.
 - **범위**: 이 단계에서 실제로 KIS Live WS에 연결이 시작된다 — **여기서부터 실제
   네트워크/자격증명 검증이 필요**. 이 연결은 **`api` 서비스 프로세스 안에서만**
@@ -136,10 +139,17 @@
   형태로도 관여할 필요도 없다. `ops-scheduler` 쪽 코드 변경·재배포는 이번 작업
   전체에 걸쳐 발생하지 않는다.
 - **의존성**: Step 1(스키마) 완료 후 진행. Step 0(정적 참조값 결정) 완료 필요.
-- **구현 직전 재확인 (KIS 공식 문서)**:
-  - `H0STCNT0`/`H0STASP0`의 최신 필드 스펙이 `172`/`178`번 문서와 일치하는지
-  - approval key 발급(`/oauth2/Approval`) 요청/응답 필드가 최신 공지와 일치하는지
-  - 41건 구독 한도 최신 수치
+- **✅ 2026-07-08 KIS 공식 웹페이지/문서 재확인 완료**:
+  - `H0STCNT0`/`H0STASP0`의 필드 스펙이 `172`/`178`번 문서와 **일치 확인됨**.
+  - WebSocket 41건 한도 세부 사항 확인됨:
+    - appkey/계좌 기준 세션 1개, 등록 건수 총합 41건 — 국내/해외/파생 **전체 실시간
+      채널 합산**(이 화면이 이 앱키의 유일한 구독 주체인 동안은 문제 없음).
+    - **체결가+호가를 같은 종목에 모두 구독하면 2건으로 계산됨** — 이 화면은 두
+      채널을 모두 쓰므로, **41건 = 최대 약 20종목**으로 재계산해야 한다(41건이
+      아니라 20종목이 실질 상한). §8 운영 안전장치, UI 레이아웃 설계 §1/§6-A에도
+      이 수치를 반영함.
+  - approval key 발급(`/oauth2/Approval`) 요청/응답 필드는 여전히 **구현 직전
+    최종 재확인 대상**으로 남긴다(이번 확인 범위는 TR 필드/구독 한도로 한정).
 
 ### Step 4 — REST Fallback 연동
 
@@ -147,8 +157,9 @@
   호출해 값을 보정하는 로직을 `QuoteSubscriptionManager`에 추가(`11_...md` §4.7).
   REST client는 기존 트레이딩 계좌 client 재사용 여부를 이 단계에서 최종 확정.
 - **의존성**: Step 3 완료 후.
-- **구현 직전 재확인**: REST 현재가 조회(`FHKST01010100`) 응답 필드가 최신 공지와
-  일치하는지 (`stck_mxpr`/`stck_llam`/`stck_sdpr`/`per`/`pbr`/`eps`/`bps` 필드명 포함).
+- **✅ 2026-07-08 KIS 공식 웹페이지/문서 재확인 완료**: REST 현재가 조회(`FHKST01010100`,
+  `029_주식현재가_시세.md`) 응답 필드가 최신 공지와 **일치 확인됨**
+  (`stck_mxpr`/`stck_llam`/`stck_sdpr`/`per`/`pbr`/`eps`/`bps` 포함). 추가 재확인 불필요.
 
 ### Step 5 — Backend API 실제 연동 (Step 1 stub → 실 구현)
 
@@ -258,7 +269,10 @@ Step 0 (정적 참조값 출처 확정 — ✅ 완료, 코드 없음)
   같은 함수를 신규 계좌에도 쓰는 방식은 금지(세션 preemption 위험).
 - **uvicorn 단일 워커 유지**: `--workers 1` 설정을 변경하지 않는다(앱키당 1세션 제약).
 - **구독 한도 하드 캡**: `SubscriptionBudget(max_subscriptions=41)`을 명시적으로
-  설정하고, 초과 요청은 API 레벨에서 422/409로 거부(자동 evict 없음).
+  설정하고, 초과 요청은 API 레벨에서 422/409로 거부(자동 evict 없음). **종목당
+  체결가+호가 2건을 소비하므로 실질 상한은 약 20종목**이다 — UI/API 모두 "종목
+  기준"이 아니라 "등록 건수 기준"으로 잔여 capacity를 계산해야 한다(잔여 2건 미만이면
+  신규 종목 추가 거부).
 - **Rate limit 격리 확인**: 신규 계좌는 별도 계좌이므로 기존 18RPS/41건 budget과
   공유되지 않음을 Step 3 구현 시 재확인(별도 `RateLimitBudgetManager` 인스턴스 사용).
 - **민감정보 비노출**: approval_key, appkey/appsecret을 API 응답/로그/UI 어디에도
