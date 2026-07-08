@@ -18,7 +18,7 @@
 
 1. [화면 목적](#1-화면-목적)
 2. [메뉴 위치](#2-메뉴-위치)
-3. [라우트](#3-라우트)
+3. [라우트](#3-라우트) ([3.1 다른 화면에서의 진입](#31-다른-화면에서의-진입-딥링크))
 4. [와이어프레임](#4-와이어프레임)
 5. [주요 UI 영역](#5-주요-ui-영역)
 6. [영역별 표시 필드](#6-영역별-표시-필드)
@@ -62,6 +62,36 @@
 > 사용자가 지정한 `/operations/realtime-quotes`를 이 문서의 기준값으로 고정한다.
 - 선택된 종목은 쿼리 파라미터로 유지한다: `/operations/realtime-quotes?symbol=138040`
   (새로고침/링크 공유 시 같은 종목이 다시 열리도록).
+
+### 3.1 다른 화면에서의 진입 (딥링크)
+
+**결론: 가능하며, 기존 코드에 이미 동일한 패턴의 선례가 있다.**
+
+- `AccountsView.tsx:340`은 포지션 행에서 "관련 주문 보기 →" 버튼 클릭 시
+  `navigate(\`/orders?symbol=${encodeURIComponent(r.symbol)}\`)`로 종목코드를 쿼리
+  파라미터로 넘긴다.
+- `OrdersView.tsx:60-66`은 마운트 시 `location.search`에서 `symbol` 파라미터를 읽어
+  검색창을 자동으로 채운다(`useEffect` + `URLSearchParams`).
+- 이 화면도 **동일한 패턴을 그대로 재사용**한다: `/operations/realtime-quotes?symbol=138040`으로
+  진입하면, 마운트 시 해당 종목을 자동으로 구독 추가하고 메인 뷰(C/D/E)에 즉시 표시한다
+  (단순 검색창 채움이 아니라 "그 종목으로 바로 조회"까지 수행한다는 점이 `OrdersView`의
+  기존 동작보다 한 단계 더 나아간 부분).
+
+**단, 현재 확인 결과 종목을 클릭 가능하게 만드는 작업은 아직 어디에도 없다.**
+`OrdersView.tsx:108-109`와 `FillHistoryView.tsx:84`의 종목(symbol) 컬럼은 현재
+**클릭 불가능한 일반 텍스트**로 렌더링된다(`<span>{r.symbol}</span>` / `row.symbol`
+그대로 출력). 따라서 "체결내역/주문 화면에서 종목 클릭 → 이 화면으로 이동"을 완성하려면,
+**이 신규 화면 자체의 구현과는 별개로 다음 두 화면에 작은 추가 작업이 필요하다**:
+
+| 화면 | 필요한 변경 | 참고 선례 |
+|---|---|---|
+| `OrdersView.tsx` | 종목(symbol) 컬럼 `render`를 클릭 가능한 링크/버튼으로 변경, `navigate(\`/operations/realtime-quotes?symbol=${encodeURIComponent(r.symbol)}\`)` 호출 | `AccountsView.tsx:340`의 "관련 주문 보기 →" 버튼과 동일한 방식 |
+| `FillHistoryView.tsx` | 동일하게 종목 컬럼을 클릭 가능하게 변경 | 위와 동일 |
+
+이 두 변경은 **이 신규 화면의 컴포넌트 작업이 아니라 기존 화면에 대한 소규모 추가 작업**이므로,
+`11_kis_realtime_quote_operations_screen.md`의 단계별 계획(§8) 중 **Phase 3(Admin UI polling
+화면) 범위에 명시적으로 포함**시키는 것을 권장한다 (이 문서 자체는 UI 레이아웃 문서이므로
+그 문서의 실제 수정은 여기서 하지 않는다).
 
 ## 4. 와이어프레임
 
