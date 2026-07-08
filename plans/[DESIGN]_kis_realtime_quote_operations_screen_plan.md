@@ -45,6 +45,10 @@
   신규 계좌 전용 클라이언트 인스턴스만 추가하며, 기존 `KoreaInvestmentAdapter`,
   `KisMarketStateClient`, `OrderManager`, `ReconciliationService` 등 주문/체결/정합성
   경로는 **일절 수정하지 않는다.**
+- **`ops-scheduler` 서비스/코드 수정** — 이 신규 계좌 전용 WebSocket 연결은 전적으로
+  `api` 서비스 프로세스(FastAPI `lifespan`) 안에서만 생성·유지된다.
+  `scripts/run_ops_scheduler.py`를 비롯한 `ops-scheduler` 컨테이너의 어떤 코드도
+  이번 작업 범위에서 수정하지 않으며, 재배포·재시작도 필요하지 않다. §6, §8 참고.
 - KIS 통합 채널(`H0UNCNT0`/`H0UNASP0`, KRX+NXT)이나 REST polling 방식 채택 —
   이미 KRX 전용 + 실시간 스트리밍으로 결정됨(`11_...md` §3).
 - 이번 계획에는 §11에 명시한 항목(차트, 워치리스트 영속화, 알림, 다중 종목 비교 뷰 등)을
@@ -58,7 +62,7 @@
 | 2 | Backend 설계 문서 확정 | ✅ 완료 — `11_kis_realtime_quote_operations_screen.md` |
 | 3 | UI 레이아웃 설계 확정 | ✅ 완료 — `[DESIGN]_kis_realtime_quote_screen_ui_layout.md` |
 | 4 | `.env` 변수명 확정 | ✅ 완료 — `KIS_REALTIME_QUOTE_APP_KEY`/`APP_SECRET`/`BASE_URL`/`WS_URL` |
-| 5 | 신규 계좌의 상한가/하한가/기준가/전일거래량/전일거래대금 보강 경로 확정 | ❌ **미확정** — UI 설계 문서 §6-E에서 REST 1회 조회로 보강 필요성만 식별됨. **Phase 1 착수 전 반드시 확정** (§5.1 Step 1에 포함) |
+| 5 | 신규 계좌의 상한가/하한가/기준가/PER/PBR/EPS/BPS 보강 경로 확정 | ✅ **완료** — REST 현재가 조회(`029_주식현재가_시세.md`, TR `FHKST01010100`)로 확정. 기존 `KISRestClient.get_quote()`가 이미 이 필드들을 raw output으로 반환하므로 **신규 백엔드 코드 불필요**(Step 0 참고) |
 | 6 | `OrdersView`/`FillHistoryView` 종목 클릭 딥링크 연동 범위 확정 | ✅ 완료 — UI 레이아웃 설계 §3.1에서 Phase 3 범위로 명시 |
 | 7 | KIS 공식 문서 재확인(TR ID, message format, 구독 제한) | ❌ **의도적으로 미확정 상태 유지** — 구현 직전(각 PR 착수 직전) 재확인 항목으로 남긴다(아래 각 단계의 "구현 직전 재확인" 참고) |
 
@@ -70,7 +74,7 @@
 | WS 클라이언트 | [`websocket_client.py`](../src/agent_trading/brokers/koreainvestment/websocket_client.py) | `KISWebSocketClient` 클래스 — 신규 계좌 자격증명으로 **별도 인스턴스** 생성해 재사용 |
 | 구독 budget | [`base.py`](../src/agent_trading/brokers/base.py) | `SubscriptionBudget(max_subscriptions=41)` — `adapter.py:85` 패턴 재사용 |
 | Approval key 캐시 | [`token_cache.py`](../src/agent_trading/brokers/koreainvestment/token_cache.py) | `KisTokenCache` + `build_live_approval_key_cache_config()` — fingerprint가 appkey/secret 기반이라 신규 계좌 자격증명을 넣으면 자동으로 캐시 파일 분리됨. 신규 `CachePurpose` 불필요 |
-| REST quote 조회 | [`rest_client.py`](../src/agent_trading/brokers/koreainvestment/rest_client.py) | `KISRestClient.get_quote()`(TTL 캐시 포함) — REST fallback(§5.4)과 정적 참조값 보강(상한가/하한가/기준가 등)에 재사용 |
+| REST quote 조회 | [`rest_client.py`](../src/agent_trading/brokers/koreainvestment/rest_client.py) | `KISRestClient.get_quote()`(2086-2118행, TTL 캐시 포함, endpoint `inquire_price` → TR `FHKST01010100`) — REST fallback(§5.4)과 정적 참조값 보강(상한가/하한가/기준가/PER/PBR/EPS/BPS)에 그대로 재사용. raw `output` 딕셔너리를 그대로 반환하므로 **신규 파싱 코드 불필요** |
 | API 라우트 패턴 | [`routes/broker_capacity.py`](../src/agent_trading/api/routes/broker_capacity.py) | "adapter 미설정 시 503" 패턴 — 신규 라우트 파일에 그대로 적용 |
 | DI 패턴 | [`api/deps.py`](../src/agent_trading/api/deps.py) | `get_kis_client(request)` 스타일 — 신규 계좌 전용 adapter DI 함수 신설 시 참고 |
 | Admin UI 공용 컴포넌트 | `admin_ui/src/components/common/*.tsx` | `StatusBadge`/`StatusCard`/`Panel`/`DataTable`/`DetailField`/`ErrorBanner`/`WarningBanner`/`LoadingSpinner`/`FilterBar` — UI 레이아웃 설계 §9에서 상세 매핑 확정 |
@@ -83,15 +87,19 @@
 각 단계는 **독립적으로 리뷰·머지 가능한 PR 단위**로 설계했다. 단계 간 의존성은
 화살표(→)로 표시하며, 병렬 진행 가능한 단계는 명시한다.
 
-### Step 0 — 정적 참조값 보강 경로 확정 (선행, 코드 변경 없음)
+### Step 0 — 정적 참조값 보강 경로 확정 (선행, 코드 변경 없음) — ✅ 확정 완료
 
-- §3 항목 5의 미확정 사항을 해소한다: 상한가/하한가/기준가/전일거래량/전일거래대금을
-  종목 구독 시점에 REST 1회 조회로 가져올지, 별도 배치로 가져올지 결정.
-- **권장(초안)**: 종목이 신규 구독될 때 `KISRestClient.get_quote()`를 1회 호출해
-  응답을 캐싱하고, 이후 장중에는 재조회하지 않는다(당일 상/하한가·기준가는 장중
-  불변, 전일 거래량/대금도 불변).
-- 산출물: 이 결정을 `11_kis_realtime_quote_operations_screen.md`에 추가 반영할지
-  여부를 결정(별도 문서 수정 작업으로, 이번 계획 범위 밖).
+- §3 항목 5는 이미 해소되었다: 상한가/하한가/기준가/PER/PBR/EPS/BPS는
+  REST 현재가 조회(`029_주식현재가_시세.md`, TR `FHKST01010100`)로 확정.
+  `KISRestClient.get_quote()`(`rest_client.py:2086-2118`)가 이 필드들을 raw
+  `output` 딕셔너리로 이미 반환하므로 **신규 백엔드 코드가 필요 없다.**
+- **적용 방식(확정)**: 종목이 신규 구독될 때(또는 종목 전환 시) `get_quote()`를
+  1회 호출해 응답을 캐싱하고, 이후 장중에는 재조회하지 않는다(당일 상/하한가·
+  기준가·PER/PBR/EPS/BPS는 장중 사실상 불변).
+- Step 0의 남은 작업은 "결정"이 아니라 **"Step 3에서 이 값을 어느 컴포넌트가
+  캐싱할지"를 정하는 구현 세부사항**으로 축소되었다 — `QuoteSubscriptionManager`
+  내부에 종목별 정적 참조값 캐시(dict)를 두는 것을 권장(Step 3에서 구현).
+- 참고: `[DESIGN]_kis_realtime_quote_screen_ui_layout.md` §6-E, v3 변경 사항.
 
 ### Step 1 — Backend Schema / API Contract (→ Step 2, 3의 전제)
 
@@ -123,7 +131,10 @@
      — `SubscriptionBudget(max_subscriptions=41)` 사용.
   4. FastAPI `lifespan`에 이 매니저를 `app.state`로 등록.
 - **범위**: 이 단계에서 실제로 KIS Live WS에 연결이 시작된다 — **여기서부터 실제
-  네트워크/자격증명 검증이 필요**.
+  네트워크/자격증명 검증이 필요**. 이 연결은 **`api` 서비스 프로세스 안에서만**
+  생성·유지되며, `ops-scheduler` 컨테이너는 이 연결의 존재를 알 필요도, 어떤
+  형태로도 관여할 필요도 없다. `ops-scheduler` 쪽 코드 변경·재배포는 이번 작업
+  전체에 걸쳐 발생하지 않는다.
 - **의존성**: Step 1(스키마) 완료 후 진행. Step 0(정적 참조값 결정) 완료 필요.
 - **구현 직전 재확인 (KIS 공식 문서)**:
   - `H0STCNT0`/`H0STASP0`의 최신 필드 스펙이 `172`/`178`번 문서와 일치하는지
@@ -137,7 +148,7 @@
   REST client는 기존 트레이딩 계좌 client 재사용 여부를 이 단계에서 최종 확정.
 - **의존성**: Step 3 완료 후.
 - **구현 직전 재확인**: REST 현재가 조회(`FHKST01010100`) 응답 필드가 최신 공지와
-  일치하는지 (상한가/하한가/기준가/전일거래량/전일거래대금 필드명 포함).
+  일치하는지 (`stck_mxpr`/`stck_llam`/`stck_sdpr`/`per`/`pbr`/`eps`/`bps` 필드명 포함).
 
 ### Step 5 — Backend API 실제 연동 (Step 1 stub → 실 구현)
 
@@ -178,7 +189,7 @@
 ### 단계 요약 (실행 순서)
 
 ```
-Step 0 (문서 결정, 코드 없음)
+Step 0 (정적 참조값 출처 확정 — ✅ 완료, 코드 없음)
   └─▶ Step 1 (Backend contract) ──┐        Step 2 (UI route/menu 골격)
                                     ├─▶ Step 3 (WS adapter + subscription manager)
                                     │      └─▶ Step 4 (REST fallback)
@@ -217,6 +228,11 @@ Step 0 (문서 결정, 코드 없음)
 `market_state_client.py`, `order_manager.py`, `reconciliation_service.py`, 기존
 `OrdersView.tsx`/`FillHistoryView.tsx`의 데이터 조회·필터 로직(컬럼 렌더링 외 부분).
 
+**`ops-scheduler` 서비스 전체(명시적 확인)**: `scripts/run_ops_scheduler.py`를 포함해
+`ops-scheduler` 컨테이너가 실행하는 어떤 파일도 이번 작업에서 변경하지 않는다.
+`docker-compose.yml`에 추가하는 `KIS_REALTIME_QUOTE_*` 환경변수도 **`api` 서비스에만**
+전달하며, `ops-scheduler` 서비스 정의에는 추가하지 않는다.
+
 ## 7. DB Migration 필요 여부 판단
 
 **결론: 필요 없음.**
@@ -252,9 +268,15 @@ Step 0 (문서 결정, 코드 없음)
   (트레이딩 계좌), `ReconciliationService`, 기존 KIS WS/REST client 클래스의
   **공개 인터페이스는 절대 변경하지 않는다.** 필요한 모든 신규 기능은 별도
   클래스/함수로 추가한다.
-- **장중 배포 주의**: Step 3(실제 KIS Live WS 연결이 시작되는 단계) 이후의 배포는
-  기존 운영 원칙(`[BACKLOG] backlog.md`의 여러 항목에 반복되는 "장중 작업 금지"
-  원칙)을 따라 **장 종료 후 배포, 다음 장중 검증**을 권장한다. Step 1, 2(stub/골격
+- **`ops-scheduler` 무변경/무재배포**: 이 화면의 KIS Live WS 연결은 전적으로 `api`
+  서비스 프로세스 안에서 생성·유지된다. `ops-scheduler` 컨테이너의 코드, 설정,
+  환경변수, 배포 절차 중 어떤 것도 이번 작업으로 변경되지 않으며, `ops-scheduler`의
+  재시작/재배포도 필요하지 않다. `ops-scheduler`가 담당하는 트레이딩 계좌(`KIS_APP_KEY`)
+  및 공시 계좌(`KIS_LIVE_INFO_*`)의 기존 세션/스케줄 루프는 이번 작업과 완전히
+  분리되어 영향을 받지 않는다.
+- **장중 배포 주의**: Step 3(실제 KIS Live WS 연결이 시작되는 단계) 이후의 `api`
+  서비스 배포는 기존 운영 원칙(`[BACKLOG] backlog.md`의 여러 항목에 반복되는 "장중
+  작업 금지" 원칙)을 따라 **장 종료 후 배포, 다음 장중 검증**을 권장한다. Step 1, 2(stub/골격
   단계)는 실제 KIS 통신이 없으므로 이 제약에서 자유롭다.
 
 ## 9. 테스트 명령 후보
