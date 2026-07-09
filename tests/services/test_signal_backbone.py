@@ -152,3 +152,28 @@ def test_build_signal_feature_entity_includes_score_diagnostics() -> None:
     assert "short_history_lt_60" in diagnostics["input_quality_flags"]
     assert "missing_sma_60" in diagnostics["missing_feature_flags"]
     assert "missing_return_3m_pct" in diagnostics["missing_feature_flags"]
+    assert snapshot.component_scores_json["shadow_signal_backbone_variant"] == (
+        "signal_backbone_v1_shadow_v2"
+    )
+    assert "shadow_slow_score_v2" in snapshot.component_scores_json
+    assert "shadow_fast_score_v2" in snapshot.component_scores_json
+    assert "shadow_overall_score_v2" in snapshot.component_scores_json
+    assert "shadow_component_scores_v2" in snapshot.component_scores_json
+    assert "shadow_reason_codes_v2" in snapshot.component_scores_json
+    assert "shadow_diagnostics_v2" in snapshot.component_scores_json
+
+
+def test_shadow_v2_reduces_slow_negative_pressure_for_borderline_case() -> None:
+    bars = _make_bars(count=80, start_price=100.0, daily_step=-0.08, last_volume=1200.0)
+
+    _, score_card = build_signal_snapshot("005930", bars)
+    snapshot = build_signal_feature_entity(
+        instrument_id=uuid4(),
+        features=build_signal_snapshot("005930", bars)[0],
+        score_card=score_card,
+    )
+
+    shadow_overall = snapshot.component_scores_json["shadow_overall_score_v2"]
+    shadow_slow = snapshot.component_scores_json["shadow_slow_score_v2"]
+    assert shadow_slow >= float(snapshot.slow_score)
+    assert shadow_overall >= float(snapshot.overall_score)

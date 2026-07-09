@@ -3,7 +3,10 @@
 > **목적**: `plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md`(Backend/API 설계)와
 > `plans/[DESIGN]_kis_realtime_quote_screen_ui_layout.md`(Admin UI 레이아웃 설계)를
 > 실제 구현 가능한 단위(작은 PR)로 분해한다.
-> **상태**: ❌ 미구현 — 이 문서는 실행 계획 문서이며, 이 작업 자체로는 코드를 변경하지 않는다.
+> **상태**: 🔄 Phase 1~3 완료, Phase 4 대기 — Step 0/1/2/3/5/6/7/8/9는 구현 완료.
+> **Step 4(REST Fallback 연동)는 미구현으로 남아 있다** — `data_source`에
+> `"rest_fallback"`이 실제로 산출되는 경로는 코드에 없다(타입 힌트 주석으로만 존재).
+> 자세한 현재 상태는 `[PRIORITY_MAP]` #19, `[BACKLOG]` #37 참조.
 > **참조**: [`11_kis_realtime_quote_operations_screen.md`](../plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md),
 > [`[DESIGN]_kis_realtime_quote_screen_ui_layout.md`](%5BDESIGN%5D_kis_realtime_quote_screen_ui_layout.md),
 > [`[BACKLOG] backlog.md` #37](%5BBACKLOG%5D%20backlog.md),
@@ -151,7 +154,7 @@
   - approval key 발급(`/oauth2/Approval`) 요청/응답 필드는 여전히 **구현 직전
     최종 재확인 대상**으로 남긴다(이번 확인 범위는 TR 필드/구독 한도로 한정).
 
-### Step 4 — REST Fallback 연동
+### Step 4 — REST Fallback 연동 — ❌ 미구현 (2026-07-08 재확인)
 
 - **작업**: WS 연결 끊김이 N초 이상 지속될 때 `KISRestClient.get_quote()`를 1회
   호출해 값을 보정하는 로직을 `QuoteSubscriptionManager`에 추가(`11_...md` §4.7).

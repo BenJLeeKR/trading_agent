@@ -794,6 +794,193 @@ bucket A가 충분히 검증된 뒤에만
 최소 1거래일 이상 추가 관측 후
 후행 proxy와 churn 부작용을 비교한다.
 
+## 9.10 `signal_backbone_v1` 하방 편향 보정안
+
+`2026-07-08` 장후 `signal_feature_batch` 실측 기준:
+
+- 총 `80`종목
+- `avg_overall_score ≈ -0.3847`
+- `avg_slow_score ≈ -0.4030`
+- `avg_fast_score ≈ -0.3623`
+
+핵심 분해:
+
+1. `momentum_3m_negative`
+   - `45 / 80`
+   - `overall` 직접 기여 평균 약 `-0.264`
+2. `below_sma60`
+   - `65 / 80`
+   - `overall` 직접 기여 평균 약 `-0.1665`
+3. `volatility_elevated`
+   - `33 / 80`
+   - `overall` 직접 기여 평균 약 `-0.1556`
+4. `atr_expanded`
+   - `51 / 80`
+   - `overall` 직접 기여 평균 약 `-0.1473`
+
+즉, 현재 하방 편향의 1차 병목은
+`fast`보다 `slow`,
+그중에서도
+`momentum_3m_negative + below_sma60` 조합이다.
+
+### 채택 원칙
+
+1. 먼저 `slow` hard-negative를 shadow에서만 완화한다.
+2. `volatility_penalty`는 2순위로 관측한다.
+3. authoritative 규칙은 즉시 바꾸지 않는다.
+4. `fast/slow/overall` score 공식 전체를 먼저 갈아엎지 않는다.
+
+### 안 A. `momentum_3m_negative` 완화 shadow
+
+현행:
+
+- `return_3m_pct <= -10.0` → `-0.8`
+- `return_3m_pct <= -3.0` → `-0.35`
+
+shadow v2 기준:
+
+- `return_3m_pct <= -15.0` → `-0.8`
+- `-15.0 < return_3m_pct <= -5.0` → `-0.45`
+- `-5.0 < return_3m_pct <= -2.0` → `-0.20`
+
+의도:
+
+- `-10% ~ -15%` 구간의 과도한 일괄 `-0.8` 낙인을 줄인다.
+- 약한 하락 추세와 구조적 붕괴를 분리한다.
+
+### 안 B. `below_sma60` 완화 shadow
+
+현행:
+
+- `price_vs_sma_60_pct <= -5.0` → `-0.8`
+- `price_vs_sma_60_pct <= -1.5` → `-0.45`
+
+shadow v2 기준:
+
+- `price_vs_sma_60_pct <= -8.0` → `-0.8`
+- `-8.0 < value <= -3.0` → `-0.45`
+- `-3.0 < value <= -1.0` → `-0.20`
+
+의도:
+
+- 약한 장기이평 하회와 추세 붕괴를 분리한다.
+- `overall` 하방 bias의 2차 주원인을 단계화한다.
+
+### 안 C. `volatility_penalty` 완화 shadow
+
+현행:
+
+- `volatility_20d_pct >= 4.5` → `-0.7`
+- `volatility_20d_pct >= 3.0` → `-0.35`
+- `atr_14_pct >= 6.0` → `-0.5`
+- `atr_14_pct >= 3.5` → `-0.2`
+- 합산 후 `max(-1.0, penalty)`
+
+shadow v2 기준:
+
+- `volatility_20d_pct >= 5.5` → `-0.55`
+- `volatility_20d_pct >= 3.8` → `-0.25`
+- `atr_14_pct >= 7.5` → `-0.35`
+- `atr_14_pct >= 4.5` → `-0.15`
+- 합산 하한은 그대로 `-1.0`
+
+의도:
+
+- 변동성 패널티의 방향은 유지하되
+  `overall` 기여량을 소폭 줄인다.
+- 다만 이 항목은 `slow` 보정 이후 2순위 적용이다.
+
+### 안 D. score weight 보정 shadow
+
+현행:
+
+- `slow_score = 0.6 * slow_momentum + 0.4 * slow_trend`
+- `overall_score = 0.55 * slow_score + 0.45 * fast_score`
+
+shadow v2 기준:
+
+- `slow_score_v2 = 0.5 * slow_momentum + 0.5 * slow_trend`
+- `overall_score_v2 = 0.50 * slow_score_v2 + 0.50 * fast_score`
+
+의도:
+
+- `slow_momentum`의 단일 항목 과잉 영향력을 줄인다.
+- `fast`의 상대 반영을 약간 높인다.
+
+단, 이 안은 A/B shadow 결과를 먼저 본 뒤에만 적용한다.
+
+### 구현 순서
+
+1. `signal_backbone_v1_shadow_v2`
+   - `momentum_3m_negative` / `below_sma60` 완화만 추가
+2. `signal_backbone_v1_shadow_v3`
+   - `volatility_penalty` 완화 추가
+3. `signal_backbone_v1_shadow_v4`
+   - score weight 보정 추가
+
+### 계측 필드
+
+추가 shadow payload:
+
+1. `shadow_signal_backbone_variant`
+2. `shadow_slow_score_v2`
+3. `shadow_fast_score_v2`
+4. `shadow_overall_score_v2`
+5. `shadow_component_scores_v2`
+6. `shadow_reason_codes_v2`
+
+### 승격 기준
+
+다음 조건을 모두 만족할 때만
+authoritative 후보로 검토한다.
+
+1. `non_negative` 또는 `mild_negative` 표본이
+   기존 대비 유의하게 증가
+2. `core_risk_off_floor_v3`의
+   `mild_relax / moderate_relax` 표본이 실제로 생성
+3. 후행 `T+1 / T+3` proxy가
+   기존 baseline보다 악화되지 않음
+4. churn 및 low-liquidity 진입 증가가 없음
+
+### 관측 1회차 기록 (`2026-07-08`, shadow_v2 마감/검증)
+
+- 목적: `signal_backbone_v1_shadow_v2`(안 A + 안 B) 구현을 코드 레벨에서
+  마감하고, 위 4개 승격 기준을 추적할 수 있는 관측 상태로 전환.
+- 코드 범위 재확인: `_score_return_3m_shadow_v2` / `_score_price_vs_ma_shadow_v2_sma60`의
+  구간별 임계값이 본 문서의 안 A/안 B 수치와 정확히 일치함을 diff 대조로 확인.
+  안 C(변동성 패널티)/안 D(weight 보정)는 이번 범위에 포함되지 않음(의도된 스코프).
+- 회귀 테스트: `tests/services/test_signal_backbone.py`,
+  `tests/scripts/test_build_signal_feature_snapshots.py` 및 인접 소비 경로
+  (`test_signal_feature_batch_runtime.py`, `test_signal_feature_pipeline.py`,
+  `test_deterministic_trigger_engine.py`, `test_expected_value_gate.py`,
+  `test_market_regime.py`, `test_decision_orchestrator.py`) 총 107개 통과.
+  DB 연결이 필요한 `test_run_decision_loop.py`/`test_run_ops_scheduler.py`
+  일부(6건)는 이번 환경에 postgres가 없어 발생한 인프라 실패로, diff와 무관함을 확인.
+- 산출물 검증: `scripts/build_signal_feature_snapshots.py`를 실제 `trading_db`
+  (Docker Compose `app` 서비스, `postgres_runtime`)에 대해 `--dry-run`으로 2회
+  실행해 `shadow_signal_backbone_variant`/`shadow_slow_score_v2`/`shadow_fast_score_v2`
+  /`shadow_overall_score_v2`/`shadow_component_scores_v2`/`shadow_reason_codes_v2`
+  /`shadow_diagnostics_v2` 필드가 `component_scores_json`에 정상 산출됨을 확인.
+  - 극단 하락(3개월 -30%대) 케이스: 안 A/B 완화 구간 밖이라 baseline과 shadow가
+    동일(`-0.8`)하게 산출됨 — 설계대로 "구조적 붕괴" 구간은 그대로 유지.
+  - 완만한 하락(3개월 -6.95%, sma60 대비 -3.5%) 케이스: baseline
+    `slow_score=-0.39` vs shadow `shadow_slow_score_v2=-0.45`처럼 구간 경계에
+    따라 개별 종목 단위로는 shadow가 더/덜 negative 하게 나올 수 있음을 확인 —
+    본 안은 "모든 종목이 항상 완화"가 아니라 §9.10에 기술된 대로 완만한 하락과
+    구조적 붕괴를 재분배하는 설계이며, 승격 기준 1은 개별 종목이 아니라
+    **모집단 단위 `non_negative`/`mild_negative` 표본 비율**로 판단해야 함을
+    재확인.
+  - 검증에 사용한 입력은 실제 시세가 아닌 합성(fake) 데이터였으므로, 검증 과정에서
+    `trading.signal_feature_batch_runs`에 생성된 synthetic 테스트 row 2건
+    (`7e4385b1-595b-4895-94a0-00a5da3912f5`, `5586ed73-145b-4271-8672-cda3fe3b4f46`)은
+    관측 이력 오염을 막기 위해 삭제했다. **실제 관측 표본으로 집계할 데이터는
+    이 2건이 아니라, 다음 정규 장후 배치(실제 시세 기반)부터 시작한다.**
+- 현재 상태: 코드/테스트/필드 산출 검증 완료 → **관측 시작 가능 상태**로 전환.
+  승격 기준 1~4는 아직 미충족(관측 표본 미축적) — 다음 정규 장후
+  `build_signal_feature_snapshots.py` 실행분부터 `shadow_overall_bucket_counts_v2`
+  / `shadow_reason_code_counts_v2` 실측치를 최소 1거래일 이상 누적한 뒤
+  판단한다.
+
 ## 8. 비채택안
 
 ### 8.1 risk_off 전체 해제

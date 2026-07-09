@@ -2067,6 +2067,70 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
         실제로 채워지는지 먼저 확인
       - 계속 `0건`이면 다음 병목은 floor 값 자체보다
         `feature snapshot missing` 또는 upstream score 생성 품질로 간주
+  - [x] `signal_backbone_v1` 하방 편향 shadow 보정안 추가 — **`v2`(안 A+B)까지 진행,
+        `v3`/`v4`는 후속 대기**
+    - `2026-07-08` 기준 `v2`(momentum_3m_negative + below_sma60 완화) 코드/테스트
+      마감 완료 → **관측 시작 상태**로 전환
+      ([`[PLAN] core_risk_off_ranking_relaxation_phase1.md` §9.10 관측 1회차 기록](./%5BPLAN%5D%20core_risk_off_ranking_relaxation_phase1.md))
+    - 회귀 테스트 107개 통과, 실제 `trading_db` 대상 `--dry-run` 산출물 검증 완료
+    - 승격 기준 4개 항목은 아직 미충족 — 정규 장후 배치로 최소 1거래일 이상
+      `shadow_overall_bucket_counts_v2` 관측 축적 필요
+    - `v3`(변동성 패널티 완화), `v4`(weight 보정)는 `v2` 관측 결과 확인 전까지 미착수
+    - 목적
+      - `feature snapshot` 입력 품질 문제가 아니라
+        `score formula` 자체의 하방 편향이 병목인지 실측 기반으로 검증
+    - 실측 근거
+      - `2026-07-08` 장후 `80`종목 기준
+      - `avg_overall_score ≈ -0.3847`
+      - `avg_slow_score ≈ -0.4030`
+      - `momentum_3m_negative`
+        - `45건`
+        - `overall` 직접 기여 평균 약 `-0.264`
+      - `below_sma60`
+        - `65건`
+        - `overall` 직접 기여 평균 약 `-0.1665`
+      - `volatility_elevated`
+        - `33건`
+        - `overall` 직접 기여 평균 약 `-0.1556`
+      - `atr_expanded`
+        - `51건`
+        - `overall` 직접 기여 평균 약 `-0.1473`
+    - 1차 적용 범위
+      - authoritative score는 유지
+      - shadow backbone variant만 추가
+    - 구현 순서
+      - `v2`
+        - `momentum_3m_negative` 임계값/패널티 완화
+        - `below_sma60` 임계값/패널티 완화
+      - `v3`
+        - `volatility_penalty` 완화 추가
+      - `v4`
+        - `slow / overall` weight 보정 추가
+    - 세부 기준안
+      - `momentum_3m_negative`
+        - 현행 `<= -10% -> -0.8`
+        - shadow `<= -15% -> -0.8`, `<= -5% -> -0.45`, `<= -2% -> -0.20`
+      - `below_sma60`
+        - 현행 `<= -5% -> -0.8`
+        - shadow `<= -8% -> -0.8`, `<= -3% -> -0.45`, `<= -1% -> -0.20`
+      - `volatility_penalty`
+        - 현행 `vol>=4.5 -> -0.7`, `atr>=6.0 -> -0.5`
+        - shadow `vol>=5.5 -> -0.55`, `atr>=7.5 -> -0.35`
+      - weight
+        - 현행 `slow=0.6/0.4`, `overall=0.55/0.45`
+        - shadow `slow=0.5/0.5`, `overall=0.50/0.50`
+    - 계측 필드
+      - `shadow_signal_backbone_variant`
+      - `shadow_slow_score_v2`
+      - `shadow_fast_score_v2`
+      - `shadow_overall_score_v2`
+      - `shadow_component_scores_v2`
+      - `shadow_reason_codes_v2`
+    - 승격 기준
+      - `non_negative + mild_negative` 표본 증가
+      - `core_risk_off_floor_v3`의 `mild_relax / moderate_relax` 표본 생성
+      - `T+1 / T+3` proxy 악화 없음
+      - churn / low-liquidity 부작용 없음
 - 근거 문서
   - [`plans/[DESIGN] deterministic_trigger_eligibility_and_ranking_v1.md`](./%5BDESIGN%5D%20deterministic_trigger_eligibility_and_ranking_v1.md)
   - [`plans/[DESIGN] performance_attribution_for_trigger_and_override.md`](./%5BDESIGN%5D%20performance_attribution_for_trigger_and_override.md)
@@ -2984,9 +3048,11 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   1:1로 대응한다.
 - **2026-07-08 기준 Phase 1~3 구현 완료** — 설계 문서의 단계 구분
   (`11_kis_realtime_quote_operations_screen.md` §8) 기준으로 보면, 현재 상태는
-  "문서/API contract/UI mock(Phase 1) → 전용 KIS WebSocket-backed quote source 및
-  REST fallback(Phase 2) → Admin UI polling 화면/딥링크/프레임 유지 UX(Phase 3)"
-  까지 반영된 상태다.
+  "문서/API contract/UI mock(Phase 1) → 전용 KIS WebSocket-backed quote source(Phase 2)
+  → Admin UI polling 화면/딥링크/프레임 유지 UX(Phase 3)" 까지 반영된 상태다.
+  단, Phase 2에 포함되는 **Step 4(REST Fallback 연동)는 미구현으로 남아 있다** —
+  `data_source`에 `"rest_fallback"`이 실제로 산출되는 경로는 코드에 없다(타입
+  힌트 주석으로만 존재). WS 연결이 끊겨도 REST로 값을 보정하지 않는다.
   - Backend: 전용 `KisRealtimeQuoteSource` + 별도 계좌/앱키 전용
     `build_realtime_quote_source()` 경로 + startup failure cleanup 보정 완료 —
     [`kis_realtime_quote_source.py`](../src/agent_trading/services/kis_realtime_quote_source.py),
@@ -3001,10 +3067,12 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
     ② symbol 검증을 6자리 숫자로 제한,
     ③ startup failure cleanup 보정,
     ④ UI `?symbol=` 동기화/프레임 유지/기존 화면 딥링크 연결 보정.
-- **남은 작업**: 설계 문서상 **Phase 4**만 남았다 — FastAPI WebSocket/SSE relay
-  검토 및 전환(브라우저까지의 push 전달, fan-out broadcaster, backpressure,
-  인증 처리). 현재 화면은 KIS → backend는 실시간 WebSocket이지만,
-  backend → browser는 polling 방식으로 동작한다.
+- **남은 작업**:
+  - 설계 문서상 **Phase 4** — FastAPI WebSocket/SSE relay 검토 및 전환(브라우저까지의
+    push 전달, fan-out broadcaster, backpressure, 인증 처리). 현재 화면은 KIS →
+    backend는 실시간 WebSocket이지만, backend → browser는 polling 방식으로 동작한다.
+  - **Step 4 (REST Fallback 연동, Phase 2 소속)** — WS 연결 끊김 시 REST로 값을
+    보정하는 로직이 아직 없다. Phase 4와 별개로 남은 소규모 항목.
 
 ### 기존 항목과의 구분
 - **`plans/[BACKLOG] backlog.md` 항목 `#19`("WebSocket 기반 실시간 order event 수신")와는

@@ -154,6 +154,21 @@ def test_result_to_json_serializes_snapshot_payload() -> None:
                 "input_quality_flags": [],
                 "reason_code_count": 1,
             },
+            "shadow_signal_backbone_variant": "signal_backbone_v1_shadow_v2",
+            "shadow_slow_score_v2": 0.41,
+            "shadow_fast_score_v2": 0.33,
+            "shadow_overall_score_v2": 0.37,
+            "shadow_component_scores_v2": {"slow_momentum": 0.55},
+            "shadow_reason_codes_v2": ["momentum_3m_positive"],
+            "shadow_diagnostics_v2": {
+                "bar_count": 80,
+                "overall_bucket": "non_negative",
+                "fast_bucket": "non_negative",
+                "slow_bucket": "non_negative",
+                "missing_feature_flags": [],
+                "input_quality_flags": [],
+                "reason_code_count": 1,
+            },
         },
     )
 
@@ -245,6 +260,21 @@ async def test_run_uses_runtime_repositories_without_db_pool(tmp_path) -> None:
                         "input_quality_flags": [],
                         "reason_code_count": 1,
                     },
+                    "shadow_signal_backbone_variant": "signal_backbone_v1_shadow_v2",
+                    "shadow_slow_score_v2": 0.41,
+                    "shadow_fast_score_v2": 0.33,
+                    "shadow_overall_score_v2": 0.37,
+                    "shadow_component_scores_v2": {"slow_momentum": 0.55},
+                    "shadow_reason_codes_v2": ["momentum_3m_positive"],
+                    "shadow_diagnostics_v2": {
+                        "bar_count": 80,
+                        "overall_bucket": "non_negative",
+                        "fast_bucket": "non_negative",
+                        "slow_bucket": "non_negative",
+                        "missing_feature_flags": [],
+                        "input_quality_flags": [],
+                        "reason_code_count": 1,
+                    },
                 },
                 reason_codes=["momentum_3m_strong"],
             ),
@@ -281,10 +311,12 @@ async def test_run_uses_runtime_repositories_without_db_pool(tmp_path) -> None:
     assert quality_summary["snapshot_count"] == 1
     assert quality_summary["overall_missing_count"] == 0
     assert quality_summary["overall_bucket_counts"]["non_negative"] == 1
+    assert "shadow_overall_bucket_counts_v2" in quality_summary
     saved_items = repos.signal_feature_batch_run_items.add_many.await_args.args[0]
     assert len(saved_items) == 1
     assert saved_items[0].metadata_json["overall_bucket"] == "non_negative"
     assert saved_items[0].metadata_json["bar_count"] == 80
+    assert "shadow_signal_backbone_variant" in saved_items[0].metadata_json
 
 
 @pytest.mark.asyncio
@@ -342,6 +374,21 @@ async def test_run_dry_run_does_not_store_unpersisted_snapshot_fk(tmp_path) -> N
                 component_scores_json={
                     "slow_momentum": 0.5,
                     "diagnostics": {
+                        "bar_count": 80,
+                        "overall_bucket": "non_negative",
+                        "fast_bucket": "non_negative",
+                        "slow_bucket": "non_negative",
+                        "missing_feature_flags": [],
+                        "input_quality_flags": [],
+                        "reason_code_count": 1,
+                    },
+                    "shadow_signal_backbone_variant": "signal_backbone_v1_shadow_v2",
+                    "shadow_slow_score_v2": 0.41,
+                    "shadow_fast_score_v2": 0.33,
+                    "shadow_overall_score_v2": 0.37,
+                    "shadow_component_scores_v2": {"slow_momentum": 0.55},
+                    "shadow_reason_codes_v2": ["momentum_3m_positive"],
+                    "shadow_diagnostics_v2": {
                         "bar_count": 80,
                         "overall_bucket": "non_negative",
                         "fast_bucket": "non_negative",
