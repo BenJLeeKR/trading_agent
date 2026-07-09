@@ -13,6 +13,7 @@ from fastapi import Depends, HTTPException, Request
 from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
 from agent_trading.repositories.container import RepositoryContainer
 from agent_trading.services.order_manager import OrderManager
+from agent_trading.services.realtime_quote_broadcaster import QuoteBroadcaster
 from agent_trading.services.realtime_quote_source import RealtimeQuoteSource
 
 
@@ -138,3 +139,18 @@ def get_realtime_quote_source(request: Request) -> RealtimeQuoteSource:
     if source is None:
         raise HTTPException(status_code=503, detail="Realtime quote source not configured")
     return source
+
+
+def get_realtime_quote_broadcaster(request: Request) -> QuoteBroadcaster:
+    """Return the app-wide ``QuoteBroadcaster`` singleton (Phase 4 push relay).
+
+    ``app.state.realtime_quote_broadcaster`` is created once in ``create_app``'s
+    ``lifespan`` and wraps whichever ``realtime_quote_source`` is active
+    (mock or KIS-backed) — see ``realtime_quote_broadcaster.py``.
+    """
+    broadcaster: QuoteBroadcaster | None = getattr(
+        request.app.state, "realtime_quote_broadcaster", None
+    )
+    if broadcaster is None:
+        raise HTTPException(status_code=503, detail="Realtime quote broadcaster not configured")
+    return broadcaster

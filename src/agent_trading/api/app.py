@@ -132,6 +132,7 @@ def create_app(
         #
         # A fresh mock instance per app avoids state bleeding across
         # tests/processes.
+        from agent_trading.services.realtime_quote_broadcaster import QuoteBroadcaster
         from agent_trading.services.realtime_quote_source import InMemoryMockQuoteSource
 
         if realtime_quote_source is None:
@@ -148,6 +149,13 @@ def create_app(
                     "falling back to mock. /realtime-quotes/* will serve mock data."
                 )
                 _app.state.realtime_quote_source = InMemoryMockQuoteSource()
+
+        # Phase 4 push relay — see realtime_quote_broadcaster.py. Wraps whichever
+        # source ended up active above (mock or KIS-backed); true push when the
+        # source supports add_listener(), fallback poll otherwise.
+        _app.state.realtime_quote_broadcaster = QuoteBroadcaster(
+            _app.state.realtime_quote_source
+        )
 
         try:
             if repos is not None:
@@ -174,6 +182,10 @@ def create_app(
                 _app.state.runtime_mode = "in_memory"
                 yield
         finally:
+            broadcaster = getattr(_app.state, "realtime_quote_broadcaster", None)
+            if broadcaster is not None:
+                broadcaster.close()
+
             # Only the live KIS-backed source needs an explicit disconnect —
             # the mock source holds no network resources.
             active_source = _app.state.realtime_quote_source

@@ -6,6 +6,8 @@ No KIS WebSocket connection is made in this test suite.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -189,6 +191,58 @@ class TestDailyPrice:
     def test_missing_symbol_returns_422(self, client: TestClient) -> None:
         resp = client.get("/realtime-quotes/daily-price")
         assert resp.status_code == 422
+
+
+class TestStream:
+    """``GET /realtime-quotes/stream`` — Phase 4 SSE push relay."""
+
+    def test_returns_sse_content_type_and_initial_event(self, client: TestClient) -> None:
+        with client.stream(
+            "GET", "/realtime-quotes/stream", params={"symbol": "005930"}
+        ) as resp:
+            assert resp.status_code == 200
+            assert resp.headers["content-type"].startswith("text/event-stream")
+            line = next(resp.iter_lines())
+            assert line.startswith("data: ")
+            payload = json.loads(line[len("data: "):])
+            assert payload["symbol"] == "005930"
+            assert payload["status"] == "no_data_yet"
+            assert payload["snapshot"] is None
+
+    def test_reflects_connected_status_once_data_exists(self, client: TestClient) -> None:
+        # Prime the mock source with data by subscribing + fetching a snapshot
+        # once first, so the broadcaster's poll fallback has something to see.
+        client.post("/realtime-quotes/subscriptions", json={"symbols": ["005930"]})
+        client.get("/realtime-quotes/snapshot", params={"symbols": "005930"})
+
+        with client.stream(
+            "GET", "/realtime-quotes/stream", params={"symbol": "005930"}
+        ) as resp:
+            assert resp.status_code == 200
+            deadline_lines = []
+            for line in resp.iter_lines():
+                if not line.startswith("data: "):
+                    continue
+                payload = json.loads(line[len("data: "):])
+                deadline_lines.append(payload)
+                if payload["status"] == "connected" or len(deadline_lines) >= 5:
+                    break
+            assert any(p["status"] == "connected" for p in deadline_lines)
+            assert any(p["snapshot"] is not None for p in deadline_lines)
+
+    def test_invalid_symbol_returns_422(self, client: TestClient) -> None:
+        resp = client.get("/realtime-quotes/stream", params={"symbol": "ABC"})
+        assert resp.status_code == 422
+
+    def test_disconnect_cleans_up_broadcaster_subscription(self, client: TestClient) -> None:
+        broadcaster = client.app.state.realtime_quote_broadcaster
+        with client.stream(
+            "GET", "/realtime-quotes/stream", params={"symbol": "005930"}
+        ) as resp:
+            next(resp.iter_lines())
+            assert "005930" in broadcaster._subscribers
+
+        assert "005930" not in broadcaster._subscribers
 
 
 class TestAuthRequired:

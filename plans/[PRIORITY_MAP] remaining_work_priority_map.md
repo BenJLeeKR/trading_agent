@@ -3083,59 +3083,16 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   계좌/앱키를 사용한다.** 이 항목은 완전히 별도의 신규 Live 계좌·앱키를 전제로 하며,
   기존 트레이딩 계좌/공시 계좌의 세션·rate-limit budget과 공유하지 않는다.
 
+
 ### 근거 문서
 - [`plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md`](../plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md)
 - [`plans/[BACKLOG] backlog.md`](./[BACKLOG]%20backlog.md) 항목 `37`
 
 ---
 
-## 권장 실행 순서
-
-### 1순위 묶음
-1. Fill History Phase 3
-2. 부분체결 자동 판정 고도화
-3. fill 발생 후 snapshot refresh 자동화
-
-### 2순위 묶음
-4. 다음 거래일 장중 실운영 검증
-5. KIS real credential smoke
-6. 운영일 상태 관리
-
-### 3순위 묶음
-7. KIS token cache 공통 모듈화
-8. 장 운영 세션 정보 저장
-9. KIS 기본종목정보 적재/갱신
-
-### 4순위 묶음
-10. Data Quality / Hard Guardrail 일원화
-11. Universe / Signal / Strategy / Portfolio / Compliance / Monitor 구조화
-   - 단, 다음 단계는 단순 agent 추가가 아니라
-     `deterministic trigger / candidate / attribution` 구조를 세우는 방향이어야 한다.
-   - 기준 문서:
-     [`plans/[ANALYSIS] expected_return_architecture_refactor_analysis.md`](./%5BANALYSIS%5D%20expected_return_architecture_refactor_analysis.md)
-
----
-
-## 정리
-
-현재 가장 중요한 남은 일은 UI가 아니라 다음 세 가지다.
-
-1. **체결 진실을 더 직접적으로 쓰는 구조 완성**
-   - fill snapshot을 주문 상태 수렴의 주 진실원으로 강화
-2. **장중 운영 검증**
-   - 최근 수정이 실제 다음 거래일에도 정상 동작하는지 실측
-3. **운영 기반 데이터 정리**
-   - 운영일 상태, 세션 정보, 종목 master, KIS token/config 기술부채 정리
-4. **Agent 책임 분리**
-   - 다만 이것은 AI agent 추가가 아니라, deterministic 계층과 hybrid 해석 계층을 올바르게 나누는 작업이어야 한다
-
-즉, 앞으로의 우선순위는 다음 한 줄로 요약된다.
-
-> **체결 진실 강화 → 장중 실운영 검증 → 운영 메타데이터 정리 → deterministic guardrail 정리 → 전략/에이전트 구조화**
-
 ## P3 - Phase 4 후단 아키텍처 재검토
 
-### 16. KIS 실시간 현재가 credential/appkey 통합 재검토 - 미완료
+### 20. KIS 실시간 현재가 credential/appkey 통합 재검토 - 미완료
 
 ### 목표
 - 현재 KIS_REALTIME_QUOTE_*와 KIS_LIVE_INFO_*를 완전 분리한 구조를
@@ -3193,3 +3150,47 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 - 따라서 Phase 4 완료 후 바로 이어서 판단할 아키텍처 정리 과제로 남겨둔다.
 
 ---
+
+## 권장 실행 순서
+
+### 1순위 묶음
+1. Fill History Phase 3
+2. 부분체결 자동 판정 고도화
+3. fill 발생 후 snapshot refresh 자동화
+
+### 2순위 묶음
+4. 다음 거래일 장중 실운영 검증
+5. KIS real credential smoke
+6. 운영일 상태 관리
+
+### 3순위 묶음
+7. KIS token cache 공통 모듈화
+8. 장 운영 세션 정보 저장
+9. KIS 기본종목정보 적재/갱신
+
+### 4순위 묶음
+10. Data Quality / Hard Guardrail 일원화
+11. Universe / Signal / Strategy / Portfolio / Compliance / Monitor 구조화
+   - 단, 다음 단계는 단순 agent 추가가 아니라
+     `deterministic trigger / candidate / attribution` 구조를 세우는 방향이어야 한다.
+   - 기준 문서:
+     [`plans/[ANALYSIS] expected_return_architecture_refactor_analysis.md`](./%5BANALYSIS%5D%20expected_return_architecture_refactor_analysis.md)
+
+---
+
+## 정리
+
+현재 가장 중요한 남은 일은 UI가 아니라 다음 세 가지다.
+
+1. **체결 진실을 더 직접적으로 쓰는 구조 완성**
+   - fill snapshot을 주문 상태 수렴의 주 진실원으로 강화
+2. **장중 운영 검증**
+   - 최근 수정이 실제 다음 거래일에도 정상 동작하는지 실측
+3. **운영 기반 데이터 정리**
+   - 운영일 상태, 세션 정보, 종목 master, KIS token/config 기술부채 정리
+4. **Agent 책임 분리**
+   - 다만 이것은 AI agent 추가가 아니라, deterministic 계층과 hybrid 해석 계층을 올바르게 나누는 작업이어야 한다
+
+즉, 앞으로의 우선순위는 다음 한 줄로 요약된다.
+
+> **체결 진실 강화 → 장중 실운영 검증 → 운영 메타데이터 정리 → deterministic guardrail 정리 → 전략/에이전트 구조화**

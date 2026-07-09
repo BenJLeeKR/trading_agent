@@ -503,6 +503,10 @@ class KisRealtimeQuoteSource:
         else:
             state.apply_orderbook(_parse_orderbook_fields(fields))
 
+        if self._listeners:
+            snapshot = state.to_snapshot(symbol, self.instrument_info(symbol))
+            self._notify_listeners(symbol, snapshot)
+
     # ------------------------------------------------------------------
     # RealtimeQuoteSource protocol
     # ------------------------------------------------------------------

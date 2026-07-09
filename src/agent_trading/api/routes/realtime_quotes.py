@@ -20,11 +20,14 @@ and ``plans/[DESIGN]_kis_realtime_quote_operations_screen_plan.md`` (Step 1-3).
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
+from typing import AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 
-from agent_trading.api.deps import get_realtime_quote_source
+from agent_trading.api.deps import get_realtime_quote_broadcaster, get_realtime_quote_source
 from agent_trading.api.schemas import (
     RealtimeQuoteBootstrapResponse,
     RealtimeQuoteConnectionInfo,
@@ -39,6 +42,7 @@ from agent_trading.api.schemas import (
     RealtimeQuoteTradeTickView,
     RealtimeQuoteUnsubscribeRequest,
 )
+from agent_trading.services.realtime_quote_broadcaster import BroadcastEvent, QuoteBroadcaster
 from agent_trading.services.realtime_quote_source import (
     InvalidSymbolError,
     MAX_DAILY_PRICE_HISTORY,
@@ -230,4 +234,56 @@ async def get_daily_price(
             for b in bars
         ],
         generated_at=datetime.now(timezone.utc),
+    )
+
+
+def _encode_sse_event(event: BroadcastEvent) -> bytes:
+    payload = {
+        "symbol": event.symbol,
+        "status": event.status,
+        "snapshot": _to_snapshot_view(event.snapshot).model_dump(mode="json")
+        if event.snapshot is not None
+        else None,
+        "generated_at": event.generated_at.isoformat(),
+    }
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
+
+
+async def _sse_event_stream(
+    broadcaster: QuoteBroadcaster, symbol: str
+) -> AsyncIterator[bytes]:
+    async for event in broadcaster.stream(symbol):
+        yield _encode_sse_event(event)
+
+
+@router.get("/stream")
+async def stream_quote(
+    symbol: str = Query(..., description="6자리 종목코드, 예: '005930'"),
+    broadcaster: QuoteBroadcaster = Depends(get_realtime_quote_broadcaster),
+) -> StreamingResponse:
+    """Phase 4 push relay — SSE stream of ``BroadcastEvent`` for one symbol.
+
+    Client picks exactly one symbol per connection (matches this screen's
+    single-selected-symbol UX — 종목 전환 = 기존 스트림을 닫고 새 스트림을 연다).
+    Reconnecting (new request after a drop) immediately receives the current
+    cached state — see ``QuoteBroadcaster.stream()``.
+
+    독립적인 REST 구독 여부 판단은 이 endpoint의 관심사가 아니다 — 구독하지
+    않은 종목도 스트림을 열 수 있고, 그 경우 계속 ``status="no_data_yet"``이다.
+    실제 KIS WS 구독은 여전히 기존 ``POST /realtime-quotes/subscriptions``로만
+    관리한다(Phase 1-3 contract 그대로).
+    """
+    normalized = symbol.strip()
+    if len(normalized) != 6 or not normalized.isdigit():
+        raise HTTPException(
+            status_code=422, detail="symbol must be exactly 6 digits (국내주식 종목코드)"
+        )
+    return StreamingResponse(
+        _sse_event_stream(broadcaster, normalized),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            # Disable any intermediary buffering (nginx) so events flush immediately.
+            "X-Accel-Buffering": "no",
+        },
     )
