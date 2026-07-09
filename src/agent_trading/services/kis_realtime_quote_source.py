@@ -26,19 +26,23 @@ Reuse (what this module does NOT reimplement)
   reconnect, subscribe/unsubscribe framing, ``SubscriptionBudget``
   enforcement. Used completely unmodified (aside from two new read-only
   ``is_connected``/``is_reconnecting`` properties added for observability).
-- ``ws_parser.is_json_message`` / ``parse_delimited_message`` — raw
-  message-splitting primitives.
+- ``ws_parser.is_json_message`` — used upstream by ``websocket_client.py`` to
+  detect JSON ack/error frames before they reach this module.
 
 What this module writes fresh
 ------------------------------
 - Full-field extraction from the 172(체결가)/178(호가) delimited payload.
-  The shared ``ws_parser.parse_trade_price()``/``parse_orderbook()``
-  functions only extract a reduced field subset for the existing
-  order/fill-event critical path; this screen needs the fuller field set
-  (VI 발동기준가, 거래정지여부, 시간구분, 10-level ladder, 누적거래량/대금).
-  Extending the shared parsers risked changing behaviour for that unrelated
-  consumer, so this module re-splits ``msg["raw"]`` locally instead
-  (see ``_parse_trade_fields`` / ``_parse_orderbook_fields``).
+  The shared ``ws_parser.parse_trade_price()``/``parse_orderbook()``/
+  ``parse_delimited_message()`` functions assume the 3-part
+  ``tr_id|continuum_key|body`` envelope verified for ``H0STCNI0`` (체결통보);
+  the actual live wire format for ``H0STCNT0``/``H0STASP0`` is the 4-part
+  ``encrypt_flag|tr_id|data_cnt|body`` (실측 2026-07-09, see
+  ``_split_realtime_frame``). Reusing the shared parser for these two
+  channels silently misclassified every tick as ``tr_id="0"``/``type=
+  "unknown"`` and dropped it. This module re-splits ``msg["raw"]`` locally
+  instead (see ``_split_realtime_frame`` / ``_parse_trade_fields`` /
+  ``_parse_orderbook_fields``), and never touches the shared parser, so the
+  existing ``H0STCNI0`` order-fill path is unaffected.
 - The subscription/session model: **single app process, single implicit
   viewer** — matches Step 3 scope. A per-viewer reference count or
   multi-consumer session registry (for when multiple browser tabs need
@@ -58,7 +62,6 @@ from typing import Any, Sequence
 from agent_trading.brokers.base import SubscriptionBudget
 from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
 from agent_trading.brokers.koreainvestment.websocket_client import KISWebSocketClient
-from agent_trading.brokers.koreainvestment.ws_parser import parse_delimited_message
 from agent_trading.services.realtime_quote_source import (
     DEFAULT_MAX_REGISTRATIONS,
     REGISTRATIONS_PER_SYMBOL,
@@ -75,6 +78,31 @@ logger = logging.getLogger(__name__)
 
 _TRADE_CHANNEL = "H0STCNT0"  # 실시간체결가 (KRX)
 _ORDERBOOK_CHANNEL = "H0STASP0"  # 실시간호가 (KRX)
+
+# 실측(2026-07-09) 기준 KIS가 실제로 보내는 H0STCNT0/H0STASP0 raw frame 포맷은
+#   {encrypt_flag}|{tr_id}|{data_cnt}|{body}
+# 4-part 포맷이다. 공유 ``ws_parser.parse_delimited_message()``는
+# ``tr_id|continuum_key|body`` 3-part 포맷을 가정하므로(H0STCNI0 체결통보 전용으로
+# 검증된 형식 — 그 경로는 이번에 건드리지 않는다), 이 두 채널에는 맞지 않아
+# parts[0]("0", encrypt_flag)을 tr_id로 오인해 모든 tick이 무조건 "unknown"으로
+# 분류/드롭되는 버그가 있었다. 아래 ``_split_realtime_frame``이 이 두 채널
+# 전용으로 raw 문자열을 직접 재분리한다(공유 파서는 그대로 둔다).
+def _split_realtime_frame(raw: str) -> tuple[str, list[str]] | None:
+    """Split a raw KIS realtime frame as ``encrypt_flag|tr_id|data_cnt|body``.
+
+    Returns ``(tr_id, fields)`` where ``fields`` has a leading empty string
+    prepended so the existing 1-indexed field-layout constants in
+    ``_parse_trade_fields``/``_parse_orderbook_fields`` (verified against real
+    ``H0STCNT0``/``H0STASP0`` samples once the envelope is stripped) continue
+    to apply unchanged. Returns ``None`` if the frame doesn't have the
+    expected 4 pipe-separated parts.
+    """
+    parts = raw.split("|")
+    if len(parts) < 4:
+        return None
+    tr_id = parts[1]
+    body = "|".join(parts[3:])
+    return tr_id, [""] + body.split("^")
 
 _HOUR_CLASS_LABELS: dict[str, str] = {
     "0": "장중",
@@ -141,7 +169,7 @@ def _parse_trade_fields(fields: list[str]) -> dict[str, Any]:
 
 
 def _parse_orderbook_fields(fields: list[str]) -> dict[str, Any]:
-    """Extract the full 178(호가 KRX) field set (10-level ladder + totals).
+    """Extract the 178(호가 KRX) field set (10-level price ladder + totals).
 
     Field layout (1-indexed, same leading-empty convention as above)::
 
@@ -152,6 +180,12 @@ def _parse_orderbook_fields(fields: list[str]) -> dict[str, Any]:
         34-43 BIDP_RSQN1..10
         44    TOTAL_ASKP_RSQN
         45    TOTAL_BIDP_RSQN
+
+    실측(2026-07-09) 검증: 위 전체 필드 레이아웃(가격 10+10, 잔량 10+10, 총잔량 2)이
+    실제 live 프레임에서 그대로 채워지는 것을 ``get_snapshots()`` 응답으로 확인했다
+    (일부 초기 샘플에서 잔량 필드가 적게 보였던 것은 그 tick이 우연히 짧은 프레임이었을
+    뿐, 구조적 누락이 아니었다). 다만 개별 프레임이 트레일링 필드를 덜 보낼 가능성은
+    여전히 있으므로 ``_f()``의 out-of-range → ``""``/``0`` 기본값 처리는 그대로 유지한다.
     """
     ask_prices = [_to_float(_f(fields, i)) for i in range(4, 14)]
     bid_prices = [_to_float(_f(fields, i)) for i in range(14, 24)]
@@ -379,15 +413,37 @@ class KisRealtimeQuoteSource:
                 )
 
     def _handle_message(self, msg: dict[str, Any]) -> None:
-        if msg.get("type") != "real_time_data":
-            return
-        tr_id = msg.get("tr_id")
+        # Try our own channels first — the shared parser's type/tr_id
+        # classification is unreliable for H0STCNT0/H0STASP0 raw frames (see
+        # ``_split_realtime_frame`` docstring), so we re-parse ``raw``
+        # directly rather than trusting ``msg.get("type")``/``msg.get("tr_id")``.
         raw = msg.get("raw")
-        if not raw or tr_id not in (_TRADE_CHANNEL, _ORDERBOOK_CHANNEL):
+        split = _split_realtime_frame(raw) if isinstance(raw, str) else None
+        if split is not None and split[0] in (_TRADE_CHANNEL, _ORDERBOOK_CHANNEL):
+            self._apply_realtime_frame(*split)
             return
 
-        parsed_envelope = parse_delimited_message(raw)
-        fields = parsed_envelope["fields"]
+        msg_type = msg.get("type")
+        if msg_type == "error":
+            logger.warning(
+                "KIS realtime-quote WS rejected/errored: tr_id=%s message=%s",
+                msg.get("tr_id"),
+                msg.get("message"),
+            )
+        elif msg_type == "subscription_ack":
+            logger.info(
+                "KIS realtime-quote WS subscription_ack: tr_id=%s tr_key=%s",
+                msg.get("tr_id"),
+                msg.get("tr_key"),
+            )
+        elif msg_type not in (None, "real_time_data"):
+            logger.warning(
+                "KIS realtime-quote WS unhandled message type=%s tr_id=%s",
+                msg_type,
+                msg.get("tr_id"),
+            )
+
+    def _apply_realtime_frame(self, tr_id: str, fields: list[str]) -> None:
         symbol = _f(fields, 1)
         state = self._state.get(symbol)
         if state is None:

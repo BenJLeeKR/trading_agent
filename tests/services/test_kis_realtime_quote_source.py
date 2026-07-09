@@ -378,10 +378,9 @@ class TestMessageHandlingAndSnapshots:
         )
         await ws.push(
             {
-                "type": "real_time_data",
-                "tr_id": "H0STCNT0",
-                "continuum_key": "001",
-                "raw": f"H0STCNT0|001|^{trade_body}",
+                "type": "unknown",
+                "tr_id": "0",
+                "raw": f"0|H0STCNT0|001|{trade_body}",
             }
         )
         await asyncio.sleep(0.05)  # let the consumer task process the message
@@ -411,10 +410,9 @@ class TestMessageHandlingAndSnapshots:
 
         await ws.push(
             {
-                "type": "real_time_data",
-                "tr_id": "H0STASP0",
-                "continuum_key": "001",
-                "raw": f"H0STASP0|001|^{book_body}",
+                "type": "unknown",
+                "tr_id": "0",
+                "raw": f"0|H0STASP0|001|{book_body}",
             }
         )
         await asyncio.sleep(0.05)
@@ -451,10 +449,9 @@ class TestMessageHandlingAndSnapshots:
 
         await ws.push(
             {
-                "type": "real_time_data",
-                "tr_id": "H0STCNT0",
-                "continuum_key": "001",
-                "raw": "H0STCNT0|001|^005930^093354^71900^5^-100^-0.14",
+                "type": "unknown",
+                "tr_id": "0",
+                "raw": "0|H0STCNT0|001|005930^093354^71900^5^-100^-0.14",
             }
         )
         await asyncio.sleep(0.05)

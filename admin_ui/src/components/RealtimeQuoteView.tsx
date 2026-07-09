@@ -32,6 +32,12 @@ function formatNumber(val: number | null | undefined): string {
   return val.toLocaleString("ko-KR");
 }
 
+/** 원 단위 금액을 억원 단위로 반올림해 "123,456 (억원)" 형태로 표시한다. */
+function formatEokwon(val: number | null | undefined): string {
+  if (val === null || val === undefined) return "—";
+  return `${Math.round(val / 100_000_000).toLocaleString("ko-KR")} (억원)`;
+}
+
 function changeColor(sign: string): string {
   if (sign === "up") return "text-[#dc2626]";
   if (sign === "down") return "text-[#2563eb]";
@@ -325,10 +331,11 @@ export default function RealtimeQuoteView() {
         />
       )}
 
-      {/* B. 종목 전환 바 */}
-      <Panel title="종목 전환">
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1 max-w-xs">
+      {/* B. 종목 전환 바 — 타이틀 없이, 검색/추가와 구독 종목 목록을 한 행에 이어붙이고
+          오른쪽 공간이 차면 자동으로 다음 줄로 넘어간다(flex-wrap). */}
+      <Panel bodyClassName="py-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-56 shrink-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#94a3b8]" />
             <input
               type="text"
@@ -342,26 +349,18 @@ export default function RealtimeQuoteView() {
               onKeyDown={(e) => {
                 if (e.key === "Enter") handleSubscribe();
               }}
-              className="w-full pl-9 pr-3 py-2 text-sm border border-[#e2e8f0] rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:border-transparent"
+              className="w-full pl-9 pr-3 py-1.5 text-sm border border-[#e2e8f0] rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#3b82f6] focus:border-transparent"
             />
           </div>
           <button
             onClick={handleSubscribe}
             disabled={atCapacity && !subscriptions.some((s) => s.symbol === symbolInput.trim())}
-            className="px-4 py-2 text-sm font-medium text-white bg-[#3b82f6] rounded-lg hover:bg-[#2563eb] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            className="shrink-0 px-4 py-1.5 text-sm font-medium text-white bg-[#3b82f6] rounded-lg hover:bg-[#2563eb] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             title={atCapacity ? "구독 한도(등록 건수)에 도달했습니다" : undefined}
           >
-            구독 추가
+            종목 추가
           </button>
-        </div>
-        {inputError && <p className="text-xs text-[#dc2626] mt-1.5">{inputError}</p>}
-        {atCapacity && !inputError && (
-          <p className="text-xs text-[#f59e0b] mt-1.5">
-            구독 한도(등록 건수)에 도달했습니다 — 기존 종목을 해제한 뒤 다시 시도하세요.
-          </p>
-        )}
 
-        <div className="flex flex-wrap gap-2 mt-4">
           {subscriptions.length === 0 && (
             <p className="text-sm text-[#94a3b8]">
               구독 중인 종목이 없습니다. 종목코드를 입력해 조회를 시작하세요.
@@ -406,6 +405,12 @@ export default function RealtimeQuoteView() {
             </div>
           ))}
         </div>
+        {inputError && <p className="text-xs text-[#dc2626] mt-1">{inputError}</p>}
+        {atCapacity && !inputError && (
+          <p className="text-xs text-[#f59e0b] mt-1">
+            구독 한도(등록 건수)에 도달했습니다 — 기존 종목을 해제한 뒤 다시 시도하세요.
+          </p>
+        )}
       </Panel>
 
       {/* 종목 없음 상태 — selectedSymbol이 없을 때만 (실제로 선택된 종목이 없는 경우) */}
@@ -446,16 +451,21 @@ export default function RealtimeQuoteView() {
           </Panel>
 
           {/* D. 10단계 호가창 + E. 상세정보 패널 — quote 유무와 무관하게 그리드 구조는 항상 렌더 */}
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
+          {/* 호가 프레임 폭 = 내부 QuoteLadder 고정폭(500px) + Panel 좌우 padding(p-3=24px)
+              + Panel border(2px) = 526px — 내부 데이터가 프레임 밖으로 튀어나가지 않도록
+              내부 컨텐츠를 감싸는 크기로 맞춘다. */}
+          <div className="grid grid-cols-1 lg:grid-cols-[526px_1fr] gap-4">
             <Panel
               title="호가"
               headerRight={
                 !quote && <span className="text-xs text-[#94a3b8]">수신 대기 중</span>
               }
+              headerClassName="h-[30px] py-0"
               noPadding
               bodyClassName="p-3"
             >
               <QuoteLadder
+                key={selectedSymbol}
                 hasData={!!quote}
                 askLevels={quote?.ask_levels ?? []}
                 bidLevels={quote?.bid_levels ?? []}
@@ -470,6 +480,7 @@ export default function RealtimeQuoteView() {
               headerRight={
                 !quote && <span className="text-xs text-[#94a3b8]">수신 대기 중</span>
               }
+              headerClassName="h-[30px] py-0"
             >
               {/* VI발동기준가/시간외 잔량은 UI 레이아웃 설계(§6-E)에 명시돼 있지만
                   RealtimeQuoteSnapshotView API contract에 아직 없어 의도적으로 생략함.
@@ -493,7 +504,7 @@ export default function RealtimeQuoteView() {
                 />
                 <DetailField
                   label="누적거래대금"
-                  value={formatNumber(quote?.accumulated_value)}
+                  value={formatEokwon(quote?.accumulated_value)}
                   mono
                 />
                 <DetailField label="PER" value={quote?.per?.toFixed(2) ?? "—"} mono />

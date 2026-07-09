@@ -226,7 +226,7 @@ describe("RealtimeQuoteView symbol code validation", () => {
 
     const input = screen.getByPlaceholderText("종목코드 6자리 (예: 005930)");
     await user.type(input, "12A45");
-    await user.click(screen.getByText("구독 추가"));
+    await user.click(screen.getByText("종목 추가"));
 
     expect(
       screen.getByText("종목코드는 6자리 숫자로 입력하세요 (예: 005930)")
@@ -256,7 +256,7 @@ describe("RealtimeQuoteView subscribe flow", () => {
 
     const input = screen.getByPlaceholderText("종목코드 6자리 (예: 005930)");
     await user.type(input, "005930");
-    await user.click(screen.getByText("구독 추가"));
+    await user.click(screen.getByText("종목 추가"));
 
     await waitFor(() => {
       expect(screen.getAllByText("삼성전자").length).toBeGreaterThan(0);
@@ -286,7 +286,7 @@ describe("RealtimeQuoteView subscribe flow", () => {
 
     const input = screen.getByPlaceholderText("종목코드 6자리 (예: 005930)");
     await user.type(input, "005930");
-    await user.click(screen.getByText("구독 추가"));
+    await user.click(screen.getByText("종목 추가"));
 
     // No new network call for a duplicate subscribe — purely client-side switch.
     expect(fetchSpy.mock.calls.length).toBe(callCountBefore);

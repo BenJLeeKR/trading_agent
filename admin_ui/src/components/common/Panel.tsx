@@ -9,6 +9,9 @@ interface PanelProps {
   className?: string;
   bodyClassName?: string;
   noPadding?: boolean;
+  /** Overrides the header row's vertical sizing (default: "py-4"). Use for a
+   * fixed-height compact title bar, e.g. `"h-[30px] py-0"`. */
+  headerClassName?: string;
 }
 
 export function Panel({
@@ -19,11 +22,17 @@ export function Panel({
   className = "",
   bodyClassName = "",
   noPadding = false,
+  headerClassName,
 }: PanelProps) {
   return (
     <div className={cn("bg-white rounded-xl border border-[#e2e8f0]", className)}>
       {(title || headerRight) && (
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#e2e8f0]">
+        <div
+          className={cn(
+            "flex items-center justify-between px-5 border-b border-[#e2e8f0]",
+            headerClassName ?? "py-4",
+          )}
+        >
           <div>
             {title && <h3 className="text-base font-semibold text-[#0f172a]">{title}</h3>}
             {subtitle && <p className="text-xs text-[#64748b] mt-0.5">{subtitle}</p>}
