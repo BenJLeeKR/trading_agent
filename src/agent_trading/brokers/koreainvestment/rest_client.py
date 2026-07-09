@@ -71,6 +71,7 @@ KIS_ENDPOINTS: Mapping[str, str] = {
     "inquire_psbl_rvsecncl": "/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl", # 정정취소가능주문조회
     "inquire_price": "/uapi/domestic-stock/v1/quotations/inquire-price",            # 주식현재가 시세
     "inquire_daily_itemchartprice": "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",  # 국내주식기간별시세
+    "inquire_daily_price": "/uapi/domestic-stock/v1/quotations/inquire-daily-price",  # 주식현재가 일자별
     "search_stock_info": "/uapi/domestic-stock/v1/quotations/search-stock-info",  # 주식기본조회
     # --- Market Data ---
     "inquire_asking_price_exp_ccn": "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn", # 호가
@@ -96,6 +97,7 @@ KIS_TR_IDS: Mapping[str, tuple[str, str]] = {
     "inquire_psbl_sell": ("TTTC8408R", None),               # 매도가능수량조회 (모의 미지원)
     "inquire_price": ("FHKST01010100", "FHKST01010100"),    # 주식현재가 시세
     "inquire_daily_itemchartprice": ("FHKST03010100", "FHKST03010100"),    # 국내주식기간별시세
+    "inquire_daily_price": ("FHKST01010400", "FHKST01010400"),    # 주식현재가 일자별
     "search_stock_info": ("CTPF1002R", None),               # 주식기본조회 (모의 미지원)
     "inquire_asking_price_exp_ccn": ("FHKST01010200", "FHKST01010200"), # 호가
     "inquire_index_category_price": ("FHPUP02140000", None),
@@ -2116,6 +2118,41 @@ class KISRestClient:
             self._set_quote_cache(symbol, output)
 
         return output
+
+    async def get_daily_price(
+        self,
+        symbol: str,
+        *,
+        period_div_code: str = "D",
+        adjusted_price: bool = False,
+    ) -> list[dict[str, Any]]:
+        """주식현재가 일자별(``FHKST01010400``) — 최근 30거래일(주/월은 30주/30개월) 조회.
+
+        ``inquire_daily_itemchartprice``(기간별시세, ``FHKST03010100``)와는 다른
+        TR이다 — 이 TR은 응답에 ``prdy_vrss``/``prdy_ctrt``(전일대비/전일대비율)를
+        바로 포함해서 realtime-quote 화면의 '일별' 탭에 그대로 쓸 수 있다. 별도
+        캐시는 두지 않는다(하루 한 번 정도만 호출되는 저빈도 조회라 TTL 캐시의
+        이점이 작음).
+        """
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": symbol,
+            "FID_PERIOD_DIV_CODE": period_div_code,
+            "FID_ORG_ADJ_PRC": "1" if adjusted_price else "0",
+        }
+
+        data = await self._request(
+            "GET",
+            endpoint_key="inquire_daily_price",
+            tr_id_key="inquire_daily_price",
+            bucket=BucketType.MARKET_DATA,
+            params=params,
+        )
+
+        output = data.get("output", [])
+        if not isinstance(output, list):
+            return []
+        return [item for item in output if isinstance(item, dict)]
 
     async def inquire_daily_itemchartprice(
         self,

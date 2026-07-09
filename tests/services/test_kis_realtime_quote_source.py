@@ -82,6 +82,7 @@ def _make_rest_client() -> MagicMock:
     rest_client = MagicMock()
     rest_client.get_approval_key = AsyncMock(return_value="test-approval-key")
     rest_client.get_quote = AsyncMock(return_value={})
+    rest_client.get_daily_price = AsyncMock(return_value=[])
     rest_client.close = AsyncMock()
     return rest_client
 
@@ -264,7 +265,7 @@ class TestSubscribe:
     async def test_subscribe_beyond_capacity_raises_without_calling_ws(
         self, connected_source: KisRealtimeQuoteSource
     ) -> None:
-        for i in range(20):
+        for i in range(15):
             await connected_source.subscribe(f"{100000 + i:06d}")
         ws = _fake_ws(connected_source)
         call_count_before = len(ws.subscribe_calls)
@@ -273,7 +274,7 @@ class TestSubscribe:
             await connected_source.subscribe("999999")
 
         # Our own precheck must reject before ever calling the WS client —
-        # mirrors the 41-registration / 2-per-symbol capacity model.
+        # mirrors the 30-registration / 2-per-symbol capacity model.
         assert len(ws.subscribe_calls) == call_count_before
 
     async def test_subscribe_rolls_back_on_full_transport_rejection(
@@ -395,6 +396,24 @@ class TestMessageHandlingAndSnapshots:
         assert quote.hour_class == "장중"
         assert quote.accumulated_volume == 3052507
         assert quote.data_source == "websocket"
+        assert len(quote.recent_trades) == 1
+        assert quote.recent_trades[0].price == 71900.0
+        assert quote.recent_trades[0].change == -100.0
+        assert quote.recent_trades[0].volume == 1  # CNTG_VOL(field 13), not ACML_VOL
+
+    async def test_multiple_trade_messages_accumulate_newest_first(
+        self, connected_source: KisRealtimeQuoteSource
+    ) -> None:
+        await connected_source.subscribe("005930")
+        ws = _fake_ws(connected_source)
+
+        for price in (71900, 71950, 72000):
+            body = f"005930^093354^{price}^5^-100^-0.14^72023.83^72100^72400^71700^71900^71800^1^3052507"
+            await ws.push({"type": "unknown", "tr_id": "0", "raw": f"0|H0STCNT0|001|{body}"})
+        await asyncio.sleep(0.05)
+
+        quote = connected_source.get_snapshots(["005930"])["005930"]
+        assert [t.price for t in quote.recent_trades] == [72000.0, 71950.0, 71900.0]
 
     async def test_orderbook_message_updates_snapshot(
         self, connected_source: KisRealtimeQuoteSource
@@ -458,6 +477,66 @@ class TestMessageHandlingAndSnapshots:
 
         assert connected_source.list_subscriptions() == []
         assert connected_source.get_snapshots(["005930"]) == {}
+
+
+class TestDailyPrice:
+    """``get_daily_price()`` — REST-only, independent of WS subscription state."""
+
+    async def test_maps_kis_fields_to_daily_price_bar(
+        self, connected_source: KisRealtimeQuoteSource
+    ) -> None:
+        connected_source._rest_client.get_daily_price.return_value = [
+            {
+                "stck_bsop_date": "20260708",
+                "stck_clpr": "128000",
+                "prdy_vrss": "3500",
+                "prdy_vrss_sign": "2",
+                "prdy_ctrt": "2.81",
+                "acml_vol": "3908418",
+            },
+            {
+                "stck_bsop_date": "20260707",
+                "stck_clpr": "124500",
+                "prdy_vrss": "-2500",
+                "prdy_vrss_sign": "5",
+                "prdy_ctrt": "-1.97",
+                "acml_vol": "3449197",
+            },
+        ]
+
+        bars = await connected_source.get_daily_price("005930")
+
+        assert len(bars) == 2
+        assert bars[0].date == "20260708"
+        assert bars[0].close == 128000.0
+        assert bars[0].change == 3500.0
+        assert bars[0].change_rate == 2.81
+        assert bars[0].volume == 3908418
+        assert bars[1].change == -2500.0  # sign already embedded in prdy_vrss
+
+    async def test_does_not_require_subscription(
+        self, connected_source: KisRealtimeQuoteSource
+    ) -> None:
+        """Unsubscribed symbols can still be queried — pure REST, no WS budget consumed."""
+        connected_source._rest_client.get_daily_price.return_value = []
+        assert connected_source.list_subscriptions() == []
+        bars = await connected_source.get_daily_price("999999")
+        assert bars == []
+
+    async def test_invalid_symbol_raises(self, connected_source: KisRealtimeQuoteSource) -> None:
+        with pytest.raises(InvalidSymbolError):
+            await connected_source.get_daily_price("ABC")
+
+    async def test_count_caps_at_max_history(
+        self, connected_source: KisRealtimeQuoteSource
+    ) -> None:
+        connected_source._rest_client.get_daily_price.return_value = [
+            {"stck_bsop_date": f"202607{i:02d}", "stck_clpr": "100", "prdy_vrss": "0",
+             "prdy_vrss_sign": "3", "prdy_ctrt": "0.0", "acml_vol": "1"}
+            for i in range(1, 32)  # 31 rows — more than MAX_DAILY_PRICE_HISTORY
+        ]
+        bars = await connected_source.get_daily_price("005930", count=1000)
+        assert len(bars) == kqs.MAX_DAILY_PRICE_HISTORY
 
 
 class TestBuildRealtimeQuoteSource:

@@ -29,9 +29,9 @@ class TestBootstrap:
         assert data["connection"]["connection_state"] == "connected"
         assert data["connection"]["environment"] == "mock"
         assert data["connection"]["registered_count"] == 0
-        assert data["connection"]["max_registrations"] == 41
+        assert data["connection"]["max_registrations"] == 30
         assert data["connection"]["registrations_per_symbol"] == 2
-        assert data["connection"]["symbol_capacity"] == 20
+        assert data["connection"]["symbol_capacity"] == 15
         assert "generated_at" in data
 
 
@@ -94,13 +94,13 @@ class TestSubscribe:
         assert resp.status_code == 422
 
     def test_subscribe_beyond_symbol_capacity_returns_409(self, client: TestClient) -> None:
-        # Symbol capacity is 41 // 2 = 20. Subscribe 20 distinct symbols first.
-        symbols = [f"{100000 + i:06d}" for i in range(20)]
+        # Symbol capacity is 30 // 2 = 15. Subscribe 15 distinct symbols first.
+        symbols = [f"{100000 + i:06d}" for i in range(15)]
         resp = client.post("/realtime-quotes/subscriptions", json={"symbols": symbols})
         assert resp.status_code == 201, resp.text
-        assert resp.json()["connection"]["registered_count"] == 40
+        assert resp.json()["connection"]["registered_count"] == 30
 
-        # The 21st distinct symbol would exceed the 41-registration budget.
+        # The 16th distinct symbol would exceed the 30-registration budget.
         resp2 = client.post("/realtime-quotes/subscriptions", json={"symbols": ["999999"]})
         assert resp2.status_code == 409, resp2.text
 
@@ -151,6 +151,8 @@ class TestSnapshot:
         assert len(quote["bid_levels"]) == 10
         assert quote["per"] is not None
         assert quote["upper_limit"] > quote["last_price"] > quote["lower_limit"]
+        assert 0 < len(quote["recent_trades"]) <= 30
+        assert quote["recent_trades"][0]["price"] > 0
 
     def test_snapshot_omits_unsubscribed_symbol(self, client: TestClient) -> None:
         resp = client.get("/realtime-quotes/snapshot", params={"symbols": "005930"})
@@ -166,6 +168,26 @@ class TestSnapshot:
 
     def test_snapshot_empty_symbols_returns_422(self, client: TestClient) -> None:
         resp = client.get("/realtime-quotes/snapshot", params={"symbols": ""})
+        assert resp.status_code == 422
+
+
+class TestDailyPrice:
+    def test_returns_bars_for_any_symbol(self, client: TestClient) -> None:
+        # No subscription required — pure REST-equivalent lookup.
+        resp = client.get("/realtime-quotes/daily-price", params={"symbol": "005930"})
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["symbol"] == "005930"
+        assert len(data["bars"]) == 30
+        assert all(bar["date"] for bar in data["bars"])
+        assert all(bar["close"] > 0 for bar in data["bars"])
+
+    def test_invalid_symbol_returns_422(self, client: TestClient) -> None:
+        resp = client.get("/realtime-quotes/daily-price", params={"symbol": "ABC"})
+        assert resp.status_code == 422, resp.text
+
+    def test_missing_symbol_returns_422(self, client: TestClient) -> None:
+        resp = client.get("/realtime-quotes/daily-price")
         assert resp.status_code == 422
 
 

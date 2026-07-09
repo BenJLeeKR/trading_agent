@@ -75,13 +75,13 @@
 |---|---|---|
 | WS 채널 파서 | [`ws_parser.py`](../src/agent_trading/brokers/koreainvestment/ws_parser.py) | `H0STCNT0`/`H0STASP0` 파서가 이미 구현됨 — **신규 파서 작성 불필요** |
 | WS 클라이언트 | [`websocket_client.py`](../src/agent_trading/brokers/koreainvestment/websocket_client.py) | `KISWebSocketClient` 클래스 — 신규 계좌 자격증명으로 **별도 인스턴스** 생성해 재사용 |
-| 구독 budget | [`base.py`](../src/agent_trading/brokers/base.py) | `SubscriptionBudget(max_subscriptions=41)` — `adapter.py:85` 패턴 재사용 |
+| 구독 budget | [`base.py`](../src/agent_trading/brokers/base.py) | `SubscriptionBudget(max_subscriptions=30)` — `adapter.py:85`의 `SubscriptionBudget` 클래스 재사용(단, 값은 KIS 공식 상한 41보다 낮은 자체 안전 한도 30을 적용, 2026-07-09 결정) |
 | Approval key 캐시 | [`token_cache.py`](../src/agent_trading/brokers/koreainvestment/token_cache.py) | `KisTokenCache` + `build_live_approval_key_cache_config()` — fingerprint가 appkey/secret 기반이라 신규 계좌 자격증명을 넣으면 자동으로 캐시 파일 분리됨. 신규 `CachePurpose` 불필요 |
 | REST quote 조회 | [`rest_client.py`](../src/agent_trading/brokers/koreainvestment/rest_client.py) | `KISRestClient.get_quote()`(2086-2118행, TTL 캐시 포함, endpoint `inquire_price` → TR `FHKST01010100`) — REST fallback(§5.4)과 정적 참조값 보강(상한가/하한가/기준가/PER/PBR/EPS/BPS)에 그대로 재사용. raw `output` 딕셔너리를 그대로 반환하므로 **신규 파싱 코드 불필요** |
 | API 라우트 패턴 | [`routes/broker_capacity.py`](../src/agent_trading/api/routes/broker_capacity.py) | "adapter 미설정 시 503" 패턴 — 신규 라우트 파일에 그대로 적용 |
 | DI 패턴 | [`api/deps.py`](../src/agent_trading/api/deps.py) | `get_kis_client(request)` 스타일 — 신규 계좌 전용 adapter DI 함수 신설 시 참고 |
 | Admin UI 공용 컴포넌트 | `admin_ui/src/components/common/*.tsx` | `StatusBadge`/`StatusCard`/`Panel`/`DataTable`/`DetailField`/`ErrorBanner`/`WarningBanner`/`LoadingSpinner`/`FilterBar` — UI 레이아웃 설계 §9에서 상세 매핑 확정 |
-| 구독 한도 progress bar 패턴 | [`BrokerCapacityPanel.tsx`](../admin_ui/src/components/BrokerCapacityPanel.tsx) | 내부 `ProgressBar`/`utilisationColor()` — 41건 한도 표시에 재사용 |
+| 구독 한도 progress bar 패턴 | [`BrokerCapacityPanel.tsx`](../admin_ui/src/components/BrokerCapacityPanel.tsx) | 내부 `ProgressBar`/`utilisationColor()` — 30건 한도 표시에 재사용 |
 | 종목 딥링크 패턴 | [`AccountsView.tsx:340`](../admin_ui/src/components/AccountsView.tsx), [`OrdersView.tsx:60-66`](../admin_ui/src/components/OrdersView.tsx) | `navigate(\`...?symbol=X\`)` + 마운트 시 쿼리 파라미터 읽기 패턴 |
 | 메뉴/라우트 패턴 | [`Layout.tsx`](../admin_ui/src/components/Layout.tsx), [`App.tsx`](../admin_ui/src/App.tsx) | `navSections` 배열 + `<Route>` 추가 패턴 |
 
@@ -131,7 +131,8 @@
      (기존 `adapter.py`/`bootstrap.py`의 `KoreaInvestmentAdapter` 생성 경로와는
      **별도의 새 함수**로 분리 — 기존 함수 시그니처/동작 변경 금지).
   3. 종목별 참조 카운트 기반 구독/해제 관리자(가칭 `QuoteSubscriptionManager`) 구현
-     — `SubscriptionBudget(max_subscriptions=41)` 사용. **종목 1개를 구독할 때마다
+     — `SubscriptionBudget(max_subscriptions=30)` 사용(2026-07-09: 운영 안정성 마진
+     확보를 위해 KIS 공식 상한 41보다 낮게 자체 조정). **종목 1개를 구독할 때마다
      체결가(`H0STCNT0`)+호가(`H0STASP0`) 2건을 원자적으로 등록/해제**하도록 구현
      (아래 "2026-07-08 재확인 결과" 참고 — 잔여 budget이 2건 미만이면 신규 종목
      추가를 거부).
@@ -145,14 +146,17 @@
 - **✅ 2026-07-08 KIS 공식 웹페이지/문서 재확인 완료**:
   - `H0STCNT0`/`H0STASP0`의 필드 스펙이 `172`/`178`번 문서와 **일치 확인됨**.
   - WebSocket 41건 한도 세부 사항 확인됨:
-    - appkey/계좌 기준 세션 1개, 등록 건수 총합 41건 — 국내/해외/파생 **전체 실시간
-      채널 합산**(이 화면이 이 앱키의 유일한 구독 주체인 동안은 문제 없음).
+    - appkey/계좌 기준 세션 1개, 등록 건수 총합 41건(KIS 공식 상한) — 국내/해외/파생
+      **전체 실시간 채널 합산**(이 화면이 이 앱키의 유일한 구독 주체인 동안은 문제 없음).
     - **체결가+호가를 같은 종목에 모두 구독하면 2건으로 계산됨** — 이 화면은 두
-      채널을 모두 쓰므로, **41건 = 최대 약 20종목**으로 재계산해야 한다(41건이
-      아니라 20종목이 실질 상한). §8 운영 안전장치, UI 레이아웃 설계 §1/§6-A에도
-      이 수치를 반영함.
+      채널을 모두 쓰므로, KIS 공식 상한(41건) 기준으로는 최대 약 20종목까지
+      가능하다. §8 운영 안전장치, UI 레이아웃 설계 §1/§6-A에도 이 수치를 반영함.
   - approval key 발급(`/oauth2/Approval`) 요청/응답 필드는 여전히 **구현 직전
     최종 재확인 대상**으로 남긴다(이번 확인 범위는 TR 필드/구독 한도로 한정).
+  - **✅ 2026-07-09 운영 안정성 조정**: KIS 공식 상한(41건)은 그대로이나, 이 화면은
+    자체적으로 **30건(≈15종목)**으로 낮춰 운영한다(다른 실시간 채널의 향후 pool
+    공유, 재연결 구간 순간 중복 등록 등을 감안한 안전 마진 확보). 아래 §8/UI 레이아웃
+    설계의 모든 "41건/20종목" 운영 수치는 이후 30건/15종목 기준으로 갱신됨.
 
 ### Step 4 — REST Fallback 연동 — ❌ 미구현 (2026-07-08 재확인)
 
@@ -271,11 +275,12 @@ Step 0 (정적 참조값 출처 확정 — ✅ 완료, 코드 없음)
   경로에서만 생성한다. 기존 `bootstrap.py`의 트레이딩 계좌 생성 함수를 수정하거나
   같은 함수를 신규 계좌에도 쓰는 방식은 금지(세션 preemption 위험).
 - **uvicorn 단일 워커 유지**: `--workers 1` 설정을 변경하지 않는다(앱키당 1세션 제약).
-- **구독 한도 하드 캡**: `SubscriptionBudget(max_subscriptions=41)`을 명시적으로
-  설정하고, 초과 요청은 API 레벨에서 422/409로 거부(자동 evict 없음). **종목당
-  체결가+호가 2건을 소비하므로 실질 상한은 약 20종목**이다 — UI/API 모두 "종목
-  기준"이 아니라 "등록 건수 기준"으로 잔여 capacity를 계산해야 한다(잔여 2건 미만이면
-  신규 종목 추가 거부).
+- **구독 한도 하드 캡**: `SubscriptionBudget(max_subscriptions=30)`을 명시적으로
+  설정하고(KIS 공식 상한 41보다 낮은 자체 안전 한도, 2026-07-09 결정), 초과 요청은
+  API 레벨에서 422/409로 거부(자동 evict 없음). **종목당 체결가+호가 2건을
+  소비하므로 실질 상한은 약 15종목**이다 — UI/API 모두 "종목 기준"이 아니라
+  "등록 건수 기준"으로 잔여 capacity를 계산해야 한다(잔여 2건 미만이면 신규
+  종목 추가 거부).
 - **Rate limit 격리 확인**: 신규 계좌는 별도 계좌이므로 기존 18RPS/41건 budget과
   공유되지 않음을 Step 3 구현 시 재확인(별도 `RateLimitBudgetManager` 인스턴스 사용).
 - **민감정보 비노출**: approval_key, appkey/appsecret을 API 응답/로그/UI 어디에도
@@ -370,3 +375,22 @@ python -m pytest tests/smoke/test_realtime_quote_live_smoke.py -v -m smoke --tim
 - 모바일 전용 네이티브 제스처(스와이프 등)
 - 이 화면을 위한 신규 alert/모니터링 대시보드 구축(`11_...md` §8 Phase 5 범위이며
   이번 계획은 Phase 1~3 상당 범위만 다룸)
+
+## Credential 분리 유지와 후속 통합 검토
+
+### 현재 결정
+- Phase 4 구현 전까지는 KIS_REALTIME_QUOTE_*와 KIS_LIVE_INFO_*를 분리 유지한다.
+
+### 분리 유지의 합리적 근거
+- KIS_LIVE_INFO_*가 이미 장운영정보 163 WebSocket을 소유하므로,
+  지금 통합은 단순 env 정리가 아니라 shared session manager 설계 문제다.
+- approval key / reconnect / registration budget을 한 credential 아래 묶으면
+  장애 원인 분리와 rollback이 어려워진다.
+- 현재 구현은 pi 안의 전용 현재가 source 기준으로 검증되어 있어
+  이 시점의 통합은 기능 확장보다 구조 변경 성격이 더 강하다.
+
+### 후속 통합 검토의 합리적 근거
+- 현재 화면은 단일 종목 중심이라 다종목 fan-out 압력이 아직 크지 않다.
+- 별도 계좌/appkey 유지에는 운영·행정 비용이 있다.
+- 따라서 Phase 4 후단에서 push relay 구조가 굳은 뒤,
+  KIS_REALTIME_QUOTE_*와 KIS_LIVE_INFO_*를 통합 가능한지 의도적으로 다시 판단한다.

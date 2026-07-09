@@ -18,6 +18,7 @@ import { WarningBanner } from "./common/WarningBanner";
 import { LoadingSpinner } from "./common/LoadingSpinner";
 import { DetailField } from "./common/DetailField";
 import { QuoteLadder } from "./common/QuoteLadder";
+import { TradeHistoryPanel } from "./common/TradeHistoryPanel";
 import { formatKstTime } from "@/lib/utils";
 import { Wifi, WifiOff, RefreshCcw, Search, X, TrendingUp, TrendingDown, Minus } from "lucide-react";
 
@@ -296,7 +297,7 @@ export default function RealtimeQuoteView() {
             <span className="text-xs font-medium text-[#64748b]">구독 한도</span>
             <span className="text-xs font-mono text-[#64748b]">
               {subscriptions.length}종목 · {connection?.registered_count ?? 0}/
-              {connection?.max_registrations ?? 41}건
+              {connection?.max_registrations ?? 30}건
             </span>
           </div>
           <div className="h-2 bg-[#e2e8f0] rounded-full overflow-hidden">
@@ -424,37 +425,42 @@ export default function RealtimeQuoteView() {
 
       {selectedSymbol && (
         <>
-          {/* C. 종목 헤더 + 현재가 바 */}
+          {/* C. 종목 헤더 + 현재가 바 — 모바일은 세로로 쌓이고(gap-3=12px),
+              데스크탑(lg 이상)에서는 종목코드/종목명 오른쪽에 20px(gap-5) 띄워
+              한 줄로 배치된다. */}
           <Panel>
-            <div className="flex items-center gap-3 mb-3">
-              <StatusBadge variant="info">{displayMarket}</StatusBadge>
-              <span className="text-base font-semibold text-[#0f172a]">{displayName}</span>
-              <span className="text-xs text-[#94a3b8] font-mono">{displaySymbol}</span>
-            </div>
-            {/* quote가 없어도 동일한 레이아웃을 유지하고 값만 "—"로 표시 */}
-            <div className="flex items-baseline gap-4 flex-wrap">
-              <span
-                className={`text-2xl font-bold font-mono ${quote ? changeColor(quote.change_sign) : "text-[#94a3b8]"}`}
-              >
-                {quote ? formatNumber(quote.last_price) : "—"}
-              </span>
-              <span
-                className={`inline-flex items-center gap-1 font-mono ${quote ? changeColor(quote.change_sign) : "text-[#94a3b8]"}`}
-              >
-                {quote && <ChangeIcon sign={quote.change_sign} />}
-                {quote ? `${formatNumber(quote.change)} (${quote.change_rate.toFixed(2)}%)` : "—"}
-              </span>
-              <span className="text-sm text-[#94a3b8]">
-                전일종가 {quote ? formatNumber(quote.prev_close) : "—"}
-              </span>
+            <div className="flex flex-col lg:flex-row lg:items-baseline gap-3 lg:gap-5">
+              <div className="flex items-center gap-3">
+                <StatusBadge variant="info">{displayMarket}</StatusBadge>
+                <span className="text-base font-semibold text-[#0f172a]">{displayName}</span>
+                <span className="text-xs text-[#94a3b8] font-mono">{displaySymbol}</span>
+              </div>
+              {/* quote가 없어도 동일한 레이아웃을 유지하고 값만 "—"로 표시 */}
+              <div className="flex items-baseline gap-4 flex-wrap">
+                <span
+                  className={`text-2xl font-bold font-mono ${quote ? changeColor(quote.change_sign) : "text-[#94a3b8]"}`}
+                >
+                  {quote ? formatNumber(quote.last_price) : "—"}
+                </span>
+                <span
+                  className={`inline-flex items-center gap-1 font-mono ${quote ? changeColor(quote.change_sign) : "text-[#94a3b8]"}`}
+                >
+                  {quote && <ChangeIcon sign={quote.change_sign} />}
+                  {quote ? `${formatNumber(quote.change)} (${quote.change_rate.toFixed(2)}%)` : "—"}
+                </span>
+                <span className="text-sm text-[#94a3b8]">
+                  전일종가 {quote ? formatNumber(quote.prev_close) : "—"}
+                </span>
+              </div>
             </div>
           </Panel>
 
-          {/* D. 10단계 호가창 + E. 상세정보 패널 — quote 유무와 무관하게 그리드 구조는 항상 렌더 */}
+          {/* D. 10단계 호가창 + 실시간 체결가(시별/일별) + E. 상세정보 패널 —
+              quote 유무와 무관하게 그리드 구조는 항상 렌더 */}
           {/* 호가 프레임 폭 = 내부 QuoteLadder 고정폭(500px) + Panel 좌우 padding(p-3=24px)
               + Panel border(2px) = 526px — 내부 데이터가 프레임 밖으로 튀어나가지 않도록
-              내부 컨텐츠를 감싸는 크기로 맞춘다. */}
-          <div className="grid grid-cols-1 lg:grid-cols-[526px_1fr] gap-4">
+              내부 컨텐츠를 감싸는 크기로 맞춘다. 실시간 체결가 프레임은 최소 400px. */}
+          <div className="grid grid-cols-1 lg:grid-cols-[526px_minmax(400px,1fr)_1fr] gap-4">
             <Panel
               title="호가"
               headerRight={
@@ -472,6 +478,23 @@ export default function RealtimeQuoteView() {
                 prevClose={quote?.prev_close ?? 0}
                 totalAskQuantity={quote?.total_ask_quantity ?? 0}
                 totalBidQuantity={quote?.total_bid_quantity ?? 0}
+              />
+            </Panel>
+
+            <Panel
+              title="실시간 체결가"
+              headerRight={
+                !quote && <span className="text-xs text-[#94a3b8]">수신 대기 중</span>
+              }
+              headerClassName="h-[30px] py-0"
+              noPadding
+              bodyClassName="p-3"
+            >
+              <TradeHistoryPanel
+                key={selectedSymbol}
+                symbol={selectedSymbol}
+                hasData={!!quote}
+                recentTrades={quote?.recent_trades ?? []}
               />
             </Panel>
 

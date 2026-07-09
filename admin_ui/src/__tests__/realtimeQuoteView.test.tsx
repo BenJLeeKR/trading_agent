@@ -30,9 +30,9 @@ const emptyBootstrap: RealtimeQuoteBootstrapResponse = {
     environment: "mock",
     data_source: "mock",
     registered_count: 0,
-    max_registrations: 41,
+    max_registrations: 30,
     registrations_per_symbol: 2,
-    symbol_capacity: 20,
+    symbol_capacity: 15,
   },
   subscriptions: [],
   generated_at: "2026-07-08T00:00:00Z",
@@ -45,9 +45,9 @@ function bootstrapWith(symbol: string, name: string, market: string): RealtimeQu
       environment: "mock",
       data_source: "mock",
       registered_count: 2,
-      max_registrations: 41,
+      max_registrations: 30,
       registrations_per_symbol: 2,
-      symbol_capacity: 20,
+      symbol_capacity: 15,
     },
     subscriptions: [{ symbol, name, market }],
     generated_at: "2026-07-08T00:00:00Z",
@@ -93,6 +93,9 @@ function snapshotFor(symbol: string, name: string, market: string): RealtimeQuot
         trading_halted: false,
         data_source: "mock",
         updated_at: "2026-07-08T00:00:03Z",
+        recent_trades: [
+          { trade_time: "09:37:30", price: 71900, change: 900, change_rate: 1.27, volume: 10 },
+        ],
       },
     },
     generated_at: "2026-07-08T00:00:03Z",
@@ -113,9 +116,9 @@ function subscriptionsResponse(
       environment: "mock",
       data_source: "mock",
       registered_count: symbols.length * 2,
-      max_registrations: 41,
+      max_registrations: 30,
       registrations_per_symbol: 2,
-      symbol_capacity: 20,
+      symbol_capacity: 15,
     },
     subscriptions: symbols,
     generated_at: "2026-07-08T00:00:00Z",
@@ -204,7 +207,7 @@ describe("RealtimeQuoteView deep link (?symbol=)", () => {
     });
     expect(screen.getAllByText("138040").length).toBeGreaterThan(0);
     await waitFor(() => {
-      expect(screen.getByText("71,900")).toBeInTheDocument();
+      expect(screen.getAllByText("71,900").length).toBeGreaterThan(0);
     });
   });
 });
@@ -262,7 +265,7 @@ describe("RealtimeQuoteView subscribe flow", () => {
       expect(screen.getAllByText("삼성전자").length).toBeGreaterThan(0);
     });
     await waitFor(() => {
-      expect(screen.getByText("71,900")).toBeInTheDocument();
+      expect(screen.getAllByText("71,900").length).toBeGreaterThan(0);
     });
   });
 
@@ -278,7 +281,7 @@ describe("RealtimeQuoteView subscribe flow", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("71,900")).toBeInTheDocument();
+      expect(screen.getAllByText("71,900").length).toBeGreaterThan(0);
     });
 
     const fetchSpy = vi.spyOn(globalThis, "fetch");
@@ -306,7 +309,7 @@ describe("RealtimeQuoteView unsubscribe flow", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("71,900")).toBeInTheDocument();
+      expect(screen.getAllByText("71,900").length).toBeGreaterThan(0);
     });
 
     mockFetchOnce(subscriptionsResponse([]));
@@ -333,7 +336,7 @@ describe("RealtimeQuoteView snapshot rendering", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("71,900")).toBeInTheDocument();
+      expect(screen.getAllByText("71,900").length).toBeGreaterThan(0);
     });
 
     // Ladder: best ask (72,000, also equals high_price) and best bid (71,800).
@@ -418,7 +421,7 @@ describe("RealtimeQuoteView URL (?symbol=) sync", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("71,900")).toBeInTheDocument();
+      expect(screen.getAllByText("71,900").length).toBeGreaterThan(0);
     });
     expect(screen.getByTestId("location-search").textContent).toContain("symbol=005930");
 
@@ -474,10 +477,62 @@ describe("RealtimeQuoteView URL (?symbol=) sync", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("71,900")).toBeInTheDocument();
+      expect(screen.getAllByText("71,900").length).toBeGreaterThan(0);
     });
     const search = screen.getByTestId("location-search").textContent ?? "";
     expect(search).toContain("symbol=138040");
     expect(search).toContain("foo=bar");
+  });
+});
+
+describe("RealtimeQuoteView 실시간 체결가 frame", () => {
+  it("shows recent trade ticks on the default 시별 tab", async () => {
+    mockFetchOnce(bootstrapWith("138040", "메리츠금융지주", "KOSPI"));
+    mockFetchOnce(snapshotFor("138040", "메리츠금융지주", "KOSPI"));
+
+    render(
+      <MemoryRouter initialEntries={["/operations/realtime-quotes?symbol=138040"]}>
+        <RealtimeQuoteView />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText("실시간 체결가")).toBeInTheDocument();
+    expect(screen.getByText("시별")).toBeInTheDocument();
+    expect(screen.getByText("일별")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getAllByText("71,900").length).toBeGreaterThan(0);
+    });
+  });
+
+  it("fetches and shows daily bars when the 일별 tab is clicked", async () => {
+    mockFetchOnce(bootstrapWith("138040", "메리츠금융지주", "KOSPI"));
+    mockFetchOnce(snapshotFor("138040", "메리츠금융지주", "KOSPI"));
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter initialEntries={["/operations/realtime-quotes?symbol=138040"]}>
+        <RealtimeQuoteView />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("71,900").length).toBeGreaterThan(0);
+    });
+
+    mockFetchOnce({
+      symbol: "138040",
+      bars: [
+        { date: "20260708", close: 102900, change: 700, change_rate: 0.68, volume: 125040 },
+        { date: "20260707", close: 102200, change: -300, change_rate: -0.29, volume: 98000 },
+      ],
+      generated_at: "2026-07-08T00:00:00Z",
+    });
+    await user.click(screen.getByText("일별"));
+
+    await waitFor(() => {
+      expect(screen.getByText("2026-07-08")).toBeInTheDocument();
+    });
+    expect(screen.getByText("102,900")).toBeInTheDocument();
+    expect(screen.getByText("2026-07-07")).toBeInTheDocument();
   });
 });

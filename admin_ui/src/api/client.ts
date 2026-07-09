@@ -428,6 +428,14 @@ export async function getRealtimeQuoteSnapshot(
   );
 }
 
+export async function getRealtimeQuoteDailyPrice(
+  symbol: string
+): Promise<import("../types/api").RealtimeQuoteDailyPriceResponse> {
+  return request<import("../types/api").RealtimeQuoteDailyPriceResponse>(
+    `/realtime-quotes/daily-price?symbol=${encodeURIComponent(symbol)}`
+  );
+}
+
 export async function getEnumMetadata(): Promise<import("../types/api").EnumMetadataListResponse> {
   return request<import("../types/api").EnumMetadataListResponse>("/metadata/enums");
 }

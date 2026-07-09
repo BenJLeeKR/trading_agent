@@ -28,16 +28,20 @@ from agent_trading.api.deps import get_realtime_quote_source
 from agent_trading.api.schemas import (
     RealtimeQuoteBootstrapResponse,
     RealtimeQuoteConnectionInfo,
+    RealtimeQuoteDailyPriceItem,
+    RealtimeQuoteDailyPriceResponse,
     RealtimeQuoteLevel,
     RealtimeQuoteSnapshotResponse,
     RealtimeQuoteSnapshotView,
     RealtimeQuoteSubscribeRequest,
     RealtimeQuoteSubscriptionsResponse,
     RealtimeQuoteSubscriptionView,
+    RealtimeQuoteTradeTickView,
     RealtimeQuoteUnsubscribeRequest,
 )
 from agent_trading.services.realtime_quote_source import (
     InvalidSymbolError,
+    MAX_DAILY_PRICE_HISTORY,
     QuoteSnapshot,
     RealtimeQuoteSource,
     SubscriptionLimitExceededError,
@@ -108,6 +112,16 @@ def _to_snapshot_view(quote: QuoteSnapshot) -> RealtimeQuoteSnapshotView:
         trading_halted=quote.trading_halted,
         data_source=quote.data_source,
         updated_at=quote.updated_at,
+        recent_trades=[
+            RealtimeQuoteTradeTickView(
+                trade_time=t.trade_time,
+                price=t.price,
+                change=t.change,
+                change_rate=t.change_rate,
+                volume=t.volume,
+            )
+            for t in quote.recent_trades
+        ],
     )
 
 
@@ -187,3 +201,33 @@ async def get_snapshot(
     raw_snapshots = source.get_snapshots(symbol_list)
     quotes = {symbol: _to_snapshot_view(quote) for symbol, quote in raw_snapshots.items()}
     return RealtimeQuoteSnapshotResponse(quotes=quotes, generated_at=datetime.now(timezone.utc))
+
+
+@router.get("/daily-price", response_model=RealtimeQuoteDailyPriceResponse)
+async def get_daily_price(
+    symbol: str = Query(..., description="6자리 종목코드, 예: '005930'"),
+    source: RealtimeQuoteSource = Depends(get_realtime_quote_source),
+) -> RealtimeQuoteDailyPriceResponse:
+    """일자별 시세('일별' 탭) — 구독 여부와 무관한 REST 1회 조회.
+
+    WS 구독/등록 budget을 소비하지 않는다(순수 REST 조회).
+    """
+    try:
+        bars = await source.get_daily_price(symbol, count=MAX_DAILY_PRICE_HISTORY)
+    except InvalidSymbolError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return RealtimeQuoteDailyPriceResponse(
+        symbol=symbol.strip(),
+        bars=[
+            RealtimeQuoteDailyPriceItem(
+                date=b.date,
+                close=b.close,
+                change=b.change,
+                change_rate=b.change_rate,
+                volume=b.volume,
+            )
+            for b in bars
+        ],
+        generated_at=datetime.now(timezone.utc),
+    )

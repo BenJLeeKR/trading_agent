@@ -108,24 +108,31 @@
 > **2026-07-08 KIS 공식 문서/웹페이지 재확인 결과 반영**: 41건 한도는 appkey/계좌
 > 기준 **국내/해외/파생 전체 실시간 채널 합산**이며, **체결가+호가를 같은 종목에
 > 모두 구독하면 2건으로 계산된다.** 이 화면은 종목당 체결가(`H0STCNT0`)와
-> 호가(`H0STASP0`)를 **둘 다** 구독하므로, **실질적으로 동시 조회 가능한 종목 수는
-> 41건이 아니라 최대 약 20종목(41 ÷ 2, 소수점 버림)**이다. 이하 모든 "41건"
-> 서술은 "등록 건수 총합 41건" 기준이며, "종목 수" 기준이 아니라는 점에 주의한다.
+> 호가(`H0STASP0`)를 **둘 다** 구독하므로, KIS 공식 한도(41건) 기준으로는
+> 최대 약 20종목(41 ÷ 2, 소수점 버림)까지 동시 조회가 가능하다.
 
-- `SubscriptionBudget(max_subscriptions=41)`을 명시적으로 생성한다 (기존
-  `KoreaInvestmentAdapter`와 동일한 값을 이 화면 전용 계좌에도 적용 — `adapter.py:85` 패턴 참고).
-  단, 이 budget은 **"등록 건수" 단위**로 소비되므로, 종목 1개를 구독 추가할 때마다
-  체결가+호가 2건을 함께 등록/해제해 budget에서 2를 소비한다(§5.2 구독 API도 이
-  2건 단위 원자적 등록/해제를 전제로 설계한다).
+> **2026-07-09 운영 안정성 조정**: 위 KIS 공식 한도(41건)는 그대로이지만, 이 화면
+> 전용 구독 예산은 **자체적으로 30건(≈ 15종목)으로 낮춰 운영**한다. 다른 실시간
+> 채널이 향후 같은 appkey pool을 공유하게 될 가능성, approval_key 재발급/재연결
+> 구간의 순간적 중복 등록 등을 감안한 안전 마진(11건)을 미리 확보하기 위함이다.
+> 이하 "41건" 서술은 **KIS 서버 측 공식 상한**을 가리키고, 이 화면이 실제로 강제하는
+> `SubscriptionBudget`/API 응답값은 모두 **30건(15종목)** 기준이다.
+
+- `SubscriptionBudget(max_subscriptions=30)`을 명시적으로 생성한다 — KIS 공식 상한
+  (41, 기존 `KoreaInvestmentAdapter`가 쓰는 값과 동일 `adapter.py:85` 패턴)보다 낮은
+  자체 안전 한도다. 이 budget은 **"등록 건수" 단위**로 소비되므로, 종목 1개를 구독
+  추가할 때마다 체결가+호가 2건을 함께 등록/해제해 budget에서 2를 소비한다(§5.2
+  구독 API도 이 2건 단위 원자적 등록/해제를 전제로 설계한다).
 - 이 화면은 critical/optional 구분이 필요 없다 — 모든 구독이 "화면에 표시 중인 종목"이므로
   전량 optional로 취급하고, 화면에서 사라진 종목은 즉시 구독 해제(`tr_type=2`, 체결가+호가
   2건 모두 해제)한다.
 - 여러 admin_ui 브라우저 세션이 같은 종목을 동시에 볼 수 있으므로, 종목별로 **참조
   카운트(reference count)**를 두어 마지막 뷰어가 사라질 때만 실제 KIS 구독(2건)을 해제한다.
-  이를 통해 41건 한도를 종목 단위(2건씩)로만 소모하고 뷰어 수와 무관하게 유지한다.
+  이를 통해 30건 한도를 종목 단위(2건씩)로만 소모하고 뷰어 수와 무관하게 유지한다.
 - **국내/해외/파생 전체 합산이라는 점도 유의**: 이 화면은 국내주식(KRX)만 다루지만,
   같은 앱키로 향후 해외/파생 실시간 채널을 추가로 구독하는 기능이 생기면 그 등록
-  건수도 같은 41건 pool을 공유한다. 현재는 이 화면이 이 앱키의 유일한 구독 주체이므로
+  건수도 같은 KIS 공식 41건 pool을 공유한다(우리 자체 30건 한도는 그 41건 pool 안에서
+  더 보수적으로 예약해 쓰는 것). 현재는 이 화면이 이 앱키의 유일한 구독 주체이므로
   즉시 문제되지 않으나, 향후 확장 시 반드시 재확인해야 한다.
 
 ### 4.4 Subscription Budget과 Broker Capacity 관측값 연결
@@ -133,7 +140,7 @@
 - 기존 `GET /broker-capacity`(`routes/broker_capacity.py`)는 **트레이딩 계좌의** budget만
   노출한다. 이 화면 전용 계좌는 별개이므로, 기존 엔드포인트에 억지로 합치지 않고
   **별도 필드 또는 별도 read-only 엔드포인트**로 노출한다 (5.3 참고).
-- 노출 항목: 활성 구독 종목 수, 41건 대비 사용률, 세션 연결 상태, 마지막 approval_key
+- 노출 항목: 활성 구독 종목 수, 30건 대비 사용률, 세션 연결 상태, 마지막 approval_key
   발급/갱신 시각.
 
 ### 4.5 실시간 Quote Snapshot 저장 여부
@@ -189,7 +196,7 @@ GET /realtime-quotes/bootstrap
 ```
 
 - 응답: 이 화면 전용 세션의 연결 상태, 현재 구독 목록(다른 admin_ui 세션이 이미
-  보고 있는 종목 포함), 41건 대비 사용률, 환경 라벨(`live`/`paper` — 항상 `live`
+  보고 있는 종목 포함), 30건 대비 사용률, 환경 라벨(`live`/`paper` — 항상 `live`
   고정이지만 화면에 재확인용으로 노출).
 
 ### 5.2 구독 요청/해제 endpoint
@@ -202,10 +209,10 @@ DELETE /realtime-quotes/subscriptions     { "symbols": ["005930"] }
 - 참조 카운트 증감만 수행하고, 실제 KIS 구독 등록/해제는 참조 카운트가 0에서 1로
   또는 1에서 0으로 바뀔 때만 트리거한다. 이때 **체결가+호가 2건을 원자적으로 함께
   등록/해제**한다 — 한 채널만 구독하고 다른 채널은 실패하는 부분 상태를 만들지 않는다.
-- 41건 초과 요청은 422/409 등으로 명시적으로 거부하고, 어떤 종목이 원인인지 응답에
+- 30건 초과 요청은 422/409 등으로 명시적으로 거부하고, 어떤 종목이 원인인지 응답에
   포함한다 (자동 evict 없음 — 이 화면은 critical/optional 구분이 없으므로 임의로
   다른 사용자의 구독을 evict하면 안 된다). **종목 1개당 2건을 소비**하므로, 잔여
-  budget이 1건만 남은 상태에서는 신규 종목 추가가 거부되어야 한다(잔여 41건 기준이
+  budget이 1건만 남은 상태에서는 신규 종목 추가가 거부되어야 한다(잔여 30건 기준이
   아니라 잔여 2건 이상 확보 가능 여부로 판단).
 
 ### 5.3 현재 구독 상태 조회 endpoint
@@ -214,7 +221,7 @@ DELETE /realtime-quotes/subscriptions     { "symbols": ["005930"] }
 GET /realtime-quotes/subscriptions
 ```
 
-- 현재 활성 구독 목록, 종목별 참조 카운트, 41건 대비 사용량, 세션 연결 상태,
+- 현재 활성 구독 목록, 종목별 참조 카운트, 30건 대비 사용량, 세션 연결 상태,
   마지막 approval_key 갱신 시각을 반환한다 (4.4의 관측값).
 
 ### 5.4 최신 quote snapshot 조회 endpoint
@@ -273,7 +280,7 @@ GET /realtime-quotes/snapshot?symbols=005930,000660
   구분해 표시한다.
 - **오류/재연결 상태**: 재연결 backoff 진행 중 여부, REST fallback 사용 중 여부(4.7)를
   명확히 배지로 표시.
-- **구독 한도 표시**: 41건 대비 현재 사용량(예: "12 / 41 구독 중") — 5.3 endpoint 값을
+- **구독 한도 표시**: 30건 대비 현재 사용량(예: "12 / 30 구독 중") — 5.3 endpoint 값을
   그대로 노출.
 
 ### 6.3 환경 혼동 방지
@@ -295,8 +302,9 @@ GET /realtime-quotes/snapshot?symbols=005930,000660
   계좌를 위한 어댑터 인스턴스는 quote/orderbook 구독 메서드만 노출하도록 제한한다
   (주문 관련 메서드가 존재하는 `KoreaInvestmentAdapter` 전체를 재사용하지 말고,
   필요한 최소 기능만 노출하는 wrapper를 구현 단계에서 검토).
-- **Rate limit / 구독 한도 준수**: 4.3의 41건 상한을 코드로 강제(§10.4.3 언급된
-  `SubscriptionBudget(max_subscriptions=41)`)하고, 초과 요청은 API 레벨에서 거부한다
+- **Rate limit / 구독 한도 준수**: 4.3의 30건 자체 상한(KIS 공식 상한 41건보다 낮음)을
+  코드로 강제(§10.4.3 언급된 `SubscriptionBudget(max_subscriptions=30)`)하고, 초과
+  요청은 API 레벨에서 거부한다
   (5.2).
 - **민감정보 비노출**: approval_key, appkey/appsecret은 API 응답/로그/UI 어디에도
   노출하지 않는다. `KisTokenCache`의 기존 로깅 패턴(`_log_hit`/`_log_miss`,
@@ -309,7 +317,7 @@ GET /realtime-quotes/snapshot?symbols=005930,000660
   인스턴스, 참조 카운트 기반 구독 관리, 메모리 snapshot 저장(4.1~4.6, 5.1~5.4).
 - **Phase 3**: Admin UI polling 화면 — 6.1~6.3 화면을 5.5(a) polling 방식으로 연결.
 - **Phase 4**: WebSocket/SSE relay 검토 및 전환 — 5.5(b) 도입, fan-out broadcaster 설계.
-- **Phase 5**: 운영 관측/alert 연동 — 세션 끊김 장기화, 41건 근접, approval_key
+- **Phase 5**: 운영 관측/alert 연동 — 세션 끊김 장기화, 30건 근접, approval_key
   갱신 실패 등에 대한 알림을 기존 운영 alert 채널에 연동.
 
 각 Phase는 이전 Phase 완료 후 별도 승인을 거쳐 착수한다 (특히 Phase 4는 Phase 3
@@ -317,16 +325,41 @@ GET /realtime-quotes/snapshot?symbols=005930,000660
 
 ## 9. 테스트 계획
 
-- **Unit test**: 참조 카운트 기반 구독/해제 로직, 41건 초과 시 거부 로직, snapshot
+- **Unit test**: 참조 카운트 기반 구독/해제 로직, 30건 초과 시 거부 로직, snapshot
   갱신/staleness 판정 로직.
 - **API contract test**: 5.1~5.4 endpoint의 요청/응답 스키마, adapter 미설정 시
   503 처리(`broker_capacity.py` 패턴과 동일 검증).
 - **Admin UI rendering test**: 연결 상태 배지, 구독 한도 표시, REST fallback 배지
   등 상태 전이별 렌더링 테스트 (mock data 기반, 기존 admin_ui 테스트 패턴 준용).
 - **KIS mock WebSocket test**: 기존 `ws_parser.py`/`websocket_client.py` 테스트
-  스위트와 동일한 방식으로, mock WS 서버를 통해 구독 성공/실패, 재연결, 41건
+  스위트와 동일한 방식으로, mock WS 서버를 통해 구독 성공/실패, 재연결, 30건
   초과 시나리오를 검증.
 - **Live read-only smoke test**: 신규 계좌 자격증명으로 실제 KIS Live WS에 연결해
   1개 종목을 짧게 구독/해제하는 최소 smoke test. 기존
   `logs/trigger_proxy_attribution_smoke_2026-07-02.log`류의 운영 smoke test와
   동일한 성격으로, CI 상시 실행이 아닌 수동/저빈도 실행 대상으로 분류한다.
+
+## Credential 분리/통합 판단 메모
+
+### 현재 판단
+- 현재는 KIS_REALTIME_QUOTE_*와 KIS_LIVE_INFO_*를 분리 유지한다.
+- 다만 이 결정을 영구 고정하지 않고, Phase 4 후단에서 통합 가능성을 다시 평가한다.
+
+### 지금 분리 유지가 합리적인 이유
+- 핵심 쟁점은 ops-scheduler와의 단순 충돌보다 WebSocket session ownership이다.
+- KIS_LIVE_INFO_*는 단순 REST 조회용 credential이 아니라 이미 장운영정보(163) WebSocket을 소유한다.
+- 따라서 지금 합치면 단순 appkey 재사용이 아니라 아래 책임을 다시 설계해야 한다.
+  - approval key 발급/재발급
+  - reconnect 정책
+  - registration budget 관리
+  - 장애 격리와 원인 분리
+- 현재 구현은 pi 내부 전용 quote source 기준으로 안정화되어 있어,
+  문제 발생 시 현재가 경로만 독립적으로 degraded/fallback 처리하기 쉽다.
+
+### 그럼에도 통합을 후속 검토해야 하는 이유
+- 현재 현재가 화면은 단일 종목 중심이므로, 초기 설계 당시 예상했던 다종목 fan-out 압력은 아직 작다.
+- 별도 계좌/appkey 유지에는 실제 운영·행정 비용이 든다.
+- 거래 없는 별도 계좌/appkey의 장기 유지 보장을 시스템이 줄 수 없으므로,
+  이는 기술 외부 이슈가 아니라 실제 아키텍처 입력값으로 취급해야 한다.
+- 따라서 Phase 4에서 push relay / WS ownership 구조를 정리한 뒤,
+  KIS_REALTIME_QUOTE_*와 KIS_LIVE_INFO_*를 단일 market-data credential로 통합할 수 있는지 다시 판단한다.

@@ -486,6 +486,15 @@ export interface RealtimeQuoteSubscriptionsResponse {
   generated_at: string;
 }
 
+export interface RealtimeQuoteTradeTickView {
+  trade_time: string;
+  price: number;
+  change: number;
+  change_rate: number;
+  /** 해당 tick의 체결량(CNTG_VOL) — 누적거래량이 아님. */
+  volume: number;
+}
+
 export interface RealtimeQuoteSnapshotView {
   symbol: string;
   market: string;
@@ -515,10 +524,27 @@ export interface RealtimeQuoteSnapshotView {
   trading_halted: boolean;
   data_source: string;
   updated_at: string;
+  /** 최근 체결 tick 히스토리, 최신순 (최대 30개). */
+  recent_trades: RealtimeQuoteTradeTickView[];
 }
 
 export interface RealtimeQuoteSnapshotResponse {
   quotes: Record<string, RealtimeQuoteSnapshotView>;
+  generated_at: string;
+}
+
+export interface RealtimeQuoteDailyPriceItem {
+  /** "YYYYMMDD" */
+  date: string;
+  close: number;
+  change: number;
+  change_rate: number;
+  volume: number;
+}
+
+export interface RealtimeQuoteDailyPriceResponse {
+  symbol: string;
+  bars: RealtimeQuoteDailyPriceItem[];
   generated_at: string;
 }
 

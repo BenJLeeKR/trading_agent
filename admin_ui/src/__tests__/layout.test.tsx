@@ -134,3 +134,66 @@ describe("Layout without token", () => {
     expect(screen.getByRole("button", { name: /로그아웃/i })).toBeInTheDocument();
   });
 });
+
+/* ───────────────────────────────────────────
+ * Scenario 5: 모바일 삼선 메뉴
+ * ─────────────────────────────────────────── */
+describe("Layout mobile menu", () => {
+  it("opens the dropdown on hamburger click and closes it again on a second click", async () => {
+    const user = userEvent.setup();
+    setStoredToken(VALID_TOKEN);
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AuthProvider>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/" element={<div>Page Content</div>} />
+            </Route>
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    // Closed by default — only the desktop sidebar's nav items exist.
+    expect(screen.getAllByText("현재가")).toHaveLength(1);
+
+    const toggle = screen.getByRole("button", { name: "메뉴 열기" });
+    await user.click(toggle);
+
+    // Open — the mobile dropdown renders a second copy of the nav list.
+    expect(screen.getAllByText("현재가")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "메뉴 닫기" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "메뉴 닫기" }));
+    expect(screen.getAllByText("현재가")).toHaveLength(1);
+  });
+
+  it("closes the dropdown after clicking a nav item", async () => {
+    const user = userEvent.setup();
+    setStoredToken(VALID_TOKEN);
+
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <AuthProvider>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/" element={<div>Page Content</div>} />
+              <Route path="/accounts" element={<div>Accounts Page</div>} />
+            </Route>
+          </Routes>
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "메뉴 열기" }));
+    expect(screen.getAllByText("계좌")).toHaveLength(2);
+
+    // Click the mobile dropdown's copy of the "계좌" link (the last one rendered).
+    const accountLinks = screen.getAllByText("계좌");
+    await user.click(accountLinks[accountLinks.length - 1]);
+
+    await screen.findByText("Accounts Page");
+    expect(screen.getAllByText("계좌")).toHaveLength(1);
+  });
+});

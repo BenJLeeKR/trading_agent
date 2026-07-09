@@ -55,21 +55,26 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from agent_trading.brokers.base import SubscriptionBudget
 from agent_trading.brokers.koreainvestment.rest_client import KISRestClient
 from agent_trading.brokers.koreainvestment.websocket_client import KISWebSocketClient
 from agent_trading.services.realtime_quote_source import (
     DEFAULT_MAX_REGISTRATIONS,
+    MAX_DAILY_PRICE_HISTORY,
+    MAX_TRADE_HISTORY,
     REGISTRATIONS_PER_SYMBOL,
     ConnectionState,
+    DailyPriceBar,
     InstrumentInfo,
     QuoteLevel,
     QuoteSnapshot,
     SubscriptionLimitExceededError,
+    TradeTick,
     _validate_symbol,
     default_instrument_info,
 )
@@ -146,8 +151,9 @@ def _parse_trade_fields(fields: list[str]) -> dict[str, Any]:
         1  MKSC_SHRN_ISCD (stock_code)     8  STCK_OPRC       36 TRHT_YN
         2  STCK_CNTG_HOUR (trade_time)     9  STCK_HGPR       44 HOUR_CLS_CODE
         3  STCK_PRPR (last_price)          10 STCK_LWPR       46 VI_STND_PRC
-        5  PRDY_VRSS (change)              14 ACML_VOL
-        6  PRDY_CTRT (change_rate)         15 ACML_TR_PBMN
+        5  PRDY_VRSS (change)              13 CNTG_VOL (tick_volume)
+        6  PRDY_CTRT (change_rate)         14 ACML_VOL
+                                            15 ACML_TR_PBMN
     """
     change = _to_float(_f(fields, 5))
     change_sign = "up" if change > 0 else "down" if change < 0 else "flat"
@@ -159,6 +165,7 @@ def _parse_trade_fields(fields: list[str]) -> dict[str, Any]:
         "open_price": _to_float(_f(fields, 8)),
         "high_price": _to_float(_f(fields, 9)),
         "low_price": _to_float(_f(fields, 10)),
+        "tick_volume": _to_int(_f(fields, 13)),
         "accumulated_volume": _to_int(_f(fields, 14)),
         "accumulated_value": _to_int(_f(fields, 15)),
         "trade_time": _f(fields, 2),
@@ -225,6 +232,7 @@ class _SymbolState:
     hour_class: str = "장중"
     trading_halted: bool = False
     vi_stnd_price: float = 0.0
+    recent_trades: deque[TradeTick] = field(default_factory=lambda: deque(maxlen=MAX_TRADE_HISTORY))
 
     # -- from H0STASP0 --
     ask_levels: list[QuoteLevel] = field(default_factory=list)
@@ -259,6 +267,17 @@ class _SymbolState:
         self.hour_class = parsed["hour_class"]
         self.vi_stnd_price = parsed["vi_stnd_price"]
         self.updated_at = datetime.now(timezone.utc)
+        # appendleft + maxlen → recent_trades stays newest-first without
+        # needing a reverse() on every read.
+        self.recent_trades.appendleft(
+            TradeTick(
+                trade_time=parsed["trade_time"],
+                price=parsed["last_price"],
+                change=parsed["change"],
+                change_rate=parsed["change_rate"],
+                volume=parsed["tick_volume"],
+            )
+        )
 
     def apply_orderbook(self, parsed: dict[str, Any]) -> None:
         self.has_orderbook_data = True
@@ -313,6 +332,7 @@ class _SymbolState:
             trading_halted=self.trading_halted,
             data_source="websocket",
             updated_at=self.updated_at,
+            recent_trades=list(self.recent_trades),
         )
 
 
@@ -346,6 +366,35 @@ class KisRealtimeQuoteSource:
         self._ws_client: KISWebSocketClient | None = None
         self._state: dict[str, _SymbolState] = {}
         self._consumer_task: asyncio.Task[None] | None = None
+        # Phase 4 push relay hook — see realtime_quote_broadcaster.py. Listeners
+        # are invoked synchronously, right after in-memory state is updated,
+        # with the freshly-built snapshot for that symbol. Best-effort: a
+        # listener exception is logged and never breaks WS message processing.
+        self._listeners: list[Callable[[str, QuoteSnapshot], None]] = []
+
+    def add_listener(self, callback: Callable[[str, QuoteSnapshot], None]) -> None:
+        """Register a callback invoked on every trade/orderbook update.
+
+        Used by ``QuoteBroadcaster`` to fan out pushes to SSE subscribers
+        without polling. Not part of the ``RealtimeQuoteSource`` protocol —
+        callers must duck-type check (``hasattr(source, "add_listener")``)
+        since ``InMemoryMockQuoteSource`` has no native push events and does
+        not implement this.
+        """
+        self._listeners.append(callback)
+
+    def remove_listener(self, callback: Callable[[str, QuoteSnapshot], None]) -> None:
+        try:
+            self._listeners.remove(callback)
+        except ValueError:
+            pass
+
+    def _notify_listeners(self, symbol: str, snapshot: QuoteSnapshot) -> None:
+        for callback in self._listeners:
+            try:
+                callback(symbol, snapshot)
+            except Exception:
+                logger.exception("Realtime-quote broadcaster listener failed for %s", symbol)
 
     # ------------------------------------------------------------------
     # Connection lifecycle
@@ -556,3 +605,29 @@ class KisRealtimeQuoteSource:
                 continue
             out[normalized] = state.to_snapshot(normalized, self.instrument_info(normalized))
         return out
+
+    async def get_daily_price(
+        self, symbol: str, count: int = MAX_DAILY_PRICE_HISTORY
+    ) -> list[DailyPriceBar]:
+        """일자별 시세(``FHKST01010400``) — WS 구독 상태와 무관한 REST 1회 조회.
+
+        구독 목록에 없는 종목도 조회 가능하다(순수 REST 조회이므로 이 화면의
+        WS 구독/등록 budget을 소비하지 않는다).
+        """
+        normalized = _validate_symbol(symbol)
+        raw_rows = await self._rest_client.get_daily_price(normalized)
+        bars: list[DailyPriceBar] = []
+        for row in raw_rows[: min(count, MAX_DAILY_PRICE_HISTORY)]:
+            # KIS 응답의 prdy_vrss/prdy_ctrt는 이미 부호가 포함된 문자열이다
+            # (028_주식현재가_일자별.md 응답 예시: "-2500"/"-1.97") — 별도 부호
+            # 보정이 필요 없다.
+            bars.append(
+                DailyPriceBar(
+                    date=str(row.get("stck_bsop_date", "")),
+                    close=_to_float(row.get("stck_clpr", "")),
+                    change=_to_float(row.get("prdy_vrss", "")),
+                    change_rate=_to_float(row.get("prdy_ctrt", "")),
+                    volume=_to_int(row.get("acml_vol", "")),
+                )
+            )
+        return bars

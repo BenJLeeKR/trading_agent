@@ -3132,3 +3132,64 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 즉, 앞으로의 우선순위는 다음 한 줄로 요약된다.
 
 > **체결 진실 강화 → 장중 실운영 검증 → 운영 메타데이터 정리 → deterministic guardrail 정리 → 전략/에이전트 구조화**
+
+## P3 - Phase 4 후단 아키텍처 재검토
+
+### 16. KIS 실시간 현재가 credential/appkey 통합 재검토 - 미완료
+
+### 목표
+- 현재 KIS_REALTIME_QUOTE_*와 KIS_LIVE_INFO_*를 완전 분리한 구조를
+  그대로 영구 유지할지, 아니면 Phase 4 후단에서
+  단일 live market-data credential 체계로 통합할지
+  운영 비용까지 포함해 다시 판단한다.
+
+### 현재 판단
+- 지금 당장 통합하지는 않는다.
+- 다만 영구 분리를 기본값으로 고정하지도 않는다.
+- 현재 구조는 실시간 현재가 화면이 pi 안에서 전용 quote source를 쓰고,
+  KIS_LIVE_INFO_*가 이미 163 장운영정보 WebSocket을 소유하는 상태를 전제로 안정화돼 있다.
+- 따라서 현재 시점의 분리 이유는
+  ops-scheduler와의 단순 충돌보다는
+  WebSocket session ownership / reconnect blast radius / approval key / registration budget 분리 쪽이 더 크다.
+
+### 통합을 지금 미루는 이유
+- KIS_LIVE_INFO_*도 이미 장운영정보용 WebSocket을 사용하므로,
+  지금 합치면 단순 env 정리가 아니라
+  shared session manager / shared WS lifecycle 설계가 필요하다.
+- 현재 구현은 pi 단일 ownership + 단일 현재가 source + polling UI
+  가정 위에 검증돼 있어,
+  지금 통합은 기능 추가보다 구조 변경 비용이 더 크다.
+- reconnect, approval key cache, registration pool(문서상 41건) 책임이 한 credential에 모이면
+  장애 원인 분리와 rollback이 어려워진다.
+
+### 그럼에도 통합을 후속 과제로 남기는 이유
+- 현재 현재가 화면은 단일 종목 중심이라,
+  초기 설계가 우려했던 다종목 fan-out 압력이 아직 작다.
+- 별도 계좌/appkey를 계속 유지하는 것은
+  기술 외적인 운영·행정 비용이 있다.
+- 거래 없는 별도 계좌/appkey의 장기 존속을
+  시스템이 보장할 수 없으므로,
+  이는 실제 아키텍처 입력값으로 취급해야 한다.
+- Phase 4에서는 push relay / WS ownership을 다시 설계하게 되므로,
+  이 시점이 credential 통합 재평가의 가장 자연스러운 접점이다.
+
+### 후속 액션
+- [ ] Phase 4 relay/fan-out 구조가 굳은 뒤 KIS_REALTIME_QUOTE_*와 KIS_LIVE_INFO_* 통합 가능성 재검토
+- [ ] KisMarketStateClient와 현재가 WS를 단일 session manager로 묶을 수 있는지 설계안 작성
+- [ ] registration budget, approval key, reconnect coupling, failure isolation 비교표 작성
+- [ ] 별도 계좌/appkey 유지 비용과 재발급/휴면 리스크를 운영 항목으로 명시
+- [ ] 최종 결론을 분리 유지 또는 통합 전환 중 하나로 확정
+
+### 근거 문서
+- [plans/[BACKLOG] backlog.md](./[BACKLOG]%20backlog.md) 항목 37
+- [plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md](../plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md)
+- [plans/[DESIGN]_kis_realtime_quote_operations_screen_plan.md](./[DESIGN]_kis_realtime_quote_operations_screen_plan.md)
+- [plans/[DESIGN]_kis_realtime_quote_screen_ui_layout.md](./[DESIGN]_kis_realtime_quote_screen_ui_layout.md)
+
+### 우선순위 이유
+- 이 작업은 당장 기능 blocker는 아니지만,
+  별도 계좌/appkey 운영 비용과 장기 credential 유지 리스크를
+  기술 판단 밖으로 밀어둘 수는 없다.
+- 따라서 Phase 4 완료 후 바로 이어서 판단할 아키텍처 정리 과제로 남겨둔다.
+
+---

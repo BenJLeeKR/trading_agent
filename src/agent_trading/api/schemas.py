@@ -2042,6 +2042,17 @@ class RealtimeQuoteSubscriptionsResponse(BaseModel):
     generated_at: datetime
 
 
+class RealtimeQuoteTradeTickView(BaseModel):
+    """One 체결(trade) tick — '실시간 체결가' 프레임의 '시별' 탭 한 행."""
+
+    trade_time: str
+    price: float
+    change: float
+    change_rate: float
+    volume: int
+    """해당 tick의 체결량(``CNTG_VOL``) — 누적거래량이 아님."""
+
+
 class RealtimeQuoteSnapshotView(BaseModel):
     """``GET /realtime-quotes/snapshot`` — one symbol's latest quote."""
 
@@ -2073,6 +2084,8 @@ class RealtimeQuoteSnapshotView(BaseModel):
     trading_halted: bool
     data_source: str
     updated_at: datetime
+    recent_trades: list[RealtimeQuoteTradeTickView] = Field(default_factory=list)
+    """최근 체결 tick 히스토리, 최신순 — '실시간 체결가' 프레임 '시별' 탭 표시용."""
 
 
 class RealtimeQuoteSnapshotResponse(BaseModel):
@@ -2083,6 +2096,25 @@ class RealtimeQuoteSnapshotResponse(BaseModel):
     """
 
     quotes: dict[str, RealtimeQuoteSnapshotView]
+    generated_at: datetime
+
+
+class RealtimeQuoteDailyPriceItem(BaseModel):
+    """하루치 시세 — '실시간 체결가' 프레임 '일별' 탭 한 행 (KIS ``FHKST01010400``)."""
+
+    date: str
+    """"YYYYMMDD"."""
+    close: float
+    change: float
+    change_rate: float
+    volume: int
+
+
+class RealtimeQuoteDailyPriceResponse(BaseModel):
+    """``GET /realtime-quotes/daily-price`` — 최근 거래일 순(최신 먼저)."""
+
+    symbol: str
+    bars: list[RealtimeQuoteDailyPriceItem]
     generated_at: datetime
 
 

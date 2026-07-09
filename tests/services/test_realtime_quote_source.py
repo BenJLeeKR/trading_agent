@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 
 from agent_trading.services.realtime_quote_source import (
+    MAX_DAILY_PRICE_HISTORY,
+    MAX_TRADE_HISTORY,
     ConnectionState,
     InMemoryMockQuoteSource,
     InvalidSymbolError,
@@ -20,7 +22,7 @@ def source() -> InMemoryMockQuoteSource:
 class TestConnectionAndCapacity:
     def test_defaults(self, source: InMemoryMockQuoteSource) -> None:
         assert source.environment == "mock"
-        assert source.max_registrations == 41
+        assert source.max_registrations == 30
         assert source.registrations_per_symbol == 2
         assert source.connection_state() == ConnectionState.CONNECTED
         assert source.registered_count() == 0
@@ -65,9 +67,9 @@ class TestSubscribe:
             await source.subscribe("1234567")
 
     async def test_subscribe_beyond_capacity_raises(self, source: InMemoryMockQuoteSource) -> None:
-        for i in range(20):
+        for i in range(15):
             await source.subscribe(f"{100000 + i:06d}")
-        assert source.registered_count() == 40
+        assert source.registered_count() == 30
         with pytest.raises(SubscriptionLimitExceededError):
             await source.subscribe("999999")
 
@@ -131,3 +133,35 @@ class TestSnapshots:
         assert info.symbol == "999999"
         assert info.market == "UNKNOWN"
         assert "999999" in info.name
+
+    async def test_snapshot_includes_recent_trades(
+        self, source: InMemoryMockQuoteSource
+    ) -> None:
+        await source.subscribe("005930")
+        snapshot = source.get_snapshots(["005930"])["005930"]
+        assert 0 < len(snapshot.recent_trades) <= MAX_TRADE_HISTORY
+        first = snapshot.recent_trades[0]
+        assert first.trade_time
+        assert first.price > 0
+
+
+class TestDailyPrice:
+    async def test_returns_bars_up_to_max_history(
+        self, source: InMemoryMockQuoteSource
+    ) -> None:
+        bars = await source.get_daily_price("005930")
+        assert len(bars) == MAX_DAILY_PRICE_HISTORY
+        assert all(bar.date for bar in bars)
+        assert all(bar.close > 0 for bar in bars)
+
+    async def test_respects_count_below_max(self, source: InMemoryMockQuoteSource) -> None:
+        bars = await source.get_daily_price("005930", count=5)
+        assert len(bars) == 5
+
+    async def test_count_above_max_is_capped(self, source: InMemoryMockQuoteSource) -> None:
+        bars = await source.get_daily_price("005930", count=1000)
+        assert len(bars) == MAX_DAILY_PRICE_HISTORY
+
+    async def test_invalid_symbol_raises(self, source: InMemoryMockQuoteSource) -> None:
+        with pytest.raises(InvalidSymbolError):
+            await source.get_daily_price("ABC")

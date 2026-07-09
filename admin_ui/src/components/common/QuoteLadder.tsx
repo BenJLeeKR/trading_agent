@@ -14,8 +14,13 @@ interface QuoteLadderProps {
 
 const PLACEHOLDER = "—";
 
-/** 직전(80) / 매도잔량(80) / 가격(100) / 대비율(80) / 매수잔량(80) / 직전(80) = 500px. */
-const LADDER_COLUMNS = "grid-cols-[80px_80px_100px_80px_80px_80px]";
+/**
+ * 데스크탑(`lg` 이상)에서는 직전(80)/매도잔량(80)/가격(100)/대비율(80)/매수잔량(80)/
+ * 직전(80) = 500px 고정. 모바일에서는 같은 비율(16%/16%/20%/16%/16%/16%, 합 100%)의
+ * 퍼센트 컬럼으로 전환해 호가 프레임 폭을 넘어가지 않고 가변적으로 줄어들게 한다.
+ */
+const LADDER_COLUMNS =
+  "grid-cols-[16%_16%_20%_16%_16%_16%] lg:grid-cols-[80px_80px_100px_80px_80px_80px]";
 
 function pctValue(price: number, prevClose: number): number {
   if (!prevClose) return 0;
@@ -117,7 +122,7 @@ export function QuoteLadder({
   }
 
   return (
-    <div className="w-[500px] border border-[#e2e8f0] rounded-lg overflow-hidden text-sm">
+    <div className="w-full lg:w-[500px] border border-[#e2e8f0] rounded-lg overflow-hidden text-sm">
       <div className={`grid ${LADDER_COLUMNS} bg-[#f8fafc] text-[10px] font-semibold text-[#64748b] uppercase py-2`}>
         <span className="text-center">직전</span>
         <span className="text-center">매도잔량</span>

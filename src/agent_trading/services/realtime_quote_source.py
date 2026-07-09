@@ -11,11 +11,13 @@ of the same protocol (e.g. ``KisRealtimeQuoteSource``) and swap it in via
 ``app.state.realtime_quote_source`` without changing the API routes or
 Admin UI contract.
 
-Important constraint carried over from the design docs: KIS's 41-registration
-WebSocket limit is counted per *registration*, not per symbol. Subscribing to
-both 체결가(price) and 호가(orderbook) for one symbol consumes 2 registrations,
-so the realistic symbol capacity is ``max_registrations // registrations_per_symbol``
-(41 // 2 = 20), not 41.
+Important constraint carried over from the design docs: KIS's official
+WebSocket registration limit is 41 per account, counted per *registration*,
+not per symbol. Subscribing to both 체결가(price) and 호가(orderbook) for one
+symbol consumes 2 registrations. This screen self-limits below that official
+ceiling — ``DEFAULT_MAX_REGISTRATIONS = 30`` (2026-07-09, operational safety
+margin) — so the realistic symbol capacity is
+``max_registrations // registrations_per_symbol`` (30 // 2 = 15), not 41/20.
 
 Subscription model (Phase 1, single-screen semantics)
 ------------------------------------------------------
@@ -39,15 +41,23 @@ set semantics are simpler and correct for now.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Protocol, Sequence
 
 _KST = timezone(timedelta(hours=9))
 
-# KIS 2026-04-20 공지 기준 (plan_docs/detailed_design/10_broker_rate_limit_and_capacity_policy.md §12)
-DEFAULT_MAX_REGISTRATIONS = 41
+# "체결가" 프레임(시별/일별 탭)의 표시/보관 상한 — 화면에 20행을 보여주는 게 목표이므로
+# 그보다 조금 넉넉한 30개까지만 메모리에 들고 있는다(2026-07-09 결정).
+MAX_TRADE_HISTORY = 30
+MAX_DAILY_PRICE_HISTORY = 30
+
+# KIS 공식 상한은 41(2026-04-20 공지 기준, plan_docs/detailed_design/
+# 10_broker_rate_limit_and_capacity_policy.md §12)이지만, 이 화면은 운영 안정성
+# 마진 확보를 위해 자체적으로 30으로 낮춰 운영한다(2026-07-09 결정,
+# plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md §4.3).
+DEFAULT_MAX_REGISTRATIONS = 30
 REGISTRATIONS_PER_SYMBOL = 2  # 체결가 + 호가
 
 _SYMBOL_RE_LEN = 6
@@ -84,6 +94,32 @@ class QuoteLevel:
 
     price: float
     quantity: int
+
+
+@dataclass(frozen=True, slots=True)
+class TradeTick:
+    """One 체결(trade) tick — 실시간 체결가 프레임의 '시별' 탭 한 행.
+
+    ``H0STCNT0``의 ``CNTG_VOL``(체결 거래량, 1-indexed field 13)이 per-tick
+    거래량이다 — ``ACML_VOL``(누적 거래량)과는 다르다.
+    """
+
+    trade_time: str  # "HH:MM:SS" (KST)
+    price: float
+    change: float  # 전일대비
+    change_rate: float  # 전일대비율(%)
+    volume: int  # 해당 tick의 체결량(CNTG_VOL) — 누적거래량이 아님
+
+
+@dataclass(frozen=True, slots=True)
+class DailyPriceBar:
+    """하루치 시세 — 실시간 체결가 프레임의 '일별' 탭 한 행 (KIS ``FHKST01010400``)."""
+
+    date: str  # "YYYYMMDD"
+    close: float
+    change: float  # 전일대비
+    change_rate: float  # 전일대비율(%)
+    volume: int  # 당일 누적 거래량(ACML_VOL)
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +160,8 @@ class QuoteSnapshot:
     trading_halted: bool
     data_source: str  # "mock" | "websocket" | "rest_fallback"
     updated_at: datetime
+    recent_trades: list[TradeTick] = field(default_factory=list)
+    """최근 체결 tick 히스토리, 최신 순 — '시별' 탭 표시용 (최대 ``MAX_TRADE_HISTORY``개)."""
 
 
 class RealtimeQuoteSource(Protocol):
@@ -142,7 +180,7 @@ class RealtimeQuoteSource(Protocol):
 
     @property
     def max_registrations(self) -> int:
-        """KIS WebSocket registration budget (41, per official notice)."""
+        """This screen's registration budget (30 — below KIS's official 41 ceiling)."""
         ...
 
     @property
@@ -196,6 +234,15 @@ class RealtimeQuoteSource(Protocol):
         Symbols that are not currently subscribed are silently omitted from
         the result (not an error) — mirrors the REST fallback / cache-miss
         behaviour expected of the real implementation.
+        """
+        ...
+
+    async def get_daily_price(self, symbol: str, count: int = MAX_DAILY_PRICE_HISTORY) -> list[DailyPriceBar]:
+        """일자별 시세(KIS ``FHKST01010400``) — '일별' 탭 표시용, 최신순.
+
+        구독 여부와 무관하게 REST 1회 조회로 동작한다(WS 구독 상태에 의존하지
+        않음). ``count``는 ``MAX_DAILY_PRICE_HISTORY``(30, KIS 자체 상한과 동일)
+        를 넘지 않는다.
         """
         ...
 
@@ -400,4 +447,56 @@ class InMemoryMockQuoteSource:
             trading_halted=False,
             data_source="mock",
             updated_at=datetime.now(timezone.utc),
+            recent_trades=self._generate_recent_trades(base, last_price, tick),
         )
+
+    def _generate_recent_trades(self, base: float, last_price: float, tick: int) -> list[TradeTick]:
+        """최근 tick일수록 ``last_price``에 가깝게, 과거로 갈수록 이전 오실레이션
+        값으로 되돌아가는 결정론적 mock 히스토리(최신순, 최대 ``MAX_TRADE_HISTORY``개).
+        """
+        now = datetime.now(_KST)
+        trades: list[TradeTick] = []
+        for i in range(MAX_TRADE_HISTORY):
+            past_tick = tick - i
+            if past_tick < 1:
+                break
+            wave = math.sin(past_tick * 0.3)
+            price = round(base * (1 + 0.01 * wave), -1) or base
+            change = round(price - base, 1)
+            change_rate = round((change / base) * 100, 2) if base else 0.0
+            trades.append(
+                TradeTick(
+                    trade_time=(now - timedelta(seconds=i)).strftime("%H:%M:%S"),
+                    price=price,
+                    change=change,
+                    change_rate=change_rate,
+                    volume=10 + (past_tick % 20),
+                )
+            )
+        return trades
+
+    async def get_daily_price(
+        self, symbol: str, count: int = MAX_DAILY_PRICE_HISTORY
+    ) -> list[DailyPriceBar]:
+        symbol = _validate_symbol(symbol)
+        base = _base_price(symbol)
+        capped = min(count, MAX_DAILY_PRICE_HISTORY)
+        today = datetime.now(_KST)
+        bars: list[DailyPriceBar] = []
+        prev_close = base
+        for i in range(capped):
+            wave = math.sin(i * 0.5)
+            close = round(base * (1 + 0.015 * wave), -1) or base
+            change = round(close - prev_close, 1)
+            change_rate = round((change / prev_close) * 100, 2) if prev_close else 0.0
+            bars.append(
+                DailyPriceBar(
+                    date=(today - timedelta(days=i)).strftime("%Y%m%d"),
+                    close=close,
+                    change=change,
+                    change_rate=change_rate,
+                    volume=100_000 + (i * 777) % 50_000,
+                )
+            )
+            prev_close = close
+        return bars
