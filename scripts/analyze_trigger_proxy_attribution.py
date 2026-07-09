@@ -32,6 +32,10 @@ from agent_trading.services.trigger_proxy_attribution import (
     build_core_risk_off_floor_v3_diagnostic_rows,
     build_core_risk_off_floor_v3_diagnostics_report,
     build_core_risk_off_floor_v3_report,
+    build_core_risk_off_floor_v5_bucket_rows,
+    build_core_risk_off_floor_v5_diagnostic_rows,
+    build_core_risk_off_floor_v5_diagnostics_report,
+    build_core_risk_off_floor_v5_report,
     DailyPriceBar,
     build_core_risk_off_topk_projection_rows,
     build_shadow_experiment_rows,
@@ -422,6 +426,10 @@ async def _run(args: argparse.Namespace) -> int:
         core_risk_off_floor_v3_diagnostic_rows = (
             build_core_risk_off_floor_v3_diagnostic_rows(enriched_rows)
         )
+        core_risk_off_floor_v5_rows = build_core_risk_off_floor_v5_bucket_rows(enriched_rows)
+        core_risk_off_floor_v5_diagnostic_rows = (
+            build_core_risk_off_floor_v5_diagnostic_rows(enriched_rows)
+        )
         core_risk_off_topk_rows = build_core_risk_off_topk_projection_rows(enriched_rows)
         event_overlay_shadow_rows = build_shadow_experiment_rows(
             enriched_rows,
@@ -533,6 +541,29 @@ async def _run(args: argparse.Namespace) -> int:
                 asdict(item)
                 for item in build_trigger_proxy_aggregate_items(
                     core_risk_off_floor_v3_diagnostic_rows,
+                    bucket_key="blocking_reason",
+                )
+            ],
+            "core_risk_off_floor_v5_items": [
+                asdict(item)
+                for item in build_trigger_proxy_aggregate_items(
+                    core_risk_off_floor_v5_rows,
+                    bucket_key="core_risk_off_floor_v5_bucket",
+                )
+            ],
+            "core_risk_off_floor_v5_report": build_core_risk_off_floor_v5_report(
+                enriched_rows
+            ),
+            "core_risk_off_floor_v5_diagnostics": (
+                build_core_risk_off_floor_v5_diagnostics_report(
+                    enriched_rows,
+                    sample_limit=max(0, int(args.sample_limit)),
+                )
+            ),
+            "core_risk_off_floor_v5_diagnostic_items": [
+                asdict(item)
+                for item in build_trigger_proxy_aggregate_items(
+                    core_risk_off_floor_v5_diagnostic_rows,
                     bucket_key="blocking_reason",
                 )
             ],

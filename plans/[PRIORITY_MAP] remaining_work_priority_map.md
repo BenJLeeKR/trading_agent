@@ -2076,6 +2076,27 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
     - 승격 기준 4개 항목은 아직 미충족 — 정규 장후 배치로 최소 1거래일 이상
       `shadow_overall_bucket_counts_v2` 관측 축적 필요
     - `v3`(변동성 패널티 완화), `v4`(weight 보정)는 `v2` 관측 결과 확인 전까지 미착수
+    - `v5` 경계 구간 재분배 설계안 작성 완료
+      - 근거 문서
+        - [`[ANALYSIS] signal_backbone_slow_score_threshold_tuning_2026-07-09.md`](./%5BANALYSIS%5D%20signal_backbone_slow_score_threshold_tuning_2026-07-09.md)
+      - 핵심안
+        - `slow_momentum`
+          - `<= -20% -> -0.8`
+          - `(-20,-10] -> -0.55`
+          - `(-10,-5] -> -0.30`
+          - `(-5,-2] -> -0.15`
+        - `slow_trend`
+          - `<= -12% -> -0.8`
+          - `(-12,-6] -> -0.50`
+          - `(-6,-2.5] -> -0.25`
+          - `(-2.5,-0.5] -> -0.10`
+      - 실측 결론
+        - `2026-07-08` 80건 기준 `deep_negative 54 -> 53`, `mild_negative 5 -> 13`
+        - `2026-07-06 ~ 2026-07-08` active `core_risk_off` 20건은
+          `moderate_negative` 이상으로 이동한 건수 `0건`
+      - 다음 구현
+        - `shadow_component_scores_v5` / `core_risk_off_floor_v5_report` 추가 후
+          최소 3거래일 추가 관측
     - 목적
       - `feature snapshot` 입력 품질 문제가 아니라
         `score formula` 자체의 하방 편향이 병목인지 실측 기반으로 검증

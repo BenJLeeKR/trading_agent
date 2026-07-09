@@ -551,6 +551,12 @@ def _snapshot_diagnostics(snapshot: Any) -> dict[str, object]:
         if isinstance(shadow_diagnostics, dict)
         else {}
     )
+    shadow_diagnostics_v5 = component_scores_json.get("shadow_diagnostics_v5")
+    normalized_shadow_diagnostics_v5 = (
+        dict(shadow_diagnostics_v5)
+        if isinstance(shadow_diagnostics_v5, dict)
+        else {}
+    )
     return {
         "overall_score": (
             float(snapshot.overall_score) if snapshot.overall_score is not None else None
@@ -576,6 +582,11 @@ def _snapshot_diagnostics(snapshot: Any) -> dict[str, object]:
         "shadow_overall_score_v2": component_scores_json.get("shadow_overall_score_v2"),
         "shadow_reason_codes_v2": list(component_scores_json.get("shadow_reason_codes_v2", [])),
         "shadow_overall_bucket_v2": normalized_shadow_diagnostics.get("overall_bucket"),
+        "shadow_slow_score_v5": component_scores_json.get("shadow_slow_score_v5"),
+        "shadow_fast_score_v5": component_scores_json.get("shadow_fast_score_v5"),
+        "shadow_overall_score_v5": component_scores_json.get("shadow_overall_score_v5"),
+        "shadow_reason_codes_v5": list(component_scores_json.get("shadow_reason_codes_v5", [])),
+        "shadow_overall_bucket_v5": normalized_shadow_diagnostics_v5.get("overall_bucket"),
     }
 
 
@@ -584,10 +595,12 @@ def _build_snapshot_quality_summary(
 ) -> dict[str, object]:
     overall_bucket_counts: dict[str, int] = {}
     shadow_overall_bucket_counts_v2: dict[str, int] = {}
+    shadow_overall_bucket_counts_v5: dict[str, int] = {}
     missing_feature_flag_counts: dict[str, int] = {}
     input_quality_flag_counts: dict[str, int] = {}
     reason_code_counts: dict[str, int] = {}
     shadow_reason_code_counts_v2: dict[str, int] = {}
+    shadow_reason_code_counts_v5: dict[str, int] = {}
     overall_missing_count = 0
     short_history_count = 0
     turnover_feature_missing_count = 0
@@ -599,6 +612,10 @@ def _build_snapshot_quality_summary(
         shadow_overall_bucket = str(diagnostics.get("shadow_overall_bucket_v2") or "unknown")
         shadow_overall_bucket_counts_v2[shadow_overall_bucket] = (
             shadow_overall_bucket_counts_v2.get(shadow_overall_bucket, 0) + 1
+        )
+        shadow_overall_bucket_v5 = str(diagnostics.get("shadow_overall_bucket_v5") or "unknown")
+        shadow_overall_bucket_counts_v5[shadow_overall_bucket_v5] = (
+            shadow_overall_bucket_counts_v5.get(shadow_overall_bucket_v5, 0) + 1
         )
         if diagnostics.get("overall_score") is None:
             overall_missing_count += 1
@@ -631,6 +648,13 @@ def _build_snapshot_quality_summary(
             shadow_reason_code_counts_v2[code] = (
                 shadow_reason_code_counts_v2.get(code, 0) + 1
             )
+        for reason_code in diagnostics.get("shadow_reason_codes_v5", []):
+            code = str(reason_code)
+            if not code:
+                continue
+            shadow_reason_code_counts_v5[code] = (
+                shadow_reason_code_counts_v5.get(code, 0) + 1
+            )
 
     deep_negative_count = int(overall_bucket_counts.get("deep_negative", 0))
     return {
@@ -641,10 +665,12 @@ def _build_snapshot_quality_summary(
         "turnover_feature_missing_count": turnover_feature_missing_count,
         "overall_bucket_counts": overall_bucket_counts,
         "shadow_overall_bucket_counts_v2": shadow_overall_bucket_counts_v2,
+        "shadow_overall_bucket_counts_v5": shadow_overall_bucket_counts_v5,
         "missing_feature_flag_counts": missing_feature_flag_counts,
         "input_quality_flag_counts": input_quality_flag_counts,
         "reason_code_counts": reason_code_counts,
         "shadow_reason_code_counts_v2": shadow_reason_code_counts_v2,
+        "shadow_reason_code_counts_v5": shadow_reason_code_counts_v5,
     }
 
 

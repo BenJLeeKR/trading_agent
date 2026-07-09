@@ -52,6 +52,7 @@ CORE_RISK_OFF_FLOOR_REPORT_BUCKETS: tuple[str, ...] = (
 
 CORE_RISK_OFF_FLOOR_V2_REPORT_BUCKETS: tuple[str, ...] = CORE_RISK_OFF_FLOOR_REPORT_BUCKETS
 CORE_RISK_OFF_FLOOR_V3_REPORT_BUCKETS: tuple[str, ...] = CORE_RISK_OFF_FLOOR_REPORT_BUCKETS
+CORE_RISK_OFF_FLOOR_V5_REPORT_BUCKETS: tuple[str, ...] = CORE_RISK_OFF_FLOOR_REPORT_BUCKETS
 
 
 def calculate_trigger_proxy_metrics(
@@ -361,6 +362,32 @@ def build_core_risk_off_floor_v3_bucket_rows(
     return annotated
 
 
+def build_core_risk_off_floor_v5_bucket_rows(
+    rows: Iterable[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    annotated: list[dict[str, object]] = []
+    for row in rows:
+        experiment = row.get("core_risk_off_experiment")
+        payload = experiment if isinstance(experiment, Mapping) else {}
+        active = bool(payload.get("active"))
+        if not active:
+            bucket = "inactive"
+        else:
+            bucket = _resolve_shadow_floor_bucket(
+                payload,
+                bucket_field="shadow_floor_relax_v5_bucket",
+                overall_field="shadow_overall_score_v5",
+                slow_field="shadow_slow_score_v5",
+                mild_overall_min=-0.20,
+                mild_slow_min=-0.15,
+                moderate_overall_min=-0.25,
+                moderate_slow_min=-0.25,
+                reason_prefix="shadow_core_risk_off_floor_v5",
+            )
+        annotated.append({**row, "core_risk_off_floor_v5_bucket": bucket})
+    return annotated
+
+
 def build_core_risk_off_floor_report(
     rows: Iterable[Mapping[str, object]],
 ) -> dict[str, object]:
@@ -519,6 +546,58 @@ def build_core_risk_off_floor_v3_report(
     }
 
 
+def build_core_risk_off_floor_v5_report(
+    rows: Iterable[Mapping[str, object]],
+) -> dict[str, object]:
+    annotated = build_core_risk_off_floor_v5_bucket_rows(rows)
+    aggregate_items = build_trigger_proxy_aggregate_items(
+        annotated,
+        bucket_key="core_risk_off_floor_v5_bucket",
+    )
+    by_bucket = {str(item.bucket): item for item in aggregate_items}
+    report_items: list[dict[str, object]] = []
+    for bucket in CORE_RISK_OFF_FLOOR_V5_REPORT_BUCKETS:
+        item = by_bucket.get(bucket)
+        report_items.append(
+            {
+                "bucket": bucket,
+                "sample_count": int(item.sample_count) if item is not None else 0,
+                "t1_return_pct_avg": item.t1_return_pct_avg if item is not None else None,
+                "t3_return_pct_avg": item.t3_return_pct_avg if item is not None else None,
+                "t5_return_pct_avg": item.t5_return_pct_avg if item is not None else None,
+                "positive_t3_hit_rate": (
+                    item.positive_t3_hit_rate if item is not None else None
+                ),
+            }
+        )
+    active_rows = [
+        row
+        for row in annotated
+        if str(row.get("core_risk_off_floor_v5_bucket") or "") != "inactive"
+    ]
+    return {
+        "bucket_order": list(CORE_RISK_OFF_FLOOR_V5_REPORT_BUCKETS),
+        "items": report_items,
+        "active_sample_count": len(active_rows),
+        "non_inactive_bucket_count": sum(
+            1
+            for item in report_items
+            if item["bucket"] != "inactive" and int(item["sample_count"]) > 0
+        ),
+        "proxy_availability": {
+            "t1_ready_count": sum(
+                1 for row in active_rows if _coerce_float(row.get("t1_return_pct")) is not None
+            ),
+            "t3_ready_count": sum(
+                1 for row in active_rows if _coerce_float(row.get("t3_return_pct")) is not None
+            ),
+            "t5_ready_count": sum(
+                1 for row in active_rows if _coerce_float(row.get("t5_return_pct")) is not None
+            ),
+        },
+    }
+
+
 def build_core_risk_off_floor_diagnostic_rows(
     rows: Iterable[Mapping[str, object]],
 ) -> list[dict[str, object]]:
@@ -561,11 +640,29 @@ def build_core_risk_off_floor_v3_diagnostic_rows(
     )
 
 
+def build_core_risk_off_floor_v5_diagnostic_rows(
+    rows: Iterable[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    return _build_core_risk_off_floor_diagnostic_rows(
+        rows,
+        bucket_field="shadow_floor_relax_v5_bucket",
+        output_bucket_key="core_risk_off_floor_v5_bucket",
+        overall_field="shadow_overall_score_v5",
+        slow_field="shadow_slow_score_v5",
+        mild_overall_min=-0.20,
+        mild_slow_min=-0.15,
+        moderate_overall_min=-0.25,
+        moderate_slow_min=-0.25,
+    )
+
+
 def _build_core_risk_off_floor_diagnostic_rows(
     rows: Iterable[Mapping[str, object]],
     *,
     bucket_field: str,
     output_bucket_key: str,
+    overall_field: str = "shadow_overall_score",
+    slow_field: str = "shadow_slow_score",
     mild_overall_min: float,
     mild_slow_min: float,
     moderate_overall_min: float,
@@ -583,17 +680,21 @@ def _build_core_risk_off_floor_diagnostic_rows(
                 reason_prefix = "shadow_core_risk_off_floor_v2"
             elif bucket_field == "shadow_floor_relax_v3_bucket":
                 reason_prefix = "shadow_core_risk_off_floor_v3"
+            elif bucket_field == "shadow_floor_relax_v5_bucket":
+                reason_prefix = "shadow_core_risk_off_floor_v5"
             shadow_floor_bucket = _resolve_shadow_floor_bucket(
                 payload,
                 bucket_field=bucket_field,
+                overall_field=overall_field,
+                slow_field=slow_field,
                 mild_overall_min=mild_overall_min,
                 mild_slow_min=mild_slow_min,
                 moderate_overall_min=moderate_overall_min,
                 moderate_slow_min=moderate_slow_min,
                 reason_prefix=reason_prefix,
             )
-        shadow_overall_score = _coerce_float(payload.get("shadow_overall_score"))
-        shadow_slow_score = _coerce_float(payload.get("shadow_slow_score"))
+        shadow_overall_score = _coerce_float(payload.get(overall_field))
+        shadow_slow_score = _coerce_float(payload.get(slow_field))
         shadow_entry_score = _coerce_float(payload.get("shadow_entry_score"))
         shadow_ranking_score = _coerce_float(
             payload.get("shadow_rank_candidate_score", payload.get("raw_ranking_score"))
@@ -714,12 +815,34 @@ def build_core_risk_off_floor_v3_diagnostics_report(
     )
 
 
+def build_core_risk_off_floor_v5_diagnostics_report(
+    rows: Iterable[Mapping[str, object]],
+    *,
+    sample_limit: int = 50,
+) -> dict[str, object]:
+    return _build_core_risk_off_floor_diagnostics_report(
+        rows,
+        sample_limit=sample_limit,
+        bucket_key="core_risk_off_floor_v5_bucket",
+        bucket_field="shadow_floor_relax_v5_bucket",
+        overall_field="shadow_overall_score_v5",
+        slow_field="shadow_slow_score_v5",
+        report_buckets=CORE_RISK_OFF_FLOOR_V5_REPORT_BUCKETS,
+        mild_overall_min=-0.20,
+        mild_slow_min=-0.15,
+        moderate_overall_min=-0.25,
+        moderate_slow_min=-0.25,
+    )
+
+
 def _build_core_risk_off_floor_diagnostics_report(
     rows: Iterable[Mapping[str, object]],
     *,
     sample_limit: int,
     bucket_key: str,
     bucket_field: str,
+    overall_field: str = "shadow_overall_score",
+    slow_field: str = "shadow_slow_score",
     report_buckets: Sequence[str],
     mild_overall_min: float,
     mild_slow_min: float,
@@ -730,6 +853,8 @@ def _build_core_risk_off_floor_diagnostics_report(
         rows,
         bucket_field=bucket_field,
         output_bucket_key=bucket_key,
+        overall_field=overall_field,
+        slow_field=slow_field,
         mild_overall_min=mild_overall_min,
         mild_slow_min=mild_slow_min,
         moderate_overall_min=moderate_overall_min,
@@ -890,6 +1015,8 @@ def _resolve_shadow_floor_bucket(
     payload: Mapping[str, object],
     *,
     bucket_field: str,
+    overall_field: str = "shadow_overall_score",
+    slow_field: str = "shadow_slow_score",
     mild_overall_min: float,
     mild_slow_min: float,
     moderate_overall_min: float,
@@ -899,8 +1026,8 @@ def _resolve_shadow_floor_bucket(
     bucket = str(payload.get(bucket_field) or "").strip()
     if bucket:
         return bucket
-    overall = _coerce_float(payload.get("shadow_overall_score"))
-    slow = _coerce_float(payload.get("shadow_slow_score"))
+    overall = _coerce_float(payload.get(overall_field))
+    slow = _coerce_float(payload.get(slow_field))
     entry_score = _coerce_float(payload.get("shadow_entry_score")) or 0.0
     ranking_score = _coerce_float(
         payload.get("shadow_rank_candidate_score", payload.get("raw_ranking_score"))

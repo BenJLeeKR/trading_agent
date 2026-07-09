@@ -161,6 +161,15 @@ def test_build_signal_feature_entity_includes_score_diagnostics() -> None:
     assert "shadow_component_scores_v2" in snapshot.component_scores_json
     assert "shadow_reason_codes_v2" in snapshot.component_scores_json
     assert "shadow_diagnostics_v2" in snapshot.component_scores_json
+    assert snapshot.component_scores_json["shadow_signal_backbone_variant_v5"] == (
+        "signal_backbone_v1_shadow_v5"
+    )
+    assert "shadow_slow_score_v5" in snapshot.component_scores_json
+    assert "shadow_fast_score_v5" in snapshot.component_scores_json
+    assert "shadow_overall_score_v5" in snapshot.component_scores_json
+    assert "shadow_component_scores_v5" in snapshot.component_scores_json
+    assert "shadow_reason_codes_v5" in snapshot.component_scores_json
+    assert "shadow_diagnostics_v5" in snapshot.component_scores_json
 
 
 def test_shadow_v2_reduces_slow_negative_pressure_for_borderline_case() -> None:
@@ -177,3 +186,17 @@ def test_shadow_v2_reduces_slow_negative_pressure_for_borderline_case() -> None:
     shadow_slow = snapshot.component_scores_json["shadow_slow_score_v2"]
     assert shadow_slow >= float(snapshot.slow_score)
     assert shadow_overall >= float(snapshot.overall_score)
+
+
+def test_shadow_v5_preserves_deep_negative_for_structural_downtrend() -> None:
+    bars = _make_bars(count=80, start_price=100.0, daily_step=-1.0, last_volume=1200.0)
+
+    features, score_card = build_signal_snapshot("005930", bars)
+    snapshot = build_signal_feature_entity(
+        instrument_id=uuid4(),
+        features=features,
+        score_card=score_card,
+    )
+
+    assert snapshot.component_scores_json["shadow_slow_score_v5"] <= -0.75
+    assert snapshot.component_scores_json["shadow_overall_score_v5"] < -0.25

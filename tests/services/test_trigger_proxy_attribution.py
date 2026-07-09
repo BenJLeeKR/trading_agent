@@ -16,6 +16,10 @@ from agent_trading.services.trigger_proxy_attribution import (
     build_core_risk_off_floor_v3_diagnostic_rows,
     build_core_risk_off_floor_v3_diagnostics_report,
     build_core_risk_off_floor_v3_report,
+    build_core_risk_off_floor_v5_bucket_rows,
+    build_core_risk_off_floor_v5_diagnostic_rows,
+    build_core_risk_off_floor_v5_diagnostics_report,
+    build_core_risk_off_floor_v5_report,
     build_core_risk_off_topk_projection_rows,
     build_shadow_experiment_rows,
     build_trigger_proxy_aggregate_items,
@@ -882,3 +886,126 @@ def test_build_core_risk_off_floor_v3_backfills_bucket_when_metadata_missing() -
     assert items["mild_relax"]["sample_count"] == 1
     assert diagnostics_v3["bucket_counts"]["mild_relax"] == 1
     assert diagnostics_v3["samples"][0]["core_risk_off_floor_v3_bucket"] == "mild_relax"
+
+
+def test_build_core_risk_off_floor_v5_bucket_rows_and_report_use_v5_scores() -> None:
+    rows = [
+        {
+            "symbol": "AAA",
+            "core_risk_off_experiment": {
+                "active": True,
+                "shadow_overall_score_v5": -0.18,
+                "shadow_slow_score_v5": -0.10,
+                "shadow_entry_score": 0.10,
+                "shadow_rank_candidate_score": 0.24,
+                "shadow_activity_pass": True,
+                "shadow_strategy_pass": True,
+            },
+            "t1_return_pct": 0.8,
+            "t3_return_pct": 1.1,
+            "t5_return_pct": None,
+        },
+        {
+            "symbol": "BBB",
+            "core_risk_off_experiment": {
+                "active": True,
+                "shadow_overall_score_v5": -0.32,
+                "shadow_slow_score_v5": -0.30,
+                "shadow_entry_score": 0.18,
+                "shadow_rank_candidate_score": 0.31,
+                "shadow_activity_pass": True,
+                "shadow_strategy_pass": True,
+            },
+            "t1_return_pct": -0.4,
+            "t3_return_pct": -0.2,
+            "t5_return_pct": None,
+        },
+        {
+            "symbol": "CCC",
+            "core_risk_off_experiment": {
+                "active": False,
+            },
+            "t1_return_pct": None,
+            "t3_return_pct": None,
+            "t5_return_pct": None,
+        },
+    ]
+
+    result = build_core_risk_off_floor_v5_bucket_rows(rows)
+    by_symbol = {row["symbol"]: row for row in result}
+    report = build_core_risk_off_floor_v5_report(rows)
+    items = {item["bucket"]: item for item in report["items"]}
+
+    assert by_symbol["AAA"]["core_risk_off_floor_v5_bucket"] == "mild_relax"
+    assert by_symbol["BBB"]["core_risk_off_floor_v5_bucket"] == "deep_negative"
+    assert by_symbol["CCC"]["core_risk_off_floor_v5_bucket"] == "inactive"
+    assert report["active_sample_count"] == 2
+    assert items["mild_relax"]["sample_count"] == 1
+    assert items["deep_negative"]["sample_count"] == 1
+    assert items["inactive"]["sample_count"] == 1
+
+
+def test_build_core_risk_off_floor_v5_diagnostics_report_uses_v5_score_fields() -> None:
+    rows = [
+        {
+            "symbol": "AAA",
+            "trade_date": "2026-07-08",
+            "source_type": "core",
+            "core_risk_off_experiment": {
+                "active": True,
+                "shadow_overall_score_v5": -0.18,
+                "shadow_slow_score_v5": -0.14,
+                "shadow_entry_score": 0.10,
+                "shadow_rank_candidate_score": 0.24,
+                "shadow_activity_pass": True,
+                "shadow_strategy_pass": True,
+                "shadow_topk_candidate": False,
+                "shadow_topk_selected": False,
+            },
+            "t1_return_pct": 0.4,
+            "t3_return_pct": 0.8,
+            "t5_return_pct": None,
+            "t3_mfe_pct": 1.2,
+            "t3_mae_pct": -0.3,
+            "t5_mfe_pct": None,
+            "t5_mae_pct": None,
+        },
+        {
+            "symbol": "BBB",
+            "trade_date": "2026-07-08",
+            "source_type": "core",
+            "core_risk_off_experiment": {
+                "active": True,
+                "shadow_overall_score_v5": -0.24,
+                "shadow_slow_score_v5": -0.20,
+                "shadow_entry_score": 0.18,
+                "shadow_rank_candidate_score": 0.31,
+                "shadow_activity_pass": True,
+                "shadow_strategy_pass": True,
+                "shadow_topk_candidate": False,
+                "shadow_topk_selected": False,
+            },
+            "t1_return_pct": -0.5,
+            "t3_return_pct": -0.1,
+            "t5_return_pct": None,
+            "t3_mfe_pct": 0.3,
+            "t3_mae_pct": -0.7,
+            "t5_mfe_pct": None,
+            "t5_mae_pct": None,
+        },
+    ]
+
+    diagnostic_rows = build_core_risk_off_floor_v5_diagnostic_rows(rows)
+    by_symbol = {row["symbol"]: row for row in diagnostic_rows}
+    report = build_core_risk_off_floor_v5_diagnostics_report(rows, sample_limit=5)
+    gate_items = {item["bucket"]: item for item in report["moderate_gate_items"]}
+    reason_items = {item["bucket"]: item for item in report["blocking_reason_items"]}
+
+    assert by_symbol["AAA"]["core_risk_off_floor_v5_bucket"] == "mild_relax"
+    assert by_symbol["AAA"]["blocking_reason"] == "mild_relax_pass"
+    assert by_symbol["BBB"]["core_risk_off_floor_v5_bucket"] == "moderate_relax"
+    assert by_symbol["BBB"]["blocking_reason"] == "moderate_relax_pass"
+    assert gate_items["entry_below_0_12"]["sample_count"] == 1
+    assert gate_items["moderate_ready"]["sample_count"] == 1
+    assert reason_items["mild_relax_pass"]["sample_count"] == 1
+    assert reason_items["moderate_relax_pass"]["sample_count"] == 1

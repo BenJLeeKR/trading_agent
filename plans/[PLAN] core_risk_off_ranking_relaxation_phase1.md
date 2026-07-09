@@ -978,6 +978,88 @@ authoritative 후보로 검토한다.
 - 현재 상태: 코드/테스트/필드 산출 검증 완료 → **관측 시작 가능 상태**로 전환.
   승격 기준 1~4는 아직 미충족(관측 표본 미축적) — 다음 정규 장후
   `build_signal_feature_snapshots.py` 실행분부터 `shadow_overall_bucket_counts_v2`
+
+## 9.11 `signal_backbone_v1_shadow_v5` 경계 구간 재분배안
+
+근거 문서:
+
+- [`[ANALYSIS] signal_backbone_slow_score_threshold_tuning_2026-07-09.md`](./%5BANALYSIS%5D%20signal_backbone_slow_score_threshold_tuning_2026-07-09.md)
+
+핵심 판단:
+
+1. `active core_risk_off` 실측 `20건`은
+   평균 `return_3m_pct ≈ -30.49%`,
+   평균 `price_vs_sma_60_pct ≈ -22.01%`로
+   대부분이 구조적 하락 구간이다.
+2. 따라서 `deep_negative` 본체를 바로 완화하는 것은
+   기대수익률 기준과 맞지 않는다.
+3. 대신 `-10% ~ -20%`, `-6% ~ -12%` 같은
+   경계 구간만 재분배하는 `shadow v5`가 적절하다.
+
+### 제안 구간
+
+`slow_momentum`
+
+- `<= -20.0` → `-0.8`
+- `(-20.0, -10.0]` → `-0.55`
+- `(-10.0, -5.0]` → `-0.30`
+- `(-5.0, -2.0]` → `-0.15`
+
+`slow_trend`
+
+- `<= -12.0` → `-0.8`
+- `(-12.0, -6.0]` → `-0.50`
+- `(-6.0, -2.5]` → `-0.25`
+- `(-2.5, -0.5]` → `-0.10`
+
+### 시뮬레이션 결과 (`2026-07-08`, 80건)
+
+- baseline
+  - `non_negative=11`
+  - `mild_negative=5`
+  - `moderate_negative=10`
+  - `deep_negative=54`
+- `v5`
+  - `non_negative=10`
+  - `mild_negative=13`
+  - `moderate_negative=4`
+  - `deep_negative=53`
+
+즉:
+
+- `deep_negative`는 거의 유지하면서
+- 경계 약세 종목만 `mild_negative`로 이동시킨다.
+
+### 보호 효과 확인
+
+같은 `v5`를
+`2026-07-06 ~ 2026-07-08` active `core_risk_off` 20건에 대입한 결과,
+
+- `moderate_negative` 이상으로 이동한 건수 `0건`
+
+즉, 현재 실제로 문제가 되는 심한 하락군을
+실수로 완화하는 안이 아니다.
+
+### 후속 구현 범위
+
+1. `signal_backbone.py`
+   - `shadow_component_scores_v5`
+   - `shadow_slow_score_v5`
+   - `shadow_overall_score_v5`
+   - `shadow_reason_codes_v5`
+2. `trigger_proxy_attribution.py`
+   - `core_risk_off_floor_v5_report`
+   - `core_risk_off_floor_v5_diagnostics`
+3. `analyze_trigger_proxy_attribution.py`
+   - `v5` bucket별 후행 proxy 요약 추가
+
+### 승격 전제
+
+1. `v5 mild_negative` 증가분이 최소 `20 symbol-day` 이상 누적
+2. `T+1 / T+3` proxy가
+   기존 `inactive` 또는 baseline `moderate_negative`보다 악화되지 않음
+3. churn 증가 없음
+4. low-liquidity 유입 증가 없음
   / `shadow_reason_code_counts_v2` 실측치를 최소 1거래일 이상 누적한 뒤
   판단한다.
 

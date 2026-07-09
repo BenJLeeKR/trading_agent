@@ -121,6 +121,7 @@ def _build_component_scores_payload(
     score_card: SignalScoreCard,
 ) -> dict[str, object]:
     shadow_v2_score_card = _build_shadow_v2_score_card(features)
+    shadow_v5_score_card = _build_shadow_v5_score_card(features)
     payload: dict[str, object] = {
         key: float(value) for key, value in score_card.component_scores.items()
     }
@@ -139,6 +140,18 @@ def _build_component_scores_payload(
     payload["shadow_diagnostics_v2"] = _build_score_diagnostics(
         features=features,
         score_card=shadow_v2_score_card,
+    )
+    payload["shadow_signal_backbone_variant_v5"] = "signal_backbone_v1_shadow_v5"
+    payload["shadow_slow_score_v5"] = shadow_v5_score_card.slow_score
+    payload["shadow_fast_score_v5"] = shadow_v5_score_card.fast_score
+    payload["shadow_overall_score_v5"] = shadow_v5_score_card.overall_score
+    payload["shadow_component_scores_v5"] = {
+        key: float(value) for key, value in shadow_v5_score_card.component_scores.items()
+    }
+    payload["shadow_reason_codes_v5"] = list(shadow_v5_score_card.reason_codes)
+    payload["shadow_diagnostics_v5"] = _build_score_diagnostics(
+        features=features,
+        score_card=shadow_v5_score_card,
     )
     return payload
 
@@ -378,6 +391,62 @@ def _build_shadow_v2_score_card(
     )
 
 
+def _build_shadow_v5_score_card(
+    features: TechnicalFeatureSnapshot,
+) -> SignalScoreCard:
+    component_scores: dict[str, float] = {}
+    reason_codes: list[str] = []
+
+    slow_momentum = _score_return_3m_shadow_v5(features.return_3m_pct, reason_codes)
+    slow_trend = _score_price_vs_ma_shadow_v5_sma60(
+        features.price_vs_sma_60_pct,
+        reason_codes=reason_codes,
+    )
+    fast_trend = _score_price_vs_ma(
+        features.price_vs_sma_20_pct,
+        positive_reason="above_sma20",
+        negative_reason="below_sma20",
+        reason_codes=reason_codes,
+    )
+    volume_confirmation = _score_volume_surge(
+        features.volume_surge_ratio,
+        features.turnover_surge_ratio,
+        reason_codes,
+    )
+    rsi_signal = _score_rsi(features.rsi_14, reason_codes)
+    volatility_penalty = _score_volatility_penalty(
+        features.volatility_20d_pct,
+        features.atr_14_pct,
+        reason_codes,
+    )
+
+    component_scores["slow_momentum"] = slow_momentum
+    component_scores["slow_trend"] = slow_trend
+    component_scores["fast_trend"] = fast_trend
+    component_scores["volume_confirmation"] = volume_confirmation
+    component_scores["rsi_signal"] = rsi_signal
+    component_scores["volatility_penalty"] = volatility_penalty
+
+    slow_score = _round_score((slow_momentum * 0.6) + (slow_trend * 0.4))
+    fast_score = _round_score(
+        (fast_trend * 0.3)
+        + (volume_confirmation * 0.2)
+        + (rsi_signal * 0.15)
+        + (volatility_penalty * 0.35)
+    )
+    overall_score = _round_score((slow_score * 0.55) + (fast_score * 0.45))
+
+    return SignalScoreCard(
+        symbol=features.symbol,
+        as_of=features.as_of,
+        fast_score=fast_score,
+        slow_score=slow_score,
+        overall_score=overall_score,
+        component_scores=component_scores,
+        reason_codes=tuple(dict.fromkeys(reason_codes)),
+    )
+
+
 def _sma(values: list[float], window: int) -> float | None:
     if len(values) < window:
         return None
@@ -504,6 +573,33 @@ def _score_return_3m_shadow_v2(
     return 0.0
 
 
+def _score_return_3m_shadow_v5(
+    value: float | None,
+    reason_codes: list[str],
+) -> float:
+    if value is None:
+        return 0.0
+    if value >= 15.0:
+        reason_codes.append("momentum_3m_strong")
+        return 0.9
+    if value >= 5.0:
+        reason_codes.append("momentum_3m_positive")
+        return 0.55
+    if value <= -20.0:
+        reason_codes.append("momentum_3m_negative")
+        return -0.8
+    if value <= -10.0:
+        reason_codes.append("momentum_3m_negative_shadow_v5")
+        return -0.55
+    if value <= -5.0:
+        reason_codes.append("momentum_3m_soft_negative_shadow_v5")
+        return -0.3
+    if value <= -2.0:
+        reason_codes.append("momentum_3m_micro_negative_shadow_v5")
+        return -0.15
+    return 0.0
+
+
 def _score_price_vs_ma(
     value: float | None,
     *,
@@ -550,6 +646,34 @@ def _score_price_vs_ma_shadow_v2_sma60(
     if value <= -1.0:
         reason_codes.append("below_sma60_soft_shadow_v2")
         return -0.2
+    return 0.0
+
+
+def _score_price_vs_ma_shadow_v5_sma60(
+    value: float | None,
+    *,
+    reason_codes: list[str],
+) -> float:
+    if value is None:
+        return 0.0
+    if value >= 5.0:
+        reason_codes.append("above_sma60")
+        return 0.8
+    if value >= 1.5:
+        reason_codes.append("above_sma60")
+        return 0.45
+    if value <= -12.0:
+        reason_codes.append("below_sma60")
+        return -0.8
+    if value <= -6.0:
+        reason_codes.append("below_sma60_shadow_v5")
+        return -0.5
+    if value <= -2.5:
+        reason_codes.append("below_sma60_soft_shadow_v5")
+        return -0.25
+    if value <= -0.5:
+        reason_codes.append("below_sma60_micro_shadow_v5")
+        return -0.1
     return 0.0
 
 

@@ -22,6 +22,10 @@ _CORE_RISK_OFF_SHADOW_V3_MILD_OVERALL_MIN = -0.20
 _CORE_RISK_OFF_SHADOW_V3_MILD_SLOW_MIN = -0.15
 _CORE_RISK_OFF_SHADOW_V3_MODERATE_OVERALL_MIN = -0.25
 _CORE_RISK_OFF_SHADOW_V3_MODERATE_SLOW_MIN = -0.25
+_CORE_RISK_OFF_SHADOW_V5_MILD_OVERALL_MIN = -0.20
+_CORE_RISK_OFF_SHADOW_V5_MILD_SLOW_MIN = -0.15
+_CORE_RISK_OFF_SHADOW_V5_MODERATE_OVERALL_MIN = -0.25
+_CORE_RISK_OFF_SHADOW_V5_MODERATE_SLOW_MIN = -0.25
 _EVENT_OVERLAY_MODE = "no_bonus_v1"
 _EVENT_OVERLAY_SHADOW_MODE = "shadow_event_lane_v1"
 _EVENT_OVERLAY_SHADOW_BONUS = 0.06
@@ -708,6 +712,14 @@ def _build_core_risk_off_shadow_experiment_metadata(
         if signal_feature_snapshot is not None
         else None
     )
+    component_scores_json = (
+        dict(signal_feature_snapshot.component_scores_json)
+        if signal_feature_snapshot is not None
+        and isinstance(signal_feature_snapshot.component_scores_json, dict)
+        else {}
+    )
+    shadow_overall_score_v5 = _float_or_none(component_scores_json.get("shadow_overall_score_v5"))
+    shadow_slow_score_v5 = _float_or_none(component_scores_json.get("shadow_slow_score_v5"))
     shadow_overall_pass = overall is not None and overall >= 0.0
     shadow_slow_pass = slow is not None and slow >= -0.05
     shadow_signal_pass = shadow_overall_pass and shadow_slow_pass
@@ -769,6 +781,23 @@ def _build_core_risk_off_shadow_experiment_metadata(
         moderate_overall_min=_CORE_RISK_OFF_SHADOW_V3_MODERATE_OVERALL_MIN,
         moderate_slow_min=_CORE_RISK_OFF_SHADOW_V3_MODERATE_SLOW_MIN,
         reason_prefix="shadow_core_risk_off_floor_v3",
+    )
+    (
+        shadow_floor_relax_v5_bucket,
+        shadow_floor_relax_v5_pass,
+        shadow_floor_relax_v5_reason_codes,
+    ) = _classify_core_risk_off_shadow_floor_bucket(
+        overall=shadow_overall_score_v5,
+        slow=shadow_slow_score_v5,
+        entry_score=entry_score,
+        ranking_score=ranking_score,
+        shadow_activity_pass=shadow_activity_pass,
+        shadow_strategy_pass=shadow_strategy_pass,
+        mild_overall_min=_CORE_RISK_OFF_SHADOW_V5_MILD_OVERALL_MIN,
+        mild_slow_min=_CORE_RISK_OFF_SHADOW_V5_MILD_SLOW_MIN,
+        moderate_overall_min=_CORE_RISK_OFF_SHADOW_V5_MODERATE_OVERALL_MIN,
+        moderate_slow_min=_CORE_RISK_OFF_SHADOW_V5_MODERATE_SLOW_MIN,
+        reason_prefix="shadow_core_risk_off_floor_v5",
     )
     shadow_topk_candidate = (
         core_risk_off_guard_active
@@ -844,6 +873,17 @@ def _build_core_risk_off_shadow_experiment_metadata(
             _CORE_RISK_OFF_SHADOW_V3_MODERATE_OVERALL_MIN
         ),
         "shadow_floor_relax_v3_moderate_slow_min": _CORE_RISK_OFF_SHADOW_V3_MODERATE_SLOW_MIN,
+        "shadow_overall_score_v5": shadow_overall_score_v5,
+        "shadow_slow_score_v5": shadow_slow_score_v5,
+        "shadow_floor_relax_v5_bucket": shadow_floor_relax_v5_bucket,
+        "shadow_floor_relax_v5_pass": shadow_floor_relax_v5_pass,
+        "shadow_floor_relax_v5_reason_codes": tuple(shadow_floor_relax_v5_reason_codes),
+        "shadow_floor_relax_v5_mild_overall_min": _CORE_RISK_OFF_SHADOW_V5_MILD_OVERALL_MIN,
+        "shadow_floor_relax_v5_mild_slow_min": _CORE_RISK_OFF_SHADOW_V5_MILD_SLOW_MIN,
+        "shadow_floor_relax_v5_moderate_overall_min": (
+            _CORE_RISK_OFF_SHADOW_V5_MODERATE_OVERALL_MIN
+        ),
+        "shadow_floor_relax_v5_moderate_slow_min": _CORE_RISK_OFF_SHADOW_V5_MODERATE_SLOW_MIN,
         "shadow_topk_candidate": shadow_topk_candidate,
         "shadow_reason_codes": tuple(shadow_reason_codes),
         "shadow_group_size": None,
