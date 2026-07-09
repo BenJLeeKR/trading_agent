@@ -4,11 +4,13 @@ import {
   getRealtimeQuoteBootstrap,
   getRealtimeQuoteSnapshot,
   subscribeRealtimeQuote,
+  subscribeRealtimeQuoteStream,
   unsubscribeRealtimeQuote,
 } from "../api/client";
 import type {
   RealtimeQuoteConnectionInfo,
   RealtimeQuoteSnapshotView,
+  RealtimeQuoteStreamStatus,
   RealtimeQuoteSubscriptionView,
 } from "../types/api";
 import { Panel } from "./common/Panel";
@@ -82,6 +84,14 @@ export default function RealtimeQuoteView() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
 
+  /* ── Phase 4 push relay state — streamStatus/pushDegraded drive the
+   * connection banner in place of polling-only connection tracking.
+   * pushDegraded=true means the SSE transport itself failed/dropped and
+   * we've fallen back to REST polling (fetchSnapshot below) until it
+   * reconnects — the frame/values never disappear either way. */
+  const [streamStatus, setStreamStatus] = useState<RealtimeQuoteStreamStatus | null>(null);
+  const [pushDegraded, setPushDegraded] = useState(false);
+
   /* ── initial bootstrap (+ ?symbol= deep-link auto-subscribe/select) ── */
   useEffect(() => {
     let cancelled = false;
@@ -154,28 +164,53 @@ export default function RealtimeQuoteView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSymbol, loading]);
 
-  /* ── polling snapshot for the selected symbol only (single-symbol focus) ── */
+  /* ── REST snapshot fetch — used for (a) the fallback poll below when the
+   * push stream is degraded, and (b) nothing else now that push is primary. ── */
   const fetchSnapshot = useCallback(async () => {
-    if (!selectedSymbol) {
-      setQuote(null);
-      return;
-    }
+    if (!selectedSymbol) return;
     try {
       const data = await getRealtimeQuoteSnapshot([selectedSymbol]);
-      setQuote(data.quotes[selectedSymbol] ?? null);
+      const next = data.quotes[selectedSymbol];
+      if (next) setQuote(next); // keep last known on a miss — never blank the view
       setSnapshotError(null);
     } catch (err: unknown) {
-      // Keep the last known quote on screen — degrade, don't blank the view.
       setSnapshotError(err instanceof Error ? err.message : "시세를 불러오지 못했습니다");
     }
   }, [selectedSymbol]);
 
+  /* ── Phase 4 push relay — primary update path. One SSE stream per selected
+   * symbol; switching symbols tears down the old stream and opens a new one.
+   * The stream's very first event on (re)connect is the broadcaster's cached
+   * latest snapshot, so reconnects catch up immediately (no blank frame). ── */
   useEffect(() => {
     setQuote(null);
+    setStreamStatus(null);
+    setPushDegraded(false);
+    if (!selectedSymbol) return;
+
+    const unsubscribe = subscribeRealtimeQuoteStream(selectedSymbol, {
+      onEvent: (event) => {
+        setStreamStatus(event.status);
+        if (event.snapshot) setQuote(event.snapshot);
+        setPushDegraded(false);
+        setSnapshotError(null);
+      },
+      onTransportError: () => {
+        setPushDegraded(true);
+      },
+    });
+    return unsubscribe;
+  }, [selectedSymbol]);
+
+  /* ── Fallback poll — only runs while the push transport is degraded, so
+   * the screen still updates (at REST cadence) instead of freezing while
+   * the SSE stream's own reconnect loop keeps retrying in the background. ── */
+  useEffect(() => {
+    if (!selectedSymbol || !pushDegraded) return;
     fetchSnapshot();
     const interval = setInterval(fetchSnapshot, POLL_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [fetchSnapshot]);
+  }, [selectedSymbol, pushDegraded, fetchSnapshot]);
 
   /* ── actions ── */
   const handleSubscribe = async () => {
@@ -258,10 +293,20 @@ export default function RealtimeQuoteView() {
       ? connection.registered_count / connection.max_registrations
       : 0;
   const atCapacity = connection ? subscriptions.length >= connection.symbol_capacity : false;
+  // Prefer the push stream's per-symbol status (live, continuously updated)
+  // over the age-based client-side check once a stream is active — fall
+  // back to the old client-computed staleness check while push is degraded.
   const isStale =
-    !!quote && Date.now() - new Date(quote.updated_at).getTime() > STALE_THRESHOLD_MS;
+    streamStatus === "stale" ||
+    (pushDegraded &&
+      !!quote &&
+      Date.now() - new Date(quote.updated_at).getTime() > STALE_THRESHOLD_MS);
   const degraded =
-    !!snapshotError || (connection ? connection.connection_state !== "connected" : false);
+    pushDegraded ||
+    streamStatus === "disconnected" ||
+    streamStatus === "reconnecting" ||
+    !!snapshotError ||
+    (connection ? connection.connection_state !== "connected" : false);
 
   return (
     <div className="p-6 space-y-4">
@@ -320,13 +365,19 @@ export default function RealtimeQuoteView() {
       )}
       {degraded && (
         <WarningBanner
-          variant={connection?.connection_state === "disconnected" ? "error" : "warning"}
+          variant={
+            streamStatus === "disconnected" || connection?.connection_state === "disconnected"
+              ? "error"
+              : "warning"
+          }
           title={
-            connection?.connection_state === "reconnecting"
-              ? "WebSocket 재연결 시도 중"
-              : connection?.connection_state === "disconnected"
-                ? "WebSocket 연결이 끊겼습니다"
-                : "시세 갱신 중 오류가 발생했습니다"
+            pushDegraded
+              ? "실시간 스트림 연결이 끊겨 재연결을 시도 중입니다 (일시적으로 폴링으로 갱신)"
+              : streamStatus === "reconnecting" || connection?.connection_state === "reconnecting"
+                ? "WebSocket 재연결 시도 중"
+                : streamStatus === "disconnected" || connection?.connection_state === "disconnected"
+                  ? "WebSocket 연결이 끊겼습니다"
+                  : "시세 갱신 중 오류가 발생했습니다"
           }
           message="화면에 표시된 값은 마지막 수신값(stale)일 수 있습니다."
         />
@@ -478,6 +529,7 @@ export default function RealtimeQuoteView() {
                 prevClose={quote?.prev_close ?? 0}
                 totalAskQuantity={quote?.total_ask_quantity ?? 0}
                 totalBidQuantity={quote?.total_bid_quantity ?? 0}
+                lastPrice={quote?.last_price ?? null}
               />
             </Panel>
 

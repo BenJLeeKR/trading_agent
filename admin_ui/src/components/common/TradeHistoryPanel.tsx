@@ -131,7 +131,7 @@ export function TradeHistoryPanel({ symbol, recentTrades, hasData }: TradeHistor
             <span className="text-center">체결량</span>
           </div>
           {tickRows.map((t, i) => (
-            <div key={i} className="grid grid-cols-4 px-3 py-1 font-mono text-xs">
+            <div key={i} className="grid grid-cols-4 px-3 py-[3px] font-mono text-xs">
               <span className="text-center text-[#64748b]">{t ? formatTime(t.trade_time) : PLACEHOLDER}</span>
               <span className={`text-center font-semibold ${t ? changeTextColor(t.change) : ""}`}>
                 {t ? fmt(t.price) : PLACEHOLDER}
@@ -160,7 +160,7 @@ export function TradeHistoryPanel({ symbol, recentTrades, hasData }: TradeHistor
           {!dailyLoading &&
             !dailyError &&
             dailyRows.map((b, i) => (
-              <div key={i} className="grid grid-cols-4 px-3 py-1 font-mono text-xs">
+              <div key={i} className="grid grid-cols-4 px-3 py-[3px] font-mono text-xs">
                 <span className="text-center text-[#64748b]">{b ? formatDate(b.date) : PLACEHOLDER}</span>
                 <span className={`text-center font-semibold ${b ? changeTextColor(b.change) : ""}`}>
                   {b ? fmt(b.close) : PLACEHOLDER}

@@ -436,6 +436,97 @@ export async function getRealtimeQuoteDailyPrice(
   );
 }
 
+/**
+ * Phase 4 push relay — subscribes to `GET /realtime-quotes/stream?symbol=...`
+ * (Server-Sent Events) for exactly one symbol.
+ *
+ * Uses `fetch` + a manually-parsed `ReadableStream` rather than the native
+ * `EventSource` — `EventSource` cannot send an `Authorization` header, and
+ * this API's Bearer-token auth is shared with every other endpoint. Owns its
+ * own reconnect-with-backoff loop (`EventSource` would normally do this for
+ * us) so a dropped connection recovers automatically; `onTransportError`
+ * lets the caller fall back to REST polling while a reconnect is pending.
+ *
+ * Returns a cleanup function — call it on symbol switch/unmount to stop the
+ * stream and cancel any in-flight retry.
+ */
+export function subscribeRealtimeQuoteStream(
+  symbol: string,
+  handlers: {
+    onEvent: (event: import("../types/api").RealtimeQuoteStreamEvent) => void;
+    onTransportError?: () => void;
+  }
+): () => void {
+  const controller = new AbortController();
+  let stopped = false;
+  let retryDelayMs = 1000;
+  const MAX_RETRY_DELAY_MS = 10_000;
+
+  async function runOnce(): Promise<void> {
+    const token = getStoredToken();
+    const res = await fetch(
+      `/realtime-quotes/stream?symbol=${encodeURIComponent(symbol)}`,
+      {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        signal: controller.signal,
+      }
+    );
+    if (!res.ok || !res.body) {
+      throw new Error(`realtime-quote stream error ${res.status}`);
+    }
+    retryDelayMs = 1000; // connected successfully — reset backoff for next drop
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (!stopped) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let sepIndex: number;
+      while ((sepIndex = buffer.indexOf("\n\n")) !== -1) {
+        const rawEvent = buffer.slice(0, sepIndex);
+        buffer = buffer.slice(sepIndex + 2);
+        const dataLine = rawEvent.split("\n").find((l) => l.startsWith("data: "));
+        if (!dataLine) continue;
+        try {
+          const event = JSON.parse(
+            dataLine.slice("data: ".length)
+          ) as import("../types/api").RealtimeQuoteStreamEvent;
+          handlers.onEvent(event);
+        } catch {
+          // Malformed frame — skip it, the stream itself is still alive.
+        }
+      }
+    }
+  }
+
+  async function loop(): Promise<void> {
+    while (!stopped) {
+      try {
+        await runOnce();
+        if (stopped) return;
+        // The stream ended without an error (server closed it) — treat like
+        // a drop and reconnect through the same backoff path below.
+        handlers.onTransportError?.();
+      } catch {
+        if (stopped || controller.signal.aborted) return;
+        handlers.onTransportError?.();
+      }
+      if (stopped) return;
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      retryDelayMs = Math.min(retryDelayMs * 2, MAX_RETRY_DELAY_MS);
+    }
+  }
+
+  loop();
+
+  return () => {
+    stopped = true;
+    controller.abort();
+  };
+}
+
 export async function getEnumMetadata(): Promise<import("../types/api").EnumMetadataListResponse> {
   return request<import("../types/api").EnumMetadataListResponse>("/metadata/enums");
 }

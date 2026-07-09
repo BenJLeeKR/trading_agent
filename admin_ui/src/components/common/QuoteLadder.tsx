@@ -10,6 +10,9 @@ interface QuoteLadderProps {
   /** Whether real data has been received. `false` renders an empty grid
    * (10+10 rows, "—" placeholders) instead of collapsing the layout. */
   hasData: boolean;
+  /** 현재 체결가 — 호가 단계 중 정확히 일치하는 가격 칸에만 테두리를 그린다.
+   * 중간가 체결 등으로 일치하는 호가가 없으면 아무 칸에도 표시하지 않는다. */
+  lastPrice?: number | null;
 }
 
 const PLACEHOLDER = "—";
@@ -101,6 +104,7 @@ export function QuoteLadder({
   totalAskQuantity,
   totalBidQuantity,
   hasData,
+  lastPrice,
 }: QuoteLadderProps) {
   const askRows = (hasData ? toRows(askLevels) : toRows([])).reverse(); // 먼 호가 → 최우선 매도호가
   const bidRows = hasData ? toRows(bidLevels) : toRows([]); // 최우선 매수호가 → 먼 호가
@@ -133,13 +137,17 @@ export function QuoteLadder({
       </div>
 
       {askRows.map((lvl, i) => {
-        const value = lvl ? pctValue(lvl.price, prevClose) : 0;
-        const color = pctTextColor(value);
+        // 동시호가 시간에는 5호가 밖의 나머지 호가가 price=0으로 들어온다 —
+        // 그 경우 가격/대비율은 "—"로 처리한다(잔량/직전은 그대로 표시).
+        const hasPrice = !!lvl && lvl.price !== 0;
+        const value = hasPrice ? pctValue(lvl.price, prevClose) : 0;
+        const color = hasPrice ? pctTextColor(value) : "text-[#94a3b8]";
         const delta = askDelta(lvl);
+        const isLastPriceRow = hasPrice && lastPrice != null && lvl.price === lastPrice;
         return (
           <div
             key={`ask-${i}`}
-            className={`grid ${LADDER_COLUMNS} py-1 bg-[#eff6ff] font-mono text-xs`}
+            className={`grid ${LADDER_COLUMNS} py-0.5 bg-[#eff6ff] font-mono text-xs`}
           >
             <span className={`text-right ${deltaTextColor(delta)}`}>
               {lvl ? formatDelta(delta) : PLACEHOLDER}
@@ -147,11 +155,15 @@ export function QuoteLadder({
             <span className="text-right text-[#475569]">
               {lvl ? fmt(lvl.quantity) : PLACEHOLDER}
             </span>
-            <span className={`text-center font-semibold ${color}`}>
-              {lvl ? fmt(lvl.price) : PLACEHOLDER}
+            <span
+              className={`text-center font-semibold ${color} border ${
+                isLastPriceRow ? "border-[#334155]" : "border-[#eff6ff]"
+              }`}
+            >
+              {hasPrice ? fmt(lvl.price) : PLACEHOLDER}
             </span>
             <span className={`text-center ${color}`}>
-              {lvl ? pctLabel(value) : PLACEHOLDER}
+              {hasPrice ? pctLabel(value) : PLACEHOLDER}
             </span>
             <span />
             <span />
@@ -160,21 +172,27 @@ export function QuoteLadder({
       })}
 
       {bidRows.map((lvl, i) => {
-        const value = lvl ? pctValue(lvl.price, prevClose) : 0;
-        const color = pctTextColor(value);
+        const hasPrice = !!lvl && lvl.price !== 0;
+        const value = hasPrice ? pctValue(lvl.price, prevClose) : 0;
+        const color = hasPrice ? pctTextColor(value) : "text-[#94a3b8]";
         const delta = bidDelta(lvl);
+        const isLastPriceRow = hasPrice && lastPrice != null && lvl.price === lastPrice;
         return (
           <div
             key={`bid-${i}`}
-            className={`grid ${LADDER_COLUMNS} py-1 bg-[#fef2f2] font-mono text-xs`}
+            className={`grid ${LADDER_COLUMNS} py-0.5 bg-[#fef2f2] font-mono text-xs`}
           >
             <span />
             <span />
-            <span className={`text-center font-semibold ${color}`}>
-              {lvl ? fmt(lvl.price) : PLACEHOLDER}
+            <span
+              className={`text-center font-semibold ${color} border ${
+                isLastPriceRow ? "border-[#334155]" : "border-[#fef2f2]"
+              }`}
+            >
+              {hasPrice ? fmt(lvl.price) : PLACEHOLDER}
             </span>
             <span className={`text-center ${color}`}>
-              {lvl ? pctLabel(value) : PLACEHOLDER}
+              {hasPrice ? pctLabel(value) : PLACEHOLDER}
             </span>
             <span className="text-left text-[#475569]">
               {lvl ? fmt(lvl.quantity) : PLACEHOLDER}

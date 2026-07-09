@@ -533,6 +533,22 @@ export interface RealtimeQuoteSnapshotResponse {
   generated_at: string;
 }
 
+/** Phase 4 push relay — 6가지 상태 모델 중 backend가 계산하는 5개
+ * ("degraded"는 프론트가 이 값 + snapshot 조회 오류 등을 종합해 판단). */
+export type RealtimeQuoteStreamStatus =
+  | "connected"
+  | "reconnecting"
+  | "disconnected"
+  | "stale"
+  | "no_data_yet";
+
+export interface RealtimeQuoteStreamEvent {
+  symbol: string;
+  status: RealtimeQuoteStreamStatus;
+  snapshot: RealtimeQuoteSnapshotView | null;
+  generated_at: string;
+}
+
 export interface RealtimeQuoteDailyPriceItem {
   /** "YYYYMMDD" */
   date: string;

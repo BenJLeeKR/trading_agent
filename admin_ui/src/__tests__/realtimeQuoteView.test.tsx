@@ -4,12 +4,17 @@ import { MemoryRouter, useLocation } from "react-router-dom";
 import { describe, expect, it, afterEach, vi, beforeEach } from "vitest";
 import RealtimeQuoteView from "../components/RealtimeQuoteView";
 import { setStoredToken, clearStoredToken } from "../api/client";
-import { mockFetchOnce, mockFetchError } from "./test-utils/mockFetch";
+import {
+  mockFetchOnce,
+  mockFetchError,
+  mockFetchStreamOnce,
+  mockFetchStreamError,
+} from "./test-utils/mockFetch";
 import { VALID_TOKEN } from "./test-utils/fixtures";
 import type {
   RealtimeQuoteBootstrapResponse,
   RealtimeQuoteLevel,
-  RealtimeQuoteSnapshotResponse,
+  RealtimeQuoteSnapshotView,
   RealtimeQuoteSubscriptionsResponse,
 } from "../types/api";
 
@@ -22,7 +27,11 @@ afterEach(() => {
   clearStoredToken();
 });
 
-/* ── fixtures ── */
+/* ── fixtures ──
+ * Phase 4: the main data path is the SSE stream (`GET /realtime-quotes/stream`),
+ * not a polled `GET /realtime-quotes/snapshot`. `streamEventFor()` builds the
+ * push event payload; `mockFetchStreamOnce([...])` queues it as the *next*
+ * fetch call, same ordering convention as the existing `mockFetchOnce`. */
 
 const emptyBootstrap: RealtimeQuoteBootstrapResponse = {
   connection: {
@@ -61,50 +70,60 @@ function bidLevels(): RealtimeQuoteLevel[] {
   return Array.from({ length: 10 }, (_, i) => ({ price: 71800 - i * 100, quantity: 90 * (i + 1) }));
 }
 
-function snapshotFor(symbol: string, name: string, market: string): RealtimeQuoteSnapshotResponse {
+function snapshotFor(symbol: string, name: string, market: string): RealtimeQuoteSnapshotView {
   return {
-    quotes: {
-      [symbol]: {
-        symbol,
-        market,
-        name,
-        last_price: 71900,
-        prev_close: 71000,
-        change: 900,
-        change_rate: 1.27,
-        change_sign: "up",
-        open_price: 71100,
-        high_price: 72000,
-        low_price: 70900,
-        upper_limit: 92300,
-        lower_limit: 49700,
-        accumulated_volume: 12345678,
-        accumulated_value: 887654321000,
-        per: 12.5,
-        pbr: 1.1,
-        eps: 5432.1,
-        bps: 65000,
-        ask_levels: askLevels(),
-        bid_levels: bidLevels(),
-        total_ask_quantity: 5500,
-        total_bid_quantity: 4950,
-        trade_time: "09:37:30",
-        hour_class: "장중",
-        trading_halted: false,
-        data_source: "mock",
-        updated_at: "2026-07-08T00:00:03Z",
-        recent_trades: [
-          { trade_time: "09:37:30", price: 71900, change: 900, change_rate: 1.27, volume: 10 },
-        ],
-      },
-    },
-    generated_at: "2026-07-08T00:00:03Z",
+    symbol,
+    market,
+    name,
+    last_price: 71900,
+    prev_close: 71000,
+    change: 900,
+    change_rate: 1.27,
+    change_sign: "up",
+    open_price: 71100,
+    high_price: 72000,
+    low_price: 70900,
+    upper_limit: 92300,
+    lower_limit: 49700,
+    accumulated_volume: 12345678,
+    accumulated_value: 887654321000,
+    per: 12.5,
+    pbr: 1.1,
+    eps: 5432.1,
+    bps: 65000,
+    ask_levels: askLevels(),
+    bid_levels: bidLevels(),
+    total_ask_quantity: 5500,
+    total_bid_quantity: 4950,
+    trade_time: "09:37:30",
+    hour_class: "장중",
+    trading_halted: false,
+    data_source: "websocket",
+    updated_at: new Date().toISOString(),
+    recent_trades: [
+      { trade_time: "093730", price: 71900, change: 900, change_rate: 1.27, volume: 10 },
+    ],
   };
 }
 
-/** Snapshot response where the requested symbol has no data yet (subscribed, no tick received). */
-function emptySnapshot(): RealtimeQuoteSnapshotResponse {
-  return { quotes: {}, generated_at: "2026-07-08T00:00:00Z" };
+/** Push-relay event carrying a real snapshot — "connected" status. */
+function streamEventFor(symbol: string, name: string, market: string) {
+  return {
+    symbol,
+    status: "connected" as const,
+    snapshot: snapshotFor(symbol, name, market),
+    generated_at: new Date().toISOString(),
+  };
+}
+
+/** Push-relay event for a subscribed-but-no-tick-yet symbol. */
+function noDataEvent(symbol: string) {
+  return {
+    symbol,
+    status: "no_data_yet" as const,
+    snapshot: null,
+    generated_at: new Date().toISOString(),
+  };
 }
 
 function subscriptionsResponse(
@@ -142,7 +161,7 @@ function LocationProbe() {
 describe("RealtimeQuoteView keeps the detail frame while data is pending", () => {
   it("shows the 호가/상세정보 frames with a waiting state when subscribed but quote is null", async () => {
     mockFetchOnce(bootstrapWith("005930", "삼성전자", "KOSPI"));
-    mockFetchOnce(emptySnapshot());
+    mockFetchStreamOnce([noDataEvent("005930")]);
 
     render(
       <MemoryRouter>
@@ -172,7 +191,7 @@ describe("RealtimeQuoteView keeps the detail frame while data is pending", () =>
 
   it("keeps the frame on ?symbol= deep-link entry before any snapshot arrives", async () => {
     mockFetchOnce(bootstrapWith("138040", "메리츠금융지주", "KOSPI"));
-    mockFetchOnce(emptySnapshot());
+    mockFetchStreamOnce([noDataEvent("138040")]);
 
     render(
       <MemoryRouter initialEntries={["/operations/realtime-quotes?symbol=138040"]}>
@@ -194,7 +213,7 @@ describe("RealtimeQuoteView keeps the detail frame while data is pending", () =>
 describe("RealtimeQuoteView deep link (?symbol=)", () => {
   it("auto-selects an already-subscribed symbol from the query param", async () => {
     mockFetchOnce(bootstrapWith("138040", "메리츠금융지주", "KOSPI"));
-    mockFetchOnce(snapshotFor("138040", "메리츠금융지주", "KOSPI"));
+    mockFetchStreamOnce([streamEventFor("138040", "메리츠금융지주", "KOSPI")]);
 
     render(
       <MemoryRouter initialEntries={["/operations/realtime-quotes?symbol=138040"]}>
@@ -255,7 +274,7 @@ describe("RealtimeQuoteView subscribe flow", () => {
     });
 
     mockFetchOnce(subscriptionsResponse([{ symbol: "005930", name: "삼성전자", market: "KOSPI" }]));
-    mockFetchOnce(snapshotFor("005930", "삼성전자", "KOSPI"));
+    mockFetchStreamOnce([streamEventFor("005930", "삼성전자", "KOSPI")]);
 
     const input = screen.getByPlaceholderText("종목코드 6자리 (예: 005930)");
     await user.type(input, "005930");
@@ -271,7 +290,7 @@ describe("RealtimeQuoteView subscribe flow", () => {
 
   it("re-adding an already-subscribed symbol does not call the API again", async () => {
     mockFetchOnce(bootstrapWith("005930", "삼성전자", "KOSPI"));
-    mockFetchOnce(snapshotFor("005930", "삼성전자", "KOSPI"));
+    mockFetchStreamOnce([streamEventFor("005930", "삼성전자", "KOSPI")]);
     const user = userEvent.setup();
 
     render(
@@ -291,7 +310,8 @@ describe("RealtimeQuoteView subscribe flow", () => {
     await user.type(input, "005930");
     await user.click(screen.getByText("종목 추가"));
 
-    // No new network call for a duplicate subscribe — purely client-side switch.
+    // No new network call for a duplicate subscribe — purely client-side switch
+    // (selectedSymbol doesn't change, so the stream effect doesn't re-fire either).
     expect(fetchSpy.mock.calls.length).toBe(callCountBefore);
   });
 });
@@ -299,7 +319,7 @@ describe("RealtimeQuoteView subscribe flow", () => {
 describe("RealtimeQuoteView unsubscribe flow", () => {
   it("removing the active symbol clears the chip and main view", async () => {
     mockFetchOnce(bootstrapWith("005930", "삼성전자", "KOSPI"));
-    mockFetchOnce(snapshotFor("005930", "삼성전자", "KOSPI"));
+    mockFetchStreamOnce([streamEventFor("005930", "삼성전자", "KOSPI")]);
     const user = userEvent.setup();
 
     render(
@@ -325,9 +345,9 @@ describe("RealtimeQuoteView unsubscribe flow", () => {
 });
 
 describe("RealtimeQuoteView snapshot rendering", () => {
-  it("renders the 10-level ladder and detail panel fields from the snapshot", async () => {
+  it("renders the 10-level ladder and detail panel fields from the pushed snapshot", async () => {
     mockFetchOnce(bootstrapWith("138040", "메리츠금융지주", "KOSPI"));
-    mockFetchOnce(snapshotFor("138040", "메리츠금융지주", "KOSPI"));
+    mockFetchStreamOnce([streamEventFor("138040", "메리츠금융지주", "KOSPI")]);
 
     render(
       <MemoryRouter>
@@ -352,6 +372,67 @@ describe("RealtimeQuoteView snapshot rendering", () => {
     expect(screen.getByText("PER")).toBeInTheDocument();
     expect(screen.getByText("12.50")).toBeInTheDocument();
   });
+
+  it("shows '—' for price/등락률 on 동시호가 empty levels (price=0) but keeps quantity", async () => {
+    mockFetchOnce(bootstrapWith("005930", "삼성전자", "KOSPI"));
+    const callAuctionSnapshot = snapshotFor("005930", "삼성전자", "KOSPI");
+    // Only the best 5 levels have a real price during 동시호가 — the rest come
+    // in as price=0 (quantity may still be a real, non-zero value).
+    callAuctionSnapshot.ask_levels = callAuctionSnapshot.ask_levels.map((lvl, i) =>
+      i < 5 ? lvl : { price: 0, quantity: 123 }
+    );
+    callAuctionSnapshot.bid_levels = callAuctionSnapshot.bid_levels.map((lvl, i) =>
+      i < 5 ? lvl : { price: 0, quantity: 456 }
+    );
+    mockFetchStreamOnce([
+      { symbol: "005930", status: "connected", snapshot: callAuctionSnapshot, generated_at: new Date().toISOString() },
+    ]);
+
+    render(
+      <MemoryRouter>
+        <RealtimeQuoteView />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("71,900").length).toBeGreaterThan(0);
+    });
+
+    // Empty levels' quantity still renders (all 5 ask-side empties share the
+    // same fixture quantity, so there are exactly 5 matches).
+    expect(screen.getAllByText("123").length).toBe(5);
+    expect(screen.getAllByText("456").length).toBe(5);
+    // ...but price=0 never renders literally as "0" anywhere in the ladder.
+    expect(screen.queryByText("0")).not.toBeInTheDocument();
+    // "—" placeholders now include the 10 empty price/pct cells (5 ask + 5 bid).
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(10);
+  });
+
+  it("updates the displayed price when a second push event arrives on the same stream", async () => {
+    mockFetchOnce(bootstrapWith("005930", "삼성전자", "KOSPI"));
+    const stream = mockFetchStreamOnce([streamEventFor("005930", "삼성전자", "KOSPI")]);
+
+    render(
+      <MemoryRouter>
+        <RealtimeQuoteView />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("71,900").length).toBeGreaterThan(0);
+    });
+
+    stream.push({
+      symbol: "005930",
+      status: "connected",
+      snapshot: { ...snapshotFor("005930", "삼성전자", "KOSPI"), last_price: 73000 },
+      generated_at: new Date().toISOString(),
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText("73,000").length).toBeGreaterThan(0);
+    });
+  });
 });
 
 describe("RealtimeQuoteView connection/degraded states", () => {
@@ -359,7 +440,7 @@ describe("RealtimeQuoteView connection/degraded states", () => {
     const reconnecting = bootstrapWith("005930", "삼성전자", "KOSPI");
     reconnecting.connection.connection_state = "reconnecting";
     mockFetchOnce(reconnecting);
-    mockFetchOnce(snapshotFor("005930", "삼성전자", "KOSPI"));
+    mockFetchStreamOnce([streamEventFor("005930", "삼성전자", "KOSPI")]);
 
     render(
       <MemoryRouter>
@@ -373,9 +454,12 @@ describe("RealtimeQuoteView connection/degraded states", () => {
     expect(screen.getByText("재연결 중")).toBeInTheDocument();
   });
 
-  it("shows a degraded banner when the snapshot poll fails but keeps the screen alive", async () => {
+  it("falls back to REST polling and shows a degraded banner when the stream fails to connect", async () => {
     mockFetchOnce(bootstrapWith("005930", "삼성전자", "KOSPI"));
-    mockFetchError(500, "snapshot unavailable");
+    mockFetchStreamError();
+    // Fallback poll (triggered once pushDegraded flips true) hits the old
+    // REST snapshot endpoint instead.
+    mockFetchOnce({ quotes: { "005930": snapshotFor("005930", "삼성전자", "KOSPI") }, generated_at: new Date().toISOString() });
 
     render(
       <MemoryRouter>
@@ -384,10 +468,14 @@ describe("RealtimeQuoteView connection/degraded states", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("시세 갱신 중 오류가 발생했습니다")).toBeInTheDocument();
+      expect(
+        screen.getByText("실시간 스트림 연결이 끊겨 재연결을 시도 중입니다 (일시적으로 폴링으로 갱신)")
+      ).toBeInTheDocument();
     });
-    // The screen stays alive — symbol chip/header still rendered, not blanked.
-    expect(screen.getAllByText("삼성전자").length).toBeGreaterThan(0);
+    // The screen stays alive — the fallback poll's data still renders.
+    await waitFor(() => {
+      expect(screen.getAllByText("71,900").length).toBeGreaterThan(0);
+    });
   });
 
   it("shows an error banner when bootstrap fails entirely", async () => {
@@ -410,7 +498,7 @@ describe("RealtimeQuoteView connection/degraded states", () => {
 describe("RealtimeQuoteView URL (?symbol=) sync", () => {
   it("clears the symbol query param after unsubscribing the last symbol", async () => {
     mockFetchOnce(bootstrapWith("005930", "삼성전자", "KOSPI"));
-    mockFetchOnce(snapshotFor("005930", "삼성전자", "KOSPI"));
+    mockFetchStreamOnce([streamEventFor("005930", "삼성전자", "KOSPI")]);
     const user = userEvent.setup();
 
     render(
@@ -435,14 +523,14 @@ describe("RealtimeQuoteView URL (?symbol=) sync", () => {
     expect(screen.getByTestId("location-search").textContent).toContain("foo=bar");
   });
 
-  it("updates the symbol query param when the selected symbol changes", async () => {
+  it("updates the symbol query param and opens a new stream when the selected symbol changes", async () => {
     mockFetchOnce(
       bootstrapWithMany([
         { symbol: "005930", name: "삼성전자", market: "KOSPI" },
         { symbol: "000660", name: "SK하이닉스", market: "KOSPI" },
       ])
     );
-    mockFetchOnce(snapshotFor("005930", "삼성전자", "KOSPI"));
+    mockFetchStreamOnce([streamEventFor("005930", "삼성전자", "KOSPI")]);
     const user = userEvent.setup();
 
     render(
@@ -456,18 +544,23 @@ describe("RealtimeQuoteView URL (?symbol=) sync", () => {
       expect(screen.getByTestId("location-search").textContent).toContain("symbol=005930");
     });
 
-    mockFetchOnce(snapshotFor("000660", "SK하이닉스", "KOSPI"));
+    mockFetchStreamOnce([streamEventFor("000660", "SK하이닉스", "KOSPI")]);
     await user.click(screen.getByText("SK하이닉스"));
 
     await waitFor(() => {
       expect(screen.getByTestId("location-search").textContent).toContain("symbol=000660");
     });
     expect(screen.getByTestId("location-search").textContent).not.toContain("symbol=005930");
+    // The new symbol's pushed price is shown — confirms the new stream was
+    // actually opened and consumed (not just the URL updated).
+    await waitFor(() => {
+      expect(screen.getAllByText("71,900").length).toBeGreaterThan(0); // shared fixture price
+    });
   });
 
   it("keeps the deep-linked symbol and unrelated query params on initial entry", async () => {
     mockFetchOnce(bootstrapWith("138040", "메리츠금융지주", "KOSPI"));
-    mockFetchOnce(snapshotFor("138040", "메리츠금융지주", "KOSPI"));
+    mockFetchStreamOnce([streamEventFor("138040", "메리츠금융지주", "KOSPI")]);
 
     render(
       <MemoryRouter initialEntries={["/operations/realtime-quotes?symbol=138040&foo=bar"]}>
@@ -486,9 +579,9 @@ describe("RealtimeQuoteView URL (?symbol=) sync", () => {
 });
 
 describe("RealtimeQuoteView 실시간 체결가 frame", () => {
-  it("shows recent trade ticks on the default 시별 tab", async () => {
+  it("shows recent trade ticks on the default 시별 탭", async () => {
     mockFetchOnce(bootstrapWith("138040", "메리츠금융지주", "KOSPI"));
-    mockFetchOnce(snapshotFor("138040", "메리츠금융지주", "KOSPI"));
+    mockFetchStreamOnce([streamEventFor("138040", "메리츠금융지주", "KOSPI")]);
 
     render(
       <MemoryRouter initialEntries={["/operations/realtime-quotes?symbol=138040"]}>
@@ -504,9 +597,9 @@ describe("RealtimeQuoteView 실시간 체결가 frame", () => {
     });
   });
 
-  it("fetches and shows daily bars when the 일별 tab is clicked", async () => {
+  it("fetches and shows daily bars when the 일별 탭 is clicked", async () => {
     mockFetchOnce(bootstrapWith("138040", "메리츠금융지주", "KOSPI"));
-    mockFetchOnce(snapshotFor("138040", "메리츠금융지주", "KOSPI"));
+    mockFetchStreamOnce([streamEventFor("138040", "메리츠금융지주", "KOSPI")]);
     const user = userEvent.setup();
 
     render(

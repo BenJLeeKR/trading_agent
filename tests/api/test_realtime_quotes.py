@@ -6,12 +6,15 @@ No KIS WebSocket connection is made in this test suite.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
+from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
 from agent_trading.api.app import create_app
+from agent_trading.api.routes.realtime_quotes import stream_quote
 
 
 @pytest.fixture
@@ -194,55 +197,76 @@ class TestDailyPrice:
 
 
 class TestStream:
-    """``GET /realtime-quotes/stream`` — Phase 4 SSE push relay."""
+    """``GET /realtime-quotes/stream`` — Phase 4 SSE push relay.
 
-    def test_returns_sse_content_type_and_initial_event(self, client: TestClient) -> None:
-        with client.stream(
-            "GET", "/realtime-quotes/stream", params={"symbol": "005930"}
-        ) as resp:
-            assert resp.status_code == 200
-            assert resp.headers["content-type"].startswith("text/event-stream")
-            line = next(resp.iter_lines())
+    These tests call the route function directly (with a real, lifespan-built
+    ``QuoteBroadcaster``) rather than driving it over HTTP. Starlette's
+    ``StreamingResponse`` spawns a concurrent "listen for client disconnect"
+    task that awaits ``receive()`` — httpx's ``ASGITransport`` only resolves
+    that ``receive()`` once the response body is fully drained, which never
+    happens for a deliberately-infinite SSE stream. That's a test-transport
+    limitation, not a product bug (browsers/real ASGI servers don't have this
+    problem), so we exercise the actual production code path — router
+    function → ``QuoteBroadcaster`` → SSE encoding — without going through
+    that incompatible transport.
+    """
+
+    async def test_returns_streaming_response_with_initial_event(self) -> None:
+        app = create_app(auth_enabled=False)
+        async with app.router.lifespan_context(app):
+            broadcaster = app.state.realtime_quote_broadcaster
+            response = await stream_quote(symbol="005930", broadcaster=broadcaster)
+            assert isinstance(response, StreamingResponse)
+            assert response.media_type == "text/event-stream"
+
+            chunk = await asyncio.wait_for(response.body_iterator.__anext__(), timeout=2.0)
+            line = chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk
             assert line.startswith("data: ")
-            payload = json.loads(line[len("data: "):])
+            payload = json.loads(line[len("data: "):].strip())
             assert payload["symbol"] == "005930"
             assert payload["status"] == "no_data_yet"
             assert payload["snapshot"] is None
+            await response.body_iterator.aclose()
 
-    def test_reflects_connected_status_once_data_exists(self, client: TestClient) -> None:
-        # Prime the mock source with data by subscribing + fetching a snapshot
-        # once first, so the broadcaster's poll fallback has something to see.
-        client.post("/realtime-quotes/subscriptions", json={"symbols": ["005930"]})
-        client.get("/realtime-quotes/snapshot", params={"symbols": "005930"})
+    async def test_reflects_connected_status_once_data_exists(self) -> None:
+        app = create_app(auth_enabled=False)
+        async with app.router.lifespan_context(app):
+            source = app.state.realtime_quote_source
+            await source.subscribe("005930")
+            source.get_snapshots(["005930"])  # prime the mock's per-call generator
+            broadcaster = app.state.realtime_quote_broadcaster
 
-        with client.stream(
-            "GET", "/realtime-quotes/stream", params={"symbol": "005930"}
-        ) as resp:
-            assert resp.status_code == 200
-            deadline_lines = []
-            for line in resp.iter_lines():
-                if not line.startswith("data: "):
-                    continue
-                payload = json.loads(line[len("data: "):])
-                deadline_lines.append(payload)
-                if payload["status"] == "connected" or len(deadline_lines) >= 5:
-                    break
-            assert any(p["status"] == "connected" for p in deadline_lines)
-            assert any(p["snapshot"] is not None for p in deadline_lines)
+            response = await stream_quote(symbol="005930", broadcaster=broadcaster)
+            seen = []
+            try:
+                for _ in range(6):
+                    chunk = await asyncio.wait_for(
+                        response.body_iterator.__anext__(), timeout=3.0
+                    )
+                    line = chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk
+                    payload = json.loads(line[len("data: "):].strip())
+                    seen.append(payload)
+                    if payload["status"] == "connected":
+                        break
+            finally:
+                await response.body_iterator.aclose()
+            assert any(p["status"] == "connected" for p in seen)
+            assert any(p["snapshot"] is not None for p in seen)
 
     def test_invalid_symbol_returns_422(self, client: TestClient) -> None:
         resp = client.get("/realtime-quotes/stream", params={"symbol": "ABC"})
         assert resp.status_code == 422
 
-    def test_disconnect_cleans_up_broadcaster_subscription(self, client: TestClient) -> None:
-        broadcaster = client.app.state.realtime_quote_broadcaster
-        with client.stream(
-            "GET", "/realtime-quotes/stream", params={"symbol": "005930"}
-        ) as resp:
-            next(resp.iter_lines())
+    async def test_generator_close_cleans_up_broadcaster_subscription(self) -> None:
+        app = create_app(auth_enabled=False)
+        async with app.router.lifespan_context(app):
+            broadcaster = app.state.realtime_quote_broadcaster
+            response = await stream_quote(symbol="005930", broadcaster=broadcaster)
+            await asyncio.wait_for(response.body_iterator.__anext__(), timeout=2.0)
             assert "005930" in broadcaster._subscribers
 
-        assert "005930" not in broadcaster._subscribers
+            await response.body_iterator.aclose()
+            assert "005930" not in broadcaster._subscribers
 
 
 class TestAuthRequired:

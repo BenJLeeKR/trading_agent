@@ -267,17 +267,28 @@ class _SymbolState:
         self.hour_class = parsed["hour_class"]
         self.vi_stnd_price = parsed["vi_stnd_price"]
         self.updated_at = datetime.now(timezone.utc)
-        # appendleft + maxlen → recent_trades stays newest-first without
-        # needing a reverse() on every read.
-        self.recent_trades.appendleft(
-            TradeTick(
-                trade_time=parsed["trade_time"],
-                price=parsed["last_price"],
-                change=parsed["change"],
-                change_rate=parsed["change_rate"],
-                volume=parsed["tick_volume"],
+        # 마감 후 KIS가 동일한 마지막 체결 프레임을 반복 전송할 때, 그걸 매번
+        # "새 체결"로 착각해 recent_trades에 또 appendleft하면 안 된다 — 실제로는
+        # 새 거래가 아니라 같은 프레임의 재전송이다. trade_time+price+volume이
+        # 직전 tick과 완전히 같으면 재전송으로 간주하고 history에는 추가하지 않는다.
+        latest = self.recent_trades[0] if self.recent_trades else None
+        if (
+            latest is None
+            or latest.trade_time != parsed["trade_time"]
+            or latest.price != parsed["last_price"]
+            or latest.volume != parsed["tick_volume"]
+        ):
+            # appendleft + maxlen → recent_trades stays newest-first without
+            # needing a reverse() on every read.
+            self.recent_trades.appendleft(
+                TradeTick(
+                    trade_time=parsed["trade_time"],
+                    price=parsed["last_price"],
+                    change=parsed["change"],
+                    change_rate=parsed["change_rate"],
+                    volume=parsed["tick_volume"],
+                )
             )
-        )
 
     def apply_orderbook(self, parsed: dict[str, Any]) -> None:
         self.has_orderbook_data = True
@@ -371,6 +382,15 @@ class KisRealtimeQuoteSource:
         # with the freshly-built snapshot for that symbol. Best-effort: a
         # listener exception is logged and never breaks WS message processing.
         self._listeners: list[Callable[[str, QuoteSnapshot], None]] = []
+        # 2026-07-09: 마감 후에도 KIS가 동일한 마지막 체결가/호가를 반복 전송하는
+        # 것이 실측됐다 — 내용이 실제로 안 바뀐 프레임까지 매번 notify하면 SSE
+        # 직렬화/전송, 구독 중인 브라우저 리렌더가 불필요하게 반복된다. 종목별
+        # "마지막으로 notify한 내용의 signature"를 들고 있다가, 다음 프레임의
+        # signature가 같으면 조용히 상태만 갱신하고 notify는 건너뛴다. 구독
+        # 직후 첫 프레임은 비교 대상이 없어(신규 종목) 항상 signature가 달라지므로
+        # 무조건 최소 1회는 통과한다 — "장중엔 미구독 → 장 종료 후 구독" 시나리오도
+        # 항상 최소 1회 값을 받는다는 보장이 이걸로 성립한다.
+        self._last_notified_signature: dict[str, tuple[Any, ...]] = {}
 
     def add_listener(self, callback: Callable[[str, QuoteSnapshot], None]) -> None:
         """Register a callback invoked on every trade/orderbook update.
@@ -395,6 +415,36 @@ class KisRealtimeQuoteSource:
                 callback(symbol, snapshot)
             except Exception:
                 logger.exception("Realtime-quote broadcaster listener failed for %s", symbol)
+
+    @staticmethod
+    def _content_signature(snapshot: QuoteSnapshot) -> tuple[Any, ...]:
+        """Comparable "did anything meaningful change" key for ``snapshot``.
+
+        Deliberately excludes ``updated_at`` (always differs — every frame
+        timestamps itself) and ``data_source``/``symbol``/``market``/``name``
+        (constant for a given subscription). Includes ``recent_trades`` so a
+        genuinely new trade tick still counts as a change even when the price
+        happens to repeat (e.g. two consecutive trades at the same price).
+        """
+        return (
+            snapshot.last_price,
+            snapshot.change,
+            snapshot.change_rate,
+            snapshot.change_sign,
+            snapshot.open_price,
+            snapshot.high_price,
+            snapshot.low_price,
+            snapshot.accumulated_volume,
+            snapshot.accumulated_value,
+            snapshot.trade_time,
+            snapshot.hour_class,
+            snapshot.trading_halted,
+            tuple(snapshot.ask_levels),
+            tuple(snapshot.bid_levels),
+            snapshot.total_ask_quantity,
+            snapshot.total_bid_quantity,
+            tuple(snapshot.recent_trades),
+        )
 
     # ------------------------------------------------------------------
     # Connection lifecycle
@@ -505,7 +555,10 @@ class KisRealtimeQuoteSource:
 
         if self._listeners:
             snapshot = state.to_snapshot(symbol, self.instrument_info(symbol))
-            self._notify_listeners(symbol, snapshot)
+            signature = self._content_signature(snapshot)
+            if signature != self._last_notified_signature.get(symbol):
+                self._last_notified_signature[symbol] = signature
+                self._notify_listeners(symbol, snapshot)
 
     # ------------------------------------------------------------------
     # RealtimeQuoteSource protocol
@@ -599,6 +652,7 @@ class KisRealtimeQuoteSource:
             await self._ws_client.unsubscribe(_TRADE_CHANNEL, normalized, critical=False)
             await self._ws_client.unsubscribe(_ORDERBOOK_CHANNEL, normalized, critical=False)
         del self._state[normalized]
+        self._last_notified_signature.pop(normalized, None)
 
     def get_snapshots(self, symbols: Sequence[str]) -> dict[str, QuoteSnapshot]:
         out: dict[str, QuoteSnapshot] = {}

@@ -3020,7 +3020,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 
 ## P1/P2 후보 (신규) — 운영 가시성 강화
 
-### 19. KIS WebSocket 기반 실시간 현재가 조회 운영 화면 — `진행중`
+### 19. KIS WebSocket 기반 실시간 현재가 조회 운영 화면 — `Phase 1~4 완료`
 
 ### 목표
 - Admin UI "기본 운영" 메뉴 아래 신규 read-only 화면을 추가해, 운영자가 선택한 종목의
@@ -3067,12 +3067,33 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
     ② symbol 검증을 6자리 숫자로 제한,
     ③ startup failure cleanup 보정,
     ④ UI `?symbol=` 동기화/프레임 유지/기존 화면 딥링크 연결 보정.
-- **남은 작업**:
-  - 설계 문서상 **Phase 4** — FastAPI WebSocket/SSE relay 검토 및 전환(브라우저까지의
-    push 전달, fan-out broadcaster, backpressure, 인증 처리). 현재 화면은 KIS →
-    backend는 실시간 WebSocket이지만, backend → browser는 polling 방식으로 동작한다.
-  - **Step 4 (REST Fallback 연동, Phase 2 소속)** — WS 연결 끊김 시 REST로 값을
-    보정하는 로직이 아직 없다. Phase 4와 별개로 남은 소규모 항목.
+- **✅ 2026-07-09 Phase 4 완료** — SSE(Server-Sent Events) 채택, app 프로세스
+  내부 fan-out 계층 `QuoteBroadcaster` 추가([`realtime_quote_broadcaster.py`](../src/agent_trading/services/realtime_quote_broadcaster.py)).
+  `KisRealtimeQuoteSource.add_listener()`로 WS tick을 즉시 push(폴링 없음),
+  `InMemoryMockQuoteSource`처럼 push를 지원하지 않는 source는 자동으로 짧은
+  주기 poll-fallback으로 동작(구독자는 구분할 필요 없음). 신규
+  `GET /realtime-quotes/stream?symbol=...`([`routes/realtime_quotes.py`](../src/agent_trading/api/routes/realtime_quotes.py)).
+  `RealtimeQuoteView.tsx`는 이제 이 스트림을 기본 데이터 경로로 쓰고,
+  스트림 자체가 끊기면(재연결 시도 중) 기존 3초 REST polling으로 자동 전환된다
+  (Phase 1-3 polling 코드는 제거하지 않고 degraded fallback으로 유지).
+  Phase 1-3 REST contract(bootstrap/subscribe/snapshot)는 변경 없음.
+  - **남은 작업**: **Step 4 (REST Fallback 연동, Phase 2 소속)** — WS 연결 끊김 시
+    REST로 값을 보정하는 로직이 아직 없다(Phase 4의 "SSE 전송 실패 시 REST polling"
+    과는 다른 항목 — 이건 KIS WS 자체 단절 시의 값 보정). 유일하게 남은 항목.
+  - **후속 검토(별도 항목)**: 아래 20번 "credential/appkey 통합 재검토"는 Phase 4
+    완료를 트리거 조건으로 뒀었다 — 이제 재평가 가능한 시점이나, 이번 작업
+    범위에서는 통합을 진행하지 않았다(명시적 범위 제외).
+  - **알려진 제한**: single-process 가정 유지(`uvicorn --workers 1`), 여러
+    운영자가 동시에 다른 종목을 볼 경우의 multi-worker/cross-process fan-out은
+    검토 대상으로 남음(Redis 등 외부 pub/sub 필요 — 지금은 불필요).
+- **✅ 2026-07-09 장마감 후 리소스 비효율 개선(변경 감지/dedup)** — 장 마감 후에도
+  KIS가 동일한 마지막 호가/체결 프레임을 계속 반복 전송하는 것이 실측됐고, 기존
+  코드는 이를 매번 새 값으로 취급해 push listener(`QuoteBroadcaster`)에 불필요하게
+  재통보했다. `KisRealtimeQuoteSource`에 종목별 "마지막 notify 내용 signature" 캐시를
+  추가해, 실제로 내용이 바뀐 프레임만 notify하도록 수정(구독 직후 첫 프레임/재구독
+  시에는 항상 최소 1회 notify 보장). 상세는
+  [`11_kis_realtime_quote_operations_screen.md`](../plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md)
+  §5.5의 2026-07-09 추가 블록 참고.
 
 ### 기존 항목과의 구분
 - **`plans/[BACKLOG] backlog.md` 항목 `#19`("WebSocket 기반 실시간 order event 수신")와는
@@ -3092,7 +3113,7 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 
 ## P3 - Phase 4 후단 아키텍처 재검토
 
-### 20. KIS 실시간 현재가 credential/appkey 통합 재검토 - 미완료
+### 20. KIS 실시간 현재가 credential/appkey 통합 재검토 - 미착수 (착수 가능 시점 도달, 2026-07-09)
 
 ### 목표
 - 현재 KIS_REALTIME_QUOTE_*와 KIS_LIVE_INFO_*를 완전 분리한 구조를
@@ -3131,7 +3152,11 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
   이 시점이 credential 통합 재평가의 가장 자연스러운 접점이다.
 
 ### 후속 액션
-- [ ] Phase 4 relay/fan-out 구조가 굳은 뒤 KIS_REALTIME_QUOTE_*와 KIS_LIVE_INFO_* 통합 가능성 재검토
+- [x] **2026-07-09: Phase 4 relay/fan-out 구조(`QuoteBroadcaster`) 완료** — 이
+      항목의 착수 트리거 조건이 충족됐다. 단, 이번 Phase 4 작업에서는 통합
+      자체를 진행하지 않았다(범위 명시적 제외, 사용자 지시). 아래 항목들은
+      여전히 미착수다.
+- [ ] KIS_REALTIME_QUOTE_*와 KIS_LIVE_INFO_* 통합 가능성 실제 재검토 착수
 - [ ] KisMarketStateClient와 현재가 WS를 단일 session manager로 묶을 수 있는지 설계안 작성
 - [ ] registration budget, approval key, reconnect coupling, failure isolation 비교표 작성
 - [ ] 별도 계좌/appkey 유지 비용과 재발급/휴면 리스크를 운영 항목으로 명시

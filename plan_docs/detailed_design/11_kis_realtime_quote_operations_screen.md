@@ -246,6 +246,114 @@ GET /realtime-quotes/snapshot?symbols=005930,000660
 **Phase 1 권장안: (c) — 우선 (a) UI polling으로 시작하고, Phase 4에서 (b) relay로
 전환한다.**
 
+> **✅ 2026-07-09 Phase 4 완료 — transport는 SSE(Server-Sent Events)로 최종 결정**.
+> WebSocket이 아니라 SSE를 선택한 이유:
+> 1. 구독/해제/종목검색 등 client→server 방향 명령은 이미 기존 REST endpoint
+>    (5.2~5.4)가 전부 처리한다. Phase 4가 새로 필요로 하는 건 **server→client
+>    단방향 push뿐**이라, 양방향 프로토콜(WS)을 새로 얹을 이유가 없다.
+> 2. 이 화면은 "선택된 종목 1개"만 본다(§2.2, 화면 UX 원칙). 종목 전환은
+>    "기존 스트림을 닫고 새 스트림을 연다"로 충분히 표현되며, WS의 멀티플렉싱
+>    (한 연결에서 여러 채널 구독)이 주는 이점이 크지 않다.
+> 3. 브라우저 `EventSource`는 재연결을 자동으로 처리해주지만 커스텀
+>    `Authorization` 헤더를 못 보내는 제약이 있어, `fetch` + `ReadableStream`으로
+>    직접 파싱하는 방식을 택했다(재연결 로직은 클라이언트에서 자체 구현,
+>    `admin_ui/src/api/client.ts`의 `subscribeRealtimeQuoteStream()`). 이 방식이면
+>    기존 Bearer 토큰 인증을 그대로 재사용할 수 있어, WS 핸드셰이크용 별도
+>    인증 방식을 새로 설계할 필요가 없다.
+> 4. FastAPI `StreamingResponse`(SSE)는 이 코드베이스에 이미 존재하는 REST
+>    라우팅 스택 위에 자연스럽게 얹히고, `@app.websocket`처럼 완전히 별도인
+>    연결 관리 레이어가 필요 없다.
+>
+> **구현 구조** (`realtime_quote_broadcaster.py`, `routes/realtime_quotes.py::stream_quote`):
+> - `QuoteBroadcaster`가 `app.state`에 1개 존재하는 app-process 내부 fan-out
+>   계층이다. `RealtimeQuoteSource`(`KisRealtimeQuoteSource`/`InMemoryMockQuoteSource`)
+>   는 여전히 pull 기반 truth로 남고(`get_snapshots()` 변경 없음, 기존
+>   REST bootstrap/subscribe/snapshot endpoint도 그대로 동작) — Phase 1-3
+>   contract는 깨지 않았다.
+> - **true push**: `KisRealtimeQuoteSource`에 `add_listener()`를 추가해, WS
+>   tick으로 상태가 갱신될 때마다(`_apply_realtime_frame`) 콜백으로 즉시
+>   broadcaster에 알린다. Polling 없이 tick 단위로 그대로 전달된다.
+> - **fallback poll**: `InMemoryMockQuoteSource`는 pull 전용(읽을 때마다 생성)이라
+>   push 이벤트가 없다 — broadcaster가 `add_listener` 미지원을 duck-typing으로
+>   감지하면 짧은 주기(기본 1초)로 대신 폴링해 같은 이벤트 스트림으로
+>   흘려보낸다. 구독자(SSE route)는 실제 push인지 poll-fallback인지 알 필요가
+>   없다 — 이게 "완전 연결 실패 시에도 최소한의 degraded fallback을 남긴다"는
+>   제약을 만족하는 지점이다.
+> - **heartbeat**: 종목별로 별도 주기(기본 5초)의 상태-only 이벤트를 추가로
+>   보내, 데이터가 없어도 연결이 죽지 않은 것처럼 보이지 않게 하고 클라이언트가
+>   staleness를 tick 주기와 무관하게 판단할 수 있게 한다.
+> - **상태 모델**: `connected`/`reconnecting`/`disconnected`/`stale`/`no_data_yet`
+>   5가지는 `QuoteBroadcaster._status_for()`가 계산해 매 이벤트에 실어 보낸다.
+>   나머지 `degraded`는 프론트가 이 값 + 스트림 자체의 전송 오류(재연결 시도 중)를
+>   종합해 표시하는 UI 레벨 상태로 유지했다(기존 배너 로직과 동일 원칙).
+> - **reconnect**: `QuoteBroadcaster.stream()`은 새 구독이 열릴 때마다 캐시된
+>   최신 snapshot을 즉시 1건 내려준다 — 재접속(새 SSE 연결) 시 다음 tick까지
+>   기다리지 않고 바로 최신 상태로 따라잡는다. 클라이언트 쪽도 전송 실패 시
+>   지수 백오프(1s→최대 10s)로 자체 재연결한다.
+> - **degraded 시 REST polling fallback**: 클라이언트의 SSE 연결 자체가
+>   실패/재시도 중이면(`onTransportError`) 기존 `GET /realtime-quotes/snapshot`
+>   3초 polling 경로가 그대로 다시 켜진다 — Phase 1-3 폴링 코드를 제거하지 않고
+>   "완전 연결 실패 시 fallback"으로 남겨뒀다.
+> - **single-process 가정 유지**: `QuoteBroadcaster`는 `app.state`의 in-memory
+>   `asyncio.Queue`로만 fan-out한다. multi-worker/여러 `api` 프로세스로
+>   확장하려면 Redis 등 외부 pub/sub이 필요하며, 이번 범위에는 포함하지 않았다
+>   (아래 "남아있는 제한/후속 과제" 참고).
+>
+> **파일**: `services/realtime_quote_broadcaster.py`(신규), `services/kis_realtime_quote_source.py`
+> (`add_listener`/`remove_listener`/`_notify_listeners` 추가), `api/routes/realtime_quotes.py`
+> (`GET /realtime-quotes/stream` 신규), `api/deps.py`/`api/app.py`(broadcaster DI/lifespan
+> 등록), `admin_ui/src/api/client.ts`(`subscribeRealtimeQuoteStream`), `RealtimeQuoteView.tsx`
+> (push 우선 + polling fallback으로 전환).
+>
+> **남아있는 제한**:
+> - single-process 가정 그대로 — `uvicorn --workers 1` 필요(기존 "1 appkey = 1
+>   WS 세션" 제약과 동일 이유로 이미 강제되고 있었음).
+> - `KIS_REALTIME_QUOTE_*`/`KIS_LIVE_INFO_*` credential 분리는 이번에도 그대로
+>   유지했다 — 통합 여부는 여전히 후속 검토 대상(아래 "Credential 분리/통합
+>   판단 메모" 참고, 이제는 "Phase 4 완료 이후" 시점에서 재평가).
+>
+> **후속 과제**:
+> 1. Credential/appkey 통합 재검토 — 이제 push relay/WS ownership 구조가
+>    안정화됐으니, "Credential 분리/통합 판단 메모"의 재평가 트리거 조건을 실제로
+>    다시 점검.
+> 2. Multi-worker/cross-process fan-out 필요성 판단 — 지금은 단일 뷰어(운영자
+>    1인) 가정이 유지되는 한 문제없음. 여러 운영자가 동시에 다른 종목을 보게
+>    되면 Redis pub/sub 등 외부 broadcaster로의 이전이 필요한지 재검토.
+> 3. Session ownership 정리 — 지금은 `api` 프로세스가 WS 연결과 broadcaster를
+>    함께 소유한다. 만약 향후 WS 연결 자체를 별도 프로세스/서비스로 분리하게
+>    되면(예: 여러 `api` 워커가 하나의 WS 세션을 공유해야 하는 시점), 그 경계를
+>    다시 설계해야 한다.
+>
+> **✅ 2026-07-09 장마감 후 리소스 비효율 리뷰 → 변경 감지(dedup) 적용**.
+> 실측 결과 장 마감(15:30) 후에도 KIS가 호가(`H0STASP0`)/체결(`H0STCNT0`) 프레임을
+> 마지막 값 그대로 반복 전송하는 것이 확인됐다 — `updated_at`은 계속 갱신되지만
+> 실제 값(가격/호가/잔량)은 완전히 동일했다. 기존에는 프레임을 받을 때마다
+> 내용이 바뀌었는지 확인 없이 매번 `_notify_listeners()`를 호출해 SSE 직렬화·
+> 전송·브라우저 리렌더가 불필요하게 반복됐다.
+>
+> - **`KisRealtimeQuoteSource`에 종목별 "마지막으로 notify한 내용의 signature"
+>   캐시(`_last_notified_signature`)를 추가**. 매 프레임마다 `updated_at`을 제외한
+>   의미 있는 필드들(가격/변동률/누적거래량/호가 10단계/최근 체결 tick 등)로
+>   signature를 만들어 직전 signature와 다를 때만 `_notify_listeners()`를 호출한다.
+>   구독 직후 첫 프레임은 비교 대상이 없어 항상 다르게 판정되므로, "장중엔
+>   미구독 → 장 종료 후 구독" 시나리오에서도 최소 1회는 반드시 화면에 값이
+>   표시된다. `unsubscribe()` 시 해당 종목의 캐시도 함께 제거해, 재구독 시 다시
+>   최소 1회 notify가 보장된다.
+> - **`_SymbolState.apply_trade()`도 함께 수정**: 기존에는 체결 프레임을 받을
+>   때마다 내용이 동일하더라도 `recent_trades` 이력에 무조건 새 tick을
+>   append해, "체결 히스토리"가 재전송된 동일 프레임으로 계속 부풀려지는
+>   문제가 있었다. 이제는 직전 tick과 `trade_time`/가격/체결량이 완전히 같으면
+>   재전송으로 간주해 이력에 추가하지 않는다 — 이 수정이 없으면 히스토리 길이가
+>   매 프레임마다 바뀌어 signature 비교 자체가 무력화된다.
+> - REST polling 경로(5.3, 5.4)와 초기 스냅샷 로딩은 이 변경의 영향을 받지
+>   않는다 — `to_snapshot()`이 반환하는 값 자체는 그대로이며, 바뀐 건 push
+>   listener에게 "언제 다시 알릴지"뿐이다.
+>
+> **파일**: `services/kis_realtime_quote_source.py`(`_last_notified_signature`,
+> `_content_signature()`, `_apply_realtime_frame()`/`unsubscribe()` 수정,
+> `_SymbolState.apply_trade()` 수정), `tests/services/test_kis_realtime_quote_source.py`
+> (`TestPushListenerDedup` 4개 테스트 추가).
+
 권장 근거:
 
 - 이 화면은 "운영자가 몇 초 간격으로 확인하는" 운영 도구이지, 밀리초 단위 트레이딩
@@ -312,16 +420,19 @@ GET /realtime-quotes/snapshot?symbols=005930,000660
 
 ## 8. 단계별 구현 계획
 
-- **Phase 1**: 이 설계 문서, API contract 확정, UI mock data 기반 화면 뼈대.
+- **Phase 1**: 이 설계 문서, API contract 확정, UI mock data 기반 화면 뼈대. ✅ 완료
 - **Phase 2**: Backend quote subscription manager — 이 화면 전용 `KISWebSocketClient`
-  인스턴스, 참조 카운트 기반 구독 관리, 메모리 snapshot 저장(4.1~4.6, 5.1~5.4).
-- **Phase 3**: Admin UI polling 화면 — 6.1~6.3 화면을 5.5(a) polling 방식으로 연결.
+  인스턴스, 참조 카운트 기반 구독 관리, 메모리 snapshot 저장(4.1~4.6, 5.1~5.4). ✅ 완료
+  (단, Step 4 REST Fallback 세부 항목은 미구현 — `[PRIORITY_MAP]` #19 참고)
+- **Phase 3**: Admin UI polling 화면 — 6.1~6.3 화면을 5.5(a) polling 방식으로 연결. ✅ 완료
 - **Phase 4**: WebSocket/SSE relay 검토 및 전환 — 5.5(b) 도입, fan-out broadcaster 설계.
+  ✅ **완료 (2026-07-09)** — SSE 채택, `QuoteBroadcaster` fan-out 계층 추가, push 우선+
+  REST polling degraded fallback. 상세는 §5.5 상단 블록 참고.
 - **Phase 5**: 운영 관측/alert 연동 — 세션 끊김 장기화, 30건 근접, approval_key
-  갱신 실패 등에 대한 알림을 기존 운영 alert 채널에 연동.
+  갱신 실패 등에 대한 알림을 기존 운영 alert 채널에 연동. 🔲 미착수(다음 후보)
 
-각 Phase는 이전 Phase 완료 후 별도 승인을 거쳐 착수한다 (특히 Phase 4는 Phase 3
-운영 경험을 바탕으로 실시간성이 실제로 부족한지 재검토한 뒤 착수 여부를 결정).
+각 Phase는 이전 Phase 완료 후 별도 승인을 거쳐 착수한다. Phase 4는 Phase 3 운영
+경험을 바탕으로 실시간성이 실제로 부족한지 재검토를 거쳐 착수·완료했다.
 
 ## 9. 테스트 계획
 
@@ -343,7 +454,9 @@ GET /realtime-quotes/snapshot?symbols=005930,000660
 
 ### 현재 판단
 - 현재는 KIS_REALTIME_QUOTE_*와 KIS_LIVE_INFO_*를 분리 유지한다.
-- 다만 이 결정을 영구 고정하지 않고, Phase 4 후단에서 통합 가능성을 다시 평가한다.
+- **2026-07-09 Phase 4(push relay) 완료 시점에도 이 결정은 그대로 유지했다** —
+  Phase 4 작업 범위에서 credential 통합은 명시적으로 제외됐다(사용자 지시).
+  아래 재평가는 이제부터 후속 검토 대상이다.
 
 ### 지금 분리 유지가 합리적인 이유
 - 핵심 쟁점은 ops-scheduler와의 단순 충돌보다 WebSocket session ownership이다.
@@ -361,5 +474,8 @@ GET /realtime-quotes/snapshot?symbols=005930,000660
 - 별도 계좌/appkey 유지에는 실제 운영·행정 비용이 든다.
 - 거래 없는 별도 계좌/appkey의 장기 유지 보장을 시스템이 줄 수 없으므로,
   이는 기술 외부 이슈가 아니라 실제 아키텍처 입력값으로 취급해야 한다.
-- 따라서 Phase 4에서 push relay / WS ownership 구조를 정리한 뒤,
-  KIS_REALTIME_QUOTE_*와 KIS_LIVE_INFO_*를 단일 market-data credential로 통합할 수 있는지 다시 판단한다.
+- **Phase 4에서 push relay/WS ownership 구조(`QuoteBroadcaster`) 정리가 이제
+  완료됐으므로**, KIS_REALTIME_QUOTE_*와 KIS_LIVE_INFO_*를 단일 market-data
+  credential로 통합할 수 있는지는 지금부터가 실제 재검토 시점이다. 다만 이번
+  Phase 4 작업에서는 통합 자체를 진행하지 않았다(범위 제외, 사용자 지시) — 후속
+  과제로 남긴다.

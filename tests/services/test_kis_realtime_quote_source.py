@@ -479,6 +479,92 @@ class TestMessageHandlingAndSnapshots:
         assert connected_source.get_snapshots(["005930"]) == {}
 
 
+class TestPushListenerDedup:
+    """2026-07-09: 장 마감 후 KIS가 동일한 마지막 값을 반복 전송하는 것이 실측됐다 —
+    내용이 실제로 안 바뀐 프레임은 ``add_listener`` 콜백을 다시 안 태우고,
+    최초 1회(또는 실제 변경 시)에만 통보한다."""
+
+    async def test_first_frame_after_subscribe_always_notifies(
+        self, connected_source: KisRealtimeQuoteSource
+    ) -> None:
+        """장중엔 미구독 상태였다가 장 종료 후 처음 구독해도, 그 첫 프레임은
+        (마감 후 반복되는 동일 값이라도) 반드시 최소 1회는 통보돼야 한다."""
+        await connected_source.subscribe("005930")
+        ws = _fake_ws(connected_source)
+        received: list[str] = []
+        connected_source.add_listener(lambda symbol, snapshot: received.append(symbol))
+
+        await ws.push(
+            {
+                "type": "unknown",
+                "tr_id": "0",
+                "raw": "0|H0STCNT0|001|005930^093354^71900^5^-100^-0.14",
+            }
+        )
+        await asyncio.sleep(0.05)
+
+        assert received == ["005930"]
+
+    async def test_identical_repeated_frame_is_not_re_notified(
+        self, connected_source: KisRealtimeQuoteSource
+    ) -> None:
+        await connected_source.subscribe("005930")
+        ws = _fake_ws(connected_source)
+        received: list[str] = []
+        connected_source.add_listener(lambda symbol, snapshot: received.append(symbol))
+
+        body = "005930^153002^278000^5^-100^-0.14^72023.83^72100^72400^71700^71900^71800^1^3052507"
+        # KIS가 마감 후 완전히 동일한 프레임을 3번 반복 전송하는 상황을 흉내낸다.
+        for _ in range(3):
+            await ws.push({"type": "unknown", "tr_id": "0", "raw": f"0|H0STCNT0|001|{body}"})
+        await asyncio.sleep(0.05)
+
+        # 첫 프레임만 통보되고, 이후 동일 프레임 2건은 스킵된다.
+        assert received == ["005930"]
+
+    async def test_content_change_notifies_again(
+        self, connected_source: KisRealtimeQuoteSource
+    ) -> None:
+        await connected_source.subscribe("005930")
+        ws = _fake_ws(connected_source)
+        received: list[str] = []
+        connected_source.add_listener(lambda symbol, snapshot: received.append(symbol))
+
+        same_body = "005930^153002^278000^5^-100^-0.14^72023.83^72100^72400^71700^71900^71800^1^3052507"
+        changed_body = "005930^153010^278500^5^-100^-0.14^72023.83^72100^72400^71700^71900^71800^1^3052507"
+        await ws.push({"type": "unknown", "tr_id": "0", "raw": f"0|H0STCNT0|001|{same_body}"})
+        await ws.push({"type": "unknown", "tr_id": "0", "raw": f"0|H0STCNT0|001|{same_body}"})
+        await ws.push({"type": "unknown", "tr_id": "0", "raw": f"0|H0STCNT0|001|{changed_body}"})
+        await asyncio.sleep(0.05)
+
+        # 1st(신규) + 3rd(실제 변경) = 2건만 통보. 2nd(동일)은 스킵.
+        assert received == ["005930", "005930"]
+
+    async def test_resubscribe_after_unsubscribe_notifies_first_frame_again(
+        self, connected_source: KisRealtimeQuoteSource
+    ) -> None:
+        """구독 해제 후 재구독하면(예: 장중 미구독 → 장 종료 후 재구독) 이전
+        signature 캐시가 남아있어 첫 프레임이 잘못 스킵되면 안 된다."""
+        await connected_source.subscribe("005930")
+        ws = _fake_ws(connected_source)
+        received: list[str] = []
+        connected_source.add_listener(lambda symbol, snapshot: received.append(symbol))
+
+        body = "005930^153002^278000^5^-100^-0.14^72023.83^72100^72400^71700^71900^71800^1^3052507"
+        await ws.push({"type": "unknown", "tr_id": "0", "raw": f"0|H0STCNT0|001|{body}"})
+        await asyncio.sleep(0.05)
+        assert received == ["005930"]
+
+        await connected_source.unsubscribe("005930")
+        await connected_source.subscribe("005930")
+        # 재구독 후 동일한 내용의 프레임이 다시 들어와도, signature 캐시가
+        # unsubscribe 시점에 지워졌으므로 다시 통보돼야 한다.
+        await ws.push({"type": "unknown", "tr_id": "0", "raw": f"0|H0STCNT0|001|{body}"})
+        await asyncio.sleep(0.05)
+
+        assert received == ["005930", "005930"]
+
+
 class TestDailyPrice:
     """``get_daily_price()`` — REST-only, independent of WS subscription state."""
 

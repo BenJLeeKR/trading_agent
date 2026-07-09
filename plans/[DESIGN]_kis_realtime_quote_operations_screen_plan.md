@@ -3,10 +3,13 @@
 > **목적**: `plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md`(Backend/API 설계)와
 > `plans/[DESIGN]_kis_realtime_quote_screen_ui_layout.md`(Admin UI 레이아웃 설계)를
 > 실제 구현 가능한 단위(작은 PR)로 분해한다.
-> **상태**: 🔄 Phase 1~3 완료, Phase 4 대기 — Step 0/1/2/3/5/6/7/8/9는 구현 완료.
-> **Step 4(REST Fallback 연동)는 미구현으로 남아 있다** — `data_source`에
-> `"rest_fallback"`이 실제로 산출되는 경로는 코드에 없다(타입 힌트 주석으로만 존재).
-> 자세한 현재 상태는 `[PRIORITY_MAP]` #19, `[BACKLOG]` #37 참조.
+> **상태**: ✅ Phase 1~4 완료 (2026-07-09) — Step 0/1/2/3/5/6/7/8/9 + Phase 4(push
+> relay, SSE) 구현 완료. **Step 4(REST Fallback 연동)만 여전히 미구현으로 남아
+> 있다** — `data_source`에 `"rest_fallback"`이 실제로 산출되는 경로는 코드에
+> 없다(타입 힌트 주석으로만 존재). 이는 Phase 4의 "완전 연결 실패 시 REST polling
+> fallback"(SSE 전송 실패 시 기존 snapshot polling 재개)과는 별개의 항목이다 —
+> 전자는 KIS WS 자체가 끊겼을 때의 값 보정, 후자는 admin_ui↔backend 전달 경로
+> 자체의 fallback이다. 자세한 현재 상태는 `[PRIORITY_MAP]` #19, `[BACKLOG]` #37 참조.
 > **참조**: [`11_kis_realtime_quote_operations_screen.md`](../plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md),
 > [`[DESIGN]_kis_realtime_quote_screen_ui_layout.md`](%5BDESIGN%5D_kis_realtime_quote_screen_ui_layout.md),
 > [`[BACKLOG] backlog.md` #37](%5BBACKLOG%5D%20backlog.md),
@@ -368,8 +371,9 @@ python -m pytest tests/smoke/test_realtime_quote_live_smoke.py -v -m smoke --tim
 - 종목 즐겨찾기/워치리스트의 서버 영속화(DB 저장) — 세션 동안만 메모리 유지
 - 가격 도달 알림/급등락 알림 등 alert 인프라 연동
 - 예상체결가/예상체결량(동시호가 전용 필드) 표시
-- WebSocket/SSE relay 방식으로의 전환 — Phase 1은 **UI polling**만 구현
-  (`11_...md` §5.5(c) 단계적 전환 계획에 따라 relay는 Phase 4 이후 별도 계획)
+- ~~WebSocket/SSE relay 방식으로의 전환~~ — **2026-07-09 Phase 4에서 구현 완료**
+  (SSE 채택, `QuoteBroadcaster` fan-out. `11_...md` §5.5 참고). Phase 1 당시엔
+  UI polling만 구현했었다.
 - 통합 채널(`H0UNCNT0`/`H0UNASP0`, KRX+NXT) 도입 — KRX 전용으로 확정됨
 - 주문 화면으로의 단축 진입 동선(호가 클릭 시 주문창 연결 등)
 - 모바일 전용 네이티브 제스처(스와이프 등)
@@ -379,7 +383,9 @@ python -m pytest tests/smoke/test_realtime_quote_live_smoke.py -v -m smoke --tim
 ## Credential 분리 유지와 후속 통합 검토
 
 ### 현재 결정
-- Phase 4 구현 전까지는 KIS_REALTIME_QUOTE_*와 KIS_LIVE_INFO_*를 분리 유지한다.
+- Phase 4(push relay) 완료 이후에도 KIS_REALTIME_QUOTE_*와 KIS_LIVE_INFO_*를
+  분리 유지한다 — Phase 4 작업 범위에서 credential 통합은 명시적으로 제외됐다
+  (사용자 지시, 2026-07-09).
 
 ### 분리 유지의 합리적 근거
 - KIS_LIVE_INFO_*가 이미 장운영정보 163 WebSocket을 소유하므로,
@@ -392,5 +398,6 @@ python -m pytest tests/smoke/test_realtime_quote_live_smoke.py -v -m smoke --tim
 ### 후속 통합 검토의 합리적 근거
 - 현재 화면은 단일 종목 중심이라 다종목 fan-out 압력이 아직 크지 않다.
 - 별도 계좌/appkey 유지에는 운영·행정 비용이 있다.
-- 따라서 Phase 4 후단에서 push relay 구조가 굳은 뒤,
-  KIS_REALTIME_QUOTE_*와 KIS_LIVE_INFO_*를 통합 가능한지 의도적으로 다시 판단한다.
+- **Phase 4의 push relay 구조(`QuoteBroadcaster`)가 이제 안정화됐으므로**,
+  KIS_REALTIME_QUOTE_*와 KIS_LIVE_INFO_*를 통합 가능한지는 지금부터가 실제
+  재검토 시점이다 — 다음 후속 과제로 남긴다(구현은 하지 않음).

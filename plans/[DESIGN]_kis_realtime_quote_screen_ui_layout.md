@@ -2,9 +2,12 @@
 
 > **목적**: `plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md`의 Backend/API 설계를
 > 전제로, Admin UI 화면 레이아웃만 먼저 문서화한다.
-> **상태**: 🔄 Phase 1~3 완료, Phase 4 대기 — `RealtimeQuoteView.tsx`/`QuoteLadder.tsx`로
-> 실제 구현 완료(단일 종목 뷰, 10호가 프레임 유지 UX, 딥링크). §7의 "REST fallback 배지"는
-> 백엔드 Step 4(REST Fallback)가 미구현이라 실제로는 트리거되지 않는다.
+> **상태**: ✅ Phase 1~4 완료 (2026-07-09) — `RealtimeQuoteView.tsx`/`QuoteLadder.tsx`로
+> 실제 구현 완료(단일 종목 뷰, 10호가 프레임 유지 UX, 딥링크). **Phase 4에서 화면 갱신
+> 방식을 polling → SSE push 우선(+ 전송 실패 시 polling fallback)으로 전환**했다
+> (`admin_ui/src/api/client.ts::subscribeRealtimeQuoteStream`). §7의 "REST fallback
+> 배지"는 여전히 백엔드 Step 4(REST Fallback, KIS WS 자체가 끊겼을 때 값 보정)가
+> 미구현이라 트리거되지 않는다 — Phase 4의 push→polling fallback과는 별개 항목.
 > **참조**: [`11_kis_realtime_quote_operations_screen.md`](../plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md), [`[BACKLOG] backlog.md` #37](%5BBACKLOG%5D%20backlog.md), [`[PRIORITY_MAP] remaining_work_priority_map.md` #19](%5BPRIORITY_MAP%5D%20remaining_work_priority_map.md)
 >
 > **v2 변경 사항**: 사용자가 제시한 참고 이미지(HTS 스타일 단일 종목 호가창)를 반영해

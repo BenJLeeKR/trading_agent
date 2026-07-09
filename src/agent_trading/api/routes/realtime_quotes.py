@@ -21,6 +21,7 @@ and ``plans/[DESIGN]_kis_realtime_quote_operations_screen_plan.md`` (Step 1-3).
 from __future__ import annotations
 
 import json
+from contextlib import aclosing
 from datetime import datetime, timezone
 from typing import AsyncIterator
 
@@ -252,8 +253,14 @@ def _encode_sse_event(event: BroadcastEvent) -> bytes:
 async def _sse_event_stream(
     broadcaster: QuoteBroadcaster, symbol: str
 ) -> AsyncIterator[bytes]:
-    async for event in broadcaster.stream(symbol):
-        yield _encode_sse_event(event)
+    # ``async for`` does NOT call ``aclose()`` on its iterator when the loop
+    # is abandoned early (client disconnect closes *this* generator, not
+    # automatically the inner one) — ``aclosing()`` guarantees
+    # ``broadcaster.stream()``'s ``finally`` (unsubscribe, cancel poll/heartbeat
+    # tasks) actually runs on every exit path, not just normal completion.
+    async with aclosing(broadcaster.stream(symbol)) as events:
+        async for event in events:
+            yield _encode_sse_event(event)
 
 
 @router.get("/stream")
