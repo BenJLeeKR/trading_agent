@@ -141,24 +141,25 @@ services:
       KIS_API_KEY: "${KIS_API_KEY:-}"
       KIS_API_SECRET: "${KIS_API_SECRET:-}"
       KIS_ACCOUNT_NUMBER: "${KIS_ACCOUNT_NUMBER:-}"
-      # P1: Live-info client (076 holiday / market session gate) — completely separate
+      # Live-info client (076 holiday / market session gate) — 2026-07-10부터
+      # Admin UI "실시간 현재가" 화면(KIS WebSocket/REST fallback)의 authoritative
+      # credential이기도 하다(build_realtime_quote_source()). ops-scheduler에서
+      # 163 WS 의존이 제거되어, 이제 이 appkey의 WS 세션은 `api` 프로세스만
+      # 소유한다(§4.2 WebSocket Session 1개 원칙 유지). 트레이딩 계좌(KIS_APP_KEY)
+      # 와는 여전히 완전히 분리되어 있다.
       KIS_LIVE_INFO_ENABLED: "${KIS_LIVE_INFO_ENABLED:-false}"
       KIS_LIVE_INFO_APP_KEY: "${KIS_LIVE_INFO_APP_KEY:-}"
       KIS_LIVE_INFO_APP_SECRET: "${KIS_LIVE_INFO_APP_SECRET:-}"
       KIS_LIVE_INFO_BASE_URL: "${KIS_LIVE_INFO_BASE_URL:-}"
       KIS_LIVE_INFO_WS_URL: "${KIS_LIVE_INFO_WS_URL:-}"
-      # P2: Live-info token cache (WebSocket approval key persistence)
+      # Live-info token cache (WebSocket approval key persistence)
       KIS_LIVE_TOKEN_CACHE_ENABLED: "${KIS_LIVE_TOKEN_CACHE_ENABLED:-true}"
       KIS_LIVE_TOKEN_CACHE_PATH: "${KIS_LIVE_TOKEN_CACHE_PATH:-.cache/kis_live_token.json}"
-      # Realtime-quote screen client (Admin UI "실시간 현재가") — completely separate
-      # Live account/appkey from the trading account and KIS_LIVE_INFO_*.
-      # This connection lives ONLY in the `api` process — never add these to
-      # ops-scheduler. Empty appkey/appsecret → mock (in-memory) source.
-      KIS_REALTIME_QUOTE_APP_KEY: "${KIS_REALTIME_QUOTE_APP_KEY:-}"
-      KIS_REALTIME_QUOTE_APP_SECRET: "${KIS_REALTIME_QUOTE_APP_SECRET:-}"
-      KIS_REALTIME_QUOTE_BASE_URL: "${KIS_REALTIME_QUOTE_BASE_URL:-https://openapi.koreainvestment.com:9443}"
-      KIS_REALTIME_QUOTE_WS_URL: "${KIS_REALTIME_QUOTE_WS_URL:-ws://ops.koreainvestment.com:21000}"
-      KIS_REALTIME_QUOTE_APPROVAL_CACHE_PATH: "${KIS_REALTIME_QUOTE_APPROVAL_CACHE_PATH:-.cache/kis_realtime_quote_approval_key.json}"
+      # 실시간 현재가 화면 전용 approval-key 파일 캐시(트레이딩/공시 계좌 캐시와 분리).
+      # KIS_REALTIME_QUOTE_*(legacy, deprecated)는 더 이상 표준 설정이 아니다 —
+      # 필요 시 코드 레벨 하위 호환 fallback(build_realtime_quote_source())만
+      # 짧게 남겨뒀으니, 이 compose 파일에서는 설정하지 않는다.
+      KIS_LIVE_INFO_APPROVAL_CACHE_PATH: "${KIS_LIVE_INFO_APPROVAL_CACHE_PATH:-.cache/kis_live_info_approval_key.json}"
       LLM_PROVIDER: "${LLM_PROVIDER:-deepseek}"
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
       DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
@@ -186,9 +187,13 @@ services:
       - seccomp:unconfined
       - apparmor:unconfined
     command:
-      - sh
-      - -c
-      - "python3 -m agent_trading.db.migrations.run && exec uvicorn agent_trading.api.app:create_app_from_env --factory --host 0.0.0.0 --port 8000"
+      - "uvicorn"
+      - "agent_trading.api.app:create_app_from_env"
+      - "--factory"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
     healthcheck:
       test:
         - "CMD"
@@ -200,6 +205,32 @@ services:
       retries: 3
       start_period: 10s
     restart: unless-stopped
+    networks:
+      - shared_net  # 추가됨
+
+  # ---- DB Migration (one-shot) ---------------------------------------------
+  # `api`는 더 이상 기동 시 자동으로 migration을 실행하지 않는다 — "api 재기동"과
+  # "DB migration 실행"을 분리하기 위한 명시적 one-shot 서비스. 배포/운영 절차:
+  #   docker compose run --rm migrate
+  #   (성공 확인 후)
+  #   docker compose up -d api
+  # `api`와 동일한 image/build/env를 재사용한다(같은 DATABASE_* 접속 정보로
+  # 실행돼야 하므로). 장기 실행 서비스가 아니므로 ports/healthcheck/restart는
+  # 두지 않는다 — `docker compose up`으로 기동되는 대상에도 포함되지 않도록
+  # `profiles`로 분리했다(명시적으로 `run`/`--profile migrate up`할 때만 대상이 됨).
+  migrate:
+    build: .
+    profiles:
+      - migrate
+    environment:
+      TZ: "Asia/Seoul"
+      DATABASE_HOST: trading_db
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "${DATABASE_NAME:-trading}"
+      DATABASE_USER: "${DATABASE_USER:-trading}"
+      DATABASE_PASSWORD: "${DATABASE_PASSWORD:-trading}"
+      DATABASE_SCHEMA: "${DATABASE_SCHEMA:-trading}"
+    command: ["python3", "-m", "agent_trading.db.migrations.run"]
     networks:
       - shared_net  # 추가됨
 
@@ -252,7 +283,11 @@ services:
       KIS_DEV_TOKEN_CACHE_ENABLED: "${KIS_DEV_TOKEN_CACHE_ENABLED:-true}"
       KIS_DEV_TOKEN_CACHE_PATH: "${KIS_DEV_TOKEN_CACHE_PATH:-.cache/kis_token.json}"
       KIS_SHARED_BUDGET_FILE: "${KIS_SHARED_BUDGET_FILE:-.cache/kis_paper_global_budget.json}"
-      # KIS Live Info (076/163)
+      # KIS Live Info (076 REST — 국내휴장일조회/session gate 전용).
+      # ops-scheduler는 2026-07-10에 163 WebSocket(KisMarketStateClient) 의존을
+      # 제거했다 — 아래 값들은 076-only 경로(create_session_provider())에만
+      # 쓰인다. KIS_LIVE_INFO_WS_URL은 scheduler 런타임에서 더 이상 163 연결을
+      # 여는 데 쓰이지 않고, 토큰 캐시 상태 조회(운영 관찰성)용으로만 남아있다.
       KIS_LIVE_INFO_ENABLED: "${KIS_LIVE_INFO_ENABLED:-false}"
       KIS_LIVE_INFO_APP_KEY: "${KIS_LIVE_INFO_APP_KEY:-}"
       KIS_LIVE_INFO_APP_SECRET: "${KIS_LIVE_INFO_APP_SECRET:-}"
@@ -314,7 +349,9 @@ services:
           if row is None:
               healthy = True;  # No session yet — skip health check
           elif row['market_phase'] in ('after_hours', 'idle'):
-              healthy = True;  # After-hours/idle: heartbeat not expected
+              healthy = True;  # After-hours/idle: heartbeat not expected (market_phase는
+                                # 163 제거(2026-07-10) 이후 항상 NULL이라 이 분기는 더 이상
+                                # 히트하지 않지만, 아래 heartbeat 최신성 검사로 폴백된다.
           elif row['last_heartbeat_at'] and (now - row['last_heartbeat_at']).total_seconds() < 120:
               healthy = True;  # Active session with recent heartbeat
           elif row['is_trading_day'] == False and row['checked_at'] and (now - row['checked_at']).total_seconds() < 86400:

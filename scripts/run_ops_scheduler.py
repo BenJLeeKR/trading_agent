@@ -53,21 +53,19 @@ from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-# Session gate — P1 market session hardening (076 API + fallback)
+# Session gate — P1 market session hardening (076 API + fallback).
+# 163 WebSocket(KisMarketStateClient)/CombinedSessionProvider 의존은
+# 2026-07-10에 제거되었다 — session source는 076 REST(KisHolidayProvider)
+# + FallbackSessionProvider(시계 기반)로 고정된다.
+# 근거: plans/[PRIORITY_MAP] remaining_work_priority_map.md 항목 20,
+# plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md
+# "163 WS(장운영정보, ops-scheduler) 제거 가능성 검토 메모".
 from agent_trading.services.market_session import (
-    CombinedSessionProvider,
     MarketSessionProvider,
     SCHEDULER_ADVISORY_LOCK_KEY,
     SessionInfo,
     create_session_provider,
     try_scheduler_lock,
-)
-
-# P2: 163 WebSocket market state + DB session persistence
-from agent_trading.brokers.koreainvestment.market_state_client import (
-    KisMarketStateClient,
-    MarketPhaseCode,
-    MarketStateProvider,
 )
 from agent_trading.brokers.koreainvestment.token_cache import (
     CachePurpose,
@@ -2800,70 +2798,19 @@ def _log_summary(state: SchedulerState) -> None:
     logger.info("=" * 72)
 
 
-async def _init_market_state_provider() -> KisMarketStateClient | None:
-    """Initialize 163 WebSocket market state client if live-info is configured.
-
-    Returns ``None`` if live-info is not enabled or credentials are missing.
-    """
-    env = _build_base_env()
-    kis_live_info_enabled = env.get("KIS_LIVE_INFO_ENABLED", "").strip().lower() == "true"
-    if not kis_live_info_enabled:
-        logger.info("Market state provider: skipped (KIS_LIVE_INFO_ENABLED != true)")
-        return None
-
-    # 163 Market State Provider는 KIS_LIVE_INFO_* 전용 credential 사용
-    app_key = env.get("KIS_LIVE_INFO_APP_KEY", "").strip()
-    api_secret = env.get("KIS_LIVE_INFO_APP_SECRET", "").strip()
-    base_ws_url = env.get("KIS_LIVE_INFO_WS_URL", "").strip() or None
-    if not app_key or not api_secret:
-        logger.warning("market_state_provider=disabled (KIS_LIVE_INFO_APP_KEY missing)")
-        return None
-
-    # Build a minimal AppSettings for KisMarketStateClient
-    settings = AppSettings()
-    try:
-        client = KisMarketStateClient(
-            settings=settings,
-            app_key=app_key,
-            api_secret=api_secret,
-            base_ws_url=base_ws_url,
-        )
-        logger.info("market_state_provider=enabled (KIS_LIVE_INFO_APP_KEY present)")
-        return client
-    except Exception as exc:
-        logger.warning("Market state provider init failed: %s — skipping", exc)
-        return None
-
-
-async def _init_session_provider(
-    market_state_provider: MarketStateProvider | None = None,
-) -> MarketSessionProvider:
+async def _init_session_provider() -> MarketSessionProvider:
     """Initialize session provider from environment configuration.
 
     Uses ``create_session_provider()`` which resolves:
     - ``KisHolidayProvider`` (076 API) if ``KIS_LIVE_INFO_ENABLED=true`` + credentials
     - ``FallbackSessionProvider`` (weekday heuristic) otherwise
 
-    If ``market_state_provider`` is provided, wraps the base provider in
-    ``CombinedSessionProvider`` for 076+163 combined phase detection.
+    163 WebSocket(``CombinedSessionProvider``)와의 결합은 2026-07-10에
+    제거되었다 — session source는 항상 이 base provider(076/fallback-only)다.
     """
     base_provider = await create_session_provider()
-
-    if market_state_provider is not None and market_state_provider.is_connected:
-        combined = CombinedSessionProvider(
-            holiday_provider=base_provider,
-            market_state_provider=market_state_provider,
-        )
-        logger.info(
-            "Session provider initialized: CombinedSessionProvider "
-            "(base=%s, market_state=%s)",
-            type(base_provider).__name__,
-            type(market_state_provider).__name__,
-        )
-        return combined
-
     logger.info(
-        "Session provider initialized: %s (163 WS not available)",
+        "Session provider initialized: %s (076/fallback-only, 163 WS removed)",
         type(base_provider).__name__,
     )
     return base_provider
@@ -3025,122 +2972,13 @@ async def _persist_operations_day_run(
         logger.exception("Failed to persist operations day run to DB")
 
 
-async def _insert_session_event(
-    state: SchedulerState,
-    dsn: str | None,
-    old_phase: str | None,
-    new_phase: str,
-) -> None:
-    """Insert a phase-change event into the ``trading.session_events`` table.
-
-    Requires ``state.session_db_id`` to be set (i.e., a prior
-    ``_persist_session_state()`` call must have succeeded).  If DSN is
-    ``None`` or ``session_db_id`` is ``None``, the operation is skipped.
-    """
-    if dsn is None or state.session_db_id is None:
-        return
-    try:
-        import asyncpg
-
-        conn = await asyncpg.connect(dsn=dsn)
-        try:
-            await conn.execute(
-                """INSERT INTO trading.session_events
-                   (market_session_id, previous_phase, new_phase,
-                    trigger_source, metadata, occurred_at)
-                   VALUES ($1, $2, $3, $4, $5, $6)""",
-                state.session_db_id,
-                old_phase,
-                new_phase,
-                "scheduler_phase_monitor",
-                None,
-                datetime.now(KST),
-            )
-        finally:
-            await conn.close()
-    except Exception:
-        logger.exception("Failed to insert session event to DB")
-
-
-async def _handle_phase_change(
-    state: SchedulerState,
-    old_phase: str | None,
-    new_phase: str,
-    dsn: str | None = None,
-) -> None:
-    """React to a market phase change.
-
-    - Detects transition to ``AFTER_HOURS`` → sets ``state.after_hours_mode = True``
-    - Detects transition to ``HALT`` / ``UNKNOWN`` → logs warning
-    - Persists updated session state to DB if DSN is available
-    """
-    now = datetime.now(KST)
-    state.market_phase = new_phase
-    state.last_phase_change = now
-
-    if new_phase == MarketPhaseCode.AFTER_HOURS.value:
-        if not state.after_hours_mode:
-            state.after_hours_mode = True
-            state.after_hours_full_snapshot_done = False
-            logger.info(
-                "Phase change: %s -> AFTER_HOURS — enabling after-hours snapshot mode",
-                old_phase or "NONE",
-            )
-    elif new_phase in (MarketPhaseCode.HALT.value, MarketPhaseCode.UNKNOWN.value):
-        logger.warning(
-            "Phase change: %s -> %s — unsafe market state detected",
-            old_phase or "NONE",
-            new_phase,
-        )
-    else:
-        logger.info(
-            "Phase change: %s -> %s",
-            old_phase or "NONE",
-            new_phase,
-        )
-
-    # Persist session state to DB (market_sessions UPSERT)
-    await _persist_session_state(state, dsn)
-
-    # Record phase-change event in session_events
-    await _insert_session_event(state, dsn, old_phase, new_phase)
-
-
-async def _session_phase_monitor(
-    state: SchedulerState,
-    market_state_provider: MarketStateProvider,
-    *,
-    poll_interval: int = 5,
-    dsn: str | None = None,
-) -> None:
-    """Background task that polls ``MarketStateProvider`` for phase changes.
-
-    Runs at a configurable interval (default 5 seconds). On detecting a phase
-    change, calls ``_handle_phase_change()`` to update in-memory state and
-    persist to DB.
-
-    Designed to run as an ``asyncio`` task alongside the main scheduler loop.
-    """
-    logger.info(
-        "Session phase monitor started (poll_interval=%ds, db_persist=%s)",
-        poll_interval,
-        dsn is not None,
-    )
-    while True:
-        try:
-            current_state = await market_state_provider.get_current_state()
-            new_phase = current_state.phase.value
-            old_phase = state.market_phase
-
-            if new_phase != old_phase:
-                await _handle_phase_change(state, old_phase, new_phase, dsn)
-        except asyncio.CancelledError:
-            logger.info("Session phase monitor cancelled")
-            break
-        except Exception:
-            logger.debug("Session phase monitor poll error (ignored)", exc_info=True)
-
-        await asyncio.sleep(poll_interval)
+# _insert_session_event() / _handle_phase_change() / _session_phase_monitor()
+# (163 WebSocket phase polling — KisMarketStateClient 기반) removed 2026-07-10.
+# ``state.market_phase``/``state.last_phase_change``는 이 세 함수의 유일한
+# writer였으므로 이제 항상 None으로 남는다 — DB 컬럼(trading.market_sessions/
+# operations_day_runs)은 그대로 두고 NULL을 기록한다(스키마 변경 없음,
+# 로깅/조회 쪽은 이미 "N/A" 폴백을 갖추고 있어 별도 수정이 필요 없다).
+# 근거: plans/[PRIORITY_MAP] remaining_work_priority_map.md 항목 20.
 
 
 def _build_dsn(env: dict[str, str]) -> str | None:
@@ -3229,8 +3067,8 @@ async def _log_startup_info(env: dict[str, str], state: SchedulerState, pool_ok:
         env.get("KIS_LIVE_TOKEN_CACHE_ENABLED", "false"),
         env.get("KIS_LIVE_TOKEN_CACHE_PATH", "N/A"),
     )
-    logger.info("  Live-info WS URL:    %s", env.get("KIS_LIVE_INFO_WS_URL", "N/A"))
-    logger.info("  Session source:      CombinedSessionProvider (076+163+fallback)")
+    logger.info("  Session source:      076 REST (KisHolidayProvider) + FallbackSessionProvider "
+                "(163 WS removed 2026-07-10)")
     logger.info("  After-hours window:  %ss", env.get("SCHEDULER_AFTER_HOURS_WINDOW", "3600"))
     logger.info("  Signal batch time:   %s", DEFAULT_SIGNAL_FEATURE_BATCH_TIME.strftime("%H:%M"))
     logger.info(
@@ -3250,11 +3088,6 @@ async def _log_startup_info(env: dict[str, str], state: SchedulerState, pool_ok:
     live_info_key_present = "present" if env.get("KIS_LIVE_INFO_APP_KEY") else "missing"
     logger.info("  trading_kis_config=%s", trading_key_present)
     logger.info("  live_info_kis_config=%s", live_info_key_present)
-    market_state = "enabled" if (
-        env.get("KIS_LIVE_INFO_ENABLED", "").strip().lower() == "true"
-        and env.get("KIS_LIVE_INFO_APP_KEY")
-    ) else "disabled"
-    logger.info("  market_state_provider=%s", market_state)
     logger.info("=" * 60)
 
 
@@ -3281,48 +3114,13 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
     market_close_at = _combine(run_date, args.market_close)
     end_at = _combine(run_date, args.end_of_day_end)
 
-    # P2: Initialize 163 WebSocket market state provider
-    market_state_provider = await _init_market_state_provider()
+    # P1: Initialize session provider (076 REST + fallback-only —
+    # 163 WebSocket/CombinedSessionProvider removed 2026-07-10).
+    session_provider = await _init_session_provider()
 
-    # P1+P2: Initialize session provider (CombinedSessionProvider if WS available)
-    session_provider = await _init_session_provider(market_state_provider)
-
-    # ── Seed initial market phase ──────────────────────────────────────
-    # Fetch the current phase from the market state provider (163 WebSocket)
-    # before the background phase monitor polls for the first time.  This
-    # ensures every _persist_session_state() call includes a non-NULL
-    # market_phase and prevents a NULL-phase row from being persisted.
-    if market_state_provider is not None and market_state_provider.is_connected:
-        try:
-            initial_state = await market_state_provider.get_current_state()
-            state.market_phase = initial_state.phase.value
-            state.last_phase_change = datetime.now(KST)
-            logger.info(
-                "Initial market phase seeded: %s (source=%s)",
-                state.market_phase,
-                type(market_state_provider).__name__,
-            )
-        except Exception:
-            logger.debug(
-                "Could not seed initial market phase — will be set by background monitor",
-                exc_info=True,
-            )
-
-    # Persist seeded state immediately so the very first market_sessions
-    # row carries a non-NULL market_phase.
+    # Persist initial state immediately so the very first market_sessions
+    # row exists (market_phase stays NULL — no writer for it anymore).
     await _persist_session_state(state, dsn)
-
-    # P2: Start background phase monitor task
-    phase_monitor_task: asyncio.Task[None] | None = None
-    if market_state_provider is not None and market_state_provider.is_connected:
-        phase_monitor_task = asyncio.create_task(
-            _session_phase_monitor(
-                state,
-                market_state_provider,
-                dsn=dsn,
-            )
-        )
-        logger.info("Phase monitor background task created")
 
     # P3: Create DB pool for advisory lock and heartbeat (with retries)
     pool = None
@@ -3359,7 +3157,7 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
     # P3: Advisory lock wrapper
     async def _run_with_lock() -> int:
         """Inner scheduler logic with lock context."""
-        nonlocal phase_monitor_task, run_date, state, pre_market_at
+        nonlocal run_date, state, pre_market_at
         nonlocal instrument_master_sync_at, instrument_status_snapshot_at
         nonlocal intraday_at, market_close_at, end_at
 
@@ -3783,22 +3581,6 @@ async def _run_scheduler(args: argparse.Namespace) -> int:
                     await heartbeat_task
                 except asyncio.CancelledError:
                     pass
-
-            # P2: Cancel phase monitor task
-            if phase_monitor_task is not None and not phase_monitor_task.done():
-                phase_monitor_task.cancel()
-                try:
-                    await phase_monitor_task
-                except asyncio.CancelledError:
-                    pass
-
-            # P2: Disconnect market state provider (WebSocket)
-            if market_state_provider is not None:
-                try:
-                    await market_state_provider.disconnect()
-                    logger.debug("Market state provider disconnected")
-                except Exception:
-                    logger.debug("Market state provider disconnect (ignored)", exc_info=True)
 
             await _close_session_provider(session_provider)
 

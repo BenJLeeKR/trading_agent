@@ -336,49 +336,70 @@ def _resolve_kis_disclosure_token_cache_enabled() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# KIS realtime-quote screen (신규 전용 계좌/앱키 — 트레이딩 계좌·KIS_LIVE_INFO_*와 완전 분리)
+# KIS realtime-quote screen — DEPRECATED credential family (2026-07-10)
 # ---------------------------------------------------------------------------
 #
-# "실시간 현재가 조회" Admin UI 화면(plan_docs/detailed_design/
-# 11_kis_realtime_quote_operations_screen.md) 전용 자격증명이다. 이 계좌는
-# 오직 국내주식 실시간 체결가(H0STCNT0)/호가(H0STASP0) 구독에만 쓰이며,
-# 기존 트레이딩 계좌(KIS_APP_KEY/KIS_API_KEY)나 공시 전용 계좌
-# (KIS_LIVE_INFO_*)의 세션/budget과 절대 공유하지 않는다.
+# 이 화면(Admin UI "실시간 현재가")은 원래 트레이딩/공시 계좌와 분리된 전용
+# appkey(``KIS_REALTIME_QUOTE_*``)를 썼다. 163 WS 의존이 ``ops-scheduler``에서
+# 제거되면서(2026-07-10) ``KIS_LIVE_INFO_*``가 더 이상 별도 프로세스와 WS 세션을
+# 공유할 필요가 없어졌으므로, 이 화면도 ``KIS_LIVE_INFO_*``(``kis_live_app_key``/
+# ``kis_live_app_secret``/``kis_live_info_base_url``/``kis_live_info_ws_url``)로
+# 통합했다 — 최종 authoritative credential은 ``KIS_LIVE_INFO_*``다.
+# 아래 ``KIS_REALTIME_QUOTE_*`` 리졸버/필드는 짧은 하위 호환 기간 동안만
+# ``build_realtime_quote_source()``의 legacy fallback 경로에서 쓰인다
+# (``KIS_LIVE_INFO_APP_KEY``/``_APP_SECRET``가 비어 있을 때만). 신규 배포는
+# ``KIS_LIVE_INFO_*``만 설정하면 되고, 이 값들은 새로 설정할 필요가 없다.
 
 
 def _resolve_kis_realtime_quote_app_key() -> str:
-    """Resolve the realtime-quote screen's dedicated appkey from
-    ``KIS_REALTIME_QUOTE_APP_KEY``. Empty string when unset (mock fallback)."""
+    """[Deprecated] Legacy ``KIS_REALTIME_QUOTE_APP_KEY`` fallback.
+
+    최종 authoritative key는 ``KIS_LIVE_INFO_APP_KEY``다. 이 값은
+    ``build_realtime_quote_source()``가 ``kis_live_app_key``가 비어 있을 때만
+    참고하는 하위 호환 fallback이다.
+    """
     return os.getenv("KIS_REALTIME_QUOTE_APP_KEY", "")
 
 
 def _resolve_kis_realtime_quote_app_secret() -> str:
-    """Resolve the realtime-quote screen's dedicated appsecret from
-    ``KIS_REALTIME_QUOTE_APP_SECRET``. Empty string when unset (mock fallback)."""
+    """[Deprecated] Legacy ``KIS_REALTIME_QUOTE_APP_SECRET`` fallback.
+
+    최종 authoritative key는 ``KIS_LIVE_INFO_APP_SECRET``다.
+    """
     return os.getenv("KIS_REALTIME_QUOTE_APP_SECRET", "")
 
 
 def _resolve_kis_realtime_quote_base_url() -> str:
-    """Resolve the realtime-quote screen's REST base URL.
+    """[Deprecated] Legacy ``KIS_REALTIME_QUOTE_BASE_URL`` fallback.
 
-    Default matches KIS 실전 도메인 (``029_주식현재가_시세.md``,
-    ``002_실시간_(웹소켓)_접속키_발급.md``). This screen is Live-only — no
-    모의투자 fallback URL is provided.
+    최종 authoritative 값은 ``KIS_LIVE_INFO_BASE_URL``다.
     """
     return os.getenv("KIS_REALTIME_QUOTE_BASE_URL", "https://openapi.koreainvestment.com:9443")
 
 
 def _resolve_kis_realtime_quote_ws_url() -> str:
-    """Resolve the realtime-quote screen's WebSocket URL.
+    """[Deprecated] Legacy ``KIS_REALTIME_QUOTE_WS_URL`` fallback.
 
-    Default matches KIS 실전 도메인 for KRX 체결가/호가
-    (``172_국내주식_실시간체결가_(KRX).md``, ``178_국내주식_실시간호가_(KRX).md``).
+    최종 authoritative 값은 ``KIS_LIVE_INFO_WS_URL``다.
     """
     return os.getenv("KIS_REALTIME_QUOTE_WS_URL", "ws://ops.koreainvestment.com:21000")
 
 
 def _resolve_kis_realtime_quote_approval_cache_path() -> str:
-    """Resolve the realtime-quote screen's approval-key file cache path.
+    """[Deprecated] Legacy realtime-quote approval-key cache path fallback.
+
+    최종 authoritative 경로는 ``kis_live_info_approval_cache_path``
+    (``KIS_LIVE_INFO_APPROVAL_CACHE_PATH``)다.
+    """
+    return os.getenv(
+        "KIS_REALTIME_QUOTE_APPROVAL_CACHE_PATH",
+        ".cache/kis_realtime_quote_approval_key.json",
+    )
+
+
+def _resolve_kis_live_info_approval_cache_path() -> str:
+    """Resolve the KIS_LIVE_INFO_* realtime-quote WebSocket approval-key
+    file cache path from ``KIS_LIVE_INFO_APPROVAL_CACHE_PATH``.
 
     Deliberately distinct from the trading account's
     ``.cache/kis_rest_approval_key.json`` and the disclosure account's
@@ -386,8 +407,8 @@ def _resolve_kis_realtime_quote_approval_cache_path() -> str:
     credential fingerprint together guarantee no cross-account cache bleed.
     """
     return os.getenv(
-        "KIS_REALTIME_QUOTE_APPROVAL_CACHE_PATH",
-        ".cache/kis_realtime_quote_approval_key.json",
+        "KIS_LIVE_INFO_APPROVAL_CACHE_PATH",
+        ".cache/kis_live_info_approval_key.json",
     )
 
 
@@ -531,23 +552,35 @@ class AppSettings:
     kis_disclosure_token_cache_enabled: bool = field(default_factory=_resolve_kis_disclosure_token_cache_enabled)
     """Disclosure token cache 사용 여부. False면 매번 재인증."""
 
-    # ---- KIS realtime-quote screen (신규 전용 계좌/앱키, 트레이딩/공시 계좌와 분리) ----
+    # ---- KIS realtime-quote screen — 2026-07-10: KIS_LIVE_INFO_*로 통합 ------
+    # 최종 authoritative credential은 kis_live_app_key/kis_live_app_secret/
+    # kis_live_info_base_url/kis_live_info_ws_url이다(위 "KIS disclosure"/
+    # "KIS live-info WebSocket URL" 필드 재사용). 아래 kis_realtime_quote_*
+    # 필드들은 build_realtime_quote_source()의 하위 호환 fallback 전용으로만
+    # 남아 있다 — 신규 배포에서는 설정할 필요가 없다.
     kis_realtime_quote_app_key: str = field(default_factory=_resolve_kis_realtime_quote_app_key)
-    """실시간 현재가 조회 화면 전용 appkey. 빈 문자열이면 mock source로 동작."""
+    """[Deprecated] legacy fallback appkey. 최종 authoritative는 kis_live_app_key."""
 
     kis_realtime_quote_app_secret: str = field(default_factory=_resolve_kis_realtime_quote_app_secret)
-    """실시간 현재가 조회 화면 전용 appsecret. 빈 문자열이면 mock source로 동작."""
+    """[Deprecated] legacy fallback appsecret. 최종 authoritative는 kis_live_app_secret."""
 
     kis_realtime_quote_base_url: str = field(default_factory=_resolve_kis_realtime_quote_base_url)
-    """실시간 현재가 조회 화면 전용 REST base URL (Live 전용)."""
+    """[Deprecated] legacy fallback REST base URL. 최종 authoritative는 kis_live_info_base_url."""
 
     kis_realtime_quote_ws_url: str = field(default_factory=_resolve_kis_realtime_quote_ws_url)
-    """실시간 현재가 조회 화면 전용 WebSocket URL (Live 전용)."""
+    """[Deprecated] legacy fallback WebSocket URL. 최종 authoritative는 kis_live_info_ws_url."""
 
     kis_realtime_quote_approval_cache_path: str = field(
         default_factory=_resolve_kis_realtime_quote_approval_cache_path,
     )
-    """실시간 현재가 조회 화면 전용 approval key 파일 캐시 경로 (트레이딩/공시 계좌와 분리)."""
+    """[Deprecated] legacy fallback approval-key 캐시 경로.
+    최종 authoritative는 kis_live_info_approval_cache_path."""
+
+    kis_live_info_approval_cache_path: str = field(
+        default_factory=_resolve_kis_live_info_approval_cache_path,
+    )
+    """실시간 현재가 조회 화면(KIS_LIVE_INFO_* 통합 후)의 WebSocket approval-key
+    파일 캐시 경로. 트레이딩/공시 계좌의 캐시 파일과는 분리되어 있다."""
 
     # ---- KIS snapshot sync stale threshold -----------------------------------
     kis_snapshot_stale_threshold_seconds: int = field(

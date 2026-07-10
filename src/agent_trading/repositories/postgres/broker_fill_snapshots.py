@@ -109,3 +109,34 @@ class PostgresBrokerFillSnapshotRepository:
             *params,
         )
         return tuple(row_to_entity(row, BrokerFillSnapshotEntity) for row in rows)
+
+    async def list_recent_by_order_ids(
+        self, order_request_ids: Sequence[UUID], *, limit_per_order: int = 20
+    ) -> dict[UUID, list[BrokerFillSnapshotEntity]]:
+        if not order_request_ids:
+            return {}
+        # ROW_NUMBER() OVER (PARTITION BY order_request_id ...)로 주문 건별
+        # "최신 limit_per_order건"을 단일 쿼리로 가져온다 — order 건마다
+        # list_recent()를 순차 호출하던 N+1을 없앤다.
+        rows = await self._tx.connection.fetch(
+            """
+            SELECT * FROM (
+                SELECT *,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY order_request_id
+                        ORDER BY order_date DESC, fill_timestamp DESC NULLS LAST, created_at DESC
+                    ) AS rn
+                FROM trading.broker_fill_snapshots
+                WHERE order_request_id = ANY($1::uuid[])
+            ) ranked
+            WHERE rn <= $2
+            ORDER BY order_request_id, rn
+            """,
+            list(set(order_request_ids)),
+            limit_per_order,
+        )
+        result: dict[UUID, list[BrokerFillSnapshotEntity]] = {}
+        for row in rows:
+            entity = row_to_entity(row, BrokerFillSnapshotEntity)
+            result.setdefault(entity.order_request_id, []).append(entity)
+        return result

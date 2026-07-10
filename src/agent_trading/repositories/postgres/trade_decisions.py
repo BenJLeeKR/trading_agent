@@ -301,8 +301,21 @@ class PostgresTradeDecisionRepository:
         # phase_trace는 LEFT JOIN LATERAL의 execution_attempts에서 조회
         # execution_attempt_status is resolved via LEFT JOIN LATERAL to get the
         # latest execution_attempt status per trade_decision (P2).
+        #
+        # `td.*` 대신 `_to_detail()`(routes/decisions.py)이 실제로 응답에
+        # 매핑하는 컬럼만 명시한다 — 나머지(exit_plan_json/agent_version_json/
+        # model_version_json/prompt_version_json/reason_codes/opposing_evidence/
+        # failed_rule_codes 등)는 API 응답 어디에도 노출되지 않는데도 매 요청마다
+        # 네트워크로 전송되고 있었다(실측: 500건 기준 row 평균 5.7KB, 이 쿼리
+        # 하나가 224ms를 차지). row_to_entity()는 SELECT에 없는 필드를 그
+        # dataclass 기본값(None/빈 dict)으로 채우므로 안전하다 — TradeDecisionEntity의
+        # 해당 필드들은 전부 기본값이 있다.
         items_sql = f"""
-            SELECT td.*, i.name AS _instrument_name,
+            SELECT td.trade_decision_id, td.decision_context_id, td.decision_type,
+                   td.side, td.strategy_id, td.symbol, td.market, td.entry_style,
+                   td.created_at, td.entry_price, td.quantity, td.max_order_value,
+                   td.confidence, td.rationale_summary, td.source_type, td.decision_json,
+                   i.name AS _instrument_name,
                    o.order_request_id AS _order_request_id,
                    o.status AS _order_status,
                    eas.execution_attempt_id AS _latest_execution_attempt_id,

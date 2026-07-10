@@ -230,6 +230,11 @@ class InMemoryInstrumentRepository:
     async def get(self, instrument_id: UUID) -> InstrumentEntity | None:
         return self._items.get(instrument_id)
 
+    async def get_many(self, instrument_ids: Sequence[UUID]) -> dict[UUID, InstrumentEntity]:
+        return {
+            iid: self._items[iid] for iid in set(instrument_ids) if iid in self._items
+        }
+
     async def get_by_symbol(self, symbol: str, market_code: str) -> InstrumentEntity | None:
         return next(
             (
@@ -316,6 +321,13 @@ class InMemoryDecisionContextRepository:
 
     async def get(self, decision_context_id: UUID) -> DecisionContextEntity | None:
         return self._items.get(decision_context_id)
+
+    async def get_many(
+        self, decision_context_ids: Sequence[UUID]
+    ) -> dict[UUID, DecisionContextEntity]:
+        return {
+            cid: self._items[cid] for cid in set(decision_context_ids) if cid in self._items
+        }
 
     async def get_by_correlation_id(self, correlation_id: str) -> DecisionContextEntity | None:
         return next((item for item in self._items.values() if item.correlation_id == correlation_id), None)
@@ -857,6 +869,28 @@ class InMemoryBrokerFillSnapshotRepository:
             reverse=True,
         )
         return tuple(items[:limit])
+
+    async def list_recent_by_order_ids(
+        self, order_request_ids: Sequence[UUID], *, limit_per_order: int = 20
+    ) -> dict[UUID, list[BrokerFillSnapshotEntity]]:
+        if not order_request_ids:
+            return {}
+        wanted = set(order_request_ids)
+        by_order: dict[UUID, list[BrokerFillSnapshotEntity]] = {}
+        for item in self._items.values():
+            if item.order_request_id in wanted:
+                by_order.setdefault(item.order_request_id, []).append(item)
+        for order_id, items in by_order.items():
+            items.sort(
+                key=lambda item: (
+                    item.order_date,
+                    item.fill_timestamp or datetime.min.replace(tzinfo=timezone.utc),
+                    item.created_at or datetime.min.replace(tzinfo=timezone.utc),
+                ),
+                reverse=True,
+            )
+            by_order[order_id] = items[:limit_per_order]
+        return by_order
 
 
 class InMemoryFillSyncRunRepository:
@@ -1493,6 +1527,16 @@ class InMemoryGuardrailEvaluationRepository:
             if item.decision_context_id == decision_context_id
         )
 
+    async def get_by_decision_contexts(
+        self, decision_context_ids: Sequence[UUID]
+    ) -> dict[UUID, list[GuardrailEvaluationEntity]]:
+        wanted = set(decision_context_ids)
+        result: dict[UUID, list[GuardrailEvaluationEntity]] = {}
+        for item in self._items.values():
+            if item.decision_context_id in wanted:
+                result.setdefault(item.decision_context_id, []).append(item)
+        return result
+
     async def get_by_order_request(
         self, order_request_id: UUID
     ) -> Sequence[GuardrailEvaluationEntity]:
@@ -1698,6 +1742,19 @@ class InMemoryInstrumentIndexMembershipRepository:
         ]
         results.sort(key=lambda item: item.membership_code)
         return tuple(results)
+
+    async def list_active_by_instruments(
+        self,
+        instrument_ids: Sequence[UUID],
+    ) -> dict[UUID, Sequence[InstrumentIndexMembershipEntity]]:
+        wanted = set(instrument_ids)
+        result: dict[UUID, list[InstrumentIndexMembershipEntity]] = {}
+        for item in self._items.values():
+            if item.instrument_id in wanted and item.effective_to is None:
+                result.setdefault(item.instrument_id, []).append(item)
+        for items in result.values():
+            items.sort(key=lambda item: item.membership_code)
+        return result
 
     async def list_active_instrument_ids_by_membership_code(
         self,
@@ -2143,6 +2200,20 @@ class InMemoryAgentRunRepository:
         ]
         results.sort(key=lambda r: r.started_at, reverse=True)
         return tuple(results)
+
+    async def list_by_decision_contexts(
+        self, decision_context_ids: Sequence[UUID], *, agent_type: str | None = None
+    ) -> dict[UUID, list[AgentRunEntity]]:
+        wanted = set(decision_context_ids)
+        result: dict[UUID, list[AgentRunEntity]] = {}
+        for r in self._runs:
+            if r.decision_context_id in wanted and (
+                agent_type is None or r.agent_type == agent_type
+            ):
+                result.setdefault(r.decision_context_id, []).append(r)
+        for ctx_id, runs in result.items():
+            runs.sort(key=lambda r: r.started_at, reverse=True)
+        return result
 
     async def list_all(self, limit: int = 100) -> Sequence[AgentRunEntity]:
         results = sorted(self._runs, key=lambda r: r.started_at, reverse=True)

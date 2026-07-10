@@ -108,6 +108,28 @@ def test_admin_ui_static_mount(empty_client: TestClient) -> None:
     assert "text/html" in response.headers.get("content-type", "")
 
 
+def test_admin_ui_spa_fallback_serves_index_html_for_client_routes(
+    empty_client: TestClient,
+) -> None:
+    """A client-side route with no matching file (e.g. ``/admin/orders``)
+    should fall back to ``index.html`` instead of 404ing.
+
+    The admin UI uses ``BrowserRouter`` (real paths, not hash routes), so a
+    direct load or page refresh at a deep link hits the server for a path
+    that doesn't exist on disk — the SPA's own router only takes over once
+    ``index.html`` has loaded and executed.
+    """
+    _dist_path = os.path.join(
+        os.path.dirname(__file__), "..", "..", "admin_ui", "dist"
+    )
+    if not os.path.isdir(_dist_path):
+        pytest.skip("admin_ui/dist not found — run 'npm run build' first")
+
+    response = empty_client.get("/admin/operations/orders")
+    assert response.status_code == 200
+    assert "text/html" in response.headers.get("content-type", "")
+
+
 # ── Snapshot sync freshness in health/readiness ─────────────────────────────
 
 

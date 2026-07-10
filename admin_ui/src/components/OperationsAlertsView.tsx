@@ -190,14 +190,16 @@ export default function OperationsAlertsView() {
         }
       }
 
-      // ── Positions count for lineage check (dedup + quantity>0) ──
-      let positionsCount = 0;
+      // ── Positions (dedup by instrument_id, 최신 snapshot_at 유지) ──
+      // 이 결과를 아래 positionsCount / latestPositionSnapshotAt 두 곳에서
+      // 재사용한다 — 예전엔 accounts.map(getPositions)를 두 번(동일 계좌
+      // 목록에 대해) 호출해 완전히 같은 API를 중복 조회하고 있었다.
       let positionsError = false;
+      const dedupPositions = new Map<string, PositionSnapshotView>();
       if (accounts.length > 0) {
         const posResults = await Promise.allSettled(
           accounts.map((a) => getPositions(a.account_id))
         );
-        const dedupPositions = new Map<string, PositionSnapshotView>();
         posResults.forEach((r) => {
           if (r.status === "fulfilled") {
             for (const pos of r.value) {
@@ -211,11 +213,11 @@ export default function OperationsAlertsView() {
             positionsError = true;
           }
         });
-        // quantity > 0인 포지션만 카운트
-        positionsCount = Array.from(dedupPositions.values()).filter(
-          (p) => (p.quantity ?? 0) > 0
-        ).length;
       }
+      // quantity > 0인 포지션만 카운트
+      const positionsCount = Array.from(dedupPositions.values()).filter(
+        (p) => (p.quantity ?? 0) > 0
+      ).length;
 
       // ── Snapshot sync run (최신 1건) ──
       let snapshotSyncRun: SnapshotSyncRunSummary | null = null;
@@ -232,28 +234,12 @@ export default function OperationsAlertsView() {
       // ── Position / Cash snapshot_at (최신 시각) ──
       let latestPositionSnapshotAt: string | null = null;
       let latestCashSnapshotAt: string | null = null;
-      if (accounts.length > 0) {
-        // Positions
-        const posResults = await Promise.allSettled(
-          accounts.map((a) => getPositions(a.account_id))
-        );
-        const dedupPositions = new Map<string, PositionSnapshotView>();
-        posResults.forEach((r) => {
-          if (r.status === "fulfilled") {
-            for (const pos of r.value) {
-              const existing = dedupPositions.get(pos.instrument_id);
-              if (!existing || pos.snapshot_at > existing.snapshot_at) {
-                dedupPositions.set(pos.instrument_id, pos);
-              }
-            }
-          }
-        });
-        for (const pos of dedupPositions.values()) {
-          if (!latestPositionSnapshotAt || pos.snapshot_at > latestPositionSnapshotAt) {
-            latestPositionSnapshotAt = pos.snapshot_at;
-          }
+      for (const pos of dedupPositions.values()) {
+        if (!latestPositionSnapshotAt || pos.snapshot_at > latestPositionSnapshotAt) {
+          latestPositionSnapshotAt = pos.snapshot_at;
         }
-
+      }
+      if (accounts.length > 0) {
         // Cash (각 계좌별 단일 CashBalanceSnapshotView 또는 null)
         const cashResults = await Promise.allSettled(
           accounts.map((a) => getCashBalance(a.account_id))

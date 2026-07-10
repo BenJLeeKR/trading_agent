@@ -68,6 +68,23 @@ class PostgresGuardrailEvaluationRepository:
         )
         return tuple(row_to_entity(r, GuardrailEvaluationEntity) for r in rows)
 
+    async def get_by_decision_contexts(
+        self, decision_context_ids: Sequence[object]
+    ) -> dict[object, list[GuardrailEvaluationEntity]]:
+        if not decision_context_ids:
+            return {}
+        rows = await self._tx.connection.fetch(
+            "SELECT * FROM trading.guardrail_evaluations "
+            "WHERE decision_context_id = ANY($1::uuid[]) "
+            "ORDER BY decision_context_id, evaluated_at",
+            list(set(decision_context_ids)),
+        )
+        result: dict[object, list[GuardrailEvaluationEntity]] = {}
+        for row in rows:
+            entity = row_to_entity(row, GuardrailEvaluationEntity)
+            result.setdefault(entity.decision_context_id, []).append(entity)
+        return result
+
     async def get_by_order_request(
         self, order_request_id: object
     ) -> Sequence[GuardrailEvaluationEntity]:

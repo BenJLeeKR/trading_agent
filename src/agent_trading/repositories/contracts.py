@@ -318,6 +318,17 @@ class InstrumentRepository(Protocol):
         """
         ...
 
+    async def get_many(
+        self, instrument_ids: Sequence[UUID]
+    ) -> dict[UUID, InstrumentEntity]:
+        """Batch lookup — avoids N+1 when enriching a list of rows.
+
+        Returns a dict keyed by ``instrument_id``; missing ids are simply
+        absent from the result (never raises for unknown ids). Empty input
+        returns an empty dict without a query.
+        """
+        ...
+
     async def upsert_by_symbol(self, instrument: InstrumentEntity) -> InstrumentEntity:
         """INSERT … ON CONFLICT (symbol, market_code) DO UPDATE … RETURNING *.
 
@@ -348,6 +359,12 @@ class DecisionContextRepository(Protocol):
         ...
 
     async def get(self, decision_context_id: UUID) -> DecisionContextEntity | None:
+        ...
+
+    async def get_many(
+        self, decision_context_ids: Sequence[UUID]
+    ) -> dict[UUID, DecisionContextEntity]:
+        """Batch lookup — avoids N+1 when enriching a list of trade decisions."""
         ...
 
     async def get_by_correlation_id(self, correlation_id: str) -> DecisionContextEntity | None:
@@ -717,6 +734,19 @@ class BrokerFillSnapshotRepository(Protocol):
     ) -> Sequence[BrokerFillSnapshotEntity]:
         ...
 
+    async def list_recent_by_order_ids(
+        self, order_request_ids: Sequence[UUID], *, limit_per_order: int = 20
+    ) -> dict[UUID, list[BrokerFillSnapshotEntity]]:
+        """Batch fill lookup for multiple orders — avoids N+1 when enriching
+        a list of orders with their most recent fills.
+
+        Returns a dict keyed by ``order_request_id``, each value newest-first
+        and capped at ``limit_per_order``. Orders with no fills are simply
+        absent from the result. Empty input returns an empty dict without a
+        query.
+        """
+        ...
+
 
 class ReconciliationRepository(Protocol):
     """Store for reconciliation runs and mismatch tracking."""
@@ -954,6 +984,12 @@ class GuardrailEvaluationRepository(Protocol):
     ) -> Sequence[GuardrailEvaluationEntity]:
         ...
 
+    async def get_by_decision_contexts(
+        self, decision_context_ids: Sequence[UUID]
+    ) -> dict[UUID, list[GuardrailEvaluationEntity]]:
+        """Batch lookup — avoids N+1 when enriching a list of trade decisions."""
+        ...
+
     async def get_by_order_request(
         self, order_request_id: UUID
     ) -> Sequence[GuardrailEvaluationEntity]:
@@ -1043,6 +1079,15 @@ class InstrumentIndexMembershipRepository(Protocol):
         self,
         instrument_id: UUID,
     ) -> Sequence[InstrumentIndexMembershipEntity]:
+        ...
+
+    async def list_active_by_instruments(
+        self,
+        instrument_ids: Sequence[UUID],
+    ) -> dict[UUID, Sequence[InstrumentIndexMembershipEntity]]:
+        """Batch variant of ``list_active_by_instrument`` — one query for many
+        instruments instead of one query per instrument (avoids N+1 when
+        composing the trading universe over thousands of instruments)."""
         ...
 
     async def list_active_instrument_ids_by_membership_code(
@@ -1312,6 +1357,20 @@ class AgentRunRepository(Protocol):
         self, decision_context_id: UUID
     ) -> Sequence[AgentRunEntity]:
         """Return all runs for a decision context, ordered by started_at DESC."""
+        ...
+
+    async def list_by_decision_contexts(
+        self, decision_context_ids: Sequence[UUID], *, agent_type: str | None = None
+    ) -> dict[UUID, list[AgentRunEntity]]:
+        """Batch lookup — avoids N+1 when enriching a list of trade decisions.
+
+        Each value is ordered by ``started_at`` DESC, same as the single-id method.
+        ``agent_type``: optional server-side filter — callers that only need
+        one agent type (e.g. compliance inspection only cares about
+        ``"ai_compliance"`` runs) should pass it so rows/columns for
+        irrelevant types (and their potentially large ``structured_output_json``)
+        aren't fetched at all.
+        """
         ...
 
     async def list_all(self, limit: int = 100) -> Sequence[AgentRunEntity]:

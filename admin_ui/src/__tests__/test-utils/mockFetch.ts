@@ -62,3 +62,15 @@ export function mockFetchStreamOnce(events: Array<Record<string, unknown>>) {
 export function mockFetchStreamError() {
   return vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new Error("stream error"));
 }
+
+/** Queues a `401` response for the SSE stream endpoint — simulates the
+ * session token expiring mid-connection (distinct from a transport drop). */
+export function mockFetchStreamUnauthorized() {
+  return vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({
+    ok: false,
+    status: 401,
+    statusText: "Unauthorized",
+    body: null,
+    json: async () => ({ detail: "Unauthorized" }),
+  } as unknown as Response);
+}

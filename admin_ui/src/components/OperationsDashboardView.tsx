@@ -20,20 +20,15 @@ import {
   getSnapshotSyncRuns,
   getLatestMarketSession,
   getLatestOperationsDay,
-  getRecentSessionEvents,
   getRecentFailures,
   getFailureSummary,
   getOrderDailySummary,
   getBuyBlockSummary,
-  getTradingUniverseCoverageSummary,
-  getMarketOverlayFunnel,
   getTradingUniversePreview,
-  getTradeDecisions,
 } from "../api/client";
 import type {
   BuyBlockSummary,
   HealthResponse,
-  MarketOverlayFunnelResponse,
   OrderSummary,
   PositionSnapshotView,
   CashBalanceSnapshotView,
@@ -43,17 +38,12 @@ import type {
   ClientDetail,
   SnapshotSyncRunSummary,
   SchedulerStatusResponse,
-  SessionEventsResponse,
-  SessionEventSummary,
   MarketSessionSummary,
   OperationsDayRunSummary,
   OperationsDayStatusResponse,
   RecentFailureItem,
   FailureSummary,
   OrderDailySummary,
-  PaginatedTradeDecisionsResponse,
-  TradeDecisionDetail,
-  TradingUniverseCoverageSummaryResponse,
   TradingUniversePreviewResponse,
 } from "../types/api";
 import { deriveAlerts } from "../lib/alerts";
@@ -103,29 +93,6 @@ interface CompactAlertItem {
   description: string;
 }
 
-interface MarketOverlayRecentRow {
-  id: string;
-  createdAt: string | null;
-  symbol: string;
-  decisionType: string;
-  side: string;
-  inclusionReason: string;
-  orderStatus: string;
-}
-
-interface UniverseFreezeRow {
-  id: string;
-  symbol: string;
-  market: string;
-  sourceType: string;
-  inclusionReason: string;
-  priority: number;
-  buyExecutionStatus: string;
-  latestDecision: string;
-  holdingProfile: string;
-  guardrailReason: string;
-}
-
 interface DashboardData {
   clients: ClientDetail[];
   health: HealthResponse | null;
@@ -140,51 +107,9 @@ interface DashboardData {
   snapshotSyncRuns: SnapshotSyncRunSummary[];
   sessionData: SchedulerStatusResponse | null;
   operationsDayData: OperationsDayStatusResponse | null;
-  sessionEvents: SessionEventSummary[];
   todayOrderSummary: OrderDailySummary | null;
-  tradingUniverseCoverage: TradingUniverseCoverageSummaryResponse | null;
-  marketOverlayFunnel: MarketOverlayFunnelResponse | null;
   tradingUniversePreview: TradingUniversePreviewResponse | null;
   tradingUniversePreviewAccountLabel: string | null;
-  todayTradeDecisions: TradeDecisionDetail[];
-}
-
-function formatDecisionTypeLabel(value: string | null | undefined): string {
-  const normalized = (value ?? "").toLowerCase();
-  const labels: Record<string, string> = {
-    approve: "APPROVE",
-    buy: "BUY",
-    sell: "SELL",
-    reduce: "REDUCE",
-    exit: "EXIT",
-    hold: "HOLD",
-    watch: "WATCH",
-    reject: "REJECT",
-  };
-  return labels[normalized] ?? (value ? value.toUpperCase() : "—");
-}
-
-function formatStopReasonLabel(value: string | null | undefined): string {
-  const normalized = (value ?? "").toLowerCase();
-  const labels: Record<string, string> = {
-    reverse_trade_same_signal_feature_snapshot: "동일 snapshot reverse 차단",
-    reverse_trade_single_share_blocked: "1주 reverse 차단",
-    same_symbol_reentry_cooldown: "동일종목 재진입 cooldown",
-    held_position_recent_buy_sell_cooldown: "최근 BUY 후 조기 SELL 차단",
-    held_position_recent_risk_sell_cooldown: "최근 위험매도 cooldown",
-    probe_churn_single_share_blocked: "1주 probe churn 차단",
-    overlay_single_share_buy_blocked: "overlay 1주 BUY 차단",
-    holding_profile_earliest_reduce_guard: "보유프로필 reduce 시각 전",
-    holding_profile_earliest_reentry_guard: "보유프로필 re-entry 시각 전",
-    general_submit_disabled_core: "core 제출 비활성",
-    general_submit_disabled_market_overlay: "overlay 제출 비활성",
-    submit_budget_consumed_core: "core 예산 소진",
-    submit_budget_consumed_market_overlay: "overlay 예산 소진",
-    sizing_rejected: "sizing 차단",
-    decision_watch: "watch 결정",
-    decision_hold: "hold 결정",
-  };
-  return labels[normalized] ?? (value || "—");
 }
 
 /* ── Helpers ── */
@@ -444,12 +369,6 @@ export default function OperationsDashboardView() {
       addError("GET /orders/buy-block-summary", e);
       return null;
     });
-    const todayTradeDecisionsPromise = getTradeDecisions(undefined, 500, 0, {
-      date: getKstTodayString(),
-    }).catch((e) => {
-      addError("GET /trade-decisions?date=today", e);
-      return null;
-    });
     const clientsPromise = getClients().catch((e) => {
       addError("GET /clients", e);
       return [] as ClientDetail[];
@@ -464,12 +383,8 @@ export default function OperationsDashboardView() {
       addError("GET /market-sessions/operations-day/latest", e);
       return null;
     });
-    const eventsPromise = getRecentSessionEvents(5).catch((e) => {
-      addError("GET /market-sessions/events/recent", e);
-      return null;
-    });
 
-    const [health, readyz, reconSummary, orders, todayOrders, todayOrderSummary, buyBlockSummaryData, todayTradeDecisionsResp, clients, sessionData, operationsDayData, eventsResp] = await Promise.all([
+    const [health, readyz, reconSummary, orders, todayOrders, todayOrderSummary, buyBlockSummaryData, clients, sessionData, operationsDayData] = await Promise.all([
       healthPromise,
       readyzPromise,
       reconSummaryPromise,
@@ -477,13 +392,10 @@ export default function OperationsDashboardView() {
       todayOrdersPromise,
       todayOrderSummaryPromise,
       buyBlockSummaryPromise,
-      todayTradeDecisionsPromise,
       clientsPromise,
       sessionPromise,
       operationsDayPromise,
-      eventsPromise,
     ]);
-    const sessionEvents = eventsResp?.data ?? [];
 
     // ── Accounts per client ──
     let accounts: AccountSummary[] = [];
@@ -525,16 +437,9 @@ export default function OperationsDashboardView() {
       });
     }
 
-    // ── Trading universe / market overlay observability ──
+    // ── Trading universe preview — 계좌 정보(previewAccount)에 의존하므로
+    // 계좌 fan-out 이후에만 생성 가능. ──
     const previewAccount = accounts.find((a) => a.status === "active") ?? accounts[0] ?? null;
-    const universeCoveragePromise = getTradingUniverseCoverageSummary(14).catch((e) => {
-      addError("GET /instruments/trading-universe/coverage-summary", e);
-      return null;
-    });
-    const marketOverlayFunnelPromise = getMarketOverlayFunnel(14, 10).catch((e) => {
-      addError("GET /instruments/trading-universe/market-overlay-funnel", e);
-      return null;
-    });
     const universePreviewPromise = previewAccount
       ? getTradingUniversePreview(previewAccount.account_id, {
           lookbackHours: 24,
@@ -561,11 +466,7 @@ export default function OperationsDashboardView() {
       addError("GET /snapshot-sync-runs", "스냅샷 동기화 이력 조회 실패");
     }
 
-    const [tradingUniverseCoverage, marketOverlayFunnel, tradingUniversePreview] = await Promise.all([
-      universeCoveragePromise,
-      marketOverlayFunnelPromise,
-      universePreviewPromise,
-    ]);
+    const tradingUniversePreview = await universePreviewPromise;
 
     // ── Recent submission failures ──
     setFailuresLoading(true);
@@ -607,11 +508,7 @@ export default function OperationsDashboardView() {
       snapshotSyncRuns,
       sessionData: sessionData as SchedulerStatusResponse | null,
       operationsDayData: operationsDayData as OperationsDayStatusResponse | null,
-      sessionEvents,
       todayOrderSummary: todayOrderSummary as OrderDailySummary | null,
-      todayTradeDecisions: (todayTradeDecisionsResp as PaginatedTradeDecisionsResponse | null)?.items ?? [],
-      tradingUniverseCoverage,
-      marketOverlayFunnel,
       tradingUniversePreview,
       tradingUniversePreviewAccountLabel: previewAccount?.account_alias
         ?? previewAccount?.account_code
@@ -796,7 +693,6 @@ export default function OperationsDashboardView() {
       sessionHealthy,
       sessionStaleSeconds,
       phaseVariant,
-      sessionEvents: data.sessionEvents,
       schedulerState,
     };
   }, [data, apiErrors]);
@@ -915,24 +811,6 @@ export default function OperationsDashboardView() {
       });
   }, [data]);
 
-  const marketOverlayRecentRows: MarketOverlayRecentRow[] = useMemo(() => {
-    if (!data?.marketOverlayFunnel) return [];
-    return (data.marketOverlayFunnel.recent_items ?? []).map((item) => ({
-      id: item.trade_decision_id,
-      createdAt: item.created_at,
-      symbol: item.symbol ?? "—",
-      decisionType: item.decision_type ? item.decision_type.toUpperCase() : "—",
-      side:
-        item.side === "buy"
-          ? "매수"
-          : item.side === "sell"
-            ? "매도"
-            : item.side?.toUpperCase() ?? "—",
-      inclusionReason: item.inclusion_reason ?? "—",
-      orderStatus: item.order_status ? item.order_status.toUpperCase() : "미생성",
-    }));
-  }, [data]);
-
   /* ── Loading / Error ── */
   if (loading) return <LoadingSpinner text="운영 데이터 로딩 중..." />;
 
@@ -1044,17 +922,6 @@ export default function OperationsDashboardView() {
   const freezeItems = activeIntradayFreeze?.items ?? [];
   const freezeMarketOverlayCount = activeIntradayFreeze?.source_type_counts?.market_overlay ?? 0;
   const marketOverlayDiagnostics = data.tradingUniversePreview?.market_overlay_diagnostics ?? null;
-  const latestTodayDecisionBySymbol = new Map<string, TradeDecisionDetail>();
-  data.todayTradeDecisions.forEach((decision) => {
-    const symbol = decision.symbol ?? "";
-    if (!symbol) return;
-    const existing = latestTodayDecisionBySymbol.get(symbol);
-    const decisionTime = new Date(decision.created_at ?? 0).getTime();
-    const existingTime = new Date(existing?.created_at ?? 0).getTime();
-    if (!existing || decisionTime >= existingTime) {
-      latestTodayDecisionBySymbol.set(symbol, decision);
-    }
-  });
   const todayBuyOrders = data.todayOrders.filter((order) => order.side === "buy");
   const latestTodayBuyOrderBySymbol = new Map<string, OrderSummary>();
   todayBuyOrders.forEach((order) => {
@@ -1070,70 +937,6 @@ export default function OperationsDashboardView() {
   const freezeBuyOrderCount = freezeItems.reduce((count, item) => {
     return latestTodayBuyOrderBySymbol.has(item.symbol) ? count + 1 : count;
   }, 0);
-  const freezeRows: UniverseFreezeRow[] = freezeItems.map((item) => {
-    const linkedBuyOrder = latestTodayBuyOrderBySymbol.get(item.symbol);
-    const linkedDecision = latestTodayDecisionBySymbol.get(item.symbol);
-    const decisionInspection =
-      linkedDecision?.decision_inspection as Record<string, unknown> | null | undefined;
-    const holdingProfilePayload =
-      decisionInspection && typeof decisionInspection === "object"
-        ? (decisionInspection["holding_profile"] as Record<string, unknown> | null | undefined)
-        : null;
-    const guardrailAttribution =
-      decisionInspection && typeof decisionInspection === "object"
-        ? (decisionInspection["guardrail_attribution"] as Record<string, unknown> | null | undefined)
-        : null;
-    const holdingProfile =
-      typeof holdingProfilePayload?.["holding_profile"] === "string"
-        ? String(holdingProfilePayload["holding_profile"])
-        : "—";
-    const guardrailReasonRaw =
-      typeof guardrailAttribution?.["latest_stop_reason"] === "string"
-        ? String(guardrailAttribution["latest_stop_reason"])
-        : linkedDecision?.latest_stop_reason ?? null;
-    let buyExecutionStatus = "미실행";
-    if (linkedBuyOrder) {
-      switch ((linkedBuyOrder.status ?? "").toLowerCase()) {
-        case "filled":
-          buyExecutionStatus = "체결";
-          break;
-        case "partially_filled":
-          buyExecutionStatus = "부분체결";
-          break;
-        case "submitted":
-        case "acknowledged":
-        case "pending_submit":
-        case "validated":
-        case "draft":
-          buyExecutionStatus = "실행";
-          break;
-        case "reconcile_required":
-          buyExecutionStatus = "조정필요";
-          break;
-        case "rejected":
-          buyExecutionStatus = "거부";
-          break;
-        default:
-          buyExecutionStatus = linkedBuyOrder.status || "실행";
-      }
-    }
-    return {
-      id: `${item.symbol}:${item.market}:${item.priority}`,
-      symbol: item.symbol,
-      market: item.market,
-      sourceType: item.source_type,
-      inclusionReason: item.inclusion_reason,
-      priority: item.priority,
-      buyExecutionStatus,
-      latestDecision: linkedDecision
-        ? `${formatDecisionTypeLabel(linkedDecision.decision_type)} / ${
-            linkedDecision.execution_status ?? "—"
-          }`
-        : "—",
-      holdingProfile,
-      guardrailReason: formatStopReasonLabel(guardrailReasonRaw),
-    };
-  });
 
   return (
     <div className="p-6 space-y-6">
@@ -1548,162 +1351,8 @@ export default function OperationsDashboardView() {
                   </p>
                 </div>
               </div>
-
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 mb-5">
-                <div className="rounded-lg border border-[#e2e8f0] p-4">
-                  <h3 className="text-sm font-semibold text-[#0f172a]">freeze 기준 요약</h3>
-                  <div className="mt-3 space-y-2 text-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[#64748b]">freeze purpose</span>
-                      <span className="font-mono text-xs text-[#0f172a]">
-                        {activeIntradayFreeze?.freeze_purpose ?? "—"}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[#64748b]">business date</span>
-                      <span className="text-[#0f172a]">{activeIntradayFreeze?.business_date ?? "—"}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[#64748b]">selection version</span>
-                      <span className="font-mono text-xs text-[#0f172a]">
-                        {activeIntradayFreeze?.selection_version ?? "—"}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[#64748b]">source 분포</span>
-                      <span className="text-[#0f172a]">
-                        {Object.entries(activeIntradayFreeze?.source_type_counts ?? {})
-                          .map(([key, value]) => `${key} ${value}`)
-                          .join(" · ") || "—"}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-[#e2e8f0] p-4">
-                  <h3 className="text-sm font-semibold text-[#0f172a]">Overlay 진단</h3>
-                  <div className="mt-3 space-y-2 text-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[#64748b]">활성 여부</span>
-                      <StatusBadge variant={marketOverlayDiagnostics?.enabled ? "success" : "warning"}>
-                        {marketOverlayDiagnostics?.enabled ? "enabled" : "disabled"}
-                      </StatusBadge>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[#64748b]">skip 사유</span>
-                      <span className="font-mono text-xs text-[#0f172a]">
-                        {marketOverlayDiagnostics?.skipped_reason ?? "—"}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[#64748b]">pre-pool / scored</span>
-                      <span className="text-[#0f172a]">
-                        {marketOverlayDiagnostics?.pre_pool_candidate_count ?? 0} / {marketOverlayDiagnostics?.scored_candidate_count ?? 0}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[#64748b]">filtered out</span>
-                      <span className="text-[#0f172a]">{marketOverlayDiagnostics?.filtered_out_count ?? 0}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-[#e2e8f0] p-4">
-                  <h3 className="text-sm font-semibold text-[#0f172a]">최근 market_overlay 분포</h3>
-                  <div className="mt-3 space-y-2 text-sm">
-                    <div>
-                      <p className="text-xs text-[#64748b] mb-1">Decision Type</p>
-                      <p className="text-[#0f172a]">
-                        {Object.entries(data.marketOverlayFunnel?.decision_type_counts ?? {})
-                          .map(([key, value]) => `${key} ${value}`)
-                          .join(" · ") || "—"}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-[#64748b] mb-1">Order Status</p>
-                      <p className="text-[#0f172a]">
-                        {Object.entries(data.marketOverlayFunnel?.order_status_counts ?? {})
-                          .map(([key, value]) => `${key} ${value}`)
-                          .join(" · ") || "—"}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <DataTable
-                columns={[
-                  { key: "priority", header: "우선순위", width: "80px", align: "center" },
-                  { key: "symbol", header: "종목", width: "90px" },
-                  { key: "market", header: "시장", width: "90px", align: "center" },
-                  { key: "sourceType", header: "source", width: "120px", align: "center" },
-                  { key: "inclusionReason", header: "선정 사유" },
-                  { key: "latestDecision", header: "최근 판단", width: "150px", align: "center" },
-                  { key: "holdingProfile", header: "프로필", width: "130px", align: "center" },
-                  { key: "guardrailReason", header: "차단/가드레일" },
-                  { key: "buyExecutionStatus", header: "오늘 매수주문", width: "110px", align: "center" },
-                ]}
-                data={freezeRows}
-                idKey="id"
-                compact
-                emptyMessage="오늘 intraday freeze 유니버스가 없습니다."
-              />
-
-              <div className="mt-5" />
-              <DataTable
-                columns={[
-                  { key: "createdAt", header: "판단시각", width: "150px", render: (row: MarketOverlayRecentRow) => formatKstDateTime(row.createdAt) },
-                  { key: "symbol", header: "종목", width: "90px" },
-                  { key: "decisionType", header: "판단", width: "90px", align: "center" },
-                  { key: "side", header: "매매", width: "80px", align: "center" },
-                  { key: "inclusionReason", header: "편입사유" },
-                  { key: "orderStatus", header: "주문상태", width: "110px", align: "center" },
-                ]}
-                data={marketOverlayRecentRows}
-                idKey="id"
-                compact
-                emptyMessage="최근 market_overlay 샘플이 없습니다."
-              />
             </Panel>
           </div>
-
-          {/* ── Section E: 최근 Session Events ── */}
-          <Panel title="Session Events" subtitle="최근 5건">
-            {d.sessionEvents.length > 0 ? (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-200 dark:border-gray-700 text-left">
-                    <th className="py-1 pr-2">Time</th>
-                    <th className="py-1 pr-2">Phase</th>
-                    <th className="py-1 pr-2">Source</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {d.sessionEvents.map(evt => (
-                    <tr key={evt.id} className="border-b border-gray-100 dark:border-gray-800">
-                      <td className="py-1 pr-2 text-xs">
-                        {formatKstDateTime(evt.occurred_at)}
-                      </td>
-                      <td className="py-1 pr-2">
-                        <StatusBadge
-                          variant={
-                            evt.new_phase === 'OPEN' ? 'success' :
-                            evt.new_phase === 'AFTER_HOURS' ? 'info' :
-                            evt.new_phase === 'HALT' ? 'error' : 'warning'
-                          }
-                        >
-                          {evt.previous_phase ?? '-'} → {evt.new_phase ?? '-'}
-                        </StatusBadge>
-                      </td>
-                      <td className="py-1 text-xs text-gray-500">{evt.trigger_source ?? '-'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <p className="text-sm text-[#94a3b8] py-2">No events yet</p>
-            )}
-          </Panel>
         </div>
       )}
     </div>

@@ -83,34 +83,69 @@ def build_realtime_quote_source(
 
     This is for the Admin UI "실시간 현재가" screen only
     (``plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md``).
-    It is **completely separate** from ``_build_kis_adapter()`` (trading
-    account) and ``_build_kis_live_quote_client()`` (``KIS_LIVE_INFO_*``
-    disclosure account):
 
-    - Own credentials: ``KIS_REALTIME_QUOTE_APP_KEY`` / ``_APP_SECRET``
-    - Own REST base URL / WebSocket URL
-    - Own ``RateLimitBudgetManager`` instance (no shared budget file)
-    - Own approval-key file cache path (``KIS_REALTIME_QUOTE_APPROVAL_CACHE_PATH``)
-    - ``account_number``/``account_product_code`` are intentionally empty —
-      this client only ever calls read-only market-data endpoints
-      (``oauth2/Approval``, ``inquire-price``), never order/balance endpoints.
+    **2026-07-10 credential 통합**: 이 화면은 원래 ``KIS_REALTIME_QUOTE_*``라는
+    전용 appkey를 썼지만, ``ops-scheduler``에서 163 WS 의존이 제거되면서
+    ``KIS_LIVE_INFO_*``가 더 이상 별도 프로세스와 WS 세션을 공유할 필요가
+    없어져(§4.2 WebSocket Session 1개 원칙 — 이제 이 화면이 ``KIS_LIVE_INFO_*``
+    appkey의 유일한 WS 소비자다) 통합했다. **최종 authoritative credential은
+    ``KIS_LIVE_INFO_APP_KEY``/``_APP_SECRET``/``_BASE_URL``/``_WS_URL``**이며
+    (``_build_kis_live_quote_client()``가 쓰는 것과 동일한 disclosure/live-info
+    계좌), 여전히 ``_build_kis_adapter()``(트레이딩 계좌)와는 완전히 분리되어
+    있다. 짧은 하위 호환을 위해 ``KIS_LIVE_INFO_*``가 비어 있으면 legacy
+    ``KIS_REALTIME_QUOTE_*``로 fallback한다(신규 배포에서는 설정할 필요 없음).
 
-    Returns ``None`` when ``KIS_REALTIME_QUOTE_APP_KEY``/``_APP_SECRET`` are
-    not configured — the caller (``api/app.py`` lifespan) falls back to
-    ``InMemoryMockQuoteSource`` in that case. This function only constructs
-    objects (no network I/O); the caller must ``await source.connect()``
-    inside an async context before use.
+    - approval-key 파일 캐시는 여전히 이 화면 전용 경로
+      (``KIS_LIVE_INFO_APPROVAL_CACHE_PATH``, legacy 경로로 fallback 가능)를
+      쓴다 — 트레이딩/공시 계좌의 캐시 파일과 섞이지 않는다.
+    - 자체 ``RateLimitBudgetManager`` 인스턴스를 새로 만든다(프로세스 내
+      budget은 여전히 공유하지 않는다 — 다만 REST rate limit 자체는 계좌
+      단위이므로, 같은 ``KIS_LIVE_INFO_*`` 계좌로 REST를 호출하는 다른 프로세스
+      — 예: ``ops-scheduler``가 구동하는 ``run_decision_loop.py`` 서브프로세스의
+      ``_build_kis_live_quote_client()`` — 와는 프로세스 경계를 넘어선 공유
+      budget이 없다는 기존 한계가 그대로 유지된다. 이건 이번 통합이 새로
+      만든 문제가 아니라 원래부터 있던 제약이다).
+    - ``account_number``/``account_product_code``는 여전히 빈 문자열 —
+      이 클라이언트는 read-only 시세 엔드포인트(``oauth2/Approval``,
+      ``inquire-price``)만 호출하고, 주문/잔고 엔드포인트는 호출하지 않는다.
+
+    Returns ``None`` when neither ``KIS_LIVE_INFO_*`` nor the legacy
+    ``KIS_REALTIME_QUOTE_*`` fallback are configured — the caller
+    (``api/app.py`` lifespan) falls back to ``InMemoryMockQuoteSource`` in
+    that case. This function only constructs objects (no network I/O); the
+    caller must ``await source.connect()`` inside an async context before use.
     """
-    if not settings.kis_realtime_quote_app_key or not settings.kis_realtime_quote_app_secret:
+    app_key = settings.kis_live_app_key
+    app_secret = settings.kis_live_app_secret
+    base_url = settings.kis_live_info_base_url
+    ws_url = settings.kis_live_info_ws_url
+    approval_cache_path = settings.kis_live_info_approval_cache_path
+
+    if not app_key or not app_secret:
+        # 짧은 하위 호환: KIS_LIVE_INFO_*가 비어 있고 legacy
+        # KIS_REALTIME_QUOTE_*가 설정되어 있으면 그걸로 fallback한다.
+        if settings.kis_realtime_quote_app_key and settings.kis_realtime_quote_app_secret:
+            logger.warning(
+                "Realtime-quote source: using deprecated KIS_REALTIME_QUOTE_* "
+                "credentials — set KIS_LIVE_INFO_APP_KEY/_APP_SECRET instead "
+                "(authoritative as of 2026-07-10)."
+            )
+            app_key = settings.kis_realtime_quote_app_key
+            app_secret = settings.kis_realtime_quote_app_secret
+            base_url = settings.kis_realtime_quote_base_url
+            ws_url = settings.kis_realtime_quote_ws_url
+            approval_cache_path = settings.kis_realtime_quote_approval_cache_path
+
+    if not app_key or not app_secret:
         logger.info(
-            "Realtime-quote source: mock (KIS_REALTIME_QUOTE_APP_KEY/_APP_SECRET not configured)."
+            "Realtime-quote source: mock (KIS_LIVE_INFO_APP_KEY/_APP_SECRET not configured)."
         )
         return None
 
     from agent_trading.services.kis_realtime_quote_source import KisRealtimeQuoteSource
 
     # Independent budget manager — never shared with the trading account's
-    # or the disclosure account's RateLimitBudgetManager instances.
+    # RateLimitBudgetManager instance.
     budget_manager = build_kis_budget_manager(
         kis_env="live",
         real_rest_rps=settings.kis_real_rest_rps,
@@ -119,21 +154,21 @@ def build_realtime_quote_source(
 
     rest_client = KISRestClient(
         env="live",
-        api_key=settings.kis_realtime_quote_app_key,
-        api_secret=settings.kis_realtime_quote_app_secret,
+        api_key=app_key,
+        api_secret=app_secret,
         account_number="",
         account_product_code="",
-        base_url=settings.kis_realtime_quote_base_url,
+        base_url=base_url,
         budget_manager=budget_manager,
         dev_token_cache_enabled=False,  # this client never calls authenticate()
         approval_cache_enabled=True,
-        approval_cache_path=settings.kis_realtime_quote_approval_cache_path,
+        approval_cache_path=approval_cache_path,
     )
 
     try:
         return KisRealtimeQuoteSource(
             rest_client=rest_client,
-            ws_url=settings.kis_realtime_quote_ws_url,
+            ws_url=ws_url,
         )
     except Exception:
         logger.exception(

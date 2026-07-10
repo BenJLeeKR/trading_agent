@@ -471,6 +471,15 @@ export function subscribeRealtimeQuoteStream(
         signal: controller.signal,
       }
     );
+    if (res.status === 401) {
+      // 인증 만료 — 일반 transport error(backoff 재시도 대상)가 아니라 request()의
+      // 401 처리와 동일한 "로그인 세션 종료" 이벤트로 다뤄야 한다. 토큰을 지우고
+      // 공용 unauthorized 콜백(AuthContext의 logout)을 호출해, 다른 REST 호출이
+      // 401을 받았을 때와 동일한 사용자 경험(로그아웃)이 되게 한다.
+      clearStoredToken();
+      if (_onUnauthorized) _onUnauthorized();
+      throw new UnauthorizedError();
+    }
     if (!res.ok || !res.body) {
       throw new Error(`realtime-quote stream error ${res.status}`);
     }
@@ -509,8 +518,15 @@ export function subscribeRealtimeQuoteStream(
         // The stream ended without an error (server closed it) — treat like
         // a drop and reconnect through the same backoff path below.
         handlers.onTransportError?.();
-      } catch {
+      } catch (err) {
         if (stopped || controller.signal.aborted) return;
+        if (err instanceof UnauthorizedError) {
+          // 세션이 끝났다 — transport 재시도로 계속 이어가면 안 되고, 여기서
+          // 완전히 멈춘다(무한 backoff 루프 방지). clearStoredToken()/
+          // _onUnauthorized()는 이미 runOnce()에서 처리했다.
+          stopped = true;
+          return;
+        }
         handlers.onTransportError?.();
       }
       if (stopped) return;

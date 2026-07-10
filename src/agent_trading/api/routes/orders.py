@@ -74,7 +74,7 @@ def _order_to_summary(order: object) -> OrderSummary:
         status=order.status.value,  # type: ignore[attr-defined]
         requested_quantity=float(order.requested_quantity),  # type: ignore[attr-defined]
         requested_price=float(order.requested_price) if order.requested_price is not None else None,  # type: ignore[attr-defined]
-        symbol=None,  # enriched by _enrich_order_summary
+        symbol=None,  # enriched by _enrich_order_summaries
         correlation_id=str(order.correlation_id),  # type: ignore[attr-defined]
         trade_decision_id=str(order.trade_decision_id) if order.trade_decision_id is not None else None,  # type: ignore[attr-defined]
         decision_context_id=str(order.decision_context_id) if order.decision_context_id is not None else None,  # type: ignore[attr-defined]
@@ -84,35 +84,49 @@ def _order_to_summary(order: object) -> OrderSummary:
     )
 
 
-async def _enrich_order_summary(
-    order: object,
+async def _enrich_order_summaries(
+    orders: Sequence[object],
     repos: RepositoryContainer,
-) -> OrderSummary:
-    """Convert an ``OrderRequestEntity`` to ``OrderSummary`` with symbol resolved.
+) -> list[OrderSummary]:
+    """Convert ``OrderRequestEntity`` rows to ``OrderSummary`` with symbol/fill
+    info resolved, using batch lookups instead of one query per order.
 
-    Looks up the instrument by ``instrument_id`` to populate the ``symbol``
-    field.  Falls back to ``None`` when the instrument is not found.
+    Postgres repos are transaction-bound (single connection per request), so
+    concurrent per-order queries aren't an option here — the only way to avoid
+    O(N) round trips is to cut the query *count* itself via ``get_many()``/
+    ``list_recent_by_order_ids()`` (2 queries total regardless of order count).
     """
-    summary = _order_to_summary(order)
-    instrument_id: UUID | None = getattr(order, "instrument_id", None)
-    if instrument_id is not None:
-        inst = await repos.instruments.get(instrument_id)
-        if inst is not None:
-            summary.symbol = inst.symbol
-            summary.instrument_name = inst.name
-    fill_rows = await repos.broker_fill_snapshots.list_recent(
-        limit=20,
-        order_request_id=order.order_request_id,  # type: ignore[attr-defined]
+    instrument_ids = [
+        iid for o in orders if (iid := getattr(o, "instrument_id", None)) is not None
+    ]
+    order_ids = [o.order_request_id for o in orders]  # type: ignore[attr-defined]
+
+    # Postgres repos share one tx-bound connection per request — these must
+    # run sequentially, but it's still only 2 queries total (not 2*N).
+    instruments_by_id = await repos.instruments.get_many(instrument_ids)
+    fills_by_order = await repos.broker_fill_snapshots.list_recent_by_order_ids(
+        order_ids, limit_per_order=20
     )
-    if fill_rows:
-        latest_fill = fill_rows[0]
-        max_filled_quantity = max(row.filled_quantity for row in fill_rows)
-        latest_fill_price = float(latest_fill.fill_price)
-        filled_quantity = float(max_filled_quantity)
-        summary.filled_quantity = filled_quantity
-        summary.avg_fill_price = latest_fill_price
-        summary.fill_amount = filled_quantity * latest_fill_price
-    return summary
+    summaries: list[OrderSummary] = []
+    for order in orders:
+        summary = _order_to_summary(order)
+        instrument_id: UUID | None = getattr(order, "instrument_id", None)
+        if instrument_id is not None:
+            inst = instruments_by_id.get(instrument_id)
+            if inst is not None:
+                summary.symbol = inst.symbol
+                summary.instrument_name = inst.name
+        fill_rows = fills_by_order.get(order.order_request_id)  # type: ignore[attr-defined]
+        if fill_rows:
+            latest_fill = fill_rows[0]
+            max_filled_quantity = max(row.filled_quantity for row in fill_rows)
+            latest_fill_price = float(latest_fill.fill_price)
+            filled_quantity = float(max_filled_quantity)
+            summary.filled_quantity = filled_quantity
+            summary.avg_fill_price = latest_fill_price
+            summary.fill_amount = filled_quantity * latest_fill_price
+        summaries.append(summary)
+    return summaries
 
 
 def _order_to_detail(order: object) -> OrderDetail:
@@ -399,7 +413,7 @@ async def list_orders(
         limit=limit,
     )
     orders = await repos.orders.list(query)
-    return [await _enrich_order_summary(o, repos) for o in orders]
+    return await _enrich_order_summaries(orders, repos)
 
 
 @router.get("/{order_request_id}", response_model=OrderDetail)

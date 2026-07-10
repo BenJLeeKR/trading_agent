@@ -642,19 +642,45 @@ class UniverseSelectionService:
         self._repos = repos
         self._liquidity_filter = liquidity_filter or LiquidityFilter(repos)
         self._kis_client = kis_client
+        # 종목별 index membership 캐시 — 한 번의 compose_with_diagnostics 호출
+        # 동안만 유효. _prime_membership_cache로 활성 종목 전체를 배치 조회해
+        # 채워두면, _index_membership_values가 종목마다 DB를 왕복하지 않는다
+        # (구성 대상 활성 종목이 수천 건이라 개별 조회 시 N+1이 된다).
+        self._membership_cache: dict[UUID, frozenset[str]] | None = None
+
+    async def _prime_membership_cache(self, instruments: Sequence[object]) -> None:
+        instrument_ids = [
+            iid for inst in instruments if (iid := getattr(inst, "instrument_id", None)) is not None
+        ]
+        memberships_by_id = await self._repos.instrument_index_memberships.list_active_by_instruments(
+            instrument_ids
+        )
+        self._membership_cache = {
+            instrument_id: frozenset(
+                str(item.membership_code).strip().upper()
+                for item in memberships
+                if str(item.membership_code).strip()
+            )
+            for instrument_id, memberships in memberships_by_id.items()
+        }
 
     async def _index_membership_values(self, instrument: object) -> frozenset[str]:
         instrument_id = getattr(instrument, "instrument_id", None)
         if instrument_id is not None:
-            memberships = await self._repos.instrument_index_memberships.list_active_by_instrument(
-                instrument_id
-            )
-            if memberships:
-                return frozenset(
-                    str(item.membership_code).strip().upper()
-                    for item in memberships
-                    if str(item.membership_code).strip()
+            if self._membership_cache is not None and instrument_id in self._membership_cache:
+                cached = self._membership_cache[instrument_id]
+                if cached:
+                    return cached
+            else:
+                memberships = await self._repos.instrument_index_memberships.list_active_by_instrument(
+                    instrument_id
                 )
+                if memberships:
+                    return frozenset(
+                        str(item.membership_code).strip().upper()
+                        for item in memberships
+                        if str(item.membership_code).strip()
+                    )
         return _metadata_index_membership_values(instrument)
 
     async def _is_core_seed_instrument(self, instrument: object) -> bool:
@@ -790,6 +816,7 @@ class UniverseSelectionService:
     ) -> None:
         """Load only approved core-seed instruments as the Core Universe."""
         instruments = await self._list_active_kr_equity_instruments()
+        await self._prime_membership_cache(instruments)
         for inst in instruments:
             if not await self._is_core_seed_instrument(inst):
                 continue

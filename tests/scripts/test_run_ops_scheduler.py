@@ -45,10 +45,7 @@ from scripts.run_ops_scheduler import (
     _generate_signal_feature_snapshot_input_command,
     _get_db_held_position_sell_count,
     _get_db_submit_count,
-    _handle_phase_change,
     _heartbeat_task,
-    _init_market_state_provider,
-    _insert_session_event,
     _init_session_provider,
     _is_held_position_sell_result,
     _is_submit_consuming_result,
@@ -71,7 +68,6 @@ from scripts.run_ops_scheduler import (
     _run_after_market_signal_feature_batch,
     _run_intraday_due_tasks,
     _session_gate,
-    _session_phase_monitor,
     _should_rollover_to_next_run_date,
     _signal_feature_snapshot_command,
     _signal_feature_snapshot_retry_input_path,
@@ -83,11 +79,7 @@ from agent_trading.domain.entities import (
     UniverseFreezeRunItemEntity,
 )
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
-from agent_trading.brokers.koreainvestment.market_state_client import (
-    MarketPhaseCode,
-    MarketState,
-    MarketStateProvider,
-)
+from agent_trading.brokers.koreainvestment.market_state_client import MarketPhaseCode
 from agent_trading.services.market_session import (
     FallbackSessionProvider,
     SCHEDULER_ADVISORY_LOCK_KEY,
@@ -1730,194 +1722,6 @@ class TestSchedulerStateP2Fields:
         assert state.recovery_batch_done is True
 
 
-class TestHandlePhaseChange:
-    """``_handle_phase_change()`` — phase 전이 반응."""
-
-    @pytest.mark.asyncio
-    async def test_after_hours_sets_mode(self) -> None:
-        """AFTER_HOURS 전이 → ``state.after_hours_mode = True``."""
-        state = SchedulerState(run_date=date(2026, 5, 18))
-        assert state.after_hours_mode is False
-
-        await _handle_phase_change(state, "OPEN", MarketPhaseCode.AFTER_HOURS.value)
-        assert state.after_hours_mode is True
-        assert state.market_phase == MarketPhaseCode.AFTER_HOURS.value
-        assert state.last_phase_change is not None
-
-    @pytest.mark.asyncio
-    async def test_halt_safe_mode(self) -> None:
-        """HALT 전이 → 로그 경고, ``is_trading_day``에는 영향 없음."""
-        state = SchedulerState(run_date=date(2026, 5, 18))
-        state.session_info = SessionInfo(
-            is_trading_day=True,
-            source="test",
-            reason="test",
-        )
-        await _handle_phase_change(state, "OPEN", MarketPhaseCode.HALT.value)
-        assert state.market_phase == MarketPhaseCode.HALT.value
-        # after_hours_mode should remain False for HALT
-        assert state.after_hours_mode is False
-
-    @pytest.mark.asyncio
-    async def test_unknown_safe_mode(self) -> None:
-        """UNKNOWN 전이 → 로그 경고."""
-        state = SchedulerState(run_date=date(2026, 5, 18))
-        await _handle_phase_change(state, "OPEN", MarketPhaseCode.UNKNOWN.value)
-        assert state.market_phase == MarketPhaseCode.UNKNOWN.value
-
-    @pytest.mark.asyncio
-    async def test_normal_phase_transition(self) -> None:
-        """OPEN 전이 → 정상 로깅."""
-        state = SchedulerState(run_date=date(2026, 5, 18))
-        await _handle_phase_change(state, "PRE_MARKET", MarketPhaseCode.OPEN.value)
-        assert state.market_phase == MarketPhaseCode.OPEN.value
-
-    @pytest.mark.asyncio
-    async def test_after_hours_idempotent(self) -> None:
-        """AFTER_HOURS 재전이 → ``after_hours_mode`` 유지."""
-        state = SchedulerState(run_date=date(2026, 5, 18))
-        await _handle_phase_change(state, "OPEN", MarketPhaseCode.AFTER_HOURS.value)
-        assert state.after_hours_mode is True
-        # Second AFTER_HOURS notification should not toggle
-        await _handle_phase_change(state, MarketPhaseCode.AFTER_HOURS.value, MarketPhaseCode.AFTER_HOURS.value)
-        assert state.after_hours_mode is True
-
-    @pytest.mark.asyncio
-    async def test_calls_insert_session_event_when_dsn_provided(self) -> None:
-        """DSN 제공 시 ``_insert_session_event``가 호출되어야 함."""
-        state = SchedulerState(run_date=date(2026, 5, 18))
-        state.session_db_id = 42  # session_db_id가 있어야 INSERT 시도
-        state.session_info = SessionInfo(
-            is_trading_day=True,
-            source="test",
-            reason="test",
-        )
-
-        # _persist_session_state 내부의 asyncpg.connect가 실패하지만,
-        # _insert_session_event 호출 자체는 검증 가능
-        with patch("scripts.run_ops_scheduler._insert_session_event") as mock_insert:
-            await _handle_phase_change(
-                state, "PRE_MARKET", MarketPhaseCode.OPEN.value,
-                dsn="postgresql://localhost/test",
-            )
-            mock_insert.assert_awaited_once_with(
-                state, "postgresql://localhost/test",
-                "PRE_MARKET", MarketPhaseCode.OPEN.value,
-            )
-
-
-class TestInsertSessionEvent:
-    """``_insert_session_event()`` — session_events INSERT."""
-
-    @pytest.mark.asyncio
-    async def test_noop_when_dsn_none(self) -> None:
-        """DSN=None → 아무 동작 안 함."""
-        state = SchedulerState(run_date=date(2026, 5, 18))
-        state.session_db_id = 42
-        await _insert_session_event(state, dsn=None, old_phase="OPEN", new_phase="CLOSING")
-        # 예외 없이 넘어가면 성공
-
-    @pytest.mark.asyncio
-    async def test_noop_when_session_db_id_none(self) -> None:
-        """session_db_id=None → 아무 동작 안 함."""
-        state = SchedulerState(run_date=date(2026, 5, 18))
-        # session_db_id is None by default
-        await _insert_session_event(state, dsn="postgresql://localhost/test", old_phase="OPEN", new_phase="CLOSING")
-        # 예외 없이 넘어가면 성공
-
-    @pytest.mark.asyncio
-    async def test_logs_error_on_db_failure(self) -> None:
-        """DB 연결 실패 → logger.exception 호출."""
-        state = SchedulerState(run_date=date(2026, 5, 18))
-        state.session_db_id = 42
-        with patch("scripts.run_ops_scheduler.logger") as mock_logger:
-            await _insert_session_event(
-                state, dsn="postgresql://invalid:5432/test",
-                old_phase="OPEN", new_phase="CLOSING",
-            )
-            mock_logger.exception.assert_called_once()
-
-
-class TestInitMarketStateProvider:
-    """``_init_market_state_provider()`` — 163 WebSocket client init."""
-
-    @pytest.mark.asyncio
-    async def test_returns_none_when_disabled(self) -> None:
-        """KIS_LIVE_INFO_ENABLED != true → None."""
-        with patch.dict("os.environ", {"KIS_LIVE_INFO_ENABLED": "false"}, clear=False):
-            provider = await _init_market_state_provider()
-            assert provider is None
-
-    @pytest.mark.asyncio
-    async def test_returns_none_when_missing_credentials(self) -> None:
-        """KIS_LIVE_INFO_ENABLED=true but no credentials → None."""
-        with patch.dict(
-            "os.environ",
-            {
-                "KIS_LIVE_INFO_ENABLED": "true",
-                "KIS_LIVE_INFO_APP_KEY": "",
-                "KIS_LIVE_INFO_APP_SECRET": "",
-            },
-            clear=True,
-        ):
-            provider = await _init_market_state_provider()
-            assert provider is None
-
-
-class TestSessionPhaseMonitor:
-    """``_session_phase_monitor()`` — 실시간 phase polling."""
-
-    @pytest.mark.asyncio
-    async def test_cancellation_stops_loop(self) -> None:
-        """CancelledError 발생 → 루프 종료."""
-        state = SchedulerState(run_date=date(2026, 5, 18))
-        mock_provider = AsyncMock(spec=MarketStateProvider)  # type: ignore[unused-ignore]
-        # Provide a minimal MarketState
-        mock_state = MarketState(
-            timestamp=datetime.now(),
-            mkop_cls_code="1",
-            phase=MarketPhaseCode.OPEN,
-        )
-        mock_provider.get_current_state = AsyncMock(return_value=mock_state)
-
-        task = asyncio.create_task(
-            _session_phase_monitor(state, mock_provider, poll_interval=1)
-        )
-        await asyncio.sleep(0.05)
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        # After cancellation, state should be updated
-        assert state.market_phase == MarketPhaseCode.OPEN.value
-
-    @pytest.mark.asyncio
-    async def test_detects_phase_change(self) -> None:
-        """Phase 변경 감지 → state 업데이트 + after_hours_mode 전환."""
-        state = SchedulerState(run_date=date(2026, 5, 18))
-        mock_provider = AsyncMock(spec=MarketStateProvider)  # type: ignore[unused-ignore]
-        # Return AFTER_HOURS to trigger the mode switch
-        mock_state = MarketState(
-            timestamp=datetime.now(),
-            mkop_cls_code="3",
-            phase=MarketPhaseCode.AFTER_HOURS,
-        )
-        mock_provider.get_current_state = AsyncMock(return_value=mock_state)
-
-        task = asyncio.create_task(
-            _session_phase_monitor(state, mock_provider, poll_interval=1)
-        )
-        await asyncio.sleep(0.05)
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        assert state.market_phase == MarketPhaseCode.AFTER_HOURS.value
-        assert state.after_hours_mode is True
-
-
 class TestPersistSessionState:
     """``_persist_session_state()`` — DB 저장 (DSN 없으면 skip)."""
 
@@ -2640,6 +2444,13 @@ class TestDecisionLoopIntradayFreeze:
             return CommandResult(name=name, argv=argv, returncode=0, duration_seconds=1.0)
 
         with (
+            # 이 테스트는 submit budget 계산/argv 구성만 검증한다 — intraday
+            # universe freeze 자체의 materialize/reuse 로직은
+            # TestDecisionLoopIntradayFreeze에서 이미 postgres_runtime을
+            # in-memory repos로 mock해 별도 검증하므로, 여기서는 실제 DB
+            # 연결(postgres_runtime())을 타지 않도록 이 호출 자체를 no-op으로
+            # mock한다(no-DB 단위 테스트 경로 유지).
+            patch("scripts.run_ops_scheduler._ensure_decision_loop_intraday_freeze", new=AsyncMock()),
             patch("scripts.run_ops_scheduler._get_db_submit_count", new=AsyncMock(return_value=2)),
             patch("scripts.run_ops_scheduler._get_db_held_position_sell_count", new=AsyncMock(return_value=0)),
             patch("scripts.run_ops_scheduler._run_and_record", new=fake_run_and_record),
@@ -2898,7 +2709,6 @@ class TestNonTradingDayEarlyTermination:
             patch("scripts.run_ops_scheduler._load_env"),
             patch("scripts.run_ops_scheduler._build_base_env", return_value={}),
             patch("scripts.run_ops_scheduler._build_dsn", return_value=None),
-            patch("scripts.run_ops_scheduler._init_market_state_provider", return_value=None),
             patch(
                 "scripts.run_ops_scheduler._init_session_provider",
                 return_value=FallbackSessionProvider(),
@@ -2938,7 +2748,6 @@ class TestNonTradingDayEarlyTermination:
             patch("scripts.run_ops_scheduler._load_env"),
             patch("scripts.run_ops_scheduler._build_base_env", return_value={}),
             patch("scripts.run_ops_scheduler._build_dsn", return_value=None),
-            patch("scripts.run_ops_scheduler._init_market_state_provider", return_value=None),
             patch(
                 "scripts.run_ops_scheduler._init_session_provider",
                 return_value=FallbackSessionProvider(),
@@ -2952,6 +2761,13 @@ class TestNonTradingDayEarlyTermination:
                 "scripts.run_ops_scheduler._get_db_submit_count",
                 return_value=0,
             ),
+            # intraday due-task 경로가 decision 태스크를 실행하면
+            # _ensure_decision_loop_intraday_freeze()가 (dsn과 무관하게) 자체
+            # DB 연결(postgres_runtime())을 여는데, 이 테스트는 --once 루프의
+            # 전체 종료 코드만 검증하므로 실제 DB 연결 없이 통과해야 한다
+            # (no-DB 단위 테스트 경로 유지) — freeze materialize/reuse 로직
+            # 자체는 TestDecisionLoopIntradayFreeze에서 별도 검증한다.
+            patch("scripts.run_ops_scheduler._ensure_decision_loop_intraday_freeze", new=AsyncMock()),
         ):
             exit_code = await _run_scheduler(args)
             assert exit_code == 0
@@ -3054,7 +2870,6 @@ class TestIdleLifecycle:
             patch("scripts.run_ops_scheduler._load_env"),
             patch("scripts.run_ops_scheduler._build_base_env", return_value={}),
             patch("scripts.run_ops_scheduler._build_dsn", return_value=None),
-            patch("scripts.run_ops_scheduler._init_market_state_provider", return_value=None),
             patch(
                 "scripts.run_ops_scheduler._init_session_provider",
                 return_value=FallbackSessionProvider(),
@@ -3133,7 +2948,6 @@ class TestIdleLifecycle:
             patch("scripts.run_ops_scheduler._load_env"),
             patch("scripts.run_ops_scheduler._build_base_env", return_value={}),
             patch("scripts.run_ops_scheduler._build_dsn", return_value=None),
-            patch("scripts.run_ops_scheduler._init_market_state_provider", return_value=None),
             patch(
                 "scripts.run_ops_scheduler._init_session_provider",
                 return_value=FallbackSessionProvider(),

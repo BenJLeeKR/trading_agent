@@ -2085,16 +2085,23 @@ class KISRestClient:
         """Cache a successful quote response."""
         self._quote_cache[symbol] = (time.time(), data)
 
-    async def get_quote(self, symbol: str) -> dict[str, Any]:
+    async def get_quote(self, symbol: str, *, bypass_cache: bool = False) -> dict[str, Any]:
         """Retrieve current price quote (주식현재가 시세).
 
         Uses inquire-price endpoint with TTL-based quote cache.
         Cache hit → no MARKET_DATA budget consumption.
+
+        ``bypass_cache=True``: 캐시 조회를 건너뛰고 항상 새로 요청한다 — 구독
+        시점의 정적 참조값 보강(캐시를 그대로 써도 무방)과 달리, "장애 시점의
+        실제 최신 현재가"가 필요한 호출자(예: ``KisRealtimeQuoteSource``의 Step 4
+        REST fallback)를 위한 것이다. 성공하면 이 최신 응답으로 캐시를 갱신하므로
+        이후의 일반(캐시 허용) 호출자에게도 최신값이 돌아간다.
         """
-        # Cache hit check (budget 소비 없음)
-        cached = self._get_quote_from_cache(symbol)
-        if cached is not None:
-            return cached
+        # Cache hit check (budget 소비 없음) — bypass_cache=True면 건너뛴다.
+        if not bypass_cache:
+            cached = self._get_quote_from_cache(symbol)
+            if cached is not None:
+                return cached
 
         params = {
             "FID_COND_MRKT_DIV_CODE": "J",

@@ -469,9 +469,6 @@ const mockOperationsDayResponse = {
   stale_seconds: 4,
 };
 
-/** Mock session events response */
-const mockSessionEvents = { status: "ok", data: [] };
-
 /** Mock recent failures data (2건: rejected + exception 혼합) */
 const mockRecentFailures = [
   {
@@ -545,113 +542,6 @@ const mockBuyBlockSummary = {
   blocked_count: 1,
   rejected_count: 1,
   exception_count: 0,
-};
-
-const mockTradingUniverseCoverage = {
-  lookback_days: 14,
-  total_decision_count: 15,
-  total_order_count: 5,
-  market_overlay_active: true,
-  items: [
-    {
-      source_type: "held_position",
-      decision_count: 10,
-      order_count: 4,
-      order_conversion_rate: 0.4,
-      first_decision_at: "2026-05-29T01:00:00Z",
-      last_decision_at: "2026-05-30T05:00:00Z",
-      last_order_at: "2026-05-30T05:10:00Z",
-    },
-    {
-      source_type: "market_overlay",
-      decision_count: 5,
-      order_count: 1,
-      order_conversion_rate: 0.2,
-      first_decision_at: "2026-05-29T02:00:00Z",
-      last_decision_at: "2026-05-30T05:20:00Z",
-      last_order_at: "2026-05-30T05:21:00Z",
-    },
-  ],
-};
-
-const mockMarketOverlayFunnel = {
-  lookback_days: 14,
-  sample_limit: 10,
-  decision_count: 5,
-  order_count: 1,
-  order_conversion_rate: 0.2,
-  decision_type_counts: {
-    hold: 3,
-    approve: 2,
-  },
-  order_status_counts: {
-    submitted: 1,
-  },
-  recent_items: [
-    {
-      trade_decision_id: "td-overlay-001",
-      symbol: "001740",
-      market: "KRX",
-      decision_type: "approve",
-      side: "buy",
-      inclusion_reason: "trade_strength",
-      rationale_summary: "Momentum confirmation",
-      created_at: "2026-05-30T05:22:00Z",
-      order_request_id: "ord-overlay-001",
-      order_status: "submitted",
-      order_created_at: "2026-05-30T05:23:00Z",
-    },
-  ],
-};
-
-const mockTodayTradeDecisions = {
-  items: [
-    {
-      trade_decision_id: "td-freeze-001",
-      decision_context_id: "ctx-freeze-001",
-      decision_type: "watch",
-      side: "buy",
-      strategy_id: "strat-001",
-      symbol: "001740",
-      instrument_name: "SK네트웍스",
-      market: "KRX",
-      entry_style: "limit",
-      created_at: "2026-05-30T05:24:00Z",
-      entry_price: null,
-      quantity: null,
-      max_order_value: null,
-      confidence: 0.72,
-      rationale_summary: "reverse trade guard",
-      source_type: "market_overlay",
-      decision_json: {},
-      decision_inspection: {
-        holding_profile: {
-          holding_profile: "event_probe",
-        },
-        guardrail_attribution: {
-          latest_stop_reason: "reverse_trade_same_signal_feature_snapshot",
-        },
-      },
-      order_request_id: null,
-      order_status: null,
-      execution_attempt_status: "stopped",
-      latest_execution_attempt_id: "ea-001",
-      latest_stop_phase: "ai_override_gate",
-      latest_stop_reason: "reverse_trade_same_signal_feature_snapshot",
-      latest_completed_at: "2026-05-30T05:24:01Z",
-      latest_phase_count: 4,
-      phase_trace: [],
-      phase_count: 4,
-      total_elapsed_ms: 120,
-      latest_phase: "ai_override_gate",
-      latest_phase_detail: null,
-      latest_status: "stopped",
-      execution_status: "pipeline_stopped",
-    },
-  ],
-  total: 1,
-  limit: 500,
-  offset: 0,
 };
 
 const mockTradingUniversePreview = {
@@ -728,19 +618,23 @@ const mockTradingUniversePreview = {
  * Helper: mock all fetch calls required by OperationsDashboardView.fetchAll()
  * before the final getRecentFailures(5) and getFailureSummary() calls.
  *
- * Call order (25 total):
- *   1-12: Promise.all [health, readyz, recon, orders, todayOrders, daily-summary,
- *                     buy-block-summary, todayTradeDecisions, clients, session,
- *                     operations-day, events]
- *   13:   getAccounts(clientId)
- *   14-16: getAccountSnapshots(3 accounts)
- *   17-19: universe/snapshot [coverage, funnel, preview]
- *   20:   getSnapshotSyncRuns(10)
- *   21:   getRecentFailures(5) — caller provides this mock
- *   22:   getFailureSummary() — caller provides this mock
+ * 화면에서 "Universe Selection / Market Overlay"의 freeze 상세/overlay 진단/
+ * Session Events 섹션을 제거하면서, 그 UI에서만 쓰이던 백엔드 호출(coverage-summary,
+ * market-overlay-funnel, trade-decisions, session-events)도 함께 제거했다 —
+ * 죽은 데이터를 계속 fetch할 이유가 없다.
+ *
+ * Call order (22 total):
+ *   1-9: Promise.all [health, readyz, recon, orders, todayOrders, daily-summary,
+ *                     buy-block-summary, clients, session, operations-day]
+ *   10:   getAccounts(clientId)
+ *   11-13: getAccountSnapshots(3 accounts)
+ *   14:   universe preview (계좌 의존 — accounts 이후에만 fire 가능)
+ *   15:   getSnapshotSyncRuns(10)
+ *   16:   getRecentFailures(5) — caller provides this mock
+ *   17:   getFailureSummary() — caller provides this mock
  */
 function mockOpsDashboardCommon() {
-  // 1-12: Parallel batch
+  // 1-9: Parallel batch
   mockFetchOnce(mockOpsHealth);            // 1. GET /health
   mockFetchOnce(mockReadyz);               // 2. GET /health/readyz
   mockFetchOnce(mockReconciliationSummary); // 3. GET /reconciliation/summary
@@ -748,25 +642,21 @@ function mockOpsDashboardCommon() {
   mockFetchOnce(mockOrders);               // 5. GET /orders?date=today
   mockFetchOnce(mockTodayOrderSummary);    // 6. GET /orders/daily-summary
   mockFetchOnce(mockBuyBlockSummary);      // 7. GET /orders/buy-block-summary
-  mockFetchOnce(mockTodayTradeDecisions);  // 8. GET /trade-decisions?date=today
-  mockFetchOnce(mockClients);              // 9. GET /clients
-  mockFetchOnce(mockSessionResponse);      // 10. GET /market-sessions/latest
-  mockFetchOnce(mockOperationsDayResponse);// 11. GET /market-sessions/operations-day/latest
-  mockFetchOnce(mockSessionEvents);        // 12. GET /market-sessions/events/recent
+  mockFetchOnce(mockClients);              // 8. GET /clients
+  mockFetchOnce(mockSessionResponse);      // 9. GET /market-sessions/latest
+  mockFetchOnce(mockOperationsDayResponse);// 10. GET /market-sessions/operations-day/latest
 
-  // 13. getAccounts
+  // 11. getAccounts
   mockFetchOnce(mockAccounts);
 
-  // 14-16. getAccountSnapshots (3 accounts)
+  // 12-14. getAccountSnapshots (3 accounts)
   mockFetchOnce({ positions: mockPositions, cash_balance: mockCashBalance });
   mockFetchOnce({ positions: mockPositionsForLocked, cash_balance: mockCashBalanceForLocked });
   mockFetchOnce({ positions: [], cash_balance: mockCashBalanceNull });
 
-  // 17-19. universe selection observability
-  mockFetchOnce(mockTradingUniverseCoverage);
-  mockFetchOnce(mockMarketOverlayFunnel);
+  // 15. universe preview (계좌 의존이라 계좌 조회 이후에만 fire)
   mockFetchOnce(mockTradingUniversePreview);
-  // 20. getSnapshotSyncRuns
+  // 16. getSnapshotSyncRuns
   mockFetchOnce([]);
 }
 
@@ -787,12 +677,11 @@ describe("OperationsDashboardView — recent failures", () => {
     expect(screen.getByText("오늘 freeze 편입")).toBeInTheDocument();
     expect(screen.getByText("3건")).toBeInTheDocument();
     expect(screen.getByText("일치")).toBeInTheDocument();
-    expect(screen.getByText("hold 3 · approve 2")).toBeInTheDocument();
-    expect(screen.getByText("submitted 1")).toBeInTheDocument();
-    expect(screen.getByText("001740")).toBeInTheDocument();
-    expect(screen.getByText("WATCH / pipeline_stopped")).toBeInTheDocument();
-    expect(screen.getByText("event_probe")).toBeInTheDocument();
-    expect(screen.getByText("동일 snapshot reverse 차단")).toBeInTheDocument();
+    // freeze 상세 테이블 / overlay 진단 / Session Events는 속도 개선을 위해
+    // 화면에서 제거되었으므로 더 이상 렌더링되지 않는다.
+    expect(screen.queryByText("freeze 기준 요약")).not.toBeInTheDocument();
+    expect(screen.queryByText("Overlay 진단")).not.toBeInTheDocument();
+    expect(screen.queryByText("Session Events")).not.toBeInTheDocument();
   });
 
   it("renders recent submission failures card with data", async () => {

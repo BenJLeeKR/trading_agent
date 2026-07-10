@@ -5,9 +5,14 @@
 > **상태**: ✅ Phase 1~4 완료 (2026-07-09) — `RealtimeQuoteView.tsx`/`QuoteLadder.tsx`로
 > 실제 구현 완료(단일 종목 뷰, 10호가 프레임 유지 UX, 딥링크). **Phase 4에서 화면 갱신
 > 방식을 polling → SSE push 우선(+ 전송 실패 시 polling fallback)으로 전환**했다
-> (`admin_ui/src/api/client.ts::subscribeRealtimeQuoteStream`). §7의 "REST fallback
-> 배지"는 여전히 백엔드 Step 4(REST Fallback, KIS WS 자체가 끊겼을 때 값 보정)가
-> 미구현이라 트리거되지 않는다 — Phase 4의 push→polling fallback과는 별개 항목.
+> (`admin_ui/src/api/client.ts::subscribeRealtimeQuoteStream`). **2026-07-10
+> 백엔드 Step 4(REST Fallback, KIS WS 자체가 끊겼을 때 값 보정)가 구현 완료**돼
+> `RealtimeQuoteSnapshotView.data_source`가 실제로 `"rest_fallback"`을 값으로
+> 가질 수 있게 됐다 — Phase 4의 push→polling fallback과는 별개 항목(전자는 KIS
+> WS 자체가 끊겼을 때의 값 보정, 후자는 admin_ui↔backend 전달 경로 자체의
+> fallback). 다만 §7의 "REST fallback 배지"(전용 UI 배지)는 이번에 추가하지
+> 않았다 — `data_source` 필드 자체는 이미 화면에 노출되므로, 별도 배지 UI는
+> 후속 과제로 남겨뒀다.
 > **참조**: [`11_kis_realtime_quote_operations_screen.md`](../plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md), [`[BACKLOG] backlog.md` #37](%5BBACKLOG%5D%20backlog.md), [`[PRIORITY_MAP] remaining_work_priority_map.md` #19](%5BPRIORITY_MAP%5D%20remaining_work_priority_map.md)
 >
 > **v2 변경 사항**: 사용자가 제시한 참고 이미지(HTS 스타일 단일 종목 호가창)를 반영해
@@ -379,3 +384,17 @@
   지금 바로 합치면 UI 문제가 아니라 session ownership 문제로 바뀐다.
 - 따라서 현재는 분리 credential을 유지하고,
   Phase 4 후단에서 push relay / WS ownership 구조를 정리한 뒤 통합 가능성을 재검토한다.
+- **✅ 2026-07-10 재검토 완료 — 결론: 당분간 분리 유지.** 실제로는 "session
+  ownership 문제"보다 더 근본적으로, 현재가 WS(`api` 프로세스)와 장운영정보 WS
+  (`ops-scheduler` 프로세스)가 애초에 서로 다른 컨테이너에서 실행되고 있었다 —
+  통합은 UI/session 설계가 아니라 서비스 토폴로지 재설계에 해당한다. 상세 근거는
+  `11_kis_realtime_quote_operations_screen.md`의 "Credential 분리/통합 판단
+  메모"(2026-07-10 갱신) 참고. UI 자체는 이번 재검토로 영향받지 않는다.
+- **✅ 2026-07-10 credential 통합 구현 완료.** 같은 날 `ops-scheduler`의 163 WS
+  의존이 제거되면서 위 재검토의 전제(서로 다른 컨테이너가 WS를 각자 소유)가
+  바뀌어, 실시간 현재가 화면의 backend credential을 `KIS_REALTIME_QUOTE_*`에서
+  `KIS_LIVE_INFO_*`로 통합했다(`runtime/bootstrap.py::build_realtime_quote_source()`).
+  **이 화면의 UI/레이아웃/동작에는 영향이 없다** — 순수하게 backend가 어느
+  env var로 KIS 계정을 인증하는지만 바뀌었을 뿐, 화면에 보이는 데이터/구성요소는
+  그대로다. 상세는 `11_kis_realtime_quote_operations_screen.md`의 "Credential
+  분리/통합 판단 메모"(2026-07-10 통합 구현 상세) 참고.

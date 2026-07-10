@@ -19,6 +19,9 @@ from typing import AsyncIterator
 from fastapi import Depends, FastAPI
 from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import Response
+from starlette.types import Scope
 
 from agent_trading.repositories.bootstrap import build_in_memory_repositories
 from agent_trading.repositories.container import RepositoryContainer
@@ -33,6 +36,24 @@ from agent_trading.api.security import configure_security, require_viewer
 logger = logging.getLogger(__name__)
 
 _VALID_ROLES = frozenset({"viewer", "admin"})
+
+
+class _SPAStaticFiles(StaticFiles):
+    """``StaticFiles`` that falls back to ``index.html`` on a 404.
+
+    The admin UI uses ``BrowserRouter`` (real paths like ``/admin/orders``),
+    so a direct load or refresh at a client-side route has no matching file
+    on disk. Without this fallback, Starlette's plain ``StaticFiles`` 404s on
+    those requests instead of handing control back to the SPA's router.
+    """
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            return await super().get_response("index.html", scope)
 
 
 def create_app(
@@ -125,8 +146,10 @@ def create_app(
         #   → InMemoryMockQuoteSource. No KIS credentials, no network calls.
         # - realtime_quote_source is a KisRealtimeQuoteSource (only when
         #   runtime.bootstrap.build_realtime_quote_source() found
-        #   KIS_REALTIME_QUOTE_APP_KEY/_APP_SECRET configured, via
-        #   create_app_from_env()) → attempt to connect; on any failure,
+        #   KIS_LIVE_INFO_APP_KEY/_APP_SECRET configured — authoritative since
+        #   2026-07-10; legacy KIS_REALTIME_QUOTE_APP_KEY/_APP_SECRET is a
+        #   short-lived fallback — via create_app_from_env()) → attempt to
+        #   connect; on any failure,
         #   fall back to mock so a bad/unreachable realtime-quote credential
         #   never prevents the whole API from starting.
         #
@@ -362,7 +385,7 @@ def create_app(
     if os.path.isdir(_admin_ui_dist):
         app.mount(
             "/admin",
-            StaticFiles(directory=_admin_ui_dist, html=True),
+            _SPAStaticFiles(directory=_admin_ui_dist, html=True),
             name="admin_ui",
         )
 
@@ -415,11 +438,12 @@ def create_app_from_env() -> FastAPI:
     ----------------------
     Independent of ``API_RUNTIME_MODE`` (unlike the broker adapter above),
     this factory attempts to build a KIS-backed realtime-quote source for
-    the "실시간 현재가" screen whenever ``KIS_REALTIME_QUOTE_APP_KEY``/
-    ``_APP_SECRET`` are set — a **completely separate** credential from the
-    trading account and ``KIS_LIVE_INFO_*``. When unset (the default), the
-    screen runs on the in-memory mock source; no KIS credentials are
-    required for the rest of the API to function.
+    the "실시간 현재가" screen whenever ``KIS_LIVE_INFO_APP_KEY``/
+    ``_APP_SECRET`` are set (authoritative since 2026-07-10; legacy
+    ``KIS_REALTIME_QUOTE_APP_KEY``/``_APP_SECRET`` is a short-lived fallback) —
+    still a **completely separate** credential from the trading account.
+    When unset (the default), the screen runs on the in-memory mock source;
+    no KIS credentials are required for the rest of the API to function.
     """
     import os
 
@@ -445,7 +469,8 @@ def create_app_from_env() -> FastAPI:
     # Realtime-quote source is orthogonal to runtime_mode — build it whenever
     # its dedicated credentials are configured, regardless of in_memory vs
     # postgres. Returns None (→ mock fallback in create_app's lifespan) when
-    # KIS_REALTIME_QUOTE_APP_KEY/_APP_SECRET are unset.
+    # neither KIS_LIVE_INFO_APP_KEY/_APP_SECRET (authoritative) nor the
+    # legacy KIS_REALTIME_QUOTE_APP_KEY/_APP_SECRET fallback are set.
     realtime_quote_source = build_realtime_quote_source(settings)
 
     return create_app(

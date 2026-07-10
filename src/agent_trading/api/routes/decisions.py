@@ -365,19 +365,19 @@ async def _resolve_signal_feature_snapshot_ids(
     repos: RepositoryContainer,
     rows: list[TradeDecisionRow],
 ) -> dict[str, str | None]:
-    """Resolve decision_context-level signal feature anchors for trade decisions."""
+    """Resolve decision_context-level signal feature anchors for trade decisions.
+
+    Uses a single batch lookup (``get_many``) instead of one query per unique
+    ``decision_context_id`` — Postgres repos share one tx-bound connection per
+    request, so N per-row queries can't be parallelized away; the only way to
+    avoid the per-row round trip is to cut the query count itself.
+    """
+    unique_context_ids = list({row.entity.decision_context_id for row in rows})
+    contexts_by_id = await repos.decision_contexts.get_many(unique_context_ids)
     resolved: dict[str, str | None] = {}
-    seen_context_ids: set[str] = set()
-    for row in rows:
-        ctx_id = str(row.entity.decision_context_id)
-        if ctx_id in seen_context_ids:
-            continue
-        seen_context_ids.add(ctx_id)
-        try:
-            decision_context = await repos.decision_contexts.get(row.entity.decision_context_id)
-        except Exception:
-            decision_context = None
-        resolved[ctx_id] = (
+    for ctx_id in unique_context_ids:
+        decision_context = contexts_by_id.get(ctx_id)
+        resolved[str(ctx_id)] = (
             str(decision_context.signal_feature_snapshot_id)
             if decision_context is not None
             and decision_context.signal_feature_snapshot_id is not None
@@ -390,17 +390,29 @@ async def _resolve_compliance_inspection_views(
     repos: RepositoryContainer,
     rows: list[TradeDecisionRow],
 ) -> dict[str, dict[str, object] | None]:
-    resolved: dict[str, dict[str, object] | None] = {}
-    seen_context_ids: set[UUID] = set()
+    """Unique context별 compliance inspection 조회 — batch lookup 2회로
+    처리한다(위 함수와 동일한 이유: 쿼리 횟수 자체를 줄여야 한다)."""
+    # decision_json은 row마다 다를 수 있으므로 context_id별 첫 row를 대표로 쓴다
+    # (기존 순차 루프도 seen_context_ids로 첫 등장 row만 사용했으므로 동일한 동작).
+    first_row_by_context: dict[UUID, TradeDecisionRow] = {}
     for row in rows:
-        context_id = row.entity.decision_context_id
-        if context_id in seen_context_ids:
-            continue
-        seen_context_ids.add(context_id)
-        agent_runs = list(await repos.agent_runs.list_by_decision_context(context_id))
-        guardrail_evaluations = list(
-            await repos.guardrail_evaluations.get_by_decision_context(context_id)
-        )
+        first_row_by_context.setdefault(row.entity.decision_context_id, row)
+
+    context_ids = list(first_row_by_context.keys())
+    # compliance inspection은 "ai_compliance" 타입 run만 쓰므로(아래
+    # _select_latest_ai_compliance_run), SQL에서 그 타입만 필터링해 불필요한
+    # agent_type(및 그 큰 structured_output_json)까지 끌어오지 않는다.
+    agent_runs_by_context = await repos.agent_runs.list_by_decision_contexts(
+        context_ids, agent_type="ai_compliance"
+    )
+    guardrail_evals_by_context = await repos.guardrail_evaluations.get_by_decision_contexts(
+        context_ids
+    )
+
+    resolved: dict[str, dict[str, object] | None] = {}
+    for context_id, row in first_row_by_context.items():
+        agent_runs = agent_runs_by_context.get(context_id, [])
+        guardrail_evaluations = guardrail_evals_by_context.get(context_id, [])
         ai_compliance_run = _select_latest_ai_compliance_run(agent_runs)
         compliance_evaluation = _select_latest_compliance_guardrail(guardrail_evaluations)
         resolved[str(context_id)] = _build_compliance_inspection(

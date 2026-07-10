@@ -126,6 +126,28 @@ class PostgresInstrumentIndexMembershipRepository:
         )
         return tuple(row_to_entity(row, InstrumentIndexMembershipEntity) for row in rows)
 
+    async def list_active_by_instruments(
+        self,
+        instrument_ids: Sequence[UUID],
+    ) -> dict[UUID, Sequence[InstrumentIndexMembershipEntity]]:
+        if not instrument_ids:
+            return {}
+        rows = await self._tx.connection.fetch(
+            """
+            SELECT *
+            FROM trading.instrument_index_memberships
+            WHERE instrument_id = ANY($1::uuid[])
+              AND effective_to IS NULL
+            ORDER BY instrument_id, membership_code
+            """,
+            list(set(instrument_ids)),
+        )
+        result: dict[UUID, list[InstrumentIndexMembershipEntity]] = {}
+        for row in rows:
+            entity = row_to_entity(row, InstrumentIndexMembershipEntity)
+            result.setdefault(entity.instrument_id, []).append(entity)
+        return result
+
     async def list_active_instrument_ids_by_membership_code(
         self,
         membership_code: str,

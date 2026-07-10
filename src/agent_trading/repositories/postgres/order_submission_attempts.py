@@ -164,6 +164,20 @@ class PostgresOrderSubmissionAttemptRepository:
         then filters to rejected/exception outcomes and joins with
         ``trading.order_requests`` + ``trading.instruments`` for
         symbol/side/created_at.
+
+        The ``submitted_from``/``submitted_to`` bounds are applied *inside*
+        the ``latest_attempts`` CTE (before ``DISTINCT ON``) rather than on
+        the final result. This means "latest attempt" is resolved within the
+        requested window, not globally — since every row that would survive
+        the old post-filter already has to fall inside the window anyway, the
+        two are equivalent whenever ``submitted_to`` is open-ended (the
+        common case, e.g. no ``date`` query param). The only behavior change
+        is for a bounded past window (``date=YYYY-MM-DD``): an order whose
+        true latest attempt landed on a *later* day now correctly reflects
+        that day's failure state instead of being erased by a resolution
+        that peeks past the window. This also lets Postgres skip attempts
+        outside the window instead of scanning the whole table just to find
+        each order's global-latest attempt.
         """
         sql = """
             WITH latest_attempts AS (
@@ -182,6 +196,8 @@ class PostgresOrderSubmissionAttemptRepository:
                         ELSE NULL
                     END AS latest_outcome
                 FROM trading.order_submission_attempts osa
+                WHERE ($2::timestamptz IS NULL OR osa.submitted_at >= $2::timestamptz)
+                  AND ($3::timestamptz IS NULL OR osa.submitted_at <= $3::timestamptz)
                 ORDER BY osa.order_request_id, osa.attempt_number DESC
             )
             SELECT
@@ -198,8 +214,6 @@ class PostgresOrderSubmissionAttemptRepository:
             JOIN trading.order_requests o ON o.order_request_id = la.order_request_id
             LEFT JOIN trading.instruments i ON i.instrument_id = o.instrument_id
             WHERE la.latest_outcome IN ('rejected', 'exception')
-              AND ($2::timestamptz IS NULL OR la.submitted_at >= $2::timestamptz)
-              AND ($3::timestamptz IS NULL OR la.submitted_at <= $3::timestamptz)
             ORDER BY la.submitted_at DESC NULLS LAST
             LIMIT $1
         """

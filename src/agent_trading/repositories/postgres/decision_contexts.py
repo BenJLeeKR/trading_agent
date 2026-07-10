@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from uuid import UUID
 
 import asyncpg
@@ -59,6 +60,18 @@ class PostgresDecisionContextRepository:
             decision_context_id,
         )
         return row_to_entity(row, DecisionContextEntity) if row else None
+
+    async def get_many(
+        self, decision_context_ids: Sequence[UUID]
+    ) -> dict[UUID, DecisionContextEntity]:
+        if not decision_context_ids:
+            return {}
+        rows = await self._tx.connection.fetch(
+            "SELECT * FROM trading.decision_contexts WHERE decision_context_id = ANY($1::uuid[])",
+            list(set(decision_context_ids)),
+        )
+        entities = [row_to_entity(row, DecisionContextEntity) for row in rows]
+        return {e.decision_context_id: e for e in entities}
 
     async def get_by_correlation_id(
         self, correlation_id: str

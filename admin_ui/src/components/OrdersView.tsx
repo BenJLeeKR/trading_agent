@@ -28,19 +28,6 @@ function todayKst(): string {
   return formatter.format(new Date());
 }
 
-function formatIsoToKstDate(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-  const formatter = new Intl.DateTimeFormat("sv-SE", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  return formatter.format(parsed);
-}
-
 export default function OrdersView() {
   const { fieldMap } = useEnumMetadata();
   const [orders, setOrders] = useState<OrderSummary[]>([]);
@@ -66,26 +53,27 @@ export default function OrdersView() {
     }
   }, []);
 
+  // 조회일(selectedDate)은 UI상 항상 값이 있다("전체 날짜" 옵션 자체가 없음
+  // — date input이 비면 즉시 오늘로 되돌아감). 즉 최종적으로 화면에 보이는
+  // 건 언제나 "그 날짜 하나"뿐인데, 예전에는 서버에서 날짜 필터 없이 전체
+  // 기간(최대 1만 건)을 가져온 뒤 클라이언트에서 그 하루치만 걸러냈다 —
+  // 데이터가 쌓일수록 매번 불필요하게 전체를 가져오는 셈이라, 서버에 날짜를
+  // 그대로 전달해 필요한 하루치만 받도록 바꿨다(주문 건수가 많아질수록
+  // 효과가 커짐). UX상 달라지는 건 없다 — 이전에도 결과는 항상 하루 단위였다.
   useEffect(() => {
     setLoading(true);
     setError(null);
-    getOrders(undefined, 10000)
+    getOrders(undefined, 10000, selectedDate)
       .then(setOrders)
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "주문을 불러오지 못했습니다";
         setError(msg);
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [selectedDate]);
 
   const filteredOrders = useMemo(() => {
     return orders.filter((o) => {
-      if (selectedDate) {
-        const orderDate = formatIsoToKstDate(o.created_at);
-        if (orderDate !== selectedDate) {
-          return false;
-        }
-      }
       if (searchText && !(o.symbol ?? "").toLowerCase().includes(searchText.toLowerCase()) && !o.order_request_id.toLowerCase().includes(searchText.toLowerCase())) {
         return false;
       }
@@ -93,7 +81,7 @@ export default function OrdersView() {
       if (sideFilter && o.side !== sideFilter) return false;
       return true;
     });
-  }, [orders, selectedDate, searchText, statusFilter, sideFilter]);
+  }, [orders, searchText, statusFilter, sideFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filteredOrders.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);

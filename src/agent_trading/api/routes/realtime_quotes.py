@@ -6,13 +6,13 @@ pipeline. They only manage subscriptions against a ``RealtimeQuoteSource``
 (``app.state.realtime_quote_source``) and return the latest quote snapshot.
 
 ``app.state.realtime_quote_source`` is either an ``InMemoryMockQuoteSource``
-(no ``KIS_REALTIME_QUOTE_APP_KEY``/``_APP_SECRET`` configured — the default)
-or a ``KisRealtimeQuoteSource`` (Step 3, a completely separate KIS Live
-account/appkey from the trading account and ``KIS_LIVE_INFO_*``, connected
-only inside the ``api`` process — see ``kis_realtime_quote_source.py`` and
-``api/app.py`` lifespan wiring). Both implement the same
-``RealtimeQuoteSource`` protocol, so **this route module needs no changes**
-regardless of which one is active.
+(no ``KIS_LIVE_INFO_APP_KEY``/``_APP_SECRET`` configured — the default) or a
+``KisRealtimeQuoteSource`` (Step 3; 2026-07-10부터 ``KIS_LIVE_INFO_*``가
+authoritative credential — a completely separate KIS Live account/appkey from
+the trading account, connected only inside the ``api`` process — see
+``kis_realtime_quote_source.py`` and ``api/app.py`` lifespan wiring). Both
+implement the same ``RealtimeQuoteSource`` protocol, so **this route module
+needs no changes** regardless of which one is active.
 
 See ``plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md``
 and ``plans/[DESIGN]_kis_realtime_quote_operations_screen_plan.md`` (Step 1-3).

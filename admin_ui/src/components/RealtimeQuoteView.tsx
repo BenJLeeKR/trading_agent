@@ -65,6 +65,42 @@ function connectionLabel(state: string | undefined): string {
   return "연결 끊김";
 }
 
+type EffectiveConnectionState = "connected" | "reconnecting" | "disconnected";
+
+/** 실시간 연결 상태의 단일 authoritative source.
+ *
+ * 헤더 아이콘/라벨, degraded 판정, warning banner가 이 함수 하나의 결과만 보고
+ * 일관되게 반응하도록 한다 — 이전에는 `connection.connection_state`(bootstrap 시점
+ * 1회성 폴링 값)와 `streamStatus`(SSE 스트림의 실시간 값)를 화면 요소마다 서로 다르게
+ * 섞어 참조해, 배너는 끊김인데 헤더는 "연결됨"으로 남거나 그 반대인 모순이 생겼다.
+ *
+ * 우선순위: 선택된 종목의 스트림이 한 번이라도 이벤트를 받았으면(`streamStatus`가
+ * null이 아니면) 그 값 + `pushDegraded`(SSE transport 자체가 끊겨 재연결 backoff
+ * 중인 상태 — `streamStatus`에는 반영되지 않으므로 별도로 합친다)를 authoritative로
+ * 쓴다. 스트림이 아직 첫 이벤트를 받기 전(종목 선택 직후 또는 종목 미선택)에만
+ * bootstrap의 `connection.connection_state`로 fallback한다.
+ */
+function resolveConnectionState(
+  streamStatus: RealtimeQuoteStreamStatus | null,
+  pushDegraded: boolean,
+  bootstrapConnectionState: string | undefined
+): EffectiveConnectionState {
+  // pushDegraded(SSE transport 자체가 끊겨 재연결 backoff 중)는 streamStatus의
+  // 첫 이벤트가 아직 오지 않은 상태(스트림이 연결을 시도했다가 바로 끊긴 경우)
+  // 에서도 발생할 수 있으므로, streamStatus 유무와 무관하게 최우선으로 본다.
+  if (pushDegraded) return "reconnecting";
+  if (streamStatus !== null) {
+    if (streamStatus === "reconnecting") return "reconnecting";
+    if (streamStatus === "disconnected") return "disconnected";
+    // "connected" | "stale" | "no_data_yet" — 스트림 채널 자체는 살아있다.
+    // 데이터가 오래됐는지(stale)는 별도의 isStale 표시로 다룬다.
+    return "connected";
+  }
+  return bootstrapConnectionState === "connected" || bootstrapConnectionState === "reconnecting"
+    ? bootstrapConnectionState
+    : "disconnected";
+}
+
 /* ── main component ── */
 
 export default function RealtimeQuoteView() {
@@ -301,12 +337,14 @@ export default function RealtimeQuoteView() {
     (pushDegraded &&
       !!quote &&
       Date.now() - new Date(quote.updated_at).getTime() > STALE_THRESHOLD_MS);
-  const degraded =
-    pushDegraded ||
-    streamStatus === "disconnected" ||
-    streamStatus === "reconnecting" ||
-    !!snapshotError ||
-    (connection ? connection.connection_state !== "connected" : false);
+  // 단일 authoritative source — 헤더 아이콘/라벨, degraded 판정, 배너가 모두
+  // 이 값 하나만 참조한다(resolveConnectionState 참고).
+  const effectiveConnectionState = resolveConnectionState(
+    streamStatus,
+    pushDegraded,
+    connection?.connection_state
+  );
+  const degraded = effectiveConnectionState !== "connected" || !!snapshotError;
 
   return (
     <div className="p-6 space-y-4">
@@ -322,15 +360,15 @@ export default function RealtimeQuoteView() {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="bg-white rounded-lg border border-[#e2e8f0] p-3">
           <div className="flex items-center gap-2">
-            {connection?.connection_state === "connected" ? (
+            {effectiveConnectionState === "connected" ? (
               <Wifi className="h-4 w-4 text-[#22c55e]" />
-            ) : connection?.connection_state === "reconnecting" ? (
+            ) : effectiveConnectionState === "reconnecting" ? (
               <RefreshCcw className="h-4 w-4 text-[#f59e0b] animate-spin" />
             ) : (
               <WifiOff className="h-4 w-4 text-[#ef4444]" />
             )}
             <span className="text-sm font-medium text-[#0f172a]">
-              {connectionLabel(connection?.connection_state)}
+              {connectionLabel(effectiveConnectionState)}
             </span>
             <span className="text-xs text-[#94a3b8]">
               데이터 출처: {connection?.data_source ?? "—"}
@@ -365,17 +403,13 @@ export default function RealtimeQuoteView() {
       )}
       {degraded && (
         <WarningBanner
-          variant={
-            streamStatus === "disconnected" || connection?.connection_state === "disconnected"
-              ? "error"
-              : "warning"
-          }
+          variant={effectiveConnectionState === "disconnected" ? "error" : "warning"}
           title={
             pushDegraded
               ? "실시간 스트림 연결이 끊겨 재연결을 시도 중입니다 (일시적으로 폴링으로 갱신)"
-              : streamStatus === "reconnecting" || connection?.connection_state === "reconnecting"
+              : effectiveConnectionState === "reconnecting"
                 ? "WebSocket 재연결 시도 중"
-                : streamStatus === "disconnected" || connection?.connection_state === "disconnected"
+                : effectiveConnectionState === "disconnected"
                   ? "WebSocket 연결이 끊겼습니다"
                   : "시세 갱신 중 오류가 발생했습니다"
           }

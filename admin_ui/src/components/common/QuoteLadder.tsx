@@ -87,6 +87,14 @@ function deltaTextColor(delta: number | null): string {
   return delta > 0 ? "text-[#dc2626]" : "text-[#2563eb]";
 }
 
+/** 잔량이 방금 바뀐 행("직전"/잔량 칸)에 원래 행 배경(매도=파랑/매수=빨강)보다
+ * 조금 더 짙은 같은 계열 색을 즉시 표시한다(페이드 없이 값이 바뀌는 즉시 켜지고
+ * 꺼짐) — 값이 그대로면 delta가 0/null이라 배경도 없다. */
+function flashBg(delta: number | null, side: "ask" | "bid"): string {
+  if (delta === null || delta === 0) return "";
+  return side === "ask" ? "bg-blue-200/70" : "bg-red-200/70";
+}
+
 /**
  * 10단계 호가창 — 매도 10단계(위, 먼 호가부터) / 매수 10단계(아래, 가까운 호가부터).
  * 배경색은 매도/매수 구분(파란/분홍)을 고정 유지하고, `가격`/`대비율` 텍스트 색상은
@@ -149,10 +157,14 @@ export function QuoteLadder({
             key={`ask-${i}`}
             className={`grid ${LADDER_COLUMNS} py-0.5 bg-[#eff6ff] font-mono text-xs`}
           >
-            <span className={`text-right ${deltaTextColor(delta)}`}>
+            <span
+              className={`text-right ${deltaTextColor(delta)} ${flashBg(delta, "ask")}`}
+            >
               {lvl ? formatDelta(delta) : PLACEHOLDER}
             </span>
-            <span className="text-right text-[#475569]">
+            <span
+              className={`text-right text-[#475569] ${flashBg(delta, "ask")}`}
+            >
               {lvl ? fmt(lvl.quantity) : PLACEHOLDER}
             </span>
             <span
@@ -194,10 +206,14 @@ export function QuoteLadder({
             <span className={`text-center ${color}`}>
               {hasPrice ? pctLabel(value) : PLACEHOLDER}
             </span>
-            <span className="text-left text-[#475569]">
+            <span
+              className={`text-left text-[#475569] ${flashBg(delta, "bid")}`}
+            >
               {lvl ? fmt(lvl.quantity) : PLACEHOLDER}
             </span>
-            <span className={`text-left ${deltaTextColor(delta)}`}>
+            <span
+              className={`text-left ${deltaTextColor(delta)} ${flashBg(delta, "bid")}`}
+            >
               {lvl ? formatDelta(delta) : PLACEHOLDER}
             </span>
           </div>

@@ -3,13 +3,27 @@
 > **목적**: `plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md`(Backend/API 설계)와
 > `plans/[DESIGN]_kis_realtime_quote_screen_ui_layout.md`(Admin UI 레이아웃 설계)를
 > 실제 구현 가능한 단위(작은 PR)로 분해한다.
-> **상태**: ✅ Phase 1~4 완료 (2026-07-09) — Step 0/1/2/3/5/6/7/8/9 + Phase 4(push
-> relay, SSE) 구현 완료. **Step 4(REST Fallback 연동)만 여전히 미구현으로 남아
-> 있다** — `data_source`에 `"rest_fallback"`이 실제로 산출되는 경로는 코드에
-> 없다(타입 힌트 주석으로만 존재). 이는 Phase 4의 "완전 연결 실패 시 REST polling
-> fallback"(SSE 전송 실패 시 기존 snapshot polling 재개)과는 별개의 항목이다 —
-> 전자는 KIS WS 자체가 끊겼을 때의 값 보정, 후자는 admin_ui↔backend 전달 경로
-> 자체의 fallback이다. 자세한 현재 상태는 `[PRIORITY_MAP]` #19, `[BACKLOG]` #37 참조.
+> **상태**: ✅ Phase 1~4 + Step 4(REST Fallback 연동) 완료. Step 0/1/2/3/5/6/7/8/9
+> + Phase 4(push relay, SSE) 구현(2026-07-09)에 이어, **2026-07-10 Step 4(REST
+> Fallback 연동)까지 구현 완료** — `data_source`에 `"rest_fallback"`이 실제로
+> 산출되는 경로가 이제 존재한다(KIS WS 연결이 끊기거나 재연결 중일 때 구독 종목의
+> snapshot을 REST 현재가 조회로 보정). 이는 Phase 4의 "완전 연결 실패 시 REST
+> polling fallback"(SSE 전송 실패 시 기존 snapshot polling 재개)과는 별개의
+> 독립적인 항목이다 — 전자(Step 4)는 KIS WS 자체가 끊겼을 때의 **값 보정**,
+> 후자(Phase 4)는 admin_ui↔backend 전달 경로(SSE) 자체의 fallback이다. 상세는
+> `11_kis_realtime_quote_operations_screen.md` §4.7의 2026-07-10 블록 참고.
+> 자세한 현재 상태는 `[PRIORITY_MAP]` #19, `[BACKLOG]` #37 참조.
+>
+> **✅ 2026-07-10 Phase 4 마감 전 보정 2건 완료**: (1) `RealtimeQuoteView.tsx`의
+> 실시간 연결 상태 표시가 `connection.connection_state`(bootstrap 1회성 값)와
+> `streamStatus`(SSE 실시간 값)를 요소마다 다르게 참조해 헤더/배너/stale 표시가
+> 서로 모순될 수 있던 문제를 `streamStatus`(+`pushDegraded`) 단일 authoritative
+> source로 정리 — bootstrap 값은 스트림이 첫 이벤트를 받기 전까지의 fallback으로만
+> 쓴다. (2) `subscribeRealtimeQuoteStream()`이 공통 `request()` 래퍼를 거치지 않아
+> `/realtime-quotes/stream`의 401이 일반 transport error로 취급되던 문제를 수정 —
+> 이제 401은 `clearStoredToken()` + `_onUnauthorized()` 호출 후 재시도 루프를
+> 완전히 멈춘다(기존 REST API의 401 처리와 동일한 사용자 경험). 상세는
+> `11_kis_realtime_quote_operations_screen.md` §5.5의 2026-07-10 블록 참고.
 > **참조**: [`11_kis_realtime_quote_operations_screen.md`](../plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md),
 > [`[DESIGN]_kis_realtime_quote_screen_ui_layout.md`](%5BDESIGN%5D_kis_realtime_quote_screen_ui_layout.md),
 > [`[BACKLOG] backlog.md` #37](%5BBACKLOG%5D%20backlog.md),
@@ -33,24 +47,43 @@
 
 ---
 
-## 1. 목표
+> **⚠️ 2026-07-10 갱신 — credential 전제 변경.** 이 문서(특히 §1, §2, §3의 원문)는
+> 2026-07-08 초기 계획 당시 "완전히 분리된 신규 Live 계좌·앱키(`KIS_REALTIME_QUOTE_*`)"를
+> 전제로 작성됐다. **이 전제는 2026-07-10에 credential 통합 구현으로 대체되었다** —
+> `ops-scheduler`의 163 WS 의존 제거로 별도 계좌를 유지할 근거(WS 세션 소유권 충돌)가
+> 사라져, 현재는 공시/076 계좌와 동일한 **`KIS_LIVE_INFO_*`가 authoritative
+> credential**이다(`KIS_REALTIME_QUOTE_*`는 deprecated fallback으로만 코드에 남음).
+> 아래 원문은 **당시 계획 기록**으로 남기고, 실제 구현 결과는 문서 맨 아래
+> "✅ 2026-07-10 credential 통합 구현 완료" 섹션을 우선한다.
+
+## 1. 목표 [2026-07-08 당시 계획 — 신규 계좌 전제는 폐기됨, 아래 참고]
 
 - Admin UI "기본 운영" 메뉴 아래 "실시간 현재가" 화면을 추가해, 운영자가 선택한 종목의
   실시간 체결가(`H0STCNT0`)/호가(`H0STASP0`, 둘 다 KRX 전용)를 조회할 수 있게 한다.
-- 이 화면 전용의 **완전히 분리된 Live 계좌·앱키**(이미 발급·행정 처리 완료)로 KIS
+- ~~이 화면 전용의 **완전히 분리된 Live 계좌·앱키**(이미 발급·행정 처리 완료)로 KIS
   WebSocket에 연결하고, 기존 트레이딩 계좌/공시 계좌(`KIS_APP_KEY`, `KIS_LIVE_INFO_*`)의
-  세션·rate-limit budget과 **전혀 공유하지 않는다**.
+  세션·rate-limit budget과 **전혀 공유하지 않는다**.~~
+  **[2026-07-10 대체]** 트레이딩 계좌(`KIS_APP_KEY`)와는 여전히 완전히 분리되어 있으나,
+  공시/076 계좌(`KIS_LIVE_INFO_*`)와는 **동일 credential을 공유**한다 — 163 WS가
+  `ops-scheduler`에서 제거되어 이 appkey의 WS 세션 소유 프로세스가 `api` 하나만
+  남았기 때문에 가능해졌다.
 - 구현자가 리뷰 가능한 크기의 PR 단위로 나눠 진행할 수 있도록, 각 구현 단계(§5)를
   독립적으로 머지 가능한 순서로 배열한다.
 
-## 2. 비목표
+## 2. 비목표 [2026-07-08 당시 계획 — 아래 두 번째 항목은 2026-07-10 통합으로 대체됨]
 
 - 주문 제출, 자동매매 판단, universe 편입, signal 계산과의 연결 — 이 화면은 시작부터
   끝까지 read-only다.
-- 기존 트레이딩 계좌·공시 계좌(`KIS_LIVE_INFO_*`)의 세션/코드 경로 변경 — 이 작업은
+- ~~기존 트레이딩 계좌·공시 계좌(`KIS_LIVE_INFO_*`)의 세션/코드 경로 변경 — 이 작업은
   신규 계좌 전용 클라이언트 인스턴스만 추가하며, 기존 `KoreaInvestmentAdapter`,
   `KisMarketStateClient`, `OrderManager`, `ReconciliationService` 등 주문/체결/정합성
-  경로는 **일절 수정하지 않는다.**
+  경로는 **일절 수정하지 않는다.**~~
+  **[2026-07-10 대체]** `KIS_LIVE_INFO_*`(공시 계좌) credential 자체는 이제 이 화면과
+  공유하지만, 그 credential을 실제로 쓰는 기존 코드 경로(`_build_kis_live_quote_client()`,
+  076 홀리데이 조회 등)는 수정하지 않았다. `KoreaInvestmentAdapter`/`OrderManager`/
+  `ReconciliationService`(트레이딩 계좌 경로)는 여전히 완전히 분리되어 있으며 일절
+  수정하지 않았다. `KisMarketStateClient`(163)는 이미 별도 작업으로 `ops-scheduler`에서
+  제거되었다(2026-07-10, 163 제거 작업).
 - **`ops-scheduler` 서비스/코드 수정** — 이 신규 계좌 전용 WebSocket 연결은 전적으로
   `api` 서비스 프로세스(FastAPI `lifespan`) 안에서만 생성·유지된다.
   `scripts/run_ops_scheduler.py`를 비롯한 `ops-scheduler` 컨테이너의 어떤 코드도
@@ -62,12 +95,16 @@
 
 ## 3. 선행 조건
 
+> **⚠️ 2026-07-10 갱신**: 아래 표는 2026-07-08 당시 "신규 전용 계좌" 전제로 작성됐다.
+> 항목 1/4는 현재 기준과 맞지 않는다 — 신규 계좌는 더 이상 쓰지 않고(항목 1은
+> 역사적 기록), authoritative `.env` 변수명은 `KIS_LIVE_INFO_*`다(항목 4 갱신).
+
 | # | 항목 | 상태 |
 |---|---|---|
-| 1 | 신규 계좌·앱키 발급 및 행정 처리 | ✅ 완료 (사용자 확인) |
+| 1 | ~~신규 계좌·앱키 발급 및 행정 처리~~ [2026-07-08 당시 선행 조건 — 2026-07-10 이후 미사용] | ✅ 완료 (사용자 확인, 당시 기준) — **2026-07-10부터 이 계좌는 더 이상 쓰지 않는다** |
 | 2 | Backend 설계 문서 확정 | ✅ 완료 — `11_kis_realtime_quote_operations_screen.md` |
 | 3 | UI 레이아웃 설계 확정 | ✅ 완료 — `[DESIGN]_kis_realtime_quote_screen_ui_layout.md` |
-| 4 | `.env` 변수명 확정 | ✅ 완료 — `KIS_REALTIME_QUOTE_APP_KEY`/`APP_SECRET`/`BASE_URL`/`WS_URL` |
+| 4 | `.env` 변수명 확정 | ~~✅ 완료 — `KIS_REALTIME_QUOTE_APP_KEY`/`APP_SECRET`/`BASE_URL`/`WS_URL`~~ **[2026-07-10 갱신] 현재 authoritative 변수명은 `KIS_LIVE_INFO_APP_KEY`/`_APP_SECRET`/`_BASE_URL`/`_WS_URL`(+ 신규 `KIS_LIVE_INFO_APPROVAL_CACHE_PATH`)다. `KIS_REALTIME_QUOTE_*`는 deprecated fallback으로만 코드에 남아 있다.** |
 | 5 | 신규 계좌의 상한가/하한가/기준가/PER/PBR/EPS/BPS 보강 경로 확정 | ✅ **완료** — REST 현재가 조회(`029_주식현재가_시세.md`, TR `FHKST01010100`)로 확정. 기존 `KISRestClient.get_quote()`가 이미 이 필드들을 raw output으로 반환하므로 **신규 백엔드 코드 불필요**(Step 0 참고) |
 | 6 | `OrdersView`/`FillHistoryView` 종목 클릭 딥링크 연동 범위 확정 | ✅ 완료 — UI 레이아웃 설계 §3.1에서 Phase 3 범위로 명시 |
 | 7 | KIS 공식 문서 재확인(TR ID, message format, 구독 제한) | 🔄 **부분 완료** — 2026-07-08 사용자가 KIS 공식 웹페이지/문서로 재확인: `H0STCNT0`/`H0STASP0` 필드 스펙 일치, 41건 구독 한도 세부 규칙(계좌 합산, 체결가+호가 2건 계산), REST 현재가 조회(`FHKST01010100`) 응답 필드 일치 — 모두 확인 완료. **남은 항목은 approval key 발급(`/oauth2/Approval`) 요청/응답 필드뿐**이며, 이는 Step 3 구현 직전 최종 재확인으로 남긴다 |
@@ -127,9 +164,14 @@
 
 ### Step 3 — Quote Subscription Manager + KIS WebSocket Adapter 연동
 
+> **⚠️ 2026-07-10 갱신**: 아래 1번 항목은 2026-07-08 당시 구현 내용의 기록이다.
+> 이후 credential 통합으로 authoritative 변수명이 `KIS_LIVE_INFO_APP_KEY` 등으로
+> 바뀌었다(`KIS_REALTIME_QUOTE_APP_KEY`는 deprecated fallback) — 상세는 문서 맨
+> 아래 "✅ 2026-07-10 credential 통합 구현 완료" 참고.
+
 - **작업**:
-  1. 신규 계좌 전용 자격증명(`KIS_REALTIME_QUOTE_APP_KEY` 등)을 읽는 설정 추가
-     (`config/settings.py`).
+  1. [2026-07-08 당시 구현] 신규 계좌 전용 자격증명(`KIS_REALTIME_QUOTE_APP_KEY` 등)을
+     읽는 설정 추가(`config/settings.py`).
   2. 신규 계좌 전용 `KISWebSocketClient` 인스턴스를 생성하는 factory 함수 추가
      (기존 `adapter.py`/`bootstrap.py`의 `KoreaInvestmentAdapter` 생성 경로와는
      **별도의 새 함수**로 분리 — 기존 함수 시그니처/동작 변경 금지).
@@ -161,12 +203,30 @@
     공유, 재연결 구간 순간 중복 등록 등을 감안한 안전 마진 확보). 아래 §8/UI 레이아웃
     설계의 모든 "41건/20종목" 운영 수치는 이후 30건/15종목 기준으로 갱신됨.
 
-### Step 4 — REST Fallback 연동 — ❌ 미구현 (2026-07-08 재확인)
+### Step 4 — REST Fallback 연동 — ✅ 구현 완료 (2026-07-10)
 
 - **작업**: WS 연결 끊김이 N초 이상 지속될 때 `KISRestClient.get_quote()`를 1회
   호출해 값을 보정하는 로직을 `QuoteSubscriptionManager`에 추가(`11_...md` §4.7).
   REST client는 기존 트레이딩 계좌 client 재사용 여부를 이 단계에서 최종 확정.
 - **의존성**: Step 3 완료 후.
+- **✅ 2026-07-10 구현 완료** (같은 날 뒤이은 credential 통합 이전 시점의 기록):
+  `QuoteSubscriptionManager`라는 별도 클래스는 만들지 않고, `KisRealtimeQuoteSource`
+  자체에 헬스 모니터 루프(`_health_monitor_loop()`)와 종목별 쿨다운을 가진
+  `_maybe_apply_rest_fallback()`을 추가했다 — 연결이 10초 이상 끊기면 트리거,
+  종목당 최소 10초 간격(쿨다운)으로만 REST 호출. REST client는 트레이딩 계좌
+  client가 아니라 **이 화면 전용으로 이미 격리된 client**를 그대로 재사용했다
+  (당시 `KIS_REALTIME_QUOTE_APP_KEY` — **2026-07-10 늦게 credential 통합 구현으로
+  `KIS_LIVE_INFO_APP_KEY`로 대체됨**, 문서 맨 아래 참고) — 계좌 통합이 전혀
+  필요 없어 초안보다 단순하게 확정됐다. 상세는
+  `11_kis_realtime_quote_operations_screen.md` §4.7 참고.
+- **✅ 2026-07-10 마감 전 검수 보정 3건**: ① fallback이 `subscribe()`/자정
+  롤오버 재조회와 `get_quote()`의 3분 TTL 캐시를 공유해 "장애 시점 최신값"
+  대신 구독 시점 캐시값을 재사용할 수 있던 문제 → `get_quote(bypass_cache=True)`
+  추가로 fallback 경로만 캐시 우회. ② fetch 실패 시에도 쿨다운이 걸려 재시도가
+  막히던 문제 → 쿨다운 기록을 fetch 성공 이후로 이동. ③ 값이 동일한 채
+  `data_source`만 `websocket`→`rest_fallback`으로 바뀌는 경우 listener notify가
+  생략되던 문제 → `_content_signature()`에 `data_source` 포함. 상세는
+  `11_kis_realtime_quote_operations_screen.md` §4.7의 2026-07-10 보정 블록 참고.
 - **✅ 2026-07-08 KIS 공식 웹페이지/문서 재확인 완료**: REST 현재가 조회(`FHKST01010100`,
   `029_주식현재가_시세.md`) 응답 필드가 최신 공지와 **일치 확인됨**
   (`stck_mxpr`/`stck_llam`/`stck_sdpr`/`per`/`pbr`/`eps`/`bps` 포함). 추가 재확인 불필요.
@@ -382,14 +442,21 @@ python -m pytest tests/smoke/test_realtime_quote_live_smoke.py -v -m smoke --tim
 
 ## Credential 분리 유지와 후속 통합 검토
 
-### 현재 결정
+> **⚠️ 2026-07-10 최종 갱신 — 이 섹션의 "현재 결정"/"분리 유지의 합리적 근거"는
+> 2026-07-09 시점의 판단이며, 2026-07-10에 credential 통합 구현으로 대체되었다.**
+> 지금의 실제 결정은 문서 맨 아래 "✅ 2026-07-10 credential 통합 구현 완료" 참고 —
+> **authoritative credential은 `KIS_LIVE_INFO_*`다.** 아래 두 소제목은 당시 판단을
+> 그대로 남긴 역사적 기록이다.
+
+### [2026-07-09 당시 결정 — 2026-07-10 통합 구현으로 폐기됨]
 - Phase 4(push relay) 완료 이후에도 KIS_REALTIME_QUOTE_*와 KIS_LIVE_INFO_*를
   분리 유지한다 — Phase 4 작업 범위에서 credential 통합은 명시적으로 제외됐다
   (사용자 지시, 2026-07-09).
 
-### 분리 유지의 합리적 근거
+### [2026-07-09 당시 근거 — 163 WS 제거로 무효화됨]
 - KIS_LIVE_INFO_*가 이미 장운영정보 163 WebSocket을 소유하므로,
   지금 통합은 단순 env 정리가 아니라 shared session manager 설계 문제다.
+  **→ 2026-07-10: `ops-scheduler`에서 163 WS 자체가 제거되어 이 전제가 사라짐.**
 - approval key / reconnect / registration budget을 한 credential 아래 묶으면
   장애 원인 분리와 rollback이 어려워진다.
 - 현재 구현은 pi 안의 전용 현재가 source 기준으로 검증되어 있어
@@ -401,3 +468,73 @@ python -m pytest tests/smoke/test_realtime_quote_live_smoke.py -v -m smoke --tim
 - **Phase 4의 push relay 구조(`QuoteBroadcaster`)가 이제 안정화됐으므로**,
   KIS_REALTIME_QUOTE_*와 KIS_LIVE_INFO_*를 통합 가능한지는 지금부터가 실제
   재검토 시점이다 — 다음 후속 과제로 남긴다(구현은 하지 않음).
+
+### ✅ 2026-07-10 재검토 완료 — 결론: 당분간 분리 유지
+- 실제 코드(`KisRealtimeQuoteSource`, `KisMarketStateClient`, `api/app.py`,
+  `run_ops_scheduler.py`)를 추적한 결과, 두 credential은 **같은 `api` 프로세스
+  안의 문제가 아니라 서로 다른 두 컨테이너 프로세스**(`api` vs `ops-scheduler`)
+  간의 문제였다 — `KisRealtimeQuoteSource`는 `api` 전용, `KisMarketStateClient`는
+  `ops-scheduler` 전용이며 `api/app.py`의 lifespan에는 후자가 전혀 등장하지
+  않는다. 통합은 "session manager 설계"가 아니라 **서비스 토폴로지 재설계**
+  (어느 프로세스가 credential을 소유할지 결정)에 가깝다.
+- 이번 재검토는 구현이 아니라 판단 문서화다 — 통합 구현 자체는 진행하지
+  않았다. **결론: 지금 통합에 착수하지 않는다. 당분간 분리 유지.**
+- 상세 비교표(분리 유지 vs 통합), 통합 시 필요한 구조 변경 6가지, 후속 선행
+  조사 체크리스트는 `11_kis_realtime_quote_operations_screen.md`의 "Credential
+  분리/통합 판단 메모"(2026-07-10 갱신) 참고.
+
+### ✅ 2026-07-10 선행 조건 검토 — 163 WS(장운영정보) 제거 가능성
+- 위 통합 재검토의 후속 선행 조사로, `ops-scheduler`가 163 WS 없이도 운영 요구를
+  만족할 수 있는지 검토했다. **결론: 제거 가능성 높음 — 별도의 장기 shadow
+  검증 없이 진행 가능.**
+- 163의 실질 게이팅 효과(076이 놓칠 수 있는 장중 `HALT`/`UNKNOWN` 안전모드)는
+  그날 최초 세션 게이트 호출 시점 한 순간으로 이미 제한적이며, phase 전이
+  자체는 원래부터 시계 기반이다. 결정적으로 현재 실제 배포 설정
+  (`KIS_ENV=paper`)에서는 163 WS 연결이 이미 매번 스킵되고 있어, 076-only
+  경로가 사실상 매일 실운영되고 있다.
+- **✅ 2026-07-10 추가 확인(사용자 판단)**: 실제 주문 판단/제출이 5분 배치
+  (`DEFAULT_DECISION_INTERVAL_SECONDS=300`)로만 이뤄져 즉시 반응이 필요한
+  실시간 경로가 없다. 163이 막던 VI/거래정지 tail 이벤트도, 감지하지
+  못해도 개별 주문의 안전성은 브로커 응답 레벨에서 별도로 걸러진다 — 163은
+  그 위에 얹힌 부가 필터였을 뿐이므로, 장기 관찰 없이도 제거 가능하다는
+  결론에 도달했다.
+- 상세 근거·검증 체크리스트·(참고용) shadow 비교 방법론은
+  `11_kis_realtime_quote_operations_screen.md`의 "163 WS 제거 가능성 검토
+  메모"(2026-07-10 신설) 참고.
+
+### ✅ 2026-07-10 163 WS 제거 구현 완료
+- 위 검토 결론에 따라 같은 날 `scripts/run_ops_scheduler.py`에서
+  `KisMarketStateClient`/`CombinedSessionProvider` 의존을 실제로 제거했다.
+  `_init_market_state_provider()`/`_session_phase_monitor()`/
+  `_handle_phase_change()`/`_insert_session_event()` 삭제, `_init_session_provider()`는
+  이제 항상 076 REST(`KisHolidayProvider`) + `FallbackSessionProvider`만 반환한다.
+- `SchedulerState.market_phase`/`last_phase_change`와 대응 DB 컬럼은 스키마
+  변경 없이 유지하되 앞으로 항상 `NULL`을 기록한다 — 로깅/헬스체크는 이미
+  null-safe 폴백을 갖추고 있어 추가 수정이 필요 없었다.
+- `core_risk_off` 장후 검증 배치(`signal_feature_batch`/`trigger_proxy_attribution`)는
+  `state.market_phase`가 아니라 고정 시계 트리거로만 게이팅됨을 코드 확인 +
+  회귀 테스트(관련 테스트 202건 전부 통과)로 검증해, 영향이 없음을 확인했다.
+- credential(`KIS_LIVE_INFO_*`/`KIS_REALTIME_QUOTE_*`) 통합 자체는 이번
+  작업에서도 범위 밖으로 유지했다. 상세는
+  `11_kis_realtime_quote_operations_screen.md`의 "163 WS(장운영정보,
+  ops-scheduler) 제거 가능성 검토 메모"(2026-07-10 갱신) 참고.
+
+### ✅ 2026-07-10 credential 통합 구현 완료 — 최종 authoritative key는 `KIS_LIVE_INFO_*`
+- 163 WS 제거로 위 "당분간 분리 유지"의 핵심 근거(프로세스 경계를 넘는 WS 세션
+  소유권 문제)가 사라져, 같은 날 곧바로 통합을 구현했다. **`KIS_REALTIME_QUOTE_*`가
+  아니라 `KIS_LIVE_INFO_*`가 최종 authoritative credential이다.**
+- `runtime/bootstrap.py::build_realtime_quote_source()`가 이제
+  `settings.kis_live_app_key`/`kis_live_app_secret`/`kis_live_info_base_url`/
+  `kis_live_info_ws_url`(+ 신규 `kis_live_info_approval_cache_path`)을 우선
+  읽고, 비어 있을 때만 legacy `kis_realtime_quote_*`로 짧게 fallback한다(경고
+  로그 포함).
+- `docker-compose.yml`(`api` 서비스)/`.env.example`에서 `KIS_REALTIME_QUOTE_*`를
+  표준 설정에서 제거하고 `KIS_LIVE_INFO_APPROVAL_CACHE_PATH`를 추가했다 —
+  `KIS_REALTIME_QUOTE_*`는 코드 레벨 하위 호환 fallback으로만 남아 있다.
+- `KisRealtimeQuoteSource`/`QuoteBroadcaster`/REST fallback 로직 자체는 수정하지
+  않았다 — 순수 credential 초기화 경로만 바뀌었다.
+- 검증: `tests/services/test_kis_realtime_quote_source.py`(신규 fallback 테스트
+  포함 3개) + 실시간 현재가/scheduler/session 관련 테스트 283개 DB 없이 통과,
+  `docker compose config` 정합성 확인.
+- 상세는 `11_kis_realtime_quote_operations_screen.md`의 "Credential 분리/통합
+  판단 메모"(2026-07-10 통합 구현 상세 섹션 추가) 참고.

@@ -19,9 +19,11 @@ async def test_list_recent_failures_joins_instruments_for_symbol() -> None:
     await repo.list_recent_failures(limit=5)
 
     connection.fetch.assert_awaited_once()
-    sql, limit = connection.fetch.await_args.args
+    sql, limit, submitted_from, submitted_to = connection.fetch.await_args.args
     assert "JOIN trading.order_requests o" in sql
     assert "LEFT JOIN trading.instruments i ON i.instrument_id = o.instrument_id" in sql
     assert "i.symbol" in sql
     assert "o.symbol" not in sql
     assert limit == 5
+    assert submitted_from is None
+    assert submitted_to is None

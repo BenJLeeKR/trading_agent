@@ -3,12 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { describe, expect, it, afterEach, vi, beforeEach } from "vitest";
 import RealtimeQuoteView from "../components/RealtimeQuoteView";
-import { setStoredToken, clearStoredToken } from "../api/client";
+import { setStoredToken, clearStoredToken, getStoredToken, setOnUnauthorized } from "../api/client";
 import {
   mockFetchOnce,
   mockFetchError,
   mockFetchStreamOnce,
   mockFetchStreamError,
+  mockFetchStreamUnauthorized,
 } from "./test-utils/mockFetch";
 import { VALID_TOKEN } from "./test-utils/fixtures";
 import type {
@@ -122,6 +123,22 @@ function noDataEvent(symbol: string) {
     symbol,
     status: "no_data_yet" as const,
     snapshot: null,
+    generated_at: new Date().toISOString(),
+  };
+}
+
+/** Push-relay event with an arbitrary status — used to drive
+ * streamStatus-authoritative scenarios (reconnecting/disconnected/stale). */
+function streamStatusEvent(
+  symbol: string,
+  name: string,
+  market: string,
+  status: "connected" | "reconnecting" | "disconnected" | "stale" | "no_data_yet"
+) {
+  return {
+    symbol,
+    status,
+    snapshot: status === "no_data_yet" || status === "disconnected" ? null : snapshotFor(symbol, name, market),
     generated_at: new Date().toISOString(),
   };
 }
@@ -436,11 +453,12 @@ describe("RealtimeQuoteView snapshot rendering", () => {
 });
 
 describe("RealtimeQuoteView connection/degraded states", () => {
-  it("shows a reconnecting banner when connection_state is reconnecting", async () => {
-    const reconnecting = bootstrapWith("005930", "삼성전자", "KOSPI");
-    reconnecting.connection.connection_state = "reconnecting";
-    mockFetchOnce(reconnecting);
-    mockFetchStreamOnce([streamEventFor("005930", "삼성전자", "KOSPI")]);
+  it("shows a reconnecting banner when the stream itself reports reconnecting", async () => {
+    // bootstrap says "connected" (stale/irrelevant once the stream is live) —
+    // streamStatus is the authoritative source, so the banner/header must
+    // follow the stream's "reconnecting", not the bootstrap value.
+    mockFetchOnce(bootstrapWith("005930", "삼성전자", "KOSPI"));
+    mockFetchStreamOnce([streamStatusEvent("005930", "삼성전자", "KOSPI", "reconnecting")]);
 
     render(
       <MemoryRouter>
@@ -492,6 +510,125 @@ describe("RealtimeQuoteView connection/degraded states", () => {
         screen.getByText("API error 503: Realtime quote source not configured")
       ).toBeInTheDocument();
     });
+  });
+});
+
+describe("RealtimeQuoteView unified connection state (streamStatus authoritative)", () => {
+  it("keeps header/banner/stale consistent through connected → reconnecting → disconnected", async () => {
+    mockFetchOnce(bootstrapWith("005930", "삼성전자", "KOSPI"));
+    const stream = mockFetchStreamOnce([streamEventFor("005930", "삼성전자", "KOSPI")]);
+
+    render(
+      <MemoryRouter>
+        <RealtimeQuoteView />
+      </MemoryRouter>
+    );
+
+    // connected: header shows "연결됨", no degraded banner.
+    await waitFor(() => {
+      expect(screen.getByText("연결됨")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("WebSocket 재연결 시도 중")).not.toBeInTheDocument();
+    expect(screen.queryByText("WebSocket 연결이 끊겼습니다")).not.toBeInTheDocument();
+
+    // reconnecting: header label + banner must flip together.
+    stream.push(streamStatusEvent("005930", "삼성전자", "KOSPI", "reconnecting"));
+    await waitFor(() => {
+      expect(screen.getByText("재연결 중")).toBeInTheDocument();
+    });
+    expect(screen.getByText("WebSocket 재연결 시도 중")).toBeInTheDocument();
+
+    // disconnected: header label + banner (now "error" variant) flip together again.
+    stream.push(streamStatusEvent("005930", "삼성전자", "KOSPI", "disconnected"));
+    await waitFor(() => {
+      expect(screen.getByText("연결 끊김")).toBeInTheDocument();
+    });
+    expect(screen.getByText("WebSocket 연결이 끊겼습니다")).toBeInTheDocument();
+    expect(screen.queryByText("재연결 중")).not.toBeInTheDocument();
+  });
+
+  it("shows the stale indicator when streamStatus is stale, without contradicting the header", async () => {
+    mockFetchOnce(bootstrapWith("005930", "삼성전자", "KOSPI"));
+    const stream = mockFetchStreamOnce([streamEventFor("005930", "삼성전자", "KOSPI")]);
+
+    render(
+      <MemoryRouter>
+        <RealtimeQuoteView />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("71,900").length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByText(/지연됨/)).not.toBeInTheDocument();
+
+    stream.push(streamStatusEvent("005930", "삼성전자", "KOSPI", "stale"));
+    await waitFor(() => {
+      expect(screen.getByText(/지연됨/)).toBeInTheDocument();
+    });
+    // "stale" still means the stream channel itself is alive — the header
+    // must not fall over into "연결 끊김" just because the data is old.
+    expect(screen.getByText("연결됨")).toBeInTheDocument();
+  });
+
+  it("shows the stream's state, not the stale bootstrap value, once the stream has spoken", async () => {
+    // Bootstrap claims the connection is already broken — this must NOT pin
+    // the header/banner to "disconnected" once the stream reports otherwise.
+    const staleBootstrap = bootstrapWith("005930", "삼성전자", "KOSPI");
+    staleBootstrap.connection.connection_state = "disconnected";
+    mockFetchOnce(staleBootstrap);
+    mockFetchStreamOnce([streamEventFor("005930", "삼성전자", "KOSPI")]);
+
+    render(
+      <MemoryRouter>
+        <RealtimeQuoteView />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("연결됨")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("WebSocket 연결이 끊겼습니다")).not.toBeInTheDocument();
+  });
+
+  it("falls back to the bootstrap connection_state before the stream's first event arrives", async () => {
+    // The stream fetch is queued but its ReadableStream never emits — this
+    // freezes the component in the "no event yet" window so we can assert
+    // the fallback value is used (rather than defaulting to "connected").
+    const reconnectingBootstrap = bootstrapWith("005930", "삼성전자", "KOSPI");
+    reconnectingBootstrap.connection.connection_state = "reconnecting";
+    mockFetchOnce(reconnectingBootstrap);
+    mockFetchStreamOnce([]); // stream connects but never emits an event
+
+    render(
+      <MemoryRouter>
+        <RealtimeQuoteView />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("재연결 중")).toBeInTheDocument();
+    });
+  });
+
+  it("stops the stream retry loop and clears the token on a 401 from /realtime-quotes/stream", async () => {
+    mockFetchOnce(bootstrapWith("005930", "삼성전자", "KOSPI"));
+    mockFetchStreamUnauthorized();
+    const onUnauthorized = vi.fn();
+    setOnUnauthorized(onUnauthorized);
+
+    render(
+      <MemoryRouter>
+        <RealtimeQuoteView />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    });
+    expect(getStoredToken()).toBeNull();
+
+    setOnUnauthorized(null as unknown as () => void);
   });
 });
 

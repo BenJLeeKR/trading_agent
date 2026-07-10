@@ -1,4 +1,4 @@
-import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Layout } from "./components/Layout";
 import { LoginForm } from "./components/LoginForm";
@@ -28,7 +28,7 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
-    <HashRouter>
+    <BrowserRouter basename="/admin">
       <AuthProvider>
         <Routes>
           {/* Login — no layout; redirect to dashboard if already authenticated */}
@@ -66,6 +66,6 @@ export default function App() {
           </Route>
         </Routes>
       </AuthProvider>
-    </HashRouter>
+    </BrowserRouter>
   );
 }

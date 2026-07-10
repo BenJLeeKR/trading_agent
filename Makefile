@@ -81,8 +81,10 @@ docker-down:
 docker-build:
 	docker compose build
 
+# 표준 migration 실행 경로(`docker compose run --rm migrate`, docker-compose.yml의
+# one-shot `migrate` service)의 convenience alias다 — 별도 실행 경로가 아니다.
 docker-migrate:
-	docker compose exec app python -m agent_trading.db.migrations.run
+	docker compose run --rm migrate
 
 docker-test:
 	docker compose exec app python -m pytest tests/ -v

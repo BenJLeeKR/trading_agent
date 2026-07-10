@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from uuid import UUID
 
 from agent_trading.db.row_mapper import row_to_entity
@@ -71,6 +72,36 @@ class PostgresAgentRunRepository:
             decision_context_id,
         )
         return [row_to_entity(r, AgentRunEntity) for r in rows]
+
+    async def list_by_decision_contexts(
+        self, decision_context_ids: Sequence[UUID], *, agent_type: str | None = None
+    ) -> dict[UUID, list[AgentRunEntity]]:
+        if not decision_context_ids:
+            return {}
+        if agent_type is not None:
+            # agent_type으로 좁히면 불필요한 타입의 큰 structured_output_json까지
+            # 네트워크로 끌어오지 않는다 — compliance 조회처럼 특정 타입 1개만
+            # 필요한 호출자에게 중요한 최적화(실측: 500개 context 기준 agent_runs
+            # 쿼리가 80ms → 이 필터 없이는 해당 context들의 전체 run이 다 오므로).
+            rows = await self._tx.connection.fetch(
+                "SELECT * FROM trading.agent_runs "
+                "WHERE decision_context_id = ANY($1::uuid[]) AND agent_type = $2 "
+                "ORDER BY decision_context_id, started_at DESC",
+                list(set(decision_context_ids)),
+                agent_type,
+            )
+        else:
+            rows = await self._tx.connection.fetch(
+                "SELECT * FROM trading.agent_runs "
+                "WHERE decision_context_id = ANY($1::uuid[]) "
+                "ORDER BY decision_context_id, started_at DESC",
+                list(set(decision_context_ids)),
+            )
+        result: dict[UUID, list[AgentRunEntity]] = {}
+        for row in rows:
+            entity = row_to_entity(row, AgentRunEntity)
+            result.setdefault(entity.decision_context_id, []).append(entity)
+        return result
 
     async def list_all(self, limit: int = 100) -> list[AgentRunEntity]:
         rows = await self._tx.connection.fetch(

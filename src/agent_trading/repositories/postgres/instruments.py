@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from uuid import UUID
 
 from agent_trading.db.row_mapper import row_to_entity
@@ -49,6 +50,16 @@ class PostgresInstrumentRepository:
             instrument_id,
         )
         return row_to_entity(row, InstrumentEntity) if row else None
+
+    async def get_many(self, instrument_ids: Sequence[UUID]) -> dict[UUID, InstrumentEntity]:
+        if not instrument_ids:
+            return {}
+        rows = await self._tx.connection.fetch(
+            "SELECT * FROM trading.instruments WHERE instrument_id = ANY($1::uuid[])",
+            list(set(instrument_ids)),
+        )
+        entities = [row_to_entity(row, InstrumentEntity) for row in rows]
+        return {e.instrument_id: e for e in entities}
 
     async def get_by_symbol(self, symbol: str, market_code: str) -> InstrumentEntity | None:
         row = await self._tx.connection.fetchrow(

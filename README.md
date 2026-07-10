@@ -67,31 +67,59 @@ make test
 
 ## Docker 환경
 
-### 1. 빌드 및 실행
+> **⚠️ `api` 컨테이너는 기동 시 더 이상 자동으로 DB migration을 실행하지 않습니다.**
+> "api 재기동"과 "DB migration 실행"은 분리된 절차입니다 — migration은 아래처럼
+> 명시적으로 먼저 실행한 뒤 `api`를 올려야 합니다.
+
+### 1. 빌드
 
 ```bash
-docker compose up -d
+docker compose build
 ```
 
-### 2. 마이그레이션
+### 2. 마이그레이션 (api보다 먼저 실행)
+
+**표준 경로**는 `docker-compose.yml`의 one-shot `migrate` service입니다 —
+`api`와 동일한 `DATABASE_*` 환경변수를 재사용하며, migration만 실행하고
+종료됩니다:
+
+```bash
+docker compose run --rm migrate
+```
+
+`make docker-migrate`는 위 명령의 convenience alias입니다(내부적으로 동일한
+`docker compose run --rm migrate`를 호출합니다) — 별도의 실행 경로가 아닙니다:
 
 ```bash
 make docker-migrate
 ```
 
-### 3. 테스트
+성공(exit code 0)을 확인한 뒤에만 다음 단계로 진행하세요.
+
+### 3. 서비스 기동
+
+```bash
+docker compose up -d
+# 또는 api만: docker compose up -d api
+```
+
+`migrate` 서비스는 `profiles: [migrate]`로 분리돼 있어 `docker compose up -d`
+대상에 포함되지 않습니다 — 매번 재기동할 때마다 migration이 재실행되는 일은
+없습니다.
+
+### 4. 테스트
 
 ```bash
 make docker-test
 ```
 
-### 4. 셸 접속
+### 5. 셸 접속
 
 ```bash
 make docker-shell
 ```
 
-### 5. 종료
+### 6. 종료
 
 ```bash
 make docker-down
@@ -242,7 +270,7 @@ docker compose up -d db api
 | `make docker-up` | Docker 서비스 시작 |
 | `make docker-down` | Docker 서비스 종료 |
 | `make docker-build` | Docker 이미지 빌드 |
-| `make docker-migrate` | Docker 컨테이너에서 마이그레이션 |
+| `make docker-migrate` | 마이그레이션 실행 — `docker compose run --rm migrate`의 alias (표준 경로는 `docker compose run --rm migrate` 자체) |
 | `make docker-test` | Docker 컨테이너에서 테스트 |
 | `make docker-shell` | Docker 컨테이너 셸 접속 |
 

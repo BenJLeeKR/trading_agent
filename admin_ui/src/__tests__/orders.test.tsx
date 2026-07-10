@@ -59,10 +59,13 @@ describe("OrdersView with order data", () => {
     await waitFor(() => {
       expect(screen.getByText("주문")).toBeInTheDocument();
     });
+    mockFetchOnce(mockOrders);
     setFixtureOrderDate();
 
     // Verify data is rendered
-    expect(screen.getByText("AAPL")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("AAPL")).toBeInTheDocument();
+    });
     expect(screen.getByText("TSLA")).toBeInTheDocument();
 
     // Verify column headers
@@ -108,6 +111,7 @@ describe("OrdersView row click navigation", () => {
     await waitFor(() => {
       expect(screen.getByText("주문")).toBeInTheDocument();
     });
+    mockFetchOnce(mockOrders);
     setFixtureOrderDate();
 
     await waitFor(() => {
@@ -140,10 +144,13 @@ describe("OrdersView filter by status", () => {
     await waitFor(() => {
       expect(screen.getByText("주문")).toBeInTheDocument();
     });
+    mockFetchOnce(mockOrders);
     setFixtureOrderDate();
 
     // Initially both orders visible
-    expect(screen.getByText("AAPL")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("AAPL")).toBeInTheDocument();
+    });
     expect(screen.getByText("TSLA")).toBeInTheDocument();
 
     // Select "Filled" from status dropdown
@@ -173,10 +180,13 @@ describe("OrdersView filter by side", () => {
     await waitFor(() => {
       expect(screen.getByText("주문")).toBeInTheDocument();
     });
+    mockFetchOnce(mockOrders);
     setFixtureOrderDate();
 
     // Initially both visible
-    expect(screen.getByText("AAPL")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("AAPL")).toBeInTheDocument();
+    });
     expect(screen.getByText("TSLA")).toBeInTheDocument();
 
     // Select "Buy" from side dropdown
@@ -206,7 +216,12 @@ describe("OrdersView search by symbol", () => {
     await waitFor(() => {
       expect(screen.getByText("주문")).toBeInTheDocument();
     });
+    mockFetchOnce(mockOrders);
     setFixtureOrderDate();
+
+    await waitFor(() => {
+      expect(screen.getByText("AAPL")).toBeInTheDocument();
+    });
 
     // Type "AAPL" in search
     const searchInput = screen.getByPlaceholderText("심볼 또는 주문 ID 검색...");
@@ -235,7 +250,12 @@ describe("OrdersView combined filter and search", () => {
     await waitFor(() => {
       expect(screen.getByText("주문")).toBeInTheDocument();
     });
+    mockFetchOnce(mockOrders);
     setFixtureOrderDate();
+
+    await waitFor(() => {
+      expect(screen.getByText("AAPL")).toBeInTheDocument();
+    });
 
     // Type "AAPL" in search
     const searchInput = screen.getByPlaceholderText("심볼 또는 주문 ID 검색...");
@@ -256,20 +276,7 @@ describe("OrdersView combined filter and search", () => {
 
 describe("OrdersView filter by selected date", () => {
   it("shows only orders matching the selected KST date", async () => {
-    mockFetchOnce([
-      {
-        ...mockOrders[0],
-        symbol: "TODAY1",
-        created_at: "2026-05-05T00:00:00Z",
-      },
-      {
-        ...mockOrders[1],
-        order_request_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee0099",
-        client_order_id: "CO-DATE-99",
-        symbol: "OTHER1",
-        created_at: "2026-05-06T00:00:00Z",
-      },
-    ]);
+    mockFetchOnce(mockOrders);
 
     render(
       <MemoryRouter>
@@ -281,6 +288,15 @@ describe("OrdersView filter by selected date", () => {
       expect(screen.getByText("주문")).toBeInTheDocument();
     });
 
+    // Date changes now re-fetch from the server with ?date=..., so the mock
+    // for this second call returns only the entry the server would filter to.
+    mockFetchOnce([
+      {
+        ...mockOrders[0],
+        symbol: "TODAY1",
+        created_at: "2026-05-05T00:00:00Z",
+      },
+    ]);
     setFixtureOrderDate();
 
     await waitFor(() => {
@@ -307,10 +323,13 @@ describe("OrdersView filter by canonical status", () => {
     await waitFor(() => {
       expect(screen.getByText("주문")).toBeInTheDocument();
     });
+    mockFetchOnce(mockOrders);
     setFixtureOrderDate();
 
     // Both orders visible initially
-    expect(screen.getByText("AAPL")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("AAPL")).toBeInTheDocument();
+    });
     expect(screen.getByText("TSLA")).toBeInTheDocument();
 
     // Select "제출 대기" (pending_submit) — only TSLA has status=pending_submit
@@ -338,10 +357,13 @@ describe("OrdersView pagination footer", () => {
     await waitFor(() => {
       expect(screen.getByText("주문")).toBeInTheDocument();
     });
+    mockFetchOnce(mockOrders);
     setFixtureOrderDate();
 
     // Total item count should appear (mockOrders has 2 items)
-    expect(screen.getByText("총 2건")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("총 2건")).toBeInTheDocument();
+    });
     // Page navigation should appear
     expect(screen.getByRole("button", { name: "Previous page" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Next page" })).toBeInTheDocument();
@@ -366,6 +388,7 @@ describe("OrdersView symbol deep link", () => {
     await waitFor(() => {
       expect(screen.getByText("주문")).toBeInTheDocument();
     });
+    mockFetchOnce(mockOrders);
     setFixtureOrderDate();
 
     await waitFor(() => {
