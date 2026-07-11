@@ -7,6 +7,8 @@ import pytest
 
 from agent_trading.services.signal_backbone import (
     PriceBar,
+    TechnicalFeatureSnapshot,
+    build_shadow_v5_payload_from_feature_snapshot,
     build_signal_feature_entity,
     build_signal_snapshot,
 )
@@ -200,3 +202,33 @@ def test_shadow_v5_preserves_deep_negative_for_structural_downtrend() -> None:
 
     assert snapshot.component_scores_json["shadow_slow_score_v5"] <= -0.75
     assert snapshot.component_scores_json["shadow_overall_score_v5"] < -0.25
+
+
+def test_build_shadow_v5_payload_from_feature_snapshot_reconstructs_scores() -> None:
+    features = TechnicalFeatureSnapshot(
+        symbol="005930",
+        as_of=datetime(2026, 7, 3, tzinfo=timezone.utc),
+        bar_count=100,
+        sma_5=None,
+        sma_20=None,
+        sma_60=None,
+        price_vs_sma_20_pct=3.2,
+        price_vs_sma_60_pct=-7.1,
+        return_1m_pct=None,
+        return_3m_pct=-12.0,
+        volatility_20d_pct=3.4,
+        atr_14_pct=4.0,
+        rsi_14=58.0,
+        average_volume_20d=None,
+        average_turnover_20d=None,
+        volume_surge_ratio=1.5,
+        turnover_surge_ratio=1.1,
+    )
+
+    payload = build_shadow_v5_payload_from_feature_snapshot(features)
+
+    assert payload["shadow_slow_score_v5"] == pytest.approx(-0.53)
+    assert payload["shadow_fast_score_v5"] == pytest.approx(0.0575)
+    assert payload["shadow_overall_score_v5"] == pytest.approx(-0.2656)
+    assert payload["shadow_component_scores_v5"]["slow_momentum"] == pytest.approx(-0.55)
+    assert payload["shadow_component_scores_v5"]["slow_trend"] == pytest.approx(-0.5)

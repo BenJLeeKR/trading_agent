@@ -13,6 +13,16 @@
 3. **정기적 검토**: Plan 완료 시 BACKLOG를 검토하여 다음 우선순위를 결정한다.
 4. **기존 numbered plan 문서는 건드리지 않는다**: [BACKLOG] backlog.md가 future work의 단일 진실 공급원(single source of truth).
 
+## 최근 추가 상세 백로그
+
+- `core_risk_off` / `slow_score_v5` shadow 완화 후속 작업:
+  [`plans/[BACKLOG] core_risk_off_slow_floor_shadow_relaxation.md`](./%5BBACKLOG%5D%20core_risk_off_slow_floor_shadow_relaxation.md)
+  - `overall_missing` 보정 이후 실측 결과를 기준으로
+    `slow_trend` 경계 구간만 shadow 완화 후보로 먼저 분리하고,
+    `slow_momentum`은 관측 유지 후 판단하는 후속 작업 정리본이다.
+  - 목적은 `deep_negative` 전체 완화가 아니라,
+    `최고 기대수익률` 목표와 정렬되는 제한적 완화 경로만 검증하는 것이다.
+
 ---
 
 ## 14-Agent 설계 vs 현재 구현/Backlog 정리

@@ -185,3 +185,113 @@ shadow_slow_score_v5 = None
 2. 재실행 산출물에 `shadow_overall_score_v5` / `shadow_slow_score_v5`가 active row에 채워졌는지 먼저 확인한다.
 3. active row에 score가 채워진 뒤에도 `mild_relax` / `moderate_relax`가 0이면, 그때 `slow_momentum`, `slow_trend`, `fast_score`, `reason_codes_v5` 분해로 threshold 병목을 다시 판정한다.
 4. active/deep_negative sample이 diagnostics sample에 반드시 포함되도록 최소 계측 보강을 별도 Task로 진행한다.
+
+## 10. `v5 field propagation` 복구 후 재실측 결과
+
+`2026-07-11` 후속 작업에서 `scripts/analyze_trigger_proxy_attribution.py`에
+`signal_feature_snapshots.component_scores_json` fallback을 추가하여,
+과거 `trade_decision.decision_json`의 `core_risk_off_experiment`에 비어 있던
+`shadow_overall_score_v5`, `shadow_slow_score_v5`,
+`shadow_component_scores_v5`, `shadow_reason_codes_v5`,
+`shadow_diagnostics_v5`를 재집계 시 보강하도록 수정했다.
+
+이후 아래 명령으로 `2026-07-06` ~ `2026-07-10` 구간을 재집계했다.
+
+```bash
+docker compose exec -T ops-scheduler bash -lc 'cd /app && python3 scripts/analyze_trigger_proxy_attribution.py \
+  --start-date 2026-07-06 \
+  --end-date 2026-07-10 \
+  --output json \
+  --write-json /app/logs/trigger_proxy_attribution_2026-07-06_2026-07-10_v5_rerun.json \
+  --sample-limit 200 \
+  --sleep-seconds 0'
+```
+
+산출물:
+
+- `logs/trigger_proxy_attribution_2026-07-06_2026-07-10_v5_rerun.json`
+
+### 10.1 복구 여부
+
+- active 표본: 35건
+- 이 중 `shadow_overall_score_v5` / `shadow_slow_score_v5`가 실제로 채워진 표본: 28건
+- 남은 7건은 `2026-07-06` 의사결정으로, 연결된 snapshot 자체가 v5 이전 산출물이라 v5 score가 여전히 비어 있다.
+
+즉, 이전처럼 active 전부가 `overall_missing`으로 무너지는 상태는 해소되었고,
+현재는
+
+1. `2026-07-06`의 구 snapshot 7건
+2. 나머지 28건의 실제 정책 threshold
+
+를 분리해서 볼 수 있다.
+
+### 10.2 재실측 bucket 분포
+
+| bucket | sample_count | 비고 |
+| --- | ---: | --- |
+| strict_pass | 0 | 없음 |
+| mild_relax | 0 | 없음 |
+| moderate_relax | 0 | 없음 |
+| deep_negative | 35 | active 전부 |
+| inactive | 64 | core risk-off active 아님 |
+
+핵심은 `mild_relax` / `moderate_relax`가 0인 원인이 더 이상 단순 field missing만은 아니라는 점이다.
+
+### 10.3 실제 정책 병목 분해
+
+v5 score가 채워진 active 28건의 분포:
+
+| 지표 | 최소 | 평균 | 최대 |
+| --- | ---: | ---: | ---: |
+| `shadow_overall_score_v5` | -0.7505 | -0.5821 | -0.2421 |
+| `shadow_slow_score_v5` | -0.8000 | -0.7232 | -0.4300 |
+
+현재 v5 기준:
+
+- `mild_relax`: `overall >= -0.20` 그리고 `slow >= -0.15`
+- `moderate_relax`: `overall >= -0.25` 그리고 `slow >= -0.25` 외 추가 gate
+
+실측 결과:
+
+- `overall`가 `-0.25 ~ -0.20` 근처인 near-miss 표본은 2건 존재
+- 하지만 `slow`가 `-0.25 ~ -0.15` 구간인 표본은 0건
+- 즉, 현재 실질 병목은 `overall`보다 `slow_score_v5` 하방 편향이다.
+
+### 10.4 component 기준 병목
+
+active + v5 score 존재 28건의 `shadow_component_scores_v5` 평균:
+
+| component | 평균 |
+| --- | ---: |
+| `slow_trend` | -0.7286 |
+| `slow_momentum` | -0.7196 |
+| `fast_trend` | -0.4732 |
+| `rsi_signal` | 0.0821 |
+| `volatility_penalty` | -0.7643 |
+| `volume_confirmation` | -0.0625 |
+
+해석:
+
+1. `slow_trend`와 `slow_momentum`이 모두 강한 음수다.
+2. `volatility_penalty`도 평균 `-0.7643`으로 하방 기여가 매우 크다.
+3. 반면 `rsi_signal`은 거의 중립~소폭 양수이고, 일부 표본은 `fast_trend`가 양수다.
+4. 따라서 현재 v5 완화가 열리지 않는 주된 원인은
+   - `below_sma60` 계열로 인한 `slow_trend` 음수
+   - `momentum_3m_negative` 계열로 인한 `slow_momentum` 음수
+   - `atr_expanded / volatility_*` 계열의 변동성 패널티
+   의 조합이다.
+
+### 10.5 active 35건의 직접 차단 사유
+
+`core_risk_off_floor_v5_diagnostics` 기준:
+
+| blocking reason | sample_count |
+| --- | ---: |
+| `overall_below_mild_floor` | 28 |
+| `overall_missing` | 7 |
+
+즉, 현재 남은 병목의 본체는 `overall_missing`이 아니라
+`overall_below_mild_floor` 28건이다.
+
+다만 이 28건의 `overall_v5` 하방 편향은 다시 `slow_score_v5` 하방 편향에서 비롯되므로,
+다음 단계는 `slow_trend / slow_momentum / volatility_penalty`의 가중치와 threshold를 shadow 실험으로 추가 완화하는 것이다.

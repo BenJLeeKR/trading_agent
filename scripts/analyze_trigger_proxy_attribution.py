@@ -19,6 +19,11 @@ from agent_trading.brokers.koreainvestment.token_cache import CachePurpose
 from agent_trading.config.settings import AppSettings, KIS_DEFAULT_REST_URLS
 from agent_trading.db.connection import close_pool, connection, create_pool
 from agent_trading.runtime.bootstrap import postgres_runtime
+from agent_trading.services.signal_backbone import (
+    KST,
+    TechnicalFeatureSnapshot,
+    build_shadow_v5_payload_from_feature_snapshot,
+)
 from agent_trading.services.trigger_proxy_attribution import (
     build_core_risk_off_floor_diagnostic_rows,
     build_core_risk_off_floor_diagnostics_report,
@@ -114,6 +119,133 @@ def _coerce_json_list(value: object) -> list[object]:
     return []
 
 
+def _coerce_snapshot_component_scores(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return {}
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(parsed, dict):
+            return dict(parsed)
+    return {}
+
+
+def _hydrate_core_risk_off_experiment_from_snapshot(
+    *,
+    source_type: str,
+    core_experiment: dict[str, object],
+    snapshot_component_scores: dict[str, object],
+) -> dict[str, object]:
+    if source_type != "core":
+        return core_experiment
+    if not core_experiment or not bool(core_experiment.get("active")):
+        return core_experiment
+    if not snapshot_component_scores:
+        return core_experiment
+
+    hydrated = dict(core_experiment)
+    fallback_keys = (
+        "shadow_overall_score_v5",
+        "shadow_slow_score_v5",
+        "shadow_fast_score_v5",
+        "shadow_component_scores_v5",
+        "shadow_reason_codes_v5",
+        "shadow_diagnostics_v5",
+    )
+    for key in fallback_keys:
+        if hydrated.get(key) is None and snapshot_component_scores.get(key) is not None:
+            hydrated[key] = snapshot_component_scores.get(key)
+    return hydrated
+
+
+def _coerce_iso_datetime(value: object) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _build_snapshot_feature_payload(snapshot_row: dict[str, object]) -> dict[str, object]:
+    required_keys = (
+        "snapshot_at",
+        "bar_count",
+        "price_vs_sma_20_pct",
+        "price_vs_sma_60_pct",
+        "return_3m_pct",
+        "volatility_20d_pct",
+        "atr_14_pct",
+        "rsi_14",
+        "volume_surge_ratio",
+        "turnover_surge_ratio",
+    )
+    if all(snapshot_row.get(key) is None for key in required_keys):
+        return {}
+    snapshot_at = _coerce_iso_datetime(snapshot_row.get("snapshot_at"))
+    bar_count = snapshot_row.get("bar_count")
+    if snapshot_at is None or bar_count is None:
+        return {}
+    features = TechnicalFeatureSnapshot(
+        symbol=str(snapshot_row.get("symbol") or ""),
+        as_of=snapshot_at.astimezone(KST),
+        bar_count=int(bar_count),
+        sma_5=None,
+        sma_20=None,
+        sma_60=None,
+        price_vs_sma_20_pct=_coerce_float(snapshot_row.get("price_vs_sma_20_pct")),
+        price_vs_sma_60_pct=_coerce_float(snapshot_row.get("price_vs_sma_60_pct")),
+        return_1m_pct=None,
+        return_3m_pct=_coerce_float(snapshot_row.get("return_3m_pct")),
+        volatility_20d_pct=_coerce_float(snapshot_row.get("volatility_20d_pct")),
+        atr_14_pct=_coerce_float(snapshot_row.get("atr_14_pct")),
+        rsi_14=_coerce_float(snapshot_row.get("rsi_14")),
+        average_volume_20d=None,
+        average_turnover_20d=None,
+        volume_surge_ratio=_coerce_float(snapshot_row.get("volume_surge_ratio")),
+        turnover_surge_ratio=_coerce_float(snapshot_row.get("turnover_surge_ratio")),
+    )
+    return build_shadow_v5_payload_from_feature_snapshot(features)
+
+
+def _enrich_snapshot_component_scores(
+    raw_component_scores: object,
+    *,
+    snapshot_row: dict[str, object],
+) -> dict[str, object]:
+    component_scores = _coerce_snapshot_component_scores(raw_component_scores)
+    has_v5 = any(
+        component_scores.get(key) is not None
+        for key in (
+            "shadow_overall_score_v5",
+            "shadow_slow_score_v5",
+            "shadow_fast_score_v5",
+            "shadow_component_scores_v5",
+            "shadow_reason_codes_v5",
+            "shadow_diagnostics_v5",
+        )
+    )
+    if has_v5:
+        return component_scores
+    rebuilt = _build_snapshot_feature_payload(snapshot_row)
+    if not rebuilt:
+        return component_scores
+    enriched = dict(component_scores)
+    for key, value in rebuilt.items():
+        enriched.setdefault(key, value)
+    return enriched
+
+
 async def _resolve_target_account(
     account_id: str | None,
 ) -> tuple[UUID | None, str | None]:
@@ -185,6 +317,17 @@ async def _load_first_symbol_day_decisions(
                     td.decision_json#>'{deterministic_trigger,metadata,event_overlay_experiment}',
                     '{}'::jsonb
                 ) AS event_overlay_experiment_json,
+                COALESCE(sfs.component_scores_json, '{}'::jsonb) AS signal_component_scores_json,
+                sfs.snapshot_at AS snapshot_at,
+                sfs.bar_count AS snapshot_bar_count,
+                sfs.price_vs_sma_20_pct AS snapshot_price_vs_sma_20_pct,
+                sfs.price_vs_sma_60_pct AS snapshot_price_vs_sma_60_pct,
+                sfs.return_3m_pct AS snapshot_return_3m_pct,
+                sfs.volatility_20d_pct AS snapshot_volatility_20d_pct,
+                sfs.atr_14_pct AS snapshot_atr_14_pct,
+                sfs.rsi_14 AS snapshot_rsi_14,
+                sfs.volume_surge_ratio AS snapshot_volume_surge_ratio,
+                sfs.turnover_surge_ratio AS snapshot_turnover_surge_ratio,
                 COALESCE(td.decision_json#>'{deterministic_trigger,eligibility_reasons}', '[]'::jsonb) AS eligibility_reasons_json,
                 ROW_NUMBER() OVER (
                     PARTITION BY td.symbol, (td.created_at AT TIME ZONE 'Asia/Seoul')::date
@@ -193,6 +336,8 @@ async def _load_first_symbol_day_decisions(
             FROM trading.trade_decisions td
             JOIN trading.decision_contexts dc
               ON dc.decision_context_id = td.decision_context_id
+            LEFT JOIN trading.signal_feature_snapshots sfs
+              ON sfs.signal_feature_snapshot_id = dc.signal_feature_snapshot_id
             WHERE dc.account_id = $1
               AND (td.created_at AT TIME ZONE 'Asia/Seoul')::date BETWEEN $2::date AND $3::date
         )
@@ -214,6 +359,17 @@ async def _load_first_symbol_day_decisions(
             ranking_score,
             core_risk_off_experiment_json,
             event_overlay_experiment_json,
+            signal_component_scores_json,
+            snapshot_at,
+            snapshot_bar_count,
+            snapshot_price_vs_sma_20_pct,
+            snapshot_price_vs_sma_60_pct,
+            snapshot_return_3m_pct,
+            snapshot_volatility_20d_pct,
+            snapshot_atr_14_pct,
+            snapshot_rsi_14,
+            snapshot_volume_surge_ratio,
+            snapshot_turnover_surge_ratio,
             eligibility_reasons_json
         FROM ranked
         WHERE rn = 1
@@ -226,6 +382,27 @@ async def _load_first_symbol_day_decisions(
         reasons = _coerce_json_list(row["eligibility_reasons_json"])
         core_experiment = _coerce_json_mapping(row["core_risk_off_experiment_json"])
         event_experiment = _coerce_json_mapping(row["event_overlay_experiment_json"])
+        snapshot_component_scores = _enrich_snapshot_component_scores(
+            row["signal_component_scores_json"],
+            snapshot_row={
+                "symbol": row["symbol"],
+                "snapshot_at": row["snapshot_at"],
+                "bar_count": row["snapshot_bar_count"],
+                "price_vs_sma_20_pct": row["snapshot_price_vs_sma_20_pct"],
+                "price_vs_sma_60_pct": row["snapshot_price_vs_sma_60_pct"],
+                "return_3m_pct": row["snapshot_return_3m_pct"],
+                "volatility_20d_pct": row["snapshot_volatility_20d_pct"],
+                "atr_14_pct": row["snapshot_atr_14_pct"],
+                "rsi_14": row["snapshot_rsi_14"],
+                "volume_surge_ratio": row["snapshot_volume_surge_ratio"],
+                "turnover_surge_ratio": row["snapshot_turnover_surge_ratio"],
+            },
+        )
+        core_experiment = _hydrate_core_risk_off_experiment_from_snapshot(
+            source_type=str(row["source_type"]),
+            core_experiment=core_experiment,
+            snapshot_component_scores=snapshot_component_scores,
+        )
         decisions.append(
             {
                 "trade_decision_id": str(row["trade_decision_id"]),

@@ -115,6 +115,27 @@ def build_signal_feature_entity(
     )
 
 
+def build_shadow_v5_payload_from_feature_snapshot(
+    features: TechnicalFeatureSnapshot,
+) -> dict[str, object]:
+    """저장된 feature 값만으로 shadow v5 score payload를 재구성한다."""
+    shadow_v5_score_card = _build_shadow_v5_score_card(features)
+    return {
+        "shadow_signal_backbone_variant_v5": "signal_backbone_v1_shadow_v5",
+        "shadow_slow_score_v5": shadow_v5_score_card.slow_score,
+        "shadow_fast_score_v5": shadow_v5_score_card.fast_score,
+        "shadow_overall_score_v5": shadow_v5_score_card.overall_score,
+        "shadow_component_scores_v5": {
+            key: float(value) for key, value in shadow_v5_score_card.component_scores.items()
+        },
+        "shadow_reason_codes_v5": list(shadow_v5_score_card.reason_codes),
+        "shadow_diagnostics_v5": _build_score_diagnostics(
+            features=features,
+            score_card=shadow_v5_score_card,
+        ),
+    }
+
+
 def _build_component_scores_payload(
     *,
     features: TechnicalFeatureSnapshot,
@@ -141,18 +162,7 @@ def _build_component_scores_payload(
         features=features,
         score_card=shadow_v2_score_card,
     )
-    payload["shadow_signal_backbone_variant_v5"] = "signal_backbone_v1_shadow_v5"
-    payload["shadow_slow_score_v5"] = shadow_v5_score_card.slow_score
-    payload["shadow_fast_score_v5"] = shadow_v5_score_card.fast_score
-    payload["shadow_overall_score_v5"] = shadow_v5_score_card.overall_score
-    payload["shadow_component_scores_v5"] = {
-        key: float(value) for key, value in shadow_v5_score_card.component_scores.items()
-    }
-    payload["shadow_reason_codes_v5"] = list(shadow_v5_score_card.reason_codes)
-    payload["shadow_diagnostics_v5"] = _build_score_diagnostics(
-        features=features,
-        score_card=shadow_v5_score_card,
-    )
+    payload.update(build_shadow_v5_payload_from_feature_snapshot(features))
     return payload
 
 

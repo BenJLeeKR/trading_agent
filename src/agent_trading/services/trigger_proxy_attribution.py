@@ -707,8 +707,24 @@ def _build_core_risk_off_floor_diagnostic_rows(
         shadow_entry_observe_pass = bool(payload.get("shadow_entry_observe_pass"))
         shadow_topk_candidate = bool(payload.get("shadow_topk_candidate"))
         shadow_topk_selected = bool(payload.get("shadow_topk_selected"))
+        shadow_component_scores_v5 = (
+            dict(payload.get("shadow_component_scores_v5"))
+            if isinstance(payload.get("shadow_component_scores_v5"), Mapping)
+            else {}
+        )
+        shadow_slow_momentum_score = _coerce_float(
+            shadow_component_scores_v5.get("slow_momentum")
+        )
+        shadow_slow_trend_score = _coerce_float(
+            shadow_component_scores_v5.get("slow_trend")
+        )
         overall_band = _classify_overall_band(shadow_overall_score)
         slow_band = _classify_slow_band(shadow_slow_score)
+        slow_relax_candidate_band = _classify_slow_relax_candidate_band(
+            shadow_slow_score
+        )
+        slow_momentum_band = _classify_slow_component_band(shadow_slow_momentum_score)
+        slow_trend_band = _classify_slow_component_band(shadow_slow_trend_score)
         moderate_gate_bucket = _classify_core_risk_off_moderate_gate(
             active=active,
             overall=shadow_overall_score,
@@ -751,8 +767,14 @@ def _build_core_risk_off_floor_diagnostic_rows(
                 "shadow_entry_observe_pass": shadow_entry_observe_pass,
                 "shadow_topk_candidate": shadow_topk_candidate,
                 "shadow_topk_selected": shadow_topk_selected,
+                "shadow_slow_momentum_score": shadow_slow_momentum_score,
+                "shadow_slow_trend_score": shadow_slow_trend_score,
                 "overall_band": overall_band,
                 "slow_band": slow_band,
+                "slow_relax_candidate_band": slow_relax_candidate_band,
+                "slow_momentum_band": slow_momentum_band,
+                "slow_trend_band": slow_trend_band,
+                "slow_component_path": f"{slow_momentum_band}|{slow_trend_band}",
                 "moderate_gate_bucket": moderate_gate_bucket,
                 "blocking_reason": blocking_reason,
                 "bucket_path": f"{overall_band}|{slow_band}|{moderate_gate_bucket}",
@@ -893,6 +915,46 @@ def _build_core_risk_off_floor_diagnostics_report(
                 for item in build_trigger_proxy_aggregate_items(
                     annotated,
                     bucket_key="slow_band",
+                )
+            )
+        ],
+        "slow_relax_candidate_items": [
+            item_to_dict
+            for item_to_dict in (
+                _aggregate_item_asdict(item)
+                for item in build_trigger_proxy_aggregate_items(
+                    annotated,
+                    bucket_key="slow_relax_candidate_band",
+                )
+            )
+        ],
+        "slow_momentum_band_items": [
+            item_to_dict
+            for item_to_dict in (
+                _aggregate_item_asdict(item)
+                for item in build_trigger_proxy_aggregate_items(
+                    annotated,
+                    bucket_key="slow_momentum_band",
+                )
+            )
+        ],
+        "slow_trend_band_items": [
+            item_to_dict
+            for item_to_dict in (
+                _aggregate_item_asdict(item)
+                for item in build_trigger_proxy_aggregate_items(
+                    annotated,
+                    bucket_key="slow_trend_band",
+                )
+            )
+        ],
+        "slow_component_path_items": [
+            item_to_dict
+            for item_to_dict in (
+                _aggregate_item_asdict(item)
+                for item in build_trigger_proxy_aggregate_items(
+                    annotated,
+                    bucket_key="slow_component_path",
                 )
             )
         ],
@@ -1071,6 +1133,34 @@ def _classify_slow_band(slow: float | None) -> str:
         return "mild_window"
     if slow >= -0.25:
         return "moderate_window"
+    return "deep_negative"
+
+
+def _classify_slow_relax_candidate_band(slow: float | None) -> str:
+    if slow is None:
+        return "missing"
+    if slow >= -0.05:
+        return "strict_ready"
+    if slow >= -0.15:
+        return "mild_candidate"
+    if slow >= -0.25:
+        return "moderate_candidate"
+    if slow >= -0.40:
+        return "edge_deep"
+    return "deep_tail"
+
+
+def _classify_slow_component_band(score: float | None) -> str:
+    if score is None:
+        return "missing"
+    if score >= 0.45:
+        return "positive"
+    if score >= 0.0:
+        return "neutral_to_flat"
+    if score >= -0.25:
+        return "micro_negative"
+    if score >= -0.55:
+        return "moderate_negative"
     return "deep_negative"
 
 

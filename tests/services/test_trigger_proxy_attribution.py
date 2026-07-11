@@ -955,6 +955,10 @@ def test_build_core_risk_off_floor_v5_diagnostics_report_uses_v5_score_fields() 
                 "active": True,
                 "shadow_overall_score_v5": -0.18,
                 "shadow_slow_score_v5": -0.14,
+                "shadow_component_scores_v5": {
+                    "slow_momentum": -0.15,
+                    "slow_trend": -0.10,
+                },
                 "shadow_entry_score": 0.10,
                 "shadow_rank_candidate_score": 0.24,
                 "shadow_activity_pass": True,
@@ -978,6 +982,10 @@ def test_build_core_risk_off_floor_v5_diagnostics_report_uses_v5_score_fields() 
                 "active": True,
                 "shadow_overall_score_v5": -0.24,
                 "shadow_slow_score_v5": -0.20,
+                "shadow_component_scores_v5": {
+                    "slow_momentum": -0.55,
+                    "slow_trend": -0.25,
+                },
                 "shadow_entry_score": 0.18,
                 "shadow_rank_candidate_score": 0.31,
                 "shadow_activity_pass": True,
@@ -1000,12 +1008,30 @@ def test_build_core_risk_off_floor_v5_diagnostics_report_uses_v5_score_fields() 
     report = build_core_risk_off_floor_v5_diagnostics_report(rows, sample_limit=5)
     gate_items = {item["bucket"]: item for item in report["moderate_gate_items"]}
     reason_items = {item["bucket"]: item for item in report["blocking_reason_items"]}
+    slow_candidate_items = {
+        item["bucket"]: item for item in report["slow_relax_candidate_items"]
+    }
+    slow_momentum_items = {
+        item["bucket"]: item for item in report["slow_momentum_band_items"]
+    }
+    slow_trend_items = {
+        item["bucket"]: item for item in report["slow_trend_band_items"]
+    }
 
     assert by_symbol["AAA"]["core_risk_off_floor_v5_bucket"] == "mild_relax"
     assert by_symbol["AAA"]["blocking_reason"] == "mild_relax_pass"
+    assert by_symbol["AAA"]["slow_relax_candidate_band"] == "mild_candidate"
+    assert by_symbol["AAA"]["slow_component_path"] == "micro_negative|micro_negative"
     assert by_symbol["BBB"]["core_risk_off_floor_v5_bucket"] == "moderate_relax"
     assert by_symbol["BBB"]["blocking_reason"] == "moderate_relax_pass"
+    assert by_symbol["BBB"]["slow_relax_candidate_band"] == "moderate_candidate"
+    assert by_symbol["BBB"]["slow_component_path"] == "moderate_negative|micro_negative"
     assert gate_items["entry_below_0_12"]["sample_count"] == 1
     assert gate_items["moderate_ready"]["sample_count"] == 1
     assert reason_items["mild_relax_pass"]["sample_count"] == 1
     assert reason_items["moderate_relax_pass"]["sample_count"] == 1
+    assert slow_candidate_items["mild_candidate"]["sample_count"] == 1
+    assert slow_candidate_items["moderate_candidate"]["sample_count"] == 1
+    assert slow_momentum_items["micro_negative"]["sample_count"] == 1
+    assert slow_momentum_items["moderate_negative"]["sample_count"] == 1
+    assert slow_trend_items["micro_negative"]["sample_count"] == 2

@@ -2152,6 +2152,21 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
       - `core_risk_off_floor_v3`의 `mild_relax / moderate_relax` 표본 생성
       - `T+1 / T+3` proxy 악화 없음
       - churn / low-liquidity 부작용 없음
+    - 후속 우선순위 요약
+      - `overall_missing`은
+        구형 snapshot 참조 + 구형 component payload 문제로 확인되었고,
+        snapshot feature 기반 `shadow v5` 재구성 fallback으로 분석 경로에서는 해소됐다.
+      - 현재 실질 병목은
+        active `core_risk_off` 표본이 전부 `deep_negative`로 남는
+        `slow_score_v5` 하방 편향이다.
+      - `deep_negative` 전체 완화는
+        `inactive` 대비 후행 proxy가 더 나쁜 군을 허용하게 되므로
+        `최고 기대수익률` 목표와 맞지 않는다.
+      - 다음 단계는
+        `slow_trend` 경계 구간만 shadow 완화 후보로 분리 계측하고,
+        `slow_momentum`은 관측 유지 후 완화 여부를 뒤로 미루는 것이다.
+      - 상세 후속 백로그:
+        [`plans/[BACKLOG] core_risk_off_slow_floor_shadow_relaxation.md`](./%5BBACKLOG%5D%20core_risk_off_slow_floor_shadow_relaxation.md)
 - 근거 문서
   - [`plans/[DESIGN] deterministic_trigger_eligibility_and_ranking_v1.md`](./%5BDESIGN%5D%20deterministic_trigger_eligibility_and_ranking_v1.md)
   - [`plans/[DESIGN] performance_attribution_for_trigger_and_override.md`](./%5BDESIGN%5D%20performance_attribution_for_trigger_and_override.md)
