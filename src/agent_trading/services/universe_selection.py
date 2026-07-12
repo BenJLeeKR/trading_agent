@@ -647,6 +647,11 @@ class UniverseSelectionService:
         # 채워두면, _index_membership_values가 종목마다 DB를 왕복하지 않는다
         # (구성 대상 활성 종목이 수천 건이라 개별 조회 시 N+1이 된다).
         self._membership_cache: dict[UUID, frozenset[str]] | None = None
+        # 활성 KR 주식 종목 전체 목록 캐시 — 한 번의 compose_with_diagnostics 호출
+        # 동안만 유효. _add_core_universe와 _add_market_overlay(core_fallback
+        # 경로)가 모두 이 전체 목록을 필요로 하는데, 캐시가 없으면 활성 종목
+        # 스캔(시장코드 3개 × 테이블 스캔)이 매 호출마다 중복 실행된다.
+        self._active_kr_equity_instruments_cache: list[object] | None = None
 
     async def _prime_membership_cache(self, instruments: Sequence[object]) -> None:
         instrument_ids = [
@@ -746,6 +751,9 @@ class UniverseSelectionService:
         )
 
     async def _list_active_kr_equity_instruments(self) -> list[object]:
+        if self._active_kr_equity_instruments_cache is not None:
+            return self._active_kr_equity_instruments_cache
+
         items_by_symbol: dict[str, object] = {}
         for market_code in ("KRX", "KOSPI", "KOSDAQ"):
             instruments = await self._repos.instruments.list_active_by_market(market_code)
@@ -757,7 +765,9 @@ class UniverseSelectionService:
                 if market_code == "KRX" and segment not in {"KOSPI", "KOSDAQ"}:
                     continue
                 items_by_symbol[symbol] = instrument
-        return list(items_by_symbol.values())
+        result = list(items_by_symbol.values())
+        self._active_kr_equity_instruments_cache = result
+        return result
 
     async def compose(self, ctx: CompositionContext) -> list[SelectedSymbol]:
         selected, _ = await self.compose_with_diagnostics(ctx)
@@ -1149,18 +1159,27 @@ class UniverseSelectionService:
             if ranking_seed_symbols:
                 seed_pool_source = "kis_ranking"
 
+        # seed_pool_symbols에 대응하는 Instrument를 심볼별로 모아둔다 — core_fallback
+        # 경로에서는 이미 로드된 인스턴스를 그대로 재사용해(추가 쿼리 0회) 채우고,
+        # kis_ranking 경로에서는(Instrument가 아직 없으므로) 배치 조회 1회로 채운다.
+        # 종목마다 개별 get_by_symbol_any_market()를 호출하던 기존 N+1을 제거한다.
+        instruments_by_symbol: dict[str, object] = {}
         if ranking_seed_symbols:
             seed_pool_symbols = ranking_seed_symbols
+            instruments_by_symbol = await self._repos.instruments.get_by_symbols_any_market(
+                seed_pool_symbols
+            )
         else:
             core_symbols = await self._list_active_kr_equity_instruments()
             seed_pool_symbols: list[str] = []
             for inst in core_symbols:
                 if await self._is_market_discovery_seed_instrument(inst):
                     seed_pool_symbols.append(inst.symbol)
+                    instruments_by_symbol[inst.symbol] = inst
 
         symbol_market_map: dict[str, str] = {}
         for symbol in seed_pool_symbols:
-            instrument = await self._repos.instruments.get_by_symbol_any_market(symbol)
+            instrument = instruments_by_symbol.get(symbol)
             if instrument is None:
                 continue
             market_code = getattr(instrument, "market_code", None)

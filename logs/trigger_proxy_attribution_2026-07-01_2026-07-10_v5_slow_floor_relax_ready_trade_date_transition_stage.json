@@ -1,0 +1,27 @@
+{
+  "active_slow_floor_relax_ready_trade_date_projection_items": [
+    {
+      "bucket": "2026-07-03|slow_floor_relax_ready",
+      "sample_count": 1,
+      "candidate_count": 1,
+      "selected_count": 0,
+      "would_buy_count": 0,
+      "submitted_count": 0
+    }
+  ],
+  "active_slow_floor_relax_ready_trade_date_transition_stage_items": [
+    {
+      "bucket": "2026-07-03|watch_only_core_path",
+      "sample_count": 1,
+      "t1_return_pct_avg": 1.4583333333333393,
+      "t3_return_pct_avg": 3.3333333333333437,
+      "t5_return_pct_avg": 1.2499999999999956,
+      "t3_mfe_pct_avg": 4.791666666666661,
+      "t3_mae_pct_avg": -0.4166666666666652,
+      "t5_mfe_pct_avg": 5.000000000000004,
+      "t5_mae_pct_avg": -3.9583333333333304,
+      "positive_t3_hit_count": 1,
+      "positive_t3_hit_rate": 1.0
+    }
+  ]
+}

@@ -458,37 +458,39 @@ export default function OperationsDashboardView() {
     //       recentActiveIssues를 사용. 이 필드는 백엔드에서 active-only로 필터링됨.
     const reconRuns: ReconciliationRunSummary[] = (reconSummary?.recentActiveIssues ?? []).slice(0, 5);
 
-    // ── Snapshot sync runs ──
-    let snapshotSyncRuns: SnapshotSyncRunSummary[] = [];
-    try {
-      snapshotSyncRuns = await getSnapshotSyncRuns(10);
-    } catch {
-      addError("GET /snapshot-sync-runs", "스냅샷 동기화 이력 조회 실패");
-    }
-
-    const tradingUniversePreview = await universePreviewPromise;
-
-    // ── Recent submission failures ──
+    // ── snapshot-sync-runs / universe preview / recent-failures / failure-summary는
+    // 서로 데이터 의존성이 없다(계좌 fan-out에만 의존) — 순차 await 대신 동시에
+    // fire하고 한 번에 기다린다. 개별 실패가 나머지를 막지 않도록 각자
+    // .catch()로 안전한 기본값을 반환한다(Promise.all이 reject하지 않게 함).
     setFailuresLoading(true);
-    try {
-      const failuresData = await getRecentFailures(5, getKstTodayString());
-      setRecentFailures(failuresData);
-      setFailuresError(null);
-    } catch (e) {
-      setRecentFailures([]);
-      setFailuresError(String(e));
-    }
+    setFailureSummaryLoading(true);
+
+    let recentFailuresError: string | null = null;
+    const snapshotSyncRunsPromise = getSnapshotSyncRuns(10).catch(() => {
+      addError("GET /snapshot-sync-runs", "스냅샷 동기화 이력 조회 실패");
+      return [] as SnapshotSyncRunSummary[];
+    });
+    const recentFailuresPromise = getRecentFailures(5, getKstTodayString()).catch((e) => {
+      recentFailuresError = String(e);
+      return [] as RecentFailureItem[];
+    });
+    const failureSummaryPromise = getFailureSummary().catch(() => null);
+
+    const [snapshotSyncRuns, tradingUniversePreview, failuresData, summaryData] =
+      await Promise.all([
+        snapshotSyncRunsPromise,
+        universePreviewPromise,
+        recentFailuresPromise,
+        failureSummaryPromise,
+      ]);
+
+    setRecentFailures(failuresData);
+    setFailuresError(recentFailuresError);
     setFailuresLoading(false);
 
-    // ── Submission failure summary (aggregated counts) ──
-    setFailureSummaryLoading(true);
-    try {
-      const summaryData = await getFailureSummary();
-      setFailureSummary(summaryData);
-    } catch {
-      setFailureSummary(null);
-    }
+    setFailureSummary(summaryData);
     setFailureSummaryLoading(false);
+
     setBuyBlockSummaryLoading(true);
     setBuyBlockSummary(buyBlockSummaryData);
     setBuyBlockSummaryLoading(false);

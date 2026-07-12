@@ -276,6 +276,17 @@ class InMemoryInstrumentRepository:
         )
         return matches[0]
 
+    async def get_by_symbols_any_market(
+        self, symbols: Sequence[str]
+    ) -> dict[str, InstrumentEntity]:
+        wanted = set(symbols)
+        result: dict[str, InstrumentEntity] = {}
+        for symbol in wanted:
+            instrument = await self.get_by_symbol_any_market(symbol)
+            if instrument is not None:
+                result[symbol] = instrument
+        return result
+
     async def upsert_by_symbol(self, instrument: InstrumentEntity) -> InstrumentEntity:
         existing = await self.get_by_symbol(instrument.symbol, instrument.market_code)
         if existing is not None:

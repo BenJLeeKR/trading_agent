@@ -12,6 +12,341 @@
 - 이미 해결된 장애성 이슈와, 아직 구조적으로 남아 있는 과제를 구분한다.
 - 사용자가 요청한 방향에 맞춰 **Admin UI 추가 고도화는 후순위**로 내리고, 백엔드/운영 안정화 과제를 앞에 둔다.
 
+## 최근 메모
+
+- `core_risk_off slow floor shadow` 후속 실측에서
+  `2026-07-01 ~ 2026-07-10` active `trend_moderate_candidate` 4건을 확보했다.
+- 후행 proxy는
+  `T+1 평균 +2.1376%`,
+  `T+3 평균 +4.3830%`,
+  `T+3 양수 비율 100%`로
+  `inactive` / `deep_negative` 대비 우위다.
+- 그러나 4건 모두
+  `candidate_count=4`, `selected_count=0`, `would_buy_count=0`,
+  `submitted_count=0`이다.
+- 개별 분해 기준 직접 병목은
+  `shadow_topk_candidate_miss`이며,
+  더 앞단 원인은
+  `shadow_topk_candidate_gate_reason=signal_both_floor_miss`다.
+- strict floor 상세 분해 기준으로는
+  `overall_near_slow_deep=3`,
+  `overall_deep_slow_near=1`이다.
+- 추가 `slow floor shadow` 경로 분해 기준으로는
+  `slow_floor_relax_ready=1`,
+  `slow_floor_relax_activity_blocked=2`,
+  `overall_floor_first=1`이다.
+- 날짜 단위로 보면
+  `slow_floor_relax_ready`는 현재 `2026-07-03` 1건뿐이고,
+  그 1건도 `candidate=1`, `selected=0`, `would_buy=0`, `submitted=0`이다.
+- 직접 원인 집계 기준으로는
+  `projection_block_reason=shadow_topk_candidate_miss`,
+  `gate_reason=signal_both_floor_miss`,
+  `watch_reason=core_watch_path_only`다.
+- 전환 단계 집계 기준으로도
+  현재 ready 코호트는 `watch_only_core_path=1`이다.
+- 날짜별로는
+  `2026-07-03|watch_only_core_path=1`이다.
+- 따라서 다음 우선 작업은
+  `ranking top-k 완화`가 아니라
+  `slow_floor_relax_ready` 코호트의
+  `WATCH -> BUY candidate` 전환 가능성 장후 누적 관측이다.
+- 이를 위해 `ops-scheduler` 장후 요약에도
+  `slow_floor_relax_ready_count`,
+  `slow_floor_relax_activity_blocked_count`,
+  `slow_floor_relax_watch_only_core_path_count`
+  를 노출하도록 보강했다.
+- `2026-07-11` 현재 DB 기준 재집계에서는
+  같은 기간 `trend_moderate_candidate_count=13`,
+  `slow_floor_relax_ready_count=0`으로 다시 산출됐다.
+  따라서 다음 우선 작업은
+  기존 메모와 현재 재집계 diff 원인을 먼저 분해하는 것이다.
+- diff 원인 분해 결과,
+  이 값은 generic `core_risk_off_floor_diagnostics`를 읽은 결과였고,
+  실제 후속 작업 기준인 `core_risk_off_floor_v5_diagnostics`와는 다르다.
+- 따라서 운영 요약과 후속 shadow 관측은
+  `core_risk_off_floor_v5_report / core_risk_off_floor_v5_diagnostics`
+  를 우선 사용하도록 정렬했다.
+- 이어서 ready 코호트 sample 자체를 별도 노출하는
+  `active_slow_floor_relax_ready_samples`도 추가했다.
+  최신 기준 ready sample은
+  `2026-07-03 / 002790` 1건이며,
+  `WATCH -> BUY candidate` 전환이 아직 열리지 않았음을
+  sample row 기준으로 직접 추적할 수 있다.
+- 최신 gap 계측 결과
+  이 sample은
+  `deterministic_buy_shape_block_reason=watch_from_exit_setup`,
+  `buy_candidate_threshold_gap=0.4021`,
+  `core_risk_off_ranking_min_gap=0.0634`로 나타났다.
+  따라서 다음 우선 작업은
+  `watch_from_exit_setup`가 core 신규 진입 관찰군에서
+  얼마나 반복되는지와,
+  그 pattern이 실제 기대수익률 관점에서 유효한지 분해하는 것이다.
+- 후속 재집계 결과,
+  `2026-07-01 ~ 2026-07-10` active `trend_moderate_candidate` 4건은
+  전부 `watch_from_exit_setup`으로 집계됐다.
+  후행 proxy는
+  `T+1 평균 +2.1376%`,
+  `T+3 평균 +4.3830%`,
+  `T+3 양수 비율 100%`로 우수하지만,
+  `selected=0`, `would_buy=0`, `submitted=0`은 그대로다.
+- 같은 구간 `slow_floor_relax_ready` 1건도
+  `watch_from_exit_setup + core_watch_path_only + shadow_topk_candidate_miss`
+  조합으로 남아 있다.
+  따라서 다음 우선 작업은
+  `watch_from_exit_setup`와 `watch_from_entry_setup` 및
+  `core_watch_path_only`의 코호트별 후행 proxy / 전환 경로 비교다.
+- 추가 교차 실측 기준으로는
+  active 전체 `watch_from_exit_setup=21건`의 `T+3 평균`이 `-1.4168%`로 약해졌고,
+  그 안에서도
+  `core_watch_path_only|watch_from_exit_setup=8건`은 `T+3 평균 +2.8953%`,
+  `watch_with_eligibility_block|watch_from_exit_setup=13건`은 `T+3 평균 -3.5729%`로 갈렸다.
+- 따라서 다음 우선 작업은
+  `watch_from_exit_setup` 전체 완화가 아니라
+  `core_watch_path_only|watch_from_exit_setup` 제한 코호트만 별도로 shadow 추적하고,
+  `selected=0` 직접 병목을 그 좁은 코호트 기준으로 더 분해하는 것이다.
+- 전용 병목 분해 결과,
+  `core_watch_path_only|watch_from_exit_setup` 8건은
+  전부 `signal_both_floor_miss + eligibility_core_risk_off_ranking_blocked`였고,
+  `projection_block_reason`은
+  `shadow_topk_candidate_miss=3`,
+  `trend_outside_target=4`,
+  `momentum_deep_negative_guard=1`로 갈렸다.
+- 따라서 다음 우선 작업은
+  이 8건 전체가 아니라
+  `core_watch_path_only|watch_from_exit_setup|trend_moderate_candidate`
+  3건만 별도 코호트로 묶어
+  `selected=0` 직접 병목과 후행 proxy를 계속 shadow 관측하는 것이다.
+- 3건 제한 코호트 실측 결과,
+  이 3건은 전부
+  `shadow_topk_candidate_miss + signal_both_floor_miss + eligibility_core_risk_off_ranking_blocked`
+  조합으로 동일했다.
+  후행 proxy는
+  `T+1 평균 +2.1376%`,
+  `T+3 평균 +4.3830%`,
+  `T+3 양수 비율 100%`로 유지된다.
+- 따라서 다음 우선 작업은
+  이 3건 코호트의 `signal_both_floor_miss` 내부를
+  `overall floor 우선 병목`과 `slow floor 우선 병목`으로 더 세분화해,
+  `ranking_blocked`가 독립 1차 병목인지 후행 2차 병목인지 분리하는 것이다.
+- 추가 분해 결과
+  `overall_near_slow_deep=2`,
+  `overall_deep_slow_near=1`로 나타났다.
+  즉 다수 표본의 직접 병목은 `overall`보다 `slow floor` 쪽이다.
+- 따라서 다음 우선 작업은
+  `core_watch_path_only|watch_from_exit_setup|trend_moderate_candidate`
+  3건 코호트에 한정한
+  `slow floor` shadow 제한 완화 설계와 후행 실측이다.
+- `slow_floor_shadow_relax_path` 직접 집계 기준으로는
+  `slow_floor_relax_ready=1`,
+  `slow_floor_relax_activity_blocked=1`,
+  `overall_floor_first=1`로 갈린다.
+- 따라서 다음 우선 작업은
+  `002790` 2건에 해당하는
+  `overall_near_slow_deep + (ready 또는 activity_blocked)` 코호트만 대상으로
+  `slow floor` shadow 제한 완화안을 설계하고,
+  `000240 overall_floor_first`는 이번 대상에서 제외하는 것이다.
+- 이어서 제한 shadow 다음 병목을 직접 보기 위해
+  `limited_slow_floor_shadow_path / limited_slow_floor_transition_stage`
+  계측을 추가했다.
+  다음 실측에서는
+  `candidate_ready -> buy_shape -> would_buy`
+  전환이 실제로 열리는지,
+  아니면 여전히 `watch_only_core_path`에 머무는지를 우선 확인한다.
+- 최신 재집계 결과,
+  `core_watch_path_only|watch_from_exit_setup|trend_moderate_candidate`
+  3건은
+  `candidate_ready=1`,
+  `activity_blocked=1`,
+  `overall_floor_first=1`로 분해됐다.
+  이 중 유일한 `candidate_ready` 1건도
+  `candidate_ready_watch_only_core_path`에 머물러
+  아직 `BUY candidate`로 이어지지 않았다.
+- 따라서 현재 후속 우선 작업은
+  `slow floor` 추가 완화가 아니라
+  `candidate_ready_watch_only_core_path`
+  코호트의 `WATCH -> BUY shape` 전환 조건을
+  shadow 계측으로 분해하는 것이다.
+- 후속 분해 결과,
+  유일한 `candidate_ready_watch_only_core_path` 표본은
+  `exit_setup_large_entry_gap`으로 나타났다.
+  즉 현재 1차 병목은 `ranking`보다
+  `BUY threshold`까지의 큰 `entry gap`이다.
+- 따라서 다음 우선 작업은
+  `candidate_ready_watch_only_core_path`
+  코호트의 `entry gap` 분포를 누적 관측하고,
+  `large entry gap`과 `moderate entry gap`의
+  후행 proxy 차이를 분리하는 것이다.
+- 이를 위한 운영 계측으로
+  `watch_only_core_path_entry_gap_band`
+  및
+  `trade_date|entry_gap_band`
+  집계를 추가했다.
+- 같은 집계는 `ops-scheduler` 장후 summary에서도
+  `watch_only_core_path_*_entry_gap_count`로 바로 확인 가능하게 반영했다.
+- 추가로 `entry_gap_band`별
+  `candidate/select/would_buy/submitted`
+  projection 집계도 붙여,
+  표본 누적 시 band별 전환력 비교가 가능하게 했다.
+- 동일 전환 카운트는 `ops-scheduler` 장후 summary에서도
+  `watch_only_core_path_*_entry_gap_candidate_count / would_buy_count / submitted_count`
+  형태로 바로 확인 가능하게 반영했다.
+- 이후 `2026-07-01 ~ 2026-07-10` 구간을
+  최신 코드 기준으로 다시 재집계한
+  `trigger_proxy_attribution_2026-07-01_2026-07-10_v12_entry_gap_recheck.json`
+  에서도
+  `candidate_ready_watch_only_core_path`의 `entry_gap_band`는
+  `2026-07-03|large_entry_gap=1`만 재확인됐다.
+  - `moderate_entry_gap=0`
+  - `small_entry_gap=0`
+  - `entry_ready=0`
+- 따라서 현재 상태는
+  `후행 proxy 누락` 문제가 아니라
+  **현행 shadow 조건과 과거 원자료 기준으로
+  해당 band 표본 자체가 아직 발생하지 않는 상태**로 해석하는 것이 맞다.
+- 즉 다음 우선 작업은
+  신규 거래일 누적 관측만 기다리는 것이 아니라,
+  과거 재집계 기준 `large`만 남는 구조가
+  `BUY threshold gap` / `entry gap band` 경계 문제인지
+  upstream score 분포 문제인지 추가 분해하는 것이다.
+- authoritative 완화는
+  `moderate/small/entry_ready` 중 실제 전환력이 확인되는 band가 생기기 전까지
+  계속 금지 유지한다.
+- 추가 `v13` 진단 기준으로
+  같은 상위 target 코호트
+  `core_watch_path_only|watch_from_exit_setup|trend_moderate_candidate`
+  전체를 다시 보면
+  `buy_candidate_threshold_gap_band`는
+  `large_entry_gap=2`, `buy_gap_missing=1`이며
+  `moderate/small/entry_ready=0`이다.
+- 단계 교차 기준으로는
+  `candidate_ready_watch_only_core_path|large_entry_gap=1`,
+  `activity_blocked|large_entry_gap=1`,
+  `overall_floor_first|buy_gap_missing=1`만 존재한다.
+- 즉 현재는
+  `candidate_ready_watch_only_core_path` 내부 band 표본 부족 문제를 넘어,
+  상위 target 코호트 전체에서도
+  `non-null buy gap`이 전부 `large`라는 점이 확인됐다.
+- 따라서 다음 우선 작업은
+  신규 거래일 대기보다 먼저
+  `watch_from_exit_setup` target 코호트의
+  `shadow_entry_score / buy gap / ranking gap` 분포를
+  authoritative BUY 경로와 직접 비교해서,
+  `moderate/small/entry_ready` 부재가
+  실제 `entry_score` 하방 편향 때문인지 검증하는 것이다.
+- 후속 strict 비교 재집계 결과,
+  `2026-06-01 ~ 2026-07-10` 전체에서도
+  strict `authoritative core BUY path`
+  (`buy_candidate=true` 또는 `candidate_intent=buy` 또는 `primary_candidate=buy_candidate`)
+  표본은 `0건`이었다.
+- 따라서 현재 다음 우선 작업은
+  strict BUY baseline과의 직접 비교가 아니라,
+  `watch_from_entry_setup` / `entry_score >= 0.52` /
+  `0.55 <= entry_score < 0.65`
+  같은 `pre-BUY staging cohort`를 비교군으로 재정의해
+  target 코호트의 `entry_score` 병목을 계속 분해하는 것이다.
+- `2026-07-01 ~ 2026-07-10` 재집계 결과,
+  `pre-BUY staging cohort`는 실제로 존재하지만
+  전부 `inactive / watch_setup_but_ineligible / eligibility_low_relative_activity`
+  경로에 머물렀고,
+  `candidate=0`, `selected=0`, `would_buy=0`, `submitted=0`이었다.
+- 따라서 현재 다음 우선 작업은
+  `slow floor` 추가 완화가 아니라
+  `pre-BUY staging` 표본의
+  `activity / eligibility` 병목을 shadow로 더 세분화해,
+  진짜 1차 병목이 `entry_score`인지 `low_relative_activity`인지 분리하는 것이다.
+- 후속 `activity_detail` 재집계 결과,
+  `pre-BUY staging`의 `low_relative_activity` 표본은
+  단일 군이 아니라
+  `max(volume_surge_ratio, turnover_surge_ratio) < 0.80`
+  심층 부족 표본과
+  `0.95 <= max_ratio < 1.10`
+  경계 근접 표본으로 갈렸다.
+- 특히 `0.55 <= entry_score < 0.65`의 가장 강한 pre-BUY 표본도
+  `low_relative_activity_max_0_95_to_1_10`으로 확인됐다.
+  즉 이 구간은 `entry_score`보다
+  `activity hard block`이 먼저 막는 구조가 유지된다.
+- 따라서 현재 후속 우선 작업은
+  `slow floor`나 `entry_score` 전체 완화가 아니라,
+  `pre-BUY staging + low_relative_activity_max_0_95_to_1_10`
+  경계 코호트만 별도 shadow 관측해
+  후행 proxy와 `candidate -> selected -> would_buy -> submitted`
+  전환력을 확인하는 것이다.
+- 이후 `2026-06-01 ~ 2026-07-10` 장기 재집계까지 확인한 결과,
+  위 경계 코호트는
+  `2026-07-08 / 001450`,
+  `2026-07-09 / 001450`
+  두 건뿐이며,
+  둘 다 `candidate=0`, `selected=0`, `would_buy=0`, `submitted=0`으로 유지됐다.
+- 따라서 다음 우선 작업은
+  단순 기간 확대 관측이 아니라
+  이 경계 코호트의 `activity hard block`이
+  실제 1차 병목인지,
+  아니면 `entry/ranking gap`보다 뒤의 병목인지
+  추가 분해하는 것이다.
+- 후속 `v21` 재집계 기준,
+  `low_relative_activity_max_0_95_to_1_10` 경계 코호트 2건은
+  각각
+  `activity_first_moderate_entry_gap`,
+  `activity_first_small_entry_gap`
+  으로 분류됐다.
+- 특히 `2026-07-09 / 001450`는
+  `small_entry_gap + small_ranking_gap`인데도
+  `candidate=0`으로 남아 있어,
+  현재 계측 기준 1차 병목은 `ranking`보다 `activity hard block` 쪽으로 해석하는 것이 맞다.
+- 따라서 다음 우선 작업은
+  `activity`를 counterfactual로 통과시켰을 때
+  다음 병목이 `top-k candidate`, `top-k selected`, `buy shape` 중 어디로 이동하는지
+  shadow 순서 계측을 추가하는 것이다.
+- 후속 `v23` 재집계 기준,
+  위 2건은 `activity` 해제 이후
+  각각
+  `buy_shape_after_activity_moderate_entry_gap`,
+  `buy_shape_after_activity_small_entry_gap`
+  으로 이동했다.
+- 추가 `buy_shape` 세부 분해 기준으로는
+  둘 다
+  `watch_from_entry_setup|moderate_entry_gap`,
+  `watch_from_entry_setup|small_entry_gap`
+  으로 집계됐고,
+  `candidate=0`, `selected=0`, `would_buy=0`, `submitted=0`이다.
+- 따라서 현재 다음 우선 작업은
+  `activity`나 `top-k` 완화가 아니라
+  `watch_from_entry_setup` 내부의
+  `entry gap / entry score` 분포를 더 세분화하여,
+  어떤 band에서만 제한 완화 검증을 계속할지 shadow로 누적 관측하는 것이다.
+- 전용 `v24` 재집계 기준,
+  `watch_from_entry_setup|small_entry_gap` 1건은
+  `T+1 +5.8252%`,
+  `candidate/select/would_buy/submitted = 0/0/0/0` 이고,
+  `watch_from_entry_setup|moderate_entry_gap` 1건은
+  `T+1 -5.0066%`,
+  `candidate/select/would_buy/submitted = 0/0/0/0` 이다.
+- 즉 현재 초기 관측만 보면
+  `small_entry_gap`이 `moderate_entry_gap`보다 유리하지만,
+  둘 다 실제 주문 전환력은 아직 0이므로
+  authoritative 완화는 여전히 금지 유지가 맞다.
+- 따라서 다음 우선 작업은
+  `watch_from_entry_setup|small_entry_gap`
+  코호트의 `T+3 / MFE / MAE`가 채워질 때까지 누적 관측하고,
+  동시에 `candidate -> selected -> would_buy -> submitted`
+  전환이 열리는지 추가 검증하는 것이다.
+- 운영 관측 편의를 위해
+  `ops-scheduler` 장후 summary에도
+  `pre_buy_boundary_entry_setup_small_gap_*`,
+  `pre_buy_boundary_entry_setup_moderate_gap_*`
+  metric을 추가했다.
+  따라서 다음 거래일부터는
+  `operations_day_runs.summary_json.trigger_proxy_attribution`
+  기준으로도 두 코호트의 누적 전환 상태를 바로 확인할 수 있다.
+- `2026-07-12` 기준으로
+  `2026-07-01 ~ 2026-07-11` 재집계(`v25`)까지 확장해도
+  두 코호트의 `T+3 / MFE / MAE`는 아직 비어 있다.
+  이는 `2026-07-11`이 `토요일`이라
+  `2026-07-08`, `2026-07-09` 표본 뒤의 추가 거래일이 아직 충분히 열리지 않았기 때문이다.
+  따라서 현재 blocker는 정책/코드가 아니라
+  **후속 거래일 미도래**이며,
+  다음 실측은 다음 거래일 장후 배치 이후 다시 확인하는 것이 맞다.
+
 ## 현재 기준선
 
 최근 완료된 핵심 작업:
@@ -2165,6 +2500,70 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
       - 다음 단계는
         `slow_trend` 경계 구간만 shadow 완화 후보로 분리 계측하고,
         `slow_momentum`은 관측 유지 후 완화 여부를 뒤로 미루는 것이다.
+      - `2026-07-06 ~ 2026-07-10` 재실측에서
+        `shadow_relax_projection_candidate=5`, `selected=0`, `would_buy=0`, `submitted=0`으로 확인됐다.
+        즉 현 시점 병목은 `submit` 이후가 아니라
+        `shadow_topk_candidate` 진입 이전이며,
+        후보 표본도 모두 `WATCH` 성격으로 남아 있었다.
+      - 따라서 다음 우선 분석은
+        `shadow_topk_candidate_miss` 하위 조건과
+        `primary_candidate=WATCH` 고착 경로 분해다.
+      - 후속 계측 결과
+        active `core_risk_off` 35건의 `shadow_topk_candidate_gate_reason`은
+        전부 `signal_both_floor_miss`로 집계됐다.
+        즉 현재 미진입의 직접 원인은
+        `ranking/activity/strategy`보다
+        strict `overall/slow` 동시 미통과다.
+      - `watch_primary_candidate_reason`은
+        `watch_with_eligibility_block=35`,
+        `watch_setup_but_ineligible=15`,
+        `core_watch_path_only=5`로 나타났다.
+        따라서 다음 단계는
+        `overall/slow strict miss`와
+        `buy eligibility 차단축`을 직접 연결해
+        실제 `WATCH → BUY` 전환 가능성이 있는 좁은 구간만 추려야 한다.
+      - 후속 계측 추가 후
+        `eligibility_block_reason_primary_items`는
+        `eligibility_core_risk_off_ranking_blocked=35`,
+        `eligibility_risk_off_block=24`,
+        `eligibility_low_relative_activity=20`,
+        `eligibility_negative_overall_floor=13` 순으로 나타났다.
+      - `shadow_signal_floor_block_path_items`는
+        active 표본이 대부분
+        `overall_fail|slow_fail|deep_negative|deep_negative|...`
+        경로에 집중됨을 보여줬다.
+        즉 다음 완화 검증은
+        `ranking/activity` 일반 완화가 아니라
+        `slow_trend` 경계 완화 shadow가
+        실제 어떤 eligibility 차단축 감소로 이어지는지
+        추적하는 방향이어야 한다.
+      - `ops-scheduler` 운영 요약에도 이제
+        `trend_moderate_candidate_count`,
+        `trend_edge_deep_count`,
+        `trend_deep_tail_count`,
+        `shadow_relax_projection_selected_count`
+        가 함께 남도록 보강했다.
+      - active `core_risk_off` 재실측 기준
+        `trend_moderate_candidate`는 2건 모두 `2026-07-10` 표본이라
+        아직 `T+1 / T+3` 후행 proxy가 비어 있다.
+        반면 `trend_edge_deep`는
+        `trend_deep_tail` 대비 훨씬 덜 나쁜 수익률/MAE를 보였지만,
+        현재 Task의 승격 대상은 `trend_moderate_candidate`이므로
+        지금 바로 완화 판단을 내리면 안 된다.
+      - 후속 장후 판단을 쉽게 하기 위해
+        `active_slow_trend_relax_candidate_report`,
+        `active_slow_trend_projection_items`
+        를 diagnostics에 추가했다.
+        이제 active 기준으로
+        `trend_moderate_candidate`의
+        `sample_count / T+1 / T+3 / candidate_count / selected_count`
+        를 바로 확인할 수 있다.
+      - 추가로
+        `active_slow_trend_trade_date_band_items`,
+        `active_slow_trend_trade_date_projection_items`
+        를 붙여
+        `2026-07-10|trend_moderate_candidate`
+        코호트를 한 줄 bucket으로 직접 추적할 수 있게 했다.
       - 상세 후속 백로그:
         [`plans/[BACKLOG] core_risk_off_slow_floor_shadow_relaxation.md`](./%5BBACKLOG%5D%20core_risk_off_slow_floor_shadow_relaxation.md)
 - 근거 문서

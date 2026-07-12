@@ -95,6 +95,42 @@ class PostgresInstrumentRepository:
         )
         return row_to_entity(row, InstrumentEntity) if row else None
 
+    async def get_by_symbols_any_market(
+        self, symbols: Sequence[str]
+    ) -> dict[str, InstrumentEntity]:
+        if not symbols:
+            return {}
+        rows = await self._tx.connection.fetch(
+            """
+            SELECT * FROM (
+                SELECT *,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY symbol
+                        ORDER BY
+                            CASE
+                                WHEN exchange_code = 'KRX' AND market_code = 'KRX' THEN 0
+                                WHEN exchange_code = 'KRX' AND is_active = true THEN 1
+                                WHEN exchange_code = 'KRX' THEN 2
+                                WHEN is_active = true THEN 3
+                                ELSE 4
+                            END,
+                            CASE
+                                WHEN market_segment IN ('KOSPI', 'KOSDAQ') THEN 0
+                                ELSE 1
+                            END,
+                            updated_at DESC NULLS LAST,
+                            created_at DESC NULLS LAST
+                    ) AS rn
+                FROM trading.instruments
+                WHERE symbol = ANY($1::text[])
+            ) ranked
+            WHERE rn = 1
+            """,
+            list(set(symbols)),
+        )
+        entities = [row_to_entity(row, InstrumentEntity) for row in rows]
+        return {e.symbol: e for e in entities}
+
     async def upsert_by_symbol(self, instrument: InstrumentEntity) -> InstrumentEntity:
         row = await self._tx.connection.fetchrow(
             """

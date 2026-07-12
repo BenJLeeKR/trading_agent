@@ -723,19 +723,127 @@ def _parse_trigger_proxy_attribution_summary(result: CommandResult) -> dict[str,
             else []
         )
         core_floor_report = (
-            obj.get("core_risk_off_floor_report")
-            if isinstance(obj.get("core_risk_off_floor_report"), dict)
-            else {}
+            obj.get("core_risk_off_floor_v5_report")
+            if isinstance(obj.get("core_risk_off_floor_v5_report"), dict)
+            else (
+                obj.get("core_risk_off_floor_report")
+                if isinstance(obj.get("core_risk_off_floor_report"), dict)
+                else {}
+            )
         )
         core_floor_proxy = (
             core_floor_report.get("proxy_availability")
             if isinstance(core_floor_report.get("proxy_availability"), dict)
             else {}
         )
+        core_floor_diagnostics = (
+            obj.get("core_risk_off_floor_v5_diagnostics")
+            if isinstance(obj.get("core_risk_off_floor_v5_diagnostics"), dict)
+            else (
+                obj.get("core_risk_off_floor_diagnostics")
+                if isinstance(obj.get("core_risk_off_floor_diagnostics"), dict)
+                else {}
+            )
+        )
         core_floor_items = (
             core_floor_report.get("items")
             if isinstance(core_floor_report.get("items"), list)
             else []
+        )
+        slow_trend_relax_candidate_items = (
+            core_floor_diagnostics.get("slow_trend_relax_candidate_items")
+            if isinstance(core_floor_diagnostics.get("slow_trend_relax_candidate_items"), list)
+            else []
+        )
+        slow_floor_shadow_relax_path_items = (
+            core_floor_diagnostics.get("slow_floor_shadow_relax_path_items")
+            if isinstance(core_floor_diagnostics.get("slow_floor_shadow_relax_path_items"), list)
+            else []
+        )
+        active_slow_floor_relax_ready_transition_stage_items = (
+            core_floor_diagnostics.get("active_slow_floor_relax_ready_transition_stage_items")
+            if isinstance(
+                core_floor_diagnostics.get("active_slow_floor_relax_ready_transition_stage_items"),
+                list,
+            )
+            else []
+        )
+        active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_band_items = (
+            core_floor_diagnostics.get("active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_band_items")
+            if isinstance(
+                core_floor_diagnostics.get(
+                    "active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_band_items"
+                ),
+                list,
+            )
+            else []
+        )
+        active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_projection_items = (
+            core_floor_diagnostics.get("active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_projection_items")
+            if isinstance(
+                core_floor_diagnostics.get(
+                    "active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_projection_items"
+                ),
+                list,
+            )
+            else []
+        )
+        pre_buy_boundary_watch_from_entry_setup_small_entry_gap_report = (
+            core_floor_diagnostics.get("pre_buy_boundary_watch_from_entry_setup_small_entry_gap_report")
+            if isinstance(
+                core_floor_diagnostics.get(
+                    "pre_buy_boundary_watch_from_entry_setup_small_entry_gap_report"
+                ),
+                dict,
+            )
+            else {}
+        )
+        pre_buy_boundary_watch_from_entry_setup_moderate_entry_gap_report = (
+            core_floor_diagnostics.get("pre_buy_boundary_watch_from_entry_setup_moderate_entry_gap_report")
+            if isinstance(
+                core_floor_diagnostics.get(
+                    "pre_buy_boundary_watch_from_entry_setup_moderate_entry_gap_report"
+                ),
+                dict,
+            )
+            else {}
+        )
+        pre_buy_boundary_watch_from_entry_setup_small_entry_gap_items = (
+            pre_buy_boundary_watch_from_entry_setup_small_entry_gap_report.get("cohort_items")
+            if isinstance(
+                pre_buy_boundary_watch_from_entry_setup_small_entry_gap_report.get("cohort_items"),
+                list,
+            )
+            else []
+        )
+        pre_buy_boundary_watch_from_entry_setup_small_entry_gap_projection_items = (
+            pre_buy_boundary_watch_from_entry_setup_small_entry_gap_report.get("projection_items")
+            if isinstance(
+                pre_buy_boundary_watch_from_entry_setup_small_entry_gap_report.get("projection_items"),
+                list,
+            )
+            else []
+        )
+        pre_buy_boundary_watch_from_entry_setup_moderate_entry_gap_items = (
+            pre_buy_boundary_watch_from_entry_setup_moderate_entry_gap_report.get("cohort_items")
+            if isinstance(
+                pre_buy_boundary_watch_from_entry_setup_moderate_entry_gap_report.get("cohort_items"),
+                list,
+            )
+            else []
+        )
+        pre_buy_boundary_watch_from_entry_setup_moderate_entry_gap_projection_items = (
+            pre_buy_boundary_watch_from_entry_setup_moderate_entry_gap_report.get("projection_items")
+            if isinstance(
+                pre_buy_boundary_watch_from_entry_setup_moderate_entry_gap_report.get("projection_items"),
+                list,
+            )
+            else []
+        )
+        shadow_relax_projection_summary = (
+            core_floor_diagnostics.get("shadow_relax_projection_summary")
+            if isinstance(core_floor_diagnostics.get("shadow_relax_projection_summary"), dict)
+            else {}
         )
         return {
             "sample_count": int(sample_count),
@@ -793,6 +901,147 @@ def _parse_trigger_proxy_attribution_summary(result: CommandResult) -> dict[str,
             ),
             "core_risk_off_floor_t5_ready_count": int(
                 core_floor_proxy.get("t5_ready_count", 0) or 0
+            ),
+            "trend_moderate_candidate_count": _find_bucket_sample_count(
+                slow_trend_relax_candidate_items,
+                "trend_moderate_candidate",
+            ),
+            "trend_edge_deep_count": _find_bucket_sample_count(
+                slow_trend_relax_candidate_items,
+                "trend_edge_deep",
+            ),
+            "trend_deep_tail_count": _find_bucket_sample_count(
+                slow_trend_relax_candidate_items,
+                "trend_deep_tail",
+            ),
+            "shadow_relax_projection_selected_count": int(
+                shadow_relax_projection_summary.get("selected_count", 0) or 0
+            ),
+            "slow_floor_relax_ready_count": _find_bucket_sample_count(
+                slow_floor_shadow_relax_path_items,
+                "slow_floor_relax_ready",
+            ),
+            "slow_floor_relax_activity_blocked_count": _find_bucket_sample_count(
+                slow_floor_shadow_relax_path_items,
+                "slow_floor_relax_activity_blocked",
+            ),
+            "slow_floor_relax_watch_only_core_path_count": _find_bucket_sample_count(
+                active_slow_floor_relax_ready_transition_stage_items,
+                "watch_only_core_path",
+            ),
+            "watch_only_core_path_large_entry_gap_count": _find_bucket_sample_count(
+                active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_band_items,
+                "large_entry_gap",
+            ),
+            "watch_only_core_path_moderate_entry_gap_count": _find_bucket_sample_count(
+                active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_band_items,
+                "moderate_entry_gap",
+            ),
+            "watch_only_core_path_small_entry_gap_count": _find_bucket_sample_count(
+                active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_band_items,
+                "small_entry_gap",
+            ),
+            "watch_only_core_path_entry_ready_count": _find_bucket_sample_count(
+                active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_band_items,
+                "entry_ready",
+            ),
+            "watch_only_core_path_large_entry_gap_candidate_count": _find_bucket_metric_count(
+                active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_projection_items,
+                "large_entry_gap",
+                "candidate_count",
+            ),
+            "watch_only_core_path_large_entry_gap_would_buy_count": _find_bucket_metric_count(
+                active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_projection_items,
+                "large_entry_gap",
+                "would_buy_count",
+            ),
+            "watch_only_core_path_large_entry_gap_submitted_count": _find_bucket_metric_count(
+                active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_projection_items,
+                "large_entry_gap",
+                "submitted_count",
+            ),
+            "watch_only_core_path_moderate_entry_gap_candidate_count": _find_bucket_metric_count(
+                active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_projection_items,
+                "moderate_entry_gap",
+                "candidate_count",
+            ),
+            "watch_only_core_path_moderate_entry_gap_would_buy_count": _find_bucket_metric_count(
+                active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_projection_items,
+                "moderate_entry_gap",
+                "would_buy_count",
+            ),
+            "watch_only_core_path_moderate_entry_gap_submitted_count": _find_bucket_metric_count(
+                active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_projection_items,
+                "moderate_entry_gap",
+                "submitted_count",
+            ),
+            "watch_only_core_path_small_entry_gap_candidate_count": _find_bucket_metric_count(
+                active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_projection_items,
+                "small_entry_gap",
+                "candidate_count",
+            ),
+            "watch_only_core_path_small_entry_gap_would_buy_count": _find_bucket_metric_count(
+                active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_projection_items,
+                "small_entry_gap",
+                "would_buy_count",
+            ),
+            "watch_only_core_path_small_entry_gap_submitted_count": _find_bucket_metric_count(
+                active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_projection_items,
+                "small_entry_gap",
+                "submitted_count",
+            ),
+            "watch_only_core_path_entry_ready_candidate_count": _find_bucket_metric_count(
+                active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_projection_items,
+                "entry_ready",
+                "candidate_count",
+            ),
+            "watch_only_core_path_entry_ready_would_buy_count": _find_bucket_metric_count(
+                active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_projection_items,
+                "entry_ready",
+                "would_buy_count",
+            ),
+            "watch_only_core_path_entry_ready_submitted_count": _find_bucket_metric_count(
+                active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_projection_items,
+                "entry_ready",
+                "submitted_count",
+            ),
+            "pre_buy_boundary_entry_setup_small_gap_count": _find_bucket_sample_count(
+                pre_buy_boundary_watch_from_entry_setup_small_entry_gap_items,
+                "watch_from_entry_setup|small_entry_gap",
+            ),
+            "pre_buy_boundary_entry_setup_small_gap_candidate_count": _find_bucket_metric_count(
+                pre_buy_boundary_watch_from_entry_setup_small_entry_gap_projection_items,
+                "watch_from_entry_setup|small_entry_gap",
+                "candidate_count",
+            ),
+            "pre_buy_boundary_entry_setup_small_gap_would_buy_count": _find_bucket_metric_count(
+                pre_buy_boundary_watch_from_entry_setup_small_entry_gap_projection_items,
+                "watch_from_entry_setup|small_entry_gap",
+                "would_buy_count",
+            ),
+            "pre_buy_boundary_entry_setup_small_gap_submitted_count": _find_bucket_metric_count(
+                pre_buy_boundary_watch_from_entry_setup_small_entry_gap_projection_items,
+                "watch_from_entry_setup|small_entry_gap",
+                "submitted_count",
+            ),
+            "pre_buy_boundary_entry_setup_moderate_gap_count": _find_bucket_sample_count(
+                pre_buy_boundary_watch_from_entry_setup_moderate_entry_gap_items,
+                "watch_from_entry_setup|moderate_entry_gap",
+            ),
+            "pre_buy_boundary_entry_setup_moderate_gap_candidate_count": _find_bucket_metric_count(
+                pre_buy_boundary_watch_from_entry_setup_moderate_entry_gap_projection_items,
+                "watch_from_entry_setup|moderate_entry_gap",
+                "candidate_count",
+            ),
+            "pre_buy_boundary_entry_setup_moderate_gap_would_buy_count": _find_bucket_metric_count(
+                pre_buy_boundary_watch_from_entry_setup_moderate_entry_gap_projection_items,
+                "watch_from_entry_setup|moderate_entry_gap",
+                "would_buy_count",
+            ),
+            "pre_buy_boundary_entry_setup_moderate_gap_submitted_count": _find_bucket_metric_count(
+                pre_buy_boundary_watch_from_entry_setup_moderate_entry_gap_projection_items,
+                "watch_from_entry_setup|moderate_entry_gap",
+                "submitted_count",
             ),
             "event_overlay_shadow_would_pass": _find_bucket_sample_count(
                 event_shadow_items,
@@ -928,6 +1177,19 @@ def _find_bucket_sample_count(items: list[Any], bucket: str) -> int:
             continue
         try:
             return int(item.get("sample_count", 0))
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+def _find_bucket_metric_count(items: list[Any], bucket: str, field: str) -> int:
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("bucket") or "") != bucket:
+            continue
+        try:
+            return int(item.get(field, 0) or 0)
         except (TypeError, ValueError):
             return 0
     return 0

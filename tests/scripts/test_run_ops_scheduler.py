@@ -845,6 +845,69 @@ class TestParseTriggerProxyAttributionSummary:
                             {"bucket": "inactive", "sample_count": 20},
                         ],
                     },
+                    "core_risk_off_floor_diagnostics": {
+                        "slow_trend_relax_candidate_items": [
+                            {"bucket": "trend_moderate_candidate", "sample_count": 3},
+                            {"bucket": "trend_edge_deep", "sample_count": 2},
+                            {"bucket": "trend_deep_tail", "sample_count": 5},
+                        ],
+                        "slow_floor_shadow_relax_path_items": [
+                            {"bucket": "slow_floor_relax_ready", "sample_count": 1},
+                            {"bucket": "slow_floor_relax_activity_blocked", "sample_count": 2},
+                        ],
+                        "active_slow_floor_relax_ready_transition_stage_items": [
+                            {"bucket": "watch_only_core_path", "sample_count": 1},
+                        ],
+                        "active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_band_items": [
+                            {"bucket": "large_entry_gap", "sample_count": 1},
+                        ],
+                        "active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_projection_items": [
+                            {
+                                "bucket": "large_entry_gap",
+                                "sample_count": 1,
+                                "candidate_count": 1,
+                                "selected_count": 0,
+                                "would_buy_count": 0,
+                                "submitted_count": 0,
+                            }
+                        ],
+                        "pre_buy_boundary_watch_from_entry_setup_small_entry_gap_report": {
+                            "cohort_items": [
+                                {"bucket": "watch_from_entry_setup|small_entry_gap", "sample_count": 1}
+                            ],
+                            "projection_items": [
+                                {
+                                    "bucket": "watch_from_entry_setup|small_entry_gap",
+                                    "sample_count": 1,
+                                    "candidate_count": 0,
+                                    "selected_count": 0,
+                                    "would_buy_count": 0,
+                                    "submitted_count": 0,
+                                }
+                            ],
+                        },
+                        "pre_buy_boundary_watch_from_entry_setup_moderate_entry_gap_report": {
+                            "cohort_items": [
+                                {"bucket": "watch_from_entry_setup|moderate_entry_gap", "sample_count": 1}
+                            ],
+                            "projection_items": [
+                                {
+                                    "bucket": "watch_from_entry_setup|moderate_entry_gap",
+                                    "sample_count": 1,
+                                    "candidate_count": 0,
+                                    "selected_count": 0,
+                                    "would_buy_count": 0,
+                                    "submitted_count": 0,
+                                }
+                            ],
+                        },
+                        "shadow_relax_projection_summary": {
+                            "candidate_count": 4,
+                            "selected_count": 1,
+                            "would_buy_count": 0,
+                            "submitted_count": 0,
+                        },
+                    },
                 },
                 ensure_ascii=False,
             ),
@@ -871,6 +934,210 @@ class TestParseTriggerProxyAttributionSummary:
             "core_risk_off_floor_t1_ready_count": 7,
             "core_risk_off_floor_t3_ready_count": 0,
             "core_risk_off_floor_t5_ready_count": 0,
+            "trend_moderate_candidate_count": 3,
+            "trend_edge_deep_count": 2,
+            "trend_deep_tail_count": 5,
+            "shadow_relax_projection_selected_count": 1,
+            "slow_floor_relax_ready_count": 1,
+            "slow_floor_relax_activity_blocked_count": 2,
+            "slow_floor_relax_watch_only_core_path_count": 1,
+            "watch_only_core_path_large_entry_gap_count": 1,
+            "watch_only_core_path_moderate_entry_gap_count": 0,
+            "watch_only_core_path_small_entry_gap_count": 0,
+            "watch_only_core_path_entry_ready_count": 0,
+            "watch_only_core_path_large_entry_gap_candidate_count": 1,
+            "watch_only_core_path_large_entry_gap_would_buy_count": 0,
+            "watch_only_core_path_large_entry_gap_submitted_count": 0,
+            "watch_only_core_path_moderate_entry_gap_candidate_count": 0,
+            "watch_only_core_path_moderate_entry_gap_would_buy_count": 0,
+            "watch_only_core_path_moderate_entry_gap_submitted_count": 0,
+            "watch_only_core_path_small_entry_gap_candidate_count": 0,
+            "watch_only_core_path_small_entry_gap_would_buy_count": 0,
+            "watch_only_core_path_small_entry_gap_submitted_count": 0,
+            "watch_only_core_path_entry_ready_candidate_count": 0,
+            "watch_only_core_path_entry_ready_would_buy_count": 0,
+            "watch_only_core_path_entry_ready_submitted_count": 0,
+            "pre_buy_boundary_entry_setup_small_gap_count": 1,
+            "pre_buy_boundary_entry_setup_small_gap_candidate_count": 0,
+            "pre_buy_boundary_entry_setup_small_gap_would_buy_count": 0,
+            "pre_buy_boundary_entry_setup_small_gap_submitted_count": 0,
+            "pre_buy_boundary_entry_setup_moderate_gap_count": 1,
+            "pre_buy_boundary_entry_setup_moderate_gap_candidate_count": 0,
+            "pre_buy_boundary_entry_setup_moderate_gap_would_buy_count": 0,
+            "pre_buy_boundary_entry_setup_moderate_gap_submitted_count": 0,
+            "event_overlay_shadow_would_pass": 0,
+        }
+
+    def test_prefers_v5_floor_report_and_diagnostics_when_present(self) -> None:
+        result = CommandResult(
+            name="after_market_trigger_proxy_attribution",
+            argv=[],
+            returncode=0,
+            duration_seconds=1.0,
+            stdout=json.dumps(
+                {
+                    "sample_count": 27,
+                    "watch_projection_items": [],
+                    "core_risk_off_shadow_items": [],
+                    "event_overlay_shadow_items": [],
+                    "core_risk_off_floor_report": {
+                        "active_sample_count": 99,
+                        "proxy_availability": {
+                            "t1_ready_count": 99,
+                            "t3_ready_count": 99,
+                            "t5_ready_count": 99,
+                        },
+                        "items": [
+                            {"bucket": "strict_pass", "sample_count": 9},
+                            {"bucket": "mild_relax", "sample_count": 9},
+                            {"bucket": "moderate_relax", "sample_count": 9},
+                            {"bucket": "deep_negative", "sample_count": 9},
+                        ],
+                    },
+                    "core_risk_off_floor_diagnostics": {
+                        "slow_trend_relax_candidate_items": [
+                            {"bucket": "trend_moderate_candidate", "sample_count": 9},
+                        ],
+                        "slow_floor_shadow_relax_path_items": [
+                            {"bucket": "slow_floor_relax_ready", "sample_count": 9},
+                        ],
+                        "active_slow_floor_relax_ready_transition_stage_items": [
+                            {"bucket": "watch_only_core_path", "sample_count": 9},
+                        ],
+                        "shadow_relax_projection_summary": {
+                            "selected_count": 9,
+                        },
+                    },
+                    "core_risk_off_floor_v5_report": {
+                        "active_sample_count": 7,
+                        "proxy_availability": {
+                            "t1_ready_count": 7,
+                            "t3_ready_count": 0,
+                            "t5_ready_count": 0,
+                        },
+                        "items": [
+                            {"bucket": "strict_pass", "sample_count": 0},
+                            {"bucket": "mild_relax", "sample_count": 1},
+                            {"bucket": "moderate_relax", "sample_count": 2},
+                            {"bucket": "deep_negative", "sample_count": 4},
+                        ],
+                    },
+                    "core_risk_off_floor_v5_diagnostics": {
+                        "slow_trend_relax_candidate_items": [
+                            {"bucket": "trend_moderate_candidate", "sample_count": 3},
+                            {"bucket": "trend_edge_deep", "sample_count": 2},
+                        ],
+                        "slow_floor_shadow_relax_path_items": [
+                            {"bucket": "slow_floor_relax_ready", "sample_count": 1},
+                            {"bucket": "slow_floor_relax_activity_blocked", "sample_count": 2},
+                        ],
+                        "active_slow_floor_relax_ready_transition_stage_items": [
+                            {"bucket": "watch_only_core_path", "sample_count": 1},
+                        ],
+                        "active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_band_items": [
+                            {"bucket": "large_entry_gap", "sample_count": 1},
+                        ],
+                        "active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_projection_items": [
+                            {
+                                "bucket": "large_entry_gap",
+                                "sample_count": 1,
+                                "candidate_count": 1,
+                                "selected_count": 0,
+                                "would_buy_count": 0,
+                                "submitted_count": 0,
+                            }
+                        ],
+                        "pre_buy_boundary_watch_from_entry_setup_small_entry_gap_report": {
+                            "cohort_items": [
+                                {"bucket": "watch_from_entry_setup|small_entry_gap", "sample_count": 1}
+                            ],
+                            "projection_items": [
+                                {
+                                    "bucket": "watch_from_entry_setup|small_entry_gap",
+                                    "sample_count": 1,
+                                    "candidate_count": 0,
+                                    "selected_count": 0,
+                                    "would_buy_count": 0,
+                                    "submitted_count": 0,
+                                }
+                            ],
+                        },
+                        "pre_buy_boundary_watch_from_entry_setup_moderate_entry_gap_report": {
+                            "cohort_items": [
+                                {"bucket": "watch_from_entry_setup|moderate_entry_gap", "sample_count": 1}
+                            ],
+                            "projection_items": [
+                                {
+                                    "bucket": "watch_from_entry_setup|moderate_entry_gap",
+                                    "sample_count": 1,
+                                    "candidate_count": 0,
+                                    "selected_count": 0,
+                                    "would_buy_count": 0,
+                                    "submitted_count": 0,
+                                }
+                            ],
+                        },
+                        "shadow_relax_projection_summary": {
+                            "selected_count": 1,
+                        },
+                    },
+                },
+                ensure_ascii=False,
+            ),
+        )
+
+        assert _parse_trigger_proxy_attribution_summary(result) == {
+            "sample_count": 27,
+            "account_id": None,
+            "account_label": None,
+            "start_date": None,
+            "end_date": None,
+            "output_path": None,
+            "watch_projection_bucket_count": 0,
+            "core_risk_off_shadow_bucket_count": 0,
+            "event_overlay_shadow_bucket_count": 0,
+            "watch_projection_shadow_watch_only": 0,
+            "watch_projection_legacy_only": 0,
+            "core_risk_off_shadow_would_pass": 0,
+            "core_risk_off_floor_active_sample_count": 7,
+            "core_risk_off_floor_strict_pass_count": 0,
+            "core_risk_off_floor_mild_relax_count": 1,
+            "core_risk_off_floor_moderate_relax_count": 2,
+            "core_risk_off_floor_deep_negative_count": 4,
+            "core_risk_off_floor_t1_ready_count": 7,
+            "core_risk_off_floor_t3_ready_count": 0,
+            "core_risk_off_floor_t5_ready_count": 0,
+            "trend_moderate_candidate_count": 3,
+            "trend_edge_deep_count": 2,
+            "trend_deep_tail_count": 0,
+            "shadow_relax_projection_selected_count": 1,
+            "slow_floor_relax_ready_count": 1,
+            "slow_floor_relax_activity_blocked_count": 2,
+            "slow_floor_relax_watch_only_core_path_count": 1,
+            "watch_only_core_path_large_entry_gap_count": 1,
+            "watch_only_core_path_moderate_entry_gap_count": 0,
+            "watch_only_core_path_small_entry_gap_count": 0,
+            "watch_only_core_path_entry_ready_count": 0,
+            "watch_only_core_path_large_entry_gap_candidate_count": 1,
+            "watch_only_core_path_large_entry_gap_would_buy_count": 0,
+            "watch_only_core_path_large_entry_gap_submitted_count": 0,
+            "watch_only_core_path_moderate_entry_gap_candidate_count": 0,
+            "watch_only_core_path_moderate_entry_gap_would_buy_count": 0,
+            "watch_only_core_path_moderate_entry_gap_submitted_count": 0,
+            "watch_only_core_path_small_entry_gap_candidate_count": 0,
+            "watch_only_core_path_small_entry_gap_would_buy_count": 0,
+            "watch_only_core_path_small_entry_gap_submitted_count": 0,
+            "watch_only_core_path_entry_ready_candidate_count": 0,
+            "watch_only_core_path_entry_ready_would_buy_count": 0,
+            "watch_only_core_path_entry_ready_submitted_count": 0,
+            "pre_buy_boundary_entry_setup_small_gap_count": 1,
+            "pre_buy_boundary_entry_setup_small_gap_candidate_count": 0,
+            "pre_buy_boundary_entry_setup_small_gap_would_buy_count": 0,
+            "pre_buy_boundary_entry_setup_small_gap_submitted_count": 0,
+            "pre_buy_boundary_entry_setup_moderate_gap_count": 1,
+            "pre_buy_boundary_entry_setup_moderate_gap_candidate_count": 0,
+            "pre_buy_boundary_entry_setup_moderate_gap_would_buy_count": 0,
+            "pre_buy_boundary_entry_setup_moderate_gap_submitted_count": 0,
             "event_overlay_shadow_would_pass": 0,
         }
 
@@ -897,6 +1164,63 @@ class TestParseTriggerProxyAttributionSummary:
                             {"bucket": "deep_negative", "sample_count": 1},
                             {"bucket": "inactive", "sample_count": 8},
                         ],
+                    },
+                    "core_risk_off_floor_diagnostics": {
+                        "slow_trend_relax_candidate_items": [
+                            {"bucket": "trend_moderate_candidate", "sample_count": 1},
+                        ],
+                        "slow_floor_shadow_relax_path_items": [
+                            {"bucket": "slow_floor_relax_ready", "sample_count": 1},
+                        ],
+                        "active_slow_floor_relax_ready_transition_stage_items": [
+                            {"bucket": "watch_only_core_path", "sample_count": 1},
+                        ],
+                        "active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_band_items": [
+                            {"bucket": "large_entry_gap", "sample_count": 1},
+                        ],
+                        "active_core_watch_exit_trend_moderate_watch_only_core_path_entry_gap_projection_items": [
+                            {
+                                "bucket": "large_entry_gap",
+                                "sample_count": 1,
+                                "candidate_count": 1,
+                                "selected_count": 0,
+                                "would_buy_count": 0,
+                                "submitted_count": 0,
+                            }
+                        ],
+                        "pre_buy_boundary_watch_from_entry_setup_small_entry_gap_report": {
+                            "cohort_items": [
+                                {"bucket": "watch_from_entry_setup|small_entry_gap", "sample_count": 1}
+                            ],
+                            "projection_items": [
+                                {
+                                    "bucket": "watch_from_entry_setup|small_entry_gap",
+                                    "sample_count": 1,
+                                    "candidate_count": 0,
+                                    "selected_count": 0,
+                                    "would_buy_count": 0,
+                                    "submitted_count": 0,
+                                }
+                            ],
+                        },
+                        "pre_buy_boundary_watch_from_entry_setup_moderate_entry_gap_report": {
+                            "cohort_items": [
+                                {"bucket": "watch_from_entry_setup|moderate_entry_gap", "sample_count": 1}
+                            ],
+                            "projection_items": [
+                                {
+                                    "bucket": "watch_from_entry_setup|moderate_entry_gap",
+                                    "sample_count": 1,
+                                    "candidate_count": 0,
+                                    "selected_count": 0,
+                                    "would_buy_count": 0,
+                                    "submitted_count": 0,
+                                }
+                            ],
+                        },
+                        "shadow_relax_projection_summary": {
+                            "selected_count": 0,
+                        },
                     },
                 },
                 ensure_ascii=False,
@@ -931,6 +1255,29 @@ class TestParseTriggerProxyAttributionSummary:
         assert metrics["core_risk_off_floor_mild_relax_count"] == 1
         assert metrics["core_risk_off_floor_deep_negative_count"] == 1
         assert metrics["core_risk_off_floor_t3_ready_count"] == 1
+        assert metrics["trend_moderate_candidate_count"] == 1
+        assert metrics["trend_edge_deep_count"] == 0
+        assert metrics["trend_deep_tail_count"] == 0
+        assert metrics["shadow_relax_projection_selected_count"] == 0
+        assert metrics["slow_floor_relax_ready_count"] == 1
+        assert metrics["slow_floor_relax_activity_blocked_count"] == 0
+        assert metrics["slow_floor_relax_watch_only_core_path_count"] == 1
+        assert metrics["watch_only_core_path_large_entry_gap_count"] == 1
+        assert metrics["watch_only_core_path_moderate_entry_gap_count"] == 0
+        assert metrics["watch_only_core_path_small_entry_gap_count"] == 0
+        assert metrics["watch_only_core_path_entry_ready_count"] == 0
+        assert metrics["watch_only_core_path_large_entry_gap_candidate_count"] == 1
+        assert metrics["watch_only_core_path_large_entry_gap_would_buy_count"] == 0
+        assert metrics["watch_only_core_path_large_entry_gap_submitted_count"] == 0
+        assert metrics["pre_buy_boundary_entry_setup_small_gap_count"] == 1
+        assert metrics["pre_buy_boundary_entry_setup_small_gap_candidate_count"] == 0
+        assert metrics["pre_buy_boundary_entry_setup_small_gap_would_buy_count"] == 0
+        assert metrics["pre_buy_boundary_entry_setup_small_gap_submitted_count"] == 0
+        assert metrics["pre_buy_boundary_entry_setup_moderate_gap_count"] == 1
+        assert metrics["pre_buy_boundary_entry_setup_moderate_gap_candidate_count"] == 0
+        assert metrics["pre_buy_boundary_entry_setup_moderate_gap_would_buy_count"] == 0
+        assert metrics["pre_buy_boundary_entry_setup_moderate_gap_submitted_count"] == 0
+        assert metrics["watch_only_core_path_entry_ready_candidate_count"] == 0
 
 
 class TestExtractCommandFailureReason:

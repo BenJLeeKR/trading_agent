@@ -318,6 +318,14 @@ class InstrumentRepository(Protocol):
         """
         ...
 
+    async def get_by_symbols_any_market(
+        self, symbols: Sequence[str]
+    ) -> dict[str, InstrumentEntity]:
+        """Batch variant of ``get_by_symbol_any_market`` — one query for many
+        symbols instead of one query per symbol (avoids N+1 when resolving a
+        seed-symbol list, e.g. market-overlay seed pool resolution)."""
+        ...
+
     async def get_many(
         self, instrument_ids: Sequence[UUID]
     ) -> dict[UUID, InstrumentEntity]:

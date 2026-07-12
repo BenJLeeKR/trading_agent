@@ -1,0 +1,71 @@
+{
+  "active_trend_moderate_slow_floor_shadow_relax_path_items": [
+    {
+      "bucket": "slow_floor_relax_activity_blocked",
+      "sample_count": 2,
+      "t1_return_pct_avg": null,
+      "t3_return_pct_avg": null,
+      "t5_return_pct_avg": null,
+      "t3_mfe_pct_avg": null,
+      "t3_mae_pct_avg": null,
+      "t5_mfe_pct_avg": null,
+      "t5_mae_pct_avg": null,
+      "positive_t3_hit_count": 0,
+      "positive_t3_hit_rate": null
+    },
+    {
+      "bucket": "overall_floor_first",
+      "sample_count": 1,
+      "t1_return_pct_avg": 2.8169014084507005,
+      "t3_return_pct_avg": 5.432595573440646,
+      "t5_return_pct_avg": 2.4144869215291687,
+      "t3_mfe_pct_avg": 6.438631790744465,
+      "t3_mae_pct_avg": -1.2072434607645843,
+      "t5_mfe_pct_avg": 6.438631790744465,
+      "t5_mae_pct_avg": -4.024144869215296,
+      "positive_t3_hit_count": 1,
+      "positive_t3_hit_rate": 1.0
+    },
+    {
+      "bucket": "slow_floor_relax_ready",
+      "sample_count": 1,
+      "t1_return_pct_avg": 1.4583333333333393,
+      "t3_return_pct_avg": 3.3333333333333437,
+      "t5_return_pct_avg": 1.2499999999999956,
+      "t3_mfe_pct_avg": 4.791666666666661,
+      "t3_mae_pct_avg": -0.4166666666666652,
+      "t5_mfe_pct_avg": 5.000000000000004,
+      "t5_mae_pct_avg": -3.9583333333333304,
+      "positive_t3_hit_count": 1,
+      "positive_t3_hit_rate": 1.0
+    }
+  ],
+  "active_trend_moderate_signal_floor_miss_detail_items": [
+    {
+      "bucket": "overall_near_slow_deep",
+      "sample_count": 3,
+      "t1_return_pct_avg": 1.4583333333333393,
+      "t3_return_pct_avg": 3.3333333333333437,
+      "t5_return_pct_avg": 1.2499999999999956,
+      "t3_mfe_pct_avg": 4.791666666666661,
+      "t3_mae_pct_avg": -0.4166666666666652,
+      "t5_mfe_pct_avg": 5.000000000000004,
+      "t5_mae_pct_avg": -3.9583333333333304,
+      "positive_t3_hit_count": 1,
+      "positive_t3_hit_rate": 1.0
+    },
+    {
+      "bucket": "overall_deep_slow_near",
+      "sample_count": 1,
+      "t1_return_pct_avg": 2.8169014084507005,
+      "t3_return_pct_avg": 5.432595573440646,
+      "t5_return_pct_avg": 2.4144869215291687,
+      "t3_mfe_pct_avg": 6.438631790744465,
+      "t3_mae_pct_avg": -1.2072434607645843,
+      "t5_mfe_pct_avg": 6.438631790744465,
+      "t5_mae_pct_avg": -4.024144869215296,
+      "positive_t3_hit_count": 1,
+      "positive_t3_hit_rate": 1.0
+    }
+  ]
+}

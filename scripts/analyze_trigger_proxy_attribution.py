@@ -305,10 +305,12 @@ async def _load_first_symbol_day_decisions(
                 COALESCE(td.decision_json#>>'{candidate_vs_final,alignment_status}', 'unknown') AS alignment_status,
                 COALESCE(td.decision_json#>>'{deterministic_trigger,primary_candidate}', 'unknown') AS primary_candidate,
                 COALESCE((td.decision_json#>>'{deterministic_trigger,watch_candidate}')::boolean, false) AS watch_candidate,
+                COALESCE((td.decision_json#>>'{deterministic_trigger,buy_candidate}')::boolean, false) AS buy_candidate,
                 COALESCE((td.decision_json#>>'{deterministic_trigger,eligibility_passed}')::boolean, false) AS eligibility_passed,
                 NULLIF(td.decision_json#>>'{deterministic_trigger,entry_score}', '')::double precision AS entry_score,
                 NULLIF(td.decision_json#>>'{deterministic_trigger,watch_score}', '')::double precision AS watch_score,
                 NULLIF(td.decision_json#>>'{deterministic_trigger,ranking_score}', '')::double precision AS ranking_score,
+                COALESCE(td.decision_json#>'{deterministic_trigger,reason_codes}', '[]'::jsonb) AS trigger_reason_codes_json,
                 COALESCE(
                     td.decision_json#>'{deterministic_trigger,metadata,core_risk_off_experiment}',
                     '{}'::jsonb
@@ -317,6 +319,10 @@ async def _load_first_symbol_day_decisions(
                     td.decision_json#>'{deterministic_trigger,metadata,event_overlay_experiment}',
                     '{}'::jsonb
                 ) AS event_overlay_experiment_json,
+                NULLIF(
+                    td.decision_json#>>'{portfolio_allocation,recommended_max_order_value}',
+                    ''
+                )::double precision AS portfolio_recommended_max_order_value,
                 COALESCE(sfs.component_scores_json, '{}'::jsonb) AS signal_component_scores_json,
                 sfs.snapshot_at AS snapshot_at,
                 sfs.bar_count AS snapshot_bar_count,
@@ -326,9 +332,17 @@ async def _load_first_symbol_day_decisions(
                 sfs.volatility_20d_pct AS snapshot_volatility_20d_pct,
                 sfs.atr_14_pct AS snapshot_atr_14_pct,
                 sfs.rsi_14 AS snapshot_rsi_14,
+                sfs.average_volume_20d AS snapshot_average_volume_20d,
+                sfs.average_turnover_20d AS snapshot_average_turnover_20d,
                 sfs.volume_surge_ratio AS snapshot_volume_surge_ratio,
                 sfs.turnover_surge_ratio AS snapshot_turnover_surge_ratio,
                 COALESCE(td.decision_json#>'{deterministic_trigger,eligibility_reasons}', '[]'::jsonb) AS eligibility_reasons_json,
+                latest_order.order_request_id AS order_request_id,
+                LOWER(COALESCE(latest_order.status::text, 'unknown')) AS order_status,
+                LOWER(COALESCE(latest_attempt.status, 'unknown')) AS execution_status,
+                LOWER(COALESCE(latest_attempt.stop_reason, '')) AS execution_stop_reason,
+                COALESCE(latest_submit.accepted, false) AS submission_accepted,
+                LOWER(COALESCE(latest_submit.error_type, '')) AS submission_error_type,
                 ROW_NUMBER() OVER (
                     PARTITION BY td.symbol, (td.created_at AT TIME ZONE 'Asia/Seoul')::date
                     ORDER BY td.created_at ASC, td.trade_decision_id ASC
@@ -338,6 +352,36 @@ async def _load_first_symbol_day_decisions(
               ON dc.decision_context_id = td.decision_context_id
             LEFT JOIN trading.signal_feature_snapshots sfs
               ON sfs.signal_feature_snapshot_id = dc.signal_feature_snapshot_id
+            LEFT JOIN LATERAL (
+                SELECT
+                    o.order_request_id,
+                    o.status
+                FROM trading.order_requests o
+                WHERE o.trade_decision_id = td.trade_decision_id
+                ORDER BY o.created_at DESC, o.order_request_id DESC
+                LIMIT 1
+            ) latest_order ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT
+                    ea.status,
+                    ea.stop_reason
+                FROM trading.execution_attempts ea
+                WHERE ea.trade_decision_id = td.trade_decision_id
+                ORDER BY COALESCE(ea.completed_at, ea.started_at, ea.created_at) DESC,
+                         ea.execution_attempt_id DESC
+                LIMIT 1
+            ) latest_attempt ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT
+                    osa.accepted,
+                    osa.error_type
+                FROM trading.order_submission_attempts osa
+                JOIN trading.order_requests o2
+                  ON o2.order_request_id = osa.order_request_id
+                WHERE o2.trade_decision_id = td.trade_decision_id
+                ORDER BY osa.submitted_at DESC, osa.attempt_id DESC
+                LIMIT 1
+            ) latest_submit ON TRUE
             WHERE dc.account_id = $1
               AND (td.created_at AT TIME ZONE 'Asia/Seoul')::date BETWEEN $2::date AND $3::date
         )
@@ -353,13 +397,16 @@ async def _load_first_symbol_day_decisions(
             alignment_status,
             primary_candidate,
             watch_candidate,
+            buy_candidate,
             eligibility_passed,
             entry_score,
             watch_score,
             ranking_score,
+            trigger_reason_codes_json,
             core_risk_off_experiment_json,
             event_overlay_experiment_json,
             signal_component_scores_json,
+            portfolio_recommended_max_order_value,
             snapshot_at,
             snapshot_bar_count,
             snapshot_price_vs_sma_20_pct,
@@ -368,9 +415,17 @@ async def _load_first_symbol_day_decisions(
             snapshot_volatility_20d_pct,
             snapshot_atr_14_pct,
             snapshot_rsi_14,
+            snapshot_average_volume_20d,
+            snapshot_average_turnover_20d,
             snapshot_volume_surge_ratio,
             snapshot_turnover_surge_ratio,
-            eligibility_reasons_json
+            eligibility_reasons_json,
+            order_request_id,
+            order_status,
+            execution_status,
+            execution_stop_reason,
+            submission_accepted,
+            submission_error_type
         FROM ranked
         WHERE rn = 1
         ORDER BY trade_date ASC, symbol ASC
@@ -380,6 +435,7 @@ async def _load_first_symbol_day_decisions(
     decisions: list[dict[str, object]] = []
     for row in rows:
         reasons = _coerce_json_list(row["eligibility_reasons_json"])
+        trigger_reason_codes = _coerce_json_list(row["trigger_reason_codes_json"])
         core_experiment = _coerce_json_mapping(row["core_risk_off_experiment_json"])
         event_experiment = _coerce_json_mapping(row["event_overlay_experiment_json"])
         snapshot_component_scores = _enrich_snapshot_component_scores(
@@ -394,6 +450,8 @@ async def _load_first_symbol_day_decisions(
                 "volatility_20d_pct": row["snapshot_volatility_20d_pct"],
                 "atr_14_pct": row["snapshot_atr_14_pct"],
                 "rsi_14": row["snapshot_rsi_14"],
+                "average_volume_20d": row["snapshot_average_volume_20d"],
+                "average_turnover_20d": row["snapshot_average_turnover_20d"],
                 "volume_surge_ratio": row["snapshot_volume_surge_ratio"],
                 "turnover_surge_ratio": row["snapshot_turnover_surge_ratio"],
             },
@@ -416,12 +474,57 @@ async def _load_first_symbol_day_decisions(
                 "alignment_status": str(row["alignment_status"]),
                 "primary_candidate": str(row["primary_candidate"]),
                 "watch_candidate": bool(row["watch_candidate"]),
+                "buy_candidate": bool(row["buy_candidate"]),
                 "eligibility_passed": bool(row["eligibility_passed"]),
                 "entry_score": float(row["entry_score"]) if row["entry_score"] is not None else None,
                 "watch_score": float(row["watch_score"]) if row["watch_score"] is not None else None,
                 "ranking_score": (
                     float(row["ranking_score"]) if row["ranking_score"] is not None else None
                 ),
+                "trigger_reason_codes": [str(reason) for reason in trigger_reason_codes],
+                "price_vs_sma_60_pct": (
+                    float(row["snapshot_price_vs_sma_60_pct"])
+                    if row["snapshot_price_vs_sma_60_pct"] is not None
+                    else None
+                ),
+                "return_3m_pct": (
+                    float(row["snapshot_return_3m_pct"])
+                    if row["snapshot_return_3m_pct"] is not None
+                    else None
+                ),
+                "average_volume_20d": (
+                    float(row["snapshot_average_volume_20d"])
+                    if row["snapshot_average_volume_20d"] is not None
+                    else None
+                ),
+                "average_turnover_20d": (
+                    float(row["snapshot_average_turnover_20d"])
+                    if row["snapshot_average_turnover_20d"] is not None
+                    else None
+                ),
+                "volume_surge_ratio": (
+                    float(row["snapshot_volume_surge_ratio"])
+                    if row["snapshot_volume_surge_ratio"] is not None
+                    else None
+                ),
+                "turnover_surge_ratio": (
+                    float(row["snapshot_turnover_surge_ratio"])
+                    if row["snapshot_turnover_surge_ratio"] is not None
+                    else None
+                ),
+                "recommended_max_order_value": (
+                    float(row["portfolio_recommended_max_order_value"])
+                    if row["portfolio_recommended_max_order_value"] is not None
+                    else None
+                ),
+                "order_request_id": (
+                    str(row["order_request_id"]) if row["order_request_id"] is not None else None
+                ),
+                "order_status": str(row["order_status"]),
+                "execution_status": str(row["execution_status"]),
+                "execution_stop_reason": str(row["execution_stop_reason"]),
+                "submission_accepted": bool(row["submission_accepted"]),
+                "submission_error_type": str(row["submission_error_type"]),
                 "core_risk_off_experiment": core_experiment,
                 "event_overlay_experiment": event_experiment,
                 "eligibility_reasons": [str(reason) for reason in reasons],

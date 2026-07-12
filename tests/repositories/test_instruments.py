@@ -207,3 +207,69 @@ async def test_postgres_get_by_symbol_any_market_prefers_active_krx_segment_row_
     assert fetched.instrument_id == active_kospi.instrument_id
     assert fetched.exchange_code == "KRX"
     assert fetched.market_segment == "KOSPI"
+
+
+@pytest.mark.asyncio
+async def test_postgres_get_by_symbols_any_market_batches_and_applies_same_tiebreak(
+    postgres_repos,
+) -> None:
+    """Batch variant should return the same tie-broken row per symbol as
+    calling ``get_by_symbol_any_market`` once per symbol, in a single query."""
+    symbol_a = "T009900"
+    symbol_b = "T009901"
+    older_krx_a = InstrumentEntity(
+        instrument_id=uuid4(),
+        symbol=symbol_a,
+        market_code="KRX",
+        asset_class=AssetClass.KR_STOCK.value,
+        currency="KRW",
+        name="배치조회A-구KRX",
+        is_active=True,
+        exchange_code="KRX",
+        created_at=datetime(2026, 6, 18, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 6, 18, tzinfo=timezone.utc),
+    )
+    newer_kospi_a = InstrumentEntity(
+        instrument_id=uuid4(),
+        symbol=symbol_a,
+        market_code="KOSPI",
+        asset_class=AssetClass.KR_STOCK.value,
+        currency="KRW",
+        name="배치조회A-신KOSPI",
+        is_active=True,
+        exchange_code="KRX",
+        market_segment="KOSPI",
+        created_at=datetime(2026, 6, 19, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 6, 19, tzinfo=timezone.utc),
+    )
+    single_b = InstrumentEntity(
+        instrument_id=uuid4(),
+        symbol=symbol_b,
+        market_code="KOSDAQ",
+        asset_class=AssetClass.KR_STOCK.value,
+        currency="KRW",
+        name="배치조회B",
+        is_active=True,
+        exchange_code="KRX",
+        market_segment="KOSDAQ",
+    )
+    await postgres_repos.instruments.add(newer_kospi_a)
+    await postgres_repos.instruments.add(older_krx_a)
+    await postgres_repos.instruments.add(single_b)
+
+    result = await postgres_repos.instruments.get_by_symbols_any_market(
+        [symbol_a, symbol_b, "T_NOT_FOUND"]
+    )
+
+    assert set(result.keys()) == {symbol_a, symbol_b}
+    # 심볼 A는 단건 조회와 동일하게 legacy KRX row를 우선해야 한다.
+    assert result[symbol_a].instrument_id == older_krx_a.instrument_id
+    assert result[symbol_b].instrument_id == single_b.instrument_id
+
+
+@pytest.mark.asyncio
+async def test_postgres_get_by_symbols_any_market_empty_input_returns_empty_dict(
+    postgres_repos,
+) -> None:
+    result = await postgres_repos.instruments.get_by_symbols_any_market([])
+    assert result == {}
