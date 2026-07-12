@@ -14,6 +14,23 @@
 
 ## 최근 메모
 
+> **📌 2026-07-12 방향 전환 확정 (사용자 결정, 최우선 반영)**:
+> 지난 6주(2026-06-01~07-12) 매수 0건은 시스템 오류가 아니라 **하락장에서
+> 자본을 지켜낸 올바른 방어 작동**이었음이 실측으로 증명됐다
+> (deep_negative T+3 -5.39% < inactive -3.17%, 게이트 해제 역-시뮬레이션
+> SF1~SF12 전부 No-Go/Shadow-Watch).
+> **따라서 `core_risk_off` 완화·`entry_score` 조작 시도는 이 시점부로 전면
+> 영구 중단한다.** 아래 최근 메모의 shadow 완화 관측 이력은 역사적 기록으로
+> 유지하되, 후속 작업으로 승격하지 않는다.
+> 새로운 최우선 작업은 **소싱(후보 공급) 단계 복구**다 — 근본 원인은 모멘텀
+> 포착 레이어(`_add_market_overlay`)가 `KIS_ENV=paper` 이중 게이트로 6주 내내
+> 완전 비활성이었고, core universe는 가격 무관·회전 없음 + 지수 편입 데이터
+> stale(2026-06-24 수동 스냅샷)이었다는 점이다. 설계/작업 순서/백로그는
+> [`plans/[DESIGN] universe_sourcing_momentum_overlay_enablement_v1.md`](./%5BDESIGN%5D%20universe_sourcing_momentum_overlay_enablement_v1.md)
+> 참고 (UNIV-1: 라이브 read-only client 주입으로 overlay 활성화가 1순위).
+
+- (이하는 2026-07-12 방향 전환 이전의 shadow 완화 관측 이력이다 — 역사적
+  기록으로만 유지)
 - `core_risk_off slow floor shadow` 후속 실측에서
   `2026-07-01 ~ 2026-07-10` active `trend_moderate_candidate` 4건을 확보했다.
 - 후행 proxy는
@@ -404,9 +421,52 @@
     `SF7/SF8`의 `T+3`는 `+0.8455% -> -3.7818%`로 다시 음수다.
     즉 아직 일반화 가능한 구조 신호가 아니라
     특정 심볼 기여가 큰 국소 표본으로 봐야 한다.
+  - 심볼당 1건만 남기는 중복 제거 기준에서도
+    `SF7`은 earliest 선택 시 `T+3=+2.7413%`,
+    latest 선택 시 `T+3=-4.1351%`로 부호가 뒤집혔다.
+    즉 현재 신호는 관측 시점 선택에도 민감하다.
+  - 추가 전환 점검에서도
+    `SF7/SF8` 표본은 전부 `watch_candidate=true`지만
+    `buy_candidate=0`, `submission_accepted=0`이었다.
+    즉 아직 수익률이 좋아 보이는 협소 band가 있어도
+    실제 매수 실행 경로는 전혀 열리지 않았다.
+  - 코드상 이 다음 병목은 사실상
+    `buy_candidate_threshold = 0.65`다.
+    다만 `eligibility_passed=True`였지만
+    `buy_candidate=False`였던 2건(`000660`, `000810`, 2026-06-18)은
+    gap 평균이 `0.0667`이었음에도
+    가상 BUY 시 `T+3 평균 -6.2780%`, hit rate `0%`였다.
+    즉 threshold만 낮추는 완화는 여전히 `No-Go`다.
+  - 추가 분해에서도
+    `ranking_score >= 0.60` 근접군 2건의 `T+3 평균`이 동일하게 `-6.2780%`였고,
+    `entry_score >= 0.58` 구간 8건은 `T+3 평균 -7.5000%`였다.
+    즉 지금은 상단 근접군을 더 빨리 BUY로 승격하는 쪽도 근거가 없다.
+  - 추가 `source_type / relative_activity / fast_band` 교차 집계에서는
+    유일하게 플러스가 나온 구간이
+    `market_overlay + no_rel_bonus + fast_score -0.12~-0.05`
+    4건뿐이었다.
+    반면 같은 `market_overlay`라도
+    `fast < -0.12` 또는 `rel_bonus=true`로 가면 다시 명확한 음수였다.
+    즉 현재 분리축은 threshold 숫자보다
+    `source lane + fast band + activity state` 조합에 가깝다.
+  - 이 협소 lane 내부 추가 분해에서는
+    `ranking_score`보다
+    `return_3m_pct`와 `price_vs_sma_60_pct`가 더 나은 분리축이었다.
+    `return_3m_pct >= 100` 및 `price_vs_sma_60_pct >= 50` 3건은
+    `T+3 평균 +3.6988%`, `T+5 평균 +6.9099%`였고,
+    반대편 1건(`000810`)은 음수였다.
+  - 이를 고정한 `SF10/SF11/SF12`
+    (`market_overlay + no_rel_bonus + fast -0.12~-0.05`
+    + `return_3m_pct >= 100` / `price_vs_sma_60_pct >= 50`)
+    는 모두 같은 3건으로 수렴했고,
+    `T+3 평균 +3.6988%`, `T+5 평균 +6.9099%`였다.
+    다만 여전히 표본이 3건뿐이라 authoritative `Go`는 불가하다.
   - 따라서 다음 우선 작업은
-    `SF7/SF8` 계열을 장후 배치에서 shadow-only로 누적 관측해
+    `SF10/SF11/SF12`와 `SF7/SF8` 계열을
+    장후 배치에서 shadow-only로 누적 관측해
     추가 `T+3/T+5` 표본을 쌓고,
+    `candidate -> selected -> would_buy -> submitted` 전환이
+    실제로 열리는지까지 같이 확인한 뒤,
     결과가 재현될 때만 승격 여부를 다시 판단하는 것이다.
 - `2026-07-12` 기준으로
   `2026-07-01 ~ 2026-07-11` 재집계(`v25`)까지 확장해도
@@ -3780,7 +3840,19 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 
 ## 권장 실행 순서
 
+> **📌 2026-07-12 갱신**: `core_risk_off`/`entry_score` 완화 전면 영구 중단
+> 확정에 따라, **종목 소싱 구조 개선(UNIV-1~5)이 1순위 묶음 최상단**에
+> 추가되었다. 상세 설계/순서/백로그는
+> [`plans/[DESIGN] universe_sourcing_momentum_overlay_enablement_v1.md`](./%5BDESIGN%5D%20universe_sourcing_momentum_overlay_enablement_v1.md) 참고.
+
 ### 1순위 묶음
+0. **종목 소싱 구조 개선 (2026-07-12 신설)**
+   - UNIV-1: market_overlay용 라이브 read-only client(`KIS_LIVE_INFO_*`) 주입
+     배선 — 6주간 완전 비활성이던 모멘텀 포착 레이어 복구 (rate budget 사전
+     산정 포함)
+   - UNIV-2: 활성화 후 1~2 거래일 실측 검증
+   - 후속: UNIV-3(멀티데이 모멘텀 shadow 신호) → UNIV-4(지수 편입 자동 갱신)
+     → UNIV-5(core 후순위화, 보류)
 1. Fill History Phase 3
 2. 부분체결 자동 판정 고도화
 3. fill 발생 후 snapshot refresh 자동화

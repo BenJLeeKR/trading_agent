@@ -1,0 +1,102 @@
+{
+  "SF7": {
+    "count": 2,
+    "avg_gap": 0.0667,
+    "rows": [
+      {
+        "trade_date": "2026-06-18",
+        "symbol": "000660",
+        "source_type": "market_overlay",
+        "entry_score": 0.5788,
+        "ranking_score": 0.6062,
+        "fast_score": -0.11,
+        "eligibility_passed": true,
+        "eligibility_reasons": [
+          "eligibility_source_type_allowed",
+          "eligibility_feature_coverage_ok",
+          "eligibility_allocation_available",
+          "eligibility_regime_pass",
+          "eligibility_signal_floor_pass"
+        ],
+        "buy_candidate": false,
+        "watch_candidate": true,
+        "final_decision_type": "watch",
+        "submission_accepted": false,
+        "execution_status": "non_trade",
+        "buy_threshold_gap": 0.0712
+      },
+      {
+        "trade_date": "2026-06-18",
+        "symbol": "000810",
+        "source_type": "market_overlay",
+        "entry_score": 0.5879,
+        "ranking_score": 0.6121,
+        "fast_score": -0.065,
+        "eligibility_passed": true,
+        "eligibility_reasons": [
+          "eligibility_source_type_allowed",
+          "eligibility_feature_coverage_ok",
+          "eligibility_allocation_available",
+          "eligibility_regime_pass",
+          "eligibility_signal_floor_pass"
+        ],
+        "buy_candidate": false,
+        "watch_candidate": true,
+        "final_decision_type": "hold",
+        "submission_accepted": false,
+        "execution_status": "non_trade",
+        "buy_threshold_gap": 0.0621
+      }
+    ]
+  },
+  "SF8": {
+    "count": 2,
+    "avg_gap": 0.0667,
+    "rows": [
+      {
+        "trade_date": "2026-06-18",
+        "symbol": "000660",
+        "source_type": "market_overlay",
+        "entry_score": 0.5788,
+        "ranking_score": 0.6062,
+        "fast_score": -0.11,
+        "eligibility_passed": true,
+        "eligibility_reasons": [
+          "eligibility_source_type_allowed",
+          "eligibility_feature_coverage_ok",
+          "eligibility_allocation_available",
+          "eligibility_regime_pass",
+          "eligibility_signal_floor_pass"
+        ],
+        "buy_candidate": false,
+        "watch_candidate": true,
+        "final_decision_type": "watch",
+        "submission_accepted": false,
+        "execution_status": "non_trade",
+        "buy_threshold_gap": 0.0712
+      },
+      {
+        "trade_date": "2026-06-18",
+        "symbol": "000810",
+        "source_type": "market_overlay",
+        "entry_score": 0.5879,
+        "ranking_score": 0.6121,
+        "fast_score": -0.065,
+        "eligibility_passed": true,
+        "eligibility_reasons": [
+          "eligibility_source_type_allowed",
+          "eligibility_feature_coverage_ok",
+          "eligibility_allocation_available",
+          "eligibility_regime_pass",
+          "eligibility_signal_floor_pass"
+        ],
+        "buy_candidate": false,
+        "watch_candidate": true,
+        "final_decision_type": "hold",
+        "submission_accepted": false,
+        "execution_status": "non_trade",
+        "buy_threshold_gap": 0.0621
+      }
+    ]
+  }
+}

@@ -15,13 +15,28 @@
 
 ## 최근 추가 상세 백로그
 
-- `core_risk_off` / `slow_score_v5` shadow 완화 후속 작업:
+- **종목 소싱(Universe Sourcing) 구조 개선 — market_overlay 활성화 및 모멘텀 신호 보강** (2026-07-12 신설, 최우선):
+  [`plans/[DESIGN] universe_sourcing_momentum_overlay_enablement_v1.md`](./%5BDESIGN%5D%20universe_sourcing_momentum_overlay_enablement_v1.md)
+  - 2026-07-12 확정: 매수 0건은 하락장 방어의 올바른 작동이었으므로
+    **`core_risk_off` 완화·`entry_score` 조작 시도는 전면 영구 중단**한다.
+    후속 방향은 게이트 완화가 아니라 소싱(후보 공급) 단계 복구다.
+  - 근본 원인: 모멘텀 포착 레이어(`_add_market_overlay`)가 `KIS_ENV=paper`
+    이중 게이트로 6주 내내 완전 비활성 + core는 가격 무관·회전 없음 +
+    지수 편입 데이터는 2026-06-24 수동 스냅샷으로 stale.
+  - 백로그: UNIV-1(라이브 read-only client 주입으로 overlay 활성화, 1순위) →
+    UNIV-2(1~2 거래일 실측) → UNIV-3(멀티데이 모멘텀 shadow 신호, 2순위) →
+    UNIV-4(지수 편입 자동 갱신, 3순위) → UNIV-5(core 후순위화, 보류).
+
+- `core_risk_off` / `slow_score_v5` shadow 완화 후속 작업 — **⚠️ 2026-07-12
+  전면 영구 중단** (관측 데이터/이력 문서로만 유지):
   [`plans/[BACKLOG] core_risk_off_slow_floor_shadow_relaxation.md`](./%5BBACKLOG%5D%20core_risk_off_slow_floor_shadow_relaxation.md)
-  - `overall_missing` 보정 이후 실측 결과를 기준으로
+  - ~~`overall_missing` 보정 이후 실측 결과를 기준으로
     `slow_trend` 경계 구간만 shadow 완화 후보로 먼저 분리하고,
-    `slow_momentum`은 관측 유지 후 판단하는 후속 작업 정리본이다.
-  - 목적은 `deep_negative` 전체 완화가 아니라,
-    `최고 기대수익률` 목표와 정렬되는 제한적 완화 경로만 검증하는 것이다.
+    `slow_momentum`은 관측 유지 후 판단하는 후속 작업 정리본이다.~~
+  - 2026-07-12 사용자 확정: 매수 0건은 시스템 오류가 아니라 하락장 자본 방어의
+    올바른 작동이었음이 증명됨(SF1~SF12 역-시뮬레이션 전부 No-Go/Shadow-Watch).
+    따라서 이 백로그의 완화 작업은 전면 영구 중단하고, 후속 방향은 위
+    "종목 소싱 구조 개선"으로 이관한다.
 
 ---
 

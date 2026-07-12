@@ -1,0 +1,262 @@
+{
+  "SF7": {
+    "count": 4,
+    "eligibility_passed": 2,
+    "buy_candidate": 0,
+    "watch_candidate": 4,
+    "submission_accepted": 0,
+    "final_decision_type_counts": {
+      "watch": 2,
+      "hold": 2
+    },
+    "execution_status_counts": {
+      "stopped": 1,
+      "non_trade": 3
+    },
+    "source_type_counts": {
+      "market_overlay": 4
+    },
+    "eligibility_reason_counts": {
+      "eligibility_source_type_allowed": 3,
+      "eligibility_feature_coverage_ok": 3,
+      "eligibility_allocation_available": 3,
+      "eligibility_regime_pass": 3,
+      "eligibility_signal_floor_pass": 3,
+      "eligibility_low_relative_activity": 1
+    },
+    "sample_rows": [
+      {
+        "trade_date": "2026-06-17",
+        "symbol": "000660",
+        "source_type": "market_overlay",
+        "entry_score": 0.5788,
+        "ranking_score": null,
+        "fast_score": -0.11,
+        "eligibility_passed": false,
+        "eligibility_reasons": [],
+        "buy_candidate": false,
+        "watch_candidate": true,
+        "final_decision_type": "watch",
+        "submission_accepted": false,
+        "execution_status": "stopped"
+      },
+      {
+        "trade_date": "2026-06-18",
+        "symbol": "000660",
+        "source_type": "market_overlay",
+        "entry_score": 0.5788,
+        "ranking_score": 0.6062,
+        "fast_score": -0.11,
+        "eligibility_passed": true,
+        "eligibility_reasons": [
+          "eligibility_source_type_allowed",
+          "eligibility_feature_coverage_ok",
+          "eligibility_allocation_available",
+          "eligibility_regime_pass",
+          "eligibility_signal_floor_pass"
+        ],
+        "buy_candidate": false,
+        "watch_candidate": true,
+        "final_decision_type": "watch",
+        "submission_accepted": false,
+        "execution_status": "non_trade"
+      },
+      {
+        "trade_date": "2026-06-18",
+        "symbol": "000810",
+        "source_type": "market_overlay",
+        "entry_score": 0.5879,
+        "ranking_score": 0.6121,
+        "fast_score": -0.065,
+        "eligibility_passed": true,
+        "eligibility_reasons": [
+          "eligibility_source_type_allowed",
+          "eligibility_feature_coverage_ok",
+          "eligibility_allocation_available",
+          "eligibility_regime_pass",
+          "eligibility_signal_floor_pass"
+        ],
+        "buy_candidate": false,
+        "watch_candidate": true,
+        "final_decision_type": "hold",
+        "submission_accepted": false,
+        "execution_status": "non_trade"
+      },
+      {
+        "trade_date": "2026-06-23",
+        "symbol": "009150",
+        "source_type": "market_overlay",
+        "entry_score": 0.5879,
+        "ranking_score": 0.5533,
+        "fast_score": -0.065,
+        "eligibility_passed": false,
+        "eligibility_reasons": [
+          "eligibility_source_type_allowed",
+          "eligibility_feature_coverage_ok",
+          "eligibility_allocation_available",
+          "eligibility_regime_pass",
+          "eligibility_signal_floor_pass",
+          "eligibility_low_relative_activity"
+        ],
+        "buy_candidate": false,
+        "watch_candidate": true,
+        "final_decision_type": "hold",
+        "submission_accepted": false,
+        "execution_status": "non_trade"
+      }
+    ]
+  },
+  "SF8": {
+    "count": 6,
+    "eligibility_passed": 2,
+    "buy_candidate": 0,
+    "watch_candidate": 6,
+    "submission_accepted": 0,
+    "final_decision_type_counts": {
+      "watch": 4,
+      "hold": 2
+    },
+    "execution_status_counts": {
+      "stopped": 1,
+      "non_trade": 5
+    },
+    "source_type_counts": {
+      "market_overlay": 4,
+      "event_overlay": 1,
+      "core": 1
+    },
+    "eligibility_reason_counts": {
+      "eligibility_source_type_allowed": 5,
+      "eligibility_feature_coverage_ok": 5,
+      "eligibility_allocation_available": 5,
+      "eligibility_regime_pass": 5,
+      "eligibility_signal_floor_pass": 5,
+      "eligibility_low_relative_activity": 3
+    },
+    "sample_rows": [
+      {
+        "trade_date": "2026-06-17",
+        "symbol": "000660",
+        "source_type": "market_overlay",
+        "entry_score": 0.5788,
+        "ranking_score": null,
+        "fast_score": -0.11,
+        "eligibility_passed": false,
+        "eligibility_reasons": [],
+        "buy_candidate": false,
+        "watch_candidate": true,
+        "final_decision_type": "watch",
+        "submission_accepted": false,
+        "execution_status": "stopped"
+      },
+      {
+        "trade_date": "2026-06-18",
+        "symbol": "000660",
+        "source_type": "market_overlay",
+        "entry_score": 0.5788,
+        "ranking_score": 0.6062,
+        "fast_score": -0.11,
+        "eligibility_passed": true,
+        "eligibility_reasons": [
+          "eligibility_source_type_allowed",
+          "eligibility_feature_coverage_ok",
+          "eligibility_allocation_available",
+          "eligibility_regime_pass",
+          "eligibility_signal_floor_pass"
+        ],
+        "buy_candidate": false,
+        "watch_candidate": true,
+        "final_decision_type": "watch",
+        "submission_accepted": false,
+        "execution_status": "non_trade"
+      },
+      {
+        "trade_date": "2026-06-18",
+        "symbol": "000810",
+        "source_type": "market_overlay",
+        "entry_score": 0.5879,
+        "ranking_score": 0.6121,
+        "fast_score": -0.065,
+        "eligibility_passed": true,
+        "eligibility_reasons": [
+          "eligibility_source_type_allowed",
+          "eligibility_feature_coverage_ok",
+          "eligibility_allocation_available",
+          "eligibility_regime_pass",
+          "eligibility_signal_floor_pass"
+        ],
+        "buy_candidate": false,
+        "watch_candidate": true,
+        "final_decision_type": "hold",
+        "submission_accepted": false,
+        "execution_status": "non_trade"
+      },
+      {
+        "trade_date": "2026-06-23",
+        "symbol": "009150",
+        "source_type": "market_overlay",
+        "entry_score": 0.5879,
+        "ranking_score": 0.5533,
+        "fast_score": -0.065,
+        "eligibility_passed": false,
+        "eligibility_reasons": [
+          "eligibility_source_type_allowed",
+          "eligibility_feature_coverage_ok",
+          "eligibility_allocation_available",
+          "eligibility_regime_pass",
+          "eligibility_signal_floor_pass",
+          "eligibility_low_relative_activity"
+        ],
+        "buy_candidate": false,
+        "watch_candidate": true,
+        "final_decision_type": "hold",
+        "submission_accepted": false,
+        "execution_status": "non_trade"
+      },
+      {
+        "trade_date": "2026-07-08",
+        "symbol": "000810",
+        "source_type": "event_overlay",
+        "entry_score": 0.5893,
+        "ranking_score": 0.5741,
+        "fast_score": -0.0575,
+        "eligibility_passed": false,
+        "eligibility_reasons": [
+          "eligibility_source_type_allowed",
+          "eligibility_feature_coverage_ok",
+          "eligibility_allocation_available",
+          "eligibility_regime_pass",
+          "eligibility_signal_floor_pass",
+          "eligibility_low_relative_activity"
+        ],
+        "buy_candidate": false,
+        "watch_candidate": true,
+        "final_decision_type": "watch",
+        "submission_accepted": false,
+        "execution_status": "non_trade"
+      },
+      {
+        "trade_date": "2026-07-09",
+        "symbol": "001450",
+        "source_type": "core",
+        "entry_score": 0.558,
+        "ranking_score": 0.5369,
+        "fast_score": 0.035,
+        "eligibility_passed": false,
+        "eligibility_reasons": [
+          "eligibility_source_type_allowed",
+          "eligibility_feature_coverage_ok",
+          "eligibility_allocation_available",
+          "eligibility_regime_pass",
+          "eligibility_signal_floor_pass",
+          "eligibility_low_relative_activity"
+        ],
+        "buy_candidate": false,
+        "watch_candidate": true,
+        "final_decision_type": "watch",
+        "submission_accepted": false,
+        "execution_status": "non_trade"
+      }
+    ]
+  }
+}

@@ -1,6 +1,18 @@
-# `core_risk_off` `slow_score_v5` shadow 완화 후속 백로그
+# `core_risk_off` `slow_score_v5` shadow 완화 후속 백로그 — ⚠️ 2026-07-12 전면 영구 중단
 
-## 1. 목적
+> **📌 2026-07-12 최종 확정 (사용자 결정)**: 이 백로그의 완화 작업은 **전면
+> 영구 중단**한다. 지난 6주 매수 0건은 시스템 오류가 아니라 하락장에서 자본을
+> 지켜낸 올바른 방어 작동이었음이 실측으로 증명됐다(deep_negative T+3 -5.39% <
+> inactive -3.17%, SF1~SF12 역-시뮬레이션 전부 No-Go/Shadow-Watch). 이 문서는
+> 그 결론에 도달한 실측 이력/데이터 보존용으로만 유지하며, 어떤 항목도 후속
+> 작업으로 승격하지 않는다. 후속 방향은 게이트 완화가 아니라 **소싱(후보 공급)
+> 단계 복구**다 —
+> [`plans/[DESIGN] universe_sourcing_momentum_overlay_enablement_v1.md`](./%5BDESIGN%5D%20universe_sourcing_momentum_overlay_enablement_v1.md)
+> 참고 (근본 원인: `_add_market_overlay` 모멘텀 레이어가 `KIS_ENV=paper` 이중
+> 게이트로 6주 내내 완전 비활성 + core universe 가격 무관·회전 없음 + 지수
+> 편입 데이터 stale).
+
+## 1. 목적 [역사적 기록 — 위 영구 중단 배너 참고]
 
 - `core_risk_off` 차단군에서
   `overall_missing` 보정 이후에도
@@ -346,6 +358,65 @@
   `000660`을 제외하면
   `T+3=+0.8455% -> -3.7818%`,
   `T+5=+3.4324% -> +1.3744%`로 약해진다.
+  심볼당 1건만 남기는 중복 제거 기준으로도
+  `SF7`은 earliest 선택 시 `T+3=+2.7413%`,
+  latest 선택 시 `T+3=-4.1351%`로 부호가 뒤집혔다.
+  즉 현재 성과는 formula의 안정적 우위라기보다
+  **동일 심볼의 어느 관측시점을 잡느냐에 민감한 상태**다.
+  또한 `SF7/SF8` 표본은 현재 로그 기준으로
+  `watch_candidate=전부 true`지만
+  `buy_candidate=0`, `submission_accepted=0`이다.
+  즉 수익률이 개선돼 보이는 협소 band가 있더라도
+  아직 실제 매수 전환 경로는 전혀 열리지 않았다.
+  더 구체적으로는
+  `eligibility_passed=True`인데도 `buy_candidate=False`였던
+  두 건(`2026-06-18 / 000660`, `2026-06-18 / 000810`)의
+  `buy_threshold_gap`은 평균 `0.0667`이었지만,
+  이 둘을 바로 BUY로 넘겼다고 가정하면
+  `T+3 평균 -6.2780%`, `T+3 hit rate 0%`였다.
+  또한 `near_buy_floor` 전체를 다시 분해하면
+  `ranking_score >= 0.60` 구간(2건)도
+  `T+3 평균 -6.2780%`였고,
+  `entry_score >= 0.58` 구간(8건) 전체는
+  `T+3 평균 -7.5000%`로 더 나빴다.
+  즉 현재는 `ranking_score`를 약간 더 높게 잡거나
+  `entry_score` 상단 근접군을 더 빨리 BUY로 승격하는 방식 역시
+  기대수익률 측면에서 근거가 없다.
+  추가 lane 분해에서도
+  `source_type / relative_activity / fast_band`를 함께 묶었을 때
+  플러스 `T+3/T+5`가 나온 구간은
+  사실상 `market_overlay + no_relative_activity_bonus + fast_score -0.12~-0.05`
+  4건뿐이었다.
+  반면 같은 `market_overlay`라도
+  `fast_score < -0.12`로 내려가면
+  `T+3`가 다시 `-6%~-7%`대로 악화됐고,
+  `relative_activity_bonus`가 붙은 `market_overlay` 3건은
+  `T+3 평균 -9.4574%`였다.
+  이 협소 lane 내부를 다시 보면
+  `ranking_score`가 높은 것이 좋은 분리축도 아니었다.
+  오히려
+  `return_3m_pct >= 100`이면서 `price_vs_sma_60_pct >= 50`인 3건은
+  `T+3 평균 +3.6988%`, `T+5 평균 +6.9099%`였고,
+  반대로 `return_3m_pct < 100`, `price_vs_sma_60_pct < 50`이던
+  `000810` 1건은 `T+3 -7.7143%`, `T+5 -7.0000%`였다.
+  즉 같은 협소 lane 안에서도
+  남는 분리축은 `ranking_score`보다
+  **중기 추세 강도(`return_3m`, `price_vs_sma_60`)** 쪽이다.
+  이를 shadow formula로 고정하면
+  `market_overlay + no_rel_bonus + fast_score -0.12~-0.05`
+  위에
+  `return_3m_pct >= 100` 또는 `price_vs_sma_60_pct >= 50`
+  하한을 얹은 `SF10/SF11/SF12`는 모두 같은 3건으로 수렴했고,
+  `T+3 평균 +3.6988%`, `T+5 평균 +6.9099%`,
+  `MFE3 +11.4974%`, `MAE3 -2.8778%`였다.
+  다만 표본이 3건뿐이므로
+  이것 역시 즉시 승격이 아니라
+  **shadow-only 후속 누적 관측 후보**로만 유지한다.
+  즉 현재 분리축은
+  `entry/ranking` 숫자보다
+  `source lane + fast band + activity state` 조합에 더 가깝다.
+  즉 다음 병목이 `buy_candidate threshold`인 것은 맞지만,
+  그렇다고 이 구간을 단순히 threshold 완화로 열어서는 안 된다.
   따라서 지금 단계에서는
   **shadow-only watch candidate**로만 유지하고,
   authoritative `Go`로 승격하지 않는다.

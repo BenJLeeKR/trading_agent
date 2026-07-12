@@ -1735,6 +1735,185 @@ leave-one-symbol-out 결과:
 3. 현 시점 최종 판정은
    **`Shadow-Watch` 유지, authoritative 승격 금지**다.
 
+추가 중복 제거 점검:
+
+- `logs/entry_score_joint_shadow_formula_symbol_dedup_2026-06-01_2026-07-10.json`
+
+심볼당 1건만 남긴 뒤 재집계하면:
+
+| formula | 방식 | T+3 평균 | T+5 평균 | 해석 |
+| --- | --- | ---: | ---: | --- |
+| `SF7_market_high_vol_fast_ge_-0.12_no_rel_bonus` | earliest per symbol | `+2.7413%` | `+1.6964%` | `000660`의 첫 관측치를 남기면 플러스 유지 |
+| `SF7_market_high_vol_fast_ge_-0.12_no_rel_bonus` | latest per symbol | `-4.1351%` | `+3.7964%` | `000660`의 다음날 관측치로 바꾸면 T+3가 음수 전환 |
+| `SF8_high_vol_fast_ge_-0.12_no_rel_bonus_entry_ge_0.55` | earliest per symbol | `+2.7413%` | `+1.6964%` | `001450`는 T+3 미관측, 핵심은 기존 3심볼 |
+| `SF8_high_vol_fast_ge_-0.12_no_rel_bonus_entry_ge_0.55` | latest per symbol | `-2.3455%` | `+9.1947%` | 관측시점 선택에 따라 T+3 부호가 다시 바뀜 |
+
+해석 보강:
+
+1. `SF7/SF8`은
+   같은 심볼이 연속 날짜로 중복 출현하는 구조를 걷어내도
+   여전히 안정적 `Go`로 수렴하지 않는다.
+2. 특히 `000660`의 어느 날짜를 대표값으로 남기느냐에 따라
+   `T+3` 부호가 바뀐다.
+3. 따라서 현재 관측은
+   “formula 우위”라기보다
+   “소수 심볼의 시점 민감 결과”로 보는 편이 맞다.
+
+추가 전환 경로 점검:
+
+- `logs/entry_score_joint_shadow_formula_transition_2026-06-01_2026-07-10.json`
+
+| formula | count | eligibility_passed | buy_candidate | watch_candidate | submission_accepted | 최종 액션 분포 |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `SF7` | 4 | 2 | 0 | 4 | 0 | `watch 2`, `hold 2` |
+| `SF8` | 6 | 2 | 0 | 6 | 0 | `watch 4`, `hold 2` |
+
+해석 보강:
+
+1. `SF7/SF8`은 후행 수익률이 일부 개선돼 보여도
+   현재 로그상 전부 `WATCH/HOLD`에 머물렀다.
+2. 즉 `entry_score` 협소 완화 band를 찾는 것만으로는 부족하고,
+   실제 다음 병목은
+   `buy_candidate` 및 최종 매수 전환 경로가 열리지 않는 데 있다.
+3. 따라서 다음 거래일 관측에서는
+   단순 수익률뿐 아니라
+   `candidate -> selected -> would_buy -> submitted`
+   전환이 실제로 열리는지까지 같이 봐야 한다.
+
+추가 코드/실측 대조:
+
+1. 코드 기준으로
+   `eligibility_passed=True` 이후 `buy_candidate`를 만드는 하드 조건은
+   사실상 `entry_score >= 0.65`다.
+   - `src/agent_trading/services/deterministic_trigger_engine.py`
+   - `buy_candidate_threshold = 0.65`
+2. `SF7/SF8` 표본 중
+   실제로 `eligibility_passed=True`였지만 `buy_candidate=False`였던
+   row는 2건뿐이다.
+   - `2026-06-18 / 000660 / entry_score 0.5788 / gap 0.0712`
+   - `2026-06-18 / 000810 / entry_score 0.5879 / gap 0.0621`
+3. 이 2건을 “threshold만 낮춰 BUY로 넘긴다”는
+   counterfactual로 보면
+   `T+1 평균 +1.4711%`였지만
+   `T+3 평균 -6.2780%`, `T+3 hit rate 0%`였다.
+4. 추가로 `near_buy_floor` 전체를 다시 분해해도
+   현재는 `ranking_score`가 높은 근접군이 더 낫다는 근거가 없다.
+   - `ranking_score >= 0.60` 구간(2건):
+     `T+3 평균 -6.2780%`
+   - `0.55 <= ranking_score < 0.60` 구간(14건):
+     `T+3 평균 -5.5901%`
+   - `entry_score >= 0.58` 구간(8건):
+     `T+3 평균 -7.5000%`
+
+해석 보강:
+
+1. 현재 병목이 `buy_candidate_threshold`인 것은 맞다.
+2. 그러나 이 병목을 단순히 숫자 완화로 열면
+   바로 기대수익률이 훼손될 가능성이 높다.
+3. 따라서 다음 단계는
+   `0.65` 자체를 내리는 것이 아니라,
+   왜 `eligibility_passed` 이후에도
+   상대적으로 좋은 표본과 나쁜 표본이 함께 `0.58` 근처에 뭉치는지,
+   그 분리축을 더 찾아내는 방향이어야 한다.
+4. 특히 현재 데이터에서는
+   `ranking_score`를 약간 더 높게 요구하는 방식이나
+   `entry_score` 상단 근접군을 BUY로 더 빨리 승격하는 방식 모두
+   `최고 기대수익률` 기준과 맞지 않는다.
+
+추가 lane 분해:
+
+- `logs/entry_score_near_buy_cross_bucket_2026-06-01_2026-07-10.json`
+
+`source_type / relative_activity / fast_band` 교차 집계 결과:
+
+| bucket | count | T+3 평균 | T+5 평균 | 해석 |
+| --- | ---: | ---: | ---: | --- |
+| `market_overlay + no_rel_bonus + fast -0.12~-0.05` | 4 | `+0.8455%` | `+3.4324%` | 현재까지 유일하게 플러스가 나온 협소 lane |
+| `market_overlay + no_rel_bonus + fast -0.20~-0.12` | 14 | `-6.3110%` | `-9.5145%` | fast가 한 단계만 더 나빠져도 급격히 악화 |
+| `market_overlay + no_rel_bonus + fast < -0.20` | 7 | `-7.3044%` | `-10.0692%` | deep negative fast tail은 명확한 `No-Go` |
+| `market_overlay + rel_bonus + fast -0.12~-0.05` | 3 | `-9.4574%` | `-9.6531%` | activity bonus가 붙어도 오히려 나빴음 |
+| `reconciliation_overlay + no_rel_bonus + fast -0.12~-0.05` | 2 | `-2.3838%` | `-2.2535%` | 완화 근거 부족 |
+| `event_overlay + no_rel_bonus + fast -0.20~-0.12` | 3 | `-4.2739%` | `-9.4760%` | broad 대비 덜 나쁘지만 여전히 `No-Go` |
+
+해석 보강:
+
+1. 현재 `near_buy_floor`에서
+   살아남는 축은 `entry_score`나 `ranking_score` 숫자 자체가 아니라
+   **source lane + fast band + relative activity state** 조합이다.
+2. 특히 `relative_activity_bonus`는
+   이 구간에서는 긍정 신호로 작동하지 않았다.
+   적어도 현재 표본에서는
+   `market_overlay + rel_bonus`가 오히려 더 나빴다.
+3. 따라서 다음 shadow 관측은
+   `market_overlay + no_rel_bonus + fast -0.12~-0.05`
+   협소 lane을 중심으로 하되,
+   이것 역시 표본이 4건뿐이므로
+   즉시 승격이 아니라 누적 관측 대상으로만 유지해야 한다.
+
+협소 lane 내부 추가 분해:
+
+- `logs/entry_score_market_lane_inner_split_2026-06-01_2026-07-10.json`
+
+대상:
+
+- `market_overlay + no_rel_bonus + fast -0.12~-0.05` 4건
+
+추가 비교 결과:
+
+| split | count | T+3 평균 | T+5 평균 | 해석 |
+| --- | ---: | ---: | ---: | --- |
+| `return_3m_pct >= 100` | 3 | `+3.6988%` | `+6.9099%` | 중기 상승 추세가 강한 표본만 남기면 개선 |
+| `return_3m_pct < 100` | 1 | `-7.7143%` | `-7.0000%` | 약한 추세 표본은 손실 |
+| `price_vs_sma_60_pct >= 50` | 3 | `+3.6988%` | `+6.9099%` | SMA60 대비 괴리가 큰 표본이 상대적으로 우수 |
+| `price_vs_sma_60_pct < 50` | 1 | `-7.7143%` | `-7.0000%` | 괴리가 낮은 표본은 손실 |
+| `ranking_score >= 0.59` | 2 | `-6.2780%` | `+0.8203%` | ranking 상단이 오히려 좋은 분리축이 아님 |
+| `volume_surge_ratio >= 0.7` | 2 | `-6.2780%` | `+0.8203%` | 단기 activity 확장은 오히려 불안정 |
+| `volume_surge_ratio < 0.7` | 2 | `+7.9691%` | `+6.0445%` | 지나치게 뜨겁지 않은 표본이 오히려 나음 |
+
+해석 보강:
+
+1. 협소 lane 안에서도
+   `ranking_score`는 좋은 분리축이 아니다.
+2. 현재 남는 추가 설명력은
+   `return_3m_pct`와 `price_vs_sma_60_pct` 같은
+   **중기 추세 강도** 쪽에서 나타난다.
+3. 즉 다음 shadow formula를 더 좁힌다면
+   `market_overlay + no_rel_bonus + fast -0.12~-0.05`
+   위에
+   `return_3m_pct` 또는 `price_vs_sma_60_pct` 하한을
+   shadow-only로 얹는 방향이 가장 합리적이다.
+
+추가 trend-filtered shadow formula back-simulation:
+
+- `logs/entry_score_trend_filtered_shadow_formula_backsim_2026-06-01_2026-07-10.json`
+
+검증한 formula:
+
+1. `SF10_market_no_rel_fast_band_trend3m100`
+   - `market_overlay + no_rel_bonus + -0.12<=fast<-0.05 + return_3m_pct>=100`
+2. `SF11_market_no_rel_fast_band_sma60_50`
+   - `market_overlay + no_rel_bonus + -0.12<=fast<-0.05 + price_vs_sma_60_pct>=50`
+3. `SF12_market_no_rel_fast_band_trend3m100_sma60_50`
+   - `market_overlay + no_rel_bonus + -0.12<=fast<-0.05 + return_3m_pct>=100 + price_vs_sma_60_pct>=50`
+
+실측 결과:
+
+| formula | count | T+1 평균 | T+3 평균 | T+5 평균 | T+5 승률 | MFE3 | MAE3 | 판정 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `SF10` | 3 | `+2.7137%` | `+3.6988%` | `+6.9099%` | `100%` | `+11.4974%` | `-2.8778%` | `Shadow-Watch` |
+| `SF11` | 3 | `+2.7137%` | `+3.6988%` | `+6.9099%` | `100%` | `+11.4974%` | `-2.8778%` | `Shadow-Watch` |
+| `SF12` | 3 | `+2.7137%` | `+3.6988%` | `+6.9099%` | `100%` | `+11.4974%` | `-2.8778%` | `Shadow-Watch` |
+
+해석 보강:
+
+1. `return_3m_pct >= 100`과 `price_vs_sma_60_pct >= 50`은
+   현재 표본에서는 사실상 같은 3건으로 수렴한다.
+2. 이 3건의 후행 수익률은
+   기존 `SF7/SF8`보다 더 좋다.
+3. 그러나 표본이 `3건`뿐이므로
+   아직 `Go`가 아니라
+   **다음 장후 배치에서 우선적으로 누적 관측할 shadow formula**다.
+
 ### 10.8.1 strict floor 상세 분해
 
 추가 진단 필드 `shadow_signal_floor_miss_detail`로
