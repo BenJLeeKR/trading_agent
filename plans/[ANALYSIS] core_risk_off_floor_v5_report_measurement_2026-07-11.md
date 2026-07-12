@@ -1383,9 +1383,254 @@ strict `authoritative core BUY path`가 같은 운영 구간 전체에서 `0건`
    - `pre_buy_boundary_entry_setup_moderate_gap_candidate_count`
    - `pre_buy_boundary_entry_setup_moderate_gap_would_buy_count`
    - `pre_buy_boundary_entry_setup_moderate_gap_submitted_count`
-   따라서 다음 장후부터는
-   별도 JSON 본문 전체를 다시 열지 않아도
-   운영 요약만으로 두 코호트의 누적 전환 상태를 바로 확인할 수 있다.
+
+### 10.7.4 `2026-07-01 ~ 2026-07-10` 기준 hydration 보강 후 `entry_score` 하방 편향 구조 점검
+
+이번 세션에서는
+`core_risk_off` 완화 판단을 더 밀기 전에,
+`analyze_trigger_proxy_attribution.py`의 hydration 범위를
+`active=true` row에만 한정하지 않고
+`source_type='core'` 전체 row로 넓혔다.
+
+즉 이제는 `core_risk_off_experiment`가 비어 있거나
+`active=false`여도,
+연결된 `signal_feature_snapshot.component_scores_json`
+또는 snapshot feature fallback에서
+`shadow_overall_score_v5`,
+`shadow_slow_score_v5`,
+`shadow_fast_score_v5`,
+`shadow_component_scores_v5`,
+`shadow_reason_codes_v5`,
+`shadow_diagnostics_v5`
+를 같이 복원한다.
+
+실측 결과:
+
+- `2026-07-01 ~ 2026-07-10` 첫 symbol/day 기준
+  `core` 표본은 `97건`
+- 이 중
+  `shadow_overall_score_v5`, `shadow_slow_score_v5`
+  가 채워진 `core` 표본은 `97/97`
+- `core_risk_off_experiment.active=true`
+  표본은 `49건`이고,
+  이 또한 `49/49`가 v5 score를 보유한다
+
+따라서 7/11에 지적됐던
+`v5 score hydration 누락`은
+현재 분석 경로 기준으로는 해소됐다고 볼 수 있다.
+
+동일 구간에서
+`entry_score`를 직접 분해해보면,
+진짜 병목은 `core_risk_off` 완화 경계보다
+`entry_score`의 population-level 하방 편향에 더 가깝다.
+
+핵심 수치:
+
+| cohort | count | entry_score 평균 | entry_score 최대 | 해석 |
+| --- | ---: | ---: | ---: | --- |
+| 전체 first symbol/day | 169 | `0.1704` | `0.5893` | 전체 분포는 강하게 하방 편향 |
+| `core` | 97 | `0.1578` | `0.5580` | 특히 core 평균이 매우 낮음 |
+| `watch_from_entry_setup` 또는 `entry_score >= 0.52` | 27 | `0.5099` | `0.5893` | 근접군은 존재하지만 얇음 |
+| `0.52 <= entry_score < 0.65` | 10 | `0.5540` | `0.5893` | BUY floor 근처까지는 오지만 `0.65`는 못 넘음 |
+
+`core` 평균 `entry_score`의 항목별 평균 기여:
+
+| 항목 | 평균 기여 |
+| --- | ---: |
+| `overall_term` | `+0.1465` |
+| `fast_term` | `+0.0580` |
+| `slow_term` | `+0.0532` |
+| `bullish_term` | `+0.0175` |
+| `risk_off_term` | `-0.1500` |
+| `allocation_term` | `+0.0272` |
+| `strategy_term` | `+0.0000` |
+| `relative_activity_term` | `+0.0038` |
+
+해석:
+
+1. `core` 평균 분포에서는
+   `risk_off_penalty=-0.15`가 거의 상수처럼 작동한다.
+2. 반면 이를 상쇄해야 할
+   `bullish_regime`, `strategy_alignment`, `relative_activity_bonus`
+   는 평균적으로 매우 작다.
+3. 특히 `core` 경로는
+   `preferred_strategy='defensive_low_volatility_rotation'`
+   가 많아
+   `trigger_strategy_alignment(+0.05)`를 거의 받지 못한다.
+4. 상위 `core` WATCH 근접군(`001450`, `000810`)도
+   `slow_score`는 높지만
+   `risk_off_penalty=-0.15`가 고정으로 깔리고,
+   `relative_activity_bonus`가 0인 경우가 많아
+   `0.53~0.56`에서 멈춘다.
+5. 즉 최근 BUY 0건의 원인을
+   `core_risk_off` shadow bucket 완화 여부로만 보는 것은 부정확하고,
+   먼저 `entry_score`가 어떤 경로에서
+   `0.65`를 넘지 못하는지 계층적으로 분해하는 쪽이 맞다.
+
+따라서 다음 단계는
+`core_risk_off` threshold 완화가 아니라,
+`WATCH` 또는 `entry_score >= 0.52` 근접군을 중심으로
+`overall / fast / slow / regime / strategy / relative activity`
+기여도와
+`watch_from_entry_setup` 미전환 병목을 추가 분해하는 것이다.
+
+추가로 이번 턴에는
+`scripts/analyze_trigger_proxy_attribution.py`에
+`entry_score_bias_report`를 정식 payload로 추가했다.
+
+신규 산출물:
+
+- `logs/trigger_proxy_attribution_2026-07-01_2026-07-10_entry_bias_v2.json`
+
+이 payload에는 아래가 같이 들어간다.
+
+- `all`
+- `core`
+- `watch_candidate_all`
+- `watch_from_entry_setup_or_ge_052`
+- `near_buy_floor`
+- `near_buy_floor_counterfactual`
+- `top_core_samples`
+
+따라서 이제는 ad-hoc 보조 스크립트 없이도
+같은 재집계 결과 안에서
+`entry_score` 하방 편향과
+근접군의 counterfactual을 반복 측정할 수 있다.
+
+`near_buy_floor_counterfactual` 실측 결과:
+
+| cohort | 표본 수 | `risk_off_penalty` 제거 시 `0.65` 상회 | `strategy_alignment`만 추가 시 `0.65` 상회 | `relative_activity_bonus` 최대치 부여 시 `0.65` 상회 |
+| --- | ---: | ---: | ---: | ---: |
+| `0.52 <= entry_score < 0.65` | 10 | 10 | 0 | 5 |
+
+해석:
+
+1. `near_buy_floor` 10건은 모두
+   `trigger_risk_off_penalty=-0.15`만 제거해도
+   BUY threshold `0.65`를 넘는다.
+2. 반면 `trigger_strategy_alignment(+0.05)`만으로는
+   단독 상회 표본이 0건이다.
+3. `relative_activity_bonus`를 최대치로 본 counterfactual도
+   10건 중 5건만 `0.65`를 넘는다.
+4. 즉 현재 `entry_score` 하방 편향의 1차 억제 항목은
+   `risk_off_penalty`이고,
+   `strategy_alignment`와 `relative_activity_bonus`는
+   보조 억제 항목으로 보는 쪽이 맞다.
+5. 다만 본 세션 기준 원칙은
+   `core_risk_off` threshold 완화 중단이므로,
+   위 수치는 즉시 완화 근거가 아니라
+   **entry score 병목의 구조적 위치를 증명한 관측치**로만 사용한다.
+
+근접군의 2차 억제 패턴:
+
+| cohort | 표본 수 | `high_volatility` | `strategy_alignment` | `relative_activity_bonus` | 해석 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `watch_from_entry_setup_or_ge_052` | 27 | 26 | 15 | 9 | 거의 전 표본이 변동성 패널티를 같이 받음 |
+| `near_buy_floor` | 10 | 10 | 7 | 1 | BUY 직전 표본도 변동성 패널티는 전부 존재 |
+| `near_buy_floor_core` | 3 | 3 | 0 | 0 | core 근접군은 `strategy/activity` 보너스가 사실상 전무 |
+
+즉 `core` 근접군은
+`slow_score` 자체는 상당히 높은데도,
+
+- `risk_off_penalty=-0.15`가 고정으로 깔리고
+- `high_volatility`가 전부 동반되며
+- `strategy_alignment`와 `relative_activity_bonus`가 비어 있는
+
+형태가 반복된다.
+
+따라서 다음 실측 분해 우선순위는
+`slow_score` 추가 완화가 아니라
+`fast_score`, `high_volatility`, `relative_activity_bonus` 부재가
+`core` 근접군에서 어떻게 동시 발생하는지 확인하는 것이다.
+
+`2026-07-12` 추가 분해 산출물:
+
+- `logs/entry_score_joint_suppression_2026-07-01_2026-07-10.json`
+
+동시 억제 패턴 실측:
+
+| cohort | 표본 수 | 핵심 관측치 | 해석 |
+| --- | ---: | --- | --- |
+| `watch_from_entry_setup_or_ge_052` | 27 | `high_volatility 26/27`, `fast_score < -0.20` `14/27`, `fast_score >= 0` `3/27` | 근접군 대부분이 이미 fast layer 약세와 high volatility를 동시에 안고 있음 |
+| `top_core_samples` 상위 10건 | 10 | `001450(2026-07-09)`만 `fast_score=+0.035`, 나머지 상위권은 모두 음수 fast | core 근접군은 `slow_score`가 높아도 fast layer가 entry 상향을 막고 있음 |
+| `top_core_samples` 상위 10건 | 10 | `high_volatility 10/10`, `relative_activity_bonus 2/10` | core 근접군은 volatility tail이 거의 상수처럼 붙고 activity 보너스는 희소함 |
+
+추가 해석:
+
+1. `entry_score` 상단 근접군을 다시 봐도
+   병목은 단일 `risk_off_penalty`가 아니라
+   `weak fast_score + high_volatility + sparse activity bonus`
+   조합에 더 가깝다.
+2. 즉 `slow_score` 기반 완화나
+   `risk_off_penalty` 단독 제거는
+   구조적으로 잘못된 타격점일 가능성이 높다.
+3. 다음 shadow formula는
+   적어도 `fast_score` 하방 꼬리와
+   `high_volatility` 구간을 함께 제어해야 한다.
+
+### 10.7.5 `entry_score` shadow formula back-simulation (`2026-06-01 ~ 2026-07-10`)
+
+이번 턴에는
+`risk_off_penalty` 완화안을 실제로 넣지 않고,
+과거 실측 row에 대해
+virtual candidate를 만들어
+후행 수익률로 먼저 검증했다.
+
+산출물:
+
+- `logs/entry_score_shadow_formula_backsim_2026-06-01_2026-07-10.json`
+
+검증한 shadow formula:
+
+1. `SF1_broad_remove_risk_off_near_buy_floor`
+   - 조건:
+     `0.52 <= entry_score < 0.65`
+     그리고 `trigger_risk_off_penalty` 존재
+   - 해석:
+     near-buy 전 구간을 넓게 열어주는 공격형 완화안
+
+2. `SF2_core_remove_risk_off_near_buy_floor`
+   - 조건:
+     `source_type='core'`
+     그리고 `0.52 <= entry_score < 0.65`
+     그리고 `trigger_risk_off_penalty` 존재
+
+3. `SF3_core_watch_setup_no_bonus_remove_risk_off`
+   - 조건:
+     `SF2`
+     + `trigger_watch_from_entry_setup`
+     + `trigger_strategy_alignment` 없음
+     + `trigger_relative_activity_bonus` 없음
+
+실측 결과:
+
+| formula | virtual candidates | T+1 평균 | T+1 승률 | T+3 평균 | T+3 승률 | T+5 평균 | T+5 승률 | 판정 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `SF1_broad_remove_risk_off_near_buy_floor` | 50 | `-1.4160%` | `37.50%` | `-5.2937%` | `23.26%` | `-8.4620%` | `14.29%` | `No-Go` |
+| `SF2_core_remove_risk_off_near_buy_floor` | 4 | `+0.4006%` | `50.00%` | `-8.4906%` | `0.00%` | `-16.9434%` | `0.00%` | `No-Go` |
+| `SF3_core_watch_setup_no_bonus_remove_risk_off` | 4 | `+0.4006%` | `50.00%` | `-8.4906%` | `0.00%` | `-16.9434%` | `0.00%` | `No-Go` |
+
+해석:
+
+1. `SF1`은 표본 수는 충분하지만
+   `T+1`, `T+3`, `T+5`가 모두 음수이므로
+   `최고 기대수익률` 목표와 정면 충돌한다.
+2. `SF2`와 `SF3`은
+   core 근접군만 남겼기 때문에
+   `T+1`은 약하게 플러스지만,
+   현재 확보된 `T+3/T+5`는
+   단 하나의 오래된 표본(`2026-06-30 / 000660`)이
+   크게 음수로 남아 있다.
+3. 따라서 현재 시점에서
+   `risk_off_penalty` 제거형 shadow formula는
+   넓게도, 좁게도
+   authoritative 승격 근거가 없다.
+4. 즉 `entry_score` 병목이 확인됐더라도
+   곧바로 `risk_off_penalty`를 풀어서는 안 되고,
+   다음 후보는
+   `high_volatility` 동반 구간과
+   `fast_score` 하방 구간을 함께 제어하는
+   더 좁은 shadow formula여야 한다.
 7. `2026-07-12` 기준으로
    `2026-07-01 ~ 2026-07-11`까지 범위를 늘려
    재집계(`v25`)를 다시 실행했지만,
@@ -1398,6 +1643,97 @@ strict `authoritative core BUY path`가 같은 운영 구간 전체에서 `0건`
    즉 현재 미완료 체크리스트의 blocker는
    코드 미구현이 아니라
    **후속 거래일 미도래**다.
+8. 보수적으로 `fast_score`까지 같이 조여도
+   아직 `Go` 근거는 없다.
+   `0.52 <= entry_score < 0.65`와 `risk_off_penalty`를 만족하는
+   50건에 대해 `fast_score >= -0.12`를 추가로 걸면
+   표본은 17건으로 줄고,
+   `T+1=+0.0883%`, `T+3=-3.1981%`, `T+5=-3.9202%`다.
+   이는 broad formula보다 손실폭은 줄지만
+   여전히 `최고 기대수익률` 기준에서는 `No-Go`다.
+9. 따라서 다음 단계는
+   `fast_score` 단일 협소화가 아니라
+   `high_volatility` tail과 결합된
+   더 좁은 joint shadow formula 설계여야 한다.
+
+### 10.7.6 `fast_score + high_volatility` joint shadow formula back-simulation
+
+산출물:
+
+- `logs/entry_score_joint_shadow_formula_backsim_2026-06-01_2026-07-10.json`
+
+검증한 추가 formula:
+
+1. `SF7_market_high_vol_fast_ge_-0.12_no_rel_bonus`
+   - 조건:
+     `source_type='market_overlay'`
+     + `trigger_high_volatility`
+     + `fast_score >= -0.12`
+     + `trigger_relative_activity_bonus` 없음
+
+2. `SF8_high_vol_fast_ge_-0.12_no_rel_bonus_entry_ge_0.55`
+   - 조건:
+     `trigger_high_volatility`
+     + `fast_score >= -0.12`
+     + `trigger_relative_activity_bonus` 없음
+     + `entry_score >= 0.55`
+
+3. `SF9_all_high_vol_fast_ge_-0.12_no_rel_bonus`
+   - 조건:
+     `trigger_high_volatility`
+     + `fast_score >= -0.12`
+     + `trigger_relative_activity_bonus` 없음
+
+실측 결과:
+
+| formula | count | T+1 평균 | T+1 승률 | T+3 n | T+3 평균 | T+3 승률 | T+5 n | T+5 평균 | T+5 승률 | MFE3 | MAE3 | 판정 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `SF7_market_high_vol_fast_ge_-0.12_no_rel_bonus` | 4 | `+2.0353%` | `50.00%` | 4 | `+0.8455%` | `50.00%` | 4 | `+3.4324%` | `75.00%` | `+9.9445%` | `-4.3726%` | `Shadow-Watch` |
+| `SF8_high_vol_fast_ge_-0.12_no_rel_bonus_entry_ge_0.55` | 6 | `+1.1106%` | `50.00%` | 4 | `+0.8455%` | `50.00%` | 4 | `+3.4324%` | `75.00%` | `+9.9445%` | `-4.3726%` | `Shadow-Watch` |
+| `SF9_all_high_vol_fast_ge_-0.12_no_rel_bonus` | 10 | `+0.3675%` | `40.00%` | 6 | `-0.2309%` | `50.00%` | 6 | `+1.5371%` | `50.00%` | `+8.7332%` | `-5.9150%` | `No-Go` |
+
+해석:
+
+1. `SF7`, `SF8`은
+   broad formula와 달리
+   `T+3`, `T+5`가 모두 플러스로 돌아선
+   첫 joint shadow formula다.
+2. 다만 두 formula의 유효 `T+3/T+5` 표본은
+   사실상 같은 4개 구표본에 기대고 있다.
+   심볼도 `000660` 2건, `000810` 1건, `009150` 1건으로
+   집중도가 높다.
+3. 즉 이는 `authoritative Go`가 아니라
+   **shadow-only watch candidate**다.
+   더 많은 후속 거래일에서
+   같은 band가 반복 재현되는지 확인해야 한다.
+4. 반면 `SF9`처럼 범위를 조금만 넓혀도
+   `T+3`가 다시 음수로 돌아간다.
+   따라서 현 단계에서 완화는
+   반드시 매우 좁은 구조로만 관찰돼야 한다.
+
+추가 견고성 점검:
+
+- `logs/entry_score_joint_shadow_formula_robustness_2026-06-01_2026-07-10.json`
+
+leave-one-symbol-out 결과:
+
+| formula | 제외 심볼 | T+3 평균 | T+5 평균 | 해석 |
+| --- | --- | ---: | ---: | --- |
+| `SF7_market_high_vol_fast_ge_-0.12_no_rel_bonus` | 없음 | `+0.8455%` | `+3.4324%` | base |
+| `SF7_market_high_vol_fast_ge_-0.12_no_rel_bonus` | `000660` 제외 | `-3.7818%` | `+1.3744%` | 핵심 수익 기여 심볼 제거 시 성과 약화 |
+| `SF8_high_vol_fast_ge_-0.12_no_rel_bonus_entry_ge_0.55` | 없음 | `+0.8455%` | `+3.4324%` | base |
+| `SF8_high_vol_fast_ge_-0.12_no_rel_bonus_entry_ge_0.55` | `000660` 제외 | `-3.7818%` | `+1.3744%` | 동일하게 `000660` 의존도가 큼 |
+
+해석 보강:
+
+1. `SF7/SF8`은 broad formula 대비 분명히 개선됐지만,
+   현재 플러스 수익률의 상당 부분이
+   `000660` 2건에 기대고 있다.
+2. 따라서 이 두 formula는
+   `Go`는 물론이고
+   “일반화 가능한 quasi-Go”로도 보기 어렵다.
+3. 현 시점 최종 판정은
+   **`Shadow-Watch` 유지, authoritative 승격 금지**다.
 
 ### 10.8.1 strict floor 상세 분해
 

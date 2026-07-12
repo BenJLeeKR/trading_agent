@@ -1,0 +1,1463 @@
+{
+  "all": {
+    "count": 169,
+    "entry_score_min": 0.0,
+    "entry_score_avg": 0.1704,
+    "entry_score_max": 0.5893,
+    "avg_terms": {
+      "overall_term": 0.1491,
+      "fast_term": 0.0595,
+      "slow_term": 0.0539,
+      "bullish_term": 0.0195,
+      "risk_on_term": 0.0,
+      "risk_off_term": -0.1491,
+      "allocation_term": 0.0258,
+      "strategy_term": 0.0065,
+      "source_term": -0.0006,
+      "relative_activity_term": 0.0038,
+      "reconstructed_entry_score": 0.1684
+    },
+    "top_reason_codes": [
+      [
+        "trigger_risk_off_penalty",
+        168
+      ],
+      [
+        "trigger_allocation_budget_available",
+        168
+      ],
+      [
+        "trigger_exit_risk_off",
+        168
+      ],
+      [
+        "trigger_no_position_exit_penalty",
+        168
+      ],
+      [
+        "trigger_high_volatility",
+        152
+      ],
+      [
+        "trigger_bearish_regime",
+        101
+      ],
+      [
+        "trigger_source_core",
+        97
+      ],
+      [
+        "trigger_watch_candidate",
+        91
+      ],
+      [
+        "trigger_no_action",
+        77
+      ],
+      [
+        "trigger_source_event_overlay",
+        66
+      ]
+    ]
+  },
+  "core": {
+    "count": 97,
+    "entry_score_min": 0.0,
+    "entry_score_avg": 0.1578,
+    "entry_score_max": 0.558,
+    "avg_terms": {
+      "overall_term": 0.1465,
+      "fast_term": 0.058,
+      "slow_term": 0.0532,
+      "bullish_term": 0.0175,
+      "risk_on_term": 0.0,
+      "risk_off_term": -0.15,
+      "allocation_term": 0.0272,
+      "strategy_term": 0.0,
+      "source_term": 0.0,
+      "relative_activity_term": 0.0038,
+      "reconstructed_entry_score": 0.1561
+    },
+    "top_reason_codes": [
+      [
+        "trigger_source_core",
+        97
+      ],
+      [
+        "trigger_risk_off_penalty",
+        97
+      ],
+      [
+        "trigger_allocation_budget_available",
+        97
+      ],
+      [
+        "trigger_exit_risk_off",
+        97
+      ],
+      [
+        "trigger_no_position_exit_penalty",
+        97
+      ],
+      [
+        "trigger_high_volatility",
+        91
+      ],
+      [
+        "trigger_bearish_regime",
+        55
+      ],
+      [
+        "trigger_no_action",
+        49
+      ],
+      [
+        "trigger_watch_candidate",
+        48
+      ],
+      [
+        "trigger_watch_from_exit_setup",
+        38
+      ]
+    ]
+  },
+  "watch_or_ge_052": {
+    "count": 27,
+    "entry_score_min": 0.4573,
+    "entry_score_avg": 0.5099,
+    "entry_score_max": 0.5893,
+    "avg_terms": {
+      "overall_term": 0.2905,
+      "fast_term": 0.0754,
+      "slow_term": 0.1298,
+      "bullish_term": 0.0889,
+      "risk_on_term": 0.0,
+      "risk_off_term": -0.1444,
+      "allocation_term": 0.0307,
+      "strategy_term": 0.0278,
+      "source_term": 0.0037,
+      "relative_activity_term": 0.0076,
+      "reconstructed_entry_score": 0.5099
+    },
+    "top_reason_codes": [
+      [
+        "trigger_allocation_budget_available",
+        27
+      ],
+      [
+        "trigger_no_position_exit_penalty",
+        27
+      ],
+      [
+        "trigger_watch_from_entry_setup",
+        27
+      ],
+      [
+        "trigger_watch_candidate",
+        27
+      ],
+      [
+        "trigger_risk_off_penalty",
+        26
+      ],
+      [
+        "trigger_high_volatility",
+        26
+      ],
+      [
+        "trigger_exit_risk_off",
+        26
+      ],
+      [
+        "trigger_bullish_regime",
+        24
+      ],
+      [
+        "trigger_source_event_overlay",
+        15
+      ],
+      [
+        "trigger_strategy_alignment",
+        15
+      ]
+    ]
+  },
+  "near_buy_floor": {
+    "count": 10,
+    "entry_score_min": 0.5253,
+    "entry_score_avg": 0.554,
+    "entry_score_max": 0.5893,
+    "avg_terms": {
+      "overall_term": 0.3128,
+      "fast_term": 0.0859,
+      "slow_term": 0.1369,
+      "bullish_term": 0.1,
+      "risk_on_term": 0.0,
+      "risk_off_term": -0.15,
+      "allocation_term": 0.03,
+      "strategy_term": 0.035,
+      "source_term": 0.0,
+      "relative_activity_term": 0.0034,
+      "reconstructed_entry_score": 0.554
+    },
+    "top_reason_codes": [
+      [
+        "trigger_bullish_regime",
+        10
+      ],
+      [
+        "trigger_risk_off_penalty",
+        10
+      ],
+      [
+        "trigger_allocation_budget_available",
+        10
+      ],
+      [
+        "trigger_high_volatility",
+        10
+      ],
+      [
+        "trigger_exit_risk_off",
+        10
+      ],
+      [
+        "trigger_no_position_exit_penalty",
+        10
+      ],
+      [
+        "trigger_watch_from_entry_setup",
+        10
+      ],
+      [
+        "trigger_watch_candidate",
+        10
+      ],
+      [
+        "trigger_source_event_overlay",
+        7
+      ],
+      [
+        "trigger_strategy_alignment",
+        7
+      ]
+    ]
+  },
+  "top_core_samples": [
+    {
+      "trade_date": "2026-07-09",
+      "symbol": "001450",
+      "entry_score": 0.558,
+      "ranking_score": 0.5369,
+      "trigger_regime_label": "bullish_trend",
+      "trigger_risk_tone": "risk_off",
+      "trigger_preferred_strategy": "defensive_low_volatility_rotation",
+      "price_vs_sma_60_pct": 10.33847794,
+      "return_3m_pct": 27.56302521,
+      "volume_surge_ratio": 0.98785647,
+      "turnover_surge_ratio": 0.99187876,
+      "snapshot_overall_score": 0.4888,
+      "snapshot_fast_score": 0.035,
+      "snapshot_slow_score": 0.86,
+      "terms": {
+        "overall_term": 0.335,
+        "fast_term": 0.1035,
+        "slow_term": 0.1395,
+        "bullish_term": 0.1,
+        "risk_on_term": 0.0,
+        "risk_off_term": -0.15,
+        "allocation_term": 0.03,
+        "strategy_term": 0.0,
+        "source_term": 0.0,
+        "relative_activity_term": 0.0,
+        "reconstructed_entry_score": 0.558
+      },
+      "trigger_reason_codes": [
+        "trigger_source_core",
+        "trigger_bullish_regime",
+        "trigger_risk_off_penalty",
+        "trigger_allocation_budget_available",
+        "trigger_high_volatility",
+        "trigger_exit_risk_off",
+        "trigger_no_position_exit_penalty",
+        "trigger_watch_from_entry_setup",
+        "trigger_watch_candidate"
+      ],
+      "core_risk_off_experiment": {
+        "mode": "hard_block_v1",
+        "active": false,
+        "apply_path": null,
+        "apply_ready": false,
+        "shadow_mode": "shadow_topk_exception_v2",
+        "shadow_rank": null,
+        "apply_enabled": false,
+        "apply_selected": false,
+        "shadow_min_score": 0.22,
+        "shadow_slow_pass": true,
+        "shadow_top_k_cap": 2,
+        "ranking_min_score": 0.48,
+        "raw_ranking_score": 0.536889,
+        "shadow_group_size": null,
+        "shadow_slow_score": 0.86,
+        "shadow_would_pass": false,
+        "shadow_entry_score": 0.5579799999999999,
+        "shadow_signal_pass": true,
+        "shadow_activity_min": 1.1,
+        "shadow_floor_bucket": "strict_pass",
+        "shadow_overall_pass": true,
+        "shadow_reason_codes": [
+          "shadow_core_risk_off_activity_blocked"
+        ],
+        "shadow_activity_pass": false,
+        "shadow_overall_score": 0.4888,
+        "shadow_strategy_pass": true,
+        "shadow_topk_selected": false,
+        "shadow_topk_candidate": false,
+        "risk_off_exception_path": null,
+        "shadow_floor_relax_pass": true,
+        "shadow_entry_observe_min": 0.05,
+        "shadow_entry_observe_pass": true,
+        "shadow_floor_relax_v2_pass": true,
+        "shadow_floor_relax_v3_pass": true,
+        "shadow_signal_fail_reasons": [],
+        "risk_off_exception_eligible": false,
+        "shadow_rank_candidate_score": 0.5369,
+        "shadow_floor_relax_entry_min": 0.12,
+        "shadow_floor_relax_v2_bucket": "strict_pass",
+        "shadow_floor_relax_v3_bucket": "strict_pass",
+        "risk_off_exception_shadow_rank": null,
+        "shadow_floor_relax_ranking_min": 0.26,
+        "shadow_floor_relax_reason_codes": [
+          "shadow_core_risk_off_floor_strict_pass"
+        ],
+        "shadow_floor_relax_v2_reason_codes": [
+          "shadow_core_risk_off_floor_v2_strict_pass"
+        ],
+        "shadow_floor_relax_v3_reason_codes": [
+          "shadow_core_risk_off_floor_v3_strict_pass"
+        ],
+        "shadow_floor_relax_v2_mild_slow_min": -0.15,
+        "shadow_floor_relax_v3_mild_slow_min": -0.15,
+        "risk_off_exception_shadow_group_size": null,
+        "shadow_floor_relax_v2_mild_overall_min": -0.15,
+        "shadow_floor_relax_v3_mild_overall_min": -0.2,
+        "shadow_floor_relax_v2_moderate_slow_min": -0.25,
+        "shadow_floor_relax_v3_moderate_slow_min": -0.25,
+        "shadow_floor_relax_v2_moderate_overall_min": -0.2,
+        "shadow_floor_relax_v3_moderate_overall_min": -0.25,
+        "shadow_overall_score_v5": 0.4888,
+        "shadow_slow_score_v5": 0.86,
+        "shadow_fast_score_v5": 0.035,
+        "shadow_component_scores_v5": {
+          "fast_trend": 0.45,
+          "rsi_signal": -0.2,
+          "slow_trend": 0.8,
+          "slow_momentum": 0.9,
+          "volatility_penalty": -0.2,
+          "volume_confirmation": 0.0
+        },
+        "shadow_reason_codes_v5": [
+          "momentum_3m_strong",
+          "above_sma60",
+          "above_sma20",
+          "rsi_weak_range",
+          "atr_watch"
+        ],
+        "shadow_diagnostics_v5": {
+          "bar_count": 100,
+          "fast_bucket": "non_negative",
+          "slow_bucket": "non_negative",
+          "overall_bucket": "non_negative",
+          "reason_code_count": 5,
+          "input_quality_flags": [],
+          "missing_feature_flags": []
+        }
+      }
+    },
+    {
+      "trade_date": "2026-07-08",
+      "symbol": "001450",
+      "entry_score": 0.5368,
+      "ranking_score": 0.5253,
+      "trigger_regime_label": "bullish_trend",
+      "trigger_risk_tone": "risk_off",
+      "trigger_preferred_strategy": "defensive_low_volatility_rotation",
+      "price_vs_sma_60_pct": 9.61103408,
+      "return_3m_pct": 23.92739274,
+      "volume_surge_ratio": 0.98387575,
+      "turnover_surge_ratio": 0.9743334,
+      "snapshot_overall_score": 0.4415,
+      "snapshot_fast_score": -0.07,
+      "snapshot_slow_score": 0.86,
+      "terms": {
+        "overall_term": 0.3243,
+        "fast_term": 0.093,
+        "slow_term": 0.1395,
+        "bullish_term": 0.1,
+        "risk_on_term": 0.0,
+        "risk_off_term": -0.15,
+        "allocation_term": 0.03,
+        "strategy_term": 0.0,
+        "source_term": 0.0,
+        "relative_activity_term": 0.0,
+        "reconstructed_entry_score": 0.5368
+      },
+      "trigger_reason_codes": [
+        "trigger_source_core",
+        "trigger_bullish_regime",
+        "trigger_risk_off_penalty",
+        "trigger_allocation_budget_available",
+        "trigger_high_volatility",
+        "trigger_exit_risk_off",
+        "trigger_no_position_exit_penalty",
+        "trigger_watch_from_entry_setup",
+        "trigger_watch_candidate"
+      ],
+      "core_risk_off_experiment": {
+        "mode": "hard_block_v1",
+        "active": false,
+        "apply_path": null,
+        "apply_ready": false,
+        "shadow_mode": "shadow_topk_exception_v2",
+        "shadow_rank": null,
+        "apply_enabled": false,
+        "apply_selected": false,
+        "shadow_min_score": 0.22,
+        "shadow_slow_pass": true,
+        "shadow_top_k_cap": 2,
+        "ranking_min_score": 0.48,
+        "raw_ranking_score": 0.525260625,
+        "shadow_group_size": null,
+        "shadow_slow_score": 0.86,
+        "shadow_would_pass": false,
+        "shadow_entry_score": 0.5368375,
+        "shadow_signal_pass": true,
+        "shadow_activity_min": 1.1,
+        "shadow_floor_bucket": "strict_pass",
+        "shadow_overall_pass": true,
+        "shadow_reason_codes": [
+          "shadow_core_risk_off_activity_blocked"
+        ],
+        "shadow_activity_pass": false,
+        "shadow_overall_score": 0.4415,
+        "shadow_strategy_pass": true,
+        "shadow_topk_selected": false,
+        "shadow_topk_candidate": false,
+        "risk_off_exception_path": null,
+        "shadow_floor_relax_pass": true,
+        "shadow_entry_observe_min": 0.05,
+        "shadow_entry_observe_pass": true,
+        "shadow_signal_fail_reasons": [],
+        "risk_off_exception_eligible": false,
+        "shadow_rank_candidate_score": 0.5253,
+        "shadow_floor_relax_entry_min": 0.12,
+        "risk_off_exception_shadow_rank": null,
+        "shadow_floor_relax_ranking_min": 0.26,
+        "shadow_floor_relax_reason_codes": [
+          "shadow_core_risk_off_floor_strict_pass"
+        ],
+        "risk_off_exception_shadow_group_size": null,
+        "shadow_overall_score_v5": 0.4415,
+        "shadow_slow_score_v5": 0.86,
+        "shadow_fast_score_v5": -0.07,
+        "shadow_component_scores_v5": {
+          "fast_trend": 0.0,
+          "rsi_signal": 0.0,
+          "slow_trend": 0.8,
+          "slow_momentum": 0.9,
+          "volatility_penalty": -0.2,
+          "volume_confirmation": 0.0
+        },
+        "shadow_reason_codes_v5": [
+          "momentum_3m_strong",
+          "above_sma60",
+          "atr_watch"
+        ],
+        "shadow_diagnostics_v5": {
+          "bar_count": 100,
+          "fast_bucket": "mild_negative",
+          "slow_bucket": "non_negative",
+          "overall_bucket": "non_negative",
+          "reason_code_count": 3,
+          "input_quality_flags": [],
+          "missing_feature_flags": []
+        }
+      }
+    },
+    {
+      "trade_date": "2026-07-09",
+      "symbol": "000810",
+      "entry_score": 0.5253,
+      "ranking_score": 0.5189,
+      "trigger_regime_label": "bullish_trend",
+      "trigger_risk_tone": "risk_off",
+      "trigger_preferred_strategy": "defensive_low_volatility_rotation",
+      "price_vs_sma_60_pct": 16.88028915,
+      "return_3m_pct": 43.52941176,
+      "volume_surge_ratio": 0.55269436,
+      "turnover_surge_ratio": 0.56541398,
+      "snapshot_overall_score": 0.4156,
+      "snapshot_fast_score": -0.1275,
+      "snapshot_slow_score": 0.86,
+      "terms": {
+        "overall_term": 0.3185,
+        "fast_term": 0.0873,
+        "slow_term": 0.1395,
+        "bullish_term": 0.1,
+        "risk_on_term": 0.0,
+        "risk_off_term": -0.15,
+        "allocation_term": 0.03,
+        "strategy_term": 0.0,
+        "source_term": 0.0,
+        "relative_activity_term": 0.0,
+        "reconstructed_entry_score": 0.5253
+      },
+      "trigger_reason_codes": [
+        "trigger_source_core",
+        "trigger_bullish_regime",
+        "trigger_risk_off_penalty",
+        "trigger_allocation_budget_available",
+        "trigger_high_volatility",
+        "trigger_exit_risk_off",
+        "trigger_no_position_exit_penalty",
+        "trigger_watch_from_entry_setup",
+        "trigger_watch_candidate"
+      ],
+      "core_risk_off_experiment": {
+        "mode": "hard_block_v1",
+        "active": false,
+        "apply_path": null,
+        "apply_ready": false,
+        "shadow_mode": "shadow_topk_exception_v2",
+        "shadow_rank": null,
+        "apply_enabled": false,
+        "apply_selected": false,
+        "shadow_min_score": 0.22,
+        "shadow_slow_pass": true,
+        "shadow_top_k_cap": 2,
+        "ranking_min_score": 0.48,
+        "raw_ranking_score": 0.518893,
+        "shadow_group_size": null,
+        "shadow_slow_score": 0.86,
+        "shadow_would_pass": false,
+        "shadow_entry_score": 0.52526,
+        "shadow_signal_pass": true,
+        "shadow_activity_min": 1.1,
+        "shadow_floor_bucket": "strict_pass",
+        "shadow_overall_pass": true,
+        "shadow_reason_codes": [
+          "shadow_core_risk_off_activity_blocked"
+        ],
+        "shadow_activity_pass": false,
+        "shadow_overall_score": 0.4156,
+        "shadow_strategy_pass": true,
+        "shadow_topk_selected": false,
+        "shadow_topk_candidate": false,
+        "risk_off_exception_path": null,
+        "shadow_floor_relax_pass": true,
+        "shadow_entry_observe_min": 0.05,
+        "shadow_entry_observe_pass": true,
+        "shadow_floor_relax_v2_pass": true,
+        "shadow_floor_relax_v3_pass": true,
+        "shadow_signal_fail_reasons": [],
+        "risk_off_exception_eligible": false,
+        "shadow_rank_candidate_score": 0.5189,
+        "shadow_floor_relax_entry_min": 0.12,
+        "shadow_floor_relax_v2_bucket": "strict_pass",
+        "shadow_floor_relax_v3_bucket": "strict_pass",
+        "risk_off_exception_shadow_rank": null,
+        "shadow_floor_relax_ranking_min": 0.26,
+        "shadow_floor_relax_reason_codes": [
+          "shadow_core_risk_off_floor_strict_pass"
+        ],
+        "shadow_floor_relax_v2_reason_codes": [
+          "shadow_core_risk_off_floor_v2_strict_pass"
+        ],
+        "shadow_floor_relax_v3_reason_codes": [
+          "shadow_core_risk_off_floor_v3_strict_pass"
+        ],
+        "shadow_floor_relax_v2_mild_slow_min": -0.15,
+        "shadow_floor_relax_v3_mild_slow_min": -0.15,
+        "risk_off_exception_shadow_group_size": null,
+        "shadow_floor_relax_v2_mild_overall_min": -0.15,
+        "shadow_floor_relax_v3_mild_overall_min": -0.2,
+        "shadow_floor_relax_v2_moderate_slow_min": -0.25,
+        "shadow_floor_relax_v3_moderate_slow_min": -0.25,
+        "shadow_floor_relax_v2_moderate_overall_min": -0.2,
+        "shadow_floor_relax_v3_moderate_overall_min": -0.25,
+        "shadow_overall_score_v5": 0.4156,
+        "shadow_slow_score_v5": 0.86,
+        "shadow_fast_score_v5": -0.1275,
+        "shadow_component_scores_v5": {
+          "fast_trend": 0.45,
+          "rsi_signal": 0.0,
+          "slow_trend": 0.8,
+          "slow_momentum": 0.9,
+          "volatility_penalty": -0.55,
+          "volume_confirmation": -0.35
+        },
+        "shadow_reason_codes_v5": [
+          "momentum_3m_strong",
+          "above_sma60",
+          "above_sma20",
+          "volume_dry_up",
+          "volatility_watch",
+          "atr_watch"
+        ],
+        "shadow_diagnostics_v5": {
+          "bar_count": 100,
+          "fast_bucket": "moderate_negative",
+          "slow_bucket": "non_negative",
+          "overall_bucket": "non_negative",
+          "reason_code_count": 6,
+          "input_quality_flags": [],
+          "missing_feature_flags": []
+        }
+      }
+    },
+    {
+      "trade_date": "2026-07-06",
+      "symbol": "000660",
+      "entry_score": 0.5067,
+      "ranking_score": 0.5268,
+      "trigger_regime_label": "bullish_trend",
+      "trigger_risk_tone": "risk_off",
+      "trigger_preferred_strategy": "defensive_low_volatility_rotation",
+      "price_vs_sma_60_pct": 28.74625043,
+      "return_3m_pct": 173.7020316,
+      "volume_surge_ratio": 1.36309,
+      "turnover_surge_ratio": 1.25133513,
+      "snapshot_overall_score": 0.3335,
+      "snapshot_fast_score": -0.31,
+      "snapshot_slow_score": 0.86,
+      "terms": {
+        "overall_term": 0.3,
+        "fast_term": 0.069,
+        "slow_term": 0.1395,
+        "bullish_term": 0.1,
+        "risk_on_term": 0.0,
+        "risk_off_term": -0.15,
+        "allocation_term": 0.03,
+        "strategy_term": 0.0,
+        "source_term": 0.0,
+        "relative_activity_term": 0.0182,
+        "reconstructed_entry_score": 0.5067
+      },
+      "trigger_reason_codes": [
+        "trigger_source_core",
+        "trigger_bullish_regime",
+        "trigger_risk_off_penalty",
+        "trigger_allocation_budget_available",
+        "trigger_relative_activity_bonus",
+        "trigger_high_volatility",
+        "trigger_exit_risk_off",
+        "trigger_no_position_exit_penalty",
+        "trigger_watch_from_entry_setup",
+        "trigger_watch_candidate"
+      ],
+      "core_risk_off_experiment": {
+        "mode": "hard_block_v1",
+        "active": false,
+        "apply_path": null,
+        "apply_ready": false,
+        "shadow_mode": "shadow_topk_exception_v2",
+        "shadow_rank": null,
+        "apply_enabled": false,
+        "apply_selected": false,
+        "shadow_min_score": 0.22,
+        "shadow_slow_pass": true,
+        "shadow_top_k_cap": 2,
+        "ranking_min_score": 0.48,
+        "raw_ranking_score": 0.5268351,
+        "shadow_group_size": null,
+        "shadow_slow_score": 0.86,
+        "shadow_would_pass": false,
+        "shadow_entry_score": 0.5066919999999999,
+        "shadow_signal_pass": true,
+        "shadow_activity_min": 1.1,
+        "shadow_floor_bucket": "strict_pass",
+        "shadow_overall_pass": true,
+        "shadow_reason_codes": [],
+        "shadow_activity_pass": true,
+        "shadow_overall_score": 0.3335,
+        "shadow_strategy_pass": true,
+        "shadow_topk_selected": false,
+        "shadow_topk_candidate": false,
+        "risk_off_exception_path": null,
+        "shadow_floor_relax_pass": true,
+        "shadow_entry_observe_min": 0.05,
+        "shadow_entry_observe_pass": true,
+        "shadow_signal_fail_reasons": [],
+        "risk_off_exception_eligible": false,
+        "shadow_rank_candidate_score": 0.5268,
+        "shadow_floor_relax_entry_min": 0.12,
+        "risk_off_exception_shadow_rank": null,
+        "shadow_floor_relax_ranking_min": 0.26,
+        "shadow_floor_relax_reason_codes": [
+          "shadow_core_risk_off_floor_strict_pass"
+        ],
+        "risk_off_exception_shadow_group_size": null,
+        "shadow_overall_score_v5": 0.3335,
+        "shadow_slow_score_v5": 0.86,
+        "shadow_fast_score_v5": -0.31,
+        "shadow_component_scores_v5": {
+          "slow_momentum": 0.9,
+          "slow_trend": 0.8,
+          "fast_trend": 0.0,
+          "volume_confirmation": 0.35,
+          "rsi_signal": -0.2,
+          "volatility_penalty": -1.0
+        },
+        "shadow_reason_codes_v5": [
+          "momentum_3m_strong",
+          "above_sma60",
+          "volume_surge_supportive",
+          "rsi_weak_range",
+          "volatility_elevated",
+          "atr_expanded"
+        ],
+        "shadow_diagnostics_v5": {
+          "bar_count": 100,
+          "overall_bucket": "non_negative",
+          "fast_bucket": "deep_negative",
+          "slow_bucket": "non_negative",
+          "missing_feature_flags": [
+            "missing_sma_60",
+            "missing_average_turnover_20d"
+          ],
+          "input_quality_flags": [
+            "turnover_history_missing"
+          ],
+          "reason_code_count": 6
+        }
+      }
+    },
+    {
+      "trade_date": "2026-07-06",
+      "symbol": "000810",
+      "entry_score": 0.485,
+      "ranking_score": 0.4968,
+      "trigger_regime_label": "bullish_trend",
+      "trigger_risk_tone": "risk_off",
+      "trigger_preferred_strategy": "defensive_low_volatility_rotation",
+      "price_vs_sma_60_pct": 13.25276253,
+      "return_3m_pct": 43.53205849,
+      "volume_surge_ratio": 0.77059221,
+      "turnover_surge_ratio": 0.74226732,
+      "snapshot_overall_score": 0.3256,
+      "snapshot_fast_score": -0.3275,
+      "snapshot_slow_score": 0.86,
+      "terms": {
+        "overall_term": 0.2983,
+        "fast_term": 0.0673,
+        "slow_term": 0.1395,
+        "bullish_term": 0.1,
+        "risk_on_term": 0.0,
+        "risk_off_term": -0.15,
+        "allocation_term": 0.03,
+        "strategy_term": 0.0,
+        "source_term": 0.0,
+        "relative_activity_term": 0.0,
+        "reconstructed_entry_score": 0.485
+      },
+      "trigger_reason_codes": [
+        "trigger_source_core",
+        "trigger_bullish_regime",
+        "trigger_risk_off_penalty",
+        "trigger_allocation_budget_available",
+        "trigger_high_volatility",
+        "trigger_exit_risk_off",
+        "trigger_no_position_exit_penalty",
+        "trigger_watch_from_entry_setup",
+        "trigger_watch_candidate"
+      ],
+      "core_risk_off_experiment": {
+        "mode": "hard_block_v1",
+        "active": false,
+        "apply_path": null,
+        "apply_ready": false,
+        "shadow_mode": "shadow_topk_exception_v2",
+        "shadow_rank": null,
+        "apply_enabled": false,
+        "apply_selected": false,
+        "shadow_min_score": 0.22,
+        "shadow_slow_pass": true,
+        "shadow_top_k_cap": 2,
+        "ranking_min_score": 0.48,
+        "raw_ranking_score": 0.4967555,
+        "shadow_group_size": null,
+        "shadow_slow_score": 0.86,
+        "shadow_would_pass": false,
+        "shadow_entry_score": 0.48500999999999994,
+        "shadow_signal_pass": true,
+        "shadow_activity_min": 1.1,
+        "shadow_floor_bucket": "strict_pass",
+        "shadow_overall_pass": true,
+        "shadow_reason_codes": [
+          "shadow_core_risk_off_activity_blocked"
+        ],
+        "shadow_activity_pass": false,
+        "shadow_overall_score": 0.3256,
+        "shadow_strategy_pass": true,
+        "shadow_topk_selected": false,
+        "shadow_topk_candidate": false,
+        "risk_off_exception_path": null,
+        "shadow_floor_relax_pass": true,
+        "shadow_entry_observe_min": 0.05,
+        "shadow_entry_observe_pass": true,
+        "shadow_signal_fail_reasons": [],
+        "risk_off_exception_eligible": false,
+        "shadow_rank_candidate_score": 0.4968,
+        "shadow_floor_relax_entry_min": 0.12,
+        "risk_off_exception_shadow_rank": null,
+        "shadow_floor_relax_ranking_min": 0.26,
+        "shadow_floor_relax_reason_codes": [
+          "shadow_core_risk_off_floor_strict_pass"
+        ],
+        "risk_off_exception_shadow_group_size": null,
+        "shadow_overall_score_v5": 0.3256,
+        "shadow_slow_score_v5": 0.86,
+        "shadow_fast_score_v5": -0.3275,
+        "shadow_component_scores_v5": {
+          "slow_momentum": 0.9,
+          "slow_trend": 0.8,
+          "fast_trend": -0.45,
+          "volume_confirmation": 0.0,
+          "rsi_signal": 0.0,
+          "volatility_penalty": -0.55
+        },
+        "shadow_reason_codes_v5": [
+          "momentum_3m_strong",
+          "above_sma60",
+          "below_sma20",
+          "volatility_watch",
+          "atr_watch"
+        ],
+        "shadow_diagnostics_v5": {
+          "bar_count": 100,
+          "overall_bucket": "non_negative",
+          "fast_bucket": "deep_negative",
+          "slow_bucket": "non_negative",
+          "missing_feature_flags": [
+            "missing_sma_60",
+            "missing_average_turnover_20d"
+          ],
+          "input_quality_flags": [
+            "turnover_history_missing"
+          ],
+          "reason_code_count": 5
+        }
+      }
+    },
+    {
+      "trade_date": "2026-07-07",
+      "symbol": "001450",
+      "entry_score": 0.477,
+      "ranking_score": 0.4923,
+      "trigger_regime_label": "bullish_trend",
+      "trigger_risk_tone": "risk_off",
+      "trigger_preferred_strategy": "defensive_low_volatility_rotation",
+      "price_vs_sma_60_pct": 7.50903232,
+      "return_3m_pct": 23.98648649,
+      "volume_surge_ratio": 0.34837904,
+      "turnover_surge_ratio": 0.34414741,
+      "snapshot_overall_score": 0.3076,
+      "snapshot_fast_score": -0.3675,
+      "snapshot_slow_score": 0.86,
+      "terms": {
+        "overall_term": 0.2942,
+        "fast_term": 0.0633,
+        "slow_term": 0.1395,
+        "bullish_term": 0.1,
+        "risk_on_term": 0.0,
+        "risk_off_term": -0.15,
+        "allocation_term": 0.03,
+        "strategy_term": 0.0,
+        "source_term": 0.0,
+        "relative_activity_term": 0.0,
+        "reconstructed_entry_score": 0.477
+      },
+      "trigger_reason_codes": [
+        "trigger_source_core",
+        "trigger_bullish_regime",
+        "trigger_risk_off_penalty",
+        "trigger_allocation_budget_available",
+        "trigger_high_volatility",
+        "trigger_exit_risk_off",
+        "trigger_no_position_exit_penalty",
+        "trigger_watch_from_entry_setup",
+        "trigger_watch_candidate"
+      ],
+      "core_risk_off_experiment": {
+        "mode": "hard_block_v1",
+        "active": false,
+        "apply_path": null,
+        "apply_ready": false,
+        "shadow_mode": "shadow_topk_exception_v2",
+        "shadow_rank": null,
+        "apply_enabled": false,
+        "apply_selected": false,
+        "shadow_min_score": 0.22,
+        "shadow_slow_pass": true,
+        "shadow_top_k_cap": 2,
+        "ranking_min_score": 0.48,
+        "raw_ranking_score": 0.492328,
+        "shadow_group_size": null,
+        "shadow_slow_score": 0.86,
+        "shadow_would_pass": false,
+        "shadow_entry_score": 0.47695999999999994,
+        "shadow_signal_pass": true,
+        "shadow_activity_min": 1.1,
+        "shadow_floor_bucket": "strict_pass",
+        "shadow_overall_pass": true,
+        "shadow_reason_codes": [
+          "shadow_core_risk_off_activity_blocked"
+        ],
+        "shadow_activity_pass": false,
+        "shadow_overall_score": 0.3076,
+        "shadow_strategy_pass": true,
+        "shadow_topk_selected": false,
+        "shadow_topk_candidate": false,
+        "risk_off_exception_path": null,
+        "shadow_floor_relax_pass": true,
+        "shadow_entry_observe_min": 0.05,
+        "shadow_entry_observe_pass": true,
+        "shadow_signal_fail_reasons": [],
+        "risk_off_exception_eligible": false,
+        "shadow_rank_candidate_score": 0.4923,
+        "shadow_floor_relax_entry_min": 0.12,
+        "risk_off_exception_shadow_rank": null,
+        "shadow_floor_relax_ranking_min": 0.26,
+        "shadow_floor_relax_reason_codes": [
+          "shadow_core_risk_off_floor_strict_pass"
+        ],
+        "risk_off_exception_shadow_group_size": null,
+        "shadow_overall_score_v5": 0.3076,
+        "shadow_slow_score_v5": 0.86,
+        "shadow_fast_score_v5": -0.3675,
+        "shadow_component_scores_v5": {
+          "fast_trend": 0.0,
+          "rsi_signal": 0.0,
+          "slow_trend": 0.8,
+          "slow_momentum": 0.9,
+          "volatility_penalty": -0.85,
+          "volume_confirmation": -0.35
+        },
+        "shadow_reason_codes_v5": [
+          "momentum_3m_strong",
+          "above_sma60",
+          "volume_dry_up",
+          "volatility_watch",
+          "atr_expanded"
+        ],
+        "shadow_diagnostics_v5": {
+          "bar_count": 100,
+          "fast_bucket": "deep_negative",
+          "slow_bucket": "non_negative",
+          "overall_bucket": "non_negative",
+          "reason_code_count": 5,
+          "input_quality_flags": [],
+          "missing_feature_flags": []
+        }
+      }
+    },
+    {
+      "trade_date": "2026-07-08",
+      "symbol": "000240",
+      "entry_score": 0.4669,
+      "ranking_score": 0.4868,
+      "trigger_regime_label": "bullish_trend",
+      "trigger_risk_tone": "risk_off",
+      "trigger_preferred_strategy": "defensive_low_volatility_rotation",
+      "price_vs_sma_60_pct": 5.66646501,
+      "return_3m_pct": 9.16666667,
+      "volume_surge_ratio": 0.604519,
+      "turnover_surge_ratio": 0.57823754,
+      "snapshot_overall_score": 0.263,
+      "snapshot_fast_score": -0.21,
+      "snapshot_slow_score": 0.65,
+      "terms": {
+        "overall_term": 0.2842,
+        "fast_term": 0.079,
+        "slow_term": 0.1237,
+        "bullish_term": 0.1,
+        "risk_on_term": 0.0,
+        "risk_off_term": -0.15,
+        "allocation_term": 0.03,
+        "strategy_term": 0.0,
+        "source_term": 0.0,
+        "relative_activity_term": 0.0,
+        "reconstructed_entry_score": 0.4669
+      },
+      "trigger_reason_codes": [
+        "trigger_source_core",
+        "trigger_bullish_regime",
+        "trigger_risk_off_penalty",
+        "trigger_allocation_budget_available",
+        "trigger_high_volatility",
+        "trigger_exit_risk_off",
+        "trigger_no_position_exit_penalty",
+        "trigger_watch_from_entry_setup",
+        "trigger_core_watch_path",
+        "trigger_watch_candidate"
+      ],
+      "core_risk_off_experiment": {
+        "mode": "hard_block_v1",
+        "active": false,
+        "apply_path": null,
+        "apply_ready": false,
+        "shadow_mode": "shadow_topk_exception_v2",
+        "shadow_rank": null,
+        "apply_enabled": false,
+        "apply_selected": false,
+        "shadow_min_score": 0.22,
+        "shadow_slow_pass": true,
+        "shadow_top_k_cap": 2,
+        "ranking_min_score": 0.48,
+        "raw_ranking_score": 0.48680875,
+        "shadow_group_size": null,
+        "shadow_slow_score": 0.65,
+        "shadow_would_pass": false,
+        "shadow_entry_score": 0.46692500000000003,
+        "shadow_signal_pass": true,
+        "shadow_activity_min": 1.1,
+        "shadow_floor_bucket": "strict_pass",
+        "shadow_overall_pass": true,
+        "shadow_reason_codes": [
+          "shadow_core_risk_off_activity_blocked"
+        ],
+        "shadow_activity_pass": false,
+        "shadow_overall_score": 0.263,
+        "shadow_strategy_pass": true,
+        "shadow_topk_selected": false,
+        "shadow_topk_candidate": false,
+        "risk_off_exception_path": null,
+        "shadow_floor_relax_pass": true,
+        "shadow_entry_observe_min": 0.05,
+        "shadow_entry_observe_pass": true,
+        "shadow_signal_fail_reasons": [],
+        "risk_off_exception_eligible": false,
+        "shadow_rank_candidate_score": 0.4868,
+        "shadow_floor_relax_entry_min": 0.12,
+        "risk_off_exception_shadow_rank": null,
+        "shadow_floor_relax_ranking_min": 0.26,
+        "shadow_floor_relax_reason_codes": [
+          "shadow_core_risk_off_floor_strict_pass"
+        ],
+        "risk_off_exception_shadow_group_size": null,
+        "shadow_overall_score_v5": 0.263,
+        "shadow_slow_score_v5": 0.65,
+        "shadow_fast_score_v5": -0.21,
+        "shadow_component_scores_v5": {
+          "fast_trend": 0.45,
+          "rsi_signal": -0.2,
+          "slow_trend": 0.8,
+          "slow_momentum": 0.55,
+          "volatility_penalty": -0.8999999999999999,
+          "volume_confirmation": 0.0
+        },
+        "shadow_reason_codes_v5": [
+          "momentum_3m_positive",
+          "above_sma60",
+          "above_sma20",
+          "volume_dry_up",
+          "rsi_weak_range",
+          "volatility_elevated",
+          "atr_watch"
+        ],
+        "shadow_diagnostics_v5": {
+          "bar_count": 100,
+          "fast_bucket": "moderate_negative",
+          "slow_bucket": "non_negative",
+          "overall_bucket": "non_negative",
+          "reason_code_count": 7,
+          "input_quality_flags": [],
+          "missing_feature_flags": []
+        }
+      }
+    },
+    {
+      "trade_date": "2026-07-03",
+      "symbol": "001800",
+      "entry_score": 0.4648,
+      "ranking_score": 0.4856,
+      "trigger_regime_label": "bullish_trend",
+      "trigger_risk_tone": "risk_off",
+      "trigger_preferred_strategy": "defensive_low_volatility_rotation",
+      "price_vs_sma_60_pct": 3.11903246,
+      "return_3m_pct": 11.03896104,
+      "volume_surge_ratio": 0.52123596,
+      "turnover_surge_ratio": 0.52009416,
+      "snapshot_overall_score": 0.2434,
+      "snapshot_fast_score": -0.0825,
+      "snapshot_slow_score": 0.51,
+      "terms": {
+        "overall_term": 0.2798,
+        "fast_term": 0.0917,
+        "slow_term": 0.1132,
+        "bullish_term": 0.1,
+        "risk_on_term": 0.0,
+        "risk_off_term": -0.15,
+        "allocation_term": 0.03,
+        "strategy_term": 0.0,
+        "source_term": 0.0,
+        "relative_activity_term": 0.0,
+        "reconstructed_entry_score": 0.4648
+      },
+      "trigger_reason_codes": [
+        "trigger_source_core",
+        "trigger_bullish_regime",
+        "trigger_risk_off_penalty",
+        "trigger_allocation_budget_available",
+        "trigger_high_volatility",
+        "trigger_exit_risk_off",
+        "trigger_no_position_exit_penalty",
+        "trigger_watch_from_entry_setup",
+        "trigger_watch_candidate"
+      ],
+      "core_risk_off_experiment": {
+        "mode": "hard_block_v1",
+        "active": false,
+        "apply_path": null,
+        "apply_ready": false,
+        "shadow_mode": "shadow_topk_exception_v2",
+        "shadow_rank": null,
+        "apply_enabled": false,
+        "apply_selected": false,
+        "shadow_min_score": 0.22,
+        "shadow_slow_pass": true,
+        "shadow_top_k_cap": 2,
+        "ranking_min_score": 0.48,
+        "raw_ranking_score": 0.48562075000000005,
+        "shadow_group_size": null,
+        "shadow_slow_score": 0.51,
+        "shadow_would_pass": false,
+        "shadow_entry_score": 0.464765,
+        "shadow_signal_pass": true,
+        "shadow_activity_min": 1.1,
+        "shadow_overall_pass": true,
+        "shadow_reason_codes": [
+          "shadow_core_risk_off_activity_blocked"
+        ],
+        "shadow_activity_pass": false,
+        "shadow_overall_score": 0.2434,
+        "shadow_strategy_pass": true,
+        "shadow_topk_selected": false,
+        "shadow_topk_candidate": false,
+        "risk_off_exception_path": null,
+        "shadow_entry_observe_min": 0.05,
+        "shadow_entry_observe_pass": true,
+        "shadow_signal_fail_reasons": [],
+        "risk_off_exception_eligible": false,
+        "shadow_rank_candidate_score": 0.4856,
+        "risk_off_exception_shadow_rank": null,
+        "risk_off_exception_shadow_group_size": null,
+        "shadow_overall_score_v5": 0.2434,
+        "shadow_slow_score_v5": 0.51,
+        "shadow_fast_score_v5": -0.0825,
+        "shadow_component_scores_v5": {
+          "slow_momentum": 0.55,
+          "slow_trend": 0.45,
+          "fast_trend": 0.45,
+          "volume_confirmation": -0.35,
+          "rsi_signal": 0.3,
+          "volatility_penalty": -0.55
+        },
+        "shadow_reason_codes_v5": [
+          "momentum_3m_positive",
+          "above_sma60",
+          "above_sma20",
+          "volume_dry_up",
+          "rsi_bullish_range",
+          "volatility_watch",
+          "atr_watch"
+        ],
+        "shadow_diagnostics_v5": {
+          "bar_count": 100,
+          "overall_bucket": "non_negative",
+          "fast_bucket": "mild_negative",
+          "slow_bucket": "non_negative",
+          "missing_feature_flags": [
+            "missing_sma_60",
+            "missing_average_turnover_20d"
+          ],
+          "input_quality_flags": [
+            "turnover_history_missing"
+          ],
+          "reason_code_count": 7
+        }
+      }
+    },
+    {
+      "trade_date": "2026-07-09",
+      "symbol": "001800",
+      "entry_score": 0.4648,
+      "ranking_score": 0.4856,
+      "trigger_regime_label": "bullish_trend",
+      "trigger_risk_tone": "risk_off",
+      "trigger_preferred_strategy": "defensive_low_volatility_rotation",
+      "price_vs_sma_60_pct": 3.9056008,
+      "return_3m_pct": 12.28448276,
+      "volume_surge_ratio": 0.52838898,
+      "turnover_surge_ratio": 0.52230334,
+      "snapshot_overall_score": 0.2434,
+      "snapshot_fast_score": -0.0825,
+      "snapshot_slow_score": 0.51,
+      "terms": {
+        "overall_term": 0.2798,
+        "fast_term": 0.0917,
+        "slow_term": 0.1132,
+        "bullish_term": 0.1,
+        "risk_on_term": 0.0,
+        "risk_off_term": -0.15,
+        "allocation_term": 0.03,
+        "strategy_term": 0.0,
+        "source_term": 0.0,
+        "relative_activity_term": 0.0,
+        "reconstructed_entry_score": 0.4648
+      },
+      "trigger_reason_codes": [
+        "trigger_source_core",
+        "trigger_bullish_regime",
+        "trigger_risk_off_penalty",
+        "trigger_allocation_budget_available",
+        "trigger_high_volatility",
+        "trigger_exit_risk_off",
+        "trigger_no_position_exit_penalty",
+        "trigger_watch_from_entry_setup",
+        "trigger_watch_candidate"
+      ],
+      "core_risk_off_experiment": {
+        "mode": "hard_block_v1",
+        "active": false,
+        "apply_path": null,
+        "apply_ready": false,
+        "shadow_mode": "shadow_topk_exception_v2",
+        "shadow_rank": null,
+        "apply_enabled": false,
+        "apply_selected": false,
+        "shadow_min_score": 0.22,
+        "shadow_slow_pass": true,
+        "shadow_top_k_cap": 2,
+        "ranking_min_score": 0.48,
+        "raw_ranking_score": 0.48562075000000005,
+        "shadow_group_size": null,
+        "shadow_slow_score": 0.51,
+        "shadow_would_pass": false,
+        "shadow_entry_score": 0.464765,
+        "shadow_signal_pass": true,
+        "shadow_activity_min": 1.1,
+        "shadow_floor_bucket": "strict_pass",
+        "shadow_overall_pass": true,
+        "shadow_reason_codes": [
+          "shadow_core_risk_off_activity_blocked"
+        ],
+        "shadow_activity_pass": false,
+        "shadow_overall_score": 0.2434,
+        "shadow_strategy_pass": true,
+        "shadow_topk_selected": false,
+        "shadow_topk_candidate": false,
+        "risk_off_exception_path": null,
+        "shadow_floor_relax_pass": true,
+        "shadow_entry_observe_min": 0.05,
+        "shadow_entry_observe_pass": true,
+        "shadow_floor_relax_v2_pass": true,
+        "shadow_floor_relax_v3_pass": true,
+        "shadow_signal_fail_reasons": [],
+        "risk_off_exception_eligible": false,
+        "shadow_rank_candidate_score": 0.4856,
+        "shadow_floor_relax_entry_min": 0.12,
+        "shadow_floor_relax_v2_bucket": "strict_pass",
+        "shadow_floor_relax_v3_bucket": "strict_pass",
+        "risk_off_exception_shadow_rank": null,
+        "shadow_floor_relax_ranking_min": 0.26,
+        "shadow_floor_relax_reason_codes": [
+          "shadow_core_risk_off_floor_strict_pass"
+        ],
+        "shadow_floor_relax_v2_reason_codes": [
+          "shadow_core_risk_off_floor_v2_strict_pass"
+        ],
+        "shadow_floor_relax_v3_reason_codes": [
+          "shadow_core_risk_off_floor_v3_strict_pass"
+        ],
+        "shadow_floor_relax_v2_mild_slow_min": -0.15,
+        "shadow_floor_relax_v3_mild_slow_min": -0.15,
+        "risk_off_exception_shadow_group_size": null,
+        "shadow_floor_relax_v2_mild_overall_min": -0.15,
+        "shadow_floor_relax_v3_mild_overall_min": -0.2,
+        "shadow_floor_relax_v2_moderate_slow_min": -0.25,
+        "shadow_floor_relax_v3_moderate_slow_min": -0.25,
+        "shadow_floor_relax_v2_moderate_overall_min": -0.2,
+        "shadow_floor_relax_v3_moderate_overall_min": -0.25,
+        "shadow_overall_score_v5": 0.2434,
+        "shadow_slow_score_v5": 0.51,
+        "shadow_fast_score_v5": -0.0825,
+        "shadow_component_scores_v5": {
+          "fast_trend": 0.45,
+          "rsi_signal": 0.3,
+          "slow_trend": 0.45,
+          "slow_momentum": 0.55,
+          "volatility_penalty": -0.55,
+          "volume_confirmation": -0.35
+        },
+        "shadow_reason_codes_v5": [
+          "momentum_3m_positive",
+          "above_sma60",
+          "above_sma20",
+          "volume_dry_up",
+          "rsi_bullish_range",
+          "volatility_watch",
+          "atr_watch"
+        ],
+        "shadow_diagnostics_v5": {
+          "bar_count": 100,
+          "fast_bucket": "mild_negative",
+          "slow_bucket": "non_negative",
+          "overall_bucket": "non_negative",
+          "reason_code_count": 7,
+          "input_quality_flags": [],
+          "missing_feature_flags": []
+        }
+      }
+    },
+    {
+      "trade_date": "2026-07-10",
+      "symbol": "002840",
+      "entry_score": 0.4573,
+      "ranking_score": 0.5743,
+      "trigger_regime_label": "event_driven_unstable",
+      "trigger_risk_tone": "risk_off",
+      "trigger_preferred_strategy": "defensive_low_volatility_rotation",
+      "price_vs_sma_60_pct": 4.43062473,
+      "return_3m_pct": -0.44280443,
+      "volume_surge_ratio": 2.60605518,
+      "turnover_surge_ratio": 2.85490326,
+      "snapshot_overall_score": 0.2081,
+      "snapshot_fast_score": 0.2425,
+      "snapshot_slow_score": 0.18,
+      "terms": {
+        "overall_term": 0.2718,
+        "fast_term": 0.1242,
+        "slow_term": 0.0885,
+        "bullish_term": 0.0,
+        "risk_on_term": 0.0,
+        "risk_off_term": -0.15,
+        "allocation_term": 0.03,
+        "strategy_term": 0.0,
+        "source_term": 0.0,
+        "relative_activity_term": 0.0927,
+        "reconstructed_entry_score": 0.4573
+      },
+      "trigger_reason_codes": [
+        "trigger_source_core",
+        "trigger_risk_off_penalty",
+        "trigger_allocation_budget_available",
+        "trigger_relative_activity_bonus",
+        "trigger_high_volatility",
+        "trigger_exit_risk_off",
+        "trigger_no_position_exit_penalty",
+        "trigger_watch_from_entry_setup",
+        "trigger_core_watch_path",
+        "trigger_watch_candidate"
+      ],
+      "core_risk_off_experiment": {
+        "mode": "hard_block_v1",
+        "active": false,
+        "apply_path": null,
+        "apply_ready": false,
+        "shadow_mode": "shadow_topk_exception_v2",
+        "shadow_rank": null,
+        "apply_enabled": false,
+        "apply_selected": false,
+        "shadow_min_score": 0.22,
+        "shadow_slow_pass": true,
+        "shadow_top_k_cap": 2,
+        "ranking_min_score": 0.48,
+        "raw_ranking_score": 0.5742698776500001,
+        "shadow_group_size": null,
+        "shadow_slow_score": 0.18,
+        "shadow_would_pass": false,
+        "shadow_entry_score": 0.4573176630000001,
+        "shadow_signal_pass": true,
+        "shadow_activity_min": 1.1,
+        "shadow_floor_bucket": "strict_pass",
+        "shadow_overall_pass": true,
+        "shadow_reason_codes": [],
+        "shadow_activity_pass": true,
+        "shadow_overall_score": 0.2081,
+        "shadow_slow_score_v5": 0.18,
+        "shadow_strategy_pass": true,
+        "shadow_topk_selected": false,
+        "shadow_topk_candidate": false,
+        "risk_off_exception_path": null,
+        "shadow_floor_relax_pass": true,
+        "shadow_overall_score_v5": 0.2081,
+        "shadow_entry_observe_min": 0.05,
+        "shadow_entry_observe_pass": true,
+        "shadow_floor_relax_v2_pass": true,
+        "shadow_floor_relax_v3_pass": true,
+        "shadow_floor_relax_v5_pass": false,
+        "shadow_signal_fail_reasons": [],
+        "risk_off_exception_eligible": false,
+        "shadow_rank_candidate_score": 0.5743,
+        "shadow_floor_relax_entry_min": 0.12,
+        "shadow_floor_relax_v2_bucket": "strict_pass",
+        "shadow_floor_relax_v3_bucket": "strict_pass",
+        "shadow_floor_relax_v5_bucket": "deep_negative",
+        "risk_off_exception_shadow_rank": null,
+        "shadow_floor_relax_ranking_min": 0.26,
+        "shadow_floor_relax_reason_codes": [
+          "shadow_core_risk_off_floor_strict_pass"
+        ],
+        "shadow_floor_relax_v2_reason_codes": [
+          "shadow_core_risk_off_floor_v2_strict_pass"
+        ],
+        "shadow_floor_relax_v3_reason_codes": [
+          "shadow_core_risk_off_floor_v3_strict_pass"
+        ],
+        "shadow_floor_relax_v5_reason_codes": [
+          "shadow_core_risk_off_floor_v5_deep_negative"
+        ],
+        "shadow_floor_relax_v2_mild_slow_min": -0.15,
+        "shadow_floor_relax_v3_mild_slow_min": -0.15,
+        "shadow_floor_relax_v5_mild_slow_min": -0.15,
+        "risk_off_exception_shadow_group_size": null,
+        "shadow_floor_relax_v2_mild_overall_min": -0.15,
+        "shadow_floor_relax_v3_mild_overall_min": -0.2,
+        "shadow_floor_relax_v5_mild_overall_min": -0.2,
+        "shadow_floor_relax_v2_moderate_slow_min": -0.25,
+        "shadow_floor_relax_v3_moderate_slow_min": -0.25,
+        "shadow_floor_relax_v5_moderate_slow_min": -0.25,
+        "shadow_floor_relax_v2_moderate_overall_min": -0.2,
+        "shadow_floor_relax_v3_moderate_overall_min": -0.25,
+        "shadow_floor_relax_v5_moderate_overall_min": -0.25,
+        "shadow_fast_score_v5": 0.2425,
+        "shadow_component_scores_v5": {
+          "fast_trend": 0.8,
+          "rsi_signal": 0.3,
+          "slow_trend": 0.45,
+          "slow_momentum": 0.0,
+          "volatility_penalty": -0.55,
+          "volume_confirmation": 0.75
+        },
+        "shadow_reason_codes_v5": [
+          "above_sma60",
+          "above_sma20",
+          "volume_surge_strong",
+          "rsi_bullish_range",
+          "volatility_watch",
+          "atr_watch"
+        ],
+        "shadow_diagnostics_v5": {
+          "bar_count": 100,
+          "fast_bucket": "non_negative",
+          "slow_bucket": "non_negative",
+          "overall_bucket": "non_negative",
+          "reason_code_count": 6,
+          "input_quality_flags": [],
+          "missing_feature_flags": []
+        }
+      }
+    }
+  ]
+}

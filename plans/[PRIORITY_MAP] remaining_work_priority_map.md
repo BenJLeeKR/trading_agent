@@ -325,6 +325,9 @@
   `small_entry_gap`이 `moderate_entry_gap`보다 유리하지만,
   둘 다 실제 주문 전환력은 아직 0이므로
   authoritative 완화는 여전히 금지 유지가 맞다.
+- 위 결론은 `2026-07-08`, `2026-07-09` 두 날짜만 따로 떼어 본 것이 아니라,
+  `2026-07-01 ~ 2026-07-10` 전체 재집계 결과에서
+  해당 코호트에 실제로 걸린 표본을 추출해 확인한 것이다.
 - 따라서 다음 우선 작업은
   `watch_from_entry_setup|small_entry_gap`
   코호트의 `T+3 / MFE / MAE`가 채워질 때까지 누적 관측하고,
@@ -338,6 +341,73 @@
   따라서 다음 거래일부터는
   `operations_day_runs.summary_json.trigger_proxy_attribution`
   기준으로도 두 코호트의 누적 전환 상태를 바로 확인할 수 있다.
+- `2026-07-12` 기준 방향 전환 메모:
+  - `core_risk_off` v5 hydration 누락은 분석 경로에서 해소됐다.
+    `2026-07-01 ~ 2026-07-10` 구간 `core` 97건 중
+    `shadow_overall_score_v5 / shadow_slow_score_v5`가 `97/97`,
+    active core `49/49`로 채워진다.
+  - 따라서 당분간 `core_risk_off` threshold 완화는 중단한다.
+  - 같은 구간 `core entry_score 평균`은 `0.1578`로 매우 낮고,
+    `watch_from_entry_setup` 또는 `entry_score >= 0.52` 근접군은 `27건`,
+    `0.52 <= entry_score < 0.65`는 `10건`뿐이다.
+  - 현재 매수 부재의 1차 병목은 `risk_off` guard보다
+    `entry_score` 하방 편향에 더 가깝다.
+  - 자동화된 `entry_score_bias_report` 재집계 기준으로
+    `near_buy_floor(0.52<=entry_score<0.65)` 10건은
+    `risk_off_penalty=-0.15` 제거 시 `10/10`이 BUY floor `0.65`를 넘고,
+    `strategy_alignment(+0.05)`만으로는 `0/10`,
+    `relative_activity_bonus` 최대치로는 `5/10`만 넘는다.
+  - 따라서 현재 `entry_score` 하방 편향의 직접 구조는
+    `risk_off_penalty`가 1차 억제,
+    `strategy / activity`가 2차 억제로 해석하는 것이 맞다.
+    단, 현 세션 원칙상 이는 즉시 완화 근거가 아니라
+    관측/분해용 근거로만 사용한다.
+  - 추가 분해 결과
+    `watch_from_entry_setup_or_ge_052` 27건 중
+    `high_volatility`는 `26건`,
+    `fast_score < -0.20`은 `14건`,
+    `fast_score >= 0`은 `3건`뿐이었다.
+    `top_core_samples` 상위권도
+    `high_volatility`가 사실상 상수이고
+    대부분 `fast_score`가 음수였다.
+  - 따라서 `entry_score`의 2차 병목은
+    `fast_score` 약세와 `high_volatility`의 동시 발생으로 보는 쪽이 맞다.
+  - 추가 back-simulation 결과,
+    `2026-06-01 ~ 2026-07-10` 기준
+    `SF1_broad_remove_risk_off_near_buy_floor`는
+    `T+1=-1.4160%`, `T+3=-5.2937%`, `T+5=-8.4620%`로
+    명확한 `No-Go`다.
+  - `core` 한정 축소안(`SF2/SF3`)도
+    표본 `4건`, `T+3=-8.4906%`, `T+5=-16.9434%`로
+    아직 `Go` 근거가 없다.
+  - 따라서 다음 shadow formula는
+    `risk_off_penalty` 단독 완화가 아니라
+    `fast_score`와 `high_volatility`를 함께 제어하는
+    더 좁은 구조로 설계해야 한다.
+  - 참고로 `fast_score >= -0.12`라는
+    단일 협소 필터만 추가해도
+    표본 `17건`, `T+1=+0.0883%`, `T+3=-3.1981%`, `T+5=-3.9202%`로
+    아직 `No-Go`다.
+    즉 다음 단계는 `fast` 단일 필터가 아니라
+    `fast + volatility` joint shadow formula 설계다.
+  - 추가 joint shadow formula 실측 결과,
+    `SF7_market_high_vol_fast_ge_-0.12_no_rel_bonus`
+    (`market_overlay + high_volatility + fast_score >= -0.12 + relative_activity_bonus 없음`)
+    은 `count=4`, `T+1=+2.0353%`, `T+3=+0.8455%`, `T+5=+3.4324%`로
+    broad `No-Go` 대비 확실히 개선됐다.
+  - 다만 이 결과는 `000660` 2건, `000810` 1건, `009150` 1건의
+    소표본에 집중돼 있으므로
+    아직 authoritative `Go`는 아니다.
+    현 시점 판정은 `Shadow-Watch`다.
+  - leave-one-symbol-out 기준으로도
+    `000660`을 제외하면
+    `SF7/SF8`의 `T+3`는 `+0.8455% -> -3.7818%`로 다시 음수다.
+    즉 아직 일반화 가능한 구조 신호가 아니라
+    특정 심볼 기여가 큰 국소 표본으로 봐야 한다.
+  - 따라서 다음 우선 작업은
+    `SF7/SF8` 계열을 장후 배치에서 shadow-only로 누적 관측해
+    추가 `T+3/T+5` 표본을 쌓고,
+    결과가 재현될 때만 승격 여부를 다시 판단하는 것이다.
 - `2026-07-12` 기준으로
   `2026-07-01 ~ 2026-07-11` 재집계(`v25`)까지 확장해도
   두 코호트의 `T+3 / MFE / MAE`는 아직 비어 있다.

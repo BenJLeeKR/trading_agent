@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import json
 import logging
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
@@ -23,6 +24,11 @@ from agent_trading.services.signal_backbone import (
     KST,
     TechnicalFeatureSnapshot,
     build_shadow_v5_payload_from_feature_snapshot,
+)
+from agent_trading.services.deterministic_trigger_engine import (
+    _build_relative_activity_score_from_raw,
+    _clamp,
+    _normalize_signed_score,
 )
 from agent_trading.services.trigger_proxy_attribution import (
     build_core_risk_off_floor_diagnostic_rows,
@@ -143,12 +149,10 @@ def _hydrate_core_risk_off_experiment_from_snapshot(
 ) -> dict[str, object]:
     if source_type != "core":
         return core_experiment
-    if not core_experiment or not bool(core_experiment.get("active")):
-        return core_experiment
     if not snapshot_component_scores:
         return core_experiment
 
-    hydrated = dict(core_experiment)
+    hydrated = dict(core_experiment or {})
     fallback_keys = (
         "shadow_overall_score_v5",
         "shadow_slow_score_v5",
@@ -319,11 +323,34 @@ async def _load_first_symbol_day_decisions(
                     td.decision_json#>'{deterministic_trigger,metadata,event_overlay_experiment}',
                     '{}'::jsonb
                 ) AS event_overlay_experiment_json,
+                COALESCE(
+                    td.decision_json#>>'{deterministic_trigger,metadata,regime_label}',
+                    ''
+                ) AS trigger_regime_label,
+                COALESCE(
+                    td.decision_json#>>'{deterministic_trigger,metadata,risk_tone}',
+                    ''
+                ) AS trigger_risk_tone,
+                COALESCE(
+                    td.decision_json#>>'{deterministic_trigger,metadata,preferred_strategy}',
+                    ''
+                ) AS trigger_preferred_strategy,
+                COALESCE(
+                    (td.decision_json#>>'{deterministic_trigger,metadata,allocation_budget_ok}')::boolean,
+                    false
+                ) AS trigger_allocation_budget_ok,
+                NULLIF(
+                    td.decision_json#>>'{portfolio_allocation,max_new_capital_pct}',
+                    ''
+                )::double precision AS portfolio_max_new_capital_pct,
                 NULLIF(
                     td.decision_json#>>'{portfolio_allocation,recommended_max_order_value}',
                     ''
                 )::double precision AS portfolio_recommended_max_order_value,
                 COALESCE(sfs.component_scores_json, '{}'::jsonb) AS signal_component_scores_json,
+                sfs.fast_score AS snapshot_fast_score,
+                sfs.slow_score AS snapshot_slow_score,
+                sfs.overall_score AS snapshot_overall_score,
                 sfs.snapshot_at AS snapshot_at,
                 sfs.bar_count AS snapshot_bar_count,
                 sfs.price_vs_sma_20_pct AS snapshot_price_vs_sma_20_pct,
@@ -405,8 +432,16 @@ async def _load_first_symbol_day_decisions(
             trigger_reason_codes_json,
             core_risk_off_experiment_json,
             event_overlay_experiment_json,
+            trigger_regime_label,
+            trigger_risk_tone,
+            trigger_preferred_strategy,
+            trigger_allocation_budget_ok,
+            portfolio_max_new_capital_pct,
             signal_component_scores_json,
             portfolio_recommended_max_order_value,
+            snapshot_fast_score,
+            snapshot_slow_score,
+            snapshot_overall_score,
             snapshot_at,
             snapshot_bar_count,
             snapshot_price_vs_sma_20_pct,
@@ -481,7 +516,32 @@ async def _load_first_symbol_day_decisions(
                 "ranking_score": (
                     float(row["ranking_score"]) if row["ranking_score"] is not None else None
                 ),
+                "trigger_regime_label": str(row["trigger_regime_label"] or ""),
+                "trigger_risk_tone": str(row["trigger_risk_tone"] or ""),
+                "trigger_preferred_strategy": str(row["trigger_preferred_strategy"] or ""),
+                "trigger_allocation_budget_ok": bool(row["trigger_allocation_budget_ok"]),
+                "portfolio_max_new_capital_pct": (
+                    float(row["portfolio_max_new_capital_pct"])
+                    if row["portfolio_max_new_capital_pct"] is not None
+                    else None
+                ),
                 "trigger_reason_codes": [str(reason) for reason in trigger_reason_codes],
+                "snapshot_fast_score": (
+                    float(row["snapshot_fast_score"])
+                    if row["snapshot_fast_score"] is not None
+                    else None
+                ),
+                "snapshot_slow_score": (
+                    float(row["snapshot_slow_score"])
+                    if row["snapshot_slow_score"] is not None
+                    else None
+                ),
+                "snapshot_overall_score": (
+                    float(row["snapshot_overall_score"])
+                    if row["snapshot_overall_score"] is not None
+                    else None
+                ),
+                "snapshot_component_scores": snapshot_component_scores,
                 "price_vs_sma_60_pct": (
                     float(row["snapshot_price_vs_sma_60_pct"])
                     if row["snapshot_price_vs_sma_60_pct"] is not None
@@ -617,6 +677,228 @@ def _select_forward_window(
     return []
 
 
+def _mean(values: Sequence[float]) -> float | None:
+    if not values:
+        return None
+    return round(sum(values) / float(len(values)), 4)
+
+
+def _build_entry_score_term_breakdown(row: dict[str, object]) -> dict[str, float]:
+    overall = _coerce_float(row.get("snapshot_overall_score"))
+    fast = _coerce_float(row.get("snapshot_fast_score"))
+    slow = _coerce_float(row.get("snapshot_slow_score"))
+    regime_label = str(row.get("trigger_regime_label") or "")
+    risk_tone = str(row.get("trigger_risk_tone") or "")
+    preferred_strategy = str(row.get("trigger_preferred_strategy") or "")
+    source_type = str(row.get("source_type") or "")
+    max_new_capital_pct = _coerce_float(row.get("portfolio_max_new_capital_pct"))
+    volume_surge_ratio = _coerce_float(row.get("volume_surge_ratio"))
+    turnover_surge_ratio = _coerce_float(row.get("turnover_surge_ratio"))
+
+    overall_term = 0.45 * _normalize_signed_score(overall)
+    fast_term = 0.20 * _normalize_signed_score(fast)
+    slow_term = 0.15 * _normalize_signed_score(slow)
+    bullish_term = 0.10 if regime_label == "bullish_trend" else 0.0
+    risk_on_term = 0.05 if risk_tone == "risk_on" else 0.0
+    risk_off_term = -0.15 if risk_tone == "risk_off" else 0.0
+    if max_new_capital_pct is None:
+        allocation_term = 0.0
+    elif max_new_capital_pct > 0:
+        allocation_term = min(0.10, max_new_capital_pct / 100.0)
+    else:
+        allocation_term = -0.20
+    strategy_term = (
+        0.05
+        if preferred_strategy in {"swing_momentum", "event_continuation"}
+        else 0.0
+    )
+    source_term = 0.05 if source_type == "market_overlay" else 0.0
+    if source_type == "held_position":
+        source_term = -0.35
+    relative_activity_bonus = _build_relative_activity_score_from_raw(
+        volume_surge_ratio=volume_surge_ratio,
+        turnover_surge_ratio=turnover_surge_ratio,
+    )
+    relative_activity_term = (
+        min(0.10, relative_activity_bonus * 0.10)
+        if relative_activity_bonus > 0
+        else 0.0
+    )
+    reconstructed_entry_score = _clamp(
+        overall_term
+        + fast_term
+        + slow_term
+        + bullish_term
+        + risk_on_term
+        + risk_off_term
+        + allocation_term
+        + strategy_term
+        + source_term
+        + relative_activity_term
+    )
+    return {
+        "overall_term": round(overall_term, 4),
+        "fast_term": round(fast_term, 4),
+        "slow_term": round(slow_term, 4),
+        "bullish_term": round(bullish_term, 4),
+        "risk_on_term": round(risk_on_term, 4),
+        "risk_off_term": round(risk_off_term, 4),
+        "allocation_term": round(allocation_term, 4),
+        "strategy_term": round(strategy_term, 4),
+        "source_term": round(source_term, 4),
+        "relative_activity_term": round(relative_activity_term, 4),
+        "reconstructed_entry_score": round(reconstructed_entry_score, 4),
+    }
+
+
+def _summarize_entry_score_cohort(rows: Sequence[dict[str, object]]) -> dict[str, object]:
+    scored_rows = [
+        row
+        for row in rows
+        if isinstance(row.get("entry_score"), (int, float))
+    ]
+    if not scored_rows:
+        return {
+            "count": 0,
+            "entry_score_min": None,
+            "entry_score_avg": None,
+            "entry_score_max": None,
+            "avg_terms": {},
+            "top_reason_codes": [],
+        }
+    entry_scores = [float(row["entry_score"]) for row in scored_rows]
+    term_keys = tuple(_build_entry_score_term_breakdown(scored_rows[0]).keys())
+    term_means: dict[str, float | None] = {}
+    for key in term_keys:
+        values = [
+            _build_entry_score_term_breakdown(row)[key]
+            for row in scored_rows
+        ]
+        term_means[key] = _mean(values)
+    reason_counter: Counter[str] = Counter()
+    for row in scored_rows:
+        reason_counter.update(str(reason) for reason in row.get("trigger_reason_codes", []))
+    return {
+        "count": len(scored_rows),
+        "entry_score_min": round(min(entry_scores), 4),
+        "entry_score_avg": _mean(entry_scores),
+        "entry_score_max": round(max(entry_scores), 4),
+        "avg_terms": term_means,
+        "top_reason_codes": [
+            [reason, count]
+            for reason, count in reason_counter.most_common(10)
+        ],
+    }
+
+
+def _build_entry_score_counterfactual_report(
+    rows: Sequence[dict[str, object]],
+) -> dict[str, object]:
+    scored_rows = [
+        row
+        for row in rows
+        if isinstance(row.get("entry_score"), (int, float))
+    ]
+    if not scored_rows:
+        return {
+            "count": 0,
+            "cross_if_remove_risk_off_penalty": 0,
+            "cross_if_add_strategy_bonus": 0,
+            "cross_if_add_full_relative_activity_bonus": 0,
+            "cross_if_remove_risk_off_and_add_strategy": 0,
+            "cross_if_remove_risk_off_and_add_relative_activity": 0,
+        }
+    result = {
+        "count": len(scored_rows),
+        "cross_if_remove_risk_off_penalty": 0,
+        "cross_if_add_strategy_bonus": 0,
+        "cross_if_add_full_relative_activity_bonus": 0,
+        "cross_if_remove_risk_off_and_add_strategy": 0,
+        "cross_if_remove_risk_off_and_add_relative_activity": 0,
+    }
+    for row in scored_rows:
+        entry_score = float(row["entry_score"])
+        reason_codes = {str(reason) for reason in row.get("trigger_reason_codes", [])}
+        remove_risk_off = 0.15 if "trigger_risk_off_penalty" in reason_codes else 0.0
+        add_strategy = 0.05 if "trigger_strategy_alignment" not in reason_codes else 0.0
+        add_relative_activity = (
+            0.10 if "trigger_relative_activity_bonus" not in reason_codes else 0.0
+        )
+        if entry_score + remove_risk_off >= 0.65:
+            result["cross_if_remove_risk_off_penalty"] += 1
+        if entry_score + add_strategy >= 0.65:
+            result["cross_if_add_strategy_bonus"] += 1
+        if entry_score + add_relative_activity >= 0.65:
+            result["cross_if_add_full_relative_activity_bonus"] += 1
+        if entry_score + remove_risk_off + add_strategy >= 0.65:
+            result["cross_if_remove_risk_off_and_add_strategy"] += 1
+        if entry_score + remove_risk_off + add_relative_activity >= 0.65:
+            result["cross_if_remove_risk_off_and_add_relative_activity"] += 1
+    return result
+
+
+def _build_entry_score_bias_report(
+    rows: Sequence[dict[str, object]],
+) -> dict[str, object]:
+    scored_rows = [
+        row
+        for row in rows
+        if isinstance(row.get("entry_score"), (int, float))
+    ]
+    core_rows = [row for row in scored_rows if str(row.get("source_type") or "") == "core"]
+    watch_candidate_all_rows = [
+        row
+        for row in scored_rows
+        if bool(row.get("watch_candidate"))
+    ]
+    watch_from_entry_setup_or_ge_052_rows = [
+        row
+        for row in scored_rows
+        if (
+            "trigger_watch_from_entry_setup"
+            in {str(reason) for reason in row.get("trigger_reason_codes", [])}
+        )
+        or float(row["entry_score"]) >= 0.52
+    ]
+    near_buy_floor_rows = [
+        row for row in scored_rows if 0.52 <= float(row["entry_score"]) < 0.65
+    ]
+    top_core_samples = sorted(
+        core_rows,
+        key=lambda row: float(row.get("entry_score") or 0.0),
+        reverse=True,
+    )[:10]
+    sample_fields = (
+        "trade_date",
+        "symbol",
+        "source_type",
+        "entry_score",
+        "ranking_score",
+        "watch_candidate",
+        "eligibility_passed",
+        "trigger_regime_label",
+        "trigger_risk_tone",
+        "trigger_preferred_strategy",
+        "trigger_reason_codes",
+    )
+    return {
+        "all": _summarize_entry_score_cohort(scored_rows),
+        "core": _summarize_entry_score_cohort(core_rows),
+        "watch_candidate_all": _summarize_entry_score_cohort(watch_candidate_all_rows),
+        "watch_from_entry_setup_or_ge_052": _summarize_entry_score_cohort(
+            watch_from_entry_setup_or_ge_052_rows
+        ),
+        "near_buy_floor": _summarize_entry_score_cohort(near_buy_floor_rows),
+        "near_buy_floor_counterfactual": _build_entry_score_counterfactual_report(
+            near_buy_floor_rows
+        ),
+        "top_core_samples": [
+            {field: row.get(field) for field in sample_fields}
+            for row in top_core_samples
+        ],
+    }
+
+
 async def _run(args: argparse.Namespace) -> int:
     await create_pool()
     try:
@@ -716,6 +998,7 @@ async def _run(args: argparse.Namespace) -> int:
             experiment_key="event_overlay_experiment",
             bucket_key="event_overlay_shadow_bucket",
         )
+        entry_score_bias_report = _build_entry_score_bias_report(enriched_rows)
         payload = {
             "account_id": str(account_id),
             "account_label": account_label,
@@ -861,6 +1144,7 @@ async def _run(args: argparse.Namespace) -> int:
                     bucket_key="event_overlay_shadow_bucket",
                 )
             ],
+            "entry_score_bias_report": entry_score_bias_report,
             "samples": enriched_rows[: max(0, int(args.sample_limit))],
         }
 

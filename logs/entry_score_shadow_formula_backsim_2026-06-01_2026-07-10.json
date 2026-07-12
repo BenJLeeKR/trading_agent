@@ -1,0 +1,272 @@
+{
+  "analysis_window": {
+    "start_date": "2026-06-01",
+    "end_date": "2026-07-10"
+  },
+  "data_sources": [
+    "logs/trigger_proxy_attribution_2026-06-01_2026-07-10_entry_bias_v4_full.json (2026-06-01~2026-06-30 rows)",
+    "logs/trigger_proxy_attribution_2026-07-01_2026-07-10_entry_bias_v2.json (2026-07-01~2026-07-10 rows)"
+  ],
+  "formulas": [
+    {
+      "formula_id": "SF1_broad_remove_risk_off_near_buy_floor",
+      "description": "0.52<=entry_score<0.65 이고 risk_off_penalty가 붙은 모든 row를 virtual BUY로 간주",
+      "count": 50,
+      "source_counts": {
+        "core": 4,
+        "event_overlay": 7,
+        "market_overlay": 31,
+        "reconciliation_overlay": 8
+      },
+      "t1_n": 48,
+      "t1_avg": -1.416,
+      "t1_hit": 0.375,
+      "t3_n": 43,
+      "t3_avg": -5.2937,
+      "t3_hit": 0.2326,
+      "t5_n": 42,
+      "t5_avg": -8.462,
+      "t5_hit": 0.1429,
+      "sample_rows": [
+        {
+          "trade_date": "2026-06-17",
+          "symbol": "000430",
+          "source_type": "market_overlay",
+          "entry_score": 0.5738,
+          "ranking_score": null,
+          "t1_return_pct": -8.759842519685035,
+          "t3_return_pct": -15.452755905511806,
+          "t5_return_pct": -23.425196850393704
+        },
+        {
+          "trade_date": "2026-06-17",
+          "symbol": "000660",
+          "source_type": "market_overlay",
+          "entry_score": 0.5788,
+          "ranking_score": null,
+          "t1_return_pct": 6.505355017850056,
+          "t3_return_pct": 15.787385957953193,
+          "t5_return_pct": 2.3403411344704583
+        },
+        {
+          "trade_date": "2026-06-18",
+          "symbol": "000660",
+          "source_type": "market_overlay",
+          "entry_score": 0.5788,
+          "ranking_score": 0.6062,
+          "t1_return_pct": 2.9422718808193693,
+          "t3_return_pct": -4.841713221601484,
+          "t5_return_pct": 8.640595903165726
+        },
+        {
+          "trade_date": "2026-06-18",
+          "symbol": "000810",
+          "source_type": "market_overlay",
+          "entry_score": 0.5879,
+          "ranking_score": 0.6121,
+          "t1_return_pct": 0.0,
+          "t3_return_pct": -7.714285714285718,
+          "t5_return_pct": -6.999999999999995
+        },
+        {
+          "trade_date": "2026-06-19",
+          "symbol": "000660",
+          "source_type": "reconciliation_overlay",
+          "entry_score": 0.5288,
+          "ranking_score": 0.5208,
+          "t1_return_pct": 5.607814761215635,
+          "t3_return_pct": -6.657018813314042,
+          "t5_return_pct": -3.292329956584661
+        },
+        {
+          "trade_date": "2026-06-19",
+          "symbol": "000810",
+          "source_type": "reconciliation_overlay",
+          "entry_score": 0.5416,
+          "ranking_score": 0.5316,
+          "t1_return_pct": -2.1428571428571463,
+          "t3_return_pct": -9.142857142857142,
+          "t5_return_pct": -9.142857142857142
+        },
+        {
+          "trade_date": "2026-06-19",
+          "symbol": "010120",
+          "source_type": "market_overlay",
+          "entry_score": 0.5738,
+          "ranking_score": 0.5456,
+          "t1_return_pct": -5.405405405405405,
+          "t3_return_pct": -13.320463320463316,
+          "t5_return_pct": -21.62162162162162
+        },
+        {
+          "trade_date": "2026-06-19",
+          "symbol": "042700",
+          "source_type": "market_overlay",
+          "entry_score": 0.5738,
+          "ranking_score": 0.5456,
+          "t1_return_pct": 2.203389830508473,
+          "t3_return_pct": -8.47457627118644,
+          "t5_return_pct": -12.711864406779661
+        },
+        {
+          "trade_date": "2026-06-19",
+          "symbol": "080220",
+          "source_type": "market_overlay",
+          "entry_score": 0.5587,
+          "ranking_score": 0.5373,
+          "t1_return_pct": 17.235345581802264,
+          "t3_return_pct": -1.2248468941382318,
+          "t5_return_pct": -13.210848643919515
+        },
+        {
+          "trade_date": "2026-06-19",
+          "symbol": "402340",
+          "source_type": "market_overlay",
+          "entry_score": 0.5647,
+          "ranking_score": 0.5406,
+          "t1_return_pct": 10.67415730337078,
+          "t3_return_pct": 1.0674157303370846,
+          "t5_return_pct": -3.3707865168539297
+        },
+        {
+          "trade_date": "2026-06-19",
+          "symbol": "403870",
+          "source_type": "market_overlay",
+          "entry_score": 0.5738,
+          "ranking_score": 0.5456,
+          "t1_return_pct": 6.0070671378091856,
+          "t3_return_pct": -10.600706713780916,
+          "t5_return_pct": -6.890459363957602
+        },
+        {
+          "trade_date": "2026-06-22",
+          "symbol": "000810",
+          "source_type": "reconciliation_overlay",
+          "entry_score": 0.5238,
+          "ranking_score": 0.5181,
+          "t1_return_pct": -5.693430656934306,
+          "t3_return_pct": -4.963503649635037,
+          "t5_return_pct": -8.75912408759124
+        }
+      ]
+    },
+    {
+      "formula_id": "SF2_core_remove_risk_off_near_buy_floor",
+      "description": "source_type=core 이고 0.52<=entry_score<0.65 이며 risk_off_penalty가 붙은 row만 virtual BUY로 간주",
+      "count": 4,
+      "source_counts": {
+        "core": 4
+      },
+      "t1_n": 4,
+      "t1_avg": 0.4006,
+      "t1_hit": 0.5,
+      "t3_n": 1,
+      "t3_avg": -8.4906,
+      "t3_hit": 0.0,
+      "t5_n": 1,
+      "t5_avg": -16.9434,
+      "t5_hit": 0.0,
+      "sample_rows": [
+        {
+          "trade_date": "2026-06-30",
+          "symbol": "000660",
+          "source_type": "core",
+          "entry_score": 0.5227,
+          "ranking_score": 0.5175,
+          "t1_return_pct": -3.396226415094339,
+          "t3_return_pct": -8.490566037735848,
+          "t5_return_pct": -16.943396226415096
+        },
+        {
+          "trade_date": "2026-07-08",
+          "symbol": "001450",
+          "source_type": "core",
+          "entry_score": 0.5368,
+          "ranking_score": 0.5253,
+          "t1_return_pct": -5.006587615283264,
+          "t3_return_pct": null,
+          "t5_return_pct": null
+        },
+        {
+          "trade_date": "2026-07-09",
+          "symbol": "000810",
+          "source_type": "core",
+          "entry_score": 0.5253,
+          "ranking_score": 0.5189,
+          "t1_return_pct": 4.180064308681675,
+          "t3_return_pct": null,
+          "t5_return_pct": null
+        },
+        {
+          "trade_date": "2026-07-09",
+          "symbol": "001450",
+          "source_type": "core",
+          "entry_score": 0.558,
+          "ranking_score": 0.5369,
+          "t1_return_pct": 5.825242718446599,
+          "t3_return_pct": null,
+          "t5_return_pct": null
+        }
+      ]
+    },
+    {
+      "formula_id": "SF3_core_watch_setup_no_bonus_remove_risk_off",
+      "description": "SF2 중 watch_from_entry_setup 이고 strategy_alignment/relative_activity_bonus가 모두 없는 row만 virtual BUY로 간주",
+      "count": 4,
+      "source_counts": {
+        "core": 4
+      },
+      "t1_n": 4,
+      "t1_avg": 0.4006,
+      "t1_hit": 0.5,
+      "t3_n": 1,
+      "t3_avg": -8.4906,
+      "t3_hit": 0.0,
+      "t5_n": 1,
+      "t5_avg": -16.9434,
+      "t5_hit": 0.0,
+      "sample_rows": [
+        {
+          "trade_date": "2026-06-30",
+          "symbol": "000660",
+          "source_type": "core",
+          "entry_score": 0.5227,
+          "ranking_score": 0.5175,
+          "t1_return_pct": -3.396226415094339,
+          "t3_return_pct": -8.490566037735848,
+          "t5_return_pct": -16.943396226415096
+        },
+        {
+          "trade_date": "2026-07-08",
+          "symbol": "001450",
+          "source_type": "core",
+          "entry_score": 0.5368,
+          "ranking_score": 0.5253,
+          "t1_return_pct": -5.006587615283264,
+          "t3_return_pct": null,
+          "t5_return_pct": null
+        },
+        {
+          "trade_date": "2026-07-09",
+          "symbol": "000810",
+          "source_type": "core",
+          "entry_score": 0.5253,
+          "ranking_score": 0.5189,
+          "t1_return_pct": 4.180064308681675,
+          "t3_return_pct": null,
+          "t5_return_pct": null
+        },
+        {
+          "trade_date": "2026-07-09",
+          "symbol": "001450",
+          "source_type": "core",
+          "entry_score": 0.558,
+          "ranking_score": 0.5369,
+          "t1_return_pct": 5.825242718446599,
+          "t3_return_pct": null,
+          "t5_return_pct": null
+        }
+      ]
+    }
+  ]
+}

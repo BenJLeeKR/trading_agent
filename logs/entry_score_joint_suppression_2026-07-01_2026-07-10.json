@@ -1,0 +1,268 @@
+{
+  "analysis_window": {
+    "cohort_window": "2026-07-01~2026-07-10",
+    "backsim_window": "2026-06-01~2026-07-10"
+  },
+  "watch_or_near_buy_joint_suppression": {
+    "count": 27,
+    "fast_score_bands": {
+      "-0.20_to_-0.12": 4,
+      "lt_-0.20": 14,
+      "-0.12_to_-0.05": 5,
+      "missing": 1,
+      "ge_0": 3
+    },
+    "top_joint_combinations": [
+      [
+        "lt_-0.20|high_vol|rel_bonus|event_overlay",
+        5
+      ],
+      [
+        "lt_-0.20|high_vol|no_rel_bonus|event_overlay",
+        4
+      ],
+      [
+        "-0.20_to_-0.12|high_vol|no_rel_bonus|event_overlay",
+        3
+      ],
+      [
+        "-0.12_to_-0.05|high_vol|no_rel_bonus|core",
+        3
+      ],
+      [
+        "lt_-0.20|high_vol|no_rel_bonus|core",
+        3
+      ],
+      [
+        "-0.12_to_-0.05|high_vol|no_rel_bonus|event_overlay",
+        2
+      ],
+      [
+        "lt_-0.20|high_vol|rel_bonus|market_overlay",
+        1
+      ],
+      [
+        "missing|no_high_vol|no_rel_bonus|market_overlay",
+        1
+      ],
+      [
+        "lt_-0.20|high_vol|rel_bonus|core",
+        1
+      ],
+      [
+        "ge_0|high_vol|rel_bonus|event_overlay",
+        1
+      ],
+      [
+        "-0.20_to_-0.12|high_vol|no_rel_bonus|core",
+        1
+      ],
+      [
+        "ge_0|high_vol|no_rel_bonus|core",
+        1
+      ]
+    ],
+    "core_top_samples": [
+      {
+        "trade_date": "2026-07-09",
+        "symbol": "001450",
+        "entry_score": 0.558,
+        "ranking_score": 0.5369,
+        "snapshot_fast_score": 0.035,
+        "snapshot_slow_score": 0.86,
+        "snapshot_overall_score": 0.4888,
+        "relative_activity_bonus": false,
+        "high_volatility": true
+      },
+      {
+        "trade_date": "2026-07-08",
+        "symbol": "001450",
+        "entry_score": 0.5368,
+        "ranking_score": 0.5253,
+        "snapshot_fast_score": -0.07,
+        "snapshot_slow_score": 0.86,
+        "snapshot_overall_score": 0.4415,
+        "relative_activity_bonus": false,
+        "high_volatility": true
+      },
+      {
+        "trade_date": "2026-07-09",
+        "symbol": "000810",
+        "entry_score": 0.5253,
+        "ranking_score": 0.5189,
+        "snapshot_fast_score": -0.1275,
+        "snapshot_slow_score": 0.86,
+        "snapshot_overall_score": 0.4156,
+        "relative_activity_bonus": false,
+        "high_volatility": true
+      },
+      {
+        "trade_date": "2026-07-06",
+        "symbol": "000660",
+        "entry_score": 0.5067,
+        "ranking_score": 0.5268,
+        "snapshot_fast_score": -0.31,
+        "snapshot_slow_score": 0.86,
+        "snapshot_overall_score": 0.3335,
+        "relative_activity_bonus": true,
+        "high_volatility": true
+      },
+      {
+        "trade_date": "2026-07-06",
+        "symbol": "000810",
+        "entry_score": 0.485,
+        "ranking_score": 0.4968,
+        "snapshot_fast_score": -0.3275,
+        "snapshot_slow_score": 0.86,
+        "snapshot_overall_score": 0.3256,
+        "relative_activity_bonus": false,
+        "high_volatility": true
+      },
+      {
+        "trade_date": "2026-07-07",
+        "symbol": "001450",
+        "entry_score": 0.477,
+        "ranking_score": 0.4923,
+        "snapshot_fast_score": -0.3675,
+        "snapshot_slow_score": 0.86,
+        "snapshot_overall_score": 0.3076,
+        "relative_activity_bonus": false,
+        "high_volatility": true
+      },
+      {
+        "trade_date": "2026-07-08",
+        "symbol": "000240",
+        "entry_score": 0.4669,
+        "ranking_score": 0.4868,
+        "snapshot_fast_score": -0.21,
+        "snapshot_slow_score": 0.65,
+        "snapshot_overall_score": 0.263,
+        "relative_activity_bonus": false,
+        "high_volatility": true
+      },
+      {
+        "trade_date": "2026-07-03",
+        "symbol": "001800",
+        "entry_score": 0.4648,
+        "ranking_score": 0.4856,
+        "snapshot_fast_score": -0.0825,
+        "snapshot_slow_score": 0.51,
+        "snapshot_overall_score": 0.2434,
+        "relative_activity_bonus": false,
+        "high_volatility": true
+      },
+      {
+        "trade_date": "2026-07-09",
+        "symbol": "001800",
+        "entry_score": 0.4648,
+        "ranking_score": 0.4856,
+        "snapshot_fast_score": -0.0825,
+        "snapshot_slow_score": 0.51,
+        "snapshot_overall_score": 0.2434,
+        "relative_activity_bonus": false,
+        "high_volatility": true
+      },
+      {
+        "trade_date": "2026-07-10",
+        "symbol": "002840",
+        "entry_score": 0.4573,
+        "ranking_score": 0.5743,
+        "snapshot_fast_score": 0.2425,
+        "snapshot_slow_score": 0.18,
+        "snapshot_overall_score": 0.2081,
+        "relative_activity_bonus": true,
+        "high_volatility": true
+      }
+    ]
+  },
+  "near_buy_risk_off_candidates_fast_threshold_backsim": {
+    "fast_ge_-0.25": {
+      "count": 47,
+      "t1_return_avg": -1.572,
+      "t1_hit": 0.3696,
+      "t3_return_avg": -5.1892,
+      "t3_hit": 0.2439,
+      "t5_return_avg": -8.6976,
+      "t5_hit": 0.125,
+      "t3_mfe_avg": 6.7289,
+      "t3_mae_avg": -11.2684
+    },
+    "fast_ge_-0.20": {
+      "count": 40,
+      "t1_return_avg": -1.5976,
+      "t1_hit": 0.35,
+      "t3_return_avg": -4.9805,
+      "t3_hit": 0.2571,
+      "t5_return_avg": -8.0898,
+      "t5_hit": 0.1471,
+      "t3_mfe_avg": 6.2171,
+      "t3_mae_avg": -11.0377
+    },
+    "fast_ge_-0.16": {
+      "count": 31,
+      "t1_return_avg": -1.4891,
+      "t1_hit": 0.3548,
+      "t3_return_avg": -5.7462,
+      "t3_hit": 0.2308,
+      "t5_return_avg": -8.126,
+      "t5_hit": 0.16,
+      "t3_mfe_avg": 5.1524,
+      "t3_mae_avg": -10.7674
+    },
+    "fast_ge_-0.14": {
+      "count": 30,
+      "t1_return_avg": -1.3621,
+      "t1_hit": 0.3667,
+      "t3_return_avg": -5.7026,
+      "t3_hit": 0.24,
+      "t5_return_avg": -7.6219,
+      "t5_hit": 0.1667,
+      "t3_mfe_avg": 5.3808,
+      "t3_mae_avg": -10.7239
+    },
+    "fast_ge_-0.12": {
+      "count": 17,
+      "t1_return_avg": 0.0883,
+      "t1_hit": 0.4118,
+      "t3_return_avg": -3.1981,
+      "t3_hit": 0.3846,
+      "t5_return_avg": -3.9202,
+      "t5_hit": 0.3077,
+      "t3_mfe_avg": 7.2236,
+      "t3_mae_avg": -7.6202
+    },
+    "fast_ge_-0.10": {
+      "count": 11,
+      "t1_return_avg": -0.867,
+      "t1_hit": 0.2727,
+      "t3_return_avg": -6.4296,
+      "t3_hit": 0.2857,
+      "t5_return_avg": -7.474,
+      "t5_hit": 0.1429,
+      "t3_mfe_avg": 5.2635,
+      "t3_mae_avg": -9.2375
+    },
+    "fast_ge_-0.08": {
+      "count": 10,
+      "t1_return_avg": -0.6082,
+      "t1_hit": 0.3,
+      "t3_return_avg": -6.4296,
+      "t3_hit": 0.2857,
+      "t5_return_avg": -7.474,
+      "t5_hit": 0.1429,
+      "t3_mfe_avg": 5.2635,
+      "t3_mae_avg": -9.2375
+    },
+    "fast_ge_+0.00": {
+      "count": 1,
+      "t1_return_avg": 5.8252,
+      "t1_hit": 1.0,
+      "t3_return_avg": null,
+      "t3_hit": null,
+      "t5_return_avg": null,
+      "t5_hit": null,
+      "t3_mfe_avg": null,
+      "t3_mae_avg": null
+    }
+  }
+}

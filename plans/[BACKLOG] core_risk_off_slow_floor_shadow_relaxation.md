@@ -23,6 +23,7 @@
 - 분석 산출물:
   - [`logs/trigger_proxy_attribution_2026-07-06_2026-07-10_v5_rerun_after_hydration_fix.json`](../logs/trigger_proxy_attribution_2026-07-06_2026-07-10_v5_rerun_after_hydration_fix.json)
   - [`plans/[ANALYSIS] core_risk_off_floor_v5_report_measurement_2026-07-11.md`](./%5BANALYSIS%5D%20core_risk_off_floor_v5_report_measurement_2026-07-11.md)
+  - [`logs/entry_score_downward_bias_2026-07-01_2026-07-10.json`](../logs/entry_score_downward_bias_2026-07-01_2026-07-10.json)
 
 ### 2.2 확인된 사실
 
@@ -86,6 +87,17 @@
   shadow 완화 후보로 먼저 관측할 가치가 있다.
 - 따라서 다음 shadow 완화는
   `slow_trend`만 별도 경계 완화 후보로 분리해야 한다.
+- 다만 `2026-07-12` 재점검 기준으로는
+  `core_risk_off` 완화보다
+  `entry_score` population-level 하방 편향이
+  더 직접적인 병목으로 확인됐다.
+  - `2026-07-01 ~ 2026-07-10` first symbol/day 기준
+    `core entry_score 평균 = 0.1578`
+  - 같은 구간 `0.52 <= entry_score < 0.65` 표본은 `10건`,
+    `entry_score >= 0.65`는 여전히 `0건`
+  - 따라서 본 백로그의 후속 shadow 관측은 유지하되,
+    새로운 threshold 완화 작업은 중단하고
+    `entry_score` 구조 분해를 우선한다.
 
 ## 3. 후속 작업 원칙
 
@@ -240,7 +252,103 @@
 - [x] `low_relative_activity_max_0_95_to_1_10` 경계 코호트의 `activity hard block`이 실제 `candidate` 전환 전 1차 병목인지 `entry/ranking gap`보다 앞서는지 추가 분해했다
 - [x] `activity_first_small_entry_gap` / `activity_first_moderate_entry_gap` 코호트에서 `shadow_activity_pass`만 풀렸을 때 `top-k` 또는 `buy shape`가 다음 1차 병목인지 shadow counterfactual을 추가 계측한다
 - [x] `buy_shape_after_activity_small_entry_gap` / `buy_shape_after_activity_moderate_entry_gap` 코호트를 `watch_from_entry_setup` / `watch_from_exit_setup` / `core_watch_gap_bridge`와 `entry gap band` 기준으로 재분해해 실제 다음 병목이 `entry setup WATCH`인지 확인한다
-- [ ] `watch_from_entry_setup|small_entry_gap` / `watch_from_entry_setup|moderate_entry_gap` 코호트의 `T+1 / T+3 / MFE / MAE`와 `candidate -> selected -> would_buy -> submitted` 전환을 누적 관측해, 제한 완화 검증 대상 band를 좁힌다
+- [x] `2026-07-01 ~ 2026-07-10` 전체 재집계 기준으로 `watch_from_entry_setup|small_entry_gap` / `watch_from_entry_setup|moderate_entry_gap` 코호트의 `T+1`과 `candidate -> selected -> would_buy -> submitted` 초기 분포를 확인했다
+- [ ] 위 2개 코호트의 `T+3 / MFE / MAE`와 추가 `candidate -> selected -> would_buy -> submitted` 누적 관측을 이어가, 제한 완화 검증 대상 band를 최종 좁힌다
+
+### 4.5 작업 E — `entry_score` 하방 편향 구조 분해 자동화
+
+- 목적:
+  `core_risk_off` 완화 루프를 중단한 상태에서
+  실제 BUY 부재의 1차 병목이
+  `entry_score` 자체인지 재현 가능하게 추적한다.
+- 산출 위치:
+  `scripts/analyze_trigger_proxy_attribution.py`
+- 핵심 산출:
+  - `entry_score_bias_report.all`
+  - `entry_score_bias_report.core`
+  - `entry_score_bias_report.watch_candidate_all`
+  - `entry_score_bias_report.watch_from_entry_setup_or_ge_052`
+  - `entry_score_bias_report.near_buy_floor`
+  - `entry_score_bias_report.near_buy_floor_counterfactual`
+  - `entry_score_bias_report.top_core_samples`
+
+#### 작업 E 체크리스트
+
+- [x] hydration 보강 후 `core` row `97/97`, active `core` row `49/49`에 v5 점수가 채워지는지 재확인했다
+- [x] `analyze_trigger_proxy_attribution.py` payload에 `entry_score_bias_report`를 추가했다
+- [x] `watch_from_entry_setup_or_ge_052` 코호트를 정식 payload로 노출했다
+- [x] `near_buy_floor_counterfactual`에 `risk_off_penalty / strategy_alignment / relative_activity_bonus` counterfactual을 추가했다
+- [x] 스크립트 테스트를 보강하고 `pytest tests/scripts/test_analyze_trigger_proxy_attribution.py -q` 통과를 확인했다
+- [x] `2026-07-01 ~ 2026-07-10` 재집계 산출물 `logs/trigger_proxy_attribution_2026-07-01_2026-07-10_entry_bias_v2.json`를 생성했다
+- [x] `near_buy_floor` 10건 중 `risk_off_penalty` 제거 시 10건 모두 `0.65`를 넘고, `strategy_alignment`만으로는 0건이라는 점을 실측으로 확인했다
+- [x] `top_core_samples`와 `watch_from_entry_setup_or_ge_052`를 기준으로 `fast_score / high_volatility / low_relative_activity`의 동시 억제 패턴을 추가 분해했다
+
+### 4.6 작업 F — `entry_score` shadow formula back-simulation
+
+- 목적:
+  `entry_score` 하방 편향 완화안을
+  단순 통과율이 아니라
+  후행 수익률 기준으로 `Go / No-Go` 판정한다.
+- 산출물:
+  - `logs/entry_score_shadow_formula_backsim_2026-06-01_2026-07-10.json`
+
+#### 작업 F 체크리스트
+
+- [x] broad shadow formula(`risk_off_penalty` 제거 + `near_buy_floor`)를 virtual candidate로 정의했다
+- [x] core-only shadow formula를 virtual candidate로 별도 정의했다
+- [x] `2026-06-01 ~ 2026-07-10` 기준 T+1 / T+3 / T+5 후행 수익률을 재집계했다
+- [x] broad formula는 `T+1=-1.4160%`, `T+3=-5.2937%`, `T+5=-8.4620%`로 `No-Go` 판정했다
+- [x] core-only formula는 `count=4`, `T+1=+0.4006%`이나 `T+3=-8.4906%`, `T+5=-16.9434%` 및 표본 부족으로 `No-Go` 판정했다
+- [x] `entry_score` 완화는 현재 단계에서 authoritative 적용 금지라는 결론을 문서에 반영했다
+- [x] `fast_score >= -0.12` 협소 필터를 얹어도 `T+3=-3.1981%`, `T+5=-3.9202%`로 아직 `No-Go`라는 점을 실측으로 확인했다
+- [x] `high_volatility`와 `fast_score`를 함께 제어하는 더 좁은 shadow formula를 설계하고 다시 back-simulation 했다
+- [ ] `SF7/SF8`을 shadow-only 후보로 장후 누적 관측해 `T+3/T+5` 표본을 더 쌓은 뒤 authoritative 승격 여부를 다시 판단한다
+
+현재 상태 메모:
+
+- `2026-07-01 ~ 2026-07-10` 전체 재집계 기준으로도
+  대상 표본은 `001450` 2건뿐이다.
+- `watch_from_entry_setup|small_entry_gap`은
+  `T+1 +5.8252%`였고,
+  `watch_from_entry_setup|moderate_entry_gap`은
+  `T+1 -5.0066%`였다.
+- 다만 두 코호트 모두
+  `candidate/select/would_buy/submitted = 0/0/0/0`이라
+  아직 실제 주문 전환력은 열리지 않았다.
+- 따라서 현재 남은 미완료 범위는
+  `wide-window 기준 존재 여부 확인`이 아니라
+  `추가 거래일 누적 후 T+3 / MFE / MAE와 전환력 검증`이다.
+- `2026-07-01 ~ 2026-07-10`의
+  `watch_from_entry_setup_or_ge_052` 27건을 다시 보면
+  `high_volatility`는 `26/27`,
+  `fast_score < -0.20`은 `14/27`,
+  `fast_score >= 0`은 `3/27`뿐이다.
+  즉 `entry_score` 근접군은
+  `risk_off_penalty`만의 문제가 아니라
+  약한 `fast_score`와 높은 변동성이 거의 함께 붙는 구조다.
+- 따라서 다음 shadow formula는
+  단순 `risk_off_penalty` 제거가 아니라
+  `fast_score` 하방 꼬리와 `high_volatility` 동시 조건을
+  함께 줄이는 방향으로만 검토해야 한다.
+- `2026-07-12` 추가 back-simulation에서는
+  `high_volatility + fast_score >= -0.12 + relative_activity_bonus 없음`
+  구조를 다시 좁혀 보았다.
+  이 중
+  `SF7_market_high_vol_fast_ge_-0.12_no_rel_bonus`는
+  `count=4`, `T+1=+2.0353%`, `T+3=+0.8455%`, `T+5=+3.4324%`,
+  `MFE3=+9.9445%`, `MAE3=-4.3726%`로
+  broad formula 대비 유의미하게 개선됐다.
+- 다만 `SF7`은
+  `000660` 2건, `000810` 1건, `009150` 1건의
+  소수 구표본에 의존하고,
+  모두 `market_overlay` 경로다.
+  leave-one-symbol-out 검증에서도
+  `000660`을 제외하면
+  `T+3=+0.8455% -> -3.7818%`,
+  `T+5=+3.4324% -> +1.3744%`로 약해진다.
+  따라서 지금 단계에서는
+  **shadow-only watch candidate**로만 유지하고,
+  authoritative `Go`로 승격하지 않는다.
 
 ### 4.5 작업 E — 장후 자동 배치 리포트 확장
 
