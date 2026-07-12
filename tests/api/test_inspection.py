@@ -1709,6 +1709,70 @@ class TestInstruments:
         app.dependency_overrides.clear()
 
 
+class TestIndexMembershipStaleness:
+    """UNIV-4: ``GET /instruments/index-membership/staleness`` (read-only 감시)."""
+
+    def test_returns_not_stale_when_recent(self) -> None:
+        repos = build_in_memory_repositories()
+        instrument_id = uuid4()
+        recent_date = (datetime.now(timezone.utc) - timedelta(days=5)).date()
+        asyncio.run(
+            repos.instrument_index_memberships.sync_current_memberships(
+                instrument_id,
+                ["KOSPI200"],
+                effective_from=recent_date,
+            )
+        )
+
+        app = create_app(repos=repos, auth_enabled=False)
+        with TestClient(app) as client:
+            response = client.get("/instruments/index-membership/staleness")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["latest_effective_from"] == recent_date.isoformat()
+        assert data["threshold_days"] == 21
+        assert data["is_stale"] is False
+        assert data["age_days"] == 5
+
+    def test_returns_stale_when_no_data(self) -> None:
+        """membership 데이터가 전혀 없으면 보수적으로 stale=True를 반환한다."""
+        repos = build_in_memory_repositories()
+
+        app = create_app(repos=repos, auth_enabled=False)
+        with TestClient(app) as client:
+            response = client.get("/instruments/index-membership/staleness")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["latest_effective_from"] is None
+        assert data["is_stale"] is True
+        assert data["age_days"] is None
+
+    def test_respects_custom_threshold_days(self) -> None:
+        repos = build_in_memory_repositories()
+        instrument_id = uuid4()
+        old_date = (datetime.now(timezone.utc) - timedelta(days=10)).date()
+        asyncio.run(
+            repos.instrument_index_memberships.sync_current_memberships(
+                instrument_id,
+                ["KOSPI200"],
+                effective_from=old_date,
+            )
+        )
+
+        app = create_app(repos=repos, auth_enabled=False)
+        with TestClient(app) as client:
+            response = client.get(
+                "/instruments/index-membership/staleness?threshold_days=7"
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["threshold_days"] == 7
+        assert data["is_stale"] is True
+
+
 class TestPositions:
     """Position / cash-balance inspection endpoints."""
 

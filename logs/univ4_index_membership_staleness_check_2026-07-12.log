@@ -1,0 +1,10 @@
+INFO:agent_trading.runtime.bootstrap:Live disclosure client created: env=live, cache_path=.cache/kis_disclosure_token.json, cache_enabled=True
+INFO:agent_trading.services.disclosure_seed_service:LiveDisclosureSeedService initialized (client=AVAILABLE)
+{
+  "latest_effective_from": "2026-06-27",
+  "as_of": "2026-07-12",
+  "age_days": 15,
+  "threshold_days": 21,
+  "is_stale": false
+}
+INFO:check_index_membership_staleness:index_membership staleness: 정상 (마지막 반영 2026-06-27, age=15일).

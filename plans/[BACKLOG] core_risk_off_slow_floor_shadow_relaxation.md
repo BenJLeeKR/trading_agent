@@ -8,8 +8,10 @@
 > 작업으로 승격하지 않는다. 후속 방향은 게이트 완화가 아니라 **소싱(후보 공급)
 > 단계 복구**다 —
 > [`plans/[DESIGN] universe_sourcing_momentum_overlay_enablement_v1.md`](./%5BDESIGN%5D%20universe_sourcing_momentum_overlay_enablement_v1.md)
-> 참고 (근본 원인: `_add_market_overlay` 모멘텀 레이어가 `KIS_ENV=paper` 이중
-> 게이트로 6주 내내 완전 비활성 + core universe 가격 무관·회전 없음 + 지수
+> 참고 (근본 원인 — **2026-07-12 UNIV-1/2 실측으로 정정**: 애초 가설이던
+> `KIS_ENV=paper` 이중 게이트 비활성은 틀렸음, 라이브 read-only client 배선은
+> 이미 정상 동작. 실제 원인은 intraday freeze materialize 시각(08:50, 장 시작
+> 전)과 F5 누적거래대금 필터 경합 + core universe 가격 무관·회전 없음 + 지수
 > 편입 데이터 stale).
 
 ## 1. 목적 [역사적 기록 — 위 영구 중단 배너 참고]

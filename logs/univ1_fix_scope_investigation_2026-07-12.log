@@ -1,0 +1,60 @@
+=== UNIV-1-fix 범위 조사 (2026-07-12) ===
+목적: intraday freeze materialize 시각(INTRADAY_START=08:50)과 F5(누적거래대금)
+필터 경합 문제의 실제 수정 방안 조사 (read-only 코드 분석, 실행/변경 없음)
+
+--- 조사 1: INTRADAY_START를 단순히 늦추는 방안의 blast radius ---
+grep -n "INTRADAY_START" scripts/run_ops_scheduler.py
+  181:INTRADAY_START = dtime(8, 50)
+  3873:parser.add_argument("--intraday-start", type=_parse_hhmm, default=INTRADAY_START)
+
+scripts/run_ops_scheduler.py 내부에서 intraday_at(=INTRADAY_START 기반 시각)은
+다음 두 pre-market 작업의 "완료 마감선(상한)"으로도 쓰인다:
+  - instrument_master_sync_at <= now < intraday_at  (L3644)
+  - instrument_status_snapshot_at <= now < intraday_at  (L3674)
+  둘 다 실패 시 _mark_instrument_master_sync_missed / _mark_instrument_status_snapshot_missed
+  로 "missed" 처리됨 (L3664-3670, 3692-3698).
+  → instrument_master_sync 기본시각 04:50, snapshot 기본시각 05:05로 08:50까지
+    margin이 충분해, intraday_at을 09:00~09:05로 늦춰도 이 두 작업 자체는
+    영향받지 않는다(margin이 늘어날 뿐).
+
+그러나 08:50 경계는 이 스케줄러 파일 밖에서도 "Pre-Market 08:00-08:50 /
+Intraday 08:50-15:30" 구조로 최소 8개 이상의 다른 계획 문서에 하드코딩된
+전제로 등장한다:
+  plans/paper_ops_execution_plan_2026-05-14.md
+  plans/kis_cash_balance_after_hours_parameter_validation_2026-05-15.md (171 cycles 산정 근거)
+  plans/[POLICY] kis_instrument_master_update_policy.md (08:50 기준 alert 정책)
+  plans/e2e_operational_test_plan_2026-05-26.md
+  plans/near_real_internal_scheduler_p0.md (cadence 산정 근거)
+  plans/prevent_intraday_false_expired_for_buy_and_sell_2026-05-21.md
+    (EXPIRED fallback suppression window가 "장중(08:50~15:30)" 고정 문자열로 하드코딩)
+  plans/approve_but_pending_root_cause_report.md 등 다수 운영 리포트
+
+결론: INTRADAY_START 자체를 옮기는 것은 스케줄러 파일 하나의 문제가 아니라,
+EXPIRED fallback suppression 로직/여러 운영 문서·리포트의 시각 전제와
+cadence 산정(171 cycles 등)까지 연쇄적으로 재검토해야 하는 넓은 변경이다.
+"주문 경로 변경보다 read-only 관측 우선" 원칙과 "이번 턴 범위는 소싱 단계로
+한정" 원칙에 비추어, 이번 턴에서 단독으로 변경하지 않는다.
+
+--- 조사 2: F5 필터에 "전일 거래대금 fallback"을 추가하는 방안의 데이터 가용성 ---
+grep -n "acml_tr_pbmn\|_check_acc_trade_amount\|get_daily_price" src/agent_trading/services/universe_selection.py
+  현재 _parse_quote_to_snapshot()이 만드는 MarketDataSnapshot에는 당일
+  acml_tr_pbmn(누적거래대금)만 있고, 전일 거래대금/거래량 필드는 없다.
+
+grep -rn "def get_daily_price" src/
+  src/agent_trading/brokers/koreainvestment/rest_client.py:2129
+  src/agent_trading/services/kis_realtime_quote_source.py:886 (per-symbol, batch 아님)
+
+결론: F5에 "당일 데이터가 아직 형성 전이면 전일 거래대금으로 대체 판정"하는
+fallback을 넣으려면 심볼별 get_daily_price 추가 호출이 필요하다(현재
+market_overlay pre-pool 배치 조회에는 없음). 이는 정확히 [DESIGN] 문서
+§2.2(UNIV-3, 멀티데이 모멘텀 신호)가 이미 계획한 "일봉 데이터 재사용" 작업과
+동일한 데이터 소스다. 별도 임시 fallback을 만들면 UNIV-3에서 다시 동일한
+API 연동을 중복 구현하게 되므로, **UNIV-1-fix는 독립 구현하지 않고 UNIV-3
+착수 시 daily_price 연동에 F5 pre-market fallback을 함께 반영하는 것으로
+재scope**하는 것이 근거 있는 대안이다.
+
+--- 종합 결론 ---
+1. INTRADAY_START 변경: 부적합(넓은 blast radius, 이번 턴 범위 밖)
+2. F5 임시 완화(예: threshold 낮추기): 실측 근거 없는 단순 완화이므로 금지 원칙 위반
+3. F5 전일 거래대금 fallback: 근거 있는 대안이나 데이터 연동이 UNIV-3와 중복
+   → UNIV-3 daily_price 연동 작업에 통합하여 처리하는 것을 권고

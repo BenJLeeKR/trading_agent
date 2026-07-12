@@ -211,6 +211,30 @@ class LiquidityFilterResult:
 
 
 @dataclass(slots=True, frozen=True)
+class MomentumShadowSignal:
+    """UNIV-3: 멀티데이 모멘텀 shadow 신호 (관측 전용, 선정에 미반영).
+
+    ``_calc_market_score()``는 당일 스파이크(등락률/거래대금/신고가 근접)만
+    보므로, 실제로 "새로 추세가 시작되는 종목"을 잡는지 검증하기 위해
+    market_overlay가 이미 선정한 종목에 한해 일봉(``get_daily_price``) 기반
+    신호를 부가로 계산해 관측한다.
+    """
+
+    symbol: str
+    relative_volume_surge: float | None = None
+    """당일(최근 1건) 거래량 / 최근 20거래일 평균 거래량."""
+
+    return_5d: float | None = None
+    """최근 5거래일 수익률 (종가 기준)."""
+
+    return_20d: float | None = None
+    """최근 20거래일 수익률 (종가 기준)."""
+
+    short_term_recovering: bool | None = None
+    """5일 수익률 > 0 이고 20일 수익률 >= -5% — "하락을 멈추고 돌아서는 중" 근사."""
+
+
+@dataclass(slots=True, frozen=True)
 class MarketOverlayDiagnostics:
     """Operational diagnostics for market-driven overlay composition."""
 
@@ -229,6 +253,23 @@ class MarketOverlayDiagnostics:
     filter_pass_rate: float | None = None
     scored_capture_rate: float | None = None
     overlay_capture_rate: float | None = None
+
+    # ── UNIV-3 shadow: F5 pre-market fallback (2026-07-12) ──────────────────
+    # 당일 누적거래대금(acml_tr_pbmn)이 미형성(장 시작 전 freeze materialize)
+    # 상태라 F5에서 전량 탈락했을 때, 전일 일봉(종가×거래량) 기반 추정
+    # 거래대금으로 "F5를 통과했을 후보"를 관측만 한다 — 아직 실제 선정에는
+    # 반영하지 않는다(shadow-first 원칙, UNIV-1-fix 조사 결과 통합).
+    shadow_fallback_evaluated: bool = False
+    shadow_fallback_evaluated_count: int = 0
+    shadow_fallback_pass_count: int = 0
+    shadow_fallback_top_symbols: tuple[str, ...] = ()
+
+    # ── UNIV-3 shadow: 멀티데이 모멘텀 신호 (2026-07-12) ────────────────────
+    # market_overlay가 실제로 선정한 종목(top_n)에 한해서만 부가로 계산한다
+    # (rate budget 보호 — pre-pool 전체가 아니라 편입된 소수만). 선정 결과에는
+    # 영향을 주지 않는 순수 관측용 필드다.
+    momentum_shadow_evaluated: bool = False
+    momentum_shadow_signals: tuple[MomentumShadowSignal, ...] = ()
 
 
 # ── Default fallback ────────────────────────────────────────────────────────

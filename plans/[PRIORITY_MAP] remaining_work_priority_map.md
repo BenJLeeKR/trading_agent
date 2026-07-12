@@ -3846,13 +3846,32 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 > [`plans/[DESIGN] universe_sourcing_momentum_overlay_enablement_v1.md`](./%5BDESIGN%5D%20universe_sourcing_momentum_overlay_enablement_v1.md) 참고.
 
 ### 1순위 묶음
-0. **종목 소싱 구조 개선 (2026-07-12 신설)**
-   - UNIV-1: market_overlay용 라이브 read-only client(`KIS_LIVE_INFO_*`) 주입
-     배선 — 6주간 완전 비활성이던 모멘텀 포착 레이어 복구 (rate budget 사전
-     산정 포함)
-   - UNIV-2: 활성화 후 1~2 거래일 실측 검증
-   - 후속: UNIV-3(멀티데이 모멘텀 shadow 신호) → UNIV-4(지수 편입 자동 갱신)
-     → UNIV-5(core 후순위화, 보류)
+0. **종목 소싱 구조 개선 (2026-07-12 신설, 07-12 실측으로 UNIV-1/2 완료)**
+   - UNIV-1(완료): market_overlay용 라이브 read-only client 주입 배선 실측 —
+     **배선은 이미 존재·정상 동작**함을 확인(원래 "paper 게이트로 비활성"
+     가설은 틀렸음). 3개 silent debug 로그를 warning으로 격상 완료.
+   - UNIV-2(완료): 실측 결과 진짜 원인은 intraday freeze materialize 시각
+     (08:50, 장 시작 전)과 F5 누적거래대금 필터의 경합 — 08:50 freeze 시
+     당일 누적거래대금 0으로 전 후보 탈락. 09:00 이후 freeze된 날(07-03)은
+     정상 동작(5건 편입) 확인.
+   - **UNIV-1-fix 범위 조사(완료)**: freeze 시각 이동은 8개+ 문서에 하드코딩된
+     08:50 경계 때문에 blast radius 과다로 부적합, threshold 완화는 금지
+     원칙 위배 → 전일 거래대금 fallback을 채택하되 **UNIV-3에 통합**하기로
+     결정(중복 API 연동 방지).
+   - **UNIV-3(1순위) 구현 완료(2026-07-12)**: F5 pre-market fallback shadow +
+     멀티데이 모멘텀 shadow(상대 거래량 급증/5·20일 수익률/반등 플래그)
+     모두 구현 완료 — 둘 다 실제 선정/스코어링에는 미반영(shadow-first),
+     테스트 106건 통과. 라이브 검증 중 `get_daily_price()` dict/객체 응답
+     형태 불일치 버그 발견·수정.
+   - **UNIV-3 다음 단계**: 코드 작업이 아니라 **수일 관측 후 승격 판단**
+     (F5 fallback/모멘텀 신호 shadow 로그의 후행 proxy 개선 여부 확인).
+   - **UNIV-4(2순위) 완료(2026-07-12)**: KIS 지수 구성종목 API 부재 확인 →
+     staleness 감시 축소안 구현(`get_latest_effective_from()` +
+     `evaluate_index_membership_staleness()`) + 운영 대시보드 노출까지 완료
+     (`GET /instruments/index-membership/staleness` + `OperationsDashboardView`
+     WarningBanner). 실측: age=15일(threshold 21일) → 정상.
+   - **다음 착수 대상**: UNIV-5(core 장기 하락 종목 후순위화) 착수 여부
+     재검토 — 단, UNIV-3 관측(수일 누적) 완료 후 판단.
 1. Fill History Phase 3
 2. 부분체결 자동 판정 고도화
 3. fill 발생 후 snapshot refresh 자동화

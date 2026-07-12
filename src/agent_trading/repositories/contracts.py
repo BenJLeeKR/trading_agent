@@ -1104,6 +1104,13 @@ class InstrumentIndexMembershipRepository(Protocol):
     ) -> Sequence[UUID]:
         ...
 
+    async def get_latest_effective_from(self) -> date | None:
+        """가장 최근에 반영된 membership 갱신 시각(``effective_from``)을 반환한다.
+
+        UNIV-4: 지수 편입 데이터 staleness 감시용 — 활성(``effective_to IS
+        NULL``) row 전체 중 최댓값. 데이터가 전혀 없으면 ``None``."""
+        ...
+
 
 class InstrumentStatusSnapshotRepository(Protocol):
     """종목 상태 snapshot authoritative 저장소."""

@@ -623,15 +623,16 @@ const mockTradingUniversePreview = {
  * market-overlay-funnel, trade-decisions, session-events)도 함께 제거했다 —
  * 죽은 데이터를 계속 fetch할 이유가 없다.
  *
- * Call order (22 total):
+ * Call order (23 total):
  *   1-9: Promise.all [health, readyz, recon, orders, todayOrders, daily-summary,
  *                     buy-block-summary, clients, session, operations-day]
  *   10:   getAccounts(clientId)
  *   11-13: getAccountSnapshots(3 accounts)
  *   14:   universe preview (계좌 의존 — accounts 이후에만 fire 가능)
- *   15:   getSnapshotSyncRuns(10)
- *   16:   getRecentFailures(5) — caller provides this mock
- *   17:   getFailureSummary() — caller provides this mock
+ *   15:   getIndexMembershipStaleness() — UNIV-4, 계좌 무관 read-only 감시
+ *   16:   getSnapshotSyncRuns(10)
+ *   17:   getRecentFailures(5) — caller provides this mock
+ *   18:   getFailureSummary() — caller provides this mock
  */
 function mockOpsDashboardCommon() {
   // 1-9: Parallel batch
@@ -656,7 +657,15 @@ function mockOpsDashboardCommon() {
 
   // 15. universe preview (계좌 의존이라 계좌 조회 이후에만 fire)
   mockFetchOnce(mockTradingUniversePreview);
-  // 16. getSnapshotSyncRuns
+  // 16. getIndexMembershipStaleness (UNIV-4, 정상 상태로 고정 — 배너 미노출)
+  mockFetchOnce({
+    latest_effective_from: "2026-06-27",
+    as_of: "2026-07-12",
+    age_days: 15,
+    threshold_days: 21,
+    is_stale: false,
+  });
+  // 17. getSnapshotSyncRuns
   mockFetchOnce([]);
 }
 

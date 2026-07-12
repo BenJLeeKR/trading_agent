@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agent_trading.api.deps import get_db, get_kis_client, get_repos
 from agent_trading.api.schemas import (
+    IndexMembershipStalenessResponse,
     InstrumentDetail,
     InstrumentMappingConsistencySummaryResponse,
     InstrumentMappingGapItem,
@@ -596,6 +597,40 @@ async def get_market_overlay_funnel(
             )
             for row in sample_rows
         ],
+    )
+
+
+@router.get(
+    "/instruments/index-membership/staleness",
+    response_model=IndexMembershipStalenessResponse,
+)
+async def get_index_membership_staleness(
+    threshold_days: int = Query(default=21, ge=1, le=365),
+    repos: RepositoryContainer = Depends(get_repos),
+) -> IndexMembershipStalenessResponse:
+    """UNIV-4: 지수 편입(index membership) 데이터 staleness 감시 (read-only).
+
+    KIS에 지수 구성종목 전체 목록 API가 없어 수동 업로드 절차
+    (`[RUNBOOK] index_membership_source_package_apply.md`)의 마지막 반영
+    시각이 오래됐는지만 관측한다. 어떤 쓰기 작업도 하지 않는다.
+    """
+    from agent_trading.services.index_membership_staleness import (
+        evaluate_index_membership_staleness,
+    )
+
+    latest = await repos.instrument_index_memberships.get_latest_effective_from()
+    today = datetime.now(_KST).date()
+    report = evaluate_index_membership_staleness(
+        latest,
+        as_of=today,
+        threshold_days=threshold_days,
+    )
+    return IndexMembershipStalenessResponse(
+        latest_effective_from=report.latest_effective_from,
+        as_of=report.as_of,
+        age_days=report.age_days,
+        threshold_days=report.threshold_days,
+        is_stale=report.is_stale,
     )
 
 

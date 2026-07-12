@@ -120,3 +120,38 @@ async def test_list_active_by_instruments_empty_input_returns_empty_dict(
 ) -> None:
     result = await postgres_repos.instrument_index_memberships.list_active_by_instruments([])
     assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_get_latest_effective_from_returns_max_active_date(
+    postgres_repos,
+) -> None:
+    """UNIV-4: staleness 감시가 참조하는 '가장 최근 반영 시각' 조회."""
+    instrument = InstrumentEntity(
+        instrument_id=uuid4(),
+        symbol="T399661",
+        market_code="KRX",
+        asset_class="kr_stock",
+        currency="KRW",
+        name="테스트staleness종목",
+        exchange_code="KRX",
+        market_segment="KOSPI",
+        is_active=True,
+    )
+    await postgres_repos.instruments.add(instrument)
+
+    await postgres_repos.instrument_index_memberships.sync_current_memberships(
+        instrument.instrument_id,
+        ["KOSPI200"],
+        effective_from=date(2026, 6, 19),
+    )
+    await postgres_repos.instrument_index_memberships.sync_current_memberships(
+        instrument.instrument_id,
+        ["KOSPI200", "KOSPI100"],
+        effective_from=date(2026, 6, 27),
+    )
+
+    latest = await postgres_repos.instrument_index_memberships.get_latest_effective_from()
+
+    assert latest is not None
+    assert latest >= date(2026, 6, 27)

@@ -25,6 +25,7 @@ import {
   getOrderDailySummary,
   getBuyBlockSummary,
   getTradingUniversePreview,
+  getIndexMembershipStaleness,
 } from "../api/client";
 import type {
   BuyBlockSummary,
@@ -45,6 +46,7 @@ import type {
   FailureSummary,
   OrderDailySummary,
   TradingUniversePreviewResponse,
+  IndexMembershipStalenessResponse,
 } from "../types/api";
 import { deriveAlerts } from "../lib/alerts";
 import {
@@ -110,6 +112,7 @@ interface DashboardData {
   todayOrderSummary: OrderDailySummary | null;
   tradingUniversePreview: TradingUniversePreviewResponse | null;
   tradingUniversePreviewAccountLabel: string | null;
+  indexMembershipStaleness: IndexMembershipStalenessResponse | null;
 }
 
 /* ── Helpers ── */
@@ -453,6 +456,12 @@ export default function OperationsDashboardView() {
         })
       : Promise.resolve(null);
 
+    // ── UNIV-4: 지수 편입 데이터 staleness 감시 (read-only, 계좌 무관) ──
+    const indexMembershipStalenessPromise = getIndexMembershipStaleness().catch((e) => {
+      addError("GET /instruments/index-membership/staleness", e);
+      return null;
+    });
+
     // ── Reconciliation runs (from summary's recentActiveIssues — active-only data) ──
     // NOTE: 별도 getReconciliationRuns API 호출 대신 이미 fetch된 summary 응답의
     //       recentActiveIssues를 사용. 이 필드는 백엔드에서 active-only로 필터링됨.
@@ -476,10 +485,11 @@ export default function OperationsDashboardView() {
     });
     const failureSummaryPromise = getFailureSummary().catch(() => null);
 
-    const [snapshotSyncRuns, tradingUniversePreview, failuresData, summaryData] =
+    const [snapshotSyncRuns, tradingUniversePreview, indexMembershipStaleness, failuresData, summaryData] =
       await Promise.all([
         snapshotSyncRunsPromise,
         universePreviewPromise,
+        indexMembershipStalenessPromise,
         recentFailuresPromise,
         failureSummaryPromise,
       ]);
@@ -516,6 +526,7 @@ export default function OperationsDashboardView() {
         ?? previewAccount?.account_code
         ?? previewAccount?.broker_account_id
         ?? null,
+      indexMembershipStaleness,
     });
     setLoading(false);
   };
@@ -696,6 +707,7 @@ export default function OperationsDashboardView() {
       sessionStaleSeconds,
       phaseVariant,
       schedulerState,
+      indexMembershipStaleness: data.indexMembershipStaleness,
     };
   }, [data, apiErrors]);
 
@@ -963,6 +975,19 @@ export default function OperationsDashboardView() {
           variant="warning"
           title="Fallback Session Detection"
           message="Session provider가 fallback 모드로 동작 중입니다. KIS live-info 연결을 확인하세요."
+        />
+      )}
+
+      {/* Warning Banner — UNIV-4: 지수 편입 데이터 staleness (read-only 감시) */}
+      {d.indexMembershipStaleness?.is_stale && (
+        <WarningBanner
+          variant="warning"
+          title="지수 편입(index membership) 데이터가 오래되었습니다"
+          message={
+            d.indexMembershipStaleness.latest_effective_from
+              ? `마지막 반영: ${d.indexMembershipStaleness.latest_effective_from} (경과 ${d.indexMembershipStaleness.age_days}일, 기준 ${d.indexMembershipStaleness.threshold_days}일). [RUNBOOK] index_membership_source_package_apply.md 절차로 갱신하세요.`
+              : "지수 편입 데이터가 전혀 없습니다. [RUNBOOK] index_membership_source_package_apply.md 절차로 초기 반영하세요."
+          }
         />
       )}
 

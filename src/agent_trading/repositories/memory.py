@@ -1779,6 +1779,14 @@ class InMemoryInstrumentIndexMembershipRepository:
         }
         return tuple(sorted(instrument_ids, key=str))
 
+    async def get_latest_effective_from(self) -> date | None:
+        active_dates = [
+            item.effective_from
+            for item in self._items.values()
+            if item.effective_to is None
+        ]
+        return max(active_dates) if active_dates else None
+
 
 class InMemoryInstrumentStatusSnapshotRepository:
     """In-memory implementation of ``InstrumentStatusSnapshotRepository``."""

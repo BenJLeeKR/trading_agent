@@ -163,3 +163,16 @@ class PostgresInstrumentIndexMembershipRepository:
             str(membership_code).strip().upper(),
         )
         return tuple(UUID(str(row["instrument_id"])) for row in rows)
+
+    async def get_latest_effective_from(self) -> date | None:
+        row = await self._tx.connection.fetchrow(
+            """
+            SELECT MAX(effective_from) AS latest_effective_from
+            FROM trading.instrument_index_memberships
+            WHERE effective_to IS NULL
+            """
+        )
+        if row is None:
+            return None
+        value = row["latest_effective_from"]
+        return value if isinstance(value, date) else None

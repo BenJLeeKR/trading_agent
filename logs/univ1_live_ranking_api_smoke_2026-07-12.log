@@ -1,0 +1,58 @@
+DEBUG:asyncio:Using selector: EpollSelector
+client.env= live
+INFO:agent_trading.brokers.koreainvestment.token_cache:live_disclosure_access_token token cache: hit path=.cache/kis_disclosure_token.json
+DEBUG:agent_trading.brokers.koreainvestment.rest_client:Token cache: dev-file hit path=.cache/kis_disclosure_token.json
+DEBUG:httpcore.connection:connect_tcp.started host='openapi.koreainvestment.com' port=9443 local_address=None timeout=5.0 socket_options=None
+DEBUG:httpcore.connection:connect_tcp.complete return_value=<httpcore._backends.anyio.AnyIOStream object at 0xf4d73ea3f380>
+DEBUG:httpcore.connection:start_tls.started ssl_context=<ssl.SSLContext object at 0xf4d73ea88050> server_hostname='openapi.koreainvestment.com' timeout=5.0
+DEBUG:httpcore.connection:start_tls.complete return_value=<httpcore._backends.anyio.AnyIOStream object at 0xf4d73eab87d0>
+DEBUG:httpcore.http11:send_request_headers.started request=<Request [b'GET']>
+DEBUG:httpcore.http11:send_request_headers.complete
+DEBUG:httpcore.http11:send_request_body.started request=<Request [b'GET']>
+DEBUG:httpcore.http11:send_request_body.complete
+DEBUG:httpcore.http11:receive_response_headers.started request=<Request [b'GET']>
+DEBUG:httpcore.http11:receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Date', b'Sun, 12 Jul 2026 07:01:21 GMT'), (b'X-Content-Type-Options', b'nosniff'), (b'Content-Length', b'13920'), (b'X-ORACLE-DMS-ECID', b'006LaIAYXfl3b6CEBFfP8T000INp04gBg2'), (b'tr_cont', b''), (b'tr_id', b'FHPST01710000'), (b'gt_uid', b'7ce670f67dbf11f1ae0773cd88a042a6'), (b'X-ORACLE-DMS-RID', b'0:1'), (b'X-XSS-Protection', b'1; mode=block'), (b'Keep-Alive', b'timeout=5, max=100'), (b'Connection', b'Keep-Alive'), (b'Content-Type', b'application/json')])
+DEBUG:httpcore.http11:receive_response_body.started request=<Request [b'GET']>
+DEBUG:httpcore.http11:receive_response_body.complete
+DEBUG:httpcore.http11:response_closed.started
+DEBUG:httpcore.http11:response_closed.complete
+DEBUG:httpcore.connection:close.started
+DEBUG:httpcore.connection:close.complete
+get_volume_rank rows: 30
+sample: {"hts_kor_isnm": "SK하이닉스", "mksc_shrn_iscd": "000660", "data_rank": "1", "stck_prpr": "2180000", "prdy_vrss_sign": "5", "prdy_vrss": "-6000", "prdy_ctrt": "-0.27", "acml_vol": "4827239", "prdy_vol": "6261504", "lstn_stcn": "712702365", "avrg_vol": "4827239", "n_befr_clpr_vrss_prpr_rate": "-0.27", "vol_inrt": "77.09", "vol_tnrt": "0.68", "nday_vol_tnrt": "0.68", "avrg_tr_pbmn": "10732251998500", "tr_pbmn_tnrt": "0.69", "nday_tr_pbmn_tnrt": "0.69", "acml_tr_pbmn": "10732251998500"}
+DEBUG:agent_trading.brokers.koreainvestment.rest_client:Token cache: in-memory hit expires_at=1783925780.555709
+DEBUG:httpcore.connection:connect_tcp.started host='openapi.koreainvestment.com' port=9443 local_address=None timeout=5.0 socket_options=None
+DEBUG:httpcore.connection:connect_tcp.complete return_value=<httpcore._backends.anyio.AnyIOStream object at 0xf4d73eab9f90>
+DEBUG:httpcore.connection:start_tls.started ssl_context=<ssl.SSLContext object at 0xf4d73ea88050> server_hostname='openapi.koreainvestment.com' timeout=5.0
+DEBUG:httpcore.connection:start_tls.complete return_value=<httpcore._backends.anyio.AnyIOStream object at 0xf4d73ebe3360>
+DEBUG:httpcore.http11:send_request_headers.started request=<Request [b'GET']>
+DEBUG:httpcore.http11:send_request_headers.complete
+DEBUG:httpcore.http11:send_request_body.started request=<Request [b'GET']>
+DEBUG:httpcore.http11:send_request_body.complete
+DEBUG:httpcore.http11:receive_response_headers.started request=<Request [b'GET']>
+DEBUG:httpcore.http11:receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Date', b'Sun, 12 Jul 2026 07:01:21 GMT'), (b'X-Content-Type-Options', b'nosniff'), (b'Content-Length', b'7797'), (b'X-ORACLE-DMS-ECID', b'006LaIA^qIYFw0zzzR06zzEjX2E0jYYz300031H01Qgk9'), (b'tr_cont', b''), (b'tr_id', b'FHPST01680000'), (b'gt_uid', b'7d434f6a7dbf11f1a958dbf54cabd72e'), (b'X-ORACLE-DMS-RID', b'0:1'), (b'X-XSS-Protection', b'1; mode=block'), (b'Keep-Alive', b'timeout=5, max=100'), (b'Connection', b'Keep-Alive'), (b'Content-Type', b'application/json')])
+DEBUG:httpcore.http11:receive_response_body.started request=<Request [b'GET']>
+DEBUG:httpcore.http11:receive_response_body.complete
+DEBUG:httpcore.http11:response_closed.started
+DEBUG:httpcore.http11:response_closed.complete
+DEBUG:httpcore.connection:close.started
+DEBUG:httpcore.connection:close.complete
+get_volume_power_rank rows: 30
+DEBUG:agent_trading.brokers.koreainvestment.rest_client:Token cache: in-memory hit expires_at=1783925780.555709
+DEBUG:httpcore.connection:connect_tcp.started host='openapi.koreainvestment.com' port=9443 local_address=None timeout=5.0 socket_options=None
+DEBUG:httpcore.connection:connect_tcp.complete return_value=<httpcore._backends.anyio.AnyIOStream object at 0xf4d73eabcc30>
+DEBUG:httpcore.connection:start_tls.started ssl_context=<ssl.SSLContext object at 0xf4d73ea88050> server_hostname='openapi.koreainvestment.com' timeout=5.0
+DEBUG:httpcore.connection:start_tls.complete return_value=<httpcore._backends.anyio.AnyIOStream object at 0xf4d73ea071d0>
+DEBUG:httpcore.http11:send_request_headers.started request=<Request [b'GET']>
+DEBUG:httpcore.http11:send_request_headers.complete
+DEBUG:httpcore.http11:send_request_body.started request=<Request [b'GET']>
+DEBUG:httpcore.http11:send_request_body.complete
+DEBUG:httpcore.http11:receive_response_headers.started request=<Request [b'GET']>
+DEBUG:httpcore.http11:receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Date', b'Sun, 12 Jul 2026 07:01:22 GMT'), (b'X-Content-Type-Options', b'nosniff'), (b'Content-Length', b'13920'), (b'X-ORACLE-DMS-ECID', b'006LaIAagic3b6CEBFaQOT0006VQ033DtH'), (b'tr_cont', b''), (b'tr_id', b'FHPST01710000'), (b'gt_uid', b'7d8d5d807dbf11f1a254ab9eb6de24f9'), (b'X-ORACLE-DMS-RID', b'0:1'), (b'X-XSS-Protection', b'1; mode=block'), (b'Keep-Alive', b'timeout=5, max=100'), (b'Connection', b'Keep-Alive'), (b'Content-Type', b'application/json')])
+DEBUG:httpcore.http11:receive_response_body.started request=<Request [b'GET']>
+DEBUG:httpcore.http11:receive_response_body.complete
+DEBUG:httpcore.http11:response_closed.started
+DEBUG:httpcore.http11:response_closed.complete
+DEBUG:httpcore.connection:close.started
+DEBUG:httpcore.connection:close.complete
+seed symbols: ['000660', '005930', '0193T0', '360750', '069500', '0197X0', '379800', '122630', '0195S0', '009150']

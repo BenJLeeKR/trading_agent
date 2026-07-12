@@ -1,7 +1,16 @@
 # 종목 소싱(Universe Sourcing) 구조 개선 — market_overlay 활성화 및 모멘텀 신호 보강 v1
 
-작성일: 2026-07-12
-상태: 설계 확정 대기 (구현 미착수)
+작성일: 2026-07-12 / 최종 갱신: 2026-07-12 (UNIV-1 실측 반영)
+상태: UNIV-1/2/4 완료, UNIV-3 shadow 신호(F5 fallback + 멀티데이 모멘텀)
+구현 완료 — UNIV-3는 관측 승격 판단만 남음, 다음은 UNIV-5 착수 여부 재검토
+
+### ⚠️ 2026-07-12 UNIV-1 실측 후 정정 (중요)
+§2.1의 원래 전제("라이브 read-only client를 새로 배선해야 한다")는 **틀렸다**.
+`run_decision_loop.py::_load_trading_universe_with_anchor()`에 `_build_kis_live_quote_client(settings)`
+주입 배선이 **이미 존재**하며(git blame: 초기 프레임워크 커밋부터), 실측
+결과 `env="live"`로 정상 동작한다. 실제 근본 원인은 §2.1이 아니라 **intraday
+freeze materialize 시점과 F5(누적거래대금) 필터의 경합**이다 — 상세는
+§2.1-정정 및 `[BACKLOG] backlog.md` UNIV-1-fix 항목 참고.
 
 ## 0. 문서 성격과 배경
 
@@ -74,7 +83,39 @@
 
 ## 2. 설계
 
-### 2.1 P1 — market_overlay env 게이트 분리 (핵심)
+### 2.1-정정 (2026-07-12 실측 결과 — §2.1 원안 대체)
+
+**실측 방법**: `scripts/diagnose_market_overlay_shadow.py`(신규, read-only,
+DB 쓰기 없음)로 `_build_kis_live_quote_client(settings)` + `compose_with_diagnostics()`를
+직접 호출 → `kis_client.env == "live"` 확인, market_overlay가 core 대비
+신규 5종목(`005930, 009150, 105560, 240810, 402340`) 편입 확인
+(`logs/univ1_market_overlay_shadow_compose_2026-07-12.log`). 이어서
+`universe_freeze_run_items` DB 조회 + 보존된 `ops-scheduler` 로그로
+2026-06-25~07-10 구간을 교차검증한 결과:
+
+- **07-03**: freeze materialize 시각 `09:01:56`(장 시작 09:00 이후) →
+  `market_overlay 편입 5건` 정상 성공, 실제 decision loop에 반영됨.
+- **06-30, 07-01, 07-02, 07-05~07-10 (9거래일 중 8일)**: freeze materialize
+  시각 정확히 `08:50:xx`(장 시작 **전**) → pre-pool/시세조회는 성공하지만
+  "편입 N건" 로그 자체가 없음(`added_count=0`).
+
+**근본 원인**: `_check_acc_trade_amount()`(F5 필터, `universe_selection.py`)가
+`acml_tr_pbmn`(당일 누적 거래대금) < 임계값이면 탈락시키는데, 08:50은 장
+시작(09:00) 전이라 **모든 종목의 당일 누적거래대금이 0에 가깝다** — 따라서
+seed pool 전원이 F5에서 탈락해 `added_count=0`이 된다. 이 스킵은 지금까지
+`logger.debug(...)`로만 남아 운영 로그(INFO 레벨)에서 전혀 보이지 않았다
+(2026-07-12 turn에서 warning 레벨로 격상 완료 — §"완료" 참고).
+
+**결론**: 원안(§2.1, 아래 취소선 처리)의 "라이브 client를 새로 주입해야
+한다"는 전제 자체가 틀렸다 — 배선은 이미 존재하고 정상 동작한다. 진짜
+문제는 **intraday freeze materialize 시점(`INTRADAY_START=08:50`)이 장 시작
+시각(09:00)보다 이르다는 스케줄링 경합**이다. 이 문제의 수정(예: freeze
+트리거 시각 조정, 또는 market_overlay 평가를 freeze materialize 시점과
+분리)은 `INTRADAY_START`가 다른 장전 작업에 미치는 영향을 아직 조사하지
+않았으므로 **이번 턴에서 단독으로 구현하지 않고 UNIV-1-fix로 백로그에만
+기록**한다(§4 참고).
+
+### 2.1 P1 — market_overlay env 게이트 분리 (원안, 실측으로 전제 반증됨 — 참고용으로만 보존)
 
 **현재 구조의 문제**: "주문 환경이 paper인가"와 "시세 랭킹 데이터를 라이브로
 받을 수 있는가"가 하나의 `env` 판정으로 묶여 있다. 그러나 이 둘은 독립적이다
@@ -124,6 +165,12 @@
   "shadow 먼저, authoritative 나중" 원칙을 그대로 따른다.
 - 일봉 조회 추가 비용: pre-pool 50종목 × 일봉 1회 = 호출 50건/사이클 증가.
   캐시(당일 내 재사용) 도입으로 실질 증가는 1일 1회 수준으로 억제 가능.
+- **(2026-07-12 추가, UNIV-1-fix 통합)** 이 일봉 재사용 작업에 F5
+  pre-market fallback을 함께 반영한다: 당일 `acml_tr_pbmn`이 미형성(장
+  시작 전 freeze materialize) 상태로 F5가 전량 탈락시킬 때, 전일 종가
+  기준 거래대금(일봉 최근 1건)을 대체 판정 기준으로 사용해 pre-market
+  freeze에서도 market_overlay가 최소한의 후보를 편입할 수 있게 한다.
+  근거: §2.1-fix 조사(`logs/univ1_fix_scope_investigation_2026-07-12.log`).
 
 ### 2.3 P3 — 지수 편입 데이터 자동 갱신
 
@@ -140,6 +187,54 @@
 - KIS에 적절한 지수구성 API가 없거나 불안정하면: 수동 업로드 절차는
   유지하되, **staleness 감시**(마지막 `as_of_date`가 21일 초과 시 운영
   대시보드 경고)만 자동화하는 축소안으로 대체한다.
+
+**2026-07-12 확인 결과 — 축소안으로 확정**: `rest_client.py`에 구현된
+지수 관련 API는 `inquire_index_category_price`(업종 구분별 **시세**)뿐이며,
+개별 종목 리스트(constituents)를 제공하는 KIS API는 코드베이스 어디에도
+없다. 자동 갱신 어댑터를 새로 만들려면 미검증 API를 조사해야 하므로(리스크
+불명), **이번 턴에서는 자동 갱신 대신 staleness 감시 축소안만 구현**한다.
+`instrument_index_memberships`의 최근 활성 반영 시각(`effective_from`
+최댓값)을 조회해 21일 초과 시 경고하는 read-only 로직 —
+`src/agent_trading/services/index_membership_staleness.py`
+(`evaluate_index_membership_staleness()`), 조회 메서드는
+`InstrumentIndexMembershipRepository.get_latest_effective_from()`으로
+추가(Postgres/in-memory 모두 구현). 실측:
+`scripts/check_index_membership_staleness.py` 실행 결과 마지막 반영
+`2026-06-27`, age=15일(threshold 21일) → **정상**, staleness 위험까지
+6일 남음(`logs/univ4_index_membership_staleness_check_2026-07-12.log`).
+운영 대시보드(프론트엔드) 노출은 이번 턴 범위 밖 — 백엔드 조회/판단 로직만
+구현하고 다음 턴 대상으로 남긴다.
+
+### 2.1-fix — UNIV-1-fix 범위 조사 결과 (2026-07-12)
+
+freeze materialize 시각(`INTRADAY_START=08:50`)과 F5(누적거래대금) 필터
+경합의 실제 수정 방안을 조사했다(코드 분석만, 변경 없음 — 상세:
+`logs/univ1_fix_scope_investigation_2026-07-12.log`).
+
+**대안 A — `INTRADAY_START`를 09:00 이후로 이동**: 스케줄러 파일 안에서는
+`instrument_master_sync`(기본 04:50)/`instrument_status_snapshot`(기본
+05:05) 완료 마감선으로도 쓰이지만, 이 두 작업엔 이미 margin이 충분해
+직접 영향은 없다. 그러나 "Pre-Market 08:00-08:50 / Intraday 08:50-15:30"
+경계는 스케줄러 파일 밖에서도 최소 8개 계획/운영 문서(EXPIRED fallback
+suppression window, cadence 산정 등)에 하드코딩된 전제로 등장한다.
+**→ 부적합. 넓은 blast radius, 이번 소싱 트랙 범위 밖이라 단독 변경하지
+않는다.**
+
+**대안 B — F5 threshold를 낮추거나 pre-market엔 F5를 skip**: 실측 근거
+없는 단순 완화이며 "실측 근거 없는 완화 제안 금지" 원칙에 위배. **→ 채택
+안 함.**
+
+**대안 C — F5에 "당일 데이터 형성 전이면 전일 거래대금으로 대체 판정"하는
+fallback 추가**: 근거 있는 대안이나, 현재 market_overlay pre-pool 조회에는
+전일 거래대금 데이터가 없다 — `get_daily_price()`(심볼별, `rest_client.py`)
+호출이 추가로 필요하다. 이는 §2.2(UNIV-3)가 이미 계획한 "일봉 데이터 재사용"
+작업과 정확히 동일한 데이터 소스다. **→ 채택. 단, 독립 구현하지 않고 UNIV-3
+착수 시 daily_price 연동에 F5 pre-market fallback을 함께 반영한다** —
+동일 API 연동의 중복 구현을 피하기 위함.
+
+**결론**: UNIV-1-fix는 별도 트랙이 아니라 **UNIV-3의 선행 요구사항으로
+재scope**한다. UNIV-3 설계(§2.2)에 "일봉 재사용 시 F5 pre-market fallback도
+함께 계산" 항목을 추가했다.
 
 ### 2.4 P4 — (후순위 검토) core 종목 장기 하락 시 사이클 내 후순위화
 
@@ -164,18 +259,82 @@
 
 ## 4. 백로그
 
-- [ ] **UNIV-1 (P1)**: market_overlay용 라이브 read-only client 주입 배선
-      (`run_decision_loop.py` + `universe_selection.py` diagnostics 정리).
-      rate budget 사전 산정 포함. — **1순위**
-- [ ] **UNIV-2 (P1 검증)**: 활성화 후 1~2 거래일 실측 —
-      `market_overlay_diagnostics` 채워짐 / freeze에 market_overlay 종목 등장 /
-      rate budget 여유 확인. — **1순위(UNIV-1 직후)**
-- [ ] **UNIV-3 (P2)**: 멀티데이 모멘텀 신호(`relative_volume_surge`,
-      `short_term_momentum`) shadow 추가 → 관측 → 승격 판단. — **2순위**
-- [ ] **UNIV-4 (P3)**: 지수 편입 데이터 자동 갱신(주 1회) 또는 staleness
-      경고 축소안. — **3순위**
+- [x] **UNIV-1 (P1)**: market_overlay용 라이브 read-only client 주입 배선
+      확인. **2026-07-12 완료 — 배선은 이미 존재·정상 동작함을 실측으로
+      확인**(신규 배선 불필요). 부가로 `_add_market_overlay()`의 3개 silent
+      skip 로그(`empty_pre_pool`/`no_quotes_returned`/`all_candidates_filtered`)를
+      debug→warning으로 격상 + 사유별 breakdown 추가
+      (`src/agent_trading/services/universe_selection.py`), 회귀 테스트 3건
+      추가(`tests/services/test_universe_selection.py`). — **완료**
+- [x] **UNIV-2 (P1 검증)**: 활성화 후 실측 — `market_overlay_diagnostics`
+      채워짐(pre_pool 14건, quotes 13/14, added 5건) 확인
+      (`logs/univ1_market_overlay_shadow_compose_2026-07-12.log`). DB
+      교차검증(`universe_freeze_run_items`)으로 07-03은 정상 동작, 06-30~07-10
+      중 8거래일은 `added_count=0`임을 확인. — **완료(원인 규명까지 완료)**
+- [x] **UNIV-1-fix 범위 조사 (완료, 2026-07-12)**: intraday freeze
+      materialize 시점(08:50)과 F5 경합 문제의 수정 방안 3개(A: 시각 이동,
+      B: threshold 완화, C: 전일 거래대금 fallback)를 조사·비교.
+      A는 blast radius 과다(8+ 문서에 08:50 경계 하드코딩)로 부적합, B는
+      실측 근거 없는 완화라 금지 원칙 위배, **C만 채택** —
+      단 독립 구현 대신 **UNIV-3에 통합**(§2.2 참고, 동일 daily_price API
+      연동 중복 방지). 상세: `logs/univ1_fix_scope_investigation_2026-07-12.log`.
+      → UNIV-1-fix는 별도 백로그 항목이 아니라 UNIV-3의 하위 작업으로 재편.
+- [~] **UNIV-3 (P2, UNIV-1-fix 통합)** — **1순위**, 부분 완료(2026-07-12):
+  - [x] **F5 pre-market fallback shadow (완료)**: `_add_market_overlay()`가
+        F5(low_volume)로 전량 탈락할 때, `get_daily_price()`(전일 종가×거래량)
+        기반 추정 거래대금으로 "F5를 통과했을 후보"를 shadow로만 관측한다
+        (`_evaluate_f5_shadow_fallback()`, `universe_selection.py`).
+        `MarketOverlayDiagnostics`에 `shadow_fallback_evaluated`/
+        `shadow_fallback_evaluated_count`/`shadow_fallback_pass_count`/
+        `shadow_fallback_top_symbols` 필드 추가. **실제 선정에는 절대
+        반영하지 않는다**(shadow-first) — `added_count`는 변경 없이 0 유지.
+        테스트 2건 추가(정상 관측 1건 + `get_daily_price` 미지원 client
+        하위호환 1건), 전체 103건 통과.
+  - [x] **`relative_volume_surge`/`short_term_momentum` shadow 신호 (완료,
+        2026-07-12)**: market_overlay가 실제로 선정한 top_n(기본 5건)에 한해
+        `get_daily_price()` 기반으로 상대 거래량 급증(`relative_volume_surge`
+        = 당일/최근 20일 평균)과 5일/20일 수익률·"하락 후 반등"
+        플래그(`short_term_recovering`)를 계산해 `MomentumShadowSignal`로
+        기록한다(`_calc_momentum_shadow_signal()`,
+        `_evaluate_multiday_momentum_shadow()`). rate budget 보호를 위해
+        pre-pool 전체가 아니라 이미 선정된 소수(top_n)에만 적용. **스코어링/
+        선정 로직에는 영향을 주지 않는 순수 관측**(`MarketOverlayDiagnostics.
+        momentum_shadow_evaluated`/`momentum_shadow_signals`). 테스트 3건
+        추가(정상 관측/하위호환/실제 KIS raw dict 형태 재현), 전체 106건 통과.
+  - **⚠️ 라이브 검증 중 발견·수정한 버그(2026-07-12)**: 최초 구현은
+    `get_daily_price()`가 `.close`/`.volume` 속성을 가진 객체를 반환한다고
+    가정했으나, 실제 주입되는 `KISRestClient.get_daily_price()`(raw REST
+    client)는 KIS 원본 필드명(`stck_clpr`/`acml_vol`)의 **dict**를 반환한다
+    — 라이브 read-only client로 재검증(`logs/univ3_momentum_shadow_recheck_
+    2026-07-12.log`)하다가 모든 신호가 `None`으로 나오는 것을 발견해 원인을
+    특정했다. `_extract_bar_close()`/`_extract_bar_volume()` 헬퍼로 dict/객체
+    양쪽을 모두 지원하도록 수정, 재검증(`logs/univ3_momentum_shadow_recheck_
+    fixed_2026-07-12.log`)으로 실제 값이 채워지는 것을 확인했다. F5 shadow
+    fallback(`_evaluate_f5_shadow_fallback`)도 동일 버그가 있어 함께 수정.
+  - [ ] **관측 승격 판단 (미착수, F5 fallback + 모멘텀 신호 공통)**: 실거래일에
+        pre-market freeze/정상 사이클 모두에서 shadow 로그가 얼마나 자주/
+        어떤 종목으로 관측되는지 수일 누적 후, 후행 proxy(T+1/T+3) 개선이
+        확인되면 실제 선정/스코어링 반영으로 승격 판단.
+- [x] **UNIV-4 (P3)** — **2순위**, 완료(2026-07-12):
+  - [x] **staleness 감시 축소안 (완료)**: KIS에 지수 구성종목 API가 없음을
+        확인(§2.3), 자동 갱신 대신 `get_latest_effective_from()` +
+        `evaluate_index_membership_staleness()`로 read-only 감시 구현.
+        실측: age=15일(threshold 21일) → 정상. 테스트 7건 추가(pure function
+        5건 + postgres/in-memory repo 각 1건), 전체 통과.
+  - [x] **운영 대시보드 노출 (완료)**: `GET /instruments/index-membership/
+        staleness` read-only 엔드포인트 추가(`api/routes/instruments.py`,
+        `api/schemas.py::IndexMembershipStalenessResponse`) + 프론트엔드
+        `OperationsDashboardView`에 연결 — `is_stale=true`일 때만
+        WarningBanner 노출(정상 시 화면 변화 없음). API 테스트 3건,
+        프론트엔드 `tsc --noEmit` clean, `dashboard.test.tsx` 16건 +
+        전체 프론트엔드 스위트 361/363건 통과(나머지 2건은 무관 파일
+        `decisions.test.tsx`의 병렬 실행 타이밍 flake — 격리 실행 시
+        31/31 통과 확인, 이번 변경과 무관).
+  - [ ] **지수 구성종목 자동 갱신 (보류, 영구)**: KIS API 부재로 원안(§2.3
+        본문) 자체가 불가 — 수동 업로드 절차(RUNBOOK) 유지, staleness
+        감시로 영구 대체 확정.
 - [ ] **UNIV-5 (P4)**: core 장기 하락 종목 사이클 내 후순위화 — UNIV-3 관측
-      후 착수 여부만 재판단. — **4순위(보류)**
+      후 착수 여부만 재판단. — **다음 우선순위**
 
 ## 5. 우선순위 근거
 
@@ -201,6 +360,14 @@
 - UNIV-3: shadow 필드가 기록된 표본으로 "신호 상위군 vs 하위군" 후행
   proxy(T+1/T+3) 차이가 확인될 것 — `core_risk_off` 세션과 동일한 판단 원칙
   ("WATCH 증가가 아니라 후행 proxy 개선"이 기준).
+  - F5 shadow fallback(구현 완료): 실거래일 pre-market freeze 발생 시
+    `shadow_fallback_evaluated=true` 사이클에서 `shadow_fallback_top_symbols`가
+    실제로 채워지는지, 그 종목들의 후행 proxy가 `market_overlay` 정규 편입
+    종목과 유사한 수준인지 확인 — 확인되면 실제 선정 반영으로 승격.
+  - 멀티데이 모멘텀 shadow(구현 완료): `momentum_shadow_signals`에서
+    `short_term_recovering=true`인 종목군의 후행 proxy(T+1/T+3)가 그렇지
+    않은 종목군보다 개선되는지 수일 관측 후 확인 — 확인되면
+    `_calc_market_score()` 가중치에 실제 반영 승격 판단.
 - 공통: 하류 게이트(`entry_score`/`core_risk_off`) 코드는 diff 0이어야 한다.
 
 ## 7. 관련 문서

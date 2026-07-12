@@ -1,0 +1,51 @@
+kis_client: KISRestClient(api_key='PS5GnCJBg5ZPbbzmKKvsgQJksnrQxtv4yxOy', api_secret='+GKFpG+ZGJXoxtLbuNW5s94WPvUgcKmYXG2kARuYjt36EGXyhRQ9ugkstKL+kmZA7s9rwMo6HNmc3Otczl1/VbKEQQguS0ybTRs4WBkqpEH+xJ9huYcacJA0wPtrIn0LeA75KRwb7uPn0aPqb/nassNprl2jXo/incDQ/o7Mf618tjTH7JM=', account_number='', account_product_code='', env='live', base_url='https://openapi.koreainvestment.com:9443', budget_manager=<agent_trading.brokers.rate_limit.RateLimitBudgetManager object at 0xf1be8533b770>, dev_token_cache_enabled=True, dev_token_cache_path='.cache/kis_disclosure_token.json', cache_purpose=<CachePurpose.LIVE_DISCLOSURE_ACCESS_TOKEN: 'live_disclosure_access_token'>, approval_cache_enabled=False, approval_cache_path='.cache/kis_rest_approval_key.json', _QUOTE_CACHE_TTL=180.0)
+kis_client.env: live
+INFO:agent_trading.runtime.bootstrap:Live disclosure client created: env=live, cache_path=.cache/kis_disclosure_token.json, cache_enabled=True
+INFO:agent_trading.services.disclosure_seed_service:LiveDisclosureSeedService initialized (client=AVAILABLE)
+INFO:agent_trading.brokers.koreainvestment.token_cache:live_disclosure_access_token token cache: hit path=.cache/kis_disclosure_token.json
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/volume-rank?FID_COND_MRKT_DIV_CODE=J&FID_COND_SCR_DIV_CODE=20171&FID_INPUT_ISCD=0000&FID_DIV_CLS_CODE=0&FID_BLNG_CLS_CODE=3&FID_TRGT_CLS_CODE=111111111&FID_TRGT_EXLS_CLS_CODE=0000000000&FID_INPUT_PRICE_1=&FID_INPUT_PRICE_2=&FID_VOL_CNT= "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/ranking/volume-power?fid_cond_mrkt_div_code=J&fid_cond_scr_div_code=20168&fid_input_iscd=0000&fid_div_cls_code=0&fid_input_price_1=&fid_input_price_2=&fid_vol_cnt=&fid_trgt_exls_cls_code=0&fid_trgt_cls_code=0 "HTTP/1.1 200 OK"
+INFO:agent_trading.services.universe_selection:market_overlay pre-pool: 14 symbols (cap=50, env=live).
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=000660 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=402340 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=011070 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=010170 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=009150 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=105560 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=002990 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=240810 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=036930 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=005930 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=067630 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=115450 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=028300 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=047920 "HTTP/1.1 200 OK"
+INFO:agent_trading.brokers.koreainvestment.rest_client:get_quotes_batch: 14/14 symbols fetched successfully.
+INFO:agent_trading.services.universe_selection:market_overlay quotes fetched: 14/14.
+INFO:agent_trading.services.universe_selection:market_overlay symbols added to universe: 5 (cap=5, candidates=11).
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-daily-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=402340&FID_PERIOD_DIV_CODE=D&FID_ORG_ADJ_PRC=0 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-daily-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=009150&FID_PERIOD_DIV_CODE=D&FID_ORG_ADJ_PRC=0 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-daily-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=005930&FID_PERIOD_DIV_CODE=D&FID_ORG_ADJ_PRC=0 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-daily-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=240810&FID_PERIOD_DIV_CODE=D&FID_ORG_ADJ_PRC=0 "HTTP/1.1 200 OK"
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-daily-price?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=105560&FID_PERIOD_DIV_CODE=D&FID_ORG_ADJ_PRC=0 "HTTP/1.1 200 OK"
+INFO:agent_trading.services.universe_selection:market_overlay 멀티데이 모멘텀 shadow 관측(UNIV-3, 선정 미반영): [('402340', None, None, None, None), ('009150', None, None, None, None), ('005930', None, None, None, None), ('240810', None, None, None, None), ('105560', None, None, None, None)]
+=== source_type별 편입 종목 수 ===
+  core: 25건 — ['000080', '000100', '000120', '000150', '000210', '000240', '000270', '000660', '000670', '000720', '000810', '000880', '000990', '001040', '001430', '001440', '001450', '001680', '001800', '002030', '002380', '002790', '002840', '003030', '003090']
+  market_overlay: 5건 — ['005930', '009150', '105560', '402340', '240810']
+
+=== market_overlay diagnostics ===
+{
+  "enabled": true,
+  "skipped_reason": null,
+  "seed_pool_source": "kis_ranking",
+  "effective_pre_pool_size": 50,
+  "pre_pool_candidate_count": 14,
+  "quotes_requested_count": 14,
+  "quotes_received_count": 14,
+  "filtered_out_count": 3,
+  "scored_candidate_count": 11,
+  "added_count": 5
+}
+
+=== market_overlay가 core 대비 실제로 새로 추가한 심볼 ===
+  market_overlay 총 5건 중 core와 겹치지 않는 신규 5건: ['005930', '009150', '105560', '240810', '402340']

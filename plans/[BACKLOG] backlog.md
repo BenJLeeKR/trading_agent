@@ -23,9 +23,47 @@
   - 근본 원인: 모멘텀 포착 레이어(`_add_market_overlay`)가 `KIS_ENV=paper`
     이중 게이트로 6주 내내 완전 비활성 + core는 가격 무관·회전 없음 +
     지수 편입 데이터는 2026-06-24 수동 스냅샷으로 stale.
-  - 백로그: UNIV-1(라이브 read-only client 주입으로 overlay 활성화, 1순위) →
-    UNIV-2(1~2 거래일 실측) → UNIV-3(멀티데이 모멘텀 shadow 신호, 2순위) →
-    UNIV-4(지수 편입 자동 갱신, 3순위) → UNIV-5(core 후순위화, 보류).
+  - **2026-07-12 UNIV-1/2 실측 완료 — 원안 정정**: 라이브 read-only client
+    주입 배선은 이미 존재·정상 동작(신규 배선 불필요, `env=paper` 가설은
+    틀렸음). 실제 원인은 intraday freeze materialize 시각(`08:50`, 장 시작
+    09:00 전)과 F5 누적거래대금 필터의 경합 — 08:50에 freeze되면 당일
+    누적거래대금이 0이라 market_overlay 후보 전원이 탈락(`added_count=0`).
+    07-03처럼 freeze가 09:00 이후 materialize된 날은 정상 동작(5건 편입)
+    확인. 관련 3개 silent debug 로그를 warning으로 격상 + 회귀 테스트 3건
+    추가 완료. 상세: `[DESIGN] universe_sourcing_momentum_overlay_enablement_v1.md`
+    §2.1-정정, `logs/univ1_*_2026-07-12.log`.
+  - **2026-07-12 UNIV-1-fix 범위 조사 완료**: freeze 시각(08:50) 이동은
+    8개+ 다른 문서에 하드코딩된 경계라 blast radius 과다로 부적합, F5
+    threshold 단순 완화는 금지 원칙 위배 → **전일 거래대금 fallback 방식을
+    채택하되 독립 구현 대신 UNIV-3(일봉 데이터 재사용)에 통합**하기로 결정.
+    상세: `[DESIGN]` 문서 §2.1-fix, `logs/univ1_fix_scope_investigation_2026-07-12.log`.
+  - 백로그: UNIV-1(완료) → UNIV-2(완료) → UNIV-3(1순위, 부분 완료
+    2026-07-12) → **UNIV-4(2순위, 부분 완료 2026-07-12)** → UNIV-5(core
+    후순위화, 보류).
+  - **2026-07-12 UNIV-3 shadow 신호 구현 완료(F5 fallback + 멀티데이
+    모멘텀)**: (1) F5(low_volume) 전량 탈락 시 전일 종가×거래량 추정
+    거래대금으로 "F5를 통과했을 후보"를 관측(`_evaluate_f5_shadow_fallback`).
+    (2) market_overlay가 실제 선정한 top_n에 한해 상대 거래량 급증/5·20일
+    수익률/반등 플래그를 `MomentumShadowSignal`로 관측
+    (`_evaluate_multiday_momentum_shadow`, `_calc_momentum_shadow_signal`).
+    둘 다 **선정/스코어링에 미반영**(shadow-first). 라이브 재검증 중
+    `get_daily_price()`가 실제로는(raw `KISRestClient`) dict(`stck_clpr`/
+    `acml_vol`)를 반환하는데 객체 속성(`.close`/`.volume`)으로 잘못
+    가정했던 버그를 발견·수정(`_extract_bar_close`/`_extract_bar_volume`
+    헬퍼로 dict/객체 이중 지원). 테스트 5건 추가, 전체 106건 통과.
+    다음 단계는 코드 구현이 아니라 **수일 관측 후 승격 판단**.
+  - **2026-07-12 UNIV-4 staleness 감시 구현 완료**: KIS에 지수 구성종목
+    (전체 종목 리스트) API가 없음을 코드 조사로 확인(`rest_client.py`에는
+    업종 시세 API만 존재) → 자동 갱신 원안 대신 read-only staleness 감시만
+    구현. `InstrumentIndexMembershipRepository.get_latest_effective_from()`
+    (Postgres+in-memory) + `services/index_membership_staleness.py`
+    (`evaluate_index_membership_staleness()`, 21일 임계값). 실측
+    (`scripts/check_index_membership_staleness.py`): 마지막 반영
+    2026-06-27, age=15일 → 정상(6일 여유). 테스트 7건 추가. **운영 대시보드
+    노출까지 완료(2026-07-12)** — `GET /instruments/index-membership/
+    staleness` read-only 엔드포인트 + `OperationsDashboardView` WarningBanner
+    연결(`is_stale=true`일 때만 노출). API 테스트 3건 추가, 프론트엔드
+    타입체크/`dashboard.test.tsx` 16건 통과. **UNIV-4 완료.**
 
 - `core_risk_off` / `slow_score_v5` shadow 완화 후속 작업 — **⚠️ 2026-07-12
   전면 영구 중단** (관측 데이터/이력 문서로만 유지):

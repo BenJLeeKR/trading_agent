@@ -307,6 +307,14 @@ export async function getMarketOverlayFunnel(
   );
 }
 
+export async function getIndexMembershipStaleness(
+  thresholdDays = 21,
+): Promise<import("../types/api").IndexMembershipStalenessResponse> {
+  return request<import("../types/api").IndexMembershipStalenessResponse>(
+    `/instruments/index-membership/staleness?threshold_days=${thresholdDays}`
+  );
+}
+
 export async function getCashBalance(
   accountId: string
 ): Promise<import("../types/api").CashBalanceSnapshotView | null> {

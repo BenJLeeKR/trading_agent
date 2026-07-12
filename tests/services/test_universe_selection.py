@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Sequence
@@ -1722,6 +1723,343 @@ class TestMarketOverlay:
         ]
         if market_indices:
             assert market_indices[0] > 0
+
+    @pytest.mark.asyncio
+    async def test_empty_pre_pool_logs_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        """seed_pool이 전부 base liquidity filter에서 탈락하면 warning 로그를 남긴다."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(
+            _make_instrument(
+                "005930",
+                is_active=False,  # base liquidity filter에서 탈락시켜 pre_pool을 비운다
+            )
+        )
+
+        class _MockKIS:
+            async def get_quotes_batch(
+                self, symbols: Sequence[str], **kwargs: object
+            ) -> dict[str, dict[str, object]]:
+                return {}
+
+        svc = UniverseSelectionService(repos, kis_client=_MockKIS())  # type: ignore[arg-type]
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+
+        with caplog.at_level(logging.WARNING, logger="agent_trading.services.universe_selection"):
+            _, diagnostics = await svc.compose_with_diagnostics(ctx)
+
+        assert diagnostics.skipped_reason == "empty_pre_pool"
+        assert any(
+            record.levelno == logging.WARNING and "pre-pool 0건" in record.getMessage()
+            for record in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_quotes_returned_logs_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        """get_quotes_batch가 빈 결과를 반환하면 warning 로그를 남긴다."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(_make_instrument("005930"))
+
+        class _MockKIS:
+            async def get_quotes_batch(
+                self, symbols: Sequence[str], **kwargs: object
+            ) -> dict[str, dict[str, object]]:
+                return {}
+
+        svc = UniverseSelectionService(repos, kis_client=_MockKIS())  # type: ignore[arg-type]
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+
+        with caplog.at_level(logging.WARNING, logger="agent_trading.services.universe_selection"):
+            _, diagnostics = await svc.compose_with_diagnostics(ctx)
+
+        assert diagnostics.skipped_reason == "no_quotes_returned"
+        assert any(
+            record.levelno == logging.WARNING and "빈 결과 반환" in record.getMessage()
+            for record in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_all_candidates_filtered_logs_warning_with_reason_breakdown(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """F5(누적거래대금 부족)로 전부 탈락하면 사유별 breakdown과 함께 warning 로그를 남긴다.
+
+        UNIV-1 실측에서 발견한 장 시작 전(08:50) intraday freeze materialize
+        시나리오 재현 — acml_tr_pbmn이 거의 0이라 전 종목이 F5에서 탈락한다.
+        """
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(_make_instrument("005930"))
+
+        class _MockKIS:
+            async def get_quotes_batch(
+                self, symbols: Sequence[str], **kwargs: object
+            ) -> dict[str, dict[str, object]]:
+                return {
+                    "005930": {
+                        "stck_prpr": "65000",
+                        "prdy_ctrt": "2.5",
+                        "acml_tr_pbmn": "0",  # 장 시작 전 — 누적거래대금 0
+                        "stck_hgpr": "66000",
+                        "stck_oprc": "64000",
+                        "stck_lwpr": "63500",
+                    },
+                }
+
+        svc = UniverseSelectionService(repos, kis_client=_MockKIS())  # type: ignore[arg-type]
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+
+        with caplog.at_level(logging.WARNING, logger="agent_trading.services.universe_selection"):
+            _, diagnostics = await svc.compose_with_diagnostics(ctx)
+
+        assert diagnostics.skipped_reason == "all_candidates_filtered"
+        assert diagnostics.added_count == 0
+        matching = [
+            record
+            for record in caplog.records
+            if record.levelno == logging.WARNING and "전부 F4/F5 필터에서 탈락" in record.getMessage()
+        ]
+        assert len(matching) == 1
+        assert "low_volume" in matching[0].getMessage()
+
+    @pytest.mark.asyncio
+    async def test_f5_shadow_fallback_observes_without_selecting(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """UNIV-3: F5 전량 탈락 시 전일 일봉 기반 shadow fallback을 관측만 하고
+        실제 선정에는 반영하지 않는다."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(_make_instrument("005930"))
+
+        class _DailyBar:
+            def __init__(self, close: float, volume: int) -> None:
+                self.close = close
+                self.volume = volume
+
+        class _MockKIS:
+            async def get_quotes_batch(
+                self, symbols: Sequence[str], **kwargs: object
+            ) -> dict[str, dict[str, object]]:
+                return {
+                    "005930": {
+                        "stck_prpr": "65000",
+                        "prdy_ctrt": "2.5",
+                        "acml_tr_pbmn": "0",  # 장 시작 전 — 당일 누적거래대금 0
+                        "stck_hgpr": "66000",
+                        "stck_oprc": "64000",
+                        "stck_lwpr": "63500",
+                    },
+                }
+
+            async def get_daily_price(self, symbol: str) -> list[_DailyBar]:
+                # 전일 종가 65000 × 거래량 5천만주 = 약 3.25조 — F5 threshold(10억) 상회
+                return [_DailyBar(close=65000.0, volume=50_000_000)]
+
+        svc = UniverseSelectionService(repos, kis_client=_MockKIS())  # type: ignore[arg-type]
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+
+        with caplog.at_level(logging.INFO, logger="agent_trading.services.universe_selection"):
+            selected, diagnostics = await svc.compose_with_diagnostics(ctx)
+
+        # shadow 평가 결과는 diagnostics에 기록되지만
+        assert diagnostics.skipped_reason == "all_candidates_filtered"
+        assert diagnostics.shadow_fallback_evaluated is True
+        assert diagnostics.shadow_fallback_evaluated_count == 1
+        assert diagnostics.shadow_fallback_pass_count == 1
+        assert diagnostics.shadow_fallback_top_symbols == ("005930",)
+        # 실제 선정 결과에는 절대 반영되지 않는다 (added_count=0 유지)
+        assert diagnostics.added_count == 0
+        market_overlay_symbols = [
+            s.symbol for s in selected if s.source_type == SourceType.MARKET_OVERLAY
+        ]
+        assert market_overlay_symbols == []
+        assert any(
+            "F5 shadow fallback" in record.getMessage() for record in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_f5_shadow_fallback_skipped_when_kis_client_lacks_daily_price(
+        self,
+    ) -> None:
+        """``get_daily_price``가 없는 client(하위 호환)에서는 shadow 평가를 건너뛴다."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(_make_instrument("005930"))
+
+        class _MockKIS:
+            async def get_quotes_batch(
+                self, symbols: Sequence[str], **kwargs: object
+            ) -> dict[str, dict[str, object]]:
+                return {
+                    "005930": {
+                        "stck_prpr": "65000",
+                        "prdy_ctrt": "2.5",
+                        "acml_tr_pbmn": "0",
+                        "stck_hgpr": "66000",
+                        "stck_oprc": "64000",
+                        "stck_lwpr": "63500",
+                    },
+                }
+
+        svc = UniverseSelectionService(repos, kis_client=_MockKIS())  # type: ignore[arg-type]
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+
+        _, diagnostics = await svc.compose_with_diagnostics(ctx)
+
+        assert diagnostics.skipped_reason == "all_candidates_filtered"
+        assert diagnostics.shadow_fallback_evaluated is False
+        assert diagnostics.shadow_fallback_evaluated_count == 0
+
+    @pytest.mark.asyncio
+    async def test_momentum_shadow_signal_observed_for_selected_symbols(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """UNIV-3: 실제 선정된 top_n에 한해 멀티데이 모멘텀 shadow 신호를 관측한다.
+
+        5일/20일 수익률·상대 거래량 급증을 계산해 diagnostics에 기록하되,
+        선정 결과(added_count/선택된 종목)에는 아무 영향도 주지 않는다.
+        """
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(_make_instrument("005930"))
+
+        class _DailyBar:
+            def __init__(self, close: float, volume: int) -> None:
+                self.close = close
+                self.volume = volume
+
+        # bars[0]이 최근 거래일 — 5일 전 대비 상승, 20일 전 대비는 -3%로
+        # "하락을 멈추고 반등 중"인 케이스를 재현한다.
+        daily_bars = [_DailyBar(close=65000.0, volume=20_000_000)]
+        daily_bars += [_DailyBar(close=62000.0, volume=8_000_000) for _ in range(3)]
+        daily_bars += [_DailyBar(close=63500.0, volume=7_000_000)]  # index 4 (5일 전)
+        daily_bars += [_DailyBar(close=61000.0, volume=6_000_000) for _ in range(14)]
+        daily_bars += [_DailyBar(close=67000.0, volume=6_500_000)]  # index 19 (20일 전)
+        daily_bars += [_DailyBar(close=66000.0, volume=6_200_000)]  # index 20 (평균용 21번째)
+
+        class _MockKIS:
+            async def get_quotes_batch(
+                self, symbols: Sequence[str], **kwargs: object
+            ) -> dict[str, dict[str, object]]:
+                return {
+                    "005930": {
+                        "stck_prpr": "65000",
+                        "prdy_ctrt": "2.5",
+                        "acml_tr_pbmn": "5000000000000",
+                        "stck_hgpr": "66000",
+                        "stck_oprc": "64000",
+                        "stck_lwpr": "63500",
+                    },
+                }
+
+            async def get_daily_price(self, symbol: str) -> list[_DailyBar]:
+                return daily_bars
+
+        svc = UniverseSelectionService(repos, kis_client=_MockKIS())  # type: ignore[arg-type]
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+
+        with caplog.at_level(logging.INFO, logger="agent_trading.services.universe_selection"):
+            selected, diagnostics = await svc.compose_with_diagnostics(ctx)
+
+        # 정상 편입은 그대로 유지 — shadow 신호가 선정에 영향을 주지 않는다.
+        market_overlay_symbols = [
+            s.symbol for s in selected if s.source_type == SourceType.MARKET_OVERLAY
+        ]
+        assert market_overlay_symbols == ["005930"]
+        assert diagnostics.added_count == 1
+
+        assert diagnostics.momentum_shadow_evaluated is True
+        assert len(diagnostics.momentum_shadow_signals) == 1
+        signal = diagnostics.momentum_shadow_signals[0]
+        assert signal.symbol == "005930"
+        assert signal.return_5d is not None and signal.return_5d > 0
+        assert signal.return_20d is not None and signal.return_20d < 0
+        assert signal.short_term_recovering is True
+        assert signal.relative_volume_surge is not None and signal.relative_volume_surge > 1.0
+        assert any(
+            "멀티데이 모멘텀 shadow 관측" in record.getMessage() for record in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_momentum_shadow_skipped_when_kis_client_lacks_daily_price(self) -> None:
+        """``get_daily_price``가 없는 client에서는 모멘텀 shadow 평가를 건너뛴다."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(_make_instrument("005930"))
+
+        class _MockKIS:
+            async def get_quotes_batch(
+                self, symbols: Sequence[str], **kwargs: object
+            ) -> dict[str, dict[str, object]]:
+                return {
+                    "005930": {
+                        "stck_prpr": "65000",
+                        "prdy_ctrt": "2.5",
+                        "acml_tr_pbmn": "5000000000000",
+                        "stck_hgpr": "66000",
+                        "stck_oprc": "64000",
+                        "stck_lwpr": "63500",
+                    },
+                }
+
+        svc = UniverseSelectionService(repos, kis_client=_MockKIS())  # type: ignore[arg-type]
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+
+        _, diagnostics = await svc.compose_with_diagnostics(ctx)
+
+        assert diagnostics.added_count == 1
+        assert diagnostics.momentum_shadow_evaluated is False
+        assert diagnostics.momentum_shadow_signals == ()
+
+    @pytest.mark.asyncio
+    async def test_momentum_shadow_signal_supports_raw_kis_dict_daily_price_rows(
+        self,
+    ) -> None:
+        """실제 ``KISRestClient.get_daily_price()``는 ``DailyPriceBar`` 객체가
+        아니라 KIS 원본 필드명(``stck_clpr``/``acml_vol``)의 raw dict list를
+        반환한다(운영 라이브 실측으로 확인, 2026-07-12). 이 실제 응답 형태를
+        직접 재현해 파싱이 정상 동작하는지 검증한다."""
+        repos = build_in_memory_repositories()
+        await repos.instruments.add(_make_instrument("005930"))
+
+        raw_daily_rows: list[dict[str, object]] = [
+            {"stck_clpr": "65000", "acml_vol": "20000000"},
+        ]
+        raw_daily_rows += [
+            {"stck_clpr": "62000", "acml_vol": "8000000"} for _ in range(3)
+        ]
+        raw_daily_rows += [{"stck_clpr": "63500", "acml_vol": "7000000"}]  # 5일 전
+        raw_daily_rows += [
+            {"stck_clpr": "61000", "acml_vol": "6000000"} for _ in range(14)
+        ]
+        raw_daily_rows += [{"stck_clpr": "67000", "acml_vol": "6500000"}]  # 20일 전
+        raw_daily_rows += [{"stck_clpr": "66000", "acml_vol": "6200000"}]
+
+        class _MockKIS:
+            async def get_quotes_batch(
+                self, symbols: Sequence[str], **kwargs: object
+            ) -> dict[str, dict[str, object]]:
+                return {
+                    "005930": {
+                        "stck_prpr": "65000",
+                        "prdy_ctrt": "2.5",
+                        "acml_tr_pbmn": "5000000000000",
+                        "stck_hgpr": "66000",
+                        "stck_oprc": "64000",
+                        "stck_lwpr": "63500",
+                    },
+                }
+
+            async def get_daily_price(self, symbol: str) -> list[dict[str, object]]:
+                return raw_daily_rows
+
+        svc = UniverseSelectionService(repos, kis_client=_MockKIS())  # type: ignore[arg-type]
+        ctx = CompositionContext(account_id=FALLBACK_ACCOUNT_ID, since=NOW)
+
+        _, diagnostics = await svc.compose_with_diagnostics(ctx)
+
+        assert diagnostics.added_count == 1
+        assert diagnostics.momentum_shadow_evaluated is True
+        signal = diagnostics.momentum_shadow_signals[0]
+        assert signal.symbol == "005930"
+        assert signal.return_5d is not None and signal.return_5d > 0
+        assert signal.return_20d is not None and signal.return_20d < 0
+        assert signal.relative_volume_surge is not None and signal.relative_volume_surge > 1.0
 
 
 # ---------------------------------------------------------------------------

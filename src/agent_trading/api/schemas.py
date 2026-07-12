@@ -811,6 +811,16 @@ class TradingUniversePreviewResponse(BaseModel):
     active_intraday_freeze_comparison: TradingUniverseFreezeComparisonView | None = None
 
 
+class IndexMembershipStalenessResponse(BaseModel):
+    """`GET /instruments/index-membership/staleness` 응답 (UNIV-4 read-only 감시)."""
+
+    latest_effective_from: date | None = None
+    as_of: date
+    age_days: int | None = None
+    threshold_days: int
+    is_stale: bool
+
+
 class TradingUniverseCoverageItem(BaseModel):
     """Source-type level operating coverage over a recent lookback window."""
 

@@ -346,6 +346,14 @@ export interface MarketOverlayFunnelResponse {
   recent_items: MarketOverlayFunnelItem[];
 }
 
+export interface IndexMembershipStalenessResponse {
+  latest_effective_from: string | null;
+  as_of: string;
+  age_days: number | null;
+  threshold_days: number;
+  is_stale: boolean;
+}
+
 export interface TradeDecisionDetail {
   trade_decision_id: string;
   decision_context_id: string;

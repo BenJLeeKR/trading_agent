@@ -52,6 +52,7 @@ from agent_trading.services.universe_selection_types import (
     LiquidityFilterResult,
     MarketDataSnapshot,
     MarketOverlayDiagnostics,
+    MomentumShadowSignal,
     SelectedSymbol,
     SourceType,
 )
@@ -248,6 +249,100 @@ def _categorize_market_reason(snapshot: MarketDataSnapshot, score: float) -> str
             return INCLUSION_REASON_NEAR_HIGH
 
     return INCLUSION_REASON_PRICE_VOLUME_BREAKOUT
+
+
+def _extract_bar_close(bar: object) -> float | None:
+    """일봉 1건에서 종가를 추출한다.
+
+    ``KISRestClient.get_daily_price()``(raw REST client — 실제
+    ``run_decision_loop.py``에서 주입되는 경로)는 KIS 원본 필드명
+    (``stck_clpr``)을 그대로 담은 ``dict``를 반환하고, 일부 wrapper
+    (``kis_realtime_quote_source.get_daily_price``)는 ``.close`` 속성을 가진
+    객체(``DailyPriceBar``)를 반환한다 — 두 형태를 모두 지원한다.
+    """
+    if isinstance(bar, dict):
+        val = bar.get("stck_clpr")
+    else:
+        val = getattr(bar, "close", None)
+    if val is None:
+        return None
+    try:
+        return float(str(val).replace(",", "").strip())
+    except (ValueError, TypeError):
+        return None
+
+
+def _extract_bar_volume(bar: object) -> float | None:
+    """일봉 1건에서 거래량을 추출한다 (``_extract_bar_close`` 참고, 동일한
+    dict(``acml_vol``)/객체(``.volume``) 이중 지원)."""
+    if isinstance(bar, dict):
+        val = bar.get("acml_vol")
+    else:
+        val = getattr(bar, "volume", None)
+    if val is None:
+        return None
+    try:
+        return float(str(val).replace(",", "").strip())
+    except (ValueError, TypeError):
+        return None
+
+
+def _calc_momentum_shadow_signal(
+    symbol: str,
+    bars: Sequence[object],
+) -> MomentumShadowSignal:
+    """UNIV-3: 일봉(dict 또는 ``DailyPriceBar`` 유사 객체, 최신순) 기반 shadow
+    신호 계산.
+
+    ``bars[0]``을 최근 거래일로 가정한다(``get_daily_price`` 반환 순서와 동일).
+    데이터가 부족하면 해당 필드는 ``None``으로 남긴다(보수적, 스코어링 미반영).
+    """
+    if not bars:
+        return MomentumShadowSignal(symbol=symbol)
+
+    def _close(idx: int) -> float | None:
+        if idx >= len(bars):
+            return None
+        return _extract_bar_close(bars[idx])
+
+    def _volume(idx: int) -> float | None:
+        if idx >= len(bars):
+            return None
+        return _extract_bar_volume(bars[idx])
+
+    relative_volume_surge: float | None = None
+    latest_volume = _volume(0)
+    if latest_volume is not None and len(bars) >= 21:
+        history_volumes = [
+            v for i in range(1, 21) if (v := _volume(i)) is not None
+        ]
+        if history_volumes:
+            avg_volume = sum(history_volumes) / len(history_volumes)
+            if avg_volume > 0:
+                relative_volume_surge = latest_volume / avg_volume
+
+    return_5d: float | None = None
+    latest_close = _close(0)
+    close_5d_ago = _close(4)
+    if latest_close is not None and close_5d_ago is not None and close_5d_ago != 0:
+        return_5d = (latest_close - close_5d_ago) / close_5d_ago
+
+    return_20d: float | None = None
+    close_20d_ago = _close(19)
+    if latest_close is not None and close_20d_ago is not None and close_20d_ago != 0:
+        return_20d = (latest_close - close_20d_ago) / close_20d_ago
+
+    short_term_recovering: bool | None = None
+    if return_5d is not None and return_20d is not None:
+        short_term_recovering = return_5d > 0 and return_20d >= -0.05
+
+    return MomentumShadowSignal(
+        symbol=symbol,
+        relative_volume_surge=relative_volume_surge,
+        return_5d=return_5d,
+        return_20d=return_20d,
+        short_term_recovering=short_term_recovering,
+    )
 
 
 # ── Pure functions: KIS response parsing ────────────────────────────────────
@@ -1200,7 +1295,12 @@ class UniverseSelectionService:
                 break
 
         if not pre_pool_candidates:
-            logger.debug("_add_market_overlay: pre-pool is empty — skipping.")
+            logger.warning(
+                "market_overlay: seed_pool %d건이 base liquidity filter에서 "
+                "전부 탈락 — pre-pool 0건 (seed_pool_source=%s).",
+                len(seed_pool_symbols),
+                seed_pool_source,
+            )
             return MarketOverlayDiagnostics(
                 enabled=True,
                 skipped_reason="empty_pre_pool",
@@ -1223,7 +1323,12 @@ class UniverseSelectionService:
         )
 
         if not raw_batch:
-            logger.debug("_add_market_overlay: no quotes returned — skipping.")
+            logger.warning(
+                "market_overlay: pre-pool %d건에 대해 get_quotes_batch가 "
+                "빈 결과 반환 — 시세 조회 자체가 실패했다(KIS API/네트워크/"
+                "budget 문제 가능성).",
+                len(pre_pool_candidates),
+            )
             return MarketOverlayDiagnostics(
                 enabled=True,
                 skipped_reason="no_quotes_returned",
@@ -1258,6 +1363,15 @@ class UniverseSelectionService:
         # ── Step 3: Parse → Filter → Score ───────────────────────────────
         scored: list[tuple[float, MarketDataSnapshot]] = []
         filtered_out_count = 0
+        # 2026-07-12: F4/F5 필터 탈락 사유를 종류별로 집계한다 — "전부 탈락"이
+        # 조용히 debug 레벨로만 남아 원인 파악이 안 되던 문제(UNIV-1 실측에서
+        # 발견: intraday freeze가 장 시작 전(08:50)에 materialize되면 F5
+        # 누적거래대금이 전부 0이라 시장 전 종목이 탈락하는데, 이게 지금까지
+        # 로그에 안 남아 있었다)를 해소하기 위해 사유 breakdown을 남긴다.
+        filtered_out_reason_counts: dict[str, int] = {}
+        # F5(low_volume)로 탈락한 후보의 snapshot을 별도로 보관 — pre-market
+        # freeze로 인한 전량 탈락 시 shadow fallback 재평가에 사용한다.
+        low_volume_candidates: list[MarketDataSnapshot] = []
 
         for sym, market_code in pre_pool_candidates:
             raw = raw_batch.get(sym)
@@ -1271,6 +1385,14 @@ class UniverseSelectionService:
             filter_result = await self._liquidity_filter.check_market_snapshot(snapshot)
             if not filter_result.passed:
                 filtered_out_count += 1
+                # fail_reason은 "low_volume:12345" 같은 값 등 세부 파라미터를
+                # 포함할 수 있어, 집계 키는 콜론 앞부분(카테고리)만 사용한다.
+                reason_category = str(filter_result.fail_reason or "unknown").split(":", 1)[0]
+                filtered_out_reason_counts[reason_category] = (
+                    filtered_out_reason_counts.get(reason_category, 0) + 1
+                )
+                if reason_category == "low_volume":
+                    low_volume_candidates.append(snapshot)
                 logger.debug(
                     "Market overlay candidate %s excluded: %s",
                     sym,
@@ -1283,7 +1405,17 @@ class UniverseSelectionService:
             scored.append((score, snapshot))
 
         if not scored:
-            logger.debug("_add_market_overlay: no candidates passed filters — skipping.")
+            logger.warning(
+                "market_overlay: 후보 %d건 전부 F4/F5 필터에서 탈락 — 편입 0건. "
+                "탈락 사유별 건수=%s (장 시작 직후처럼 누적거래대금이 아직 형성되지 "
+                "않은 시점에 freeze가 materialize되면 F5=low_volume으로 전부 "
+                "탈락할 수 있다 — UNIV-1 실측 참고).",
+                len(pre_pool_candidates),
+                filtered_out_reason_counts,
+            )
+            shadow_diag = await self._evaluate_f5_shadow_fallback(
+                low_volume_candidates, ctx
+            )
             return MarketOverlayDiagnostics(
                 enabled=True,
                 skipped_reason="all_candidates_filtered",
@@ -1300,6 +1432,7 @@ class UniverseSelectionService:
                 filter_pass_rate=0.0,
                 scored_capture_rate=0.0,
                 overlay_capture_rate=0.0,
+                **shadow_diag,
             )
 
         # ── Step 6: Select top N ─────────────────────────────────────────
@@ -1324,6 +1457,11 @@ class UniverseSelectionService:
             ctx.market_overlay_cap,
             len(scored),
         )
+
+        # UNIV-3: 실제 선정된 top_n에 한해서만 멀티데이 모멘텀 shadow 신호를
+        # 부가로 관측한다(rate budget 보호, 선정 결과에는 영향 없음).
+        momentum_diag = await self._evaluate_multiday_momentum_shadow(top_n)
+
         return MarketOverlayDiagnostics(
             enabled=True,
             skipped_reason=None,
@@ -1343,7 +1481,151 @@ class UniverseSelectionService:
                 len(top_n),
                 len(pre_pool_candidates),
             ),
+            **momentum_diag,
         )
+
+    async def _evaluate_f5_shadow_fallback(
+        self,
+        low_volume_candidates: list[MarketDataSnapshot],
+        ctx: CompositionContext,
+    ) -> dict[str, object]:
+        """F5(low_volume) 전량 탈락 시, 전일 일봉 기반 shadow 재평가 (UNIV-3).
+
+        장 시작 전(예: 08:50) freeze materialize로 당일 누적거래대금이
+        미형성인 상태에서 F5가 seed pool 전원을 탈락시키는 경우, 전일
+        종가×거래량으로 추정한 거래대금을 사용해 "F5를 통과했을 후보"를
+        **관측만** 한다. 실제 universe 선정에는 반영하지 않는다
+        (shadow-first 원칙 — `[DESIGN] universe_sourcing_momentum_overlay_
+        enablement_v1.md` §2.1-fix/§2.2 참고).
+
+        ``kis_client``에 ``get_daily_price``가 없으면(구버전 mock 등)
+        평가 자체를 건너뛴다 — 하위 호환.
+        """
+        get_daily_price = getattr(self._kis_client, "get_daily_price", None)
+        if not low_volume_candidates or not callable(get_daily_price):
+            return {}
+
+        # rate budget 보호: shadow 평가는 low_volume 후보 전체가 아니라
+        # effective pre-pool 크기만큼만 수행한다(이미 pre_pool_candidates가
+        # 그 상한이므로 여기서는 추가 cap 없이 그대로 사용해도 안전).
+        evaluated = 0
+        shadow_scored: list[tuple[float, str]] = []
+
+        for snapshot in low_volume_candidates:
+            evaluated += 1
+            try:
+                bars = await get_daily_price(snapshot.symbol)
+            except Exception:
+                logger.debug(
+                    "market_overlay shadow fallback: get_daily_price(%s) 실패 — 건너뜀.",
+                    snapshot.symbol,
+                )
+                continue
+            if not bars:
+                continue
+
+            close = _extract_bar_close(bars[0])
+            volume = _extract_bar_volume(bars[0])
+            if close is None or volume is None:
+                continue
+
+            estimated_trade_amount = Decimal(str(close)) * Decimal(str(volume))
+            if estimated_trade_amount < _ACC_VOLUME_THRESHOLD:
+                continue
+
+            # shadow score: 당일 등락률/고가 근접도는 실측값 그대로 쓰고,
+            # 거래대금 축만 전일 추정치로 대체한 임시 snapshot으로 점수화한다.
+            shadow_snapshot = MarketDataSnapshot(
+                symbol=snapshot.symbol,
+                market=snapshot.market,
+                current_price=snapshot.current_price,
+                change_rate=snapshot.change_rate,
+                acc_trade_amount=estimated_trade_amount,
+                high_price=snapshot.high_price,
+                low_price=snapshot.low_price,
+                open_price=snapshot.open_price,
+                iscd_stat_cls_code=snapshot.iscd_stat_cls_code,
+            )
+            shadow_scored.append((_calc_market_score(shadow_snapshot), snapshot.symbol))
+
+        if evaluated == 0:
+            return {}
+
+        shadow_scored.sort(key=lambda x: x[0], reverse=True)
+        top_n = shadow_scored[: ctx.market_overlay_cap]
+
+        logger.info(
+            "market_overlay F5 shadow fallback: 전일 거래대금 추정으로 %d/%d건이 "
+            "F5를 통과했을 것으로 관측됨(상위 %d건=%s) — 실제 선정에는 미반영 "
+            "(shadow-first, UNIV-3).",
+            len(shadow_scored),
+            evaluated,
+            len(top_n),
+            [sym for _score, sym in top_n],
+        )
+
+        return {
+            "shadow_fallback_evaluated": True,
+            "shadow_fallback_evaluated_count": evaluated,
+            "shadow_fallback_pass_count": len(shadow_scored),
+            "shadow_fallback_top_symbols": tuple(sym for _score, sym in top_n),
+        }
+
+    async def _evaluate_multiday_momentum_shadow(
+        self,
+        top_n: list[tuple[float, MarketDataSnapshot]],
+    ) -> dict[str, object]:
+        """UNIV-3: market_overlay가 실제 선정한 종목의 멀티데이 모멘텀을 shadow로
+        관측한다 (`[DESIGN] universe_sourcing_momentum_overlay_enablement_v1.md`
+        §2.2 — 정책 문서 §4.4의 "당일 스파이크가 아니라 새로 시작되는 추세
+        포착" 의도를 검증하기 위함).
+
+        현재 `_calc_market_score()`는 당일 등락률/거래대금/신고가 근접도만
+        보므로, 실제로 선정된 종목이 멀티데이 모멘텀 관점에서도 타당한지
+        (거래량 급증, 하락 후 반등 여부)를 부가로 기록만 한다 — 스코어링/선정
+        로직에는 어떤 영향도 주지 않는다.
+
+        rate budget 보호를 위해 pre-pool 전체가 아니라 이미 선정된 top_n
+        (기본 5건)에 대해서만 조회한다. ``kis_client``에 ``get_daily_price``가
+        없으면(구버전 mock 등) 평가를 건너뛴다 — 하위 호환.
+        """
+        get_daily_price = getattr(self._kis_client, "get_daily_price", None)
+        if not top_n or not callable(get_daily_price):
+            return {}
+
+        signals: list[MomentumShadowSignal] = []
+        for _score, snapshot in top_n:
+            try:
+                bars = await get_daily_price(snapshot.symbol)
+            except Exception:
+                logger.debug(
+                    "market_overlay momentum shadow: get_daily_price(%s) 실패 — 건너뜀.",
+                    snapshot.symbol,
+                )
+                continue
+            signals.append(_calc_momentum_shadow_signal(snapshot.symbol, bars))
+
+        if not signals:
+            return {}
+
+        logger.info(
+            "market_overlay 멀티데이 모멘텀 shadow 관측(UNIV-3, 선정 미반영): %s",
+            [
+                (
+                    s.symbol,
+                    s.relative_volume_surge,
+                    s.return_5d,
+                    s.return_20d,
+                    s.short_term_recovering,
+                )
+                for s in signals
+            ],
+        )
+
+        return {
+            "momentum_shadow_evaluated": True,
+            "momentum_shadow_signals": tuple(signals),
+        }
 
     async def _apply_exclusions(
         self,
