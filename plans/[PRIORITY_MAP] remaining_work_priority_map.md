@@ -75,6 +75,16 @@
   아니다. SPPV-3 착수는 계속 보류, 다음 과제(`fast_score_v2` 검증 등)를
   구체화했다.
 
+- 작성자: Claude
+- 수정일자: 2026-07-14 (8차, §17.5 후속 3과제 — SPPV-2.10)
+- 수정내용: §17.5가 지시한 후속 3과제(`fast_score_v2` shadow 2종,
+  `risk_adj_momentum_3m` 18개월 창 재검증, `reversal_1m` 하락장 반분
+  안정성)를 실행했다. `fast_score_v2` 2종 모두 No-Go(하락장 역전이
+  원안과 거의 동일) — `rsi_signal`이 부분 원인일 뿐이었음을 재확인.
+  `risk_adj_momentum_3m`은 18개월 창에서 T+20 t_NW=2.03으로 marginal
+  통과 — Watch 유지, 조건부 상향. `reversal_1m`은 반분 표본 개별 유의
+  미달로 Hold 유지. SPPV-3 착수는 계속 보류.
+
 ## 최근 메모
 
 > **📌 2026-07-14 BUY 주문경로 근본 복구 기준 확정 (최신, 최우선 반영)**:
@@ -185,6 +195,20 @@
 > momentum_3m` 재검증, `reversal_1m` 하락장 조건부 오버레이 분리 검증)를
 > 구체화했다. 상세: `plans/[DESIGN] signal_predictive_power_validation.md`
 > §17.
+
+> **📌 2026-07-14 SPPV-2.10 완료 — §17.5 후속 3과제 실측 (최신)**: §17.5가
+> 지시한 후속 3과제를 실제로 수행했다. **`fast_score_v2`(rsi_signal
+> 제거/부호반전) shadow 2종 모두 No-Go** — 하락장 T+5 spread가 원안
+> (t_NW=-2.79)과 거의 동일하게 역전(drop -2.41, flip -2.32) —
+> `rsi_signal`이 부분 원인일 뿐 주된 원인이 아니었음을 재확인, §2.9의
+> 낙관적 프레이밍을 하향 조정한다. `risk_adj_momentum_3m`의 1차 창을
+> 12→18개월로 넓히자 T+20 pooled spread t_NW이 1.47→**2.03**으로 §16
+> 게이트 문턱을 겨우 통과했으나 T+5(1.97)는 여전히 미달인 marginal
+> 결과라 **"Watch 유지, 조건부 상향"**에 그친다. `reversal_1m`은 하락장
+> 96거래일을 시간순 반분해 안정성을 확인 — 방향은 전체/전반부/후반부
+> 모두 일관되나(전반 1.87/후반 1.33) 반분 표본 각각은 개별 유의 문턱을
+> 넘지 못해 **Hold 유지**. **SPPV-3 착수는 계속 보류**한다. 상세:
+> `plans/[DESIGN] signal_predictive_power_validation.md` §18.
 
 > **📌 2026-07-12 방향 전환 (이력, 2026-07-14 결론으로 대체)**:
 > 지난 6주(2026-06-01~07-12) 매수 0건은 시스템 오류가 아니라 **하락장에서
@@ -4078,11 +4102,23 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      완전한 Go는 아니다. `reversal_1m`은 하락장 조건부 후보로 분리
      검토 필요. SPPV-3 착수는 계속 보류. 상세:
      `plans/[DESIGN] signal_predictive_power_validation.md` §17.
-   - **SPPV-3(보류 유지, 사유 재교체)**: 착수 조건은 §17에서 확인된
-     후속 검증(`fast_score_v2` 재조합 검증, `risk_adj_momentum_3m`
-     재검증)에서 안정적 알파 확인 — 사용자 판단 필요(§14.5, §17.5).
-     착수 시 regime/allocation/strategy/source를 복원한
-     `entry_score` point-in-time 재현과 signal/risk-off/regime
+   - **SPPV-2.10(완료, 2026-07-14, §17.5 후속 3과제)**: `fast_score_v2`
+     (rsi_signal 제거/부호반전) shadow 2종, `risk_adj_momentum_3m` 1차
+     창 18개월 확장, `reversal_1m` 하락장 반분 안정성을 실측. **결과:
+     `fast_score_v2` 2종 모두 No-Go** — 하락장 T+5 spread가 원안과 거의
+     동일하게 역전(drop -2.41/flip -2.32, 원안 -2.79) — `rsi_signal`은
+     부분 원인일 뿐이었음. `risk_adj_momentum_3m`은 18개월 창 T+20
+     t_NW=2.03으로 marginal 통과 — Watch 유지, 조건부 상향. `reversal_
+     1m`은 반분 표본 개별 유의 미달 — Hold 유지. SPPV-3 착수는 계속
+     보류. 상세: `plans/[DESIGN] signal_predictive_power_validation.md`
+     §18.
+   - **SPPV-3(보류 유지, 사유 재교체)**: §18(SPPV-2.10)에서 `fast_
+     score_v2` 2종 모두 No-Go로 확인됐고, `risk_adj_momentum_3m`은
+     marginal한 Watch에 머물러 있다 — 착수 조건은 `risk_adj_momentum_3m`
+     의 창 경계 민감도 재확인 또는 `fast_score` 전면 재설계에서 안정적
+     알파 확인 — 사용자 판단 필요(§14.5, §17.5, §18.6). 착수 시
+     regime/allocation/strategy/source를 복원한 `entry_score`
+     point-in-time 재현과 signal/risk-off/regime
      eligibility 중복 억제 ablation.
    - **SPPV-4**: Virtual BUY의 `candidate → selected → expected value → would_buy
      → submitted`, MFE/MAE/낙폭/비용 차감 기대수익 비교.

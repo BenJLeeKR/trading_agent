@@ -1,0 +1,58 @@
+INFO:validate_signal_predictive_power_v7_followup:[20/87] 누적 표본 13060건
+INFO:validate_signal_predictive_power_v7_followup:[40/87] 누적 표본 26120건
+INFO:validate_signal_predictive_power_v7_followup:[60/87] 누적 표본 39180건
+INFO:validate_signal_predictive_power_v7_followup:[80/87] 누적 표본 52240건
+INFO:validate_signal_predictive_power_v7_followup:[87/87] 누적 표본 56753건
+INFO:validate_signal_predictive_power_v7_followup:전체 3년 표본 56753건, 실패 0종목
+
+=== SPPV-2.10 — §17.5 후속 3과제 실측 ===
+
+[과제 1] fast_score_v2 (rsi_signal 제거/반전) — §16 이원 기준
+  [fast_score_v2_drop]
+    T+5: 1차(12m) spread t_NW=0.59, 2차(3년) spread t_NW=-0.17
+          bullish_trend(n=351): t_NW=0.29
+          bearish_trend(n=96): t_NW=-2.41
+          range_bound(n=200): t_NW=0.65
+          event_driven_unstable(n=6): 표본부족
+    T+20: 1차(12m) spread t_NW=0.42, 2차(3년) spread t_NW=0.48
+          bullish_trend(n=351): t_NW=-0.15
+          bearish_trend(n=96): t_NW=-0.56
+          range_bound(n=200): t_NW=1.64
+          event_driven_unstable(n=6): 표본부족
+  [fast_score_v2_flip]
+    T+5: 1차(12m) spread t_NW=0.64, 2차(3년) spread t_NW=-0.15
+          bullish_trend(n=351): t_NW=0.12
+          bearish_trend(n=96): t_NW=-2.32
+          range_bound(n=200): t_NW=0.82
+          event_driven_unstable(n=6): 표본부족
+    T+20: 1차(12m) spread t_NW=0.53, 2차(3년) spread t_NW=0.48
+          bullish_trend(n=351): t_NW=-0.22
+          bearish_trend(n=96): t_NW=-0.58
+          range_bound(n=200): t_NW=1.76
+          event_driven_unstable(n=6): 표본부족
+  [fast_score_orig_recomputed]
+    T+5: 1차(12m) spread t_NW=0.34, 2차(3년) spread t_NW=-0.52
+          bullish_trend(n=351): t_NW=-0.04
+          bearish_trend(n=96): t_NW=-2.79
+          range_bound(n=200): t_NW=0.57
+          event_driven_unstable(n=6): 표본부족
+    T+20: 1차(12m) spread t_NW=0.12, 2차(3년) spread t_NW=0.04
+          bullish_trend(n=351): t_NW=-0.54
+          bearish_trend(n=96): t_NW=-0.84
+          range_bound(n=200): t_NW=1.62
+          event_driven_unstable(n=6): 표본부족
+
+[과제 2] risk_adj_momentum_3m — 1차 창 12개월 vs 18개월 재검증
+  [12m 창, cutoff=2025-06-16, 표본=21315건, 국면분포={'bullish_trend': 20793, 'range_bound': 522}]
+    T+5: spread t_NW=1.55, ic t_NW=-0.58
+    T+20: spread t_NW=1.47, ic t_NW=0.07
+  [18m 창, cutoff=2024-12-15, 표본=31494건, 국면분포={'bearish_trend': 1218, 'range_bound': 6525, 'event_driven_unstable': 174, 'bullish_trend': 23577}]
+    T+5: spread t_NW=1.97, ic t_NW=0.09
+    T+20: spread t_NW=2.03, ic t_NW=0.78
+
+[과제 3] reversal_1m 하락장 조건부 오버레이 — 표본 내(전반부/후반부) 안정성
+  하락장 거래일 총 96일, 전반부 48일 / 후반부 48일
+    T+5: 전체(n=96) spread t_NW=2.13, 전반부(n=48) t_NW=1.87, 후반부(n=48) t_NW=1.33
+    T+20: 전체(n=96) spread t_NW=1.47, 전반부(n=48) t_NW=0.79, 후반부(n=48) t_NW=1.61
+
+산출 저장: logs/signal_ic_sppv2_10_followup_2026-07-14.json

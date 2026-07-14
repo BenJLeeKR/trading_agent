@@ -15,6 +15,13 @@
 조정 모멘텀)이 3년 pooled에서 유의(t_NW=2.07)하고 하락장에서도 역전
 되지 않아 유일한 "Watch" 후보로 남았으나, §16 Go 게이트(1차+2차 모두
 충족)는 아직 완전히 통과하지 못해 SPPV-3 착수는 계속 보류한다.**
+**§17.5 후속 3과제(SPPV-2.10, §18) 완료 — `fast_score_v2`(rsi_signal
+제거/반전 두 변형 모두)는 하락장 역전이 거의 그대로 남아(T+5
+t_NW=-2.3~-2.4) No-Go로 판정, `risk_adj_momentum_3m`은 1차 창을
+18개월로 넓히자 T+20 t_NW=2.03으로 문턱을 겨우 넘었으나 marginal이라
+"Watch 유지, 조건부 상향"에 그친다. `reversal_1m`은 하락장 T+5에서
+방향은 일관되나 반분 표본 각각은 유의 문턱 미달 — Hold 유지. SPPV-3
+착수는 계속 보류한다.**
 상위 문서: `plans/[ANALYSIS] foundational_design_review_objective_alignment.md`
 (undated 버전이 canonical — dated 파일명은 존재하지 않음, 이력 참고 시에도
 이 파일을 기준으로 한다)
@@ -119,6 +126,22 @@
   후보로 분리 검토가 필요하다.** SPPV-3 착수는 계속 보류하되,
   `risk_adj_momentum_3m`을 "Watch" 후보로 다음 검증 대상에 추가한다.
   상세: §17.
+
+- 작성자: Claude
+- 수정일자: 2026-07-14 (8차, §17.5 후속 3과제 — SPPV-2.10)
+- 수정내용: §17.5가 지시한 후속 3과제를 실제로 수행했다(SPPV-2.10, §18).
+  (1) **`fast_score_v2` shadow 2종(rsi_signal 제거/부호반전) 검증 —
+  둘 다 No-Go.** 하락장 T+5 spread가 원안(t_NW=-2.79)과 거의 다르지
+  않게 역전됨(drop -2.41, flip -2.32) — `rsi_signal`이 하락장 역전의
+  일부만 설명했을 뿐 주된 원인이 아니었음을 재확인, §17의 낙관적
+  프레이밍을 하향 조정한다. (2) `risk_adj_momentum_3m`의 1차 창을
+  12→18개월로 넓히자 T+20 pooled spread t_NW이 1.47→**2.03**으로 §16
+  게이트 문턱을 처음 넘었으나, T+5(1.97)는 여전히 미달이고 문턱을
+  간신히 넘은 marginal 결과라 "Watch 유지, 조건부 상향"으로만 기록한다.
+  (3) `reversal_1m` 하락장(96거래일) 표본을 시간순 반분해 안정성을
+  확인 — 방향은 전체/전반부/후반부 모두 양(+)으로 일관되나, 반분 표본
+  각각은 개별적으로 |t_NW|≥2 문턱을 넘지 못해(전반 1.87, 후반 1.33)
+  표본 확대 전까지 Hold로 유지한다. SPPV-3 착수는 계속 보류. 상세: §18.
 
 ---
 
@@ -227,14 +250,31 @@ canonical),
     redesign.py`(read-only, 신규 KIS 호출 0건 — 3년 캐시 재사용),
     `logs/signal_ic_sppv2_9_feature_redesign_2026-07-14.json`,
     `logs/sppv2_9_feature_redesign_run_2026-07-14.log`.
+- [x] **SPPV-2.10(신설)** §17.5 후속 3과제 실측 (완료, 2026-07-14)
+  - 작업 범위: (1) `fast_score_v2`(rsi_signal 제거/부호반전) shadow 2종
+    검증, (2) `risk_adj_momentum_3m` 1차 창 12→18개월 확장 재검증,
+    (3) `reversal_1m` 하락장 조건부 오버레이 표본 내(전/후반부) 안정성
+    확인.
+  - **결과: `fast_score_v2` 2종 모두 No-Go — 하락장 T+5 spread가 원안과
+    거의 동일하게 역전(drop -2.41, flip -2.32, 원안 -2.79) — `rsi_signal`
+    은 부분 원인일 뿐 주된 원인이 아니었음.** `risk_adj_momentum_3m`은
+    18개월 창에서 T+20 t_NW=1.47→**2.03**으로 문턱을 겨우 넘었으나
+    T+5(1.97)는 미달, marginal — "Watch 유지, 조건부 상향". `reversal_1m`
+    은 하락장 반분 검증에서 방향은 일관되나(전반 1.87/후반 1.33) 개별
+    유의 문턱 미달 — Hold 유지. SPPV-3 착수는 계속 보류. §18 상세.
+  - 산출물: `scripts/validate_signal_predictive_power_v7_followup.py`
+    (read-only, 신규 KIS 호출 0건 — 3년 캐시 재사용),
+    `logs/signal_ic_sppv2_10_followup_2026-07-14.json`,
+    `logs/sppv2_10_followup_run_2026-07-14.log`.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 사유 재교체**: §12(1년, 자기참조 포함) 당시 "알파 근거
     강화"로 낙관했던 것이 §14(3년, 자기참조 제거) 확장 검증에서 반박됨 —
     하락장 표본에서 안정적인 종목 선택 능력을 확인하지 못했고 일부(fast_
     score)는 유의하게 역방향이었다. §17(SPPV-2.9)에서 `rsi_signal`이
-    그 원인 중 하나로 확인됐고, `risk_adj_momentum_3m`이 유일한 Watch
-    후보로 남았으나 아직 §16 Go 게이트를 완전히 통과하지 못해 착수
-    보류를 유지한다.
+    그 원인 중 하나로 확인됐으나, §18(SPPV-2.10)에서 `fast_score_v2`
+    변형 2종 모두 하락장 역전을 해소하지 못해 No-Go로 판정됐다.
+    `risk_adj_momentum_3m`이 18개월 창에서 marginal하게 §16 게이트에
+    근접했으나 확정 Go는 아니다 — 착수 보류를 유지한다.
   - 작업 범위: regime/allocation/strategy/source 복원, signal 약세와
     `risk_off_penalty`/eligibility 중복 억제 분해
 - [ ] **SPPV-4** 전체 BUY funnel back-simulation
@@ -897,17 +937,20 @@ bearish/range_bound 어느 국면 내부도 `overall_score`/`slow_score`가
 - `scripts/validate_signal_predictive_power_v4_extended_period.py`
 - `scripts/validate_signal_predictive_power_v5_recency_window.py`
 - `scripts/validate_signal_predictive_power_v6_feature_redesign.py`
+- `scripts/validate_signal_predictive_power_v7_followup.py`
 - `logs/signal_ic_sppv2_expanded_2026-07-14.json`
 - `logs/signal_ic_sppv2_5_regime_decomposition_2026-07-14.json`
 - `logs/signal_ic_sppv2_7_extended_period_2026-07-14.json`
 - `logs/signal_ic_sppv_recency_window_primary_2026-07-14.json`
 - `logs/signal_ic_sppv2_9_feature_redesign_2026-07-14.json`
+- `logs/signal_ic_sppv2_10_followup_2026-07-14.json`
 - `logs/sppv2_run_2026-07-14.log`, `logs/sppv2_5_run_2026-07-14.log`,
   `logs/sppv2_7_run_2026-07-14.log`, `logs/sppv_recency_window_run_2026-07-14.log`,
-  `logs/sppv2_9_feature_redesign_run_2026-07-14.log`
+  `logs/sppv2_9_feature_redesign_run_2026-07-14.log`,
+  `logs/sppv2_10_followup_run_2026-07-14.log`
 - `logs/_bars_cache_core88_2026-07-14/`(88종목 1년 캐시, 재사용 가능)
 - `logs/_bars_cache_core87_3y_2026-07-14/`(87종목+벤치마크 3년 캐시,
-  SPPV-2.7/2.8/2.9가 공유 재사용)
+  SPPV-2.7/2.8/2.9/2.10이 공유 재사용)
 
 ## 16. SPPV-2.8 — 검증 기간(period) 기준 재설계: 최근성 우선 + 필수 국면 표본 게이트 (2026-07-14)
 
@@ -1170,3 +1213,122 @@ ModuleNotFoundError: No module named 'dotenv'
    `bearish_trend`로 판정된 날에만 활성화하는 shadow 규칙을 별도 검증한다.
 4. `event_driven_unstable`은 여전히 표본 부족(3년 기준 6일)으로 이번에도
    판정 제외했다 — 미해결 한계로 유지.
+
+## 18. SPPV-2.10 — §17.5 후속 3과제 실측 검증 (2026-07-14)
+
+### 18.1 실행 개요
+
+§17.5가 남긴 3개 과제를 그대로 이어 실행했다(새 방법론 설계 없음, §16
+이원 기준·기존 함수 재사용). 3년 캐시(`logs/_bars_cache_core87_3y_
+2026-07-14/`)를 재사용해 **신규 KIS 호출 0건**(로그 확인)으로 검증했다.
+산출: `scripts/validate_signal_predictive_power_v7_followup.py`
+(read-only), `logs/signal_ic_sppv2_10_followup_2026-07-14.json`,
+`logs/sppv2_10_followup_run_2026-07-14.log`. 실행: 종료 코드 0, 87종목
+전체 성공(실패 0), 3년 표본 56,753건.
+
+### 18.2 과제 1 — `fast_score_v2` shadow 검증 (rsi_signal 제거/부호반전)
+
+`rsi_signal`을 (a) 제거하고 나머지 3개 sub-component 가중치를 재정규화한
+`fast_score_v2_drop`, (b) 부호만 반전한 `fast_score_v2_flip` 두 가지를
+운영 가중치 상수(0.3/0.2/0.15/0.35)는 그대로 두고 정의해 검증했다. 원안
+`fast_score`도 같은 파이프라인으로 재계산(`fast_score_orig_recomputed`)
+해 §17 수치와의 정합성을 함께 확인했다.
+
+| 신호 | horizon | 1차(12개월) pooled t_NW | 2차(3년) pooled t_NW | bearish_trend(3년, n=96) t_NW |
+|---|---|---|---|---|
+| fast_score_orig_recomputed | T+5 | 0.34 | -0.52 | **-2.79**(§17과 동일 재현) |
+| fast_score_v2_drop | T+5 | 0.59 | -0.17 | **-2.41** |
+| fast_score_v2_flip | T+5 | 0.64 | -0.15 | **-2.32** |
+| fast_score_v2_drop | T+20 | 0.42 | 0.48 | -0.56 |
+| fast_score_v2_flip | T+20 | 0.53 | 0.48 | -0.58 |
+
+**해석 — §17의 "rsi_signal이 원인"이라는 프레이밍을 하향 조정한다.**
+`rsi_signal`을 제거하거나 부호를 반전해도, 하락장 T+5 spread는 원안
+(-2.79)과 거의 다르지 않은 크기로 여전히 유의하게 역전된다(drop -2.41,
+flip -2.32 — 원안 대비 개선폭이 15~17%에 불과). 즉 `rsi_signal`은 §14/
+§17에서 관측된 하락장 역전 현상의 **부분적 기여자였을 뿐, 주된 원인이
+아니다** — `fast_trend`/`volume_confirmation`/`volatility_penalty` 등
+나머지 성분들도 하락장에서 함께 역방향으로 작동하고 있다는 뜻이다. 1차
+(최근 12개월)/2차(3년) pooled 어디에서도 두 변형 모두 유의한 양(+)의
+신호를 보이지 않았다.
+
+**판정: `fast_score_v2_drop`, `fast_score_v2_flip` 모두 No-Go.** 단일
+sub-component 제거/반전으로는 `fast_score`의 근본 문제(하락장 역전)가
+해결되지 않는다 — `fast_score`는 부분 수정이 아니라 전면 재설계 또는
+폐기 대상에 더 가깝다는 것이 이번 실측의 결론이다.
+
+### 18.3 과제 2 — `risk_adj_momentum_3m` 1차 창 12개월 vs 18개월
+
+| 1차 창 | cutoff | 표본 | 국면 분포(창 내부) | T+5 spread t_NW | T+20 spread t_NW |
+|---|---|---|---|---|---|
+| 12개월 | 2025-06-16 | 21,315건 | bullish 20,793 / range 522 (bearish 0) | 1.55 | 1.47 |
+| 18개월 | 2024-12-15 | 31,494건 | bullish 23,577 / range 6,525 / bearish 1,218 / event 174 | 1.97 | **2.03** |
+
+**해석**: 1차 창을 18개월로 넓히자 T+20 pooled spread가 처음으로 §16
+게이트 문턱(|t_NW|≥2)을 **간신히** 통과했다(2.03). 18개월 창 안에는
+하락장 표본(1,218 cross-sectional건, 약 14거래일)도 일부 포함되기
+시작해 12개월 창의 "하락장 완전 부재" 한계도 부분적으로 완화됐다. 다만
+(1) T+5(1.97)는 여전히 문턱 미달이고, (2) T+20의 2.03은 임계값을 겨우
+넘은 marginal 수치라 창 경계(±1~2개월)를 조금만 옮겨도 유의성이 사라질
+수 있는 **취약한 결과**다. §17의 2차(3년) 결과(bearish_trend 내부
+t_NW=0.39, 역전 없음)는 여전히 유효하므로 §16 게이트의 (b)는 이미
+충족돼 있었지만, (a)(1차 유의성)는 이번에 "12개월 미달 → 18개월 marginal
+통과"로 바뀐 것뿐이다.
+
+**판정: `risk_adj_momentum_3m` — Watch 유지, 조건부 상향(Hold에 가까운
+Watch).** 완전한 Go로 선언하지 않는다 — marginal한 문턱 통과 하나만으로
+결론을 키우지 말라는 원칙에 따라, 표본이 더 누적되거나(자연 경과), 창
+경계에 덜 민감한지 별도로 확인(예: 15개월/21개월도 함께 확인)한 뒤 재
+판단한다.
+
+### 18.4 과제 3 — `reversal_1m` 하락장 조건부 오버레이, 표본 내 안정성
+
+시장 공통 국면이 `bearish_trend`인 96거래일을 시간순으로 반분(전반부
+48일/후반부 48일)해 각각 재검증했다 — 최근 12개월 창에는 하락장 표본이
+전무해 "1차=최근 창" 기준을 그대로 적용할 수 없으므로, 그 대안으로 표본
+내 시간 분할 안정성을 확인했다.
+
+| horizon | 전체(n=96) t_NW | 전반부(n=48) t_NW | 후반부(n=48) t_NW |
+|---|---|---|---|
+| T+5 | **2.13** | 1.87 | 1.33 |
+| T+20 | 1.47 | 0.79 | 1.61 |
+
+**해석**: T+5에서는 방향(양(+))이 전체·전반부·후반부 모두 일관되지만,
+반분 표본 각각은 표본 수가 절반(48일)으로 줄면서 개별적으로는 |t_NW|≥2
+문턱을 넘지 못한다(전반 1.87, 후반 1.33) — 검정력 저하로 설명 가능한
+범위이지만, "전체 표본에서만 유의하고 반분하면 둘 다 미달"이라는 패턴은
+소표본 우연일 가능성을 완전히 배제할 수 없다는 뜻이기도 하다. T+20은
+전반부(0.79)가 특히 약해 T+5보다 근거가 얕다.
+
+**판정: `reversal_1m` — Hold 유지(T+5 한정, 하락장 조건부).** 방향
+일관성은 있으나 반분 안정성 검증에서 확정적 Go로 올릴 근거는 아직
+부족하다 — 하락장 표본이 추가로 누적되는 시점(다음 조정 국면 관측)에
+재검증한다.
+
+### 18.5 판정 종합 — SPPV-3 착수 보류 유지
+
+세 후보 중 §16 게이트를 완전히 통과한 것은 없다.
+
+| 후보 | 판정 | 근거 |
+|---|---|---|
+| `fast_score_v2_drop` | **No-Go** | 하락장 역전이 원안 대비 15~17%만 개선, 어디서도 유의한 양(+) 없음 |
+| `fast_score_v2_flip` | **No-Go** | 상동 |
+| `risk_adj_momentum_3m` | **Watch 유지(조건부 상향)** | 18개월 창에서 T+20 marginal 통과(2.03), T+5는 여전히 미달, 취약한 결과 |
+| `reversal_1m` | **Hold 유지(T+5 한정)** | 방향 일관되나 반분 표본 개별 유의성 미달 |
+
+**SPPV-3(entry_score 전체 재현) 착수는 계속 보류한다.** 이번 검증은
+"rsi_signal 하나만 고치면 fast_score가 살아난다"는 낙관적 가설을
+반박했고, 신호 재설계는 sub-component 하나를 바꾸는 수준이 아니라 더
+근본적인 재구성이 필요함을 시사한다.
+
+### 18.6 다음 단계
+
+1. `fast_score`는 부분 수정 대신 **전면 재설계 또는 폐기**를 검토
+   대상으로 격상한다 — `fast_trend`/`volume_confirmation`/
+   `volatility_penalty`도 개별적으로 하락장 기여도를 재점검한다.
+2. `risk_adj_momentum_3m`은 창 경계 민감도를 확인한다(15개월/21개월 등
+   중간값도 확인해 18개월 결과가 우연한 경계 효과인지 판별).
+3. `reversal_1m`은 다음 하락/조정 국면이 관측되면 표본을 추가해 반분
+   안정성을 재확인한다 — 인위적으로 표본을 늘릴 수 없으므로 시간 경과를
+   기다리는 항목으로 표시한다.
+4. `event_driven_unstable`은 여전히 판정 불가(3년 기준 6일) — 미해결.

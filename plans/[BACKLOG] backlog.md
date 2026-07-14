@@ -69,6 +69,17 @@
   아니다. SPPV-3 착수는 계속 보류, 다음 과제(`fast_score_v2` shadow
   검증 등)를 구체화했다.
 
+- 작성자: Claude
+- 수정일자: 2026-07-14 (8차, §17.5 후속 3과제 — SPPV-2.10)
+- 수정내용: §17.5가 지시한 후속 3과제를 실행했다(SPPV-2.10 신설).
+  `fast_score_v2`(rsi_signal 제거/부호반전) shadow 2종 모두 No-Go —
+  하락장 T+5 spread가 원안(t_NW=-2.79)과 거의 동일하게 역전(drop -2.41/
+  flip -2.32) — `rsi_signal`이 부분 원인일 뿐이었음을 재확인. `risk_
+  adj_momentum_3m`은 1차 창을 18개월로 넓히자 T+20 t_NW=2.03으로 §16
+  게이트를 겨우 통과 — Watch 유지, 조건부 상향. `reversal_1m`은 하락장
+  반분(전/후반부) 검증에서 개별 유의 미달로 Hold 유지. SPPV-3 착수는
+  계속 보류.
+
 ---
 
 ## 관리 원칙
@@ -237,9 +248,27 @@
     (read-only, 신규 KIS 호출 0건),
     `logs/signal_ic_sppv2_9_feature_redesign_2026-07-14.json`. 상세:
     `plans/[DESIGN] signal_predictive_power_validation.md` §17.
-  - **SPPV-3(보류 유지, 사유 재교체)**: 착수 조건은 §17(SPPV-2.9)에서
-    확정한 후속 검증(`fast_score_v2` 재조합, `risk_adj_momentum_3m`
-    재검증)에서 안정적 알파 확인 — 사용자 확인 필요. 착수 시 당시
+  - **SPPV-2.10(완료, 2026-07-14, §17.5 후속 3과제)**: `fast_score_v2`
+    (rsi_signal 제거/부호반전) shadow 2종 + `risk_adj_momentum_3m` 1차
+    창 18개월 확장 + `reversal_1m` 하락장 반분 안정성을 실측(3년 캐시
+    재사용, 신규 KIS 호출 0건). **결과: `fast_score_v2` 2종 모두
+    No-Go** — 하락장 T+5 spread가 원안(t_NW=-2.79)과 거의 동일하게
+    역전(drop -2.41, flip -2.32) — `rsi_signal`은 부분 원인일 뿐 주된
+    원인이 아니었음을 재확인, §17의 낙관적 프레이밍을 하향 조정한다.
+    `risk_adj_momentum_3m`은 18개월 창에서 T+20 t_NW=1.47→**2.03**으로
+    §16 게이트를 겨우 통과했으나 T+5(1.97)는 여전히 미달인 marginal
+    결과 — "Watch 유지, 조건부 상향". `reversal_1m`은 하락장 96거래일을
+    반분(전/후반부 48일씩)해 안정성 확인 — 방향은 일관되나(전반 1.87/
+    후반 1.33) 개별 유의 문턱 미달 — Hold 유지. SPPV-3 착수는 계속
+    보류. 산출: `scripts/validate_signal_predictive_power_v7_followup.py`
+    (read-only, 신규 KIS 호출 0건),
+    `logs/signal_ic_sppv2_10_followup_2026-07-14.json`. 상세:
+    `plans/[DESIGN] signal_predictive_power_validation.md` §18.
+  - **SPPV-3(보류 유지, 사유 재교체)**: §18(SPPV-2.10)에서 `fast_
+    score_v2` 2종 모두 No-Go로 확인됐고 `risk_adj_momentum_3m`은
+    marginal Watch에 머물러 있다 — 착수 조건은 `risk_adj_momentum_3m`
+    창 경계 민감도 재확인 또는 `fast_score` 전면 재설계에서 안정적
+    알파 확인 — 사용자 확인 필요. 착수 시 당시
     regime/allocation/strategy/source를 복원해
     `entry_score`를 point-in-time 재현하고 signal 약세, `risk_off_
     penalty`, regime eligibility block의 중복 억제를 ablation한다.
