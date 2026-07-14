@@ -80,6 +80,18 @@
   반분(전/후반부) 검증에서 개별 유의 미달로 Hold 유지. SPPV-3 착수는
   계속 보류.
 
+- 작성자: Claude
+- 수정일자: 2026-07-14 (9차, §18.6 후속 — SPPV-2.11)
+- 수정내용: §18.6이 지시한 세 과제를 실행했다(SPPV-2.11 신설). `fast_
+  score` leave-one-out 4종 분해 결과 `fast_trend` 제거 시 하락장 T+5
+  spread가 -2.79→-1.60으로 가장 크게 개선 — `rsi_signal`이 아니라
+  `fast_trend`가 주된 원인이었음을 정정. `risk_adj_momentum_3m`은
+  15~21개월 창에서 안정적 plateau(우연 아님, marginal). 국면 전환형
+  shadow 후보 `regime_switch_v1`을 신설해 2차(3년) pooled 트랙 최고
+  수치(T+5=2.60/T+20=2.36)를 확인했으나 1차는 하락장 표본 부재로 미달 —
+  가장 유망한 Watch 후보로 격상, 확정 Go는 아니다. `fast_score`는 전면
+  재설계 대상으로 확정. SPPV-3 착수는 계속 보류.
+
 ---
 
 ## 관리 원칙
@@ -264,11 +276,30 @@
     (read-only, 신규 KIS 호출 0건),
     `logs/signal_ic_sppv2_10_followup_2026-07-14.json`. 상세:
     `plans/[DESIGN] signal_predictive_power_validation.md` §18.
-  - **SPPV-3(보류 유지, 사유 재교체)**: §18(SPPV-2.10)에서 `fast_
-    score_v2` 2종 모두 No-Go로 확인됐고 `risk_adj_momentum_3m`은
-    marginal Watch에 머물러 있다 — 착수 조건은 `risk_adj_momentum_3m`
-    창 경계 민감도 재확인 또는 `fast_score` 전면 재설계에서 안정적
-    알파 확인 — 사용자 확인 필요. 착수 시 당시
+  - **SPPV-2.11(완료, 2026-07-14, §18.6 후속)**: `fast_score`
+    leave-one-out 4종(fast_trend/volume_confirmation/rsi_signal/
+    volatility_penalty 각각 제거) + `risk_adj_momentum_3m` 창 경계
+    민감도(12/15/18/21개월) + 국면 전환형 shadow `regime_switch_v1`
+    (비하락장=risk_adj_momentum_3m, 하락장=reversal_1m)을 실측(3년
+    캐시 재사용, 신규 KIS 호출 0건). **결과: `fast_trend` 제거 시
+    하락장 T+5 spread가 -2.79→-1.60(비유의 전환)으로 가장 크게 개선 —
+    §17/§18의 `rsi_signal` 원인 지목을 정정, 실제 주된 원인은 `fast_
+    trend`였다.** `risk_adj_momentum_3m`은 15~21개월 창에서 T+20
+    t_NW 1.90→2.03→2.04로 안정적 plateau(우연 아님, 여전히 marginal).
+    `regime_switch_v1`은 2차(3년) pooled T+5=2.60/T+20=2.36으로 트랙
+    최고 수치를 냈으나 1차(최근 12개월)는 하락장 표본 부재로 미달 —
+    가장 유망한 Watch 후보로 격상, 확정 Go는 아니다. `fast_score`는
+    전면 재설계 대상으로 확정. SPPV-3 착수는 계속 보류. 산출:
+    `scripts/validate_signal_predictive_power_v8_fast_score_teardown.py`
+    (read-only, 신규 KIS 호출 0건),
+    `logs/signal_ic_sppv2_11_fast_score_teardown_2026-07-14.json`.
+    상세: `plans/[DESIGN] signal_predictive_power_validation.md` §19.
+  - **SPPV-3(보류 유지, 사유 재교체)**: §19(SPPV-2.11)에서 `fast_score`
+    하락장 역전의 주된 원인이 `fast_trend`로 재확인됐고, 가장 유망한
+    `regime_switch_v1`도 1차 게이트를 하락장 표본 부재로 통과하지
+    못한다 — 착수 조건은 (a) 최근 12개월 창에 실제 하락 국면이 편입
+    되거나 (b) §16 게이트에 국면 조건부 신호용 예외 규정을 추가하는 것
+    — 사용자 확인 필요. 착수 시 당시
     regime/allocation/strategy/source를 복원해
     `entry_score`를 point-in-time 재현하고 signal 약세, `risk_off_
     penalty`, regime eligibility block의 중복 억제를 ablation한다.

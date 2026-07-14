@@ -1,0 +1,53 @@
+INFO:validate_signal_predictive_power_v8_fast_score_teardown:[20/87] 누적 표본 13060건
+INFO:validate_signal_predictive_power_v8_fast_score_teardown:[40/87] 누적 표본 26120건
+INFO:validate_signal_predictive_power_v8_fast_score_teardown:[60/87] 누적 표본 39180건
+INFO:validate_signal_predictive_power_v8_fast_score_teardown:[80/87] 누적 표본 52240건
+INFO:validate_signal_predictive_power_v8_fast_score_teardown:[87/87] 누적 표본 56753건
+INFO:validate_signal_predictive_power_v8_fast_score_teardown:전체 3년 표본 56753건, 실패 0종목
+
+=== SPPV-2.11 — §18.6 후속: fast_score 전면 분해 + 창 경계 민감도 + shadow 후보 ===
+
+[과제 1] fast_score leave-one-out 4종 — 어떤 성분을 빼야 하락장 역전이 해소되는가
+  [drop_fast_trend]
+    T+5: 1차(12m) spread t_NW=-0.04, 2차(3년) spread t_NW=-0.66, bearish_trend t_NW=-1.6
+    T+20: 1차(12m) spread t_NW=-0.93, 2차(3년) spread t_NW=-0.93, bearish_trend t_NW=-0.84
+  [drop_volume_confirmation]
+    T+5: 1차(12m) spread t_NW=0.55, 2차(3년) spread t_NW=-0.17, bearish_trend t_NW=-2.58
+    T+20: 1차(12m) spread t_NW=-0.08, 2차(3년) spread t_NW=-0.02, bearish_trend t_NW=-0.92
+  [drop_rsi_signal]
+    T+5: 1차(12m) spread t_NW=0.59, 2차(3년) spread t_NW=-0.16, bearish_trend t_NW=-2.39
+    T+20: 1차(12m) spread t_NW=0.43, 2차(3년) spread t_NW=0.49, bearish_trend t_NW=-0.55
+  [drop_volatility_penalty]
+    T+5: 1차(12m) spread t_NW=0.94, 2차(3년) spread t_NW=0.56, bearish_trend t_NW=-2.31
+    T+20: 1차(12m) spread t_NW=0.81, 2차(3년) spread t_NW=0.85, bearish_trend t_NW=-0.8
+  [fast_score_orig_recomputed]
+    T+5: 1차(12m) spread t_NW=0.34, 2차(3년) spread t_NW=-0.52, bearish_trend t_NW=-2.79
+    T+20: 1차(12m) spread t_NW=0.12, 2차(3년) spread t_NW=0.04, bearish_trend t_NW=-0.84
+
+[과제 2] risk_adj_momentum_3m — 1차 창 12/15/18/21개월 민감도
+  [12m 창, cutoff=2025-06-16, 표본=21315건]
+    T+5: spread t_NW=1.55, ic t_NW=-0.58
+    T+20: spread t_NW=1.47, ic t_NW=0.07
+  [15m 창, cutoff=2025-03-17, 표본=26535건]
+    T+5: spread t_NW=1.98, ic t_NW=-0.11
+    T+20: spread t_NW=1.9, ic t_NW=0.42
+  [18m 창, cutoff=2024-12-15, 표본=31494건]
+    T+5: spread t_NW=1.97, ic t_NW=0.09
+    T+20: spread t_NW=2.03, ic t_NW=0.78
+  [21m 창, cutoff=2024-09-15, 표본=36627건]
+    T+5: spread t_NW=1.75, ic t_NW=-0.01
+    T+20: spread t_NW=2.04, ic t_NW=0.86
+
+[과제 3] regime_switch_v1(비하락장=risk_adj_momentum_3m, 하락장=reversal_1m) — §16 이원 기준
+  T+5: 1차(12m) spread t_NW=1.55, 2차(3년) spread t_NW=2.6
+        bullish_trend(n=351): t_NW=1.79
+        bearish_trend(n=96): t_NW=2.13
+        range_bound(n=200): t_NW=1.04
+        event_driven_unstable(n=6): 표본부족
+  T+20: 1차(12m) spread t_NW=1.47, 2차(3년) spread t_NW=2.36
+        bullish_trend(n=351): t_NW=1.51
+        bearish_trend(n=96): t_NW=1.47
+        range_bound(n=200): t_NW=2.09
+        event_driven_unstable(n=6): 표본부족
+
+산출 저장: logs/signal_ic_sppv2_11_fast_score_teardown_2026-07-14.json

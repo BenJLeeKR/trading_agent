@@ -85,6 +85,18 @@
   통과 — Watch 유지, 조건부 상향. `reversal_1m`은 반분 표본 개별 유의
   미달로 Hold 유지. SPPV-3 착수는 계속 보류.
 
+- 작성자: Claude
+- 수정일자: 2026-07-14 (9차, §18.6 후속 — SPPV-2.11)
+- 수정내용: §18.6이 지시한 세 과제(`fast_score` leave-one-out 4종,
+  `risk_adj_momentum_3m` 창 경계 민감도 12~21개월, 국면 전환형 shadow
+  `regime_switch_v1`)를 실행했다. `fast_trend` 제거 시 하락장 T+5
+  spread가 -2.79→-1.60으로 가장 크게 개선 — `rsi_signal`이 아니라
+  `fast_trend`가 주된 원인이었음을 정정. `risk_adj_momentum_3m`은
+  15~21개월에서 안정적 plateau(우연 아님, marginal). `regime_switch_v1`
+  은 2차(3년) pooled 트랙 최고 수치(T+5=2.60/T+20=2.36)를 냈으나 1차는
+  하락장 표본 부재로 미달 — 가장 유망한 Watch 후보로 격상. SPPV-3
+  착수는 계속 보류.
+
 ## 최근 메모
 
 > **📌 2026-07-14 BUY 주문경로 근본 복구 기준 확정 (최신, 최우선 반영)**:
@@ -209,6 +221,27 @@
 > 모두 일관되나(전반 1.87/후반 1.33) 반분 표본 각각은 개별 유의 문턱을
 > 넘지 못해 **Hold 유지**. **SPPV-3 착수는 계속 보류**한다. 상세:
 > `plans/[DESIGN] signal_predictive_power_validation.md` §18.
+
+> **📌 2026-07-14 SPPV-2.11 완료 — fast_score 전면 분해 + 창 경계 민감도
+> + shadow 후보 (최신)**: §18.6이 지시한 세 과제를 실제로 수행했다.
+> **`fast_score` leave-one-out 4종(성분 각 1개씩 제거) 분해 결과,
+> `fast_trend`(SMA20 이격) 제거 시 하락장 T+5 spread가 -2.79→**-1.60(비
+> 유의 전환)**으로 가장 크게 개선됨 — §17/§18에서 `rsi_signal`을 원인으로
+> 지목한 것을 정정한다. 실제 주된 원인은 `fast_trend`였다.** (drop_
+> volume_confirmation -2.58, drop_rsi_signal -2.39, drop_volatility_
+> penalty -2.31 — 모두 여전히 유의하게 역전.) `risk_adj_momentum_3m`을
+> 12/15/18/21개월 창으로 재검증한 결과 T+20 t_NW이 1.47→1.90→2.03→2.04로
+> **안정적 plateau**를 보여 18개월 결과가 단발성 우연이 아님을 확인했으나
+> 절대 크기는 여전히 marginal(~2.0)이다. 국면 전환형 shadow 후보 `regime_
+> switch_v1`(비하락장=`risk_adj_momentum_3m`, 하락장=`reversal_1m`)을
+> 신설해 검증 — **2차(3년) pooled가 T+5 t_NW=2.60, T+20 t_NW=2.36으로
+> 이 트랙 전체에서 가장 강한 2차 결과**를 냈으나, 1차(최근 12개월)는
+> 하락장 표본 부재로 여전히 risk_adj_momentum_3m 수준(1.47~1.55)에
+> 머물러 §16 게이트를 완전히 통과하지 못한다 — **가장 유망한 Watch
+> 후보로 격상하되 확정 Go는 아니다.** `fast_score`는 이번 결과로 부분
+> 수정이 아닌 **전면 재설계 대상으로 확정**됐다. **SPPV-3 착수는 계속
+> 보류**한다. 상세: `plans/[DESIGN] signal_predictive_power_
+> validation.md` §19.
 
 > **📌 2026-07-12 방향 전환 (이력, 2026-07-14 결론으로 대체)**:
 > 지난 6주(2026-06-01~07-12) 매수 0건은 시스템 오류가 아니라 **하락장에서
@@ -4112,12 +4145,28 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      1m`은 반분 표본 개별 유의 미달 — Hold 유지. SPPV-3 착수는 계속
      보류. 상세: `plans/[DESIGN] signal_predictive_power_validation.md`
      §18.
-   - **SPPV-3(보류 유지, 사유 재교체)**: §18(SPPV-2.10)에서 `fast_
-     score_v2` 2종 모두 No-Go로 확인됐고, `risk_adj_momentum_3m`은
-     marginal한 Watch에 머물러 있다 — 착수 조건은 `risk_adj_momentum_3m`
-     의 창 경계 민감도 재확인 또는 `fast_score` 전면 재설계에서 안정적
-     알파 확인 — 사용자 판단 필요(§14.5, §17.5, §18.6). 착수 시
-     regime/allocation/strategy/source를 복원한 `entry_score`
+   - **SPPV-2.11(완료, 2026-07-14, §18.6 후속)**: `fast_score`
+     leave-one-out 4종 분해 + `risk_adj_momentum_3m` 창 경계 민감도
+     (12~21개월) + 국면 전환형 shadow `regime_switch_v1` 검증. **결과:
+     `fast_trend` 제거 시 하락장 T+5 spread가 -2.79→-1.60(비유의
+     전환)으로 가장 크게 개선 — 주된 원인은 `rsi_signal`이 아니라
+     `fast_trend`였음을 정정.** `risk_adj_momentum_3m`은 15~21개월
+     창에서 T+20 t_NW 1.90→2.03→2.04로 안정적 plateau(우연 아님,
+     marginal). `regime_switch_v1`(비하락장=risk_adj_momentum_3m,
+     하락장=reversal_1m)은 2차(3년) pooled 트랙 최고 수치
+     (T+5=2.60/T+20=2.36)를 냈으나 1차(최근 12개월)는 하락장 표본
+     부재로 미달 — 가장 유망한 Watch 후보로 격상하되 확정 Go는 아니다.
+     `fast_score`는 전면 재설계 대상으로 확정. SPPV-3 착수는 계속
+     보류. 상세: `plans/[DESIGN] signal_predictive_power_validation.md`
+     §19.
+   - **SPPV-3(보류 유지, 사유 재교체)**: §19(SPPV-2.11)에서 `fast_score`
+     하락장 역전의 주된 원인이 `fast_trend`로 재확인됐고(부분 수정으로는
+     알파 생성 불가), 가장 유망한 `regime_switch_v1`도 1차(최근 12개월)
+     게이트를 하락장 표본 부재로 통과하지 못한다 — 착수 조건은 (a)
+     최근 12개월 창에 실제 하락 국면이 편입되거나 (b) §16 게이트에
+     "국면 조건부 신호는 그 국면 존재 기간을 1차 창으로 인정"하는 예외
+     규정을 추가하는 것 — 사용자 판단 필요(§14.5, §17.5, §18.6, §19.6).
+     착수 시 regime/allocation/strategy/source를 복원한 `entry_score`
      point-in-time 재현과 signal/risk-off/regime
      eligibility 중복 억제 ablation.
    - **SPPV-4**: Virtual BUY의 `candidate → selected → expected value → would_buy
