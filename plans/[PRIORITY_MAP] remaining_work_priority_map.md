@@ -12,9 +12,67 @@
 - 이미 해결된 장애성 이슈와, 아직 구조적으로 남아 있는 과제를 구분한다.
 - 사용자가 요청한 방향에 맞춰 **Admin UI 추가 고도화는 후순위**로 내리고, 백엔드/운영 안정화 과제를 앞에 둔다.
 
+## 수정 이력
+
+- 작성자: Codex
+- 수정일자: 2026-07-14
+- 수정내용: 최고 기대수익률을 손실 제약 아래의 목적함수로 고정하고,
+  `2026-06-25` 이후 BUY 0건의 `entry_score` 직접 병목 실측을 반영했다. 신호
+  통계 보정 → `entry_score` 재현 → 전체 BUY funnel back-simulation → 제한적
+  probe를 새 최우선 순서로 올리고 소싱 트랙은 차후 보류로 정렬했다.
+
+- 작성자: Claude
+- 수정일자: 2026-07-14
+- 수정내용: SPPV-2 완료 결과(core 88종목, cross-sectional IC 유의성 없음)를
+  반영해 SPPV-2를 완료로 갱신하고, SPPV-2.5(quintile spread 진단)를 다음
+  작업으로, SPPV-3을 조건부 보류로 재정렬했다.
+
+- 작성자: Claude
+- 수정일자: 2026-07-14 (2차)
+- 수정내용: SPPV-2.5 완료 결과(quintile spread pooled 유의하나 국면 내부
+  미재현 — 국면 혼입 착시 가능성)를 반영해 SPPV-2.5를 완료로 갱신하고,
+  SPPV-3 착수 조건을 "표본 확장 후 국면 내부 유의성 재확인 또는 신호
+  feature 재설계"로 구체화했다.
+
 ## 최근 메모
 
-> **📌 2026-07-12 방향 전환 확정 (사용자 결정, 최우선 반영)**:
+> **📌 2026-07-14 BUY 주문경로 근본 복구 기준 확정 (최신, 최우선 반영)**:
+> 목표는 손실 0이 아니라 **허용 손실 제약 아래 비용 차감 기대수익 최대화**다.
+> `2026-06-25` 이후 `symbol + trade_date` 첫 decision 297건을 재검증한 결과
+> `entry_score >= 0.65=0`, `BUY_CANDIDATE=0`, eligibility 통과 21건,
+> `risk_off_penalty=294`, 최대/평균 entry score `0.6086/0.1699`, BUY
+> 주문요청/submit 0건이었다. 따라서 이 기간 BUY 0건의 직접 병목은 하류
+> compliance/broker가 아니라 `entry_score < 0.65`다.
+>
+> 새 최우선 순서는 ① 신호 IC 통계 보정 확장 ② `entry_score` point-in-time
+> 재현과 중복 penalty ablation ③ 전체 BUY funnel counterfactual ④ 비용 차감
+> 기대수익·MFE/MAE·손실 제약 검증 ⑤ 별도 승인된 제한적 paper probe다.
+> threshold 일괄 완화와 risk/compliance/guardrail 제거는 금지한다. 상세는
+> [`plans/[DESIGN] signal_predictive_power_validation.md`](./%5BDESIGN%5D%20signal_predictive_power_validation.md)
+> 참고.
+>
+> **📌 2026-07-14 SPPV-2 완료 — 결과 갱신 (최신)**: core 88종목 전체로
+> 확장해 거래일별 cross-sectional IC + Newey-West 보정 + 국면별 분해를
+> 수행한 결과, **①의 "신호 IC 통계 보정 확장"이 완료됐고 결과는 부정적이다**
+> — SPPV-1 파일럿의 t=2.4~4.1("유의미"~"강함")은 overlap 편향의 산물이었고,
+> 정확히 보정하면 전 신호·전 horizon에서 |t_NW|<1.1로 통계적 유의성이
+> 없다. 다만 `overall_score` 비용 차감 quintile spread(T+20 기준 +3.88%p)는
+> 방향성 있게 남아 있어 "완전 무신호"로 단정하지 않는다. **②(entry_score
+> 재현)로 바로 넘어가지 않는다** — 그 spread가 시장 베타 착시인지 잔여
+> 알파인지 먼저 가리는 진단(SPPV-2.5, 초과수익 기반 재검증)이 선행돼야
+> 한다. 상세: `plans/[DESIGN] signal_predictive_power_validation.md` §9.
+>
+> **📌 2026-07-14 SPPV-2.5 완료 — 정체 판정 (최신)**: `overall_score`
+> quintile spread 자체를 Newey-West로 재검정(pooled T+20 t=2.30, 유의)한
+> 뒤 국면 내부(bullish/bearish/range_bound)로 다시 나눠 재확인했다.
+> **어느 국면 내부에서도 유의성이 재현되지 않는다**(최고 bullish_trend
+> t=1.55) — pooled 유의성이 국면 혼입(regime-mix) 착시일 가능성이 높다는
+> 뜻이다. **SPPV-3(entry_score 전체 재현) 착수를 계속 보류**한다. 다음은
+> 표본 확장(기간·유니버스 확대) 재검증 또는 신호 feature 재설계 중 하나를
+> 선택해야 하며, 이 판단은 사용자 확인이 필요하다. 상세:
+> `plans/[DESIGN] signal_predictive_power_validation.md` §11.
+
+> **📌 2026-07-12 방향 전환 (이력, 2026-07-14 결론으로 대체)**:
 > 지난 6주(2026-06-01~07-12) 매수 0건은 시스템 오류가 아니라 **하락장에서
 > 자본을 지켜낸 올바른 방어 작동**이었음이 실측으로 증명됐다
 > (deep_negative T+3 -5.39% < inactive -3.17%, 게이트 해제 역-시뮬레이션
@@ -3849,10 +3907,11 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 >   0.65 미근접).
 > - **목표 확정(2026-07-14): 목표 B(최고 기대수익률) — 사용자 결정.**
 >   "손실 0이 목적이 아니라, 손실 최소화하며 리스크 감내 후 기대수익 추구"
->   = risk-adjusted return 극대화. "주문 0건"은 성공이 아니라 실패(기회비용).
-> - **새 1순위 = 신호 예측력 실증 검증(IC/유의성, read-only, 완화 아님)** —
->   상승/하락/횡보 국면 out-of-sample 포함. 이게 통과해야 "무엇을 근거로
->   사고 파는가"의 토대가 생긴다. 착수 진행 중.
+>   = 허용 손실 제약 아래 net expected return 극대화. "주문 0건"은 성공이
+>   아니라 실패(기회비용 + 실집행 검증 불가)다.
+> - **새 1순위 = 신호 예측력 + `entry_score` + 전체 BUY funnel 검증** — 8종목
+>   파일럿은 가설 생성으로만 인정하고, 통계 보정 확장 후 entry 산식과 중복
+>   penalty를 재현해 Virtual BUY의 비용 차감 성과까지 검증한다.
 > - 상세: `plans/[ANALYSIS] foundational_design_review_objective_alignment_2026-07-14.md`.
 >
 > **📌 2026-07-12 (이력)**: `core_risk_off`/`entry_score` 완화 전면 영구
@@ -3861,7 +3920,33 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 > [`plans/[DESIGN] universe_sourcing_momentum_overlay_enablement_v1.md`](./%5BDESIGN%5D%20universe_sourcing_momentum_overlay_enablement_v1.md) 참고.
 
 ### 1순위 묶음
-0. **종목 소싱 구조 개선 (2026-07-12 신설, 07-12 실측으로 UNIV-1/2 완료)**
+0. **BUY 주문 0건 근본 복구 (2026-07-14 신설, 최우선)**
+   - **SPPV-1(완료/결론 보류)**: core 8종목 pooled IC 파일럿. 예측 가능성
+     가설은 확보했으나 overlap·군집 의존성 보정 전이라 입증으로 확정하지 않음.
+   - **SPPV-2(완료, 2026-07-14)**: core 88종목 전체 × cross-sectional
+     거래일별 IC/ICIR × Newey-West 보정 × 국면별 분해 × 비용 차감 quintile
+     완료. **결과: SPPV-1의 낙관적 t-stat(2.4~4.1)은 overlap 편향이었음이
+     확인됨 — 정확 보정 시 전 신호·전 horizon |t_NW|<1.1로 유의성 없음.**
+     단 quintile spread(overall_score +3.88%p)는 방향성 있게 잔존.
+   - **SPPV-2.5(완료, 2026-07-14)**: quintile spread 자체의 Newey-West
+     유의성 검정 + 국면 내부(within-regime) 분해 완료. **결과:
+     `overall_score` pooled spread(T+20 t_NW=2.30)는 유의하나 국면 내부
+     (bullish t=1.55/range t=1.63/bearish t=0.38) 어디서도 재현되지 않음 —
+     국면 혼입(regime-mix) 착시 가능성이 높음.** 종목 선택 알파 근거 미확보.
+   - **SPPV-3(조건부 보류 유지)**: 착수 조건은 표본 확장(기간 1→2~3년 또는
+     유니버스 확대) 후 국면 내부 유의성 재확인, 또는 신호 feature 재설계로
+     트랙 전환 — 사용자 판단 필요(§11.5). 착수 시 regime/allocation/
+     strategy/source를 복원한 `entry_score` point-in-time 재현과
+     signal/risk-off/regime eligibility 중복 억제 ablation.
+   - **SPPV-4**: Virtual BUY의 `candidate → selected → expected value → would_buy
+     → submitted`, MFE/MAE/낙폭/비용 차감 기대수익 비교.
+   - **SPPV-5**: out-of-sample 기대수익 양수와 손실 제약을 모두 만족한 공식만
+     shadow 유지. 후보 수 증가만으로 Go 금지.
+   - **SPPV-6**: 별도 승인 후 일일 top-k·최소 수량·계좌 위험한도 아래 제한적
+     paper probe. risk/compliance/guardrail/broker 경계 유지.
+   - 기준 문서: `plans/[DESIGN] signal_predictive_power_validation.md`.
+
+0.1. **종목 소싱 구조 개선 (2026-07-12 신설, 07-14 기준 차후 보류)**
    - UNIV-1(완료): market_overlay용 라이브 read-only client 주입 배선 실측 —
      **배선은 이미 존재·정상 동작**함을 확인(원래 "paper 게이트로 비활성"
      가설은 틀렸음). 3개 silent debug 로그를 warning으로 격상 완료.

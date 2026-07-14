@@ -1,0 +1,907 @@
+{
+  "as_of": "2026-07-14T14:48:37.032296+09:00",
+  "universe": "core_full_current_survivors",
+  "universe_note": "point-in-time(당시 편입·편출 종목) universe는 지수 편입 이력이 1년 전체를 커버하지 못해(가장 오래된 스냅샷 2026-06-27) 이번 턴에 시도하지 않았다 — 현재 생존 core 종목만 사용, survivorship bias 존재.",
+  "symbol_count_total": 88,
+  "symbol_count_used": 88,
+  "fetch_failures": [],
+  "total_rolling_samples": 16720,
+  "round_trip_cost_bps_assumption": 30.0,
+  "by_signal": {
+    "slow_score": {
+      "T+1": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": -0.0106,
+          "std_ic": 0.2094,
+          "icir": -0.0505,
+          "t_naive": -0.7,
+          "t_newey_west": -0.71,
+          "pct_positive_days": 0.489,
+          "strength": "없음(노이즈)"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 190,
+          "mean_ic": -0.0106,
+          "std_ic": 0.2094,
+          "icir": -0.0505,
+          "t_naive": -0.7,
+          "t_newey_west": -0.71,
+          "pct_positive_days": 0.489,
+          "strength": "없음(노이즈)"
+        },
+        "quintile_return_stats": {
+          "top_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 0.019,
+            "pct_positive": 0.459,
+            "mean_mae_pct": -2.261
+          },
+          "bottom_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": -0.104,
+            "pct_positive": 0.439,
+            "mean_mae_pct": -1.434
+          },
+          "spread_pct": 0.123
+        }
+      },
+      "T+3": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": -0.0026,
+          "std_ic": 0.2121,
+          "icir": -0.0122,
+          "t_naive": -0.17,
+          "t_newey_west": -0.12,
+          "pct_positive_days": 0.526,
+          "strength": "없음(노이즈)"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 64,
+          "mean_ic": -0.0027,
+          "std_ic": 0.232,
+          "icir": -0.0116,
+          "t_naive": -0.09,
+          "t_newey_west": -0.09,
+          "pct_positive_days": 0.609,
+          "strength": "없음(노이즈)"
+        },
+        "quintile_return_stats": {
+          "top_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 0.568,
+            "pct_positive": 0.497,
+            "mean_mae_pct": -4.247
+          },
+          "bottom_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 0.186,
+            "pct_positive": 0.485,
+            "mean_mae_pct": -2.787
+          },
+          "spread_pct": 0.382
+        }
+      },
+      "T+5": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": 0.0053,
+          "std_ic": 0.2167,
+          "icir": 0.0245,
+          "t_naive": 0.34,
+          "t_newey_west": 0.18,
+          "pct_positive_days": 0.542,
+          "strength": "없음(노이즈)"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 38,
+          "mean_ic": -0.0061,
+          "std_ic": 0.2181,
+          "icir": -0.028,
+          "t_naive": -0.17,
+          "t_newey_west": -0.19,
+          "pct_positive_days": 0.526,
+          "strength": "없음(노이즈)"
+        },
+        "quintile_return_stats": {
+          "top_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 1.001,
+            "pct_positive": 0.51,
+            "mean_mae_pct": -5.535
+          },
+          "bottom_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 0.501,
+            "pct_positive": 0.501,
+            "mean_mae_pct": -3.695
+          },
+          "spread_pct": 0.5
+        }
+      },
+      "T+10": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": 0.0195,
+          "std_ic": 0.2085,
+          "icir": 0.0936,
+          "t_naive": 1.29,
+          "t_newey_west": 0.55,
+          "pct_positive_days": 0.574,
+          "strength": "없음(노이즈)"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 19,
+          "mean_ic": 0.0031,
+          "std_ic": 0.2257,
+          "icir": 0.0135,
+          "t_naive": 0.06,
+          "t_newey_west": 0.13,
+          "pct_positive_days": 0.526,
+          "strength": "없음(노이즈)"
+        },
+        "quintile_return_stats": {
+          "top_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 1.943,
+            "pct_positive": 0.511,
+            "mean_mae_pct": -7.734
+          },
+          "bottom_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 0.922,
+            "pct_positive": 0.49,
+            "mean_mae_pct": -5.366
+          },
+          "spread_pct": 1.021
+        }
+      },
+      "T+20": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": 0.0324,
+          "std_ic": 0.1744,
+          "icir": 0.1857,
+          "t_naive": 2.56,
+          "t_newey_west": 0.89,
+          "pct_positive_days": 0.568,
+          "strength": "미약"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 10,
+          "mean_ic": -0.0138,
+          "std_ic": 0.254,
+          "icir": -0.0544,
+          "t_naive": -0.17,
+          "t_newey_west": -0.58,
+          "pct_positive_days": 0.5,
+          "strength": "없음(노이즈)"
+        },
+        "quintile_return_stats": {
+          "top_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 3.831,
+            "pct_positive": 0.513,
+            "mean_mae_pct": -10.537
+          },
+          "bottom_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 1.905,
+            "pct_positive": 0.501,
+            "mean_mae_pct": -7.457
+          },
+          "spread_pct": 1.926
+        }
+      },
+      "regime_decomposed_T+5": {
+        "range_bound": {
+          "n": 4989,
+          "ic": 0.0256,
+          "strength": "미약"
+        },
+        "bullish_trend": {
+          "n": 8356,
+          "ic": -0.0174,
+          "strength": "없음(노이즈)"
+        },
+        "bearish_trend": {
+          "n": 3127,
+          "ic": -0.0028,
+          "strength": "없음(노이즈)"
+        },
+        "event_driven_unstable": {
+          "n": 248,
+          "ic": 0.0329,
+          "strength": "미약"
+        }
+      }
+    },
+    "fast_score": {
+      "T+1": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": -0.0035,
+          "std_ic": 0.1943,
+          "icir": -0.0179,
+          "t_naive": -0.25,
+          "t_newey_west": -0.25,
+          "pct_positive_days": 0.479,
+          "strength": "없음(노이즈)"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 190,
+          "mean_ic": -0.0035,
+          "std_ic": 0.1943,
+          "icir": -0.0179,
+          "t_naive": -0.25,
+          "t_newey_west": -0.25,
+          "pct_positive_days": 0.479,
+          "strength": "없음(노이즈)"
+        },
+        "quintile_return_stats": {
+          "top_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 0.002,
+            "pct_positive": 0.46,
+            "mean_mae_pct": -2.114
+          },
+          "bottom_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": -0.07,
+            "pct_positive": 0.457,
+            "mean_mae_pct": -1.781
+          },
+          "spread_pct": 0.072
+        }
+      },
+      "T+3": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": 0.0094,
+          "std_ic": 0.19,
+          "icir": 0.0494,
+          "t_naive": 0.68,
+          "t_newey_west": 0.49,
+          "pct_positive_days": 0.521,
+          "strength": "없음(노이즈)"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 64,
+          "mean_ic": -0.0101,
+          "std_ic": 0.2149,
+          "icir": -0.047,
+          "t_naive": -0.38,
+          "t_newey_west": -0.4,
+          "pct_positive_days": 0.484,
+          "strength": "없음(노이즈)"
+        },
+        "quintile_return_stats": {
+          "top_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 0.554,
+            "pct_positive": 0.499,
+            "mean_mae_pct": -3.873
+          },
+          "bottom_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 0.338,
+            "pct_positive": 0.492,
+            "mean_mae_pct": -3.529
+          },
+          "spread_pct": 0.216
+        }
+      },
+      "T+5": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": 0.0062,
+          "std_ic": 0.1812,
+          "icir": 0.0342,
+          "t_naive": 0.47,
+          "t_newey_west": 0.27,
+          "pct_positive_days": 0.479,
+          "strength": "없음(노이즈)"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 38,
+          "mean_ic": -0.0005,
+          "std_ic": 0.2048,
+          "icir": -0.0023,
+          "t_naive": -0.01,
+          "t_newey_west": -0.02,
+          "pct_positive_days": 0.474,
+          "strength": "없음(노이즈)"
+        },
+        "quintile_return_stats": {
+          "top_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 0.963,
+            "pct_positive": 0.511,
+            "mean_mae_pct": -4.982
+          },
+          "bottom_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 0.838,
+            "pct_positive": 0.522,
+            "mean_mae_pct": -4.643
+          },
+          "spread_pct": 0.125
+        }
+      },
+      "T+10": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": 0.0137,
+          "std_ic": 0.1901,
+          "icir": 0.0723,
+          "t_naive": 1.0,
+          "t_newey_west": 0.48,
+          "pct_positive_days": 0.516,
+          "strength": "없음(노이즈)"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 19,
+          "mean_ic": -0.01,
+          "std_ic": 0.2153,
+          "icir": -0.0463,
+          "t_naive": -0.2,
+          "t_newey_west": -0.45,
+          "pct_positive_days": 0.474,
+          "strength": "없음(노이즈)"
+        },
+        "quintile_return_stats": {
+          "top_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 2.134,
+            "pct_positive": 0.518,
+            "mean_mae_pct": -6.873
+          },
+          "bottom_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 1.426,
+            "pct_positive": 0.501,
+            "mean_mae_pct": -6.658
+          },
+          "spread_pct": 0.709
+        }
+      },
+      "T+20": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": 0.0207,
+          "std_ic": 0.1721,
+          "icir": 0.1201,
+          "t_naive": 1.66,
+          "t_newey_west": 0.62,
+          "pct_positive_days": 0.547,
+          "strength": "미약"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 10,
+          "mean_ic": -0.0009,
+          "std_ic": 0.1085,
+          "icir": -0.0082,
+          "t_naive": -0.03,
+          "t_newey_west": -0.04,
+          "pct_positive_days": 0.4,
+          "strength": "없음(노이즈)"
+        },
+        "quintile_return_stats": {
+          "top_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 4.359,
+            "pct_positive": 0.543,
+            "mean_mae_pct": -8.935
+          },
+          "bottom_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 3.563,
+            "pct_positive": 0.53,
+            "mean_mae_pct": -9.458
+          },
+          "spread_pct": 0.796
+        }
+      },
+      "regime_decomposed_T+5": {
+        "range_bound": {
+          "n": 4989,
+          "ic": 0.0022,
+          "strength": "없음(노이즈)"
+        },
+        "bullish_trend": {
+          "n": 8356,
+          "ic": 0.0493,
+          "strength": "미약"
+        },
+        "bearish_trend": {
+          "n": 3127,
+          "ic": -0.1053,
+          "strength": "강함"
+        },
+        "event_driven_unstable": {
+          "n": 248,
+          "ic": -0.1032,
+          "strength": "강함"
+        }
+      }
+    },
+    "overall_score": {
+      "T+1": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": -0.0083,
+          "std_ic": 0.2023,
+          "icir": -0.0411,
+          "t_naive": -0.57,
+          "t_newey_west": -0.56,
+          "pct_positive_days": 0.474,
+          "strength": "없음(노이즈)"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 190,
+          "mean_ic": -0.0083,
+          "std_ic": 0.2023,
+          "icir": -0.0411,
+          "t_naive": -0.57,
+          "t_newey_west": -0.56,
+          "pct_positive_days": 0.474,
+          "strength": "없음(노이즈)"
+        },
+        "quintile_return_stats": {
+          "top_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 0.044,
+            "pct_positive": 0.462,
+            "mean_mae_pct": -2.226
+          },
+          "bottom_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": -0.056,
+            "pct_positive": 0.446,
+            "mean_mae_pct": -1.443
+          },
+          "spread_pct": 0.1
+        }
+      },
+      "T+3": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": 0.0034,
+          "std_ic": 0.2067,
+          "icir": 0.0166,
+          "t_naive": 0.23,
+          "t_newey_west": 0.16,
+          "pct_positive_days": 0.5,
+          "strength": "없음(노이즈)"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 64,
+          "mean_ic": -0.0022,
+          "std_ic": 0.2321,
+          "icir": -0.0096,
+          "t_naive": -0.08,
+          "t_newey_west": -0.08,
+          "pct_positive_days": 0.516,
+          "strength": "없음(노이즈)"
+        },
+        "quintile_return_stats": {
+          "top_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 0.934,
+            "pct_positive": 0.52,
+            "mean_mae_pct": -4.116
+          },
+          "bottom_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 0.299,
+            "pct_positive": 0.491,
+            "mean_mae_pct": -2.823
+          },
+          "spread_pct": 0.635
+        }
+      },
+      "T+5": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": 0.0089,
+          "std_ic": 0.2115,
+          "icir": 0.042,
+          "t_naive": 0.58,
+          "t_newey_west": 0.32,
+          "pct_positive_days": 0.537,
+          "strength": "없음(노이즈)"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 38,
+          "mean_ic": 0.0011,
+          "std_ic": 0.2219,
+          "icir": 0.0049,
+          "t_naive": 0.03,
+          "t_newey_west": 0.03,
+          "pct_positive_days": 0.526,
+          "strength": "없음(노이즈)"
+        },
+        "quintile_return_stats": {
+          "top_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 1.653,
+            "pct_positive": 0.539,
+            "mean_mae_pct": -5.255
+          },
+          "bottom_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 0.606,
+            "pct_positive": 0.51,
+            "mean_mae_pct": -3.746
+          },
+          "spread_pct": 1.046
+        }
+      },
+      "T+10": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": 0.0212,
+          "std_ic": 0.2052,
+          "icir": 0.1033,
+          "t_naive": 1.42,
+          "t_newey_west": 0.62,
+          "pct_positive_days": 0.553,
+          "strength": "미약"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 19,
+          "mean_ic": 0.0043,
+          "std_ic": 0.2241,
+          "icir": 0.0193,
+          "t_naive": 0.08,
+          "t_newey_west": 0.19,
+          "pct_positive_days": 0.474,
+          "strength": "없음(노이즈)"
+        },
+        "quintile_return_stats": {
+          "top_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 3.221,
+            "pct_positive": 0.538,
+            "mean_mae_pct": -7.122
+          },
+          "bottom_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 1.027,
+            "pct_positive": 0.494,
+            "mean_mae_pct": -5.443
+          },
+          "spread_pct": 2.194
+        }
+      },
+      "T+20": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": 0.0343,
+          "std_ic": 0.1656,
+          "icir": 0.2074,
+          "t_naive": 2.86,
+          "t_newey_west": 1.08,
+          "pct_positive_days": 0.584,
+          "strength": "미약"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 10,
+          "mean_ic": 0.0023,
+          "std_ic": 0.2309,
+          "icir": 0.0098,
+          "t_naive": 0.03,
+          "t_newey_west": 0.09,
+          "pct_positive_days": 0.5,
+          "strength": "없음(노이즈)"
+        },
+        "quintile_return_stats": {
+          "top_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 5.827,
+            "pct_positive": 0.561,
+            "mean_mae_pct": -9.391
+          },
+          "bottom_quintile": {
+            "n": 3230,
+            "mean_net_return_pct": 1.944,
+            "pct_positive": 0.501,
+            "mean_mae_pct": -7.658
+          },
+          "spread_pct": 3.883
+        }
+      },
+      "regime_decomposed_T+5": {
+        "range_bound": {
+          "n": 4989,
+          "ic": 0.0272,
+          "strength": "미약"
+        },
+        "bullish_trend": {
+          "n": 8356,
+          "ic": 0.0282,
+          "strength": "미약"
+        },
+        "bearish_trend": {
+          "n": 3127,
+          "ic": -0.0687,
+          "strength": "유의미"
+        },
+        "event_driven_unstable": {
+          "n": 248,
+          "ic": 0.015,
+          "strength": "없음(노이즈)"
+        }
+      }
+    },
+    "slow_momentum": {
+      "T+1": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": -0.0104,
+          "std_ic": 0.2037,
+          "icir": -0.0511,
+          "t_naive": -0.7,
+          "t_newey_west": -0.72,
+          "pct_positive_days": 0.5,
+          "strength": "없음(노이즈)"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 190,
+          "mean_ic": -0.0104,
+          "std_ic": 0.2037,
+          "icir": -0.0511,
+          "t_naive": -0.7,
+          "t_newey_west": -0.72,
+          "pct_positive_days": 0.5,
+          "strength": "없음(노이즈)"
+        }
+      },
+      "T+3": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": -0.0024,
+          "std_ic": 0.2081,
+          "icir": -0.0114,
+          "t_naive": -0.16,
+          "t_newey_west": -0.11,
+          "pct_positive_days": 0.542,
+          "strength": "없음(노이즈)"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 64,
+          "mean_ic": 0.0007,
+          "std_ic": 0.2257,
+          "icir": 0.003,
+          "t_naive": 0.02,
+          "t_newey_west": 0.02,
+          "pct_positive_days": 0.578,
+          "strength": "없음(노이즈)"
+        }
+      },
+      "T+5": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": 0.0063,
+          "std_ic": 0.2125,
+          "icir": 0.0296,
+          "t_naive": 0.41,
+          "t_newey_west": 0.22,
+          "pct_positive_days": 0.537,
+          "strength": "없음(노이즈)"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 38,
+          "mean_ic": -0.0042,
+          "std_ic": 0.2154,
+          "icir": -0.0197,
+          "t_naive": -0.12,
+          "t_newey_west": -0.13,
+          "pct_positive_days": 0.5,
+          "strength": "없음(노이즈)"
+        }
+      },
+      "T+10": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": 0.0206,
+          "std_ic": 0.2046,
+          "icir": 0.1009,
+          "t_naive": 1.39,
+          "t_newey_west": 0.58,
+          "pct_positive_days": 0.589,
+          "strength": "미약"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 19,
+          "mean_ic": 0.0161,
+          "std_ic": 0.2241,
+          "icir": 0.0718,
+          "t_naive": 0.31,
+          "t_newey_west": 0.68,
+          "pct_positive_days": 0.526,
+          "strength": "없음(노이즈)"
+        }
+      },
+      "T+20": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": 0.0335,
+          "std_ic": 0.181,
+          "icir": 0.1852,
+          "t_naive": 2.55,
+          "t_newey_west": 0.85,
+          "pct_positive_days": 0.553,
+          "strength": "미약"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 10,
+          "mean_ic": 0.0027,
+          "std_ic": 0.2655,
+          "icir": 0.0101,
+          "t_naive": 0.03,
+          "t_newey_west": 0.1,
+          "pct_positive_days": 0.5,
+          "strength": "없음(노이즈)"
+        }
+      },
+      "regime_decomposed_T+5": {
+        "range_bound": {
+          "n": 4989,
+          "ic": 0.0642,
+          "strength": "유의미"
+        },
+        "bullish_trend": {
+          "n": 8356,
+          "ic": -0.0098,
+          "strength": "없음(노이즈)"
+        },
+        "bearish_trend": {
+          "n": 3127,
+          "ic": 0.003,
+          "strength": "없음(노이즈)"
+        },
+        "event_driven_unstable": {
+          "n": 248,
+          "ic": 0.0799,
+          "strength": "유의미"
+        }
+      }
+    },
+    "slow_trend": {
+      "T+1": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": -0.0121,
+          "std_ic": 0.2029,
+          "icir": -0.0597,
+          "t_naive": -0.82,
+          "t_newey_west": -0.84,
+          "pct_positive_days": 0.479,
+          "strength": "없음(노이즈)"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 190,
+          "mean_ic": -0.0121,
+          "std_ic": 0.2029,
+          "icir": -0.0597,
+          "t_naive": -0.82,
+          "t_newey_west": -0.84,
+          "pct_positive_days": 0.479,
+          "strength": "없음(노이즈)"
+        }
+      },
+      "T+3": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": -0.0031,
+          "std_ic": 0.2002,
+          "icir": -0.0156,
+          "t_naive": -0.22,
+          "t_newey_west": -0.15,
+          "pct_positive_days": 0.511,
+          "strength": "없음(노이즈)"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 64,
+          "mean_ic": -0.0057,
+          "std_ic": 0.2222,
+          "icir": -0.0258,
+          "t_naive": -0.21,
+          "t_newey_west": -0.21,
+          "pct_positive_days": 0.547,
+          "strength": "없음(노이즈)"
+        }
+      },
+      "T+5": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": 0.0038,
+          "std_ic": 0.2033,
+          "icir": 0.0185,
+          "t_naive": 0.25,
+          "t_newey_west": 0.14,
+          "pct_positive_days": 0.505,
+          "strength": "없음(노이즈)"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 38,
+          "mean_ic": -0.0094,
+          "std_ic": 0.2084,
+          "icir": -0.0453,
+          "t_naive": -0.28,
+          "t_newey_west": -0.31,
+          "pct_positive_days": 0.526,
+          "strength": "없음(노이즈)"
+        }
+      },
+      "T+10": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": 0.0176,
+          "std_ic": 0.1931,
+          "icir": 0.0911,
+          "t_naive": 1.26,
+          "t_newey_west": 0.57,
+          "pct_positive_days": 0.511,
+          "strength": "없음(노이즈)"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 19,
+          "mean_ic": -0.0035,
+          "std_ic": 0.2126,
+          "icir": -0.0167,
+          "t_naive": -0.07,
+          "t_newey_west": -0.18,
+          "pct_positive_days": 0.421,
+          "strength": "없음(노이즈)"
+        }
+      },
+      "T+20": {
+        "cross_sectional_overlapping": {
+          "n_days": 190,
+          "mean_ic": 0.0285,
+          "std_ic": 0.1467,
+          "icir": 0.194,
+          "t_naive": 2.67,
+          "t_newey_west": 1.06,
+          "pct_positive_days": 0.6,
+          "strength": "미약"
+        },
+        "cross_sectional_non_overlapping": {
+          "n_days": 10,
+          "mean_ic": -0.0321,
+          "std_ic": 0.2004,
+          "icir": -0.1604,
+          "t_naive": -0.51,
+          "t_newey_west": -1.6,
+          "pct_positive_days": 0.5,
+          "strength": "미약"
+        }
+      },
+      "regime_decomposed_T+5": {
+        "range_bound": {
+          "n": 4989,
+          "ic": -0.043,
+          "strength": "미약"
+        },
+        "bullish_trend": {
+          "n": 8356,
+          "ic": -0.0092,
+          "strength": "없음(노이즈)"
+        },
+        "bearish_trend": {
+          "n": 3127,
+          "ic": -0.0114,
+          "strength": "없음(노이즈)"
+        },
+        "event_driven_unstable": {
+          "n": 248,
+          "ic": -0.02,
+          "strength": "없음(노이즈)"
+        }
+      }
+    }
+  }
+}

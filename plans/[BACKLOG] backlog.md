@@ -4,6 +4,28 @@
 >
 > **원칙**: "실행할 때만 번호 Plan 생성, 아직 시작하지 않을 작업은 BACKLOG에만 기록."
 
+## 수정 이력
+
+- 작성자: Codex
+- 수정일자: 2026-07-14
+- 수정내용: BUY 주문 0건의 `entry_score` 직접 병목 실측을 반영하고, 신호
+  통계 보정부터 전체 BUY funnel back-simulation 및 제한적 probe까지의
+  최우선 후속 백로그를 추가했다. 기존 universe sourcing 최우선 표기는
+  2026-07-12 이력으로 격하했다.
+
+- 작성자: Claude
+- 수정일자: 2026-07-14
+- 수정내용: SPPV-2(core 88종목 확장 검증) 완료 결과를 반영 — SPPV-1
+  파일럿의 낙관적 결론이 overlap 편향이었음을 확인하고, SPPV-2.5(quintile
+  spread 정체 진단)를 신설, SPPV-3을 조건부 보류로 재분류했다.
+
+- 작성자: Claude
+- 수정일자: 2026-07-14 (2차)
+- 수정내용: SPPV-2.5(quintile spread 국면 내부 재검증) 완료 결과를 반영 —
+  pooled 유의성이 국면 혼입 착시일 가능성이 높다는 결론을 기록하고, SPPV-3
+  착수 조건을 "표본 확장 후 국면 내부 유의성 재확인 또는 신호 feature
+  재설계"로 구체화했다.
+
 ---
 
 ## 관리 원칙
@@ -73,11 +95,64 @@
     242건(holiday_client/market_session/run_ops_scheduler/token_cache)
     전체 통과, 회귀 없음.
 
-- **종목 소싱(Universe Sourcing) 구조 개선 — market_overlay 활성화 및 모멘텀 신호 보강** (2026-07-12 신설, 최우선):
+- **BUY 주문 0건 근본 복구 — 신호 예측력·`entry_score`·전체 주문 funnel 재설계**
+  (2026-07-14 신설, 최우선):
+  [`plans/[DESIGN] signal_predictive_power_validation.md`](./%5BDESIGN%5D%20signal_predictive_power_validation.md)
+  - 목표: 손실 0이 아니라 VaR/drawdown/exposure/liquidity 한도 안에서 비용 차감
+    기대수익을 최대화한다. risk/compliance는 목적함수가 아니라 제약조건이다.
+  - 운영 기준선: `2026-06-25` 이후 `symbol + trade_date` 첫 decision 297건 중
+    `entry_score >= 0.65=0`, `BUY_CANDIDATE=0`, eligibility 통과 21건,
+    `risk_off_penalty=294`, BUY 주문요청/submit 0건. 직접 병목은
+    `entry_score < 0.65`다.
+  - **SPPV-1(파일럿 완료, 결론 보류)**: core 8종목 pooled IC로
+    `slow_momentum`/`overall_score`의 예측 가능성 가설을 확보했다. overlap과
+    군집 의존성 보정 전이므로 통계적 입증으로 확정하지 않는다.
+  - **SPPV-2(완료, 2026-07-14)**: core 88종목 전체 × 거래일별 cross-sectional
+    Spearman IC × ICIR × Newey-West 보정 × 국면별 분해 × 비용 차감 quintile
+    성과(T+1/T+3/T+5/T+10/T+20)를 산출했다. **결과: SPPV-1의 t=2.4~4.1
+    ("유의미"~"강함")은 overlap 편향의 산물이었음이 확인됨 — 정확 보정 시
+    전 신호·전 horizon |t_NW|<1.1로 통계적 유의성 없음.** 단
+    `overall_score` quintile spread(+3.88%p, T+20)는 방향성 있게 잔존해
+    "완전 무신호"로 단정하지 않는다. 하락장(bearish_trend)에서는
+    overall/fast_score IC가 음(-)으로 역전 — 현재 risk_off 방어가 근거
+    없는 게 아니라는 정황도 함께 확인됨. 산출:
+    `scripts/validate_signal_predictive_power_v2.py`(read-only),
+    `logs/signal_ic_sppv2_expanded_2026-07-14.json`. 상세:
+    `plans/[DESIGN] signal_predictive_power_validation.md` §9.
+    point-in-time universe(당시 편입·편출 종목)와 시장·업종 대비 초과수익은
+    이번 턴에 시도하지 못해 한계로 남김(§9.5).
+  - **SPPV-2.5(완료, 2026-07-14)**: quintile spread 자체의 Newey-West
+    유의성 검정 + 국면 내부(within-regime) 분해 완료. **결과: `overall_score`
+    pooled spread(T+20, t_NW=2.30)는 유의하나, 국면 내부(bullish_trend
+    t=1.55, range_bound t=1.63, bearish_trend t=0.38) 어디서도 재현되지
+    않음 — pooled 유의성이 국면 혼입(regime-mix) 착시일 가능성이 높다.**
+    종목 선택 알파 근거는 아직 미확보. 산출:
+    `scripts/validate_signal_predictive_power_v2_5.py`(read-only),
+    `logs/signal_ic_sppv2_5_regime_decomposition_2026-07-14.json`,
+    `logs/_bars_cache_core88_2026-07-14/`(재사용 캐시). 상세:
+    `plans/[DESIGN] signal_predictive_power_validation.md` §11.
+  - **SPPV-3(조건부 보류 유지)**: 착수 조건은 (a) 표본 확장(기간 1→2~3년
+    또는 유니버스 확대) 후 국면 내부 유의성 재확인, 또는 (b) 신호 feature
+    구성 자체의 재설계로 트랙 전환 — 둘 중 선택은 추가 리소스 투입 여부를
+    정하는 것이라 사용자 확인 필요(§11.5). 착수 시 당시 regime/allocation/
+    strategy/source를 복원해 `entry_score`를 point-in-time 재현하고 signal
+    약세, `risk_off_penalty`, regime eligibility block의 중복 억제를
+    ablation한다.
+  - **SPPV-4**: 각 shadow formula별 Virtual BUY를 만들고 `candidate → selected
+    → expected value → would_buy → submitted` 전환, MFE/MAE/낙폭/비용 차감
+    기대수익을 비교한다.
+  - **SPPV-5**: out-of-sample 기대수익 양수와 사전 손실 제약을 충족한 공식만
+    shadow 후보로 유지한다. 후보 증가나 WATCH 증가만으로 Go 판정하지 않는다.
+  - **SPPV-6**: 별도 승인 후 일일 top-k, 최소 수량, 계좌 위험한도 아래 제한적
+    paper probe로 승격한다. deterministic risk/compliance/guardrail과 broker
+    submit 경계는 유지한다.
+
+- **종목 소싱(Universe Sourcing) 구조 개선 — market_overlay 활성화 및 모멘텀 신호 보강** (2026-07-12 신설, 2026-07-14 기준 이력/차후 보류):
   [`plans/[DESIGN] universe_sourcing_momentum_overlay_enablement_v1.md`](./%5BDESIGN%5D%20universe_sourcing_momentum_overlay_enablement_v1.md)
-  - 2026-07-12 확정: 매수 0건은 하락장 방어의 올바른 작동이었으므로
+  - 2026-07-12 당시 확정: 매수 0건은 하락장 방어의 올바른 작동이었으므로
     **`core_risk_off` 완화·`entry_score` 조작 시도는 전면 영구 중단**한다.
-    후속 방향은 게이트 완화가 아니라 소싱(후보 공급) 단계 복구다.
+    후속 방향은 게이트 완화가 아니라 소싱(후보 공급) 단계 복구였다. 이 결론은
+    2026-07-14 근본 재검토와 DB funnel 실측으로 대체됐으며 현재는 이력이다.
   - 근본 원인: 모멘텀 포착 레이어(`_add_market_overlay`)가 `KIS_ENV=paper`
     이중 게이트로 6주 내내 완전 비활성 + core는 가격 무관·회전 없음 +
     지수 편입 데이터는 2026-06-24 수동 스냅샷으로 stale.

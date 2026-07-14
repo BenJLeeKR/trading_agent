@@ -1,0 +1,240 @@
+{
+  "as_of": "2026-07-14T15:12:04.672281+09:00",
+  "total_rolling_samples": 16720,
+  "regime_counts": {
+    "range_bound": 4989,
+    "bullish_trend": 8356,
+    "bearish_trend": 3127,
+    "event_driven_unstable": 248
+  },
+  "by_signal": {
+    "slow_score": {
+      "T+5_overall": {
+        "n_days": 190,
+        "mean_spread_pct": 0.5,
+        "t_naive": 1.61,
+        "t_newey_west": 0.89,
+        "pct_days_positive_spread": 0.532
+      },
+      "T+5_by_regime": {
+        "bullish_trend": {
+          "n_days": 190,
+          "mean_spread_pct": 0.204,
+          "t_naive": 0.58,
+          "t_newey_west": 0.4,
+          "pct_days_positive_spread": 0.516
+        },
+        "bearish_trend": {
+          "n_days": 183,
+          "mean_spread_pct": -0.449,
+          "t_naive": -1.24,
+          "t_newey_west": -1.01,
+          "pct_days_positive_spread": 0.432
+        },
+        "range_bound": {
+          "n_days": 190,
+          "mean_spread_pct": 0.412,
+          "t_naive": 1.4,
+          "t_newey_west": 1.2,
+          "pct_days_positive_spread": 0.511
+        },
+        "event_driven_unstable": {
+          "n_days": 7,
+          "mean_spread_pct": -1.762,
+          "t_naive": -0.72,
+          "t_newey_west": -0.96,
+          "pct_days_positive_spread": 0.429
+        }
+      },
+      "T+20_overall": {
+        "n_days": 190,
+        "mean_spread_pct": 1.927,
+        "t_naive": 3.64,
+        "t_newey_west": 1.35,
+        "pct_days_positive_spread": 0.574
+      },
+      "T+20_by_regime": {
+        "bullish_trend": {
+          "n_days": 190,
+          "mean_spread_pct": 0.23,
+          "t_naive": 0.4,
+          "t_newey_west": 0.19,
+          "pct_days_positive_spread": 0.468
+        },
+        "bearish_trend": {
+          "n_days": 183,
+          "mean_spread_pct": 1.537,
+          "t_naive": 2.04,
+          "t_newey_west": 1.54,
+          "pct_days_positive_spread": 0.546
+        },
+        "range_bound": {
+          "n_days": 190,
+          "mean_spread_pct": 1.035,
+          "t_naive": 1.5,
+          "t_newey_west": 0.98,
+          "pct_days_positive_spread": 0.547
+        },
+        "event_driven_unstable": {
+          "n_days": 7,
+          "mean_spread_pct": 6.303,
+          "t_naive": 1.12,
+          "t_newey_west": 4.64,
+          "pct_days_positive_spread": 0.714
+        }
+      }
+    },
+    "fast_score": {
+      "T+5_overall": {
+        "n_days": 190,
+        "mean_spread_pct": 0.125,
+        "t_naive": 0.43,
+        "t_newey_west": 0.24,
+        "pct_days_positive_spread": 0.489
+      },
+      "T+5_by_regime": {
+        "bullish_trend": {
+          "n_days": 190,
+          "mean_spread_pct": 0.707,
+          "t_naive": 1.54,
+          "t_newey_west": 0.95,
+          "pct_days_positive_spread": 0.511
+        },
+        "bearish_trend": {
+          "n_days": 183,
+          "mean_spread_pct": -0.903,
+          "t_naive": -2.21,
+          "t_newey_west": -1.69,
+          "pct_days_positive_spread": 0.404
+        },
+        "range_bound": {
+          "n_days": 190,
+          "mean_spread_pct": 0.206,
+          "t_naive": 0.63,
+          "t_newey_west": 0.48,
+          "pct_days_positive_spread": 0.489
+        },
+        "event_driven_unstable": {
+          "n_days": 7,
+          "mean_spread_pct": 1.472,
+          "t_naive": 0.32,
+          "t_newey_west": 0.53,
+          "pct_days_positive_spread": 0.286
+        }
+      },
+      "T+20_overall": {
+        "n_days": 190,
+        "mean_spread_pct": 0.794,
+        "t_naive": 1.4,
+        "t_newey_west": 0.67,
+        "pct_days_positive_spread": 0.526
+      },
+      "T+20_by_regime": {
+        "bullish_trend": {
+          "n_days": 190,
+          "mean_spread_pct": 0.3,
+          "t_naive": 0.37,
+          "t_newey_west": 0.26,
+          "pct_days_positive_spread": 0.516
+        },
+        "bearish_trend": {
+          "n_days": 183,
+          "mean_spread_pct": -1.755,
+          "t_naive": -2.24,
+          "t_newey_west": -1.17,
+          "pct_days_positive_spread": 0.399
+        },
+        "range_bound": {
+          "n_days": 190,
+          "mean_spread_pct": 0.435,
+          "t_naive": 0.54,
+          "t_newey_west": 0.36,
+          "pct_days_positive_spread": 0.537
+        },
+        "event_driven_unstable": {
+          "n_days": 7,
+          "mean_spread_pct": 9.552,
+          "t_naive": 1.68,
+          "t_newey_west": 7.71,
+          "pct_days_positive_spread": 0.857
+        }
+      }
+    },
+    "overall_score": {
+      "T+5_overall": {
+        "n_days": 190,
+        "mean_spread_pct": 1.046,
+        "t_naive": 2.92,
+        "t_newey_west": 1.64,
+        "pct_days_positive_spread": 0.579
+      },
+      "T+5_by_regime": {
+        "bullish_trend": {
+          "n_days": 190,
+          "mean_spread_pct": 0.721,
+          "t_naive": 1.58,
+          "t_newey_west": 0.99,
+          "pct_days_positive_spread": 0.553
+        },
+        "bearish_trend": {
+          "n_days": 183,
+          "mean_spread_pct": -0.777,
+          "t_naive": -2.02,
+          "t_newey_west": -1.72,
+          "pct_days_positive_spread": 0.415
+        },
+        "range_bound": {
+          "n_days": 190,
+          "mean_spread_pct": 0.607,
+          "t_naive": 2.12,
+          "t_newey_west": 1.76,
+          "pct_days_positive_spread": 0.542
+        },
+        "event_driven_unstable": {
+          "n_days": 7,
+          "mean_spread_pct": 2.05,
+          "t_naive": 0.54,
+          "t_newey_west": 1.14,
+          "pct_days_positive_spread": 0.571
+        }
+      },
+      "T+20_overall": {
+        "n_days": 190,
+        "mean_spread_pct": 3.884,
+        "t_naive": 6.42,
+        "t_newey_west": 2.3,
+        "pct_days_positive_spread": 0.658
+      },
+      "T+20_by_regime": {
+        "bullish_trend": {
+          "n_days": 190,
+          "mean_spread_pct": 2.216,
+          "t_naive": 3.01,
+          "t_newey_west": 1.55,
+          "pct_days_positive_spread": 0.558
+        },
+        "bearish_trend": {
+          "n_days": 183,
+          "mean_spread_pct": 0.493,
+          "t_naive": 0.62,
+          "t_newey_west": 0.38,
+          "pct_days_positive_spread": 0.536
+        },
+        "range_bound": {
+          "n_days": 190,
+          "mean_spread_pct": 1.742,
+          "t_naive": 2.41,
+          "t_newey_west": 1.63,
+          "pct_days_positive_spread": 0.568
+        },
+        "event_driven_unstable": {
+          "n_days": 7,
+          "mean_spread_pct": 11.614,
+          "t_naive": 2.69,
+          "t_newey_west": 7.17,
+          "pct_days_positive_spread": 0.857
+        }
+      }
+    }
+  }
+}

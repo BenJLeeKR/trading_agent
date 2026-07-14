@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "/workspace/agent_trading/scripts/validate_signal_predictive_power_v2_5.py", line 38, in <module>
+    from dotenv import load_dotenv
+ModuleNotFoundError: No module named 'dotenv'
