@@ -1,0 +1,45 @@
+INFO:validate_signal_predictive_power_v9_gate_and_fast_features:[20/87] 누적 표본 13060건
+INFO:validate_signal_predictive_power_v9_gate_and_fast_features:[40/87] 누적 표본 26120건
+INFO:validate_signal_predictive_power_v9_gate_and_fast_features:[60/87] 누적 표본 39180건
+INFO:validate_signal_predictive_power_v9_gate_and_fast_features:[80/87] 누적 표본 52240건
+INFO:validate_signal_predictive_power_v9_gate_and_fast_features:[87/87] 누적 표본 56753건
+INFO:validate_signal_predictive_power_v9_gate_and_fast_features:전체 3년 표본 56753건, 실패 0종목
+
+=== SPPV-2.12 — §19.6 후속: regime_switch_v1 게이트 규칙 + fast 계열 신규 feature ===
+
+[과제 1] regime_switch_v1 1차 게이트 예외 규칙 비교
+  [규칙 B] 최근 발생 bearish_trend 48거래일 표본으로 reversal_1m 재검증
+    T+5: reversal_1m spread t_NW=1.33 (n_days=48)
+    T+20: reversal_1m spread t_NW=1.61 (n_days=48)
+  [규칙 C] 적응형 최소 국면 표본 창(최근 30거래일, 목표 30일) 재검증
+    T+5: reversal_1m spread t_NW=4.18 (n_days=30)
+    T+20: reversal_1m spread t_NW=3.02 (n_days=30)
+  [참고] regime_switch_v1 §19 재확인(1차=최근 12개월 달력, 2차=3년 전체)
+    T+5: 1차(12m 달력) t_NW=1.55, 2차(3년) t_NW=2.6
+    T+20: 1차(12m 달력) t_NW=1.47, 2차(3년) t_NW=2.36
+
+[과제 2] fast 계열 신규 feature — rsi_mean_reversion, sma5_over_sma20_gap
+  [rsi_mean_reversion]
+    T+5: 1차(12m) spread t_NW=-0.23, 2차(3년) spread t_NW=-0.29
+          bullish_trend(n=351): t_NW=-0.3
+          bearish_trend(n=96): t_NW=2.26
+          range_bound(n=200): t_NW=-1.82
+          event_driven_unstable(n=6): 표본부족
+    T+20: 1차(12m) spread t_NW=-0.08, 2차(3년) spread t_NW=-0.34
+          bullish_trend(n=351): t_NW=0.01
+          bearish_trend(n=96): t_NW=1.21
+          range_bound(n=200): t_NW=-1.67
+          event_driven_unstable(n=6): 표본부족
+  [sma5_over_sma20_gap]
+    T+5: 1차(12m) spread t_NW=0.48, 2차(3년) spread t_NW=0.53
+          bullish_trend(n=351): t_NW=0.58
+          bearish_trend(n=96): t_NW=-2.67
+          range_bound(n=200): t_NW=1.8
+          event_driven_unstable(n=6): 표본부족
+    T+20: 1차(12m) spread t_NW=0.77, 2차(3년) spread t_NW=0.98
+          bullish_trend(n=351): t_NW=0.5
+          bearish_trend(n=96): t_NW=-0.77
+          range_bound(n=200): t_NW=1.89
+          event_driven_unstable(n=6): 표본부족
+
+산출 저장: logs/signal_ic_sppv2_12_gate_and_fast_features_2026-07-14.json

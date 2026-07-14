@@ -97,6 +97,16 @@
   하락장 표본 부재로 미달 — 가장 유망한 Watch 후보로 격상. SPPV-3
   착수는 계속 보류.
 
+- 작성자: Claude
+- 수정일자: 2026-07-14 (10차, §19.6 후속 — SPPV-2.12)
+- 수정내용: `regime_switch_v1` 1차 게이트 예외 규칙 3개(A 관찰 유예/B
+  최근-실사례 고정창/C 적응형 최소 국면 표본 창)를 비교했다. 규칙 C가
+  n=30에서 t_NW=4.18로 급등하지만 n=48(규칙 B)에서는 1.33에 불과 —
+  데이터 스누핑으로 판정, 채택 거부. 규칙 B는 정직한 재검증에서도
+  미달 — 규칙 A(관찰 유예)를 유일하게 채택. fast 계열 신규 feature 2종
+  (`rsi_mean_reversion`, `sma5_over_sma20_gap`)도 범용 대체 후보로
+  No-Go(각각 하락장 전용/하락장 역전). SPPV-3 착수는 계속 보류.
+
 ## 최근 메모
 
 > **📌 2026-07-14 BUY 주문경로 근본 복구 기준 확정 (최신, 최우선 반영)**:
@@ -242,6 +252,27 @@
 > 수정이 아닌 **전면 재설계 대상으로 확정**됐다. **SPPV-3 착수는 계속
 > 보류**한다. 상세: `plans/[DESIGN] signal_predictive_power_
 > validation.md` §19.
+
+> **📌 2026-07-14 SPPV-2.12 완료 — regime_switch_v1 게이트 예외 규칙 +
+> fast 계열 신규 feature (최신)**: §19.6이 지시한 두 과제를 수행했다.
+> `regime_switch_v1`의 1차 게이트 예외 규칙 3개를 정의·비교했다 —
+> **규칙 A(관찰 유예, 하락장 재발 시 자동 재검증, 절차적)**, **규칙
+> B(최근-실사례 고정창, 가장 최근 bearish_trend 48거래일)**, **규칙
+> C(적응형 최소 국면 표본 창, 최소 30거래일 확보까지 확장)**. 규칙 C는
+> n=30에서 T+5 t_NW=**4.18**로 급등했지만 n=48(규칙 B)에서는 **1.33**에
+> 불과해, **"목표 유의 수준을 넘길 때까지 표본을 사후적으로 줄이는"
+> 구조 자체가 데이터 스누핑을 만든다고 판정하고 채택을 거부**한다 —
+> 공격형 시스템이라도 이런 자기선택적 표본 축소는 실거래 재현성을
+> 보장하지 못한다. 규칙 B(고정 표본, 정직한 측정)는 1.33~1.61로
+> 여전히 §16 게이트 미달 — **규칙 A(관찰 유예)를 유일하게 채택**한다.
+> fast 계열 신규 feature 2종(`rsi_mean_reversion`=연속형 평균회귀
+> RSI, `sma5_over_sma20_gap`=단기 이동평균 격차)도 실측 — 둘 다 범용
+> `fast_score` 대체 후보로는 **No-Go**다. `rsi_mean_reversion`은
+> 하락장(T+5)에서만 유의(t=2.26, `reversal_1m`과 동일한 국면 조건부
+> 패턴), `sma5_over_sma20_gap`은 SMA20 이격과 마찬가지로 하락장에서
+> 유의하게 역전(t=-2.67) — "이동평균 창을 짧게 하면 해결된다"는 가설도
+> 기각됐다. **SPPV-3 착수는 계속 보류**한다. 상세:
+> `plans/[DESIGN] signal_predictive_power_validation.md` §20.
 
 > **📌 2026-07-12 방향 전환 (이력, 2026-07-14 결론으로 대체)**:
 > 지난 6주(2026-06-01~07-12) 매수 0건은 시스템 오류가 아니라 **하락장에서
@@ -4159,15 +4190,26 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      `fast_score`는 전면 재설계 대상으로 확정. SPPV-3 착수는 계속
      보류. 상세: `plans/[DESIGN] signal_predictive_power_validation.md`
      §19.
-   - **SPPV-3(보류 유지, 사유 재교체)**: §19(SPPV-2.11)에서 `fast_score`
-     하락장 역전의 주된 원인이 `fast_trend`로 재확인됐고(부분 수정으로는
-     알파 생성 불가), 가장 유망한 `regime_switch_v1`도 1차(최근 12개월)
-     게이트를 하락장 표본 부재로 통과하지 못한다 — 착수 조건은 (a)
-     최근 12개월 창에 실제 하락 국면이 편입되거나 (b) §16 게이트에
-     "국면 조건부 신호는 그 국면 존재 기간을 1차 창으로 인정"하는 예외
-     규정을 추가하는 것 — 사용자 판단 필요(§14.5, §17.5, §18.6, §19.6).
-     착수 시 regime/allocation/strategy/source를 복원한 `entry_score`
-     point-in-time 재현과 signal/risk-off/regime
+   - **SPPV-2.12(완료, 2026-07-14, §19.6 후속)**: `regime_switch_v1`의
+     1차 게이트 예외 규칙 3개(A 관찰 유예/B 최근-실사례 고정창(n=48)/
+     C 적응형 최소 국면 표본 창(최소 30일))를 정의·비교하고, fast 계열
+     신규 feature 2종(`rsi_mean_reversion`, `sma5_over_sma20_gap`)을
+     실측. **결과: 규칙 C가 n=30에서 t_NW=4.18로 급등하지만 n=48(규칙
+     B)에서는 1.33에 불과 — "문턱을 넘을 때까지 창을 줄이는" 데이터
+     스누핑으로 판정, 채택 거부.** 규칙 B는 정직한 재검증에서도 미달 —
+     **규칙 A(관찰 유예, 하락장 재발 시 자동 재검증)를 유일하게
+     채택**. fast 계열 신규 feature 2종 모두 범용 대체 후보로 No-Go —
+     `rsi_mean_reversion`은 하락장 전용(t=2.26, `reversal_1m`과 동일
+     패턴), `sma5_over_sma20_gap`은 SMA20과 동일하게 하락장에서 유의
+     하게 역전(t=-2.67). SPPV-3 착수는 계속 보류. 상세:
+     `plans/[DESIGN] signal_predictive_power_validation.md` §20.
+   - **SPPV-3(보류 유지, 사유 재교체)**: §20(SPPV-2.12)에서 `regime_
+     switch_v1`의 1차 게이트는 "관찰 유예"만 방어 가능하다고 확정됐고,
+     fast 계열 신규 feature도 범용 대체 후보를 찾지 못했다 — 착수
+     조건은 최근 12개월 창에 실제 하락 국면이 편입돼 규칙 A의 재검증
+     트리거가 발동하는 것 — 사용자 확인 필요(§14.5, §17.5, §18.6,
+     §19.6, §20.5). 착수 시 regime/allocation/strategy/source를
+     복원한 `entry_score` point-in-time 재현과 signal/risk-off/regime
      eligibility 중복 억제 ablation.
    - **SPPV-4**: Virtual BUY의 `candidate → selected → expected value → would_buy
      → submitted`, MFE/MAE/낙폭/비용 차감 기대수익 비교.

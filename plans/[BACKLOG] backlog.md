@@ -92,6 +92,16 @@
   가장 유망한 Watch 후보로 격상, 확정 Go는 아니다. `fast_score`는 전면
   재설계 대상으로 확정. SPPV-3 착수는 계속 보류.
 
+- 작성자: Claude
+- 수정일자: 2026-07-14 (10차, §19.6 후속 — SPPV-2.12)
+- 수정내용: §19.6이 지시한 두 과제를 실행했다(SPPV-2.12 신설). `regime_
+  switch_v1`의 1차 게이트 예외 규칙 3개(A 관찰 유예/B 최근-실사례
+  고정창/C 적응형 최소 국면 표본 창)를 비교 — 규칙 C가 n=30에서
+  t_NW=4.18로 급등하지만 n=48(규칙 B)에서는 1.33에 불과해 데이터
+  스누핑으로 판정, 채택 거부. 규칙 A(관찰 유예)를 유일하게 채택. fast
+  계열 신규 feature 2종(`rsi_mean_reversion`, `sma5_over_sma20_gap`)도
+  범용 대체 후보로 No-Go. SPPV-3 착수는 계속 보류.
+
 ---
 
 ## 관리 원칙
@@ -294,12 +304,27 @@
     (read-only, 신규 KIS 호출 0건),
     `logs/signal_ic_sppv2_11_fast_score_teardown_2026-07-14.json`.
     상세: `plans/[DESIGN] signal_predictive_power_validation.md` §19.
-  - **SPPV-3(보류 유지, 사유 재교체)**: §19(SPPV-2.11)에서 `fast_score`
-    하락장 역전의 주된 원인이 `fast_trend`로 재확인됐고, 가장 유망한
-    `regime_switch_v1`도 1차 게이트를 하락장 표본 부재로 통과하지
-    못한다 — 착수 조건은 (a) 최근 12개월 창에 실제 하락 국면이 편입
-    되거나 (b) §16 게이트에 국면 조건부 신호용 예외 규정을 추가하는 것
-    — 사용자 확인 필요. 착수 시 당시
+  - **SPPV-2.12(완료, 2026-07-14, §19.6 후속)**: `regime_switch_v1`의
+    1차 게이트 예외 규칙 3개(A 관찰 유예/B 최근-실사례 고정창(n=48)/
+    C 적응형 최소 국면 표본 창(최소 30일)) + fast 계열 신규 feature
+    2종(`rsi_mean_reversion`, `sma5_over_sma20_gap`)을 실측(3년 캐시
+    재사용, 신규 KIS 호출 0건). **결과: 규칙 C가 n=30에서
+    t_NW=4.18로 급등하지만 n=48(규칙 B)에서는 1.33에 불과 — "문턱을
+    넘을 때까지 창을 줄이는" 데이터 스누핑으로 판정, 채택 거부.** 규칙
+    B는 정직한 재검증에서도 미달(1.33~1.61) — **규칙 A(관찰 유예)를
+    유일하게 채택**한다. fast 계열 신규 feature 2종 모두 범용 대체
+    후보로 No-Go — `rsi_mean_reversion`은 하락장 전용(t=2.26,
+    `reversal_1m`과 동일 패턴), `sma5_over_sma20_gap`은 SMA20과 동일
+    하게 하락장에서 유의하게 역전(t=-2.67). SPPV-3 착수는 계속 보류.
+    산출: `scripts/validate_signal_predictive_power_v9_gate_and_fast_
+    features.py`(read-only, 신규 KIS 호출 0건),
+    `logs/signal_ic_sppv2_12_gate_and_fast_features_2026-07-14.json`.
+    상세: `plans/[DESIGN] signal_predictive_power_validation.md` §20.
+  - **SPPV-3(보류 유지, 사유 재교체)**: §20(SPPV-2.12)에서 `regime_
+    switch_v1`의 1차 게이트는 "관찰 유예"만 방어 가능하다고 확정됐고,
+    fast 계열 신규 feature도 범용 대체 후보를 찾지 못했다 — 착수
+    조건은 최근 12개월 창에 실제 하락 국면이 편입돼 규칙 A의 재검증
+    트리거가 발동하는 것 — 사용자 확인 필요. 착수 시 당시
     regime/allocation/strategy/source를 복원해
     `entry_score`를 point-in-time 재현하고 signal 약세, `risk_off_
     penalty`, regime eligibility block의 중복 억제를 ablation한다.
