@@ -1,0 +1,267 @@
+{
+  "as_of": "2026-07-14T22:29:40.959140+09:00",
+  "primary_window": {
+    "recent_window_calendar_days": 365,
+    "cutoff_trade_date": "2025-06-16",
+    "common_market_regime_distribution": {
+      "bullish_trend": 239,
+      "range_bound": 6
+    },
+    "total_rolling_samples": 21315
+  },
+  "supplementary_reference": "logs/signal_ic_sppv2_7_extended_period_2026-07-14.json",
+  "min_regime_trading_days_gate": 30,
+  "by_signal": {
+    "slow_score": {
+      "T+5": {
+        "pooled_raw_ic": {
+          "n_days": 245,
+          "mean_pct": -0.0279,
+          "t_naive": -1.99,
+          "t_newey_west": -1.08,
+          "pct_days_positive": 0.486
+        },
+        "pooled_raw_spread": {
+          "n_days": 245,
+          "mean_pct": -0.073,
+          "t_naive": -0.27,
+          "t_newey_west": -0.15,
+          "pct_days_positive": 0.478
+        },
+        "by_common_regime_raw_spread": {
+          "bullish_trend": {
+            "n_days": 239,
+            "mean_pct": -0.099,
+            "t_naive": -0.36,
+            "t_newey_west": -0.2,
+            "pct_days_positive": 0.477
+          },
+          "bearish_trend": {
+            "n_days": 0,
+            "note": "표본부족(<5일)"
+          },
+          "range_bound": {
+            "n_days": 6,
+            "mean_pct": 0.987,
+            "t_naive": 0.91,
+            "t_newey_west": 1.03,
+            "pct_days_positive": 0.5
+          },
+          "event_driven_unstable": {
+            "n_days": 0,
+            "note": "표본부족(<5일)"
+          }
+        }
+      },
+      "T+20": {
+        "pooled_raw_ic": {
+          "n_days": 245,
+          "mean_pct": -0.0217,
+          "t_naive": -1.73,
+          "t_newey_west": -0.53,
+          "pct_days_positive": 0.469
+        },
+        "pooled_raw_spread": {
+          "n_days": 245,
+          "mean_pct": -0.251,
+          "t_naive": -0.49,
+          "t_newey_west": -0.15,
+          "pct_days_positive": 0.486
+        },
+        "by_common_regime_raw_spread": {
+          "bullish_trend": {
+            "n_days": 239,
+            "mean_pct": -0.451,
+            "t_naive": -0.87,
+            "t_newey_west": -0.28,
+            "pct_days_positive": 0.477
+          },
+          "bearish_trend": {
+            "n_days": 0,
+            "note": "표본부족(<5일)"
+          },
+          "range_bound": {
+            "n_days": 6,
+            "mean_pct": 7.701,
+            "t_naive": 2.33,
+            "t_newey_west": 4.56,
+            "pct_days_positive": 0.833
+          },
+          "event_driven_unstable": {
+            "n_days": 0,
+            "note": "표본부족(<5일)"
+          }
+        }
+      }
+    },
+    "fast_score": {
+      "T+5": {
+        "pooled_raw_ic": {
+          "n_days": 245,
+          "mean_pct": 0.0058,
+          "t_naive": 0.53,
+          "t_newey_west": 0.31,
+          "pct_days_positive": 0.498
+        },
+        "pooled_raw_spread": {
+          "n_days": 245,
+          "mean_pct": 0.14,
+          "t_naive": 0.58,
+          "t_newey_west": 0.34,
+          "pct_days_positive": 0.502
+        },
+        "by_common_regime_raw_spread": {
+          "bullish_trend": {
+            "n_days": 239,
+            "mean_pct": 0.158,
+            "t_naive": 0.64,
+            "t_newey_west": 0.37,
+            "pct_days_positive": 0.502
+          },
+          "bearish_trend": {
+            "n_days": 0,
+            "note": "표본부족(<5일)"
+          },
+          "range_bound": {
+            "n_days": 6,
+            "mean_pct": -0.599,
+            "t_naive": -0.54,
+            "t_newey_west": -0.79,
+            "pct_days_positive": 0.5
+          },
+          "event_driven_unstable": {
+            "n_days": 0,
+            "note": "표본부족(<5일)"
+          }
+        }
+      },
+      "T+20": {
+        "pooled_raw_ic": {
+          "n_days": 245,
+          "mean_pct": 0.0099,
+          "t_naive": 0.93,
+          "t_newey_west": 0.37,
+          "pct_days_positive": 0.518
+        },
+        "pooled_raw_spread": {
+          "n_days": 245,
+          "mean_pct": 0.116,
+          "t_naive": 0.25,
+          "t_newey_west": 0.12,
+          "pct_days_positive": 0.486
+        },
+        "by_common_regime_raw_spread": {
+          "bullish_trend": {
+            "n_days": 239,
+            "mean_pct": 0.137,
+            "t_naive": 0.29,
+            "t_newey_west": 0.14,
+            "pct_days_positive": 0.485
+          },
+          "bearish_trend": {
+            "n_days": 0,
+            "note": "표본부족(<5일)"
+          },
+          "range_bound": {
+            "n_days": 6,
+            "mean_pct": -0.702,
+            "t_naive": -0.39,
+            "t_newey_west": -1.84,
+            "pct_days_positive": 0.5
+          },
+          "event_driven_unstable": {
+            "n_days": 0,
+            "note": "표본부족(<5일)"
+          }
+        }
+      }
+    },
+    "overall_score": {
+      "T+5": {
+        "pooled_raw_ic": {
+          "n_days": 245,
+          "mean_pct": -0.0162,
+          "t_naive": -1.25,
+          "t_newey_west": -0.69,
+          "pct_days_positive": 0.498
+        },
+        "pooled_raw_spread": {
+          "n_days": 245,
+          "mean_pct": 0.618,
+          "t_naive": 2.09,
+          "t_newey_west": 1.16,
+          "pct_days_positive": 0.551
+        },
+        "by_common_regime_raw_spread": {
+          "bullish_trend": {
+            "n_days": 239,
+            "mean_pct": 0.616,
+            "t_naive": 2.04,
+            "t_newey_west": 1.13,
+            "pct_days_positive": 0.552
+          },
+          "bearish_trend": {
+            "n_days": 0,
+            "note": "표본부족(<5일)"
+          },
+          "range_bound": {
+            "n_days": 6,
+            "mean_pct": 0.704,
+            "t_naive": 0.56,
+            "t_newey_west": 0.81,
+            "pct_days_positive": 0.5
+          },
+          "event_driven_unstable": {
+            "n_days": 0,
+            "note": "표본부족(<5일)"
+          }
+        }
+      },
+      "T+20": {
+        "pooled_raw_ic": {
+          "n_days": 245,
+          "mean_pct": -0.0089,
+          "t_naive": -0.77,
+          "t_newey_west": -0.26,
+          "pct_days_positive": 0.51
+        },
+        "pooled_raw_spread": {
+          "n_days": 245,
+          "mean_pct": 1.906,
+          "t_naive": 3.59,
+          "t_newey_west": 1.18,
+          "pct_days_positive": 0.576
+        },
+        "by_common_regime_raw_spread": {
+          "bullish_trend": {
+            "n_days": 239,
+            "mean_pct": 1.794,
+            "t_naive": 3.35,
+            "t_newey_west": 1.11,
+            "pct_days_positive": 0.569
+          },
+          "bearish_trend": {
+            "n_days": 0,
+            "note": "표본부족(<5일)"
+          },
+          "range_bound": {
+            "n_days": 6,
+            "mean_pct": 6.347,
+            "t_naive": 1.72,
+            "t_newey_west": 3.69,
+            "pct_days_positive": 0.833
+          },
+          "event_driven_unstable": {
+            "n_days": 0,
+            "note": "표본부족(<5일)"
+          }
+        }
+      }
+    }
+  },
+  "insufficient_regimes_in_primary_window": [
+    "range_bound",
+    "bearish_trend",
+    "event_driven_unstable"
+  ]
+}

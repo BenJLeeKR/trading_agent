@@ -26,6 +26,49 @@
   착수 조건을 "표본 확장 후 국면 내부 유의성 재확인 또는 신호 feature
   재설계"로 구체화했다.
 
+- 작성자: Claude
+- 수정일자: 2026-07-14 (3차, 사용자 지적 반영)
+- 수정내용: SPPV-2.5의 "국면 혼입 착시" 결론을 방법론 오류(`regime_label`이
+  시장이 아니라 종목 자신의 신호였음)로 폐기했다. KODEX 200 시장 벤치마크
+  기준 재검증(SPPV-2.6)을 신설해 반영 — 결론이 반박되어 알파 근거가
+  강화됐으나, 하락장 표본 전무라는 새 한계가 확인돼 SPPV-3 보류 사유를
+  "하락장 검증 공백"으로 교체했다.
+
+- 작성자: Claude
+- 수정일자: 2026-07-14 (4차)
+- 수정내용: SPPV-2.6의 "알파 근거 강화" 결론을 다시 하향 조정했다.
+  벤치마크(069500) 자기참조 제거 + 3년 확장 검증(SPPV-2.7)에서 pooled
+  유의성이 소멸하고 하락장에서 신호가 역전/역방향으로 나타났다. SPPV-3
+  보류 사유를 "신호 feature 재설계 검토 필요"로 재교체했다.
+
+- 작성자: Claude
+- 수정일자: 2026-07-14 (5차, 검증 기간 재설계)
+- 수정내용: 이 시스템이 3개월 이하 중단기 공격형이라는 전제로 **SPPV 검증
+  기간 기준을 재설계**했다(SPPV-2.8 신설). 3년 pooled를 기본값으로 두지
+  않고, 최근 12개월을 1차(primary), 3년(SPPV-2.7 재사용)을 국면 커버리지
+  2차(supplementary) 게이트로 분리했다. 최근 12개월 실측 결과 하락장
+  거래일이 0일이라 1차만으로는 필수 국면 검증이 불가능함을 실증했고, 1차
+  pooled 유의성도 확보되지 않았다. §14의 보류 판정은 유지.
+
+- 작성자: Claude
+- 수정일자: 2026-07-14 (6차, 실행 증빙 재검증)
+- 수정내용: SPPV-2.8의 최초 실행 로그가 실제로는 호스트 `dotenv` 미설치로
+  즉시 실패한 트레이스였던 증빙 결함을 발견하고, 컨테이너에서 재실행해
+  정상 로그를 재확보했다. 종료 코드 0/KIS 호출 0건/bearish_trend 0일/
+  `overall_score` T+20 t_NW=1.18 전부 재현 — 결론·판정 변경 없이 증빙만
+  보강했다.
+
+- 작성자: Claude
+- 수정일자: 2026-07-14 (7차, 신호 feature 재설계 검토 — SPPV-2.9)
+- 수정내용: §14.5가 지시한 신호 feature 재설계 검토를 실행했다(SPPV-2.9
+  신설). `fast_score`/`slow_score`의 6개 sub-component 분해 + 신규 후보
+  feature(`risk_adj_momentum_3m`, `reversal_1m`) 검증 결과, `rsi_signal`
+  이 T+20에서 유의하게 역방향(t_NW=-2.94)임을 특정했고, `risk_adj_
+  momentum_3m`이 3년 pooled 유의(t_NW=2.07) + 하락장 역전 없음으로
+  유일한 Watch 후보로 확인됐으나 1차 창 유의성 미달로 완전한 Go는
+  아니다. SPPV-3 착수는 계속 보류, 다음 과제(`fast_score_v2` shadow
+  검증 등)를 구체화했다.
+
 ---
 
 ## 관리 원칙
@@ -121,23 +164,85 @@
     `plans/[DESIGN] signal_predictive_power_validation.md` §9.
     point-in-time universe(당시 편입·편출 종목)와 시장·업종 대비 초과수익은
     이번 턴에 시도하지 못해 한계로 남김(§9.5).
-  - **SPPV-2.5(완료, 2026-07-14)**: quintile spread 자체의 Newey-West
-    유의성 검정 + 국면 내부(within-regime) 분해 완료. **결과: `overall_score`
-    pooled spread(T+20, t_NW=2.30)는 유의하나, 국면 내부(bullish_trend
-    t=1.55, range_bound t=1.63, bearish_trend t=0.38) 어디서도 재현되지
-    않음 — pooled 유의성이 국면 혼입(regime-mix) 착시일 가능성이 높다.**
-    종목 선택 알파 근거는 아직 미확보. 산출:
+  - **SPPV-2.5(완료, 2026-07-14) — ⚠️ 방법론 오류로 결론 폐기**: quintile
+    spread 자체의 Newey-West 유의성 검정 + 국면 내부(within-regime) 분해
+    시도. ~~결과: pooled spread(T+20, t_NW=2.30)는 유의하나 국면 내부
+    어디서도 재현되지 않음 — 국면 혼입 착시~~ **→ 오류(사용자 지적):
+    `regime_label`이 시장이 아니라 그 종목 자신의 신호(slow_score/
+    return_3m 등)로 판정되는 라벨이었다(`market_regime.py:21-38`) —
+    검정 대상(`overall_score`)과 같은 계열 변수로 표본을 조건화한 선택
+    편향. SPPV-2.6에서 정정.** 산출:
     `scripts/validate_signal_predictive_power_v2_5.py`(read-only),
-    `logs/signal_ic_sppv2_5_regime_decomposition_2026-07-14.json`,
-    `logs/_bars_cache_core88_2026-07-14/`(재사용 캐시). 상세:
-    `plans/[DESIGN] signal_predictive_power_validation.md` §11.
-  - **SPPV-3(조건부 보류 유지)**: 착수 조건은 (a) 표본 확장(기간 1→2~3년
-    또는 유니버스 확대) 후 국면 내부 유의성 재확인, 또는 (b) 신호 feature
-    구성 자체의 재설계로 트랙 전환 — 둘 중 선택은 추가 리소스 투입 여부를
-    정하는 것이라 사용자 확인 필요(§11.5). 착수 시 당시 regime/allocation/
-    strategy/source를 복원해 `entry_score`를 point-in-time 재현하고 signal
-    약세, `risk_off_penalty`, regime eligibility block의 중복 억제를
-    ablation한다.
+    `logs/signal_ic_sppv2_5_regime_decomposition_2026-07-14.json`. 상세:
+    `plans/[DESIGN] signal_predictive_power_validation.md` §11(이력 보존).
+  - **SPPV-2.6(완료, 2026-07-14, 방법론 교정) — ⚠️ SPPV-2.7에서 표현
+    하향 조정**: KODEX 200(`069500`, 이미 core universe 구성원)을 시장
+    벤치마크로 써서 거래일 단위 공통 국면 + 초과수익으로 재검증.
+    ~~결과: "국면 혼입 착시" 결론은 반박되고 알파 근거는 오히려 강화됐다.~~
+    **→ 벤치마크를 평가 universe에도 포함시킨 자기참조 문제와 1년(하락장
+    0일) 표본 한계가 있었다. 아래 SPPV-2.7에서 교정.** 산출:
+    `scripts/validate_signal_predictive_power_v3_market_regime.py`,
+    `logs/signal_ic_sppv_market_regime_correction_2026-07-14.json`. 상세:
+    `plans/[DESIGN] signal_predictive_power_validation.md` §12(이력).
+  - **SPPV-2.7(완료, 2026-07-14, 자기참조 제거 + 3년 확장)**: 평가
+    universe에서 벤치마크 심볼을 제외(core 87종목)하고 조회 기간을
+    1년→**3년**(종목당 일봉 733개)으로 확장 — 시장 공통 국면 기준 실제
+    하락장 표본(96거래일, 15%)을 처음으로 확보했다. **결과: `overall_score`
+    pooled spread 유의성이 소멸(t_NW 2.30→1.32)했고, 하락장 내부에서는
+    spread가 음수로 역전(T+5 t_NW=-1.71, T+20 t_NW=-0.14)하거나
+    `fast_score`는 하락장에서 통계적으로 유의하게 역방향(T+5 t_NW=-2.79)
+    이었다. 어떤 국면 내부도 |t_NW|≥2를 넘지 못했다(유일한 유의는
+    fast_score의 역방향 하락장 신호뿐).** SPPV-2.6의 "알파 근거 강화"
+    결론은 과도했음이 확인돼 하향 조정한다 — 안정적인 종목 선택 알파를
+    찾지 못했다. 산출:
+    `scripts/validate_signal_predictive_power_v4_extended_period.py`
+    (read-only), `logs/signal_ic_sppv2_7_extended_period_2026-07-14.json`,
+    `logs/_bars_cache_core87_3y_2026-07-14/`. 상세:
+    `plans/[DESIGN] signal_predictive_power_validation.md` §14(최신
+    canonical 결론).
+  - **SPPV-2.8(완료, 2026-07-14, 검증 기간 기준 재설계)**: 이 시스템이
+    3개월 이하 중단기 공격형이라는 전제로 검증 기간 기준을 재설계했다 —
+    3년 pooled 기본값 대신 **최근 12개월(1차, primary)과 3년(2차,
+    supplementary 국면 게이트)**을 분리했다. 국면(특히 하락장) 최소
+    표본(30거래일) 미달 시 1차만으로 판정하지 않고 2차(장기)를 반드시
+    함께 참고한다. 기존 3년 캐시를 재사용해(신규 KIS 호출 0건) 최근
+    12개월(2025-06-16~2026-07-14, 245거래일)을 실측한 결과 **하락장
+    거래일 0일** — 최근성 창만으로는 필수 국면 게이트를 통과할 수 없음을
+    실증했고, 1차 pooled 유의성도 미확보(`overall_score` T+20
+    t_NW=1.18). §14의 보류 판정은 변경하지 않으며, 향후 재검증은 이
+    이원 기준을 따른다. 산출:
+    `scripts/validate_signal_predictive_power_v5_recency_window.py`
+    (read-only, 신규 KIS 호출 0건),
+    `logs/signal_ic_sppv_recency_window_primary_2026-07-14.json`. 상세:
+    `plans/[DESIGN] signal_predictive_power_validation.md` §16.
+    **실행 증빙 재검증(2026-07-14, 6차)**: 최초 로그가 실패 트레이스
+    (호스트 `dotenv` 미설치)였음을 발견해 컨테이너에서 재실행 — 종료
+    코드 0/KIS 호출 0건/bearish_trend 0일/t_NW=1.18 전부 재현. §16.6.
+  - **SPPV-2.9(완료, 2026-07-14, 신호 feature 재설계 검토)**: `fast_
+    score`/`slow_score`의 6개 sub-component(`slow_momentum`/`slow_
+    trend`/`fast_trend`/`volume_confirmation`/`rsi_signal`/`volatility_
+    penalty`)를 운영 코드 그대로 분해 실측 + 신규 후보 feature 2개
+    (`risk_adj_momentum_3m`=변동성 조정 모멘텀, `reversal_1m`=단기
+    역추세)를 §16 이원 기준으로 검증(3년 캐시 재사용, 신규 KIS 호출
+    0건). **결과: `rsi_signal`이 T+20에서 유의하게 역방향(1차
+    t_NW=-2.94, bullish_trend 내부 -2.79) — `fast_score` 실패 원인
+    특정.** `risk_adj_momentum_3m`은 2차(3년) pooled 유의(t_NW=2.07) +
+    하락장 역전 없음(t_NW=0.39)으로 유일한 Watch 후보이나 1차(최근
+    12개월) 유의성(t_NW=1.47)이 §16 게이트 미달로 완전한 Go는 아니다.
+    `reversal_1m`은 하락장에서만 유의(T+5 t_NW=2.13)해 국면 조건부
+    후보로 분리 검토가 필요하다. SPPV-3 착수는 계속 보류, 다음 과제로
+    `rsi_signal` 제거/반전한 `fast_score_v2` shadow 검증과 `risk_adj_
+    momentum_3m` 재검증을 확정했다. 산출:
+    `scripts/validate_signal_predictive_power_v6_feature_redesign.py`
+    (read-only, 신규 KIS 호출 0건),
+    `logs/signal_ic_sppv2_9_feature_redesign_2026-07-14.json`. 상세:
+    `plans/[DESIGN] signal_predictive_power_validation.md` §17.
+  - **SPPV-3(보류 유지, 사유 재교체)**: 착수 조건은 §17(SPPV-2.9)에서
+    확정한 후속 검증(`fast_score_v2` 재조합, `risk_adj_momentum_3m`
+    재검증)에서 안정적 알파 확인 — 사용자 확인 필요. 착수 시 당시
+    regime/allocation/strategy/source를 복원해
+    `entry_score`를 point-in-time 재현하고 signal 약세, `risk_off_
+    penalty`, regime eligibility block의 중복 억제를 ablation한다.
   - **SPPV-4**: 각 shadow formula별 Virtual BUY를 만들고 `candidate → selected
     → expected value → would_buy → submitted` 전환, MFE/MAE/낙폭/비용 차감
     기대수익을 비교한다.

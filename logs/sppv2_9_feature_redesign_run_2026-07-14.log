@@ -1,0 +1,110 @@
+INFO:validate_signal_predictive_power_v6_feature_redesign:3년 국면 분포: {'bearish_trend': 96, 'range_bound': 200, 'event_driven_unstable': 6, 'bullish_trend': 351}
+INFO:validate_signal_predictive_power_v6_feature_redesign:최근 12개월(cutoff=2025-06-16) 국면 분포: {'bullish_trend': 239, 'range_bound': 6}
+INFO:validate_signal_predictive_power_v6_feature_redesign:[20/87] 누적 표본 13060건
+INFO:validate_signal_predictive_power_v6_feature_redesign:[40/87] 누적 표본 26120건
+INFO:validate_signal_predictive_power_v6_feature_redesign:[60/87] 누적 표본 39180건
+INFO:validate_signal_predictive_power_v6_feature_redesign:[80/87] 누적 표본 52240건
+INFO:validate_signal_predictive_power_v6_feature_redesign:[87/87] 누적 표본 56753건
+INFO:validate_signal_predictive_power_v6_feature_redesign:전체 표본 56753건(3년), 최근 12개월 표본 21315건, 실패 0종목
+
+=== SPPV-2.9 신호 feature 재설계 검토 — sub-component 분해 + 신규 후보 ===
+3년 국면 분포: {'bearish_trend': 96, 'range_bound': 200, 'event_driven_unstable': 6, 'bullish_trend': 351}
+최근 12개월 국면 분포: {'bullish_trend': 239, 'range_bound': 6}
+
+[slow_momentum]
+  T+5: 1차(최근12m) spread t_NW=-0.51, 2차(3년) spread t_NW=-0.06
+        bullish_trend(n=351): spread t_NW=0.07
+        bearish_trend(n=96): spread t_NW=-0.63
+        range_bound(n=200): spread t_NW=-0.06
+        event_driven_unstable(n=6): 표본 부족 — 판정 제외
+  T+20: 1차(최근12m) spread t_NW=-0.49, 2차(3년) spread t_NW=0.52
+        bullish_trend(n=351): spread t_NW=-0.3
+        bearish_trend(n=96): spread t_NW=0.88
+        range_bound(n=200): spread t_NW=0.96
+        event_driven_unstable(n=6): 표본 부족 — 판정 제외
+
+[slow_trend]
+  T+5: 1차(최근12m) spread t_NW=0.46, 2차(3년) spread t_NW=0.84
+        bullish_trend(n=351): spread t_NW=0.71
+        bearish_trend(n=96): spread t_NW=-1.17
+        range_bound(n=200): spread t_NW=1.08
+        event_driven_unstable(n=6): 표본 부족 — 판정 제외
+  T+20: 1차(최근12m) spread t_NW=-0.38, 2차(3년) spread t_NW=0.46
+        bullish_trend(n=351): spread t_NW=-0.57
+        bearish_trend(n=96): spread t_NW=0.35
+        range_bound(n=200): spread t_NW=1.15
+        event_driven_unstable(n=6): 표본 부족 — 판정 제외
+
+[fast_trend]
+  T+5: 1차(최근12m) spread t_NW=0.65, 2차(3년) spread t_NW=0.8
+        bullish_trend(n=351): spread t_NW=0.68
+        bearish_trend(n=96): spread t_NW=-0.79
+        range_bound(n=200): spread t_NW=0.98
+        event_driven_unstable(n=6): 표본 부족 — 판정 제외
+  T+20: 1차(최근12m) spread t_NW=0.22, 2차(3년) spread t_NW=0.66
+        bullish_trend(n=351): spread t_NW=-0.14
+        bearish_trend(n=96): spread t_NW=0.22
+        range_bound(n=200): spread t_NW=1.37
+        event_driven_unstable(n=6): 표본 부족 — 판정 제외
+
+[volume_confirmation]
+  T+5: 1차(최근12m) spread t_NW=-0.1, 2차(3년) spread t_NW=-0.28
+        bullish_trend(n=351): spread t_NW=-0.17
+        bearish_trend(n=96): spread t_NW=-0.22
+        range_bound(n=200): spread t_NW=-0.11
+        event_driven_unstable(n=6): 표본 부족 — 판정 제외
+  T+20: 1차(최근12m) spread t_NW=-0.65, 2차(3년) spread t_NW=-0.16
+        bullish_trend(n=351): spread t_NW=-0.79
+        bearish_trend(n=96): spread t_NW=1.04
+        range_bound(n=200): spread t_NW=0.29
+        event_driven_unstable(n=6): 표본 부족 — 판정 제외
+
+[rsi_signal]
+  T+5: 1차(최근12m) spread t_NW=-1.11, 2차(3년) spread t_NW=-0.81
+        bullish_trend(n=351): spread t_NW=-1.05
+        bearish_trend(n=96): spread t_NW=-1.43
+        range_bound(n=200): spread t_NW=0.62
+        event_driven_unstable(n=6): 표본 부족 — 판정 제외
+  T+20: 1차(최근12m) spread t_NW=-2.94, 2차(3년) spread t_NW=-1.55
+        bullish_trend(n=351): spread t_NW=-2.79
+        bearish_trend(n=96): spread t_NW=-0.22
+        range_bound(n=200): spread t_NW=0.66
+        event_driven_unstable(n=6): 표본 부족 — 판정 제외
+
+[volatility_penalty]
+  T+5: 1차(최근12m) spread t_NW=-1.19, 2차(3년) spread t_NW=-1.22
+        bullish_trend(n=351): spread t_NW=-1.32
+        bearish_trend(n=96): spread t_NW=-0.75
+        range_bound(n=200): spread t_NW=0.23
+        event_driven_unstable(n=6): 표본 부족 — 판정 제외
+  T+20: 1차(최근12m) spread t_NW=-1.44, 2차(3년) spread t_NW=-1.45
+        bullish_trend(n=351): spread t_NW=-1.42
+        bearish_trend(n=96): spread t_NW=0.4
+        range_bound(n=200): spread t_NW=-1.22
+        event_driven_unstable(n=6): 표본 부족 — 판정 제외
+
+[risk_adj_momentum_3m]
+  T+5: 1차(최근12m) spread t_NW=1.55, 2차(3년) spread t_NW=1.73
+        bullish_trend(n=351): spread t_NW=1.79
+        bearish_trend(n=96): spread t_NW=-0.54
+        range_bound(n=200): spread t_NW=1.04
+        event_driven_unstable(n=6): 표본 부족 — 판정 제외
+  T+20: 1차(최근12m) spread t_NW=1.47, 2차(3년) spread t_NW=2.07
+        bullish_trend(n=351): spread t_NW=1.51
+        bearish_trend(n=96): spread t_NW=0.39
+        range_bound(n=200): spread t_NW=2.09
+        event_driven_unstable(n=6): 표본 부족 — 판정 제외
+
+[reversal_1m]
+  T+5: 1차(최근12m) spread t_NW=-0.46, 2차(3년) spread t_NW=-0.28
+        bullish_trend(n=351): spread t_NW=-0.47
+        bearish_trend(n=96): spread t_NW=2.13
+        range_bound(n=200): spread t_NW=-0.89
+        event_driven_unstable(n=6): 표본 부족 — 판정 제외
+  T+20: 1차(최근12m) spread t_NW=-1.01, 2차(3년) spread t_NW=-1.02
+        bullish_trend(n=351): spread t_NW=-0.84
+        bearish_trend(n=96): spread t_NW=1.47
+        range_bound(n=200): spread t_NW=-1.38
+        event_driven_unstable(n=6): 표본 부족 — 판정 제외
+
+산출 저장: logs/signal_ic_sppv2_9_feature_redesign_2026-07-14.json
