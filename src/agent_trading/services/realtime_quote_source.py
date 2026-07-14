@@ -40,11 +40,14 @@ set semantics are simpler and correct for now.
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Protocol, Sequence
+from typing import Awaitable, Callable, Protocol, Sequence
+
+logger = logging.getLogger(__name__)
 
 _KST = timezone(timedelta(hours=9))
 
@@ -261,19 +264,96 @@ _MOCK_INSTRUMENTS: dict[str, InstrumentInfo] = {
 
 
 def default_instrument_info(symbol: str) -> InstrumentInfo:
-    """Best-effort name/market lookup shared by mock and KIS-backed sources.
+    """Demo/placeholder name+market lookup — last-resort fallback only.
 
     Only a handful of demo symbols are seeded; any other symbol falls back to
-    a generic placeholder name and ``market="UNKNOWN"``. A proper
-    instrument-master-backed lookup (real KOSPI/KOSDAQ classification + name)
-    is a known Step 4+ improvement — see
-    ``[DESIGN]_kis_realtime_quote_operations_screen_plan.md`` Step 3 report.
+    a generic placeholder name and ``market="UNKNOWN"``. Real screens should
+    go through ``InstrumentInfoResolver`` (below), which prefers the actual
+    ``instruments`` DB table and only reaches this function when the table has
+    no row for the symbol (or no lookup was configured at all, e.g. tests).
     """
     normalized = symbol.strip()
     known = _MOCK_INSTRUMENTS.get(normalized)
     if known is not None:
         return known
     return InstrumentInfo(normalized, f"종목{normalized}", "UNKNOWN")
+
+
+# ``instruments`` 테이블 조회 콜백 — ``services/realtime_quote_source.py``는
+# repository 계층을 직접 import하지 않는다(순환 의존/결합 방지). 실제 배선은
+# ``api/app.py``/``runtime/bootstrap.py``에서 ``InstrumentRepository``를 감싸는
+# 콜백을 만들어 주입한다 — symbol -> InstrumentInfo | None (DB에 없으면 None).
+InstrumentInfoLookup = Callable[[str], Awaitable["InstrumentInfo | None"]]
+
+
+class InstrumentInfoResolver:
+    """symbol -> ``InstrumentInfo`` 조회 + 캐시 (mock/KIS 소스 공용).
+
+    실시간 시세 화면은 같은 구독 종목에 대해 초 단위로 반복 조회되므로, 매
+    ``instrument_info()`` 호출마다 DB를 두드리면 N+1이 된다. 대신 ``subscribe()``
+    시점(종목당 정확히 1회, 이미 async인 경로)에만 ``instruments`` 테이블을 조회해
+    결과를 캐싱하고, ``instrument_info()``는 캐시만 읽는 동기 조회로 유지한다
+    (``RealtimeQuoteSource.instrument_info`` 프로토콜 자체가 동기 메서드라서, 매
+    호출 시점에 직접 await 하는 선택지가 없다).
+
+    조회 실패(DB에 없는 심볼, lookup 콜백 미설정, 조회 중 예외)는 모두
+    ``default_instrument_info()``의 placeholder로 폴백하고, 그 폴백 결과도 그대로
+    캐싱한다 — 같은 미등록 심볼을 구독할 때마다 매번 DB를 다시 두드리지 않기
+    위함이다.
+    """
+
+    __slots__ = ("_lookup", "_cache")
+
+    def __init__(self, lookup: InstrumentInfoLookup | None) -> None:
+        self._lookup = lookup
+        self._cache: dict[str, InstrumentInfo] = {}
+
+    async def warm(self, symbol: str) -> None:
+        """``symbol``의 name/market을 조회해 캐시에 채워 넣는다(이미 있으면 no-op).
+
+        ``subscribe()``에서 호출한다 — 구독 시점에 딱 1번만 DB를 조회한다.
+        """
+        if symbol in self._cache:
+            return
+        info: InstrumentInfo | None = None
+        if self._lookup is not None:
+            try:
+                info = await self._lookup(symbol)
+            except Exception:
+                logger.exception(
+                    "instruments table lookup failed for symbol=%s — falling back "
+                    "to placeholder name/market",
+                    symbol,
+                )
+        self._cache[symbol] = info if info is not None else default_instrument_info(symbol)
+
+    def get(self, symbol: str) -> InstrumentInfo:
+        """캐시에서 조회 — 아직 ``warm()``되지 않은 심볼은 placeholder를 반환한다."""
+        cached = self._cache.get(symbol)
+        if cached is not None:
+            return cached
+        return default_instrument_info(symbol)
+
+    def evict(self, symbol: str) -> None:
+        """``unsubscribe()`` 시점에 캐시를 지운다.
+
+        ``warm()``은 캐시에 값이 있으면 무조건 스킵하므로, 이걸 호출하지 않으면
+        최초 구독 시점에 ``instruments`` 테이블에 없어 placeholder로 캐싱된
+        심볼은(또는 반대로 DB 값이 나중에 바뀐 경우도) 프로세스가 살아있는 한
+        재구독해도 영원히 갱신되지 않는다 — 다음 ``subscribe()``가 다시
+        DB를 조회하도록 캐시 항목을 제거한다.
+        """
+        self._cache.pop(symbol, None)
+
+    def set_lookup(self, lookup: InstrumentInfoLookup | None) -> None:
+        """조회 콜백을 나중에 주입/교체한다.
+
+        생성 시점에는 아직 repos/DB pool이 준비되지 않은 배선(예: ``api/app.py``
+        lifespan에서 quote source를 먼저 만들고, repos는 그 뒤에 준비되는 순서)을
+        지원하기 위함이다. 이미 캐싱된 항목은 그대로 유지된다 — 교체 시점 이전에
+        조회된 게 없으므로 실질적으로는 항상 빈 캐시에서 시작한다.
+        """
+        self._lookup = lookup
 
 
 def _validate_symbol(symbol: str) -> str:
@@ -330,11 +410,13 @@ class InMemoryMockQuoteSource:
         *,
         max_registrations: int = DEFAULT_MAX_REGISTRATIONS,
         registrations_per_symbol: int = REGISTRATIONS_PER_SYMBOL,
+        instrument_info_lookup: InstrumentInfoLookup | None = None,
     ) -> None:
         self._max_registrations = max_registrations
         self._registrations_per_symbol = registrations_per_symbol
         self._subscriptions: set[str] = set()
         self._tick = 0
+        self._instrument_resolver = InstrumentInfoResolver(instrument_info_lookup)
 
     @property
     def environment(self) -> str:
@@ -359,7 +441,11 @@ class InMemoryMockQuoteSource:
         return sorted(self._subscriptions)
 
     def instrument_info(self, symbol: str) -> InstrumentInfo:
-        return default_instrument_info(symbol)
+        return self._instrument_resolver.get(symbol)
+
+    def set_instrument_info_lookup(self, lookup: InstrumentInfoLookup | None) -> None:
+        """``instruments`` 테이블 조회 콜백을 배선한다(``api/app.py`` lifespan 전용)."""
+        self._instrument_resolver.set_lookup(lookup)
 
     async def subscribe(self, symbol: str) -> None:
         normalized = _validate_symbol(symbol)
@@ -374,11 +460,13 @@ class InMemoryMockQuoteSource:
                 f"({self._max_registrations} registrations = {symbol_capacity} symbols "
                 f"at {self._registrations_per_symbol} registrations/symbol)."
             )
+        await self._instrument_resolver.warm(normalized)
         self._subscriptions.add(normalized)
 
     async def unsubscribe(self, symbol: str) -> None:
         normalized = symbol.strip()
         self._subscriptions.discard(normalized)
+        self._instrument_resolver.evict(normalized)
 
     def get_snapshots(self, symbols: Sequence[str]) -> dict[str, QuoteSnapshot]:
         self._tick += 1

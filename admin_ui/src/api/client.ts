@@ -3,6 +3,42 @@
  * handles 401, returns typed JSON responses.
  * ─────────────────────────────────────────── */
 
+/**
+ * 백엔드 API 호출 접두사.
+ *
+ * 프로덕션 빌드(Docker) 기본값은 **``/api``**다 — 프론트 컨테이너의
+ * nginx(``nginx.frontend.conf``)가 ``/api/*`` 요청만 접두사를 벗기고 백엔드로
+ * 내부 프록시한다. 브라우저는 항상 자신이 접속한 origin(그게 `trd.puwa.net`이든
+ * zrok 터널 주소든 `localhost:3000`이든)으로만 호출하므로 CORS도, HTTPS
+ * 페이지에서 HTTP API를 부를 때 브라우저가 막는 mixed-content 문제도 애초에
+ * 발생하지 않는다.
+ *
+ * ``/api`` 접두사가 반드시 필요한 이유(단순 상대경로로는 안 되는 이유):
+ * React Router의 클라이언트 라우트(``/orders``, ``/accounts``,
+ * ``/reconciliation``, ``/agent-runs`` 등, App.tsx 참고)가 백엔드 API 라우터
+ * prefix와 이름이 그대로 겹친다 — 접두사 없이 경로만 보고 nginx가 "이건
+ * API다/화면이다"를 구분하려 하면, `/orders` 새로고침 같은 페이지 내비게이션이
+ * SPA 대신 API 응답을 받아버리는 충돌이 생긴다(실측 확인됨). ``/api``로 항상
+ * 명확히 구분한다.
+ *
+ * (과거엔 프론트 빌드 시점에 절대 URL, 예: `http://trd.puwa.net:8000`을
+ * 박아 넣었는데, zrok처럼 프론트만 터널링되고 백엔드는 별도 HTTPS 주소가
+ * 없는 환경에서 mixed-content로 막히는 문제가 있었다.)
+ *
+ * 로컬 `npm run dev`(vite dev server, nginx 프록시 없음)에서는 백엔드
+ * 8000 포트로 직접 호출해야 하므로 `import.meta.env.DEV`일 때만
+ * `http://localhost:8000`로 폴백한다. `VITE_API_BASE_URL`을 명시적으로
+ * 지정하면 그 값이 항상 우선한다.
+ *
+ * `??`가 아니라 `||`를 쓴다 — Docker build arg 기본값이 빈 문자열(``""``)로
+ * 전달되는데(``Dockerfile``의 ``ARG VITE_API_BASE_URL=""``), `??`(nullish
+ * coalescing)는 `null`/`undefined`일 때만 폴백하고 빈 문자열은 "설정된 값"으로
+ * 취급해버려서 `API_BASE_URL`이 의도와 다르게 빈 문자열이 되는 실제 버그가
+ * 있었다(`/api` 접두사가 안 붙어 `fetch("/orders")`처럼 호출됨 — 실측 확인).
+ */
+export const API_BASE_URL: string =
+  import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? "http://localhost:8000" : "/api");
+
 const TOKEN_KEY = "auth_token";
 
 export function getStoredToken(): string | null {
@@ -55,7 +91,7 @@ async function request<T>(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const res = await fetch(path, { ...options, headers });
+  const res = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
 
   if (res.status === 401) {
     clearStoredToken();
@@ -101,7 +137,7 @@ export async function getClients(): Promise<import("../types/api").ClientDetail[
 
 export async function getDefaultClient(): Promise<import("../types/api").ClientDetail | null> {
   try {
-    const res = await fetch("/clients/default", {
+    const res = await fetch(`${API_BASE_URL}/clients/default`, {
       headers: getStoredToken()
         ? { Authorization: `Bearer ${getStoredToken()}` }
         : {},
@@ -290,6 +326,24 @@ export async function getTradingUniversePreview(
   );
 }
 
+/**
+ * 오늘 이미 얼려둔(freeze) 유니버스 요약만 가져온다 — 라이브 재계산 없음.
+ *
+ * 2026-07-14: 운영 대시보드는 원래 ``getTradingUniversePreview()``를 썼는데,
+ * 그 API는 "freeze vs live 비교" 카드를 위해 유니버스 선정 알고리즘 전체를
+ * 그 순간 다시 계산하는 무거운 작업(실측 0.7~1.0초)을 매번 같이 수행했다.
+ * "freeze / live 비교" 카드를 없애면서 그 무거운 재계산이 필요 없어졌으므로,
+ * DB에서 오늘 freeze 결과만 가볍게 읽어오는 이 엔드포인트로 교체한다. 계좌
+ * 정보도 필요 없다(freeze view는 계좌 무관).
+ */
+export async function getActiveIntradayFreezeSummary(): Promise<
+  import("../types/api").TradingUniverseFreezeView | null
+> {
+  return request<import("../types/api").TradingUniverseFreezeView | null>(
+    "/instruments/trading-universe/freeze-summary"
+  );
+}
+
 export async function getTradingUniverseCoverageSummary(
   lookbackDays = 14,
 ): Promise<import("../types/api").TradingUniverseCoverageSummaryResponse> {
@@ -473,7 +527,7 @@ export function subscribeRealtimeQuoteStream(
   async function runOnce(): Promise<void> {
     const token = getStoredToken();
     const res = await fetch(
-      `/realtime-quotes/stream?symbol=${encodeURIComponent(symbol)}`,
+      `${API_BASE_URL}/realtime-quotes/stream?symbol=${encodeURIComponent(symbol)}`,
       {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         signal: controller.signal,
@@ -611,7 +665,7 @@ export async function getRecentExternalEvents(
     limit: String(limit),
     include_non_listed: 'true',
   });
-  const res = await fetch(`/external-events/recent?${params}`, {
+  const res = await fetch(`${API_BASE_URL}/external-events/recent?${params}`, {
     headers: getStoredToken()
       ? { Authorization: `Bearer ${getStoredToken()}` }
       : {},

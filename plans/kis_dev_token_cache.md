@@ -1,5 +1,32 @@
 # KIS Dev Token Cache — 설계 문서
 
+> **📌 2026-07-13 정책 명확화 (사용자 확정)**
+>
+> 이 문서의 "live 환경 기본 비활성화" 원칙은 **트레이딩(계좌) credential
+> (`KIS_APP_KEY`/`KIS_ENV`)에만 적용된다** — 계좌 관련 live 환경은 여전히
+> **기본 비활성화**이며, 현재 계좌 관련 기능은 전부 `KIS_ENV=paper` 기준으로
+> 동작한다(`.env`/`.env.example`/`docker-compose.yml` 전체에서
+> `KIS_ENV` 기본값 `paper` 확인됨).
+>
+> 반면 **시세/공시 등 정보성(read-only) 조회 목적의 `KIS_LIVE_INFO_*`
+> credential은 live 환경에서 의도적으로 활성화하여 사용한다** — 이 문서가
+> 작성될 당시엔 `KIS_LIVE_INFO_*`가 아직 도입되기 전이라 "live=비활성화"를
+> credential 구분 없이 일괄 서술했는데, 이후 `KIS_LIVE_INFO_*` 통합 작업으로
+> 이 서술이 부정확해졌다. 트레이딩 계좌와 정보성 계좌는 리스크 성격이
+> 다르다(정보성 계좌는 주문/잔고 엔드포인트를 호출하지 않는 read-only
+> credential) — 아래 §2 표는 트레이딩 계좌 기준으로만 유효하다.
+>
+> **추가로 확인된 문제**: 트레이딩 계좌든 `KIS_LIVE_INFO_*`든, **동일
+> appkey에는 반드시 하나의 토큰 캐시 파일만 사용해야 한다**는 이 문서 §3의
+> 설계 의도("파일 기반 캐시를 두어 프로세스 간 access token을 공유한다")가
+> `KIS_LIVE_INFO_*` 쪽에서는 지켜지지 않고 있다 — 같은 appkey를 쓰는
+> `KISHolidayClient`(076)와 disclosure/시세 클라이언트가 서로 다른 캐시
+> 파일(`kis_live_oauth_token.json` vs `kis_disclosure_token.json`)을 써서,
+> cold start 시 같은 appkey로 `oauth2/tokenP`가 중복 호출될 위험이 있다
+> (`EGW00133` 1분당 1회 제한 위반 가능). 상세 원인·통합 작업은
+> `plans/[BACKLOG] backlog.md`의 "KIS 토큰 캐시 통합(appkey당 1개)" 항목과
+> `plans/[PRIORITY_MAP] remaining_work_priority_map.md` 참고.
+
 ## 1. 목적
 
 Roo Code가 테스트/스크립트를 별도 프로세스로 실행할 때마다 `oauth2/tokenP`가 재발급되어 KIS Paper의 1회/분 제한(EGW00133)에 걸리는 문제를 해결한다. 파일 기반 캐시를 두어 프로세스 간 access token을 공유한다.
@@ -8,7 +35,7 @@ Roo Code가 테스트/스크립트를 별도 프로세스로 실행할 때마다
 
 | 항목 | 내용 |
 |------|------|
-| `live` 환경 | 기본 **비활성화** — 실전 환경에서는 절대 파일 캐시를 사용하지 않음 |
+| `live` 환경 (트레이딩 계좌, `KIS_APP_KEY`) | 기본 **비활성화** — 실전 환경에서는 절대 파일 캐시를 사용하지 않음. 단, 이 원칙은 트레이딩 계좌 한정 — 정보성 `KIS_LIVE_INFO_*`의 live 활성화는 상단 2026-07-13 banner 참고 |
 | 보안 | app key fingerprint로 변조/교체 감지; base_url/env 변경 시 자동 무효화 |
 | 기존 테스트 | 전혀 영향 없음 (`dev_token_cache_enabled=False` 기본값) |
 | smoke 테스트 | 영향 없음 (module-scoped fixture로 이미 in-memory cache 사용) |
@@ -342,6 +369,7 @@ def client(
 | 리스크 | 완화 |
 |--------|------|
 | 파일 lock 경합 (동시 프로세스) | Only save on success; read는 atomic; write 실패 시 silent fallback |
-| 민감한 토큰이 파일로 유출 | Paper/local 전용; live는 비활성화; `.gitignore` 확인 필요 |
+| 민감한 토큰이 파일로 유출 | 트레이딩 계좌는 paper/local 전용, live는 비활성화; `KIS_LIVE_INFO_*`(정보성)는 live에서도 활성화되므로 `.cache/` 전체가 `.gitignore`에 포함돼 있는지 확인 필요 |
+| **(신규, 2026-07-13) 동일 appkey에 캐시 파일이 여러 개로 분산** | `KIS_LIVE_INFO_*` 계열이 `kis_live_oauth_token.json`/`kis_disclosure_token.json`으로 쪼개져 있어 cold start 시 중복 `oauth2/tokenP` 호출 위험(`EGW00133`) — 통합 작업 필요(백로그 참고) |
 | 캐시 파일 timestamp 오차 | Wall clock 기반 + 60s buffer |
 | Fingerprint collision | SHA256 16자리 hex = 64bit; collision 확률 무시 가능 |

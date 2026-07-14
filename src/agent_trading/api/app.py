@@ -14,9 +14,10 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import AsyncIterator
+from typing import AsyncIterator, Sequence
 
 from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -56,6 +57,52 @@ class _SPAStaticFiles(StaticFiles):
             return await super().get_response("index.html", scope)
 
 
+def _build_instrument_info_lookup(app: FastAPI, runtime_mode: str):
+    """'실시간 현재가' 화면용 종목명/시장구분 조회 콜백 — ``instruments`` 테이블 조회.
+
+    ``InMemoryMockQuoteSource``/``KisRealtimeQuoteSource`` 양쪽 모두
+    ``RealtimeQuoteSource.instrument_info()``가 동기 메서드라서 매 호출마다 직접
+    DB를 조회할 수 없다 — 대신 이 콜백은 ``subscribe()`` 시점(종목당 정확히
+    1회, ``InstrumentInfoResolver`` 참고)에만 호출된다. 시세 polling/WS tick
+    경로에는 전혀 관여하지 않으므로 N+1 걱정이 없다.
+
+    ``in_memory`` 모드는 ``app.state.repos``(싱글톤 컨테이너)를 그대로 쓴다.
+    ``postgres`` 모드는 ``api/deps.get_repos``와 동일하게 요청마다 독립된
+    ``TransactionManager``를 열어 1회 조회 후 즉시 닫는다 — 구독이 걸릴 때만
+    여는 짧은 연결이므로 커넥션 풀에 부담이 없다.
+    """
+    from agent_trading.services.realtime_quote_source import InstrumentInfo
+
+    async def _lookup(symbol: str) -> InstrumentInfo | None:
+        # ``app.state.repos``가 있으면(in_memory 모드, 또는 caller가 명시적으로
+        # ``repos=``를 주입한 경우) 그 싱글톤 컨테이너를 그대로 쓴다 — 이게
+        # ``runtime_mode`` 라벨보다 우선한다(``create_app`` docstring: repos가
+        # 주입되면 runtime_mode는 라벨일 뿐). 없을 때만(순수 postgres 모드,
+        # per-request repos) 요청과 무관한 독립 트랜잭션을 새로 연다.
+        repos = getattr(app.state, "repos", None)
+        if repos is not None:
+            entity = await repos.instruments.get_by_symbol_any_market(symbol)
+        elif runtime_mode == "postgres":
+            from agent_trading.db.transaction import TransactionManager
+            from agent_trading.repositories.postgres.instruments import (
+                PostgresInstrumentRepository,
+            )
+
+            async with TransactionManager() as tx:
+                entity = await PostgresInstrumentRepository(tx).get_by_symbol_any_market(
+                    symbol
+                )
+        else:
+            return None
+
+        if entity is None:
+            return None
+        market = entity.market_segment if entity.market_segment in {"KOSPI", "KOSDAQ"} else "UNKNOWN"
+        return InstrumentInfo(symbol=entity.symbol, name=entity.name, market=market)
+
+    return _lookup
+
+
 def create_app(
     repos: RepositoryContainer | None = None,
     *,
@@ -65,6 +112,7 @@ def create_app(
     auth_role: str = "viewer",
     broker_adapter: object | None = None,
     realtime_quote_source: object | None = None,
+    cors_allowed_origins: Sequence[str] | None = None,
 ) -> FastAPI:
     """Create a configured FastAPI application.
 
@@ -75,6 +123,14 @@ def create_app(
         and ``runtime_mode`` is treated as a label only.
     runtime_mode:
         Runtime identifier (``"in_memory"`` or ``"postgres"``).
+    cors_allowed_origins:
+        Origins allowed to call this API cross-origin (e.g. ``["http://trd.puwa.net:3000"]``).
+        Needed once the Admin UI is served from a separate origin/port than this
+        API (frontend/backend split — nginx no longer fronts this API, so the
+        browser calls it directly and the response must carry CORS headers or
+        the browser blocks it). Defaults to ``["http://localhost:3000"]`` (local
+        dev frontend) when not provided — set explicitly in production via
+        ``create_app_from_env()``'s ``CORS_ALLOWED_ORIGINS`` env var.
     auth_enabled:
         Whether to enforce Bearer token authentication on protected endpoints.
         ``True`` (default) — token validation is active.
@@ -173,6 +229,18 @@ def create_app(
                 )
                 _app.state.realtime_quote_source = InMemoryMockQuoteSource()
 
+        # 종목명/시장구분(KOSPI/KOSDAQ)을 실제 ``instruments`` 테이블에서 채우도록
+        # 조회 콜백을 배선한다 — 배선 이전에는 두 소스 모두 하드코딩된 5개짜리
+        # placeholder(``default_instrument_info``)로만 채워졌었다. 이 시점에는
+        # in_memory 모드의 ``_app.state.repos``가 아직 없을 수 있지만(아래에서
+        # 구성됨), 이 콜백은 나중에 실제 구독이 들어올 때(``subscribe()``)에야
+        # 처음 호출되므로 상관없다 — 그때는 이미 준비되어 있다.
+        set_lookup = getattr(
+            _app.state.realtime_quote_source, "set_instrument_info_lookup", None
+        )
+        if set_lookup is not None:
+            set_lookup(_build_instrument_info_lookup(_app, runtime_mode))
+
         # Phase 4 push relay — see realtime_quote_broadcaster.py. Wraps whichever
         # source ended up active above (mock or KIS-backed); true push when the
         # source supports add_listener(), fallback poll otherwise.
@@ -227,6 +295,22 @@ def create_app(
         docs_url="/docs",
         redoc_url=None,
         swagger_ui_parameters={"persistAuthorization": True},
+    )
+
+    # ── CORS ─────────────────────────────────────────────────────────────
+    # 프론트(Admin UI)가 nginx 뒤에서 이 API와 같은 origin으로 묶여 서비스되던
+    # 예전 구조에서는 필요 없었지만, 프론트/백엔드를 별도 컨테이너·포트로
+    # 분리하면 브라우저가 이 API를 cross-origin으로 호출하게 되므로 CORS 헤더가
+    # 없으면 브라우저가 응답을 막는다. 인증은 쿠키가 아니라 JS가 직접 붙이는
+    # ``Authorization: Bearer`` 헤더이므로 ``allow_credentials``(쿠키/브라우저
+    # 관리 자격증명 전용 플래그)는 켤 필요가 없다 — 켜면 ``allow_origins=["*"]``와
+    # 함께 쓸 수 없게 되는 제약만 생긴다.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(cors_allowed_origins) if cors_allowed_origins else ["http://localhost:3000"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     # ── OpenAPI security scheme (Authorize button in Swagger UI) ────────────
@@ -424,6 +508,13 @@ def create_app_from_env() -> FastAPI:
     INSPECTION_API_ROLE : str
         Role assigned to authenticated principals (default ``"viewer"``).
         Currently unused for authorization logic, but reserved for future use.
+    CORS_ALLOWED_ORIGINS : str
+        Comma-separated list of origins allowed to call this API cross-origin
+        (e.g. ``"http://trd.puwa.net,http://trd.puwa.net:3000"``). Required
+        once the Admin UI is split into its own container/port and nginx no
+        longer fronts this API — the browser then calls this API's origin
+        directly. Defaults to ``"http://localhost:3000"`` (local dev frontend)
+        when unset.
 
     Broker adapter
     --------------
@@ -456,6 +547,12 @@ def create_app_from_env() -> FastAPI:
     mode = os.getenv("API_RUNTIME_MODE", "in_memory")
     token = os.getenv("INSPECTION_API_TOKEN")
     role = os.getenv("INSPECTION_API_ROLE", "viewer")
+    cors_origins_raw = os.getenv("CORS_ALLOWED_ORIGINS")
+    cors_allowed_origins = (
+        [origin.strip() for origin in cors_origins_raw.split(",") if origin.strip()]
+        if cors_origins_raw
+        else None
+    )
 
     settings = AppSettings()
 
@@ -479,6 +576,7 @@ def create_app_from_env() -> FastAPI:
         auth_role=role,
         broker_adapter=broker_adapter,
         realtime_quote_source=realtime_quote_source,
+        cors_allowed_origins=cors_allowed_origins,
     )
 
 

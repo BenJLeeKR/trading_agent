@@ -2,6 +2,15 @@
 
 작성일: 2026-05-14
 
+> **📌 2026-07-14 근본 설계 검토 경계 (중요)**: 이 정책이 규정하는 종목
+> 선정(core universe + overlay)은 **방어적 설계**이며 "최고 기대수익률
+> 종목 탐색(alpha sourcing)"을 목표로 하지 않는다. core 레이어는 가격/
+> 모멘텀과 무관한 정적 대형주 풀이고, 기대수익률(`expected_value_gate`)은
+> 소싱이 아니라 사후 게이트로만 작동한다. 시스템 목표가 "자본 보전"인지
+> "최고 기대수익률"인지는 아직 미확정이며, 목표에 따라 이 정책의 적합성
+> 판단이 갈린다. 상세: `plans/[ANALYSIS] foundational_design_review_
+> objective_alignment_2026-07-14.md`.
+
 ## 1. 목적
 
 이 문서는 `instrument master`와 `trading universe`를 분리하여 정의하고, 실제 운영에서 어떤 비즈니스 기준과 절차로 오늘의 판단 대상 종목을 선정할지 고정한다.

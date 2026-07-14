@@ -134,6 +134,31 @@ def _build_intraday_freeze_comparison(
 
 
 @router.get(
+    "/instruments/trading-universe/freeze-summary",
+    response_model=TradingUniverseFreezeView | None,
+)
+async def get_trading_universe_freeze_summary(
+    repos: RepositoryContainer = Depends(get_repos),
+) -> TradingUniverseFreezeView | None:
+    """오늘 이미 얼려둔(freeze) 유니버스 요약 — 라이브 재계산을 하지 않는다.
+
+    2026-07-14: 운영 대시보드의 "Universe Selection / Market Overlay" 카드가
+    기존 ``GET /instruments/trading-universe/preview``를 호출하고 있었는데,
+    그 엔드포인트는 이 freeze 테이블 조회(``_build_active_intraday_freeze_view``,
+    가벼움)와 별개로 **"freeze vs live 비교" 카드를 위해 유니버스 선정 알고리즘
+    전체를 그 순간 다시 계산**하는 무거운 작업(``UniverseSelectionService
+    .compose_with_diagnostics()`` — Core Universe 2,767건 스캔 등, 실측
+    0.7~1.0초)을 같이 수행했다. "freeze / live 비교" 카드를 없애기로 하면서,
+    이 라이브 재계산이 더 이상 필요 없어졌다 — 이 엔드포인트는
+    ``universe_freeze_runs``/``universe_freeze_run_items`` 테이블을 오늘
+    날짜로 조회만 하고 끝난다(계좌 정보도 필요 없음 — freeze view는 계좌
+    무관). 기존 ``/instruments/trading-universe/preview``는 라이브 진단이
+    필요한 다른 용도를 위해 그대로 남겨둔다.
+    """
+    return await _build_active_intraday_freeze_view(repos)
+
+
+@router.get(
     "/instruments/mapping-consistency/summary",
     response_model=InstrumentMappingConsistencySummaryResponse,
 )

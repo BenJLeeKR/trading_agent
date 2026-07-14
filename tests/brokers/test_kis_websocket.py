@@ -316,11 +316,74 @@ class TestKISWebSocketClient:
         assert ws_client.get_last_continuum("H0STCNT0") is None
 
 
+class TestReconnectApprovalKeyRefresh:
+    """재연결 시 approval_key를 새로 발급받는지 검증(2026-07-14 회귀).
+
+    실측: KIS WS approval_key는 값 자체의 24h TTL과 무관하게 세션 티켓처럼
+    동작해서, 끊긴 뒤 같은 값으로 재연결하면 재구독 직후 KIS가
+    "JSON PARSING ERROR"로 거부하고 다시 끊기는 무한 재연결 루프가 발생했다.
+    ``_handle_disconnect()``가 재연결마다 새 approval_key를 받아오는지 확인한다.
+    """
+
+    @pytest.mark.asyncio
+    async def test_initial_connect_does_not_force_refresh(
+        self, mock_rest_client: MagicMock
+    ) -> None:
+        mock_rest_client.get_approval_key = AsyncMock(return_value="fresh-key")
+        client = KISWebSocketClient(
+            rest_client=mock_rest_client,
+            approval_key="initial-key",
+            env="paper",
+        )
+        with patch("websockets.connect", new=AsyncMock(return_value=AsyncMock())):
+            await client.connect()
+
+        # 최초 connect()는 호출자(KisRealtimeQuoteSource.connect())가 이미
+        # 방금 발급받은 키를 넘겨준 것이므로, 여기서 또 재발급할 필요가 없다.
+        mock_rest_client.get_approval_key.assert_not_called()
+        assert client._approval_key == "initial-key"
+
+    @pytest.mark.asyncio
+    async def test_reconnect_forces_fresh_approval_key(
+        self, mock_rest_client: MagicMock
+    ) -> None:
+        mock_rest_client.get_approval_key = AsyncMock(return_value="refreshed-key")
+        client = KISWebSocketClient(
+            rest_client=mock_rest_client,
+            approval_key="stale-key",
+            env="paper",
+        )
+        with patch("websockets.connect", new=AsyncMock(return_value=AsyncMock())):
+            await client.connect(force_refresh_approval_key=True)
+
+        mock_rest_client.get_approval_key.assert_awaited_once_with(force=True)
+        assert client._approval_key == "refreshed-key"
+
+    @pytest.mark.asyncio
+    async def test_handle_disconnect_reconnects_with_force_refresh(
+        self, mock_rest_client: MagicMock
+    ) -> None:
+        mock_rest_client.get_approval_key = AsyncMock(return_value="refreshed-key")
+        client = KISWebSocketClient(
+            rest_client=mock_rest_client,
+            approval_key="stale-key",
+            env="paper",
+        )
+        client._should_reconnect = True
+        client._reconnect_delay = 0.0  # 테스트에서 실제로 기다리지 않게
+
+        with patch("websockets.connect", new=AsyncMock(return_value=AsyncMock())):
+            await client._handle_disconnect()
+
+        mock_rest_client.get_approval_key.assert_awaited_once_with(force=True)
+        assert client._approval_key == "refreshed-key"
+
+
 class TestWebSocketUrlOverride:
     """``KISWebSocketClient`` URL override behaviour without calling ``connect()``.
 
-    ``connect()`` creates background ``_reader_loop`` / ``_heartbeat_loop`` tasks
-    that make reliable unit testing difficult without heavy mocking. Instead we
+    ``connect()`` creates a background ``_reader_loop`` task that makes
+    reliable unit testing difficult without heavy mocking. Instead we
     verify:
 
     1. ``__init__`` correctly stores the ``ws_url`` parameter as ``self._ws_url``.

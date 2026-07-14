@@ -509,10 +509,20 @@ async def create_session_provider() -> MarketSessionProvider:
        → ``KisHolidayProvider`` (076 API)
     2. 그 외 → ``FallbackSessionProvider``
 
-    ``KISHolidayClient``의 file-based token cache는
-    ``KIS_LIVE_TOKEN_CACHE_ENABLED``와 ``KIS_LIVE_TOKEN_CACHE_PATH``
-    환경 변수를 통해 설정되며, market_state_client.py와 **별도 파일**
-    (``kis_live_oauth_token.json``)을 사용합니다.
+    ``KISHolidayClient``의 file-based token cache는 **2026-07-13 토큰 캐시
+    통합**에 따라 ``KIS_DISCLOSURE_TOKEN_CACHE_ENABLED``/
+    ``KIS_DISCLOSURE_TOKEN_CACHE_PATH`` 환경 변수를 사용해, 같은
+    ``KIS_LIVE_INFO_*`` appkey로 인증하는 disclosure/시세 client
+    (``_build_kis_live_quote_client``, ``_build_live_disclosure_client``)와
+    **동일한 캐시 파일**(기본 ``kis_disclosure_token.json``)을 공유한다.
+    이전에는 076 전용 별도 파일(``kis_live_oauth_token.json``)을 썼는데,
+    같은 appkey에 캐시 파일이 여러 개로 나뉘면 cold start 시 각자 독립적으로
+    `oauth2/tokenP`를 호출해 KIS의 1분당 1회 발급 제한(``EGW00133``)에
+    걸릴 위험이 있어 통합했다 — 상세: `plans/[BACKLOG] backlog.md`
+    "KIS 토큰 캐시 통합(appkey당 1개)" 항목.
+
+    (``market_state_client.py``의 WS approval-key 캐시는 REST access token과
+    다른 종류의 자원이라 이번 통합 범위에 포함하지 않는다.)
 
     Returns:
         ``MarketSessionProvider`` 인스턴스
@@ -527,30 +537,30 @@ async def create_session_provider() -> MarketSessionProvider:
     if enabled and app_key and app_secret:
         base = base_url or "https://openapi.koreainvestment.com:9443"
 
-        # Live-info token cache 설정 (holiday OAuth 전용, market_state와 별도 파일)
+        # 2026-07-13: disclosure/시세 client와 동일한 REST access token
+        # 캐시(같은 appkey, 같은 자원)를 공유한다 — 076 전용 별도 파일은
+        # 더 이상 사용하지 않는다.
         cache_enabled = (
-            os.getenv("KIS_LIVE_TOKEN_CACHE_ENABLED", "false").strip().lower() == "true"
+            os.getenv("KIS_DISCLOSURE_TOKEN_CACHE_ENABLED", "true").strip().lower() == "true"
         )
-        cache_base_path = os.getenv(
-            "KIS_LIVE_TOKEN_CACHE_PATH",
-            ".cache/kis_live_token.json",
+        shared_cache_path = os.getenv(
+            "KIS_DISCLOSURE_TOKEN_CACHE_PATH",
+            ".cache/kis_disclosure_token.json",
         ).strip()
-        # market_state_client.py와 충돌 방지를 위해 별도 파일 사용
-        cache_parent = os.path.dirname(cache_base_path) or ".cache"
-        oauth_cache_path = os.path.join(cache_parent, "kis_live_oauth_token.json")
 
         client = KISHolidayClient(
             app_key=app_key,
             app_secret=app_secret,
             base_url=base,
             enable_token_cache=cache_enabled,
-            token_cache_path=oauth_cache_path,
+            token_cache_path=shared_cache_path,
+            share_rest_access_token_cache=True,
         )
         logger.info(
             "SessionProvider: KisHolidayProvider (076 API) base_url=%s "
-            "token_cache=%s enabled=%s",
+            "token_cache=%s(shared with disclosure/quote client) enabled=%s",
             base,
-            oauth_cache_path,
+            shared_cache_path,
             cache_enabled,
         )
         return KisHolidayProvider(holiday_client=client)

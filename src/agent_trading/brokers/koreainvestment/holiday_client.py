@@ -28,6 +28,7 @@ from agent_trading.brokers.koreainvestment.token_cache import (
     CachePurpose,
     KisTokenCache,
     build_holiday_oauth_cache_config,
+    build_rest_access_token_cache_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -111,6 +112,7 @@ class KISHolidayClient:
         *,
         enable_token_cache: bool = False,
         token_cache_path: str | None = None,
+        share_rest_access_token_cache: bool = False,
     ) -> None:
         self._app_key = app_key
         self._app_secret = app_secret
@@ -127,13 +129,34 @@ class KISHolidayClient:
         # File token cache (live-info OAuth token persistence across restarts)
         self._cache_enabled = enable_token_cache
         cache_path = token_cache_path or f".cache/{_HOLIDAY_OAUTH_CACHE_DEFAULT_FILENAME}"
-        self._token_cache = KisTokenCache(build_holiday_oauth_cache_config(
-            enabled=enable_token_cache,
-            cache_path=Path(cache_path),
-            app_key=app_key,
-            app_secret=app_secret,
-            base_url=self._base_url,
-        ))
+        if share_rest_access_token_cache:
+            # 2026-07-13 토큰 캐시 통합: 076(휴장일) API도 동일 appkey
+            # (KIS_LIVE_INFO_*)의 일반 REST access token(oauth2/tokenP)을
+            # 그대로 쓸 수 있다 — 076 전용 토큰이 따로 있는 게 아니라,
+            # 같은 appkey로 발급받은 하나의 access token을 모든 REST
+            # 엔드포인트에 공용으로 쓰는 구조이기 때문이다. 그래서 disclosure/
+            # 시세 client(KISRestClient)와 **동일한 cache_purpose +
+            # fingerprint 스킴**을 써서 같은 캐시 파일을 공유하게 한다
+            # (`build_holiday_oauth_cache_config`의 holiday 전용 prefix/
+            # secret-suffix 지문을 쓰면 서로 다른 파일처럼 취급되어 캐시가
+            # 공유되지 않는다). 상세: `plans/[BACKLOG] backlog.md`
+            # "KIS 토큰 캐시 통합(appkey당 1개)" 항목.
+            self._token_cache = KisTokenCache(build_rest_access_token_cache_config(
+                enabled=enable_token_cache,
+                cache_path=Path(cache_path),
+                cache_purpose=CachePurpose.LIVE_DISCLOSURE_ACCESS_TOKEN,
+                api_key=app_key,
+                kis_env="live",
+                base_url=self._base_url,
+            ))
+        else:
+            self._token_cache = KisTokenCache(build_holiday_oauth_cache_config(
+                enabled=enable_token_cache,
+                cache_path=Path(cache_path),
+                app_key=app_key,
+                app_secret=app_secret,
+                base_url=self._base_url,
+            ))
 
     # ------------------------------------------------------------------
     # HTTP client lifecycle

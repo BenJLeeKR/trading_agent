@@ -9,6 +9,7 @@ from agent_trading.services.realtime_quote_source import (
     MAX_TRADE_HISTORY,
     ConnectionState,
     InMemoryMockQuoteSource,
+    InstrumentInfo,
     InvalidSymbolError,
     SubscriptionLimitExceededError,
 )
@@ -143,6 +144,109 @@ class TestSnapshots:
         first = snapshot.recent_trades[0]
         assert first.trade_time
         assert first.price > 0
+
+
+class TestInstrumentInfoLookup:
+    """``instruments`` 테이블 조회 배선 — ``InstrumentInfoResolver`` 연동."""
+
+    async def test_subscribe_uses_instrument_lookup_over_placeholder(self) -> None:
+        """조회 콜백이 채워지면 하드코딩된 mock dict 대신 그 결과를 쓴다."""
+        calls: list[str] = []
+
+        async def lookup(symbol: str) -> InstrumentInfo | None:
+            calls.append(symbol)
+            return InstrumentInfo(symbol=symbol, name="DB종목명", market="KOSDAQ")
+
+        source = InMemoryMockQuoteSource(instrument_info_lookup=lookup)
+        # "005930" is one of the seeded mock instruments (삼성전자/KOSPI) — the
+        # real lookup result must win over that hardcoded fallback.
+        await source.subscribe("005930")
+
+        info = source.instrument_info("005930")
+        assert info.name == "DB종목명"
+        assert info.market == "KOSDAQ"
+        assert calls == ["005930"]
+
+    async def test_subscribe_calls_lookup_at_most_once_per_symbol(self) -> None:
+        """같은 심볼을 여러 번 조회해도 DB lookup은 1회만 호출된다(N+1 방지)."""
+        calls: list[str] = []
+
+        async def lookup(symbol: str) -> InstrumentInfo | None:
+            calls.append(symbol)
+            return InstrumentInfo(symbol=symbol, name="DB종목명", market="KOSPI")
+
+        source = InMemoryMockQuoteSource(instrument_info_lookup=lookup)
+        await source.subscribe("005930")
+        # Repeated snapshot/instrument_info reads must never re-trigger the lookup.
+        source.get_snapshots(["005930"])
+        source.get_snapshots(["005930"])
+        source.instrument_info("005930")
+
+        assert calls == ["005930"]
+
+    async def test_lookup_miss_falls_back_to_placeholder(self) -> None:
+        """DB에 없는 심볼(lookup이 ``None`` 반환)은 기존 placeholder로 폴백한다."""
+
+        async def lookup(symbol: str) -> InstrumentInfo | None:
+            return None
+
+        source = InMemoryMockQuoteSource(instrument_info_lookup=lookup)
+        await source.subscribe("999999")
+
+        info = source.instrument_info("999999")
+        assert info.market == "UNKNOWN"
+        assert "999999" in info.name
+
+    async def test_lookup_exception_falls_back_to_placeholder(self) -> None:
+        """조회 콜백이 예외를 던져도 구독 자체는 실패하지 않고 placeholder로 폴백한다."""
+
+        async def lookup(symbol: str) -> InstrumentInfo | None:
+            raise RuntimeError("DB down")
+
+        source = InMemoryMockQuoteSource(instrument_info_lookup=lookup)
+        await source.subscribe("005930")  # must not raise
+
+        info = source.instrument_info("005930")
+        assert info.name == "삼성전자"
+        assert info.market == "KOSPI"
+
+    async def test_unsubscribe_then_resubscribe_refreshes_stale_cache(self) -> None:
+        """구독 취소 후 재구독하면 DB를 다시 조회한다(최초 조회 이후 DB에 값이 생긴 경우).
+
+        회귀 버그: ``warm()``은 캐시가 있으면 무조건 스킵하는데,
+        ``unsubscribe()``가 캐시를 지우지 않으면 최초 구독 시점에
+        instruments 테이블에 없어 placeholder로 캐싱된 심볼은 나중에 DB에
+        실제 데이터가 생겨도 재구독 시 계속 placeholder만 반환한다
+        (실측: 069500을 instruments에 추가하기 전에 구독한 적이 있으면,
+        추가 후 구독취소/재구독을 해도 종목정보가 갱신되지 않음).
+        """
+        calls: list[str] = []
+
+        async def lookup(symbol: str) -> InstrumentInfo | None:
+            calls.append(symbol)
+            if len(calls) == 1:
+                return None  # 최초 구독 시점 — 아직 instruments 테이블에 없음
+            return InstrumentInfo(symbol=symbol, name="KODEX 200", market="KOSPI")
+
+        source = InMemoryMockQuoteSource(instrument_info_lookup=lookup)
+        await source.subscribe("069500")
+        assert source.instrument_info("069500").market == "UNKNOWN"  # placeholder 캐싱됨
+
+        await source.unsubscribe("069500")
+        await source.subscribe("069500")  # DB에 이제 실제 데이터가 있음
+
+        info = source.instrument_info("069500")
+        assert info.name == "KODEX 200"
+        assert info.market == "KOSPI"
+        assert calls == ["069500", "069500"]  # 재구독 시 다시 조회했어야 함
+
+    def test_no_lookup_configured_preserves_existing_behavior(
+        self, source: InMemoryMockQuoteSource
+    ) -> None:
+        """lookup을 주지 않으면(기본값) 기존 mock dict/placeholder 그대로 동작한다."""
+        info = source.instrument_info("138040")
+        assert info.name == "메리츠금융지주"
+        assert info.market == "KOSPI"
 
 
 class TestDailyPrice:

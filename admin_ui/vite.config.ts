@@ -5,29 +5,15 @@ import path from "path";
 
 export default defineConfig({
   plugins: [react()],
-  base: "/admin/",
+  base: "/",
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
   },
-  server: {
-    proxy: {
-      "/health": "http://localhost:8000",
-      "/health/readyz": "http://localhost:8000",
-      "/orders": "http://localhost:8000",
-      "/reconciliation": "http://localhost:8000",
-      "/audit-logs": "http://localhost:8000",
-      "/accounts": "http://localhost:8000",
-      "/positions": "http://localhost:8000",
-      "/cash-balances": "http://localhost:8000",
-      "/clients": "http://localhost:8000",
-      "/instruments": "http://localhost:8000",
-      "/trade-decisions": "http://localhost:8000",
-      "/decision-contexts": "http://localhost:8000",
-      "/agent-runs": "http://localhost:8000",
-    },
-  },
+  // 프론트/백엔드 분리 이후로는 `src/api/client.ts`의 `API_BASE_URL`이 API
+  // 호출마다 백엔드 origin을 명시적으로 붙이므로(기본값
+  // `http://localhost:8000`), dev server가 경로별로 프록시할 필요가 없다.
   build: {
     outDir: "dist",
   },

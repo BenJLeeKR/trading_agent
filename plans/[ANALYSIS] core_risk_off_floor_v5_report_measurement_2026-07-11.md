@@ -1,5 +1,13 @@
 # `core_risk_off_floor_v5_report` 실측 비교 분석
 
+> **📌 2026-07-14 검증 범위 경계 (중요)**: 이 분석을 포함한 core_risk_off /
+> entry_score 백테스트의 **유효 범위는 "이번 하락 국면 한정"이다.** 표본이
+> 단일 급락 국면 약 2주에 집중(상승장·횡보장 표본 전무)이고, 실집행이 아닌
+> 후행수익률 proxy shadow 관측이며, 핵심 비교가 N=35~49 소표본(완화 후보는
+> N=3~4로 leave-one-out에서 부호 뒤집힘)이다. 따라서 "매수 억제가 옳았다"는
+> 결론을 "모든 시장 국면에서 항구적으로 옳다"로 확대 해석하면 안 된다.
+> 상세: `plans/[ANALYSIS] foundational_design_review_objective_alignment_2026-07-14.md`.
+
 ## 1. 목적과 결론
 
 이번 분석의 목적은 `core_risk_off_floor_v5_report`의 `mild_relax` / `moderate_relax` 표본과 `T+1` / `T+3` 후행 수익률 proxy를 실측 비교하여, 현재 v5 완화안이 실제 완화 경로를 만들고 있는지 확인하는 것이다.
@@ -2087,3 +2095,145 @@ threshold 완화보다 먼저
 
 다만 이 28건의 `overall_v5` 하방 편향은 다시 `slow_score_v5` 하방 편향에서 비롯되므로,
 다음 단계는 `slow_trend / slow_momentum / volatility_penalty`의 가중치와 threshold를 shadow 실험으로 추가 완화하는 것이다.
+
+### 10.10 2026-07-12 기준 최신 종합 결론
+
+`2026-07-01 ~ 2026-07-10` 재집계와
+`entry_score` 실측 로그를 함께 기준으로 보면,
+이 문서의 초기 가설이었던
+`core_risk_off slow floor` 완화 트랙은
+이제 주 분석 축에서 내려놓는 것이 맞다.
+
+핵심 이유는 다음과 같다.
+
+1. `core_risk_off` v5 hydration 누락은 이미 해소됐다.
+   같은 구간 `core` 97건 중
+   `shadow_overall_score_v5 / shadow_slow_score_v5`는 `97/97`,
+   active core `49/49`로 채워진다.
+   따라서 지금 남은 문제를
+   "관측 필드 누락 때문에 정확히 못 본다"로 돌릴 수는 없다.
+2. 같은 구간 `core entry_score 평균`은 `0.1578`로 매우 낮다.
+   `watch_from_entry_setup` 또는 `entry_score >= 0.52` 근접군은 `27건`,
+   `0.52 <= entry_score < 0.65`는 `10건`뿐이다.
+   즉 현재 주문 부재의 1차 병목은
+   `risk_off` hard block보다
+   `entry_score` 산출 자체의 하방 편향에 더 가깝다.
+3. `near_buy_floor(0.52 <= entry_score < 0.65)` 10건 기준
+   `risk_off_penalty=-0.15` 제거 시 `10/10`이 BUY floor `0.65`를 넘지만,
+   `strategy_alignment(+0.05)`만으로는 `0/10`,
+   `relative_activity_bonus` 최대치로도 `5/10`만 넘는다.
+   따라서 현재 `entry_score` 하방 편향의 직접 구조는
+   `risk_off_penalty` 1차 억제,
+   `strategy / activity` 2차 억제로 읽는 편이 맞다.
+   다만 이것은 즉시 완화 근거가 아니라
+   구조 분해 결과로만 사용해야 한다.
+
+#### 10.10.1 단순 완화안 No-Go 재확인
+
+다음 broad / core 축 shadow formula는 모두
+`최고 기대수익률` 기준에서 기각 상태를 유지한다.
+
+| formula | count | T+1 | T+3 | T+5 | 판정 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `SF1_broad_remove_risk_off_near_buy_floor` | 10 | `-1.4160%` | `-5.2937%` | `-8.4620%` | `No-Go` |
+| `SF2/SF3 core 축소안` | 4 | n/a | `-8.4906%` | `-16.9434%` | `No-Go` |
+| `fast_score >= -0.12` 단일 필터 | 17 | `+0.0883%` | `-3.1981%` | `-3.9202%` | `No-Go` |
+
+정리하면 다음과 같다.
+
+- `risk_off_penalty`를 단독으로 제거하는 완화는 금지 유지가 맞다.
+- `buy_candidate_threshold`를 단순히 내리는 것도 금지 유지가 맞다.
+- `ranking_score`를 조금 더 높게 요구하거나,
+  `entry_score` 상단 근접군을 빠르게 BUY로 승격하는 것도
+  현재 데이터에서는 기대수익률 개선 근거가 없다.
+
+#### 10.10.2 현재까지 남은 최선의 shadow-watch lane
+
+최근 추가 실측에서 broad / core 완화안이 모두 꺾인 뒤,
+상대적으로 가장 나은 lane은
+아래 협소 조합으로 수렴한다.
+
+- `market_overlay`
+- `relative_activity_bonus 없음`
+- `fast_score -0.12 ~ -0.05`
+
+교차 집계 기준:
+
+| bucket | count | T+3 평균 | T+5 평균 | 판정 |
+| --- | ---: | ---: | ---: | --- |
+| `market_overlay + no_rel_bonus + fast -0.12~-0.05` | 4 | `+0.8455%` | `+3.4324%` | `Shadow-Watch` |
+| `market_overlay + no_rel_bonus + fast -0.20~-0.12` | 14 | `-6.3110%` | `-9.5145%` | `No-Go` |
+| `market_overlay + no_rel_bonus + fast < -0.20` | 7 | `-7.3044%` | `-10.0692%` | `No-Go` |
+| `market_overlay + rel_bonus + fast -0.12~-0.05` | 3 | `-9.4574%` | `-9.6531%` | `No-Go` |
+
+즉, 현재 살아남는 분리축은
+`entry_score` 숫자 자체보다는
+`source lane + fast band + relative activity state` 조합이다.
+
+추가 내부 분해 기준으로도
+협소 lane 안에서 `ranking_score`는 좋은 분리축이 아니고,
+`return_3m_pct` 및 `price_vs_sma_60_pct` 같은
+중기 추세 강도가 설명력을 더 가진다.
+
+| split | count | T+3 평균 | T+5 평균 | 해석 |
+| --- | ---: | ---: | ---: | --- |
+| `return_3m_pct >= 100` | 3 | `+3.6988%` | `+6.9099%` | 강한 중기 추세 표본만 남기면 개선 |
+| `return_3m_pct < 100` | 1 | `-7.7143%` | `-7.0000%` | 약한 추세 표본은 손실 |
+| `price_vs_sma_60_pct >= 50` | 3 | `+3.6988%` | `+6.9099%` | SMA60 대비 강한 상방 괴리 표본 우수 |
+| `ranking_score >= 0.59` | 2 | `-6.2780%` | `+0.8203%` | ranking 상단은 좋은 분리축이 아님 |
+
+#### 10.10.3 SF10 / SF11 / SF12 상태
+
+현재까지 가장 좁고 성과가 나아진 shadow formula는
+실질적으로 같은 3개 row로 수렴하는
+`SF10 / SF11 / SF12`다.
+
+| formula | count | T+1 | T+3 | T+5 | MFE3 | MAE3 | 판정 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `SF10_market_no_rel_fast_ge_-0.12_ret3m_ge_100` | 3 | `+2.7137%` | `+3.6988%` | `+6.9099%` | `+11.4974%` | `-2.8778%` | `Shadow-Watch` |
+| `SF11_market_no_rel_fast_ge_-0.12_price_vs_sma60_ge_50` | 3 | `+2.7137%` | `+3.6988%` | `+6.9099%` | `+11.4974%` | `-2.8778%` | `Shadow-Watch` |
+| `SF12_market_no_rel_fast_ge_-0.12_ret3m_ge_100_and_price_vs_sma60_ge_50` | 3 | `+2.7137%` | `+3.6988%` | `+6.9099%` | `+11.4974%` | `-2.8778%` | `Shadow-Watch` |
+
+다만 이 결과는 여전히 소표본이며,
+실제 전환력은 아직 열리지 않았다.
+
+- `candidate -> selected -> would_buy -> submitted`
+  실전 전환은 아직 `0` 상태다.
+- 따라서 이 lane은
+  "실행 후보"가 아니라
+  "다음 추가 관측의 최우선 shadow-watch 대상"으로만 유지한다.
+
+#### 10.10.4 현재 시점의 운영 결론
+
+이 문서의 최신 결론을 운영 관점으로 정리하면 다음과 같다.
+
+1. `core_risk_off` threshold 완화 트랙은 중단 상태를 유지한다.
+2. 현재 1차 병목은 `entry_score` 하방 편향이며,
+   특히 `risk_off_penalty + high_volatility + 음수 fast_score` 결합이 핵심 억제 구조다.
+3. 다만 이 억제 구조를 완화하는 broad formula는
+   모두 후행 수익률 기준 `No-Go`다.
+4. 현재 남은 유의미한 shadow lane은
+   `market_overlay + no_rel_bonus + fast -0.12~-0.05`
+   위에 중기 추세 강도 조건을 얹은 `SF10~SF12`뿐이다.
+5. 그마저도 표본이 `3건`에 불과하므로,
+   authoritative 승격이나 threshold 조정은 아직 금지다.
+
+#### 10.10.5 다음 우선 분석 과제
+
+이후 분석은 `slow floor 완화`가 아니라
+다음 방향으로 이동해야 한다.
+
+1. `entry_score` 산출식 내부에서
+   `risk_off_penalty`, `fast_score`, `high_volatility`,
+   `strategy_alignment`, `relative_activity_bonus`가
+   어떤 조합으로 하방 편향을 만드는지
+   component 수준으로 더 직접 분해할 것
+2. `watch_from_entry_setup` 및 `entry_score >= 0.52` 근접군을 대상으로
+   `candidate -> selected -> would_buy -> submitted`
+   전환력이 실제로 열리는 lane이 있는지 누적 관측할 것
+3. `SF10~SF12`는 신규 완화안이 아니라
+   `Shadow-Watch` lane으로만 유지하면서
+   추가 `T+3 / T+5 / MFE / MAE`를 누적할 것
+4. 실측 수익률 증명 없이
+   `buy_candidate_threshold` 또는 `core_risk_off` 기준을
+   직접 내리는 변경은 금지 유지할 것

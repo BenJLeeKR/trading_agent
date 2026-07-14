@@ -3840,9 +3840,24 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
 
 ## 권장 실행 순서
 
-> **📌 2026-07-12 갱신**: `core_risk_off`/`entry_score` 완화 전면 영구 중단
-> 확정에 따라, **종목 소싱 구조 개선(UNIV-1~5)이 1순위 묶음 최상단**에
-> 추가되었다. 상세 설계/순서/백로그는
+> **📌 2026-07-14 근본 재정렬 (최신, 상위 우선)**: 근본 설계 검토 결과,
+> "주문 0건"의 진짜 뿌리는 소싱이 아니라 **①목표-설계 불일치(방어 시스템에
+> 공격을 기대) ②신호 예측력 미검증**임이 확인됐다. 이에 따라:
+> - **종목 소싱 개선(UNIV-1~5) 트랙은 "차후 보류"로 강등** — 현 국면에서
+>   소싱을 넓혀도 신규 종목이 같은 미검증 entry_score에 동일하게 억눌려
+>   주문 발생에 영향 없음(2026-07-14 실측: 편입 19종목 전체가 buy threshold
+>   0.65 미근접).
+> - **목표 확정(2026-07-14): 목표 B(최고 기대수익률) — 사용자 결정.**
+>   "손실 0이 목적이 아니라, 손실 최소화하며 리스크 감내 후 기대수익 추구"
+>   = risk-adjusted return 극대화. "주문 0건"은 성공이 아니라 실패(기회비용).
+> - **새 1순위 = 신호 예측력 실증 검증(IC/유의성, read-only, 완화 아님)** —
+>   상승/하락/횡보 국면 out-of-sample 포함. 이게 통과해야 "무엇을 근거로
+>   사고 파는가"의 토대가 생긴다. 착수 진행 중.
+> - 상세: `plans/[ANALYSIS] foundational_design_review_objective_alignment_2026-07-14.md`.
+>
+> **📌 2026-07-12 (이력)**: `core_risk_off`/`entry_score` 완화 전면 영구
+> 중단 확정에 따라 소싱 개선(UNIV-1~5)을 1순위로 올렸으나, 위 07-14
+> 재정렬로 강등됨. 소싱 트랙 상세는
 > [`plans/[DESIGN] universe_sourcing_momentum_overlay_enablement_v1.md`](./%5BDESIGN%5D%20universe_sourcing_momentum_overlay_enablement_v1.md) 참고.
 
 ### 1순위 묶음
@@ -3872,6 +3887,27 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      WarningBanner). 실측: age=15일(threshold 21일) → 정상.
    - **다음 착수 대상**: UNIV-5(core 장기 하락 종목 후순위화) 착수 여부
      재검토 — 단, UNIV-3 관측(수일 누적) 완료 후 판단.
+0.5. **KIS 토큰 캐시 통합(appkey당 1개) (2026-07-13 신설, universe sourcing과
+     무관한 별도 트랙)** — 상세: `plans/[BACKLOG] backlog.md`
+   - 같은 `KIS_LIVE_INFO_APP_KEY`가 076 holiday client와 공시/시세
+     client에서 서로 다른 캐시 파일(`kis_live_oauth_token.json` vs
+     `kis_disclosure_token.json`)로 분산돼 있어, cold start 시 동일
+     appkey로 `oauth2/tokenP`가 중복 발급될 위험(`EGW00133`) 확인.
+   - 정책 확정: (1) 트레이딩 계좌 live는 기본 비활성화 유지(paper 기준),
+     (2) `KIS_LIVE_INFO_*` 정보성 credential은 live 활성화 유지, (3) 같은
+     appkey에는 캐시 파일 1개만 사용하도록 통합.
+   - 관련 문서 갱신 완료: `plans/kis_dev_token_cache.md`,
+     `plans/kis_oauth_cache_centralization_2026-05-17.md`,
+     `plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md`.
+   - **구현 완료(2026-07-13)**: `KISHolidayClient`에 `share_rest_access_token_cache`
+     옵션 추가 — 076 client가 disclosure/시세 client와 동일한 cache_purpose
+     (`LIVE_DISCLOSURE_ACCESS_TOKEN`)/fingerprint 스킴으로 `kis_disclosure_token.json`
+     을 공유하도록 `market_session.py` 수정. `run_ops_scheduler.py`의 진단
+     summary도 갱신. **cold start 실측 검증 완료** — 캐시 삭제 후 076
+     client가 토큰 발급+저장 → 곧바로 disclosure client가 같은 파일에서
+     캐시 hit(추가 `oauth2/tokenP` 호출 없음) 확인
+     (`logs/token_cache_unification_verify_2026-07-13.log`). 테스트 242건
+     통과(회귀 없음).
 1. Fill History Phase 3
 2. 부분체결 자동 판정 고도화
 3. fill 발생 후 snapshot refresh 자동화

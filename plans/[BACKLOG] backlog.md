@@ -15,6 +15,64 @@
 
 ## 최근 추가 상세 백로그
 
+- **KIS 토큰 캐시 통합(appkey당 1개)** (2026-07-13 신설, 신규 트랙 — universe
+  sourcing과 무관):
+  - **배경**: `.cache/kis_disclosure_token.json` 조사 중, 같은
+    `KIS_LIVE_INFO_APP_KEY`가 서로 다른 3개 캐시 파일로 쪼개져 있음을
+    발견 — `kis_live_oauth_token.json`(076 holiday client),
+    `kis_disclosure_token.json`(공시 클라이언트 + market_overlay 라이브
+    시세 클라이언트가 공유), `kis_live_token.json`(설정만 있고 163 WS
+    제거 이후 사실상 미사용). 각 캐시가 서로 다른 파일만 보고 다른 파일의
+    유효 토큰 존재 여부를 확인하지 않아, cold start 시 같은 appkey로
+    `oauth2/tokenP`가 중복 발급될 위험이 있다(`EGW00133`: 1분당 1회 제한
+    — 이 저장소에 실제 발생 이력 다수).
+  - **정책 확정(사용자, 2026-07-13)**:
+    1. 트레이딩 계좌(`KIS_APP_KEY`/`KIS_ENV`) 관련 live 환경은 기본
+       비활성화 유지 — 계좌 관련은 전부 `KIS_ENV=paper` 기준.
+    2. 정보성(시세/공시) 목적의 `KIS_LIVE_INFO_*`는 live에서 계속
+       활성화하여 사용.
+    3. **하나의 appkey에는 하나의 토큰 캐시 파일만 사용**한다 — 이 원칙이
+       `KIS_LIVE_INFO_*` 계열(076 holiday + 공시/시세)에서 지켜지도록
+       통합.
+  - **관련 문서 갱신 완료**: `plans/kis_dev_token_cache.md`(상단 banner +
+    §2/§7 표 수정), `plans/kis_oauth_cache_centralization_2026-05-17.md`
+    (상단 banner — "구현 중앙화"와 "파일 통합"은 다른 것이었음을 명시),
+    `plan_docs/detailed_design/11_kis_realtime_quote_operations_screen.md`
+    (§후속 액션에 관련 실측 링크 추가).
+  - **구현 완료(2026-07-13)**:
+    - `holiday_client.py`의 `KISHolidayClient.__init__`에
+      `share_rest_access_token_cache: bool = False` 옵션 추가 — `True`일 때
+      holiday 전용 fingerprint/purpose(`build_holiday_oauth_cache_config`)
+      대신 disclosure/시세 client와 동일한
+      `build_rest_access_token_cache_config(cache_purpose=
+      CachePurpose.LIVE_DISCLOSURE_ACCESS_TOKEN, api_key=app_key, kis_env=
+      "live", base_url=...)`를 사용하게 했다 — cache_purpose와 fingerprint가
+      완전히 동일해야 `KisTokenCache.load()`가 "다른 파일처럼" 취급하지
+      않고 진짜로 캐시를 공유한다(단순히 cache_path만 맞추는 걸로는
+      부족했음 — `purpose_mismatch`로 매번 miss 처리됨).
+    - `market_session.py`의 `create_session_provider()`가
+      `KIS_DISCLOSURE_TOKEN_CACHE_ENABLED`/`KIS_DISCLOSURE_TOKEN_CACHE_PATH`
+      (기본 `kis_disclosure_token.json`)를 쓰도록 변경, `share_rest_access_
+      token_cache=True` 전달. 기존 076 전용 파일(`kis_live_oauth_token.json`)
+      은 더 이상 생성/참조되지 않는다.
+    - `run_ops_scheduler.py`의 `_build_token_cache_health_summary()` 진단
+      summary도 `holiday_oauth` 항목이 `live_disclosure_access_token`과
+      동일한 캐시를 참조하도록 갱신(더 이상 사용하지 않는
+      `build_holiday_oauth_cache_config` import 제거).
+    - `.env.example`에 `KIS_DISCLOSURE_TOKEN_CACHE_ENABLED`/`_PATH` 신규
+      문서화 + `KIS_LIVE_TOKEN_CACHE_PATH`가 이제 WS approval-key 전용임을
+      명시.
+    - (WS approval-key 캐시(`KisMarketStateClient`, `CachePurpose.
+      LIVE_APPROVAL_KEY`)는 REST access token과 다른 종류의 자원이라 이번
+      통합 범위에서 제외 — 그대로 유지.)
+  - **검증 완료(2026-07-13)**: 캐시 파일 삭제 후 cold start 재현 —
+    076 client가 `oauth2/tokenP`로 토큰 발급 후 `kis_disclosure_token.json`
+    에 저장 → 곧바로 disclosure client를 별도로 기동해도 **같은 파일에서
+    캐시 hit**(추가 토큰 발급 없음) 확인
+    (`logs/token_cache_unification_verify_2026-07-13.log`). 관련 테스트
+    242건(holiday_client/market_session/run_ops_scheduler/token_cache)
+    전체 통과, 회귀 없음.
+
 - **종목 소싱(Universe Sourcing) 구조 개선 — market_overlay 활성화 및 모멘텀 신호 보강** (2026-07-12 신설, 최우선):
   [`plans/[DESIGN] universe_sourcing_momentum_overlay_enablement_v1.md`](./%5BDESIGN%5D%20universe_sourcing_momentum_overlay_enablement_v1.md)
   - 2026-07-12 확정: 매수 0건은 하락장 방어의 올바른 작동이었으므로

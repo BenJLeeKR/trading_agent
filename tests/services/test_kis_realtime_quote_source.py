@@ -409,6 +409,63 @@ class TestSubscribe:
             await source.aclose()
 
 
+class TestInstrumentInfoLookup:
+    """``instruments`` 테이블 조회 배선 — mock 소스와 동일한 ``InstrumentInfoResolver``."""
+
+    async def test_subscribe_uses_instrument_lookup_over_placeholder(
+        self, fake_ws_client_factory
+    ) -> None:
+        from agent_trading.services.realtime_quote_source import InstrumentInfo
+
+        calls: list[str] = []
+
+        async def lookup(symbol: str):
+            calls.append(symbol)
+            return InstrumentInfo(symbol=symbol, name="DB종목명", market="KOSDAQ")
+
+        rest_client = _make_rest_client()
+        source = KisRealtimeQuoteSource(
+            rest_client=rest_client, ws_url="ws://fake", instrument_info_lookup=lookup
+        )
+        await source.connect()
+        try:
+            # "005930" is one of the hardcoded mock instruments (삼성전자/KOSPI) —
+            # the real lookup result must win over that placeholder.
+            await source.subscribe("005930")
+            info = source.instrument_info("005930")
+            assert info.name == "DB종목명"
+            assert info.market == "KOSDAQ"
+            assert calls == ["005930"]
+        finally:
+            await source.aclose()
+
+    async def test_lookup_exception_falls_back_to_placeholder(
+        self, fake_ws_client_factory
+    ) -> None:
+        async def lookup(symbol: str):
+            raise RuntimeError("DB down")
+
+        rest_client = _make_rest_client()
+        source = KisRealtimeQuoteSource(
+            rest_client=rest_client, ws_url="ws://fake", instrument_info_lookup=lookup
+        )
+        await source.connect()
+        try:
+            await source.subscribe("005930")  # must not raise
+            info = source.instrument_info("005930")
+            assert info.name == "삼성전자"
+            assert info.market == "KOSPI"
+        finally:
+            await source.aclose()
+
+    def test_no_lookup_configured_preserves_existing_behavior(self) -> None:
+        rest_client = _make_rest_client()
+        source = KisRealtimeQuoteSource(rest_client=rest_client, ws_url="ws://fake")
+        info = source.instrument_info("999999")
+        assert info.market == "UNKNOWN"
+        assert "999999" in info.name
+
+
 class TestUnsubscribe:
     async def test_unsubscribe_removes_both_channels(
         self, connected_source: KisRealtimeQuoteSource

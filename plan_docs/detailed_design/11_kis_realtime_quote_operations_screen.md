@@ -774,6 +774,18 @@ manager를 공유하는 설계 변경"이 아니라, **두 개의 독립 배포 
 - [ ] 위 조사 결과에 따라 "당분간 분리 유지" 결론을 재확인하거나, 통합 설계
       착수 여부를 다시 판단.
 
+> **📌 2026-07-13 관련 실측 확인**: 위 체크리스트는 **WS approval-key/세션
+> 1개 원칙**(WebSocket 계층) 범위였는데, 별개로 **REST `oauth2/tokenP`
+> 토큰 캐시** 계층에서도 유사한 문제가 실제로 존재함을 코드 분석으로
+> 확인했다 — 같은 `KIS_LIVE_INFO_*` appkey를 쓰는 076 holiday client와
+> 공시/시세 quote client가 서로 다른 캐시 파일(`kis_live_oauth_token.json`
+> vs `kis_disclosure_token.json`)을 써서, cold start 시 같은 appkey로
+> `oauth2/tokenP`가 중복 발급될 위험(`EGW00133` 1분당 1회 제한)이 있다.
+> 이건 WS 세션 통합 여부와 무관하게 **지금 바로 고칠 수 있는 별도
+> 이슈**라, `plans/kis_dev_token_cache.md` 상단 banner + `plans/[BACKLOG]
+> backlog.md`의 "KIS 토큰 캐시 통합(appkey당 1개)" 항목으로 분리해서
+> 진행한다.
+
 ## 163 WS(장운영정보, `ops-scheduler`) 제거 가능성 검토 메모 — ✅ 구현 완료(2026-07-10)
 
 > **✅ 2026-07-10 검토 완료 → 같은 날 구현 완료.** 결론: "제거 가능성 높음,

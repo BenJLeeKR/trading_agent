@@ -1,5 +1,13 @@
 # `signal_backbone_v1` slow 구간 재설계 분석
 
+> **📌 2026-07-14 근본 경계 (중요)**: 이 문서가 다루는 slow_score/threshold
+> 튜닝은 **신호 체계의 예측력(미래 수익률 상관)이 실증 검증되지 않은 상태**
+> 에서 이뤄진 것이다. slow_momentum/slow_trend는 과거 가격의 추세 상태를
+> 기술하는 룰 기반 지표이며 가중치는 하드코딩 값이다. 이 문서의 shadow
+> 실측 역시 단일 하락 국면·소표본·proxy 기반이라 일반화 불가.
+> "무엇을 근거로 사고 파는가"의 토대 검증이 threshold 튜닝보다 선행되어야
+> 한다. 상세: `plans/[ANALYSIS] foundational_design_review_objective_alignment_2026-07-14.md`.
+
 ## 목적
 
 - `signal_backbone_v1`의 `slow_momentum`, `slow_trend` 점수 구간이

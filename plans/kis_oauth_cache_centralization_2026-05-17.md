@@ -3,6 +3,22 @@
 > 작성일: 2026-05-17
 > 작성자: Roo Architect
 
+> **📌 2026-07-13 범위 명확화**: 이 문서의 "중앙화"는 **캐시 로직 구현의
+> 중복 제거**(3개 클라이언트가 각자 만든 로드/저장/지문 코드를
+> `KisTokenCache` 공통 모듈로 통일)를 의미하며, **캐시 파일/용도
+> (`CachePurpose`) 자체를 하나로 합치는 것이 아니다** — 오히려 이 설계는
+> `PAPER_ACCESS_TOKEN`/`LIVE_HOLIDAY_OAUTH`/`LIVE_APPROVAL_KEY` 3개의
+> **서로 다른 캐시 파일**을 그대로 유지한 채 구현만 공유 모듈로 옮겼다.
+> 이후 `KIS_LIVE_INFO_*` 통합 과정에서 `LIVE_DISCLOSURE_ACCESS_TOKEN`이라는
+> 4번째 purpose/파일(`kis_disclosure_token.json`)이 추가로 생겨, 지금은
+> **같은 appkey(`KIS_LIVE_INFO_APP_KEY`)에 대해 캐시 파일이 2~3개로
+> 분산된 상태**다(`kis_live_oauth_token.json` — 076 holiday,
+> `kis_disclosure_token.json` — 공시+시세 quote client 공유,
+> `kis_live_token.json` — 설정만 있고 사실상 미사용). "appkey당 캐시
+> 파일 1개" 원칙으로의 실제 통합은 아직 하지 않은 상태이며, 이 작업은
+> `plans/[BACKLOG] backlog.md`의 "KIS 토큰 캐시 통합(appkey당 1개)"
+> 항목으로 별도 진행한다.
+
 ---
 
 ## 1. 목적

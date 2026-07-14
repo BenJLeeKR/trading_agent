@@ -351,13 +351,22 @@ class InstrumentRepository(Protocol):
         ...
 
     async def list_active_by_market(
-        self, market_code: str
+        self, market_code: str, *, asset_class: str | None = None
     ) -> Sequence[InstrumentEntity]:
         """List all active instruments for a given market code.
 
         This is the primary method used by ``UniverseSelectionService``
         to build the Core Universe.  Returns only ``is_active=true``
         instruments, ordered by symbol.
+
+        ``asset_class``: optional filter (e.g. ``"kr_stock"``) — when
+        omitted (default), all asset classes are returned, matching the
+        historical behavior relied on by ``sync_kis_instrument_master.py``'s
+        deactivate-missing pass. ``UniverseSelectionService`` passes
+        ``"kr_stock"`` explicitly so ETF/ETN rows never enter Core Universe
+        composition (they were never eligible; excluding them at the query
+        level also avoids scanning/scoring rows the caller would filter out
+        anyway).
         """
         ...
 

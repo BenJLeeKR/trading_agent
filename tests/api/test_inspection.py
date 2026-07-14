@@ -1575,6 +1575,103 @@ class TestInstruments:
         ]
         assert data["active_intraday_freeze_comparison"]["freeze_only_symbols"] == []
 
+    def test_get_trading_universe_freeze_summary(self) -> None:
+        """``GET /instruments/trading-universe/freeze-summary``는 라이브 재계산 없이
+        오늘 freeze 결과만 반환해야 한다(계좌 파라미터도 필요 없다)."""
+        repos = build_in_memory_repositories()
+        now = datetime.now(timezone.utc)
+
+        held_inst = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="005930",
+            market_code="KRX",
+            asset_class="KR_STOCK",
+            currency="KRW",
+            name="Samsung Electronics",
+            is_active=True,
+            metadata={"market_segment": "KOSPI"},
+        )
+        freeze_only_inst = InstrumentEntity(
+            instrument_id=uuid4(),
+            symbol="035420",
+            market_code="KRX",
+            asset_class="KR_STOCK",
+            currency="KRW",
+            name="NAVER",
+            is_active=True,
+            metadata={"market_segment": "KOSPI"},
+        )
+        for inst in (held_inst, freeze_only_inst):
+            asyncio.run(repos.instruments.add(inst))
+
+        business_date = now.astimezone(timezone(timedelta(hours=9))).date()
+        freeze_run_id = uuid4()
+        asyncio.run(
+            repos.universe_freeze_runs.add(
+                UniverseFreezeRunEntity(
+                    universe_freeze_run_id=freeze_run_id,
+                    business_date=business_date,
+                    freeze_purpose="decision_loop_intraday",
+                    freeze_sequence=1,
+                    frozen_at=now,
+                    selection_version="decision_loop_intraday.freeze.v1",
+                    target_count=2,
+                    status="materialized",
+                )
+            )
+        )
+        asyncio.run(
+            repos.universe_freeze_run_items.add_many(
+                (
+                    UniverseFreezeRunItemEntity(
+                        universe_freeze_run_item_id=uuid4(),
+                        universe_freeze_run_id=freeze_run_id,
+                        instrument_id=held_inst.instrument_id,
+                        symbol="005930",
+                        market_code="KRX",
+                        source_type="held_position",
+                        inclusion_reason="held_position_mandatory",
+                        rank=1,
+                        cap_bucket="held_position",
+                    ),
+                    UniverseFreezeRunItemEntity(
+                        universe_freeze_run_item_id=uuid4(),
+                        universe_freeze_run_id=freeze_run_id,
+                        instrument_id=freeze_only_inst.instrument_id,
+                        symbol="035420",
+                        market_code="KRX",
+                        source_type="core",
+                        inclusion_reason="approved_core_universe",
+                        rank=2,
+                        cap_bucket="core",
+                    ),
+                )
+            )
+        )
+
+        app = create_app(repos=repos, auth_enabled=False)
+        with TestClient(app) as client:
+            response = client.get("/instruments/trading-universe/freeze-summary")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["freeze_purpose"] == "decision_loop_intraday"
+        assert data["target_count"] == 2
+        assert data["source_type_counts"] == {"held_position": 1, "core": 1}
+        # 라이브 재계산/비교 관련 필드는 이 응답에 아예 없어야 한다(별도 엔드포인트라서).
+        assert "active_intraday_freeze_comparison" not in data
+        assert "market_overlay_diagnostics" not in data
+
+    def test_get_trading_universe_freeze_summary_returns_null_when_no_freeze_run(self) -> None:
+        """오늘 freeze run이 없으면 200 + null을 반환해야 한다(에러 아님)."""
+        repos = build_in_memory_repositories()
+        app = create_app(repos=repos, auth_enabled=False)
+        with TestClient(app) as client:
+            response = client.get("/instruments/trading-universe/freeze-summary")
+
+        assert response.status_code == 200
+        assert response.json() is None
+
     def test_get_trading_universe_coverage_summary(self) -> None:
         """``GET /instruments/trading-universe/coverage-summary`` returns source coverage."""
         mock_conn = AsyncMock()

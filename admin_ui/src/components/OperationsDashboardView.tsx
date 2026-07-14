@@ -24,7 +24,7 @@ import {
   getFailureSummary,
   getOrderDailySummary,
   getBuyBlockSummary,
-  getTradingUniversePreview,
+  getActiveIntradayFreezeSummary,
   getIndexMembershipStaleness,
 } from "../api/client";
 import type {
@@ -45,7 +45,7 @@ import type {
   RecentFailureItem,
   FailureSummary,
   OrderDailySummary,
-  TradingUniversePreviewResponse,
+  TradingUniverseFreezeView,
   IndexMembershipStalenessResponse,
 } from "../types/api";
 import { deriveAlerts } from "../lib/alerts";
@@ -110,8 +110,7 @@ interface DashboardData {
   sessionData: SchedulerStatusResponse | null;
   operationsDayData: OperationsDayStatusResponse | null;
   todayOrderSummary: OrderDailySummary | null;
-  tradingUniversePreview: TradingUniversePreviewResponse | null;
-  tradingUniversePreviewAccountLabel: string | null;
+  activeIntradayFreeze: TradingUniverseFreezeView | null;
   indexMembershipStaleness: IndexMembershipStalenessResponse | null;
 }
 
@@ -356,11 +355,12 @@ export default function OperationsDashboardView() {
       addError("GET /reconciliation/summary", e);
       return null;
     });
-    const ordersPromise = getOrders().catch((e) => {
-      addError("GET /orders", e);
-      return [];
-    });
-    const todayOrdersPromise = getOrders(undefined, undefined, getKstTodayString()).catch((e) => {
+    // "오늘의 운영 현황" 대시보드이므로 이 화면이 쓰는 주문 목록(최근 5건 요약,
+    // 거부 건수 등)은 애초에 오늘 것만 필요하다 — date 필터 없이 부르면 전체
+    // 이력(최근 100건, 전체 기간)을 스캔해 today 필터보다 눈에 띄게 느렸고
+    // (실측: 무필터 ~19-25ms vs date=today ~3ms), 게다가 아래 두 호출이
+    // 사실상 같은 데이터를 두 번 부르는 중복 요청이었다. 하나로 합친다.
+    const ordersPromise = getOrders(undefined, undefined, getKstTodayString()).catch((e) => {
       addError("GET /orders?date=today", e);
       return [];
     });
@@ -387,17 +387,27 @@ export default function OperationsDashboardView() {
       return null;
     });
 
-    const [health, readyz, reconSummary, orders, todayOrders, todayOrderSummary, buyBlockSummaryData, clients, sessionData, operationsDayData] = await Promise.all([
+    // 오늘 이미 얼려둔(freeze) 유니버스 요약 — 계좌 정보가 필요 없어서(freeze view는
+    // 계좌 무관) 계좌 fan-out을 기다릴 필요 없이 다른 API들과 함께 바로 부른다.
+    // "freeze / live 비교" 카드를 없애면서 라이브 재계산이 필요 없어졌다(과거엔
+    // getTradingUniversePreview()가 계좌 fan-out 이후에만 부를 수 있었고, 그 안에서
+    // 유니버스 선정 알고리즘 전체를 재계산해서 0.7~1.0초가 걸렸었다).
+    const activeIntradayFreezePromise = getActiveIntradayFreezeSummary().catch((e) => {
+      addError("GET /instruments/trading-universe/freeze-summary", e);
+      return null;
+    });
+
+    const [health, readyz, reconSummary, orders, todayOrderSummary, buyBlockSummaryData, clients, sessionData, operationsDayData, activeIntradayFreeze] = await Promise.all([
       healthPromise,
       readyzPromise,
       reconSummaryPromise,
       ordersPromise,
-      todayOrdersPromise,
       todayOrderSummaryPromise,
       buyBlockSummaryPromise,
       clientsPromise,
       sessionPromise,
       operationsDayPromise,
+      activeIntradayFreezePromise,
     ]);
 
     // ── Accounts per client ──
@@ -440,22 +450,6 @@ export default function OperationsDashboardView() {
       });
     }
 
-    // ── Trading universe preview — 계좌 정보(previewAccount)에 의존하므로
-    // 계좌 fan-out 이후에만 생성 가능. ──
-    const previewAccount = accounts.find((a) => a.status === "active") ?? accounts[0] ?? null;
-    const universePreviewPromise = previewAccount
-      ? getTradingUniversePreview(previewAccount.account_id, {
-          lookbackHours: 24,
-          maxCap: 30,
-          excludeHeldFromCap: true,
-          marketOverlayCap: 5,
-          prePoolSize: 50,
-        }).catch((e) => {
-          addError("GET /instruments/trading-universe/preview", e);
-          return null;
-        })
-      : Promise.resolve(null);
-
     // ── UNIV-4: 지수 편입 데이터 staleness 감시 (read-only, 계좌 무관) ──
     const indexMembershipStalenessPromise = getIndexMembershipStaleness().catch((e) => {
       addError("GET /instruments/index-membership/staleness", e);
@@ -485,10 +479,9 @@ export default function OperationsDashboardView() {
     });
     const failureSummaryPromise = getFailureSummary().catch(() => null);
 
-    const [snapshotSyncRuns, tradingUniversePreview, indexMembershipStaleness, failuresData, summaryData] =
+    const [snapshotSyncRuns, indexMembershipStaleness, failuresData, summaryData] =
       await Promise.all([
         snapshotSyncRunsPromise,
-        universePreviewPromise,
         indexMembershipStalenessPromise,
         recentFailuresPromise,
         failureSummaryPromise,
@@ -513,7 +506,7 @@ export default function OperationsDashboardView() {
       reconSummary: reconSummary as ReconciliationSummary | null,
       reconRuns,
       orders,
-      todayOrders,
+      todayOrders: orders,
       accounts,
       positionsMap,
       cashMap,
@@ -521,11 +514,7 @@ export default function OperationsDashboardView() {
       sessionData: sessionData as SchedulerStatusResponse | null,
       operationsDayData: operationsDayData as OperationsDayStatusResponse | null,
       todayOrderSummary: todayOrderSummary as OrderDailySummary | null,
-      tradingUniversePreview,
-      tradingUniversePreviewAccountLabel: previewAccount?.account_alias
-        ?? previewAccount?.account_code
-        ?? previewAccount?.broker_account_id
-        ?? null,
+      activeIntradayFreeze,
       indexMembershipStaleness,
     });
     setLoading(false);
@@ -930,12 +919,14 @@ export default function OperationsDashboardView() {
   const alertStatusVariant: "error" | "warning" | "healthy" =
     d.urgentCount > 0 ? "error" : d.cautionCount > 0 ? "warning" : "healthy";
 
-  const activeIntradayFreeze = data.tradingUniversePreview?.active_intraday_freeze ?? null;
-  const activeIntradayFreezeComparison =
-    data.tradingUniversePreview?.active_intraday_freeze_comparison ?? null;
+  // 2026-07-14: "freeze / live 비교" 카드를 없애면서 라이브 재계산
+  // (getTradingUniversePreview → market_overlay_diagnostics/comparison)이
+  // 더 이상 필요 없어졌다 — activeIntradayFreeze는 이제 DB의 freeze 결과만
+  // 가볍게 조회하는 getActiveIntradayFreezeSummary() 응답을 그대로 쓴다.
+  const activeIntradayFreeze = data.activeIntradayFreeze;
   const freezeItems = activeIntradayFreeze?.items ?? [];
   const freezeMarketOverlayCount = activeIntradayFreeze?.source_type_counts?.market_overlay ?? 0;
-  const marketOverlayDiagnostics = data.tradingUniversePreview?.market_overlay_diagnostics ?? null;
+  const freezeEventOverlayCount = activeIntradayFreeze?.source_type_counts?.event_overlay ?? 0;
   const todayBuyOrders = data.todayOrders.filter((order) => order.side === "buy");
   const latestTodayBuyOrderBySymbol = new Map<string, OrderSummary>();
   todayBuyOrders.forEach((order) => {
@@ -1328,17 +1319,16 @@ export default function OperationsDashboardView() {
             />
           </div>
 
-          {/* ── Section D: Universe Selection / Market Overlay ── */}
+          {/* ── Section D: Universe Selection / Market Overlay ──
+              2026-07-14: "freeze / live 비교" 카드 제거 — 라이브 유니버스
+              재계산(getTradingUniversePreview, 실측 0.7~1.0초 오버헤드) 없이
+              오늘 freeze 결과만 가볍게 조회(getActiveIntradayFreezeSummary)해서
+              표시한다. 계좌 무관이라 "preview 계좌" 표시도 함께 제거. */}
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-[#0f172a]">Universe Selection / Market Overlay</h2>
-              <span className="text-xs text-[#94a3b8]">
-                preview 계좌: {data.tradingUniversePreviewAccountLabel ?? "없음"}
-              </span>
-            </div>
+            <h2 className="text-lg font-semibold text-[#0f172a]">Universe Selection / Market Overlay</h2>
             <Panel
               title="오늘 유니버스 freeze 기준"
-              subtitle="active intraday freeze + today orders + market-overlay-funnel"
+              subtitle="active intraday freeze + today orders"
             >
               <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-5">
                 <div className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
@@ -1355,8 +1345,11 @@ export default function OperationsDashboardView() {
                   <p className="mt-1 text-lg font-semibold text-[#0f172a]">
                     {freezeMarketOverlayCount}건
                   </p>
-                  <p className="text-xs text-[#94a3b8]">
-                    quotes {marketOverlayDiagnostics?.quotes_received_count ?? 0} / {marketOverlayDiagnostics?.quotes_requested_count ?? 0}
+                </div>
+                <div className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
+                  <p className="text-xs text-[#64748b]">freeze 내 event_overlay</p>
+                  <p className="mt-1 text-lg font-semibold text-[#0f172a]">
+                    {freezeEventOverlayCount}건
                   </p>
                 </div>
                 <div className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
@@ -1366,15 +1359,6 @@ export default function OperationsDashboardView() {
                   </p>
                   <p className="text-xs text-[#94a3b8]">
                     today buy orders {todayBuyOrders.length}건 중 freeze 종목 기준
-                  </p>
-                </div>
-                <div className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
-                  <p className="text-xs text-[#64748b]">freeze / live 비교</p>
-                  <p className="mt-1 text-lg font-semibold text-[#0f172a]">
-                    {activeIntradayFreezeComparison?.exact_match ? "일치" : "차이있음"}
-                  </p>
-                  <p className="text-xs text-[#94a3b8]">
-                    공통 {activeIntradayFreezeComparison?.common_symbol_count ?? 0} / freeze {activeIntradayFreezeComparison?.freeze_total_count ?? 0}
                   </p>
                 </div>
               </div>

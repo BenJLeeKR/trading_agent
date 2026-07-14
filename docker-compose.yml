@@ -175,10 +175,17 @@ services:
       GEMINI_TIMEOUT_SECONDS: "${GEMINI_TIMEOUT_SECONDS:-30}"
       OPENDART_API_KEY: "${OPENDART_API_KEY:-}"
       INSPECTION_API_TOKEN: "${INSPECTION_API_TOKEN:-}"
+      # 프론트(Admin UI)를 별도 컨테이너/포트로 분리한 뒤, 브라우저가 이 API를
+      # cross-origin으로 직접 호출할 때 필요 — 쉼표로 구분한 origin 목록.
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-http://localhost:3000}"
     ports:
       - "8000:8000"
     volumes:
-      - ./admin_ui/dist:/app/admin_ui/dist
+      # Admin UI는 별도 frontend 컨테이너(포트 3000)로 분리되어, 이 API
+      # 컨테이너는 더 이상 정적 파일을 서비스하지 않는다(admin_ui/dist 볼륨
+      # 마운트 제거). api/app.py의 ``if os.path.isdir(_admin_ui_dist)``
+      # static mount 코드는 dist 디렉터리가 없으면 그냥 no-op이라 안전하게
+      # 남겨뒀다.
       # Share KIS dev token cache to avoid 1-per-minute oauth2 rate limit
       - ./.cache:/app/.cache
     cap_add:
@@ -207,6 +214,26 @@ services:
     restart: unless-stopped
     networks:
       - shared_net  # 추가됨
+
+  # ---- Admin UI (별도 컨테이너로 분리된 프론트엔드) ------------------------
+  # 예전에는 api 서비스가 admin_ui/dist를 /admin 경로에 static mount 했지만,
+  # 이제 독립된 nginx 컨테이너가 root("/")에서 직접 서비스한다. 이 컨테이너의
+  # nginx(admin_ui/nginx.frontend.conf)가 API 경로를 백엔드(agent_trading-api-1:8000,
+  # 같은 shared_net)로 내부 프록시하므로, 브라우저는 항상 자신이 접속한
+  # origin으로만 호출한다 — zrok처럼 프론트만 HTTPS 터널링되고 백엔드는 별도
+  # HTTPS 주소가 없는 환경에서도 CORS/mixed-content 문제 없이 동작한다.
+  # VITE_API_BASE_URL은 기본값(빈 문자열)이면 이 내부 프록시를 타므로 특수
+  # 배포가 아닌 한 설정할 필요 없다.
+  frontend:
+    build:
+      context: ./admin_ui
+      args:
+        VITE_API_BASE_URL: "${VITE_API_BASE_URL:-}"
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+    networks:
+      - shared_net
 
   # ---- DB Migration (one-shot) ---------------------------------------------
   # `api`는 더 이상 기동 시 자동으로 migration을 실행하지 않는다 — "api 재기동"과

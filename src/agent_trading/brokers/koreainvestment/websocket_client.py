@@ -113,25 +113,57 @@ class KISWebSocketClient:
         self._subscriptions: dict[str, set[str]] = {}  # channel -> {tr_keys}
         self._critical_subscriptions: dict[str, set[str]] = {}
         self._reader_task: asyncio.Task[None] | None = None
-        self._heartbeat_task: asyncio.Task[None] | None = None
         self._continuum_tracker: dict[str, str] = {}  # tr_id -> last continuum_key
 
     # ------------------------------------------------------------------
     # Connection lifecycle
     # ------------------------------------------------------------------
 
-    async def connect(self) -> None:
+    async def connect(self, *, force_refresh_approval_key: bool = False) -> None:
         """Connect to the KIS WebSocket server.
 
+        Parameters
+        ----------
+        force_refresh_approval_key:
+            Re-issue a fresh approval key (bypassing its 24h cache) before
+            opening the socket, as an extra safety measure on reconnect.
+            Not the fix for the "JSON PARSING ERROR" reconnect loop (see
+            ``ping_interval`` note below for the actual root cause) — kept
+            because there's no downside to a fresh key on reconnect.
+            ``_handle_disconnect()`` always passes ``True``; the very first
+            ``connect()`` call leaves this ``False`` since the caller
+            (``KisRealtimeQuoteSource.connect()``) just fetched a fresh key
+            moments earlier.
+
         Raises ``ConnectionError`` if the connection fails.
+
+        Heartbeat (2026-07-14 root-cause fix)
+        --------------------------------------
+        Previously this sent an app-level empty string (``await
+        self._ws.send("")``) every 30s from a separate task as a
+        "heartbeat". KIS's WS gateway treats every application-level text
+        frame as JSON to parse — an empty string isn't valid JSON, so KIS
+        rejected it with ``rt_cd=1``/``"JSON PARSING ERROR : invalid json
+        format"`` and then dropped the connection outright, causing an
+        infinite reconnect loop (observed failures landed almost exactly
+        30s after each connect, matching this heartbeat's interval).
+        ``KisMarketStateClient`` (``market_state_client.py``) already does
+        this correctly — protocol-level WebSocket ping/pong frames via
+        ``websockets.connect(..., ping_interval=...)``, invisible to KIS's
+        JSON parser since they never reach the application layer. This
+        client now does the same instead of a hand-rolled heartbeat task.
         """
         import websockets
+
+        if force_refresh_approval_key:
+            self._approval_key = await self._rest.get_approval_key(force=True)
 
         url = self._ws_url or KIS_WS_URLS[self._env]
         try:
             self._ws = await websockets.connect(
                 url,
-                ping_interval=None,  # We handle heartbeats ourselves
+                ping_interval=_HEARTBEAT_INTERVAL,
+                ping_timeout=10,
                 max_size=2**20,  # 1 MB max message size
             )
         except Exception as e:
@@ -143,7 +175,6 @@ class KISWebSocketClient:
 
         # Start background tasks
         self._reader_task = asyncio.create_task(self._reader_loop())
-        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
         # Resubscribe after reconnect
         await self._resubscribe_all()
@@ -157,9 +188,6 @@ class KISWebSocketClient:
         if self._reader_task is not None:
             self._reader_task.cancel()
             self._reader_task = None
-        if self._heartbeat_task is not None:
-            self._heartbeat_task.cancel()
-            self._heartbeat_task = None
 
         if self._ws is not None:
             try:
@@ -330,16 +358,6 @@ class KISWebSocketClient:
             except asyncio.QueueFull:
                 logger.warning("Message queue full, dropping message: %s", parsed.get("type"))
 
-    async def _heartbeat_loop(self) -> None:
-        """Background task that sends periodic heartbeats."""
-        while self._connected:
-            await asyncio.sleep(_HEARTBEAT_INTERVAL)
-            try:
-                if self._ws is not None:
-                    await self._ws.send("")
-                    logger.debug("Heartbeat sent")
-            except Exception as e:
-                logger.warning("Heartbeat failed: %s", e)
 
     # ------------------------------------------------------------------
     # Internal: disconnect handling
@@ -363,7 +381,7 @@ class KISWebSocketClient:
         )
 
         try:
-            await self.connect()
+            await self.connect(force_refresh_approval_key=True)
         except Exception as e:
             logger.error("Reconnect failed: %s", e)
             # Schedule another reconnect attempt

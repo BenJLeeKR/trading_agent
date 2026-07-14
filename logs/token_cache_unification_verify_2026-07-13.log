@@ -1,0 +1,10 @@
+INFO:agent_trading.services.market_session:SessionProvider: KisHolidayProvider (076 API) base_url=https://openapi.koreainvestment.com:9443 token_cache=.cache/kis_disclosure_token.json(shared with disclosure/quote client) enabled=True
+INFO:agent_trading.brokers.koreainvestment.token_cache:live_disclosure_access_token token cache: miss reason=file_missing path=.cache/kis_disclosure_token.json
+INFO:httpx:HTTP Request: POST https://openapi.koreainvestment.com:9443/oauth2/tokenP "HTTP/1.1 200 OK"
+INFO:agent_trading.brokers.koreainvestment.token_cache:live_disclosure_access_token token cache: saved path=.cache/kis_disclosure_token.json expires_at=1784001842.948797
+INFO:httpx:HTTP Request: GET https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/chk-holiday?BASS_DT=20260713&CTX_AREA_NK=&CTX_AREA_FK= "HTTP/1.1 200 OK"
+INFO:agent_trading.services.market_session:KisHolidayProvider: session_info date=2026-07-13 is_trading_day=True opnd_yn=Y bzdy_yn=Y tr_day_yn=Y source=kis_holiday_api
+=== holiday client done ===
+INFO:agent_trading.runtime.bootstrap:Live disclosure client created: env=live, cache_path=.cache/kis_disclosure_token.json, cache_enabled=True
+INFO:agent_trading.brokers.koreainvestment.token_cache:live_disclosure_access_token token cache: hit path=.cache/kis_disclosure_token.json
+=== disclosure client done ===

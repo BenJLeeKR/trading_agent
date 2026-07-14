@@ -70,7 +70,6 @@ from agent_trading.services.market_session import (
 from agent_trading.brokers.koreainvestment.token_cache import (
     CachePurpose,
     KisTokenCache,
-    build_holiday_oauth_cache_config,
     build_live_approval_key_cache_config,
     build_rest_approval_key_cache_config,
     build_rest_access_token_cache_config,
@@ -1552,10 +1551,16 @@ def _build_scheduler_runtime_summary() -> dict[str, Any]:
 
 
 def _build_token_cache_health_summary() -> dict[str, Any]:
-    """Build a compact operational view of KIS token/approval cache files."""
+    """Build a compact operational view of KIS token/approval cache files.
+
+    2026-07-13 토큰 캐시 통합: ``holiday_oauth``(076)는 더 이상 전용 파일
+    (``kis_live_oauth_token.json``)을 쓰지 않는다 — disclosure/시세 client와
+    동일한 appkey(``KIS_LIVE_INFO_*``)로 인증하는 같은 종류의 REST access
+    token이므로, ``live_disclosure_access_token``과 캐시 파일/purpose를
+    공유한다(아래 두 항목이 동일한 path/status를 보고하면 정상 통합된 것).
+    상세: `plans/[BACKLOG] backlog.md` "KIS 토큰 캐시 통합(appkey당 1개)".
+    """
     settings = AppSettings()
-    live_token_cache_parent = Path(settings.kis_live_token_cache_path).parent
-    holiday_oauth_cache_path = live_token_cache_parent / "kis_live_oauth_token.json"
     caches: dict[str, KisTokenCache] = {
         "paper_rest_access_token": KisTokenCache(
             build_rest_access_token_cache_config(
@@ -1578,11 +1583,12 @@ def _build_token_cache_health_summary() -> dict[str, Any]:
             ),
         ),
         "holiday_oauth": KisTokenCache(
-            build_holiday_oauth_cache_config(
-                enabled=settings.kis_live_token_cache_enabled,
-                cache_path=holiday_oauth_cache_path,
-                app_key=settings.kis_live_app_key or "",
-                app_secret=settings.kis_live_app_secret or "",
+            build_rest_access_token_cache_config(
+                enabled=settings.kis_disclosure_token_cache_enabled,
+                cache_path=Path(settings.kis_disclosure_token_cache_path),
+                cache_purpose=CachePurpose.LIVE_DISCLOSURE_ACCESS_TOKEN,
+                api_key=settings.kis_live_app_key or "",
+                kis_env="live",
                 base_url=settings.kis_live_info_base_url or settings.kis_base_url,
             ),
         ),
