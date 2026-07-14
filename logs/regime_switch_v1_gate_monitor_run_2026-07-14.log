@@ -1,0 +1,7 @@
+
+=== regime_switch_v1 1차 게이트 모니터링(규칙 A) ===
+기준일: 2026-06-16, 최근 365일 cutoff=2025-06-16
+국면 분포: {'bullish_trend': 239, 'range_bound': 6}
+판정: NOT_TRIGGERED — 최근 12개월 창에 bearish_trend 0일 — 규칙 A(관찰 유예) 유지
+
+산출 저장: logs/regime_switch_v1_gate_monitor_2026-07-14.json

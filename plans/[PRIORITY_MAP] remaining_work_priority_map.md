@@ -107,6 +107,16 @@
   (`rsi_mean_reversion`, `sma5_over_sma20_gap`)도 범용 대체 후보로
   No-Go(각각 하락장 전용/하락장 역전). SPPV-3 착수는 계속 보류.
 
+- 작성자: Claude
+- 수정일자: 2026-07-14 (11차, §20.5 후속 — SPPV-2.13/2.14)
+- 수정내용: `regime_switch_v1` 규칙 A(관찰 유예)를 실행 가능한 모니터링
+  스크립트로 구현(벤치마크 1종목만 조회) — 실행 결과 현재
+  NOT_TRIGGERED(bearish_trend 0일). "절대 가격 수준" 미의존 신규 fast
+  계열 2종(`money_flow_5d`, `relative_strength_rank_1m`)을 실측 — 둘 다
+  범용 대체 후보로 No-Go. `relative_strength_rank_1m`은 하락장에서
+  유의하게 역전(t=-2.13) — 시장 베타 제거 상대강도조차 하락장에서
+  반대로 작동한다는 규칙성 재확인. SPPV-3 착수는 계속 보류.
+
 ## 최근 메모
 
 > **📌 2026-07-14 BUY 주문경로 근본 복구 기준 확정 (최신, 최우선 반영)**:
@@ -273,6 +283,27 @@
 > 유의하게 역전(t=-2.67) — "이동평균 창을 짧게 하면 해결된다"는 가설도
 > 기각됐다. **SPPV-3 착수는 계속 보류**한다. 상세:
 > `plans/[DESIGN] signal_predictive_power_validation.md` §20.
+
+> **📌 2026-07-14 SPPV-2.13/2.14 완료 — regime_switch_v1 모니터링 실행체
+> + 완전 신규 fast 계열 feature (최신)**: §20.5가 지시한 두 과제를
+> 수행했다. `regime_switch_v1`의 규칙 A(관찰 유예)를 **실제 실행 가능한
+> 경량 모니터링 스크립트**(`scripts/monitor_regime_switch_v1_gate.py`)로
+> 구현했다 — 벤치마크(069500) 1종목만 조회(신규 KIS 호출 0건)해 최근
+> 12개월 창의 국면 분포를 확인하고, `bearish_trend` 거래일이 30일
+> 이상이면 `TRIGGERED`, 1~29일이면 `PARTIAL`, 0일이면 `NOT_TRIGGERED`
+> 로 자동 판정한다. 실행 결과: **`NOT_TRIGGERED`(최근 12개월
+> bearish_trend 0일)** — §20 판단과 일치, 재검증 시점 아님을 실측으로
+> 재확인했다. 이어서 "절대 가격 수준"에 전혀 의존하지 않는 완전 신규
+> fast 계열 feature 2종을 실측했다 — **`money_flow_5d`**(최근 5거래일
+> 상승/하락일 거래대금 비대칭, 자금 흐름 축)와 **`relative_strength_
+> rank_1m`**(cross-sectional 상대강도 순위, 시장 베타 제거). **결과:
+> 둘 다 pooled/1차 유의성 없이 범용 대체 후보로 No-Go.** `money_
+> flow_5d`는 모든 구간 |t|<1.2로 방향성조차 없는 완전 무신호다.
+> `relative_strength_rank_1m`은 하락장(T+5)에서 유의하게 **역전**
+> (t=-2.13) — **시장 베타를 완전히 제거한 상대강도조차 하락장에서는
+> 반대로 작동한다**는, 절대/상대 지표 구분을 넘어선 더 강력한 규칙성을
+> 재확인했다. **SPPV-3 착수는 계속 보류**한다. 상세:
+> `plans/[DESIGN] signal_predictive_power_validation.md` §21, §22.
 
 > **📌 2026-07-12 방향 전환 (이력, 2026-07-14 결론으로 대체)**:
 > 지난 6주(2026-06-01~07-12) 매수 0건은 시스템 오류가 아니라 **하락장에서
@@ -4203,12 +4234,30 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      패턴), `sma5_over_sma20_gap`은 SMA20과 동일하게 하락장에서 유의
      하게 역전(t=-2.67). SPPV-3 착수는 계속 보류. 상세:
      `plans/[DESIGN] signal_predictive_power_validation.md` §20.
-   - **SPPV-3(보류 유지, 사유 재교체)**: §20(SPPV-2.12)에서 `regime_
-     switch_v1`의 1차 게이트는 "관찰 유예"만 방어 가능하다고 확정됐고,
-     fast 계열 신규 feature도 범용 대체 후보를 찾지 못했다 — 착수
-     조건은 최근 12개월 창에 실제 하락 국면이 편입돼 규칙 A의 재검증
-     트리거가 발동하는 것 — 사용자 확인 필요(§14.5, §17.5, §18.6,
-     §19.6, §20.5). 착수 시 regime/allocation/strategy/source를
+   - **SPPV-2.13/2.14(완료, 2026-07-14, §20.5 후속)**: `regime_
+     switch_v1` 규칙 A(관찰 유예)를 실행 가능한 모니터링 스크립트로
+     구현(벤치마크 1종목만 조회, 신규 KIS 호출 0건) + 완전 신규 fast
+     계열 feature 2종(`money_flow_5d`=자금 흐름 축, `relative_
+     strength_rank_1m`=cross-sectional 상대강도 축) 실측. **결과:
+     모니터링 판정 NOT_TRIGGERED(bearish_trend 0일, §20과 일치).** fast
+     계열 신규 feature 2종 모두 범용 대체 후보로 No-Go — `money_
+     flow_5d`는 방향성조차 없는 완전 무신호(|t|<1.2), `relative_
+     strength_rank_1m`은 하락장에서 유의하게 역전(t=-2.13) — 시장 베타
+     제거 상대강도조차 하락장에서는 반대로 작동한다는 규칙성 재확인.
+     SPPV-3 착수는 계속 보류. 산출:
+     `scripts/monitor_regime_switch_v1_gate.py`,
+     `scripts/validate_signal_predictive_power_v10_new_fast_features.py`
+     (둘 다 read-only, 신규 KIS 호출 0건),
+     `logs/regime_switch_v1_gate_monitor_2026-07-14.json`,
+     `logs/signal_ic_sppv2_14_new_fast_features_2026-07-14.json`. 상세:
+     `plans/[DESIGN] signal_predictive_power_validation.md` §21, §22.
+   - **SPPV-3(보류 유지, 사유 재교체)**: §21/§22(SPPV-2.13/2.14)에서
+     `regime_switch_v1` 모니터링이 실행 가능한 상태로 구현됐고(현재
+     NOT_TRIGGERED), 완전 신규 fast 계열 feature도 범용 대체 후보를
+     찾지 못했다 — 착수 조건은 모니터링 스크립트가 `TRIGGERED`를
+     반환하는 것(최근 12개월 창에 bearish_trend 30일 이상 편입) — 사용자
+     확인 필요(§14.5, §17.5, §18.6, §19.6, §20.5). 착수 시
+     regime/allocation/strategy/source를
      복원한 `entry_score` point-in-time 재현과 signal/risk-off/regime
      eligibility 중복 억제 ablation.
    - **SPPV-4**: Virtual BUY의 `candidate → selected → expected value → would_buy
