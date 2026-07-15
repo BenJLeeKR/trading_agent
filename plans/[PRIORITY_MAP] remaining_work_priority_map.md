@@ -156,6 +156,16 @@
   69%)이 시장 공통 국면(range_bound)과 전혀 다름을 재확인. entry_score
   통합 시 국면 정의 통일이 새로운 전제로 필요함을 발견.
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (16차, 중복 억제 시계열 누적 + 국면 정의 비교
+  체계 구축)
+- 수정내용: 하루치 관찰을 시계열 누적 절차로 승격 — 신규 오케스트레이터
+  가 penalty 축 A/B/C와 시장 공통 국면을 같은 실행에서 계산해 누적
+  이력에 기록. 실행 결과: 이전 실측과 동일한 수치(A=85/B=60/C=75/
+  A∩B∩C=60)로 교차 검증, 국면 일치 18건/불일치 69건(79%) — "시장
+  비하락장인데 종목별 하락장" 60건. SPPV-3 본작업용 비교 실험(현행
+  종목별 정의 vs 시장 공통 정렬) 설계 완료.
+
 ## 최근 메모
 
 > **📌 2026-07-14 BUY 주문경로 근본 복구 기준 확정 (최신, 최우선 반영)**:
@@ -440,6 +450,27 @@
 > DB(`trade_decisions`) 직접 조회는 자동 승인 경계 밖 프로덕션 읽기로
 > 판단돼 이번 턴에 시도하지 않았다. 상세:
 > `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §8.
+
+> **📌 2026-07-15 중복 억제 시계열 누적 + 국면 정의 비교 체계 구축
+> (최신)**: 위 §8의 하루치 관찰을 §6(Phase 2)이 확립한 누적 패턴에
+> 맞춰 시계열 절차로 승격했다. 신규
+> `scripts/run_entry_score_penalty_ablation_cycle.py`가 `shadow_
+> entry_score_penalty_ablation.py`(penalty 축 A/B/C)와 `shadow_regime_
+> conditional_entry_signal.py`(시장 공통 국면)의 함수를 그대로
+> 재사용해, 종목별 국면과 시장 공통 국면을 같은 실행에서 나란히
+> 계산하고 누적 이력(`logs/entry_score_penalty_ablation_history.jsonl`,
+> 중복 거래일 자동 skip)에 기록한다. **실행 결과: §8과 완전히 동일한
+> 수치(A=85/B=60/C=75/A∩B∩C=60)로 교차 검증됐고, 국면 일치 18건/
+> 불일치 69건(79%)** — 그중 "시장 비하락장인데 종목별 하락장" 60건,
+> "시장 하락장인데 종목별 비하락장" 0건. 즉시 재실행해 중복 방지
+> 로직이 정상 발동함을 확인했다. **SPPV-3 본작업용 비교 실험**을
+> 설계 문서 §9.6에 구체화했다 — 기존 3년 rolling 표본에 대해 (a)
+> 현행 종목별 국면 정의와 (b) 시장 공통 국면 정의로 `_assess_buy_
+> eligibility`를 각각 재계산해, 두 정의 아래 통과 종목의 forward
+> return을 §16 이원 기준(quintile spread + Newey-West)으로 비교한다
+> — 새 KIS 호출 없이 기존 3년 캐시로 수행 가능하다. `entry_score`
+> 코드/운영 변경 없음. 상세: `plans/[DESIGN] regime_conditional_
+> entry_signal_v1.md` §9.
 
 > **📌 2026-07-12 방향 전환 (이력, 2026-07-14 결론으로 대체)**:
 > 지난 6주(2026-06-01~07-12) 매수 0건은 시스템 오류가 아니라 **하락장에서
@@ -4438,14 +4469,27 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      (read-only, 신규 KIS 호출 0건),
      `logs/shadow_entry_score_penalty_ablation_2026-07-15.json`.
      상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §8.
-   - **SPPV-3(보류 유지, 형태 재정의)**: §2.16~§2.18에서 국면 분기형
-     entry 설계 초안, Phase 2 누적 체계, 중복 penalty 실측이 마련됐다
-     — 다음 착수 형태는 이 설계 문서를 기반으로 regime/allocation/
-     strategy/source를 복원한 `entry_score` point-in-time 재현과
-     signal/risk-off/regime eligibility 중복 억제 ablation, 그리고
-     국면 정의(종목별 vs 시장 공통) 통일이다. 착수 전제(누적 이력에서
-     `TRIGGERED` 전환 관측 또는 shadow 설계 추가 검증 우선)는 사용자
-     확인 필요(§14.5, §17.5, §18.6, §19.6, §20.5, §23).
+   - **SPPV-2.19(완료, 2026-07-15, 중복 억제 시계열 누적 + 국면 정의
+     비교 체계 구축)**: §8의 하루치 관찰을 시계열 누적 절차로 승격 —
+     신규 오케스트레이터(`scripts/run_entry_score_penalty_ablation_
+     cycle.py`)가 penalty 축 A/B/C와 시장 공통 국면을 같은 실행에서
+     계산해 누적 이력(`logs/entry_score_penalty_ablation_history.
+     jsonl`, 중복 거래일 자동 skip)에 기록. **결과: §8과 동일한
+     수치(A=85/B=60/C=75/A∩B∩C=60)로 교차 검증, 국면 일치 18건/
+     불일치 69건(79%)** — "시장 비하락장인데 종목별 하락장" 60건.
+     재실행으로 중복 방지 정상 발동 확인. SPPV-3 본작업용 비교
+     실험(현행 종목별 정의 vs 시장 공통 정렬, §16 이원 기준 재사용,
+     기존 3년 캐시로 신규 KIS 호출 없이 수행 가능)을 §9.6에 설계.
+     상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §9.
+   - **SPPV-3(보류 유지, 형태 재정의)**: §2.16~§2.19에서 국면 분기형
+     entry 설계 초안, Phase 2 누적 체계, 중복 penalty 실측·누적,
+     비교 실험 설계가 마련됐다 — 다음 착수 형태는 이 설계 문서를
+     기반으로 regime/allocation/strategy/source를 복원한 `entry_score`
+     point-in-time 재현과 signal/risk-off/regime eligibility 중복
+     억제 ablation, §9.6의 종목별 vs 시장 공통 국면 정의 비교 실험
+     이다. 착수 전제(누적 이력에서 `TRIGGERED` 전환 관측 또는 shadow
+     설계 추가 검증 우선)는 사용자 확인 필요(§14.5, §17.5, §18.6,
+     §19.6, §20.5, §23).
    - **SPPV-4**: Virtual BUY의 `candidate → selected → expected value → would_buy
      → submitted`, MFE/MAE/낙폭/비용 차감 기대수익 비교.
    - **SPPV-5**: out-of-sample 기대수익 양수와 손실 제약을 모두 만족한 공식만

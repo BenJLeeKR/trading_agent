@@ -2,8 +2,9 @@
 
 작성일: 2026-07-15
 상태: **설계 초안 + shadow 계산기 1차 실행 완료 + Phase 2 누적 사이클
-구축·실행 완료(§6) + entry_score 중복 penalty ablation 실측 완료(§8) —
-실거래/`entry_score` 반영 없음.**
+구축·실행 완료(§6) + entry_score 중복 penalty ablation 실측 완료(§8) +
+중복 억제 시계열 누적·국면 정의 비교 체계 구축(§9) — 실거래/
+`entry_score` 반영 없음.**
 상위 문서: `plans/[ANALYSIS] sppv_regime_polarity_synthesis_and_next_direction.md`
 (§4 판정 — "국면 분기형 entry 설계로 전환"), `plans/[DESIGN] signal_
 predictive_power_validation.md`(§16 이원 기준, §19/§20/§21 근거 실측),
@@ -390,3 +391,128 @@ conditional_signal`을 반영하려면 **regime penalty/eligibility의
 4. 위 결정들이 정리되면 SPPV-3(entry_score point-in-time 재현 및
    중복 penalty ablation 본작업)에 정식 착수할 수 있다 — 이번 §8은
    그 "준비" 단계다.
+
+## 9. 중복 억제 시계열 누적 + 국면 정의 비교 체계 (2026-07-15)
+
+### 9.1 왜 하루치 관찰로 끝내면 안 되는가
+
+§8은 오늘 하루치(87종목)로 "A∩B∩C=60=B 전체"와 "종목별 국면이 시장
+공통 국면과 전혀 다르다"는 두 가지를 확인했다. 그러나 §8.6에서 이미
+인정했듯, 하루치 표본만으로는 "오늘의 우연"과 "상시 구조"를 구분할 수
+없다. §6(Phase 2)이 `regime_conditional_signal`에 대해 이미 확립한
+"반복 실행 → 누적 이력" 패턴을 이 ablation에도 그대로 적용해야
+같은 문제를 겪지 않는다.
+
+### 9.2 구현 — `scripts/run_entry_score_penalty_ablation_cycle.py`
+
+새 계산 로직을 만들지 않고 두 기존 함수를 그대로 재사용했다:
+
+- `scripts/shadow_entry_score_penalty_ablation.py`의
+  `_reconstruct_symbol_state()`(§8의 penalty 축 A/B/C 계산, 종목별
+  `classify_market_regime` 재사용)
+- `scripts/shadow_regime_conditional_entry_signal.py`의
+  `_build_benchmark_regime_by_date()`(§22의 시장 공통 국면 계산)
+
+이 둘을 합쳐 종목마다 **"종목별 regime_label"과 "시장 공통 국면"을
+같은 실행에서 나란히 계산**하고, 다음을 누적 이력 파일
+(`logs/entry_score_penalty_ablation_history.jsonl`, append-only,
+거래일당 1줄, 같은 거래일 재실행 시 중복 skip — §6이 확립한 것과
+동일한 이력 패턴)에 기록한다:
+
+- A/B/C 각 축의 발동 건수와 A∩B∩C
+- 종목별 `regime_label` 분포 vs 시장 공통 국면
+- **국면 일치/불일치 건수**, 그중 "시장은 비하락장인데 종목별로는
+  하락장" 방향과 "시장은 하락장인데 종목별로는 비하락장" 방향을
+  분리 집계(divergence의 방향성까지 구분)
+
+당일 상세(87종목 개별 값)는 별도 파일(`logs/entry_score_penalty_
+ablation_<날짜>.json`)로 남겨 이력 파일은 가볍게 유지한다 — §6과
+동일한 "요약 이력 vs 당일 상세" 역할 분리.
+
+### 9.3 실행 결과 (2026-07-15)
+
+3년 캐시 재사용, **신규 KIS 호출 0건**, 종료 코드 0, 87/87종목 성공.
+
+| 실행 | 결과 |
+|---|---|
+| 1차 실행 | 시장 공통 국면(2026-07-14)=`range_bound`. A=85/B=60/C=75/A∩B∩C=60(§8과 완전히 일치, 정합성 재확인). 종목별 분포: bearish_trend 60/range_bound 18/bullish_trend 7/event_driven_unstable 2. **국면 일치 18건, 불일치 69건(79%)** — 그중 "시장 비하락장인데 종목별 하락장" 60건, "시장 하락장인데 종목별 비하락장" 0건(애초에 시장이 하락장이 아니므로 당연히 0). 이력에 1줄 추가(누적 거래일 1개). |
+| 2차 실행(즉시 재실행, 중복 방지 검증) | 동일 결과 계산됐으나 "2026-07-14는 이미 이력에 존재 — 중복 추가 skip" 정상 출력, 이력 줄 수 그대로 1개 유지 |
+
+### 9.4 해석(쉬운 설명)
+
+- **entry_score 세 겹 차단은 우연이 아니다.** 오늘 실측에서도 §8과
+  정확히 같은 숫자(A=85, B=60, C=75, 교집합=60)가 나왔다 — 같은
+  날짜의 같은 데이터를 다시 계산한 것이므로 당연한 재현이지만, 두
+  스크립트(§8과 §9)가 서로 다른 코드 경로로도 동일한 결과를 낸다는
+  **교차 검증**이 됐다.
+- **종목별 국면과 시장 국면은 5개 중 4개꼴로 다르다(79%).** 오늘
+  시장은 "옆으로 횡보"(`range_bound`)로 판단됐는데, 실제 entry_score
+  계산에 쓰이는 개별 종목 판정은 87개 중 60개(69%)가 "하락 추세"로
+  나온다 — 즉 지금 운영 코드는 **시장이 하락장이 아닌 날에도** 개별
+  종목 다수를 "하락장"으로 잘못(?) 분류해 risk_off_penalty와
+  eligibility 차단을 발동시키고 있을 가능성이 있다. "잘못"이라고
+  단정하지 않는 이유는, 종목별 판정이 그 종목 고유의 약세(개별
+  기업 이슈 등)를 반영하는 것일 수도 있어서다 — 이 구분은 §9.6의
+  비교 실험으로 가려야 한다.
+
+### 9.5 종목별 국면 vs 시장 공통 국면 — 정리
+
+| 구분 | 종목별(per-symbol) 국면 | 시장 공통(market-common) 국면 |
+|---|---|---|
+| 정의 | 그 종목 자신의 `overall_score`/`return_3m_pct`/`price_vs_sma_60_pct` 등을 `classify_market_regime()`에 입력 | KODEX 200(069500) 벤치마크의 rolling 기술적 상태를 같은 함수에 입력, 하루에 라벨 1개를 전 종목이 공유 |
+| 현재 쓰이는 곳 | `entry_score`의 regime bonus/penalty, `_assess_buy_eligibility`의 regime 차단(운영 코드, 지금도 실사용 중) | `regime_conditional_signal`(§2, 아직 shadow 단계, 미적용) |
+| 오늘 실측(2026-07-14) | bearish_trend 60/range_bound 18/bullish_trend 7/event 2 | range_bound 1개(전 종목 공유) |
+| 알려진 문제 | §12.1(SPPV-2.6)에서 이미 "검정 대상 신호와 같은 계열 변수로 조건화한 선택 편향"으로 지적됨 — 그런데도 운영 코드는 여전히 이 정의를 쓴다 | SPPV 전체 트랙(§16 이하)이 검증에 사용한 정의 — 시장 전체 방향을 반영 |
+
+**핵심 쟁점**: 지금 운영 중인 `entry_score`/eligibility는 "문제가 있다고
+이미 알려진" 종목별 정의를 쓰고 있고, 검증된 `regime_conditional_
+signal`은 "올바르다고 확인된" 시장 공통 정의를 쓴다 — 이 둘을 통합
+하려면 반드시 하나로 맞춰야 하며, 그 결정은 실측 비교 없이 내릴 수
+없다(§9.6).
+
+### 9.6 SPPV-3 본작업용 비교 실험 설계
+
+SPPV-3(entry_score point-in-time 재현) 착수 시, 다음 실험을 **반드시
+포함**해야 한다 — 새 방법론이 아니라 이미 SPPV 트랙이 확립한 §16
+이원 기준·3년 캐시·cross-sectional quintile spread를 그대로 재사용한다.
+
+**실험 설계**:
+
+1. 기존 3년 rolling 표본(87종목×56,753건, 이미 확보됨)에 대해, 각
+   거래일·종목마다 **두 가지 eligibility 판정**을 병렬로 계산한다:
+   - **변형 A(현행 유지)**: `_assess_buy_eligibility`를 그대로 호출 —
+     regime 차단 조건에 **종목별** `regime_label`을 사용.
+   - **변형 B(시장 공통 정렬)**: 동일한 `_assess_buy_eligibility`를
+     호출하되, regime 차단 조건에 **시장 공통** 국면(벤치마크 기준,
+     그날 전 종목 공유)을 대입.
+2. 두 변형 각각에 대해 "eligibility 통과 종목의 T+5/T+20 forward
+   return"을 quintile spread + Newey-West로 비교한다(§16과 동일한
+   통계 방법) — **어느 정의가 실제로 좋은 종목을 통과시키는지**를
+   가린다.
+3. 두 변형의 **통과율 자체**도 비교한다 — 변형 B가 변형 A보다 통과율이
+   높아지는지 낮아지는지(§8.4에서 종목별 정의가 시장보다 훨씬 자주
+   "하락장"으로 판정하는 경향이 확인됐으므로, 변형 B는 통과율이
+   높아질 가능성이 있다 — 다만 이것이 "더 정확한 판단"인지 "위험
+   완화 약화"인지는 1번의 forward return 비교로만 판단한다).
+4. **Go/No-Go**: 변형 B가 (a) 변형 A보다 통과 종목의 forward return이
+   유의하게 낫거나 최소한 나쁘지 않고, (b) 하락장(§16 2차 기준)에서
+   위험 신호를 놓치지 않는다는 것이 함께 확인돼야 "시장 공통 정렬"로
+   전환한다. 둘 중 하나라도 실패하면 종목별 정의를 유지하되, `regime_
+   conditional_signal` 쪽을 종목별 정의에 맞추는 대안도 함께 검토한다.
+
+이 실험은 새 KIS 호출이 필요 없다 — 기존 3년 캐시와 이미 만들어둔
+`_reconstruct_symbol_state`류 함수를 T+5/T+20 forward return과 결합
+하기만 하면 된다. 다음 SPPV-3 착수 시 우선 수행 항목으로 지정한다.
+
+### 9.7 다음 단계
+
+1. `scripts/run_entry_score_penalty_ablation_cycle.py`를 `scripts/
+   run_regime_conditional_shadow_cycle.py`와 함께 주기적으로(3년 캐시
+   갱신 시 또는 매 SPPV 턴) 실행해 이력을 계속 쌓는다.
+2. §9.6의 비교 실험을 SPPV-3 착수 시 최우선으로 수행한다 — 이 실험
+   결과 없이 `regime_conditional_signal`을 `entry_score`에 통합하지
+   않는다.
+3. 두 이력 파일(`regime_conditional_signal_shadow_history.jsonl`,
+   `entry_score_penalty_ablation_history.jsonl`)이 충분히 쌓이면,
+   "국면 불일치 비율(79%)"과 "삼중 중복 비율" 자체가 시간에 따라
+   안정적인지(오늘만의 우연이 아닌지) 재확인한다.

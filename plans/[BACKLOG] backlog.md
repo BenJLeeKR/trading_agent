@@ -158,6 +158,17 @@
   전제로 필요함을 발견. 운영 DB 직접 조회는 자동 승인 경계 밖으로
   판단돼 시도하지 않았다.
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (16차, 중복 억제 시계열 누적 + 국면 정의 비교
+  체계 구축)
+- 수정내용: §8의 하루치 관찰을 시계열 누적 절차로 승격했다 — 신규
+  오케스트레이터(`scripts/run_entry_score_penalty_ablation_cycle.py`)
+  가 penalty 축 A/B/C와 시장 공통 국면을 같은 실행에서 계산해 누적
+  이력에 기록. 실행 결과: 이전 실측과 동일한 수치(A=85/B=60/C=75/
+  A∩B∩C=60)로 교차 검증, 국면 일치 18건/불일치 69건(79%) — "시장
+  비하락장인데 종목별 하락장" 60건. 재실행 중복 방지 확인. SPPV-3
+  본작업용 비교 실험(현행 종목별 정의 vs 시장 공통 정렬)을 설계.
+
 ---
 
 ## 관리 원칙
@@ -456,14 +467,35 @@
     신규 KIS 호출 0건),
     `logs/shadow_entry_score_penalty_ablation_2026-07-15.json`.
     상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §8.
-  - **SPPV-3(보류 유지, 형태 재정의)**: §2.16~§2.18에서 국면 분기형
-    entry 설계 초안, Phase 2 누적 체계, 중복 penalty 실측이 마련됐다
-    — 다음 착수 형태는 이 설계 문서를 기반으로 regime/allocation/
-    strategy/source를 복원한 `entry_score` point-in-time 재현과
-    signal/risk-off/regime eligibility 중복 억제 ablation, 그리고
-    국면 정의(종목별 vs 시장 공통) 통일이다. 착수 조건은 누적 이력
-    에서 `TRIGGERED` 전환이 관측되거나 shadow 설계를 추가 검증할지 —
-    사용자 확인 필요. 착수 시 당시 regime/allocation/strategy/source를
+  - **SPPV-2.19(완료, 2026-07-15, 중복 억제 시계열 누적 + 국면 정의
+    비교 체계 구축)**: §8의 하루치 관찰을 시계열 누적 절차로 승격했다
+    — 신규 `scripts/run_entry_score_penalty_ablation_cycle.py`가
+    `shadow_entry_score_penalty_ablation.py`(penalty 축 A/B/C)와
+    `shadow_regime_conditional_entry_signal.py`(시장 공통 국면)의
+    함수를 그대로 재사용해, 종목별 국면과 시장 공통 국면을 같은
+    실행에서 나란히 계산하고 누적 이력(`logs/entry_score_penalty_
+    ablation_history.jsonl`, 중복 거래일 자동 skip)에 기록한다.
+    **결과: §8과 완전히 동일한 수치(A=85/B=60/C=75/A∩B∩C=60)로 교차
+    검증, 국면 일치 18건/불일치 69건(79%)** — "시장 비하락장인데
+    종목별 하락장" 60건, "시장 하락장인데 종목별 비하락장" 0건.
+    재실행으로 중복 방지 정상 발동 확인. **SPPV-3 본작업용 비교
+    실험**(기존 3년 rolling 표본에 (a) 현행 종목별 국면 정의와 (b)
+    시장 공통 국면 정의로 `_assess_buy_eligibility`를 각각 재계산해
+    두 정의 아래 통과 종목의 forward return을 §16 이원 기준으로
+    비교, 신규 KIS 호출 없이 수행 가능)을 §9.6에 구체화했다. 산출:
+    `scripts/run_entry_score_penalty_ablation_cycle.py`(read-only,
+    신규 KIS 호출 0건), `logs/entry_score_penalty_ablation_
+    history.jsonl`. 상세: `plans/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §9.
+  - **SPPV-3(보류 유지, 형태 재정의)**: §2.16~§2.19에서 국면 분기형
+    entry 설계 초안, Phase 2 누적 체계, 중복 penalty 실측·누적,
+    비교 실험 설계가 마련됐다 — 다음 착수 형태는 이 설계 문서를
+    기반으로 regime/allocation/strategy/source를 복원한 `entry_score`
+    point-in-time 재현과 signal/risk-off/regime eligibility 중복
+    억제 ablation, §9.6의 종목별 vs 시장 공통 국면 정의 비교 실험이다.
+    착수 조건은 누적 이력에서 `TRIGGERED` 전환이 관측되거나 shadow
+    설계를 추가 검증할지 — 사용자 확인 필요. 착수 시 당시
+    regime/allocation/strategy/source를
     복원해 `entry_score`를 point-in-time 재현하고 signal 약세,
     `risk_off_penalty`, regime eligibility block의 중복 억제를
     ablation한다.
