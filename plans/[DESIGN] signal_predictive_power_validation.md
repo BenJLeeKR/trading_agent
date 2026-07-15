@@ -350,6 +350,28 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   완전 재사용, 종료 코드 0). `entry_score` 코드/운영 변경 없음.
   상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §10.
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (18차, A/B 판정 불일치 표본 direct 비교 + 1차
+  창 재확인)
+- 수정내용: §10.5(다음 단계)가 지시한 두 과제를 실행했다(SPPV-2.21).
+  신규 `scripts/validate_entry_score_regime_definition_ab_diff.py`가
+  같은 종목-거래일 표본을 `A_only`/`B_only`/`both`/`neither` 4개
+  배타적 집합으로 분해했다. **핵심 발견: `B_only`가 3년·최근 12개월
+  모두에서 정확히 0건 — 시장 공통 정의(B)는 종목별 정의(A)의 진부분
+  집합(strict subset)이며, "새로운 종목을 발굴"하는 효과는 없고
+  "A가 통과시킨 것 중 일부(`A_only`, 3년간 1,072건)를 추가로 차단"
+  하는 것뿐임을 구조적으로 확인했다.** `A_only`의 forward return은
+  방향상 음수(T+5 -0.17%, T+20 -0.70%)이나 **통계적으로 유의하지
+  않다(|t_NW|<1)**. 최근 12개월 창은 `A_only=B_only=0`으로 **A-B
+  차이 자체가 존재하지 않는다**(§21 모니터링의 bearish_trend 0일과
+  정합). "일별 짝비교" 방법은 `B_only`가 0이라 정의상 계산 불가함을
+  확인했고, 그 대안으로 `A_only` 자체의 유의성 검정이 실질적으로
+  동등한 검증임을 확인했다. **판정: Watch 유지(No-Go에 근접), 시장
+  공통 정의로의 확정 전환(Go)은 기각.** 이번 실행의 실제 KIS 호출
+  여부도 가정 없이 로그로 확인 — `HTTP Request:` 0건. `entry_score`
+  코드/운영 변경 없음. 상세: `plans/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §11.
+
 ---
 
 ## 진행 체크리스트
@@ -637,6 +659,26 @@ canonical),
     `logs/signal_ic_entry_score_regime_definition_comparison_
     2026-07-15.json`, `logs/entry_score_regime_definition_
     comparison_run_2026-07-15.log`.
+- [x] **SPPV-2.21(신설)** A/B 판정 불일치 표본 direct 비교 + 1차 창
+  재확인 (완료, 2026-07-15)
+  - 작업 범위: §10.5가 지시한 두 과제 — 같은 종목-거래일 표본을
+    `A_only`/`B_only`/`both`/`neither` 4개 배타적 집합으로 분해,
+    최근 12개월 창에서도 동일 비교 반복.
+  - **결과: `B_only`가 3년·1차 창 모두에서 0건 — 시장 공통 정의(B)는
+    종목별 정의(A)의 진부분집합(strict subset)임을 구조적으로 확인.**
+    B는 새 종목을 발굴하지 않고 A가 통과시킨 것 중 일부(`A_only`,
+    3년간 1,072건)를 추가로 차단할 뿐이다. `A_only`의 forward
+    return은 방향상 음수(T+5 -0.17%, T+20 -0.70%)이나 통계적으로
+    유의하지 않음(|t_NW|<1). 최근 12개월은 A-B 차이 자체가 없음
+    (§21 모니터링과 정합). "일별 짝비교"는 `B_only=0`이라 정의상
+    계산 불가함을 확인 — 대안으로 `A_only` 자체의 유의성 검정이
+    실질적으로 동등함을 확인. **판정: Watch 유지(No-Go에 근접),
+    확정 Go 기각.** 실행 로그로 KIS 호출 0건 확인(가정 없이 실측).
+    상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §11.
+  - 산출물: `scripts/validate_entry_score_regime_definition_ab_diff.py`
+    (read-only, 신규 KIS 호출 0건 — 3년 캐시 재사용),
+    `logs/signal_ic_entry_score_regime_ab_diff_2026-07-15.json`,
+    `logs/entry_score_regime_ab_diff_run_2026-07-15.log`.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의**: §12(1년, 자기참조 포함) 당시 "알파 근거
     강화"로 낙관했던 것이 §14(3년, 자기참조 제거) 확장 검증에서 반박됨 —
@@ -644,15 +686,18 @@ canonical),
     score)는 유의하게 역방향이었다. §23의 종합 판정에 따라, SPPV-3의
     다음 착수 형태는 기존 `entry_score` sub-component 조합의 단순
     재현이 아니라 **`regime_switch_v1` 아이디어를 국면 분기형 entry
-    설계의 초기 원형으로 삼는 것**으로 재정의된다. §8~§10(SPPV-2.18~
-    2.20)에서 중복 penalty 구조·국면 불일치·비교 실험을 실측했고,
-    시장 공통 정의가 방향상 유리하다는 근거(Watch)를 확보했다 —
-    A-B 차이 직접 유의성 검정과 1차(최근 12개월) 창 재확인이 남은
-    선행 과제다. 1차 게이트(§21 모니터링)가 `TRIGGERED`로 전환되거나,
-    설계 자체를 shadow 단계에서 먼저 진행할지는 사용자 확인 필요.
+    설계의 초기 원형으로 삼는 것**으로 재정의된다. §8~§11(SPPV-2.18~
+    2.21)에서 중복 penalty 구조·국면 불일치·비교 실험을 정밀 실측한
+    결과, **국면 정의 통일(종목별→시장 공통)은 Watch/No-Go에 근접**
+    한다는 것이 확인됐다 — B가 A의 부분집합일 뿐 새 기회를 만들지
+    못하기 때문이다. SPPV-3의 우선순위는 국면 정의 통일보다 `regime_
+    conditional_signal`을 alpha layer에 직접 통합(§3 제안)하는 쪽으로
+    재조정할지 사용자와 논의가 필요하다. 1차 게이트(§21 모니터링)가
+    `TRIGGERED`로 전환되거나, 설계 자체를 shadow 단계에서 먼저 진행할지도
+    사용자 확인 필요.
   - 작업 범위: regime/allocation/strategy/source 복원, signal 약세와
-    `risk_off_penalty`/eligibility 중복 억제 분해, A-B 차이 유의성
-    검정, `overall_score` 재설계(통과군 내부 역전 해소)
+    `risk_off_penalty`/eligibility 중복 억제 분해, `overall_score`
+    재설계(통과군 내부 역전 해소), §21 TRIGGERED 시 A_only 재검증
 - [ ] **SPPV-4** 전체 BUY funnel back-simulation
   - 작업 범위: `candidate → selected → expected value → would_buy → submitted`
     counterfactual 전환과 MFE/MAE/낙폭 비교
@@ -1367,6 +1412,10 @@ bearish/range_bound 어느 국면 내부도 `overall_score`/`slow_score`가
   `_assess_buy_eligibility` 함수 그대로 호출)
 - `logs/signal_ic_entry_score_regime_definition_comparison_2026-07-15.json`,
   `logs/entry_score_regime_definition_comparison_run_2026-07-15.log`
+- `scripts/validate_entry_score_regime_definition_ab_diff.py`
+  (read-only, 신규 KIS 호출 0건 — 3년 캐시 재사용)
+- `logs/signal_ic_entry_score_regime_ab_diff_2026-07-15.json`,
+  `logs/entry_score_regime_ab_diff_run_2026-07-15.log`
 - `logs/_bars_cache_core88_2026-07-14/`(88종목 1년 캐시, 재사용 가능)
 - `logs/_bars_cache_core87_3y_2026-07-14/`(87종목+벤치마크 3년 캐시,
   SPPV-2.7/2.8/2.9/2.10/2.11/2.12가 공유 재사용)

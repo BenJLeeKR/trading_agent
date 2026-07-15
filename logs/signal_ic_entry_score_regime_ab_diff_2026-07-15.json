@@ -1,0 +1,150 @@
+{
+  "as_of": "2026-07-16T07:19:44.625512+09:00",
+  "symbol_count_used": 87,
+  "fetch_failures": [],
+  "total_rolling_samples_3y": 56753,
+  "total_rolling_samples_recent_12m": 21315,
+  "recent_window_cutoff": "2025-06-16",
+  "windows": {
+    "supplementary_3y": {
+      "window": "2차(3년, 전체 표본)",
+      "counts": {
+        "A_only": 1072,
+        "B_only": 0,
+        "both": 10639,
+        "neither": 45042
+      },
+      "by_horizon": {
+        "T+5": {
+          "A_only": {
+            "n": 1072,
+            "mean_pct": -0.1694,
+            "t_naive": -0.85,
+            "t_newey_west": -0.62,
+            "pct_positive": 0.4888
+          },
+          "B_only": {
+            "n": 0,
+            "note": "표본부족(<5)"
+          },
+          "both": {
+            "n": 10639,
+            "mean_pct": 1.0357,
+            "t_naive": 12.41,
+            "t_newey_west": 7.7,
+            "pct_positive": 0.5118
+          },
+          "neither": {
+            "n": 45042,
+            "mean_pct": 0.6047,
+            "t_naive": 20.22,
+            "t_newey_west": 11.8,
+            "pct_positive": 0.5117
+          },
+          "day_matched_paired_diff_B_minus_A": {
+            "n": 0,
+            "note": "표본부족(<5)"
+          }
+        },
+        "T+20": {
+          "A_only": {
+            "n": 1072,
+            "mean_pct": -0.7028,
+            "t_naive": -1.77,
+            "t_newey_west": -0.79,
+            "pct_positive": 0.4487
+          },
+          "B_only": {
+            "n": 0,
+            "note": "표본부족(<5)"
+          },
+          "both": {
+            "n": 10639,
+            "mean_pct": 3.578,
+            "t_naive": 21.07,
+            "t_newey_west": 7.69,
+            "pct_positive": 0.5224
+          },
+          "neither": {
+            "n": 45042,
+            "mean_pct": 2.4371,
+            "t_naive": 38.22,
+            "t_newey_west": 11.63,
+            "pct_positive": 0.5265
+          },
+          "day_matched_paired_diff_B_minus_A": {
+            "n": 0,
+            "note": "표본부족(<5)"
+          }
+        }
+      }
+    },
+    "primary_recent_12m": {
+      "window": "1차(최근 12개월)",
+      "counts": {
+        "A_only": 0,
+        "B_only": 0,
+        "both": 5468,
+        "neither": 15847
+      },
+      "by_horizon": {
+        "T+5": {
+          "A_only": {
+            "n": 0,
+            "note": "표본부족(<5)"
+          },
+          "B_only": {
+            "n": 0,
+            "note": "표본부족(<5)"
+          },
+          "both": {
+            "n": 5468,
+            "mean_pct": 1.1763,
+            "t_naive": 8.95,
+            "t_newey_west": 5.62,
+            "pct_positive": 0.5119
+          },
+          "neither": {
+            "n": 15847,
+            "mean_pct": 1.1292,
+            "t_naive": 19.95,
+            "t_newey_west": 11.93,
+            "pct_positive": 0.5312
+          },
+          "day_matched_paired_diff_B_minus_A": {
+            "n": 0,
+            "note": "표본부족(<5)"
+          }
+        },
+        "T+20": {
+          "A_only": {
+            "n": 0,
+            "note": "표본부족(<5)"
+          },
+          "B_only": {
+            "n": 0,
+            "note": "표본부족(<5)"
+          },
+          "both": {
+            "n": 5468,
+            "mean_pct": 4.2342,
+            "t_naive": 16.24,
+            "t_newey_west": 5.87,
+            "pct_positive": 0.5234
+          },
+          "neither": {
+            "n": 15847,
+            "mean_pct": 3.6512,
+            "t_naive": 29.61,
+            "t_newey_west": 9.18,
+            "pct_positive": 0.5482
+          },
+          "day_matched_paired_diff_B_minus_A": {
+            "n": 0,
+            "note": "표본부족(<5)"
+          }
+        }
+      }
+    }
+  }
+}

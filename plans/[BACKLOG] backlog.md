@@ -181,6 +181,17 @@
   Watch(조건부 유리, 확정 Go 아님). 실행 로그로 KIS 호출 0건 확인
   (가정 아닌 실측).
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (18차, A/B 판정 불일치 표본 direct 비교 + 1차
+  창 재확인)
+- 수정내용: 같은 종목-거래일 표본을 A_only/B_only/both/neither 4개
+  집합으로 분해했다 — B_only가 3년·1차 창 모두 0건임을 확인, 시장
+  공통 정의는 종목별 정의의 진부분집합일 뿐임을 구조적으로 확인.
+  A_only의 forward return은 방향상 음수(T+5 -0.17%, T+20 -0.70%)
+  이나 유의하지 않음(|t_NW|<1). 최근 12개월은 A-B 차이 자체가 없음.
+  판정 Watch 유지(No-Go에 근접), 확정 전환 기각. 실행 로그로 KIS
+  호출 0건 확인.
+
 ---
 
 ## 관리 원칙
@@ -518,13 +529,36 @@
     `logs/signal_ic_entry_score_regime_definition_comparison_
     2026-07-15.json`. 상세: `plans/[DESIGN] regime_conditional_
     entry_signal_v1.md` §10.
-  - **SPPV-3(보류 유지, 형태 재정의)**: §2.16~§2.20에서 국면 분기형
+  - **SPPV-2.21(완료, 2026-07-15, A/B 판정 불일치 표본 direct 비교 +
+    1차 창 재확인)**: 같은 종목-거래일 표본을 신규
+    `scripts/validate_entry_score_regime_definition_ab_diff.py`로
+    A_only/B_only/both/neither 4개 배타적 집합으로 분해했다. **결과:
+    B_only가 3년(56,753건)·최근 12개월(21,315건) 모두 정확히 0건 —
+    시장 공통 정의(B)는 종목별 정의(A)의 진부분집합(strict subset)
+    일 뿐, 새 종목을 발굴하지 않고 A가 통과시킨 것 중 일부(A_only,
+    3년간 1,072건)를 추가로 차단만 함을 구조적으로 확인.** A_only의
+    forward return은 방향상 음수(T+5 -0.1694%, T+20 -0.7028%)이나
+    통계적으로 유의하지 않음(t_NW -0.62/-0.79, |t|<1). 최근 12개월
+    창은 A_only=B_only=0으로 A-B 차이 자체가 존재하지 않음(§21
+    모니터링과 정합) — 재현되지 않은 것이 아니라 검증 기회 자체가
+    없는 것. 원래 계획한 "일별 짝비교"는 B_only=0이라 정의상 계산
+    불가함을 확인, A_only 자체의 유의성 검정으로 대체. **판정: Watch
+    유지(No-Go에 근접), 시장 공통 정의로의 확정 전환(Go)은 기각.**
+    실행 로그를 가정 없이 확인 — `HTTP Request:` 0건. 산출:
+    `scripts/validate_entry_score_regime_definition_ab_diff.py`
+    (read-only, 신규 KIS 호출 0건),
+    `logs/signal_ic_entry_score_regime_ab_diff_2026-07-15.json`.
+    상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §11.
+  - **SPPV-3(보류 유지, 형태 재정의)**: §2.16~§2.21에서 국면 분기형
     entry 설계 초안, Phase 2 누적 체계, 중복 penalty 실측·누적,
-    비교 실험 설계·실측이 마련됐다 — 다음 착수 형태는 이 설계 문서를
-    기반으로 regime/allocation/strategy/source를 복원한 `entry_score`
+    비교 실험 설계·실측·정밀 분해가 마련됐다 — **국면 정의 통일은
+    Watch/No-Go에 근접**함이 확인됐다(B가 A의 부분집합일 뿐 새 기회를
+    만들지 못함). 다음 착수 형태는 이 설계 문서를 기반으로
+    regime/allocation/strategy/source를 복원한 `entry_score`
     point-in-time 재현과 signal/risk-off/regime eligibility 중복
-    억제 ablation이다. A-B 차이 직접 유의성 검정과 최근 12개월 1차
-    창 재확인이 선행 과제로 남았다. 착수 조건은 누적 이력에서
+    억제 ablation이며, 우선순위를 "국면 정의 통일"에서 "regime_
+    conditional_signal을 alpha layer에 직접 통합"하는 쪽으로 재조정
+    할지 사용자와 논의가 필요하다. 착수 조건은 누적 이력에서
     `TRIGGERED` 전환이 관측되거나 shadow 설계를 추가 검증할지 —
     사용자 확인 필요. 착수 시 당시
     regime/allocation/strategy/source를
