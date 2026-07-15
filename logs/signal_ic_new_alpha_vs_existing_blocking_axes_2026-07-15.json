@@ -1,0 +1,124 @@
+{
+  "as_of": "2026-07-16T08:38:54.985984+09:00",
+  "symbol_count_used": 87,
+  "fetch_failures": [],
+  "total_rolling_samples_3y": 56753,
+  "total_rolling_samples_recent_12m": 21315,
+  "recent_window_cutoff": "2025-06-16",
+  "windows": {
+    "supplementary_3y": {
+      "window": "2차(3년, 전체 표본)",
+      "top_quintile_n": 10999,
+      "survives_n": 3491,
+      "blocked_n": 7508,
+      "axis_a_n": 5076,
+      "axis_b_n": 1270,
+      "axis_c_n": 1525,
+      "by_horizon": {
+        "T+5": {
+          "top_quintile_all_ablation_no_block": {
+            "n": 10999,
+            "mean_pct": 1.0079,
+            "t_naive": 12.83,
+            "t_newey_west": 9.06,
+            "pct_positive": 0.512
+          },
+          "survives_current_operational_logic": {
+            "n": 3491,
+            "mean_pct": 1.4218,
+            "t_naive": 8.69,
+            "t_newey_west": 5.89,
+            "pct_positive": 0.5239
+          },
+          "blocked_by_current_operational_logic": {
+            "n": 7508,
+            "mean_pct": 0.8154,
+            "t_naive": 9.45,
+            "t_newey_west": 6.86,
+            "pct_positive": 0.5065
+          }
+        },
+        "T+20": {
+          "top_quintile_all_ablation_no_block": {
+            "n": 10999,
+            "mean_pct": 3.5544,
+            "t_naive": 21.96,
+            "t_newey_west": 10.35,
+            "pct_positive": 0.5245
+          },
+          "survives_current_operational_logic": {
+            "n": 3491,
+            "mean_pct": 4.3809,
+            "t_naive": 13.26,
+            "t_newey_west": 5.78,
+            "pct_positive": 0.5176
+          },
+          "blocked_by_current_operational_logic": {
+            "n": 7508,
+            "mean_pct": 3.1701,
+            "t_naive": 17.56,
+            "t_newey_west": 8.35,
+            "pct_positive": 0.5277
+          }
+        }
+      }
+    },
+    "primary_recent_12m": {
+      "window": "1차(최근 12개월)",
+      "top_quintile_n": 4165,
+      "survives_n": 1621,
+      "blocked_n": 2544,
+      "axis_a_n": 2073,
+      "axis_b_n": 0,
+      "axis_c_n": 11,
+      "by_horizon": {
+        "T+5": {
+          "top_quintile_all_ablation_no_block": {
+            "n": 4165,
+            "mean_pct": 1.7108,
+            "t_naive": 11.25,
+            "t_newey_west": 7.52,
+            "pct_positive": 0.5366
+          },
+          "survives_current_operational_logic": {
+            "n": 1621,
+            "mean_pct": 1.9724,
+            "t_naive": 7.0,
+            "t_newey_west": 4.5,
+            "pct_positive": 0.5392
+          },
+          "blocked_by_current_operational_logic": {
+            "n": 2544,
+            "mean_pct": 1.5442,
+            "t_naive": 8.95,
+            "t_newey_west": 6.29,
+            "pct_positive": 0.535
+          }
+        },
+        "T+20": {
+          "top_quintile_all_ablation_no_block": {
+            "n": 4165,
+            "mean_pct": 5.721,
+            "t_naive": 17.79,
+            "t_newey_west": 8.16,
+            "pct_positive": 0.5448
+          },
+          "survives_current_operational_logic": {
+            "n": 1621,
+            "mean_pct": 5.8709,
+            "t_naive": 10.29,
+            "t_newey_west": 4.54,
+            "pct_positive": 0.5312
+          },
+          "blocked_by_current_operational_logic": {
+            "n": 2544,
+            "mean_pct": 5.6255,
+            "t_naive": 14.77,
+            "t_newey_west": 6.71,
+            "pct_positive": 0.5535
+          }
+        }
+      }
+    }
+  }
+}

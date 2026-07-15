@@ -206,6 +206,22 @@
   Watch로 낮추지 않되 억지로 완전한 Go도 선언하지 않음. 실행 로그로
   KIS 호출 0건 확인.
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (20차, 새 alpha 상위군과 기존 차단 축 결합
+  효과 검증 — 진짜 병목 재발견)
+- 수정내용: regime_conditional_signal을 새 alpha로 넣었을 때 기존
+  차단 로직이 그 효과를 상쇄하는지 검증했다 — 상위 20% 표본의
+  68.3%(3년)/61.1%(최근 12개월)가 차단되나 차단된 표본도 forward
+  return이 강하게 유의하게 양(+)(생존군과 큰 차이 없음). 실패 사유를
+  집계한 결과 §8/§9/§11이 조사해온 regime 관련 축이 아니라 순수
+  유동성 게이트 eligibility_low_relative_activity(거래량/거래대금
+  급증 비율<1.10 차단)가 차단의 압도적 대부분(79.7%/99.6%)을 차지함을
+  새로 발견 — regime 삼중 중복은 오히려 부차적(20.3%/0.4%). 판정:
+  alpha 자체는 Conditional Go 유지, 결합 시나리오는 Watch(활동성
+  필터 ablation 검증 필요). SPPV-3 최우선 조사 대상을 "국면 정의
+  통일/regime penalty"에서 "활동성 필터 재검토"로 재조정. 두 스크립트
+  실행 로그로 KIS 호출 0건 확인.
+
 ---
 
 ## 관리 원칙
@@ -582,15 +598,43 @@
     `logs/signal_ic_alpha_layer_vs_regime_conditional_signal_
     2026-07-15.json`. 상세: `plans/[DESIGN] regime_conditional_
     entry_signal_v1.md` §12.
-  - **SPPV-3(보류 유지, 형태 재정의)**: §2.16~§2.21에서 국면 정의
-    통일(차단 축)은 Watch/No-Go에 근접함이 확인됐으나, **§2.22에서
-    alpha layer 교체(선별 축)는 2차 창에서 유의한 우위를 확보
-    (Conditional Go)했다.** 다음 착수 형태는 이 설계 문서를 기반으로
-    regime/allocation/strategy/source를 복원한 `entry_score`
-    point-in-time 재현과 signal/risk-off/regime eligibility 중복
-    억제 ablation이며, 우선순위는 "국면 정의 통일"이 아니라 "regime_
-    conditional_signal을 alpha layer에 직접 통합"하는 쪽이다. 착수
-    조건은 1차 게이트에서 `TRIGGERED` 전환이 관측되는 것 —
+  - **SPPV-2.23(완료, 2026-07-15, 새 alpha 상위군과 기존 차단 축
+    결합 효과 검증 — 진짜 병목 재발견)**: `regime_conditional_
+    signal`을 새 alpha로 넣었을 때 기존 차단 로직이 그 효과를
+    상쇄하는지 신규 `scripts/validate_new_alpha_vs_existing_
+    blocking_axes.py`로 검증했다. **결과: 상위 20% 표본의 68.3%
+    (3년)/61.1%(최근 12개월)가 차단되나, 차단된 표본도 forward
+    return이 강하게 유의하게 양(+)(3년 T+5 +0.815%/t_NW=6.86, T+20
+    +3.170%/t_NW=8.35 — 생존군과 큰 차이 없음).** §8/§9/§11이
+    조사해온 regime 관련 세 축이 원인일 것이라는 예상과 달리, 신규
+    `scripts/diagnose_blocked_reason_distribution.py`로 실제
+    eligibility 실패 사유를 집계한 결과 **`eligibility_low_
+    relative_activity`(거래량/거래대금 급증 비율<1.10 차단,
+    `deterministic_trigger_engine.py:493-499`, 국면·신호와 무관한
+    순수 유동성 게이트)가 차단의 압도적 대부분(3년 79.7%, 최근
+    12개월 99.6%)을 차지함을 새로 발견** — regime 삼중 중복(축B/C)
+    은 오히려 부차적(3년 20.3%, 최근 12개월 0.4%)이었다. **판정:
+    `regime_conditional_signal`의 alpha 대체 가치(§12)는 훼손되지
+    않아 Conditional Go 유지, 결합 시나리오는 Watch(활동성 필터
+    ablation 검증 필요).** 두 스크립트 실행 로그로 KIS 호출 0건
+    확인(가정 없이 실측). 산출:
+    `scripts/validate_new_alpha_vs_existing_blocking_axes.py`,
+    `scripts/diagnose_blocked_reason_distribution.py`(둘 다
+    read-only, 신규 KIS 호출 0건),
+    `logs/signal_ic_new_alpha_vs_existing_blocking_axes_
+    2026-07-15.json`. 상세: `plans/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §13.
+  - **SPPV-3(보류 유지, 형태 재정의 — 우선순위 재조정)**: §2.16~
+    §2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에 근접함이
+    확인됐고, §2.22에서 alpha layer 교체(선별 축)는 Conditional
+    Go를 확보했으나, **§2.23에서 결합 사용 시 진짜 병목이 regime
+    관련 축이 아니라 활동성 필터임이 새로 확인됐다.** 다음 착수
+    형태는 이 설계 문서를 기반으로 regime/allocation/strategy/
+    source를 복원한 `entry_score` point-in-time 재현과 signal/
+    risk-off/regime eligibility 중복 억제 ablation이며, **SPPV-3의
+    최우선 조사 대상은 `eligibility_low_relative_activity` 필터
+    재검토다.** 착수 조건은 1차 게이트에서 `TRIGGERED` 전환이
+    관측되는 것 —
     사용자 확인 필요. 착수 시 당시
     regime/allocation/strategy/source를
     복원해 `entry_score`를 point-in-time 재현하고 signal 약세,

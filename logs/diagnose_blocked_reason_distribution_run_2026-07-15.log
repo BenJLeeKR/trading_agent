@@ -1,0 +1,10 @@
+
+[3y] 차단됨 7508건 — 실패 사유 분포:
+  eligibility_low_relative_activity: 5983건 (79.7%)
+  eligibility_core_risk_off_guard_blocked: 1270건 (16.9%)
+  eligibility_negative_overall_floor: 253건 (3.4%)
+  eligibility_negative_slow_floor: 2건 (0.0%)
+
+[recent_12m] 차단됨 2544건 — 실패 사유 분포:
+  eligibility_low_relative_activity: 2533건 (99.6%)
+  eligibility_negative_overall_floor: 11건 (0.4%)

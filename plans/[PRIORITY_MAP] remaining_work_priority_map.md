@@ -195,6 +195,20 @@
   창은 미달이나 §21 구조적 이유(하락장 부재) 때문. 판정 Conditional
   Go(2차 검증 통과, 1차 게이트 전환 대기).
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (20차, 새 alpha 상위군과 기존 차단 축 결합
+  효과 검증 — 진짜 병목 재발견)
+- 수정내용: regime_conditional_signal을 새 alpha로 넣었을 때 기존
+  차단 로직이 그 효과를 상쇄하는지 검증 — 상위 20% 표본의 68.3%(3년)/
+  61.1%(최근 12개월)가 차단되나 차단된 표본도 forward return이
+  유의하게 양(+). 실패 사유 집계 결과 regime 관련 축이 아니라 순수
+  유동성 게이트 eligibility_low_relative_activity(거래량/거래대금
+  급증 비율<1.10 차단)가 차단의 압도적 대부분(79.7%/99.6%)을 차지함을
+  새로 발견 — regime 삼중 중복은 오히려 부차적(20.3%/0.4%). 판정:
+  alpha 자체는 Conditional Go 유지, 결합 시나리오는 Watch(활동성
+  필터 ablation 검증 필요). SPPV-3 최우선 조사 대상을 활동성 필터
+  재검토로 재조정.
+
 ## 최근 메모
 
 > **📌 2026-07-14 BUY 주문경로 근본 복구 기준 확정 (최신, 최우선 반영)**:
@@ -578,6 +592,41 @@
 > 로그로 확인 — `HTTP Request:` **0건**. `entry_score` 코드/운영
 > 변경 없음 — 이번 턴은 shadow/validation 범위에 머문다. 상세:
 > `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §12.
+
+> **📌 2026-07-15 새 alpha 상위군과 기존 차단 축 결합 효과 검증 —
+> 진짜 병목 재발견 (최신, 최우선 반영)**: `regime_conditional_
+> signal`(위 Conditional Go)을 새 alpha로 넣었을 때 기존 차단
+> 로직이 그 효과를 상쇄하는지 검증했다. 신규
+> `scripts/validate_new_alpha_vs_existing_blocking_axes.py`가
+> 거래일별 cross-sectional 상위 20%(regime_conditional_signal
+> 기준)에 운영 함수 `_build_entry_score`/`_assess_buy_eligibility`를
+> 그대로 호출한 결과, **상위군의 68.3%(3년)/61.1%(최근 12개월)가
+> 차단됐다.** 그러나 **차단된 표본도 forward return이 강하게
+> 유의하게 양(+)**이었다(3년 T+5 +0.815%/t_NW=6.86, T+20 +3.170%/
+> t_NW=8.35 — 생존군과 큰 차이 없음, 1차 창 T+20은 생존 +5.87% vs
+> 차단 +5.63%로 거의 동일). 이는 §8/§9/§11이 조사해온 regime 관련
+> 세 축이 주범일 것이라는 예상과 달랐다 — 신규
+> `scripts/diagnose_blocked_reason_distribution.py`로 실제
+> eligibility 실패 사유를 집계한 결과, **`eligibility_low_
+> relative_activity`(거래량/거래대금 급증 비율이 평소 대비 10%
+> 이상 늘지 않으면 차단, `deterministic_trigger_engine.py:493-499`,
+> 국면·신호와 전혀 무관한 순수 유동성 게이트)가 차단의 압도적
+> 대부분(3년 79.7%, 최근 12개월 99.6%)을 차지함을 새로 발견했다** —
+> §8의 regime 축(B/C)은 오히려 부차적이었다(3년 20.3%, 최근 12개월
+> 0.4%). **판정: `regime_conditional_signal`의 alpha 대체 가치(§12)
+> 는 훼손되지 않아 Conditional Go를 유지하되, "결합 사용
+> 시나리오"(새 alpha + 기존 차단 로직 그대로)는 확정 Go로 선언하지
+> 않는다 — Watch(활동성 필터 ablation 검증 필요)로 판정한다.**
+> "더 막는 것이 안전하다"는 가정으로 되돌아가지 않되, 이 필터를
+> 완화했을 때 기대수익이 실제로 개선되는지는 별도 검증이 필요하다는
+> 뜻이다. **SPPV-3의 다음 최우선 조사 대상을 "국면 정의 통일/
+> regime penalty"에서 "활동성 필터(`eligibility_low_relative_
+> activity`) 재검토"로 재조정한다** — §8/§9/§11의 regime 축 조사
+>보다 이 필터의 영향력이 훨씬 크다는 것이 이번 턴에 확인됐다. 두
+> 스크립트 실행의 실제 KIS 호출 여부도 가정 없이 로그로 확인 —
+> 둘 다 `HTTP Request:` 0건. `entry_score` 코드/운영 변경 없음 —
+> 이번 턴도 shadow/validation 범위에 머문다. 상세:
+> `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §13.
 
 > **📌 2026-07-12 방향 전환 (이력, 2026-07-14 결론으로 대체)**:
 > 지난 6주(2026-06-01~07-12) 매수 0건은 시스템 오류가 아니라 **하락장에서
@@ -4632,15 +4681,35 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      `logs/signal_ic_alpha_layer_vs_regime_conditional_signal_
      2026-07-15.json`. 상세: `plans/[DESIGN] regime_conditional_
      entry_signal_v1.md` §12.
-   - **SPPV-3(보류 유지, 형태 재정의)**: §2.16~§2.21에서 국면 정의
-     통일(차단 축)은 Watch/No-Go에 근접한다는 것이 확인됐으나,
-     **§2.22에서 alpha layer 교체(선별 축)는 2차 창에서 유의한 우위를
-     확보(Conditional Go)했다.** 다음 착수 형태는 이 설계 문서를
+   - **SPPV-2.23(완료, 2026-07-15, 새 alpha 상위군과 기존 차단 축
+     결합 효과 검증 — 진짜 병목 재발견)**: `regime_conditional_
+     signal`을 새 alpha로 넣었을 때 기존 차단 로직이 그 효과를
+     상쇄하는지 검증. **결과: 상위 20% 표본의 68.3%(3년)/61.1%(최근
+     12개월)가 차단되나, 차단된 표본도 forward return이 강하게
+     유의하게 양(+)(생존군과 큰 차이 없음).** 실패 사유 집계 결과
+     **regime 관련 축이 아니라 순수 유동성 게이트 `eligibility_
+     low_relative_activity`(거래량/거래대금 급증 비율<1.10 차단)가
+     차단의 압도적 대부분(3년 79.7%, 최근 12개월 99.6%)을 차지함을
+     새로 발견** — regime 삼중 중복은 오히려 부차적(20.3%/0.4%).
+     **판정: alpha 자체는 Conditional Go 유지, 결합 시나리오는
+     Watch(활동성 필터 ablation 검증 필요).** 두 스크립트 실행 로그로
+     KIS 호출 0건 확인. 산출:
+     `scripts/validate_new_alpha_vs_existing_blocking_axes.py`,
+     `scripts/diagnose_blocked_reason_distribution.py`(둘 다
+     read-only, 신규 KIS 호출 0건),
+     `logs/signal_ic_new_alpha_vs_existing_blocking_axes_
+     2026-07-15.json`. 상세: `plans/[DESIGN] regime_conditional_
+     entry_signal_v1.md` §13.
+   - **SPPV-3(보류 유지, 형태 재정의 — 우선순위 재조정)**: §2.16~
+     §2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에 근접한다는
+     것이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는 Conditional
+     Go를 확보했으나, **§2.23에서 결합 사용 시 진짜 병목이 regime
+     관련 축이 아니라 활동성 필터(`eligibility_low_relative_
+     activity`)임이 새로 확인됐다.** 다음 착수 형태는 이 설계 문서를
      기반으로 regime/allocation/strategy/source를 복원한 `entry_score`
      point-in-time 재현과 signal/risk-off/regime eligibility 중복
-     억제 ablation이며, 우선순위는 "국면 정의 통일"이 아니라 "`regime_
-     conditional_signal`을 alpha layer에 직접 통합"하는 쪽이다. 착수
-     전제(1차 게이트 `TRIGGERED` 전환 관측)는 사용자
+     억제 ablation이며, **SPPV-3의 최우선 조사 대상은 활동성 필터
+     재검토다.** 착수 전제(1차 게이트 `TRIGGERED` 전환 관측)는 사용자
      확인 필요(§14.5, §17.5, §18.6, §19.6, §20.5, §23).
    - **SPPV-4**: Virtual BUY의 `candidate → selected → expected value → would_buy
      → submitted`, MFE/MAE/낙폭/비용 차감 기대수익 비교.

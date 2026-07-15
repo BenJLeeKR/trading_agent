@@ -1,0 +1,37 @@
+INFO:validate_new_alpha_vs_existing_blocking_axes:[20/87] 누적 표본 13060건
+INFO:validate_new_alpha_vs_existing_blocking_axes:[40/87] 누적 표본 26120건
+INFO:validate_new_alpha_vs_existing_blocking_axes:[60/87] 누적 표본 39180건
+INFO:validate_new_alpha_vs_existing_blocking_axes:[80/87] 누적 표본 52240건
+INFO:validate_new_alpha_vs_existing_blocking_axes:[87/87] 누적 표본 56753건
+INFO:validate_new_alpha_vs_existing_blocking_axes:전체 3년 표본 56753건, 실패 0종목
+
+=== regime_conditional_signal 상위군 vs 기존 차단 축 결합 효과 ===
+전체 3년 표본: 56753건, 최근 12개월(cutoff=2025-06-16) 표본: 21315건
+
+--- 2차(3년, 전체 표본) ---
+새 alpha 상위 20% 표본: 10999건 (전체 표본 대비)
+  생존(eligibility 통과)=3491건(31.7%), 차단됨=7508건(68.3%)
+  축A(entry_score regime penalty) 발동=5076건, 축B(eligibility regime block) 발동=1270건, 축C(eligibility negative floor) 발동=1525건
+  [T+5]
+    상위군 전체(ablation, 차단 없다고 가정): {'n': 10999, 'mean_pct': 1.0079, 't_naive': 12.83, 't_newey_west': 9.06, 'pct_positive': 0.512}
+    생존(현재 운영 로직 그대로 통과): {'n': 3491, 'mean_pct': 1.4218, 't_naive': 8.69, 't_newey_west': 5.89, 'pct_positive': 0.5239}
+    차단됨(현재 운영 로직이 걸러낸 표본): {'n': 7508, 'mean_pct': 0.8154, 't_naive': 9.45, 't_newey_west': 6.86, 'pct_positive': 0.5065}
+  [T+20]
+    상위군 전체(ablation, 차단 없다고 가정): {'n': 10999, 'mean_pct': 3.5544, 't_naive': 21.96, 't_newey_west': 10.35, 'pct_positive': 0.5245}
+    생존(현재 운영 로직 그대로 통과): {'n': 3491, 'mean_pct': 4.3809, 't_naive': 13.26, 't_newey_west': 5.78, 'pct_positive': 0.5176}
+    차단됨(현재 운영 로직이 걸러낸 표본): {'n': 7508, 'mean_pct': 3.1701, 't_naive': 17.56, 't_newey_west': 8.35, 'pct_positive': 0.5277}
+
+--- 1차(최근 12개월) ---
+새 alpha 상위 20% 표본: 4165건 (전체 표본 대비)
+  생존(eligibility 통과)=1621건(38.9%), 차단됨=2544건(61.1%)
+  축A(entry_score regime penalty) 발동=2073건, 축B(eligibility regime block) 발동=0건, 축C(eligibility negative floor) 발동=11건
+  [T+5]
+    상위군 전체(ablation, 차단 없다고 가정): {'n': 4165, 'mean_pct': 1.7108, 't_naive': 11.25, 't_newey_west': 7.52, 'pct_positive': 0.5366}
+    생존(현재 운영 로직 그대로 통과): {'n': 1621, 'mean_pct': 1.9724, 't_naive': 7.0, 't_newey_west': 4.5, 'pct_positive': 0.5392}
+    차단됨(현재 운영 로직이 걸러낸 표본): {'n': 2544, 'mean_pct': 1.5442, 't_naive': 8.95, 't_newey_west': 6.29, 'pct_positive': 0.535}
+  [T+20]
+    상위군 전체(ablation, 차단 없다고 가정): {'n': 4165, 'mean_pct': 5.721, 't_naive': 17.79, 't_newey_west': 8.16, 'pct_positive': 0.5448}
+    생존(현재 운영 로직 그대로 통과): {'n': 1621, 'mean_pct': 5.8709, 't_naive': 10.29, 't_newey_west': 4.54, 'pct_positive': 0.5312}
+    차단됨(현재 운영 로직이 걸러낸 표본): {'n': 2544, 'mean_pct': 5.6255, 't_naive': 14.77, 't_newey_west': 6.71, 'pct_positive': 0.5535}
+
+산출 저장: logs/signal_ic_new_alpha_vs_existing_blocking_axes_2026-07-15.json

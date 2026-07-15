@@ -6,8 +6,10 @@
 중복 억제 시계열 누적·국면 정의 비교 체계 구축(§9) + §9.6 비교 실험
 실측 완료(§10) + A/B 불일치 표본 direct 비교·1차 창 재확인 완료(§11) +
 **alpha layer vs regime_conditional_signal 직접 비교 완료(§12,
-2차 창에서 유의한 우위 확인 — Conditional Go)** — 실거래/
-`entry_score` 반영 없음.**
+2차 창에서 유의한 우위 확인 — Conditional Go)** + **새 alpha 상위군과
+기존 차단 축 결합 효과 검증 완료(§13) — 진짜 병목은 regime 축이 아니라
+별개의 활동성(activity) 필터임을 신규 발견, 결합 판정 Watch(추가
+검증 필요)** — 실거래/`entry_score` 반영 없음.**
 상위 문서: `plans/[ANALYSIS] sppv_regime_polarity_synthesis_and_next_direction.md`
 (§4 판정 — "국면 분기형 entry 설계로 전환"), `plans/[DESIGN] signal_
 predictive_power_validation.md`(§16 이원 기준, §19/§20/§21 근거 실측),
@@ -856,3 +858,132 @@ layer_vs_regime_conditional_signal_2026-07-15.json`,
 3. 이 비교 결과를 근거로 SPPV-3의 우선순위를 "국면 정의 통일"(§11,
    Watch/No-Go)에서 "alpha layer 교체"(§12, Conditional Go)로
    공식 재조정할지 사용자 확인을 받는다.
+
+## 13. 새 alpha 상위군과 기존 차단 축 결합 효과 (2026-07-15)
+
+### 13.1 배경 — "더 잘 고르는 alpha"를 찾은 뒤에도 기존 차단이 그 효과를 죽이는가
+
+§12(SPPV-2.22)는 `regime_conditional_signal`이 alpha layer로서 현행보다
+유의하게 낫다는 것을 확인했다(Conditional Go). 그러나 그 확인은 "이
+신호로 순위를 매기면 상위/하위 quintile 차이가 유의하다"는 것이었지,
+**"실제로 이 신호를 alpha layer에 넣고 기존 차단 로직(§8에서 정량화한
+세 축)을 그대로 두면 상위권 종목들이 살아남는지"**는 아직 확인하지
+않았다. 이번 실험은 그 질문에 답한다 — 방어 강화가 아니라 "새 alpha가
+찾은 좋은 종목이 기존 차단 때문에 다시 사라지는가"를 실측한다.
+
+### 13.2 실행 개요
+
+`scripts/validate_new_alpha_vs_existing_blocking_axes.py`(read-only)가
+3년 rolling 표본(87종목)에서 거래일별 cross-sectional 상위 20%를
+`regime_conditional_signal` 기준으로 뽑고, 그 상위군에 **운영 함수
+`_build_entry_score()`/`_assess_buy_eligibility()`를 그대로 호출**해
+(종목별 regime 기준, 현재 실제로 도는 로직) 생존/차단 여부와 forward
+return을 비교했다. 3년 캐시 재사용, 종료 코드 0, 87/87종목 성공.
+**실제 KIS 호출 여부는 가정하지 않고 로그로 확인** — `HTTP Request:`
+**0건**. 산출: `logs/signal_ic_new_alpha_vs_existing_blocking_axes_
+2026-07-15.json`, `logs/new_alpha_vs_existing_blocking_axes_run_
+2026-07-15.log`.
+
+### 13.3 핵심 결과 — 상위군의 60~68%가 차단된다
+
+| 창 | 상위 20% 표본 | 생존 | 차단됨 |
+|---|---|---|---|
+| 2차(3년) | 10,999건 | 3,491건(31.7%) | **7,508건(68.3%)** |
+| 1차(최근 12개월) | 4,165건 | 1,621건(38.9%) | **2,544건(61.1%)** |
+
+| 창 | horizon | 상위군 전체(차단 없다고 가정) | 생존(현재 운영 로직) | 차단됨 |
+|---|---|---|---|---|
+| 2차(3년) | T+5 | +1.008%(t_NW=9.06) | +1.422%(t_NW=5.89) | +0.815%(t_NW=**6.86**) |
+| 2차(3년) | T+20 | +3.554%(t_NW=10.35) | +4.381%(t_NW=5.78) | +3.170%(t_NW=**8.35**) |
+| 1차(최근 12개월) | T+5 | +1.711%(t_NW=7.52) | +1.972%(t_NW=4.50) | +1.544%(t_NW=**6.29**) |
+| 1차(최근 12개월) | T+20 | +5.721%(t_NW=8.16) | +5.871%(t_NW=4.54) | +5.626%(t_NW=**6.71**) |
+
+**차단된 표본도 forward return이 강하게 유의하게 양(+)이다** — 심지어
+1차 창 T+20에서는 생존군(+5.87%)과 차단군(+5.63%)의 차이가 거의
+없다. 이는 "차단이 나쁜 종목을 걸러낸다"는 가정과 달리, **차단된
+표본의 절대다수가 실제로는 손실이 아니라 상당한 이익을 내고
+있었다**는 뜻이다.
+
+### 13.4 결정적 재발견 — 진짜 병목은 regime 축이 아니라 "활동성 필터"
+
+§8/§9/§11에서 계속 조사해온 세 축(entry_score regime penalty,
+eligibility regime block, eligibility negative floor)이 이 차단의
+주범일 것이라 예상했으나, `scripts/diagnose_blocked_reason_
+distribution.py`(read-only, 신규 KIS 호출 0건, 종료 코드 0)로 실제
+`_assess_buy_eligibility()`의 최종 실패 사유를 집계한 결과 **전혀
+다른 결론이 나왔다**:
+
+| 실패 사유 | 3년(7,508건 중) | 최근 12개월(2,544건 중) |
+|---|---|---|
+| `eligibility_low_relative_activity` | **5,983건(79.7%)** | **2,533건(99.6%)** |
+| `eligibility_core_risk_off_guard_blocked`(§8의 축B) | 1,270건(16.9%) | 0건 |
+| `eligibility_negative_overall_floor`(§8의 축C) | 253건(3.4%) | 11건(0.4%) |
+| `eligibility_negative_slow_floor` | 2건(0.0%) | 0건 |
+
+**`eligibility_low_relative_activity`가 차단의 압도적 대부분(3년
+79.7%, 최근 12개월 99.6%)을 차지한다.** 이 조건은 코드
+(`deterministic_trigger_engine.py:493-499`)에서 다음과 같이 정의된다:
+
+```python
+if (
+    volume_surge_ratio is not None
+    and turnover_surge_ratio is not None
+    and max(volume_surge_ratio, turnover_surge_ratio) < 1.10
+):
+    reasons.append("eligibility_low_relative_activity")
+    return False, tuple(reasons)
+```
+
+즉 **"거래량 급증 비율과 거래대금 급증 비율 중 큰 쪽이 평소 대비
+10% 이상 늘지 않으면 차단"**하는 조건이다 — 국면(regime)이나 신호
+강도(overall/slow)와 **전혀 무관한, 순수 유동성/활동성 게이트**다.
+§8/§9/§11이 지금까지 조사한 "regime 관련 삼중 중복"은, 새 alpha
+(`regime_conditional_signal`) 상위군에서는 상대적으로 부차적인
+문제였다(3년 16.9%+3.4%=20.3%, 최근 12개월 0.4%) — **진짜 병목은
+완전히 별개의 네 번째 축(활동성 필터)이었다.**
+
+### 13.5 해석 — 과잉 억제의 강력한 증거
+
+1. **활동성 필터가 걸러낸 종목(3년 5,983건, 최근 12개월 2,533건)의
+   forward return이 나쁘지 않다** — 이 필터가 알파와 무관하게
+   작동하므로, "alpha가 찾은 좋은 종목"과 "최근 거래가 조용했던
+   종목"이 상당 부분 겹칠 뿐, 실제 수익성과는 관계가 약하다는
+   해석이 가능하다.
+2. **"regime_conditional_signal을 넣어도 기존 차단 축이 그대로면
+   효과가 상쇄되는가?"에 대한 답: 그렇다(60~68% 차단) — 그러나
+   그 상쇄의 주범은 §8/§9/§11이 조사한 regime 관련 축이 아니라
+   활동성 필터(threshold 1.10)다.** 이는 SPPV-3의 조사 범위를
+   재조정해야 함을 뜻한다 — "국면 정의 통일"이나 "regime penalty
+   중복 해소"보다 **"활동성 필터의 임계값(1.10)이 과도한지"**가
+   훨씬 더 큰 병목이다.
+3. 다만 이번 실험은 활동성 필터를 제거했을 때의 forward return을
+   직접 ablation하지 않았다(상위군 전체=차단 없음 가정 값이
+   그 근사치이긴 하다 — 2차 T+20 기준 상위군 전체 +3.554% vs
+   생존만 +4.381%, 차이 0.827%p). 이 필터 하나만 별도로 껐을 때의
+   효과를 정밀하게 분리하는 추가 실험이 필요하다.
+
+### 13.6 판정 — Watch(추가 검증 필요), alpha 자체는 Conditional Go 유지
+
+**`regime_conditional_signal`의 alpha layer 대체 가치(§12)는 이번
+실험으로 훼손되지 않았다** — 여전히 Conditional Go다. 그러나
+**"결합 사용 시나리오"(새 alpha + 기존 차단 로직 그대로)는 확정
+Go로 선언하지 않는다** — 이번에 새로 발견된 활동성 필터의 과잉 억제
+가능성을 별도로 검증하기 전까지는, alpha를 바꿔도 실제 BUY 후보의
+60~68%가 여전히 걸러질 것이기 때문이다. **판정: Watch(추가 검증
+필요) — "더 막는 것이 안전하다"는 가정으로 되돌아가지 않되, 이
+필터를 완화했을 때 기대수익이 실제로 개선되는지 별도로 확인해야
+한다.**
+
+### 13.7 다음 단계 — 우선순위 재조정
+
+1. **`eligibility_low_relative_activity` ablation 실험을 다음
+   최우선으로 지정한다** — 이 필터를 제거(또는 임계값 완화)했을 때
+   전체 BUY 후보 표본의 forward return이 개선되는지/악화되는지
+   직접 검증한다. §8/§9/§11의 regime 축 조사보다 이 실험의 영향력이
+   훨씬 크다는 것이 이번 턴에 확인됐다.
+2. SPPV-3의 우선순위를 "국면 정의 통일"(§11) → "alpha layer
+   교체"(§12) → **"활동성 필터 재검토"(§13, 신규 최우선)**로
+   재조정할지 사용자 확인을 받는다.
+3. §21 게이트가 `TRIGGERED`로 전환되는 시점과 별개로, 활동성 필터
+   ablation은 지금 당장(신규 KIS 호출 없이) 수행 가능하다 — 다음
+   턴 착수 후보로 남긴다.

@@ -395,6 +395,35 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   validation 범위에 머문다. 상세: `plans/[DESIGN] regime_conditional_
   entry_signal_v1.md` §12.
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (20차, 새 alpha 상위군과 기존 차단 축 결합
+  효과 검증 — 진짜 병목 재발견)
+- 수정내용: `regime_conditional_signal`(§12, Conditional Go)을 새
+  alpha로 넣었을 때 기존 차단 로직이 그 효과를 상쇄하는지 검증했다
+  (SPPV-2.23). 신규 `scripts/validate_new_alpha_vs_existing_
+  blocking_axes.py`가 거래일별 cross-sectional 상위 20%(regime_
+  conditional_signal 기준)에 운영 함수 `_build_entry_score`/
+  `_assess_buy_eligibility`를 그대로 호출한 결과, **상위군의 68.3%
+  (3년)/61.1%(최근 12개월)가 차단**됐다. 그러나 **차단된 표본도
+  forward return이 강하게 유의하게 양(+)**이었다(3년 T+5 +0.815%
+  t_NW=6.86, T+20 +3.170% t_NW=8.35 — 생존군과 큰 차이 없음, 특히
+  1차 창 T+20은 생존 +5.87% vs 차단 +5.63%로 거의 동일). 이는 §8/
+  §9/§11이 조사해온 regime 관련 세 축이 아니라 다른 원인을 의심하게
+  했고, 신규 진단 스크립트 `scripts/diagnose_blocked_reason_
+  distribution.py`로 실제 eligibility 실패 사유를 집계한 결과
+  **`eligibility_low_relative_activity`(거래량/거래대금 급증 비율
+  <1.10이면 차단, `deterministic_trigger_engine.py:493-499`, 국면·
+  신호와 무관한 순수 유동성 게이트)가 차단의 압도적 대부분(3년
+  79.7%, 최근 12개월 99.6%)을 차지함을 새로 발견했다** — §8의
+  regime 축(B/C)은 오히려 부차적이었다(3년 20.3%, 최근 12개월
+  0.4%). **판정: alpha 자체(§12)는 Conditional Go 유지, 결합
+  시나리오는 Watch(활동성 필터 ablation 검증 필요)로 확정.** SPPV-3
+  다음 최우선 조사 대상을 "국면 정의 통일/regime penalty"에서
+  "활동성 필터(`eligibility_low_relative_activity`) 재검토"로
+  재조정했다. 두 스크립트 실행 모두 로그로 KIS 호출 0건 확인(가정
+  없이 실측). `entry_score` 코드/운영 변경 없음. 상세:
+  `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §13.
+
 ---
 
 ## 진행 체크리스트
@@ -722,25 +751,56 @@ canonical),
     `logs/signal_ic_alpha_layer_vs_regime_conditional_signal_
     2026-07-15.json`, `logs/alpha_layer_vs_regime_conditional_
     signal_run_2026-07-15.log`.
+- [x] **SPPV-2.23(신설)** 새 alpha 상위군과 기존 차단 축 결합 효과
+  검증 — 진짜 병목 재발견 (완료, 2026-07-15)
+  - 작업 범위: `regime_conditional_signal`을 새 alpha로 넣었을 때
+    기존 차단 로직(운영 `_build_entry_score`/`_assess_buy_
+    eligibility` 그대로 호출)이 그 효과를 상쇄하는지, 상쇄한다면
+    어느 축이 주범인지 규명.
+  - **결과: 상위 20% 표본의 68.3%(3년)/61.1%(최근 12개월)가 차단
+    되지만, 차단된 표본도 forward return이 강하게 유의하게 양(+)
+    (3년 T+5 +0.815% t_NW=6.86, T+20 +3.170% t_NW=8.35 — 생존군과
+    큰 차이 없음).** 실패 사유 집계 결과 **`eligibility_low_
+    relative_activity`(거래량/거래대금 급증 비율<1.10 차단, 국면·
+    신호와 무관한 순수 유동성 게이트)가 차단의 압도적 대부분(3년
+    79.7%, 최근 12개월 99.6%)을 차지 — §8의 regime 축(B/C)은
+    오히려 부차적(3년 20.3%, 최근 12개월 0.4%)임을 새로 발견.**
+    **판정: alpha 자체(§12)는 Conditional Go 유지, 결합 시나리오는
+    Watch(활동성 필터 ablation 검증 필요).** SPPV-3 다음 최우선
+    조사 대상을 "국면 정의 통일/regime penalty"에서 "활동성
+    필터(`eligibility_low_relative_activity`) 재검토"로 재조정.
+    두 스크립트 실행 로그로 KIS 호출 0건 확인(가정 없이 실측).
+    상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §13.
+  - 산출물: `scripts/validate_new_alpha_vs_existing_blocking_axes.py`,
+    `scripts/diagnose_blocked_reason_distribution.py`(둘 다
+    read-only, 신규 KIS 호출 0건 — 3년 캐시 재사용),
+    `logs/signal_ic_new_alpha_vs_existing_blocking_axes_
+    2026-07-15.json`, `logs/new_alpha_vs_existing_blocking_axes_
+    run_2026-07-15.log`, `logs/diagnose_blocked_reason_
+    distribution_run_2026-07-15.log`.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
-  - **보류 유지, 형태 재정의**: §12(1년, 자기참조 포함) 당시 "알파 근거
-    강화"로 낙관했던 것이 §14(3년, 자기참조 제거) 확장 검증에서 반박됨 —
-    하락장 표본에서 안정적인 종목 선택 능력을 확인하지 못했고 일부(fast_
-    score)는 유의하게 역방향이었다. §23의 종합 판정에 따라, SPPV-3의
-    다음 착수 형태는 기존 `entry_score` sub-component 조합의 단순
-    재현이 아니라 **`regime_switch_v1` 아이디어를 국면 분기형 entry
-    설계의 초기 원형으로 삼는 것**으로 재정의된다. §8~§11(SPPV-2.18~
-    2.21)에서 국면 정의 통일(종목별→시장 공통)은 Watch/No-Go에
-    근접한다는 것이 확인됐으나, §12(SPPV-2.22)에서 **alpha layer
-    교체는 2차 창에서 유의한 우위를 확보(Conditional Go)**했다 —
-    SPPV-3의 우선순위는 국면 정의 통일이 아니라 `regime_conditional_
-    signal`을 alpha layer에 직접 통합하는 쪽으로 재조정한다. 1차
-    게이트(§21 모니터링)가 `TRIGGERED`로 전환되는 즉시 최종 Go
-    여부를 재확인해야 하며, 그 전까지 코드 변경은 보류한다.
-  - 작업 범위: regime/allocation/strategy/source 복원, signal 약세와
-    `risk_off_penalty`/eligibility 중복 억제 분해, `overall_score`
-    재설계(통과군 내부 역전 해소), §21 TRIGGERED 시 alpha layer 교체
-    최종 재확인
+  - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
+    포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
+    제거) 확장 검증에서 반박됨 — 하락장 표본에서 안정적인 종목 선택
+    능력을 확인하지 못했고 일부(fast_score)는 유의하게 역방향이었다.
+    §23의 종합 판정에 따라, SPPV-3의 다음 착수 형태는 기존 `entry_
+    score` sub-component 조합의 단순 재현이 아니라 **`regime_
+    switch_v1` 아이디어를 국면 분기형 entry 설계의 초기 원형으로
+    삼는 것**으로 재정의된다. §8~§11(SPPV-2.18~2.21)에서 국면 정의
+    통일(종목별→시장 공통)은 Watch/No-Go에 근접한다는 것이 확인됐고,
+    §12(SPPV-2.22)에서 alpha layer 교체는 2차 창에서 유의한 우위를
+    확보(Conditional Go)했으나, **§13(SPPV-2.23)에서 결합 사용 시
+    진짜 병목이 regime 관련 축이 아니라 별개의 활동성 필터
+    (`eligibility_low_relative_activity`)임을 새로 발견**했다 —
+    SPPV-3의 최우선 조사 대상은 이제 이 활동성 필터 재검토다. 1차
+    게이트(§21 모니터링)가 `TRIGGERED`로 전환되는 즉시 alpha layer
+    교체의 최종 Go 여부도 재확인해야 하며, 그 전까지 코드 변경은
+    보류한다.
+  - 작업 범위: `eligibility_low_relative_activity` ablation 검증
+    (신규 최우선), regime/allocation/strategy/source 복원, signal
+    약세와 `risk_off_penalty`/eligibility 중복 억제 분해, `overall_
+    score` 재설계(통과군 내부 역전 해소), §21 TRIGGERED 시 alpha
+    layer 교체 최종 재확인
 - [ ] **SPPV-4** 전체 BUY funnel back-simulation
   - 작업 범위: `candidate → selected → expected value → would_buy → submitted`
     counterfactual 전환과 MFE/MAE/낙폭 비교
@@ -1463,6 +1523,12 @@ bearish/range_bound 어느 국면 내부도 `overall_score`/`slow_score`가
   (read-only, 신규 KIS 호출 0건 — 3년 캐시 재사용)
 - `logs/signal_ic_alpha_layer_vs_regime_conditional_signal_2026-07-15.json`,
   `logs/alpha_layer_vs_regime_conditional_signal_run_2026-07-15.log`
+- `scripts/validate_new_alpha_vs_existing_blocking_axes.py`,
+  `scripts/diagnose_blocked_reason_distribution.py`(둘 다 read-only,
+  신규 KIS 호출 0건 — 3년 캐시 재사용)
+- `logs/signal_ic_new_alpha_vs_existing_blocking_axes_2026-07-15.json`,
+  `logs/new_alpha_vs_existing_blocking_axes_run_2026-07-15.log`,
+  `logs/diagnose_blocked_reason_distribution_run_2026-07-15.log`
 - `logs/_bars_cache_core88_2026-07-14/`(88종목 1년 캐시, 재사용 가능)
 - `logs/_bars_cache_core87_3y_2026-07-14/`(87종목+벤치마크 3년 캐시,
   SPPV-2.7/2.8/2.9/2.10/2.11/2.12가 공유 재사용)
