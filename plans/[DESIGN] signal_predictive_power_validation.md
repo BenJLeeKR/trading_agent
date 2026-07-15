@@ -256,6 +256,21 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   SPPV-3의 다음 착수 형태는 `regime_switch_v1` 아이디어를 entry_score
   대체 설계의 초기 원형으로 삼는 것으로 재정의된다.
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (13차, 국면 분기형 entry 설계 초안 + shadow
+  계산기)
+- 수정내용: §23의 판정을 실제 설계 문서로 구체화했다(SPPV-2.16). 신규
+  문서 `plans/[DESIGN] regime_conditional_entry_signal_v1.md`에
+  국면별 신호 선택 매트릭스(비하락장=`risk_adj_momentum_3m`, 하락장=
+  `reversal_1m`, 판정불가=신호 미산출), `entry_score` 통합 방안(alpha
+  layer 0.80 가중치 블록 교체 제안, 미적용), shadow 검증 계획(Phase
+  1/2, §16 그대로 재사용하는 Go/No-Go 기준)을 작성했다. **shadow
+  계산기(`scripts/shadow_regime_conditional_entry_signal.py`)를 실행해
+  실시간(캐시 기준 최신일 2026-07-14) 스냅샷을 1회 산출** — 시장 공통
+  국면 `range_bound`로 87/87종목이 `risk_adj_momentum_3m` 분기를
+  사용했고 하락장 분기는 미발동(§21 모니터링과 정합). `entry_score`
+  코드/운영에는 아무 변경도 가하지 않았다 — 설계·shadow 단계에 머문다.
+
 ---
 
 ## 진행 체크리스트
@@ -448,6 +463,24 @@ canonical),
     확정. 유니버스/미시구조 재검토는 후순위 유지.** §23 상세, 별도
     문서 `plans/[ANALYSIS] sppv_regime_polarity_synthesis_and_next_
     direction.md`.
+- [x] **SPPV-2.16(신설)** 국면 분기형 entry 설계 초안 + shadow 계산기
+  1차 실행 (완료, 2026-07-15)
+  - 작업 범위: §23의 판정을 실제 설계 문서로 구체화 — 국면별 신호
+    선택 매트릭스, `entry_score` 통합 방안(제안, 미적용), shadow 검증
+    계획(Phase 1/2, Go-No-Go 기준) 작성. shadow 계산기 스크립트로
+    1회 실시간 스냅샷 실행.
+  - **결과: 설계 문서
+    `plans/[DESIGN] regime_conditional_entry_signal_v1.md` 작성 완료.**
+    shadow 계산기 실행(기준일 2026-07-14, 시장 공통 국면
+    `range_bound`) — 87/87종목 `risk_adj_momentum_3m` 분기 신호
+    산출(하락장 분기는 이번엔 미발동, §21 모니터링 NOT_TRIGGERED와
+    정합). `entry_score` 코드/운영 반영은 없음 — 설계·shadow 단계만
+    진행.
+  - 산출물: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`,
+    `scripts/shadow_regime_conditional_entry_signal.py`(read-only,
+    신규 KIS 호출 0건 — 3년 캐시 재사용),
+    `logs/shadow_regime_conditional_entry_signal_2026-07-15.json`,
+    `logs/shadow_regime_conditional_entry_signal_run_2026-07-15.log`.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의**: §12(1년, 자기참조 포함) 당시 "알파 근거
     강화"로 낙관했던 것이 §14(3년, 자기참조 제거) 확장 검증에서 반박됨 —
@@ -1145,6 +1178,12 @@ bearish/range_bound 어느 국면 내부도 `overall_score`/`slow_score`가
   `logs/sppv2_14_new_fast_features_run_2026-07-14.log`
 - `plans/[ANALYSIS] sppv_regime_polarity_synthesis_and_next_direction.md`
   (국면별 신호 극성 종합표 + 상위 재설계 방향 확정, 별도 문서)
+- `plans/[DESIGN] regime_conditional_entry_signal_v1.md`(국면 분기형
+  entry 설계 초안, 별도 문서)
+- `scripts/shadow_regime_conditional_entry_signal.py`(read-only, 신규
+  KIS 호출 0건 — 3년 캐시 재사용)
+- `logs/shadow_regime_conditional_entry_signal_2026-07-15.json`,
+  `logs/shadow_regime_conditional_entry_signal_run_2026-07-15.log`
 - `logs/_bars_cache_core88_2026-07-14/`(88종목 1년 캐시, 재사용 가능)
 - `logs/_bars_cache_core87_3y_2026-07-14/`(87종목+벤치마크 3년 캐시,
   SPPV-2.7/2.8/2.9/2.10/2.11/2.12가 공유 재사용)

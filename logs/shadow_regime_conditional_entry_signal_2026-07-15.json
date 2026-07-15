@@ -1,0 +1,794 @@
+{
+  "as_of": "2026-07-15T10:54:42.778294+09:00",
+  "benchmark_symbol": "069500",
+  "latest_benchmark_trade_date": "2026-07-14",
+  "latest_common_market_regime": "range_bound",
+  "symbol_count_total": 87,
+  "symbol_count_with_signal": 87,
+  "fetch_failures": [],
+  "rows": [
+    {
+      "symbol": "000100",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -8.627278849323364,
+      "risk_adj_momentum_3m_raw": -8.627278849323364,
+      "reversal_1m_raw": 14.814814814814813
+    },
+    {
+      "symbol": "000270",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -2.0190178200217037,
+      "risk_adj_momentum_3m_raw": -2.0190178200217037,
+      "reversal_1m_raw": 17.97884841363102
+    },
+    {
+      "symbol": "000660",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": 8.810243686940924,
+      "risk_adj_momentum_3m_raw": 8.810243686940924,
+      "reversal_1m_raw": 19.689336691855587
+    },
+    {
+      "symbol": "000810",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": 9.393955285343278,
+      "risk_adj_momentum_3m_raw": 9.393955285343278,
+      "reversal_1m_raw": 6.408345752608047
+    },
+    {
+      "symbol": "001040",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -9.136141747953994,
+      "risk_adj_momentum_3m_raw": -9.136141747953994,
+      "reversal_1m_raw": 27.997858672376875
+    },
+    {
+      "symbol": "001450",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": 8.003554241826269,
+      "risk_adj_momentum_3m_raw": 8.003554241826269,
+      "reversal_1m_raw": 9.818181818181815
+    },
+    {
+      "symbol": "002380",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -5.982452032816551,
+      "risk_adj_momentum_3m_raw": -5.982452032816551,
+      "reversal_1m_raw": 25.267857142857142
+    },
+    {
+      "symbol": "003490",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": 2.1748255746187453,
+      "risk_adj_momentum_3m_raw": 2.1748255746187453,
+      "reversal_1m_raw": 9.55631399317406
+    },
+    {
+      "symbol": "003550",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": 1.2290103319106456,
+      "risk_adj_momentum_3m_raw": 1.2290103319106456,
+      "reversal_1m_raw": 15.512708150744958
+    },
+    {
+      "symbol": "003670",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -6.191725862010352,
+      "risk_adj_momentum_3m_raw": -6.191725862010352,
+      "reversal_1m_raw": 30.95693779904306
+    },
+    {
+      "symbol": "004020",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -9.454880341383348,
+      "risk_adj_momentum_3m_raw": -9.454880341383348,
+      "reversal_1m_raw": 26.77824267782427
+    },
+    {
+      "symbol": "005380",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -4.693906409399053,
+      "risk_adj_momentum_3m_raw": -4.693906409399053,
+      "reversal_1m_raw": 33.67187499999999
+    },
+    {
+      "symbol": "005385",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -6.8021173242462485,
+      "risk_adj_momentum_3m_raw": -6.8021173242462485,
+      "reversal_1m_raw": 22.4505928853755
+    },
+    {
+      "symbol": "005387",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -5.540433392875073,
+      "risk_adj_momentum_3m_raw": -5.540433392875073,
+      "reversal_1m_raw": 21.027667984189723
+    },
+    {
+      "symbol": "005490",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -4.729279921967676,
+      "risk_adj_momentum_3m_raw": -4.729279921967676,
+      "reversal_1m_raw": 22.17948717948718
+    },
+    {
+      "symbol": "005830",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -0.8062028342944458,
+      "risk_adj_momentum_3m_raw": -0.8062028342944458,
+      "reversal_1m_raw": -4.9543676662320735
+    },
+    {
+      "symbol": "005930",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": 4.018618451156953,
+      "risk_adj_momentum_3m_raw": 4.018618451156953,
+      "reversal_1m_raw": 23.323615160349853
+    },
+    {
+      "symbol": "005935",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": 4.566220569326194,
+      "risk_adj_momentum_3m_raw": 4.566220569326194,
+      "reversal_1m_raw": 18.660714285714285
+    },
+    {
+      "symbol": "006400",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -1.6833338437743444,
+      "risk_adj_momentum_3m_raw": -1.6833338437743444,
+      "reversal_1m_raw": 22.13114754098361
+    },
+    {
+      "symbol": "006405",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -4.942008667438387,
+      "risk_adj_momentum_3m_raw": -4.942008667438387,
+      "reversal_1m_raw": 25.702811244979916
+    },
+    {
+      "symbol": "006800",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -9.143091784506197,
+      "risk_adj_momentum_3m_raw": -9.143091784506197,
+      "reversal_1m_raw": 24.463937621832354
+    },
+    {
+      "symbol": "007070",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": 3.0134521097531457,
+      "risk_adj_momentum_3m_raw": 3.0134521097531457,
+      "reversal_1m_raw": 0.390625
+    },
+    {
+      "symbol": "008770",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -1.319458892825325,
+      "risk_adj_momentum_3m_raw": -1.319458892825325,
+      "reversal_1m_raw": 21.07023411371237
+    },
+    {
+      "symbol": "009150",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": 14.9113366742443,
+      "risk_adj_momentum_3m_raw": 14.9113366742443,
+      "reversal_1m_raw": 38.4765625
+    },
+    {
+      "symbol": "009540",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -5.455360475356082,
+      "risk_adj_momentum_3m_raw": -5.455360475356082,
+      "reversal_1m_raw": 25.42759407069556
+    },
+    {
+      "symbol": "010130",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -12.252447389170278,
+      "risk_adj_momentum_3m_raw": -12.252447389170278,
+      "reversal_1m_raw": 21.50038669760247
+    },
+    {
+      "symbol": "010140",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -6.305693115589386,
+      "risk_adj_momentum_3m_raw": -6.305693115589386,
+      "reversal_1m_raw": 24.37722419928826
+    },
+    {
+      "symbol": "011070",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": 14.55820837820596,
+      "risk_adj_momentum_3m_raw": 14.55820837820596,
+      "reversal_1m_raw": 48.13915857605178
+    },
+    {
+      "symbol": "011170",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -8.622841422628012,
+      "risk_adj_momentum_3m_raw": -8.622841422628012,
+      "reversal_1m_raw": 25.99009900990099
+    },
+    {
+      "symbol": "012330",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": 3.220358324273993,
+      "risk_adj_momentum_3m_raw": 3.220358324273993,
+      "reversal_1m_raw": 29.393939393939394
+    },
+    {
+      "symbol": "012450",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -9.441553094302103,
+      "risk_adj_momentum_3m_raw": -9.441553094302103,
+      "reversal_1m_raw": 26.28909551986475
+    },
+    {
+      "symbol": "015760",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -7.533401242135064,
+      "risk_adj_momentum_3m_raw": -7.533401242135064,
+      "reversal_1m_raw": 14.698492462311563
+    },
+    {
+      "symbol": "016360",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -1.8542886136150731,
+      "risk_adj_momentum_3m_raw": -1.8542886136150731,
+      "reversal_1m_raw": 18.21829855537721
+    },
+    {
+      "symbol": "017670",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -8.136161513967258,
+      "risk_adj_momentum_3m_raw": -8.136161513967258,
+      "reversal_1m_raw": 16.18381618381618
+    },
+    {
+      "symbol": "018260",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": 2.0996906302256546,
+      "risk_adj_momentum_3m_raw": 2.0996906302256546,
+      "reversal_1m_raw": 18.907563025210084
+    },
+    {
+      "symbol": "018880",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -4.469072423665254,
+      "risk_adj_momentum_3m_raw": -4.469072423665254,
+      "reversal_1m_raw": 34.48940269749519
+    },
+    {
+      "symbol": "024110",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -2.916868487311366,
+      "risk_adj_momentum_3m_raw": -2.916868487311366,
+      "reversal_1m_raw": 8.658008658008654
+    },
+    {
+      "symbol": "028260",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": 2.7328309497539807,
+      "risk_adj_momentum_3m_raw": 2.7328309497539807,
+      "reversal_1m_raw": 28.772635814889334
+    },
+    {
+      "symbol": "028300",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -6.043213554520461,
+      "risk_adj_momentum_3m_raw": -6.043213554520461,
+      "reversal_1m_raw": 44.777662874870735
+    },
+    {
+      "symbol": "029780",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -3.9052888181305727,
+      "risk_adj_momentum_3m_raw": -3.9052888181305727,
+      "reversal_1m_raw": 10.22514071294559
+    },
+    {
+      "symbol": "030200",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -8.61463856991673,
+      "risk_adj_momentum_3m_raw": -8.61463856991673,
+      "reversal_1m_raw": 8.833922261484094
+    },
+    {
+      "symbol": "032830",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": 4.9793484084499084,
+      "risk_adj_momentum_3m_raw": 4.9793484084499084,
+      "reversal_1m_raw": 26.450116009280745
+    },
+    {
+      "symbol": "034020",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -7.593038657446623,
+      "risk_adj_momentum_3m_raw": -7.593038657446623,
+      "reversal_1m_raw": 31.364956437560497
+    },
+    {
+      "symbol": "034220",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -7.563783029641098,
+      "risk_adj_momentum_3m_raw": -7.563783029641098,
+      "reversal_1m_raw": 25.69992821249103
+    },
+    {
+      "symbol": "035420",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -4.813972712687357,
+      "risk_adj_momentum_3m_raw": -4.813972712687357,
+      "reversal_1m_raw": 24.297520661157023
+    },
+    {
+      "symbol": "036460",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -6.400717420299338,
+      "risk_adj_momentum_3m_raw": -6.400717420299338,
+      "reversal_1m_raw": 11.004126547455295
+    },
+    {
+      "symbol": "042660",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -5.512235973659123,
+      "risk_adj_momentum_3m_raw": -5.512235973659123,
+      "reversal_1m_raw": 40.55727554179567
+    },
+    {
+      "symbol": "047050",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -6.468576580676168,
+      "risk_adj_momentum_3m_raw": -6.468576580676168,
+      "reversal_1m_raw": 21.439509954058188
+    },
+    {
+      "symbol": "047810",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -6.4758902685228,
+      "risk_adj_momentum_3m_raw": -6.4758902685228,
+      "reversal_1m_raw": 8.908973531310526
+    },
+    {
+      "symbol": "051900",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -0.9951361579567333,
+      "risk_adj_momentum_3m_raw": -0.9951361579567333,
+      "reversal_1m_raw": 2.4340770791075106
+    },
+    {
+      "symbol": "051905",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -7.307348780845328,
+      "risk_adj_momentum_3m_raw": -7.307348780845328,
+      "reversal_1m_raw": 13.738317757009344
+    },
+    {
+      "symbol": "051910",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -5.759687288551136,
+      "risk_adj_momentum_3m_raw": -5.759687288551136,
+      "reversal_1m_raw": 30.612244897959183
+    },
+    {
+      "symbol": "051915",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -10.454464051442624,
+      "risk_adj_momentum_3m_raw": -10.454464051442624,
+      "reversal_1m_raw": 27.328058429701763
+    },
+    {
+      "symbol": "055550",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": 2.379689528331786,
+      "risk_adj_momentum_3m_raw": 2.379689528331786,
+      "reversal_1m_raw": 0.18744142455482393
+    },
+    {
+      "symbol": "066570",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": 11.769926118045202,
+      "risk_adj_momentum_3m_raw": 11.769926118045202,
+      "reversal_1m_raw": 20.769230769230774
+    },
+    {
+      "symbol": "066575",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": 7.386029873916222,
+      "risk_adj_momentum_3m_raw": 7.386029873916222,
+      "reversal_1m_raw": 19.024390243902435
+    },
+    {
+      "symbol": "068270",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -3.070343984913942,
+      "risk_adj_momentum_3m_raw": -3.070343984913942,
+      "reversal_1m_raw": 0.9742120343839589
+    },
+    {
+      "symbol": "078930",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": 1.9643409360041575,
+      "risk_adj_momentum_3m_raw": 1.9643409360041575,
+      "reversal_1m_raw": 0.2525252525252486
+    },
+    {
+      "symbol": "086280",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -4.347879888457747,
+      "risk_adj_momentum_3m_raw": -4.347879888457747,
+      "reversal_1m_raw": 18.153153153153156
+    },
+    {
+      "symbol": "096770",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -2.883726503833407,
+      "risk_adj_momentum_3m_raw": -2.883726503833407,
+      "reversal_1m_raw": 6.755555555555559
+    },
+    {
+      "symbol": "097950",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -6.846547055721249,
+      "risk_adj_momentum_3m_raw": -6.846547055721249,
+      "reversal_1m_raw": 7.231920199501252
+    },
+    {
+      "symbol": "105560",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": 4.886657797678223,
+      "risk_adj_momentum_3m_raw": 4.886657797678223,
+      "reversal_1m_raw": -4.651162790697683
+    },
+    {
+      "symbol": "105630",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -6.419060592101221,
+      "risk_adj_momentum_3m_raw": -6.419060592101221,
+      "reversal_1m_raw": -0.1097694840834329
+    },
+    {
+      "symbol": "112610",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -7.082028075023887,
+      "risk_adj_momentum_3m_raw": -7.082028075023887,
+      "reversal_1m_raw": 30.545774647887324
+    },
+    {
+      "symbol": "120110",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -10.735486005954513,
+      "risk_adj_momentum_3m_raw": -10.735486005954513,
+      "reversal_1m_raw": 29.08093278463649
+    },
+    {
+      "symbol": "128940",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -4.880317893952641,
+      "risk_adj_momentum_3m_raw": -4.880317893952641,
+      "reversal_1m_raw": 16.216216216216218
+    },
+    {
+      "symbol": "138040",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -1.4683867475488288,
+      "risk_adj_momentum_3m_raw": -1.4683867475488288,
+      "reversal_1m_raw": 0.6993006993006978
+    },
+    {
+      "symbol": "139480",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -7.5775601063185,
+      "risk_adj_momentum_3m_raw": -7.5775601063185,
+      "reversal_1m_raw": 11.75824175824176
+    },
+    {
+      "symbol": "161390",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": 3.4902765416746164,
+      "risk_adj_momentum_3m_raw": 3.4902765416746164,
+      "reversal_1m_raw": 3.5211267605633756
+    },
+    {
+      "symbol": "180640",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -0.47899492533497423,
+      "risk_adj_momentum_3m_raw": -0.47899492533497423,
+      "reversal_1m_raw": 12.900703674745895
+    },
+    {
+      "symbol": "181710",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -2.263655701529737,
+      "risk_adj_momentum_3m_raw": -2.263655701529737,
+      "reversal_1m_raw": 2.1963824289405687
+    },
+    {
+      "symbol": "196170",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -4.399899144253684,
+      "risk_adj_momentum_3m_raw": -4.399899144253684,
+      "reversal_1m_raw": 20.709219858156025
+    },
+    {
+      "symbol": "207940",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -3.7480742411141525,
+      "risk_adj_momentum_3m_raw": -3.7480742411141525,
+      "reversal_1m_raw": -2.6256564141035277
+    },
+    {
+      "symbol": "241560",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -3.093243412795291,
+      "risk_adj_momentum_3m_raw": -3.093243412795291,
+      "reversal_1m_raw": 8.538350217076696
+    },
+    {
+      "symbol": "251270",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -9.784040525524862,
+      "risk_adj_momentum_3m_raw": -9.784040525524862,
+      "reversal_1m_raw": 11.722488038277511
+    },
+    {
+      "symbol": "267250",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -6.566485265102674,
+      "risk_adj_momentum_3m_raw": -6.566485265102674,
+      "reversal_1m_raw": 30.11029411764706
+    },
+    {
+      "symbol": "271560",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -2.291817898913384,
+      "risk_adj_momentum_3m_raw": -2.291817898913384,
+      "reversal_1m_raw": 4.179104477611939
+    },
+    {
+      "symbol": "298020",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -10.729186120541241,
+      "risk_adj_momentum_3m_raw": -10.729186120541241,
+      "reversal_1m_raw": 23.2722143864598
+    },
+    {
+      "symbol": "302440",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -5.145960447628465,
+      "risk_adj_momentum_3m_raw": -5.145960447628465,
+      "reversal_1m_raw": 12.5
+    },
+    {
+      "symbol": "323410",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -2.8042533577855533,
+      "risk_adj_momentum_3m_raw": -2.8042533577855533,
+      "reversal_1m_raw": 4.347826086956519
+    },
+    {
+      "symbol": "329180",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -0.571980501988788,
+      "risk_adj_momentum_3m_raw": -0.571980501988788,
+      "reversal_1m_raw": 33.2378223495702
+    },
+    {
+      "symbol": "352820",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -3.869392191786957,
+      "risk_adj_momentum_3m_raw": -3.869392191786957,
+      "reversal_1m_raw": 7.623318385650224
+    },
+    {
+      "symbol": "357780",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -4.896292455963253,
+      "risk_adj_momentum_3m_raw": -4.896292455963253,
+      "reversal_1m_raw": 19.550858652575954
+    },
+    {
+      "symbol": "373220",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -3.455341318222313,
+      "risk_adj_momentum_3m_raw": -3.455341318222313,
+      "reversal_1m_raw": 21.559074299634595
+    },
+    {
+      "symbol": "377300",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -7.948329812289939,
+      "risk_adj_momentum_3m_raw": -7.948329812289939,
+      "reversal_1m_raw": 18.387096774193544
+    },
+    {
+      "symbol": "402340",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": 10.409997191989955,
+      "risk_adj_momentum_3m_raw": 10.409997191989955,
+      "reversal_1m_raw": 20.71952031978681
+    },
+    {
+      "symbol": "454910",
+      "trade_date": "2026-07-14",
+      "common_market_regime": "range_bound",
+      "signal_source": "risk_adj_momentum_3m",
+      "regime_conditional_signal": -5.890523368140062,
+      "risk_adj_momentum_3m_raw": -5.890523368140062,
+      "reversal_1m_raw": 38.80733944954129
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+INFO:shadow_regime_conditional_entry_signal:기준일 2026-07-14, 시장 공통 국면=range_bound
+INFO:shadow_regime_conditional_entry_signal:[20/87] 처리 완료
+INFO:shadow_regime_conditional_entry_signal:[40/87] 처리 완료
+INFO:shadow_regime_conditional_entry_signal:[60/87] 처리 완료
+INFO:shadow_regime_conditional_entry_signal:[80/87] 처리 완료
+INFO:shadow_regime_conditional_entry_signal:[87/87] 처리 완료
+
+=== 국면 분기형 진입 신호 shadow 스냅샷(Phase 1) ===
+기준일: 2026-07-14, 시장 공통 국면: range_bound
+신호 산출 종목: 87/87 (판정불가/실패 0종목)
+상위 5종목(신호값 기준):
+  009150: 14.9113 (risk_adj_momentum_3m)
+  011070: 14.5582 (risk_adj_momentum_3m)
+  066570: 11.7699 (risk_adj_momentum_3m)
+  402340: 10.4100 (risk_adj_momentum_3m)
+  000810: 9.3940 (risk_adj_momentum_3m)
+하위 5종목(신호값 기준):
+  010130: -12.2524 (risk_adj_momentum_3m)
+  120110: -10.7355 (risk_adj_momentum_3m)
+  298020: -10.7292 (risk_adj_momentum_3m)
+  051915: -10.4545 (risk_adj_momentum_3m)
+  251270: -9.7840 (risk_adj_momentum_3m)
+
+산출 저장: logs/shadow_regime_conditional_entry_signal_2026-07-15.json

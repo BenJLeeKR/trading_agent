@@ -126,6 +126,15 @@
   수렴을 근거로 feature 추가 실험을 중단하고 **국면 분기형 entry 설계
   검토로 전환**을 확정. 유니버스/미시구조 재검토는 후순위 유지.
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (13차, 국면 분기형 entry 설계 초안 + shadow 계산기)
+- 수정내용: 12차 판정을 실제 설계 문서(`plans/[DESIGN] regime_
+  conditional_entry_signal_v1.md`)로 구체화했다 — 국면별 신호 선택
+  매트릭스, `entry_score` alpha layer 교체 제안(미적용), shadow 검증
+  Phase 1/2 계획. shadow 계산기 실행(2026-07-14 기준, 시장 공통 국면
+  `range_bound`) — 87/87종목 `risk_adj_momentum_3m` 분기 사용, 하락장
+  분기는 미발동(§21 모니터링과 정합). `entry_score` 코드/운영 변경 없음.
+
 ## 최근 메모
 
 > **📌 2026-07-14 BUY 주문경로 근본 복구 기준 확정 (최신, 최우선 반영)**:
@@ -347,6 +356,23 @@
 > 원형으로 삼는 것으로 재정의된다.** 이 판정은 사용자 확인을 권장한다.
 > 상세: `plans/[ANALYSIS] sppv_regime_polarity_synthesis_and_next_
 > direction.md`.
+
+> **📌 2026-07-15 국면 분기형 entry 설계 초안 + shadow 계산기 (최신)**:
+> 위 판정을 실제 설계 문서로 구체화했다 — 신규 문서
+> `plans/[DESIGN] regime_conditional_entry_signal_v1.md`에 **국면별
+> 신호 선택 매트릭스**(비하락장=`risk_adj_momentum_3m`, 하락장=
+> `reversal_1m`, 판정불가=신호 미산출), **`entry_score` 통합 방안**
+> (alpha layer 0.80 가중치 블록 교체 제안, 아직 미적용 — `entry_score`
+> 코드는 손대지 않았다), **shadow 검증 계획**(Phase 1=1회 스냅샷,
+> Phase 2=반복 로깅+out-of-sample 누적, Go/No-Go는 §16 기준 그대로
+> 재사용)을 작성했다. `scripts/shadow_regime_conditional_entry_
+> signal.py`(read-only, 신규 KIS 호출 0건 — 3년 캐시 재사용)로 실시간
+> 스냅샷을 1회 실행 — 기준일 2026-07-14, 시장 공통 국면 `range_bound`,
+> 87/87종목이 `risk_adj_momentum_3m` 분기 신호 산출(하락장 분기는
+> 미발동, §21 모니터링 NOT_TRIGGERED와 정합). 이번 실행은 신호 유의성을
+> 다시 검증한 것이 아니라 **설계가 실제로 동작하는지 확인한 연결성
+> 테스트**다. 상세: `plans/[DESIGN] regime_conditional_entry_
+> signal_v1.md`.
 
 > **📌 2026-07-12 방향 전환 (이력, 2026-07-14 결론으로 대체)**:
 > 지난 6주(2026-06-01~07-12) 매수 0건은 시스템 오류가 아니라 **하락장에서
@@ -4306,16 +4332,26 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      설계 검토로 전환**을 확정했다. 유니버스/미시구조 재검토는 후순위
      유지. 상세: `plans/[ANALYSIS] sppv_regime_polarity_synthesis_and_
      next_direction.md`.
-   - **SPPV-3(보류 유지, 형태 재정의)**: §2.15(SPPV-2.15)의 판정에 따라
-     다음 착수 형태는 기존 sub-component 조합의 단순 재현이 아니라
-     `regime_switch_v1` 아이디어를 국면 분기형 entry 설계 원형으로
-     삼는 것으로 재정의된다 — 착수 조건은 모니터링 스크립트가
-     `TRIGGERED`를 반환하거나(최근 12개월 창에 bearish_trend 30일 이상
-     편입) shadow 설계를 먼저 착수할지 — 사용자 확인 필요(§14.5,
-     §17.5, §18.6, §19.6, §20.5, §23). 착수 시
-     regime/allocation/strategy/source를
-     복원한 `entry_score` point-in-time 재현과 signal/risk-off/regime
-     eligibility 중복 억제 ablation.
+   - **SPPV-2.16(완료, 2026-07-15, 국면 분기형 entry 설계 초안 +
+     shadow 계산기)**: SPPV-2.15의 판정을 실제 설계 문서
+     (`plans/[DESIGN] regime_conditional_entry_signal_v1.md`)로
+     구체화 — 국면별 신호 선택 매트릭스, `entry_score` alpha layer
+     교체 제안(미적용), shadow 검증 Phase 1/2 계획. **결과: shadow
+     계산기 실행(2026-07-14 기준) — 시장 공통 국면 `range_bound`로
+     87/87종목이 `risk_adj_momentum_3m` 분기 사용, 하락장 분기는
+     미발동(§21 모니터링과 정합). `entry_score` 코드/운영 변경 없음.**
+     산출: `scripts/shadow_regime_conditional_entry_signal.py`
+     (read-only, 신규 KIS 호출 0건),
+     `logs/shadow_regime_conditional_entry_signal_2026-07-15.json`.
+     상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`.
+   - **SPPV-3(보류 유지, 형태 재정의)**: §2.16(SPPV-2.16)에서 국면
+     분기형 entry 설계 초안이 마련됐다 — 다음 착수 형태는 기존
+     sub-component 조합의 단순 재현이 아니라 이 설계 문서를 기반으로
+     regime/allocation/strategy/source를 복원한 `entry_score`
+     point-in-time 재현과 signal/risk-off/regime eligibility 중복
+     억제 ablation이다. 착수 전제(1차 게이트 `TRIGGERED` 전환 또는
+     shadow 설계 추가 검증 우선)는 사용자 확인 필요(§14.5, §17.5,
+     §18.6, §19.6, §20.5, §23).
    - **SPPV-4**: Virtual BUY의 `candidate → selected → expected value → would_buy
      → submitted`, MFE/MAE/낙폭/비용 차감 기대수익 비교.
    - **SPPV-5**: out-of-sample 기대수익 양수와 손실 제약을 모두 만족한 공식만
