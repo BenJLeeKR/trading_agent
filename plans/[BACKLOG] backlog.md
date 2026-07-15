@@ -134,6 +134,18 @@
   `risk_adj_momentum_3m` 분기 사용, 하락장 분기는 미발동(§21 모니터링과
   정합). `entry_score` 코드/운영 변경 없음 — 설계·shadow 단계 유지.
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (14차, regime_conditional_signal Phase 2
+  shadow 누적 사이클 구축)
+- 수정내용: Phase 2를 실행 가능한 오케스트레이터(신규
+  `scripts/run_regime_conditional_shadow_cycle.py`)로 구현했다 —
+  게이트 판정(§21)과 신호 계산(§22)을 벤치마크 1회 조회로 통합, 누적
+  이력 파일(JSONL, 중복 거래일 자동 skip) 구축, `TRIGGERED` 전환 시
+  재검증 runbook 출력. 실행 결과: 게이트 NOT_TRIGGERED, 신호
+  2026-07-14 기준 `range_bound`로 87/87종목 `risk_adj_momentum_3m`
+  분기 — 이력에 1줄 추가, 재실행 중복 방지 확인. `entry_score` 코드/
+  운영 변경 없음.
+
 ---
 
 ## 관리 원칙
@@ -400,15 +412,31 @@
     운영 변경 없음.** 산출:
     `logs/shadow_regime_conditional_entry_signal_2026-07-15.json`.
     상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`.
-  - **SPPV-3(보류 유지, 형태 재정의)**: §2.16(SPPV-2.16)에서 국면
-    분기형 entry 설계 초안이 마련됐다 — 다음 착수 형태는 이 설계 문서를
-    기반으로 regime/allocation/strategy/source를 복원한 `entry_score`
-    point-in-time 재현과 signal/risk-off/regime eligibility 중복 억제
-    ablation이다. 착수 조건은 모니터링 스크립트가 `TRIGGERED`를
-    반환하거나 shadow 설계를 추가 검증할지 — 사용자 확인 필요. 착수 시
-    당시 regime/allocation/strategy/source를 복원해
-    `entry_score`를 point-in-time 재현하고 signal 약세, `risk_off_
-    penalty`, regime eligibility block의 중복 억제를 ablation한다.
+  - **SPPV-2.17(완료, 2026-07-15, Phase 2 shadow 누적 사이클 구축)**:
+    Phase 2를 실행 가능한 오케스트레이터(신규
+    `scripts/run_regime_conditional_shadow_cycle.py`)로 구현했다 —
+    게이트 판정(§21)과 신호 계산(§22)을 벤치마크 1회 조회로 통합(중복
+    KIS 호출 없음), 누적 이력 파일 `logs/regime_conditional_signal_
+    shadow_history.jsonl`(append-only, 거래일당 1줄, 중복 거래일 자동
+    skip) 구축, `TRIGGERED`/`PARTIAL` 전환 시 재검증 절차(runbook)를
+    화면에 출력한다(자동 재검증은 하지 않음). **결과: 신규 KIS 호출
+    0건으로 게이트 NOT_TRIGGERED(bearish_trend 0일), 신호 2026-07-14
+    기준 `range_bound`로 87/87종목 `risk_adj_momentum_3m` 분기 — 이력에
+    1줄 추가. 즉시 재실행해 중복 방지 로직이 정상 발동함을 확인
+    (같은 거래일 재추가 skip).** `entry_score` 코드/운영 변경 없음.
+    산출: `scripts/run_regime_conditional_shadow_cycle.py`(read-only),
+    `logs/regime_conditional_signal_shadow_history.jsonl`. 상세:
+    `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §6.
+  - **SPPV-3(보류 유지, 형태 재정의)**: §2.16/§2.17에서 국면 분기형
+    entry 설계 초안과 Phase 2 누적 체계가 마련됐다 — 다음 착수 형태는
+    이 설계 문서를 기반으로 regime/allocation/strategy/source를
+    복원한 `entry_score` point-in-time 재현과 signal/risk-off/regime
+    eligibility 중복 억제 ablation이다. 착수 조건은 누적 이력에서
+    `TRIGGERED` 전환이 관측되거나 shadow 설계를 추가 검증할지 —
+    사용자 확인 필요. 착수 시 당시 regime/allocation/strategy/source를
+    복원해 `entry_score`를 point-in-time 재현하고 signal 약세,
+    `risk_off_penalty`, regime eligibility block의 중복 억제를
+    ablation한다.
   - **SPPV-4**: 각 shadow formula별 Virtual BUY를 만들고 `candidate → selected
     → expected value → would_buy → submitted` 전환, MFE/MAE/낙폭/비용 차감
     기대수익을 비교한다.

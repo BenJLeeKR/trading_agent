@@ -1,0 +1,15 @@
+
+=== 국면 분기형 진입 신호 — Phase 2 shadow 누적 사이클 ===
+[게이트] 기준일=2026-06-16, cutoff=2025-06-16, 국면분포={'bullish_trend': 239, 'range_bound': 6}, 판정=NOT_TRIGGERED
+[신호] 기준일=2026-07-14, 시장 공통 국면=range_bound
+INFO:run_regime_conditional_shadow_cycle:[20/87] 처리 완료
+INFO:run_regime_conditional_shadow_cycle:[40/87] 처리 완료
+INFO:run_regime_conditional_shadow_cycle:[60/87] 처리 완료
+INFO:run_regime_conditional_shadow_cycle:[80/87] 처리 완료
+INFO:run_regime_conditional_shadow_cycle:[87/87] 처리 완료
+
+[누적] 이력에 1줄 추가 완료 — logs/regime_conditional_signal_shadow_history.jsonl
+[누적] 현재까지 누적된 고유 거래일 수: 1
+[상세] 당일 스냅샷 저장 — logs/shadow_regime_conditional_entry_signal_2026-07-14.json
+
+게이트 판정 NOT_TRIGGERED — 규칙 A(관찰 유예) 유지, 추가 조치 없음.

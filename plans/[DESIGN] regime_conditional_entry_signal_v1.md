@@ -1,7 +1,8 @@
 # 국면 분기형 진입 신호 설계 (regime_conditional_entry_signal v1)
 
 작성일: 2026-07-15
-상태: **설계 초안 + shadow 계산기 1차 실행 완료 — 실거래/`entry_score` 반영 없음.**
+상태: **설계 초안 + shadow 계산기 1차 실행 완료 + Phase 2 누적 사이클
+구축·실행 완료(§6) — 실거래/`entry_score` 반영 없음.**
 상위 문서: `plans/[ANALYSIS] sppv_regime_polarity_synthesis_and_next_direction.md`
 (§4 판정 — "국면 분기형 entry 설계로 전환"), `plans/[DESIGN] signal_
 predictive_power_validation.md`(§16 이원 기준, §19/§20/§21 근거 실측),
@@ -133,7 +134,7 @@ score += 0.80 * _normalize_signed_score(regime_conditional_signal)
 universe 각 종목에 대해 어떤 값을 내는가"**를 1회 계산·기록했다.
 DB write 없음, 주문 경로 없음. §5에 실행 결과 기록.
 
-### 4.2 Phase 2(다음 턴 이후): 반복 shadow 로깅 + out-of-sample 누적
+### 4.2 Phase 2(이번 턴부터 실행 가능 — §6에서 구현·실행 완료)
 
 - 이 스크립트를 향후 3년 캐시를 갱신할 때마다(또는 별도 주기로) 함께
   실행해, **매번 다른 날짜의 스냅샷을 시계열로 누적**한다. 이는 새로운
@@ -142,6 +143,8 @@ DB write 없음, 주문 경로 없음. §5에 실행 결과 기록.
   기준을 그대로 적용해 `regime_conditional_signal`을 **점수 하나의
   shadow feature가 아니라 entry 후보로서** 재검증한다 — 이는 §21
   모니터링 스크립트의 `TRIGGERED` 신호와 연동된다.
+- 구체적 실행체와 누적 형식은 §6(Phase 2 shadow 누적 사이클 — 2026-07-15
+  구현 완료)에 기록한다.
 
 ### 4.3 Go/No-Go 판정 기준(§16 그대로 재사용, 신규 기준 없음)
 
@@ -188,15 +191,87 @@ DB write 없음, 주문 경로 없음. §5에 실행 결과 기록.
 산출: `logs/shadow_regime_conditional_entry_signal_2026-07-15.json`,
 `logs/shadow_regime_conditional_entry_signal_run_2026-07-15.log`.
 
-## 6. 다음 단계
+## 6. Phase 2 — shadow 누적 사이클 구축·실행 (2026-07-15)
 
-1. Phase 2(반복 shadow 로깅)를 향후 SPPV 턴 또는 3년 캐시 갱신 시
-   함께 수행한다 — 별도 스케줄러 등록은 운영 인프라 변경 금지 원칙에
-   따라 이번 턴에는 하지 않는다.
-2. §21 모니터링이 `TRIGGERED`로 전환되면, 이 문서 §4.3의 Go/No-Go
-   기준으로 `regime_conditional_signal`을 정식 재검증한다.
+### 6.1 왜 별도 오케스트레이터가 필요한가
+
+Phase 1의 `scripts/shadow_regime_conditional_entry_signal.py`는 "실행할
+때마다 그날의 스냅샷 JSON 하나"만 남긴다 — 반복 실행해도 이전 결과와
+연결되지 않고, `scripts/monitor_regime_switch_v1_gate.py`의 게이트
+판정과 별개로 돌아간다. Phase 2가 실제로 "누적"이 되려면 (1) 게이트
+판정과 신호 계산을 **한 번의 실행으로 묶고**, (2) 그 결과를 **시계열
+이력 파일에 추가(append)**하며, (3) 같은 거래일을 중복 기록하지 않아야
+한다. 이 세 가지를 위해 새 로직을 짜지 않고 기존 두 스크립트의 계산
+함수를 그대로 import해 재사용하는 오케스트레이터를 만들었다.
+
+### 6.2 구현 — `scripts/run_regime_conditional_shadow_cycle.py`
+
+- **벤치마크(069500) bars를 1회만 조회**해 (a) 게이트 판정(§21 로직,
+  `_build_benchmark_daily_series` 재사용)과 (b) 오늘 신호 계산(§22
+  로직, `_build_benchmark_regime_by_date`/`_latest_regime_and_signal`
+  재사용) 양쪽에 함께 쓴다 — 중복 KIS 호출이 생기지 않는다.
+- **누적 이력**: `logs/regime_conditional_signal_shadow_history.jsonl`
+  (append-only, JSON Lines, 거래일당 1줄). 각 줄은 `trade_date`,
+  `common_market_regime`, `gate_status`,
+  `gate_bearish_days_recent_12m`, `symbol_count_with_signal`,
+  `signal_source_distribution`(신호 산출 종목이 몇 개나 `risk_adj_
+  momentum_3m`/`reversal_1m`을 썼는지 집계)을 담는다 — 87종목 전체의
+  개별 값까지는 담지 않아(상세는 별도 당일자 JSON 참고) 파일이 시간이
+  지나도 가볍게 유지된다.
+- **중복 방지**: 실행 전 이력 파일을 읽어 이미 기록된 `trade_date`
+  집합을 만들고, 오늘 날짜가 이미 있으면 새 줄을 추가하지 않는다 —
+  같은 날 여러 번 실행해도 이력이 부풀지 않는다(재실행으로 실제
+  검증했다 — §6.3).
+- **당일 상세 스냅샷도 함께 저장**: Phase 1과 동일한 포맷으로
+  `logs/shadow_regime_conditional_entry_signal_<날짜>.json`(87종목
+  개별 값 전체)을 남긴다 — 이력 파일은 "요약", 이 파일은 "상세"로
+  역할을 분리한다.
+- **게이트 상태에 따른 안내**: 게이트가 `TRIGGERED`/`PARTIAL`이면
+  화면에 §4.3 재검증 절차(runbook)를 그대로 출력한다 — 자동 재검증은
+  하지 않는다(3년 캐시 재구축은 비용이 크고 신중한 판단이 필요하므로
+  사람이 다음 턴에 명시적으로 착수한다).
+
+### 6.3 실행 결과 (2026-07-15)
+
+3년 캐시 재사용, **신규 KIS 호출 0건**, 종료 코드 0.
+
+| 실행 | 결과 |
+|---|---|
+| 1차 실행 | 게이트: 기준일 2026-06-16, 국면분포 `{bullish_trend: 239, range_bound: 6}`, 판정 `NOT_TRIGGERED`. 신호: 기준일 2026-07-14, 국면 `range_bound`, 87/87종목 `risk_adj_momentum_3m` 분기. 이력에 1줄 추가(누적 거래일 1개). |
+| 2차 실행(즉시 재실행, 중복 방지 검증) | 동일 결과 계산됐으나 **"2026-07-14는 이미 이력에 존재 — 중복 추가 skip"** 정상 출력, 이력 줄 수 그대로 1개 유지 |
+
+**해석**: 게이트(2026-06-16 기준)와 신호 계산(2026-07-14 기준)의
+기준일이 다른 것은 §21.3에서 이미 설명한 정상적 지연이다 — 게이트
+판정은 forward-return 계산이 가능한 날짜까지만 국면을 라벨링하는
+`_build_benchmark_daily_series`(T+20 확보 필요)를 재사용하기 때문에
+약 20거래일 지연이 생기고, 신호 계산은 forward-return이 필요 없는
+`_build_benchmark_regime_by_date`를 써서 최신 봉 날짜까지 라벨링한다.
+이 둘은 서로 다른 목적(게이트=과거 12개월 분포 판정, 신호=오늘 값
+계산)에 맞게 각기 다른 기존 함수를 정확히 재사용한 결과이지 오류가
+아니다. 중복 방지 로직이 실제로 두 번째 실행에서 발동해, 반복 실행
+시에도 이력 파일이 부풀지 않음을 확인했다.
+
+산출: `scripts/run_regime_conditional_shadow_cycle.py`(read-only),
+`logs/regime_conditional_signal_shadow_history.jsonl`,
+`logs/shadow_regime_conditional_entry_signal_2026-07-14.json`,
+`logs/run_regime_conditional_shadow_cycle_run_2026-07-15.log`.
+
+## 7. 다음 단계
+
+1. `scripts/run_regime_conditional_shadow_cycle.py`를 향후 SPPV 턴
+   또는 3년 캐시 갱신 시마다 함께 실행해 이력을 계속 쌓는다 — 별도
+   스케줄러 등록은 운영 인프라 변경 금지 원칙에 따라 이번 턴에는
+   하지 않는다(수동/다음 턴 관행으로 유지).
+2. 게이트가 `TRIGGERED`로 전환되면, §6.2의 runbook(오케스트레이터가
+   화면에 출력하는 절차)을 그대로 따라 §4.3의 Go/No-Go 기준으로
+   `regime_conditional_signal`을 정식 재검증한다.
 3. §3의 `entry_score` 통합안은 제안 단계에 머문다 — `risk_off_
    penalty`와의 중복 여부는 SPPV-3(중복 penalty ablation) 착수 시
    함께 정리한다.
 4. `event_driven_unstable` 국면은 여전히 신호 미산출 상태로 둔다 —
    표본이 쌓이기 전까지 임의로 채우지 않는다.
+5. 이력 파일(`logs/regime_conditional_signal_shadow_history.jsonl`)이
+   충분히 쌓이면(예: 국면 분포가 실제로 변화하는 시점), 이 파일
+   자체를 §16 이원 기준 재검증의 "실시간 1차 표본"으로 활용하는 방안을
+   검토한다 — 지금은 3년 과거 재구축 캐시에 의존하지만, 누적이 쌓이면
+   실제 shadow 관측치로 1차 유의성을 확인할 수 있게 된다.

@@ -135,6 +135,17 @@
   `range_bound`) — 87/87종목 `risk_adj_momentum_3m` 분기 사용, 하락장
   분기는 미발동(§21 모니터링과 정합). `entry_score` 코드/운영 변경 없음.
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (14차, regime_conditional_signal Phase 2
+  shadow 누적 사이클 구축)
+- 수정내용: Phase 2를 실제 실행 가능한 오케스트레이터(`scripts/run_
+  regime_conditional_shadow_cycle.py`)로 구현했다 — 게이트 판정(§21)과
+  신호 계산(§22)을 벤치마크 1회 조회로 통합, 누적 이력 파일(JSONL,
+  중복 거래일 자동 skip) 구축, `TRIGGERED` 전환 시 재검증 runbook
+  출력. 실행 결과: 게이트 NOT_TRIGGERED, 신호 2026-07-14 기준
+  `range_bound`로 87/87종목 `risk_adj_momentum_3m` 분기 — 이력에 1줄
+  추가, 재실행 중복 방지 확인. `entry_score` 코드/운영 변경 없음.
+
 ## 최근 메모
 
 > **📌 2026-07-14 BUY 주문경로 근본 복구 기준 확정 (최신, 최우선 반영)**:
@@ -373,6 +384,24 @@
 > 다시 검증한 것이 아니라 **설계가 실제로 동작하는지 확인한 연결성
 > 테스트**다. 상세: `plans/[DESIGN] regime_conditional_entry_
 > signal_v1.md`.
+
+> **📌 2026-07-15 regime_conditional_signal Phase 2 shadow 누적
+> 사이클 구축 (최신)**: Phase 2(반복 shadow 로깅)를 실제 실행 가능한
+> 오케스트레이터로 구현했다 — 신규
+> `scripts/run_regime_conditional_shadow_cycle.py`가 §21(monitor_
+> regime_switch_v1_gate.py)의 게이트 판정 로직과 §22(shadow_regime_
+> conditional_entry_signal.py)의 신호 계산 로직을 **벤치마크 bars를
+> 1회만 조회해** 함께 실행하고, 그 결과를 누적 이력 파일
+> `logs/regime_conditional_signal_shadow_history.jsonl`(append-only,
+> 거래일당 1줄, 중복 거래일 자동 skip)에 추가한다. 게이트가
+> TRIGGERED/PARTIAL로 전환되면 재검증 절차(runbook)를 화면에 출력
+> 한다(자동 재검증은 하지 않음 — 3년 캐시 재구축은 신중한 판단이
+> 필요한 별도 작업). **실행 결과: 게이트 NOT_TRIGGERED(2026-06-16
+> 기준, bearish_trend 0일), 신호 계산 2026-07-14 기준 `range_bound`로
+> 87/87종목 `risk_adj_momentum_3m` 분기 — 이력에 1줄 추가.** 즉시
+> 재실행해 **중복 방지 로직이 실제로 발동**(같은 거래일 재추가 skip)
+> 함을 확인했다. `entry_score` 코드/운영 변경 없음. 상세:
+> `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §6.
 
 > **📌 2026-07-12 방향 전환 (이력, 2026-07-14 결론으로 대체)**:
 > 지난 6주(2026-06-01~07-12) 매수 0건은 시스템 오류가 아니라 **하락장에서
@@ -4344,13 +4373,24 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      (read-only, 신규 KIS 호출 0건),
      `logs/shadow_regime_conditional_entry_signal_2026-07-15.json`.
      상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`.
-   - **SPPV-3(보류 유지, 형태 재정의)**: §2.16(SPPV-2.16)에서 국면
-     분기형 entry 설계 초안이 마련됐다 — 다음 착수 형태는 기존
-     sub-component 조합의 단순 재현이 아니라 이 설계 문서를 기반으로
-     regime/allocation/strategy/source를 복원한 `entry_score`
+   - **SPPV-2.17(완료, 2026-07-15, Phase 2 shadow 누적 사이클
+     구축)**: Phase 2를 실행 가능한 오케스트레이터
+     (`scripts/run_regime_conditional_shadow_cycle.py`)로 구현 —
+     게이트 판정(§21)과 신호 계산(§22)을 벤치마크 1회 조회로 통합,
+     누적 이력 파일(JSONL, 중복 거래일 자동 skip) 구축, `TRIGGERED`
+     전환 시 재검증 runbook 출력. **결과: 게이트 NOT_TRIGGERED, 신호
+     2026-07-14 기준 `range_bound`로 87/87종목 `risk_adj_momentum_3m`
+     분기 — 이력에 1줄 추가, 재실행 중복 방지 확인.** `entry_score`
+     코드/운영 변경 없음. 산출:
+     `logs/regime_conditional_signal_shadow_history.jsonl`. 상세:
+     `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §6.
+   - **SPPV-3(보류 유지, 형태 재정의)**: §2.16/§2.17에서 국면 분기형
+     entry 설계 초안과 Phase 2 누적 체계가 마련됐다 — 다음 착수 형태는
+     기존 sub-component 조합의 단순 재현이 아니라 이 설계 문서를
+     기반으로 regime/allocation/strategy/source를 복원한 `entry_score`
      point-in-time 재현과 signal/risk-off/regime eligibility 중복
-     억제 ablation이다. 착수 전제(1차 게이트 `TRIGGERED` 전환 또는
-     shadow 설계 추가 검증 우선)는 사용자 확인 필요(§14.5, §17.5,
+     억제 ablation이다. 착수 전제(누적 이력에서 `TRIGGERED` 전환 관측
+     또는 shadow 설계 추가 검증 우선)는 사용자 확인 필요(§14.5, §17.5,
      §18.6, §19.6, §20.5, §23).
    - **SPPV-4**: Virtual BUY의 `candidate → selected → expected value → would_buy
      → submitted`, MFE/MAE/낙폭/비용 차감 기대수익 비교.

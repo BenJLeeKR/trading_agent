@@ -271,6 +271,26 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   사용했고 하락장 분기는 미발동(§21 모니터링과 정합). `entry_score`
   코드/운영에는 아무 변경도 가하지 않았다 — 설계·shadow 단계에 머문다.
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (14차, regime_conditional_signal Phase 2 shadow
+  누적 사이클 구축)
+- 수정내용: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §4.2가 지시한 Phase 2(반복 shadow 로깅)를 실제 실행 가능한 형태로
+  구현했다(SPPV-2.17). 신규 오케스트레이터
+  `scripts/run_regime_conditional_shadow_cycle.py`가 §21(monitor_
+  regime_switch_v1_gate.py)의 게이트 판정 로직과 §22(shadow_regime_
+  conditional_entry_signal.py)의 신호 계산 로직을 **벤치마크 bars를
+  1회만 조회해** 함께 실행하고, 그 결과를 누적 이력 파일
+  `logs/regime_conditional_signal_shadow_history.jsonl`(append-only,
+  거래일당 1줄, 중복 거래일 자동 skip)에 추가한다. 게이트가
+  TRIGGERED/PARTIAL로 전환되면 §4.3의 재검증 절차(runbook)를 화면에
+  출력한다(자동 재검증은 하지 않음). **실행 결과: 게이트
+  NOT_TRIGGERED(2026-06-16 기준, bearish_trend 0일), 신호 계산
+  2026-07-14 기준 `range_bound`로 87/87종목 `risk_adj_momentum_3m`
+  분기 — 이력에 1줄 추가.** 즉시 재실행해 중복 방지 로직이 실제로
+  발동함(같은 거래일 재추가 skip)을 확인했다. `entry_score` 코드/운영
+  변경 없음.
+
 ---
 
 ## 진행 체크리스트
@@ -481,6 +501,24 @@ canonical),
     신규 KIS 호출 0건 — 3년 캐시 재사용),
     `logs/shadow_regime_conditional_entry_signal_2026-07-15.json`,
     `logs/shadow_regime_conditional_entry_signal_run_2026-07-15.log`.
+- [x] **SPPV-2.17(신설)** regime_conditional_signal Phase 2 shadow
+  누적 사이클 구축 (완료, 2026-07-15)
+  - 작업 범위: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
+    §4.2의 Phase 2를 실행 가능한 오케스트레이터로 구현 — 게이트 판정
+    (§21)과 신호 계산(§22)을 벤치마크 1회 조회로 통합, 누적 이력
+    파일(JSONL, 중복 거래일 skip) 구축, `TRIGGERED` 전환 시 재검증
+    runbook 출력.
+  - **결과: 신규 KIS 호출 0건으로 게이트 NOT_TRIGGERED(bearish_trend
+    0일), 신호 2026-07-14 기준 `range_bound`로 87/87종목 `risk_adj_
+    momentum_3m` 분기 산출 — 이력에 1줄 추가. 재실행 시 중복 방지
+    로직이 정상 발동함을 확인.** `entry_score` 코드/운영 변경 없음.
+    상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §6.
+  - 산출물: `scripts/run_regime_conditional_shadow_cycle.py`
+    (read-only, 신규 KIS 호출 0건 — 3년 캐시 재사용),
+    `logs/regime_conditional_signal_shadow_history.jsonl`(누적 이력,
+    JSON Lines), `logs/shadow_regime_conditional_entry_signal_
+    2026-07-14.json`(당일 상세),
+    `logs/run_regime_conditional_shadow_cycle_run_2026-07-15.log`.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의**: §12(1년, 자기참조 포함) 당시 "알파 근거
     강화"로 낙관했던 것이 §14(3년, 자기참조 제거) 확장 검증에서 반박됨 —
@@ -1184,6 +1222,13 @@ bearish/range_bound 어느 국면 내부도 `overall_score`/`slow_score`가
   KIS 호출 0건 — 3년 캐시 재사용)
 - `logs/shadow_regime_conditional_entry_signal_2026-07-15.json`,
   `logs/shadow_regime_conditional_entry_signal_run_2026-07-15.log`
+- `scripts/run_regime_conditional_shadow_cycle.py`(read-only, 신규
+  KIS 호출 0건 — Phase 2 오케스트레이터, §21+§22 로직 통합)
+- `logs/regime_conditional_signal_shadow_history.jsonl`(누적 이력,
+  append-only, 거래일당 1줄),
+  `logs/shadow_regime_conditional_entry_signal_2026-07-14.json`(당일
+  상세 스냅샷),
+  `logs/run_regime_conditional_shadow_cycle_run_2026-07-15.log`
 - `logs/_bars_cache_core88_2026-07-14/`(88종목 1년 캐시, 재사용 가능)
 - `logs/_bars_cache_core87_3y_2026-07-14/`(87종목+벤치마크 3년 캐시,
   SPPV-2.7/2.8/2.9/2.10/2.11/2.12가 공유 재사용)

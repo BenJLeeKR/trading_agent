@@ -1,0 +1,1 @@
+{"as_of": "2026-07-15T17:31:37.739272+09:00", "trade_date": "2026-07-14", "common_market_regime": "range_bound", "gate_status": "NOT_TRIGGERED", "gate_bearish_days_recent_12m": 0, "symbol_count_total": 87, "symbol_count_with_signal": 87, "signal_source_distribution": {"risk_adj_momentum_3m": 87}, "fetch_failures": []}
