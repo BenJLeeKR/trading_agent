@@ -117,6 +117,15 @@
   유의하게 역전(t=-2.13) — 시장 베타 제거 상대강도조차 하락장에서
   반대로 작동한다는 규칙성 재확인. SPPV-3 착수는 계속 보류.
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (12차, 국면별 신호 극성 종합 및 상위 방향 확정)
+- 수정내용: SPPV-2.9~2.14의 10개 신호를 종합표로 통합(별도 문서
+  `plans/[ANALYSIS] sppv_regime_polarity_synthesis_and_next_direction.md`)
+  — 8/10이 "추세형=상승/횡보 전용, 되돌림형=하락장 전용" 규칙성을
+  따름(`rsi_signal`만 상승장 역전 예외). 5개 축 모두 시도 후 동일 결론
+  수렴을 근거로 feature 추가 실험을 중단하고 **국면 분기형 entry 설계
+  검토로 전환**을 확정. 유니버스/미시구조 재검토는 후순위 유지.
+
 ## 최근 메모
 
 > **📌 2026-07-14 BUY 주문경로 근본 복구 기준 확정 (최신, 최우선 반영)**:
@@ -304,6 +313,40 @@
 > 반대로 작동한다**는, 절대/상대 지표 구분을 넘어선 더 강력한 규칙성을
 > 재확인했다. **SPPV-3 착수는 계속 보류**한다. 상세:
 > `plans/[DESIGN] signal_predictive_power_validation.md` §21, §22.
+
+> **📌 2026-07-15 국면별 신호 극성 종합 및 상위 방향 확정 (최신,
+> 최우선 반영)**: SPPV-2.9~2.14(§17~§22)에서 산출된 10개 신호
+> (`fast_score`, `fast_trend`, `sma5_over_sma20_gap`, `rsi_signal`,
+> `rsi_mean_reversion`, `relative_strength_rank_1m`, `reversal_1m`,
+> `money_flow_5d`, `risk_adj_momentum_3m`, `regime_switch_v1`)를 절대
+> 추세·오실레이터·자금흐름·상대강도·복합 5개 축으로 분류해 하나의
+> 종합표로 정리했다(별도 문서 `plans/[ANALYSIS] sppv_regime_polarity_
+> synthesis_and_next_direction.md`). **핵심 발견: 8/10 신호가 "추세형
+> 신호는 상승/횡보장 전용(또는 무신호), 되돌림형 신호는 하락장 전용"
+> 규칙성을 따른다** — 절대 지표뿐 아니라 시장 베타를 제거한 상대
+> 지표(`relative_strength_rank_1m`)에서도 재현돼 구조적 특성으로
+> 판단된다. **예외: `rsi_signal`은 하락장이 아니라 상승장에서 역전** —
+> 규칙성에 억지로 끼워 맞추지 않고 별개 문제(RSI 계단함수 설계 결함)로
+> 분류했다. `fast_trend` 단독은 하락장에서 비유의(-0.79)하지만 `fast_
+> score`(합성) 하락장은 강하게 유의하게 역전(-2.79)한다는 점도 확인 —
+> 개별 성분보다 상관된 조합 효과가 더 크다.
+>
+> **판정: feature 추가 실험을 중단하고 국면 분기형 entry 설계 검토로
+> 전환한다.** 절대·상대·오실레이터·거래량·복합 5개 축을 모두 시도해
+> 매번 같은 결론에 수렴했다는 것이 근거다 — 11번째 새 feature를
+> 시도해도 같은 결론이 반복될 가능성이 높고, "결론이 나올 때까지 새
+> feature를 계속 시도"하는 것 자체가 §20에서 경계한 데이터 스누핑과
+> 같은 위험을 반복한다. `regime_switch_v1`이 단일 정적 가중치로는
+> 얻지 못한 트랙 최고 2차 pooled 유의성(T+5=2.60/T+20=2.36)을 국면
+> "전환"만으로 달성한 것이 이 판정의 직접 증거다. **유니버스/시장
+> 미시구조 재검토는 후순위로 유지**한다 — 근본 설계 검토(§2)의 "신호
+> 미검증 시 소싱 개선은 잘못된 레버" 원칙이, 지금은 "이미 검증된
+> 국면 조건부 신호를 먼저 entry 설계에 활용하라"는 방향으로 이어진다.
+> **SPPV-3의 다음 착수 형태는 `entry_score` sub-component의 단순
+> 재현이 아니라 `regime_switch_v1` 아이디어를 국면 분기형 entry 설계
+> 원형으로 삼는 것으로 재정의된다.** 이 판정은 사용자 확인을 권장한다.
+> 상세: `plans/[ANALYSIS] sppv_regime_polarity_synthesis_and_next_
+> direction.md`.
 
 > **📌 2026-07-12 방향 전환 (이력, 2026-07-14 결론으로 대체)**:
 > 지난 6주(2026-06-01~07-12) 매수 0건은 시스템 오류가 아니라 **하락장에서
@@ -4251,12 +4294,25 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      `logs/regime_switch_v1_gate_monitor_2026-07-14.json`,
      `logs/signal_ic_sppv2_14_new_fast_features_2026-07-14.json`. 상세:
      `plans/[DESIGN] signal_predictive_power_validation.md` §21, §22.
-   - **SPPV-3(보류 유지, 사유 재교체)**: §21/§22(SPPV-2.13/2.14)에서
-     `regime_switch_v1` 모니터링이 실행 가능한 상태로 구현됐고(현재
-     NOT_TRIGGERED), 완전 신규 fast 계열 feature도 범용 대체 후보를
-     찾지 못했다 — 착수 조건은 모니터링 스크립트가 `TRIGGERED`를
-     반환하는 것(최근 12개월 창에 bearish_trend 30일 이상 편입) — 사용자
-     확인 필요(§14.5, §17.5, §18.6, §19.6, §20.5). 착수 시
+   - **SPPV-2.15(완료, 2026-07-15, 국면별 신호 극성 종합 및 상위 방향
+     확정)**: SPPV-2.9~2.14의 10개 신호를 절대추세/오실레이터/자금흐름/
+     상대강도/복합 5개 축으로 분류해 종합표로 정리(별도 문서
+     `plans/[ANALYSIS] sppv_regime_polarity_synthesis_and_next_
+     direction.md`). **결과: 8/10이 "추세형=상승/횡보 전용, 되돌림형=
+     하락장 전용" 규칙성을 따름(`rsi_signal`만 상승장 역전 예외).**
+     5개 축 모두 시도 후 동일 결론 수렴 + `regime_switch_v1`이 정적
+     신호로는 얻지 못한 트랙 최고 2차 유의성을 국면 전환만으로 달성한
+     것을 근거로 **feature 추가 실험을 중단하고 국면 분기형 entry
+     설계 검토로 전환**을 확정했다. 유니버스/미시구조 재검토는 후순위
+     유지. 상세: `plans/[ANALYSIS] sppv_regime_polarity_synthesis_and_
+     next_direction.md`.
+   - **SPPV-3(보류 유지, 형태 재정의)**: §2.15(SPPV-2.15)의 판정에 따라
+     다음 착수 형태는 기존 sub-component 조합의 단순 재현이 아니라
+     `regime_switch_v1` 아이디어를 국면 분기형 entry 설계 원형으로
+     삼는 것으로 재정의된다 — 착수 조건은 모니터링 스크립트가
+     `TRIGGERED`를 반환하거나(최근 12개월 창에 bearish_trend 30일 이상
+     편입) shadow 설계를 먼저 착수할지 — 사용자 확인 필요(§14.5,
+     §17.5, §18.6, §19.6, §20.5, §23). 착수 시
      regime/allocation/strategy/source를
      복원한 `entry_score` point-in-time 재현과 signal/risk-off/regime
      eligibility 중복 억제 ablation.

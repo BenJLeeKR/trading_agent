@@ -114,6 +114,16 @@
   시장 베타 제거 상대강도조차 하락장에서 반대로 작동한다는 규칙성
   재확인. SPPV-3 착수는 계속 보류.
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (12차, 국면별 신호 극성 종합 및 상위 방향 확정)
+- 수정내용: SPPV-2.9~2.14의 10개 신호를 종합표로 통합(신규 문서
+  `plans/[ANALYSIS] sppv_regime_polarity_synthesis_and_next_direction.md`)
+  — 8/10이 "추세형=상승/횡보 전용, 되돌림형=하락장 전용" 규칙성을
+  따름(`rsi_signal`만 상승장 역전 예외). feature 추가 실험을 중단하고
+  **국면 분기형 entry 설계 검토로 전환**을 확정, 유니버스/미시구조
+  재검토는 후순위 유지. SPPV-3의 다음 착수 형태를 `regime_switch_v1`
+  아이디어 기반 entry 설계 원형으로 재정의했다.
+
 ---
 
 ## 관리 원칙
@@ -349,12 +359,29 @@
     `logs/regime_switch_v1_gate_monitor_2026-07-14.json`,
     `logs/signal_ic_sppv2_14_new_fast_features_2026-07-14.json`. 상세:
     `plans/[DESIGN] signal_predictive_power_validation.md` §21, §22.
-  - **SPPV-3(보류 유지, 사유 재교체)**: §21/§22(SPPV-2.13/2.14)에서
-    `regime_switch_v1` 모니터링이 실행 가능한 상태로 구현됐고(현재
-    NOT_TRIGGERED), 완전 신규 fast 계열 feature도 범용 대체 후보를
-    찾지 못했다 — 착수 조건은 모니터링 스크립트가 `TRIGGERED`를
-    반환하는 것 — 사용자 확인 필요. 착수 시 당시
-    regime/allocation/strategy/source를 복원해
+  - **SPPV-2.15(완료, 2026-07-15, 국면별 신호 극성 종합 및 상위 방향
+    확정)**: SPPV-2.9~2.14의 10개 신호(`fast_score`, `fast_trend`,
+    `sma5_over_sma20_gap`, `rsi_signal`, `rsi_mean_reversion`,
+    `relative_strength_rank_1m`, `reversal_1m`, `money_flow_5d`,
+    `risk_adj_momentum_3m`, `regime_switch_v1`)를 절대추세/오실레이터/
+    자금흐름/상대강도/복합 5개 축으로 분류해 종합표로 정리했다(신규
+    문서 `plans/[ANALYSIS] sppv_regime_polarity_synthesis_and_next_
+    direction.md`). **결과: 8/10이 "추세형=상승/횡보 전용, 되돌림형=
+    하락장 전용" 규칙성을 따름(`rsi_signal`만 상승장 역전 예외), `fast_
+    trend` 단독은 하락장 비유의(-0.79)이나 `fast_score`(합성)는 유의
+    역전(-2.79) — 개별 성분보다 조합 효과가 큼.** 5개 축 모두 시도 후
+    동일 결론 수렴 + `regime_switch_v1`이 정적 신호로는 얻지 못한 트랙
+    최고 2차 유의성(T+5=2.60/T+20=2.36)을 국면 전환만으로 달성한 것을
+    근거로 **feature 추가 실험을 중단하고 국면 분기형 entry 설계
+    검토로 전환**을 확정했다. 유니버스/미시구조 재검토는 후순위 유지.
+    상세: `plans/[ANALYSIS] sppv_regime_polarity_synthesis_and_next_
+    direction.md`.
+  - **SPPV-3(보류 유지, 형태 재정의)**: §2.15(SPPV-2.15)의 판정에 따라
+    다음 착수 형태는 기존 sub-component 조합의 단순 재현이 아니라
+    `regime_switch_v1` 아이디어를 국면 분기형 entry 설계 원형으로 삼는
+    것으로 재정의된다 — 착수 조건은 모니터링 스크립트가 `TRIGGERED`를
+    반환하거나 shadow 설계를 먼저 착수할지 — 사용자 확인 필요. 착수 시
+    당시 regime/allocation/strategy/source를 복원해
     `entry_score`를 point-in-time 재현하고 signal 약세, `risk_off_
     penalty`, regime eligibility block의 중복 억제를 ablation한다.
   - **SPPV-4**: 각 shadow formula별 Virtual BUY를 만들고 `candidate → selected
