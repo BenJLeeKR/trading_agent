@@ -166,6 +166,15 @@
   비하락장인데 종목별 하락장" 60건. SPPV-3 본작업용 비교 실험(현행
   종목별 정의 vs 시장 공통 정렬) 설계 완료.
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (17차, §9.6 비교 실험 실측)
+- 수정내용: 종목별 vs 시장 공통 regime 정의 비교 실험을 실행 — 변형
+  B(시장 공통)가 통과율은 더 낮으면서(18.75%<20.64%) 통과 종목의
+  forward return은 더 높음(T+5 +1.04%>+0.93%, T+20 +3.58%>+3.19%,
+  둘 다 유의). A-B 차이 직접 유의성 미검정, 통과군 내부 quintile
+  spread 여전히 역전 — 판정 Watch(조건부 유리). 실행 로그로 KIS 호출
+  0건 확인.
+
 ## 최근 메모
 
 > **📌 2026-07-14 BUY 주문경로 근본 복구 기준 확정 (최신, 최우선 반영)**:
@@ -471,6 +480,28 @@
 > — 새 KIS 호출 없이 기존 3년 캐시로 수행 가능하다. `entry_score`
 > 코드/운영 변경 없음. 상세: `plans/[DESIGN] regime_conditional_
 > entry_signal_v1.md` §9.
+
+> **📌 2026-07-15 §9.6 비교 실험 실측 — 종목별 vs 시장 공통 regime
+> 정의 (최신)**: 위 §9.6에서 설계한 실험을 실제로 실행했다(신규
+> `scripts/validate_entry_score_regime_definition_comparison.py`).
+> 3년 rolling 표본(87종목, 56,753건)에 운영 함수 `_assess_buy_
+> eligibility()`를 그대로 호출해 **변형 A(종목별 regime)**와 **변형
+> B(시장 공통 regime)** 각각의 통과군 T+5/T+20 forward return을 §16
+> 이원 검증 도구로 비교했다. **핵심 결과: 변형 B가 변형 A보다 통과율은
+> 더 낮으면서(18.75% < 20.64%) 통과 종목의 forward return은 더 높다
+> (T+5 +1.0357%>+0.9254%, T+20 +3.5780%>+3.1861%, 둘 다 baseline
+> 대비 통계적으로 유의, t_NW 7.3~7.7).** "더 많이 통과시켜서 좋아
+> 보이는 착시"가 아니라 "더 적게, 더 좋은 것만" 통과시키는 방향이라
+> 과잉 억제가 아니라 정밀한 억제일 가능성을 뒷받침한다. **다만 A-B
+> 차이 자체의 통계적 유의성은 이번에 검정하지 않았고**, 통과군 내부
+> 에서도 `overall_score` quintile spread가 여전히 유의하게 역전
+> (T+20 t_NW=-2.84~-3.06)해 `overall_score` 재순위화 자체의 문제는
+> 별개로 남아있다. **판정: Watch(조건부 유리, 확정 Go 아님)** — 단순
+> 통과율 증가만으로 긍정 판단하지 않는다는 원칙에 따라 임계값/정의
+> 변경을 밀어붙이지 않는다. **이번 턴 실행의 실제 KIS 호출 여부는
+> 가정하지 않고 로그로 확인** — `HTTP Request:` **0건**(3년 캐시
+> 완전 재사용, 종료 코드 0). 상세: `plans/[DESIGN] regime_conditional_
+> entry_signal_v1.md` §10.
 
 > **📌 2026-07-12 방향 전환 (이력, 2026-07-14 결론으로 대체)**:
 > 지난 6주(2026-06-01~07-12) 매수 0건은 시스템 오류가 아니라 **하락장에서
@@ -4481,15 +4512,31 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      실험(현행 종목별 정의 vs 시장 공통 정렬, §16 이원 기준 재사용,
      기존 3년 캐시로 신규 KIS 호출 없이 수행 가능)을 §9.6에 설계.
      상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §9.
-   - **SPPV-3(보류 유지, 형태 재정의)**: §2.16~§2.19에서 국면 분기형
+   - **SPPV-2.20(완료, 2026-07-15, §9.6 비교 실험 실측)**: 종목별 vs
+     시장 공통 regime 정의 비교 실험을 실제로 실행 — 운영 `_assess_
+     buy_eligibility()`를 그대로 호출해 변형 A/B 각각의 통과군
+     T+5/T+20 forward return을 §16 이원 검증 도구로 비교. **결과:
+     변형 B가 통과율은 더 낮으면서(18.75%<20.64%) 통과 종목의
+     forward return은 더 높음(T+5 +1.04%>+0.93%, T+20 +3.58%>+3.19%,
+     둘 다 baseline 대비 유의, t_NW 7.3~7.7)** — 과잉 억제가 아니라
+     정밀한 억제 가능성. A-B 차이 직접 유의성 미검정, 통과군 내부
+     quintile spread 여전히 유의하게 역전(T+20 t_NW=-2.84~-3.06) —
+     **판정 Watch(조건부 유리, 확정 Go 아님)**. 실행 로그 확인 결과
+     `HTTP Request:` 0건(가정 아닌 실측 확인). 산출:
+     `scripts/validate_entry_score_regime_definition_comparison.py`
+     (read-only, 신규 KIS 호출 0건),
+     `logs/signal_ic_entry_score_regime_definition_comparison_
+     2026-07-15.json`. 상세: `plans/[DESIGN] regime_conditional_
+     entry_signal_v1.md` §10.
+   - **SPPV-3(보류 유지, 형태 재정의)**: §2.16~§2.20에서 국면 분기형
      entry 설계 초안, Phase 2 누적 체계, 중복 penalty 실측·누적,
-     비교 실험 설계가 마련됐다 — 다음 착수 형태는 이 설계 문서를
+     비교 실험 설계·실측이 마련됐다 — 다음 착수 형태는 이 설계 문서를
      기반으로 regime/allocation/strategy/source를 복원한 `entry_score`
      point-in-time 재현과 signal/risk-off/regime eligibility 중복
-     억제 ablation, §9.6의 종목별 vs 시장 공통 국면 정의 비교 실험
-     이다. 착수 전제(누적 이력에서 `TRIGGERED` 전환 관측 또는 shadow
-     설계 추가 검증 우선)는 사용자 확인 필요(§14.5, §17.5, §18.6,
-     §19.6, §20.5, §23).
+     억제 ablation이다. A-B 차이 직접 유의성 검정과 최근 12개월 1차
+     창 재확인이 선행 과제로 남았다. 착수 전제(누적 이력에서
+     `TRIGGERED` 전환 관측 또는 shadow 설계 추가 검증 우선)는 사용자
+     확인 필요(§14.5, §17.5, §18.6, §19.6, §20.5, §23).
    - **SPPV-4**: Virtual BUY의 `candidate → selected → expected value → would_buy
      → submitted`, MFE/MAE/낙폭/비용 차감 기대수익 비교.
    - **SPPV-5**: out-of-sample 기대수익 양수와 손실 제약을 모두 만족한 공식만

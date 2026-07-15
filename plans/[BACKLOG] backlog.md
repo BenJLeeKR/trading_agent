@@ -169,6 +169,18 @@
   비하락장인데 종목별 하락장" 60건. 재실행 중복 방지 확인. SPPV-3
   본작업용 비교 실험(현행 종목별 정의 vs 시장 공통 정렬)을 설계.
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (17차, §9.6 비교 실험 실측)
+- 수정내용: 종목별 vs 시장 공통 regime 정의 비교 실험을 실제로
+  실행했다 — 운영 `_assess_buy_eligibility()`를 그대로 호출해 변형
+  A/B 각각의 통과군 forward return을 §16 이원 검증 도구로 비교. 변형
+  B가 통과율은 더 낮으면서(18.75%<20.64%) 통과 종목의 forward
+  return은 더 높음(T+5 +1.04%>+0.93%, T+20 +3.58%>+3.19%, 둘 다
+  유의) — 과잉 억제가 아니라 정밀한 억제 가능성. A-B 차이 직접
+  유의성 미검정, 통과군 내부 quintile spread 여전히 역전 — 판정
+  Watch(조건부 유리, 확정 Go 아님). 실행 로그로 KIS 호출 0건 확인
+  (가정 아닌 실측).
+
 ---
 
 ## 관리 원칙
@@ -487,14 +499,34 @@
     신규 KIS 호출 0건), `logs/entry_score_penalty_ablation_
     history.jsonl`. 상세: `plans/[DESIGN] regime_conditional_
     entry_signal_v1.md` §9.
-  - **SPPV-3(보류 유지, 형태 재정의)**: §2.16~§2.19에서 국면 분기형
+  - **SPPV-2.20(완료, 2026-07-15, §9.6 비교 실험 실측)**: 종목별 vs
+    시장 공통 regime 정의 비교 실험을 실제로 실행했다 — 신규
+    `scripts/validate_entry_score_regime_definition_comparison.py`가
+    운영 `_assess_buy_eligibility()`를 그대로 호출해 변형 A(종목별)/
+    변형 B(시장 공통) 각각의 통과군 T+5/T+20 forward return을 §16
+    이원 검증 도구로 비교. **결과: 변형 B가 통과율은 더 낮으면서
+    (18.75%<20.64%) 통과 종목의 forward return은 더 높음(T+5
+    +1.0357%>+0.9254%, T+20 +3.5780%>+3.1861%, 둘 다 baseline 대비
+    유의, t_NW 7.3~7.7)** — 과잉 억제가 아니라 정밀한 억제 가능성을
+    뒷받침. A-B 차이 자체의 직접 유의성은 미검정, 통과군 내부
+    `overall_score` quintile spread는 여전히 유의하게
+    역전(T+20 t_NW=-2.84~-3.06) — **판정 Watch(조건부 유리, 확정
+    Go 아님)**. 실행 로그를 가정 없이 확인한 결과 `HTTP Request:`
+    0건(3년 캐시 완전 재사용). 산출:
+    `scripts/validate_entry_score_regime_definition_comparison.py`
+    (read-only, 신규 KIS 호출 0건),
+    `logs/signal_ic_entry_score_regime_definition_comparison_
+    2026-07-15.json`. 상세: `plans/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §10.
+  - **SPPV-3(보류 유지, 형태 재정의)**: §2.16~§2.20에서 국면 분기형
     entry 설계 초안, Phase 2 누적 체계, 중복 penalty 실측·누적,
-    비교 실험 설계가 마련됐다 — 다음 착수 형태는 이 설계 문서를
+    비교 실험 설계·실측이 마련됐다 — 다음 착수 형태는 이 설계 문서를
     기반으로 regime/allocation/strategy/source를 복원한 `entry_score`
     point-in-time 재현과 signal/risk-off/regime eligibility 중복
-    억제 ablation, §9.6의 종목별 vs 시장 공통 국면 정의 비교 실험이다.
-    착수 조건은 누적 이력에서 `TRIGGERED` 전환이 관측되거나 shadow
-    설계를 추가 검증할지 — 사용자 확인 필요. 착수 시 당시
+    억제 ablation이다. A-B 차이 직접 유의성 검정과 최근 12개월 1차
+    창 재확인이 선행 과제로 남았다. 착수 조건은 누적 이력에서
+    `TRIGGERED` 전환이 관측되거나 shadow 설계를 추가 검증할지 —
+    사용자 확인 필요. 착수 시 당시
     regime/allocation/strategy/source를
     복원해 `entry_score`를 point-in-time 재현하고 signal 약세,
     `risk_off_penalty`, regime eligibility block의 중복 억제를

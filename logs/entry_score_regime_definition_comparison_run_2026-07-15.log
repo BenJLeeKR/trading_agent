@@ -1,0 +1,29 @@
+INFO:validate_entry_score_regime_definition_comparison:시장 공통 국면 분포(3년): {'bearish_trend': 96, 'range_bound': 200, 'event_driven_unstable': 6, 'bullish_trend': 351}
+INFO:validate_entry_score_regime_definition_comparison:[20/87] 누적 표본 13060건
+INFO:validate_entry_score_regime_definition_comparison:[40/87] 누적 표본 26120건
+INFO:validate_entry_score_regime_definition_comparison:[60/87] 누적 표본 39180건
+INFO:validate_entry_score_regime_definition_comparison:[80/87] 누적 표본 52240건
+INFO:validate_entry_score_regime_definition_comparison:[87/87] 누적 표본 56753건
+INFO:validate_entry_score_regime_definition_comparison:전체 3년 표본 56753건, 실패 0종목
+
+=== 종목별 regime vs 시장 공통 regime — eligibility 통과군 forward return 비교 ===
+전체 표본: 56753건, 시장 공통 국면 분포(3년): {'bearish_trend': 96, 'range_bound': 200, 'event_driven_unstable': 6, 'bullish_trend': 351}
+
+[통과 종목 수] 변형 A(종목별) 통과 11711/56753 (20.64%)
+[통과 종목 수] 변형 B(시장 공통) 통과 10639/56752 (18.75%, 시장 공통 라벨이 존재하는 표본 기준)
+
+[T+5]
+  baseline(전체 표본, eligibility 무관): {'n': 56753, 'mean_pct': 0.6706, 't_naive': 23.37, 't_newey_west': 12.82, 'pct_positive': 0.5113}
+  변형 A(종목별) 통과군 forward return: {'n': 11711, 'mean_pct': 0.9254, 't_naive': 11.86, 't_newey_west': 7.4, 'pct_positive': 0.5097}
+  변형 A 통과군 내부 quintile spread: {'n': 630, 'mean_pct': 0.2001, 't_naive': 0.72, 't_newey_west': 0.64, 'pct_positive': 0.4762}
+  변형 B(시장 공통) 통과군 forward return: {'n': 10639, 'mean_pct': 1.0357, 't_naive': 12.41, 't_newey_west': 7.7, 'pct_positive': 0.5118}
+  변형 B 통과군 내부 quintile spread: {'n': 542, 'mean_pct': 0.1062, 't_naive': 0.36, 't_newey_west': 0.32, 'pct_positive': 0.4723}
+
+[T+20]
+  baseline(전체 표본, eligibility 무관): {'n': 56753, 'mean_pct': 2.5912, 't_naive': 42.96, 't_newey_west': 11.82, 'pct_positive': 0.5242}
+  변형 A(종목별) 통과군 forward return: {'n': 11711, 'mean_pct': 3.1861, 't_naive': 20.05, 't_newey_west': 7.31, 'pct_positive': 0.5157}
+  변형 A 통과군 내부 quintile spread: {'n': 630, 'mean_pct': -1.5137, 't_naive': -2.75, 't_newey_west': -2.84, 'pct_positive': 0.4444}
+  변형 B(시장 공통) 통과군 forward return: {'n': 10639, 'mean_pct': 3.578, 't_naive': 21.07, 't_newey_west': 7.69, 'pct_positive': 0.5224}
+  변형 B 통과군 내부 quintile spread: {'n': 542, 'mean_pct': -1.8443, 't_naive': -3.13, 't_newey_west': -3.06, 'pct_positive': 0.441}
+
+산출 저장: logs/signal_ic_entry_score_regime_definition_comparison_2026-07-15.json
