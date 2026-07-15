@@ -1,0 +1,16 @@
+INFO:shadow_entry_score_penalty_ablation:[20/87] 처리 완료
+INFO:shadow_entry_score_penalty_ablation:[40/87] 처리 완료
+INFO:shadow_entry_score_penalty_ablation:[60/87] 처리 완료
+INFO:shadow_entry_score_penalty_ablation:[80/87] 처리 완료
+INFO:shadow_entry_score_penalty_ablation:[87/87] 처리 완료
+
+=== entry_score 중복 penalty ablation — Phase 0 shadow 분석 ===
+재구성 종목: 87/87 (실패 0)
+[축 A] entry_score regime penalty(-0.15) 적용: 85건
+[축 B] eligibility regime 차단(bearish+risk_off): 60건
+[축 C] eligibility signal floor(overall<-0.10 또는 slow<-0.15): 75건
+[교집합] A∩B=60, A∩C=74, B∩C=60, A∩B∩C=60
+[비교] 3축 중 아무것도 안 걸림=1건
+[운영 eligibility 함수 그대로 호출] 통과=6건, 차단=81건
+
+산출 저장: logs/shadow_entry_score_penalty_ablation_2026-07-15.json

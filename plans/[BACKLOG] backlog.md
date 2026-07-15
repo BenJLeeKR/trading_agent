@@ -146,6 +146,18 @@
   분기 — 이력에 1줄 추가, 재실행 중복 방지 확인. `entry_score` 코드/
   운영 변경 없음.
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (15차, entry_score 중복 penalty ablation 실측)
+- 수정내용: SPPV-3 착수 전제("중복 억제 구조 재현·분해")를 실측으로
+  구체화했다 — 운영 함수(`_build_entry_score`, `_assess_buy_
+  eligibility`)를 그대로 호출해 오늘(87종목) 기준 세 penalty 축을
+  독립 평가. B(60건) 발동 종목은 예외 없이 A·C도 함께 발동
+  (A∩B∩C=60=B 전체) — "삼중 중복"이 오늘 데이터로 100% 재현됨.
+  종목별 regime_label(bearish_trend 69%)이 시장 공통 국면(range_bound)
+  과 전혀 다름을 재확인 — entry_score 통합 시 국면 정의 통일이 새로운
+  전제로 필요함을 발견. 운영 DB 직접 조회는 자동 승인 경계 밖으로
+  판단돼 시도하지 않았다.
+
 ---
 
 ## 관리 원칙
@@ -427,12 +439,30 @@
     산출: `scripts/run_regime_conditional_shadow_cycle.py`(read-only),
     `logs/regime_conditional_signal_shadow_history.jsonl`. 상세:
     `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §6.
-  - **SPPV-3(보류 유지, 형태 재정의)**: §2.16/§2.17에서 국면 분기형
-    entry 설계 초안과 Phase 2 누적 체계가 마련됐다 — 다음 착수 형태는
-    이 설계 문서를 기반으로 regime/allocation/strategy/source를
-    복원한 `entry_score` point-in-time 재현과 signal/risk-off/regime
-    eligibility 중복 억제 ablation이다. 착수 조건은 누적 이력에서
-    `TRIGGERED` 전환이 관측되거나 shadow 설계를 추가 검증할지 —
+  - **SPPV-2.18(완료, 2026-07-15, entry_score 중복 penalty ablation
+    실측)**: SPPV-3 착수 전제를 실측으로 구체화했다 — 운영 함수
+    (`_build_entry_score`, `_assess_buy_eligibility`)를 그대로
+    호출해 오늘(87종목) 기준 세 penalty 축(entry_score regime
+    penalty/eligibility regime 차단/eligibility signal floor)을
+    독립 평가. **결과: A(85건)/B(60건)/C(75건) 중 B가 발동한 60건은
+    예외 없이 A·C도 함께 발동(A∩B∩C=60=B 전체)** — 근본 진단 §2의
+    "삼중 중복"이 오늘 데이터로 100% 재현됨을 확인. 종목별(per-symbol)
+    regime_label 분포(bearish_trend 69%)가 시장 공통 국면
+    (`range_bound`)과 전혀 다름을 재확인 — `entry_score` 통합 시
+    국면 정의(종목별 vs 시장 공통) 통일이 새로운 전제로 필요함을
+    발견. 운영 DB(`trade_decisions`) 직접 조회는 자동 승인 경계 밖
+    으로 판단돼 시도하지 않았다. 산출:
+    `scripts/shadow_entry_score_penalty_ablation.py`(read-only,
+    신규 KIS 호출 0건),
+    `logs/shadow_entry_score_penalty_ablation_2026-07-15.json`.
+    상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §8.
+  - **SPPV-3(보류 유지, 형태 재정의)**: §2.16~§2.18에서 국면 분기형
+    entry 설계 초안, Phase 2 누적 체계, 중복 penalty 실측이 마련됐다
+    — 다음 착수 형태는 이 설계 문서를 기반으로 regime/allocation/
+    strategy/source를 복원한 `entry_score` point-in-time 재현과
+    signal/risk-off/regime eligibility 중복 억제 ablation, 그리고
+    국면 정의(종목별 vs 시장 공통) 통일이다. 착수 조건은 누적 이력
+    에서 `TRIGGERED` 전환이 관측되거나 shadow 설계를 추가 검증할지 —
     사용자 확인 필요. 착수 시 당시 regime/allocation/strategy/source를
     복원해 `entry_score`를 point-in-time 재현하고 signal 약세,
     `risk_off_penalty`, regime eligibility block의 중복 억제를

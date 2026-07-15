@@ -146,6 +146,16 @@
   `range_bound`로 87/87종목 `risk_adj_momentum_3m` 분기 — 이력에 1줄
   추가, 재실행 중복 방지 확인. `entry_score` 코드/운영 변경 없음.
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (15차, entry_score 중복 penalty ablation 실측)
+- 수정내용: SPPV-3 착수 전제를 실측으로 구체화 — 운영 함수를 그대로
+  호출해 세 penalty 축(entry_score regime penalty/eligibility regime
+  차단/eligibility signal floor)을 오늘(87종목) 기준 독립 평가. B(60건)
+  발동 종목은 예외 없이 A·C도 함께 발동(A∩B∩C=60=B 전체) — "삼중
+  중복"이 오늘 데이터로 100% 재현됨. 종목별 regime_label(bearish_trend
+  69%)이 시장 공통 국면(range_bound)과 전혀 다름을 재확인. entry_score
+  통합 시 국면 정의 통일이 새로운 전제로 필요함을 발견.
+
 ## 최근 메모
 
 > **📌 2026-07-14 BUY 주문경로 근본 복구 기준 확정 (최신, 최우선 반영)**:
@@ -402,6 +412,34 @@
 > 재실행해 **중복 방지 로직이 실제로 발동**(같은 거래일 재추가 skip)
 > 함을 확인했다. `entry_score` 코드/운영 변경 없음. 상세:
 > `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §6.
+
+> **📌 2026-07-15 entry_score 중복 penalty ablation 실측 (최신)**:
+> SPPV-3 착수 전제인 "중복 억제 구조를 point-in-time 기준으로 재현하고
+> 분해할 준비"를 실제 실측으로 구체화했다(`plans/[DESIGN] regime_
+> conditional_entry_signal_v1.md` §8). 신규
+> `scripts/shadow_entry_score_penalty_ablation.py`가 Phase 0(재구성
+> 가능 구간)만으로 운영 함수(`_build_entry_score`, `_assess_buy_
+> eligibility`)를 그대로 호출해, 오늘(87종목) 기준 세 penalty 축을
+> 독립 평가했다 — **축 A(entry_score regime penalty, -0.15) 85건**,
+> **축 B(eligibility의 bearish+risk_off 차단) 60건**, **축
+> C(eligibility signal floor, overall<-0.10 또는 slow<-0.15) 75건**.
+> **핵심 발견: B가 발동한 60건은 예외 없이 A·C도 함께 발동한다
+> (A∩B∩C=60=B 전체)** — `plans/[ANALYSIS] foundational_design_review_
+> objective_alignment.md` §2의 "삼중 중복" 지적이 추상적 우려가 아니라
+> 오늘 데이터로 **100% 재현되는 사실**임을 확인했다. 운영 `_assess_
+> buy_eligibility` 함수를 그대로 호출한 결과도 통과 6/87(≈6.9%)로
+> 과거 DB 기준선(21/297≈7%)과 대략 일치한다. **부가 발견**: `entry_
+> score`가 실제로 쓰는 **종목별(per-symbol)** `regime_label` 분포는
+> bearish_trend 60/87(69%)인데, 시장 공통(KODEX 200 벤치마크) 국면은
+> `range_bound`다 — §12.1(SPPV-2.6)에서 코드로 확인했던 "종목별
+> regime_label은 시장이 아니라 종목 자신의 신호" 문제가 운영 코드에
+> 여전히 남아있고 오늘도 실제로 시장 판단과 크게 어긋난다. **따라서
+> `entry_score`에 `regime_conditional_signal`(시장 공통 국면 기준)을
+> 통합하려면, regime penalty/eligibility의 국면 정의(종목별 vs 시장
+> 공통)를 먼저 통일해야 한다**는 새로운 착수 전제가 추가됐다. 운영
+> DB(`trade_decisions`) 직접 조회는 자동 승인 경계 밖 프로덕션 읽기로
+> 판단돼 이번 턴에 시도하지 않았다. 상세:
+> `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §8.
 
 > **📌 2026-07-12 방향 전환 (이력, 2026-07-14 결론으로 대체)**:
 > 지난 6주(2026-06-01~07-12) 매수 0건은 시스템 오류가 아니라 **하락장에서
@@ -4384,14 +4422,30 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      코드/운영 변경 없음. 산출:
      `logs/regime_conditional_signal_shadow_history.jsonl`. 상세:
      `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §6.
-   - **SPPV-3(보류 유지, 형태 재정의)**: §2.16/§2.17에서 국면 분기형
-     entry 설계 초안과 Phase 2 누적 체계가 마련됐다 — 다음 착수 형태는
-     기존 sub-component 조합의 단순 재현이 아니라 이 설계 문서를
-     기반으로 regime/allocation/strategy/source를 복원한 `entry_score`
-     point-in-time 재현과 signal/risk-off/regime eligibility 중복
-     억제 ablation이다. 착수 전제(누적 이력에서 `TRIGGERED` 전환 관측
-     또는 shadow 설계 추가 검증 우선)는 사용자 확인 필요(§14.5, §17.5,
-     §18.6, §19.6, §20.5, §23).
+   - **SPPV-2.18(완료, 2026-07-15, entry_score 중복 penalty ablation
+     실측)**: SPPV-3 착수 전제("중복 억제 구조 재현·분해")를 실측으로
+     구체화 — 운영 함수(`_build_entry_score`, `_assess_buy_
+     eligibility`)를 그대로 호출해 오늘(87종목) 기준 세 penalty 축을
+     독립 평가. **결과: 축 A(entry_score regime penalty) 85건, 축
+     B(eligibility regime 차단) 60건, 축 C(eligibility signal floor)
+     75건 — B가 발동한 60건은 예외 없이 A·C도 함께 발동
+     (A∩B∩C=60=B 전체)** — §2의 "삼중 중복"이 오늘 데이터로 100%
+     재현됨. 종목별 regime_label(bearish_trend 69%)이 시장 공통
+     국면(`range_bound`)과 전혀 다름을 재확인 — `entry_score` 통합
+     시 국면 정의(종목별 vs 시장 공통) 통일이 새로운 전제로 필요함을
+     발견. 운영 DB 직접 조회는 자동 승인 경계 밖으로 판단돼 시도하지
+     않았다. 산출: `scripts/shadow_entry_score_penalty_ablation.py`
+     (read-only, 신규 KIS 호출 0건),
+     `logs/shadow_entry_score_penalty_ablation_2026-07-15.json`.
+     상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §8.
+   - **SPPV-3(보류 유지, 형태 재정의)**: §2.16~§2.18에서 국면 분기형
+     entry 설계 초안, Phase 2 누적 체계, 중복 penalty 실측이 마련됐다
+     — 다음 착수 형태는 이 설계 문서를 기반으로 regime/allocation/
+     strategy/source를 복원한 `entry_score` point-in-time 재현과
+     signal/risk-off/regime eligibility 중복 억제 ablation, 그리고
+     국면 정의(종목별 vs 시장 공통) 통일이다. 착수 전제(누적 이력에서
+     `TRIGGERED` 전환 관측 또는 shadow 설계 추가 검증 우선)는 사용자
+     확인 필요(§14.5, §17.5, §18.6, §19.6, §20.5, §23).
    - **SPPV-4**: Virtual BUY의 `candidate → selected → expected value → would_buy
      → submitted`, MFE/MAE/낙폭/비용 차감 기대수익 비교.
    - **SPPV-5**: out-of-sample 기대수익 양수와 손실 제약을 모두 만족한 공식만

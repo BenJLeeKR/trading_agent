@@ -291,6 +291,24 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   발동함(같은 거래일 재추가 skip)을 확인했다. `entry_score` 코드/운영
   변경 없음.
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (15차, entry_score 중복 penalty ablation 실측)
+- 수정내용: SPPV-3 착수 전제인 "중복 억제 구조 재현·분해"를
+  `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §8로
+  구체화했다. 신규 스크립트 `scripts/shadow_entry_score_penalty_
+  ablation.py`가 Phase 0(재구성 가능 구간)만으로 `_build_entry_score`/
+  `_assess_buy_eligibility`(운영 함수 그대로 호출)의 세 penalty 축
+  (entry_score regime penalty / eligibility regime 차단 / eligibility
+  signal floor)을 오늘(87종목) 기준 독립 평가했다. **결과: A(85건)/
+  B(60건)/C(75건) 중 B가 발동한 60건은 예외 없이 A·C도 함께 발동
+  (A∩B∩C=60=B 전체)** — §2 근본 진단의 "삼중 중복" 지적이 오늘
+  데이터로 100% 재현됨을 확인. 종목별(per-symbol) regime_label 분포
+  (bearish_trend 60/87=69%)가 시장 공통 국면(`range_bound`)과 전혀
+  다르다는 점도 재확인(§12.1 코드 문제가 운영 코드에 그대로 남아
+  있음). 운영 DB(`trade_decisions`) 직접 조회는 자동 승인 경계
+  밖으로 판단돼 시도하지 않았다. 상세: `plans/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §8.
+
 ---
 
 ## 진행 체크리스트
@@ -519,6 +537,28 @@ canonical),
     JSON Lines), `logs/shadow_regime_conditional_entry_signal_
     2026-07-14.json`(당일 상세),
     `logs/run_regime_conditional_shadow_cycle_run_2026-07-15.log`.
+- [x] **SPPV-2.18(신설)** `entry_score` 중복 penalty ablation — Phase 0
+  shadow 실측 (완료, 2026-07-15)
+  - 작업 범위: SPPV-3 착수 전제("중복 억제 구조를 point-in-time 기준
+    으로 재현하고 분해할 준비")를 실제 가능한 수준으로 실행 — 운영
+    함수(`_build_entry_score`, `_assess_buy_eligibility`)를 그대로
+    호출해 세 penalty 축(entry_score regime penalty / eligibility
+    regime 차단 / eligibility signal floor)의 교집합을 오늘(87종목)
+    기준 정량화.
+  - **결과: A(85)/B(60)/C(75) 중 B가 발동한 60건은 예외 없이 A·C도
+    함께 발동(A∩B∩C=60=B 전체)** — §2 근본 진단의 "삼중 중복"이
+    오늘 데이터로 100% 재현됨. 종목별(per-symbol) regime_label 분포
+    (bearish_trend 69%)가 시장 공통 국면(`range_bound`)과 완전히
+    다름을 재확인(§12.1 문제가 운영 코드에 그대로 남아 있음).
+    `entry_score`에 `regime_conditional_signal`을 통합하려면 국면
+    정의(종목별 vs 시장 공통)를 먼저 통일해야 한다는 네 번째 쟁점을
+    발견. 운영 DB(`trade_decisions`) 직접 조회는 자동 승인 경계
+    밖으로 판단돼 시도하지 않았다. 상세: `plans/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §8.
+  - 산출물: `scripts/shadow_entry_score_penalty_ablation.py`
+    (read-only, 신규 KIS 호출 0건 — 3년 캐시 재사용, 운영 함수 그대로
+    호출), `logs/shadow_entry_score_penalty_ablation_2026-07-15.json`,
+    `logs/shadow_entry_score_penalty_ablation_run_2026-07-15.log`.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의**: §12(1년, 자기참조 포함) 당시 "알파 근거
     강화"로 낙관했던 것이 §14(3년, 자기참조 제거) 확장 검증에서 반박됨 —
@@ -526,9 +566,11 @@ canonical),
     score)는 유의하게 역방향이었다. §23의 종합 판정에 따라, SPPV-3의
     다음 착수 형태는 기존 `entry_score` sub-component 조합의 단순
     재현이 아니라 **`regime_switch_v1` 아이디어를 국면 분기형 entry
-    설계의 초기 원형으로 삼는 것**으로 재정의된다. 1차 게이트(§21
-    모니터링)가 `TRIGGERED`로 전환되거나, 설계 자체를 shadow 단계에서
-    먼저 진행할지는 사용자 확인 필요.
+    설계의 초기 원형으로 삼는 것**으로 재정의된다. §8(SPPV-2.18)에서
+    중복 penalty 구조를 실측으로 정량화했고, 국면 정의(종목별 vs
+    시장 공통) 통일 여부가 새로운 착수 전제로 추가됐다. 1차 게이트
+    (§21 모니터링)가 `TRIGGERED`로 전환되거나, 설계 자체를 shadow
+    단계에서 먼저 진행할지는 사용자 확인 필요.
   - 작업 범위: regime/allocation/strategy/source 복원, signal 약세와
     `risk_off_penalty`/eligibility 중복 억제 분해
 - [ ] **SPPV-4** 전체 BUY funnel back-simulation
@@ -1229,6 +1271,11 @@ bearish/range_bound 어느 국면 내부도 `overall_score`/`slow_score`가
   `logs/shadow_regime_conditional_entry_signal_2026-07-14.json`(당일
   상세 스냅샷),
   `logs/run_regime_conditional_shadow_cycle_run_2026-07-15.log`
+- `scripts/shadow_entry_score_penalty_ablation.py`(read-only, 신규
+  KIS 호출 0건 — 3년 캐시 재사용, 운영 `_build_entry_score`/
+  `_assess_buy_eligibility` 함수 그대로 호출)
+- `logs/shadow_entry_score_penalty_ablation_2026-07-15.json`,
+  `logs/shadow_entry_score_penalty_ablation_run_2026-07-15.log`
 - `logs/_bars_cache_core88_2026-07-14/`(88종목 1년 캐시, 재사용 가능)
 - `logs/_bars_cache_core87_3y_2026-07-14/`(87종목+벤치마크 3년 캐시,
   SPPV-2.7/2.8/2.9/2.10/2.11/2.12가 공유 재사용)

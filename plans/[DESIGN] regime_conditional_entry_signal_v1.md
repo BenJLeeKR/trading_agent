@@ -2,7 +2,8 @@
 
 작성일: 2026-07-15
 상태: **설계 초안 + shadow 계산기 1차 실행 완료 + Phase 2 누적 사이클
-구축·실행 완료(§6) — 실거래/`entry_score` 반영 없음.**
+구축·실행 완료(§6) + entry_score 중복 penalty ablation 실측 완료(§8) —
+실거래/`entry_score` 반영 없음.**
 상위 문서: `plans/[ANALYSIS] sppv_regime_polarity_synthesis_and_next_direction.md`
 (§4 판정 — "국면 분기형 entry 설계로 전환"), `plans/[DESIGN] signal_
 predictive_power_validation.md`(§16 이원 기준, §19/§20/§21 근거 실측),
@@ -275,3 +276,117 @@ Phase 1의 `scripts/shadow_regime_conditional_entry_signal.py`는 "실행할
    자체를 §16 이원 기준 재검증의 "실시간 1차 표본"으로 활용하는 방안을
    검토한다 — 지금은 3년 과거 재구축 캐시에 의존하지만, 누적이 쌓이면
    실제 shadow 관측치로 1차 유의성을 확인할 수 있게 된다.
+
+## 8. `entry_score` 중복 penalty ablation — Phase 0 shadow 실측 (2026-07-15)
+
+### 8.1 배경 — SPPV-3 착수 전제
+
+§3에서 언급한 대로, `entry_score`에 `regime_conditional_signal`을
+반영하지 않는 이유 중 하나는 현재 `entry_score`/`_assess_buy_
+eligibility`의 "국면이면 무언가를 차감/차단한다"는 로직이 여러 곳에
+중복돼 있고(`plans/[ANALYSIS] foundational_design_review_objective_
+alignment.md` §2 근본 진단), 이 중복을 해소하지 않은 채 새 신호를
+얹으면 또 다른 중복을 만들 위험이 있기 때문이다. 이번 턴에 이 중복을
+**말로만 지적하지 않고 오늘 시점 실제 데이터로 정량화**했다.
+
+**중요한 경계**: 운영 DB(`trade_decisions`)를 직접 조회하는 것은
+자동 승인 경계 밖의 프로덕션 읽기로 판단돼 이번 턴에 시도하지
+않았다(harness가 차단). 대신 SPPV 트랙 전체가 지금까지 해온 방식 —
+운영 코드(`build_signal_snapshot`, `classify_market_regime`,
+`_build_entry_score`, `_assess_buy_eligibility`)를 그대로 재사용하는
+read-only 재계산 — 을 동일하게 적용했다. 이는 실제 DB 데이터가 아니라
+**오늘 시점 실시간 시세로 재구성한 shadow 값**이라는 한계가 있지만,
+코드 경로 자체는 운영 함수를 직접 호출한 것이라 신뢰도가 높다.
+
+### 8.2 실행 개요
+
+`scripts/shadow_entry_score_penalty_ablation.py`(read-only)가 core
+87종목(벤치마크 제외) × 오늘(3년 캐시 최신 봉) 기준으로, Phase
+0(재구성 가능 — signal_backbone 순수 함수 + **종목별(per-symbol)**
+`classify_market_regime`)만으로 아래 세 개의 독립적인 penalty/차단
+축을 평가했다. Phase 1~3(allocation/strategy/실제 실행 이력)은
+재구성 불가로 `None`을 그대로 전달했다(운영 함수가 이 경우 해당
+가산/차감 항을 자연스럽게 건너뛴다 — 새 로직을 만들지 않았다).
+
+- **축 A**: `entry_score`의 regime penalty(`risk_tone=='risk_off'`
+  일 때 -0.15, `_build_entry_score` 그대로 호출)
+- **축 B**: `_assess_buy_eligibility`의 regime 차단(`risk_tone==
+  'risk_off' and regime_label=='bearish_trend'`, core 심볼은 예외
+  없이 차단)
+- **축 C**: `_assess_buy_eligibility`의 signal floor 차단
+  (`overall<-0.10` 또는 `slow<-0.15`)
+
+3년 캐시 재사용, **신규 KIS 호출 0건**, 종료 코드 0, 87/87종목 성공.
+산출: `logs/shadow_entry_score_penalty_ablation_2026-07-15.json`,
+`logs/shadow_entry_score_penalty_ablation_run_2026-07-15.log`.
+
+### 8.3 실측 결과
+
+| 항목 | 값 |
+|---|---|
+| 축 A(entry_score regime penalty 적용) | 85/87 |
+| 축 B(eligibility regime 차단) | 60/87 |
+| 축 C(eligibility signal floor 차단) | 75/87 |
+| A∩B | 60 |
+| A∩C | 74 |
+| B∩C | 60 |
+| A∩B∩C | 60 |
+| 아무 축도 안 걸림 | 1/87 |
+| 운영 `_assess_buy_eligibility` 그대로 호출 — 통과 | 6/87 |
+| 〃 — 차단 | 81/87 |
+| 종목별(per-symbol) `regime_label` 분포 | bearish_trend 60 / range_bound 18 / bullish_trend 7 / event_driven_unstable 2 |
+| 종목별 `risk_tone` 분포 | risk_off 85 / neutral 2 |
+
+### 8.4 해석 — 중복은 "이론"이 아니라 오늘 "정확히" 재현된다
+
+1. **B∩A/B∩C가 모두 60 = B(60) 전체와 일치한다.** 즉 eligibility의
+   regime 차단이 발동한 60개 종목은 **예외 없이 전부** entry_score의
+   regime penalty와 signal floor 차단도 동시에 걸린다 — 근본 진단
+   §2가 "약한 signal이 이미 반영된 뒤 risk_off_penalty가 다시
+   차감되고, eligibility가 동일한 조건을 다시 차단한다"고 서술한
+   것이 추상적 우려가 아니라 **오늘 데이터로 100% 재현되는 사실**임을
+   확인했다.
+2. **종목별(per-symbol) 국면이 시장 공통(market-common) 국면과
+   완전히 다르다.** 오늘 시장 공통 국면(§6, KODEX 200 벤치마크
+   기준)은 `range_bound`인데, `entry_score`가 실제로 쓰는 **종목별**
+   `classify_market_regime()` 기준으로는 87종목 중 60개(69%)가
+   `bearish_trend`로 판정된다. 이는 §12.1(SPPV-2.6)에서 코드로
+   확인했던 "종목별 regime_label은 시장이 아니라 그 종목 자신의
+   신호"라는 문제가 여전히 운영 코드에 살아있고, 오늘도 실제로
+   시장 판단과 크게 어긋난 결과를 내고 있음을 보여준다.
+3. **eligibility 통과율(6/87≈6.9%)은 과거 DB 기준선(2026-06-25~,
+   21/297≈7%)과 크게 다르지 않다** — 오늘 실시간 재구성 값이 과거
+   실측 패턴과 대략 일치해, 이 ablation이 특이한 하루의 우연이
+   아니라 상시적인 구조적 패턴일 가능성을 시사한다(다만 표본이
+   하루치뿐이라 결론으로 확정하지는 않는다 — §8.6 다음 단계 참고).
+
+### 8.5 `regime_conditional_signal` 설계와의 연결
+
+이 결과는 §2/§3에서 이미 제기한 우려를 강화한다. `regime_conditional_
+signal`이 쓰는 국면 정의는 **시장 공통(market-common, KODEX 200
+벤치마크 기준)**인 반면, `entry_score`의 regime penalty/eligibility
+차단이 쓰는 국면 정의는 **종목별(per-symbol)**이다 — 이 둘은 오늘
+데이터에서 이미 크게 다른 결과(시장 공통=range_bound vs 종목별
+69%가 bearish_trend)를 낸다. 따라서 `entry_score`에 `regime_
+conditional_signal`을 반영하려면 **regime penalty/eligibility의
+국면 정의도 시장 공통 기준으로 함께 맞출지, 아니면 종목별 정의를
+유지한 채 신호만 교체할지**를 먼저 결정해야 한다 — 이 결정 없이
+신호만 바꾸면 "새 신호는 시장 공통 국면을 보는데 risk_off_penalty는
+여전히 종목별 국면을 본다"는 **네 번째 불일치**가 추가될 위험이 있다.
+
+### 8.6 다음 단계 — SPPV-3 착수를 위해 남은 것
+
+1. **국면 정의 통일 여부 결정**: `regime_conditional_signal` 통합
+   시 entry_score의 regime penalty/eligibility도 시장 공통 국면
+   기준으로 바꿀지 사용자 확인이 필요하다 — 이는 코드 변경 범위를
+   크게 좌우한다.
+2. **표본 확장**: 이번 실측은 오늘 하루치(87종목)뿐이다. §6의 Phase 2
+   누적 사이클을 이 ablation에도 연결해, 매일 한 번씩 세 축의
+   교집합을 누적하면 "오늘의 우연"인지 "상시 구조"인지 판별할 수
+   있다 — 다음 턴 후보로 남긴다.
+3. **DB 실측과의 교차검증(보류)**: 이번 턴은 운영 DB 접근 없이
+   진행했다 — 실제 `trade_decisions.decision_json`과 대조하는 것은
+   사용자가 명시적으로 그 DB 조회를 승인한 뒤 별도로 진행한다.
+4. 위 결정들이 정리되면 SPPV-3(entry_score point-in-time 재현 및
+   중복 penalty ablation 본작업)에 정식 착수할 수 있다 — 이번 §8은
+   그 "준비" 단계다.
