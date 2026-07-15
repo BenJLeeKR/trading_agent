@@ -184,6 +184,17 @@
   forward return은 방향상 음수이나 유의하지 않음. 최근 12개월은 A-B
   차이 자체가 없음. 판정 Watch 유지(No-Go에 근접), 확정 전환 기각.
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (19차, alpha layer vs regime_conditional_signal
+  직접 비교)
+- 수정내용: 무게중심을 국면 정의 통일(차단)에서 alpha layer 교체
+  (선별)로 이동 — 현행 alpha layer와 regime_conditional_signal을
+  같은 3년 표본에서 직접 비교. 2차(3년) 창에서 regime_conditional_
+  signal이 T+5/T+20 둘 다 유의(t_NW 2.52/2.33), 현행 alpha layer는
+  어디서도 비유의(1.02~1.39) — 4개 관측치 전부 일관되게 우세. 1차
+  창은 미달이나 §21 구조적 이유(하락장 부재) 때문. 판정 Conditional
+  Go(2차 검증 통과, 1차 게이트 전환 대기).
+
 ## 최근 메모
 
 > **📌 2026-07-14 BUY 주문경로 근본 복구 기준 확정 (최신, 최우선 반영)**:
@@ -540,6 +551,33 @@
 > 유의성도 확인되지 않았기 때문이다. 이번 실행의 KIS 호출 여부도
 > 가정 없이 로그로 확인 — `HTTP Request:` 0건. 상세:
 > `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §11.
+
+> **📌 2026-07-15 alpha layer vs regime_conditional_signal 직접 비교 —
+> 무게중심을 차단에서 선별로 이동 (최신, 최우선 반영)**: §11.8의 지시에
+> 따라 "국면 정의 통일"(누구를 걸러낼지, 차단 축)에서 "alpha layer
+> 교체"(누구를 위로 올릴지, 선별 축)로 검증 무게중심을 옮겼다. 신규
+> `scripts/validate_alpha_layer_vs_regime_conditional_signal.py`가
+> 현행 `entry_score`의 alpha layer(`_normalize_signed_score`의
+> 선형성으로 순위상 `0.45·overall+0.20·fast+0.15·slow`와 동일함을
+> 코드로 확인)와 `regime_conditional_signal`을 같은 3년 rolling
+> 표본(87종목, 56,753건)에서 §16 이원 검증 도구(quintile spread +
+> Newey-West)로 직접 비교했다. **핵심 결과: 2차(3년) 창에서 `regime_
+> conditional_signal`이 T+5(t_NW=2.52)/T+20(t_NW=2.33) 둘 다 유의
+> 임계(|t|≥2)를 통과하는 반면, 현행 alpha layer는 같은 표본에서
+> 어디서도 유의하지 않다(1.02~1.39).** spread 크기·t값·양수 비율
+> 4개 관측치(2개 창×2개 horizon) 전부에서 `regime_conditional_
+> signal`이 일관되게 우세했다(1차 창 포함, T+20에서 격차가 특히
+> 큼: 2.082%p vs 1.043%p). 이는 "더 막는 방법"이 아니라 "더 공격적
+> 으로 좋은 종목을 위에 올리는" 관점에서 실제 우위가 있다는 뜻이다.
+> 1차(최근 12개월) 게이트는 두 신호 모두 미달이나, 원인은 §21에서
+> 이미 확인된 구조적 사실(최근 12개월 시장 공통 하락장 0일)이지
+> 신호 결함이 아니다. **판정을 지나치게 보수적으로 눌러 Watch로
+> 부르지 않고 "Conditional Go"(2차 검증 통과, 1차 게이트 전환 대기)
+> 로 명시한다** — 동시에 §16 이원 기준을 자의로 낮춰 억지로 완전한
+> Go를 선언하지도 않는다. 실행의 실제 KIS 호출 여부도 가정 없이
+> 로그로 확인 — `HTTP Request:` **0건**. `entry_score` 코드/운영
+> 변경 없음 — 이번 턴은 shadow/validation 범위에 머문다. 상세:
+> `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §12.
 
 > **📌 2026-07-12 방향 전환 (이력, 2026-07-14 결론으로 대체)**:
 > 지난 6주(2026-06-01~07-12) 매수 0건은 시스템 오류가 아니라 **하락장에서
@@ -4580,17 +4618,29 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      (read-only, 신규 KIS 호출 0건),
      `logs/signal_ic_entry_score_regime_ab_diff_2026-07-15.json`.
      상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §11.
-   - **SPPV-3(보류 유지, 형태 재정의)**: §2.16~§2.21에서 국면 분기형
-     entry 설계 초안, Phase 2 누적 체계, 중복 penalty 실측·누적,
-     비교 실험 설계·실측·정밀 분해가 마련됐다 — **국면 정의 통일은
-     Watch/No-Go에 근접**한다는 것이 확인됐다(B가 A의 부분집합일 뿐
-     새 기회를 만들지 못함). 다음 착수 형태는 이 설계 문서를 기반으로
-     regime/allocation/strategy/source를 복원한 `entry_score`
+   - **SPPV-2.22(완료, 2026-07-15, alpha layer vs regime_conditional_
+     signal 직접 비교)**: 무게중심을 국면 정의 통일(차단)에서 alpha
+     layer 교체(선별)로 이동. 현행 alpha layer와 regime_conditional_
+     signal을 같은 3년 표본에서 직접 비교. **결과: 2차(3년) 창에서
+     regime_conditional_signal이 T+5(t_NW=2.52)/T+20(t_NW=2.33) 둘
+     다 유의, 현행 alpha layer는 어디서도 비유의(1.02~1.39) — 4개
+     관측치 전부 일관되게 우세.** 1차 창은 미달이나 §21 구조적
+     이유(하락장 부재) 때문. **판정 Conditional Go(2차 검증 통과,
+     1차 게이트 전환 대기).** 실행 로그로 KIS 호출 0건 확인. 산출:
+     `scripts/validate_alpha_layer_vs_regime_conditional_signal.py`
+     (read-only, 신규 KIS 호출 0건),
+     `logs/signal_ic_alpha_layer_vs_regime_conditional_signal_
+     2026-07-15.json`. 상세: `plans/[DESIGN] regime_conditional_
+     entry_signal_v1.md` §12.
+   - **SPPV-3(보류 유지, 형태 재정의)**: §2.16~§2.21에서 국면 정의
+     통일(차단 축)은 Watch/No-Go에 근접한다는 것이 확인됐으나,
+     **§2.22에서 alpha layer 교체(선별 축)는 2차 창에서 유의한 우위를
+     확보(Conditional Go)했다.** 다음 착수 형태는 이 설계 문서를
+     기반으로 regime/allocation/strategy/source를 복원한 `entry_score`
      point-in-time 재현과 signal/risk-off/regime eligibility 중복
-     억제 ablation이며, 우선순위를 "국면 정의 통일"에서 "`regime_
-     conditional_signal`을 alpha layer에 직접 통합"하는 쪽으로
-     재조정할지 사용자와 논의가 필요하다. 착수 전제(누적 이력에서
-     `TRIGGERED` 전환 관측 또는 shadow 설계 추가 검증 우선)는 사용자
+     억제 ablation이며, 우선순위는 "국면 정의 통일"이 아니라 "`regime_
+     conditional_signal`을 alpha layer에 직접 통합"하는 쪽이다. 착수
+     전제(1차 게이트 `TRIGGERED` 전환 관측)는 사용자
      확인 필요(§14.5, §17.5, §18.6, §19.6, §20.5, §23).
    - **SPPV-4**: Virtual BUY의 `candidate → selected → expected value → would_buy
      → submitted`, MFE/MAE/낙폭/비용 차감 기대수익 비교.

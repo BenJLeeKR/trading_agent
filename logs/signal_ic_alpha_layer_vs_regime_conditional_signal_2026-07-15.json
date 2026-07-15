@@ -1,0 +1,214 @@
+{
+  "as_of": "2026-07-16T08:11:11.851472+09:00",
+  "symbol_count_used": 87,
+  "fetch_failures": [],
+  "total_rolling_samples_3y": 56753,
+  "total_rolling_samples_recent_12m": 21315,
+  "recent_window_cutoff": "2025-06-16",
+  "signal_evaluable_samples_3y": 56235,
+  "signal_evaluable_samples_recent_12m": 21315,
+  "supplementary_3y": {
+    "T+5": {
+      "current_alpha_composite_full_sample": {
+        "ic": {
+          "n_days": 653,
+          "mean_pct": -0.0048,
+          "t_naive": -0.59,
+          "t_newey_west": -0.34,
+          "pct_days_positive": 0.502
+        },
+        "spread": {
+          "n_days": 653,
+          "mean_pct": 0.302,
+          "t_naive": 1.98,
+          "t_newey_west": 1.13,
+          "pct_days_positive": 0.534
+        }
+      },
+      "current_alpha_composite_signal_evaluable_subset": {
+        "ic": {
+          "n_days": 647,
+          "mean_pct": -0.0068,
+          "t_naive": -0.84,
+          "t_newey_west": -0.49,
+          "pct_days_positive": 0.499
+        },
+        "spread": {
+          "n_days": 647,
+          "mean_pct": 0.275,
+          "t_naive": 1.79,
+          "t_newey_west": 1.02,
+          "pct_days_positive": 0.532
+        }
+      },
+      "regime_conditional_signal": {
+        "ic": {
+          "n_days": 647,
+          "mean_pct": 0.0108,
+          "t_naive": 1.32,
+          "t_newey_west": 0.75,
+          "pct_days_positive": 0.553
+        },
+        "spread": {
+          "n_days": 647,
+          "mean_pct": 0.666,
+          "t_naive": 4.46,
+          "t_newey_west": 2.52,
+          "pct_days_positive": 0.612
+        }
+      }
+    },
+    "T+20": {
+      "current_alpha_composite_full_sample": {
+        "ic": {
+          "n_days": 653,
+          "mean_pct": 0.0121,
+          "t_naive": 1.8,
+          "t_newey_west": 0.62,
+          "pct_days_positive": 0.53
+        },
+        "spread": {
+          "n_days": 653,
+          "mean_pct": 1.093,
+          "t_naive": 4.21,
+          "t_newey_west": 1.39,
+          "pct_days_positive": 0.525
+        }
+      },
+      "current_alpha_composite_signal_evaluable_subset": {
+        "ic": {
+          "n_days": 647,
+          "mean_pct": 0.0104,
+          "t_naive": 1.55,
+          "t_newey_west": 0.54,
+          "pct_days_positive": 0.526
+        },
+        "spread": {
+          "n_days": 647,
+          "mean_pct": 1.043,
+          "t_naive": 4.0,
+          "t_newey_west": 1.32,
+          "pct_days_positive": 0.521
+        }
+      },
+      "regime_conditional_signal": {
+        "ic": {
+          "n_days": 647,
+          "mean_pct": 0.0236,
+          "t_naive": 3.54,
+          "t_newey_west": 1.21,
+          "pct_days_positive": 0.577
+        },
+        "spread": {
+          "n_days": 647,
+          "mean_pct": 2.082,
+          "t_naive": 7.64,
+          "t_newey_west": 2.33,
+          "pct_days_positive": 0.629
+        }
+      }
+    }
+  },
+  "primary_recent_12m": {
+    "T+5": {
+      "current_alpha_composite_full_sample": {
+        "ic": {
+          "n_days": 245,
+          "mean_pct": -0.0149,
+          "t_naive": -1.15,
+          "t_newey_west": -0.64,
+          "pct_days_positive": 0.494
+        },
+        "spread": {
+          "n_days": 245,
+          "mean_pct": 0.716,
+          "t_naive": 2.32,
+          "t_newey_west": 1.29,
+          "pct_days_positive": 0.559
+        }
+      },
+      "current_alpha_composite_signal_evaluable_subset": {
+        "ic": {
+          "n_days": 245,
+          "mean_pct": -0.0149,
+          "t_naive": -1.15,
+          "t_newey_west": -0.64,
+          "pct_days_positive": 0.494
+        },
+        "spread": {
+          "n_days": 245,
+          "mean_pct": 0.716,
+          "t_naive": 2.32,
+          "t_newey_west": 1.29,
+          "pct_days_positive": 0.559
+        }
+      },
+      "regime_conditional_signal": {
+        "ic": {
+          "n_days": 245,
+          "mean_pct": -0.0152,
+          "t_naive": -1.06,
+          "t_newey_west": -0.58,
+          "pct_days_positive": 0.494
+        },
+        "spread": {
+          "n_days": 245,
+          "mean_pct": 0.859,
+          "t_naive": 2.85,
+          "t_newey_west": 1.55,
+          "pct_days_positive": 0.6
+        }
+      }
+    },
+    "T+20": {
+      "current_alpha_composite_full_sample": {
+        "ic": {
+          "n_days": 245,
+          "mean_pct": -0.0071,
+          "t_naive": -0.62,
+          "t_newey_west": -0.22,
+          "pct_days_positive": 0.502
+        },
+        "spread": {
+          "n_days": 245,
+          "mean_pct": 1.952,
+          "t_naive": 3.73,
+          "t_newey_west": 1.26,
+          "pct_days_positive": 0.58
+        }
+      },
+      "current_alpha_composite_signal_evaluable_subset": {
+        "ic": {
+          "n_days": 245,
+          "mean_pct": -0.0071,
+          "t_naive": -0.62,
+          "t_newey_west": -0.22,
+          "pct_days_positive": 0.502
+        },
+        "spread": {
+          "n_days": 245,
+          "mean_pct": 1.952,
+          "t_naive": 3.73,
+          "t_newey_west": 1.26,
+          "pct_days_positive": 0.58
+        }
+      },
+      "regime_conditional_signal": {
+        "ic": {
+          "n_days": 245,
+          "mean_pct": 0.0028,
+          "t_naive": 0.23,
+          "t_newey_west": 0.07,
+          "pct_days_positive": 0.522
+        },
+        "spread": {
+          "n_days": 245,
+          "mean_pct": 3.01,
+          "t_naive": 5.09,
+          "t_newey_west": 1.47,
+          "pct_days_positive": 0.645
+        }
+      }
+    }
+  }
+}

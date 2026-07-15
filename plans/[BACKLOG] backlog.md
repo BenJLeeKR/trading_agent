@@ -192,6 +192,20 @@
   판정 Watch 유지(No-Go에 근접), 확정 전환 기각. 실행 로그로 KIS
   호출 0건 확인.
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (19차, alpha layer vs regime_conditional_signal
+  직접 비교)
+- 수정내용: 무게중심을 국면 정의 통일(차단)에서 alpha layer 교체
+  (선별)로 이동했다 — 현행 alpha layer(순위상 0.45·overall+0.20·
+  fast+0.15·slow와 동일함을 코드로 확인)와 regime_conditional_signal
+  을 같은 3년 표본에서 직접 비교. 2차(3년) 창에서 regime_conditional_
+  signal이 T+5/T+20 둘 다 유의(t_NW 2.52/2.33), 현행 alpha layer는
+  어디서도 비유의(1.02~1.39) — spread·t값·양수 비율 4개 관측치 전부
+  일관되게 우세. 1차 창은 미달이나 §21 구조적 이유(하락장 부재)
+  때문. 판정 Conditional Go(2차 검증 통과, 1차 게이트 전환 대기) —
+  Watch로 낮추지 않되 억지로 완전한 Go도 선언하지 않음. 실행 로그로
+  KIS 호출 0건 확인.
+
 ---
 
 ## 관리 원칙
@@ -549,17 +563,34 @@
     (read-only, 신규 KIS 호출 0건),
     `logs/signal_ic_entry_score_regime_ab_diff_2026-07-15.json`.
     상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §11.
-  - **SPPV-3(보류 유지, 형태 재정의)**: §2.16~§2.21에서 국면 분기형
-    entry 설계 초안, Phase 2 누적 체계, 중복 penalty 실측·누적,
-    비교 실험 설계·실측·정밀 분해가 마련됐다 — **국면 정의 통일은
-    Watch/No-Go에 근접**함이 확인됐다(B가 A의 부분집합일 뿐 새 기회를
-    만들지 못함). 다음 착수 형태는 이 설계 문서를 기반으로
+  - **SPPV-2.22(완료, 2026-07-15, alpha layer vs regime_conditional_
+    signal 직접 비교)**: 무게중심을 국면 정의 통일(차단)에서 alpha
+    layer 교체(선별)로 이동했다 — 신규
+    `scripts/validate_alpha_layer_vs_regime_conditional_signal.py`가
+    현행 alpha layer(순위상 `0.45·overall+0.20·fast+0.15·slow`와
+    동일함을 코드로 확인)와 `regime_conditional_signal`을 같은 3년
+    표본에서 §16 이원 검증 도구로 직접 비교. **결과: 2차(3년) 창에서
+    `regime_conditional_signal`이 T+5(t_NW=2.52)/T+20(t_NW=2.33) 둘
+    다 유의, 현행 alpha layer는 어디서도 비유의(1.02~1.39) — spread·
+    t값·양수 비율 4개 관측치 전부 일관되게 우세.** 1차 창은 미달이나
+    §21 구조적 이유(하락장 부재) 때문. **판정: Conditional Go(2차
+    검증 통과, 1차 게이트 전환 대기)** — Watch로 낮추지 않되 억지로
+    완전한 Go도 선언하지 않음. 실행 로그로 KIS 호출 0건 확인(가정
+    없이 실측). 산출:
+    `scripts/validate_alpha_layer_vs_regime_conditional_signal.py`
+    (read-only, 신규 KIS 호출 0건),
+    `logs/signal_ic_alpha_layer_vs_regime_conditional_signal_
+    2026-07-15.json`. 상세: `plans/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §12.
+  - **SPPV-3(보류 유지, 형태 재정의)**: §2.16~§2.21에서 국면 정의
+    통일(차단 축)은 Watch/No-Go에 근접함이 확인됐으나, **§2.22에서
+    alpha layer 교체(선별 축)는 2차 창에서 유의한 우위를 확보
+    (Conditional Go)했다.** 다음 착수 형태는 이 설계 문서를 기반으로
     regime/allocation/strategy/source를 복원한 `entry_score`
     point-in-time 재현과 signal/risk-off/regime eligibility 중복
-    억제 ablation이며, 우선순위를 "국면 정의 통일"에서 "regime_
-    conditional_signal을 alpha layer에 직접 통합"하는 쪽으로 재조정
-    할지 사용자와 논의가 필요하다. 착수 조건은 누적 이력에서
-    `TRIGGERED` 전환이 관측되거나 shadow 설계를 추가 검증할지 —
+    억제 ablation이며, 우선순위는 "국면 정의 통일"이 아니라 "regime_
+    conditional_signal을 alpha layer에 직접 통합"하는 쪽이다. 착수
+    조건은 1차 게이트에서 `TRIGGERED` 전환이 관측되는 것 —
     사용자 확인 필요. 착수 시 당시
     regime/allocation/strategy/source를
     복원해 `entry_score`를 point-in-time 재현하고 signal 약세,

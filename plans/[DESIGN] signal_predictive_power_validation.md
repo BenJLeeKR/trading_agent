@@ -372,6 +372,29 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   코드/운영 변경 없음. 상세: `plans/[DESIGN] regime_conditional_
   entry_signal_v1.md` §11.
 
+- 작성자: Claude
+- 수정일자: 2026-07-15 (19차, alpha layer vs regime_conditional_signal
+  직접 비교 — 무게중심을 차단에서 선별로 이동)
+- 수정내용: §11.8이 지시한 대로 무게중심을 "국면 정의 통일"(차단
+  축)에서 "alpha layer 교체"(선별 축)로 옮겼다(SPPV-2.22). 신규
+  `scripts/validate_alpha_layer_vs_regime_conditional_signal.py`가
+  `entry_score`의 alpha layer(`0.45·overall+0.20·fast+0.15·slow`,
+  `_normalize_signed_score`의 선형성으로 순위상 원 가중합과 동일함을
+  코드로 확인)와 `regime_conditional_signal`을 같은 3년 rolling
+  표본(87종목, 56,753건)에서 §16 이원 검증 도구로 직접 비교했다.
+  **결과: 2차(3년) 창에서 `regime_conditional_signal`이 T+5(t_NW=
+  2.52)/T+20(t_NW=2.33) 둘 다 유의 임계(|t|≥2)를 통과하는 반면,
+  현행 alpha layer는 같은 표본에서 어디서도 유의하지 않다(1.02~
+  1.39)** — spread 크기·t값·양수 비율 4개 관측치 전부에서
+  `regime_conditional_signal`이 일관되게 우세했다(1차 창 포함).
+  1차(최근 12개월) 게이트는 여전히 미달이나, 원인이 신호 결함이
+  아니라 §21의 구조적 사실(최근 하락장 부재)임을 재확인 — **판정을
+  Watch로 낮추지 않고 "Conditional Go"(2차 검증 통과, 1차 게이트
+  전환 대기)로 명시**했다. 실행 로그로 KIS 호출 0건 확인(가정 없이
+  실측). `entry_score` 코드/운영 변경 없음 — 이번 턴은 shadow/
+  validation 범위에 머문다. 상세: `plans/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §12.
+
 ---
 
 ## 진행 체크리스트
@@ -679,6 +702,26 @@ canonical),
     (read-only, 신규 KIS 호출 0건 — 3년 캐시 재사용),
     `logs/signal_ic_entry_score_regime_ab_diff_2026-07-15.json`,
     `logs/entry_score_regime_ab_diff_run_2026-07-15.log`.
+- [x] **SPPV-2.22(신설)** alpha layer vs regime_conditional_signal
+  직접 비교 — 무게중심을 차단에서 선별로 이동 (완료, 2026-07-15)
+  - 작업 범위: 현행 `entry_score` alpha layer(순위상 `0.45·overall+
+    0.20·fast+0.15·slow`와 동일함을 코드로 확인)와 `regime_
+    conditional_signal`을 같은 3년 rolling 표본에서 §16 이원 검증
+    도구로 직접 비교.
+  - **결과: 2차(3년) 창에서 `regime_conditional_signal`이 T+5(t_NW=
+    2.52)/T+20(t_NW=2.33) 둘 다 유의, 현행 alpha layer는 어디서도
+    비유의(1.02~1.39)** — spread·t값·양수 비율 4개 관측치 전부에서
+    `regime_conditional_signal`이 일관되게 우세. 1차 창은 미달이나
+    §21의 구조적 이유(하락장 부재)임을 재확인. **판정: Conditional
+    Go(2차 검증 통과, 1차 게이트 전환 대기) — Watch로 낮추지 않되
+    억지로 완전한 Go도 선언하지 않음.** 실행 로그로 KIS 호출 0건
+    확인(가정 없이 실측). `entry_score` 코드/운영 변경 없음. 상세:
+    `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §12.
+  - 산출물: `scripts/validate_alpha_layer_vs_regime_conditional_
+    signal.py`(read-only, 신규 KIS 호출 0건 — 3년 캐시 재사용),
+    `logs/signal_ic_alpha_layer_vs_regime_conditional_signal_
+    2026-07-15.json`, `logs/alpha_layer_vs_regime_conditional_
+    signal_run_2026-07-15.log`.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의**: §12(1년, 자기참조 포함) 당시 "알파 근거
     강화"로 낙관했던 것이 §14(3년, 자기참조 제거) 확장 검증에서 반박됨 —
@@ -687,17 +730,17 @@ canonical),
     다음 착수 형태는 기존 `entry_score` sub-component 조합의 단순
     재현이 아니라 **`regime_switch_v1` 아이디어를 국면 분기형 entry
     설계의 초기 원형으로 삼는 것**으로 재정의된다. §8~§11(SPPV-2.18~
-    2.21)에서 중복 penalty 구조·국면 불일치·비교 실험을 정밀 실측한
-    결과, **국면 정의 통일(종목별→시장 공통)은 Watch/No-Go에 근접**
-    한다는 것이 확인됐다 — B가 A의 부분집합일 뿐 새 기회를 만들지
-    못하기 때문이다. SPPV-3의 우선순위는 국면 정의 통일보다 `regime_
-    conditional_signal`을 alpha layer에 직접 통합(§3 제안)하는 쪽으로
-    재조정할지 사용자와 논의가 필요하다. 1차 게이트(§21 모니터링)가
-    `TRIGGERED`로 전환되거나, 설계 자체를 shadow 단계에서 먼저 진행할지도
-    사용자 확인 필요.
+    2.21)에서 국면 정의 통일(종목별→시장 공통)은 Watch/No-Go에
+    근접한다는 것이 확인됐으나, §12(SPPV-2.22)에서 **alpha layer
+    교체는 2차 창에서 유의한 우위를 확보(Conditional Go)**했다 —
+    SPPV-3의 우선순위는 국면 정의 통일이 아니라 `regime_conditional_
+    signal`을 alpha layer에 직접 통합하는 쪽으로 재조정한다. 1차
+    게이트(§21 모니터링)가 `TRIGGERED`로 전환되는 즉시 최종 Go
+    여부를 재확인해야 하며, 그 전까지 코드 변경은 보류한다.
   - 작업 범위: regime/allocation/strategy/source 복원, signal 약세와
     `risk_off_penalty`/eligibility 중복 억제 분해, `overall_score`
-    재설계(통과군 내부 역전 해소), §21 TRIGGERED 시 A_only 재검증
+    재설계(통과군 내부 역전 해소), §21 TRIGGERED 시 alpha layer 교체
+    최종 재확인
 - [ ] **SPPV-4** 전체 BUY funnel back-simulation
   - 작업 범위: `candidate → selected → expected value → would_buy → submitted`
     counterfactual 전환과 MFE/MAE/낙폭 비교
@@ -1416,6 +1459,10 @@ bearish/range_bound 어느 국면 내부도 `overall_score`/`slow_score`가
   (read-only, 신규 KIS 호출 0건 — 3년 캐시 재사용)
 - `logs/signal_ic_entry_score_regime_ab_diff_2026-07-15.json`,
   `logs/entry_score_regime_ab_diff_run_2026-07-15.log`
+- `scripts/validate_alpha_layer_vs_regime_conditional_signal.py`
+  (read-only, 신규 KIS 호출 0건 — 3년 캐시 재사용)
+- `logs/signal_ic_alpha_layer_vs_regime_conditional_signal_2026-07-15.json`,
+  `logs/alpha_layer_vs_regime_conditional_signal_run_2026-07-15.log`
 - `logs/_bars_cache_core88_2026-07-14/`(88종목 1년 캐시, 재사용 가능)
 - `logs/_bars_cache_core87_3y_2026-07-14/`(87종목+벤치마크 3년 캐시,
   SPPV-2.7/2.8/2.9/2.10/2.11/2.12가 공유 재사용)

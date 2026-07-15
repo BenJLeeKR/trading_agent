@@ -1,0 +1,32 @@
+INFO:validate_alpha_layer_vs_regime_conditional_signal:[20/87] 누적 표본 13060건
+INFO:validate_alpha_layer_vs_regime_conditional_signal:[40/87] 누적 표본 26120건
+INFO:validate_alpha_layer_vs_regime_conditional_signal:[60/87] 누적 표본 39180건
+INFO:validate_alpha_layer_vs_regime_conditional_signal:[80/87] 누적 표본 52240건
+INFO:validate_alpha_layer_vs_regime_conditional_signal:[87/87] 누적 표본 56753건
+INFO:validate_alpha_layer_vs_regime_conditional_signal:전체 3년 표본 56753건, 실패 0종목
+
+=== 현행 entry_score alpha layer vs regime_conditional_signal 직접 비교 ===
+전체 3년 표본: 56753건, 최근 12개월(cutoff=2025-06-16) 표본: 21315건
+regime_conditional_signal 산출 가능(판정불가 제외) 3년 표본: 56235건, 최근 12개월: 21315건
+
+--- supplementary_3y ---
+  [T+5]
+    current_alpha_composite(전체 표본): spread={'n_days': 653, 'mean_pct': 0.302, 't_naive': 1.98, 't_newey_west': 1.13, 'pct_days_positive': 0.534}
+    current_alpha_composite(신호 산출 가능 부분집합, 공정비교용): spread={'n_days': 647, 'mean_pct': 0.275, 't_naive': 1.79, 't_newey_west': 1.02, 'pct_days_positive': 0.532}
+    regime_conditional_signal: spread={'n_days': 647, 'mean_pct': 0.666, 't_naive': 4.46, 't_newey_west': 2.52, 'pct_days_positive': 0.612}
+  [T+20]
+    current_alpha_composite(전체 표본): spread={'n_days': 653, 'mean_pct': 1.093, 't_naive': 4.21, 't_newey_west': 1.39, 'pct_days_positive': 0.525}
+    current_alpha_composite(신호 산출 가능 부분집합, 공정비교용): spread={'n_days': 647, 'mean_pct': 1.043, 't_naive': 4.0, 't_newey_west': 1.32, 'pct_days_positive': 0.521}
+    regime_conditional_signal: spread={'n_days': 647, 'mean_pct': 2.082, 't_naive': 7.64, 't_newey_west': 2.33, 'pct_days_positive': 0.629}
+
+--- primary_recent_12m ---
+  [T+5]
+    current_alpha_composite(전체 표본): spread={'n_days': 245, 'mean_pct': 0.716, 't_naive': 2.32, 't_newey_west': 1.29, 'pct_days_positive': 0.559}
+    current_alpha_composite(신호 산출 가능 부분집합, 공정비교용): spread={'n_days': 245, 'mean_pct': 0.716, 't_naive': 2.32, 't_newey_west': 1.29, 'pct_days_positive': 0.559}
+    regime_conditional_signal: spread={'n_days': 245, 'mean_pct': 0.859, 't_naive': 2.85, 't_newey_west': 1.55, 'pct_days_positive': 0.6}
+  [T+20]
+    current_alpha_composite(전체 표본): spread={'n_days': 245, 'mean_pct': 1.952, 't_naive': 3.73, 't_newey_west': 1.26, 'pct_days_positive': 0.58}
+    current_alpha_composite(신호 산출 가능 부분집합, 공정비교용): spread={'n_days': 245, 'mean_pct': 1.952, 't_naive': 3.73, 't_newey_west': 1.26, 'pct_days_positive': 0.58}
+    regime_conditional_signal: spread={'n_days': 245, 'mean_pct': 3.01, 't_naive': 5.09, 't_newey_west': 1.47, 'pct_days_positive': 0.645}
+
+산출 저장: logs/signal_ic_alpha_layer_vs_regime_conditional_signal_2026-07-15.json
