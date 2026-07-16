@@ -594,6 +594,25 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   미호출 — 이번 턴도 shadow/validation 범위. 상세: `plans/[DESIGN]
   regime_conditional_entry_signal_v1.md` §19.
 
+- 작성자: Claude
+- 수정일자: 2026-07-16 (29차, R3 재현성 검증 + percentile 계산
+  민감도 점검)
+- 수정내용: SPPV-2.29가 채택 검토한 R3를 분기 4분할로 재검증했다
+  (SPPV-2.30). **R3의 "4개 창 전부 우위" 결론이 분기 단위로는
+  무너졌다 — 분기1·분기3에서 R3가 R0보다 오히려 낮았다**(분기1
+  T+20 R0 +1.208% vs R3 +1.041%, 분기3 T+20 R0 +3.648% vs R3
+  +3.402%). SPPV-2.29의 4개 창은 서로 겹치는 넓은 구간이라 해상도가
+  낮았음이 원인으로 판단된다. percentile 계산 기준을 candidate
+  내부로 바꾼 변형(R3b)은 8개 창 전부에서 R0보다 높았으나
+  selected_rate가 29.9~39.2%까지 낮아져 R1과 유사한 "극단적 선별"
+  우려가 있어 별도 검증이 필요하다. 결론: R3를 다시 Watch로
+  하향한다(SPPV-2.29의 "유력 후보 격상" 철회) — 분기 25%에서 방향이
+  뒤집힌 것은 "일부 분할 창에서 흔들리면 Watch/Hold"라는 판정
+  원칙에 해당한다. R3b는 신규 관찰 대상으로 등록만 하고 이번 턴에
+  격상하지 않는다. 신규 KIS 호출 0건. 운영 코드 변경 없음, broker
+  submit 미호출 — 이번 턴도 shadow/validation 범위. 상세:
+  `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §20.
+
 ---
 
 ## 진행 체크리스트
@@ -1163,6 +1182,43 @@ canonical),
   - 다음 과제: R3의 §3 공식 정식 반영 여부 사용자 확인, R3 재현성
     추가 검증(분기별 분할 등), percentile 계산의 universe 구성
     민감도 점검.
+- [x] **SPPV-2.30(신설)** R3(percentile 재보정) 재현성 검증 +
+  percentile 계산 민감도 점검 (완료, 2026-07-16)
+  - 작업 범위: SPPV-2.29가 채택 검토한 R3를 분기 4분할로 재검증하고,
+    percentile 계산 기준(그날 전체 universe vs candidate 컷 이후
+    내부)의 민감도를 점검. 비교 대상은 A(현행 alpha)/B_R0(재보정
+    없음)/B_R3(전체 universe 기준)/B_R3b(candidate 내부 기준,
+    신규 민감도 변형) 4개.
+  - **결과: R3(전체 universe 기준)의 "4개 창(2차/1차/전반부/후반부)
+    전부 우위"라는 SPPV-2.29의 결론은, 분기 4분할로 더 잘게
+    쪼개자 무너졌다 — 분기1(2023-10~2024-06)과 분기3(2025-02~
+    2025-10)에서 R3가 오히려 R0보다 forward return이 낮았다**(분기1
+    T+20 R0 +1.208% vs R3 +1.041%, 분기3 T+20 R0 +3.648% vs R3
+    +3.402%). SPPV-2.29의 4개 창은 서로 크게 겹치는 넓은 구간
+    (특히 "후반부"≈"최근 12개월")이었기 때문에, 분할 해상도가
+    낮았을 때만 "8/8 재현"으로 보였을 가능성이 높다. **percentile
+    계산 기준 민감도도 크게 나타났다: candidate 컷 이후 내부에서
+    재계산한 R3b는 8개 창 전부(분기1·분기3 포함)에서 R0보다
+    일관되게 높았으나**, selected_rate가 29.9~39.2%까지 낮아져
+    §19에서 기각한 R1(가중치 축소)과 유사한 "극단적 선별" 패턴을
+    보였다 — 개선이 진짜인지 이번 실험만으로 확정할 수 없다.
+    **판정: SPPV-2.29의 "R3 유력 후보로 격상" 판정을 철회하고
+    Watch로 하향한다** — 분기 단위 재현성 검증에서 2/4(25%) 분기가
+    방향을 뒤집은 것은 "일부 분할 창에서 흔들리면 Watch/Hold"라는
+    판정 원칙에 정확히 해당한다. **R3b는 새로운 관찰 대상으로
+    등록하되 이번 턴에 유력 후보로 올리지 않는다**(R1과 동일한
+    선택률 급감 우려를 별도 검증해야 함). 신규 KIS 호출 0건(기존
+    3년 캐시로 전량 서빙, 로그로 실측 확인). 운영 코드 변경 없음,
+    broker submit 미호출 — 이번 턴도 shadow/validation 범위. 상세:
+    `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §20.
+  - 산출물: `scripts/validate_alpha_layer_r3_reproducibility.py`
+    (read-only, 신규 KIS 호출 0건), `logs/signal_ic_alpha_layer_
+    r3_reproducibility_2026-07-16.json`, `logs/alpha_layer_r3_
+    reproducibility_run_2026-07-16.log`.
+  - 다음 과제: R3b를 R1과 동일한 엄격도로 별도 검증, 분기1·분기3에서
+    R3가 R0보다 못한 원인 규명(§16과 유사한 국면/유동성 분해),
+    향후 재보정 검증은 분기 단위 이상 세분화된 분할을 표준 절차로
+    삼는다.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
@@ -1898,6 +1954,9 @@ bearish/range_bound 어느 국면 내부도 `overall_score`/`slow_score`가
 - `scripts/validate_alpha_layer_score_rescaling_comparison.py`,
   `logs/signal_ic_alpha_layer_score_rescaling_comparison_2026-07-16.json`,
   `logs/alpha_layer_score_rescaling_comparison_run_2026-07-16.log`
+- `scripts/validate_alpha_layer_r3_reproducibility.py`,
+  `logs/signal_ic_alpha_layer_r3_reproducibility_2026-07-16.json`,
+  `logs/alpha_layer_r3_reproducibility_run_2026-07-16.log`
 - `scripts/shadow_regime_conditional_entry_signal.py`(read-only, 신규
   KIS 호출 0건 — 3년 캐시 재사용)
 - `logs/shadow_regime_conditional_entry_signal_2026-07-15.json`,

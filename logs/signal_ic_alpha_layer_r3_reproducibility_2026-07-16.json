@@ -1,0 +1,1272 @@
+{
+  "as_of": "2026-07-16T19:52:12.016665+09:00",
+  "symbol_count_used": 87,
+  "fetch_failures": [],
+  "total_rolling_samples_3y": 56753,
+  "total_rolling_samples_recent_12m": 21315,
+  "recent_window_cutoff": "2025-06-16",
+  "scenarios_tested": [
+    "A_current_alpha",
+    "B_R0_no_rescale",
+    "B_R3_percentile_fulluniverse",
+    "B_R3b_percentile_candidateonly"
+  ],
+  "windows": {
+    "supplementary_3y": {
+      "window": "2차(3년, 전체 표본)",
+      "scenarios": {
+        "A_current_alpha": {
+          "candidate_n": 11101,
+          "eligible_n": 5462,
+          "selected_n": 3804,
+          "would_buy_n": 1672,
+          "blocked_by_eligibility_n": 5639,
+          "blocked_by_score_threshold_n": 1658,
+          "eligible_rate_of_candidate": 49.2,
+          "selected_rate_of_eligible": 69.64,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 1672,
+              "mean_pct": 0.708,
+              "t_naive": 4.11,
+              "t_newey_west": 2.79,
+              "pct_positive": 0.491
+            },
+            "T+20": {
+              "n": 1672,
+              "mean_pct": 1.9373,
+              "t_naive": 5.78,
+              "t_newey_west": 2.49,
+              "pct_positive": 0.4874
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 1672,
+              "mfe_mean_pct": 5.4093,
+              "mae_mean_pct": -4.261
+            },
+            "T+20": {
+              "n": 1672,
+              "mfe_mean_pct": 11.9085,
+              "mae_mean_pct": -7.9444
+            }
+          }
+        },
+        "B_R0_no_rescale": {
+          "candidate_n": 10999,
+          "eligible_n": 3491,
+          "selected_n": 3491,
+          "would_buy_n": 1543,
+          "blocked_by_eligibility_n": 7508,
+          "blocked_by_score_threshold_n": 0,
+          "eligible_rate_of_candidate": 31.74,
+          "selected_rate_of_eligible": 100.0,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 1543,
+              "mean_pct": 1.0893,
+              "t_naive": 4.64,
+              "t_newey_west": 3.04,
+              "pct_positive": 0.4951
+            },
+            "T+20": {
+              "n": 1543,
+              "mean_pct": 2.8177,
+              "t_naive": 6.58,
+              "t_newey_west": 2.9,
+              "pct_positive": 0.4932
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 1543,
+              "mfe_mean_pct": 6.8241,
+              "mae_mean_pct": -4.9532
+            },
+            "T+20": {
+              "n": 1543,
+              "mfe_mean_pct": 15.1386,
+              "mae_mean_pct": -9.0141
+            }
+          }
+        },
+        "B_R3_percentile_fulluniverse": {
+          "candidate_n": 10999,
+          "eligible_n": 3491,
+          "selected_n": 3321,
+          "would_buy_n": 1516,
+          "blocked_by_eligibility_n": 7508,
+          "blocked_by_score_threshold_n": 170,
+          "eligible_rate_of_candidate": 31.74,
+          "selected_rate_of_eligible": 95.13,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 1516,
+              "mean_pct": 1.1493,
+              "t_naive": 4.87,
+              "t_newey_west": 3.11,
+              "pct_positive": 0.4954
+            },
+            "T+20": {
+              "n": 1516,
+              "mean_pct": 3.5911,
+              "t_naive": 8.02,
+              "t_newey_west": 3.25,
+              "pct_positive": 0.5
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 1516,
+              "mfe_mean_pct": 6.6176,
+              "mae_mean_pct": -4.9408
+            },
+            "T+20": {
+              "n": 1516,
+              "mfe_mean_pct": 15.3148,
+              "mae_mean_pct": -8.9671
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "candidate_n": 10999,
+          "eligible_n": 3491,
+          "selected_n": 1234,
+          "would_buy_n": 1024,
+          "blocked_by_eligibility_n": 7508,
+          "blocked_by_score_threshold_n": 2257,
+          "eligible_rate_of_candidate": 31.74,
+          "selected_rate_of_eligible": 35.35,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 1024,
+              "mean_pct": 1.9597,
+              "t_naive": 6.5,
+              "t_newey_west": 4.0,
+              "pct_positive": 0.5469
+            },
+            "T+20": {
+              "n": 1024,
+              "mean_pct": 6.1337,
+              "t_naive": 9.5,
+              "t_newey_west": 3.78,
+              "pct_positive": 0.5371
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 1024,
+              "mfe_mean_pct": 7.6253,
+              "mae_mean_pct": -4.9314
+            },
+            "T+20": {
+              "n": 1024,
+              "mfe_mean_pct": 18.5761,
+              "mae_mean_pct": -9.0423
+            }
+          }
+        }
+      }
+    },
+    "primary_recent_12m": {
+      "window": "1차(최근 12개월)",
+      "scenarios": {
+        "A_current_alpha": {
+          "candidate_n": 4165,
+          "eligible_n": 2322,
+          "selected_n": 1540,
+          "would_buy_n": 585,
+          "blocked_by_eligibility_n": 1843,
+          "blocked_by_score_threshold_n": 782,
+          "eligible_rate_of_candidate": 55.75,
+          "selected_rate_of_eligible": 66.32,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 585,
+              "mean_pct": 1.3933,
+              "t_naive": 4.14,
+              "t_newey_west": 2.68,
+              "pct_positive": 0.5111
+            },
+            "T+20": {
+              "n": 585,
+              "mean_pct": 3.4911,
+              "t_naive": 5.47,
+              "t_newey_west": 2.51,
+              "pct_positive": 0.5265
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 585,
+              "mfe_mean_pct": 6.643,
+              "mae_mean_pct": -4.5904
+            },
+            "T+20": {
+              "n": 585,
+              "mfe_mean_pct": 15.3694,
+              "mae_mean_pct": -8.1592
+            }
+          }
+        },
+        "B_R0_no_rescale": {
+          "candidate_n": 4165,
+          "eligible_n": 1621,
+          "selected_n": 1621,
+          "would_buy_n": 673,
+          "blocked_by_eligibility_n": 2544,
+          "blocked_by_score_threshold_n": 0,
+          "eligible_rate_of_candidate": 38.92,
+          "selected_rate_of_eligible": 100.0,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 673,
+              "mean_pct": 2.0577,
+              "t_naive": 4.87,
+              "t_newey_west": 3.11,
+              "pct_positive": 0.5319
+            },
+            "T+20": {
+              "n": 673,
+              "mean_pct": 4.3066,
+              "t_naive": 5.71,
+              "t_newey_west": 2.59,
+              "pct_positive": 0.5171
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 673,
+              "mfe_mean_pct": 8.848,
+              "mae_mean_pct": -5.4873
+            },
+            "T+20": {
+              "n": 673,
+              "mfe_mean_pct": 20.0743,
+              "mae_mean_pct": -9.6832
+            }
+          }
+        },
+        "B_R3_percentile_fulluniverse": {
+          "candidate_n": 4165,
+          "eligible_n": 1621,
+          "selected_n": 1519,
+          "would_buy_n": 657,
+          "blocked_by_eligibility_n": 2544,
+          "blocked_by_score_threshold_n": 102,
+          "eligible_rate_of_candidate": 38.92,
+          "selected_rate_of_eligible": 93.71,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 657,
+              "mean_pct": 2.0977,
+              "t_naive": 4.74,
+              "t_newey_west": 2.93,
+              "pct_positive": 0.5251
+            },
+            "T+20": {
+              "n": 657,
+              "mean_pct": 6.0496,
+              "t_naive": 7.42,
+              "t_newey_west": 3.04,
+              "pct_positive": 0.5434
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 657,
+              "mfe_mean_pct": 8.5051,
+              "mae_mean_pct": -5.4902
+            },
+            "T+20": {
+              "n": 657,
+              "mfe_mean_pct": 20.6393,
+              "mae_mean_pct": -9.4749
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "candidate_n": 4165,
+          "eligible_n": 1621,
+          "selected_n": 537,
+          "would_buy_n": 443,
+          "blocked_by_eligibility_n": 2544,
+          "blocked_by_score_threshold_n": 1084,
+          "eligible_rate_of_candidate": 38.92,
+          "selected_rate_of_eligible": 33.13,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 443,
+              "mean_pct": 2.8771,
+              "t_naive": 5.27,
+              "t_newey_west": 3.04,
+              "pct_positive": 0.5756
+            },
+            "T+20": {
+              "n": 443,
+              "mean_pct": 9.1603,
+              "t_naive": 7.75,
+              "t_newey_west": 2.9,
+              "pct_positive": 0.5914
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 443,
+              "mfe_mean_pct": 9.4204,
+              "mae_mean_pct": -5.3669
+            },
+            "T+20": {
+              "n": 443,
+              "mfe_mean_pct": 24.5663,
+              "mae_mean_pct": -9.3634
+            }
+          }
+        }
+      }
+    },
+    "3y_first_half": {
+      "window": "3년 전반부",
+      "scenarios": {
+        "A_current_alpha": {
+          "candidate_n": 5542,
+          "eligible_n": 2448,
+          "selected_n": 1768,
+          "would_buy_n": 874,
+          "blocked_by_eligibility_n": 3094,
+          "blocked_by_score_threshold_n": 680,
+          "eligible_rate_of_candidate": 44.17,
+          "selected_rate_of_eligible": 72.22,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 874,
+              "mean_pct": 0.1871,
+              "t_naive": 0.88,
+              "t_newey_west": 0.64,
+              "pct_positive": 0.4668
+            },
+            "T+20": {
+              "n": 874,
+              "mean_pct": 0.2906,
+              "t_naive": 0.79,
+              "t_newey_west": 0.38,
+              "pct_positive": 0.4485
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 874,
+              "mfe_mean_pct": 4.6068,
+              "mae_mean_pct": -4.1264
+            },
+            "T+20": {
+              "n": 874,
+              "mfe_mean_pct": 9.0714,
+              "mae_mean_pct": -7.8122
+            }
+          }
+        },
+        "B_R0_no_rescale": {
+          "candidate_n": 5457,
+          "eligible_n": 1359,
+          "selected_n": 1359,
+          "would_buy_n": 657,
+          "blocked_by_eligibility_n": 4098,
+          "blocked_by_score_threshold_n": 0,
+          "eligible_rate_of_candidate": 24.9,
+          "selected_rate_of_eligible": 100.0,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 657,
+              "mean_pct": 0.4424,
+              "t_naive": 1.46,
+              "t_newey_west": 1.03,
+              "pct_positive": 0.4612
+            },
+            "T+20": {
+              "n": 657,
+              "mean_pct": 0.9782,
+              "t_naive": 1.96,
+              "t_newey_west": 0.94,
+              "pct_positive": 0.4627
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 657,
+              "mfe_mean_pct": 5.4808,
+              "mae_mean_pct": -4.5414
+            },
+            "T+20": {
+              "n": 657,
+              "mfe_mean_pct": 10.7514,
+              "mae_mean_pct": -8.4775
+            }
+          }
+        },
+        "B_R3_percentile_fulluniverse": {
+          "candidate_n": 5457,
+          "eligible_n": 1359,
+          "selected_n": 1312,
+          "would_buy_n": 649,
+          "blocked_by_eligibility_n": 4098,
+          "blocked_by_score_threshold_n": 47,
+          "eligible_rate_of_candidate": 24.9,
+          "selected_rate_of_eligible": 96.54,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 649,
+              "mean_pct": 0.4939,
+              "t_naive": 1.76,
+              "t_newey_west": 1.26,
+              "pct_positive": 0.4684
+            },
+            "T+20": {
+              "n": 649,
+              "mean_pct": 1.0226,
+              "t_naive": 2.1,
+              "t_newey_west": 0.97,
+              "pct_positive": 0.453
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 649,
+              "mfe_mean_pct": 5.3062,
+              "mae_mean_pct": -4.5392
+            },
+            "T+20": {
+              "n": 649,
+              "mfe_mean_pct": 10.5215,
+              "mae_mean_pct": -8.5352
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "candidate_n": 5457,
+          "eligible_n": 1359,
+          "selected_n": 509,
+          "would_buy_n": 425,
+          "blocked_by_eligibility_n": 4098,
+          "blocked_by_score_threshold_n": 850,
+          "eligible_rate_of_candidate": 24.9,
+          "selected_rate_of_eligible": 37.45,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 425,
+              "mean_pct": 1.2273,
+              "t_naive": 3.05,
+              "t_newey_west": 2.16,
+              "pct_positive": 0.5129
+            },
+            "T+20": {
+              "n": 425,
+              "mean_pct": 2.8301,
+              "t_naive": 3.67,
+              "t_newey_west": 2.03,
+              "pct_positive": 0.4635
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 425,
+              "mfe_mean_pct": 6.4393,
+              "mae_mean_pct": -4.7765
+            },
+            "T+20": {
+              "n": 425,
+              "mfe_mean_pct": 13.1702,
+              "mae_mean_pct": -9.1774
+            }
+          }
+        }
+      }
+    },
+    "3y_second_half": {
+      "window": "3년 후반부",
+      "scenarios": {
+        "A_current_alpha": {
+          "candidate_n": 5559,
+          "eligible_n": 3014,
+          "selected_n": 2036,
+          "would_buy_n": 798,
+          "blocked_by_eligibility_n": 2545,
+          "blocked_by_score_threshold_n": 978,
+          "eligible_rate_of_candidate": 54.22,
+          "selected_rate_of_eligible": 67.55,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 798,
+              "mean_pct": 1.2786,
+              "t_naive": 4.64,
+              "t_newey_west": 3.03,
+              "pct_positive": 0.5175
+            },
+            "T+20": {
+              "n": 798,
+              "mean_pct": 3.7408,
+              "t_naive": 6.58,
+              "t_newey_west": 2.79,
+              "pct_positive": 0.5301
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 798,
+              "mfe_mean_pct": 6.2882,
+              "mae_mean_pct": -4.4083
+            },
+            "T+20": {
+              "n": 798,
+              "mfe_mean_pct": 15.0159,
+              "mae_mean_pct": -8.0893
+            }
+          }
+        },
+        "B_R0_no_rescale": {
+          "candidate_n": 5542,
+          "eligible_n": 2132,
+          "selected_n": 2132,
+          "would_buy_n": 886,
+          "blocked_by_eligibility_n": 3410,
+          "blocked_by_score_threshold_n": 0,
+          "eligible_rate_of_candidate": 38.47,
+          "selected_rate_of_eligible": 100.0,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 886,
+              "mean_pct": 1.5691,
+              "t_naive": 4.61,
+              "t_newey_west": 2.93,
+              "pct_positive": 0.5203
+            },
+            "T+20": {
+              "n": 886,
+              "mean_pct": 4.1818,
+              "t_naive": 6.49,
+              "t_newey_west": 2.84,
+              "pct_positive": 0.5158
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 886,
+              "mfe_mean_pct": 7.8203,
+              "mae_mean_pct": -5.2585
+            },
+            "T+20": {
+              "n": 886,
+              "mfe_mean_pct": 18.3919,
+              "mae_mean_pct": -9.412
+            }
+          }
+        },
+        "B_R3_percentile_fulluniverse": {
+          "candidate_n": 5542,
+          "eligible_n": 2132,
+          "selected_n": 2009,
+          "would_buy_n": 867,
+          "blocked_by_eligibility_n": 3410,
+          "blocked_by_score_threshold_n": 123,
+          "eligible_rate_of_candidate": 38.47,
+          "selected_rate_of_eligible": 94.23,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 867,
+              "mean_pct": 1.6399,
+              "t_naive": 4.62,
+              "t_newey_west": 2.87,
+              "pct_positive": 0.5156
+            },
+            "T+20": {
+              "n": 867,
+              "mean_pct": 5.5137,
+              "t_naive": 8.03,
+              "t_newey_west": 3.24,
+              "pct_positive": 0.5352
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 867,
+              "mfe_mean_pct": 7.5993,
+              "mae_mean_pct": -5.2414
+            },
+            "T+20": {
+              "n": 867,
+              "mfe_mean_pct": 18.9028,
+              "mae_mean_pct": -9.2904
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "candidate_n": 5542,
+          "eligible_n": 2132,
+          "selected_n": 725,
+          "would_buy_n": 599,
+          "blocked_by_eligibility_n": 3410,
+          "blocked_by_score_threshold_n": 1407,
+          "eligible_rate_of_candidate": 38.47,
+          "selected_rate_of_eligible": 34.01,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 599,
+              "mean_pct": 2.4793,
+              "t_naive": 5.8,
+              "t_newey_west": 3.39,
+              "pct_positive": 0.571
+            },
+            "T+20": {
+              "n": 599,
+              "mean_pct": 8.4776,
+              "t_naive": 8.94,
+              "t_newey_west": 3.4,
+              "pct_positive": 0.5893
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 599,
+              "mfe_mean_pct": 8.4667,
+              "mae_mean_pct": -5.0412
+            },
+            "T+20": {
+              "n": 599,
+              "mfe_mean_pct": 22.4116,
+              "mae_mean_pct": -8.9464
+            }
+          }
+        }
+      }
+    },
+    "quarter_1": {
+      "window": "3년 분기1(2023-10-10~2024-06-07)",
+      "scenarios": {
+        "A_current_alpha": {
+          "candidate_n": 2771,
+          "eligible_n": 1199,
+          "selected_n": 943,
+          "would_buy_n": 445,
+          "blocked_by_eligibility_n": 1572,
+          "blocked_by_score_threshold_n": 256,
+          "eligible_rate_of_candidate": 43.27,
+          "selected_rate_of_eligible": 78.65,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 445,
+              "mean_pct": 0.1249,
+              "t_naive": 0.41,
+              "t_newey_west": 0.28,
+              "pct_positive": 0.4539
+            },
+            "T+20": {
+              "n": 445,
+              "mean_pct": 0.8734,
+              "t_naive": 1.68,
+              "t_newey_west": 0.7,
+              "pct_positive": 0.4697
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 445,
+              "mfe_mean_pct": 4.475,
+              "mae_mean_pct": -4.0514
+            },
+            "T+20": {
+              "n": 445,
+              "mfe_mean_pct": 9.0465,
+              "mae_mean_pct": -7.4012
+            }
+          }
+        },
+        "B_R0_no_rescale": {
+          "candidate_n": 2703,
+          "eligible_n": 795,
+          "selected_n": 795,
+          "would_buy_n": 388,
+          "blocked_by_eligibility_n": 1908,
+          "blocked_by_score_threshold_n": 0,
+          "eligible_rate_of_candidate": 29.41,
+          "selected_rate_of_eligible": 100.0,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 388,
+              "mean_pct": 0.4244,
+              "t_naive": 1.04,
+              "t_newey_west": 0.73,
+              "pct_positive": 0.451
+            },
+            "T+20": {
+              "n": 388,
+              "mean_pct": 1.2076,
+              "t_naive": 1.85,
+              "t_newey_west": 0.78,
+              "pct_positive": 0.4433
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 388,
+              "mfe_mean_pct": 5.4633,
+              "mae_mean_pct": -4.5823
+            },
+            "T+20": {
+              "n": 388,
+              "mfe_mean_pct": 10.7166,
+              "mae_mean_pct": -8.137
+            }
+          }
+        },
+        "B_R3_percentile_fulluniverse": {
+          "candidate_n": 2703,
+          "eligible_n": 795,
+          "selected_n": 774,
+          "would_buy_n": 385,
+          "blocked_by_eligibility_n": 1908,
+          "blocked_by_score_threshold_n": 21,
+          "eligible_rate_of_candidate": 29.41,
+          "selected_rate_of_eligible": 97.36,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 385,
+              "mean_pct": 0.2813,
+              "t_naive": 0.8,
+              "t_newey_west": 0.55,
+              "pct_positive": 0.4442
+            },
+            "T+20": {
+              "n": 385,
+              "mean_pct": 1.0409,
+              "t_naive": 1.67,
+              "t_newey_west": 0.66,
+              "pct_positive": 0.4468
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 385,
+              "mfe_mean_pct": 5.1515,
+              "mae_mean_pct": -4.5557
+            },
+            "T+20": {
+              "n": 385,
+              "mfe_mean_pct": 10.3375,
+              "mae_mean_pct": -8.2837
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "candidate_n": 2703,
+          "eligible_n": 795,
+          "selected_n": 294,
+          "would_buy_n": 245,
+          "blocked_by_eligibility_n": 1908,
+          "blocked_by_score_threshold_n": 501,
+          "eligible_rate_of_candidate": 29.41,
+          "selected_rate_of_eligible": 36.98,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 245,
+              "mean_pct": 0.7437,
+              "t_naive": 1.63,
+              "t_newey_west": 1.13,
+              "pct_positive": 0.4939
+            },
+            "T+20": {
+              "n": 245,
+              "mean_pct": 2.616,
+              "t_naive": 2.7,
+              "t_newey_west": 1.31,
+              "pct_positive": 0.4571
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 245,
+              "mfe_mean_pct": 5.9014,
+              "mae_mean_pct": -4.6257
+            },
+            "T+20": {
+              "n": 245,
+              "mfe_mean_pct": 12.4286,
+              "mae_mean_pct": -8.8471
+            }
+          }
+        }
+      }
+    },
+    "quarter_2": {
+      "window": "3년 분기2(2024-06-10~2025-02-11)",
+      "scenarios": {
+        "A_current_alpha": {
+          "candidate_n": 2771,
+          "eligible_n": 1249,
+          "selected_n": 825,
+          "would_buy_n": 429,
+          "blocked_by_eligibility_n": 1522,
+          "blocked_by_score_threshold_n": 424,
+          "eligible_rate_of_candidate": 45.07,
+          "selected_rate_of_eligible": 66.05,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 429,
+              "mean_pct": 0.2517,
+              "t_naive": 0.84,
+              "t_newey_west": 0.68,
+              "pct_positive": 0.4802
+            },
+            "T+20": {
+              "n": 429,
+              "mean_pct": -0.3139,
+              "t_naive": -0.6,
+              "t_newey_west": -0.38,
+              "pct_positive": 0.4266
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 429,
+              "mfe_mean_pct": 4.7435,
+              "mae_mean_pct": -4.2043
+            },
+            "T+20": {
+              "n": 429,
+              "mfe_mean_pct": 9.0972,
+              "mae_mean_pct": -8.2385
+            }
+          }
+        },
+        "B_R0_no_rescale": {
+          "candidate_n": 2754,
+          "eligible_n": 564,
+          "selected_n": 564,
+          "would_buy_n": 269,
+          "blocked_by_eligibility_n": 2190,
+          "blocked_by_score_threshold_n": 0,
+          "eligible_rate_of_candidate": 20.48,
+          "selected_rate_of_eligible": 100.0,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 269,
+              "mean_pct": 0.4682,
+              "t_naive": 1.03,
+              "t_newey_west": 0.76,
+              "pct_positive": 0.4758
+            },
+            "T+20": {
+              "n": 269,
+              "mean_pct": 0.6474,
+              "t_naive": 0.83,
+              "t_newey_west": 0.53,
+              "pct_positive": 0.4907
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 269,
+              "mfe_mean_pct": 5.5059,
+              "mae_mean_pct": -4.4825
+            },
+            "T+20": {
+              "n": 269,
+              "mfe_mean_pct": 10.8016,
+              "mae_mean_pct": -8.9686
+            }
+          }
+        },
+        "B_R3_percentile_fulluniverse": {
+          "candidate_n": 2754,
+          "eligible_n": 564,
+          "selected_n": 538,
+          "would_buy_n": 264,
+          "blocked_by_eligibility_n": 2190,
+          "blocked_by_score_threshold_n": 26,
+          "eligible_rate_of_candidate": 20.48,
+          "selected_rate_of_eligible": 95.39,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 264,
+              "mean_pct": 0.8039,
+              "t_naive": 1.75,
+              "t_newey_west": 1.34,
+              "pct_positive": 0.5038
+            },
+            "T+20": {
+              "n": 264,
+              "mean_pct": 0.9961,
+              "t_naive": 1.29,
+              "t_newey_west": 0.84,
+              "pct_positive": 0.4621
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 264,
+              "mfe_mean_pct": 5.5318,
+              "mae_mean_pct": -4.5151
+            },
+            "T+20": {
+              "n": 264,
+              "mfe_mean_pct": 10.7899,
+              "mae_mean_pct": -8.9019
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "candidate_n": 2754,
+          "eligible_n": 564,
+          "selected_n": 215,
+          "would_buy_n": 180,
+          "blocked_by_eligibility_n": 2190,
+          "blocked_by_score_threshold_n": 349,
+          "eligible_rate_of_candidate": 20.48,
+          "selected_rate_of_eligible": 38.12,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 180,
+              "mean_pct": 1.8856,
+              "t_naive": 2.63,
+              "t_newey_west": 1.91,
+              "pct_positive": 0.5389
+            },
+            "T+20": {
+              "n": 180,
+              "mean_pct": 3.1216,
+              "t_naive": 2.49,
+              "t_newey_west": 1.68,
+              "pct_positive": 0.4722
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 180,
+              "mfe_mean_pct": 7.1714,
+              "mae_mean_pct": -4.9817
+            },
+            "T+20": {
+              "n": 180,
+              "mfe_mean_pct": 14.1797,
+              "mae_mean_pct": -9.627
+            }
+          }
+        }
+      }
+    },
+    "quarter_3": {
+      "window": "3년 분기3(2025-02-12~2025-10-14)",
+      "scenarios": {
+        "A_current_alpha": {
+          "candidate_n": 2771,
+          "eligible_n": 1388,
+          "selected_n": 1080,
+          "would_buy_n": 444,
+          "blocked_by_eligibility_n": 1383,
+          "blocked_by_score_threshold_n": 308,
+          "eligible_rate_of_candidate": 50.09,
+          "selected_rate_of_eligible": 77.81,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 444,
+              "mean_pct": 1.0289,
+              "t_naive": 3.32,
+              "t_newey_west": 2.43,
+              "pct_positive": 0.5315
+            },
+            "T+20": {
+              "n": 444,
+              "mean_pct": 4.1508,
+              "t_naive": 5.86,
+              "t_newey_west": 2.4,
+              "pct_positive": 0.5473
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 444,
+              "mfe_mean_pct": 5.2458,
+              "mae_mean_pct": -3.8528
+            },
+            "T+20": {
+              "n": 444,
+              "mfe_mean_pct": 13.4022,
+              "mae_mean_pct": -7.16
+            }
+          }
+        },
+        "B_R0_no_rescale": {
+          "candidate_n": 2754,
+          "eligible_n": 950,
+          "selected_n": 950,
+          "would_buy_n": 430,
+          "blocked_by_eligibility_n": 1804,
+          "blocked_by_score_threshold_n": 0,
+          "eligible_rate_of_candidate": 34.5,
+          "selected_rate_of_eligible": 100.0,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 430,
+              "mean_pct": 0.6326,
+              "t_naive": 1.73,
+              "t_newey_west": 1.19,
+              "pct_positive": 0.4884
+            },
+            "T+20": {
+              "n": 430,
+              "mean_pct": 3.6478,
+              "t_naive": 4.78,
+              "t_newey_west": 1.92,
+              "pct_positive": 0.5116
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 430,
+              "mfe_mean_pct": 5.2256,
+              "mae_mean_pct": -4.2531
+            },
+            "T+20": {
+              "n": 430,
+              "mfe_mean_pct": 13.3899,
+              "mae_mean_pct": -7.9153
+            }
+          }
+        },
+        "B_R3_percentile_fulluniverse": {
+          "candidate_n": 2754,
+          "eligible_n": 950,
+          "selected_n": 919,
+          "would_buy_n": 425,
+          "blocked_by_eligibility_n": 1804,
+          "blocked_by_score_threshold_n": 31,
+          "eligible_rate_of_candidate": 34.5,
+          "selected_rate_of_eligible": 96.74,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 425,
+              "mean_pct": 0.5654,
+              "t_naive": 1.59,
+              "t_newey_west": 1.1,
+              "pct_positive": 0.4894
+            },
+            "T+20": {
+              "n": 425,
+              "mean_pct": 3.4015,
+              "t_naive": 4.56,
+              "t_newey_west": 1.74,
+              "pct_positive": 0.5082
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 425,
+              "mfe_mean_pct": 5.0599,
+              "mae_mean_pct": -4.2662
+            },
+            "T+20": {
+              "n": 425,
+              "mfe_mean_pct": 13.2135,
+              "mae_mean_pct": -8.1401
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "candidate_n": 2754,
+          "eligible_n": 950,
+          "selected_n": 372,
+          "would_buy_n": 308,
+          "blocked_by_eligibility_n": 1804,
+          "blocked_by_score_threshold_n": 578,
+          "eligible_rate_of_candidate": 34.5,
+          "selected_rate_of_eligible": 39.16,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 308,
+              "mean_pct": 0.9497,
+              "t_naive": 2.47,
+              "t_newey_west": 1.66,
+              "pct_positive": 0.5487
+            },
+            "T+20": {
+              "n": 308,
+              "mean_pct": 4.9315,
+              "t_naive": 5.42,
+              "t_newey_west": 2.11,
+              "pct_positive": 0.5519
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 308,
+              "mfe_mean_pct": 5.5284,
+              "mae_mean_pct": -4.2382
+            },
+            "T+20": {
+              "n": 308,
+              "mfe_mean_pct": 14.7924,
+              "mae_mean_pct": -8.1713
+            }
+          }
+        }
+      }
+    },
+    "quarter_4": {
+      "window": "3년 분기4(2025-10-15~2026-06-16)",
+      "scenarios": {
+        "A_current_alpha": {
+          "candidate_n": 2788,
+          "eligible_n": 1626,
+          "selected_n": 956,
+          "would_buy_n": 354,
+          "blocked_by_eligibility_n": 1162,
+          "blocked_by_score_threshold_n": 670,
+          "eligible_rate_of_candidate": 58.32,
+          "selected_rate_of_eligible": 58.79,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 354,
+              "mean_pct": 1.5917,
+              "t_naive": 3.29,
+              "t_newey_west": 2.03,
+              "pct_positive": 0.5
+            },
+            "T+20": {
+              "n": 354,
+              "mean_pct": 3.2265,
+              "t_naive": 3.49,
+              "t_newey_west": 1.56,
+              "pct_positive": 0.5085
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 354,
+              "mfe_mean_pct": 7.5958,
+              "mae_mean_pct": -5.1051
+            },
+            "T+20": {
+              "n": 354,
+              "mfe_mean_pct": 17.0398,
+              "mae_mean_pct": -9.2547
+            }
+          }
+        },
+        "B_R0_no_rescale": {
+          "candidate_n": 2788,
+          "eligible_n": 1182,
+          "selected_n": 1182,
+          "would_buy_n": 456,
+          "blocked_by_eligibility_n": 1606,
+          "blocked_by_score_threshold_n": 0,
+          "eligible_rate_of_candidate": 42.4,
+          "selected_rate_of_eligible": 100.0,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 456,
+              "mean_pct": 2.4523,
+              "t_naive": 4.37,
+              "t_newey_west": 2.72,
+              "pct_positive": 0.5504
+            },
+            "T+20": {
+              "n": 456,
+              "mean_pct": 4.6853,
+              "t_naive": 4.57,
+              "t_newey_west": 2.13,
+              "pct_positive": 0.5197
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 456,
+              "mfe_mean_pct": 10.267,
+              "mae_mean_pct": -6.2065
+            },
+            "T+20": {
+              "n": 456,
+              "mfe_mean_pct": 23.1086,
+              "mae_mean_pct": -10.8235
+            }
+          }
+        },
+        "B_R3_percentile_fulluniverse": {
+          "candidate_n": 2788,
+          "eligible_n": 1182,
+          "selected_n": 1090,
+          "would_buy_n": 442,
+          "blocked_by_eligibility_n": 1606,
+          "blocked_by_score_threshold_n": 92,
+          "eligible_rate_of_candidate": 42.4,
+          "selected_rate_of_eligible": 92.22,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 442,
+              "mean_pct": 2.6731,
+              "t_naive": 4.43,
+              "t_newey_west": 2.69,
+              "pct_positive": 0.5407
+            },
+            "T+20": {
+              "n": 442,
+              "mean_pct": 7.5446,
+              "t_naive": 6.66,
+              "t_newey_west": 2.82,
+              "pct_positive": 0.5611
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 442,
+              "mfe_mean_pct": 10.0411,
+              "mae_mean_pct": -6.1791
+            },
+            "T+20": {
+              "n": 442,
+              "mfe_mean_pct": 24.3733,
+              "mae_mean_pct": -10.3965
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "candidate_n": 2788,
+          "eligible_n": 1182,
+          "selected_n": 353,
+          "would_buy_n": 291,
+          "blocked_by_eligibility_n": 1606,
+          "blocked_by_score_threshold_n": 829,
+          "eligible_rate_of_candidate": 42.4,
+          "selected_rate_of_eligible": 29.86,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 291,
+              "mean_pct": 4.0984,
+              "t_naive": 5.32,
+              "t_newey_west": 3.05,
+              "pct_positive": 0.5945
+            },
+            "T+20": {
+              "n": 291,
+              "mean_pct": 12.2309,
+              "t_naive": 7.32,
+              "t_newey_west": 2.86,
+              "pct_positive": 0.6289
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 291,
+              "mfe_mean_pct": 11.5767,
+              "mae_mean_pct": -5.8911
+            },
+            "T+20": {
+              "n": 291,
+              "mfe_mean_pct": 30.476,
+              "mae_mean_pct": -9.7668
+            }
+          }
+        }
+      }
+    }
+  }
+}

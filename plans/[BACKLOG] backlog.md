@@ -326,6 +326,19 @@
   이라 확정 Go 아님). 운영 코드 변경 없음, broker submit 미호출.
   실행 로그로 KIS 호출 0건 확인.
 
+- 작성자: Claude
+- 수정일자: 2026-07-16 (28차, R3 재현성 검증 + percentile 계산
+  민감도 점검)
+- 수정내용: R3를 분기 4분할로 재검증했다(SPPV-2.30). R3의 "4개 창
+  전부 우위" 결론이 분기 단위로는 무너짐 — 분기1·분기3에서 R3가
+  R0보다 오히려 낮음을 발견. 이전 4개 창(2차/1차/전후반)은 서로
+  겹치는 넓은 구간이라 해상도가 낮았던 것으로 판단. percentile을
+  candidate 내부에서 재계산한 R3b는 8개 창 전부 우위를 보였으나
+  selected_rate가 30%대까지 낮아져 R1과 유사한 극단적 선별 우려로
+  별도 검증 필요. 결론: R3를 다시 Watch로 하향(유력 후보 격상
+  철회), R3b는 신규 관찰 대상으로만 등록. 운영 코드 변경 없음,
+  broker submit 미호출. 실행 로그로 KIS 호출 0건 확인.
+
 ---
 
 ## 관리 원칙
@@ -879,26 +892,51 @@
     `logs/signal_ic_alpha_layer_score_rescaling_comparison_
     2026-07-16.json`. 상세: `plans/[DESIGN] regime_conditional_
     entry_signal_v1.md` §19.
-  - **SPPV-3(다음 착수: R3를 §3 공식에 정식 반영할지 사용자 확인 +
-    R3 재현성 추가 검증 + §3 전제조건 충족 후 alpha 교체 재검증 +
-    "국면 조건부 활동성 threshold" 설계 검토 여부 사용자 확인)**:
+  - **SPPV-2.30(완료, 2026-07-16, R3 재현성 검증 + percentile 계산
+    민감도 점검 — R3 유력 후보 격상 철회, Watch로 하향)**: §2.29가
+    채택 검토한 R3를 분기 4분할로 재검증하고 percentile 계산
+    기준(그날 전체 universe vs candidate 컷 이후 내부)의 민감도를
+    점검했다. **결과: R3의 "4개 창 전부 우위" 결론이 분기 단위로는
+    무너졌다 — 분기1(2023-10~2024-06)과 분기3(2025-02~2025-10)
+    에서 R3가 오히려 R0보다 forward return이 낮았다**(분기1 T+20
+    R0 +1.208% vs R3 +1.041%, 분기3 T+20 R0 +3.648% vs R3
+    +3.402%). §2.29의 4개 창은 서로 겹치는 넓은 구간이라 해상도가
+    낮았음이 원인으로 판단된다. **percentile 계산 기준 민감도도
+    컸다 — candidate 컷 이후 내부에서 재계산한 R3b는 8개 창 전부
+    (분기1·분기3 포함)에서 R0보다 일관되게 높았으나**, selected_
+    rate가 29.9~39.2%까지 낮아져 §2.29에서 기각한 R1과 유사한
+    "극단적 선별" 패턴이라 개선이 진짜인지 확정할 수 없다. **판정:
+    §2.29의 "R3 유력한 후보로 격상" 판정을 철회하고 Watch로
+    하향한다** — 분기 25%에서 방향이 뒤집힌 것은 "일부 분할 창에서
+    흔들리면 Watch/Hold"라는 판정 원칙에 정확히 해당한다. **R3b는
+    새로운 관찰 대상으로 등록하되 이번 턴에 격상하지 않는다.**
+    신규 KIS 호출 0건, broker submit 미호출. 산출:
+    `scripts/validate_alpha_layer_r3_reproducibility.py`
+    (read-only, 신규 KIS 호출 0건),
+    `logs/signal_ic_alpha_layer_r3_reproducibility_2026-07-16.json`.
+    상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
+    §20.
+  - **SPPV-3(다음 착수: R3b를 R1과 동일한 엄격도로 별도 검증 +
+    분기1·분기3에서 R3가 R0보다 못한 원인 규명 + §3 전제조건
+    충족 후 alpha 교체 재검증 + "국면 조건부 활동성 threshold"
+    설계 검토 여부 사용자 확인)**:
     §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
     근접함이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는
-    Conditional Go를 확보했으며, **§2.27~§2.29에서 그 Conditional
-    Go가 실제 virtual BUY funnel 단계까지 방향 일관되게 보강됐고,
-    0.65 문턱 사실상 무력화 caveat도 percentile 기반 재보정(R3)
-    으로 해소 가능함을 확인했다(유력 후보, 확정 Go는 아님).**
-    한편 **§2.23~§2.26에서 결합 사용 시 가장 빈번하게
+    Conditional Go를 확보했으며, **§2.27~§2.28에서 그 Conditional
+    Go가 실제 virtual BUY funnel 단계까지 방향 일관되게 보강됐으나,
+    "0.65 문턱 사실상 무력화" caveat의 해소안(R3, §2.29)은 §2.30의
+    분기 재현성 검증에서 2/4 분기가 방향을 뒤집어 다시 Watch로
+    하향됐다.** 한편 **§2.23~§2.26에서 결합 사용 시 가장 빈번하게
     걸리는 축이 활동성 필터임이 확인됐고, 완화 효과의 반전이 국면·
     유동성 구조 차이 때문임을 규명했으나, 정적 완화(1.10→1.00)가
     기대수익률을 실제로 개선하는지는 여전히 Watch(격상 근거 없음)
-    단계에 머문다.** 다음 착수 형태는 R3의 §3 공식 정식 반영 여부
-    사용자 확인, R3 재현성 추가 검증, alpha 교체의 §3 전제조건
-    (§21 1차 게이트 TRIGGERED 전환, risk_off_penalty 중복 해소)
-    충족 후 재검증과 "국면 조건부 threshold" 설계 검토 여부에 대한
-    사용자 확인이며, 운영 코드(`deterministic_trigger_engine.py:
-    493-499`) 반영은 Conditional Go 이상 확보 후 사용자 승인받아
-    진행한다.
+    단계에 머문다.** 다음 착수 형태는 R3b를 R1과 동일한 엄격도로
+    별도 검증, 분기1·분기3에서 R3가 R0보다 못한 원인 규명, alpha
+    교체의 §3 전제조건(§21 1차 게이트 TRIGGERED 전환, risk_off_
+    penalty 중복 해소) 충족 후 재검증과 "국면 조건부 threshold"
+    설계 검토 여부에 대한 사용자 확인이며, 운영 코드
+    (`deterministic_trigger_engine.py:493-499`) 반영은 Conditional
+    Go 이상 확보 후 사용자 승인받아 진행한다.
     이 설계 문서를 기반으로 regime/allocation/
     strategy/source를 복원한 `entry_score` point-in-time 재현과
     signal/risk-off/regime eligibility 중복 억제 ablation이다.
