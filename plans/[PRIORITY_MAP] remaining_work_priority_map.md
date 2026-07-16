@@ -209,6 +209,22 @@
   필터 ablation 검증 필요). SPPV-3 최우선 조사 대상을 활동성 필터
   재검토로 재조정.
 
+- 작성자: Claude
+- 수정일자: 2026-07-16 (21차, 활동성 필터 정밀 ablation)
+- 수정내용: eligibility_low_relative_activity가 실제 과잉 억제인지
+  threshold 현행(1.10)/완화(1.00)/완전 제거 3개 시나리오로 정밀
+  판정. 완전 제거는 생존군 forward return이 무차단 상위군 전체
+  수준으로 회귀하고 현행 유지보다도 낮아 No-Go로 확정. 완화(1.00)는
+  생존 종목 수(2차 31.7%→37.7%, 1차 38.9%→46.4%)와 T+5/T+20 평균
+  수익률·t_NW·양수율이 1차·2차 창 모두 동시에 소폭 개선되는 방향은
+  일관됐으나 개선폭이 작고 threshold 1개만 검증돼 Watch(추가 검증
+  필요)로 기록 — Conditional Go로 단정하지 않음. 결론: 활동성
+  필터가 BUY 0건의 "주범"인지 "과잉 억제"인지는 이번 실측만으로
+  확정할 수 없다 — 재검토 필요 후보로 남김(2026-07-16 2차 검토,
+  Codex 지적으로 "제거 시 개선"/"주범 확정" 표현을 정정). 결합
+  시나리오 판정은 Watch로 유지. 다음 착수: threshold 추가 스윕
+  (0.95/0.90)과 out-of-sample 재현성 확인.
+
 ## 최근 메모
 
 > **📌 2026-07-14 BUY 주문경로 근본 복구 기준 확정 (최신, 최우선 반영)**:
@@ -627,6 +643,40 @@
 > 둘 다 `HTTP Request:` 0건. `entry_score` 코드/운영 변경 없음 —
 > 이번 턴도 shadow/validation 범위에 머문다. 상세:
 > `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §13.
+
+> **📌 2026-07-16 활동성 필터 정밀 ablation — 완전 제거만 No-Go로
+> 확정, 완화는 Watch (최신, 2026-07-16 해석 보정 반영)**: 위 발견의
+> `eligibility_low_relative_activity`가 실제로 과잉 억제인지
+> 판정했다. 신규 `scripts/validate_activity_filter_ablation.py`가
+> `regime_conditional_signal` 상위 20% 표본을 대상으로 threshold
+> 현행(1.10)/완화(1.00)/완전 제거 3개 시나리오를 비교한 결과,
+> **완전 제거 시 생존군 forward return이 무차단 상위군 전체 수준으로
+> 회귀하고 현행 유지보다도 낮았다**(2차 T+20 제거 +3.882% < 현행
+> +4.381%, ≈무차단 전체 +3.554%) — **No-Go(완전 제거 안)**로 확정.
+> 반면 **임계값 1.10→1.00 완화는 생존 종목 수(2차 31.7%→37.7%, 1차
+> 38.9%→46.4%)와 T+5/T+20 평균 수익률·Newey-West t값·양수 비율이
+> 1차·2차 창 모두 동시에 소폭(0.07~0.18%p) 개선되는 방향은
+> 일관됐으나**, 검증한 threshold가 1.00 하나뿐이고 개선폭이 작아
+> **Watch(추가 검증 필요)**로만 기록한다 — Conditional Go로
+> 단정하지 않는다. **판단 기준을 "차단된 표본이 플러스인지"에서
+> "차단 제거/완화 시 기대수익률이 실제로 개선되는지"로 재정정했다
+> (Codex 지적 반영)** — "차단 비중이 크다"≠"과잉 억제", "표본
+> 증가로 t값이 커진다"≠"품질 개선"임을 실측으로 확인했다(완전
+> 제거 시나리오가 표본은 늘지만 평균 수익률은 오히려 낮아지는 역설
+> 사례). **결론: 활동성 필터가 BUY 0건의 "주범"인지 "과잉 억제"
+> 인지는 이번 실측만으로 확정할 수 없다** — 재검토 필요 후보로
+> 남기되 "주범 확정"·"과잉 억제 확정"·"제거 시 개선" 같은 확정적
+> 결론은 쓰지 않는다. 위 §13의 "결합 사용 시나리오 Watch" 판정은
+> 이번 결과로도 **Watch로 유지**한다. 실행 로그로 KIS 호출 0건
+> 확인(기존 3년 캐시로 전량 서빙). `entry_score`/`_assess_buy_
+> eligibility` 운영 코드 변경 없음 — 이번 턴도 shadow/validation
+> 범위. 산출: `scripts/validate_activity_filter_ablation.py`
+> (read-only, 신규 KIS 호출 0건),
+> `logs/signal_ic_activity_filter_ablation_2026-07-16.json`. 상세:
+> `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §14.
+> **다음 착수: threshold를 1.00 외에 추가 스윕(예 0.95/0.90)하고
+> out-of-sample 재현성을 확인해 완화안을 Conditional Go 이상으로
+> 확정하는 것.**
 
 > **📌 2026-07-12 방향 전환 (이력, 2026-07-14 결론으로 대체)**:
 > 지난 6주(2026-06-01~07-12) 매수 0건은 시스템 오류가 아니라 **하락장에서
@@ -4700,13 +4750,41 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      `logs/signal_ic_new_alpha_vs_existing_blocking_axes_
      2026-07-15.json`. 상세: `plans/[DESIGN] regime_conditional_
      entry_signal_v1.md` §13.
-   - **SPPV-3(보류 유지, 형태 재정의 — 우선순위 재조정)**: §2.16~
+   - **SPPV-2.24(완료, 2026-07-16, 활동성 필터 정밀 ablation — 완전
+     제거만 No-Go로 확정, 완화는 Watch)**: `eligibility_low_relative_
+     activity`가 실제로 과잉 억제인지 threshold 현행(1.10)/완화
+     (1.00)/완전 제거 3개 시나리오로 정밀 판정. **결과: 완전 제거는
+     생존군 forward return이 무차단 상위군 전체 수준으로 회귀하고
+     현행 유지보다도 낮아**(2차 T+20 제거 +3.882% < 현행 +4.381%,
+     ≈무차단 전체 +3.554%) **No-Go로 확정**. **완화(1.00)는 생존
+     종목 수(2차 31.7%→37.7%, 1차 38.9%→46.4%)와 T+5/T+20 평균
+     수익률·t_NW·양수율이 두 창 모두 동시에 소폭(0.07~0.18%p)
+     개선되는 방향은 일관됐으나, 검증 threshold가 1개뿐이고 개선폭이
+     작아 Watch(추가 검증 필요)로 기록** — Conditional Go로 단정하지
+     않는다. 판단 기준을 "차단 표본이 플러스인지"에서 "차단 제거/
+     완화 시 기대수익률이 실제 개선되는지"로 재정정했다(2026-07-16
+     2차 검토, Codex 지적 반영). **결론: 활동성 필터가 BUY 0건의
+     "주범"인지 "과잉 억제"인지는 이번 실측만으로 확정할 수 없다**
+     — 재검토 필요 후보로 남기되 확정적 결론은 쓰지 않는다. §2.23의
+     "결합 시나리오 Watch" 판정은 이번 결과로도 Watch로 유지. 실행
+     로그로 KIS 호출 0건 확인. 산출:
+     `scripts/validate_activity_filter_ablation.py`(read-only, 신규
+     KIS 호출 0건), `logs/signal_ic_activity_filter_ablation_
+     2026-07-16.json`. 상세: `plans/[DESIGN] regime_conditional_
+     entry_signal_v1.md` §14.
+   - **SPPV-3(다음 착수: threshold 추가 스윕 + out-of-sample 재현성
+     확인으로 완화안을 Conditional Go 이상으로 확정)**: §2.16~
      §2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에 근접한다는
      것이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는 Conditional
-     Go를 확보했으나, **§2.23에서 결합 사용 시 진짜 병목이 regime
-     관련 축이 아니라 활동성 필터(`eligibility_low_relative_
-     activity`)임이 새로 확인됐다.** 다음 착수 형태는 이 설계 문서를
-     기반으로 regime/allocation/strategy/source를 복원한 `entry_score`
+     Go를 확보했으며, **§2.23~§2.24에서 결합 사용 시 가장 빈번하게
+     걸리는 축이 활동성 필터(`eligibility_low_relative_activity`)
+     임이 확인됐으나, 완화(1.10→1.00)가 기대수익률을 실제로 개선
+     하는지는 Watch(추가 검증 필요) 단계에 머문다.** 다음 착수
+     형태는 이 완화 방향의 추가 threshold 스윕·재현성 확인이며,
+     운영 코드(`deterministic_trigger_engine.py:493-499`) 반영은
+     Conditional Go 이상 확보 후 사용자 승인을 받아 진행한다. 이
+     설계 문서를 기반으로 regime/allocation/strategy/source를
+     복원한 `entry_score`
      point-in-time 재현과 signal/risk-off/regime eligibility 중복
      억제 ablation이며, **SPPV-3의 최우선 조사 대상은 활동성 필터
      재검토다.** 착수 전제(1차 게이트 `TRIGGERED` 전환 관측)는 사용자

@@ -1,0 +1,43 @@
+INFO:validate_activity_filter_ablation:[20/87] 누적 표본 13060건
+INFO:validate_activity_filter_ablation:[40/87] 누적 표본 26120건
+INFO:validate_activity_filter_ablation:[60/87] 누적 표본 39180건
+INFO:validate_activity_filter_ablation:[80/87] 누적 표본 52240건
+INFO:validate_activity_filter_ablation:[87/87] 누적 표본 56753건
+INFO:validate_activity_filter_ablation:전체 3년 표본 56753건, 실패 0종목
+
+=== eligibility_low_relative_activity 활동성 필터 정밀 ablation ===
+전체 3년 표본: 56753건, 최근 12개월(cutoff=2025-06-16) 표본: 21315건
+
+--- 2차(3년, 전체 표본) ---
+새 alpha 상위 20% 표본: 10999건
+
+  [시나리오: current_1.10, threshold=1.1] 생존=3491건(31.7%), 차단=7508건
+    T+5 생존군: {'n': 3491, 'mean_pct': 1.4218, 't_naive': 8.69, 't_newey_west': 5.89, 'pct_positive': 0.5239}
+    T+20 생존군: {'n': 3491, 'mean_pct': 4.3809, 't_naive': 13.26, 't_newey_west': 5.78, 'pct_positive': 0.5176}
+
+  [시나리오: relaxed_1.00, threshold=1.0] 생존=4148건(37.7%), 차단=6851건
+    T+5 생존군: {'n': 4148, 'mean_pct': 1.4894, 't_naive': 9.99, 't_newey_west': 6.85, 'pct_positive': 0.5282}
+    T+20 생존군: {'n': 4148, 'mean_pct': 4.5601, 't_naive': 15.04, 't_newey_west': 6.58, 'pct_positive': 0.521}
+
+  [시나리오: removed, threshold=None] 생존=9474건(86.1%), 차단=1525건
+    T+5 생존군: {'n': 9474, 'mean_pct': 0.9833, 't_naive': 11.33, 't_newey_west': 8.02, 'pct_positive': 0.5074}
+    T+20 생존군: {'n': 9474, 'mean_pct': 3.8823, 't_naive': 21.46, 't_newey_west': 10.16, 'pct_positive': 0.5273}
+  [참고] 상위군 전체(모든 차단 무시): {5: {'n': 10999, 'mean_pct': 1.0079, 't_naive': 12.83, 't_newey_west': 9.06, 'pct_positive': 0.512}, 20: {'n': 10999, 'mean_pct': 3.5544, 't_naive': 21.96, 't_newey_west': 10.35, 'pct_positive': 0.5245}}
+
+--- 1차(최근 12개월) ---
+새 alpha 상위 20% 표본: 4165건
+
+  [시나리오: current_1.10, threshold=1.1] 생존=1621건(38.9%), 차단=2544건
+    T+5 생존군: {'n': 1621, 'mean_pct': 1.9724, 't_naive': 7.0, 't_newey_west': 4.5, 'pct_positive': 0.5392}
+    T+20 생존군: {'n': 1621, 'mean_pct': 5.8709, 't_naive': 10.29, 't_newey_west': 4.54, 'pct_positive': 0.5312}
+
+  [시나리오: relaxed_1.00, threshold=1.0] 생존=1931건(46.4%), 차단=2234건
+    T+5 생존군: {'n': 1931, 'mean_pct': 2.1445, 't_naive': 8.42, 't_newey_west': 5.48, 'pct_positive': 0.5515}
+    T+20 생존군: {'n': 1931, 'mean_pct': 6.4317, 't_naive': 12.24, 't_newey_west': 5.44, 'pct_positive': 0.5417}
+
+  [시나리오: removed, threshold=None] 생존=4154건(99.7%), 차단=11건
+    T+5 생존군: {'n': 4154, 'mean_pct': 1.709, 't_naive': 11.21, 't_newey_west': 7.48, 'pct_positive': 0.5361}
+    T+20 생존군: {'n': 4154, 'mean_pct': 5.7532, 't_naive': 17.86, 't_newey_west': 8.18, 'pct_positive': 0.5457}
+  [참고] 상위군 전체(모든 차단 무시): {5: {'n': 4165, 'mean_pct': 1.7108, 't_naive': 11.25, 't_newey_west': 7.52, 'pct_positive': 0.5366}, 20: {'n': 4165, 'mean_pct': 5.721, 't_naive': 17.79, 't_newey_west': 8.16, 'pct_positive': 0.5448}}
+
+산출 저장: logs/signal_ic_activity_filter_ablation_2026-07-16.json

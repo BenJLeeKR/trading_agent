@@ -424,6 +424,36 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   없이 실측). `entry_score` 코드/운영 변경 없음. 상세:
   `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §13.
 
+- 작성자: Claude
+- 수정일자: 2026-07-16 (21차, 활동성 필터 정밀 ablation)
+- 수정내용: §13이 발견한 `eligibility_low_relative_activity`가 실제로
+  과잉 억제인지 정밀 ablation으로 판정했다(SPPV-2.24). 신규
+  `scripts/validate_activity_filter_ablation.py`가 `regime_
+  conditional_signal` 상위 20% 표본 대상으로 threshold 현행(1.10)/
+  완화(1.00)/완전 제거 3개 시나리오를 비교한 결과, **완전 제거는
+  생존군 forward return이 무차단 상위군 전체 수준으로 회귀하고
+  현행 유지보다도 낮아**(2차 T+20 제거 +3.882% < 현행 +4.381%,
+  ≈무차단 전체 +3.554%) **No-Go로 확정**했다. **임계값 1.10→1.00
+  완화는 생존 종목 수(2차 31.7%→37.7%, 1차 38.9%→46.4%)와 T+5/
+  T+20 평균 수익률·Newey-West t값·양수 비율이 1차·2차 창 모두에서
+  동시에 소폭(0.07~0.18%p) 개선되는 방향은 일관됐으나, 검증
+  threshold가 1.00 단 하나뿐이고 개선폭이 작아 Watch(추가 검증
+  필요) 수준으로만 기록했다** — Conditional Go로 단정하지 않는다.
+  판단 기준을 "차단된 표본이 플러스인지"에서 "차단 제거/완화 시
+  기대수익률이 실제로 개선되는지"로 재정정했다(2026-07-16 2차
+  검토, Codex 지적 반영) — "차단 사유의 대부분을 차지한다"가 곧
+  "과잉 억제"를 뜻하지 않고, "표본이 늘어 t값이 커진다"가 곧
+  "품질 개선"을 뜻하지 않음을 실측으로 확인했다(완전 제거 시나리오가
+  그 역설 사례). **결론: 활동성 필터가 BUY 0건의 "주범"인지
+  "과잉 억제"인지는 이번 실측만으로 확정할 수 없다** — 재검토가
+  필요한 후보로 남기고, "주범 확정"·"과잉 억제 확정"·"제거 시
+  개선" 같은 확정적 결론은 쓰지 않는다. §13의 "결합 사용 시나리오
+  Watch" 판정은 이번 결과로도 **Watch로 유지**한다. 신규 KIS 호출
+  0건(기존 3년 캐시 88개 파일로 전량 서빙, 로그로 실측 확인).
+  `entry_score`/`_assess_buy_eligibility` 운영 코드 변경 없음 —
+  이번 턴은 shadow/validation 범위. 상세: `plans/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §14.
+
 ---
 
 ## 진행 체크리스트
@@ -778,6 +808,40 @@ canonical),
     2026-07-15.json`, `logs/new_alpha_vs_existing_blocking_axes_
     run_2026-07-15.log`, `logs/diagnose_blocked_reason_
     distribution_run_2026-07-15.log`.
+- [x] **SPPV-2.24(신설)** `eligibility_low_relative_activity` 활동성
+  필터 정밀 ablation (완료, 2026-07-16)
+  - 작업 범위: SPPV-2.23이 발견한 활동성 필터가 실제로 과잉 억제인지,
+    새 alpha 위에서도 정당한 선별인지 판정. `regime_conditional_
+    signal` 상위 20% 표본 대상, 필터 threshold를 현행(1.10)/완화
+    (1.00)/완전 제거 3개 시나리오로 나눠 생존 종목 수·T+5·T+20
+    forward return·Newey-West t값·양수 비율을 비교.
+  - **결과(2026-07-16 해석 보정 반영 — 판단 기준을 "차단 표본이
+    플러스인지"가 아니라 "차단 제거/완화 시 기대수익률이 실제로
+    개선되는지"로 고정): 완전 제거는 No-Go로 확정** — 생존군
+    forward return이 무차단 상위군 전체 수준으로 회귀(2차 T+20
+    제거 +3.882% vs 무차단 전체 +3.554%, 거의 동일)하며 현행
+    유지(+4.381%)보다도 낮다. 즉 **현재 실측상 무차단 전체보다
+    필터 적용 시 생존군 평균이 더 높으므로, "필터 제거가
+    기대수익률을 개선한다"는 근거는 없다.** **임계값 1.10→1.00
+    완화는 Watch(방향은 유력하나 확정 아님)** — 생존 종목 수(2차
+    31.7%→37.7%, 1차 38.9%→46.4%)와 T+5/T+20 평균 수익률·t_NW·
+    양수율이 1차·2차 창 모두에서 동시에 소폭(0.07~0.18%p) 개선되는
+    방향은 확인됐으나, 검증한 threshold가 1.00 하나뿐이고 개선폭이
+    작아 "Conditional Go"로 단정하기엔 이르다. **차단된 표본 자체가
+    forward return이 플러스라는 사실(§13)만으로는 "과잉 억제"를
+    증명하지 못한다는 점, 그리고 "표본 증가로 t_NW가 커진다"가 곧
+    "품질 개선"을 뜻하지 않는다는 점(완전 제거 시나리오가 그
+    역설 사례) 둘 다 실측으로 확인했다.** **활동성 필터가 BUY
+    0건의 "주범"인지, "과잉 억제"인지는 이번 실측만으로 확정할 수
+    없다** — 재검토가 필요한 후보로 남기되, 확정적 결론(주범
+    확정/과잉 억제 확정/제거 시 개선)은 내리지 않는다. 신규 KIS
+    호출 0건(기존 3년 캐시 88개 파일로 전량 서빙, 로그로 실측
+    확인). `entry_score`/`_assess_buy_eligibility` 운영 코드 변경
+    없음 — 이번 턴은 shadow/validation 범위. 상세: `plans/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §14.
+  - 산출물: `scripts/validate_activity_filter_ablation.py`(read-only,
+    신규 KIS 호출 0건), `logs/signal_ic_activity_filter_ablation_
+    2026-07-16.json`, `logs/activity_filter_ablation_run_2026-07-16.log`.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
@@ -1488,6 +1552,14 @@ bearish/range_bound 어느 국면 내부도 `overall_score`/`slow_score`가
   (국면별 신호 극성 종합표 + 상위 재설계 방향 확정, 별도 문서)
 - `plans/[DESIGN] regime_conditional_entry_signal_v1.md`(국면 분기형
   entry 설계 초안, 별도 문서)
+- `scripts/validate_new_alpha_vs_existing_blocking_axes.py`,
+  `scripts/diagnose_blocked_reason_distribution.py`,
+  `logs/signal_ic_new_alpha_vs_existing_blocking_axes_2026-07-15.json`,
+  `logs/new_alpha_vs_existing_blocking_axes_run_2026-07-15.log`,
+  `logs/diagnose_blocked_reason_distribution_run_2026-07-15.log`
+- `scripts/validate_activity_filter_ablation.py`,
+  `logs/signal_ic_activity_filter_ablation_2026-07-16.json`,
+  `logs/activity_filter_ablation_run_2026-07-16.log`
 - `scripts/shadow_regime_conditional_entry_signal.py`(read-only, 신규
   KIS 호출 0건 — 3년 캐시 재사용)
 - `logs/shadow_regime_conditional_entry_signal_2026-07-15.json`,

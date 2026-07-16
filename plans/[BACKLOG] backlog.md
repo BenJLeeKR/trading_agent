@@ -222,6 +222,24 @@
   통일/regime penalty"에서 "활동성 필터 재검토"로 재조정. 두 스크립트
   실행 로그로 KIS 호출 0건 확인.
 
+- 작성자: Claude
+- 수정일자: 2026-07-16 (21차, 활동성 필터 정밀 ablation)
+- 수정내용: eligibility_low_relative_activity가 실제로 과잉 억제인지
+  threshold 현행(1.10)/완화(1.00)/완전 제거 3개 시나리오로 정밀
+  판정했다. 완전 제거는 생존군 forward return이 무차단 상위군 전체
+  수준으로 회귀하고 현행 유지보다도 낮아(2차 T+20 제거 +3.882% <
+  현행 +4.381%) No-Go로 확정. 완화(1.00)는 생존 종목 수(2차
+  31.7%→37.7%, 1차 38.9%→46.4%)와 T+5/T+20 평균 수익률·Newey-West
+  t값·양수 비율이 1차·2차 창 모두 동시에 소폭 개선되는 방향은
+  일관됐으나 개선폭이 작고 threshold 1개만 검증돼 Watch(추가 검증
+  필요)로 기록 — Conditional Go로 단정하지 않음. "차단 비중이
+  크다"≠"과잉 억제", "표본 증가로 t값이 커진다"≠"품질 개선"임을
+  실측으로 반증(완전 제거가 그 역설 사례). 결론: 활동성 필터가
+  BUY 0건의 "주범"인지 "과잉 억제"인지는 이번 실측만으로 확정할 수
+  없다 — 재검토 필요 후보로 남김(2026-07-16 2차 검토, Codex 지적
+  반영해 해석 보정). 결합 시나리오 판정은 Watch로 유지. 실행 로그로
+  KIS 호출 0건 확인.
+
 ---
 
 ## 관리 원칙
@@ -624,17 +642,46 @@
     `logs/signal_ic_new_alpha_vs_existing_blocking_axes_
     2026-07-15.json`. 상세: `plans/[DESIGN] regime_conditional_
     entry_signal_v1.md` §13.
-  - **SPPV-3(보류 유지, 형태 재정의 — 우선순위 재조정)**: §2.16~
-    §2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에 근접함이
-    확인됐고, §2.22에서 alpha layer 교체(선별 축)는 Conditional
-    Go를 확보했으나, **§2.23에서 결합 사용 시 진짜 병목이 regime
-    관련 축이 아니라 활동성 필터임이 새로 확인됐다.** 다음 착수
-    형태는 이 설계 문서를 기반으로 regime/allocation/strategy/
-    source를 복원한 `entry_score` point-in-time 재현과 signal/
-    risk-off/regime eligibility 중복 억제 ablation이며, **SPPV-3의
-    최우선 조사 대상은 `eligibility_low_relative_activity` 필터
-    재검토다.** 착수 조건은 1차 게이트에서 `TRIGGERED` 전환이
-    관측되는 것 —
+  - **SPPV-2.24(완료, 2026-07-16, 활동성 필터 정밀 ablation — 완전
+    제거만 No-Go로 확정, 완화는 Watch)**: `eligibility_low_relative_
+    activity`가 실제로 과잉 억제인지 신규 `scripts/validate_
+    activity_filter_ablation.py`로 threshold 현행(1.10)/완화
+    (1.00)/완전 제거 3개 시나리오를 정밀 비교했다. **완전 제거는
+    생존군 forward return이 무차단 상위군 전체 수준으로 회귀하고
+    현행 유지보다도 낮아**(2차 T+20 제거 +3.882% < 현행 +4.381%,
+    ≈무차단 전체 +3.554%) **No-Go로 확정**. **완화(1.00)는 생존
+    종목 수(2차 31.7%→37.7%, 1차 38.9%→46.4%)와 T+5/T+20 평균
+    수익률·t_NW·양수율이 1차·2차 창 모두 동시에 소폭(0.07~
+    0.18%p) 개선되는 방향은 일관됐으나, 검증 threshold가 1개뿐이고
+    개선폭이 작아 Watch(추가 검증 필요)로 기록** — Conditional
+    Go로 단정하지 않는다. 판단 기준을 "차단 표본이 플러스인지"에서
+    "차단 제거/완화 시 기대수익률이 실제 개선되는지"로 재정정했다
+    (2026-07-16 2차 검토, Codex 지적 반영). "차단 비중이 크다"가
+    "과잉 억제"를 뜻하지 않고, "표본 증가로 t값이 커진다"가 "품질
+    개선"을 뜻하지 않음을 실측으로 확인(완전 제거가 그 역설 사례).
+    **결론: 활동성 필터가 BUY 0건의 "주범"인지 "과잉 억제"인지는
+    이번 실측만으로 확정할 수 없다** — 재검토 필요 후보로 남기되
+    확정적 결론은 쓰지 않는다. §2.23의 "결합 시나리오 Watch" 판정은
+    이번 결과로도 Watch로 유지. 실행 로그로 KIS 호출 0건 확인. 산출:
+    `scripts/validate_activity_filter_ablation.py`(read-only, 신규
+    KIS 호출 0건),
+    `logs/signal_ic_activity_filter_ablation_2026-07-16.json`.
+    상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
+    §14.
+  - **SPPV-3(다음 착수: threshold 추가 스윕 + out-of-sample 재현성
+    확인으로 완화안을 Conditional Go 이상으로 확정)**: §2.16~§2.21에서
+    국면 정의 통일(차단 축)은 Watch/No-Go에 근접함이 확인됐고,
+    §2.22에서 alpha layer 교체(선별 축)는 Conditional Go를 확보
+    했으며, **§2.23~§2.24에서 결합 사용 시 가장 빈번하게 걸리는
+    축이 활동성 필터임이 확인됐으나, 완화(1.10→1.00)가 기대수익률을
+    실제로 개선하는지는 Watch(추가 검증 필요) 단계에 머문다.** 다음
+    착수 형태는 이 완화 방향의 추가 threshold 스윕·재현성 확인이며,
+    운영 코드(`deterministic_trigger_engine.py:493-499`) 반영은
+    Conditional Go 이상 확보 후 사용자 승인받아 진행한다. 이 설계
+    문서를 기반으로 regime/allocation/
+    strategy/source를 복원한 `entry_score` point-in-time 재현과
+    signal/risk-off/regime eligibility 중복 억제 ablation이다.
+    착수 조건은 1차 게이트에서 `TRIGGERED` 전환이 관측되는 것 —
     사용자 확인 필요. 착수 시 당시
     regime/allocation/strategy/source를
     복원해 `entry_score`를 point-in-time 재현하고 signal 약세,

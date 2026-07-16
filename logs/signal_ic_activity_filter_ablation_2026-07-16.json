@@ -1,0 +1,186 @@
+{
+  "as_of": "2026-07-16T09:31:33.743921+09:00",
+  "symbol_count_used": 87,
+  "fetch_failures": [],
+  "total_rolling_samples_3y": 56753,
+  "total_rolling_samples_recent_12m": 21315,
+  "recent_window_cutoff": "2025-06-16",
+  "windows": {
+    "supplementary_3y": {
+      "window": "2차(3년, 전체 표본)",
+      "top_quintile_n": 10999,
+      "scenarios": {
+        "current_1.10": {
+          "threshold": 1.1,
+          "survives_n": 3491,
+          "blocked_n": 7508,
+          "survives_pct": 31.74,
+          "by_horizon": {
+            "T+5": {
+              "n": 3491,
+              "mean_pct": 1.4218,
+              "t_naive": 8.69,
+              "t_newey_west": 5.89,
+              "pct_positive": 0.5239
+            },
+            "T+20": {
+              "n": 3491,
+              "mean_pct": 4.3809,
+              "t_naive": 13.26,
+              "t_newey_west": 5.78,
+              "pct_positive": 0.5176
+            }
+          }
+        },
+        "relaxed_1.00": {
+          "threshold": 1.0,
+          "survives_n": 4148,
+          "blocked_n": 6851,
+          "survives_pct": 37.71,
+          "by_horizon": {
+            "T+5": {
+              "n": 4148,
+              "mean_pct": 1.4894,
+              "t_naive": 9.99,
+              "t_newey_west": 6.85,
+              "pct_positive": 0.5282
+            },
+            "T+20": {
+              "n": 4148,
+              "mean_pct": 4.5601,
+              "t_naive": 15.04,
+              "t_newey_west": 6.58,
+              "pct_positive": 0.521
+            }
+          }
+        },
+        "removed": {
+          "threshold": null,
+          "survives_n": 9474,
+          "blocked_n": 1525,
+          "survives_pct": 86.14,
+          "by_horizon": {
+            "T+5": {
+              "n": 9474,
+              "mean_pct": 0.9833,
+              "t_naive": 11.33,
+              "t_newey_west": 8.02,
+              "pct_positive": 0.5074
+            },
+            "T+20": {
+              "n": 9474,
+              "mean_pct": 3.8823,
+              "t_naive": 21.46,
+              "t_newey_west": 10.16,
+              "pct_positive": 0.5273
+            }
+          }
+        }
+      },
+      "top_quintile_all_no_block": {
+        "T+5": {
+          "n": 10999,
+          "mean_pct": 1.0079,
+          "t_naive": 12.83,
+          "t_newey_west": 9.06,
+          "pct_positive": 0.512
+        },
+        "T+20": {
+          "n": 10999,
+          "mean_pct": 3.5544,
+          "t_naive": 21.96,
+          "t_newey_west": 10.35,
+          "pct_positive": 0.5245
+        }
+      }
+    },
+    "primary_recent_12m": {
+      "window": "1차(최근 12개월)",
+      "top_quintile_n": 4165,
+      "scenarios": {
+        "current_1.10": {
+          "threshold": 1.1,
+          "survives_n": 1621,
+          "blocked_n": 2544,
+          "survives_pct": 38.92,
+          "by_horizon": {
+            "T+5": {
+              "n": 1621,
+              "mean_pct": 1.9724,
+              "t_naive": 7.0,
+              "t_newey_west": 4.5,
+              "pct_positive": 0.5392
+            },
+            "T+20": {
+              "n": 1621,
+              "mean_pct": 5.8709,
+              "t_naive": 10.29,
+              "t_newey_west": 4.54,
+              "pct_positive": 0.5312
+            }
+          }
+        },
+        "relaxed_1.00": {
+          "threshold": 1.0,
+          "survives_n": 1931,
+          "blocked_n": 2234,
+          "survives_pct": 46.36,
+          "by_horizon": {
+            "T+5": {
+              "n": 1931,
+              "mean_pct": 2.1445,
+              "t_naive": 8.42,
+              "t_newey_west": 5.48,
+              "pct_positive": 0.5515
+            },
+            "T+20": {
+              "n": 1931,
+              "mean_pct": 6.4317,
+              "t_naive": 12.24,
+              "t_newey_west": 5.44,
+              "pct_positive": 0.5417
+            }
+          }
+        },
+        "removed": {
+          "threshold": null,
+          "survives_n": 4154,
+          "blocked_n": 11,
+          "survives_pct": 99.74,
+          "by_horizon": {
+            "T+5": {
+              "n": 4154,
+              "mean_pct": 1.709,
+              "t_naive": 11.21,
+              "t_newey_west": 7.48,
+              "pct_positive": 0.5361
+            },
+            "T+20": {
+              "n": 4154,
+              "mean_pct": 5.7532,
+              "t_naive": 17.86,
+              "t_newey_west": 8.18,
+              "pct_positive": 0.5457
+            }
+          }
+        }
+      },
+      "top_quintile_all_no_block": {
+        "T+5": {
+          "n": 4165,
+          "mean_pct": 1.7108,
+          "t_naive": 11.25,
+          "t_newey_west": 7.52,
+          "pct_positive": 0.5366
+        },
+        "T+20": {
+          "n": 4165,
+          "mean_pct": 5.721,
+          "t_naive": 17.79,
+          "t_newey_west": 8.16,
+          "pct_positive": 0.5448
+        }
+      }
+    }
+  }
+}
