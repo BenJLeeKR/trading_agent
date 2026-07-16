@@ -501,6 +501,29 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   validation 범위. 상세: `plans/[DESIGN] regime_conditional_entry_
   signal_v1.md` §15.
 
+- 작성자: Claude
+- 수정일자: 2026-07-16 (25차, 활동성 필터 완화 효과 전반부/후반부
+  반전 원인 분해)
+- 수정내용: SPPV-2.25가 발견한 "완화 효과가 3년 전반부에서는
+  반대로 나타나는" 현상의 원인을 규명했다(SPPV-2.26). 시장 공통
+  regime 분포(전반부 range_bound 45.4%+bearish_trend 28.5% 혼합/
+  약세 편중 vs 후반부 bullish_trend 82.9% 극편중), 상위 20% 무차단
+  기본 수익률 레벨(후반부가 전반부의 약 3.3~3.4배), 유동성 구조
+  (average_turnover_20d 중앙값 약 1.9배 확대, trend_strength 약
+  2.4배 확대), 그리고 threshold 완화 시 "새로 통과하는 표본"만
+  분리한 forward return을 비교했다. **결정적 발견: threshold를
+  1.10→1.00으로 낮췄을 때 새로 통과하는 표본의 품질이 전반부에서는
+  기존 통과군보다 낮고(+0.56%<+0.74%), 후반부에서는 오히려 기존
+  통과군보다 높다(+2.72%>+1.86%)** — 완화 효과의 방향 반전은
+  활동성 필터 로직 결함이 아니라 두 반기의 시장 국면·유동성 구조
+  차이가 만들어낸 결과로 판단했다. 정적 threshold 완화안은 여전히
+  Watch 유지(격상도 강등도 아님) — 완전 제거는 여전히 No-Go. 향후
+  검토 방향은 "완화"가 아니라 "국면 조건부 threshold"일 가능성이
+  있으나 이번 턴은 원인 규명까지만(새 설계·구현·운영 코드 변경
+  없음). 신규 KIS 호출 0건(기존 3년 캐시로 전량 서빙, 로그로 실측
+  확인). 상세: `plans/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §16.
+
 ---
 
 ## 진행 체크리스트
@@ -923,6 +946,44 @@ canonical),
   - 다음 과제: 전반부·후반부가 왜 정반대 방향을 보이는지(국면 분포,
     유동성 레벨 구조 변화 등) 원인 규명이 threshold 상수 변경 검토의
     선행 조건이다.
+- [x] **SPPV-2.26(신설)** 활동성 필터 완화 효과 전반부/후반부 반전
+  원인 분해 (완료, 2026-07-16)
+  - 작업 범위: SPPV-2.25가 발견한 "완화 효과가 3년 전반부에서는
+    반대로 나타나는" 현상의 원인을 규명. 시장 공통 regime 분포,
+    activity_ratio 분포, 상위 20% 무차단 기본 수익률 레벨,
+    volatility/turnover/trend 보조 축, 그리고 threshold 완화 시
+    "새로 통과하는 표본"만 분리한 forward return 비교로 4개 축을
+    분해.
+  - **결과: (1) regime 분포 — 전반부(2023-10~2025-02)는 range_
+    bound 45.4%+bearish_trend 28.5%로 혼합/약세 편중, 후반부
+    (2025-02~2026-06)는 bullish_trend 82.9%로 강세장 극도 편중.
+    (2) 상위 20% 무차단 기본 수익률 — 후반부가 전반부보다 T+5는
+    약 3.3배, T+20은 약 3.4배 높음(전반부 +0.47%/+1.60% vs 후반부
+    +1.54%/+5.48%). (3) 유동성 구조 — average_turnover_20d
+    중앙값이 후반부에 약 1.9배(378억→706억), trend_strength도
+    약 2.4배(+6.93%→+16.67%) 확대. (4) 결정적 비교 — threshold를
+    1.10→1.00으로 낮췄을 때 새로 통과하는 표본의 T+5 평균이
+    전반부에서는 기존 통과군보다 낮고(+0.56% < +0.74%, 비유의),
+    후반부에서는 기존 통과군보다 높다(+2.72% > +1.86%, 유의).**
+    **결론: 완화 효과의 반전은 활동성 필터 로직 결함이 아니라
+    두 반기의 시장 국면(혼합/약세 vs 강세장 극편중)과 유동성 구조
+    (거래대금 약 1.9배 확대)가 결합된 결과로 판단** — 국면·유동성
+    변화가 "완화 시 새로 들어오는 한계 종목"의 실제 품질 자체를
+    바꿔놓았다는 것이 가장 직접적인 인과 고리다. **판정: 정적
+    threshold 완화안은 여전히 Watch 유지(격상도 강등도 아님) — 완전
+    제거는 여전히 No-Go.** 향후 검토 방향은 "완화"가 아니라 "국면
+    조건부 threshold"일 가능성이 있으나, 이는 새 설계 제안이며 이번
+    턴은 원인 규명까지만 수행(설계·구현·운영 코드 변경 없음). 신규
+    KIS 호출 0건(기존 3년 캐시로 전량 서빙, 로그로 실측 확인).
+    상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
+    §16.
+  - 산출물: `scripts/diagnose_activity_filter_half_period_
+    divergence.py`(read-only, 신규 KIS 호출 0건), `logs/signal_ic_
+    activity_filter_half_period_divergence_2026-07-16.json`,
+    `logs/activity_filter_half_period_divergence_run_2026-07-16.log`.
+  - 다음 과제: "국면 조건부 활동성 threshold" 설계 검토 여부를
+    사용자에게 확인받는 것, 유동성 구조 확대(거래대금 약 1.9배)가
+    일시적인지 영구적인지 장기 모니터링.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
@@ -1646,6 +1707,9 @@ bearish/range_bound 어느 국면 내부도 `overall_score`/`slow_score`가
 - `scripts/validate_activity_filter_threshold_sweep.py`,
   `logs/signal_ic_activity_filter_threshold_sweep_2026-07-16.json`,
   `logs/activity_filter_threshold_sweep_run_2026-07-16.log`
+- `scripts/diagnose_activity_filter_half_period_divergence.py`,
+  `logs/signal_ic_activity_filter_half_period_divergence_2026-07-16.json`,
+  `logs/activity_filter_half_period_divergence_run_2026-07-16.log`
 - `scripts/shadow_regime_conditional_entry_signal.py`(read-only, 신규
   KIS 호출 0건 — 3년 캐시 재사용)
 - `logs/shadow_regime_conditional_entry_signal_2026-07-15.json`,

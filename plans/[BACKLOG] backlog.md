@@ -265,6 +265,21 @@
   추가됨 — Watch 유지(완전 제거는 여전히 No-Go). 실행 로그로 KIS
   호출 0건 확인.
 
+- 작성자: Claude
+- 수정일자: 2026-07-16 (24차, 활동성 필터 완화 효과 전반부/후반부
+  반전 원인 분해)
+- 수정내용: SPPV-2.25가 발견한 반전의 원인을 규명했다(SPPV-2.26).
+  전반부는 range_bound 45.4%+bearish_trend 28.5% 혼합/약세 편중,
+  후반부는 bullish_trend 82.9% 극편중 — 상위 20% 무차단 기본
+  수익률이 후반부가 전반부의 약 3.3~3.4배, 거래대금 중앙값도 약
+  1.9배 확대됐다. 결정적으로, threshold 1.10→1.00 완화 시 새로
+  통과하는 표본의 품질이 전반부에서는 기존 통과군보다 낮고 후반부
+  에서는 오히려 높음을 확인 — 완화 효과의 반전은 필터 로직 결함이
+  아니라 국면·유동성 구조 차이가 만든 결과로 판단. 정적 완화안은
+  여전히 Watch, 완전 제거는 여전히 No-Go. 향후 방향은 "완화"가
+  아니라 "국면 조건부 threshold"일 가능성(설계 제안, 이번 턴은
+  원인 규명까지만). 실행 로그로 KIS 호출 0건 확인.
+
 ---
 
 ## 관리 원칙
@@ -714,17 +729,41 @@
     `logs/signal_ic_activity_filter_threshold_sweep_2026-07-16.json`.
     상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
     §15.
-  - **SPPV-3(다음 착수: 전반부·후반부가 왜 반대 방향을 보이는지
-    원인 규명)**: §2.16~§2.21에서 국면 정의 통일(차단 축)은
+  - **SPPV-2.26(완료, 2026-07-16, 활동성 필터 완화 효과 전반부/
+    후반부 반전 원인 분해)**: SPPV-2.25가 발견한 반전의 원인을
+    규명했다. 시장 공통 regime 분포, activity_ratio 분포, 상위
+    20% 무차단 기본 수익률 레벨, volatility/turnover/trend 보조
+    축, threshold 완화 시 새로 통과하는 표본만 분리한 forward
+    return을 비교했다. **결과: 전반부는 range_bound 45.4%+
+    bearish_trend 28.5% 혼합/약세 편중, 후반부는 bullish_trend
+    82.9% 극편중. 상위 20% 무차단 기본 수익률은 후반부가 전반부의
+    약 3.3~3.4배. average_turnover_20d 중앙값도 약 1.9배(378억→
+    706억), trend_strength도 약 2.4배 확대. 결정적으로, threshold
+    1.10→1.00 완화 시 새로 통과하는 표본의 T+5 평균이 전반부에서는
+    기존 통과군보다 낮고(+0.56%<+0.74%, 비유의), 후반부에서는
+    오히려 높다(+2.72%>+1.86%, 유의).** **결론: 완화 효과의 반전은
+    활동성 필터 로직 결함이 아니라 두 반기의 시장 국면·유동성 구조
+    차이가 결합된 결과다** — 국면·유동성 변화가 "완화 시 새로
+    들어오는 한계 종목"의 실제 품질을 바꿔놓았다는 것이 직접적
+    인과 고리. **판정: 정적 threshold 완화안은 여전히 Watch
+    유지(격상도 강등도 아님), 완전 제거는 여전히 No-Go.** 향후
+    방향은 "완화"가 아니라 "국면 조건부 threshold"일 가능성(새
+    설계 제안, 이번 턴은 원인 규명까지만). 신규 KIS 호출 0건. 산출:
+    `scripts/diagnose_activity_filter_half_period_divergence.py`
+    (read-only, 신규 KIS 호출 0건),
+    `logs/signal_ic_activity_filter_half_period_divergence_
+    2026-07-16.json`. 상세: `plans/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §16.
+  - **SPPV-3(다음 착수: "국면 조건부 활동성 threshold" 설계 검토
+    여부 사용자 확인)**: §2.16~§2.21에서 국면 정의 통일(차단 축)은
     Watch/No-Go에 근접함이 확인됐고, §2.22에서 alpha layer 교체
-    (선별 축)는 Conditional Go를 확보했으며, **§2.23~§2.25에서
-    결합 사용 시 가장 빈번하게 걸리는 축이 활동성 필터임이
-    확인됐으나, 완화(1.10→1.00)가 기대수익률을 실제로 개선하는지는
-    threshold sweep·기간 분할 검증에서도 재현성이 확인되지 않아
-    Watch(격상 근거 없음) 단계에 머문다.** 다음 착수 형태는
-    전반부/후반부가 정반대 방향을 보이는 원인(국면 분포, 유동성
-    레벨 구조 변화 등) 규명이며, 운영 코드
-    (`deterministic_trigger_engine.py:493-499`) 반영은
+    (선별 축)는 Conditional Go를 확보했으며, **§2.23~§2.26에서
+    결합 사용 시 가장 빈번하게 걸리는 축이 활동성 필터임이 확인됐고,
+    완화 효과의 반전이 국면·유동성 구조 차이 때문임을 규명했으나,
+    정적 완화(1.10→1.00)가 기대수익률을 실제로 개선하는지는 여전히
+    Watch(격상 근거 없음) 단계에 머문다.** 다음 착수 형태는 "국면
+    조건부 threshold" 설계 검토 여부에 대한 사용자 확인이며, 운영
+    코드(`deterministic_trigger_engine.py:493-499`) 반영은
     Conditional Go 이상 확보 후 사용자 승인받아 진행한다. 이 설계
     문서를 기반으로 regime/allocation/
     strategy/source를 복원한 `entry_score` point-in-time 재현과
