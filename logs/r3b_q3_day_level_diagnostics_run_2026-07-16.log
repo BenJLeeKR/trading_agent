@@ -1,0 +1,76 @@
+INFO:validate_r3b_q3_day_level_diagnostics:[20/87] 누적 표본 13060건
+INFO:validate_r3b_q3_day_level_diagnostics:[40/87] 누적 표본 26120건
+INFO:validate_r3b_q3_day_level_diagnostics:[60/87] 누적 표본 39180건
+INFO:validate_r3b_q3_day_level_diagnostics:[80/87] 누적 표본 52240건
+INFO:validate_r3b_q3_day_level_diagnostics:[87/87] 누적 표본 56753건
+INFO:validate_r3b_q3_day_level_diagnostics:전체 3년 표본 56753건, 실패 0종목
+
+=== 분기3 세부 진단 시작: 2025-02-12~2025-10-14, 표본 14181건 ===
+
+=== 3년 분기3 — R0 vs R3b 스왑 거래일 세부 진단(스왑 발생일 83건 중 상위 15건) ===
+
+[T+5] 분기3 전체(모든 날 포함) aggregate_diff=0.3171%p, replacement_effect=0.3306%p, composition_effect=-0.0135%p
+
+[T+20] 분기3 전체(모든 날 포함) aggregate_diff=1.2837%p, replacement_effect=1.5081%p, composition_effect=-0.2245%p
+
+  #1 2025-02-12 (스왑 개수=6)
+    T+5: common=None%(n=0), dropped=2.3023%(n=3), added=1.1902%(n=3) | 이날 paired효과=-1.1121%p | 제거 전 aggregate=0.3171%p → 제거 후=0.3265%p | 제거 전 paired평균=-1.1035%p → 제거 후=-1.1034%p
+    T+20: common=None%(n=0), dropped=4.2709%(n=3), added=-5.9861%(n=3) | 이날 paired효과=-10.257%p | 제거 전 aggregate=1.2837%p → 제거 후=1.3955%p | 제거 전 paired평균=-0.4666%p → 제거 후=-0.3472%p
+
+  #2 2025-02-13 (스왑 개수=6)
+    T+5: common=None%(n=0), dropped=-0.04%(n=3), added=-2.1423%(n=3) | 이날 paired효과=-2.1023%p | 제거 전 aggregate=0.3171%p → 제거 후=0.3428%p | 제거 전 paired평균=-1.1035%p → 제거 후=-1.0913%p
+    T+20: common=None%(n=0), dropped=0.3004%(n=3), added=-5.2545%(n=3) | 이날 paired효과=-5.5549%p | 제거 전 aggregate=1.2837%p → 제거 후=1.3604%p | 제거 전 paired평균=-0.4666%p → 제거 후=-0.4046%p
+
+  #3 2025-03-21 (스왑 개수=6)
+    T+5: common=None%(n=0), dropped=-4.0161%(n=3), added=-3.5523%(n=3) | 이날 paired효과=0.4638%p | 제거 전 aggregate=0.3171%p → 제거 후=0.3288%p | 제거 전 paired평균=-1.1035%p → 제거 후=-1.1226%p
+    T+20: common=None%(n=0), dropped=-9.1425%(n=3), added=4.8707%(n=3) | 이날 paired효과=14.0132%p | 제거 전 aggregate=1.2837%p → 제거 후=1.1944%p | 제거 전 paired평균=-0.4666%p → 제거 후=-0.6432%p
+
+  #4 2025-04-22 (스왑 개수=6)
+    T+5: common=None%(n=0), dropped=1.8535%(n=3), added=1.2861%(n=3) | 이날 paired효과=-0.5674%p | 제거 전 aggregate=0.3171%p → 제거 후=0.3224%p | 제거 전 paired평균=-1.1035%p → 제거 후=-1.11%p
+    T+20: common=None%(n=0), dropped=13.799%(n=3), added=8.1182%(n=3) | 이날 paired효과=-5.6809%p | 제거 전 aggregate=1.2837%p → 제거 후=1.3237%p | 제거 전 paired평균=-0.4666%p → 제거 후=-0.403%p
+
+  #5 2025-05-07 (스왑 개수=6)
+    T+5: common=None%(n=0), dropped=-2.3048%(n=3), added=2.7504%(n=3) | 이날 paired효과=5.0552%p | 제거 전 aggregate=0.3171%p → 제거 후=0.2788%p | 제거 전 paired평균=-1.1035%p → 제거 후=-1.1786%p
+    T+20: common=None%(n=0), dropped=1.9279%(n=3), added=20.1509%(n=3) | 이날 paired효과=18.223%p | 제거 전 aggregate=1.2837%p → 제거 후=1.1219%p | 제거 전 paired평균=-0.4666%p → 제거 후=-0.6945%p
+
+  #6 2025-05-27 (스왑 개수=6)
+    T+5: common=None%(n=0), dropped=-0.9964%(n=3), added=12.8694%(n=3) | 이날 paired효과=13.8658%p | 제거 전 aggregate=0.3171%p → 제거 후=0.1884%p | 제거 전 paired평균=-1.1035%p → 제거 후=-1.286%p
+    T+20: common=None%(n=0), dropped=12.792%(n=3), added=41.2273%(n=3) | 이날 paired효과=28.4353%p | 제거 전 aggregate=1.2837%p → 제거 후=0.9909%p | 제거 전 paired평균=-0.4666%p → 제거 후=-0.8191%p
+
+  #7 2025-06-10 (스왑 개수=6)
+    T+5: common=None%(n=0), dropped=-3.7085%(n=3), added=9.7054%(n=3) | 이날 paired효과=13.414%p | 제거 전 aggregate=0.3171%p → 제거 후=0.2005%p | 제거 전 paired평균=-1.1035%p → 제거 후=-1.2805%p
+    T+20: common=None%(n=0), dropped=-0.3856%(n=3), added=14.7627%(n=3) | 이날 paired효과=15.1483%p | 제거 전 aggregate=1.2837%p → 제거 후=1.1587%p | 제거 전 paired평균=-0.4666%p → 제거 후=-0.657%p
+
+  #8 2025-07-10 (스왑 개수=6)
+    T+5: common=None%(n=0), dropped=1.4547%(n=3), added=-0.7617%(n=3) | 이날 paired효과=-2.2165%p | 제거 전 aggregate=0.3171%p → 제거 후=0.3397%p | 제거 전 paired평균=-1.1035%p → 제거 후=-1.0899%p
+    T+20: common=None%(n=0), dropped=-6.9179%(n=3), added=-4.9186%(n=3) | 이날 paired효과=1.9993%p | 제거 전 aggregate=1.2837%p → 제거 후=1.3063%p | 제거 전 paired평균=-0.4666%p → 제거 후=-0.4967%p
+
+  #9 2025-09-19 (스왑 개수=6)
+    T+5: common=None%(n=0), dropped=-1.5463%(n=3), added=0.966%(n=3) | 이날 paired효과=2.5123%p | 제거 전 aggregate=0.3171%p → 제거 후=0.3017%p | 제거 전 paired평균=-1.1035%p → 제거 후=-1.1476%p
+    T+20: common=None%(n=0), dropped=6.941%(n=3), added=11.3184%(n=3) | 이날 paired효과=4.3774%p | 제거 전 aggregate=1.2837%p → 제거 후=1.244%p | 제거 전 paired평균=-0.4666%p → 제거 후=-0.5257%p
+
+  #10 2025-09-22 (스왑 개수=6)
+    T+5: common=None%(n=0), dropped=-4.6624%(n=3), added=-2.5458%(n=3) | 이날 paired효과=2.1166%p | 제거 전 aggregate=0.3171%p → 제거 후=0.3143%p | 제거 전 paired평균=-1.1035%p → 제거 후=-1.1427%p
+    T+20: common=None%(n=0), dropped=4.0006%(n=3), added=21.3893%(n=3) | 이날 paired효과=17.3887%p | 제거 전 aggregate=1.2837%p → 제거 후=1.1243%p | 제거 전 paired평균=-0.4666%p → 제거 후=-0.6844%p
+
+  #11 2025-09-24 (스왑 개수=6)
+    T+5: common=None%(n=0), dropped=-2.0461%(n=3), added=-0.7756%(n=3) | 이날 paired효과=1.2705%p | 제거 전 aggregate=0.3171%p → 제거 후=0.3153%p | 제거 전 paired평균=-1.1035%p → 제거 후=-1.1324%p
+    T+20: common=None%(n=0), dropped=12.1719%(n=3), added=17.18%(n=3) | 이날 paired효과=5.0081%p | 제거 전 aggregate=1.2837%p → 제거 후=1.2231%p | 제거 전 paired평균=-0.4666%p → 제거 후=-0.5334%p
+
+  #12 2025-03-13 (스왑 개수=5)
+    T+5: common=None%(n=0), dropped=-2.5192%(n=3), added=0.69%(n=2) | 이날 paired효과=3.2092%p | 제거 전 aggregate=0.3171%p → 제거 후=0.2967%p | 제거 전 paired평균=-1.1035%p → 제거 후=-1.1561%p
+    T+20: common=None%(n=0), dropped=-16.2555%(n=3), added=-12.1351%(n=2) | 이날 paired효과=4.1204%p | 제거 전 aggregate=1.2837%p → 제거 후=1.2554%p | 제거 전 paired평균=-0.4666%p → 제거 후=-0.5226%p
+
+  #13 2025-04-28 (스왑 개수=5)
+    T+5: common=None%(n=0), dropped=1.4443%(n=3), added=11.7809%(n=2) | 이날 paired효과=10.3366%p | 제거 전 aggregate=0.3171%p → 제거 후=0.252%p | 제거 전 paired평균=-1.1035%p → 제거 후=-1.243%p
+    T+20: common=None%(n=0), dropped=7.6164%(n=3), added=32.0788%(n=2) | 이날 paired효과=24.4624%p | 제거 전 aggregate=1.2837%p → 제거 후=1.1341%p | 제거 전 paired평균=-0.4666%p → 제거 후=-0.7706%p
+
+  #14 2025-02-20 (스왑 개수=4)
+    T+5: common=5.6338%(n=1), dropped=-2.9064%(n=2), added=0.4699%(n=2) | 이날 paired효과=3.3764%p | 제거 전 aggregate=0.3171%p → 제거 후=0.3001%p | 제거 전 paired평균=-1.1035%p → 제거 후=-1.1581%p
+    T+20: common=-6.6398%(n=1), dropped=7.5623%(n=2), added=-2.1392%(n=2) | 이날 paired효과=-9.7016%p | 제거 전 aggregate=1.2837%p → 제거 후=1.3622%p | 제거 전 paired평균=-0.4666%p → 제거 후=-0.354%p
+
+  #15 2025-02-26 (스왑 개수=4)
+    T+5: common=-5.7471%(n=1), dropped=-7.8302%(n=2), added=1.1986%(n=2) | 이날 paired효과=9.0288%p | 제거 전 aggregate=0.3171%p → 제거 후=0.2829%p | 제거 전 paired평균=-1.1035%p → 제거 후=-1.227%p
+    T+20: common=-13.3621%(n=1), dropped=-1.324%(n=2), added=-1.581%(n=2) | 이날 paired효과=-0.2571%p | 제거 전 aggregate=1.2837%p → 제거 후=1.3233%p | 제거 전 paired평균=-0.4666%p → 제거 후=-0.4692%p
+
+산출 저장: logs/signal_ic_r3b_q3_day_level_diagnostics_2026-07-16.json
