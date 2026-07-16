@@ -1,0 +1,139 @@
+INFO:validate_r3b_strict_and_r3_failure_decomposition:[20/87] 누적 표본 13060건
+INFO:validate_r3b_strict_and_r3_failure_decomposition:[40/87] 누적 표본 26120건
+INFO:validate_r3b_strict_and_r3_failure_decomposition:[60/87] 누적 표본 39180건
+INFO:validate_r3b_strict_and_r3_failure_decomposition:[80/87] 누적 표본 52240건
+INFO:validate_r3b_strict_and_r3_failure_decomposition:[87/87] 누적 표본 56753건
+INFO:validate_r3b_strict_and_r3_failure_decomposition:전체 3년 표본 56753건, 실패 0종목
+
+=== R3b 엄격 검증 + R3 실패 구간(분기1/분기3) 원인 분해 ===
+전체 3년 표본: 56753건, 최근 12개월(cutoff=2025-06-16) 표본: 21315건
+
+=== 2차(3년, 전체 표본) (표본 56753건) ===
+  [A_current_alpha] candidate=11101, eligible=5462, selected=3804(rate=69.64%), would_buy=1672
+    would_buy T+5: {'n': 1672, 'mean_pct': 0.708, 't_naive': 4.11, 't_newey_west': 2.79, 'pct_positive': 0.491} | MFE/MAE: {'n': 1672, 'mfe_mean_pct': 5.4093, 'mae_mean_pct': -4.261}
+    would_buy T+20: {'n': 1672, 'mean_pct': 1.9373, 't_naive': 5.78, 't_newey_west': 2.49, 'pct_positive': 0.4874} | MFE/MAE: {'n': 1672, 'mfe_mean_pct': 11.9085, 'mae_mean_pct': -7.9444}
+  [B_R0_no_rescale] candidate=10999, eligible=3491, selected=3491(rate=100.0%), would_buy=1543
+    would_buy T+5: {'n': 1543, 'mean_pct': 1.0893, 't_naive': 4.64, 't_newey_west': 3.04, 'pct_positive': 0.4951} | MFE/MAE: {'n': 1543, 'mfe_mean_pct': 6.8241, 'mae_mean_pct': -4.9532}
+    would_buy T+20: {'n': 1543, 'mean_pct': 2.8177, 't_naive': 6.58, 't_newey_west': 2.9, 'pct_positive': 0.4932} | MFE/MAE: {'n': 1543, 'mfe_mean_pct': 15.1386, 'mae_mean_pct': -9.0141}
+  [B_R3_percentile_fulluniverse] candidate=10999, eligible=3491, selected=3321(rate=95.13%), would_buy=1516
+    would_buy T+5: {'n': 1516, 'mean_pct': 1.1493, 't_naive': 4.87, 't_newey_west': 3.11, 'pct_positive': 0.4954} | MFE/MAE: {'n': 1516, 'mfe_mean_pct': 6.6176, 'mae_mean_pct': -4.9408}
+    would_buy T+20: {'n': 1516, 'mean_pct': 3.5911, 't_naive': 8.02, 't_newey_west': 3.25, 'pct_positive': 0.5} | MFE/MAE: {'n': 1516, 'mfe_mean_pct': 15.3148, 'mae_mean_pct': -8.9671}
+  [B_R3b_percentile_candidateonly] candidate=10999, eligible=3491, selected=1234(rate=35.35%), would_buy=1024
+    would_buy T+5: {'n': 1024, 'mean_pct': 1.9597, 't_naive': 6.5, 't_newey_west': 4.0, 'pct_positive': 0.5469} | MFE/MAE: {'n': 1024, 'mfe_mean_pct': 7.6253, 'mae_mean_pct': -4.9314}
+    would_buy T+20: {'n': 1024, 'mean_pct': 6.1337, 't_naive': 9.5, 't_newey_west': 3.78, 'pct_positive': 0.5371} | MFE/MAE: {'n': 1024, 'mfe_mean_pct': 18.5761, 'mae_mean_pct': -9.0423}
+  [overlap 진단] R3∩R0=79.82%, R3b∩R0=55.27%, R3b∩R3=76.17%
+  [R3 원인분해 보조지표] 국면분포={'bearish_trend': {'days': 96, 'pct': 14.7}, 'range_bound': {'days': 200, 'pct': 30.6}, 'event_driven_unstable': {'days': 6, 'pct': 0.9}, 'bullish_trend': {'days': 351, 'pct': 53.8}}, saturation_rate=100.0%, activity_ratio={'n': 10999, 'mean': 1.1906, 'median': 0.915, 'p25': 0.6564, 'p75': 1.3309}, volatility={'n': 10999, 'mean': 3.0527, 'median': 2.6727, 'p25': 2.0124, 'p75': 3.6921}
+
+=== 1차(최근 12개월) (표본 21315건) ===
+  [A_current_alpha] candidate=4165, eligible=2322, selected=1540(rate=66.32%), would_buy=585
+    would_buy T+5: {'n': 585, 'mean_pct': 1.3933, 't_naive': 4.14, 't_newey_west': 2.68, 'pct_positive': 0.5111} | MFE/MAE: {'n': 585, 'mfe_mean_pct': 6.643, 'mae_mean_pct': -4.5904}
+    would_buy T+20: {'n': 585, 'mean_pct': 3.4911, 't_naive': 5.47, 't_newey_west': 2.51, 'pct_positive': 0.5265} | MFE/MAE: {'n': 585, 'mfe_mean_pct': 15.3694, 'mae_mean_pct': -8.1592}
+  [B_R0_no_rescale] candidate=4165, eligible=1621, selected=1621(rate=100.0%), would_buy=673
+    would_buy T+5: {'n': 673, 'mean_pct': 2.0577, 't_naive': 4.87, 't_newey_west': 3.11, 'pct_positive': 0.5319} | MFE/MAE: {'n': 673, 'mfe_mean_pct': 8.848, 'mae_mean_pct': -5.4873}
+    would_buy T+20: {'n': 673, 'mean_pct': 4.3066, 't_naive': 5.71, 't_newey_west': 2.59, 'pct_positive': 0.5171} | MFE/MAE: {'n': 673, 'mfe_mean_pct': 20.0743, 'mae_mean_pct': -9.6832}
+  [B_R3_percentile_fulluniverse] candidate=4165, eligible=1621, selected=1519(rate=93.71%), would_buy=657
+    would_buy T+5: {'n': 657, 'mean_pct': 2.0977, 't_naive': 4.74, 't_newey_west': 2.93, 'pct_positive': 0.5251} | MFE/MAE: {'n': 657, 'mfe_mean_pct': 8.5051, 'mae_mean_pct': -5.4902}
+    would_buy T+20: {'n': 657, 'mean_pct': 6.0496, 't_naive': 7.42, 't_newey_west': 3.04, 'pct_positive': 0.5434} | MFE/MAE: {'n': 657, 'mfe_mean_pct': 20.6393, 'mae_mean_pct': -9.4749}
+  [B_R3b_percentile_candidateonly] candidate=4165, eligible=1621, selected=537(rate=33.13%), would_buy=443
+    would_buy T+5: {'n': 443, 'mean_pct': 2.8771, 't_naive': 5.27, 't_newey_west': 3.04, 'pct_positive': 0.5756} | MFE/MAE: {'n': 443, 'mfe_mean_pct': 9.4204, 'mae_mean_pct': -5.3669}
+    would_buy T+20: {'n': 443, 'mean_pct': 9.1603, 't_naive': 7.75, 't_newey_west': 2.9, 'pct_positive': 0.5914} | MFE/MAE: {'n': 443, 'mfe_mean_pct': 24.5663, 'mae_mean_pct': -9.3634}
+  [overlap 진단] R3∩R0=78.54%, R3b∩R0=52.82%, R3b∩R3=75.4%
+  [R3 원인분해 보조지표] 국면분포={'bullish_trend': {'days': 239, 'pct': 97.6}, 'range_bound': {'days': 6, 'pct': 2.4}}, saturation_rate=100.0%, activity_ratio={'n': 4165, 'mean': 1.2238, 'median': 0.96, 'p25': 0.6855, 'p75': 1.3825}, volatility={'n': 4165, 'mean': 3.5016, 'median': 2.997, 'p25': 2.2156, 'p75': 4.476}
+
+=== 3년 전반부 (표본 28304건) ===
+  [A_current_alpha] candidate=5542, eligible=2448, selected=1768(rate=72.22%), would_buy=874
+    would_buy T+5: {'n': 874, 'mean_pct': 0.1871, 't_naive': 0.88, 't_newey_west': 0.64, 'pct_positive': 0.4668} | MFE/MAE: {'n': 874, 'mfe_mean_pct': 4.6068, 'mae_mean_pct': -4.1264}
+    would_buy T+20: {'n': 874, 'mean_pct': 0.2906, 't_naive': 0.79, 't_newey_west': 0.38, 'pct_positive': 0.4485} | MFE/MAE: {'n': 874, 'mfe_mean_pct': 9.0714, 'mae_mean_pct': -7.8122}
+  [B_R0_no_rescale] candidate=5457, eligible=1359, selected=1359(rate=100.0%), would_buy=657
+    would_buy T+5: {'n': 657, 'mean_pct': 0.4424, 't_naive': 1.46, 't_newey_west': 1.03, 'pct_positive': 0.4612} | MFE/MAE: {'n': 657, 'mfe_mean_pct': 5.4808, 'mae_mean_pct': -4.5414}
+    would_buy T+20: {'n': 657, 'mean_pct': 0.9782, 't_naive': 1.96, 't_newey_west': 0.94, 'pct_positive': 0.4627} | MFE/MAE: {'n': 657, 'mfe_mean_pct': 10.7514, 'mae_mean_pct': -8.4775}
+  [B_R3_percentile_fulluniverse] candidate=5457, eligible=1359, selected=1312(rate=96.54%), would_buy=649
+    would_buy T+5: {'n': 649, 'mean_pct': 0.4939, 't_naive': 1.76, 't_newey_west': 1.26, 'pct_positive': 0.4684} | MFE/MAE: {'n': 649, 'mfe_mean_pct': 5.3062, 'mae_mean_pct': -4.5392}
+    would_buy T+20: {'n': 649, 'mean_pct': 1.0226, 't_naive': 2.1, 't_newey_west': 0.97, 'pct_positive': 0.453} | MFE/MAE: {'n': 649, 'mfe_mean_pct': 10.5215, 'mae_mean_pct': -8.5352}
+  [B_R3b_percentile_candidateonly] candidate=5457, eligible=1359, selected=509(rate=37.45%), would_buy=425
+    would_buy T+5: {'n': 425, 'mean_pct': 1.2273, 't_naive': 3.05, 't_newey_west': 2.16, 'pct_positive': 0.5129} | MFE/MAE: {'n': 425, 'mfe_mean_pct': 6.4393, 'mae_mean_pct': -4.7765}
+    would_buy T+20: {'n': 425, 'mean_pct': 2.8301, 't_naive': 3.67, 't_newey_west': 2.03, 'pct_positive': 0.4635} | MFE/MAE: {'n': 425, 'mfe_mean_pct': 13.1702, 'mae_mean_pct': -9.1774}
+  [overlap 진단] R3∩R0=82.28%, R3b∩R0=58.35%, R3b∩R3=75.53%
+  [R3 원인분해 보조지표] 국면분포={'bearish_trend': {'days': 93, 'pct': 28.5}, 'range_bound': {'days': 148, 'pct': 45.4}, 'event_driven_unstable': {'days': 5, 'pct': 1.5}, 'bullish_trend': {'days': 80, 'pct': 24.5}}, saturation_rate=100.0%, activity_ratio={'n': 5457, 'mean': 1.1627, 'median': 0.8839, 'p25': 0.6429, 'p75': 1.2786}, volatility={'n': 5457, 'mean': 2.7507, 'median': 2.4747, 'p25': 1.9181, 'p75': 3.2564}
+
+=== 3년 후반부 (표본 28449건) ===
+  [A_current_alpha] candidate=5559, eligible=3014, selected=2036(rate=67.55%), would_buy=798
+    would_buy T+5: {'n': 798, 'mean_pct': 1.2786, 't_naive': 4.64, 't_newey_west': 3.03, 'pct_positive': 0.5175} | MFE/MAE: {'n': 798, 'mfe_mean_pct': 6.2882, 'mae_mean_pct': -4.4083}
+    would_buy T+20: {'n': 798, 'mean_pct': 3.7408, 't_naive': 6.58, 't_newey_west': 2.79, 'pct_positive': 0.5301} | MFE/MAE: {'n': 798, 'mfe_mean_pct': 15.0159, 'mae_mean_pct': -8.0893}
+  [B_R0_no_rescale] candidate=5542, eligible=2132, selected=2132(rate=100.0%), would_buy=886
+    would_buy T+5: {'n': 886, 'mean_pct': 1.5691, 't_naive': 4.61, 't_newey_west': 2.93, 'pct_positive': 0.5203} | MFE/MAE: {'n': 886, 'mfe_mean_pct': 7.8203, 'mae_mean_pct': -5.2585}
+    would_buy T+20: {'n': 886, 'mean_pct': 4.1818, 't_naive': 6.49, 't_newey_west': 2.84, 'pct_positive': 0.5158} | MFE/MAE: {'n': 886, 'mfe_mean_pct': 18.3919, 'mae_mean_pct': -9.412}
+  [B_R3_percentile_fulluniverse] candidate=5542, eligible=2132, selected=2009(rate=94.23%), would_buy=867
+    would_buy T+5: {'n': 867, 'mean_pct': 1.6399, 't_naive': 4.62, 't_newey_west': 2.87, 'pct_positive': 0.5156} | MFE/MAE: {'n': 867, 'mfe_mean_pct': 7.5993, 'mae_mean_pct': -5.2414}
+    would_buy T+20: {'n': 867, 'mean_pct': 5.5137, 't_naive': 8.03, 't_newey_west': 3.24, 'pct_positive': 0.5352} | MFE/MAE: {'n': 867, 'mfe_mean_pct': 18.9028, 'mae_mean_pct': -9.2904}
+  [B_R3b_percentile_candidateonly] candidate=5542, eligible=2132, selected=725(rate=34.01%), would_buy=599
+    would_buy T+5: {'n': 599, 'mean_pct': 2.4793, 't_naive': 5.8, 't_newey_west': 3.39, 'pct_positive': 0.571} | MFE/MAE: {'n': 599, 'mfe_mean_pct': 8.4667, 'mae_mean_pct': -5.0412}
+    would_buy T+20: {'n': 599, 'mean_pct': 8.4776, 't_naive': 8.94, 't_newey_west': 3.4, 'pct_positive': 0.5893} | MFE/MAE: {'n': 599, 'mfe_mean_pct': 22.4116, 'mae_mean_pct': -8.9464}
+  [overlap 진단] R3∩R0=77.97%, R3b∩R0=53.09%, R3b∩R3=76.63%
+  [R3 원인분해 보조지표] 국면분포={'range_bound': {'days': 52, 'pct': 15.9}, 'bullish_trend': {'days': 271, 'pct': 82.9}, 'bearish_trend': {'days': 3, 'pct': 0.9}, 'event_driven_unstable': {'days': 1, 'pct': 0.3}}, saturation_rate=100.0%, activity_ratio={'n': 5542, 'mean': 1.218, 'median': 0.9507, 'p25': 0.6746, 'p75': 1.3755}, volatility={'n': 5542, 'mean': 3.35, 'median': 2.8845, 'p25': 2.1459, 'p75': 4.2175}
+
+=== 3년 분기1(2023-10-10~2024-06-07) (표본 14123건) ===
+  [A_current_alpha] candidate=2771, eligible=1199, selected=943(rate=78.65%), would_buy=445
+    would_buy T+5: {'n': 445, 'mean_pct': 0.1249, 't_naive': 0.41, 't_newey_west': 0.28, 'pct_positive': 0.4539} | MFE/MAE: {'n': 445, 'mfe_mean_pct': 4.475, 'mae_mean_pct': -4.0514}
+    would_buy T+20: {'n': 445, 'mean_pct': 0.8734, 't_naive': 1.68, 't_newey_west': 0.7, 'pct_positive': 0.4697} | MFE/MAE: {'n': 445, 'mfe_mean_pct': 9.0465, 'mae_mean_pct': -7.4012}
+  [B_R0_no_rescale] candidate=2703, eligible=795, selected=795(rate=100.0%), would_buy=388
+    would_buy T+5: {'n': 388, 'mean_pct': 0.4244, 't_naive': 1.04, 't_newey_west': 0.73, 'pct_positive': 0.451} | MFE/MAE: {'n': 388, 'mfe_mean_pct': 5.4633, 'mae_mean_pct': -4.5823}
+    would_buy T+20: {'n': 388, 'mean_pct': 1.2076, 't_naive': 1.85, 't_newey_west': 0.78, 'pct_positive': 0.4433} | MFE/MAE: {'n': 388, 'mfe_mean_pct': 10.7166, 'mae_mean_pct': -8.137}
+  [B_R3_percentile_fulluniverse] candidate=2703, eligible=795, selected=774(rate=97.36%), would_buy=385
+    would_buy T+5: {'n': 385, 'mean_pct': 0.2813, 't_naive': 0.8, 't_newey_west': 0.55, 'pct_positive': 0.4442} | MFE/MAE: {'n': 385, 'mfe_mean_pct': 5.1515, 'mae_mean_pct': -4.5557}
+    would_buy T+20: {'n': 385, 'mean_pct': 1.0409, 't_naive': 1.67, 't_newey_west': 0.66, 'pct_positive': 0.4468} | MFE/MAE: {'n': 385, 'mfe_mean_pct': 10.3375, 'mae_mean_pct': -8.2837}
+  [B_R3b_percentile_candidateonly] candidate=2703, eligible=795, selected=294(rate=36.98%), would_buy=245
+    would_buy T+5: {'n': 245, 'mean_pct': 0.7437, 't_naive': 1.63, 't_newey_west': 1.13, 'pct_positive': 0.4939} | MFE/MAE: {'n': 245, 'mfe_mean_pct': 5.9014, 'mae_mean_pct': -4.6257}
+    would_buy T+20: {'n': 245, 'mean_pct': 2.616, 't_naive': 2.7, 't_newey_west': 1.31, 'pct_positive': 0.4571} | MFE/MAE: {'n': 245, 'mfe_mean_pct': 12.4286, 'mae_mean_pct': -8.8471}
+  [overlap 진단] R3∩R0=84.68%, R3b∩R0=61.22%, R3b∩R3=74.69%
+  [R3 원인분해 보조지표] 국면분포={'bearish_trend': {'days': 17, 'pct': 10.4}, 'range_bound': {'days': 76, 'pct': 46.6}, 'event_driven_unstable': {'days': 4, 'pct': 2.5}, 'bullish_trend': {'days': 66, 'pct': 40.5}}, saturation_rate=100.0%, activity_ratio={'n': 2703, 'mean': 1.204, 'median': 0.8846, 'p25': 0.6474, 'p75': 1.2777}, volatility={'n': 2703, 'mean': 2.6744, 'median': 2.4626, 'p25': 1.8381, 'p75': 3.1686}
+
+=== 3년 분기2(2024-06-10~2025-02-11) (표본 14181건) ===
+  [A_current_alpha] candidate=2771, eligible=1249, selected=825(rate=66.05%), would_buy=429
+    would_buy T+5: {'n': 429, 'mean_pct': 0.2517, 't_naive': 0.84, 't_newey_west': 0.68, 'pct_positive': 0.4802} | MFE/MAE: {'n': 429, 'mfe_mean_pct': 4.7435, 'mae_mean_pct': -4.2043}
+    would_buy T+20: {'n': 429, 'mean_pct': -0.3139, 't_naive': -0.6, 't_newey_west': -0.38, 'pct_positive': 0.4266} | MFE/MAE: {'n': 429, 'mfe_mean_pct': 9.0972, 'mae_mean_pct': -8.2385}
+  [B_R0_no_rescale] candidate=2754, eligible=564, selected=564(rate=100.0%), would_buy=269
+    would_buy T+5: {'n': 269, 'mean_pct': 0.4682, 't_naive': 1.03, 't_newey_west': 0.76, 'pct_positive': 0.4758} | MFE/MAE: {'n': 269, 'mfe_mean_pct': 5.5059, 'mae_mean_pct': -4.4825}
+    would_buy T+20: {'n': 269, 'mean_pct': 0.6474, 't_naive': 0.83, 't_newey_west': 0.53, 'pct_positive': 0.4907} | MFE/MAE: {'n': 269, 'mfe_mean_pct': 10.8016, 'mae_mean_pct': -8.9686}
+  [B_R3_percentile_fulluniverse] candidate=2754, eligible=564, selected=538(rate=95.39%), would_buy=264
+    would_buy T+5: {'n': 264, 'mean_pct': 0.8039, 't_naive': 1.75, 't_newey_west': 1.34, 'pct_positive': 0.5038} | MFE/MAE: {'n': 264, 'mfe_mean_pct': 5.5318, 'mae_mean_pct': -4.5151}
+    would_buy T+20: {'n': 264, 'mean_pct': 0.9961, 't_naive': 1.29, 't_newey_west': 0.84, 'pct_positive': 0.4621} | MFE/MAE: {'n': 264, 'mfe_mean_pct': 10.7899, 'mae_mean_pct': -8.9019}
+  [B_R3b_percentile_candidateonly] candidate=2754, eligible=564, selected=215(rate=38.12%), would_buy=180
+    would_buy T+5: {'n': 180, 'mean_pct': 1.8856, 't_naive': 2.63, 't_newey_west': 1.91, 'pct_positive': 0.5389} | MFE/MAE: {'n': 180, 'mfe_mean_pct': 7.1714, 'mae_mean_pct': -4.9817}
+    would_buy T+20: {'n': 180, 'mean_pct': 3.1216, 't_naive': 2.49, 't_newey_west': 1.68, 'pct_positive': 0.4722} | MFE/MAE: {'n': 180, 'mfe_mean_pct': 14.1797, 'mae_mean_pct': -9.627}
+  [overlap 진단] R3∩R0=78.79%, R3b∩R0=54.44%, R3b∩R3=76.67%
+  [R3 원인분해 보조지표] 국면분포={'range_bound': {'days': 72, 'pct': 44.2}, 'bullish_trend': {'days': 14, 'pct': 8.6}, 'bearish_trend': {'days': 76, 'pct': 46.6}, 'event_driven_unstable': {'days': 1, 'pct': 0.6}}, saturation_rate=100.0%, activity_ratio={'n': 2754, 'mean': 1.1222, 'median': 0.8827, 'p25': 0.6397, 'p75': 1.2786}, volatility={'n': 2754, 'mean': 2.8256, 'median': 2.506, 'p25': 1.9629, 'p75': 3.3472}
+
+=== 3년 분기3(2025-02-12~2025-10-14) (표본 14181건) ===
+  [A_current_alpha] candidate=2771, eligible=1388, selected=1080(rate=77.81%), would_buy=444
+    would_buy T+5: {'n': 444, 'mean_pct': 1.0289, 't_naive': 3.32, 't_newey_west': 2.43, 'pct_positive': 0.5315} | MFE/MAE: {'n': 444, 'mfe_mean_pct': 5.2458, 'mae_mean_pct': -3.8528}
+    would_buy T+20: {'n': 444, 'mean_pct': 4.1508, 't_naive': 5.86, 't_newey_west': 2.4, 'pct_positive': 0.5473} | MFE/MAE: {'n': 444, 'mfe_mean_pct': 13.4022, 'mae_mean_pct': -7.16}
+  [B_R0_no_rescale] candidate=2754, eligible=950, selected=950(rate=100.0%), would_buy=430
+    would_buy T+5: {'n': 430, 'mean_pct': 0.6326, 't_naive': 1.73, 't_newey_west': 1.19, 'pct_positive': 0.4884} | MFE/MAE: {'n': 430, 'mfe_mean_pct': 5.2256, 'mae_mean_pct': -4.2531}
+    would_buy T+20: {'n': 430, 'mean_pct': 3.6478, 't_naive': 4.78, 't_newey_west': 1.92, 'pct_positive': 0.5116} | MFE/MAE: {'n': 430, 'mfe_mean_pct': 13.3899, 'mae_mean_pct': -7.9153}
+  [B_R3_percentile_fulluniverse] candidate=2754, eligible=950, selected=919(rate=96.74%), would_buy=425
+    would_buy T+5: {'n': 425, 'mean_pct': 0.5654, 't_naive': 1.59, 't_newey_west': 1.1, 'pct_positive': 0.4894} | MFE/MAE: {'n': 425, 'mfe_mean_pct': 5.0599, 'mae_mean_pct': -4.2662}
+    would_buy T+20: {'n': 425, 'mean_pct': 3.4015, 't_naive': 4.56, 't_newey_west': 1.74, 'pct_positive': 0.5082} | MFE/MAE: {'n': 425, 'mfe_mean_pct': 13.2135, 'mae_mean_pct': -8.1401}
+  [B_R3b_percentile_candidateonly] candidate=2754, eligible=950, selected=372(rate=39.16%), would_buy=308
+    would_buy T+5: {'n': 308, 'mean_pct': 0.9497, 't_naive': 2.47, 't_newey_west': 1.66, 'pct_positive': 0.5487} | MFE/MAE: {'n': 308, 'mfe_mean_pct': 5.5284, 'mae_mean_pct': -4.2382}
+    would_buy T+20: {'n': 308, 'mean_pct': 4.9315, 't_naive': 5.42, 't_newey_west': 2.11, 'pct_positive': 0.5519} | MFE/MAE: {'n': 308, 'mfe_mean_pct': 14.7924, 'mae_mean_pct': -8.1713}
+  [overlap 진단] R3∩R0=79.06%, R3b∩R0=58.44%, R3b∩R3=81.17%
+  [R3 원인분해 보조지표] 국면분포={'range_bound': {'days': 49, 'pct': 30.1}, 'bullish_trend': {'days': 110, 'pct': 67.5}, 'bearish_trend': {'days': 3, 'pct': 1.8}, 'event_driven_unstable': {'days': 1, 'pct': 0.6}}, saturation_rate=100.0%, activity_ratio={'n': 2754, 'mean': 1.1401, 'median': 0.8875, 'p25': 0.6319, 'p75': 1.2979}, volatility={'n': 2754, 'mean': 2.7398, 'median': 2.415, 'p25': 1.8595, 'p75': 3.2958}
+
+=== 3년 분기4(2025-10-15~2026-06-16) (표본 14268건) ===
+  [A_current_alpha] candidate=2788, eligible=1626, selected=956(rate=58.79%), would_buy=354
+    would_buy T+5: {'n': 354, 'mean_pct': 1.5917, 't_naive': 3.29, 't_newey_west': 2.03, 'pct_positive': 0.5} | MFE/MAE: {'n': 354, 'mfe_mean_pct': 7.5958, 'mae_mean_pct': -5.1051}
+    would_buy T+20: {'n': 354, 'mean_pct': 3.2265, 't_naive': 3.49, 't_newey_west': 1.56, 'pct_positive': 0.5085} | MFE/MAE: {'n': 354, 'mfe_mean_pct': 17.0398, 'mae_mean_pct': -9.2547}
+  [B_R0_no_rescale] candidate=2788, eligible=1182, selected=1182(rate=100.0%), would_buy=456
+    would_buy T+5: {'n': 456, 'mean_pct': 2.4523, 't_naive': 4.37, 't_newey_west': 2.72, 'pct_positive': 0.5504} | MFE/MAE: {'n': 456, 'mfe_mean_pct': 10.267, 'mae_mean_pct': -6.2065}
+    would_buy T+20: {'n': 456, 'mean_pct': 4.6853, 't_naive': 4.57, 't_newey_west': 2.13, 'pct_positive': 0.5197} | MFE/MAE: {'n': 456, 'mfe_mean_pct': 23.1086, 'mae_mean_pct': -10.8235}
+  [B_R3_percentile_fulluniverse] candidate=2788, eligible=1182, selected=1090(rate=92.22%), would_buy=442
+    would_buy T+5: {'n': 442, 'mean_pct': 2.6731, 't_naive': 4.43, 't_newey_west': 2.69, 'pct_positive': 0.5407} | MFE/MAE: {'n': 442, 'mfe_mean_pct': 10.0411, 'mae_mean_pct': -6.1791}
+    would_buy T+20: {'n': 442, 'mean_pct': 7.5446, 't_naive': 6.66, 't_newey_west': 2.82, 'pct_positive': 0.5611} | MFE/MAE: {'n': 442, 'mfe_mean_pct': 24.3733, 'mae_mean_pct': -10.3965}
+  [B_R3b_percentile_candidateonly] candidate=2788, eligible=1182, selected=353(rate=29.86%), would_buy=291
+    would_buy T+5: {'n': 291, 'mean_pct': 4.0984, 't_naive': 5.32, 't_newey_west': 3.05, 'pct_positive': 0.5945} | MFE/MAE: {'n': 291, 'mfe_mean_pct': 11.5767, 'mae_mean_pct': -5.8911}
+    would_buy T+20: {'n': 291, 'mean_pct': 12.2309, 't_naive': 7.32, 't_newey_west': 2.86, 'pct_positive': 0.6289} | MFE/MAE: {'n': 291, 'mfe_mean_pct': 30.476, 'mae_mean_pct': -9.7668}
+  [overlap 진단] R3∩R0=76.92%, R3b∩R0=47.42%, R3b∩R3=71.82%
+  [R3 원인분해 보조지표] 국면분포={'bullish_trend': {'days': 161, 'pct': 98.2}, 'range_bound': {'days': 3, 'pct': 1.8}}, saturation_rate=100.0%, activity_ratio={'n': 2788, 'mean': 1.2949, 'median': 1.0023, 'p25': 0.7211, 'p75': 1.4579}, volatility={'n': 2788, 'mean': 3.9528, 'median': 3.5701, 'p25': 2.597, 'p75': 5.0089}
+
+산출 저장: logs/signal_ic_r3b_strict_and_r3_failure_decomposition_2026-07-16.json

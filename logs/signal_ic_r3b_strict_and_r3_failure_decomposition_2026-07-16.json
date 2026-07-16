@@ -1,0 +1,1544 @@
+{
+  "as_of": "2026-07-16T21:14:10.703734+09:00",
+  "symbol_count_used": 87,
+  "fetch_failures": [],
+  "total_rolling_samples_3y": 56753,
+  "total_rolling_samples_recent_12m": 21315,
+  "recent_window_cutoff": "2025-06-16",
+  "scenarios_tested": [
+    "A_current_alpha",
+    "B_R0_no_rescale",
+    "B_R3_percentile_fulluniverse",
+    "B_R3b_percentile_candidateonly"
+  ],
+  "windows": {
+    "supplementary_3y": {
+      "window": "2차(3년, 전체 표본)",
+      "scenarios": {
+        "A_current_alpha": {
+          "candidate_n": 11101,
+          "eligible_n": 5462,
+          "selected_n": 3804,
+          "would_buy_n": 1672,
+          "selected_rate_of_eligible": 69.64,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 1672,
+              "mean_pct": 0.708,
+              "t_naive": 4.11,
+              "t_newey_west": 2.79,
+              "pct_positive": 0.491
+            },
+            "T+20": {
+              "n": 1672,
+              "mean_pct": 1.9373,
+              "t_naive": 5.78,
+              "t_newey_west": 2.49,
+              "pct_positive": 0.4874
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 1672,
+              "mfe_mean_pct": 5.4093,
+              "mae_mean_pct": -4.261
+            },
+            "T+20": {
+              "n": 1672,
+              "mfe_mean_pct": 11.9085,
+              "mae_mean_pct": -7.9444
+            }
+          }
+        },
+        "B_R0_no_rescale": {
+          "candidate_n": 10999,
+          "eligible_n": 3491,
+          "selected_n": 3491,
+          "would_buy_n": 1543,
+          "selected_rate_of_eligible": 100.0,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 1543,
+              "mean_pct": 1.0893,
+              "t_naive": 4.64,
+              "t_newey_west": 3.04,
+              "pct_positive": 0.4951
+            },
+            "T+20": {
+              "n": 1543,
+              "mean_pct": 2.8177,
+              "t_naive": 6.58,
+              "t_newey_west": 2.9,
+              "pct_positive": 0.4932
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 1543,
+              "mfe_mean_pct": 6.8241,
+              "mae_mean_pct": -4.9532
+            },
+            "T+20": {
+              "n": 1543,
+              "mfe_mean_pct": 15.1386,
+              "mae_mean_pct": -9.0141
+            }
+          }
+        },
+        "B_R3_percentile_fulluniverse": {
+          "candidate_n": 10999,
+          "eligible_n": 3491,
+          "selected_n": 3321,
+          "would_buy_n": 1516,
+          "selected_rate_of_eligible": 95.13,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 1516,
+              "mean_pct": 1.1493,
+              "t_naive": 4.87,
+              "t_newey_west": 3.11,
+              "pct_positive": 0.4954
+            },
+            "T+20": {
+              "n": 1516,
+              "mean_pct": 3.5911,
+              "t_naive": 8.02,
+              "t_newey_west": 3.25,
+              "pct_positive": 0.5
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 1516,
+              "mfe_mean_pct": 6.6176,
+              "mae_mean_pct": -4.9408
+            },
+            "T+20": {
+              "n": 1516,
+              "mfe_mean_pct": 15.3148,
+              "mae_mean_pct": -8.9671
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "candidate_n": 10999,
+          "eligible_n": 3491,
+          "selected_n": 1234,
+          "would_buy_n": 1024,
+          "selected_rate_of_eligible": 35.35,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 1024,
+              "mean_pct": 1.9597,
+              "t_naive": 6.5,
+              "t_newey_west": 4.0,
+              "pct_positive": 0.5469
+            },
+            "T+20": {
+              "n": 1024,
+              "mean_pct": 6.1337,
+              "t_naive": 9.5,
+              "t_newey_west": 3.78,
+              "pct_positive": 0.5371
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 1024,
+              "mfe_mean_pct": 7.6253,
+              "mae_mean_pct": -4.9314
+            },
+            "T+20": {
+              "n": 1024,
+              "mfe_mean_pct": 18.5761,
+              "mae_mean_pct": -9.0423
+            }
+          }
+        }
+      },
+      "would_buy_overlap": {
+        "r3_overlap_with_r0_pct": 79.82,
+        "r3b_overlap_with_r0_pct": 55.27,
+        "r3b_overlap_with_r3_pct": 76.17
+      },
+      "r3_failure_diagnostics": {
+        "regime_day_distribution": {
+          "bearish_trend": {
+            "days": 96,
+            "pct": 14.7
+          },
+          "range_bound": {
+            "days": 200,
+            "pct": 30.6
+          },
+          "event_driven_unstable": {
+            "days": 6,
+            "pct": 0.9
+          },
+          "bullish_trend": {
+            "days": 351,
+            "pct": 53.8
+          }
+        },
+        "candidate_n": 10999,
+        "saturation_rate_pct": 100.0,
+        "activity_ratio_distribution": {
+          "n": 10999,
+          "mean": 1.1906,
+          "median": 0.915,
+          "p25": 0.6564,
+          "p75": 1.3309
+        },
+        "volatility_20d_pct_distribution": {
+          "n": 10999,
+          "mean": 3.0527,
+          "median": 2.6727,
+          "p25": 2.0124,
+          "p75": 3.6921
+        },
+        "average_turnover_20d_distribution": {
+          "n": 10999,
+          "mean": 259532624316.4303,
+          "median": 49253926300.0,
+          "p25": 18255325346.4,
+          "p75": 148864795425.0
+        }
+      }
+    },
+    "primary_recent_12m": {
+      "window": "1차(최근 12개월)",
+      "scenarios": {
+        "A_current_alpha": {
+          "candidate_n": 4165,
+          "eligible_n": 2322,
+          "selected_n": 1540,
+          "would_buy_n": 585,
+          "selected_rate_of_eligible": 66.32,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 585,
+              "mean_pct": 1.3933,
+              "t_naive": 4.14,
+              "t_newey_west": 2.68,
+              "pct_positive": 0.5111
+            },
+            "T+20": {
+              "n": 585,
+              "mean_pct": 3.4911,
+              "t_naive": 5.47,
+              "t_newey_west": 2.51,
+              "pct_positive": 0.5265
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 585,
+              "mfe_mean_pct": 6.643,
+              "mae_mean_pct": -4.5904
+            },
+            "T+20": {
+              "n": 585,
+              "mfe_mean_pct": 15.3694,
+              "mae_mean_pct": -8.1592
+            }
+          }
+        },
+        "B_R0_no_rescale": {
+          "candidate_n": 4165,
+          "eligible_n": 1621,
+          "selected_n": 1621,
+          "would_buy_n": 673,
+          "selected_rate_of_eligible": 100.0,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 673,
+              "mean_pct": 2.0577,
+              "t_naive": 4.87,
+              "t_newey_west": 3.11,
+              "pct_positive": 0.5319
+            },
+            "T+20": {
+              "n": 673,
+              "mean_pct": 4.3066,
+              "t_naive": 5.71,
+              "t_newey_west": 2.59,
+              "pct_positive": 0.5171
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 673,
+              "mfe_mean_pct": 8.848,
+              "mae_mean_pct": -5.4873
+            },
+            "T+20": {
+              "n": 673,
+              "mfe_mean_pct": 20.0743,
+              "mae_mean_pct": -9.6832
+            }
+          }
+        },
+        "B_R3_percentile_fulluniverse": {
+          "candidate_n": 4165,
+          "eligible_n": 1621,
+          "selected_n": 1519,
+          "would_buy_n": 657,
+          "selected_rate_of_eligible": 93.71,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 657,
+              "mean_pct": 2.0977,
+              "t_naive": 4.74,
+              "t_newey_west": 2.93,
+              "pct_positive": 0.5251
+            },
+            "T+20": {
+              "n": 657,
+              "mean_pct": 6.0496,
+              "t_naive": 7.42,
+              "t_newey_west": 3.04,
+              "pct_positive": 0.5434
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 657,
+              "mfe_mean_pct": 8.5051,
+              "mae_mean_pct": -5.4902
+            },
+            "T+20": {
+              "n": 657,
+              "mfe_mean_pct": 20.6393,
+              "mae_mean_pct": -9.4749
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "candidate_n": 4165,
+          "eligible_n": 1621,
+          "selected_n": 537,
+          "would_buy_n": 443,
+          "selected_rate_of_eligible": 33.13,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 443,
+              "mean_pct": 2.8771,
+              "t_naive": 5.27,
+              "t_newey_west": 3.04,
+              "pct_positive": 0.5756
+            },
+            "T+20": {
+              "n": 443,
+              "mean_pct": 9.1603,
+              "t_naive": 7.75,
+              "t_newey_west": 2.9,
+              "pct_positive": 0.5914
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 443,
+              "mfe_mean_pct": 9.4204,
+              "mae_mean_pct": -5.3669
+            },
+            "T+20": {
+              "n": 443,
+              "mfe_mean_pct": 24.5663,
+              "mae_mean_pct": -9.3634
+            }
+          }
+        }
+      },
+      "would_buy_overlap": {
+        "r3_overlap_with_r0_pct": 78.54,
+        "r3b_overlap_with_r0_pct": 52.82,
+        "r3b_overlap_with_r3_pct": 75.4
+      },
+      "r3_failure_diagnostics": {
+        "regime_day_distribution": {
+          "bullish_trend": {
+            "days": 239,
+            "pct": 97.6
+          },
+          "range_bound": {
+            "days": 6,
+            "pct": 2.4
+          }
+        },
+        "candidate_n": 4165,
+        "saturation_rate_pct": 100.0,
+        "activity_ratio_distribution": {
+          "n": 4165,
+          "mean": 1.2238,
+          "median": 0.96,
+          "p25": 0.6855,
+          "p75": 1.3825
+        },
+        "volatility_20d_pct_distribution": {
+          "n": 4165,
+          "mean": 3.5016,
+          "median": 2.997,
+          "p25": 2.2156,
+          "p75": 4.476
+        },
+        "average_turnover_20d_distribution": {
+          "n": 4165,
+          "mean": 508179236675.2685,
+          "median": 86345837405.0,
+          "p25": 27798107712.5,
+          "p75": 249917067990.0
+        }
+      }
+    },
+    "3y_first_half": {
+      "window": "3년 전반부",
+      "scenarios": {
+        "A_current_alpha": {
+          "candidate_n": 5542,
+          "eligible_n": 2448,
+          "selected_n": 1768,
+          "would_buy_n": 874,
+          "selected_rate_of_eligible": 72.22,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 874,
+              "mean_pct": 0.1871,
+              "t_naive": 0.88,
+              "t_newey_west": 0.64,
+              "pct_positive": 0.4668
+            },
+            "T+20": {
+              "n": 874,
+              "mean_pct": 0.2906,
+              "t_naive": 0.79,
+              "t_newey_west": 0.38,
+              "pct_positive": 0.4485
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 874,
+              "mfe_mean_pct": 4.6068,
+              "mae_mean_pct": -4.1264
+            },
+            "T+20": {
+              "n": 874,
+              "mfe_mean_pct": 9.0714,
+              "mae_mean_pct": -7.8122
+            }
+          }
+        },
+        "B_R0_no_rescale": {
+          "candidate_n": 5457,
+          "eligible_n": 1359,
+          "selected_n": 1359,
+          "would_buy_n": 657,
+          "selected_rate_of_eligible": 100.0,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 657,
+              "mean_pct": 0.4424,
+              "t_naive": 1.46,
+              "t_newey_west": 1.03,
+              "pct_positive": 0.4612
+            },
+            "T+20": {
+              "n": 657,
+              "mean_pct": 0.9782,
+              "t_naive": 1.96,
+              "t_newey_west": 0.94,
+              "pct_positive": 0.4627
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 657,
+              "mfe_mean_pct": 5.4808,
+              "mae_mean_pct": -4.5414
+            },
+            "T+20": {
+              "n": 657,
+              "mfe_mean_pct": 10.7514,
+              "mae_mean_pct": -8.4775
+            }
+          }
+        },
+        "B_R3_percentile_fulluniverse": {
+          "candidate_n": 5457,
+          "eligible_n": 1359,
+          "selected_n": 1312,
+          "would_buy_n": 649,
+          "selected_rate_of_eligible": 96.54,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 649,
+              "mean_pct": 0.4939,
+              "t_naive": 1.76,
+              "t_newey_west": 1.26,
+              "pct_positive": 0.4684
+            },
+            "T+20": {
+              "n": 649,
+              "mean_pct": 1.0226,
+              "t_naive": 2.1,
+              "t_newey_west": 0.97,
+              "pct_positive": 0.453
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 649,
+              "mfe_mean_pct": 5.3062,
+              "mae_mean_pct": -4.5392
+            },
+            "T+20": {
+              "n": 649,
+              "mfe_mean_pct": 10.5215,
+              "mae_mean_pct": -8.5352
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "candidate_n": 5457,
+          "eligible_n": 1359,
+          "selected_n": 509,
+          "would_buy_n": 425,
+          "selected_rate_of_eligible": 37.45,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 425,
+              "mean_pct": 1.2273,
+              "t_naive": 3.05,
+              "t_newey_west": 2.16,
+              "pct_positive": 0.5129
+            },
+            "T+20": {
+              "n": 425,
+              "mean_pct": 2.8301,
+              "t_naive": 3.67,
+              "t_newey_west": 2.03,
+              "pct_positive": 0.4635
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 425,
+              "mfe_mean_pct": 6.4393,
+              "mae_mean_pct": -4.7765
+            },
+            "T+20": {
+              "n": 425,
+              "mfe_mean_pct": 13.1702,
+              "mae_mean_pct": -9.1774
+            }
+          }
+        }
+      },
+      "would_buy_overlap": {
+        "r3_overlap_with_r0_pct": 82.28,
+        "r3b_overlap_with_r0_pct": 58.35,
+        "r3b_overlap_with_r3_pct": 75.53
+      },
+      "r3_failure_diagnostics": {
+        "regime_day_distribution": {
+          "bearish_trend": {
+            "days": 93,
+            "pct": 28.5
+          },
+          "range_bound": {
+            "days": 148,
+            "pct": 45.4
+          },
+          "event_driven_unstable": {
+            "days": 5,
+            "pct": 1.5
+          },
+          "bullish_trend": {
+            "days": 80,
+            "pct": 24.5
+          }
+        },
+        "candidate_n": 5457,
+        "saturation_rate_pct": 100.0,
+        "activity_ratio_distribution": {
+          "n": 5457,
+          "mean": 1.1627,
+          "median": 0.8839,
+          "p25": 0.6429,
+          "p75": 1.2786
+        },
+        "volatility_20d_pct_distribution": {
+          "n": 5457,
+          "mean": 2.7507,
+          "median": 2.4747,
+          "p25": 1.9181,
+          "p75": 3.2564
+        },
+        "average_turnover_20d_distribution": {
+          "n": 5457,
+          "mean": 109222050076.5151,
+          "median": 37765416925.0,
+          "p25": 14373646380.0,
+          "p75": 112071110681.2
+        }
+      }
+    },
+    "3y_second_half": {
+      "window": "3년 후반부",
+      "scenarios": {
+        "A_current_alpha": {
+          "candidate_n": 5559,
+          "eligible_n": 3014,
+          "selected_n": 2036,
+          "would_buy_n": 798,
+          "selected_rate_of_eligible": 67.55,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 798,
+              "mean_pct": 1.2786,
+              "t_naive": 4.64,
+              "t_newey_west": 3.03,
+              "pct_positive": 0.5175
+            },
+            "T+20": {
+              "n": 798,
+              "mean_pct": 3.7408,
+              "t_naive": 6.58,
+              "t_newey_west": 2.79,
+              "pct_positive": 0.5301
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 798,
+              "mfe_mean_pct": 6.2882,
+              "mae_mean_pct": -4.4083
+            },
+            "T+20": {
+              "n": 798,
+              "mfe_mean_pct": 15.0159,
+              "mae_mean_pct": -8.0893
+            }
+          }
+        },
+        "B_R0_no_rescale": {
+          "candidate_n": 5542,
+          "eligible_n": 2132,
+          "selected_n": 2132,
+          "would_buy_n": 886,
+          "selected_rate_of_eligible": 100.0,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 886,
+              "mean_pct": 1.5691,
+              "t_naive": 4.61,
+              "t_newey_west": 2.93,
+              "pct_positive": 0.5203
+            },
+            "T+20": {
+              "n": 886,
+              "mean_pct": 4.1818,
+              "t_naive": 6.49,
+              "t_newey_west": 2.84,
+              "pct_positive": 0.5158
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 886,
+              "mfe_mean_pct": 7.8203,
+              "mae_mean_pct": -5.2585
+            },
+            "T+20": {
+              "n": 886,
+              "mfe_mean_pct": 18.3919,
+              "mae_mean_pct": -9.412
+            }
+          }
+        },
+        "B_R3_percentile_fulluniverse": {
+          "candidate_n": 5542,
+          "eligible_n": 2132,
+          "selected_n": 2009,
+          "would_buy_n": 867,
+          "selected_rate_of_eligible": 94.23,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 867,
+              "mean_pct": 1.6399,
+              "t_naive": 4.62,
+              "t_newey_west": 2.87,
+              "pct_positive": 0.5156
+            },
+            "T+20": {
+              "n": 867,
+              "mean_pct": 5.5137,
+              "t_naive": 8.03,
+              "t_newey_west": 3.24,
+              "pct_positive": 0.5352
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 867,
+              "mfe_mean_pct": 7.5993,
+              "mae_mean_pct": -5.2414
+            },
+            "T+20": {
+              "n": 867,
+              "mfe_mean_pct": 18.9028,
+              "mae_mean_pct": -9.2904
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "candidate_n": 5542,
+          "eligible_n": 2132,
+          "selected_n": 725,
+          "would_buy_n": 599,
+          "selected_rate_of_eligible": 34.01,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 599,
+              "mean_pct": 2.4793,
+              "t_naive": 5.8,
+              "t_newey_west": 3.39,
+              "pct_positive": 0.571
+            },
+            "T+20": {
+              "n": 599,
+              "mean_pct": 8.4776,
+              "t_naive": 8.94,
+              "t_newey_west": 3.4,
+              "pct_positive": 0.5893
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 599,
+              "mfe_mean_pct": 8.4667,
+              "mae_mean_pct": -5.0412
+            },
+            "T+20": {
+              "n": 599,
+              "mfe_mean_pct": 22.4116,
+              "mae_mean_pct": -8.9464
+            }
+          }
+        }
+      },
+      "would_buy_overlap": {
+        "r3_overlap_with_r0_pct": 77.97,
+        "r3b_overlap_with_r0_pct": 53.09,
+        "r3b_overlap_with_r3_pct": 76.63
+      },
+      "r3_failure_diagnostics": {
+        "regime_day_distribution": {
+          "range_bound": {
+            "days": 52,
+            "pct": 15.9
+          },
+          "bullish_trend": {
+            "days": 271,
+            "pct": 82.9
+          },
+          "bearish_trend": {
+            "days": 3,
+            "pct": 0.9
+          },
+          "event_driven_unstable": {
+            "days": 1,
+            "pct": 0.3
+          }
+        },
+        "candidate_n": 5542,
+        "saturation_rate_pct": 100.0,
+        "activity_ratio_distribution": {
+          "n": 5542,
+          "mean": 1.218,
+          "median": 0.9507,
+          "p25": 0.6746,
+          "p75": 1.3755
+        },
+        "volatility_20d_pct_distribution": {
+          "n": 5542,
+          "mean": 3.35,
+          "median": 2.8845,
+          "p25": 2.1459,
+          "p75": 4.2175
+        },
+        "average_turnover_20d_distribution": {
+          "n": 5542,
+          "mean": 407537821650.8253,
+          "median": 70647415019.45,
+          "p25": 22894046837.5,
+          "p75": 203205657817.5
+        }
+      }
+    },
+    "quarter_1": {
+      "window": "3년 분기1(2023-10-10~2024-06-07)",
+      "scenarios": {
+        "A_current_alpha": {
+          "candidate_n": 2771,
+          "eligible_n": 1199,
+          "selected_n": 943,
+          "would_buy_n": 445,
+          "selected_rate_of_eligible": 78.65,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 445,
+              "mean_pct": 0.1249,
+              "t_naive": 0.41,
+              "t_newey_west": 0.28,
+              "pct_positive": 0.4539
+            },
+            "T+20": {
+              "n": 445,
+              "mean_pct": 0.8734,
+              "t_naive": 1.68,
+              "t_newey_west": 0.7,
+              "pct_positive": 0.4697
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 445,
+              "mfe_mean_pct": 4.475,
+              "mae_mean_pct": -4.0514
+            },
+            "T+20": {
+              "n": 445,
+              "mfe_mean_pct": 9.0465,
+              "mae_mean_pct": -7.4012
+            }
+          }
+        },
+        "B_R0_no_rescale": {
+          "candidate_n": 2703,
+          "eligible_n": 795,
+          "selected_n": 795,
+          "would_buy_n": 388,
+          "selected_rate_of_eligible": 100.0,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 388,
+              "mean_pct": 0.4244,
+              "t_naive": 1.04,
+              "t_newey_west": 0.73,
+              "pct_positive": 0.451
+            },
+            "T+20": {
+              "n": 388,
+              "mean_pct": 1.2076,
+              "t_naive": 1.85,
+              "t_newey_west": 0.78,
+              "pct_positive": 0.4433
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 388,
+              "mfe_mean_pct": 5.4633,
+              "mae_mean_pct": -4.5823
+            },
+            "T+20": {
+              "n": 388,
+              "mfe_mean_pct": 10.7166,
+              "mae_mean_pct": -8.137
+            }
+          }
+        },
+        "B_R3_percentile_fulluniverse": {
+          "candidate_n": 2703,
+          "eligible_n": 795,
+          "selected_n": 774,
+          "would_buy_n": 385,
+          "selected_rate_of_eligible": 97.36,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 385,
+              "mean_pct": 0.2813,
+              "t_naive": 0.8,
+              "t_newey_west": 0.55,
+              "pct_positive": 0.4442
+            },
+            "T+20": {
+              "n": 385,
+              "mean_pct": 1.0409,
+              "t_naive": 1.67,
+              "t_newey_west": 0.66,
+              "pct_positive": 0.4468
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 385,
+              "mfe_mean_pct": 5.1515,
+              "mae_mean_pct": -4.5557
+            },
+            "T+20": {
+              "n": 385,
+              "mfe_mean_pct": 10.3375,
+              "mae_mean_pct": -8.2837
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "candidate_n": 2703,
+          "eligible_n": 795,
+          "selected_n": 294,
+          "would_buy_n": 245,
+          "selected_rate_of_eligible": 36.98,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 245,
+              "mean_pct": 0.7437,
+              "t_naive": 1.63,
+              "t_newey_west": 1.13,
+              "pct_positive": 0.4939
+            },
+            "T+20": {
+              "n": 245,
+              "mean_pct": 2.616,
+              "t_naive": 2.7,
+              "t_newey_west": 1.31,
+              "pct_positive": 0.4571
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 245,
+              "mfe_mean_pct": 5.9014,
+              "mae_mean_pct": -4.6257
+            },
+            "T+20": {
+              "n": 245,
+              "mfe_mean_pct": 12.4286,
+              "mae_mean_pct": -8.8471
+            }
+          }
+        }
+      },
+      "would_buy_overlap": {
+        "r3_overlap_with_r0_pct": 84.68,
+        "r3b_overlap_with_r0_pct": 61.22,
+        "r3b_overlap_with_r3_pct": 74.69
+      },
+      "r3_failure_diagnostics": {
+        "regime_day_distribution": {
+          "bearish_trend": {
+            "days": 17,
+            "pct": 10.4
+          },
+          "range_bound": {
+            "days": 76,
+            "pct": 46.6
+          },
+          "event_driven_unstable": {
+            "days": 4,
+            "pct": 2.5
+          },
+          "bullish_trend": {
+            "days": 66,
+            "pct": 40.5
+          }
+        },
+        "candidate_n": 2703,
+        "saturation_rate_pct": 100.0,
+        "activity_ratio_distribution": {
+          "n": 2703,
+          "mean": 1.204,
+          "median": 0.8846,
+          "p25": 0.6474,
+          "p75": 1.2777
+        },
+        "volatility_20d_pct_distribution": {
+          "n": 2703,
+          "mean": 2.6744,
+          "median": 2.4626,
+          "p25": 1.8381,
+          "p75": 3.1686
+        },
+        "average_turnover_20d_distribution": {
+          "n": 2703,
+          "mean": 102362489203.5754,
+          "median": 34107750195.0,
+          "p25": 13043657190.05,
+          "p75": 108757537795.2
+        }
+      }
+    },
+    "quarter_2": {
+      "window": "3년 분기2(2024-06-10~2025-02-11)",
+      "scenarios": {
+        "A_current_alpha": {
+          "candidate_n": 2771,
+          "eligible_n": 1249,
+          "selected_n": 825,
+          "would_buy_n": 429,
+          "selected_rate_of_eligible": 66.05,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 429,
+              "mean_pct": 0.2517,
+              "t_naive": 0.84,
+              "t_newey_west": 0.68,
+              "pct_positive": 0.4802
+            },
+            "T+20": {
+              "n": 429,
+              "mean_pct": -0.3139,
+              "t_naive": -0.6,
+              "t_newey_west": -0.38,
+              "pct_positive": 0.4266
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 429,
+              "mfe_mean_pct": 4.7435,
+              "mae_mean_pct": -4.2043
+            },
+            "T+20": {
+              "n": 429,
+              "mfe_mean_pct": 9.0972,
+              "mae_mean_pct": -8.2385
+            }
+          }
+        },
+        "B_R0_no_rescale": {
+          "candidate_n": 2754,
+          "eligible_n": 564,
+          "selected_n": 564,
+          "would_buy_n": 269,
+          "selected_rate_of_eligible": 100.0,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 269,
+              "mean_pct": 0.4682,
+              "t_naive": 1.03,
+              "t_newey_west": 0.76,
+              "pct_positive": 0.4758
+            },
+            "T+20": {
+              "n": 269,
+              "mean_pct": 0.6474,
+              "t_naive": 0.83,
+              "t_newey_west": 0.53,
+              "pct_positive": 0.4907
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 269,
+              "mfe_mean_pct": 5.5059,
+              "mae_mean_pct": -4.4825
+            },
+            "T+20": {
+              "n": 269,
+              "mfe_mean_pct": 10.8016,
+              "mae_mean_pct": -8.9686
+            }
+          }
+        },
+        "B_R3_percentile_fulluniverse": {
+          "candidate_n": 2754,
+          "eligible_n": 564,
+          "selected_n": 538,
+          "would_buy_n": 264,
+          "selected_rate_of_eligible": 95.39,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 264,
+              "mean_pct": 0.8039,
+              "t_naive": 1.75,
+              "t_newey_west": 1.34,
+              "pct_positive": 0.5038
+            },
+            "T+20": {
+              "n": 264,
+              "mean_pct": 0.9961,
+              "t_naive": 1.29,
+              "t_newey_west": 0.84,
+              "pct_positive": 0.4621
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 264,
+              "mfe_mean_pct": 5.5318,
+              "mae_mean_pct": -4.5151
+            },
+            "T+20": {
+              "n": 264,
+              "mfe_mean_pct": 10.7899,
+              "mae_mean_pct": -8.9019
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "candidate_n": 2754,
+          "eligible_n": 564,
+          "selected_n": 215,
+          "would_buy_n": 180,
+          "selected_rate_of_eligible": 38.12,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 180,
+              "mean_pct": 1.8856,
+              "t_naive": 2.63,
+              "t_newey_west": 1.91,
+              "pct_positive": 0.5389
+            },
+            "T+20": {
+              "n": 180,
+              "mean_pct": 3.1216,
+              "t_naive": 2.49,
+              "t_newey_west": 1.68,
+              "pct_positive": 0.4722
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 180,
+              "mfe_mean_pct": 7.1714,
+              "mae_mean_pct": -4.9817
+            },
+            "T+20": {
+              "n": 180,
+              "mfe_mean_pct": 14.1797,
+              "mae_mean_pct": -9.627
+            }
+          }
+        }
+      },
+      "would_buy_overlap": {
+        "r3_overlap_with_r0_pct": 78.79,
+        "r3b_overlap_with_r0_pct": 54.44,
+        "r3b_overlap_with_r3_pct": 76.67
+      },
+      "r3_failure_diagnostics": {
+        "regime_day_distribution": {
+          "range_bound": {
+            "days": 72,
+            "pct": 44.2
+          },
+          "bullish_trend": {
+            "days": 14,
+            "pct": 8.6
+          },
+          "bearish_trend": {
+            "days": 76,
+            "pct": 46.6
+          },
+          "event_driven_unstable": {
+            "days": 1,
+            "pct": 0.6
+          }
+        },
+        "candidate_n": 2754,
+        "saturation_rate_pct": 100.0,
+        "activity_ratio_distribution": {
+          "n": 2754,
+          "mean": 1.1222,
+          "median": 0.8827,
+          "p25": 0.6397,
+          "p75": 1.2786
+        },
+        "volatility_20d_pct_distribution": {
+          "n": 2754,
+          "mean": 2.8256,
+          "median": 2.506,
+          "p25": 1.9629,
+          "p75": 3.3472
+        },
+        "average_turnover_20d_distribution": {
+          "n": 2754,
+          "mean": 115954582044.4003,
+          "median": 40939788440.7,
+          "p25": 15286123140.0,
+          "p75": 114282862820.0
+        }
+      }
+    },
+    "quarter_3": {
+      "window": "3년 분기3(2025-02-12~2025-10-14)",
+      "scenarios": {
+        "A_current_alpha": {
+          "candidate_n": 2771,
+          "eligible_n": 1388,
+          "selected_n": 1080,
+          "would_buy_n": 444,
+          "selected_rate_of_eligible": 77.81,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 444,
+              "mean_pct": 1.0289,
+              "t_naive": 3.32,
+              "t_newey_west": 2.43,
+              "pct_positive": 0.5315
+            },
+            "T+20": {
+              "n": 444,
+              "mean_pct": 4.1508,
+              "t_naive": 5.86,
+              "t_newey_west": 2.4,
+              "pct_positive": 0.5473
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 444,
+              "mfe_mean_pct": 5.2458,
+              "mae_mean_pct": -3.8528
+            },
+            "T+20": {
+              "n": 444,
+              "mfe_mean_pct": 13.4022,
+              "mae_mean_pct": -7.16
+            }
+          }
+        },
+        "B_R0_no_rescale": {
+          "candidate_n": 2754,
+          "eligible_n": 950,
+          "selected_n": 950,
+          "would_buy_n": 430,
+          "selected_rate_of_eligible": 100.0,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 430,
+              "mean_pct": 0.6326,
+              "t_naive": 1.73,
+              "t_newey_west": 1.19,
+              "pct_positive": 0.4884
+            },
+            "T+20": {
+              "n": 430,
+              "mean_pct": 3.6478,
+              "t_naive": 4.78,
+              "t_newey_west": 1.92,
+              "pct_positive": 0.5116
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 430,
+              "mfe_mean_pct": 5.2256,
+              "mae_mean_pct": -4.2531
+            },
+            "T+20": {
+              "n": 430,
+              "mfe_mean_pct": 13.3899,
+              "mae_mean_pct": -7.9153
+            }
+          }
+        },
+        "B_R3_percentile_fulluniverse": {
+          "candidate_n": 2754,
+          "eligible_n": 950,
+          "selected_n": 919,
+          "would_buy_n": 425,
+          "selected_rate_of_eligible": 96.74,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 425,
+              "mean_pct": 0.5654,
+              "t_naive": 1.59,
+              "t_newey_west": 1.1,
+              "pct_positive": 0.4894
+            },
+            "T+20": {
+              "n": 425,
+              "mean_pct": 3.4015,
+              "t_naive": 4.56,
+              "t_newey_west": 1.74,
+              "pct_positive": 0.5082
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 425,
+              "mfe_mean_pct": 5.0599,
+              "mae_mean_pct": -4.2662
+            },
+            "T+20": {
+              "n": 425,
+              "mfe_mean_pct": 13.2135,
+              "mae_mean_pct": -8.1401
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "candidate_n": 2754,
+          "eligible_n": 950,
+          "selected_n": 372,
+          "would_buy_n": 308,
+          "selected_rate_of_eligible": 39.16,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 308,
+              "mean_pct": 0.9497,
+              "t_naive": 2.47,
+              "t_newey_west": 1.66,
+              "pct_positive": 0.5487
+            },
+            "T+20": {
+              "n": 308,
+              "mean_pct": 4.9315,
+              "t_naive": 5.42,
+              "t_newey_west": 2.11,
+              "pct_positive": 0.5519
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 308,
+              "mfe_mean_pct": 5.5284,
+              "mae_mean_pct": -4.2382
+            },
+            "T+20": {
+              "n": 308,
+              "mfe_mean_pct": 14.7924,
+              "mae_mean_pct": -8.1713
+            }
+          }
+        }
+      },
+      "would_buy_overlap": {
+        "r3_overlap_with_r0_pct": 79.06,
+        "r3b_overlap_with_r0_pct": 58.44,
+        "r3b_overlap_with_r3_pct": 81.17
+      },
+      "r3_failure_diagnostics": {
+        "regime_day_distribution": {
+          "range_bound": {
+            "days": 49,
+            "pct": 30.1
+          },
+          "bullish_trend": {
+            "days": 110,
+            "pct": 67.5
+          },
+          "bearish_trend": {
+            "days": 3,
+            "pct": 1.8
+          },
+          "event_driven_unstable": {
+            "days": 1,
+            "pct": 0.6
+          }
+        },
+        "candidate_n": 2754,
+        "saturation_rate_pct": 100.0,
+        "activity_ratio_distribution": {
+          "n": 2754,
+          "mean": 1.1401,
+          "median": 0.8875,
+          "p25": 0.6319,
+          "p75": 1.2979
+        },
+        "volatility_20d_pct_distribution": {
+          "n": 2754,
+          "mean": 2.7398,
+          "median": 2.415,
+          "p25": 1.8595,
+          "p75": 3.2958
+        },
+        "average_turnover_20d_distribution": {
+          "n": 2754,
+          "mean": 123650947316.1063,
+          "median": 46540107997.95,
+          "p25": 18584066545.0,
+          "p75": 111192644810.0
+        }
+      }
+    },
+    "quarter_4": {
+      "window": "3년 분기4(2025-10-15~2026-06-16)",
+      "scenarios": {
+        "A_current_alpha": {
+          "candidate_n": 2788,
+          "eligible_n": 1626,
+          "selected_n": 956,
+          "would_buy_n": 354,
+          "selected_rate_of_eligible": 58.79,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 354,
+              "mean_pct": 1.5917,
+              "t_naive": 3.29,
+              "t_newey_west": 2.03,
+              "pct_positive": 0.5
+            },
+            "T+20": {
+              "n": 354,
+              "mean_pct": 3.2265,
+              "t_naive": 3.49,
+              "t_newey_west": 1.56,
+              "pct_positive": 0.5085
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 354,
+              "mfe_mean_pct": 7.5958,
+              "mae_mean_pct": -5.1051
+            },
+            "T+20": {
+              "n": 354,
+              "mfe_mean_pct": 17.0398,
+              "mae_mean_pct": -9.2547
+            }
+          }
+        },
+        "B_R0_no_rescale": {
+          "candidate_n": 2788,
+          "eligible_n": 1182,
+          "selected_n": 1182,
+          "would_buy_n": 456,
+          "selected_rate_of_eligible": 100.0,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 456,
+              "mean_pct": 2.4523,
+              "t_naive": 4.37,
+              "t_newey_west": 2.72,
+              "pct_positive": 0.5504
+            },
+            "T+20": {
+              "n": 456,
+              "mean_pct": 4.6853,
+              "t_naive": 4.57,
+              "t_newey_west": 2.13,
+              "pct_positive": 0.5197
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 456,
+              "mfe_mean_pct": 10.267,
+              "mae_mean_pct": -6.2065
+            },
+            "T+20": {
+              "n": 456,
+              "mfe_mean_pct": 23.1086,
+              "mae_mean_pct": -10.8235
+            }
+          }
+        },
+        "B_R3_percentile_fulluniverse": {
+          "candidate_n": 2788,
+          "eligible_n": 1182,
+          "selected_n": 1090,
+          "would_buy_n": 442,
+          "selected_rate_of_eligible": 92.22,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 442,
+              "mean_pct": 2.6731,
+              "t_naive": 4.43,
+              "t_newey_west": 2.69,
+              "pct_positive": 0.5407
+            },
+            "T+20": {
+              "n": 442,
+              "mean_pct": 7.5446,
+              "t_naive": 6.66,
+              "t_newey_west": 2.82,
+              "pct_positive": 0.5611
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 442,
+              "mfe_mean_pct": 10.0411,
+              "mae_mean_pct": -6.1791
+            },
+            "T+20": {
+              "n": 442,
+              "mfe_mean_pct": 24.3733,
+              "mae_mean_pct": -10.3965
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "candidate_n": 2788,
+          "eligible_n": 1182,
+          "selected_n": 353,
+          "would_buy_n": 291,
+          "selected_rate_of_eligible": 29.86,
+          "by_stage_horizon": {
+            "T+5": {
+              "n": 291,
+              "mean_pct": 4.0984,
+              "t_naive": 5.32,
+              "t_newey_west": 3.05,
+              "pct_positive": 0.5945
+            },
+            "T+20": {
+              "n": 291,
+              "mean_pct": 12.2309,
+              "t_naive": 7.32,
+              "t_newey_west": 2.86,
+              "pct_positive": 0.6289
+            }
+          },
+          "mfe_mae_would_buy": {
+            "T+5": {
+              "n": 291,
+              "mfe_mean_pct": 11.5767,
+              "mae_mean_pct": -5.8911
+            },
+            "T+20": {
+              "n": 291,
+              "mfe_mean_pct": 30.476,
+              "mae_mean_pct": -9.7668
+            }
+          }
+        }
+      },
+      "would_buy_overlap": {
+        "r3_overlap_with_r0_pct": 76.92,
+        "r3b_overlap_with_r0_pct": 47.42,
+        "r3b_overlap_with_r3_pct": 71.82
+      },
+      "r3_failure_diagnostics": {
+        "regime_day_distribution": {
+          "bullish_trend": {
+            "days": 161,
+            "pct": 98.2
+          },
+          "range_bound": {
+            "days": 3,
+            "pct": 1.8
+          }
+        },
+        "candidate_n": 2788,
+        "saturation_rate_pct": 100.0,
+        "activity_ratio_distribution": {
+          "n": 2788,
+          "mean": 1.2949,
+          "median": 1.0023,
+          "p25": 0.7211,
+          "p75": 1.4579
+        },
+        "volatility_20d_pct_distribution": {
+          "n": 2788,
+          "mean": 3.9528,
+          "median": 3.5701,
+          "p25": 2.597,
+          "p75": 5.0089
+        },
+        "average_turnover_20d_distribution": {
+          "n": 2788,
+          "mean": 687962660932.6818,
+          "median": 116401255382.4,
+          "p25": 33794422700.0,
+          "p75": 375247192322.0
+        }
+      }
+    }
+  }
+}

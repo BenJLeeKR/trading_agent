@@ -606,12 +606,40 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   내부로 바꾼 변형(R3b)은 8개 창 전부에서 R0보다 높았으나
   selected_rate가 29.9~39.2%까지 낮아져 R1과 유사한 "극단적 선별"
   우려가 있어 별도 검증이 필요하다. 결론: R3를 다시 Watch로
-  하향한다(SPPV-2.29의 "유력 후보 격상" 철회) — 분기 25%에서 방향이
+  하향한다(SPPV-2.29의 "유력 후보 격상" 철회) — 분기 50%에서 방향이
   뒤집힌 것은 "일부 분할 창에서 흔들리면 Watch/Hold"라는 판정
   원칙에 해당한다. R3b는 신규 관찰 대상으로 등록만 하고 이번 턴에
   격상하지 않는다. 신규 KIS 호출 0건. 운영 코드 변경 없음, broker
   submit 미호출 — 이번 턴도 shadow/validation 범위. 상세:
   `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §20.
+
+- 작성자: Claude
+- 수정일자: 2026-07-16 (30차, R3b 엄격 재검증 + R3 실패 구간 원인
+  분해)
+- 수정내용: R3b를 R1과 동일한 엄격 기준(8개 창 중 하나라도 악화되면
+  기각)으로 재검증하고, would_buy 종목 겹침률(overlap)로 "진짜
+  선별 개선"과 "표본 급감 착시"를 분리했다(SPPV-2.31). **R3b는
+  8개 창 전부(R3가 실패한 분기1·분기3 포함)에서 R0보다 높았다.**
+  **핵심 발견: R3는 R0와 77~85%가 같은 종목을 고르는 "미세
+  재조정"인 반면, R3b는 R0와 47~61%만 겹쳐 40~53%를 새로 골라
+  넣는 질적으로 다른 선별이다** — 순수 표본 축소 착시라면 겹침률이
+  100%에 가까워야 하는데 그렇지 않아, 실제 재선별 효과로 판단했다.
+  R3 실패 원인 분해에서는 saturation_rate가 4개 분기 전부 100.0%로
+  동일해 분기간 차이의 원인이 아니었고, 국면 분포도 설명력이
+  없었다(분기3은 강세장 67.5%인데도 실패, 분기2는 약세+횡보
+  90.8%인데도 성공 — 정반대 패턴). 결론: R3의 실패는 특정 국면
+  때문이 아니라 R0와의 높은 겹침에서 오는 작은 효과 크기가 잡음에
+  취약했기 때문으로 판단. **판정: R3b를 유력한 재보정 후보로 신규
+  격상(Watch→Conditional Go 경계) — R1이 실패한 엄격 기준을 통과한
+  첫 재보정안이다.** 다만 selected_rate가 30%대로 낮고(거래 빈도
+  최대 36% 감소), 동일 3년 표본 내부 분할이라 진정한 out-of-sample
+  검증은 아니며, §3 기존 전제조건도 미충족이라 확정 Go는 아니다.
+  **R3는 Watch 유지**(하향 판정 번복 없음). 문서 정정: "분기
+  25%가 뒤집혔다"는 계산 오류를 "2/4=50%"로 5개 문서 전체에서
+  정정했다(결론 불변, 오히려 더 심각한 재현성 결여를 뜻함). 신규
+  KIS 호출 0건. 운영 코드 변경 없음, broker submit 미호출 — 이번
+  턴도 shadow/validation 범위. 상세: `plans/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §21.
 
 ---
 
@@ -1203,7 +1231,7 @@ canonical),
     §19에서 기각한 R1(가중치 축소)과 유사한 "극단적 선별" 패턴을
     보였다 — 개선이 진짜인지 이번 실험만으로 확정할 수 없다.
     **판정: SPPV-2.29의 "R3 유력 후보로 격상" 판정을 철회하고
-    Watch로 하향한다** — 분기 단위 재현성 검증에서 2/4(25%) 분기가
+    Watch로 하향한다** — 분기 단위 재현성 검증에서 2/4(50%) 분기가
     방향을 뒤집은 것은 "일부 분할 창에서 흔들리면 Watch/Hold"라는
     판정 원칙에 정확히 해당한다. **R3b는 새로운 관찰 대상으로
     등록하되 이번 턴에 유력 후보로 올리지 않는다**(R1과 동일한
@@ -1219,6 +1247,61 @@ canonical),
     R3가 R0보다 못한 원인 규명(§16과 유사한 국면/유동성 분해),
     향후 재보정 검증은 분기 단위 이상 세분화된 분할을 표준 절차로
     삼는다.
+- [x] **SPPV-2.31(신설)** R3b 엄격 재검증 + R3 실패 구간(분기1/
+  분기3) 원인 분해 (완료, 2026-07-16)
+  - 작업 범위: R3b를 R1과 동일한 엄격 기준(4개 창 중 하나라도
+    forward return이 악화되면 기각)으로 8개 창(2차/1차/전후반/
+    분기1~4) 전부 재검증하고, would_buy 종목 집합의 overlap
+    (R3/R3b가 R0와 얼마나 같은 종목을 고르는지)을 계측해 "진짜
+    선별 품질 개선"과 "표본 급감 착시"를 분리. 추가로 §16 방식의
+    국면/유동성 분포 + saturation 비율(원시 신호가 1.0을 넘어
+    normalize에서 포화되는 비율)로 분기1·분기3에서 R3가 R0보다
+    못한 원인을 분해.
+  - **결과 1(R3b 엄격 검증): R3b는 8개 창 전부(R1이 실패한 기준
+    그대로, R3가 실패한 분기1·분기3 포함)에서 R0보다 forward
+    return이 높았다**(2차 T+20 R0 +2.818% vs R3b +6.134%, 분기1
+    T+20 R0 +1.208% vs R3b +2.616%, 분기3 T+20 R0 +3.648% vs
+    R3b +4.932%). **overlap 진단 — R3(전체 universe 기준)는 R0와
+    77~85%가 같은 종목을 고르는 반면, R3b(candidate 내부 기준)는
+    R0와 47~61%만 겹친다** — R3b는 R0가 고르지 않았을 종목의
+    40~53%를 새로 골라 넣는 질적으로 다른 선별이며, 순수 표본
+    축소 착시(선별 집합이 R0의 단순 부분집합)라면 겹침률이 100%에
+    가까워야 하는데 실제로는 절반 가까이가 다른 종목이다 — **표본
+    급감 착시가 아니라 실제 재선별 효과로 판단**.
+  - **결과 2(R3 실패 원인 분해): saturation_rate가 4개 분기 전부
+    100.0%로 동일**하여 이 자체는 분기간 차이의 원인이 아니다.
+    국면 분포도 깔끔한 설명을 주지 못한다 — **분기3은 강세장
+    67.5%가 지배적인데도 R3가 실패했고, 분기2는 약세+횡보 90.8%가
+    지배적인데도 R3가 성공**했다("강세장이면 R3가 이긴다"는 가설과
+    정확히 반대). activity_ratio·volatility 분포도 분기1~3 사이에
+    뚜렷한 차이가 없었다. **결론: R3의 실패는 특정 국면·유동성
+    조건 때문이 아니라, R3가 R0와 77~85%나 겹치는 "미세 재조정"에
+    불과해 효과 크기 자체가 작고, 그만큼 분기 단위 표본 잡음에
+    취약하다는 구조적 한계로 해석하는 것이 더 정확하다.**
+  - **판정: R3b를 유력한 재보정 후보로 신규 격상한다(Watch→
+    Conditional Go 경계) — R1이 실패한 엄격 기준을 통과한 첫
+    재보정안이다.** 다만 selected_rate가 29.9~39.2%로 매우 낮고
+    (거래 빈도 최대 36% 감소), 이번 검증도 동일 3년 표본 내부
+    분할일 뿐 진정한 out-of-sample은 아니며, §3의 기존 전제조건도
+    미충족이라 확정 Go는 아니다. **R3는 Watch를 그대로 유지**한다
+    — 이번 원인 분해로도 하향 판정이 번복되지 않았다. 문서 정정:
+    §20/SPPV-2.30의 "분기 25%가 뒤집혔다"는 계산 오류였다(2/4=
+    50%가 맞음) — 5개 정본 문서 전체에서 정정 완료, 결론에는
+    영향 없음(오히려 더 심각한 재현성 결여를 뜻함). 신규 KIS 호출
+    0건(기존 3년 캐시로 전량 서빙, 로그로 실측 확인). 운영 코드
+    변경 없음, broker submit 미호출 — 이번 턴도 shadow/validation
+    범위. 상세: `plans/[DESIGN] regime_conditional_entry_signal_
+    v1.md` §21.
+  - 산출물: `scripts/validate_r3b_strict_and_r3_failure_
+    decomposition.py`(read-only, 신규 KIS 호출 0건), `logs/
+    signal_ic_r3b_strict_and_r3_failure_decomposition_2026-07-16.
+    json`, `logs/r3b_strict_and_r3_failure_decomposition_run_
+    2026-07-16.log`.
+  - 다음 과제: R3b를 §3 공식에 정식 반영할지 사용자 확인, R3b의
+    거래 빈도 감소가 자본 회전에 미치는 영향 검토, percentile
+    순위-forward return IC를 분기별로 직접 계산하는 후속 분석,
+    이 3년 표본을 벗어난 진정한 out-of-sample 기간에서 R3b 장기
+    모니터링.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
@@ -1957,6 +2040,9 @@ bearish/range_bound 어느 국면 내부도 `overall_score`/`slow_score`가
 - `scripts/validate_alpha_layer_r3_reproducibility.py`,
   `logs/signal_ic_alpha_layer_r3_reproducibility_2026-07-16.json`,
   `logs/alpha_layer_r3_reproducibility_run_2026-07-16.log`
+- `scripts/validate_r3b_strict_and_r3_failure_decomposition.py`,
+  `logs/signal_ic_r3b_strict_and_r3_failure_decomposition_2026-07-16.json`,
+  `logs/r3b_strict_and_r3_failure_decomposition_run_2026-07-16.log`
 - `scripts/shadow_regime_conditional_entry_signal.py`(read-only, 신규
   KIS 호출 0건 — 3년 캐시 재사용)
 - `logs/shadow_regime_conditional_entry_signal_2026-07-15.json`,
