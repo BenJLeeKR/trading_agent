@@ -294,6 +294,23 @@
   funnel 레벨까지 보강됐으나, 전반부 비유의·국면 편향 가능성·거래
   빈도 감소로 확정 Go는 아니다. 실행 로그로 KIS 호출 0건 확인.
 
+- 작성자: Claude
+- 수정일자: 2026-07-16 (26차, alpha layer 교체 virtual BUY funnel
+  확장 검증)
+- 수정내용: would_buy를 실제 운영 판단 경로에 한 단계 더 가깝게
+  확장했다(SPPV-2.28). assess_deterministic_triggers()가 실제로
+  쓰는 BUY_CANDIDATE 조건(eligible AND entry_score>=0.65 AND
+  allocation_budget_ok, 실제 운영 상수 재사용)을 재현한 selected
+  단계를 추가해 candidate→eligible→selected→would_buy 5단계로
+  확장, MFE/MAE도 계측했다. would_buy 우위는 4개 창 전부(8/8)에서
+  유지됐으나, 신규 alpha는 selected 비율이 4개 창 전부에서 정확히
+  100.0%(0.65 문턱이 사실상 무력화)임을 새로 발견 — 현행은 66~72%
+  만 통과. MFE/MAE는 신규 alpha가 상방·하방 모두 크지만 MFE/|MAE|
+  비율은 4개 창 전부에서 신규가 더 높음. 결론: Conditional Go
+  재확인, 다만 "0.65 문턱 무력화"·"MAE 확대" 계측 caveat 추가로
+  확정 Go는 아니다. broker submit 미호출. 실행 로그로 KIS 호출
+  0건 확인.
+
 ---
 
 ## 관리 원칙
@@ -792,17 +809,46 @@
     `logs/signal_ic_alpha_layer_buy_funnel_comparison_
     2026-07-16.json`. 상세: `plans/[DESIGN] regime_conditional_
     entry_signal_v1.md` §17.
-  - **SPPV-3(다음 착수: §3 전제조건 충족 후 alpha 교체 재검증 +
-    "국면 조건부 활동성 threshold" 설계 검토 여부 사용자 확인)**:
+  - **SPPV-2.28(완료, 2026-07-16, alpha layer 교체 virtual BUY
+    funnel 확장 검증 — Conditional Go 재확인, caveat 2건 발견)**:
+    would_buy를 실제 운영 판단 경로에 한 단계 더 가깝게 확장했다.
+    운영 함수 `assess_deterministic_triggers()`가 실제로 쓰는
+    `BUY_CANDIDATE` 조건(`eligible AND entry_score>=0.65 AND
+    allocation_budget_ok`, `deterministic_trigger_engine.py:89`의
+    실제 상수 재사용)을 그대로 재현한 `selected` 단계를 추가해
+    candidate→eligible→selected→would_buy 5단계로 확장하고,
+    MFE/MAE도 계측했다. **결과: selected 단계 추가 후에도
+    would_buy의 forward return 우위는 4개 창·2개 horizon 전부
+    (8/8)에서 유지됐다.** **결정적 신규 계측: 새 alpha는 4개 창
+    전부에서 selected 비율이 정확히 100.0%였다**(`blocked_by_
+    score_threshold=0`, 예외 없음) — candidate 정의와 selected
+    조건이 같은 alpha 신호를 두 번 거르는 구조라 **0.65 문턱이 새
+    alpha에는 사실상 무력화된다는 계측 caveat**을 새로 발견했다
+    (현행은 eligible의 66~72%만 통과). **MFE/MAE: 새 alpha는
+    상방·하방 진폭 모두 크지만, MFE/|MAE| 비율은 4개 창 전부에서
+    새 alpha가 더 높았다**(2차 T+20 현행 1.50 vs 신규 1.68).
+    **판정: §2.27의 Conditional Go를 재확인했으나, "0.65 문턱
+    사실상 무력화"·"MAE 확대" 두 계측 caveat이 추가되어 여전히
+    확정 Go는 아니다.** 신규 KIS 호출 0건, broker submit 미호출.
+    산출: `scripts/validate_alpha_layer_virtual_buy_funnel_
+    extended.py`(read-only, 신규 KIS 호출 0건),
+    `logs/signal_ic_alpha_layer_virtual_buy_funnel_extended_
+    2026-07-16.json`. 상세: `plans/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §18.
+  - **SPPV-3(다음 착수: §3 공식 재보정 설계 검토 여부 + §3
+    전제조건 충족 후 alpha 교체 재검증 + "국면 조건부 활동성
+    threshold" 설계 검토 여부 사용자 확인)**:
     §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
     근접함이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는
-    Conditional Go를 확보했으며, **§2.27에서 그 Conditional Go가
-    실제 BUY funnel 단계까지 방향 일관되게 보강됨을 확인했다.**
-    한편 **§2.23~§2.26에서 결합 사용 시 가장 빈번하게 걸리는 축이
-    활동성 필터임이 확인됐고, 완화 효과의 반전이 국면·유동성 구조
-    차이 때문임을 규명했으나, 정적 완화(1.10→1.00)가 기대수익률을
-    실제로 개선하는지는 여전히 Watch(격상 근거 없음) 단계에
-    머문다.** 다음 착수 형태는 alpha 교체의 §3 전제조건(§21 1차
+    Conditional Go를 확보했으며, **§2.27~§2.28에서 그 Conditional
+    Go가 실제 virtual BUY funnel 단계까지 방향 일관되게 보강됐으나,
+    0.65 문턱 사실상 무력화·MAE 확대라는 계측 caveat도 함께
+    발견했다.** 한편 **§2.23~§2.26에서 결합 사용 시 가장 빈번하게
+    걸리는 축이 활동성 필터임이 확인됐고, 완화 효과의 반전이 국면·
+    유동성 구조 차이 때문임을 규명했으나, 정적 완화(1.10→1.00)가
+    기대수익률을 실제로 개선하는지는 여전히 Watch(격상 근거 없음)
+    단계에 머문다.** 다음 착수 형태는 §3 공식의 재보정(스케일링)
+    설계 검토 여부 사용자 확인, alpha 교체의 §3 전제조건(§21 1차
     게이트 TRIGGERED 전환, risk_off_penalty 중복 해소) 충족 후
     재검증과 "국면 조건부 threshold" 설계 검토 여부에 대한 사용자
     확인이며, 운영 코드(`deterministic_trigger_engine.py:493-499`)

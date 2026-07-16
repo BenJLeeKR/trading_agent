@@ -1,0 +1,43 @@
+INFO:validate_alpha_layer_virtual_buy_funnel_extended:[20/87] 누적 표본 13060건
+INFO:validate_alpha_layer_virtual_buy_funnel_extended:[40/87] 누적 표본 26120건
+INFO:validate_alpha_layer_virtual_buy_funnel_extended:[60/87] 누적 표본 39180건
+INFO:validate_alpha_layer_virtual_buy_funnel_extended:[80/87] 누적 표본 52240건
+INFO:validate_alpha_layer_virtual_buy_funnel_extended:[87/87] 누적 표본 56753건
+INFO:validate_alpha_layer_virtual_buy_funnel_extended:전체 3년 표본 56753건, 실패 0종목
+
+=== alpha layer 교체 — virtual BUY funnel 확장 검증(candidate→eligible→selected→would_buy) ===
+전체 3년 표본: 56753건, 최근 12개월(cutoff=2025-06-16) 표본: 21315건
+
+=== 2차(3년, 전체 표본) (표본 56753건) ===
+  [시나리오 A(현행)] candidate=11101, eligible=5462(49.2%), selected(0.65 통과)=3804(69.64% of eligible), would_buy(top-3/일)=1672, blocked_eligibility=5639, blocked_score=1658
+    would_buy T+5: {'n': 1672, 'mean_pct': 0.708, 't_naive': 4.11, 't_newey_west': 2.79, 'pct_positive': 0.491} | MFE/MAE: {'n': 1672, 'mfe_mean_pct': 5.4093, 'mae_mean_pct': -4.261}
+    would_buy T+20: {'n': 1672, 'mean_pct': 1.9373, 't_naive': 5.78, 't_newey_west': 2.49, 'pct_positive': 0.4874} | MFE/MAE: {'n': 1672, 'mfe_mean_pct': 11.9085, 'mae_mean_pct': -7.9444}
+  [시나리오 B(신규)] candidate=10999, eligible=3491(31.74%), selected(0.65 통과)=3491(100.0% of eligible), would_buy(top-3/일)=1543, blocked_eligibility=7508, blocked_score=0
+    would_buy T+5: {'n': 1543, 'mean_pct': 1.0893, 't_naive': 4.64, 't_newey_west': 3.04, 'pct_positive': 0.4951} | MFE/MAE: {'n': 1543, 'mfe_mean_pct': 6.8241, 'mae_mean_pct': -4.9532}
+    would_buy T+20: {'n': 1543, 'mean_pct': 2.8177, 't_naive': 6.58, 't_newey_west': 2.9, 'pct_positive': 0.4932} | MFE/MAE: {'n': 1543, 'mfe_mean_pct': 15.1386, 'mae_mean_pct': -9.0141}
+
+=== 1차(최근 12개월) (표본 21315건) ===
+  [시나리오 A(현행)] candidate=4165, eligible=2322(55.75%), selected(0.65 통과)=1540(66.32% of eligible), would_buy(top-3/일)=585, blocked_eligibility=1843, blocked_score=782
+    would_buy T+5: {'n': 585, 'mean_pct': 1.3933, 't_naive': 4.14, 't_newey_west': 2.68, 'pct_positive': 0.5111} | MFE/MAE: {'n': 585, 'mfe_mean_pct': 6.643, 'mae_mean_pct': -4.5904}
+    would_buy T+20: {'n': 585, 'mean_pct': 3.4911, 't_naive': 5.47, 't_newey_west': 2.51, 'pct_positive': 0.5265} | MFE/MAE: {'n': 585, 'mfe_mean_pct': 15.3694, 'mae_mean_pct': -8.1592}
+  [시나리오 B(신규)] candidate=4165, eligible=1621(38.92%), selected(0.65 통과)=1621(100.0% of eligible), would_buy(top-3/일)=673, blocked_eligibility=2544, blocked_score=0
+    would_buy T+5: {'n': 673, 'mean_pct': 2.0577, 't_naive': 4.87, 't_newey_west': 3.11, 'pct_positive': 0.5319} | MFE/MAE: {'n': 673, 'mfe_mean_pct': 8.848, 'mae_mean_pct': -5.4873}
+    would_buy T+20: {'n': 673, 'mean_pct': 4.3066, 't_naive': 5.71, 't_newey_west': 2.59, 'pct_positive': 0.5171} | MFE/MAE: {'n': 673, 'mfe_mean_pct': 20.0743, 'mae_mean_pct': -9.6832}
+
+=== 3년 전반부 (표본 28304건) ===
+  [시나리오 A(현행)] candidate=5542, eligible=2448(44.17%), selected(0.65 통과)=1768(72.22% of eligible), would_buy(top-3/일)=874, blocked_eligibility=3094, blocked_score=680
+    would_buy T+5: {'n': 874, 'mean_pct': 0.1871, 't_naive': 0.88, 't_newey_west': 0.64, 'pct_positive': 0.4668} | MFE/MAE: {'n': 874, 'mfe_mean_pct': 4.6068, 'mae_mean_pct': -4.1264}
+    would_buy T+20: {'n': 874, 'mean_pct': 0.2906, 't_naive': 0.79, 't_newey_west': 0.38, 'pct_positive': 0.4485} | MFE/MAE: {'n': 874, 'mfe_mean_pct': 9.0714, 'mae_mean_pct': -7.8122}
+  [시나리오 B(신규)] candidate=5457, eligible=1359(24.9%), selected(0.65 통과)=1359(100.0% of eligible), would_buy(top-3/일)=657, blocked_eligibility=4098, blocked_score=0
+    would_buy T+5: {'n': 657, 'mean_pct': 0.4424, 't_naive': 1.46, 't_newey_west': 1.03, 'pct_positive': 0.4612} | MFE/MAE: {'n': 657, 'mfe_mean_pct': 5.4808, 'mae_mean_pct': -4.5414}
+    would_buy T+20: {'n': 657, 'mean_pct': 0.9782, 't_naive': 1.96, 't_newey_west': 0.94, 'pct_positive': 0.4627} | MFE/MAE: {'n': 657, 'mfe_mean_pct': 10.7514, 'mae_mean_pct': -8.4775}
+
+=== 3년 후반부 (표본 28449건) ===
+  [시나리오 A(현행)] candidate=5559, eligible=3014(54.22%), selected(0.65 통과)=2036(67.55% of eligible), would_buy(top-3/일)=798, blocked_eligibility=2545, blocked_score=978
+    would_buy T+5: {'n': 798, 'mean_pct': 1.2786, 't_naive': 4.64, 't_newey_west': 3.03, 'pct_positive': 0.5175} | MFE/MAE: {'n': 798, 'mfe_mean_pct': 6.2882, 'mae_mean_pct': -4.4083}
+    would_buy T+20: {'n': 798, 'mean_pct': 3.7408, 't_naive': 6.58, 't_newey_west': 2.79, 'pct_positive': 0.5301} | MFE/MAE: {'n': 798, 'mfe_mean_pct': 15.0159, 'mae_mean_pct': -8.0893}
+  [시나리오 B(신규)] candidate=5542, eligible=2132(38.47%), selected(0.65 통과)=2132(100.0% of eligible), would_buy(top-3/일)=886, blocked_eligibility=3410, blocked_score=0
+    would_buy T+5: {'n': 886, 'mean_pct': 1.5691, 't_naive': 4.61, 't_newey_west': 2.93, 'pct_positive': 0.5203} | MFE/MAE: {'n': 886, 'mfe_mean_pct': 7.8203, 'mae_mean_pct': -5.2585}
+    would_buy T+20: {'n': 886, 'mean_pct': 4.1818, 't_naive': 6.49, 't_newey_west': 2.84, 'pct_positive': 0.5158} | MFE/MAE: {'n': 886, 'mfe_mean_pct': 18.3919, 'mae_mean_pct': -9.412}
+
+산출 저장: logs/signal_ic_alpha_layer_virtual_buy_funnel_extended_2026-07-16.json

@@ -723,28 +723,49 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   후보 단계까지 보강됐으나, 3년 전반부 비유의·국면 편향 가능성·
   거래 빈도 감소 트레이드오프로 확정 Go는 아니다.** 상세: `plans/
   [DESIGN] regime_conditional_entry_signal_v1.md` §17.
+
+- 작성자: Claude
+- 수정일자: 2026-07-16 (2.29순위, alpha layer 교체 virtual BUY
+  funnel 확장 검증)
+- 수정내용: §2.28의 `would_buy`를 실제 운영 판단 경로에 한 단계 더
+  가깝게 확장했다. 운영 함수 `assess_deterministic_triggers()`가
+  실제로 쓰는 `BUY_CANDIDATE` 조건(`eligible AND entry_score>=0.65
+  AND allocation_budget_ok`, 실제 운영 상수 재사용)을 그대로
+  재현한 `selected` 단계를 추가해 candidate→eligible→selected→
+  would_buy 5단계로 확장하고, MFE/MAE도 계측했다. would_buy 단계의
+  forward return 우위는 4개 창·2개 horizon 전부(8/8)에서 유지됐다.
+  **결정적 신규 계측: 새 alpha는 4개 창 전부에서 selected 비율이
+  정확히 100.0%였다** — candidate 정의와 selected 조건이 같은
+  alpha 신호를 두 번 거르는 구조라 0.65 문턱이 새 alpha에는 사실상
+  무력화된다는 계측 caveat을 새로 발견했다(현행은 eligible의
+  66~72%만 통과). MFE/MAE 비교에서는 새 alpha가 상방·하방 진폭
+  모두 크지만 MFE/|MAE| 비율은 4개 창 전부에서 새 alpha가 더 높았다.
+  **결론: Conditional Go를 재확인했으나, "0.65 문턱 사실상
+  무력화"·"MAE 확대"라는 두 계측 caveat이 추가되어 여전히 확정
+  Go는 아니다.** broker submit 미호출. 상세: `plans/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §18.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
   국면 정의 통일(차단 축)은 Watch/No-Go에 근접한다는 것이 확인됐고,
   §2.22에서 alpha layer 교체(선별 축)는 Conditional Go를 확보했고,
-  **§2.28에서 그 Conditional Go가 실제 BUY funnel(candidate→
-  eligible→would_buy) 단계까지 방향 일관되게 보강됨을 확인했다.**
-  한편 **§2.23~§2.27에서 결합 사용 시 가장 빈번하게 걸리는 축이
-  regime 관련 축이 아니라 활동성 필터(`eligibility_low_relative_
-  activity`)임이 확인됐고, 완화 효과의 반전이 국면·유동성 구조
-  차이 때문임을 규명했으나, 이 필터가 과잉 억제인지·정적 완화가
-  실제로 기대수익률을 개선하는지는 여전히 미확정이다(Watch — 격상
-  근거 없음)**. SPPV-3의 다음 착수 항목은 alpha 교체의 §3 전제조건
-  (§21 1차 게이트 TRIGGERED 전환, risk_off_penalty 중복 해소) 충족
-  후 재검증과 "국면 조건부 activity threshold" 설계 검토 여부에
-  대한 사용자 확인이며, 운영 코드 반영은 Conditional Go 이상이
+  **§2.28~§2.29에서 그 Conditional Go가 실제 virtual BUY funnel
+  (candidate→eligible→selected→would_buy, MFE/MAE 포함)까지 방향
+  일관되게 보강됨을 확인했으나, 0.65 문턱 사실상 무력화·MAE 확대라는
+  계측 caveat도 함께 발견했다.** 한편 **§2.23~§2.27에서 결합 사용 시
+  가장 빈번하게 걸리는 축이 regime 관련 축이 아니라 활동성 필터
+  (`eligibility_low_relative_activity`)임이 확인됐고, 완화 효과의
+  반전이 국면·유동성 구조 차이 때문임을 규명했으나, 이 필터가 과잉
+  억제인지·정적 완화가 실제로 기대수익률을 개선하는지는 여전히
+  미확정이다(Watch — 격상 근거 없음)**. SPPV-3의 다음 착수 항목은
+  §3 공식의 재보정(스케일링) 설계 검토 여부 사용자 확인, alpha 교체의
+  §3 전제조건(§21 1차 게이트 TRIGGERED 전환, risk_off_penalty 중복
+  해소) 충족 후 재검증과 "국면 조건부 activity threshold" 설계 검토
+  여부에 대한 사용자 확인이며, 운영 코드 반영은 Conditional Go 이상이
   확보된 뒤 사용자 승인을 받아 진행한다. 1차 게이트(§21 모니터링)가
   `TRIGGERED`로 전환되는 즉시
   alpha layer 교체의 최종 Go 여부도 재확인해야 하며, 그 전까지 코드
-  변경은 보류한다. Virtual BUY별
-  T+1/T+3/T+5/T+10/T+20, MFE/MAE, 비용 차감 수익률과
-  `candidate → selected → would_buy → submitted`를 비교한다.
+  변경은 보류한다.
 - **4순위**: out-of-sample 기대수익 양수와 손실 제약을 만족한 formula만
   shadow로 유지한 뒤 일일 top-k·최소 수량·계좌 위험한도 아래 제한적 paper
   probe 승격을 별도 승인한다. compliance/VaR/guardrail 경계는 유지한다.

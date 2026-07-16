@@ -546,6 +546,31 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   변경 없음 — 이번 턴도 shadow/validation 범위. 상세: `plans/
   [DESIGN] regime_conditional_entry_signal_v1.md` §17.
 
+- 작성자: Claude
+- 수정일자: 2026-07-16 (27차, alpha layer 교체 virtual BUY funnel
+  확장 검증)
+- 수정내용: `would_buy`를 실제 운영 판단 경로에 한 단계 더 가깝게
+  확장했다(SPPV-2.28). 운영 함수 `assess_deterministic_triggers()`
+  가 실제로 쓰는 `BUY_CANDIDATE` 조건(`eligible AND entry_score>=
+  0.65 AND allocation_budget_ok`, `deterministic_trigger_engine.py:
+  89`의 실제 상수 재사용)을 그대로 재현한 `selected` 단계를 추가해
+  candidate→eligible→selected→would_buy 5단계로 확장했다. would_buy
+  단계의 forward return 우위(새 alpha>현행)는 4개 창·2개 horizon
+  전부(8/8)에서 유지됐다. **결정적 신규 계측**: 새 alpha는 4개 창
+  전부에서 selected 비율이 **정확히 100.0%**였다 — candidate
+  정의와 selected 조건이 같은 alpha 신호를 두 번 거르는 구조라
+  0.65 문턱이 새 alpha에는 **사실상 무력화된다는 계측 caveat**을
+  새로 발견했다(현행은 eligible의 66~72%만 통과해 실제로 필터링
+  효과가 있음). MFE/MAE 비교에서는 새 alpha가 4개 창 전부에서
+  MFE(상방)·MAE(하방 절댓값) 모두 크지만, MFE/|MAE| 비율은 4개
+  창 전부에서 새 alpha가 더 높았다(예: 2차 T+20 현행 1.50 vs
+  신규 1.68). 결론: SPPV-2.27의 Conditional Go를 재확인했으나,
+  "0.65 문턱 사실상 무력화"·"MAE 확대"라는 두 계측 caveat이
+  추가되어 여전히 확정 Go는 아니다. 신규 KIS 호출 0건. 운영 코드
+  변경 없음 — 이번 턴도 shadow/validation 범위, broker submit
+  미호출. 상세: `plans/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §18.
+
 ---
 
 ## 진행 체크리스트
@@ -1044,6 +1069,40 @@ canonical),
   - 다음 과제: §3 전제조건(§21 1차 게이트 TRIGGERED 전환, risk_off_
     penalty 중복 해소) 충족 후 재검증, regime별 층화 비교, 거래
     빈도 감소의 운영 영향 별도 검토.
+- [x] **SPPV-2.28(신설)** alpha layer 교체 virtual BUY funnel 확장
+  검증(candidate→eligible→selected→would_buy) (완료, 2026-07-16)
+  - 작업 범위: SPPV-2.27의 `would_buy`를 실제 운영 판단 경로에
+    한 단계 더 가깝게 확장. 운영 함수 `assess_deterministic_
+    triggers()`가 실제로 쓰는 `BUY_CANDIDATE` 조건(`eligible AND
+    entry_score>=0.65(운영 상수 buy_candidate_threshold) AND
+    allocation_budget_ok`)을 그대로 재현한 `selected` 단계를 추가.
+    MFE/MAE도 함께 계측(`validate_signal_predictive_power_v2.py`
+    기존 패턴 재사용). broker submit은 호출하지 않음.
+  - **결과: `selected` 단계 추가 후에도 would_buy의 forward return
+    우위(현행 대비 새 alpha)는 4개 창·2개 horizon 전부(8/8)에서
+    유지됐다.** **결정적 신규 계측**: 새 alpha(B)는 4개 창 전부에서
+    `selected` 비율이 **정확히 100.0%**(`blocked_by_score_
+    threshold=0`, 예외 없음) — candidate 정의(그날 alpha 상위
+    20%)와 selected 조건(같은 alpha 기반 entry_score>=0.65)이
+    사실상 같은 신호를 두 번 거르는 구조라, **0.65 문턱이 새
+    alpha에는 사실상 무력화된다는 계측 caveat을 새로 발견**했다.
+    현행(A)은 eligible의 66~72%만 이 문턱을 통과해 실제로 필터링
+    효과가 있다. **MFE/MAE 비교: 새 alpha는 4개 창 전부에서 MFE
+    (상방)도 크고 MAE(하방) 절댓값도 크지만, MFE/|MAE| 비율은 4개
+    창 전부에서 새 alpha가 더 높다**(예: 2차 T+20 MFE/|MAE| 현행
+    1.50 vs 신규 1.68). **판정: SPPV-2.27의 Conditional Go를
+    재확인했으나, "0.65 문턱 사실상 무력화"와 "MAE 절댓값 확대"라는
+    두 계측 caveat이 추가되어 여전히 확정 Go는 아니다.** 신규 KIS
+    호출 0건(기존 3년 캐시로 전량 서빙, 로그로 실측 확인). 운영
+    코드 변경 없음 — 이번 턴도 shadow/validation 범위. 상세:
+    `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §18.
+  - 산출물: `scripts/validate_alpha_layer_virtual_buy_funnel_
+    extended.py`(read-only, 신규 KIS 호출 0건), `logs/signal_ic_
+    alpha_layer_virtual_buy_funnel_extended_2026-07-16.json`,
+    `logs/alpha_layer_virtual_buy_funnel_extended_run_2026-07-16.log`.
+  - 다음 과제: §3 공식의 재보정(스케일링) 설계 검토 여부 사용자
+    확인, §3 전제조건 충족 후 재검증, regime별 층화 비교, MAE 확대가
+    사이징/손절 설계에 미치는 영향 별도 검토.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
@@ -1773,6 +1832,9 @@ bearish/range_bound 어느 국면 내부도 `overall_score`/`slow_score`가
 - `scripts/validate_alpha_layer_buy_funnel_comparison.py`,
   `logs/signal_ic_alpha_layer_buy_funnel_comparison_2026-07-16.json`,
   `logs/alpha_layer_buy_funnel_comparison_run_2026-07-16.log`
+- `scripts/validate_alpha_layer_virtual_buy_funnel_extended.py`,
+  `logs/signal_ic_alpha_layer_virtual_buy_funnel_extended_2026-07-16.json`,
+  `logs/alpha_layer_virtual_buy_funnel_extended_run_2026-07-16.log`
 - `scripts/shadow_regime_conditional_entry_signal.py`(read-only, 신규
   KIS 호출 0건 — 3년 캐시 재사용)
 - `logs/shadow_regime_conditional_entry_signal_2026-07-15.json`,
