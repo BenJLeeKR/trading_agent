@@ -480,6 +480,27 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   정본 문서에는 동일 패턴의 문장이 없어 추가 수정이 필요하지
   않았다(확인만 수행).
 
+- 작성자: Claude
+- 수정일자: 2026-07-16 (24차, 활동성 필터 threshold sweep + 기간
+  분할 재현성 검증)
+- 수정내용: SPPV-2.24의 "1.00 완화 Watch" 판정을 Conditional Go
+  이상으로 올릴 수 있는지 검증했다(SPPV-2.25). threshold를 1.10/
+  1.05/1.00/0.95/0.90으로 확장 스윕하고, 3년 표본을 거래일 기준
+  전반부/후반부로 양분해 재현성을 확인한 결과, **2차(3년) 전체·
+  1차(최근 12개월)·3년 후반부에서는 완화할수록 평균 수익률이
+  개선되는 것처럼 보였으나, 3년 전반부에서는 정반대로 완화할수록
+  악화됐다**(T+5 기준 1.10 +0.7394% → 0.90 +0.5728%). 즉 "완화=
+  개선"은 사실상 후반부(=최근 12개월과 거의 동일 시기)의 효과가
+  3년 pooled 평균을 끌어올린 것이었고, 3년 전체를 대표하는 규칙성이
+  아니었다. 창마다 최적 threshold도 달라 단일 sweet spot이 없다.
+  결론: 완화안은 Conditional Go로 올릴 근거를 얻지 못했고, 오히려
+  재현성 부재라는 신중론 근거가 추가됐다 — **판정 Watch 유지(격상
+  없음), 완전 제거는 여전히 No-Go**. 신규 KIS 호출 0건(기존 3년
+  캐시 88개 파일로 전량 서빙, 로그로 실측 확인). `entry_score`/
+  `_assess_buy_eligibility` 운영 코드 변경 없음 — 이번 턴도 shadow/
+  validation 범위. 상세: `plans/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §15.
+
 ---
 
 ## 진행 체크리스트
@@ -870,6 +891,38 @@ canonical),
   - 산출물: `scripts/validate_activity_filter_ablation.py`(read-only,
     신규 KIS 호출 0건), `logs/signal_ic_activity_filter_ablation_
     2026-07-16.json`, `logs/activity_filter_ablation_run_2026-07-16.log`.
+- [x] **SPPV-2.25(신설)** 활동성 필터 threshold sweep + 기간 분할
+  재현성 검증 (완료, 2026-07-16)
+  - 작업 범위: SPPV-2.24의 "1.00 완화는 Watch(추가 검증 필요)"
+    판정을 Conditional Go 이상으로 올릴 수 있는지, threshold를
+    1.10(현행)/1.05/1.00/0.95/0.90 5단계로 확장 스윕하고, 3년
+    표본을 거래일 기준 전반부/후반부로 양분해 완화 효과의
+    out-of-sample 재현성을 확인.
+  - **결과: 2차(3년) 전체·1차(최근 12개월)·3년 후반부에서는
+    threshold를 완화할수록 T+5/T+20 평균 수익률이 단조 개선되는
+    것처럼 보였으나, 3년 전반부(2023-10-10~2025-02-11)만 따로 보면
+    완화할수록 평균 수익률이 정반대로 단조 악화됐다**(1.10 +0.7394%
+    → 0.90 +0.5728%, T+5 기준). **즉 "완화=개선" 패턴은 사실상
+    후반부(=최근 12개월과 거의 동일 시기) 효과가 3년 pooled 평균을
+    끌어올린 것이었고, 3년 전체를 대표하는 일관된 규칙성이 아니다.**
+    창마다 최적 threshold도 서로 달라(2차 3년은 0.95, 1차/후반부는
+    0.90까지 계속 개선, 전반부는 0.90에서 최악) 단일 sweet spot이
+    존재하지 않는다. **결론: 1.00(또는 그 이하) 완화는 재현성 있는
+    개선으로 볼 수 없다** — Conditional Go로 올릴 근거는 생기지
+    않았고, 오히려 완화안의 신뢰도를 낮추는 방향의 새 근거가
+    확보됐다. **판정: Watch 유지(격상 근거 없음), 완전 제거는
+    여전히 No-Go(§14 유지).** 신규 KIS 호출 0건(기존 3년 캐시 88개
+    파일로 전량 서빙, 로그로 실측 확인). `entry_score`/`_assess_
+    buy_eligibility` 운영 코드 변경 없음 — 이번 턴도 shadow/
+    validation 범위. 상세: `plans/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §15.
+  - 산출물: `scripts/validate_activity_filter_threshold_sweep.py`
+    (read-only, 신규 KIS 호출 0건), `logs/signal_ic_activity_
+    filter_threshold_sweep_2026-07-16.json`, `logs/activity_filter_
+    threshold_sweep_run_2026-07-16.log`.
+  - 다음 과제: 전반부·후반부가 왜 정반대 방향을 보이는지(국면 분포,
+    유동성 레벨 구조 변화 등) 원인 규명이 threshold 상수 변경 검토의
+    선행 조건이다.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
@@ -1590,6 +1643,9 @@ bearish/range_bound 어느 국면 내부도 `overall_score`/`slow_score`가
 - `scripts/validate_activity_filter_ablation.py`,
   `logs/signal_ic_activity_filter_ablation_2026-07-16.json`,
   `logs/activity_filter_ablation_run_2026-07-16.log`
+- `scripts/validate_activity_filter_threshold_sweep.py`,
+  `logs/signal_ic_activity_filter_threshold_sweep_2026-07-16.json`,
+  `logs/activity_filter_threshold_sweep_run_2026-07-16.log`
 - `scripts/shadow_regime_conditional_entry_signal.py`(read-only, 신규
   KIS 호출 0건 — 3년 캐시 재사용)
 - `logs/shadow_regime_conditional_entry_signal_2026-07-15.json`,

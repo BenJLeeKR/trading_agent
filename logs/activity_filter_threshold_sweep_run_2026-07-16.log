@@ -1,0 +1,100 @@
+INFO:validate_activity_filter_threshold_sweep:[20/87] 누적 표본 13060건
+INFO:validate_activity_filter_threshold_sweep:[40/87] 누적 표본 26120건
+INFO:validate_activity_filter_threshold_sweep:[60/87] 누적 표본 39180건
+INFO:validate_activity_filter_threshold_sweep:[80/87] 누적 표본 52240건
+INFO:validate_activity_filter_threshold_sweep:[87/87] 누적 표본 56753건
+INFO:validate_activity_filter_threshold_sweep:전체 3년 표본 56753건, 실패 0종목
+
+=== 활동성 필터 threshold sweep + 기간 분할 재현성 검증 ===
+전체 3년 표본: 56753건, 최근 12개월(cutoff=2025-06-16) 표본: 21315건
+전반부: 2023-10-10~2025-02-11(28304건), 후반부: 2025-02-12~2026-06-16(28449건)
+
+--- 2차(3년, 전체 표본) (상위 20% 표본 10999건) ---
+
+  [threshold=1.1] 생존=3491건(31.7%)
+    T+5 생존군: {'n': 3491, 'mean_pct': 1.4218, 't_naive': 8.69, 't_newey_west': 5.89, 'pct_positive': 0.5239, 'delta_mean_pct_vs_current_1.10': None}
+    T+20 생존군: {'n': 3491, 'mean_pct': 4.3809, 't_naive': 13.26, 't_newey_west': 5.78, 'pct_positive': 0.5176, 'delta_mean_pct_vs_current_1.10': None}
+
+  [threshold=1.05] 생존=3788건(34.4%)
+    T+5 생존군: {'n': 3788, 'mean_pct': 1.4551, 't_naive': 9.19, 't_newey_west': 6.22, 'pct_positive': 0.5256, 'delta_mean_pct_vs_current_1.10': 0.0333}
+    T+20 생존군: {'n': 3788, 'mean_pct': 4.5474, 't_naive': 14.27, 't_newey_west': 6.2, 'pct_positive': 0.5214, 'delta_mean_pct_vs_current_1.10': 0.1665}
+
+  [threshold=1.0] 생존=4148건(37.7%)
+    T+5 생존군: {'n': 4148, 'mean_pct': 1.4894, 't_naive': 9.99, 't_newey_west': 6.85, 'pct_positive': 0.5282, 'delta_mean_pct_vs_current_1.10': 0.0676}
+    T+20 생존군: {'n': 4148, 'mean_pct': 4.5601, 't_naive': 15.04, 't_newey_west': 6.58, 'pct_positive': 0.521, 'delta_mean_pct_vs_current_1.10': 0.1792}
+
+  [threshold=0.95] 생존=4525건(41.1%)
+    T+5 생존군: {'n': 4525, 'mean_pct': 1.5452, 't_naive': 10.82, 't_newey_west': 7.42, 'pct_positive': 0.5297, 'delta_mean_pct_vs_current_1.10': 0.1234}
+    T+20 생존군: {'n': 4525, 'mean_pct': 4.6615, 't_naive': 16.02, 't_newey_west': 7.03, 'pct_positive': 0.5238, 'delta_mean_pct_vs_current_1.10': 0.2806}
+
+  [threshold=0.9] 생존=4913건(44.7%)
+    T+5 생존군: {'n': 4913, 'mean_pct': 1.5105, 't_naive': 11.17, 't_newey_west': 7.7, 'pct_positive': 0.529, 'delta_mean_pct_vs_current_1.10': 0.0887}
+    T+20 생존군: {'n': 4913, 'mean_pct': 4.6569, 't_naive': 16.85, 't_newey_west': 7.48, 'pct_positive': 0.527, 'delta_mean_pct_vs_current_1.10': 0.276}
+
+--- 1차(최근 12개월) (상위 20% 표본 4165건) ---
+
+  [threshold=1.1] 생존=1621건(38.9%)
+    T+5 생존군: {'n': 1621, 'mean_pct': 1.9724, 't_naive': 7.0, 't_newey_west': 4.5, 'pct_positive': 0.5392, 'delta_mean_pct_vs_current_1.10': None}
+    T+20 생존군: {'n': 1621, 'mean_pct': 5.8709, 't_naive': 10.29, 't_newey_west': 4.54, 'pct_positive': 0.5312, 'delta_mean_pct_vs_current_1.10': None}
+
+  [threshold=1.05] 생존=1761건(42.3%)
+    T+5 생존군: {'n': 1761, 'mean_pct': 2.0533, 't_naive': 7.55, 't_newey_west': 4.83, 'pct_positive': 0.5429, 'delta_mean_pct_vs_current_1.10': 0.0809}
+    T+20 생존군: {'n': 1761, 'mean_pct': 6.2618, 't_naive': 11.37, 't_newey_west': 4.98, 'pct_positive': 0.5395, 'delta_mean_pct_vs_current_1.10': 0.3909}
+
+  [threshold=1.0] 생존=1931건(46.4%)
+    T+5 생존군: {'n': 1931, 'mean_pct': 2.1445, 't_naive': 8.42, 't_newey_west': 5.48, 'pct_positive': 0.5515, 'delta_mean_pct_vs_current_1.10': 0.1721}
+    T+20 생존군: {'n': 1931, 'mean_pct': 6.4317, 't_naive': 12.24, 't_newey_west': 5.44, 'pct_positive': 0.5417, 'delta_mean_pct_vs_current_1.10': 0.5608}
+
+  [threshold=0.95] 생존=2111건(50.7%)
+    T+5 생존군: {'n': 2111, 'mean_pct': 2.2784, 't_naive': 9.3, 't_newey_west': 6.05, 'pct_positive': 0.5538, 'delta_mean_pct_vs_current_1.10': 0.306}
+    T+20 생존군: {'n': 2111, 'mean_pct': 6.7084, 't_naive': 13.25, 't_newey_west': 5.88, 'pct_positive': 0.5457, 'delta_mean_pct_vs_current_1.10': 0.8375}
+
+  [threshold=0.9] 생존=2274건(54.6%)
+    T+5 생존군: {'n': 2274, 'mean_pct': 2.2788, 't_naive': 9.83, 't_newey_west': 6.4, 'pct_positive': 0.5558, 'delta_mean_pct_vs_current_1.10': 0.3064}
+    T+20 생존군: {'n': 2274, 'mean_pct': 6.7785, 't_naive': 14.05, 't_newey_west': 6.3, 'pct_positive': 0.5506, 'delta_mean_pct_vs_current_1.10': 0.9076}
+
+--- 3년 전반부(out-of-sample 분할 1) (상위 20% 표본 5457건) ---
+
+  [threshold=1.1] 생존=1359건(24.9%)
+    T+5 생존군: {'n': 1359, 'mean_pct': 0.7394, 't_naive': 3.41, 't_newey_west': 2.64, 'pct_positive': 0.4952, 'delta_mean_pct_vs_current_1.10': None}
+    T+20 생존군: {'n': 1359, 'mean_pct': 1.7865, 't_naive': 4.68, 't_newey_west': 2.36, 'pct_positive': 0.4842, 'delta_mean_pct_vs_current_1.10': None}
+
+  [threshold=1.05] 생존=1481건(27.1%)
+    T+5 생존군: {'n': 1481, 'mean_pct': 0.6945, 't_naive': 3.3, 't_newey_west': 2.59, 'pct_positive': 0.4943, 'delta_mean_pct_vs_current_1.10': -0.0449}
+    T+20 생존군: {'n': 1481, 'mean_pct': 1.7406, 't_naive': 4.75, 't_newey_west': 2.45, 'pct_positive': 0.4828, 'delta_mean_pct_vs_current_1.10': -0.0459}
+
+  [threshold=1.0] 생존=1624건(29.8%)
+    T+5 생존군: {'n': 1624, 'mean_pct': 0.7103, 't_naive': 3.57, 't_newey_west': 2.81, 'pct_positive': 0.4926, 'delta_mean_pct_vs_current_1.10': -0.0291}
+    T+20 생존군: {'n': 1624, 'mean_pct': 1.6748, 't_naive': 4.81, 't_newey_west': 2.49, 'pct_positive': 0.4809, 'delta_mean_pct_vs_current_1.10': -0.1117}
+
+  [threshold=0.95] 생존=1773건(32.5%)
+    T+5 생존군: {'n': 1773, 'mean_pct': 0.6615, 't_naive': 3.52, 't_newey_west': 2.8, 'pct_positive': 0.4901, 'delta_mean_pct_vs_current_1.10': -0.0779}
+    T+20 생존군: {'n': 1773, 'mean_pct': 1.6553, 't_naive': 5.0, 't_newey_west': 2.71, 'pct_positive': 0.4817, 'delta_mean_pct_vs_current_1.10': -0.1312}
+
+  [threshold=0.9] 생존=1950건(35.7%)
+    T+5 생존군: {'n': 1950, 'mean_pct': 0.5728, 't_naive': 3.21, 't_newey_west': 2.6, 'pct_positive': 0.4872, 'delta_mean_pct_vs_current_1.10': -0.1666}
+    T+20 생존군: {'n': 1950, 'mean_pct': 1.629, 't_naive': 5.18, 't_newey_west': 2.88, 'pct_positive': 0.4831, 'delta_mean_pct_vs_current_1.10': -0.1575}
+
+--- 3년 후반부(out-of-sample 분할 2) (상위 20% 표본 5542건) ---
+
+  [threshold=1.1] 생존=2132건(38.5%)
+    T+5 생존군: {'n': 2132, 'mean_pct': 1.8568, 't_naive': 8.11, 't_newey_west': 5.29, 'pct_positive': 0.5422, 'delta_mean_pct_vs_current_1.10': None}
+    T+20 생존군: {'n': 2132, 'mean_pct': 6.0346, 't_naive': 12.58, 't_newey_west': 5.42, 'pct_positive': 0.5389, 'delta_mean_pct_vs_current_1.10': None}
+
+  [threshold=1.05] 생존=2307건(41.6%)
+    T+5 생존군: {'n': 2307, 'mean_pct': 1.9434, 't_naive': 8.76, 't_newey_west': 5.7, 'pct_positive': 0.5457, 'delta_mean_pct_vs_current_1.10': 0.0866}
+    T+20 생존군: {'n': 2307, 'mean_pct': 6.3493, 't_naive': 13.7, 't_newey_west': 5.87, 'pct_positive': 0.5462, 'delta_mean_pct_vs_current_1.10': 0.3147}
+
+  [threshold=1.0] 생존=2524건(45.5%)
+    T+5 생존군: {'n': 2524, 'mean_pct': 1.9907, 't_naive': 9.56, 't_newey_west': 6.3, 'pct_positive': 0.5511, 'delta_mean_pct_vs_current_1.10': 0.1339}
+    T+20 생존군: {'n': 2524, 'mean_pct': 6.4165, 't_naive': 14.55, 't_newey_west': 6.29, 'pct_positive': 0.5468, 'delta_mean_pct_vs_current_1.10': 0.3819}
+
+  [threshold=0.95] 생존=2752건(49.7%)
+    T+5 생존군: {'n': 2752, 'mean_pct': 2.1146, 't_naive': 10.56, 't_newey_west': 6.95, 'pct_positive': 0.5552, 'delta_mean_pct_vs_current_1.10': 0.2578}
+    T+20 생존군: {'n': 2752, 'mean_pct': 6.5982, 't_naive': 15.55, 't_newey_west': 6.71, 'pct_positive': 0.5509, 'delta_mean_pct_vs_current_1.10': 0.5636}
+
+  [threshold=0.9] 생존=2963건(53.5%)
+    T+5 생존군: {'n': 2963, 'mean_pct': 2.1277, 't_naive': 11.19, 't_newey_west': 7.38, 'pct_positive': 0.5565, 'delta_mean_pct_vs_current_1.10': 0.2709}
+    T+20 생존군: {'n': 2963, 'mean_pct': 6.6496, 't_naive': 16.43, 't_newey_west': 7.17, 'pct_positive': 0.5559, 'delta_mean_pct_vs_current_1.10': 0.615}
+
+산출 저장: logs/signal_ic_activity_filter_threshold_sweep_2026-07-16.json
