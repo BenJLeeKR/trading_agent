@@ -685,6 +685,26 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   미호출 — 이번 턴도 shadow/validation 범위. 상세: `plans/[DESIGN]
   regime_conditional_entry_signal_v1.md` §23.
 
+- 작성자: Claude
+- 수정일자: 2026-07-16 (33차, R3b pooled 우위 날짜 집중도 검증 +
+  교체효과/구성효과 정량 분리)
+- 수정내용: SPPV-2.33이 지시한 분기3 세밀 진단을 실행했다(SPPV-
+  2.34). 거래일별 스왑 개수 상위 10% 제거 후 aggregate 우위
+  잔존비율을 계산하고, `aggregate_diff=replacement_effect+
+  composition_effect` 정확한 항등식으로 두 효과를 분리했다.
+  **결과 1: 스왑 상위 10% 거래일 제거 후에도 8개 창 중 7개에서
+  우위가 80~120% 수준으로 유지 — "소수 거래일 집중" 가설 기각.
+  분기3만 예외로 잔존비율 30~65%로 크게 감소.** **결과 2(중요
+  정정): SPPV-2.33의 "구성효과도 상당히 기여한다"는 서술은 방향이
+  틀렸다 — 정확한 분해 결과 composition_effect는 8개 창 중 6개에서
+  오히려 음(-)으로 우위를 상쇄하는 방향이었고, aggregate 우위
+  전체는 순수 replacement_effect에서 온다.** 판정: 재격상보다
+  원인 확정을 우선(지시에 따름) — R3b 우위 근거는 명확해졌으나
+  분기3 반례가 실제 집중형임이 확인돼 **R3b/R3 모두 Watch 판정을
+  그대로 유지한다.** 신규 KIS 호출 0건. 운영 코드 변경 없음,
+  broker submit 미호출 — 이번 턴도 shadow/validation 범위. 상세:
+  `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §24.
+
 ---
 
 ## 진행 체크리스트
@@ -1421,7 +1441,12 @@ canonical),
     common_kept(55.3%)가 비교적 균형 잡혀 있다. dropped_only가
     common_kept보다 평균이 낮으므로, R0 자신의 집합이 "저품질
     다수"에 더 크게 끌려 내려간다는 것도 aggregate 차이의 상당
-    부분을 설명한다. **가장 중요한 발견: 분기3에서 이번 pooled
+    부분을 설명한다. **[SPPV-2.34에서 정정] 이 문단의 방향이
+    틀렸다 — 정확한 항등식 분해(§24) 결과 구성효과는 8개 창 중
+    6개에서 오히려 음(-)으로, R3b의 우위를 만드는 것이 아니라
+    상쇄하는 방향이었다. aggregate 우위 전체는 사실상 순수
+    replacement_effect(교체 종목 자체의 품질 차이)에서 온다 —
+    상세는 §24 참고.** **가장 중요한 발견: 분기3에서 이번 pooled
     계산(교체효과 +2.594%p, 양)과 SPPV-2.32의 일별 대응표본(paired,
     -0.4666%p, 음)의 부호가 정반대다** — 두 지표는 가중 방식이
     다르다(pooled는 종목-일 단위 동일 가중이라 스왑이 많이 일어난
@@ -1451,6 +1476,51 @@ canonical),
     효과와 활동성 필터·다른 차단 축의 상호작용 확인, SPPV-2.32에
     남은 과제(더 긴 표본 축적, §3 공식 반영 여부 사용자 확인 등)는
     계속 유효.
+- [x] **SPPV-2.34(신설)** R3b pooled 우위 날짜 집중도 검증 +
+  교체효과/구성효과 정량 분리 (완료, 2026-07-16)
+  - 작업 범위: SPPV-2.33이 지시한 분기3 세밀 진단을 실행. 거래일별
+    스왑 개수(added+dropped)를 계산해 상위 10%(top-decile) 거래일을
+    제거했을 때 pooled aggregate 우위가 얼마나 남는지(잔존비율)
+    재계산. 동시에 `aggregate_diff = replacement_effect +
+    composition_effect`(정확한 항등식, `replacement_effect =
+    w0'·(mean_added-mean_dropped)`, `composition_effect = (w1'-w0')·
+    (mean_added-mean_common)`, w0'=R0 자신의 dropped 비중, w1'=
+    신규안 자신의 added 비중)로 두 효과를 정확히 분리.
+  - **결과 1(날짜 집중도): 스왑 상위 10% 거래일을 제거해도 8개 창
+    중 7개(2차/1차/전반부/후반부/분기1/분기2/분기4)에서 aggregate
+    우위가 80~120% 수준으로 거의 그대로 남거나 오히려 커졌다** —
+    "소수 거래일 집중" 가설은 이 7개 창에서 기각된다. **분기3만
+    예외로 잔존비율이 T+5=29.7%, T+20=65.2%로 크게 줄어들어**, 이미
+    발견한 pooled·paired 부호 불일치가 실제로 소수 스왑 밀집일이
+    만든 아티팩트임이 직접 확인됐다.
+  - **결과 2(정확한 효과 분리) — [중요 정정]: SPPV-2.33의 "구성
+    효과도 상당히 기여한다"는 서술은 방향이 틀렸다.** 정확한
+    항등식 분해 결과 `composition_effect`는 8개 창 중 6개에서
+    오히려 음(-)이었다(예: 2차 T+20 aggregate=+3.32%p = replacement
+    +4.27%p + composition **-0.96%p**) — **구성효과는 R3b의 우위를
+    만드는 것이 아니라 오히려 상쇄하는 방향으로 작용**했고,
+    aggregate 우위 전체는 사실상 `replacement_effect`(교체 종목
+    자체의 품질 차이) 하나에서 나온다. R0 vs R3에서도 같은 패턴(분기
+    1·분기3은 replacement_effect 자체가 음수).
+  - **판정: 이번 턴도 재격상보다 원인 확정을 우선했다(지시에
+    따름).** R3b의 aggregate 우위 근거는 이전보다 명확해졌다(순수
+    교체효과이며 날짜 집중형도 아님) — 그러나 분기3이라는 명백한
+    반례가 남아 있고 그 반례는 실제 소수 거래일 집중형임이 확인돼,
+    **R3b/R3 모두 SPPV-2.32~2.33의 Watch 판정을 그대로 유지한다.**
+    신규 KIS 호출 0건(기존 3년 캐시로 전량 서빙, 로그로 실측
+    확인). 운영 코드 변경 없음, broker submit 미호출 — 이번 턴도
+    shadow/validation 범위. 상세: `plans/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §24.
+  - 산출물: `scripts/validate_r3b_day_concentration_and_effect_
+    decomposition.py`(read-only, 신규 KIS 호출 0건), `logs/
+    signal_ic_r3b_day_concentration_and_effect_decomposition_
+    2026-07-16.json`, `logs/r3b_day_concentration_and_effect_
+    decomposition_run_2026-07-16.log`.
+  - 다음 과제: 분기3의 스왑 상위 10% 거래일을 구체적으로 나열해
+    이벤트/실적 발표 등 특정 사유 존재 여부 확인, R3b의 §3 공식
+    정식 반영 여부는 이번까지 축적된 근거(부분적 실체 확인 + 명백한
+    반례 1개)를 사용자가 종합 판단, §22.5/§23.7에 남은 과제(더 긴
+    표본 축적, §3 전제조건 충족 후 재검증)는 계속 유효.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
@@ -2198,6 +2268,9 @@ bearish/range_bound 어느 국면 내부도 `overall_score`/`slow_score`가
 - `scripts/validate_r3b_aggregate_vs_paired_decomposition.py`,
   `logs/signal_ic_r3b_aggregate_vs_paired_decomposition_2026-07-16.json`,
   `logs/r3b_aggregate_vs_paired_decomposition_run_2026-07-16.log`
+- `scripts/validate_r3b_day_concentration_and_effect_decomposition.py`,
+  `logs/signal_ic_r3b_day_concentration_and_effect_decomposition_2026-07-16.json`,
+  `logs/r3b_day_concentration_and_effect_decomposition_run_2026-07-16.log`
 - `scripts/shadow_regime_conditional_entry_signal.py`(read-only, 신규
   KIS 호출 0건 — 3년 캐시 재사용)
 - `logs/shadow_regime_conditional_entry_signal_2026-07-15.json`,

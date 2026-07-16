@@ -1,0 +1,1458 @@
+{
+  "as_of": "2026-07-17T06:44:30.978045+09:00",
+  "symbol_count_used": 87,
+  "fetch_failures": [],
+  "total_rolling_samples_3y": 56753,
+  "total_rolling_samples_recent_12m": 21315,
+  "recent_window_cutoff": "2025-06-16",
+  "windows": {
+    "supplementary_3y": {
+      "window": "2차(3년, 전체 표본)",
+      "comparisons": {
+        "R0_vs_R3": {
+          "label": "R0_vs_R3",
+          "n_swap_days": 247,
+          "swap_count_distribution": {
+            "mean": 2.48,
+            "median": 2,
+            "max": 6,
+            "top_decile_n_days": 25
+          },
+          "by_horizon": {
+            "T+5": {
+              "full_pooled": {
+                "n_common": 1210,
+                "n_dropped": 333,
+                "n_added": 306,
+                "mean_common_pct": 0.9761,
+                "mean_dropped_pct": 1.5008,
+                "mean_added_pct": 1.834,
+                "mean_base_pct": 1.0893,
+                "mean_new_pct": 1.1493,
+                "aggregate_diff_pct": 0.0599,
+                "replacement_effect_pct": 0.0719,
+                "composition_effect_pct": -0.012,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 1190,
+                "n_dropped": 278,
+                "n_added": 251,
+                "mean_common_pct": 1.0109,
+                "mean_dropped_pct": 1.4272,
+                "mean_added_pct": 1.959,
+                "mean_base_pct": 1.0897,
+                "mean_new_pct": 1.176,
+                "aggregate_diff_pct": 0.0863,
+                "replacement_effect_pct": 0.1007,
+                "composition_effect_pct": -0.0144,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 144.1,
+              "paired_daily_equal_weight": {
+                "n_days": 247,
+                "mean_diff_pct": 0.1711,
+                "t_naive": 0.23,
+                "t_newey_west": 0.21,
+                "pct_days_added_better": 0.4615
+              }
+            },
+            "T+20": {
+              "full_pooled": {
+                "n_common": 1210,
+                "n_dropped": 333,
+                "n_added": 306,
+                "mean_common_pct": 2.7698,
+                "mean_dropped_pct": 2.9919,
+                "mean_added_pct": 6.8385,
+                "mean_base_pct": 2.8177,
+                "mean_new_pct": 3.5911,
+                "aggregate_diff_pct": 0.7733,
+                "replacement_effect_pct": 0.8302,
+                "composition_effect_pct": -0.0568,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 1190,
+                "n_dropped": 278,
+                "n_added": 251,
+                "mean_common_pct": 2.7799,
+                "mean_dropped_pct": 3.1025,
+                "mean_added_pct": 7.3911,
+                "mean_base_pct": 2.841,
+                "mean_new_pct": 3.5831,
+                "aggregate_diff_pct": 0.7421,
+                "replacement_effect_pct": 0.8121,
+                "composition_effect_pct": -0.07,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 96.0,
+              "paired_daily_equal_weight": {
+                "n_days": 247,
+                "mean_diff_pct": 3.734,
+                "t_naive": 2.59,
+                "t_newey_west": 1.37,
+                "pct_days_added_better": 0.5263
+              }
+            }
+          }
+        },
+        "R0_vs_R3b": {
+          "label": "R0_vs_R3b",
+          "n_swap_days": 302,
+          "swap_count_distribution": {
+            "mean": 3.45,
+            "median": 4,
+            "max": 6,
+            "top_decile_n_days": 30
+          },
+          "by_horizon": {
+            "T+5": {
+              "full_pooled": {
+                "n_common": 566,
+                "n_dropped": 977,
+                "n_added": 458,
+                "mean_common_pct": 1.727,
+                "mean_dropped_pct": 0.7199,
+                "mean_added_pct": 2.2473,
+                "mean_base_pct": 1.0893,
+                "mean_new_pct": 1.9597,
+                "aggregate_diff_pct": 0.8704,
+                "replacement_effect_pct": 0.9671,
+                "composition_effect_pct": -0.0967,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 566,
+                "n_dropped": 887,
+                "n_added": 368,
+                "mean_common_pct": 1.727,
+                "mean_dropped_pct": 0.7337,
+                "mean_added_pct": 2.326,
+                "mean_base_pct": 1.1206,
+                "mean_new_pct": 1.963,
+                "aggregate_diff_pct": 0.8424,
+                "replacement_effect_pct": 0.9721,
+                "composition_effect_pct": -0.1297,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 96.8,
+              "paired_daily_equal_weight": {
+                "n_days": 302,
+                "mean_diff_pct": 1.0705,
+                "t_naive": 1.8,
+                "t_newey_west": 1.42,
+                "pct_days_added_better": 0.5
+              }
+            },
+            "T+20": {
+              "full_pooled": {
+                "n_common": 566,
+                "n_dropped": 977,
+                "n_added": 458,
+                "mean_common_pct": 3.8289,
+                "mean_dropped_pct": 2.2319,
+                "mean_added_pct": 8.9819,
+                "mean_base_pct": 2.8177,
+                "mean_new_pct": 6.1337,
+                "aggregate_diff_pct": 3.3159,
+                "replacement_effect_pct": 4.274,
+                "composition_effect_pct": -0.958,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 566,
+                "n_dropped": 887,
+                "n_added": 368,
+                "mean_common_pct": 3.8289,
+                "mean_dropped_pct": 2.1939,
+                "mean_added_pct": 8.0389,
+                "mean_base_pct": 2.8308,
+                "mean_new_pct": 5.4877,
+                "aggregate_diff_pct": 2.6569,
+                "replacement_effect_pct": 3.5681,
+                "composition_effect_pct": -0.9113,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 80.1,
+              "paired_daily_equal_weight": {
+                "n_days": 302,
+                "mean_diff_pct": 5.7043,
+                "t_naive": 4.4,
+                "t_newey_west": 1.96,
+                "pct_days_added_better": 0.5728
+              }
+            }
+          }
+        }
+      }
+    },
+    "primary_recent_12m": {
+      "window": "1차(최근 12개월)",
+      "comparisons": {
+        "R0_vs_R3": {
+          "label": "R0_vs_R3",
+          "n_swap_days": 108,
+          "swap_count_distribution": {
+            "mean": 2.61,
+            "median": 2,
+            "max": 6,
+            "top_decile_n_days": 11
+          },
+          "by_horizon": {
+            "T+5": {
+              "full_pooled": {
+                "n_common": 516,
+                "n_dropped": 157,
+                "n_added": 141,
+                "mean_common_pct": 1.8616,
+                "mean_dropped_pct": 2.7021,
+                "mean_added_pct": 2.9617,
+                "mean_base_pct": 2.0577,
+                "mean_new_pct": 2.0977,
+                "aggregate_diff_pct": 0.04,
+                "replacement_effect_pct": 0.0606,
+                "composition_effect_pct": -0.0205,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 510,
+                "n_dropped": 130,
+                "n_added": 114,
+                "mean_common_pct": 1.8749,
+                "mean_dropped_pct": 2.3233,
+                "mean_added_pct": 2.9116,
+                "mean_base_pct": 1.966,
+                "mean_new_pct": 2.0643,
+                "aggregate_diff_pct": 0.0983,
+                "replacement_effect_pct": 0.1195,
+                "composition_effect_pct": -0.0212,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 245.8,
+              "paired_daily_equal_weight": {
+                "n_days": 108,
+                "mean_diff_pct": -0.0574,
+                "t_naive": -0.05,
+                "t_newey_west": -0.04,
+                "pct_days_added_better": 0.4167
+              }
+            },
+            "T+20": {
+              "full_pooled": {
+                "n_common": 516,
+                "n_dropped": 157,
+                "n_added": 141,
+                "mean_common_pct": 4.5143,
+                "mean_dropped_pct": 3.6241,
+                "mean_added_pct": 11.6682,
+                "mean_base_pct": 4.3066,
+                "mean_new_pct": 6.0496,
+                "aggregate_diff_pct": 1.743,
+                "replacement_effect_pct": 1.8765,
+                "composition_effect_pct": -0.1336,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 510,
+                "n_dropped": 130,
+                "n_added": 114,
+                "mean_common_pct": 4.4601,
+                "mean_dropped_pct": 3.7868,
+                "mean_added_pct": 11.8937,
+                "mean_base_pct": 4.3233,
+                "mean_new_pct": 5.8181,
+                "aggregate_diff_pct": 1.4948,
+                "replacement_effect_pct": 1.6467,
+                "composition_effect_pct": -0.1519,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 85.8,
+              "paired_daily_equal_weight": {
+                "n_days": 108,
+                "mean_diff_pct": 7.1698,
+                "t_naive": 2.82,
+                "t_newey_west": 1.23,
+                "pct_days_added_better": 0.5648
+              }
+            }
+          }
+        },
+        "R0_vs_R3b": {
+          "label": "R0_vs_R3b",
+          "n_swap_days": 133,
+          "swap_count_distribution": {
+            "mean": 3.53,
+            "median": 4,
+            "max": 6,
+            "top_decile_n_days": 13
+          },
+          "by_horizon": {
+            "T+5": {
+              "full_pooled": {
+                "n_common": 234,
+                "n_dropped": 439,
+                "n_added": 209,
+                "mean_common_pct": 2.0964,
+                "mean_dropped_pct": 2.037,
+                "mean_added_pct": 3.7513,
+                "mean_base_pct": 2.0577,
+                "mean_new_pct": 2.8771,
+                "aggregate_diff_pct": 0.8195,
+                "replacement_effect_pct": 1.1182,
+                "composition_effect_pct": -0.2988,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 234,
+                "n_dropped": 400,
+                "n_added": 170,
+                "mean_common_pct": 2.0964,
+                "mean_dropped_pct": 1.8048,
+                "mean_added_pct": 4.2372,
+                "mean_base_pct": 1.9124,
+                "mean_new_pct": 2.9972,
+                "aggregate_diff_pct": 1.0847,
+                "replacement_effect_pct": 1.5346,
+                "composition_effect_pct": -0.4498,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 132.4,
+              "paired_daily_equal_weight": {
+                "n_days": 133,
+                "mean_diff_pct": 1.045,
+                "t_naive": 1.03,
+                "t_newey_west": 0.76,
+                "pct_days_added_better": 0.4887
+              }
+            },
+            "T+20": {
+              "full_pooled": {
+                "n_common": 234,
+                "n_dropped": 439,
+                "n_added": 209,
+                "mean_common_pct": 5.1597,
+                "mean_dropped_pct": 3.8519,
+                "mean_added_pct": 13.6395,
+                "mean_base_pct": 4.3066,
+                "mean_new_pct": 9.1603,
+                "aggregate_diff_pct": 4.8537,
+                "replacement_effect_pct": 6.3845,
+                "composition_effect_pct": -1.5308,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 234,
+                "n_dropped": 400,
+                "n_added": 170,
+                "mean_common_pct": 5.1597,
+                "mean_dropped_pct": 3.6584,
+                "mean_added_pct": 13.4241,
+                "mean_base_pct": 4.2125,
+                "mean_new_pct": 8.6373,
+                "aggregate_diff_pct": 4.4248,
+                "replacement_effect_pct": 6.1613,
+                "composition_effect_pct": -1.7365,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 91.2,
+              "paired_daily_equal_weight": {
+                "n_days": 133,
+                "mean_diff_pct": 8.1993,
+                "t_naive": 3.44,
+                "t_newey_west": 1.3,
+                "pct_days_added_better": 0.594
+              }
+            }
+          }
+        }
+      }
+    },
+    "3y_first_half": {
+      "window": "3년 전반부",
+      "comparisons": {
+        "R0_vs_R3": {
+          "label": "R0_vs_R3",
+          "n_swap_days": 101,
+          "swap_count_distribution": {
+            "mean": 2.28,
+            "median": 2,
+            "max": 4,
+            "top_decile_n_days": 10
+          },
+          "by_horizon": {
+            "T+5": {
+              "full_pooled": {
+                "n_common": 534,
+                "n_dropped": 123,
+                "n_added": 115,
+                "mean_common_pct": 0.5164,
+                "mean_dropped_pct": 0.121,
+                "mean_added_pct": 0.3893,
+                "mean_base_pct": 0.4424,
+                "mean_new_pct": 0.4939,
+                "aggregate_diff_pct": 0.0515,
+                "replacement_effect_pct": 0.0502,
+                "composition_effect_pct": 0.0013,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 524,
+                "n_dropped": 103,
+                "n_added": 95,
+                "mean_common_pct": 0.4968,
+                "mean_dropped_pct": -0.2534,
+                "mean_added_pct": 0.7192,
+                "mean_base_pct": 0.3736,
+                "mean_new_pct": 0.5309,
+                "aggregate_diff_pct": 0.1574,
+                "replacement_effect_pct": 0.1598,
+                "composition_effect_pct": -0.0024,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 305.6,
+              "paired_daily_equal_weight": {
+                "n_days": 101,
+                "mean_diff_pct": 0.3516,
+                "t_naive": 0.29,
+                "t_newey_west": 0.28,
+                "pct_days_added_better": 0.4851
+              }
+            },
+            "T+20": {
+              "full_pooled": {
+                "n_common": 534,
+                "n_dropped": 123,
+                "n_added": 115,
+                "mean_common_pct": 0.9487,
+                "mean_dropped_pct": 1.1065,
+                "mean_added_pct": 1.3662,
+                "mean_base_pct": 0.9782,
+                "mean_new_pct": 1.0226,
+                "aggregate_diff_pct": 0.0444,
+                "replacement_effect_pct": 0.0486,
+                "composition_effect_pct": -0.0042,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 524,
+                "n_dropped": 103,
+                "n_added": 95,
+                "mean_common_pct": 0.854,
+                "mean_dropped_pct": 0.8001,
+                "mean_added_pct": 2.275,
+                "mean_base_pct": 0.8451,
+                "mean_new_pct": 1.0721,
+                "aggregate_diff_pct": 0.2269,
+                "replacement_effect_pct": 0.2423,
+                "composition_effect_pct": -0.0153,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 511.0,
+              "paired_daily_equal_weight": {
+                "n_days": 101,
+                "mean_diff_pct": 0.7058,
+                "t_naive": 0.36,
+                "t_newey_west": 0.74,
+                "pct_days_added_better": 0.4851
+              }
+            }
+          }
+        },
+        "R0_vs_R3b": {
+          "label": "R0_vs_R3b",
+          "n_swap_days": 123,
+          "swap_count_distribution": {
+            "mean": 3.37,
+            "median": 4,
+            "max": 6,
+            "top_decile_n_days": 12
+          },
+          "by_horizon": {
+            "T+5": {
+              "full_pooled": {
+                "n_common": 248,
+                "n_dropped": 409,
+                "n_added": 177,
+                "mean_common_pct": 1.5493,
+                "mean_dropped_pct": -0.2288,
+                "mean_added_pct": 0.7763,
+                "mean_base_pct": 0.4424,
+                "mean_new_pct": 1.2273,
+                "aggregate_diff_pct": 0.785,
+                "replacement_effect_pct": 0.6257,
+                "composition_effect_pct": 0.1593,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 248,
+                "n_dropped": 373,
+                "n_added": 146,
+                "mean_common_pct": 1.5493,
+                "mean_dropped_pct": -0.3042,
+                "mean_added_pct": 0.9532,
+                "mean_base_pct": 0.436,
+                "mean_new_pct": 1.3284,
+                "aggregate_diff_pct": 0.8924,
+                "replacement_effect_pct": 0.7552,
+                "composition_effect_pct": 0.1372,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 113.7,
+              "paired_daily_equal_weight": {
+                "n_days": 123,
+                "mean_diff_pct": 1.351,
+                "t_naive": 1.56,
+                "t_newey_west": 1.29,
+                "pct_days_added_better": 0.5203
+              }
+            },
+            "T+20": {
+              "full_pooled": {
+                "n_common": 248,
+                "n_dropped": 409,
+                "n_added": 177,
+                "mean_common_pct": 1.85,
+                "mean_dropped_pct": 0.4496,
+                "mean_added_pct": 4.2034,
+                "mean_base_pct": 0.9782,
+                "mean_new_pct": 2.8301,
+                "aggregate_diff_pct": 1.8519,
+                "replacement_effect_pct": 2.3368,
+                "composition_effect_pct": -0.4849,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 248,
+                "n_dropped": 373,
+                "n_added": 146,
+                "mean_common_pct": 1.85,
+                "mean_dropped_pct": 0.1185,
+                "mean_added_pct": 4.5914,
+                "mean_base_pct": 0.81,
+                "mean_new_pct": 2.8658,
+                "aggregate_diff_pct": 2.0559,
+                "replacement_effect_pct": 2.6866,
+                "composition_effect_pct": -0.6308,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 111.0,
+              "paired_daily_equal_weight": {
+                "n_days": 123,
+                "mean_diff_pct": 3.6581,
+                "t_naive": 2.2,
+                "t_newey_west": 2.07,
+                "pct_days_added_better": 0.5691
+              }
+            }
+          }
+        }
+      }
+    },
+    "3y_second_half": {
+      "window": "3년 후반부",
+      "comparisons": {
+        "R0_vs_R3": {
+          "label": "R0_vs_R3",
+          "n_swap_days": 146,
+          "swap_count_distribution": {
+            "mean": 2.62,
+            "median": 2,
+            "max": 6,
+            "top_decile_n_days": 15
+          },
+          "by_horizon": {
+            "T+5": {
+              "full_pooled": {
+                "n_common": 676,
+                "n_dropped": 210,
+                "n_added": 191,
+                "mean_common_pct": 1.3393,
+                "mean_dropped_pct": 2.3089,
+                "mean_added_pct": 2.7038,
+                "mean_base_pct": 1.5691,
+                "mean_new_pct": 1.6399,
+                "aggregate_diff_pct": 0.0708,
+                "replacement_effect_pct": 0.0936,
+                "composition_effect_pct": -0.0228,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 666,
+                "n_dropped": 175,
+                "n_added": 156,
+                "mean_common_pct": 1.3658,
+                "mean_dropped_pct": 2.2501,
+                "mean_added_pct": 2.3221,
+                "mean_base_pct": 1.5498,
+                "mean_new_pct": 1.5473,
+                "aggregate_diff_pct": -0.0025,
+                "replacement_effect_pct": 0.015,
+                "composition_effect_pct": -0.0175,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": -3.5,
+              "paired_daily_equal_weight": {
+                "n_days": 146,
+                "mean_diff_pct": 0.0462,
+                "t_naive": 0.05,
+                "t_newey_west": 0.04,
+                "pct_days_added_better": 0.4452
+              }
+            },
+            "T+20": {
+              "full_pooled": {
+                "n_common": 676,
+                "n_dropped": 210,
+                "n_added": 191,
+                "mean_common_pct": 4.2084,
+                "mean_dropped_pct": 4.0961,
+                "mean_added_pct": 10.1333,
+                "mean_base_pct": 4.1818,
+                "mean_new_pct": 5.5137,
+                "aggregate_diff_pct": 1.3319,
+                "replacement_effect_pct": 1.4309,
+                "composition_effect_pct": -0.0991,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 666,
+                "n_dropped": 175,
+                "n_added": 156,
+                "mean_common_pct": 4.2115,
+                "mean_dropped_pct": 4.111,
+                "mean_added_pct": 9.8449,
+                "mean_base_pct": 4.1906,
+                "mean_new_pct": 5.2807,
+                "aggregate_diff_pct": 1.09,
+                "replacement_effect_pct": 1.1931,
+                "composition_effect_pct": -0.1031,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 81.8,
+              "paired_daily_equal_weight": {
+                "n_days": 146,
+                "mean_diff_pct": 5.8289,
+                "t_naive": 2.89,
+                "t_newey_west": 1.32,
+                "pct_days_added_better": 0.5548
+              }
+            }
+          }
+        },
+        "R0_vs_R3b": {
+          "label": "R0_vs_R3b",
+          "n_swap_days": 179,
+          "swap_count_distribution": {
+            "mean": 3.51,
+            "median": 4,
+            "max": 6,
+            "top_decile_n_days": 18
+          },
+          "by_horizon": {
+            "T+5": {
+              "full_pooled": {
+                "n_common": 318,
+                "n_dropped": 568,
+                "n_added": 281,
+                "mean_common_pct": 1.8657,
+                "mean_dropped_pct": 1.4031,
+                "mean_added_pct": 3.1738,
+                "mean_base_pct": 1.5691,
+                "mean_new_pct": 2.4793,
+                "aggregate_diff_pct": 0.9102,
+                "replacement_effect_pct": 1.1352,
+                "composition_effect_pct": -0.225,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 318,
+                "n_dropped": 514,
+                "n_added": 227,
+                "mean_common_pct": 1.8657,
+                "mean_dropped_pct": 1.2796,
+                "mean_added_pct": 3.4987,
+                "mean_base_pct": 1.5036,
+                "mean_new_pct": 2.5459,
+                "aggregate_diff_pct": 1.0423,
+                "replacement_effect_pct": 1.3709,
+                "composition_effect_pct": -0.3287,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 114.5,
+              "paired_daily_equal_weight": {
+                "n_days": 179,
+                "mean_diff_pct": 0.8778,
+                "t_naive": 1.09,
+                "t_newey_west": 0.83,
+                "pct_days_added_better": 0.486
+              }
+            },
+            "T+20": {
+              "full_pooled": {
+                "n_common": 318,
+                "n_dropped": 568,
+                "n_added": 281,
+                "mean_common_pct": 5.3722,
+                "mean_dropped_pct": 3.5153,
+                "mean_added_pct": 11.9918,
+                "mean_base_pct": 4.1818,
+                "mean_new_pct": 8.4776,
+                "aggregate_diff_pct": 4.2958,
+                "replacement_effect_pct": 5.4342,
+                "composition_effect_pct": -1.1384,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 318,
+                "n_dropped": 514,
+                "n_added": 227,
+                "mean_common_pct": 5.3722,
+                "mean_dropped_pct": 3.3131,
+                "mean_added_pct": 12.458,
+                "mean_base_pct": 4.1001,
+                "mean_new_pct": 8.3236,
+                "aggregate_diff_pct": 4.2235,
+                "replacement_effect_pct": 5.6496,
+                "composition_effect_pct": -1.4262,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 98.3,
+              "paired_daily_equal_weight": {
+                "n_days": 179,
+                "mean_diff_pct": 7.1105,
+                "t_naive": 3.82,
+                "t_newey_west": 1.5,
+                "pct_days_added_better": 0.5754
+              }
+            }
+          }
+        }
+      }
+    },
+    "quarter_1": {
+      "window": "3년 분기1(2023-10-10~2024-06-07)",
+      "comparisons": {
+        "R0_vs_R3": {
+          "label": "R0_vs_R3",
+          "n_swap_days": 54,
+          "swap_count_distribution": {
+            "mean": 2.19,
+            "median": 2,
+            "max": 4,
+            "top_decile_n_days": 5
+          },
+          "by_horizon": {
+            "T+5": {
+              "full_pooled": {
+                "n_common": 326,
+                "n_dropped": 62,
+                "n_added": 59,
+                "mean_common_pct": 0.2149,
+                "mean_dropped_pct": 1.5263,
+                "mean_added_pct": 0.6482,
+                "mean_base_pct": 0.4244,
+                "mean_new_pct": 0.2813,
+                "aggregate_diff_pct": -0.1431,
+                "replacement_effect_pct": -0.1403,
+                "composition_effect_pct": -0.0028,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 321,
+                "n_dropped": 52,
+                "n_added": 49,
+                "mean_common_pct": 0.2471,
+                "mean_dropped_pct": 1.3013,
+                "mean_added_pct": 1.3271,
+                "mean_base_pct": 0.394,
+                "mean_new_pct": 0.3901,
+                "aggregate_diff_pct": -0.0039,
+                "replacement_effect_pct": 0.0036,
+                "composition_effect_pct": -0.0075,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 2.7,
+              "paired_daily_equal_weight": {
+                "n_days": 54,
+                "mean_diff_pct": -0.63,
+                "t_naive": -0.32,
+                "t_newey_west": -0.3,
+                "pct_days_added_better": 0.4444
+              }
+            },
+            "T+20": {
+              "full_pooled": {
+                "n_common": 326,
+                "n_dropped": 62,
+                "n_added": 59,
+                "mean_common_pct": 0.7178,
+                "mean_dropped_pct": 3.7826,
+                "mean_added_pct": 2.8257,
+                "mean_base_pct": 1.2076,
+                "mean_new_pct": 1.0409,
+                "aggregate_diff_pct": -0.1667,
+                "replacement_effect_pct": -0.1529,
+                "composition_effect_pct": -0.0138,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 321,
+                "n_dropped": 52,
+                "n_added": 49,
+                "mean_common_pct": 0.7222,
+                "mean_dropped_pct": 3.2584,
+                "mean_added_pct": 4.3138,
+                "mean_base_pct": 1.0758,
+                "mean_new_pct": 1.1979,
+                "aggregate_diff_pct": 0.1221,
+                "replacement_effect_pct": 0.1471,
+                "composition_effect_pct": -0.0251,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": -73.2,
+              "paired_daily_equal_weight": {
+                "n_days": 54,
+                "mean_diff_pct": -0.4357,
+                "t_naive": -0.14,
+                "t_newey_west": -0.32,
+                "pct_days_added_better": 0.4444
+              }
+            }
+          }
+        },
+        "R0_vs_R3b": {
+          "label": "R0_vs_R3b",
+          "n_swap_days": 69,
+          "swap_count_distribution": {
+            "mean": 3.3,
+            "median": 4,
+            "max": 6,
+            "top_decile_n_days": 7
+          },
+          "by_horizon": {
+            "T+5": {
+              "full_pooled": {
+                "n_common": 150,
+                "n_dropped": 238,
+                "n_added": 95,
+                "mean_common_pct": 1.2297,
+                "mean_dropped_pct": -0.0831,
+                "mean_added_pct": -0.0236,
+                "mean_base_pct": 0.4244,
+                "mean_new_pct": 0.7437,
+                "aggregate_diff_pct": 0.3193,
+                "replacement_effect_pct": 0.0365,
+                "composition_effect_pct": 0.2828,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 149,
+                "n_dropped": 218,
+                "n_added": 78,
+                "mean_common_pct": 1.258,
+                "mean_dropped_pct": -0.2641,
+                "mean_added_pct": -0.2643,
+                "mean_base_pct": 0.3538,
+                "mean_new_pct": 0.7349,
+                "aggregate_diff_pct": 0.3811,
+                "replacement_effect_pct": -0.0001,
+                "composition_effect_pct": 0.3812,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 119.4,
+              "paired_daily_equal_weight": {
+                "n_days": 69,
+                "mean_diff_pct": 0.1144,
+                "t_naive": 0.11,
+                "t_newey_west": 0.1,
+                "pct_days_added_better": 0.4928
+              }
+            },
+            "T+20": {
+              "full_pooled": {
+                "n_common": 150,
+                "n_dropped": 238,
+                "n_added": 95,
+                "mean_common_pct": 1.5736,
+                "mean_dropped_pct": 0.9769,
+                "mean_added_pct": 4.2619,
+                "mean_base_pct": 1.2076,
+                "mean_new_pct": 2.616,
+                "aggregate_diff_pct": 1.4084,
+                "replacement_effect_pct": 2.015,
+                "composition_effect_pct": -0.6066,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 149,
+                "n_dropped": 218,
+                "n_added": 78,
+                "mean_common_pct": 1.6069,
+                "mean_dropped_pct": 0.5439,
+                "mean_added_pct": 3.5875,
+                "mean_base_pct": 0.9755,
+                "mean_new_pct": 2.2875,
+                "aggregate_diff_pct": 1.312,
+                "replacement_effect_pct": 1.8079,
+                "composition_effect_pct": -0.4959,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 93.2,
+              "paired_daily_equal_weight": {
+                "n_days": 69,
+                "mean_diff_pct": 3.4008,
+                "t_naive": 1.47,
+                "t_newey_west": 2.02,
+                "pct_days_added_better": 0.5362
+              }
+            }
+          }
+        }
+      }
+    },
+    "quarter_2": {
+      "window": "3년 분기2(2024-06-10~2025-02-11)",
+      "comparisons": {
+        "R0_vs_R3": {
+          "label": "R0_vs_R3",
+          "n_swap_days": 47,
+          "swap_count_distribution": {
+            "mean": 2.38,
+            "median": 2,
+            "max": 4,
+            "top_decile_n_days": 5
+          },
+          "by_horizon": {
+            "T+5": {
+              "full_pooled": {
+                "n_common": 208,
+                "n_dropped": 61,
+                "n_added": 56,
+                "mean_common_pct": 0.9889,
+                "mean_dropped_pct": -1.3073,
+                "mean_added_pct": 0.1166,
+                "mean_base_pct": 0.4682,
+                "mean_new_pct": 0.8039,
+                "aggregate_diff_pct": 0.3357,
+                "replacement_effect_pct": 0.3229,
+                "composition_effect_pct": 0.0128,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 203,
+                "n_dropped": 51,
+                "n_added": 46,
+                "mean_common_pct": 0.8917,
+                "mean_dropped_pct": -1.8385,
+                "mean_added_pct": 0.0717,
+                "mean_base_pct": 0.3435,
+                "mean_new_pct": 0.7402,
+                "aggregate_diff_pct": 0.3967,
+                "replacement_effect_pct": 0.3835,
+                "composition_effect_pct": 0.0132,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 118.2,
+              "paired_daily_equal_weight": {
+                "n_days": 47,
+                "mean_diff_pct": 1.4794,
+                "t_naive": 1.05,
+                "t_newey_west": 1.14,
+                "pct_days_added_better": 0.5319
+              }
+            },
+            "T+20": {
+              "full_pooled": {
+                "n_common": 208,
+                "n_dropped": 61,
+                "n_added": 56,
+                "mean_common_pct": 1.3104,
+                "mean_dropped_pct": -1.6133,
+                "mean_added_pct": -0.1715,
+                "mean_base_pct": 0.6474,
+                "mean_new_pct": 0.9961,
+                "aggregate_diff_pct": 0.3487,
+                "replacement_effect_pct": 0.327,
+                "composition_effect_pct": 0.0217,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 203,
+                "n_dropped": 51,
+                "n_added": 46,
+                "mean_common_pct": 1.0623,
+                "mean_dropped_pct": -1.7064,
+                "mean_added_pct": 0.1033,
+                "mean_base_pct": 0.5064,
+                "mean_new_pct": 0.8851,
+                "aggregate_diff_pct": 0.3788,
+                "replacement_effect_pct": 0.3634,
+                "composition_effect_pct": 0.0154,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 108.6,
+              "paired_daily_equal_weight": {
+                "n_days": 47,
+                "mean_diff_pct": 2.0174,
+                "t_naive": 0.95,
+                "t_newey_west": 2.0,
+                "pct_days_added_better": 0.5319
+              }
+            }
+          }
+        },
+        "R0_vs_R3b": {
+          "label": "R0_vs_R3b",
+          "n_swap_days": 54,
+          "swap_count_distribution": {
+            "mean": 3.44,
+            "median": 4,
+            "max": 6,
+            "top_decile_n_days": 5
+          },
+          "by_horizon": {
+            "T+5": {
+              "full_pooled": {
+                "n_common": 98,
+                "n_dropped": 171,
+                "n_added": 82,
+                "mean_common_pct": 2.0384,
+                "mean_dropped_pct": -0.4317,
+                "mean_added_pct": 1.703,
+                "mean_base_pct": 0.4682,
+                "mean_new_pct": 1.8856,
+                "aggregate_diff_pct": 1.4174,
+                "replacement_effect_pct": 1.357,
+                "composition_effect_pct": 0.0604,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 98,
+                "n_dropped": 156,
+                "n_added": 68,
+                "mean_common_pct": 2.0384,
+                "mean_dropped_pct": -0.3812,
+                "mean_added_pct": 2.4392,
+                "mean_base_pct": 0.5523,
+                "mean_new_pct": 2.2026,
+                "aggregate_diff_pct": 1.6502,
+                "replacement_effect_pct": 1.7322,
+                "composition_effect_pct": -0.082,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 116.4,
+              "paired_daily_equal_weight": {
+                "n_days": 54,
+                "mean_diff_pct": 2.931,
+                "t_naive": 2.05,
+                "t_newey_west": 1.7,
+                "pct_days_added_better": 0.5556
+              }
+            },
+            "T+20": {
+              "full_pooled": {
+                "n_common": 98,
+                "n_dropped": 171,
+                "n_added": 82,
+                "mean_common_pct": 2.273,
+                "mean_dropped_pct": -0.2843,
+                "mean_added_pct": 4.1357,
+                "mean_base_pct": 0.6474,
+                "mean_new_pct": 3.1216,
+                "aggregate_diff_pct": 2.4742,
+                "replacement_effect_pct": 2.8097,
+                "composition_effect_pct": -0.3355,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 98,
+                "n_dropped": 156,
+                "n_added": 68,
+                "mean_common_pct": 2.273,
+                "mean_dropped_pct": -0.5253,
+                "mean_added_pct": 5.3605,
+                "mean_base_pct": 0.5543,
+                "mean_new_pct": 3.5378,
+                "aggregate_diff_pct": 2.9834,
+                "replacement_effect_pct": 3.6149,
+                "composition_effect_pct": -0.6315,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 120.6,
+              "paired_daily_equal_weight": {
+                "n_days": 54,
+                "mean_diff_pct": 3.9867,
+                "t_naive": 1.67,
+                "t_newey_west": 1.07,
+                "pct_days_added_better": 0.6111
+              }
+            }
+          }
+        }
+      }
+    },
+    "quarter_3": {
+      "window": "3년 분기3(2025-02-12~2025-10-14)",
+      "comparisons": {
+        "R0_vs_R3": {
+          "label": "R0_vs_R3",
+          "n_swap_days": 69,
+          "swap_count_distribution": {
+            "mean": 2.58,
+            "median": 2,
+            "max": 6,
+            "top_decile_n_days": 7
+          },
+          "by_horizon": {
+            "T+5": {
+              "full_pooled": {
+                "n_common": 336,
+                "n_dropped": 94,
+                "n_added": 89,
+                "mean_common_pct": 0.3662,
+                "mean_dropped_pct": 1.5848,
+                "mean_added_pct": 1.3174,
+                "mean_base_pct": 0.6326,
+                "mean_new_pct": 0.5654,
+                "aggregate_diff_pct": -0.0672,
+                "replacement_effect_pct": -0.0585,
+                "composition_effect_pct": -0.0087,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 330,
+                "n_dropped": 79,
+                "n_added": 74,
+                "mean_common_pct": 0.4273,
+                "mean_dropped_pct": 1.7603,
+                "mean_added_pct": 1.2562,
+                "mean_base_pct": 0.6848,
+                "mean_new_pct": 0.5791,
+                "aggregate_diff_pct": -0.1056,
+                "replacement_effect_pct": -0.0974,
+                "composition_effect_pct": -0.0083,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 157.1,
+              "paired_daily_equal_weight": {
+                "n_days": 69,
+                "mean_diff_pct": -0.682,
+                "t_naive": -0.64,
+                "t_newey_west": -0.76,
+                "pct_days_added_better": 0.4203
+              }
+            },
+            "T+20": {
+              "full_pooled": {
+                "n_common": 336,
+                "n_dropped": 94,
+                "n_added": 89,
+                "mean_common_pct": 2.841,
+                "mean_dropped_pct": 6.5316,
+                "mean_added_pct": 5.5176,
+                "mean_base_pct": 3.6478,
+                "mean_new_pct": 3.4015,
+                "aggregate_diff_pct": -0.2463,
+                "replacement_effect_pct": -0.2217,
+                "composition_effect_pct": -0.0246,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 330,
+                "n_dropped": 79,
+                "n_added": 74,
+                "mean_common_pct": 2.9172,
+                "mean_dropped_pct": 6.3663,
+                "mean_added_pct": 5.3571,
+                "mean_base_pct": 3.5834,
+                "mean_new_pct": 3.3641,
+                "aggregate_diff_pct": -0.2193,
+                "replacement_effect_pct": -0.1949,
+                "composition_effect_pct": -0.0244,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 89.0,
+              "paired_daily_equal_weight": {
+                "n_days": 69,
+                "mean_diff_pct": -0.0364,
+                "t_naive": -0.02,
+                "t_newey_west": -0.02,
+                "pct_days_added_better": 0.4638
+              }
+            }
+          }
+        },
+        "R0_vs_R3b": {
+          "label": "R0_vs_R3b",
+          "n_swap_days": 83,
+          "swap_count_distribution": {
+            "mean": 3.36,
+            "median": 3,
+            "max": 6,
+            "top_decile_n_days": 8
+          },
+          "by_horizon": {
+            "T+5": {
+              "full_pooled": {
+                "n_common": 180,
+                "n_dropped": 250,
+                "n_added": 128,
+                "mean_common_pct": 0.916,
+                "mean_dropped_pct": 0.4285,
+                "mean_added_pct": 0.9971,
+                "mean_base_pct": 0.6326,
+                "mean_new_pct": 0.9497,
+                "aggregate_diff_pct": 0.3171,
+                "replacement_effect_pct": 0.3306,
+                "composition_effect_pct": -0.0135,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 180,
+                "n_dropped": 226,
+                "n_added": 104,
+                "mean_common_pct": 0.916,
+                "mean_dropped_pct": 0.5464,
+                "mean_added_pct": 0.6115,
+                "mean_base_pct": 0.7103,
+                "mean_new_pct": 0.8045,
+                "aggregate_diff_pct": 0.0942,
+                "replacement_effect_pct": 0.0362,
+                "composition_effect_pct": 0.058,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 29.7,
+              "paired_daily_equal_weight": {
+                "n_days": 83,
+                "mean_diff_pct": -1.1035,
+                "t_naive": -1.28,
+                "t_newey_west": -1.3,
+                "pct_days_added_better": 0.4217
+              }
+            },
+            "T+20": {
+              "full_pooled": {
+                "n_common": 180,
+                "n_dropped": 250,
+                "n_added": 128,
+                "mean_common_pct": 4.3689,
+                "mean_dropped_pct": 3.1286,
+                "mean_added_pct": 5.7226,
+                "mean_base_pct": 3.6478,
+                "mean_new_pct": 4.9315,
+                "aggregate_diff_pct": 1.2837,
+                "replacement_effect_pct": 1.5081,
+                "composition_effect_pct": -0.2245,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 180,
+                "n_dropped": 226,
+                "n_added": 104,
+                "mean_common_pct": 4.3689,
+                "mean_dropped_pct": 3.2399,
+                "mean_added_pct": 4.9382,
+                "mean_base_pct": 3.7404,
+                "mean_new_pct": 4.5774,
+                "aggregate_diff_pct": 0.837,
+                "replacement_effect_pct": 0.9454,
+                "composition_effect_pct": -0.1084,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 65.2,
+              "paired_daily_equal_weight": {
+                "n_days": 83,
+                "mean_diff_pct": -0.4666,
+                "t_naive": -0.24,
+                "t_newey_west": -0.21,
+                "pct_days_added_better": 0.4578
+              }
+            }
+          }
+        }
+      }
+    },
+    "quarter_4": {
+      "window": "3년 분기4(2025-10-15~2026-06-16)",
+      "comparisons": {
+        "R0_vs_R3": {
+          "label": "R0_vs_R3",
+          "n_swap_days": 77,
+          "swap_count_distribution": {
+            "mean": 2.65,
+            "median": 2,
+            "max": 6,
+            "top_decile_n_days": 8
+          },
+          "by_horizon": {
+            "T+5": {
+              "full_pooled": {
+                "n_common": 340,
+                "n_dropped": 116,
+                "n_added": 102,
+                "mean_common_pct": 2.301,
+                "mean_dropped_pct": 2.8957,
+                "mean_added_pct": 3.9134,
+                "mean_base_pct": 2.4523,
+                "mean_new_pct": 2.6731,
+                "aggregate_diff_pct": 0.2208,
+                "replacement_effect_pct": 0.2589,
+                "composition_effect_pct": -0.0381,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 336,
+                "n_dropped": 96,
+                "n_added": 82,
+                "mean_common_pct": 2.2946,
+                "mean_dropped_pct": 1.4926,
+                "mean_added_pct": 3.5167,
+                "mean_base_pct": 2.1164,
+                "mean_new_pct": 2.5344,
+                "aggregate_diff_pct": 0.418,
+                "replacement_effect_pct": 0.4498,
+                "composition_effect_pct": -0.0318,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 189.3,
+              "paired_daily_equal_weight": {
+                "n_days": 77,
+                "mean_diff_pct": 0.6988,
+                "t_naive": 0.45,
+                "t_newey_west": 0.39,
+                "pct_days_added_better": 0.4675
+              }
+            },
+            "T+20": {
+              "full_pooled": {
+                "n_common": 340,
+                "n_dropped": 116,
+                "n_added": 102,
+                "mean_common_pct": 5.5597,
+                "mean_dropped_pct": 2.1226,
+                "mean_added_pct": 14.1608,
+                "mean_base_pct": 4.6853,
+                "mean_new_pct": 7.5446,
+                "aggregate_diff_pct": 2.8592,
+                "replacement_effect_pct": 3.0623,
+                "composition_effect_pct": -0.2031,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 336,
+                "n_dropped": 96,
+                "n_added": 82,
+                "mean_common_pct": 5.5103,
+                "mean_dropped_pct": 1.4544,
+                "mean_added_pct": 14.0772,
+                "mean_base_pct": 4.609,
+                "mean_new_pct": 7.1909,
+                "aggregate_diff_pct": 2.5819,
+                "replacement_effect_pct": 2.8051,
+                "composition_effect_pct": -0.2232,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 90.3,
+              "paired_daily_equal_weight": {
+                "n_days": 77,
+                "mean_diff_pct": 11.0847,
+                "t_naive": 3.38,
+                "t_newey_west": 1.56,
+                "pct_days_added_better": 0.6364
+              }
+            }
+          }
+        },
+        "R0_vs_R3b": {
+          "label": "R0_vs_R3b",
+          "n_swap_days": 96,
+          "swap_count_distribution": {
+            "mean": 3.65,
+            "median": 4,
+            "max": 6,
+            "top_decile_n_days": 10
+          },
+          "by_horizon": {
+            "T+5": {
+              "full_pooled": {
+                "n_common": 138,
+                "n_dropped": 318,
+                "n_added": 153,
+                "mean_common_pct": 3.1044,
+                "mean_dropped_pct": 2.1692,
+                "mean_added_pct": 4.9948,
+                "mean_base_pct": 2.4523,
+                "mean_new_pct": 4.0984,
+                "aggregate_diff_pct": 1.6461,
+                "replacement_effect_pct": 1.9705,
+                "composition_effect_pct": -0.3244,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 138,
+                "n_dropped": 288,
+                "n_added": 123,
+                "mean_common_pct": 3.1044,
+                "mean_dropped_pct": 1.8279,
+                "mean_added_pct": 5.6813,
+                "mean_base_pct": 2.2414,
+                "mean_new_pct": 4.3188,
+                "aggregate_diff_pct": 2.0774,
+                "replacement_effect_pct": 2.6051,
+                "composition_effect_pct": -0.5277,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 126.2,
+              "paired_daily_equal_weight": {
+                "n_days": 96,
+                "mean_diff_pct": 2.5908,
+                "t_naive": 2.02,
+                "t_newey_west": 1.51,
+                "pct_days_added_better": 0.5417
+              }
+            },
+            "T+20": {
+              "full_pooled": {
+                "n_common": 138,
+                "n_dropped": 318,
+                "n_added": 153,
+                "mean_common_pct": 6.681,
+                "mean_dropped_pct": 3.8193,
+                "mean_added_pct": 17.2367,
+                "mean_base_pct": 4.6853,
+                "mean_new_pct": 12.2309,
+                "aggregate_diff_pct": 7.5455,
+                "replacement_effect_pct": 9.3569,
+                "composition_effect_pct": -1.8113,
+                "check_sum_matches": 0.0
+              },
+              "excl_top_decile_swap_days": {
+                "n_common": 138,
+                "n_dropped": 288,
+                "n_added": 123,
+                "mean_common_pct": 6.681,
+                "mean_dropped_pct": 3.5932,
+                "mean_added_pct": 16.9967,
+                "mean_base_pct": 4.5934,
+                "mean_new_pct": 11.5424,
+                "aggregate_diff_pct": 6.9489,
+                "replacement_effect_pct": 9.0615,
+                "composition_effect_pct": -2.1126,
+                "check_sum_matches": 0.0
+              },
+              "aggregate_diff_remaining_pct_of_full": 92.1,
+              "paired_daily_equal_weight": {
+                "n_days": 96,
+                "mean_diff_pct": 13.6615,
+                "t_naive": 4.72,
+                "t_newey_west": 1.87,
+                "pct_days_added_better": 0.6771
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
