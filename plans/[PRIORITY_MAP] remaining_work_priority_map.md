@@ -197,7 +197,8 @@
 
 - 작성자: Claude
 - 수정일자: 2026-07-15 (20차, 새 alpha 상위군과 기존 차단 축 결합
-  효과 검증 — 진짜 병목 재발견)
+  효과 검증 — 가장 빈번한 차단 사유 재발견; 당시 해석은
+  이후 §2.24/§14 ablation으로 보정됨)
 - 수정내용: regime_conditional_signal을 새 alpha로 넣었을 때 기존
   차단 로직이 그 효과를 상쇄하는지 검증 — 상위 20% 표본의 68.3%(3년)/
   61.1%(최근 12개월)가 차단되나 차단된 표본도 forward return이
@@ -224,6 +225,15 @@
   Codex 지적으로 "제거 시 개선"/"주범 확정" 표현을 정정). 결합
   시나리오 판정은 Watch로 유지. 다음 착수: threshold 추가 스윕
   (0.95/0.90)과 out-of-sample 재현성 확인.
+
+- 작성자: Claude
+- 수정일자: 2026-07-16 (22차, §13/§14 문서 내부 해석 일관성 정리)
+- 수정내용: 새 실측 없이 SPPV-2.23("최근 메모" 배너 포함)의 "진짜
+  병목 재발견" 등 단정 표현을 "가장 빈번한 차단 사유 재발견(당시
+  해석은 이후 §2.24/§14 ablation으로 보정됨)"으로 정정했다.
+  `regime_conditional_entry_signal_v1.md` §13.4~§13.6도 함께
+  "당시 해석(§14 보정 전)"으로 위치를 낮췄다(내용은 보존, 삭제
+  없음) — 5개 정본 문서 전체의 일관성을 맞췄다.
 
 ## 최근 메모
 
@@ -610,7 +620,8 @@
 > `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §12.
 
 > **📌 2026-07-15 새 alpha 상위군과 기존 차단 축 결합 효과 검증 —
-> 진짜 병목 재발견 (최신, 최우선 반영)**: `regime_conditional_
+> 가장 빈번한 차단 사유 재발견 (당시 해석은 이후 §2.24/§14
+> ablation으로 보정됨)**: `regime_conditional_
 > signal`(위 Conditional Go)을 새 alpha로 넣었을 때 기존 차단
 > 로직이 그 효과를 상쇄하는지 검증했다. 신규
 > `scripts/validate_new_alpha_vs_existing_blocking_axes.py`가
@@ -4732,7 +4743,8 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      2026-07-15.json`. 상세: `plans/[DESIGN] regime_conditional_
      entry_signal_v1.md` §12.
    - **SPPV-2.23(완료, 2026-07-15, 새 alpha 상위군과 기존 차단 축
-     결합 효과 검증 — 진짜 병목 재발견)**: `regime_conditional_
+     결합 효과 검증 — 가장 빈번한 차단 사유 재발견; 당시 해석은
+  이후 §2.24/§14 ablation으로 보정됨)**: `regime_conditional_
      signal`을 새 alpha로 넣었을 때 기존 차단 로직이 그 효과를
      상쇄하는지 검증. **결과: 상위 20% 표본의 68.3%(3년)/61.1%(최근
      12개월)가 차단되나, 차단된 표본도 forward return이 강하게

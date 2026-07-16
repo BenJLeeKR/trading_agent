@@ -397,7 +397,8 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
 
 - 작성자: Claude
 - 수정일자: 2026-07-15 (20차, 새 alpha 상위군과 기존 차단 축 결합
-  효과 검증 — 진짜 병목 재발견)
+  효과 검증 — 가장 빈번한 차단 사유 재발견; 당시 해석은 이후
+  SPPV-2.24/§14 ablation으로 보정됨)
 - 수정내용: `regime_conditional_signal`(§12, Conditional Go)을 새
   alpha로 넣었을 때 기존 차단 로직이 그 효과를 상쇄하는지 검증했다
   (SPPV-2.23). 신규 `scripts/validate_new_alpha_vs_existing_
@@ -453,6 +454,19 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   `entry_score`/`_assess_buy_eligibility` 운영 코드 변경 없음 —
   이번 턴은 shadow/validation 범위. 상세: `plans/[DESIGN]
   regime_conditional_entry_signal_v1.md` §14.
+
+- 작성자: Claude
+- 수정일자: 2026-07-16 (22차, §13/§14 문서 내부 해석 일관성 정리)
+- 수정내용: 새 실측 없이 문서 내부 표현만 정리했다. §13(SPPV-2.23)의
+  "진짜 병목 재발견"·"과잉 억제의 강력한 증거"·"주범" 등 §14
+  보정 결론과 충돌하는 단정 표현을 §13.4~§13.6 제목/본문에서
+  "당시 해석(§14 보정 전)" 형태로 위치를 낮췄다(내용 삭제 없이
+  보존). SPPV-2.23 관련 체크리스트/수정이력 제목도 "가장 빈번한
+  차단 사유 재발견"으로 정정하고 "당시 해석은 이후 SPPV-2.24/§14
+  ablation으로 보정됨"이라는 안내를 추가했다. 다른 4개 정본 문서
+  (`[ANALYSIS]`, `[PRIORITY_MAP]`, `[BACKLOG]`, 그리고 `[DESIGN]
+  regime_conditional_entry_signal_v1.md` 자체)에서도 동일한
+  불일치를 함께 정리했다.
 
 ---
 
@@ -782,11 +796,13 @@ canonical),
     2026-07-15.json`, `logs/alpha_layer_vs_regime_conditional_
     signal_run_2026-07-15.log`.
 - [x] **SPPV-2.23(신설)** 새 alpha 상위군과 기존 차단 축 결합 효과
-  검증 — 진짜 병목 재발견 (완료, 2026-07-15)
+  검증 — 가장 빈번한 차단 사유 재발견 (완료, 2026-07-15; **당시
+  해석("과잉 억제 확정" 뉘앙스)은 이후 SPPV-2.24/§14 ablation으로
+  보정됨 — 아래 결과 서술은 원문 보존, 최종 판단은 SPPV-2.24 참고**)
   - 작업 범위: `regime_conditional_signal`을 새 alpha로 넣었을 때
     기존 차단 로직(운영 `_build_entry_score`/`_assess_buy_
     eligibility` 그대로 호출)이 그 효과를 상쇄하는지, 상쇄한다면
-    어느 축이 주범인지 규명.
+    어느 축이 가장 자주 걸리는지 규명.
   - **결과: 상위 20% 표본의 68.3%(3년)/61.1%(최근 12개월)가 차단
     되지만, 차단된 표본도 forward return이 강하게 유의하게 양(+)
     (3년 T+5 +0.815% t_NW=6.86, T+20 +3.170% t_NW=8.35 — 생존군과
@@ -854,9 +870,11 @@ canonical),
     통일(종목별→시장 공통)은 Watch/No-Go에 근접한다는 것이 확인됐고,
     §12(SPPV-2.22)에서 alpha layer 교체는 2차 창에서 유의한 우위를
     확보(Conditional Go)했으나, **§13(SPPV-2.23)에서 결합 사용 시
-    진짜 병목이 regime 관련 축이 아니라 별개의 활동성 필터
-    (`eligibility_low_relative_activity`)임을 새로 발견**했다 —
-    SPPV-3의 최우선 조사 대상은 이제 이 활동성 필터 재검토다. 1차
+    가장 빈번하게 걸리는 축이 regime 관련 축이 아니라 별개의
+    활동성 필터(`eligibility_low_relative_activity`)임을 새로
+    발견**했다(단, "과잉 억제"·"주범" 여부는 SPPV-2.24/§14 ablation
+    으로 검증한 결과 확정할 수 없었다 — Watch 유지) — SPPV-3의
+    최우선 조사 대상은 이제 이 활동성 필터 완화안 추가 검증이다. 1차
     게이트(§21 모니터링)가 `TRIGGERED`로 전환되는 즉시 alpha layer
     교체의 최종 Go 여부도 재확인해야 하며, 그 전까지 코드 변경은
     보류한다.
