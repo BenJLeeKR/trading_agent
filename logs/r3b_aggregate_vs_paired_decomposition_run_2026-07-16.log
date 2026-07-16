@@ -1,0 +1,76 @@
+INFO:validate_r3b_aggregate_vs_paired_decomposition:[20/87] 누적 표본 13060건
+INFO:validate_r3b_aggregate_vs_paired_decomposition:[40/87] 누적 표본 26120건
+INFO:validate_r3b_aggregate_vs_paired_decomposition:[60/87] 누적 표본 39180건
+INFO:validate_r3b_aggregate_vs_paired_decomposition:[80/87] 누적 표본 52240건
+INFO:validate_r3b_aggregate_vs_paired_decomposition:[87/87] 누적 표본 56753건
+INFO:validate_r3b_aggregate_vs_paired_decomposition:전체 3년 표본 56753건, 실패 0종목
+
+=== R3b aggregate 우위 vs 대응표본 음수 구간 3분해(common/dropped/added) ===
+전체 3년 표본: 56753건, 최근 12개월(cutoff=2025-06-16) 표본: 21315건
+(참고) t_NW 유의성 판정 기준: |t_NW| >= 1.96(근사 양측 95%, 경계값 포함)
+
+=== 2차(3년, 전체 표본) (표본 56753건) ===
+  [R0_vs_R3] common=1210, dropped_only=333, added_only=306 | base_total=1543, new_total=1516
+    T+5: common_kept=0.9761%, dropped_only=1.5008%, added_only=1.834% | 재구성 R0평균=1.0893%, 재구성 new평균=1.1493%, aggregate차이=0.0599%p, 교체효과(added-dropped)=0.3332%p
+    T+20: common_kept=2.7698%, dropped_only=2.9919%, added_only=6.8385% | 재구성 R0평균=2.8177%, 재구성 new평균=3.5911%, aggregate차이=0.7733%p, 교체효과(added-dropped)=3.8466%p
+  [R0_vs_R3b] common=566, dropped_only=977, added_only=458 | base_total=1543, new_total=1024
+    T+5: common_kept=1.727%, dropped_only=0.7199%, added_only=2.2473% | 재구성 R0평균=1.0893%, 재구성 new평균=1.9597%, aggregate차이=0.8704%p, 교체효과(added-dropped)=1.5273%p
+    T+20: common_kept=3.8289%, dropped_only=2.2319%, added_only=8.9819% | 재구성 R0평균=2.8177%, 재구성 new평균=6.1337%, aggregate차이=3.3159%p, 교체효과(added-dropped)=6.75%p
+
+=== 1차(최근 12개월) (표본 21315건) ===
+  [R0_vs_R3] common=516, dropped_only=157, added_only=141 | base_total=673, new_total=657
+    T+5: common_kept=1.8616%, dropped_only=2.7021%, added_only=2.9617% | 재구성 R0평균=2.0577%, 재구성 new평균=2.0977%, aggregate차이=0.04%p, 교체효과(added-dropped)=0.2596%p
+    T+20: common_kept=4.5143%, dropped_only=3.6241%, added_only=11.6682% | 재구성 R0평균=4.3066%, 재구성 new평균=6.0496%, aggregate차이=1.743%p, 교체효과(added-dropped)=8.0441%p
+  [R0_vs_R3b] common=234, dropped_only=439, added_only=209 | base_total=673, new_total=443
+    T+5: common_kept=2.0964%, dropped_only=2.037%, added_only=3.7513% | 재구성 R0평균=2.0577%, 재구성 new평균=2.8771%, aggregate차이=0.8195%p, 교체효과(added-dropped)=1.7143%p
+    T+20: common_kept=5.1597%, dropped_only=3.8519%, added_only=13.6395% | 재구성 R0평균=4.3066%, 재구성 new평균=9.1603%, aggregate차이=4.8537%p, 교체효과(added-dropped)=9.7876%p
+
+=== 3년 전반부 (표본 28304건) ===
+  [R0_vs_R3] common=534, dropped_only=123, added_only=115 | base_total=657, new_total=649
+    T+5: common_kept=0.5164%, dropped_only=0.121%, added_only=0.3893% | 재구성 R0평균=0.4424%, 재구성 new평균=0.4939%, aggregate차이=0.0515%p, 교체효과(added-dropped)=0.2683%p
+    T+20: common_kept=0.9487%, dropped_only=1.1065%, added_only=1.3662% | 재구성 R0평균=0.9782%, 재구성 new평균=1.0226%, aggregate차이=0.0444%p, 교체효과(added-dropped)=0.2597%p
+  [R0_vs_R3b] common=248, dropped_only=409, added_only=177 | base_total=657, new_total=425
+    T+5: common_kept=1.5493%, dropped_only=-0.2288%, added_only=0.7763% | 재구성 R0평균=0.4424%, 재구성 new평균=1.2273%, aggregate차이=0.785%p, 교체효과(added-dropped)=1.0051%p
+    T+20: common_kept=1.85%, dropped_only=0.4496%, added_only=4.2034% | 재구성 R0평균=0.9782%, 재구성 new평균=2.8301%, aggregate차이=1.8519%p, 교체효과(added-dropped)=3.7538%p
+
+=== 3년 후반부 (표본 28449건) ===
+  [R0_vs_R3] common=676, dropped_only=210, added_only=191 | base_total=886, new_total=867
+    T+5: common_kept=1.3393%, dropped_only=2.3089%, added_only=2.7038% | 재구성 R0평균=1.5691%, 재구성 new평균=1.6399%, aggregate차이=0.0708%p, 교체효과(added-dropped)=0.3948%p
+    T+20: common_kept=4.2084%, dropped_only=4.0961%, added_only=10.1333% | 재구성 R0평균=4.1818%, 재구성 new평균=5.5137%, aggregate차이=1.3319%p, 교체효과(added-dropped)=6.0372%p
+  [R0_vs_R3b] common=318, dropped_only=568, added_only=281 | base_total=886, new_total=599
+    T+5: common_kept=1.8657%, dropped_only=1.4031%, added_only=3.1738% | 재구성 R0평균=1.5691%, 재구성 new평균=2.4793%, aggregate차이=0.9102%p, 교체효과(added-dropped)=1.7707%p
+    T+20: common_kept=5.3722%, dropped_only=3.5153%, added_only=11.9918% | 재구성 R0평균=4.1818%, 재구성 new평균=8.4776%, aggregate차이=4.2958%p, 교체효과(added-dropped)=8.4765%p
+
+=== 3년 분기1(2023-10-10~2024-06-07) (표본 14123건) ===
+  [R0_vs_R3] common=326, dropped_only=62, added_only=59 | base_total=388, new_total=385
+    T+5: common_kept=0.2149%, dropped_only=1.5263%, added_only=0.6482% | 재구성 R0평균=0.4244%, 재구성 new평균=0.2813%, aggregate차이=-0.1431%p, 교체효과(added-dropped)=-0.8781%p
+    T+20: common_kept=0.7178%, dropped_only=3.7826%, added_only=2.8257% | 재구성 R0평균=1.2076%, 재구성 new평균=1.0409%, aggregate차이=-0.1667%p, 교체효과(added-dropped)=-0.9569%p
+  [R0_vs_R3b] common=150, dropped_only=238, added_only=95 | base_total=388, new_total=245
+    T+5: common_kept=1.2297%, dropped_only=-0.0831%, added_only=-0.0236% | 재구성 R0평균=0.4244%, 재구성 new평균=0.7437%, aggregate차이=0.3193%p, 교체효과(added-dropped)=0.0595%p
+    T+20: common_kept=1.5736%, dropped_only=0.9769%, added_only=4.2619% | 재구성 R0평균=1.2076%, 재구성 new평균=2.616%, aggregate차이=1.4084%p, 교체효과(added-dropped)=3.285%p
+
+=== 3년 분기2(2024-06-10~2025-02-11) (표본 14181건) ===
+  [R0_vs_R3] common=208, dropped_only=61, added_only=56 | base_total=269, new_total=264
+    T+5: common_kept=0.9889%, dropped_only=-1.3073%, added_only=0.1166% | 재구성 R0평균=0.4682%, 재구성 new평균=0.8039%, aggregate차이=0.3357%p, 교체효과(added-dropped)=1.4239%p
+    T+20: common_kept=1.3104%, dropped_only=-1.6133%, added_only=-0.1715% | 재구성 R0평균=0.6474%, 재구성 new평균=0.9961%, aggregate차이=0.3487%p, 교체효과(added-dropped)=1.4419%p
+  [R0_vs_R3b] common=98, dropped_only=171, added_only=82 | base_total=269, new_total=180
+    T+5: common_kept=2.0384%, dropped_only=-0.4317%, added_only=1.703% | 재구성 R0평균=0.4682%, 재구성 new평균=1.8856%, aggregate차이=1.4174%p, 교체효과(added-dropped)=2.1347%p
+    T+20: common_kept=2.273%, dropped_only=-0.2843%, added_only=4.1357% | 재구성 R0평균=0.6474%, 재구성 new평균=3.1216%, aggregate차이=2.4742%p, 교체효과(added-dropped)=4.42%p
+
+=== 3년 분기3(2025-02-12~2025-10-14) (표본 14181건) ===
+  [R0_vs_R3] common=336, dropped_only=94, added_only=89 | base_total=430, new_total=425
+    T+5: common_kept=0.3662%, dropped_only=1.5848%, added_only=1.3174% | 재구성 R0평균=0.6326%, 재구성 new평균=0.5654%, aggregate차이=-0.0672%p, 교체효과(added-dropped)=-0.2674%p
+    T+20: common_kept=2.841%, dropped_only=6.5316%, added_only=5.5176% | 재구성 R0평균=3.6478%, 재구성 new평균=3.4015%, aggregate차이=-0.2463%p, 교체효과(added-dropped)=-1.0139%p
+  [R0_vs_R3b] common=180, dropped_only=250, added_only=128 | base_total=430, new_total=308
+    T+5: common_kept=0.916%, dropped_only=0.4285%, added_only=0.9971% | 재구성 R0평균=0.6326%, 재구성 new평균=0.9497%, aggregate차이=0.3171%p, 교체효과(added-dropped)=0.5686%p
+    T+20: common_kept=4.3689%, dropped_only=3.1286%, added_only=5.7226% | 재구성 R0평균=3.6478%, 재구성 new평균=4.9315%, aggregate차이=1.2837%p, 교체효과(added-dropped)=2.594%p
+
+=== 3년 분기4(2025-10-15~2026-06-16) (표본 14268건) ===
+  [R0_vs_R3] common=340, dropped_only=116, added_only=102 | base_total=456, new_total=442
+    T+5: common_kept=2.301%, dropped_only=2.8957%, added_only=3.9134% | 재구성 R0평균=2.4523%, 재구성 new평균=2.6731%, aggregate차이=0.2208%p, 교체효과(added-dropped)=1.0177%p
+    T+20: common_kept=5.5597%, dropped_only=2.1226%, added_only=14.1608% | 재구성 R0평균=4.6853%, 재구성 new평균=7.5446%, aggregate차이=2.8592%p, 교체효과(added-dropped)=12.0382%p
+  [R0_vs_R3b] common=138, dropped_only=318, added_only=153 | base_total=456, new_total=291
+    T+5: common_kept=3.1044%, dropped_only=2.1692%, added_only=4.9948% | 재구성 R0평균=2.4523%, 재구성 new평균=4.0984%, aggregate차이=1.6461%p, 교체효과(added-dropped)=2.8256%p
+    T+20: common_kept=6.681%, dropped_only=3.8193%, added_only=17.2367% | 재구성 R0평균=4.6853%, 재구성 new평균=12.2309%, aggregate차이=7.5455%p, 교체효과(added-dropped)=13.4174%p
+
+산출 저장: logs/signal_ic_r3b_aggregate_vs_paired_decomposition_2026-07-16.json

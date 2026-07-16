@@ -662,6 +662,29 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   턴도 shadow/validation 범위. 상세: `plans/[DESIGN] regime_
   conditional_entry_signal_v1.md` §22.
 
+- 작성자: Claude
+- 수정일자: 2026-07-16 (32차, R3b aggregate 우위 vs 대응표본 음수
+  구간 3분해)
+- 수정내용: SPPV-2.32의 "t_NW≥1.96 창 2개" 서술을 산출 JSON으로
+  재확인해 **실제로는 3개(2차=1.96, 전반부=2.07, 분기1=2.02)**였음을
+  정정했다(분기1 누락). common_kept/dropped_only/added_only 항등식
+  분해로 aggregate 우위의 원인을 규명했다(SPPV-2.33). **added_only
+  평균이 8개 창 전부에서 common_kept·dropped_only보다 뚜렷이 높아
+  R3b의 신규 선택 자체는 실제로 우수했음을 확인**했으나, **R0
+  자신의 구성이 저품질 dropped_only 비중(63.3%, 2차)이 커서
+  aggregate 차이의 상당 부분이 "구성 효과"에서도 왔다.** **가장
+  중요한 발견: 분기3에서 이번 pooled 교체효과(+2.594%p)와
+  SPPV-2.32의 paired 교체효과(-0.4666%p)의 부호가 정반대** —
+  가중 방식 차이(종목-일 동일가중 vs 거래일 동일가중) 때문이며,
+  이는 R3b의 효과가 "매일 조금씩"이 아니라 "소수 스왑 밀집일에
+  집중"된 비대칭 구조임을 시사한다. 결론: aggregate 우위는 부분적
+  실체가 있으나(added_only 우수성) 비대칭적이고 특정 구간 집중형
+  이라 안정적 재현으로 단정하기 이르다 — **R3b/R3 모두 SPPV-2.32의
+  Watch 판정을 그대로 유지한다(이번 턴은 재격상이 아닌 원인
+  규명).** 신규 KIS 호출 0건. 운영 코드 변경 없음, broker submit
+  미호출 — 이번 턴도 shadow/validation 범위. 상세: `plans/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §23.
+
 ---
 
 ## 진행 체크리스트
@@ -1340,9 +1363,12 @@ canonical),
     6개에서 양(+)이었으나(2차 +5.70%p, 1차 +8.20%p, 전반부
     +3.66%p, 후반부 +7.11%p, 분기2 +3.99%p, 분기4 +13.66%p),
     **분기3에서는 음수(-0.47%p, 대체 우위일 비율 45.8%로 절반
-    미만)로 뒤집혔다.** T_NW가 1.96 이상(통상적 유의 수준)인 창은
-    2차(1.96)·전반부(2.07) 2개뿐이고 나머지는 1.0~1.9의 marginal한
-    값이었다. **R0 vs R3(전체 universe) 대체쌍은 더 약했다** —
+    미만)로 뒤집혔다.** **(SPPV-2.33에서 정정: t_NW>=1.96 기준을
+    충족하는 창은 실제로 2차(1.96)·전반부(2.07)·분기1(2.02) 3개다
+    — 최초 서술은 분기1을 누락한 계산 오류였다. 판정 기준은
+    "|t_NW|>=1.96(근사 양측 95%, 경계값 포함)"으로 명시한다.)**
+    나머지 창은 1.0~1.9의 marginal한 값이었다. **R0 vs R3(전체
+    universe) 대체쌍은 더 약했다** —
     분기1(-0.44%p, 사실상 음수)·분기3(-0.04%p, 사실상 0)로 대체
     효과가 없거나 음수인 창이 2개였다.
   - **핵심 정정: SPPV-2.31이 "R3b는 R0와 47~61%만 겹쳐 실제
@@ -1370,6 +1396,61 @@ canonical),
     등), 더 긴 표본·더 많은 교체 발생일 축적 후 재평가, 향후
     재보정 검증은 overlap만으로 재선별 품질을 증명하지 않고 반드시
     대응표본 직접 비교를 병행하는 것을 표준 절차로 삼는다.
+- [x] **SPPV-2.33(신설)** R3b aggregate 우위 vs 대응표본 음수 구간
+  3분해(common_kept/dropped_only/added_only) (완료, 2026-07-16)
+  - 작업 범위: SPPV-2.32의 "aggregate 우위와 대체쌍 성과 불일치"
+    원인을 정확한 항등식 분해로 규명. R0의 would_buy와 R3b(또는
+    R3)의 would_buy를 common_kept(둘 다 고름)/dropped_only(R0만)/
+    added_only(신규안만) 3개 그룹으로 완전히 분해하고, `mean(R0)
+    = (n_common·mean_common + n_dropped·mean_dropped)/(n_common+
+    n_dropped)` 항등식으로 각 그룹의 기여를 정확히 계측. 이번
+    턴은 재격상보다 원인 규명을 우선했다(작업 지시에 따름).
+  - **문서 정정**: SPPV-2.32의 "t_NW>=1.96 창 2개(2차·전반부)"
+    서술을 산출 JSON 원본으로 재확인한 결과 **실제로는 3개
+    (2차=1.96, 전반부=2.07, 분기1=2.02)**로, 분기1을 누락한 계산
+    오류였다. 판정 기준을 "|t_NW|>=1.96(근사 양측 95%, 경계값
+    포함)"으로 명시했다.
+  - **결과: R0 vs R3b 3분해에서 `added_only`의 평균이 8개 창 전부
+    에서 `common_kept`·`dropped_only`보다 뚜렷이 높았다**(예: 2차
+    T+20 added +8.98% vs common +3.83% vs dropped +2.23%) —
+    "R3b가 새로 골라 넣은 종목이 실제로 고수익을 냈다"는 것은
+    사실이며, SPPV-2.32의 표본 급감 착시 우려를 상당 부분
+    반박한다. **다만 "구성/표본수 효과"도 상당하다** — R0의
+    would_buy 구성은 dropped_only(63.3%, 2차)가 common_kept
+    (36.7%)보다 훨씬 큰 비중인 반면, R3b는 added_only(44.7%)와
+    common_kept(55.3%)가 비교적 균형 잡혀 있다. dropped_only가
+    common_kept보다 평균이 낮으므로, R0 자신의 집합이 "저품질
+    다수"에 더 크게 끌려 내려간다는 것도 aggregate 차이의 상당
+    부분을 설명한다. **가장 중요한 발견: 분기3에서 이번 pooled
+    계산(교체효과 +2.594%p, 양)과 SPPV-2.32의 일별 대응표본(paired,
+    -0.4666%p, 음)의 부호가 정반대다** — 두 지표는 가중 방식이
+    다르다(pooled는 종목-일 단위 동일 가중이라 스왑이 많이 일어난
+    날의 영향력이 커지고, paired는 거래일 단위 동일 가중이라 매일을
+    동등하게 취급). **이 부호 불일치 자체가 R3b의 교체 효과가
+    "매일 조금씩 좋다"가 아니라 "소수의 스왑 밀집일에 크게 좋고
+    나머지 평범한 날에는 오히려 나쁘다"는 비대칭 구조임을 시사하며,
+    안정적으로 재현 가능한 일상적 edge가 아니라 특정 구간에 몰린
+    효과일 가능성을 뒷받침한다.** R0 vs R3(전체 universe)에서는
+    분기1·분기3 모두 added_only가 dropped_only보다 낮아(교체효과
+    음수) §21의 "미세 재조정" 가설이 pooled 직접 계측으로도
+    재확인됐다. **판정: R3b의 aggregate 우위는 부분적으로 실체가
+    있으나(added_only의 실제 우수성) 비대칭적이고 소수 구간에
+    집중된 것으로 보여 "안정적 재현 가능"이라 단정하기엔 이르다 —
+    R3b/R3 모두 SPPV-2.32의 Watch 판정을 그대로 유지한다(이번 턴은
+    재격상이 아니라 원인 설명이 목적).** 신규 KIS 호출 0건(기존
+    3년 캐시로 전량 서빙, 로그로 실측 확인). 운영 코드 변경 없음,
+    broker submit 미호출 — 이번 턴도 shadow/validation 범위. 상세:
+    `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §23.
+  - 산출물: `scripts/validate_r3b_aggregate_vs_paired_
+    decomposition.py`(read-only, 신규 KIS 호출 0건), `logs/
+    signal_ic_r3b_aggregate_vs_paired_decomposition_2026-07-16.
+    json`, `logs/r3b_aggregate_vs_paired_decomposition_run_
+    2026-07-16.log`.
+  - 다음 과제: 분기3처럼 pooled/paired 부호가 갈리는 구간의
+    거래일 단위 세밀 진단(스왑 밀집일 존재 여부), R3b의 구성
+    효과와 활동성 필터·다른 차단 축의 상호작용 확인, SPPV-2.32에
+    남은 과제(더 긴 표본 축적, §3 공식 반영 여부 사용자 확인 등)는
+    계속 유효.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
@@ -2114,6 +2195,9 @@ bearish/range_bound 어느 국면 내부도 `overall_score`/`slow_score`가
 - `scripts/validate_r3b_paired_replacement_analysis.py`,
   `logs/signal_ic_r3b_paired_replacement_analysis_2026-07-16.json`,
   `logs/r3b_paired_replacement_analysis_run_2026-07-16.log`
+- `scripts/validate_r3b_aggregate_vs_paired_decomposition.py`,
+  `logs/signal_ic_r3b_aggregate_vs_paired_decomposition_2026-07-16.json`,
+  `logs/r3b_aggregate_vs_paired_decomposition_run_2026-07-16.log`
 - `scripts/shadow_regime_conditional_entry_signal.py`(read-only, 신규
   KIS 호출 0건 — 3년 캐시 재사용)
 - `logs/shadow_regime_conditional_entry_signal_2026-07-15.json`,

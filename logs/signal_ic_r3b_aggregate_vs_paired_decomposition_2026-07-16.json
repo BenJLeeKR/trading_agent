@@ -1,0 +1,1251 @@
+{
+  "as_of": "2026-07-16T22:15:53.613095+09:00",
+  "symbol_count_used": 87,
+  "fetch_failures": [],
+  "total_rolling_samples_3y": 56753,
+  "total_rolling_samples_recent_12m": 21315,
+  "recent_window_cutoff": "2025-06-16",
+  "t_nw_significance_threshold": 1.96,
+  "windows": {
+    "supplementary_3y": {
+      "window": "2차(3년, 전체 표본)",
+      "comparisons": {
+        "R0_vs_R3": {
+          "n_common": 1210,
+          "n_dropped_only": 333,
+          "n_added_only": 306,
+          "n_base_total": 1543,
+          "n_new_total": 1516,
+          "by_horizon": {
+            "T+5": {
+              "common_kept": {
+                "n": 1210,
+                "mean_pct": 0.9761,
+                "t_naive": 3.79,
+                "t_newey_west": 2.42,
+                "pct_positive": 0.4876,
+                "empirical_2.5pct": -13.278,
+                "empirical_97.5pct": 20.0
+              },
+              "dropped_only": {
+                "n": 333,
+                "mean_pct": 1.5008,
+                "t_naive": 2.69,
+                "t_newey_west": 1.95,
+                "pct_positive": 0.5225,
+                "empirical_2.5pct": -15.7182,
+                "empirical_97.5pct": 24.6809
+              },
+              "added_only": {
+                "n": 306,
+                "mean_pct": 1.834,
+                "t_naive": 3.19,
+                "t_newey_west": 2.31,
+                "pct_positive": 0.5261,
+                "empirical_2.5pct": -12.9393,
+                "empirical_97.5pct": 26.0952
+              },
+              "reconstructed_mean_base_pct": 1.0893,
+              "reconstructed_mean_new_pct": 1.1493,
+              "reconstructed_aggregate_diff_pct": 0.0599,
+              "replacement_effect_added_minus_dropped_pct": 0.3332
+            },
+            "T+20": {
+              "common_kept": {
+                "n": 1210,
+                "mean_pct": 2.7698,
+                "t_naive": 5.91,
+                "t_newey_west": 2.62,
+                "pct_positive": 0.4917,
+                "empirical_2.5pct": -21.4732,
+                "empirical_97.5pct": 46.2413
+              },
+              "dropped_only": {
+                "n": 333,
+                "mean_pct": 2.9919,
+                "t_naive": 2.93,
+                "t_newey_west": 1.81,
+                "pct_positive": 0.4985,
+                "empirical_2.5pct": -27.1128,
+                "empirical_97.5pct": 49.6437
+              },
+              "added_only": {
+                "n": 306,
+                "mean_pct": 6.8385,
+                "t_naive": 5.68,
+                "t_newey_west": 2.6,
+                "pct_positive": 0.5327,
+                "empirical_2.5pct": -23.057,
+                "empirical_97.5pct": 60.7754
+              },
+              "reconstructed_mean_base_pct": 2.8177,
+              "reconstructed_mean_new_pct": 3.5911,
+              "reconstructed_aggregate_diff_pct": 0.7733,
+              "replacement_effect_added_minus_dropped_pct": 3.8466
+            }
+          }
+        },
+        "R0_vs_R3b": {
+          "n_common": 566,
+          "n_dropped_only": 977,
+          "n_added_only": 458,
+          "n_base_total": 1543,
+          "n_new_total": 1024,
+          "by_horizon": {
+            "T+5": {
+              "common_kept": {
+                "n": 566,
+                "mean_pct": 1.727,
+                "t_naive": 4.47,
+                "t_newey_west": 2.91,
+                "pct_positive": 0.5389,
+                "empirical_2.5pct": -13.0263,
+                "empirical_97.5pct": 20.0
+              },
+              "dropped_only": {
+                "n": 977,
+                "mean_pct": 0.7199,
+                "t_naive": 2.44,
+                "t_newey_west": 1.64,
+                "pct_positive": 0.4698,
+                "empirical_2.5pct": -14.1496,
+                "empirical_97.5pct": 22.5874
+              },
+              "added_only": {
+                "n": 458,
+                "mean_pct": 2.2473,
+                "t_naive": 4.72,
+                "t_newey_west": 3.14,
+                "pct_positive": 0.5568,
+                "empirical_2.5pct": -13.2203,
+                "empirical_97.5pct": 27.7963
+              },
+              "reconstructed_mean_base_pct": 1.0893,
+              "reconstructed_mean_new_pct": 1.9597,
+              "reconstructed_aggregate_diff_pct": 0.8704,
+              "replacement_effect_added_minus_dropped_pct": 1.5273
+            },
+            "T+20": {
+              "common_kept": {
+                "n": 566,
+                "mean_pct": 3.8289,
+                "t_naive": 5.45,
+                "t_newey_west": 2.49,
+                "pct_positive": 0.5141,
+                "empirical_2.5pct": -19.7254,
+                "empirical_97.5pct": 48.5075
+              },
+              "dropped_only": {
+                "n": 977,
+                "mean_pct": 2.2319,
+                "t_naive": 4.13,
+                "t_newey_west": 1.96,
+                "pct_positive": 0.4811,
+                "empirical_2.5pct": -24.8503,
+                "empirical_97.5pct": 43.1784
+              },
+              "added_only": {
+                "n": 458,
+                "mean_pct": 8.9819,
+                "t_naive": 7.87,
+                "t_newey_west": 3.31,
+                "pct_positive": 0.5655,
+                "empirical_2.5pct": -25.5376,
+                "empirical_97.5pct": 68.8525
+              },
+              "reconstructed_mean_base_pct": 2.8177,
+              "reconstructed_mean_new_pct": 6.1337,
+              "reconstructed_aggregate_diff_pct": 3.3159,
+              "replacement_effect_added_minus_dropped_pct": 6.75
+            }
+          }
+        }
+      }
+    },
+    "primary_recent_12m": {
+      "window": "1차(최근 12개월)",
+      "comparisons": {
+        "R0_vs_R3": {
+          "n_common": 516,
+          "n_dropped_only": 157,
+          "n_added_only": 141,
+          "n_base_total": 673,
+          "n_new_total": 657,
+          "by_horizon": {
+            "T+5": {
+              "common_kept": {
+                "n": 516,
+                "mean_pct": 1.8616,
+                "t_naive": 3.85,
+                "t_newey_west": 2.37,
+                "pct_positive": 0.5194,
+                "empirical_2.5pct": -14.3525,
+                "empirical_97.5pct": 28.4932
+              },
+              "dropped_only": {
+                "n": 157,
+                "mean_pct": 2.7021,
+                "t_naive": 3.11,
+                "t_newey_west": 2.17,
+                "pct_positive": 0.5732,
+                "empirical_2.5pct": -16.6304,
+                "empirical_97.5pct": 24.6809
+              },
+              "added_only": {
+                "n": 141,
+                "mean_pct": 2.9617,
+                "t_naive": 2.79,
+                "t_newey_west": 1.94,
+                "pct_positive": 0.5461,
+                "empirical_2.5pct": -13.671,
+                "empirical_97.5pct": 31.1748
+              },
+              "reconstructed_mean_base_pct": 2.0577,
+              "reconstructed_mean_new_pct": 2.0977,
+              "reconstructed_aggregate_diff_pct": 0.04,
+              "replacement_effect_added_minus_dropped_pct": 0.2596
+            },
+            "T+20": {
+              "common_kept": {
+                "n": 516,
+                "mean_pct": 4.5143,
+                "t_naive": 5.33,
+                "t_newey_west": 2.49,
+                "pct_positive": 0.5155,
+                "empirical_2.5pct": -22.6841,
+                "empirical_97.5pct": 51.1828
+              },
+              "dropped_only": {
+                "n": 157,
+                "mean_pct": 3.6241,
+                "t_naive": 2.19,
+                "t_newey_west": 1.26,
+                "pct_positive": 0.5223,
+                "empirical_2.5pct": -27.1128,
+                "empirical_97.5pct": 49.9368
+              },
+              "added_only": {
+                "n": 141,
+                "mean_pct": 11.6682,
+                "t_naive": 5.46,
+                "t_newey_west": 2.54,
+                "pct_positive": 0.6454,
+                "empirical_2.5pct": -25.1261,
+                "empirical_97.5pct": 67.0908
+              },
+              "reconstructed_mean_base_pct": 4.3066,
+              "reconstructed_mean_new_pct": 6.0496,
+              "reconstructed_aggregate_diff_pct": 1.743,
+              "replacement_effect_added_minus_dropped_pct": 8.0441
+            }
+          }
+        },
+        "R0_vs_R3b": {
+          "n_common": 234,
+          "n_dropped_only": 439,
+          "n_added_only": 209,
+          "n_base_total": 673,
+          "n_new_total": 443,
+          "by_horizon": {
+            "T+5": {
+              "common_kept": {
+                "n": 234,
+                "mean_pct": 2.0964,
+                "t_naive": 2.87,
+                "t_newey_west": 1.8,
+                "pct_positive": 0.5513,
+                "empirical_2.5pct": -16.2476,
+                "empirical_97.5pct": 24.0
+              },
+              "dropped_only": {
+                "n": 439,
+                "mean_pct": 2.037,
+                "t_naive": 3.93,
+                "t_newey_west": 2.59,
+                "pct_positive": 0.5216,
+                "empirical_2.5pct": -15.5638,
+                "empirical_97.5pct": 26.2803
+              },
+              "added_only": {
+                "n": 209,
+                "mean_pct": 3.7513,
+                "t_naive": 4.6,
+                "t_newey_west": 2.88,
+                "pct_positive": 0.6029,
+                "empirical_2.5pct": -12.9393,
+                "empirical_97.5pct": 32.0224
+              },
+              "reconstructed_mean_base_pct": 2.0577,
+              "reconstructed_mean_new_pct": 2.8771,
+              "reconstructed_aggregate_diff_pct": 0.8195,
+              "replacement_effect_added_minus_dropped_pct": 1.7143
+            },
+            "T+20": {
+              "common_kept": {
+                "n": 234,
+                "mean_pct": 5.1597,
+                "t_naive": 4.1,
+                "t_newey_west": 1.95,
+                "pct_positive": 0.5513,
+                "empirical_2.5pct": -21.4732,
+                "empirical_97.5pct": 51.1828
+              },
+              "dropped_only": {
+                "n": 439,
+                "mean_pct": 3.8519,
+                "t_naive": 4.09,
+                "t_newey_west": 1.96,
+                "pct_positive": 0.4989,
+                "empirical_2.5pct": -24.8503,
+                "empirical_97.5pct": 50.3205
+              },
+              "added_only": {
+                "n": 209,
+                "mean_pct": 13.6395,
+                "t_naive": 6.72,
+                "t_newey_west": 2.71,
+                "pct_positive": 0.6364,
+                "empirical_2.5pct": -28.2,
+                "empirical_97.5pct": 100.5556
+              },
+              "reconstructed_mean_base_pct": 4.3066,
+              "reconstructed_mean_new_pct": 9.1603,
+              "reconstructed_aggregate_diff_pct": 4.8537,
+              "replacement_effect_added_minus_dropped_pct": 9.7876
+            }
+          }
+        }
+      }
+    },
+    "3y_first_half": {
+      "window": "3년 전반부",
+      "comparisons": {
+        "R0_vs_R3": {
+          "n_common": 534,
+          "n_dropped_only": 123,
+          "n_added_only": 115,
+          "n_base_total": 657,
+          "n_new_total": 649,
+          "by_horizon": {
+            "T+5": {
+              "common_kept": {
+                "n": 534,
+                "mean_pct": 0.5164,
+                "t_naive": 1.67,
+                "t_newey_west": 1.2,
+                "pct_positive": 0.4644,
+                "empirical_2.5pct": -11.4458,
+                "empirical_97.5pct": 15.8868
+              },
+              "dropped_only": {
+                "n": 123,
+                "mean_pct": 0.121,
+                "t_naive": 0.13,
+                "t_newey_west": 0.1,
+                "pct_positive": 0.4472,
+                "empirical_2.5pct": -15.255,
+                "empirical_97.5pct": 21.8341
+              },
+              "added_only": {
+                "n": 115,
+                "mean_pct": 0.3893,
+                "t_naive": 0.58,
+                "t_newey_west": 0.54,
+                "pct_positive": 0.487,
+                "empirical_2.5pct": -12.2807,
+                "empirical_97.5pct": 16.924
+              },
+              "reconstructed_mean_base_pct": 0.4424,
+              "reconstructed_mean_new_pct": 0.4939,
+              "reconstructed_aggregate_diff_pct": 0.0515,
+              "replacement_effect_added_minus_dropped_pct": 0.2683
+            },
+            "T+20": {
+              "common_kept": {
+                "n": 534,
+                "mean_pct": 0.9487,
+                "t_naive": 1.83,
+                "t_newey_west": 0.87,
+                "pct_positive": 0.4644,
+                "empirical_2.5pct": -19.0962,
+                "empirical_97.5pct": 30.1867
+              },
+              "dropped_only": {
+                "n": 123,
+                "mean_pct": 1.1065,
+                "t_naive": 0.77,
+                "t_newey_west": 0.63,
+                "pct_positive": 0.4553,
+                "empirical_2.5pct": -32.0339,
+                "empirical_97.5pct": 38.9134
+              },
+              "added_only": {
+                "n": 115,
+                "mean_pct": 1.3662,
+                "t_naive": 1.04,
+                "t_newey_west": 0.91,
+                "pct_positive": 0.4,
+                "empirical_2.5pct": -17.6249,
+                "empirical_97.5pct": 35.7143
+              },
+              "reconstructed_mean_base_pct": 0.9782,
+              "reconstructed_mean_new_pct": 1.0226,
+              "reconstructed_aggregate_diff_pct": 0.0444,
+              "replacement_effect_added_minus_dropped_pct": 0.2597
+            }
+          }
+        },
+        "R0_vs_R3b": {
+          "n_common": 248,
+          "n_dropped_only": 409,
+          "n_added_only": 177,
+          "n_base_total": 657,
+          "n_new_total": 425,
+          "by_horizon": {
+            "T+5": {
+              "common_kept": {
+                "n": 248,
+                "mean_pct": 1.5493,
+                "t_naive": 3.05,
+                "t_newey_west": 2.19,
+                "pct_positive": 0.5282,
+                "empirical_2.5pct": -11.6492,
+                "empirical_97.5pct": 18.1015
+              },
+              "dropped_only": {
+                "n": 409,
+                "mean_pct": -0.2288,
+                "t_naive": -0.61,
+                "t_newey_west": -0.46,
+                "pct_positive": 0.4205,
+                "empirical_2.5pct": -11.8257,
+                "empirical_97.5pct": 16.3748
+              },
+              "added_only": {
+                "n": 177,
+                "mean_pct": 0.7763,
+                "t_naive": 1.18,
+                "t_newey_west": 0.93,
+                "pct_positive": 0.4915,
+                "empirical_2.5pct": -14.8768,
+                "empirical_97.5pct": 24.1667
+              },
+              "reconstructed_mean_base_pct": 0.4424,
+              "reconstructed_mean_new_pct": 1.2273,
+              "reconstructed_aggregate_diff_pct": 0.785,
+              "replacement_effect_added_minus_dropped_pct": 1.0051
+            },
+            "T+20": {
+              "common_kept": {
+                "n": 248,
+                "mean_pct": 1.85,
+                "t_naive": 2.19,
+                "t_newey_west": 1.12,
+                "pct_positive": 0.4597,
+                "empirical_2.5pct": -18.2222,
+                "empirical_97.5pct": 34.6596
+              },
+              "dropped_only": {
+                "n": 409,
+                "mean_pct": 0.4496,
+                "t_naive": 0.73,
+                "t_newey_west": 0.42,
+                "pct_positive": 0.4645,
+                "empirical_2.5pct": -24.4762,
+                "empirical_97.5pct": 32.0573
+              },
+              "added_only": {
+                "n": 177,
+                "mean_pct": 4.2034,
+                "t_naive": 2.96,
+                "t_newey_west": 1.79,
+                "pct_positive": 0.4689,
+                "empirical_2.5pct": -25.5376,
+                "empirical_97.5pct": 48.8764
+              },
+              "reconstructed_mean_base_pct": 0.9782,
+              "reconstructed_mean_new_pct": 2.8301,
+              "reconstructed_aggregate_diff_pct": 1.8519,
+              "replacement_effect_added_minus_dropped_pct": 3.7538
+            }
+          }
+        }
+      }
+    },
+    "3y_second_half": {
+      "window": "3년 후반부",
+      "comparisons": {
+        "R0_vs_R3": {
+          "n_common": 676,
+          "n_dropped_only": 210,
+          "n_added_only": 191,
+          "n_base_total": 886,
+          "n_new_total": 867,
+          "by_horizon": {
+            "T+5": {
+              "common_kept": {
+                "n": 676,
+                "mean_pct": 1.3393,
+                "t_naive": 3.43,
+                "t_newey_west": 2.1,
+                "pct_positive": 0.5059,
+                "empirical_2.5pct": -14.5062,
+                "empirical_97.5pct": 23.1207
+              },
+              "dropped_only": {
+                "n": 210,
+                "mean_pct": 2.3089,
+                "t_naive": 3.31,
+                "t_newey_west": 2.33,
+                "pct_positive": 0.5667,
+                "empirical_2.5pct": -16.6197,
+                "empirical_97.5pct": 24.6809
+              },
+              "added_only": {
+                "n": 191,
+                "mean_pct": 2.7038,
+                "t_naive": 3.28,
+                "t_newey_west": 2.31,
+                "pct_positive": 0.5497,
+                "empirical_2.5pct": -12.9393,
+                "empirical_97.5pct": 31.1748
+              },
+              "reconstructed_mean_base_pct": 1.5691,
+              "reconstructed_mean_new_pct": 1.6399,
+              "reconstructed_aggregate_diff_pct": 0.0708,
+              "replacement_effect_added_minus_dropped_pct": 0.3948
+            },
+            "T+20": {
+              "common_kept": {
+                "n": 676,
+                "mean_pct": 4.2084,
+                "t_naive": 5.78,
+                "t_newey_west": 2.58,
+                "pct_positive": 0.5133,
+                "empirical_2.5pct": -22.7788,
+                "empirical_97.5pct": 51.1828
+              },
+              "dropped_only": {
+                "n": 210,
+                "mean_pct": 4.0961,
+                "t_naive": 2.97,
+                "t_newey_west": 1.76,
+                "pct_positive": 0.5238,
+                "empirical_2.5pct": -26.8571,
+                "empirical_97.5pct": 49.9368
+              },
+              "added_only": {
+                "n": 191,
+                "mean_pct": 10.1333,
+                "t_naive": 5.91,
+                "t_newey_west": 2.75,
+                "pct_positive": 0.6126,
+                "empirical_2.5pct": -24.8276,
+                "empirical_97.5pct": 65.0246
+              },
+              "reconstructed_mean_base_pct": 4.1818,
+              "reconstructed_mean_new_pct": 5.5137,
+              "reconstructed_aggregate_diff_pct": 1.3319,
+              "replacement_effect_added_minus_dropped_pct": 6.0372
+            }
+          }
+        },
+        "R0_vs_R3b": {
+          "n_common": 318,
+          "n_dropped_only": 568,
+          "n_added_only": 281,
+          "n_base_total": 886,
+          "n_new_total": 599,
+          "by_horizon": {
+            "T+5": {
+              "common_kept": {
+                "n": 318,
+                "mean_pct": 1.8657,
+                "t_naive": 3.32,
+                "t_newey_west": 2.08,
+                "pct_positive": 0.5472,
+                "empirical_2.5pct": -14.2651,
+                "empirical_97.5pct": 21.202
+              },
+              "dropped_only": {
+                "n": 568,
+                "mean_pct": 1.4031,
+                "t_naive": 3.28,
+                "t_newey_west": 2.15,
+                "pct_positive": 0.5053,
+                "empirical_2.5pct": -15.5751,
+                "empirical_97.5pct": 24.6809
+              },
+              "added_only": {
+                "n": 281,
+                "mean_pct": 3.1738,
+                "t_naive": 4.87,
+                "t_newey_west": 3.1,
+                "pct_positive": 0.5979,
+                "empirical_2.5pct": -12.813,
+                "empirical_97.5pct": 31.1748
+              },
+              "reconstructed_mean_base_pct": 1.5691,
+              "reconstructed_mean_new_pct": 2.4793,
+              "reconstructed_aggregate_diff_pct": 0.9102,
+              "replacement_effect_added_minus_dropped_pct": 1.7707
+            },
+            "T+20": {
+              "common_kept": {
+                "n": 318,
+                "mean_pct": 5.3722,
+                "t_naive": 5.09,
+                "t_newey_west": 2.32,
+                "pct_positive": 0.5566,
+                "empirical_2.5pct": -20.6052,
+                "empirical_97.5pct": 51.1828
+              },
+              "dropped_only": {
+                "n": 568,
+                "mean_pct": 3.5153,
+                "t_naive": 4.33,
+                "t_newey_west": 2.0,
+                "pct_positive": 0.493,
+                "empirical_2.5pct": -26.5805,
+                "empirical_97.5pct": 50.6744
+              },
+              "added_only": {
+                "n": 281,
+                "mean_pct": 11.9918,
+                "t_naive": 7.46,
+                "t_newey_west": 3.03,
+                "pct_positive": 0.6263,
+                "empirical_2.5pct": -25.1261,
+                "empirical_97.5pct": 92.6535
+              },
+              "reconstructed_mean_base_pct": 4.1818,
+              "reconstructed_mean_new_pct": 8.4776,
+              "reconstructed_aggregate_diff_pct": 4.2958,
+              "replacement_effect_added_minus_dropped_pct": 8.4765
+            }
+          }
+        }
+      }
+    },
+    "quarter_1": {
+      "window": "3년 분기1(2023-10-10~2024-06-07)",
+      "comparisons": {
+        "R0_vs_R3": {
+          "n_common": 326,
+          "n_dropped_only": 62,
+          "n_added_only": 59,
+          "n_base_total": 388,
+          "n_new_total": 385,
+          "by_horizon": {
+            "T+5": {
+              "common_kept": {
+                "n": 326,
+                "mean_pct": 0.2149,
+                "t_naive": 0.56,
+                "t_newey_west": 0.38,
+                "pct_positive": 0.4417,
+                "empirical_2.5pct": -11.4467,
+                "empirical_97.5pct": 15.516
+              },
+              "dropped_only": {
+                "n": 62,
+                "mean_pct": 1.5263,
+                "t_naive": 0.98,
+                "t_newey_west": 0.8,
+                "pct_positive": 0.5,
+                "empirical_2.5pct": -11.8616,
+                "empirical_97.5pct": 26.589
+              },
+              "added_only": {
+                "n": 59,
+                "mean_pct": 0.6482,
+                "t_naive": 0.72,
+                "t_newey_west": 0.61,
+                "pct_positive": 0.4576,
+                "empirical_2.5pct": -8.8418,
+                "empirical_97.5pct": 21.1382
+              },
+              "reconstructed_mean_base_pct": 0.4244,
+              "reconstructed_mean_new_pct": 0.2813,
+              "reconstructed_aggregate_diff_pct": -0.1431,
+              "replacement_effect_added_minus_dropped_pct": -0.8781
+            },
+            "T+20": {
+              "common_kept": {
+                "n": 326,
+                "mean_pct": 0.7178,
+                "t_naive": 1.12,
+                "t_newey_west": 0.45,
+                "pct_positive": 0.4448,
+                "empirical_2.5pct": -18.7931,
+                "empirical_97.5pct": 27.8481
+              },
+              "dropped_only": {
+                "n": 62,
+                "mean_pct": 3.7826,
+                "t_naive": 1.65,
+                "t_newey_west": 1.71,
+                "pct_positive": 0.4355,
+                "empirical_2.5pct": -13.9601,
+                "empirical_97.5pct": 38.9134
+              },
+              "added_only": {
+                "n": 59,
+                "mean_pct": 2.8257,
+                "t_naive": 1.39,
+                "t_newey_west": 1.23,
+                "pct_positive": 0.4576,
+                "empirical_2.5pct": -18.8482,
+                "empirical_97.5pct": 39.653
+              },
+              "reconstructed_mean_base_pct": 1.2076,
+              "reconstructed_mean_new_pct": 1.0409,
+              "reconstructed_aggregate_diff_pct": -0.1667,
+              "replacement_effect_added_minus_dropped_pct": -0.9569
+            }
+          }
+        },
+        "R0_vs_R3b": {
+          "n_common": 150,
+          "n_dropped_only": 238,
+          "n_added_only": 95,
+          "n_base_total": 388,
+          "n_new_total": 245,
+          "by_horizon": {
+            "T+5": {
+              "common_kept": {
+                "n": 150,
+                "mean_pct": 1.2297,
+                "t_naive": 2.13,
+                "t_newey_west": 1.38,
+                "pct_positive": 0.5333,
+                "empirical_2.5pct": -11.6492,
+                "empirical_97.5pct": 15.2078
+              },
+              "dropped_only": {
+                "n": 238,
+                "mean_pct": -0.0831,
+                "t_naive": -0.15,
+                "t_newey_west": -0.11,
+                "pct_positive": 0.3992,
+                "empirical_2.5pct": -11.4458,
+                "empirical_97.5pct": 18.6706
+              },
+              "added_only": {
+                "n": 95,
+                "mean_pct": -0.0236,
+                "t_naive": -0.03,
+                "t_newey_west": -0.03,
+                "pct_positive": 0.4316,
+                "empirical_2.5pct": -11.8852,
+                "empirical_97.5pct": 18.6472
+              },
+              "reconstructed_mean_base_pct": 0.4244,
+              "reconstructed_mean_new_pct": 0.7437,
+              "reconstructed_aggregate_diff_pct": 0.3193,
+              "replacement_effect_added_minus_dropped_pct": 0.0595
+            },
+            "T+20": {
+              "common_kept": {
+                "n": 150,
+                "mean_pct": 1.5736,
+                "t_naive": 1.59,
+                "t_newey_west": 0.66,
+                "pct_positive": 0.4533,
+                "empirical_2.5pct": -16.6583,
+                "empirical_97.5pct": 30.9487
+              },
+              "dropped_only": {
+                "n": 238,
+                "mean_pct": 0.9769,
+                "t_naive": 1.13,
+                "t_newey_west": 0.61,
+                "pct_positive": 0.437,
+                "empirical_2.5pct": -19.0962,
+                "empirical_97.5pct": 35.316
+              },
+              "added_only": {
+                "n": 95,
+                "mean_pct": 4.2619,
+                "t_naive": 2.19,
+                "t_newey_west": 1.99,
+                "pct_positive": 0.4632,
+                "empirical_2.5pct": -22.3759,
+                "empirical_97.5pct": 48.8764
+              },
+              "reconstructed_mean_base_pct": 1.2076,
+              "reconstructed_mean_new_pct": 2.616,
+              "reconstructed_aggregate_diff_pct": 1.4084,
+              "replacement_effect_added_minus_dropped_pct": 3.285
+            }
+          }
+        }
+      }
+    },
+    "quarter_2": {
+      "window": "3년 분기2(2024-06-10~2025-02-11)",
+      "comparisons": {
+        "R0_vs_R3": {
+          "n_common": 208,
+          "n_dropped_only": 61,
+          "n_added_only": 56,
+          "n_base_total": 269,
+          "n_new_total": 264,
+          "by_horizon": {
+            "T+5": {
+              "common_kept": {
+                "n": 208,
+                "mean_pct": 0.9889,
+                "t_naive": 1.91,
+                "t_newey_west": 1.54,
+                "pct_positive": 0.5,
+                "empirical_2.5pct": -9.9313,
+                "empirical_97.5pct": 15.8868
+              },
+              "dropped_only": {
+                "n": 61,
+                "mean_pct": -1.3073,
+                "t_naive": -1.41,
+                "t_newey_west": -1.1,
+                "pct_positive": 0.3934,
+                "empirical_2.5pct": -15.255,
+                "empirical_97.5pct": 9.8171
+              },
+              "added_only": {
+                "n": 56,
+                "mean_pct": 0.1166,
+                "t_naive": 0.12,
+                "t_newey_west": 0.12,
+                "pct_positive": 0.5179,
+                "empirical_2.5pct": -13.4003,
+                "empirical_97.5pct": 16.924
+              },
+              "reconstructed_mean_base_pct": 0.4682,
+              "reconstructed_mean_new_pct": 0.8039,
+              "reconstructed_aggregate_diff_pct": 0.3357,
+              "replacement_effect_added_minus_dropped_pct": 1.4239
+            },
+            "T+20": {
+              "common_kept": {
+                "n": 208,
+                "mean_pct": 1.3104,
+                "t_naive": 1.49,
+                "t_newey_west": 1.04,
+                "pct_positive": 0.4952,
+                "empirical_2.5pct": -23.9506,
+                "empirical_97.5pct": 30.1867
+              },
+              "dropped_only": {
+                "n": 61,
+                "mean_pct": -1.6133,
+                "t_naive": -0.98,
+                "t_newey_west": -1.18,
+                "pct_positive": 0.4754,
+                "empirical_2.5pct": -32.0339,
+                "empirical_97.5pct": 12.8529
+              },
+              "added_only": {
+                "n": 56,
+                "mean_pct": -0.1715,
+                "t_naive": -0.1,
+                "t_newey_west": -0.18,
+                "pct_positive": 0.3393,
+                "empirical_2.5pct": -16.8874,
+                "empirical_97.5pct": 32.0026
+              },
+              "reconstructed_mean_base_pct": 0.6474,
+              "reconstructed_mean_new_pct": 0.9961,
+              "reconstructed_aggregate_diff_pct": 0.3487,
+              "replacement_effect_added_minus_dropped_pct": 1.4419
+            }
+          }
+        },
+        "R0_vs_R3b": {
+          "n_common": 98,
+          "n_dropped_only": 171,
+          "n_added_only": 82,
+          "n_base_total": 269,
+          "n_new_total": 180,
+          "by_horizon": {
+            "T+5": {
+              "common_kept": {
+                "n": 98,
+                "mean_pct": 2.0384,
+                "t_naive": 2.19,
+                "t_newey_west": 1.77,
+                "pct_positive": 0.5204,
+                "empirical_2.5pct": -9.8039,
+                "empirical_97.5pct": 22.0657
+              },
+              "dropped_only": {
+                "n": 171,
+                "mean_pct": -0.4317,
+                "t_naive": -0.93,
+                "t_newey_west": -0.73,
+                "pct_positive": 0.4503,
+                "empirical_2.5pct": -12.069,
+                "empirical_97.5pct": 11.8263
+              },
+              "added_only": {
+                "n": 82,
+                "mean_pct": 1.703,
+                "t_naive": 1.52,
+                "t_newey_west": 1.11,
+                "pct_positive": 0.561,
+                "empirical_2.5pct": -16.8392,
+                "empirical_97.5pct": 25.6078
+              },
+              "reconstructed_mean_base_pct": 0.4682,
+              "reconstructed_mean_new_pct": 1.8856,
+              "reconstructed_aggregate_diff_pct": 1.4174,
+              "replacement_effect_added_minus_dropped_pct": 2.1347
+            },
+            "T+20": {
+              "common_kept": {
+                "n": 98,
+                "mean_pct": 2.273,
+                "t_naive": 1.51,
+                "t_newey_west": 1.17,
+                "pct_positive": 0.4694,
+                "empirical_2.5pct": -23.9506,
+                "empirical_97.5pct": 54.6809
+              },
+              "dropped_only": {
+                "n": 171,
+                "mean_pct": -0.2843,
+                "t_naive": -0.33,
+                "t_newey_west": -0.24,
+                "pct_positive": 0.5029,
+                "empirical_2.5pct": -26.3948,
+                "empirical_97.5pct": 22.9925
+              },
+              "added_only": {
+                "n": 82,
+                "mean_pct": 4.1357,
+                "t_naive": 1.98,
+                "t_newey_west": 0.96,
+                "pct_positive": 0.4756,
+                "empirical_2.5pct": -25.5376,
+                "empirical_97.5pct": 42.8894
+              },
+              "reconstructed_mean_base_pct": 0.6474,
+              "reconstructed_mean_new_pct": 3.1216,
+              "reconstructed_aggregate_diff_pct": 2.4742,
+              "replacement_effect_added_minus_dropped_pct": 4.42
+            }
+          }
+        }
+      }
+    },
+    "quarter_3": {
+      "window": "3년 분기3(2025-02-12~2025-10-14)",
+      "comparisons": {
+        "R0_vs_R3": {
+          "n_common": 336,
+          "n_dropped_only": 94,
+          "n_added_only": 89,
+          "n_base_total": 430,
+          "n_new_total": 425,
+          "by_horizon": {
+            "T+5": {
+              "common_kept": {
+                "n": 336,
+                "mean_pct": 0.3662,
+                "t_naive": 0.9,
+                "t_newey_west": 0.62,
+                "pct_positive": 0.4792,
+                "empirical_2.5pct": -13.5815,
+                "empirical_97.5pct": 14.2857
+              },
+              "dropped_only": {
+                "n": 94,
+                "mean_pct": 1.5848,
+                "t_naive": 1.93,
+                "t_newey_west": 1.56,
+                "pct_positive": 0.5213,
+                "empirical_2.5pct": -13.6038,
+                "empirical_97.5pct": 19.7183
+              },
+              "added_only": {
+                "n": 89,
+                "mean_pct": 1.3174,
+                "t_naive": 1.88,
+                "t_newey_west": 1.5,
+                "pct_positive": 0.5281,
+                "empirical_2.5pct": -9.589,
+                "empirical_97.5pct": 16.7904
+              },
+              "reconstructed_mean_base_pct": 0.6326,
+              "reconstructed_mean_new_pct": 0.5654,
+              "reconstructed_aggregate_diff_pct": -0.0672,
+              "replacement_effect_added_minus_dropped_pct": -0.2674
+            },
+            "T+20": {
+              "common_kept": {
+                "n": 336,
+                "mean_pct": 2.841,
+                "t_naive": 3.46,
+                "t_newey_west": 1.35,
+                "pct_positive": 0.497,
+                "empirical_2.5pct": -18.7368,
+                "empirical_97.5pct": 46.3636
+              },
+              "dropped_only": {
+                "n": 94,
+                "mean_pct": 6.5316,
+                "t_naive": 3.5,
+                "t_newey_west": 2.52,
+                "pct_positive": 0.5638,
+                "empirical_2.5pct": -12.8926,
+                "empirical_97.5pct": 49.6437
+              },
+              "added_only": {
+                "n": 89,
+                "mean_pct": 5.5176,
+                "t_naive": 3.17,
+                "t_newey_west": 1.65,
+                "pct_positive": 0.5506,
+                "empirical_2.5pct": -13.8927,
+                "empirical_97.5pct": 52.9691
+              },
+              "reconstructed_mean_base_pct": 3.6478,
+              "reconstructed_mean_new_pct": 3.4015,
+              "reconstructed_aggregate_diff_pct": -0.2463,
+              "replacement_effect_added_minus_dropped_pct": -1.0139
+            }
+          }
+        },
+        "R0_vs_R3b": {
+          "n_common": 180,
+          "n_dropped_only": 250,
+          "n_added_only": 128,
+          "n_base_total": 430,
+          "n_new_total": 308,
+          "by_horizon": {
+            "T+5": {
+              "common_kept": {
+                "n": 180,
+                "mean_pct": 0.916,
+                "t_naive": 1.95,
+                "t_newey_west": 1.34,
+                "pct_positive": 0.5389,
+                "empirical_2.5pct": -12.3328,
+                "empirical_97.5pct": 14.1129
+              },
+              "dropped_only": {
+                "n": 250,
+                "mean_pct": 0.4285,
+                "t_naive": 0.8,
+                "t_newey_west": 0.54,
+                "pct_positive": 0.452,
+                "empirical_2.5pct": -14.0,
+                "empirical_97.5pct": 19.4323
+              },
+              "added_only": {
+                "n": 128,
+                "mean_pct": 0.9971,
+                "t_naive": 1.54,
+                "t_newey_west": 1.13,
+                "pct_positive": 0.5625,
+                "empirical_2.5pct": -11.8012,
+                "empirical_97.5pct": 18.1818
+              },
+              "reconstructed_mean_base_pct": 0.6326,
+              "reconstructed_mean_new_pct": 0.9497,
+              "reconstructed_aggregate_diff_pct": 0.3171,
+              "replacement_effect_added_minus_dropped_pct": 0.5686
+            },
+            "T+20": {
+              "common_kept": {
+                "n": 180,
+                "mean_pct": 4.3689,
+                "t_naive": 3.78,
+                "t_newey_west": 1.51,
+                "pct_positive": 0.5444,
+                "empirical_2.5pct": -18.5664,
+                "empirical_97.5pct": 47.7849
+              },
+              "dropped_only": {
+                "n": 250,
+                "mean_pct": 3.1286,
+                "t_naive": 3.08,
+                "t_newey_west": 1.32,
+                "pct_positive": 0.488,
+                "empirical_2.5pct": -20.078,
+                "empirical_97.5pct": 48.6239
+              },
+              "added_only": {
+                "n": 128,
+                "mean_pct": 5.7226,
+                "t_naive": 3.89,
+                "t_newey_west": 1.8,
+                "pct_positive": 0.5625,
+                "empirical_2.5pct": -14.433,
+                "empirical_97.5pct": 49.8046
+              },
+              "reconstructed_mean_base_pct": 3.6478,
+              "reconstructed_mean_new_pct": 4.9315,
+              "reconstructed_aggregate_diff_pct": 1.2837,
+              "replacement_effect_added_minus_dropped_pct": 2.594
+            }
+          }
+        }
+      }
+    },
+    "quarter_4": {
+      "window": "3년 분기4(2025-10-15~2026-06-16)",
+      "comparisons": {
+        "R0_vs_R3": {
+          "n_common": 340,
+          "n_dropped_only": 116,
+          "n_added_only": 102,
+          "n_base_total": 456,
+          "n_new_total": 442,
+          "by_horizon": {
+            "T+5": {
+              "common_kept": {
+                "n": 340,
+                "mean_pct": 2.301,
+                "t_naive": 3.49,
+                "t_newey_west": 2.07,
+                "pct_positive": 0.5324,
+                "empirical_2.5pct": -16.2476,
+                "empirical_97.5pct": 31.652
+              },
+              "dropped_only": {
+                "n": 116,
+                "mean_pct": 2.8957,
+                "t_naive": 2.7,
+                "t_newey_west": 1.85,
+                "pct_positive": 0.6034,
+                "empirical_2.5pct": -18.722,
+                "empirical_97.5pct": 25.0
+              },
+              "added_only": {
+                "n": 102,
+                "mean_pct": 3.9134,
+                "t_naive": 2.77,
+                "t_newey_west": 1.94,
+                "pct_positive": 0.5686,
+                "empirical_2.5pct": -15.9763,
+                "empirical_97.5pct": 32.6733
+              },
+              "reconstructed_mean_base_pct": 2.4523,
+              "reconstructed_mean_new_pct": 2.6731,
+              "reconstructed_aggregate_diff_pct": 0.2208,
+              "replacement_effect_added_minus_dropped_pct": 1.0177
+            },
+            "T+20": {
+              "common_kept": {
+                "n": 340,
+                "mean_pct": 5.5597,
+                "t_naive": 4.65,
+                "t_newey_west": 2.28,
+                "pct_positive": 0.5294,
+                "empirical_2.5pct": -28.7809,
+                "empirical_97.5pct": 61.7907
+              },
+              "dropped_only": {
+                "n": 116,
+                "mean_pct": 2.1226,
+                "t_naive": 1.07,
+                "t_newey_west": 0.61,
+                "pct_positive": 0.4914,
+                "empirical_2.5pct": -27.1128,
+                "empirical_97.5pct": 59.5779
+              },
+              "added_only": {
+                "n": 102,
+                "mean_pct": 14.1608,
+                "t_naive": 5.1,
+                "t_newey_west": 2.49,
+                "pct_positive": 0.6667,
+                "empirical_2.5pct": -25.5814,
+                "empirical_97.5pct": 85.0498
+              },
+              "reconstructed_mean_base_pct": 4.6853,
+              "reconstructed_mean_new_pct": 7.5446,
+              "reconstructed_aggregate_diff_pct": 2.8592,
+              "replacement_effect_added_minus_dropped_pct": 12.0382
+            }
+          }
+        },
+        "R0_vs_R3b": {
+          "n_common": 138,
+          "n_dropped_only": 318,
+          "n_added_only": 153,
+          "n_base_total": 456,
+          "n_new_total": 291,
+          "by_horizon": {
+            "T+5": {
+              "common_kept": {
+                "n": 138,
+                "mean_pct": 3.1044,
+                "t_naive": 2.73,
+                "t_newey_west": 1.68,
+                "pct_positive": 0.558,
+                "empirical_2.5pct": -21.7677,
+                "empirical_97.5pct": 32.4387
+              },
+              "dropped_only": {
+                "n": 318,
+                "mean_pct": 2.1692,
+                "t_naive": 3.4,
+                "t_newey_west": 2.23,
+                "pct_positive": 0.5472,
+                "empirical_2.5pct": -16.0681,
+                "empirical_97.5pct": 26.5351
+              },
+              "added_only": {
+                "n": 153,
+                "mean_pct": 4.9948,
+                "t_naive": 4.78,
+                "t_newey_west": 3.01,
+                "pct_positive": 0.6275,
+                "empirical_2.5pct": -12.9393,
+                "empirical_97.5pct": 32.6733
+              },
+              "reconstructed_mean_base_pct": 2.4523,
+              "reconstructed_mean_new_pct": 4.0984,
+              "reconstructed_aggregate_diff_pct": 1.6461,
+              "replacement_effect_added_minus_dropped_pct": 2.8256
+            },
+            "T+20": {
+              "common_kept": {
+                "n": 138,
+                "mean_pct": 6.681,
+                "t_naive": 3.5,
+                "t_newey_west": 1.81,
+                "pct_positive": 0.5725,
+                "empirical_2.5pct": -26.2774,
+                "empirical_97.5pct": 56.8849
+              },
+              "dropped_only": {
+                "n": 318,
+                "mean_pct": 3.8193,
+                "t_naive": 3.15,
+                "t_newey_west": 1.56,
+                "pct_positive": 0.4969,
+                "empirical_2.5pct": -28.7809,
+                "empirical_97.5pct": 64.8148
+              },
+              "added_only": {
+                "n": 153,
+                "mean_pct": 17.2367,
+                "t_naive": 6.59,
+                "t_newey_west": 2.82,
+                "pct_positive": 0.6797,
+                "empirical_2.5pct": -28.2,
+                "empirical_97.5pct": 102.7723
+              },
+              "reconstructed_mean_base_pct": 4.6853,
+              "reconstructed_mean_new_pct": 12.2309,
+              "reconstructed_aggregate_diff_pct": 7.5455,
+              "replacement_effect_added_minus_dropped_pct": 13.4174
+            }
+          }
+        }
+      }
+    }
+  }
+}
