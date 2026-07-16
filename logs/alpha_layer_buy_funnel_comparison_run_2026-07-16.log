@@ -1,0 +1,43 @@
+INFO:validate_alpha_layer_buy_funnel_comparison:[20/87] 누적 표본 13060건
+INFO:validate_alpha_layer_buy_funnel_comparison:[40/87] 누적 표본 26120건
+INFO:validate_alpha_layer_buy_funnel_comparison:[60/87] 누적 표본 39180건
+INFO:validate_alpha_layer_buy_funnel_comparison:[80/87] 누적 표본 52240건
+INFO:validate_alpha_layer_buy_funnel_comparison:[87/87] 누적 표본 56753건
+INFO:validate_alpha_layer_buy_funnel_comparison:전체 3년 표본 56753건, 실패 0종목
+
+=== 현행 alpha layer vs regime_conditional_signal — BUY funnel 비교 ===
+전체 3년 표본: 56753건, 최근 12개월(cutoff=2025-06-16) 표본: 21315건
+
+=== 2차(3년, 전체 표본) (표본 56753건) ===
+  [시나리오 A: 현행 alpha] candidate=11101, eligible=5462(49.2%), would_buy=1920, blocked=5639
+    would_buy T+5: {'n': 1920, 'mean_pct': 0.6796, 't_naive': 3.69, 't_newey_west': 2.46, 'pct_positive': 0.4911}
+    would_buy T+20: {'n': 1920, 'mean_pct': 1.9041, 't_naive': 5.58, 't_newey_west': 2.38, 'pct_positive': 0.4854}
+  [시나리오 B: regime_conditional_signal] candidate=10999, eligible=3491(31.74%), would_buy=1543, blocked=7508
+    would_buy T+5: {'n': 1543, 'mean_pct': 1.0893, 't_naive': 4.64, 't_newey_west': 3.04, 'pct_positive': 0.4951}
+    would_buy T+20: {'n': 1543, 'mean_pct': 2.8177, 't_naive': 6.58, 't_newey_west': 2.9, 'pct_positive': 0.4932}
+
+=== 1차(최근 12개월) (표본 21315건) ===
+  [시나리오 A: 현행 alpha] candidate=4165, eligible=2322(55.75%), would_buy=722, blocked=1843
+    would_buy T+5: {'n': 722, 'mean_pct': 1.1985, 't_naive': 3.3, 't_newey_west': 2.09, 'pct_positive': 0.5028}
+    would_buy T+20: {'n': 722, 'mean_pct': 3.1516, 't_naive': 4.76, 't_newey_west': 2.09, 'pct_positive': 0.5111}
+  [시나리오 B: regime_conditional_signal] candidate=4165, eligible=1621(38.92%), would_buy=673, blocked=2544
+    would_buy T+5: {'n': 673, 'mean_pct': 2.0577, 't_naive': 4.87, 't_newey_west': 3.11, 'pct_positive': 0.5319}
+    would_buy T+20: {'n': 673, 'mean_pct': 4.3066, 't_naive': 5.71, 't_newey_west': 2.59, 'pct_positive': 0.5171}
+
+=== 3년 전반부 (표본 28304건) ===
+  [시나리오 A: 현행 alpha] candidate=5542, eligible=2448(44.17%), would_buy=959, blocked=3094
+    would_buy T+5: {'n': 959, 'mean_pct': 0.3533, 't_naive': 1.61, 't_newey_west': 1.2, 'pct_positive': 0.4765}
+    would_buy T+20: {'n': 959, 'mean_pct': 0.3667, 't_naive': 1.01, 't_newey_west': 0.5, 'pct_positive': 0.4536}
+  [시나리오 B: regime_conditional_signal] candidate=5457, eligible=1359(24.9%), would_buy=657, blocked=4098
+    would_buy T+5: {'n': 657, 'mean_pct': 0.4424, 't_naive': 1.46, 't_newey_west': 1.03, 'pct_positive': 0.4612}
+    would_buy T+20: {'n': 657, 'mean_pct': 0.9782, 't_naive': 1.96, 't_newey_west': 0.94, 'pct_positive': 0.4627}
+
+=== 3년 후반부 (표본 28449건) ===
+  [시나리오 A: 현행 alpha] candidate=5559, eligible=3014(54.22%), would_buy=961, blocked=2545
+    would_buy T+5: {'n': 961, 'mean_pct': 1.0053, 't_naive': 3.4, 't_newey_west': 2.15, 'pct_positive': 0.5057}
+    would_buy T+20: {'n': 961, 'mean_pct': 3.4383, 't_naive': 6.0, 't_newey_west': 2.48, 'pct_positive': 0.5172}
+  [시나리오 B: regime_conditional_signal] candidate=5542, eligible=2132(38.47%), would_buy=886, blocked=3410
+    would_buy T+5: {'n': 886, 'mean_pct': 1.5691, 't_naive': 4.61, 't_newey_west': 2.93, 'pct_positive': 0.5203}
+    would_buy T+20: {'n': 886, 'mean_pct': 4.1818, 't_naive': 6.49, 't_newey_west': 2.84, 'pct_positive': 0.5158}
+
+산출 저장: logs/signal_ic_alpha_layer_buy_funnel_comparison_2026-07-16.json

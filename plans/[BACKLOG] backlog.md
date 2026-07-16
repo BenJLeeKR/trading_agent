@@ -280,6 +280,20 @@
   아니라 "국면 조건부 threshold"일 가능성(설계 제안, 이번 턴은
   원인 규명까지만). 실행 로그로 KIS 호출 0건 확인.
 
+- 작성자: Claude
+- 수정일자: 2026-07-16 (25차, alpha layer 교체 BUY funnel 검증)
+- 수정내용: 무게중심을 활동성 필터에서 alpha 교체(SPPV-2.22)로
+  되돌려, 현행 alpha와 regime_conditional_signal을 candidate→
+  eligible→would_buy(실제 운영 top-K=3 재사용)→blocked 4단계
+  funnel로 비교했다(SPPV-2.27). would_buy 단계 forward return이
+  2차(3년)·1차(최근 12개월)·전반부·후반부 4개 창, T+5/T+20 전부
+  (8/8)에서 새 alpha가 현행보다 높았다 — 활동성 필터 완화와 달리
+  방향이 한 번도 반전되지 않았다(전반부만 비유의). eligible 비율은
+  낮아져 would_buy 표본이 약 20% 줄었지만 표본당 수익률 개선폭이
+  더 커 누적 기대 성과는 여전히 개선. 결론: Conditional Go가
+  funnel 레벨까지 보강됐으나, 전반부 비유의·국면 편향 가능성·거래
+  빈도 감소로 확정 Go는 아니다. 실행 로그로 KIS 호출 0건 확인.
+
 ---
 
 ## 관리 원칙
@@ -754,18 +768,46 @@
     `logs/signal_ic_activity_filter_half_period_divergence_
     2026-07-16.json`. 상세: `plans/[DESIGN] regime_conditional_
     entry_signal_v1.md` §16.
-  - **SPPV-3(다음 착수: "국면 조건부 활동성 threshold" 설계 검토
-    여부 사용자 확인)**: §2.16~§2.21에서 국면 정의 통일(차단 축)은
-    Watch/No-Go에 근접함이 확인됐고, §2.22에서 alpha layer 교체
-    (선별 축)는 Conditional Go를 확보했으며, **§2.23~§2.26에서
-    결합 사용 시 가장 빈번하게 걸리는 축이 활동성 필터임이 확인됐고,
-    완화 효과의 반전이 국면·유동성 구조 차이 때문임을 규명했으나,
-    정적 완화(1.10→1.00)가 기대수익률을 실제로 개선하는지는 여전히
-    Watch(격상 근거 없음) 단계에 머문다.** 다음 착수 형태는 "국면
-    조건부 threshold" 설계 검토 여부에 대한 사용자 확인이며, 운영
-    코드(`deterministic_trigger_engine.py:493-499`) 반영은
-    Conditional Go 이상 확보 후 사용자 승인받아 진행한다. 이 설계
-    문서를 기반으로 regime/allocation/
+  - **SPPV-2.27(완료, 2026-07-16, alpha layer 교체 BUY funnel
+    검증 — Conditional Go 보강, 확정 Go는 아님)**: 무게중심을
+    활동성 필터에서 alpha 교체(§2.22)로 되돌려, 현행 alpha와
+    `regime_conditional_signal`을 candidate(상위 20%)→eligible
+    (운영 `_assess_buy_eligibility` 그대로)→would_buy(eligible 중
+    entry_score 상위 `WATCH_TOP_K_BUY=3`, `trigger_proxy_
+    attribution.py:38`의 실제 운영 상수 재사용)→blocked 4단계
+    funnel로 비교했다. **결과: would_buy 단계 forward return이
+    2차(3년)·1차(최근 12개월)·전반부·후반부 4개 창, T+5/T+20 전부
+    (8/8)에서 새 alpha가 현행보다 높았다**(2차 T+20 현행 +1.90%/
+    t_NW=2.38 vs 신규 +2.82%/t_NW=2.90). **활동성 필터 완화(SPPV-
+    2.25/2.26)와 달리 방향이 한 번도 반전되지 않았다** — 전반부만
+    두 시나리오 모두 비유의했으나 방향은 유지됐다. eligible 비율이
+    낮아져(2차 31.7% vs 49.2%) would_buy 표본이 약 20% 줄었지만
+    표본당 수익률 개선폭이 더 커 누적 기대 성과 근사치는 신규
+    alpha가 여전히 컸다. **결론: §2.22의 Conditional Go가 funnel
+    실제 매수 후보 단계까지 방향 일관되게 보강됐으나, 전반부
+    비유의·국면 편향 가능성·거래 빈도 감소(약 20%)로 확정 Go는
+    아니다.** 신규 KIS 호출 0건. 산출:
+    `scripts/validate_alpha_layer_buy_funnel_comparison.py`
+    (read-only, 신규 KIS 호출 0건),
+    `logs/signal_ic_alpha_layer_buy_funnel_comparison_
+    2026-07-16.json`. 상세: `plans/[DESIGN] regime_conditional_
+    entry_signal_v1.md` §17.
+  - **SPPV-3(다음 착수: §3 전제조건 충족 후 alpha 교체 재검증 +
+    "국면 조건부 활동성 threshold" 설계 검토 여부 사용자 확인)**:
+    §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
+    근접함이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는
+    Conditional Go를 확보했으며, **§2.27에서 그 Conditional Go가
+    실제 BUY funnel 단계까지 방향 일관되게 보강됨을 확인했다.**
+    한편 **§2.23~§2.26에서 결합 사용 시 가장 빈번하게 걸리는 축이
+    활동성 필터임이 확인됐고, 완화 효과의 반전이 국면·유동성 구조
+    차이 때문임을 규명했으나, 정적 완화(1.10→1.00)가 기대수익률을
+    실제로 개선하는지는 여전히 Watch(격상 근거 없음) 단계에
+    머문다.** 다음 착수 형태는 alpha 교체의 §3 전제조건(§21 1차
+    게이트 TRIGGERED 전환, risk_off_penalty 중복 해소) 충족 후
+    재검증과 "국면 조건부 threshold" 설계 검토 여부에 대한 사용자
+    확인이며, 운영 코드(`deterministic_trigger_engine.py:493-499`)
+    반영은 Conditional Go 이상 확보 후 사용자 승인받아 진행한다.
+    이 설계 문서를 기반으로 regime/allocation/
     strategy/source를 복원한 `entry_score` point-in-time 재현과
     signal/risk-off/regime eligibility 중복 억제 ablation이다.
     착수 조건은 1차 게이트에서 `TRIGGERED` 전환이 관측되는 것 —

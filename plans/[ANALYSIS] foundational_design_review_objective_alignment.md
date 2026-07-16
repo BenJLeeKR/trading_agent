@@ -706,19 +706,40 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   threshold"일 가능성이 있으나 이번 턴은 원인 규명까지만 수행(새
   설계·구현·운영 코드 변경 없음). 상세: `plans/[DESIGN] regime_
   conditional_entry_signal_v1.md` §16.
+
+- 작성자: Claude
+- 수정일자: 2026-07-16 (2.28순위, alpha layer 교체 BUY funnel 검증)
+- 수정내용: 무게중심을 활동성 필터에서 alpha 교체(§2.22)로 되돌려,
+  현행 alpha와 `regime_conditional_signal`을 candidate→eligible→
+  would_buy(실제 운영 top-K 상수 재사용)→blocked 4단계 BUY funnel
+  로 비교했다. **결과: would_buy 단계 forward return이 2차(3년)·
+  1차(최근 12개월)·3년 전반부·3년 후반부 4개 창, T+5/T+20 전부
+  (8/8)에서 새 alpha가 현행보다 높았다** — 활동성 필터 완화(2.26
+  순위)와 달리 방향이 한 번도 반전되지 않았다(3년 전반부만 두
+  시나리오 모두 비유의했으나 방향은 유지). eligible 전환율은 신규
+  alpha가 더 낮아 would_buy 표본 수도 약 20% 적었지만, 표본당 평균
+  수익률 개선폭이 더 커서 누적 기대 성과 근사치는 신규 alpha가
+  여전히 컸다. **결론: §2.22의 Conditional Go가 funnel 실제 매수
+  후보 단계까지 보강됐으나, 3년 전반부 비유의·국면 편향 가능성·
+  거래 빈도 감소 트레이드오프로 확정 Go는 아니다.** 상세: `plans/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §17.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
   국면 정의 통일(차단 축)은 Watch/No-Go에 근접한다는 것이 확인됐고,
-  §2.22에서 alpha layer 교체(선별 축)는 Conditional Go를 확보했으나,
-  **§2.23~§2.27에서 결합 사용 시 가장 빈번하게 걸리는 축이 regime
-  관련 축이 아니라 활동성 필터(`eligibility_low_relative_activity`)
-  임이 확인됐고, 완화 효과의 반전이 국면·유동성 구조 차이 때문임을
-  규명했으나, 이 필터가 과잉 억제인지·정적 완화가 실제로 기대수익률을
-  개선하는지는 여전히 미확정이다(Watch — 격상 근거 없음)**. SPPV-3의
-  다음 착수 항목은 "국면 조건부 threshold" 설계 검토 여부에 대한
-  사용자 확인이며, 운영 코드 반영은 Conditional Go 이상이 확보된 뒤
-  사용자 승인을 받아 진행한다. 1차 게이트(§21 모니터링)가
+  §2.22에서 alpha layer 교체(선별 축)는 Conditional Go를 확보했고,
+  **§2.28에서 그 Conditional Go가 실제 BUY funnel(candidate→
+  eligible→would_buy) 단계까지 방향 일관되게 보강됨을 확인했다.**
+  한편 **§2.23~§2.27에서 결합 사용 시 가장 빈번하게 걸리는 축이
+  regime 관련 축이 아니라 활동성 필터(`eligibility_low_relative_
+  activity`)임이 확인됐고, 완화 효과의 반전이 국면·유동성 구조
+  차이 때문임을 규명했으나, 이 필터가 과잉 억제인지·정적 완화가
+  실제로 기대수익률을 개선하는지는 여전히 미확정이다(Watch — 격상
+  근거 없음)**. SPPV-3의 다음 착수 항목은 alpha 교체의 §3 전제조건
+  (§21 1차 게이트 TRIGGERED 전환, risk_off_penalty 중복 해소) 충족
+  후 재검증과 "국면 조건부 activity threshold" 설계 검토 여부에
+  대한 사용자 확인이며, 운영 코드 반영은 Conditional Go 이상이
+  확보된 뒤 사용자 승인을 받아 진행한다. 1차 게이트(§21 모니터링)가
   `TRIGGERED`로 전환되는 즉시
   alpha layer 교체의 최종 Go 여부도 재확인해야 하며, 그 전까지 코드
   변경은 보류한다. Virtual BUY별

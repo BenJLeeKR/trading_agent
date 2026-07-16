@@ -524,6 +524,28 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   확인). 상세: `plans/[DESIGN] regime_conditional_entry_signal_
   v1.md` §16.
 
+- 작성자: Claude
+- 수정일자: 2026-07-16 (26차, alpha layer 교체 BUY funnel 검증)
+- 수정내용: 무게중심을 활동성 필터에서 alpha 교체로 되돌려,
+  현행 alpha(`current_alpha_composite`)와 `regime_conditional_
+  signal`을 candidate→eligible→would_buy→blocked 4단계 BUY
+  funnel로 비교했다(SPPV-2.27). would_buy 상수(`WATCH_TOP_K_
+  BUY=3`)는 `trigger_proxy_attribution.py:38`의 실제 운영 상수를
+  재사용했다. **결과: would_buy 단계 forward return이 2차(3년)·
+  1차(최근 12개월)·3년 전반부·3년 후반부 4개 창, T+5/T+20 2개
+  horizon 전부(8/8)에서 새 alpha가 현행보다 높았다**(2차 T+20
+  현행 +1.90%/t_NW=2.38 vs 신규 +2.82%/t_NW=2.90). 활동성 필터
+  완화(§15)와 달리 방향이 한 번도 반전되지 않았다 — 3년 전반부만
+  두 시나리오 모두 비유의했으나 방향은 유지됐다. eligible 전환율은
+  신규 alpha가 더 낮아(2차 31.7% vs 49.2%) would_buy 표본 수가 약
+  20% 적었지만, 표본당 평균 수익률 개선폭이 더 커서 누적 기대
+  성과 근사치(표본 수×평균)는 신규 alpha가 여전히 컸다. 결론:
+  §12의 Conditional Go가 funnel 실제 매수 후보 단계까지 보강됐으나,
+  3년 전반부 비유의·국면 편향 가능성·거래 빈도 감소 트레이드오프로
+  확정 Go는 아니다. 신규 KIS 호출 0건. `entry_score` 운영 코드
+  변경 없음 — 이번 턴도 shadow/validation 범위. 상세: `plans/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §17.
+
 ---
 
 ## 진행 체크리스트
@@ -984,6 +1006,44 @@ canonical),
   - 다음 과제: "국면 조건부 활동성 threshold" 설계 검토 여부를
     사용자에게 확인받는 것, 유동성 구조 확대(거래대금 약 1.9배)가
     일시적인지 영구적인지 장기 모니터링.
+- [x] **SPPV-2.27(신설)** alpha layer 교체 BUY funnel(candidate→
+  eligible→would_buy→blocked) 검증 (완료, 2026-07-16)
+  - 작업 범위: 무게중심을 활동성 필터(§14~§16)에서 원래 핵심 레버인
+    alpha 교체(§12)로 되돌려, 현행 alpha(`current_alpha_composite`)
+    와 `regime_conditional_signal`을 candidate(상위 20%)→eligible
+    (운영 `_assess_buy_eligibility` 그대로)→would_buy(eligible 중
+    entry_score 상위 `WATCH_TOP_K_BUY=3`, 실제 운영 상수 재사용)→
+    blocked 4단계 BUY funnel로 비교. entry_score는 시나리오 A는
+    운영 함수 그대로, 시나리오 B는 §3 제안 그대로 alpha 항(0.80
+    가중치)만 교체하고 나머지는 동일 공식으로 재구성(운영 코드
+    미수정).
+  - **결과: would_buy(최종 매수 후보) 단계의 forward return이 2차
+    (3년)·1차(최근 12개월)·3년 전반부·3년 후반부 4개 창, T+5/T+20
+    2개 horizon 전부(8/8)에서 새 alpha(B)가 현행(A)보다 높았다**
+    (예: 2차 T+20 A +1.90%/t_NW=2.38 vs B +2.82%/t_NW=2.90; 1차
+    T+20 A +3.15%/t_NW=2.09 vs B +4.31%/t_NW=2.59). **활동성 필터
+    완화(§15)에서는 전반부에서 방향 자체가 반전됐던 것과 달리, 이번
+    alpha 교체 효과는 4개 창 전부에서 방향이 한 번도 뒤집히지
+    않았다** — 3년 전반부만 두 시나리오 모두 비유의(t_NW 0.5~1.2)
+    했으나 방향(B>A)은 유지됐다. funnel 전환율은 B가 eligible
+    비율이 더 낮아(2차 31.7% vs 49.2%) would_buy 표본 수도 약 20%
+    적었지만(2차 1,543 vs 1,920), 표본당 평균 수익률 개선폭이 더
+    커서 표본 수×평균 수익률의 합(누적 기대 성과 근사)은 B가 A보다
+    여전히 컸다(2차 T+20 기준 A 36.6 vs B 43.5, 약 19% 개선).
+    **판정: §12의 Conditional Go가 funnel의 실제 매수 후보 단계까지
+    보강됐다 — 그러나 3년 전반부 비유의, 국면 편향 가능성(§16과 동일
+    우려), 거래 빈도 감소 트레이드오프 때문에 확정 Go는 아니다.**
+    신규 KIS 호출 0건(기존 3년 캐시로 전량 서빙, 로그로 실측 확인).
+    `entry_score` 운영 코드 변경 없음 — 이번 턴도 shadow/validation
+    범위. 상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
+    §17.
+  - 산출물: `scripts/validate_alpha_layer_buy_funnel_comparison.py`
+    (read-only, 신규 KIS 호출 0건), `logs/signal_ic_alpha_layer_
+    buy_funnel_comparison_2026-07-16.json`, `logs/alpha_layer_buy_
+    funnel_comparison_run_2026-07-16.log`.
+  - 다음 과제: §3 전제조건(§21 1차 게이트 TRIGGERED 전환, risk_off_
+    penalty 중복 해소) 충족 후 재검증, regime별 층화 비교, 거래
+    빈도 감소의 운영 영향 별도 검토.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
@@ -1710,6 +1770,9 @@ bearish/range_bound 어느 국면 내부도 `overall_score`/`slow_score`가
 - `scripts/diagnose_activity_filter_half_period_divergence.py`,
   `logs/signal_ic_activity_filter_half_period_divergence_2026-07-16.json`,
   `logs/activity_filter_half_period_divergence_run_2026-07-16.log`
+- `scripts/validate_alpha_layer_buy_funnel_comparison.py`,
+  `logs/signal_ic_alpha_layer_buy_funnel_comparison_2026-07-16.json`,
+  `logs/alpha_layer_buy_funnel_comparison_run_2026-07-16.log`
 - `scripts/shadow_regime_conditional_entry_signal.py`(read-only, 신규
   KIS 호출 0건 — 3년 캐시 재사용)
 - `logs/shadow_regime_conditional_entry_signal_2026-07-15.json`,
