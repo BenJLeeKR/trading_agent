@@ -571,6 +571,29 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   미호출. 상세: `plans/[DESIGN] regime_conditional_entry_signal_
   v1.md` §18.
 
+- 작성자: Claude
+- 수정일자: 2026-07-16 (28차, 새 alpha entry_score 스케일 재보정
+  shadow 검증)
+- 수정내용: SPPV-2.28의 "0.65 문턱 사실상 무력화" caveat의 원인을
+  분해했다(SPPV-2.29) — `regime_conditional_signal`이 [-1,1] 스케일
+  이 아닌 퍼센트 단위 비율이라 `_normalize_signed_score`가 상위
+  20% quintile에서 거의 항상 saturate됨을 확인했다. 재보정 3안(R1
+  가중치 축소 0.80→0.50/R2 z-score/R3 percentile)과 기준선(R0)을
+  비교한 결과, **R1은 selected_rate를 크게 낮췄지만 forward return
+  이 3/4 창에서 악화돼 기각**했고, **R2는 selected_rate가 여전히
+  96.9~99.3%로 문제를 충분히 해결하지 못했다**(상위 20% 멤버는
+  정의상 z>=1 saturate 경계 근처에 몰림). **R3(percentile 기반)가
+  가장 균형 잡힌 결과를 보였다 — selected_rate를 93.7~96.5%로
+  의미 있게 낮추면서(문턱 실질 회복), forward return이 4개 창·2개
+  horizon 전부(8/8)에서 개선됐고**(2차 T+20 R0 +2.818% vs R3
+  +3.591%, 1차 T+20 R0 +4.307% vs R3 +6.050%), **would_buy 표본
+  감소는 1.2~2.4%로 미미했으며 MAE도 3개 창에서 근소 개선됐다.**
+  결론: R1/R2는 기각, R3를 유력한 재보정 후보로 채택 검토하되
+  단일 실험·재현성 미확인·§3 기존 전제조건 미충족으로 확정 Go는
+  아니다. 신규 KIS 호출 0건. 운영 코드 변경 없음, broker submit
+  미호출 — 이번 턴도 shadow/validation 범위. 상세: `plans/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §19.
+
 ---
 
 ## 진행 체크리스트
@@ -1103,6 +1126,43 @@ canonical),
   - 다음 과제: §3 공식의 재보정(스케일링) 설계 검토 여부 사용자
     확인, §3 전제조건 충족 후 재검증, regime별 층화 비교, MAE 확대가
     사이징/손절 설계에 미치는 영향 별도 검토.
+- [x] **SPPV-2.29(신설)** 새 alpha entry_score 스케일 재보정 shadow
+  검증 (완료, 2026-07-16)
+  - 작업 범위: SPPV-2.28이 발견한 "0.65 문턱 사실상 무력화" caveat의
+    원인을 분해하고, 재보정 3안(R1 가중치 축소/R2 z-score/R3
+    percentile)과 기준선(R0, 재보정 없음)을 candidate→eligible→
+    selected→would_buy funnel + MFE/MAE로 비교. candidate 정의는
+    바꾸지 않고 entry_score 계산에만 재보정 적용(운영 코드 미수정).
+  - **원인: `regime_conditional_signal`이 [-1,1] 스케일이 아닌
+    퍼센트 단위 비율(예: 3개월 수익률/변동성=6.0)이라 `_normalize_
+    signed_score`가 상위 20% quintile에서 거의 항상 saturate(1.0)
+    된다.**
+  - **결과: R1(가중치 0.80→0.50)은 selected_rate를 46.6~67.8%로
+    크게 낮췄지만 forward return이 4개 창 중 3개에서 오히려
+    악화 — 기각.** **R2(z-score)는 selected_rate가 96.9~99.3%로
+    R0(100%)와 큰 차이가 없어 문제를 충분히 해결하지 못함(상위
+    20% 멤버는 정의상 z>=1 saturate 경계 근처에 몰림) — forward
+    return은 3/4 창에서 개선됐으나 문턱 회복 목적은 미흡.**
+    **R3(percentile)가 가장 균형 잡힌 결과: selected_rate가
+    93.7~96.5%로 의미 있게 내려오면서(문턱 실질 회복), forward
+    return이 4개 창·2개 horizon 전부(8/8)에서 R0보다 개선됐고**
+    (예: 2차 T+20 R0 +2.818% vs R3 +3.591%, 1차 T+20 R0 +4.307%
+    vs R3 +6.050%), **would_buy 표본 감소는 1.2~2.4%로 미미했으며,
+    MAE(하방 절댓값)는 오히려 3개 창에서 근소하게 개선됐다.**
+    **결론: R1/R2는 기각, R3(percentile 기반 스케일링)를 유력한
+    재보정 후보로 채택 검토(Watch→Conditional Go 경계)한다 — 다만
+    단일 실험·재현성 미확인·§3 기존 전제조건 미충족으로 확정 Go는
+    아니다.** 신규 KIS 호출 0건(기존 3년 캐시로 전량 서빙, 로그로
+    실측 확인). 운영 코드 변경 없음, broker submit 미호출 — 이번
+    턴도 shadow/validation 범위. 상세: `plans/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §19.
+  - 산출물: `scripts/validate_alpha_layer_score_rescaling_
+    comparison.py`(read-only, 신규 KIS 호출 0건), `logs/signal_ic_
+    alpha_layer_score_rescaling_comparison_2026-07-16.json`,
+    `logs/alpha_layer_score_rescaling_comparison_run_2026-07-16.log`.
+  - 다음 과제: R3의 §3 공식 정식 반영 여부 사용자 확인, R3 재현성
+    추가 검증(분기별 분할 등), percentile 계산의 universe 구성
+    민감도 점검.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
@@ -1835,6 +1895,9 @@ bearish/range_bound 어느 국면 내부도 `overall_score`/`slow_score`가
 - `scripts/validate_alpha_layer_virtual_buy_funnel_extended.py`,
   `logs/signal_ic_alpha_layer_virtual_buy_funnel_extended_2026-07-16.json`,
   `logs/alpha_layer_virtual_buy_funnel_extended_run_2026-07-16.log`
+- `scripts/validate_alpha_layer_score_rescaling_comparison.py`,
+  `logs/signal_ic_alpha_layer_score_rescaling_comparison_2026-07-16.json`,
+  `logs/alpha_layer_score_rescaling_comparison_run_2026-07-16.log`
 - `scripts/shadow_regime_conditional_entry_signal.py`(read-only, 신규
   KIS 호출 0건 — 3년 캐시 재사용)
 - `logs/shadow_regime_conditional_entry_signal_2026-07-15.json`,

@@ -744,26 +744,52 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   무력화"·"MAE 확대"라는 두 계측 caveat이 추가되어 여전히 확정
   Go는 아니다.** broker submit 미호출. 상세: `plans/[DESIGN]
   regime_conditional_entry_signal_v1.md` §18.
+
+- 작성자: Claude
+- 수정일자: 2026-07-16 (2.30순위, 새 alpha entry_score 스케일
+  재보정 shadow 검증)
+- 수정내용: §2.29의 "0.65 문턱 사실상 무력화" caveat의 원인을
+  분해했다 — `regime_conditional_signal`이 [-1,1] 스케일이 아닌
+  퍼센트 단위 비율(예: 3개월 수익률/변동성=6.0)이라 `_normalize_
+  signed_score`가 상위 20% quintile에서 거의 항상 saturate됨을
+  확인했다. 재보정 3안(R1 가중치 축소 0.80→0.50/R2 z-score/R3
+  percentile)과 기준선(R0)을 candidate→eligible→selected→
+  would_buy funnel + MFE/MAE로 비교했다. **R1은 selected_rate를
+  46.6~67.8%로 크게 낮췄지만 forward return이 4개 창 중 3개에서
+  악화돼 기각.** **R2(z-score)는 selected_rate가 96.9~99.3%로
+  R0(100%)와 큰 차이가 없어 문제를 충분히 해결하지 못함**(상위
+  20% 멤버는 정의상 z>=1 saturate 경계 근처에 몰림). **R3
+  (percentile)가 가장 균형 잡힌 결과 — selected_rate를 93.7~96.5%
+  로 의미 있게 낮추면서(문턱 실질 회복), forward return이 4개 창·
+  2개 horizon 전부(8/8)에서 개선됐고**(2차 T+20 R0 +2.818% vs R3
+  +3.591%, 1차 T+20 R0 +4.307% vs R3 +6.050%), **would_buy 표본
+  감소는 1.2~2.4%로 미미했으며 MAE도 3개 창에서 근소 개선됐다.**
+  **결론: R1/R2는 기각, R3(percentile 기반 스케일링)를 유력한
+  재보정 후보로 채택 검토한다 — 다만 단일 실험·재현성 미확인·
+  §3 기존 전제조건 미충족으로 확정 Go는 아니다.** 운영 코드 변경
+  없음, broker submit 미호출. 상세: `plans/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §19.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
   국면 정의 통일(차단 축)은 Watch/No-Go에 근접한다는 것이 확인됐고,
   §2.22에서 alpha layer 교체(선별 축)는 Conditional Go를 확보했고,
-  **§2.28~§2.29에서 그 Conditional Go가 실제 virtual BUY funnel
+  **§2.28~§2.30에서 그 Conditional Go가 실제 virtual BUY funnel
   (candidate→eligible→selected→would_buy, MFE/MAE 포함)까지 방향
-  일관되게 보강됨을 확인했으나, 0.65 문턱 사실상 무력화·MAE 확대라는
-  계측 caveat도 함께 발견했다.** 한편 **§2.23~§2.27에서 결합 사용 시
+  일관되게 보강됨을 확인했고, 0.65 문턱 사실상 무력화 caveat도
+  percentile 기반 재보정(R3)으로 해소 가능함을 확인했다(유력
+  후보, 확정 Go는 아님).** 한편 **§2.23~§2.27에서 결합 사용 시
   가장 빈번하게 걸리는 축이 regime 관련 축이 아니라 활동성 필터
   (`eligibility_low_relative_activity`)임이 확인됐고, 완화 효과의
   반전이 국면·유동성 구조 차이 때문임을 규명했으나, 이 필터가 과잉
   억제인지·정적 완화가 실제로 기대수익률을 개선하는지는 여전히
   미확정이다(Watch — 격상 근거 없음)**. SPPV-3의 다음 착수 항목은
-  §3 공식의 재보정(스케일링) 설계 검토 여부 사용자 확인, alpha 교체의
-  §3 전제조건(§21 1차 게이트 TRIGGERED 전환, risk_off_penalty 중복
-  해소) 충족 후 재검증과 "국면 조건부 activity threshold" 설계 검토
-  여부에 대한 사용자 확인이며, 운영 코드 반영은 Conditional Go 이상이
-  확보된 뒤 사용자 승인을 받아 진행한다. 1차 게이트(§21 모니터링)가
-  `TRIGGERED`로 전환되는 즉시
+  R3의 §3 공식 정식 반영 여부 사용자 확인, R3 재현성 추가 검증,
+  alpha 교체의 §3 전제조건(§21 1차 게이트 TRIGGERED 전환, risk_
+  off_penalty 중복 해소) 충족 후 재검증과 "국면 조건부 activity
+  threshold" 설계 검토 여부에 대한 사용자 확인이며, 운영 코드 반영은
+  Conditional Go 이상이 확보된 뒤 사용자 승인을 받아 진행한다. 1차
+  게이트(§21 모니터링)가 `TRIGGERED`로 전환되는 즉시
   alpha layer 교체의 최종 Go 여부도 재확인해야 하며, 그 전까지 코드
   변경은 보류한다.
 - **4순위**: out-of-sample 기대수익 양수와 손실 제약을 만족한 formula만

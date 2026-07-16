@@ -291,6 +291,20 @@
   Go 재확인, 다만 "0.65 문턱 무력화"·"MAE 확대" 계측 caveat 추가로
   확정 Go는 아니다. broker submit 미호출.
 
+- 작성자: Claude
+- 수정일자: 2026-07-16 (27차, 새 alpha entry_score 스케일 재보정
+  shadow 검증)
+- 수정내용: "0.65 문턱 무력화" caveat의 원인(regime_conditional_
+  signal이 퍼센트 단위 비율이라 normalize 함수에서 상위 20%가
+  거의 항상 saturate)을 분해했다(SPPV-2.29). 재보정 3안(R1 가중치
+  축소/R2 z-score/R3 percentile)과 기준선(R0)을 비교한 결과, R1은
+  forward return이 3/4 창에서 악화돼 기각, R2는 selected_rate가
+  R0와 큰 차이 없어 문제 미해결, R3(percentile)는 selected_rate를
+  93.7~96.5%로 낮추면서 forward return이 4개 창·2개 horizon
+  전부(8/8)에서 개선되고 MAE도 개선됨을 확인. 결론: R1/R2 기각,
+  R3를 유력한 재보정 후보로 채택 검토(단일 실험이라 확정 Go 아님).
+  운영 코드 변경 없음, broker submit 미호출.
+
 ## 최근 메모
 
 > **📌 2026-07-14 BUY 주문경로 근본 복구 기준 확정 (최신, 최우선 반영)**:
@@ -879,6 +893,51 @@
 > **다음 착수: §3 공식의 재보정(스케일링) 설계 검토 여부 사용자
 > 확인, §3 전제조건 충족 후 재검증, regime별 층화 비교, MAE 확대가
 > 사이징/손절 설계에 미치는 영향 검토.**
+
+> **📌 2026-07-16 새 alpha entry_score 스케일 재보정 shadow 검증
+> 완료 (최신, 최우선 반영)**: 위 다음 착수 항목 중 "§3 공식 재보정
+> 설계 검토"를 실행했다. 원인 분해: `regime_conditional_signal`이
+> [-1,1] 스케일이 아닌 퍼센트 단위 비율(예: 3개월 수익률/변동성=
+> 6.0)이라 `_normalize_signed_score`가 상위 20% quintile에서 거의
+> 항상 saturate됨을 확인했다. candidate 정의는 그대로 두고 entry_
+> score 계산에만 재보정을 적용한 3안(R1 가중치 축소 0.80→0.50/R2
+> 그날 cross-sectional z-score/R3 그날 cross-sectional percentile)
+> 과 기준선(R0, 재보정 없음)을 candidate→eligible→selected→
+> would_buy funnel + MFE/MAE로 비교했다(모두 운영 코드 미수정,
+> broker submit 미호출). **결과: R1은 selected_rate를 46.6~67.8%
+> 로 크게 낮췄지만 forward return이 4개 창 중 3개에서 오히려
+> 악화돼 기각한다** — "문턱을 되살렸다"는 사실만으로 성공으로 보지
+> 않는다는 원칙 그대로다. **R2(z-score)는 selected_rate가
+> 96.9~99.3%로 R0(100%)와 큰 차이가 없어 문제를 충분히 해결하지
+> 못했다**(상위 20% quintile 멤버는 정의상 그날 평균보다 이미
+> 충분히 높아 z-score로 바꿔도 여전히 saturate 경계(z>=1) 근처에
+> 몰림). **R3(percentile)가 가장 균형 잡힌 결과를 보였다**:
+> selected_rate가 93.7~96.5%로 의미 있게 내려와(문턱 실질 회복),
+> **forward return이 2차(3년)·1차(최근 12개월)·전반부·후반부 4개
+> 창, T+5/T+20 전부(8/8)에서 R0보다 개선됐다**(2차 T+20 R0
+> +2.818% vs R3 +3.591%, 1차 T+20 R0 +4.307% vs R3 +6.050%,
+> 후반부 T+20 R0 +4.182% vs R3 +5.514%). would_buy 표본 감소는
+> 1.2~2.4%로 미미했고, **MAE(하방 절댓값)는 오히려 3개 창에서
+> 근소하게 개선**됐다(§18에서 우려한 "MAE 확대" caveat이 이
+> 재보정에서는 완화되는 방향). 전반부는 이번에도 비유의(t_NW=
+> 0.97)했으나 이는 §16에서 확인한 구조적 약세 시기 때문이며 방향은
+> R3가 여전히 우세하다. **판정: R1/R2는 기각한다. R3(percentile
+> 기반 스케일링)는 "필터 복원"과 "기대수익률 유지·개선"을 동시에
+> 만족하는 유일한 재보정안으로, 유력한 후보로 격상한다(Watch→
+> Conditional Go 경계) — 다만 이번이 단일 실험이고 재현성(다른
+> 기간 분할 등)을 추가 확인하지 않았으며, §3의 기존 전제조건(§21
+> 1차 게이트 TRIGGERED 전환, risk_off_penalty 중복 해소)도 여전히
+> 미충족이라 확정 Go는 아니다.** 신규 KIS 호출 0건(기존 3년 캐시로
+> 전량 서빙, 로그로 실측 확인). 운영 코드 변경 없음, broker submit
+> 미호출 — 이번 턴도 shadow/validation 범위. 산출:
+> `scripts/validate_alpha_layer_score_rescaling_comparison.py`
+> (read-only, 신규 KIS 호출 0건),
+> `logs/signal_ic_alpha_layer_score_rescaling_comparison_
+> 2026-07-16.json`. 상세: `plans/[DESIGN] regime_conditional_
+> entry_signal_v1.md` §19.
+> **다음 착수: R3를 §3 공식에 정식 반영할지 사용자 확인, R3
+> 재현성 추가 검증(분기별 분할 등), percentile 계산의 universe
+> 구성 민감도 점검.**
 
 > **📌 2026-07-12 방향 전환 (이력, 2026-07-14 결론으로 대체)**:
 > 지난 6주(2026-06-01~07-12) 매수 0건은 시스템 오류가 아니라 **하락장에서
@@ -5074,26 +5133,56 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      `logs/signal_ic_alpha_layer_virtual_buy_funnel_extended_
      2026-07-16.json`. 상세: `plans/[DESIGN] regime_conditional_
      entry_signal_v1.md` §18.
-   - **SPPV-3(다음 착수: §3 공식 재보정 설계 검토 여부 + §3
-     전제조건 충족 후 alpha 교체 재검증 + "국면 조건부 활동성
-     threshold" 설계 검토 여부 사용자 확인)**:
+   - **SPPV-2.29(완료, 2026-07-16, 새 alpha entry_score 스케일
+     재보정 shadow 검증 — R3 유력 후보로 격상, 확정 Go는 아님)**:
+     §2.28의 "0.65 문턱 사실상 무력화" caveat의 원인을 분해했다 —
+     `regime_conditional_signal`이 [-1,1] 스케일이 아닌 퍼센트 단위
+     비율(예: 3개월 수익률/변동성=6.0)이라 `_normalize_signed_
+     score`가 상위 20% quintile에서 거의 항상 saturate됨을
+     확인했다. candidate 정의는 그대로 두고 entry_score 계산에만
+     재보정을 적용한 3안(R1 가중치 축소 0.80→0.50/R2 그날 z-score/
+     R3 그날 percentile)과 기준선(R0)을 비교했다. **결과: R1은
+     selected_rate를 46.6~67.8%로 크게 낮췄지만 forward return이
+     4개 창 중 3개에서 오히려 악화돼 기각**(문턱 회복만으로 성공
+     판정하지 않는다는 원칙). **R2(z-score)는 selected_rate가
+     96.9~99.3%로 R0(100%)와 큰 차이가 없어 문제를 충분히 해결하지
+     못했다**(상위 20% 멤버는 정의상 z>=1 saturate 경계 근처에
+     몰림). **R3(percentile)가 가장 균형 잡힌 결과 — selected_
+     rate를 93.7~96.5%로 의미 있게 낮추면서(문턱 실질 회복),
+     forward return이 4개 창·2개 horizon 전부(8/8)에서 개선됐고**
+     (2차 T+20 R0 +2.818% vs R3 +3.591%, 1차 T+20 R0 +4.307% vs
+     R3 +6.050%), **would_buy 표본 감소는 1.2~2.4%로 미미했으며
+     MAE도 3개 창에서 근소 개선됐다.** **판정: R1/R2는 기각, R3
+     (percentile 기반 스케일링)를 유력한 재보정 후보로 채택
+     검토한다(Watch→Conditional Go 경계) — 다만 단일 실험이고
+     재현성을 추가 확인하지 않았으며, §3의 기존 전제조건도 여전히
+     미충족이라 확정 Go는 아니다.** 신규 KIS 호출 0건, broker
+     submit 미호출. 산출: `scripts/validate_alpha_layer_score_
+     rescaling_comparison.py`(read-only, 신규 KIS 호출 0건),
+     `logs/signal_ic_alpha_layer_score_rescaling_comparison_
+     2026-07-16.json`. 상세: `plans/[DESIGN] regime_conditional_
+     entry_signal_v1.md` §19.
+   - **SPPV-3(다음 착수: R3를 §3 공식에 정식 반영할지 사용자 확인 +
+     R3 재현성 추가 검증 + §3 전제조건 충족 후 alpha 교체 재검증 +
+     "국면 조건부 활동성 threshold" 설계 검토 여부 사용자 확인)**:
      §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
      근접한다는 것이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는
-     Conditional Go를 확보했으며, **§2.27~§2.28에서 그 Conditional
+     Conditional Go를 확보했으며, **§2.27~§2.29에서 그 Conditional
      Go가 실제 virtual BUY funnel(candidate→eligible→selected→
-     would_buy, MFE/MAE 포함) 단계까지 방향 일관되게 보강됨을
-     확인했으나, 0.65 문턱 사실상 무력화·MAE 확대라는 계측 caveat도
-     함께 발견했다.** 한편 **§2.23~§2.26에서 결합 사용 시 가장
+     would_buy, MFE/MAE 포함) 단계까지 방향 일관되게 보강됐고,
+     0.65 문턱 사실상 무력화 caveat도 percentile 기반 재보정(R3)
+     으로 해소 가능함을 확인했다(유력 후보, 확정 Go는 아님).**
+     한편 **§2.23~§2.26에서 결합 사용 시 가장
      빈번하게 걸리는 축이 활동성 필터(`eligibility_low_relative_
      activity`)임이 확인됐고, 완화 효과의 반전이 국면·유동성 구조
      차이 때문임을 규명했으나, 정적 완화(1.10→1.00)가 기대수익률을
      실제로 개선하는지는 여전히 Watch(격상 근거 없음) 단계에
-     머문다.** 다음 착수 형태는 §3 공식의 재보정(스케일링) 설계
-     검토 여부 사용자 확인, alpha 교체의 §3 전제조건(§21 1차 게이트
-     TRIGGERED 전환, risk_off_penalty 중복 해소) 충족 후 재검증,
-     "국면 조건부 threshold" 설계 검토 여부에 대한 사용자 확인이며,
-     운영 코드(`deterministic_trigger_engine.py:493-499`) 반영은
-     Conditional Go 이상 확보 후 사용자 승인을 받아 진행한다.
+     머문다.** 다음 착수 형태는 R3의 §3 공식 정식 반영 여부 사용자
+     확인, R3 재현성 추가 검증, alpha 교체의 §3 전제조건(§21 1차
+     게이트 TRIGGERED 전환, risk_off_penalty 중복 해소) 충족 후
+     재검증, "국면 조건부 threshold" 설계 검토 여부에 대한 사용자
+     확인이며, 운영 코드(`deterministic_trigger_engine.py:493-499`)
+     반영은 Conditional Go 이상 확보 후 사용자 승인을 받아 진행한다.
      이 설계 문서를 기반으로 regime/allocation/strategy/source를
      복원한 `entry_score`
      point-in-time 재현과 signal/risk-off/regime eligibility 중복
