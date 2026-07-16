@@ -641,6 +641,27 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   턴도 shadow/validation 범위. 상세: `plans/[DESIGN] regime_
   conditional_entry_signal_v1.md` §21.
 
+- 작성자: Claude
+- 수정일자: 2026-07-16 (31차, R3b 대응표본 검증 — overlap 근거 보정)
+- 수정내용: SPPV-2.31의 overlap(간접) 근거를 대응표본(직접) 검증
+  으로 재확인했다(SPPV-2.32) — 같은 거래일에 R0가 버리고 R3b가
+  새로 고른 "대체 종목쌍"의 forward return 차이를 일별로 계산해
+  집계했다. **R0 vs R3b 대체쌍(added−dropped) T+20 평균은 8개 창
+  중 6개에서 양(+)이었으나 분기3에서는 음수(-0.47%p, 대체 우위일
+  비율 45.8%로 절반 미만)로 뒤집혔다.** t_NW가 1.96 이상인 창은
+  2개(2차, 전반부)뿐이고 나머지는 marginal했다. R0 vs R3 대체쌍은
+  더 약해 분기1(-0.44%p)·분기3(-0.04%p)에서 사실상 음수/0이었다.
+  **핵심 정정: SPPV-2.31이 overlap만으로 "실제 재선별 효과"라고
+  결론 낸 것은 근거가 부족했다 — 이번 직접 검증에서 그 재선별이
+  분기3에서는 오히려 더 나쁜 종목으로의 교체였음이 드러났다.**
+  aggregate 우위(8/8) 자체는 부정되지 않으나 그 우위가 "대체
+  종목의 우수성"에서 왔다는 인과관계는 확인되지 않았다. **판정:
+  SPPV-2.31의 "R3b 유력 후보 격상" 판정을 다시 Watch로 하향한다.**
+  R3는 Watch를 유지하되 이번 직접 검증으로 근거가 강화됐다. 신규
+  KIS 호출 0건. 운영 코드 변경 없음, broker submit 미호출 — 이번
+  턴도 shadow/validation 범위. 상세: `plans/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §22.
+
 ---
 
 ## 진행 체크리스트
@@ -1278,13 +1299,19 @@ canonical),
     조건 때문이 아니라, R3가 R0와 77~85%나 겹치는 "미세 재조정"에
     불과해 효과 크기 자체가 작고, 그만큼 분기 단위 표본 잡음에
     취약하다는 구조적 한계로 해석하는 것이 더 정확하다.**
-  - **판정: R3b를 유력한 재보정 후보로 신규 격상한다(Watch→
-    Conditional Go 경계) — R1이 실패한 엄격 기준을 통과한 첫
-    재보정안이다.** 다만 selected_rate가 29.9~39.2%로 매우 낮고
-    (거래 빈도 최대 36% 감소), 이번 검증도 동일 3년 표본 내부
-    분할일 뿐 진정한 out-of-sample은 아니며, §3의 기존 전제조건도
-    미충족이라 확정 Go는 아니다. **R3는 Watch를 그대로 유지**한다
-    — 이번 원인 분해로도 하향 판정이 번복되지 않았다. 문서 정정:
+  - **판정(당시 판정, SPPV-2.32에서 재정정됨): R3b를 유력한 재보정
+    후보로 신규 격상한다(Watch→Conditional Go 경계) — R1이 실패한
+    엄격 기준을 통과한 첫 재보정안이다.** 다만 selected_rate가
+    29.9~39.2%로 매우 낮고(거래 빈도 최대 36% 감소), 이번 검증도
+    동일 3년 표본 내부 분할일 뿐 진정한 out-of-sample은 아니며,
+    §3의 기존 전제조건도 미충족이라 확정 Go는 아니다. **[중요]
+    이 판정의 핵심 근거였던 overlap(간접 지표)은 SPPV-2.32의
+    대응표본(직접) 검증에서 근거가 부족했음이 드러났다 — 분기3에서
+    실제 대체 종목쌍의 forward return 차이가 음수로 뒤집혔다.
+    이 판정은 SPPV-2.32에서 다시 Watch로 하향 정정됐다 —
+    상세는 §22 참고.** **R3는 Watch를 그대로 유지**한다 — 이번
+    원인 분해로도 하향 판정이 번복되지 않았고, SPPV-2.32의
+    직접 검증으로 오히려 근거가 강화됐다. 문서 정정:
     §20/SPPV-2.30의 "분기 25%가 뒤집혔다"는 계산 오류였다(2/4=
     50%가 맞음) — 5개 정본 문서 전체에서 정정 완료, 결론에는
     영향 없음(오히려 더 심각한 재현성 결여를 뜻함). 신규 KIS 호출
@@ -1302,6 +1329,47 @@ canonical),
     순위-forward return IC를 분기별로 직접 계산하는 후속 분석,
     이 3년 표본을 벗어난 진정한 out-of-sample 기간에서 R3b 장기
     모니터링.
+- [x] **SPPV-2.32(신설)** R3b 대응표본(paired-sample) 검증 —
+  overlap 근거 보정 (완료, 2026-07-16)
+  - 작업 범위: SPPV-2.31의 overlap(간접) 근거를 대응표본(직접)
+    검증으로 재확인. 같은 거래일·같은 candidate 집합에서 R0가
+    버리고 R3b가 새로 고른 "대체 종목쌍"의 forward return 차이를
+    일별로 계산해 창별로 집계(평균/Newey-West t/양수 비율/경험적
+    95% 구간). R0 vs R3(전체 universe)에도 동일 적용.
+  - **결과: R0 vs R3b 대체쌍(added−dropped) T+20 평균은 8개 창 중
+    6개에서 양(+)이었으나(2차 +5.70%p, 1차 +8.20%p, 전반부
+    +3.66%p, 후반부 +7.11%p, 분기2 +3.99%p, 분기4 +13.66%p),
+    **분기3에서는 음수(-0.47%p, 대체 우위일 비율 45.8%로 절반
+    미만)로 뒤집혔다.** T_NW가 1.96 이상(통상적 유의 수준)인 창은
+    2차(1.96)·전반부(2.07) 2개뿐이고 나머지는 1.0~1.9의 marginal한
+    값이었다. **R0 vs R3(전체 universe) 대체쌍은 더 약했다** —
+    분기1(-0.44%p, 사실상 음수)·분기3(-0.04%p, 사실상 0)로 대체
+    효과가 없거나 음수인 창이 2개였다.
+  - **핵심 정정: SPPV-2.31이 "R3b는 R0와 47~61%만 겹쳐 실제
+    재선별 효과"라고 결론 낸 것은 overlap(간접) 근거만으로 내린
+    판단이었다 — 이번 대응표본(직접) 검증에서 그 재선별이
+    "분기3에서는 오히려 더 나쁜 종목으로의 교체"였음이 드러났다.**
+    §2.31의 aggregate 우위(8/8 창) 자체는 부정되지 않으나, 그
+    우위가 "대체 종목의 우수성"에서 왔다는 인과관계는 확인되지
+    않았다 — 오히려 분기3에서는 반대 증거가 나와, aggregate 우위가
+    다른 경로(공통 유지 종목의 성과, 모집단 구성 차이 등)로
+    발생했을 가능성이 제기됐다. **판정: SPPV-2.31의 "R3b 유력
+    후보로 격상" 판정을 다시 Watch로 하향한다.** R3는 Watch를
+    유지하되, 이번 직접 검증이 오히려 "R3는 R0와 겹침이 많아 효과
+    크기가 작다"는 §2.31의 가설을 간접이 아닌 직접 증거로 재확인해
+    근거를 강화했다. 신규 KIS 호출 0건(기존 3년 캐시로 전량 서빙,
+    로그로 실측 확인). 운영 코드 변경 없음, broker submit 미호출
+    — 이번 턴도 shadow/validation 범위. 상세: `plans/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §22.
+  - 산출물: `scripts/validate_r3b_paired_replacement_analysis.py`
+    (read-only, 신규 KIS 호출 0건), `logs/signal_ic_r3b_paired_
+    replacement_analysis_2026-07-16.json`, `logs/r3b_paired_
+    replacement_analysis_run_2026-07-16.log`.
+  - 다음 과제: R3b의 aggregate 우위와 대체쌍 성과(분기3 음수)가
+    불일치하는 원인 규명(공통 유지 종목 기여도, 모집단 구성 변화
+    등), 더 긴 표본·더 많은 교체 발생일 축적 후 재평가, 향후
+    재보정 검증은 overlap만으로 재선별 품질을 증명하지 않고 반드시
+    대응표본 직접 비교를 병행하는 것을 표준 절차로 삼는다.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
@@ -2043,6 +2111,9 @@ bearish/range_bound 어느 국면 내부도 `overall_score`/`slow_score`가
 - `scripts/validate_r3b_strict_and_r3_failure_decomposition.py`,
   `logs/signal_ic_r3b_strict_and_r3_failure_decomposition_2026-07-16.json`,
   `logs/r3b_strict_and_r3_failure_decomposition_run_2026-07-16.log`
+- `scripts/validate_r3b_paired_replacement_analysis.py`,
+  `logs/signal_ic_r3b_paired_replacement_analysis_2026-07-16.json`,
+  `logs/r3b_paired_replacement_analysis_run_2026-07-16.log`
 - `scripts/shadow_regime_conditional_entry_signal.py`(read-only, 신규
   KIS 호출 0건 — 3년 캐시 재사용)
 - `logs/shadow_regime_conditional_entry_signal_2026-07-15.json`,

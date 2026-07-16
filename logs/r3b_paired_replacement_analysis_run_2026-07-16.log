@@ -1,0 +1,75 @@
+INFO:validate_r3b_paired_replacement_analysis:[20/87] 누적 표본 13060건
+INFO:validate_r3b_paired_replacement_analysis:[40/87] 누적 표본 26120건
+INFO:validate_r3b_paired_replacement_analysis:[60/87] 누적 표본 39180건
+INFO:validate_r3b_paired_replacement_analysis:[80/87] 누적 표본 52240건
+INFO:validate_r3b_paired_replacement_analysis:[87/87] 누적 표본 56753건
+INFO:validate_r3b_paired_replacement_analysis:전체 3년 표본 56753건, 실패 0종목
+
+=== R3/R3b 종목 대체쌍(paired replacement) 직접 검증 ===
+전체 3년 표본: 56753건, 최근 12개월(cutoff=2025-06-16) 표본: 21315건
+
+=== 2차(3년, 전체 표본) (표본 56753건) ===
+  [R0_vs_R3] 교체 발생일수=247, 교체 슬롯 수(dropped/added)=306/306
+    T+5 대체쌍(added-dropped) 차이: {'n_days': 247, 'mean_diff_pct': 0.1711, 't_naive': 0.23, 't_newey_west': 0.21, 'pct_days_added_better': 0.4615, 'empirical_2.5pct': -20.7477, 'empirical_97.5pct': 26.3855}
+    T+20 대체쌍(added-dropped) 차이: {'n_days': 247, 'mean_diff_pct': 3.734, 't_naive': 2.59, 't_newey_west': 1.37, 'pct_days_added_better': 0.5263, 'empirical_2.5pct': -34.8713, 'empirical_97.5pct': 57.1619}
+  [R0_vs_R3b] 교체 발생일수=302, 교체 슬롯 수(dropped/added)=585/458
+    T+5 대체쌍(added-dropped) 차이: {'n_days': 302, 'mean_diff_pct': 1.0705, 't_naive': 1.8, 't_newey_west': 1.42, 'pct_days_added_better': 0.5, 'empirical_2.5pct': -17.7207, 'empirical_97.5pct': 24.6742}
+    T+20 대체쌍(added-dropped) 차이: {'n_days': 302, 'mean_diff_pct': 5.7043, 't_naive': 4.4, 't_newey_west': 1.96, 'pct_days_added_better': 0.5728, 'empirical_2.5pct': -29.375, 'empirical_97.5pct': 57.1619}
+
+=== 1차(최근 12개월) (표본 21315건) ===
+  [R0_vs_R3] 교체 발생일수=108, 교체 슬롯 수(dropped/added)=141/141
+    T+5 대체쌍(added-dropped) 차이: {'n_days': 108, 'mean_diff_pct': -0.0574, 't_naive': -0.05, 't_newey_west': -0.04, 'pct_days_added_better': 0.4167, 'empirical_2.5pct': -18.3571, 'empirical_97.5pct': 27.2447}
+    T+20 대체쌍(added-dropped) 차이: {'n_days': 108, 'mean_diff_pct': 7.1698, 't_naive': 2.82, 't_newey_west': 1.23, 'pct_days_added_better': 0.5648, 'empirical_2.5pct': -34.5649, 'empirical_97.5pct': 76.9459}
+  [R0_vs_R3b] 교체 발생일수=133, 교체 슬롯 수(dropped/added)=261/209
+    T+5 대체쌍(added-dropped) 차이: {'n_days': 133, 'mean_diff_pct': 1.045, 't_naive': 1.03, 't_newey_west': 0.76, 'pct_days_added_better': 0.4887, 'empirical_2.5pct': -18.8179, 'empirical_97.5pct': 28.8048}
+    T+20 대체쌍(added-dropped) 차이: {'n_days': 133, 'mean_diff_pct': 8.1993, 't_naive': 3.44, 't_newey_west': 1.3, 'pct_days_added_better': 0.594, 'empirical_2.5pct': -37.235, 'empirical_97.5pct': 82.8866}
+
+=== 3년 전반부 (표본 28304건) ===
+  [R0_vs_R3] 교체 발생일수=101, 교체 슬롯 수(dropped/added)=115/115
+    T+5 대체쌍(added-dropped) 차이: {'n_days': 101, 'mean_diff_pct': 0.3516, 't_naive': 0.29, 't_newey_west': 0.28, 'pct_days_added_better': 0.4851, 'empirical_2.5pct': -22.3445, 'empirical_97.5pct': 26.3182}
+    T+20 대체쌍(added-dropped) 차이: {'n_days': 101, 'mean_diff_pct': 0.7058, 't_naive': 0.36, 't_newey_west': 0.74, 'pct_days_added_better': 0.4851, 'empirical_2.5pct': -34.8713, 'empirical_97.5pct': 31.5206}
+  [R0_vs_R3b] 교체 발생일수=123, 교체 슬롯 수(dropped/added)=237/177
+    T+5 대체쌍(added-dropped) 차이: {'n_days': 123, 'mean_diff_pct': 1.351, 't_naive': 1.56, 't_newey_west': 1.29, 'pct_days_added_better': 0.5203, 'empirical_2.5pct': -17.4535, 'empirical_97.5pct': 22.3024}
+    T+20 대체쌍(added-dropped) 차이: {'n_days': 123, 'mean_diff_pct': 3.6581, 't_naive': 2.2, 't_newey_west': 2.07, 'pct_days_added_better': 0.5691, 'empirical_2.5pct': -26.632, 'empirical_97.5pct': 42.6974}
+
+=== 3년 후반부 (표본 28449건) ===
+  [R0_vs_R3] 교체 발생일수=146, 교체 슬롯 수(dropped/added)=191/191
+    T+5 대체쌍(added-dropped) 차이: {'n_days': 146, 'mean_diff_pct': 0.0462, 't_naive': 0.05, 't_newey_west': 0.04, 'pct_days_added_better': 0.4452, 'empirical_2.5pct': -18.3571, 'empirical_97.5pct': 26.3855}
+    T+20 대체쌍(added-dropped) 차이: {'n_days': 146, 'mean_diff_pct': 5.8289, 't_naive': 2.89, 't_newey_west': 1.32, 'pct_days_added_better': 0.5548, 'empirical_2.5pct': -34.5649, 'empirical_97.5pct': 75.5321}
+  [R0_vs_R3b] 교체 발생일수=179, 교체 슬롯 수(dropped/added)=348/281
+    T+5 대체쌍(added-dropped) 차이: {'n_days': 179, 'mean_diff_pct': 0.8778, 't_naive': 1.09, 't_newey_west': 0.83, 'pct_days_added_better': 0.486, 'empirical_2.5pct': -18.6083, 'empirical_97.5pct': 26.9943}
+    T+20 대체쌍(added-dropped) 차이: {'n_days': 179, 'mean_diff_pct': 7.1105, 't_naive': 3.82, 't_newey_west': 1.5, 'pct_days_added_better': 0.5754, 'empirical_2.5pct': -30.6695, 'empirical_97.5pct': 77.7603}
+
+=== 3년 분기1(2023-10-10~2024-06-07) (표본 14123건) ===
+  [R0_vs_R3] 교체 발생일수=54, 교체 슬롯 수(dropped/added)=59/59
+    T+5 대체쌍(added-dropped) 차이: {'n_days': 54, 'mean_diff_pct': -0.63, 't_naive': -0.32, 't_newey_west': -0.3, 'pct_days_added_better': 0.4444, 'empirical_2.5pct': -31.5473, 'empirical_97.5pct': 23.8296}
+    T+20 대체쌍(added-dropped) 차이: {'n_days': 54, 'mean_diff_pct': -0.4357, 't_naive': -0.14, 't_newey_west': -0.32, 'pct_days_added_better': 0.4444, 'empirical_2.5pct': -42.4017, 'empirical_97.5pct': 29.3473}
+  [R0_vs_R3b] 교체 발생일수=69, 교체 슬롯 수(dropped/added)=133/95
+    T+5 대체쌍(added-dropped) 차이: {'n_days': 69, 'mean_diff_pct': 0.1144, 't_naive': 0.11, 't_newey_west': 0.1, 'pct_days_added_better': 0.4928, 'empirical_2.5pct': -17.4535, 'empirical_97.5pct': 14.276}
+    T+20 대체쌍(added-dropped) 차이: {'n_days': 69, 'mean_diff_pct': 3.4008, 't_naive': 1.47, 't_newey_west': 2.02, 'pct_days_added_better': 0.5362, 'empirical_2.5pct': -23.895, 'empirical_97.5pct': 49.1116}
+
+=== 3년 분기2(2024-06-10~2025-02-11) (표본 14181건) ===
+  [R0_vs_R3] 교체 발생일수=47, 교체 슬롯 수(dropped/added)=56/56
+    T+5 대체쌍(added-dropped) 차이: {'n_days': 47, 'mean_diff_pct': 1.4794, 't_naive': 1.05, 't_newey_west': 1.14, 'pct_days_added_better': 0.5319, 'empirical_2.5pct': -14.1231, 'empirical_97.5pct': 26.3182}
+    T+20 대체쌍(added-dropped) 차이: {'n_days': 47, 'mean_diff_pct': 2.0174, 't_naive': 0.95, 't_newey_west': 2.0, 'pct_days_added_better': 0.5319, 'empirical_2.5pct': -22.965, 'empirical_97.5pct': 31.5206}
+  [R0_vs_R3b] 교체 발생일수=54, 교체 슬롯 수(dropped/added)=104/82
+    T+5 대체쌍(added-dropped) 차이: {'n_days': 54, 'mean_diff_pct': 2.931, 't_naive': 2.05, 't_newey_west': 1.7, 'pct_days_added_better': 0.5556, 'empirical_2.5pct': -14.0149, 'empirical_97.5pct': 27.4536}
+    T+20 대체쌍(added-dropped) 차이: {'n_days': 54, 'mean_diff_pct': 3.9867, 't_naive': 1.67, 't_newey_west': 1.07, 'pct_days_added_better': 0.6111, 'empirical_2.5pct': -26.632, 'empirical_97.5pct': 38.4381}
+
+=== 3년 분기3(2025-02-12~2025-10-14) (표본 14181건) ===
+  [R0_vs_R3] 교체 발생일수=69, 교체 슬롯 수(dropped/added)=89/89
+    T+5 대체쌍(added-dropped) 차이: {'n_days': 69, 'mean_diff_pct': -0.682, 't_naive': -0.64, 't_newey_west': -0.76, 'pct_days_added_better': 0.4203, 'empirical_2.5pct': -14.4515, 'empirical_97.5pct': 16.3389}
+    T+20 대체쌍(added-dropped) 차이: {'n_days': 69, 'mean_diff_pct': -0.0364, 't_naive': -0.02, 't_newey_west': -0.02, 'pct_days_added_better': 0.4638, 'empirical_2.5pct': -31.4485, 'empirical_97.5pct': 37.8606}
+  [R0_vs_R3b] 교체 발생일수=83, 교체 슬롯 수(dropped/added)=151/128
+    T+5 대체쌍(added-dropped) 차이: {'n_days': 83, 'mean_diff_pct': -1.1035, 't_naive': -1.28, 't_newey_west': -1.3, 'pct_days_added_better': 0.4217, 'empirical_2.5pct': -16.434, 'empirical_97.5pct': 13.8658}
+    T+20 대체쌍(added-dropped) 차이: {'n_days': 83, 'mean_diff_pct': -0.4666, 't_naive': -0.24, 't_newey_west': -0.21, 'pct_days_added_better': 0.4578, 'empirical_2.5pct': -37.235, 'empirical_97.5pct': 37.3844}
+
+=== 3년 분기4(2025-10-15~2026-06-16) (표본 14268건) ===
+  [R0_vs_R3] 교체 발생일수=77, 교체 슬롯 수(dropped/added)=102/102
+    T+5 대체쌍(added-dropped) 차이: {'n_days': 77, 'mean_diff_pct': 0.6988, 't_naive': 0.45, 't_newey_west': 0.39, 'pct_days_added_better': 0.4675, 'empirical_2.5pct': -18.3571, 'empirical_97.5pct': 28.551}
+    T+20 대체쌍(added-dropped) 차이: {'n_days': 77, 'mean_diff_pct': 11.0847, 't_naive': 3.38, 't_newey_west': 1.56, 'pct_days_added_better': 0.6364, 'empirical_2.5pct': -34.5649, 'empirical_97.5pct': 77.5383}
+  [R0_vs_R3b] 교체 발생일수=96, 교체 슬롯 수(dropped/added)=197/153
+    T+5 대체쌍(added-dropped) 차이: {'n_days': 96, 'mean_diff_pct': 2.5908, 't_naive': 2.02, 't_newey_west': 1.51, 'pct_days_added_better': 0.5417, 'empirical_2.5pct': -21.2493, 'empirical_97.5pct': 31.5972}
+    T+20 대체쌍(added-dropped) 차이: {'n_days': 96, 'mean_diff_pct': 13.6615, 't_naive': 4.72, 't_newey_west': 1.87, 'pct_days_added_better': 0.6771, 'empirical_2.5pct': -28.3436, 'empirical_97.5pct': 83.4967}
+
+산출 저장: logs/signal_ic_r3b_paired_replacement_analysis_2026-07-16.json
