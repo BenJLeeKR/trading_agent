@@ -1087,6 +1087,21 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   §21 게이트 미충족으로 여전히 이르다(불변).** 운영 코드 변경
   없음, broker submit 미호출. 상세: `plans/[DESIGN] regime_
   conditional_entry_signal_v1.md` §36.
+
+- 작성자: Claude
+- 수정일자: 2026-07-17 (2.48순위, 승인 범위 확정 + risk_off_
+  penalty(entry_score 축) 완화안 심층 해석)
+- 수정내용: 사용자가 §2.47의 A/B/C 중 "B — entry_score risk_off_
+  penalty만 완화"를 승인(eligibility 축 비승인)했다. 기존 산출물을
+  신규 실행 없이 재사용해 T+5/T+20 양쪽·MAE 트레이드오프를 심층
+  해석했다(§2.48). **결과: 총 기대수익 proxy가 2개 창×2horizon
+  전부에서 개선(12.9~20.9%), t_NW도 함께 개선, MAE는 소폭
+  악화(5.9~7.8% 상대)하나 개선폭보다 항상 작다.** 판정: **R3b +
+  entry_score risk_off_penalty 제거 조합은 Conditional Go를
+  보강한다.** SPPV-3 진입 관점에서 남은 조건은 사실상 §21 게이트
+  하나로 좁혀졌다(entry_score 코드 반영은 게이트 충족 후 별도
+  절차). 운영 코드 변경 없음, broker submit 미호출. 상세: `plans/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §37.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
@@ -1160,7 +1175,13 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   축은 제거 시 총 기대수익 proxy가 약 20% 개선되나 MAE도 소폭
   악화되는 실제 트레이드오프임을 확인 — §3 조건②를 "방향 확인,
   사용자 승인 대기"로 진전시켰으나 §21 게이트 미충족은 불변이라
-  SPPV-3 진입은 여전히 이르다.** 한편
+  SPPV-3 진입은 여전히 이르다. §2.48에서 사용자가 entry_score
+  축만 승인함에 따라 기존 산출물을 재해석한 결과, T+5/T+20 양쪽
+  에서 총 기대수익 proxy가 12.9~20.9% 개선되고 MAE 악화(5.9~
+  7.8% 상대)는 개선폭보다 항상 작아 정당화 가능함을 확인 — R3b +
+  entry_score risk_off_penalty 제거 조합은 Conditional Go를
+  보강하며, SPPV-3 진입 관점에서 남은 조건은 사실상 §21 게이트
+  하나로 좁혀졌다.** 한편
   **§2.23~§2.27에서
   결합 사용 시 가장 빈번하게 걸리는 축이 regime 관련 축이 아니라
   활동성 필터(`eligibility_low_relative_activity`)임이 확인됐고,

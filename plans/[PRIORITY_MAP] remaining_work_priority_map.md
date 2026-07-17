@@ -573,10 +573,46 @@
   이르다(불변).** 신규 KIS 호출 0건. 운영 코드 변경 없음, broker
   submit 미호출.
 
+- 작성자: Claude
+- 수정일자: 2026-07-17 (45차, 승인 범위 확정 + risk_off_penalty
+  (entry_score 축) 완화안 심층 해석)
+- 수정내용: 사용자가 44차(SPPV-2.46)의 A/B/C 중 "B — entry_score
+  risk_off_penalty만 완화"를 승인(eligibility 축 비승인)했다.
+  기존 산출물을 신규 실행 없이 재사용해 T+5/T+20 양쪽·MAE
+  트레이드오프를 심층 해석했다(SPPV-2.47). **결과: 총 기대수익
+  proxy가 2개 창×2horizon 전부에서 개선(12.9~20.9%), t_NW도 함께
+  개선, MAE는 소폭 악화(5.9~7.8% 상대)하나 개선폭보다 항상
+  작다.** 판정: **R3b + entry_score risk_off_penalty 제거 조합은
+  Conditional Go를 보강한다.** SPPV-3 진입 관점에서 남은 조건은
+  사실상 §21 게이트 하나로 좁혀졌다(entry_score 코드 반영은 게이트
+  충족 후 별도 절차). 신규 KIS 호출 없음(신규 실행 자체가
+  없었음). 운영 코드 변경 없음, broker submit 미호출.
+
 ## 최근 메모
 
-> **📌 2026-07-17 R3b 채택 시 risk_off_penalty 중복 해소 ablation
-> (최신)**: §3 전제조건 ②(시장 하락장 도래 여부와 별개인
+> **📌 2026-07-17 승인 범위 확정 + risk_off_penalty(entry_score
+> 축) 완화안 심층 해석 (최신)**: 사용자가 직전 턴(SPPV-2.46)의
+> A(현행)/B(entry_score risk_off_penalty 제거)/C(eligibility
+> 축 완화) 3개 시나리오 중 **"B — entry_score 축만" 승인**했다
+> (eligibility 축 완화는 비승인 — C는 이미 A와 완전 동일해 애초에
+> 완화 대상이 아니었음을 재확인). **신규 실행 없이** 직전 턴 산출물
+> (`logs/signal_ic_r3b_risk_off_penalty_duplication_ablation_2026-
+> 07-17.json`)을 재사용해 T+5/T+20 양쪽·MAE 트레이드오프를 심층
+> 재해석했다. **결과: 총 기대수익 proxy가 2개 창(2차/1차)×2horizon
+> 전부에서 개선한다**(2차 T+5 +14.3%, T+20 +20.9%, 1차 T+5
+> +12.9%, T+20 +20.5%) — **T+20뿐 아니라 T+5도 유의미하게
+> 개선**되며, t_NW도 함께 개선(+4.2~5.4%). **MAE는 소폭 악화하나
+> (5.9~7.8% 상대 증가) 개선폭보다 항상 작다** — 손실 심화가 수익
+> 개선을 초과하지 않는 트레이드오프. **판정: R3b + entry_score
+> risk_off_penalty 제거 조합은 Conditional Go를 보강한다.** SPPV-3
+> 진입 관점에서 남은 조건은 §3 전제조건 ②(risk_off_penalty)가
+> "실측 근거 확보 + 사용자 승인"까지 진행되면서 **사실상 §21
+> 게이트 하나로 좁혀졌다** — 다만 entry_score 코드 반영 자체는
+> 게이트 충족 이후 별도 절차이며 확정 Go는 아니다. 상세: `plans/
+> [DESIGN] regime_conditional_entry_signal_v1.md` §37(SPPV-2.47).
+>
+> **📌 2026-07-17 R3b 채택 시 risk_off_penalty 중복 해소 ablation**:
+> §3 전제조건 ②(시장 하락장 도래 여부와 별개인
 > "risk_off_penalty 중복 해소")를 R3b candidate 위에서 실측했다.
 > **코드 확정**: `entry_score` 축(`_build_entry_score:1139-1141`,
 > risk_tone=="risk_off"이면 -0.15)과 `eligibility` 축(`_assess_
@@ -6339,12 +6375,33 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      signal_ic_r3b_risk_off_penalty_duplication_ablation_2026-
      07-17.json`. 상세: `plans/[DESIGN] regime_conditional_entry_
      signal_v1.md` §36.
-   - **SPPV-3(다음 착수: entry_score의 risk_off_penalty 완화(제거/
-     축소) 여부 사용자 승인 결정 + §21 게이트 정기 재모니터링 +
-     T+5 horizon 강건성 확보 + out-of-sample 데이터 축적 시 혼합
-     국면 구간(분기1 유형) 재확인 + `portfolio_allocation` gap
-     실거래 누적 후 재검증 + "국면 조건부 활동성 threshold" 설계
-     검토 여부 사용자 확인)**:
+   - **SPPV-2.47(완료, 2026-07-17, 승인 범위 확정 + risk_off_
+     penalty(entry_score 축) 완화안 심층 해석 — Conditional Go
+     보강, SPPV-3 진입 관점에서 남은 조건은 사실상 §21 게이트
+     하나로 좁혀짐)**: 사용자가 §2.46의 A/B/C 중 "B — entry_score
+     risk_off_penalty만 완화"를 승인(eligibility 축 비승인 —
+     C는 이미 A와 완전 동일해 애초에 완화 대상이 아니었음을
+     재확인). **신규 실행 없이** §2.46 산출물을 재사용해 T+5/T+20
+     양쪽·MAE 트레이드오프를 심층 재해석했다. **결과: 총 기대수익
+     proxy가 2개 창(2차/1차)×2horizon 전부에서 개선한다**(2차 T+5
+     +14.3%, T+20 +20.9%, 1차 T+5 +12.9%, T+20 +20.5%) — **T+20
+     뿐 아니라 T+5도 유의미하게 개선**되며, t_NW도 함께 개선
+     (+4.2~5.4%). **MAE는 소폭 악화하나(5.9~7.8% 상대 증가) 개선
+     폭보다 항상 작다** — 손실 심화가 수익 개선을 초과하지 않는
+     트레이드오프. **판정: R3b + entry_score risk_off_penalty
+     제거 조합은 Conditional Go를 보강한다.** SPPV-3 진입 관점에서
+     남은 조건은 §3 전제조건 ②가 "실측 근거 확보 + 사용자 승인"
+     까지 진행되면서 **사실상 §21 게이트 하나로 좁혀졌다** — 다만
+     entry_score 코드 반영 자체는 게이트 충족 이후 별도 절차이며
+     확정 Go는 아니다. 신규 KIS 호출 없음(신규 실행 자체가
+     없었음). 산출물: 신규 산출물 없음(§2.46 재사용). 상세:
+     `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §37.
+   - **SPPV-3(다음 착수: §21 게이트 정기 재모니터링 + 게이트 충족
+     (또는 별도 승인) 시 entry_score 코드 반영 절차 설계 + T+5
+     horizon의 더 넓은 구조적 논점(강제된 보유기간 부재) 재확인 +
+     out-of-sample 데이터 축적 시 혼합 국면 구간(분기1 유형) 재확인
+     + `portfolio_allocation` gap 실거래 누적 후 재검증 + "국면
+     조건부 활동성 threshold" 설계 검토 여부 사용자 확인)**:
      §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
      근접한다는 것이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는
      Conditional Go를 확보했으며, **§2.27~§2.28에서 그 Conditional
@@ -6420,7 +6477,13 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      entry_score 축은 제거 시 총 기대수익 proxy가 약 20% 개선되나
      MAE도 소폭 악화되는 실제 트레이드오프임을 확인 — §3 조건②를
      "방향 확인, 사용자 승인 대기"로 진전시켰으나 §21 게이트 미충족
-     은 불변이라 SPPV-3 진입은 여전히 이르다(§36).** 한편 **§2.23~
+     은 불변이라 SPPV-3 진입은 여전히 이르다(§36). 사용자가 이후
+     entry_score 축만 승인함에 따라 §37에서 재해석한 결과, T+5/
+     T+20 양쪽에서 총 기대수익 proxy가 12.9~20.9% 개선되고 MAE
+     악화(5.9~7.8% 상대)는 개선폭보다 항상 작아 정당화 가능함을
+     확인 — R3b + entry_score risk_off_penalty 제거 조합은
+     Conditional Go를 보강하며, SPPV-3 진입 관점에서 남은 조건은
+     사실상 §21 게이트 하나로 좁혀졌다.** 한편 **§2.23~
      §2.26에서 결합 사용
      시 가장 빈번하게 걸리는 축이 활동성 필터(`eligibility_low_
      relative_activity`)임이 확인됐고, 완화 효과의 반전이 국면·

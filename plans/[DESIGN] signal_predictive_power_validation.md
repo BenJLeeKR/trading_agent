@@ -927,6 +927,23 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   validation 범위. 상세: `plans/[DESIGN] regime_conditional_entry_
   signal_v1.md` §36.
 
+- 작성자: Claude
+- 수정일자: 2026-07-17 (46차, 승인 범위 확정 + risk_off_penalty
+  (entry_score 축) 완화안 심층 해석)
+- 수정내용: 사용자가 §2.46의 A/B/C 중 "B — entry_score risk_off_
+  penalty만 완화"를 승인(eligibility 축 비승인)했다. §2.46 산출물을
+  신규 실행 없이 재사용해 T+5/T+20 양쪽·MAE 트레이드오프를 심층
+  해석했다(SPPV-2.47). **결과: 총 기대수익 proxy가 2개 창×
+  2horizon 전부에서 개선(12.9~20.9%), t_NW도 함께 개선, MAE는
+  소폭 악화(5.9~7.8% 상대)하나 개선폭보다 항상 작다.** 판정: **R3b
+  + entry_score risk_off_penalty 제거 조합은 Conditional Go를
+  보강한다.** SPPV-3 진입 관점에서 남은 조건은 사실상 §21 게이트
+  하나로 좁혀졌다(entry_score 코드 반영은 게이트 충족 후 별도
+  절차). 신규 KIS 호출 없음(신규 실행 자체가 없었음). 운영 코드
+  변경 없음, broker submit 미호출 — 이번 턴도 shadow/validation
+  범위. 상세: `plans/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §37.
+
 ---
 
 ## 진행 체크리스트
@@ -2254,6 +2271,43 @@ canonical),
     사용자 승인 결정, §21 게이트 정기 재모니터링, T+5 horizon
     강건성 확보, out-of-sample 혼합 국면 구간 재확인, `portfolio_
     allocation` gap 재검증.
+- [x] **SPPV-2.47(신설)** 승인 범위 확정 + `risk_off_penalty`
+  (entry_score 축) 완화안 심층 해석 (완료, 2026-07-17)
+  - 작업 범위: 사용자가 §2.46의 A/B/C 3개 시나리오 중 **"B —
+    entry_score의 risk_off_penalty만 완화" 승인**, eligibility
+    축 완화는 비승인. 이번 턴은 그 승인 범위를 문서에 고정하고,
+    **§2.46에서 이미 실측된 A/B 산출물을 신규 실행 없이 재사용**
+    해 T+5/T+20 양쪽·MAE 트레이드오프·SPPV-3 진입 의미를 더 깊게
+    해석했다(같은 코드·같은 캐시라 재실행은 불필요한 반복).
+  - **재해석 결과**: 총 기대수익 proxy가 2개 창×2horizon 전부에서
+    개선(2차 T+5 +14.3%, T+20 +20.9%; 1차 T+5 +12.9%, T+20
+    +20.5%) — **T+20뿐 아니라 T+5도 유의미하게 개선**된다. t_NW도
+    함께 개선(+4.2~5.4%). MAE는 함께 소폭 악화(5.9~7.8% 상대
+    증가)하나 **개선폭보다 항상 작다** — 손실 심화가 수익 개선을
+    초과하지 않는 트레이드오프.
+  - **3가지 질문에 답**: ①risk_off_penalty 제거는 R3b 우위를 더
+    선명하게 만든다(방향·유의성·총 기대수익 동시 개선). ②개선은
+    T+20에만 국한되지 않고 T+5에서도 유지된다(다만 §31이 지적한
+    "강제된 보유기간 부재"라는 더 넓은 구조적 논점 자체를 뒤집는
+    것은 아니다). ③MAE 악화는 개선폭보다 상대적으로 작아 정당화
+    가능한 수준이나, 실제 반영 전 리스크 한도 확인은 별도로
+    필요하다.
+  - **판정: R3b + entry_score risk_off_penalty 제거 조합은
+    Conditional Go를 보강한다.** SPPV-3 진입 관점에서 남은 조건은
+    사실상 **§21 게이트 하나로 좁혀졌다** — §3 전제조건 ②(risk_
+    off_penalty 중복)는 "실측 근거 확보 + 사용자 승인(entry_score
+    축)"까지 진행됐고, ①(게이트)만 외생적으로 남아 있다. 다만
+    이것이 확정 Go를 의미하지는 않는다 — entry_score 조정 자체는
+    아직 shadow 상태이며, 반영은 게이트 충족 이후 별도 절차를
+    따른다. 운영 코드 변경 없음, broker submit 미호출 — 이번 턴도
+    shadow/validation 범위. 상세: `plans/[DESIGN] regime_
+    conditional_entry_signal_v1.md` §37.
+  - 산출물: 신규 산출물 없음(§2.46 산출물을 재사용, 신규 실행
+    없음).
+  - 다음 과제: §21 게이트 정기 재모니터링, 게이트 충족(또는 별도
+    승인) 시 entry_score 코드 반영 절차 설계, T+5 horizon의 더
+    넓은 구조적 논점(강제된 보유기간 부재) 재확인, out-of-sample
+    혼합 국면 구간 재확인, `portfolio_allocation` gap 재검증.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
