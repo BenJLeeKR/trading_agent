@@ -484,6 +484,20 @@
   파이프라인 반영)은 그대로 남아 확정 Go는 아니다. 운영 코드 변경
   없음, broker submit 미호출. 신규 KIS 호출 없음(신규 실행 없음).
 
+- 작성자: Claude
+- 수정일자: 2026-07-17 (38차, R3b 총 기대수익 proxy의 유휴 자본
+  반영 보강 검증)
+- 수정내용: 37차(SPPV-2.39)의 "조건 (2) 해소"를 유휴 자본 기회
+  비용까지 반영해 보강 검증했다(SPPV-2.40). 신규 계측은 창별 전체
+  거래일 수 하나뿐(캐시 봉 데이터만 사용, 신규 KIS 호출 없음).
+  **엄격 기준(R0가 전체 슬롯을 자기 평균으로 100% 채웠다는 이론적
+  최대와 비교) 적용 결과, T+20은 8개 창 중 7개에서 여전히 R3b
+  우위(견고)이나, T+5는 8개 창 중 6개에서 우위가 사라지거나 이미
+  열세(취약).** 판정: **"조건 (2) 해소"는 과장 — 정확히는 "T+20
+  기준 완화, T+5 기준 여전히 미해결"** 수준으로 재조정. R3b는
+  Conditional Go를 유지한다(확정 Go 아님). 운영 코드 변경 없음,
+  broker submit 미호출. 신규 KIS 호출 없음(로그 확인).
+
 ---
 
 ## 관리 원칙
@@ -1286,11 +1300,35 @@
     `scripts/validate_r3b_total_expected_return_proxy.py`(read-only,
     KIS 호출 없음), `logs/signal_ic_r3b_total_expected_return_
     proxy_2026-07-17.json`. 상세: `plans/[DESIGN] regime_
-    conditional_entry_signal_v1.md` §29.
+    conditional_entry_signal_v1.md` §29. **[SPPV-2.40에서 정정]
+    "조건 (2) 해소"는 과장이었다 — 아래 SPPV-2.40 참고.**
+  - **SPPV-2.40(완료, 2026-07-17, R3b 총 기대수익 proxy의 유휴
+    자본 반영 보강 검증 — "조건 (2) 해소"→"완화/축소"로 재조정)**:
+    SPPV-2.39의 "조건 (2) 해소"를 유휴 자본 기회비용까지 반영해
+    보강 검증. 신규 계측은 창별 전체 거래일 수 하나뿐(캐시 봉
+    데이터만 사용, 신규 KIS 호출 없음). **엄격 기준("R0가 전체
+    슬롯(거래일×3)을 자기 평균으로 100% 채웠다"는 이론적 최대와
+    R3b의 실현 총합을 비교) 적용 결과, T+20은 8개 창 중 7개(분기3
+    제외)에서 여전히 R3b가 우위**(108.5%~177.5%, 견고)**이나, T+5
+    는 8개 창 중 6개에서 우위가 사라지거나 이미 열세**(84.3%~
+    98.8%, 전반부·분기2만 통과, 취약)**.** 전체 슬롯 정규화
+    (per-slot) proxy는 raw proxy와 대수적으로 완전히 같은 비율을
+    보여(항등식) 새 정보를 주지 않음도 확인. **판정: "조건 (2)
+    해소"는 과장 — 정확히는 "T+20 기준 완화, T+5 기준 여전히
+    미해결" 수준으로 재조정한다.** R3b는 Conditional Go를 유지한다
+    (확정 Go 아님). 확정 Go 전 잔여 조건에 "T+5 horizon 의존
+    여부에 따른 유휴 자본 취약성 확인"을 추가. 신규 KIS 호출
+    0건(로그 확인). 산출: `scripts/validate_r3b_capital_
+    utilization_adjusted_proxy.py`(read-only, 신규 KIS 호출 0건),
+    `logs/signal_ic_r3b_capital_utilization_adjusted_proxy_2026-
+    07-17.json`. 상세: `plans/[DESIGN] regime_conditional_entry_
+    signal_v1.md` §30.
   - **SPPV-3(다음 착수: §3 전제조건 충족 여부 사용자 확인(다음
     최우선) + point-in-time `entry_score` 파이프라인 반영 shadow
     실행 설계 + 분기1·분기2 marginal t_NW out-of-sample 재확인 +
-    "국면 조건부 활동성 threshold" 설계 검토 여부 사용자 확인)**:
+    이 시스템의 운영 호라이즌이 T+20 중심인지 T+5도 포함하는지
+    사용자 확인 + "국면 조건부 활동성 threshold" 설계 검토 여부
+    사용자 확인)**:
     §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
     근접함이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는
     Conditional Go를 확보했으며, **§2.27~§2.28에서 그 Conditional

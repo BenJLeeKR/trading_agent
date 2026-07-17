@@ -797,6 +797,23 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   validation 범위. 상세: `plans/[DESIGN] regime_conditional_entry_
   signal_v1.md` §29.
 
+- 작성자: Claude
+- 수정일자: 2026-07-17 (39차, R3b 총 기대수익 proxy의 유휴 자본
+  반영 보강 검증)
+- 수정내용: §2.39가 "조건 (2) 해소"라 표현한 것을 유휴 자본
+  기회비용까지 반영해 보강 검증했다(SPPV-2.40). 신규 계측은 창별
+  전체 거래일 수 하나뿐(캐시 봉 데이터만 사용, 신규 KIS 호출
+  없음). **엄격 기준(R0가 전체 슬롯을 자기 평균으로 100% 채웠다는
+  이론적 최대와 비교) 적용 결과, T+20은 8개 창 중 7개에서 여전히
+  R3b 우위(견고)이나, T+5는 8개 창 중 6개에서 우위가 사라지거나
+  이미 열세(취약).** 판정: **"조건 (2) 해소"는 과장 — 정확히는
+  "T+20 기준 완화, T+5 기준 여전히 미해결"** 수준으로 재조정. R3b는
+  Conditional Go를 유지한다(확정 Go 아님). 확정 Go 전 잔여 조건에
+  "T+5 horizon 의존 여부에 따른 유휴 자본 취약성 확인"을 추가.
+  신규 KIS 호출 0건(로그 확인). 운영 코드 변경 없음, broker submit
+  미호출 — 이번 턴도 shadow/validation 범위. 상세: `plans/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §30.
+
 ---
 
 ## 진행 체크리스트
@@ -1821,7 +1838,43 @@ canonical),
     expected_return_proxy_run_2026-07-17.log`.
   - 다음 과제: §3 전제조건 충족 여부 사용자 확인(다음 최우선),
     point-in-time `entry_score` 파이프라인 반영 shadow 실행 설계,
-    분기1·분기2 marginal t_NW out-of-sample 재확인.
+    분기1·분기2 marginal t_NW out-of-sample 재확인. **[SPPV-2.40에서
+    정정] "조건 (2) 해소"는 과장이었다 — 아래 SPPV-2.40 참고.**
+- [x] **SPPV-2.40(신설)** R3b 총 기대수익 proxy의 유휴 자본 반영
+  보강 검증 (완료, 2026-07-17)
+  - 작업 범위: §2.39가 "조건 (2) 해소"라 표현한 것이 유휴 자본
+    기회비용을 반영하지 않은 채였다는 점을 보강 검증. 신규 계측은
+    "창별 전체 거래일 수"(캐시 봉 데이터로만 계산, 신규 KIS 호출
+    없음) 하나뿐이며, 나머지는 §20 JSON을 재사용.
+  - **방법론**: (1) 기존(raw) proxy(§2.39와 동일), (2) 전체 슬롯
+    (거래일×3) 정규화 per-slot proxy — R0/R3b 공통 분모라 대수적
+    으로 raw와 비율이 동일함을 항등식으로 확인(실측으로도 소수점
+    까지 일치), (3) **엄격 기준**: R3b의 실현된 총합을, "R0가 전체
+    가용 슬롯을 하나도 남기지 않고 R0 자신의 평균으로 100% 채웠다"
+    는 이론적 최대와 비교(R3b에 가장 불리한 벤치마크).
+  - **결과: horizon에 따라 결론이 갈린다.** **T+20 기준 8개 창 중
+    7개(분기3 제외)에서 R3b가 이 엄격 기준(R0 이론적 최대)보다도
+    높다**(108.5%~177.5%) — T+20에서는 우위가 견고. **T+5 기준
+    8개 창 중 6개에서 우위가 사라지거나 이미 열세**(84.3%~98.8%,
+    전반부·분기2만 통과) — T+5에서는 우위가 유휴 자본 가정에 취약.
+  - **판정: §2.39의 "조건 (2) 해소"는 과장이다.** 정확한 서술:
+    **"조건 (2)는 T+20 기준으로는 상당 부분 완화됐으나, T+5
+    기준으로는 여전히 미해결에 가깝다."** R3b는 Conditional Go를
+    유지한다(확정 Go 아님). 확정 Go 전 잔여 조건에 "T+5 horizon
+    의존 여부에 따른 유휴 자본 취약성 확인"을 추가한다. 신규 KIS
+    호출 없음(로그로 확인, 캐시 봉 데이터만 사용). 운영 코드 변경
+    없음, broker submit 미호출 — 이번 턴도 shadow/validation
+    범위. 상세: `plans/[DESIGN] regime_conditional_entry_signal_
+    v1.md` §30.
+  - 산출물: `scripts/validate_r3b_capital_utilization_adjusted_
+    proxy.py`(read-only, 신규 KIS 호출 0건), `logs/signal_ic_r3b_
+    capital_utilization_adjusted_proxy_2026-07-17.json`, `logs/
+    r3b_capital_utilization_adjusted_proxy_run_2026-07-17.log`.
+  - 다음 과제: §3 전제조건 충족 여부 사용자 확인(다음 최우선),
+    point-in-time `entry_score` 파이프라인 반영 shadow 실행 설계,
+    분기1·분기2 marginal t_NW out-of-sample 재확인, 이 시스템의
+    운영 호라이즌이 T+20 중심인지 T+5도 포함하는지 사용자 확인
+    (T+5 유휴 자본 취약성의 실질적 의미 판단에 필요).
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

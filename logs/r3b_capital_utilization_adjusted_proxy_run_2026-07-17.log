@@ -1,0 +1,51 @@
+INFO:validate_r3b_capital_utilization_adjusted_proxy:[20/87] 누적 표본 13060건
+INFO:validate_r3b_capital_utilization_adjusted_proxy:[40/87] 누적 표본 26120건
+INFO:validate_r3b_capital_utilization_adjusted_proxy:[60/87] 누적 표본 39180건
+INFO:validate_r3b_capital_utilization_adjusted_proxy:[80/87] 누적 표본 52240건
+INFO:validate_r3b_capital_utilization_adjusted_proxy:[87/87] 누적 표본 56753건
+INFO:validate_r3b_capital_utilization_adjusted_proxy:전체 3년 표본 56753건, 실패 0종목
+=== 창별 전체 거래일 수(신규 KIS 호출 없음, 캐시 봉 데이터로만 계산) ===
+  2차(3년): 653일
+  1차(12M): 245일
+  전반부: 326일
+  후반부: 327일
+  분기1: 163일
+  분기2: 163일
+  분기3: 163일
+  분기4: 164일
+
+=== R3b 유휴 자본 반영 보강 proxy — R0 vs R3b ===
+
+--- 2차(3년) (거래일 653일, 전체 가용 슬롯 1959) ---
+  [T+5] 기존(raw) proxy R3b/R0=119.4% | per-slot(항등식 확인) R3b/R0=119.4% | 엄격 기준(R0 이론적 최대 대비) R3b=94.0% | 판정 뒤집힘=True
+  [T+20] 기존(raw) proxy R3b/R0=144.5% | per-slot(항등식 확인) R3b/R0=144.5% | 엄격 기준(R0 이론적 최대 대비) R3b=113.8% | 판정 뒤집힘=False
+
+--- 1차(12M) (거래일 245일, 전체 가용 슬롯 735) ---
+  [T+5] 기존(raw) proxy R3b/R0=92.0% | per-slot(항등식 확인) R3b/R0=92.0% | 엄격 기준(R0 이론적 최대 대비) R3b=84.3% | 판정 뒤집힘=False
+  [T+20] 기존(raw) proxy R3b/R0=140.0% | per-slot(항등식 확인) R3b/R0=140.0% | 엄격 기준(R0 이론적 최대 대비) R3b=128.2% | 판정 뒤집힘=False
+
+--- 전반부 (거래일 326일, 전체 가용 슬롯 978) ---
+  [T+5] 기존(raw) proxy R3b/R0=179.4% | per-slot(항등식 확인) R3b/R0=179.4% | 엄격 기준(R0 이론적 최대 대비) R3b=120.5% | 판정 뒤집힘=False
+  [T+20] 기존(raw) proxy R3b/R0=187.1% | per-slot(항등식 확인) R3b/R0=187.1% | 엄격 기준(R0 이론적 최대 대비) R3b=125.7% | 판정 뒤집힘=False
+
+--- 후반부 (거래일 327일, 전체 가용 슬롯 981) ---
+  [T+5] 기존(raw) proxy R3b/R0=106.8% | per-slot(항등식 확인) R3b/R0=106.8% | 엄격 기준(R0 이론적 최대 대비) R3b=96.5% | 판정 뒤집힘=True
+  [T+20] 기존(raw) proxy R3b/R0=137.1% | per-slot(항등식 확인) R3b/R0=137.1% | 엄격 기준(R0 이론적 최대 대비) R3b=123.8% | 판정 뒤집힘=False
+
+--- 분기1 (거래일 163일, 전체 가용 슬롯 489) ---
+  [T+5] 기존(raw) proxy R3b/R0=110.6% | per-slot(항등식 확인) R3b/R0=110.6% | 엄격 기준(R0 이론적 최대 대비) R3b=87.8% | 판정 뒤집힘=True
+  [T+20] 기존(raw) proxy R3b/R0=136.8% | per-slot(항등식 확인) R3b/R0=136.8% | 엄격 기준(R0 이론적 최대 대비) R3b=108.5% | 판정 뒤집힘=False
+
+--- 분기2 (거래일 163일, 전체 가용 슬롯 489) ---
+  [T+5] 기존(raw) proxy R3b/R0=269.6% | per-slot(항등식 확인) R3b/R0=269.6% | 엄격 기준(R0 이론적 최대 대비) R3b=148.3% | 판정 뒤집힘=False
+  [T+20] 기존(raw) proxy R3b/R0=322.6% | per-slot(항등식 확인) R3b/R0=322.6% | 엄격 기준(R0 이론적 최대 대비) R3b=177.5% | 판정 뒤집힘=False
+
+--- 분기3 (거래일 163일, 전체 가용 슬롯 489) ---
+  [T+5] 기존(raw) proxy R3b/R0=107.5% | per-slot(항등식 확인) R3b/R0=107.6% | 엄격 기준(R0 이론적 최대 대비) R3b=94.6% | 판정 뒤집힘=True
+  [T+20] 기존(raw) proxy R3b/R0=96.8% | per-slot(항등식 확인) R3b/R0=96.8% | 엄격 기준(R0 이론적 최대 대비) R3b=85.1% | 판정 뒤집힘=False
+
+--- 분기4 (거래일 164일, 전체 가용 슬롯 492) ---
+  [T+5] 기존(raw) proxy R3b/R0=106.7% | per-slot(항등식 확인) R3b/R0=106.7% | 엄격 기준(R0 이론적 최대 대비) R3b=98.8% | 판정 뒤집힘=True
+  [T+20] 기존(raw) proxy R3b/R0=166.6% | per-slot(항등식 확인) R3b/R0=166.6% | 엄격 기준(R0 이론적 최대 대비) R3b=154.4% | 판정 뒤집힘=False
+
+산출 저장: logs/signal_ic_r3b_capital_utilization_adjusted_proxy_2026-07-17.json

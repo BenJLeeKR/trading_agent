@@ -1,0 +1,423 @@
+{
+  "windows": {
+    "supplementary_3y": {
+      "label": "2차(3년)",
+      "n_trading_days": 653,
+      "total_slots": 1959,
+      "by_horizon": {
+        "T+5": {
+          "r0_would_buy_n": 1543,
+          "r3b_would_buy_n": 1024,
+          "r0_mean_pct": 1.0893,
+          "r3b_mean_pct": 1.9597,
+          "raw_total_proxy": {
+            "R0": 1680.8,
+            "R3b": 2006.7,
+            "r3b_pct_of_r0": 119.4
+          },
+          "per_slot_proxy_idle_zero": {
+            "R0": 0.858,
+            "R3b": 1.0243,
+            "r3b_pct_of_r0": 119.4
+          },
+          "strict_vs_r0_theoretical_max": {
+            "r0_theoretical_max_total": 2133.9,
+            "r3b_realized_total": 2006.7,
+            "r3b_pct_of_r0_theoretical_max": 94.0
+          },
+          "verdict_flip_raw_vs_strict": true
+        },
+        "T+20": {
+          "r0_would_buy_n": 1543,
+          "r3b_would_buy_n": 1024,
+          "r0_mean_pct": 2.8177,
+          "r3b_mean_pct": 6.1337,
+          "raw_total_proxy": {
+            "R0": 4347.7,
+            "R3b": 6280.9,
+            "r3b_pct_of_r0": 144.5
+          },
+          "per_slot_proxy_idle_zero": {
+            "R0": 2.2193,
+            "R3b": 3.2062,
+            "r3b_pct_of_r0": 144.5
+          },
+          "strict_vs_r0_theoretical_max": {
+            "r0_theoretical_max_total": 5519.9,
+            "r3b_realized_total": 6280.9,
+            "r3b_pct_of_r0_theoretical_max": 113.8
+          },
+          "verdict_flip_raw_vs_strict": false
+        }
+      }
+    },
+    "primary_recent_12m": {
+      "label": "1차(12M)",
+      "n_trading_days": 245,
+      "total_slots": 735,
+      "by_horizon": {
+        "T+5": {
+          "r0_would_buy_n": 673,
+          "r3b_would_buy_n": 443,
+          "r0_mean_pct": 2.0577,
+          "r3b_mean_pct": 2.8771,
+          "raw_total_proxy": {
+            "R0": 1384.8,
+            "R3b": 1274.6,
+            "r3b_pct_of_r0": 92.0
+          },
+          "per_slot_proxy_idle_zero": {
+            "R0": 1.8841,
+            "R3b": 1.7341,
+            "r3b_pct_of_r0": 92.0
+          },
+          "strict_vs_r0_theoretical_max": {
+            "r0_theoretical_max_total": 1512.4,
+            "r3b_realized_total": 1274.6,
+            "r3b_pct_of_r0_theoretical_max": 84.3
+          },
+          "verdict_flip_raw_vs_strict": false
+        },
+        "T+20": {
+          "r0_would_buy_n": 673,
+          "r3b_would_buy_n": 443,
+          "r0_mean_pct": 4.3066,
+          "r3b_mean_pct": 9.1603,
+          "raw_total_proxy": {
+            "R0": 2898.3,
+            "R3b": 4058.0,
+            "r3b_pct_of_r0": 140.0
+          },
+          "per_slot_proxy_idle_zero": {
+            "R0": 3.9433,
+            "R3b": 5.5211,
+            "r3b_pct_of_r0": 140.0
+          },
+          "strict_vs_r0_theoretical_max": {
+            "r0_theoretical_max_total": 3165.4,
+            "r3b_realized_total": 4058.0,
+            "r3b_pct_of_r0_theoretical_max": 128.2
+          },
+          "verdict_flip_raw_vs_strict": false
+        }
+      }
+    },
+    "3y_first_half": {
+      "label": "전반부",
+      "n_trading_days": 326,
+      "total_slots": 978,
+      "by_horizon": {
+        "T+5": {
+          "r0_would_buy_n": 657,
+          "r3b_would_buy_n": 425,
+          "r0_mean_pct": 0.4424,
+          "r3b_mean_pct": 1.2273,
+          "raw_total_proxy": {
+            "R0": 290.7,
+            "R3b": 521.6,
+            "r3b_pct_of_r0": 179.4
+          },
+          "per_slot_proxy_idle_zero": {
+            "R0": 0.2972,
+            "R3b": 0.5333,
+            "r3b_pct_of_r0": 179.4
+          },
+          "strict_vs_r0_theoretical_max": {
+            "r0_theoretical_max_total": 432.7,
+            "r3b_realized_total": 521.6,
+            "r3b_pct_of_r0_theoretical_max": 120.5
+          },
+          "verdict_flip_raw_vs_strict": false
+        },
+        "T+20": {
+          "r0_would_buy_n": 657,
+          "r3b_would_buy_n": 425,
+          "r0_mean_pct": 0.9782,
+          "r3b_mean_pct": 2.8301,
+          "raw_total_proxy": {
+            "R0": 642.7,
+            "R3b": 1202.8,
+            "r3b_pct_of_r0": 187.1
+          },
+          "per_slot_proxy_idle_zero": {
+            "R0": 0.6572,
+            "R3b": 1.2299,
+            "r3b_pct_of_r0": 187.1
+          },
+          "strict_vs_r0_theoretical_max": {
+            "r0_theoretical_max_total": 956.7,
+            "r3b_realized_total": 1202.8,
+            "r3b_pct_of_r0_theoretical_max": 125.7
+          },
+          "verdict_flip_raw_vs_strict": false
+        }
+      }
+    },
+    "3y_second_half": {
+      "label": "후반부",
+      "n_trading_days": 327,
+      "total_slots": 981,
+      "by_horizon": {
+        "T+5": {
+          "r0_would_buy_n": 886,
+          "r3b_would_buy_n": 599,
+          "r0_mean_pct": 1.5691,
+          "r3b_mean_pct": 2.4793,
+          "raw_total_proxy": {
+            "R0": 1390.2,
+            "R3b": 1485.1,
+            "r3b_pct_of_r0": 106.8
+          },
+          "per_slot_proxy_idle_zero": {
+            "R0": 1.4171,
+            "R3b": 1.5139,
+            "r3b_pct_of_r0": 106.8
+          },
+          "strict_vs_r0_theoretical_max": {
+            "r0_theoretical_max_total": 1539.3,
+            "r3b_realized_total": 1485.1,
+            "r3b_pct_of_r0_theoretical_max": 96.5
+          },
+          "verdict_flip_raw_vs_strict": true
+        },
+        "T+20": {
+          "r0_would_buy_n": 886,
+          "r3b_would_buy_n": 599,
+          "r0_mean_pct": 4.1818,
+          "r3b_mean_pct": 8.4776,
+          "raw_total_proxy": {
+            "R0": 3705.1,
+            "R3b": 5078.1,
+            "r3b_pct_of_r0": 137.1
+          },
+          "per_slot_proxy_idle_zero": {
+            "R0": 3.7769,
+            "R3b": 5.1765,
+            "r3b_pct_of_r0": 137.1
+          },
+          "strict_vs_r0_theoretical_max": {
+            "r0_theoretical_max_total": 4102.3,
+            "r3b_realized_total": 5078.1,
+            "r3b_pct_of_r0_theoretical_max": 123.8
+          },
+          "verdict_flip_raw_vs_strict": false
+        }
+      }
+    },
+    "quarter_1": {
+      "label": "분기1",
+      "n_trading_days": 163,
+      "total_slots": 489,
+      "by_horizon": {
+        "T+5": {
+          "r0_would_buy_n": 388,
+          "r3b_would_buy_n": 245,
+          "r0_mean_pct": 0.4244,
+          "r3b_mean_pct": 0.7437,
+          "raw_total_proxy": {
+            "R0": 164.7,
+            "R3b": 182.2,
+            "r3b_pct_of_r0": 110.6
+          },
+          "per_slot_proxy_idle_zero": {
+            "R0": 0.3368,
+            "R3b": 0.3726,
+            "r3b_pct_of_r0": 110.6
+          },
+          "strict_vs_r0_theoretical_max": {
+            "r0_theoretical_max_total": 207.5,
+            "r3b_realized_total": 182.2,
+            "r3b_pct_of_r0_theoretical_max": 87.8
+          },
+          "verdict_flip_raw_vs_strict": true
+        },
+        "T+20": {
+          "r0_would_buy_n": 388,
+          "r3b_would_buy_n": 245,
+          "r0_mean_pct": 1.2076,
+          "r3b_mean_pct": 2.616,
+          "raw_total_proxy": {
+            "R0": 468.5,
+            "R3b": 640.9,
+            "r3b_pct_of_r0": 136.8
+          },
+          "per_slot_proxy_idle_zero": {
+            "R0": 0.9581,
+            "R3b": 1.3106,
+            "r3b_pct_of_r0": 136.8
+          },
+          "strict_vs_r0_theoretical_max": {
+            "r0_theoretical_max_total": 590.5,
+            "r3b_realized_total": 640.9,
+            "r3b_pct_of_r0_theoretical_max": 108.5
+          },
+          "verdict_flip_raw_vs_strict": false
+        }
+      }
+    },
+    "quarter_2": {
+      "label": "분기2",
+      "n_trading_days": 163,
+      "total_slots": 489,
+      "by_horizon": {
+        "T+5": {
+          "r0_would_buy_n": 269,
+          "r3b_would_buy_n": 180,
+          "r0_mean_pct": 0.4682,
+          "r3b_mean_pct": 1.8856,
+          "raw_total_proxy": {
+            "R0": 125.9,
+            "R3b": 339.4,
+            "r3b_pct_of_r0": 269.6
+          },
+          "per_slot_proxy_idle_zero": {
+            "R0": 0.2575,
+            "R3b": 0.6941,
+            "r3b_pct_of_r0": 269.6
+          },
+          "strict_vs_r0_theoretical_max": {
+            "r0_theoretical_max_total": 228.9,
+            "r3b_realized_total": 339.4,
+            "r3b_pct_of_r0_theoretical_max": 148.3
+          },
+          "verdict_flip_raw_vs_strict": false
+        },
+        "T+20": {
+          "r0_would_buy_n": 269,
+          "r3b_would_buy_n": 180,
+          "r0_mean_pct": 0.6474,
+          "r3b_mean_pct": 3.1216,
+          "raw_total_proxy": {
+            "R0": 174.2,
+            "R3b": 561.9,
+            "r3b_pct_of_r0": 322.6
+          },
+          "per_slot_proxy_idle_zero": {
+            "R0": 0.3562,
+            "R3b": 1.1491,
+            "r3b_pct_of_r0": 322.6
+          },
+          "strict_vs_r0_theoretical_max": {
+            "r0_theoretical_max_total": 316.6,
+            "r3b_realized_total": 561.9,
+            "r3b_pct_of_r0_theoretical_max": 177.5
+          },
+          "verdict_flip_raw_vs_strict": false
+        }
+      }
+    },
+    "quarter_3": {
+      "label": "분기3",
+      "n_trading_days": 163,
+      "total_slots": 489,
+      "by_horizon": {
+        "T+5": {
+          "r0_would_buy_n": 430,
+          "r3b_would_buy_n": 308,
+          "r0_mean_pct": 0.6326,
+          "r3b_mean_pct": 0.9497,
+          "raw_total_proxy": {
+            "R0": 272.0,
+            "R3b": 292.5,
+            "r3b_pct_of_r0": 107.5
+          },
+          "per_slot_proxy_idle_zero": {
+            "R0": 0.5562,
+            "R3b": 0.5982,
+            "r3b_pct_of_r0": 107.6
+          },
+          "strict_vs_r0_theoretical_max": {
+            "r0_theoretical_max_total": 309.3,
+            "r3b_realized_total": 292.5,
+            "r3b_pct_of_r0_theoretical_max": 94.6
+          },
+          "verdict_flip_raw_vs_strict": true
+        },
+        "T+20": {
+          "r0_would_buy_n": 430,
+          "r3b_would_buy_n": 308,
+          "r0_mean_pct": 3.6478,
+          "r3b_mean_pct": 4.9315,
+          "raw_total_proxy": {
+            "R0": 1568.6,
+            "R3b": 1518.9,
+            "r3b_pct_of_r0": 96.8
+          },
+          "per_slot_proxy_idle_zero": {
+            "R0": 3.2078,
+            "R3b": 3.1061,
+            "r3b_pct_of_r0": 96.8
+          },
+          "strict_vs_r0_theoretical_max": {
+            "r0_theoretical_max_total": 1783.8,
+            "r3b_realized_total": 1518.9,
+            "r3b_pct_of_r0_theoretical_max": 85.1
+          },
+          "verdict_flip_raw_vs_strict": false
+        }
+      }
+    },
+    "quarter_4": {
+      "label": "분기4",
+      "n_trading_days": 164,
+      "total_slots": 492,
+      "by_horizon": {
+        "T+5": {
+          "r0_would_buy_n": 456,
+          "r3b_would_buy_n": 291,
+          "r0_mean_pct": 2.4523,
+          "r3b_mean_pct": 4.0984,
+          "raw_total_proxy": {
+            "R0": 1118.2,
+            "R3b": 1192.6,
+            "r3b_pct_of_r0": 106.7
+          },
+          "per_slot_proxy_idle_zero": {
+            "R0": 2.2728,
+            "R3b": 2.424,
+            "r3b_pct_of_r0": 106.7
+          },
+          "strict_vs_r0_theoretical_max": {
+            "r0_theoretical_max_total": 1206.5,
+            "r3b_realized_total": 1192.6,
+            "r3b_pct_of_r0_theoretical_max": 98.8
+          },
+          "verdict_flip_raw_vs_strict": true
+        },
+        "T+20": {
+          "r0_would_buy_n": 456,
+          "r3b_would_buy_n": 291,
+          "r0_mean_pct": 4.6853,
+          "r3b_mean_pct": 12.2309,
+          "raw_total_proxy": {
+            "R0": 2136.5,
+            "R3b": 3559.2,
+            "r3b_pct_of_r0": 166.6
+          },
+          "per_slot_proxy_idle_zero": {
+            "R0": 4.3425,
+            "R3b": 7.2341,
+            "r3b_pct_of_r0": 166.6
+          },
+          "strict_vs_r0_theoretical_max": {
+            "r0_theoretical_max_total": 2305.2,
+            "r3b_realized_total": 3559.2,
+            "r3b_pct_of_r0_theoretical_max": 154.4
+          },
+          "verdict_flip_raw_vs_strict": false
+        }
+      }
+    }
+  },
+  "as_of": "2026-07-17T18:57:32.990657+09:00",
+  "total_trading_days": {
+    "supplementary_3y": 653,
+    "primary_recent_12m": 245,
+    "3y_first_half": 326,
+    "3y_second_half": 327,
+    "quarter_1": 163,
+    "quarter_2": 163,
+    "quarter_3": 163,
+    "quarter_4": 164
+  }
+}
