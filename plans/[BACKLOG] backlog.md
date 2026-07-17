@@ -579,6 +579,25 @@
   스크립트 없이 기존 코드·로그 재확인만 수행. 운영 코드 변경
   없음, broker submit 미호출.
 
+- 작성자: Claude
+- 수정일자: 2026-07-17 (44차, R3b 채택 시 risk_off_penalty 중복
+  해소 ablation)
+- 수정내용: §3 전제조건 ②(risk_off_penalty 중복 해소)를 R3b
+  candidate 위에서 실측했다(SPPV-2.46). entry_score 축(-0.15)과
+  eligibility 축(즉시 차단)이 서로 다른 함수의 별개 축임을 코드로
+  확정하고, A(현행)/B(entry_score 축 무력화)/C(eligibility 축
+  완화) 3개 시나리오를 실제 운영 함수 호출로 비교했다(운영 코드
+  미수정, market_regime 입력만 국소 중립화). **결과: C는 A와
+  완전 동일**(eligibility 축이 R3b candidate pool에서 비활성) —
+  중복 우려는 애초에 발생하지 않는다. **B는 T+20 총 기대수익
+  proxy가 2차 +20.9%/1차 +20.5% 개선되나 MAE도 소폭 악화(약
+  0.5%p)** — 실제 트레이드오프. 판정: **eligibility 축은 비활성,
+  entry_score 축은 "완화 검토 후보"에 가깝다는 실측 근거 확보 —
+  R3b는 Conditional Go를 유지하고, §3 조건②는 "방향 확인, 사용자
+  승인 대기"로 진전, SPPV-3 진입은 §21 게이트 미충족으로 여전히
+  이르다(불변).** 신규 KIS 호출 0건. 운영 코드 변경 없음, broker
+  submit 미호출.
+
 ---
 
 ## 관리 원칙
@@ -1511,12 +1530,33 @@
     유지한다.** 새 실측/새 스크립트 없이 기존 코드·로그 재확인만
     수행(신규 KIS 호출 해당 없음). 상세: `plans/[DESIGN] regime_
     conditional_entry_signal_v1.md` §35.
-  - **SPPV-3(다음 착수: §3 게이트는 시장 상황 의존적이므로 3년
-    캐시 갱신 시마다 재모니터링 + `risk_off_penalty` 중복 해소
-    ablation 착수 여부 사용자 판단 + T+5 horizon 강건성 확보 +
-    out-of-sample 데이터 축적 시 혼합 국면 구간(분기1 유형) 재확인
-    + `portfolio_allocation` gap 실거래 누적 후 재검증 + "국면
-    조건부 활동성 threshold" 설계 검토 여부 사용자 확인)**:
+  - **SPPV-2.46(완료, 2026-07-17, R3b 채택 시 risk_off_penalty
+    중복 해소 ablation — Conditional Go 유지, §3 조건② 방향 확인)**:
+    entry_score 축(-0.15, `_build_entry_score:1139-1141`)과
+    eligibility 축(즉시 차단, `_assess_buy_eligibility:421-438`)이
+    서로 다른 함수의 별개 축임을 코드로 확정하고, A(현행)/B
+    (entry_score 축 무력화)/C(eligibility 축 완화) 3개 시나리오를
+    R3b candidate 위에서 실제 운영 함수 호출로 비교(운영 코드
+    미수정, market_regime 입력만 국소 중립화). **결과: C는 2차·
+    1차 창 모두 A와 완전 동일**(eligibility 축이 R3b candidate
+    pool에서 비활성) — 중복 우려는 애초에 발생하지 않는다. **B는
+    T+20 총 기대수익 proxy가 2차 +20.9%/1차 +20.5% 개선되나 MAE도
+    소폭 악화(약 0.5%p)** — 실제 트레이드오프. **판정: eligibility
+    축은 비활성, entry_score 축은 "완화 검토 후보"에 가깝다는
+    실측 근거 확보 — R3b는 Conditional Go를 유지하고, §3 조건②는
+    "방향 확인, 사용자 승인 대기"로 진전, SPPV-3 진입은 §21 게이트
+    미충족으로 여전히 이르다(불변).** 신규 KIS 호출 0건, broker
+    submit 미호출. 산출: `scripts/validate_r3b_risk_off_penalty_
+    duplication_ablation.py`(read-only, 신규 KIS 호출 0건), `logs/
+    signal_ic_r3b_risk_off_penalty_duplication_ablation_2026-
+    07-17.json`. 상세: `plans/[DESIGN] regime_conditional_entry_
+    signal_v1.md` §36.
+  - **SPPV-3(다음 착수: entry_score의 risk_off_penalty 완화(제거/
+    축소) 여부 사용자 승인 결정 + §21 게이트 정기 재모니터링 +
+    T+5 horizon 강건성 확보 + out-of-sample 데이터 축적 시 혼합
+    국면 구간(분기1 유형) 재확인 + `portfolio_allocation` gap
+    실거래 누적 후 재검증 + "국면 조건부 활동성 threshold" 설계
+    검토 여부 사용자 확인)**:
     §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
     근접함이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는
     Conditional Go를 확보했으며, **§2.27~§2.28에서 그 Conditional

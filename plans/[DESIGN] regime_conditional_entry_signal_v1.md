@@ -146,7 +146,16 @@ switch_v1_gate.py`는 실행 시점과 무관하게 항상 하드코딩된
 `..._2026-07-14.json`에 저장하며, §34가 인용한 `..._2026-07-17.
 json`은 그 결과를 호스트로 복사하며 수동 재명명한 사본(내용은
 이번 재실행 결과 그대로, 결론 영향 없음) — **결론 유지, 기록만
-정정** —
+정정** + **R3b 채택 시 `risk_off_penalty` 중복 해소 ablation 완료
+(§36, 2026-07-17) — A(현행)/B(entry_score risk_off_penalty 제거)/
+C(eligibility risk_off 축 완화) 3개 시나리오 실측 결과, **C는 A와
+완전 동일**(eligibility 축이 R3b candidate pool에서 단 한 건도
+걸리지 않는 비활성 축임을 확인) — 중복 우려는 애초에 발생하지
+않음. **B는 T+20 총 기대수익 proxy가 2차 +20.9%/1차 +20.5% 개선**
+되나 MAE도 소폭 악화(약 0.5%p) — "공짜 개선"이 아닌 실제
+트레이드오프. §3 조건 ②를 "미착수"→"방향 확인, 사용자 승인 대기"
+로 진전 — **Conditional Go 유지, SPPV-3 진입은 §21 게이트
+미충족으로 여전히 이름(불변)** —
 실거래/`entry_score` 반영 없음.**
 상위 문서: `plans/[ANALYSIS] sppv_regime_polarity_synthesis_and_next_direction.md`
 (§4 판정 — "국면 분기형 entry 설계로 전환"), `plans/[DESIGN] signal_
@@ -4009,3 +4018,140 @@ broker submit 미호출.
 out-of-sample 데이터 축적 시 혼합 국면 구간 재확인, `portfolio_
 allocation` gap 실거래 누적 후 재검증)은 이번 정정과 무관하게 그대로
 유효하다 — 이번 턴은 새 과제를 추가하지 않는다.
+
+## 36. R3b 채택 시 `risk_off_penalty` 중복 해소 ablation (SPPV-2.46, 2026-07-17)
+
+§34.4가 남긴 "`risk_off_penalty` 중복 해소 ablation"을 실행했다.
+**이번 턴의 범위**: §3 전제조건 중 시장 외생 변수인 §21 게이트는
+건드리지 않고(§34에서 이미 NOT_TRIGGERED 재확인, 불변), R3b의
+방향성 우위 자체도 재검증하지 않는다 — **오직 "R3b를 실제
+entry_score 경로에 반영할 때 `risk_off_penalty`(및 인접 eligibility
+축)가 여전히 성과를 깎는 진짜 병목인지, 유지해야 할 정당한 방어
+장치인지"만 판정한다.**
+
+### 36.1 코드 기준 사실 확정 — 중복 축은 2개, 서로 다른 단계에 있다
+
+1. **entry_score 축**: `deterministic_trigger_engine._build_entry_
+   score:1139-1141` — `market_regime.risk_tone=="risk_off"`이면
+   `score -= 0.15`(reason `trigger_risk_off_penalty`). 이것이 문서가
+   "risk_off_penalty"라 불러온 축이다.
+2. **eligibility 축(별개)**: 같은 파일 `_assess_buy_eligibility:
+   421-438` — `risk_tone=="risk_off"` **그리고** `regime_label==
+   "bearish_trend"`이면 core 종목은 예외 없이 즉시 차단
+   (`eligibility_risk_off_block`/`eligibility_core_risk_off_guard_
+   blocked`). entry_score의 -0.15와는 다른 함수, 다른 단계(eligible
+   자체를 막음)다.
+3. **중복의 정확한 성격**: 두 축 모두 `classify_market_regime()`을
+   쓰지만, entry_score/eligibility는 **종목별 개별 스냅샷**으로
+   호출하고, `regime_conditional_signal`의 하락장 분기(`reversal_
+   1m`)는 **시장 공통(벤치마크) 국면**으로 갈린다 — "같은 판정
+   로직, 다른 기준 단위"가 중복 의심의 정체다.
+
+### 36.2 방법론 — A/B/C 3개 시나리오, R3b 후보 위에서 비교
+
+스크립트: `scripts/validate_r3b_risk_off_penalty_duplication_
+ablation.py`(read-only, 운영 코드 미수정 — 실제 `_build_entry_
+score`/`_assess_buy_eligibility`/`classify_market_regime`를 그대로
+호출하되, **함수에 넘기는 `market_regime` 입력만** `dataclasses.
+replace(risk_tone="neutral")`로 국소적으로 바꿔 재현한다, 이 세션
+전체의 일관된 shadow 관례):
+
+- **A(현행 유지)**: 두 축 모두 실제 로직 그대로.
+- **B(entry_score risk_off_penalty만 무력화)**: eligibility는
+  그대로, entry_score 계산에만 중립화된 market_regime을 넘겨
+  -0.15 조정항이 걸리지 않게 한다.
+- **C(eligibility risk_off 축만 완화)**: entry_score는 그대로
+  (risk_off_penalty 유지), eligibility 판정에만 중립화된 market_
+  regime을 넘겨 `eligibility_risk_off_block`이 걸리지 않게 한다.
+
+candidate(R3b 상위 20% quintile) → eligible → selected(entry_score
+>=0.65) → would_buy(top-3) funnel을 2차(3년)/1차(최근 12개월) 두
+창에서 계측. 산출: `logs/signal_ic_r3b_risk_off_penalty_
+duplication_ablation_2026-07-17.json`, 실행 로그 `logs/r3b_risk_
+off_penalty_duplication_ablation_run_2026-07-17.log`(신규 KIS
+호출 0건 — 기존 3년 캐시로 전량 서빙).
+
+### 36.3 실측 결과
+
+| 창 | 시나리오 | eligible | selected(rate) | would_buy | T+20 평균 | T+20 t_NW | T+20 양수율 | T+20 MAE | T+20 총proxy |
+|---|---|---|---|---|---|---|---|---|---|
+| 2차 | A(현행) | 3491 | 1376(39.42%) | 1079 | 5.725% | 3.67 | 52.83% | -8.97% | 6177.7 |
+| 2차 | B(entry_score 축 제거) | 3491 | **1505(43.11%)** | **1151** | **6.491%** | 3.87 | 53.34% | -9.52% | **7471.2** |
+| 2차 | C(eligibility 축 완화) | 3491 | 1376(39.42%) | 1079 | 5.725% | 3.67 | 52.83% | -8.97% | 6177.7 |
+| 1차 | A(현행) | 1621 | 592(36.52%) | 464 | 9.043% | 2.99 | 59.48% | -9.18% | 4196.1 |
+| 1차 | B(entry_score 축 제거) | 1621 | **700(43.18%)** | **511** | **9.893%** | 3.13 | 57.93% | -9.72% | **5055.4** |
+| 1차 | C(eligibility 축 완화) | 1621 | 592(36.52%) | 464 | 9.043% | 2.99 | 59.48% | -9.18% | 4196.1 |
+
+**핵심 발견 1 — 시나리오 C는 두 창 모두 A와 완전히 동일하다**
+(candidate/eligible/selected/would_buy/모든 지표가 소수점까지
+일치). 이는 **eligibility 축(`eligibility_risk_off_block`)이
+R3b의 candidate pool에서는 단 한 건도 실제로 걸리지 않는다**는
+뜻이다 — R3b의 candidate는 그날 `regime_conditional_signal`(모멘텀/
+반전 강도) 상위 20%로 뽑히는데, 이 조건 자체가 종목별 `bearish_
+trend`(개별 3개월 수익률·추세 급락)와 구조적으로 거의 겹치지 않기
+때문이다. **즉 eligibility 축은 R3b 후보군에 대해 "충돌하는 중복"이
+아니라 "애초에 적용되지 않는 비활성 축"이다.**
+
+**핵심 발견 2 — 시나리오 B(entry_score의 risk_off_penalty만 제거)
+는 두 창 모두 selected/would_buy가 늘고, 동시에 T+20 평균·t_NW·
+총 기대수익 proxy가 함께 개선된다.** 총 기대수익 proxy는 T+20
+기준 2차 +20.9%(6177.7→7471.2), 1차 +20.5%(4196.1→5055.4) 개선
+된다. 다만 **MAE(하방 이탈)도 함께 소폭 악화**된다(2차 -8.97%→
+-9.52%p, 1차 -9.18%→-9.72%p, 약 0.5%p) — "공짜 개선"이 아니라
+**수익 확대와 하방 노출 확대가 함께 오는 실제 트레이드오프**다.
+양수 비율은 혼재(2차 소폭 개선, 1차 소폭 악화)한다.
+
+### 36.4 해석 — 병목인가, 정당한 방어인가
+
+1. **eligibility 축(C)은 R3b 관점에서 "제거해야 할 중복"도 "지켜야
+   할 방어"도 아니다 — 애초에 개입하지 않는다.** 이 축을 둘러싼
+   "중복 우려"는 R3b의 candidate 구성 방식(모멘텀/반전 상위 20%)
+   자체가 이미 개별 약세장 신호와 상호배타적이기 때문에 실전에서는
+   발생하지 않는 이론적 우려였다.
+2. **entry_score 축(B)은 R3b 후보군에 대해 실제로 성과를 깎는
+   병목 쪽에 더 가깝다.** 제거 시 거래량·평균수익률·총 기대수익이
+   함께 늘고 t_NW도 유지되거나 개선된다 — "최고 기대수익률" 목표
+   관점에서는 유리한 방향이다. 다만 MAE 악화가 함께 나타나 **완전한
+   무비용 개선은 아니다** — 손실 허용 범위 내에서의 트레이드오프로
+   해석해야 한다(이 시스템의 목표가 "손실 0"이 아니라 "허용 손실
+   아래 기대수익 최대화"임을 상기하면, 이 트레이드오프는 목표에
+   부합하는 방향이다).
+3. **이 결과는 §3 전제조건 ②("의미 중복 해소")에 대한 실측 기반
+   1차 답을 제공하지만, "완전 해소"로 선언하기엔 이르다** — 단일
+   shadow 계측 1회이며, out-of-sample 재확인과 사용자의 최종 승인
+   (엔트리 스코어 조정 로직 변경은 운영 코드 변경 사안이므로)이
+   필요하다.
+
+### 36.5 판정 — Conditional Go 유지, §3 조건 ②는 "유력한 방향 확인"으로 구체화
+
+**R3b는 Conditional Go를 유지한다.** 이번 턴은 §3 전제조건 중
+② ("risk_off_penalty 중복 해소")에 대해 다음과 같이 구체화한다:
+- eligibility 축은 R3b 후보군에서 비활성 — 우려 해소(단, "제거"가
+  아니라 "애초에 무관"이라는 형태로 해소).
+- entry_score 축은 제거 시 기대수익이 개선되나 MAE 트레이드오프가
+  있다 — **"유지해야 할 방어"라기보다 "완화를 검토할 후보"에 가깝다**
+  는 실측 근거를 확보했으나, 운영 코드(entry_score) 변경은 이번
+  턴 범위 밖이다(사용자 승인 및 §21 게이트와 별개로 진행 여부
+  결정 필요).
+
+**SPPV-3(운영 코드 반영) 진입은 여전히 아직 이르다** — 주된 차단
+요인은 §34에서 이미 확인한 §21 게이트(NOT_TRIGGERED, 이번 턴
+무관)이며, 이번 턴의 발견은 §3 조건 ②를 "미착수"에서 "방향 확인,
+사용자 승인 대기"로 진전시킨 것이다. **운영 코드(`entry_score`,
+`deterministic_trigger_engine.py`)는 변경하지 않았다** — 이번 턴도
+shadow/validation 범위, broker submit 미호출.
+
+**활동성 필터(§14~§16)의 판정은 이번 턴과 무관하게 그대로
+유지된다.**
+
+### 36.6 다음 단계
+
+1. §21 게이트는 시장 상황 의존적이므로 정기 재모니터링 대상으로
+   유지(§34와 동일).
+2. entry_score의 risk_off_penalty 완화(제거 또는 축소)를 실제
+   운영 코드에 반영할지 여부는 **사용자 승인이 필요한 별도 결정
+   사안**이다 — 이번 턴은 실측 근거만 제공했다.
+3. T+5 horizon 강건성 확보(§31의 조건 그대로 유효).
+4. out-of-sample 데이터 축적 시 혼합 국면 구간(분기1 유형) 재확인.
+5. `portfolio_allocation` gap은 실거래 계좌 상태 없이는 메울 수
+   없다 — 실거래 누적 이후 재검증 대상으로 남긴다.

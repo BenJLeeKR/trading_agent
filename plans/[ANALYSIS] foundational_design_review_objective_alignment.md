@@ -1068,6 +1068,25 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   아직 이르다는 판정을 그대로 유지한다.** 운영 코드 변경 없음,
   broker submit 미호출. 상세: `plans/[DESIGN] regime_conditional_
   entry_signal_v1.md` §35.
+
+- 작성자: Claude
+- 수정일자: 2026-07-17 (2.47순위, R3b 채택 시 risk_off_penalty
+  중복 해소 ablation)
+- 수정내용: §3 전제조건 ②(risk_off_penalty 중복 해소)를 R3b
+  candidate 위에서 실측했다(§2.47). entry_score 축(-0.15)과
+  eligibility 축(즉시 차단)이 서로 다른 함수의 별개 축임을 코드로
+  확정하고, A(현행)/B(entry_score 축 무력화)/C(eligibility 축
+  완화) 3개 시나리오를 실제 운영 함수 호출로 비교했다(운영 코드
+  미수정). **결과: C는 A와 완전 동일**(eligibility 축이 R3b
+  candidate pool에서 비활성) — 중복 우려는 애초에 발생하지 않는다.
+  **B는 T+20 총 기대수익 proxy가 2차 +20.9%/1차 +20.5% 개선되나
+  MAE도 소폭 악화(약 0.5%p)** — 실제 트레이드오프. 판정:
+  **eligibility 축은 비활성, entry_score 축은 "완화 검토 후보"에
+  가깝다는 실측 근거 확보 — R3b는 Conditional Go를 유지하고, §3
+  조건②는 "방향 확인, 사용자 승인 대기"로 진전, SPPV-3 진입은
+  §21 게이트 미충족으로 여전히 이르다(불변).** 운영 코드 변경
+  없음, broker submit 미호출. 상세: `plans/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §36.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
@@ -1135,7 +1154,13 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   각각 관리 가능한 잔여 리스크·미해결이나 치명적이지 않은 리스크로
   확인됐다 — R3b는 Conditional Go를 유지하되, SPPV-3(운영 코드
   반영) 진입은 R3b의 성과와 무관한 §3 게이트 미충족 때문에 아직
-  이르다.** 한편
+  이르다. §2.47에서 §3 전제조건 ②(risk_off_penalty 중복 해소)를
+  R3b candidate 위에서 실측한 결과, eligibility 축은 R3b candidate
+  pool에서 비활성(중복 우려 자체가 발생하지 않음)이고 entry_score
+  축은 제거 시 총 기대수익 proxy가 약 20% 개선되나 MAE도 소폭
+  악화되는 실제 트레이드오프임을 확인 — §3 조건②를 "방향 확인,
+  사용자 승인 대기"로 진전시켰으나 §21 게이트 미충족은 불변이라
+  SPPV-3 진입은 여전히 이르다.** 한편
   **§2.23~§2.27에서
   결합 사용 시 가장 빈번하게 걸리는 축이 regime 관련 축이 아니라
   활동성 필터(`eligibility_low_relative_activity`)임이 확인됐고,

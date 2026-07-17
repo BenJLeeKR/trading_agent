@@ -1,0 +1,32 @@
+INFO:validate_r3b_risk_off_penalty_duplication_ablation:[20/87] 누적 표본 13060건
+INFO:validate_r3b_risk_off_penalty_duplication_ablation:[40/87] 누적 표본 26120건
+INFO:validate_r3b_risk_off_penalty_duplication_ablation:[60/87] 누적 표본 39180건
+INFO:validate_r3b_risk_off_penalty_duplication_ablation:[80/87] 누적 표본 52240건
+INFO:validate_r3b_risk_off_penalty_duplication_ablation:[87/87] 누적 표본 56753건
+INFO:validate_r3b_risk_off_penalty_duplication_ablation:전체 3년 표본 56753건, 실패 0종목
+
+=== R3b 채택 시 risk_off_penalty 중복 해소 ablation(A/B/C) ===
+
+=== 2차(3년, 전체 표본) (표본 56753건) ===
+  [A_baseline] candidate=10999, eligible=3491, selected=1376(rate=39.42%), would_buy=1079(활동일당=2.291)
+    T+5: {'n': 1079, 'mean_pct': 1.8873, 't_newey_west': 3.99, 'pct_positive': 0.5422, 'mfe_mean_pct': 7.4332, 'mae_mean_pct': -4.8469, 'total_return_proxy': 2036.4}
+    T+20: {'n': 1079, 'mean_pct': 5.7254, 't_newey_west': 3.67, 'pct_positive': 0.5283, 'mfe_mean_pct': 18.015, 'mae_mean_pct': -8.9733, 'total_return_proxy': 6177.7}
+  [B_remove_entry_score_penalty] candidate=10999, eligible=3491, selected=1505(rate=43.11%), would_buy=1151(활동일당=2.325)
+    T+5: {'n': 1151, 'mean_pct': 2.0221, 't_newey_west': 4.18, 'pct_positive': 0.55, 'mfe_mean_pct': 8.0284, 'mae_mean_pct': -5.2261, 'total_return_proxy': 2327.4}
+    T+20: {'n': 1151, 'mean_pct': 6.491, 't_newey_west': 3.87, 'pct_positive': 0.5334, 'mfe_mean_pct': 19.6, 'mae_mean_pct': -9.5176, 'total_return_proxy': 7471.2}
+  [C_relax_eligibility_block] candidate=10999, eligible=3491, selected=1376(rate=39.42%), would_buy=1079(활동일당=2.291)
+    T+5: {'n': 1079, 'mean_pct': 1.8873, 't_newey_west': 3.99, 'pct_positive': 0.5422, 'mfe_mean_pct': 7.4332, 'mae_mean_pct': -4.8469, 'total_return_proxy': 2036.4}
+    T+20: {'n': 1079, 'mean_pct': 5.7254, 't_newey_west': 3.67, 'pct_positive': 0.5283, 'mfe_mean_pct': 18.015, 'mae_mean_pct': -8.9733, 'total_return_proxy': 6177.7}
+
+=== 1차(최근 12개월) (표본 21315건) ===
+  [A_baseline] candidate=4165, eligible=1621, selected=592(rate=36.52%), would_buy=464(활동일당=2.22)
+    T+5: {'n': 464, 'mean_pct': 3.0307, 't_newey_west': 3.32, 'pct_positive': 0.5797, 'mfe_mean_pct': 9.4056, 'mae_mean_pct': -5.2128, 'total_return_proxy': 1406.2}
+    T+20: {'n': 464, 'mean_pct': 9.0434, 't_newey_west': 2.99, 'pct_positive': 0.5948, 'mfe_mean_pct': 24.2439, 'mae_mean_pct': -9.1828, 'total_return_proxy': 4196.1}
+  [B_remove_entry_score_penalty] candidate=4165, eligible=1621, selected=700(rate=43.18%), would_buy=511(활동일당=2.291)
+    T+5: {'n': 511, 'mean_pct': 3.1061, 't_newey_west': 3.46, 'pct_positive': 0.5734, 'mfe_mean_pct': 9.7506, 'mae_mean_pct': -5.5362, 'total_return_proxy': 1587.2}
+    T+20: {'n': 511, 'mean_pct': 9.8932, 't_newey_west': 3.13, 'pct_positive': 0.5793, 'mfe_mean_pct': 25.7717, 'mae_mean_pct': -9.72, 'total_return_proxy': 5055.4}
+  [C_relax_eligibility_block] candidate=4165, eligible=1621, selected=592(rate=36.52%), would_buy=464(활동일당=2.22)
+    T+5: {'n': 464, 'mean_pct': 3.0307, 't_newey_west': 3.32, 'pct_positive': 0.5797, 'mfe_mean_pct': 9.4056, 'mae_mean_pct': -5.2128, 'total_return_proxy': 1406.2}
+    T+20: {'n': 464, 'mean_pct': 9.0434, 't_newey_west': 2.99, 'pct_positive': 0.5948, 'mfe_mean_pct': 24.2439, 'mae_mean_pct': -9.1828, 'total_return_proxy': 4196.1}
+
+산출 저장: logs/signal_ic_r3b_risk_off_penalty_duplication_ablation_2026-07-17.json

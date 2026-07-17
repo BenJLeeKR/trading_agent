@@ -554,10 +554,57 @@
   스크립트 없이 기존 코드·로그 재확인만 수행. 운영 코드 변경
   없음, broker submit 미호출.
 
+- 작성자: Claude
+- 수정일자: 2026-07-17 (44차, R3b 채택 시 risk_off_penalty 중복
+  해소 ablation)
+- 수정내용: §3 전제조건 ②(risk_off_penalty 중복 해소)를 R3b
+  candidate 위에서 실측했다(SPPV-2.46). entry_score 축(-0.15)과
+  eligibility 축(즉시 차단)이 서로 다른 함수의 별개 축임을 코드로
+  확정하고, A(현행)/B(entry_score 축 무력화)/C(eligibility 축
+  완화) 3개 시나리오를 실제 운영 함수 호출로 비교했다(운영 코드
+  미수정, market_regime 입력만 국소 중립화). **결과: C는 A와
+  완전 동일**(eligibility 축이 R3b candidate pool에서 비활성) —
+  중복 우려는 애초에 발생하지 않는다. **B는 T+20 총 기대수익
+  proxy가 2차 +20.9%/1차 +20.5% 개선되나 MAE도 소폭 악화(약
+  0.5%p)** — 실제 트레이드오프. 판정: **eligibility 축은 비활성,
+  entry_score 축은 "완화 검토 후보"에 가깝다는 실측 근거 확보 —
+  R3b는 Conditional Go를 유지하고, §3 조건②는 "방향 확인, 사용자
+  승인 대기"로 진전, SPPV-3 진입은 §21 게이트 미충족으로 여전히
+  이르다(불변).** 신규 KIS 호출 0건. 운영 코드 변경 없음, broker
+  submit 미호출.
+
 ## 최근 메모
 
-> **📌 2026-07-17 SPPV-2.44 산출물 파일명/실행 경로 불일치 정정
-> (최신)**: 직전 턴(SPPV-2.44)이 §3 게이트 재확인 산출물을 `logs/
+> **📌 2026-07-17 R3b 채택 시 risk_off_penalty 중복 해소 ablation
+> (최신)**: §3 전제조건 ②(시장 하락장 도래 여부와 별개인
+> "risk_off_penalty 중복 해소")를 R3b candidate 위에서 실측했다.
+> **코드 확정**: `entry_score` 축(`_build_entry_score:1139-1141`,
+> risk_tone=="risk_off"이면 -0.15)과 `eligibility` 축(`_assess_
+> buy_eligibility:421-438`, risk_tone=="risk_off" **그리고**
+> regime_label=="bearish_trend"이면 core 종목 즉시 차단)은 서로
+> 다른 함수·다른 단계의 별개 축이다. **A(현행)/B(entry_score 축
+> 무력화)/C(eligibility 축 완화) 3개 시나리오를 실제 운영 함수
+> 호출로 비교(운영 코드 미수정, market_regime 입력만 국소 중립화)
+> 한 결과: C는 2차·1차 창 모두 A와 완전히 동일**하다 —
+> eligibility 축이 R3b candidate pool(그날 regime_conditional_
+> signal 상위 20%)에서 단 한 건도 걸리지 않음을 확인했다(candidate
+> 조건 자체가 종목별 bearish_trend와 구조적으로 거의 겹치지 않기
+> 때문) — **중복 우려는 애초에 발생하지 않는다.** **B(entry_score
+> risk_off_penalty 제거)는 selected/would_buy가 늘고 T+20 총
+> 기대수익 proxy가 2차 +20.9%(6177.7→7471.2)/1차 +20.5%(4196.1→
+> 5055.4) 개선되나, MAE도 소폭 악화(약 0.5%p)**된다 — "공짜
+> 개선"이 아닌 실제 트레이드오프. **판정: eligibility 축은 R3b
+> 관점에서 "제거할 중복"도 "지킬 방어"도 아니라 애초에 비활성이고,
+> entry_score 축은 "유지해야 할 방어"보다 "완화를 검토할 후보"에
+> 가깝다는 실측 근거를 확보했다.** R3b는 **Conditional Go를
+> 유지**하며, §3 조건②는 "미착수"→"방향 확인, 사용자 승인 대기"로
+> 진전됐다 — 다만 **entry_score 조정은 운영 코드 변경 사안이라
+> 이번 턴 범위 밖이며, SPPV-3 진입은 §21 게이트 미충족(불변)으로
+> 여전히 이르다.** 상세: `plans/[DESIGN] regime_conditional_entry_
+> signal_v1.md` §36(SPPV-2.46).
+>
+> **📌 2026-07-17 SPPV-2.44 산출물 파일명/실행 경로 불일치 정정**:
+> 직전 턴(SPPV-2.44)이 §3 게이트 재확인 산출물을 `logs/
 > regime_switch_v1_gate_monitor_2026-07-17.json`으로 표기한 것이
 > 실제 스크립트 동작과 불일치했다. **확인된 사실: `scripts/
 > monitor_regime_switch_v1_gate.py:122`는 실행 시점과 무관하게
@@ -6271,12 +6318,33 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      유지한다.** 새 실측/새 스크립트 없이 기존 코드·로그 재확인만
      수행(신규 KIS 호출 해당 없음). 상세: `plans/[DESIGN] regime_
      conditional_entry_signal_v1.md` §35.
-   - **SPPV-3(다음 착수: §3 게이트는 시장 상황 의존적이므로 3년
-     캐시 갱신 시마다 재모니터링 + `risk_off_penalty` 중복 해소
-     ablation 착수 여부 사용자 판단 + T+5 horizon 강건성 확보 +
-     out-of-sample 데이터 축적 시 혼합 국면 구간(분기1 유형) 재확인
-     + `portfolio_allocation` gap 실거래 누적 후 재검증 + "국면
-     조건부 활동성 threshold" 설계 검토 여부 사용자 확인)**:
+   - **SPPV-2.46(완료, 2026-07-17, R3b 채택 시 risk_off_penalty
+     중복 해소 ablation — Conditional Go 유지, §3 조건② 방향 확인)**:
+     entry_score 축(-0.15, `_build_entry_score:1139-1141`)과
+     eligibility 축(즉시 차단, `_assess_buy_eligibility:421-438`)이
+     서로 다른 함수의 별개 축임을 코드로 확정하고, A(현행)/B
+     (entry_score 축 무력화)/C(eligibility 축 완화) 3개 시나리오를
+     R3b candidate 위에서 실제 운영 함수 호출로 비교(운영 코드
+     미수정, market_regime 입력만 국소 중립화). **결과: C는 2차·
+     1차 창 모두 A와 완전 동일**(eligibility 축이 R3b candidate
+     pool에서 비활성) — 중복 우려는 애초에 발생하지 않는다. **B는
+     T+20 총 기대수익 proxy가 2차 +20.9%/1차 +20.5% 개선되나 MAE도
+     소폭 악화(약 0.5%p)** — 실제 트레이드오프. **판정: eligibility
+     축은 비활성, entry_score 축은 "완화 검토 후보"에 가깝다는
+     실측 근거 확보 — R3b는 Conditional Go를 유지하고, §3 조건②는
+     "방향 확인, 사용자 승인 대기"로 진전, SPPV-3 진입은 §21 게이트
+     미충족으로 여전히 이르다(불변).** 신규 KIS 호출 0건, broker
+     submit 미호출. 산출: `scripts/validate_r3b_risk_off_penalty_
+     duplication_ablation.py`(read-only, 신규 KIS 호출 0건), `logs/
+     signal_ic_r3b_risk_off_penalty_duplication_ablation_2026-
+     07-17.json`. 상세: `plans/[DESIGN] regime_conditional_entry_
+     signal_v1.md` §36.
+   - **SPPV-3(다음 착수: entry_score의 risk_off_penalty 완화(제거/
+     축소) 여부 사용자 승인 결정 + §21 게이트 정기 재모니터링 +
+     T+5 horizon 강건성 확보 + out-of-sample 데이터 축적 시 혼합
+     국면 구간(분기1 유형) 재확인 + `portfolio_allocation` gap
+     실거래 누적 후 재검증 + "국면 조건부 활동성 threshold" 설계
+     검토 여부 사용자 확인)**:
      §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
      근접한다는 것이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는
      Conditional Go를 확보했으며, **§2.27~§2.28에서 그 Conditional
@@ -6346,7 +6414,13 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      T+5는 각각 관리 가능한 잔여 리스크·미해결이나 치명적이지 않은
      리스크로 확인됐다 — R3b는 Conditional Go를 유지하되, SPPV-3
      (운영 코드 반영) 진입은 R3b의 성과와 무관한 §3 게이트 미충족
-     때문에 아직 이르다(§34).** 한편 **§2.23~
+     때문에 아직 이르다(§34). §2.46에서 §3 조건②(risk_off_penalty
+     중복 해소)를 R3b candidate 위에서 실측한 결과, eligibility
+     축은 R3b candidate pool에서 비활성(중복 우려 자체가 없음)이고
+     entry_score 축은 제거 시 총 기대수익 proxy가 약 20% 개선되나
+     MAE도 소폭 악화되는 실제 트레이드오프임을 확인 — §3 조건②를
+     "방향 확인, 사용자 승인 대기"로 진전시켰으나 §21 게이트 미충족
+     은 불변이라 SPPV-3 진입은 여전히 이르다(§36).** 한편 **§2.23~
      §2.26에서 결합 사용
      시 가장 빈번하게 걸리는 축이 활동성 필터(`eligibility_low_
      relative_activity`)임이 확인됐고, 완화 효과의 반전이 국면·
