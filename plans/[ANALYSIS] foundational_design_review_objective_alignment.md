@@ -954,6 +954,22 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   기존 JSON 재검산만 수행. 운영 코드 변경 없음, broker submit
   미호출. 상세: `plans/[DESIGN] regime_conditional_entry_signal_
   v1.md` §28.
+
+- 작성자: Claude
+- 수정일자: 2026-07-17 (2.40순위, selected_rate 감소가 총 기대수익에
+  미치는 영향 정량화)
+- 수정내용: R3b Conditional Go 확정 전 잔여 조건 중 조건 (2)를
+  정량화했다(§2.40). 신규 실측 없이 기존 산출물 2개만 재사용해
+  총 기대수익 proxy(=would_buy_n × mean_forward_return_pct)를 8개
+  창×2horizon(16개 조합) 전부 계측한 결과, **14/16 조합에서 R3b의
+  총proxy가 R0보다 높다**(92.0%~322.6%). 나머지 2개(1차 T+5, 분기3
+  T+20)도 거의 동률. 판정: "거래 빈도 감소가 총 기대수익을
+  훼손하는가"에 명확히 "아니다" — **확정 Go 전 잔여 조건 4가지 중
+  1개(조건 2)가 해소돼 Conditional Go 근거가 보강됐다.** 나머지
+  3개 조건(분기1·분기2 marginal t_NW, §3 전제조건, point-in-time
+  파이프라인 반영)은 그대로 남아 확정 Go는 아니다. 운영 코드 변경
+  없음, broker submit 미호출. 상세: `plans/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §29.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
@@ -983,7 +999,15 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   에서 R0보다 덜 의존적임을 확인했다 — R3b를 Watch에서 Conditional
   Go로 상향한다(조건부: marginal t_NW 재확인, 거래 빈도 축소의
   총 기대수익 영향 정량화, §3 전제조건, point-in-time 파이프라인
-  반영 shadow 실행이 확정 Go 전 필요).** 한편
+  반영 shadow 실행이 확정 Go 전 필요). §2.39에서 §2.38의 수치
+  오류 3건을 정정했으나 모두 방향성 우위를 약화시키지 않아
+  Conditional Go는 유지됐고, §2.40에서 "거래 빈도 축소의 총
+  기대수익 영향 정량화" 조건을 실제로 계측한 결과 8개 창×2horizon
+  16개 조합 중 14개에서 R3b의 총 기대수익 proxy가 R0보다 높아
+  (92.0%~322.6%) 확정 Go 전 잔여 조건 4개 중 1개가 해소되고
+  Conditional Go 근거가 보강됐다 — 나머지 3개 조건(marginal t_NW,
+  §3 전제조건, point-in-time 파이프라인 반영)은 그대로 남아
+  확정 Go는 아니다.** 한편
   **§2.23~§2.27에서
   결합 사용 시 가장 빈번하게 걸리는 축이 regime 관련 축이 아니라
   활동성 필터(`eligibility_low_relative_activity`)임이 확인됐고,

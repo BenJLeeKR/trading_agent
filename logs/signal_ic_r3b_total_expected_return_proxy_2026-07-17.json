@@ -1,0 +1,444 @@
+{
+  "windows": {
+    "supplementary_3y": {
+      "label": "2차(3년)",
+      "by_horizon": {
+        "T+5": {
+          "R0": {
+            "would_buy_n": 1543,
+            "n_days": 560,
+            "would_buy_per_active_day": 2.755,
+            "mean_pct": 1.0893,
+            "t_newey_west": 3.04,
+            "pct_positive": 0.4951,
+            "mfe_mean_pct": 6.8241,
+            "mae_mean_pct": -4.9532,
+            "total_return_proxy": 1680.8
+          },
+          "R3b": {
+            "would_buy_n": 1024,
+            "n_days": 464,
+            "would_buy_per_active_day": 2.207,
+            "mean_pct": 1.9597,
+            "t_newey_west": 4.0,
+            "pct_positive": 0.5469,
+            "mfe_mean_pct": 7.6253,
+            "mae_mean_pct": -4.9314,
+            "total_return_proxy": 2006.7
+          },
+          "r3b_total_proxy_pct_of_r0": 119.4
+        },
+        "T+20": {
+          "R0": {
+            "would_buy_n": 1543,
+            "n_days": 560,
+            "would_buy_per_active_day": 2.755,
+            "mean_pct": 2.8177,
+            "t_newey_west": 2.9,
+            "pct_positive": 0.4932,
+            "mfe_mean_pct": 15.1386,
+            "mae_mean_pct": -9.0141,
+            "total_return_proxy": 4347.7
+          },
+          "R3b": {
+            "would_buy_n": 1024,
+            "n_days": 464,
+            "would_buy_per_active_day": 2.207,
+            "mean_pct": 6.1337,
+            "t_newey_west": 3.78,
+            "pct_positive": 0.5371,
+            "mfe_mean_pct": 18.5761,
+            "mae_mean_pct": -9.0423,
+            "total_return_proxy": 6280.9
+          },
+          "r3b_total_proxy_pct_of_r0": 144.5
+        }
+      }
+    },
+    "primary_recent_12m": {
+      "label": "1차(12M)",
+      "by_horizon": {
+        "T+5": {
+          "R0": {
+            "would_buy_n": 673,
+            "n_days": 241,
+            "would_buy_per_active_day": 2.793,
+            "mean_pct": 2.0577,
+            "t_newey_west": 3.11,
+            "pct_positive": 0.5319,
+            "mfe_mean_pct": 8.848,
+            "mae_mean_pct": -5.4873,
+            "total_return_proxy": 1384.8
+          },
+          "R3b": {
+            "would_buy_n": 443,
+            "n_days": 206,
+            "would_buy_per_active_day": 2.15,
+            "mean_pct": 2.8771,
+            "t_newey_west": 3.04,
+            "pct_positive": 0.5756,
+            "mfe_mean_pct": 9.4204,
+            "mae_mean_pct": -5.3669,
+            "total_return_proxy": 1274.6
+          },
+          "r3b_total_proxy_pct_of_r0": 92.0
+        },
+        "T+20": {
+          "R0": {
+            "would_buy_n": 673,
+            "n_days": 241,
+            "would_buy_per_active_day": 2.793,
+            "mean_pct": 4.3066,
+            "t_newey_west": 2.59,
+            "pct_positive": 0.5171,
+            "mfe_mean_pct": 20.0743,
+            "mae_mean_pct": -9.6832,
+            "total_return_proxy": 2898.3
+          },
+          "R3b": {
+            "would_buy_n": 443,
+            "n_days": 206,
+            "would_buy_per_active_day": 2.15,
+            "mean_pct": 9.1603,
+            "t_newey_west": 2.9,
+            "pct_positive": 0.5914,
+            "mfe_mean_pct": 24.5663,
+            "mae_mean_pct": -9.3634,
+            "total_return_proxy": 4058.0
+          },
+          "r3b_total_proxy_pct_of_r0": 140.0
+        }
+      }
+    },
+    "3y_first_half": {
+      "label": "전반부",
+      "by_horizon": {
+        "T+5": {
+          "R0": {
+            "would_buy_n": 657,
+            "n_days": 243,
+            "would_buy_per_active_day": 2.704,
+            "mean_pct": 0.4424,
+            "t_newey_west": 1.03,
+            "pct_positive": 0.4612,
+            "mfe_mean_pct": 5.4808,
+            "mae_mean_pct": -4.5414,
+            "total_return_proxy": 290.7
+          },
+          "R3b": {
+            "would_buy_n": 425,
+            "n_days": 192,
+            "would_buy_per_active_day": 2.214,
+            "mean_pct": 1.2273,
+            "t_newey_west": 2.16,
+            "pct_positive": 0.5129,
+            "mfe_mean_pct": 6.4393,
+            "mae_mean_pct": -4.7765,
+            "total_return_proxy": 521.6
+          },
+          "r3b_total_proxy_pct_of_r0": 179.4
+        },
+        "T+20": {
+          "R0": {
+            "would_buy_n": 657,
+            "n_days": 243,
+            "would_buy_per_active_day": 2.704,
+            "mean_pct": 0.9782,
+            "t_newey_west": 0.94,
+            "pct_positive": 0.4627,
+            "mfe_mean_pct": 10.7514,
+            "mae_mean_pct": -8.4775,
+            "total_return_proxy": 642.7
+          },
+          "R3b": {
+            "would_buy_n": 425,
+            "n_days": 192,
+            "would_buy_per_active_day": 2.214,
+            "mean_pct": 2.8301,
+            "t_newey_west": 2.03,
+            "pct_positive": 0.4635,
+            "mfe_mean_pct": 13.1702,
+            "mae_mean_pct": -9.1774,
+            "total_return_proxy": 1202.8
+          },
+          "r3b_total_proxy_pct_of_r0": 187.1
+        }
+      }
+    },
+    "3y_second_half": {
+      "label": "후반부",
+      "by_horizon": {
+        "T+5": {
+          "R0": {
+            "would_buy_n": 886,
+            "n_days": 317,
+            "would_buy_per_active_day": 2.795,
+            "mean_pct": 1.5691,
+            "t_newey_west": 2.93,
+            "pct_positive": 0.5203,
+            "mfe_mean_pct": 7.8203,
+            "mae_mean_pct": -5.2585,
+            "total_return_proxy": 1390.2
+          },
+          "R3b": {
+            "would_buy_n": 599,
+            "n_days": 272,
+            "would_buy_per_active_day": 2.202,
+            "mean_pct": 2.4793,
+            "t_newey_west": 3.39,
+            "pct_positive": 0.571,
+            "mfe_mean_pct": 8.4667,
+            "mae_mean_pct": -5.0412,
+            "total_return_proxy": 1485.1
+          },
+          "r3b_total_proxy_pct_of_r0": 106.8
+        },
+        "T+20": {
+          "R0": {
+            "would_buy_n": 886,
+            "n_days": 317,
+            "would_buy_per_active_day": 2.795,
+            "mean_pct": 4.1818,
+            "t_newey_west": 2.84,
+            "pct_positive": 0.5158,
+            "mfe_mean_pct": 18.3919,
+            "mae_mean_pct": -9.412,
+            "total_return_proxy": 3705.1
+          },
+          "R3b": {
+            "would_buy_n": 599,
+            "n_days": 272,
+            "would_buy_per_active_day": 2.202,
+            "mean_pct": 8.4776,
+            "t_newey_west": 3.4,
+            "pct_positive": 0.5893,
+            "mfe_mean_pct": 22.4116,
+            "mae_mean_pct": -8.9464,
+            "total_return_proxy": 5078.1
+          },
+          "r3b_total_proxy_pct_of_r0": 137.1
+        }
+      }
+    },
+    "quarter_1": {
+      "label": "분기1",
+      "by_horizon": {
+        "T+5": {
+          "R0": {
+            "would_buy_n": 388,
+            "n_days": 144,
+            "would_buy_per_active_day": 2.694,
+            "mean_pct": 0.4244,
+            "t_newey_west": 0.73,
+            "pct_positive": 0.451,
+            "mfe_mean_pct": 5.4633,
+            "mae_mean_pct": -4.5823,
+            "total_return_proxy": 164.7
+          },
+          "R3b": {
+            "would_buy_n": 245,
+            "n_days": 114,
+            "would_buy_per_active_day": 2.149,
+            "mean_pct": 0.7437,
+            "t_newey_west": 1.13,
+            "pct_positive": 0.4939,
+            "mfe_mean_pct": 5.9014,
+            "mae_mean_pct": -4.6257,
+            "total_return_proxy": 182.2
+          },
+          "r3b_total_proxy_pct_of_r0": 110.6
+        },
+        "T+20": {
+          "R0": {
+            "would_buy_n": 388,
+            "n_days": 144,
+            "would_buy_per_active_day": 2.694,
+            "mean_pct": 1.2076,
+            "t_newey_west": 0.78,
+            "pct_positive": 0.4433,
+            "mfe_mean_pct": 10.7166,
+            "mae_mean_pct": -8.137,
+            "total_return_proxy": 468.5
+          },
+          "R3b": {
+            "would_buy_n": 245,
+            "n_days": 114,
+            "would_buy_per_active_day": 2.149,
+            "mean_pct": 2.616,
+            "t_newey_west": 1.31,
+            "pct_positive": 0.4571,
+            "mfe_mean_pct": 12.4286,
+            "mae_mean_pct": -8.8471,
+            "total_return_proxy": 640.9
+          },
+          "r3b_total_proxy_pct_of_r0": 136.8
+        }
+      }
+    },
+    "quarter_2": {
+      "label": "분기2",
+      "by_horizon": {
+        "T+5": {
+          "R0": {
+            "would_buy_n": 269,
+            "n_days": 99,
+            "would_buy_per_active_day": 2.717,
+            "mean_pct": 0.4682,
+            "t_newey_west": 0.76,
+            "pct_positive": 0.4758,
+            "mfe_mean_pct": 5.5059,
+            "mae_mean_pct": -4.4825,
+            "total_return_proxy": 125.9
+          },
+          "R3b": {
+            "would_buy_n": 180,
+            "n_days": 78,
+            "would_buy_per_active_day": 2.308,
+            "mean_pct": 1.8856,
+            "t_newey_west": 1.91,
+            "pct_positive": 0.5389,
+            "mfe_mean_pct": 7.1714,
+            "mae_mean_pct": -4.9817,
+            "total_return_proxy": 339.4
+          },
+          "r3b_total_proxy_pct_of_r0": 269.6
+        },
+        "T+20": {
+          "R0": {
+            "would_buy_n": 269,
+            "n_days": 99,
+            "would_buy_per_active_day": 2.717,
+            "mean_pct": 0.6474,
+            "t_newey_west": 0.53,
+            "pct_positive": 0.4907,
+            "mfe_mean_pct": 10.8016,
+            "mae_mean_pct": -8.9686,
+            "total_return_proxy": 174.2
+          },
+          "R3b": {
+            "would_buy_n": 180,
+            "n_days": 78,
+            "would_buy_per_active_day": 2.308,
+            "mean_pct": 3.1216,
+            "t_newey_west": 1.68,
+            "pct_positive": 0.4722,
+            "mfe_mean_pct": 14.1797,
+            "mae_mean_pct": -9.627,
+            "total_return_proxy": 561.9
+          },
+          "r3b_total_proxy_pct_of_r0": 322.6
+        }
+      }
+    },
+    "quarter_3": {
+      "label": "분기3",
+      "by_horizon": {
+        "T+5": {
+          "R0": {
+            "would_buy_n": 430,
+            "n_days": 154,
+            "would_buy_per_active_day": 2.792,
+            "mean_pct": 0.6326,
+            "t_newey_west": 1.19,
+            "pct_positive": 0.4884,
+            "mfe_mean_pct": 5.2256,
+            "mae_mean_pct": -4.2531,
+            "total_return_proxy": 272.0
+          },
+          "R3b": {
+            "would_buy_n": 308,
+            "n_days": 137,
+            "would_buy_per_active_day": 2.248,
+            "mean_pct": 0.9497,
+            "t_newey_west": 1.66,
+            "pct_positive": 0.5487,
+            "mfe_mean_pct": 5.5284,
+            "mae_mean_pct": -4.2382,
+            "total_return_proxy": 292.5
+          },
+          "r3b_total_proxy_pct_of_r0": 107.5
+        },
+        "T+20": {
+          "R0": {
+            "would_buy_n": 430,
+            "n_days": 154,
+            "would_buy_per_active_day": 2.792,
+            "mean_pct": 3.6478,
+            "t_newey_west": 1.92,
+            "pct_positive": 0.5116,
+            "mfe_mean_pct": 13.3899,
+            "mae_mean_pct": -7.9153,
+            "total_return_proxy": 1568.6
+          },
+          "R3b": {
+            "would_buy_n": 308,
+            "n_days": 137,
+            "would_buy_per_active_day": 2.248,
+            "mean_pct": 4.9315,
+            "t_newey_west": 2.11,
+            "pct_positive": 0.5519,
+            "mfe_mean_pct": 14.7924,
+            "mae_mean_pct": -8.1713,
+            "total_return_proxy": 1518.9
+          },
+          "r3b_total_proxy_pct_of_r0": 96.8
+        }
+      }
+    },
+    "quarter_4": {
+      "label": "분기4",
+      "by_horizon": {
+        "T+5": {
+          "R0": {
+            "would_buy_n": 456,
+            "n_days": 163,
+            "would_buy_per_active_day": 2.798,
+            "mean_pct": 2.4523,
+            "t_newey_west": 2.72,
+            "pct_positive": 0.5504,
+            "mfe_mean_pct": 10.267,
+            "mae_mean_pct": -6.2065,
+            "total_return_proxy": 1118.2
+          },
+          "R3b": {
+            "would_buy_n": 291,
+            "n_days": 135,
+            "would_buy_per_active_day": 2.156,
+            "mean_pct": 4.0984,
+            "t_newey_west": 3.05,
+            "pct_positive": 0.5945,
+            "mfe_mean_pct": 11.5767,
+            "mae_mean_pct": -5.8911,
+            "total_return_proxy": 1192.6
+          },
+          "r3b_total_proxy_pct_of_r0": 106.7
+        },
+        "T+20": {
+          "R0": {
+            "would_buy_n": 456,
+            "n_days": 163,
+            "would_buy_per_active_day": 2.798,
+            "mean_pct": 4.6853,
+            "t_newey_west": 2.13,
+            "pct_positive": 0.5197,
+            "mfe_mean_pct": 23.1086,
+            "mae_mean_pct": -10.8235,
+            "total_return_proxy": 2136.5
+          },
+          "R3b": {
+            "would_buy_n": 291,
+            "n_days": 135,
+            "would_buy_per_active_day": 2.156,
+            "mean_pct": 12.2309,
+            "t_newey_west": 2.86,
+            "pct_positive": 0.6289,
+            "mfe_mean_pct": 30.476,
+            "mae_mean_pct": -9.7668,
+            "total_return_proxy": 3559.2
+          },
+          "r3b_total_proxy_pct_of_r0": 166.6
+        }
+      }
+    }
+  }
+}

@@ -444,10 +444,48 @@
   유지한다.** 새 실험 없이 기존 JSON 재검산만 수행(신규 KIS 호출
   해당 없음). 운영 코드 변경 없음, broker submit 미호출.
 
+- 작성자: Claude
+- 수정일자: 2026-07-17 (37차, selected_rate 감소가 총 기대수익에
+  미치는 영향 정량화)
+- 수정내용: R3b Conditional Go 확정 전 잔여 조건 중 조건 (2)를
+  정량화했다(SPPV-2.39). 신규 실측 없이 기존 산출물 2개만 재사용해
+  총 기대수익 proxy(=would_buy_n × mean_forward_return_pct)를 8개
+  창×2horizon(16개 조합) 전부 계측한 결과, **14/16 조합에서 R3b의
+  총proxy가 R0보다 높다**(92.0%~322.6%). 나머지 2개(1차 T+5, 분기3
+  T+20)도 거의 동률. 판정: "거래 빈도 감소가 총 기대수익을
+  훼손하는가"에 명확히 "아니다" — **확정 Go 전 잔여 조건 4가지 중
+  1개(조건 2)가 해소돼 Conditional Go 근거가 보강됐다.** 나머지
+  3개 조건(분기1·분기2 marginal t_NW, §3 전제조건, point-in-time
+  파이프라인 반영)은 그대로 남아 확정 Go는 아니다. 운영 코드 변경
+  없음, broker submit 미호출.
+
 ## 최근 메모
 
-> **📌 2026-07-17 SPPV-2.37 수치 정정 + Conditional Go 재평가
-> (최신)**: 직전 SPPV-2.37 보고의 세 가지 수치 서술을 재검산해
+> **📌 2026-07-17 selected_rate 감소가 총 기대수익에 미치는 영향
+> 정량화 (최신)**: R3b Conditional Go 확정 전 잔여 조건 4가지 중
+> 조건 (2) — "selected_rate 감소(약 61~70%p)가 총 기대수익(거래
+> 빈도×종목당 수익)에 미치는 영향"을 정량화했다. **신규 실측 없이**
+> 기존 산출물 2개(`logs/signal_ic_alpha_layer_r3_reproducibility_
+> 2026-07-16.json`, `logs/signal_ic_r3b_sppv3_entry_readiness_
+> check_2026-07-17.json`)만 재사용해, `WATCH_TOP_K_BUY=3`이 각
+> 거래에 동일 자본을 배정한다는 가정 아래 **총 기대수익 proxy =
+> would_buy_n(거래 횟수) × mean_forward_return_pct(거래당 평균
+> 수익률)**를 8개 창×2horizon(16개 조합) 전부 계측했다. **결과:
+> 16개 조합 중 14개에서 R3b의 총proxy가 R0보다 높다(92.0%~
+> 322.6%)** — 나머지 2개(1차 T+5=92.0%, 분기3 T+20=96.8%)도 거의
+> 동률이며 이전에 이미 지목된 약점 구간과 일치한다. 활동일당 평균
+> 매수 수는 R0(2.69~2.80, 거의 포화) 대비 R3b(2.15~2.31)가 낮아
+> "덜 산다"는 사실 자체는 확인되나, 거래당 수익률 개선이 거래
+> 횟수 감소를 상쇄하고도 남는다. **판정: "거래 빈도 감소가 총
+> 기대수익을 훼손하는가"에 명확히 "아니다" — 확정 Go 전 잔여
+> 조건 4가지 중 1개(조건 2)가 해소돼 Conditional Go 근거가
+> 보강됐다.** 나머지 3개 조건(분기1·분기2 marginal t_NW, §3
+> 전제조건, point-in-time 파이프라인 반영)은 그대로 남아 확정
+> Go는 아니다. 상세: `plans/[DESIGN] regime_conditional_entry_
+> signal_v1.md` §29(SPPV-2.39).
+>
+> **📌 2026-07-17 SPPV-2.37 수치 정정 + Conditional Go 재평가**:
+> 직전 SPPV-2.37 보고의 세 가지 수치 서술을 재검산해
 > 정정했다. **정정 1: "R0가 8개 창 중 3개에서 T+20 평균이 마이너스로
 > 뒤집힌다"는 오류 — 2차(3년, -0.1%)도 음(-)이므로 정확히는
 > 4개 창(2차·전반부·분기1·분기2)이다.** **정정 2: "양수 비율이
@@ -5844,11 +5882,33 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      유효. 새 실험 없이 기존 JSON `python3 -c` read-only 재검산만
      수행(신규 실행 없음, KIS 호출 해당 없음). 상세: `plans/
      [DESIGN] regime_conditional_entry_signal_v1.md` §28.
-   - **SPPV-3(다음 착수: selected_rate 급감의 총 기대수익 영향
-     정량화 + §3 전제조건 충족 여부 사용자 확인 + point-in-time
-     `entry_score` 파이프라인 반영 shadow 실행 설계 + 분기1·분기2
-     marginal t_NW out-of-sample 재확인 + "국면 조건부 활동성
-     threshold" 설계 검토 여부 사용자 확인)**:
+   - **SPPV-2.39(완료, 2026-07-17, selected_rate 감소가 총 기대
+     수익에 미치는 영향 정량화 — Conditional Go 근거 보강)**: R3b
+     Conditional Go 확정 전 잔여 조건 중 조건 (2)를 정량화. 신규
+     실측 없이 기존 산출물 2개(`logs/signal_ic_alpha_layer_r3_
+     reproducibility_2026-07-16.json`, `logs/signal_ic_r3b_sppv3_
+     entry_readiness_check_2026-07-17.json`)만 재사용해, `WATCH_
+     TOP_K_BUY=3`이 각 거래에 동일 자본을 배정한다는 가정 아래
+     **총 기대수익 proxy = would_buy_n(거래 횟수) × mean_forward_
+     return_pct(거래당 평균 수익률)**를 8개 창×2horizon(16개 조합)
+     전부 계측. **결과: 16개 조합 중 14개에서 R3b의 총proxy가 R0
+     보다 높다(92.0%~322.6%)** — 나머지 2개(1차 T+5=92.0%, 분기3
+     T+20=96.8%)도 거의 동률. 활동일당 평균 매수 수는 R0(2.69~
+     2.80) 대비 R3b(2.15~2.31)가 낮아 "덜 산다"는 사실은 확인되나,
+     거래당 수익률 개선이 거래 횟수 감소를 상쇄하고도 남는다.
+     **판정: "거래 빈도 감소가 총 기대수익을 훼손하는가"에 명확히
+     "아니다" — 확정 Go 전 잔여 조건 4가지 중 1개(조건 2)가 해소돼
+     Conditional Go 근거가 보강됐다.** 나머지 3개 조건(분기1·분기2
+     marginal t_NW, §3 전제조건, point-in-time 파이프라인 반영)은
+     그대로 남아 확정 Go는 아니다. 신규 KIS 호출 없음(신규 실행
+     자체가 없었음). 산출: `scripts/validate_r3b_total_expected_
+     return_proxy.py`(read-only, KIS 호출 없음), `logs/signal_ic_
+     r3b_total_expected_return_proxy_2026-07-17.json`. 상세:
+     `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §29.
+   - **SPPV-3(다음 착수: §3 전제조건 충족 여부 사용자 확인(다음
+     최우선) + point-in-time `entry_score` 파이프라인 반영 shadow
+     실행 설계 + 분기1·분기2 marginal t_NW out-of-sample 재확인 +
+     "국면 조건부 활동성 threshold" 설계 검토 여부 사용자 확인)**:
      §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
      근접한다는 것이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는
      Conditional Go를 확보했으며, **§2.27~§2.28에서 그 Conditional
@@ -5880,7 +5940,13 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      필요)(§27). **§2.38에서 §2.37의 수치 오류 3건(R0 음(-) 반전
      창 수 3개→4개, 양수 비율 열세 창 수 3/8→1/8, selected_rate
      표현 명확화)을 정정했으나, 모두 R3b의 방향성 우위를 약화시키지
-     않아 Conditional Go 판정은 그대로 유지된다(§28).** 한편 **§2.23~
+     않아 Conditional Go 판정은 그대로 유지된다(§28). §2.39에서
+     확정 Go 전 잔여 조건 (2)(거래 빈도 축소의 총 기대수익 영향)를
+     실제로 계측한 결과 8개 창×2horizon 16개 조합 중 14개에서 R3b
+     의 총 기대수익 proxy가 R0보다 높아(92.0%~322.6%) 이 조건이
+     해소되고 Conditional Go 근거가 보강됐다 — 나머지 3개 조건
+     (marginal t_NW, §3 전제조건, point-in-time 파이프라인 반영)은
+     그대로 남아 확정 Go는 아니다(§29).** 한편 **§2.23~
      §2.26에서 결합 사용
      시 가장 빈번하게 걸리는 축이 활동성 필터(`eligibility_low_
      relative_activity`)임이 확인됐고, 완화 효과의 반전이 국면·

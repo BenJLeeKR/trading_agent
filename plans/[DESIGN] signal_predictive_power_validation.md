@@ -778,6 +778,25 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   submit 미호출 — 이번 턴도 shadow/validation 범위. 상세: `plans/
   [DESIGN] regime_conditional_entry_signal_v1.md` §28.
 
+- 작성자: Claude
+- 수정일자: 2026-07-17 (38차, selected_rate 감소가 총 기대수익에
+  미치는 영향 정량화)
+- 수정내용: R3b Conditional Go 확정 전 잔여 조건 중 조건 (2)
+  (selected_rate 감소가 총 기대수익에 미치는 영향)를 정량화했다
+  (SPPV-2.39). **신규 실측 없이** 기존 산출물 2개만 재사용해
+  총 기대수익 proxy(= would_buy_n × mean_forward_return_pct)를
+  8개 창×2horizon(16개 조합) 전부 계측한 결과, **14/16 조합에서
+  R3b의 총proxy가 R0보다 높다**(92.0%~322.6%). 나머지 2개(1차
+  T+5, 분기3 T+20)도 R0와 거의 동률. 판정: "거래 빈도 감소가 총
+  기대수익을 훼손하는가"에 명확히 "아니다" — **확정 Go 전 잔여
+  조건 4가지 중 1개(조건 2)가 해소돼 Conditional Go 근거가
+  보강됐다.** 나머지 3개 조건(분기1·분기2 marginal t_NW, §3
+  전제조건, point-in-time 파이프라인 반영)은 그대로 남아 확정
+  Go는 아니다. 신규 KIS 호출 없음(신규 실행 자체가 없었음). 운영
+  코드 변경 없음, broker submit 미호출 — 이번 턴도 shadow/
+  validation 범위. 상세: `plans/[DESIGN] regime_conditional_entry_
+  signal_v1.md` §29.
+
 ---
 
 ## 진행 체크리스트
@@ -1766,6 +1785,43 @@ canonical),
     read-only 재검산만 수행, 산출 파일 생성 없음).
   - 다음 과제: §2.37의 4개 잔여 조건(위 참고)은 이번 턴과 무관하게
     계속 유효.
+- [x] **SPPV-2.39(신설)** selected_rate 감소가 총 기대수익에 미치는
+  영향 정량화 (완료, 2026-07-17)
+  - 작업 범위: §2.37/§2.38의 확정 Go 전 잔여 조건 중 조건 (2) —
+    "selected_rate 감소(약 61~70%p)가 총 기대수익(거래 빈도×종목당
+    수익)에 미치는 영향 정량화"를 실행. **신규 실측/신규 KIS 호출
+    없이** 기존 산출물 두 개(`logs/signal_ic_alpha_layer_r3_
+    reproducibility_2026-07-16.json`, `logs/signal_ic_r3b_sppv3_
+    entry_readiness_check_2026-07-17.json`)만 재사용해 로컬 계산.
+  - **방법론**: `WATCH_TOP_K_BUY=3`(거래일당 최대 매수 슬롯, 실제
+    운영 상수)가 would_buy 종목마다 동일 자본을 배정한다는 가정
+    아래, 총 기대수익 proxy = would_buy_n(거래 횟수) × mean_
+    forward_return_pct(거래당 평균 수익률)로 8개 창×2horizon(16개
+    조합) 전부 계측.
+  - **결과: 16개 조합 중 14개에서 R3b의 총 기대수익 proxy가 R0보다
+    높다**(92.0%~322.6%, 중앙값 약 138%). 나머지 2개(1차 T+5=
+    92.0%, 분기3 T+20=96.8%)도 R0에 근접한 거의 동률 수준이며,
+    이전 턴들이 이미 지목한 약점 구간(1차 T+5 노이즈, 분기3의
+    복잡한 날짜 구조)과 정확히 일치한다. 활동일당 평균 매수 수는
+    R0(2.69~2.80, 거의 포화) 대비 R3b(2.15~2.31)가 낮아 "덜 산다"는
+    것은 활동일 수·활동일당 매수 수 두 차원 모두에서 사실이다.
+  - **판정: "거래 빈도 감소가 총 기대수익을 훼손하는가"에 명확히
+    "아니다"로 답한다** — 거래당 수익률 개선이 거래 횟수 감소를
+    충분히 상쇄하고도 남는다. **§2.37/§2.38의 확정 Go 전 잔여
+    조건 4가지 중 조건 (2)는 이번 턴으로 해소됐다.** 다만 나머지
+    3개 조건(분기1·분기2 marginal t_NW, §3 전제조건, point-in-time
+    파이프라인 반영)이 그대로 남아 있어 **확정 Go는 아니며, R3b는
+    Conditional Go를 유지하되 근거가 보강됐다.** 신규 KIS 호출
+    없음(신규 실행 자체가 없었음). 운영 코드 변경 없음, broker
+    submit 미호출 — 이번 턴도 shadow/validation 범위. 상세: `plans/
+    [DESIGN] regime_conditional_entry_signal_v1.md` §29.
+  - 산출물: `scripts/validate_r3b_total_expected_return_proxy.py`
+    (read-only, 로컬 재계산, KIS 호출 없음), `logs/signal_ic_r3b_
+    total_expected_return_proxy_2026-07-17.json`, `logs/r3b_total_
+    expected_return_proxy_run_2026-07-17.log`.
+  - 다음 과제: §3 전제조건 충족 여부 사용자 확인(다음 최우선),
+    point-in-time `entry_score` 파이프라인 반영 shadow 실행 설계,
+    분기1·분기2 marginal t_NW out-of-sample 재확인.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
