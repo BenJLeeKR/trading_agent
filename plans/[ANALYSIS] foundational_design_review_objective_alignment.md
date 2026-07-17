@@ -1002,6 +1002,24 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   후 청산 시점 분포 실측)를 확정 Go의 필수조건으로 격상한다. 운영
   코드 변경 없음, broker submit 미호출. 상세: `plans/[DESIGN]
   regime_conditional_entry_signal_v1.md` §31.
+
+- 작성자: Claude
+- 수정일자: 2026-07-17 (2.43순위, R3b를 point-in-time entry_score
+  파이프라인에 반영한 shadow 검증)
+- 수정내용: §2.42가 남긴 "point-in-time entry_score 파이프라인
+  반영 shadow 실행"을 수행했다(§2.43). 기존 검증이 이미 실제 운영
+  함수(`build_signal_snapshot`/`_assess_buy_eligibility`/`_build_
+  entry_score`)를 호출해왔음을 확인했으나, 실제 `strategy_
+  selection` 조정항(+0.05 보너스)이 그동안 `None`으로 누락돼
+  있었다 — 이를 실제 `select_strategy()` 호출로 채워 A/B 양쪽에
+  공정하게 반영했다. **결과: 8개 창×2horizon 16개 조합 전부에서
+  R3b>R0 방향 유지**, 다만 **분기1 T+20의 t_NW가 1.31→0.96으로
+  더 약화**돼 기존 marginal 우려가 심화됐다. 판정: **R3b는
+  Conditional Go를 유지한다.** "point-in-time 파이프라인 반영"
+  조건은 부분 해소(핵심 우려는 해소, `portfolio_allocation` gap은
+  미해결로 잔존). 운영 코드 변경 없음, broker submit 미호출.
+  상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
+  §32.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
@@ -1051,7 +1069,13 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   불과함을 확인했다 — "T+20 중심이라 T+5를 무시해도 된다"는 주장은
   코드로 뒷받침되지 않는다. R3b는 Conditional Go를 유지하되, T+5
   horizon 강건성 확보(또는 실거래 누적 후 청산 시점 분포 실측)를
-  확정 Go의 필수조건으로 격상했다.** 한편
+  확정 Go의 필수조건으로 격상했다. **§2.43에서 실제 point-in-time
+  entry_score 파이프라인의 누락된 조정항(`strategy_selection`,
+  +0.05 보너스)을 실제 `select_strategy()`로 채워 A/B 양쪽에 반영한
+  결과, 8개 창×2horizon 16개 조합 전부에서 R3b>R0 방향이 유지됐으나
+  분기1 T+20의 t_NW가 1.31→0.96으로 더 약화됐다 — R3b는 Conditional
+  Go를 유지하되, "point-in-time 파이프라인 반영" 조건은 부분 해소
+  (`portfolio_allocation` gap은 미해결)로 기록했다.** 한편
   **§2.23~§2.27에서
   결합 사용 시 가장 빈번하게 걸리는 축이 regime 관련 축이 아니라
   활동성 필터(`eligibility_low_relative_activity`)임이 확인됐고,

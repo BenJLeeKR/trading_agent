@@ -833,6 +833,25 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   미호출. 상세: `plans/[DESIGN] regime_conditional_entry_signal_
   v1.md` §31.
 
+- 작성자: Claude
+- 수정일자: 2026-07-17 (41차, R3b를 point-in-time entry_score
+  파이프라인에 반영한 shadow 검증)
+- 수정내용: §2.41이 남긴 "point-in-time entry_score 파이프라인
+  반영 shadow 실행"을 수행했다(SPPV-2.42). 기존 검증이 이미
+  `build_signal_snapshot`/`_assess_buy_eligibility`/`_build_entry_
+  score` 등 실제 운영 함수를 호출해왔음을 확인했으나, 실제
+  `strategy_selection` 조정항(+0.05 보너스)이 그동안 `None`으로
+  누락돼 있었다 — 이를 실제 `select_strategy()` 호출로 채워 A/B
+  양쪽에 공정하게 반영했다. **결과: 8개 창×2horizon 16개 조합
+  전부에서 R3b>R0 방향 유지**(붕괴 없음), 다만 **분기1 T+20의
+  t_NW가 1.31→0.96으로 더 약화**돼 기존 marginal 우려가 심화됐다.
+  판정: **R3b는 Conditional Go를 유지한다.** "point-in-time
+  파이프라인 반영" 조건은 부분 해소(핵심 우려는 해소, `portfolio_
+  allocation` gap은 미해결로 잔존). 신규 KIS 호출 0건. 운영 코드
+  변경 없음, broker submit 미호출 — 이번 턴도 shadow/validation
+  범위. 상세: `plans/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §32.
+
 ---
 
 ## 진행 체크리스트
@@ -1951,6 +1970,48 @@ canonical),
     실측 계획 수립, point-in-time `entry_score` 파이프라인 반영
     shadow 실행 설계, 분기1·분기2 marginal t_NW out-of-sample
     재확인.
+- [x] **SPPV-2.42(신설)** R3b를 point-in-time `entry_score` 파이프
+  라인에 반영한 shadow 검증 (완료, 2026-07-17)
+  - 작업 범위: §2.41이 남긴 "point-in-time entry_score 파이프라인
+    반영 shadow 실행"을 수행. 코드 조사 결과 §18(SPPV-2.28)부터
+    이미 `signal_backbone.build_signal_snapshot`/`deterministic_
+    trigger_engine._assess_buy_eligibility`/`_build_entry_score`
+    등 실제 운영 함수를 직접 호출해왔음을 먼저 확인했다 — 다만
+    실제 `strategy_selection` 조정항(선호 전략이 swing_momentum/
+    event_continuation이면 +0.05 보너스)이 그동안 `None`으로
+    누락돼 있었다. `portfolio_allocation`(계좌 잔고/포지션 필요)과
+    달리 `strategy_selection`은 market_regime과 source_type만으로
+    계산되는 순수 함수라 오프라인에서도 실제 값으로 채울 수 있어,
+    이번 턴이 그 누락을 메웠다.
+  - **방법론**: 실제 `select_strategy()`를 호출해 A(현행)와 R0/
+    R3b(가상 alpha 교체) 양쪽에 동일하게 반영(공정한 A/B 비교),
+    8개 창 BUY funnel을 재계측해 §20의 기존 결과와 비교.
+  - **결과: 8개 창×2horizon(16개 조합) 전부에서 R3b>R0 방향이
+    그대로 유지된다**(방향 붕괴 없음) — 6개 조합은 강화(1차 양쪽,
+    후반부 T+5, 분기3 T+20, 분기4 양쪽), 나머지는 소폭 약화. **단
+    분기1 T+20의 t_NW가 1.31→0.96으로 더 약화**돼 기존 marginal
+    우려가 심화됐다. R3b의 selected_rate도 소폭 상승(예: 2차
+    35.4%→39.4%) — strategy_selection 보너스가 일부 경계선 종목을
+    문턱 위로 밀어 올린 결과다.
+  - **판정: R3b는 Conditional Go를 유지한다.** "point-in-time
+    파이프라인 반영" 조건은 **부분 해소**로 기록한다 — 실제
+    strategy_selection을 반영해도 방향이 무너지지 않아 핵심 우려
+    (실제 파이프라인에 가까워지면 우위가 사라질 수 있다)는 해소
+    됐으나, `portfolio_allocation` gap(계좌 상태 필요, 실거래
+    이력 없어 재현 불가)이 남아 있어 완전 해소는 아니다. 분기1
+    t_NW 약화는 §31.4의 "분기1·분기2 marginal t_NW 재확인" 조건의
+    우선순위를 높인다. 신규 KIS 호출 0건(기존 3년 캐시로 전량
+    서빙, 로그로 실측 확인). 운영 코드 변경 없음, broker submit
+    미호출 — 이번 턴도 shadow/validation 범위. 상세: `plans/
+    [DESIGN] regime_conditional_entry_signal_v1.md` §32.
+  - 산출물: `scripts/validate_r3b_point_in_time_pipeline_shadow.py`
+    (read-only, 신규 KIS 호출 0건), `logs/signal_ic_r3b_point_in_
+    time_pipeline_shadow_2026-07-17.json`, `logs/r3b_point_in_time_
+    pipeline_shadow_run_2026-07-17.log`.
+  - 다음 과제: §3 전제조건 충족 여부 사용자 확인(최우선), 분기1
+    t_NW 약화(0.96) 우선 재확인, T+5 horizon 강건성 확보 또는
+    실거래 누적 후 청산 시점 분포 실측, `portfolio_allocation`
+    gap은 실거래 누적 이후 재검증 대상으로 유보.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

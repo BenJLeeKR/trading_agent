@@ -490,10 +490,52 @@
   KIS 호출 없음(read-only 코드/문서 조사만 수행). 운영 코드 변경
   없음, broker submit 미호출.
 
+- 작성자: Claude
+- 수정일자: 2026-07-17 (40차, R3b를 point-in-time entry_score
+  파이프라인에 반영한 shadow 검증)
+- 수정내용: 39차(SPPV-2.41)가 남긴 "point-in-time entry_score
+  파이프라인 반영 shadow 실행"을 수행했다(SPPV-2.42). 기존 검증이
+  이미 실제 운영 함수(`build_signal_snapshot`/`_assess_buy_
+  eligibility`/`_build_entry_score`)를 호출해왔음을 확인했으나,
+  실제 `strategy_selection` 조정항(+0.05 보너스)이 그동안 `None`
+  으로 누락돼 있었다 — 이를 실제 `select_strategy()` 호출로 채워
+  A/B 양쪽에 공정하게 반영했다. **결과: 8개 창×2horizon 16개
+  조합 전부에서 R3b>R0 방향 유지**(붕괴 없음), 다만 **분기1 T+20의
+  t_NW가 1.31→0.96으로 더 약화**돼 기존 marginal 우려가 심화됐다.
+  판정: **R3b는 Conditional Go를 유지한다.** "point-in-time
+  파이프라인 반영" 조건은 부분 해소(핵심 우려는 해소, `portfolio_
+  allocation` gap은 미해결로 잔존). 신규 KIS 호출 0건. 운영 코드
+  변경 없음, broker submit 미호출.
+
 ## 최근 메모
 
-> **📌 2026-07-17 R3b Conditional Go의 운영 horizon 적합성 판단
-> (최신)**: R3b의 T+5 취약성(§30)이 실운영과 충돌하는지 판단하기
+> **📌 2026-07-17 R3b를 point-in-time entry_score 파이프라인에
+> 반영한 shadow 검증 (최신)**: 코드 조사 결과 §18(SPPV-2.28)부터
+> 이미 `signal_backbone.build_signal_snapshot`/`deterministic_
+> trigger_engine._assess_buy_eligibility`/`_build_entry_score`
+> 등 실제 운영 함수를 직접 호출해왔음을 확인했다 — 다만 실제
+> `strategy_selection` 조정항(선호 전략이 swing_momentum/event_
+> continuation이면 entry_score에 +0.05 보너스)이 그동안 항상
+> `None`으로 누락돼 있었다. `portfolio_allocation`(계좌 잔고/
+> 포지션 필요, 실거래 이력 없어 재현 불가)과 달리 `strategy_
+> selection`은 market_regime과 source_type만으로 계산되는 순수
+> 함수라 오프라인에서도 실제 `select_strategy()`로 채울 수 있어,
+> A(현행)와 R0/R3b(가상 alpha 교체) 양쪽에 동일하게 반영해 8개
+> 창 BUY funnel을 재계측했다(신규 KIS 호출 0건, 기존 3년 캐시
+> 재사용). **결과: 8개 창×2horizon(16개 조합) 전부에서 R3b>R0
+> 방향이 그대로 유지된다**(방향 붕괴 없음) — 6개 조합은 강화(1차
+> 양쪽, 후반부 T+5, 분기3 T+20, 분기4 양쪽), 나머지는 소폭 약화.
+> **단 분기1 T+20의 t_NW가 1.31→0.96으로 더 약화**돼 기존
+> marginal 우려가 심화됐다. R3b의 selected_rate도 소폭 상승(예:
+> 2차 35.4%→39.4%). **판정: R3b는 Conditional Go를 유지한다.**
+> "point-in-time 파이프라인 반영" 조건은 **부분 해소**로 기록한다
+> — 핵심 우려(실제 파이프라인에 가까워지면 우위가 사라질 수
+> 있다)는 해소됐으나 `portfolio_allocation` gap은 여전히 미해결.
+> 상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
+> §32(SPPV-2.42).
+>
+> **📌 2026-07-17 R3b Conditional Go의 운영 horizon 적합성 판단**:
+> R3b의 T+5 취약성(§30)이 실운영과 충돌하는지 판단하기
 > 위해 운영 코드(`deterministic_trigger_engine.py`, `ai_agents/
 > schemas.py`, `common_types.py`)와 5개 기준 문서를 read-only로
 > 조사했다(신규 KIS 호출 없음, 스크립트 실행 자체가 없었음).
@@ -6025,12 +6067,37 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      를 기존 3개 조건과 동등한 필수조건으로 격상**한다. 신규 KIS
      호출 없음(read-only 조사만 수행, 산출 파일 없음). 상세: `plans/
      [DESIGN] regime_conditional_entry_signal_v1.md` §31.
+   - **SPPV-2.42(완료, 2026-07-17, R3b를 point-in-time entry_score
+     파이프라인에 반영한 shadow 검증 — Conditional Go 유지, 조건
+     부분 해소)**: §18(SPPV-2.28)부터 이미 실제 운영 함수(`build_
+     signal_snapshot`/`_assess_buy_eligibility`/`_build_entry_
+     score`)를 직접 호출해왔음을 확인했으나, 실제 `strategy_
+     selection` 조정항(+0.05 보너스)이 그동안 `None`으로 누락돼
+     있었다. `portfolio_allocation`과 달리 `strategy_selection`은
+     market_regime·source_type만으로 계산되는 순수 함수라 오프라인
+     에서도 실제 `select_strategy()`로 채울 수 있어, A(현행)와
+     R0/R3b(가상 alpha 교체) 양쪽에 동일하게 반영해 8개 창 BUY
+     funnel을 재계측했다(신규 KIS 호출 0건). **결과: 8개 창×
+     2horizon(16개 조합) 전부에서 R3b>R0 방향이 그대로 유지된다**
+     (방향 붕괴 없음) — 6개 조합은 강화(1차 양쪽, 후반부 T+5, 분기3
+     T+20, 분기4 양쪽), 나머지는 소폭 약화. **단 분기1 T+20의
+     t_NW가 1.31→0.96으로 더 약화**돼 기존 marginal 우려가
+     심화됐다. R3b의 selected_rate도 소폭 상승(예: 2차 35.4%→
+     39.4%). **판정: R3b는 Conditional Go를 유지한다.** "point-
+     in-time 파이프라인 반영" 조건은 **부분 해소**로 기록한다 —
+     핵심 우려(실제 파이프라인에 가까워지면 우위가 사라질 수
+     있다)는 해소됐으나 `portfolio_allocation` gap(계좌 상태 필요,
+     실거래 이력 없어 재현 불가)은 여전히 미해결. 신규 KIS 호출
+     0건, broker submit 미호출. 산출: `scripts/validate_r3b_
+     point_in_time_pipeline_shadow.py`(read-only, 신규 KIS 호출
+     0건), `logs/signal_ic_r3b_point_in_time_pipeline_shadow_
+     2026-07-17.json`. 상세: `plans/[DESIGN] regime_conditional_
+     entry_signal_v1.md` §32.
    - **SPPV-3(다음 착수: §3 전제조건 충족 여부 사용자 확인(다음
-     최우선) + T+5 horizon 강건성 개선 여부 또는 실거래 누적 후
-     청산 시점 분포 실측 계획 수립 + point-in-time `entry_score`
-     파이프라인 반영 shadow 실행 설계 + 분기1·분기2 marginal t_NW
-     out-of-sample 재확인 + "국면 조건부 활동성 threshold" 설계
-     검토 여부 사용자 확인)**:
+     최우선) + 분기1 t_NW 약화(0.96) 우선 재확인 + T+5 horizon
+     강건성 개선 여부 또는 실거래 누적 후 청산 시점 분포 실측
+     계획 수립 + `portfolio_allocation` gap 실거래 누적 후 재검증
+     + "국면 조건부 활동성 threshold" 설계 검토 여부 사용자 확인)**:
      §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
      근접한다는 것이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는
      Conditional Go를 확보했으며, **§2.27~§2.28에서 그 Conditional
@@ -6081,7 +6148,14 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      "T+20 중심이라 T+5를 무시해도 된다"는 주장은 코드로 뒷받침되지
      않는다. R3b는 Conditional Go를 유지하되, T+5 horizon 강건성
      확보(또는 실거래 누적 후 청산 시점 분포 실측)를 확정 Go의
-     필수조건으로 격상했다(§31).** 한편 **§2.23~
+     필수조건으로 격상했다(§31). §2.42에서 point-in-time entry_
+     score 파이프라인의 누락된 조정항(strategy_selection, +0.05
+     보너스)을 실제 select_strategy()로 채워 A/B 양쪽에 반영한
+     결과, 8개 창×2horizon 16개 조합 전부에서 R3b>R0 방향이
+     유지됐으나 분기1 T+20의 t_NW가 1.31→0.96으로 더 약화됐다 —
+     R3b는 Conditional Go를 유지하되, "point-in-time 파이프라인
+     반영" 조건은 부분 해소(portfolio_allocation gap은 미해결)로
+     기록했다(§32).** 한편 **§2.23~
      §2.26에서 결합 사용
      시 가장 빈번하게 걸리는 축이 활동성 필터(`eligibility_low_
      relative_activity`)임이 확인됐고, 완화 효과의 반전이 국면·
