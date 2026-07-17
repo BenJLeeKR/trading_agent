@@ -744,6 +744,24 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   이번 턴도 shadow/validation 범위. 상세: `plans/[DESIGN] regime_
   conditional_entry_signal_v1.md` §26.
 
+- 작성자: Claude
+- 수정일자: 2026-07-17 (36차, R3b의 SPPV-3 진입 후보 여부 판단 —
+  실제 BUY funnel 최소 검증)
+- 수정내용: R3b 미세 해부를 멈추고 SPPV-3 착수 후보 여부를 판단
+  (SPPV-2.37). 기존 §20의 8개 창 BUY funnel 계측(재실행 없이 재사용)
+  결과 T+20 평균 우위 8/8 일관, t_NW 6/8 유의. **신규 계측: would_
+  buy 모집단의 거래일 편중도(top-decile-day leave-out) — 거래일
+  집중 의존은 R3b만의 문제가 아니라 R0(기준선) 자체가 8개 창 중
+  3개에서 상위 10%일 제거 시 평균이 마이너스로 뒤집히는 alpha
+  신호 계열 전반의 특성이며, R3b는 8/8 창에서 R0보다 그 의존도가
+  더 낮다(더 견고).** 판정: **R3b를 Watch에서 Conditional Go로
+  상향**(조건부: 분기1·분기2 marginal t_NW 재확인, selected_rate
+  급감의 총 기대수익 영향 정량화, §3 전제조건 충족, point-in-time
+  파이프라인 반영 shadow 실행이 확정 Go 전 필요). 신규 KIS 호출
+  0건. 운영 코드 변경 없음, broker submit 미호출 — 이번 턴도
+  shadow/validation 범위. 상세: `plans/[DESIGN] regime_conditional_
+  entry_signal_v1.md` §27.
+
 ---
 
 ## 진행 체크리스트
@@ -1657,6 +1675,44 @@ canonical),
     이벤트/실적 연관성 외부 데이터 검증, §22.5/§23.7/§24.6/§25.7에
     남은 과제(더 긴 표본 축적, R3b의 §3 공식 반영 여부 사용자
     확인)는 계속 유효.
+- [x] **SPPV-2.37(신설)** R3b의 SPPV-3 진입 후보 여부 판단 — 실제
+  BUY funnel 최소 검증 (완료, 2026-07-17)
+  - 작업 범위: R3b의 미세 해부(분기3 스왑 구조)를 멈추고 "R3b를
+    SPPV-3 착수 후보로 올릴 수 있는가"를 판단. §20(SPPV-2.30)의
+    실제 BUY funnel(candidate→eligible→selected→would_buy) 계측을
+    재실행 없이 재사용하고, would_buy 모집단의 거래일 편중도(top-
+    decile-day leave-out)만 8개 창 전부에 신규 계측했다.
+  - **결과 1(§20 재확인): T+20 평균 우위는 8개 창 전부(8/8)에서
+    R3b > R0.** t_NW는 6/8 창에서 통상 유의(≥1.96), 2개 창(분기1=
+    1.31, 분기2=1.68)은 marginal이나 방향은 일관. 양수 비율은
+    3/8 창(전반부·분기1·분기2)에서 R0보다 낮아, 이 구간의 개선은
+    "적중률"이 아니라 "승리 폭(MFE)"에서 온다.
+  - **결과 2(신규, 결정적 근거): 거래일 집중 의존은 R3b만의 문제가
+    아니라 alpha 신호 계열 전반의 특성이다.** R0(현행 재보정 없음
+    기준선) 자체가 T+20 기준 8개 창 중 3개(전반부/분기1/분기2)에서
+    상위 10% 거래일을 제거하면 평균이 마이너스로 뒤집힌다(2차조차
+    잔존비율 -0.1%). **R3b는 8개 창 전부(8/8)에서 R0보다 잔존비율이
+    높다**(예: 2차 R0 -0.1% vs R3b 41.9%, 분기2 R0 -173.3% vs R3b
+    35.2%) — R3b가 R0보다 거래일 집중에 **덜** 의존한다.
+  - **판정: R3b를 Watch에서 Conditional Go로 상향한다.** 근거:
+    8/8 창 방향 일관 + 6/8 t_NW 유의 + 거래일 편중도가 R0보다 8/8
+    창에서 더 낮음(반대 가설을 직접 반박). 단, 확정 Go 전 잔여
+    조건: (1) 분기1·분기2 marginal t_NW의 out-of-sample 재확인,
+    (2) selected_rate 급감(29.9~39.2%)이 총 기대수익(거래 빈도
+    ×종목당 수익)에 미치는 영향 정량화, (3) §3 전제조건(1차 게이트
+    TRIGGERED 전환) 충족 확인, (4) 실제 point-in-time `entry_score`
+    파이프라인 반영 shadow 실행. 신규 KIS 호출 0건(기존 3년 캐시로
+    전량 서빙, 로그로 실측 확인). 운영 코드 변경 없음, broker submit
+    미호출 — 이번 턴도 shadow/validation 범위. 상세: `plans/
+    [DESIGN] regime_conditional_entry_signal_v1.md` §27.
+  - 산출물: `scripts/validate_r3b_sppv3_entry_readiness_check.py`
+    (read-only, 신규 KIS 호출 0건), `logs/signal_ic_r3b_sppv3_
+    entry_readiness_check_2026-07-17.json`, `logs/r3b_sppv3_entry_
+    readiness_check_run_2026-07-17.log`.
+  - 다음 과제: selected_rate 급감의 총 기대수익 영향 정량화, §3
+    전제조건 충족 여부 사용자 확인, point-in-time `entry_score`
+    파이프라인 반영 shadow 실행 설계, 분기1·분기2 marginal t_NW
+    out-of-sample 재확인.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조
@@ -1676,7 +1732,13 @@ canonical),
     최우선 조사 대상은 이제 이 활동성 필터 완화안 추가 검증이다. 1차
     게이트(§21 모니터링)가 `TRIGGERED`로 전환되는 즉시 alpha layer
     교체의 최종 Go 여부도 재확인해야 하며, 그 전까지 코드 변경은
-    보류한다.
+    보류한다. **[SPPV-2.37 갱신] R3b(candidate 내부 percentile
+    재보정)가 실제 BUY funnel 8개 창 검증에서 Watch→Conditional
+    Go로 상향됐다(§2.37) — SPPV-3 착수 시 alpha 재보정 로직의 1순위
+    후보로 삼되, §2.37이 명시한 잔여 조건(marginal t_NW 재확인,
+    거래 빈도 축소의 총 기대수익 영향 정량화, §3 전제조건, point-
+    in-time 파이프라인 반영 shadow 실행) 충족 전까지 SPPV-3 자체의
+    착수(운영 코드 반영)는 여전히 보류한다.**
   - 작업 범위: `eligibility_low_relative_activity` ablation 검증
     (신규 최우선), regime/allocation/strategy/source 복원, signal
     약세와 `risk_off_penalty`/eligibility 중복 억제 분해, `overall_

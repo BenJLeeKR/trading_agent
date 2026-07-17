@@ -922,6 +922,23 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   판정을 그대로 유지(구조 확정·문구 보수화 목적). 운영 코드 변경
   없음, broker submit 미호출. 상세: `plans/[DESIGN] regime_
   conditional_entry_signal_v1.md` §26.
+
+- 작성자: Claude
+- 수정일자: 2026-07-17 (2.38순위, R3b의 SPPV-3 진입 후보 여부 판단
+  — 실제 BUY funnel 최소 검증)
+- 수정내용: R3b 미세 해부를 멈추고 SPPV-3 착수 후보 여부를
+  판단했다(§2.38). 기존 8개 창 BUY funnel 계측(재사용) 결과 T+20
+  평균 우위 8/8 일관, t_NW 6/8 유의. **신규: would_buy 모집단의
+  거래일 편중도(top-decile-day leave-out) 계측 결과, 거래일 집중
+  의존은 R3b만의 문제가 아니라 R0(기준선) 자체가 8개 창 중 3개에서
+  상위 10%일 제거 시 평균이 마이너스로 뒤집히는 alpha 신호 계열
+  전반의 특성이며, R3b는 8/8 창에서 R0보다 그 의존도가 더 낮다
+  (더 견고).** 판정: **R3b를 Watch에서 Conditional Go로 상향**
+  (조건부: 분기1·분기2 marginal t_NW 재확인, selected_rate 급감의
+  총 기대수익 영향 정량화, §3 전제조건 충족, point-in-time
+  파이프라인 반영 shadow 실행이 확정 Go 전 필요). 운영 코드 변경
+  없음, broker submit 미호출. 상세: `plans/[DESIGN] regime_
+  conditional_entry_signal_v1.md` §27.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
@@ -942,7 +959,16 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   재검증한 결과 "대형 스왑일 전적 의존"은 과장으로 정정됐다 —
   aggregate 순 기여는 상당하나(T+5 약 70%, T+20 약 35%), 총 양(+)
   합계 관점에서는 15%에 불과하고 "대형=양(+)/소규모=음(-)"도
-  양극단(Q1·Q5)에서만 성립한다.** 한편
+  양극단(Q1·Q5)에서만 성립한다. **§2.38에서 R3b의 SPPV-3 진입
+  후보 여부를 판단한 결과, 실제 BUY funnel 8개 창에서 T+20 평균
+  우위 8/8 일관·t_NW 6/8 유의를 재확인했고, 신규로 would_buy
+  모집단의 거래일 편중도를 계측해 "거래일 집중 의존"이 R3b만의
+  문제가 아니라 R0(기준선) 자체의 특성(8개 창 중 3개에서 상위 10%
+  거래일 제거 시 평균이 마이너스로 반전)이며 R3b가 오히려 8/8 창
+  에서 R0보다 덜 의존적임을 확인했다 — R3b를 Watch에서 Conditional
+  Go로 상향한다(조건부: marginal t_NW 재확인, 거래 빈도 축소의
+  총 기대수익 영향 정량화, §3 전제조건, point-in-time 파이프라인
+  반영 shadow 실행이 확정 Go 전 필요).** 한편
   **§2.23~§2.27에서
   결합 사용 시 가장 빈번하게 걸리는 축이 regime 관련 축이 아니라
   활동성 필터(`eligibility_low_relative_activity`)임이 확인됐고,

@@ -1,0 +1,384 @@
+{
+  "windows": {
+    "supplementary_3y": {
+      "window": "2차(3년, 전체 표본)",
+      "scenarios": {
+        "B_R0_no_rescale": {
+          "would_buy_n": 1543,
+          "by_horizon": {
+            "T+5": {
+              "n_days": 560,
+              "n_rows": 1543,
+              "overall_mean_pct": 1.0893,
+              "top_decile_n_days": 56,
+              "mean_after_top_decile_removal_pct": -0.5028,
+              "remaining_pct_of_original": -46.2
+            },
+            "T+20": {
+              "n_days": 560,
+              "n_rows": 1543,
+              "overall_mean_pct": 2.8177,
+              "top_decile_n_days": 56,
+              "mean_after_top_decile_removal_pct": -0.0036,
+              "remaining_pct_of_original": -0.1
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "would_buy_n": 1024,
+          "by_horizon": {
+            "T+5": {
+              "n_days": 464,
+              "n_rows": 1024,
+              "overall_mean_pct": 1.9597,
+              "top_decile_n_days": 46,
+              "mean_after_top_decile_removal_pct": 0.2083,
+              "remaining_pct_of_original": 10.6
+            },
+            "T+20": {
+              "n_days": 464,
+              "n_rows": 1024,
+              "overall_mean_pct": 6.1337,
+              "top_decile_n_days": 46,
+              "mean_after_top_decile_removal_pct": 2.5695,
+              "remaining_pct_of_original": 41.9
+            }
+          }
+        }
+      }
+    },
+    "primary_recent_12m": {
+      "window": "1차(최근 12개월)",
+      "scenarios": {
+        "B_R0_no_rescale": {
+          "would_buy_n": 673,
+          "by_horizon": {
+            "T+5": {
+              "n_days": 241,
+              "n_rows": 673,
+              "overall_mean_pct": 2.0577,
+              "top_decile_n_days": 24,
+              "mean_after_top_decile_removal_pct": 0.1071,
+              "remaining_pct_of_original": 5.2
+            },
+            "T+20": {
+              "n_days": 241,
+              "n_rows": 673,
+              "overall_mean_pct": 4.3066,
+              "top_decile_n_days": 24,
+              "mean_after_top_decile_removal_pct": 1.1912,
+              "remaining_pct_of_original": 27.7
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "would_buy_n": 443,
+          "by_horizon": {
+            "T+5": {
+              "n_days": 206,
+              "n_rows": 443,
+              "overall_mean_pct": 2.8771,
+              "top_decile_n_days": 20,
+              "mean_after_top_decile_removal_pct": 0.5673,
+              "remaining_pct_of_original": 19.7
+            },
+            "T+20": {
+              "n_days": 206,
+              "n_rows": 443,
+              "overall_mean_pct": 9.1603,
+              "top_decile_n_days": 20,
+              "mean_after_top_decile_removal_pct": 4.4766,
+              "remaining_pct_of_original": 48.9
+            }
+          }
+        }
+      }
+    },
+    "3y_first_half": {
+      "window": "3년 전반부",
+      "scenarios": {
+        "B_R0_no_rescale": {
+          "would_buy_n": 657,
+          "by_horizon": {
+            "T+5": {
+              "n_days": 243,
+              "n_rows": 657,
+              "overall_mean_pct": 0.4424,
+              "top_decile_n_days": 24,
+              "mean_after_top_decile_removal_pct": -0.7565,
+              "remaining_pct_of_original": -171.0
+            },
+            "T+20": {
+              "n_days": 243,
+              "n_rows": 657,
+              "overall_mean_pct": 0.9782,
+              "top_decile_n_days": 24,
+              "mean_after_top_decile_removal_pct": -1.1658,
+              "remaining_pct_of_original": -119.2
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "would_buy_n": 425,
+          "by_horizon": {
+            "T+5": {
+              "n_days": 192,
+              "n_rows": 425,
+              "overall_mean_pct": 1.2273,
+              "top_decile_n_days": 19,
+              "mean_after_top_decile_removal_pct": -0.1061,
+              "remaining_pct_of_original": -8.6
+            },
+            "T+20": {
+              "n_days": 192,
+              "n_rows": 425,
+              "overall_mean_pct": 2.8301,
+              "top_decile_n_days": 19,
+              "mean_after_top_decile_removal_pct": 0.4953,
+              "remaining_pct_of_original": 17.5
+            }
+          }
+        }
+      }
+    },
+    "3y_second_half": {
+      "window": "3년 후반부",
+      "scenarios": {
+        "B_R0_no_rescale": {
+          "would_buy_n": 886,
+          "by_horizon": {
+            "T+5": {
+              "n_days": 317,
+              "n_rows": 886,
+              "overall_mean_pct": 1.5691,
+              "top_decile_n_days": 31,
+              "mean_after_top_decile_removal_pct": -0.1968,
+              "remaining_pct_of_original": -12.5
+            },
+            "T+20": {
+              "n_days": 317,
+              "n_rows": 886,
+              "overall_mean_pct": 4.1818,
+              "top_decile_n_days": 31,
+              "mean_after_top_decile_removal_pct": 1.2048,
+              "remaining_pct_of_original": 28.8
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "would_buy_n": 599,
+          "by_horizon": {
+            "T+5": {
+              "n_days": 272,
+              "n_rows": 599,
+              "overall_mean_pct": 2.4793,
+              "top_decile_n_days": 27,
+              "mean_after_top_decile_removal_pct": 0.4567,
+              "remaining_pct_of_original": 18.4
+            },
+            "T+20": {
+              "n_days": 272,
+              "n_rows": 599,
+              "overall_mean_pct": 8.4776,
+              "top_decile_n_days": 27,
+              "mean_after_top_decile_removal_pct": 4.1651,
+              "remaining_pct_of_original": 49.1
+            }
+          }
+        }
+      }
+    },
+    "quarter_1": {
+      "window": "3년 분기1",
+      "scenarios": {
+        "B_R0_no_rescale": {
+          "would_buy_n": 388,
+          "by_horizon": {
+            "T+5": {
+              "n_days": 144,
+              "n_rows": 388,
+              "overall_mean_pct": 0.4244,
+              "top_decile_n_days": 14,
+              "mean_after_top_decile_removal_pct": -0.8573,
+              "remaining_pct_of_original": -202.0
+            },
+            "T+20": {
+              "n_days": 144,
+              "n_rows": 388,
+              "overall_mean_pct": 1.2076,
+              "top_decile_n_days": 14,
+              "mean_after_top_decile_removal_pct": -1.1093,
+              "remaining_pct_of_original": -91.9
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "would_buy_n": 245,
+          "by_horizon": {
+            "T+5": {
+              "n_days": 114,
+              "n_rows": 245,
+              "overall_mean_pct": 0.7437,
+              "top_decile_n_days": 11,
+              "mean_after_top_decile_removal_pct": -0.5011,
+              "remaining_pct_of_original": -67.4
+            },
+            "T+20": {
+              "n_days": 114,
+              "n_rows": 245,
+              "overall_mean_pct": 2.616,
+              "top_decile_n_days": 11,
+              "mean_after_top_decile_removal_pct": 0.2809,
+              "remaining_pct_of_original": 10.7
+            }
+          }
+        }
+      }
+    },
+    "quarter_2": {
+      "window": "3년 분기2",
+      "scenarios": {
+        "B_R0_no_rescale": {
+          "would_buy_n": 269,
+          "by_horizon": {
+            "T+5": {
+              "n_days": 99,
+              "n_rows": 269,
+              "overall_mean_pct": 0.4682,
+              "top_decile_n_days": 9,
+              "mean_after_top_decile_removal_pct": -0.4937,
+              "remaining_pct_of_original": -105.4
+            },
+            "T+20": {
+              "n_days": 99,
+              "n_rows": 269,
+              "overall_mean_pct": 0.6474,
+              "top_decile_n_days": 9,
+              "mean_after_top_decile_removal_pct": -1.1216,
+              "remaining_pct_of_original": -173.3
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "would_buy_n": 180,
+          "by_horizon": {
+            "T+5": {
+              "n_days": 78,
+              "n_rows": 180,
+              "overall_mean_pct": 1.8856,
+              "top_decile_n_days": 7,
+              "mean_after_top_decile_removal_pct": 0.552,
+              "remaining_pct_of_original": 29.3
+            },
+            "T+20": {
+              "n_days": 78,
+              "n_rows": 180,
+              "overall_mean_pct": 3.1216,
+              "top_decile_n_days": 7,
+              "mean_after_top_decile_removal_pct": 1.0997,
+              "remaining_pct_of_original": 35.2
+            }
+          }
+        }
+      }
+    },
+    "quarter_3": {
+      "window": "3년 분기3",
+      "scenarios": {
+        "B_R0_no_rescale": {
+          "would_buy_n": 430,
+          "by_horizon": {
+            "T+5": {
+              "n_days": 154,
+              "n_rows": 430,
+              "overall_mean_pct": 0.6326,
+              "top_decile_n_days": 15,
+              "mean_after_top_decile_removal_pct": -0.5656,
+              "remaining_pct_of_original": -89.4
+            },
+            "T+20": {
+              "n_days": 154,
+              "n_rows": 430,
+              "overall_mean_pct": 3.6478,
+              "top_decile_n_days": 15,
+              "mean_after_top_decile_removal_pct": 1.2818,
+              "remaining_pct_of_original": 35.1
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "would_buy_n": 308,
+          "by_horizon": {
+            "T+5": {
+              "n_days": 137,
+              "n_rows": 308,
+              "overall_mean_pct": 0.9497,
+              "top_decile_n_days": 13,
+              "mean_after_top_decile_removal_pct": -0.0101,
+              "remaining_pct_of_original": -1.1
+            },
+            "T+20": {
+              "n_days": 137,
+              "n_rows": 308,
+              "overall_mean_pct": 4.9315,
+              "top_decile_n_days": 13,
+              "mean_after_top_decile_removal_pct": 2.5757,
+              "remaining_pct_of_original": 52.2
+            }
+          }
+        }
+      }
+    },
+    "quarter_4": {
+      "window": "3년 분기4",
+      "scenarios": {
+        "B_R0_no_rescale": {
+          "would_buy_n": 456,
+          "by_horizon": {
+            "T+5": {
+              "n_days": 163,
+              "n_rows": 456,
+              "overall_mean_pct": 2.4523,
+              "top_decile_n_days": 16,
+              "mean_after_top_decile_removal_pct": 0.3385,
+              "remaining_pct_of_original": 13.8
+            },
+            "T+20": {
+              "n_days": 163,
+              "n_rows": 456,
+              "overall_mean_pct": 4.6853,
+              "top_decile_n_days": 16,
+              "mean_after_top_decile_removal_pct": 1.3809,
+              "remaining_pct_of_original": 29.5
+            }
+          }
+        },
+        "B_R3b_percentile_candidateonly": {
+          "would_buy_n": 291,
+          "by_horizon": {
+            "T+5": {
+              "n_days": 135,
+              "n_rows": 291,
+              "overall_mean_pct": 4.0984,
+              "top_decile_n_days": 13,
+              "mean_after_top_decile_removal_pct": 1.4759,
+              "remaining_pct_of_original": 36.0
+            },
+            "T+20": {
+              "n_days": 135,
+              "n_rows": 291,
+              "overall_mean_pct": 12.2309,
+              "top_decile_n_days": 13,
+              "mean_after_top_decile_removal_pct": 7.2191,
+              "remaining_pct_of_original": 59.0
+            }
+          }
+        }
+      }
+    }
+  },
+  "as_of": "2026-07-17T13:34:46.282247+09:00",
+  "symbol_count_used": 87,
+  "fetch_failures": [],
+  "note": "기존 SPPV-2.30 산출(logs/signal_ic_alpha_layer_r3_reproducibility_2026-07-16.json)의 funnel 표본수/평균/t_NW/양수비율은 재사용하고, 이 산출은 would_buy 단계의 거래일 단위 편중도(top-decile-day leave-out)만 신규 계측한 것이다."
+}

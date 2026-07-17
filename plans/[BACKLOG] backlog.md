@@ -439,6 +439,22 @@
   (구조 확정·문구 보수화 목적). 운영 코드 변경 없음, broker submit
   미호출. 실행 로그로 KIS 호출 0건 확인.
 
+- 작성자: Claude
+- 수정일자: 2026-07-17 (35차, R3b의 SPPV-3 진입 후보 여부 판단 —
+  실제 BUY funnel 최소 검증)
+- 수정내용: R3b 미세 해부를 멈추고 SPPV-3 착수 후보 여부를 판단
+  (SPPV-2.37). 기존 8개 창 BUY funnel 계측(재사용) 결과 T+20 평균
+  우위 8/8 일관, t_NW 6/8 유의. **신규: would_buy 모집단의 거래일
+  편중도(top-decile-day leave-out) 계측 결과, 거래일 집중 의존은
+  R3b만의 문제가 아니라 R0(기준선) 자체가 8개 창 중 3개에서 상위
+  10%일 제거 시 평균이 마이너스로 뒤집히는 alpha 신호 계열 전반의
+  특성이며, R3b는 8/8 창에서 R0보다 그 의존도가 더 낮다(더
+  견고).** 판정: **R3b를 Watch에서 Conditional Go로 상향**
+  (조건부: 분기1·분기2 marginal t_NW 재확인, selected_rate 급감의
+  총 기대수익 영향 정량화, §3 전제조건 충족, point-in-time
+  파이프라인 반영 shadow 실행이 확정 Go 전 필요). 운영 코드 변경
+  없음, broker submit 미호출. 실행 로그로 KIS 호출 0건 확인.
+
 ---
 
 ## 관리 원칙
@@ -1184,11 +1200,35 @@
     signal_ic_r3b_q3_swap_size_bucket_decomposition_2026-07-17.
     json`. 상세: `plans/[DESIGN] regime_conditional_entry_signal_
     v1.md` §26.
-  - **SPPV-3(다음 착수: Q4가 왜 소규모인데도 양(+)이고 Q2·Q3는 왜
-    음(-)인지 스왑개수 외 추가 변수 확인 + 2025-02-12~13 연속
-    악재일의 이벤트/실적 연관성 외부 데이터로 검증 + R3b 구성
-    효과와 활동성 필터의 상호작용 확인 + 더 긴 표본으로 재평가 +
-    §3 전제조건 충족 후 alpha 교체 재검증 + "국면 조건부 활동성
+  - **SPPV-2.37(완료, 2026-07-17, R3b의 SPPV-3 진입 후보 여부 판단
+    — 실제 BUY funnel 최소 검증 — Watch→Conditional Go 상향)**:
+    R3b 미세 해부를 멈추고 SPPV-3 착수 후보 여부를 판단. 기존
+    §2.30의 8개 창 BUY funnel 계측(candidate→eligible→selected→
+    would_buy, 재실행 없이 재사용) 결과 **T+20 평균 우위 8/8 창
+    일관**(R3b>R0), t_NW 6/8 창 유의(≥1.96), 나머지 2개(분기1=1.31,
+    분기2=1.68)는 marginal. **신규 계측(결정적 근거): would_buy
+    모집단을 거래일별로 묶어 top-decile-day leave-out을 8개 창
+    전부에 적용 — "거래일 집중 의존"은 R3b만의 문제가 아니라
+    R0(기준선) 자체가 8개 창 중 3개(전반부/분기1/분기2)에서 상위
+    10% 거래일 제거 시 T+20 평균이 마이너스로 뒤집히는 alpha 신호
+    계열 전반의 특성이며, R3b는 8개 창 전부(8/8)에서 R0보다 잔존
+    비율이 더 높다**(예: 2차 R0 -0.1% vs R3b 41.9%, 분기2 R0
+    -173.3% vs R3b 35.2%) — R3b가 R0보다 거래일 집중에 덜 의존.
+    **판정: R3b를 Watch에서 Conditional Go로 상향한다.** 단, 확정
+    Go 전 잔여 조건: (1) 분기1·분기2 marginal t_NW의 out-of-sample
+    재확인, (2) selected_rate 급감(29.9~39.2%)이 총 기대수익(거래
+    빈도×종목당 수익)에 미치는 영향 정량화, (3) §3 전제조건(1차
+    게이트 TRIGGERED 전환) 충족 확인, (4) 실제 point-in-time
+    `entry_score` 파이프라인 반영 shadow 실행. 신규 KIS 호출 0건,
+    broker submit 미호출. 산출: `scripts/validate_r3b_sppv3_entry_
+    readiness_check.py`(read-only, 신규 KIS 호출 0건), `logs/
+    signal_ic_r3b_sppv3_entry_readiness_check_2026-07-17.json`.
+    상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
+    §27.
+  - **SPPV-3(다음 착수: selected_rate 급감의 총 기대수익 영향
+    정량화 + §3 전제조건 충족 여부 사용자 확인 + point-in-time
+    `entry_score` 파이프라인 반영 shadow 실행 설계 + 분기1·분기2
+    marginal t_NW out-of-sample 재확인 + "국면 조건부 활동성
     threshold" 설계 검토 여부 사용자 확인)**:
     §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
     근접함이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는

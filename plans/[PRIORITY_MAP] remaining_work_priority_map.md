@@ -414,10 +414,48 @@
   (구조 확정·문구 보수화 목적). 운영 코드 변경 없음, broker submit
   미호출.
 
+- 작성자: Claude
+- 수정일자: 2026-07-17 (35차, R3b의 SPPV-3 진입 후보 여부 판단 —
+  실제 BUY funnel 최소 검증)
+- 수정내용: R3b 미세 해부를 멈추고 SPPV-3 착수 후보 여부를 판단
+  (SPPV-2.37). 기존 8개 창 BUY funnel 계측(재사용) 결과 T+20 평균
+  우위 8/8 일관, t_NW 6/8 유의. **신규: would_buy 모집단의 거래일
+  편중도(top-decile-day leave-out) 계측 결과, 거래일 집중 의존은
+  R3b만의 문제가 아니라 R0(기준선) 자체가 8개 창 중 3개에서 상위
+  10%일 제거 시 평균이 마이너스로 뒤집히는 alpha 신호 계열 전반의
+  특성이며, R3b는 8/8 창에서 R0보다 그 의존도가 더 낮다(더
+  견고).** 판정: **R3b를 Watch에서 Conditional Go로 상향**
+  (조건부: 분기1·분기2 marginal t_NW 재확인, selected_rate 급감의
+  총 기대수익 영향 정량화, §3 전제조건 충족, point-in-time
+  파이프라인 반영 shadow 실행이 확정 Go 전 필요). 운영 코드 변경
+  없음, broker submit 미호출.
+
 ## 최근 메모
 
+> **📌 2026-07-17 R3b의 SPPV-3 진입 후보 여부 판단 — 실제 BUY
+> funnel 최소 검증 (최신, Conditional Go 상향)**: R3b 미세 해부를
+> 멈추고 "SPPV-3 착수 후보로 올릴 수 있는가"를 판단했다. 기존
+> 8개 창 BUY funnel 계측(candidate→eligible→selected→would_buy,
+> 재실행 없이 재사용) 결과 **T+20 평균 우위가 8개 창 전부(8/8)에서
+> R3b > R0**이고 t_NW는 6/8 창에서 통상 유의(≥1.96). **신규 계측
+> (결정적 근거): would_buy 모집단을 거래일별로 묶어 top-decile-day
+> leave-out을 8개 창 전부에 적용한 결과, "거래일 집중 의존"은
+> R3b만의 문제가 아니라 R0(현행 재보정 없음 기준선) 자체가 8개 창
+> 중 3개(전반부/분기1/분기2)에서 상위 10% 거래일을 제거하면 T+20
+> 평균이 마이너스로 뒤집히는 alpha 신호 계열 전반의 특성이며,
+> R3b는 8개 창 전부(8/8)에서 R0보다 그 잔존비율이 더 높다**(예:
+> 2차 R0 -0.1% vs R3b 41.9%, 분기2 R0 -173.3% vs R3b 35.2%) —
+> R3b가 R0보다 거래일 집중에 **덜** 의존한다. 판정: **R3b를 Watch
+> 에서 Conditional Go로 상향한다.** 단, 확정 Go 전 잔여 조건 —
+> (1) 분기1(t_NW=1.31)·분기2(t_NW=1.68) marginal 재확인, (2)
+> selected_rate 급감(29.9~39.2%)이 총 기대수익(거래 빈도×종목당
+> 수익)에 미치는 영향 정량화, (3) §3 전제조건(1차 게이트 TRIGGERED
+> 전환) 충족 확인, (4) 실제 point-in-time `entry_score` 파이프라인
+> 반영 shadow 실행. 상세: `plans/[DESIGN] regime_conditional_
+> entry_signal_v1.md` §27(SPPV-2.37).
+>
 > **📌 2026-07-17 분기3 반례의 대형/소규모 스왑 구조 정밀 확정 +
-> "전적으로 의존" 문구 보수화 (최신)**: SPPV-2.35의 "대형 스왑일은
+> "전적으로 의존" 문구 보수화**: SPPV-2.35의 "대형 스왑일은
 > 유일한 강한 양(+)의 원천"이라는 서술을 분기3 83개 스왑일 전체를
 > 5분위(quintile)로 구간화해 검증한 결과, **"대형=양(+)/소규모=
 > 음(-)"은 양극단(Q1 최대·Q5 최소)에서만 성립하고 중간 구간
@@ -5734,13 +5772,36 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      py`(read-only, 신규 KIS 호출 0건), `logs/signal_ic_r3b_q3_
      swap_size_bucket_decomposition_2026-07-17.json`. 상세: `plans/
      [DESIGN] regime_conditional_entry_signal_v1.md` §26.
-   - **SPPV-3(다음 착수: Q4가 왜 소규모인데도 양(+)이고 Q2·Q3는
-     왜 음(-)인지 스왑개수 외 추가 변수 확인 + 2025-02-12~13
-     연속 악재일의 이벤트/실적 연관성 외부 데이터로 검증 + R3b
-     구성 효과와 활동성 필터의 상호작용 확인 + 더 긴 표본으로
-     재평가 + §3 전제조건 충족 후 alpha 교체 재검증 + "국면 조건부
-     활동성 threshold"
-     설계 검토 여부 사용자 확인)**:
+   - **SPPV-2.37(완료, 2026-07-17, R3b의 SPPV-3 진입 후보 여부
+     판단 — 실제 BUY funnel 최소 검증 — Watch→Conditional Go 상향)**:
+     R3b 미세 해부를 멈추고 SPPV-3 착수 후보 여부를 판단. 기존
+     §2.30의 8개 창 BUY funnel 계측(candidate→eligible→selected→
+     would_buy, 재실행 없이 재사용) 결과 **T+20 평균 우위 8/8 창
+     일관**(R3b>R0), t_NW 6/8 창 유의(≥1.96), 나머지 2개(분기1=1.31,
+     분기2=1.68)는 marginal. **신규 계측(결정적 근거): would_buy
+     모집단을 거래일별로 묶어 top-decile-day leave-out을 8개 창
+     전부에 적용 — "거래일 집중 의존"은 R3b만의 문제가 아니라
+     R0(기준선) 자체가 8개 창 중 3개(전반부/분기1/분기2)에서 상위
+     10% 거래일 제거 시 T+20 평균이 마이너스로 뒤집히는 alpha 신호
+     계열 전반의 특성이며, R3b는 8개 창 전부(8/8)에서 R0보다 잔존
+     비율이 더 높다**(예: 2차 R0 -0.1% vs R3b 41.9%, 분기2 R0
+     -173.3% vs R3b 35.2%) — R3b가 R0보다 거래일 집중에 덜 의존.
+     **판정: R3b를 Watch에서 Conditional Go로 상향한다.** 단, 확정
+     Go 전 잔여 조건: (1) 분기1·분기2 marginal t_NW의 out-of-sample
+     재확인, (2) selected_rate 급감(29.9~39.2%)이 총 기대수익(거래
+     빈도×종목당 수익)에 미치는 영향 정량화, (3) §3 전제조건(1차
+     게이트 TRIGGERED 전환) 충족 확인, (4) 실제 point-in-time
+     `entry_score` 파이프라인 반영 shadow 실행. 신규 KIS 호출 0건,
+     broker submit 미호출. 산출: `scripts/validate_r3b_sppv3_entry_
+     readiness_check.py`(read-only, 신규 KIS 호출 0건), `logs/
+     signal_ic_r3b_sppv3_entry_readiness_check_2026-07-17.json`.
+     상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
+     §27.
+   - **SPPV-3(다음 착수: selected_rate 급감의 총 기대수익 영향
+     정량화 + §3 전제조건 충족 여부 사용자 확인 + point-in-time
+     `entry_score` 파이프라인 반영 shadow 실행 설계 + 분기1·분기2
+     marginal t_NW out-of-sample 재확인 + "국면 조건부 활동성
+     threshold" 설계 검토 여부 사용자 확인)**:
      §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
      근접한다는 것이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는
      Conditional Go를 확보했으며, **§2.27~§2.28에서 그 Conditional
@@ -5759,7 +5820,17 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      재검증한 결과 "대형 스왑일 전적 의존"은 과장으로 정정됐다 —
      aggregate 순 기여는 상당하나(T+5 약 70%, T+20 약 35%), 총
      양(+) 합계 관점에서는 15%에 불과하고 "대형=양(+)/소규모=
-     음(-)"도 양극단(Q1·Q5)에서만 성립한다(§26).** 한편 **§2.23~
+     음(-)"도 양극단(Q1·Q5)에서만 성립한다(§26). **§2.37에서 R3b의
+     SPPV-3 진입 후보 여부를 판단한 결과, 실제 BUY funnel 8개 창의
+     T+20 평균 우위 8/8 일관·t_NW 6/8 유의를 재확인했고, 신규로
+     would_buy 모집단의 거래일 편중도를 계측해 "거래일 집중 의존"
+     이 R3b만의 문제가 아니라 R0(기준선) 자체의 특성(8개 창 중
+     3개에서 상위 10% 거래일 제거 시 평균이 마이너스로 반전)이며
+     R3b가 오히려 8/8 창에서 R0보다 덜 의존적임을 확인했다 — R3b를
+     Watch에서 Conditional Go로 상향한다(조건부: marginal t_NW
+     재확인, 거래 빈도 축소의 총 기대수익 영향 정량화, §3 전제조건,
+     point-in-time 파이프라인 반영 shadow 실행이 확정 Go 전
+     필요)(§27).** 한편 **§2.23~
      §2.26에서 결합 사용
      시 가장 빈번하게 걸리는 축이 활동성 필터(`eligibility_low_
      relative_activity`)임이 확인됐고, 완화 효과의 반전이 국면·
