@@ -547,6 +547,22 @@
   R3b는 Conditional Go를 유지한다**(Watch 재하향 근거 없음). 신규
   KIS 호출 0건. 운영 코드 변경 없음, broker submit 미호출.
 
+- 작성자: Claude
+- 수정일자: 2026-07-17 (42차, SPPV-3 진입 관문 3종 종합 판정 — §3
+  게이트 재확인 + 분기1/T+5 리스크 종합)
+- 수정내용: SPPV-3 진입 전 마지막 관문 3가지(§3 전제조건, 분기1
+  약화, T+5 취약성)를 종합 판정했다(SPPV-2.44). 기존 검증(분기1=
+  SPPV-2.43, T+5=SPPV-2.41)을 반복하지 않고, 유일한 신규 실측인
+  §3 게이트(기존 SPPV-2.13 모니터링 스크립트 재실행)만 확인 —
+  **결과 `NOT_TRIGGERED`(불변, 최근 12개월 bearish_trend 0/30일).**
+  종합 판정: ①§3 전제조건 미충족, ②분기1 약화는 관리 가능한 잔여
+  리스크(치명적 결함 아님), ③T+5 취약성은 미해결이나 치명적 근거
+  없음. 판정: **R3b는 Conditional Go를 유지한다.** 다만 **SPPV-3
+  (운영 코드 반영) 진입은 아직 이르다 — 주된 차단 요인은 R3b 성과와
+  무관한 §3 게이트(하락장 미도래)**이며, 규칙 A(관찰 유예)에 따라
+  인위적으로 앞당길 수 없다. 신규 KIS 호출 0건. 운영 코드 변경
+  없음, broker submit 미호출.
+
 ---
 
 ## 관리 원칙
@@ -1442,12 +1458,34 @@
     0건), `logs/signal_ic_r3b_quarter1_weakness_diagnosis_2026-
     07-17.json`. 상세: `plans/[DESIGN] regime_conditional_entry_
     signal_v1.md` §33.
-  - **SPPV-3(다음 착수: §3 전제조건 충족 여부 사용자 확인(다음
-    최우선) + out-of-sample 데이터 축적 시 혼합 국면 구간(분기1
-    유형) 우선 재확인 + T+5 horizon 강건성 개선 여부 또는 실거래
-    누적 후 청산 시점 분포 실측 계획 수립 + `portfolio_allocation`
-    gap 실거래 누적 후 재검증 + "국면 조건부 활동성 threshold"
-    설계 검토 여부 사용자 확인)**:
+  - **SPPV-2.44(완료, 2026-07-17, SPPV-3 진입 관문 3종 종합 판정
+    — §3 게이트 재확인 + 분기1/T+5 리스크 종합 — Conditional Go
+    유지, SPPV-3 진입은 §3 게이트 미충족으로 아직 이름)**: SPPV-3
+    진입 전 마지막 관문 3가지(①§3 전제조건, ②분기1 약화, ③T+5
+    취약성)를 종합 판정. 기존 검증(분기1=SPPV-2.43, T+5=SPPV-2.41)
+    을 반복하지 않고, 유일한 신규 실측인 §3 게이트(`regime_switch_
+    v1` 1차 게이트, 기존 SPPV-2.13 모니터링 스크립트 `scripts/
+    monitor_regime_switch_v1_gate.py` 재실행)만 확인(신규 KIS
+    호출 0건, 벤치마크 캐시로 전량 서빙). **결과: `NOT_TRIGGERED`
+    (불변)** — 기준일 2026-06-16 기준 최근 12개월 창에 `bullish_
+    trend` 239일, `range_bound` 6일, `bearish_trend` **0일**
+    (문턱 30일 미달). **종합 판정표: ①§3 전제조건(게이트+risk_
+    off_penalty 중복 해소) — 미충족. ②분기1 약화 — 제한된 잔여
+    리스크(치명적 결함 아님). ③T+5 취약성 — 미해결이나 치명적
+    근거 없음.** **판정: R3b는 Conditional Go를 유지한다.** 다만
+    **SPPV-3(운영 코드 반영) 진입은 아직 이르다 — 주된 차단 요인은
+    R3b의 성과와 무관한 §3 게이트(하락장 미도래)**이며, "규칙
+    A(관찰 유예)"에 따라 인위적으로 앞당길 수 없다. Watch로
+    재하향할 근거는 없다. 산출: `logs/regime_switch_v1_gate_
+    monitor_2026-07-17.json`, `logs/regime_switch_v1_gate_monitor_
+    run_2026-07-17.log`(신규 스크립트 없음). 상세: `plans/[DESIGN]
+    regime_conditional_entry_signal_v1.md` §34.
+  - **SPPV-3(다음 착수: §3 게이트는 시장 상황 의존적이므로 3년
+    캐시 갱신 시마다 재모니터링 + `risk_off_penalty` 중복 해소
+    ablation 착수 여부 사용자 판단 + T+5 horizon 강건성 확보 +
+    out-of-sample 데이터 축적 시 혼합 국면 구간(분기1 유형) 재확인
+    + `portfolio_allocation` gap 실거래 누적 후 재검증 + "국면
+    조건부 활동성 threshold" 설계 검토 여부 사용자 확인)**:
     §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
     근접함이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는
     Conditional Go를 확보했으며, **§2.27~§2.28에서 그 Conditional

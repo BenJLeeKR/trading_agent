@@ -1,0 +1,14 @@
+{
+  "as_of": "2026-07-17T21:12:43.129478+09:00",
+  "benchmark_symbol": "069500",
+  "recent_window_calendar_days": 365,
+  "cutoff_trade_date": "2025-06-16",
+  "last_trade_date": "2026-06-16",
+  "recent_common_market_regime_distribution": {
+    "bullish_trend": 239,
+    "range_bound": 6
+  },
+  "min_regime_trading_days_gate": 30,
+  "trigger_status": "NOT_TRIGGERED",
+  "trigger_message": "최근 12개월 창에 bearish_trend 0일 — 규칙 A(관찰 유예) 유지"
+}
