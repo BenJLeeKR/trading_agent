@@ -1,0 +1,442 @@
+{
+  "as_of": "2026-07-17T20:42:00.650112+09:00",
+  "symbol_count_used": 87,
+  "fetch_failures": [],
+  "quarters": {
+    "분기1": {
+      "label": "분기1",
+      "n_rows": 14123,
+      "regime_distribution": {
+        "bearish_trend": 1462,
+        "range_bound": 6581,
+        "event_driven_unstable": 344,
+        "bullish_trend": 5736
+      },
+      "r0_would_buy": {
+        "would_buy_n": 388,
+        "by_horizon": {
+          "T+5": {
+            "n": 388,
+            "mean_pct": 0.1298,
+            "t_newey_west": 0.24,
+            "pct_positive": 0.433,
+            "mfe_mean_pct": 5.1713,
+            "mae_mean_pct": -4.5698
+          },
+          "T+20": {
+            "n": 388,
+            "mean_pct": 0.7534,
+            "t_newey_west": 0.48,
+            "pct_positive": 0.4253,
+            "mfe_mean_pct": 10.0472,
+            "mae_mean_pct": -8.3282
+          }
+        }
+      },
+      "r3b_would_buy": {
+        "would_buy_n": 267,
+        "by_horizon": {
+          "T+5": {
+            "n": 267,
+            "mean_pct": 0.5627,
+            "t_newey_west": 0.88,
+            "pct_positive": 0.4869,
+            "mfe_mean_pct": 5.5771,
+            "mae_mean_pct": -4.5757
+          },
+          "T+20": {
+            "n": 267,
+            "mean_pct": 1.8154,
+            "t_newey_west": 0.96,
+            "pct_positive": 0.4307,
+            "mfe_mean_pct": 11.6015,
+            "mae_mean_pct": -8.887
+          }
+        }
+      },
+      "n_swap_days": 46,
+      "by_horizon_day_level": {
+        "T+5": {
+          "aggregate_diff_pct": 0.4329,
+          "replacement_effect_pct": 0.503,
+          "composition_effect_pct": -0.0701,
+          "paired_mean_pct": 2.0663,
+          "n_swap_days_positive": 27,
+          "n_swap_days_negative": 19,
+          "top_decile_day_remaining_pct": 178.4
+        },
+        "T+20": {
+          "aggregate_diff_pct": 1.062,
+          "replacement_effect_pct": 2.614,
+          "composition_effect_pct": -1.552,
+          "paired_mean_pct": 6.5719,
+          "n_swap_days_positive": 33,
+          "n_swap_days_negative": 13,
+          "top_decile_day_remaining_pct": 157.8
+        }
+      },
+      "top_swap_days_detail": [
+        {
+          "rank": 1,
+          "trade_date": "2024-04-26",
+          "swap_count": 5,
+          "paired_effect_T+5_pct": -0.9172,
+          "paired_effect_T+20_pct": -21.8769
+        },
+        {
+          "rank": 2,
+          "trade_date": "2024-01-03",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": 0.2422,
+          "paired_effect_T+20_pct": -16.1084
+        },
+        {
+          "rank": 3,
+          "trade_date": "2024-02-21",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": -17.4535,
+          "paired_effect_T+20_pct": 28.7039
+        },
+        {
+          "rank": 4,
+          "trade_date": "2024-02-22",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": -23.4357,
+          "paired_effect_T+20_pct": -44.3561
+        },
+        {
+          "rank": 5,
+          "trade_date": "2024-02-26",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": 8.8761,
+          "paired_effect_T+20_pct": 9.6109
+        },
+        {
+          "rank": 6,
+          "trade_date": "2024-02-29",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": 3.1203,
+          "paired_effect_T+20_pct": 5.1685
+        },
+        {
+          "rank": 7,
+          "trade_date": "2024-03-27",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": -6.2793,
+          "paired_effect_T+20_pct": 1.485
+        },
+        {
+          "rank": 8,
+          "trade_date": "2024-04-02",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": 6.5645,
+          "paired_effect_T+20_pct": 8.922
+        },
+        {
+          "rank": 9,
+          "trade_date": "2024-04-03",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": 1.7928,
+          "paired_effect_T+20_pct": 10.2426
+        },
+        {
+          "rank": 10,
+          "trade_date": "2024-04-15",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": -0.816,
+          "paired_effect_T+20_pct": 5.9502
+        }
+      ]
+    },
+    "분기2": {
+      "label": "분기2",
+      "n_rows": 14181,
+      "regime_distribution": {
+        "range_bound": 6264,
+        "bullish_trend": 1218,
+        "bearish_trend": 6612,
+        "event_driven_unstable": 87
+      },
+      "r0_would_buy": {
+        "would_buy_n": 269,
+        "by_horizon": {
+          "T+5": {
+            "n": 269,
+            "mean_pct": 0.5099,
+            "t_newey_west": 0.85,
+            "pct_positive": 0.4796,
+            "mfe_mean_pct": 5.3345,
+            "mae_mean_pct": -4.515
+          },
+          "T+20": {
+            "n": 269,
+            "mean_pct": 0.5904,
+            "t_newey_west": 0.49,
+            "pct_positive": 0.4498,
+            "mfe_mean_pct": 10.5189,
+            "mae_mean_pct": -9.1527
+          }
+        }
+      },
+      "r3b_would_buy": {
+        "would_buy_n": 186,
+        "by_horizon": {
+          "T+5": {
+            "n": 186,
+            "mean_pct": 1.6141,
+            "t_newey_west": 1.68,
+            "pct_positive": 0.5269,
+            "mfe_mean_pct": 6.9004,
+            "mae_mean_pct": -4.9409
+          },
+          "T+20": {
+            "n": 186,
+            "mean_pct": 2.7172,
+            "t_newey_west": 1.48,
+            "pct_positive": 0.4624,
+            "mfe_mean_pct": 13.6364,
+            "mae_mean_pct": -9.6323
+          }
+        }
+      },
+      "n_swap_days": 29,
+      "by_horizon_day_level": {
+        "T+5": {
+          "aggregate_diff_pct": 1.1042,
+          "replacement_effect_pct": 1.607,
+          "composition_effect_pct": -0.5029,
+          "paired_mean_pct": 3.9888,
+          "n_swap_days_positive": 18,
+          "n_swap_days_negative": 11,
+          "top_decile_day_remaining_pct": 92.4
+        },
+        "T+20": {
+          "aggregate_diff_pct": 2.1268,
+          "replacement_effect_pct": 4.5403,
+          "composition_effect_pct": -2.4136,
+          "paired_mean_pct": 9.078,
+          "n_swap_days_positive": 20,
+          "n_swap_days_negative": 9,
+          "top_decile_day_remaining_pct": 92.9
+        }
+      },
+      "top_swap_days_detail": [
+        {
+          "rank": 1,
+          "trade_date": "2024-07-30",
+          "swap_count": 5,
+          "paired_effect_T+5_pct": -9.4481,
+          "paired_effect_T+20_pct": -6.4173
+        },
+        {
+          "rank": 2,
+          "trade_date": "2024-08-23",
+          "swap_count": 5,
+          "paired_effect_T+5_pct": 18.9588,
+          "paired_effect_T+20_pct": 24.4057
+        },
+        {
+          "rank": 3,
+          "trade_date": "2024-06-14",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": 4.9891,
+          "paired_effect_T+20_pct": -17.3642
+        },
+        {
+          "rank": 4,
+          "trade_date": "2024-08-19",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": -14.0149,
+          "paired_effect_T+20_pct": -16.4405
+        },
+        {
+          "rank": 5,
+          "trade_date": "2024-08-29",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": 1.774,
+          "paired_effect_T+20_pct": 10.4869
+        },
+        {
+          "rank": 6,
+          "trade_date": "2024-08-30",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": -2.7647,
+          "paired_effect_T+20_pct": 0.5495
+        },
+        {
+          "rank": 7,
+          "trade_date": "2025-01-14",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": 13.0497,
+          "paired_effect_T+20_pct": 35.2888
+        },
+        {
+          "rank": 8,
+          "trade_date": "2024-08-14",
+          "swap_count": 3,
+          "paired_effect_T+5_pct": 1.1827,
+          "paired_effect_T+20_pct": 11.7653
+        },
+        {
+          "rank": 9,
+          "trade_date": "2024-08-16",
+          "swap_count": 3,
+          "paired_effect_T+5_pct": -9.1212,
+          "paired_effect_T+20_pct": -12.925
+        },
+        {
+          "rank": 10,
+          "trade_date": "2024-08-28",
+          "swap_count": 3,
+          "paired_effect_T+5_pct": 5.3083,
+          "paired_effect_T+20_pct": 3.1559
+        }
+      ]
+    },
+    "분기3": {
+      "label": "분기3",
+      "n_rows": 14181,
+      "regime_distribution": {
+        "range_bound": 4263,
+        "bullish_trend": 9570,
+        "bearish_trend": 261,
+        "event_driven_unstable": 87
+      },
+      "r0_would_buy": {
+        "would_buy_n": 430,
+        "by_horizon": {
+          "T+5": {
+            "n": 430,
+            "mean_pct": 0.6679,
+            "t_newey_west": 1.29,
+            "pct_positive": 0.4953,
+            "mfe_mean_pct": 5.1749,
+            "mae_mean_pct": -4.2408
+          },
+          "T+20": {
+            "n": 430,
+            "mean_pct": 4.2736,
+            "t_newey_west": 1.92,
+            "pct_positive": 0.5093,
+            "mfe_mean_pct": 14.1355,
+            "mae_mean_pct": -8.0964
+          }
+        }
+      },
+      "r3b_would_buy": {
+        "would_buy_n": 323,
+        "by_horizon": {
+          "T+5": {
+            "n": 323,
+            "mean_pct": 0.8754,
+            "t_newey_west": 1.61,
+            "pct_positive": 0.5356,
+            "mfe_mean_pct": 5.3998,
+            "mae_mean_pct": -4.1963
+          },
+          "T+20": {
+            "n": 323,
+            "mean_pct": 5.0076,
+            "t_newey_west": 2.16,
+            "pct_positive": 0.5573,
+            "mfe_mean_pct": 14.8386,
+            "mae_mean_pct": -8.0474
+          }
+        }
+      },
+      "n_swap_days": 37,
+      "by_horizon_day_level": {
+        "T+5": {
+          "aggregate_diff_pct": 0.2075,
+          "replacement_effect_pct": -0.0792,
+          "composition_effect_pct": 0.2867,
+          "paired_mean_pct": 0.4398,
+          "n_swap_days_positive": 19,
+          "n_swap_days_negative": 18,
+          "top_decile_day_remaining_pct": 127.8
+        },
+        "T+20": {
+          "aggregate_diff_pct": 0.734,
+          "replacement_effect_pct": -0.2279,
+          "composition_effect_pct": 0.9619,
+          "paired_mean_pct": 0.0951,
+          "n_swap_days_positive": 17,
+          "n_swap_days_negative": 20,
+          "top_decile_day_remaining_pct": 104.7
+        }
+      },
+      "top_swap_days_detail": [
+        {
+          "rank": 1,
+          "trade_date": "2025-02-12",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": -1.1775,
+          "paired_effect_T+20_pct": -11.7151
+        },
+        {
+          "rank": 2,
+          "trade_date": "2025-03-05",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": -7.7468,
+          "paired_effect_T+20_pct": 0.502
+        },
+        {
+          "rank": 3,
+          "trade_date": "2025-03-18",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": -8.4824,
+          "paired_effect_T+20_pct": 8.1771
+        },
+        {
+          "rank": 4,
+          "trade_date": "2025-03-19",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": 5.2673,
+          "paired_effect_T+20_pct": -1.8495
+        },
+        {
+          "rank": 5,
+          "trade_date": "2025-03-21",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": 0.6162,
+          "paired_effect_T+20_pct": 18.0267
+        },
+        {
+          "rank": 6,
+          "trade_date": "2025-06-25",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": -8.4456,
+          "paired_effect_T+20_pct": -19.8218
+        },
+        {
+          "rank": 7,
+          "trade_date": "2025-06-26",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": -3.6217,
+          "paired_effect_T+20_pct": -1.8666
+        },
+        {
+          "rank": 8,
+          "trade_date": "2025-07-09",
+          "swap_count": 4,
+          "paired_effect_T+5_pct": -4.7857,
+          "paired_effect_T+20_pct": -12.6797
+        },
+        {
+          "rank": 9,
+          "trade_date": "2025-02-19",
+          "swap_count": 3,
+          "paired_effect_T+5_pct": -3.1228,
+          "paired_effect_T+20_pct": 2.8952
+        },
+        {
+          "rank": 10,
+          "trade_date": "2025-03-11",
+          "swap_count": 3,
+          "paired_effect_T+5_pct": 6.5775,
+          "paired_effect_T+20_pct": 6.9595
+        }
+      ]
+    }
+  }
+}

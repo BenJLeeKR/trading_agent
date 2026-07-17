@@ -1,0 +1,44 @@
+INFO:validate_r3b_quarter1_weakness_diagnosis:[20/87] 누적 표본 13060건
+INFO:validate_r3b_quarter1_weakness_diagnosis:[40/87] 누적 표본 26120건
+INFO:validate_r3b_quarter1_weakness_diagnosis:[60/87] 누적 표본 39180건
+INFO:validate_r3b_quarter1_weakness_diagnosis:[80/87] 누적 표본 52240건
+INFO:validate_r3b_quarter1_weakness_diagnosis:[87/87] 누적 표본 56753건
+INFO:validate_r3b_quarter1_weakness_diagnosis:전체 3년 표본 56753건, 실패 0종목
+
+=== 분기1 구조 진단 (표본 14123건) ===
+  국면 분포: {'bearish_trend': 1462, 'range_bound': 6581, 'event_driven_unstable': 344, 'bullish_trend': 5736}
+  R0 would_buy=388, R3b would_buy=267
+    T+5 R0: {'n': 388, 'mean_pct': 0.1298, 't_newey_west': 0.24, 'pct_positive': 0.433, 'mfe_mean_pct': 5.1713, 'mae_mean_pct': -4.5698}
+    T+5 R3b: {'n': 267, 'mean_pct': 0.5627, 't_newey_west': 0.88, 'pct_positive': 0.4869, 'mfe_mean_pct': 5.5771, 'mae_mean_pct': -4.5757}
+    T+20 R0: {'n': 388, 'mean_pct': 0.7534, 't_newey_west': 0.48, 'pct_positive': 0.4253, 'mfe_mean_pct': 10.0472, 'mae_mean_pct': -8.3282}
+    T+20 R3b: {'n': 267, 'mean_pct': 1.8154, 't_newey_west': 0.96, 'pct_positive': 0.4307, 'mfe_mean_pct': 11.6015, 'mae_mean_pct': -8.887}
+  스왑 발생일: 46건
+  [T+5] pooled aggregate_diff=0.4329%p, paired 평균=2.0663%p, 스왑일 중 양(+)=27건/음(-)=19건, 상위10%일 제거후 잔존=178.4%
+  [T+20] pooled aggregate_diff=1.062%p, paired 평균=6.5719%p, 스왑일 중 양(+)=33건/음(-)=13건, 상위10%일 제거후 잔존=157.8%
+  상위 스왑일 상세: [{'rank': 1, 'trade_date': '2024-04-26', 'swap_count': 5, 'paired_effect_T+5_pct': -0.9172, 'paired_effect_T+20_pct': -21.8769}, {'rank': 2, 'trade_date': '2024-01-03', 'swap_count': 4, 'paired_effect_T+5_pct': 0.2422, 'paired_effect_T+20_pct': -16.1084}, {'rank': 3, 'trade_date': '2024-02-21', 'swap_count': 4, 'paired_effect_T+5_pct': -17.4535, 'paired_effect_T+20_pct': 28.7039}, {'rank': 4, 'trade_date': '2024-02-22', 'swap_count': 4, 'paired_effect_T+5_pct': -23.4357, 'paired_effect_T+20_pct': -44.3561}, {'rank': 5, 'trade_date': '2024-02-26', 'swap_count': 4, 'paired_effect_T+5_pct': 8.8761, 'paired_effect_T+20_pct': 9.6109}, {'rank': 6, 'trade_date': '2024-02-29', 'swap_count': 4, 'paired_effect_T+5_pct': 3.1203, 'paired_effect_T+20_pct': 5.1685}, {'rank': 7, 'trade_date': '2024-03-27', 'swap_count': 4, 'paired_effect_T+5_pct': -6.2793, 'paired_effect_T+20_pct': 1.485}, {'rank': 8, 'trade_date': '2024-04-02', 'swap_count': 4, 'paired_effect_T+5_pct': 6.5645, 'paired_effect_T+20_pct': 8.922}, {'rank': 9, 'trade_date': '2024-04-03', 'swap_count': 4, 'paired_effect_T+5_pct': 1.7928, 'paired_effect_T+20_pct': 10.2426}, {'rank': 10, 'trade_date': '2024-04-15', 'swap_count': 4, 'paired_effect_T+5_pct': -0.816, 'paired_effect_T+20_pct': 5.9502}]
+
+=== 분기2 구조 진단 (표본 14181건) ===
+  국면 분포: {'range_bound': 6264, 'bullish_trend': 1218, 'bearish_trend': 6612, 'event_driven_unstable': 87}
+  R0 would_buy=269, R3b would_buy=186
+    T+5 R0: {'n': 269, 'mean_pct': 0.5099, 't_newey_west': 0.85, 'pct_positive': 0.4796, 'mfe_mean_pct': 5.3345, 'mae_mean_pct': -4.515}
+    T+5 R3b: {'n': 186, 'mean_pct': 1.6141, 't_newey_west': 1.68, 'pct_positive': 0.5269, 'mfe_mean_pct': 6.9004, 'mae_mean_pct': -4.9409}
+    T+20 R0: {'n': 269, 'mean_pct': 0.5904, 't_newey_west': 0.49, 'pct_positive': 0.4498, 'mfe_mean_pct': 10.5189, 'mae_mean_pct': -9.1527}
+    T+20 R3b: {'n': 186, 'mean_pct': 2.7172, 't_newey_west': 1.48, 'pct_positive': 0.4624, 'mfe_mean_pct': 13.6364, 'mae_mean_pct': -9.6323}
+  스왑 발생일: 29건
+  [T+5] pooled aggregate_diff=1.1042%p, paired 평균=3.9888%p, 스왑일 중 양(+)=18건/음(-)=11건, 상위10%일 제거후 잔존=92.4%
+  [T+20] pooled aggregate_diff=2.1268%p, paired 평균=9.078%p, 스왑일 중 양(+)=20건/음(-)=9건, 상위10%일 제거후 잔존=92.9%
+  상위 스왑일 상세: [{'rank': 1, 'trade_date': '2024-07-30', 'swap_count': 5, 'paired_effect_T+5_pct': -9.4481, 'paired_effect_T+20_pct': -6.4173}, {'rank': 2, 'trade_date': '2024-08-23', 'swap_count': 5, 'paired_effect_T+5_pct': 18.9588, 'paired_effect_T+20_pct': 24.4057}, {'rank': 3, 'trade_date': '2024-06-14', 'swap_count': 4, 'paired_effect_T+5_pct': 4.9891, 'paired_effect_T+20_pct': -17.3642}, {'rank': 4, 'trade_date': '2024-08-19', 'swap_count': 4, 'paired_effect_T+5_pct': -14.0149, 'paired_effect_T+20_pct': -16.4405}, {'rank': 5, 'trade_date': '2024-08-29', 'swap_count': 4, 'paired_effect_T+5_pct': 1.774, 'paired_effect_T+20_pct': 10.4869}, {'rank': 6, 'trade_date': '2024-08-30', 'swap_count': 4, 'paired_effect_T+5_pct': -2.7647, 'paired_effect_T+20_pct': 0.5495}, {'rank': 7, 'trade_date': '2025-01-14', 'swap_count': 4, 'paired_effect_T+5_pct': 13.0497, 'paired_effect_T+20_pct': 35.2888}, {'rank': 8, 'trade_date': '2024-08-14', 'swap_count': 3, 'paired_effect_T+5_pct': 1.1827, 'paired_effect_T+20_pct': 11.7653}, {'rank': 9, 'trade_date': '2024-08-16', 'swap_count': 3, 'paired_effect_T+5_pct': -9.1212, 'paired_effect_T+20_pct': -12.925}, {'rank': 10, 'trade_date': '2024-08-28', 'swap_count': 3, 'paired_effect_T+5_pct': 5.3083, 'paired_effect_T+20_pct': 3.1559}]
+
+=== 분기3 구조 진단 (표본 14181건) ===
+  국면 분포: {'range_bound': 4263, 'bullish_trend': 9570, 'bearish_trend': 261, 'event_driven_unstable': 87}
+  R0 would_buy=430, R3b would_buy=323
+    T+5 R0: {'n': 430, 'mean_pct': 0.6679, 't_newey_west': 1.29, 'pct_positive': 0.4953, 'mfe_mean_pct': 5.1749, 'mae_mean_pct': -4.2408}
+    T+5 R3b: {'n': 323, 'mean_pct': 0.8754, 't_newey_west': 1.61, 'pct_positive': 0.5356, 'mfe_mean_pct': 5.3998, 'mae_mean_pct': -4.1963}
+    T+20 R0: {'n': 430, 'mean_pct': 4.2736, 't_newey_west': 1.92, 'pct_positive': 0.5093, 'mfe_mean_pct': 14.1355, 'mae_mean_pct': -8.0964}
+    T+20 R3b: {'n': 323, 'mean_pct': 5.0076, 't_newey_west': 2.16, 'pct_positive': 0.5573, 'mfe_mean_pct': 14.8386, 'mae_mean_pct': -8.0474}
+  스왑 발생일: 37건
+  [T+5] pooled aggregate_diff=0.2075%p, paired 평균=0.4398%p, 스왑일 중 양(+)=19건/음(-)=18건, 상위10%일 제거후 잔존=127.8%
+  [T+20] pooled aggregate_diff=0.734%p, paired 평균=0.0951%p, 스왑일 중 양(+)=17건/음(-)=20건, 상위10%일 제거후 잔존=104.7%
+  상위 스왑일 상세: [{'rank': 1, 'trade_date': '2025-02-12', 'swap_count': 4, 'paired_effect_T+5_pct': -1.1775, 'paired_effect_T+20_pct': -11.7151}, {'rank': 2, 'trade_date': '2025-03-05', 'swap_count': 4, 'paired_effect_T+5_pct': -7.7468, 'paired_effect_T+20_pct': 0.502}, {'rank': 3, 'trade_date': '2025-03-18', 'swap_count': 4, 'paired_effect_T+5_pct': -8.4824, 'paired_effect_T+20_pct': 8.1771}, {'rank': 4, 'trade_date': '2025-03-19', 'swap_count': 4, 'paired_effect_T+5_pct': 5.2673, 'paired_effect_T+20_pct': -1.8495}, {'rank': 5, 'trade_date': '2025-03-21', 'swap_count': 4, 'paired_effect_T+5_pct': 0.6162, 'paired_effect_T+20_pct': 18.0267}, {'rank': 6, 'trade_date': '2025-06-25', 'swap_count': 4, 'paired_effect_T+5_pct': -8.4456, 'paired_effect_T+20_pct': -19.8218}, {'rank': 7, 'trade_date': '2025-06-26', 'swap_count': 4, 'paired_effect_T+5_pct': -3.6217, 'paired_effect_T+20_pct': -1.8666}, {'rank': 8, 'trade_date': '2025-07-09', 'swap_count': 4, 'paired_effect_T+5_pct': -4.7857, 'paired_effect_T+20_pct': -12.6797}, {'rank': 9, 'trade_date': '2025-02-19', 'swap_count': 3, 'paired_effect_T+5_pct': -3.1228, 'paired_effect_T+20_pct': 2.8952}, {'rank': 10, 'trade_date': '2025-03-11', 'swap_count': 3, 'paired_effect_T+5_pct': 6.5775, 'paired_effect_T+20_pct': 6.9595}]
+
+산출 저장: logs/signal_ic_r3b_quarter1_weakness_diagnosis_2026-07-17.json
