@@ -498,6 +498,23 @@
   Conditional Go를 유지한다(확정 Go 아님). 운영 코드 변경 없음,
   broker submit 미호출. 신규 KIS 호출 없음(로그 확인).
 
+- 작성자: Claude
+- 수정일자: 2026-07-17 (39차, R3b Conditional Go의 운영 horizon
+  적합성 판단)
+- 수정내용: 38차(SPPV-2.40)가 남긴 "T+20 중심인가, T+5 취약성이
+  실운영과 충돌하는가"를 코드·문서 조사로 판단했다(SPPV-2.41).
+  **결과: `deterministic_trigger_engine.py`의 SELL/청산은 100%
+  `exit_score`(신호/점수) 기반이며 경과일수를 전혀 참조하지 않고,
+  `max_holding_days=20`은 AI Risk agent의 LLM 출력 힌트 기본값일
+  뿐 실제로 20일 뒤 매도를 강제하는 코드가 없다.** 기존 §16 Go/
+  No-Go 표준이 T+5·T+20을 이미 동시에 요구해온 것도 확인. 판정:
+  **"T+20 중심이라 T+5 약점을 무시해도 된다"는 주장은 코드로
+  뒷받침되지 않는다.** R3b는 Conditional Go를 유지하되(즉시 Watch
+  재하향 근거는 부족), T+5 horizon 강건성 확보(또는 실거래 누적
+  후 청산 시점 분포 실측)를 확정 Go의 필수조건으로 격상한다. 신규
+  KIS 호출 없음(read-only 코드/문서 조사만 수행). 운영 코드 변경
+  없음, broker submit 미호출.
+
 ---
 
 ## 관리 원칙
@@ -1323,12 +1340,35 @@
     `logs/signal_ic_r3b_capital_utilization_adjusted_proxy_2026-
     07-17.json`. 상세: `plans/[DESIGN] regime_conditional_entry_
     signal_v1.md` §30.
+  - **SPPV-2.41(완료, 2026-07-17, R3b Conditional Go의 운영
+    horizon 적합성 판단 — Conditional Go 유지, T+5 강건성을 확정
+    Go 필수조건으로 격상)**: R3b의 T+5 취약성(§30)이 실운영과
+    충돌하는지 판단하기 위해 운영 코드(`deterministic_trigger_
+    engine.py`, `ai_agents/schemas.py`, `common_types.py`)와 5개
+    기준 문서를 read-only로 조사(신규 KIS 호출 없음, 스크립트
+    실행 자체가 없었음). **결과: SELL/청산 판정은 `exit_score`
+    (신호/점수)를 계산해 임계값과 비교하는 100% 신호 기반이며,
+    경과일수·보유일수를 입력으로 쓰는 코드 경로가 전혀 없다.**
+    `max_holding_days=20`(`schemas.py`의 `ExitPlanHint`)은 AI
+    Risk agent의 **LLM 출력 힌트 기본값**일 뿐 실제로 20일 뒤
+    매도를 강제하는 코드가 없다 — T+20과 우연히 일치하는 숫자
+    이지만 인과관계는 없다. 문서상 1차/2차 구분도 horizon이 아닌
+    **기간 창** 구분이며, 기존 §16 Go/No-Go 표준은 T+5·T+20을
+    이미 동시에 요구해왔다(새 기준 아님). 실거래 이력도 진입-청산
+    쌍이 없어 평균 보유기간을 실측할 수 없다. **판정: "이 시스템이
+    T+20 중심이라 T+5 약점을 무시해도 된다"는 주장은 코드로
+    뒷받침되지 않는다.** R3b는 **Conditional Go를 유지**한다(즉시
+    Watch 재하향 근거는 부족). 확정 Go 전 잔여 조건에 **"T+5
+    horizon 강건성 확보(또는 실거래 누적 후 청산 시점 분포 실측)"
+    를 기존 3개 조건과 동등한 필수조건으로 격상**한다. 신규 KIS
+    호출 없음(read-only 조사만 수행, 산출 파일 없음). 상세: `plans/
+    [DESIGN] regime_conditional_entry_signal_v1.md` §31.
   - **SPPV-3(다음 착수: §3 전제조건 충족 여부 사용자 확인(다음
-    최우선) + point-in-time `entry_score` 파이프라인 반영 shadow
-    실행 설계 + 분기1·분기2 marginal t_NW out-of-sample 재확인 +
-    이 시스템의 운영 호라이즌이 T+20 중심인지 T+5도 포함하는지
-    사용자 확인 + "국면 조건부 활동성 threshold" 설계 검토 여부
-    사용자 확인)**:
+    최우선) + T+5 horizon 강건성 개선 여부 또는 실거래 누적 후
+    청산 시점 분포 실측 계획 수립 + point-in-time `entry_score`
+    파이프라인 반영 shadow 실행 설계 + 분기1·분기2 marginal t_NW
+    out-of-sample 재확인 + "국면 조건부 활동성 threshold" 설계
+    검토 여부 사용자 확인)**:
     §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
     근접함이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는
     Conditional Go를 확보했으며, **§2.27~§2.28에서 그 Conditional

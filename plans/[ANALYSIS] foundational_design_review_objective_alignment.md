@@ -985,6 +985,23 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   Conditional Go를 유지한다(확정 Go 아님). 운영 코드 변경 없음,
   broker submit 미호출. 상세: `plans/[DESIGN] regime_conditional_
   entry_signal_v1.md` §30.
+
+- 작성자: Claude
+- 수정일자: 2026-07-17 (2.42순위, R3b Conditional Go의 운영
+  horizon 적합성 판단)
+- 수정내용: §2.41이 남긴 "T+20 중심인가, T+5 취약성이 실운영과
+  충돌하는가"를 코드·문서 조사로 판단했다(§2.42). **결과:
+  `deterministic_trigger_engine.py`의 SELL/청산은 100% `exit_
+  score`(신호/점수) 기반이며 경과일수를 전혀 참조하지 않고,
+  `max_holding_days=20`은 AI Risk agent의 LLM 출력 힌트 기본값일
+  뿐 실제로 20일 뒤 매도를 강제하는 코드가 없다.** 기존 §16 Go/
+  No-Go 표준이 T+5·T+20을 이미 동시에 요구해온 것도 확인. **판정:
+  "T+20 중심이라 T+5 약점을 무시해도 된다"는 주장은 코드로
+  뒷받침되지 않는다.** R3b는 Conditional Go를 유지하되(즉시 Watch
+  재하향 근거는 부족), T+5 horizon 강건성 확보(또는 실거래 누적
+  후 청산 시점 분포 실측)를 확정 Go의 필수조건으로 격상한다. 운영
+  코드 변경 없음, broker submit 미호출. 상세: `plans/[DESIGN]
+  regime_conditional_entry_signal_v1.md` §31.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서
@@ -1027,7 +1044,14 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   엄격 기준(R0 이론적 최대 대비)에서도 여전히 R3b 우위이나 T+5는
   8개 창 중 6개에서 우위가 사라지거나 이미 열세임을 확인해 "조건
   (2) 해소"를 "T+20 완화·T+5 미해결" 수준으로 재조정했다 — R3b는
-  Conditional Go를 유지한다(확정 Go 아님).** 한편
+  Conditional Go를 유지한다(확정 Go 아님). **§2.42에서 "이 시스템이
+  T+20 중심인가"를 코드로 직접 조사한 결과, SELL/청산이 100%
+  exit_score(신호/점수) 기반이고 경과일수를 참조하지 않으며
+  max_holding_days=20이 실제로 집행되지 않는 LLM 힌트 기본값에
+  불과함을 확인했다 — "T+20 중심이라 T+5를 무시해도 된다"는 주장은
+  코드로 뒷받침되지 않는다. R3b는 Conditional Go를 유지하되, T+5
+  horizon 강건성 확보(또는 실거래 누적 후 청산 시점 분포 실측)를
+  확정 Go의 필수조건으로 격상했다.** 한편
   **§2.23~§2.27에서
   결합 사용 시 가장 빈번하게 걸리는 축이 regime 관련 축이 아니라
   활동성 필터(`eligibility_low_relative_activity`)임이 확인됐고,

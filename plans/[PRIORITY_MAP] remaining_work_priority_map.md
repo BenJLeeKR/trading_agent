@@ -473,10 +473,52 @@
   Conditional Go를 유지한다(확정 Go 아님). 운영 코드 변경 없음,
   broker submit 미호출.
 
+- 작성자: Claude
+- 수정일자: 2026-07-17 (39차, R3b Conditional Go의 운영 horizon
+  적합성 판단)
+- 수정내용: 38차(SPPV-2.40)가 남긴 "T+20 중심인가, T+5 취약성이
+  실운영과 충돌하는가"를 코드·문서 조사로 판단했다(SPPV-2.41).
+  **결과: `deterministic_trigger_engine.py`의 SELL/청산은 100%
+  `exit_score`(신호/점수) 기반이며 경과일수를 전혀 참조하지 않고,
+  `max_holding_days=20`은 AI Risk agent의 LLM 출력 힌트 기본값일
+  뿐 실제로 20일 뒤 매도를 강제하는 코드가 없다.** 기존 §16 Go/
+  No-Go 표준이 T+5·T+20을 이미 동시에 요구해온 것도 확인. 판정:
+  **"T+20 중심이라 T+5 약점을 무시해도 된다"는 주장은 코드로
+  뒷받침되지 않는다.** R3b는 Conditional Go를 유지하되(즉시 Watch
+  재하향 근거는 부족), T+5 horizon 강건성 확보(또는 실거래 누적
+  후 청산 시점 분포 실측)를 확정 Go의 필수조건으로 격상한다. 신규
+  KIS 호출 없음(read-only 코드/문서 조사만 수행). 운영 코드 변경
+  없음, broker submit 미호출.
+
 ## 최근 메모
 
-> **📌 2026-07-17 R3b 총 기대수익 proxy의 유휴 자본 반영 보강 검증
-> (최신)**: SPPV-2.39의 "조건 (2) 해소"를 유휴 자본 기회비용까지
+> **📌 2026-07-17 R3b Conditional Go의 운영 horizon 적합성 판단
+> (최신)**: R3b의 T+5 취약성(§30)이 실운영과 충돌하는지 판단하기
+> 위해 운영 코드(`deterministic_trigger_engine.py`, `ai_agents/
+> schemas.py`, `common_types.py`)와 5개 기준 문서를 read-only로
+> 조사했다(신규 KIS 호출 없음, 스크립트 실행 자체가 없었음).
+> **결과: SELL/청산 판정은 `exit_score`(국면 risk-off·보유 편향·
+> 무보유 페널티 등 피처 기반)를 계산해 임계값과 비교하는 100%
+> 신호/점수 기반이며, 경과일수·보유일수를 입력으로 쓰는 코드
+> 경로가 전혀 없다.** `max_holding_days=20`(`schemas.py`의
+> `ExitPlanHint`)은 AI Risk agent의 **LLM 출력 힌트 기본값**일
+> 뿐, 이 값을 읽어 실제 매도를 강제하는 코드는 존재하지 않는다 —
+> T+20과 우연히 일치하는 숫자이지만 인과관계는 없다. 문서상 1차/
+> 2차 구분도 horizon이 아니라 **기간 창**(최근 12개월 vs 3년)
+> 구분이며, 기존 §16 Go/No-Go 표준은 **T+5·T+20을 이미 동시에
+> 요구**해왔다(새로 만든 기준 아님). 실거래 이력(`logs/trigger_
+> proxy_attribution_*.json`)도 진입-청산 쌍이 없어 실제 평균
+> 보유기간을 실측할 수 없다. **판정: "이 시스템이 T+20 중심이라
+> T+5 약점을 무시해도 된다"는 주장은 코드로 뒷받침되지 않는다.**
+> R3b는 **Conditional Go를 유지**한다(즉시 Watch 재하향 근거는
+> 부족 — T+20 근거 자체는 여전히 강함). 다만 **확정 Go 전 잔여
+> 조건에 "T+5 horizon 강건성 확보(또는 실거래 누적 후 청산 시점
+> 분포 실측)"를 기존 3개 조건과 동등한 필수조건으로 격상**한다.
+> 상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
+> §31(SPPV-2.41).
+>
+> **📌 2026-07-17 R3b 총 기대수익 proxy의 유휴 자본 반영 보강 검증**:
+> SPPV-2.39의 "조건 (2) 해소"를 유휴 자본 기회비용까지
 > 반영해 보강 검증했다(SPPV-2.40). 신규 계측은 창별 전체 거래일
 > 수 하나뿐(캐시 봉 데이터만 사용, 신규 KIS 호출 없음). **엄격
 > 기준("R0가 전체 슬롯(거래일×3)을 자기 평균으로 100% 채웠다"는
@@ -5960,12 +6002,35 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      `logs/signal_ic_r3b_capital_utilization_adjusted_proxy_
      2026-07-17.json`. 상세: `plans/[DESIGN] regime_conditional_
      entry_signal_v1.md` §30.
+   - **SPPV-2.41(완료, 2026-07-17, R3b Conditional Go의 운영
+     horizon 적합성 판단 — Conditional Go 유지, T+5 강건성을 확정
+     Go 필수조건으로 격상)**: R3b의 T+5 취약성(§30)이 실운영과
+     충돌하는지 판단하기 위해 운영 코드(`deterministic_trigger_
+     engine.py`, `ai_agents/schemas.py`, `common_types.py`)와 5개
+     기준 문서를 read-only로 조사(신규 KIS 호출 없음, 스크립트
+     실행 자체가 없었음). **결과: SELL/청산 판정은 `exit_score`
+     (신호/점수)를 계산해 임계값과 비교하는 100% 신호 기반이며,
+     경과일수·보유일수를 입력으로 쓰는 코드 경로가 전혀 없다.**
+     `max_holding_days=20`(`schemas.py`의 `ExitPlanHint`)은 AI
+     Risk agent의 **LLM 출력 힌트 기본값**일 뿐 실제로 20일 뒤
+     매도를 강제하는 코드가 없다 — T+20과 우연히 일치하는 숫자
+     이지만 인과관계는 없다. 문서상 1차/2차 구분도 horizon이 아닌
+     **기간 창** 구분이며, 기존 §16 Go/No-Go 표준은 T+5·T+20을
+     이미 동시에 요구해왔다(새 기준 아님). 실거래 이력도 진입-청산
+     쌍이 없어 평균 보유기간을 실측할 수 없다. **판정: "이 시스템이
+     T+20 중심이라 T+5 약점을 무시해도 된다"는 주장은 코드로
+     뒷받침되지 않는다.** R3b는 **Conditional Go를 유지**한다(즉시
+     Watch 재하향 근거는 부족). 확정 Go 전 잔여 조건에 **"T+5
+     horizon 강건성 확보(또는 실거래 누적 후 청산 시점 분포 실측)"
+     를 기존 3개 조건과 동등한 필수조건으로 격상**한다. 신규 KIS
+     호출 없음(read-only 조사만 수행, 산출 파일 없음). 상세: `plans/
+     [DESIGN] regime_conditional_entry_signal_v1.md` §31.
    - **SPPV-3(다음 착수: §3 전제조건 충족 여부 사용자 확인(다음
-     최우선) + point-in-time `entry_score` 파이프라인 반영 shadow
-     실행 설계 + 분기1·분기2 marginal t_NW out-of-sample 재확인 +
-     이 시스템의 운영 호라이즌이 T+20 중심인지 T+5도 포함하는지
-     사용자 확인(T+5 유휴 자본 취약성의 실질적 의미 판단에 필요) +
-     "국면 조건부 활동성 threshold" 설계 검토 여부 사용자 확인)**:
+     최우선) + T+5 horizon 강건성 개선 여부 또는 실거래 누적 후
+     청산 시점 분포 실측 계획 수립 + point-in-time `entry_score`
+     파이프라인 반영 shadow 실행 설계 + 분기1·분기2 marginal t_NW
+     out-of-sample 재확인 + "국면 조건부 활동성 threshold" 설계
+     검토 여부 사용자 확인)**:
      §2.16~§2.21에서 국면 정의 통일(차단 축)은 Watch/No-Go에
      근접한다는 것이 확인됐고, §2.22에서 alpha layer 교체(선별 축)는
      Conditional Go를 확보했으며, **§2.27~§2.28에서 그 Conditional
@@ -6009,7 +6074,14 @@ agent 설계 문서 기준으로도 순서는 다음이 맞다.
      R3b 우위이나 T+5는 8개 창 중 6개에서 우위가 사라지거나 이미
      열세임을 확인해 "조건 (2) 해소"를 "T+20 완화·T+5 미해결"
      수준으로 재조정했다 — R3b는 Conditional Go를 유지한다(확정
-     Go 아님)(§30).** 한편 **§2.23~
+     Go 아님)(§30). §2.41에서 "이 시스템이 T+20 중심인가"를 코드로
+     직접 조사한 결과, SELL/청산이 100% exit_score(신호/점수)
+     기반이고 경과일수를 참조하지 않으며 max_holding_days=20이
+     실제로 집행되지 않는 LLM 힌트 기본값에 불과함을 확인했다 —
+     "T+20 중심이라 T+5를 무시해도 된다"는 주장은 코드로 뒷받침되지
+     않는다. R3b는 Conditional Go를 유지하되, T+5 horizon 강건성
+     확보(또는 실거래 누적 후 청산 시점 분포 실측)를 확정 Go의
+     필수조건으로 격상했다(§31).** 한편 **§2.23~
      §2.26에서 결합 사용
      시 가장 빈번하게 걸리는 축이 활동성 필터(`eligibility_low_
      relative_activity`)임이 확인됐고, 완화 효과의 반전이 국면·
