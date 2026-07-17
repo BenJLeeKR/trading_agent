@@ -939,6 +939,21 @@ value/compliance/broker가 아니라 `entry_score < 0.65`다.
   파이프라인 반영 shadow 실행이 확정 Go 전 필요). 운영 코드 변경
   없음, broker submit 미호출. 상세: `plans/[DESIGN] regime_
   conditional_entry_signal_v1.md` §27.
+
+- 작성자: Claude
+- 수정일자: 2026-07-17 (2.39순위, §2.38 수치 정정 + Conditional Go
+  재평가)
+- 수정내용: §2.38의 세 가지 수치 서술을 재검산해 정정했다(§2.39).
+  **정정 1: R0의 top-decile-day 음(-) 반전 창 수는 "3개"가 아니라
+  "4개"(2차 포함).** **정정 2: 양수 비율 열세 창 수는 "3/8"이
+  아니라 T+20 기준 "1/8"(분기2만), T+5 기준 "0/8".** **정정 3:
+  "selected_rate 급감(약 30~40%)"은 R3b 자신의 비율 수준(29.9~
+  39.2%)이며 R0(100%) 대비 약 61~70%p 감소로 명확화.** 세 정정
+  모두 R3b의 방향성 우위를 약화시키지 않아(정정 1·2는 오히려 R3b에
+  유리한 방향) **R3b는 Conditional Go를 유지한다.** 새 실험 없이
+  기존 JSON 재검산만 수행. 운영 코드 변경 없음, broker submit
+  미호출. 상세: `plans/[DESIGN] regime_conditional_entry_signal_
+  v1.md` §28.
 - **3순위(보류 유지, 형태 재정의 — 우선순위 재조정)**: **`entry_
   score`와 BUY funnel 재현** — §2.7 확장 검증에서 하락장 안정성이
   확인되지 않아 단순 재현으로는 착수하지 않는다. §2.16~§2.21에서

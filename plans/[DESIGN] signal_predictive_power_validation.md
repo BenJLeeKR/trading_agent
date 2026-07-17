@@ -762,6 +762,22 @@ entry 설계 검토로 전환**을 확정했다. 별도 문서
   shadow/validation 범위. 상세: `plans/[DESIGN] regime_conditional_
   entry_signal_v1.md` §27.
 
+- 작성자: Claude
+- 수정일자: 2026-07-17 (37차, SPPV-2.37 수치 정정 + Conditional
+  Go 재평가)
+- 수정내용: 36차(SPPV-2.37)의 세 가지 수치 서술을 재검산해 정정
+  했다(SPPV-2.38). **정정 1: R0의 top-decile-day 음(-) 반전 창
+  수는 "3개"가 아니라 "4개"(2차 포함).** **정정 2: 양수 비율
+  열세 창 수는 "3/8"이 아니라 T+20 기준 "1/8"(분기2만), T+5
+  기준으로는 "0/8".** **정정 3: "selected_rate 급감(약 30~40%)"
+  은 R3b 자신의 비율 수준(29.9~39.2%)이며 R0(100%) 대비 약
+  61~70%p 감소로 명확화.** 세 정정 모두 R3b의 방향성 우위를
+  약화시키지 않아(정정 1·2는 오히려 R3b에 유리한 방향) **R3b는
+  Conditional Go를 유지한다.** 새 실험 없이 기존 JSON 재검산만
+  수행(신규 KIS 호출 해당 없음). 운영 코드 변경 없음, broker
+  submit 미호출 — 이번 턴도 shadow/validation 범위. 상세: `plans/
+  [DESIGN] regime_conditional_entry_signal_v1.md` §28.
+
 ---
 
 ## 진행 체크리스트
@@ -1704,7 +1720,9 @@ canonical),
     파이프라인 반영 shadow 실행. 신규 KIS 호출 0건(기존 3년 캐시로
     전량 서빙, 로그로 실측 확인). 운영 코드 변경 없음, broker submit
     미호출 — 이번 턴도 shadow/validation 범위. 상세: `plans/
-    [DESIGN] regime_conditional_entry_signal_v1.md` §27.
+    [DESIGN] regime_conditional_entry_signal_v1.md` §27. **[SPPV-
+    2.38에서 정정] "8개 창 중 3개" 및 "3/8 창"은 계산 오류였다 —
+    아래 SPPV-2.38 참고.**
   - 산출물: `scripts/validate_r3b_sppv3_entry_readiness_check.py`
     (read-only, 신규 KIS 호출 0건), `logs/signal_ic_r3b_sppv3_
     entry_readiness_check_2026-07-17.json`, `logs/r3b_sppv3_entry_
@@ -1713,6 +1731,41 @@ canonical),
     전제조건 충족 여부 사용자 확인, point-in-time `entry_score`
     파이프라인 반영 shadow 실행 설계, 분기1·분기2 marginal t_NW
     out-of-sample 재확인.
+- [x] **SPPV-2.38(신설)** SPPV-2.37 수치 정정 + Conditional Go
+  재평가 (완료, 2026-07-17)
+  - 작업 범위: §2.37의 세 가지 수치 서술을 재검산해 정정하고,
+    정정 후에도 Conditional Go 상향이 유지 가능한지 재평가. **새
+    실험 없이** 기존 산출물(`logs/signal_ic_alpha_layer_r3_
+    reproducibility_2026-07-16.json`, `logs/signal_ic_r3b_sppv3_
+    entry_readiness_check_2026-07-17.json`)을 `python3 -c` read-only
+    재검산만으로 확인(신규 실행 없음, KIS 호출 해당 없음).
+  - **정정 1**: "R0가 8개 창 중 3개에서 T+20 평균이 마이너스로
+    뒤집힌다"는 서술은 오류 — §2.37 자신의 표를 재확인하면 **2차
+    (3년, -0.1%)도 음(-)이므로 정확히는 4개 창(2차·전반부·분기1·
+    분기2)**이다. 이 정정은 R0의 취약성을 더 크게 보여줘 R3b의
+    상대적 견고함 논거를 오히려 강화한다.
+  - **정정 2**: "양수 비율이 3/8 창(전반부·분기1·분기2)에서 R0보다
+    낮다"는 서술도 오류 — 재검산 결과 **T+20 기준 1/8 창(분기2)
+    에서만** R3b 양수 비율이 R0보다 낮고(전반부·분기1은 R3b가 근소
+    하게 더 높음), **T+5 기준으로는 8/8 창 전부에서 R3b가 R0보다
+    높다.** 이 정정은 R3b에 유리한 방향이다.
+  - **정정 3**: "selected_rate 급감(약 30~40%)"이라는 표현은 모호
+    했다 — 정확히는 **R3b 자신의 selected_rate가 eligible 대비
+    29.86~39.16% 수준**이며, R0(100%, 정의상) 대비 **약 61~70%p
+    감소**다.
+  - **판정: 세 정정 모두 R3b의 방향성 우위를 약화시키지 않아 R3b는
+    Conditional Go를 유지한다.** §2.37의 확정 Go 전 잔여 조건
+    4가지(분기1·분기2 marginal t_NW 재확인, selected_rate 감소의
+    총 기대수익 영향 정량화, §3 전제조건 충족, point-in-time
+    파이프라인 반영 shadow 실행)는 이번 정정과 무관하게 그대로
+    유효하다. 이번 턴의 교훈은 판정 자체보다 "근거 숫자를 정확히
+    세지 못했다"는 방법론적 경계다. 운영 코드 변경 없음, broker
+    submit 미호출 — 이번 턴도 shadow/validation 범위. 상세: `plans/
+    [DESIGN] regime_conditional_entry_signal_v1.md` §28.
+  - 산출물: 신규 스크립트 없음(기존 JSON에 대한 `python3 -c`
+    read-only 재검산만 수행, 산출 파일 생성 없음).
+  - 다음 과제: §2.37의 4개 잔여 조건(위 참고)은 이번 턴과 무관하게
+    계속 유효.
 - [~] **SPPV-3** `entry_score` point-in-time 재현 및 중복 penalty ablation
   - **보류 유지, 형태 재정의 — 우선순위 재조정**: §12(1년, 자기참조
     포함) 당시 "알파 근거 강화"로 낙관했던 것이 §14(3년, 자기참조

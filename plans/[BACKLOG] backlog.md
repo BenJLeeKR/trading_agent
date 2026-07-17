@@ -455,6 +455,20 @@
   파이프라인 반영 shadow 실행이 확정 Go 전 필요). 운영 코드 변경
   없음, broker submit 미호출. 실행 로그로 KIS 호출 0건 확인.
 
+- 작성자: Claude
+- 수정일자: 2026-07-17 (36차, SPPV-2.37 수치 정정 + Conditional Go
+  재평가)
+- 수정내용: 35차(SPPV-2.37)의 세 가지 수치 서술을 재검산해 정정
+  했다(SPPV-2.38). **정정 1: R0의 top-decile-day 음(-) 반전 창
+  수는 "3개"가 아니라 "4개"(2차 포함).** **정정 2: 양수 비율
+  열세 창 수는 "3/8"이 아니라 T+20 기준 "1/8"(분기2만), T+5 기준
+  "0/8".** **정정 3: "selected_rate 급감(약 30~40%)"은 R3b 자신의
+  비율 수준(29.9~39.2%)이며 R0(100%) 대비 약 61~70%p 감소로
+  명확화.** 세 정정 모두 R3b의 방향성 우위를 약화시키지 않아(정정
+  1·2는 오히려 R3b에 유리한 방향) **R3b는 Conditional Go를
+  유지한다.** 새 실험 없이 기존 JSON 재검산만 수행(신규 KIS 호출
+  해당 없음). 운영 코드 변경 없음, broker submit 미호출.
+
 ---
 
 ## 관리 원칙
@@ -1224,7 +1238,21 @@
     readiness_check.py`(read-only, 신규 KIS 호출 0건), `logs/
     signal_ic_r3b_sppv3_entry_readiness_check_2026-07-17.json`.
     상세: `plans/[DESIGN] regime_conditional_entry_signal_v1.md`
-    §27.
+    §27. **[SPPV-2.38에서 정정] "8개 창 중 3개"와 "3/8 창"은 계산
+    오류였다 — 아래 SPPV-2.38 참고.**
+  - **SPPV-2.38(완료, 2026-07-17, SPPV-2.37 수치 정정 + Conditional
+    Go 재평가 — Conditional Go 유지)**: §2.37의 세 가지 수치
+    서술을 재검산해 정정. **정정 1: R0의 top-decile-day 음(-)
+    반전 창 수는 "3개"가 아니라 "4개"(2차 포함).** **정정 2: 양수
+    비율 열세 창 수는 "3/8"이 아니라 T+20 기준 "1/8"(분기2만),
+    T+5 기준 "0/8".** **정정 3: "selected_rate 급감(약 30~40%)"은
+    R3b 자신의 비율 수준(29.86~39.16%)이며 R0(100%) 대비 약
+    61~70%p 감소로 명확화.** **판정: 세 정정 모두 R3b의 방향성
+    우위를 약화시키지 않아 R3b는 Conditional Go를 유지한다.**
+    §2.37의 확정 Go 전 잔여 조건 4가지는 이번 정정과 무관하게
+    그대로 유효. 새 실험 없이 기존 JSON `python3 -c` read-only
+    재검산만 수행(신규 실행 없음, KIS 호출 해당 없음). 상세:
+    `plans/[DESIGN] regime_conditional_entry_signal_v1.md` §28.
   - **SPPV-3(다음 착수: selected_rate 급감의 총 기대수익 영향
     정량화 + §3 전제조건 충족 여부 사용자 확인 + point-in-time
     `entry_score` 파이프라인 반영 shadow 실행 설계 + 분기1·분기2
