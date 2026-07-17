@@ -1,0 +1,54 @@
+INFO:validate_r3b_q3_swap_size_bucket_decomposition:[20/87] 누적 표본 13060건
+INFO:validate_r3b_q3_swap_size_bucket_decomposition:[40/87] 누적 표본 26120건
+INFO:validate_r3b_q3_swap_size_bucket_decomposition:[60/87] 누적 표본 39180건
+INFO:validate_r3b_q3_swap_size_bucket_decomposition:[80/87] 누적 표본 52240건
+INFO:validate_r3b_q3_swap_size_bucket_decomposition:[87/87] 누적 표본 56753건
+INFO:validate_r3b_q3_swap_size_bucket_decomposition:전체 3년 표본 56753건, 실패 0종목
+
+=== 분기3 대형/소규모 스왑 구조 정밀 진단 시작: 2025-02-12~2025-10-14, 표본 14181건 ===
+
+=== 분기3 스왑 발생일 83건 — 대형/소규모 구조 정밀 확정 ===
+
+[T+5] 분기3 전체: aggregate_diff(pooled)=0.3171%p, paired 평균=-1.1035%p
+  -- T+5 quintile(스왑개수 내림차순 5분위) --
+    Q1: n_days=17, 스왑개수범위=4~6, paired평균=3.3378%p, 구간자체 pooled효과=3.1471%p | 이 구간 제거 후 aggregate=-0.0615%p, paired평균=-2.2474%p
+    Q2: n_days=17, 스왑개수범위=4~4, paired평균=-1.4145%p, 구간자체 pooled효과=-0.4052%p | 이 구간 제거 후 aggregate=0.4347%p, paired평균=-1.0234%p
+    Q3: n_days=16, 스왑개수범위=3~4, paired평균=-4.8694%p, 구간자체 pooled효과=-4.2493%p | 이 구간 제거 후 aggregate=0.7165%p, paired평균=-0.2042%p
+    Q4: n_days=17, 스왑개수범위=2~3, paired평균=-1.3788%p, 구간자체 pooled효과=-1.0273%p | 이 구간 제거 후 aggregate=0.411%p, paired평균=-1.0326%p
+    Q5: n_days=16, 스왑개수범위=2~2, paired평균=-1.4334%p, 구간자체 pooled효과=-1.4334%p | 이 구간 제거 후 aggregate=0.2827%p, paired평균=-1.0247%p
+  -- T+5 상위 10%(대형, n=8) vs 나머지 90%(n=75) --
+    대형: paired평균=3.3501%p, 구간자체 pooled효과=3.3501%p
+    나머지 제거 후(=대형만 남김 아님, 대형 제거 후) aggregate=0.0942%p, paired평균=-1.5785%p
+  -- T+5 leave-top-k-days-out --
+    k=1: 제거 후 aggregate=0.3265%p(원본 대비 103.0%), 제거 후 paired평균=-1.1034%p
+    k=3: 제거 후 aggregate=0.3649%p(원본 대비 115.1%), 제거 후 paired평균=-1.1105%p
+    k=5: 제거 후 aggregate=0.3317%p(원본 대비 104.6%), 제거 후 paired평균=-1.1965%p
+    k=8: 제거 후 aggregate=0.0942%p(원본 대비 29.7%), 제거 후 paired평균=-1.5785%p
+  -- T+5 부호별 총합 분해 --
+    전체 양(+) 합계=210.7382%p (대형 10% 비중=15.6%), 전체 음(-) 합계=-302.3269%p (대형 10% 비중=2.0%)
+  -- T+5 2025-02-12/13 묶음 제거 --
+    제거 전 aggregate=0.3171%p, paired=-1.1035%p
+    제거 후 aggregate=0.3525%p, paired=-1.091%p
+
+[T+20] 분기3 전체: aggregate_diff(pooled)=1.2837%p, paired 평균=-0.4666%p
+  -- T+20 quintile(스왑개수 내림차순 5분위) --
+    Q1: n_days=17, 스왑개수범위=4~6, paired평균=6.2913%p, 구간자체 pooled효과=7.7164%p | 이 구간 제거 후 aggregate=0.3765%p, paired평균=-2.2073%p
+    Q2: n_days=17, 스왑개수범위=4~4, paired평균=-3.0419%p, 구간자체 pooled효과=-1.5498%p | 이 구간 제거 후 aggregate=1.6672%p, paired평균=0.1967%p
+    Q3: n_days=16, 스왑개수범위=3~4, paired평균=-2.9579%p, 구간자체 pooled효과=-1.1394%p | 이 구간 제거 후 aggregate=1.5406%p, paired평균=0.1283%p
+    Q4: n_days=17, 스왑개수범위=2~3, paired평균=4.3775%p, 구간자체 pooled효과=4.349%p | 이 구간 제거 후 aggregate=1.0893%p, paired평균=-1.7143%p
+    Q5: n_days=16, 스왑개수범위=2~2, paired평균=-7.5662%p, 구간자체 pooled효과=-7.5662%p | 이 구간 제거 후 aggregate=1.7011%p, paired평균=1.2288%p
+  -- T+20 상위 10%(대형, n=8) vs 나머지 90%(n=75) --
+    대형: paired평균=7.0408%p, 구간자체 pooled효과=7.0408%p
+    나머지 제거 후(=대형만 남김 아님, 대형 제거 후) aggregate=0.837%p, paired평균=-1.2674%p
+  -- T+20 leave-top-k-days-out --
+    k=1: 제거 후 aggregate=1.3955%p(원본 대비 108.7%), 제거 후 paired평균=-0.3472%p
+    k=3: 제거 후 aggregate=1.3855%p(원본 대비 107.9%), 제거 후 paired평균=-0.4616%p
+    k=5: 제거 후 aggregate=1.2607%p(원본 대비 98.2%), 제거 후 paired평균=-0.6343%p
+    k=8: 제거 후 aggregate=0.837%p(원본 대비 65.2%), 제거 후 paired평균=-1.2674%p
+  -- T+20 부호별 총합 분해 --
+    전체 양(+) 합계=517.7753%p (대형 10% 비중=15.0%), 전체 음(-) 합계=-556.5042%p (대형 10% 비중=3.9%)
+  -- T+20 2025-02-12/13 묶음 제거 --
+    제거 전 aggregate=1.2837%p, paired=-0.4666%p
+    제거 후 aggregate=1.4741%p, paired=-0.2829%p
+
+산출 저장: logs/signal_ic_r3b_q3_swap_size_bucket_decomposition_2026-07-17.json
